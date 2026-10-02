@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-02T10:15:25.657Z",
+  "implementationCommit": "293bcc13e8cf10bdc9700d5a1ad04a726d989766",
+  "model": "gpt-5.6-sol",
+  "scope": "Only the changed implementation, using the shared native KnowledgePipeline; historical unselected notes are not claimed refreshed.",
+  "analysis": {
+    "total": 9,
+    "reused": 0,
+    "failures": [
+      {
+        "keys": [
+          "omem:apps/server/src/assistant/acp-model.ts"
+        ],
+        "error": "Error: Worker stopped before completion"
+      },
+      {
+        "keys": [
+          "omem:apps/server/src/assistant/runtime.ts"
+        ],
+        "error": "Error: Worker stopped before completion"
+      },
+      {
+        "keys": [
+          "omem:apps/server/src/knowledge/agent-research.ts"
+        ],
+        "error": "Error: Worker stopped before completion"
+      }
+    ]
+  },
+  "targets": [
+    {
+      "path": "apps/server/src/assistant/acp-model.ts",
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "state": "stale",
+      "generationAt": "2026-10-02T08:09:52.515Z",
+      "reviewAt": "2026-10-02T08:12:16.339Z"
+    },
+    {
+      "path": "apps/server/src/assistant/runtime.ts",
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "state": "stale",
+      "generationAt": "2026-10-02T08:12:45.927Z",
+      "reviewAt": "2026-10-02T08:13:53.461Z"
+    },
+    {
+      "path": "apps/server/src/knowledge/agent-research.ts",
+      "key": "omem:apps/server/src/knowledge/agent-research.ts",
+      "state": "stale",
+      "generationAt": "2026-10-02T08:11:18.349Z",
+      "reviewAt": "2026-10-02T08:13:45.198Z"
+    },
+    {
+      "path": "apps/server/src/retrieval/port.ts",
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "state": "stale",
+      "generationAt": "2026-10-02T08:20:44.617Z",
+      "reviewAt": "2026-10-02T08:22:33.002Z"
+    },
+    {
+      "path": "apps/server/src/retrieval/unified.ts",
+      "key": "omem:apps/server/src/retrieval/unified.ts",
+      "state": "stale",
+      "generationAt": "2026-10-02T08:21:20.598Z",
+      "reviewAt": "2026-10-02T08:22:57.311Z"
+    },
+    {
+      "path": "apps/server/src/retrieval/units.ts",
+      "key": "omem:apps/server/src/retrieval/units.ts",
+      "state": "stale",
+      "generationAt": "2026-10-02T08:29:15.890Z",
+      "reviewAt": "2026-10-02T08:30:49.889Z"
+    },
+    {
+      "path": "apps/web/src/App.vue",
+      "key": "omem:apps/web/src/App.vue",
+      "state": "stale",
+      "generationAt": "2026-10-02T08:29:48.835Z",
+      "reviewAt": "2026-10-02T08:31:23.695Z"
+    },
+    {
+      "path": "apps/web/src/DailyAssistant.vue",
+      "key": "omem:apps/web/src/DailyAssistant.vue",
+      "state": "stale",
+      "generationAt": "2026-10-01T19:02:29.239Z",
+      "reviewAt": "2026-10-01T19:02:47.846Z"
+    },
+    {
+      "path": "apps/web/src/assistant-reader.ts",
+      "key": "omem:apps/web/src/assistant-reader.ts",
+      "state": "pending"
+    }
+  ]
+}
