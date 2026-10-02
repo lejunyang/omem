@@ -3,11 +3,11 @@
 ## 软件开发 / omem
 
 - [先认识 omem：把材料变成能找回的工作记忆](knowledge/articles/e3a688af2ed1ce2734e7f6a41ed91e4369645398f90a03e28b92c27028f48e1f.md)
-- [一份材料的旅程：从导入到阅读与引用](knowledge/articles/08e8de8e7788195db049c6fb0184ebc7888d9ec16a991ed19523deb074181035.md)
+- [一份材料的旅程：从导入到检索、知识与固定引用](knowledge/articles/08e8de8e7788195db049c6fb0184ebc7888d9ec16a991ed19523deb074181035.md)
 - [一次提问如何找到答案：召回、上下文与 RAG](knowledge/articles/c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.md)
 - [规则变了以后：原文、记忆与待办如何更新](knowledge/articles/d4de0ea627a2bb808daffc14026246c2dbde153c0450431a2116482269c8270c.md)
-- [改一条完整功能链：让搜索结果说清所在位置](knowledge/articles/0fc1372e659c300a4a7193e2de27f7d10a3c14baf8d61d9cee5f74f4a67a1d4a.md)
-- [Agent 怎样把材料讲明白：从自主调查到发布更新](knowledge/articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.md)
+- [为搜索结果补上章节位置：走通 UI、API 与检索](knowledge/articles/0fc1372e659c300a4a7193e2de27f7d10a3c14baf8d61d9cee5f74f4a67a1d4a.md)
+- [Agent 怎样把材料讲明白：自主调查、写作与独立补查](knowledge/articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.md)
 
 ## 未分类
 
@@ -37,7 +37,6 @@
 - [个人模式与仓库评审模式的开发进程编排](knowledge/articles/a74183dc494df06cd9b8406ca75119754295c4c008e72594d207fa41925ecdb4.md)
 - [中文语义检索嵌入模型加载器](knowledge/articles/e6bf632dcd40d69a1151173be62ed00d4a34ce12dbb807bec6a2b875e192b503.md)
 - [人类可读标签与边禁用测试](knowledge/articles/0d47116f37e3f7c65e7bddec0054e1250530013254b6fefc266d809246aa3233.md)
-- [从固定捕获版本读取原始文本](knowledge/articles/b78b96282f557af2dc5ea06afb847932c2ad962715a8015373cc467a3d0fcfe2.md)
 - [仓库 Wiki 构建与代码理解生成入口](knowledge/articles/d21256ca08886dcd0422b5fb2f1efd666ccf2a4178d143b6109412eebf45318a.md)
 - [仓库画像分析技能](knowledge/articles/7677bd80caf57f4e5148533980737b73ce190d8ef8c4e1cf6850868f28d6efff.md)
 - [仓库画像角色提示词](knowledge/articles/13bd77ed2efa881d1ccf6feca07627839a9632782d99f994745fa232db2ec7dc.md)
@@ -45,17 +44,12 @@
 - [仓库画像输出合同](knowledge/articles/3e4b85d74f8910bb221b86974eb0915fff00d6a7d360874fd3078df6714c28e6.md)
 - [仓库评审前端 API 客户端](knowledge/articles/6c65141ee7d53bfc2e1178dfc69de1aa6b5f5297e8b31d66d1dc79b4a2f540a9.md)
 - [仓库评审应用的多视图入口与证据浏览流程](knowledge/articles/e694f81e24ca1befefb3b3cf89616921d8d35f97fdadd4ce6166e250e70a5bc4.md)
-- [仓库评审数据的隔离存储与证据关系追踪](knowledge/articles/a0ff0c9b065f1a0d127f0c3eaab43d101b474dfb5ea36ed4af18f3d54bbae9d3.md)
-- [仓库评审数据迁移与关系失效测试](knowledge/articles/3d8ea1ba7a0579de7e341dff053249558c1a26299ea1a878cee05290c0664abf.md)
 - [仓库评审环境的 Vite 子进程](knowledge/articles/cd1b75c2c1332e7194afb86f5929b50e10d9904026895e0c3ad6ba0239048e20.md)
 - [仓库路径的共享模块分组](knowledge/articles/a73807a7fa14d3e9f2528c36ba0e29ab962e902649656f2eda17a79dde920bc3.md)
 - [代码材料分析角色的 OpenAI 展示配置](knowledge/articles/327b0609fcf256278f41d2d488129cf9114b7d97d4b07d03b01cb887c4d35d16.md)
-- [代码理解成果的版本化导出与安全恢复](knowledge/articles/6cec8ff9441999507ac0cd70efdd0459bb4722ffa6ca135373be067b0e44501e.md)
-- [代码理解结果的生成、校验与持久化](knowledge/articles/b3371593c4922018b730c855f682b8fe880f0633812ad1d353f218a718c4abc2.md)
 - [代码理解结果的确定性边界与校验流程](knowledge/articles/1d33a8899c49964fac8dab4b336aa8e90afd1bd833fed7e3735c3b028a0051ff.md)
 - [代码理解结果的统一数据合同](knowledge/articles/b788aeb7ccdde76156964386658cac67129528ea2f9984835612c1b30d3724bc.md)
 - [代码理解输出模式](knowledge/articles/e3458a379458e413ff165b3f1f644c9c51232c9f24dbbc5cc74e0607b5e99ed7.md)
-- [代码知识侧表迁移的历史数据保留测试](knowledge/articles/7303edce6baad8ce95d914367da21f131e984012e51109e3d7d21190cda5df89.md)
 - [代码预算能力重新导出入口](knowledge/articles/03e3ca85e6a4f7266e2be74c590123433c643052b841bc781a926b3c77637ef2.md)
 - [以 systemd 用户服务运行 omem](knowledge/articles/1a9c21c446b469cc0a9dc38104855613063f2c3cafb7ca0375a8ef2797aef922.md)
 - [任务流状态、跟进信息与操作命令合同](knowledge/articles/d4f012d7cbabb8a2f5eeadeb3b78ee4d732a42bfc4b6b2aa7908744a5663e1ce.md)
@@ -101,7 +95,6 @@
 - [知识正文复核角色的界面与默认提示配置](knowledge/articles/17b760c6862c610efcce63b9a219b157a0e9fb151034ce481e5e688986b8a964.md)
 - [知识章节组织代理配置](knowledge/articles/4355e55f7eb3503c8c430c4e28bc37bc019530f5428fa9786e97b1252d179a77.md)
 - [确定性模块依赖关系图](knowledge/articles/fa6dbeea582ec6feb9c2b2bcea29665bc9cbe719553a2144e42aabc9bc3d20d1.md)
-- [离线质量评估与发布门禁](knowledge/articles/d653773b149e27637a3760c8d4e2f8b39ea031520f0a1d102f05b3a1ce8b944b.md)
 - [稳定 JSON 规范化与摘要生成](knowledge/articles/0933415c79c1fce767ee888ce090e9dbd043d33f8718b39ad685fbebd8b92237.md)
 - [符号范围阅读与关系钻取组件](knowledge/articles/d95238a271bbfbff76302eb5a9aefd6d4cd132756b23105aa2174f932426f8b6.md)
 - [符号解释分析技能](knowledge/articles/00c2f3dc687d24a26d3fb25d8f12527122561f1502a84bab7e08955d1722c5dc.md)
@@ -117,16 +110,11 @@
 - [证据独立复核流程与判定边界](knowledge/articles/8a2f06ea8c90d773f80434054a1e575d955eaaa1030eae20ee26209368c88f24.md)
 - [评审代码模型配置入口](knowledge/articles/61aad49ff2faa17241ba19ef355c04f74be02477a5846b483794c0910ee56c5c.md)
 - [评审关系种子的加载与引用解析](knowledge/articles/a6127bd2e4ef6cbcdc304575f881c2c8225fb50d0c3195230be94498afc5c453.md)
-- [质量标注状态与飞书交互验收](knowledge/articles/78c85c71da9b8ee81c56f3c57b9087072cd00451c17c810dfe9ec4ed216165aa.md)
 - [质量评审数据集仓储与冻结校验](knowledge/articles/49fd1d32ef4c1278549cf6f20863208b590b78dc9d3e0b474f5304a4eb22ed2e.md)
 - [质量预测评估器：证据支持、任务完成与安全打断指标](knowledge/articles/54f7340a31e5f5edaae4bd88493f85ebc33326c978a0ddaffd5f348b609b8dc5.md)
 - [边目标解析与下钻行为测试](knowledge/articles/3894ae0726ccafd9430642c69a8d86667b730dad24b89e6b29248366f7cc87c4.md)
 - [运行时交互请求仓储](knowledge/articles/5b1530b27c38ca50b05c8fcf7cd08eb6fccb7cea9e0d11569c06df8b6feb1e32.md)
 - [连接器的文件边界与 Git 固定版本测试](knowledge/articles/965b4f1092dfb9c4c93df107f618b1dbaddf59d1f70c9a8a2d6c6ef759d544f3.md)
-- [飞书交互卡片驱动的质量标注会话](knowledge/articles/f9b21cfe84dfd9d1b3f5171f2f47dbc705d2e81971ef2ade8daebade7b16fd04.md)
-- [飞书富消息统一内容部件的行为验证](knowledge/articles/059b60916e48ca3223191f2ac7ff5d4654cff72f65cd231fc9025699e694be85.md)
-- [飞书应用接入与安全绑定验收](knowledge/articles/f76729f74c3264801b7970613e4cd5fe72f7eb391ff9d326310f145a9e22ceb2.md)
-- [飞书质量数据集的人工标注联调入口](knowledge/articles/f5eb4da86a2da0eeb6316527263a2849ffe80405e0c33963892ee227d32e3436.md)
 
 ## 软件开发 / omem / Web 应用 / 材料处理
 
@@ -152,11 +140,6 @@
 - [工作区的阅读布局、交互状态与移动端适配](knowledge/articles/eae55956da4a2f5d641d4be82ac2693ddbab36beec083a708ec85db4f7c3673b.md)
 - [统一阅读界面的视觉基础与可访问性](knowledge/articles/d2fe94130e810a9f42c000987bcae8589f0d9d6a000b71fe39989be63fd84273.md)
 
-## 软件开发 / omem / Web 应用 / 证据阅读
-
-- [原始材料阅读与证据跳转](knowledge/articles/4b9d3ac9d775696f7fdfb11b62922c68aa35ceaa961f0041278a4fd2c84e1a5f.md)
-- [模块说明、证据与文件下探界面](knowledge/articles/9b4dcab1214bbd0cb31ae5cc73e8b4db1ae09fb7b2cff65fc3cb8c82c27a9e26.md)
-
 ## 软件开发 / omem / Web 应用 / 通用交互组件
 
 - [可展开且可选择的内容区块](knowledge/articles/e94c2059fddef7fff4c4166c0dbc7b6dd2df8213ee38ea3b2e0b6ac17c30d082.md)
@@ -167,13 +150,13 @@
 - [统一的空状态展示组件](knowledge/articles/88b12ddcc01aead1f398bfb1f65e9f7863638b095ec1a8eaf802e4bcbc7dcafe.md)
 - [统一的轻量 SVG 图标组件](knowledge/articles/506240a8f06c64ad3989b93e2eee7b17167c020f27c2bd6936d4396522ce00da.md)
 
+## 软件开发 / omem / Web 应用 / 证据阅读
+
+- [模块说明、证据与文件下探界面](knowledge/articles/9b4dcab1214bbd0cb31ae5cc73e8b4db1ae09fb7b2cff65fc3cb8c82c27a9e26.md)
+
 ## 软件开发 / omem / Web 应用 / 工作区入口
 
 - [知识库阅读与整理入口重设计](knowledge/articles/cf724b52fd6fb802f1016d1b227c60cd6ebdbb9c39062c027b484354f403a36f.md)
-
-## 软件开发 / omem / 知识管理 / 仓储集成测试
-
-- [知识浏览与递归证据追踪的端到端验证](knowledge/articles/5ef71b2c76cc144c5bd5b4ddf3a6f860924bd6e2d060a8a70675f934ca0f5e13.md)
 
 ## 软件开发 / omem / Web 应用 / 证据阅读 / 递归证据追踪
 
