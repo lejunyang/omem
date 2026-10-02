@@ -5,7 +5,21 @@ import type { KnowledgeArtifact } from "../../../../packages/contracts/src/knowl
 import { stableDigest } from "../storage/digest.js";
 import { sourceForMaterialKey } from "./material-identity.js";
 import { relevance } from "../retrieval/relevance.js";
+import { marked, type Token, type Tokens } from "marked";
 type Row = Record<string, unknown>;
+
+/** Search the prose a reader sees, at the same granularity as its references.
+ * A chapter hit must not promote every source mentioned elsewhere in it. */
+function passages(body: string): string[] {
+  const extract = (tokens: Token[]): string[] => tokens.flatMap(token => {
+    if (token.type === "paragraph" || token.type === "text") return [token.raw];
+    if (token.type === "list") return (token as Tokens.List).items.flatMap(item => extract(item.tokens));
+    if (token.type === "blockquote") return extract((token as Tokens.Blockquote).tokens);
+    if (token.type === "table") return (token as Tokens.Table).rows.map(row => row.map(cell => cell.text).join(" "));
+    return []; // code, Mermaid, headings and metadata are not explanatory prose
+  });
+  return extract(marked.lexer(body));
+}
 
 export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): Row[] {
   if (!terms.length || !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_heads'").get()) return [];
@@ -32,20 +46,25 @@ export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): 
     const value = row ? { id: String(row.id), artifact: JSON.parse(String(row.artifact)) as KnowledgeArtifact } : null;
     articleCache.set(key, value); return value;
   }
-  const seen = new Set<string>(), output = new Map<string, Row>();
+  const seen = new Map<string, number>(), output = new Map<string, Row>();
   function visit(a: KnowledgeArtifact, depth: number, keys?: Set<string>, score = 0) {
     if (depth > 8 || output.size >= 100) return;
     if (a.dependencies.some(d => d.kind === "material" ? source(d.key)?.digest !== d.digest : article(d.key)?.id !== d.digest)) return;
     for (const c of a.document.citations.filter(c => !keys || keys.has(c.key))) {
       const visitKey = `${a.document.key}:${c.key}`;
-      if (seen.has(visitKey)) continue;
-      seen.add(visitKey);
+      if ((seen.get(visitKey) ?? -1) >= score) continue;
+      seen.set(visitKey, score);
       if (c.target.kind === "article") {
         const child = article(c.target.key);
         if (child) {
           const section = c.target.section;
           const sections = child.artifact.document.sections.filter(s => !section || s.key === section);
-          visit(child.artifact, depth + 1, new Set(sections.flatMap(s => [...s.body.matchAll(/\[\[([\w-]+)\]\]/g)].map(m => m[1]!))), score);
+          const blocks = sections.flatMap(s => passages(s.body).map(body => ({ body, score: relevance(body, terms, s.title) })));
+          const matched = blocks.filter(b => b.score);
+          // An explicit child-section reference may provide background even
+          // when it uses different vocabulary. Retain that section, not siblings.
+          for (const block of matched.length ? matched : section ? blocks : [])
+            visit(child.artifact, depth + 1, new Set([...block.body.matchAll(/\[\[([\w-]+)\]\]/g)].map(m => m[1]!)), Math.min(score, block.score || score));
         }
         continue;
       }
@@ -73,12 +92,12 @@ export function knowledgeEvidenceCandidates(db: DatabaseSync, terms: string[]): 
   for (const row of rows) {
     try {
       const a = JSON.parse(String(row.artifact)) as KnowledgeArtifact;
-      const matches = a.document.sections.map(section => ({section, score: relevance(section.title + "\n" + section.body, terms, a.document.title)})).sort((a,b) => b.score-a.score);
+      const matches = a.document.sections.flatMap(section => passages(section.body).map(body => ({body, score: relevance(body, terms, section.title)}))).sort((a,b) => b.score-a.score);
       // Literal article names open the first explanatory section, rather than
       // turning every citation in the article into a search hit.
       if (!matches.some(s => s.score) && terms.length <= 2 && terms.every(t => a.document.title.toLowerCase().includes(t)) && matches[0]) matches[0].score = .4;
-      for (const {section, score} of matches) {
-        if (score) visit(a, 0, new Set([...section.body.matchAll(/\[\[([\w-]+)\]\]/g)].map(m => m[1]!)), score);
+      for (const {body, score} of matches) {
+        if (score) visit(a, 0, new Set([...body.matchAll(/\[\[([\w-]+)\]\]/g)].map(m => m[1]!)), score);
       }
     } catch { /* Invalid projections never interrupt original-evidence retrieval. */ }
   }

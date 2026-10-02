@@ -95,6 +95,23 @@ it("uses derived knowledge to find original evidence without promoting prose or 
   expect(retrieval.searchSources({ text: "Aurora" })).toEqual([]);
 });
 
+it("routes a paragraph hit to its sources, without expanding the rest of the chapter", () => {
+  const { repository, store, capture } = setup();
+  capture("function first() { return 42; }");
+  store.capture({source:"manual",externalId:"b",title:"另一个实现",parts:[{type:"text",text:"function second() { return 99; }"}],context:{}});
+  const materials=new Map(repository.materials().map(m=>[m.key,m]));
+  const d=document("guide:journey");
+  d.title="旅行安排";
+  d.sections[0]!.body="海边渡轮需要提前购买船票。[[c1]]\n\n酒店预订由住宿流程处理。[[c2]]";
+  d.citations[0]!.target={kind:"material",key:"manual:a",startLine:1,endLine:1};
+  d.citations.push({...d.citations[0]!,key:"c2",label:"住宿实现",target:{kind:"material",key:"manual:b",startLine:1,endLine:1},quote:""});
+  d.questions=[];
+  repository.publish(artifact(bindKnowledgeQuotes(d,materials),[...materials.values()].map(m=>({kind:"material" as const,key:m.key,digest:m.digest}))));
+  const hits=new KeywordRetrieval(store.db).searchSources({text:"海边 渡轮 船票"});
+  expect(hits).toHaveLength(1);
+  expect(store.evidence(hits[0]!.fragmentId)!.fragment.text).toContain("first()");
+});
+
 it("keeps identical external ids from different material carriers distinct", () => {
   const { store, repository } = setup();
   for (const source of ["file", "manual"] as const) store.capture({ source, externalId: "omem:README.md", title: source, parts: [{ type: "text", text: "Same text, different source identity." }], context: {} });
