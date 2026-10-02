@@ -539,6 +539,7 @@ export async function prepareAgentResearch(input: {
                     sectionTitle: h.headingPath.join(" / "),
                     score: h.score,
                     excerpt: h.text,
+                    description: h.materialDescription,
                     citations: h.citations,
                     references: h.references,
                     derived: true,
