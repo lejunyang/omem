@@ -267,6 +267,13 @@ it("opens a named method as a complete operation including its local state and b
     expect(hit.text).toContain("const available");
     expect(hit.text).toContain("if (!available) return null");
     expect(hit.text).toContain("return { id }");
+    const question = (
+      await s.retrieval.search({
+        text: "ParcelService.reserveParcel 为什么拒绝？",
+        purpose: "implementation",
+      })
+    )[0]!;
+    expect(question.target).toEqual(hit.target);
   } finally {
     await s.close();
   }

@@ -13,6 +13,9 @@ import { join } from "node:path";
 const review = taskFlag("review"), root = process.cwd();
 const config = review ? readRetrievalConfig(process.env.REVIEW_RETRIEVAL_CONFIG ?? join(root,"config/retrieval.json")) : loadConfig().retrieval;
 const store = review ? createReviewStore(root) : new Store(loadConfig().dataDir);
+// Other explicit maintenance commands can publish while indexing; SQLite still
+// serializes writes, but a short writer wait avoids failing on their brief lock.
+store.db.exec("PRAGMA busy_timeout=10000");
 const retrieval = new UnifiedRetrieval(store.db, () => loadChineseEmbedding(config?.osdkModel,root));
 try {
   if (review) { await runReviewSync(store,root); restoreReviewKnowledge(store,root); await runCodeSync(store,root); }
