@@ -5,6 +5,41 @@ let model = "alpha";
 let effort = "low";
 let promptId;
 let permission = false;
+let nativeSkills = [];
+let mcpServers = [];
+const update = (value) => send({
+  jsonrpc: "2.0",
+  method: "session/update",
+  params: { sessionId: "test-session", update: value },
+});
+async function submitAssistantResult() {
+  // Only the native assistant protocol is exercised here. The fixed response
+  // does not evaluate retrieval, comprehension, or real CLI/model quality.
+  const server = mcpServers.find((entry) => entry.name === "omem" && entry.type === "http");
+  if (!server) throw Error("Fixture assistant requires the supplied omem MCP server");
+  const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
+    import("@modelcontextprotocol/sdk/client/index.js"),
+    import("@modelcontextprotocol/sdk/client/streamableHttp.js"),
+  ]);
+  const client = new Client({ name: "browser-assistant-fixture", version: "1" });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+    update({ sessionUpdate: "tool_call", toolCallId: "fixture-submit", title: "Tool: omem/submit_result", status: "in_progress" });
+    const result = await client.callTool({
+      name: "submit_result",
+      arguments: { result: {
+        answer: "日常消息已读取；当前没有需要变更的事项。",
+        citations: [],
+        create_task: null,
+        update_task: null,
+      } },
+    });
+    if (result.isError) throw Error(JSON.stringify(result.content));
+    update({ sessionUpdate: "tool_call_update", toolCallId: "fixture-submit", status: "completed" });
+  } finally {
+    await client.close();
+  }
+}
 const options = () => [
   {
     id: "model",
@@ -39,8 +74,15 @@ readline.createInterface({ input: process.stdin }).on("line", (raw) => {
         sessionCapabilities: { close: {} },
       },
     });
-  else if (msg.method === "session/new")
+  else if (msg.method === "session/new") {
+    nativeSkills = msg.params?._meta?.trae?.options?.skills || [];
+    mcpServers = msg.params?.mcpServers || [];
     reply({ sessionId: "test-session", configOptions: options() });
+    update({
+      sessionUpdate: "available_commands_update",
+      availableCommands: nativeSkills.map((name) => ({ name, description: `Fixture loaded ${name}` })),
+    });
+  }
   else if (msg.method === "session/set_config_option") {
     if (msg.params.configId === "model") model = msg.params.value;
     else effort = msg.params.value;
@@ -69,6 +111,12 @@ readline.createInterface({ input: process.stdin }).on("line", (raw) => {
       });
       return;
     }
+    if (nativeSkills.includes("omem-assistant-research")) {
+      void submitAssistantResult().then(() => reply({ stopReason: "end_turn" })).catch((error) => {
+        send({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: String(error) } });
+      });
+      return;
+    }
     send({
       jsonrpc: "2.0",
       method: "session/update",
@@ -89,7 +137,7 @@ readline.createInterface({ input: process.stdin }).on("line", (raw) => {
           sessionUpdate: "agent_message_chunk",
           content: {
             type: "text",
-            text: text.includes("Daily message workflows v1:") ? JSON.stringify({ answer: "日常消息已读取；当前没有需要变更的事项。", citation_ids: [], create_task: null, update_task: null, search_queries: [] }) : `Evidence answer ${model}/${effort}; images=${msg.params.prompt.filter((p) => p.type === "image").length}`,
+            text: `Evidence answer ${model}/${effort}; images=${msg.params.prompt.filter((p) => p.type === "image").length}`,
           },
         },
       },
