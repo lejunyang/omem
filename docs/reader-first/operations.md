@@ -12,6 +12,8 @@
 
 本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / `osdk run retrieval:index --review` 补建索引。
 
+材料用途整理：原始材料页展开“材料用途与适用范围”，可调用当前 Agent 阅读固定原文或人工填写。批量任务 `osdk run review:catalog docs --documents` 选择 Markdown，`osdk run review:catalog <文件或目录>` 也可分析代码；`--retry` 重做已有模型说明，人工修正始终保留。发布数据在 `.repo-review/knowledge/material-descriptions/`，按固定材料 digest 恢复；分类与概念变更后运行 `osdk run retrieval:index --review`。当前是主动触发，不是自动清洗所有新输入。细节及限制见 [材料用途与概念入口](material-understanding.md)。
+
 ## 检查
 
 `osdk deps --frozen`、`osdk run check`；UI 使用 `osdk run browser` 和 scripts/code-wiki-viewport.ts 检查实际页面。`osdk run retrieval:verify` 使用真实本地模型；`osdk run knowledge:native-verify` 用实际 Traex ACP 验证调查、写作和独立工具补查。`osdk run review:verify --full` 生成机器报告，不能代替阅读验收。

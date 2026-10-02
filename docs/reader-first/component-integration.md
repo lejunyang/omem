@@ -1,12 +1,14 @@
 # 成熟方法如何进入现有代码
 
-本文是改造路线，不把外部产品文档或实验收益当 omem 已有能力。完整平台、可嵌入组件和可复用方法分开评估；先判断来源元数据能否衔接，不因缺少内部 Fragment 合同直接否决。
+本文是改造路线，不把外部产品文档或实验收益当 omem 已有能力。完整平台、可嵌入组件和可复用方法分开评估；先判断来源元数据能否衔接，不因缺少内部 Fragment 合同直接否决。2026-10-03 已落地的片段背景、材料说明和过滤见下文，真实收益以当轮同库对照为准。
 
 ## 文档结构与上下文检索
 
 [Docling](https://docling-project.github.io/docling/concepts/chunking/) 按结构切分并在长度预算下细化，能够保留标题等背景。对 omem：在 Capture 外加解析适配器输出块、标题路径、表格与定位；store 继续保存原件。`knowledge/structure.ts` 复用 marked/TS 已足够处理当前文本，PDF/Office 接 Docling 实际转换而不是再造布局解析。解析失败保留原件并说明降级。先验证双栏、表格和扫描材料，而非只看 Markdown 是否漂亮。
 
-[Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval) 给每个片段补它在整份文档中的具体背景，再进入全文与向量索引。对 omem：`retrieval/semantic.ts` 的 title+400 字符输入改为结构背景+片段，`keyword.ts` 也索引背景；主体、人称、事件、章节、函数职责可来自可靠结构或模型理解。补充文字是派生投影，不能改原文；预处理更换必须更换向量身份。避免给每个块附同一段泛化文档摘要。
+[Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval) 给每个片段补它在整份文档中的具体背景，再进入全文与向量索引。omem 已在 `retrieval/units.ts` / `unified.ts` 用结构背景+片段替代旧 title+字符窗口主入口，FTS5 与 BGE 共用；本轮进一步把模型阅读得到的概念别称仅附在其原文范围。补充文字是派生投影，不能改原文；预处理更换必须更换向量身份。没有给每个块附同一段泛化摘要，也尚未实现完整的逐块语境生成。
+
+[Haystack metadata filtering](https://docs.haystack.deepset.ai/docs/metadata-filtering) 把正式属性过滤与内容召回分开。本轮在现有 SQLite 上保存每版材料的用途、状态和明确有效期，由原生 `material-cataloger` 分析，页面可修正；`UnifiedRetrieval` 在截断候选前执行明确条件，默认排序减少计划、调研和旧状态的干扰。未知分类仍可见，背景查询保留历史内容。没有把目录、保存时间或题集问题当作分类。这是方法适配，没有安装 Haystack 平台；具体代码与边界见 [材料用途与概念入口](material-understanding.md)。
 
 融合参考 [Elasticsearch RRF](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion)，相关性重排参考 [BGE 作者实现](https://github.com/FlagOpen/FlagEmbedding)。改 `keyword.ts`、`semantic.ts` 和 `knowledge/retrieval.ts`：候选分别生成，先过滤正式范围和时效；正文匹配不搜索引用理由与 trace；按命中节回溯；记录词覆盖和原始分数；只做一次融合；重排后补父章节。RRF 把排名转成可融合分数，不自动判定相关；MMR 减少重复，不替代相关性判断。
 
@@ -48,6 +50,6 @@ Traex 的 [用户手册](https://bytedance.larkoffice.com/wiki/HWUPwVssCi0KSPkOC
 
 已经实施的通用改进包括完整概念覆盖、按来源文档频率加权、限制标题扩散、按命中章节回溯知识、一次融合、向量弱尾部过滤、精确标识符要求实际命中。词法相关性在一个连贯的局部段落内计算，避免把大文件中相隔很远的词拼成高分命中；这仍不能替代结构背景与语义理解。默认结果合并完全重复摘要，同一来源最多两个互补摘录，避免一个文件占满首屏；原文与其他摘录都保留，内部 raw 搜索可以关闭分组。
 
-剩余工作不该只继续调权重：检索结构投影需加入章节/函数背景；已有解释应该作为独立的检索表示并带回原件；来源适用状态与时间需成为正式数据；真实评测要把主题相似与能回答问题分别标注。不要按 archive/test 路径直接降权，也不要把回归问法或预期路径写进排序。Agent 当前可在明确范围内检索、看目录、原生 Grep 与补读完整文件，能继续调查而不受首次排序限制。
+结构投影、可独立检索的讲解及正式材料说明已进入共享检索。剩余工作不该只继续调权重：混合文档需要更细的适用说明，长问题要保留明确符号入口，业务机制需要连贯补读；真实评测必须把主题相似与能回答问题分别标注。不要按 archive/test 路径直接降权，也不要把回归问法或预期路径写进排序。Agent 当前可在明确范围内检索、看目录、原生 Grep 与补读完整文件，能继续调查而不受首次排序限制。
 
 真实 HTTP 抽查进一步发现章节级引用扩散。现用 marked 解析读者段落、列表项和表格行，仅从实际匹配的文字回溯其引用；代码块/图与同章无关段落不继承分数。跨文章引用有明确章节时保留该章背景，未指定章节则继续找相关段落。这个修复处理了别名回原件的错误扩散，不宣称已解决中文语义、当前/历史适用性和跨文件功能理解。

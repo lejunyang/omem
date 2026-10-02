@@ -6,12 +6,12 @@ omem 的目标是让个人材料被读懂、找回并用于行动。文档、代
 
 ## 现在做到哪里
 
-截至 2026-10-02，本轮开始时已有统一捕获和版本、TS/Vue 结构定位、SQLite 全文与中文向量混合召回、长期记忆抽取及来源更新重核验、持久事项、共享引用阅读。详细基线保留在 current-system.md。此轮已消除部分候选噪声，并接通 ACP Agent 原生调查、继续写作和独立补查：固定材料目录、原生 skill、全面只读 MCP 与最终候选提交；不再固定三轮调查或限制宿主输入输出 token。真实小型代码与设计材料流程通过；检索质量、复杂 Wiki 的讲解和长期综合理解仍是主要缺口。
+截至 2026-10-03，已有统一捕获和固定版本、TS/Vue 结构定位、带章节/函数背景的全文与中文向量召回、长期记忆抽取及来源更新重核验、持久事项和共享引用阅读。ACP Agent 能原生调查、继续写作和独立补查：固定材料目录、原生 skill、只读 MCP 与最终候选提交；不再固定三轮调查或限制宿主输入输出 token。普通助手已接同一调查能力，网页保留综合回答与实际命中。新增材料用途、适用范围和段落概念入口，可由 AI 整理、人工修正并进入共享检索。实际排序、复杂 Wiki 的讲解和长期综合理解仍是主要缺口，不能由这些流程接通推导为质量已解决。
 
 | 用户结果 | 现有基础 | 当前主要不足 | 改造位置 |
 | --- | --- | --- | --- |
-| 材料完整、可读 | Capture、原文版本、Markdown/AST 阅读结构 | 空行片段和字符窗口缺少结构背景，多模态解析较浅 | store、knowledge/structure、retrieval |
-| 找到相关内容 | FTS5、中文短词、BGE、RRF/MMR、知识和记忆导航 | 本轮已修候选扩散与重复融合；复杂问法仍缺结构语义与时效，重排对照未证明可默认开启 | retrieval/keyword、semantic、knowledge/retrieval |
+| 材料完整、可读 | Capture、原文版本、Markdown/AST 结构、正式材料用途 | 混合文档的章节性质不够细，多模态解析较浅；用途整理仍需触发 | store、knowledge/structure、source-profile/descriptions |
+| 找到相关内容 | ICU/FTS5 BM25、中文 BGE、讲解与记忆、用途过滤、段落概念入口 | 长问题可能漏函数，主题相关不等于能回答；重排对照未证明可默认开启 | retrieval/units、unified、knowledge/agent-research |
 | 看懂陌生系统 | 页面目的、案例、研究/写作/复核角色 | 本轮已接原生自主调查；复杂文章的可理解性仍需真实读者验收 | knowledge/pipeline、agent-runtime、agents |
 | 理解代码含义 | 符号、导入、候选调用和设计关联 | AST 结构不能解释业务因果、设计动机和完整功能链 | 原生读文件/搜索、MCP 代码导航、背景材料 |
 | 记住并主动使用 | claim/episode/procedure/task、重核验、提醒 | 缺少项目/人物/主题整合、事件时间与价值选择 | learning、memory、assistant |
@@ -23,6 +23,7 @@ omem 的目标是让个人材料被读懂、找回并用于行动。文档、代
 - [成熟组件如何融入与代码改造](reader-first/component-integration.md)：具体采用什么、进入哪个适配层、哪些代码要替换、怎样判断收益。
 - [Agent 自主研究方案](reader-first/agent-research.md)：工具、材料工作区、原生 skills、会话、最终产物与独立补查复核。
 - [助手检索与真实命中](reader-first/assistant-search-research.md)：新问题搜出了什么，成熟方案的适配、局限及现有代码改造入口。
+- [材料用途与概念入口](reader-first/material-understanding.md)：本轮如何保存、查看和修正材料性质，怎样融入全文、向量及 Agent 搜索，哪些问题还没有解决。
 - [个人记忆与跟进流程](reader-first/assistant-memory-flow.md)：保存、提问、换版、更新及持续跟进的真实成功与失败。
 - [写作与学习路线](reader-first/writing.md)：人如何由一个案例理解概念、机制、取舍并开始修改。
 - [当前进度](reader-first/progress.md)：本轮实际完成和真实验证；设计内容不代表已交付。
