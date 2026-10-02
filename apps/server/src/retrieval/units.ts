@@ -11,7 +11,7 @@ import { fragmentPositions } from "../knowledge/structure.js";
 import { stableDigest } from "../storage/digest.js";
 import type { ProvenanceRef, RetrievalHit, SourceAnchor } from "./port.js";
 
-export const UNIT_VERSION = "structure-icu-v2";
+export const UNIT_VERSION = "structure-icu-v3";
 type Row = Record<string, unknown>;
 export type RetrievalUnit = Omit<RetrievalHit, "score" | "routes"> & {
   owner: string;
@@ -67,17 +67,33 @@ export function markdownPassages(text: string): Passage[] {
 
 export function codePassages(material: KnowledgeMaterial): Passage[] {
   const parsed = parseFile(material.path ?? material.title, material.text);
-  const symbols = parsed.symbols.filter(
-    (s) =>
-      !parsed.symbols.some(
-        (child) =>
-          child !== s &&
-          child.rangeStart.line >= s.rangeStart.line &&
-          child.rangeEnd.line <= s.rangeEnd.line &&
-          (child.rangeStart.line > s.rangeStart.line ||
-            child.rangeEnd.line < s.rangeEnd.line),
-      ),
-  );
+  const contains = (
+    parent: (typeof parsed.symbols)[number],
+    child: (typeof parsed.symbols)[number],
+  ) =>
+    parent !== child &&
+    parent.rangeStart.line <= child.rangeStart.line &&
+    parent.rangeEnd.line >= child.rangeEnd.line &&
+    (parent.rangeStart.line < child.rangeStart.line ||
+      parent.rangeStart.col < child.rangeStart.col ||
+      parent.rangeEnd.line > child.rangeEnd.line ||
+      parent.rangeEnd.col > child.rangeEnd.col);
+  const callable = (kind: string) => kind === "function" || kind === "method";
+  const symbols = parsed.symbols.filter((s) => {
+    // Local variables belong to their operation. Replacing a method with its
+    // leaf declarations loses the control flow readers came to understand.
+    if (s.kind === "const")
+      return !parsed.symbols.some(
+        (p) =>
+          contains(p, s) &&
+          (callable(p.kind) || p.kind === "class" || p.kind === "component"),
+      );
+    if (s.kind === "class" || s.kind === "component")
+      return !parsed.symbols.some(
+        (child) => contains(s, child) && callable(child.kind),
+      );
+    return true;
+  });
   if (!symbols.length)
     return [
       {

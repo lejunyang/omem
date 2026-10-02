@@ -432,11 +432,16 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       }
     };
     const priority = (u: RetrievalUnit) => {
+      const definition =
+        exactLookup(q.text) &&
+        u.headingPath.at(-1)?.toLowerCase() === q.text.trim().toLowerCase()
+          ? 2
+          : 1;
       if (
         q.purpose !== "follow-up" ||
         (!["task", "memory"].includes(u.kind) && u.subtype !== "conversation")
       )
-        return preference(u);
+        return preference(u) * definition;
       const event = Date.parse(u.eventAt ?? "");
       const ageDays = Math.max(0, (Date.now() - event) / 86_400_000);
       return (
