@@ -131,6 +131,34 @@
         "软件开发",
         "omem"
       ]
+    },
+    {
+      "key": "guide:knowledge-agent",
+      "title": "Agent 怎样把材料讲明白：自主调查、写作与补查",
+      "order": 5,
+      "kind": "explanation",
+      "reader": "想理解并改进知识生成过程的开发者",
+      "goal": "沿一篇文章的生成解释阅读目标、原件工作区、Agent 调查工具、研究交接、作者补读、独立复核及发布，知道模型自带 harness 和 omem 各负责什么，能定位改变调查与写作体验的位置。不要写成协议字段说明或测试覆盖清单。",
+      "scenario": "选择一份功能设计与它的实现代码，想写一篇让新人理解功能的文章。展示初始问题、一次发现缺少背景后补读、作者将研究地图变成连贯解释、复核独立核对关键因果的过程；例子是教学构造，不伪装为真实运行记录。",
+      "questions": [
+        "阅读目标如何决定调查和文章结构？",
+        "Agent 可以读什么，怎样搜索、导航并补背景？",
+        "研究者、作者和独立复核怎样交接，为什么一次 ACP prompt 仍能反复调用工具？",
+        "产物如何发布、记录来源并在材料变化后更新？",
+        "检索和事实复核目前还不能替代哪些阅读质量？"
+      ],
+      "entryPaths": [
+        "apps/server/src/knowledge/pipeline.ts",
+        "apps/server/src/knowledge/agent-research.ts",
+        "apps/server/src/agent-runtime/gateway.ts",
+        "apps/server/src/agents.ts",
+        "docs/reader-first/agent-research.md",
+        "docs/reader-first/writing.md"
+      ],
+      "topicPath": [
+        "软件开发",
+        "omem"
+      ]
     }
   ]
 }

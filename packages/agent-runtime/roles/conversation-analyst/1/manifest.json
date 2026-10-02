@@ -11,7 +11,7 @@
       "canonical_name": "omem-conversation-analyst",
       "version": "1",
       "load_mode": "inline",
-      "artifact_digest": "4f4d854a34d98a25b756fda1710800fee6f98db31ffc8865659706cf8c0d6c76"
+      "artifact_digest": "7019975bc9951ca91ca4d5980963fa8a1f9f4818e9aade0421165f487b07d0eb"
     }
   ],
   "output_schema": "KnowledgeBatch.v1",
