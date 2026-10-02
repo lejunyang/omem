@@ -527,61 +527,61 @@ export class RetrievalProjection {
     };
     // All material used while writing must remain in the visibility scope, even
     // when only the cited original inputs decide whether prose can be recalled.
-    const inputsAvailable = (
-      a: KnowledgeArtifact,
-      seen = new Set<string>(),
-    ): boolean =>
-      a.dependencies.every((d) => {
+    const availability = new WeakMap<KnowledgeArtifact, boolean>();
+    const support = new WeakMap<KnowledgeArtifact, boolean>();
+    const freshness = new WeakMap<KnowledgeArtifact, boolean>();
+    const inputsAvailable = (a: KnowledgeArtifact): boolean => {
+      const prior = availability.get(a);
+      if (prior !== undefined) return prior;
+      availability.set(a, false);
+      const available = a.dependencies.every((d) => {
         if (d.kind === "material") return materials.has(d.key);
-        if (seen.has(d.digest)) return true;
-        seen.add(d.digest);
         const child = fixedArticle(d.key, d.digest);
-        return !!child && inputsAvailable(child.artifact, seen);
+        return !!child && inputsAvailable(child.artifact);
       });
-    const supported = (
-      a: KnowledgeArtifact,
-      seen = new Set<string>(),
-    ): boolean => {
+      availability.set(a, available);
+      return available;
+    };
+    const supported = (a: KnowledgeArtifact): boolean => {
+      const prior = support.get(a);
+      if (prior !== undefined) return prior;
+      support.set(a, false);
       if (
         a.review.verdict !== "accepted" ||
         invalidated.has(a.document.key) ||
         !inputsAvailable(a)
       )
         return false;
-      return a.document.citations.every((c) => {
+      const supportedInputs = a.document.citations.every((c) => {
         const dependency = a.dependencies.find(
           (d) => d.kind === c.target.kind && d.key === c.target.key,
         );
         if (!dependency) return false;
         if (c.target.kind === "material")
           return materials.get(c.target.key)?.digest === dependency.digest;
-        if (seen.has(dependency.digest)) return false;
         const child = fixedArticle(c.target.key, dependency.digest);
-        return (
-          !!child &&
-          supported(child.artifact, new Set([...seen, dependency.digest]))
-        );
+        return !!child && supported(child.artifact);
       });
+      support.set(a, supportedInputs);
+      return supportedInputs;
     };
-    const current = (
-      a: KnowledgeArtifact,
-      seen = new Set<string>(),
-    ): boolean => {
+    const current = (a: KnowledgeArtifact): boolean => {
+      const prior = freshness.get(a);
+      if (prior !== undefined) return prior;
+      freshness.set(a, false);
       if (
         !articles.get(a.document.key)?.current ||
         invalidated.has(a.document.key)
       )
         return false;
-      return a.dependencies.every((d) => {
+      const fresh = a.dependencies.every((d) => {
         if (d.kind === "material")
           return materials.get(d.key)?.digest === d.digest;
-        if (seen.has(d.digest)) return false;
         const child = articles.get(d.key);
-        return (
-          child?.revision === d.digest &&
-          current(child.artifact, new Set([...seen, d.digest]))
-        );
+        return child?.revision === d.digest && current(child.artifact);
       });
+      freshness.set(a, fresh);
+      return fresh;
     };
     const validArticles = new Map(
       [...articles].filter(([, a]) => supported(a.artifact)),
@@ -627,13 +627,19 @@ export class RetrievalProjection {
     };
     for (const [key, { revision, artifact: a }] of validArticles) {
       const reviewState = current(a) ? undefined : ("needs-review" as const);
+      const visibilityIds = [...new Set(articleVisibility(a))];
       const owner = "knowledge:" + key,
         identity =
-          UNIT_VERSION + ":" + revision + ":" + (reviewState ?? "current");
+          UNIT_VERSION +
+          ":" +
+          revision +
+          ":" +
+          (reviewState ?? "current") +
+          ":" +
+          idFor(visibilityIds);
       wanted.add(owner);
       if (heads.get(owner) === identity) continue;
       // The whole source background must be visible before derived prose is disclosed.
-      const visibilityIds = [...new Set(articleVisibility(a))];
       const units = a.document.sections.flatMap((section) =>
         markdownPassages(section.body).map(
           (p, index): RetrievalUnit => ({

@@ -286,6 +286,20 @@ it("recalls supported prose as pending review when an uncited research input cha
       reviewState: "needs-review",
     });
     expect(hit.references[0]).toMatchObject({ startLine: 1, endLine: 2 });
+    s.store.capture({
+      ...backgroundInput,
+      parts: [{ type: "text", text: "值班安排周三。" }],
+    });
+    const visibleIds = new Set(
+      s.repository.materials().flatMap((m) => m.fragments.map((f) => f.id)),
+    );
+    const repeated = await s.retrieval.search({
+      text: "重复通知 配送",
+      kinds: ["knowledge"],
+      visible: (id) => visibleIds.has(id),
+    });
+    expect(repeated).toHaveLength(1);
+    expect(repeated[0]!.target).toMatchObject({ reviewState: "needs-review" });
     expect(
       await s.retrieval.search({
         text: "重复通知",
