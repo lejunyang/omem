@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-02T04:26:22.315Z",
-  "implementationCommit": "564f43495fe2fec9ba1a627cb6ff8df1bef74f28",
-  "sourceDigest": "4ef682664eb52f5df2459ddf8088dfec5a5a5ca4873a915a28cbc7471e507c24",
+  "recordedAt": "2026-10-02T11:40:54.649Z",
+  "implementationCommit": "68677fabdb9dba9041b253a925c1b4409f9c3418",
+  "sourceDigest": "8e2066499a166d033c86c17730fe2ae08dfff6981661615404d1af4fa03474b9",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-02T04-26-22-315Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-02T11-40-54-649Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-02T04-26-22-315Z/project.log",
-        "sha256": "a5255d423ba0af49b7c62200bfe844f2ab6f284e21a188c77bf6407f6bb93134"
+        "log": ".repo-review/runtime/verification/2026-10-02T11-40-54-649Z/project.log",
+        "sha256": "f6e21d832b53b921bc203a53ccf04d7856fe3910847ac161aea1e7a85df6084c"
       }
     },
     {
@@ -43,16 +43,16 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-02T04-26-22-315Z/liveChineseRetrieval.log",
-        "sha256": "252cf67b60196c208e23561479136670ac946a592c644f35d53c2a175f0b19e1"
+        "log": ".repo-review/runtime/verification/2026-10-02T11-40-54-649Z/liveChineseRetrieval.log",
+        "sha256": "eaab515e25820c499c7642c5affe0f466d1e18522e8b7de23f6ee39bade1b02a"
       }
     },
     {
       "name": "currentKnowledgeReferences",
       "state": "passed",
       "details": {
-        "articles": 186,
-        "citations": 1328,
+        "articles": 176,
+        "citations": 1243,
         "errors": []
       }
     },
@@ -61,17 +61,19 @@
       "state": "passed",
       "details": {
         "available": true,
-        "backend": "sqlite-fts5-bge-crossencoder@5",
+        "backend": "sqlite-context-bm25-bge@1",
+        "projection": "structure-icu-v4",
+        "units": 12679,
+        "semantic": {
+          "model": "structure-icu-v4:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
+          "state": "ready",
+          "indexed": 12679,
+          "pending": 0,
+          "error": null
+        },
         "reranker": {
           "model": null,
           "state": "disabled",
-          "error": null
-        },
-        "semantic": {
-          "model": "bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
-          "state": "ready",
-          "indexed": 12130,
-          "pending": 0,
           "error": null
         }
       }
@@ -80,7 +82,7 @@
       "name": "repositorySearch",
       "state": "failed",
       "details": {
-        "passed": 4,
+        "passed": 2,
         "total": 6
       }
     },
@@ -92,16 +94,16 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "verification/history/；旧截图与 seed 核对仅用于历史追溯。运行日志保存在 gitignored runtime。",
   "knowledge": {
-    "materials": 566,
-    "reviewedMaterials": 172,
-    "pendingMaterials": 394,
-    "currentArticles": 186,
-    "citations": 1328,
-    "articleLinks": 5,
+    "materials": 572,
+    "reviewedMaterials": 164,
+    "pendingMaterials": 408,
+    "currentArticles": 176,
+    "citations": 1243,
+    "articleLinks": 2,
     "errors": [],
     "restore": {
-      "stale": 307,
-      "restored": 189,
+      "stale": 322,
+      "restored": 179,
       "missing": 3
     },
     "incomplete": true,
@@ -119,51 +121,57 @@
         "baselineTop5": [
           "docs/reader-first/validation.md",
           "docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md",
-          "config/wiki-pages.json",
-          "docs/archive/2026-10-01-baseline/2026-10-01/02-审查范围与证据口径.md",
-          "docs/reader-first/validation.md"
+          "docs/archive/2026-10-01-baseline/research/mempalace/README.md",
+          "docs/reader-first/retrieval-redesign.md",
+          "docs/archive/2026-10-01-baseline/implementation/status.md"
         ],
-        "baselineUniquePathsAt5": 4,
+        "baselineUniquePathsAt5": 5,
         "passed": false,
         "firstExpectedRank": null,
-        "uniquePathsAt5": 4,
-        "elapsedMs": 7093,
+        "uniquePathsAt5": 5,
+        "elapsedMs": 1359,
         "top5": [
           {
             "path": "docs/reader-first/validation.md",
             "routes": [
-              "short-keyword",
-              "semantic"
+              "bm25",
+              "semantic",
+              "purpose:balanced"
             ],
             "snippet": "- “中文语义检索怎样处理长代码片段？”的预期实现首次出现在第 14 位，前面混入 UI 和角色清单，属于实际排序失败。\n- “如何保证本地模型不在启动时联网下载？”第三项命中了新的 `operations.md` 说明，但题集仍只接受原 README、AGENTS 或实现文件。这一项同时暴露题集随文档迁移未完整更新，"
           },
           {
             "path": "docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md",
             "routes": [
-              "short-keyword"
+              "bm25",
+              "purpose:balanced"
             ],
             "snippet": "- 稀疏/关键词：SQLite FTS/BM25候选，中文分词与二元gram/代码标识符分词比较验证；FTS5 trigram不命中不足三字的MATCH，当前LIKE带ESCAPE也不能直接利用其对应优化，不能只换表就宣布中文检索升级；路径、符号、错误码精确召回单独保底。当前LIKE仅作可比较baseline\n- de"
           },
           {
-            "path": "config/wiki-pages.json",
+            "path": "docs/archive/2026-10-01-baseline/research/mempalace/README.md",
             "routes": [
-              "short-keyword"
+              "bm25",
+              "semantic",
+              "purpose:balanced"
             ],
-            "snippet": "…、融合、背景补充与回答，区分找不到和找到却答不好。\",\n      \"scenario\": \"用户记得飞书消息要经过后台处理，却不记得文件名，输入“飞书 消息 后台”，随后追问处理过程。\",\n      \"questions\": [\n        \"顶部搜索、知识搜索和助手是否共用召回？\",\n        \"全文"
+            "snippet": "高层 search 可能按 source_file/父组归并，返回 source_file 也可能经过展示清理。为每个固定片段提供单独可映射的虚拟 source identity，或者用低层检索保留 ID 后自行融合；不依赖展示的 basename 还原真实证据。用相同内容不同来源、相同文件不同段、同名不同目录专门验收"
           },
           {
-            "path": "docs/reader-first/validation.md",
+            "path": "docs/reader-first/retrieval-redesign.md",
             "routes": [
-              "short-keyword"
+              "bm25",
+              "purpose:balanced"
             ],
-            "snippet": "…run retrieval:index --review：退出 0，完成 11337 个当前 Source head 片段的向量索引，pending 为 0；该计数包括保留的仓库来源，不表示所有来源都应参与默认搜索。\n- osdk run retrieval:verify：退出 0，真实 BGE-small-zh-v"
+            "snippet": "全文排序复用 SQLite FTS5 的 BM25，对中文先用 ICU 分词。语义检索沿用 osdk 管理的中文 BGE，结构预处理版本进入向量身份，与旧 Fragment 向量隔离。来源或文章当前版本变化时只替换对应投影；原始历史和固定引用保留。"
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/2026-10-01/02-审查范围与证据口径.md",
+            "path": "docs/archive/2026-10-01-baseline/implementation/status.md",
             "routes": [
-              "short-keyword"
+              "bm25",
+              "purpose:balanced"
             ],
-            "snippet": "…构化表格/消息/代码/图像区域的统一selector仍不足；跨revision身份续接缺失 |\n| 检索 | LIKE+中文2gram，来源head，知识正文可导航至原片段 | 没有embedding/重排；时间参数未实际执行；统一权限/时态/项目检索不足；存在引用跨片段召回缺口 |\n| AST | TS单文件AST"
+            "snippet": "> **2026-10-01 中文语义检索**：osdk 已下载并校验固定版 `Xenova/bge-small-zh-v1.5` q8（权重 24,010,842 字节）。SQLite schema 17 保存按模型身份隔离的原片段分窗向量；个人助手、飞书助手和 repo-review 搜索共用检索，后台补建新材料，"
           }
         ]
       },
@@ -177,54 +185,61 @@
         "status": 200,
         "baselineTop5": [
           "docs/reader-first/validation.md",
-          ".agents/skills/osdk-guide/reference/model/guide.md",
-          ".claude/skills/osdk-guide/reference/model/guide.md",
-          "docs/archive/2026-10-01-baseline/AGENTS.md",
-          ".agents/skills/osdk-guide/reference/configuration/models.md"
+          "docs/reader-first/operations.md",
+          ".claude/skills/osdk-guide/reference/configuration/models.md",
+          ".agents/skills/osdk-guide/reference/configuration/models.md",
+          ".agents/skills/osdk-guide/reference/model/guide.md"
         ],
         "baselineUniquePathsAt5": 5,
-        "passed": true,
-        "firstExpectedRank": 4,
+        "passed": false,
+        "firstExpectedRank": 19,
         "uniquePathsAt5": 5,
-        "elapsedMs": 6868,
+        "elapsedMs": 705,
         "top5": [
           {
             "path": "docs/reader-first/validation.md",
             "routes": [
-              "short-keyword"
+              "bm25",
+              "semantic",
+              "purpose:balanced"
             ],
             "snippet": "- “中文语义检索怎样处理长代码片段？”的预期实现首次出现在第 14 位，前面混入 UI 和角色清单，属于实际排序失败。\n- “如何保证本地模型不在启动时联网下载？”第三项命中了新的 `operations.md` 说明，但题集仍只接受原 README、AGENTS 或实现文件。这一项同时暴露题集随文档迁移未完整更新，"
           },
           {
+            "path": "docs/reader-first/operations.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / "
+          },
+          {
+            "path": ".claude/skills/osdk-guide/reference/configuration/models.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "`model use` 的 reference/include/exclude/variant/kind/family/derived_from/endpoint 会写入同名声明；`sync` 会识别这些字段的变化。模型配置不触发\n任何信任要求：模型字节是内容，osdk 不执行它们，下载仍按锁定摘要校验。`model "
+          },
+          {
             "path": ".agents/skills/osdk-guide/reference/model/guide.md",
             "routes": [
-              "short-keyword",
-              "semantic"
+              "bm25",
+              "semantic",
+              "purpose:balanced"
             ],
             "snippet": "不要手写 OSDK 受管模型声明；使用 `model use/unuse`。`model import` 只创建当前机器的本地快照，不写声明或 lock，并拒绝链接/reparse point 与特殊文件。`install` 不会隐式下载模型。Civitai 引用必须是精确的 `civitai:<model-id>@<"
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
+            "path": "docs/archive/2026-10-01-baseline/implementation/code-wiki-review-2026-09-29.md",
             "routes": [
-              "short-keyword",
-              "semantic"
+              "bm25",
+              "semantic",
+              "purpose:balanced"
             ],
-            "snippet": "合中文的模型，通过 osdk CLI 声明、下载和锁定，运行时禁止隐式联网下载。当前 memory-zh 为 BGE-small-zh-v1.5；换模型必须更换向量身份，不能混用旧索引。\n- Personal-first, server or local. Preserve team scope in architec"
-          },
-          {
-            "path": "apps/server/src/retrieval/embedding.ts",
-            "routes": [
-              "knowledge"
-            ],
-            "snippet": "const extractor = await pipeline(\"feature-extraction\", model.snapshot_path, {\n    local_files_only: true, dtype: \"q8\", device: \"cpu\", session_options: { intraOp"
-          },
-          {
-            "path": "docs/reader-first/native-research-results.md",
-            "routes": [
-              "short-keyword",
-              "semantic"
-            ],
-            "snippet": "源码实现与模型派生资产分别本地提交，没有推送。启动 dev 恢复已发布知识，更新后需要重启才能看到新文章，不自动调用模型生成整库，也不清空个人库。\n"
+            "snippet": "“跟代码提交走”不等于提交会不断变化的 SQLite WAL。源码、人工关系及派生 Wiki 共同进入 Git，本地索引用它们重建。首启需要本地索引构建，但不需要手动点击同步或重新调用模型。默认启动不自动消耗模型调用。"
           }
         ]
       },
@@ -238,53 +253,58 @@
         "status": 200,
         "baselineTop5": [
           "docs/archive/2026-10-01-baseline/2026-10-01/README.md",
-          "docs/archive/2026-10-01-baseline/implementation/batch2/lark.md",
           "docs/reader-first/validation.md",
-          "config/wiki-pages.json",
+          "docs/archive/2026-10-01-baseline/AGENTS.md",
+          "docs/archive/2026-10-01-baseline/implementation/batch2/lark.md",
           "docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
-        "firstExpectedRank": null,
+        "firstExpectedRank": 15,
         "uniquePathsAt5": 5,
-        "elapsedMs": 7331,
+        "elapsedMs": 805,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/2026-10-01/README.md",
             "routes": [
-              "short-keyword",
-              "semantic"
+              "bm25",
+              "semantic",
+              "purpose:balanced"
             ],
             "snippet": "明从“重试 3 次”改成“5 次” | 停用旧结论，重新分析新材料，独立复核后更新原记忆，保留旧历史 | 已用真实 GPT-5.6-sol 验证同 ID 从 3 次更新为 5 次；旧原文保留，不能只排队就算完成 |"
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/implementation/batch2/lark.md",
-            "routes": [
-              "short-keyword"
-            ],
-            "snippet": "状态更新采用 compare-and-set：同一卡片连点、Web与卡片同时批准、approve/reject竞态，最多一次业务效果。stale decision 更新卡片为“资料已变化，需重新查看”，不能批准不同内容。用户修改后执行先生成新 proposal digest，再重新验证，不沿用旧批准。"
-          },
-          {
             "path": "docs/reader-first/validation.md",
             "routes": [
-              "short-keyword",
-              "semantic"
+              "bm25",
+              "semantic",
+              "purpose:balanced"
             ],
             "snippet": "| 问法 | 实际结果 | 判断 |\n| --- | --- | --- |\n| 知识文章是怎样生成的 | 知识检索前五个章节包含入门、检索、材料旅程；原始材料侧仍有前端组件排在架构说明前 | 能找到相关讲解，机制入口排序仍可改善 |\n| 规则修改后旧记忆怎么处理 | 前五个章节大部分来自概览，专项记忆页没有出现；原始"
           },
           {
-            "path": "config/wiki-pages.json",
+            "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
             "routes": [
-              "short-keyword",
-              "semantic"
+              "bm25",
+              "semantic",
+              "purpose:balanced"
             ],
-            "snippet": "验和任务状态的区别，知道哪些更新已完成、哪些仍待处理。\",\n      \"scenario\": \"项目约定从重试三次改为五次；另一条独立消息让助手明早跟进评审。不要把约定文本直接当用户交办。\",\n      \"questions\": [\n        \"一条原始记录怎样成为可用记忆？\",\n        \"来源变化后"
+            "snippet": "1. 修改捕获、AST、知识生成/复核、引用、检索或助手运行后，先通过相关检查并提交实现，再更新受影响的知识资产，单独提交。保持已有用户改动。\n2. 用 `osdk run review:generate <文件或目录> --modules` 更新受影响的原始材料理解和模块正文；多个 `--only` 可合用。需要全库"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/implementation/batch2/lark.md",
+            "routes": [
+              "bm25",
+              "purpose:balanced"
+            ],
+            "snippet": "状态更新采用 compare-and-set：同一卡片连点、Web与卡片同时批准、approve/reject竞态，最多一次业务效果。stale decision 更新卡片为“资料已变化，需重新查看”，不能批准不同内容。用户修改后执行先生成新 proposal digest，再重新验证，不沿用旧批准。"
           },
           {
             "path": "docs/archive/2026-10-01-baseline/2026-10-01/05-RAG与记忆检索.md",
             "routes": [
-              "short-keyword",
-              "semantic"
+              "bm25",
+              "semantic",
+              "purpose:balanced"
             ],
             "snippet": "历史片段可以被用户显式查看或用于历史回答；不应因“能读到”就作为当前有效依据。先前轮次selectedEvidence也必须重新验证状态，不能绕开新版召回过滤。"
           }
@@ -297,53 +317,62 @@
         ],
         "status": 200,
         "baselineTop5": [
+          "scripts/live-native-knowledge-smoke.ts",
+          "scripts/live-native-knowledge-smoke.ts",
           "apps/server/src/knowledge/pipeline.ts",
-          "docs/reader-first/component-integration.md",
-          "apps/server/src/knowledge/pipeline.ts",
-          "apps/server/src/knowledge/api.ts",
+          "scripts/review-guides.ts",
           "scripts/review-guides.ts"
         ],
-        "baselineUniquePathsAt5": 4,
+        "baselineUniquePathsAt5": 3,
         "passed": true,
-        "firstExpectedRank": 1,
-        "uniquePathsAt5": 5,
-        "elapsedMs": 3248,
+        "firstExpectedRank": 3,
+        "uniquePathsAt5": 3,
+        "elapsedMs": 127,
         "top5": [
           {
-            "path": "apps/server/src/knowledge/pipeline.ts",
+            "path": "scripts/live-native-knowledge-smoke.ts",
             "routes": [
+              "bm25",
               "code-symbol",
-              "fulltext"
+              "purpose:balanced"
             ],
-            "snippet": "export class KnowledgePipeline {\n  readonly registry = new RoleBundleRegistry();\n  private readonly running = new Set<DurableJobWorker>();\n  private stopping = "
-          },
-          {
-            "path": "docs/reader-first/component-integration.md",
-            "routes": [
-              "fulltext"
-            ],
-            "snippet": "[DeepWiki 官方规划](https://docs.devin.ai/work-with-devin/deepwiki) 支持页面 purpose、层级和重点，并结合 Wiki 与代码搜索。对 omem：持久页面计划保留读者、问题、前置概念、案例与读后行动；`KnowledgePipeline.writePage"
-          },
-          {
-            "path": "apps/server/src/knowledge/api.ts",
-            "routes": [
-              "knowledge"
-            ],
-            "snippet": "const pipeline = running;\n    void pipeline.analyze(selected).then(result => { lastRun = result; }).catch(error => { lastRun = { error: String(error) }; }).fina"
-          },
-          {
-            "path": "scripts/review-guides.ts",
-            "routes": [
-              "fulltext"
-            ],
-            "snippet": "const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), join(runtime, \"reader-agents\"), new RuntimeRequestRepository"
+            "snippet": "const pipeline = new KnowledgePipeline(\n  repository,\n  new RoleRuntimeGateway(new RoleBundleRegistry(), join(dir, \"agents\")),\n  profile,\n  { log: console.log }"
           },
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
             "routes": [
-              "fulltext"
+              "bm25",
+              "code-symbol",
+              "purpose:balanced"
             ],
             "snippet": "const pipeline = new KnowledgePipeline(\n  repository,\n  new RoleRuntimeGateway(new RoleBundleRegistry(), join(dir, \"agents\")),\n  profile,\n  { log: console.log }"
+          },
+          {
+            "path": "apps/server/src/knowledge/pipeline.ts",
+            "routes": [
+              "bm25",
+              "code-symbol",
+              "purpose:balanced"
+            ],
+            "snippet": "export class KnowledgePipeline {\n  readonly registry = new RoleBundleRegistry();\n  private readonly running = new Set<DurableJobWorker>();\n  private stopping = "
+          },
+          {
+            "path": "scripts/review-guides.ts",
+            "routes": [
+              "bm25",
+              "code-symbol",
+              "purpose:balanced"
+            ],
+            "snippet": "const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), join(runtime, \"reader-agents\"), new RuntimeRequestRepository"
+          },
+          {
+            "path": "scripts/review-guides.ts",
+            "routes": [
+              "bm25",
+              "code-symbol",
+              "purpose:balanced"
+            ],
+            "snippet": "const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), join(runtime, \"reader-agents\"), new RuntimeRequestRepository"
           }
         ]
       },
@@ -354,53 +383,62 @@
         ],
         "status": 200,
         "baselineTop5": [
+          "apps/server/src/retrieval/unified.ts",
           "apps/server/src/retrieval/semantic.ts",
-          "apps/server/src/knowledge/agent-research.ts",
-          "scripts/live-retrieval-smoke.ts",
-          "apps/server/tests/assistant-runtime.test.ts",
-          "apps/server/tests/retrieval-semantic.test.ts"
+          "apps/server/src/retrieval/semantic.ts",
+          "apps/server/src/retrieval/semantic.ts",
+          "apps/server/src/retrieval/semantic.ts"
         ],
-        "baselineUniquePathsAt5": 5,
+        "baselineUniquePathsAt5": 2,
         "passed": true,
-        "firstExpectedRank": 1,
-        "uniquePathsAt5": 5,
-        "elapsedMs": 2962,
+        "firstExpectedRank": 2,
+        "uniquePathsAt5": 2,
+        "elapsedMs": 110,
         "top5": [
+          {
+            "path": "apps/server/src/retrieval/unified.ts",
+            "routes": [
+              "bm25",
+              "code-symbol",
+              "purpose:balanced"
+            ],
+            "snippet": "async searchSourcesAsync(q: SearchQuery): Promise<SourceCandidate[]> {\n    return this.sources(await this.search({ ...q, kinds: [\"source\"] }), q);\n  }"
+          },
           {
             "path": "apps/server/src/retrieval/semantic.ts",
             "routes": [
+              "bm25",
               "code-symbol",
-              "fulltext"
+              "purpose:balanced"
             ],
-            "snippet": "/** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {"
+            "snippet": "/** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const "
           },
           {
-            "path": "apps/server/src/knowledge/agent-research.ts",
+            "path": "apps/server/src/retrieval/semantic.ts",
             "routes": [
-              "fulltext"
+              "bm25",
+              "code-symbol",
+              "purpose:balanced"
             ],
-            "snippet": "…rieval instanceof SemanticRetrieval\n            ? retrieval.searchSourcesAsync(queryInput)\n            : retrieval.searchSources(queryInput));\n          for (c"
+            "snippet": "/** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const "
           },
           {
-            "path": "scripts/live-retrieval-smoke.ts",
+            "path": "apps/server/src/retrieval/semantic.ts",
             "routes": [
-              "fulltext"
+              "bm25",
+              "code-symbol",
+              "purpose:balanced"
             ],
-            "snippet": "const hits = await retrieval.searchSourcesAsync({ text: c.query, limit: 3 });\n    assert.equal(hits[0]?.fragmentId,ids[i],c.query);\n    assert.ok(hits[0]?.route"
+            "snippet": "/** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const "
           },
           {
-            "path": "apps/server/tests/assistant-runtime.test.ts",
+            "path": "apps/server/src/retrieval/semantic.ts",
             "routes": [
-              "fulltext"
+              "bm25",
+              "code-symbol",
+              "purpose:balanced"
             ],
-            "snippet": "…(store,model,{retrieval:Object.assign(retrieval,{\n    async searchSourcesAsync() { return searches++ ? [] : [{id:original.fragments[0]!.id,fragmentId:original."
-          },
-          {
-            "path": "apps/server/tests/retrieval-semantic.test.ts",
-            "routes": [
-              "fulltext"
-            ],
-            "snippet": "…rivate\",\"海边度假需乘渡轮，私人行程内容。\");\n    const hits=await retrieval.searchSourcesAsync({text:\"海边度假 交通\",visible:id=>id!==hidden});\n    expect(hits[0]?.id).toBe(useful);"
+            "snippet": "/** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const "
           }
         ]
       },
@@ -411,61 +449,62 @@
         ],
         "status": 200,
         "baselineTop5": [
-          "design.md",
           "docs/archive/2026-10-01-baseline/implementation/code-wiki-prototype-gap.md",
           "docs/archive/2026-10-01-baseline/implementation/code-wiki-prototype-gap.md",
-          "docs/archive/2026-10-01-baseline/PROJECT-README.md",
-          "docs/archive/2026-10-01-baseline/implementation/code-wiki-prototype-gap.md"
+          "docs/archive/2026-10-01-baseline/prototype/README.md",
+          "docs/archive/2026-10-01-baseline/prototype/README.md",
+          "design.md"
         ],
         "baselineUniquePathsAt5": 3,
-        "passed": true,
-        "firstExpectedRank": 5,
-        "uniquePathsAt5": 4,
-        "elapsedMs": 9769,
+        "passed": false,
+        "firstExpectedRank": 12,
+        "uniquePathsAt5": 3,
+        "elapsedMs": 718,
         "top5": [
+          {
+            "path": "docs/archive/2026-10-01-baseline/implementation/code-wiki-prototype-gap.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "版本 r6，现行版本是 r7」+「查看现行版本」（`app.jsx:1396-1404`）。\n- 「版本」tab 并排 r6/r7 diff，各带「打开历史/现行版本」链接（`app.jsx:1447-1482`）。"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/implementation/code-wiki-prototype-gap.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "**这是 P0 的核心。** 原型用**单个原生 `<dialog>`**（`app.jsx:1290`），`showModal()` 打开（`app.jsx:388`），整棵路径栈共享一个焦点陷阱："
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/prototype/README.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "`app.jsx` 是 React 交互逻辑，`data.js` 是虚构示例图，`styles.css` 是样式；`build.mjs` 将这些打包到单个 `index.html`。React/ReactDOM 18.3.1、esbuild 0.28.1 均固定在 lockfile。不需要运行 esbuild 才能打开"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/prototype/README.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "示例数据通过 `localStorage['omem-demo-v1']` 保存变更历史，问题草稿/会话保存在本次页面内存。截图是验证产物，不是虚假的生产页面。"
+          },
           {
             "path": "design.md",
             "routes": [
-              "fulltext",
-              "short-keyword",
-              "semantic"
+              "bm25",
+              "semantic",
+              "purpose:balanced"
             ],
             "snippet": "改 UI 前阅读 `.agents/skills/omem-design/SKILL.md`，复用 token 与组件；之后执行 `osdk run check` 和浏览器检查，验证引用层级、恢复焦点、窄屏、错误态。历史离线原型保留在 docs/archive/2026-10-01-baseline/prototype"
-          },
-          {
-            "path": "docs/archive/2026-10-01-baseline/implementation/code-wiki-prototype-gap.md",
-            "routes": [
-              "fulltext",
-              "short-keyword",
-              "semantic"
-            ],
-            "snippet": "状态：审计草案，2026-09-29。只读对照 `docs/prototype/` 离线 React 原型与当前 `apps/web` 实现；不改生产 UI、不 commit。\n证据分级：**[P]** = 原型文件事实（`docs/prototype/**`，行号为原型源文件）；**[C]** = 当前实现事实（`a"
-          },
-          {
-            "path": "docs/archive/2026-10-01-baseline/implementation/code-wiki-prototype-gap.md",
-            "routes": [
-              "fulltext",
-              "short-keyword"
-            ],
-            "snippet": "- **restricted**：`OmStateBanner` danger 风，标题「当前无权查看」，正文说明，唯一动作「返回引用处」；「就这段追问」disabled（原型 `app.jsx:1405-1422,1556-1559`）。\n- **deleted**：标题「原始内容已删除」，不伪装高亮、不悄悄指向新目"
-          },
-          {
-            "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
-            "routes": [
-              "fulltext",
-              "short-keyword",
-              "semantic"
-            ],
-            "snippet": "本仓库不提交真实会话、原件、token、模型权重和运行数据库。`docs/prototype` 保留此前经确认的离线视觉原型，它的演示数据和 React 构建不参与新 Vue 产品运行。"
-          },
-          {
-            "path": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
-            "routes": [
-              "fulltext",
-              "short-keyword",
-              "semantic"
-            ],
-            "snippet": "\n                      ) : (\n                        <p className=\"muted\">本例没有记录其他直接引用。</p>\n                      )}\n                    </>\n                  )"
           }
         ]
       }
