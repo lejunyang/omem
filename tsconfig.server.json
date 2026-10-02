@@ -23,6 +23,7 @@
     "scripts/retrieval-index.ts",
     "scripts/live-retrieval-smoke.ts",
     "scripts/review-guides.ts",
+    "scripts/review-catalog.ts",
     "scripts/live-knowledge-smoke.ts",
     "scripts/live-native-knowledge-smoke.ts",
     "scripts/assistant-memory-flow.ts"
