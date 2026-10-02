@@ -709,6 +709,7 @@ onBeforeUnmount(() => {
             · 第 {{ r.target.startLine }}–{{ r.target.endLine }} 行</span
           >
         </p>
+        <p v-if="r.target.kind === 'knowledge' && r.target.reviewState === 'needs-review'" class="muted">待复核的讲解背景 · 引用依据仍匹配原文，其他材料已有变化</p>
         <OmMarkdown
           v-if="r.kind === 'knowledge'"
           :source="r.text"
@@ -961,6 +962,7 @@ onBeforeUnmount(() => {
     <DailyAssistant
       v-else-if="view === 'daily'"
       @open="(id) => evidence?.open(id)"
+      @navigate="pushSearch"
       @refresh="refresh" />
     <section v-else-if="view === 'tasks'" class="page">
       <span class="eyebrow">从工作中记下要推进的事</span>
