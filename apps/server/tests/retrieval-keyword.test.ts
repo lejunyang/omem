@@ -185,3 +185,13 @@ describe("P0: RetrievalPort project handling", () => {
     expect(hits.length).toBe(1);
   });
 });
+
+it("does not combine far-apart words in a long fragment into a relevant passage",()=>{
+  const store=setup();
+  const words=["海边","度假","交通","渡轮","船票","岛屿","天气","酒店"];
+  store.capture(captureSchema.parse({source:"manual",externalId:"long-misc",title:"零散清单",parts:[{type:"text",text:words.join("普通文字".repeat(180))}]}));
+  store.capture(captureSchema.parse({source:"manual",externalId:"travel",title:"上岛交通",parts:[{type:"text",text:"海边度假去岛屿，需要乘渡轮，提前购买船票安排交通。"}]}));
+  const hits=new KeywordRetrieval(store.db).searchSources({text:words.join(" ")});
+  expect(hits).toHaveLength(1);
+  expect(hits[0]!.snippet).toContain("提前购买船票");
+});
