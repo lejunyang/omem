@@ -253,6 +253,15 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       return false;
     return true;
   }
+  private namedDefinition(unit: RetrievalUnit, q: SearchQuery) {
+    if (unit.kind !== "source" || unit.subtype !== "code") return false;
+    const name = unit.headingPath.at(-1)?.toLowerCase();
+    return queryTerms(q.text).some(
+      (term) =>
+        /^[a-z_$][\w$.]*$/.test(term) &&
+        (name === term || name?.endsWith("." + term)),
+    );
+  }
   private lexical(q: SearchQuery): ScoredUnit[] {
     this.sync();
     const terms = queryTerms(q.text);
@@ -283,6 +292,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           return [];
         if (
           !exact &&
+          !this.namedDefinition(unit, q) &&
           !relevance(
             unit.text +
               "\n" +
@@ -432,11 +442,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       }
     };
     const priority = (u: RetrievalUnit) => {
-      const definition =
-        exactLookup(q.text) &&
-        u.headingPath.at(-1)?.toLowerCase() === q.text.trim().toLowerCase()
-          ? 2
-          : 1;
+      const definition = this.namedDefinition(u, q) ? 2 : 1;
       if (
         q.purpose !== "follow-up" ||
         (!["task", "memory"].includes(u.kind) && u.subtype !== "conversation")
