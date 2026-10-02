@@ -118,7 +118,13 @@ it("returns the explanation as readable context with its own article and exact o
       endLine: 2,
       revisionId: s.repository.materials()[0]!.revisionId,
     });
-    expect(explanation.citations).toEqual([expect.objectContaining({ key: "implementation", label: "事件受理", actionable: true })]);
+    expect(explanation.citations).toEqual([
+      expect.objectContaining({
+        key: "implementation",
+        label: "事件受理",
+        actionable: true,
+      }),
+    ]);
     const hidden = explanation.references[0]!.fragmentIds[0]!;
     expect(
       await s.retrieval.search({
@@ -226,6 +232,41 @@ it("finds separate functions in the same file at their own ranges rather than a 
     expect(
       await s.retrieval.search({ text: "imaginaryParcelHandler" }),
     ).toEqual([]);
+  } finally {
+    await s.close();
+  }
+});
+
+it("opens a named method as a complete operation including its local state and branches", async () => {
+  const s = setup();
+  try {
+    s.store.capture({
+      source: "file",
+      externalId: "parcel-service",
+      title: "parcel.ts",
+      context: { filePath: "parcel.ts", captureFormat: "verbatim-v1" },
+      parts: [
+        {
+          type: "text",
+          text: "export class ParcelService {\n  /** Reserve one parcel. */\n  reserveParcel(id: string) {\n    const available = this.capacity > 0;\n    if (!available) return null;\n    this.capacity -= 1;\n    return { id };\n  }\n  capacity = 3;\n}",
+        },
+      ],
+    });
+    const hit = (
+      await s.retrieval.search({
+        text: "ParcelService.reserveParcel",
+        purpose: "implementation",
+      })
+    )[0]!;
+    expect(hit.headingPath.at(-1)).toBe("ParcelService.reserveParcel");
+    expect(hit.target).toMatchObject({
+      kind: "source",
+      startLine: 2,
+      endLine: 8,
+    });
+    expect(hit.text).toContain("const available");
+    expect(hit.text).toContain("if (!available) return null");
+    expect(hit.text).toContain("return { id }");
   } finally {
     await s.close();
   }
