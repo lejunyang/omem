@@ -13,7 +13,7 @@ import { restoreReviewKnowledge, writeReviewKnowledgeIndex } from "../apps/serve
 import { validateKnowledgeDocument } from "../apps/server/src/knowledge/repository.js";
 import { buildReviewApp } from "../apps/server/src/review/app.js";
 import { readRetrievalConfig } from "../apps/server/src/retrieval/factory.js";
-import { SemanticRetrieval } from "../apps/server/src/retrieval/semantic.js";
+import { UnifiedRetrieval } from "../apps/server/src/retrieval/unified.js";
 
 const root=process.env.REVIEW_REPO_ROOT ?? process.cwd();
 const full=taskFlag("full");
@@ -76,7 +76,7 @@ try {
   const configPath=process.env.REVIEW_RETRIEVAL_CONFIG ?? join(root,'config/retrieval.json');
   const config=existsSync(configPath)?readRetrievalConfig(configPath):undefined;
   const built=await buildReviewApp({store,repoRoot:root,retrievalConfig:config});app=built.app;
-  if(built.retrieval instanceof SemanticRetrieval) {
+  if(built.retrieval instanceof UnifiedRetrieval) {
     try{while(await built.retrieval.indexBatch(16)){};checks.push({name:'semanticIndex',state:'passed',details:built.retrieval.health()});}
     catch(error){checks.push({name:'semanticIndex',state:'failed',details:String(error)});}
   }else checks.push({name:'semanticIndex',state:'skipped',details:'Semantic retrieval is not configured.'});

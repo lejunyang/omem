@@ -18,12 +18,12 @@ import { z } from "zod";
 import type { KnowledgeMaterial } from "../../../../packages/contracts/src/knowledge.js";
 import type { NativeResearchEnvironment } from "../agent-runtime/gateway.js";
 import { stableDigest } from "../storage/digest.js";
-import { SemanticRetrieval } from "../retrieval/semantic.js";
+import { UnifiedRetrieval } from "../retrieval/unified.js";
+import { RetrievalProjection } from "../retrieval/units.js";
+import { retrievalPurposes } from "../retrieval/port.js";
 import { loadChineseEmbedding } from "../retrieval/embedding.js";
 import { loadChineseReranker } from "../retrieval/reranker.js";
-import { KeywordRetrieval } from "../retrieval/keyword.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
-import { queryTerms, relevance, bestSnippet } from "../retrieval/relevance.js";
 import { materialSections, fragmentPositions } from "./structure.js";
 import { parseFile } from "../code/parse.js";
 import { KnowledgeRepository, type KnowledgeArticle } from "./repository.js";
@@ -59,7 +59,7 @@ export async function prepareAgentResearch(input: {
   const { workspace, repository } = input;
   let databaseHandle: DatabaseSync | undefined;
   let httpHandle: ReturnType<typeof createServer> | undefined;
-  let semanticHandle: SemanticRetrieval | undefined;
+  let semanticHandle: UnifiedRetrieval | undefined;
   let closed = false;
   const close = async () => {
     if (closed) return;
@@ -161,6 +161,8 @@ export async function prepareAgentResearch(input: {
       { mode: 0o600 },
     );
     const databaseFile = join(workspace, "snapshot.sqlite");
+    // Build before freezing the copy; Agent tools never write to the snapshot.
+    new RetrievalProjection(repository.store.db).sync();
     repository.store.db.exec(
       `VACUUM INTO '${databaseFile.replaceAll("'", "''")}'`,
     );
@@ -170,16 +172,17 @@ export async function prepareAgentResearch(input: {
       enabled: true,
       osdkModel: "memory-zh",
     };
-    const retrieval = config.enabled
-      ? new SemanticRetrieval(
-          db,
-          () => loadChineseEmbedding(config.osdkModel, process.cwd()),
-          config.reranker
-            ? () => loadChineseReranker(config.reranker, process.cwd())
-            : undefined,
-        )
-      : new KeywordRetrieval(db);
-    if (retrieval instanceof SemanticRetrieval) semanticHandle = retrieval;
+    const retrieval = new UnifiedRetrieval(
+      db,
+      config.enabled
+        ? () => loadChineseEmbedding(config.osdkModel, process.cwd())
+        : undefined,
+      config.reranker
+        ? () => loadChineseReranker(config.reranker, process.cwd())
+        : undefined,
+      true,
+    );
+    semanticHandle = retrieval;
     let ready: Promise<unknown> | undefined;
     const fragments = new Map(
       input.materials.flatMap((m) =>
@@ -350,19 +353,19 @@ export async function prepareAgentResearch(input: {
           query: z.string(),
           keys: z.array(z.string()).optional(),
           kind: z.enum(["all", "code", "document"]).default("all"),
+          purpose: z.enum(retrievalPurposes).default("balanced"),
           limit: z.number().int().min(1).max(50).default(10),
         },
-        async ({ query, keys, kind, limit }) => {
-          ready ??=
-            retrieval instanceof SemanticRetrieval
-              ? retrieval.indexBatch(0).catch((error) =>
-                  record({
-                    kind: "index",
-                    state: "lexical-only",
-                    reason: String(error),
-                  }),
-                )
-              : Promise.resolve();
+        async ({ query, keys, kind, limit, purpose }) => {
+          ready ??= config.enabled
+            ? retrieval.indexBatch(0).catch((error) =>
+                record({
+                  kind: "index",
+                  state: "lexical-only",
+                  reason: String(error),
+                }),
+              )
+            : Promise.resolve();
           await ready;
           const visible = (id: string) => {
             const f = fragments.get(id);
@@ -376,33 +379,39 @@ export async function prepareAgentResearch(input: {
             text: query,
             limit,
             visible,
+            purpose,
+            kinds: ["source" as const],
           };
-          const hits = await (retrieval instanceof SemanticRetrieval
-            ? retrieval.searchSourcesAsync(queryInput)
-            : retrieval.searchSources(queryInput));
+          const hits = await retrieval.search(queryInput);
           for (const hit of hits)
-            reads.add(fragments.get(hit.fragmentId)!.material.key);
+            if (hit.target.kind === "source") reads.add(hit.target.key);
           return {
             health: retrieval.health(),
-            hits: hits.map((h) => {
-              const f = fragments.get(h.fragmentId)!;
+            hits: hits.flatMap((h) => {
+              if (h.target.kind !== "source") return [];
+              const f = fragments.get(h.target.fragmentIds[0]!);
+              if (!f) return [];
               const e = entries.get(f.material.key)!;
-              return {
-                key: f.material.key,
-                title: f.material.title,
-                path: relative(workspace, e.file),
-                revision: f.material.revisionId,
-                score: h.score,
-                routes: h.routes,
-                startLine: f.fragment.startLine,
-                endLine: f.fragment.endLine,
-                snippet: h.snippet,
-                outline: materialSections(f.material).filter(
-                  (s) =>
-                    s.startLine <= f.fragment.endLine &&
-                    s.endLine >= f.fragment.startLine,
-                ),
-              };
+              return [
+                {
+                  key: f.material.key,
+                  title: f.material.title,
+                  path: relative(workspace, e.file),
+                  revision: f.material.revisionId,
+                  score: h.score,
+                  routes: h.routes,
+                  startLine: h.target.startLine,
+                  endLine: h.target.endLine,
+                  snippet: h.text,
+                  context: h.context,
+                  headingPath: h.headingPath,
+                  outline: materialSections(f.material).filter(
+                    (s) =>
+                      s.startLine <= f.fragment.endLine &&
+                      s.endLine >= f.fragment.startLine,
+                  ),
+                },
+              ];
             }),
           };
         },
@@ -412,30 +421,47 @@ export async function prepareAgentResearch(input: {
         "Search existing explanations by their relevant section, retaining raw-source references. Derived prose is background, not independent evidence.",
         {
           query: z.string(),
+          purpose: z.enum(retrievalPurposes).default("concept"),
           limit: z.number().int().min(1).max(30).default(8),
         },
-        ({ query, limit }) => {
-          const terms = queryTerms(query);
-          return [...articles.values()]
-            .flatMap((a) =>
-              a.document.sections.map((s) => ({
-                key: a.document.key,
-                title: a.document.title,
-                revision: a.revision,
-                section: s.key,
-                sectionTitle: s.title,
-                score: relevance(
-                  s.title + "\n" + s.body,
-                  terms,
-                  a.document.title,
-                ),
-                excerpt: bestSnippet(s.body, terms, 600),
-                derived: true,
-              })),
-            )
-            .filter((s) => s.score > 0)
-            .sort((a, b) => b.score - a.score)
-            .slice(0, limit);
+        async ({ query, limit, purpose }) => {
+          if (config.enabled) {
+            ready ??= retrieval
+              .indexBatch(0)
+              .catch((error) =>
+                record({
+                  kind: "index",
+                  state: "lexical-only",
+                  reason: String(error),
+                }),
+              );
+            await ready;
+          }
+          const hits = await retrieval.search({
+            text: query,
+            limit,
+            purpose,
+            kinds: ["knowledge"],
+            visible: (id) => fragments.has(id),
+          });
+          return hits.flatMap((h) =>
+            h.target.kind === "knowledge" && articles.has(h.target.key)
+              ? [
+                  {
+                    key: h.target.key,
+                    title: h.title,
+                    revision: h.target.revision,
+                    section: h.target.section,
+                    sectionTitle: h.headingPath.join(" / "),
+                    score: h.score,
+                    excerpt: h.text,
+                    citations: h.citations,
+                    references: h.references,
+                    derived: true,
+                  },
+                ]
+              : [],
+          );
         },
       );
       tool(
@@ -461,9 +487,17 @@ export async function prepareAgentResearch(input: {
         "Find active remembered facts, experiences and procedures; use as background and inspect the original evidence.",
         {
           query: z.string(),
+          purpose: z.enum(retrievalPurposes).default("background"),
           limit: z.number().int().min(1).max(30).default(8),
         },
-        ({ query, limit }) => retrieval.searchMemories({ text: query, limit }),
+        async ({ query, limit, purpose }) =>
+          retrieval.search({
+            text: query,
+            limit,
+            purpose,
+            kinds: ["memory"],
+            visible: (id) => fragments.has(id),
+          }),
       );
       tool(
         "read_memory",

@@ -25,6 +25,7 @@ export function developmentRetrieval(store: Store, retrieval: RetrievalPort): Re
     };
   };
   return {
+    ...(retrieval.search ? { search: (q: SearchQuery) => retrieval.search!(policy(q)) } : {}),
     searchSources: q => retrieval.searchSources(policy(q)),
     ...(retrieval.searchSourcesAsync ? { searchSourcesAsync: (q: SearchQuery) => retrieval.searchSourcesAsync!(policy(q)) } : {}),
     searchMemories: q => retrieval.searchMemories(q),

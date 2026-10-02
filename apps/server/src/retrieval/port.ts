@@ -1,13 +1,64 @@
 /**
- * Unified retrieval port (processing-policy.md §8). Today it has a keyword baseline
- * over the fixed SQLite fragments and applied memories. A later MemPalace sidecar can
- * implement the same interface without changing callers (pipeline / assistant tools).
- *
- * Everything returned here points back at immutable fragment ids, so higher layers can
- * always quote the original evidence instead of trusting a reranked summary.
+ * Shared search for readers, assistants and Agent tools. Retrieval units preserve
+ * original structure, derived explanations and applied state as distinct results.
+ * Their fixed targets remain readable; explanations retain original references.
+ * The source-only methods support processors that still require Fragment anchors.
  */
 
 export type RetrievalScope = "project" | "topic" | "workspace";
+
+export const retrievalPurposes = [
+  "balanced",
+  "concept",
+  "implementation",
+  "background",
+  "follow-up",
+] as const;
+export type RetrievalPurpose = (typeof retrievalPurposes)[number];
+
+export type SourceAnchor = {
+  kind: "source";
+  key: string;
+  revisionId: string;
+  digest: string;
+  startLine: number;
+  endLine: number;
+  fragmentIds: string[];
+};
+export type RetrievalTarget =
+  | SourceAnchor
+  | { kind: "knowledge"; key: string; revision: string; section: string }
+  | { kind: "memory" | "task"; id: string; version: number };
+
+/** A readable explanation is a result, not merely an alias for its citations. */
+export type RetrievalHit = {
+  id: string;
+  kind: RetrievalTarget["kind"];
+  title: string;
+  text: string;
+  context: string;
+  headingPath: string[];
+  score: number;
+  routes: string[];
+  target: RetrievalTarget;
+  references: SourceAnchor[];
+  citations?: {
+    key: string;
+    label: string;
+    reason: string;
+    relation: string;
+    target: {
+      kind: "material" | "article";
+      key: string;
+      startLine?: number;
+      endLine?: number;
+      section?: string;
+    };
+    actionable: boolean;
+  }[];
+  provenance: ProvenanceRef;
+  eventAt: string | null;
+};
 
 export type TimeRange = {
   from?: string;
@@ -39,6 +90,11 @@ export type SearchQuery = {
   visible?: (fragmentId: string) => boolean;
   /** False retains raw fused order for comparisons or downstream fusion. */
   diversify?: boolean;
+  /** Purpose is supplied by the reader/Agent, never inferred from repository paths. */
+  purpose?: RetrievalPurpose;
+  kinds?: RetrievalTarget["kind"][];
+  /** Formal article classification, independent of citation/source directories. */
+  topicPath?: string[];
 };
 
 export type ProvenanceRef = {
@@ -81,6 +137,8 @@ export type RetrievalHealth = {
 };
 
 export interface RetrievalPort {
+  /** Shared retrieval over original units, readable explanations and applied state. */
+  search?(query: SearchQuery): Promise<RetrievalHit[]>;
   /** Keyword/vector search over imported source fragments. */
   searchSources(query: SearchQuery): SourceCandidate[];
   /** Optional local semantic branch; callers await this when supplied. */

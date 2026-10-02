@@ -6,10 +6,10 @@ import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { Store } from "../apps/server/src/store.js";
 import { loadChineseEmbedding } from "../apps/server/src/retrieval/embedding.js";
-import { SemanticRetrieval } from "../apps/server/src/retrieval/semantic.js";
+import { UnifiedRetrieval } from "../apps/server/src/retrieval/unified.js";
 import { captureSchema } from "../packages/contracts/src/index.js";
 const dir = mkdtempSync(join(tmpdir(),"omem-semantic-")), store = new Store(dir);
-const retrieval = new SemanticRetrieval(store.db, () => loadChineseEmbedding(), taskFlag("reranker") ? ()=>loadChineseReranker() : undefined);
+const retrieval = new UnifiedRetrieval(store.db, () => loadChineseEmbedding(), taskFlag("reranker") ? ()=>loadChineseReranker() : undefined);
 const cases = [
   { title: "诊疗安排", text: "周四上午十点去口腔门诊拔智齿，提前半小时到医院取号。", query: "我哪天去看牙医？" },
   { title: "故障处理", text: "当下游连续失败时打开熔断器，短暂等待后放行少量请求探测恢复情况。", query: "依赖服务挂了怎么避免一直重试？" },

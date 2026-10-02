@@ -68,9 +68,9 @@
         "当前中文模型、重排、时间检索有哪些实际限制？"
       ],
       "entryPaths": [
-        "apps/server/src/retrieval/keyword.ts",
-        "apps/server/src/retrieval/semantic.ts",
-        "apps/server/src/retrieval/context.ts",
+        "apps/server/src/retrieval/unified.ts",
+        "apps/server/src/retrieval/units.ts",
+        "apps/server/src/retrieval/port.ts",
         "apps/server/src/assistant/runtime.ts",
         "apps/server/src/knowledge/api.ts"
       ],
@@ -124,7 +124,7 @@
         "scripts/dev.ts",
         "apps/web/src/App.vue",
         "apps/server/src/app.ts",
-        "apps/server/src/retrieval/context.ts",
+        "apps/server/src/retrieval/unified.ts",
         "docs/reader-first/operations.md"
       ],
       "topicPath": [

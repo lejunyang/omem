@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 18;
+export const SUPPORTED_SCHEMA_VERSION = 19;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -976,6 +976,28 @@ const taskFollowUpStatements = [
     PRIMARY KEY(task_id,task_version,kind,occurrence))`,
 ] as const;
 
+// Retrieval projections are replaceable indexes. Immutable revisions remain the authority.
+const retrievalUnitStatements = [
+  `CREATE TABLE retrieval_units(
+    id TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL,
+    title TEXT NOT NULL, text TEXT NOT NULL, context TEXT NOT NULL,
+    heading_path TEXT NOT NULL, target TEXT NOT NULL, references_json TEXT NOT NULL,
+    visibility_ids TEXT NOT NULL, topic_path TEXT NOT NULL, provenance TEXT NOT NULL,
+    event_at TEXT, subtype TEXT NOT NULL)`,
+  `CREATE INDEX retrieval_units_owner ON retrieval_units(owner)`,
+  `CREATE TABLE retrieval_projection_heads(owner TEXT PRIMARY KEY, identity TEXT NOT NULL)`,
+  `CREATE VIRTUAL TABLE retrieval_units_fts USING fts5(
+    id UNINDEXED,title,context,body,tokenize='unicode61')`,
+  `CREATE TABLE retrieval_unit_vectors(
+    unit_id TEXT NOT NULL REFERENCES retrieval_units(id) ON DELETE CASCADE,
+    model_id TEXT NOT NULL, part INTEGER NOT NULL, start_offset INTEGER NOT NULL,
+    end_offset INTEGER NOT NULL, vector BLOB NOT NULL,
+    PRIMARY KEY(model_id,unit_id,part))`,
+  `CREATE TABLE retrieval_unit_vector_heads(
+    unit_id TEXT NOT NULL REFERENCES retrieval_units(id) ON DELETE CASCADE,
+    model_id TEXT NOT NULL, PRIMARY KEY(model_id,unit_id))`,
+] as const;
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -1070,6 +1092,7 @@ const migrations: readonly Migration[] = [
   { version: 16, name: "memory-refresh-outcomes", statements: memoryRefreshStatements, checksum: checksum(memoryRefreshStatements) },
   { version: 17, name: "fragment-semantic-index", statements: embeddingStatements, checksum: checksum(embeddingStatements) },
   { version: 18, name: "task-follow-up-lifecycle", statements: taskFollowUpStatements, checksum: checksum(taskFollowUpStatements) },
+  { version: 19, name: "contextual-retrieval-units", statements: retrievalUnitStatements, checksum: checksum(retrievalUnitStatements) },
 ];
 
 const legacyV1Checksum = createHash("sha256")

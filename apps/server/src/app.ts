@@ -1,4 +1,5 @@
 import { evidenceSection } from "./retrieval/context.js";
+import { retrievalPurposes } from "./retrieval/port.js";
 import { importDevelopmentKnowledge, developmentRetrieval } from "./review/development.js";
 import { taskCommandSchema } from "../../../packages/contracts/src/task-flow.js";
 import { messageWorkflows } from "./assistant/message-workflows.js";
@@ -270,8 +271,11 @@ export async function buildApp(
     const b = z.object({ from: str, to: str }).strict().parse(req.body);
     return store.link(b.from, b.to);
   });
-  app.get<{ Querystring: { q?: string } }>("/api/search", async (req) => {
-    const query = { text: (req.query.q || "").slice(0, 300), limit: 30 };
+  app.get<{ Querystring: { q?: string; purpose?: string } }>("/api/search", async (req, reply) => {
+    const purpose = z.enum(retrievalPurposes).safeParse(req.query.purpose ?? "balanced");
+    if (!purpose.success) return reply.code(400).send({ error: "查找用途无效" });
+    const query = { text: (req.query.q || "").slice(0, 300), limit: 30, purpose: purpose.data };
+    if (assistantRetrieval.search) return assistantRetrieval.search(query);
     const hits = await (assistantRetrieval.searchSourcesAsync?.(query) ?? assistantRetrieval.searchSources(query));
     return hits.flatMap(hit => {
       const entry = store.evidence(hit.fragmentId);
