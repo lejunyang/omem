@@ -30,6 +30,7 @@ import { JobRepository } from "./jobs/repository.js";
 import { InputAggregator } from "./inputs/aggregator.js";
 import { RuntimeRequestRepository } from "./agent-runtime/requests.js";
 import { SourceProfileService } from "./source-profile/service.js";
+import { MaterialDescriptions } from "./source-profile/descriptions.js";
 const id = () => randomUUID();
 const now = () => new Date().toISOString();
 const hash = (s: string | Buffer) =>
@@ -42,6 +43,7 @@ export class Store {
   readonly inputs: InputAggregator;
   readonly runtimeRequests: RuntimeRequestRepository;
   readonly profiles: SourceProfileService;
+  readonly descriptions: MaterialDescriptions;
   constructor(
     readonly dataDir: string,
     options: {
@@ -63,6 +65,7 @@ export class Store {
       this.inputs = new InputAggregator(this.db);
       this.runtimeRequests = new RuntimeRequestRepository(this.db);
       this.profiles = new SourceProfileService(this.db);
+      this.descriptions = new MaterialDescriptions(this.db);
     } catch (error) {
       this.db.close();
       throw error;

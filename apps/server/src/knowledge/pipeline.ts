@@ -1,4 +1,5 @@
 import { MaterialResearch } from "./research.js";
+import { materialDescriptionBatchSchema } from "../../../../packages/contracts/src/material-description.js";
 import { prepareAgentResearch } from "./agent-research.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
 import { readFileSync } from "node:fs";
@@ -29,6 +30,36 @@ export class KnowledgePipeline {
     readonly options: { budget?: Partial<GenerationBudget>; nativeResearch?: boolean; retrievalConfig?: RetrievalConfig; concurrency?: number; retryTag?: string; onPublish?: (a: KnowledgeArticle) => void; log?: (message: string) => void } = {}) {}
 
   private get nativeResearch() { return this.options.nativeResearch ?? this.profile.transport === "acp"; }
+
+  /** Optional catalog work shares the native investigation harness. It creates
+   * navigation metadata, not personal facts or a replacement for original prose. */
+  async describeMaterials(materials: KnowledgeMaterial[]) {
+    const descriptions = this.repository.store.descriptions;
+    const versions = new Map(materials.map(m => [m.key, descriptions.get(m.revisionId)]));
+    const targets = materials.filter(m => versions.get(m.key)?.author !== "user");
+    if (!targets.length) return [];
+    const offers = targets.map(material => ({ material, ranges: [{ start: 1, end: material.lineCount }] }));
+    const run = await this.runRole("material-cataloger", offers, [], {
+      targetKeys: targets.map(m => m.key), descriptionVersions: targets.map(m => versions.get(m.key)?.version ?? 0),
+      instruction: "Read each target's original text. Describe what it can answer, distinguish plans, research, examples and implemented behavior. No user question or expected answer is supplied.",
+    }, out => {
+      const batch = materialDescriptionBatchSchema.parse(out);
+      if (batch.descriptions.length !== targets.length || new Set(batch.descriptions.map(d => d.key)).size !== targets.length || targets.some(m => !batch.descriptions.some(d => d.key === m.key))) throw Error("Describe every selected material exactly once");
+      for (const entry of batch.descriptions) {
+        const m = targets.find(m => m.key === entry.key)!;
+        if (entry.description.concepts.some(c => c.endLine < c.startLine || c.endLine > m.lineCount)) throw Error(`Concept range outside ${m.key}`);
+        const {validFrom, validUntil} = entry.description;
+        if (validFrom && validUntil && Date.parse(validFrom) >= Date.parse(validUntil)) throw Error("Invalid effective time range");
+      }
+      return batch;
+    });
+    if (this.stopping) throw Error("Material description cancelled");
+    return materialDescriptionBatchSchema.parse(run.result).descriptions.map(entry => {
+      const m = targets.find(m => m.key === entry.key)!;
+      const record = descriptions.save(m.revisionId, entry.description, "model", versions.get(m.key)?.version ?? 0, run.trace);
+      return { key: m.key, digest: m.digest, ...record, trace: run.trace };
+    });
+  }
 
   async stop() { this.stopping = true; await Promise.all([...this.running].map(w => w.stop())); }
 

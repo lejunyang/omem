@@ -9,9 +9,11 @@ import type {
 import { parseFile } from "../code/parse.js";
 import { fragmentPositions } from "../knowledge/structure.js";
 import { stableDigest } from "../storage/digest.js";
+import { MaterialDescriptions } from "../source-profile/descriptions.js";
+import type { MaterialDescriptionRecord } from "../../../../packages/contracts/src/material-description.js";
 import type { ProvenanceRef, RetrievalHit, SourceAnchor } from "./port.js";
 
-export const UNIT_VERSION = "structure-icu-v4";
+export const UNIT_VERSION = "structure-icu-v5";
 type Row = Record<string, unknown>;
 export type RetrievalUnit = Omit<RetrievalHit, "score" | "routes"> & {
   owner: string;
@@ -40,6 +42,26 @@ export function markdownPassages(text: string): Passage[] {
         headings.pop();
       headings.push({ depth: token.depth, title: token.text });
     } else if (token.type !== "space" && token.raw.trim()) {
+      const previous = output.at(-1);
+      const endLine = text
+        .slice(0, cursor - token.raw.match(/\s*$/)![0].length)
+        .split("\n").length;
+      // A table/list introduction cannot answer on its own. Keep its explanation
+      // with the block it introduces while retaining the original line range.
+      if (
+        previous &&
+        ["table", "list", "code"].includes(token.type) &&
+        /[:：]$/.test(previous.text) &&
+        JSON.stringify(previous.headingPath) ===
+          JSON.stringify(headings.map((h) => h.title))
+      ) {
+        previous.endLine = endLine;
+        previous.text = text
+          .split("\n")
+          .slice(previous.startLine - 1, endLine)
+          .join("\n");
+        continue;
+      }
       output.push({
         text: token.raw.trim(),
         startLine: text.slice(0, offset).split("\n").length,
@@ -240,7 +262,11 @@ export function sourceAnchor(
   };
 }
 
-function sourceUnits(material: KnowledgeMaterial, row: Row): RetrievalUnit[] {
+function sourceUnits(
+  material: KnowledgeMaterial,
+  row: Row,
+  description?: MaterialDescriptionRecord,
+): RetrievalUnit[] {
   const body = JSON.parse(String(row.body)),
     code = /\.(?:[cm]?[jt]sx?|vue)$/i.test(material.path ?? material.title);
   const passages = code
@@ -335,12 +361,22 @@ function sourceUnits(material: KnowledgeMaterial, row: Row): RetrievalUnit[] {
       .join("\n");
     return [
       {
-        id: idFor([UNIT_VERSION, "source", material.revisionId, index]),
+        id: idFor([
+          UNIT_VERSION,
+          "source",
+          material.revisionId,
+          index,
+          description?.version,
+        ]),
+        materialDescription: description,
         owner: "source:" + material.sourceId,
         kind: "source" as const,
         title: material.title,
         text: p.text,
         context: [
+          ...(description?.description.concepts
+            .filter((c) => c.startLine <= p.endLine && c.endLine >= p.startLine)
+            .map((c) => `概念：${c.label}；${c.aliases.join("、")}`) ?? []),
           material.title,
           ...p.headingPath,
           replyContext
@@ -414,6 +450,11 @@ export class RetrievalProjection {
   }
   private *changes() {
     const signature = idFor([
+      this.db
+        .prepare(
+          "SELECT revision_id,max(version) version FROM material_descriptions GROUP BY revision_id ORDER BY revision_id",
+        )
+        .all(),
       this.db.prepare("SELECT id,head FROM sources ORDER BY id").all(),
       tableExists(this.db, "knowledge_heads")
         ? this.db
@@ -447,6 +488,7 @@ export class RetrievalProjection {
         .map((r) => [String(r.owner), String(r.identity)]),
     );
     const wanted = new Set<string>();
+    const descriptions = new MaterialDescriptions(this.db);
     const sourceRows = this.db
       .prepare(
         "SELECT r.*,s.namespace,s.external_id FROM sources s JOIN revisions r ON r.id=s.head",
@@ -467,11 +509,13 @@ export class RetrievalProjection {
     for (const row of sourceRows) {
       const m = material(row);
       if (!m) continue;
+      const description = descriptions.get(m.revisionId) ?? undefined;
       const owner = "source:" + m.sourceId,
-        identity = UNIT_VERSION + ":" + m.revisionId;
+        identity =
+          UNIT_VERSION + ":" + m.revisionId + ":" + (description?.version ?? 0);
       wanted.add(owner);
       if (heads.get(owner) !== identity)
-        this.replace(owner, identity, sourceUnits(m, row));
+        this.replace(owner, identity, sourceUnits(m, row, description));
       yield;
     }
     const articleRows = tableExists(this.db, "knowledge_heads")
@@ -626,6 +670,10 @@ export class RetrievalProjection {
       return [...new Map(output.map((r) => [idFor(r), r])).values()];
     };
     for (const [key, { revision, artifact: a }] of validArticles) {
+      const original = materials.get(key);
+      const description = original
+        ? (descriptions.get(original.revisionId) ?? undefined)
+        : undefined;
       const reviewState = current(a) ? undefined : ("needs-review" as const);
       const visibilityIds = [...new Set(articleVisibility(a))];
       const owner = "knowledge:" + key,
@@ -636,7 +684,9 @@ export class RetrievalProjection {
           ":" +
           (reviewState ?? "current") +
           ":" +
-          idFor(visibilityIds);
+          idFor(visibilityIds) +
+          ":" +
+          (description?.version ?? 0);
       wanted.add(owner);
       if (heads.get(owner) === identity) continue;
       // The whole source background must be visible before derived prose is disclosed.
@@ -649,7 +699,9 @@ export class RetrievalProjection {
               revision,
               section.key,
               index,
+              description?.version,
             ]),
+            materialDescription: description,
             owner,
             kind: "knowledge",
             title: a.document.title,
@@ -866,7 +918,7 @@ export class RetrievalProjection {
       for (const u of units) {
         this.db
           .prepare(
-            "INSERT INTO retrieval_units VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO retrieval_units VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
           )
           .run(
             u.id,
@@ -883,6 +935,9 @@ export class RetrievalProjection {
             JSON.stringify(u.provenance),
             u.eventAt,
             u.subtype,
+            u.materialDescription
+              ? JSON.stringify(u.materialDescription)
+              : null,
           );
         this.db
           .prepare(
@@ -913,6 +968,9 @@ export function indexText(text: string) {
 }
 export function decodeUnit(row: Row): RetrievalUnit {
   return {
+    ...(row.description_json
+      ? { materialDescription: JSON.parse(String(row.description_json)) }
+      : {}),
     id: String(row.id),
     owner: String(row.owner),
     kind: String(row.kind) as RetrievalUnit["kind"],

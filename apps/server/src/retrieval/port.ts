@@ -6,6 +6,10 @@
  */
 
 export type RetrievalScope = "project" | "topic" | "workspace";
+import type {
+  MaterialDescriptionRecord,
+  MaterialRole,
+} from "../../../../packages/contracts/src/material-description.js";
 
 export const retrievalPurposes = [
   "balanced",
@@ -38,6 +42,7 @@ export type RetrievalTarget =
 
 /** A readable explanation is a result, not merely an alias for its citations. */
 export type RetrievalHit = {
+  materialDescription?: MaterialDescriptionRecord;
   id: string;
   kind: RetrievalTarget["kind"];
   title: string;
@@ -101,6 +106,10 @@ export type SearchQuery = {
   kinds?: RetrievalTarget["kind"][];
   /** Formal article classification, independent of citation/source directories. */
   topicPath?: string[];
+  /** Explicit reader filters. Classification is persisted, never inferred from paths. */
+  materialRoles?: MaterialRole[];
+  /** Search an effective date only when the reader asks; not the capture timestamp. */
+  effectiveAt?: string;
 };
 
 export type ProvenanceRef = {

@@ -216,6 +216,19 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     return rows.length;
   }
   private eligible(u: RetrievalUnit, q: SearchQuery) {
+    const description = u.materialDescription?.description;
+    if (
+      q.materialRoles?.length &&
+      !q.materialRoles.includes(description?.role ?? "unknown")
+    )
+      return false;
+    if (q.effectiveAt && description) {
+      const at = Date.parse(q.effectiveAt);
+      if (description.validFrom && at < Date.parse(description.validFrom))
+        return false;
+      if (description.validUntil && at >= Date.parse(description.validUntil))
+        return false;
+    }
     if (
       q.purpose === "follow-up" &&
       u.kind === "task" &&
@@ -255,6 +268,30 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     )
       return false;
     return true;
+  }
+  private applicability(u: RetrievalUnit, q: SearchQuery) {
+    const d = u.materialDescription?.description;
+    if (!d || q.materialRoles?.length || q.purpose === "background") return 1;
+    // Navigation preferences, not truth decisions. Unknown sources remain fully
+    // eligible; explicit role/history searches retain plans and research.
+    const role = {
+      reference: 1,
+      implementation: 1,
+      plan: 0.45,
+      research: 0.55,
+      record: 0.9,
+      example: 0.5,
+      unknown: 1,
+    }[d.role];
+    const state =
+      d.status === "superseded"
+        ? 0.4
+        : d.status === "proposed"
+          ? 0.65
+          : d.status === "historical"
+            ? 0.8
+            : 1;
+    return role * state;
   }
   private namedDefinition(unit: RetrievalUnit, q: SearchQuery) {
     if (unit.kind !== "source" || unit.subtype !== "code") return false;
@@ -300,6 +337,11 @@ export class UnifiedRetrieval extends KeywordRetrieval {
             unit.text +
               "\n" +
               unit.headingPath.join(" ") +
+              "\n" +
+              unit.context
+                .split("\n")
+                .filter((line) => line.startsWith("概念："))
+                .join("\n") +
               (unit.kind === "task" || unit.kind === "memory"
                 ? "\n" + unit.title + "\n" + unit.context
                 : ""),
@@ -318,6 +360,11 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           },
         ];
       })
+      .sort(
+        (a, b) =>
+          b.score * this.applicability(b.unit, q) -
+          a.score * this.applicability(a.unit, q),
+      )
       .slice(0, 250);
   }
   async search(q: SearchQuery): Promise<RetrievalHit[]> {
@@ -371,7 +418,14 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     }
     const sorted = [...dense.values()].sort((a, b) => b.score - a.score);
     const floor = Math.max(0.4, (sorted[0]?.score ?? 1) - 0.075);
-    const accepted = sorted.filter((h) => h.score >= floor).slice(0, 100);
+    const accepted = sorted
+      .filter((h) => h.score >= floor)
+      .sort(
+        (a, b) =>
+          b.score * this.applicability(b.unit, q) -
+          a.score * this.applicability(a.unit, q),
+      )
+      .slice(0, 100);
     const fused = new Map<string, ScoredUnit>(),
       scale = Math.max(...lexical.map((h) => h.score), 1e-6);
     for (const branch of [lexical.slice(0, 100), accepted])
@@ -454,7 +508,9 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         q.purpose !== "follow-up" ||
         (!["task", "memory"].includes(u.kind) && u.subtype !== "conversation")
       )
-        return preference(u) * definition * freshness;
+        return (
+          preference(u) * definition * freshness * this.applicability(u, q)
+        );
       const event = Date.parse(u.eventAt ?? "");
       const ageDays = Math.max(0, (Date.now() - event) / 86_400_000);
       return (
@@ -519,6 +575,9 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         citations,
         provenance: u.provenance,
         eventAt: u.eventAt,
+        ...(u.materialDescription
+          ? { materialDescription: u.materialDescription }
+          : {}),
       });
       if (output.length >= (q.limit ?? 20)) break;
     }

@@ -20,6 +20,7 @@ import type { NativeResearchEnvironment } from "../agent-runtime/gateway.js";
 import { stableDigest } from "../storage/digest.js";
 import { UnifiedRetrieval } from "../retrieval/unified.js";
 import { retrievalPurposes } from "../retrieval/port.js";
+import { materialRoles } from "../../../../packages/contracts/src/material-description.js";
 import { loadChineseEmbedding } from "../retrieval/embedding.js";
 import { loadChineseReranker } from "../retrieval/reranker.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
@@ -156,6 +157,7 @@ export async function prepareAgentResearch(input: {
       source: e.material.namespace,
       lines: e.material.lineCount,
       images: e.images,
+      description: repository.store.descriptions.get(e.material.revisionId),
     }));
     writeFileSync(
       join(workspace, "catalog.json"),
@@ -295,6 +297,7 @@ export async function prepareAgentResearch(input: {
           .map((l, i) => `${start + i}: ${l}`)
           .join("\n"),
         outline: materialSections(m),
+        description: catalog.find(item => item.revision === m.revisionId)?.description ?? null,
         images: e.images,
         provenance: {
           source: m.namespace,
@@ -413,9 +416,11 @@ export async function prepareAgentResearch(input: {
           keys: z.array(z.string()).optional(),
           kind: z.enum(["all", "code", "document"]).default("all"),
           purpose: z.enum(retrievalPurposes).default("balanced"),
+          materialRoles: z.array(z.enum(materialRoles)).optional(),
+          effectiveAt: z.iso.datetime({offset:true}).optional(),
           limit: z.number().int().min(1).max(50).default(10),
         },
-        async ({ query, keys, kind, limit, purpose }) => {
+        async ({ query, keys, kind, limit, purpose, materialRoles, effectiveAt }) => {
           ready ??= config.enabled
             ? retrieval.indexBatch(0).catch((error) =>
                 record({
@@ -439,6 +444,7 @@ export async function prepareAgentResearch(input: {
             limit,
             visible,
             purpose,
+            materialRoles, effectiveAt,
             kinds: ["source" as const],
           };
           const hits = await retrieval.search(queryInput);
@@ -463,6 +469,7 @@ export async function prepareAgentResearch(input: {
                   endLine: h.target.endLine,
                   snippet: h.text,
                   context: h.context,
+                  description: h.materialDescription,
                   headingPath: h.headingPath,
                   outline: materialSections(f.material).filter(
                     (s) =>
@@ -481,9 +488,11 @@ export async function prepareAgentResearch(input: {
         {
           query: z.string(),
           purpose: z.enum(retrievalPurposes).default("concept"),
+          materialRoles: z.array(z.enum(materialRoles)).optional(),
+          effectiveAt: z.iso.datetime({offset:true}).optional(),
           limit: z.number().int().min(1).max(30).default(8),
         },
-        async ({ query, limit, purpose }) => {
+        async ({ query, limit, purpose, materialRoles, effectiveAt }) => {
           if (config.enabled) {
             ready ??= retrieval.indexBatch(0).catch((error) =>
               record({
@@ -499,6 +508,7 @@ export async function prepareAgentResearch(input: {
             limit,
             purpose,
             kinds: ["knowledge"],
+            materialRoles, effectiveAt,
             visible: (id) => fragments.has(id),
           });
           // Search may return a reviewed background page whose uncited research

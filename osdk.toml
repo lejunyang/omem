@@ -145,3 +145,18 @@ help = "Page key (overview, capture, retrieval, memory, contributing); omit for 
 
 [tasks."review:guides".flags.retry]
 help = "Retry failed investigation or writing"
+
+[tasks."review:catalog"]
+run = [{ argv = ["bun", "scripts/review-catalog.ts", "{{args}}"] }]
+description = "Read fixed materials with ACP and save editable roles and concept entries"
+
+[[tasks."review:catalog".args]]
+name = "target"
+default = ""
+help = "Captured file or directory; omit for all materials"
+
+[tasks."review:catalog".flags.documents]
+help = "Describe Markdown documents only"
+
+[tasks."review:catalog".flags.retry]
+help = "Re-analyze model descriptions; preserve user corrections"

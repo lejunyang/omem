@@ -37,6 +37,7 @@ import { FeedbackService, MemoryService } from "./memory/service.js";
 import { LarkOnboardingService } from "./integrations/lark/onboarding.js";
 import { OMEM_LARK_DEFAULT_CONFIG } from "./integrations/lark/defaults.js";
 import { LearningPipeline } from "./learning/pipeline.js";
+import { materialDescriptionSchema, materialRoles } from "../../../packages/contracts/src/material-description.js";
 import {
   OfficialLarkCapabilityProbe,
   OfficialLarkRegistrationAdapter,
@@ -234,6 +235,15 @@ export async function buildApp(
     },
   }));
   app.get("/api/sources", async () => store.list());
+  app.get<{ Params: { revision: string } }>("/api/material-descriptions/:revision", async (req, reply) => {
+    if (!store.revision(req.params.revision)) return reply.code(404).send({error:"材料版本不存在"});
+    return {record: store.descriptions.get(req.params.revision)};
+  });
+  app.put<{ Params: { revision: string } }>("/api/material-descriptions/:revision", async (req, reply) => {
+    const input = z.object({expectedVersion:z.number().int().nonnegative(), description:materialDescriptionSchema}).strict().parse(req.body);
+    try { return {record:store.descriptions.save(req.params.revision, input.description, "user", input.expectedVersion)}; }
+    catch(error) { return reply.code(409).send({error:String(error instanceof Error ? error.message : error)}); }
+  });
   app.post("/api/captures", async (req) =>
     store.capture(captureSchema.parse(req.body)),
   );
@@ -300,7 +310,7 @@ export async function buildApp(
     const b = z.object({ from: str, to: str }).strict().parse(req.body);
     return store.link(b.from, b.to);
   });
-  app.get<{ Querystring: { q?: string; purpose?: string } }>(
+  app.get<{ Querystring: { q?: string; purpose?: string; role?: string; effectiveAt?: string } }>(
     "/api/search",
     async (req, reply) => {
       const purpose = z
@@ -308,10 +318,15 @@ export async function buildApp(
         .safeParse(req.query.purpose ?? "balanced");
       if (!purpose.success)
         return reply.code(400).send({ error: "查找用途无效" });
+      const role = z.enum(materialRoles).optional().safeParse(req.query.role || undefined);
+      const effectiveAt = z.iso.datetime({offset:true}).optional().safeParse(req.query.effectiveAt || undefined);
+      if (!role.success || !effectiveAt.success) return reply.code(400).send({error:"材料筛选条件无效"});
       const query = {
         text: (req.query.q || "").slice(0, 300),
         limit: 30,
         purpose: purpose.data,
+        ...(role.data ? {materialRoles:[role.data]} : {}),
+        ...(effectiveAt.data ? {effectiveAt:effectiveAt.data} : {}),
       };
       if (assistantRetrieval.search) return assistantRetrieval.search(query);
       const hits = await (assistantRetrieval.searchSourcesAsync?.(query) ??

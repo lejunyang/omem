@@ -5,6 +5,7 @@ import type { Store } from "../store.js";
 import { restoreKnowledgeArticles, writeKnowledgeArticle } from "../knowledge/artifacts.js";
 import { digest, type KnowledgeArticle } from "../knowledge/repository.js";
 import { captureRepositoryMaterials, createReviewKnowledgeRepository } from "./materials.js";
+import { restoreMaterialDescriptions } from "../knowledge/material-descriptions.js";
 
 export function restoreReviewKnowledge(store: Store, root: string) {
   const notes = join(root, ".repo-review/knowledge/user-notes.json");
@@ -14,6 +15,7 @@ export function restoreReviewKnowledge(store: Store, root: string) {
   }
   const coverage = captureRepositoryMaterials(store, root);
   const repository = createReviewKnowledgeRepository(store);
+  restoreMaterialDescriptions(repository, join(root,".repo-review/knowledge/material-descriptions"));
   const restored = restoreKnowledgeArticles(repository, join(root, ".repo-review/knowledge/articles"));
   for (const m of repository.materials().filter(m => m.key.startsWith("manual:knowledge-answer:"))) {
     const id = m.key.slice("manual:knowledge-answer:".length);
