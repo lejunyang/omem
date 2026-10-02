@@ -181,7 +181,11 @@ export class KnowledgePipeline {
 
   async analyze(materials: KnowledgeMaterial[], supplements: (targets: KnowledgeMaterial[]) => Offer[] = () => []) {
     const current = new Map(this.repository.list().filter(a => a.current).map(a => [a.document.key, a]));
-    const pending = materials.filter(m => { const a = current.get(m.key); return !a; });
+    const verifierHash = this.nativeResearch ? this.registry.load("knowledge-verifier").bundleHash : null;
+    const pending = materials.filter(m => {
+      const a = current.get(m.key);
+      return !a || (this.nativeResearch && (a.generation.trace.bundleHash !== this.registry.load(analystFor(m)).bundleHash || a.review.trace.bundleHash !== verifierHash));
+    });
     // Each article gets its own original and explicit linked context. Sharing a
     // prompt to save calls made unrelated batch siblings permanent dependencies.
     // Concurrency still bounds cost; genuinely supplied context stays tracked.

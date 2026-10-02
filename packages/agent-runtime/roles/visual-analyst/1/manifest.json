@@ -11,7 +11,7 @@
       "canonical_name": "omem-visual-analyst",
       "version": "1",
       "load_mode": "inline",
-      "artifact_digest": "4a0b411344030ecd24c6bf187d73d77b41c163cc519d3aa56d4f7afba836622e"
+      "artifact_digest": "54a661a23db655fc6eeecc46c0f25fea8cb5850e9a4f4bd7be07206d99bb6eb2"
     }
   ],
   "output_schema": "KnowledgeBatch.v1",

@@ -11,7 +11,7 @@
       "canonical_name": "omem-knowledge-refresher",
       "version": "1",
       "load_mode": "inline",
-      "artifact_digest": "1b38bd9adc118245a030962f439bd881c7fa418b8992b9136d93bec5f38efba1"
+      "artifact_digest": "772a999c8f1df84527787088a68115f71090919fcc1361d500e1775a82898fbb"
     }
   ],
   "output_schema": "KnowledgeBatch.v1",
