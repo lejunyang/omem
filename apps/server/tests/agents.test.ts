@@ -39,7 +39,10 @@ async function run(
   }
 }
 it("negotiates model before validating new effort options; drops thoughts", async () => {
-  const { events } = await run("hello", { model: "beta", effort: "high" });
+  const { events, result } = await run("hello", {
+    model: "beta",
+    effort: "high",
+  });
   expect(
     events
       .filter((e) => e.type === "text")
@@ -47,6 +50,9 @@ it("negotiates model before validating new effort options; drops thoughts", asyn
       .join(""),
   ).toContain("beta/high");
   expect(JSON.stringify(events)).not.toContain("PRIVATE_THOUGHT");
+  expect(result.timings.initializeMs).toBeGreaterThanOrEqual(0);
+  expect(result.timings.sessionSetupMs).toBeGreaterThanOrEqual(0);
+  expect(result.timings.promptMs).toBeGreaterThanOrEqual(0);
 });
 it("rejects unsupported effort instead of falling back", async () => {
   await expect(run("hello", { effort: "high" })).rejects.toThrow(

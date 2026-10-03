@@ -105,7 +105,11 @@ it("lets a research agent request caller candidates and read their fixed enclosi
     );
     const result = await client.callTool({
       name: "search_materials",
-      arguments: { query: "reserveParcel", codeIntent: "callers" },
+      arguments: {
+        query: "reserveParcel",
+        codeIntent: "callers",
+        keys: ["originals/shipping.ts"],
+      },
     });
     const data = JSON.parse(
       (result.content as { type: string; text: string }[]).find(
@@ -123,9 +127,22 @@ it("lets a research agent request caller candidates and read their fixed enclosi
     ]);
     const read = await client.callTool({
       name: "read_section",
-      arguments: { key: data.hits[0].key, section: "checkout" },
+      arguments: {
+        key: data.hits[0].path,
+        atLine: data.hits[0].codeMatches[0].lines[0],
+      },
     });
     expect(JSON.stringify(read)).toContain("return reserveParcel()");
+    const body = JSON.parse((read.content as { text: string }[])[0]!.text);
+    expect(body.startLine).toBe(2);
+    expect(body.endLine).toBe(2);
+    expect(body.key).toBe(data.hits[0].key);
+    const unknown = await client.callTool({
+      name: "search_materials",
+      arguments: { query: "reserveParcel", keys: ["invented:shipping.ts"] },
+    });
+    expect(unknown.isError).toBe(true);
+    expect(JSON.stringify(unknown)).toContain("Unknown material locator");
   } finally {
     await client.close();
     await env?.close();

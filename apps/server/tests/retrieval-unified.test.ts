@@ -11,6 +11,7 @@ import { UnifiedRetrieval } from "../src/retrieval/unified.js";
 import { markdownPassages } from "../src/retrieval/units.js";
 import { querySymbols } from "../src/retrieval/relevance.js";
 import { rerankPassages } from "../src/retrieval/rerank-passages.js";
+import { ensureMaterialAliases } from "../src/knowledge/material-identity.js";
 import type { EmbeddingModel } from "../src/retrieval/embedding.js";
 import {
   AssistantRuntime,
@@ -412,6 +413,9 @@ it("lets the assistant cite one of two functions sharing a fragment without sele
         },
       ],
     });
+    ensureMaterialAliases(s.store.db);
+    const material = s.repository.materials()[0]!;
+    s.store.db.prepare("INSERT INTO knowledge_material_aliases(material_key,source_id) VALUES(?,?)").run("library:parcel-operations", material.sourceId);
     const hits = await Promise.all(
       ["reserveParcel", "releaseParcel"].map((text) =>
         s.retrieval.search({ text, purpose: "implementation" }),
@@ -452,6 +456,7 @@ it("lets the assistant cite one of two functions sharing a fragment without sele
       userText: "这两个函数有什么区别？",
     });
     expect(received?.evidence).toHaveLength(2);
+    expect(received?.evidence.every(e => e.materialKey === "library:parcel-operations" && e.sourceTarget?.key === e.materialKey)).toBe(true);
     expect(new Set(received?.evidence.map((e) => e.fragmentId)).size).toBe(1);
     expect(new Set(received?.evidence.map((e) => e.citationId)).size).toBe(2);
     expect(result.turn.selectedEvidence).toHaveLength(1);

@@ -123,6 +123,7 @@ export type AssistantModelReply = {
     sessionId: string;
     tools: string[];
     timings?: { prepareMs: number; agentMs: number; totalMs: number };
+    acpTimings?: { initializeMs: number; sessionSetupMs: number; promptMs: number; firstToolMs: number | null; toolCalls: number; failedToolCalls: number };
   };
 };
 
@@ -947,6 +948,10 @@ export class AssistantRuntime {
           visible,
         );
         entry.sourceTarget = reference;
+        // Preserve the input adapter's public locator alongside its fixed range.
+        // Reconstructing a revision alone produces the storage namespace key,
+        // which may not be the key exposed by the research catalog.
+        entry.materialKey = reference.key;
         entry.materialDescription = this.store.descriptions.get(reference.revisionId) ?? undefined;
         if (hit.kind === "source" && hit.headingPath.length)
           entry.sectionTitle = hit.headingPath.join(" / ");

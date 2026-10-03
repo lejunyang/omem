@@ -110,7 +110,7 @@ export async function prepareAssistantResearch(input: {
           !m.fragments.every((f) => visible(f.id))
         )
           throw Error(`历史版本不在本次授权材料中：${c.key}`);
-        const item = evidenceForRange(m, c.startLine, c.endLine, visible);
+        const item = evidenceForRange({ ...m, key: current.key }, c.startLine, c.endLine, visible);
         item.materialDescription = input.repository.store.descriptions.get(m.revisionId) ?? undefined;
         citations.set(c.id, item.citationId!);
         return item;
