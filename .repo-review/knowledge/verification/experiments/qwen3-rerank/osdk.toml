@@ -1,0 +1,11 @@
+[tools]
+bun = "1.4.2"
+
+[models.qwen3-relevance]
+source = "hf:onnx-community/Qwen3-Reranker-0.6B-ONNX@9995c50e2310679108a55f5ccd16ba8be9f17c20"
+include = ["*.json", "*.txt", "*.jinja", "onnx/model_q4.onnx"]
+exclude = []
+variant = "q4"
+kind = "other"
+
+[models.qwen3-relevance.views]
