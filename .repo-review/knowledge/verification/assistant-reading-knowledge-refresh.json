@@ -1,0 +1,545 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-03T13:25:19.037Z",
+  "configuredModel": "gpt-5.6-sol",
+  "scope": "五份配置材料用途说明；受影响的提问、自主调查两篇读者指南。文件级旧文章未全部重写，失效仍如实保留。",
+  "interruption": "第一轮指南研究启动后，问答实测发现已有讲解缺少可补读的文章/章节 key；提交 506514f 后停止该轮并重新生成，避免发布后立刻失效。旧历史与中断日志均保留。",
+  "updates": [
+    {
+      "key": "guide:knowledge-agent",
+      "title": "Agent 如何把材料讲成一篇可读文章",
+      "current": true,
+      "revision": "846edd4aa734912352cc34cbdd6980100a859c7798a3aceddd5360604f34238e",
+      "staleDependencies": [],
+      "sections": [
+        {
+          "title": "从一个新人真正会问的问题开始",
+          "characters": 403
+        },
+        {
+          "title": "固定本次原件，同时保留显式历史入口",
+          "characters": 707
+        },
+        {
+          "title": "首次代码命中不够时，沿缺口补读背景",
+          "characters": 582
+        },
+        {
+          "title": "研究者画地图，作者把地图写成解释",
+          "characters": 579
+        },
+        {
+          "title": "一次 prompt 是完整 Agent turn，不是一次文本补全",
+          "characters": 481
+        },
+        {
+          "title": "发布锁定作者和复核者实际依赖的来源",
+          "characters": 448
+        },
+        {
+          "title": "知道工具能保证什么，也知道该去哪里改",
+          "characters": 475
+        }
+      ],
+      "citations": 20,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T13:21:29.540Z",
+        "trace": {
+          "runId": "b784b1e6-be1b-40d9-b678-1231b3c701ca",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "deea74564e1ffaf76676a9947e6df4e8e54847b2c42549c96bd1b2b5f0f8ca34",
+          "sessionIds": [
+            "01a101eb-db84-7ec3-b550-607b3d244deb"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T13:24:39.047Z",
+        "trace": {
+          "runId": "fbde1b4f-5363-4f61-ba4e-dbe56ee0ca01",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "efc4549c0f0d5db4ff1cc4fd8f9843e2fc874af61414fed8d1513c17c78e2ee2",
+          "sessionIds": [
+            "01a101ed-8946-7e02-b110-9e368bedb00a"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "guide:retrieval",
+      "title": "一次提问如何找到答案：召回、上下文与固定引用",
+      "current": true,
+      "revision": "5f7a8e91866d40c2ad85c39fbb658ae31f859e43f6f78a53de6fee41bb732cba",
+      "staleDependencies": [],
+      "sections": [
+        {
+          "title": "从一条群消息开始",
+          "characters": 468
+        },
+        {
+          "title": "三个入口共享召回，但不共享同一结果",
+          "characters": 426
+        },
+        {
+          "title": "候选怎样被找出来",
+          "characters": 702
+        },
+        {
+          "title": "命中片段以后，怎样读懂并固定证据",
+          "characters": 395
+        },
+        {
+          "title": "问答模型只负责调查与表达",
+          "characters": 467
+        },
+        {
+          "title": "当前边界：中文、重排、时间与代码导航",
+          "characters": 548
+        },
+        {
+          "title": "怎样区分召回问题与回答问题",
+          "characters": 646
+        }
+      ],
+      "citations": 33,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T13:19:43.294Z",
+        "trace": {
+          "runId": "728d9a55-b141-4658-91eb-4e63b54ac64a",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "c88aa5e1716916d3edaca7540c52172521daab7dc4251241a24cc0dbd12434a5",
+          "sessionIds": [
+            "01a101e9-e983-7c61-817f-86b35f0ba55a"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T13:21:47.309Z",
+        "trace": {
+          "runId": "ed40094d-4fd4-49c1-a09e-fb8e789d1ab5",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "36134d8eabee06daf34ec6a76fd57ae8be0e0f07973d8290f70dd0bec90d84d2",
+          "sessionIds": [
+            "01a101eb-e26f-7a63-a86a-2763d891fc02"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    }
+  ],
+  "descriptions": [
+    {
+      "key": "omem:config/omem.example.json",
+      "digest": "9c7cc75e1a9e2aae08169204697060c59668ee6d9eca3e2cf210cfedbe397abd",
+      "role": "example",
+      "status": "current",
+      "file": "5d1009df8d0538a809beb21733d550555eb59b48ccf5624be29d7da125ba0e60.json",
+      "generation": {
+        "at": "2026-10-03T12:56:44.326Z",
+        "trace": {
+          "runId": "516f5f1e-5846-41ae-b4bf-4ebf6d3886b3",
+          "roleId": "material-cataloger",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "b9eec65505e0fae49c902e65082674d6445afdeb5d6daea6acbd092cd8cc9b87",
+          "sessionIds": [
+            "01a101d5-555b-7eb3-9a6d-eedc329db2c3"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-material-cataloger",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      }
+    },
+    {
+      "key": "omem:config/wiki-pages.json",
+      "digest": "92b8dd4f2458bf693e9bace4bdc7e652219f1e3ab8a9dd1abd9cf6db93403e90",
+      "role": "plan",
+      "status": "current",
+      "file": "5aa93c7050dd41b8d9cc0d7bdb57e74797b9fc7859e18c6ddbf22c6fc8601bf2.json",
+      "generation": {
+        "at": "2026-10-03T12:56:44.328Z",
+        "trace": {
+          "runId": "516f5f1e-5846-41ae-b4bf-4ebf6d3886b3",
+          "roleId": "material-cataloger",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "b9eec65505e0fae49c902e65082674d6445afdeb5d6daea6acbd092cd8cc9b87",
+          "sessionIds": [
+            "01a101d5-555b-7eb3-9a6d-eedc329db2c3"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-material-cataloger",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      }
+    },
+    {
+      "key": "omem:config/review-code-model.json",
+      "digest": "d5c3c9f3c4dad89ab391ef0e9ff47f8627d806a592667e5ef34c27b0bf86c2f6",
+      "role": "implementation",
+      "status": "current",
+      "file": "02a681a80958004f618bcb371efecfb13074092a20accd92b990b5067e2e7453.json",
+      "generation": {
+        "at": "2026-10-03T12:56:44.327Z",
+        "trace": {
+          "runId": "516f5f1e-5846-41ae-b4bf-4ebf6d3886b3",
+          "roleId": "material-cataloger",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "b9eec65505e0fae49c902e65082674d6445afdeb5d6daea6acbd092cd8cc9b87",
+          "sessionIds": [
+            "01a101d5-555b-7eb3-9a6d-eedc329db2c3"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-material-cataloger",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      }
+    },
+    {
+      "key": "omem:config/review-code-model.example.json",
+      "digest": "d5c3c9f3c4dad89ab391ef0e9ff47f8627d806a592667e5ef34c27b0bf86c2f6",
+      "role": "example",
+      "status": "current",
+      "file": "47bdfe8d7e937661daca030a6c075a8d674d77f28db3a8ba7b3f8e00e23961cb.json",
+      "generation": {
+        "at": "2026-10-03T12:56:44.327Z",
+        "trace": {
+          "runId": "516f5f1e-5846-41ae-b4bf-4ebf6d3886b3",
+          "roleId": "material-cataloger",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "b9eec65505e0fae49c902e65082674d6445afdeb5d6daea6acbd092cd8cc9b87",
+          "sessionIds": [
+            "01a101d5-555b-7eb3-9a6d-eedc329db2c3"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-material-cataloger",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      }
+    },
+    {
+      "key": "omem:config/retrieval.json",
+      "digest": "b367efa304dd3bf3ef142072d307f8e560d43f7c3a52dfc358f04c75b892984a",
+      "role": "implementation",
+      "status": "current",
+      "file": "e5e87f7e898efd2729a282e1e1ff91c4ffbbe9f91b86ad0628776778fe89d73e.json",
+      "generation": {
+        "at": "2026-10-03T12:56:44.327Z",
+        "trace": {
+          "runId": "516f5f1e-5846-41ae-b4bf-4ebf6d3886b3",
+          "roleId": "material-cataloger",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "b9eec65505e0fae49c902e65082674d6445afdeb5d6daea6acbd092cd8cc9b87",
+          "sessionIds": [
+            "01a101d5-555b-7eb3-9a6d-eedc329db2c3"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-material-cataloger",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      }
+    }
+  ],
+  "pages": [
+    {
+      "key": "guide:overview",
+      "title": "先认识 omem：把材料变成能找回的工作记忆",
+      "state": "stale",
+      "generatedAt": "2026-10-03T03:33:14.813Z",
+      "reviewedAt": "2026-10-03T03:36:00.827Z"
+    },
+    {
+      "key": "guide:capture",
+      "title": "一份材料如何变成可检索、可追溯的知识",
+      "state": "stale",
+      "generatedAt": "2026-10-03T02:57:04.635Z",
+      "reviewedAt": "2026-10-03T03:01:09.720Z"
+    },
+    {
+      "key": "guide:retrieval",
+      "title": "一次提问如何找到答案：召回、上下文与固定引用",
+      "state": "reviewed",
+      "generatedAt": "2026-10-03T13:19:43.294Z",
+      "reviewedAt": "2026-10-03T13:21:47.309Z"
+    },
+    {
+      "key": "guide:memory",
+      "title": "规则变了以后：原文、记忆与待办怎样更新",
+      "state": "stale",
+      "generatedAt": "2026-10-03T03:27:37.919Z",
+      "reviewedAt": "2026-10-03T03:32:02.211Z"
+    },
+    {
+      "key": "guide:contributing",
+      "title": "改一条完整功能链：让搜索结果说清所属章节",
+      "state": "stale",
+      "generatedAt": "2026-10-03T03:41:35.495Z",
+      "reviewedAt": "2026-10-03T03:44:09.836Z"
+    },
+    {
+      "key": "guide:knowledge-agent",
+      "title": "Agent 如何把材料讲成一篇可读文章",
+      "state": "reviewed",
+      "generatedAt": "2026-10-03T13:21:29.540Z",
+      "reviewedAt": "2026-10-03T13:24:39.047Z"
+    }
+  ],
+  "coverage": {
+    "materials": 604,
+    "current": 132,
+    "stale": 359,
+    "fileStates": {
+      "pending": 270,
+      "not-applicable": 1244,
+      "stale": 207,
+      "reviewed": 127
+    }
+  },
+  "runs": [
+    {
+      "log": ".repo-review/runtime/research/assistant-reading-catalog.log",
+      "sha256": "db32794c0ee54c437ebd89cf8319711202f477878c78a913ea6707e0c5d8c226",
+      "events": [
+        "2026-10-03T12:55:13.678Z AI material-cataloger: omem:config/omem.example.json,omem:config/retrieval.json,omem:config/review-code-model.example.json,omem:config/review-code-model.json,omem:config/wiki-pages.json"
+      ]
+    },
+    {
+      "log": ".repo-review/runtime/research/assistant-reading-guides.log",
+      "sha256": "6c14cdd63a2623026ef2143ba98fe9a5a9bcb294a222a707473aaa1f6249171b",
+      "events": [
+        "2026-10-03T12:56:13.798Z AI knowledge-researcher: 一次提问如何找到答案：搜索、上下文与 RAG",
+        "2026-10-03T12:56:25.235Z AI knowledge-researcher: Agent 怎样把材料讲明白：自主调查、写作与补查",
+        "FAILED guide:retrieval Error: Worker stopped before completion",
+        "FAILED guide:knowledge-agent Error: Worker stopped before completion",
+        "      \"error\": \"Error: Worker stopped before completion\"",
+        "      \"error\": \"Error: Worker stopped before completion\""
+      ]
+    },
+    {
+      "log": ".repo-review/runtime/research/assistant-reading-guides-final.log",
+      "sha256": "8cfae3718e7c3ff7f8205cfb72f67d65840a539937291d47f2d8cb8055315279",
+      "events": [
+        "2026-10-03T13:01:38.035Z AI knowledge-researcher: 一次提问如何找到答案：搜索、上下文与 RAG",
+        "2026-10-03T13:01:49.154Z AI knowledge-researcher: Agent 怎样把材料讲明白：自主调查、写作与补查",
+        "2026-10-03T13:05:09.980Z AI knowledge-writer: guide:knowledge-agent",
+        "2026-10-03T13:06:06.695Z AI knowledge-writer: guide:retrieval",
+        "2026-10-03T13:08:32.686Z AI knowledge-verifier: guide:knowledge-agent",
+        "2026-10-03T13:09:33.656Z AI knowledge-verifier: guide:retrieval",
+        "2026-10-03T13:10:58.504Z AI knowledge-refresher: guide:knowledge-agent",
+        "2026-10-03T13:12:51.672Z AI knowledge-refresher: guide:retrieval",
+        "2026-10-03T13:13:14.058Z AI knowledge-verifier: guide:knowledge-agent",
+        "2026-10-03T13:14:25.877Z AI knowledge-verifier: guide:retrieval",
+        "2026-10-03T13:15:23.794Z AI knowledge-refresher: guide:knowledge-agent",
+        "2026-10-03T13:17:24.262Z AI knowledge-verifier: guide:knowledge-agent",
+        "2026-10-03T13:17:35.489Z AI knowledge-refresher: guide:retrieval",
+        "2026-10-03T13:19:32.531Z AI knowledge-refresher: guide:knowledge-agent",
+        "2026-10-03T13:19:43.310Z AI knowledge-verifier: guide:retrieval",
+        "2026-10-03T13:21:29.553Z AI knowledge-verifier: guide:knowledge-agent",
+        "2026-10-03T13:21:47.526Z Published guide:retrieval",
+        "2026-10-03T13:24:39.336Z Published guide:knowledge-agent"
+      ]
+    }
+  ]
+}

@@ -2,8 +2,8 @@
 
 ## 软件开发 / omem
 
-- [一次提问如何找到答案：搜索、补读与固定引用](knowledge/articles/c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.md)
-- [Agent 怎样把材料讲明白：从自主调查到发布](knowledge/articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.md)
+- [一次提问如何找到答案：召回、上下文与固定引用](knowledge/articles/c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.md)
+- [Agent 如何把材料讲成一篇可读文章](knowledge/articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.md)
 
 ## 未分类
 
@@ -145,10 +145,6 @@
 - [统一的界面组件与阅读交互入口](knowledge/articles/e83268cba42660fda5898607ef1afe7d12fb8a09536445374b5756f146737585.md)
 - [统一的空状态展示组件](knowledge/articles/88b12ddcc01aead1f398bfb1f65e9f7863638b095ec1a8eaf802e4bcbc7dcafe.md)
 - [统一的轻量 SVG 图标组件](knowledge/articles/506240a8f06c64ad3989b93e2eee7b17167c020f27c2bd6936d4396522ce00da.md)
-
-## 软件开发 / omem / 服务端 / 检索 / 词面相关性
-
-- [检索查询的词面解释与局部相关性](knowledge/articles/b0bd95bebba21bca08eb2e061f8c0ea5346eeb18101c05e2ff0d8d16c450e7dc.md)
 
 ## 软件开发 / omem / Web 应用 / 证据阅读
 
