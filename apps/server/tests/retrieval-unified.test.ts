@@ -633,6 +633,9 @@ it("retains same-named definitions and source visibility without treating mentio
       [],
     );
     expect(querySymbols("How can I apply the new rule?")).toEqual([]);
+    expect(querySymbols("renderArticle 如何处理 Markdown 和 JSON？")).toEqual([
+      "renderarticle",
+    ]);
     expect(
       querySymbols(
         "不调用 ParcelService.reserveParcel. 而使用 `apply`，会发生什么？",
