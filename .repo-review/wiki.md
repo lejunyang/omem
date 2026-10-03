@@ -3,7 +3,6 @@
 ## 软件开发 / omem
 
 - [一次提问如何找到答案：搜索、上下文与 RAG](knowledge/articles/c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.md)
-- [Agent 怎样把材料讲明白：从自主调查到发布更新](knowledge/articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.md)
 
 ## 未分类
 
@@ -146,6 +145,10 @@
 - [统一的空状态展示组件](knowledge/articles/88b12ddcc01aead1f398bfb1f65e9f7863638b095ec1a8eaf802e4bcbc7dcafe.md)
 - [统一的轻量 SVG 图标组件](knowledge/articles/506240a8f06c64ad3989b93e2eee7b17167c020f27c2bd6936d4396522ce00da.md)
 
+## 软件开发 / omem / 服务端 / 检索 / 检索单位投影
+
+- [把多种记忆投影成统一检索单位](knowledge/articles/130cdb6c662c51b13762227a6e5989994935a42467c7e55412ace7eb689e1d4f.md)
+
 ## 软件开发 / omem / Web 应用 / 证据阅读
 
 - [模块说明、证据与文件下探界面](knowledge/articles/9b4dcab1214bbd0cb31ae5cc73e8b4db1ae09fb7b2cff65fc3cb8c82c27a9e26.md)
@@ -153,6 +156,11 @@
 ## 软件开发 / omem / Web 应用 / 工作区入口
 
 - [知识库阅读与整理入口重设计](knowledge/articles/cf724b52fd6fb802f1016d1b227c60cd6ebdbb9c39062c027b484354f403a36f.md)
+
+## 软件开发 / omem / 服务端 / 检索 / 统一检索接口
+
+- [统一检索：从多路召回到可读证据](knowledge/articles/0f4c98f99ec08ee9f67bc4c9abbbec7193e9e0c6a38384e2306d9c1cf84a9f03.md)
+- [统一检索端口：让原件、知识与已应用状态共享查询合同](knowledge/articles/e1aefe156d02f69476a443ae16951b1e4d0f5e30e2f93765c433725e810452db.md)
 
 ## 软件开发 / omem / Web 应用 / 证据阅读 / 递归证据追踪
 
