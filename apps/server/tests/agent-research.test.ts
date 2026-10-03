@@ -18,6 +18,7 @@ it("exposes aliases, receivers and branch context without asserting that a call 
       "export function boot(config) {",
       "  const worker = config.enabled ? new Delivery(config) : null;",
       "  if (config.ready) { worker?.start(); }",
+      "  if (probe()) { return; }",
       "}",
     ].join("\n"),
   );
@@ -46,6 +47,7 @@ it("exposes aliases, receivers and branch context without asserting that a call 
       }),
     ]),
   });
+  expect(parsed.calls.find(c => c.callee === "probe")?.context?.some(c => c.kind.startsWith("surrounding-condition"))).toBe(false);
 });
 
 it("serves a fixed original and submission, then releases task copies without removing canonical evidence or audit", async () => {
