@@ -65,7 +65,7 @@
         "全文、中文短词、符号、向量、记忆与知识分别帮助解决什么问题？",
         "命中一个片段后怎样补上下文？",
         "助手如何使用来源和进一步查询？",
-        "怎样单独选择问答模型，快模型实际节省了什么时间、还有什么不足？",
+        "助手怎样按问题补齐关键条件，何时独立核对答案？",
         "当前中文模型、重排、时间检索有哪些实际限制？"
       ],
       "entryPaths": [
@@ -78,7 +78,8 @@
         "apps/server/src/assistant/research.ts",
         "apps/server/src/knowledge/research-snapshot.ts",
         "apps/server/src/config.ts",
-        "docs/reader-first/fast-assistant.md"
+        "docs/reader-first/answer-investigation.md",
+        "apps/server/src/assistant/answer-review.ts"
       ],
       "topicPath": [
         "软件开发",
