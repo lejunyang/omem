@@ -108,7 +108,7 @@ const digest = () =>
 const config = loadReviewCodeModelConfig();
 if (config.transport !== "acp")
   throw Error("Assistant comparison requires an ACP configuration");
-const models = option("models", "gpt-5.6-luna,gpt-5.6-sol")
+const models = option("models", "gpt-5.6-sol")
   .split(",")
   .filter(Boolean);
 const report: Record<string, any> = {

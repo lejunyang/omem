@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.js";
 import { UnifiedRetrieval } from "../src/retrieval/unified.js";
-import { markdownPassages, RetrievalProjection } from "../src/retrieval/units.js";
+import {
+  markdownPassages,
+  RetrievalProjection,
+} from "../src/retrieval/units.js";
 import { KnowledgeRepository } from "../src/knowledge/repository.js";
 import { researchSnapshot } from "../src/knowledge/research-snapshot.js";
 import { DatabaseSync } from "node:sqlite";
@@ -101,7 +104,7 @@ it("uses persisted roles before the result limit and lets the reader explicitly 
   );
   const answer = await retrieval.search({
     text: "配送失败重试",
-    purpose: "concept",
+    purpose: "implementation",
     limit: 1,
   });
   expect(answer[0]?.target).toMatchObject({ revisionId: implemented.id });
@@ -111,8 +114,28 @@ it("uses persisted roles before the result limit and lets the reader explicitly 
     limit: 1,
   });
   expect(plans[0]?.target).toMatchObject({ revisionId: plan.id });
+  // A classification is not a global quality penalty. General/concept search
+  // keeps the same relevance score as an explicitly requested plan.
+  const general = await retrieval.search({
+    text: "配送失败重试",
+    purpose: "concept",
+    diversify: false,
+  });
+  const planScore = general.find(
+    (h) => h.target.kind === "source" && h.target.revisionId === plan.id,
+  )?.score;
   // Updating only navigation metadata invalidates the projection too.
   store.descriptions.save(plan.id, description({ role: "record" }), "user", 1);
+  const changedRole = await retrieval.search({
+    text: "配送失败重试",
+    purpose: "concept",
+    diversify: false,
+  });
+  expect(
+    changedRole.find(
+      (h) => h.target.kind === "source" && h.target.revisionId === plan.id,
+    )?.score,
+  ).toBe(planScore);
   expect(
     await retrieval.search({ text: "配送失败重试", materialRoles: ["plan"] }),
   ).toEqual([]);
@@ -206,22 +229,52 @@ it("carries descriptions into the permitted Agent snapshot without unrelated met
 });
 
 it("reuses admitted source indices but rebuilds outdated annotations and excludes hidden owners", async () => {
-  const {store, dir} = setup();
-  const kept = capture(store,"public","配送规则：发货前可修改地址。"),
-    hidden = capture(store,"hidden","秘密配送安排，不可公开。");
-  store.descriptions.save(kept.id,description({role:"plan",status:"proposed"}),"user",0);
+  const { store, dir } = setup();
+  const kept = capture(store, "public", "配送规则：发货前可修改地址。"),
+    hidden = capture(store, "hidden", "秘密配送安排，不可公开。");
+  store.descriptions.save(
+    kept.id,
+    description({ role: "plan", status: "proposed" }),
+    "user",
+    0,
+  );
   new RetrievalProjection(store.db).sync();
   // The source index is now stale, while the immutable material is unchanged.
-  store.descriptions.save(kept.id,description({role:"reference",status:"current"}),"user",1);
+  store.descriptions.save(
+    kept.id,
+    description({ role: "reference", status: "current" }),
+    "user",
+    1,
+  );
   const repository = new KnowledgeRepository(store);
-  const db = researchSnapshot({repository,materials:repository.materials().filter(m=>m.revisionId===kept.id),articles:[],file:join(dir,"warm.sqlite"),visible:id=>kept.fragments.some(f=>f.id===id)});
-  const retrieval = new UnifiedRetrieval(db,undefined,undefined,true);
+  const db = researchSnapshot({
+    repository,
+    materials: repository.materials().filter((m) => m.revisionId === kept.id),
+    articles: [],
+    file: join(dir, "warm.sqlite"),
+    visible: (id) => kept.fragments.some((f) => f.id === id),
+  });
+  const retrieval = new UnifiedRetrieval(db, undefined, undefined, true);
   try {
-    const result = await retrieval.search({text:"配送",materialRoles:["reference"]});
+    const result = await retrieval.search({
+      text: "配送",
+      materialRoles: ["reference"],
+    });
     expect(result).toHaveLength(1);
     expect(result[0]!.materialDescription?.description.status).toBe("current");
-    expect(result[0]!.target).toMatchObject({revisionId:kept.id});
-    expect(db.prepare("SELECT 1 FROM retrieval_units WHERE owner=?").get("source:"+hidden.sourceId)).toBeUndefined();
-    expect(db.prepare("SELECT 1 FROM retrieval_units_fts WHERE body MATCH '秘密'").get()).toBeUndefined();
-  } finally {await retrieval.close();db.close();}
+    expect(result[0]!.target).toMatchObject({ revisionId: kept.id });
+    expect(
+      db
+        .prepare("SELECT 1 FROM retrieval_units WHERE owner=?")
+        .get("source:" + hidden.sourceId),
+    ).toBeUndefined();
+    expect(
+      db
+        .prepare("SELECT 1 FROM retrieval_units_fts WHERE body MATCH '秘密'")
+        .get(),
+    ).toBeUndefined();
+  } finally {
+    await retrieval.close();
+    db.close();
+  }
 });

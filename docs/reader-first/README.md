@@ -14,6 +14,7 @@
 - [Agent 自主研究](agent-research.md)：材料工作区、原生工具/skills/MCP、会话与独立补查。
 - [助手检索调研与实际内容](assistant-search-research.md)：新问题究竟命中了什么，以及成熟方法如何进入本项目。
 - [个人记忆与跟进全流程](assistant-memory-flow.md)：生活约定的保存、问答、换版、记忆更新和持续跟进。
+- [按问题调查与答案复核](answer-investigation.md)：Sol 如何选择能够回答问题的材料、补齐关键条件，以及独立补查的能力与限制。
 - [快模型自主问答](fast-assistant.md)：Luna 与 Sol 共用材料工具的实际比较、独立配置、快照准备优化和质量判断。
 - [目标流程](architecture.md)：材料、检索、代码研究、知识与记忆如何协作。
 - [写作与阅读](writing.md)：读者任务、页面模板、引用和视觉规范。

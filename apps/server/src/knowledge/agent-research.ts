@@ -4,7 +4,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync, writeFileSync, appendFileSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  writeFileSync,
+  appendFileSync,
+  rmSync,
+  copyFileSync,
+} from "node:fs";
 import {
   dirname,
   join,
@@ -24,7 +30,11 @@ import { materialRoles } from "../../../../packages/contracts/src/material-descr
 import { loadChineseEmbedding } from "../retrieval/embedding.js";
 import { loadChineseReranker } from "../retrieval/reranker.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
-import { materialSections, fragmentPositions, containingSection } from "./structure.js";
+import {
+  materialSections,
+  fragmentPositions,
+  containingSection,
+} from "./structure.js";
 import { parseFile } from "../code/parse.js";
 import {
   KnowledgeRepository,
@@ -32,6 +42,7 @@ import {
   type KnowledgeArticle,
 } from "./repository.js";
 import { researchSnapshot } from "./research-snapshot.js";
+import { MaterialDescriptions } from "../source-profile/descriptions.js";
 
 type Entry = {
   material: KnowledgeMaterial;
@@ -52,6 +63,18 @@ const page = {
 const codeFile = (m: KnowledgeMaterial) =>
   /\.(?:[cm]?[jt]sx?|vue|py|go|rs|sh|css)$/.test(m.path ?? m.title);
 
+export type ResearchSnapshot = {
+  file: string;
+  materials: KnowledgeMaterial[];
+  articles: KnowledgeArticle[];
+};
+export type ResearchTool = {
+  name: string;
+  description: string;
+  shape: z.ZodRawShape;
+  run: (args: any, snapshot: ResearchSnapshot) => unknown | Promise<unknown>;
+};
+
 export async function prepareAgentResearch(input: {
   repository: KnowledgeRepository;
   materials: KnowledgeMaterial[];
@@ -59,6 +82,10 @@ export async function prepareAgentResearch(input: {
   workspace: string;
   schema: z.ZodType;
   validate: (output: unknown) => unknown;
+  /** Internal only: an independent reader uses the author's sealed snapshot,
+   * including memory/history, never a second view of the changing live store. */
+  snapshot?: ResearchSnapshot;
+  tools?: ResearchTool[];
   retrievalConfig?: RetrievalConfig;
   /** Host policy; native files and MCP share this same snapshot scope. */
   visible?: (fragmentId: string) => boolean;
@@ -159,18 +186,25 @@ export async function prepareAgentResearch(input: {
       images: e.images,
       description: repository.store.descriptions.get(e.material.revisionId),
     }));
+    const databaseFile = join(workspace, "snapshot.sqlite");
+    if (input.snapshot) copyFileSync(input.snapshot.file, databaseFile);
+    const db = input.snapshot
+      ? new DatabaseSync(databaseFile, { readOnly: true })
+      : researchSnapshot({
+          ...input,
+          file: databaseFile,
+          includeUnanchoredState:
+            input.includeUnanchoredState ?? !input.visible,
+        });
+    databaseHandle = db;
+    const descriptions = new MaterialDescriptions(db);
+    for (const item of catalog)
+      item.description = descriptions.get(item.revision);
     writeFileSync(
       join(workspace, "catalog.json"),
       JSON.stringify(catalog, null, 2),
       { mode: 0o600 },
     );
-    const databaseFile = join(workspace, "snapshot.sqlite");
-    const db = researchSnapshot({
-      ...input,
-      file: databaseFile,
-      includeUnanchoredState: input.includeUnanchoredState ?? !input.visible,
-    });
-    databaseHandle = db;
     const admittedArticles = input.articles.filter((a) =>
       db
         .prepare("SELECT 1 FROM knowledge_revisions WHERE id=?")
@@ -244,6 +278,8 @@ export async function prepareAgentResearch(input: {
         related_materials: "查看材料关联",
         material_history: "对比历史版本",
         read_image: "查看原始图片",
+        investigation_notes: "整理已查明内容与待解问题",
+        review_answer: "独立核对答案与关键条件",
       };
       if (e.kind === "mcp" || e.kind === "submission")
         input.onActivity?.({
@@ -268,10 +304,12 @@ export async function prepareAgentResearch(input: {
       const exact = entries.get(key);
       if (exact) return exact;
       const matching = [...entries.values()].filter(
-          (e) => e.material.path === key || e.file === resolve(workspace, key),
-        );
+        (e) => e.material.path === key || e.file === resolve(workspace, key),
+      );
       if (matching.length > 1)
-        throw Error(`Ambiguous material path; use one of these exact keys: ${matching.map(e => e.material.key).join(", ")}`);
+        throw Error(
+          `Ambiguous material path; use one of these exact keys: ${matching.map((e) => e.material.key).join(", ")}`,
+        );
       const found = matching[0];
       if (!found)
         throw Error(
@@ -300,7 +338,9 @@ export async function prepareAgentResearch(input: {
           .map((l, i) => `${start + i}: ${l}`)
           .join("\n"),
         outline: materialSections(m),
-        description: catalog.find(item => item.revision === m.revisionId)?.description ?? null,
+        description:
+          catalog.find((item) => item.revision === m.revisionId)?.description ??
+          null,
         images: e.images,
         provenance: {
           source: m.namespace,
@@ -357,6 +397,15 @@ export async function prepareAgentResearch(input: {
           },
         );
       }
+      for (const extra of input.tools ?? []) {
+        tool(extra.name, extra.description, extra.shape, (args) =>
+          extra.run(args, {
+            file: databaseFile,
+            materials: input.materials,
+            articles: admittedArticles,
+          }),
+        );
+      }
       tool(
         "list_materials",
         "Discover fixed originals with readable file paths, provenance and line counts. Paginate or filter by title/path/type.",
@@ -402,20 +451,36 @@ export async function prepareAgentResearch(input: {
       tool(
         "read_section",
         "Read the complete chapter or enclosing code symbol at a search hit's atLine, without guessing a title or reading from line 1. Alternatively use an exact outline title. Omit both to get the outline. Keys and catalog paths accepted.",
-        { key: z.string(), section: z.string().optional(), atLine: z.number().int().positive().optional() },
+        {
+          key: z.string(),
+          section: z.string().optional(),
+          atLine: z.number().int().positive().optional(),
+        },
         ({ key, section, atLine }) => {
           const m = entry(key).material,
             outline = materialSections(m);
           if (atLine !== undefined) {
             if (section) throw Error("Use either atLine or section, not both");
-            if (atLine > m.lineCount) throw Error(`Invalid line; ${m.title} has ${m.lineCount} lines`);
+            if (atLine > m.lineCount)
+              throw Error(`Invalid line; ${m.title} has ${m.lineCount} lines`);
             const enclosing = containingSection(m, atLine);
-            if (!enclosing) return { key: m.key, atLine, outline, hint: "This line is outside a chapter or symbol. Use read_material with the returned line range you need." };
+            if (!enclosing)
+              return {
+                key: m.key,
+                atLine,
+                outline,
+                hint: "This line is outside a chapter or symbol. Use read_material with the returned line range you need.",
+              };
             return read(m.key, enclosing.startLine, enclosing.endLine);
           }
           if (!section) return { key: m.key, outline };
           const matches = outline.filter((s) => s.title === section);
-          if (matches.length > 1) return { key: m.key, outline: matches, hint: "Several sections share this title. Use atLine to select the intended section." };
+          if (matches.length > 1)
+            return {
+              key: m.key,
+              outline: matches,
+              hint: "Several sections share this title. Use atLine to select the intended section.",
+            };
           const s = matches[0];
           if (!s) throw Error("Section missing; choose an exact outline title");
           return read(m.key, s.startLine, s.endLine);
@@ -426,16 +491,32 @@ export async function prepareAgentResearch(input: {
         "Hybrid lexical/Chinese semantic search within this snapshot. For code navigation put the symbol in query and set codeIntent to definition or callers. Callers are name-level AST candidates, not type-resolved links; aliases/dynamic calls may be missing. Read the enclosing operation to confirm. Empty results mean no match in scope; refine concepts or use native Grep.",
         {
           query: z.string(),
-          keys: z.array(z.string()).optional().describe("Scope to exact material keys or paths returned by reading/search tools. Unknown or ambiguous locators return an error, never silently an empty search."),
+          keys: z
+            .array(z.string())
+            .optional()
+            .describe(
+              "Scope to exact material keys or paths returned by reading/search tools. Unknown or ambiguous locators return an error, never silently an empty search.",
+            ),
           kind: z.enum(["all", "code", "document"]).default("all"),
           purpose: z.enum(retrievalPurposes).default("balanced"),
           codeIntent: z.enum(codeIntents).optional(),
           materialRoles: z.array(z.enum(materialRoles)).optional(),
-          effectiveAt: z.iso.datetime({offset:true}).optional(),
+          effectiveAt: z.iso.datetime({ offset: true }).optional(),
           limit: z.number().int().min(1).max(50).default(10),
         },
-        async ({ query, keys, kind, limit, purpose, codeIntent, materialRoles, effectiveAt }) => {
-          const selectedKeys = keys ? new Set(keys.map((key: string) => entry(key).material.key)) : undefined;
+        async ({
+          query,
+          keys,
+          kind,
+          limit,
+          purpose,
+          codeIntent,
+          materialRoles,
+          effectiveAt,
+        }) => {
+          const selectedKeys = keys
+            ? new Set(keys.map((key: string) => entry(key).material.key))
+            : undefined;
           ready ??= config.enabled
             ? retrieval.indexBatch(0).catch((error) =>
                 record({
@@ -460,7 +541,8 @@ export async function prepareAgentResearch(input: {
             visible,
             purpose,
             codeIntent,
-            materialRoles, effectiveAt,
+            materialRoles,
+            effectiveAt,
             kinds: ["source" as const],
           };
           const hits = await retrieval.search(queryInput);
@@ -490,7 +572,9 @@ export async function prepareAgentResearch(input: {
                   description: h.materialDescription,
                   headingPath: h.headingPath,
                   outline: materialSections(f.material).filter(
-                    (s) => s.startLine <= target.endLine && s.endLine >= target.startLine,
+                    (s) =>
+                      s.startLine <= target.endLine &&
+                      s.endLine >= target.startLine,
                   ),
                 },
               ];
@@ -505,7 +589,7 @@ export async function prepareAgentResearch(input: {
           query: z.string(),
           purpose: z.enum(retrievalPurposes).default("concept"),
           materialRoles: z.array(z.enum(materialRoles)).optional(),
-          effectiveAt: z.iso.datetime({offset:true}).optional(),
+          effectiveAt: z.iso.datetime({ offset: true }).optional(),
           limit: z.number().int().min(1).max(30).default(8),
         },
         async ({ query, limit, purpose, materialRoles, effectiveAt }) => {
@@ -524,7 +608,8 @@ export async function prepareAgentResearch(input: {
             limit,
             purpose,
             kinds: ["knowledge"],
-            materialRoles, effectiveAt,
+            materialRoles,
+            effectiveAt,
             visible: (id) => fragments.has(id),
           });
           // Search may return a reviewed background page whose uncited research
@@ -661,7 +746,13 @@ export async function prepareAgentResearch(input: {
               (c) =>
                 !symbol ||
                 c.callee === symbol ||
-                c.callee.endsWith("." + symbol),
+                c.expression === symbol ||
+                c.callee === symbol.split(".").at(-1) ||
+                parsed.imports.some((i) =>
+                  i.bindings?.some(
+                    (b) => b.local === c.callee && b.imported === symbol,
+                  ),
+                ),
             );
             if (symbol && !symbols.length && !calls.length) return [];
             reads.add(m.key);
@@ -671,7 +762,18 @@ export async function prepareAgentResearch(input: {
                 path: entries.get(m.key)!.file,
                 symbols,
                 imports: parsed.imports,
-                calls: calls.map((c) => ({ ...c, status: "candidate" })),
+                calls: calls.map((c) => ({
+                  ...c,
+                  status: "candidate",
+                  importCandidates: parsed.imports.filter((i) =>
+                    i.bindings?.some(
+                      (b) =>
+                        b.local === c.callee ||
+                        b.local === c.receiver?.split(".")[0],
+                    ),
+                  ),
+                  enclosing: containingSection(m, c.rangeStart.line),
+                })),
                 routes: parsed.routes,
                 tests: parsed.tests,
                 relatedKnowledge: [...articles.values()]
@@ -820,7 +922,7 @@ export async function prepareAgentResearch(input: {
         },
         async ({ result }) => {
           try {
-            submitted = input.validate(result);
+            submitted = await input.validate(result);
             record({ kind: "submission", success: true, reads: [...reads] });
             writeFileSync(
               join(workspace, "result.json"),

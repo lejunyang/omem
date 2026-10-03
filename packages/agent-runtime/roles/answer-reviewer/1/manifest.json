@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "role_id": "daily-assistant",
+  "role_id": "answer-reviewer",
   "role_version": "1",
   "profile_ref": "traex",
   "prompt_templates": [
@@ -8,13 +8,13 @@
   ],
   "skill_bundles": [
     {
-      "canonical_name": "omem-assistant-research",
+      "canonical_name": "omem-answer-review",
       "version": "1",
       "load_mode": "native",
-      "artifact_digest": "88017bebb229cc2a2d9b3440b6084f60594fb5d5fed94f15120ad2aad2785f2f"
+      "artifact_digest": "6bd7d3b2d477927d981a43adbdc722c8b8550d23492d59fd2994e57e6548f690"
     }
   ],
-  "output_schema": "AssistantReply.v1",
+  "output_schema": "AnswerReview.v1",
   "tool_policy": {
     "mode": "read_only",
     "allowed_tools": []

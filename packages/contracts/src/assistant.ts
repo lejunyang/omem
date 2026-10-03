@@ -41,3 +41,25 @@ export const assistantReplySchema = z
   })
   .strict();
 export type AssistantReply = z.infer<typeof assistantReplySchema>;
+
+export const answerDraftSchema = assistantReplySchema.pick({
+  answer: true,
+  citations: true,
+});
+export const answerReviewSchema = z
+  .object({
+    summary: z.string(),
+    issues: z.array(
+      z
+        .object({
+          problem: z.string().min(1),
+          whyItMatters: z.string().min(1),
+          suggestion: z.string().min(1),
+          sources: assistantReplySchema.shape.citations,
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+export type AnswerDraft = z.infer<typeof answerDraftSchema>;
+export type AnswerReview = z.infer<typeof answerReviewSchema>;

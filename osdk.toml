@@ -64,7 +64,7 @@ description = "Compare real answering agents on a frozen material corpus; consum
 [tasks."assistant:compare".options.questions]
 help = "JSON file containing [{id, turns: [question, follow-up]}]"
 [tasks."assistant:compare".options.models]
-default = "gpt-5.6-luna,gpt-5.6-sol"
+default = "gpt-5.6-sol"
 help = "Comma-separated model IDs; each is validated through ACP"
 [tasks."assistant:compare".options.effort]
 default = "medium"

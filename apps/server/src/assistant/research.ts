@@ -10,6 +10,7 @@ import { materialSections } from "../knowledge/structure.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
 import type { AssistantEvidence, AssistantModelPort } from "./runtime.js";
 import { parseAssistantReply } from "./acp-model.js";
+import type { ResearchTool } from "../knowledge/agent-research.js";
 
 export function evidenceForRange(
   material: KnowledgeMaterial,
@@ -47,6 +48,8 @@ export async function prepareAssistantResearch(input: {
   workspace: string;
   retrievalConfig?: RetrievalConfig;
   context: Parameters<AssistantModelPort["generate"]>[0];
+  tools?: ResearchTool[];
+  beforeSubmit?: (answer: string) => void;
 }) {
   const context = input.context,
     visible = context.visible ?? (() => context.visibility === "private");
@@ -72,9 +75,11 @@ export async function prepareAssistantResearch(input: {
     includeUnanchoredState: context.visibility === "private",
     schema: assistantReplySchema,
     onActivity: context.onResearchActivity,
+    tools: input.tools,
     validate: (out) => {
       const parsed = assistantReplySchema.parse(out),
         identities = new Set<string>();
+      input.beforeSubmit?.(parsed.answer);
       if (parsed.create_task && parsed.update_task)
         throw Error("每次只能提议一个事项操作");
       const update = parsed.update_task;
@@ -110,8 +115,14 @@ export async function prepareAssistantResearch(input: {
           !m.fragments.every((f) => visible(f.id))
         )
           throw Error(`历史版本不在本次授权材料中：${c.key}`);
-        const item = evidenceForRange({ ...m, key: current.key }, c.startLine, c.endLine, visible);
-        item.materialDescription = input.repository.store.descriptions.get(m.revisionId) ?? undefined;
+        const item = evidenceForRange(
+          { ...m, key: current.key },
+          c.startLine,
+          c.endLine,
+          visible,
+        );
+        item.materialDescription =
+          input.repository.store.descriptions.get(m.revisionId) ?? undefined;
         citations.set(c.id, item.citationId!);
         return item;
       });
