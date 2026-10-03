@@ -33,3 +33,5 @@
 `config/wiki-pages.json` 是本仓库的实验选题数据，不是所有知识库必须使用的模板。分类和新文章存入个人数据目录；人工编写的跨领域验收输入放在隔离 runtime，不能冒充用户真实笔记。
 
 中文专用重排器已由 osdk 锁定为 `relevance-zh`，目前不默认启用。可运行 `osdk run retrieval:verify --reranker` 检查真实权重；要在统一检索和知识调查中对照，在 retrieval 配置增加 `"reranker": "relevance-zh"` 后重启。它不改变 embedding 身份，不要求重建现有向量，但不能用四个小样例声称全库效果通过。
+
+另一实验选项是 `relevance-zh-v2`（BGE reranker v2-m3 q8）：先执行 `osdk model sync relevance-zh-v2` 和 `osdk model verify relevance-zh-v2 --json`，再显式配置 `"reranker": "relevance-zh-v2"`。运行仍禁止下载。默认检索配置没有重排器；两个模型的本机收益与耗时应先看[同库评估](retrieval-evaluation.md)。Qwen3 和 Zoekt 尚未接入，不能把调研清单当成可用配置。
