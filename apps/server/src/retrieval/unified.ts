@@ -8,6 +8,7 @@ import {
   exactLookup,
   bestSnippet,
   relevance,
+  querySymbols,
 } from "./relevance.js";
 import {
   RetrievalProjection,
@@ -296,11 +297,56 @@ export class UnifiedRetrieval extends KeywordRetrieval {
   private namedDefinition(unit: RetrievalUnit, q: SearchQuery) {
     if (unit.kind !== "source" || unit.subtype !== "code") return false;
     const name = unit.headingPath.at(-1)?.toLowerCase();
-    return queryTerms(q.text).some(
+    return querySymbols(q.text).some(
       (term) =>
         /^[a-z_$][\w$.]*$/.test(term) &&
         (name === term || name?.endsWith("." + term)),
     );
+  }
+  private symbols(q: SearchQuery): ScoredUnit[] {
+    const names = querySymbols(q.text);
+    if (!names.length) return [];
+    const definition = "lower(json_extract(heading_path, '$[#-1]'))";
+    // AST-backed operation names have their own route. They must not depend on
+    // a whole-question BM25 rank surviving its candidate cutoff.
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM retrieval_units
+      WHERE kind='source' AND subtype='code' AND (${names
+        .map(
+          () =>
+            `(${definition}=? OR substr(${definition},-length(?)-1)='.'||?)`,
+        )
+        .join(" OR ")})
+      ORDER BY owner,id`,
+      )
+      .all(...names.flatMap((name) => [name, name, name]));
+    return rows
+      .map(decodeUnit)
+      .filter((unit) => this.eligible(unit, q))
+      .map((unit) => ({
+        unit,
+        score: 1,
+        routes: ["code-symbol"],
+      }));
+  }
+  private fuse(branches: ScoredUnit[][]): ScoredUnit[] {
+    const fused = new Map<string, ScoredUnit>();
+    for (const branch of branches) {
+      const scale = Math.max(...branch.map((h) => h.score), 1e-6);
+      branch.forEach((h, rank) => {
+        const prior = fused.get(h.unit.id);
+        const quality = h.routes.includes("semantic")
+          ? (h.score - 0.3) / 0.7
+          : h.score / scale;
+        fused.set(h.unit.id, {
+          ...h,
+          score: (prior?.score ?? 0) + quality / (61 + rank),
+          routes: [...new Set([...(prior?.routes ?? []), ...h.routes])],
+        });
+      });
+    }
+    return [...fused.values()];
   }
   private lexical(q: SearchQuery): ScoredUnit[] {
     this.sync();
@@ -353,10 +399,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           {
             unit,
             score: -Number(row.rank),
-            routes: [
-              "bm25",
-              ...(exact && unit.subtype === "code" ? ["code-symbol"] : []),
-            ],
+            routes: ["bm25"],
           },
         ];
       })
@@ -370,8 +413,11 @@ export class UnifiedRetrieval extends KeywordRetrieval {
   async search(q: SearchQuery): Promise<RetrievalHit[]> {
     await this.syncAsync();
     const lexical = this.lexical(q);
+    const symbols = this.symbols(q);
+    const lexicalOnly = () =>
+      symbols.length ? this.fuse([lexical, symbols]) : lexical;
     if (!q.text.trim() || exactLookup(q.text) || !this.model)
-      return this.finish(lexical, q);
+      return this.finish(lexicalOnly(), q);
     const dense = new Map<string, ScoredUnit>();
     try {
       const [raw] = await this.model.embed([q.text.slice(0, 400)], "query"),
@@ -414,7 +460,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       }
     } catch (error) {
       this.error = String(error);
-      return this.finish(lexical, q);
+      return this.finish(lexicalOnly(), q);
     }
     const sorted = [...dense.values()].sort((a, b) => b.score - a.score);
     const floor = Math.max(0.4, (sorted[0]?.score ?? 1) - 0.075);
@@ -426,28 +472,20 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           a.score * this.applicability(a.unit, q),
       )
       .slice(0, 100);
-    const fused = new Map<string, ScoredUnit>(),
-      scale = Math.max(...lexical.map((h) => h.score), 1e-6);
-    for (const branch of [lexical.slice(0, 100), accepted])
-      branch.forEach((h, rank) => {
-        const prior = fused.get(h.unit.id);
-        const quality = h.routes.includes("semantic")
-          ? (h.score - 0.3) / 0.7
-          : h.score / scale;
-        fused.set(h.unit.id, {
-          ...h,
-          score: (prior?.score ?? 0) + quality / (61 + rank),
-          routes: [...new Set([...(prior?.routes ?? []), ...h.routes])],
-        });
-      });
-    let hits = [...fused.values()];
+    let hits = this.fuse([lexical.slice(0, 100), accepted, symbols]);
     if (this.loadReranker && hits.length) {
       try {
         this.rankingLoad ??= this.loadReranker().then(
           (model) => (this.reranker = model),
         );
         const model = await this.rankingLoad,
-          pool = hits.sort((a, b) => b.score - a.score).slice(0, 40);
+          pool = hits
+            .sort(
+              (a, b) =>
+                Number(b.routes.includes("code-symbol")) -
+                  Number(a.routes.includes("code-symbol")) || b.score - a.score,
+            )
+            .slice(0, 40);
         const scores = await model.score(
           q.text,
           pool.map(
@@ -584,8 +622,11 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     return output;
   }
   override searchSources(q: SearchQuery): SourceCandidate[] {
+    const sourceQuery = { ...q, kinds: ["source" as const] };
+    const lexical = this.lexical(sourceQuery),
+      symbols = this.symbols(sourceQuery);
     return this.sources(
-      this.finish(this.lexical({ ...q, kinds: ["source"] }), q),
+      this.finish(symbols.length ? this.fuse([lexical, symbols]) : lexical, q),
       q,
     );
   }
