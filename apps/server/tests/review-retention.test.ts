@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import {
   reviewCleanupPlan,
   pruneCandidates,
+  beginReviewRun,
 } from "../../../scripts/review-retention.js";
 
 it("bounds completed verification outputs while preserving cited reports, active runs and source history", () => {
@@ -60,6 +61,9 @@ it("bounds completed verification outputs while preserving cited reports, active
       ".repo-review/knowledge/articles/old.json",
       "fixed cited article",
     );
+    expect(() =>
+      beginReviewRun(join(root, ".repo-review/runtime/data"), "assistant"),
+    ).toThrow("empty");
     const candidates = reviewCleanupPlan(root);
     expect(candidates).toHaveLength(4); // 3 obsolete reports, 1 completed run
     expect(existsSync(reports[1]!)).toBe(true); // preview has no effects
