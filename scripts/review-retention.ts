@@ -62,8 +62,13 @@ export function completedReviewRuns(
     }));
 }
 export function beginReviewRun(directory: string, kind: string) {
-  if (existsSync(join(directory, marker)))
-    throw Error("Choose a fresh review output directory");
+  if (
+    existsSync(directory) &&
+    (lstatSync(directory).isSymbolicLink() || readdirSync(directory).length)
+  )
+    throw Error(
+      "Choose a fresh, empty review output directory; existing files are not owned by this run",
+    );
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const run: Run = {
     version: 1,

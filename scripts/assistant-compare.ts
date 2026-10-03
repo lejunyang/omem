@@ -64,13 +64,13 @@ const directory = resolve(
   ),
 );
 const dataDir = join(directory, "data");
-mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 const file = join(dataDir, "omem.sqlite");
 if (existsSync(file))
   throw Error(
     "Choose a fresh output directory; previous results are preserved",
   );
 const finishRun = beginReviewRun(directory, "assistant");
+mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 const source = new DatabaseSync(join(sourceDir, "omem.sqlite"), {
   readOnly: true,
 });
