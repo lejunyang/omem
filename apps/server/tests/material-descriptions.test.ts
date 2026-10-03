@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.js";
 import { UnifiedRetrieval } from "../src/retrieval/unified.js";
-import { markdownPassages } from "../src/retrieval/units.js";
+import { markdownPassages, RetrievalProjection } from "../src/retrieval/units.js";
 import { KnowledgeRepository } from "../src/knowledge/repository.js";
 import { researchSnapshot } from "../src/knowledge/research-snapshot.js";
 import { DatabaseSync } from "node:sqlite";
@@ -203,4 +203,25 @@ it("carries descriptions into the permitted Agent snapshot without unrelated met
   expect(
     new RoleBundleRegistry().load("material-cataloger").manifest.output_schema,
   ).toBe("MaterialDescriptions.v1");
+});
+
+it("reuses admitted source indices but rebuilds outdated annotations and excludes hidden owners", async () => {
+  const {store, dir} = setup();
+  const kept = capture(store,"public","配送规则：发货前可修改地址。"),
+    hidden = capture(store,"hidden","秘密配送安排，不可公开。");
+  store.descriptions.save(kept.id,description({role:"plan",status:"proposed"}),"user",0);
+  new RetrievalProjection(store.db).sync();
+  // The source index is now stale, while the immutable material is unchanged.
+  store.descriptions.save(kept.id,description({role:"reference",status:"current"}),"user",1);
+  const repository = new KnowledgeRepository(store);
+  const db = researchSnapshot({repository,materials:repository.materials().filter(m=>m.revisionId===kept.id),articles:[],file:join(dir,"warm.sqlite"),visible:id=>kept.fragments.some(f=>f.id===id)});
+  const retrieval = new UnifiedRetrieval(db,undefined,undefined,true);
+  try {
+    const result = await retrieval.search({text:"配送",materialRoles:["reference"]});
+    expect(result).toHaveLength(1);
+    expect(result[0]!.materialDescription?.description.status).toBe("current");
+    expect(result[0]!.target).toMatchObject({revisionId:kept.id});
+    expect(db.prepare("SELECT 1 FROM retrieval_units WHERE owner=?").get("source:"+hidden.sourceId)).toBeUndefined();
+    expect(db.prepare("SELECT 1 FROM retrieval_units_fts WHERE body MATCH '秘密'").get()).toBeUndefined();
+  } finally {await retrieval.close();db.close();}
 });

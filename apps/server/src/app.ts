@@ -32,7 +32,7 @@ import { Store } from "./store.js";
 import { Runs } from "./runs.js";
 import { acp } from "./agents.js";
 import { fileInput, gitInput, larkInput, hookInput } from "./connectors.js";
-import type { Config } from "./config.js";
+import { assistantProfile as selectAssistantProfile, type Config } from "./config.js";
 import { FeedbackService, MemoryService } from "./memory/service.js";
 import { LarkOnboardingService } from "./integrations/lark/onboarding.js";
 import { OMEM_LARK_DEFAULT_CONFIG } from "./integrations/lark/defaults.js";
@@ -58,6 +58,7 @@ export async function buildApp(
     larkRuntime?: LarkRuntimeHost;
   } = {},
 ) {
+  const assistantProfile = selectAssistantProfile(config);
   if (!["127.0.0.1", "localhost", "::1"].includes(config.host) && !config.token)
     throw Error("OMEM_TOKEN is required for a non-loopback bind");
   const app = Fastify({ bodyLimit: 12_000_000, logger: false });
@@ -73,8 +74,6 @@ export async function buildApp(
   // Production assistant uses the real ACP adapter against a configured profile.
   // When no ACP profile can actually run (missing CLI / auth / wrong transport)
   // the adapter raises ModelUnavailableError and the runtime degrades honestly.
-  const assistantProfile =
-    config.profiles.find((p) => p.transport === "acp") ?? null;
   app.get("/api/memory-refreshes", async () =>
     store.db
       .prepare(
@@ -106,7 +105,7 @@ export async function buildApp(
     repository: development?.repository,
     prefix: "/api/knowledge",
     workspace: resolve(config.dataDir, "knowledge-agents"),
-    profile: assistantProfile ?? undefined,
+    profile: config.profiles.find(p => p.transport === "acp"),
     retrievalConfig: config.retrieval,
     retrieval: assistantRetrieval,
   });

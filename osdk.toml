@@ -58,6 +58,24 @@ run = ["pnpm run typecheck", "pnpm run test", "pnpm run build"]
 run = "bun scripts/assistant-memory-flow.ts"
 description = "Verify captured material, native assistant research, memory refresh and ongoing follow-up with real Traex"
 
+[tasks."assistant:compare"]
+run = "bun scripts/assistant-compare.ts"
+description = "Compare real answering agents on a frozen material corpus; consumes model calls"
+[tasks."assistant:compare".options.questions]
+help = "JSON file containing [{id, turns: [question, follow-up]}]"
+[tasks."assistant:compare".options.models]
+default = "gpt-5.6-luna,gpt-5.6-sol"
+help = "Comma-separated model IDs; each is validated through ACP"
+[tasks."assistant:compare".options.effort]
+default = "medium"
+help = "Reasoning effort validated through ACP"
+[tasks."assistant:compare".options.data]
+help = "Source data directory; defaults to personal data or isolated review data"
+[tasks."assistant:compare".options.output]
+help = "Fresh output directory; defaults to an ignored runtime directory"
+[tasks."assistant:compare".flags.review]
+help = "Use the repository input adapter and its captured knowledge"
+
 [tasks.browser]
 run = "pnpm run test:browser"
 [tasks.live-daily]

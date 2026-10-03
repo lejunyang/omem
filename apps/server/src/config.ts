@@ -18,6 +18,10 @@ const timezoneSchema = z
 const schema = z
   .object({
     profiles: z.array(profileSchema).min(1),
+    assistant: z
+      .object({ profileId: z.string().min(1) })
+      .strict()
+      .optional(),
     notifications: z
       .object({
         mode: z.enum(["instant", "digest"]).default("instant"),
@@ -92,6 +96,22 @@ export type Config = Omit<
   host: string;
   port: number;
 };
+
+/** Answering can use a faster agent without changing learning or Wiki writing. */
+export function assistantProfile(
+  config: Pick<Config, "profiles" | "assistant">,
+) {
+  if (!config.assistant)
+    return config.profiles.find((p) => p.transport === "acp") ?? null;
+  const profile = config.profiles.find(
+    (p) => p.id === config.assistant!.profileId,
+  );
+  if (!profile)
+    throw Error(`Assistant profile not found: ${config.assistant.profileId}`);
+  if (profile.transport !== "acp")
+    throw Error(`Assistant profile requires ACP: ${profile.id}`);
+  return profile;
+}
 export function loadConfig() {
   const file = resolve(process.env.OMEM_CONFIG || "omem.local.json");
   const config = schema.parse(
@@ -104,6 +124,7 @@ export function loadConfig() {
   );
   if (new Set(config.profiles.map((p) => p.id)).size !== config.profiles.length)
     throw Error("Duplicate agent profile ID");
+  assistantProfile(config);
   const dataDir = resolve(process.env.OMEM_DATA_DIR || ".omem");
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   return {

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 20;
+export const SUPPORTED_SCHEMA_VERSION = 21;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -1007,6 +1007,10 @@ const retrievalUnitStatements = [
     model_id TEXT NOT NULL, PRIMARY KEY(model_id,unit_id))`,
 ] as const;
 
+const revisionReadIndexStatements = [
+  "CREATE INDEX fragments_revision_ordinal_idx ON fragments(revision_id, ordinal)",
+] as const;
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -1103,6 +1107,7 @@ const migrations: readonly Migration[] = [
   { version: 18, name: "task-follow-up-lifecycle", statements: taskFollowUpStatements, checksum: checksum(taskFollowUpStatements) },
   { version: 19, name: "contextual-retrieval-units", statements: retrievalUnitStatements, checksum: checksum(retrievalUnitStatements) },
   { version: 20, name: "material-descriptions", statements: materialDescriptionStatements, checksum: checksum(materialDescriptionStatements) },
+  { version: 21, name: "revision-fragment-read-index", statements: revisionReadIndexStatements, checksum: checksum(revisionReadIndexStatements) },
 ];
 
 const legacyV1Checksum = createHash("sha256")
