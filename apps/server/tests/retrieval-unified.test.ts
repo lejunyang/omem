@@ -398,6 +398,173 @@ it("keeps a parent explanation tied to its fixed child revision after the child'
   }
 });
 
+it("keeps supported sections after another section changes, including fixed section links and visibility", async () => {
+  const s = setup();
+  const capture = (id: string, text: string) =>
+    s.store.capture({
+      source: "manual",
+      externalId: id,
+      title: id,
+      context: {},
+      parts: [{ type: "text", text }],
+    });
+  try {
+    capture(
+      "consumer",
+      "if (seen(event.id)) return;\nqueue.deliver(event.parcel);",
+    );
+    const original = s.publish();
+    capture("capacity", "每次配送最多五件。\n超过限额时等待下次配送。");
+    const capacity = s.repository
+      .materials()
+      .find((m) => m.title === "capacity")!;
+    const materials = new Map(s.repository.materials().map((m) => [m.key, m]));
+    const article = s.repository.publish({
+      ...original,
+      document: bindKnowledgeQuotes(
+        {
+          ...original.document,
+          sections: [
+            {
+              ...original.document.sections[0]!,
+              body:
+                original.document.sections[0]!.body +
+                "\n\n重复通知会共用同一个配送编号，方便查询进度。[[implementation]]",
+            },
+            {
+              key: "capacity",
+              title: "配送容量",
+              body: "配送每次最多五件。[[capacity]]",
+            },
+          ],
+          citations: [
+            ...original.document.citations,
+            {
+              key: "capacity",
+              label: "配送容量",
+              reason: "一次配送的限额",
+              relation: "explains",
+              quote: "",
+              target: {
+                kind: "material",
+                key: capacity.key,
+                startLine: 1,
+                endLine: 2,
+              },
+            },
+          ],
+        },
+        materials,
+      ),
+      dependencies: [
+        ...original.dependencies,
+        { kind: "material", key: capacity.key, digest: capacity.digest },
+      ],
+    });
+    const publishParent = (key: string, section?: string) =>
+      s.repository.publish({
+        ...article,
+        document: {
+          ...article.document,
+          key,
+          sections: [
+            {
+              key: "overview",
+              title: "配送说明",
+              body: "重复通知仍只配送一次。[[guide]]",
+            },
+          ],
+          citations: [
+            {
+              key: "guide",
+              label: "配送指南",
+              reason: "配送处理",
+              relation: "explains",
+              quote: "",
+              target: {
+                kind: "article",
+                key: article.document.key,
+                ...(section ? { section } : {}),
+              },
+            },
+          ],
+        },
+        dependencies: [
+          {
+            kind: "article",
+            key: article.document.key,
+            digest: article.revision,
+          },
+        ],
+      });
+    const sectionParent = publishParent("section-parent", "dedup");
+    const wholeParent = publishParent("whole-parent");
+    const query = { text: "重复通知 配送", kinds: ["knowledge" as const] };
+    const own = (hits: Awaited<ReturnType<typeof s.retrieval.search>>) =>
+      hits.filter(
+        (h) =>
+          h.target.kind === "knowledge" &&
+          h.target.key === article.document.key,
+      );
+    expect(
+      own(await s.retrieval.search(query)).filter(
+        (h) => h.target.kind === "knowledge" && h.target.section === "dedup",
+      ),
+    ).toHaveLength(1);
+    expect(
+      own(await s.retrieval.search({ ...query, diversify: false })).filter(
+        (h) => h.target.kind === "knowledge" && h.target.section === "dedup",
+      ),
+    ).toHaveLength(2);
+    capture("capacity", "每次配送最多十件。\n超过限额时等待下次配送。");
+    s.repository.refresh();
+    const hits = await s.retrieval.search(query);
+    expect(own(hits)[0]?.target).toMatchObject({
+      revision: article.revision,
+      section: "dedup",
+      reviewState: "needs-review",
+    });
+    expect(own(hits)[0]?.references[0]?.digest).toBe(
+      original.dependencies[0]!.digest,
+    );
+    expect(
+      hits.some(
+        (h) =>
+          h.target.kind === "knowledge" &&
+          h.target.key === sectionParent.document.key,
+      ),
+    ).toBe(true);
+    expect(
+      hits.some(
+        (h) =>
+          h.target.kind === "knowledge" &&
+          h.target.key === wholeParent.document.key,
+      ),
+    ).toBe(false);
+    expect(
+      own(
+        await s.retrieval.search({ text: "配送容量", kinds: ["knowledge"] }),
+      ).some(
+        (h) => h.target.kind === "knowledge" && h.target.section === "capacity",
+      ),
+    ).toBe(false);
+    const hidden = new Set(
+      s.repository
+        .materials()
+        .find((m) => m.key === capacity.key)!
+        .fragments.map((f) => f.id),
+    );
+    expect(
+      await s.retrieval.search({ ...query, visible: (id) => !hidden.has(id) }),
+    ).toEqual([]);
+    capture("consumer", "queue.deliver(event.parcel); // no duplicate guard");
+    s.repository.refresh();
+    expect(await s.retrieval.search(query)).toEqual([]);
+  } finally {
+    await s.close();
+  }
+});
+
 it("lets the assistant cite one of two functions sharing a fragment without selecting the other range", async () => {
   const s = setup();
   try {
@@ -415,7 +582,11 @@ it("lets the assistant cite one of two functions sharing a fragment without sele
     });
     ensureMaterialAliases(s.store.db);
     const material = s.repository.materials()[0]!;
-    s.store.db.prepare("INSERT INTO knowledge_material_aliases(material_key,source_id) VALUES(?,?)").run("library:parcel-operations", material.sourceId);
+    s.store.db
+      .prepare(
+        "INSERT INTO knowledge_material_aliases(material_key,source_id) VALUES(?,?)",
+      )
+      .run("library:parcel-operations", material.sourceId);
     const hits = await Promise.all(
       ["reserveParcel", "releaseParcel"].map((text) =>
         s.retrieval.search({ text, purpose: "implementation" }),
@@ -456,7 +627,13 @@ it("lets the assistant cite one of two functions sharing a fragment without sele
       userText: "这两个函数有什么区别？",
     });
     expect(received?.evidence).toHaveLength(2);
-    expect(received?.evidence.every(e => e.materialKey === "library:parcel-operations" && e.sourceTarget?.key === e.materialKey)).toBe(true);
+    expect(
+      received?.evidence.every(
+        (e) =>
+          e.materialKey === "library:parcel-operations" &&
+          e.sourceTarget?.key === e.materialKey,
+      ),
+    ).toBe(true);
     expect(new Set(received?.evidence.map((e) => e.fragmentId)).size).toBe(1);
     expect(new Set(received?.evidence.map((e) => e.citationId)).size).toBe(2);
     expect(result.turn.selectedEvidence).toHaveLength(1);
@@ -904,7 +1081,13 @@ it("passes readable background to the assistant while keeping original bytes and
     expect(
       received?.background?.find((b) => b.kind === "knowledge")?.text,
     ).toContain("只安排一次运输");
-    expect(received?.background?.find((b) => b.kind === "knowledge")?.target).toMatchObject({ kind: "knowledge", key: "delivery-guide", section: "dedup" });
+    expect(
+      received?.background?.find((b) => b.kind === "knowledge")?.target,
+    ).toMatchObject({
+      kind: "knowledge",
+      key: "delivery-guide",
+      section: "dedup",
+    });
     expect(received?.evidence.map((e) => e.text).join("\n")).toContain(
       "seen(event.id)",
     );
