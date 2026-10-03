@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-03T17:50:47.207Z",
-  "implementationCommit": "c127375db85b12a49b63b35f58dd1c07d2d3b22a",
-  "sourceDigest": "d386992d45164b66af93fad428cfc742b05cf7403f26006c22be0abaacd8eb7b",
+  "recordedAt": "2026-10-03T18:52:51.083Z",
+  "implementationCommit": "7aae95dc2eb6e4ea4fb536ad6925da8f6502b8ce",
+  "sourceDigest": "19e688799ecd07703cd924312a76a6a12077b280bdfb4c82b215d66303b56b2b",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-03T17-50-47-207Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-03T18-52-51-083Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-03T17-50-47-207Z/project.log",
-        "sha256": "70e70564ffaa002a8c58e963df2f368e6a853ebc7b8ea2ce2e56edb84b0e0a58"
+        "log": ".repo-review/runtime/verification/2026-10-03T18-52-51-083Z/project.log",
+        "sha256": "6a7c2b35dd3a65330632f8b7c7652c8d60675a6fa5557aa47f2590509e32c582"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-03T17-50-47-207Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-03T18-52-51-083Z/liveChineseRetrieval.log",
         "sha256": "706af7ca54b86df22c3ddb228955030370a560583b16b1f37bf0502dc05d74c9"
       }
     },
@@ -51,8 +51,8 @@
       "name": "currentKnowledgeReferences",
       "state": "passed",
       "details": {
-        "articles": 132,
-        "citations": 776,
+        "articles": 134,
+        "citations": 774,
         "errors": []
       }
     },
@@ -63,11 +63,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v5",
-        "units": 12780,
+        "units": 13211,
         "semantic": {
           "model": "structure-icu-v5:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 12780,
+          "indexed": 13211,
           "pending": 0,
           "error": null
         },
@@ -95,15 +95,15 @@
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
     "materials": 614,
-    "reviewedMaterials": 127,
-    "pendingMaterials": 487,
-    "currentArticles": 132,
-    "citations": 776,
+    "reviewedMaterials": 130,
+    "pendingMaterials": 484,
+    "currentArticles": 134,
+    "citations": 774,
     "articleLinks": 0,
     "errors": [],
     "restore": {
-      "stale": 372,
-      "restored": 134,
+      "stale": 370,
+      "restored": 136,
       "missing": 3
     },
     "incomplete": true,
@@ -119,8 +119,8 @@
         ],
         "status": 200,
         "baselineTop5": [
-          "docs/reader-first/component-integration.md",
           "docs/reader-first/retrieval-redesign.md",
+          "docs/reader-first/component-integration.md",
           "README.md",
           "docs/reader-first/retrieval-redesign.md",
           "docs/reader-first/component-integration.md"
@@ -129,16 +129,8 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 3,
-        "elapsedMs": 1534,
+        "elapsedMs": 1676,
         "top5": [
-          {
-            "path": "docs/reader-first/component-integration.md",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "真实 HTTP 抽查进一步发现章节级引用扩散。现用 marked 解析读者段落、列表项和表格行，仅从实际匹配的文字回溯其引用；代码块/图与同章无关段落不继承分数。跨文章引用有明确章节时保留该章背景，未指定章节则继续找相关段落。这个修复处理了别名回原件的错误扩散，不宣称已解决中文语义、当前/历史适用性和跨文件功能理解。"
-          },
           {
             "path": "docs/reader-first/retrieval-redesign.md",
             "routes": [
@@ -146,6 +138,14 @@
               "purpose:balanced"
             ],
             "snippet": "全文排序复用 SQLite FTS5 的 BM25，对中文先用 ICU 分词。语义检索沿用 osdk 管理的中文 BGE，结构预处理版本进入向量身份，与旧 Fragment 向量隔离。来源或文章当前版本变化时只替换对应投影；原始历史和固定引用保留。"
+          },
+          {
+            "path": "docs/reader-first/component-integration.md",
+            "routes": [
+              "bm25",
+              "purpose:balanced"
+            ],
+            "snippet": "真实 HTTP 抽查进一步发现章节级引用扩散。现用 marked 解析读者段落、列表项和表格行，仅从实际匹配的文字回溯其引用；代码块/图与同章无关段落不继承分数。跨文章引用有明确章节时保留该章背景，未指定章节则继续找相关段落。这个修复处理了别名回原件的错误扩散，不宣称已解决中文语义、当前/历史适用性和跨文件功能理解。"
           },
           {
             "path": "README.md",
@@ -192,7 +192,7 @@
         "passed": false,
         "firstExpectedRank": 9,
         "uniquePathsAt5": 5,
-        "elapsedMs": 538,
+        "elapsedMs": 764,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -259,7 +259,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 714,
+        "elapsedMs": 698,
         "top5": [
           {
             "path": "apps/server/tests/retrieval-unified.test.ts",
@@ -322,7 +322,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 4,
-        "elapsedMs": 120,
+        "elapsedMs": 150,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -383,7 +383,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 121,
+        "elapsedMs": 135,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -449,7 +449,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 5,
-        "elapsedMs": 700,
+        "elapsedMs": 752,
         "top5": [
           {
             "path": "design.md",
