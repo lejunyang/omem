@@ -649,6 +649,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       );
     };
     const owners = new Map<string, number>(),
+      sections = new Set<string>(),
       seen = new Set<string>(),
       output: RetrievalHit[] = [];
     const terms = queryTerms(q.text);
@@ -672,12 +673,18 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       if (!this.eligible(h.unit, q)) continue;
       const u = h.unit,
         fingerprint = u.text.replace(/\s+/g, " ").trim();
+      const section =
+        u.target.kind === "knowledge"
+          ? `${u.target.revision}:${u.target.section}`
+          : null;
       if (
         q.diversify !== false &&
         q.codeIntent !== "callers" &&
-        ((owners.get(u.owner) ?? 0) >= 2 || seen.has(fingerprint))
+        ((section ? sections.has(section) : (owners.get(u.owner) ?? 0) >= 2) ||
+          seen.has(fingerprint))
       )
         continue;
+      if (section) sections.add(section);
       owners.set(u.owner, (owners.get(u.owner) ?? 0) + 1);
       seen.add(fingerprint);
       const text = (

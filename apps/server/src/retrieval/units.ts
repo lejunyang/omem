@@ -572,7 +572,7 @@ export class RetrievalProjection {
     // All material used while writing must remain in the visibility scope, even
     // when only the cited original inputs decide whether prose can be recalled.
     const availability = new WeakMap<KnowledgeArtifact, boolean>();
-    const support = new WeakMap<KnowledgeArtifact, boolean>();
+    const support = new WeakMap<KnowledgeArtifact, Map<string, boolean>>();
     const freshness = new WeakMap<KnowledgeArtifact, boolean>();
     const inputsAvailable = (a: KnowledgeArtifact): boolean => {
       const prior = availability.get(a);
@@ -586,17 +586,30 @@ export class RetrievalProjection {
       availability.set(a, available);
       return available;
     };
-    const supported = (a: KnowledgeArtifact): boolean => {
-      const prior = support.get(a);
+    // Keep the complete section as the support boundary: a paragraph without
+    // its own citation may rely on another paragraph in the same explanation.
+    // A changed citation in a different section must not erase this one.
+    const supported = (a: KnowledgeArtifact, sectionKey: string): boolean => {
+      let sections = support.get(a);
+      if (!sections) support.set(a, (sections = new Map()));
+      const prior = sections.get(sectionKey);
       if (prior !== undefined) return prior;
-      support.set(a, false);
+      sections.set(sectionKey, false);
       if (
         a.review.verdict !== "accepted" ||
         invalidated.has(a.document.key) ||
         !inputsAvailable(a)
       )
         return false;
-      const supportedInputs = a.document.citations.every((c) => {
+      const section = a.document.sections.find((s) => s.key === sectionKey);
+      if (!section) return false;
+      const citationKeys = [...section.body.matchAll(/\[\[([\w-]+)\]\]/g)].map(
+        (match) => match[1],
+      );
+      if (!citationKeys.length) return false;
+      const supportedInputs = citationKeys.every((key) => {
+        const c = a.document.citations.find((citation) => citation.key === key);
+        if (!c) return false;
         const dependency = a.dependencies.find(
           (d) => d.kind === c.target.kind && d.key === c.target.key,
         );
@@ -604,9 +617,14 @@ export class RetrievalProjection {
         if (c.target.kind === "material")
           return materials.get(c.target.key)?.digest === dependency.digest;
         const child = fixedArticle(c.target.key, dependency.digest);
-        return !!child && supported(child.artifact);
+        if (!child) return false;
+        return c.target.section
+          ? supported(child.artifact, c.target.section)
+          : child.artifact.document.sections.every((s) =>
+              supported(child.artifact, s.key),
+            );
       });
-      support.set(a, supportedInputs);
+      sections.set(sectionKey, supportedInputs);
       return supportedInputs;
     };
     const current = (a: KnowledgeArtifact): boolean => {
@@ -628,7 +646,9 @@ export class RetrievalProjection {
       return fresh;
     };
     const validArticles = new Map(
-      [...articles].filter(([, a]) => supported(a.artifact)),
+      [...articles].filter(([, a]) =>
+        a.artifact.document.sections.some((s) => supported(a.artifact, s.key)),
+      ),
     );
     const articleVisibility = (
       a: KnowledgeArtifact,
@@ -670,6 +690,7 @@ export class RetrievalProjection {
       return [...new Map(output.map((r) => [idFor(r), r])).values()];
     };
     for (const [key, { revision, artifact: a }] of validArticles) {
+      const sections = a.document.sections.filter((s) => supported(a, s.key));
       const original = materials.get(key);
       const description = original
         ? (descriptions.get(original.revisionId) ?? undefined)
@@ -686,11 +707,13 @@ export class RetrievalProjection {
           ":" +
           idFor(visibilityIds) +
           ":" +
-          (description?.version ?? 0);
+          (description?.version ?? 0) +
+          ":sections:" +
+          idFor(sections.map((s) => s.key));
       wanted.add(owner);
       if (heads.get(owner) === identity) continue;
       // The whole source background must be visible before derived prose is disclosed.
-      const units = a.document.sections.flatMap((section) =>
+      const units = sections.flatMap((section) =>
         markdownPassages(section.body).map(
           (p, index): RetrievalUnit => ({
             id: idFor([
