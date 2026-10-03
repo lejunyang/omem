@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-03T07:50:03.889Z",
-  "implementationCommit": "9d5161c9d8d8f017b9ad668eb2b7815aa8383d7f",
-  "sourceDigest": "35d22f9d930f14b1bdc049c4a2cb84cd9a4d957c158d35d94e1bac00254a12fc",
+  "recordedAt": "2026-10-03T03:56:35.382Z",
+  "implementationCommit": "4006ef331131523ecb235638fa9d203af369202d",
+  "sourceDigest": "5d13d48c12afbc76fd56c166490dfde33c3258b64bf38a82d98aeb6fe8452fed",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-03T07-50-03-889Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-03T03-56-35-382Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-03T07-50-03-889Z/project.log",
-        "sha256": "0a5476e4911d768cc634416bea9fa197d9581e3ef7440fb72b19c8593a010673"
+        "log": ".repo-review/runtime/verification/2026-10-03T03-56-35-382Z/project.log",
+        "sha256": "609dce48f8b68e6d0c56511fd66413e33fa8d47c61ee71185e358ede911b5970"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-03T07-50-03-889Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-03T03-56-35-382Z/liveChineseRetrieval.log",
         "sha256": "706af7ca54b86df22c3ddb228955030370a560583b16b1f37bf0502dc05d74c9"
       }
     },
@@ -51,8 +51,8 @@
       "name": "currentKnowledgeReferences",
       "state": "passed",
       "details": {
-        "articles": 147,
-        "citations": 909,
+        "articles": 146,
+        "citations": 968,
         "errors": []
       }
     },
@@ -63,11 +63,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v5",
-        "units": 12644,
+        "units": 12599,
         "semantic": {
           "model": "structure-icu-v5:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 12644,
+          "indexed": 12599,
           "pending": 0,
           "error": null
         },
@@ -94,16 +94,16 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "verification/history/；旧截图与 seed 核对仅用于历史追溯。运行日志保存在 gitignored runtime。",
   "knowledge": {
-    "materials": 601,
-    "reviewedMaterials": 143,
-    "pendingMaterials": 458,
-    "currentArticles": 147,
-    "citations": 909,
+    "materials": 598,
+    "reviewedMaterials": 137,
+    "pendingMaterials": 461,
+    "currentArticles": 146,
+    "citations": 968,
     "articleLinks": 0,
     "errors": [],
     "restore": {
-      "stale": 356,
-      "restored": 149,
+      "stale": 353,
+      "restored": 148,
       "missing": 3
     },
     "incomplete": true,
@@ -129,7 +129,7 @@
         "passed": true,
         "firstExpectedRank": 4,
         "uniquePathsAt5": 4,
-        "elapsedMs": 1477,
+        "elapsedMs": 1164,
         "top5": [
           {
             "path": "docs/reader-first/component-integration.md",
@@ -192,7 +192,7 @@
         "passed": false,
         "firstExpectedRank": 8,
         "uniquePathsAt5": 5,
-        "elapsedMs": 582,
+        "elapsedMs": 642,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -250,16 +250,16 @@
         "status": 200,
         "baselineTop5": [
           "config/wiki-pages.json",
-          "apps/server/tests/retrieval-unified.test.ts",
           "docs/archive/2026-10-01-baseline/AGENTS.md",
           "docs/archive/2026-10-01-baseline/implementation/batch2/lark.md",
-          ".agents/skills/osdk-guide/reference/doctor/guide.md"
+          ".agents/skills/osdk-guide/reference/doctor/guide.md",
+          ".claude/skills/osdk-guide/reference/doctor/guide.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 675,
+        "elapsedMs": 846,
         "top5": [
           {
             "path": "config/wiki-pages.json",
@@ -269,15 +269,6 @@
               "purpose:balanced"
             ],
             "snippet": "规则变了以后：原文、记忆与待办如何更新\",\n      \"order\": 3,\n      \"kind\": \"explanation\",\n      \"reader\": \"想知道个人记忆如何维护与跟进事项的人\",\n      \"goal\": \"解释保存材料、应用记忆、重新核验和任务状态的区别，知道哪些更新已完成、哪些仍"
-          },
-          {
-            "path": "apps/server/tests/retrieval-unified.test.ts",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "const passages = rerankPassages(\n    text,\n    \"怎样修改有效记忆，提案从什么入口写入？\",\n    text.slice(0, 400),\n    [{ label: \"原子写入记忆或事项\", aliases: [\"applyTask\", \"applyMemory\"] }"
           },
           {
             "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
@@ -303,6 +294,14 @@
               "purpose:balanced"
             ],
             "snippet": "| 参数 | 语义 |\n| --- | --- |\n| `--verify` | 重新哈希安装文件，检测工具自更新、手工修改或不完整恢复；可能较慢 |\n| `--tool <TOOL>` | 只验证一个工具；要求同时给 `--verify` |"
+          },
+          {
+            "path": "apps/server/src/knowledge/agent-research.ts",
+            "routes": [
+              "bm25",
+              "purpose:balanced"
+            ],
+            "snippet": "…list_materials: \"查看材料目录\",\n        search_materials: \"搜索原始材料\",\n        read_material: \"补读原文\",\n        read_section: \"阅读完整章节\",\n        search_knowledge: \"查找已有讲解\""
           }
         ]
       },
@@ -323,7 +322,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 4,
-        "elapsedMs": 150,
+        "elapsedMs": 203,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -384,7 +383,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 141,
+        "elapsedMs": 185,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -450,7 +449,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 5,
-        "elapsedMs": 748,
+        "elapsedMs": 918,
         "top5": [
           {
             "path": "design.md",
