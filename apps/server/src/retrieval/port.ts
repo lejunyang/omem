@@ -19,6 +19,8 @@ export const retrievalPurposes = [
   "follow-up",
 ] as const;
 export type RetrievalPurpose = (typeof retrievalPurposes)[number];
+export const codeIntents = ["definition", "callers"] as const;
+export type CodeIntent = (typeof codeIntents)[number];
 
 export type SourceAnchor = {
   kind: "source";
@@ -51,6 +53,13 @@ export type RetrievalHit = {
   headingPath: string[];
   score: number;
   routes: string[];
+  /** Name-level AST call sites, not type-resolved cross-file edges. */
+  codeMatches?: {
+    symbol: string;
+    kind: "call";
+    status: "candidate";
+    lines: number[];
+  }[];
   target: RetrievalTarget;
   references: SourceAnchor[];
   citations?: {
@@ -103,6 +112,8 @@ export type SearchQuery = {
   diversify?: boolean;
   /** Purpose is supplied by the reader/Agent, never inferred from repository paths. */
   purpose?: RetrievalPurpose;
+  /** Explicit navigation overrides the conservative natural-language shortcut. */
+  codeIntent?: CodeIntent;
   kinds?: RetrievalTarget["kind"][];
   /** Formal article classification, independent of citation/source directories. */
   topicPath?: string[];

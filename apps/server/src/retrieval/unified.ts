@@ -9,7 +9,10 @@ import {
   bestSnippet,
   relevance,
   querySymbols,
+  asksForCallers,
 } from "./relevance.js";
+import { CodeNavigation } from "./code-navigation.js";
+import { rerankPassages } from "./rerank-passages.js";
 import {
   RetrievalProjection,
   decodeUnit,
@@ -25,6 +28,7 @@ type ScoredUnit = {
   score: number;
   routes: string[];
   excerpt?: string;
+  codeMatches?: RetrievalHit["codeMatches"];
 };
 const normalize = (v: number[]) => {
   const norm = Math.hypot(...v);
@@ -37,6 +41,7 @@ const normalize = (v: number[]) => {
  * projects the same results back to immutable evidence for older processors. */
 export class UnifiedRetrieval extends KeywordRetrieval {
   private projection: RetrievalProjection;
+  private navigation: CodeNavigation;
   private model?: EmbeddingModel;
   private loading?: Promise<EmbeddingModel>;
   private reranker?: RerankerModel;
@@ -54,6 +59,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
   ) {
     super(database);
     this.projection = new RetrievalProjection(database);
+    this.navigation = new CodeNavigation(database);
   }
 
   private sync() {
@@ -330,6 +336,60 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         routes: ["code-symbol"],
       }));
   }
+  private navigationQuery(q: SearchQuery): SearchQuery {
+    return !q.codeIntent &&
+      querySymbols(q.text).length &&
+      asksForCallers(q.text)
+      ? { ...q, codeIntent: "callers" }
+      : q;
+  }
+  private callers(q: SearchQuery): ScoredUnit[] {
+    const names = querySymbols(q.text);
+    if (!names.length) return [];
+    const units = this.database
+      .prepare(
+        `SELECT * FROM retrieval_units
+      WHERE kind='source' AND subtype='code' AND (${names.map(() => "instr(lower(text),?)>0").join(" OR ")})`,
+      )
+      .all(...names.map((n) => n.split(".").at(-1)!))
+      .map(decodeUnit)
+      .filter((u) => this.eligible(u, q));
+    const span = (u: RetrievalUnit) =>
+      u.target.kind === "source"
+        ? u.target.endLine - u.target.startLine
+        : Infinity;
+    const seen = new Set<string>();
+    // Prefer the smallest enclosing operation over an overlapping outer function.
+    return units
+      .sort((a, b) => span(a) - span(b) || a.id.localeCompare(b.id))
+      .flatMap((unit) => {
+        if (unit.target.kind !== "source") return [];
+        const target = unit.target;
+        const matches = this.navigation.matches(unit, names).flatMap((m) => {
+          const lines = m.lines.filter(
+            (line) => !seen.has(`${target.revisionId}:${line}:${m.symbol}`),
+          );
+          for (const line of lines)
+            seen.add(`${target.revisionId}:${line}:${m.symbol}`);
+          return lines.length ? [{ ...m, lines }] : [];
+        });
+        if (!matches.length) return [];
+        const line =
+          Math.min(...matches.flatMap((m) => m.lines)) - target.startLine;
+        return [
+          {
+            unit,
+            score: 1,
+            routes: ["code-call-candidate"],
+            codeMatches: matches,
+            excerpt: unit.text
+              .split("\n")
+              .slice(Math.max(0, line - 3), line + 12)
+              .join("\n"),
+          },
+        ];
+      });
+  }
   private fuse(branches: ScoredUnit[][]): ScoredUnit[] {
     const fused = new Map<string, ScoredUnit>();
     for (const branch of branches) {
@@ -341,6 +401,9 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           : h.score / scale;
         fused.set(h.unit.id, {
           ...h,
+          // The symbol route contributes navigation; it must not overwrite a
+          // query-relevant dense window with the beginning of the same method.
+          excerpt: prior?.excerpt ?? h.excerpt,
           score: (prior?.score ?? 0) + quality / (61 + rank),
           routes: [...new Set([...(prior?.routes ?? []), ...h.routes])],
         });
@@ -412,6 +475,12 @@ export class UnifiedRetrieval extends KeywordRetrieval {
   }
   async search(q: SearchQuery): Promise<RetrievalHit[]> {
     await this.syncAsync();
+    q = this.navigationQuery(q);
+    if (q.codeIntent)
+      return this.finish(
+        q.codeIntent === "callers" ? this.callers(q) : this.symbols(q),
+        q,
+      );
     const lexical = this.lexical(q);
     const symbols = this.symbols(q);
     const lexicalOnly = () =>
@@ -486,20 +555,42 @@ export class UnifiedRetrieval extends KeywordRetrieval {
                   Number(a.routes.includes("code-symbol")) || b.score - a.score,
             )
             .slice(0, 40);
+        const passages = pool.flatMap((h, unitIndex) =>
+          rerankPassages(
+            h.unit.text,
+            q.text,
+            h.excerpt,
+            h.unit.target.kind === "source"
+              ? h.unit.materialDescription?.description.concepts.filter(
+                  (c) =>
+                    h.unit.target.kind === "source" &&
+                    c.startLine <= h.unit.target.endLine &&
+                    c.endLine >= h.unit.target.startLine,
+                )
+              : [],
+          ).map((text) => ({
+            unitIndex,
+            text,
+            input: h.unit.context.slice(0, 160) + "\n" + text,
+          })),
+        );
         const scores = await model.score(
           q.text,
-          pool.map(
-            (h) =>
-              h.unit.context + "\n" + (h.excerpt ?? h.unit.text).slice(0, 1200),
-          ),
+          passages.map((p) => p.input),
         );
+        const best = new Map<number, { score: number; text: string }>();
+        passages.forEach((p, i) => {
+          if (scores[i]! > (best.get(p.unitIndex)?.score ?? -Infinity))
+            best.set(p.unitIndex, { score: scores[i]!, text: p.text });
+        });
         const max = Math.max(...pool.map((h) => h.score), 1e-6);
         hits = pool.flatMap((h, i) =>
-          scores[i]! >= 0.1 || h.routes.includes("code-symbol")
+          best.get(i)!.score >= 0.1 || h.routes.includes("code-symbol")
             ? [
                 {
                   ...h,
-                  score: scores[i]! * 0.7 + (h.score / max) * 0.3,
+                  score: best.get(i)!.score * 0.7 + (h.score / max) * 0.3,
+                  excerpt: best.get(i)!.text,
                   routes: [...h.routes, "cross-encoder"],
                 },
               ]
@@ -537,7 +628,8 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       }
     };
     const priority = (u: RetrievalUnit) => {
-      const definition = this.namedDefinition(u, q) ? 2 : 1;
+      const definition =
+        q.codeIntent !== "callers" && this.namedDefinition(u, q) ? 2 : 1;
       const freshness =
         u.target.kind === "knowledge" && u.target.reviewState === "needs-review"
           ? 0.85
@@ -560,14 +652,29 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       seen = new Set<string>(),
       output: RetrievalHit[] = [];
     const terms = queryTerms(q.text);
-    for (const h of hits.sort(
+    const ordered = hits.sort(
       (a, b) => b.score * priority(b.unit) - a.score * priority(a.unit),
-    )) {
+    );
+    if (q.codeIntent === "callers" && q.diversify !== false) {
+      // Show the breadth of entry points before more sites in the same file.
+      // Unlike a per-owner cap, this does not discard the remaining call sites.
+      const counts = new Map<string, number>();
+      const round = new Map(
+        ordered.map((h) => {
+          const n = counts.get(h.unit.owner) ?? 0;
+          counts.set(h.unit.owner, n + 1);
+          return [h.unit.id, n];
+        }),
+      );
+      ordered.sort((a, b) => round.get(a.unit.id)! - round.get(b.unit.id)!);
+    }
+    for (const h of ordered) {
       if (!this.eligible(h.unit, q)) continue;
       const u = h.unit,
         fingerprint = u.text.replace(/\s+/g, " ").trim();
       if (
         q.diversify !== false &&
+        q.codeIntent !== "callers" &&
         ((owners.get(u.owner) ?? 0) >= 2 || seen.has(fingerprint))
       )
         continue;
@@ -608,6 +715,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         headingPath: u.headingPath,
         score: h.score * priority(u),
         routes: [...h.routes, "purpose:" + (q.purpose ?? "balanced")],
+        ...(h.codeMatches ? { codeMatches: h.codeMatches } : {}),
         target: u.target,
         references: u.references,
         citations,
@@ -622,7 +730,19 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     return output;
   }
   override searchSources(q: SearchQuery): SourceCandidate[] {
+    this.sync();
+    q = this.navigationQuery(q);
     const sourceQuery = { ...q, kinds: ["source" as const] };
+    if (q.codeIntent)
+      return this.sources(
+        this.finish(
+          q.codeIntent === "callers"
+            ? this.callers(sourceQuery)
+            : this.symbols(sourceQuery),
+          q,
+        ),
+        q,
+      );
     const lexical = this.lexical(sourceQuery),
       symbols = this.symbols(sourceQuery);
     return this.sources(

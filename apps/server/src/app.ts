@@ -1,5 +1,5 @@
 import { evidenceSection } from "./retrieval/context.js";
-import { retrievalPurposes } from "./retrieval/port.js";
+import { codeIntents, retrievalPurposes } from "./retrieval/port.js";
 import {
   importDevelopmentKnowledge,
   developmentRetrieval,
@@ -310,7 +310,7 @@ export async function buildApp(
     const b = z.object({ from: str, to: str }).strict().parse(req.body);
     return store.link(b.from, b.to);
   });
-  app.get<{ Querystring: { q?: string; purpose?: string; role?: string; effectiveAt?: string } }>(
+  app.get<{ Querystring: { q?: string; purpose?: string; codeIntent?: string; role?: string; effectiveAt?: string } }>(
     "/api/search",
     async (req, reply) => {
       const purpose = z
@@ -318,6 +318,8 @@ export async function buildApp(
         .safeParse(req.query.purpose ?? "balanced");
       if (!purpose.success)
         return reply.code(400).send({ error: "查找用途无效" });
+      const codeIntent = z.enum(codeIntents).optional().safeParse(req.query.codeIntent);
+      if (!codeIntent.success) return reply.code(400).send({error:"代码查找方式无效"});
       const role = z.enum(materialRoles).optional().safeParse(req.query.role || undefined);
       const effectiveAt = z.iso.datetime({offset:true}).optional().safeParse(req.query.effectiveAt || undefined);
       if (!role.success || !effectiveAt.success) return reply.code(400).send({error:"材料筛选条件无效"});
@@ -325,6 +327,7 @@ export async function buildApp(
         text: (req.query.q || "").slice(0, 300),
         limit: 30,
         purpose: purpose.data,
+        codeIntent: codeIntent.data,
         ...(role.data ? {materialRoles:[role.data]} : {}),
         ...(effectiveAt.data ? {effectiveAt:effectiveAt.data} : {}),
       };

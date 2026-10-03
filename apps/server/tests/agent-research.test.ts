@@ -68,3 +68,68 @@ it("serves a fixed original and submission, then releases task copies without re
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+it("lets a research agent request caller candidates and read their fixed enclosing operation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "omem-research-callers-"));
+  const store = new Store(join(root, "data"));
+  const client = new Client({ name: "caller-flow", version: "1" });
+  let env: Awaited<ReturnType<typeof prepareAgentResearch>> | undefined;
+  try {
+    store.capture({
+      source: "file",
+      externalId: "shipping",
+      title: "shipping.ts",
+      context: { filePath: "shipping.ts" },
+      parts: [
+        {
+          type: "text",
+          text: 'export function reserveParcel() { return "reserved"; }\nexport function checkout() { return reserveParcel(); }',
+        },
+      ],
+    });
+    const repository = new KnowledgeRepository(store);
+    const schema = z.object({ summary: z.string() });
+    env = await prepareAgentResearch({
+      repository,
+      materials: repository.materials(),
+      articles: [],
+      workspace: join(root, "task"),
+      schema,
+      validate: (x) => schema.parse(x),
+      retrievalConfig: { enabled: false },
+    });
+    const server = env.servers[0]!;
+    if (server.type !== "http") throw Error("HTTP MCP expected");
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(server.url)),
+    );
+    const result = await client.callTool({
+      name: "search_materials",
+      arguments: { query: "reserveParcel", codeIntent: "callers" },
+    });
+    const data = JSON.parse(
+      (result.content as { type: string; text: string }[]).find(
+        (c) => c.type === "text",
+      )!.text,
+    );
+    expect(data.hits).toHaveLength(1);
+    expect(data.hits[0].codeMatches).toEqual([
+      {
+        symbol: "reserveparcel",
+        kind: "call",
+        status: "candidate",
+        lines: [2],
+      },
+    ]);
+    const read = await client.callTool({
+      name: "read_section",
+      arguments: { key: data.hits[0].key, section: "checkout" },
+    });
+    expect(JSON.stringify(read)).toContain("return reserveParcel()");
+  } finally {
+    await client.close();
+    await env?.close();
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
