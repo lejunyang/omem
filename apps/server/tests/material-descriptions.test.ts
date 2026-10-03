@@ -114,11 +114,10 @@ it("uses persisted roles before the result limit and lets the reader explicitly 
     limit: 1,
   });
   expect(plans[0]?.target).toMatchObject({ revisionId: plan.id });
-  // A classification is not a global quality penalty. General/concept search
-  // keeps the same relevance score as an explicitly requested plan.
+  // Explicit background search keeps plans eligible without role penalties.
   const general = await retrieval.search({
     text: "配送失败重试",
-    purpose: "concept",
+    purpose: "background",
     diversify: false,
   });
   const planScore = general.find(
@@ -128,7 +127,7 @@ it("uses persisted roles before the result limit and lets the reader explicitly 
   store.descriptions.save(plan.id, description({ role: "record" }), "user", 1);
   const changedRole = await retrieval.search({
     text: "配送失败重试",
-    purpose: "concept",
+    purpose: "background",
     diversify: false,
   });
   expect(
