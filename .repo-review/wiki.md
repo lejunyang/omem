@@ -3,11 +3,11 @@
 ## 软件开发 / omem
 
 - [先认识 omem：把材料变成能找回的工作记忆](knowledge/articles/e3a688af2ed1ce2734e7f6a41ed91e4369645398f90a03e28b92c27028f48e1f.md)
-- [一份材料的旅程：从导入到检索、知识与固定引用](knowledge/articles/08e8de8e7788195db049c6fb0184ebc7888d9ec16a991ed19523deb074181035.md)
-- [一次提问如何找到答案：召回、上下文与 RAG](knowledge/articles/c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.md)
-- [规则变了以后：原文、记忆与待办如何更新](knowledge/articles/d4de0ea627a2bb808daffc14026246c2dbde153c0450431a2116482269c8270c.md)
-- [为搜索结果补上章节位置：走通 UI、API 与检索](knowledge/articles/0fc1372e659c300a4a7193e2de27f7d10a3c14baf8d61d9cee5f74f4a67a1d4a.md)
-- [Agent 怎样把材料讲明白：自主调查、写作与独立补查](knowledge/articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.md)
+- [一份材料如何变成可检索、可追溯的知识](knowledge/articles/08e8de8e7788195db049c6fb0184ebc7888d9ec16a991ed19523deb074181035.md)
+- [一次提问如何找到答案：搜索、上下文与 RAG](knowledge/articles/c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.md)
+- [规则变了以后：原文、记忆与待办怎样更新](knowledge/articles/d4de0ea627a2bb808daffc14026246c2dbde153c0450431a2116482269c8270c.md)
+- [改一条完整功能链：让搜索结果说清所属章节](knowledge/articles/0fc1372e659c300a4a7193e2de27f7d10a3c14baf8d61d9cee5f74f4a67a1d4a.md)
+- [Agent 怎样把材料讲明白：从自主调查到复核发布](knowledge/articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.md)
 
 ## 未分类
 
@@ -116,6 +116,19 @@
 - [运行时交互请求仓储](knowledge/articles/5b1530b27c38ca50b05c8fcf7cd08eb6fccb7cea9e0d11569c06df8b6feb1e32.md)
 - [连接器的文件边界与 Git 固定版本测试](knowledge/articles/965b4f1092dfb9c4c93df107f618b1dbaddf59d1f70c9a8a2d6c6ef759d544f3.md)
 
+## 软件开发 / omem / 服务端 / 检索 / 混合语义检索
+
+- [SQLite 中的词法与语义混合检索](knowledge/articles/88b6ad2760e38375526220fcfb2546cb978618c3390bf459bf10380d0a719db0.md)
+
+## 软件开发 / omem / Web 应用 / 工作区入口
+
+- [个人工作记忆的 Web 工作区总入口](knowledge/articles/da0e264957572bf35832a2327ed88508c6913c8ffb0323e87898adcffe262642.md)
+- [知识库阅读与整理入口重设计](knowledge/articles/cf724b52fd6fb802f1016d1b227c60cd6ebdbb9c39062c027b484354f403a36f.md)
+
+## 软件开发 / omem / 服务端 / 检索 / 候选重排
+
+- [中文候选段落的离线交叉编码重排](knowledge/articles/a233324e0e4f61e7088ab978b0565708031545fcbf7cb5604645240e62f40614.md)
+
 ## 软件开发 / omem / Web 应用 / 材料处理
 
 - [从材料选择到文章整理任务](knowledge/articles/78f7700ae70bb697992117b2fd48b4142bf2fd94368145ce4178ddb68c3941f4.md)
@@ -150,15 +163,36 @@
 - [统一的空状态展示组件](knowledge/articles/88b12ddcc01aead1f398bfb1f65e9f7863638b095ec1a8eaf802e4bcbc7dcafe.md)
 - [统一的轻量 SVG 图标组件](knowledge/articles/506240a8f06c64ad3989b93e2eee7b17167c020f27c2bd6936d4396522ce00da.md)
 
+## 软件开发 / omem / 服务端 / 检索 / 词面相关性
+
+- [检索查询的词项、代码符号与摘要启发式](knowledge/articles/b0bd95bebba21bca08eb2e061f8c0ea5346eeb18101c05e2ff0d8d16c450e7dc.md)
+
+## 软件开发 / omem / 服务端 / 检索 / 索引维护
+
+- [检索索引补建：从材料同步到中文向量](knowledge/articles/c4e286048ae9b03aaf2a54a2760ff83e531b45e623863a511a5ca6d54cf7aba1.md)
+
 ## 软件开发 / omem / Web 应用 / 证据阅读
 
 - [模块说明、证据与文件下探界面](knowledge/articles/9b4dcab1214bbd0cb31ae5cc73e8b4db1ae09fb7b2cff65fc3cb8c82c27a9e26.md)
 
-## 软件开发 / omem / Web 应用 / 工作区入口
+## 软件开发 / omem / 服务端 / 检索 / 知识引导的原始证据检索
 
-- [知识库阅读与整理入口重设计](knowledge/articles/cf724b52fd6fb802f1016d1b227c60cd6ebdbb9c39062c027b484354f403a36f.md)
+- [用知识讲解找回原始证据](knowledge/articles/c1d016bfceaa9ad6e811622ceb90acc5a8a4c40816edc2c9bb6689fa263f00e1.md)
+
+## 软件开发 / omem / 服务端 / 检索 / 统一检索接口
+
+- [统一检索：从多路召回到可追溯结果](knowledge/articles/0f4c98f99ec08ee9f67bc4c9abbbec7193e9e0c6a38384e2306d9c1cf84a9f03.md)
+- [统一检索端口：连接原文、知识与已应用状态](knowledge/articles/e1aefe156d02f69476a443ae16951b1e4d0f5e30e2f93765c433725e810452db.md)
+
+## 软件开发 / omem / 服务端 / 检索 / 统一检索装配
+
+- [统一检索服务的配置与生命周期装配](knowledge/articles/4de4dc1b2d97b0ac0916c8d7803da3bbb33b99302666b39fa0e01e13e7ba9ae6.md)
 
 ## 软件开发 / omem / Web 应用 / 证据阅读 / 递归证据追踪
 
 - [证据追踪抽屉的可序列化导航栈](knowledge/articles/554ae7dc676071326abffed7e8da265970b91066493050820e4642626dcf8ec0.md)
 - [递归证据抽屉的导航状态管理](knowledge/articles/0cfbcfbff237fe972490dae83461722e3deabf9289299f5d678cd7b04ea0d030.md)
+
+## 软件开发 / omem / 服务端 / 检索 / 混合检索
+
+- [面向原始证据的 SQLite 关键词检索](knowledge/articles/1444f142c0b04e6d91f3135deeda21102d3ef672bd0b0965f51d090841647b1b.md)
