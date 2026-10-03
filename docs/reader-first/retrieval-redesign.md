@@ -32,6 +32,8 @@
 
 ## 如何判断是否做好
 
+明确操作名现有独立定义候选，不再依赖整句话的词法/向量排名；同名定义仍按原件范围过滤。普通大写名词不自动当成操作名。这解决了几条长问题中的方法遗漏，但尚不能区分找定义与找调用者，也不能保证拒绝长句里的不存在符号。可选重排新增锁定的 BGE v2-m3；默认是否启用及成熟方案的具体取舍见[检索评估](retrieval-evaluation.md)。
+
 全部实现后，用真实中文问题检查：能否找到完整机制，能否定位到正确实现和对应行，旧材料是否误当当前状态，助手是否保留解释并能继续补读。比较原始结果与新结果，不把路径命中、独立复核通过或自动测试数当成理解质量。实际 HTTP、中文模型、阅读页面和受影响 `.repo-review` 产物一起验收。
 
 借鉴方法来自 [Anthropic Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval)、[LlamaIndex Recursive Retriever](https://developers.llamaindex.ai/python/framework/integrations/retrievers/recursive_retriever_nodes/) 与 [SQLite FTS5](https://www.sqlite.org/fts5.html)。这里复用它们的上下文、父子回读和成熟排序思路；效果必须在本项目材料上重新验证。

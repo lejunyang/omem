@@ -24,6 +24,7 @@ omem 的目标是让个人材料被读懂、找回并用于行动。文档、代
 - [Agent 自主研究方案](reader-first/agent-research.md)：工具、材料工作区、原生 skills、会话、最终产物与独立补查复核。
 - [助手检索与真实命中](reader-first/assistant-search-research.md)：新问题搜出了什么，成熟方案的适配、局限及现有代码改造入口。
 - [材料用途与概念入口](reader-first/material-understanding.md)：本轮如何保存、查看和修正材料性质，怎样融入全文、向量及 Agent 搜索，哪些问题还没有解决。
+- [中文重排与成熟检索评估](reader-first/retrieval-evaluation.md)：独立符号候选和同库对照；BGE、RRF、Qwen3、Zoekt 的采用状态及具体改造位置。
 - [个人记忆与跟进流程](reader-first/assistant-memory-flow.md)：保存、提问、换版、更新及持续跟进的真实成功与失败。
 - [写作与学习路线](reader-first/writing.md)：人如何由一个案例理解概念、机制、取舍并开始修改。
 - [当前进度](reader-first/progress.md)：本轮实际完成和真实验证；设计内容不代表已交付。

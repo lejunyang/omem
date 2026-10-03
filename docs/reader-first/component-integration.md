@@ -10,7 +10,7 @@
 
 [Haystack metadata filtering](https://docs.haystack.deepset.ai/docs/metadata-filtering) 把正式属性过滤与内容召回分开。本轮在现有 SQLite 上保存每版材料的用途、状态和明确有效期，由原生 `material-cataloger` 分析，页面可修正；`UnifiedRetrieval` 在截断候选前执行明确条件，默认排序减少计划、调研和旧状态的干扰。未知分类仍可见，背景查询保留历史内容。没有把目录、保存时间或题集问题当作分类。这是方法适配，没有安装 Haystack 平台；具体代码与边界见 [材料用途与概念入口](material-understanding.md)。
 
-融合参考 [Elasticsearch RRF](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion)，相关性重排参考 [BGE 作者实现](https://github.com/FlagOpen/FlagEmbedding)。改 `keyword.ts`、`semantic.ts` 和 `knowledge/retrieval.ts`：候选分别生成，先过滤正式范围和时效；正文匹配不搜索引用理由与 trace；按命中节回溯；记录词覆盖和原始分数；只做一次融合；重排后补父章节。RRF 把排名转成可融合分数，不自动判定相关；MMR 减少重复，不替代相关性判断。
+融合参考 [Elasticsearch RRF](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion)，相关性重排参考 [BGE 作者实现](https://github.com/FlagOpen/FlagEmbedding)。现在共享入口已在 `retrieval/unified.ts`，新增独立符号候选及集中融合，`keyword.ts`、`semantic.ts` 和 `knowledge/retrieval.ts` 保留兼容用途。继续在共享入口比较候选和排序，不能再分别改几条旧搜索路线。RRF 把排名转成可融合分数，不自动判定相关；MMR 减少重复，不替代相关性判断。
 
 本轮先消除可解释的噪声并做真实对照。中文 embedding/reranker 用 osdk 声明锁定、运行禁止下载；可比较 Qwen3/BGE，但不在没有问题集、时延和效果证据时换更大模型。没有直接搬 Elasticsearch 平台的必要，个人 SQLite 原件与检索接口可以保留。
 
@@ -43,6 +43,8 @@ Traex 的 [用户手册](https://bytedance.larkoffice.com/wiki/HWUPwVssCi0KSPkOC
 先文档还原决策和完整方案，再治理真实候选噪声，再把 Agent 工具研究贯穿调查/写作/独立补查，随后更新本仓库实际指南。持续记忆整合和复杂解析器另做完整切片。完整调用图、全库 100% 覆盖、换图数据库、更多角色和更复杂 schema 都不应阻塞一个真实流程。
 
 ## 本轮检索对照与配置决定
+
+2026-10-03 的后续对照增加了独立符号候选、RRF 融合和 BGE v2-m3，与旧实现和 base 使用同一冻结库。详细方法、上游方案和后续代码改造在[中文重排评估](retrieval-evaluation.md)，逐题结果在[当前对照](../../.repo-review/knowledge/verification/symbol-reranking.md)。下面的六题实验是此前依据，不应混计成新一轮样本。
 
 已把中文/英文 [BGE reranker](https://huggingface.co/Xenova/bge-reranker-base) 的 q8 权重经 osdk 下载、校验并锁定，`retrieval/reranker.ts` 用 Transformers.js 对问题与段落成对计算；不是对单段做分类。`factory.ts` 允许配置 `reranker: "relevance-zh"`，知识 Agent 使用同一配置。运行不下载，缺模型时保留词法结果并暴露降级状态。
 

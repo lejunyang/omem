@@ -8,6 +8,7 @@
 - [当前实现逐层审查](current-system.md)：清洗、RAG、记忆、代码、Wiki 与 ACP 的实际代码、缺口和解法。
 - [成熟组件与具体改造](component-integration.md)：每项外部方法如何融入现有文件与合同，而不是只列产品名字。
 - [本轮检索改造](retrieval-redesign.md)：讲解、结构化原件与用途策略如何接成同一条搜索和回答流程。
+- [中文重排与成熟检索评估](retrieval-evaluation.md)：符号候选、RRF、BGE 的同库对照，以及接下来该改候选、模型输入还是文章内容。
 - [材料用途与概念入口](material-understanding.md)：AI 阅读后的正式分类、适用时间、段落别称、人工修正，及其对检索的实际作用和局限。
 - [Agent 自主研究](agent-research.md)：材料工作区、原生工具/skills/MCP、会话与独立补查。
 - [助手检索调研与实际内容](assistant-search-research.md)：新问题究竟命中了什么，以及成熟方法如何进入本项目。
