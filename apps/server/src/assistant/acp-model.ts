@@ -10,6 +10,7 @@ import type { KnowledgeRepository } from "../knowledge/repository.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
 import { RoleBundleRegistry } from "../agent-runtime/bundles.js";
 import { prepareAssistantResearch } from "./research.js";
+import { answerInvestigation, reviewAssistantAnswer } from "./answer-review.js";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import type { AgentProfile } from "../../../../packages/contracts/src/index.js";
 import { acp } from "../agents.js";
@@ -172,11 +173,26 @@ export class AcpAssistantModel implements AssistantModelPort {
       profile,
       randomUUID(),
     );
+    const investigation = answerInvestigation({
+      workspace,
+      review: (draft, snapshot) =>
+        reviewAssistantAnswer({
+          draft,
+          snapshot,
+          repository: this.deps.repository!,
+          profile,
+          workspaceRoot: this.deps.researchWorkspace ?? this.deps.workspaceRoot,
+          retrievalConfig: this.deps.retrievalConfig,
+          context: input,
+        }),
+    });
     const environment = await prepareAssistantResearch({
       repository: this.deps.repository!,
       workspace,
       retrievalConfig: this.deps.retrievalConfig,
       context: input,
+      tools: investigation.tools,
+      beforeSubmit: investigation.beforeSubmit,
     });
     const context = {
       question: input.userText,

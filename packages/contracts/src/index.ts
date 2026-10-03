@@ -676,6 +676,7 @@ export type JobAttemptFingerprint = z.infer<typeof jobAttemptFingerprintSchema>;
 export const roleIdSchema = z.enum([
   "material-cataloger",
   "daily-assistant",
+  "answer-reviewer",
   "extractor",
   "verifier",
   "planner",
@@ -721,6 +722,7 @@ export const roleManifestSchema = z
       )
       .max(10),
     output_schema: z.enum([
+      "AnswerReview.v1",
       "MaterialDescriptions.v1",
       "ProposalBatch.v1",
       "AssessmentBatch.v1",

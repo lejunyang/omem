@@ -1,0 +1,78 @@
+{
+  "$id": "https://omem.local/schema/AnswerReview.v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "string"
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "problem": {
+            "type": "string",
+            "minLength": 1
+          },
+          "whyItMatters": {
+            "type": "string",
+            "minLength": 1
+          },
+          "suggestion": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^cite_[1-9]\\d*$"
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "revision": {
+                  "type": "string"
+                },
+                "startLine": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "endLine": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "id",
+                "key",
+                "startLine",
+                "endLine"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "problem",
+          "whyItMatters",
+          "suggestion",
+          "sources"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "summary",
+    "issues"
+  ],
+  "additionalProperties": false
+}

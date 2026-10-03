@@ -8,6 +8,45 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { Store } from "../src/store.js";
 import { KnowledgeRepository } from "../src/knowledge/repository.js";
 import { prepareAgentResearch } from "../src/knowledge/agent-research.js";
+import { parseFile } from "../src/code/parse.js";
+
+it("exposes aliases, receivers and branch context without asserting that a call runs", () => {
+  const parsed = parseFile(
+    "shipping.ts",
+    [
+      'import { Dispatcher as Delivery } from "./dispatch.js";',
+      "export function boot(config) {",
+      "  const worker = config.enabled ? new Delivery(config) : null;",
+      "  if (config.ready) { worker?.start(); }",
+      "}",
+    ].join("\n"),
+  );
+  expect(parsed.imports[0]?.bindings).toEqual([
+    { local: "Delivery", imported: "Dispatcher" },
+  ]);
+  expect(parsed.calls.find((c) => c.callee === "Delivery")).toMatchObject({
+    kind: "construct",
+    callerQName: "boot",
+    context: expect.arrayContaining([
+      {
+        kind: "surrounding-condition:true",
+        text: "config.enabled",
+        rangeStart: { line: 3, col: 17 },
+        rangeEnd: { line: 3, col: 31 },
+      },
+    ]),
+  });
+  expect(parsed.calls.find((c) => c.callee === "start")).toMatchObject({
+    receiver: "worker",
+    expression: "worker?.start",
+    context: expect.arrayContaining([
+      expect.objectContaining({
+        kind: "surrounding-condition:then",
+        text: "config.ready",
+      }),
+    ]),
+  });
+});
 
 it("serves a fixed original and submission, then releases task copies without removing canonical evidence or audit", async () => {
   const root = mkdtempSync(join(tmpdir(), "omem-research-lifecycle-")),

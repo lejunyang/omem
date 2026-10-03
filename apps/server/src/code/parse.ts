@@ -10,7 +10,10 @@
  */
 import * as ts from "typescript";
 import { parse as parseVue } from "@vue/compiler-sfc";
-import type { CodeRange, CodeSymbolKind } from "../../../../packages/contracts/src/index.js";
+import type {
+  CodeRange,
+  CodeSymbolKind,
+} from "../../../../packages/contracts/src/index.js";
 
 export type ParsedSymbol = {
   name: string;
@@ -25,12 +28,22 @@ export type ParsedSymbol = {
 export type ParsedImport = {
   specifier: string;
   rangeStart: CodeRange;
+  bindings?: { local: string; imported: string }[];
 };
 
 export type ParsedCall = {
   callerQName: string;
   callee: string;
   rangeStart: CodeRange;
+  expression?: string;
+  receiver?: string;
+  kind?: "call" | "construct";
+  context?: {
+    kind: string;
+    text: string;
+    rangeStart: CodeRange;
+    rangeEnd: CodeRange;
+  }[];
 };
 
 export type ParsedRoute = {
@@ -56,7 +69,9 @@ export type ParsedFile = {
 };
 
 function posOf(sf: ts.SourceFile, node: ts.Node): CodeRange {
-  const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+  const { line, character } = sf.getLineAndCharacterOfPosition(
+    node.getStart(sf),
+  );
   return { line: line + 1, col: character };
 }
 function endOf(sf: ts.SourceFile, node: ts.Node): CodeRange {
@@ -78,12 +93,84 @@ function walkTs(
   path: string,
   lineOffset: number,
 ): Pick<ParsedFile, "symbols" | "imports" | "calls"> {
-  const sf = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  const sf = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
   const symbols: ParsedSymbol[] = [];
   const imports: ParsedImport[] = [];
   const calls: ParsedCall[] = [];
 
   let contextName = "";
+  const range = (node: ts.Node) => ({
+    rangeStart: { ...posOf(sf, node), line: posOf(sf, node).line + lineOffset },
+    rangeEnd: { ...endOf(sf, node), line: endOf(sf, node).line + lineOffset },
+  });
+  const callContext = (node: ts.Node): NonNullable<ParsedCall["context"]> => {
+    const result: NonNullable<ParsedCall["context"]> = [];
+    let statement = false;
+    for (let p = node.parent; p && !ts.isSourceFile(p); p = p.parent) {
+      if (ts.isFunctionLike(p)) {
+        result.push({
+          kind: "enclosing-operation",
+          text: signatureOf(p, sf),
+          ...range(p),
+        });
+        break;
+      }
+      if (
+        ts.isIfStatement(p) ||
+        ts.isConditionalExpression(p) ||
+        (ts.isBinaryExpression(p) &&
+          [
+            ts.SyntaxKind.AmpersandAmpersandToken,
+            ts.SyntaxKind.BarBarToken,
+            ts.SyntaxKind.QuestionQuestionToken,
+          ].includes(p.operatorToken.kind))
+      ) {
+        const condition = ts.isBinaryExpression(p)
+          ? p.left
+          : ts.isConditionalExpression(p)
+            ? p.condition
+            : p.expression;
+        const branch = ts.isIfStatement(p)
+          ? p.elseStatement && node.getStart(sf) >= p.elseStatement.getStart(sf)
+            ? "else"
+            : "then"
+          : ts.isConditionalExpression(p)
+            ? node.getStart(sf) >= p.whenFalse.getStart(sf)
+              ? "false"
+              : "true"
+            : p.operatorToken.getText(sf);
+        result.push({
+          kind: `surrounding-condition:${branch}`,
+          text: condition.getText(sf),
+          ...range(condition),
+        });
+      } else if (!statement && ts.isStatement(p) && !ts.isBlock(p)) {
+        result.push({ kind: "statement", text: p.getText(sf), ...range(p) });
+        statement = true;
+      }
+    }
+    return result;
+  };
+  const callerName = (node: ts.Node) => {
+    const names: string[] = [];
+    for (let p = node.parent; p && !ts.isSourceFile(p); p = p.parent) {
+      if (ts.isClassDeclaration(p) && p.name) names.push(p.name.text);
+      else if (ts.isFunctionLike(p))
+        names.push(
+          p.name?.getText(sf) ??
+            (ts.isVariableDeclaration(p.parent)
+              ? p.parent.name.getText(sf)
+              : "<callback>"),
+        );
+    }
+    return names.reverse().join(".");
+  };
 
   const addSymbol = (
     node: ts.Node,
@@ -97,7 +184,8 @@ function walkTs(
     const end = endOf(sf, node);
     symbols.push({
       name,
-      qualifiedName: qualifiedName ?? (contextName ? `${contextName}.${name}` : name),
+      qualifiedName:
+        qualifiedName ?? (contextName ? `${contextName}.${name}` : name),
       kind,
       rangeStart: { line: start.line + lineOffset, col: start.col },
       rangeEnd: { line: end.line + lineOffset, col: end.col },
@@ -110,7 +198,12 @@ function walkTs(
     switch (node.kind) {
       case ts.SyntaxKind.FunctionDeclaration: {
         const fd = node as ts.FunctionDeclaration;
-        addSymbol(fd, fd.name?.text ?? "", "function", isExported(fd.modifiers));
+        addSymbol(
+          fd,
+          fd.name?.text ?? "",
+          "function",
+          isExported(fd.modifiers),
+        );
         break;
       }
       case ts.SyntaxKind.ClassDeclaration: {
@@ -118,10 +211,26 @@ function walkTs(
         const nm = cd.name?.text ?? "";
         addSymbol(cd, nm, "class", isExported(cd.modifiers));
         for (const member of cd.members) {
-          if (ts.isMethodDeclaration(member) && member.name && ts.isIdentifier(member.name)) {
-            addSymbol(member, member.name.text, "method", false, `${nm}.${member.name.text}`);
+          if (
+            ts.isMethodDeclaration(member) &&
+            member.name &&
+            ts.isIdentifier(member.name)
+          ) {
+            addSymbol(
+              member,
+              member.name.text,
+              "method",
+              false,
+              `${nm}.${member.name.text}`,
+            );
           } else if (ts.isConstructorDeclaration(member)) {
-            addSymbol(member, "constructor", "method", false, `${nm}.constructor`);
+            addSymbol(
+              member,
+              "constructor",
+              "method",
+              false,
+              `${nm}.constructor`,
+            );
           }
         }
         break;
@@ -147,8 +256,14 @@ function walkTs(
           if (ts.isIdentifier(decl.name)) {
             const isFn =
               !!decl.initializer &&
-              (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer));
-            addSymbol(decl, decl.name.text, isFn ? "function" : "const", isExported(vs.modifiers));
+              (ts.isArrowFunction(decl.initializer) ||
+                ts.isFunctionExpression(decl.initializer));
+            addSymbol(
+              decl,
+              decl.name.text,
+              isFn ? "function" : "const",
+              isExported(vs.modifiers),
+            );
           }
         }
         break;
@@ -160,31 +275,65 @@ function walkTs(
           imports.push({
             specifier: imp.moduleSpecifier.text,
             rangeStart: { line: start.line + lineOffset, col: start.col },
+            bindings: [
+              ...(imp.importClause?.name
+                ? [{ local: imp.importClause.name.text, imported: "default" }]
+                : []),
+              ...(imp.importClause?.namedBindings &&
+              ts.isNamedImports(imp.importClause.namedBindings)
+                ? imp.importClause.namedBindings.elements.map((e) => ({
+                    local: e.name.text,
+                    imported: e.propertyName?.text ?? e.name.text,
+                  }))
+                : imp.importClause?.namedBindings &&
+                    ts.isNamespaceImport(imp.importClause.namedBindings)
+                  ? [
+                      {
+                        local: imp.importClause.namedBindings.name.text,
+                        imported: "*",
+                      },
+                    ]
+                  : []),
+            ],
           });
         }
         break;
       }
-      case ts.SyntaxKind.CallExpression: {
-        const ce = node as ts.CallExpression;
+      case ts.SyntaxKind.CallExpression:
+      case ts.SyntaxKind.NewExpression: {
+        const ce = node as ts.CallExpression | ts.NewExpression;
         let callee = "";
         if (ts.isIdentifier(ce.expression)) callee = ce.expression.text;
-        else if (ts.isPropertyAccessExpression(ce.expression)) callee = ce.expression.name.text;
+        else if (ts.isPropertyAccessExpression(ce.expression))
+          callee = ce.expression.name.text;
         if (callee && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(callee)) {
           const start = posOf(sf, ce);
           calls.push({
-            callerQName: contextName,
+            callerQName: callerName(ce),
             callee,
             rangeStart: { line: start.line + lineOffset, col: start.col },
+            expression: ce.expression.getText(sf),
+            ...(ts.isPropertyAccessExpression(ce.expression)
+              ? { receiver: ce.expression.expression.getText(sf) }
+              : {}),
+            kind: ts.isNewExpression(ce) ? "construct" : "call",
+            context: callContext(ce),
           });
         }
         break;
       }
     }
     ts.forEachChild(node, (child) => {
-      if (ts.isFunctionDeclaration(child) && child.name) {
-        contextName = child.name.text;
+      if (ts.isFunctionLike(child)) {
+        const previous = contextName;
+        const name =
+          child.name?.getText(sf) ??
+          (ts.isVariableDeclaration(child.parent)
+            ? child.parent.name.getText(sf)
+            : "<callback>");
+        contextName = previous ? `${previous}.${name}` : name;
         visit(child);
-        contextName = "";
+        contextName = previous;
         return;
       }
       visit(child);
@@ -218,7 +367,10 @@ function extractTests(source: string): ParsedTest[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(source))) {
     const upto = source.slice(0, m.index);
-    out.push({ name: m[2]!, rangeStart: { line: upto.split("\n").length, col: 0 } });
+    out.push({
+      name: m[2]!,
+      rangeStart: { line: upto.split("\n").length, col: 0 },
+    });
   }
   return out;
 }
@@ -252,7 +404,11 @@ export function parseFile(path: string, source: string): ParsedFile {
       };
     }
     const script = descriptor.scriptSetup ?? descriptor.script;
-    let walk: Pick<ParsedFile, "symbols" | "imports" | "calls"> = { symbols: [], imports: [], calls: [] };
+    let walk: Pick<ParsedFile, "symbols" | "imports" | "calls"> = {
+      symbols: [],
+      imports: [],
+      calls: [],
+    };
     let lineOffset = 0;
     if (script?.content) {
       lineOffset = (script.loc?.start?.line ?? 1) - 1;

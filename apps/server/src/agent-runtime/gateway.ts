@@ -4,7 +4,7 @@ import {
   knowledgeReviewSchema,
   knowledgePlanSchema,
 } from "../../../../packages/contracts/src/knowledge.js";
-import { assistantReplySchema } from "../../../../packages/contracts/src/assistant.js";
+import { assistantReplySchema, answerReviewSchema } from "../../../../packages/contracts/src/assistant.js";
 import { materialDescriptionBatchSchema } from "../../../../packages/contracts/src/material-description.js";
 import {
   estimateTokens,
@@ -47,6 +47,7 @@ const outputSchemas = {
   "CorrectionProposal.v1": correctionProposalSchema,
   "AnswerWithCitations.v1": answerWithCitationsSchema,
   "AssistantReply.v1": assistantReplySchema,
+  "AnswerReview.v1": answerReviewSchema,
 } satisfies Record<string, z.ZodType>;
 
 type OutputSchemaName = keyof typeof outputSchemas;
