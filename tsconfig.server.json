@@ -20,6 +20,7 @@
     "scripts/review-wiki.ts",
     "scripts/review-knowledge.ts",
     "scripts/review-verify.ts",
+    "scripts/review-prune.ts",
     "scripts/retrieval-index.ts",
     "scripts/live-retrieval-smoke.ts",
     "scripts/review-guides.ts",

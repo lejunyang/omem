@@ -175,7 +175,8 @@ export class AcpAssistantModel implements AssistantModelPort {
     );
     const investigation = answerInvestigation({
       workspace,
-      review: (draft, snapshot) =>
+      signal: input.signal,
+      review: (draft, snapshot, signal) =>
         reviewAssistantAnswer({
           draft,
           snapshot,
@@ -183,7 +184,7 @@ export class AcpAssistantModel implements AssistantModelPort {
           profile,
           workspaceRoot: this.deps.researchWorkspace ?? this.deps.workspaceRoot,
           retrievalConfig: this.deps.retrievalConfig,
-          context: input,
+          context: { ...input, signal },
         }),
     });
     const environment = await prepareAssistantResearch({
@@ -320,7 +321,11 @@ export class AcpAssistantModel implements AssistantModelPort {
         error instanceof Error ? error.message : "自主调查暂不可用",
       );
     } finally {
-      await environment.close();
+      try {
+        await investigation.close();
+      } finally {
+        await environment.close();
+      }
     }
   }
 }

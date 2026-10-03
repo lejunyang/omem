@@ -46,10 +46,15 @@ it("lets an independent reader inspect the same frozen originals and returns an 
   try {
     new RoleBundleRegistry().load("answer-reviewer");
     let calls = 0;
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const investigation = answerInvestigation({
       workspace,
       review: async (_draft, snapshot) => {
         calls++;
+        await waiting;
         capture("规则已经变更：周一配送。");
         const reader = await prepareAgentResearch({
           repository,
@@ -114,7 +119,33 @@ it("lets an independent reader inspect the same frozen originals and returns an 
     expect((await submit(draft.answer)).isError).toBe(true);
     expect(env.result()).toBeUndefined();
     const review = await call("review_answer", { draft });
-    expect(JSON.stringify(review)).toContain("中午前");
+    const payload = (result: any) => JSON.parse(result.content[0].text);
+    const started = payload(review);
+    expect(started.status).toBe("running");
+    const again = payload(await call("review_answer", { draft }));
+    expect(again.reviewId).toBe(started.reviewId);
+    expect(calls).toBe(1);
+    expect(JSON.stringify(await submit(draft.answer))).toContain(
+      "read_answer_review",
+    );
+    expect(
+      payload(
+        await call("read_answer_review", {
+          reviewId: started.reviewId,
+          waitSeconds: 0,
+        }),
+      ).status,
+    ).toBe("running");
+    release();
+    const completed = payload(
+      await call("read_answer_review", { reviewId: started.reviewId }),
+    );
+    expect(completed.status).toBe("completed");
+    expect(JSON.stringify(completed.report)).toContain("中午前");
+    expect(
+      payload(await call("read_answer_review", { reviewId: started.reviewId }))
+        .report,
+    ).toEqual(completed.report);
     expect((await submit(draft.answer)).isError).toBe(true);
     expect(
       (
@@ -127,10 +158,68 @@ it("lets an independent reader inspect the same frozen originals and returns an 
     expect(
       readFileSync(join(workspace, "answer-review.json"), "utf8"),
     ).toContain("登记截止时间");
+    await investigation.close();
   } finally {
     for (const c of clients.reverse()) await c.close();
     for (const e of environments.reverse()) await e.close();
     store.close();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("retains failures without an implicit second model call and cancels the owned review on close", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "omem-answer-review-cancel-"));
+  let calls = 0;
+  let cancelled = false;
+  const investigation = answerInvestigation({
+    workspace,
+    review: async (_draft, _snapshot, signal) => {
+      if (++calls === 1) throw Error("Agent connection closed");
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            cancelled = true;
+            reject(signal.reason);
+          },
+          { once: true },
+        );
+      });
+      throw Error("unreachable");
+    },
+  });
+  const start = investigation.tools.find((t) => t.name === "review_answer")!;
+  const read = investigation.tools.find(
+    (t) => t.name === "read_answer_review",
+  )!;
+  const snapshot = {} as Parameters<typeof start.run>[1];
+  const draft = { answer: "需要核对", citations: [] };
+  try {
+    const first: any = await start.run({ draft }, snapshot);
+    const failed: any = await read.run(
+      { reviewId: first.reviewId, waitSeconds: 20 },
+      snapshot,
+    );
+    expect(failed).toMatchObject({
+      status: "failed",
+      error: "Agent connection closed",
+    });
+    expect(await start.run({ draft }, snapshot)).toMatchObject({
+      reviewId: first.reviewId,
+      status: "failed",
+    });
+    expect(calls).toBe(1);
+    expect(() => investigation.beforeSubmit("最终答案")).toThrow();
+    const retry: any = await start.run({ draft, retry: true }, snapshot);
+    expect(retry.reviewId).not.toBe(first.reviewId);
+    await investigation.close();
+    expect(cancelled).toBe(true);
+    expect(
+      await read.run({ reviewId: retry.reviewId, waitSeconds: 0 }, snapshot),
+    ).toMatchObject({ status: "cancelled" });
+    expect(() => investigation.beforeSubmit("最终答案")).toThrow();
+  } finally {
+    await investigation.close();
+    rmSync(workspace, { recursive: true, force: true });
   }
 });
