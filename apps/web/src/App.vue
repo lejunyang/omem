@@ -165,6 +165,14 @@ function readSearchResult(result: RetrievalHit, reference?: SourceAnchor) {
     title: result.title,
   });
 }
+function readCallSite(result: RetrievalHit, line: number) {
+  if (result.target.kind !== "source") return;
+  readSearchResult(result, {
+    ...result.target,
+    startLine: Math.max(result.target.startLine, line - 3),
+    endLine: Math.min(result.target.endLine, line + 12),
+  });
+}
 function readSearchCitation(result: RetrievalHit, citation: string) {
   if (result.target.kind !== "knowledge") return;
   const label =
@@ -700,6 +708,9 @@ onBeforeUnmount(() => {
       <SearchAnswer :query="query" :purpose="searchPurpose" @navigate="pushSearch" @open="(id) => evidence?.open(id)" @results="showSearchResults" />
       <h2 ref="searchResultsHeading" class="search-results-heading">实际搜索命中 <small v-if="!searching && !searchError">{{ results.length }} 条</small></h2>
       <label class="search-purpose">筛选命中材料<select v-model="searchRole"><option value="">所有用途</option><option v-for="role in materialRoles" :key="role" :value="role">{{materialRoleLabels[role]}}</option></select></label>
+      <p v-if="results.some(r => r.codeMatches?.length)" class="muted call-candidate-note">
+        以下是按名称找到的调用位置。同名方法可能属于不同对象，需结合上下文确认；别名和动态调用可能未被找到。
+      </p>
       <p v-if="searching" class="search-loading" role="status">
         <span class="search-spinner" aria-hidden="true" />正在搜索相关材料…
       </p>
@@ -733,6 +744,15 @@ onBeforeUnmount(() => {
         />
         <p v-else class="excerpt">{{ r.text }}</p>
         <div class="search-actions">
+          <template v-for="match in r.codeMatches" :key="match.symbol">
+            <OmButton
+              v-for="line in match.lines"
+              :key="line"
+              variant="secondary"
+              @click="readCallSite(r, line)"
+              >查看第 {{ line }} 行调用</OmButton
+            >
+          </template>
           <OmButton
             v-if="r.kind !== 'memory' || r.references.length"
             variant="secondary"
