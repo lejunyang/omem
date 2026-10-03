@@ -118,6 +118,13 @@ run = [{ argv = ["bun", "scripts/review-verify.ts", "{{args}}"] }]
 [tasks."review:verify".flags.full]
 help = "Run dependencies, complete project checks and live Chinese retrieval"
 
+[tasks."review:prune"]
+description = "Preview redundant review reports and completed temporary runs"
+run = [{ argv = ["bun", "scripts/review-prune.ts", "{{args}}"] }]
+
+[tasks."review:prune".flags.apply]
+help = "Remove only the listed redundant verification outputs"
+
 [tasks."review:build"]
 run = [{ argv = ["bun", "scripts/review-wiki.ts", "{{args}}"] }]
 

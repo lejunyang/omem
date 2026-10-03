@@ -39,7 +39,7 @@
 3. 检查 current/stale/pending/failed 与实际引用，抽查读者是否能理解。上层受影响则更新，失败保留有效旧历史并说明原因；排队不等于应用成功。
 4. 检索修改运行 osdk run retrieval:verify 与 osdk run retrieval:index --review，并通过真实 HTTP 搜索检查中文问题；运行 osdk run review:verify --full 生成当前报告。旧报告不能继承为本轮通过率。
 5. 实际模型配置是 config/review-code-model.json（REVIEW_CODE_MODEL_CONFIG 可覆盖），不只改 example；保留研究、生成、独立复核与运行 trace。数据库和临时材料在 .repo-review/runtime/（gitignored），发布正文和验证报告按功能提交。
-6. .repo-review/data/ 与旧历史保留，不因本轮文档归档删除它们。固定历史引用不能静默跳到当前版本。
+6. .repo-review/data/、原件/文章固定引用所需历史保留，不能静默跳到当前版本。验收副本和报告不是知识历史：按 `review:prune` 保留有限报告，实验结束释放复制的数据库；专项结果更新同一份简报，不持续堆整库正文、重复页面或调试日志。清理未知旧目录前核对用途及进程占用。
 
 ## 既有合同
 

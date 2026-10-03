@@ -7,9 +7,10 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { z } from "zod";
 import { Store } from "../apps/server/src/store.js";
@@ -27,6 +28,11 @@ import { acp } from "../apps/server/src/agents.js";
 import { profileSchema } from "../packages/contracts/src/index.js";
 import { loadReviewCodeModelConfig } from "../apps/server/src/review/model-config.js";
 import { taskFlag } from "./task-args.js";
+import {
+  beginReviewRun,
+  completedReviewRuns,
+  pruneCandidates,
+} from "./review-retention.js";
 
 const option = (name: string, fallback = "") =>
   process.env[`osdk_arg_${name}`] ||
@@ -64,6 +70,7 @@ if (existsSync(file))
   throw Error(
     "Choose a fresh output directory; previous results are preserved",
   );
+const finishRun = beginReviewRun(directory, "assistant");
 const source = new DatabaseSync(join(sourceDir, "omem.sqlite"), {
   readOnly: true,
 });
@@ -108,9 +115,7 @@ const digest = () =>
 const config = loadReviewCodeModelConfig();
 if (config.transport !== "acp")
   throw Error("Assistant comparison requires an ACP configuration");
-const models = option("models", "gpt-5.6-sol")
-  .split(",")
-  .filter(Boolean);
+const models = option("models", "gpt-5.6-sol").split(",").filter(Boolean);
 const report: Record<string, any> = {
   startedAt: new Date().toISOString(),
   implementationCommit: execFileSync("git", ["rev-parse", "HEAD"], {
@@ -129,6 +134,7 @@ const save = () =>
     JSON.stringify(report, null, 2) + "\n",
     { mode: 0o600 },
   );
+const generations = new Set<Promise<unknown>>();
 try {
   // Load model/query services outside timed questions; missing vectors remain
   // explicitly visible in health, rather than silently changing this corpus.
@@ -179,7 +185,7 @@ try {
         {
           generate: async (input) => {
             modelStart = performance.now();
-            return adapter.generate({
+            const generation = adapter.generate({
               ...input,
               onResearchActivity: (e) => {
                 events.push({
@@ -189,6 +195,12 @@ try {
                 input.onResearchActivity?.(e);
               },
             });
+            generations.add(generation);
+            try {
+              return await generation;
+            } finally {
+              generations.delete(generation);
+            }
           },
         },
         { ownerId: "owner", retrieval: port, turnTimeoutMs: profile.timeoutMs },
@@ -267,8 +279,14 @@ try {
   report.completedAt = new Date().toISOString();
   save();
 } finally {
+  // turn() can return on cancellation before ACP closes. Release its snapshot
+  // only after both author and owned reviewer have actually stopped.
+  await Promise.allSettled(generations);
   await retrieval.close();
   store.db.exec("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE");
   store.close();
+  rmSync(dataDir, { recursive: true, force: true });
+  finishRun();
+  pruneCandidates(completedReviewRuns(dirname(directory), "assistant"));
 }
 console.log("Comparison saved: " + join(directory, "report.json"));

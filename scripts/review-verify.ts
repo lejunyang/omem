@@ -1,4 +1,5 @@
 import { taskFlag } from "./task-args.js";
+import { beginReviewRun, pruneCandidates, reviewCleanupPlan } from "./review-retention.js";
 /** Reproducible repository acceptance. Reports describe this run only. */
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
@@ -22,6 +23,7 @@ const output=join(root,'.repo-review/knowledge/verification.json');
 const history=join(root,'.repo-review/knowledge/verification/history');
 const logs=join(root,'.repo-review/runtime/verification',runId);
 mkdirSync(logs,{recursive:true}); mkdirSync(history,{recursive:true});
+const finishRun = beginReviewRun(logs, "verification");
 const hash=(value: string | Buffer)=>createHash('sha256').update(value).digest('hex');
 function sourceDigest() {
   const files=execFileSync('git',['ls-files','--cached','--others','--exclude-standard','-z'],{cwd:root,encoding:'utf8'}).split('\0')
@@ -51,7 +53,7 @@ for(const [name,args] of [['dependencies',['deps','--frozen']],['project',['run'
 }
 const report: Record<string,unknown>={version:4,recordedAt:at,implementationCommit:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),sourceDigest:initialDigest,queryDigest,mode:full?'full':'repository',checks,
   scope:'本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。',
-  history:'verification/history/；旧截图与 seed 核对仅用于历史追溯。运行日志保存在 gitignored runtime。'};
+  history:'当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。'};
 const store=createReviewStore(root);
 let app: Awaited<ReturnType<typeof buildReviewApp>>['app'] | undefined;
 try {
@@ -111,5 +113,7 @@ if(existsSync(output)){
   if(!existsSync(archived))writeFileSync(archived,old);
 }
 writeFileSync(output,JSON.stringify(report,null,2)+'\n');
+finishRun();
+pruneCandidates(reviewCleanupPlan(root));
 console.log(JSON.stringify({report:relative(root,output),passed:report.passed,checks,knowledge:report.knowledge},null,2));
 if(!report.passed)process.exitCode=1;

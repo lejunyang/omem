@@ -280,6 +280,7 @@ export async function prepareAgentResearch(input: {
         read_image: "查看原始图片",
         investigation_notes: "整理已查明内容与待解问题",
         review_answer: "独立核对答案与关键条件",
+        read_answer_review: "等待或读取独立复核意见",
       };
       if (e.kind === "mcp" || e.kind === "submission")
         input.onActivity?.({

@@ -22,6 +22,10 @@
 
 ## 数据与连接
 
+仓库验收清理：`osdk run review:prune` 预览，`osdk run review:prune --apply` 执行。自动检查只保留当前报告、最近两份成功与两份失败归档，以及当前文档直接引用的报告；`review:verify` 结束时自动执行这个保留规则。旧记录仍可从 Git 找回，不能用旧成功覆盖当前失败。
+
+`assistant:compare` 结束时释放本次复制的数据库，保留答案、模型配置、意见和读取记录；只保留同一输出父目录最近三次已结束运行。自动检查日志也只保留最近三次。进行中的运行和没有归属标记的旧实验目录不会自动删除，需核对后清理。原件版本、材料说明历史、文章固定引用、正式 `.omem` 和 `.repo-review/runtime/data` 不在此清理范围。专项验收用一份现行简报和必要样例，不反复提交整库正文、重复 HTML 或临时调试日志。
+
 个人数据库、资产与临时输出在 .omem/，可用 OMEM_DATA_DIR 覆盖。隔离仓库运行数据在 .repo-review/runtime/。保留旧引用依赖的历史，不删除 .repo-review/data/ 等既有档案。原件、会话、密钥、数据库与模型权重不提交 Git。
 
 当前是 SQLite 单用户服务。默认仅 loopback；远程访问需 OMEM_HOST、OMEM_TOKEN 及适当的 TLS/隧道。浏览器令牌用于连接这台 omem 服务，不是模型令牌。飞书需单独启用、授权和配对；OMEM_SECRET_KEY 是加密 App Secret 的本地主密钥，不能入 Git。外部通知、全局 hooks 与屏幕监听需要独立明确范围。
