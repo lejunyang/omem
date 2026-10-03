@@ -10,6 +10,7 @@ import {
 import { UnifiedRetrieval } from "../src/retrieval/unified.js";
 import { markdownPassages } from "../src/retrieval/units.js";
 import { querySymbols } from "../src/retrieval/relevance.js";
+import { rerankPassages } from "../src/retrieval/rerank-passages.js";
 import type { EmbeddingModel } from "../src/retrieval/embedding.js";
 import {
   AssistantRuntime,
@@ -644,6 +645,166 @@ it("retains same-named definitions and source visibility without treating mentio
   } finally {
     await s.close();
   }
+});
+
+it("finds captured call sites instead of definitions, imports or comments, preserving scope and revisions", async () => {
+  const s = setup();
+  const capture = (id: string, text: string) =>
+    s.store.capture({
+      source: "file",
+      externalId: id,
+      title: id + ".ts",
+      context: { filePath: id + ".ts" },
+      parts: [{ type: "text", text }],
+    });
+  try {
+    capture(
+      "parcel",
+      "export function reserveParcel(id: string) { return id; }",
+    );
+    capture(
+      "checkout",
+      [
+        'import { reserveParcel } from "./parcel";',
+        '// reserveParcel("comment") is only an example.',
+        'export function checkout() { return reserveParcel("a"); }',
+        'export function retry() { return reserveParcel("b"); }',
+        'export function schedule() { return reserveParcel("c"); }',
+      ].join("\n"),
+    );
+    const question = "哪些地方调用 reserveParcel？要找调用方，而不是定义。";
+    capture(
+      "mobile",
+      'export function buyOnPhone() { return reserveParcel("d"); }',
+    );
+    const hits = await s.retrieval.search({ text: question });
+    expect(hits).toHaveLength(4); // File diversity does not discard the other operations.
+    expect(new Set(hits.slice(0, 2).map((h) => h.title)).size).toBe(2);
+    expect(
+      hits.flatMap((h) => h.codeMatches!.flatMap((m) => m.lines)).sort(),
+    ).toEqual([1, 3, 4, 5]);
+    expect(
+      hits.every((h) => h.codeMatches!.every((m) => m.status === "candidate")),
+    ).toBe(true);
+    expect(hits.every((h) => h.routes.includes("code-call-candidate"))).toBe(
+      true,
+    );
+    const explicit = await s.retrieval.search({
+      text: "reserveParcel",
+      codeIntent: "callers",
+    });
+    expect(explicit.map((h) => h.id)).toEqual(hits.map((h) => h.id));
+    expect(
+      (
+        await s.retrieval.search({ text: question, codeIntent: "definition" })
+      )[0]?.headingPath.at(-1),
+    ).toBe("reserveParcel");
+    const visible = new Set(hits[0]!.references.flatMap((r) => r.fragmentIds));
+    expect(
+      (
+        await s.retrieval.search({
+          text: question,
+          visible: (id) => visible.has(id),
+        })
+      ).every((h) =>
+        h.references.every((r) => r.fragmentIds.every((id) => visible.has(id))),
+      ),
+    ).toBe(true);
+    expect(
+      await s.retrieval.search({ text: "AbsentShippingMethod_728 callers" }),
+    ).toEqual([]);
+    const oldTarget = hits.find((h) => h.title === "checkout.ts")!.target;
+    capture(
+      "checkout",
+      'export function checkout() { return "no reservation"; }',
+    );
+    expect(
+      (await s.retrieval.search({ text: question })).map((h) => h.title),
+    ).toEqual(["mobile.ts"]);
+    if (oldTarget.kind === "source")
+      expect(
+        s.retrieval.readEvidence(oldTarget.revisionId, oldTarget.fragmentIds[0])
+          ?.text,
+      ).toContain("reserveParcel");
+  } finally {
+    await s.close();
+  }
+});
+
+it("keeps a dense match near the end of a named operation and sends local passages to reranking", async () => {
+  const s = setup();
+  const inputs: string[][] = [];
+  const model: EmbeddingModel = {
+    id: "window-fixture",
+    close: async () => {},
+    embed: async (texts, purpose) =>
+      texts.map((t) =>
+        purpose === "query" || t.includes("TAIL_ACTION") ? [1, 0] : [0, 1],
+      ),
+  };
+  const retrieval = new UnifiedRetrieval(
+    s.store.db,
+    async () => model,
+    async () => ({
+      id: "record-inputs",
+      close: async () => {},
+      score: async (_q, passages) => {
+        inputs.push(passages);
+        return passages.map((p) => (p.includes("TAIL_ACTION") ? 0.9 : 0.2));
+      },
+    }),
+  );
+  try {
+    s.store.capture({
+      source: "file",
+      externalId: "long-operation",
+      title: "parcel.ts",
+      context: { filePath: "parcel.ts" },
+      parts: [
+        {
+          type: "text",
+          text:
+            "export function reserveParcel(id: string) {\n" +
+            Array.from(
+              { length: 90 },
+              (_, i) => `  console.log("preparation ${i}");`,
+            ).join("\n") +
+            "\n  return commitReservation(id); // TAIL_ACTION\n}",
+        },
+      ],
+    });
+    while (await retrieval.indexBatch(32)) {}
+    const hits = await retrieval.search({
+      text: "reserveParcel 最后怎样实际提交预约？",
+      purpose: "implementation",
+    });
+    expect(inputs.flat().some((p) => p.includes("TAIL_ACTION"))).toBe(true);
+    expect(inputs.flat().every((p) => p.length <= 961)).toBe(true);
+    expect(hits[0]?.text).toContain("commitReservation");
+    expect(hits[0]?.target).toMatchObject({ startLine: 1, endLine: 93 });
+    expect(hits[0]?.routes).toEqual(
+      expect.arrayContaining(["semantic", "code-symbol", "cross-encoder"]),
+    );
+  } finally {
+    await retrieval.close();
+    await s.close();
+  }
+});
+
+it("uses a range-bound Chinese concept to locate English write operations beyond notification prose", () => {
+  const text =
+    "// 修改记忆、提案与入口的信息提示\n" +
+    "prepareNotification();\n".repeat(100) +
+    "\napplyTask();\napplyMemory();\n";
+  const passages = rerankPassages(
+    text,
+    "怎样修改有效记忆，提案从什么入口写入？",
+    text.slice(0, 400),
+    [{ label: "原子写入记忆或事项", aliases: ["applyTask", "applyMemory"] }],
+  );
+  expect(passages.some((p) => p.includes("applyTask();\napplyMemory();"))).toBe(
+    true,
+  );
 });
 
 it("persists contextual semantic units with a separate identity and finds explanations beyond lexical wording", async () => {

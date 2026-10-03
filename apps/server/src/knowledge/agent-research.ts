@@ -19,7 +19,7 @@ import type { KnowledgeMaterial } from "../../../../packages/contracts/src/knowl
 import type { NativeResearchEnvironment } from "../agent-runtime/gateway.js";
 import { stableDigest } from "../storage/digest.js";
 import { UnifiedRetrieval } from "../retrieval/unified.js";
-import { retrievalPurposes } from "../retrieval/port.js";
+import { codeIntents, retrievalPurposes } from "../retrieval/port.js";
 import { materialRoles } from "../../../../packages/contracts/src/material-description.js";
 import { loadChineseEmbedding } from "../retrieval/embedding.js";
 import { loadChineseReranker } from "../retrieval/reranker.js";
@@ -410,17 +410,18 @@ export async function prepareAgentResearch(input: {
       );
       tool(
         "search_materials",
-        "Hybrid lexical/Chinese semantic search within this snapshot. Optional keys/type narrow a task scope. Empty results mean no strong match; refine concepts or use native Grep.",
+        "Hybrid lexical/Chinese semantic search within this snapshot. For code navigation put the symbol in query and set codeIntent to definition or callers. Callers are name-level AST candidates, not type-resolved links; aliases/dynamic calls may be missing. Read the enclosing operation to confirm. Empty results mean no match in scope; refine concepts or use native Grep.",
         {
           query: z.string(),
           keys: z.array(z.string()).optional(),
           kind: z.enum(["all", "code", "document"]).default("all"),
           purpose: z.enum(retrievalPurposes).default("balanced"),
+          codeIntent: z.enum(codeIntents).optional(),
           materialRoles: z.array(z.enum(materialRoles)).optional(),
           effectiveAt: z.iso.datetime({offset:true}).optional(),
           limit: z.number().int().min(1).max(50).default(10),
         },
-        async ({ query, keys, kind, limit, purpose, materialRoles, effectiveAt }) => {
+        async ({ query, keys, kind, limit, purpose, codeIntent, materialRoles, effectiveAt }) => {
           ready ??= config.enabled
             ? retrieval.indexBatch(0).catch((error) =>
                 record({
@@ -444,6 +445,7 @@ export async function prepareAgentResearch(input: {
             limit,
             visible,
             purpose,
+            codeIntent,
             materialRoles, effectiveAt,
             kinds: ["source" as const],
           };
@@ -465,6 +467,7 @@ export async function prepareAgentResearch(input: {
                   revision: f.material.revisionId,
                   score: h.score,
                   routes: h.routes,
+                  codeMatches: h.codeMatches,
                   startLine: h.target.startLine,
                   endLine: h.target.endLine,
                   snippet: h.text,
