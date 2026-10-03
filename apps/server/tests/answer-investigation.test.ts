@@ -52,7 +52,7 @@ it("lets an independent reader inspect the same frozen originals and returns an 
     });
     const investigation = answerInvestigation({
       workspace,
-      review: async (_draft, snapshot) => {
+      review: async (_draft, snapshot, signal, publish) => {
         calls++;
         await waiting;
         capture("规则已经变更：周一配送。");
@@ -63,6 +63,7 @@ it("lets an independent reader inspect the same frozen originals and returns an 
           workspace: join(root, "reader"),
           schema: answerReviewSchema,
           validate: (x) => answerReviewSchema.parse(x),
+          onSubmitted: (x) => publish(answerReviewSchema.parse(x)),
           retrievalConfig: { enabled: false },
         });
         expect(reader.tools).not.toContain("review_answer");
@@ -84,6 +85,14 @@ it("lets an independent reader inspect the same frozen originals and returns an 
           ],
         };
         await read("submit_result", { result });
+        // The CLI can continue its closing message after submitting. Its
+        // validated report must already be readable; cancellation must not
+        // reclassify that report as a failed review.
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        });
         return answerReviewSchema.parse(reader.result());
       },
     });
@@ -159,6 +168,14 @@ it("lets an independent reader inspect the same frozen originals and returns an 
       readFileSync(join(workspace, "answer-review.json"), "utf8"),
     ).toContain("登记截止时间");
     await investigation.close();
+    expect(
+      payload(
+        await call("read_answer_review", {
+          reviewId: started.reviewId,
+          waitSeconds: 0,
+        }),
+      ).status,
+    ).toBe("completed");
   } finally {
     for (const c of clients.reverse()) await c.close();
     for (const e of environments.reverse()) await e.close();

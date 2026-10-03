@@ -82,6 +82,8 @@ export async function prepareAgentResearch(input: {
   workspace: string;
   schema: z.ZodType;
   validate: (output: unknown) => unknown;
+  /** Called only after the candidate is validated and saved, before CLI teardown. */
+  onSubmitted?: (output: unknown) => void;
   /** Internal only: an independent reader uses the author's sealed snapshot,
    * including memory/history, never a second view of the changing live store. */
   snapshot?: ResearchSnapshot;
@@ -930,6 +932,7 @@ export async function prepareAgentResearch(input: {
               JSON.stringify(submitted, null, 2),
               { mode: 0o600 },
             );
+            input.onSubmitted?.(submitted);
             return answer({ accepted: true });
           } catch (error) {
             const message =
