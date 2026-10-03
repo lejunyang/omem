@@ -136,6 +136,9 @@ function walkTs(
           : ts.isConditionalExpression(p)
             ? p.condition
             : p.expression;
+        // A call evaluating the condition is not guarded by that condition.
+        // Only calls in a branch/right operand inherit this reading context.
+        if (node.getStart(sf) < condition.getEnd()) continue;
         const branch = ts.isIfStatement(p)
           ? p.elseStatement && node.getStart(sf) >= p.elseStatement.getStart(sf)
             ? "else"
