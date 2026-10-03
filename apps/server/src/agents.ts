@@ -95,6 +95,12 @@ export async function acp(
   signal: AbortSignal,
   options: AcpOptions = {},
 ) {
+  const startedAt = performance.now();
+  let initializedAt = startedAt;
+  let promptStartedAt: number | undefined;
+  let promptFinishedAt: number | undefined;
+  let firstToolAt: number | undefined;
+  const toolCalls = new Map<string, string>();
   const child = launch(profile, profile.args, cwd);
   // Track the 'close' event from spawn time so we never miss it after stop().
   // On Windows, 'close' fires only after the process exits AND its stdio
@@ -224,6 +230,10 @@ export async function acp(
           return { action: "decline" };
         },
         sessionUpdate: async ({ update }) => {
+          if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+            firstToolAt ??= performance.now();
+            toolCalls.set(update.toolCallId, update.status ?? toolCalls.get(update.toolCallId) ?? "pending");
+          }
           if (["tool_call", "tool_call_update", "plan", "usage_update"].includes(update.sessionUpdate)) options.onSessionUpdate?.(update);
           if (
             update.sessionUpdate === "agent_message_chunk" &&
@@ -278,6 +288,7 @@ export async function acp(
     ]);
     if (initialized.protocolVersion !== 1)
       throw Error("Unsupported ACP protocol version");
+    initializedAt = performance.now();
     const session = await Promise.race([
       connection.newSession({
         cwd,
@@ -332,6 +343,7 @@ export async function acp(
       ]);
       configOptions = reply.configOptions;
     }
+    const configuredAt = performance.now();
     if (blocks) {
       if (options.contextBudget) assertContextBudget(configOptions, options.contextBudget);
       if (
@@ -340,12 +352,14 @@ export async function acp(
       )
         throw Error("This agent does not support images");
       emit("status", "Agent 已连接，正在基于固定证据回答");
+      promptStartedAt = performance.now();
       const result = await Promise.race([
         connection.prompt({ sessionId, prompt: blocks }),
         exited,
       ]);
       if (result.stopReason !== "end_turn")
         throw Error(`Agent stopped: ${result.stopReason}`);
+      promptFinishedAt = performance.now();
       // The agent's prompt has completed. Clear the global timeout now so
       // session teardown (closeSession) doesn't race it under parallel load —
       // otherwise a slow prompt leaves no budget for the 1s closeSession race,
@@ -364,6 +378,14 @@ export async function acp(
       sessionId,
       availableCommands,
       usage,
+      timings: {
+        initializeMs: Math.round(initializedAt - startedAt),
+        sessionSetupMs: Math.round(configuredAt - initializedAt),
+        promptMs: promptStartedAt === undefined ? 0 : Math.round((promptFinishedAt ?? performance.now()) - promptStartedAt),
+        firstToolMs: promptStartedAt === undefined || firstToolAt === undefined ? null : Math.round(Math.max(0, firstToolAt - promptStartedAt)),
+        toolCalls: toolCalls.size,
+        failedToolCalls: [...toolCalls.values()].filter(status => status === "failed").length,
+      },
     };
   } catch (error) {
     if (terminalFailure) throw terminalFailure;
