@@ -35,7 +35,9 @@ export function querySymbols(text: string): string[] {
           (name) =>
             terms.has(name.toLowerCase()) &&
             (exactLookup(text) ||
-              /[A-Z_$.]/.test(name) ||
+              // Capitalized prose (Markdown) and acronyms (JSON) are not
+              // operation names unless explicitly quoted or searched alone.
+              /[a-z\d][A-Z]|[_$.]/.test(name) ||
               quoted.includes(name.toLowerCase())),
         )
         .map((name) => name.toLowerCase()),
