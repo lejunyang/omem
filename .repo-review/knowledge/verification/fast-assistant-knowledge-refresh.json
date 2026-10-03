@@ -1,0 +1,618 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-03T09:38:33.772Z",
+  "scope": "快模型自主问答、材料准备优化及读者指南的真实 Traex ACP 更新；独立事实复核不代表读者验收。",
+  "effectiveProfile": "config/review-code-model.json",
+  "configuredModel": "gpt-5.6-sol",
+  "configuredTimeoutMs": 480000,
+  "scopeAdjustment": "逐文件流程完成两篇后反复扩写校验边界，未体现端到端阅读目标；于 09:11 UTC 主动停止其余生成。已发布结果与有效旧历史保留，其余改动文件没有冒充已刷新；转为更新提问和自主调查两篇读者指南。首次指南运行因使用旧计划于 09:13 UTC 停止，保留中断记录，再按 00c3d3b 计划重启。",
+  "focused": {
+    "at": "2026-10-03T09:11:41.911Z",
+    "scope": "Only implementation and UI files changed in this slice, plus their behavior checks. Legacy unrelated batch siblings remain explicitly stale.",
+    "total": 10,
+    "reused": 0,
+    "failures": [
+      {
+        "keys": [
+          "omem:apps/server/src/assistant/runtime.ts"
+        ],
+        "error": "Error: Worker stopped before completion"
+      },
+      {
+        "keys": [
+          "omem:apps/server/src/knowledge/research-snapshot.ts"
+        ],
+        "error": "Error: Worker stopped before completion"
+      }
+    ],
+    "states": [
+      {
+        "key": "omem:apps/server/src/assistant/acp-model.ts",
+        "current": true
+      },
+      {
+        "key": "omem:apps/server/src/assistant/research.ts",
+        "current": true
+      },
+      {
+        "key": "omem:apps/server/src/assistant/runtime.ts",
+        "current": false
+      },
+      {
+        "key": "omem:apps/server/src/knowledge/research-snapshot.ts",
+        "current": false
+      },
+      {
+        "key": "omem:apps/server/src/knowledge/agent-research.ts",
+        "current": false
+      },
+      {
+        "key": "omem:apps/server/src/config.ts",
+        "current": false
+      },
+      {
+        "key": "omem:apps/server/src/app.ts",
+        "current": false
+      },
+      {
+        "key": "omem:apps/server/src/storage/migrations.ts",
+        "current": false
+      },
+      {
+        "key": "omem:scripts/assistant-compare.ts",
+        "current": false
+      },
+      {
+        "key": "omem:config/omem.example.json",
+        "current": false
+      }
+    ]
+  },
+  "updates": [
+    {
+      "key": "guide:knowledge-agent",
+      "title": "Agent 怎样把材料讲明白：从自主调查到发布",
+      "current": true,
+      "staleDependencies": [],
+      "revision": "8dc520fc958401f0231d1e9febac63211ce37b36fd7f6f8f8910f4b5c011b9a6",
+      "artifact": "../articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.json",
+      "sections": [
+        {
+          "key": "scenario",
+          "title": "先定义新人读完能做什么"
+        },
+        {
+          "key": "goal-to-research",
+          "title": "阅读目标怎样变成调查路线"
+        },
+        {
+          "key": "fixed-workspace",
+          "title": "固定原件与证据快照怎样支持补读"
+        },
+        {
+          "key": "one-agent-turn",
+          "title": "一次 ACP prompt 为什么能反复查资料"
+        },
+        {
+          "key": "role-handoff",
+          "title": "同一个例子怎样跨过研究、写作与复核"
+        },
+        {
+          "key": "publish-and-refresh",
+          "title": "发布时固定来源，换版后显式更新"
+        },
+        {
+          "key": "change-and-quality",
+          "title": "想改体验，应从哪一层下手"
+        }
+      ],
+      "citations": 21,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T09:34:24.845Z",
+        "trace": {
+          "runId": "0aa2970c-17d1-4da1-9f81-c7d31ca977a8",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "295dfed7b3a7fa372700294c4f0c544628608a2e168e8bc041acf081693b0db7",
+          "sessionIds": [
+            "01a1011a-7843-7433-bdbc-21e1b1ff3797",
+            "01a1011a-a881-7d60-ada6-16e95ef4e2c0",
+            "01a1011a-dde6-71d1-a297-902eefabf399"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T09:36:11.537Z",
+        "trace": {
+          "runId": "09611965-c6ff-4e4f-a926-214b9d09f0c7",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "f12a7e9b1aeac000866a4b4f532980267b1a22cde8957cb27a075070137eacde",
+          "sessionIds": [
+            "01a1011d-9b32-7523-bae6-f69c2dfe17b2"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "guide:retrieval",
+      "title": "一次提问如何找到答案：搜索、补读与固定引用",
+      "current": true,
+      "staleDependencies": [],
+      "revision": "7d69ef21e837de8c30d4296bbc29a7e28e58671eecb83f4a3f0489a82e8734e4",
+      "artifact": "../articles/c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.json",
+      "sections": [
+        {
+          "key": "scenario",
+          "title": "从一条群消息开始"
+        },
+        {
+          "key": "entry-differences",
+          "title": "搜索负责找线索，助手负责形成回答"
+        },
+        {
+          "key": "retrieval-signals",
+          "title": "不同线索各自解决什么"
+        },
+        {
+          "key": "context-expansion",
+          "title": "命中片段之后，怎样补成可回答的上下文"
+        },
+        {
+          "key": "fixed-citations",
+          "title": "为什么回答能回到固定原文"
+        },
+        {
+          "key": "assistant-model",
+          "title": "单独选择问答模型，实际节省了什么"
+        },
+        {
+          "key": "diagnosis",
+          "title": "怎样定位效果问题与当前限制"
+        }
+      ],
+      "citations": 40,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T09:31:45.173Z",
+        "trace": {
+          "runId": "2b543075-1094-4bb6-873f-89afa048139d",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "62e514db90bcd04b23f3006c21289af36d58eaf6dc445d38c74a58d151cbbc66",
+          "sessionIds": [
+            "01a10119-864a-7b81-8e50-98b56c09c0c9"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T09:33:26.264Z",
+        "trace": {
+          "runId": "dd301805-0096-464f-86f4-3f74b079c4ec",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "3d11c356f2aa1cfedefd1bbb972bfc9f1ce62da17d1aee43bc4e1ce09dce40db",
+          "sessionIds": [
+            "01a1011b-2cc4-7c51-8f32-2b8458a0ddda"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "title": "ACP 助手模型：受控回答与自主调查",
+      "current": false,
+      "staleDependencies": [
+        {
+          "kind": "material",
+          "key": "omem:docs/reader-first/progress.md"
+        }
+      ],
+      "revision": "e4bbc6bc76a21e525097408db6cebe8e3c0bb1bc706e648ce8ddd37052f3c332",
+      "artifact": "../articles/12661f71bb7b912e4993949f4b3d1d6f22c399845d20c1cbced17ce858b7b0cf.json",
+      "sections": [
+        {
+          "key": "purpose-routing",
+          "title": "把模型接入变成可失败、可治理的边界"
+        },
+        {
+          "key": "representative-flow",
+          "title": "一条代表性调用如何完成自主调查"
+        },
+        {
+          "key": "direct-mode-and-limits",
+          "title": "直连模式的输入收敛与输出边界"
+        }
+      ],
+      "citations": 11,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T09:06:38.559Z",
+        "trace": {
+          "runId": "a50fb257-fe89-491e-94e6-18f22b8d8bbb",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "cf7249c15442b1e39aaf24b102de5416628af5d1557d5e58a424f5f5d56fa577",
+          "sessionIds": [
+            "01a10102-c2eb-70d1-b5f1-2299eff4fe2f"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T09:08:13.701Z",
+        "trace": {
+          "runId": "3579cc75-0156-4a7a-860e-b5a3898b2d61",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "484640cf4fa5b029c699f3530d81b7838b631260047464fb8d353ec01cc5930a",
+          "sessionIds": [
+            "01a10104-5d9e-7c42-9374-e6c2c395bf95"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "omem:apps/server/src/assistant/research.ts",
+      "title": "助手自主调查的可见性与证据闸门",
+      "current": false,
+      "staleDependencies": [
+        {
+          "kind": "material",
+          "key": "omem:docs/reader-first/progress.md"
+        }
+      ],
+      "revision": "bb9e8f8b8b8f3527decd435bcaae5afed988c64c7071f6477368c1b9a47dd9fe",
+      "artifact": "../articles/3efae8968a44bf44dacc55149ba558726e4fc2960c6e516d52bd071f01f15d99.json",
+      "sections": [
+        {
+          "key": "purpose",
+          "title": "为什么需要这一层"
+        },
+        {
+          "key": "flow",
+          "title": "一条代表性调用如何得到可追溯回复"
+        },
+        {
+          "key": "boundaries",
+          "title": "输出约束、边界与模块关系"
+        }
+      ],
+      "citations": 5,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T09:00:12.976Z",
+        "trace": {
+          "runId": "dc4fe001-5be1-4a7e-9c8f-b01a2c030108",
+          "roleId": "code-analyst",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "1f417723534b94d5600de959cc3da941a1c9a9c2b3e730d90891cfb1377a21a6",
+          "sessionIds": [
+            "01a100fb-a66c-7831-8516-d530234a8871"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-code-analyst",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T09:01:32.092Z",
+        "trace": {
+          "runId": "bf5ab468-b049-4fda-b803-321335f865fa",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "10d1af436fd333fe189b76bc981b48062961a19fe92c12cf339d5e9c2f7706bd",
+          "sessionIds": [
+            "01a100fe-561c-7730-8f0b-96e77048ae7e"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    }
+  ],
+  "pages": [
+    {
+      "key": "guide:overview",
+      "title": "先认识 omem：把材料变成能找回的工作记忆",
+      "state": "stale",
+      "generatedAt": "2026-10-03T03:33:14.813Z",
+      "reviewedAt": "2026-10-03T03:36:00.827Z"
+    },
+    {
+      "key": "guide:capture",
+      "title": "一份材料如何变成可检索、可追溯的知识",
+      "state": "stale",
+      "generatedAt": "2026-10-03T02:57:04.635Z",
+      "reviewedAt": "2026-10-03T03:01:09.720Z"
+    },
+    {
+      "key": "guide:retrieval",
+      "title": "一次提问如何找到答案：搜索、补读与固定引用",
+      "state": "reviewed",
+      "generatedAt": "2026-10-03T09:31:45.173Z",
+      "reviewedAt": "2026-10-03T09:33:26.264Z"
+    },
+    {
+      "key": "guide:memory",
+      "title": "规则变了以后：原文、记忆与待办怎样更新",
+      "state": "stale",
+      "generatedAt": "2026-10-03T03:27:37.919Z",
+      "reviewedAt": "2026-10-03T03:32:02.211Z"
+    },
+    {
+      "key": "guide:contributing",
+      "title": "改一条完整功能链：让搜索结果说清所属章节",
+      "state": "stale",
+      "generatedAt": "2026-10-03T03:41:35.495Z",
+      "reviewedAt": "2026-10-03T03:44:09.836Z"
+    },
+    {
+      "key": "guide:knowledge-agent",
+      "title": "Agent 怎样把材料讲明白：从自主调查到发布",
+      "state": "reviewed",
+      "generatedAt": "2026-10-03T09:34:24.845Z",
+      "reviewedAt": "2026-10-03T09:36:11.537Z"
+    }
+  ],
+  "coverage": {
+    "catalogEntries": 1838,
+    "materials": 604,
+    "current": 133,
+    "stale": 358,
+    "fileStates": {
+      "pending": 270,
+      "not-applicable": 1234,
+      "stale": 206,
+      "reviewed": 128
+    }
+  },
+  "runs": [
+    {
+      "log": ".repo-review/runtime/research/fast-assistant-knowledge.log",
+      "sha256": "660a4fa29bbe8361ad732eb2b551fad9d9a1d65756e5ce8b82a7c8ff257dff26",
+      "events": [
+        "2026-10-03T08:57:03.305Z AI code-analyst: omem:apps/server/src/assistant/acp-model.ts",
+        "2026-10-03T08:57:17.199Z AI code-analyst: omem:apps/server/src/assistant/research.ts",
+        "2026-10-03T08:59:11.469Z AI knowledge-verifier: omem:apps/server/src/assistant/acp-model.ts",
+        "2026-10-03T09:00:12.990Z AI knowledge-verifier: omem:apps/server/src/assistant/research.ts",
+        "2026-10-03T09:01:10.403Z AI knowledge-refresher: omem:apps/server/src/assistant/acp-model.ts",
+        "2026-10-03T09:01:32.443Z Published omem:apps/server/src/assistant/research.ts",
+        "2026-10-03T09:01:32.929Z AI code-analyst: omem:apps/server/src/assistant/runtime.ts",
+        "2026-10-03T09:02:56.181Z AI knowledge-verifier: omem:apps/server/src/assistant/acp-model.ts",
+        "2026-10-03T09:04:09.942Z AI knowledge-verifier: omem:apps/server/src/assistant/runtime.ts",
+        "2026-10-03T09:05:04.523Z AI knowledge-refresher: omem:apps/server/src/assistant/acp-model.ts",
+        "2026-10-03T09:06:38.571Z AI knowledge-verifier: omem:apps/server/src/assistant/acp-model.ts",
+        "2026-10-03T09:06:51.387Z AI knowledge-refresher: omem:apps/server/src/assistant/runtime.ts",
+        "2026-10-03T09:08:13.943Z Published omem:apps/server/src/assistant/acp-model.ts",
+        "2026-10-03T09:08:14.267Z AI code-analyst: omem:apps/server/src/knowledge/research-snapshot.ts",
+        "2026-10-03T09:08:33.516Z AI knowledge-verifier: omem:apps/server/src/assistant/runtime.ts",
+        "2026-10-03T09:10:03.864Z AI knowledge-verifier: omem:apps/server/src/knowledge/research-snapshot.ts",
+        "2026-10-03T09:10:36.344Z AI knowledge-refresher: omem:apps/server/src/assistant/runtime.ts",
+        "2026-10-03T09:11:41.428Z FAILED omem:apps/server/src/assistant/runtime.ts: Error: Worker stopped before completion",
+        "2026-10-03T09:11:41.702Z FAILED omem:apps/server/src/knowledge/research-snapshot.ts: Error: Worker stopped before completion",
+        "DONE {\"at\":\"2026-10-03T09:11:41.911Z\",\"scope\":\"Only implementation and UI files changed in this slice, plus their behavior checks. Legacy unrelated batch siblings remain explicitly stale.\",\"total\":10,\"reused\":0,\"failures\":[{\"keys\":[\"omem:apps/server/src/assistant/runtime.ts\"],\"error\":\"Error: Worker stopped before completion\"},{\"keys\":[\"omem:apps/server/src/knowledge/research-snapshot.ts\"],\"error\":\"Error: Worker stopped before completion\"}],\"states\":[{\"key\":\"omem:apps/server/src/assistant/acp-model.ts\",\"current\":true},{\"key\":\"omem:apps/server/src/assistant/research.ts\",\"current\":true},{\"key\":\"omem:apps/server/src/assistant/runtime.ts\",\"current\":false},{\"key\":\"omem:apps/server/src/knowledge/research-snapshot.ts\",\"current\":false},{\"key\":\"omem:apps/server/src/knowledge/agent-research.ts\",\"current\":false},{\"key\":\"omem:apps/server/src/config.ts\",\"current\":false},{\"key\":\"omem:apps/server/src/app.ts\",\"current\":false},{\"key\":\"omem:apps/server/src/storage/migrations.ts\",\"current\":false},{\"key\":\"omem:scripts/assistant-compare.ts\",\"current\":false},{\"key\":\"omem:config/omem.example.json\",\"current\":false}]}"
+      ]
+    },
+    {
+      "log": ".repo-review/runtime/research/fast-assistant-guides.log",
+      "sha256": "d9922b957ee6789317005e4fdd2b2a8658757d62bd78fefd1bc95609fcc9c715",
+      "events": [
+        "2026-10-03T09:12:32.208Z AI knowledge-researcher: 一次提问如何找到答案：搜索、上下文与 RAG",
+        "FAILED guide:retrieval Error: Worker stopped before completion",
+        "      \"error\": \"Error: Worker stopped before completion\""
+      ]
+    },
+    {
+      "log": ".repo-review/runtime/research/fast-assistant-guides-final.log",
+      "sha256": "edd337909c1599ac406d4a834ea75ecc8e0570f92ffbe2efffbe1d37ae1b4403",
+      "events": [
+        "2026-10-03T09:13:37.323Z AI knowledge-researcher: 一次提问如何找到答案：搜索、上下文与 RAG",
+        "2026-10-03T09:13:49.024Z AI knowledge-researcher: Agent 怎样把材料讲明白：自主调查、写作与补查",
+        "2026-10-03T09:18:38.889Z AI knowledge-writer: guide:knowledge-agent",
+        "2026-10-03T09:21:02.088Z AI knowledge-writer: guide:retrieval",
+        "2026-10-03T09:23:45.082Z AI knowledge-verifier: guide:knowledge-agent",
+        "2026-10-03T09:26:12.374Z AI knowledge-refresher: guide:knowledge-agent",
+        "2026-10-03T09:26:24.259Z AI knowledge-verifier: guide:retrieval",
+        "2026-10-03T09:28:12.437Z AI knowledge-verifier: guide:knowledge-agent",
+        "2026-10-03T09:29:56.179Z AI knowledge-refresher: guide:retrieval",
+        "2026-10-03T09:30:59.226Z AI knowledge-refresher: guide:knowledge-agent",
+        "2026-10-03T09:31:45.190Z AI knowledge-verifier: guide:retrieval",
+        "2026-10-03T09:33:26.558Z Published guide:retrieval",
+        "2026-10-03T09:34:24.857Z AI knowledge-verifier: guide:knowledge-agent",
+        "2026-10-03T09:36:11.797Z Published guide:knowledge-agent"
+      ]
+    }
+  ]
+}
