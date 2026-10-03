@@ -1,0 +1,68 @@
+schema = 4
+
+[platforms]
+
+[models.qwen3-relevance]
+provider = "huggingface"
+repository = "onnx-community/Qwen3-Reranker-0.6B-ONNX"
+requested_revision = "9995c50e2310679108a55f5ccd16ba8be9f17c20"
+revision = "9995c50e2310679108a55f5ccd16ba8be9f17c20"
+endpoint = "https://huggingface.co"
+variant = "q4"
+kind = "other"
+include = [
+    "*.json",
+    "*.txt",
+    "*.jinja",
+    "onnx/model_q4.onnx",
+]
+
+[[models.qwen3-relevance.files]]
+path = "added_tokens.json"
+size = 707
+sha256 = "c0284b582e14987fbd3d5a2cb2bd139084371ed9acbae488829a1c900833c680"
+
+[[models.qwen3-relevance.files]]
+path = "chat_template.jinja"
+size = 4116
+sha256 = "87a2728cb8dc9fe424d624542f6060ec05a1d285ebbec578bb078900e33396b5"
+
+[[models.qwen3-relevance.files]]
+path = "config.json"
+size = 1359
+sha256 = "ea7e71d263350d75f8fd0ad710328e96453be8ce2aa9dfe296000ee1366bb869"
+
+[[models.qwen3-relevance.files]]
+path = "generation_config.json"
+size = 214
+sha256 = "64d86df2173901c58389974bde21f7d2ab9eb7d79f35a337753329d39cf265c0"
+
+[[models.qwen3-relevance.files]]
+path = "merges.txt"
+size = 1671853
+sha256 = "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+
+[[models.qwen3-relevance.files]]
+path = "onnx/model_q4.onnx"
+size = 995235866
+sha256 = "787193952a9aa58374381ec7647b160ac6c200a386dbfc3bc998a3c458081330"
+
+[[models.qwen3-relevance.files]]
+path = "special_tokens_map.json"
+size = 613
+sha256 = "76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd"
+
+[[models.qwen3-relevance.files]]
+path = "tokenizer.json"
+size = 11422654
+sha256 = "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+
+[[models.qwen3-relevance.files]]
+path = "tokenizer_config.json"
+size = 5404
+sha256 = "443bfa629eb16387a12edbf92a76f6a6f10b2af3b53d87ba1550adfcf45f7fa0"
+
+[[models.qwen3-relevance.files]]
+path = "vocab.json"
+size = 2776833
+sha256 = "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
