@@ -11,6 +11,16 @@ export interface RerankerModel {
   close(): Promise<void>;
 }
 export const RERANKER_REVISION = "280bcc27a84e0b898c251e06fddb25171bd9b101";
+const snapshots: Record<string, { revision: string; label: string }> = {
+  "Xenova/bge-reranker-base": {
+    revision: RERANKER_REVISION,
+    label: "bge-reranker",
+  },
+  "onnx-community/bge-reranker-v2-m3-ONNX": {
+    revision: "6f5ff65298512715a1e669753bc754d2bc8f367b",
+    label: "bge-reranker-v2-m3",
+  },
+};
 const files = [
   "config.json",
   "tokenizer.json",
@@ -35,12 +45,10 @@ export async function loadChineseReranker(
       files: { path: string; sha256: string }[];
     };
   };
-  if (
-    snapshot.repository !== "Xenova/bge-reranker-base" ||
-    snapshot.revision !== RERANKER_REVISION
-  )
+  const supported = snapshots[snapshot.repository];
+  if (!supported || snapshot.revision !== supported.revision)
     throw Error(
-      "Unsupported reranker snapshot; sync the locked relevance-zh model",
+      "Unsupported reranker snapshot; sync a locked relevance-zh or relevance-zh-v2 model",
     );
   const hashes: string[] = [];
   for (const name of files) {
@@ -71,7 +79,8 @@ export async function loadChineseReranker(
   let serial: Promise<unknown> = Promise.resolve();
   return {
     id:
-      "bge-reranker-q8-pair512-temp3-v1:" +
+      supported.label +
+      "-q8-pair512-temp3-v1:" +
       createHash("sha256").update(hashes.join(":")).digest("hex"),
     score(query, passages) {
       const work = serial.then(async () => {
