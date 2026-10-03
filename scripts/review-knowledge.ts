@@ -52,10 +52,11 @@ try {
   const requestedKeys = new Set(requested.map(m=>m.key));
   const selected = new Set(requestedKeys);
   const saved = readdirSync(assets).filter(f => f.endsWith(".json")).map(file => JSON.parse(readFileSync(join(assets,file),"utf8"))) as ReturnType<KnowledgeRepository["list"]>;
-  // Older multi-material batches have conservative sibling dependencies. Refresh
-  // just the originals actually invalidated by a requested changed material.
-  for (const article of saved) if (byKey.has(article.document.key) && !repository.get(article.document.key)?.current && article.dependencies.some(d=>d.kind==='material' && requestedKeys.has(d.key) && byKey.get(d.key)?.digest!==d.digest)) selected.add(article.document.key);
-  const materials = allMaterials.filter(m=>selected.has(m.key));
+  // Local generation owns only its requested files. Legacy batch dependencies
+  // can otherwise turn a two-file update into an unrelated regeneration wave.
+  // Expanded sibling/module refresh remains explicit via --modules.
+  if (withModules) for (const article of saved) if (byKey.has(article.document.key) && !repository.get(article.document.key)?.current && article.dependencies.some(d=>d.kind==='material' && requestedKeys.has(d.key) && byKey.get(d.key)?.digest!==d.digest)) selected.add(article.document.key);
+  const materials = [...requested, ...allMaterials.filter(m=>selected.has(m.key) && !requestedKeys.has(m.key))];
   if (!materials.length) throw Error("No matching captured materials");
   const files = listFiles(store), byFile = new Map(files.map(f => [f.fileId, f]));
   console.log("Material inventory:", materials.length, "targets;", coverage.filter(c => c.state === "excluded").length, "excluded;", coverage.filter(c => c.state === "failed").length, "capture failures");
