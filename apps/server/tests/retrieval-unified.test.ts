@@ -9,6 +9,7 @@ import {
 } from "../src/knowledge/repository.js";
 import { UnifiedRetrieval } from "../src/retrieval/unified.js";
 import { markdownPassages } from "../src/retrieval/units.js";
+import { querySymbols } from "../src/retrieval/relevance.js";
 import type { EmbeddingModel } from "../src/retrieval/embedding.js";
 import {
   AssistantRuntime,
@@ -511,6 +512,135 @@ it("keeps heading context and table structure, ignoring headings inside code fen
   expect(blocks.find((b) => b.text.includes("提前一天"))?.text).toContain(
     "| 类型 | 条件 |",
   );
+});
+
+it("keeps an explicit operation in the hybrid and reranking pools despite whole-question distractors", async () => {
+  const s = setup();
+  const text =
+    "ParcelService.reserveParcel 如何处理配送预约，为什么拒绝请求，输入判断和结果保存在哪里？";
+  const model: EmbeddingModel = {
+    id: "symbol-cutoff-fixture",
+    close: async () => {},
+    embed: async (texts, purpose) =>
+      texts.map((t) =>
+        purpose === "passage" && t.includes("return { id }") ? [0, 1] : [1, 0],
+      ),
+  };
+  const pools: string[][] = [];
+  const retrieval = new UnifiedRetrieval(
+    s.store.db,
+    async () => model,
+    async () => ({
+      id: "pool-inspection-fixture",
+      close: async () => {},
+      score: async (_query, passages) => {
+        pools.push(passages);
+        return passages.map(() => 0.5);
+      },
+    }),
+  );
+  try {
+    s.store.capture({
+      source: "file",
+      externalId: "shipping",
+      title: "shipping.ts",
+      context: { filePath: "shipping.ts" },
+      parts: [
+        {
+          type: "text",
+          text: "export class ParcelService {\n  reserveParcel(id: string) {\n    return { id };\n  }\n}",
+        },
+      ],
+    });
+    for (let i = 0; i < 130; i++)
+      s.store.capture({
+        source: "manual",
+        externalId: "question-" + i,
+        title: "讨论 " + i,
+        context: {},
+        parts: [
+          {
+            type: "text",
+            text: `第 ${i} 条讨论：${text} 配送预约，拒绝请求，输入判断，结果保存。这里只复述问题，没有实现。`,
+          },
+        ],
+      });
+    while (await retrieval.indexBatch(32)) {}
+    const hits = await retrieval.search({ text, purpose: "implementation" });
+    const definition = hits.find(
+      (h) => h.headingPath.at(-1) === "ParcelService.reserveParcel",
+    );
+    expect(definition?.routes).toContain("code-symbol");
+    expect(definition?.target).toMatchObject({
+      kind: "source",
+      startLine: 2,
+      endLine: 4,
+    });
+    expect(pools[0]?.some((p) => p.includes("return { id }"))).toBe(true);
+    expect(hits.filter((h) => h.id === definition?.id)).toHaveLength(1);
+    const plain = await s.retrieval.search({ text, purpose: "implementation" });
+    expect(
+      plain.some((h) => h.headingPath.at(-1) === "ParcelService.reserveParcel"),
+    ).toBe(true);
+    expect(
+      s.retrieval
+        .searchSources({ text })
+        .some((h) => h.routes.includes("code-symbol")),
+    ).toBe(true);
+  } finally {
+    await retrieval.close();
+    await s.close();
+  }
+});
+
+it("retains same-named definitions and source visibility without treating mentions as definitions", async () => {
+  const s = setup();
+  try {
+    for (const id of ["east", "west"])
+      s.store.capture({
+        source: "file",
+        externalId: id,
+        title: id + ".ts",
+        context: { filePath: id + ".ts" },
+        parts: [
+          {
+            type: "text",
+            text: `export function reserveParcel() { return "${id}"; }`,
+          },
+        ],
+      });
+    s.store.capture({
+      source: "manual",
+      externalId: "note",
+      title: "背景",
+      context: {},
+      parts: [{ type: "text", text: "reserveParcel 只是一个讨论中的名字。" }],
+    });
+    const hits = await s.retrieval.search({ text: "reserveParcel" });
+    const definitions = hits.filter((h) => h.routes.includes("code-symbol"));
+    expect(definitions).toHaveLength(2);
+    const visible = new Set(
+      definitions[0]!.references.flatMap((r) => r.fragmentIds),
+    );
+    const limited = await s.retrieval.search({
+      text: "reserveParcel 在未预约时会怎样？",
+      visible: (id) => visible.has(id),
+    });
+    expect(
+      limited.filter((h) => h.routes.includes("code-symbol")).map((h) => h.id),
+    ).toEqual([definitions[0]!.id]);
+    expect(await s.retrieval.search({ text: "AbsentDispatch_2917" })).toEqual(
+      [],
+    );
+    expect(querySymbols("How can I apply the new rule?")).toEqual([]);
+    expect(
+      querySymbols(
+        "不调用 ParcelService.reserveParcel. 而使用 `apply`，会发生什么？",
+      ),
+    ).toEqual(["parcelservice.reserveparcel", "apply"]);
+  } finally {
+    await s.close();
+  }
 });
 
 it("persists contextual semantic units with a separate identity and finds explanations beyond lexical wording", async () => {

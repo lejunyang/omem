@@ -15,6 +15,33 @@ export function queryTerms(text: string): string[] {
 export function exactLookup(text: string): boolean {
   return /^[A-Za-z_$][\w$./\\-]*$/.test(text.trim());
 }
+/** Explicit code spelling, rather than every English word in a question.
+ * Quotes allow otherwise ambiguous names such as `apply`; a bare lookup does too.
+ * These are navigation candidates, not a claim that the symbol answers the query. */
+export function querySymbols(text: string): string[] {
+  const names = text.match(/[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*/g) ?? [];
+  const quoted = [
+    ...text.matchAll(
+      /[`"'“‘]([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)[`"'”’]/g,
+    ),
+  ].map((m) => m[1]!.toLowerCase());
+  const terms = new Set(
+    queryTerms(text).map((term) => term.replace(/\.+$/, "")),
+  );
+  return [
+    ...new Set(
+      names
+        .filter(
+          (name) =>
+            terms.has(name.toLowerCase()) &&
+            (exactLookup(text) ||
+              /[A-Z_$.]/.test(name) ||
+              quoted.includes(name.toLowerCase())),
+        )
+        .map((name) => name.toLowerCase()),
+    ),
+  ];
+}
 export function relevance(text: string, terms: string[], title = "", weights?: Map<string, number>) {
   const lower = text.toLowerCase(), heading = title.toLowerCase();
   const matched = terms.filter(t => lower.includes(t));
