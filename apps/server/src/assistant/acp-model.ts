@@ -230,7 +230,8 @@ export class AcpAssistantModel implements AssistantModelPort {
           })),
           explanations: context.explanations.map((b) => ({
             title: b.title,
-            section: b.headingPath,
+            target: b.target,
+            heading: b.headingPath,
             reviewState: b.reviewState ?? "current",
           })),
         })}\n</initial_reading_leads>`,

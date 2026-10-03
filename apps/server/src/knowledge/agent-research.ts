@@ -568,7 +568,7 @@ export async function prepareAgentResearch(input: {
       );
       tool(
         "read_knowledge",
-        "Read an existing fixed article or section with citations and source dependency versions. Use read_material to check claims.",
+        "Read an existing fixed article or section with citations and source dependency versions. Copy the exact article key and optional section key from search_knowledge or initial explanation target; display titles are not keys. Use read_material to check claims.",
         {
           key: z.string(),
           section: z.string().optional(),
