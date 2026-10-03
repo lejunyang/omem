@@ -278,7 +278,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
   }
   private applicability(u: RetrievalUnit, q: SearchQuery) {
     const d = u.materialDescription?.description;
-    if (!d || q.materialRoles?.length || q.purpose !== "implementation") return 1;
+    if (!d || q.materialRoles?.length || q.purpose === "background") return 1;
     // Navigation preferences, not truth decisions. Unknown sources remain fully
     // eligible; explicit role/history searches retain plans and research.
     const role = {
