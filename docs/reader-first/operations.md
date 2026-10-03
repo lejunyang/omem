@@ -16,6 +16,8 @@
 
 ## 检查
 
+问答模型可以独立选择：个人配置的 `assistant.profileId` 指向一个 ACP profile，例如示例中的 `traex-fast`（Luna）。这不改变学习或知识写作模型。用 `osdk run assistant:compare --questions /absolute/path/questions.json --review` 做真实模型对照；配置、输入格式与报告边界见[快模型自主问答](fast-assistant.md)。
+
 `osdk deps --frozen`、`osdk run check`；UI 使用 `osdk run browser` 和 scripts/code-wiki-viewport.ts 检查实际页面。`osdk run retrieval:verify` 使用真实本地模型；`osdk run knowledge:native-verify` 用实际 Traex ACP 验证调查、写作和独立工具补查。`osdk run review:verify --full` 生成机器报告，不能代替阅读验收。
 
 ## 数据与连接

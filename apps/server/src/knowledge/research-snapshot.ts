@@ -67,7 +67,12 @@ export function researchSnapshot(input: {
       all("sources").filter((r) => sourceIds.has(String(r.id))),
     );
     copy("revisions", revisions);
-    copy("material_descriptions", all("material_descriptions").filter(r => revisionIds.has(String(r.revision_id))));
+    copy(
+      "material_descriptions",
+      all("material_descriptions").filter((r) =>
+        revisionIds.has(String(r.revision_id)),
+      ),
+    );
     copy(
       "fragments",
       all("fragments").filter((r) => fragmentIds.has(String(r.id))),
@@ -185,6 +190,52 @@ export function researchSnapshot(input: {
         (r) =>
           taskIds.has(String(r.task_id)) && allowedEvidence(r.evidence_set!),
       ),
+    );
+    // Warm the source projection from the host instead of parsing every AST and
+    // segmenting every paragraph again for each question. Only fully admitted
+    // owners can be reused. sync() below checks version/description identities
+    // and rebuilds stale owners; articles and applied state are still projected
+    // from this snapshot's admitted dependencies.
+    const warmOwners = new Set(
+      db
+        .prepare("SELECT id,head FROM sources")
+        .all()
+        .filter((r) => revisionIds.has(String(r.head)))
+        .map((r) => "source:" + String(r.id)),
+    );
+    const sourceUnits = all("retrieval_units").filter(
+      (r) => r.kind === "source" && warmOwners.has(String(r.owner)),
+    );
+    for (const row of sourceUnits) {
+      const visibility = JSON.parse(String(row.visibility_ids)) as string[];
+      const references = JSON.parse(String(row.references_json)) as {
+        revisionId: string;
+        fragmentIds: string[];
+      }[];
+      if (
+        !visibility.every((id) => fragmentIds.has(id)) ||
+        !references.every(
+          (ref) =>
+            revisionIds.has(ref.revisionId) &&
+            ref.fragmentIds.every((id) => fragmentIds.has(id)),
+        )
+      )
+        warmOwners.delete(String(row.owner));
+    }
+    const warmUnits = sourceUnits.filter((r) =>
+      warmOwners.has(String(r.owner)),
+    );
+    const warmIds = new Set(warmUnits.map((r) => String(r.id)));
+    copy("retrieval_units", warmUnits);
+    copy(
+      "retrieval_projection_heads",
+      all("retrieval_projection_heads").filter((r) =>
+        warmOwners.has(String(r.owner)),
+      ),
+    );
+    copy(
+      "retrieval_units_fts",
+      all("retrieval_units_fts").filter((r) => warmIds.has(String(r.id))),
     );
     db.exec("COMMIT; PRAGMA foreign_keys=ON");
     new RetrievalProjection(db).sync();

@@ -19,6 +19,7 @@ import {
 import { EncryptedSecretStore } from "../src/integrations/lark/secret-store.js";
 import { Store } from "../src/store.js";
 import { KeywordRetrieval } from "../src/retrieval/keyword.js";
+import { UnifiedRetrieval } from "../src/retrieval/unified.js";
 
 type Resource = { directory: string; store: Store; secrets: EncryptedSecretStore };
 const resources: Resource[] = [];
@@ -68,6 +69,30 @@ const captureSource = (
     context: extra.context ?? {},
     provenance: { ...ownerProvenance, ...(extra.provenance ?? {}) },
   }).revision;
+
+it("passes revision-bound purpose and validity to the answering agent instead of promoting an old plan to current behavior", async () => {
+  const { store } = setup();
+  const old = captureSource(store, "delivery-plan", "配送计划：准备允许每周改一次收货地址。");
+  const description = { role: "plan", status: "proposed", summary: "尚未实施的配送计划", topics: ["配送"], scope: "试点", validFrom: null, validUntil: "2026-09-01T00:00:00Z", concepts: [], basis: "标题说明是计划" };
+  store.descriptions.save(old.id, description, "user", 0);
+  const live = captureSource(store, "delivery-current", "配送现行规则：发货前可以修改收货地址。");
+  store.descriptions.save(live.id, { ...description, role: "reference", status: "current", validUntil: null }, "user", 0);
+  const retrieval = new UnifiedRetrieval(store.db);
+  let seen = false;
+  const runtime = new AssistantRuntime(store, { async generate(input) {
+    const plan = input.evidence.find(e => e.sourceRevisionId === old.id)!;
+    const rule = input.evidence.find(e => e.sourceRevisionId === live.id)!;
+    expect(plan.materialDescription).toMatchObject({ revisionId: old.id, description: { role:"plan",status:"proposed", validUntil: description.validUntil } });
+    expect(rule.materialDescription).toMatchObject({ revisionId: live.id, description: { status:"current",validUntil:null } });
+    seen = true;
+    return {answer:"发货前可以改地址",citationIds:[rule.citationId!]};
+  } }, {retrieval});
+  try {
+    const c = runtime.conversations.open({principalId:"owner",channel:"web",chatId:"material-status",visibility:"private"});
+    await runtime.turn({conversationId:c.id,userText:"配送收货地址",mode:"research"});
+    expect(seen).toBe(true);
+  } finally {runtime.shutdown(); await retrieval.close();}
+});
 
 class ScriptedModel implements AssistantModelPort {
   readonly calls: {

@@ -43,13 +43,16 @@ export type AssistantEvidence = {
   /** Revision id of the fragment's source revision (used as source_revision_id). */
   sourceRevisionId: string;
   revisionTitle: string;
+  materialKey?: string;
+  path?: string | null;
   sectionTitle?: string;
   text: string;
   sourceTarget?: SourceAnchor;
+  materialDescription?: RetrievalHit["materialDescription"];
 };
 export type AssistantBackground = Pick<
   RetrievalHit,
-  "kind" | "title" | "text" | "headingPath"
+  "kind" | "title" | "text" | "headingPath" | "materialDescription"
 > & { citationIds: string[]; reviewState?: "needs-review" };
 
 export type AssistantCreateTaskCall = {
@@ -119,6 +122,7 @@ export type AssistantModelReply = {
     effort: string | null;
     sessionId: string;
     tools: string[];
+    timings?: { prepareMs: number; agentMs: number; totalMs: number };
   };
 };
 
@@ -943,6 +947,7 @@ export class AssistantRuntime {
           visible,
         );
         entry.sourceTarget = reference;
+        entry.materialDescription = this.store.descriptions.get(reference.revisionId) ?? undefined;
         if (hit.kind === "source" && hit.headingPath.length)
           entry.sectionTitle = hit.headingPath.join(" / ");
         if (!evidence.has(entry.citationId!))
@@ -960,6 +965,7 @@ export class AssistantRuntime {
               "（引用见文章）",
           ),
           headingPath: hit.headingPath,
+          materialDescription: hit.materialDescription,
           citationIds,
           ...(hit.target.kind === "knowledge" && hit.target.reviewState
             ? { reviewState: hit.target.reviewState }

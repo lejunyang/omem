@@ -31,6 +31,8 @@ export function evidenceForRange(
     citationId: `e:${fragmentId}:${startLine}:${endLine}`,
     sourceRevisionId: material.revisionId,
     revisionTitle: material.title,
+    materialKey: material.key,
+    path: material.path,
     sectionTitle: section?.title,
     text: material.text
       .split("\n")
@@ -109,6 +111,7 @@ export async function prepareAssistantResearch(input: {
         )
           throw Error(`历史版本不在本次授权材料中：${c.key}`);
         const item = evidenceForRange(m, c.startLine, c.endLine, visible);
+        item.materialDescription = input.repository.store.descriptions.get(m.revisionId) ?? undefined;
         citations.set(c.id, item.citationId!);
         return item;
       });
