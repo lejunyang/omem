@@ -53,7 +53,7 @@ export type AssistantEvidence = {
 export type AssistantBackground = Pick<
   RetrievalHit,
   "kind" | "title" | "text" | "headingPath" | "materialDescription"
-> & { citationIds: string[]; reviewState?: "needs-review" };
+> & { citationIds: string[]; target?: RetrievalHit["target"]; reviewState?: "needs-review" };
 
 export type AssistantCreateTaskCall = {
   tool: "create_task";
@@ -962,6 +962,7 @@ export class AssistantRuntime {
       if (hit.kind !== "source")
         background.push({
           kind: hit.kind,
+          target: hit.target,
           title: hit.title,
           text: hit.text.replace(
             /\[\[([\w-]+)\]\]/g,

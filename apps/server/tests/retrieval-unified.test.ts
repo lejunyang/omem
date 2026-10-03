@@ -904,6 +904,7 @@ it("passes readable background to the assistant while keeping original bytes and
     expect(
       received?.background?.find((b) => b.kind === "knowledge")?.text,
     ).toContain("只安排一次运输");
+    expect(received?.background?.find((b) => b.kind === "knowledge")?.target).toMatchObject({ kind: "knowledge", key: "delivery-guide", section: "dedup" });
     expect(received?.evidence.map((e) => e.text).join("\n")).toContain(
       "seen(event.id)",
     );
