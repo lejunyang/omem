@@ -2,8 +2,8 @@
 
 ## 软件开发 / omem
 
-- [一次提问如何找到答案：召回、上下文与固定引用](knowledge/articles/c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.md)
-- [Agent 如何把材料讲成一篇可读文章](knowledge/articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.md)
+- [一次提问如何找到答案：共享搜索、上下文与 RAG](knowledge/articles/c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.md)
+- [Agent 怎样把材料讲明白：自主调查、写作与补查](knowledge/articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.md)
 
 ## 未分类
 
