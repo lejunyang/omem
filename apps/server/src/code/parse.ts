@@ -327,16 +327,12 @@ function walkTs(
       }
     }
     ts.forEachChild(node, (child) => {
-      if (ts.isFunctionLike(child)) {
-        const previous = contextName;
-        const name =
-          child.name?.getText(sf) ??
-          (ts.isVariableDeclaration(child.parent)
-            ? child.parent.name.getText(sf)
-            : "<callback>");
-        contextName = previous ? `${previous}.${name}` : name;
+      // Keep persisted symbol names stable; call navigation derives its own
+      // lexical context in callerName without changing retrieval unit identity.
+      if (ts.isFunctionDeclaration(child) && child.name) {
+        contextName = child.name.text;
         visit(child);
-        contextName = previous;
+        contextName = "";
         return;
       }
       visit(child);
