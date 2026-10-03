@@ -176,7 +176,7 @@ export class AcpAssistantModel implements AssistantModelPort {
     const investigation = answerInvestigation({
       workspace,
       signal: input.signal,
-      review: (draft, snapshot, signal) =>
+      review: (draft, snapshot, signal, publish) =>
         reviewAssistantAnswer({
           draft,
           snapshot,
@@ -185,6 +185,7 @@ export class AcpAssistantModel implements AssistantModelPort {
           workspaceRoot: this.deps.researchWorkspace ?? this.deps.workspaceRoot,
           retrievalConfig: this.deps.retrievalConfig,
           context: { ...input, signal },
+          onSubmitted: publish,
         }),
     });
     const environment = await prepareAssistantResearch({

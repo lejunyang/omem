@@ -32,6 +32,7 @@ export function answerInvestigation(input: {
     draft: AnswerDraft,
     snapshot: ResearchSnapshot,
     signal: AbortSignal,
+    publish: (report: AnswerReview) => void,
   ) => Promise<AnswerReview>;
 }) {
   let required = false;
@@ -50,10 +51,12 @@ export function answerInvestigation(input: {
     error?: string;
     retrieved: boolean;
     work?: Promise<void>;
+    completion?: Promise<void>;
   };
   let last: Review | undefined;
+  const ownedWork: Promise<void>[] = [];
   const persist = (job: Review) => {
-    const { work, ...record } = job;
+    const { work, completion, ...record } = job;
     writeFileSync(
       join(input.workspace, "answer-review.json"),
       JSON.stringify(record, null, 2),
@@ -127,22 +130,36 @@ export function answerInvestigation(input: {
           retrieved: false,
         });
         persist(job);
+        let finish!: () => void;
+        job.completion = new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        const publish = (report: AnswerReview) => {
+          if (job.status !== "running") return;
+          controller.signal.throwIfAborted();
+          job.report = report;
+          job.status = "completed";
+          job.finishedAt = new Date().toISOString();
+          persist(job);
+          finish();
+        };
         // The task owns this promise, not the lifetime of an individual MCP request.
         job.work = Promise.resolve()
-          .then(() => input.review(draft, snapshot, controller.signal))
-          .then((report) => {
-            controller.signal.throwIfAborted();
-            job.report = report;
-            job.status = "completed";
-          })
+          .then(() => input.review(draft, snapshot, controller.signal, publish))
+          .then(publish)
           .catch((error) => {
+            // A validated, saved review remains available even if the CLI is
+            // cancelled while signing off. It is still not a published answer.
+            if (job.status === "completed") return;
             job.status = controller.signal.aborted ? "cancelled" : "failed";
             job.error = error instanceof Error ? error.message : String(error);
           })
           .then(() => {
-            job.finishedAt = new Date().toISOString();
+            job.finishedAt ??= new Date().toISOString();
             persist(job);
+            finish();
           });
+        ownedWork.push(job.work);
         return status(job);
       },
     },
@@ -164,7 +181,7 @@ export function answerInvestigation(input: {
           let timer: ReturnType<typeof setTimeout> | undefined;
           try {
             await Promise.race([
-              job.work,
+              job.completion,
               new Promise<void>((resolve) => {
                 timer = setTimeout(resolve, waitSeconds * 1000);
               }),
@@ -182,7 +199,7 @@ export function answerInvestigation(input: {
     async close() {
       input.signal?.removeEventListener("abort", abort);
       controller.abort(new Error("Investigation ended"));
-      await last?.work;
+      await Promise.allSettled(ownedWork);
     },
     beforeSubmit(answer: string) {
       if (last?.status === "running")
@@ -213,6 +230,7 @@ export async function reviewAssistantAnswer(input: {
   workspaceRoot: string;
   retrievalConfig?: RetrievalConfig;
   context: Parameters<AssistantModelPort["generate"]>[0];
+  onSubmitted?: (report: AnswerReview) => void;
 }): Promise<AnswerReview> {
   input.context.signal?.throwIfAborted();
   const registry = new RoleBundleRegistry();
@@ -247,6 +265,8 @@ export async function reviewAssistantAnswer(input: {
     retrievalConfig: input.retrievalConfig,
     schema: answerReviewSchema,
     onActivity: input.context.onResearchActivity,
+    onSubmitted: (output) =>
+      input.onSubmitted?.(answerReviewSchema.parse(output)),
     validate(value) {
       const report = answerReviewSchema.parse(value);
       for (const issue of report.issues)
