@@ -1,0 +1,1849 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-03T03:55:25.143Z",
+  "scope": "本轮真实 Traex ACP 知识刷新。模型独立复核与检索效果、读者验收分别记录。",
+  "effectiveProfile": ".repo-review/runtime/research/material-catalog-retry-config.json",
+  "configuredModel": "gpt-5.6-sol",
+  "configuredTimeoutMs": 600000,
+  "updates": [
+    {
+      "key": "guide:capture",
+      "title": "一份材料如何变成可检索、可追溯的知识",
+      "current": true,
+      "revision": "ba37834f817d3ddd3b844093030a2bb88c42d0b09167e8a6323bcf4b8e2cf4dc",
+      "artifact": "../articles/08e8de8e7788195db049c6fb0184ebc7888d9ec16a991ed19523deb074181035.json",
+      "sections": [
+        {
+          "key": "example",
+          "title": "先走一遍：同一份约定的两个版本"
+        },
+        {
+          "key": "entry",
+          "title": "网页和连接器最终交出同一种输入"
+        },
+        {
+          "key": "commit",
+          "title": "一次 Capture 在事务里提交什么"
+        },
+        {
+          "key": "retrieval",
+          "title": "保存后为什么马上能搜，但索引又不等于原件"
+        },
+        {
+          "key": "branches",
+          "title": "保存后的三条分支：立即、后台、显式"
+        },
+        {
+          "key": "citations",
+          "title": "为什么更新后仍能打开旧引用"
+        },
+        {
+          "key": "media-code",
+          "title": "图片、代码与修改入口"
+        }
+      ],
+      "citations": 32,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T02:57:04.635Z",
+        "trace": {
+          "runId": "277c9bb4-4133-4012-8ce9-ab52defbf421",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "d49fec4f20c754e886a41fe220dbd05b960a1fa980772050f42fa0241e645f84",
+          "sessionIds": [
+            "01a0ffaf-e60f-7030-b483-760078cc904e"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:01:09.720Z",
+        "trace": {
+          "runId": "f4802fe2-4642-48c6-a7ed-4d73dc503857",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "e17c0b47682b117a76f92cc2fcd7f7a1abea22a0a60143e64150096389992658",
+          "sessionIds": [
+            "01a0ffb3-1431-7400-9157-a5ea22a20c86"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "guide:contributing",
+      "title": "改一条完整功能链：让搜索结果说清所属章节",
+      "current": true,
+      "revision": "0177995dbd7609bae800ed638cac26612c4748134c8bb9c38f7e2859f59dd23f",
+      "artifact": "../articles/0fc1372e659c300a4a7193e2de27f7d10a3c14baf8d61d9cee5f74f4a67a1d4a.json",
+      "sections": [
+        {
+          "key": "scenario",
+          "title": "先看见现状，再选择一个小改动"
+        },
+        {
+          "key": "start",
+          "title": "启动同一套个人开发环境"
+        },
+        {
+          "key": "trace",
+          "title": "从输入框跟到结果卡"
+        },
+        {
+          "key": "change",
+          "title": "按改动含义选择落点"
+        },
+        {
+          "key": "ui",
+          "title": "复用组件，并在真实页面看间距"
+        },
+        {
+          "key": "verify",
+          "title": "把“检查通过”和“读者可用”分开"
+        }
+      ],
+      "citations": 40,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T03:41:35.495Z",
+        "trace": {
+          "runId": "c44286ee-3192-4956-bb08-1c0b5b9addda",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "e928b49f498baea391d5b062544341c9232533babd0fff0d28967d9babfe560f",
+          "sessionIds": [
+            "01a0ffd8-3d58-7a53-b580-818556a934ea"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:44:09.836Z",
+        "trace": {
+          "runId": "112ed45c-e046-4495-8a64-5dab0131c32c",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "c14d954468ee592308549d2cd756b0fcae6a40b7e05593d3b9daae476406608c",
+          "sessionIds": [
+            "01a0ffdb-2595-74e1-b07d-232d4c2952ed"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "guide:knowledge-agent",
+      "title": "Agent 怎样把材料讲明白：从自主调查到复核发布",
+      "current": true,
+      "revision": "8ba6ae9976d222d96d86f7181f50d10fcb67bac8f7109362cb4984e5e27afcec",
+      "artifact": "../articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.json",
+      "sections": [
+        {
+          "key": "goal-and-example",
+          "title": "先决定读者要带走什么"
+        },
+        {
+          "key": "workspace-and-search",
+          "title": "在固定原件上调查，缺背景就继续补读"
+        },
+        {
+          "key": "one-turn-many-tools",
+          "title": "一次 prompt 为什么能包含多轮工具交互"
+        },
+        {
+          "key": "role-handoff",
+          "title": "研究地图、成文与独立复核怎样交接"
+        },
+        {
+          "key": "publish-and-refresh",
+          "title": "候选如何成为可追溯文章"
+        },
+        {
+          "key": "quality-and-change-points",
+          "title": "质量边界与实际修改入口"
+        }
+      ],
+      "citations": 20,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T03:40:25.956Z",
+        "trace": {
+          "runId": "15337a0b-729f-493f-a179-e4eda641577d",
+          "roleId": "knowledge-writer",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "bc522249fad26fdc09f6072448e94ebaffc7e5fa258761e8f2f963bd68c45814",
+          "sessionIds": [
+            "01a0ffd6-5375-78d0-9747-4ba9514a5334"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-writer",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:43:41.270Z",
+        "trace": {
+          "runId": "d7556524-5a04-4910-ad91-9dea1d480eea",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "77ea67ef0b518691e8391b90d2a46271dd3b610cc0c8b5cd913423884bb61652",
+          "sessionIds": [
+            "01a0ffda-2f99-7e32-b59f-7e1af333021d"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "guide:memory",
+      "title": "规则变了以后：原文、记忆与待办怎样更新",
+      "current": true,
+      "revision": "0b8891f1fe0d74274452478e6e88024b0f33ff7178dd2172f723fbc40f166309",
+      "artifact": "../articles/d4de0ea627a2bb808daffc14026246c2dbde153c0450431a2116482269c8270c.json",
+      "sections": [
+        {
+          "key": "scenario",
+          "title": "先把两条消息分开"
+        },
+        {
+          "key": "memory-pipeline",
+          "title": "从已保存原件到当前可用记忆"
+        },
+        {
+          "key": "source-refresh",
+          "title": "来源换版后，旧结论先停用再重查"
+        },
+        {
+          "key": "wiki-refresh",
+          "title": "记忆重核验不等于 Wiki 已更新"
+        },
+        {
+          "key": "task-time",
+          "title": "等待、检查时间和截止时间各管一件事"
+        },
+        {
+          "key": "reminders",
+          "title": "提醒出现、通知已读，都不代表事情完成"
+        },
+        {
+          "key": "capabilities",
+          "title": "现在能主动做到什么，哪里仍要人介入"
+        }
+      ],
+      "citations": 20,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T03:27:37.919Z",
+        "trace": {
+          "runId": "bffeafac-6aa9-4c8a-8d44-610b47d9b2c9",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "93585fa9899bfb13ca8a3a17dfab69ec16d448584a0bbe58f953a64f84ed456b",
+          "sessionIds": [
+            "01a0ffcb-0807-7e30-b777-2a6b7810d569",
+            "01a0ffcb-5c75-7b40-82e9-5db53d438a2f",
+            "01a0ffcb-94a2-79f3-aa54-e25dc6393188"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:32:02.211Z",
+        "trace": {
+          "runId": "7ed5ac7e-8ccd-48d0-8691-038dda09db73",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "b117569376d9658eb1fb32d0124cf42dbc0d95a738bb75f6a4e3d62da39b57f2",
+          "sessionIds": [
+            "01a0ffce-6c7b-7291-b8ef-04888de1a36b"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "guide:overview",
+      "title": "先认识 omem：把材料变成能找回的工作记忆",
+      "current": true,
+      "revision": "84df24a14bd5d847a6e15ce953f61a25c23459e719570db2f6ece81a12e03f26",
+      "artifact": "../articles/e3a688af2ed1ce2734e7f6a41ed91e4369645398f90a03e28b92c27028f48e1f.json",
+      "sections": [
+        {
+          "key": "purpose",
+          "title": "它解决的是“以后还能找到并继续做”"
+        },
+        {
+          "key": "walkthrough",
+          "title": "教学示例：先保存一份项目约定"
+        },
+        {
+          "key": "find",
+          "title": "用自然问题找回决定"
+        },
+        {
+          "key": "concepts",
+          "title": "同一条约定为何会有四种形态"
+        },
+        {
+          "key": "follow",
+          "title": "跟进评审必须来自明确交办"
+        },
+        {
+          "key": "code",
+          "title": "代码与其他材料共用同一条路"
+        },
+        {
+          "key": "boundaries",
+          "title": "现在能做什么，还不能承诺什么"
+        }
+      ],
+      "citations": 20,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T03:33:14.813Z",
+        "trace": {
+          "runId": "970fef94-ffb4-46d4-8fdc-ce2d9b43ed2e",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "65e9e02fbac15a23d76741f245a05b3c9695b53db4a9fd85fe8a3ddc97b3fb7f",
+          "sessionIds": [
+            "01a0ffd0-7875-7b23-8e79-b0c92b163435",
+            "01a0ffd0-b2ba-7313-91ff-e30c3b3a9340"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:36:00.827Z",
+        "trace": {
+          "runId": "de6fc517-9cc9-4de4-b17f-a79764ebf533",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "b1a0ed598ce2591606c35b90fa67b4770c4b9e201bd7a06a4c87925074d8651e",
+          "sessionIds": [
+            "01a0ffd3-8a1c-7a21-8790-b7cbf2a17d43"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "guide:retrieval",
+      "title": "一次提问如何找到答案：搜索、上下文与 RAG",
+      "current": true,
+      "revision": "6ee1d7cb81165c05a291dbe91ef391b6bbb536e900a52f9518806007b7206d77",
+      "artifact": "../articles/c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.json",
+      "sections": [
+        {
+          "key": "journey",
+          "title": "先看一条实际阅读路线"
+        },
+        {
+          "key": "entrances",
+          "title": "三个入口，一套召回基础"
+        },
+        {
+          "key": "candidates",
+          "title": "全文、短词、符号、向量、知识与记忆各做什么"
+        },
+        {
+          "key": "context",
+          "title": "命中片段后，怎样补成可读上下文"
+        },
+        {
+          "key": "assistant",
+          "title": "助手如何使用来源并继续查询"
+        },
+        {
+          "key": "limits",
+          "title": "当前中文排序与时间检索的边界"
+        },
+        {
+          "key": "diagnosis",
+          "title": "从可见症状定位问题和修改入口"
+        }
+      ],
+      "citations": 27,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T03:11:37.999Z",
+        "trace": {
+          "runId": "591dd263-01fb-4f1a-8b99-928d50e861c3",
+          "roleId": "knowledge-writer",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "0bdc1359767fb023a94149b0202b1ace06a31d1ad5d281cc20f3b23ccae496ae",
+          "sessionIds": [
+            "01a0ffba-7829-7533-ad24-e25c51de9244",
+            "01a0ffba-ae0b-7781-8653-c817d82bb4eb"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-writer",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:15:03.825Z",
+        "trace": {
+          "runId": "5d0ca1ae-4d04-4fa3-a721-da83e65f118a",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "5cb223b202fcbd91641cd3e5532f6454825875acd8b6ac945ef220ed51afed55",
+          "sessionIds": [
+            "01a0ffbf-bac6-74f0-8abc-1cfdba76e8d1"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "omem:apps/server/src/knowledge/retrieval.ts",
+      "title": "用知识讲解找回原始证据",
+      "current": true,
+      "revision": "b8fa2b84157356b3d320dba53a9928170b7488f2cf845fdd03d29b806ab1157f",
+      "artifact": "../articles/c1d016bfceaa9ad6e811622ceb90acc5a8a4c40816edc2c9bb6689fa263f00e1.json",
+      "sections": [
+        {
+          "key": "purpose",
+          "title": "解决什么问题"
+        },
+        {
+          "key": "flow",
+          "title": "一条代表性调用怎样工作"
+        },
+        {
+          "key": "boundaries",
+          "title": "可信边界与修改入口"
+        }
+      ],
+      "citations": 7,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T02:49:05.800Z",
+        "trace": {
+          "runId": "cd969af1-db13-4f0a-90d0-886977f7a224",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "95faa56b7a32e2b7200ffd81d84ff8359cde79deab323244a5cb02475dc9e9a0",
+          "sessionIds": [
+            "01a0ffa9-43b2-7ce2-976b-8a3873b6f591"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T02:51:02.626Z",
+        "trace": {
+          "runId": "16b56ec7-2f25-4364-a7c3-49881b8dcb14",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "7498a63b1ad59c8c2972b2db9239a617fb966369b9bcafefef60f229b329f32b",
+          "sessionIds": [
+            "01a0ffaa-f5c8-7f10-8465-1693d4150f06"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/factory.ts",
+      "title": "统一检索服务的配置与生命周期装配",
+      "current": true,
+      "revision": "6c97618d8aa8c59906240744a028b50fb1fb14c1b795550add839c0870fb010d",
+      "artifact": "../articles/4de4dc1b2d97b0ac0916c8d7803da3bbb33b99302666b39fa0e01e13e7ba9ae6.json",
+      "sections": [
+        {
+          "key": "purpose",
+          "title": "为什么需要这一层工厂"
+        },
+        {
+          "key": "flow",
+          "title": "一次代表性启动如何流转"
+        },
+        {
+          "key": "config-boundaries",
+          "title": "配置边界与资源收尾"
+        }
+      ],
+      "citations": 9,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T03:11:52.532Z",
+        "trace": {
+          "runId": "b9166522-0256-4f92-8a99-a4ab41ef92f9",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "018e79888c150ec0aa6d09badf2ff2862fd3600b5dcf4e15549041a48253b90d",
+          "sessionIds": [
+            "01a0ffbc-8baa-7622-b6af-b7c011ecca40"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:14:20.891Z",
+        "trace": {
+          "runId": "cac84651-08b0-4a96-88ec-71eb86a0f2da",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "45aa31d9d930ff15a57d4c14d19966cc36959c68b5312d5a903e97b26bb61f85",
+          "sessionIds": [
+            "01a0ffbf-f260-7222-8d58-60593ccd35bd"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "title": "面向原始证据的 SQLite 关键词检索",
+      "current": true,
+      "revision": "cac3baf481c8d8ab447ab18ece8537504259914bd7402e57d82a04b65b0e5fb4",
+      "artifact": "../articles/1444f142c0b04e6d91f3135deeda21102d3ef672bd0b0965f51d090841647b1b.json",
+      "sections": [
+        {
+          "key": "purpose",
+          "title": "解决什么问题"
+        },
+        {
+          "key": "source-flow",
+          "title": "一次原始材料查询怎样流过"
+        },
+        {
+          "key": "guidance-and-evidence",
+          "title": "记忆和知识只负责引路"
+        },
+        {
+          "key": "boundaries",
+          "title": "边界与修改入口"
+        }
+      ],
+      "citations": 10,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T02:58:31.201Z",
+        "trace": {
+          "runId": "6f31a46d-2521-430d-b684-a01ef566f11a",
+          "roleId": "code-analyst",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "d44d2cacd0131961d5a0d60eaf5933c23bc3965ccd816a921659153e09349b7e",
+          "sessionIds": [
+            "01a0ffaf-c107-71b3-a47f-ffdaf119defe"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-code-analyst",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:01:03.586Z",
+        "trace": {
+          "runId": "6d8320ed-ab5f-4884-be9f-4a17b793cb38",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "b83a08a48d2154baea4fcd1537d913d866f88bc29d1cf7bee65356450cca222d",
+          "sessionIds": [
+            "01a0ffb3-b0f3-7d92-b960-898d4b84e7ce"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/port.ts",
+      "title": "统一检索端口：连接原文、知识与已应用状态",
+      "current": true,
+      "revision": "bcd724066693feda54fdd7fe3fddf279d4cf473201e9aff5c8089120a58e7264",
+      "artifact": "../articles/e1aefe156d02f69476a443ae16951b1e4d0f5e30e2f93765c433725e810452db.json",
+      "sections": [
+        {
+          "key": "purpose",
+          "title": "为什么需要统一端口"
+        },
+        {
+          "key": "flow",
+          "title": "一次材料搜索怎样经过端口"
+        },
+        {
+          "key": "boundaries",
+          "title": "边界、兼容接口与修改入口"
+        }
+      ],
+      "citations": 11,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T02:56:51.131Z",
+        "trace": {
+          "runId": "8f526c0f-6708-4597-9f5e-376b850122bf",
+          "roleId": "code-analyst",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "00b58c1d38fbdfda9ad15221150cef6d8e65d03dbe8a7d004f5ab1055d13a99a",
+          "sessionIds": [
+            "01a0ffaf-c063-7b72-b092-1b99c42bdac0"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-code-analyst",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:00:05.598Z",
+        "trace": {
+          "runId": "2342d21e-eb8d-4ba5-a176-8e1140dfddf5",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "450d72b8c179c45c09cde47528068cb395661e83c4011c30770371dee3ceda3f",
+          "sessionIds": [
+            "01a0ffb2-2b58-72c3-995e-d55641ded6da"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/relevance.ts",
+      "title": "检索查询的词项、代码符号与摘要启发式",
+      "current": true,
+      "revision": "72f6d78b4c0ffce2e9f3a944b25b36f71faf23f54ee2352ace8fdfcf55b1f595",
+      "artifact": "../articles/b0bd95bebba21bca08eb2e061f8c0ea5346eeb18101c05e2ff0d8d16c450e7dc.json",
+      "sections": [
+        {
+          "key": "purpose",
+          "title": "解决什么问题"
+        },
+        {
+          "key": "representative-flow",
+          "title": "一条代表性调用"
+        },
+        {
+          "key": "scoring-boundaries",
+          "title": "评分、摘要与边界"
+        }
+      ],
+      "citations": 4,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T03:17:12.497Z",
+        "trace": {
+          "runId": "73da6410-8cd1-427a-948e-f6ecb7126924",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "2cf11db608482855599d681cc682e2a010617fb2458bbc3a71d514b5542fb892",
+          "sessionIds": [
+            "01a0ffc3-0598-7a80-98e8-889caecee529"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:20:22.469Z",
+        "trace": {
+          "runId": "867a9dcb-2050-4e90-a295-022d143ebb5c",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "4b8f882f41f4e118897b77000ae4391d81b544686589fe2703fbfa2953079b0b",
+          "sessionIds": [
+            "01a0ffc5-d026-70b3-a18b-9bf7cf378612"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/reranker.ts",
+      "title": "中文候选段落的离线交叉编码重排",
+      "current": true,
+      "revision": "d5cb1e6241efd3741e72142fa33bcf299c44b7dff61d188ed20d96f9dbd6e0d1",
+      "artifact": "../articles/a233324e0e4f61e7088ab978b0565708031545fcbf7cb5604645240e62f40614.json",
+      "sections": [
+        {
+          "key": "purpose-and-contract",
+          "title": "解决什么问题"
+        },
+        {
+          "key": "load-and-score",
+          "title": "从模型别名到候选分数"
+        },
+        {
+          "key": "boundaries-and-lifecycle",
+          "title": "并发、错误与生命周期边界"
+        }
+      ],
+      "citations": 6,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T03:09:35.435Z",
+        "trace": {
+          "runId": "c7904364-5f2e-4116-937e-f49b1217ed6d",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "0d8fc68a5cdd57787431d75b499a61dbaf584c8d8ad3fa1a061a15d591f64c5c",
+          "sessionIds": [
+            "01a0ffbb-9a6b-7811-9909-1f3bee11b7c2"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:12:56.318Z",
+        "trace": {
+          "runId": "df3df5af-0873-4982-93c9-7a0d537c1d23",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "43500337796dc9ec539520e88288e7d32a5fac2bb6caa27fd9b6a82f8025fb06",
+          "sessionIds": [
+            "01a0ffbd-e6b3-7802-8c14-c2c432d61194"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/semantic.ts",
+      "title": "SQLite 中的词法与语义混合检索",
+      "current": true,
+      "revision": "e211aa642b54c6dc9123171a614fce9677fe593cb8592c8f8b9b608b7127971f",
+      "artifact": "../articles/88b6ad2760e38375526220fcfb2546cb978618c3390bf459bf10380d0a719db0.json",
+      "sections": [
+        {
+          "key": "purpose",
+          "title": "解决自然语言与原文措辞不一致"
+        },
+        {
+          "key": "indexing",
+          "title": "后台补齐可持久复用的向量索引"
+        },
+        {
+          "key": "search-flow",
+          "title": "一次查询如何产生结果"
+        }
+      ],
+      "citations": 9,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T03:18:00.368Z",
+        "trace": {
+          "runId": "fa071f10-4e95-4ec8-a9a2-449e3ba8f187",
+          "roleId": "code-analyst",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "fd9f9b83edbe4721860c1e9dd918d8c921411f33bce436c27d306a739c1db325",
+          "sessionIds": [
+            "01a0ffc0-fa16-7cc0-ae8a-c686d112466c"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-code-analyst",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:21:36.893Z",
+        "trace": {
+          "runId": "d3696158-f3a3-4e67-be58-42d03c34eeee",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "41dc8692f2fab186e92785259ecba7a340862eb3e4f932f8dba810fbe973b491",
+          "sessionIds": [
+            "01a0ffc5-d471-7242-9b69-e8d9e91159e7"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/unified.ts",
+      "title": "统一检索：从多路召回到可追溯结果",
+      "current": true,
+      "revision": "027b74e87b3ada0b05cb260ea73e2ed6f9900e0baa4cd567dfcb32aa9255fe7d",
+      "artifact": "../articles/0f4c98f99ec08ee9f67bc4c9abbbec7193e9e0c6a38384e2306d9c1cf84a9f03.json",
+      "sections": [
+        {
+          "key": "purpose",
+          "title": "为什么需要统一检索"
+        },
+        {
+          "key": "search-flow",
+          "title": "自然语言实现问题怎样得到结果"
+        },
+        {
+          "key": "boundaries",
+          "title": "精确查询、筛选与兼容边界"
+        }
+      ],
+      "citations": 14,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T03:51:24.281Z",
+        "trace": {
+          "runId": "00df2578-a4e5-4153-b3bf-b72c7b5d58e7",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "b8a1a09ab3047915fe404484abf4c531d2da9a1df370972a1fc583fade9af194",
+          "sessionIds": [
+            "01a0ffe1-9af3-7603-b493-744b671f0cf6"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:53:55.460Z",
+        "trace": {
+          "runId": "b7c4c347-2da9-4530-a4b4-a985b15f0ef8",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "79ce64e62e77e2fd5d911cb717b2ef73c304d219fb61f71c0a011fe2f91c019b",
+          "sessionIds": [
+            "01a0ffe4-1c01-72f1-9aa3-e3464ee5953b",
+            "01a0ffe4-4f24-7970-b182-a813f35a2d46"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "omem:apps/web/src/App.vue",
+      "title": "个人工作记忆的 Web 工作区总入口",
+      "current": true,
+      "revision": "025913ce73b2e1b63c5e940a01d75869feff82b4f7902f21cc0388dbba397569",
+      "artifact": "../articles/da0e264957572bf35832a2327ed88508c6913c8ffb0323e87898adcffe262642.json",
+      "sections": [
+        {
+          "key": "purpose",
+          "title": "把多条记忆工作流收进一个入口"
+        },
+        {
+          "key": "startup",
+          "title": "启动时先识别服务，再同步工作区"
+        },
+        {
+          "key": "capture-flow",
+          "title": "代表性调用：保存一段材料并进入阅读"
+        },
+        {
+          "key": "boundaries",
+          "title": "搜索防竞态与模块边界"
+        }
+      ],
+      "citations": 12,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T03:29:55.027Z",
+        "trace": {
+          "runId": "0a27d4ec-7001-4d9c-b507-c99b295e1a41",
+          "roleId": "knowledge-refresher",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "6d8809bcecfe675817984585444a6e605e9a7333be2b47e29f2ad097dc37b27a",
+          "sessionIds": [
+            "01a0ffce-b0d0-70c2-aafb-62ba1f61d996"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-refresher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:32:57.289Z",
+        "trace": {
+          "runId": "bc5c05c7-0a94-476d-b37b-2162a3859879",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "8e6fc459560f1415b115af96dd7bb87d0f3e1653b82b71fda19b79dc2de00b2d",
+          "sessionIds": [
+            "01a0ffd0-b9f5-7be3-a6f6-d8244df85d2a"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    },
+    {
+      "key": "omem:scripts/retrieval-index.ts",
+      "title": "检索索引补建：从材料同步到中文向量",
+      "current": true,
+      "revision": "3fd2addb15df73c43db7d8e4e749a75cfaeccadd98d2ca949daa86a00818182d",
+      "artifact": "../articles/c4e286048ae9b03aaf2a54a2760ff83e531b45e623863a511a5ca6d54cf7aba1.json",
+      "sections": [
+        {
+          "key": "purpose",
+          "title": "解决什么问题"
+        },
+        {
+          "key": "flow",
+          "title": "一次评审库补建如何运行"
+        },
+        {
+          "key": "boundaries",
+          "title": "输出、并发与可修改点"
+        }
+      ],
+      "citations": 10,
+      "generation": {
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "at": "2026-10-03T03:25:52.844Z",
+        "trace": {
+          "runId": "8b54a634-6e5f-430d-a161-b0dbb35341b5",
+          "roleId": "code-analyst",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "28c7b7b9c473f1e98942ca0d8eee5a18e96a30d1cc3ea479b526033593f4aee9",
+          "sessionIds": [
+            "01a0ffc9-0d7e-71d1-be4a-0fad5fba2966"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-code-analyst",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        }
+      },
+      "review": {
+        "model": "gpt-5.6-sol",
+        "at": "2026-10-03T03:29:18.076Z",
+        "trace": {
+          "runId": "e6169468-739c-4fc3-beef-a54923684807",
+          "roleId": "knowledge-verifier",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "fingerprint": "2da7793b6fa6f01a90b84db054adaa61c8bec668b6ab411f2aea98fafd4f233a",
+          "sessionIds": [
+            "01a0ffcc-d704-7c33-90c5-d4b950afa303"
+          ],
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-verifier",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_materials",
+            "read_material",
+            "read_section",
+            "search_materials",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ]
+        },
+        "verdict": "accepted"
+      }
+    }
+  ],
+  "pages": [
+    {
+      "key": "guide:overview",
+      "title": "先认识 omem：把材料变成能找回的工作记忆",
+      "state": "reviewed",
+      "generatedAt": "2026-10-03T03:33:14.813Z",
+      "reviewedAt": "2026-10-03T03:36:00.827Z"
+    },
+    {
+      "key": "guide:capture",
+      "title": "一份材料如何变成可检索、可追溯的知识",
+      "state": "reviewed",
+      "generatedAt": "2026-10-03T02:57:04.635Z",
+      "reviewedAt": "2026-10-03T03:01:09.720Z"
+    },
+    {
+      "key": "guide:retrieval",
+      "title": "一次提问如何找到答案：搜索、上下文与 RAG",
+      "state": "reviewed",
+      "generatedAt": "2026-10-03T03:11:37.999Z",
+      "reviewedAt": "2026-10-03T03:15:03.825Z"
+    },
+    {
+      "key": "guide:memory",
+      "title": "规则变了以后：原文、记忆与待办怎样更新",
+      "state": "reviewed",
+      "generatedAt": "2026-10-03T03:27:37.919Z",
+      "reviewedAt": "2026-10-03T03:32:02.211Z"
+    },
+    {
+      "key": "guide:contributing",
+      "title": "改一条完整功能链：让搜索结果说清所属章节",
+      "state": "reviewed",
+      "generatedAt": "2026-10-03T03:41:35.495Z",
+      "reviewedAt": "2026-10-03T03:44:09.836Z"
+    },
+    {
+      "key": "guide:knowledge-agent",
+      "title": "Agent 怎样把材料讲明白：从自主调查到复核发布",
+      "state": "reviewed",
+      "generatedAt": "2026-10-03T03:40:25.956Z",
+      "reviewedAt": "2026-10-03T03:43:41.270Z"
+    }
+  ],
+  "coverage": {
+    "materials": 1802,
+    "current": 146,
+    "stale": 340,
+    "fileStates": {
+      "pending": 269,
+      "not-applicable": 1204,
+      "stale": 192,
+      "reviewed": 137
+    }
+  },
+  "runs": [
+    {
+      "log": ".repo-review/runtime/research/symbol-guides.log",
+      "sha256": "ecf6ad9e8ad970a318c8e820035789f18864f2c1c59a773617e63b458c645125",
+      "events": [
+        "2026-10-03T02:38:53.824Z AI knowledge-researcher: 先认识 omem：把材料变成能找回的工作记忆",
+        "2026-10-03T02:39:38.726Z AI knowledge-researcher: 一份材料的旅程：从导入到阅读与引用",
+        "2026-10-03T02:44:04.851Z AI knowledge-writer: guide:overview",
+        "2026-10-03T02:46:59.301Z AI knowledge-verifier: guide:overview",
+        "2026-10-03T02:47:40.601Z AI knowledge-writer: guide:capture",
+        "2026-10-03T02:51:43.764Z AI knowledge-verifier: guide:capture",
+        "2026-10-03T02:54:25.002Z AI knowledge-refresher: guide:capture",
+        "2026-10-03T02:57:04.660Z AI knowledge-verifier: guide:capture",
+        "FAILED guide:overview Error: Agent timed out",
+        "2026-10-03T02:57:54.294Z AI knowledge-researcher: 一次提问如何找到答案：搜索、上下文与 RAG",
+        "2026-10-03T03:01:10.322Z Published guide:capture",
+        "2026-10-03T03:01:10.599Z AI knowledge-researcher: 规则变了以后：原文、记忆与待办如何更新",
+        "2026-10-03T03:05:56.721Z AI knowledge-writer: guide:retrieval",
+        "2026-10-03T03:07:33.401Z AI knowledge-writer: guide:memory",
+        "2026-10-03T03:10:43.670Z AI knowledge-verifier: guide:memory",
+        "2026-10-03T03:11:38.300Z AI knowledge-verifier: guide:retrieval",
+        "2026-10-03T03:15:04.325Z Published guide:retrieval",
+        "2026-10-03T03:15:04.515Z AI knowledge-researcher: 改一条完整功能链：从搜索结果到界面",
+        "2026-10-03T03:15:58.114Z AI knowledge-refresher: guide:memory",
+        "2026-10-03T03:18:27.605Z AI knowledge-verifier: guide:memory",
+        "2026-10-03T03:21:17.018Z AI knowledge-writer: guide:contributing",
+        "2026-10-03T03:23:37.394Z AI knowledge-refresher: guide:memory",
+        "2026-10-03T03:25:57.861Z AI knowledge-verifier: guide:contributing",
+        "2026-10-03T03:27:37.961Z AI knowledge-verifier: guide:memory",
+        "2026-10-03T03:30:13.173Z AI knowledge-refresher: guide:contributing",
+        "2026-10-03T03:32:03.092Z Published guide:memory",
+        "2026-10-03T03:32:03.217Z AI knowledge-researcher: Agent 怎样把材料讲明白：自主调查、写作与补查",
+        "2026-10-03T03:35:06.733Z AI knowledge-verifier: guide:contributing",
+        "2026-10-03T03:36:19.884Z AI knowledge-writer: guide:knowledge-agent",
+        "2026-10-03T03:38:22.578Z AI knowledge-refresher: guide:contributing",
+        "2026-10-03T03:40:26.286Z AI knowledge-verifier: guide:knowledge-agent",
+        "2026-10-03T03:41:35.526Z AI knowledge-verifier: guide:contributing",
+        "2026-10-03T03:43:41.994Z Published guide:knowledge-agent",
+        "2026-10-03T03:44:10.370Z Published guide:contributing",
+        "      \"error\": \"Error: Agent timed out\""
+      ]
+    },
+    {
+      "log": ".repo-review/runtime/research/symbol-guides-overview-sandbox-failure.log",
+      "sha256": "9f9ed55e9ad970cfefe3133b535af7d540064450138f611432f1384cdc2a404e",
+      "events": [
+        "2026-10-03T03:15:57.698Z AI knowledge-researcher: 先认识 omem：把材料变成能找回的工作记忆",
+        "FAILED guide:overview Error: ACP connection closed"
+      ]
+    },
+    {
+      "log": ".repo-review/runtime/research/symbol-guides-overview-retry.log",
+      "sha256": "87ed2efc41779439c025536067ec6d40578f585ec63e2abf4bec3ca3ead5e8c3",
+      "events": [
+        "2026-10-03T03:17:44.820Z AI knowledge-researcher: 先认识 omem：把材料变成能找回的工作记忆",
+        "2026-10-03T03:23:34.078Z AI knowledge-writer: guide:overview",
+        "2026-10-03T03:26:52.629Z AI knowledge-verifier: guide:overview",
+        "2026-10-03T03:29:43.037Z AI knowledge-refresher: guide:overview",
+        "2026-10-03T03:33:15.154Z AI knowledge-verifier: guide:overview",
+        "2026-10-03T03:36:01.116Z Published guide:overview"
+      ]
+    },
+    {
+      "log": ".repo-review/runtime/research/symbol-modules.log",
+      "sha256": "4474f479fdfbb887a60dd4a7d196a4551d115860485e958cf6eea46188fb0361",
+      "events": [
+        "2026-10-03T02:41:42.334Z AI code-analyst: omem:apps/server/src/knowledge/retrieval.ts",
+        "2026-10-03T02:44:32.657Z AI knowledge-verifier: omem:apps/server/src/knowledge/retrieval.ts",
+        "2026-10-03T02:47:09.968Z AI knowledge-refresher: omem:apps/server/src/knowledge/retrieval.ts",
+        "2026-10-03T02:49:05.914Z AI knowledge-verifier: omem:apps/server/src/knowledge/retrieval.ts",
+        "2026-10-03T02:51:03.009Z Published omem:apps/server/src/knowledge/retrieval.ts",
+        "2026-10-03T02:51:03.617Z AI code-analyst: omem:apps/server/src/retrieval/factory.ts",
+        "2026-10-03T02:52:07.279Z FAILED omem:apps/server/src/retrieval/factory.ts: Error: Worker stopped before completion",
+        "    error: \"Error: Worker stopped before completion\","
+      ]
+    },
+    {
+      "log": ".repo-review/runtime/research/symbol-modules-resumed.log",
+      "sha256": "e1a3e73b92e32a7c86a37b7c416236d120201174a97a8e264915b12b0e36893f",
+      "events": [
+        "2026-10-03T02:52:53.216Z AI code-analyst: omem:apps/server/src/retrieval/factory.ts",
+        "2026-10-03T02:53:38.328Z AI code-analyst: omem:apps/server/src/retrieval/keyword.ts",
+        "2026-10-03T02:54:17.214Z AI code-analyst: omem:apps/server/src/retrieval/port.ts",
+        "2026-10-03T02:56:51.146Z AI knowledge-verifier: omem:apps/server/src/retrieval/port.ts",
+        "2026-10-03T02:57:46.114Z AI knowledge-verifier: omem:apps/server/src/retrieval/factory.ts",
+        "2026-10-03T02:58:31.325Z AI knowledge-verifier: omem:apps/server/src/retrieval/keyword.ts",
+        "2026-10-03T03:00:06.090Z Published omem:apps/server/src/retrieval/port.ts",
+        "2026-10-03T03:00:07.899Z AI code-analyst: omem:apps/server/src/retrieval/relevance.ts",
+        "2026-10-03T03:01:04.394Z Published omem:apps/server/src/retrieval/keyword.ts",
+        "2026-10-03T03:01:06.837Z AI code-analyst: omem:apps/server/src/retrieval/reranker.ts",
+        "2026-10-03T03:02:22.597Z AI knowledge-refresher: omem:apps/server/src/retrieval/factory.ts",
+        "2026-10-03T03:04:23.996Z AI knowledge-verifier: omem:apps/server/src/retrieval/reranker.ts",
+        "2026-10-03T03:05:32.725Z AI knowledge-verifier: omem:apps/server/src/retrieval/factory.ts",
+        "2026-10-03T03:07:08.747Z AI knowledge-refresher: omem:apps/server/src/retrieval/reranker.ts",
+        "2026-10-03T03:08:06.732Z AI knowledge-refresher: omem:apps/server/src/retrieval/factory.ts",
+        "2026-10-03T03:09:35.457Z AI knowledge-verifier: omem:apps/server/src/retrieval/reranker.ts",
+        "2026-10-03T03:11:02.434Z AI knowledge-verifier: omem:apps/server/src/retrieval/relevance.ts",
+        "2026-10-03T03:11:52.565Z AI knowledge-verifier: omem:apps/server/src/retrieval/factory.ts",
+        "2026-10-03T03:12:56.855Z Published omem:apps/server/src/retrieval/reranker.ts",
+        "2026-10-03T03:12:58.427Z AI code-analyst: omem:apps/server/src/retrieval/semantic.ts",
+        "2026-10-03T03:14:21.293Z Published omem:apps/server/src/retrieval/factory.ts",
+        "2026-10-03T03:14:22.758Z AI code-analyst: omem:apps/server/src/retrieval/unified.ts",
+        "2026-10-03T03:15:11.220Z AI knowledge-refresher: omem:apps/server/src/retrieval/relevance.ts",
+        "2026-10-03T03:17:12.513Z AI knowledge-verifier: omem:apps/server/src/retrieval/relevance.ts",
+        "2026-10-03T03:18:00.382Z AI knowledge-verifier: omem:apps/server/src/retrieval/semantic.ts",
+        "2026-10-03T03:20:23.289Z Published omem:apps/server/src/retrieval/relevance.ts",
+        "2026-10-03T03:20:25.364Z AI code-analyst: omem:apps/web/src/App.vue",
+        "2026-10-03T03:21:37.476Z Published omem:apps/server/src/retrieval/semantic.ts",
+        "2026-10-03T03:21:39.704Z AI code-analyst: omem:scripts/retrieval-index.ts",
+        "2026-10-03T03:23:50.319Z AI knowledge-verifier: omem:apps/web/src/App.vue",
+        "2026-10-03T03:25:08.878Z FAILED omem:apps/server/src/retrieval/unified.ts: Error: Agent timed out",
+        "2026-10-03T03:25:53.078Z AI knowledge-verifier: omem:scripts/retrieval-index.ts",
+        "2026-10-03T03:27:57.959Z AI knowledge-refresher: omem:apps/web/src/App.vue",
+        "2026-10-03T03:29:18.507Z Published omem:scripts/retrieval-index.ts",
+        "2026-10-03T03:29:55.046Z AI knowledge-verifier: omem:apps/web/src/App.vue",
+        "2026-10-03T03:32:57.521Z Published omem:apps/web/src/App.vue",
+        "    error: \"Error: Agent timed out\","
+      ]
+    },
+    {
+      "log": ".repo-review/runtime/research/symbol-unified-timeout-config-rejected.log",
+      "sha256": "a1f5d88005748c717a42fe08d075f61f22388f41ff7e5d931aa36f2856629448",
+      "events": []
+    },
+    {
+      "log": ".repo-review/runtime/research/symbol-unified-retry.log",
+      "sha256": "1ec4312edc78451f1ca2c4783b354825090f6e12e53d922f5d30edbdda647b16",
+      "events": [
+        "2026-10-03T03:30:10.284Z AI code-analyst: omem:apps/server/src/retrieval/unified.ts",
+        "2026-10-03T03:32:48.064Z AI knowledge-verifier: omem:apps/server/src/retrieval/unified.ts",
+        "2026-10-03T03:34:58.651Z Published omem:apps/server/src/retrieval/unified.ts"
+      ]
+    },
+    {
+      "log": ".repo-review/runtime/research/symbol-unified-reading-correction.log",
+      "sha256": "e68e8f667140d4b45be12bdf637b2ed6cd945a8f07e7d0da77c2cfe6ea599861",
+      "events": [
+        "2026-10-03T03:37:41.930Z AI knowledge-refresher: omem:apps/server/src/retrieval/unified.ts",
+        "2026-10-03T03:40:21.755Z AI knowledge-verifier: omem:apps/server/src/retrieval/unified.ts",
+        "2026-10-03T03:43:09.349Z AI knowledge-refresher: omem:apps/server/src/retrieval/unified.ts",
+        "2026-10-03T03:45:58.635Z AI knowledge-verifier: omem:apps/server/src/retrieval/unified.ts",
+        "2026-10-03T03:48:34.838Z AI knowledge-refresher: omem:apps/server/src/retrieval/unified.ts",
+        "2026-10-03T03:51:24.303Z AI knowledge-verifier: omem:apps/server/src/retrieval/unified.ts",
+        "2026-10-03T03:53:55.922Z Published omem:apps/server/src/retrieval/unified.ts"
+      ]
+    }
+  ]
+}
