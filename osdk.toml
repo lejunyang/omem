@@ -4,9 +4,20 @@ node = "24.18.1"
 pnpm = "11"
 bun = "1.4.2"
 
+[models.relevance-zh-v2.views]
+
 [models.relevance-zh.views]
 
 [models.memory-zh.views]
+
+[models.relevance-zh-v2]
+source = "hf:onnx-community/bge-reranker-v2-m3-ONNX@6f5ff65298512715a1e669753bc754d2bc8f367b"
+include = ["config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "onnx/model_quantized.onnx"]
+exclude = []
+variant = "q8"
+kind = "other"
+family = "bge-reranker"
+derived_from = "BAAI/bge-reranker-v2-m3"
 
 [models.relevance-zh]
 source = "hf:Xenova/bge-reranker-base@280bcc27a84e0b898c251e06fddb25171bd9b101"
