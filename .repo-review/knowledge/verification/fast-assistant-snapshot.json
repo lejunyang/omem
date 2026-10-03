@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-03T09:01:12.170Z",
+  "note": "Same source corpus and schema 21; cold rebuild vs warm source projection reuse. No model calls.",
+  "variants": [
+    {
+      "name": "cold",
+      "prepareMs": 23656,
+      "units": {
+        "n": 10976
+      },
+      "unitDigest": "11ff3a11568abed21c5fe52ebd86ff3cdbfbb50acc67c92c934a8af6003b07d7",
+      "ftsDigest": "500e322dd5c25e8fa1348eda48b14493cdab13d7ffce433e23dbfc95ce938f92",
+      "vectorHeadsDigest": "2f3b8cc856e6181d975c149f5429b28fd0e2257479c3b8d50832c60512d366c6"
+    },
+    {
+      "name": "warm",
+      "prepareMs": 9532,
+      "units": {
+        "n": 10976
+      },
+      "unitDigest": "11ff3a11568abed21c5fe52ebd86ff3cdbfbb50acc67c92c934a8af6003b07d7",
+      "ftsDigest": "500e322dd5c25e8fa1348eda48b14493cdab13d7ffce433e23dbfc95ce938f92",
+      "vectorHeadsDigest": "2f3b8cc856e6181d975c149f5429b28fd0e2257479c3b8d50832c60512d366c6"
+    }
+  ],
+  "identical": true
+}
