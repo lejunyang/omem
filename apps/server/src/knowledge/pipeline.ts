@@ -189,7 +189,9 @@ export class KnowledgePipeline {
         const dependencies: KnowledgeArtifact["dependencies"] = offers.filter(o=>citedKeys.has(o.material.key)).map(o => ({ kind: "material", key: o.material.key, digest: o.material.digest }));
         for (const a of articles.filter(a=>document.citations.some(c=>c.target.kind==="article"&&c.target.key===a.document.key))) dependencies.push({ kind: "article", key: a.document.key, digest: a.revision });
         if (this.stopping) throw Error("Knowledge publication cancelled");
-        const artifact: KnowledgeArtifact = { version: 1, document, dependencies, ...(publication ? { reading: publication.reading, selection: { materialKeys: publication.materialKeys } } : {}),
+        const artifact: KnowledgeArtifact = { version: 1, document, dependencies, ...(publication ? { reading: publication.reading,
+          ...(publication.reading.contextIds?.length ? { selection: { materialKeys: publication.materialKeys } } : {}),
+        } : {}),
           publication: {role: publication ? publication.reading.kind === "reference" ? "reference" : "article" : "note"},
           investigation: offers.filter(o=>readKeys.has(o.material.key)).map(o=>({key:o.material.key,digest:o.material.digest})),
           generation: { model: write.trace.effectiveModel!, effort: write.trace.effectiveEffort, at: write.at, trace: { ...write.trace, ...(publication ? { research: publication.research, writerVersion: publication.writerVersion } : {}), ...(maintenance ? { maintenance: maintenanceTrace(maintenance) } : {}) } as unknown as Record<string, unknown> },
