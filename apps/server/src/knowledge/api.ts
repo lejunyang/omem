@@ -16,6 +16,7 @@ import { KnowledgeRepository, type KnowledgeArticle } from "./repository.js";
 import { posix } from "node:path";
 import { parseFile } from "../code/parse.js";
 import { wikiPageBriefSchema } from "../../../../packages/contracts/src/knowledge.js";
+import { KnowledgePageWorker } from "./page-worker.js";
 
 export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; retrieval?: RetrievalPort; retrievalConfig?: RetrievalConfig; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void }) {
   const repository = input.repository ?? new KnowledgeRepository(input.store);
@@ -24,10 +25,30 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
   let running: KnowledgePipeline | null = null;
   let lastRun: unknown = null;
   let descriptionRun: {state: string; revisionIds: string[]; error?: string} | null = null;
+  const maintenance = new KnowledgePageWorker(repository, {
+    blocked: () => !!running,
+    onError: error => app.log.error(error),
+    run: input.profile ? async (brief, job, signal) => {
+      const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)),
+        { ...input.profile!, id: "traex" }, { retrievalConfig: input.retrievalConfig, budget: input.budget, onPublish: input.onPublish, retryTag: `${job.id}:${job.generation}` });
+      running = pipeline;
+      const cancel = () => { void pipeline.stop(); };
+      signal.addEventListener("abort", cancel, { once: true });
+      try {
+        if (signal.aborted) throw Error("Knowledge maintenance cancelled");
+        return (await pipeline.writePage(brief))[0]?.revision;
+      } finally {
+        signal.removeEventListener("abort", cancel);
+        await pipeline.stop();
+        running = null;
+      }
+    } : undefined,
+  });
+  app.addHook("onReady", async () => { maintenance.start(); });
   app.get(prefix + "/description-run", async () => descriptionRun);
   app.post<{ Body: {revisionIds: string[]} }>(prefix + "/describe", async (req, reply) => {
     if (!input.profile) return reply.code(503).send({error:"请先在能力与连接中配置 Agent"});
-    if (running) return reply.code(409).send({error:"材料整理正在进行，请稍后再试"});
+    if (running || maintenance.busy()) return reply.code(409).send({error:"材料整理正在进行，请稍后再试"});
     const ids = req.body?.revisionIds;
     if (!Array.isArray(ids) || !ids.length || ids.length > 30 || ids.some(id => typeof id !== "string")) return reply.code(400).send({error:"请选择 1–30 份材料"});
     const selected = repository.materials().filter(m => ids.includes(m.revisionId));
@@ -56,7 +77,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     return { ...c, actionable: !!target, unavailableReason: target ? null : "被引用的原始材料版本不可用", current: target?.current ?? false,
       resolved: target ? { kind: "material", key: target.material.key, digest: target.material.digest, title: target.material.title, startLine: c.target.startLine, endLine: c.target.endLine } : null };
   };
-  app.get(prefix + "/articles", async () => { repository.refresh(); return { articles: repository.published().map(meta), pages: repository.pages(), materials: repository.materials().map(m => ({ key: m.key, title: m.title, path: m.path, revisionId: m.revisionId })), running: !!running, lastRun }; });
+  app.get(prefix + "/articles", async () => { repository.refresh(); return { articles: repository.published().map(meta), pages: repository.pages().map(p => ({ ...p, maintenance: maintenance.status(p.key) })), materials: repository.materials().map(m => ({ key: m.key, title: m.title, path: m.path, revisionId: m.revisionId })), running: !!running || maintenance.busy(), lastRun: maintenance.lastRun() ?? lastRun }; });
   app.get<{ Params: { key: string }; Querystring: { revision?: string } }>(prefix + "/articles/:key", async (req, reply) => {
     repository.refresh();
     const a = repository.get(req.params.key, req.query.revision);
@@ -166,25 +187,27 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     for (const hit of ranked) if (!best.has(hit.key)) best.set(hit.key, hit);
     return [...best.values()].slice(0, 50);
   });
-  function startPage(brief: import("../../../../packages/contracts/src/knowledge.js").WikiPageBrief, retry=false) {
-    running = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)), { ...input.profile!, id: "traex" }, { retrievalConfig: input.retrievalConfig, budget: input.budget, onPublish: input.onPublish, retryTag: retry ? new Date().toISOString() : undefined });
-    const pipeline = running;
-    lastRun = { state: "running", title: brief.title, key: brief.key };
-    void pipeline.writePage(brief).then(() => { lastRun = { state: "published", title: brief.title, key: brief.key }; })
-      .catch(error => { lastRun = { state: "failed", title: brief.title, key: brief.key, error: String(error) }; }).finally(() => { running = null; });
-    return { state: "running", key: brief.key };
+  function startPage(brief: import("../../../../packages/contracts/src/knowledge.js").WikiPageBrief) {
+    maintenance.request(brief.key);
+    return { state: "queued", key: brief.key };
   }
+  app.put<{ Params: { key: string }; Body: { enabled: boolean } }>(prefix + "/pages/:key/maintenance", async (req, reply) => {
+    if (typeof req.body?.enabled !== "boolean") return reply.code(400).send({ error: "请选择是否随材料更新" });
+    if (req.body.enabled && !input.profile) return reply.code(503).send({ error: "请先在能力与连接中配置 Agent" });
+    try { return maintenance.setEnabled(req.params.key, req.body.enabled); }
+    catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "无法设置自动更新" }); }
+  });
   app.post<{Params:{key:string}}>(prefix+"/pages/:key/refresh", async(req,reply)=>{
     if (!input.profile) return reply.code(503).send({error:"请先在能力与连接中配置 Agent"});
-    if (running) return reply.code(409).send({error:"知识整理正在进行"});
+    if (["queued", "writing"].includes(maintenance.status(req.params.key)?.state ?? "")) return reply.code(409).send({error:"这篇文章正在整理"});
     const brief=repository.pages().find(p=>p.key===req.params.key)?.plan;
     if (!brief) return reply.code(404).send({error:"这篇内容没有保存阅读目标，请从整理文章开始"});
-    return reply.code(202).send(startPage(brief,true));
+    return reply.code(202).send(startPage(brief));
   });
   app.route<{ Params: { key?: string }; Body: { brief: unknown; revisionIds: string[] } }>({ method: ["POST", "PUT"], url: prefix + "/pages/:key?", handler: async (req, reply) => {
     if (!input.profile) return reply.code(503).send({ error: "请先在能力与连接中配置 Agent" });
-    if (running) return reply.code(409).send({ error: "知识整理正在进行" });
     const editing = req.method === "PUT";
+    if (editing && ["queued", "writing"].includes(maintenance.status(req.params.key!)?.state ?? "")) return reply.code(409).send({ error: "这篇文章正在整理，完成后可调整材料与目标" });
     if (editing && !repository.pages().some(p => p.key === req.params.key && p.plan)) return reply.code(404).send({ error: "这篇文章没有保存阅读目标" });
     const parsed = wikiPageBriefSchema.safeParse(req.body?.brief);
     const ids = req.body?.revisionIds;
@@ -195,11 +218,11 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     if (selected.length !== selectedIds.size) return reply.code(400).send({ error: "所选材料已更新，请刷新后重试" });
     const brief = { ...parsed.data, materialKeys: selected.map(m => m.key) };
     repository.savePlan(brief, true);
-    return reply.code(202).send(startPage(brief, editing));
+    return reply.code(202).send(startPage(brief));
   } });
   app.post<{ Body: { revisionIds: string[] } }>(prefix + "/analyze", async (req, reply) => {
     if (!input.profile) return reply.code(503).send({ error: "未配置可用 Agent" });
-    if (running) return reply.code(409).send({ error: "知识整理正在进行" });
+    if (running || maintenance.busy()) return reply.code(409).send({ error: "知识整理正在进行" });
     if (!Array.isArray(req.body?.revisionIds) || !req.body.revisionIds.length || req.body.revisionIds.length > 500) return reply.code(400).send({ error: "请选择要整理的固定材料版本" });
     const ids = new Set(req.body.revisionIds), selected = repository.materials().filter(m => ids.has(m.revisionId));
     if (selected.length !== ids.size) return reply.code(400).send({ error: "部分材料已更新或不可用，请刷新后重试" });
@@ -208,6 +231,6 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     void pipeline.analyze(selected).then(result => { lastRun = result; }).catch(error => { lastRun = { error: String(error) }; }).finally(() => { running = null; });
     return reply.code(202).send({ state: "running", materials: selected.length });
   });
-  app.addHook("preClose", async () => { await running?.stop(); });
+  app.addHook("preClose", async () => { await maintenance.stop(); await running?.stop(); });
   return repository;
 }

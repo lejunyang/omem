@@ -71,6 +71,13 @@ export const wikiPageBriefSchema = z.object({
 }).strict();
 export type WikiPageBrief = z.infer<typeof wikiPageBriefSchema>;
 
+export type PageMaintenanceStatus = {
+  enabled: boolean;
+  state: "idle" | "queued" | "writing" | "published" | "failed";
+  error: string | null;
+  updatedAt: string | null;
+};
+
 /** A bounded, read-only investigation over already captured material. */
 export const knowledgeResearchSchema = z.object({
   schema_version: z.literal(1), ready: z.boolean(),
