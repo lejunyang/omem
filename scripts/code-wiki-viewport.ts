@@ -194,6 +194,12 @@ try {
     await expect(page.locator(".book-content .article-body > h2")).toBeVisible();
     await expect(page.locator(".book-content .md-body p").first()).toBeVisible();
     await page.screenshot({ path: `${OUT}/knowledge-${width}.png`, fullPage: true });
+    const maintenance = page.getByRole("region", { name: "文章更新方式" });
+    await maintenance.scrollIntoViewIfNeeded();
+    await expect(maintenance.getByRole("checkbox", { name: "随所选材料自动更新" })).toBeVisible();
+    expect(await maintenance.locator("label").evaluate(el => getComputedStyle(el).flexDirection)).toBe("row");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: `${OUT}/maintenance-${width}.png` });
   });
   expect(errors).toEqual([]);
   writeFileSync(`${OUT}/report.json`, JSON.stringify({ base: BASE, checks, errors }, null, 2));

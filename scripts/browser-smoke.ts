@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildApp } from "../apps/server/src/app.js";
 import { Store } from "../apps/server/src/store.js";
+import { KnowledgeRepository, bindKnowledgeQuotes } from "../apps/server/src/knowledge/repository.js";
 import { LarkOnboardingService } from "../apps/server/src/integrations/lark/onboarding.js";
 import { EncryptedSecretStore } from "../apps/server/src/integrations/lark/secret-store.js";
 import type {
@@ -886,6 +887,39 @@ try {
       await page.screenshot({ path: join(out, `disclosure-${width}.png`) });
     }
     await page.emulateMedia({ reducedMotion: "no-preference" });
+  });
+  await check("article maintenance settings persist through the real API", async () => {
+    // Host-rendering fixture only; live-page-maintenance.ts verifies actual AI updates.
+    const repository = new KnowledgeRepository(store), material = repository.materials()[0]!;
+    const plan = { key: "browser-maintenance", title: "文章更新设置验收", order: 0, kind: "reference" as const,
+      reader: "界面验收", goal: "验证已选材料的更新设置", scenario: "打开和关闭持续维护",
+      questions: ["如何开启更新？"], entryPaths: [], materialKeys: [material.key], topicPath: ["界面验收"] };
+    repository.savePlan(plan, true);
+    repository.publish({ version: 1, reading: plan, publication: { role: "reference" },
+      document: bindKnowledgeQuotes({ key: plan.key, title: plan.title, summary: "用于检查文章更新控件的固定界面数据。", category: "界面验收", topicPath: plan.topicPath,
+        sections: [{ key: "source", title: "所选材料", body: "下方设置跟踪这份材料的后续版本。[[source]]" }],
+        citations: [{ key: "source", label: material.title, reason: "所选原文", relation: "background", quote: "", target: { kind: "material", key: material.key, startLine: 1, endLine: 1 } }], questions: [] }, new Map([[material.key, material]])),
+      dependencies: [{ kind: "material", key: material.key, digest: material.digest }],
+      generation: { model: "browser-fixture", effort: null, at: new Date().toISOString(), trace: {} },
+      review: { model: "browser-fixture", at: new Date().toISOString(), verdict: "accepted", trace: {} },
+    });
+    await page.goto(base + "#/knowledge/" + plan.key);
+    const panel = page.getByRole("region", { name: "文章更新方式" });
+    const toggle = panel.getByRole("checkbox", { name: "随所选材料自动更新" });
+    await toggle.check();
+    await expect.poll(() => Number(store.db.prepare("SELECT enabled FROM knowledge_page_maintenance WHERE document_key=?").get(plan.key)?.enabled)).toBe(1);
+    await page.reload();
+    await expect(toggle).toBeChecked();
+    for (const width of [1440, 768, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await panel.scrollIntoViewIfNeeded();
+      expect(await panel.locator("label").evaluate(el => getComputedStyle(el).flexDirection)).toBe("row");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: join(out, `article-maintenance-${width}.png`) });
+    }
+    await toggle.uncheck();
+    await expect.poll(() => Number(store.db.prepare("SELECT enabled FROM knowledge_page_maintenance WHERE document_key=?").get(plan.key)?.enabled)).toBe(0);
+    expect(store.jobs.list().filter(job => job.kind === "knowledge:maintain-page")).toHaveLength(0);
   });
   expect(errors).toEqual([]);
   writeFileSync(

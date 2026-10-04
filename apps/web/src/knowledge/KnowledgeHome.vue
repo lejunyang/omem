@@ -5,6 +5,7 @@ import KnowledgeDocument from "./KnowledgeDocument.vue";
 import KnowledgeTree from "./KnowledgeTree.vue";
 import KnowledgeFolder from "./KnowledgeFolder.vue";
 import ArticleComposer, { type MaterialOption } from "./ArticleComposer.vue";
+import ArticleMaintenance from "./ArticleMaintenance.vue";
 import type { WikiPageBrief } from "../../../../packages/contracts/src/knowledge";
 import { topicTree, inTopic, articleOrder } from "./topics";
 import {
@@ -77,6 +78,8 @@ const current = computed(() =>
 const currentPlan = computed(
   () => pages.value.find((p) => p.key === selected.value)?.plan,
 );
+const currentMaintenance = computed(() => pages.value.find(p => p.key === selected.value)?.maintenance);
+const pageBusy = (key?: string) => !!key && ["queued", "writing"].includes(pages.value.find(p => p.key === key)?.maintenance?.state ?? "");
 function compose(plan?: WikiPageBrief) {
   composerPlan.value = plan;
   composerOpen.value = true;
@@ -311,11 +314,11 @@ onBeforeUnmount(() => {
     <div class="book-content">
       <p v-if="error" class="error" role="alert">{{ error }}</p>
       <p v-if="running" class="generation-status" role="status">
-        正在整理“{{
+        {{ lastRun?.state === 'queued' ? '已排队整理' : '正在整理' }}“{{
           lastRun?.title || "所选材料"
         }}”。完成调查、撰写与复核后，文章会出现在目录中。
       </p>
-      <p v-else-if="lastRun?.state === 'failed'" class="error" role="alert">
+      <p v-else-if="!current && lastRun?.state === 'failed'" class="error" role="alert">
         “{{ lastRun.title }}”未完成：{{ lastRun.error }}
       </p>
       <p
@@ -375,7 +378,7 @@ onBeforeUnmount(() => {
               }}
             </p>
           </div>
-          <OmButton variant="primary" :disabled="running" @click="compose()"
+          <OmButton variant="primary" @click="compose()"
             ><OmIcon name="plus" />整理文章</OmButton
           >
         </header>
@@ -429,7 +432,7 @@ onBeforeUnmount(() => {
             }}</span
             ><OmButton
               variant="secondary"
-              :disabled="running"
+              :disabled="pageBusy(page.key)"
               @click="refreshPage(page.key)"
               >{{ page.state === "failed" ? "重试整理" : "开始整理" }}</OmButton
             >
@@ -441,18 +444,21 @@ onBeforeUnmount(() => {
           description="点击「整理文章」，选择材料和想弄懂的问题。"
         />
       </section>
+      <ArticleMaintenance v-if="current && currentPlan" :key="current.key"
+        :prefix="prefix" :document-key="current.key" :selected-count="currentPlan.materialKeys?.length ?? 0"
+        :status="currentMaintenance" @updated="load" @retry="refreshPage(current.key)" />
       <footer v-if="current" class="next-guide">
         <OmButton
           v-if="currentPlan"
           variant="secondary"
-          :disabled="running"
+          :disabled="pageBusy(current.key)"
           @click="refreshPage(current.key)"
           >重新整理这篇</OmButton
         >
         <OmButton
           v-if="currentPlan"
           variant="secondary"
-          :disabled="running"
+          :disabled="pageBusy(current.key)"
           @click="compose(currentPlan)"
           >调整材料与目标</OmButton
         >
@@ -471,7 +477,7 @@ onBeforeUnmount(() => {
       :prefix="prefix"
       :materials="materials"
       :topic-path="composerPlan?.topicPath ?? topic"
-      :running="running"
+      :running="pageBusy(composerPlan?.key)"
       :plan="composerPlan"
       @close="composerOpen = false"
       @submitted="load"
