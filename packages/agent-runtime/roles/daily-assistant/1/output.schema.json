@@ -1,11 +1,36 @@
 {
-  "$id": "https://omem.local/schema/AssistantReply.v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "answer": {
       "type": "string",
       "minLength": 1
+    },
+    "project_selection": {
+      "description": "The project this conversation is now about, chosen from the supplied saved projects. Resolve from the current question, prior clarification and material context, not a similar name alone. Null clears the project for unrelated/general questions, comparisons or unresolved ambiguity. This is a reading scope, not permission or a fact update.",
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "project_id",
+        "reason"
+      ],
+      "additionalProperties": false
     },
     "citations": {
       "type": "array",
@@ -312,5 +337,6 @@
     "create_task",
     "update_task"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$id": "https://omem.local/schema/AssistantReply.v1"
 }

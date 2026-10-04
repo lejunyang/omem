@@ -645,7 +645,7 @@ export class Store {
     return this.db
       .prepare(
         `SELECT id,title,detail,due_at AS dueAt,evidence_id AS evidenceId,
-           status,version,workspace_id AS workspaceId,owner_id AS ownerId,
+           status,version,workspace_id AS workspaceId,owner_id AS ownerId,project_id AS projectId,
            due_expression AS dueExpression,next_step AS nextStep,follow_up AS followUp
          FROM tasks ORDER BY created_at DESC`,
       )

@@ -27,6 +27,8 @@ import type {
 } from "../retrieval/port.js";
 import { fragmentPositions } from "../knowledge/structure.js";
 import { stableDigest } from "../storage/digest.js";
+import { assistantProjectSelectionSchema } from "../../../../packages/contracts/src/assistant.js";
+import type { MaterialContext } from "../../../../packages/contracts/src/contexts.js";
 
 export type ResearchActivity = {
   label: string;
@@ -91,6 +93,7 @@ export type AssistantTask = {
   dueAt: string | null;
   followUp?: TaskFollowUp | null;
   nextStep?: string;
+  projectId?: string | null;
 };
 
 export function validatedDueAt(
@@ -112,6 +115,7 @@ export function validatedDueAt(
 export type AssistantModelReply = {
   /** Final natural-language reply shown to the user. */
   answer: string;
+  projectSelection?: { project_id: string | null; reason: string };
   /** Evidence citation ids supplied to this turn (legacy fragment ids accepted). */
   citationIds: string[];
   /** Structured, server-enforced tool requests. The model cannot grant itself
@@ -187,6 +191,9 @@ export type AssistantModelPort = {
     visibility: Visibility;
     /** Owner-scoped corrections/constraints the model must respect. */
     trustedContext?: string;
+    /** Resolved reading scope; never an authorization boundary. Private library only. */
+    workingProject?: MaterialContext | null;
+    projects?: MaterialContext[];
     tasks?: AssistantTask[];
     clock?: { now: string; timezone: string };
     retrievalRound?: number;
@@ -595,12 +602,12 @@ export class AssistantRuntime {
       // Prior turns are per-conversation only: a group conversation never replays
       // private p2p history, because those live in a different conversation row.
       const maxPrior = this.options.maxPriorTurns ?? 20;
-      const priorTurns = this.router
+      const completedTurns = this.router
         .turns(input.conversation.id)
         .filter(
           (t) => t.id !== input.turnId && t.inputMessageRefs.status === "done",
-        )
-        .slice(-maxPrior)
+        );
+      const priorTurns = (maxPrior > 0 ? completedTurns.slice(-maxPrior) : [])
         .map((t) => ({
           ordinal: t.ordinal,
           userText: t.inputText,
@@ -617,7 +624,9 @@ export class AssistantRuntime {
       );
       const retrieved = context.evidence;
       let background = context.background;
-      const priorCtx = this.priorWorkingContext(input.conversation);
+      const inScope = this.readingScope(input.conversation);
+      const priorCtx = this.priorWorkingContext(input.conversation).filter(e =>
+        (e.sourceTarget?.fragmentIds ?? [e.fragmentId]).every(inScope));
       let evidence = [
         ...retrieved,
         ...priorCtx.filter(
@@ -632,6 +641,9 @@ export class AssistantRuntime {
 
       // 1b. Read owner-scoped corrections from FeedbackService (H-G16).
       const trustedContext = this.readScopedCorrections(input.conversation);
+      const projects = input.conversation.visibility === "private"
+        ? this.store.contexts.list().filter(c => c.kind === "project") : [];
+      const workingProject = projects.find(p => p.id === input.conversation.projectId) ?? null;
       const tasks = this.visibleTasks(input.conversation);
       const clock = {
         now: new Date().toISOString(),
@@ -653,6 +665,8 @@ export class AssistantRuntime {
             background,
             visibility: input.conversation.visibility,
             trustedContext,
+            workingProject,
+            projects,
             tasks,
             clock,
             retrievalRound: 0,
@@ -704,6 +718,8 @@ export class AssistantRuntime {
               background,
               visibility: input.conversation.visibility,
               trustedContext,
+              workingProject,
+              projects,
               tasks,
               clock,
               retrievalRound: 1,
@@ -757,6 +773,16 @@ export class AssistantRuntime {
       // resolves after the turn was cancelled must not write anything.
       this.assertNotCancelled(input.signal);
 
+      // Commit only a completed turn's resolved object. It narrows reading, never
+      // visibility or action authority; topic changes can explicitly clear it.
+      let projectId = workingProject?.id ?? null;
+      if (!degraded && reply.projectSelection) {
+        const selection = assistantProjectSelectionSchema.parse(reply.projectSelection);
+        if (selection.project_id && !projects.some(p => p.id === selection.project_id))
+          throw Error("所选项目不在本次可用项目中");
+        projectId = selection.project_id;
+      }
+
       // 3. Structured, server-enforced tool calls. No prompt-as-permission: every
       //    create_task goes through MemoryService (owner/version/receipt/idempotency).
       //    B: we ALSO check the user's actual intent — consultation questions
@@ -778,6 +804,9 @@ export class AssistantRuntime {
           trace: reply.researchTrace,
         });
       const createdTaskIds: string[] = [];
+      if (!degraded && reply.projectSelection) toolActions.push({
+        tool: "select_project", projectId, reason: reply.projectSelection.reason,
+      });
       let taskRejectedReason: string | null = null;
       if (!degraded && mode !== "research") {
         for (const call of reply.toolCalls ?? []) {
@@ -814,6 +843,7 @@ export class AssistantRuntime {
             transportEventId: input.transportEventId,
             userText: input.userText,
             requestId: input.turnId,
+            projectId,
           });
           toolActions.push(governed.action);
           if (governed.taskId) createdTaskIds.push(governed.taskId);
@@ -888,12 +918,16 @@ export class AssistantRuntime {
       // FENCE: abort check right before final persistence.
       this.assertNotCancelled(input.signal);
 
-      this.router.completeTurn({
-        turnId: input.turnId,
-        result: finalAnswer,
-        selectedEvidence,
-        toolActions,
-        degraded,
+      this.store.tx(() => {
+        this.router.completeTurn({
+          turnId: input.turnId,
+          result: finalAnswer,
+          selectedEvidence,
+          toolActions,
+          degraded,
+        });
+        if (!degraded && reply.projectSelection)
+          this.router.setProject(input.conversation.id, projectId);
       });
     } catch (error) {
       if (input.signal.aborted || error instanceof TurnCancelledError)
@@ -948,7 +982,7 @@ export class AssistantRuntime {
         evidence: await this.retrieveEvidence(userText, conversation),
         background: [] as AssistantBackground[],
       };
-    const visible = (id: string) => this.isVisible(conversation, id);
+    const visible = this.readingScope(conversation);
     const hits = await retrieval.search({
       text: userText,
       // Retrieve a pool, then spend reading slots on distinct complete contexts.
@@ -982,11 +1016,11 @@ export class AssistantRuntime {
         text: userText,
         limit: 20,
         diversify: false,
-        visible: (fragmentId) => this.isVisible(conversation, fragmentId),
+        visible: this.readingScope(conversation),
       });
       // Retain the actual semantic hit inside a long original fragment. The ACP
       // evidence budget is 2,000 characters; rereading only its prefix loses tails.
-      const visible = (id: string) => this.isVisible(conversation, id);
+      const visible = this.readingScope(conversation);
       const evidence = new Map<string, AssistantEvidence>();
       for (const c of candidates) {
         const hit = this.enrichEvidence(
@@ -1017,10 +1051,22 @@ export class AssistantRuntime {
     const q = userText.trim().slice(0, 300);
     if (!q.trim()) return [];
     rows = this.store.search(q) as typeof rows;
+    const inScope = this.readingScope(conversation);
     return rows
       .map((row) => this.enrichEvidence(String(row.id)))
       .filter((e): e is AssistantEvidence => Boolean(e))
-      .filter((e) => this.isVisible(conversation, e.fragmentId));
+      .filter((e) => inScope(e.fragmentId));
+  }
+
+  /** Apply the saved material membership before ranking/limiting. Native Agent
+   * tools remain free to investigate another project or necessary background. */
+  private readingScope(conversation: Conversation): (id: string) => boolean {
+    const project = conversation.visibility === "private" && conversation.projectId
+      ? this.store.contexts.list().find(c => c.kind === "project" && c.id === conversation.projectId) : null;
+    const members = project ? new Set(this.store.db.prepare(`SELECT f.id FROM fragments f
+      JOIN revisions r ON r.id=f.revision_id
+      JOIN material_context_sources s ON s.source_id=r.source_id WHERE s.context_id=?`).all(project.id).map(r => String(r.id))) : null;
+    return id => this.isVisible(conversation, id) && (!members || members.has(id));
   }
 
   private visibleTasks(conversation: Conversation): AssistantTask[] {
@@ -1042,6 +1088,7 @@ export class AssistantRuntime {
         dueAt: t.dueAt ? String(t.dueAt) : null,
         followUp: t.followUp as TaskFollowUp | null,
         nextStep: String(t.nextStep ?? ""),
+        projectId: t.projectId ? String(t.projectId) : null,
       }));
   }
 
@@ -1091,6 +1138,9 @@ export class AssistantRuntime {
           : null;
       if (call.action === "reschedule" && !dueAt)
         return reject("请给出明确的改期时间");
+      const taskProject = tasks.find(t => t.id === call.taskId)?.projectId;
+      const contextIds = taskProject && this.store.contexts.list().some(c => c.id === taskProject)
+        ? [taskProject] : [];
       const revision = this.store.capture({
         source: "manual",
         externalId: `turn:${input.turnId}`,
@@ -1112,7 +1162,7 @@ export class AssistantRuntime {
           forwarded: false,
           producerKind: "original",
         },
-      }).revision;
+      }, { contextIds }).revision;
       const receipt = this.options.memory.commandTask({
         taskId: call.taskId,
         expectedVersion: call.expectedVersion,
@@ -1296,6 +1346,7 @@ export class AssistantRuntime {
     transportEventId: string | null;
     userText: string;
     requestId: string;
+    projectId: string | null;
   }): { action: Record<string, unknown>; taskId?: string } {
     const ownerId = this.options.ownerId ?? "owner";
     const reject = (reason: string, extra: Record<string, unknown> = {}) => ({
@@ -1353,7 +1404,7 @@ export class AssistantRuntime {
             forwarded: false,
             producerKind: "original",
           },
-        }).revision;
+        }, { contextIds: input.projectId ? [input.projectId] : [] }).revision;
         if (rev.fragments[0]) {
           directEvidence = [
             {
@@ -1384,7 +1435,7 @@ export class AssistantRuntime {
           operation: "create",
           scope: {
             workspace_id: "personal",
-            project_id: null,
+            project_id: input.projectId,
             subject_id: null,
           },
           body: {
@@ -1476,7 +1527,7 @@ export class AssistantRuntime {
   ): AssistantTurnResult {
     return {
       turn,
-      conversation,
+      conversation: this.router.get(conversation.id) ?? conversation,
       evidence: Array.isArray(turn.selectedEvidence)
         ? (turn.selectedEvidence as AssistantEvidence[])
         : evidence,

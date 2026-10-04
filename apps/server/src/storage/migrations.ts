@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 22;
+export const SUPPORTED_SCHEMA_VERSION = 23;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -1021,6 +1021,12 @@ const retrievalContextStatements = [
   )`,
 ];
 
+const assistantProjectStatements = [
+  "ALTER TABLE conversations ADD COLUMN project_id TEXT",
+  "ALTER TABLE tasks ADD COLUMN project_id TEXT",
+  "ALTER TABLE task_revisions ADD COLUMN project_id TEXT",
+];
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -1119,6 +1125,7 @@ const migrations: readonly Migration[] = [
   { version: 20, name: "material-descriptions", statements: materialDescriptionStatements, checksum: checksum(materialDescriptionStatements) },
   { version: 21, name: "revision-fragment-read-index", statements: revisionReadIndexStatements, checksum: checksum(revisionReadIndexStatements) },
   { version: 22, name: "retrieval-context-hierarchy", statements: retrievalContextStatements, checksum: checksum(retrievalContextStatements) },
+  { version: 23, name: "assistant-project-context", statements: assistantProjectStatements, checksum: checksum(assistantProjectStatements) },
 ];
 
 const legacyV1Checksum = createHash("sha256")
