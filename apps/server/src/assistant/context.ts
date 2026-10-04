@@ -167,5 +167,38 @@ export function assembleAnswerContext(
           : {}),
       });
   }
-  return { evidence: [...evidence.values()], background };
+  // Keep an original passage once when another admitted range already contains
+  // it. Never join revisions or manufacture a wider range. Background links are
+  // remapped to the retained fixed citation rather than left dangling.
+  const entries = [...evidence.values()];
+  const owners = new Map(
+    entries.map((entry) => {
+      let owner = entry;
+      for (const candidate of entries) {
+        const range = owner.sourceTarget;
+        const parent = candidate.sourceTarget;
+        if (
+          range &&
+          parent &&
+          parent.revisionId === range.revisionId &&
+          parent.startLine <= range.startLine &&
+          parent.endLine >= range.endLine &&
+          (parent.startLine < range.startLine || parent.endLine > range.endLine)
+        )
+          owner = candidate;
+      }
+      return [entry.citationId!, owner];
+    }),
+  );
+  return {
+    evidence: [...new Set(owners.values())],
+    background: background.map((entry) => ({
+      ...entry,
+      citationIds: [
+        ...new Set(
+          entry.citationIds.map((id) => owners.get(id)?.citationId ?? id),
+        ),
+      ],
+    })),
+  };
 }

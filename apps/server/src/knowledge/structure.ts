@@ -2,7 +2,7 @@ import { marked } from "marked";
 import { parseFile } from "../code/parse.js";
 import type { KnowledgeMaterial } from "../../../../packages/contracts/src/knowledge.js";
 
-export type MaterialSection = { title: string; startLine: number; endLine: number; kind: "section" | "symbol" | "document" };
+export type MaterialSection = { title: string; startLine: number; endLine: number; kind: "section" | "symbol" | "document"; depth?: number };
 const cache = new WeakMap<KnowledgeMaterial, MaterialSection[]>();
 type PositionedFragment = KnowledgeMaterial["fragments"][number] & { start: number; end: number; startLine: number; endLine: number };
 const positionsCache = new WeakMap<KnowledgeMaterial, PositionedFragment[]>();
