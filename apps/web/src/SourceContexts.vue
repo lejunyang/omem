@@ -7,12 +7,14 @@ import type { ContextAssignment, MaterialContext } from "../../../packages/contr
 const props = defineProps<{ sourceId: string }>();
 const selected = ref<string[]>([]), loaded = ref(false), saving = ref(false), message = ref(""), error = ref("");
 const assignment = ref<ContextAssignment | null>(null), candidates = ref<MaterialContext[]>([]);
+const expanded = ref(false);
 watch(() => props.sourceId, async id => {
-  loaded.value = false; message.value = ""; error.value = ""; assignment.value = null; candidates.value = [];
+  loaded.value = false; message.value = ""; error.value = ""; assignment.value = null; candidates.value = []; expanded.value = false;
   try {
     const result = await api<{ contextIds: string[]; assignment: ContextAssignment | null; candidates: MaterialContext[] }>(`/sources/${encodeURIComponent(id)}/contexts`);
     if (id !== props.sourceId) return;
     selected.value = result.contextIds; assignment.value = result.assignment; candidates.value = result.candidates; loaded.value = true;
+    expanded.value = result.assignment?.status === "ambiguous";
   } catch (e) { if (id === props.sourceId) error.value = String(e); }
 }, { immediate: true });
 async function save() {
@@ -28,7 +30,7 @@ async function save() {
 }
 </script>
 <template>
-  <OmDisclosure class="source-contexts" :title="assignment?.status === 'ambiguous' ? '所属项目与主题 · 需要补充' : '所属项目与主题'">
+  <OmDisclosure v-model:open="expanded" class="source-contexts" :title="assignment?.status === 'ambiguous' ? '所属项目与主题 · 需要补充' : '所属项目与主题'">
     <p>归属适用于这份材料的所有版本。调整归属不会删除原文或历史引用。手动保存后以你的选择为准，包括不选项目。</p>
     <div v-if="assignment && assignment.status !== 'manual'" class="assignment-note">
       <strong>{{ assignment.status === 'automatic' ? 'AI 已整理归属，可在下方调整' : assignment.status === 'ambiguous' ? '暂时无法确定归属' : '未找到合适的已有项目或主题' }}</strong>
