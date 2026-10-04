@@ -32,7 +32,28 @@ export function sourceContextRange(
       ? member
       : enclosingContext(hierarchy.nodes, hit.startLine, hit.endLine);
   if (!section) return hit;
-  const parent = sourceAnchor(material, section.startLine, section.endLine);
+  // A document's single outer H1 is its title, not an instruction to read every
+  // chapter. A hit in its introduction keeps that introduction. Ordinary
+  // chapters still include their subsections (e.g. a budget's refund rules).
+  const siblings = hierarchy.nodes.filter(
+    (n) => n.parentId === section.parentId,
+  );
+  const firstChild = Math.min(
+    ...hierarchy.nodes
+      .filter((n) => n.parentId === section.id)
+      .map((n) => n.startLine),
+  );
+  const isDocumentTitle =
+    section.kind === "section" &&
+    section.depth === 1 &&
+    hierarchy.nodes.find((n) => n.id === section.parentId)?.kind ===
+      "document" &&
+    siblings.length === 1;
+  const endLine =
+    isDocumentTitle && hit.endLine < firstChild
+      ? Math.min(section.endLine, firstChild - 1)
+      : section.endLine;
+  const parent = sourceAnchor(material, section.startLine, endLine);
   // The parent's heading and siblings are also content. A visible child does
   // not grant access to them; keep the original match if expansion is hidden.
   return parent.fragmentIds.length && parent.fragmentIds.every(visible)
