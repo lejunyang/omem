@@ -14,7 +14,9 @@
 
 本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / `osdk run retrieval:index --review` 补建索引。
 
-模型首次加载失败后，后台按 30 秒间隔重新加载，不永久缓存失败结果。实际服务的 `/api/health` 中 `retrieval.semantic` 区分关闭、补建、就绪与降级；隔离库检查通过不能代替这个运行状态。补建期间仍可搜索已有向量，未建部分保留全文检索。
+如果服务启动时已经配置 `retrieval.enabled=true`，只是本地模型文件缺失，安装完成后后台会按 30 秒间隔重新尝试加载，不永久缓存失败结果。若刚把检索配置从关闭改为开启，或改了模型别名，需要重启服务：配置在启动时读取，模型加载重试不重新读取配置文件。默认示例启用中文向量检索；个人配置以实际文件为准。
+
+实际服务的 `/api/health` 中 `retrieval.semantic` 区分关闭、补建、就绪与降级；隔离库检查通过不能代替这个运行状态。补建期间仍可搜索已有向量，未建部分保留全文检索。
 
 材料用途整理：原始材料页展开“材料用途与适用范围”，可调用当前 Agent 阅读固定原文或人工填写。批量任务 `osdk run review:catalog docs --documents` 选择 Markdown，`osdk run review:catalog <文件或目录>` 也可分析代码；`--retry` 重做已有模型说明，人工修正始终保留。发布数据在 `.repo-review/knowledge/material-descriptions/`，按固定材料 digest 恢复；分类与概念变更后运行 `osdk run retrieval:index --review`。当前是主动触发，不是自动清洗所有新输入。细节及限制见 [材料用途与概念入口](material-understanding.md)。
 
