@@ -7,7 +7,6 @@ import {
   queryTerms,
   exactLookup,
   bestSnippet,
-  relevance,
   querySymbols,
   asksForCallers,
 } from "./relevance.js";
@@ -336,12 +335,21 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         routes: ["code-symbol"],
       }));
   }
-  private navigationQuery(q: SearchQuery): SearchQuery {
-    return !q.codeIntent &&
-      querySymbols(q.text).length &&
-      asksForCallers(q.text)
-      ? { ...q, codeIntent: "callers" }
-      : q;
+  private navigationCandidates(
+    q: SearchQuery,
+  ): { query: SearchQuery; hits: ScoredUnit[] } | null {
+    if (q.codeIntent)
+      return {
+        query: q,
+        hits: q.codeIntent === "callers" ? this.callers(q) : this.symbols(q),
+      };
+    if (querySymbols(q.text).length && asksForCallers(q.text)) {
+      const hits = this.callers(q);
+      // An inferred shortcut is not an explicit filter. Unsupported languages
+      // or missing AST call sites still get ordinary text/semantic recall.
+      if (hits.length) return { query: { ...q, codeIntent: "callers" }, hits };
+    }
+    return null;
   }
   private callers(q: SearchQuery): ScoredUnit[] {
     const names = querySymbols(q.text);
@@ -423,64 +431,51 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       .join(" OR ");
     const rows = this.database
       .prepare(
-        `SELECT u.*,bm25(retrieval_units_fts,0,2,1,4) rank FROM retrieval_units_fts
-      JOIN retrieval_units u ON u.id=retrieval_units_fts.id WHERE retrieval_units_fts MATCH ? ORDER BY rank`,
+        `SELECT id,bm25(retrieval_units_fts,0,2,1,4) rank FROM retrieval_units_fts
+      WHERE retrieval_units_fts MATCH ? ORDER BY rank`,
       )
-      .all(phrase);
-    return rows
-      .flatMap((row) => {
-        const unit = decodeUnit(row);
-        if (!this.eligible(unit, q)) return [];
-        const exact = exactLookup(q.text);
-        if (
-          exact &&
-          !(unit.text + "\n" + unit.context)
-            .toLowerCase()
-            .includes(q.text.trim().toLowerCase())
-        )
-          return [];
-        if (
-          !exact &&
-          !this.namedDefinition(unit, q) &&
-          !relevance(
-            unit.text +
-              "\n" +
-              unit.headingPath.join(" ") +
-              "\n" +
-              unit.context
-                .split("\n")
-                .filter((line) => line.startsWith("概念："))
-                .join("\n") +
-              (unit.kind === "task" || unit.kind === "memory"
-                ? "\n" + unit.title + "\n" + unit.context
-                : ""),
-            terms,
-          )
-        )
-          return [];
-        return [
-          {
-            unit,
-            score: -Number(row.rank),
-            routes: ["bm25"],
-          },
-        ];
-      })
-      .sort(
-        (a, b) =>
-          b.score * this.applicability(b.unit, q) -
-          a.score * this.applicability(a.unit, q),
+      .iterate(phrase);
+    const pool: ScoredUnit[] = [];
+    // Sort only IDs/scores in SQLite. Carrying every full source through its
+    // sort buffer is costly even when JavaScript stops consuming rows early.
+    const readUnit = this.database.prepare(
+      "SELECT * FROM retrieval_units WHERE id=?",
+    );
+    const limit = 250;
+    const weighted = (hit: ScoredUnit) =>
+      hit.score * this.applicability(hit.unit, q);
+    const exact = exactLookup(q.text);
+    for (const row of rows) {
+      const score = -Number(row.rank);
+      // BM25 rows arrive in descending score order. Applicability is a prior
+      // in [0,1], so no remaining row can beat this upper bound. Stop only
+      // after collecting eligible candidates: hidden/out-of-scope rows never
+      // consume the pool. Strict inequality retains stable ties.
+      if (pool.length === limit && score < weighted(pool.at(-1)!)) break;
+      const stored = readUnit.get(row.id!);
+      if (!stored) continue;
+      const unit = decodeUnit(stored);
+      if (!this.eligible(unit, q)) continue;
+      if (
+        exact &&
+        !(unit.text + "\n" + unit.context)
+          .toLowerCase()
+          .includes(q.text.trim().toLowerCase())
       )
-      .slice(0, 250);
+        continue;
+      // BM25 supplies lexical relevance. A second minimum matched-word count
+      // rejects concise answers to verbose questions and unsupported-language
+      // symbol references; context selection happens after candidate recall.
+      pool.push({ unit, score, routes: ["bm25"] });
+      pool.sort((a, b) => weighted(b) - weighted(a));
+      if (pool.length > limit) pool.pop();
+    }
+    return pool;
   }
   async search(q: SearchQuery): Promise<RetrievalHit[]> {
     await this.syncAsync();
-    q = this.navigationQuery(q);
-    if (q.codeIntent)
-      return this.finish(
-        q.codeIntent === "callers" ? this.callers(q) : this.symbols(q),
-        q,
-      );
+    const navigation = this.navigationCandidates(q);
+    if (navigation) return this.finish(navigation.hits, navigation.query);
     const lexical = this.lexical(q);
     const symbols = this.symbols(q);
     const lexicalOnly = () =>
@@ -738,18 +733,10 @@ export class UnifiedRetrieval extends KeywordRetrieval {
   }
   override searchSources(q: SearchQuery): SourceCandidate[] {
     this.sync();
-    q = this.navigationQuery(q);
     const sourceQuery = { ...q, kinds: ["source" as const] };
-    if (q.codeIntent)
-      return this.sources(
-        this.finish(
-          q.codeIntent === "callers"
-            ? this.callers(sourceQuery)
-            : this.symbols(sourceQuery),
-          q,
-        ),
-        q,
-      );
+    const navigation = this.navigationCandidates(sourceQuery);
+    if (navigation)
+      return this.sources(this.finish(navigation.hits, navigation.query), q);
     const lexical = this.lexical(sourceQuery),
       symbols = this.symbols(sourceQuery);
     return this.sources(

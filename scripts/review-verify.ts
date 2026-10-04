@@ -64,7 +64,9 @@ try {
   const articles=published.filter(a=>a.current);
   const errors:{key:string;error:string}[]=[];
   let citations=0,articleLinks=0;
-  for(const article of articles)try {
+  // A stale page remains readable with fixed historical citations. Auditing only
+  // whole-page current heads can report success with zero checked references.
+  for(const article of published)try {
     const fixedMaterials=new Map(),fixedArticles=new Map();
     for(const dep of article.dependencies) {
       if(dep.kind==='material') { const source=repo.resolveMaterial(dep.key,dep.digest)?.material;if(source)fixedMaterials.set(dep.key,source); }
@@ -79,7 +81,7 @@ try {
     pages:published.map(a=>({key:a.document.key,title:a.document.title,role:repo.role(a),current:a.current,sections:statuses(a)})),
     restore:restored.restored.reduce((counts,r)=>{counts[r.state]=(counts[r.state]??0)+1;return counts;},{} as Record<string,number>),
     note:'按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。'};
-  checks.push({name:'currentKnowledgeReferences',state:errors.length?'failed':'passed',details:{articles:articles.length,citations,errors}});
+  checks.push({name:'publishedKnowledgeReferences',state:errors.length?'failed':published.length?'passed':'skipped',details:{articles:published.length,currentArticles:articles.length,citations,errors}});
   writeReviewKnowledgeIndex(root,published);
   const configPath=process.env.REVIEW_RETRIEVAL_CONFIG ?? join(root,'config/retrieval.json');
   const config=existsSync(configPath)?readRetrievalConfig(configPath):undefined;

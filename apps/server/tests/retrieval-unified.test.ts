@@ -9,7 +9,7 @@ import {
 } from "../src/knowledge/repository.js";
 import { UnifiedRetrieval } from "../src/retrieval/unified.js";
 import { markdownPassages } from "../src/retrieval/units.js";
-import { querySymbols } from "../src/retrieval/relevance.js";
+import { asksForCallers, querySymbols } from "../src/retrieval/relevance.js";
 import { rerankPassages } from "../src/retrieval/rerank-passages.js";
 import { sourceContextRange } from "../src/retrieval/context.js";
 import { sourceAnchor } from "../src/retrieval/units.js";
@@ -913,6 +913,18 @@ it("finds captured call sites instead of definitions, imports or comments, prese
   } finally {
     await s.close();
   }
+});
+
+it("keeps ordinary recall when a code question mentions calls or navigation has no AST support", async () => {
+  const s=setup();
+  try {
+    s.store.capture({source:"manual",externalId:"shipping-guide",title:"配送接口说明.md",context:{},parts:[{type:"text",text:"schedule_shipment no longer accepts a destination argument. The caller must set shipment.destination before calling schedule_shipment()."}]});
+    const errorQuestion="Too many arguments for schedule_shipment()\nThere is a part of my code where it calls schedule_shipment(destination).";
+    expect(asksForCallers(errorQuestion)).toBe(false);
+    expect((await s.retrieval.search({text:errorQuestion}))[0]?.title).toBe("配送接口说明.md");
+    expect((await s.retrieval.search({text:"Who calls schedule_shipment?"}))[0]?.title).toBe("配送接口说明.md");
+    expect(await s.retrieval.search({text:"schedule_shipment",codeIntent:"callers"})).toEqual([]);
+  } finally {await s.close();}
 });
 
 it("keeps a dense match near the end of a named operation and sends local passages to reranking", async () => {
