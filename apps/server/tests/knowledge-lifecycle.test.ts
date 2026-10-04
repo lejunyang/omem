@@ -8,6 +8,7 @@ import {
   bindKnowledgeQuotes,
 } from "../src/knowledge/repository.js";
 import { UnifiedRetrieval } from "../src/retrieval/unified.js";
+import { parseFile } from "../src/code/parse.js";
 import type {
   KnowledgeArtifact,
   WikiPageBrief,
@@ -186,4 +187,31 @@ it("reviews only the chapter whose uncited premise changed", async () => {
     await retrieval.search({ text: "春游集合", kinds: ["knowledge"] }),
   ).toEqual([]);
   await retrieval.close();
+});
+
+it("keeps documented code citations current when an unrelated function moves their lines", () => {
+  const { store, repository, artifact } = setup();
+  const text = "/** 每人预算八十元。 */\nexport const budget = () => 80;\n\n/** 集合地点在图书馆。 */\nexport function venue() { return '图书馆'; }";
+  const capture = (text: string) => store.capture({
+    source: "file", externalId: "outing.ts", title: "outing.ts", parts: [{ type: "text", text }], context: {},
+  });
+  capture(text);
+  const source = repository.materials().find(m => m.title === "outing.ts")!;
+  artifact.dependencies = [{ kind: "material", key: source.key, digest: source.digest }];
+  artifact.document.citations.forEach((citation, i) => {
+    citation.target = { kind: "material", key: source.key, startLine: i ? 4 : 1, endLine: i ? 5 : 2 };
+  });
+  bindKnowledgeQuotes(artifact.document, new Map([[source.key, source]]));
+  const page = repository.publish(artifact);
+  const moved = "export function unrelated() { return 0; }\n\n" + text;
+  capture(moved);
+  repository.refresh();
+  expect(repository.get(page.document.key)?.current).toBe(true);
+  // Code navigation still locates the declaration rather than its comment.
+  expect(parseFile("outing.ts", text).symbols.find(s => s.name === "budget")?.rangeStart.line).toBe(2);
+  expect(repository.resolveMaterial(source.key, source.digest)?.material.revisionId).toBe(source.revisionId);
+  capture(moved.replace("每人预算八十元", "每人预算一百二十元"));
+  expect(repository.statusReader()(page)).toMatchObject({
+    budget: { state: "needs-review" }, venue: { state: "current" },
+  });
 });

@@ -13,7 +13,7 @@ export function materialSections(material: KnowledgeMaterial): MaterialSection[]
   const path = material.path ?? material.title;
   let sections: MaterialSection[] = [];
   if (/\.(?:[cm]?[jt]sx?|vue)$/.test(path)) {
-    sections = parseFile(path, material.text).symbols.map(s => ({ title: s.qualifiedName, startLine: s.rangeStart.line, endLine: s.rangeEnd.line, kind: "symbol" }));
+    sections = parseFile(path, material.text).symbols.map(s => ({ title: s.qualifiedName, startLine: s.documentationStart?.line ?? s.rangeStart.line, endLine: s.rangeEnd.line, kind: "symbol" }));
   } else if (/\.(?:md|markdown)$/i.test(path) || /^#{1,6}\s/m.test(material.text)) {
     // Use the same Markdown parser as the reader: fenced headings aren't sections.
     let cursor = 0;

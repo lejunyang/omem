@@ -21,6 +21,8 @@ export type ParsedSymbol = {
   kind: CodeSymbolKind;
   rangeStart: CodeRange;
   rangeEnd: CodeRange;
+  /** Attached JSDoc belongs to the reading context, not the declaration anchor. */
+  documentationStart?: CodeRange;
   exported: boolean;
   signature: string | null;
 };
@@ -185,6 +187,12 @@ function walkTs(
     if (!name) return;
     const start = posOf(sf, node);
     const end = endOf(sf, node);
+    // JSDoc on an arrow/function variable belongs to its VariableStatement.
+    const declaration = ts.isVariableDeclaration(node) && ts.isVariableStatement(node.parent.parent)
+      ? node.parent.parent : node;
+    const withDocs = declaration.getStart(sf, true);
+    const documentation = withDocs < declaration.getStart(sf)
+      ? sf.getLineAndCharacterOfPosition(withDocs) : null;
     symbols.push({
       name,
       qualifiedName:
@@ -192,6 +200,7 @@ function walkTs(
       kind,
       rangeStart: { line: start.line + lineOffset, col: start.col },
       rangeEnd: { line: end.line + lineOffset, col: end.col },
+      ...(documentation ? { documentationStart: { line: documentation.line + 1 + lineOffset, col: documentation.character } } : {}),
       exported,
       signature: signatureOf(node, sf),
     });
