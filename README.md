@@ -43,7 +43,7 @@ Wiki 按读者问题调查、讲解：页面计划规定阅读目标和真实案
 
 日常助理支持持久会话、事项交办、等待、改期、完成、取消与站内提醒。来源更新后已有记忆重核验。持续项目理解、自动监听回复、周期回顾与英语卡片仍是后续能力。
 
-中文本地快速决策目前处于实验阶段：已实跑 GLiClass、Qwen3.5-4B 和 Plumb-4B，提供 `decision:evaluate` 与搜索前后对照的 `decision:inspect`。它们尚未接管默认助手或记忆写入；当前收益、失败和资源占用见[中文快速决策](docs/reader-first/fast-decisions.md)。
+中文本地快速决策目前处于实验阶段：已实跑 GLiClass、Qwen3.5-4B 和 Plumb-4B，提供 `decision:evaluate` 与搜索前后对照的 `decision:inspect`。它们尚未接管默认助手或记忆写入。助手可另配 `assistant.readingProfileId`，先读召回正文作答，需要深入调查时转回常规 profile，并保留同一材料快照和事实笔记；默认仍用 Sol 常规调查。效果、配置和资源占用见[中文快速决策](docs/reader-first/fast-decisions.md)。
 
 普通助手现已接入原生自主调查：按问题选择搜索、补读、记忆、历史或代码导航，再提交答案与行动候选。预算80元换为120元、更新同一记忆、创建跟进、重启提醒、延后及完成的真实Traex流程已通过。搜索页同时提供综合回答与实际命中，真实网页首题与追问均完成；基础排序仍会把计划和旧说明排在实现前，不能用Agent补查成功代替检索质量。具体实际内容与成熟方案见 [助手检索调研](docs/reader-first/assistant-search-research.md)，保存、换版、记忆更新和跟进的成功/失败见 [个人全流程](docs/reader-first/assistant-memory-flow.md)。
 

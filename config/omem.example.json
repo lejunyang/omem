@@ -33,6 +33,16 @@
       "timeoutMs": 300000
     },
     {
+      "id": "traex-reader",
+      "name": "TraeX · 先读材料作答",
+      "transport": "acp",
+      "command": "traex",
+      "args": ["-c", "sandbox_mode=\"read-only\"", "acp", "serve"],
+      "model": "gpt-5.6-sol",
+      "effort": "low",
+      "timeoutMs": 480000
+    },
+    {
       "id": "codex",
       "name": "Codex · CLI",
       "transport": "codex-cli",

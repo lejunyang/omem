@@ -124,6 +124,15 @@ export type AssistantModelReply = {
     tools: string[];
     timings?: { prepareMs: number; agentMs: number; totalMs: number };
     acpTimings?: { initializeMs: number; sessionSetupMs: number; promptMs: number; firstToolMs: number | null; toolCalls: number; failedToolCalls: number };
+    stages?: {
+      stage: "reading" | "research";
+      model: string | null;
+      effort: string | null;
+      sessionId?: string;
+      elapsedMs: number;
+      outcome: "answered" | "handoff" | "failed";
+      reason?: string;
+    }[];
   };
 };
 

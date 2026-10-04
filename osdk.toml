@@ -112,6 +112,11 @@ help = "Comma-separated model IDs; each is validated through ACP"
 [tasks."assistant:compare".options.effort]
 default = "medium"
 help = "Reasoning effort validated through ACP"
+[tasks."assistant:compare".options.reading-model]
+help = "Also compare a material-first reader with the normal model as investigation fallback"
+[tasks."assistant:compare".options.reading-effort]
+default = "auto"
+help = "auto discovers the lowest advertised none/minimal/low effort; explicit values are validated"
 [tasks."assistant:compare".options.data]
 help = "Source data directory; defaults to personal data or isolated review data"
 [tasks."assistant:compare".options.output]

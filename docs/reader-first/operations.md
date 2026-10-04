@@ -2,7 +2,7 @@
 
 ## 启动
 
-使用 osdk 管理 Bun、Node、pnpm 与应用依赖：`osdk install`、`osdk deps --frozen`、`osdk run dev`。开发模式把本仓库与已提交知识接入同一个个人库，默认 API 4317 / web 5173，占用时选择空闲端口；以终端输出为准。`OMEM_PORT`、`OMEM_WEB_PORT` 可指定端口。正式构建 `osdk run build` 后 `osdk run start`，默认空工作区。
+使用 osdk 管理 Bun、Node、pnpm 与应用依赖：`osdk install`、`osdk deps --frozen`、`osdk run dev`。开发模式把本仓库与已提交知识接入同一个个人库，默认 API 4317 / web 5173，占用时选择空闲端口；以终端输出为准。`OMEM_PORT`、`OMEM_WEB_PORT` 可指定端口。正式构建 `osdk run build` 后 `osdk run start`：未设置 `OMEM_REPO_ROOT` 时不会在启动时导入仓库，但会保留并使用所选数据目录的已有内容，不能把它理解为每次启动都得到空库。
 
 个人配置读取 `OMEM_CONFIG` 或忽略提交的 `omem.local.json`，没有时用 config/omem.example.json。profiles 配置 CLI/ACP 与模型；能力动态探测。启动不会自动生成整库知识。已启用的检索索引可后台补建。
 
@@ -16,7 +16,7 @@
 
 ## 检查
 
-问答模型可以独立选择：个人配置的 `assistant.profileId` 指向一个 ACP profile，例如示例中的 `traex-fast`（Luna）。这不改变学习或知识写作模型。用 `osdk run assistant:compare --questions /absolute/path/questions.json --review` 做真实模型对照；配置、输入格式与报告边界见[快模型自主问答](fast-assistant.md)。
+问答模型可以独立选择：个人配置的 `assistant.profileId` 指向调查用的 ACP profile，默认保持 `traex`（Sol）。可另外设置 `assistant.readingProfileId` 为 `traex-reader`（Sol / low），先读已有材料作答，需要深入调查时交回主 profile；省略就不增加这个阶段。它们不改变学习或知识写作模型。用 `osdk run assistant:compare --questions /absolute/path/questions.json --review --reading-model gpt-5.6-sol` 比较两条路径；配置、输入格式与报告边界见[中文快速决策](fast-decisions.md)。
 
 `osdk deps --frozen`、`osdk run check`；UI 使用 `osdk run browser` 和 scripts/code-wiki-viewport.ts 检查实际页面。`osdk run retrieval:verify` 使用真实本地模型；`osdk run knowledge:native-verify` 用实际 Traex ACP 验证调查、写作和独立工具补查。`osdk run review:verify --full` 生成机器报告，不能代替阅读验收。
 

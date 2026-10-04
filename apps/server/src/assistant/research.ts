@@ -1,4 +1,7 @@
-import { assistantReplySchema } from "../../../../packages/contracts/src/assistant.js";
+import {
+  assistantReplySchema,
+  type AssistantReply,
+} from "../../../../packages/contracts/src/assistant.js";
 import type { KnowledgeMaterial } from "../../../../packages/contracts/src/knowledge.js";
 import { prepareAgentResearch } from "../knowledge/agent-research.js";
 import {
@@ -49,7 +52,7 @@ export async function prepareAssistantResearch(input: {
   retrievalConfig?: RetrievalConfig;
   context: Parameters<AssistantModelPort["generate"]>[0];
   tools?: ResearchTool[];
-  beforeSubmit?: (answer: string) => void;
+  beforeSubmit?: (answer: string, reply: AssistantReply) => void;
 }) {
   const context = input.context,
     visible = context.visible ?? (() => context.visibility === "private");
@@ -79,7 +82,7 @@ export async function prepareAssistantResearch(input: {
     validate: (out) => {
       const parsed = assistantReplySchema.parse(out),
         identities = new Set<string>();
-      input.beforeSubmit?.(parsed.answer);
+      input.beforeSubmit?.(parsed.answer, parsed);
       if (parsed.create_task && parsed.update_task)
         throw Error("每次只能提议一个事项操作");
       const update = parsed.update_task;
