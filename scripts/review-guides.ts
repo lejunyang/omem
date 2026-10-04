@@ -18,7 +18,7 @@ const root = process.env.REVIEW_REPO_ROOT ?? process.cwd();
 const config = loadReviewCodeModelConfig();
 if (config.transport !== "acp" || !config.command) throw Error("Reader guides require the configured ACP agent");
 const plan = z.object({ version: z.literal(1), pages: z.array(wikiPageBriefSchema).min(1) }).parse(JSON.parse(readFileSync(join(root, "config/wiki-pages.json"), "utf8")));
-const targets = taskTargets();
+const targets = [...new Set([...taskTargets(), ...process.argv.slice(2).filter(a=>!a.startsWith("-"))])];
 const pages = plan.pages.filter(p => !targets.length || targets.some(t => p.key === t || p.key === `guide:${t}`));
 if (!pages.length) throw Error("No matching reader page");
 const profile = profileSchema.parse({ id: "traex", name: "Reader guide", transport: "acp", command: config.command, args: config.args ?? [], model: config.model, effort: config.effort, timeoutMs: config.timeoutMs, maxContextChars: 200000 });
