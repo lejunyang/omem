@@ -220,6 +220,8 @@ export async function prepareAgentResearch(input: {
           title: a.document.title,
           summary: a.document.summary,
           revision: a.revision,
+          reviewState: a.current ? "current" : "needs-review",
+          sections: a.document.sections.map((s) => ({ key: s.key, title: s.title })),
         })),
         null,
         2,

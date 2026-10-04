@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.js";
-import { KnowledgeRepository } from "../src/knowledge/repository.js";
+import { KnowledgeRepository, bindKnowledgeQuotes } from "../src/knowledge/repository.js";
 import { KnowledgePipeline, analystFor } from "../src/knowledge/pipeline.js";
 import { RoleBundleRegistry } from "../src/agent-runtime/bundles.js";
 import { RoleRuntimeGateway } from "../src/agent-runtime/gateway.js";
@@ -215,4 +215,38 @@ it("does not reintroduce the old draft when the reader removes its source from t
     expect(JSON.stringify(input.context)).not.toContain("The release uses fixed evidence.");
   }
   expect(f.repository.get(brief.key)!.dependencies.map(d => d.key)).toEqual(["manual:other"]);
+});
+
+it("keeps a partially outdated explanation available to every native writing role", async () => {
+  const f = setup();
+  f.pipeline.options.nativeResearch = true;
+  f.capture("# 工作坊\n## 预算\n预算八十元。\n\n## 集合\n在图书馆集合。");
+  const brief = { key: "workshop-introduction", title: "参加工作坊", order: 0, kind: "explanation" as const, reader: "参加者", goal: "知道怎样准备", scenario: "参加一次工作坊", questions: ["费用和地点？"], entryPaths: [], materialKeys: ["manual:example"] };
+  const [initial] = await f.pipeline.writePage(brief);
+  const original = f.repository.materials()[0]!;
+  const previous = f.repository.publish({
+    ...initial!,
+    document: bindKnowledgeQuotes({ ...initial!.document,
+      sections: [
+        {key:"budget",title:"费用",body:"准备八十元。[[budget]]"},
+        {key:"venue",title:"集合地点",body:"在图书馆集合。[[venue]]"},
+      ],
+      citations: ([['budget', 3], ['venue', 6]] as const).map(([key, line])=>({
+        key,label:key,reason:"活动约定",relation:"supports",
+        target:{kind:"material",key:original.key,startLine:line,endLine:line},quote:"",
+      })),
+    }, new Map([[original.key, original]])),
+  });
+  f.capture("# 工作坊\n## 预算\n预算一百二十元。\n\n## 集合\n在图书馆集合。");
+  f.repository.refresh();
+  expect(f.repository.get(brief.key)!.current).toBe(false);
+  expect(f.repository.statusReader()(previous)).toMatchObject({budget:{state:"needs-review"},venue:{state:"current"}});
+  const next = {...brief,key:"workshop-route",goal:"从已知集合地点安排出行"};
+  await f.pipeline.writePage(next);
+  const jobs = f.store.db.prepare("SELECT kind,input_refs FROM jobs WHERE kind LIKE 'knowledge:%'").all().filter(row=>{
+    const task=JSON.parse(String(row.input_refs))[0].task;
+    return task.page?.key===next.key || task.targetKeys?.includes(next.key);
+  });
+  expect(jobs).toHaveLength(3);
+  for(const row of jobs) expect(JSON.parse(String(row.input_refs))[0].articles).toContainEqual({key:brief.key,revision:previous.revision});
 });
