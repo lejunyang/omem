@@ -990,6 +990,7 @@ onBeforeUnmount(() => {
       :proposals="proposals"
       @refresh="refresh"
       @open="(id) => evidence?.open(id)"
+      @open-revision="openRevision"
       @error="(text) => (error = text)" />
     <DecisionsView
       v-else-if="view === 'decisions'"

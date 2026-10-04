@@ -92,6 +92,8 @@ export type JobAttempt = {
 export type Job = {
   materialTitle?: string | null;
   evidenceId?: string | null;
+  sourceRevisionId?: string | null;
+  contextQuestion?: string | null;
   id: string;
   kind: string;
   inputRefs: Record<string, unknown>[];

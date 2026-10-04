@@ -584,10 +584,15 @@ export async function buildApp(
         const revision = ref?.revisionId
           ? store.revision(String(ref.revisionId))
           : null;
+        const assignment = revision ? store.contexts.assignment(revision.sourceId) : null;
         return {
           ...job,
           materialTitle: revision?.title ?? null,
           evidenceId: revision?.fragments[0]?.id ?? null,
+          sourceRevisionId: revision?.id ?? null,
+          contextQuestion: job.kind === "extract_claims" && job.state === "succeeded" &&
+            assignment?.status === "ambiguous" && assignment.revisionId === revision?.id
+            ? assignment.question : null,
         };
       }),
   );
