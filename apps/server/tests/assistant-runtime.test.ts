@@ -20,6 +20,8 @@ import { EncryptedSecretStore } from "../src/integrations/lark/secret-store.js";
 import { Store } from "../src/store.js";
 import { KeywordRetrieval } from "../src/retrieval/keyword.js";
 import { UnifiedRetrieval } from "../src/retrieval/unified.js";
+import { materialFromRevision } from "../src/knowledge/repository.js";
+import { evidenceForRange } from "../src/assistant/research.js";
 
 type Resource = { directory: string; store: Store; secrets: EncryptedSecretStore };
 const resources: Resource[] = [];
@@ -1003,4 +1005,47 @@ it("keeps a semantic hit beyond the ACP prefix budget, including the next turn's
   const conversation=runtime.conversations.open({principalId:"owner",channel:"web",chatId:"long-evidence",visibility:"private"});
   await runtime.turn({conversationId:conversation.id,userText:"查一下看牙的安排"});
   await runtime.turn({conversationId:conversation.id,userText:"再说一次刚才的预约码"});
+});
+
+it("keeps the complete cited chapter and its conditions when a follow-up has no fresh matches", async () => {
+  const { store } = setup();
+  const original = store.capture({
+    source: "manual", externalId: "workshop-arrangement", title: "周末工作坊安排",
+    parts: [
+      { type: "text", text: "# 参加费用\n参加者预算八十元。" },
+      { type: "text", text: "预算包括材料费，不包含往返交通费。" },
+      { type: "text", text: "仅限已报名者；请在周三十八点前确认。" },
+    ],
+    provenance: ownerProvenance,
+  }).revision;
+  const material = materialFromRevision(store, original.id)!;
+  const cited = evidenceForRange(material, 1, material.lineCount, () => true);
+  expect(cited.sourceTarget!.fragmentIds).toHaveLength(3);
+  const description = { role: "reference", status: "current", summary: "工作坊费用与报名条件", topics: ["工作坊"], scope: "已报名参加者", validFrom: null, validUntil: null, concepts: [], basis: "活动原文" };
+  store.descriptions.save(original.id, description, "user", 0);
+  const seen: Parameters<AssistantModelPort["generate"]>[0][] = [];
+  let hiddenFragment: string | undefined;
+  const runtime = new AssistantRuntime(store, { async generate(input) {
+    seen.push(input);
+    return { answer: "预算是八十元。", citationIds: [cited.citationId!], researchedEvidence: [cited] };
+  } }, {
+    retrieval: Object.assign(new KeywordRetrieval(store.db), { async searchSourcesAsync() { return []; } }),
+    visibilityPolicy: ({ fragmentId }) => fragmentId !== hiddenFragment,
+  });
+  const conversation = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "chapter-follow-up", visibility: "private" });
+  try {
+    await runtime.turn({ conversationId: conversation.id, userText: "工作坊预算是多少？" });
+    await runtime.turn({ conversationId: conversation.id, userText: "包括交通费吗？什么时候确认？" });
+    expect(seen).toHaveLength(2);
+    expect(seen[1]!.evidence).toHaveLength(1);
+    expect(seen[1]!.evidence[0]).toMatchObject({
+      citationId: cited.citationId, materialKey: material.key,
+      sourceTarget: cited.sourceTarget, text: material.text,
+      sectionTitle: "参加费用",
+      materialDescription: { revisionId: original.id, description },
+    });
+    hiddenFragment = original.fragments[1]!.id;
+    await runtime.turn({ conversationId: conversation.id, userText: "再看一遍刚才的条件。" });
+    expect(seen[2]!.evidence).toEqual([]);
+  } finally { runtime.shutdown(); }
 });
