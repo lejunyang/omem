@@ -401,7 +401,7 @@ export class LearningPipeline {
         project: shared.length === 1 ? shared[0] : null,
         already_applied_task_actions: this.handledTaskActions(job),
         daily_message_policy:
-          "For discussion/chat: preserve decisions, per-speaker commitments, open questions and explicit outcomes. Only explicit owner assignment or a verified owner's own commitment can propose an owner task. A waiting promise from someone else is background, not permission to create or complete a task. Distinguish check-in time from deadline; no invented schedule or external outreach.",
+          "For discussion/chat: preserve decisions, responsibilities, deadlines, per-speaker commitments and explicit outcomes as scoped facts. A named person's assignment is not a personal task even when reported by the verified owner. Only a verified owner's own commitment or explicit request to track an action can propose a task, with owner_id exactly trusted_context.owner_id. Keep other people's responsibilities and deadlines as claims; unresolved promises may also be attributed observations. Distinguish check-in time from deadline; no invented schedule or external outreach.",
         refreshTargets: this.refreshMemories(job),
         instruction:
           "Investigate what the NEW input sources change. Search existing memories and project originals before creating another memory. Use read_fragments to obtain exact immutable IDs, quotes and provenance; read_memory returns version and body for an update. For a partial change, read the earlier original and preserve unaffected conditions. Update the same memory_id with its current expected_versions and retain scope; this applies to later separate messages as well as source revisions. Do not extract every background document as new input. If scope or support remains ambiguous, abstain with the concrete missing information. Never treat derived bodies as evidence. already_applied_task_actions are host receipts for this exact original owner command: do not recreate or reapply its task, even if completed or cancelled.",
@@ -461,6 +461,8 @@ export class LearningPipeline {
         throw Error("ROLE_OUTPUT_SCOPE: use the supplied formal project; do not infer it from names or conversation IDs");
     }
     for (const proposal of batch.proposals) {
+      if (proposal.kind === "task" && proposal.body.owner_id !== context.trusted_context.owner_id)
+        throw Error("ROLE_OUTPUT_TASK_OWNER: tasks belong to trusted_context.owner_id. Preserve another person's responsibility, deadline or commitment as a scoped claim, not a task. Do not change the owner ID to force acceptance; only an explicit personal tracking request or the owner's own commitment authorizes a personal task.");
       if (proposal.operation === "create") continue;
       const row = this.input.store.db.prepare("SELECT scope FROM memories WHERE id=?").get(proposal.target_id!);
       if (row && (JSON.parse(String(row.scope)).project_id ?? null) !== proposal.scope.project_id)

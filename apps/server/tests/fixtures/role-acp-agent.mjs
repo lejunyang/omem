@@ -291,7 +291,7 @@ function output(text) {
   });
 }
 async function finish() {
-  const value = output(pendingText);
+  let value = output(pendingText);
   const server = mcpServers.find(s => s.name === "omem" && s.type === "http");
   if (server) {
     const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
@@ -301,6 +301,16 @@ async function finish() {
     const client = new Client({ name: "learning-protocol-fixture", version: "1" });
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+      const batch = JSON.parse(value);
+      if (args.has("--repair-foreign-task") && batch.role_id === "extractor") {
+        batch.proposals[0].body.owner_id = "colleague";
+        const rejected = await client.callTool({ name: "submit_result", arguments: { result: batch } });
+        if (!rejected.isError || !JSON.stringify(rejected.content).includes("ROLE_OUTPUT_TASK_OWNER"))
+          throw Error("Expected actionable task-owner feedback before a corrected submission");
+        batch.proposals[0].kind = "claim";
+        batch.proposals[0].body = { statement: "同事负责这次集成", attribution: "原文记录", valid_from: null, valid_to: null };
+        value = JSON.stringify(batch);
+      }
       const result = await client.callTool({ name: "submit_result", arguments: { result: JSON.parse(value) } });
       if (result.isError) throw Error(JSON.stringify(result.content));
     } catch (e) {

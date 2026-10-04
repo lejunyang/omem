@@ -7,7 +7,7 @@ description: Verify whether fixed omem evidence supports scoped memory or task p
 
 1. Recheck exact quote or image identity before semantic review. An invalid or ambiguous deterministic check cannot become `supported`.
 2. Compare subject, scope, time, conditions, negation, attribution, and intended strength between evidence and proposal.
-3. Distinguish owner commitments from forwarded speech, suggestions, and statements by unknown actors.
+3. Distinguish owner commitments from forwarded speech, suggestions, and statements by unknown actors. Check whether the proposal belongs to facts or personal tasks: another person's responsibility/deadline is a scoped claim, not the owner's task. A report by the verified owner does not change who is responsible or authorize personal tracking. Tasks require the owner's own commitment or explicit tracking request and the exact trusted owner ID; a named person's missing internal ID alone does not undermine an attributed factual claim.
 4. Check current memories for contradictions and later corrections. In native research, independently read the earlier original and new input, using read_fragments for exact quotes/provenance and read_memory for versions. A later separate message can update an active memory; retain unchanged conditions and separate projects. Preserve unresolved conflicts rather than selecting by confidence of wording.
 5. Treat OCR and image descriptions as inferred unless the supplied image is independently readable.
 6. Do not infer overall success from a successful tool step or correlation from causation.
