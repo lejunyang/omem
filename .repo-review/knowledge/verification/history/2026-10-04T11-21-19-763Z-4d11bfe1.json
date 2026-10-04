@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-04T10:45:37.335Z",
-  "implementationCommit": "4392c7a36458e2acfb6a05661c92a3f398ca3bac",
-  "sourceDigest": "6ae6727260f8ef84e2fe2f21a5b682c3f5852980717592ff5861f03ff5959441",
+  "recordedAt": "2026-10-04T11:21:19.763Z",
+  "implementationCommit": "484887198d90de1a110703bc614cbaacb40adea5",
+  "sourceDigest": "96a037480eabbf4f7d5d6f38ee8d017af9109aee66ed48e7cac1e59a54284768",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T10-45-37-335Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-04T11-21-19-763Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T10-45-37-335Z/project.log",
-        "sha256": "e4ceda0970abfa1d10c542a74ac8954375fea1a1e7c3ab3f85ec159ee6b19448"
+        "log": ".repo-review/runtime/verification/2026-10-04T11-21-19-763Z/project.log",
+        "sha256": "4be9178e7a1b582b851c7162410440dc6e4de546f73510444a5bf564098fb087"
       }
     },
     {
@@ -43,16 +43,17 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T10-45-37-335Z/liveChineseRetrieval.log",
-        "sha256": "96fa7115540b6d837e756a0cdccd7b621db5c2ac3a75dda8e2b4d80d04daacbc"
+        "log": ".repo-review/runtime/verification/2026-10-04T11-21-19-763Z/liveChineseRetrieval.log",
+        "sha256": "610d62bb64795e9832332aa36374add55c271e33737635d71f1941c7de21c885"
       }
     },
     {
-      "name": "currentKnowledgeReferences",
+      "name": "publishedKnowledgeReferences",
       "state": "passed",
       "details": {
-        "articles": 0,
-        "citations": 0,
+        "articles": 8,
+        "currentArticles": 0,
+        "citations": 217,
         "errors": []
       }
     },
@@ -63,11 +64,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v6",
-        "units": 12002,
+        "units": 12088,
         "semantic": {
           "model": "structure-icu-v6:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 12002,
+          "indexed": 12088,
           "pending": 0,
           "error": null
         },
@@ -94,11 +95,11 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 632,
+    "materials": 634,
     "publishedPages": 8,
     "currentPages": 0,
     "plannedPages": 0,
-    "citations": 0,
+    "citations": 217,
     "articleLinks": 0,
     "errors": [],
     "pages": [
@@ -379,27 +380,18 @@
         ],
         "status": 200,
         "baselineTop5": [
-          "docs/reader-first/validation.md",
           "docs/reader-first/component-integration.md",
           "docs/reader-first/retrieval-redesign.md",
           "docs/reader-first/retrieval-redesign.md",
-          "docs/reader-first/validation.md"
+          "docs/reader-first/component-integration.md",
+          "docs/reader-first/current-system.md"
         ],
         "baselineUniquePathsAt5": 3,
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 3,
-        "elapsedMs": 578,
+        "elapsedMs": 879,
         "top5": [
-          {
-            "path": "docs/reader-first/validation.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "- “中文语义检索怎样处理长代码片段？”的预期实现首次出现在第 14 位，前面混入 UI 和角色清单，属于实际排序失败。\n- “如何保证本地模型不在启动时联网下载？”第三项命中了新的 `operations.md` 说明，但题集仍只接受原 README、AGENTS 或实现文件。这一项同时暴露题集随文档迁移未完整更新，"
-          },
           {
             "path": "docs/reader-first/component-integration.md",
             "routes": [
@@ -425,12 +417,20 @@
             "snippet": "这借鉴片段上下文检索和元数据过滤，尚不是逐块完整语境生成，也不解决跨文件业务链。当前预处理身份为 `structure-icu-v6`，需要补建向量。原文换版后不沿用旧版分类；人工修正保留。具体流程与适用限制见 [材料用途与概念入口](material-understanding.md)。"
           },
           {
-            "path": "docs/reader-first/validation.md",
+            "path": "docs/reader-first/component-integration.md",
             "routes": [
               "bm25",
               "purpose:balanced"
             ],
-            "snippet": "最终 `osdk run review:verify --full` **退出 1**。依赖、完整项目检查、中文模型检查、当前文章引用和索引检查通过；六条仓库 HTTP 检索有四条达到题集预期。报告对应实现提交 `554225d`，随后仅补写本段验收结果，没有修改报告中的失败状态。索引补齐至 11362 个片段、pen"
+            "snippet": "[Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval) 给每个片段补它在整份文档中的具体背景，再进入全文与向量索引。omem 已在 `retrieval/units.ts` / `unified.ts` 用结构"
+          },
+          {
+            "path": "docs/reader-first/current-system.md",
+            "routes": [
+              "bm25",
+              "purpose:balanced"
+            ],
+            "snippet": "主要入口现在使用 `UnifiedRetrieval`：ICU 中文分词、SQLite FTS5 BM25、osdk 锁定的 BGE-small-zh-v1.5、CPU ONNX 和 SQLite 向量比较。全文/语义候选融合一次，过滤弱向量尾部，再合并重复、限制同来源摘录。讲解正文、原件、记忆和事项使用共同的 `Re"
           }
         ]
       },
@@ -443,36 +443,18 @@
         ],
         "status": 200,
         "baselineTop5": [
-          "docs/reader-first/validation.md",
-          "docs/reader-first/operations.md",
           ".claude/skills/osdk-guide/reference/configuration/models.md",
           ".agents/skills/osdk-guide/reference/configuration/models.md",
-          ".agents/skills/osdk-guide/reference/model/guide.md"
+          ".agents/skills/osdk-guide/reference/model/guide.md",
+          ".claude/skills/osdk-guide/reference/model/guide.md",
+          ".claude/skills/osdk-guide/reference/global-options/guide.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
-        "firstExpectedRank": 15,
+        "firstExpectedRank": 10,
         "uniquePathsAt5": 5,
-        "elapsedMs": 554,
+        "elapsedMs": 688,
         "top5": [
-          {
-            "path": "docs/reader-first/validation.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "- “中文语义检索怎样处理长代码片段？”的预期实现首次出现在第 14 位，前面混入 UI 和角色清单，属于实际排序失败。\n- “如何保证本地模型不在启动时联网下载？”第三项命中了新的 `operations.md` 说明，但题集仍只接受原 README、AGENTS 或实现文件。这一项同时暴露题集随文档迁移未完整更新，"
-          },
-          {
-            "path": "docs/reader-first/operations.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / "
-          },
           {
             "path": ".claude/skills/osdk-guide/reference/configuration/models.md",
             "routes": [
@@ -499,6 +481,23 @@
               "purpose:balanced"
             ],
             "snippet": "| `--source <ID>` | — | 本次调用优先使用指定下载源 |\n| `--refresh-sources` | — | 忽略源测速缓存并重新探测 |\n| `--source-mode <auto\\|env>` | `OSDK_SOURCE_MODE` | `auto` 排序环境镜像与内置源；`env` "
+          },
+          {
+            "path": "docs/reader-first/component-integration.md",
+            "routes": [
+              "bm25",
+              "purpose:balanced"
+            ],
+            "snippet": "本轮先消除可解释的噪声并做真实对照。中文 embedding/reranker 用 osdk 声明锁定、运行禁止下载；可比较 Qwen3/BGE，但不在没有问题集、时延和效果证据时换更大模型。没有直接搬 Elasticsearch 平台的必要，个人 SQLite 原件与检索接口可以保留。"
+          },
+          {
+            "path": ".claude/skills/osdk-guide/reference/install/guide.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "`install` 安装开发工具；项目自身依赖使用 `osdk deps`。模型不会作为裸 `install` 的副作用\n下载，使用 `osdk model sync`。"
           }
         ]
       },
@@ -521,7 +520,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 561,
+        "elapsedMs": 616,
         "top5": [
           {
             "path": "config/wiki-pages.json",
@@ -585,7 +584,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 4,
-        "elapsedMs": 287,
+        "elapsedMs": 315,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -646,7 +645,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 260,
+        "elapsedMs": 142,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -704,15 +703,15 @@
         "baselineTop5": [
           "design.md",
           "docs/archive/2026-10-01-baseline/prototype/build.mjs",
+          "docs/archive/2026-10-01-baseline/prototype/data.js",
           "docs/reader-first/current-system.md",
-          "docs/reader-first/retrieval-redesign.md",
-          "docs/archive/2026-10-01-baseline/prototype/verification.json"
+          "docs/reader-first/retrieval-redesign.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
         "firstExpectedRank": 8,
         "uniquePathsAt5": 5,
-        "elapsedMs": 921,
+        "elapsedMs": 676,
         "top5": [
           {
             "path": "design.md",
@@ -733,6 +732,15 @@
             "snippet": "id=\"root\"></div><script>window.OMEM_TWEAKS=/*EDITMODE-BEGIN*/{\"fontSize\":16,\"density\":\"舒展\"}/*EDITMODE-END*/;</script><script>${script}</script></body></html>`,\n"
           },
           {
+            "path": "docs/archive/2026-10-01-baseline/prototype/data.js",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "< 100\n        ? [\n            {\n              id: \"long-\" + (i + 1),\n              label: \"继续查看下一份材料\",\n              type: \"明确引用\",\n            },\n          ]\n  "
+          },
+          {
             "path": "docs/reader-first/current-system.md",
             "routes": [
               "bm25",
@@ -749,15 +757,6 @@
               "purpose:balanced"
             ],
             "snippet": "新增可重建的 SQLite 检索投影，不改 Capture、Revision 和历史 Fragment。Markdown 使用现有 marked，保留章节路径、段落、列表和表格；代码使用现有 TS/Vue AST，按符号范围组织，附签名、注释和模块背景；聊天保留参与者、事件时间及会话/回复关系。长单位可以向量化为多个窗"
-          },
-          {
-            "path": "docs/archive/2026-10-01-baseline/prototype/verification.json",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "正文\",\n    \"手机布局与全屏引用\",\n    \"无脚本异常且零外部请求\"\n  ],\n  \"errors\": [],\n  \"externalRequests\": [],\n  \"scope\": \"Offline prototype only; no backend or model evaluation\"\n}"
           }
         ]
       }

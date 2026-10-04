@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-04T11:21:19.763Z",
-  "implementationCommit": "484887198d90de1a110703bc614cbaacb40adea5",
-  "sourceDigest": "96a037480eabbf4f7d5d6f38ee8d017af9109aee66ed48e7cac1e59a54284768",
+  "recordedAt": "2026-10-04T12:39:32.415Z",
+  "implementationCommit": "f2654d55dcee218672b707671f4724fffb09a4fa",
+  "sourceDigest": "a055f7e7b9041ef87bd8f238102f5fb0aab0e03f739dfd52d0bc02c4be457923",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T11-21-19-763Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-04T12-39-32-415Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T11-21-19-763Z/project.log",
-        "sha256": "4be9178e7a1b582b851c7162410440dc6e4de546f73510444a5bf564098fb087"
+        "log": ".repo-review/runtime/verification/2026-10-04T12-39-32-415Z/project.log",
+        "sha256": "458af30427897e725198c769ba485e0b242cb7ec2e2f67d5cef7d13676a77dd9"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T11-21-19-763Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-04T12-39-32-415Z/liveChineseRetrieval.log",
         "sha256": "610d62bb64795e9832332aa36374add55c271e33737635d71f1941c7de21c885"
       }
     },
@@ -64,11 +64,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v6",
-        "units": 12088,
+        "units": 12184,
         "semantic": {
           "model": "structure-icu-v6:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 12088,
+          "indexed": 12184,
           "pending": 0,
           "error": null
         },
@@ -95,7 +95,7 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 634,
+    "materials": 635,
     "publishedPages": 8,
     "currentPages": 0,
     "plannedPages": 0,
@@ -171,32 +171,27 @@
       },
       {
         "key": "guide:knowledge-agent",
-        "title": "从材料到可持续更新的读者文章",
+        "title": "把材料整理成一篇真正能用的文章",
         "role": "article",
         "current": false,
         "sections": {
-          "scenario": {
+          "reader-question": {
             "state": "current"
           },
-          "brief": {
+          "three-products": {
             "state": "current"
           },
           "pipeline": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "content-types": {
             "state": "current"
           },
-          "reading": {
+          "what-reader-gets": {
+            "state": "current"
+          },
+          "source-change": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "change": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "change-points": {
+          "improve": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           }
@@ -204,59 +199,59 @@
       },
       {
         "key": "guide:knowledge-maintenance",
-        "title": "整理文章，以及原文更新后怎么处理",
+        "title": "整理文章，并在原文更新后维护解释",
         "role": "article",
         "current": false,
         "sections": {
           "start": {
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          },
+          "submit": {
             "state": "current"
           },
-          "publish": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "retry": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          "failure": {
+            "state": "current"
           },
           "changes": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "refresh-and-history": {
+          "history": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "developer": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "current"
           }
         }
       },
       {
         "key": "guide:knowledge-reference",
-        "title": "知识文章的状态、证据关系与修改入口",
+        "title": "知识文章的状态、来源与修改入口",
         "role": "reference",
         "current": false,
         "sections": {
           "scenario": {
-            "state": "current"
-          },
-          "state-map": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "evidence-types": {
+          "status-map": {
             "state": "current"
           },
-          "section-lifecycle": {
+          "source-relations": {
             "state": "current"
           },
-          "visibility-entrypoints": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          "change-flow": {
+            "state": "current"
           },
-          "retirement-and-change": {
+          "visibility": {
+            "state": "current"
+          },
+          "retirement": {
+            "state": "current"
+          },
+          "change-points": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           }
@@ -390,7 +385,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 3,
-        "elapsedMs": 879,
+        "elapsedMs": 972,
         "top5": [
           {
             "path": "docs/reader-first/component-integration.md",
@@ -443,20 +438,29 @@
         ],
         "status": 200,
         "baselineTop5": [
-          ".claude/skills/osdk-guide/reference/configuration/models.md",
+          "docs/reader-first/operations.md",
           ".agents/skills/osdk-guide/reference/configuration/models.md",
+          ".claude/skills/osdk-guide/reference/configuration/models.md",
           ".agents/skills/osdk-guide/reference/model/guide.md",
-          ".claude/skills/osdk-guide/reference/model/guide.md",
-          ".claude/skills/osdk-guide/reference/global-options/guide.md"
+          ".claude/skills/osdk-guide/reference/model/guide.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
-        "firstExpectedRank": 10,
+        "firstExpectedRank": 12,
         "uniquePathsAt5": 5,
-        "elapsedMs": 688,
+        "elapsedMs": 707,
         "top5": [
           {
-            "path": ".claude/skills/osdk-guide/reference/configuration/models.md",
+            "path": "docs/reader-first/operations.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / "
+          },
+          {
+            "path": ".agents/skills/osdk-guide/reference/configuration/models.md",
             "routes": [
               "bm25",
               "semantic",
@@ -474,6 +478,15 @@
             "snippet": "不要手写 OSDK 受管模型声明；使用 `model use/unuse`。`model import` 只创建当前机器的本地快照，不写声明或 lock，并拒绝链接/reparse point 与特殊文件。`install` 不会隐式下载模型。Civitai 引用必须是精确的 `civitai:<model-id>@<"
           },
           {
+            "path": "docs/reader-first/component-integration.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "当前隔离试验使用 osdk 管理的 Python/uv，锁定 `hindsight-api-slim[embedded-db]==0.10.2`，由 pg0 启动仅本机访问的 PostgreSQL。模型仍是仓库实际配置的 Traex ACP / gpt-5.6-sol，已有中文 BGE 提供向量，没有安装本地大语言模型"
+          },
+          {
             "path": ".claude/skills/osdk-guide/reference/global-options/guide.md",
             "routes": [
               "bm25",
@@ -481,23 +494,6 @@
               "purpose:balanced"
             ],
             "snippet": "| `--source <ID>` | — | 本次调用优先使用指定下载源 |\n| `--refresh-sources` | — | 忽略源测速缓存并重新探测 |\n| `--source-mode <auto\\|env>` | `OSDK_SOURCE_MODE` | `auto` 排序环境镜像与内置源；`env` "
-          },
-          {
-            "path": "docs/reader-first/component-integration.md",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "本轮先消除可解释的噪声并做真实对照。中文 embedding/reranker 用 osdk 声明锁定、运行禁止下载；可比较 Qwen3/BGE，但不在没有问题集、时延和效果证据时换更大模型。没有直接搬 Elasticsearch 平台的必要，个人 SQLite 原件与检索接口可以保留。"
-          },
-          {
-            "path": ".claude/skills/osdk-guide/reference/install/guide.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "`install` 安装开发工具；项目自身依赖使用 `osdk deps`。模型不会作为裸 `install` 的副作用\n下载，使用 `osdk model sync`。"
           }
         ]
       },
@@ -520,7 +516,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 616,
+        "elapsedMs": 672,
         "top5": [
           {
             "path": "config/wiki-pages.json",
@@ -529,7 +525,7 @@
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "、应用记忆、重新核验和任务状态的区别，知道哪些更新已完成、哪些仍待处理。\",\n      \"scenario\": \"项目约定从重试三次改为五次；另一条独立消息让助手明早跟进评审。不要把约定文本直接当用户交办。\",\n      \"questions\": [\n        \"一条原始记录怎样成为可用记忆？\",\n     "
+            "snippet": "记忆与待办如何更新\",\n      \"order\": 3,\n      \"kind\": \"explanation\",\n      \"reader\": \"想知道个人记忆如何维护与跟进事项的人\",\n      \"goal\": \"解释保存材料、应用记忆、重新核验和任务状态的区别，知道哪些更新已完成、哪些仍待处理。\",\n   "
           },
           {
             "path": "apps/server/tests/retrieval-unified.test.ts",
@@ -584,7 +580,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 4,
-        "elapsedMs": 315,
+        "elapsedMs": 163,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -645,7 +641,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 142,
+        "elapsedMs": 152,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -711,7 +707,7 @@
         "passed": false,
         "firstExpectedRank": 8,
         "uniquePathsAt5": 5,
-        "elapsedMs": 676,
+        "elapsedMs": 690,
         "top5": [
           {
             "path": "design.md",
