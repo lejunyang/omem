@@ -163,7 +163,7 @@ it("carries a reader's supplemental answer into the next investigation, writing 
   expect(f.store.revision(revision)?.parts).toContainEqual(expect.objectContaining({ text: "Mira reviews release evidence every Thursday." }));
   const before = f.run.mock.calls.length;
   await f.pipeline.writePage(plan);
-  for (const role of ["knowledge-researcher", "knowledge-writer", "knowledge-verifier"]) {
+  for (const role of ["knowledge-researcher", "knowledge-refresher", "knowledge-verifier"]) {
     const input = f.run.mock.calls.slice(before).find(([input]) => input.roleId === role)?.[0];
     expect(input, role).toBeDefined();
     expect(JSON.stringify(input!.context.materials), role).toContain("Mira reviews release evidence every Thursday.");
@@ -171,4 +171,48 @@ it("carries a reader's supplemental answer into the next investigation, writing 
   expect(reopened.published()).toHaveLength(1);
   expect(reopened.get(brief.key)?.reading).toEqual(plan);
   expect(reopened.get(brief.key, first!.revision)).not.toBeNull();
+});
+
+it("maintains a published page from its old explanation and source changes before independent review", async () => {
+  const f = setup();
+  f.pipeline.options.nativeResearch = true;
+  const brief = { key: "guide:release", title: "Release", order: 0, kind: "explanation" as const, reader: "Reader", goal: "Understand release", scenario: "A release", questions: ["What changes?"], entryPaths: [], materialKeys: ["manual:example"] };
+  const [previous] = await f.pipeline.writePage(brief);
+  const oldSource = f.repository.materials()[0]!;
+  f.capture("The release now waits for the reviewer.\nThe original statement stays in history.");
+  const before = f.run.mock.calls.length;
+  const [updated] = await f.pipeline.writePage(brief);
+  const calls = f.run.mock.calls.slice(before).map(([input]) => input);
+  expect(calls.map(input => input.roleId)).toEqual(["knowledge-researcher", "knowledge-refresher", "knowledge-verifier"]);
+  for (const input of calls) {
+    expect(input.context.task!.maintenance).toMatchObject({
+      previousRevision: previous!.revision, previousDraft: previous!.document,
+      changedFields: [],
+      materialChanges: [{ key: oldSource.key, previousRevision: oldSource.revisionId,
+        hunks: [{ before: { startLine: 1, lineCount: 1 }, after: { startLine: 1, lineCount: 2 } }] }],
+      sections: [{ key: "behavior", state: "needs-review" }],
+    });
+  }
+  expect(calls[1]!.context.task!.revisionRequest).toMatchObject({ previousDrafts: [previous!.document] });
+  expect(updated!.document.citations[0]!.quote).toContain("now waits for the reviewer");
+  expect(updated!.generation.trace.maintenance).toMatchObject({ previousRevision: previous!.revision, reusedDraft: true });
+  expect(updated!.generation.trace.maintenance).not.toHaveProperty("previousDraft");
+  expect(f.repository.get(brief.key, previous!.revision)?.document.citations[0]!.quote).toBe("The release uses fixed evidence.");
+});
+
+it("does not reintroduce the old draft when the reader removes its source from the new selection", async () => {
+  const f = setup();
+  f.pipeline.options.nativeResearch = true;
+  f.store.capture({ source: "manual", externalId: "other", title: "Other", parts: [{ type: "text", text: "Only discuss the next release." }], context: {} });
+  const brief = { key: "guide:release", title: "Release", order: 0, kind: "explanation" as const, reader: "Reader", goal: "Understand release", scenario: "A release", questions: ["What changes?"], entryPaths: [], materialKeys: ["manual:example", "manual:other"] };
+  await f.pipeline.writePage(brief);
+  const before = f.run.mock.calls.length;
+  await f.pipeline.writePage({ ...brief, materialKeys: ["manual:other"], goal: "Understand the next release" });
+  const calls = f.run.mock.calls.slice(before).map(([input]) => input);
+  expect(calls.map(input => input.roleId)).toEqual(["knowledge-researcher", "knowledge-writer", "knowledge-verifier"]);
+  for (const input of calls) {
+    expect(input.context.task!.maintenance).toMatchObject({ previousDraft: undefined, changedFields: ["goal", "materialKeys"] });
+    expect(JSON.stringify(input.context)).not.toContain("The release uses fixed evidence.");
+  }
+  expect(f.repository.get(brief.key)!.dependencies.map(d => d.key)).toEqual(["manual:other"]);
 });
