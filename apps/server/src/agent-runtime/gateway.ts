@@ -30,7 +30,7 @@ import {
   type AgentProfile,
   type ContextManifest,
 } from "../../../../packages/contracts/src/index.js";
-import { acp, cli, optionValues, type Emit } from "../agents.js";
+import { acp, cli, optionValues, withAgentWorkspace, type Emit } from "../agents.js";
 import { canonicalJson, stableDigest } from "../storage/digest.js";
 import { RoleBundleRegistry, type RoleBundle } from "./bundles.js";
 import type { RuntimeRequestRepository } from "./requests.js";
@@ -360,7 +360,7 @@ export class RoleRuntimeGateway {
       runId,
     );
     const effectiveProfile: AgentProfile = {
-      ...input.profile,
+      ...withAgentWorkspace(input.profile, workspace),
       skills: nativeSkills.map((skill) => skill.canonical_name),
     };
     const environment = await input.research?.(
