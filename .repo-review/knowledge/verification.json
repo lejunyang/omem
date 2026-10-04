@@ -1,51 +1,25 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-04T12:39:32.415Z",
-  "implementationCommit": "f2654d55dcee218672b707671f4724fffb09a4fa",
-  "sourceDigest": "a055f7e7b9041ef87bd8f238102f5fb0aab0e03f739dfd52d0bc02c4be457923",
+  "recordedAt": "2026-10-04T14:11:44.358Z",
+  "implementationCommit": "d21bd4cc8d8f1828c3ed30ef668ebe0c56e491b7",
+  "sourceDigest": "6991c269e9591b32e27b675840711efc5aa0a43e3000468b3e628408ff1b0e8d",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
-  "mode": "full",
+  "mode": "repository",
   "checks": [
     {
       "name": "dependencies",
-      "state": "passed",
-      "details": {
-        "command": [
-          "osdk",
-          "deps",
-          "--frozen"
-        ],
-        "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T12-39-32-415Z/dependencies.log",
-        "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
-      }
+      "state": "skipped",
+      "details": "Run with --full; earlier results are not inherited."
     },
     {
       "name": "project",
-      "state": "passed",
-      "details": {
-        "command": [
-          "osdk",
-          "run",
-          "check"
-        ],
-        "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T12-39-32-415Z/project.log",
-        "sha256": "458af30427897e725198c769ba485e0b242cb7ec2e2f67d5cef7d13676a77dd9"
-      }
+      "state": "skipped",
+      "details": "Run with --full; earlier results are not inherited."
     },
     {
       "name": "liveChineseRetrieval",
-      "state": "passed",
-      "details": {
-        "command": [
-          "/Users/bytedance/Library/Application Support/osdk/installs/bun/1.4.2/bin/bun",
-          "scripts/live-retrieval-smoke.ts"
-        ],
-        "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T12-39-32-415Z/liveChineseRetrieval.log",
-        "sha256": "610d62bb64795e9832332aa36374add55c271e33737635d71f1941c7de21c885"
-      }
+      "state": "skipped",
+      "details": "Run with --full; earlier results are not inherited."
     },
     {
       "name": "publishedKnowledgeReferences",
@@ -53,7 +27,7 @@
       "details": {
         "articles": 8,
         "currentArticles": 0,
-        "citations": 217,
+        "citations": 205,
         "errors": []
       }
     },
@@ -64,11 +38,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v6",
-        "units": 12184,
+        "units": 12289,
         "semantic": {
           "model": "structure-icu-v6:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 12184,
+          "indexed": 12289,
           "pending": 0,
           "error": null
         },
@@ -95,11 +69,11 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 635,
+    "materials": 637,
     "publishedPages": 8,
     "currentPages": 0,
     "plannedPages": 0,
-    "citations": 217,
+    "citations": 205,
     "articleLinks": 0,
     "errors": [],
     "pages": [
@@ -175,21 +149,24 @@
         "role": "article",
         "current": false,
         "sections": {
-          "reader-question": {
+          "scenario": {
             "state": "current"
           },
-          "three-products": {
+          "page-plan": {
             "state": "current"
           },
-          "pipeline": {
+          "workflow": {
             "state": "current"
           },
-          "what-reader-gets": {
+          "roles": {
             "state": "current"
           },
-          "source-change": {
+          "reader-result": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          },
+          "changes": {
+            "state": "current"
           },
           "improve": {
             "state": "needs-review",
@@ -199,30 +176,29 @@
       },
       {
         "key": "guide:knowledge-maintenance",
-        "title": "整理文章，并在原文更新后维护解释",
+        "title": "把材料整理成文章，并在原文变化后继续维护",
         "role": "article",
         "current": false,
         "sections": {
           "start": {
+            "state": "current"
+          },
+          "compose": {
+            "state": "current"
+          },
+          "run-and-retry": {
+            "state": "current"
+          },
+          "accept": {
+            "state": "current"
+          },
+          "source-change": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "submit": {
-            "state": "current"
-          },
-          "failure": {
-            "state": "current"
-          },
-          "changes": {
+          "maintain": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "history": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "developer": {
-            "state": "current"
           }
         }
       },
@@ -232,26 +208,26 @@
         "role": "reference",
         "current": false,
         "sections": {
-          "scenario": {
+          "three_axes": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "status-map": {
-            "state": "current"
+          "section_status": {
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "source-relations": {
-            "state": "current"
+          "source_records": {
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "change-flow": {
-            "state": "current"
-          },
-          "visibility": {
+          "consumers": {
             "state": "current"
           },
           "retirement": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "change-points": {
+          "change_map": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           }
@@ -326,34 +302,29 @@
       },
       {
         "key": "guide:retrieval",
-        "title": "一次提问如何找到答案：搜索、上下文与 RAG",
+        "title": "一次提问如何找到答案：召回、补读与回答",
         "role": "article",
         "current": false,
         "sections": {
-          "scenario": {
+          "example": {
             "state": "current"
           },
-          "division": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          "shared": {
+            "state": "current"
           },
           "routes": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "current"
           },
           "context": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "current"
           },
-          "investigation": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          "research": {
+            "state": "current"
           },
           "limits": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "current"
           },
-          "diagnosis": {
+          "diagnose": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           }
@@ -385,7 +356,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 3,
-        "elapsedMs": 972,
+        "elapsedMs": 809,
         "top5": [
           {
             "path": "docs/reader-first/component-integration.md",
@@ -448,7 +419,7 @@
         "passed": false,
         "firstExpectedRank": 12,
         "uniquePathsAt5": 5,
-        "elapsedMs": 707,
+        "elapsedMs": 760,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -509,14 +480,14 @@
           "config/wiki-pages.json",
           "apps/server/tests/retrieval-unified.test.ts",
           "docs/archive/2026-10-01-baseline/AGENTS.md",
-          "docs/archive/2026-10-01-baseline/implementation/batch2/lark.md",
-          ".agents/skills/osdk-guide/reference/doctor/guide.md"
+          "docs/reader-first/progress.md",
+          "docs/archive/2026-10-01-baseline/implementation/batch2/lark.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 672,
+        "elapsedMs": 586,
         "top5": [
           {
             "path": "config/wiki-pages.json",
@@ -546,20 +517,21 @@
             "snippet": "1. 修改捕获、AST、知识生成/复核、引用、检索或助手运行后，先通过相关检查并提交实现，再更新受影响的知识资产，单独提交。保持已有用户改动。\n2. 用 `osdk run review:generate <文件或目录> --modules` 更新受影响的原始材料理解和模块正文；多个 `--only` 可合用。需要全库"
           },
           {
+            "path": "docs/reader-first/progress.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "现有系统已用真实 Traex 验证：约定从 80 改为 120 后更新同一记忆，创建跟进、重启后提醒、延后及完成；这不等于持续项目理解已经解决。"
+          },
+          {
             "path": "docs/archive/2026-10-01-baseline/implementation/batch2/lark.md",
             "routes": [
               "bm25",
               "purpose:balanced"
             ],
             "snippet": "状态更新采用 compare-and-set：同一卡片连点、Web与卡片同时批准、approve/reject竞态，最多一次业务效果。stale decision 更新卡片为“资料已变化，需重新查看”，不能批准不同内容。用户修改后执行先生成新 proposal digest，再重新验证，不沿用旧批准。"
-          },
-          {
-            "path": ".agents/skills/osdk-guide/reference/doctor/guide.md",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "| 参数 | 语义 |\n| --- | --- |\n| `--verify` | 重新哈希安装文件，检测工具自更新、手工修改或不完整恢复；可能较慢 |\n| `--tool <TOOL>` | 只验证一个工具；要求同时给 `--verify` |"
           }
         ]
       },
@@ -580,7 +552,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 4,
-        "elapsedMs": 163,
+        "elapsedMs": 135,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -707,7 +679,7 @@
         "passed": false,
         "firstExpectedRank": 8,
         "uniquePathsAt5": 5,
-        "elapsedMs": 690,
+        "elapsedMs": 594,
         "top5": [
           {
             "path": "design.md",
