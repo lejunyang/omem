@@ -657,7 +657,10 @@
             "id": "bb453c901cb7d50d325c2d0affb0e7ccfb1d32d38bcab8bfcdf5fd5173f758b5",
             "kind": "source",
             "title": "apps/server/src/knowledge/agent-research.ts",
-            "text": "…list_materials: \"查看材料目录\",\n        search_materials: \"搜索原始材料\",\n        read_material: \"补读原文\",\n        read_section: \"阅读完整章节\",\n        search_knowledge: \"查找已有讲解\",\n        read_knowledge: \"阅读已有讲解\",\n        search_memories: \"查找个人记忆\",\n        read_memory: \"核对记忆状态\",\n        code_navigation: \"查看代码定义与关联线索\",\n        related_materials: \"查看材料关联\",\n        material_history: \"对比历史版本\",\n        read_image: \"查看原始图片\",\n      };\n      if (e.kind === \"mcp\" || e.kind === \"submission\")\n        input.onActivity?.({\n          label:\n            e.kind === \"submission\"\n              ? \"整理调查结果\"\n              : (labels[e.tool ?? \"\"] ?? \"核对资料\"),\n          tool: e.tool,\n          status: e.success === false ? \"failed\" : \"done\",\n          at: new Date().toISOString(),\n          ...(e.args?.key\n            ? {",
+            "text": "…list_materials: \"查看材料目录\",\n        search_materials: \"搜索原始材料\",\n        read_material: \"补读原文\",\n        read_section: \"阅读完整章节\",\n        search_knowledge: \"查找已有讲解\",\n        read_knowledge: \"阅读已有讲解\",\n        search_memories: \"查找个人记忆\",\n        read_memory: \"核对记忆状态\",\n        code_navigation: \"查看代码定义与关联线索\",\n        related_materials: \"查看材料关联\",\n        material_history: \"对比历史版本\",\n        read_image: \"查看原始图片\",\n      };\n      if (e.kind === \"mcp\" || e.kind === \"submission\")\n        input.onActivity?.({\n          label:\n            e.kind === \"submission\"\n              ? \"整理调查结果\"\n              : (labels[",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 790,
+            "originalTextSha256": "4cfb46c0fc62536c90b16082b88dee54f2726cf8f9f0f8cd6d5d546c97adf996",
             "context": "apps/server/src/knowledge/agent-research.ts\nprepareAgentResearch\nrecord",
             "headingPath": [
               "prepareAgentResearch",
@@ -1268,7 +1271,10 @@
             "id": "fca06455961ece92591361647a05dfab83ddd10a7cb4aa148db480a0abc86373",
             "kind": "source",
             "title": "apps/server/src/integrations/lark/card-actions.ts",
-            "text": "const resultCard = (state: string, action: string, detail?: string) => {\n  const approved = state === \"approved\";\n  const rejected = state === \"rejected\";\n  const context = state === \"context_requested\";\n  const label = approved\n    ? \"已批准\"\n    : rejected\n      ? \"已拒绝\"\n      : context\n        ? \"等待补充背景\"\n        : state === \"stale\" || state === \"expired\"\n          ? \"资料已变化或请求已过期，请重新查看\"\n          : \"未执行\";\n  return {\n    schema: \"2.0\",\n    config: { width_mode: \"default\", update_multi: true },\n    header: {\n      title: { tag: \"plain_text\", content: \"omem 决策结果\" },\n      template: approved ? \"green\" : rejected ? \"red\" : \"orange\",\n    },\n    body: {\n      elements: [\n        { tag: \"markdown\", content: `**${label}**\\n动作：\\`${action}\\`` },\n        ...(detail\n          ? [{ tag: \"markdown\", conten",
+            "text": "const resultCard = (state: string, action: string, detail?: string) => {\n  const approved = state === \"approved\";\n  const rejected = state === \"rejected\";\n  const context = state === \"context_requested\";\n  const label = approved\n    ? \"已批准\"\n    : rejected\n      ? \"已拒绝\"\n      : context\n        ? \"等待补充背景\"\n        : state === \"stale\" || state === \"expired\"\n          ? \"资料已变化或请求已过期，请重新查看\"\n          : \"未执行\";\n  return {\n    schema: \"2.0\",\n    config: { width_mode: \"default\", update_multi: true },\n    header: {\n      title: { tag: \"plain_text\", content: \"omem 决策结果\" },\n      template: approved ? \"gree",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 800,
+            "originalTextSha256": "37542c003591f06eca76445d0827fc2f6321f6fb2c94f5d03f50a0878d5bed3a",
             "context": "apps/server/src/integrations/lark/card-actions.ts\nresultCard",
             "headingPath": [
               "resultCard"
@@ -1695,7 +1701,10 @@
             "id": "bb453c901cb7d50d325c2d0affb0e7ccfb1d32d38bcab8bfcdf5fd5173f758b5",
             "kind": "source",
             "title": "apps/server/src/knowledge/agent-research.ts",
-            "text": "…list_materials: \"查看材料目录\",\n        search_materials: \"搜索原始材料\",\n        read_material: \"补读原文\",\n        read_section: \"阅读完整章节\",\n        search_knowledge: \"查找已有讲解\",\n        read_knowledge: \"阅读已有讲解\",\n        search_memories: \"查找个人记忆\",\n        read_memory: \"核对记忆状态\",\n        code_navigation: \"查看代码定义与关联线索\",\n        related_materials: \"查看材料关联\",\n        material_history: \"对比历史版本\",\n        read_image: \"查看原始图片\",\n      };\n      if (e.kind === \"mcp\" || e.kind === \"submission\")\n        input.onActivity?.({\n          label:\n            e.kind === \"submission\"\n              ? \"整理调查结果\"\n              : (labels[e.tool ?? \"\"] ?? \"核对资料\"),\n          tool: e.tool,\n          status: e.success === false ? \"failed\" : \"done\",\n          at: new Date().toISOString(),\n          ...(e.args?.key\n            ? {",
+            "text": "…list_materials: \"查看材料目录\",\n        search_materials: \"搜索原始材料\",\n        read_material: \"补读原文\",\n        read_section: \"阅读完整章节\",\n        search_knowledge: \"查找已有讲解\",\n        read_knowledge: \"阅读已有讲解\",\n        search_memories: \"查找个人记忆\",\n        read_memory: \"核对记忆状态\",\n        code_navigation: \"查看代码定义与关联线索\",\n        related_materials: \"查看材料关联\",\n        material_history: \"对比历史版本\",\n        read_image: \"查看原始图片\",\n      };\n      if (e.kind === \"mcp\" || e.kind === \"submission\")\n        input.onActivity?.({\n          label:\n            e.kind === \"submission\"\n              ? \"整理调查结果\"\n              : (labels[",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 790,
+            "originalTextSha256": "4cfb46c0fc62536c90b16082b88dee54f2726cf8f9f0f8cd6d5d546c97adf996",
             "context": "apps/server/src/knowledge/agent-research.ts\nprepareAgentResearch\nrecord",
             "headingPath": [
               "prepareAgentResearch",
@@ -2306,7 +2315,10 @@
             "id": "fca06455961ece92591361647a05dfab83ddd10a7cb4aa148db480a0abc86373",
             "kind": "source",
             "title": "apps/server/src/integrations/lark/card-actions.ts",
-            "text": "const resultCard = (state: string, action: string, detail?: string) => {\n  const approved = state === \"approved\";\n  const rejected = state === \"rejected\";\n  const context = state === \"context_requested\";\n  const label = approved\n    ? \"已批准\"\n    : rejected\n      ? \"已拒绝\"\n      : context\n        ? \"等待补充背景\"\n        : state === \"stale\" || state === \"expired\"\n          ? \"资料已变化或请求已过期，请重新查看\"\n          : \"未执行\";\n  return {\n    schema: \"2.0\",\n    config: { width_mode: \"default\", update_multi: true },\n    header: {\n      title: { tag: \"plain_text\", content: \"omem 决策结果\" },\n      template: approved ? \"green\" : rejected ? \"red\" : \"orange\",\n    },\n    body: {\n      elements: [\n        { tag: \"markdown\", content: `**${label}**\\n动作：\\`${action}\\`` },\n        ...(detail\n          ? [{ tag: \"markdown\", conten",
+            "text": "const resultCard = (state: string, action: string, detail?: string) => {\n  const approved = state === \"approved\";\n  const rejected = state === \"rejected\";\n  const context = state === \"context_requested\";\n  const label = approved\n    ? \"已批准\"\n    : rejected\n      ? \"已拒绝\"\n      : context\n        ? \"等待补充背景\"\n        : state === \"stale\" || state === \"expired\"\n          ? \"资料已变化或请求已过期，请重新查看\"\n          : \"未执行\";\n  return {\n    schema: \"2.0\",\n    config: { width_mode: \"default\", update_multi: true },\n    header: {\n      title: { tag: \"plain_text\", content: \"omem 决策结果\" },\n      template: approved ? \"gree",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 800,
+            "originalTextSha256": "37542c003591f06eca76445d0827fc2f6321f6fb2c94f5d03f50a0878d5bed3a",
             "context": "apps/server/src/integrations/lark/card-actions.ts\nresultCard",
             "headingPath": [
               "resultCard"
@@ -2828,7 +2840,10 @@
             "id": "0d7db1810eef523051ebe9c93fc0b88b963bc2da3642eaf57726a36e8a4849f4",
             "kind": "source",
             "title": "AGENTS.md",
-            "text": "- UI 使用 Vue 3 + TypeScript。先读 .agents/skills/omem-design/SKILL.md 与根 design.md，复用 packages/ui。当前架构见 docs/reader-first/architecture.md，旧 docs/design.md 已归档。\n- 保持黑白灰阅读风格，主菜单稳定，材料/学习目录放页面内。正文限制行宽，段落、图表、代码、按钮组留清晰间距；检查桌面、768px、390px。\n- 递归引用共用 useEvidenceTrail / OmTrailDrawer；逐层恢复滚动、展开状态，Esc 返回，关闭归还焦点。内部 ID 不做展示文案，缺失引用给人读原因。\n- 运行、依赖和模型按 .agents/skills/osdk-guide/SKILL.md 使用 osdk；上游 lejunyang/one-sdk。脚本用 Bun，不恢复 tsx。任务声明 args/flags，避免要求用户写双横线。\n- LLM 通过可配置 CLI/ACP；动态发现 model/effort，拒绝不支持的参数。不强制本地 LLM。本地 embedding/reranker 优先中文，由 osdk 声明/下载/锁定，运行不隐式下载；换模型或预处理需隔离向量身份。\n- 个人配置、原始会话、密钥、数据库与模型权重不入 Git。外部通知、采集范围和 OS 服务是独立显式集成，不安装未经指定范围的全局 hooks/屏幕监听。",
+            "text": "- UI 使用 Vue 3 + TypeScript。先读 .agents/skills/omem-design/SKILL.md 与根 design.md，复用 packages/ui。当前架构见 docs/reader-first/architecture.md，旧 docs/design.md 已归档。\n- 保持黑白灰阅读风格，主菜单稳定，材料/学习目录放页面内。正文限制行宽，段落、图表、代码、按钮组留清晰间距；检查桌面、768px、390px。\n- 递归引用共用 useEvidenceTrail / OmTrailDrawer；逐层恢复滚动、展开状态，Esc 返回，关闭归还焦点。内部 ID 不做展示文案，缺失引用给人读原因。\n- 运行、依赖和模型按 .agents/skills/osdk-guide/SKILL.md 使用 osdk；上游 lejunyang/one-sdk。脚本用 Bun，不恢复 tsx。任务声明 args/flags，避免要求用户写双横线。\n- LLM 通过可配置 CLI/ACP；动态发现 model/effort，拒绝不支持的参数。不强制本地 LLM。本地 embedding/reranker 优先中文，由 osdk 声明/下载/锁定，运行不隐式下载；换模型或预处理需隔离向量身份。\n- 个人配置、原始会话、密钥、数据库与模型权重不入 Git。外部通知、",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 643,
+            "originalTextSha256": "d434ad399baf1b6f01bc9f9ccf244f73b97ddd0ed5bf29c16b16bd56f978dc79",
             "context": "AGENTS.md\nomem：以读懂、找回和行动为目标\n界面与运行环境",
             "headingPath": [
               "omem：以读懂、找回和行动为目标",
@@ -2897,7 +2912,10 @@
             "id": "77942cc1d3297ed11a473a2700772413731b3482471c391d6b265f8808f3dd5e",
             "kind": "source",
             "title": ".agents/skills/osdk-guide/reference/global-options/guide.md",
-            "text": "| 参数 | 环境变量 | 语义 |\n| --- | --- | --- |\n| `-v, --verbose...` | — | 增加日志详细度，可重复 |\n| `-q, --quiet` | — | 抑制 osdk 自己的进度输出，不吞子进程输出 |\n| `-j, --jobs <N>` | `OSDK_JOBS` | 单个工具或模型内部的最大并发下载/安装数 |\n| `--model-jobs <N>` | `OSDK_MODEL_JOBS` | `model sync` 同时处理的模型数，默认 2；与 `--jobs` 相乘 |\n| `-y, --yes` | — | 对确认提示回答“是”；不会绕过要求精确指纹的安全门 |\n| `--source <ID>` | — | 本次调用优先使用指定下载源 |\n| `--refresh-sources` | — | 忽略源测速缓存并重新探测 |\n| `--source-mode <auto\\|env>` | `OSDK_SOURCE_MODE` | `auto` 排序环境镜像与内置源；`env` 原样遵循环境镜像 |\n| `--offline` | `OSDK_OFFLINE` | 禁止网络，只用本地缓存与锁定信息 |\n| `--require-checksums` | `OSDK_REQUIRE_CHECKSUMS` | 拒绝没有可验证 checksum 的产物 |\n| `--attestations <off\\|if-available\\|required>` | `OSDK_ATTESTATIONS` | GitHub artifact attestation 策略 |\n| `--prerelease <never\\|if-explicit\\|allow>` | `OSDK_PRERELEASE` | 预发布版本选择策",
+            "text": "| 参数 | 环境变量 | 语义 |\n| --- | --- | --- |\n| `-v, --verbose...` | — | 增加日志详细度，可重复 |\n| `-q, --quiet` | — | 抑制 osdk 自己的进度输出，不吞子进程输出 |\n| `-j, --jobs <N>` | `OSDK_JOBS` | 单个工具或模型内部的最大并发下载/安装数 |\n| `--model-jobs <N>` | `OSDK_MODEL_JOBS` | `model sync` 同时处理的模型数，默认 2；与 `--jobs` 相乘 |\n| `-y, --yes` | — | 对确认提示回答“是”；不会绕过要求精确指纹的安全门 |\n| `--source <ID>` | — | 本次调用优先使用指定下载源 |\n| `--refresh-sources` | — | 忽略源测速缓存并重新探测 |\n| `--source-mode <auto\\|env>` | `OSDK_SOURCE_MODE` | `auto` 排序环境镜像与内置源；`env` 原样遵循环境镜像 |\n| `--offline` | `OSDK_OFFLINE` | 禁止网络，只用本地缓存与锁定信息 |\n| `--require-checksums` | `OSDK_REQUIRE_CHECKSUMS` | 拒绝没有",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 800,
+            "originalTextSha256": "15a542a22c12425df3e4d4ddb3513cf235751b59f676f7dc930b07d48d4f6335",
             "context": ".agents/skills/osdk-guide/reference/global-options/guide.md\n全局参数",
             "headingPath": [
               "全局参数"
@@ -3419,7 +3437,10 @@
             "id": "de3cb2e880be6b00e4fe684a7828507b222b7c2e3cf58fe8ba3c3bcb5a824256",
             "kind": "source",
             "title": "docs/archive/2026-10-01-baseline/AGENTS.md",
-            "text": "…ackages/ui` 的 trail composable/OmDialog 系组件里，Code Wiki 直接复用，不在 codewiki 侧另造第二套 drawer。URL hash 深链可序列化整栈；`MAX_TRAIL` 只是深链 URL 长度预算（200），渲染栈不静默截断。\n- **seed 引用必须可校验**：评审边唯一来源是手维护的 `docs/repo-review/associations.json`（每条点名 codePath+symbol + requirement/decision/research/test 锚点）；模块理解 seed（`.repo-review/knowledge/understandings/*.seed.json`）用 path+qualifiedName+kind 定位。同步时把这些 locator 重新解析到 head 图并盖 digest、过严格 `CodeUnderstanding.v1` 交叉引用校验；解析不到的 locator 保留为 rejected 行，永不覆盖好行。**不要**用语义相似度自动加边。\n- **实际模型配置**：review 默认读取 `config/review-code-model.json`，`REVIEW_CODE_MODEL_CONFIG` 可覆盖，不读个人 Agent profile。启动只恢复知识，不自动调用生成式模型；启用的本地向量索引可后台补建。显式 `review:analyze` / `review:generate` 或用户操作才生成。模型/effort 经 ACP 校验，预算同时写入运行 trace；不要只改 example。人工 seed 仍不得冒充真实模型成果。\n- **数据与发布边界**：数据库、临时工作目录和构建暂存写 `.repo-review/runti",
+            "text": "…ackages/ui` 的 trail composable/OmDialog 系组件里，Code Wiki 直接复用，不在 codewiki 侧另造第二套 drawer。URL hash 深链可序列化整栈；`MAX_TRAIL` 只是深链 URL 长度预算（200），渲染栈不静默截断。\n- **seed 引用必须可校验**：评审边唯一来源是手维护的 `docs/repo-review/associations.json`（每条点名 codePath+symbol + requirement/decision/research/test 锚点）；模块理解 seed（`.repo-review/knowledge/understandings/*.seed.json`）用 path+qualifiedName+kind 定位。同步时把这些 locator 重新解析到 head 图并盖 digest、过严格 `CodeUnderstanding.v1` 交叉引用校验；解析不到的 locator 保留为 rejected 行，永不覆盖好行。**不要**用语义相似度自动加边。\n- **实际模型配置**：review 默认读取 `config/review-code-model.json`，`REVIEW_CODE_MODEL_CONFIG` 可覆盖，不读个人 Agent profile。",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 801,
+            "originalTextSha256": "a7510a8dc41c6d728cce690894bad16ab9e108a2af9c1f60ef981b76f2409678",
             "context": "概念：Code Wiki 与 repo-review 维护合同；统一知识产品、人类可读 label、seed 引用校验\ndocs/archive/2026-10-01-baseline/AGENTS.md\nomem：个人记忆与助理的实施约定\nCode Wiki / repo-review 维护规则",
             "headingPath": [
               "omem：个人记忆与助理的实施约定",
@@ -3877,7 +3898,10 @@
             "id": "0d7db1810eef523051ebe9c93fc0b88b963bc2da3642eaf57726a36e8a4849f4",
             "kind": "source",
             "title": "AGENTS.md",
-            "text": "- UI 使用 Vue 3 + TypeScript。先读 .agents/skills/omem-design/SKILL.md 与根 design.md，复用 packages/ui。当前架构见 docs/reader-first/architecture.md，旧 docs/design.md 已归档。\n- 保持黑白灰阅读风格，主菜单稳定，材料/学习目录放页面内。正文限制行宽，段落、图表、代码、按钮组留清晰间距；检查桌面、768px、390px。\n- 递归引用共用 useEvidenceTrail / OmTrailDrawer；逐层恢复滚动、展开状态，Esc 返回，关闭归还焦点。内部 ID 不做展示文案，缺失引用给人读原因。\n- 运行、依赖和模型按 .agents/skills/osdk-guide/SKILL.md 使用 osdk；上游 lejunyang/one-sdk。脚本用 Bun，不恢复 tsx。任务声明 args/flags，避免要求用户写双横线。\n- LLM 通过可配置 CLI/ACP；动态发现 model/effort，拒绝不支持的参数。不强制本地 LLM。本地 embedding/reranker 优先中文，由 osdk 声明/下载/锁定，运行不隐式下载；换模型或预处理需隔离向量身份。\n- 个人配置、原始会话、密钥、数据库与模型权重不入 Git。外部通知、采集范围和 OS 服务是独立显式集成，不安装未经指定范围的全局 hooks/屏幕监听。",
+            "text": "- UI 使用 Vue 3 + TypeScript。先读 .agents/skills/omem-design/SKILL.md 与根 design.md，复用 packages/ui。当前架构见 docs/reader-first/architecture.md，旧 docs/design.md 已归档。\n- 保持黑白灰阅读风格，主菜单稳定，材料/学习目录放页面内。正文限制行宽，段落、图表、代码、按钮组留清晰间距；检查桌面、768px、390px。\n- 递归引用共用 useEvidenceTrail / OmTrailDrawer；逐层恢复滚动、展开状态，Esc 返回，关闭归还焦点。内部 ID 不做展示文案，缺失引用给人读原因。\n- 运行、依赖和模型按 .agents/skills/osdk-guide/SKILL.md 使用 osdk；上游 lejunyang/one-sdk。脚本用 Bun，不恢复 tsx。任务声明 args/flags，避免要求用户写双横线。\n- LLM 通过可配置 CLI/ACP；动态发现 model/effort，拒绝不支持的参数。不强制本地 LLM。本地 embedding/reranker 优先中文，由 osdk 声明/下载/锁定，运行不隐式下载；换模型或预处理需隔离向量身份。\n- 个人配置、原始会话、密钥、数据库与模型权重不入 Git。外部通知、",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 643,
+            "originalTextSha256": "d434ad399baf1b6f01bc9f9ccf244f73b97ddd0ed5bf29c16b16bd56f978dc79",
             "context": "AGENTS.md\nomem：以读懂、找回和行动为目标\n界面与运行环境",
             "headingPath": [
               "omem：以读懂、找回和行动为目标",
@@ -3946,7 +3970,10 @@
             "id": "77942cc1d3297ed11a473a2700772413731b3482471c391d6b265f8808f3dd5e",
             "kind": "source",
             "title": ".agents/skills/osdk-guide/reference/global-options/guide.md",
-            "text": "| 参数 | 环境变量 | 语义 |\n| --- | --- | --- |\n| `-v, --verbose...` | — | 增加日志详细度，可重复 |\n| `-q, --quiet` | — | 抑制 osdk 自己的进度输出，不吞子进程输出 |\n| `-j, --jobs <N>` | `OSDK_JOBS` | 单个工具或模型内部的最大并发下载/安装数 |\n| `--model-jobs <N>` | `OSDK_MODEL_JOBS` | `model sync` 同时处理的模型数，默认 2；与 `--jobs` 相乘 |\n| `-y, --yes` | — | 对确认提示回答“是”；不会绕过要求精确指纹的安全门 |\n| `--source <ID>` | — | 本次调用优先使用指定下载源 |\n| `--refresh-sources` | — | 忽略源测速缓存并重新探测 |\n| `--source-mode <auto\\|env>` | `OSDK_SOURCE_MODE` | `auto` 排序环境镜像与内置源；`env` 原样遵循环境镜像 |\n| `--offline` | `OSDK_OFFLINE` | 禁止网络，只用本地缓存与锁定信息 |\n| `--require-checksums` | `OSDK_REQUIRE_CHECKSUMS` | 拒绝没有可验证 checksum 的产物 |\n| `--attestations <off\\|if-available\\|required>` | `OSDK_ATTESTATIONS` | GitHub artifact attestation 策略 |\n| `--prerelease <never\\|if-explicit\\|allow>` | `OSDK_PRERELEASE` | 预发布版本选择策",
+            "text": "| 参数 | 环境变量 | 语义 |\n| --- | --- | --- |\n| `-v, --verbose...` | — | 增加日志详细度，可重复 |\n| `-q, --quiet` | — | 抑制 osdk 自己的进度输出，不吞子进程输出 |\n| `-j, --jobs <N>` | `OSDK_JOBS` | 单个工具或模型内部的最大并发下载/安装数 |\n| `--model-jobs <N>` | `OSDK_MODEL_JOBS` | `model sync` 同时处理的模型数，默认 2；与 `--jobs` 相乘 |\n| `-y, --yes` | — | 对确认提示回答“是”；不会绕过要求精确指纹的安全门 |\n| `--source <ID>` | — | 本次调用优先使用指定下载源 |\n| `--refresh-sources` | — | 忽略源测速缓存并重新探测 |\n| `--source-mode <auto\\|env>` | `OSDK_SOURCE_MODE` | `auto` 排序环境镜像与内置源；`env` 原样遵循环境镜像 |\n| `--offline` | `OSDK_OFFLINE` | 禁止网络，只用本地缓存与锁定信息 |\n| `--require-checksums` | `OSDK_REQUIRE_CHECKSUMS` | 拒绝没有",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 800,
+            "originalTextSha256": "15a542a22c12425df3e4d4ddb3513cf235751b59f676f7dc930b07d48d4f6335",
             "context": ".agents/skills/osdk-guide/reference/global-options/guide.md\n全局参数",
             "headingPath": [
               "全局参数"
@@ -4468,7 +4495,10 @@
             "id": "de3cb2e880be6b00e4fe684a7828507b222b7c2e3cf58fe8ba3c3bcb5a824256",
             "kind": "source",
             "title": "docs/archive/2026-10-01-baseline/AGENTS.md",
-            "text": "…ackages/ui` 的 trail composable/OmDialog 系组件里，Code Wiki 直接复用，不在 codewiki 侧另造第二套 drawer。URL hash 深链可序列化整栈；`MAX_TRAIL` 只是深链 URL 长度预算（200），渲染栈不静默截断。\n- **seed 引用必须可校验**：评审边唯一来源是手维护的 `docs/repo-review/associations.json`（每条点名 codePath+symbol + requirement/decision/research/test 锚点）；模块理解 seed（`.repo-review/knowledge/understandings/*.seed.json`）用 path+qualifiedName+kind 定位。同步时把这些 locator 重新解析到 head 图并盖 digest、过严格 `CodeUnderstanding.v1` 交叉引用校验；解析不到的 locator 保留为 rejected 行，永不覆盖好行。**不要**用语义相似度自动加边。\n- **实际模型配置**：review 默认读取 `config/review-code-model.json`，`REVIEW_CODE_MODEL_CONFIG` 可覆盖，不读个人 Agent profile。启动只恢复知识，不自动调用生成式模型；启用的本地向量索引可后台补建。显式 `review:analyze` / `review:generate` 或用户操作才生成。模型/effort 经 ACP 校验，预算同时写入运行 trace；不要只改 example。人工 seed 仍不得冒充真实模型成果。\n- **数据与发布边界**：数据库、临时工作目录和构建暂存写 `.repo-review/runti",
+            "text": "…ackages/ui` 的 trail composable/OmDialog 系组件里，Code Wiki 直接复用，不在 codewiki 侧另造第二套 drawer。URL hash 深链可序列化整栈；`MAX_TRAIL` 只是深链 URL 长度预算（200），渲染栈不静默截断。\n- **seed 引用必须可校验**：评审边唯一来源是手维护的 `docs/repo-review/associations.json`（每条点名 codePath+symbol + requirement/decision/research/test 锚点）；模块理解 seed（`.repo-review/knowledge/understandings/*.seed.json`）用 path+qualifiedName+kind 定位。同步时把这些 locator 重新解析到 head 图并盖 digest、过严格 `CodeUnderstanding.v1` 交叉引用校验；解析不到的 locator 保留为 rejected 行，永不覆盖好行。**不要**用语义相似度自动加边。\n- **实际模型配置**：review 默认读取 `config/review-code-model.json`，`REVIEW_CODE_MODEL_CONFIG` 可覆盖，不读个人 Agent profile。",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 801,
+            "originalTextSha256": "a7510a8dc41c6d728cce690894bad16ab9e108a2af9c1f60ef981b76f2409678",
             "context": "概念：Code Wiki 与 repo-review 维护合同；统一知识产品、人类可读 label、seed 引用校验\ndocs/archive/2026-10-01-baseline/AGENTS.md\nomem：个人记忆与助理的实施约定\nCode Wiki / repo-review 维护规则",
             "headingPath": [
               "omem：个人记忆与助理的实施约定",
@@ -5051,7 +5081,10 @@
             "id": "7755c06004d17b2e69750a90dc58bdf25f23b1e2945cf24efe776153a81d5d9f",
             "kind": "source",
             "title": "docs/archive/2026-10-01-baseline/implementation/batch2/agent-runtime.md",
-            "text": "| role             | 工作                              | 输入                                    | 输出                   | 工具                                 |\n| ---------------- | --------------------------------- | --------------------------------------- | ---------------------- | ------------------------------------ |\n| extractor        | 提炼事实、经历、事项线索          | 固定材料+已验证 provenance+相关现行记忆 | ProposalBatch          | 默认无工具                           |\n| verifier         | 判断引文支持、条件/否定/冲突/意图 | 候选+原文+冲突集合                      | AssessmentBatch        | 默认无工具；需要时受限 evidence_read |\n| planner          | 补背景、拆下一步、提醒建议        | 已生效事项+依赖+明确目标                | PlanProposal           | 不执行对外动作                       |\n| feedback-curator | 将纠正归入同 scope 的后续约束     | 反馈+原提案+结果                        | Correct",
+            "text": "| role             | 工作                              | 输入                                    | 输出                   | 工具                                 |\n| ---------------- | --------------------------------- | --------------------------------------- | ---------------------- | ------------------------------------ |\n| extractor        | 提炼事实、经历、事项线索          | 固定材料+已验证 provenance+相关现行记忆 | ProposalBatch          | 默认无工具                           |\n| verifier         | 判断引文支持、条件/否定/冲突/意图 | 候选+原文+冲突集合                      | AssessmentBatch        | 默认无工具；需要时受限 evidence_read |\n| planner          |",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 800,
+            "originalTextSha256": "c5c21221bf29d03521944da4eedb208def1d0a03d1e6b2f728dafbea06b1fc3d",
             "context": "概念：五类认知角色的输入、输出和工具边界；extractor、verifier、planner、feedback-curator、answerer\ndocs/archive/2026-10-01-baseline/implementation/batch2/agent-runtime.md\nACP/CLI 运行包：提示词、Skills 与工具必须配套\n2. 角色划分",
             "headingPath": [
               "ACP/CLI 运行包：提示词、Skills 与工具必须配套",
@@ -5269,7 +5302,10 @@
             "id": "b8c5c13ecf177f06c7f20e85e6076177e9007cb61672a51f58c3964f3eeabfb1",
             "kind": "source",
             "title": "apps/server/src/quality/lark-annotations.ts",
-            "text": "….text.slice(0, 3000)}\\n\\n**请判断以下四点**\\n1. 这是否值得作为长期知识记录？\\n2. 建议事实是否准确且足够原子？\\n3. 是否保留了数字、条件、例外和适用范围？\\n4. 是否允许在“${sample.input.source.section}”范围自动沉淀？\\n\\n**建议答案**\\n处置：${label.disposition}\\n自动应用：${label.autoApply ? \"是\" : \"否\"}\\n${objects || \"无提炼对象\"}`,\n          },\n          {\n            tag: \"column_set\",\n            flex_mode: \"flow\",\n            horizontal_spacing: \"8px\",\n            columns: [\n              {\n                tag: \"column\",\n                width: \"auto\",\n                elements: [button(\"confirm\", \"标注正确\")],\n              },\n              {\n                tag: \"column\",\n                width: \"auto\",\n                elements: [button(\"abstain\", \"应不提炼\")],\n              },\n              {\n                tag: \"column\",\n                width: \"auto\",\n                elements:",
+            "text": "….text.slice(0, 3000)}\\n\\n**请判断以下四点**\\n1. 这是否值得作为长期知识记录？\\n2. 建议事实是否准确且足够原子？\\n3. 是否保留了数字、条件、例外和适用范围？\\n4. 是否允许在“${sample.input.source.section}”范围自动沉淀？\\n\\n**建议答案**\\n处置：${label.disposition}\\n自动应用：${label.autoApply ? \"是\" : \"否\"}\\n${objects || \"无提炼对象\"}`,\n          },\n          {\n            tag: \"column_set\",\n            flex_mode: \"flow\",\n            horizontal_spacing: \"8px\",\n            columns: [\n              {\n                tag: \"column\",\n                width: \"auto\",\n                elements: [button(\"confirm\", \"标注正确\")],\n              },\n              {\n                tag: \"column\",\n      ",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 800,
+            "originalTextSha256": "42b8770f49d2ecded6a469d25adc9848634a4a8039e94f4652feef3fcc8057a6",
             "context": "apps/server/src/quality/lark-annotations.ts\nQualityLarkAnnotationService\nQualityLarkAnnotationService.card",
             "headingPath": [
               "QualityLarkAnnotationService",
@@ -6141,7 +6177,10 @@
             "id": "7755c06004d17b2e69750a90dc58bdf25f23b1e2945cf24efe776153a81d5d9f",
             "kind": "source",
             "title": "docs/archive/2026-10-01-baseline/implementation/batch2/agent-runtime.md",
-            "text": "| role             | 工作                              | 输入                                    | 输出                   | 工具                                 |\n| ---------------- | --------------------------------- | --------------------------------------- | ---------------------- | ------------------------------------ |\n| extractor        | 提炼事实、经历、事项线索          | 固定材料+已验证 provenance+相关现行记忆 | ProposalBatch          | 默认无工具                           |\n| verifier         | 判断引文支持、条件/否定/冲突/意图 | 候选+原文+冲突集合                      | AssessmentBatch        | 默认无工具；需要时受限 evidence_read |\n| planner          | 补背景、拆下一步、提醒建议        | 已生效事项+依赖+明确目标                | PlanProposal           | 不执行对外动作                       |\n| feedback-curator | 将纠正归入同 scope 的后续约束     | 反馈+原提案+结果                        | Correct",
+            "text": "| role             | 工作                              | 输入                                    | 输出                   | 工具                                 |\n| ---------------- | --------------------------------- | --------------------------------------- | ---------------------- | ------------------------------------ |\n| extractor        | 提炼事实、经历、事项线索          | 固定材料+已验证 provenance+相关现行记忆 | ProposalBatch          | 默认无工具                           |\n| verifier         | 判断引文支持、条件/否定/冲突/意图 | 候选+原文+冲突集合                      | AssessmentBatch        | 默认无工具；需要时受限 evidence_read |\n| planner          |",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 800,
+            "originalTextSha256": "c5c21221bf29d03521944da4eedb208def1d0a03d1e6b2f728dafbea06b1fc3d",
             "context": "概念：五类认知角色的输入、输出和工具边界；extractor、verifier、planner、feedback-curator、answerer\ndocs/archive/2026-10-01-baseline/implementation/batch2/agent-runtime.md\nACP/CLI 运行包：提示词、Skills 与工具必须配套\n2. 角色划分",
             "headingPath": [
               "ACP/CLI 运行包：提示词、Skills 与工具必须配套",
@@ -6359,7 +6398,10 @@
             "id": "b8c5c13ecf177f06c7f20e85e6076177e9007cb61672a51f58c3964f3eeabfb1",
             "kind": "source",
             "title": "apps/server/src/quality/lark-annotations.ts",
-            "text": "….text.slice(0, 3000)}\\n\\n**请判断以下四点**\\n1. 这是否值得作为长期知识记录？\\n2. 建议事实是否准确且足够原子？\\n3. 是否保留了数字、条件、例外和适用范围？\\n4. 是否允许在“${sample.input.source.section}”范围自动沉淀？\\n\\n**建议答案**\\n处置：${label.disposition}\\n自动应用：${label.autoApply ? \"是\" : \"否\"}\\n${objects || \"无提炼对象\"}`,\n          },\n          {\n            tag: \"column_set\",\n            flex_mode: \"flow\",\n            horizontal_spacing: \"8px\",\n            columns: [\n              {\n                tag: \"column\",\n                width: \"auto\",\n                elements: [button(\"confirm\", \"标注正确\")],\n              },\n              {\n                tag: \"column\",\n                width: \"auto\",\n                elements: [button(\"abstain\", \"应不提炼\")],\n              },\n              {\n                tag: \"column\",\n                width: \"auto\",\n                elements:",
+            "text": "….text.slice(0, 3000)}\\n\\n**请判断以下四点**\\n1. 这是否值得作为长期知识记录？\\n2. 建议事实是否准确且足够原子？\\n3. 是否保留了数字、条件、例外和适用范围？\\n4. 是否允许在“${sample.input.source.section}”范围自动沉淀？\\n\\n**建议答案**\\n处置：${label.disposition}\\n自动应用：${label.autoApply ? \"是\" : \"否\"}\\n${objects || \"无提炼对象\"}`,\n          },\n          {\n            tag: \"column_set\",\n            flex_mode: \"flow\",\n            horizontal_spacing: \"8px\",\n            columns: [\n              {\n                tag: \"column\",\n                width: \"auto\",\n                elements: [button(\"confirm\", \"标注正确\")],\n              },\n              {\n                tag: \"column\",\n      ",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 800,
+            "originalTextSha256": "42b8770f49d2ecded6a469d25adc9848634a4a8039e94f4652feef3fcc8057a6",
             "context": "apps/server/src/quality/lark-annotations.ts\nQualityLarkAnnotationService\nQualityLarkAnnotationService.card",
             "headingPath": [
               "QualityLarkAnnotationService",
@@ -7147,7 +7189,10 @@
             "id": "4336072ca3ffa7f3e1ebe2e709013af36808cc7d2922d60b318645d982616856",
             "kind": "source",
             "title": "apps/server/tests/development-knowledge.test.ts",
-            "text": "const article = repository.publish({ version: 1, document: bindKnowledgeQuotes({ key: \"topic:overview\", title: \"统一记忆\", summary: \"保存与阅读\", category: \"overview\", sections: [{ key: \"reading\", title: \"如何阅读\", body: \"统一保存材料与知识。参考 [[source]]\" }], citations: [{ key: \"source\", label: \"使用指南\", reason: \"介绍保存范围\", relation: \"supports\", target: { kind: \"material\", key: material.key, startLine: 1, endLine: 3 }, quote: \"\" }], questions: [] }, new Map([[material.key, material]])), dependencies: [{ kind: \"material\", key: material.key, digest: material.digest }], generation: { model: \"fixture\", at: \"2026-10-01\", effort: null, trace: {} }, review: { model: \"fixture-verifier\", at: \"2026-10-01\", verdict: \"accepted\", trace: {} } });",
+            "text": "const article = repository.publish({ version: 1, document: bindKnowledgeQuotes({ key: \"topic:overview\", title: \"统一记忆\", summary: \"保存与阅读\", category: \"overview\", sections: [{ key: \"reading\", title: \"如何阅读\", body: \"统一保存材料与知识。参考 [[source]]\" }], citations: [{ key: \"source\", label: \"使用指南\", reason: \"介绍保存范围\", relation: \"supports\", target: { kind: \"material\", key: material.key, startLine: 1, endLine: 3 }, quote: \"\" }], questions: [] }, new Map([[material.key, material]])), dependencies: [{ kind: \"material\", key: material.key, digest: material.digest }], generation: { model: \"fixture\", at: \"2026-10-01\", e",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 717,
+            "originalTextSha256": "170e35a1cf381f4be03c5e4a2b26c35567395a363809f999c453dc0b7908a31f",
             "context": "apps/server/tests/development-knowledge.test.ts\narticle",
             "headingPath": [
               "article"
@@ -7751,7 +7796,10 @@
             "id": "21ee63a0a60da359f5f92e1ef3350edc5e0335d90f7308f939814e6a9c3e8126",
             "kind": "source",
             "title": "AGENTS.md",
-            "text": "1. 修改捕获、代码理解、知识生成/引用、检索或助手后，先提交检查通过的实现，再用真实 traex ACP / gpt-5.6-sol 更新受影响知识，单独提交产物。用户已授权，不需重复确认。\n2. 新读者指南按页面计划生成并独立复核。原有材料说明可用 osdk run review:generate <路径> --modules；保留历史，不能手改模型产物或用 seed/AST sync 冒充模型成果。\n3. 检查 current/stale/pending/failed 与实际引用，抽查读者是否能理解。上层受影响则更新，失败保留有效旧历史并说明原因；排队不等于应用成功。\n4. 检索修改运行 osdk run retrieval:verify 与 osdk run retrieval:index --review，并通过真实 HTTP 搜索检查中文问题；运行 osdk run review:verify --full 生成当前报告。旧报告不能继承为本轮通过率。\n5. 实际模型配置是 config/review-code-model.json（REVIEW_CODE_MODEL_CONFIG 可覆盖），不只改 example；保留研究、生成、独立复核与运行 trace。数据库和临时材料在 .repo-review/runtime/（gitignored），发布正文和验证报告按功能提交。\n6. .repo-review/data/ 与旧历史保留，不因本轮文档归档删除它们。固定历史引用不能静默跳到当前版本。",
+            "text": "1. 修改捕获、代码理解、知识生成/引用、检索或助手后，先提交检查通过的实现，再用真实 traex ACP / gpt-5.6-sol 更新受影响知识，单独提交产物。用户已授权，不需重复确认。\n2. 新读者指南按页面计划生成并独立复核。原有材料说明可用 osdk run review:generate <路径> --modules；保留历史，不能手改模型产物或用 seed/AST sync 冒充模型成果。\n3. 检查 current/stale/pending/failed 与实际引用，抽查读者是否能理解。上层受影响则更新，失败保留有效旧历史并说明原因；排队不等于应用成功。\n4. 检索修改运行 osdk run retrieval:verify 与 osdk run retrieval:index --review，并通过真实 HTTP 搜索检查中文问题；运行 osdk run review:verify --full 生成当前报告。旧报告不能继承为本轮通过率。\n5. 实际模型配置是 config/review-code-model.json（REVIEW_CODE_MODEL_CONFIG 可覆盖），不只改 example；保留研究、生成、独立复核与运行 trace。数据库和临时材料在 .repo-review/runtime/（gitignored），发布正文和验证报告按功能提",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 662,
+            "originalTextSha256": "f23ed0631637a6476d8287d66dc544a9a649869960b1688091cfb88ec2536ea9",
             "context": "AGENTS.md\nomem：以读懂、找回和行动为目标\n用本仓库验证本仓库",
             "headingPath": [
               "omem：以读懂、找回和行动为目标",
@@ -8214,7 +8262,10 @@
             "id": "4336072ca3ffa7f3e1ebe2e709013af36808cc7d2922d60b318645d982616856",
             "kind": "source",
             "title": "apps/server/tests/development-knowledge.test.ts",
-            "text": "const article = repository.publish({ version: 1, document: bindKnowledgeQuotes({ key: \"topic:overview\", title: \"统一记忆\", summary: \"保存与阅读\", category: \"overview\", sections: [{ key: \"reading\", title: \"如何阅读\", body: \"统一保存材料与知识。参考 [[source]]\" }], citations: [{ key: \"source\", label: \"使用指南\", reason: \"介绍保存范围\", relation: \"supports\", target: { kind: \"material\", key: material.key, startLine: 1, endLine: 3 }, quote: \"\" }], questions: [] }, new Map([[material.key, material]])), dependencies: [{ kind: \"material\", key: material.key, digest: material.digest }], generation: { model: \"fixture\", at: \"2026-10-01\", effort: null, trace: {} }, review: { model: \"fixture-verifier\", at: \"2026-10-01\", verdict: \"accepted\", trace: {} } });",
+            "text": "const article = repository.publish({ version: 1, document: bindKnowledgeQuotes({ key: \"topic:overview\", title: \"统一记忆\", summary: \"保存与阅读\", category: \"overview\", sections: [{ key: \"reading\", title: \"如何阅读\", body: \"统一保存材料与知识。参考 [[source]]\" }], citations: [{ key: \"source\", label: \"使用指南\", reason: \"介绍保存范围\", relation: \"supports\", target: { kind: \"material\", key: material.key, startLine: 1, endLine: 3 }, quote: \"\" }], questions: [] }, new Map([[material.key, material]])), dependencies: [{ kind: \"material\", key: material.key, digest: material.digest }], generation: { model: \"fixture\", at: \"2026-10-01\", e",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 717,
+            "originalTextSha256": "170e35a1cf381f4be03c5e4a2b26c35567395a363809f999c453dc0b7908a31f",
             "context": "apps/server/tests/development-knowledge.test.ts\narticle",
             "headingPath": [
               "article"
@@ -8818,7 +8869,10 @@
             "id": "21ee63a0a60da359f5f92e1ef3350edc5e0335d90f7308f939814e6a9c3e8126",
             "kind": "source",
             "title": "AGENTS.md",
-            "text": "1. 修改捕获、代码理解、知识生成/引用、检索或助手后，先提交检查通过的实现，再用真实 traex ACP / gpt-5.6-sol 更新受影响知识，单独提交产物。用户已授权，不需重复确认。\n2. 新读者指南按页面计划生成并独立复核。原有材料说明可用 osdk run review:generate <路径> --modules；保留历史，不能手改模型产物或用 seed/AST sync 冒充模型成果。\n3. 检查 current/stale/pending/failed 与实际引用，抽查读者是否能理解。上层受影响则更新，失败保留有效旧历史并说明原因；排队不等于应用成功。\n4. 检索修改运行 osdk run retrieval:verify 与 osdk run retrieval:index --review，并通过真实 HTTP 搜索检查中文问题；运行 osdk run review:verify --full 生成当前报告。旧报告不能继承为本轮通过率。\n5. 实际模型配置是 config/review-code-model.json（REVIEW_CODE_MODEL_CONFIG 可覆盖），不只改 example；保留研究、生成、独立复核与运行 trace。数据库和临时材料在 .repo-review/runtime/（gitignored），发布正文和验证报告按功能提交。\n6. .repo-review/data/ 与旧历史保留，不因本轮文档归档删除它们。固定历史引用不能静默跳到当前版本。",
+            "text": "1. 修改捕获、代码理解、知识生成/引用、检索或助手后，先提交检查通过的实现，再用真实 traex ACP / gpt-5.6-sol 更新受影响知识，单独提交产物。用户已授权，不需重复确认。\n2. 新读者指南按页面计划生成并独立复核。原有材料说明可用 osdk run review:generate <路径> --modules；保留历史，不能手改模型产物或用 seed/AST sync 冒充模型成果。\n3. 检查 current/stale/pending/failed 与实际引用，抽查读者是否能理解。上层受影响则更新，失败保留有效旧历史并说明原因；排队不等于应用成功。\n4. 检索修改运行 osdk run retrieval:verify 与 osdk run retrieval:index --review，并通过真实 HTTP 搜索检查中文问题；运行 osdk run review:verify --full 生成当前报告。旧报告不能继承为本轮通过率。\n5. 实际模型配置是 config/review-code-model.json（REVIEW_CODE_MODEL_CONFIG 可覆盖），不只改 example；保留研究、生成、独立复核与运行 trace。数据库和临时材料在 .repo-review/runtime/（gitignored），发布正文和验证报告按功能提",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 662,
+            "originalTextSha256": "f23ed0631637a6476d8287d66dc544a9a649869960b1688091cfb88ec2536ea9",
             "context": "AGENTS.md\nomem：以读懂、找回和行动为目标\n用本仓库验证本仓库",
             "headingPath": [
               "omem：以读懂、找回和行动为目标",
@@ -8973,7 +9027,10 @@
             "id": "de63a3d0289fbcbe54354c6b19f8ac3ec4aa32c0ea7ebc864b9394948922e8b1",
             "kind": "source",
             "title": "scripts/code-wiki-viewport.ts",
-            "text": "await page.getByRole(\"button\", { name: \"能力与连接\", exact: true }).click();\n    await expect(page.getByText(\"正在连接 Agent，读取支持的模型与思考强度…\")).toBeVisible();\n    expect((await response).ok()).toBe(true);\n    await expect(page.getByText(\"已读取此 Agent 支持的模型与思考强度\")).toBeVisible();\n    await expect(page.getByText(\"当前已连接本地服务，未启用访问令牌，无需填写。\")).toBeVisible();\n    await page.screenshot({ path: `${OUT}/settings-1440.png`, fullPage: true });\n    await page.getByRole(\"button\", { name: \"知识库\", exact: true }).click();\n  });\n  await check(\"category browsing and composer at desktop, tablet and mobile widths\", async () => {",
+            "text": "await page.getByRole(\"button\", { name: \"能力与连接\", exact: true }).click();\n    await expect(page.getByText(\"正在连接 Agent，读取支持的模型与思考强度…\")).toBeVisible();\n    expect((await response).ok()).toBe(true);\n    await expect(page.getByText(\"已读取此 Agent 支持的模型与思考强度\")).toBeVisible();\n    await expect(page.getByText(\"当前已连接本地服务，未启用访问令牌，无需填写。\")).toBeVisible();\n    await page.screenshot({ path: `${OUT}/settings-1440.png`, fullPage: true });\n    await page.getByRole(\"button\", { name: \"知识库\", exact: true }).click();\n  });\n  await check(\"category browsing and composer at desktop, tablet and mobile widths\", async () => ",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 601,
+            "originalTextSha256": "c6386cbe2d937c166fe3c6c8db6360b574c8136e4a51090dbd11a9934ed0e102",
             "context": "scripts/code-wiki-viewport.ts\n模块定义与初始化",
             "headingPath": [
               "模块定义与初始化"
@@ -9474,7 +9531,10 @@
             "id": "21ee63a0a60da359f5f92e1ef3350edc5e0335d90f7308f939814e6a9c3e8126",
             "kind": "source",
             "title": "AGENTS.md",
-            "text": "1. 修改捕获、代码理解、知识生成/引用、检索或助手后，先提交检查通过的实现，再用真实 traex ACP / gpt-5.6-sol 更新受影响知识，单独提交产物。用户已授权，不需重复确认。\n2. 新读者指南按页面计划生成并独立复核。原有材料说明可用 osdk run review:generate <路径> --modules；保留历史，不能手改模型产物或用 seed/AST sync 冒充模型成果。\n3. 检查 current/stale/pending/failed 与实际引用，抽查读者是否能理解。上层受影响则更新，失败保留有效旧历史并说明原因；排队不等于应用成功。\n4. 检索修改运行 osdk run retrieval:verify 与 osdk run retrieval:index --review，并通过真实 HTTP 搜索检查中文问题；运行 osdk run review:verify --full 生成当前报告。旧报告不能继承为本轮通过率。\n5. 实际模型配置是 config/review-code-model.json（REVIEW_CODE_MODEL_CONFIG 可覆盖），不只改 example；保留研究、生成、独立复核与运行 trace。数据库和临时材料在 .repo-review/runtime/（gitignored），发布正文和验证报告按功能提交。\n6. .repo-review/data/ 与旧历史保留，不因本轮文档归档删除它们。固定历史引用不能静默跳到当前版本。",
+            "text": "1. 修改捕获、代码理解、知识生成/引用、检索或助手后，先提交检查通过的实现，再用真实 traex ACP / gpt-5.6-sol 更新受影响知识，单独提交产物。用户已授权，不需重复确认。\n2. 新读者指南按页面计划生成并独立复核。原有材料说明可用 osdk run review:generate <路径> --modules；保留历史，不能手改模型产物或用 seed/AST sync 冒充模型成果。\n3. 检查 current/stale/pending/failed 与实际引用，抽查读者是否能理解。上层受影响则更新，失败保留有效旧历史并说明原因；排队不等于应用成功。\n4. 检索修改运行 osdk run retrieval:verify 与 osdk run retrieval:index --review，并通过真实 HTTP 搜索检查中文问题；运行 osdk run review:verify --full 生成当前报告。旧报告不能继承为本轮通过率。\n5. 实际模型配置是 config/review-code-model.json（REVIEW_CODE_MODEL_CONFIG 可覆盖），不只改 example；保留研究、生成、独立复核与运行 trace。数据库和临时材料在 .repo-review/runtime/（gitignored），发布正文和验证报告按功能提",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 662,
+            "originalTextSha256": "f23ed0631637a6476d8287d66dc544a9a649869960b1688091cfb88ec2536ea9",
             "context": "AGENTS.md\nomem：以读懂、找回和行动为目标\n用本仓库验证本仓库",
             "headingPath": [
               "omem：以读懂、找回和行动为目标",
@@ -9549,7 +9609,10 @@
             "id": "e28c39519e8b2356e8850981a10c0278fd9701f0ede6fe783dab8d79ee07e4d6",
             "kind": "source",
             "title": "apps/web/src/App.vue",
-            "text": "…<p class=\"muted\">\n        使用运行 omem 的电脑上已登录的\n        Agent。进入此页会自动读取可用模型与思考强度；问答使用这里选择的配置。\n      </p>\n      <OmPanel title=\"问答运行配置\"\n        ><div class=\"form\">\n          <label\n            >Agent 接入<select v-model=\"profileId\" @change=\"setProfile\">\n              <option v-for=\"p in profiles\" :key=\"p.id\" :value=\"p.id\">\n                {{ p.name }}\n              </option>\n            </select></label\n          >\n          <div class=\"form-grid\">\n            <label\n              >模型（留空使用宿主默认）<input\n                v-model=\"model\"\n                list=\"model-values\"\n                placeholder=\"模型 ID\"\n              /><datalist id=\"model-values\">\n                <option\n                  v-for=\"o in options.find((o) => o.id === 'model')?.values ||\n                  []\"\n                  :",
+            "text": "…<p class=\"muted\">\n        使用运行 omem 的电脑上已登录的\n        Agent。进入此页会自动读取可用模型与思考强度；问答使用这里选择的配置。\n      </p>\n      <OmPanel title=\"问答运行配置\"\n        ><div class=\"form\">\n          <label\n            >Agent 接入<select v-model=\"profileId\" @change=\"setProfile\">\n              <option v-for=\"p in profiles\" :key=\"p.id\" :value=\"p.id\">\n                {{ p.name }}\n              </option>\n            </select></label\n          >\n          <div class=\"form-grid\">\n            <label\n              >模型（留空使用宿主默认）<input\n                v-model=\"model\"\n                list=\"model-values\"\n                placeholder=\"模型",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 794,
+            "originalTextSha256": "d71792d4fbab1bba90f16f30946f80f596002bc45a78cc754a510e823b2aeb30",
             "context": "apps/web/src/App.vue\n模块定义与初始化",
             "headingPath": [
               "模块定义与初始化"
@@ -9726,7 +9789,10 @@
             "id": "625df642f6b32d3ae32bdd30d059e43602cd0d4e037b88e210512e37aea43908",
             "kind": "source",
             "title": "docs/reader-first/fast-assistant.md",
-            "text": "| 问题 | 改造与位置 | 保留的限制 |\n| --- | --- | --- |\n| 想试快模型却同时改变写作模型 | `config.ts` 增加 `assistant.profileId`；`app.ts` 分开选择问答与知识配置 | profile 仍需配置可用的 ACP CLI |\n| 原始检索结果缺用途与适用时间 | `assistant/runtime.ts` 把固定版本的材料说明传给 Agent，派生讲解也保留说明；`assistant/research.ts` 在最终引用中保留同版本说明 | 说明是派生标注，可能缺失或判断错误；不是事实证明 |\n| 模型为定位初始结果再次翻全库目录 | 原文结果带 `materialKey`、路径、固定行范围；目录可按需搜索，不再要求先读完整 catalog | 仍需根据问题补查，不能把初始命中当成答案 |\n| 同一库每次提问重新解析 AST、切词建索引 | `research-snapshot.ts` 复用授权范围内完整来源的索引和 FTS；再由原有投影逻辑检查版本、说明和索引身份，过期的重建 | 不是复制整个私人数据库；讲解与状态仍按快照可见依赖生成；快照准备仍有成本 |\n| 每次读取一个原件版本都扫描全部片段 | 迁移 21 增加 `fragments(revision_id, ordinal)` 索引，服务原文读取、历史展开和调查快照 | 不改变材料或向量身份；首次启动会建索引 |\n| 很难判断时间花在哪 | `acp-model.ts` 留下材料准备、Agent 调查和总时间；比较脚本另计初始检索 | Agent 时间含启动、工具和提交，不等于纯模型推理时间；不是首字延迟 |",
+            "text": "| 问题 | 改造与位置 | 保留的限制 |\n| --- | --- | --- |\n| 想试快模型却同时改变写作模型 | `config.ts` 增加 `assistant.profileId`；`app.ts` 分开选择问答与知识配置 | profile 仍需配置可用的 ACP CLI |\n| 原始检索结果缺用途与适用时间 | `assistant/runtime.ts` 把固定版本的材料说明传给 Agent，派生讲解也保留说明；`assistant/research.ts` 在最终引用中保留同版本说明 | 说明是派生标注，可能缺失或判断错误；不是事实证明 |\n| 模型为定位初始结果再次翻全库目录 | 原文结果带 `materialKey`、路径、固定行范围；目录可按需搜索，不再要求先读完整 catalog | 仍需根据问题补查，不能把初始命中当成答案 |\n| 同一库每次提问重新解析 AST、切词建索引 | `research-snapshot.ts` 复用授权范围内完整来源的索引和 FTS；再由原有投影逻辑检查版本、说明和索引身份，过期的重建 | 不是复制整个私人数据库；讲解与状态仍按快照可见依赖生成；快照准备仍有成本 |\n| 每次读取一个原件版本都扫描全部片段 | 迁移 21 增加 `fragments(revision_id, ordinal)` 索引，服务原文读取、历史",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 731,
+            "originalTextSha256": "ae827e7cfd7bbc168b20580152dc7a4163da18c834bcb7a41e924d64e67bab9d",
             "context": "docs/reader-first/fast-assistant.md\n用快模型调查材料并回答\n本轮对代码的改造",
             "headingPath": [
               "用快模型调查材料并回答",
@@ -10014,7 +10080,10 @@
             "id": "de63a3d0289fbcbe54354c6b19f8ac3ec4aa32c0ea7ebc864b9394948922e8b1",
             "kind": "source",
             "title": "scripts/code-wiki-viewport.ts",
-            "text": "await page.getByRole(\"button\", { name: \"能力与连接\", exact: true }).click();\n    await expect(page.getByText(\"正在连接 Agent，读取支持的模型与思考强度…\")).toBeVisible();\n    expect((await response).ok()).toBe(true);\n    await expect(page.getByText(\"已读取此 Agent 支持的模型与思考强度\")).toBeVisible();\n    await expect(page.getByText(\"当前已连接本地服务，未启用访问令牌，无需填写。\")).toBeVisible();\n    await page.screenshot({ path: `${OUT}/settings-1440.png`, fullPage: true });\n    await page.getByRole(\"button\", { name: \"知识库\", exact: true }).click();\n  });\n  await check(\"category browsing and composer at desktop, tablet and mobile widths\", async () => {",
+            "text": "await page.getByRole(\"button\", { name: \"能力与连接\", exact: true }).click();\n    await expect(page.getByText(\"正在连接 Agent，读取支持的模型与思考强度…\")).toBeVisible();\n    expect((await response).ok()).toBe(true);\n    await expect(page.getByText(\"已读取此 Agent 支持的模型与思考强度\")).toBeVisible();\n    await expect(page.getByText(\"当前已连接本地服务，未启用访问令牌，无需填写。\")).toBeVisible();\n    await page.screenshot({ path: `${OUT}/settings-1440.png`, fullPage: true });\n    await page.getByRole(\"button\", { name: \"知识库\", exact: true }).click();\n  });\n  await check(\"category browsing and composer at desktop, tablet and mobile widths\", async () => ",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 601,
+            "originalTextSha256": "c6386cbe2d937c166fe3c6c8db6360b574c8136e4a51090dbd11a9934ed0e102",
             "context": "scripts/code-wiki-viewport.ts\n模块定义与初始化",
             "headingPath": [
               "模块定义与初始化"
@@ -10482,7 +10551,10 @@
             "id": "21ee63a0a60da359f5f92e1ef3350edc5e0335d90f7308f939814e6a9c3e8126",
             "kind": "source",
             "title": "AGENTS.md",
-            "text": "1. 修改捕获、代码理解、知识生成/引用、检索或助手后，先提交检查通过的实现，再用真实 traex ACP / gpt-5.6-sol 更新受影响知识，单独提交产物。用户已授权，不需重复确认。\n2. 新读者指南按页面计划生成并独立复核。原有材料说明可用 osdk run review:generate <路径> --modules；保留历史，不能手改模型产物或用 seed/AST sync 冒充模型成果。\n3. 检查 current/stale/pending/failed 与实际引用，抽查读者是否能理解。上层受影响则更新，失败保留有效旧历史并说明原因；排队不等于应用成功。\n4. 检索修改运行 osdk run retrieval:verify 与 osdk run retrieval:index --review，并通过真实 HTTP 搜索检查中文问题；运行 osdk run review:verify --full 生成当前报告。旧报告不能继承为本轮通过率。\n5. 实际模型配置是 config/review-code-model.json（REVIEW_CODE_MODEL_CONFIG 可覆盖），不只改 example；保留研究、生成、独立复核与运行 trace。数据库和临时材料在 .repo-review/runtime/（gitignored），发布正文和验证报告按功能提交。\n6. .repo-review/data/ 与旧历史保留，不因本轮文档归档删除它们。固定历史引用不能静默跳到当前版本。",
+            "text": "1. 修改捕获、代码理解、知识生成/引用、检索或助手后，先提交检查通过的实现，再用真实 traex ACP / gpt-5.6-sol 更新受影响知识，单独提交产物。用户已授权，不需重复确认。\n2. 新读者指南按页面计划生成并独立复核。原有材料说明可用 osdk run review:generate <路径> --modules；保留历史，不能手改模型产物或用 seed/AST sync 冒充模型成果。\n3. 检查 current/stale/pending/failed 与实际引用，抽查读者是否能理解。上层受影响则更新，失败保留有效旧历史并说明原因；排队不等于应用成功。\n4. 检索修改运行 osdk run retrieval:verify 与 osdk run retrieval:index --review，并通过真实 HTTP 搜索检查中文问题；运行 osdk run review:verify --full 生成当前报告。旧报告不能继承为本轮通过率。\n5. 实际模型配置是 config/review-code-model.json（REVIEW_CODE_MODEL_CONFIG 可覆盖），不只改 example；保留研究、生成、独立复核与运行 trace。数据库和临时材料在 .repo-review/runtime/（gitignored），发布正文和验证报告按功能提",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 662,
+            "originalTextSha256": "f23ed0631637a6476d8287d66dc544a9a649869960b1688091cfb88ec2536ea9",
             "context": "AGENTS.md\nomem：以读懂、找回和行动为目标\n用本仓库验证本仓库",
             "headingPath": [
               "omem：以读懂、找回和行动为目标",
@@ -10557,7 +10629,10 @@
             "id": "e28c39519e8b2356e8850981a10c0278fd9701f0ede6fe783dab8d79ee07e4d6",
             "kind": "source",
             "title": "apps/web/src/App.vue",
-            "text": "…<p class=\"muted\">\n        使用运行 omem 的电脑上已登录的\n        Agent。进入此页会自动读取可用模型与思考强度；问答使用这里选择的配置。\n      </p>\n      <OmPanel title=\"问答运行配置\"\n        ><div class=\"form\">\n          <label\n            >Agent 接入<select v-model=\"profileId\" @change=\"setProfile\">\n              <option v-for=\"p in profiles\" :key=\"p.id\" :value=\"p.id\">\n                {{ p.name }}\n              </option>\n            </select></label\n          >\n          <div class=\"form-grid\">\n            <label\n              >模型（留空使用宿主默认）<input\n                v-model=\"model\"\n                list=\"model-values\"\n                placeholder=\"模型 ID\"\n              /><datalist id=\"model-values\">\n                <option\n                  v-for=\"o in options.find((o) => o.id === 'model')?.values ||\n                  []\"\n                  :",
+            "text": "…<p class=\"muted\">\n        使用运行 omem 的电脑上已登录的\n        Agent。进入此页会自动读取可用模型与思考强度；问答使用这里选择的配置。\n      </p>\n      <OmPanel title=\"问答运行配置\"\n        ><div class=\"form\">\n          <label\n            >Agent 接入<select v-model=\"profileId\" @change=\"setProfile\">\n              <option v-for=\"p in profiles\" :key=\"p.id\" :value=\"p.id\">\n                {{ p.name }}\n              </option>\n            </select></label\n          >\n          <div class=\"form-grid\">\n            <label\n              >模型（留空使用宿主默认）<input\n                v-model=\"model\"\n                list=\"model-values\"\n                placeholder=\"模型",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 794,
+            "originalTextSha256": "d71792d4fbab1bba90f16f30946f80f596002bc45a78cc754a510e823b2aeb30",
             "context": "apps/web/src/App.vue\n模块定义与初始化",
             "headingPath": [
               "模块定义与初始化"
@@ -10734,7 +10809,10 @@
             "id": "625df642f6b32d3ae32bdd30d059e43602cd0d4e037b88e210512e37aea43908",
             "kind": "source",
             "title": "docs/reader-first/fast-assistant.md",
-            "text": "| 问题 | 改造与位置 | 保留的限制 |\n| --- | --- | --- |\n| 想试快模型却同时改变写作模型 | `config.ts` 增加 `assistant.profileId`；`app.ts` 分开选择问答与知识配置 | profile 仍需配置可用的 ACP CLI |\n| 原始检索结果缺用途与适用时间 | `assistant/runtime.ts` 把固定版本的材料说明传给 Agent，派生讲解也保留说明；`assistant/research.ts` 在最终引用中保留同版本说明 | 说明是派生标注，可能缺失或判断错误；不是事实证明 |\n| 模型为定位初始结果再次翻全库目录 | 原文结果带 `materialKey`、路径、固定行范围；目录可按需搜索，不再要求先读完整 catalog | 仍需根据问题补查，不能把初始命中当成答案 |\n| 同一库每次提问重新解析 AST、切词建索引 | `research-snapshot.ts` 复用授权范围内完整来源的索引和 FTS；再由原有投影逻辑检查版本、说明和索引身份，过期的重建 | 不是复制整个私人数据库；讲解与状态仍按快照可见依赖生成；快照准备仍有成本 |\n| 每次读取一个原件版本都扫描全部片段 | 迁移 21 增加 `fragments(revision_id, ordinal)` 索引，服务原文读取、历史展开和调查快照 | 不改变材料或向量身份；首次启动会建索引 |\n| 很难判断时间花在哪 | `acp-model.ts` 留下材料准备、Agent 调查和总时间；比较脚本另计初始检索 | Agent 时间含启动、工具和提交，不等于纯模型推理时间；不是首字延迟 |",
+            "text": "| 问题 | 改造与位置 | 保留的限制 |\n| --- | --- | --- |\n| 想试快模型却同时改变写作模型 | `config.ts` 增加 `assistant.profileId`；`app.ts` 分开选择问答与知识配置 | profile 仍需配置可用的 ACP CLI |\n| 原始检索结果缺用途与适用时间 | `assistant/runtime.ts` 把固定版本的材料说明传给 Agent，派生讲解也保留说明；`assistant/research.ts` 在最终引用中保留同版本说明 | 说明是派生标注，可能缺失或判断错误；不是事实证明 |\n| 模型为定位初始结果再次翻全库目录 | 原文结果带 `materialKey`、路径、固定行范围；目录可按需搜索，不再要求先读完整 catalog | 仍需根据问题补查，不能把初始命中当成答案 |\n| 同一库每次提问重新解析 AST、切词建索引 | `research-snapshot.ts` 复用授权范围内完整来源的索引和 FTS；再由原有投影逻辑检查版本、说明和索引身份，过期的重建 | 不是复制整个私人数据库；讲解与状态仍按快照可见依赖生成；快照准备仍有成本 |\n| 每次读取一个原件版本都扫描全部片段 | 迁移 21 增加 `fragments(revision_id, ordinal)` 索引，服务原文读取、历史",
+            "textRetainedAs": "excerpt",
+            "originalTextLength": 731,
+            "originalTextSha256": "ae827e7cfd7bbc168b20580152dc7a4163da18c834bcb7a41e924d64e67bab9d",
             "context": "docs/reader-first/fast-assistant.md\n用快模型调查材料并回答\n本轮对代码的改造",
             "headingPath": [
               "用快模型调查材料并回答",
@@ -11019,5 +11097,10 @@
   "completedAt": "2026-10-03T12:59:23.318Z",
   "corpusUnchanged": true,
   "rawReport": ".repo-review/runtime/research/assistant-reading/catalog-comparison/report.json",
-  "rawSha256": "edd17962cd835f5b4c2736615528a91053251c83feb7f49d24cffaf8fd670a2a"
+  "rawSha256": "edd17962cd835f5b4c2736615528a91053251c83feb7f49d24cffaf8fd670a2a",
+  "retention": {
+    "compactedAt": "2026-10-04T10:02:22.768Z",
+    "originalReportSha256": "1ef765324b804a3b5781f62c63e71b15266c1209cd4af621aa15f9fee7f83366",
+    "policy": "保留原实验时间、题目、排名、分数、来源与评语；删除重复 fullUnit 原文，长命中正文只留前 600 字并记录原文长度和摘要。ranking.passages 保持完整，以便原样重跑既有重排实验。不是新验证结果。完整旧报告可在 Git 历史读取。"
+  }
 }
