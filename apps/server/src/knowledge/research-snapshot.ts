@@ -87,6 +87,19 @@ export function researchSnapshot(input: {
         sourceIds.has(String(r.source_id)),
       ),
     );
+    // Project names/descriptions are personal metadata, not evidence granted by
+    // one shared fragment. Only personal research receives this catalog, and
+    // memberships/counts are limited to originals admitted into this snapshot.
+    const groupSources = new Set(input.materials
+      .filter(m => revisionIds.has(m.revisionId)).map(m => m.sourceId));
+    const groups = input.includeUnanchoredState
+      ? all("material_contexts").filter(r => r.workspace_id === "personal") : [];
+    const groupIds = new Set(groups.map(r => String(r.id)));
+    const memberships = all("material_context_sources").filter(r =>
+      groupIds.has(String(r.context_id)) && groupSources.has(String(r.source_id)));
+    const admittedGroups = new Set(memberships.map(r => String(r.context_id)));
+    copy("material_contexts", groups.filter(r => admittedGroups.has(String(r.id))));
+    copy("material_context_sources", memberships);
     copy(
       "review_relations",
       all("review_relations").filter(

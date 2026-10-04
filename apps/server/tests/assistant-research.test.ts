@@ -150,6 +150,18 @@ function payload(result: unknown): any {
   return JSON.parse(content.find((block) => block.type === "text")!.text!);
 }
 
+it("does not expose personal project metadata to a shared conversation through a visible original", async () => {
+  const {store, capture, open} = setup();
+  const material = capture("public-note", "公开活动安排。");
+  const group = store.contexts.create({name: "私人项目名", kind: "project", description: "私有范围说明"});
+  store.tx(() => store.contexts.setForSource(material.sourceId, [group.id]));
+  const permitted = new Set(material.fragments.map(f=>f.id));
+  const {workspace, call} = await open(id=>permitted.has(id));
+  expect(payload(await call("list_material_groups", {})).groups).toEqual([]);
+  expect(readFileSync(join(workspace, "catalog.json"), "utf8")).not.toContain(group.id);
+  expect(readFileSync(join(workspace, "groups.json"), "utf8")).not.toContain(group.name);
+});
+
 it("excludes a hidden historical dependency from native snapshots, catalogs and MCP reads even when its current article is public", async () => {
   const { repository, capture, open } = setup();
   const hidden = capture(
