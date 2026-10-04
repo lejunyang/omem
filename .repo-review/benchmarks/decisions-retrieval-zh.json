@@ -1,0 +1,845 @@
+{
+  "version": 1,
+  "description": "2026-10-04 实际 dev HTTP 搜索的 5 个问题、各前 6 条命中；逐条完整保存可见文本。人工审阅后冻结标签再运行模型。新措辞不等于独立盲测；题材与库内材料有关。direct 表示可支持答案或关键条件，不代表已验证所有实现行为。background/topic 的争议采用多个可接受标签。原始固定 target 保留用于核对。没有改写排序或只选好例子。",
+  "optionSets": {
+    "relevance": [
+      {
+        "key": "direct",
+        "description": "直接回答用户当前问题，或给出决定答案的必要条件"
+      },
+      {
+        "key": "background",
+        "description": "有助于理解的背景，但不直接回答当前问题"
+      },
+      {
+        "key": "topic",
+        "description": "仅提到同一话题、问题或计划，没有提供当前问题的答案"
+      },
+      {
+        "key": "irrelevant",
+        "description": "与当前问题无关"
+      },
+      {
+        "key": "conflicting",
+        "description": "与已知有效信息冲突，必须进一步核对才能用于回答"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "live-1-hit-1",
+      "group": "live-1",
+      "context": "{\"标题\": \"Lark 运行宿主真实环境冒烟验证\", \"章节\": [\"断言、输出与未覆盖边界\"], \"类型\": \"knowledge\", \"正文\": \"该脚本明确断言的是“能力无缺失且宿主产生 connected 事件”，并未直接创建测试消息、验证入站事件被捕获、确认记忆写入内容，或核对实际出站消息到达。允许投递开关只是放行已有队列，不能把投递成功等同于本脚本的连接成功；此外，它只验证一条 active 连接，多连接选择、公平性及失效连接恢复均不在当前流程内。[[c8]]\", \"适用说明\": null}",
+      "question": "用户问题：我只是询问已有安排，会不会被创建为新待办？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "irrelevant",
+        "topic"
+      ],
+      "provenance": {
+        "query": "我只是询问已有安排，会不会被创建为新待办？",
+        "originalRank": 1,
+        "target": {
+          "kind": "knowledge",
+          "key": "omem:scripts/live-lark-host-smoke.ts",
+          "revision": "6f7fc70e3e0f38dd118e2d70c0cc95dddc7845542a062fbffa6b3afcfefcc308",
+          "section": "assertions-and-limits"
+        },
+        "routes": [
+          "bm25",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-1-hit-2",
+      "group": "live-1",
+      "context": "{\"标题\": \"每日消息工作流配方与提示词组装\", \"章节\": [\"作用与权限边界\"], \"类型\": \"knowledge\", \"正文\": \"模块把日常消息的处理规则集中为版本化配方，并明确这些规则只是处理策略：被捕获的消息是待分析的材料，本身不构成调用工具或修改事项的授权。[[c1]] 各配方进一步限定可采取的动作，例如讨论中他人的承诺不自动成为当前用户的任务，等待流程不得自动对外联系或声称回复已经到达，回顾询问也不能直接改变任务状态或虚构进展。[[c2]]\", \"适用说明\": null}",
+      "question": "用户问题：我只是询问已有安排，会不会被创建为新待办？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "direct"
+      ],
+      "provenance": {
+        "query": "我只是询问已有安排，会不会被创建为新待办？",
+        "originalRank": 2,
+        "target": {
+          "kind": "knowledge",
+          "key": "omem:apps/server/src/assistant/message-workflows.ts",
+          "revision": "746392ddaca454f625ef0102de91cdce3c2b1e0749accebcbdb5a887e2f9788c",
+          "section": "purpose"
+        },
+        "routes": [
+          "bm25",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-1-hit-3",
+      "group": "live-1",
+      "context": "{\"标题\": \"以 systemd 用户服务运行 omem\", \"章节\": [\"适用场景与前置条件\"], \"类型\": \"knowledge\", \"正文\": \"该模板适合希望把 omem 作为个人后台进程交给 systemd 管理的场景。服务被安排在 `network-online.target` 之后启动，但这只是启动顺序约束，不表示模板会主动拉起该目标，也不保证届时网络实际可用。复制到用户级 systemd 目录前，必须先填写真实路径；因此它是**部署起点**，不是已完成部署的证明。参考 [[c1]]\", \"适用说明\": null}",
+      "question": "用户问题：我只是询问已有安排，会不会被创建为新待办？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "irrelevant"
+      ],
+      "provenance": {
+        "query": "我只是询问已有安排，会不会被创建为新待办？",
+        "originalRank": 3,
+        "target": {
+          "kind": "knowledge",
+          "key": "omem:deploy/omem.service.example",
+          "revision": "8e9acca1d740bff6e270efc02073429438295a3847a48a9d1b5c0b57bfb63adf",
+          "section": "purpose"
+        },
+        "routes": [
+          "bm25",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-1-hit-4",
+      "group": "live-1",
+      "context": "{\"标题\": \"apps/server/src/assistant/runtime.ts\", \"章节\": [\"TASK_INTENT_PATTERNS\"], \"类型\": \"source\", \"正文\": \"/**\\n * Deterministic detection of an explicit owner task-creation / assignment intent.\\n * The model is NOT trusted to decide this: a consultation question that mentions\\n * a task topic must never auto-create a task, even if the model emits create_task.\\n */\\nconst TASK_INTENT_PATTERNS = [\\n  /帮我跟进/,\\n  /帮我追踪/,\\n  /记录.*等待/,\\n  /帮我记/,\\n  /帮我建/,\\n  /帮我创建/,\\n  /帮我写/,\\n  /帮我安排/,\\n  /帮我提/,\\n  /提醒我/,\\n  /记得/,\\n  /待办/,\\n  /建一个?任务/,\\n  /创建一个?任务/,\\n  /加个?任务/,\\n  /记录一下/,\\n  /记一下/,\\n  /安排一下/,\\n  /设个?提醒/,\\n  /明天?要/,\\n  /周五?要/,\\n  /周[一二三四五六日天]要/,\\n  /^\\\\s*todo\\\\b/i,\\n  /^\\\\s*task[:：]/i,\\n];\", \"适用说明\": null}",
+      "question": "用户问题：我只是询问已有安排，会不会被创建为新待办？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "direct"
+      ],
+      "provenance": {
+        "query": "我只是询问已有安排，会不会被创建为新待办？",
+        "originalRank": 4,
+        "target": {
+          "kind": "source",
+          "key": "omem:apps/server/src/assistant/runtime.ts",
+          "revisionId": "0f871692-e306-4de7-8a28-b9ef52b3df76",
+          "digest": "6c6c9d2aeeca69a97223479acab948bdd8993259bf53c68def2ec16af92a1ce6",
+          "startLine": 200,
+          "endLine": 230,
+          "fragmentIds": [
+            "0c1337d8-472a-41a4-93ab-0e5eb70c8f6b"
+          ]
+        },
+        "routes": [
+          "bm25",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-1-hit-5",
+      "group": "live-1",
+      "context": "{\"标题\": \"Lark 通知投递、聚合与重试状态机\", \"章节\": [\"Worker 编排、安全边界与验证缺口\"], \"类型\": \"knowledge\", \"正文\": \"材料未展示调度循环、意图创建入口、表结构或测试，因而不能确认运行频率，也不能声称并发与故障路径已有自动化覆盖。条件抢占和非活动标注会话守卫说明应重点验证双 Worker 竞争、租约过期重领、旧令牌回写及取消竞态。[[c10]]\", \"适用说明\": null}",
+      "question": "用户问题：我只是询问已有安排，会不会被创建为新待办？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "irrelevant",
+        "topic"
+      ],
+      "provenance": {
+        "query": "我只是询问已有安排，会不会被创建为新待办？",
+        "originalRank": 5,
+        "target": {
+          "kind": "knowledge",
+          "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+          "revision": "bf748f6503bc203f093866d0c1221bf44e9c89fa5107a816a286a2c312749776",
+          "section": "worker-and-boundaries"
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-1-hit-6",
+      "group": "live-1",
+      "context": "{\"标题\": \"jobs · 模块理解\", \"章节\": [\"控制、留痕与当前限制\"], \"类型\": \"knowledge\", \"正文\": \"租约语义仍有待确认：`markRunning` 要求原租约未到期，但 heartbeat 只校验 token、状态和取消标记，没有检查原到期时间，因而可能续回已过期但尚未被重新领取的租约。[[c12]] `AbortSignal` 也只是协作式通知，处理器是否及时停止外部副作用取决于具体实现。现有材料未包含表结构与测试，无法确认并发去重、双 worker 竞争、旧 token 防覆盖及事务回滚已有真实行为保障。\", \"适用说明\": null}",
+      "question": "用户问题：我只是询问已有安排，会不会被创建为新待办？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "irrelevant"
+      ],
+      "provenance": {
+        "query": "我只是询问已有安排，会不会被创建为新待办？",
+        "originalRank": 6,
+        "target": {
+          "kind": "knowledge",
+          "key": "module:jobs",
+          "revision": "962fb819538181c8fa4bfce6cff07e6eed594c0161c5709fe382586ca8099e88",
+          "section": "control_progress_limits",
+          "reviewState": "needs-review"
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-2-hit-1",
+      "group": "live-2",
+      "context": "{\"标题\": \"docs/reader-first/progress.md\", \"章节\": [\"当前实施进度\", \"本轮：保留仍有依据的章节，减少重复检索结果\"], \"类型\": \"source\", \"正文\": \"检索不再因一处引用变化丢掉整篇解释；按完整章节保留引用版本仍匹配的内容，并继续标为待复核背景。指向子文章某一章的固定引用按该章核对，整篇引用仍要求全部章节可用；所有调查依赖的可见性检查保留。结果按文章章节去重，为其他解释留出位置。范围与限制见[统一检索](retrieval-redesign.md)，同库实际内容、真实 Sol 与最终检查更新在[当前检索报告](../../.repo-review/knowledge/verification/unified-retrieval.md)。本轮没有修改 UI，未重做浏览器布局验收。\", \"适用说明\": null}",
+      "question": "用户问题：我引用文章某一章，另一章的来源更新会让这个引用失效吗？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "direct"
+      ],
+      "provenance": {
+        "query": "我引用文章某一章，另一章的来源更新会让这个引用失效吗？",
+        "originalRank": 1,
+        "target": {
+          "kind": "source",
+          "key": "omem:docs/reader-first/progress.md",
+          "revisionId": "4783adc6-f843-4859-b258-48284783ea41",
+          "digest": "dfceecc4025fa864317b2110f3e0607e6f43489ee5331c43b98e1d41a36bc2db",
+          "startLine": 7,
+          "endLine": 7,
+          "fragmentIds": [
+            "bd52fc30-3090-474c-97b2-bb3d0326b713"
+          ]
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-2-hit-2",
+      "group": "live-2",
+      "context": "{\"标题\": \"知识文章的文件导出与依赖恢复\", \"章节\": [\"为什么同时保存 Markdown 和 JSON\"], \"类型\": \"knowledge\", \"正文\": \"`articleMarkdown` 面向阅读：它把各章节拼成文章，将正文中的 `[[引用键]]` 替换为带标签、跳转地址和原因提示的链接。文章引用跳到另一篇文章的固定文件；材料引用由调用方提供地址，未提供时退化到 `#source-evidence`。页首还会标明生成与独立复核模型。参考 [[c1]]\", \"适用说明\": null}",
+      "question": "用户问题：我引用文章某一章，另一章的来源更新会让这个引用失效吗？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "background",
+        "topic"
+      ],
+      "provenance": {
+        "query": "我引用文章某一章，另一章的来源更新会让这个引用失效吗？",
+        "originalRank": 2,
+        "target": {
+          "kind": "knowledge",
+          "key": "omem:apps/server/src/knowledge/artifacts.ts",
+          "revision": "ad627f4226f2382ef3c33aeadd30a7d208c529696ddb455a8dcc39affcb96154",
+          "section": "purpose",
+          "reviewState": "needs-review"
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-2-hit-3",
+      "group": "live-2",
+      "context": "{\"标题\": \"一份材料如何变成可检索、可追溯的知识\", \"章节\": [\"为什么更新后仍能打开旧引用\"], \"类型\": \"knowledge\", \"正文\": \"文章发布时会检查依赖 digest 是否仍匹配，并把文章自身保存成知识 Revision。来源变化后，refresh 会把依赖不再匹配的文章标为非当前，而不会悄悄把引用改指 V2。参考 [[c24]] [[c25]]\", \"适用说明\": null}",
+      "question": "用户问题：我引用文章某一章，另一章的来源更新会让这个引用失效吗？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "background"
+      ],
+      "provenance": {
+        "query": "我引用文章某一章，另一章的来源更新会让这个引用失效吗？",
+        "originalRank": 3,
+        "target": {
+          "kind": "knowledge",
+          "key": "guide:capture",
+          "revision": "ba37834f817d3ddd3b844093030a2bb88c42d0b09167e8a6323bcf4b8e2cf4dc",
+          "section": "citations",
+          "reviewState": "needs-review"
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-2-hit-4",
+      "group": "live-2",
+      "context": "{\"标题\": \"来源更新的记忆失效快照与重核验对账\", \"章节\": [\"失效集合冻结与幂等记录\"], \"类型\": \"knowledge\", \"正文\": \"来源内容更新后，`recordSourceRefresh` 从输入中选取第一个同时具有 `sourceId` 和 `revisionId` 的引用；缺少完整引用时直接报错。它以工作区、来源和新修订生成稳定记录 ID，并优先复用已有记录，使重复投递不会重新缩小已经冻结的影响范围。[[c1]]\", \"适用说明\": {\"revisionId\": \"188462e7-421d-443a-a112-da3b40d6daa3\", \"version\": 1, \"author\": \"model\", \"description\": {\"role\": \"implementation\", \"status\": \"current\", \"summary\": \"实现来源换版后的记忆重核验记录：首次处理时冻结受影响的失效记忆集合，使重复投递不会缩小范围；后续按新来源版本上的实际依赖和记忆活跃状态统计已修复与未解决项，并把刷新记录标为 applied、needs_review 或 superseded。\", \"topics\": [\"来源换版\", \"记忆失效\", \"重核验\", \"幂等记录\", \"依赖状态\", \"刷新结果\"], \"scope\": \"服务端 refresh_records 的创建与结果核算；不负责运行模型抽取，也不直接修改记忆正文。\", \"validFrom\": null, \"validUntil\": null, \"concepts\": [{\"label\": \"冻结一次来源换版影响到的记忆集合\", \"aliases\": [\"recordSourceRefresh\", \"refresh record\", \"失效集合\"], \"startLine\": 6, \"endLine\": 24}, {\"label\": \"按真实依赖状态核算刷新是否应用成功\", \"aliases\": [\"reconcileSourceRefresh\", \"repaired\", \"unresolved\", \"superseded\"], \"startLine\": 27, \"endLine\": 41}], \"basis\": \"第6至24行明确重复投递不得抹掉已冻结的受影响集合，并写入 refresh_records；第27至41行说明排队成功不等于应用成功，实际查询当前依赖与来源 head 后更新状态。文件是可执行函数定义，未标示为提案或历史实现。\"}, \"updatedAt\": \"2026-10-03T02:09:34.444Z\"}}",
+      "question": "用户问题：我引用文章某一章，另一章的来源更新会让这个引用失效吗？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "topic",
+        "irrelevant"
+      ],
+      "provenance": {
+        "query": "我引用文章某一章，另一章的来源更新会让这个引用失效吗？",
+        "originalRank": 4,
+        "target": {
+          "kind": "knowledge",
+          "key": "omem:apps/server/src/learning/refresh.ts",
+          "revision": "33ff961cc0ce3f2ae00cc57d27ee3f6e4d92db471427aabcf0529c7ad9eb532a",
+          "section": "purpose-and-snapshot"
+        },
+        "routes": [
+          "bm25",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-2-hit-5",
+      "group": "live-2",
+      "context": "{\"标题\": \"docs/reader-first/retrieval-redesign.md\", \"章节\": [\"统一检索与材料理解\", \"一、讲解本身成为结果\"], \"类型\": \"source\", \"正文\": \"文章调查时读过的所有材料，仍决定它是否需要重新复核，也决定背景内容的可见范围；但不能因为一份未被正文引用的材料更新，就丢掉整篇解释。现在以完整章节判断引用支持：这一节引用的原件版本仍匹配、独立复核曾通过、且没有用户更正时，允许以“待复核背景”参与检索，并降低排序偏好。同篇其他章节引用变化，不再一并删除这一节；本节任一引用变化则整节退出，避免留下缺少前提的孤立段落。原件不可见或用户明确更正时仍停止召回。文章链接沿保存时的子文章版本回溯，不跳到最新文章的新引用位置。指定子文章章节的引用只检查该固定章节，未指定章节则要求整篇子文章的引用仍受支持。所有调查依赖仍参与可见性检查，不能借局部保留泄漏其他材料。这里不根据相似文本续接版本，不把过期文章改成 current，也不赋予它事实写入权限。章节间未显式写出的语义依赖仍可能变化，因此返回的背景必须标为待复核，由 Agent 阅读当前原件后使用。\", \"适用说明\": null}",
+      "question": "用户问题：我引用文章某一章，另一章的来源更新会让这个引用失效吗？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "direct"
+      ],
+      "provenance": {
+        "query": "我引用文章某一章，另一章的来源更新会让这个引用失效吗？",
+        "originalRank": 5,
+        "target": {
+          "kind": "source",
+          "key": "omem:docs/reader-first/retrieval-redesign.md",
+          "revisionId": "b3e5a123-3f09-448e-9374-6afb59f0fb60",
+          "digest": "d6358b4574fa1af0b8787c833c73c08fd0223596a4f640a5bf76705a9a969e48",
+          "startLine": 9,
+          "endLine": 9,
+          "fragmentIds": [
+            "82d95fba-1385-4a34-a0b8-fa3d4af46636"
+          ]
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-2-hit-6",
+      "group": "live-2",
+      "context": "{\"标题\": \"个人知识库的阅读与证据追溯\", \"章节\": [\"从主题目录进入知识文章\"], \"类型\": \"knowledge\", \"正文\": \"选中文章后，正文页展示标题、摘要和分节内容；章节较多时提供篇内目录。若原始材料已经变化，页面会明确标记文章等待更新，同时说明引用仍指向写作时使用的版本，让“正文是否最新”和“证据能否复核”成为两个可辨认的状态。参考 [[c2]]\", \"适用说明\": null}",
+      "question": "用户问题：我引用文章某一章，另一章的来源更新会让这个引用失效吗？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "background"
+      ],
+      "provenance": {
+        "query": "我引用文章某一章，另一章的来源更新会让这个引用失效吗？",
+        "originalRank": 6,
+        "target": {
+          "kind": "knowledge",
+          "key": "module:web:part-3",
+          "revision": "2bb7c959f7c53751a6dc3c618e09ef41d2fb2ed775da2b0c5a7feaa0d2f427d7",
+          "section": "reading-entry",
+          "reviewState": "needs-review"
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-3-hit-1",
+      "group": "live-3",
+      "context": "{\"标题\": \"README.md\", \"章节\": [\"omem\", \"当前基础\"], \"类型\": \"source\", \"正文\": \"原始材料现在可以让 AI 阅读并整理用途、适用状态和概念别称，随后人工修正。搜索用保存的分类减少旧计划和调研噪声，概念按对应原文行进入全文和中文向量索引。入口在原文的“材料用途与适用范围”；仓库批量使用 `osdk run review:catalog docs --documents`。这是明确触发的整理，不会在每次捕获后自动调用模型；分类并不证明内容正确。详见 [材料用途与概念入口](docs/reader-first/material-understanding.md)。\", \"适用说明\": {\"revisionId\": \"161ab2d7-d084-4a5c-b292-b84a30f7c271\", \"version\": 1, \"author\": \"model\", \"description\": {\"role\": \"reference\", \"status\": \"current\", \"summary\": \"项目总览与使用入口：说明 omem 如何统一保存和利用文档、代码、聊天、图片及个人经历，给出开发与生产启动方式，并概述固定版本、混合检索、材料用途整理、Wiki、助手与事项能力。它同时明确高质量知识整理、主动助理、完整意图路由、跨文件功能链等仍有缺口。\", \"topics\": [\"项目概览\", \"启动运行\", \"固定版本\", \"混合检索\", \"材料理解\", \"知识生成\", \"个人助理\", \"开发检查\"], \"scope\": \"当前仓库的产品定位、主要能力、运行入口、开发栈与高层限制；详细完成度需继续查看 progress.md 等当前文档。\", \"validFrom\": null, \"validUntil\": null, \"concepts\": [{\"label\": \"统一个人材料与代码知识的产品目标\", \"aliases\": [\"omem是什么\", \"个人知识库\", \"统一记忆\"], \"startLine\": 1, \"endLine\": 5}, {\"label\": \"开发与生产环境的启动方式和端口\", \"aliases\": [\"开始使用\", \"osdk run dev\", \"4317端口\", \"5173端口\"], \"startLine\": 7, \"endLine\": 17}, {\"label\": \"当前文档入口与历史档案边界\", \"aliases\": [\"先读哪些文档\", \"当前进度\", \"历史文档\"], \"startLine\": 19, \"endLine\": 25}, {\"label\": \"固定原文、模型配置与运行产物位置\", \"aliases\": [\"原文版本\", \"review-code-model\", \"repo-review产物\"], \"startLine\": 27, \"endLine\": 29}, {\"label\": \"全文、中文向量、符号、记忆和知识检索基础\", \"aliases\": [\"混合检索\", \"BGE中文向量\", \"助手召回\"], \"startLine\": 31, \"endLine\": 38}, {\"label\": \"材料用途、适用状态与概念别称整理\", \"aliases\": [\"材料说明\", \"material catalog\", \"概念入口\"], \"startLine\": 40, \"endLine\": 40}, {\"label\": \"按读者问题生成和独立复核 Wiki\", \"aliases\": [\"读者指南\", \"review guides\", \"整理文章\"], \"startLine\": 42, \"endLine\": 42}, {\"label\": \"日常助理和自主调查的已有能力与缺口\", \"aliases\": [\"事项跟进\", \"原生调查\", \"助手搜索\"], \"startLine\": 44, \"endLine\": 46}, {\"label\": \"技术栈、检查命令与个人数据边界\", \"aliases\": [\"Vue TypeScript\", \"osdk check\", \"单用户服务\", \"数据安全\"], \"startLine\": 48, \"endLine\": 59}], \"basis\": \"第3至5行直接陈述项目目标、已有基础与仍在推进的能力；第15至17行给出实际启动方式，第29至46行以“当前基础”和已通过流程描述现有功能，同时明确多项未完成或未验收边界；第59行限定当前为单用户服务。因此这是当前项目入口参考，而非完整实现证明或未来计划。\"}, \"updatedAt\": \"2026-10-03T02:09:34.406Z\"}}",
+      "question": "用户问题：导入一篇文档后，系统会自己整理用途和概念吗？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "direct"
+      ],
+      "provenance": {
+        "query": "导入一篇文档后，系统会自己整理用途和概念吗？",
+        "originalRank": 1,
+        "target": {
+          "kind": "source",
+          "key": "omem:README.md",
+          "revisionId": "161ab2d7-d084-4a5c-b292-b84a30f7c271",
+          "digest": "7fb515235f3a2d784a3b733465b88aa1ded1e2e93ddc5dc8c2173689ad83f4b8",
+          "startLine": 40,
+          "endLine": 40,
+          "fragmentIds": [
+            "26630aad-41e9-41d3-bdcd-143af54cc319"
+          ]
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-3-hit-2",
+      "group": "live-3",
+      "context": "{\"标题\": \"docs/README.md\", \"章节\": [\"系统方案、当前缺口与改造入口\", \"现在做到哪里\"], \"类型\": \"source\", \"正文\": \"| 用户结果 | 现有基础 | 当前主要不足 | 改造位置 |\\n| --- | --- | --- | --- |\\n| 材料完整、可读 | Capture、原文版本、Markdown/AST 结构、正式材料用途 | 混合文档的章节性质不够细，多模态解析较浅；用途整理仍需触发 | store、knowledge/structure、source-profile/descriptions |\\n| 找到相关内容 | ICU/FTS5 BM25、中文 BGE、讲解与记忆、用途过滤、段落概念入口 | 长问题可能漏函数，主题相关不等于能回答；重排对照未证明可默认开启 | retrieval/units、unified、knowledge/agent-research |\\n| 看懂陌生系统 | 页面目的、案例、研究/写作/复核角色 | 本轮已接原生自主调查；复杂文章的可理解性仍需真实读者验收 | knowledge/pipeline、agent-runtime、agents |\\n| 理解代码含义 | 符号、导入、候选调用和设计关联 | AST 结构不能解释业务因果、设计动机和完整功能链 | 原生读文件/搜索、MCP 代码导航、背景材料 |\\n| 记住并主动使用 | claim/episode/procedure/task、重核验、提醒 | 缺少项目/人物/主题整合、事件时间与价值选择 | learning、memory、assistant |\", \"适用说明\": null}",
+      "question": "用户问题：导入一篇文档后，系统会自己整理用途和概念吗？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "direct"
+      ],
+      "provenance": {
+        "query": "导入一篇文档后，系统会自己整理用途和概念吗？",
+        "originalRank": 2,
+        "target": {
+          "kind": "source",
+          "key": "omem:docs/README.md",
+          "revisionId": "5a8d64d3-8b26-4493-b854-08dee141377a",
+          "digest": "dd09c4b3d386ff1ee98c025dafed95b8818249dbdf7c122504786b0108d5b5b4",
+          "startLine": 13,
+          "endLine": 19,
+          "fragmentIds": [
+            "ee468c20-acba-48b0-ab55-bfa962f1abe7"
+          ]
+        },
+        "routes": [
+          "bm25",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-3-hit-3",
+      "group": "live-3",
+      "context": "{\"标题\": \"知识库浏览、检索与文章整理入口\", \"章节\": [\"在阅读、分类概览和文章整理之间切换\"], \"类型\": \"knowledge\", \"正文\": \"选中文章时，页面按文章键与修订号挂载正文组件，并向上转发证据导航事件；未选中文章时，则展示分类面包屑、主题卡片和分页文章列表。非当前版本的文章会标记为“待更新”，读者还可以返回分类或继续阅读同分类的下一篇。参考 [[c9]]\", \"适用说明\": null}",
+      "question": "用户问题：导入一篇文档后，系统会自己整理用途和概念吗？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "topic",
+        "irrelevant"
+      ],
+      "provenance": {
+        "query": "导入一篇文档后，系统会自己整理用途和概念吗？",
+        "originalRank": 3,
+        "target": {
+          "kind": "knowledge",
+          "key": "omem:apps/web/src/knowledge/KnowledgeHome.vue",
+          "revision": "cceab1e4509a24d50a482b8d40513d7b6e74bed538d55738d7a81cd6c1925458",
+          "section": "reading-and-composing"
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-3-hit-4",
+      "group": "live-3",
+      "context": "{\"标题\": \"Agent 怎样把材料讲明白：从自主调查到发布更新\", \"章节\": [\"先决定要帮助谁理解什么\"], \"类型\": \"knowledge\", \"正文\": \"设想一个**教学构造**的任务：开发者选中一份功能设计和对应实现，想让刚接触项目的人理解“后台怎样把材料整理成一篇可追溯文章”。期望的可见结果不是文件摘要，而是一篇能回答三个问题的解释：输入是什么，Agent 为什么要补读，开发者应去哪里改变行为。\", \"适用说明\": null}",
+      "question": "用户问题：导入一篇文档后，系统会自己整理用途和概念吗？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "background",
+        "topic"
+      ],
+      "provenance": {
+        "query": "导入一篇文档后，系统会自己整理用途和概念吗？",
+        "originalRank": 4,
+        "target": {
+          "kind": "knowledge",
+          "key": "guide:knowledge-agent",
+          "revision": "cb3924708b1199a2bf1562f71a4428a85b370c4f72ed2fa3b9157e81e5dcadd6",
+          "section": "scenario",
+          "reviewState": "needs-review"
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-3-hit-5",
+      "group": "live-3",
+      "context": "{\"标题\": \"docs/reader-first/retrieval-redesign.md\", \"章节\": [\"统一检索与材料理解\", \"三、用途驱动的共享策略\"], \"类型\": \"source\", \"正文\": \"用途有综合、概念、实现、背景、事项跟进。读者和 Agent 可以明确指定；未指定时保留综合检索，不用仓库名称、目录和题集问法猜结果。概念/背景优先提供连贯说明，实现兼顾符号与原文，事项跟进纳入当前事项和事件时间。用途是结果组合的偏好，不用它排掉仍可能需要的其他材料。\", \"适用说明\": null}",
+      "question": "用户问题：导入一篇文档后，系统会自己整理用途和概念吗？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "background",
+        "topic"
+      ],
+      "provenance": {
+        "query": "导入一篇文档后，系统会自己整理用途和概念吗？",
+        "originalRank": 5,
+        "target": {
+          "kind": "source",
+          "key": "omem:docs/reader-first/retrieval-redesign.md",
+          "revisionId": "b3e5a123-3f09-448e-9374-6afb59f0fb60",
+          "digest": "d6358b4574fa1af0b8787c833c73c08fd0223596a4f640a5bf76705a9a969e48",
+          "startLine": 25,
+          "endLine": 25,
+          "fragmentIds": [
+            "ea3cf579-37ff-405d-9774-48e37356c0b4"
+          ]
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-3-hit-6",
+      "group": "live-3",
+      "context": "{\"标题\": \"docs/reader-first/material-understanding.md\", \"章节\": [\"材料用途、适用范围与概念入口\", \"怎样影响搜索\"], \"类型\": \"source\", \"正文\": \"明单独展示。\\n4. **让读者看到选择依据。** 搜索页的“筛选命中材料”作用于实际搜索结果，显示用途、状态和适用范围；综合回答仍沿自己选择的调查范围工作，该筛选不偷偷变成会话权限。\", \"适用说明\": null}",
+      "question": "用户问题：导入一篇文档后，系统会自己整理用途和概念吗？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "background",
+        "topic"
+      ],
+      "provenance": {
+        "query": "导入一篇文档后，系统会自己整理用途和概念吗？",
+        "originalRank": 6,
+        "target": {
+          "kind": "source",
+          "key": "omem:docs/reader-first/material-understanding.md",
+          "revisionId": "c25b8763-1a1c-4571-a2e1-2c2f68016c6e",
+          "digest": "d941051abaab1bbe4ba2b80b4d0e92be22cfcdd2c3514644c65198bdc3e58c66",
+          "startLine": 15,
+          "endLine": 18,
+          "fragmentIds": [
+            "e7c0628e-7c3c-441d-9604-76363ae32692"
+          ]
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-4-hit-1",
+      "group": "live-4",
+      "context": "{\"标题\": \"repo-review 服务启动入口\", \"章节\": [\"模型配置与生命周期\"], \"类型\": \"knowledge\", \"正文\": \"监听成功后，`SIGINT` 与 `SIGTERM` 调用 `app.close()` 并退出；启动异常则直接关闭 Store 后重新抛错。[[c8]] 现有材料尚不能证明正常信号路径是否同时释放 Store、数据库连接与语义检索后台资源，也不能确认多次信号下的清理幂等性。\", \"适用说明\": null}",
+      "question": "用户问题：服务重新启动后，提醒会不会重复发？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "topic",
+        "irrelevant"
+      ],
+      "provenance": {
+        "query": "服务重新启动后，提醒会不会重复发？",
+        "originalRank": 1,
+        "target": {
+          "kind": "knowledge",
+          "key": "omem:apps/server/src/review/main.ts",
+          "revision": "8868f2246317092b5b03be719837a391c7f25fe109dbf90e7de920a924b9eda0",
+          "section": "models_and_lifecycle",
+          "reviewState": "needs-review"
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-4-hit-2",
+      "group": "live-4",
+      "context": "{\"标题\": \"docs/reader-first/progress.md\", \"章节\": [\"当前实施进度\", \"已有的一条个人流程\"], \"类型\": \"source\", \"正文\": \"上一轮真实 Traex 从头验收第四次运行退出 0：读书会预算 80→120 元更新同一记忆；等待只建一个事项，纯查询不改事项；服务重启后提醒一次，延后到新检查时间，重复轮询不重复，完成后不提醒，后台学习不重建事项。时间检查使用真实提醒逻辑和注入验收时钟，不代表等待至未来日期。前三轮失败保留，不用后续成功覆盖。详见[个人流程](assistant-memory-flow.md)。\", \"适用说明\": null}",
+      "question": "用户问题：服务重新启动后，提醒会不会重复发？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "direct"
+      ],
+      "provenance": {
+        "query": "服务重新启动后，提醒会不会重复发？",
+        "originalRank": 2,
+        "target": {
+          "kind": "source",
+          "key": "omem:docs/reader-first/progress.md",
+          "revisionId": "4783adc6-f843-4859-b258-48284783ea41",
+          "digest": "dfceecc4025fa864317b2110f3e0607e6f43489ee5331c43b98e1d41a36bc2db",
+          "startLine": 63,
+          "endLine": 63,
+          "fragmentIds": [
+            "2a499943-2285-4408-a1ba-a584b8e8fa89"
+          ]
+        },
+        "routes": [
+          "bm25",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-4-hit-3",
+      "group": "live-4",
+      "context": "{\"标题\": \"仓库评审数据迁移与关系失效测试\", \"章节\": [\"重复迁移保持已稳定状态\"], \"类型\": \"knowledge\", \"正文\": \"首次迁移后，测试记录文件来源的 external id、head 与别名；在同一个 `Store` 和 stateDir 上再次调用迁移时，返回值为零且状态快照不变。这证明的是**同一数据库状态上的第二次执行**不会继续改写结果，并未模拟关闭后重新启动服务。参考 [[c6]]\", \"适用说明\": null}",
+      "question": "用户问题：服务重新启动后，提醒会不会重复发？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "topic",
+        "irrelevant"
+      ],
+      "provenance": {
+        "query": "服务重新启动后，提醒会不会重复发？",
+        "originalRank": 3,
+        "target": {
+          "kind": "knowledge",
+          "key": "omem:apps/server/tests/review-migration.test.ts",
+          "revision": "3c22515a42b8c071298273abd7599ad7e9dadd75a19a34a9380fc83fbd78f5d2",
+          "section": "idempotence",
+          "reviewState": "needs-review"
+        },
+        "routes": [
+          "bm25",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-4-hit-4",
+      "group": "live-4",
+      "context": "{\"标题\": \"开发端口选择与占用处理\", \"章节\": [\"与启动流程的关系\"], \"类型\": \"knowledge\", \"正文\": \"完整文件只定义并导出端口选择函数，没有启动后端、代理或其他服务。[[c4]] 因而它负责提供经过一次本机绑定探测的端口，外部启动流程负责传播并重新监听该端口；当前材料无法证明后端与代理确实共享同一返回值，也未展示实际绑定失败后的重试策略。\", \"适用说明\": null}",
+      "question": "用户问题：服务重新启动后，提醒会不会重复发？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "topic",
+        "irrelevant"
+      ],
+      "provenance": {
+        "query": "服务重新启动后，提醒会不会重复发？",
+        "originalRank": 4,
+        "target": {
+          "kind": "knowledge",
+          "key": "omem:scripts/dev-ports.ts",
+          "revision": "666cf013380e84c9752d821718c63f0355c0b1ecff1b2026c2004b7e468db841",
+          "section": "relationships"
+        },
+        "routes": [
+          "bm25",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-4-hit-5",
+      "group": "live-4",
+      "context": "{\"标题\": \"事项等待、稍后提醒与取消控制\", \"章节\": [\"从表单输入到任务命令\"], \"类型\": \"knowledge\", \"正文\": \"提交前，组件以 `busy` 阻止自身重复执行，并分别校验等待对象和提醒时间。输入时间会转换为 ISO 字符串；请求携带动作、当前任务版本及随机请求标识。成功后收起表单并通知父组件刷新，失败时上报错误，最后恢复可操作状态。参考 [[c4]]\", \"适用说明\": null}",
+      "question": "用户问题：服务重新启动后，提醒会不会重复发？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "background",
+        "topic"
+      ],
+      "provenance": {
+        "query": "服务重新启动后，提醒会不会重复发？",
+        "originalRank": 5,
+        "target": {
+          "kind": "knowledge",
+          "key": "omem:apps/web/src/TaskFollowUpControls.vue",
+          "revision": "8e1d5b6bda285e0205d2aa629830badd8ad5828e34f86a9f5f51b858675d2b24",
+          "section": "command-flow",
+          "reviewState": "needs-review"
+        },
+        "routes": [
+          "bm25",
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-4-hit-6",
+      "group": "live-4",
+      "context": "{\"标题\": \"docs/reader-first/answer-investigation.md\", \"章节\": [\"围绕问题调查，再检查答案是否有用\", \"宿主究竟检查什么\"], \"类型\": \"source\", \"正文\": \"复核以本次调查内的后台任务执行：`review_answer` 立即返回任务 ID，相同草稿重复调用复用结果；运行中提交另一稿也不会悄悄启动第二个模型。`read_answer_review` 每次最多等 20 秒，返回运行中、完成、失败或取消及实际意见。20 秒是单次工具等待时间，不是模型生成上限。作者取得意见后才能提交，不用 shell sleep，也无需重新发起复核。失败需明确 retry 才重试。结束作者调查会取消并等待其复核退出，再释放封存快照。\", \"适用说明\": null}",
+      "question": "用户问题：服务重新启动后，提醒会不会重复发？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "irrelevant",
+        "topic"
+      ],
+      "provenance": {
+        "query": "服务重新启动后，提醒会不会重复发？",
+        "originalRank": 6,
+        "target": {
+          "kind": "source",
+          "key": "omem:docs/reader-first/answer-investigation.md",
+          "revisionId": "2f503259-237f-43c2-8a37-736782891ec3",
+          "digest": "360f23e966c677210db6b3168eb740d4fde185efa43c8f7d81bab15a5069240f",
+          "startLine": 25,
+          "endLine": 25,
+          "fragmentIds": [
+            "14ee61df-9ddf-4715-aae0-07b354e9b699"
+          ]
+        },
+        "routes": [
+          "bm25",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-5-hit-1",
+      "group": "live-5",
+      "context": "{\"标题\": \"scripts/assistant-memory-flow.ts\", \"章节\": [\"firstAnswer\"], \"类型\": \"source\", \"正文\": \"const firstAnswer = await turn(\\n    \\\"查询原约定\\\",\\n    \\\"这份周末读书会约定里，我每次参加最多花多少？这是预算上限还是报名任务？先不要创建事项。\\\",\\n  );\", \"适用说明\": null}",
+      "question": "用户问题：学校的住宿费这学期什么时候交？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "irrelevant"
+      ],
+      "provenance": {
+        "query": "学校的住宿费这学期什么时候交？",
+        "originalRank": 1,
+        "target": {
+          "kind": "source",
+          "key": "omem:scripts/assistant-memory-flow.ts",
+          "revisionId": "17ce288c-5b51-472d-878e-3c479a94be1f",
+          "digest": "621d5df69016e71af04bca86e47620b3015f9145d05fc029e455d3ea26935c90",
+          "startLine": 287,
+          "endLine": 290,
+          "fragmentIds": [
+            "2eaa2f4a-fe40-46b2-9bdd-c90ca7362a23"
+          ]
+        },
+        "routes": [
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-5-hit-2",
+      "group": "live-5",
+      "context": "{\"标题\": \"scripts/assistant-memory-flow.ts\", \"章节\": [\"captureBudget\"], \"类型\": \"source\", \"正文\": \"const captureBudget = async (amount: number) => {\\n  const text = `# 周末读书会\\\\n\\\\n## 费用约定\\\\n我参加周末读书会时，每次费用上限为${amount}元。这是我已经确认并生效的个人预算约定。`;\\n  writeFileSync(join(directory, `original-budget-${amount}.md`), text + \\\"\\\\n\\\", {\\n    mode: 0o600,\\n  });\\n  const result = await request<{\\n    revision: { id: string; sourceId: string; version: number };\\n    job: unknown;\\n  }>(\\\"POST\\\", \\\"/api/captures\\\", {\\n    source: \\\"m\", \"适用说明\": null}",
+      "question": "用户问题：学校的住宿费这学期什么时候交？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "irrelevant"
+      ],
+      "provenance": {
+        "query": "学校的住宿费这学期什么时候交？",
+        "originalRank": 2,
+        "target": {
+          "kind": "source",
+          "key": "omem:scripts/assistant-memory-flow.ts",
+          "revisionId": "17ce288c-5b51-472d-878e-3c479a94be1f",
+          "digest": "621d5df69016e71af04bca86e47620b3015f9145d05fc029e455d3ea26935c90",
+          "startLine": 140,
+          "endLine": 169,
+          "fragmentIds": [
+            "9eeb4bd2-7526-48c6-aaa6-f3df40b642fe"
+          ]
+        },
+        "routes": [
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-5-hit-3",
+      "group": "live-5",
+      "context": "{\"标题\": \"生成任务的令牌估算与预算校验\", \"章节\": [\"函数调用时的显式校验\"], \"类型\": \"knowledge\", \"正文\": \"预算合并完成后，函数逐项要求数值为安全整数且位于 1 至 1,000,000 之间；不满足条件时立即抛出包含字段名的错误，满足时返回统一预算。该校验仅约束三个字段各自的数值范围，没有检查输入、输出与预留量之间的组合关系，也不能据此判断某项配置是否受特定模型支持。[[c3]]\", \"适用说明\": null}",
+      "question": "用户问题：学校的住宿费这学期什么时候交？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "irrelevant"
+      ],
+      "provenance": {
+        "query": "学校的住宿费这学期什么时候交？",
+        "originalRank": 3,
+        "target": {
+          "kind": "knowledge",
+          "key": "omem:apps/server/src/agent-runtime/budget.ts",
+          "revision": "148a99daf6fd6e7b6b82e54da6581a0ddc738737cc503050749183e6324e7569",
+          "section": "validation-boundary"
+        },
+        "routes": [
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-5-hit-4",
+      "group": "live-5",
+      "context": "{\"标题\": \"规则变了以后：原文、记忆与待办怎样更新\", \"章节\": [\"先把两条消息分开\"], \"类型\": \"knowledge\", \"正文\": \"这是贯穿本页的**教学示例**，不是这组措辞已经跑过的真实记录。当前已有一条相似的真实流程：预算从 80 元改为 120 元时更新同一记忆，另一次明确委托才创建等待事项；它证明主链可用，但不能外推到所有材料和自然语言时间。参考 [[c2]]\", \"适用说明\": null}",
+      "question": "用户问题：学校的住宿费这学期什么时候交？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "irrelevant"
+      ],
+      "provenance": {
+        "query": "学校的住宿费这学期什么时候交？",
+        "originalRank": 4,
+        "target": {
+          "kind": "knowledge",
+          "key": "guide:memory",
+          "revision": "0b8891f1fe0d74274452478e6e88024b0f33ff7178dd2172f723fbc40f166309",
+          "section": "scenario",
+          "reviewState": "needs-review"
+        },
+        "routes": [
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-5-hit-5",
+      "group": "live-5",
+      "context": "{\"标题\": \"日常消息支持交办、等待、改期、完成、取消和站内到期提醒。\", \"章节\": [], \"类型\": \"memory\", \"正文\": \"日常消息支持交办、等待、改期、完成、取消和站内到期提醒。\\n运行与维护文档\", \"适用说明\": null}",
+      "question": "用户问题：学校的住宿费这学期什么时候交？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "irrelevant"
+      ],
+      "provenance": {
+        "query": "学校的住宿费这学期什么时候交？",
+        "originalRank": 5,
+        "target": {
+          "kind": "memory",
+          "id": "5d2f2837-9460-4d47-a1ff-0e97ce490a7b",
+          "version": 1
+        },
+        "routes": [
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    },
+    {
+      "id": "live-5-hit-6",
+      "group": "live-5",
+      "context": "{\"标题\": \"docs/reader-first/operations.md\", \"章节\": [\"运行与维护\", \"数据与连接\"], \"类型\": \"source\", \"正文\": \"日常消息支持交办、等待、改期、完成、取消与站内到期提醒；没有自动监听对方回复、周期回顾、日历或学习卡。通知已读不等于事项完成。\", \"适用说明\": null}",
+      "question": "用户问题：学校的住宿费这学期什么时候交？\n这份材料对回答当前问题有何作用？",
+      "options": "relevance",
+      "expected": [
+        "irrelevant"
+      ],
+      "provenance": {
+        "query": "学校的住宿费这学期什么时候交？",
+        "originalRank": 6,
+        "target": {
+          "kind": "source",
+          "key": "omem:docs/reader-first/operations.md",
+          "revisionId": "e715b814-200f-4fa7-836e-200155e728f9",
+          "digest": "5b09a76ea0beffb8bea600e8871c99334aec736fab0f0cee87cd97269a78ef1e",
+          "startLine": 33,
+          "endLine": 33,
+          "fragmentIds": [
+            "1b88d5f1-ef31-4c94-b9f7-a05743e7f1ca"
+          ]
+        },
+        "routes": [
+          "semantic",
+          "purpose:balanced"
+        ]
+      }
+    }
+  ]
+}
