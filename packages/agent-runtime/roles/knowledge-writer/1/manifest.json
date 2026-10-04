@@ -11,7 +11,7 @@
       "canonical_name": "omem-knowledge-writer",
       "version": "1",
       "load_mode": "inline",
-      "artifact_digest": "c572c5fd01f4099a578eceedccedf9b08b596107b7e72327e1ec228064afc136"
+      "artifact_digest": "76bec3c27320ae91a7a7ac520a5dc2d6f49308a0c9fdb69a83e7b83343f51d64"
     }
   ],
   "output_schema": "KnowledgeBatch.v1",
