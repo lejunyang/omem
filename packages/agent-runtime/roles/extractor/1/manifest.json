@@ -11,7 +11,7 @@
       "canonical_name": "omem-extract",
       "version": "extract-1",
       "load_mode": "inline",
-      "artifact_digest": "f1bc8c0145b8bb85ae795f4de23e4379a3406a235c790a3851ea1d18eaff4586"
+      "artifact_digest": "7c5d9b5d5010de7f4f1139a880fa057bc0057130fcc88e59ddcf16d973fc1746"
     }
   ],
   "output_schema": "ProposalBatch.v1",

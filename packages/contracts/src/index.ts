@@ -286,8 +286,12 @@ export const claimProposalBodySchema = z
   .object({
     statement: z.string().min(1).max(2000),
     attribution: z.string().min(1).max(2000),
-    valid_from: z.iso.datetime({ offset: true }).nullable(),
-    valid_to: z.iso.datetime({ offset: true }).nullable(),
+    valid_from: z.iso.datetime({ offset: true }).nullable().describe(
+      "When the asserted state explicitly starts to hold. This is not the message, capture or observation time. Use null if the source does not establish a start; keep event dates and deadlines in statement.",
+    ),
+    valid_to: z.iso.datetime({ offset: true }).nullable().describe(
+      "When the asserted state explicitly stops holding, such as the end of a temporary appointment. A deadline or event time does not by itself expire the fact describing it. Use null unless the source establishes that this state ends.",
+    ),
   })
   .strict();
 
