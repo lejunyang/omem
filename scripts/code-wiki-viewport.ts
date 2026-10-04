@@ -17,7 +17,7 @@ try {
     await page.getByRole("button", { name: "知识库", exact: true }).click();
     await expect(page.getByRole("navigation", { name: "知识目录" })).toBeVisible();
     const initialCatalog = await api("/api/knowledge/articles");
-    const firstPage = initialCatalog.articles.find((a: any) => a.current && a.reading) ?? initialCatalog.articles.find((a: any) => a.current);
+    const firstPage = initialCatalog.articles.find((a: any) => a.reading && a.role === "article") ?? initialCatalog.articles[0];
     expect(firstPage).toBeTruthy();
     await page.getByLabel("查找章节", { exact: true }).fill(firstPage.title);
     await page.locator(".tree-title").filter({ hasText: firstPage.title }).first().click();
@@ -40,18 +40,23 @@ try {
   });
   await check("citations open the fixed code range and expand context", async () => {
     const catalog = await api("/api/knowledge/articles");
-    const meta = catalog.articles.find((a: any) => a.key === "omem:apps/server/src/agent-runtime/gateway.ts");
-    expect(meta).toBeTruthy();
-    await page.getByLabel("查找章节", { exact: true }).fill(meta.title);
-    await page.locator(".tree-title").filter({ hasText: meta.title }).click();
-    const article = await api("/api/knowledge/articles/" + encodeURIComponent(meta.key));
+    let article: any, c: any;
+    for (const meta of catalog.articles) {
+      const candidate=await api("/api/knowledge/articles/"+encodeURIComponent(meta.key));
+      const citation=candidate.citations.filter((c:any)=>c.actionable && c.resolved?.kind === "material" && /\.[cm]?[jt]sx?$/.test(c.resolved.key) && c.resolved.startLine > 20).sort((a:any,b:any)=>a.resolved.startLine-b.resolved.startLine)[0];
+      if (citation) {
+        const source=await api("/api/knowledge/materials/"+encodeURIComponent(citation.resolved.key)+"?digest="+citation.resolved.digest);
+        if (source.links?.length) { article=candidate; c=citation; break; }
+      }
+    }
+    expect(article).toBeTruthy(); expect(c).toBeTruthy();
+    await page.getByLabel("查找章节", { exact: true }).fill(article.title);
+    await page.locator(".tree-title").filter({ hasText: article.title }).first().click();
     const groups = await page.locator(".book-content .md-body p, .book-content .md-body li, .book-content .md-body td").evaluateAll(nodes => nodes.map(n => [...n.querySelectorAll(".om-inline-citation[href]")].map(a => decodeURIComponent(a.getAttribute("href")!.split("/").pop()!))));
     for (const keys of groups) {
       const targets = keys.map(key => JSON.stringify(article.citations.find((c: any) => c.key === key).target));
       expect(new Set(targets).size).toBe(targets.length);
     }
-    const c = article.citations.find((c: any) => c.actionable && c.resolved?.kind === "material" && c.resolved.key.endsWith("gateway.ts") && c.resolved.startLine > 20);
-    expect(c).toBeTruthy();
     const trigger = page.locator(".book-content").getByRole("link", { name: c.label }).first();
     await trigger.click();
     const drawer = page.locator("dialog[open]");
@@ -64,28 +69,25 @@ try {
     await expect(drawer).toHaveCount(0);
     await expect(trigger).toBeFocused();
     await trigger.click();
-    await drawer.getByRole("button", {name:/阅读这份材料的知识解读/}).click();
+    await expect(drawer.locator(".code-table tr")).toHaveCount(c.resolved.endLine - c.resolved.startLine + 1, { timeout: 30000 });
+    // Drill into a source import instead of requiring an obsolete per-file Wiki.
+    while (await drawer.getByRole("button",{name:"向上展开 20 行",exact:true}).count()) await drawer.getByRole("button",{name:"向上展开 20 行",exact:true}).click();
+    const importLink=drawer.locator(".line-reference").first();
+    await expect(importLink).toBeVisible();
+    const scroller=drawer.locator(".trail-scroll");
+    await importLink.scrollIntoViewIfNeeded();
+    const saved=await scroller.evaluate(el=>el.scrollTop);
+    await importLink.click();
     await expect(drawer.locator(".layer-chip")).toContainText("第 2 层");
-    await expect(drawer.locator(".article-body .md-body p").first()).toBeVisible();
-    const innerLink = drawer.locator(".om-inline-citation[href]").last();
-    await innerLink.scrollIntoViewIfNeeded();
-    const scroller = drawer.locator(".trail-scroll");
-    // A real wheel gesture gives the reader control after async restoration.
-    const beforeWheel = await scroller.evaluate(el => el.scrollTop);
-    await scroller.hover(); await page.mouse.wheel(0, -80);
-    await expect.poll(() => scroller.evaluate(el => el.scrollTop)).toBeLessThan(beforeWheel);
-    await innerLink.scrollIntoViewIfNeeded();
-    const saved = await scroller.evaluate(el => el.scrollTop);
-    await innerLink.click();
-    await expect(drawer.locator(".layer-chip")).toContainText("第 3 层");
+    await expect(drawer.locator(".code-table tr").first()).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(drawer.locator(".layer-chip")).toContainText("第 2 层");
-    await expect.poll(() => scroller.evaluate(el => el.scrollTop)).toBeCloseTo(saved, -1);
-
+    await expect(drawer.locator(".layer-chip")).toContainText("第 1 层");
+    await expect.poll(()=>scroller.evaluate(el=>el.scrollTop)).toBeCloseTo(saved,-1);
+    await drawer.locator(".line-reference").first().click();
     expect(page.url()).toContain("/trail/");
     await page.reload();
     await expect(page.locator("dialog[open] .layer-chip")).toContainText("第 2 层");
-    await expect(page.locator("dialog[open] .article-body > h2")).toBeVisible();
+    await expect(page.locator("dialog[open] .knowledge-source h2")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.locator("dialog[open] .layer-chip")).toContainText("第 1 层");
     await page.keyboard.press("Escape");
@@ -131,7 +133,7 @@ try {
     const previous = catalog.articles.find((a: any) => a.key === previousKey);
     await page.getByLabel("查找章节", { exact: true }).fill("");
     await page.getByRole("button", { name: "返回分类", exact: true }).click();
-    const classified = catalog.articles.find((a: any) => a.current && a.topicPath?.length);
+    const classified = catalog.articles.find((a: any) => a.topicPath?.length);
     if (classified) for (const part of classified.topicPath) {
       await page.locator(".topic-folder > .om-disclosure > .disclosure-heading > .disclosure-title").filter({ hasText: part }).first().click();
     }

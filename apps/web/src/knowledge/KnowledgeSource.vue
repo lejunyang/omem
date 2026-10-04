@@ -22,8 +22,7 @@ watch(() => [props.materialKey, props.digest], async () => {
   catch (e) { if (current === generation) error.value = String(e); }
 }, { immediate: true });
 async function reference(key: string) {
-  try { const a = await knowledgeApi<ArticleMeta>(props.prefix, "/articles/" + encodeURIComponent(key)); emit("navigate", knowledgeFrame(key, a.title)); }
-  catch { emit("navigate", { kind: "source", id: JSON.stringify({ key }), title: "关联原始材料" }); }
+  emit("navigate", { kind: "source", id: JSON.stringify({ key }), title: "关联原始材料" });
 }
 function internal(path: string) {
   const target = material.value?.documentLinks?.find(link => link.href === path)?.target;
