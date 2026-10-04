@@ -216,14 +216,7 @@ export class KnowledgeRepository {
       this.store.db.prepare(`INSERT INTO knowledge_pages VALUES(?,?,?,'published',NULL,?) ON CONFLICT(document_key)
         DO UPDATE SET role=excluded.role,plan=COALESCE(excluded.plan,knowledge_pages.plan),state='published',error=NULL,updated_at=excluded.updated_at`)
         .run(artifact.document.key, publicationRole(artifact), artifact.reading ? JSON.stringify(artifact.reading) : null, artifact.generation.at);
-      const liveQuestions = new Set(artifact.document.questions.map(q => digest(artifact.document.key + ":" + q.question)));
-      for (const row of this.store.db.prepare("SELECT id FROM knowledge_questions WHERE document_key=? AND state='open'").all(artifact.document.key) as Row[]) {
-        if (!liveQuestions.has(String(row.id))) this.store.db.prepare("UPDATE knowledge_questions SET state='superseded',updated_at=? WHERE id=?").run(new Date().toISOString(), String(row.id));
-      }
-      for (const question of artifact.document.questions) {
-        const id = digest(artifact.document.key + ":" + question.question);
-        this.store.db.prepare("INSERT INTO knowledge_questions(id,document_key,article_revision,body,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET article_revision=excluded.article_revision,body=excluded.body,state=CASE WHEN knowledge_questions.state='superseded' THEN 'open' ELSE knowledge_questions.state END,updated_at=excluded.updated_at").run(id, artifact.document.key, revision, JSON.stringify(question), new Date().toISOString());
-      }
+      this.restoreQuestionActions(artifact, revision);
       const changedSections = artifact.document.sections.filter(section => {
         const previous = existing?.document.sections.find(s => s.key === section.key);
         return !previous || previous.title !== section.title || previous.body !== section.body;
@@ -236,6 +229,17 @@ export class KnowledgeRepository {
     });
     this.refresh();
     return this.get(artifact.document.key)!;
+  }
+
+  private restoreQuestionActions(artifact: KnowledgeArtifact, revision: string) {
+    const liveQuestions = new Set(artifact.document.questions.map(q => digest(artifact.document.key + ":" + q.question)));
+    for (const row of this.store.db.prepare("SELECT id FROM knowledge_questions WHERE document_key=? AND state='open'").all(artifact.document.key) as Row[]) {
+      if (!liveQuestions.has(String(row.id))) this.store.db.prepare("UPDATE knowledge_questions SET state='superseded',updated_at=? WHERE id=?").run(new Date().toISOString(), String(row.id));
+    }
+    for (const question of artifact.document.questions) {
+      const id = digest(artifact.document.key + ":" + question.question);
+      this.store.db.prepare("INSERT INTO knowledge_questions(id,document_key,article_revision,body,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET article_revision=excluded.article_revision,body=excluded.body,state=CASE WHEN knowledge_questions.state='superseded' THEN 'open' ELSE knowledge_questions.state END,updated_at=excluded.updated_at").run(id, artifact.document.key, revision, JSON.stringify(question), new Date().toISOString());
+    }
   }
 
   /** Restore reviewed bytes and their fixed inputs. An import can advance only
@@ -266,6 +270,7 @@ export class KnowledgeRepository {
         this.store.db.prepare("INSERT OR IGNORE INTO knowledge_pages VALUES(?,?,?,'published',NULL,?)")
           .run(artifact.document.key, publicationRole(artifact), artifact.reading ? JSON.stringify(artifact.reading) : null, artifact.generation.at);
         if (!head || canAdvance || head.revision === revision) {
+          this.restoreQuestionActions(artifact, revision);
           this.store.db.prepare(`UPDATE knowledge_pages SET role=?,plan=COALESCE(?,plan),state='published',error=NULL,updated_at=?
             WHERE document_key=? AND (? OR state IN ('planned','retired'))`)
             .run(publicationRole(artifact),artifact.reading ? JSON.stringify(artifact.reading) : null,artifact.generation.at,artifact.document.key,Number(!head || head.revision !== revision));
