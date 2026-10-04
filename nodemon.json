@@ -1,0 +1,8 @@
+{
+  "watch": ["apps/server/src", "packages/contracts/src", "packages/agent-runtime", "config", "omem.local.json"],
+  "ext": "ts,json,md",
+  "signal": "SIGTERM",
+  "delay": "300ms",
+  "exitcrash": true,
+  "exec": "bun"
+}

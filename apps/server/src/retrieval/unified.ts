@@ -68,7 +68,14 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     if (!this.readOnly) await this.projection.syncAsync();
   }
   private ready() {
-    this.loading ??= this.load!().then((model) => (this.model = model));
+    this.loading ??= this.load!()
+      .then((model) => (this.model = model))
+      .catch((error) => {
+        // A failed startup is not a loaded model. Let the background worker's
+        // existing 30-second backoff retry instead of caching rejection forever.
+        this.loading = undefined;
+        throw error;
+      });
     return this.loading;
   }
   private get modelId() {

@@ -1,6 +1,7 @@
-/** Shared personal/review development lifecycle; direct Bun children, explicit
+/** Shared personal/review development lifecycle; Bun API, explicit
  * proxy ports, bounded shutdown and child failure propagation. */
 import { spawn, execFile, type ChildProcess } from "node:child_process";
+import { createRequire } from "node:module";
 import { selectDevPort } from "./dev-ports.js";
 
 const review = process.env.OMEM_DEV_MODE !== "personal";
@@ -91,8 +92,11 @@ async function main(): Promise<void> {
   }
 
   apiChild = spawn(
-    bun,
-    [...(review ? [] : ["--watch"]), review ? "apps/server/src/review/main.ts" : "apps/server/src/main.ts"],
+    review ? bun : "node",
+    review ? ["apps/server/src/review/main.ts"] : [
+      createRequire(import.meta.url).resolve("nodemon/bin/nodemon.js"),
+      "--config", "nodemon.json", "apps/server/src/main.ts",
+    ],
     { cwd: repoRoot, stdio: "inherit", detached: process.platform !== "win32",
       env: { ...process.env, OMEM_PORT: String(API_PORT), REVIEW_PORT: String(API_PORT), REVIEW_WEB_PORT: String(WEB_PORT) } },
   );

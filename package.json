@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "bun scripts/dev.ts",
-    "dev:server": "bun --watch apps/server/src/main.ts",
+    "dev:server": "nodemon --config nodemon.json apps/server/src/main.ts",
     "dev:web": "pnpm --filter @omem/web run dev",
     "build": "tsc -p tsconfig.server.json && pnpm --filter @omem/web run build",
     "start": "node dist/apps/server/src/main.js",
@@ -41,6 +41,7 @@
     "@vitejs/plugin-vue": "6.0.9",
     "@vue/compiler-sfc": "3.5.43",
     "hyparquet": "1.31.2",
+    "nodemon": "3.1.14",
     "prettier": "3.6.2",
     "typescript": "5.9.3",
     "vite": "7.3.1",

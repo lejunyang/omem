@@ -91,6 +91,36 @@ function setup() {
   };
 }
 
+it("recovers semantic indexing after a failed model load while lexical search stays available", async () => {
+  const s = setup();
+  let attempts = 0;
+  const model: EmbeddingModel = {
+    id: "recovery-fixture",
+    embed: async (texts) => texts.map(() => [1, 0]),
+    close: async () => {},
+  };
+  const retrieval = new UnifiedRetrieval(s.store.db, async () => {
+    if (++attempts === 1) throw Error("temporary process spawn failure");
+    return model;
+  });
+  try {
+    s.store.capture({ source: "manual", externalId: "delivery-note", title: "配送安排",
+      parts: [{ type: "text", text: "包裹每周四发出。" }], context: {} });
+    const first = retrieval.indexBatch();
+    expect(retrieval.indexBatch()).toBe(first);
+    await expect(first).rejects.toThrow("temporary process spawn failure");
+    expect(retrieval.health().semantic.state).toBe("degraded");
+    expect((await retrieval.search({ text: "包裹" }))[0]?.routes).toContain("bm25");
+    await retrieval.indexBatch();
+    expect(attempts).toBe(2);
+    expect(retrieval.health().semantic).toMatchObject({ state: "ready", pending: 0, error: null });
+    expect((await retrieval.search({ text: "发货时间" }))[0]?.routes).toContain("semantic");
+  } finally {
+    await retrieval.close();
+    await s.close();
+  }
+});
+
 it("returns the explanation as readable context with its own article and exact original range", async () => {
   const s = setup();
   try {
