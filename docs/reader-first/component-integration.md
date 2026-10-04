@@ -8,8 +8,8 @@
 | --- | --- | --- | --- |
 | DeepWiki 的页面地图与分层写作 | 在 `packages/contracts/src/knowledge.ts`、知识存储/API 中持久化页面目的、发布用途、目录关系；`writePage` 写正式文章，材料分析只产内部笔记，旧批次合成已移除 | 替换文件或计算批次直接进入目录；保留 Traex 自主调查和固定来源 | 核心实现和阅读界面已交付，三篇主题页已真实生成；最新实现变化后仍需维护正文 |
 | Docling 解析组件 | 增加可选解析 worker，输出结构块、标题、表格、页码/位置及解析版本；由 Capture 适配层保存原件和派生文本，再进入 `knowledge/structure.ts` 与检索投影 | 替换 PDF/Office/OCR 自研清洗；TS/Vue 和已有 Markdown 解析继续使用 | 未安装、未接入；Python/解析模型由 osdk 显式管理 |
-| Haystack 层级检索组件 | 通过 `RetrievalPort` 接组件适配，映射 `sourceId/revisionId/range/parentId`；候选只取叶子，回答上下文按父节点恢复 | 不复制另一套应用；SQLite 继续保存原件，组件索引是可重建投影 | 组件未接入；已有同一固定原件的章节/函数补读，正式持久父子单位仍待做 |
-| Hindsight 持续综合理解 | 先接可选记忆读取/整合后端；输入原件、事件时间与元数据，返回带来源的观察和主题视图，供 Agent 补查 | 比较替换分散 claim 整合；原件版本和 MemoryService 的事实/事项应用权保留 | 0.10.2 隔离环境和 Traex/Sol 模型接口已建立；连续记忆试验进行中，生产未接入 |
+| Haystack 层级检索组件 | 通过 `RetrievalPort` 接组件适配，映射 `sourceId/revisionId/range/parentId`；候选只取叶子，回答上下文按父节点恢复 | 不复制另一套应用；SQLite 继续保存原件，组件索引是可重建投影 | 未安装该组件；已保存固定原文的父子结构和段落归属，助手补章节与上级引言，Agent 可按节点继续补读 |
+| Hindsight 持续综合理解 | 先接可选记忆读取/整合后端；输入原件、事件时间与元数据，返回带来源的观察和主题视图，供 Agent 补查 | 比较替换分散 claim 整合；原件版本和 MemoryService 的事实/事项应用权保留 | 0.10.2 + Traex/Sol 的连续保存、召回、回答及综合视图刷新已跑通合成场景；适配稳定性、时间细节与长期效果未通过，生产未接入 |
 | 公开评测实现 | MTRAG 用官方段落与标注，FreshStack 复用官方要点覆盖评价，LongMemEval 保留原始会话和 oracle 对照 | 替换“预期路径命中＝质量”的判断；工程 smoke 保留 | MTRAG Cloud、FreshStack Godot 和改造后完整中文 T2 词法已运行，LongMemEval 尚未运行 |
 
 这些组件不必一次安装。第一个交付应先解决页面用途和更新生命周期，随后接父章节与简明检索策略；复杂文档解析和记忆后端按各自真实输入交付。
@@ -34,9 +34,13 @@ omem 已有 `WikiPageBrief`，缺的不是继续加提示字段，而是让计�
 
 [官方部署](https://github.com/vectorize-io/hindsight#quick-start) 需要额外服务/存储和模型配置，不是一个零成本 TypeScript 依赖。Traex ACP 也不能直接冒充它的普通 HTTP 模型端点；接入时应检查其 provider 扩展，或在明确配置的受支持 provider 上做隔离对照，不能隐式要求另一份付费密钥。采用它的理由必须是长期更新与跨会话效果、维护成本的净收益，而不是某个排行榜总分。
 
-当前隔离试验使用 osdk 管理的 Python/uv，锁定 `hindsight-api-slim[embedded-db]==0.10.2`，由 pg0 启动仅本机访问的 PostgreSQL。模型仍是仓库实际配置的 Traex ACP / gpt-5.6-sol，已有中文 BGE 提供向量，没有安装本地大语言模型或要求另一份模型密钥。临时 HTTP 适配器把结构化输出与工具选择转换为 ACP/MCP；Hindsight 执行自己选择的记忆工具，再带结果请求下一轮，适配器不伪造工具结果。已实跑中文向量和结构化输出，数据库初始化也已成功；这还不能证明 retain/recall/reflect、综合视图或长期记忆效果已通过。首次启动发现上游不支持 `none` 重排配置，已改用上游提供的 RRF 直通模式。
+当前隔离试验使用 osdk 管理的 Python/uv，锁定 `hindsight-api-slim[embedded-db]==0.10.2`，由 pg0 启动仅本机访问的 PostgreSQL。模型仍是仓库实际配置的 Traex ACP / gpt-5.6-sol，已有中文 BGE 提供向量，没有安装本地大语言模型或要求另一份模型密钥。临时 HTTP 适配器把结构化输出与工具选择转换为 ACP/MCP；Hindsight 执行自己选择的记忆工具，再带结果请求下一轮，适配器不伪造工具结果。已实跑中文向量和结构化输出，并完成下述小型连续记忆试验；长期效果仍需单独验证。首次启动发现上游不支持 `none` 重排配置，已改用上游提供的 RRF 直通模式。
 
-三条明确标注的合成项目材料覆盖改期、负责人交接、预算包含关系和未约定的付款时间。首次提取在 Traex 空响应流中断；改用严格 schema 后虽收到了有效 MCP 提交，ACP 收尾仍失败，未继续应用为记忆。正在修正收尾交互再试，完整 retain/recall/reflect 未通过。运行目录、数据库、临时令牌和原始 trace 均在被忽略的 `.repo-review/runtime/experiments/hindsight`；尚未成为正式可复用适配器，也未写入个人库。完成工具循环与来源映射验证后，再决定如何提取可选接入模块，并运行 LongMemEval；不把这次接口探针当作 Hindsight 的质量评测。
+三条明确标注的合成项目材料覆盖改期、负责人交接、预算包含关系和未约定的付款时间。修正 ACP 提交后的收尾交互后，三次 retain、recall 和两次 reflect 已完成；模型正确区分最新日期、负责人与预算包含关系，付款日回答“未约定”。保存每条材料约 54～75 秒，召回 0.21 秒，两次调查回答约 159/112 秒。随后把真实生成的回答保存为综合视图，加入第四条变更，再显式调用 refresh：视图更新为 10 月 20 日上线、总预算 9000 元且包含云费用 3500 元、付款日 10 月 15 日，并保留负责人和历史。新材料保存约 74 秒，刷新约 177 秒。这证明调用与更新流程可运行，尚不构成快速问答或质量优势。
+
+仍有实际问题：两轮调查各出现一次“Agent 未提交响应或工具选择”，上游继续调查后得到结果；早期另有两次 Traex 空响应流失败。观察合并把 9 月 5 日才补充的云预算与 9 月 3 日的预算变更写到一起，综合视图也沿用了这个时间归属，不能认为时间推理已经正确。部分观察的事件结束时间仍带原定上线日期；还需要从观察回查源事实及 omem 固定行范围，不能直接把返回的观察当最终引用。当前数据量只有四条人工构造材料，LongMemEval 与对现有记忆的同条件比较尚未运行。
+
+运行目录、数据库、临时令牌和原始 trace 均在被忽略的 `.repo-review/runtime/experiments/hindsight`；实验结束已停止 PostgreSQL。尚未成为正式可复用适配器，也未写入个人库。下一步先修工具选择交互与来源/时间映射，再做长期更新对照；结果更新本页，不持续提交实验日志。
 
 本次也读了 [Hindsight benchmark](https://github.com/vectorize-io/hindsight-benchmarks) 和 [Mem0 benchmark](https://github.com/mem0ai/memory-benchmarks) 的运行设计：可参考摄取/检索/回答分阶段和逐题输出。用相同的历史、回答模型与评价条件比较，保留准备记忆所花的成本；不能把不同模型的分数相减说成架构收益。数据选择与本轮实际运行边界见[外部评测](external-evaluation.md)。
 

@@ -1,4 +1,4 @@
-import { evidenceNeighbors, evidenceSection, sourceContextRange } from "../retrieval/context.js";
+import { evidenceNeighbors, evidenceSection, sourceContextRanges } from "../retrieval/context.js";
 import {
   taskFollowUpSchema,
   type TaskFollowUp,
@@ -952,26 +952,27 @@ export class AssistantRuntime {
         const material = materialFromRevision(this.store, reference.revisionId);
         if (!material) continue;
         if (!reference.fragmentIds.every(visible)) continue;
-        const context = hit.kind === "source"
-          ? sourceContextRange(material, reference, visible)
-          : reference;
-        const entry = evidenceForRange(
-          material,
-          context.startLine,
-          context.endLine,
-          visible,
-        );
-        entry.sourceTarget = context;
-        // Preserve the input adapter's public locator alongside its fixed range.
-        // Reconstructing a revision alone produces the storage namespace key,
-        // which may not be the key exposed by the research catalog.
-        entry.materialKey = reference.key;
-        entry.materialDescription = this.store.descriptions.get(reference.revisionId) ?? undefined;
-        if (hit.kind === "source" && hit.headingPath.length)
-          entry.sectionTitle = hit.headingPath.join(" / ");
-        if (!evidence.has(entry.citationId!))
-          evidence.set(entry.citationId!, entry);
-        citationIds.push(entry.citationId!);
+        const contexts = hit.kind === "source"
+          ? sourceContextRanges(material, reference, visible, { db: this.store.db, unitId: hit.id })
+          : [reference];
+        for (const context of contexts) {
+          const entry = evidenceForRange(
+            material,
+            context.startLine,
+            context.endLine,
+            visible,
+          );
+          entry.sourceTarget = context;
+          // Preserve the adapter's public locator alongside its fixed range.
+          // A reconstructed revision may use a different storage namespace key.
+          entry.materialKey = reference.key;
+          entry.materialDescription = this.store.descriptions.get(reference.revisionId) ?? undefined;
+          if (hit.kind === "source" && !entry.sectionTitle && hit.headingPath.length)
+            entry.sectionTitle = hit.headingPath.join(" / ");
+          if (!evidence.has(entry.citationId!))
+            evidence.set(entry.citationId!, entry);
+          citationIds.push(entry.citationId!);
+        }
       }
       if (hit.kind !== "source")
         background.push({

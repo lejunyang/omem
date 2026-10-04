@@ -230,6 +230,9 @@ export function researchSnapshot(input: {
     );
     const warmIds = new Set(warmUnits.map((r) => String(r.id)));
     copy("retrieval_units", warmUnits);
+    copy("retrieval_contexts", all("retrieval_contexts").filter(r =>
+      warmOwners.has(String(r.owner)) && revisionIds.has(String(r.revision_id)),
+    ));
     copy(
       "retrieval_projection_heads",
       all("retrieval_projection_heads").filter((r) =>

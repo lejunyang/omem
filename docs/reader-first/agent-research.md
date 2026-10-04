@@ -1,6 +1,6 @@
 # Agent 自主调查、写作与独立补查
 
-2026-10-02。原生 ACP 调查、写作与独立补查已接通；实际仓库生成状态见 progress.md。
+更新：2026-10-04。原生 ACP 调查、写作与独立补查已接通；实际仓库生成状态见 progress.md。
 
 ## 改造前的限制
 
@@ -10,14 +10,14 @@ writePage 的 researcher 返回 requests，宿主最多三轮执行 MaterialRese
 
 `knowledge/pipeline.ts` 的 ACP 知识任务默认开启 nativeResearch。研究者在一次 session/prompt 内按需读材料并用工具调查，再把 findings 交作者；作者也可以继续读取；verifier 独立新会话有相同材料范围和工具，自行补查。调查不再受宿主三轮门槛限制。保留旧 bounded-context 模式作为非 ACP/协议兼容；这不表示普通助手问答的上下文策略也已重做。
 
-`knowledge/agent-research.ts` 把固定原文导出 originals/，保留安全相对路径，图片单独导出，catalog.json 记录 key、修订、文件、行数和出处。SQLite 使用 VACUUM INTO 做一致快照，检索仅读这个快照；任务完成前不会因当前库变化而悄悄换原文。快照会话按需加载本地已安装的中文 BGE，未安装降级全文，不下载权重。派生文章和记忆仍标明背景来源。
+`knowledge/agent-research.ts` 把固定原文导出 originals/，保留安全相对路径，图片单独导出，catalog.json 记录 key、修订、文件、行数和出处。`research-snapshot.ts` 向隔离 SQLite 复制本次获准原件、历史与相关知识/记忆，复用版本仍匹配的检索投影和向量，封存后只读；不会复制个人会话、凭据或全部数据库。任务完成前不会因当前库变化而悄悄换原文。快照会话按需加载本地已安装的中文 BGE，未安装降级全文，不下载权重。派生文章和记忆仍标明背景来源。
 
 官方 MCP SDK 提供 Streamable HTTP，只监听本机且每次任务有独立随机地址，生命周期随角色结束。工具如下：
 
 | 工具 | 帮助 Agent 完成的调查 |
 | --- | --- |
 | list_materials | 按标题/路径/类型发现原件，分页取得完整目录 |
-| read_material / read_section | 整篇、任意行段、完整章节或函数；含来源、修订、目录和图片 |
+| read_material / read_section | 整篇、任意行段、完整章节或函数；目录保存父子节点，可按 contextId 向上补条件、向下读子话题；含来源、修订和图片 |
 | search_materials | 共用修复后的混合检索；按明确 key/类型缩范围；弱匹配可为空 |
 | search_knowledge / read_knowledge | 阅读已有解释和其引用，再回原文核对新增事实 |
 | search_memories / read_memory | 找已有事实、经验、流程及其依据，提供背景 |
