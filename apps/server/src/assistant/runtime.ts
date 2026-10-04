@@ -848,7 +848,7 @@ export class AssistantRuntime {
                       } as Record<string, string>
                     )[String(action.action)] ?? "已更新");
               const time = task.dueAt
-                ? `；提醒时间：${new Intl.DateTimeFormat("zh-CN", { timeZone: clock.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(String(task.dueAt)))}（${clock.timezone}）`
+                ? `；截止时间：${new Intl.DateTimeFormat("zh-CN", { timeZone: clock.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(String(task.dueAt)))}（${clock.timezone}）`
                 : "";
               const follow = task.followUp
                 ? taskFollowUpSchema.parse(task.followUp)

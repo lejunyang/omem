@@ -62,6 +62,7 @@
               }
             },
             "due_at": {
+              "description": "Actual completion deadline explicitly requested by the owner, with timezone. A reminder/check-in time belongs in follow_up.next_check_at. Null when only a reminder is requested; do not inherit a project's deadline for a new reminder.",
               "anyOf": [
                 {
                   "type": "string"
@@ -82,6 +83,7 @@
               ]
             },
             "follow_up": {
+              "description": "Reminder/check-in scheduling, including a NEW reminder with no waiting party. Set next_check_at and the owner's exact time_expression; waiting_on=null unless waiting for someone, snoozed_until=null for an initial reminder. Separate from a completion deadline.",
               "anyOf": [
                 {
                   "type": "object",
@@ -194,6 +196,7 @@
               ]
             },
             "due_at": {
+              "description": "Actual completion deadline explicitly requested by the owner, with timezone. A reminder/check-in time belongs in follow_up.next_check_at. Null when only a reminder is requested; do not inherit a project's deadline for a new reminder.",
               "anyOf": [
                 {
                   "type": "string"
@@ -214,6 +217,7 @@
               ]
             },
             "follow_up": {
+              "description": "Reminder/check-in scheduling, including a NEW reminder with no waiting party. Set next_check_at and the owner's exact time_expression; waiting_on=null unless waiting for someone, snoozed_until=null for an initial reminder. Separate from a completion deadline.",
               "anyOf": [
                 {
                   "type": "object",
