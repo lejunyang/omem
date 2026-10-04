@@ -78,6 +78,30 @@ osdk run benchmark:mtrag .repo-review/runtime/design-audit
 
 原始基线保留在 `.repo-review/runtime/benchmarks/freshstack-godot`，最终实现对照在 `freshstack-bounded`；运行临时数据库已释放。只发布本节简报，不提交题目、答案、整库原文或重复数据库。报告中的源码指纹用于区分实际实现；当时 HEAD 只是运行起点，不能据此把未提交的改动算到旧提交里。
 
+## LongMemEval：给足相关会话后的七类诊断
+
+2026-10-04 已完成真实 Traex ACP / gpt-5.6-sol 对照。使用官方 cleaned 数据的 oracle 文件，固定修订 `98d7416c24c778c2fee6e6f3006e7a073259d48f`；500 题中按类别各选 SHA256(question_id) 最小的一题，在运行前固定七题和 12 段相关会话。没有把长历史压缩成人工摘要，也没有运行完整 s/m 历史、官方裁判或排行榜总分。
+
+两条路线使用同一批原始 user/assistant 会话和相同 Sol/medium：一条直接阅读全部相关会话作答；另一条用 Hindsight 0.10.2 逐题独立 bank，按日期 retain 后 reflect。问题与标准答案不参与记忆整理，has_answer 标记剔除；原始会话 ID 只作不透明文档身份，不提供答案会话列表。问题日期随回答请求提供。这是相关会话已给足时的整合诊断，不能算长历史召回能力。
+
+| 类别 | 人工抽读结果 |
+| --- | --- |
+| 缺失信息 | 两条路线都指出没有十二月参观记录、无法确定数量；Hindsight 另列一二月记录，增加了无关篇幅 |
+| 知识更新 | 直接 Sol 回答衣橱鞋架，符合标注；Hindsight 回答最后确认在床下、鞋架尚为计划。原会话同时含鞋架位置线索和未来存放措辞，需单列为原文含糊/标注分歧，不能简单判定哪条路线理解更好 |
+| 跨会话合并 | 两者均合并看诊 50 与药物 25，得到 75 |
+| 找回助手建议 | 两者均找到 Miss Bee Providore；Hindsight 增加日期与地点限定 |
+| 个人偏好 | 两者都给远程同事虚拟咖啡交流建议；Hindsight 更明确关联先前讨论及共同决定形式，但输出冗长 |
+| 找回用户经历 | 两者均找到 The Glass Menagerie；Hindsight 额外补了演员与朋友的背景，问题并不需要 |
+| 时间先后 | 两者均判断美西家庭旅行在欧洲独行前。原文只说“几年前”和“去年夏天”，Hindsight 额外细化为约 2020 年；相对顺序有依据，具体年份不是原文明确事实 |
+
+Hindsight 七题均完成，无 case 级失败；回答 109.46～138.21 秒，中位 124.60 秒。12 次 retain 各 144.67～258.87 秒，累计 2309.55 秒，不能从总成本中省略。直接阅读回答为 10.01～18.90 秒，中位 12.45 秒；它无需先整理记忆，但已经拿到全部相关会话，不能据此声称能在任意长历史中这样回答。
+
+这批结果没有证明引入整个 Hindsight 问答循环有净收益。它是当前 ACP 适配器、Sol 与 BGE-small-zh 的实际组合，不是上游服务的固有速度；公开样本是英语，中文 BGE 也不能用来推断其最佳检索效果。时间题元数据还有晚于 question_date 的同日会话，双方均沿用官方 oracle 范围，故不当作严格 as-of 测试。
+
+下一步保留 Hindsight 作为可选持续主题视图候选，先解决原件定位与事件时间映射，并比较“后台整理 → 快速读取视图/原件 → 必要时调查”。不要让每次简单查值都进入完整 reflect。现有 MemoryService 保持事实和事项应用职责，生产暂不接入。
+
+数据、选题、逐题输出和人工备注在 `.repo-review/runtime/benchmarks/longmemeval`；原始文件 SHA256 为 `821a2034d219ab45846873dd14c14f12cfe7776e73527a483f9dac095d38620c`。实验数据库及专用适配服务已停止，结果只更新本简报，不提交整库会话或新建一套历史报告。
+
 ## 其他测试集为什么值得用
 
 | 要解决的能力 | 数据与已检查内容 | 在 omem 中怎样接 | 本轮状态与限制 |
@@ -85,7 +109,7 @@ osdk run benchmark:mtrag .repo-review/runtime/design-audit
 | 中文自然表达的检索 | [C-MTEB T2Retrieval](https://huggingface.co/datasets/C-MTEB/T2Retrieval) 的完整中文 dev 数据 | 先比较透明词法基线和生产词法链，再单独检查中文向量和必要重排 | 改造后完整 22,812 题词法已运行；生活/网络检索不等于代码理解或长期记忆 |
 | 跨代码与文档找全答案 | [FreshStack](https://fresh-stack.github.io/) 及其 [评测实现](https://github.com/fresh-stack/freshstack)：真实开发问题、答案要点、代码/文档段落和要点标注 | 复用官方数据加载与评测，输出 query/doc/score；保留段落 ID、URL 和 byte offset。看 alpha-nDCG、要点覆盖，不能只看一个文件命中 | 完整 Godot 99 题词法对照已运行，结果见上节；未测向量/AST/回答，官方正例、负例和答案要点不交给检索器 |
 | 多轮追问与资料不足 | [MTRAG human](https://github.com/IBM/mt-rag-benchmark/tree/main/mtrag-human)：110 段对话、842 个任务，含追问、澄清、部分可答和不可答 | 会话先解析当前对象；分别给标准原文、标准原文混噪声、实际召回做回答，复用官方三类生成设置 | 已读完整会话文件和官方结构；仅 Cloud 188 题词法已运行。不可答/寒暄没有包含在本次检索分母中 |
-| 长期个人记忆 | [LongMemEval](https://github.com/xiaowu0162/LongMemEval)：500 题，含知识更新、时间、多会话与缺失信息 | 每题隔离记忆库，按日期导入历史；同一 Sol 回答条件对照当前机制与成熟后端。完整 s 用于记忆检索，oracle 用于给足材料的生成对照 | 已读格式和数据清单，未运行。`answer`、`has_answer`、答案会话 ID 必须留在评分侧；oracle 不能当检索成绩 |
+| 长期个人记忆 | [LongMemEval](https://github.com/xiaowu0162/LongMemEval)：500 题，含知识更新、时间、多会话与缺失信息 | 每题隔离记忆库，按日期导入历史；完整 s 用于记忆检索，oracle 用于给足材料的生成对照 | 七类预选 oracle 案例已实际比较直接 Sol 与 Hindsight；完整历史召回、现有 omem 记忆后端及官方评分未运行。答案与 has_answer 不进入模型 |
 | 中文给足材料仍读不好 | [LongBench v1](https://github.com/THUDM/LongBench/blob/main/LongBench/README.md) 的中文阅读/总结任务 | 使用长原文回答，隔离“找不到”和“给足仍理解错”；不要把长上下文分数当检索分数 | 已读 v1 说明，未运行；不要把 v2 多选任务当同一个中文测试 |
 | 需要推理才能识别相关材料 | [BRIGHT](https://github.com/xlang-ai/BRIGHT) | 在基础改造之后检查主题词相似但不回答的问题，遵守官方排除文档约定 | 仅调研，不与下一片绑定，也不一次铺开全部榜单 |
 
