@@ -4,6 +4,7 @@ import type {
   WikiPageBrief,
   KnowledgeRole,
   SectionStatus,
+  PageMaintenanceStatus,
 } from "../../../../packages/contracts/src/knowledge";
 export type ArticleMeta = {
   role?: KnowledgeRole;
@@ -47,6 +48,7 @@ export type PlannedPage = {
   plan: WikiPageBrief | null;
   state: string;
   error?: string;
+  maintenance?: PageMaintenanceStatus | null;
 };
 export type KnowledgeFrame = {
   kind: "knowledge" | "citation" | "source";
