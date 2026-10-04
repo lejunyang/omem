@@ -1,0 +1,48 @@
+{
+  "repo": "IBM/mt-rag-benchmark",
+  "commit": "2c618bb98db3c8526433e22d8a2f7320f10a7470",
+  "files": [
+    {
+      "path": "corpora/passage_level/cloud.jsonl.zip",
+      "name": "cloud.jsonl.zip",
+      "sha256": "a0c5427013c65556aeddfdc246dd6068f3a7fad08ce6ae7adddaa9e87aae246d",
+      "size": 21310415,
+      "url": "https://raw.githubusercontent.com/IBM/mt-rag-benchmark/2c618bb98db3c8526433e22d8a2f7320f10a7470/corpora/passage_level/cloud.jsonl.zip"
+    },
+    {
+      "path": "mtrag-human/retrieval_tasks/cloud/cloud_lastturn.jsonl",
+      "name": "cloud_lastturn.jsonl",
+      "sha256": "85851a3d24fd09d07b6817ad023604f42ed3313af34dc95431c039890ddda1cb",
+      "size": 20870,
+      "url": "https://raw.githubusercontent.com/IBM/mt-rag-benchmark/2c618bb98db3c8526433e22d8a2f7320f10a7470/mtrag-human/retrieval_tasks/cloud/cloud_lastturn.jsonl"
+    },
+    {
+      "path": "mtrag-human/retrieval_tasks/cloud/cloud_rewrite.jsonl",
+      "name": "cloud_rewrite.jsonl",
+      "sha256": "f999821b4179bd900a8c06fcf849a895f2a1eb56adb6ae10b5bc95bb468c6a4c",
+      "size": 22896,
+      "url": "https://raw.githubusercontent.com/IBM/mt-rag-benchmark/2c618bb98db3c8526433e22d8a2f7320f10a7470/mtrag-human/retrieval_tasks/cloud/cloud_rewrite.jsonl"
+    },
+    {
+      "path": "mtrag-human/retrieval_tasks/cloud/cloud_questions.jsonl",
+      "name": "cloud_questions.jsonl",
+      "sha256": "8c38d26821b2ef81de4b8fc9d1683391c063394a46bc7cd949bfa1b09ea1498e",
+      "size": 58395,
+      "url": "https://raw.githubusercontent.com/IBM/mt-rag-benchmark/2c618bb98db3c8526433e22d8a2f7320f10a7470/mtrag-human/retrieval_tasks/cloud/cloud_questions.jsonl"
+    },
+    {
+      "path": "mtrag-human/retrieval_tasks/cloud/qrels/dev.tsv",
+      "name": "dev.tsv",
+      "sha256": "925635635bf0e60b20d8ea0b18160cff878897acf8e0bf54e7096cc0ade8bd3b",
+      "size": 30951,
+      "url": "https://raw.githubusercontent.com/IBM/mt-rag-benchmark/2c618bb98db3c8526433e22d8a2f7320f10a7470/mtrag-human/retrieval_tasks/cloud/qrels/dev.tsv"
+    },
+    {
+      "path": "mtrag-human/retrieval_tasks/README.md",
+      "name": "README.md",
+      "sha256": "626061b8daef49bb91905081068da5bfe6772462b3f9a4b55826d0580c863110",
+      "size": 3175,
+      "url": "https://raw.githubusercontent.com/IBM/mt-rag-benchmark/2c618bb98db3c8526433e22d8a2f7320f10a7470/mtrag-human/retrieval_tasks/README.md"
+    }
+  ]
+}
