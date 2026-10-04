@@ -335,6 +335,7 @@ export async function reviewAssistantAnswer(input: {
         expectedSkills: bundle.skills.map((s) => s.canonical_name),
         onSessionUpdate: environment.update,
         allowPermission: environment.allowPermission,
+        finalSubmission: environment.submission,
       },
     );
     writeFileSync(

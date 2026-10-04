@@ -43,6 +43,7 @@ import {
 import { researchSnapshot } from "./research-snapshot.js";
 import { MaterialDescriptions } from "../source-profile/descriptions.js";
 import { contextHierarchy, enclosingContext, type ContextNode } from "../retrieval/hierarchy.js";
+import { sourceContextRanges } from "../retrieval/context.js";
 
 type Entry = {
   material: KnowledgeMaterial;
@@ -272,6 +273,7 @@ export async function prepareAgentResearch(input: {
       const labels: Record<string, string> = {
         list_materials: "查看材料目录",
         search_materials: "搜索原始材料",
+        search_contexts: "按问题查找完整阅读材料",
         read_material: "补读原文",
         read_section: "阅读完整章节",
         search_knowledge: "查找已有讲解",
@@ -605,6 +607,89 @@ export async function prepareAgentResearch(input: {
               ];
             }),
           };
+        },
+      );
+      tool(
+        "search_contexts",
+        "Retrieve complete reading contexts for distinct parts of the user's question or specific missing prerequisites. Supply your own focused queries; each question keeps its own ranked contexts instead of competing for one global top-k. Searches originals, explanations and applied state in the SAME snapshot. Shared contexts appear once with per-question IDs. Results are reading leads, NOT verified answers or a coverage score. Use single searches for simple lookups, and refine queries/read callers or history when a part is still unanswered.",
+        {
+          questions: z.array(z.object({
+            question: z.string().min(1).describe("The specific user question or missing condition this search serves; do not invent unrelated audit topics."),
+            query: z.string().min(1),
+            purpose: z.enum(retrievalPurposes).default("balanced"),
+            codeIntent: z.enum(codeIntents).optional(),
+            materialRoles: z.array(z.enum(materialRoles)).optional(),
+            effectiveAt: z.iso.datetime({ offset: true }).optional(),
+            kinds: z.array(z.enum(["source", "knowledge", "memory", "task"])).min(1).optional(),
+            keys: z.array(z.string()).optional(),
+          })).min(1).max(8),
+          contextsPerQuestion: z.number().int().min(1).max(12).default(3),
+        },
+        async ({ questions, contextsPerQuestion }) => {
+          // Resolve every explicit scope before searching, so an invalid path
+          // cannot silently broaden one part to the whole workspace.
+          const scopes = questions.map((q: { keys?: string[] }) => q.keys
+            ? new Set(q.keys.map(key => entry(key).material.key)) : undefined);
+          ready ??= config.enabled ? retrieval.indexBatch(0).catch(error =>
+            record({ kind: "index", state: "lexical-only", reason: String(error) })) : Promise.resolve();
+          await ready;
+          const pools = await Promise.all(questions.map((q: {
+            query: string; purpose: (typeof retrievalPurposes)[number];
+            codeIntent?: (typeof codeIntents)[number];
+            materialRoles?: (typeof materialRoles)[number][];
+            effectiveAt?: string;
+            kinds?: ("source" | "knowledge" | "memory" | "task")[];
+          }, i: number) => retrieval.search({
+            text: q.query, purpose: q.purpose, kinds: q.kinds,
+            codeIntent: q.codeIntent, materialRoles: q.materialRoles, effectiveAt: q.effectiveAt,
+            limit: 50, diversify: false,
+            visible: id => {
+              const f = fragments.get(id);
+              return !!f && (!scopes[i] || scopes[i].has(f.material.key));
+            },
+          })));
+          const contexts = new Map<string, { id: string; [key: string]: unknown }>();
+          const groups = questions.map((q: { question: string; query: string }, i: number) => {
+            const matches: { contextId: string; rank: number }[] = [];
+            for (const [rank, hit] of pools[i]!.entries()) {
+              let identity: string, body: Record<string, unknown>;
+              if (hit.target.kind === "source") {
+                const material = entries.get(hit.target.key)?.material;
+                if (!material) continue;
+                const ranges = sourceContextRanges(material, hit.target, id => fragments.has(id), { db, unitId: hit.id });
+                identity = JSON.stringify(ranges);
+                body = { kind: "source", key: material.key, title: material.title,
+                  passages: ranges.map(range => read(material.key, range.startLine, range.endLine)) };
+              } else if (hit.target.kind === "knowledge") {
+                const row = db.prepare("SELECT artifact FROM knowledge_revisions WHERE document_key=? AND id=?")
+                  .get(hit.target.key, hit.target.revision);
+                if (!row) continue;
+                const article = JSON.parse(String(row.artifact)) as KnowledgeArticle;
+                const sectionKey = hit.target.section;
+                const section = article.document.sections.find(s => s.key === sectionKey);
+                if (!section) continue;
+                identity = JSON.stringify(hit.target);
+                body = { kind: "knowledge", target: hit.target, title: article.document.title,
+                  section, derived: true, dependencies: article.dependencies,
+                  citations: article.document.citations.filter(c => section.body.includes(`[[${c.key}]]`)) };
+              } else {
+                identity = JSON.stringify(hit.target);
+                body = { kind: hit.kind, target: hit.target, title: hit.title, text: hit.text,
+                  references: hit.references, appliedState: true };
+              }
+              let context = contexts.get(identity);
+              if (!context) {
+                context = { id: `context_${contexts.size + 1}`, ...body };
+                contexts.set(identity, context);
+              }
+              if (matches.some(m => m.contextId === context.id)) continue;
+              matches.push({ contextId: context.id, rank: rank + 1 });
+              if (matches.length >= contextsPerQuestion) break;
+            }
+            return { question: q.question, query: q.query, matches };
+          });
+          return { questions: groups, contexts: [...contexts.values()], health: retrieval.health(),
+            next: "Read each question's contexts for the actual answer and prerequisites. An empty group is a search gap, not proof that the fact or feature is absent. Refine only unresolved parts; do not repeat answered searches or turn this into a system audit." };
         },
       );
       tool(

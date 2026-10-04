@@ -10,6 +10,51 @@ import { KnowledgeRepository } from "../src/knowledge/repository.js";
 import { prepareAgentResearch } from "../src/knowledge/agent-research.js";
 import { parseFile } from "../src/code/parse.js";
 
+it("keeps reading contexts for each question, including parent conditions and the sealed original", async () => {
+  const root = mkdtempSync(join(tmpdir(), "omem-question-contexts-"));
+  const store = new Store(join(root, "data"));
+  const client = new Client({ name: "question-context-check", version: "1" });
+  let env: Awaited<ReturnType<typeof prepareAgentResearch>> | undefined;
+  try {
+    const capture = (text: string) => store.capture({ source: "manual", externalId: "outing", title: "郊游安排",
+      parts: [{ type: "text", text }] });
+    capture("# 郊游\n仅限提前登记的成员参加。\n\n## 费用\n费用为120元。\n\n包含午餐，不含交通费。\n\n## 集合\n集合地点为南门，时间是上午九点。");
+    const repo = new KnowledgeRepository(store), material = repo.materials()[0]!;
+    const schema = z.object({ answer: z.string() });
+    env = await prepareAgentResearch({ repository: repo, materials: [material], articles: [], workspace: join(root, "task"),
+      schema, validate: x => schema.parse(x), retrievalConfig: { enabled: false } });
+    const server = env.servers[0]!;
+    if (server.type !== "http") throw Error("HTTP MCP expected");
+    await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+    capture("# 新安排\n费用改为300元，在北门集合。");
+    const response = await client.callTool({ name: "search_contexts", arguments: {
+      questions: [
+        { question: "费用与适用条件？", query: "费用" },
+        { question: "在哪集合？", query: "集合" },
+        { question: "费用包含什么？", query: "费用" },
+        { question: "材料是否提到火星？", query: "unfindableMarsIdentifier" },
+      ], contextsPerQuestion: 1,
+    } });
+    expect(response.isError).not.toBe(true);
+    const data = JSON.parse((response.content as { text: string }[])[0]!.text);
+    expect(data.questions.map((q: { matches: unknown[] }) => q.matches.length)).toEqual([1, 1, 1, 0]);
+    expect(data.contexts).toHaveLength(2);
+    expect(data.questions[0].matches[0].contextId).toBe(data.questions[2].matches[0].contextId);
+    const fee = data.contexts.find((c: { id: string }) => c.id === data.questions[0].matches[0].contextId);
+    expect(fee.passages.map((p: { text: string }) => p.text).join("\n")).toContain("仅限提前登记");
+    expect(JSON.stringify(fee)).toContain("不含交通费");
+    expect(JSON.stringify(data.contexts)).toContain("南门");
+    expect(JSON.stringify(data.contexts)).not.toContain("300元");
+    expect(fee.passages.every((p: { revision: string }) => p.revision === material.revisionId)).toBe(true);
+    const invalid = await client.callTool({ name: "search_contexts", arguments: {
+      questions: [{ question: "费用？", query: "费用", keys: ["not-offered"] }],
+    } });
+    expect(invalid.isError).toBe(true);
+  } finally {
+    await client.close(); await env?.close(); store.close(); rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it("exposes aliases, receivers and branch context without asserting that a call runs", () => {
   const parsed = parseFile(
     "shipping.ts",
