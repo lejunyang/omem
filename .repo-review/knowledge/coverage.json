@@ -1,10 +1,13 @@
 {
   "version": 1,
-  "checkedAt": "2026-10-04T21:16:28.226Z",
+  "checkedAt": "2026-10-04T22:04:40.772Z",
   "model": "gpt-5.6-sol",
   "workflow": "reader-first",
   "selection": [
-    "guide:memory"
+    "guide:memory",
+    "guide:knowledge-agent",
+    "guide:knowledge-maintenance",
+    "guide:knowledge-reference"
   ],
   "pages": [
     {
@@ -35,17 +38,17 @@
     {
       "key": "guide:knowledge-agent",
       "title": "把材料写成一篇能用的文章",
-      "state": "stale"
+      "state": "reviewed"
     },
     {
       "key": "guide:knowledge-maintenance",
       "title": "整理文章，以及原文更新后怎么处理",
-      "state": "stale"
+      "state": "reviewed"
     },
     {
       "key": "guide:knowledge-reference",
       "title": "知识文章的状态、来源与修改入口",
-      "state": "stale"
+      "state": "reviewed"
     }
   ],
   "files": [
@@ -2062,13 +2065,13 @@
       "knowledge": "not-applicable"
     },
     {
-      "path": ".repo-review/knowledge/verification/history/2026-10-04T14-24-43-021Z-646cfe10.json",
+      "path": ".repo-review/knowledge/verification/history/2026-10-04T17-57-59-241Z-e594fba5.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
     },
     {
-      "path": ".repo-review/knowledge/verification/history/2026-10-04T17-57-59-241Z-e594fba5.json",
+      "path": ".repo-review/knowledge/verification/history/2026-10-04T19-57-01-723Z-a8cc7ef0.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
@@ -2325,7 +2328,7 @@
       "path": "README.md",
       "state": "captured",
       "materialKey": "omem:README.md",
-      "digest": "791805c2bbe9d4a6f86b1d11a8e8dcef7513200c29891fff0338325e5737d976",
+      "digest": "0df535efcd7c0718fcbf0c174b4a2352a446d4d151a2470f456d53cadfc207df",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -2693,7 +2696,7 @@
       "path": "apps/server/src/knowledge/lifecycle.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/src/knowledge/lifecycle.ts",
-      "digest": "5c2d419aa3473412e7271442add32ac3744ae0840819ea1d00082ac1b1e5c7bd",
+      "digest": "09a474eef1dedc106ce6a1d486432d0c05bcc6f41b0a4541bc843aa2ad485fc8",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -3373,7 +3376,7 @@
       "path": "apps/server/tests/knowledge-lifecycle.test.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/tests/knowledge-lifecycle.test.ts",
-      "digest": "501b257acfd6cafd5196081019fa84cfe3e13962053a0dd68fb275330636eaf2",
+      "digest": "18ed825671b83cd269f2bd92eeadca9926868096237c294ea52521850a052a8c",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5069,7 +5072,7 @@
       "path": "docs/reader-first/progress.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/progress.md",
-      "digest": "fee1161a865092db918cb43e607651efd33ac28c99515312958765a87227d9ec",
+      "digest": "11d5869a966e242b5ec3cfa73da068c9501b337dbf16b8ebc67fd4a2c88b680a",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5077,7 +5080,7 @@
       "path": "docs/reader-first/project-contexts.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/project-contexts.md",
-      "digest": "12a06bb6f6ab0acfab04b42bc0b4200e1a8c00cff3d67641e7b7c1fbffe2b321",
+      "digest": "4d1062ee7e26b7cda422ab26672dda45de67e174fec79aea8d809b3836a0698f",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5085,7 +5088,7 @@
       "path": "docs/reader-first/publication-lifecycle.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/publication-lifecycle.md",
-      "digest": "550b34e63044caaccf7432725c98c83394a2878a3ac519cb57dd498af9896bb3",
+      "digest": "594aef85794a09f8f12c827b852890c79aa61b2b49f40b5181f3c5dcb13cd7e8",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
