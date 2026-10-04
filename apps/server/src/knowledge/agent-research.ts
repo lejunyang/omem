@@ -291,6 +291,7 @@ export async function prepareAgentResearch(input: {
         search_materials: "搜索原始材料",
         search_contexts: "按问题查找完整阅读材料",
         read_material: "补读原文",
+        read_fragments: "读取原文与记忆引用定位",
         read_section: "阅读完整章节",
         search_knowledge: "查找已有讲解",
         read_knowledge: "阅读已有讲解",
@@ -511,6 +512,26 @@ export async function prepareAgentResearch(input: {
           endLine: z.number().int().positive().optional(),
         },
         (a) => read(a.key, a.startLine, a.endLine),
+      );
+      tool(
+        "read_fragments",
+        "Read immutable fragments and original provenance for a captured source. Use these exact IDs and raw quotes for memory proposals; line-numbered read_material text is for reading, not an exact fragment quote. Pagination follows fragment ordinal.",
+        { key: z.string(), ...page },
+        ({ key, offset, limit }) => {
+          const m = entry(key).material;
+          reads.add(m.key);
+          const row = db.prepare("SELECT body FROM revisions WHERE id=?").get(m.revisionId)!;
+          const body = JSON.parse(String(row.body));
+          const parts = (body.parts ?? []).flatMap((p: { type: string; text?: string }) =>
+            p.type === "text" ? (p.text ?? "").split(/\n\s*\n/).filter(t => t.trim()).map(() => p) : [p]);
+          return { key: m.key, sourceId: m.sourceId, revision: m.revisionId, provenance: body.provenance ?? null,
+            groupIds: memberGroups.get(m.sourceId) ?? [], total: m.fragments.length,
+            nextOffset: offset + limit < m.fragments.length ? offset + limit : null,
+            fragments: m.fragments.slice(offset, offset + limit).map((f, index) => ({
+              fragment_revision_id: f.id, source_revision_id: m.revisionId, text: f.text, part: parts[offset + index],
+            })),
+          };
+        },
       );
       tool(
         "read_section",
@@ -879,7 +900,7 @@ export async function prepareAgentResearch(input: {
         ({ id }) => {
           const r = db
             .prepare(
-              "SELECT m.id,m.kind,m.status,m.scope,mr.body,mr.evidence_set FROM memories m JOIN memory_revisions mr ON mr.id=m.head_revision_id WHERE m.id=? AND m.status='active'",
+              "SELECT m.id,m.version,m.kind,m.status,m.scope,mr.body,mr.evidence_set FROM memories m JOIN memory_revisions mr ON mr.id=m.head_revision_id WHERE m.id=? AND m.status='active'",
             )
             .get(id);
           if (!r) throw Error("Memory no longer active in snapshot");

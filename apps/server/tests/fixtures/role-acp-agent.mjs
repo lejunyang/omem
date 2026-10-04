@@ -8,6 +8,7 @@ let model = "alpha";
 let effort = "low";
 let pendingPrompt;
 let pendingText = "";
+let mcpServers = [];
 const options = () => [
   {
     id: "model",
@@ -57,13 +58,14 @@ function output(text) {
     if (roleId === "verifier") return JSON.stringify({ schema_version: 1, job_id: jobId, role_id: roleId,
       assessments: ctx.candidates.map(c => ({ proposal_id: c.proposal_id, proposal_digest: c.proposal_digest,
         quote_asset_verdict: "valid", semantic_verdict: "supported", reason_code: "fixture_support",
+        ...(c.operation === "create" ? {} : { update_relation: "amends" }),
         reason: "Current fixed source supports updated limit.", missing_context: [] })) });
     const m = JSON.parse(text.match(/\[UNTRUSTED MATERIAL JSON\]\s*(\{[^\n]+\})/)[1]);
-    const target = ctx.task.refreshTargets[0];
+    const target = ctx.task.refreshTargets[0] ?? ctx.related_memories.find(m => m.kind === "claim" && m.scope?.project_id === ctx.trusted_context.project_id);
     return JSON.stringify({ schema_version: 1, job_id: jobId, role_id: "extractor", observations: [], abstentions: [],
       proposals: [{ schema_version: 1, proposal_id: "refresh-fixture", kind: "claim", operation: target ? "update" : "create",
         ...(target ? { target_id: target.memory_id } : {}),
-        scope: target?.scope ?? { workspace_id: "personal", project_id: null, subject_id: "owner" },
+        scope: target?.scope ?? { workspace_id: "personal", project_id: ctx.trusted_context.project_id, subject_id: "owner" },
         body: { statement: m.text, attribution: "source states", valid_from: null, valid_to: null },
         evidence: [{ fragment_revision_id: m.fragment_revision_id, source_revision_id: m.source_revision_id,
           exact_quote: m.text, selector: { start: 0, end: Array.from(m.text).length, unit: "unicode_codepoint" } }],
@@ -288,10 +290,27 @@ function output(text) {
     ],
   });
 }
-function finish() {
+async function finish() {
+  const value = output(pendingText);
+  const server = mcpServers.find(s => s.name === "omem" && s.type === "http");
+  if (server) {
+    const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
+      import("@modelcontextprotocol/sdk/client/index.js"),
+      import("@modelcontextprotocol/sdk/client/streamableHttp.js"),
+    ]);
+    const client = new Client({ name: "learning-protocol-fixture", version: "1" });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+      const result = await client.callTool({ name: "submit_result", arguments: { result: JSON.parse(value) } });
+      if (result.isError) throw Error(JSON.stringify(result.content));
+    } catch (e) {
+      send({ jsonrpc: "2.0", id: pendingPrompt, error: { code: -32000, message: String(e) } });
+      return;
+    } finally { await client.close(); }
+  }
   update({
     sessionUpdate: "agent_message_chunk",
-    content: { type: "text", text: output(pendingText) },
+    content: { type: "text", text: value },
   });
   send({
     jsonrpc: "2.0",
@@ -318,6 +337,7 @@ readline.createInterface({ input: process.stdin }).on("line", (raw) => {
       },
     });
   else if (message.method === "session/new") {
+    mcpServers = message.params?.mcpServers ?? [];
     reply({ sessionId, configOptions: options() });
     if (!args.has("--no-discovery"))
       update({

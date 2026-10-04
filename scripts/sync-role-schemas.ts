@@ -16,7 +16,7 @@ writeFileSync("packages/agent-runtime/roles/knowledge-researcher/1/output.schema
 for (const [role, schema] of [["extractor", proposalBatchSchema], ["verifier", assessmentBatchSchema]] as const) {
   writeFileSync(`packages/agent-runtime/roles/${role}/1/output.schema.json`, JSON.stringify({ ...z.toJSONSchema(schema, { reused: "ref" }), $id: `https://omem.invalid/contracts/${role === "extractor" ? "ProposalBatch" : "AssessmentBatch"}.v1` }, null, 2) + "\n");
 }
-for (const role of ["daily-assistant", "knowledge-writer", "knowledge-refresher", "knowledge-planner", "knowledge-researcher", "knowledge-verifier", "code-analyst", "material-analyst", "conversation-analyst", "visual-analyst"]) {
+for (const role of ["extractor", "verifier", "daily-assistant", "knowledge-writer", "knowledge-refresher", "knowledge-planner", "knowledge-researcher", "knowledge-verifier", "code-analyst", "material-analyst", "conversation-analyst", "visual-analyst"]) {
   const root = `packages/agent-runtime/roles/${role}/1`;
   const manifest = JSON.parse(readFileSync(`${root}/manifest.json`, "utf8"));
   for (const skill of manifest.skill_bundles) skill.artifact_digest = directoryDigest(`${root}/skills/${skill.canonical_name}`);

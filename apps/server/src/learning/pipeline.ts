@@ -24,6 +24,9 @@ import { stableDigest } from "../storage/digest.js";
 import type { Store } from "../store.js";
 import { KeywordRetrieval } from "../retrieval/keyword.js";
 import type { RetrievalPort } from "../retrieval/port.js";
+import type { RetrievalConfig } from "../retrieval/factory.js";
+import { KnowledgeRepository } from "../knowledge/repository.js";
+import { prepareAgentResearch } from "../knowledge/agent-research.js";
 
 type Row = Record<string, unknown>;
 
@@ -81,6 +84,8 @@ export class LearningPipeline {
       ownerId?: string;
       workerId?: string;
       retrieval?: RetrievalPort;
+      retrievalConfig?: RetrievalConfig;
+      nativeResearch?: boolean;
     },
   ) {
     const registry = new RoleBundleRegistry();
@@ -314,13 +319,13 @@ export class LearningPipeline {
       return { revision, epoch: Number(state.validity_epoch) };
     });
     const first = revisions[0]!;
-    // Context carriers (application/conversationId/runId) describe WHERE a capture
-    // happened, NOT a trusted project. A real project link is a separate confirmed
-    // ContextLink, which does not exist yet here. So project_id is unknown until
-    // confirmed, and the model is told project_trusted=false rather than being fed a
-    // conversationId as if it were a project.
-    const projectId: string | null = null;
-    const projectTrusted = false;
+    // Only a single explicit project common to all input sources is a trusted
+    // scope. Topics, names, file paths and conversation carriers are not projects.
+    const projects = this.input.store.contexts.list().filter(p => p.kind === "project");
+    const shared = projects.filter(p => revisions.every(({ revision }) =>
+      this.input.store.contexts.forSource(revision.sourceId).includes(p.id)));
+    const projectId = shared.length === 1 ? shared[0]!.id : null;
+    const projectTrusted = projectId !== null;
     const subjectId = first.revision.provenance?.actorId ?? null;
     const scope = {
       workspace_id: job.workspaceId,
@@ -347,7 +352,7 @@ export class LearningPipeline {
           forwarded: prov?.forwarded ?? false,
           producer_kind: prov?.producerKind ?? "original",
         };
-        if (part?.type === "image") {
+        if (part?.type === "image" && !this.nativeResearch) {
           const bytes = this.input.store.asset(part.assetId);
           if (!bytes) throw Error("LEARNING_IMAGE_NOT_FOUND");
           material.image = {
@@ -382,19 +387,24 @@ export class LearningPipeline {
         source_epoch: first.epoch,
         project_trusted: projectTrusted,
       },
-      materials,
+      // Native sessions read complete inputs and images on demand. A first
+      // fragment is an entry point, not the entire evidence or a token budget.
+      materials: this.nativeResearch ? materials.slice(0, 1) : materials,
       related_memories: [
         ...this.relatedMemories(first.revision, scope),
         ...this.refreshMemories(job),
       ],
       task: {
         mode: "extract_and_refresh",
+        nativeResearch: this.nativeResearch,
+        input_sources: revisions.map(({ revision }) => ({ source_id: revision.sourceId, revision_id: revision.id, title: revision.title })),
+        project: shared.length === 1 ? shared[0] : null,
         already_applied_task_actions: this.handledTaskActions(job),
         daily_message_policy:
           "For discussion/chat: preserve decisions, per-speaker commitments, open questions and explicit outcomes. Only explicit owner assignment or a verified owner's own commitment can propose an owner task. A waiting promise from someone else is background, not permission to create or complete a task. Distinguish check-in time from deadline; no invented schedule or external outreach.",
         refreshTargets: this.refreshMemories(job),
         instruction:
-          "Recheck invalidated memories against ONLY current original materials. If still supported or changed, emit an update to the same memory_id with expected_versions[that id]=version, retaining its scope. Do not create a duplicate for an existing target. If no longer supported, abstain with a reason; it stays invalidated. You may create genuinely new memories. Never treat prior derived bodies as evidence. already_applied_task_actions are host receipts for this exact original owner command: do not create or reapply its task action. Retain useful attributed observations or other durable facts without recreating the task, including when it has since been completed or cancelled.",
+          "Investigate what the NEW input sources change. Search existing memories and project originals before creating another memory. Use read_fragments to obtain exact immutable IDs, quotes and provenance; read_memory returns version and body for an update. For a partial change, read the earlier original and preserve unaffected conditions. Update the same memory_id with its current expected_versions and retain scope; this applies to later separate messages as well as source revisions. Do not extract every background document as new input. If scope or support remains ambiguous, abstain with the concrete missing information. Never treat derived bodies as evidence. already_applied_task_actions are host receipts for this exact original owner command: do not recreate or reapply its task, even if completed or cancelled.",
       },
       confirmed_corrections: this.input.feedback.recall(scope),
       ...(candidates ? { candidates } : {}),
@@ -423,16 +433,62 @@ export class LearningPipeline {
       text: query,
       scope: "workspace",
       project_id: scope.project_id,
-      project_trusted: false,
+      project_trusted: scope.project_id !== null,
       limit: 10,
     });
-    return recalled.map((memory) => ({
-      memory_id: memory.id,
-      kind: memory.kind,
-      status: memory.status,
-      score: memory.score,
-      snippet: memory.snippet,
+    return recalled.flatMap((memory) => {
+      const row = this.input.store.db.prepare(`SELECT m.id,m.version,m.kind,m.status,m.scope,r.body,r.evidence_set
+        FROM memories m JOIN memory_revisions r ON r.id=m.head_revision_id WHERE m.id=?`).get(memory.id);
+      return row ? [{ memory_id: String(row.id), version: Number(row.version), kind: String(row.kind),
+        status: String(row.status), scope: JSON.parse(String(row.scope)), body: JSON.parse(String(row.body)),
+        evidence: JSON.parse(String(row.evidence_set)), derived: true, score: memory.score }] : [];
+    });
+  }
+
+  private get nativeResearch() { return this.input.nativeResearch ?? this.input.profile.transport === "acp"; }
+
+  private membershipStamp(job: JobLease) {
+    return stableDigest(this.sourceRefs(job).map(ref => {
+      const revision = this.input.store.revision(ref.revisionId);
+      return { revision: ref.revisionId, groups: revision ? this.input.store.contexts.forSource(revision.sourceId) : [] };
     }));
+  }
+
+  private validateScope(batch: ProposalBatch, context: ContextManifest) {
+    for (const item of [...batch.proposals, ...batch.observations]) {
+      if (item.scope.workspace_id !== context.trusted_context.workspace_id ||
+        item.scope.project_id !== context.trusted_context.project_id)
+        throw Error("ROLE_OUTPUT_SCOPE: use the supplied formal project; do not infer it from names or conversation IDs");
+    }
+    for (const proposal of batch.proposals) {
+      if (proposal.operation === "create") continue;
+      const row = this.input.store.db.prepare("SELECT scope FROM memories WHERE id=?").get(proposal.target_id!);
+      if (row && (JSON.parse(String(row.scope)).project_id ?? null) !== proposal.scope.project_id)
+        throw Error("ROLE_OUTPUT_SCOPE: an update cannot move an existing memory to a different project");
+    }
+  }
+
+  private async runRole(job: JobLease, context: ContextManifest, signal: AbortSignal, batch?: ProposalBatch) {
+    const stamp = this.membershipStamp(job);
+    const expected = job.inputRefs.find((r): r is { learningMembership: string } =>
+      !!r && typeof r === "object" && typeof (r as { learningMembership?: unknown }).learningMembership === "string");
+    if (expected && expected.learningMembership !== stamp) throw Error("STALE_JOB_INPUT: project membership changed");
+    if (batch) this.validateScope(batch, context);
+    const repository = new KnowledgeRepository(this.input.store);
+    const run = await this.gateway.run({
+      roleId: context.role_id, profile: this.input.profile, context, signal,
+      ...(context.role_id === "extractor" ? { validateOutput: (output: unknown) => {
+        const batch = proposalBatchSchema.parse(output); this.validateScope(batch, context); return batch;
+      } } : {}),
+      ...(this.nativeResearch ? { research: (workspace, schema, validate) => prepareAgentResearch({
+        repository, materials: repository.materials(), articles: repository.published(), workspace, schema, validate,
+        retrievalConfig: this.input.retrievalConfig,
+      }) } satisfies Pick<Parameters<RoleRuntimeGateway["run"]>[0], "research"> : {}),
+    });
+    // Model investigation is asynchronous. Never reinterpret an old result using
+    // membership edited during extraction or between extraction and review.
+    if (stamp !== this.membershipStamp(job)) throw Error("STALE_JOB_INPUT: project membership changed");
+    return { ...run, membershipStamp: stamp };
   }
 
   /**
@@ -552,12 +608,7 @@ export class LearningPipeline {
       if (job.roleVersion !== "extractor@1")
         throw Error(`LEARNING_ROLE_VERSION_UNSUPPORTED: ${job.roleVersion}`);
       const context = this.context(job, "extractor");
-      const run = await this.gateway.run({
-        roleId: "extractor",
-        profile: this.input.profile,
-        context,
-        signal,
-      });
+      const run = await this.runRole(job, context, signal);
       const batch = proposalBatchSchema.parse(run.result);
       const output = this.saveRun(job, run);
       this.recordObservations(job, batch);
@@ -571,6 +622,7 @@ export class LearningPipeline {
           kind: "verify_proposals",
           inputRefs: [
             { roleOutputId: output.id, extractionJobId: job.id },
+            { learningMembership: run.membershipStamp },
             ...job.inputRefs,
           ],
           roleVersion: "verifier@1",
@@ -643,12 +695,7 @@ export class LearningPipeline {
         proposal_digest: stableDigest(proposal),
       }));
       const context = this.context(job, "verifier", candidates);
-      const run = await this.gateway.run({
-        roleId: "verifier",
-        profile: this.input.profile,
-        context,
-        signal,
-      });
+      const run = await this.runRole(job, context, signal, { ...batch, proposals });
       const assessments = assessmentBatchSchema.parse(run.result);
       const byProposal = new Map(
         assessments.assessments.map((assessment) => [
@@ -687,6 +734,7 @@ export class LearningPipeline {
               role_version: `${run.trace.roleId}@${run.trace.roleVersion}`,
               reason_code: assessment.reason_code,
               details: assessment.reason,
+              update_relation: assessment.update_relation,
             },
           };
         }),

@@ -66,6 +66,14 @@
               "minLength": 1,
               "maxLength": 1000
             }
+          },
+          "update_relation": {
+            "type": "string",
+            "enum": [
+              "amends",
+              "conflicts",
+              "unclear"
+            ]
           }
         },
         "required": [

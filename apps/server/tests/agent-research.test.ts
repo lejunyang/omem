@@ -135,6 +135,10 @@ it("serves a fixed original and submission, then releases task copies without re
       arguments: { key: material.key },
     });
     expect(JSON.stringify(read)).toContain("提前预订船票");
+    const fragmentRead = await client.callTool({ name: "read_fragments", arguments: { key: material.key } });
+    const fixed = JSON.parse((fragmentRead.content as { text: string }[])[0]!.text);
+    expect(fixed.fragments[0]).toMatchObject({ fragment_revision_id: material.fragments[0]!.id,
+      source_revision_id: material.revisionId, text: material.fragments[0]!.text });
     expect(existsSync(join(workspace, "snapshot.sqlite"))).toBe(true);
     let completed = false;
     void env.submission?.then(() => { completed = true; });

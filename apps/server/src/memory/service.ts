@@ -378,6 +378,15 @@ export class MemoryService {
     return [...nextSources].some((source) => !priorSources.has(source));
   }
 
+  private isReviewedAmendment(proposal: Proposal, assessment: AssessmentInput) {
+    if (assessment.update_relation !== "amends" || assessment.semantic_verdict !== "supported" || !proposal.target_id)
+      return false;
+    const target = this.db.prepare("SELECT scope,version FROM memories WHERE id=?").get(proposal.target_id);
+    if (!target || Number(target.version) !== proposal.expected_versions[proposal.target_id]) return false;
+    const scope = JSON.parse(String(target.scope));
+    return scope.workspace_id === proposal.scope.workspace_id && this.sameProject(scope, proposal);
+  }
+
   private proposalSourceIds(proposalId: string) {
     return new Set(
       this.sourceReads(proposalId).map((row) => String(row.source_id)),
@@ -788,7 +797,7 @@ export class MemoryService {
       reasons.push("due_time_ambiguous");
     if (proposal.kind === "procedure")
       reasons.push("procedure_requires_review");
-    if (this.hasCrossSourceUpdate(proposal))
+    if (this.hasCrossSourceUpdate(proposal) && !this.isReviewedAmendment(proposal, assessment))
       reasons.push("cross_source_conflict");
     if (impactCount > (this.options.maxAutoApply ?? 10))
       reasons.push("impact_limit_exceeded");
@@ -816,8 +825,8 @@ export class MemoryService {
     //   (c) the allowed deterministic resolution has already been attempted,
     //   (d) we can state why now, the options and the effect of choosing.
     // impact_limit_exceeded is always (a): a change rippling past the auto budget
-    // touches many existing objects. A cross-source update is a genuine choice (b),
-    // but it only escalates after the deterministic补证 finds no resolution AND it
+    // touches many existing objects. An unresolved cross-source disagreement is
+    // a genuine choice (b); a separately reviewed amendment is not. Escalate if it
     // either overwrites active important knowledge (targetActive) or blocks the
     // owner's current task (blocksCurrentTask). Otherwise it stays internal.
     const impactEscalates = reasons.includes("impact_limit_exceeded");
@@ -885,6 +894,7 @@ export class MemoryService {
         assessment.reason_code,
         JSON.stringify({
           semantic: assessment.details,
+          updateRelation: assessment.update_relation ?? null,
           deterministicErrors,
         }),
         now(),

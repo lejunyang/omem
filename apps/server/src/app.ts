@@ -133,6 +133,8 @@ export async function buildApp(
         profile: learningProfile,
         workspaceRoot: config.agentCwd,
         pollMs: learningConfig?.pollMs,
+        retrieval: assistantRetrieval,
+        retrievalConfig: config.retrieval,
       })
     : null;
   let lark = dependencies.lark;
