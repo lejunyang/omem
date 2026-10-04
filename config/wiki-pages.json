@@ -63,7 +63,7 @@
       "questions": [
         "顶部搜索、知识搜索和助手是否共用召回？",
         "全文、中文短词、符号、向量、记忆与知识分别帮助解决什么问题？",
-        "命中一个片段后怎样补上下文？",
+        "命中一个片段后怎样补同节的条件？为什么阅读列表去重不应限制助手找全材料？",
         "助手如何使用来源和进一步查询？",
         "助手怎样按问题补齐关键条件，何时独立核对答案？",
         "当前中文模型、重排、时间检索有哪些实际限制？"
@@ -72,13 +72,16 @@
         "apps/server/src/retrieval/unified.ts",
         "apps/server/src/retrieval/units.ts",
         "apps/server/src/retrieval/port.ts",
+        "apps/server/src/retrieval/context.ts",
         "apps/server/src/assistant/runtime.ts",
+        "apps/server/src/knowledge/agent-research.ts",
         "apps/server/src/knowledge/api.ts",
         "apps/server/src/assistant/acp-model.ts",
         "apps/server/src/assistant/research.ts",
         "apps/server/src/knowledge/research-snapshot.ts",
         "apps/server/src/config.ts",
         "docs/reader-first/answer-investigation.md",
+        "docs/reader-first/retrieval-redesign.md",
         "apps/server/src/assistant/answer-review.ts"
       ],
       "topicPath": [

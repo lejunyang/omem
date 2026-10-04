@@ -108,7 +108,9 @@ export type SearchQuery = {
   timeRange?: TimeRange;
   /** Host visibility policy, applied before final ranking/limit. */
   visible?: (fragmentId: string) => boolean;
-  /** False retains raw fused order for comparisons or downstream fusion. */
+  /** False disables browse-only source caps and section/text deduplication.
+   * Assistants and research tools use false, then assemble answer context.
+   * Ranking, explicit scope and visibility filters still apply. */
   diversify?: boolean;
   /** Purpose is supplied by the reader/Agent, never inferred from repository paths. */
   purpose?: RetrievalPurpose;

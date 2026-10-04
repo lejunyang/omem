@@ -11,6 +11,8 @@ import { UnifiedRetrieval } from "../src/retrieval/unified.js";
 import { markdownPassages } from "../src/retrieval/units.js";
 import { querySymbols } from "../src/retrieval/relevance.js";
 import { rerankPassages } from "../src/retrieval/rerank-passages.js";
+import { sourceContextRange } from "../src/retrieval/context.js";
+import { sourceAnchor } from "../src/retrieval/units.js";
 import { ensureMaterialAliases } from "../src/knowledge/material-identity.js";
 import type { EmbeddingModel } from "../src/retrieval/embedding.js";
 import {
@@ -1097,4 +1099,52 @@ it("passes readable background to the assistant while keeping original bytes and
   } finally {
     await s.close();
   }
+});
+
+it("assembles all three facts from one original and restores a missing chapter condition for answering", async () => {
+  const s = setup();
+  try {
+    s.store.capture({
+      source: "manual", externalId: "ferry", title: "出行安排.md",
+      parts: [{type: "text", text: [
+        "# 出行", "## 渡轮预订时间", "渡轮预订必须提前完成。", "",
+        "最后受理时间是周三18点。", "", "## 渡轮预订证件",
+        "渡轮预订需要身份证原件。", "", "## 渡轮预订取消",
+        "渡轮预订可在周四12点前取消。", "", "## 其他交通", "火车票可以当天购买。",
+      ].join("\n")}], context: {},
+    });
+    const browse = await s.retrieval.search({text: "渡轮预订", kinds: ["source"]});
+    expect(browse).toHaveLength(2);
+    let received: Parameters<AssistantModelPort["generate"]>[0] | undefined;
+    const runtime = new AssistantRuntime(s.store, {generate: async input => {
+      received = input;
+      return {answer: "已找到预订时间、证件和取消规则。", citationIds: []};
+    }}, {ownerId: "owner", retrieval: s.retrieval});
+    const conversation = runtime.conversations.open({principalId:"owner",channel:"web",chatId:"ferry",visibility:"private"});
+    await runtime.turn({conversationId:conversation.id,userText:"渡轮预订"});
+    const text = received!.evidence.map(e => e.text).join("\n");
+    expect(text).toContain("周三18点");
+    expect(text).toContain("身份证原件");
+    expect(text).toContain("周四12点");
+    expect(text).not.toContain("火车票");
+    for (const e of received!.evidence) {
+      const m = s.repository.materials().find(m => m.revisionId === e.sourceRevisionId)!;
+      expect(m.text.split("\n").slice(e.sourceTarget!.startLine - 1, e.sourceTarget!.endLine).join("\n")).toBe(e.text);
+    }
+  } finally { await s.close(); }
+});
+
+it("does not expand a visible hit into a hidden part of its chapter", async () => {
+  const s = setup();
+  try {
+    s.store.capture({source:"manual",externalId:"access",title:"安排.md",context:{},parts:[
+      {type:"text",text:"## 预订规则\n\n内部联络号码：12345。"},
+      {type:"text",text:"渡轮预订需要身份证。"},
+    ]});
+    const m = s.repository.materials()[0]!, hit = sourceAnchor(m, m.lineCount, m.lineCount);
+    expect(m.fragments.length).toBeGreaterThan(1);
+    const visible = (id:string) => hit.fragmentIds.includes(id);
+    expect(sourceContextRange(m, hit, visible)).toEqual(hit);
+    expect(sourceContextRange(m, hit, () => true).startLine).toBe(1);
+  } finally { await s.close(); }
 });
