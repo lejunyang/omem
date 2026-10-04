@@ -107,6 +107,19 @@ default = ".repo-review/runtime/benchmarks/t2-retrieval"
 help = "Ignored benchmark cache and current report directory"
 [tasks."benchmark:t2".flags.reset]
 help = "Replace the previous comparison when implementation or data changed"
+
+[tasks."benchmark:freshstack"]
+run = [{ argv = ["bun", "scripts/benchmark-freshstack.ts", "{{args}}"] }]
+description = "Full Godot code/document retrieval comparison; downloads pinned data and official Python evaluator in isolated runtime"
+[[tasks."benchmark:freshstack".args]]
+name = "directory"
+default = ".repo-review/runtime/benchmarks/freshstack-godot"
+help = "Ignored benchmark cache and report directory"
+[tasks."benchmark:freshstack".flags.reset]
+help = "Replace the previous comparison after implementation or data changes"
+[tasks."benchmark:freshstack".flags.evaluate-only]
+help = "Score saved rankings with the official evaluator without rerunning retrieval"
+
 [[tasks."benchmark:mtrag".args]]
 name = "directory"
 default = ".repo-review/runtime/benchmarks/mtrag-cloud"
