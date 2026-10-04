@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-04T06:35:01.108Z",
-  "implementationCommit": "32edec5dbb24c83f38c8aee8d8459e3943b0c84d",
-  "sourceDigest": "b4438964eee55e1c1b69350c518ae8fd15fac81b48f27a138b47fb75425ece78",
+  "recordedAt": "2026-10-04T07:22:55.979Z",
+  "implementationCommit": "3518073f14200d692b2a437901f32442073af3e4",
+  "sourceDigest": "f0576f9493767660a879fd1ab6010d7336cb2a6f8f564c6f85e983fe0c4e6e80",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "repository",
   "checks": [
@@ -25,8 +25,8 @@
       "name": "currentKnowledgeReferences",
       "state": "passed",
       "details": {
-        "articles": 132,
-        "citations": 736,
+        "articles": 133,
+        "citations": 745,
         "errors": []
       }
     },
@@ -37,11 +37,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v5",
-        "units": 13486,
+        "units": 13517,
         "semantic": {
           "model": "structure-icu-v5:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 13486,
+          "indexed": 13517,
           "pending": 0,
           "error": null
         },
@@ -69,15 +69,15 @@
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
     "materials": 624,
-    "reviewedMaterials": 129,
-    "pendingMaterials": 495,
-    "currentArticles": 132,
-    "citations": 736,
+    "reviewedMaterials": 130,
+    "pendingMaterials": 494,
+    "currentArticles": 133,
+    "citations": 745,
     "articleLinks": 0,
     "errors": [],
     "restore": {
-      "stale": 373,
-      "restored": 134,
+      "stale": 374,
+      "restored": 135,
       "missing": 3
     },
     "incomplete": true,
@@ -103,7 +103,7 @@
         "passed": false,
         "firstExpectedRank": 18,
         "uniquePathsAt5": 3,
-        "elapsedMs": 940,
+        "elapsedMs": 928,
         "top5": [
           {
             "path": "docs/reader-first/retrieval-redesign.md",
@@ -166,7 +166,7 @@
         "passed": false,
         "firstExpectedRank": 11,
         "uniquePathsAt5": 5,
-        "elapsedMs": 654,
+        "elapsedMs": 684,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -233,7 +233,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 722,
+        "elapsedMs": 698,
         "top5": [
           {
             "path": "docs/reader-first/progress.md",
@@ -296,7 +296,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 4,
-        "elapsedMs": 171,
+        "elapsedMs": 200,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -357,7 +357,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 148,
+        "elapsedMs": 132,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -423,7 +423,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 5,
-        "elapsedMs": 723,
+        "elapsedMs": 751,
         "top5": [
           {
             "path": "design.md",

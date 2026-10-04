@@ -1,9 +1,5 @@
 # 知识目录
 
-## 软件开发 / omem / 服务端 / Agent 运行时 / ACP 助手模型
-
-- [ACP 助手模型：直接回答与自主调查编排](knowledge/articles/12661f71bb7b912e4993949f4b3d1d6f22c399845d20c1cbced17ce858b7b0cf.md)
-
 ## 未分类
 
 - [Code Understanding 合同与校验器测试](knowledge/articles/c281bfae6402d6ff26bfd180241c9f827c76f8db81ecb71856d1d2b9f448742b.md)
@@ -135,6 +131,10 @@
 - [工作区的阅读布局、交互状态与移动端适配](knowledge/articles/eae55956da4a2f5d641d4be82ac2693ddbab36beec083a708ec85db4f7c3673b.md)
 - [统一阅读界面的视觉基础与可访问性](knowledge/articles/d2fe94130e810a9f42c000987bcae8589f0d9d6a000b71fe39989be63fd84273.md)
 
+## 软件开发 / omem / 服务端 / Agent 运行时 / 答案独立复核
+
+- [助手答案的独立复核与提交闸门](knowledge/articles/d69c6479025bcf0d552473d59f1c5ee1fe633a5939d171ea8a8c9ece1f2408fc.md)
+
 ## 软件开发 / omem / Web 应用 / 通用交互组件
 
 - [可展开且可选择的内容区块](knowledge/articles/e94c2059fddef7fff4c4166c0dbc7b6dd2df8213ee38ea3b2e0b6ac17c30d082.md)
@@ -144,6 +144,10 @@
 - [统一的界面组件与阅读交互入口](knowledge/articles/e83268cba42660fda5898607ef1afe7d12fb8a09536445374b5756f146737585.md)
 - [统一的空状态展示组件](knowledge/articles/88b12ddcc01aead1f398bfb1f65e9f7863638b095ec1a8eaf802e4bcbc7dcafe.md)
 - [统一的轻量 SVG 图标组件](knowledge/articles/506240a8f06c64ad3989b93e2eee7b17167c020f27c2bd6936d4396522ce00da.md)
+
+## 软件开发 / omem / 服务端 / Agent 运行时 / 材料优先回答
+
+- [材料优先回答与受控研究交接](knowledge/articles/9a12750d6858d626e55ff5e639401b3d067e5f99045f300dcc49d864fb412d7e.md)
 
 ## 软件开发 / omem / Web 应用 / 证据阅读
 
