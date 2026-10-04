@@ -28,6 +28,7 @@ import { acp } from "../apps/server/src/agents.js";
 import { profileSchema } from "../packages/contracts/src/index.js";
 import { loadReviewCodeModelConfig } from "../apps/server/src/review/model-config.js";
 import { taskFlag } from "./task-args.js";
+import { evidenceForRange } from "../apps/server/src/assistant/research.js";
 import {
   beginReviewRun,
   completedReviewRuns,
@@ -35,6 +36,7 @@ import {
 } from "./review-retention.js";
 
 const option = (name: string, fallback = "") =>
+  process.env[`osdk_arg_${name.replaceAll("-", "_")}`] ||
   process.env[`osdk_arg_${name}`] ||
   process.argv
     .find((a) => a.startsWith(`--${name}=`))
@@ -47,13 +49,49 @@ const cases = z
     z
       .object({
         id: z.string(),
-        turns: z.array(z.string().min(1).max(2000)).min(1),
+        turns: z
+          .array(
+            z.union([
+              z
+                .string()
+                .min(1)
+                .max(2000)
+                .transform((question) => ({ question, materialRanges: [] })),
+              z
+                .object({
+                  question: z.string().min(1).max(2000),
+                  materialRanges: z
+                    .array(
+                      z
+                        .object({
+                          key: z.string().min(1),
+                          startLine: z.number().int().positive(),
+                          endLine: z.number().int().positive(),
+                        })
+                        .strict(),
+                    )
+                    .min(1),
+                })
+                .strict(),
+            ]),
+          )
+          .min(1),
       })
       .strict(),
   )
   .min(1)
   .parse(JSON.parse(readFileSync(resolve(option("questions")), "utf8")));
 const review = taskFlag("review");
+const contextSelection = z
+  .enum(["retrieved", "provided", "both"])
+  .parse(option("context", "retrieved"));
+if (
+  contextSelection !== "retrieved" &&
+  cases.some((c) => c.turns.some((t) => !t.materialRanges.length))
+)
+  throw Error(
+    "Provided-context comparison requires materialRanges for every turn; supply original ranges, never expected answers",
+  );
 const variantSelection = z
   .enum(["both", "research", "reading-first"])
   .parse(option("variant", "both"));
@@ -154,9 +192,10 @@ const report: Record<string, any> = {
   corpusDigest: digest(),
   materialCount: repository.materials().length,
   method:
-    "One frozen corpus, existing shared retrieval without reranker, real native ACP and all research tools. Independent conversations per case; turns within each case preserve history. Model order alternates per case. Check answers manually; successful submission does not imply correctness.",
+    "One frozen corpus, real native ACP and all research tools. Independent conversations per case and condition; follow-ups preserve that condition's history. Order alternates per case. Provided context replaces only the initial matches and explanations with evaluator-selected original ranges, not an answer or restricted corpus. Initial search still runs in both conditions and is timed separately. Check final answers manually; submission is not correctness and selected ranges may be insufficient.",
   profiles: [],
   variantSelection,
+  contextSelection,
   cases: [],
 };
 const save = () =>
@@ -219,6 +258,7 @@ try {
     profile: ReturnType<typeof profileSchema.parse>;
     variant: string;
     reader?: ReturnType<typeof profileSchema.parse>;
+    context: "retrieved" | "provided";
   }[] = [];
   for (const model of models) {
     const profile = profileSchema.parse({
@@ -246,22 +286,30 @@ try {
       })),
       agent: probe.agentInfo,
     });
-    if (variantSelection !== "reading-first")
-      profiles.push({ profile, variant: "research" });
-    if (readingProfile && variantSelection !== "research")
-      profiles.push({
-        profile,
-        variant: "reading-first",
-        reader: readingProfile,
-      });
+    for (const context of contextSelection === "both"
+      ? (["retrieved", "provided"] as const)
+      : [contextSelection]) {
+      if (variantSelection !== "reading-first")
+        profiles.push({ profile, variant: "research", context });
+      if (readingProfile && variantSelection !== "research")
+        profiles.push({
+          profile,
+          variant: "reading-first",
+          reader: readingProfile,
+          context,
+        });
+    }
   }
   save();
   for (const [index, test] of cases.entries())
-    for (const { profile, variant, reader } of index % 2
+    for (const { profile, variant, reader, context: contextVariant } of index %
+    2
       ? [...profiles].reverse()
       : profiles) {
       let modelStart = 0;
       let events: (ResearchActivity & { elapsedMs: number })[] = [];
+      let currentTurn = test.turns[0]!;
+      let initialContext: Record<string, unknown> | null = null;
       const adapter = new AcpAssistantModel({
         profile,
         readingProfile: reader,
@@ -274,8 +322,33 @@ try {
         {
           generate: async (input) => {
             modelStart = performance.now();
+            const provided =
+              contextVariant === "provided"
+                ? currentTurn.materialRanges.map((range) => {
+                    const material = repository
+                      .materials()
+                      .find((m) => m.key === range.key || m.path === range.key);
+                    if (!material)
+                      throw Error(
+                        `Provided material absent from frozen corpus: ${range.key}`,
+                      );
+                    return evidenceForRange(
+                      material,
+                      range.startLine,
+                      range.endLine,
+                      input.visible ?? (() => true),
+                    );
+                  })
+                : null;
+            const actualInput = provided
+              ? { ...input, evidence: provided, background: [] }
+              : input;
+            initialContext = {
+              evidence: actualInput.evidence,
+              background: actualInput.background ?? [],
+            };
             const generation = adapter.generate({
-              ...input,
+              ...actualInput,
               onResearchActivity: (e) => {
                 events.push({
                   ...e,
@@ -301,9 +374,12 @@ try {
         visibility: "private",
       });
       try {
-        for (const [turnIndex, question] of test.turns.entries()) {
+        for (const [turnIndex, turn] of test.turns.entries()) {
+          currentTurn = turn;
+          const question = turn.question;
           events = [];
           modelStart = 0;
+          initialContext = null;
           const start = performance.now();
           console.log(
             JSON.stringify({
@@ -311,6 +387,7 @@ try {
               turn: turnIndex + 1,
               model: profile.model,
               variant,
+              context: contextVariant,
               state: "running",
             }),
           );
@@ -328,11 +405,13 @@ try {
               question,
               model: profile.model,
               variant,
+              context: contextVariant,
               effort: profile.effort,
               elapsedMs: Math.round(performance.now() - start),
               initialRetrievalMs: modelStart
                 ? Math.round(modelStart - start)
                 : null,
+              initialContext,
               events,
               result,
             });
@@ -343,6 +422,7 @@ try {
                 turn: turnIndex + 1,
                 model: profile.model,
                 variant,
+                context: contextVariant,
                 ms: report.cases.at(-1).elapsedMs,
                 failed,
               }),
@@ -354,6 +434,7 @@ try {
               question,
               model: profile.model,
               variant,
+              context: contextVariant,
               error: String(error),
               elapsedMs: Math.round(performance.now() - start),
               events,

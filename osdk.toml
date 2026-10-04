@@ -136,7 +136,11 @@ description = "Verify captured material, native assistant research, memory refre
 run = "bun scripts/assistant-compare.ts"
 description = "Compare real answering agents on a frozen material corpus; consumes model calls"
 [tasks."assistant:compare".options.questions]
-help = "JSON file containing [{id, turns: [question, follow-up]}]"
+help = "JSON cases with string turns, or {question, materialRanges:[{key,startLine,endLine}]} for supplied-context diagnosis"
+[tasks."assistant:compare".options.context]
+default = "retrieved"
+choices = ["retrieved", "provided", "both"]
+help = "Compare normal initial search with selected original passages; all native investigation tools stay available"
 [tasks."assistant:compare".options.models]
 default = "gpt-5.6-sol"
 help = "Comma-separated model IDs; each is validated through ACP"
