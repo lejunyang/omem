@@ -427,6 +427,9 @@ export const evidenceAssessmentSchema = z
     reason_code: z.string().min(1).max(300),
     reason: z.string().min(1).max(2000),
     missing_context: z.array(z.string().min(1).max(1000)).max(50),
+    // A supported new statement alone does not establish whether it supersedes
+    // an earlier one. Independent review distinguishes amendment from conflict.
+    update_relation: z.enum(["amends", "conflicts", "unclear"]).optional(),
   })
   .strict();
 
@@ -512,6 +515,7 @@ export const proposalAssessmentInputSchema = z
     role_version: z.string().min(1).max(300),
     reason_code: z.string().min(1).max(300),
     details: z.string().min(1).max(4000),
+    update_relation: z.enum(["amends", "conflicts", "unclear"]).optional(),
   })
   .strict();
 

@@ -8,7 +8,8 @@ description: Verify whether fixed omem evidence supports scoped memory or task p
 1. Recheck exact quote or image identity before semantic review. An invalid or ambiguous deterministic check cannot become `supported`.
 2. Compare subject, scope, time, conditions, negation, attribution, and intended strength between evidence and proposal.
 3. Distinguish owner commitments from forwarded speech, suggestions, and statements by unknown actors.
-4. Check supplied current memories for contradictions and later corrections. Preserve conflicts rather than selecting by confidence of wording.
+4. Check current memories for contradictions and later corrections. In native research, independently read the earlier original and new input, using read_fragments for exact quotes/provenance and read_memory for versions. A later separate message can update an active memory; retain unchanged conditions and separate projects. Preserve unresolved conflicts rather than selecting by confidence of wording.
 5. Treat OCR and image descriptions as inferred unless the supplied image is independently readable.
 6. Do not infer overall success from a successful tool step or correlation from causation.
-7. Return AssessmentBatch.v1 JSON only. Never approve, apply, execute, message, or change policy.
+7. In native research submit_result with AssessmentBatch.v1; otherwise return the JSON directly. Never approve, apply, execute, message, or change policy. Investigation tools may read originals and derived context, but derived bodies are not independent evidence.
+8. For an update, distinguish an established amendment of the same fact from unresolved disagreement: set update_relation to amends, conflicts, or unclear and explain why. Recency alone does not establish an amendment. Do not require user confirmation merely because a clear change arrived as a separate message.

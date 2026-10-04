@@ -123,6 +123,7 @@ describe("P0: context manifest per-fragment provenance reaches the model", () =>
         profile: profile(),
         workspaceRoot: join(directory, "agent"),
         pollMs: 20,
+        nativeResearch: false, // This check covers bounded inline provenance; native reads are tested through MCP.
       });
       const result = await pipe.processOne();
       expect(result.processed).toBe(true);
