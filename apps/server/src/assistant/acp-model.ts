@@ -301,6 +301,7 @@ export class AcpAssistantModel implements AssistantModelPort {
             unbounded: true,
             onSessionUpdate: environment.update,
             allowPermission: environment.allowPermission,
+            finalSubmission: environment.submission,
           },
         );
       const actual = (
