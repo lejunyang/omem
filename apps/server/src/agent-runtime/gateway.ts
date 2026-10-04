@@ -6,6 +6,7 @@ import {
 } from "../../../../packages/contracts/src/knowledge.js";
 import { assistantReplySchema, answerReviewSchema } from "../../../../packages/contracts/src/assistant.js";
 import { materialDescriptionBatchSchema } from "../../../../packages/contracts/src/material-description.js";
+import { contextResolutionSchema } from "../../../../packages/contracts/src/contexts.js";
 import {
   estimateTokens,
   generationBudget,
@@ -36,6 +37,7 @@ import { RoleBundleRegistry, type RoleBundle } from "./bundles.js";
 import type { RuntimeRequestRepository } from "./requests.js";
 
 const outputSchemas = {
+  "ContextResolution.v1": contextResolutionSchema,
   "MaterialDescriptions.v1": materialDescriptionBatchSchema,
   "KnowledgeResearch.v1": knowledgeResearchSchema,
   "KnowledgeBatch.v1": knowledgeBatchSchema,

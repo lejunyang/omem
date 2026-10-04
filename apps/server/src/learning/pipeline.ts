@@ -27,6 +27,7 @@ import type { RetrievalPort } from "../retrieval/port.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
 import { KnowledgeRepository } from "../knowledge/repository.js";
 import { prepareAgentResearch } from "../knowledge/agent-research.js";
+import { contextResolutionSchema, type ContextResolution } from "../../../../packages/contracts/src/contexts.js";
 
 type Row = Record<string, unknown>;
 
@@ -332,6 +333,7 @@ export class LearningPipeline {
       project_id: projectId,
       subject_id: subjectId,
     };
+    const refreshTargets = this.refreshMemories(job).filter(m => (m.scope.project_id ?? null) === projectId);
     const materials = revisions.flatMap(({ revision }) => {
       // Align each fixed fragment (by ordinal) back to the stored part it was split
       // from, so per-part provenance (actor/reply/observedAt/quoted/forwarded/
@@ -392,7 +394,7 @@ export class LearningPipeline {
       materials: this.nativeResearch ? materials.slice(0, 1) : materials,
       related_memories: [
         ...this.relatedMemories(first.revision, scope),
-        ...this.refreshMemories(job),
+        ...refreshTargets,
       ],
       task: {
         mode: "extract_and_refresh",
@@ -402,7 +404,7 @@ export class LearningPipeline {
         already_applied_task_actions: this.handledTaskActions(job),
         daily_message_policy:
           "For discussion/chat: preserve decisions, responsibilities, deadlines, per-speaker commitments and explicit outcomes as scoped facts. A named person's assignment is not a personal task even when reported by the verified owner. Only a verified owner's own commitment or explicit request to track an action can propose a task, with owner_id exactly trusted_context.owner_id. Keep other people's responsibilities and deadlines as claims; unresolved promises may also be attributed observations. Distinguish check-in time from deadline; no invented schedule or external outreach.",
-        refreshTargets: this.refreshMemories(job),
+        refreshTargets,
         instruction:
           "Investigate what the NEW input sources change. Search existing memories and project originals before creating another memory. Use read_fragments to obtain exact immutable IDs, quotes and provenance; read_memory returns version and body for an update. For a partial change, read the earlier original and preserve unaffected conditions. Update the same memory_id with its current expected_versions and retain scope; this applies to later separate messages as well as source revisions. Do not extract every background document as new input. If scope or support remains ambiguous, abstain with the concrete missing information. Never treat derived bodies as evidence. already_applied_task_actions are host receipts for this exact original owner command: do not recreate or reapply its task, even if completed or cancelled.",
       },
@@ -522,10 +524,12 @@ export class LearningPipeline {
       result: unknown;
       trace: RoleRunTrace;
     },
+    stageKey?: string,
   ) {
     const sessionId = run.trace.sessionIds.at(-1);
     if (!sessionId) throw Error("ROLE_SESSION_ID_MISSING");
     return this.input.store.jobs.saveRoleOutput({
+      stageKey,
       jobId: job.id,
       leaseToken: job.leaseToken,
       model: run.trace.effectiveModel,
@@ -609,6 +613,8 @@ export class LearningPipeline {
     try {
       if (job.roleVersion !== "extractor@1")
         throw Error(`LEARNING_ROLE_VERSION_UNSUPPORTED: ${job.roleVersion}`);
+      const unresolved = await this.resolveContexts(job, signal);
+      if (unresolved) return { resultRef: unresolved, usage: { contextNeedsClarification: true } };
       const context = this.context(job, "extractor");
       const run = await this.runRole(job, context, signal);
       const batch = proposalBatchSchema.parse(run.result);
@@ -653,6 +659,65 @@ export class LearningPipeline {
         });
       throw classify(error);
     }
+  }
+
+  /** Reuse the native research harness; filing is completed before fact extraction.
+   * Two independent sessions must agree before an automatic membership is saved. */
+  private async resolveContexts(job: JobLease, signal: AbortSignal): Promise<string | null> {
+    if (!this.nativeResearch || !this.input.store.contexts.list().length) return null;
+    for (const ref of this.sourceRefs(job)) {
+      const revision = this.input.store.revision(ref.revisionId);
+      if (!revision) throw Error("LEARNING_INPUT_REVISION_NOT_FOUND");
+      const previous = this.input.store.contexts.assignment(revision.sourceId);
+      if (!this.input.store.contexts.needsInvestigation(revision.sourceId, revision.id)) {
+        if (previous?.status === "ambiguous" && previous.revisionId === revision.id)
+          return `context:${revision.sourceId}:${previous.version}`;
+        continue;
+      }
+      const context = this.context(job, "context-resolver");
+      const repository = new KnowledgeRepository(this.input.store);
+      const outputIds: string[] = [];
+      const investigate = async (draft?: ContextResolution) => {
+        const run = await this.gateway.run({
+          roleId: "context-resolver", profile: this.input.profile, signal,
+          context: { ...context, related_memories: [], confirmed_corrections: [],
+            task: { nativeResearch: true, mode: draft ? "independent_review" : "investigation",
+              input_source: { source_id: revision.sourceId, revision_id: revision.id, title: revision.title },
+              ...(draft ? { drafts: [draft] } : {}) } },
+          validateOutput: out => {
+            const value = contextResolutionSchema.parse(out);
+            this.input.store.contexts.validate([...value.contextIds, ...value.candidateIds]);
+            if ((value.status === "matched") !== (value.contextIds.length > 0))
+              throw Error("ROLE_OUTPUT_CONTEXT_MATCH: matched requires known contextIds; other decisions keep contextIds empty");
+            return value;
+          },
+          research: (workspace, schema, validate) => prepareAgentResearch({
+            repository, materials: repository.materials(), articles: repository.published(), workspace, schema, validate,
+            retrievalConfig: this.input.retrievalConfig,
+            includeGroupCatalog: true,
+          }),
+        });
+        outputIds.push(this.saveRun(job, run, `context:${revision.sourceId}:${draft ? "review" : "investigation"}`).id);
+        return contextResolutionSchema.parse(run.result);
+      };
+      const proposal = await investigate();
+      const review = proposal.status === "matched" ? await investigate(proposal) : null;
+      const assignment = this.input.store.tx(() => {
+        const saved = this.input.store.contexts.saveResolution(revision.sourceId, revision.id,
+          previous?.version ?? 0, proposal, review, outputIds);
+        if (saved.status === "automatic") {
+          const names = this.input.store.contexts.list().filter(g => proposal.contextIds.includes(g.id)).map(g => g.name);
+          this.input.store.record("context", `材料已归入${names.join("、")}`, null, revision.id,
+            `「${revision.title}」：${saved.reason}。可在原文的“所属项目与主题”中调整。`);
+        } else if (saved.status === "ambiguous") {
+          this.input.store.record("context", "材料归属需要补充", null, revision.id,
+            `「${revision.title}」：${saved.question} ${saved.reason}。原文已保留，选择归属后会继续整理。`);
+        }
+        return saved;
+      });
+      if (assignment.status === "ambiguous") return outputIds.at(-1)!;
+    }
+    return null;
   }
 
   private async verify(job: JobLease, signal: AbortSignal) {

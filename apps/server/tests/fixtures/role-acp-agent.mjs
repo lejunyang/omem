@@ -47,6 +47,7 @@ function output(text) {
   const roleId = field(text, "role_id", "extractor");
   const projectId = field(text, "project_id", "none");
   const imageCount = JSON.parse(text.match(/\[TRUSTED CONTEXT\]\s*(\{[^\n]+\})/)[1]).material_index.filter(m => m.image).length;
+  if (roleId === "context-resolver") return JSON.stringify({ status: "unrelated", contextIds: [], candidateIds: [], reason: "Protocol fixture", question: null });
   if (text.includes("OUTPUT_FLOOD")) return "x".repeat(120_000);
   if (text.includes("MALFORMED_OUTPUT")) return "not-json";
   if (roleId.endsWith("-analyst") || roleId === "knowledge-writer" || roleId === "knowledge-refresher") {
@@ -302,6 +303,16 @@ async function finish() {
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
       const batch = JSON.parse(value);
+      if (pendingText.includes("TRUSTED ROLE context-resolver@")) {
+        const groupsResult = await client.callTool({ name: "list_material_groups", arguments: {} });
+        const groups = JSON.parse(groupsResult.content.find(c => c.type === "text").text).groups;
+        const target = groups.find(g => g.description === "Web");
+        if (!target) throw Error("Fixture expects a Web project in the actual tool snapshot");
+        const ambiguous = pendingText.includes("AMBIGUOUS_CONTEXT");
+        value = JSON.stringify({ status: ambiguous ? "ambiguous" : "matched", contextIds: ambiguous ? [] : [target.id],
+          candidateIds: ambiguous ? groups.map(g => g.id) : [], reason: ambiguous ? "未说明发布的是哪一端" : "这条消息属于 Web 发布约定",
+          question: ambiguous ? "这条消息说的是 Web 还是移动端？" : null });
+      }
       if (args.has("--repair-foreign-task") && batch.role_id === "extractor") {
         batch.proposals[0].body.owner_id = "colleague";
         const rejected = await client.callTool({ name: "submit_result", arguments: { result: batch } });

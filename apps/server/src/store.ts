@@ -163,7 +163,7 @@ export class Store {
             throw Error("CAPTURE_EVENT_CONFLICT");
           const revision = this.revision(String(receipt.revision_id));
           if (!revision) throw Error("Capture receipt revision is missing");
-          if (selection.contextIds) this.contexts.setForSource(revision.sourceId, selection.contextIds);
+          if (selection.contextIds) this.setSourceContextsInTransaction(revision.sourceId, selection.contextIds);
           const queued = this.queueCaptureJob(input, revision);
           return {
             revision,
@@ -187,9 +187,9 @@ export class Store {
             .prepare("SELECT * FROM revisions WHERE id=?")
             .get(String(source.head)) as Row)
         : undefined;
-      if (selection.contextIds) this.contexts.setForSource(String(source.id), selection.contextIds);
       if (head?.fingerprint === fingerprint) {
         const revision = this.revision(String(head.id))!;
+        if (selection.contextIds) this.setSourceContextsInTransaction(revision.sourceId, selection.contextIds);
         const receipt = this.writeCaptureReceipt(
           input,
           payloadDigest,
@@ -203,6 +203,7 @@ export class Store {
           job: queued?.job ?? null,
         };
       }
+      if (selection.contextIds) this.contexts.setForSource(String(source.id), selection.contextIds);
       const revisionId = id();
       this.db
         .prepare("INSERT INTO revisions VALUES(?,?,?,?,?,?,?,?)")
@@ -304,6 +305,42 @@ export class Store {
         job: queued?.job ?? null,
       };
     });
+  }
+  setSourceContexts(sourceId: string, ids: string[]) {
+    return this.tx(() => this.setSourceContextsInTransaction(sourceId, ids));
+  }
+  private setSourceContextsInTransaction(sourceId: string, ids: string[]) {
+      const source = this.db.prepare("SELECT head FROM sources WHERE id=?").get(sourceId);
+      if (!source) throw Error("原始材料不存在");
+      const revision = this.revision(String(source.head))!;
+      const before = this.contexts.forSource(sourceId), previous = this.contexts.assignment(sourceId);
+      const contextIds = this.contexts.setForSource(sourceId, ids);
+      const changed = stableDigest(before) !== stableDigest([...contextIds].sort());
+      if (changed) {
+        const projects = new Set(this.contexts.list().filter(c => c.kind === "project").map(c => c.id));
+        const newProjects = contextIds.filter(id => projects.has(id));
+        const newProject = newProjects.length === 1 ? newProjects[0] : null;
+        // A corrected filing must not leave facts active under the wrong project.
+        // Preserve the old history and let normal extraction recreate/review facts
+        // in the chosen scope; do not silently move a memory or a personal task.
+        const rows = this.db.prepare(`SELECT DISTINCT m.id,m.head_revision_id,m.scope FROM memories m
+          JOIN memory_dependencies md ON md.memory_revision_id=m.head_revision_id WHERE md.source_id=? AND m.status='active'`).all(sourceId);
+        for (const row of rows) if ((JSON.parse(String(row.scope)).project_id ?? null) !== newProject) {
+          this.db.prepare("UPDATE memories SET status='invalidated' WHERE id=?").run(String(row.id));
+          this.db.prepare("UPDATE memory_dependencies SET state='stale' WHERE memory_revision_id=? AND source_id=?")
+            .run(String(row.head_revision_id), sourceId);
+        }
+      }
+      let queued = false;
+      if ((changed || previous?.status === "ambiguous") && revision.provenance?.producerKind !== "derived") {
+        const state = this.db.prepare("SELECT validity_epoch FROM source_state WHERE source_id=?").get(sourceId);
+        this.jobs.enqueueInCurrentTransaction({ kind: "extract_claims", roleVersion: "extractor@1", policyVersion: "memory-policy@1",
+          inputRefs: [{ revisionId: revision.id, sourceId, validityEpoch: Number(state?.validity_epoch ?? 1) },
+            { learningMembership: stableDigest([{ revision: revision.id, groups: this.contexts.forSource(sourceId) }]),
+              assignmentVersion: this.contexts.assignment(sourceId)!.version }], cause: "context_correction" });
+        queued = true;
+      }
+      return { contextIds, assignment: this.contexts.assignment(sourceId), queued };
   }
   private captureReceipt(row: Row) {
     return {

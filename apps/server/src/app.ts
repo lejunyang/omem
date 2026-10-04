@@ -240,10 +240,14 @@ export async function buildApp(
   app.get("/api/sources", async () => store.list());
   app.get("/api/contexts", async () => store.contexts.list());
   app.post("/api/contexts", async req => store.contexts.create(contextInputSchema.parse(req.body)));
-  app.get<{ Params: { id: string } }>("/api/sources/:id/contexts", async req => ({ contextIds: store.contexts.forSource(req.params.id) }));
+  app.get<{ Params: { id: string } }>("/api/sources/:id/contexts", async req => {
+    const assignment = store.contexts.assignment(req.params.id);
+    return { contextIds: store.contexts.forSource(req.params.id), assignment,
+      candidates: store.contexts.list().filter(c => assignment?.candidateIds.includes(c.id)) };
+  });
   app.put<{ Params: { id: string } }>("/api/sources/:id/contexts", async (req, reply) => {
     const { contextIds } = z.object({ contextIds: contextIdsSchema }).strict().parse(req.body);
-    try { return { contextIds: store.tx(() => store.contexts.setForSource(req.params.id, contextIds)) }; }
+    try { return store.setSourceContexts(req.params.id, contextIds); }
     catch (error) { return reply.code(400).send({ error: String(error instanceof Error ? error.message : error) }); }
   });
   app.get<{ Params: { revision: string } }>("/api/material-descriptions/:revision", async (req, reply) => {
