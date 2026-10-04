@@ -1,6 +1,6 @@
 # 外部测试集与本轮检索诊断
 
-更新：2026-10-04。目的在于判断设计和上下文是否真的有效，不再用本仓库几个预期路径或模型复核 accepted 代表质量。本轮已运行 MTRAG Cloud 的完整词法检索子集；下方其他数据集仅调研/抽查格式，尚未得到 omem 分数。
+更新：2026-10-04。目的在于判断设计和上下文是否真的有效，不再用本仓库几个预期路径或模型复核 accepted 代表质量。MTRAG Cloud 的完整词法检索子集已运行；T2Retrieval 已接入可续跑的完整中文词法对照，尚未完成整套问题。其他数据集仅调研/抽查格式，尚未得到 omem 分数。
 
 ## 已运行：MTRAG Cloud
 
@@ -38,11 +38,19 @@ osdk run benchmark:mtrag .repo-review/runtime/design-audit
 
 脚本核对所有正例都存在于完整语料，问题集合与标注分母一致。它绕过 Capture，使用官方段落定位，因此不证明我们的材料清洗、版本引用或摄取流程正确。公开数据的权利与引用说明仍以上游为准。
 
+## 正在推进：完整中文 T2Retrieval 词法对照
+
+`osdk run benchmark:t2` 使用 [C-MTEB/T2Retrieval](https://huggingface.co/datasets/C-MTEB/T2Retrieval) 的完整 corpus/queries 和独立 qrels：118,605 份材料、22,812 个问题、118,932 条正例关联。版本、下载地址、文件大小和 SHA-256 固定在 `config/benchmarks/t2-retrieval.json`。使用成熟的 `hyparquet` 读取官方 Parquet，不自行转换标注或挑掉长材料。
+
+这一轮只比较相同 ICU 分词与 FTS5 字段权重下的 BM25 和当前生产词法链，不调用 ACP、向量或重排，不代表完整中文 RAG。官方语料未提供上层原文关系，因此每条官方材料独立作为 owner；它不能评估父章节补读或同文件多个答案点的覆盖。材料原文保留官方格式；查询、qrels 和评分只在评估侧，绝不进入索引或个人库。
+
+脚本已验证完整语料导入、逐题比较、正常中断时保存进度与释放临时数据库。结果写入同一 runtime 目录的 `ranking-report.json` 和 `rankings.ndjson`；实现与数据身份相同才可续跑，变化后用 `--reset` 替换旧对照。完整跑完前标记 `complete: false`，按原始顺序得到的前几百题不作为整体分数发布。下一步依据完整结果定位必要材料在哪里丢失，再改变生产召回和上下文组织。
+
 ## 其他测试集为什么值得用
 
 | 要解决的能力 | 数据与已检查内容 | 在 omem 中怎样接 | 本轮状态与限制 |
 | --- | --- | --- | --- |
-| 中文自然表达的检索 | [C-MTEB T2Retrieval](https://huggingface.co/datasets/C-MTEB/T2Retrieval) 的中文查询格式与样本 | 使用官方 corpus/query/qrels，比较普通词法、中文向量和必要重排；固定完整公开子集 | 已抽查查询，未运行。生活/网络检索不等于代码理解或长期记忆 |
+| 中文自然表达的检索 | [C-MTEB T2Retrieval](https://huggingface.co/datasets/C-MTEB/T2Retrieval) 的完整中文 dev 数据 | 先比较透明词法基线和生产词法链，再单独检查中文向量和必要重排 | 词法对照脚本已接入，完整问题集未跑完；生活/网络检索不等于代码理解或长期记忆 |
 | 跨代码与文档找全答案 | [FreshStack](https://fresh-stack.github.io/) 及其 [评测实现](https://github.com/fresh-stack/freshstack)：真实开发问题、答案要点、代码/文档段落和要点标注 | 复用官方数据加载与评测，输出 query/doc/score；保留段落 ID、URL 和 byte offset。看 alpha-nDCG、要点覆盖，不能只看一个文件命中 | 已抽查 Godot 问题、nuggets 与原文结构，未全量运行；官方正例/负例及答案要点不能交给被测检索器 |
 | 多轮追问与资料不足 | [MTRAG human](https://github.com/IBM/mt-rag-benchmark/tree/main/mtrag-human)：110 段对话、842 个任务，含追问、澄清、部分可答和不可答 | 会话先解析当前对象；分别给标准原文、标准原文混噪声、实际召回做回答，复用官方三类生成设置 | 已读完整会话文件和官方结构；仅 Cloud 188 题词法已运行。不可答/寒暄没有包含在本次检索分母中 |
 | 长期个人记忆 | [LongMemEval](https://github.com/xiaowu0162/LongMemEval)：500 题，含知识更新、时间、多会话与缺失信息 | 每题隔离记忆库，按日期导入历史；同一 Sol 回答条件对照当前机制与成熟后端。完整 s 用于记忆检索，oracle 用于给足材料的生成对照 | 已读格式和数据清单，未运行。`answer`、`has_answer`、答案会话 ID 必须留在评分侧；oracle 不能当检索成绩 |
