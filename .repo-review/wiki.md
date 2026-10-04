@@ -2,9 +2,9 @@
 
 ## 软件开发 / omem / 知识整理
 
-- [从材料到可持续更新的读者文章](knowledge/articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.md)
-- [整理文章，以及原文更新后怎么处理](knowledge/articles/6e759d62e9d979106e38f747df2b358de8e7de1b87bc619a0cf7673070409bef.md)
-- [知识文章的状态、证据关系与修改入口](knowledge/articles/08debc9dce56ab4b9a9c94566ff90c5d9660bd199684c1a371e5cf691502dbae.md)
+- [从材料到可持续更新的读者文章](knowledge/articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.md) · 部分内容待核对
+- [整理文章，以及原文更新后怎么处理](knowledge/articles/6e759d62e9d979106e38f747df2b358de8e7de1b87bc619a0cf7673070409bef.md) · 部分内容待核对
+- [知识文章的状态、证据关系与修改入口](knowledge/articles/08debc9dce56ab4b9a9c94566ff90c5d9660bd199684c1a371e5cf691502dbae.md) · 部分内容待核对
 
 ## 软件开发 / omem
 
