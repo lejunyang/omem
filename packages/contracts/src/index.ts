@@ -417,6 +417,11 @@ export const proposalBatchSchema = z
   })
   .strict();
 
+const uncertaintyReviewSchema = z.object({
+  verdict: z.enum(["non_blocking", "unresolved"]),
+  reason: z.string().min(1).max(2000),
+}).strict().describe("Independent review of all candidate uncertainties against the entire proposal, including scope, actor, time and authority. Non-blocking means none changes the fact or action being proposed; explain why. Missing review does not resolve uncertainty.");
+
 export const evidenceAssessmentSchema = z
   .object({
     proposal_id: z.string().min(1).max(500),
@@ -431,6 +436,7 @@ export const evidenceAssessmentSchema = z
     reason_code: z.string().min(1).max(300),
     reason: z.string().min(1).max(2000),
     missing_context: z.array(z.string().min(1).max(1000)).max(50),
+    uncertainty_review: uncertaintyReviewSchema.optional(),
     // A supported new statement alone does not establish whether it supersedes
     // an earlier one. Independent review distinguishes amendment from conflict.
     update_relation: z.enum(["amends", "conflicts", "unclear"]).optional(),
@@ -519,6 +525,8 @@ export const proposalAssessmentInputSchema = z
     role_version: z.string().min(1).max(300),
     reason_code: z.string().min(1).max(300),
     details: z.string().min(1).max(4000),
+    missing_context: z.array(z.string().min(1).max(1000)).max(50).optional(),
+    uncertainty_review: uncertaintyReviewSchema.optional(),
     update_relation: z.enum(["amends", "conflicts", "unclear"]).optional(),
   })
   .strict();

@@ -74,6 +74,11 @@ describe("B2-08 controlled learning pipeline", () => {
       expect(store.tasks()).toEqual([]);
       const rows = store.db.prepare("SELECT m.kind,r.body FROM memories m JOIN memory_revisions r ON r.id=m.head_revision_id").all();
       expect(rows).toMatchObject([{ kind: "claim", body: expect.stringContaining("同事负责这次集成") }]);
+      const assessment = store.db.prepare("SELECT details FROM evidence_assessments").get();
+      expect(JSON.parse(String(assessment?.details))).toMatchObject({
+        uncertaintyReview: { verdict: "non_blocking", reason: "具体方案不影响明确陈述的负责人事实。" },
+        missingContext: [],
+      });
     } finally { await worker.stop(); store.close(); }
   });
 

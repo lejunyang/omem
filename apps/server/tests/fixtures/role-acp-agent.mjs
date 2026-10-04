@@ -309,6 +309,13 @@ async function finish() {
           throw Error("Expected actionable task-owner feedback before a corrected submission");
         batch.proposals[0].kind = "claim";
         batch.proposals[0].body = { statement: "同事负责这次集成", attribution: "原文记录", valid_from: null, valid_to: null };
+        batch.proposals[0].uncertainties = ["没有说明采用哪种集成方案"];
+        value = JSON.stringify(batch);
+      }
+      if (args.has("--repair-foreign-task") && batch.role_id === "verifier") {
+        batch.assessments[0].uncertainty_review = {
+          verdict: "non_blocking", reason: "具体方案不影响明确陈述的负责人事实。",
+        };
         value = JSON.stringify(batch);
       }
       const result = await client.callTool({ name: "submit_result", arguments: { result: JSON.parse(value) } });

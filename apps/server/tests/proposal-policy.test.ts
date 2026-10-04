@@ -158,6 +158,36 @@ const count = (store: Store, table: string) =>
   );
 
 describe("B2-04 extraction policy and application acceptance", () => {
+  it("saves a supported fact after independent review resolves peripheral doubts, while preserving material uncertainty", () => {
+    const { store, memory } = setup();
+    const revision = capture(store, "本轮验收截止时间为10月3日18点。");
+    const proposal = () => claimProposal(revision, revision.fragments[0]!.text, {
+      uncertainties: ["未说明具体完成口径"],
+    });
+    expect(memory.evaluate(proposal(), supported).policy).toBe("defer_until_use");
+    expect(memory.evaluate(proposal(), { ...supported,
+      uncertainty_review: { verdict: "unresolved", reason: "尚不能判断该疑问的影响" },
+    }).policy).toBe("defer_until_use");
+    const review = { verdict: "non_blocking", reason: "完成口径不改变原文明确约定的截止时间，候选不声称已完成。" } as const;
+    expect(memory.evaluate(proposal(), { ...supported, uncertainty_review: review,
+      missing_context: ["尚未确定这条期限属于哪个项目"],
+    }).policy).toBe("defer_until_use");
+    expect(memory.memories()).toEqual([]);
+    const candidate = proposal();
+    const result = memory.evaluate(candidate, { ...supported, uncertainty_review: review, missing_context: [] });
+    expect(result).toMatchObject({ policy: "auto_apply", receipt: { entityType: "memory" } });
+    expect(memory.memories()).toHaveLength(1);
+    expect(memory.proposals().find(p => p.id === candidate.proposal_id)?.uncertainties).toEqual(candidate.uncertainties);
+    const rows = store.db.prepare("SELECT details FROM evidence_assessments").all();
+    expect(rows.some(row => JSON.parse(String(row.details)).uncertaintyReview?.reason === review.reason)).toBe(true);
+
+    const forwarded = capture(store, "我周五交方案", { actorId: null, verifiedBy: null, forwarded: true });
+    expect(memory.evaluate(taskProposal(forwarded, { uncertainties: ["未说明方案格式"] }), {
+      ...supported, uncertainty_review: { verdict: "non_blocking", reason: "格式不影响截止时间" },
+    }).policy).toBe("retain_as_source");
+    expect(store.tasks()).toEqual([]);
+  });
+
   it("A-K01 auto-applies one explicit owner task with evidence, change and notification", () => {
     const { store, memory } = setup();
     const revision = capture(
