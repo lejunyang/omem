@@ -32,7 +32,7 @@ import { Store } from "./store.js";
 import { Runs } from "./runs.js";
 import { acp } from "./agents.js";
 import { fileInput, gitInput, larkInput, hookInput } from "./connectors.js";
-import { assistantProfile as selectAssistantProfile, type Config } from "./config.js";
+import { assistantProfile as selectAssistantProfile, assistantReadingProfile, type Config } from "./config.js";
 import { FeedbackService, MemoryService } from "./memory/service.js";
 import { LarkOnboardingService } from "./integrations/lark/onboarding.js";
 import { OMEM_LARK_DEFAULT_CONFIG } from "./integrations/lark/defaults.js";
@@ -91,6 +91,7 @@ export async function buildApp(
 
   const assistantModel = new AcpAssistantModel({
     profile: assistantProfile,
+    readingProfile: assistantReadingProfile(config),
     workspaceRoot: config.agentCwd,
     repository: development?.repository ?? new KnowledgeRepository(store),
     researchWorkspace: resolve(config.dataDir, "assistant-agents"),

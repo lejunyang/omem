@@ -1,6 +1,6 @@
 /** Live native Agent comparison on one frozen corpus. Questions are supplied by
  * the evaluator and are never captured as source material. No synthetic pass rate. */
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, backup } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import {
   cpSync,
@@ -65,17 +65,24 @@ const directory = resolve(
 );
 const dataDir = join(directory, "data");
 const file = join(dataDir, "omem.sqlite");
+const sourceFile = join(sourceDir, "omem.sqlite");
+if (!existsSync(sourceFile))
+  throw Error(`Source database not found: ${sourceFile}`);
 if (existsSync(file))
   throw Error(
     "Choose a fresh output directory; previous results are preserved",
   );
 const finishRun = beginReviewRun(directory, "assistant");
 mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-const source = new DatabaseSync(join(sourceDir, "omem.sqlite"), {
-  readOnly: true,
-});
+// SQLite may need to create WAL/SHM handles after the last writer closed.
+// No business-data writes run on this connection; backup owns the consistent read.
+const source = new DatabaseSync(sourceFile);
 try {
-  source.exec(`VACUUM INTO '${file.replaceAll("'", "''")}'`);
+  await backup(source, file);
+} catch (error) {
+  rmSync(dataDir, { recursive: true, force: true });
+  finishRun();
+  throw error;
 } finally {
   source.close();
 }
@@ -121,6 +128,18 @@ const report: Record<string, any> = {
   implementationCommit: execFileSync("git", ["rev-parse", "HEAD"], {
     encoding: "utf8",
   }).trim(),
+  implementationFiles: Object.fromEntries(
+    [
+      "apps/server/src/assistant/acp-model.ts",
+      "apps/server/src/assistant/reading-stage.ts",
+      "apps/server/src/assistant/research.ts",
+      "apps/server/src/assistant/runtime.ts",
+      "scripts/assistant-compare.ts",
+    ].map((path) => [
+      path,
+      createHash("sha256").update(readFileSync(path)).digest("hex"),
+    ]),
+  ),
   corpusDigest: digest(),
   materialCount: repository.materials().length,
   method:
@@ -140,7 +159,55 @@ try {
   // explicitly visible in health, rather than silently changing this corpus.
   await retrieval.indexBatch(0);
   report.retrieval = retrieval.health();
-  const profiles = [];
+  let readingProfile;
+  if (option("reading-model")) {
+    readingProfile = profileSchema.parse({
+      id: "reader",
+      name: "Material-first reader",
+      transport: config.transport,
+      command: config.command,
+      args: config.args,
+      timeoutMs: config.timeoutMs,
+      model: option("reading-model"),
+    });
+    const discovery = await acp(
+      readingProfile,
+      join(directory, "probe", "reader"),
+      null,
+      () => {},
+      new AbortController().signal,
+    );
+    const effort = discovery.configOptions.find(
+      (o) => o.category === "reasoning_effort" || o.id === "reasoning_effort",
+    );
+    const supported =
+      effort?.type === "select"
+        ? effort.options
+            .flatMap((o) => ("options" in o ? o.options : [o]))
+            .map((o) => o.value)
+        : [];
+    const requested = option("reading-effort", "auto");
+    const selected =
+      requested === "auto"
+        ? ["none", "minimal", "low"].find((value) => supported.includes(value))
+        : requested;
+    if (!selected || !supported.includes(selected))
+      throw Error(
+        `Reader effort unavailable: ${requested}; supported: ${supported.join(", ")}`,
+      );
+    readingProfile = { ...readingProfile, effort: selected };
+    // Real session validation happens again with the selected effort on each turn.
+    report.readingProfile = {
+      model: readingProfile.model,
+      effort: selected,
+      supported,
+    };
+  }
+  const profiles: {
+    profile: ReturnType<typeof profileSchema.parse>;
+    variant: string;
+    reader?: ReturnType<typeof profileSchema.parse>;
+  }[] = [];
   for (const model of models) {
     const profile = profileSchema.parse({
       id: "traex",
@@ -167,15 +234,24 @@ try {
       })),
       agent: probe.agentInfo,
     });
-    profiles.push(profile);
+    profiles.push({ profile, variant: "research" });
+    if (readingProfile)
+      profiles.push({
+        profile,
+        variant: "reading-first",
+        reader: readingProfile,
+      });
   }
   save();
   for (const [index, test] of cases.entries())
-    for (const profile of index % 2 ? [...profiles].reverse() : profiles) {
+    for (const { profile, variant, reader } of index % 2
+      ? [...profiles].reverse()
+      : profiles) {
       let modelStart = 0;
       let events: (ResearchActivity & { elapsedMs: number })[] = [];
       const adapter = new AcpAssistantModel({
         profile,
+        readingProfile: reader,
         repository,
         workspaceRoot: join(directory, "agents"),
         retrievalConfig: { enabled: true, osdkModel: "memory-zh" },
@@ -221,6 +297,7 @@ try {
               case: test.id,
               turn: turnIndex + 1,
               model: profile.model,
+              variant,
               state: "running",
             }),
           );
@@ -237,6 +314,7 @@ try {
               turn: turnIndex + 1,
               question,
               model: profile.model,
+              variant,
               effort: profile.effort,
               elapsedMs: Math.round(performance.now() - start),
               initialRetrievalMs: modelStart
@@ -251,6 +329,7 @@ try {
                 case: test.id,
                 turn: turnIndex + 1,
                 model: profile.model,
+                variant,
                 ms: report.cases.at(-1).elapsedMs,
                 failed,
               }),
@@ -261,6 +340,7 @@ try {
               turn: turnIndex + 1,
               question,
               model: profile.model,
+              variant,
               error: String(error),
               elapsedMs: Math.round(performance.now() - start),
               events,

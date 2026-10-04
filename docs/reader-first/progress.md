@@ -4,7 +4,9 @@
 
 ## 本轮：中文快速决策的本机筛选
 
-通过 osdk 实跑 GLiClass multilingual mini、Qwen3.5-4B MLX Q4、Plumb-4B GGUF Q8 / Q4，并加入搜索前后再判断的只读实验入口。短场景与真实 HTTP 命中分开验收；初步发现 Qwen / Plumb Q8 的阅读顺序有收益，但资料充分性、选项顺序稳定性和记忆更新仍不可靠，因此未启用自动路由或快答。9B+ 本机排除，明确 English-only 的候选低优先级。原始结果留 runtime，公开简报固定覆盖，不复制整库验收数据。实际数字、资源口径和未完成项见[实验简报](../../.repo-review/knowledge/verification/fast-decisions.md)，流程与代码落点见[中文快速决策](fast-decisions.md)。本轮未修改 UI。
+通过 osdk 实跑 GLiClass multilingual mini、Qwen3.5-4B MLX Q4、Plumb-4B GGUF Q8 / Q4，并加入搜索前后再判断的只读实验入口。短场景与真实 HTTP 命中分开验收；Qwen / Plumb Q8 的阅读顺序有局部收益，但资料充分性、选项顺序稳定性和记忆更新仍不可靠，未用它们接管路由。助手已接可选的先读材料作答与同快照调查交接，配置 readingProfileId 才启用；默认保持 Sol 常规调查。本轮先比较 Sol 的 low 作答与 medium 调查，不重启 Luna 的完整调查反复对照。9B+ 本机排除，明确 English-only 的候选低优先级。实际数字、资源口径、失败和验证状态见[实验简报](../../.repo-review/knowledge/verification/fast-decisions.md)，流程与代码落点见[中文快速决策](fast-decisions.md)。原始结果留 runtime，公开简报覆盖同一文件；UI 未修改。
+
+同一冻结材料的首轮问答中，先读路径的端口查询从 232 秒降至 47 秒且保留关键条件；但部署追问遗漏已有数据的前提，章节更新问题混淆原件与讲解的版本单位。两题不能按调用成功计为内容通过，当前不建议默认启用。已澄清运行文档与检索说明里的这两处范围歧义；修正后的材料尚未作为该轮输入，仍需验证来源改善和作答前对问题对象的核对。实现的取消、同快照交接、调用失败回退及旧独立复核行为已检查，完整项目 407 项测试、类型与构建通过。
 
 ## 本轮：保留仍有依据的章节，减少重复检索结果
 

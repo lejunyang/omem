@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { profileSchema } from "../../../packages/contracts/src/index.js";
-import { assistantProfile } from "../src/config.js";
+import { assistantProfile, assistantReadingProfile } from "../src/config.js";
 
 it("selects the answer profile without changing the writing profile and rejects invalid choices", () => {
   const profiles = ["writer", "fast"].map((id) =>
@@ -16,6 +16,13 @@ it("selects the answer profile without changing the writing profile and rejects 
     profiles[1],
   );
   expect(profiles[0]!.model).toBe("gpt-5.6-sol");
+  const cascade = {
+    profiles,
+    assistant: { profileId: "writer", readingProfileId: "fast" },
+  };
+  expect(assistantProfile(cascade)).toBe(profiles[0]);
+  expect(assistantReadingProfile(cascade)).toBe(profiles[1]);
+  expect(assistantReadingProfile({ profiles })).toBeNull();
   expect(assistantProfile({ profiles })).toBe(profiles[0]);
   expect(() =>
     assistantProfile({ profiles, assistant: { profileId: "missing" } }),

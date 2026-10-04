@@ -19,7 +19,10 @@ const schema = z
   .object({
     profiles: z.array(profileSchema).min(1),
     assistant: z
-      .object({ profileId: z.string().min(1) })
+      .object({
+        profileId: z.string().min(1),
+        readingProfileId: z.string().min(1).optional(),
+      })
       .strict()
       .optional(),
     notifications: z
@@ -110,6 +113,18 @@ export function assistantProfile(
     throw Error(`Assistant profile not found: ${config.assistant.profileId}`);
   if (profile.transport !== "acp")
     throw Error(`Assistant profile requires ACP: ${profile.id}`);
+  return profile;
+}
+
+/** Optional material-first writer. The regular profile remains the investigator. */
+export function assistantReadingProfile(
+  config: Pick<Config, "profiles" | "assistant">,
+) {
+  const id = config.assistant?.readingProfileId;
+  if (!id) return null;
+  const profile = config.profiles.find((p) => p.id === id);
+  if (!profile || profile.transport !== "acp")
+    throw Error(`Assistant reading profile requires an existing ACP profile: ${id}`);
   return profile;
 }
 export function loadConfig() {
