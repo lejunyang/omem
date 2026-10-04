@@ -90,12 +90,18 @@ it("publishes a planned imported page and advances only managed heads even when 
   write(a); restoreKnowledgeArticles(s.repository,assets);
   expect(s.repository.pages()[0]?.state).toBe("published");
   expect(s.repository.published()[0]?.document.summary).toBe(a.document.summary);
+  const question = s.repository.questions()[0]!;
+  expect(question.question).toBe(a.document.questions[0]!.question);
+  expect(question.state).toBe("open");
   const old = s.repository.get(a.document.key)!;
   const updated = {...a, document:{...a.document,summary:"新的完整讲解，保留写作时的原文。"}};
   write(updated); restoreKnowledgeArticles(s.repository,assets);
   expect(s.repository.get(a.document.key)?.document.summary).toBe(updated.document.summary);
   expect(s.repository.get(a.document.key)?.current).toBe(false);
   expect(s.repository.get(a.document.key,old.revision)).not.toBeNull();
+  const answered = s.repository.answer(question.id,"以后需要可配置，默认保持当前值。");
+  restoreKnowledgeArticles(s.repository,assets);
+  expect(s.repository.questions()[0]).toMatchObject({state:"answered",answerRevision:answered});
   // A personally published revision breaks import ownership of the live head.
   const live = s.repository.materials()[0]!;
   const personal = s.repository.publish(artifact(bindKnowledgeQuotes({...document(),summary:"我自己的说明"},new Map([[live.key,live]])),[{kind:"material",key:live.key,digest:live.digest}]));
@@ -165,9 +171,7 @@ it("preserves new reader input when an older generation or imported article fini
   const assets = join(f.dir,"articles");
   writeKnowledgeArticle(assets,{...a,revision:"unused",current:true});
   restoreKnowledgeArticles(f.repository,assets);
-  // Restored articles do not recreate question actions; publish a changed revision.
-  const published = f.repository.publish({...a, document:{...a.document,summary:"可补充背景的文章"}});
-  f.repository.reconcileImport(assets,[{key:reading.key,revision:published.revision}]);
+  const published = f.repository.get(reading.key)!;
   f.repository.answer(f.repository.questions()[0]!.id,"需要配置，默认保持 42。");
   const plan = f.repository.pages()[0]!.plan!;
   expect(() => f.repository.publish(a, reading)).toThrow("整理期间发生变化");
