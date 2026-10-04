@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 23;
+export const SUPPORTED_SCHEMA_VERSION = 24;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -1021,6 +1021,19 @@ const retrievalContextStatements = [
   )`,
 ];
 
+const stagedRoleOutputStatements = [
+  `CREATE TABLE role_outputs_staged(
+    id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL,job_id TEXT NOT NULL REFERENCES jobs(id),
+    attempt INTEGER NOT NULL,output_schema TEXT NOT NULL,output_digest TEXT NOT NULL,
+    output_json TEXT NOT NULL,trace_json TEXT NOT NULL,created_at TEXT NOT NULL,
+    stage_key TEXT NOT NULL DEFAULT 'result',UNIQUE(job_id,attempt,stage_key))`,
+  `INSERT INTO role_outputs_staged(id,workspace_id,job_id,attempt,output_schema,output_digest,output_json,trace_json,created_at)
+    SELECT id,workspace_id,job_id,attempt,output_schema,output_digest,output_json,trace_json,created_at FROM role_outputs`,
+  "DROP TABLE role_outputs",
+  "ALTER TABLE role_outputs_staged RENAME TO role_outputs",
+  "CREATE INDEX role_outputs_job_idx ON role_outputs(job_id,attempt)",
+] as const;
+
 const assistantProjectStatements = [
   "ALTER TABLE conversations ADD COLUMN project_id TEXT",
   "ALTER TABLE tasks ADD COLUMN project_id TEXT",
@@ -1126,6 +1139,7 @@ const migrations: readonly Migration[] = [
   { version: 21, name: "revision-fragment-read-index", statements: revisionReadIndexStatements, checksum: checksum(revisionReadIndexStatements) },
   { version: 22, name: "retrieval-context-hierarchy", statements: retrievalContextStatements, checksum: checksum(retrievalContextStatements) },
   { version: 23, name: "assistant-project-context", statements: assistantProjectStatements, checksum: checksum(assistantProjectStatements) },
+  { version: 24, name: "staged-role-outputs", statements: stagedRoleOutputStatements, checksum: checksum(stagedRoleOutputStatements) },
 ];
 
 const legacyV1Checksum = createHash("sha256")

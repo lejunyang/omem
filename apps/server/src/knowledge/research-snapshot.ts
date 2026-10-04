@@ -15,6 +15,7 @@ export function researchSnapshot(input: {
   file: string;
   visible?: (fragmentId: string) => boolean;
   includeUnanchoredState?: boolean;
+  includeGroupCatalog?: boolean;
 }) {
   const original = input.repository.store.db;
   const db = new DatabaseSync(input.file);
@@ -98,7 +99,7 @@ export function researchSnapshot(input: {
     const memberships = all("material_context_sources").filter(r =>
       groupIds.has(String(r.context_id)) && groupSources.has(String(r.source_id)));
     const admittedGroups = new Set(memberships.map(r => String(r.context_id)));
-    copy("material_contexts", groups.filter(r => admittedGroups.has(String(r.id))));
+    copy("material_contexts", groups.filter(r => input.includeGroupCatalog || admittedGroups.has(String(r.id))));
     copy("material_context_sources", memberships);
     copy(
       "review_relations",

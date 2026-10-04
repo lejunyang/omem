@@ -450,6 +450,7 @@ export class JobRepository {
   }
 
   saveRoleOutput(input: {
+    stageKey?: string;
     jobId: string;
     leaseToken: string;
     model: string | null;
@@ -485,8 +486,8 @@ export class JobRepository {
         .prepare(
           `INSERT INTO role_outputs(
              id,workspace_id,job_id,attempt,output_schema,output_digest,
-             output_json,trace_json,created_at
-           ) VALUES(?,?,?,?,?,?,?,?,?)`,
+             output_json,trace_json,created_at,stage_key
+           ) VALUES(?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           id,
@@ -498,6 +499,7 @@ export class JobRepository {
           JSON.stringify(input.output),
           JSON.stringify(input.trace),
           iso(input.now ?? new Date()),
+          input.stageKey ?? "result",
         );
       return { id, outputDigest, attempt: job.attempt };
     });
@@ -509,7 +511,7 @@ export class JobRepository {
         `SELECT id,job_id AS jobId,attempt,output_schema AS outputSchema,
            output_digest AS outputDigest,output_json AS outputJson,
            trace_json AS traceJson,created_at AS createdAt
-         FROM role_outputs WHERE job_id=? ORDER BY attempt`,
+         FROM role_outputs WHERE job_id=? ORDER BY attempt,created_at`,
       )
       .all(jobId);
   }

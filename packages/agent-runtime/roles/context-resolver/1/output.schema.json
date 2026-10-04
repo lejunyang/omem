@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "matched",
+        "ambiguous",
+        "unrelated"
+      ]
+    },
+    "contextIds": {
+      "maxItems": 40,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    },
+    "candidateIds": {
+      "maxItems": 40,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2400
+    },
+    "question": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "status",
+    "contextIds",
+    "candidateIds",
+    "reason",
+    "question"
+  ],
+  "additionalProperties": false,
+  "$id": "https://omem.invalid/contracts/ContextResolution.v1"
+}
