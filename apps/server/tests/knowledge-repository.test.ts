@@ -110,6 +110,36 @@ it("publishes a planned imported page and advances only managed heads even when 
   expect(s.repository.get(a.document.key)?.revision).toBe(personal.revision);
 });
 
+it("recovers after a rejected asset without mistaking the previous imported head for a personal edit", () => {
+  const s = setup(); s.capture("function value() {\n  return 42;\n}");
+  const m = s.repository.materials()[0]!;
+  const a = artifact(bindKnowledgeQuotes(document(), new Map([[m.key,m]])), [{kind:"material",key:m.key,digest:m.digest}]);
+  const assets = join(s.dir,"articles");
+  const write = (value:KnowledgeArtifact) => writeKnowledgeArticle(assets,{...value,revision:"unused",current:true});
+  const owned = () => s.store.db.prepare("SELECT revision_id FROM knowledge_import_memberships WHERE owner=? AND document_key=?").get(assets,a.document.key)?.revision_id;
+  write(a); restoreKnowledgeArticles(s.repository,assets);
+  const original = s.repository.get(a.document.key)!;
+  const next = {...a, document:{...a.document,summary:"补充后的完整解释"}};
+  write({...next, review:{...next.review,verdict:"needs_revision"}});
+  expect(restoreKnowledgeArticles(s.repository,assets)[0]?.state).toBe("rejected");
+  expect(owned()).toBe(original.revision);
+  expect(s.repository.get(a.document.key)?.revision).toBe(original.revision);
+  write(next);
+  expect(restoreKnowledgeArticles(s.repository,assets)[0]?.state).toBe("restored");
+  const updated = s.repository.get(a.document.key)!;
+  expect(updated.document.summary).toBe(next.document.summary);
+  expect(owned()).toBe(updated.revision);
+  expect(s.repository.get(a.document.key,original.revision)).not.toBeNull();
+  // A real personal revision stays visible through imports and asset removal.
+  const personal = s.repository.publish({...next,document:{...next.document,summary:"个人补充"}});
+  write({...next,document:{...next.document,summary:"再次导入"}});
+  expect(restoreKnowledgeArticles(s.repository,assets)[0]?.state).toBe("preserved");
+  expect(owned()).toBe(updated.revision);
+  rmSync(assets,{recursive:true});
+  restoreKnowledgeArticles(s.repository,assets);
+  expect(s.repository.published()[0]?.revision).toBe(personal.revision);
+});
+
 it("uses derived knowledge to find original evidence without promoting prose or stale sources", () => {
   const { repository, store, capture } = setup();
   capture("function value() {\n  return 42;\n}");

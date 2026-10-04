@@ -164,9 +164,13 @@ export class KnowledgeRepository {
         if (!other && this.get(key)?.revision === row.revision_id) this.pageState(key,"retired");
       }
       for (const a of assets) {
+        // Presence keeps an asset managed, but only an applied head advances
+        // ownership. Rejected/deferred imports and preserved personal edits
+        // must not make the last imported head look like a personal revision.
+        if (this.get(a.key)?.revision !== a.revision) continue;
         this.store.db.prepare("INSERT INTO knowledge_import_memberships VALUES(?,?,?) ON CONFLICT(owner,document_key) DO UPDATE SET revision_id=excluded.revision_id")
           .run(owner,a.key,a.revision);
-        if (this.get(a.key)?.revision === a.revision) this.store.db.prepare("UPDATE knowledge_pages SET state='published',error=NULL WHERE document_key=? AND state='retired'").run(a.key);
+        this.store.db.prepare("UPDATE knowledge_pages SET state='published',error=NULL WHERE document_key=? AND state='retired'").run(a.key);
       }
     });
   }
