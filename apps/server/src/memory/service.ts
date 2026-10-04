@@ -779,7 +779,17 @@ export class MemoryService {
     const reasons: string[] = [];
     if (assessment.semantic_verdict !== "supported")
       reasons.push(`semantic_${assessment.semantic_verdict}`);
-    if (proposal.uncertainties.length) reasons.push("uncertainties_present");
+    // Resolve an extractor's doubts without deleting them. A supported verdict
+    // alone says nothing about whether the remaining doubts affect this proposal.
+    const uncertaintyResolved =
+      assessment.semantic_verdict === "supported" &&
+      assessment.uncertainty_review?.verdict === "non_blocking" &&
+      !assessment.missing_context?.length;
+    if (proposal.uncertainties.length && !uncertaintyResolved)
+      reasons.push("uncertainties_present");
+    if (assessment.uncertainty_review?.verdict === "unresolved")
+      reasons.push("uncertainties_unresolved");
+    if (assessment.missing_context?.length) reasons.push("missing_context");
     if (proposal.evidence.some((evidence) => "asset_hash" in evidence))
       reasons.push("inferred_image_requires_review");
     if (
@@ -862,6 +872,8 @@ export class MemoryService {
       assessment.semantic_verdict === "insufficient" ||
       assessment.semantic_verdict === "needs_scope" ||
       reasons.includes("uncertainties_present") ||
+      reasons.includes("uncertainties_unresolved") ||
+      reasons.includes("missing_context") ||
       reasons.includes("due_time_ambiguous") ||
       reasons.includes("unverified_success");
     if (softUncertainty) return { outcome: "defer_until_use", reasons };
@@ -895,6 +907,8 @@ export class MemoryService {
         JSON.stringify({
           semantic: assessment.details,
           updateRelation: assessment.update_relation ?? null,
+          uncertaintyReview: assessment.uncertainty_review ?? null,
+          missingContext: assessment.missing_context ?? [],
           deterministicErrors,
         }),
         now(),

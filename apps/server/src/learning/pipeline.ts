@@ -736,6 +736,8 @@ export class LearningPipeline {
               role_version: `${run.trace.roleId}@${run.trace.roleVersion}`,
               reason_code: assessment.reason_code,
               details: assessment.reason,
+              missing_context: assessment.missing_context,
+              uncertainty_review: assessment.uncertainty_review,
               update_relation: assessment.update_relation,
             },
           };

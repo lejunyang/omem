@@ -67,6 +67,29 @@
               "maxLength": 1000
             }
           },
+          "uncertainty_review": {
+            "description": "Independent review of all candidate uncertainties against the entire proposal, including scope, actor, time and authority. Non-blocking means none changes the fact or action being proposed; explain why. Missing review does not resolve uncertainty.",
+            "type": "object",
+            "properties": {
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "non_blocking",
+                  "unresolved"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "verdict",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
           "update_relation": {
             "type": "string",
             "enum": [
