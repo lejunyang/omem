@@ -94,6 +94,14 @@ run = "bun scripts/live-retrieval-smoke.ts"
 [tasks."retrieval:verify".flags.reranker]
 help = "Compare the installed Chinese cross-encoder (not enabled by default)"
 
+[tasks."benchmark:mtrag"]
+run = "bun scripts/benchmark-mtrag.ts"
+description = "Compare lexical ranking on the pinned public MTRAG Cloud corpus; downloads benchmark data, no model calls"
+[[tasks."benchmark:mtrag".args]]
+name = "directory"
+default = ".repo-review/runtime/benchmarks/mtrag-cloud"
+help = "Cache and report directory; use an ignored runtime directory"
+
 [tasks.check]
 run = ["pnpm run typecheck", "pnpm run test", "pnpm run build"]
 
