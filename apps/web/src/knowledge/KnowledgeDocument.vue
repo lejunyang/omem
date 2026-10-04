@@ -12,6 +12,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   navigate: [frame: KnowledgeFrame];
   loaded: [title: string];
+  answered: [];
 }>();
 const article = ref<Article | null>(null),
   error = ref("");
@@ -60,6 +61,23 @@ function cite(key: string) {
     title: c.label,
   });
 }
+async function answered() {
+  emit("answered");
+  const key = props.documentKey;
+  try {
+    const result = await knowledgeApi<Article>(
+      props.prefix,
+      "/articles/" +
+        encodeURIComponent(key) +
+        (props.revision
+          ? "?revision=" + encodeURIComponent(props.revision)
+          : ""),
+    );
+    if (key === props.documentKey) article.value = result;
+  } catch (e) {
+    error.value = String(e);
+  }
+}
 </script>
 <template>
   <article ref="root" class="knowledge-document">
@@ -103,6 +121,7 @@ function cite(key: string) {
           v-if="article.questionCount"
           :prefix="prefix"
           :document-key="article.key"
+          @answered="answered"
         />
         <OmDisclosure
           class="article-details provenance-details"

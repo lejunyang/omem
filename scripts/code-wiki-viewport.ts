@@ -167,6 +167,27 @@ try {
       await expect(page.locator(".book-content .article-body > h2")).toBeVisible({ timeout: 30000 });
     }
   });
+  await check("existing article editing keeps selected materials and the reader's draft", async () => {
+    const trigger = page.getByRole("button", {name:"调整材料与目标",exact:true});
+    for (const width of [1440, 768, 390]) {
+      await page.setViewportSize({width,height:1000});
+      await trigger.click();
+      const dialog = page.getByRole("dialog",{name:"调整材料与目标",exact:true});
+      expect(await dialog.locator(".material-option input:checked").count()).toBeGreaterThan(0);
+      await dialog.getByRole("button",{name:"下一步",exact:true}).click();
+      expect(await dialog.getByLabel("文章主题",{exact:true}).inputValue()).not.toBe("");
+      await dialog.getByLabel("想弄懂什么",{exact:true}).fill("我想了解这篇文章的材料，以及补充背景后怎样更新解释。");
+      await expect(dialog.getByRole("button",{name:"保存并重新整理",exact:true})).toBeInViewport();
+      expect(await dialog.evaluate(el=>el.scrollWidth<=innerWidth)).toBe(true);
+      await page.screenshot({path:`${OUT}/article-edit-${width}.png`});
+      await page.keyboard.press("Escape");
+      await expect(trigger).toBeFocused();
+      await trigger.click();
+      await dialog.getByRole("button",{name:"下一步",exact:true}).click();
+      await expect(dialog.getByLabel("想弄懂什么",{exact:true})).toHaveValue("我想了解这篇文章的材料，以及补充背景后怎样更新解释。");
+      await page.keyboard.press("Escape");
+    }
+  });
   for (const width of [1440, 768, 390]) await check(`readable layout at ${width}px`, async () => {
     await page.setViewportSize({ width, height: 1000 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

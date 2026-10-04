@@ -5,6 +5,7 @@ import KnowledgeDocument from "./KnowledgeDocument.vue";
 import KnowledgeTree from "./KnowledgeTree.vue";
 import KnowledgeFolder from "./KnowledgeFolder.vue";
 import ArticleComposer, { type MaterialOption } from "./ArticleComposer.vue";
+import type { WikiPageBrief } from "../../../../packages/contracts/src/knowledge";
 import { topicTree, inTopic, articleOrder } from "./topics";
 import {
   knowledgeApi,
@@ -24,6 +25,7 @@ const emit = defineEmits<{
 const loading = ref(true),
   mobileNavigation = ref(false),
   composerOpen = ref(false);
+const composerPlan = ref<WikiPageBrief>();
 const allArticles = ref<ArticleMeta[]>([]),
   materials = ref<MaterialOption[]>([]),
   query = ref(""),
@@ -72,6 +74,13 @@ const tree = computed(() => topicTree(articles.value));
 const current = computed(() =>
   allArticles.value.find((a) => a.key === selected.value),
 );
+const currentPlan = computed(
+  () => pages.value.find((p) => p.key === selected.value)?.plan,
+);
+function compose(plan?: WikiPageBrief) {
+  composerPlan.value = plan;
+  composerOpen.value = true;
+}
 const activePath = computed(() => current.value?.topicPath ?? topic.value);
 const scopedArticles = computed(() =>
   articles.value.filter((a) => inTopic(a, topic.value)).sort(articleOrder),
@@ -326,6 +335,7 @@ onBeforeUnmount(() => {
         :document-key="current.key"
         :revision="current.revision"
         @navigate="emit('navigate', $event)"
+        @answered="load"
       />
       <p v-else-if="loading" role="status">正在打开知识库…</p>
       <section v-else class="library-overview">
@@ -365,10 +375,7 @@ onBeforeUnmount(() => {
               }}
             </p>
           </div>
-          <OmButton
-            variant="primary"
-            :disabled="running"
-            @click="composerOpen = true"
+          <OmButton variant="primary" :disabled="running" @click="compose()"
             ><OmIcon name="plus" />整理文章</OmButton
           >
         </header>
@@ -436,11 +443,18 @@ onBeforeUnmount(() => {
       </section>
       <footer v-if="current" class="next-guide">
         <OmButton
-          v-if="current.reading"
+          v-if="currentPlan"
           variant="secondary"
           :disabled="running"
           @click="refreshPage(current.key)"
           >重新整理这篇</OmButton
+        >
+        <OmButton
+          v-if="currentPlan"
+          variant="secondary"
+          :disabled="running"
+          @click="compose(currentPlan)"
+          >调整材料与目标</OmButton
         >
         <OmButton variant="ghost" @click="selectTopic(current.topicPath ?? [])"
           >返回分类</OmButton
@@ -456,8 +470,9 @@ onBeforeUnmount(() => {
       :open="composerOpen"
       :prefix="prefix"
       :materials="materials"
-      :topic-path="topic"
+      :topic-path="composerPlan?.topicPath ?? topic"
       :running="running"
+      :plan="composerPlan"
       @close="composerOpen = false"
       @submitted="load"
     />
