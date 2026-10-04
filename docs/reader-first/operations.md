@@ -6,11 +6,15 @@
 
 个人配置读取 `OMEM_CONFIG` 或忽略提交的 `omem.local.json`，没有时用 config/omem.example.json。profiles 配置 CLI/ACP 与模型；能力动态探测。启动不会自动生成整库知识。已启用的检索索引可后台补建。
 
+开发 API 使用项目内 [nodemon](https://github.com/remy/nodemon) 监测服务源码、合同、角色和配置变化，通过 SIGTERM 关闭旧进程后启动新的 Bun 进程；TypeScript 仍由 Bun 执行。这样不会在长期热重载的同一 Bun 进程中累积状态。前端仍由 Vite 热更新，个人数据库与原文历史保留。
+
 ## 模型与生成
 
 仓库模型读取 config/review-code-model.json，REVIEW_CODE_MODEL_CONFIG 可覆盖；使用真实 traex ACP 的 gpt-5.6-sol。`osdk run review:generate <路径>` 只生成明确选中材料的内部分析笔记，不进入正式目录，也不自动按文件或模块拼出专题；读者指南用 `osdk run review:guides`，只更新一页可用 `osdk run review:guides retrieval`。页面计划在 config/wiki-pages.json；ACP 知识任务现用原生工具/skill/MCP 自主调查、补读、写作，再独立补查。没有宿主输入输出 token 预算或固定三轮研究限制。`--retry` 可重试失败任务。角色输出、目录、research.jsonl 与 trace 保存在 .repo-review/runtime/；原文和数据库快照是临时副本，角色结束后回收，原始版本仍由正式 Store 保存。发布的文章在 .repo-review/knowledge/。
 
 本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / `osdk run retrieval:index --review` 补建索引。
+
+模型首次加载失败后，后台按 30 秒间隔重新加载，不永久缓存失败结果。实际服务的 `/api/health` 中 `retrieval.semantic` 区分关闭、补建、就绪与降级；隔离库检查通过不能代替这个运行状态。补建期间仍可搜索已有向量，未建部分保留全文检索。
 
 材料用途整理：原始材料页展开“材料用途与适用范围”，可调用当前 Agent 阅读固定原文或人工填写。批量任务 `osdk run review:catalog docs --documents` 选择 Markdown，`osdk run review:catalog <文件或目录>` 也可分析代码；`--retry` 重做已有模型说明，人工修正始终保留。发布数据在 `.repo-review/knowledge/material-descriptions/`，按固定材料 digest 恢复；分类与概念变更后运行 `osdk run retrieval:index --review`。当前是主动触发，不是自动清洗所有新输入。细节及限制见 [材料用途与概念入口](material-understanding.md)。
 
