@@ -408,18 +408,16 @@ export class UnifiedRetrieval extends KeywordRetrieval {
   private fuse(branches: ScoredUnit[][]): ScoredUnit[] {
     const fused = new Map<string, ScoredUnit>();
     for (const branch of branches) {
-      const scale = Math.max(...branch.map((h) => h.score), 1e-6);
       branch.forEach((h, rank) => {
         const prior = fused.get(h.unit.id);
-        const quality = h.routes.includes("semantic")
-          ? (h.score - 0.3) / 0.7
-          : h.score / scale;
         fused.set(h.unit.id, {
           ...h,
           // The symbol route contributes navigation; it must not overwrite a
           // query-relevant dense window with the beginning of the same method.
           excerpt: prior?.excerpt ?? h.excerpt,
-          score: (prior?.score ?? 0) + quality / (61 + rank),
+          // Standard RRF: scores from BM25, cosine and symbol lookup have
+          // different scales. Only each route's one-based rank contributes.
+          score: (prior?.score ?? 0) + 1 / (60 + rank + 1),
           routes: [...new Set([...(prior?.routes ?? []), ...h.routes])],
         });
       });
