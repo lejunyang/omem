@@ -95,9 +95,10 @@ export function planMaintenance(
   });
   // An unscoped old plan did not record the whole catalog. Do not pretend every
   // previously unread source is newly added, or trigger a whole-library reread.
-  const newlySelected = previous.reading?.materialKeys
+  const previousSelection = previous.selection?.materialKeys ?? previous.reading?.materialKeys;
+  const newlySelected = previousSelection
     ? materials
-        .filter((m) => !previous.reading!.materialKeys!.includes(m.key))
+        .filter((m) => !previousSelection.includes(m.key))
         .map((m) => ({ key: m.key, title: m.title }))
     : [];
   const changedFields = (

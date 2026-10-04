@@ -159,7 +159,7 @@ export class KnowledgePipeline {
     return batch;
   }
 
-  private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[], priorFeedback?: unknown, publication?: { reading: WikiPageBrief; research: unknown; writerVersion: string; maintenance?: ArticleMaintenance }) {
+  private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[], priorFeedback?: unknown, publication?: { reading: WikiPageBrief; research: unknown; writerVersion: string; maintenance?: ArticleMaintenance; materialKeys: string[] }) {
     if (this.nativeResearch) offers = offers.map(o=>({material:o.material,ranges:[{start:1,end:o.material.lineCount}]}));
     const maintenance = publication?.maintenance;
     let repair: unknown = priorFeedback ?? (maintenance?.previousDraft ? {
@@ -189,7 +189,7 @@ export class KnowledgePipeline {
         const dependencies: KnowledgeArtifact["dependencies"] = offers.filter(o=>citedKeys.has(o.material.key)).map(o => ({ kind: "material", key: o.material.key, digest: o.material.digest }));
         for (const a of articles.filter(a=>document.citations.some(c=>c.target.kind==="article"&&c.target.key===a.document.key))) dependencies.push({ kind: "article", key: a.document.key, digest: a.revision });
         if (this.stopping) throw Error("Knowledge publication cancelled");
-        const artifact: KnowledgeArtifact = { version: 1, document, dependencies, ...(publication ? { reading: publication.reading } : {}),
+        const artifact: KnowledgeArtifact = { version: 1, document, dependencies, ...(publication ? { reading: publication.reading, selection: { materialKeys: publication.materialKeys } } : {}),
           publication: {role: publication ? publication.reading.kind === "reference" ? "reference" : "article" : "note"},
           investigation: offers.filter(o=>readKeys.has(o.material.key)).map(o=>({key:o.material.key,digest:o.material.digest})),
           generation: { model: write.trace.effectiveModel!, effort: write.trace.effectiveEffort, at: write.at, trace: { ...write.trace, ...(publication ? { research: publication.research, writerVersion: publication.writerVersion } : {}), ...(maintenance ? { maintenance: maintenanceTrace(maintenance) } : {}) } as unknown as Record<string, unknown> },
@@ -274,11 +274,11 @@ export class KnowledgePipeline {
     this.repository.refresh();
     const writerVersion = stableDigest([this.nativeResearch ? "native-research@4" : "reader-first@4", ...["knowledge-researcher", "knowledge-writer", "knowledge-refresher", "knowledge-verifier"].map(role => this.registry.load(role).bundleHash)]);
     const existing = this.repository.get(brief.key);
-    if (!this.options.retryTag && existing?.current && stableDigest(existing.reading ?? null) === stableDigest(brief) && existing.generation.trace.writerVersion === writerVersion) return [existing];
-    const available = this.repository.materials();
-    const scope = brief.materialKeys ? new Set(brief.materialKeys) : null;
-    const materials = scope ? available.filter(m => scope.has(m.key)) : available;
-    if (!materials.length || (scope && materials.length !== scope.size)) throw Error("Selected materials are no longer available");
+    const materials = this.repository.materialsForPlan(brief);
+    const materialKeys = materials.map(m => m.key).sort();
+    if (!this.options.retryTag && existing?.current && stableDigest(existing.reading ?? null) === stableDigest(brief) && existing.generation.trace.writerVersion === writerVersion &&
+      (!brief.contextIds?.length || stableDigest(existing.selection?.materialKeys ?? []) === stableDigest(materialKeys))) return [existing];
+    if (!materials.length) throw Error("所选项目或主题还没有材料，请先保存材料再整理");
     const maintenance = existing ? planMaintenance(this.repository, existing, brief, materials) : undefined;
     if (this.nativeResearch) {
       const offers = materials.map(material=>({material,ranges:[{start:1,end:material.lineCount}]}));
@@ -293,7 +293,7 @@ export class KnowledgePipeline {
       const research = knowledgeResearchSchema.parse(run.result);
       if (!research.ready || research.requests.length) throw Error("Native researcher must complete its own tool investigation before writing");
       return this.writeAndVerify("knowledge-writer", [{...brief,purpose:brief.goal}], offers, articles, this.previousFeedback([brief], offers, articles, brief, maintenance),
-        {reading:brief,research:{trace:run.trace,findings:research.findings,gaps:research.gaps},writerVersion,maintenance});
+        {reading:brief,research:{trace:run.trace,findings:research.findings,gaps:research.gaps},writerVersion,maintenance,materialKeys});
     }
     const research = new MaterialResearch(materials, brief);
     if (maintenance) {
@@ -325,7 +325,7 @@ export class KnowledgePipeline {
     }
     const target = { ...brief, purpose: brief.goal };
     return this.writeAndVerify("knowledge-writer", [target], [...research.offers.values()], [],
-      this.previousFeedback([brief], [...research.offers.values()], [], brief, maintenance), { reading: brief, research: { rounds, findings, gaps,
+      this.previousFeedback([brief], [...research.offers.values()], [], brief, maintenance), { reading: brief, materialKeys, research: { rounds, findings, gaps,
         materials: [...research.offers.values()].map(o => ({ key: o.material.key, digest: o.material.digest, ranges: o.ranges })) }, writerVersion, maintenance });
   }
 

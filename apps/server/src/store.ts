@@ -31,6 +31,7 @@ import { InputAggregator } from "./inputs/aggregator.js";
 import { RuntimeRequestRepository } from "./agent-runtime/requests.js";
 import { SourceProfileService } from "./source-profile/service.js";
 import { MaterialDescriptions } from "./source-profile/descriptions.js";
+import { MaterialContexts } from "./contexts/repository.js";
 const id = () => randomUUID();
 const now = () => new Date().toISOString();
 const hash = (s: string | Buffer) =>
@@ -44,6 +45,7 @@ export class Store {
   readonly runtimeRequests: RuntimeRequestRepository;
   readonly profiles: SourceProfileService;
   readonly descriptions: MaterialDescriptions;
+  readonly contexts: MaterialContexts;
   constructor(
     readonly dataDir: string,
     options: {
@@ -66,6 +68,7 @@ export class Store {
       this.runtimeRequests = new RuntimeRequestRepository(this.db);
       this.profiles = new SourceProfileService(this.db);
       this.descriptions = new MaterialDescriptions(this.db);
+      this.contexts = new MaterialContexts(this.db);
     } catch (error) {
       this.db.close();
       throw error;
@@ -102,7 +105,8 @@ export class Store {
       .run(id(), changeId, title, details, date, null, changeId);
     return changeId;
   }
-  capture(input: CaptureInput) {
+  capture(input: CaptureInput, selection: { contextIds?: string[] } = {}) {
+    if (selection.contextIds) this.contexts.validate(selection.contextIds);
     const payloadDigest = stableDigest(input);
     const parts: StoredPart[] = input.parts.map((p) => {
       if (p.type !== "image") return p;
@@ -159,6 +163,7 @@ export class Store {
             throw Error("CAPTURE_EVENT_CONFLICT");
           const revision = this.revision(String(receipt.revision_id));
           if (!revision) throw Error("Capture receipt revision is missing");
+          if (selection.contextIds) this.contexts.setForSource(revision.sourceId, selection.contextIds);
           const queued = this.queueCaptureJob(input, revision);
           return {
             revision,
@@ -182,6 +187,7 @@ export class Store {
             .prepare("SELECT * FROM revisions WHERE id=?")
             .get(String(source.head)) as Row)
         : undefined;
+      if (selection.contextIds) this.contexts.setForSource(String(source.id), selection.contextIds);
       if (head?.fingerprint === fingerprint) {
         const revision = this.revision(String(head.id))!;
         const receipt = this.writeCaptureReceipt(

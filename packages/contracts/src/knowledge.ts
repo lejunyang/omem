@@ -67,7 +67,8 @@ export const wikiPageBriefSchema = z.object({
   reader: z.string(), goal: z.string(), scenario: z.string(),
   questions: z.array(z.string()).min(1).max(12), entryPaths: z.array(z.string()).max(20),
   topicPath: z.array(z.string().trim().min(1).max(120)).optional(),
-  materialKeys: z.array(key).min(1).optional().describe("Explicit investigation scope. Omit to search all eligible captured materials; entryPaths are starting points only."),
+  materialKeys: z.array(key).optional().describe("Explicit investigation scope. Combined with contextIds when supplied. Omit both to search all eligible captured materials; entryPaths are starting points only."),
+  contextIds: z.array(key).min(1).max(40).optional().describe("Persisted project/topic memberships to follow, including originals added later. Not an article category or an inferred similarity group."),
 }).strict();
 export type WikiPageBrief = z.infer<typeof wikiPageBriefSchema>;
 
@@ -112,6 +113,8 @@ export type KnowledgeArtifact = {
   generation: { model: string; effort: string | null; at: string; trace: Record<string, unknown> };
   review: { model: string; at: string; trace: Record<string, unknown>; verdict: "accepted" };
   reading?: WikiPageBrief;
+  /** Host snapshot of the chosen source catalog; the reading plan keeps its dynamic scope. */
+  selection?: { materialKeys: string[] };
   /** Publication intent is assigned by the host, never inferred from a path. */
   publication?: { role: KnowledgeRole };
   /** Read during investigation; not an assertion that every byte supports the page. */
