@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-04T05:34:01.594Z",
-  "implementationCommit": "e28438c651a482b3c3ab4969187c89cd94c874b9",
-  "sourceDigest": "34d59d313801845a6d85be8314ef3c5232855075eb917b1d22ada2ddd9f9e7a8",
+  "recordedAt": "2026-10-04T06:35:01.108Z",
+  "implementationCommit": "32edec5dbb24c83f38c8aee8d8459e3943b0c84d",
+  "sourceDigest": "b4438964eee55e1c1b69350c518ae8fd15fac81b48f27a138b47fb75425ece78",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "repository",
   "checks": [
@@ -26,7 +26,7 @@
       "state": "passed",
       "details": {
         "articles": 132,
-        "citations": 732,
+        "citations": 736,
         "errors": []
       }
     },
@@ -37,11 +37,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v5",
-        "units": 13434,
+        "units": 13486,
         "semantic": {
           "model": "structure-icu-v5:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 13434,
+          "indexed": 13486,
           "pending": 0,
           "error": null
         },
@@ -68,11 +68,11 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 622,
+    "materials": 624,
     "reviewedMaterials": 129,
-    "pendingMaterials": 493,
+    "pendingMaterials": 495,
     "currentArticles": 132,
-    "citations": 732,
+    "citations": 736,
     "articleLinks": 0,
     "errors": [],
     "restore": {
@@ -166,7 +166,7 @@
         "passed": false,
         "firstExpectedRank": 11,
         "uniquePathsAt5": 5,
-        "elapsedMs": 700,
+        "elapsedMs": 654,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -223,8 +223,8 @@
         ],
         "status": 200,
         "baselineTop5": [
-          "apps/server/tests/retrieval-unified.test.ts",
           "docs/reader-first/progress.md",
+          "apps/server/tests/retrieval-unified.test.ts",
           "docs/archive/2026-10-01-baseline/AGENTS.md",
           "docs/archive/2026-10-01-baseline/implementation/batch2/lark.md",
           ".agents/skills/osdk-guide/reference/doctor/guide.md"
@@ -233,8 +233,16 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 772,
+        "elapsedMs": 722,
         "top5": [
+          {
+            "path": "docs/reader-first/progress.md",
+            "routes": [
+              "bm25",
+              "purpose:balanced"
+            ],
+            "snippet": "通过 osdk 实跑 GLiClass multilingual mini、Qwen3.5-4B MLX Q4、Plumb-4B GGUF Q8 / Q4，并加入搜索前后再判断的只读实验入口。短场景与真实 HTTP 命中分开验收；Qwen / Plumb Q8 的阅读顺序有局部收益，但资料充分性、选项顺序稳定性和记忆更"
+          },
           {
             "path": "apps/server/tests/retrieval-unified.test.ts",
             "routes": [
@@ -243,14 +251,6 @@
               "purpose:balanced"
             ],
             "snippet": "const passages = rerankPassages(\n    text,\n    \"怎样修改有效记忆，提案从什么入口写入？\",\n    text.slice(0, 400),\n    [{ label: \"原子写入记忆或事项\", aliases: [\"applyTask\", \"applyMemory\"] }"
-          },
-          {
-            "path": "docs/reader-first/progress.md",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "通过 osdk 实跑 GLiClass multilingual mini、Qwen3.5-4B MLX Q4、Plumb-4B GGUF Q8 / Q4，并加入搜索前后再判断的只读实验入口。短场景与真实 HTTP 命中分开验收；初步发现 Qwen / Plumb Q8 的阅读顺序有收益，但资料充分性、选项顺序稳定性和"
           },
           {
             "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
@@ -296,7 +296,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 4,
-        "elapsedMs": 214,
+        "elapsedMs": 171,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -357,7 +357,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 144,
+        "elapsedMs": 148,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -423,7 +423,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 5,
-        "elapsedMs": 782,
+        "elapsedMs": 723,
         "top5": [
           {
             "path": "design.md",
