@@ -2,6 +2,7 @@
 import { computed, ref, watch, nextTick } from "vue";
 import { OmButton, OmDialog, OmIcon } from "@omem/ui";
 import { knowledgeApi } from "./api";
+import type { WikiPageBrief } from "../../../../packages/contracts/src/knowledge";
 export type MaterialOption = {
   key: string;
   title: string;
@@ -14,6 +15,7 @@ const props = defineProps<{
   materials: MaterialOption[];
   topicPath: string[];
   running: boolean;
+  plan?: WikiPageBrief;
 }>();
 const emit = defineEmits<{ submitted: []; close: [] }>();
 const title = ref(""),
@@ -28,6 +30,7 @@ const materialSearch = ref<HTMLInputElement>(),
 const step = ref(1),
   limit = ref(40),
   onlySelected = ref(false);
+let draftKey: string | undefined;
 watch(
   () => step.value,
   async () => {
@@ -52,32 +55,59 @@ watch([filter, onlySelected], () => {
 watch(
   () => props.open,
   (open) => {
-    if (open) step.value = 1;
+    if (!open) return;
+    step.value = 1;
+    const key = props.plan?.key ?? "new";
+    if (draftKey === key) return;
+    draftKey = key;
+    title.value = props.plan?.title ?? "";
+    goal.value = props.plan?.goal ?? "";
+    reader.value = props.plan?.reader ?? "希望了解这个主题的人";
+    selected.value = props.plan
+      ? props.materials
+          .filter(
+            (m) =>
+              !props.plan!.materialKeys ||
+              props.plan!.materialKeys.includes(m.key),
+          )
+          .map((m) => m.revisionId)
+      : [];
+    filter.value = "";
+    onlySelected.value = !!props.plan;
+    error.value = "";
   },
 );
 async function submit() {
   sending.value = true;
   error.value = "";
   try {
-    await knowledgeApi(props.prefix, "/pages", {
-      method: "POST",
-      body: JSON.stringify({
-        revisionIds: selected.value,
-        brief: {
-          key: "article:" + crypto.randomUUID(),
-          title: title.value.trim(),
-          order: 0,
-          kind: "explanation",
-          reader: reader.value.trim(),
-          goal: goal.value.trim(),
-          scenario: goal.value.trim(),
-          questions: [goal.value.trim()],
-          entryPaths: [],
-          ...(props.topicPath.length ? { topicPath: props.topicPath } : {}),
-        },
-      }),
-    });
+    const plan = props.plan;
+    const changedGoal = !plan || goal.value.trim() !== plan.goal;
+    await knowledgeApi(
+      props.prefix,
+      plan ? "/pages/" + encodeURIComponent(plan.key) : "/pages",
+      {
+        method: plan ? "PUT" : "POST",
+        body: JSON.stringify({
+          revisionIds: selected.value,
+          brief: {
+            ...(plan ?? {}),
+            key: plan?.key ?? "article:" + crypto.randomUUID(),
+            title: title.value.trim(),
+            order: plan?.order ?? 0,
+            kind: plan?.kind ?? "explanation",
+            reader: reader.value.trim(),
+            goal: goal.value.trim(),
+            scenario: changedGoal ? goal.value.trim() : plan.scenario,
+            questions: changedGoal ? [goal.value.trim()] : plan.questions,
+            entryPaths: plan?.entryPaths ?? [],
+            ...(props.topicPath.length ? { topicPath: props.topicPath } : {}),
+          },
+        }),
+      },
+    );
     selected.value = [];
+    draftKey = undefined;
     title.value = "";
     goal.value = "";
     filter.value = "";
@@ -94,7 +124,7 @@ async function submit() {
 <template>
   <OmDialog
     :open="open"
-    title="整理成文章"
+    :title="plan ? '调整材料与目标' : '整理成文章'"
     @close="emit('close')"
     @back="emit('close')"
   >
@@ -116,7 +146,13 @@ async function submit() {
       <section v-if="step === 1" class="material-step">
         <div class="step-heading">
           <h3>这篇文章基于哪些材料？</h3>
-          <p>选择相关文档、代码或记录，AI 会结合它们调查并撰写。</p>
+          <p>
+            {{
+              plan
+                ? "已选中这篇文章的现有材料。可增删材料；重新整理后仍是同一篇文章，旧版引用继续保留。"
+                : "选择相关文档、代码或记录，AI 会结合它们调查并撰写。"
+            }}
+          </p>
         </div>
         <div class="material-toolbar">
           <label class="filter-field"
@@ -242,7 +278,7 @@ async function submit() {
             form="article-composer-form"
             :disabled="running || !selected.length"
             :loading="sending"
-            >开始整理</OmButton
+            >{{ plan ? "保存并重新整理" : "开始整理" }}</OmButton
           >
         </div>
       </div>
