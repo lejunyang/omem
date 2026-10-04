@@ -134,6 +134,33 @@ it("keeps unaffected chapters searchable and citations pinned when surrounding m
   await retrieval.close();
 });
 
+it("compares complete referenced chapters without pulling in a later report, and keeps nested conditions", async () => {
+  const { store, repository, capture, artifact } = setup();
+  const original = "# 活动约定\n这是参加者的安排。\n## 预算\n预算是八十元。\n### 费用条件\n费用不含交通。\n## 地点\n地点在图书馆。\n## 筹备记录\n已完成首次核对。";
+  capture(original);
+  const source = repository.materials()[0]!;
+  artifact.dependencies = [{ kind: "material", key: source.key, digest: source.digest }];
+  artifact.document.citations[0]!.target = { kind: "material", key: source.key, startLine: 2, endLine: 8 };
+  artifact.document.citations[1]!.target = { kind: "material", key: source.key, startLine: 8, endLine: 8 };
+  bindKnowledgeQuotes(artifact.document, new Map([[source.key, source]]));
+  const page = repository.publish(artifact);
+  capture(original.replace("已完成首次核对。", "已完成第二次核对，补充了核对记录。"));
+  repository.refresh();
+  expect(repository.get(page.document.key)?.current).toBe(true);
+  const retrieval = new UnifiedRetrieval(store.db);
+  try {
+    const hits = await retrieval.search({ text: "春游经费", kinds: ["knowledge"] });
+    expect(hits.some(hit => hit.target.kind === "knowledge" && hit.target.section === "budget")).toBe(true);
+    expect(hits[0]!.references[0]?.revisionId).toBe(source.revisionId);
+    // The cited span still includes whole nested chapters, not just its literal quotes.
+    capture(original.replace("费用不含交通。", "费用包含交通。"));
+    expect(repository.statusReader()(page)).toMatchObject({ budget: { state: "needs-review" }, venue: { state: "current" } });
+    // A new chapter inside the referenced span cannot disappear from comparison.
+    capture(original.replace("## 地点", "## 参加条件\n仅限提前报名者。\n## 地点"));
+    expect(repository.statusReader()(page).budget?.state).toBe("needs-review");
+  } finally { await retrieval.close(); }
+});
+
 it("stores page plans independently and keeps internal file notes out of publication and recall", async () => {
   const { store, repository, artifact } = setup();
   const brief: WikiPageBrief = {

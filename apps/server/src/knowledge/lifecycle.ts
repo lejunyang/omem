@@ -5,7 +5,7 @@ import type {
   KnowledgeRole,
   SectionStatus,
 } from "../../../../packages/contracts/src/knowledge.js";
-import { materialSections } from "./structure.js";
+import { materialSections, type MaterialSection } from "./structure.js";
 
 /** Legacy migration uses saved reader intent, not keys, paths or topic names. */
 export function publicationRole(a: KnowledgeArtifact): KnowledgeRole {
@@ -36,6 +36,38 @@ const textAt = (m: KnowledgeMaterial, start: number, end: number) =>
     .slice(start - 1, end)
     .join("\n")
     .trimEnd();
+
+/** A document title wraps the whole Markdown tree, but a citation spanning its
+ * introduction and two chapters does not depend on every later chapter. Keep
+ * each intersecting child chapter complete, including its nested conditions. */
+function markdownRootContexts(m: KnowledgeMaterial, root: MaterialSection) {
+  const children: MaterialSection[] = [];
+  for (const section of materialSections(m)) {
+    if (section.kind !== "section" || section.startLine <= root.startLine || section.endLine > root.endLine) continue;
+    if (!children.length || section.startLine > children.at(-1)!.endLine) children.push(section);
+  }
+  return [
+    { ...root, endLine: (children[0]?.startLine ?? root.endLine + 1) - 1, intro: true },
+    ...children.map(section => ({ ...section, intro: false })),
+  ];
+}
+
+function unchangedMarkdownRoot(before: KnowledgeMaterial, after: KnowledgeMaterial, root: MaterialSection, start: number, end: number) {
+  const roots = materialSections(after).filter(s => s.kind === "section" && s.depth === 1);
+  if (roots.length !== 1 || roots[0]!.title !== root.title) return false;
+  const selected = markdownRootContexts(before, root).filter(s => s.startLine <= end && s.endLine >= start);
+  const current = markdownRootContexts(after, roots[0]!);
+  const positions = selected.map(s => current.flatMap((c, index) =>
+    c.intro === s.intro && c.title === s.title && c.depth === s.depth ? [index] : []));
+  if (!selected.length || positions.some(matches => matches.length !== 1)) return false;
+  // Added/reordered chapters inside the referenced span require review too.
+  return selected.every((s, index) => {
+    const position = positions[index]![0]!;
+    if (index && position !== positions[index - 1]![0]! + 1) return false;
+    const c = current[position]!;
+    return textAt(before, s.startLine, s.endLine) === textAt(after, c.startLine, c.endLine);
+  });
+}
 
 /** A citation remains pinned to its original. This comparison only decides
  * whether its surrounding chapter/function still applies, including moved lines.
@@ -68,6 +100,9 @@ export function unchangedContext(
     )
     .sort((a, b) => a.endLine - a.startLine - (b.endLine - b.startLine))[0];
   if (!enclosing || enclosing.kind === "document") return false;
+  if (enclosing.kind === "section" && enclosing.depth === 1 &&
+    materialSections(before).filter(s => s.kind === "section" && s.depth === 1).length === 1)
+    return unchangedMarkdownRoot(before, after, enclosing, c.target.startLine, c.target.endLine);
   const candidates = materialSections(after).filter(
     (s) => s.title === enclosing.title && s.kind === enclosing.kind,
   );
