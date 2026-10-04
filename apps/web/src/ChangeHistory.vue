@@ -7,7 +7,7 @@ const props = defineProps<{ changes: Change[] }>();
 const emit = defineEmits<{ open: [id: string]; restore: [change: Change] }>();
 const filter = ref("all");
 const expanded = ref(new Set<string>());
-const labels: Record<string, string> = { capture: "材料", knowledge: "知识", restore: "恢复", task: "事项", decision: "判断", answer: "问答", reference: "引用" };
+const labels: Record<string, string> = { capture: "材料", context: "材料归属", knowledge: "知识", restore: "恢复", task: "事项", decision: "判断", answer: "问答", reference: "引用" };
 const visible = computed(() => props.changes.filter(c => filter.value === "all" || c.kind === filter.value));
 function summary(c: Change) {
   if (c.kind === "capture") return c.beforeId ? "原始材料已更新。展开查看具体增删。" : "首次保存原始材料。";
@@ -28,7 +28,7 @@ function summary(c: Change) {
       <template #actions><template v-if="['capture','restore'].includes(c.kind)">
         <OmButton v-if="c.afterId" @click="emit('open', c.afterId)">阅读此版本</OmButton>
         <OmButton v-if="c.beforeId && c.afterId" @click="emit('restore', c)">恢复为新版本</OmButton>
-      </template></template>
+      </template><OmButton v-if="c.kind === 'context' && c.afterId" @click="emit('open', c.afterId)">查看材料归属</OmButton></template>
     </OmPanel>
     <OmEmpty v-if="!visible.length" title="此范围暂无变化" />
   </section>
