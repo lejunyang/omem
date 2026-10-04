@@ -112,6 +112,7 @@ export class KnowledgeRepository {
       CREATE TABLE IF NOT EXISTS knowledge_imports(asset TEXT PRIMARY KEY, state TEXT NOT NULL, reason TEXT NOT NULL, checked_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS knowledge_pages(document_key TEXT PRIMARY KEY, role TEXT NOT NULL, plan TEXT,
         state TEXT NOT NULL DEFAULT 'published', error TEXT, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS knowledge_page_edits(document_key TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS knowledge_import_memberships(owner TEXT NOT NULL,document_key TEXT NOT NULL,revision_id TEXT NOT NULL,
         PRIMARY KEY(owner,document_key));`);
     // Persist the migration once. Content revisions and their hashes are untouched.
@@ -128,10 +129,19 @@ export class KnowledgeRepository {
     return this.store.db.prepare("SELECT * FROM knowledge_pages WHERE role!='note' AND state!='retired' ORDER BY updated_at").all()
       .map(r => ({key:String(r.document_key),role:r.role,plan:r.plan ? JSON.parse(String(r.plan)) as WikiPageBrief : null,state:String(r.state),error:r.error}));
   }
-  savePlan(brief: WikiPageBrief) {
+  hasUserPlan(key: string) { return !!this.store.db.prepare("SELECT 1 FROM knowledge_page_edits WHERE document_key=?").get(key); }
+  savePlan(brief: WikiPageBrief, user = false) {
+    // Imported page maps must not replace a reader's selection on restart.
+    if (!user && this.hasUserPlan(brief.key)) return;
+    if (user) this.store.db.prepare("INSERT OR IGNORE INTO knowledge_page_edits VALUES(?)").run(brief.key);
+    const previous = this.pages().find(p => p.key === brief.key)?.plan;
     this.store.db.prepare(`INSERT INTO knowledge_pages VALUES(?,?,?,'planned',NULL,?) ON CONFLICT(document_key)
       DO UPDATE SET role=excluded.role,plan=excluded.plan,state=CASE WHEN knowledge_pages.state='retired' THEN 'planned' ELSE knowledge_pages.state END,updated_at=excluded.updated_at`)
       .run(brief.key, brief.kind === "reference" ? "reference" : "article", JSON.stringify(brief), new Date().toISOString());
+    if (this.get(brief.key) && stableDigest(previous ?? null) !== stableDigest(brief)) {
+      this.store.db.prepare("INSERT OR REPLACE INTO knowledge_invalidations VALUES(?,?)").run(brief.key, "材料范围或阅读目标已调整，等待重新整理");
+      this.refresh();
+    }
   }
   pageState(key: string, state: "writing" | "published" | "failed" | "retired", error?: string) {
     this.store.db.prepare("UPDATE knowledge_pages SET state=?,error=?,updated_at=? WHERE document_key=?")
@@ -189,7 +199,9 @@ export class KnowledgeRepository {
     return r ? { ...JSON.parse(String(r.artifact)), revision: String(r.id), current: r.head === r.id && !!r.current } : null;
   }
 
-  publish(artifact: KnowledgeArtifact) {
+  publish(artifact: KnowledgeArtifact, expectedPlan?: WikiPageBrief) {
+    if (expectedPlan && stableDigest(this.pages().find(p => p.key === artifact.document.key)?.plan ?? null) !== stableDigest(expectedPlan))
+      throw Error("阅读目标或补充材料在整理期间发生变化，请重新整理；已保留旧文和最新选材。");
     const materials = new Map(this.materials().map(m => [m.key, m]));
     const articles = new Map(this.list().map(a => [a.document.key, a]));
     if (artifact.dependencies.some(d => d.kind === "material" ? materials.get(d.key)?.digest !== d.digest : articles.get(d.key)?.revision !== d.digest)) throw Error("KNOWLEDGE_INPUT_CHANGED");
@@ -287,6 +299,11 @@ export class KnowledgeRepository {
     const q = this.questions().find(q => q.id === id);
     if (!q) throw Error("Question not found");
     const capture = this.store.capture({ source: "manual", externalId: `knowledge-answer:${id}`, title: q.question, parts: [{ type: "text", text: answer }], context: { application: "knowledge-reader", event: id, conversationId: q.documentKey }, provenance: { collectorId: "knowledge-reader", actorId: "owner", actorType: "owner", actorVerifiedBy: "local-ui", sourceUri: null, eventId: null, eventAt: new Date().toISOString(), timezone: "Asia/Shanghai", quoted: false, forwarded: false, producerKind: "original" } });
+    const plan = this.pages().find(p => p.key === q.documentKey)?.plan;
+    if (plan) {
+      const material = materialFromRevision(this.store, capture.revision.id)!;
+      this.savePlan({ ...plan, materialKeys: [...new Set([...(plan.materialKeys ?? this.materials().map(m => m.key)), material.key])] }, true);
+    }
     this.store.db.prepare("UPDATE knowledge_questions SET state='answered',answer_revision=?,updated_at=? WHERE id=?").run(capture.revision.id, new Date().toISOString(), id);
     this.store.db.prepare("INSERT OR REPLACE INTO knowledge_invalidations VALUES(?,?)").run(q.documentKey, "用户补充了背景，需要重新核对");
     this.refresh();

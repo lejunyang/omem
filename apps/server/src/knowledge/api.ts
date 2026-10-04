@@ -181,17 +181,22 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     if (!brief) return reply.code(404).send({error:"这篇内容没有保存阅读目标，请从整理文章开始"});
     return reply.code(202).send(startPage(brief,true));
   });
-  app.post<{ Body: { brief: unknown; revisionIds: string[] } }>(prefix + "/pages", async (req, reply) => {
+  app.route<{ Params: { key?: string }; Body: { brief: unknown; revisionIds: string[] } }>({ method: ["POST", "PUT"], url: prefix + "/pages/:key?", handler: async (req, reply) => {
     if (!input.profile) return reply.code(503).send({ error: "请先在能力与连接中配置 Agent" });
     if (running) return reply.code(409).send({ error: "知识整理正在进行" });
+    const editing = req.method === "PUT";
+    if (editing && !repository.pages().some(p => p.key === req.params.key && p.plan)) return reply.code(404).send({ error: "这篇文章没有保存阅读目标" });
     const parsed = wikiPageBriefSchema.safeParse(req.body?.brief);
     const ids = req.body?.revisionIds;
-    if (!parsed.success || !Array.isArray(ids) || !ids.length || ids.length > 500) return reply.code(400).send({ error: "请填写阅读目标并选择原始材料" });
+    if (!parsed.success || !Array.isArray(ids) || !ids.length || ids.some(id => typeof id !== "string")) return reply.code(400).send({ error: "请填写阅读目标并选择原始材料" });
+    if (editing && parsed.data.key !== req.params.key) return reply.code(400).send({ error: "文章已切换，请重新打开整理窗口" });
+    if (!editing && repository.pages().some(p => p.key === parsed.data.key)) return reply.code(409).send({ error: "文章已存在，请使用调整材料与目标" });
     const selectedIds = new Set(ids), selected = repository.materials().filter(m => selectedIds.has(m.revisionId));
     if (selected.length !== selectedIds.size) return reply.code(400).send({ error: "所选材料已更新，请刷新后重试" });
     const brief = { ...parsed.data, materialKeys: selected.map(m => m.key) };
-    return reply.code(202).send(startPage(brief));
-  });
+    repository.savePlan(brief, true);
+    return reply.code(202).send(startPage(brief, editing));
+  } });
   app.post<{ Body: { revisionIds: string[] } }>(prefix + "/analyze", async (req, reply) => {
     if (!input.profile) return reply.code(503).send({ error: "未配置可用 Agent" });
     if (running) return reply.code(409).send({ error: "知识整理正在进行" });

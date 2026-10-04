@@ -58,11 +58,12 @@ export function restoreKnowledgeArticles(repository: KnowledgeRepository, direct
         if (artifact.version !== 1 || artifact.review?.verdict !== "accepted" || !artifact.generation?.model || !artifact.review.model) throw Error("Missing generation/review provenance");
         knowledgeDocumentSchema.parse(artifact.document);
         const head = repository.get(artifact.document.key);
+        const editedPlan = repository.hasUserPlan(artifact.document.key);
         const managed = repository.store.db.prepare("SELECT revision_id FROM knowledge_import_memberships WHERE owner=? AND document_key=?").get(owner,artifact.document.key);
-        if (head && head.revision !== digest(stableDigest(artifact)) && managed?.revision_id !== head.revision) {
+        if (head && (editedPlan || (head.revision !== digest(stableDigest(artifact)) && managed?.revision_id !== head.revision))) {
           repository.restoreHistorical(artifact, false);
           state = "preserved";
-          reason = "保留当前非本次导入管理的正文，新资产作为历史保存";
+          reason = "保留个人修改的正文或阅读目标，新资产作为历史保存";
         } else if (artifact.dependencies.some(d => d.kind === "material" ? sources.get(d.key) !== d.digest : repository.get(d.key)?.revision !== d.digest)) {
           repository.restoreHistorical(artifact, true, owner);
           state = Object.values(repository.statusReader()(artifact)).every(s=>s.state === "current") ? "restored" : "stale";
