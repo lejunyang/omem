@@ -188,7 +188,7 @@ export class KnowledgePipeline {
           investigation: offers.filter(o=>readKeys.has(o.material.key)).map(o=>({key:o.material.key,digest:o.material.digest})),
           generation: { model: write.trace.effectiveModel!, effort: write.trace.effectiveEffort, at: write.at, trace: { ...write.trace, ...(publication ? { research: publication.research, writerVersion: publication.writerVersion } : {}) } as unknown as Record<string, unknown> },
           review: { model: review.trace.effectiveModel!, at: review.at, trace: review.trace as unknown as Record<string, unknown>, verdict: "accepted" } };
-        const article = this.repository.publish(artifact);
+        const article = this.repository.publish(artifact, publication?.reading);
         this.options.onPublish?.(article); this.options.log?.(`Published ${document.key}`); published.push(article);
       }
       if (!rejected.length) return published;

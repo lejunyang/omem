@@ -157,6 +157,28 @@ it("retires old investigation questions and notifies only for a new knowledge re
   expect(store.notifications()).toHaveLength(notifications + 1);
 });
 
+it("preserves new reader input when an older generation or imported article finishes", () => {
+  const f = setup(); f.capture("function value() {\n  return 42;\n}");
+  const m = f.repository.materials()[0]!;
+  const reading = {key:"guide:value", title:"返回值", kind:"explanation" as const, order:0, reader:"读者", goal:"了解返回值", scenario:"读取数值", questions:["返回什么？"], entryPaths:[], materialKeys:[m.key]};
+  const a = { ...artifact(bindKnowledgeQuotes(document(reading.key), new Map([[m.key,m]])), [{kind:"material" as const,key:m.key,digest:m.digest}]), reading };
+  const assets = join(f.dir,"articles");
+  writeKnowledgeArticle(assets,{...a,revision:"unused",current:true});
+  restoreKnowledgeArticles(f.repository,assets);
+  // Restored articles do not recreate question actions; publish a changed revision.
+  const published = f.repository.publish({...a, document:{...a.document,summary:"可补充背景的文章"}});
+  f.repository.reconcileImport(assets,[{key:reading.key,revision:published.revision}]);
+  f.repository.answer(f.repository.questions()[0]!.id,"需要配置，默认保持 42。");
+  const plan = f.repository.pages()[0]!.plan!;
+  expect(() => f.repository.publish(a, reading)).toThrow("整理期间发生变化");
+  expect(f.repository.get(reading.key)?.revision).toBe(published.revision);
+  expect(f.repository.get(reading.key)?.current).toBe(false);
+  restoreKnowledgeArticles(f.repository,assets);
+  new KnowledgeRepository(f.store).savePlan(reading);
+  expect(f.repository.pages()[0]!.plan).toEqual(plan);
+  expect(f.repository.get(reading.key)?.revision).toBe(published.revision);
+});
+
 
 it("retrieves all original fragments covered by a cross-paragraph citation", () => {
   const { repository, store, capture } = setup();

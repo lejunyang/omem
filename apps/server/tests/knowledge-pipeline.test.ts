@@ -149,3 +149,26 @@ it("keeps the reading plan after failure and resumes the matching draft for publ
   expect(f.repository.pages()).toContainEqual(expect.objectContaining({key:brief.key,state:"published"}));
   expect(f.repository.published()).toHaveLength(1);
 });
+
+it("carries a reader's supplemental answer into the next investigation, writing and independent review", async () => {
+  const f = setup();
+  const brief = { key: "guide:evidence", title: "Evidence review", order: 0, kind: "explanation" as const, reader: "New reader", goal: "Understand evidence review", scenario: "Review a release", questions: ["Who reviews evidence?"], entryPaths: [], materialKeys: ["manual:example"] };
+  const [first] = await f.pipeline.writePage(brief);
+  f.repository.publish({ ...first!, document: { ...first!.document, questions: [{ question: "Who reviews evidence?", why: "The owner is missing.", nextStep: "Ask the owner.", blocking: false, citationKeys: ["c1"] }] } });
+  const question = f.repository.questions()[0]!;
+  const revision = f.repository.answer(question.id, "Mira reviews release evidence every Thursday.");
+  const reopened = new KnowledgeRepository(f.store);
+  const plan = reopened.pages().find(p => p.key === brief.key)!.plan!;
+  expect(plan.materialKeys).toContain("manual:knowledge-answer:" + question.id);
+  expect(f.store.revision(revision)?.parts).toContainEqual(expect.objectContaining({ text: "Mira reviews release evidence every Thursday." }));
+  const before = f.run.mock.calls.length;
+  await f.pipeline.writePage(plan);
+  for (const role of ["knowledge-researcher", "knowledge-writer", "knowledge-verifier"]) {
+    const input = f.run.mock.calls.slice(before).find(([input]) => input.roleId === role)?.[0];
+    expect(input, role).toBeDefined();
+    expect(JSON.stringify(input!.context.materials), role).toContain("Mira reviews release evidence every Thursday.");
+  }
+  expect(reopened.published()).toHaveLength(1);
+  expect(reopened.get(brief.key)?.reading).toEqual(plan);
+  expect(reopened.get(brief.key, first!.revision)).not.toBeNull();
+});
