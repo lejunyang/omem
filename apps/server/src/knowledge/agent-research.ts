@@ -541,6 +541,7 @@ export async function prepareAgentResearch(input: {
           const queryInput = {
             text: query,
             limit,
+            diversify: false,
             visible,
             purpose,
             codeIntent,
@@ -609,6 +610,7 @@ export async function prepareAgentResearch(input: {
           const hits = await retrieval.search({
             text: query,
             limit,
+            diversify: false,
             purpose,
             kinds: ["knowledge"],
             materialRoles,

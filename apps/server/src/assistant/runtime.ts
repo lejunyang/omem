@@ -1,4 +1,4 @@
-import { evidenceNeighbors, evidenceSection } from "../retrieval/context.js";
+import { evidenceNeighbors, evidenceSection, sourceContextRange } from "../retrieval/context.js";
 import {
   taskFollowUpSchema,
   type TaskFollowUp,
@@ -939,6 +939,8 @@ export class AssistantRuntime {
     const hits = await retrieval.search({
       text: userText,
       limit: 16,
+      // Browse diversity must not discard a third fact from the same original.
+      diversify: false,
       purpose,
       visible,
     });
@@ -950,13 +952,16 @@ export class AssistantRuntime {
         const material = materialFromRevision(this.store, reference.revisionId);
         if (!material) continue;
         if (!reference.fragmentIds.every(visible)) continue;
+        const context = hit.kind === "source"
+          ? sourceContextRange(material, reference, visible)
+          : reference;
         const entry = evidenceForRange(
           material,
-          reference.startLine,
-          reference.endLine,
+          context.startLine,
+          context.endLine,
           visible,
         );
-        entry.sourceTarget = reference;
+        entry.sourceTarget = context;
         // Preserve the input adapter's public locator alongside its fixed range.
         // Reconstructing a revision alone produces the storage namespace key,
         // which may not be the key exposed by the research catalog.
@@ -1010,6 +1015,7 @@ export class AssistantRuntime {
       )({
         text: userText,
         limit: 20,
+        diversify: false,
         visible: (fragmentId) => this.isVisible(conversation, fragmentId),
       });
       // Retain the actual semantic hit inside a long original fragment. The ACP
