@@ -83,6 +83,11 @@ export type PageMaintenanceStatus = {
 export const knowledgeResearchSchema = z.object({
   schema_version: z.literal(1), ready: z.boolean(),
   findings: z.string().max(12000), gaps: z.array(z.string()).max(12),
+  composition: z.object({
+    mode: z.enum(["maintain", "rewrite"]),
+    reason: z.string().min(1).max(1600),
+    outline: z.string().min(1).max(6000),
+  }).strict().optional().describe("Plan the reader's route after investigation. Maintain a useful existing explanation for local changes; rewrite when its organization obscures the page's purpose. Explain what to retain, reorganize or omit and why. This is a writing decision, not a factual verdict or length score."),
   requests: z.array(z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("search"), query: z.string().min(1).max(300) }).strict(),
     z.object({ kind: z.literal("read"), materialKey: key, startLine: z.number().int().positive(), endLine: z.number().int().positive() }).strict(),

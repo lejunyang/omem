@@ -8,6 +8,7 @@ import { KnowledgePipeline, analystFor } from "../src/knowledge/pipeline.js";
 import { RoleBundleRegistry } from "../src/agent-runtime/bundles.js";
 import { RoleRuntimeGateway } from "../src/agent-runtime/gateway.js";
 import { profileSchema } from "../../../packages/contracts/src/index.js";
+import type { KnowledgeResearch } from "../../../packages/contracts/src/knowledge.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => cleanups.splice(0).reverse().forEach(fn => fn()));
@@ -18,13 +19,14 @@ function setup(reject = false, changeDuringRun = false) {
   const captured = capture("The release uses fixed evidence.");
   const repository = new KnowledgeRepository(store), registry = new RoleBundleRegistry(), gateway = new RoleRuntimeGateway(registry, join(dir, "agents"));
   let count = 0;
+  let composition: KnowledgeResearch["composition"];
   const run = vi.spyOn(gateway, "run").mockImplementation(async input => {
     count++;
     if (changeDuringRun && count === 1) capture("The release has changed.");
     const key = String((input.context.task!.targetKeys as string[] | undefined)?.[0] ?? (input.context.task!.page as {key:string}).key);
     const sourceKey = !key.startsWith("manual:") ? String((input.context.task!.allowedMaterials as {key:string}[])[0]!.key) : key;
     const sourceLine = 1;
-    let result: unknown = input.roleId === "knowledge-researcher" ? {schema_version:1,ready:true,findings:"Read the original",gaps:[],requests:[]} : input.roleId === "knowledge-verifier" ? { schema_version: 1, verdicts: [{ documentKey: key, verdict: reject ? "needs_revision" : "accepted", issues: reject ? ["The interpretation is unsupported"] : [], questions: [] }] } : {
+    let result: unknown = input.roleId === "knowledge-researcher" ? {schema_version:1,ready:true,findings:"Read the original",gaps:[],requests:[],composition} : input.roleId === "knowledge-verifier" ? { schema_version: 1, verdicts: [{ documentKey: key, verdict: reject ? "needs_revision" : "accepted", issues: reject ? ["The interpretation is unsupported"] : [], questions: [] }] } : {
       schema_version: 1, documents: [{ key, title: "Evidence behavior", summary: "A derived explanation", category: "background", sections: [{ key: "behavior", title: "Behavior", body: reject ? "An unsupported extrapolation.[[c1]]" : key.startsWith("module:") ? "Additional context is documented.[[c1]]" : "The release preserves evidence.[[c1]]" }], citations: [{ key: "c1", label: "Original statement", reason: "The original states this constraint.", relation: "supports", target: { kind: "material", key: sourceKey, startLine: sourceLine, endLine: sourceLine }, quote: "" }], questions: [] }],
     };
     const normalized = input.validateOutput?.(result); if (normalized !== undefined) result = normalized;
@@ -33,7 +35,7 @@ function setup(reject = false, changeDuringRun = false) {
   });
   const profile = profileSchema.parse({ id: "traex", name: "Fixture", command: "unused", transport: "acp" });
   const pipeline = new KnowledgePipeline(repository, gateway, profile, { concurrency: 1, nativeResearch: false });
-  return { store, repository, pipeline, run, captured, capture, accept: () => { reject = false; }, reject: () => { reject = true; } };
+  return { store, repository, pipeline, run, captured, capture, accept: () => { reject = false; }, reject: () => { reject = true; }, compose: (plan: KnowledgeResearch["composition"]) => { composition = plan; } };
 }
 
 it("publishes only after independent review and reuses durable outputs after projection loss", async () => {
@@ -198,6 +200,32 @@ it("maintains a published page from its old explanation and source changes befor
   expect(updated!.generation.trace.maintenance).toMatchObject({ previousRevision: previous!.revision, reusedDraft: true });
   expect(updated!.generation.trace.maintenance).not.toHaveProperty("previousDraft");
   expect(f.repository.get(brief.key, previous!.revision)?.document.citations[0]!.quote).toBe("The release uses fixed evidence.");
+});
+
+it.each([true, false])("can reorganize a published explanation without patching its old structure (native=%s)", async nativeResearch => {
+  const f = setup();
+  f.pipeline.options.nativeResearch = nativeResearch;
+  const brief = { key: "release-explained", title: "Release", order: 0, kind: "explanation" as const, reader: "Reader", goal: "Understand release", scenario: "A release", questions: ["What changes?"], entryPaths: [], materialKeys: ["manual:example"] };
+  const [previous] = await f.pipeline.writePage(brief);
+  const composition = { mode: "rewrite" as const, reason: "The explanation is a list of assertions, not a release walkthrough.", outline: "Follow one release; retain the required review step and explain its observable result." };
+  f.compose(composition);
+  f.capture("The release now waits for the reviewer.");
+  const before = f.run.mock.calls.length;
+  const [updated] = await f.pipeline.writePage(brief);
+  const calls = f.run.mock.calls.slice(before).map(([input]) => input);
+  expect(calls.map(input => input.roleId)).toEqual(["knowledge-researcher", "knowledge-writer", "knowledge-verifier"]);
+  expect(calls[0]!.context.task!.maintenance).toHaveProperty("previousDraft", previous!.document);
+  for (const input of calls.slice(1)) {
+    expect(input.context.task!.maintenance).toMatchObject({ previousRevision: previous!.revision, previousDraft: undefined, sections: [] });
+    expect(input.context.task).not.toHaveProperty("revisionRequest");
+  }
+  expect(calls[1]!.context.task!.research).toHaveProperty("composition", composition);
+  expect(calls[2]!.context.task!.composition).toEqual(composition);
+  expect(updated!.generation.trace.research).toHaveProperty("composition", composition);
+  expect(updated!.generation.trace.maintenance).toMatchObject({ previousRevision: previous!.revision, reusedDraft: false });
+  expect(updated!.document.citations[0]!.quote).toBe("The release now waits for the reviewer.");
+  expect(f.repository.published()).toHaveLength(1);
+  expect(f.repository.get(brief.key, previous!.revision)!.document).toEqual(previous!.document);
 });
 
 it("does not reintroduce the old draft when the reader removes its source from the new selection", async () => {

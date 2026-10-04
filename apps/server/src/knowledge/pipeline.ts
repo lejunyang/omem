@@ -5,7 +5,7 @@ import { prepareAgentResearch } from "./agent-research.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
 import { readFileSync } from "node:fs";
 import type { AgentProfile, ContextManifest } from "../../../../packages/contracts/src/index.js";
-import { knowledgeResearchSchema, type WikiPageBrief, knowledgeBatchSchema, knowledgeReviewSchema, type KnowledgeArtifact, type KnowledgeDocument, type KnowledgeMaterial } from "../../../../packages/contracts/src/knowledge.js";
+import { knowledgeResearchSchema, type KnowledgeResearch, type WikiPageBrief, knowledgeBatchSchema, knowledgeReviewSchema, type KnowledgeArtifact, type KnowledgeDocument, type KnowledgeMaterial } from "../../../../packages/contracts/src/knowledge.js";
 import { RoleBundleRegistry } from "../agent-runtime/bundles.js";
 import { RoleRuntimeGateway, type RoleRunTrace } from "../agent-runtime/gateway.js";
 import { DurableJobWorker } from "../jobs/worker.js";
@@ -16,6 +16,9 @@ import { KnowledgeRepository, materialFromRevision, bindKnowledgeQuotes, validat
 type Offer = { material: KnowledgeMaterial; ranges: { start: number; end: number }[] };
 type Target = { key: string; title: string; purpose?: string };
 type RunResult = { result: unknown; trace: RoleRunTrace; at: string };
+type WritingResearch = Pick<KnowledgeResearch, "findings" | "gaps" | "composition"> & {
+  trace?: RoleRunTrace; rounds?: unknown[]; materials?: unknown[];
+};
 
 export function analystFor(m: KnowledgeMaterial) {
   if (m.images.length) return "visual-analyst";
@@ -159,20 +162,26 @@ export class KnowledgePipeline {
     return batch;
   }
 
-  private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[], priorFeedback?: unknown, publication?: { reading: WikiPageBrief; research: unknown; writerVersion: string; maintenance?: ArticleMaintenance; materialKeys: string[] }) {
+  private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[], priorFeedback?: unknown, publication?: { reading: WikiPageBrief; research: WritingResearch; writerVersion: string; maintenance?: ArticleMaintenance; materialKeys: string[] }) {
     if (this.nativeResearch) offers = offers.map(o=>({material:o.material,ranges:[{start:1,end:o.material.lineCount}]}));
-    const maintenance = publication?.maintenance;
+    const composition = publication?.research.composition;
+    // Investigation can retire an unhelpful structure without deleting the old
+    // publication or narrowing the originals available to writer and reviewer.
+    const maintenance = publication?.maintenance && composition?.mode === "rewrite"
+      ? { ...publication.maintenance, previousDraft: undefined, sections: [],
+          instruction: "沿本次 composition 和阅读目标重新组织完整文章。研究阶段已检查旧文；写作不沿用旧稿结构，仍须从当前原件核对必要事实、条件和引用。保持文章身份与历史，不写改稿说明。" }
+      : publication?.maintenance;
     let repair: unknown = priorFeedback ?? (maintenance?.previousDraft ? {
       previousDrafts: [maintenance.previousDraft], issues: [], instruction: maintenance.instruction,
     } : undefined);
     let remaining = targets;
     const published: KnowledgeArticle[] = [];
     for (let attempt = 0; attempt < 4; attempt++) {
-      const write = await this.runRole(repair ? "knowledge-refresher" : role, offers, articles, { conservative: attempt === 3 ? "Retain only directly supported statements; turn remaining uncertain claims into scoped questions with next steps. Do not reintroduce rejected claims." : undefined, targetKeys: remaining.map(t => t.key), targets: remaining, catalogTopics: [...new Set(this.repository.list().map(a => JSON.stringify(a.document.topicPath ?? [])).filter(p => p !== "[]"))].map(p => JSON.parse(p)), reading: publication?.reading, maintenance, research: publication ? {findings:(publication.research as {findings?:unknown}).findings,gaps:(publication.research as {gaps?:unknown}).gaps} : undefined, revisionAttempt: attempt, ...(repair ? { revisionRequest: repair } : {}) }, out => this.checkBatch(out, remaining, offers, articles));
+      const write = await this.runRole(repair ? "knowledge-refresher" : role, offers, articles, { conservative: attempt === 3 ? "Retain only directly supported statements; turn remaining uncertain claims into scoped questions with next steps. Do not reintroduce rejected claims." : undefined, targetKeys: remaining.map(t => t.key), targets: remaining, catalogTopics: [...new Set(this.repository.list().map(a => JSON.stringify(a.document.topicPath ?? [])).filter(p => p !== "[]"))].map(p => JSON.parse(p)), reading: publication?.reading, maintenance, research: publication ? {findings:publication.research.findings,gaps:publication.research.gaps,composition} : undefined, revisionAttempt: attempt, ...(repair ? { revisionRequest: repair } : {}) }, out => this.checkBatch(out, remaining, offers, articles));
       const batch = knowledgeBatchSchema.parse(write.result);
       // Explicit placement is user/page-plan data, not inferred from repository paths.
       if (publication?.reading.topicPath) for (const document of batch.documents) document.topicPath = publication.reading.topicPath;
-      const review = await this.runRole("knowledge-verifier", offers, articles, { targetKeys: remaining.map(t => t.key), drafts: batch.documents, targets: remaining, reading: publication?.reading, maintenance,
+      const review = await this.runRole("knowledge-verifier", offers, articles, { targetKeys: remaining.map(t => t.key), drafts: batch.documents, targets: remaining, reading: publication?.reading, maintenance, composition,
         ...(maintenance ? { instruction: "独立核查本次变化及受影响的解释，试用完整新稿回答阅读目标。检查是否沿用了过时前提，或删掉了仍必要的步骤与条件。旧文和作者结论都不是事实来源；自己补读当前原件。允许根据新目标调整结构，不要求逐字保留旧文。" } : {}),
       }, out => {
         const r = knowledgeReviewSchema.parse(out);
@@ -206,7 +215,7 @@ export class KnowledgePipeline {
     throw Error(`Semantic review still requests changes: ${remaining.map(t => t.key).join(", ")}`);
   }
 
-  private previousFeedback(targets: Target[], offers: Offer[], articles: KnowledgeArticle[] = [], reading?: WikiPageBrief, maintenance?: ArticleMaintenance) {
+  private previousFeedback(targets: Target[], offers: Offer[], articles: KnowledgeArticle[] = [], reading?: WikiPageBrief, maintenance?: ArticleMaintenance, composition?: KnowledgeResearch["composition"]) {
     const drafts: KnowledgeDocument[] = [], issues: unknown[] = [];
     for (const target of targets) {
       const rows = this.repository.store.db.prepare(`SELECT o.output_json,j.input_refs FROM role_outputs o JOIN jobs j ON j.id=o.job_id
@@ -215,6 +224,7 @@ export class KnowledgePipeline {
         const input = JSON.parse(row.input_refs)[0];
         if (!input.materials || stableDigest(input.task?.reading ?? null) !== stableDigest(reading ?? null)) continue;
         if ((input.task?.maintenance?.previousRevision ?? null) !== (maintenance?.previousRevision ?? null)) continue;
+        if (stableDigest(input.task?.composition ?? null) !== stableDigest(composition ?? null)) continue;
         if ((input.articles ?? []).some((a:{key:string;revision:string})=>!articles.some(current=>current.document.key===a.key && current.revision===a.revision))) continue;
         // A draft from an old multi-document batch may rely on a sibling that
         // is no longer supplied. Do not smuggle that context into a repair.
@@ -294,8 +304,8 @@ export class KnowledgePipeline {
       }, out=>knowledgeResearchSchema.parse(out));
       const research = knowledgeResearchSchema.parse(run.result);
       if (!research.ready || research.requests.length) throw Error("Native researcher must complete its own tool investigation before writing");
-      return this.writeAndVerify("knowledge-writer", [{...brief,purpose:brief.goal}], offers, articles, this.previousFeedback([brief], offers, articles, brief, maintenance),
-        {reading:brief,research:{trace:run.trace,findings:research.findings,gaps:research.gaps},writerVersion,maintenance,materialKeys});
+      return this.writeAndVerify("knowledge-writer", [{...brief,purpose:brief.goal}], offers, articles, this.previousFeedback([brief], offers, articles, brief, maintenance, research.composition),
+        {reading:brief,research:{trace:run.trace,findings:research.findings,gaps:research.gaps,composition:research.composition},writerVersion,maintenance,materialKeys});
     }
     const research = new MaterialResearch(materials, brief);
     if (maintenance) {
@@ -312,14 +322,15 @@ export class KnowledgePipeline {
     if (!research.offers.size) for (const m of materials.slice(0, 3)) research.read(m.key, 1, Math.min(m.lineCount, 80));
     const rounds: unknown[] = [];
     let observations: unknown = [], findings = "", gaps: string[] = [];
+    let composition: KnowledgeResearch["composition"];
     for (let round = 0; round < 3; round++) {
       const run = await this.runRole("knowledge-researcher", [...research.offers.values()], [], {
         title: brief.title, page: brief, round, remainingRounds: 3 - round, catalog: research.catalog(), observations, findings, maintenance,
         ...(maintenance ? {instruction:maintenance.instruction} : {}),
       }, out => knowledgeResearchSchema.parse(out));
       const result = knowledgeResearchSchema.parse(run.result);
-      findings = result.findings; gaps = result.gaps;
-      rounds.push({ trace: run.trace, findings, gaps, requests: result.requests });
+      findings = result.findings; gaps = result.gaps; composition = result.composition;
+      rounds.push({ trace: run.trace, findings, gaps, composition, requests: result.requests });
       // Execute a last round's requests too: the writer and verifier will see
       // the fetched source even when investigation has exhausted its round budget.
       observations = research.execute(result.requests);
@@ -327,7 +338,7 @@ export class KnowledgePipeline {
     }
     const target = { ...brief, purpose: brief.goal };
     return this.writeAndVerify("knowledge-writer", [target], [...research.offers.values()], [],
-      this.previousFeedback([brief], [...research.offers.values()], [], brief, maintenance), { reading: brief, materialKeys, research: { rounds, findings, gaps,
+      this.previousFeedback([brief], [...research.offers.values()], [], brief, maintenance, composition), { reading: brief, materialKeys, research: { rounds, findings, gaps, composition,
         materials: [...research.offers.values()].map(o => ({ key: o.material.key, digest: o.material.digest, ranges: o.ranges })) }, writerVersion, maintenance });
   }
 
