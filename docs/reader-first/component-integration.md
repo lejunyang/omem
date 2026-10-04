@@ -1,6 +1,40 @@
 # 成熟方法如何进入现有代码
 
-本文是改造路线，不把外部产品文档或实验收益当 omem 已有能力。完整平台、可嵌入组件和可复用方法分开评估；先判断来源元数据能否衔接，不因缺少内部 Fragment 合同直接否决。2026-10-03 已落地的片段背景、材料说明和过滤见下文，真实收益以当轮同库对照为准。
+更新：2026-10-04。本文区分已经实现的方法、下一步接入的组件和仍待比较的后端，不把上游文档或榜单当 omem 已有能力。实际代码、文章和外部检索诊断见[整体复审](review.md)。
+
+## 本次选择及替换位置
+
+| 选择 | 具体进入现有项目的方式 | 替换什么／保留什么 | 状态 |
+| --- | --- | --- | --- |
+| DeepWiki 的页面地图与分层写作 | 在 `packages/contracts/src/knowledge.ts`、知识存储/API 中持久化页面目的、发布用途、目录关系；`writePage` 写正式文章，`analyze/synthesize` 产内部笔记 | 替换文件或计算批次直接进入目录；保留 Traex 自主调查和固定来源 | 下一个实现切片，尚未完成 |
+| Docling 解析组件 | 增加可选解析 worker，输出结构块、标题、表格、页码/位置及解析版本；由 Capture 适配层保存原件和派生文本，再进入 `knowledge/structure.ts` 与检索投影 | 替换 PDF/Office/OCR 自研清洗；TS/Vue 和已有 Markdown 解析继续使用 | 未安装、未接入；Python/解析模型由 osdk 显式管理 |
+| Haystack 层级检索组件 | 通过 `RetrievalPort` 接 Python 组件适配，映射 `sourceId/revisionId/range/parentId`；候选只取叶子，回答上下文按父节点恢复 | 不复制另一套应用；SQLite 继续保存原件，组件索引是可重建投影 | 未接入；先需要正式父子单位，现有 headingPath 不等于父子图 |
+| Hindsight 持续综合理解 | 先接可选记忆读取/整合后端；输入原件、事件时间与元数据，返回带来源的观察和主题视图，供 Agent 补查 | 比较替换分散 claim 整合；原件版本和 MemoryService 的事实/事项应用权保留 | 未接入；不是给当前库再增加一次默认双写 |
+| 公开评测实现 | MTRAG 用官方段落与标注，FreshStack 复用官方要点覆盖评价，LongMemEval 保留原始会话和 oracle 对照 | 替换“预期路径命中＝质量”的判断；工程 smoke 保留 | MTRAG 词法已运行，其他仅调研 |
+
+这些组件不必一次安装。第一个交付应先解决页面用途和更新生命周期，随后接父章节与简明检索策略；复杂文档解析和记忆后端按各自真实输入交付。
+
+### 页面规划：借用流程，不能照搬篇幅配额
+
+本次检查 [deepwiki-open 的结构规划](https://github.com/AsyncFuncAI/deepwiki-open/blob/d92819a9c9f3b99416e3580ff235fc9d3adf8b89/api/services/wiki/structure.py)、[页面提示](https://github.com/AsyncFuncAI/deepwiki-open/blob/d92819a9c9f3b99416e3580ff235fc9d3adf8b89/api/services/wiki/prompts.py) 与[内容生成](https://github.com/AsyncFuncAI/deepwiki-open/blob/d92819a9c9f3b99416e3580ff235fc9d3adf8b89/api/services/wiki/content.py)：先规划页面层级和相关原件，再写页面。这与逐文件摘要再批量汇总有实质区别。它的一些来源数量/图表要求不适合小主题，不照抄；仓库分支链接也不能替代 omem 的固定版本引用。它是独立开源实现，不是商业 DeepWiki 的源码。
+
+omem 已有 `WikiPageBrief`，缺的不是继续加提示字段，而是让计划决定正式发布。发布用途必须随产物保存；迁移保留旧资产和引用，不能靠某个 key 前缀临时过滤。独立复核分别判断事实与页面任务，不能因为一行转导出解释没有错就把它升级成完整教程。
+
+### 结构解析与检索：先把适配数据说清楚
+
+[Docling chunking](https://docling-project.github.io/docling/concepts/chunking/) 能从结构文档产生带上下文的分块。适配器同时保存原件定位与派生文字定位；扫描文本不能伪造源码行号。解析配置和版本进入投影身份，重新解析不改旧引用。异步 worker 可独立重试，解析失败仍能查看原件，不要求全部用户安装这个可选能力。
+
+[Haystack HierarchicalDocumentSplitter](https://docs.haystack.deepset.ai/docs/hierarchicaldocumentsplitter) 与 [AutoMergingRetriever](https://docs.haystack.deepset.ai/docs/automergingretriever) 依赖明确父子 ID：若多个子块命中，可取父块作为完整语境。应先把这些元数据带入 `retrieval/units.ts` 的持久投影，保持完整章节/函数边界；通过组件适配返回候选后，再由 omem 校验原件身份与可见范围。不是在向量结果后随意多拼几行，也不要求为了使用组件先丢弃现有 SQLite。实际兼容的 DocumentStore 和组件版本要随适配锁定。
+
+### 持续记忆：要比较可运行的后端，而非只借术语
+
+[Hindsight mental models](https://hindsight.vectorize.io/developer/mental-models) 是围绕常用问题维护的综合视图；来源变化后可更新视图，过期视图仍可见，但不直接替代底层查证。借鉴点是“持续维护已有理解”，不只是再加一个摘要表。
+
+先通过后端接口导入一个隔离主题：每条输入带原件版本、事件时间、人物/项目标识；Hindsight 的 retain/recall/reflect 结果带原始定位回到 omem。用户问题仍由现有 Agent 阅读；事实应用、提醒与任务状态仍经 MemoryService。比较后再替换当前整合逻辑，避免两个后端各自宣称同一当前事实。
+
+[官方部署](https://github.com/vectorize-io/hindsight#quick-start) 需要额外服务/存储和模型配置，不是一个零成本 TypeScript 依赖。Traex ACP 也不能直接冒充它的普通 HTTP 模型端点；接入时应检查其 provider 扩展，或在明确配置的受支持 provider 上做隔离对照，不能隐式要求另一份付费密钥。采用它的理由必须是长期更新与跨会话效果、维护成本的净收益，而不是某个排行榜总分。
+
+本次也读了 [Hindsight benchmark](https://github.com/vectorize-io/hindsight-benchmarks) 和 [Mem0 benchmark](https://github.com/mem0ai/memory-benchmarks) 的运行设计：可参考摄取/检索/回答分阶段和逐题输出。用相同的历史、回答模型与评价条件比较，保留准备记忆所花的成本；不能把不同模型的分数相减说成架构收益。数据选择与本轮实际运行边界见[外部评测](external-evaluation.md)。
 
 ## 文档结构与上下文检索
 
@@ -24,7 +58,7 @@
 
 ## Agent 自带 harness
 
-[ACP turn](https://agentclientprotocol.com/protocol/v1/prompt-turn) 可包含多个模型与工具交互。对 omem：改 `agents.ts` 的事件处理与 `agent-runtime/gateway.ts`，提供 MCP 和固定材料工作区；原生 skill 被 Agent 按需加载；中间说明与最终结果分开；研究不再固定三次新会话。writer 和独立 verifier 都可自主补读，发布仍由宿主完成。
+[ACP turn](https://agentclientprotocol.com/protocol/v1/prompt-turn) 可包含多个模型与工具交互。omem 的 `agents.ts` 与 `agent-runtime/gateway.ts` 已处理这条链路：提供 MCP 和固定材料工作区，原生 skill 按需加载，中间说明与最终结果分开；研究不再固定三次新会话。writer 和独立 verifier 都可自主补读，发布仍由宿主完成。接下来复用这些能力，不重做一套 Agent 工具循环。
 
 提供知识搜索/读取、原件列表/章节/行段、图片路径、符号导航、相关知识与版本历史。能直接落盘的材料让原生文件工具读取；内部对象与统一搜索用 MCP。不要在 omem 重做 CLI 的计划、工具循环和压缩内核。`config/review-code-model.json` 使用真实配置，并去掉宿主输入/输出 token 限制；模型固有上下文与 CLI 的压缩管理仍存在。
 
@@ -40,9 +74,11 @@ Traex 的 [用户手册](https://bytedance.larkoffice.com/wiki/HWUPwVssCi0KSPkOC
 
 ## 优先顺序与不做成前置门的事情
 
-先文档还原决策和完整方案，再治理真实候选噪声，再把 Agent 工具研究贯穿调查/写作/独立补查，随后更新本仓库实际指南。持续记忆整合和复杂解析器另做完整切片。完整调用图、全库 100% 覆盖、换图数据库、更多角色和更复杂 schema 都不应阻塞一个真实流程。
+Agent 自主调查已经接通，下一步不再重做这项前置条件。先改变正式文章的发布与更新生命周期，再把候选检索和回答上下文拆开，随后对照持续记忆后端。完整调用图、全库 100% 覆盖、更多角色和更复杂 schema 都不应阻塞一个真实流程。
 
-## 本轮检索对照与配置决定
+## 此前检索实现与配置依据（2026-10-03）
+
+下列规则是已有实现，不代表已经证明可泛化；2026-10-04 的外部词法对照没有显示稳定胜过简单基线。后续应拆分召回、上下文与界面去重，不能照此继续叠加权重。
 
 2026-10-03 的后续对照增加了独立符号候选、RRF 融合和 BGE v2-m3，与旧实现和 base 使用同一冻结库。详细方法、上游方案和后续代码改造在[中文重排评估](retrieval-evaluation.md)，逐题结果在[当前对照](../../.repo-review/knowledge/verification/symbol-reranking.md)。下面的六题实验是此前依据，不应混计成新一轮样本。
 
