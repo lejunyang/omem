@@ -62,19 +62,21 @@ export class KnowledgePageWorker {
     return plan;
   }
   private scopeDigest(plan: WikiPageBrief) {
-    const materials = this.repository.materials();
+    const materials = this.repository.materialsForPlan(plan);
     const byKey = new Map(materials.map(m => [m.key, m.digest]));
-    const keys = plan.materialKeys ?? materials.map(m => m.key);
+    const keys = materials.map(m => m.key);
     return stableDigest({ plan, materials: [...new Set(keys)].sort().map(key => ({ key, digest: byKey.get(key) ?? null })) });
   }
 
   setEnabled(key: string, enabled: boolean) {
     const plan = this.plan(key);
-    if (enabled && !plan.materialKeys?.length) throw Error("请先在调整材料与目标中明确选择要跟踪的材料");
+    if (enabled && !plan.materialKeys?.length && !plan.contextIds?.length) throw Error("请先在调整材料与目标中选择材料、项目或主题");
     const before = this.follow(key);
     const digest = this.scopeDigest(plan);
     this.repository.refresh();
-    const baseline = this.repository.get(key)?.current ? digest : null;
+    const article = this.repository.get(key);
+    const scopeUnchanged = !plan.contextIds?.length || stableDigest(article?.selection?.materialKeys ?? []) === stableDigest(this.repository.materialsForPlan(plan).map(m => m.key).sort());
+    const baseline = article?.current && scopeUnchanged ? digest : null;
     this.repository.store.db.prepare(`INSERT INTO knowledge_page_maintenance VALUES(?,?,?,?,NULL)
       ON CONFLICT(document_key) DO UPDATE SET enabled=excluded.enabled,target_digest=excluded.target_digest,
       processed_digest=CASE WHEN knowledge_page_maintenance.enabled=0 AND excluded.enabled=1
@@ -116,7 +118,7 @@ export class KnowledgePageWorker {
     const plans = new Map(this.repository.pages().map(p => [p.key, p.plan]));
     for (const row of this.repository.store.db.prepare("SELECT * FROM knowledge_page_maintenance WHERE enabled=1").all() as Follow[]) {
       const plan = plans.get(row.document_key);
-      if (!plan?.materialKeys?.length) continue;
+      if (!plan || (!plan.materialKeys?.length && !plan.contextIds?.length)) continue;
       const digest = this.scopeDigest(plan);
       if (digest !== row.target_digest) this.repository.store.db.prepare(
         "UPDATE knowledge_page_maintenance SET target_digest=? WHERE document_key=?",

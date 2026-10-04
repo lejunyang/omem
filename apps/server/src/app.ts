@@ -7,6 +7,7 @@ import {
 import { taskCommandSchema } from "../../../packages/contracts/src/task-flow.js";
 import { messageWorkflows } from "./assistant/message-workflows.js";
 import { registerKnowledgeRoutes } from "./knowledge/api.js";
+import { contextInputSchema, contextIdsSchema } from "../../../packages/contracts/src/contexts.js";
 import Fastify from "fastify";
 import staticFiles from "@fastify/static";
 import { existsSync } from "node:fs";
@@ -235,6 +236,14 @@ export async function buildApp(
     },
   }));
   app.get("/api/sources", async () => store.list());
+  app.get("/api/contexts", async () => store.contexts.list());
+  app.post("/api/contexts", async req => store.contexts.create(contextInputSchema.parse(req.body)));
+  app.get<{ Params: { id: string } }>("/api/sources/:id/contexts", async req => ({ contextIds: store.contexts.forSource(req.params.id) }));
+  app.put<{ Params: { id: string } }>("/api/sources/:id/contexts", async (req, reply) => {
+    const { contextIds } = z.object({ contextIds: contextIdsSchema }).strict().parse(req.body);
+    try { return { contextIds: store.tx(() => store.contexts.setForSource(req.params.id, contextIds)) }; }
+    catch (error) { return reply.code(400).send({ error: String(error instanceof Error ? error.message : error) }); }
+  });
   app.get<{ Params: { revision: string } }>("/api/material-descriptions/:revision", async (req, reply) => {
     if (!store.revision(req.params.revision)) return reply.code(404).send({error:"材料版本不存在"});
     return {record: store.descriptions.get(req.params.revision)};
@@ -244,28 +253,31 @@ export async function buildApp(
     try { return {record:store.descriptions.save(req.params.revision, input.description, "user", input.expectedVersion)}; }
     catch(error) { return reply.code(409).send({error:String(error instanceof Error ? error.message : error)}); }
   });
-  app.post("/api/captures", async (req) =>
-    store.capture(captureSchema.parse(req.body)),
-  );
+  app.post("/api/captures", async (req) => {
+    const { contextIds, ...capture } = captureSchema.extend({ contextIds: contextIdsSchema.optional() }).parse(req.body);
+    return store.capture(capture, { contextIds });
+  });
   app.post("/api/connectors/file", async (req) => {
-    const b = z.object({ path: str }).parse(req.body);
+    const b = z.object({ path: str, contextIds: contextIdsSchema.optional() }).parse(req.body);
     return store.capture(
       captureSchema.parse(await fileInput(b.path, config.captureRoots)),
+      { contextIds: b.contextIds },
     );
   });
   app.post("/api/connectors/git", async (req) => {
     const b = z
-      .object({ repo: str, path: str, ref: str.default("HEAD") })
+      .object({ repo: str, path: str, ref: str.default("HEAD"), contextIds: contextIdsSchema.optional() })
       .parse(req.body);
     return store.capture(
       captureSchema.parse(
         await gitInput(b.repo, b.path, b.ref, config.captureRoots),
       ),
+      { contextIds: b.contextIds },
     );
   });
   app.post("/api/connectors/lark", async (req) => {
-    const b = z.object({ url: z.url() }).parse(req.body);
-    return store.capture(captureSchema.parse(await larkInput(b.url)));
+    const b = z.object({ url: z.url(), contextIds: contextIdsSchema.optional() }).parse(req.body);
+    return store.capture(captureSchema.parse(await larkInput(b.url)), { contextIds: b.contextIds });
   });
   app.post("/api/hooks/traex", async (req) =>
     store.capture(captureSchema.parse(hookInput(req.body))),

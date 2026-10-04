@@ -77,7 +77,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     return { ...c, actionable: !!target, unavailableReason: target ? null : "被引用的原始材料版本不可用", current: target?.current ?? false,
       resolved: target ? { kind: "material", key: target.material.key, digest: target.material.digest, title: target.material.title, startLine: c.target.startLine, endLine: c.target.endLine } : null };
   };
-  app.get(prefix + "/articles", async () => { repository.refresh(); return { articles: repository.published().map(meta), pages: repository.pages().map(p => ({ ...p, maintenance: maintenance.status(p.key) })), materials: repository.materials().map(m => ({ key: m.key, title: m.title, path: m.path, revisionId: m.revisionId })), running: !!running || maintenance.busy(), lastRun: maintenance.lastRun() ?? lastRun }; });
+  app.get(prefix + "/articles", async () => { repository.refresh(); return { articles: repository.published().map(meta), pages: repository.pages().map(p => ({ ...p, maintenance: maintenance.status(p.key) })), contexts: input.store.contexts.list(), materials: repository.materials().map(m => ({ key: m.key, title: m.title, path: m.path, revisionId: m.revisionId, contextIds: input.store.contexts.forSource(m.sourceId) })), running: !!running || maintenance.busy(), lastRun: maintenance.lastRun() ?? lastRun }; });
   app.get<{ Params: { key: string }; Querystring: { revision?: string } }>(prefix + "/articles/:key", async (req, reply) => {
     repository.refresh();
     const a = repository.get(req.params.key, req.query.revision);
@@ -211,12 +211,15 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     if (editing && !repository.pages().some(p => p.key === req.params.key && p.plan)) return reply.code(404).send({ error: "这篇文章没有保存阅读目标" });
     const parsed = wikiPageBriefSchema.safeParse(req.body?.brief);
     const ids = req.body?.revisionIds;
-    if (!parsed.success || !Array.isArray(ids) || !ids.length || ids.some(id => typeof id !== "string")) return reply.code(400).send({ error: "请填写阅读目标并选择原始材料" });
+    if (!parsed.success || !Array.isArray(ids) || (!ids.length && !parsed.data.contextIds?.length) || ids.some(id => typeof id !== "string")) return reply.code(400).send({ error: "请填写阅读目标并选择原始材料、项目或主题" });
     if (editing && parsed.data.key !== req.params.key) return reply.code(400).send({ error: "文章已切换，请重新打开整理窗口" });
     if (!editing && repository.pages().some(p => p.key === parsed.data.key)) return reply.code(409).send({ error: "文章已存在，请使用调整材料与目标" });
     const selectedIds = new Set(ids), selected = repository.materials().filter(m => selectedIds.has(m.revisionId));
     if (selected.length !== selectedIds.size) return reply.code(400).send({ error: "所选材料已更新，请刷新后重试" });
     const brief = { ...parsed.data, materialKeys: selected.map(m => m.key) };
+    try {
+      if (!repository.materialsForPlan(brief).length) return reply.code(400).send({ error: "所选项目或主题还没有材料，请先保存材料" });
+    } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "材料范围不可用" }); }
     repository.savePlan(brief, true);
     return reply.code(202).send(startPage(brief));
   } });

@@ -122,6 +122,15 @@ export class KnowledgeRepository {
 
   materials() { return this.materialProvider(); }
 
+  materialsForPlan(brief: WikiPageBrief) {
+    const available = this.materials();
+    if (!brief.materialKeys && !brief.contextIds?.length) return available;
+    const explicit = new Set(brief.materialKeys ?? []);
+    if ([...explicit].some(key => !available.some(m => m.key === key))) throw Error("所选材料已不可用，请调整材料范围");
+    const sources = this.store.contexts.sourceIds(brief.contextIds ?? []);
+    return available.filter(m => explicit.has(m.key) || sources.has(m.sourceId));
+  }
+
   role(a: KnowledgeArtifact): KnowledgeRole {
     return (this.store.db.prepare("SELECT role FROM knowledge_pages WHERE document_key=?").get(a.document.key)?.role as KnowledgeRole | undefined) ?? publicationRole(a);
   }
@@ -206,6 +215,8 @@ export class KnowledgeRepository {
   publish(artifact: KnowledgeArtifact, expectedPlan?: WikiPageBrief) {
     if (expectedPlan && stableDigest(this.pages().find(p => p.key === artifact.document.key)?.plan ?? null) !== stableDigest(expectedPlan))
       throw Error("阅读目标或补充材料在整理期间发生变化，请重新整理；已保留旧文和最新选材。");
+    if (expectedPlan && artifact.selection && stableDigest(this.materialsForPlan(expectedPlan).map(m => m.key).sort()) !== stableDigest([...artifact.selection.materialKeys].sort()))
+      throw Error("项目或主题的材料在整理期间发生变化，将按最新范围重新整理；旧文已保留。");
     const materials = new Map(this.materials().map(m => [m.key, m]));
     const articles = new Map(this.list().map(a => [a.document.key, a]));
     if (artifact.dependencies.some(d => d.kind === "material" ? materials.get(d.key)?.digest !== d.digest : articles.get(d.key)?.revision !== d.digest)) throw Error("KNOWLEDGE_INPUT_CHANGED");

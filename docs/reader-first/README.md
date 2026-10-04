@@ -6,6 +6,7 @@
 
 - [整体复审](review.md)：实际能力、问题成因及外部方案。
 - [文章发布与持续维护](publication-lifecycle.md)：正式文章、参考、内部笔记，章节变化判断与重新整理的本轮改造。
+- [项目与主题材料](project-contexts.md)：明确保存材料归属，让后来加入的记录进入同一篇文章；与自动判断归属、事实写入的边界。
 - [外部评测与实际结果](external-evaluation.md)：MTRAG Cloud 全子集的词法对照，以及中文、代码和长期记忆分别应使用哪些公开测试。
 - [当前实现逐层审查](current-system.md)：清洗、RAG、记忆、代码、Wiki 与 ACP 的实际代码、缺口和解法。
 - [成熟组件与具体改造](component-integration.md)：每项外部方法如何融入现有文件与合同，而不是只列产品名字。
