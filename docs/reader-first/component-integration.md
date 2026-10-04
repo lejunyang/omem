@@ -6,11 +6,11 @@
 
 | 选择 | 具体进入现有项目的方式 | 替换什么／保留什么 | 状态 |
 | --- | --- | --- | --- |
-| DeepWiki 的页面地图与分层写作 | 在 `packages/contracts/src/knowledge.ts`、知识存储/API 中持久化页面目的、发布用途、目录关系；`writePage` 写正式文章，`analyze/synthesize` 产内部笔记 | 替换文件或计算批次直接进入目录；保留 Traex 自主调查和固定来源 | 下一个实现切片，尚未完成 |
+| DeepWiki 的页面地图与分层写作 | 在 `packages/contracts/src/knowledge.ts`、知识存储/API 中持久化页面目的、发布用途、目录关系；`writePage` 写正式文章，材料分析只产内部笔记，旧批次合成已移除 | 替换文件或计算批次直接进入目录；保留 Traex 自主调查和固定来源 | 核心实现和阅读界面已交付，三篇主题页已真实生成；最新实现变化后仍需维护正文 |
 | Docling 解析组件 | 增加可选解析 worker，输出结构块、标题、表格、页码/位置及解析版本；由 Capture 适配层保存原件和派生文本，再进入 `knowledge/structure.ts` 与检索投影 | 替换 PDF/Office/OCR 自研清洗；TS/Vue 和已有 Markdown 解析继续使用 | 未安装、未接入；Python/解析模型由 osdk 显式管理 |
-| Haystack 层级检索组件 | 通过 `RetrievalPort` 接 Python 组件适配，映射 `sourceId/revisionId/range/parentId`；候选只取叶子，回答上下文按父节点恢复 | 不复制另一套应用；SQLite 继续保存原件，组件索引是可重建投影 | 未接入；先需要正式父子单位，现有 headingPath 不等于父子图 |
+| Haystack 层级检索组件 | 通过 `RetrievalPort` 接组件适配，映射 `sourceId/revisionId/range/parentId`；候选只取叶子，回答上下文按父节点恢复 | 不复制另一套应用；SQLite 继续保存原件，组件索引是可重建投影 | 组件未接入；已有同一固定原件的章节/函数补读，正式持久父子单位仍待做 |
 | Hindsight 持续综合理解 | 先接可选记忆读取/整合后端；输入原件、事件时间与元数据，返回带来源的观察和主题视图，供 Agent 补查 | 比较替换分散 claim 整合；原件版本和 MemoryService 的事实/事项应用权保留 | 未接入；不是给当前库再增加一次默认双写 |
-| 公开评测实现 | MTRAG 用官方段落与标注，FreshStack 复用官方要点覆盖评价，LongMemEval 保留原始会话和 oracle 对照 | 替换“预期路径命中＝质量”的判断；工程 smoke 保留 | MTRAG 词法已运行，其他仅调研 |
+| 公开评测实现 | MTRAG 用官方段落与标注，FreshStack 复用官方要点覆盖评价，LongMemEval 保留原始会话和 oracle 对照 | 替换“预期路径命中＝质量”的判断；工程 smoke 保留 | MTRAG Cloud 与完整 FreshStack Godot 词法已运行；中文 T2 全量进行中，LongMemEval 尚未运行 |
 
 这些组件不必一次安装。第一个交付应先解决页面用途和更新生命周期，随后接父章节与简明检索策略；复杂文档解析和记忆后端按各自真实输入交付。
 

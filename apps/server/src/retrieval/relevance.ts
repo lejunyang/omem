@@ -32,8 +32,10 @@ export function exactLookup(text: string): boolean {
 /** A shortcut for unambiguous navigation requests, not a general intent model.
  * Agents/API callers can supply codeIntent directly for other wording. */
 export function asksForCallers(text: string): boolean {
-  return /调用方|调用者|谁(?:在)?调用|哪些[^。？?\n]{0,16}调用|\bcallers?\b|\b(?:where|who|what)\b[^.?!\n]{0,32}\bcalls?\b/i.test(
-    text,
+  // Infer navigation only from the request, not a pasted stack trace or code
+  // explanation later in the message ("a part where it calls ...").
+  return /调用方|调用者|谁(?:在)?调用|哪些[^。？?\n]{0,16}调用|\bcallers\b|\b(?:who|what)\s+(?:\w+\s+){0,3}calls?\b|\bwhere\s+(?:is|are|does|do)\b[^.?!\n]{0,32}\bcall(?:s|ed)?\b/i.test(
+    text.split(/\r?\n/)[0] ?? "",
   );
 }
 /** Explicit code spelling, rather than every English word in a question.
