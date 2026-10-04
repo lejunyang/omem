@@ -5,6 +5,7 @@ import KnowledgeDocument from "./KnowledgeDocument.vue";
 import KnowledgeTree from "./KnowledgeTree.vue";
 import KnowledgeFolder from "./KnowledgeFolder.vue";
 import ArticleComposer, { type MaterialOption } from "./ArticleComposer.vue";
+import type { MaterialContext } from "../../../../packages/contracts/src/contexts";
 import ArticleMaintenance from "./ArticleMaintenance.vue";
 import type { WikiPageBrief } from "../../../../packages/contracts/src/knowledge";
 import { topicTree, inTopic, articleOrder } from "./topics";
@@ -79,6 +80,8 @@ const currentPlan = computed(
   () => pages.value.find((p) => p.key === selected.value)?.plan,
 );
 const currentMaintenance = computed(() => pages.value.find(p => p.key === selected.value)?.maintenance);
+const contexts = ref<MaterialContext[]>([]);
+const currentContexts = computed(() => contexts.value.filter(c => currentPlan.value?.contextIds?.includes(c.id)).map(c => c.name));
 const pageBusy = (key?: string) => !!key && ["queued", "writing"].includes(pages.value.find(p => p.key === key)?.maintenance?.state ?? "");
 function compose(plan?: WikiPageBrief) {
   composerPlan.value = plan;
@@ -195,12 +198,14 @@ async function load() {
       articles: ArticleMeta[];
       pages?: PlannedPage[];
       materials: MaterialOption[];
+      contexts?: MaterialContext[];
       running: boolean;
       lastRun: typeof lastRun.value;
     }>(props.prefix, "/articles");
     allArticles.value = result.articles;
     pages.value = result.pages ?? [];
     materials.value = result.materials;
+    contexts.value = result.contexts ?? [];
     running.value = result.running;
     lastRun.value = result.lastRun;
     error.value = "";
@@ -446,6 +451,7 @@ onBeforeUnmount(() => {
       </section>
       <ArticleMaintenance v-if="current && currentPlan" :key="current.key"
         :prefix="prefix" :document-key="current.key" :selected-count="currentPlan.materialKeys?.length ?? 0"
+        :contexts="currentContexts"
         :status="currentMaintenance" @updated="load" @retry="refreshPage(current.key)" />
       <footer v-if="current" class="next-guide">
         <OmButton

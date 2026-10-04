@@ -62,7 +62,7 @@
       "scenario": "明确标注的教学示例：已经保存的活动说明中，一节写参加预算八十元，另一节写图书馆集合；一份旧活动记录也提到八十元。用户问“这次活动要准备多少钱、到哪里集合？”沿这个问题展示怎样找到当前适用的两项信息、补读同节条件、识别旧记录和组织带引用的回答，再说明需要改进召回与上下文时读哪些实现。示例用于讲解，不声称系统必然给出某个排名，也不把未实现的跨材料判断写成自动保证。",
       "questions": [
         "同一个问题里要找金额和集合点，全文与向量怎样提供候选；只谈活动主题的段落为什么还不够？",
-        "命中预算后如何补回报名条件？如果地点在另一章，助手怎样发现缺口并继续查？",
+        "命中预算后如何补回报名条件？如果地点在另一章，助手怎样按子问题分别保留完整语境、发现缺口并继续查？",
         "遇到旧活动记录时，应核对哪些信息才能回答这次安排；无法确认时怎样清楚作答？",
         "最后答案仍不完整，怎样区分召回、补读和回答的问题，并定位相应实现？"
       ],
@@ -146,20 +146,23 @@
       "order": 0,
       "kind": "explanation",
       "reader": "想理解并改进知识生成过程的开发者",
-      "goal": "读者能够沿一篇文章说清页面目标、调查、写作、独立补查和发布各解决什么问题。用具体内容展示从材料到解释的变化，区分内部笔记、参考页和正式讲解；让新人能理解与使用，而非枚举协议和检查规则。",
+      "goal": "读者能够沿一篇文章说清页面目标、调查、写作、独立补查和发布各解决什么问题。用具体内容展示从材料到解释的变化，区分内部笔记、参考页和正式讲解；让新人能理解与使用，而非枚举协议和检查规则。示例只标注一次，不用夹具、验收实录等术语组织正文；固定版本等机制放在它们解决具体问题的位置，不铺成限制清单。",
       "scenario": "教学示例：一份活动约定同时写了预算八十元和图书馆集合，需要整理成一篇解释参加者怎样准备的文章。用这份简短内容串起选材、阅读目标、补背景、文章与引用。",
       "questions": [
         "如何把一个读者问题变成页面计划，而不是每文件生成说明？",
         "Agent 如何补读缺少的背景，作者和独立复核分别做什么？",
         "新读者最终读到什么，引用和参考页怎样帮助继续了解？",
-        "原文变化以后哪些内容需要重新核对，哪些继续可用？"
+        "原文变化以后哪些内容需要重新核对，哪些继续可用？",
+        "一条新的聊天怎样通过项目或主题归属进入已有文章，和只选几份材料有什么区别？"
       ],
       "entryPaths": [
         "apps/server/src/knowledge/pipeline.ts",
         "apps/server/src/knowledge/lifecycle.ts",
         "apps/server/src/knowledge/repository.ts",
         "apps/web/src/knowledge/ArticleComposer.vue",
-        "apps/server/src/knowledge/agent-research.ts"
+        "apps/server/src/knowledge/agent-research.ts",
+        "docs/reader-first/project-contexts.md",
+        "apps/server/src/contexts/repository.ts"
       ],
       "topicPath": [
         "软件开发",
@@ -180,7 +183,8 @@
         "生成失败会保留什么，如何重试？",
         "原文无关改动和预算变化会怎样影响两节解释？",
         "怎样更新同一篇文章，如何读取写作时的旧来源？",
-        "怎样判断整理出的文章回答了自己的问题，哪些内容需要继续补材料？"
+        "怎样判断整理出的文章回答了自己的问题，哪些内容需要继续补材料？",
+        "怎样按项目或主题持续选材，让后来的聊天也更新文章；归属错误或只想选部分材料时怎样调整？"
       ],
       "entryPaths": [
         "apps/web/src/knowledge/ArticleComposer.vue",
@@ -188,7 +192,10 @@
         "apps/server/src/knowledge/api.ts",
         "apps/server/src/knowledge/pipeline.ts",
         "scripts/review-guides.ts",
-        "docs/reader-first/operations.md"
+        "docs/reader-first/operations.md",
+        "docs/reader-first/project-contexts.md",
+        "apps/web/src/ContextPicker.vue",
+        "apps/web/src/SourceContexts.vue"
       ],
       "topicPath": [
         "软件开发",
@@ -208,7 +215,8 @@
         "页面用途、生成状态、章节适用状态各表示什么？",
         "直接引用、背景前提与调查轨迹分别如何存储和使用？",
         "目录、API、助手与检索在哪些入口决定可见和可用内容？",
-        "导入资产移除以后怎样退出目录，哪些历史仍保留？"
+        "导入资产移除以后怎样退出目录，哪些历史仍保留？",
+        "项目材料归属、文章分类、动态选材和固定引用分别在哪里实现，生成途中选材变化如何处理？"
       ],
       "entryPaths": [
         "packages/contracts/src/knowledge.ts",
@@ -217,7 +225,10 @@
         "apps/server/src/knowledge/artifacts.ts",
         "apps/server/src/retrieval/units.ts",
         "apps/server/src/assistant/research.ts",
-        "apps/server/src/review/development.ts"
+        "apps/server/src/review/development.ts",
+        "apps/server/src/contexts/repository.ts",
+        "apps/server/src/knowledge/page-worker.ts",
+        "docs/reader-first/project-contexts.md"
       ],
       "topicPath": [
         "软件开发",
