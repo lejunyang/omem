@@ -16,7 +16,7 @@ it("serves fixed inline citations and explicit question actions through the same
     store.capture({ source: "manual", externalId: "plan", title: "发布计划", parts: [{ type: "text", text: "发布前必须核对回滚步骤。" }], context: {} });
     const m = repository.materials()[0]!;
     const document: KnowledgeDocument = { key: m.key, title: "发布准备", summary: "发布约束", category: "requirements", sections: [{ key: "release", title: "发布前", body: "先核对回滚步骤。[[source]]" }], citations: [{ key: "source", label: "发布计划原文", reason: "原文直接说明发布条件", relation: "supports", target: { kind: "material", key: m.key, startLine: 1, endLine: 1 }, quote: "" }], questions: [{ question: "由谁核对？", why: "原文没有责任人", nextStep: "确认负责人", blocking: false, citationKeys: ["source"] }] };
-    const article = repository.publish({ version: 1, document: bindKnowledgeQuotes(document, new Map([[m.key, m]])), dependencies: [{ kind: "material", key: m.key, digest: m.digest }], generation: { model: "fixture", effort: null, at: "2026-01-01T00:00:00Z", trace: {} }, review: { model: "fixture-reviewer", at: "2026-01-01T00:00:01Z", trace: {}, verdict: "accepted" } });
+    const article = repository.publish({ version: 1, publication: {role:"article"}, document: bindKnowledgeQuotes(document, new Map([[m.key, m]])), dependencies: [{ kind: "material", key: m.key, digest: m.digest }], generation: { model: "fixture", effort: null, at: "2026-01-01T00:00:00Z", trace: {} }, review: { model: "fixture-reviewer", at: "2026-01-01T00:00:01Z", trace: {}, verdict: "accepted" } });
     const read = await app.inject("/api/knowledge/articles/" + encodeURIComponent(m.key));
     expect(read.json().citations[0]).toMatchObject({ actionable: true, label: "发布计划原文", reason: "原文直接说明发布条件" });
     const c = await app.inject("/api/knowledge/citation?" + new URLSearchParams({ document: m.key, revision: article.revision, citation: "source" }));
@@ -46,7 +46,7 @@ it("persists independent topic paths, scopes discovery and returns one best sect
     const add = (key: string, title: string, path: string[], text: string) => {
       const captured = store.capture({ source: "manual", externalId: key, title, parts: [{ type: "text", text }], context: {} });
       const m = repository.materials().find(m => m.revisionId === captured.revision.id)!;
-      repository.publish({ version: 1, document: bindKnowledgeQuotes({ key, title, topicPath: path, category: path[0]!, summary: text,
+      repository.publish({ version: 1, publication: {role:"article"}, document: bindKnowledgeQuotes({ key, title, topicPath: path, category: path[0]!, summary: text,
         sections: [{ key: "practice", title: "练习", body: text + " [[source]]" }, { key: "review", title: "回顾", body: "记录练习结果。[[source]]" }],
         citations: [{ key: "source", label: title, reason: "练习安排", relation: "supports", target: { kind: "material", key: m.key, startLine: 1, endLine: 1 }, quote: "" }], questions: [] }, new Map([[m.key, m]])),
         dependencies: [{ kind: "material", key: m.key, digest: m.digest }], generation: { model: "fixture", effort: null, at: "2026-10-02", trace: {} }, review: { model: "fixture", at: "2026-10-02", verdict: "accepted", trace: {} } });

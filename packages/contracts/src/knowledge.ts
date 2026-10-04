@@ -30,6 +30,10 @@ export const knowledgeDocumentSchema = z.object({
     key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,59}$/),
     title: z.string().min(1).max(200),
     body: z.string().min(1).max(24000),
+    reviewSources: z.array(z.object({
+      key, startLine: z.number().int().positive(), endLine: z.number().int().positive(),
+      reason: z.string().min(1).max(800),
+    }).strict()).max(20).optional().describe("Background premises whose change requires reviewing this section, even when not cited in its prose. Select the relevant original range and explain the premise. Do not list everything read."),
   }).strict()).min(1).max(20),
   citations: z.array(knowledgeCitationSchema).min(1).max(160),
   questions: z.array(knowledgeQuestionSchema).max(20),
@@ -85,6 +89,9 @@ export type KnowledgeBatch = z.infer<typeof knowledgeBatchSchema>;
 export type KnowledgeReview = z.infer<typeof knowledgeReviewSchema>;
 export type KnowledgePlan = z.infer<typeof knowledgePlanSchema>;
 
+export type KnowledgeRole = "article" | "reference" | "note";
+export type SectionStatus = { state: "current" | "needs-review" | "unavailable"; reason?: string };
+
 export type KnowledgeMaterial = {
   key: string; title: string; path: string | null; sourceId: string; revisionId: string;
   namespace: string; conversationId?: string; actorId?: string | null; actorVerifiedBy?: string | null; eventAt?: string | null; quoted?: boolean; forwarded?: boolean; digest: string; text: string; lineCount: number;
@@ -98,4 +105,8 @@ export type KnowledgeArtifact = {
   generation: { model: string; effort: string | null; at: string; trace: Record<string, unknown> };
   review: { model: string; at: string; trace: Record<string, unknown>; verdict: "accepted" };
   reading?: WikiPageBrief;
+  /** Publication intent is assigned by the host, never inferred from a path. */
+  publication?: { role: KnowledgeRole };
+  /** Read during investigation; not an assertion that every byte supports the page. */
+  investigation?: { key: string; digest: string }[];
 };

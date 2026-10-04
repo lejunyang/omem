@@ -41,7 +41,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     return reply.code(202).send(descriptionRun);
   });
   const meta = (a: KnowledgeArticle) => ({ key: a.document.key, title: a.document.title, summary: a.document.summary, category: a.document.category, current: a.current, revision: a.revision,
-    topicPath: a.document.topicPath ?? [], generatedAt: a.generation.at, model: a.generation.model, reviewedBy: a.review.model, questionCount: a.document.questions.length, reading: a.reading });
+    topicPath: a.document.topicPath ?? [], generatedAt: a.generation.at, model: a.generation.model, reviewedBy: a.review.model, questionCount: a.document.questions.length, reading: a.reading, role: repository.role(a) });
   const resolveCitation = (a: KnowledgeArticle, key: string) => {
     const c = a.document.citations.find(c => c.key === key);
     if (!c) return null;
@@ -56,12 +56,12 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     return { ...c, actionable: !!target, unavailableReason: target ? null : "被引用的原始材料版本不可用", current: target?.current ?? false,
       resolved: target ? { kind: "material", key: target.material.key, digest: target.material.digest, title: target.material.title, startLine: c.target.startLine, endLine: c.target.endLine } : null };
   };
-  app.get(prefix + "/articles", async () => { repository.refresh(); return { articles: repository.list().map(meta), materials: repository.materials().map(m => ({ key: m.key, title: m.title, path: m.path, revisionId: m.revisionId })), running: !!running, lastRun }; });
+  app.get(prefix + "/articles", async () => { repository.refresh(); return { articles: repository.published().map(meta), pages: repository.pages(), materials: repository.materials().map(m => ({ key: m.key, title: m.title, path: m.path, revisionId: m.revisionId })), running: !!running, lastRun }; });
   app.get<{ Params: { key: string }; Querystring: { revision?: string } }>(prefix + "/articles/:key", async (req, reply) => {
     repository.refresh();
     const a = repository.get(req.params.key, req.query.revision);
     if (!a) return reply.code(404).send({ error: "尚未生成这份知识" });
-    return { ...meta(a), document: a.document, citations: a.document.citations.map(c => resolveCitation(a, c.key)) };
+    return { ...meta(a), document: a.document, sectionStatus: repository.statusReader()(a), citations: a.document.citations.map(c => resolveCitation(a, c.key)) };
   });
   app.get<{ Querystring: { document: string; revision?: string; citation: string } }>(prefix + "/citation", async (req, reply) => {
     const a = repository.get(req.query.document, req.query.revision);
@@ -72,7 +72,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     const entry = repository.resolveMaterial(req.params.key, req.query.digest);
     if (!entry) return reply.code(404).send({ error: "固定材料不可用" });
     const m = entry.material;
-    const knowledge = repository.get(m.key);
+    const knowledge = repository.published().find(a=>a.document.key===m.key);
     const all = repository.materials();
     const documentLinks: { href: string; target: string }[] = [];
     if (m.path) for (const match of m.text.matchAll(/\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
@@ -108,7 +108,10 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     if (!image || !["image/png", "image/jpeg", "image/webp"].includes(image.mime) || !bytes) return reply.code(404).send({ error: "图片不可用" });
     return reply.type(image.mime).send(bytes);
   });
-  app.get(prefix + "/questions", async () => repository.questions());
+  app.get(prefix + "/questions", async () => {
+    const published = new Set(repository.published().map(a=>a.document.key));
+    return repository.questions().filter(q=>published.has(q.documentKey));
+  });
   app.post<{ Params: { id: string }; Body: { answer: string } }>(prefix + "/questions/:id/answer", async (req, reply) => {
     if (typeof req.body?.answer !== "string" || !req.body.answer.trim() || req.body.answer.length > 20000) return reply.code(400).send({ error: "请提供 1–20000 字的回答" });
     const revisionId = repository.answer(req.params.id, req.body.answer.trim()); input.onAnswer?.();
@@ -122,7 +125,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     let topic: string[] = [];
     try { if (req.query.topic) { topic = JSON.parse(req.query.topic); if (!Array.isArray(topic) || topic.some(p => typeof p !== "string")) throw Error(); } }
     catch { return reply.code(400).send({ error: "分类路径无效" }); }
-    const articles = repository.list().filter(a => a.current && topic.every((part, i) => a.document.topicPath?.[i] === part));
+    const articles = repository.published().filter(a => topic.every((part, i) => a.document.topicPath?.[i] === part));
     if (retrieval.search) {
       const purpose = req.query.purpose ?? "concept";
       if (!retrievalPurposes.includes(purpose as typeof retrievalPurposes[number])) return reply.code(400).send({ error: "查找用途无效" });
@@ -142,7 +145,8 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     const hits = await (retrieval.searchSourcesAsync?.(query) ?? retrieval.searchSources(query));
     const maxScore = Math.max(...hits.map(h => h.score), 1e-6);
     const hitRanks = new Map(hits.map(hit => [hit.fragmentId, hit.score / maxScore]));
-    const ranked = articles.flatMap(a => a.document.sections.flatMap(section => {
+    const assess = repository.statusReader();
+    const ranked = articles.flatMap(a => a.document.sections.filter(section=>assess(a)[section.key]?.state === "current").flatMap(section => {
       const lexical = relevance(section.title + " " + section.body, terms, a.document.title);
       let evidence = 0;
       for (const c of a.document.citations.filter(c => section.body.includes("[[" + c.key + "]]"))) {
@@ -162,6 +166,21 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     for (const hit of ranked) if (!best.has(hit.key)) best.set(hit.key, hit);
     return [...best.values()].slice(0, 50);
   });
+  function startPage(brief: import("../../../../packages/contracts/src/knowledge.js").WikiPageBrief, retry=false) {
+    running = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)), { ...input.profile!, id: "traex" }, { retrievalConfig: input.retrievalConfig, budget: input.budget, onPublish: input.onPublish, retryTag: retry ? new Date().toISOString() : undefined });
+    const pipeline = running;
+    lastRun = { state: "running", title: brief.title, key: brief.key };
+    void pipeline.writePage(brief).then(() => { lastRun = { state: "published", title: brief.title, key: brief.key }; })
+      .catch(error => { lastRun = { state: "failed", title: brief.title, key: brief.key, error: String(error) }; }).finally(() => { running = null; });
+    return { state: "running", key: brief.key };
+  }
+  app.post<{Params:{key:string}}>(prefix+"/pages/:key/refresh", async(req,reply)=>{
+    if (!input.profile) return reply.code(503).send({error:"请先在能力与连接中配置 Agent"});
+    if (running) return reply.code(409).send({error:"知识整理正在进行"});
+    const brief=repository.pages().find(p=>p.key===req.params.key)?.plan;
+    if (!brief) return reply.code(404).send({error:"这篇内容没有保存阅读目标，请从整理文章开始"});
+    return reply.code(202).send(startPage(brief,true));
+  });
   app.post<{ Body: { brief: unknown; revisionIds: string[] } }>(prefix + "/pages", async (req, reply) => {
     if (!input.profile) return reply.code(503).send({ error: "请先在能力与连接中配置 Agent" });
     if (running) return reply.code(409).send({ error: "知识整理正在进行" });
@@ -171,12 +190,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     const selectedIds = new Set(ids), selected = repository.materials().filter(m => selectedIds.has(m.revisionId));
     if (selected.length !== selectedIds.size) return reply.code(400).send({ error: "所选材料已更新，请刷新后重试" });
     const brief = { ...parsed.data, materialKeys: selected.map(m => m.key) };
-    running = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)), { ...input.profile, id: "traex" }, { retrievalConfig: input.retrievalConfig, budget: input.budget, onPublish: input.onPublish });
-    const pipeline = running;
-    lastRun = { state: "running", title: brief.title, key: brief.key };
-    void pipeline.writePage(brief).then(() => { lastRun = { state: "published", title: brief.title, key: brief.key }; })
-      .catch(error => { lastRun = { state: "failed", title: brief.title, error: String(error) }; }).finally(() => { running = null; });
-    return reply.code(202).send({ state: "running", key: brief.key });
+    return reply.code(202).send(startPage(brief));
   });
   app.post<{ Body: { revisionIds: string[] } }>(prefix + "/analyze", async (req, reply) => {
     if (!input.profile) return reply.code(503).send({ error: "未配置可用 Agent" });

@@ -25,6 +25,7 @@ const profile = profileSchema.parse({ id: "traex", name: "Reader guide", transpo
 const store = createReviewStore(root), runtime = join(root, ".repo-review/runtime");
 mkdirSync(runtime, { recursive: true });
 const { repository, coverage } = restoreReviewKnowledge(store, root);
+for (const page of plan.pages) repository.savePlan(page);
 const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), join(runtime, "reader-agents"), new RuntimeRequestRepository(store.db)), profile,
   { retrievalConfig: readRetrievalConfig(join(root, "config/retrieval.json")), budget: config, retryTag: taskFlag("retry") ? new Date().toISOString() : undefined, onPublish: a => publishReviewArticle(root, a), log: message => console.log(new Date().toISOString(), message) });
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => void pipeline.stop());

@@ -8,12 +8,13 @@ import type {
 } from "../../../../packages/contracts/src/knowledge.js";
 import { parseFile } from "../code/parse.js";
 import { fragmentPositions } from "../knowledge/structure.js";
+import { knowledgeStatus, publicationRole } from "../knowledge/lifecycle.js";
 import { stableDigest } from "../storage/digest.js";
 import { MaterialDescriptions } from "../source-profile/descriptions.js";
 import type { MaterialDescriptionRecord } from "../../../../packages/contracts/src/material-description.js";
 import type { ProvenanceRef, RetrievalHit, SourceAnchor } from "./port.js";
 
-export const UNIT_VERSION = "structure-icu-v5";
+export const UNIT_VERSION = "structure-icu-v6";
 type Row = Record<string, unknown>;
 export type RetrievalUnit = Omit<RetrievalHit, "score" | "routes"> & {
   owner: string;
@@ -229,6 +230,9 @@ export function materialFromRow(
     }),
     conversationId: body.context?.conversationId,
     actorId: body.provenance?.actorId,
+    actorVerifiedBy: body.provenance?.actorVerifiedBy,
+    quoted: body.provenance?.quoted,
+    forwarded: body.provenance?.forwarded,
     eventAt: body.provenance?.eventAt,
     text,
     images,
@@ -450,6 +454,7 @@ export class RetrievalProjection {
   }
   private *changes() {
     const signature = idFor([
+      tableExists(this.db, "knowledge_pages") ? this.db.prepare("SELECT document_key,role,state FROM knowledge_pages ORDER BY document_key").all() : [],
       this.db
         .prepare(
           "SELECT revision_id,max(version) version FROM material_descriptions GROUP BY revision_id ORDER BY revision_id",
@@ -572,13 +577,11 @@ export class RetrievalProjection {
     // All material used while writing must remain in the visibility scope, even
     // when only the cited original inputs decide whether prose can be recalled.
     const availability = new WeakMap<KnowledgeArtifact, boolean>();
-    const support = new WeakMap<KnowledgeArtifact, Map<string, boolean>>();
-    const freshness = new WeakMap<KnowledgeArtifact, boolean>();
     const inputsAvailable = (a: KnowledgeArtifact): boolean => {
       const prior = availability.get(a);
       if (prior !== undefined) return prior;
       availability.set(a, false);
-      const available = a.dependencies.every((d) => {
+      const available = (a.investigation ?? []).every(d=>materials.has(d.key)) && a.dependencies.every((d) => {
         if (d.kind === "material") return materials.has(d.key);
         const child = fixedArticle(d.key, d.digest);
         return !!child && inputsAvailable(child.artifact);
@@ -586,67 +589,31 @@ export class RetrievalProjection {
       availability.set(a, available);
       return available;
     };
-    // Keep the complete section as the support boundary: a paragraph without
-    // its own citation may rely on another paragraph in the same explanation.
-    // A changed citation in a different section must not erase this one.
-    const supported = (a: KnowledgeArtifact, sectionKey: string): boolean => {
-      let sections = support.get(a);
-      if (!sections) support.set(a, (sections = new Map()));
-      const prior = sections.get(sectionKey);
-      if (prior !== undefined) return prior;
-      sections.set(sectionKey, false);
-      if (
-        a.review.verdict !== "accepted" ||
-        invalidated.has(a.document.key) ||
-        !inputsAvailable(a)
-      )
-        return false;
-      const section = a.document.sections.find((s) => s.key === sectionKey);
-      if (!section) return false;
-      const citationKeys = [...section.body.matchAll(/\[\[([\w-]+)\]\]/g)].map(
-        (match) => match[1],
-      );
-      if (!citationKeys.length) return false;
-      const supportedInputs = citationKeys.every((key) => {
-        const c = a.document.citations.find((citation) => citation.key === key);
-        if (!c) return false;
-        const dependency = a.dependencies.find(
-          (d) => d.kind === c.target.kind && d.key === c.target.key,
-        );
-        if (!dependency) return false;
-        if (c.target.kind === "material")
-          return materials.get(c.target.key)?.digest === dependency.digest;
-        const child = fixedArticle(c.target.key, dependency.digest);
-        if (!child) return false;
-        return c.target.section
-          ? supported(child.artifact, c.target.section)
-          : child.artifact.document.sections.every((s) =>
-              supported(child.artifact, s.key),
-            );
-      });
-      sections.set(sectionKey, supportedInputs);
-      return supportedInputs;
+    const originals = new Map<string, KnowledgeMaterial | null>();
+    const fixedMaterial = (key: string, digest?: string) => {
+      const head = materials.get(key);
+      if (!digest || head?.digest === digest) return head;
+      const identity = key + ":" + digest;
+      if (!originals.has(identity)) {
+        let found: KnowledgeMaterial | null = null;
+        if (head) for (const row of this.db.prepare("SELECT r.*,s.namespace,s.external_id FROM revisions r JOIN sources s ON s.id=r.source_id WHERE r.source_id=?").all(head.sourceId) as Row[]) {
+          const revision = String(row.id);
+          if (!this.materialCache.has(revision)) this.materialCache.set(revision, materialFromRow(this.db, row));
+          const candidate = this.materialCache.get(revision);
+          if (candidate?.digest === digest) { found = candidate; break; }
+        }
+        originals.set(identity, found);
+      }
+      return originals.get(identity);
     };
-    const current = (a: KnowledgeArtifact): boolean => {
-      const prior = freshness.get(a);
-      if (prior !== undefined) return prior;
-      freshness.set(a, false);
-      if (
-        !articles.get(a.document.key)?.current ||
-        invalidated.has(a.document.key)
-      )
-        return false;
-      const fresh = a.dependencies.every((d) => {
-        if (d.kind === "material")
-          return materials.get(d.key)?.digest === d.digest;
-        const child = articles.get(d.key);
-        return child?.revision === d.digest && current(child.artifact);
-      });
-      freshness.set(a, fresh);
-      return fresh;
-    };
+    const assess = knowledgeStatus({material:fixedMaterial, article:(key, revision)=>revision ? fixedArticle(key,revision)?.artifact : articles.get(key)?.artifact, invalidated});
+    const supported = (a: KnowledgeArtifact, section: string) => inputsAvailable(a) && assess(a)[section]?.state === "current";
+    const current = (a: KnowledgeArtifact) => Object.values(assess(a)).every(s=>s.state === "current");
+    const publications = new Map(tableExists(this.db, "knowledge_pages") ? this.db.prepare("SELECT document_key,role,state FROM knowledge_pages").all().map(r=>[String(r.document_key), r]) : []);
     const validArticles = new Map(
       [...articles].filter(([, a]) =>
+        (publications.get(a.artifact.document.key)?.role ?? publicationRole(a.artifact)) !== "note" &&
+        !["retired","planned"].includes(String(publications.get(a.artifact.document.key)?.state)) &&
         a.artifact.document.sections.some((s) => supported(a.artifact, s.key)),
       ),
     );
@@ -654,7 +621,7 @@ export class RetrievalProjection {
       a: KnowledgeArtifact,
       seen = new Set<string>(),
     ): string[] =>
-      a.dependencies.flatMap((d) => {
+      [...a.dependencies, ...(a.investigation ?? []).map(d=>({...d,kind:"material" as const}))].flatMap((d) => {
         if (d.kind === "material")
           return materials.get(d.key)?.fragments.map((f) => f.id) ?? [];
         if (seen.has(d.digest)) return [];
@@ -672,7 +639,8 @@ export class RetrievalProjection {
         const c = a.document.citations.find((c) => c.key === match[1]);
         if (!c) continue;
         if (c.target.kind === "material") {
-          const m = materials.get(c.target.key);
+          const dependency = a.dependencies.find(d=>d.kind === "material" && d.key === c.target.key);
+          const m = dependency && fixedMaterial(c.target.key, dependency.digest);
           if (m && c.target.startLine && c.target.endLine)
             output.push(sourceAnchor(m, c.target.startLine, c.target.endLine));
         } else {

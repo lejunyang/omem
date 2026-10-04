@@ -4,12 +4,12 @@ import { prepareAgentResearch } from "./agent-research.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
 import { readFileSync } from "node:fs";
 import type { AgentProfile, ContextManifest } from "../../../../packages/contracts/src/index.js";
-import { knowledgeResearchSchema, type WikiPageBrief, knowledgeBatchSchema, knowledgePlanSchema, knowledgeReviewSchema, type KnowledgeArtifact, type KnowledgeDocument, type KnowledgeMaterial, type KnowledgePlan } from "../../../../packages/contracts/src/knowledge.js";
+import { knowledgeResearchSchema, type WikiPageBrief, knowledgeBatchSchema, knowledgeReviewSchema, type KnowledgeArtifact, type KnowledgeDocument, type KnowledgeMaterial } from "../../../../packages/contracts/src/knowledge.js";
 import { RoleBundleRegistry } from "../agent-runtime/bundles.js";
-import { RoleRuntimeGateway, renderRolePrompt, type RoleRunTrace } from "../agent-runtime/gateway.js";
+import { RoleRuntimeGateway, type RoleRunTrace } from "../agent-runtime/gateway.js";
 import { DurableJobWorker } from "../jobs/worker.js";
 import { stableDigest } from "../storage/digest.js";
-import { estimateTokens, type GenerationBudget } from "../agent-runtime/budget.js";
+import { type GenerationBudget } from "../agent-runtime/budget.js";
 import { KnowledgeRepository, materialFromRevision, bindKnowledgeQuotes, validateKnowledgeDocument, type KnowledgeArticle } from "./repository.js";
 
 type Offer = { material: KnowledgeMaterial; ranges: { start: number; end: number }[] };
@@ -151,6 +151,10 @@ export class KnowledgePipeline {
         if (o.material.text && !o.ranges.some(r => c.target.startLine! >= r.start && c.target.endLine! <= r.end)) throw Error(`Citation ${c.key} requests unseen lines from ${c.target.key}`);
       }
     }
+    for (const d of batch.documents) for (const section of d.sections) for (const source of section.reviewSources ?? []) {
+      const offer = offers.find(o=>o.material.key===source.key);
+      if (!offer?.ranges.some(r=>source.startLine >= r.start && source.endLine <= r.end)) throw Error(`Unseen review source: ${source.key}`);
+    }
     return batch;
   }
 
@@ -173,12 +177,15 @@ export class KnowledgePipeline {
       for (const document of batch.documents.filter(d => !rejected.some(v => v.documentKey === d.key))) {
         const extraQuestions = verdicts.find(v => v.documentKey === document.key)!.questions;
         document.questions = [...document.questions, ...extraQuestions].filter((q, i, all) => all.findIndex(x => x.question === q.question) === i).slice(0, 20);
-        const readKeys = new Set(document.citations.filter(c=>c.target.kind==="material").map(c=>c.target.key));
-        if (this.nativeResearch) for (const t of [write.trace,review.trace]) for (const event of (t.usage.activity ?? []) as {reads?:string[]}[]) for(const key of event.reads??[])readKeys.add(key);
-        const dependencies: KnowledgeArtifact["dependencies"] = offers.filter(o=>!this.nativeResearch||readKeys.has(o.material.key)).map(o => ({ kind: "material", key: o.material.key, digest: o.material.digest }));
-        for (const a of articles.filter(a=>!this.nativeResearch||document.citations.some(c=>c.target.kind==="article"&&c.target.key===a.document.key))) dependencies.push({ kind: "article", key: a.document.key, digest: a.revision });
+        const citedKeys = new Set([...document.citations.filter(c=>c.target.kind==="material").map(c=>c.target.key), ...document.sections.flatMap(s=>(s.reviewSources ?? []).map(r=>r.key))]);
+        const readKeys = new Set<string>(this.nativeResearch ? [] : offers.map(o=>o.material.key));
+        if (this.nativeResearch) for (const t of [write.trace,review.trace,(publication?.research as {trace?:RoleRunTrace})?.trace].filter((t):t is RoleRunTrace=>!!t)) for (const event of (t.usage.activity ?? []) as {reads?:string[]}[]) for(const key of event.reads??[])readKeys.add(key);
+        const dependencies: KnowledgeArtifact["dependencies"] = offers.filter(o=>citedKeys.has(o.material.key)).map(o => ({ kind: "material", key: o.material.key, digest: o.material.digest }));
+        for (const a of articles.filter(a=>document.citations.some(c=>c.target.kind==="article"&&c.target.key===a.document.key))) dependencies.push({ kind: "article", key: a.document.key, digest: a.revision });
         if (this.stopping) throw Error("Knowledge publication cancelled");
         const artifact: KnowledgeArtifact = { version: 1, document, dependencies, ...(publication ? { reading: publication.reading } : {}),
+          publication: {role: publication ? publication.reading.kind === "reference" ? "reference" : "article" : "note"},
+          investigation: offers.filter(o=>readKeys.has(o.material.key)).map(o=>({key:o.material.key,digest:o.material.digest})),
           generation: { model: write.trace.effectiveModel!, effort: write.trace.effectiveEffort, at: write.at, trace: { ...write.trace, ...(publication ? { research: publication.research, writerVersion: publication.writerVersion } : {}) } as unknown as Record<string, unknown> },
           review: { model: review.trace.effectiveModel!, at: review.at, trace: review.trace as unknown as Record<string, unknown>, verdict: "accepted" } };
         const article = this.repository.publish(artifact);
@@ -191,14 +198,15 @@ export class KnowledgePipeline {
     throw Error(`Semantic review still requests changes: ${remaining.map(t => t.key).join(", ")}`);
   }
 
-  private previousFeedback(targets: KnowledgeMaterial[], offers: Offer[]) {
+  private previousFeedback(targets: Target[], offers: Offer[], articles: KnowledgeArticle[] = [], reading?: WikiPageBrief) {
     const drafts: KnowledgeDocument[] = [], issues: unknown[] = [];
     for (const target of targets) {
       const rows = this.repository.store.db.prepare(`SELECT o.output_json,j.input_refs FROM role_outputs o JOIN jobs j ON j.id=o.job_id
         WHERE o.output_schema='KnowledgeReview.v1' AND EXISTS(SELECT 1 FROM json_each(o.output_json,'$.verdicts') v WHERE json_extract(v.value,'$.documentKey')=? AND json_extract(v.value,'$.verdict')='needs_revision') ORDER BY o.created_at DESC LIMIT 1`).all(target.key) as { output_json: string; input_refs: string }[];
       for (const row of rows) {
         const input = JSON.parse(row.input_refs)[0];
-        if (!input.materials?.some((m: {key:string;digest:string}) => m.key === target.key && m.digest === target.digest)) continue;
+        if (!input.materials || stableDigest(input.task?.reading ?? null) !== stableDigest(reading ?? null)) continue;
+        if ((input.articles ?? []).some((a:{key:string;revision:string})=>!articles.some(current=>current.document.key===a.key && current.revision===a.revision))) continue;
         // A draft from an old multi-document batch may rely on a sibling that
         // is no longer supplied. Do not smuggle that context into a repair.
         if (!input.materials.every((m: {key:string;digest:string}) => offers.some(o => o.material.key === m.key && o.material.digest === m.digest))) continue;
@@ -243,21 +251,34 @@ export class KnowledgePipeline {
   /** Publish a reader page directly from investigated originals. File summaries
    * are optional background, never a prerequisite or an arbitrary batching tree. */
   async writePage(brief: WikiPageBrief) {
+    this.repository.savePlan(brief);
+    this.repository.pageState(brief.key, "writing");
+    try {
+      const articles = await this.writePlannedPage(brief);
+      this.repository.pageState(brief.key, "published");
+      return articles;
+    } catch (error) {
+      this.repository.pageState(brief.key, "failed", String(error));
+      throw error;
+    }
+  }
+
+  private async writePlannedPage(brief: WikiPageBrief) {
     this.repository.refresh();
-    const writerVersion = stableDigest([this.nativeResearch ? "native-research@1" : "reader-first@2", ...["knowledge-researcher", "knowledge-writer", "knowledge-refresher", "knowledge-verifier"].map(role => this.registry.load(role).bundleHash)]);
+    const writerVersion = stableDigest([this.nativeResearch ? "native-research@2" : "reader-first@3", ...["knowledge-researcher", "knowledge-writer", "knowledge-refresher", "knowledge-verifier"].map(role => this.registry.load(role).bundleHash)]);
     const existing = this.repository.get(brief.key);
-    if (existing?.current && stableDigest(existing.reading) === stableDigest(brief) && existing.generation.trace.writerVersion === writerVersion) return [existing];
+    if (!this.options.retryTag && existing?.current && stableDigest(existing.reading) === stableDigest(brief) && existing.generation.trace.writerVersion === writerVersion) return [existing];
     const available = this.repository.materials();
     const scope = brief.materialKeys ? new Set(brief.materialKeys) : null;
     const materials = scope ? available.filter(m => scope.has(m.key)) : available;
     if (!materials.length || (scope && materials.length !== scope.size)) throw Error("Selected materials are no longer available");
     if (this.nativeResearch) {
       const offers = materials.map(material=>({material,ranges:[{start:1,end:material.lineCount}]}));
-      const articles = this.repository.list().filter(a=>a.current&&a.document.key!==brief.key);
+      const articles = this.repository.published().filter(a=>a.current&&a.document.key!==brief.key);
       const run = await this.runRole("knowledge-researcher", offers, articles, {title:brief.title,page:brief}, out=>knowledgeResearchSchema.parse(out));
       const research = knowledgeResearchSchema.parse(run.result);
       if (!research.ready || research.requests.length) throw Error("Native researcher must complete its own tool investigation before writing");
-      return this.writeAndVerify("knowledge-writer", [{...brief,purpose:brief.goal}], offers, articles, undefined,
+      return this.writeAndVerify("knowledge-writer", [{...brief,purpose:brief.goal}], offers, articles, this.previousFeedback([brief], offers, articles, brief),
         {reading:brief,research:{trace:run.trace,findings:research.findings,gaps:research.gaps},writerVersion});
     }
     const research = new MaterialResearch(materials, brief);
@@ -279,89 +300,8 @@ export class KnowledgePipeline {
     }
     const target = { ...brief, purpose: brief.goal };
     return this.writeAndVerify("knowledge-writer", [target], [...research.offers.values()], [],
-      undefined, { reading: brief, research: { rounds, findings, gaps,
+      this.previousFeedback([brief], [...research.offers.values()], [], brief), { reading: brief, research: { rounds, findings, gaps,
         materials: [...research.offers.values()].map(o => ({ key: o.material.key, digest: o.material.digest, ranges: o.ranges })) }, writerVersion });
   }
 
-  async plan(): Promise<KnowledgePlan> {
-    const materials = this.repository.materials();
-    const articles = this.repository.list().filter(a => a.current);
-    const base = materials[0];
-    if (!base) throw Error("No captured materials to organize");
-    const result = await this.runRole("knowledge-planner", this.nativeResearch ? materials.map(material=>({material,ranges:[{start:1,end:material.lineCount}]})) : [{ material: base, ranges: [{ start: 1, end: Math.min(base.lineCount, 100) }] }], this.nativeResearch ? articles : [],
-      { title: "知识树规划", catalog: articles.map(a => ({ key: a.document.key, title: a.document.title, category: a.document.category, summary: a.document.summary.slice(0, 220) })) }, out => {
-        const plan = knowledgePlanSchema.parse(out);
-        for (const chapter of plan.chapters) for (const key of chapter.materialKeys) if (!articles.some(a => a.document.key === key)) throw Error(`Unknown catalog key ${key}`);
-      });
-    return knowledgePlanSchema.parse(result.result);
-  }
-
-  async synthesize(target: Target, childKeys: string[]): Promise<KnowledgeArticle[]> {
-    const available = new Map(this.repository.list().filter(a => a.current).map(a => [a.document.key, a]));
-    const children = [...new Set(childKeys)].map(k => available.get(k)).filter((a): a is KnowledgeArticle => !!a);
-    if (!children.length) throw Error(`No reviewed child knowledge for ${target.key}`);
-    if (children.length > 12) {
-      const parts: string[] = [];
-      for (let i = 0; i < children.length; i += 12) {
-        const key = `${target.key}:part-${i / 12 + 1}`;
-        await this.synthesize({ key, title: `${target.title} · 专题 ${i / 12 + 1}`, purpose: target.purpose }, children.slice(i, i + 12).map(a => a.document.key));
-        parts.push(key);
-      }
-      return this.synthesize(target, parts);
-    }
-    const existing = available.get(target.key);
-    if (existing && existing.dependencies.filter(d => d.kind === "article").length === children.length && children.every(a => existing.dependencies.some(d => d.kind === "article" && d.key === a.document.key && d.digest === a.revision))) return [existing];
-    // Composing already-reviewed chapters is a different reading level from
-    // interpreting file knowledge. Keep their fixed article references instead
-    // of flattening every descendant source back into the parent prompt.
-    const composingChapters = children.every(child => child.dependencies.some(d => d.kind === "article"));
-    if (composingChapters) target = { ...target, purpose: `${target.purpose ?? ""} 这是已复核子章节的上层综述。使用正文内联 article 引用提供下钻入口，按子章节所支持的范围概括；它们不是新的独立事实证据。原始材料只提供有限背景，完整依据沿固定子章节引用回查。` };
-    const materials = new Map(this.repository.materials().map(m => [m.key, m]));
-    const offers = new Map<string, Offer>();
-    if (!composingChapters) for (const child of children) for (const c of child.document.citations) if (c.target.kind === "material") {
-      const m = materials.get(c.target.key); if (!m) continue;
-      const offer = offers.get(m.key) ?? { material: m, ranges: [] };
-      const start = c.target.startLine ?? 1, end = c.target.endLine ?? 1;
-      if (!offer.ranges.some(r => r.start <= start && r.end >= end)) offer.ranges.push({ start, end });
-      offers.set(m.key, offer);
-    }
-    // A higher-level synthesis cites lower-level derived articles; carry at
-    // least one of their original dependencies so provenance remains explicit.
-    if (!offers.size) for (const child of children) {
-      const d = child.dependencies.find(d => d.kind === "material" && materials.has(d.key));
-      if (d) { const m = materials.get(d.key)!; offers.set(m.key, { material: m, ranges: [{ start: 1, end: Math.min(m.lineCount, 60) }] }); break; }
-    }
-    let selected = [...offers.values()];
-    for (const offer of selected) {
-      const merged: { start: number; end: number }[] = [];
-      for (const range of offer.ranges.sort((a, b) => a.start - b.start)) {
-        const last = merged.at(-1);
-        if (last && range.start <= last.end + 1) last.end = Math.max(last.end, range.end);
-        else merged.push({ ...range });
-      }
-      offer.ranges = merged;
-    }
-    // When the configured budget permits it, provide the full relevant source
-    // instead of making a chapter infer behavior between isolated excerpts.
-    const full = selected.map(o => ({ material: o.material, ranges: [{ start: 1, end: o.material.lineCount }] }));
-    if (!this.nativeResearch) try {
-      const base = this.registry.load("knowledge-writer");
-      const maxInput = this.options.budget?.maxInputTokens ?? base.manifest.budget.max_context_tokens;
-      const bundle = { ...base, manifest: { ...base.manifest, budget: { ...base.manifest.budget, max_context_tokens: maxInput } } };
-      const preview = renderRolePrompt(bundle, this.context("knowledge-writer", "context-budget-preview", full, children, { targetKeys: [target.key], targets: [target] }));
-      const text = preview.blocks.map(b => b.type === "text" ? b.text : "").join("\n");
-      if (!composingChapters && estimateTokens(text).budgetedTokens <= maxInput * 0.8) selected = full;
-    } catch { /* Bounded excerpts remain explicit when the whole source is too large. */ }
-    let feedback: unknown;
-    const previous = this.repository.store.db.prepare(`SELECT o.output_json,j.input_refs FROM role_outputs o JOIN jobs j ON j.id=o.job_id
-      WHERE o.output_schema='KnowledgeReview.v1' AND EXISTS(SELECT 1 FROM json_each(o.output_json,'$.verdicts') v WHERE json_extract(v.value,'$.documentKey')=? AND json_extract(v.value,'$.verdict')='needs_revision') ORDER BY o.created_at DESC LIMIT 1`).get(target.key) as { output_json: string; input_refs: string } | undefined;
-    if (previous) {
-      const input = JSON.parse(previous.input_refs)[0];
-      const sameSources = input.materials?.every((m: { key: string; digest: string }) => materials.get(m.key)?.digest === m.digest);
-      const sameArticles = input.articles?.every((a: { key: string; revision: string }) => available.get(a.key)?.revision === a.revision);
-      const draft = input.task?.drafts?.find((d: KnowledgeDocument) => d.key === target.key);
-      if (sameSources && sameArticles && draft) feedback = { previousDrafts: [draft], issues: JSON.parse(previous.output_json).verdicts.filter((v: { documentKey: string }) => v.documentKey === target.key), instruction: "Revise the rejected chapter precisely according to these issues. Preserve supported content and the cited scope; do not replace the chapter with unrelated prose." };
-    }
-    return this.writeAndVerify("knowledge-writer", [target], selected, children, feedback);
-  }
 }

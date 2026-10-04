@@ -6,6 +6,8 @@ import { restoreKnowledgeArticles, writeKnowledgeArticle } from "../knowledge/ar
 import { digest, type KnowledgeArticle } from "../knowledge/repository.js";
 import { captureRepositoryMaterials, createReviewKnowledgeRepository } from "./materials.js";
 import { restoreMaterialDescriptions } from "../knowledge/material-descriptions.js";
+import { publicationRole } from "../knowledge/lifecycle.js";
+import { wikiPageBriefSchema } from "../../../../packages/contracts/src/knowledge.js";
 
 export function restoreReviewKnowledge(store: Store, root: string) {
   const notes = join(root, ".repo-review/knowledge/user-notes.json");
@@ -17,6 +19,8 @@ export function restoreReviewKnowledge(store: Store, root: string) {
   const repository = createReviewKnowledgeRepository(store);
   restoreMaterialDescriptions(repository, join(root,".repo-review/knowledge/material-descriptions"));
   const restored = restoreKnowledgeArticles(repository, join(root, ".repo-review/knowledge/articles"));
+  const plans = join(root,"config/wiki-pages.json");
+  if (existsSync(plans)) for (const page of JSON.parse(readFileSync(plans,"utf8")).pages) repository.savePlan(wikiPageBriefSchema.parse(page));
   for (const m of repository.materials().filter(m => m.key.startsWith("manual:knowledge-answer:"))) {
     const id = m.key.slice("manual:knowledge-answer:".length);
     store.db.prepare("UPDATE knowledge_questions SET state='answered',answer_revision=? WHERE id=?").run(m.revisionId, id);
@@ -42,13 +46,13 @@ export function publishReviewArticle(root: string, article: KnowledgeArticle) {
 }
 
 export function writeReviewKnowledgeIndex(root: string, articles: KnowledgeArticle[]) {
-  const pages = articles.filter(a => a.current).sort((a, b) => (a.reading?.order ?? Infinity) - (b.reading?.order ?? Infinity) || a.document.title.localeCompare(b.document.title));
+  const pages = articles.filter(a => publicationRole(a) !== "note").sort((a, b) => (a.reading?.order ?? Infinity) - (b.reading?.order ?? Infinity) || a.document.title.localeCompare(b.document.title));
   const groups = new Map<string, KnowledgeArticle[]>();
   for (const article of pages) {
     const label = article.document.topicPath?.join(" / ") || "未分类";
     groups.set(label, [...(groups.get(label) ?? []), article]);
   }
-  const md = ["# 知识目录", "", ...[...groups].flatMap(([label, members]) => ["## " + label, "", ...members.map(a => `- [${a.document.title}](knowledge/articles/${digest(a.document.key)}.md)`), ""])].join("\n");
+  const md = ["# 知识目录", "", ...[...groups].flatMap(([label, members]) => ["## " + label, "", ...members.map(a => `- [${a.document.title}](knowledge/articles/${digest(a.document.key)}.md)${a.current ? "" : " · 部分内容待核对"}`), ""])].join("\n");
   const path = join(root, ".repo-review/wiki.md");
   if (!existsSync(path) || readFileSync(path, "utf8") !== md) writeFileSync(path, md);
 }

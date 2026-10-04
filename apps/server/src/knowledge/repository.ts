@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import type { Store } from "../store.js";
 import { stableDigest } from "../storage/digest.js";
 import { sourceForMaterialKey, ensureMaterialAliases } from "./material-identity.js";
-import { knowledgeDocumentSchema, type KnowledgeArtifact, type KnowledgeDocument, type KnowledgeMaterial } from "../../../../packages/contracts/src/knowledge.js";
+import { knowledgeDocumentSchema, type KnowledgeArtifact, type KnowledgeDocument, type KnowledgeMaterial, type KnowledgeRole, type WikiPageBrief } from "../../../../packages/contracts/src/knowledge.js";
+import { knowledgeStatus, publicationRole } from "./lifecycle.js";
 
 export const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 type Row = Record<string, unknown>;
@@ -53,6 +54,12 @@ export function validateKnowledgeDocument(document: KnowledgeDocument, materials
     const refs = [...section.body.matchAll(/\[\[([a-zA-Z][a-zA-Z0-9_-]*)\]\]/g)].map(m => m[1]!);
     if (!refs.length) throw Error(`Section ${section.key} needs inline [[citation]] references`);
     for (const id of refs) { if (!citations.has(id)) throw Error(`Unknown inline citation ${id}`); used.add(id); }
+    for (const input of section.reviewSources ?? []) {
+      if (offered && !offered.has(`material:${input.key}`)) throw Error(`Review source was not offered: ${input.key}`);
+      const m = materials.get(input.key);
+      if (!m && allowMissingHistorical) continue;
+      if (!m || input.endLine < input.startLine || input.endLine > m.lineCount) throw Error(`Invalid review source range: ${input.key}`);
+    }
   }
   for (const c of document.citations) {
     if (!used.has(c.key)) throw Error(`Citation ${c.key} is detached from the narrative; place [[${c.key}]] beside its claim`);
@@ -102,10 +109,73 @@ export class KnowledgeRepository {
       CREATE TABLE IF NOT EXISTS knowledge_questions(id TEXT PRIMARY KEY, document_key TEXT NOT NULL, article_revision TEXT NOT NULL,
       body TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'open', answer_revision TEXT, task_id TEXT, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS knowledge_invalidations(document_key TEXT PRIMARY KEY, reason TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS knowledge_imports(asset TEXT PRIMARY KEY, state TEXT NOT NULL, reason TEXT NOT NULL, checked_at TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS knowledge_imports(asset TEXT PRIMARY KEY, state TEXT NOT NULL, reason TEXT NOT NULL, checked_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS knowledge_pages(document_key TEXT PRIMARY KEY, role TEXT NOT NULL, plan TEXT,
+        state TEXT NOT NULL DEFAULT 'published', error TEXT, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS knowledge_import_memberships(owner TEXT NOT NULL,document_key TEXT NOT NULL,revision_id TEXT NOT NULL,
+        PRIMARY KEY(owner,document_key));`);
+    // Persist the migration once. Content revisions and their hashes are untouched.
+    for (const a of this.list()) this.store.db.prepare("INSERT OR IGNORE INTO knowledge_pages VALUES(?,?,?,'published',NULL,?)")
+      .run(a.document.key, publicationRole(a), a.reading ? JSON.stringify(a.reading) : null, a.generation.at);
   }
 
   materials() { return this.materialProvider(); }
+
+  role(a: KnowledgeArtifact): KnowledgeRole {
+    return (this.store.db.prepare("SELECT role FROM knowledge_pages WHERE document_key=?").get(a.document.key)?.role as KnowledgeRole | undefined) ?? publicationRole(a);
+  }
+  pages() {
+    return this.store.db.prepare("SELECT * FROM knowledge_pages WHERE role!='note' AND state!='retired' ORDER BY updated_at").all()
+      .map(r => ({key:String(r.document_key),role:r.role,plan:r.plan ? JSON.parse(String(r.plan)) as WikiPageBrief : null,state:String(r.state),error:r.error}));
+  }
+  savePlan(brief: WikiPageBrief) {
+    this.store.db.prepare(`INSERT INTO knowledge_pages VALUES(?,?,?,'planned',NULL,?) ON CONFLICT(document_key)
+      DO UPDATE SET role=excluded.role,plan=excluded.plan,state=CASE WHEN knowledge_pages.state='retired' THEN 'planned' ELSE knowledge_pages.state END,updated_at=excluded.updated_at`)
+      .run(brief.key, brief.kind === "reference" ? "reference" : "article", JSON.stringify(brief), new Date().toISOString());
+  }
+  pageState(key: string, state: "writing" | "published" | "failed" | "retired", error?: string) {
+    this.store.db.prepare("UPDATE knowledge_pages SET state=?,error=?,updated_at=? WHERE document_key=?")
+      .run(state, error ?? null, new Date().toISOString(), key);
+  }
+  published() {
+    const retired = new Set(this.store.db.prepare("SELECT document_key FROM knowledge_pages WHERE state IN ('retired','planned')").all().map(r=>String(r.document_key)));
+    return this.list().filter(a => this.role(a) !== "note" && !retired.has(a.document.key));
+  }
+  /** Reconcile only this import's publications. User-created/replaced pages and
+   * fixed history remain intact when an asset is removed from its directory. */
+  reconcileImport(owner: string, assets: {key:string; revision:string}[]) {
+    this.store.tx(()=>{
+      const retained = new Set(assets.map(a=>a.key));
+      for (const row of this.store.db.prepare("SELECT document_key,revision_id FROM knowledge_import_memberships WHERE owner=?").all(owner)) {
+        const key=String(row.document_key);
+        if (retained.has(key)) continue;
+        this.store.db.prepare("DELETE FROM knowledge_import_memberships WHERE owner=? AND document_key=?").run(owner,key);
+        const other = this.store.db.prepare("SELECT 1 FROM knowledge_import_memberships WHERE document_key=?").get(key);
+        if (!other && this.get(key)?.revision === row.revision_id) this.pageState(key,"retired");
+      }
+      for (const a of assets) {
+        this.store.db.prepare("INSERT INTO knowledge_import_memberships VALUES(?,?,?) ON CONFLICT(owner,document_key) DO UPDATE SET revision_id=excluded.revision_id")
+          .run(owner,a.key,a.revision);
+        if (this.get(a.key)?.revision === a.revision) this.store.db.prepare("UPDATE knowledge_pages SET state='published',error=NULL WHERE document_key=? AND state='retired'").run(a.key);
+      }
+    });
+  }
+  statusReader() {
+    const materials = new Map(this.materials().map(m=>[m.key,m]));
+    const articles = new Map(this.list().map(a=>[a.document.key,a]));
+    const fixed = new Map<string, KnowledgeMaterial | null>();
+    return knowledgeStatus({
+      material: (key, digest) => {
+        const current = materials.get(key);
+        if (!digest || current?.digest === digest) return current;
+        const id = key + ":" + digest;
+        if (!fixed.has(id)) fixed.set(id, this.resolveMaterial(key, digest)?.material ?? null);
+        return fixed.get(id);
+      },
+      article: (key, revision) => revision ? this.get(key, revision) : articles.get(key),
+      invalidated: new Set(this.store.db.prepare("SELECT document_key FROM knowledge_invalidations").all().map(r=>String(r.document_key))),
+    });
+  }
 
   list(): KnowledgeArticle[] {
     return (this.store.db.prepare("SELECT r.id,r.artifact,h.current FROM knowledge_heads h JOIN knowledge_revisions r ON r.id=h.revision_id ORDER BY r.document_key").all() as Row[]).map(r => ({ ...JSON.parse(String(r.artifact)), revision: String(r.id), current: !!r.current }));
@@ -131,6 +201,9 @@ export class KnowledgeRepository {
       this.store.db.prepare("INSERT OR IGNORE INTO knowledge_revisions VALUES(?,?,?,?)").run(revision, artifact.document.key, JSON.stringify(artifact), artifact.generation.at);
       this.store.db.prepare("INSERT INTO knowledge_heads VALUES(?,?,1) ON CONFLICT(document_key) DO UPDATE SET revision_id=excluded.revision_id,current=1").run(artifact.document.key, revision);
       this.store.db.prepare("DELETE FROM knowledge_invalidations WHERE document_key=?").run(artifact.document.key);
+      this.store.db.prepare(`INSERT INTO knowledge_pages VALUES(?,?,?,'published',NULL,?) ON CONFLICT(document_key)
+        DO UPDATE SET role=excluded.role,plan=COALESCE(excluded.plan,knowledge_pages.plan),state='published',error=NULL,updated_at=excluded.updated_at`)
+        .run(artifact.document.key, publicationRole(artifact), artifact.reading ? JSON.stringify(artifact.reading) : null, artifact.generation.at);
       const liveQuestions = new Set(artifact.document.questions.map(q => digest(artifact.document.key + ":" + q.question)));
       for (const row of this.store.db.prepare("SELECT id FROM knowledge_questions WHERE document_key=? AND state='open'").all(artifact.document.key) as Row[]) {
         if (!liveQuestions.has(String(row.id))) this.store.db.prepare("UPDATE knowledge_questions SET state='superseded',updated_at=? WHERE id=?").run(new Date().toISOString(), String(row.id));
@@ -147,7 +220,7 @@ export class KnowledgeRepository {
       const details = existing
         ? [changedSections.length ? "更新章节：" + changedSections.join("、") : "正文章节未改动", removed.length ? "移除章节：" + removed.join("、") : "", `本版包含 ${artifact.document.citations.length} 处引用；独立复核通过。`].filter(Boolean).join("。")
         : `新增 ${artifact.document.sections.length} 个章节：${artifact.document.sections.map(s => s.title).join("、")}。独立复核通过。`;
-      this.store.record("knowledge", (existing ? "知识已更新：" : "新增知识：") + artifact.document.title, existing?.revision ?? null, revision, details);
+      if (publicationRole(artifact) !== "note") this.store.record("knowledge", (existing ? "知识已更新：" : "新增知识：") + artifact.document.title, existing?.revision ?? null, revision, details);
     });
     this.refresh();
     return this.get(artifact.document.key)!;
@@ -171,23 +244,19 @@ export class KnowledgeRepository {
     const revision = digest(stableDigest(artifact));
     this.store.tx(() => {
       this.store.db.prepare("INSERT OR IGNORE INTO knowledge_revisions VALUES(?,?,?,?)").run(revision, artifact.document.key, JSON.stringify(artifact), artifact.generation.at);
-      if (asHead) this.store.db.prepare("INSERT OR IGNORE INTO knowledge_heads VALUES(?,?,0)").run(artifact.document.key, revision);
+      if (asHead) {
+        this.store.db.prepare("INSERT OR IGNORE INTO knowledge_heads VALUES(?,?,0)").run(artifact.document.key, revision);
+        this.store.db.prepare("INSERT OR IGNORE INTO knowledge_pages VALUES(?,?,?,'published',NULL,?)")
+          .run(artifact.document.key, publicationRole(artifact), artifact.reading ? JSON.stringify(artifact.reading) : null, artifact.generation.at);
+      }
     });
   }
 
-  /** Refresh checks content identity, including dependencies on derived pages. */
+  /** Refresh applicability per chapter; page identity and its plan remain stable. */
   refresh() {
-    const materials = new Map(this.materials().map(m => [m.key, m.digest]));
-    const articles = this.list();
-    const articleMap = new Map(articles.map(a => [a.document.key, a]));
-    const bad = new Set((this.store.db.prepare("SELECT document_key FROM knowledge_invalidations").all() as Row[]).map(r => String(r.document_key)));
-    for (const a of articles) if (a.dependencies.some(d => d.kind === "material" ? materials.get(d.key) !== d.digest : articleMap.get(d.key)?.revision !== d.digest)) bad.add(a.document.key);
-    for (let i = 0; i < articles.length; i++) {
-      const before = bad.size;
-      for (const a of articles) if (a.dependencies.some(d => d.kind === "article" && bad.has(d.key))) bad.add(a.document.key);
-      if (bad.size === before) break;
-    }
-    for (const a of articles) this.store.db.prepare("UPDATE knowledge_heads SET current=? WHERE document_key=?").run(bad.has(a.document.key) ? 0 : 1, a.document.key);
+    const assess = this.statusReader();
+    for (const a of this.list()) this.store.db.prepare("UPDATE knowledge_heads SET current=? WHERE document_key=?")
+      .run(Object.values(assess(a)).every(s=>s.state==="current") ? 1 : 0, a.document.key);
   }
 
   resolveMaterial(key: string, expectedDigest?: string) {
@@ -197,7 +266,7 @@ export class KnowledgeRepository {
     if (!sourceId) return null;
     for (const row of this.store.db.prepare("SELECT id FROM revisions WHERE source_id=? ORDER BY created_at DESC").all(sourceId) as Row[]) {
       const m = materialFromRevision(this.store, String(row.id));
-      if (m && (!expectedDigest || m.digest === expectedDigest)) return { material: { ...m, key }, current: false };
+      if (m && (!expectedDigest || m.digest === expectedDigest)) return { material: { ...m, key, path: m.path ?? current?.path ?? null }, current: false };
     }
     return null;
   }
