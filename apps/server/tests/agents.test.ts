@@ -1,8 +1,9 @@
-import { it, expect } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { it, expect, vi } from "vitest";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { acp, cliArgs, type AcpOptions } from "../src/agents.js";
+import { acp, cli, cliArgs, type AcpOptions } from "../src/agents.js";
 import { profileSchema } from "../../../packages/contracts/src/index.js";
 const profile = () =>
   profileSchema.parse({
@@ -100,4 +101,30 @@ it("builds explicit safe CLI argv without shell interpolation", () => {
   expect(a).toContain("read-only");
   expect(a).toContain("literal$(pwd)");
   expect(a).not.toContain("--dangerously-bypass-approvals-and-sandbox");
+});
+
+it("does not let captured-workspace Git commands discover the enclosing development checkout", async () => {
+  const root = mkdtempSync(join(tmpdir(), "omem-research-git-"));
+  const workspace = join(root, "runtime", "research");
+  const originals = join(workspace, "originals");
+  try {
+    execFileSync("git", ["init", "-q", root]);
+    mkdirSync(originals, { recursive: true });
+    // Demonstrate the bug with real Git, then invoke the same command through
+    // the child launch shared by CLI and ACP. The model protocol is not tested.
+    expect(execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: originals, encoding: "utf8" }).trim()).toBe(realpathSync(root));
+    vi.stubEnv("GIT_DIR", join(root, ".git"));
+    vi.stubEnv("GIT_WORK_TREE", root);
+    const probe = join(root, "probe.mjs");
+    writeFileSync(probe, `import {spawnSync} from 'node:child_process';
+      const results = ['.', 'originals'].map(cwd => {
+        const result = spawnSync('git', ['rev-parse', '--show-toplevel'], {cwd, encoding:'utf8'});
+        return {status:result.status, stdout:result.stdout.trim()};
+      });
+      console.log(JSON.stringify({type:'item.completed', item:{type:'agent_message',text:JSON.stringify(results)}}));`);
+    let output = "";
+    await cli(profileSchema.parse({ ...profile(), transport: "codex-cli", args: [probe] }), workspace, "probe",
+      (type, text) => { if (type === "text") output += text; }, new AbortController().signal);
+    expect(JSON.parse(output)).toEqual([{ status: 128, stdout: "" }, { status: 128, stdout: "" }]);
+  } finally { vi.unstubAllEnvs(); rmSync(root, { recursive: true, force: true }); }
 });

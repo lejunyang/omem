@@ -1,7 +1,8 @@
 /** Client-side ACP transport is reused from the official SDK. Agent output is data;
  * thought chunks are discarded. Permission callbacks never silently authorize tools. */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
+import { delimiter, dirname } from "node:path";
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -44,14 +45,22 @@ export function withAgentWorkspace(profile: AgentProfile, workspace: string): Ag
   return { ...profile, args: ["-C", workspace, "-c", "project_doc_max_bytes=0", ...profile.args] };
 }
 
-const env = () =>
-  Object.fromEntries(
+const env = (cwd: string) => ({
+  ...Object.fromEntries(
     Object.entries(process.env).filter(
       ([key]) =>
         !key.startsWith("BOTMUX_") &&
-        !["OMEM_TOKEN", "CLAUDECODE"].includes(key),
+        !["OMEM_TOKEN", "CLAUDECODE", "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR",
+          "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"].includes(key),
     ),
-  );
+  ),
+  // Exported originals are a captured workspace, not the enclosing development
+  // checkout. Git's implicit parent discovery must not cross that boundary.
+  // This avoids accidental context leakage; it is not a filesystem sandbox.
+  // Git ignores a ceiling equal to its starting directory. Include the parent
+  // as well so a command from either the workspace root or a child stops here.
+  GIT_CEILING_DIRECTORIES: [realpathSync(cwd), dirname(realpathSync(cwd)), process.env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(delimiter),
+});
 function stop(child: ChildProcessWithoutNullStreams) {
   if (child.exitCode !== null) return;
   try {
@@ -72,7 +81,7 @@ function launch(profile: AgentProfile, args: string[], cwd: string) {
   mkdirSync(cwd, { recursive: true, mode: 0o700 });
   const child = spawn(profile.command, args, {
     cwd,
-    env: env(),
+    env: env(cwd),
     stdio: "pipe",
     shell: false,
     detached: process.platform !== "win32",
