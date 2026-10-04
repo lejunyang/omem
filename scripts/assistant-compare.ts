@@ -54,6 +54,11 @@ const cases = z
   .min(1)
   .parse(JSON.parse(readFileSync(resolve(option("questions")), "utf8")));
 const review = taskFlag("review");
+const variantSelection = z
+  .enum(["both", "research", "reading-first"])
+  .parse(option("variant", "both"));
+if (variantSelection === "reading-first" && !option("reading-model"))
+  throw Error("--variant reading-first requires --reading-model");
 const sourceDir = resolve(
   option("data", review ? ".repo-review/runtime/data" : ".omem"),
 );
@@ -132,8 +137,14 @@ const report: Record<string, any> = {
     [
       "apps/server/src/assistant/acp-model.ts",
       "apps/server/src/assistant/reading-stage.ts",
+      "apps/server/src/assistant/answer-review.ts",
       "apps/server/src/assistant/research.ts",
       "apps/server/src/assistant/runtime.ts",
+      "packages/agent-runtime/roles/answer-reviewer/1/prompt.md",
+      "packages/agent-runtime/roles/answer-reviewer/1/manifest.json",
+      "packages/agent-runtime/roles/answer-reviewer/1/skills/omem-answer-review/SKILL.md",
+      "packages/agent-runtime/roles/daily-assistant/1/manifest.json",
+      "packages/agent-runtime/roles/daily-assistant/1/skills/omem-assistant-research/SKILL.md",
       "scripts/assistant-compare.ts",
     ].map((path) => [
       path,
@@ -145,6 +156,7 @@ const report: Record<string, any> = {
   method:
     "One frozen corpus, existing shared retrieval without reranker, real native ACP and all research tools. Independent conversations per case; turns within each case preserve history. Model order alternates per case. Check answers manually; successful submission does not imply correctness.",
   profiles: [],
+  variantSelection,
   cases: [],
 };
 const save = () =>
@@ -234,8 +246,9 @@ try {
       })),
       agent: probe.agentInfo,
     });
-    profiles.push({ profile, variant: "research" });
-    if (readingProfile)
+    if (variantSelection !== "reading-first")
+      profiles.push({ profile, variant: "research" });
+    if (readingProfile && variantSelection !== "research")
       profiles.push({
         profile,
         variant: "reading-first",
