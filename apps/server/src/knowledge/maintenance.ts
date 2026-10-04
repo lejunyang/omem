@@ -132,7 +132,7 @@ export function planMaintenance(
         }))
       : [],
     instruction: reusable
-      ? "维护同一篇文章。previousDraft 是旧版解释，不是新的事实来源。先按 changedFields、materialChanges、newlySelected 和 sections 定位本次问题；保留仍回答读者问题的案例、解释和结构。围绕变化及其影响补读，发现矛盾再扩大调查，不从头遍历整个材料库。阅读目标改变时允许重组或删除旧内容。hunks 仅是新旧原文调查入口，不是已确认的语义变化；可用 material_history 读 previousRevision。旧引用行号属于旧版，重新核对当前快照中的位置和含义，不能照抄旧坐标或把旧文当证据。交付完整文章，不写修订日志。"
+      ? "维护同一篇文章身份。previousDraft 是旧版解释，不是新的事实来源。先按 changedFields、materialChanges、newlySelected 和 sections 定位变化，再按阅读目标判断旧稿是否仍有清楚的讲解路线，在 composition 中选择局部维护或重新组织。局部维护保留有效案例和解释；旧稿妨碍理解时可重组删减，不因已发布就强制保留结构。围绕变化及讲解缺口补读，不从头遍历整个材料库。hunks 仅是新旧原文调查入口，不是已确认的语义变化；可用 material_history 读 previousRevision。旧引用行号属于旧版，重新核对当前快照中的位置和含义，不能照抄旧坐标或把旧文当证据。交付完整文章，不写修订日志。"
       : "原文章依赖或调查背景已超出本次材料范围，因此不提供旧正文。保持页面身份，按本次目标和选定材料重新调查、写作；不要寻找或恢复移出范围的内容。",
   };
 }

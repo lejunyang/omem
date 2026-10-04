@@ -20,6 +20,35 @@
         "type": "string"
       }
     },
+    "composition": {
+      "description": "Plan the reader's route after investigation. Maintain a useful existing explanation for local changes; rewrite when its organization obscures the page's purpose. Explain what to retain, reorganize or omit and why. This is a writing decision, not a factual verdict or length score.",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "maintain",
+            "rewrite"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1600
+        },
+        "outline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 6000
+        }
+      },
+      "required": [
+        "mode",
+        "reason",
+        "outline"
+      ],
+      "additionalProperties": false
+    },
     "requests": {
       "maxItems": 12,
       "type": "array",
