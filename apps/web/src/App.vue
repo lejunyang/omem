@@ -116,6 +116,7 @@ const probeNote = ref("");
 const accessProtected = ref(false);
 const processing = ref({ running: false, enabled: false });
 const toast = ref("");
+const toastHasNotifications = ref(false);
 const token = ref("");
 const evidence = ref<InstanceType<typeof EvidenceReader>>();
 const query = ref("");
@@ -243,9 +244,10 @@ const unread = computed(
 const selectedProfile = computed(() =>
   profiles.value.find((p) => p.id === profileId.value),
 );
-function say(text: string) {
+function say(text: string, notifications = false) {
   clearTimeout(toastTimer);
   toast.value = text;
+  toastHasNotifications.value = notifications;
   toastTimer = setTimeout(() => (toast.value = ""), 6000);
 }
 async function refresh() {
@@ -281,19 +283,13 @@ async function refresh() {
       lastNotificationId &&
       latest &&
       latest.id !== lastNotificationId
-    )
-      say(
-        notifications.value
-          .slice(
-            0,
-            Math.max(
-              1,
-              notifications.value.findIndex((n) => n.id === lastNotificationId),
-            ),
-          )
-          .map((n) => n.title + "：" + n.body)
-          .join("；"),
-      );
+    ) {
+      const previous = notifications.value.findIndex(n => n.id === lastNotificationId);
+      const summary = previous === 1
+        ? Array.from(latest.title).slice(0, 80).join("") + (Array.from(latest.title).length > 80 ? "…" : "")
+        : previous > 1 ? `收到 ${previous} 条新通知` : "有新通知";
+      say(summary, true);
+    }
     lastNotificationId = latest?.id || "none";
     pollError.value = "";
   } catch (e) {
@@ -1291,7 +1287,13 @@ onBeforeUnmount(() => {
           openRevision(id);
         }
       " />
-    <div v-if="toast" class="toast" role="status">{{ toast }}</div>
+    <div v-if="toast" class="toast" role="status">
+      <span class="toast-message">{{ toast }}</span>
+      <div class="toast-actions">
+        <OmButton v-if="toastHasNotifications" variant="ghost" @click="view = 'notifications'; toast = ''">查看通知</OmButton>
+        <OmButton variant="ghost" aria-label="关闭提示" @click="toast = ''">关闭</OmButton>
+      </div>
+    </div>
     <template v-if="view === 'read'" #assistant
       ><ChatPane
         :key="focus?.id"
