@@ -27,6 +27,7 @@ function setup() {
     const m = repository.materials()[0]!;
     return repository.publish({
       version: 1,
+      publication: {role:"article"},
       document: bindKnowledgeQuotes(
         {
           key: "delivery-guide",
@@ -240,7 +241,7 @@ it("finds separate functions in the same file at their own ranges rather than a 
   }
 });
 
-it("recalls supported prose as pending review when an uncited research input changes, but respects explicit invalidation", async () => {
+it("keeps prose current when incidental research changes, but respects explicit invalidation", async () => {
   const s = setup();
   try {
     s.store.capture({
@@ -286,7 +287,6 @@ it("recalls supported prose as pending review when an uncited research input cha
     )[0]!;
     expect(hit.target).toMatchObject({
       kind: "knowledge",
-      reviewState: "needs-review",
     });
     expect(hit.references[0]).toMatchObject({ startLine: 1, endLine: 2 });
     s.store.capture({
@@ -302,7 +302,7 @@ it("recalls supported prose as pending review when an uncited research input cha
       visible: (id) => visibleIds.has(id),
     });
     expect(repeated).toHaveLength(1);
-    expect(repeated[0]!.target).toMatchObject({ reviewState: "needs-review" });
+    expect(repeated[0]!.target).not.toHaveProperty("reviewState");
     expect(
       await s.retrieval.search({
         text: "重复通知",
@@ -391,7 +391,7 @@ it("keeps a parent explanation tied to its fixed child revision after the child'
       (h) =>
         h.target.kind === "knowledge" && h.target.key === parent.document.key,
     )!;
-    expect(hit.target).toMatchObject({ reviewState: "needs-review" });
+    expect(hit.target).not.toHaveProperty("reviewState");
     expect(hit.references[0]).toMatchObject({ startLine: 1, endLine: 2 });
   } finally {
     await s.close();

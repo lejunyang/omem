@@ -60,21 +60,27 @@ try {
   await runReviewSync(store,root);await runCodeSync(store,root);
   const restored=restoreReviewKnowledge(store,root), repo=restored.repository;repo.refresh();
   const materials=new Map(repo.materials().map(m=>[m.key,m]));
-  const articles=new Map(repo.list().filter(a=>a.current).map(a=>[a.document.key,a]));
+  const published=repo.published();
+  const articles=published.filter(a=>a.current);
   const errors:{key:string;error:string}[]=[];
   let citations=0,articleLinks=0;
-  for(const article of articles.values())try {
-    validateKnowledgeDocument(article.document,materials,articles);
+  for(const article of articles)try {
+    const fixedMaterials=new Map(),fixedArticles=new Map();
+    for(const dep of article.dependencies) {
+      if(dep.kind==='material') { const source=repo.resolveMaterial(dep.key,dep.digest)?.material;if(source)fixedMaterials.set(dep.key,source); }
+      else {const child=repo.get(dep.key,dep.digest);if(child)fixedArticles.set(dep.key,child);}
+    }
+    validateKnowledgeDocument(article.document,fixedMaterials,fixedArticles);
     if(article.review.verdict!=='accepted')throw Error('Missing accepted independent review');
-    for(const dep of article.dependencies)if((dep.kind==='material'?materials.get(dep.key)?.digest:articles.get(dep.key)?.revision)!==dep.digest)throw Error('Stale dependency: '+dep.key);
     citations+=article.document.citations.length;articleLinks+=article.document.citations.filter(c=>c.target.kind==='article').length;
   }catch(error){errors.push({key:article.document.key,error:String(error)});}
-  const reviewed=[...materials.keys()].filter(key=>articles.has(key)).length;
-  report.knowledge={materials:materials.size,reviewedMaterials:reviewed,pendingMaterials:materials.size-reviewed,currentArticles:articles.size,citations,articleLinks,errors,
+  const statuses=repo.statusReader();
+  report.knowledge={materials:materials.size,publishedPages:published.length,currentPages:articles.length,plannedPages:repo.pages().filter(p=>!published.some(a=>a.document.key===p.key)).length,citations,articleLinks,errors,
+    pages:published.map(a=>({key:a.document.key,title:a.document.title,role:repo.role(a),current:a.current,sections:statuses(a)})),
     restore:restored.restored.reduce((counts,r)=>{counts[r.state]=(counts[r.state]??0)+1;return counts;},{} as Record<string,number>),
-    incomplete:reviewed<materials.size,note:'未覆盖或过期文章不计为通过；本检查只验证当前正文，不能代表全库已经生成。'};
-  checks.push({name:'currentKnowledgeReferences',state:errors.length?'failed':'passed',details:{articles:articles.size,citations,errors}});
-  writeReviewKnowledgeIndex(root,[...articles.values()]);
+    note:'按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。'};
+  checks.push({name:'currentKnowledgeReferences',state:errors.length?'failed':'passed',details:{articles:articles.length,citations,errors}});
+  writeReviewKnowledgeIndex(root,published);
   const configPath=process.env.REVIEW_RETRIEVAL_CONFIG ?? join(root,'config/retrieval.json');
   const config=existsSync(configPath)?readRetrievalConfig(configPath):undefined;
   const built=await buildReviewApp({store,repoRoot:root,retrievalConfig:config});app=built.app;

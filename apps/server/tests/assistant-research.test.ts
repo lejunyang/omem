@@ -107,6 +107,7 @@ function artifact(
 ): KnowledgeArtifact {
   return {
     version: 1,
+      publication: {role:"article"},
     document,
     dependencies,
     generation: {

@@ -66,7 +66,7 @@ export async function prepareAssistantResearch(input: {
   const offered = new Map(materials.map((m) => [m.key, m]));
   // The shared snapshot admits articles against their exact dependency revisions,
   // and uses that same admitted set for native catalogs and MCP reads.
-  const articles = input.repository.list();
+  const articles = input.repository.published();
   let evidence: AssistantEvidence[] = [];
   const environment = await prepareAgentResearch({
     repository: input.repository,

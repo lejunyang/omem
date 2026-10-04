@@ -248,14 +248,7 @@ run = [{ argv = ["bun", "scripts/review-knowledge.ts", "{{args}}"] }]
 
 [[tasks."review:analyze".args]]
 name = "target"
-default = ""
-help = "File or directory to process; omit for all materials"
-
-[tasks."review:analyze".flags.modules]
-help = "Update affected modules and existing ancestors"
-
-[tasks."review:analyze".flags.files-only]
-help = "Only analyze source materials"
+help = "File or directory for internal analysis notes; reader pages use review:guides"
 
 [tasks."review:analyze".flags.retry]
 help = "Retry unfinished model work"
@@ -265,14 +258,7 @@ run = [{ argv = ["bun", "scripts/review-knowledge.ts", "{{args}}"] }]
 
 [[tasks."review:generate".args]]
 name = "target"
-default = ""
-help = "File or directory to process; omit for all materials"
-
-[tasks."review:generate".flags.modules]
-help = "Update affected modules and existing ancestors"
-
-[tasks."review:generate".flags.files-only]
-help = "Only analyze source materials"
+help = "File or directory for internal analysis notes; reader pages use review:guides"
 
 [tasks."review:generate".flags.retry]
 help = "Retry unfinished model work"

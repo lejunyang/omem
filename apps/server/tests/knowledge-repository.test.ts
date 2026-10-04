@@ -25,7 +25,7 @@ function document(key = "manual:a"): KnowledgeDocument {
     questions: [{ question: "后续是否需要配置返回值？", why: "当前材料只有固定值。", nextStep: "确认产品要求。", blocking: false, citationKeys: ["c1"] }] };
 }
 function artifact(d: KnowledgeDocument, dependencies: KnowledgeArtifact["dependencies"]): KnowledgeArtifact {
-  return { version: 1, document: d, dependencies,
+  return { version: 1, publication: {role:"article"}, document: d, dependencies,
     generation: { model: "fixture-writer", effort: "low", at: "2026-01-01T00:00:00Z", trace: { sessionIds: ["writer-fixture"] } },
     review: { model: "fixture-reviewer", at: "2026-01-01T00:00:01Z", trace: { sessionIds: ["reviewer-fixture"] }, verdict: "accepted" } };
 }

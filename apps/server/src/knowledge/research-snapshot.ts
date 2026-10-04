@@ -119,12 +119,14 @@ export function researchSnapshot(input: {
         .get(revision) as Row | undefined;
       if (!row) return false;
       checked.set(revision, false);
-      const dependencies = JSON.parse(String(row.artifact)).dependencies as {
+      const artifact = JSON.parse(String(row.artifact));
+      const dependencies = artifact.dependencies as {
         kind: string;
         key: string;
         digest: string;
       }[];
       if (
+        !(artifact.investigation ?? []).every((d:{key:string})=>input.materials.some(m=>m.key===d.key)) ||
         !dependencies.every((d) =>
           d.kind === "material"
             ? permittedMaterialVersions.has(`${d.key}\n${d.digest}`)
@@ -138,6 +140,7 @@ export function researchSnapshot(input: {
     };
     input.articles.forEach((a) => visit(a.revision));
     copy("knowledge_revisions", [...knowledge.values()]);
+    copy("knowledge_pages", all("knowledge_pages").filter(r=>input.articles.some(a=>a.document.key===r.document_key)));
     copy(
       "knowledge_heads",
       all("knowledge_heads").filter((r) =>

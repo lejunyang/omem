@@ -35,7 +35,7 @@
 .repo-review 是实际应用，不是第二个产品。用户入口只有 osdk run dev，保留个人库数据；隔离 runtime 用于生成和检索验收。启动恢复已提交知识，不自动生成整库。
 
 1. 修改捕获、代码理解、知识生成/引用、检索或助手后，先提交检查通过的实现，再用真实 traex ACP / gpt-5.6-sol 更新受影响知识，单独提交产物。用户已授权，不需重复确认。
-2. 新读者指南按页面计划生成并独立复核。原有材料说明可用 osdk run review:generate <路径> --modules；保留历史，不能手改模型产物或用 seed/AST sync 冒充模型成果。
+2. 新读者指南按页面计划生成并独立复核。内部材料笔记可用 osdk run review:generate <路径>，不自动合成模块目录；仍被正式知识引用的历史必须保留，不能手改模型产物或用 seed/AST sync 冒充模型成果。
 3. 检查 current/stale/pending/failed 与实际引用，抽查读者是否能理解。上层受影响则更新，失败保留有效旧历史并说明原因；排队不等于应用成功。
 4. 检索修改运行 osdk run retrieval:verify 与 osdk run retrieval:index --review，并通过真实 HTTP 搜索检查中文问题；运行 osdk run review:verify --full 生成当前报告。旧报告不能继承为本轮通过率。
 5. 实际模型配置是 config/review-code-model.json（REVIEW_CODE_MODEL_CONFIG 可覆盖），不只改 example；保留研究、生成、独立复核与运行 trace。数据库和临时材料在 .repo-review/runtime/（gitignored），发布正文和验证报告按功能提交。

@@ -1,6 +1,6 @@
 import { stableDigest } from "../storage/digest.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { KnowledgeArtifact, KnowledgeCitation } from "../../../../packages/contracts/src/knowledge.js";
 import { knowledgeDocumentSchema } from "../../../../packages/contracts/src/knowledge.js";
 import { digest, KnowledgeRepository, type KnowledgeArticle } from "./repository.js";
@@ -30,13 +30,16 @@ export function writeKnowledgeArticle(directory: string, a: KnowledgeArticle, ma
 }
 
 export function restoreKnowledgeArticles(repository: KnowledgeRepository, directory: string) {
-  if (!existsSync(directory)) return [];
   const result: { file: string; state: string; reason: string }[] = [];
   const pending: { file: string; artifact: KnowledgeArtifact }[] = [];
-  for (const file of readdirSync(directory).filter(f => f.endsWith(".json")).sort()) {
+  for (const file of (existsSync(directory) ? readdirSync(directory) : []).filter(f => f.endsWith(".json")).sort()) {
     try { pending.push({ file, artifact: JSON.parse(readFileSync(join(directory, file), "utf8")) as KnowledgeArtifact }); }
     catch (error) { result.push({ file, state: "rejected", reason: String(error) }); }
   }
+  // A temporarily unreadable asset is not a deletion. Keep prior ownership until
+  // the directory is parseable, while still restoring its other valid pages.
+  const imported = pending.map(({artifact})=>({key:artifact.document?.key,revision:digest(stableDigest(artifact))})).filter(a=>!!a.key);
+  const parseable = !result.length;
   const sources = new Map(repository.materials().map(m => [m.key, m.digest]));
   for (let pass = 0; pending.length && pass < 100; pass++) {
     let progress = false;
@@ -53,7 +56,11 @@ export function restoreKnowledgeArticles(repository: KnowledgeRepository, direct
       try {
         if (artifact.version !== 1 || artifact.review?.verdict !== "accepted" || !artifact.generation?.model || !artifact.review.model) throw Error("Missing generation/review provenance");
         knowledgeDocumentSchema.parse(artifact.document);
-        if (artifact.dependencies.some(d => d.kind === "material" ? sources.get(d.key) !== d.digest : repository.get(d.key)?.revision !== d.digest)) { state = "stale"; reason = "来源或子知识已变化，等待重新分析"; }
+        if (artifact.dependencies.some(d => d.kind === "material" ? sources.get(d.key) !== d.digest : repository.get(d.key)?.revision !== d.digest)) {
+          repository.restoreHistorical(artifact);
+          state = Object.values(repository.statusReader()(artifact)).every(s=>s.state === "current") ? "restored" : "stale";
+          reason = state === "stale" ? "部分引用的章节或函数已变化，保留旧文等待核对" : "引用所在上下文未变，保留原有解释";
+        }
         else if (repository.get(artifact.document.key)?.revision !== digest(stableDigest(artifact))) repository.publish(artifact);
       } catch (error) { state = "rejected"; reason = String(error); }
       repository.store.db.prepare("INSERT INTO knowledge_imports VALUES(?,?,?,?) ON CONFLICT(asset) DO UPDATE SET state=excluded.state,reason=excluded.reason,checked_at=excluded.checked_at").run(file, state, reason, new Date().toISOString());
@@ -62,5 +69,6 @@ export function restoreKnowledgeArticles(repository: KnowledgeRepository, direct
     if (!progress) break;
   }
   for (const { file } of pending) result.push({ file, state: "missing", reason: "引用的子知识尚不可用" });
+  if (parseable) repository.reconcileImport(resolve(directory), imported);
   repository.refresh(); return result;
 }
