@@ -73,7 +73,11 @@ it("serves a fixed original and submission, then releases task copies without re
       articles: [],
       workspace,
       schema,
-      validate: (x) => schema.parse(x),
+      validate: (x) => {
+        const result = schema.parse(x);
+        if (!result.summary.includes("船票")) throw Error("Missing source context");
+        return result;
+      },
       retrievalConfig: { enabled: false },
     });
     const server = env.servers[0]!;
@@ -87,11 +91,26 @@ it("serves a fixed original and submission, then releases task copies without re
     });
     expect(JSON.stringify(read)).toContain("提前预订船票");
     expect(existsSync(join(workspace, "snapshot.sqlite"))).toBe(true);
+    let completed = false;
+    void env.submission?.then(() => { completed = true; });
+    const invalid = await client.callTool({
+      name: "submit_result",
+      arguments: { result: { summary: "没有原文支持的内容" } },
+    });
+    expect(invalid.isError).toBe(true);
+    expect(completed).toBe(false);
+    expect(env.result()).toBeUndefined();
     await client.callTool({
       name: "submit_result",
       arguments: { result: { summary: "提前买船票" } },
     });
     expect(env.result()).toEqual({ summary: "提前买船票" });
+    expect(completed).toBe(true);
+    env.reset();
+    let nextCompleted = false;
+    void env.submission?.then(() => { nextCompleted = true; });
+    await Promise.resolve();
+    expect(nextCompleted).toBe(false);
     await env.close();
     expect(existsSync(join(workspace, "originals"))).toBe(false);
     expect(existsSync(join(workspace, "snapshot.sqlite"))).toBe(false);

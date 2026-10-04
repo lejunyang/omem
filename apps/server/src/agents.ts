@@ -29,6 +29,8 @@ export type AcpOptions = {
   skillDiscoveryTimeoutMs?: number;
   maxOutputChars?: number;
   unbounded?: boolean;
+  /** Resolved by the host only after a final tool result is validated and saved. */
+  finalSubmission?: Promise<void>;
   onSessionUpdate?: (update: SessionUpdate) => void;
   allowPermission?: (request: RequestPermissionRequest) => boolean;
   contextBudget?: { estimatedInputTokens: number; maxOutputTokens: number; contextReserveTokens: number };
@@ -147,6 +149,7 @@ export async function acp(
   let availableCommands: string[] = [];
   let usage: Record<string, unknown> = {};
   let outputChars = 0;
+  let completion: "probe" | "end_turn" | "validated_submission" = "probe";
   let resolveDiscovery = () => {};
   const discovery = new Promise<void>((resolve) => {
     resolveDiscovery = resolve;
@@ -362,23 +365,38 @@ export async function acp(
       emit("status", "Agent 已连接，正在基于固定证据回答");
       promptStartedAt = performance.now();
       const result = await Promise.race([
-        connection.prompt({ sessionId, prompt: blocks }),
+        connection.prompt({ sessionId, prompt: blocks }).then(result => ({ kind: "prompt" as const, result })),
         exited,
+        ...(options.finalSubmission
+          ? [options.finalSubmission.then(() => ({ kind: "submission" as const }))]
+          : []),
       ]);
-      if (result.stopReason !== "end_turn")
-        throw Error(`Agent stopped: ${result.stopReason}`);
+      if (signal.aborted) throw Error("CANCELLED");
+      if (terminalFailure) throw terminalFailure;
+      if (result.kind === "prompt" && result.result.stopReason !== "end_turn")
+        throw Error(`Agent stopped: ${result.result.stopReason}`);
+      completion = result.kind === "submission" ? "validated_submission" : "end_turn";
       promptFinishedAt = performance.now();
       // The agent's prompt has completed. Clear the global timeout now so
       // session teardown (closeSession) doesn't race it under parallel load —
       // otherwise a slow prompt leaves no budget for the 1s closeSession race,
       // turning a clean success into a spurious "Agent timed out".
       clearTimeout(timeout);
+      // A native role is complete when its final tool submission is accepted.
+      // Some CLIs never finish session/prompt after this; cancel that remaining
+      // turn without treating it as a user cancellation or losing the result.
+      if (completion === "validated_submission")
+        void connection.cancel({ sessionId }).catch(() => {});
     }
     if (initialized.agentCapabilities?.sessionCapabilities?.close)
       await Promise.race([
-        connection.closeSession({ sessionId }),
+        connection.closeSession({ sessionId }).catch(error => {
+          if (completion !== "validated_submission") throw error;
+        }),
         new Promise((r) => setTimeout(r, 1000)),
       ]);
+    if (signal.aborted) throw Error("CANCELLED");
+    if (terminalFailure) throw terminalFailure;
     return {
       agentInfo: initialized.agentInfo,
       capabilities: initialized.agentCapabilities,
@@ -386,6 +404,7 @@ export async function acp(
       sessionId,
       availableCommands,
       usage,
+      completion,
       timings: {
         initializeMs: Math.round(initializedAt - startedAt),
         sessionSetupMs: Math.round(configuredAt - initializedAt),

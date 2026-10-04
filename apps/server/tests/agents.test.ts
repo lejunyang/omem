@@ -2,7 +2,7 @@ import { it, expect } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { acp, cliArgs } from "../src/agents.js";
+import { acp, cliArgs, type AcpOptions } from "../src/agents.js";
 import { profileSchema } from "../../../packages/contracts/src/index.js";
 const profile = () =>
   profileSchema.parse({
@@ -18,6 +18,7 @@ async function run(
   text: string,
   patch: Record<string, unknown> = {},
   signal = new AbortController().signal,
+  options: AcpOptions = {},
 ) {
   const cwd = mkdtempSync(join(tmpdir(), "omem-acp-"));
   const events: { type: string; text: string }[] = [];
@@ -28,6 +29,7 @@ async function run(
       [{ type: "text", text }],
       (type, text) => events.push({ type, text }),
       signal,
+      options,
     );
     return { result, events };
   } finally {
@@ -68,6 +70,17 @@ it("bounds idle prompt duration", async () => {
   await expect(run("TIMEOUT", { timeoutMs: 1000 })).rejects.toThrow(
     "timed out",
   );
+});
+it("finishes a validated final submission when the CLI never ends its prompt", async () => {
+  const { result } = await run(
+    "TIMEOUT",
+    { model: "beta", effort: "high", timeoutMs: 1000 },
+    new AbortController().signal,
+    { finalSubmission: Promise.resolve() },
+  );
+  expect(result.completion).toBe("validated_submission");
+  expect(result.configOptions.find(o => o.id === "model")?.currentValue).toBe("beta");
+  expect(result.configOptions.find(o => o.id === "reasoning_effort")?.currentValue).toBe("high");
 });
 it("cancels an active prompt", async () => {
   const c = new AbortController();
