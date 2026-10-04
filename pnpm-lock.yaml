@@ -23,6 +23,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.31.0
         version: 1.31.0(supports-color@5.5.0)(zod@4.1.12)
+      diff:
+        specifier: 9.0.0
+        version: 9.0.0
       fastify:
         specifier: 5.12.5
         version: 5.12.5
