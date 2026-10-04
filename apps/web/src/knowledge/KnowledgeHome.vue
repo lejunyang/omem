@@ -6,7 +6,12 @@ import KnowledgeTree from "./KnowledgeTree.vue";
 import KnowledgeFolder from "./KnowledgeFolder.vue";
 import ArticleComposer, { type MaterialOption } from "./ArticleComposer.vue";
 import { topicTree, inTopic, articleOrder } from "./topics";
-import { knowledgeApi, type ArticleMeta, type KnowledgeFrame } from "./api";
+import {
+  knowledgeApi,
+  type ArticleMeta,
+  type KnowledgeFrame,
+  type PlannedPage,
+} from "./api";
 const props = defineProps<{
   prefix: string;
   compact?: boolean;
@@ -19,7 +24,7 @@ const emit = defineEmits<{
 const loading = ref(true),
   mobileNavigation = ref(false),
   composerOpen = ref(false);
-const articles = ref<ArticleMeta[]>([]),
+const allArticles = ref<ArticleMeta[]>([]),
   materials = ref<MaterialOption[]>([]),
   query = ref(""),
   selected = ref(
@@ -27,6 +32,33 @@ const articles = ref<ArticleMeta[]>([]),
   ),
   error = ref("");
 const pageSize = ref(20);
+const view = ref<"article" | "reference">("article");
+const pages = ref<PlannedPage[]>([]);
+const articles = computed(() =>
+  allArticles.value.filter((a) => (a.role ?? "article") === view.value),
+);
+const pendingPages = computed(() =>
+  pages.value.filter(
+    (p) =>
+      p.role === view.value &&
+      p.plan &&
+      topic.value.every((part, i) => p.plan!.topicPath?.[i] === part) &&
+      !allArticles.value.some((a) => a.key === p.key),
+  ),
+);
+function changeView(value: "article" | "reference") {
+  view.value = value;
+  query.value = "";
+  selectTopic([]);
+}
+watch(
+  [selected, allArticles],
+  () => {
+    const role = allArticles.value.find((a) => a.key === selected.value)?.role;
+    if (role === "article" || role === "reference") view.value = role;
+  },
+  { flush: "sync" },
+);
 const topic = ref<string[]>([]),
   running = ref(false),
   lastRun = ref<{
@@ -38,7 +70,7 @@ const topic = ref<string[]>([]),
 let timer: ReturnType<typeof setInterval> | undefined;
 const tree = computed(() => topicTree(articles.value));
 const current = computed(() =>
-  articles.value.find((a) => a.key === selected.value),
+  allArticles.value.find((a) => a.key === selected.value),
 );
 const activePath = computed(() => current.value?.topicPath ?? topic.value);
 const scopedArticles = computed(() =>
@@ -107,7 +139,9 @@ watch(
 const matches = computed(() => [
   ...new Map(
     [
-      ...remoteMatches.value,
+      ...remoteMatches.value.filter(
+        (a) => (a.role ?? "article") === view.value,
+      ),
       ...scopedArticles.value.filter((a) =>
         (a.title + a.summary).toLowerCase().includes(query.value.toLowerCase()),
       ),
@@ -131,15 +165,29 @@ watch(
     selected.value = key ?? "";
   },
 );
+async function refreshPage(key: string) {
+  try {
+    await knowledgeApi(
+      props.prefix,
+      "/pages/" + encodeURIComponent(key) + "/refresh",
+      { method: "POST" },
+    );
+    await load();
+  } catch (e) {
+    error.value = String(e);
+  }
+}
 async function load() {
   try {
     const result = await knowledgeApi<{
       articles: ArticleMeta[];
+      pages?: PlannedPage[];
       materials: MaterialOption[];
       running: boolean;
       lastRun: typeof lastRun.value;
     }>(props.prefix, "/articles");
-    articles.value = result.articles;
+    allArticles.value = result.articles;
+    pages.value = result.pages ?? [];
     materials.value = result.materials;
     running.value = result.running;
     lastRun.value = result.lastRun;
@@ -293,6 +341,19 @@ onBeforeUnmount(() => {
             ><span v-else>{{ part }}</span></template
           >
         </nav>
+        <div class="library-views" aria-label="阅读内容">
+          <OmButton
+            :variant="view === 'article' ? 'primary' : 'ghost'"
+            :aria-pressed="view === 'article'"
+            @click="changeView('article')"
+            >主题文章</OmButton
+          ><OmButton
+            :variant="view === 'reference' ? 'primary' : 'ghost'"
+            :aria-pressed="view === 'reference'"
+            @click="changeView('reference')"
+            >参考资料</OmButton
+          >
+        </div>
         <header class="overview-heading">
           <div>
             <h1>{{ topic.at(-1) || "知识库" }}</h1>
@@ -348,13 +409,39 @@ onBeforeUnmount(() => {
           @click="pageSize += 20"
           >继续浏览（还有 {{ scopedArticles.length - pageSize }} 篇）</OmButton
         >
+        <section v-if="pendingPages.length" class="planned-pages">
+          <h2>准备整理</h2>
+          <p v-for="page in pendingPages" :key="page.key">
+            <strong>{{ page.plan?.title }}</strong
+            ><span>{{
+              page.state === "writing"
+                ? "正在调查与写作"
+                : page.state === "failed"
+                  ? "上次整理未完成，阅读目标已保留"
+                  : "阅读目标已保存，等待整理"
+            }}</span
+            ><OmButton
+              variant="secondary"
+              :disabled="running"
+              @click="refreshPage(page.key)"
+              >{{ page.state === "failed" ? "重试整理" : "开始整理" }}</OmButton
+            >
+          </p>
+        </section>
         <OmEmpty
-          v-if="!scopedArticles.length"
+          v-if="!scopedArticles.length && !pendingPages.length"
           title="知识从你的材料开始"
           description="点击「整理文章」，选择材料和想弄懂的问题。"
         />
       </section>
       <footer v-if="current" class="next-guide">
+        <OmButton
+          v-if="current.reading"
+          variant="secondary"
+          :disabled="running"
+          @click="refreshPage(current.key)"
+          >重新整理这篇</OmButton
+        >
         <OmButton variant="ghost" @click="selectTopic(current.topicPath ?? [])"
           >返回分类</OmButton
         ><OmButton
@@ -377,6 +464,31 @@ onBeforeUnmount(() => {
   </section>
 </template>
 <style scoped>
+.library-views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.planned-pages {
+  border-top: 1px solid var(--om-line);
+  margin-top: 32px;
+  padding-top: 20px;
+}
+.planned-pages h2 {
+  font-size: 15px;
+}
+.planned-pages p {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 20px 0;
+  font-size: 14px;
+}
+.planned-pages span {
+  color: var(--om-muted);
+  font-size: 13px;
+}
 .knowledge-library {
   display: grid;
   grid-template-columns: 256px minmax(0, 1fr);
