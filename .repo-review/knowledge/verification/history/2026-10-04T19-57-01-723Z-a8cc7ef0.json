@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-04T14:24:43.021Z",
-  "implementationCommit": "ab0b8d64a9ba76a920ad6b3af14b61112fdb9945",
-  "sourceDigest": "dc3c2f71f4804c925b44589f878ac06bdb45bfaf8abf96f80dfb8ac9a032bf9a",
+  "recordedAt": "2026-10-04T19:57:01.723Z",
+  "implementationCommit": "ebafa1596dba8f314411c7e5d5e0452610f2d67b",
+  "sourceDigest": "a5f1bc04e9541f5795b31d552514f297b001fd0cd596fcef2a87b090a5d1a429",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T14-24-43-021Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-04T19-57-01-723Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T14-24-43-021Z/project.log",
-        "sha256": "db643dd16061958032f0f0b6654414a3ee995bcc3131fee7485ecb5a6c408447"
+        "log": ".repo-review/runtime/verification/2026-10-04T19-57-01-723Z/project.log",
+        "sha256": "518d9a0d4fb89a76988540385f0a06bb2e65268ec29c78a37f5699f53e174f26"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T14-24-43-021Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-04T19-57-01-723Z/liveChineseRetrieval.log",
         "sha256": "610d62bb64795e9832332aa36374add55c271e33737635d71f1941c7de21c885"
       }
     },
@@ -52,8 +52,8 @@
       "state": "passed",
       "details": {
         "articles": 8,
-        "currentArticles": 0,
-        "citations": 205,
+        "currentArticles": 3,
+        "citations": 243,
         "errors": []
       }
     },
@@ -64,11 +64,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v6",
-        "units": 12272,
+        "units": 12756,
         "semantic": {
           "model": "structure-icu-v6:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 12272,
+          "indexed": 12756,
           "pending": 0,
           "error": null
         },
@@ -95,11 +95,11 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 637,
+    "materials": 650,
     "publishedPages": 8,
-    "currentPages": 0,
+    "currentPages": 3,
     "plannedPages": 0,
-    "citations": 205,
+    "citations": 243,
     "articleLinks": 0,
     "errors": [],
     "pages": [
@@ -114,15 +114,14 @@
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "entry": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "commit": {
             "state": "current"
           },
-          "retrieval": {
+          "commit": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          },
+          "retrieval": {
+            "state": "current"
           },
           "branches": {
             "state": "needs-review",
@@ -133,39 +132,40 @@
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "media-code": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           }
         }
       },
       {
         "key": "guide:contributing",
-        "title": "改一条完整功能链：让搜索结果说清所属章节",
+        "title": "改一条完整功能链：从搜索结果到界面",
         "role": "article",
         "current": false,
         "sections": {
-          "scenario": {
+          "outcome": {
+            "state": "needs-review",
+            "reason": "背景前提已有变化：当前排序能力和真实 HTTP 搜索边界变化时，需要重审教学例子中的非承诺说明。"
+          },
+          "start-dev": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "start": {
+          "trace-request": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "trace": {
+          "section-origin": {
             "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "reason": "背景前提已有变化：回答上下文扩展边界变化会影响三类上下文的区别。"
           },
           "change": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "ui": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
           "verify": {
             "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "reason": "背景前提已有变化：知识更新命令、模型流程或检查入口变化时，需要更新收尾步骤。"
           }
         }
       },
@@ -173,7 +173,7 @@
         "key": "guide:knowledge-agent",
         "title": "把材料整理成一篇真正能用的文章",
         "role": "article",
-        "current": false,
+        "current": true,
         "sections": {
           "scenario": {
             "state": "current"
@@ -181,48 +181,49 @@
           "page-plan": {
             "state": "current"
           },
+          "new-chat": {
+            "state": "current"
+          },
           "workflow": {
             "state": "current"
           },
-          "roles": {
-            "state": "current"
-          },
           "reader-result": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "current"
           },
           "changes": {
             "state": "current"
           },
-          "improve": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          "maintenance": {
+            "state": "current"
           }
         }
       },
       {
         "key": "guide:knowledge-maintenance",
-        "title": "把材料整理成文章，并在原文变化后继续维护",
+        "title": "整理文章，以及原文更新后怎么处理",
         "role": "article",
         "current": false,
         "sections": {
-          "start": {
-            "state": "current"
-          },
-          "compose": {
-            "state": "current"
-          },
-          "run-and-retry": {
-            "state": "current"
-          },
-          "accept": {
-            "state": "current"
-          },
-          "source-change": {
+          "choose-scope": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "maintain": {
+          "compose-article": {
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          },
+          "wait-and-retry": {
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          },
+          "reader-check": {
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          },
+          "change-example": {
+            "state": "current"
+          },
+          "maintain-same-article": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           }
@@ -234,59 +235,50 @@
         "role": "reference",
         "current": false,
         "sections": {
-          "three_axes": {
+          "status-axes": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "section_status": {
+          "scope-classification": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "source_records": {
+          "dynamic-lifecycle": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "consumers": {
+          "evidence-visibility": {
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          },
+          "asset-removal": {
             "state": "current"
-          },
-          "retirement": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "change_map": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           }
         }
       },
       {
         "key": "guide:memory",
-        "title": "规则变了以后：原文、记忆与待办怎样更新",
+        "title": "规则变了以后：原文、记忆与待办如何更新",
         "role": "article",
-        "current": false,
+        "current": true,
         "sections": {
-          "scenario": {
+          "separate-fact-and-action": {
             "state": "current"
           },
-          "memory-pipeline": {
+          "capture-to-memory": {
             "state": "current"
           },
           "source-refresh": {
             "state": "current"
           },
-          "wiki-refresh": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "task-time": {
+          "memory-vs-wiki": {
             "state": "current"
           },
-          "reminders": {
+          "task-time-and-notification": {
             "state": "current"
           },
-          "capabilities": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          "check-progress-and-limits": {
+            "state": "current"
           }
         }
       },
@@ -296,31 +288,30 @@
         "role": "article",
         "current": false,
         "sections": {
-          "purpose": {
+          "start-with-agreement": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "walkthrough": {
+          "save-and-read": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "find": {
+          "ask-and-check": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "concepts": {
+          "organize-article": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "follow": {
+          "four-objects": {
+            "state": "current"
+          },
+          "documents-and-code": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "code": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "boundaries": {
+          "delegate-and-close": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           }
@@ -328,39 +319,34 @@
       },
       {
         "key": "guide:retrieval",
-        "title": "一次提问如何找到答案：召回、补读与回答",
+        "title": "一次提问如何找到答案：搜索、上下文与 RAG",
         "role": "article",
-        "current": false,
+        "current": true,
         "sections": {
-          "example": {
+          "what-counts-as-an-answer": {
             "state": "current"
           },
-          "shared": {
+          "retrieve-candidates": {
             "state": "current"
           },
-          "routes": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "context": {
+          "restore-context": {
             "state": "current"
           },
-          "research": {
+          "investigate-gaps": {
             "state": "current"
           },
-          "limits": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          "write-the-answer": {
+            "state": "current"
           },
-          "diagnose": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          "locate-failures": {
+            "state": "current"
           }
         }
       }
     ],
     "restore": {
-      "stale": 8
+      "stale": 5,
+      "restored": 3
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -384,7 +370,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 3,
-        "elapsedMs": 1783,
+        "elapsedMs": 577,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -439,17 +425,26 @@
         "status": 200,
         "baselineTop5": [
           "docs/reader-first/operations.md",
+          "docs/reader-first/operations.md",
           ".agents/skills/osdk-guide/reference/configuration/models.md",
           ".claude/skills/osdk-guide/reference/configuration/models.md",
-          ".agents/skills/osdk-guide/reference/model/guide.md",
-          ".claude/skills/osdk-guide/reference/model/guide.md"
+          ".agents/skills/osdk-guide/reference/model/guide.md"
         ],
-        "baselineUniquePathsAt5": 5,
+        "baselineUniquePathsAt5": 4,
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 753,
+        "elapsedMs": 577,
         "top5": [
+          {
+            "path": "docs/reader-first/operations.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "如果服务启动时已经配置 `retrieval.enabled=true`，只是本地模型文件缺失，安装完成后后台会按 30 秒间隔重新尝试加载，不永久缓存失败结果。若刚把检索配置从关闭改为开启，或改了模型别名，需要重启服务：配置在启动时读取，模型加载重试不重新读取配置文件。默认示例启用中文向量检索；个人配置以实际文件为准"
+          },
           {
             "path": "docs/reader-first/operations.md",
             "routes": [
@@ -478,22 +473,13 @@
             "snippet": "不要手写 OSDK 受管模型声明；使用 `model use/unuse`。`model import` 只创建当前机器的本地快照，不写声明或 lock，并拒绝链接/reparse point 与特殊文件。`install` 不会隐式下载模型。Civitai 引用必须是精确的 `civitai:<model-id>@<"
           },
           {
-            "path": "docs/reader-first/operations.md",
+            "path": "docs/reader-first/answer-investigation.md",
             "routes": [
               "bm25",
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "个人配置读取 `OMEM_CONFIG` 或忽略提交的 `omem.local.json`，没有时用 config/omem.example.json。profiles 配置 CLI/ACP 与模型；能力动态探测。启动不会自动生成整库知识。已启用的检索索引可后台补建。"
-          },
-          {
-            "path": "docs/reader-first/component-integration.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "当前隔离试验使用 osdk 管理的 Python/uv，锁定 `hindsight-api-slim[embedded-db]==0.10.2`，由 pg0 启动仅本机访问的 PostgreSQL。模型仍是仓库实际配置的 Traex ACP / gpt-5.6-sol，已有中文 BGE 提供向量，没有安装本地大语言模型"
+            "snippet": "第二题所选运行说明本身没有讲清“启动时已启用但缺模型”和“现在才修改配置启用”的区别，因此不能把它当作给足材料仍失败的纯写作实验。现已修正说明，并让助手在给步骤前核对前后条件是否真正衔接。随后用真实 Sol 重放指定原文组，仍提供没有补写重启条件的旧版运行说明：约 125 秒完成，主动补读配置入口、检索工厂和后台加载，"
           }
         ]
       },
@@ -506,18 +492,27 @@
         ],
         "status": 200,
         "baselineTop5": [
+          "docs/reader-first/assistant-memory-flow.md",
           "config/wiki-pages.json",
           "apps/server/tests/retrieval-unified.test.ts",
-          "docs/reader-first/progress.md",
-          "docs/archive/2026-10-01-baseline/AGENTS.md",
-          ".agents/skills/osdk-guide/reference/doctor/guide.md"
+          "docs/reader-first/publication-lifecycle.md",
+          "docs/reader-first/publication-lifecycle.md"
         ],
-        "baselineUniquePathsAt5": 5,
+        "baselineUniquePathsAt5": 4,
         "passed": false,
         "firstExpectedRank": null,
-        "uniquePathsAt5": 5,
-        "elapsedMs": 668,
+        "uniquePathsAt5": 4,
+        "elapsedMs": 660,
         "top5": [
+          {
+            "path": "docs/reader-first/assistant-memory-flow.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "事项即时应用和后台学习原本分别有验收脚本，但普通用户会同时启用它们。助手保存的原始委托也会进入后台提取。现在 LearningPipeline 把这条原始指令的已有应用回执和当前事项状态交给提取者，并按固定片段与任务历史过滤已经生效的重复事项候选；名称相似度不决定是否重复。原始指令、模型候选、观察和其他记忆仍保留，即使"
+          },
           {
             "path": "config/wiki-pages.json",
             "routes": [
@@ -525,7 +520,7 @@
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "记忆与待办如何更新\",\n      \"order\": 3,\n      \"kind\": \"explanation\",\n      \"reader\": \"想知道个人记忆如何维护与跟进事项的人\",\n      \"goal\": \"解释保存材料、应用记忆、重新核验和任务状态的区别，知道哪些更新已完成、哪些仍待处理。\",\n   "
+            "snippet": "3,\n      \"kind\": \"explanation\",\n      \"reader\": \"想知道个人记忆如何维护与跟进事项的人\",\n      \"goal\": \"解释保存材料、应用记忆、重新核验和任务状态的区别，知道哪些更新已完成、哪些仍待处理。\",\n      \"scenario\": \"项目约定从重试三次改为"
           },
           {
             "path": "apps/server/tests/retrieval-unified.test.ts",
@@ -537,30 +532,22 @@
             "snippet": "const passages = rerankPassages(\n    text,\n    \"怎样修改有效记忆，提案从什么入口写入？\",\n    text.slice(0, 400),\n    [{ label: \"原子写入记忆或事项\", aliases: [\"applyTask\", \"applyMemory\"] }"
           },
           {
-            "path": "docs/reader-first/progress.md",
+            "path": "docs/reader-first/publication-lifecycle.md",
             "routes": [
               "bm25",
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "现有系统已用真实 Traex 验证：约定从 80 改为 120 后更新同一记忆，创建跟进、重启后提醒、延后及完成；这不等于持续项目理解已经解决。"
+            "snippet": "“补充背景”会把回答保存成原始材料，同时加入这篇文章的选材计划。下一次重新整理时，研究者、作者和独立复核者都能读取它。保存补充本身不等于正文已经更新；开启持续维护后由后台排队，否则需要手动重新整理。两种方式都应检查新结果。"
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
+            "path": "docs/reader-first/publication-lifecycle.md",
             "routes": [
               "bm25",
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "1. 修改捕获、AST、知识生成/复核、引用、检索或助手运行后，先通过相关检查并提交实现，再更新受影响的知识资产，单独提交。保持已有用户改动。\n2. 用 `osdk run review:generate <文件或目录> --modules` 更新受影响的原始材料理解和模块正文；多个 `--only` 可合用。需要全库"
-          },
-          {
-            "path": ".agents/skills/osdk-guide/reference/doctor/guide.md",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "| 参数 | 语义 |\n| --- | --- |\n| `--verify` | 重新哈希安装文件，检测工具自更新、手工修改或不完整恢复；可能较慢 |\n| `--tool <TOOL>` | 只验证一个工具；要求同时给 `--verify` |"
+            "snippet": "失败保留旧文章并显示重试入口，不反复对同一份失败输入调用模型。新材料版本、范围成员变化或手动重试可以再次执行。界面显示排队、调查写作、完成或失败，固定旧引用继续可读；一次后台维护不会把知识文章变成独立事实，也不会直接修改个人记忆或事项。当前支持明确材料与项目/主题成员，尚未从内容自动判断新材料归属，也未实现周期回顾。"
           }
         ]
       },
@@ -581,7 +568,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 4,
-        "elapsedMs": 260,
+        "elapsedMs": 183,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -642,7 +629,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 146,
+        "elapsedMs": 166,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -708,7 +695,7 @@
         "passed": false,
         "firstExpectedRank": 8,
         "uniquePathsAt5": 5,
-        "elapsedMs": 691,
+        "elapsedMs": 759,
         "top5": [
           {
             "path": "design.md",
