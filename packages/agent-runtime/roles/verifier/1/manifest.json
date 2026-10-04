@@ -11,7 +11,7 @@
       "canonical_name": "omem-evidence-review",
       "version": "review-1",
       "load_mode": "inline",
-      "artifact_digest": "f4936f6d52c353529677e660f564ef6358200ff6f5dbbb16d421f75805d2c9e5"
+      "artifact_digest": "0411c96a03d921976d1f07526185d3a65437d25bbccb888fd5705ad978423447"
     }
   ],
   "output_schema": "AssessmentBatch.v1",

@@ -63,6 +63,20 @@ const pipeline = (store: Store, workspaceRoot: string, selected = profile()) =>
   });
 
 describe("B2-08 controlled learning pipeline", () => {
+  it("returns task-owner feedback to the native agent so responsibility survives as a fact", async () => {
+    const directory = temporary("omem-learning-responsibility-");
+    const store = new Store(directory);
+    const worker = pipeline(store, join(directory, "agent"), profile([fixtureAgent, "--repair-foreign-task"]));
+    try {
+      capture(store);
+      await worker.drain();
+      expect(store.jobs.list().every(job => job.state === "succeeded")).toBe(true);
+      expect(store.tasks()).toEqual([]);
+      const rows = store.db.prepare("SELECT m.kind,r.body FROM memories m JOIN memory_revisions r ON r.id=m.head_revision_id").all();
+      expect(rows).toMatchObject([{ kind: "claim", body: expect.stringContaining("同事负责这次集成") }]);
+    } finally { await worker.stop(); store.close(); }
+  });
+
   it("runs capture through independent extractor/verifier sessions and atomic application", async () => {
     const directory = temporary("omem-learning-app-");
     const built = await buildApp({
