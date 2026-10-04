@@ -57,6 +57,7 @@ export type NativeResearchEnvironment = {
   tools: string[];
   instructions: string;
   result: () => unknown;
+  submission?: Promise<void>;
   reset: () => void;
   activity: () => unknown[];
   update: (update: SessionUpdate) => void;
@@ -433,6 +434,7 @@ export class RoleRuntimeGateway {
                   (skill) => skill.canonical_name,
                 ),
                 unbounded: native,
+                finalSubmission: environment?.submission,
                 onSessionUpdate: environment?.update,
                 allowPermission: environment?.allowPermission,
                 ...(native
@@ -455,7 +457,7 @@ export class RoleRuntimeGateway {
               },
             );
             sessionIds.push(result.sessionId);
-            usage = result.usage;
+            usage = { ...result.usage, acpCompletion: result.completion };
             effectiveModel = currentOption(result.configOptions, "model");
             effectiveEffort = currentOption(
               result.configOptions,

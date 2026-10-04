@@ -29,6 +29,8 @@ writePage 的 researcher 返回 requests，宿主最多三轮执行 MaterialRese
 
 `agent-runtime/gateway.ts` 在原生知识模式跳过宿主输入/输出 token 预算，skills 按 canonical 名称原生加载；`agents.ts` 处理工具生命周期、计划与实际 usage，丢弃私有思考。候选提交经共享 Zod 合同及引用校验，因此聊天过程不用伪装成最终 JSON。实际 config/review-code-model.json 已移除三项预算配置；模型固有窗口、Traex 自动压缩、超时和取消仍存在。
 
+原生知识角色的 `submit_result` 通过校验并保存后，会通知 ACP 收束剩余会话。曾实际出现独立复核已经提交 accepted，但 CLI 一直不返回 `session/prompt`，最终八分钟超时；现在无需再等待该结束消息才接收结果。失败提交仍留在同一会话修正，用户取消仍使任务取消。运行记录用 `acpCompletion` 区分正常回合结束和最终提交完成；后一种情况的 usage 只代表退出前已收到的统计。角色完成后仍要保存作业结果，并经过独立复核、材料与计划有效性检查，才会发布文章。
+
 知识生成、助手和答案复核现在共用 Traex 的工作区启动配置：明确指定材料工作区，并关闭项目指令的自动加载（`project_doc_max_bytes=0`）。此前只有助手接了这项设置；真实活动文章的维护研究者和改写者曾先尝试读取并不存在的仓库 README、reader-first 文档，失败后才寻找材料目录。开发仓库的 AGENTS 不应指导一次个人材料调查。这里统一的是指令发现方式，不是文件系统沙箱；原生 CLI 仍未实现完整 OS 文件访问隔离。
 
 修复后以同一旧文和材料变化完成了真实 Traex/Sol 的研究、改写、独立复核，活动时间正确更新，三阶段记录中无 README、进度文档或仓库根目录探测。用时约 244 秒，修复前约 311 秒；这是一次实际观察，不是稳定速度基准。结果与限制见[文章维护](publication-lifecycle.md)。
