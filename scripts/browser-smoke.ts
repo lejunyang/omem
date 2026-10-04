@@ -921,6 +921,44 @@ try {
     await expect.poll(() => Number(store.db.prepare("SELECT enabled FROM knowledge_page_maintenance WHERE document_key=?").get(plan.key)?.enabled)).toBe(0);
     expect(store.jobs.list().filter(job => job.kind === "knowledge:maintain-page")).toHaveLength(0);
   });
+  await check("project capture and article scope use persisted memberships", async () => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(base + "#/capture");
+    await page.getByRole("button", { name: "新建项目或主题", exact: true }).click();
+    await page.getByLabel("名称", { exact: true }).fill("阅读小组界面验收");
+    await page.getByLabel("范围说明", { exact: true }).fill("报名与场地安排");
+    await page.getByRole("button", { name: "创建并选中", exact: true }).click();
+    await expect.poll(() => store.contexts.list().find(c => c.name === "阅读小组界面验收")?.id).toBeTruthy();
+    await expect(page.getByRole("checkbox", { name: /阅读小组界面验收/ })).toBeChecked();
+    await page.getByLabel("材料标题", { exact: true }).fill("小组场地补充");
+    await page.getByLabel("材料正文", { exact: true }).fill("周五在东侧阅读室集合。小周负责签到。");
+    await page.getByRole("button", { name: "保存材料与证据", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "小组场地补充", exact: true })).toBeVisible();
+    const source = store.list().find(s => s.title === "小组场地补充")!;
+    const contextId = store.contexts.list().find(c => c.name === "阅读小组界面验收")!.id;
+    expect(store.contexts.forSource(source.sourceId)).toEqual([contextId]);
+    await page.getByRole("button", { name: "所属项目与主题", exact: true }).click();
+    await expect(page.getByRole("checkbox", { name: /阅读小组界面验收/ })).toBeChecked();
+    await page.getByRole("button", { name: "保存归属", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "归属已保存" })).toBeVisible();
+    await page.goto(base + "#/knowledge/browser-maintenance");
+    await page.getByRole("button", { name: "调整材料与目标", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "调整材料与目标", exact: true });
+    await dialog.getByRole("checkbox", { name: /阅读小组界面验收/ }).check();
+    await expect(dialog.locator(".material-options")).toContainText("小组场地补充");
+    const linked = dialog.locator(".material-option").filter({ hasText: "小组场地补充" });
+    await expect(linked.getByRole("checkbox")).toBeChecked();
+    await expect(linked.getByRole("checkbox")).toBeDisabled();
+    for (const width of [1440, 768, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: join(out, `project-contexts-${width}.png`) });
+    }
+    await dialog.getByRole("button", { name: "下一步", exact: true }).click();
+    await dialog.getByRole("button", { name: "保存并重新整理", exact: true }).click();
+    await expect(dialog).not.toBeVisible();
+    expect(new KnowledgeRepository(store).pages().find(p => p.key === "browser-maintenance")?.plan?.contextIds).toEqual([contextId]);
+  });
   expect(errors).toEqual([]);
   writeFileSync(
     resolve(".repo-review/runtime/browser/verification.json"),

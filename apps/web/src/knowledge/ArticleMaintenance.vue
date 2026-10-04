@@ -7,6 +7,7 @@ const props = defineProps<{
   prefix: string;
   documentKey: string;
   selectedCount: number;
+  contexts?: string[];
   status?: PageMaintenanceStatus | null;
 }>();
 const emit = defineEmits<{ updated: []; retry: [] }>();
@@ -30,10 +31,11 @@ async function toggle(event: Event) {
 <template>
   <section class="article-maintenance" aria-label="文章更新方式">
     <label>
-      <input type="checkbox" :checked="status?.enabled" :disabled="saving || (!status?.enabled && !selectedCount)" @change="toggle" />
+      <input type="checkbox" :checked="status?.enabled" :disabled="saving || (!status?.enabled && !selectedCount && !contexts?.length)" @change="toggle" />
       <strong>随所选材料自动更新</strong>
     </label>
-    <p v-if="selectedCount">跟踪已选的 {{ selectedCount }} 项材料。材料有变化时，AI 会更新并复核这篇文章；期间仍可阅读旧版。新增材料请通过“调整材料与目标”加入。</p>
+    <p v-if="contexts?.length">持续跟踪 {{ contexts.join('、') }} 中的材料<span v-if="selectedCount">，以及另选的 {{ selectedCount }} 项背景材料</span>。新增、移出或更新材料后，AI 会重新整理并复核；期间仍可阅读旧版。</p>
+    <p v-else-if="selectedCount">跟踪已选的 {{ selectedCount }} 项材料。材料有变化时，AI 会更新并复核这篇文章；期间仍可阅读旧版。新增材料请通过“调整材料与目标”加入。</p>
     <p v-else>先通过“调整材料与目标”明确选材，再开启持续更新。</p>
     <p v-if="saving" role="status">正在保存更新方式…</p>
     <p v-else-if="status?.state === 'queued'" role="status">更新已排队，将按最新材料整理。</p>

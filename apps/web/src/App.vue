@@ -40,6 +40,8 @@ import {
 } from "./api";
 import EvidenceReader from "./EvidenceReader.vue";
 import MaterialDescription from "./MaterialDescription.vue";
+import ContextPicker from "./ContextPicker.vue";
+import SourceContexts from "./SourceContexts.vue";
 import { materialRoles, materialRoleLabels, materialStatusLabels, type MaterialRole } from "../../../packages/contracts/src/material-description";
 import ChatPane from "./ChatPane.vue";
 import AssetImage from "./AssetImage.vue";
@@ -238,6 +240,7 @@ const image = ref<{
 } | null>(null);
 const taskDraft = ref({ title: "", detail: "", dueAt: "" });
 const importMode = ref("text");
+const captureContextIds = ref<string[]>([]);
 const unread = computed(
   () => notifications.value.filter((n) => !n.readAt).length,
 );
@@ -422,15 +425,17 @@ async function capture() {
   error.value = "";
   try {
     let response: { revision: Revision; duplicate: boolean };
+    const contextIds = captureContextIds.value.length ? captureContextIds.value : undefined;
     if (importMode.value === "lark")
-      response = await api("/connectors/lark", { url: input.value.url });
+      response = await api("/connectors/lark", { url: input.value.url, contextIds });
     else if (importMode.value === "file")
-      response = await api("/connectors/file", { path: input.value.filePath });
+      response = await api("/connectors/file", { path: input.value.filePath, contextIds });
     else if (importMode.value === "git")
       response = await api("/connectors/git", {
         repo: input.value.repo,
         path: input.value.gitPath,
         ref: input.value.gitRef,
+        contextIds,
       });
     else {
       const parts: unknown[] = [];
@@ -441,6 +446,7 @@ async function capture() {
       if (image.value) parts.push(image.value);
       response = await api("/captures", {
         source: input.value.source,
+        contextIds,
         externalId: input.value.externalId || crypto.randomUUID(),
         title: input.value.title,
         parts,
@@ -820,6 +826,7 @@ onBeforeUnmount(() => {
           </div>
           <h1>{{ revision.title }}</h1>
           <MaterialDescription :revision-id="revision.id" :current="revision.current" />
+          <SourceContexts :key="revision.sourceId" :source-id="revision.sourceId" />
           <p class="muted">
             保存于 {{ new Date(revision.createdAt).toLocaleString("zh-CN") }} ·
             每个片段都有固定身份
@@ -969,7 +976,7 @@ onBeforeUnmount(() => {
           <p class="muted">
             只读取配置 captureRoots 允许的 UTF-8 文件，最多 500 KB。
           </p></template
-        ><OmButton type="submit" variant="primary" :loading="busy"
+        ><ContextPicker v-model="captureContextIds" :disabled="busy" /><OmButton type="submit" variant="primary" :loading="busy"
           >保存材料与证据</OmButton
         >
       </form>

@@ -201,6 +201,22 @@ try {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: `${OUT}/maintenance-${width}.png` });
   });
+  await check("project and topic input is readable in the actual development app", async () => {
+    await page.goto(BASE + "#/capture");
+    const picker = page.getByRole("group", { name: "项目或主题（可选）", exact: true });
+    await expect(picker).toBeVisible();
+    await expect(picker.getByRole("status")).toHaveCount(0);
+    await expect(picker.getByRole("alert")).toHaveCount(0);
+    await picker.getByRole("button", { name: "新建项目或主题", exact: true }).click();
+    for (const width of [1440, 768, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await picker.scrollIntoViewIfNeeded();
+      await expect(picker.getByLabel("名称", { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: `${OUT}/context-input-${width}.png` });
+    }
+    // Read-only inspection: do not leave synthetic contexts in the personal library.
+  });
   expect(errors).toEqual([]);
   writeFileSync(`${OUT}/report.json`, JSON.stringify({ base: BASE, checks, errors }, null, 2));
 } finally { await browser.close(); }
