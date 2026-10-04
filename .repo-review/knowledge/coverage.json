@@ -1,11 +1,10 @@
 {
   "version": 1,
-  "checkedAt": "2026-10-04T20:56:37.248Z",
+  "checkedAt": "2026-10-04T21:16:28.226Z",
   "model": "gpt-5.6-sol",
   "workflow": "reader-first",
   "selection": [
-    "guide:memory",
-    "guide:knowledge-agent"
+    "guide:memory"
   ],
   "pages": [
     {
@@ -36,7 +35,7 @@
     {
       "key": "guide:knowledge-agent",
       "title": "把材料写成一篇能用的文章",
-      "state": "reviewed"
+      "state": "stale"
     },
     {
       "key": "guide:knowledge-maintenance",
@@ -2782,7 +2781,7 @@
       "path": "apps/server/src/learning/pipeline.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/src/learning/pipeline.ts",
-      "digest": "8790239fa1e290e34558347ebf1ee1560348bc76db36171b13b335be95959124",
+      "digest": "b50de16c86f5e310bcce478269b114e1477992ee5af7d07bb95271a26393bae5",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -3326,7 +3325,7 @@
       "path": "apps/server/tests/fixtures/role-acp-agent.mjs",
       "state": "captured",
       "materialKey": "omem:apps/server/tests/fixtures/role-acp-agent.mjs",
-      "digest": "66c3937aebf106770471bc86a44027c6b85b149ceade9694160de29a479ff6fc",
+      "digest": "063aa67d3a7068e385c7d84696dad55a3562d9289df5ec0fe35ef8f8bfcebcf9",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -3470,9 +3469,9 @@
       "path": "apps/server/tests/learning-pipeline.test.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/tests/learning-pipeline.test.ts",
-      "digest": "4f1b570a1c4daabc8911a83d372dc86a17a38df80b1433fec3e9eb5dd977c2a3",
+      "digest": "6da1c9a50172966d84b027c2956ac3b804c1a6fa4153b14518dd4a2fdedafcba",
       "reason": "固定材料已保存",
-      "knowledge": "reviewed"
+      "knowledge": "stale"
     },
     {
       "path": "apps/server/tests/learning-projects.test.ts",
@@ -5070,7 +5069,7 @@
       "path": "docs/reader-first/progress.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/progress.md",
-      "digest": "f8e9d1d767008930466a4a940291910edf08cd31dfe030ce0c3413f919e53d57",
+      "digest": "fee1161a865092db918cb43e607651efd33ac28c99515312958765a87227d9ec",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5078,7 +5077,7 @@
       "path": "docs/reader-first/project-contexts.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/project-contexts.md",
-      "digest": "19f8f80b52a8f67d74bcd5ed2d30b27fabbf63d2d319d9f8afd84b12d0b90c5f",
+      "digest": "12a06bb6f6ab0acfab04b42bc0b4200e1a8c00cff3d67641e7b7c1fbffe2b321",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5334,7 +5333,7 @@
       "path": "packages/agent-runtime/roles/extractor/1/manifest.json",
       "state": "captured",
       "materialKey": "omem:packages/agent-runtime/roles/extractor/1/manifest.json",
-      "digest": "c34e873aad8ef48687b617b5205c4818e90ce3ee51dc3ae3c625cdb79426564d",
+      "digest": "b40c559e19359d009a7612891c7fdbfb385a749f8fd4aa92db84aec55c583191",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -5350,7 +5349,7 @@
       "path": "packages/agent-runtime/roles/extractor/1/prompt.md",
       "state": "captured",
       "materialKey": "omem:packages/agent-runtime/roles/extractor/1/prompt.md",
-      "digest": "062be81d57ec59efc478cf2e2fb3e2fbeba08e1e13ba284b555fcd8cd41961e1",
+      "digest": "e7083e4472b5c43f7c9cfd60469cadce5d9b8b65562552d91364a846744b45bc",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -5358,7 +5357,7 @@
       "path": "packages/agent-runtime/roles/extractor/1/skills/omem-extract/SKILL.md",
       "state": "captured",
       "materialKey": "omem:packages/agent-runtime/roles/extractor/1/skills/omem-extract/SKILL.md",
-      "digest": "acbc355fdf848fbd645331d709de5da8a4ccc4546da4e938754f32fd313fee4d",
+      "digest": "20ab09ca1014da164c75091fb85ae52d69f33631e58f4eaeb964aab88935ee62",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -5846,7 +5845,7 @@
       "path": "packages/agent-runtime/roles/verifier/1/manifest.json",
       "state": "captured",
       "materialKey": "omem:packages/agent-runtime/roles/verifier/1/manifest.json",
-      "digest": "6bf0cb43165b2fa9ef32780901aeddd215e3e66aee181e0cf7df498483cac102",
+      "digest": "91c9edbc4a0655077f24e483ed3624afa2602383f6704a86f5e456ec2b562cb1",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -5862,7 +5861,7 @@
       "path": "packages/agent-runtime/roles/verifier/1/prompt.md",
       "state": "captured",
       "materialKey": "omem:packages/agent-runtime/roles/verifier/1/prompt.md",
-      "digest": "d38a6e3fca66de820fa10d5dfae557af2baba164f97018ca6c086f812b76a8c9",
+      "digest": "78ae9b563f387d715e9095f51ac5ecd05be78c743e15020c2bd000dddcaed2f4",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -5870,7 +5869,7 @@
       "path": "packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/SKILL.md",
       "state": "captured",
       "materialKey": "omem:packages/agent-runtime/roles/verifier/1/skills/omem-evidence-review/SKILL.md",
-      "digest": "4d6abf95e32654315b37e07133c5450568b8abeddcdba13eea0b3c5422414759",
+      "digest": "c0635b719174823c7e9a42302767b1ff34825afc60d850a81bee5de2815d99cd",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
