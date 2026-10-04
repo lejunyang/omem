@@ -40,6 +40,7 @@ export type MemoryApplication = {
 export type TaskApplication = {
   metadata: ApplicationMetadata;
   task: {
+    projectId?: string | null;
     id?: string;
     expectedVersion?: number;
     title: string;
@@ -555,6 +556,7 @@ export class ApplicationRepository {
         const taskId = existing
           ? String(existing.id)
           : (input.task.id ?? randomUUID());
+        const projectId = input.task.projectId === undefined ? (existing?.project_id ? String(existing.project_id) : null) : input.task.projectId;
         const parsedFollowUp = input.task.followUp ? taskFollowUpSchema.parse(input.task.followUp) : null;
         const followUp = input.task.followUp === undefined ? (existing?.follow_up ? String(existing.follow_up) : null) : parsedFollowUp ? JSON.stringify({ ...parsedFollowUp,
           next_check_at: parsedFollowUp.next_check_at ? new Date(parsedFollowUp.next_check_at).toISOString() : null,
@@ -571,7 +573,7 @@ export class ApplicationRepository {
           const updated = this.db
             .prepare(
               `UPDATE tasks SET title=?,detail=?,due_at=?,evidence_id=?,status=?,
-                 version=?,workspace_id=?,owner_id=?,due_expression=?,next_step=?,follow_up=?
+                 version=?,workspace_id=?,owner_id=?,due_expression=?,next_step=?,follow_up=?,project_id=?
                WHERE id=? AND workspace_id=? AND version=?`,
             )
             .run(
@@ -586,6 +588,7 @@ export class ApplicationRepository {
               input.task.dueExpression ?? null,
               input.task.nextStep,
               followUp,
+              projectId,
               taskId,
               input.metadata.workspaceId,
               previousVersion,
@@ -596,8 +599,8 @@ export class ApplicationRepository {
             .prepare(
               `INSERT INTO tasks(
                  id,title,detail,due_at,evidence_id,status,created_at,version,
-                 workspace_id,owner_id,due_expression,next_step,follow_up
-               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                 workspace_id,owner_id,due_expression,next_step,follow_up,project_id
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
             )
             .run(
               taskId,
@@ -613,14 +616,15 @@ export class ApplicationRepository {
               input.task.dueExpression ?? null,
               input.task.nextStep,
               followUp,
+              projectId,
             );
         }
         this.db
           .prepare(
             `INSERT INTO task_revisions(
              id,workspace_id,task_id,version,title,detail,due_at,due_expression,
-             owner_id,next_step,status,evidence_set,correction_feedback_id,created_at,follow_up
-           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)`,
+             owner_id,next_step,status,evidence_set,correction_feedback_id,created_at,follow_up,project_id
+           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?)`,
           )
           .run(
             randomUUID(),
@@ -639,6 +643,7 @@ export class ApplicationRepository {
             ),
             date,
             followUp,
+            projectId,
           );
         return {
           id: taskId,

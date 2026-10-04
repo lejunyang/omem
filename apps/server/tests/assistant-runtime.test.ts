@@ -72,6 +72,73 @@ const captureSource = (
     provenance: { ...ownerProvenance, ...(extra.provenance ?? {}) },
   }).revision;
 
+it("keeps the resolved project through restart, scopes follow-up retrieval, and preserves a task's own project when the conversation changes", async () => {
+  const resource = setup();
+  let store = resource.store;
+  const web = store.contexts.create({name:"新版发布",kind:"project",description:"Web端"});
+  const mobile = store.contexts.create({name:"新版发布",kind:"project",description:"移动端"});
+  const a = captureSource(store,"web-update","验收负责人许宁，期限不变，素材不改交互无需重验。");
+  const b = captureSource(store,"mobile-update","验收负责人陈远，任何素材修改需要重验。");
+  store.contexts.setForSource(a.sourceId,[web.id]);
+  store.contexts.setForSource(b.sourceId,[mobile.id]);
+  let retrieval = new UnifiedRetrieval(store.db);
+  let runtime = new AssistantRuntime(store,{async generate(input) {
+    expect(input.workingProject).toBeNull();
+    expect(input.projects?.map(p=>p.id)).toContain(web.id);
+    return {answer:"Web端负责人是许宁。",citationIds:[a.fragments[0]!.id],
+      projectSelection:{project_id:web.id,reason:"用户指定Web端"}};
+  }},{retrieval});
+  const conversation = runtime.conversations.open({principalId:"owner",channel:"web",chatId:"project-binding",visibility:"private"});
+  const first = await runtime.turn({conversationId:conversation.id,userText:"Web端现在谁负责验收？"});
+  expect(first.conversation.projectId).toBe(web.id);
+  runtime.shutdown(); await retrieval.close(); store.close();
+
+  store = resource.store = new Store(resource.directory);
+  resources.find(r => r.directory === resource.directory)!.store = store;
+  retrieval = new UnifiedRetrieval(store.db);
+  let step = 0;
+  runtime = new AssistantRuntime(store,{async generate(input) {
+    step++;
+    if (step === 1) {
+      // No transcript/citation replay: the discussion object is durable data.
+      expect(input.priorTurns).toEqual([]);
+      expect(input.workingProject?.id).toBe(web.id);
+      expect(input.evidence.map(e=>e.sourceRevisionId)).toContain(a.id);
+      expect(input.evidence.map(e=>e.sourceRevisionId)).not.toContain(b.id);
+      expect(input.visible?.(b.fragments[0]!.id)).toBe(true); // scope is not permission
+      return {answer:"建议跟进",citationIds:[],projectSelection:{project_id:web.id,reason:"延续刚才的Web端"},
+        toolCalls:[{tool:"create_task",title:"确认Web端验收结果",detail:"找许宁确认"}]};
+    }
+    if (step === 2) return {answer:"移动端由陈远负责。",citationIds:[],
+      projectSelection:{project_id:mobile.id,reason:"用户切换到移动端"}};
+    if (step === 3) {
+      expect(input.workingProject?.id).toBe(mobile.id);
+      const task=input.tasks![0]!;
+      expect(task.projectId).toBe(web.id);
+      return {answer:"候选完成",citationIds:[],toolCalls:[{tool:"update_task",taskId:task.id,expectedVersion:task.version,action:"complete"}]};
+    }
+    return {answer:"这是无关的日常提醒。",citationIds:[],projectSelection:{project_id:null,reason:"与项目无关"},
+      toolCalls:[{tool:"create_task",title:"买牛奶",detail:"日常购物"}]};
+  }},{retrieval,memory:new MemoryService(store),maxPriorTurns:0});
+  try {
+    const taskTurn=await runtime.turn({conversationId:conversation.id,userText:"帮我记个待办：找验收负责人确认结果"});
+    expect(taskTurn.turn.inputMessageRefs.status).toBe("done");
+    expect(taskTurn.degraded).toBe(false);
+    const task=store.tasks()[0]!;
+    expect(task.projectId).toBe(web.id);
+    const original=store.evidence(String(task.evidenceId))!;
+    expect(store.contexts.forSource(original.revision.sourceId)).toEqual([web.id]);
+    await runtime.turn({conversationId:conversation.id,userText:"再看看移动端的验收"});
+    await runtime.turn({conversationId:conversation.id,userText:"把刚才Web端的待办标为完成"});
+    expect(store.tasks().find(t=>t.id===task.id)).toMatchObject({projectId:web.id,status:"done"});
+    expect(store.db.prepare("SELECT project_id FROM task_revisions WHERE task_id=? ORDER BY version").all(String(task.id)))
+      .toEqual([{project_id:web.id},{project_id:web.id}]);
+    const cleared=await runtime.turn({conversationId:conversation.id,userText:"换个话题，帮我记一下买牛奶"});
+    expect(cleared.conversation.projectId).toBeNull();
+    expect(store.tasks().find(t=>t.title==="买牛奶")?.projectId).toBeNull();
+  } finally { runtime.shutdown(); await retrieval.close(); }
+});
+
 it("passes revision-bound purpose and validity to the answering agent instead of promoting an old plan to current behavior", async () => {
   const { store } = setup();
   const old = captureSource(store, "delivery-plan", "配送计划：准备允许每周改一次收货地址。");

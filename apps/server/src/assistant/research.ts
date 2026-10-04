@@ -82,6 +82,10 @@ export async function prepareAssistantResearch(input: {
     validate: (out) => {
       const parsed = assistantReplySchema.parse(out),
         identities = new Set<string>();
+      const selectedProject = parsed.project_selection?.project_id;
+      if (selectedProject && (context.visibility !== "private" ||
+        !context.projects?.some(p => p.kind === "project" && p.id === selectedProject)))
+        throw Error("project_selection 必须使用当前可用项目的真实 ID；无法辨认时设为 null 并澄清。主题不是项目，选择也不授予写入权限。");
       input.beforeSubmit?.(parsed.answer, parsed);
       if (parsed.create_task && parsed.update_task)
         throw Error("每次只能提议一个事项操作");

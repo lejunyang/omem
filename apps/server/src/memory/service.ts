@@ -1270,6 +1270,7 @@ export class MemoryService {
           metadata,
           task: {
             id: proposal.target_id ?? undefined,
+            ...(proposal.operation === "create" ? { projectId: proposal.scope.project_id } : {}),
             expectedVersion: proposal.target_id
               ? proposal.expected_versions[proposal.target_id]
               : undefined,

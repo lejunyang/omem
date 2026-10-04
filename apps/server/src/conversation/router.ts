@@ -17,6 +17,7 @@ export type Conversation = {
   visibility: Visibility;
   currentGoal: string | null;
   pendingCaseId: string | null;
+  projectId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -65,6 +66,7 @@ const rowToConversation = (row: Row): Conversation => ({
   visibility: String(row.visibility) as Visibility,
   currentGoal: row.current_goal ? String(row.current_goal) : null,
   pendingCaseId: row.pending_case_id ? String(row.pending_case_id) : null,
+  projectId: row.project_id ? String(row.project_id) : null,
   createdAt: String(row.created_at),
   updatedAt: String(row.updated_at),
 });
@@ -143,6 +145,12 @@ export class ConversationRouter {
         "UPDATE conversations SET current_goal=?,updated_at=? WHERE id=?",
       )
       .run(goal, now(), conversationId);
+  }
+
+  /** A resolved discussion object, independent of chat identity and permissions. */
+  setProject(conversationId: string, projectId: string | null) {
+    this.db.prepare("UPDATE conversations SET project_id=?,updated_at=? WHERE id=?")
+      .run(projectId, now(), conversationId);
   }
 
   nextOrdinal(conversationId: string): number {

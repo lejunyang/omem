@@ -11,7 +11,7 @@
       "canonical_name": "omem-assistant-research",
       "version": "1",
       "load_mode": "native",
-      "artifact_digest": "08e956a9ac0cb55784f7df5491bcc241e8db19e1f9f6daba5d1ac723d9117026"
+      "artifact_digest": "dfff8a23e58239b9bd7886852dad32d6a19435fa67f0f8bc0adb74df156d1051"
     }
   ],
   "output_schema": "AssistantReply.v1",

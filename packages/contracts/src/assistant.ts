@@ -9,9 +9,15 @@ const followUp = taskFollowUpSchema.nullable().describe(
 );
 
 /** Native research returns locators, not copied database IDs or copied code. */
+export const assistantProjectSelectionSchema = z.object({
+  project_id: z.string().min(1).nullable(),
+  reason: z.string().min(1),
+}).strict().describe("The project this conversation is now about, chosen from the supplied saved projects. Resolve from the current question, prior clarification and material context, not a similar name alone. Null clears the project for unrelated/general questions, comparisons or unresolved ambiguity. This is a reading scope, not permission or a fact update.");
+
 export const assistantReplySchema = z
   .object({
     answer: z.string().min(1),
+    project_selection: assistantProjectSelectionSchema.optional(),
     citations: z.array(
       z
         .object({
