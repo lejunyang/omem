@@ -1,4 +1,5 @@
-import { evidenceNeighbors, evidenceSection, sourceContextRanges } from "../retrieval/context.js";
+import { evidenceNeighbors, evidenceSection } from "../retrieval/context.js";
+import { assembleAnswerContext, mergeBackground } from "./context.js";
 import {
   taskFollowUpSchema,
   type TaskFollowUp,
@@ -21,10 +22,8 @@ import type {
   RetrievalHit,
   SourceAnchor,
 } from "../retrieval/port.js";
-import { materialFromRevision } from "../knowledge/repository.js";
 import { fragmentPositions } from "../knowledge/structure.js";
 import { stableDigest } from "../storage/digest.js";
-import { evidenceForRange } from "./research.js";
 
 export type ResearchActivity = {
   label: string;
@@ -671,10 +670,10 @@ export class AssistantRuntime {
             ),
           );
           const extra = contexts.flatMap((c) => c.evidence);
-          background = [
+          background = mergeBackground([
             ...contexts.flatMap((c) => c.background),
             ...background,
-          ].slice(0, 16);
+          ]);
           evidence = [
             ...new Map(
               [...extra, ...evidence].map((e) => [
@@ -682,7 +681,7 @@ export class AssistantRuntime {
                 e,
               ]),
             ).values(),
-          ].slice(0, 24);
+          ];
           reply = await this.withTimeout(
             this.model.generate({
               userText: input.userText,
@@ -938,62 +937,14 @@ export class AssistantRuntime {
     const visible = (id: string) => this.isVisible(conversation, id);
     const hits = await retrieval.search({
       text: userText,
-      limit: 16,
+      // Retrieve a pool, then spend reading slots on distinct complete contexts.
+      limit: 48,
       // Browse diversity must not discard a third fact from the same original.
       diversify: false,
       purpose,
       visible,
     });
-    const evidence = new Map<string, AssistantEvidence>(),
-      background: AssistantBackground[] = [];
-    for (const hit of hits) {
-      const citationIds: string[] = [];
-      for (const reference of hit.references) {
-        const material = materialFromRevision(this.store, reference.revisionId);
-        if (!material) continue;
-        if (!reference.fragmentIds.every(visible)) continue;
-        const contexts = hit.kind === "source"
-          ? sourceContextRanges(material, reference, visible, { db: this.store.db, unitId: hit.id })
-          : [reference];
-        for (const context of contexts) {
-          const entry = evidenceForRange(
-            material,
-            context.startLine,
-            context.endLine,
-            visible,
-          );
-          entry.sourceTarget = context;
-          // Preserve the adapter's public locator alongside its fixed range.
-          // A reconstructed revision may use a different storage namespace key.
-          entry.materialKey = reference.key;
-          entry.materialDescription = this.store.descriptions.get(reference.revisionId) ?? undefined;
-          if (hit.kind === "source" && !entry.sectionTitle && hit.headingPath.length)
-            entry.sectionTitle = hit.headingPath.join(" / ");
-          if (!evidence.has(entry.citationId!))
-            evidence.set(entry.citationId!, entry);
-          citationIds.push(entry.citationId!);
-        }
-      }
-      if (hit.kind !== "source")
-        background.push({
-          kind: hit.kind,
-          target: hit.target,
-          title: hit.title,
-          text: hit.text.replace(
-            /\[\[([\w-]+)\]\]/g,
-            (_ref, key: string) =>
-              hit.citations?.find((c) => c.key === key)?.label ??
-              "（引用见文章）",
-          ),
-          headingPath: hit.headingPath,
-          materialDescription: hit.materialDescription,
-          citationIds,
-          ...(hit.target.kind === "knowledge" && hit.target.reviewState
-            ? { reviewState: hit.target.reviewState }
-            : {}),
-        });
-    }
-    return { evidence: [...evidence.values()].slice(0, 28), background };
+    return assembleAnswerContext(this.store,hits,visible);
   }
 
   private async retrieveEvidence(

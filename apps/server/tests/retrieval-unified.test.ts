@@ -12,6 +12,7 @@ import { markdownPassages } from "../src/retrieval/units.js";
 import { asksForCallers, querySymbols } from "../src/retrieval/relevance.js";
 import { rerankPassages } from "../src/retrieval/rerank-passages.js";
 import { sourceContextRange } from "../src/retrieval/context.js";
+import { assembleAnswerContext } from "../src/assistant/context.js";
 import { sourceAnchor } from "../src/retrieval/units.js";
 import { ensureMaterialAliases } from "../src/knowledge/material-identity.js";
 import type { EmbeddingModel } from "../src/retrieval/embedding.js";
@@ -1170,6 +1171,41 @@ it("passes readable background to the assistant while keeping original bytes and
   } finally {
     await s.close();
   }
+});
+
+it("reads a complete knowledge chapter once, including an unmatched condition and its fixed original", async () => {
+  const s = setup();
+  try {
+    s.store.capture({source:"manual",externalId:"consumer",title:"受理实现",context:{},parts:[{type:"text",text:"if (seen(event.id)) return;\nqueue.deliver(event.parcel);"}]});
+    const first = s.publish();
+    s.store.capture({source:"manual",externalId:"eligibility",title:"适用范围.md",context:{},parts:[{type:"text",text:"# 条件\n\n仅限提前登记并完成付款的参加者。\n\n# 其他\n初版导读。"}]});
+    const condition = s.repository.materials().find(m => m.key === "manual:eligibility")!;
+    const {revision,current,...base} = first;
+    const document = structuredClone(base.document);
+    document.sections[0]!.body += "\n\n重复通知用已有记录处理。[[implementation]]\n\n仅限提前登记并完成付款的参加者。[[condition]]";
+    document.sections.push({key:"unrelated",title:"资料归档",body:"归档采用独立目录。[[condition]]"});
+    document.citations.push({key:"condition",label:"适用条件",reason:"原文规定适用对象",relation:"supports",quote:"",target:{kind:"material",key:condition.key,startLine:3,endLine:3}});
+    const article = s.repository.publish({...base,document:bindKnowledgeQuotes(document,new Map(s.repository.materials().map(m=>[m.key,m]))),dependencies:[...base.dependencies,{kind:"material",key:condition.key,digest:condition.digest}]});
+    // Moving an unchanged condition in a later original does not rebind its citation.
+    s.store.capture({source:"manual",externalId:"eligibility",title:"适用范围.md",context:{},parts:[{type:"text",text:"# 条件\n\n仅限提前登记并完成付款的参加者。\n\n# 其他\n更新后的导读。"}]});
+    const hits = await s.retrieval.search({text:"重复通知",kinds:["knowledge"],diversify:false,limit:2});
+    expect(hits.filter(h=>h.target.kind==="knowledge" && h.target.section==="dedup").length).toBeGreaterThan(1);
+    expect(hits.some(h=>h.text.includes("完成付款"))).toBe(false);
+    const assembled = assembleAnswerContext(s.store,hits,()=>true,1);
+    expect(assembled.background).toHaveLength(1);
+    expect(assembled.background[0]?.text).toContain("完成付款");
+    expect(assembled.background[0]?.text).not.toContain("归档采用");
+    expect(assembled.background[0]?.target).toMatchObject({revision:article.revision,section:"dedup"});
+    const original = assembled.evidence.find(e=>e.text.includes("完成付款"))!;
+    expect(original.sourceRevisionId).toBe(condition.revisionId);
+    expect(assembled.background[0]?.citationIds).toContain(original.citationId);
+    expect(assembled.background[0]?.citationIds.every(id=>assembled.evidence.some(e=>e.citationId===id))).toBe(true);
+    // A visible excerpt alone cannot authorize the rest of the chapter.
+    const hidden = new Set(condition.fragments.map(f=>f.id));
+    const restricted = assembleAnswerContext(s.store,hits,id=>!hidden.has(id),1);
+    expect(restricted.background[0]?.text).not.toContain("完成付款");
+    expect(restricted.evidence.some(e=>e.sourceRevisionId===condition.revisionId)).toBe(false);
+  } finally { await s.close(); }
 });
 
 it("assembles all three facts from one original and restores a missing chapter condition for answering", async () => {
