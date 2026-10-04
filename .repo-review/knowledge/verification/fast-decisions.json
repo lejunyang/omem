@@ -3233,5 +3233,697 @@
       }
     }
   },
-  "updatedAt": "2026-10-04T06:35:01.108Z"
+  "updatedAt": "2026-10-04T07:22:55.979Z",
+  "latestAnswerValidation": {
+    "implementationCommit": "28f9a7f",
+    "defaultEnabled": false,
+    "replay": {
+      "completedAt": "2026-10-04T06:58:20.567Z",
+      "corpusDigest": "174cc25b88ae8b5375149a0f9359b575c51b06c3475ee027b5f4df69546181d3",
+      "corpusUnchanged": true,
+      "materialCount": 624,
+      "implementationFiles": {
+        "apps/server/src/assistant/acp-model.ts": "fc433ebc7722a640812bbb33b59ccab20580c4970b6a1a5f64585cc9a61ebf75",
+        "apps/server/src/assistant/reading-stage.ts": "590cd3e2d207b4e0f2eb083c265b431f065fecfbbc9dce17163f18d6bad4a17d",
+        "apps/server/src/assistant/answer-review.ts": "42555f79ddfef27774aa7d7cb78b7318612684f0efbdb33ab97cda3f6d602309",
+        "apps/server/src/assistant/research.ts": "9da50c8336a7e4603be8b09185631242d26ac26d8e458fa321ddfdae65660499",
+        "apps/server/src/assistant/runtime.ts": "bfaebf808b902efb235eb50c009cfd87c893bbb14b9b3872a9cb994084148287",
+        "packages/agent-runtime/roles/answer-reviewer/1/prompt.md": "270d650736801fd3dcef13de618815636a91949c62c1408d3a16ae587f0aceff",
+        "packages/agent-runtime/roles/answer-reviewer/1/skills/omem-answer-review/SKILL.md": "dc32507d539c8651c4e5e0dabb8efa13ee738166a4b2fd6b76bb2db7135ec3a9",
+        "packages/agent-runtime/roles/daily-assistant/1/skills/omem-assistant-research/SKILL.md": "3480fca3116c453adc91e5bc2f846e9786f574d5c5d55d1896d3a761252d57d8",
+        "scripts/assistant-compare.ts": "38b7143cd06f63976db9d44ceb14d016a850419b2bfc523ae6bf737569183966"
+      },
+      "rawReportSha256": "624de917e92a0c215e7268ec643d4210ac9cee28d655ed0524c3bf408c6336ca",
+      "note": "Regression replay with clarified source documents and direct review. This predates the final instruction limiting routine reviews of explicit facts; that final version is evaluated separately on the fictional personal corpus. Changed source corpus: no controlled speed comparison against the earlier run.",
+      "copyReleased": true,
+      "cases": [
+        {
+          "case": "running",
+          "turn": 1,
+          "question": "本地运行时，API 和网页地址在哪里看？如果默认端口被占用怎么办？",
+          "elapsedMs": 190668,
+          "answer": "先看你用哪种启动方式；两种模式不一样：\n\n### `osdk run dev`（开发模式）\n\n启动后直接看终端输出，打开其中打印的 **web URL**；实际端口可能已经变化，所以终端输出最可靠。默认地址是：\n\n- API：`http://127.0.0.1:4317`\n- 网页：`http://127.0.0.1:5173`\n\n默认端口被占用时，启动脚本会自动选择空闲端口，并把实际 API 端口同步给网页代理；继续使用终端打印的地址即可。也可以用 `OMEM_PORT` 和 `OMEM_WEB_PORT` 指定端口。[[e:9b4d2130-4792-4045-896e-c7d8ac2f8ae0:15:17]][[e:df8b776e-8477-4ee3-a54a-aee26c52b050:81:91]]\n\n但如果是你**显式指定**的端口被占用，程序不会自动换端口，而会报错；此时释放该端口，或换一个值再启动。例如：\n\n```bash\nOMEM_PORT=4318 OMEM_WEB_PORT=5174 osdk run dev\n```\n\n[[e:70c9aa44-3339-4319-89fe-85ce908c246f:18:23]]\n\n### `osdk run build` 后 `osdk run start`（正式运行）\n\nAPI 和网页共用同一个服务地址，默认都是 `http://127.0.0.1:4317`：网页走根路径，API 走 `/api/...`。终端也会打印实际监听地址。[[e:ebbc669b-aac6-4343-b583-7d7771762fd8:3:6]][[e:2720bba5-5b7e-4bd3-b387-ac8c7a3fe33c:872:874]]\n\n这种模式只需改 `OMEM_PORT`；若 4317 被占用，释放端口或换端口后重启，例如：\n\n```bash\nOMEM_PORT=4318 osdk run start\n```\n\n`OMEM_WEB_PORT` 只用于开发模式的独立网页服务。",
+          "degraded": false,
+          "createdTaskIds": [],
+          "stages": [
+            {
+              "stage": "reading",
+              "model": "gpt-5.6-sol",
+              "effort": "low",
+              "sessionId": "01a105ac-53c8-7dc3-a6bc-1c9927c47ad0",
+              "elapsedMs": 176181,
+              "outcome": "answered"
+            }
+          ],
+          "assessment": "Distinguishes development and production startup; independent review corrected the initial assumption of development mode."
+        },
+        {
+          "case": "running",
+          "turn": 2,
+          "question": "那上线运行也会带上本仓库的知识吗？",
+          "elapsedMs": 233396,
+          "answer": "默认不会。`osdk run build` 后用 `osdk run start` 正式运行时，如果没有设置 `OMEM_REPO_ROOT`，启动过程不会导入本仓库的材料和已发布知识；它只会继续使用所选数据目录中已经存在的个人数据。启动也不会自动生成整库 Wiki。[[e:d813998b-3798-4e35-bf27-bac506359237:3:7]]\n\n如果希望上线实例也能查询本仓库知识，需要在运行环境中显式设置 `OMEM_REPO_ROOT`，并确保该路径实际包含仓库和 `.repo-review/knowledge` 知识资产；服务检测到这个变量后才会调用仓库知识导入。[[e:5df6a66a-e756-467b-879b-9f3a6d30e7f3:64:70]][[e:7e96bee9-b368-4ef9-902f-83e8da6b62e4:37:40]]\n\n所以可以概括为：**开发模式默认带；正式运行默认不带，但可显式开启。** 另一个例外是，如果上线使用的持久化数据目录此前已经导入过相关内容，它仍会保留并继续使用那些已有内容。",
+          "degraded": false,
+          "createdTaskIds": [],
+          "stages": [
+            {
+              "stage": "reading",
+              "model": "gpt-5.6-sol",
+              "effort": "low",
+              "sessionId": "01a105af-336b-75a0-a8a6-5dde647e678b",
+              "elapsedMs": 221141,
+              "outcome": "answered"
+            }
+          ],
+          "assessment": "Preserves prior persisted knowledge; absence of automatic import does not empty the database."
+        },
+        {
+          "case": "chapter-search",
+          "turn": 1,
+          "question": "我只更新了一篇文档的一个章节，之前基于其他章节整理出的讲解还可以搜索到吗？",
+          "elapsedMs": 153378,
+          "answer": "不一定。关键不是“更新了几个原文章节”，而是旧讲解章节引用了哪份原件。\n\n- 如果那些讲解引用的也是这篇被更新的文档：目前原件版本按**整篇文档摘要**匹配，不按原文章节逐一匹配。哪怕只改一个章节，整篇摘要变化后，所有仍引用该文档旧版本的讲解章节都会失去匹配、退出搜索；系统不会因为它们引用的段落文字没变而自动续接。\n- 如果那些讲解章节只引用其他未变化的原件：它们仍可保留在搜索中，通常会作为“待复核背景”并降低排序。\n\n所以，对“同一篇文档的其他章节”来说，当前答案通常是**不能继续搜到对应旧讲解**；“按章节保留”指的是按生成出来的讲解章节保留，并不代表按原始文档章节判断更新。[[e:af631bc0-eb37-4274-aff1-0dbfed254eb8:9:13]]",
+          "degraded": false,
+          "createdTaskIds": [],
+          "stages": [
+            {
+              "stage": "reading",
+              "model": "gpt-5.6-sol",
+              "effort": "low",
+              "sessionId": "01a105b2-c118-7300-824d-c07f47ee099f",
+              "elapsedMs": 141976,
+              "outcome": "answered"
+            }
+          ],
+          "assessment": "Correctly distinguishes whole-original digest from derived chapter scope; other unchanged originals remain eligible."
+        }
+      ]
+    },
+    "checks": {
+      "frozenDependenciesExit": 0,
+      "projectCheckExit": 0,
+      "tests": 408,
+      "ui": "unchanged; not rechecked",
+      "measuredImplementationMatchesCurrent": true,
+      "measurementScope": "All runtime, reviewer/writer skills and manifests hashed by the final comparison still match the committed worktree; three-question repository replay predates the final routine-review instruction."
+    },
+    "personalComparison": {
+      "status": "completed",
+      "startedAt": "2026-10-04T07:02:27.181Z",
+      "completedAt": "2026-10-04T07:08:10.423Z",
+      "corpusDigest": "f5320e727f1b605da322aad71468f88b010d36f6f2500be0e839c04210530e53",
+      "corpusUnchanged": true,
+      "implementationFiles": {
+        "apps/server/src/assistant/acp-model.ts": "fc433ebc7722a640812bbb33b59ccab20580c4970b6a1a5f64585cc9a61ebf75",
+        "apps/server/src/assistant/reading-stage.ts": "c748701a25529365258915ffbf696f9f36b394de8cf444e4fbb61710d6aef3b9",
+        "apps/server/src/assistant/answer-review.ts": "42555f79ddfef27774aa7d7cb78b7318612684f0efbdb33ab97cda3f6d602309",
+        "apps/server/src/assistant/research.ts": "9da50c8336a7e4603be8b09185631242d26ac26d8e458fa321ddfdae65660499",
+        "apps/server/src/assistant/runtime.ts": "bfaebf808b902efb235eb50c009cfd87c893bbb14b9b3872a9cb994084148287",
+        "packages/agent-runtime/roles/answer-reviewer/1/prompt.md": "270d650736801fd3dcef13de618815636a91949c62c1408d3a16ae587f0aceff",
+        "packages/agent-runtime/roles/answer-reviewer/1/manifest.json": "a812b533ee8156bbbdf82fdf3037fabbf18bb7b61053b3bac4b39d1114078ff5",
+        "packages/agent-runtime/roles/answer-reviewer/1/skills/omem-answer-review/SKILL.md": "dc32507d539c8651c4e5e0dabb8efa13ee738166a4b2fd6b76bb2db7135ec3a9",
+        "packages/agent-runtime/roles/daily-assistant/1/manifest.json": "29a7d771892cc1b84e09adb3505d726860002bd204daa98973215a4ef6a23835",
+        "packages/agent-runtime/roles/daily-assistant/1/skills/omem-assistant-research/SKILL.md": "0efd0f887e5a5fbb8ffec759c7951d3edcc2646c0636c8e52dd2cb89f81dd5ef",
+        "scripts/assistant-compare.ts": "9e64999ef457831d996d0aa6b32d2be46507879393d882ca51d99df9af2013e4"
+      },
+      "materialCount": 3,
+      "synthetic": true,
+      "sourceMaterials": [
+        {
+          "id": "photo-walk",
+          "title": "秋季摄影散步活动说明",
+          "text": "# 秋季摄影散步\n活动日期为 2026 年 10 月 10 日，14:30 在滨河公园北门集合。\n报名截止为 2026 年 10 月 8 日 18:00，限 12 人。提交报名表后会收到自动回执；这只代表表单提交成功，不代表取得名额。名额以组织者在报名记录中的“已确认”为准，候补者须等待单独通知。\n费用 80 元，其中材料包 20 元、活动费 60 元。材料包付款后即预订，取消不退材料包费用；在报名截止前取消可退已付的活动费，截止后活动费也不退。未付款者没有退款。此规则适用于本次活动。"
+        },
+        {
+          "id": "my-photo-record",
+          "title": "我的摄影散步报名记录",
+          "text": "# 我的摄影散步报名记录\n2026 年 10 月 3 日 09:10：我提交了秋季摄影散步报名表，并收到了“提交成功”的自动回执。\n2026 年 10 月 3 日 10:05：组织者回复我目前排在候补第 3 位，暂时没有名额。\n截至 2026 年 10 月 4 日上午，我没有收到新的名额确认消息。本记录没有记载我是否付款。"
+        },
+        {
+          "id": "book-club",
+          "title": "十月周末读书会",
+          "text": "# 十月周末读书会\n2026 年 10 月 11 日 10:00 在街角书屋集合，报名在 2026 年 10 月 8 日 12:00 截止。\n活动费 30 元，报名截止前取消可全额退款。报名者需向组织者确认名额；书屋门口的海报并非报名记录。"
+        }
+      ],
+      "expectations": {
+        "method": "Synthetic personal materials; expectations fixed before any model run; not actual user data. Sources and expectations are separate and expectations never enter the material store.",
+        "cases": [
+          {
+            "case": "photo-followup",
+            "turn": 1,
+            "expected": "2026-10-10 14:30 滨河公园北门；简洁直答。"
+          },
+          {
+            "case": "photo-followup",
+            "turn": 2,
+            "expected": "没有确认成功，是候补第3位，自动回执不等于名额；用前文还原活动而不多问。"
+          },
+          {
+            "case": "photo-followup",
+            "turn": 3,
+            "expected": "不能保证退80；当前时间在10月8日18:00前，如已付款可退活动费60，材料包20不退；本人付款未记录，不能断言已支付或已退款；纯咨询不执行取消。"
+          },
+          {
+            "case": "ambiguous",
+            "turn": 1,
+            "expected": "新对话无唯一活动，可询问是摄影散步还是读书会；也可简短并列两个明确活动地点；不能单选猜测。"
+          }
+        ]
+      },
+      "requestedProfiles": [
+        {
+          "requested": {
+            "model": "gpt-5.6-sol",
+            "effort": "medium"
+          },
+          "actual": [
+            {
+              "id": "model",
+              "currentValue": "gpt-5.6-sol"
+            },
+            {
+              "id": "reasoning_effort",
+              "currentValue": "medium"
+            }
+          ],
+          "agent": {
+            "name": "traex-acp",
+            "title": "TraeCode CLI",
+            "version": "0.207.1"
+          }
+        }
+      ],
+      "readingProfile": {
+        "model": "gpt-5.6-sol",
+        "effort": "low",
+        "supported": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "rawReportSha256": "f23ef96eb38ab5059a5f1c049957fd1022de63c186305766beb1ade1912dbe23",
+      "comparisonCopyReleased": true,
+      "interpretation": "All eight answers preserve the checked facts and conditions; reading-first is shorter in this small sample and has lower observed latency on all four turns. Single run on three synthetic documents: not a general reliability or speed estimate. Both models had the same final investigation skill. No inference/review/task was required by these explicit source facts; difficult cases retain investigation/review support.",
+      "cases": [
+        {
+          "case": "photo-followup",
+          "turn": 1,
+          "question": "秋季摄影散步几点、在哪里集合？",
+          "variant": "research",
+          "elapsedMs": 41239,
+          "answer": "秋季摄影散步是 **2026 年 10 月 10 日 14:30**，在 **滨河公园北门**集合。[[e:437d244f-96a0-4cec-9387-e73ff7de01ed:2:2]]\n\n不过，你截至 10 月 4 日上午仍是**候补第 3 位**，还没有收到名额确认；自动回执只代表表单提交成功，不代表报名成功。[[e:db0f57b8-a7c0-4f10-8f60-4f938dba82e1:2:4]][[e:437d244f-96a0-4cec-9387-e73ff7de01ed:3:3]]",
+          "initialRetrievalMs": 14,
+          "createdTaskIds": [],
+          "degraded": false,
+          "stages": [
+            {
+              "stage": "research",
+              "model": "gpt-5.6-sol",
+              "effort": "medium",
+              "sessionId": "01a105b8-eab1-7523-93cf-15d306f684e0",
+              "elapsedMs": 41112,
+              "outcome": "answered"
+            }
+          ],
+          "events": [
+            {
+              "label": "准备可补读的材料与当前事项",
+              "elapsedMs": 100
+            },
+            {
+              "label": "阅读完整章节",
+              "tool": "read_section",
+              "elapsedMs": 24875
+            },
+            {
+              "label": "阅读完整章节",
+              "tool": "read_section",
+              "elapsedMs": 24894
+            },
+            {
+              "label": "整理调查结果",
+              "elapsedMs": 32127
+            }
+          ]
+        },
+        {
+          "case": "photo-followup",
+          "turn": 2,
+          "question": "那我已经报上了吗？",
+          "variant": "research",
+          "elapsedMs": 40651,
+          "answer": "还没有真正报上。你已经**提交了报名表**，但组织者回复你目前是**候补第 3 位、暂时没有名额**；截至 10 月 4 日上午，也还没收到新的名额确认。[[e:db0f57b8-a7c0-4f10-8f60-4f938dba82e1:2:4]]\n\n自动回执只表示表单提交成功，正式取得名额要以组织者标记“已确认”为准，候补者需等单独通知。[[e:437d244f-96a0-4cec-9387-e73ff7de01ed:3:3]]",
+          "initialRetrievalMs": 5,
+          "createdTaskIds": [],
+          "degraded": false,
+          "stages": [
+            {
+              "stage": "research",
+              "model": "gpt-5.6-sol",
+              "effort": "medium",
+              "sessionId": "01a105b9-855d-7b21-abb4-c5aff7336267",
+              "elapsedMs": 40538,
+              "outcome": "answered"
+            }
+          ],
+          "events": [
+            {
+              "label": "准备可补读的材料与当前事项",
+              "elapsedMs": 92
+            },
+            {
+              "label": "补读原文",
+              "tool": "read_material",
+              "elapsedMs": 27854
+            },
+            {
+              "label": "补读原文",
+              "tool": "read_material",
+              "elapsedMs": 27865
+            },
+            {
+              "label": "整理调查结果",
+              "elapsedMs": 33334
+            }
+          ]
+        },
+        {
+          "case": "photo-followup",
+          "turn": 3,
+          "question": "那我现在退出能退80元吗？",
+          "variant": "research",
+          "elapsedMs": 41149,
+          "answer": "不能退满 80 元。现在是 10 月 4 日，仍在 10 月 8 日 18:00 的报名截止前；如果你已经付了 80 元，现在取消只能退 **60 元活动费**，其中 **20 元材料包费付款后即预订，不退**。[[e:437d244f-96a0-4cec-9387-e73ff7de01ed:3:4]]\n\n不过，现有记录没有写你是否付款，而且你目前仍是候补、尚未确认名额。[[e:db0f57b8-a7c0-4f10-8f60-4f938dba82e1:3:4]] 所以实际分两种情况：\n\n- 已付 80 元：可退 60 元；\n- 没付款：没有退款可退。\n\n因此，按现有资料不能认定你能退 80 元。",
+          "initialRetrievalMs": 9,
+          "createdTaskIds": [],
+          "degraded": false,
+          "stages": [
+            {
+              "stage": "research",
+              "model": "gpt-5.6-sol",
+              "effort": "medium",
+              "sessionId": "01a105ba-2492-7333-92da-e1807ef03cf3",
+              "elapsedMs": 41038,
+              "outcome": "answered"
+            }
+          ],
+          "events": [
+            {
+              "label": "准备可补读的材料与当前事项",
+              "elapsedMs": 91
+            },
+            {
+              "label": "阅读完整章节",
+              "tool": "read_section",
+              "elapsedMs": 23558
+            },
+            {
+              "label": "阅读完整章节",
+              "tool": "read_section",
+              "elapsedMs": 23574
+            },
+            {
+              "label": "阅读完整章节",
+              "tool": "read_section",
+              "elapsedMs": 23598
+            },
+            {
+              "label": "整理调查结果",
+              "elapsedMs": 32412
+            }
+          ]
+        },
+        {
+          "case": "photo-followup",
+          "turn": 1,
+          "question": "秋季摄影散步几点、在哪里集合？",
+          "variant": "reading-first",
+          "elapsedMs": 29068,
+          "answer": "秋季摄影散步定于 **2026 年 10 月 10 日 14:30** 集合，地点是 **滨河公园北门**。[[e:437d244f-96a0-4cec-9387-e73ff7de01ed:2:2]]",
+          "initialRetrievalMs": 5,
+          "createdTaskIds": [],
+          "degraded": false,
+          "stages": [
+            {
+              "stage": "reading",
+              "model": "gpt-5.6-sol",
+              "effort": "low",
+              "sessionId": "01a105ba-cb39-7da1-a5d6-32535054452c",
+              "elapsedMs": 28968,
+              "outcome": "answered"
+            }
+          ],
+          "events": [
+            {
+              "label": "准备可补读的材料与当前事项",
+              "elapsedMs": 81
+            },
+            {
+              "label": "整理调查结果",
+              "elapsedMs": 23774
+            }
+          ]
+        },
+        {
+          "case": "photo-followup",
+          "turn": 2,
+          "question": "那我已经报上了吗？",
+          "variant": "reading-first",
+          "elapsedMs": 31469,
+          "answer": "报名表已经提交成功了，但还不能算正式报上（拿到名额）。组织者说你目前排在**候补第 3 位**、暂时没有名额；截至今天上午，也还没有收到新的名额确认。[[e:db0f57b8-a7c0-4f10-8f60-4f938dba82e1:2:4]]",
+          "initialRetrievalMs": 7,
+          "createdTaskIds": [],
+          "degraded": false,
+          "stages": [
+            {
+              "stage": "reading",
+              "model": "gpt-5.6-sol",
+              "effort": "low",
+              "sessionId": "01a105bb-35d7-7530-ba0a-63eab5e8aeb5",
+              "elapsedMs": 31359,
+              "outcome": "answered"
+            }
+          ],
+          "events": [
+            {
+              "label": "准备可补读的材料与当前事项",
+              "elapsedMs": 93
+            },
+            {
+              "label": "整理调查结果",
+              "elapsedMs": 24995
+            }
+          ]
+        },
+        {
+          "case": "photo-followup",
+          "turn": 3,
+          "question": "那我现在退出能退80元吗？",
+          "variant": "reading-first",
+          "elapsedMs": 34408,
+          "answer": "不能退 80 元。现在是 10 月 4 日，仍在 10 月 8 日 18:00 的报名截止时间之前；但本次活动的 20 元材料包付款后即预订、取消不退，所以如果你已经付了全部 80 元，现在退出最多退 60 元活动费。[[e:437d244f-96a0-4cec-9387-e73ff7de01ed:3:4]]\n\n你的报名记录没有写明是否付款：如果还没付款，就没有退款可退；是否处于候补不改变上述退款规则。[[e:db0f57b8-a7c0-4f10-8f60-4f938dba82e1:2:4]]",
+          "initialRetrievalMs": 6,
+          "createdTaskIds": [],
+          "degraded": false,
+          "stages": [
+            {
+              "stage": "reading",
+              "model": "gpt-5.6-sol",
+              "effort": "low",
+              "sessionId": "01a105bb-b95b-7aa0-9b68-04203bde5efd",
+              "elapsedMs": 34292,
+              "outcome": "answered"
+            }
+          ],
+          "events": [
+            {
+              "label": "准备可补读的材料与当前事项",
+              "elapsedMs": 96
+            },
+            {
+              "label": "整理调查结果",
+              "elapsedMs": 27763
+            }
+          ]
+        },
+        {
+          "case": "ambiguous",
+          "turn": 1,
+          "question": "集合地点是哪里？",
+          "variant": "reading-first",
+          "elapsedMs": 53339,
+          "answer": "资料里有两个活动：\n\n- 如果你问的是**秋季摄影散步**，集合地点是**滨河公园北门**，10 月 10 日 14:30 集合。[[e:437d244f-96a0-4cec-9387-e73ff7de01ed:1:2]]\n- 如果你问的是**十月周末读书会**，集合地点是**街角书屋**，10 月 11 日 10:00 集合。[[e:0057e982-26b4-42e2-bfc0-6d887593fa55:1:2]]",
+          "initialRetrievalMs": 6,
+          "createdTaskIds": [],
+          "degraded": false,
+          "stages": [
+            {
+              "stage": "reading",
+              "model": "gpt-5.6-sol",
+              "effort": "low",
+              "sessionId": "01a105bc-397c-7d43-9b8a-13433b6565e3",
+              "elapsedMs": 53227,
+              "outcome": "answered"
+            }
+          ],
+          "events": [
+            {
+              "label": "准备可补读的材料与当前事项",
+              "elapsedMs": 93
+            },
+            {
+              "label": "搜索原始材料",
+              "tool": "search_materials",
+              "elapsedMs": 22805
+            },
+            {
+              "label": "搜索原始材料",
+              "tool": "search_materials",
+              "elapsedMs": 22812
+            },
+            {
+              "label": "搜索原始材料",
+              "tool": "search_materials",
+              "elapsedMs": 22822
+            },
+            {
+              "label": "搜索原始材料",
+              "tool": "search_materials",
+              "elapsedMs": 22842
+            },
+            {
+              "label": "查看材料目录",
+              "tool": "list_materials",
+              "elapsedMs": 29753
+            },
+            {
+              "label": "补读原文",
+              "tool": "read_material",
+              "elapsedMs": 38439
+            },
+            {
+              "label": "补读原文",
+              "tool": "read_material",
+              "elapsedMs": 38449
+            },
+            {
+              "label": "补读原文",
+              "tool": "read_material",
+              "elapsedMs": 38460
+            },
+            {
+              "label": "整理调查结果",
+              "elapsedMs": 46245
+            }
+          ]
+        },
+        {
+          "case": "ambiguous",
+          "turn": 1,
+          "question": "集合地点是哪里？",
+          "variant": "research",
+          "elapsedMs": 58329,
+          "answer": "如果你问的是你报名的**秋季摄影散步**：集合地点是**滨河公园北门**，时间是 **2026 年 10 月 10 日 14:30**。[[e:437d244f-96a0-4cec-9387-e73ff7de01ed:1:2]]\n\n资料里还有另一个活动：**十月周末读书会**在**街角书屋**集合，时间是 **2026 年 10 月 11 日 10:00**。[[e:0057e982-26b4-42e2-bfc0-6d887593fa55:1:2]]",
+          "initialRetrievalMs": 5,
+          "createdTaskIds": [],
+          "degraded": false,
+          "stages": [
+            {
+              "stage": "research",
+              "model": "gpt-5.6-sol",
+              "effort": "medium",
+              "sessionId": "01a105bd-08ce-78a1-95ab-0ace685905a0",
+              "elapsedMs": 58218,
+              "outcome": "answered"
+            }
+          ],
+          "events": [
+            {
+              "label": "准备可补读的材料与当前事项",
+              "elapsedMs": 93
+            },
+            {
+              "label": "搜索原始材料",
+              "tool": "search_materials",
+              "elapsedMs": 26065
+            },
+            {
+              "label": "搜索原始材料",
+              "tool": "search_materials",
+              "elapsedMs": 26075
+            },
+            {
+              "label": "搜索原始材料",
+              "tool": "search_materials",
+              "elapsedMs": 26084
+            },
+            {
+              "label": "搜索原始材料",
+              "tool": "search_materials",
+              "elapsedMs": 26101
+            },
+            {
+              "label": "搜索原始材料",
+              "tool": "search_materials",
+              "elapsedMs": 26128
+            },
+            {
+              "label": "补读原文",
+              "tool": "read_material",
+              "elapsedMs": 35146
+            },
+            {
+              "label": "补读原文",
+              "tool": "read_material",
+              "elapsedMs": 35169
+            },
+            {
+              "label": "查看材料目录",
+              "tool": "list_materials",
+              "elapsedMs": 35175
+            },
+            {
+              "label": "补读原文",
+              "tool": "read_material",
+              "elapsedMs": 41308
+            },
+            {
+              "label": "整理调查结果",
+              "elapsedMs": 50500
+            }
+          ]
+        }
+      ],
+      "syntheticSourceDatabaseReleased": true
+    },
+    "knowledgeVerification": {
+      "transport": "traex ACP",
+      "targetCount": 2,
+      "failures": 0,
+      "articles": [
+        {
+          "id": "d69c6479025bcf0d552473d59f1c5ee1fe633a5939d171ea8a8c9ece1f2408fc",
+          "key": "omem:apps/server/src/assistant/answer-review.ts",
+          "title": "助手答案的独立复核与提交闸门",
+          "verdict": "accepted",
+          "generationModel": "gpt-5.6-sol",
+          "reviewModel": "gpt-5.6-sol",
+          "reviewAt": "2026-10-04T07:15:12.234Z",
+          "citations": 9,
+          "sequence": "analyst, independent verifier accepted"
+        },
+        {
+          "id": "9a12750d6858d626e55ff5e639401b3d067e5f99045f300dcc49d864fb412d7e",
+          "key": "omem:apps/server/src/assistant/reading-stage.ts",
+          "title": "材料优先回答与受控研究交接",
+          "verdict": "accepted",
+          "generationModel": "gpt-5.6-sol",
+          "reviewModel": "gpt-5.6-sol",
+          "reviewAt": "2026-10-04T07:22:32.534Z",
+          "citations": 9,
+          "sequence": "analyst, verifier requested a corrected citation range, refresher, verifier accepted"
+        }
+      ],
+      "humanReading": "Both explain purpose, a representative request, flow diagrams and change locations. These are module references with implementation details, not acceptance of the entire reader wiki.",
+      "repository": {
+        "recordedAt": "2026-10-04T07:22:55.979Z",
+        "implementationCommit": "3518073f14200d692b2a437901f32442073af3e4",
+        "full": false,
+        "exitCode": 1,
+        "checks": [
+          {
+            "name": "dependencies",
+            "state": "skipped",
+            "details": "Run with --full; earlier results are not inherited."
+          },
+          {
+            "name": "project",
+            "state": "skipped",
+            "details": "Run with --full; earlier results are not inherited."
+          },
+          {
+            "name": "liveChineseRetrieval",
+            "state": "skipped",
+            "details": "Run with --full; earlier results are not inherited."
+          },
+          {
+            "name": "currentKnowledgeReferences",
+            "state": "passed",
+            "details": {
+              "articles": 133,
+              "citations": 745,
+              "errors": []
+            }
+          },
+          {
+            "name": "semanticIndex",
+            "state": "passed",
+            "details": {
+              "available": true,
+              "backend": "sqlite-context-bm25-bge@1",
+              "projection": "structure-icu-v5",
+              "units": 13517,
+              "semantic": {
+                "model": "structure-icu-v5:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
+                "state": "ready",
+                "indexed": 13517,
+                "pending": 0,
+                "error": null
+              },
+              "reranker": {
+                "model": null,
+                "state": "disabled",
+                "error": null
+              }
+            }
+          },
+          {
+            "name": "repositorySearch",
+            "state": "failed",
+            "details": {
+              "passed": 2,
+              "total": 6
+            }
+          },
+          {
+            "name": "unchangedSourcesDuringVerification",
+            "state": "passed"
+          }
+        ],
+        "knowledge": {
+          "materials": 624,
+          "reviewedMaterials": 130,
+          "pendingMaterials": 494,
+          "currentArticles": 133,
+          "citations": 745,
+          "articleLinks": 0,
+          "errors": [],
+          "restore": {
+            "stale": 374,
+            "restored": 135,
+            "missing": 3
+          },
+          "incomplete": true,
+          "note": "未覆盖或过期文章不计为通过；本检查只验证当前正文，不能代表全库已经生成。"
+        }
+      }
+    },
+    "delivery": {
+      "available": "Optional material-first ACP profile with same-snapshot research handoff and direct independent review",
+      "defaultEnabled": false,
+      "localDecisionModelsInProduction": false,
+      "limits": [
+        "Small Chinese and synthetic comparison sets are not general accuracy estimates.",
+        "Repository relevance remains poor; this slice did not change ranking.",
+        "Complex investigations can still take minutes.",
+        "Local model scores do not authorize actions or memory writes."
+      ],
+      "commits": {
+        "implementation": "28f9a7f",
+        "currentDocumentation": "3518073"
+      }
+    }
+  }
 }

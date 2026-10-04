@@ -1,10 +1,11 @@
 {
   "version": 1,
-  "checkedAt": "2026-10-04T06:34:07.993Z",
+  "checkedAt": "2026-10-04T07:22:32.775Z",
   "profile": "/Users/bytedance/Desktop/Projects/lejunyang/omem/config/review-code-model.json",
   "model": "gpt-5.6-sol",
   "selection": [
-    "apps/server/src/assistant/acp-model.ts"
+    "apps/server/src/assistant/reading-stage.ts",
+    "apps/server/src/assistant/answer-review.ts"
   ],
   "files": [
     {
@@ -8074,13 +8075,13 @@
       "knowledge": "not-applicable"
     },
     {
-      "path": ".repo-review/knowledge/verification/history/2026-10-03T17-50-47-207Z-33331892.json",
+      "path": ".repo-review/knowledge/verification/history/2026-10-03T18-52-51-083Z-4c3349c3.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
     },
     {
-      "path": ".repo-review/knowledge/verification/history/2026-10-03T18-52-51-083Z-4c3349c3.json",
+      "path": ".repo-review/knowledge/verification/history/2026-10-04T05-34-01-594Z-5cea6cf7.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
@@ -8415,15 +8416,15 @@
       "materialKey": "omem:apps/server/src/assistant/acp-model.ts",
       "digest": "fc433ebc7722a640812bbb33b59ccab20580c4970b6a1a5f64585cc9a61ebf75",
       "reason": "固定材料已保存",
-      "knowledge": "reviewed"
+      "knowledge": "stale"
     },
     {
       "path": "apps/server/src/assistant/answer-review.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/src/assistant/answer-review.ts",
-      "digest": "0ea40f4c04b1b724c0e6459018056ff93a5eb6f88c8072717c19bc130ee62a0c",
+      "digest": "42555f79ddfef27774aa7d7cb78b7318612684f0efbdb33ab97cda3f6d602309",
       "reason": "固定材料已保存",
-      "knowledge": "pending"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/server/src/assistant/default-model.ts",
@@ -8445,9 +8446,9 @@
       "path": "apps/server/src/assistant/reading-stage.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/src/assistant/reading-stage.ts",
-      "digest": "c17053c66fcd8c8fdf066f4dfdf271da4f52d9029639fe34cecee700a0d4de41",
+      "digest": "c748701a25529365258915ffbf696f9f36b394de8cf444e4fbb61710d6aef3b9",
       "reason": "固定材料已保存",
-      "knowledge": "pending"
+      "knowledge": "reviewed"
     },
     {
       "path": "apps/server/src/assistant/research.ts",
@@ -9133,7 +9134,7 @@
       "path": "apps/server/tests/assistant-reading-stage.test.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/tests/assistant-reading-stage.test.ts",
-      "digest": "16a52201270d88c48e9ccca8a8f03b3bf7bc8d234cf4a73daf966c9bae1e0e04",
+      "digest": "63cfeccdc338ac47d692e2749a0eb5ca04b8a6e62e8f00ecacffb60bc7872e02",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -10837,7 +10838,7 @@
       "path": "docs/reader-first/answer-investigation.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/answer-investigation.md",
-      "digest": "446cb61916875ea97186ab8c7c714295a0520f8391d8e38af20a7a357db5b9fc",
+      "digest": "638d76c25227141f0aeaffe204266df5056a019debb2fae87e7aeb13c64da79c",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -10901,7 +10902,7 @@
       "path": "docs/reader-first/fast-decisions.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/fast-decisions.md",
-      "digest": "3766a040c1c2b08ff6969f5b3cf75ecf64bf6a80c3798e284970dfd02786858b",
+      "digest": "d23b4e74dda46c9370c00929073a5171f8d14c44e8c1d798871fa51120fca02e",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -10941,7 +10942,7 @@
       "path": "docs/reader-first/progress.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/progress.md",
-      "digest": "dacb32f1a3e9a9bc9bbb149af5c588f12556608ccbe5401b0324b4dadab5cc6e",
+      "digest": "8212e9232081ff002e63c4dc062278a2e2b0e1e4a292fba324de784eda7df30d",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -11021,7 +11022,7 @@
       "path": "osdk.toml",
       "state": "captured",
       "materialKey": "omem:osdk.toml",
-      "digest": "0099162df7d32fdf704f7fccad92d00056060b1a2f0114ea14d1d775585e19c1",
+      "digest": "d670e98cc161cbd49c3c3476c79559856b54a75dc4f6c730018bb3a43349a41a",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -11037,7 +11038,7 @@
       "path": "packages/agent-runtime/roles/answer-reviewer/1/manifest.json",
       "state": "captured",
       "materialKey": "omem:packages/agent-runtime/roles/answer-reviewer/1/manifest.json",
-      "digest": "cf93bbcb78816a645bb9c5d1af35c20dba3e06b3bb12eadb83c8f8f75ed05030",
+      "digest": "a812b533ee8156bbbdf82fdf3037fabbf18bb7b61053b3bac4b39d1114078ff5",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -11053,7 +11054,7 @@
       "path": "packages/agent-runtime/roles/answer-reviewer/1/prompt.md",
       "state": "captured",
       "materialKey": "omem:packages/agent-runtime/roles/answer-reviewer/1/prompt.md",
-      "digest": "cd738e7f4d605013171f2a4ea158830a5999f50618278bdb850b98240997e0cd",
+      "digest": "270d650736801fd3dcef13de618815636a91949c62c1408d3a16ae587f0aceff",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -11061,7 +11062,7 @@
       "path": "packages/agent-runtime/roles/answer-reviewer/1/skills/omem-answer-review/SKILL.md",
       "state": "captured",
       "materialKey": "omem:packages/agent-runtime/roles/answer-reviewer/1/skills/omem-answer-review/SKILL.md",
-      "digest": "d7f324f0d33468e91e559f6629b0d7db28930976e23518aa8678cba92bb8fa86",
+      "digest": "dc32507d539c8651c4e5e0dabb8efa13ee738166a4b2fd6b76bb2db7135ec3a9",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -11149,7 +11150,7 @@
       "path": "packages/agent-runtime/roles/daily-assistant/1/manifest.json",
       "state": "captured",
       "materialKey": "omem:packages/agent-runtime/roles/daily-assistant/1/manifest.json",
-      "digest": "b4c84106a6e6860320021f784673a942dbf8ba260885a564d0e3c6d29141ff7f",
+      "digest": "29a7d771892cc1b84e09adb3505d726860002bd204daa98973215a4ef6a23835",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -11173,7 +11174,7 @@
       "path": "packages/agent-runtime/roles/daily-assistant/1/skills/omem-assistant-research/SKILL.md",
       "state": "captured",
       "materialKey": "omem:packages/agent-runtime/roles/daily-assistant/1/skills/omem-assistant-research/SKILL.md",
-      "digest": "3480fca3116c453adc91e5bc2f846e9786f574d5c5d55d1896d3a761252d57d8",
+      "digest": "0efd0f887e5a5fbb8ffec759c7951d3edcc2646c0636c8e52dd2cb89f81dd5ef",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -12021,7 +12022,7 @@
       "path": "scripts/assistant-compare.ts",
       "state": "captured",
       "materialKey": "omem:scripts/assistant-compare.ts",
-      "digest": "87134bc3003661cadf54cfe4cc7641c70c77a47863d461faab49b12233949171",
+      "digest": "9e64999ef457831d996d0aa6b32d2be46507879393d882ca51d99df9af2013e4",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
