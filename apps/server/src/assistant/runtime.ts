@@ -1,5 +1,8 @@
 import { evidenceNeighbors, evidenceSection } from "../retrieval/context.js";
 import { assembleAnswerContext, mergeBackground } from "./context.js";
+import { evidenceForRange } from "./research.js";
+import { materialFromRevision } from "../knowledge/repository.js";
+import { sourceAnchor } from "../retrieval/units.js";
 import {
   taskFollowUpSchema,
   type TaskFollowUp,
@@ -52,7 +55,11 @@ export type AssistantEvidence = {
 export type AssistantBackground = Pick<
   RetrievalHit,
   "kind" | "title" | "text" | "headingPath" | "materialDescription"
-> & { citationIds: string[]; target?: RetrievalHit["target"]; reviewState?: "needs-review" };
+> & {
+  citationIds: string[];
+  target?: RetrievalHit["target"];
+  reviewState?: "needs-review";
+};
 
 export type AssistantCreateTaskCall = {
   tool: "create_task";
@@ -122,7 +129,14 @@ export type AssistantModelReply = {
     sessionId: string;
     tools: string[];
     timings?: { prepareMs: number; agentMs: number; totalMs: number };
-    acpTimings?: { initializeMs: number; sessionSetupMs: number; promptMs: number; firstToolMs: number | null; toolCalls: number; failedToolCalls: number };
+    acpTimings?: {
+      initializeMs: number;
+      sessionSetupMs: number;
+      promptMs: number;
+      firstToolMs: number | null;
+      toolCalls: number;
+      failedToolCalls: number;
+    };
     stages?: {
       stage: "reading" | "research";
       model: string | null;
@@ -944,7 +958,7 @@ export class AssistantRuntime {
       purpose,
       visible,
     });
-    return assembleAnswerContext(this.store,hits,visible);
+    return assembleAnswerContext(this.store, hits, visible);
   }
 
   private async retrieveEvidence(
@@ -1164,18 +1178,44 @@ export class AssistantRuntime {
             s.sourceRevisionId !== entry.sourceRevisionId
           )
             return entry;
-          const original = this.store.evidence(s.fragmentId);
+          const material = materialFromRevision(
+            this.store,
+            entry.sourceRevisionId,
+          );
+          const target = s.sourceTarget;
           if (
-            s.sourceTarget.revisionId !== entry.sourceRevisionId ||
-            !original?.fragment.text.includes(s.text)
+            !material ||
+            target.revisionId !== material.revisionId ||
+            target.digest !== material.digest ||
+            !Number.isInteger(target.startLine) ||
+            !Number.isInteger(target.endLine) ||
+            target.startLine < 1 ||
+            target.endLine < target.startLine ||
+            target.endLine > material.lineCount
           )
-            return entry;
+            return null;
+          // A chapter can span several stored fragments. Re-read its fixed
+          // range instead of looking for the entire text in the first fragment.
+          const anchor = sourceAnchor(
+            material,
+            target.startLine,
+            target.endLine,
+          );
+          if (
+            !anchor.fragmentIds.length ||
+            !anchor.fragmentIds.every((id) => this.isVisible(conversation, id))
+          )
+            return null;
           return {
-            ...entry,
-            citationId: s.citationId,
-            sourceTarget: s.sourceTarget,
-            sectionTitle: s.sectionTitle,
-            text: s.text,
+            ...evidenceForRange(
+              { ...material, key: target.key },
+              target.startLine,
+              target.endLine,
+              (id) => this.isVisible(conversation, id),
+            ),
+            ...(s.citationId ? { citationId: s.citationId } : {}),
+            materialDescription:
+              this.store.descriptions.get(material.revisionId) ?? undefined,
           };
         })
         .filter((e): e is AssistantEvidence => Boolean(e))
