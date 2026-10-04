@@ -226,9 +226,9 @@ export class KnowledgeRepository {
     return this.get(artifact.document.key)!;
   }
 
-  /** Restore an already reviewed historical version, retaining its fixed inputs.
-   * Never promotes stale content or replaces an existing head. */
-  restoreHistorical(artifact: KnowledgeArtifact, asHead = true) {
+  /** Restore reviewed bytes and their fixed inputs. An import can advance only
+   * its own previously managed head; applicability is recalculated separately. */
+  restoreHistorical(artifact: KnowledgeArtifact, asHead = true, importOwner?: string) {
     if (artifact.version !== 1 || artifact.review?.verdict !== "accepted" || !artifact.generation?.model || !artifact.review.model) throw Error("Missing review provenance");
     const materials = new Map<string, KnowledgeMaterial>(), articles = new Map<string, KnowledgeArticle>();
     for (const dependency of artifact.dependencies) {
@@ -245,9 +245,19 @@ export class KnowledgeRepository {
     this.store.tx(() => {
       this.store.db.prepare("INSERT OR IGNORE INTO knowledge_revisions VALUES(?,?,?,?)").run(revision, artifact.document.key, JSON.stringify(artifact), artifact.generation.at);
       if (asHead) {
+        const head = this.get(artifact.document.key);
+        const managed = importOwner && this.store.db.prepare("SELECT revision_id FROM knowledge_import_memberships WHERE owner=? AND document_key=?").get(importOwner, artifact.document.key);
+        const canAdvance = !!head && !!managed && managed.revision_id === head.revision;
         this.store.db.prepare("INSERT OR IGNORE INTO knowledge_heads VALUES(?,?,0)").run(artifact.document.key, revision);
+        if (canAdvance) this.store.db.prepare("UPDATE knowledge_heads SET revision_id=?,current=0 WHERE document_key=?")
+          .run(revision,artifact.document.key);
         this.store.db.prepare("INSERT OR IGNORE INTO knowledge_pages VALUES(?,?,?,'published',NULL,?)")
           .run(artifact.document.key, publicationRole(artifact), artifact.reading ? JSON.stringify(artifact.reading) : null, artifact.generation.at);
+        if (!head || canAdvance || head.revision === revision) {
+          this.store.db.prepare(`UPDATE knowledge_pages SET role=?,plan=COALESCE(?,plan),state='published',error=NULL,updated_at=?
+            WHERE document_key=? AND (? OR state IN ('planned','retired'))`)
+            .run(publicationRole(artifact),artifact.reading ? JSON.stringify(artifact.reading) : null,artifact.generation.at,artifact.document.key,Number(!head || head.revision !== revision));
+        }
       }
     });
   }
