@@ -121,6 +121,35 @@ it("recovers semantic indexing after a failed model load while lexical search st
   }
 });
 
+it("combines agreement between lexical and semantic routes without letting score scales suppress it", async () => {
+  const s = setup();
+  const model: EmbeddingModel = {
+    id: "rank-agreement-fixture",
+    close: async () => {},
+    embed: async (texts, purpose) => texts.map(text => {
+      const cosine = purpose === "query" ? 1 : text.includes("shared-answer") ? 0.94 : text.includes("dense-only") ? 0.99 : 0.1;
+      return [cosine, Math.sqrt(1 - cosine * cosine)];
+    }),
+  };
+  const retrieval = new UnifiedRetrieval(s.store.db, async () => model);
+  try {
+    for (const [title, text] of [
+      ["keyword-only", "violet ledger reconciliation reserve condition"],
+      ["shared-answer", "ledger records retain the prior balance. " + "background context ".repeat(45)],
+      ["dense-only", "The register keeps yesterday's amount."],
+    ]) s.store.capture({ source: "manual", externalId: title, title, parts: [{ type: "text", text }], context: {} });
+    while (await retrieval.indexBatch()) {}
+    const hits = await retrieval.search({ text: "violet ledger reconciliation reserve condition", diversify: false });
+    expect(hits[0]?.title).toBe("shared-answer");
+    expect(hits[0]?.routes).toEqual(expect.arrayContaining(["bm25", "semantic"]));
+    expect(hits.some(hit => hit.title === "keyword-only")).toBe(true);
+    expect(hits.some(hit => hit.title === "dense-only")).toBe(true);
+    const target = hits[0]!.target;
+    expect(target.kind).toBe("source");
+    if (target.kind === "source") expect(retrieval.readEvidence(target.revisionId, target.fragmentIds[0])?.text).toContain("prior balance");
+  } finally { await retrieval.close(); await s.close(); }
+});
+
 it("returns the explanation as readable context with its own article and exact original range", async () => {
   const s = setup();
   try {
