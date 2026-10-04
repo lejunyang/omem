@@ -1,6 +1,6 @@
 # 调用方导航与相关代码窗口：本轮结果
 
-日期：2026-10-03。实现提交 `6e99d08`。原始数据见 [20 题排序与模型输入](navigation-passages.json)，设计与代码位置见[当前说明](../../../docs/reader-first/code-navigation-and-passages.md)。
+日期：2026-10-03。实现提交 `6e99d08`。[20 题排序与模型输入](navigation-passages.json)保留排名、命中摘录和实际重排输入；2026-10-04 移除了重复整段原文，重排实验使用的 `ranking.passages` 保持完整。旧响应可在 Git 历史读取。设计与代码位置见[当前说明](../../../docs/reader-first/code-navigation-and-passages.md)。
 
 ## 决定
 
