@@ -28,6 +28,9 @@
     "scripts/live-knowledge-smoke.ts",
     "scripts/live-native-knowledge-smoke.ts",
     "scripts/assistant-memory-flow.ts",
-    "scripts/assistant-compare.ts"
+    "scripts/assistant-compare.ts",
+    "scripts/decision-prepare.ts",
+    "scripts/decision-evaluate.ts",
+    "scripts/decision-inspect.ts"
   ]
 }

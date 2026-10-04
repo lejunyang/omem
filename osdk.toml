@@ -4,11 +4,54 @@ node = "24.18.1"
 pnpm = "11"
 bun = "1.4.2"
 
+[models.decision-plumb4b-q4.views]
+
+[models.decision-plumb4b.views]
+
+[models.decision-gliclass.views]
+
+[models.decision-qwen4b.views]
+
+[models.decision-gliclass]
+source = "hf:knowledgator/gliclass-multilang-mini@0bd888b6c3ef9fca5f0a9d407bddfbbc7623486b"
+include = ["*.json", "*.safetensors", "spm.model"]
+exclude = []
+variant = "bf16"
+kind = "other"
+family = "gliclass"
+
 [models.relevance-zh-v2.views]
 
 [models.relevance-zh.views]
 
 [models.memory-zh.views]
+
+[models.decision-plumb4b-q4]
+source = "hf:crh225/plumb-4b-GGUF@71c1c57e523219124f7be9c486d475d19891185f"
+include = ["plumb-4b-v5-Q4_K_M.gguf", "LICENSE", "NOTICE"]
+exclude = []
+variant = "gguf-q4-k-m"
+kind = "other"
+family = "qwen3.5"
+derived_from = "crh225/plumb-4b"
+
+[models.decision-plumb4b]
+source = "hf:crh225/plumb-4b-GGUF@71c1c57e523219124f7be9c486d475d19891185f"
+include = ["plumb-4b-v5-Q8_0.gguf", "LICENSE", "NOTICE"]
+exclude = []
+variant = "gguf-q8"
+kind = "other"
+family = "qwen3.5"
+derived_from = "crh225/plumb-4b"
+
+[models.decision-qwen4b]
+source = "hf:mlx-community/Qwen3.5-4B-4bit@0e7ffd5c629ef7719d4cbc04069232580bfa9d9c"
+include = ["*.json", "*.safetensors", "*.jinja"]
+exclude = []
+variant = "mlx-q4"
+kind = "other"
+family = "qwen3.5"
+derived_from = "Qwen/Qwen3.5-4B"
 
 [models.relevance-zh-v2]
 source = "hf:onnx-community/bge-reranker-v2-m3-ONNX@6f5ff65298512715a1e669753bc754d2bc8f367b"
@@ -83,6 +126,53 @@ run = "bun scripts/live-daily-smoke.ts"
 
 [tasks.live-acp]
 run = "bun scripts/live-acp-smoke.ts"
+
+[tasks."decision:prepare"]
+description = "Install optional local decision-model dependencies in an isolated runtime"
+run = [{ argv = ["bun", "scripts/decision-prepare.ts"] }]
+
+[tasks."decision:inspect"]
+description = "Read-only local advice before and after real HTTP retrieval; never applies actions"
+run = [{ argv = ["bun", "scripts/decision-inspect.ts", "{{args}}"] }]
+[[tasks."decision:inspect".args]]
+name = "question"
+help = "Current user question"
+[tasks."decision:inspect".options.api]
+help = "Running omem API base URL"
+[tasks."decision:inspect".options.query]
+help = "Explicit search query when the question needs conversation context"
+[tasks."decision:inspect".options.context]
+help = "File containing relevant prior conversation or current selection"
+[tasks."decision:inspect".options.model]
+default = "decision-plumb4b"
+help = "Installed osdk model alias"
+[tasks."decision:inspect".options.backend]
+help = "gliclass, mlx or gguf; inferred for standard aliases"
+[tasks."decision:inspect".options.output]
+help = "Replace this current report"
+
+[tasks."decision:evaluate"]
+description = "Compare local models on a fixed Chinese decision suite; completion is not acceptance"
+run = [{ argv = ["bun", "scripts/decision-evaluate.ts", "{{args}}"] }]
+[tasks."decision:evaluate".options.model]
+default = "decision-gliclass"
+help = "Installed osdk model alias"
+[tasks."decision:evaluate".options.backend]
+help = "gliclass, mlx or gguf; inferred for standard aliases"
+[tasks."decision:evaluate".options.cases]
+help = "Evaluation JSON file; never captured as source material"
+[tasks."decision:evaluate".options.output]
+help = "Replace this current report instead of accumulating runs"
+[tasks."decision:evaluate".options.rotations]
+default = "2"
+help = "Option-order controls, from 1 to 4"
+[tasks."decision:evaluate".options.device]
+default = "cpu"
+help = "GLiClass device: cpu or mps; MLX uses Metal"
+[tasks."decision:evaluate".options.readout]
+default = "classification"
+choices = ["classification", "query-label"]
+help = "GLiClass query-label evaluates native relevance ranking, not decision accuracy"
 [tasks.live-role]
 run = "pnpm run test:live-role"
 [tasks.live-learning]

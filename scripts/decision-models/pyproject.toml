@@ -1,0 +1,12 @@
+[project]
+name = "omem-decision-evaluation"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "gliclass==0.1.20",
+  "mlx-lm==0.32.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "jevk5 @ git+https://github.com/allebee/jevk5@v0.3.0",
+]
+
+[tool.uv]
+package = false

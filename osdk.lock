@@ -22,6 +22,184 @@ url = "https://registry.npmjs.org/@oven/bun-darwin-aarch64/-/bun-darwin-aarch64-
 file_name = "bun-1.4.2.tgz"
 checksum = "sha512:31775990fd5f79ab6ac59fbf5535d61b50558cce0e1817a1558d90f3c11e523ffb2f450c782188b66c8f61337ec31be5189e85eba244b73b30f86bd059ec276a"
 
+[models.decision-gliclass]
+provider = "huggingface"
+repository = "knowledgator/gliclass-multilang-mini"
+requested_revision = "0bd888b6c3ef9fca5f0a9d407bddfbbc7623486b"
+revision = "0bd888b6c3ef9fca5f0a9d407bddfbbc7623486b"
+endpoint = "https://huggingface.co"
+variant = "bf16"
+kind = "other"
+family = "gliclass"
+include = [
+    "*.json",
+    "*.safetensors",
+    "spm.model",
+]
+
+[[models.decision-gliclass.files]]
+path = "added_tokens.json"
+size = 92
+sha256 = "b867d6af444d3de86cc1db4b6cc8dfe02aa5cff45c51282604a4680972f76d40"
+
+[[models.decision-gliclass.files]]
+path = "config.json"
+size = 2098
+sha256 = "3277f133289a26eb34f75f3b99c5739321827b6361c83974d2e4eca13b988aae"
+
+[[models.decision-gliclass.files]]
+path = "model.safetensors"
+size = 567503348
+sha256 = "440d8f17603d3e6f7d13a4fe7ffa7e9ef2c5a2581cceccb2f643334b92c8aea8"
+
+[[models.decision-gliclass.files]]
+path = "special_tokens_map.json"
+size = 970
+sha256 = "b2f1b2f15f29a6b6d9d6ea4eca1675d2c231a71477f151d48f79cc83a625ba21"
+
+[[models.decision-gliclass.files]]
+path = "spm.model"
+size = 4305025
+sha256 = "13c8d666d62a7bc4ac8f040aab68e942c861f93303156cc28f5c7e885d86d6e3"
+
+[[models.decision-gliclass.files]]
+path = "tokenizer.json"
+size = 16336328
+sha256 = "77e1661635eafe733781f83318eececcdf1190bc4c3199b32e5abb9def39daf4"
+
+[[models.decision-gliclass.files]]
+path = "tokenizer_config.json"
+size = 20444
+sha256 = "9e1c2981880005bda229880ee44131d94d50e3dc620347ac3896a87fdaef2698"
+
+[models.decision-plumb4b]
+provider = "huggingface"
+repository = "crh225/plumb-4b-GGUF"
+requested_revision = "71c1c57e523219124f7be9c486d475d19891185f"
+revision = "71c1c57e523219124f7be9c486d475d19891185f"
+endpoint = "https://huggingface.co"
+variant = "gguf-q8"
+kind = "other"
+family = "qwen3.5"
+derived_from = "crh225/plumb-4b"
+include = [
+    "plumb-4b-v5-Q8_0.gguf",
+    "LICENSE",
+    "NOTICE",
+]
+
+[[models.decision-plumb4b.files]]
+path = "LICENSE"
+size = 11560
+sha256 = "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+
+[[models.decision-plumb4b.files]]
+path = "NOTICE"
+size = 701
+sha256 = "f039a4e32f0a1f22da6ca65055a3bb6fa99cf33fe5d7dcec4e156a27a11d2ab5"
+
+[[models.decision-plumb4b.files]]
+path = "plumb-4b-v5-Q8_0.gguf"
+size = 4482402656
+sha256 = "a0d2974e04541b79e167d8acabfb7a7e4b4f93f3b47ac4a006d196d240f68177"
+
+[models.decision-plumb4b-q4]
+provider = "huggingface"
+repository = "crh225/plumb-4b-GGUF"
+requested_revision = "71c1c57e523219124f7be9c486d475d19891185f"
+revision = "71c1c57e523219124f7be9c486d475d19891185f"
+endpoint = "https://huggingface.co"
+variant = "gguf-q4-k-m"
+kind = "other"
+family = "qwen3.5"
+derived_from = "crh225/plumb-4b"
+include = [
+    "plumb-4b-v5-Q4_K_M.gguf",
+    "LICENSE",
+    "NOTICE",
+]
+
+[[models.decision-plumb4b-q4.files]]
+path = "LICENSE"
+size = 11560
+sha256 = "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+
+[[models.decision-plumb4b-q4.files]]
+path = "NOTICE"
+size = 701
+sha256 = "f039a4e32f0a1f22da6ca65055a3bb6fa99cf33fe5d7dcec4e156a27a11d2ab5"
+
+[[models.decision-plumb4b-q4.files]]
+path = "plumb-4b-v5-Q4_K_M.gguf"
+size = 2708803936
+sha256 = "d605acccbcf18e283d01f483fccfc9815335f6c46d1030a84e57acb34dae32c9"
+
+[models.decision-qwen4b]
+provider = "huggingface"
+repository = "mlx-community/Qwen3.5-4B-4bit"
+requested_revision = "0e7ffd5c629ef7719d4cbc04069232580bfa9d9c"
+revision = "0e7ffd5c629ef7719d4cbc04069232580bfa9d9c"
+endpoint = "https://huggingface.co"
+variant = "mlx-q4"
+kind = "other"
+family = "qwen3.5"
+derived_from = "Qwen/Qwen3.5-4B"
+include = [
+    "*.json",
+    "*.safetensors",
+    "*.jinja",
+]
+
+[[models.decision-qwen4b.files]]
+path = "chat_template.jinja"
+size = 7756
+sha256 = "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"
+
+[[models.decision-qwen4b.files]]
+path = "config.json"
+size = 3366
+sha256 = "f3efc81b2ea8d96a45301037d3ccccbcccdef44a961845c87f286aaddbc6eaaa"
+
+[[models.decision-qwen4b.files]]
+path = "model.safetensors"
+size = 3034300695
+sha256 = "5fb9acd0246866381cf8c5c354c6db1019f6498eec4ccb4f5edcc71ffeacb2db"
+
+[[models.decision-qwen4b.files]]
+path = "model.safetensors.index.json"
+size = 101944
+sha256 = "52e534c41f7b97708329c85f762e5882bf48bd5955a422c6ae74eba321e6048a"
+
+[[models.decision-qwen4b.files]]
+path = "preprocessor_config.json"
+size = 390
+sha256 = "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516"
+
+[[models.decision-qwen4b.files]]
+path = "processor_config.json"
+size = 1300
+sha256 = "14932921ca485d458a04dafd8069fbb0a4505622a48208d19ed247115801385b"
+
+[[models.decision-qwen4b.files]]
+path = "tokenizer.json"
+size = 19989343
+sha256 = "87a7830d63fcf43bf241c3c5242e96e62dd3fdc29224ca26fed8ea333db72de4"
+
+[[models.decision-qwen4b.files]]
+path = "tokenizer_config.json"
+size = 1139
+sha256 = "e98f1901ac6f0adff67b1d540bfa0c36ac1a0cf59eb72ed78146ef89aafa1182"
+
+[[models.decision-qwen4b.files]]
+path = "video_preprocessor_config.json"
+size = 385
+sha256 = "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+
+[[models.decision-qwen4b.files]]
+path = "vocab.json"
+size = 6722759
+sha256 = "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+
 [models.memory-zh]
 provider = "huggingface"
 repository = "Xenova/bge-small-zh-v1.5"
