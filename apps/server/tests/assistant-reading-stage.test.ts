@@ -16,7 +16,7 @@ vi.mock("../src/agents.js", async (original) => ({
   acp: vi.fn(),
 }));
 
-it.each(["answer", "handoff", "unavailable", "cancel"] as const)(
+it.each(["answer", "review", "handoff", "unavailable", "cancel"] as const)(
   "reading stage %s uses the real MCP scope and preserves the handoff snapshot",
   async (mode) => {
     const root = mkdtempSync(join(tmpdir(), "omem-reading-stage-"));
@@ -63,7 +63,45 @@ it.each(["answer", "handoff", "unavailable", "cancel"] as const)(
             create_task: null,
             update_task: null,
           };
-          if (profile.id === "reader" && mode === "handoff") {
+          if (mode === "review" && profile.id === "researcher") {
+            const question = JSON.parse(
+              readFileSync(join(cwd, "review-question.json"), "utf8"),
+            );
+            expect(question.question).toBe("会议安排？");
+            expect(question.draft).toBeUndefined();
+            expect(
+              readFileSync(join(cwd, "review-draft.json"), "utf8"),
+            ).toContain("地址确定");
+            const read = await client.callTool({
+              name: "read_material",
+              arguments: { key: material.key },
+            });
+            expect(JSON.stringify(read)).toContain("地址待确认");
+            const submitted = await client.callTool({
+              name: "submit_result",
+              arguments: {
+                result: {
+                  summary: "地址尚未确认",
+                  issues: [
+                    {
+                      problem: "地址确定没有依据",
+                      whyItMatters: "不能直接前往",
+                      suggestion: "说明地址待确认",
+                      sources: [
+                        {
+                          id: "cite_1",
+                          key: material.key,
+                          startLine: 2,
+                          endLine: 2,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            });
+            expect(submitted.isError).not.toBe(true);
+          } else if (profile.id === "reader" && mode === "handoff") {
             const action = await client.callTool({
               name: "submit_result",
               arguments: {
@@ -91,6 +129,38 @@ it.each(["answer", "handoff", "unavailable", "cancel"] as const)(
             expect(handed.isError).not.toBe(true);
             capture("安排改为周六，地址已确认。");
           } else {
+            if (mode === "review") {
+              const payload = (r: any) => JSON.parse(r.content[0].text);
+              const draft = {
+                answer: "周五开会，地址确定。[[cite_1]]",
+                citations: reply.citations,
+              };
+              const started = payload(
+                await client.callTool({
+                  name: "review_answer",
+                  arguments: { draft },
+                }),
+              );
+              expect(started.reviewId).toBeTypeOf("string");
+              expect(started.accepted).toBeUndefined();
+              const completed = payload(
+                await client.callTool({
+                  name: "read_answer_review",
+                  arguments: { reviewId: started.reviewId },
+                }),
+              );
+              expect(completed.status).toBe("completed");
+              expect(JSON.stringify(completed.report)).toContain(
+                "地址尚未确认",
+              );
+              const unchanged = await client.callTool({
+                name: "submit_result",
+                arguments: { result: { ...reply, answer: draft.answer } },
+              });
+              expect(unchanged.isError).toBe(true);
+              reply.answer = "周五开会，地址待确认。[[cite_1]]";
+              reply.citations[0]!.endLine = 2;
+            }
             if (mode === "handoff") {
               expect(
                 readFileSync(join(cwd, "reading-handoff.json"), "utf8"),
@@ -159,7 +229,9 @@ it.each(["answer", "handoff", "unavailable", "cancel"] as const)(
       if (mode === "cancel") await expect(pending).rejects.toThrow("cancelled");
       else {
         const result = await pending;
-        expect(result.researchedEvidence?.[0]?.text).toBe("周五开会。");
+        expect(result.researchedEvidence?.[0]?.text).toBe(
+          mode === "review" ? "周五开会。\n地址待确认。" : "周五开会。",
+        );
         expect(result.researchTrace?.stages?.map((s) => s.outcome)).toEqual(
           mode === "handoff"
             ? ["handoff", "answered"]
@@ -169,7 +241,7 @@ it.each(["answer", "handoff", "unavailable", "cancel"] as const)(
         );
       }
       expect(calls).toEqual(
-        mode === "handoff" || mode === "unavailable"
+        mode === "handoff" || mode === "unavailable" || mode === "review"
           ? ["reader", "researcher"]
           : ["reader"],
       );

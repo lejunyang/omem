@@ -117,6 +117,10 @@ help = "Also compare a material-first reader with the normal model as investigat
 [tasks."assistant:compare".options.reading-effort]
 default = "auto"
 help = "auto discovers the lowest advertised none/minimal/low effort; explicit values are validated"
+[tasks."assistant:compare".options.variant]
+default = "both"
+choices = ["both", "research", "reading-first"]
+help = "Run both paths, or replay one path without repeating a completed baseline"
 [tasks."assistant:compare".options.data]
 help = "Source data directory; defaults to personal data or isolated review data"
 [tasks."assistant:compare".options.output]
