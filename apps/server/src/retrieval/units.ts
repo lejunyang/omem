@@ -8,6 +8,7 @@ import type {
 } from "../../../../packages/contracts/src/knowledge.js";
 import { parseFile } from "../code/parse.js";
 import { fragmentPositions } from "../knowledge/structure.js";
+import { CONTEXT_VERSION, saveContextHierarchy } from "./hierarchy.js";
 import { knowledgeStatus, publicationRole } from "../knowledge/lifecycle.js";
 import { stableDigest } from "../storage/digest.js";
 import { MaterialDescriptions } from "../source-profile/descriptions.js";
@@ -493,6 +494,7 @@ export class RetrievalProjection {
         .map((r) => [String(r.owner), String(r.identity)]),
     );
     const wanted = new Set<string>();
+    const contexts = new Map(this.db.prepare("SELECT owner,revision_id,version FROM retrieval_contexts").all().map(r => [String(r.owner), r]));
     const descriptions = new MaterialDescriptions(this.db);
     const sourceRows = this.db
       .prepare(
@@ -520,7 +522,15 @@ export class RetrievalProjection {
           UNIT_VERSION + ":" + m.revisionId + ":" + (description?.version ?? 0);
       wanted.add(owner);
       if (heads.get(owner) !== identity)
-        this.replace(owner, identity, sourceUnits(m, row, description));
+        this.replace(owner, identity, sourceUnits(m, row, description), m);
+      else if (contexts.get(owner)?.revision_id !== m.revisionId || contexts.get(owner)?.version !== CONTEXT_VERSION) {
+        // Backfill the new context projection without changing unit/vector IDs.
+        const members = this.db.prepare("SELECT id,target FROM retrieval_units WHERE owner=?").all(owner).map(r => {
+          const target = JSON.parse(String(r.target)) as SourceAnchor;
+          return { id: String(r.id), startLine: target.startLine, endLine: target.endLine };
+        });
+        saveContextHierarchy(this.db, m, members);
+      }
       yield;
     }
     const articleRows = tableExists(this.db, "knowledge_heads")
@@ -889,6 +899,7 @@ export class RetrievalProjection {
     owner: string,
     identity: string | null,
     units: RetrievalUnit[],
+    material?: KnowledgeMaterial,
   ) {
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -899,6 +910,7 @@ export class RetrievalProjection {
           .prepare("DELETE FROM retrieval_units_fts WHERE id=?")
           .run(String(row.id));
       this.db.prepare("DELETE FROM retrieval_units WHERE owner=?").run(owner);
+      this.db.prepare("DELETE FROM retrieval_contexts WHERE owner=?").run(owner);
       this.db
         .prepare("DELETE FROM retrieval_projection_heads WHERE owner=?")
         .run(owner);
@@ -941,6 +953,8 @@ export class RetrievalProjection {
             indexText(u.text.replace(/\[\[[\w-]+\]\]/g, "")),
           );
       }
+      if (material) saveContextHierarchy(this.db, material, units.flatMap(u => u.target.kind === "source"
+        ? [{ id: u.id, startLine: u.target.startLine, endLine: u.target.endLine }] : []));
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");

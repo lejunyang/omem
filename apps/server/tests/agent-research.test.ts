@@ -178,6 +178,12 @@ it("lets a research agent request caller candidates and read their fixed enclosi
     expect(body.startLine).toBe(2);
     expect(body.endLine).toBe(2);
     expect(body.key).toBe(data.hits[0].key);
+    expect(body.context.id).toBe(data.hits[0].contextNode.id);
+    const parent = await client.callTool({ name: "read_section", arguments: { key: body.key, contextId: body.context.parentId } });
+    const parentBody = JSON.parse((parent.content as {text:string}[])[0]!.text);
+    expect(parentBody.text).toContain("function reserveParcel");
+    expect(parentBody.text).toContain("function checkout");
+    expect(parentBody.context.children).toContain(body.context.id);
     const unknown = await client.callTool({
       name: "search_materials",
       arguments: { query: "reserveParcel", keys: ["invented:shipping.ts"] },

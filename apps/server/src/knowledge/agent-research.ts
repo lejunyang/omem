@@ -31,7 +31,6 @@ import { loadChineseEmbedding } from "../retrieval/embedding.js";
 import { loadChineseReranker } from "../retrieval/reranker.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
 import {
-  materialSections,
   fragmentPositions,
   containingSection,
 } from "./structure.js";
@@ -43,6 +42,7 @@ import {
 } from "./repository.js";
 import { researchSnapshot } from "./research-snapshot.js";
 import { MaterialDescriptions } from "../source-profile/descriptions.js";
+import { contextHierarchy, enclosingContext, type ContextNode } from "../retrieval/hierarchy.js";
 
 type Entry = {
   material: KnowledgeMaterial;
@@ -320,6 +320,11 @@ export async function prepareAgentResearch(input: {
         );
       return found;
     };
+    const outlines = new Map<string, ContextNode[]>();
+    const outlineFor = (m: KnowledgeMaterial) => {
+      if (!outlines.has(m.revisionId)) outlines.set(m.revisionId, contextHierarchy(m, db).nodes);
+      return outlines.get(m.revisionId)!;
+    };
     const read = (key: string, start = 1, end?: number) => {
       const e = entry(key),
         m = e.material;
@@ -340,7 +345,7 @@ export async function prepareAgentResearch(input: {
           .slice(start - 1, end)
           .map((l, i) => `${start + i}: ${l}`)
           .join("\n"),
-        outline: materialSections(m),
+        outline: outlineFor(m),
         description:
           catalog.find((item) => item.revision === m.revisionId)?.description ??
           null,
@@ -453,20 +458,28 @@ export async function prepareAgentResearch(input: {
       );
       tool(
         "read_section",
-        "Read the complete chapter or enclosing code symbol at a search hit's atLine, without guessing a title or reading from line 1. Alternatively use an exact outline title. Omit both to get the outline. Keys and catalog paths accepted.",
+        "Read a fixed chapter or code symbol using its contextId, or the smallest enclosing context at atLine. Search hits and outlines include id, parentId and children: follow parentId to read broader conditions, or children to inspect a subtopic. Alternatively use an exact title. Omit all selectors for the outline. Keys and catalog paths accepted.",
         {
           key: z.string(),
           section: z.string().optional(),
           atLine: z.number().int().positive().optional(),
+          contextId: z.string().optional(),
         },
-        ({ key, section, atLine }) => {
+        ({ key, section, atLine, contextId }) => {
           const m = entry(key).material,
-            outline = materialSections(m);
+            outline = outlineFor(m);
+          if ([section, atLine, contextId].filter(v => v !== undefined).length > 1)
+            throw Error("Use only one of contextId, atLine or section");
+          const readContext = (node: ContextNode) => ({ ...read(m.key, node.startLine, node.endLine), context: node });
+          if (contextId) {
+            const node = outline.find(n => n.id === contextId);
+            if (!node) throw Error("Context missing in this fixed original; choose an id from its outline");
+            return readContext(node);
+          }
           if (atLine !== undefined) {
-            if (section) throw Error("Use either atLine or section, not both");
             if (atLine > m.lineCount)
               throw Error(`Invalid line; ${m.title} has ${m.lineCount} lines`);
-            const enclosing = containingSection(m, atLine);
+            const enclosing = enclosingContext(outline, atLine) ?? (outline.length === 1 ? outline[0] : undefined);
             if (!enclosing)
               return {
                 key: m.key,
@@ -474,7 +487,7 @@ export async function prepareAgentResearch(input: {
                 outline,
                 hint: "This line is outside a chapter or symbol. Use read_material with the returned line range you need.",
               };
-            return read(m.key, enclosing.startLine, enclosing.endLine);
+            return readContext(enclosing);
           }
           if (!section) return { key: m.key, outline };
           const matches = outline.filter((s) => s.title === section);
@@ -486,7 +499,7 @@ export async function prepareAgentResearch(input: {
             };
           const s = matches[0];
           if (!s) throw Error("Section missing; choose an exact outline title");
-          return read(m.key, s.startLine, s.endLine);
+          return readContext(s);
         },
       );
       tool(
@@ -575,7 +588,8 @@ export async function prepareAgentResearch(input: {
                   context: h.context,
                   description: h.materialDescription,
                   headingPath: h.headingPath,
-                  outline: materialSections(f.material).filter(
+                  contextNode: enclosingContext(outlineFor(f.material), target.startLine, target.endLine) ?? null,
+                  outline: outlineFor(f.material).filter(
                     (s) =>
                       s.startLine <= target.endLine &&
                       s.endLine >= target.startLine,

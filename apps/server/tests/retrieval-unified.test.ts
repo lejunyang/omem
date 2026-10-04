@@ -1149,7 +1149,7 @@ it("assembles all three facts from one original and restores a missing chapter c
     s.store.capture({
       source: "manual", externalId: "ferry", title: "出行安排.md",
       parts: [{type: "text", text: [
-        "# 出行", "## 渡轮预订时间", "渡轮预订必须提前完成。", "",
+        "# 出行", "", "以下安排仅适用于提前报名的参加者。", "", "## 渡轮预订时间", "渡轮预订必须提前完成。", "",
         "最后受理时间是周三18点。", "", "## 渡轮预订证件",
         "渡轮预订需要身份证原件。", "", "## 渡轮预订取消",
         "渡轮预订可在周四12点前取消。", "", "## 其他交通", "火车票可以当天购买。",
@@ -1165,6 +1165,7 @@ it("assembles all three facts from one original and restores a missing chapter c
     const conversation = runtime.conversations.open({principalId:"owner",channel:"web",chatId:"ferry",visibility:"private"});
     await runtime.turn({conversationId:conversation.id,userText:"渡轮预订"});
     const text = received!.evidence.map(e => e.text).join("\n");
+    expect(text).toContain("仅适用于提前报名的参加者");
     expect(text).toContain("周三18点");
     expect(text).toContain("身份证原件");
     expect(text).toContain("周四12点");
@@ -1186,7 +1187,9 @@ it("does not expand a visible hit into a hidden part of its chapter", async () =
     const m = s.repository.materials()[0]!, hit = sourceAnchor(m, m.lineCount, m.lineCount);
     expect(m.fragments.length).toBeGreaterThan(1);
     const visible = (id:string) => hit.fragmentIds.includes(id);
-    expect(sourceContextRange(m, hit, visible)).toEqual(hit);
-    expect(sourceContextRange(m, hit, () => true).startLine).toBe(1);
+    await s.retrieval.search({text:"渡轮预订",diversify:false});
+    const projection = { db: s.store.db, unitId: "fixed-history" };
+    expect(sourceContextRange(m, hit, visible, projection)).toEqual(hit);
+    expect(sourceContextRange(m, hit, () => true, projection).startLine).toBe(1);
   } finally { await s.close(); }
 });

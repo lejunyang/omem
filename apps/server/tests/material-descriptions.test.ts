@@ -272,6 +272,7 @@ it("reuses admitted source indices but rebuilds outdated annotations and exclude
         .prepare("SELECT 1 FROM retrieval_units_fts WHERE body MATCH '秘密'")
         .get(),
     ).toBeUndefined();
+    expect(db.prepare("SELECT revision_id FROM retrieval_contexts").all()).toEqual([{ revision_id: kept.id }]);
   } finally {
     await retrieval.close();
     db.close();
