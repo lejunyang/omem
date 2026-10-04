@@ -14,7 +14,7 @@ import { answerInvestigation, reviewAssistantAnswer } from "./answer-review.js";
 import { readingStage, readingStageInstructions } from "./reading-stage.js";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import type { AgentProfile } from "../../../../packages/contracts/src/index.js";
-import { acp } from "../agents.js";
+import { acp, withAgentWorkspace } from "../agents.js";
 import { retrievalPurposes, type RetrievalPurpose } from "../retrieval/port.js";
 import {
   ModelUnavailableError,
@@ -276,19 +276,8 @@ export class AcpAssistantModel implements AssistantModelPort {
       const run = async (selected: AgentProfile, stagePrompt: string) =>
         acp(
           {
-            ...selected,
+            ...withAgentWorkspace(selected, workspace),
             skills: bundle.skills.map((s) => s.canonical_name),
-            args: /(?:^|[/\\])(?:traex|traecli)(?:\.exe)?$/.test(
-              selected.command,
-            )
-              ? [
-                  "-C",
-                  workspace,
-                  "-c",
-                  "project_doc_max_bytes=0",
-                  ...selected.args,
-                ]
-              : selected.args,
           },
           workspace,
           [

@@ -34,6 +34,14 @@ export type AcpOptions = {
   contextBudget?: { estimatedInputTokens: number; maxOutputTokens: number; contextReserveTokens: number };
   onRuntimeRequest?: (request: RuntimeRequestEvent) => void | Promise<void>;
 };
+
+/** Run a supplied role in its material workspace without inheriting repository
+ * development instructions. This controls prompt discovery, not OS file access. */
+export function withAgentWorkspace(profile: AgentProfile, workspace: string): AgentProfile {
+  if (profile.transport !== "acp" || !/(?:^|[/\\])(?:traex|traecli)(?:\.exe)?$/.test(profile.command)) return profile;
+  return { ...profile, args: ["-C", workspace, "-c", "project_doc_max_bytes=0", ...profile.args] };
+}
+
 const env = () =>
   Object.fromEntries(
     Object.entries(process.env).filter(

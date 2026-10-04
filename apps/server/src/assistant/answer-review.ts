@@ -10,7 +10,7 @@ import {
 } from "../../../../packages/contracts/src/assistant.js";
 import type { AgentProfile } from "../../../../packages/contracts/src/index.js";
 import { RoleBundleRegistry } from "../agent-runtime/bundles.js";
-import { acp } from "../agents.js";
+import { acp, withAgentWorkspace } from "../agents.js";
 import {
   prepareAgentResearch,
   type ResearchSnapshot,
@@ -311,11 +311,8 @@ export async function reviewAssistantAnswer(input: {
     input.context.signal?.throwIfAborted();
     const result = await acp(
       {
-        ...profile,
+        ...withAgentWorkspace(profile, workspace),
         skills: bundle.skills.map((s) => s.canonical_name),
-        args: /(?:^|[/\\])(?:traex|traecli)(?:\.exe)?$/.test(profile.command)
-          ? ["-C", workspace, "-c", "project_doc_max_bytes=0", ...profile.args]
-          : profile.args,
       },
       workspace,
       [
