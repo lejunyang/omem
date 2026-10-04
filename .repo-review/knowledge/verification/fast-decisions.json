@@ -1,0 +1,2464 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-04T05:22:21.425244+00:00",
+  "method": "Small author-labelled Chinese screening, not blind benchmark or production accuracy. Fixed actual HTTP snippets and hand-authored scenarios are separated. Raw reports remain in ignored runtime. No model enabled in production. RSS and MLX peak allocations measure different overlapping resources; do not sum or directly compare them. Native GLiClass relevance is ranked, not graded as 5-way classification.",
+  "runs": [
+    {
+      "name": "decision-gliclass",
+      "startedAt": "2026-10-04T04:46:19.058Z",
+      "machine": {
+        "cpu": "Apple M2 Pro",
+        "arch": "arm64",
+        "memoryBytes": 34359738368
+      },
+      "suite": {
+        "sha256": "33faddee4f538925d23a30f32e28fb4b5baf139ec39fa1b17c8f1ca152faf5f2"
+      },
+      "model": {
+        "ready": true,
+        "loadMs": 25590,
+        "library": "gliclass",
+        "version": "0.1.20",
+        "device": "cpu",
+        "dtype": "torch.bfloat16",
+        "repository": "knowledgator/gliclass-multilang-mini",
+        "revision": "0bd888b6c3ef9fca5f0a9d407bddfbbc7623486b",
+        "variant": "bf16",
+        "files": [
+          {
+            "path": "added_tokens.json",
+            "sha256": "b867d6af444d3de86cc1db4b6cc8dfe02aa5cff45c51282604a4680972f76d40"
+          },
+          {
+            "path": "config.json",
+            "sha256": "3277f133289a26eb34f75f3b99c5739321827b6361c83974d2e4eca13b988aae"
+          },
+          {
+            "path": "model.safetensors",
+            "sha256": "440d8f17603d3e6f7d13a4fe7ffa7e9ef2c5a2581cceccb2f643334b92c8aea8"
+          },
+          {
+            "path": "special_tokens_map.json",
+            "sha256": "b2f1b2f15f29a6b6d9d6ea4eca1675d2c231a71477f151d48f79cc83a625ba21"
+          },
+          {
+            "path": "spm.model",
+            "sha256": "13c8d666d62a7bc4ac8f040aab68e942c861f93303156cc28f5c7e885d86d6e3"
+          },
+          {
+            "path": "tokenizer.json",
+            "sha256": "77e1661635eafe733781f83318eececcdf1190bc4c3199b32e5abb9def39daf4"
+          },
+          {
+            "path": "tokenizer_config.json",
+            "sha256": "9e1c2981880005bda229880ee44131d94d50e3dc620347ac3896a87fdaef2698"
+          }
+        ]
+      },
+      "readout": "classification",
+      "summary": {
+        "correct": 26,
+        "total": 76,
+        "errors": 0,
+        "p50Ms": 413.27,
+        "p95Ms": 469.5,
+        "groups": {
+          "context": {
+            "correct": 6,
+            "total": 14
+          },
+          "readiness": {
+            "correct": 2,
+            "total": 12
+          },
+          "actions": {
+            "correct": 2,
+            "total": 8
+          },
+          "domain": {
+            "correct": 6,
+            "total": 12
+          },
+          "relevance": {
+            "correct": 6,
+            "total": 18
+          },
+          "memory": {
+            "correct": 4,
+            "total": 12
+          }
+        },
+        "optionOrderChanges": [
+          "short-evidence",
+          "searchable-name",
+          "enough-simple",
+          "enough-negative",
+          "memory-suggestion"
+        ],
+        "wrongDirectAnswers": [
+          "not-enough-topical:0",
+          "searchable-name:1",
+          "not-enough-topical:1"
+        ],
+        "peakProcessBytes": 991854592,
+        "peakModelAllocationBytes": 0,
+        "maxObservedServerResidentBytes": 0
+      },
+      "rawReportSha256": "7281c99e869212426860f12caad6d7d6ccd4d7945072a42b588a6154fe0762c6",
+      "failedExamples": [
+        {
+          "id": "short-evidence:0",
+          "selected": "search",
+          "expected": [
+            "answer"
+          ],
+          "scores": {
+            "answer": 0.23813846707344055,
+            "search": 0.30577585101127625,
+            "investigate": 0.07039359956979752,
+            "clarify": 0.13999438285827637,
+            "action": 0.24569779634475708
+          }
+        },
+        {
+          "id": "ambiguous-arrange:0",
+          "selected": "action",
+          "expected": [
+            "clarify"
+          ],
+          "scores": {
+            "answer": 0.14470534026622772,
+            "search": 0.16917769610881805,
+            "investigate": 0.08374903351068497,
+            "clarify": 0.23857878148555756,
+            "action": 0.3637892007827759
+          }
+        },
+        {
+          "id": "ambiguous-two-projects:0",
+          "selected": "search",
+          "expected": [
+            "clarify"
+          ],
+          "scores": {
+            "answer": 0.09309843182563782,
+            "search": 0.4511420726776123,
+            "investigate": 0.11586286872625351,
+            "clarify": 0.16596589982509613,
+            "action": 0.17393076419830322
+          }
+        },
+        {
+          "id": "clear-question-no-answer:0",
+          "selected": "search",
+          "expected": [
+            "investigate"
+          ],
+          "scores": {
+            "answer": 0.1674739569425583,
+            "search": 0.49998486042022705,
+            "investigate": 0.12252655625343323,
+            "clarify": 0.0984528586268425,
+            "action": 0.11156170815229416
+          }
+        },
+        {
+          "id": "enough-simple:0",
+          "selected": "search",
+          "expected": [
+            "answer"
+          ],
+          "scores": {
+            "answer": 0.15577128529548645,
+            "search": 0.41040268540382385,
+            "investigate": 0.13323824107646942,
+            "clarify": 0.10057350248098373,
+            "action": 0.20001429319381714
+          }
+        },
+        {
+          "id": "time-conflict:0",
+          "selected": "search",
+          "expected": [
+            "investigate"
+          ],
+          "scores": {
+            "answer": 0.09479808062314987,
+            "search": 0.5541160702705383,
+            "investigate": 0.09780729562044144,
+            "clarify": 0.07617239654064178,
+            "action": 0.17710614204406738
+          }
+        },
+        {
+          "id": "enough-negative:0",
+          "selected": "action",
+          "expected": [
+            "answer"
+          ],
+          "scores": {
+            "answer": 0.2565010190010071,
+            "search": 0.21599550545215607,
+            "investigate": 0.05904988572001457,
+            "clarify": 0.05211133882403374,
+            "action": 0.41634222865104675
+          }
+        },
+        {
+          "id": "not-enough-topical:0",
+          "selected": "answer",
+          "expected": [
+            "investigate"
+          ],
+          "scores": {
+            "answer": 0.2794317305088043,
+            "search": 0.2584320902824402,
+            "investigate": 0.08259986340999603,
+            "clarify": 0.11290062218904495,
+            "action": 0.26663562655448914
+          }
+        }
+      ]
+    },
+    {
+      "name": "decision-qwen4b",
+      "startedAt": "2026-10-04T04:47:37.227Z",
+      "machine": {
+        "cpu": "Apple M2 Pro",
+        "arch": "arm64",
+        "memoryBytes": 34359738368
+      },
+      "suite": {
+        "sha256": "33faddee4f538925d23a30f32e28fb4b5baf139ec39fa1b17c8f1ca152faf5f2"
+      },
+      "model": {
+        "ready": true,
+        "loadMs": 18379,
+        "library": "mlx-lm",
+        "version": "0.32.0",
+        "device": "metal",
+        "thinking": false,
+        "readout": "single answer-token logits; uncalibrated",
+        "repository": "mlx-community/Qwen3.5-4B-4bit",
+        "revision": "0e7ffd5c629ef7719d4cbc04069232580bfa9d9c",
+        "variant": "mlx-q4",
+        "files": [
+          {
+            "path": "chat_template.jinja",
+            "sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"
+          },
+          {
+            "path": "config.json",
+            "sha256": "f3efc81b2ea8d96a45301037d3ccccbcccdef44a961845c87f286aaddbc6eaaa"
+          },
+          {
+            "path": "model.safetensors",
+            "sha256": "5fb9acd0246866381cf8c5c354c6db1019f6498eec4ccb4f5edcc71ffeacb2db"
+          },
+          {
+            "path": "model.safetensors.index.json",
+            "sha256": "52e534c41f7b97708329c85f762e5882bf48bd5955a422c6ae74eba321e6048a"
+          },
+          {
+            "path": "preprocessor_config.json",
+            "sha256": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516"
+          },
+          {
+            "path": "processor_config.json",
+            "sha256": "14932921ca485d458a04dafd8069fbb0a4505622a48208d19ed247115801385b"
+          },
+          {
+            "path": "tokenizer.json",
+            "sha256": "87a7830d63fcf43bf241c3c5242e96e62dd3fdc29224ca26fed8ea333db72de4"
+          },
+          {
+            "path": "tokenizer_config.json",
+            "sha256": "e98f1901ac6f0adff67b1d540bfa0c36ac1a0cf59eb72ed78146ef89aafa1182"
+          },
+          {
+            "path": "video_preprocessor_config.json",
+            "sha256": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+          },
+          {
+            "path": "vocab.json",
+            "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+          }
+        ]
+      },
+      "readout": "classification",
+      "summary": {
+        "correct": 55,
+        "total": 76,
+        "errors": 0,
+        "p50Ms": 568.7,
+        "p95Ms": 594.88,
+        "groups": {
+          "context": {
+            "correct": 8,
+            "total": 14
+          },
+          "readiness": {
+            "correct": 10,
+            "total": 12
+          },
+          "actions": {
+            "correct": 5,
+            "total": 8
+          },
+          "domain": {
+            "correct": 10,
+            "total": 12
+          },
+          "relevance": {
+            "correct": 15,
+            "total": 18
+          },
+          "memory": {
+            "correct": 7,
+            "total": 12
+          }
+        },
+        "optionOrderChanges": [
+          "short-conversation",
+          "searchable-name",
+          "ambiguous-two-projects",
+          "enough-prerequisite",
+          "question-not-action",
+          "related-question-list",
+          "related-irrelevant",
+          "related-current-negative",
+          "memory-unknown"
+        ],
+        "wrongDirectAnswers": [],
+        "peakProcessBytes": 1808203776,
+        "peakModelAllocationBytes": 3043626372,
+        "maxObservedServerResidentBytes": 0
+      },
+      "rawReportSha256": "ed6180bcfb839243fe44c8a18fdc5b5d191fa89d90fc9781e7fabd84592c4e56",
+      "failedExamples": [
+        {
+          "id": "short-conversation:0",
+          "selected": "clarify",
+          "expected": [
+            "search"
+          ],
+          "scores": {
+            "answer": 0.04818567633628845,
+            "search": 0.14842234551906586,
+            "investigate": 0.1681845337152481,
+            "clarify": 0.5870217680931091,
+            "action": 0.04818567633628845
+          }
+        },
+        {
+          "id": "searchable-name:0",
+          "selected": "clarify",
+          "expected": [
+            "search"
+          ],
+          "scores": {
+            "answer": 0.04015131667256355,
+            "search": 0.2966803312301636,
+            "investigate": 0.179945707321167,
+            "clarify": 0.43166735768318176,
+            "action": 0.05155530944466591
+          }
+        },
+        {
+          "id": "ambiguous-two-projects:0",
+          "selected": "search",
+          "expected": [
+            "clarify"
+          ],
+          "scores": {
+            "answer": 0.0788002610206604,
+            "search": 0.35315826535224915,
+            "investigate": 0.21420130133628845,
+            "clarify": 0.275039941072464,
+            "action": 0.0788002610206604
+          }
+        },
+        {
+          "id": "enough-prerequisite:0",
+          "selected": "clarify",
+          "expected": [
+            "answer"
+          ],
+          "scores": {
+            "answer": 0.19352835416793823,
+            "search": 0.11738087981939316,
+            "investigate": 0.21929635107517242,
+            "clarify": 0.3190743327140808,
+            "action": 0.1507200300693512
+          }
+        },
+        {
+          "id": "question-not-action:0",
+          "selected": "action",
+          "expected": [
+            "answer"
+          ],
+          "scores": {
+            "answer": 0.10249637067317963,
+            "search": 0.015718327835202217,
+            "investigate": 0.01781119965016842,
+            "clarify": 0.005782449617981911,
+            "action": 0.8581916689872742
+          }
+        },
+        {
+          "id": "cancel-unknown-task:0",
+          "selected": "action",
+          "expected": [
+            "clarify"
+          ],
+          "scores": {
+            "answer": 0.05057705193758011,
+            "search": 0.007756241597235203,
+            "investigate": 0.014490565285086632,
+            "clarify": 0.030676526948809624,
+            "action": 0.8964996337890625
+          }
+        },
+        {
+          "id": "domain-mixed:0",
+          "selected": "schedule",
+          "expected": [
+            "mixed"
+          ],
+          "scores": {
+            "code": 0.024179738014936447,
+            "business": 0.004201808013021946,
+            "schedule": 0.9073378443717957,
+            "learning": 0.0008273848216049373,
+            "mixed": 0.02133854106068611,
+            "other": 0.0022490660194307566,
+            "unknown": 0.0398656390607357
+          }
+        },
+        {
+          "id": "memory-other-scope:0",
+          "selected": "replace",
+          "expected": [
+            "supplement"
+          ],
+          "scores": {
+            "replace": 0.44893163442611694,
+            "supplement": 0.21206027269363403,
+            "duplicate": 0.003884019562974572,
+            "conflict": 0.14574676752090454,
+            "none": 0.06075628101825714,
+            "unknown": 0.12862105667591095
+          }
+        }
+      ]
+    },
+    {
+      "name": "decision-plumb4b",
+      "startedAt": "2026-10-04T05:01:05.409Z",
+      "machine": {
+        "cpu": "Apple M2 Pro",
+        "arch": "arm64",
+        "memoryBytes": 34359738368
+      },
+      "suite": {
+        "sha256": "33faddee4f538925d23a30f32e28fb4b5baf139ec39fa1b17c8f1ca152faf5f2"
+      },
+      "model": {
+        "ready": true,
+        "loadMs": 78,
+        "library": "jevk5",
+        "version": "0.3.0",
+        "device": "llama.cpp-metal",
+        "temperature": 2.07,
+        "readout": "upstream GGUF option-token probabilities",
+        "workerReadyMs": 6583,
+        "server": {
+          "tool": "github:ggml-org/llama.cpp@b11382",
+          "contextSize": 8192,
+          "threads": 4,
+          "parallel": 1,
+          "gpuLayers": "all",
+          "promptCache": false
+        },
+        "repository": "crh225/plumb-4b-GGUF",
+        "revision": "71c1c57e523219124f7be9c486d475d19891185f",
+        "variant": "gguf-q8",
+        "files": [
+          {
+            "path": "LICENSE",
+            "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+          },
+          {
+            "path": "NOTICE",
+            "sha256": "f039a4e32f0a1f22da6ca65055a3bb6fa99cf33fe5d7dcec4e156a27a11d2ab5"
+          },
+          {
+            "path": "plumb-4b-v5-Q8_0.gguf",
+            "sha256": "a0d2974e04541b79e167d8acabfb7a7e4b4f93f3b47ac4a006d196d240f68177"
+          }
+        ]
+      },
+      "readout": "classification",
+      "summary": {
+        "correct": 62,
+        "total": 76,
+        "errors": 0,
+        "p50Ms": 590.13,
+        "p95Ms": 657.97,
+        "groups": {
+          "context": {
+            "correct": 13,
+            "total": 14
+          },
+          "readiness": {
+            "correct": 6,
+            "total": 12
+          },
+          "actions": {
+            "correct": 6,
+            "total": 8
+          },
+          "domain": {
+            "correct": 10,
+            "total": 12
+          },
+          "relevance": {
+            "correct": 18,
+            "total": 18
+          },
+          "memory": {
+            "correct": 9,
+            "total": 12
+          }
+        },
+        "optionOrderChanges": [
+          "searchable-name",
+          "time-conflict",
+          "enough-prerequisite",
+          "memory-other-scope",
+          "memory-duplicate",
+          "memory-unknown"
+        ],
+        "wrongDirectAnswers": [],
+        "peakProcessBytes": 37961728,
+        "peakModelAllocationBytes": 0,
+        "maxObservedServerResidentBytes": 9217261568
+      },
+      "rawReportSha256": "c92b2c99d7f8d253047a2132fb3047c2d78b4ae52f4b46cea2e9299784b84c5f",
+      "failedExamples": [
+        {
+          "id": "not-enough-topical:0",
+          "selected": "clarify",
+          "expected": [
+            "investigate"
+          ],
+          "scores": {
+            "answer": 0.026253089487535713,
+            "search": 0.11905406156627871,
+            "investigate": 0.11567858652221129,
+            "clarify": 0.730845800717004,
+            "action": 0.00816846170697024
+          }
+        },
+        {
+          "id": "enough-prerequisite:0",
+          "selected": "clarify",
+          "expected": [
+            "answer"
+          ],
+          "scores": {
+            "answer": 0.19776975283732942,
+            "search": 0.04985342968540501,
+            "investigate": 0.185999843957375,
+            "clarify": 0.5533822297274534,
+            "action": 0.012994743792437079
+          }
+        },
+        {
+          "id": "plan-comparison:0",
+          "selected": "clarify",
+          "expected": [
+            "investigate"
+          ],
+          "scores": {
+            "answer": 0.017026004592639907,
+            "search": 0.01939984968228277,
+            "investigate": 0.3579668699368903,
+            "clarify": 0.5976850218267762,
+            "action": 0.007922253961410894
+          }
+        },
+        {
+          "id": "cancel-unknown-task:0",
+          "selected": "action",
+          "expected": [
+            "clarify"
+          ],
+          "scores": {
+            "answer": 0.07525968446672626,
+            "search": 0.021658560610489267,
+            "investigate": 0.058297750668068346,
+            "clarify": 0.12875971638541261,
+            "action": 0.7160242878693035
+          }
+        },
+        {
+          "id": "domain-mixed:0",
+          "selected": "schedule",
+          "expected": [
+            "mixed"
+          ],
+          "scores": {
+            "code": 0.06262105527693594,
+            "business": 0.024955960384776304,
+            "schedule": 0.6199488279583437,
+            "learning": 0.02206079689208774,
+            "mixed": 0.21197545087611233,
+            "other": 0.022154644079639622,
+            "unknown": 0.03628326453210434
+          }
+        },
+        {
+          "id": "memory-other-scope:0",
+          "selected": "replace",
+          "expected": [
+            "supplement"
+          ],
+          "scores": {
+            "replace": 0.5075093048546307,
+            "supplement": 0.27135960274765125,
+            "duplicate": 0.016646905349628458,
+            "conflict": 0.042014497361972526,
+            "none": 0.04286405525307243,
+            "unknown": 0.11960563443304459
+          }
+        },
+        {
+          "id": "searchable-name:1",
+          "selected": "clarify",
+          "expected": [
+            "search"
+          ],
+          "scores": {
+            "search": 0.1734463787789366,
+            "investigate": 0.04449386446326309,
+            "clarify": 0.7137964329983427,
+            "action": 0.01803416106137762,
+            "answer": 0.05022916269808007
+          }
+        },
+        {
+          "id": "time-conflict:1",
+          "selected": "clarify",
+          "expected": [
+            "investigate"
+          ],
+          "scores": {
+            "search": 0.11953573290080138,
+            "investigate": 0.39490339490323406,
+            "clarify": 0.4049407529618862,
+            "action": 0.018041798776896274,
+            "answer": 0.0625783204571822
+          }
+        }
+      ]
+    },
+    {
+      "name": "decision-plumb4b-q4",
+      "startedAt": "2026-10-04T05:12:27.451Z",
+      "machine": {
+        "cpu": "Apple M2 Pro",
+        "arch": "arm64",
+        "memoryBytes": 34359738368
+      },
+      "suite": {
+        "sha256": "33faddee4f538925d23a30f32e28fb4b5baf139ec39fa1b17c8f1ca152faf5f2"
+      },
+      "model": {
+        "ready": true,
+        "loadMs": 64,
+        "library": "jevk5",
+        "version": "0.3.0",
+        "device": "llama.cpp-metal",
+        "temperature": 2.07,
+        "readout": "upstream GGUF option-token probabilities",
+        "workerReadyMs": 1519,
+        "server": {
+          "tool": "github:ggml-org/llama.cpp@b11382",
+          "contextSize": 8192,
+          "threads": 4,
+          "parallel": 1,
+          "gpuLayers": "all",
+          "promptCache": false
+        },
+        "repository": "crh225/plumb-4b-GGUF",
+        "revision": "71c1c57e523219124f7be9c486d475d19891185f",
+        "variant": "gguf-q4-k-m",
+        "files": [
+          {
+            "path": "LICENSE",
+            "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+          },
+          {
+            "path": "NOTICE",
+            "sha256": "f039a4e32f0a1f22da6ca65055a3bb6fa99cf33fe5d7dcec4e156a27a11d2ab5"
+          },
+          {
+            "path": "plumb-4b-v5-Q4_K_M.gguf",
+            "sha256": "d605acccbcf18e283d01f483fccfc9815335f6c46d1030a84e57acb34dae32c9"
+          }
+        ]
+      },
+      "readout": "classification",
+      "summary": {
+        "correct": 52,
+        "total": 76,
+        "errors": 0,
+        "ranking": [],
+        "p50Ms": 653.64,
+        "p95Ms": 738.62,
+        "groups": {
+          "context": {
+            "correct": 9,
+            "total": 14
+          },
+          "readiness": {
+            "correct": 4,
+            "total": 12
+          },
+          "actions": {
+            "correct": 5,
+            "total": 8
+          },
+          "domain": {
+            "correct": 10,
+            "total": 12
+          },
+          "relevance": {
+            "correct": 16,
+            "total": 18
+          },
+          "memory": {
+            "correct": 8,
+            "total": 12
+          }
+        },
+        "optionOrderChanges": [
+          "short-conversation",
+          "cancel-known-task",
+          "related-background",
+          "related-plan-not-current",
+          "memory-other-scope",
+          "memory-duplicate"
+        ],
+        "wrongDirectAnswers": [],
+        "directSupport": {
+          "truePositive": 6,
+          "falsePositive": 1,
+          "falseNegative": 0
+        },
+        "peakProcessBytes": 32997376,
+        "peakModelAllocationBytes": 0,
+        "maxObservedServerResidentBytes": 7540211712
+      },
+      "rawReportSha256": "ee8a0463f2fc2ae557e19145548b5fc7b5b4dbb81cd2ad5d9db027c07df4c83f",
+      "failedExamples": [
+        {
+          "id": "searchable-name:0",
+          "selected": "clarify",
+          "expected": [
+            "search"
+          ],
+          "scores": {
+            "answer": 0.014737271911421004,
+            "search": 0.3875512234816568,
+            "investigate": 0.044801741929439046,
+            "clarify": 0.5479887684791983,
+            "action": 0.004920994198284794
+          }
+        },
+        {
+          "id": "clear-question-no-answer:0",
+          "selected": "clarify",
+          "expected": [
+            "investigate"
+          ],
+          "scores": {
+            "answer": 0.01250334777230854,
+            "search": 0.038428278168189244,
+            "investigate": 0.22956910509942935,
+            "clarify": 0.7140059253675353,
+            "action": 0.005493343592537486
+          }
+        },
+        {
+          "id": "time-conflict:0",
+          "selected": "clarify",
+          "expected": [
+            "investigate"
+          ],
+          "scores": {
+            "answer": 0.031008362109077033,
+            "search": 0.11420351888580516,
+            "investigate": 0.2650147325460492,
+            "clarify": 0.5814953219931411,
+            "action": 0.008278064465927616
+          }
+        },
+        {
+          "id": "not-enough-topical:0",
+          "selected": "clarify",
+          "expected": [
+            "investigate"
+          ],
+          "scores": {
+            "answer": 0.03673177044339275,
+            "search": 0.06674835593130453,
+            "investigate": 0.08615576430555641,
+            "clarify": 0.801243175349555,
+            "action": 0.00912093397019126
+          }
+        },
+        {
+          "id": "enough-prerequisite:0",
+          "selected": "clarify",
+          "expected": [
+            "answer"
+          ],
+          "scores": {
+            "answer": 0.19282019709343426,
+            "search": 0.05975471696179216,
+            "investigate": 0.17822229643764362,
+            "clarify": 0.5515564047665719,
+            "action": 0.017646384740558085
+          }
+        },
+        {
+          "id": "plan-comparison:0",
+          "selected": "clarify",
+          "expected": [
+            "investigate"
+          ],
+          "scores": {
+            "answer": 0.019469968144102606,
+            "search": 0.03068208956594255,
+            "investigate": 0.3014942456076722,
+            "clarify": 0.6408237460871514,
+            "action": 0.007529950595131297
+          }
+        },
+        {
+          "id": "cancel-unknown-task:0",
+          "selected": "action",
+          "expected": [
+            "clarify"
+          ],
+          "scores": {
+            "answer": 0.09115213053106147,
+            "search": 0.028820674399775214,
+            "investigate": 0.06641738451513951,
+            "clarify": 0.24670368861991096,
+            "action": 0.5669061219341129
+          }
+        },
+        {
+          "id": "domain-mixed:0",
+          "selected": "schedule",
+          "expected": [
+            "mixed"
+          ],
+          "scores": {
+            "code": 0.05333593714188904,
+            "business": 0.018678760535665827,
+            "schedule": 0.5480218430436817,
+            "learning": 0.020862290991656367,
+            "mixed": 0.3048326816147883,
+            "other": 0.01739508488856256,
+            "unknown": 0.036873401783756185
+          }
+        }
+      ]
+    },
+    {
+      "name": "retrieval-gliclass",
+      "startedAt": "2026-10-04T05:07:46.111Z",
+      "machine": {
+        "cpu": "Apple M2 Pro",
+        "arch": "arm64",
+        "memoryBytes": 34359738368
+      },
+      "suite": {
+        "sha256": "0da4b4cf5e9e7e6bc752443bb68f07c256b4355f4ec3ccbe06a409809345a47a"
+      },
+      "model": {
+        "ready": true,
+        "loadMs": 17798,
+        "library": "gliclass",
+        "version": "0.1.20",
+        "device": "cpu",
+        "dtype": "torch.bfloat16",
+        "workerReadyMs": 17970,
+        "repository": "knowledgator/gliclass-multilang-mini",
+        "revision": "0bd888b6c3ef9fca5f0a9d407bddfbbc7623486b",
+        "variant": "bf16",
+        "files": [
+          {
+            "path": "added_tokens.json",
+            "sha256": "b867d6af444d3de86cc1db4b6cc8dfe02aa5cff45c51282604a4680972f76d40"
+          },
+          {
+            "path": "config.json",
+            "sha256": "3277f133289a26eb34f75f3b99c5739321827b6361c83974d2e4eca13b988aae"
+          },
+          {
+            "path": "model.safetensors",
+            "sha256": "440d8f17603d3e6f7d13a4fe7ffa7e9ef2c5a2581cceccb2f643334b92c8aea8"
+          },
+          {
+            "path": "special_tokens_map.json",
+            "sha256": "b2f1b2f15f29a6b6d9d6ea4eca1675d2c231a71477f151d48f79cc83a625ba21"
+          },
+          {
+            "path": "spm.model",
+            "sha256": "13c8d666d62a7bc4ac8f040aab68e942c861f93303156cc28f5c7e885d86d6e3"
+          },
+          {
+            "path": "tokenizer.json",
+            "sha256": "77e1661635eafe733781f83318eececcdf1190bc4c3199b32e5abb9def39daf4"
+          },
+          {
+            "path": "tokenizer_config.json",
+            "sha256": "9e1c2981880005bda229880ee44131d94d50e3dc620347ac3896a87fdaef2698"
+          }
+        ]
+      },
+      "readout": "classification",
+      "summary": {
+        "correct": 14,
+        "total": 60,
+        "errors": 0,
+        "p50Ms": 693.06,
+        "p95Ms": 2158.05,
+        "groups": {
+          "live-1": {
+            "correct": 0,
+            "total": 12
+          },
+          "live-2": {
+            "correct": 6,
+            "total": 12
+          },
+          "live-3": {
+            "correct": 6,
+            "total": 12
+          },
+          "live-4": {
+            "correct": 2,
+            "total": 12
+          },
+          "live-5": {
+            "correct": 0,
+            "total": 12
+          }
+        },
+        "optionOrderChanges": [],
+        "wrongDirectAnswers": [],
+        "directSupport": {
+          "truePositive": 0,
+          "falsePositive": 0,
+          "falseNegative": 14
+        },
+        "peakProcessBytes": 1331871744,
+        "peakModelAllocationBytes": 0,
+        "maxObservedServerResidentBytes": 0,
+        "ranking": [
+          {
+            "group": "live-1",
+            "firstDirectBefore": 2,
+            "firstDirectAfter": 2,
+            "after": [
+              "live-1-hit-5",
+              "live-1-hit-4",
+              "live-1-hit-3",
+              "live-1-hit-6",
+              "live-1-hit-1",
+              "live-1-hit-2"
+            ]
+          },
+          {
+            "group": "live-2",
+            "firstDirectBefore": 1,
+            "firstDirectAfter": 4,
+            "after": [
+              "live-2-hit-6",
+              "live-2-hit-2",
+              "live-2-hit-3",
+              "live-2-hit-1",
+              "live-2-hit-5",
+              "live-2-hit-4"
+            ]
+          },
+          {
+            "group": "live-3",
+            "firstDirectBefore": 1,
+            "firstDirectAfter": 3,
+            "after": [
+              "live-3-hit-4",
+              "live-3-hit-3",
+              "live-3-hit-2",
+              "live-3-hit-6",
+              "live-3-hit-5",
+              "live-3-hit-1"
+            ]
+          },
+          {
+            "group": "live-4",
+            "firstDirectBefore": 2,
+            "firstDirectAfter": 2,
+            "after": [
+              "live-4-hit-6",
+              "live-4-hit-2",
+              "live-4-hit-5",
+              "live-4-hit-3",
+              "live-4-hit-1",
+              "live-4-hit-4"
+            ]
+          },
+          {
+            "group": "live-5",
+            "firstDirectBefore": null,
+            "firstDirectAfter": null,
+            "after": [
+              "live-5-hit-2",
+              "live-5-hit-5",
+              "live-5-hit-1",
+              "live-5-hit-3",
+              "live-5-hit-6",
+              "live-5-hit-4"
+            ]
+          }
+        ]
+      },
+      "rawReportSha256": "813410a937064478b902ebea2600fcad8509eee35af38cc10777b3da887ddbbb",
+      "failedExamples": [
+        {
+          "id": "live-1-hit-1:0",
+          "selected": "background",
+          "expected": [
+            "irrelevant",
+            "topic"
+          ],
+          "scores": {
+            "direct": 0.010829177685081959,
+            "background": 0.5663857460021973,
+            "topic": 0.04023527726531029,
+            "irrelevant": 0.1860460340976715,
+            "conflicting": 0.19650377333164215
+          }
+        },
+        {
+          "id": "live-1-hit-2:0",
+          "selected": "background",
+          "expected": [
+            "direct"
+          ],
+          "scores": {
+            "direct": 0.010634319856762886,
+            "background": 0.8140136003494263,
+            "topic": 0.0327560119330883,
+            "irrelevant": 0.060247521847486496,
+            "conflicting": 0.08234860002994537
+          }
+        },
+        {
+          "id": "live-1-hit-3:0",
+          "selected": "background",
+          "expected": [
+            "irrelevant"
+          ],
+          "scores": {
+            "direct": 0.015122567303478718,
+            "background": 0.545730710029602,
+            "topic": 0.05361415445804596,
+            "irrelevant": 0.0721457302570343,
+            "conflicting": 0.31338679790496826
+          }
+        },
+        {
+          "id": "live-1-hit-4:0",
+          "selected": "background",
+          "expected": [
+            "direct"
+          ],
+          "scores": {
+            "direct": 0.017257438972592354,
+            "background": 0.7885802984237671,
+            "topic": 0.025906482711434364,
+            "irrelevant": 0.07496289163827896,
+            "conflicting": 0.09329283237457275
+          }
+        },
+        {
+          "id": "live-1-hit-5:0",
+          "selected": "background",
+          "expected": [
+            "irrelevant",
+            "topic"
+          ],
+          "scores": {
+            "direct": 0.017471089959144592,
+            "background": 0.6698353290557861,
+            "topic": 0.038761306554079056,
+            "irrelevant": 0.07708606868982315,
+            "conflicting": 0.19684617221355438
+          }
+        },
+        {
+          "id": "live-1-hit-6:0",
+          "selected": "background",
+          "expected": [
+            "irrelevant"
+          ],
+          "scores": {
+            "direct": 0.013729912228882313,
+            "background": 0.7119026184082031,
+            "topic": 0.0304611437022686,
+            "irrelevant": 0.08677572011947632,
+            "conflicting": 0.15713052451610565
+          }
+        },
+        {
+          "id": "live-2-hit-1:0",
+          "selected": "background",
+          "expected": [
+            "direct"
+          ],
+          "scores": {
+            "direct": 0.009336081333458424,
+            "background": 0.6926516890525818,
+            "topic": 0.0352340042591095,
+            "irrelevant": 0.10852837562561035,
+            "conflicting": 0.15424992144107819
+          }
+        },
+        {
+          "id": "live-2-hit-4:0",
+          "selected": "background",
+          "expected": [
+            "topic",
+            "irrelevant"
+          ],
+          "scores": {
+            "direct": 0.00233186106197536,
+            "background": 0.96681809425354,
+            "topic": 0.0038445887621492147,
+            "irrelevant": 0.008663914166390896,
+            "conflicting": 0.018341505900025368
+          }
+        }
+      ]
+    },
+    {
+      "name": "retrieval-gliclass-native",
+      "startedAt": "2026-10-04T05:10:10.132Z",
+      "machine": {
+        "cpu": "Apple M2 Pro",
+        "arch": "arm64",
+        "memoryBytes": 34359738368
+      },
+      "suite": {
+        "sha256": "0da4b4cf5e9e7e6bc752443bb68f07c256b4355f4ec3ccbe06a409809345a47a"
+      },
+      "model": {
+        "ready": true,
+        "loadMs": 41788,
+        "library": "gliclass",
+        "version": "0.1.20",
+        "device": "cpu",
+        "dtype": "torch.bfloat16",
+        "workerReadyMs": 41912,
+        "repository": "knowledgator/gliclass-multilang-mini",
+        "revision": "0bd888b6c3ef9fca5f0a9d407bddfbbc7623486b",
+        "variant": "bf16",
+        "files": [
+          {
+            "path": "added_tokens.json",
+            "sha256": "b867d6af444d3de86cc1db4b6cc8dfe02aa5cff45c51282604a4680972f76d40"
+          },
+          {
+            "path": "config.json",
+            "sha256": "3277f133289a26eb34f75f3b99c5739321827b6361c83974d2e4eca13b988aae"
+          },
+          {
+            "path": "model.safetensors",
+            "sha256": "440d8f17603d3e6f7d13a4fe7ffa7e9ef2c5a2581cceccb2f643334b92c8aea8"
+          },
+          {
+            "path": "special_tokens_map.json",
+            "sha256": "b2f1b2f15f29a6b6d9d6ea4eca1675d2c231a71477f151d48f79cc83a625ba21"
+          },
+          {
+            "path": "spm.model",
+            "sha256": "13c8d666d62a7bc4ac8f040aab68e942c861f93303156cc28f5c7e885d86d6e3"
+          },
+          {
+            "path": "tokenizer.json",
+            "sha256": "77e1661635eafe733781f83318eececcdf1190bc4c3199b32e5abb9def39daf4"
+          },
+          {
+            "path": "tokenizer_config.json",
+            "sha256": "9e1c2981880005bda229880ee44131d94d50e3dc620347ac3896a87fdaef2698"
+          }
+        ]
+      },
+      "readout": "query-label",
+      "summary": {
+        "correct": null,
+        "total": 30,
+        "errors": 0,
+        "ranking": [
+          {
+            "group": "live-1",
+            "hasDirect": true,
+            "before": [
+              "live-1-hit-1",
+              "live-1-hit-2",
+              "live-1-hit-3",
+              "live-1-hit-4",
+              "live-1-hit-5",
+              "live-1-hit-6"
+            ],
+            "after": [
+              "live-1-hit-3",
+              "live-1-hit-5",
+              "live-1-hit-4",
+              "live-1-hit-1",
+              "live-1-hit-6",
+              "live-1-hit-2"
+            ],
+            "firstDirectBefore": 2,
+            "firstDirectAfter": 3,
+            "errors": 0
+          },
+          {
+            "group": "live-2",
+            "hasDirect": true,
+            "before": [
+              "live-2-hit-1",
+              "live-2-hit-2",
+              "live-2-hit-3",
+              "live-2-hit-4",
+              "live-2-hit-5",
+              "live-2-hit-6"
+            ],
+            "after": [
+              "live-2-hit-2",
+              "live-2-hit-3",
+              "live-2-hit-6",
+              "live-2-hit-1",
+              "live-2-hit-4",
+              "live-2-hit-5"
+            ],
+            "firstDirectBefore": 1,
+            "firstDirectAfter": 4,
+            "errors": 0
+          },
+          {
+            "group": "live-3",
+            "hasDirect": true,
+            "before": [
+              "live-3-hit-1",
+              "live-3-hit-2",
+              "live-3-hit-3",
+              "live-3-hit-4",
+              "live-3-hit-5",
+              "live-3-hit-6"
+            ],
+            "after": [
+              "live-3-hit-2",
+              "live-3-hit-5",
+              "live-3-hit-6",
+              "live-3-hit-1",
+              "live-3-hit-3",
+              "live-3-hit-4"
+            ],
+            "firstDirectBefore": 1,
+            "firstDirectAfter": 1,
+            "errors": 0
+          },
+          {
+            "group": "live-4",
+            "hasDirect": true,
+            "before": [
+              "live-4-hit-1",
+              "live-4-hit-2",
+              "live-4-hit-3",
+              "live-4-hit-4",
+              "live-4-hit-5",
+              "live-4-hit-6"
+            ],
+            "after": [
+              "live-4-hit-1",
+              "live-4-hit-3",
+              "live-4-hit-5",
+              "live-4-hit-4",
+              "live-4-hit-2",
+              "live-4-hit-6"
+            ],
+            "firstDirectBefore": 2,
+            "firstDirectAfter": 5,
+            "errors": 0
+          },
+          {
+            "group": "live-5",
+            "hasDirect": false,
+            "before": [
+              "live-5-hit-1",
+              "live-5-hit-2",
+              "live-5-hit-3",
+              "live-5-hit-4",
+              "live-5-hit-5",
+              "live-5-hit-6"
+            ],
+            "after": [
+              "live-5-hit-5",
+              "live-5-hit-1",
+              "live-5-hit-2",
+              "live-5-hit-6",
+              "live-5-hit-3",
+              "live-5-hit-4"
+            ],
+            "firstDirectBefore": null,
+            "firstDirectAfter": null,
+            "errors": 0
+          }
+        ],
+        "p50Ms": 473.24,
+        "p95Ms": 1829.07,
+        "groups": {
+          "live-1": {
+            "correct": null,
+            "total": 6
+          },
+          "live-2": {
+            "correct": null,
+            "total": 6
+          },
+          "live-3": {
+            "correct": null,
+            "total": 6
+          },
+          "live-4": {
+            "correct": null,
+            "total": 6
+          },
+          "live-5": {
+            "correct": null,
+            "total": 6
+          }
+        },
+        "optionOrderChanges": [],
+        "wrongDirectAnswers": [],
+        "directSupport": null,
+        "peakProcessBytes": 1248985088,
+        "peakModelAllocationBytes": 0,
+        "maxObservedServerResidentBytes": 0
+      },
+      "rawReportSha256": "dae61d10692e95dedc490cc29346dfd9bbf0166fd687b3e204af581210c5e3ca",
+      "failedExamples": []
+    },
+    {
+      "name": "retrieval-qwen4b",
+      "startedAt": "2026-10-04T05:05:29.481Z",
+      "machine": {
+        "cpu": "Apple M2 Pro",
+        "arch": "arm64",
+        "memoryBytes": 34359738368
+      },
+      "suite": {
+        "sha256": "0da4b4cf5e9e7e6bc752443bb68f07c256b4355f4ec3ccbe06a409809345a47a"
+      },
+      "model": {
+        "ready": true,
+        "loadMs": 20021,
+        "library": "mlx-lm",
+        "version": "0.32.0",
+        "device": "metal",
+        "thinking": false,
+        "readout": "single answer-token logits; uncalibrated",
+        "workerReadyMs": 20209,
+        "repository": "mlx-community/Qwen3.5-4B-4bit",
+        "revision": "0e7ffd5c629ef7719d4cbc04069232580bfa9d9c",
+        "variant": "mlx-q4",
+        "files": [
+          {
+            "path": "chat_template.jinja",
+            "sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"
+          },
+          {
+            "path": "config.json",
+            "sha256": "f3efc81b2ea8d96a45301037d3ccccbcccdef44a961845c87f286aaddbc6eaaa"
+          },
+          {
+            "path": "model.safetensors",
+            "sha256": "5fb9acd0246866381cf8c5c354c6db1019f6498eec4ccb4f5edcc71ffeacb2db"
+          },
+          {
+            "path": "model.safetensors.index.json",
+            "sha256": "52e534c41f7b97708329c85f762e5882bf48bd5955a422c6ae74eba321e6048a"
+          },
+          {
+            "path": "preprocessor_config.json",
+            "sha256": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516"
+          },
+          {
+            "path": "processor_config.json",
+            "sha256": "14932921ca485d458a04dafd8069fbb0a4505622a48208d19ed247115801385b"
+          },
+          {
+            "path": "tokenizer.json",
+            "sha256": "87a7830d63fcf43bf241c3c5242e96e62dd3fdc29224ca26fed8ea333db72de4"
+          },
+          {
+            "path": "tokenizer_config.json",
+            "sha256": "e98f1901ac6f0adff67b1d540bfa0c36ac1a0cf59eb72ed78146ef89aafa1182"
+          },
+          {
+            "path": "video_preprocessor_config.json",
+            "sha256": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+          },
+          {
+            "path": "vocab.json",
+            "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+          }
+        ]
+      },
+      "readout": "classification",
+      "summary": {
+        "correct": 30,
+        "total": 60,
+        "errors": 0,
+        "p50Ms": 1019.34,
+        "p95Ms": 2235.65,
+        "groups": {
+          "live-1": {
+            "correct": 3,
+            "total": 12
+          },
+          "live-2": {
+            "correct": 7,
+            "total": 12
+          },
+          "live-3": {
+            "correct": 10,
+            "total": 12
+          },
+          "live-4": {
+            "correct": 5,
+            "total": 12
+          },
+          "live-5": {
+            "correct": 5,
+            "total": 12
+          }
+        },
+        "optionOrderChanges": [
+          "live-1-hit-1",
+          "live-1-hit-3",
+          "live-1-hit-5",
+          "live-2-hit-1",
+          "live-2-hit-3",
+          "live-2-hit-5",
+          "live-3-hit-3",
+          "live-3-hit-4",
+          "live-3-hit-5",
+          "live-3-hit-6",
+          "live-4-hit-4",
+          "live-5-hit-2",
+          "live-5-hit-4"
+        ],
+        "wrongDirectAnswers": [],
+        "directSupport": {
+          "truePositive": 6,
+          "falsePositive": 1,
+          "falseNegative": 8
+        },
+        "peakProcessBytes": 3314974720,
+        "peakModelAllocationBytes": 3765806140,
+        "maxObservedServerResidentBytes": 0,
+        "ranking": [
+          {
+            "group": "live-1",
+            "firstDirectBefore": 2,
+            "firstDirectAfter": 1,
+            "after": [
+              "live-1-hit-2",
+              "live-1-hit-6",
+              "live-1-hit-4",
+              "live-1-hit-3",
+              "live-1-hit-5",
+              "live-1-hit-1"
+            ]
+          },
+          {
+            "group": "live-2",
+            "firstDirectBefore": 1,
+            "firstDirectAfter": 1,
+            "after": [
+              "live-2-hit-1",
+              "live-2-hit-3",
+              "live-2-hit-5",
+              "live-2-hit-2",
+              "live-2-hit-6",
+              "live-2-hit-4"
+            ]
+          },
+          {
+            "group": "live-3",
+            "firstDirectBefore": 1,
+            "firstDirectAfter": 1,
+            "after": [
+              "live-3-hit-1",
+              "live-3-hit-2",
+              "live-3-hit-6",
+              "live-3-hit-5",
+              "live-3-hit-4",
+              "live-3-hit-3"
+            ]
+          },
+          {
+            "group": "live-4",
+            "firstDirectBefore": 2,
+            "firstDirectAfter": 1,
+            "after": [
+              "live-4-hit-2",
+              "live-4-hit-5",
+              "live-4-hit-6",
+              "live-4-hit-4",
+              "live-4-hit-1",
+              "live-4-hit-3"
+            ]
+          },
+          {
+            "group": "live-5",
+            "firstDirectBefore": null,
+            "firstDirectAfter": null,
+            "after": [
+              "live-5-hit-4",
+              "live-5-hit-6",
+              "live-5-hit-5",
+              "live-5-hit-2",
+              "live-5-hit-1",
+              "live-5-hit-3"
+            ]
+          }
+        ]
+      },
+      "rawReportSha256": "a401c047bb776d6009045da5fa66f23ecdd58763a9f81b4eb9f3f1cee99c1d06",
+      "failedExamples": [
+        {
+          "id": "live-1-hit-2:0",
+          "selected": "background",
+          "expected": [
+            "direct"
+          ],
+          "scores": {
+            "direct": 0.1961783915758133,
+            "background": 0.6042720079421997,
+            "topic": 0.07216998934745789,
+            "irrelevant": 0.06368980556726456,
+            "conflicting": 0.06368980556726456
+          }
+        },
+        {
+          "id": "live-1-hit-3:0",
+          "selected": "background",
+          "expected": [
+            "irrelevant"
+          ],
+          "scores": {
+            "direct": 0.12704512476921082,
+            "background": 0.39132654666900635,
+            "topic": 0.1848495602607727,
+            "irrelevant": 0.2094619870185852,
+            "conflicting": 0.08731675148010254
+          }
+        },
+        {
+          "id": "live-1-hit-4:0",
+          "selected": "background",
+          "expected": [
+            "direct"
+          ],
+          "scores": {
+            "direct": 0.14077533781528473,
+            "background": 0.43361857533454895,
+            "topic": 0.09675338119268417,
+            "irrelevant": 0.2320992797613144,
+            "conflicting": 0.09675338119268417
+          }
+        },
+        {
+          "id": "live-1-hit-5:0",
+          "selected": "background",
+          "expected": [
+            "irrelevant",
+            "topic"
+          ],
+          "scores": {
+            "direct": 0.11410050094127655,
+            "background": 0.31015732884407043,
+            "topic": 0.21316780149936676,
+            "irrelevant": 0.2737128734588623,
+            "conflicting": 0.08886155486106873
+          }
+        },
+        {
+          "id": "live-1-hit-6:0",
+          "selected": "background",
+          "expected": [
+            "irrelevant"
+          ],
+          "scores": {
+            "direct": 0.16619467735290527,
+            "background": 0.31049254536628723,
+            "topic": 0.1466662734746933,
+            "irrelevant": 0.1883232295513153,
+            "conflicting": 0.1883232295513153
+          }
+        },
+        {
+          "id": "live-2-hit-3:0",
+          "selected": "direct",
+          "expected": [
+            "background"
+          ],
+          "scores": {
+            "direct": 0.34752216935157776,
+            "background": 0.34752216935157776,
+            "topic": 0.07754267752170563,
+            "irrelevant": 0.0995667576789856,
+            "conflicting": 0.12784625589847565
+          }
+        },
+        {
+          "id": "live-2-hit-4:0",
+          "selected": "background",
+          "expected": [
+            "topic",
+            "irrelevant"
+          ],
+          "scores": {
+            "direct": 0.17606638371944427,
+            "background": 0.47859808802604675,
+            "topic": 0.08316786587238312,
+            "irrelevant": 0.1553780436515808,
+            "conflicting": 0.10678966343402863
+          }
+        },
+        {
+          "id": "live-2-hit-5:0",
+          "selected": "background",
+          "expected": [
+            "direct"
+          ],
+          "scores": {
+            "direct": 0.32343989610671997,
+            "background": 0.4153050482273102,
+            "topic": 0.04960110783576965,
+            "irrelevant": 0.09266708046197891,
+            "conflicting": 0.11898688226938248
+          }
+        }
+      ]
+    },
+    {
+      "name": "retrieval-plumb4b",
+      "startedAt": "2026-10-04T05:03:16.212Z",
+      "machine": {
+        "cpu": "Apple M2 Pro",
+        "arch": "arm64",
+        "memoryBytes": 34359738368
+      },
+      "suite": {
+        "sha256": "0da4b4cf5e9e7e6bc752443bb68f07c256b4355f4ec3ccbe06a409809345a47a"
+      },
+      "model": {
+        "ready": true,
+        "loadMs": 49,
+        "library": "jevk5",
+        "version": "0.3.0",
+        "device": "llama.cpp-metal",
+        "temperature": 2.07,
+        "readout": "upstream GGUF option-token probabilities",
+        "workerReadyMs": 1425,
+        "server": {
+          "tool": "github:ggml-org/llama.cpp@b11382",
+          "contextSize": 8192,
+          "threads": 4,
+          "parallel": 1,
+          "gpuLayers": "all",
+          "promptCache": false
+        },
+        "repository": "crh225/plumb-4b-GGUF",
+        "revision": "71c1c57e523219124f7be9c486d475d19891185f",
+        "variant": "gguf-q8",
+        "files": [
+          {
+            "path": "LICENSE",
+            "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+          },
+          {
+            "path": "NOTICE",
+            "sha256": "f039a4e32f0a1f22da6ca65055a3bb6fa99cf33fe5d7dcec4e156a27a11d2ab5"
+          },
+          {
+            "path": "plumb-4b-v5-Q8_0.gguf",
+            "sha256": "a0d2974e04541b79e167d8acabfb7a7e4b4f93f3b47ac4a006d196d240f68177"
+          }
+        ]
+      },
+      "readout": "classification",
+      "summary": {
+        "correct": 34,
+        "total": 60,
+        "errors": 0,
+        "p50Ms": 772.15,
+        "p95Ms": 1580.27,
+        "groups": {
+          "live-1": {
+            "correct": 6,
+            "total": 12
+          },
+          "live-2": {
+            "correct": 3,
+            "total": 12
+          },
+          "live-3": {
+            "correct": 10,
+            "total": 12
+          },
+          "live-4": {
+            "correct": 3,
+            "total": 12
+          },
+          "live-5": {
+            "correct": 12,
+            "total": 12
+          }
+        },
+        "optionOrderChanges": [
+          "live-1-hit-1",
+          "live-1-hit-5",
+          "live-2-hit-2",
+          "live-3-hit-2",
+          "live-3-hit-3",
+          "live-4-hit-6"
+        ],
+        "wrongDirectAnswers": [],
+        "directSupport": {
+          "truePositive": 11,
+          "falsePositive": 7,
+          "falseNegative": 3
+        },
+        "peakProcessBytes": 33357824,
+        "peakModelAllocationBytes": 0,
+        "maxObservedServerResidentBytes": 7785660416,
+        "ranking": [
+          {
+            "group": "live-1",
+            "firstDirectBefore": 2,
+            "firstDirectAfter": 1,
+            "after": [
+              "live-1-hit-2",
+              "live-1-hit-4",
+              "live-1-hit-3",
+              "live-1-hit-6",
+              "live-1-hit-1",
+              "live-1-hit-5"
+            ]
+          },
+          {
+            "group": "live-2",
+            "firstDirectBefore": 1,
+            "firstDirectAfter": 1,
+            "after": [
+              "live-2-hit-1",
+              "live-2-hit-3",
+              "live-2-hit-6",
+              "live-2-hit-2",
+              "live-2-hit-4",
+              "live-2-hit-5"
+            ]
+          },
+          {
+            "group": "live-3",
+            "firstDirectBefore": 1,
+            "firstDirectAfter": 1,
+            "after": [
+              "live-3-hit-1",
+              "live-3-hit-5",
+              "live-3-hit-6",
+              "live-3-hit-4",
+              "live-3-hit-2",
+              "live-3-hit-3"
+            ]
+          },
+          {
+            "group": "live-4",
+            "firstDirectBefore": 2,
+            "firstDirectAfter": 1,
+            "after": [
+              "live-4-hit-2",
+              "live-4-hit-5",
+              "live-4-hit-6",
+              "live-4-hit-3",
+              "live-4-hit-1",
+              "live-4-hit-4"
+            ]
+          },
+          {
+            "group": "live-5",
+            "firstDirectBefore": null,
+            "firstDirectAfter": null,
+            "after": [
+              "live-5-hit-4",
+              "live-5-hit-6",
+              "live-5-hit-1",
+              "live-5-hit-5",
+              "live-5-hit-3",
+              "live-5-hit-2"
+            ]
+          }
+        ]
+      },
+      "rawReportSha256": "7c2be133c1881ef51ee544740b4c534795f9970989a131609e01917d88020137",
+      "failedExamples": [
+        {
+          "id": "live-1-hit-3:0",
+          "selected": "background",
+          "expected": [
+            "irrelevant"
+          ],
+          "scores": {
+            "direct": 0.14243502886463447,
+            "background": 0.5062867963141977,
+            "topic": 0.1673387264758612,
+            "irrelevant": 0.1255489794182233,
+            "conflicting": 0.05839046892708332
+          }
+        },
+        {
+          "id": "live-1-hit-6:0",
+          "selected": "background",
+          "expected": [
+            "irrelevant"
+          ],
+          "scores": {
+            "direct": 0.09899452224673298,
+            "background": 0.35227542454038374,
+            "topic": 0.2091348425598622,
+            "irrelevant": 0.10432981172222687,
+            "conflicting": 0.23526539893079412
+          }
+        },
+        {
+          "id": "live-2-hit-2:0",
+          "selected": "direct",
+          "expected": [
+            "background",
+            "topic"
+          ],
+          "scores": {
+            "direct": 0.47301201995610376,
+            "background": 0.31480182143677365,
+            "topic": 0.11243123246373056,
+            "irrelevant": 0.06129837310789689,
+            "conflicting": 0.03845655303549514
+          }
+        },
+        {
+          "id": "live-2-hit-3:0",
+          "selected": "direct",
+          "expected": [
+            "background"
+          ],
+          "scores": {
+            "direct": 0.8297991026111788,
+            "background": 0.10067712177327258,
+            "topic": 0.03552855311780235,
+            "irrelevant": 0.015314088716402777,
+            "conflicting": 0.018681133781343468
+          }
+        },
+        {
+          "id": "live-2-hit-4:0",
+          "selected": "background",
+          "expected": [
+            "topic",
+            "irrelevant"
+          ],
+          "scores": {
+            "direct": 0.27706879940444035,
+            "background": 0.5080915874295063,
+            "topic": 0.11406496783907656,
+            "irrelevant": 0.06264332458676247,
+            "conflicting": 0.038131320740214324
+          }
+        },
+        {
+          "id": "live-2-hit-5:0",
+          "selected": "background",
+          "expected": [
+            "direct"
+          ],
+          "scores": {
+            "direct": 0.10533712556777243,
+            "background": 0.7874692608934128,
+            "topic": 0.02455160348905652,
+            "irrelevant": 0.019238507916380647,
+            "conflicting": 0.06340350213337757
+          }
+        },
+        {
+          "id": "live-2-hit-6:0",
+          "selected": "direct",
+          "expected": [
+            "background"
+          ],
+          "scores": {
+            "direct": 0.6733678230178458,
+            "background": 0.21006940294009982,
+            "topic": 0.06250738681981746,
+            "irrelevant": 0.026862295905949806,
+            "conflicting": 0.02719309131628699
+          }
+        },
+        {
+          "id": "live-3-hit-2:0",
+          "selected": "topic",
+          "expected": [
+            "direct"
+          ],
+          "scores": {
+            "direct": 0.05462697157810029,
+            "background": 0.24642976149394225,
+            "topic": 0.5577488345792679,
+            "irrelevant": 0.05739623757265764,
+            "conflicting": 0.08379819477603184
+          }
+        }
+      ]
+    },
+    {
+      "name": "retrieval-plumb4b-q4",
+      "startedAt": "2026-10-04T05:15:33.934Z",
+      "machine": {
+        "cpu": "Apple M2 Pro",
+        "arch": "arm64",
+        "memoryBytes": 34359738368
+      },
+      "suite": {
+        "sha256": "0da4b4cf5e9e7e6bc752443bb68f07c256b4355f4ec3ccbe06a409809345a47a"
+      },
+      "model": {
+        "ready": true,
+        "loadMs": 10,
+        "library": "jevk5",
+        "version": "0.3.0",
+        "device": "llama.cpp-metal",
+        "temperature": 2.07,
+        "readout": "upstream GGUF option-token probabilities",
+        "workerReadyMs": 1130,
+        "server": {
+          "tool": "github:ggml-org/llama.cpp@b11382",
+          "contextSize": 8192,
+          "threads": 4,
+          "parallel": 1,
+          "gpuLayers": "all",
+          "promptCache": false
+        },
+        "repository": "crh225/plumb-4b-GGUF",
+        "revision": "71c1c57e523219124f7be9c486d475d19891185f",
+        "variant": "gguf-q4-k-m",
+        "files": [
+          {
+            "path": "LICENSE",
+            "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+          },
+          {
+            "path": "NOTICE",
+            "sha256": "f039a4e32f0a1f22da6ca65055a3bb6fa99cf33fe5d7dcec4e156a27a11d2ab5"
+          },
+          {
+            "path": "plumb-4b-v5-Q4_K_M.gguf",
+            "sha256": "d605acccbcf18e283d01f483fccfc9815335f6c46d1030a84e57acb34dae32c9"
+          }
+        ]
+      },
+      "readout": "classification",
+      "summary": {
+        "correct": 30,
+        "total": 60,
+        "errors": 0,
+        "ranking": [
+          {
+            "group": "live-1",
+            "hasDirect": true,
+            "before": [
+              "live-1-hit-1",
+              "live-1-hit-2",
+              "live-1-hit-3",
+              "live-1-hit-4",
+              "live-1-hit-5",
+              "live-1-hit-6"
+            ],
+            "after": [
+              "live-1-hit-2",
+              "live-1-hit-4",
+              "live-1-hit-3",
+              "live-1-hit-1",
+              "live-1-hit-6",
+              "live-1-hit-5"
+            ],
+            "firstDirectBefore": 2,
+            "firstDirectAfter": 1,
+            "errors": 0
+          },
+          {
+            "group": "live-2",
+            "hasDirect": true,
+            "before": [
+              "live-2-hit-1",
+              "live-2-hit-2",
+              "live-2-hit-3",
+              "live-2-hit-4",
+              "live-2-hit-5",
+              "live-2-hit-6"
+            ],
+            "after": [
+              "live-2-hit-3",
+              "live-2-hit-2",
+              "live-2-hit-6",
+              "live-2-hit-1",
+              "live-2-hit-4",
+              "live-2-hit-5"
+            ],
+            "firstDirectBefore": 1,
+            "firstDirectAfter": 4,
+            "errors": 0
+          },
+          {
+            "group": "live-3",
+            "hasDirect": true,
+            "before": [
+              "live-3-hit-1",
+              "live-3-hit-2",
+              "live-3-hit-3",
+              "live-3-hit-4",
+              "live-3-hit-5",
+              "live-3-hit-6"
+            ],
+            "after": [
+              "live-3-hit-1",
+              "live-3-hit-6",
+              "live-3-hit-5",
+              "live-3-hit-4",
+              "live-3-hit-2",
+              "live-3-hit-3"
+            ],
+            "firstDirectBefore": 1,
+            "firstDirectAfter": 1,
+            "errors": 0
+          },
+          {
+            "group": "live-4",
+            "hasDirect": true,
+            "before": [
+              "live-4-hit-1",
+              "live-4-hit-2",
+              "live-4-hit-3",
+              "live-4-hit-4",
+              "live-4-hit-5",
+              "live-4-hit-6"
+            ],
+            "after": [
+              "live-4-hit-2",
+              "live-4-hit-5",
+              "live-4-hit-6",
+              "live-4-hit-1",
+              "live-4-hit-3",
+              "live-4-hit-4"
+            ],
+            "firstDirectBefore": 2,
+            "firstDirectAfter": 1,
+            "errors": 0
+          },
+          {
+            "group": "live-5",
+            "hasDirect": false,
+            "before": [
+              "live-5-hit-1",
+              "live-5-hit-2",
+              "live-5-hit-3",
+              "live-5-hit-4",
+              "live-5-hit-5",
+              "live-5-hit-6"
+            ],
+            "after": [
+              "live-5-hit-1",
+              "live-5-hit-2",
+              "live-5-hit-4",
+              "live-5-hit-6",
+              "live-5-hit-3",
+              "live-5-hit-5"
+            ],
+            "firstDirectBefore": null,
+            "firstDirectAfter": null,
+            "errors": 0
+          }
+        ],
+        "p50Ms": 808.05,
+        "p95Ms": 1764.1,
+        "groups": {
+          "live-1": {
+            "correct": 3,
+            "total": 12
+          },
+          "live-2": {
+            "correct": 2,
+            "total": 12
+          },
+          "live-3": {
+            "correct": 8,
+            "total": 12
+          },
+          "live-4": {
+            "correct": 5,
+            "total": 12
+          },
+          "live-5": {
+            "correct": 12,
+            "total": 12
+          }
+        },
+        "optionOrderChanges": [
+          "live-1-hit-1",
+          "live-1-hit-2",
+          "live-1-hit-5",
+          "live-3-hit-2",
+          "live-3-hit-3",
+          "live-4-hit-1",
+          "live-4-hit-3",
+          "live-4-hit-6"
+        ],
+        "wrongDirectAnswers": [],
+        "directSupport": {
+          "truePositive": 8,
+          "falsePositive": 10,
+          "falseNegative": 6
+        },
+        "peakProcessBytes": 33177600,
+        "peakModelAllocationBytes": 0,
+        "maxObservedServerResidentBytes": 7054180352
+      },
+      "rawReportSha256": "5fa74c9dcb4ba70af897e69046d6913833661d930422885497bab6ca591a1186",
+      "failedExamples": [
+        {
+          "id": "live-1-hit-2:0",
+          "selected": "background",
+          "expected": [
+            "direct"
+          ],
+          "scores": {
+            "direct": 0.24863115548311057,
+            "background": 0.5927793040991047,
+            "topic": 0.05808461946488728,
+            "irrelevant": 0.05070025312110042,
+            "conflicting": 0.049804667831796975
+          }
+        },
+        {
+          "id": "live-1-hit-3:0",
+          "selected": "background",
+          "expected": [
+            "irrelevant"
+          ],
+          "scores": {
+            "direct": 0.10398265909494231,
+            "background": 0.3798706448842272,
+            "topic": 0.2270116766213315,
+            "irrelevant": 0.23301323960957918,
+            "conflicting": 0.05612177978991975
+          }
+        },
+        {
+          "id": "live-1-hit-4:0",
+          "selected": "background",
+          "expected": [
+            "direct"
+          ],
+          "scores": {
+            "direct": 0.17564476697396228,
+            "background": 0.470748132819724,
+            "topic": 0.1636155250148896,
+            "irrelevant": 0.13301199392764318,
+            "conflicting": 0.05697958126378092
+          }
+        },
+        {
+          "id": "live-1-hit-6:0",
+          "selected": "background",
+          "expected": [
+            "irrelevant"
+          ],
+          "scores": {
+            "direct": 0.0562678439971141,
+            "background": 0.32185128376846617,
+            "topic": 0.18876481903568496,
+            "irrelevant": 0.22079596042376343,
+            "conflicting": 0.21232009277497133
+          }
+        },
+        {
+          "id": "live-2-hit-2:0",
+          "selected": "direct",
+          "expected": [
+            "background",
+            "topic"
+          ],
+          "scores": {
+            "direct": 0.7165136390723712,
+            "background": 0.131202246655766,
+            "topic": 0.07629693895888824,
+            "irrelevant": 0.046143632148475056,
+            "conflicting": 0.029843543164499484
+          }
+        },
+        {
+          "id": "live-2-hit-3:0",
+          "selected": "direct",
+          "expected": [
+            "background"
+          ],
+          "scores": {
+            "direct": 0.8289576691221399,
+            "background": 0.08676189159587296,
+            "topic": 0.034108954797166524,
+            "irrelevant": 0.026744473486321797,
+            "conflicting": 0.023427010998498903
+          }
+        },
+        {
+          "id": "live-2-hit-4:0",
+          "selected": "background",
+          "expected": [
+            "topic",
+            "irrelevant"
+          ],
+          "scores": {
+            "direct": 0.1556455433499319,
+            "background": 0.47774031151997626,
+            "topic": 0.15080886826358575,
+            "irrelevant": 0.15502009508954934,
+            "conflicting": 0.06078518177695681
+          }
+        },
+        {
+          "id": "live-2-hit-5:0",
+          "selected": "background",
+          "expected": [
+            "direct"
+          ],
+          "scores": {
+            "direct": 0.09813348998592357,
+            "background": 0.6317498244921558,
+            "topic": 0.04990996648650784,
+            "irrelevant": 0.04219113039599638,
+            "conflicting": 0.17801558863941644
+          }
+        }
+      ]
+    }
+  ],
+  "liveInspection": {
+    "at": "2026-10-04T05:20:18.405Z",
+    "question": "导入一篇文档后，系统会自己整理用途和概念吗？",
+    "query": "导入一篇文档后，系统会自己整理用途和概念吗？",
+    "beforeSearch": {
+      "answers": [
+        {
+          "id": "before:0",
+          "selected": "clarify",
+          "scores": {
+            "answer": 0.07023140844121628,
+            "search": 0.08376940200591573,
+            "investigate": 0.053872630441588285,
+            "clarify": 0.7364414505640129,
+            "action": 0.05568510854726674
+          },
+          "inputTokens": 266,
+          "serverModelMs": 502.87,
+          "serverResidentBytes": 5064785920,
+          "elapsedMs": 533.45,
+          "processPeakBytes": 33161216
+        },
+        {
+          "id": "before:1",
+          "selected": "search",
+          "scores": {
+            "search": 0.6357091667456088,
+            "investigate": 0.06187006172619602,
+            "clarify": 0.17887346112405075,
+            "action": 0.03016162518383772,
+            "answer": 0.0933856852203066
+          },
+          "inputTokens": 266,
+          "serverModelMs": 493.47,
+          "serverResidentBytes": 5179162624,
+          "elapsedMs": 507.49,
+          "processPeakBytes": 33193984
+        }
+      ],
+      "orderAgreement": false
+    },
+    "afterSearch": {
+      "answers": [
+        {
+          "id": "after:0",
+          "selected": "search",
+          "scores": {
+            "answer": 0.26662930964409165,
+            "search": 0.5402722440821002,
+            "investigate": 0.04661573921564969,
+            "clarify": 0.13392732065842572,
+            "action": 0.012555386399732773
+          },
+          "inputTokens": 1184,
+          "serverModelMs": 1934.75,
+          "serverResidentBytes": 5353717760,
+          "elapsedMs": 1950.91,
+          "processPeakBytes": 33325056
+        },
+        {
+          "id": "after:1",
+          "selected": "search",
+          "scores": {
+            "search": 0.8949206577579656,
+            "investigate": 0.02087160104287335,
+            "clarify": 0.044900081742359176,
+            "action": 0.012203955497896187,
+            "answer": 0.02710370395890567
+          },
+          "inputTokens": 1184,
+          "serverModelMs": 1921.07,
+          "serverResidentBytes": 5353947136,
+          "elapsedMs": 1927.58,
+          "processPeakBytes": 33390592
+        }
+      ],
+      "orderAgreement": true
+    },
+    "searchMs": 1220,
+    "complete": true,
+    "method": "Read-only advice before and after real HTTP search. Search happens regardless of first advice to observe context benefit. Query comes from user; no automatic query rewrite. Order agreement is not correctness. No automatic answer, action or memory update.",
+    "materialCount": 6,
+    "rawReportSha256": "a56f983efed0b595c6d7f85cf3e8efe1afab37f8e09626e62dafdcb0d12b9b79"
+  },
+  "implementationCommit": "e28438c",
+  "checks": {
+    "prepare": 0,
+    "frozenDependencies": 0,
+    "check": 0,
+    "testsPassed": 403,
+    "ui": "not changed; layout not rechecked",
+    "defaultRoutingChanged": false
+  },
+  "knowledgeVerification": {
+    "model": "gpt-5.6-sol",
+    "effectiveModel": "gpt-5.6-sol",
+    "transport": "traex ACP",
+    "path": "scripts/decision-inspect.ts",
+    "article": "f815c461d425fce1877c8977f2a181a8849cbcf6b5853d99e9156000400a9c8b",
+    "verdict": "accepted",
+    "sequence": "analyst, independent verifier requested revision, refresher, independent verifier accepted",
+    "citations": 5,
+    "repository": {
+      "recordedAt": "2026-10-04T05:34:01.594Z",
+      "implementationCommit": "e28438c651a482b3c3ab4969187c89cd94c874b9",
+      "full": false,
+      "exitCode": 1,
+      "checks": [
+        {
+          "name": "dependencies",
+          "state": "skipped",
+          "details": "Run with --full; earlier results are not inherited."
+        },
+        {
+          "name": "project",
+          "state": "skipped",
+          "details": "Run with --full; earlier results are not inherited."
+        },
+        {
+          "name": "liveChineseRetrieval",
+          "state": "skipped",
+          "details": "Run with --full; earlier results are not inherited."
+        },
+        {
+          "name": "currentKnowledgeReferences",
+          "state": "passed",
+          "details": {
+            "articles": 132,
+            "citations": 732,
+            "errors": []
+          }
+        },
+        {
+          "name": "semanticIndex",
+          "state": "passed",
+          "details": {
+            "available": true,
+            "backend": "sqlite-context-bm25-bge@1",
+            "projection": "structure-icu-v5",
+            "units": 13434,
+            "semantic": {
+              "model": "structure-icu-v5:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
+              "state": "ready",
+              "indexed": 13434,
+              "pending": 0,
+              "error": null
+            },
+            "reranker": {
+              "model": null,
+              "state": "disabled",
+              "error": null
+            }
+          }
+        },
+        {
+          "name": "repositorySearch",
+          "state": "failed",
+          "details": {
+            "passed": 2,
+            "total": 6
+          }
+        },
+        {
+          "name": "unchangedSourcesDuringVerification",
+          "state": "passed"
+        }
+      ],
+      "previousSearch": {
+        "passed": 3,
+        "total": 6
+      },
+      "regression": {
+        "query": "中文语义检索怎样处理长代码片段？",
+        "expectedPathRankBefore": 3,
+        "expectedPathRankAfter": 18,
+        "interpretation": "Path match is not answer quality. Previous README hit was generic. Corpus changed; no ranking code change in this slice. Cause not isolated."
+      }
+    }
+  }
+}

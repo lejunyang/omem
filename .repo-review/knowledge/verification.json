@@ -1,58 +1,32 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-03T18:52:51.083Z",
-  "implementationCommit": "7aae95dc2eb6e4ea4fb536ad6925da8f6502b8ce",
-  "sourceDigest": "19e688799ecd07703cd924312a76a6a12077b280bdfb4c82b215d66303b56b2b",
+  "recordedAt": "2026-10-04T05:34:01.594Z",
+  "implementationCommit": "e28438c651a482b3c3ab4969187c89cd94c874b9",
+  "sourceDigest": "34d59d313801845a6d85be8314ef3c5232855075eb917b1d22ada2ddd9f9e7a8",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
-  "mode": "full",
+  "mode": "repository",
   "checks": [
     {
       "name": "dependencies",
-      "state": "passed",
-      "details": {
-        "command": [
-          "osdk",
-          "deps",
-          "--frozen"
-        ],
-        "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-03T18-52-51-083Z/dependencies.log",
-        "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
-      }
+      "state": "skipped",
+      "details": "Run with --full; earlier results are not inherited."
     },
     {
       "name": "project",
-      "state": "passed",
-      "details": {
-        "command": [
-          "osdk",
-          "run",
-          "check"
-        ],
-        "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-03T18-52-51-083Z/project.log",
-        "sha256": "6a7c2b35dd3a65330632f8b7c7652c8d60675a6fa5557aa47f2590509e32c582"
-      }
+      "state": "skipped",
+      "details": "Run with --full; earlier results are not inherited."
     },
     {
       "name": "liveChineseRetrieval",
-      "state": "passed",
-      "details": {
-        "command": [
-          "/Users/bytedance/Library/Application Support/osdk/installs/bun/1.4.2/bin/bun",
-          "scripts/live-retrieval-smoke.ts"
-        ],
-        "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-03T18-52-51-083Z/liveChineseRetrieval.log",
-        "sha256": "706af7ca54b86df22c3ddb228955030370a560583b16b1f37bf0502dc05d74c9"
-      }
+      "state": "skipped",
+      "details": "Run with --full; earlier results are not inherited."
     },
     {
       "name": "currentKnowledgeReferences",
       "state": "passed",
       "details": {
-        "articles": 134,
-        "citations": 774,
+        "articles": 132,
+        "citations": 732,
         "errors": []
       }
     },
@@ -63,11 +37,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v5",
-        "units": 13211,
+        "units": 13434,
         "semantic": {
           "model": "structure-icu-v5:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 13211,
+          "indexed": 13434,
           "pending": 0,
           "error": null
         },
@@ -82,7 +56,7 @@
       "name": "repositorySearch",
       "state": "failed",
       "details": {
-        "passed": 3,
+        "passed": 2,
         "total": 6
       }
     },
@@ -94,16 +68,16 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 614,
-    "reviewedMaterials": 130,
-    "pendingMaterials": 484,
-    "currentArticles": 134,
-    "citations": 774,
+    "materials": 622,
+    "reviewedMaterials": 129,
+    "pendingMaterials": 493,
+    "currentArticles": 132,
+    "citations": 732,
     "articleLinks": 0,
     "errors": [],
     "restore": {
-      "stale": 370,
-      "restored": 136,
+      "stale": 373,
+      "restored": 134,
       "missing": 3
     },
     "incomplete": true,
@@ -121,15 +95,15 @@
         "baselineTop5": [
           "docs/reader-first/retrieval-redesign.md",
           "docs/reader-first/component-integration.md",
-          "README.md",
           "docs/reader-first/retrieval-redesign.md",
-          "docs/reader-first/component-integration.md"
+          "docs/reader-first/component-integration.md",
+          "docs/reader-first/current-system.md"
         ],
         "baselineUniquePathsAt5": 3,
-        "passed": true,
-        "firstExpectedRank": 3,
+        "passed": false,
+        "firstExpectedRank": 18,
         "uniquePathsAt5": 3,
-        "elapsedMs": 1676,
+        "elapsedMs": 940,
         "top5": [
           {
             "path": "docs/reader-first/retrieval-redesign.md",
@@ -148,14 +122,6 @@
             "snippet": "真实 HTTP 抽查进一步发现章节级引用扩散。现用 marked 解析读者段落、列表项和表格行，仅从实际匹配的文字回溯其引用；代码块/图与同章无关段落不继承分数。跨文章引用有明确章节时保留该章背景，未指定章节则继续找相关段落。这个修复处理了别名回原件的错误扩散，不宣称已解决中文语义、当前/历史适用性和跨文件功能理解。"
           },
           {
-            "path": "README.md",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "原文、检索片段与讲解章节是不同用途，不应该以同一种切分组织阅读。顶部搜索、知识检索与助手已共用召回基础；助手补读原始章节与相邻上下文。完整意图路由和跨文件功能链扩展仍待实现。"
-          },
-          {
             "path": "docs/reader-first/retrieval-redesign.md",
             "routes": [
               "bm25",
@@ -170,6 +136,14 @@
               "purpose:balanced"
             ],
             "snippet": "[Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval) 给每个片段补它在整份文档中的具体背景，再进入全文与向量索引。omem 已在 `retrieval/units.ts` / `unified.ts` 用结构"
+          },
+          {
+            "path": "docs/reader-first/current-system.md",
+            "routes": [
+              "bm25",
+              "purpose:balanced"
+            ],
+            "snippet": "主要入口现在使用 `UnifiedRetrieval`：ICU 中文分词、SQLite FTS5 BM25、osdk 锁定的 BGE-small-zh-v1.5、CPU ONNX 和 SQLite 向量比较。全文/语义候选融合一次，过滤弱向量尾部，再合并重复、限制同来源摘录。讲解正文、原件、记忆和事项使用共同的 `Re"
           }
         ]
       },
@@ -190,9 +164,9 @@
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
-        "firstExpectedRank": 9,
+        "firstExpectedRank": 11,
         "uniquePathsAt5": 5,
-        "elapsedMs": 764,
+        "elapsedMs": 700,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -250,16 +224,16 @@
         "status": 200,
         "baselineTop5": [
           "apps/server/tests/retrieval-unified.test.ts",
+          "docs/reader-first/progress.md",
           "docs/archive/2026-10-01-baseline/AGENTS.md",
           "docs/archive/2026-10-01-baseline/implementation/batch2/lark.md",
-          ".agents/skills/osdk-guide/reference/doctor/guide.md",
-          ".claude/skills/osdk-guide/reference/doctor/guide.md"
+          ".agents/skills/osdk-guide/reference/doctor/guide.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 698,
+        "elapsedMs": 772,
         "top5": [
           {
             "path": "apps/server/tests/retrieval-unified.test.ts",
@@ -269,6 +243,14 @@
               "purpose:balanced"
             ],
             "snippet": "const passages = rerankPassages(\n    text,\n    \"怎样修改有效记忆，提案从什么入口写入？\",\n    text.slice(0, 400),\n    [{ label: \"原子写入记忆或事项\", aliases: [\"applyTask\", \"applyMemory\"] }"
+          },
+          {
+            "path": "docs/reader-first/progress.md",
+            "routes": [
+              "bm25",
+              "purpose:balanced"
+            ],
+            "snippet": "通过 osdk 实跑 GLiClass multilingual mini、Qwen3.5-4B MLX Q4、Plumb-4B GGUF Q8 / Q4，并加入搜索前后再判断的只读实验入口。短场景与真实 HTTP 命中分开验收；初步发现 Qwen / Plumb Q8 的阅读顺序有收益，但资料充分性、选项顺序稳定性和"
           },
           {
             "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
@@ -294,14 +276,6 @@
               "purpose:balanced"
             ],
             "snippet": "| 参数 | 语义 |\n| --- | --- |\n| `--verify` | 重新哈希安装文件，检测工具自更新、手工修改或不完整恢复；可能较慢 |\n| `--tool <TOOL>` | 只验证一个工具；要求同时给 `--verify` |"
-          },
-          {
-            "path": "apps/server/src/knowledge/agent-research.ts",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "…list_materials: \"查看材料目录\",\n        search_materials: \"搜索原始材料\",\n        read_material: \"补读原文\",\n        read_section: \"阅读完整章节\",\n        search_knowledge: \"查找已有讲解\""
           }
         ]
       },
@@ -322,7 +296,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 4,
-        "elapsedMs": 150,
+        "elapsedMs": 214,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -383,7 +357,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 135,
+        "elapsedMs": 144,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -449,7 +423,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 5,
-        "elapsedMs": 752,
+        "elapsedMs": 782,
         "top5": [
           {
             "path": "design.md",

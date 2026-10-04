@@ -1,9 +1,5 @@
 # 知识目录
 
-## 软件开发 / omem
-
-- [一次提问如何找到答案：搜索、上下文与 RAG](knowledge/articles/c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.md)
-
 ## 未分类
 
 - [Code Understanding 合同与校验器测试](knowledge/articles/c281bfae6402d6ff26bfd180241c9f827c76f8db81ecb71856d1d2b9f448742b.md)
@@ -145,9 +141,9 @@
 - [统一的空状态展示组件](knowledge/articles/88b12ddcc01aead1f398bfb1f65e9f7863638b095ec1a8eaf802e4bcbc7dcafe.md)
 - [统一的轻量 SVG 图标组件](knowledge/articles/506240a8f06c64ad3989b93e2eee7b17167c020f27c2bd6936d4396522ce00da.md)
 
-## 软件开发 / omem / 服务端 / 检索 / 检索单位投影
+## 软件开发 / omem / 中文快速决策 / 搜索前后对照
 
-- [把多种记忆投影成统一检索单位](knowledge/articles/130cdb6c662c51b13762227a6e5989994935a42467c7e55412ace7eb689e1d4f.md)
+- [搜索前后的小模型只读决策对照](knowledge/articles/f815c461d425fce1877c8977f2a181a8849cbcf6b5853d99e9156000400a9c8b.md)
 
 ## 软件开发 / omem / Web 应用 / 证据阅读
 
@@ -160,7 +156,6 @@
 ## 软件开发 / omem / 服务端 / 检索 / 统一检索接口
 
 - [统一检索：从多路召回到可读证据](knowledge/articles/0f4c98f99ec08ee9f67bc4c9abbbec7193e9e0c6a38384e2306d9c1cf84a9f03.md)
-- [统一检索端口：让原件、知识与已应用状态共享查询合同](knowledge/articles/e1aefe156d02f69476a443ae16951b1e4d0f5e30e2f93765c433725e810452db.md)
 
 ## 软件开发 / omem / Web 应用 / 证据阅读 / 递归证据追踪
 
