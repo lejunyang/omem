@@ -950,8 +950,9 @@ it("daily workflow creates with time, reschedules, completes, and suppresses due
   } };
   const runtime = new AssistantRuntime(store, model, { memory: new MemoryService(store), timezone: "Asia/Shanghai" });
   const c = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "daily", visibility: "private" });
-  const create = await runtime.turn({ conversationId: c.id, userText: "提醒我10月2日上午9点英语复习" });
+  const create = await runtime.turn({ conversationId: c.id, userText: "帮我记个待办：10月2日上午9点前完成英语复习" });
   expect(create.turn.result).toContain("已创建任务：英语复习");
+  expect(create.turn.result).toContain("截止时间");
   expect(create.turn.result).not.toContain("模型自报");
   expect(store.tasks()[0]!.dueAt).toBe("2026-10-02T01:00:00.000Z");
   await runtime.turn({ conversationId: c.id, userText: "改到10月3日上午10点" });
@@ -964,6 +965,29 @@ it("daily workflow creates with time, reschedules, completes, and suppresses due
   try { store.remind(); } finally { vi.useRealTimers(); }
   expect(store.notifications().some(n => String(n.title).startsWith("待办到期"))).toBe(false);
   expect((store.db.prepare("SELECT count(*) AS n FROM application_receipts WHERE entity_type='task'").get() as { n: number }).n).toBe(3);
+});
+
+it("creates a check-in reminder without inventing a completion deadline", async () => {
+  const { store } = setup();
+  const runtime = new AssistantRuntime(store, { generate: async () => ({
+    answer: "候选", citationIds: [], toolCalls: [{tool: "create_task", title: "确认验收结果", detail: "联系负责人",
+      dueAt: null, dueExpression: null, followUp: {waiting_on: null, next_check_at: "2026-10-07T15:00:00+08:00",
+        snoozed_until: null, time_expression: "2026年10月7日15点", timezone: "Asia/Shanghai"}}],
+  }) }, {memory: new MemoryService(store), timezone: "Asia/Shanghai"});
+  const conversation = runtime.conversations.open({principalId: "owner", channel: "web", chatId: "check-in", visibility: "private"});
+  const result = await runtime.turn({conversationId: conversation.id, userText: "2026年10月7日15点提醒我找负责人确认验收结果"});
+  expect(store.tasks()).toHaveLength(1);
+  expect(store.tasks()[0]).toMatchObject({dueAt: null, followUp: {next_check_at: "2026-10-07T07:00:00.000Z", waiting_on: null}});
+  expect(result.turn.result).toContain("下次跟进");
+  expect(result.turn.result).not.toContain("截止时间");
+  store.remind("2026-10-07T07:00:00.000Z");
+  const reminders = store.notifications().filter(n => String(n.title).startsWith("事项待跟进"));
+  expect(reminders).toHaveLength(1);
+  expect(reminders[0]!.body).toContain("当前检查时间");
+  expect(reminders[0]!.body).not.toContain("当前截止时间");
+  store.remind("2026-10-07T07:00:00.000Z");
+  expect(store.notifications().filter(n => String(n.title).startsWith("事项待跟进"))).toHaveLength(1);
+  runtime.shutdown();
 });
 
 it("one bounded query expansion retrieves cross-language originals and never executes first-round mutations", async () => {

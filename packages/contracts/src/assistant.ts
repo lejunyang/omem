@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { taskActionSchema, taskFollowUpSchema } from "./task-flow.js";
 
+const deadline = z.string().nullable().describe(
+  "Actual completion deadline explicitly requested by the owner, with timezone. A reminder/check-in time belongs in follow_up.next_check_at. Null when only a reminder is requested; do not inherit a project's deadline for a new reminder.",
+);
+const followUp = taskFollowUpSchema.nullable().describe(
+  "Reminder/check-in scheduling, including a NEW reminder with no waiting party. Set next_check_at and the owner's exact time_expression; waiting_on=null unless waiting for someone, snoozed_until=null for an initial reminder. Separate from a completion deadline.",
+);
+
 /** Native research returns locators, not copied database IDs or copied code. */
 export const assistantReplySchema = z
   .object({
@@ -21,9 +28,9 @@ export const assistantReplySchema = z
         title: z.string().min(1),
         detail: z.string(),
         citation_ids: z.array(z.string()),
-        due_at: z.string().nullable(),
+        due_at: deadline,
         due_expression: z.string().nullable(),
-        follow_up: taskFollowUpSchema.nullable(),
+        follow_up: followUp,
       })
       .strict()
       .nullable(),
@@ -32,9 +39,9 @@ export const assistantReplySchema = z
         task_id: z.string(),
         expected_version: z.number().int().positive(),
         action: taskActionSchema,
-        due_at: z.string().nullable(),
+        due_at: deadline,
         due_expression: z.string().nullable(),
-        follow_up: taskFollowUpSchema.nullable(),
+        follow_up: followUp,
       })
       .strict()
       .nullable(),

@@ -36,10 +36,10 @@ try {
   const recalled = await turn("之前记录的熔断器连续失败几次会打开，冷却多久？");
   assert.ok(JSON.stringify(recalled.turn.selectedEvidence).includes(revision.fragments[0]!.id), "Must cite original English source");
   assert.match(recalled.turn.result, /7|七|seven/i); assert.match(recalled.turn.result, /41|四十一/);
-  await turn("帮我记一下：2030年10月2日上午9点提醒我复习英语面试词汇。");
+  await turn("帮我记个待办：2030年10月2日上午9点前完成英语面试词汇复习。");
   assert.equal(store.tasks().length, 1);
   assert.equal(store.tasks()[0]!.dueAt, "2030-10-02T01:00:00.000Z");
-  await turn("把刚才的英语复习任务改到2030年10月3日上午10点。");
+  await turn("把刚才的英语复习任务截止时间改到2030年10月3日上午10点。");
   assert.equal(store.tasks()[0]!.dueAt, "2030-10-03T02:00:00.000Z");
   await turn("刚才的英语复习任务已经做完了，标记完成。");
   assert.equal(store.tasks()[0]!.status, "done");
