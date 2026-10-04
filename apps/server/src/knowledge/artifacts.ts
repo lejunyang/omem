@@ -30,6 +30,7 @@ export function writeKnowledgeArticle(directory: string, a: KnowledgeArticle, ma
 }
 
 export function restoreKnowledgeArticles(repository: KnowledgeRepository, directory: string) {
+  const owner = resolve(directory);
   const result: { file: string; state: string; reason: string }[] = [];
   const pending: { file: string; artifact: KnowledgeArtifact }[] = [];
   for (const file of (existsSync(directory) ? readdirSync(directory) : []).filter(f => f.endsWith(".json")).sort()) {
@@ -56,8 +57,14 @@ export function restoreKnowledgeArticles(repository: KnowledgeRepository, direct
       try {
         if (artifact.version !== 1 || artifact.review?.verdict !== "accepted" || !artifact.generation?.model || !artifact.review.model) throw Error("Missing generation/review provenance");
         knowledgeDocumentSchema.parse(artifact.document);
-        if (artifact.dependencies.some(d => d.kind === "material" ? sources.get(d.key) !== d.digest : repository.get(d.key)?.revision !== d.digest)) {
-          repository.restoreHistorical(artifact);
+        const head = repository.get(artifact.document.key);
+        const managed = repository.store.db.prepare("SELECT revision_id FROM knowledge_import_memberships WHERE owner=? AND document_key=?").get(owner,artifact.document.key);
+        if (head && head.revision !== digest(stableDigest(artifact)) && managed?.revision_id !== head.revision) {
+          repository.restoreHistorical(artifact, false);
+          state = "preserved";
+          reason = "保留当前非本次导入管理的正文，新资产作为历史保存";
+        } else if (artifact.dependencies.some(d => d.kind === "material" ? sources.get(d.key) !== d.digest : repository.get(d.key)?.revision !== d.digest)) {
+          repository.restoreHistorical(artifact, true, owner);
           state = Object.values(repository.statusReader()(artifact)).every(s=>s.state === "current") ? "restored" : "stale";
           reason = state === "stale" ? "部分引用的章节或函数已变化，保留旧文等待核对" : "引用所在上下文未变，保留原有解释";
         }
@@ -69,6 +76,6 @@ export function restoreKnowledgeArticles(repository: KnowledgeRepository, direct
     if (!progress) break;
   }
   for (const { file } of pending) result.push({ file, state: "missing", reason: "引用的子知识尚不可用" });
-  if (parseable) repository.reconcileImport(resolve(directory), imported);
+  if (parseable) repository.reconcileImport(owner, imported);
   repository.refresh(); return result;
 }

@@ -79,6 +79,31 @@ it("restores reviewed knowledge in a fresh DB and preserves question actions", (
   expect(second.repository.questions()[0]!.state).toBe("answered");
 });
 
+it("publishes a planned imported page and advances only managed heads even when inputs are stale", () => {
+  const s = setup(); s.capture("function value() {\n  return 42;\n}");
+  const m = s.repository.materials()[0]!;
+  const a = artifact(bindKnowledgeQuotes(document(), new Map([[m.key,m]])),[{kind:"material",key:m.key,digest:m.digest}]);
+  const assets = join(s.dir,"articles");
+  const write = (value:KnowledgeArtifact) => writeKnowledgeArticle(assets,{...value,revision:"unused",current:false});
+  s.repository.savePlan({key:a.document.key,title:a.document.title,reader:"读者",goal:"理解返回值",scenario:"查询固定值",questions:["返回什么？"],entryPaths:[],topicPath:[],kind:"explanation",order:0});
+  s.capture("function value() {\n  return 99;\n}");
+  write(a); restoreKnowledgeArticles(s.repository,assets);
+  expect(s.repository.pages()[0]?.state).toBe("published");
+  expect(s.repository.published()[0]?.document.summary).toBe(a.document.summary);
+  const old = s.repository.get(a.document.key)!;
+  const updated = {...a, document:{...a.document,summary:"新的完整讲解，保留写作时的原文。"}};
+  write(updated); restoreKnowledgeArticles(s.repository,assets);
+  expect(s.repository.get(a.document.key)?.document.summary).toBe(updated.document.summary);
+  expect(s.repository.get(a.document.key)?.current).toBe(false);
+  expect(s.repository.get(a.document.key,old.revision)).not.toBeNull();
+  // A personally published revision breaks import ownership of the live head.
+  const live = s.repository.materials()[0]!;
+  const personal = s.repository.publish(artifact(bindKnowledgeQuotes({...document(),summary:"我自己的说明"},new Map([[live.key,live]])),[{kind:"material",key:live.key,digest:live.digest}]));
+  write({...updated,document:{...updated.document,summary:"再次更新的导入资产"}});
+  expect(restoreKnowledgeArticles(s.repository,assets)[0]?.state).toBe("preserved");
+  expect(s.repository.get(a.document.key)?.revision).toBe(personal.revision);
+});
+
 it("uses derived knowledge to find original evidence without promoting prose or stale sources", () => {
   const { repository, store, capture } = setup();
   capture("function value() {\n  return 42;\n}");
