@@ -272,7 +272,7 @@ export class KnowledgePipeline {
 
   private async writePlannedPage(brief: WikiPageBrief) {
     this.repository.refresh();
-    const writerVersion = stableDigest([this.nativeResearch ? "native-research@3" : "reader-first@4", ...["knowledge-researcher", "knowledge-writer", "knowledge-refresher", "knowledge-verifier"].map(role => this.registry.load(role).bundleHash)]);
+    const writerVersion = stableDigest([this.nativeResearch ? "native-research@4" : "reader-first@4", ...["knowledge-researcher", "knowledge-writer", "knowledge-refresher", "knowledge-verifier"].map(role => this.registry.load(role).bundleHash)]);
     const existing = this.repository.get(brief.key);
     if (!this.options.retryTag && existing?.current && stableDigest(existing.reading ?? null) === stableDigest(brief) && existing.generation.trace.writerVersion === writerVersion) return [existing];
     const available = this.repository.materials();
@@ -283,7 +283,10 @@ export class KnowledgePipeline {
     if (this.nativeResearch) {
       const offers = materials.map(material=>({material,ranges:[{start:1,end:material.lineCount}]}));
       const permitted = articleWithinMaterials(this.repository, materials);
-      const articles = this.repository.published().filter(a=>a.current&&a.document.key!==brief.key&&permitted(a));
+      // A changed chapter does not erase the rest of a useful explanation.
+      // The shared snapshot filters searchable sections and read_knowledge
+      // labels outdated pages; fixed citations retain their own lifecycle.
+      const articles = this.repository.published().filter(a=>a.document.key!==brief.key&&permitted(a));
       const run = await this.runRole("knowledge-researcher", offers, articles, {title:brief.title,page:brief,maintenance,
         ...(maintenance ? {instruction:maintenance.instruction} : {}),
       }, out=>knowledgeResearchSchema.parse(out));
