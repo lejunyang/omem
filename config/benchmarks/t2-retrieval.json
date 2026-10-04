@@ -1,0 +1,29 @@
+{
+  "repo": "C-MTEB/T2Retrieval",
+  "revision": "8731a845f1bf500a4f111cf1070785c793d10e64",
+  "qrelsRepo": "C-MTEB/T2Retrieval-qrels",
+  "qrelsRevision": "1c83b8d1544e529875e3f6930f3a1fcf749a8e97",
+  "files": [
+    {
+      "role": "corpus",
+      "path": "data/corpus-00000-of-00001-8afe7b7a7eca49e3.parquet",
+      "size": 156789043,
+      "sha256": "d4a207a9277eb1cf31f68ab6a7236cbf3e8fbf9493e0e2b577a34660929fcd17",
+      "url": "https://huggingface.co/datasets/C-MTEB/T2Retrieval/resolve/8731a845f1bf500a4f111cf1070785c793d10e64/data/corpus-00000-of-00001-8afe7b7a7eca49e3.parquet"
+    },
+    {
+      "role": "queries",
+      "path": "data/queries-00000-of-00001-930bf3b805a80dd9.parquet",
+      "size": 817492,
+      "sha256": "47a5866f1e668700420f44b200f9808c9e799208a46da147dfe380b40fb406ec",
+      "url": "https://huggingface.co/datasets/C-MTEB/T2Retrieval/resolve/8731a845f1bf500a4f111cf1070785c793d10e64/data/queries-00000-of-00001-930bf3b805a80dd9.parquet"
+    },
+    {
+      "role": "qrels",
+      "path": "data/dev-00000-of-00001-92ed0416056ff7e1.parquet",
+      "size": 1146734,
+      "sha256": "a283ce5c8bd739e7f5524107586eb21e68d7736172524b79eb5bd844c4b78c00",
+      "url": "https://huggingface.co/datasets/C-MTEB/T2Retrieval-qrels/resolve/1c83b8d1544e529875e3f6930f3a1fcf749a8e97/data/dev-00000-of-00001-92ed0416056ff7e1.parquet"
+    }
+  ]
+}
