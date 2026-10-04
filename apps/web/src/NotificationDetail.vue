@@ -35,12 +35,13 @@ const tone = (state: string, supersededBy?: string | null) =>
     <p v-if="loading" class="muted">正在读取持久状态…</p>
     <template v-else-if="detail">
       <div class="row">
-        <OmBadge>{{ ({knowledge:"知识更新",capture:"材料更新",task:"事项",decision:"需要判断"} as Record<string,string>)[detail.changeKind || ""] || "通知" }}</OmBadge>
+        <OmBadge>{{ ({knowledge:"知识更新",capture:"材料更新",context:"材料归属",task:"事项",decision:"需要判断"} as Record<string,string>)[detail.changeKind || ""] || "通知" }}</OmBadge>
         <small>{{ new Date(detail.createdAt).toLocaleString("zh-CN") }}</small>
       </div>
       <h3>{{ detail.title }}</h3>
       <p>{{ detail.changeKind === "capture" ? "原始材料已保存，可在下方查看本次内容变化。" : detail.changeKind === "knowledge" && !detail.afterId ? "旧版知识整理通知，当时未记录可比较的正文版本。新产生的更新会提供章节变化和内容差异。" : detail.body }}</p><p class="muted">已读仅表示你看过这条消息，不改变待办或判断结果。</p>
       <p v-if="detail.receipt" class="muted">已更新{{ ({task:'事项',claim:'事实记忆',episode:'经历',procedure:'流程'} as Record<string,string>)[detail.receipt.entityType] || '记忆' }} · 第 {{ detail.receipt.entityVersion }} 版</p>
+      <OmButton v-if="detail.changeKind === 'context' && detail.afterId" @click="emit('openRevision', detail.afterId)">查看材料归属</OmButton>
       <section v-if="detail.changeId && detail.afterId && ['knowledge','capture','restore'].includes(detail.changeKind || '')" class="detail-block">
         <h4>本次改动</h4><ChangeComparison :change-id="detail.changeId" />
         <OmButton v-if="detail.changeKind !== 'knowledge'" @click="emit('openRevision', detail.afterId)">阅读此版本</OmButton>
