@@ -1,67 +1,88 @@
 {
   "version": 1,
-  "key": "omem:docs/reader-first/README.md",
-  "digest": "7904ea7699711543e2bcbd901cf7691c423e8189850e85164b837aaa61745cc8",
+  "key": "omem:docs/reader-first/code-navigation-and-passages.md",
+  "digest": "1d0f0666a176cf8b7cc2cab4a7542c178fef7d145adc66ffb17816fdeaee52f0",
   "description": {
-    "role": "reference",
+    "role": "implementation",
     "status": "current",
-    "summary": "读者优先文档集的总入口：说明 omem 要把个人材料、代码与行动放进同一助手，并给出 2026-10-04 复审后的核心问题、后续主线、各专题文档用途和第一阶段验收标准。适合先判断应去哪里了解当前实现、检索、知识维护、问答、记忆或运行方式。",
+    "summary": "解释统一搜索如何把定义、调用方和机制查询分路，并以固定 revision 的 AST 返回名称级调用候选；同时说明长代码单位如何选择查询相关窗口供 cross-encoder 重排。可用于找到接口、代码落点、结果字段与验证方法，也明确它不是类型解析后的完整调用图或全文理解。",
     "topics": [
-      "读者优先文档",
-      "个人记忆助手",
-      "文档导航",
-      "当前主线",
-      "验收目标"
+      "代码导航",
+      "调用方查询",
+      "AST 候选",
+      "长代码重排",
+      "passage 选择",
+      "固定版本"
     ],
-    "scope": "omem 读者优先重构的文档地图、2026-10-04 复审结论与第一阶段交付目标。",
+    "scope": "omem 对 TS、JS、Vue 固定原件的定义/调用方导航，以及长代码单位的 passage 选择与重排实现。",
     "validFrom": null,
     "validUntil": null,
     "concepts": [
       {
-        "label": "统一材料、代码与行动的产品目标",
+        "label": "定义、调用方与机制查询的分路",
         "aliases": [
-          "产品目标",
-          "统一知识库",
-          "个人记忆助手"
-        ],
-        "startLine": 1,
-        "endLine": 3
-      },
-      {
-        "label": "复审发现的核心问题与下一步主线",
-        "aliases": [
-          "当前问题",
-          "重构主线",
-          "下一步优先级"
+          "codeIntent",
+          "definition",
+          "callers"
         ],
         "startLine": 5,
-        "endLine": 5
+        "endLine": 15
       },
       {
-        "label": "读者优先专题文档地图",
+        "label": "固定版本 AST 调用候选的生成与排序",
         "aliases": [
-          "文档入口",
-          "阅读目录",
-          "专题索引"
+          "名称级调用候选",
+          "codeMatches",
+          "调用位置"
         ],
-        "startLine": 7,
-        "endLine": 26
+        "startLine": 17,
+        "endLine": 21
       },
       {
-        "label": "第一阶段交付与读者验收问题",
+        "label": "长方法相关窗口的选择与重排",
         "aliases": [
-          "阶段交付",
-          "验收标准",
-          "读懂与行动"
+          "rerank passages",
+          "向量窗口",
+          "局部文本评分"
         ],
-        "startLine": 28,
-        "endLine": 28
+        "startLine": 23,
+        "endLine": 29
+      },
+      {
+        "label": "passage 重排的来源与限制",
+        "aliases": [
+          "长文档重排",
+          "token 截断",
+          "最高分聚合"
+        ],
+        "startLine": 31,
+        "endLine": 33
+      },
+      {
+        "label": "代码改造位置与采用条件",
+        "aliases": [
+          "实现文件",
+          "验证方法",
+          "BGE 可选重排"
+        ],
+        "startLine": 35,
+        "endLine": 43
+      },
+      {
+        "label": "后续需补齐接收者、完整流程与无答案判断",
+        "aliases": [
+          "后续限制",
+          "接收者背景",
+          "完整功能链"
+        ],
+        "startLine": 45,
+        "endLine": 45
       }
     ],
-    "basis": "第3行直接陈述产品目标；第5行说明 2026-10-04 复审核对范围、已发现问题和下一步；第7-26行逐项解释各文档入口；第28行定义第一阶段交付与验收问题。正文是当前文档导航和方向说明，不是实现代码或单次实验；日期是核对日期而非明确生效时间。"
+    "basis": "第7-21行以实际请求、HTTP/MCP 入口、AST 处理和结果字段描述现有行为；第25-29行用“现在”说明窗口选择及评分实现；第37-41行列出具体代码落点。第21、33、45行明确名称候选、截断和完整流程限制，因此材料支持当前实现说明，但不支持完整调用图的宣称。"
   },
   "generation": {
-    "at": "2026-10-04T10:57:54.785Z",
+    "at": "2026-10-04T10:57:54.787Z",
     "trace": {
       "runId": "899b121d-a2b2-4cee-8150-7aa25327d0b3",
       "roleId": "material-cataloger",

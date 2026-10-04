@@ -1,96 +1,84 @@
 {
   "version": 1,
-  "key": "omem:docs/reader-first/operations.md",
-  "digest": "00f11c5c81e403fe99d9232476d8b175844778d8cf32ea467cd1a1acd37fd15e",
+  "key": "omem:docs/reader-first/publication-lifecycle.md",
+  "digest": "34093e32dcc076ed60c245e24f62181966f3fac415ea94dd932b27549c682eae",
   "description": {
     "role": "reference",
     "status": "current",
-    "summary": "当前运行与维护手册，覆盖开发/生产启动、Agent 与模型配置、知识及材料说明生成、索引和验证、数据清理与远程连接，以及从普通材料整理正式文章的入口。还能确认默认关闭的中文重排实验及单用户边界。",
+    "summary": "解释文章从计划、调查、写作、独立复核到发布和重新整理的当前生命周期，并区分正式文章、参考资料、内部笔记以及正文引用、章节背景前提、调查轨迹。重点说明原文变化时如何按章节定位待核对范围、保留固定历史，以及导入下架为何不等于删除。",
     "topics": [
-      "启动运维",
-      "模型配置",
-      "知识生成",
-      "材料整理",
-      "验证检查",
-      "数据安全",
-      "中文重排"
+      "文章生命周期",
+      "发布用途",
+      "章节失效",
+      "固定引用",
+      "调查轨迹",
+      "重新整理",
+      "资产导入"
     ],
-    "scope": "omem 当前开发与生产运行、仓库验收、个人数据和实验模型配置；端口、路径和命令以该固定版本为准。",
+    "scope": "omem 当前知识页面的发布、更新影响判断、检索可用性和历史保留；不承诺自动语义影响分析或后台自动重写。",
     "validFrom": null,
     "validUntil": null,
     "concepts": [
       {
-        "label": "开发和生产启动、端口与个人配置",
+        "label": "页面计划和三类知识用途的保存与展示",
         "aliases": [
-          "osdk run dev",
-          "生产启动",
-          "端口配置",
-          "OMEM_CONFIG"
+          "正式文章",
+          "参考资料",
+          "内部笔记",
+          "knowledge_pages"
         ],
-        "startLine": 3,
-        "endLine": 7
+        "startLine": 5,
+        "endLine": 17
       },
       {
-        "label": "知识生成、材料用途整理与本地向量索引",
+        "label": "正文引用、章节背景前提与调查轨迹的区别",
         "aliases": [
-          "review:guides",
-          "review:generate",
-          "review:catalog",
-          "BGE embedding"
+          "reviewSources",
+          "investigation",
+          "更新依据",
+          "研究轨迹"
         ],
-        "startLine": 9,
-        "endLine": 15
+        "startLine": 19,
+        "endLine": 25
       },
       {
-        "label": "助手模型选择与工程、浏览器、检索验收命令",
+        "label": "原文变化怎样按章节或代码结构判断影响",
         "aliases": [
-          "readingProfileId",
-          "assistant:compare",
-          "review:verify",
-          "knowledge:native-verify"
+          "章节待核对",
+          "行号移动",
+          "lifecycle",
+          "固定原文比较"
         ],
-        "startLine": 17,
-        "endLine": 21
-      },
-      {
-        "label": "报告清理、数据位置、单用户连接和提醒边界",
-        "aliases": [
-          "review:prune",
-          "数据目录",
-          "远程访问",
-          "SQLite 单用户",
-          "站内提醒"
-        ],
-        "startLine": 23,
+        "startLine": 27,
         "endLine": 33
       },
       {
-        "label": "网页整理文章的两步流程与发布保护",
+        "label": "重新整理、导入下架与历史保留规则",
         "aliases": [
-          "整理文章",
-          "选择原始材料",
-          "阅读目标",
-          "生成失败"
+          "writePage",
+          "重新整理",
+          "资产移除",
+          "历史版本"
         ],
         "startLine": 35,
         "endLine": 39
       },
       {
-        "label": "中文重排器的显式配置与实验边界",
+        "label": "实现修改入口与完整生命周期验收项",
         "aliases": [
-          "relevance-zh",
-          "BGE reranker v2-m3",
-          "默认关闭",
-          "Qwen3"
+          "知识发布代码",
+          "KnowledgeHome",
+          "KnowledgeDocument",
+          "生命周期验收"
         ],
         "startLine": 41,
-        "endLine": 43
+        "endLine": 48
       }
     ],
-    "basis": "全文以“运行与维护”为目的，直接给出当前启动、生成、检查、数据和网页操作方法（第3—39行）；末段明确两种 reranker 仅为显式实验选项、默认未启用，Qwen3 和 Zoekt 尚未接入（第41—43行）。"
+    "basis": "正文使用“本轮实现”描述行为（第3行），并具体列出持久页面用途、三类来源关系、共用 lifecycle 判断入口、更新和删除规则（第5—39行）。它同时明确没有完整调用图、自动语义影响分析或后台自动重写（第31、37行）。"
   },
   "generation": {
-    "at": "2026-10-04T11:00:01.580Z",
+    "at": "2026-10-04T11:00:01.581Z",
     "trace": {
       "runId": "30737ddf-75af-4cf9-b812-5d411f0aed3a",
       "roleId": "material-cataloger",

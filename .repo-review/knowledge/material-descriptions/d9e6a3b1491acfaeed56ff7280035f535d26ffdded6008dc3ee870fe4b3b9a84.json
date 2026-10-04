@@ -1,67 +1,98 @@
 {
   "version": 1,
-  "key": "omem:docs/reader-first/README.md",
-  "digest": "7904ea7699711543e2bcbd901cf7691c423e8189850e85164b837aaa61745cc8",
+  "key": "omem:docs/reader-first/external-evaluation.md",
+  "digest": "2e5beb6b0c1fea4c49579843e967416d10d8c9baf2363c2fc8cd6d7b738eac60",
   "description": {
-    "role": "reference",
+    "role": "research",
     "status": "current",
-    "summary": "读者优先文档集的总入口：说明 omem 要把个人材料、代码与行动放进同一助手，并给出 2026-10-04 复审后的核心问题、后续主线、各专题文档用途和第一阶段验收标准。适合先判断应去哪里了解当前实现、检索、知识维护、问答、记忆或运行方式。",
+    "summary": "记录 omem 检索设计的外部评测：已完成 MTRAG Cloud 全量词法对照，报告可复现设置、指标、得失与不能外推的结论；T2Retrieval 仅完成工具接入、整套问题尚未跑完；FreshStack、LongMemEval、LongBench、BRIGHT 等仍属格式调研或待运行。可用于选择对应能力的测试集并正确解释评测口径。",
     "topics": [
-      "读者优先文档",
-      "个人记忆助手",
-      "文档导航",
-      "当前主线",
-      "验收目标"
+      "外部评测",
+      "MTRAG Cloud",
+      "T2Retrieval",
+      "检索基线",
+      "长期记忆评测",
+      "评测口径"
     ],
-    "scope": "omem 读者优先重构的文档地图、2026-10-04 复审结论与第一阶段交付目标。",
+    "scope": "截至 2026-10-04 的公开数据集调研与检索诊断；只有 MTRAG Cloud 188 题词法子集有完整 omem 对照结果。",
     "validFrom": null,
     "validUntil": null,
     "concepts": [
       {
-        "label": "统一材料、代码与行动的产品目标",
+        "label": "MTRAG Cloud 词法对照的数据与实验条件",
         "aliases": [
-          "产品目标",
-          "统一知识库",
-          "个人记忆助手"
-        ],
-        "startLine": 1,
-        "endLine": 3
-      },
-      {
-        "label": "复审发现的核心问题与下一步主线",
-        "aliases": [
-          "当前问题",
-          "重构主线",
-          "下一步优先级"
+          "MTRAG 基线",
+          "BM25 对照",
+          "UnifiedRetrieval 词法链"
         ],
         "startLine": 5,
-        "endLine": 5
+        "endLine": 14
       },
       {
-        "label": "读者优先专题文档地图",
+        "label": "MTRAG 指标结果、退步样例与可得结论",
         "aliases": [
-          "文档入口",
-          "阅读目录",
-          "专题索引"
+          "Recall@20",
+          "nDCG@10",
+          "Hit@5"
         ],
-        "startLine": 7,
-        "endLine": 26
+        "startLine": 16,
+        "endLine": 27
       },
       {
-        "label": "第一阶段交付与读者验收问题",
+        "label": "MTRAG 复现入口与数据保留边界",
         "aliases": [
-          "阶段交付",
-          "验收标准",
-          "读懂与行动"
+          "benchmark:mtrag",
+          "ranking-report.json",
+          "评测缓存"
         ],
-        "startLine": 28,
-        "endLine": 28
+        "startLine": 29,
+        "endLine": 39
+      },
+      {
+        "label": "T2Retrieval 完整中文词法对照的进行状态",
+        "aliases": [
+          "benchmark:t2",
+          "中文检索基准",
+          "可续跑评测"
+        ],
+        "startLine": 41,
+        "endLine": 47
+      },
+      {
+        "label": "各类检索、代码与记忆能力的测试集选择",
+        "aliases": [
+          "FreshStack",
+          "LongMemEval",
+          "LongBench"
+        ],
+        "startLine": 49,
+        "endLine": 60
+      },
+      {
+        "label": "外部榜单和工程测试不能直接代表用户质量",
+        "aliases": [
+          "评测限制",
+          "模型条件",
+          "内容质量"
+        ],
+        "startLine": 62,
+        "endLine": 68
+      },
+      {
+        "label": "分层评价与隔离生成失败和检索失败",
+        "aliases": [
+          "评价流程",
+          "给足原件",
+          "真实检索"
+        ],
+        "startLine": 70,
+        "endLine": 76
       }
     ],
-    "basis": "第3行直接陈述产品目标；第5行说明 2026-10-04 复审核对范围、已发现问题和下一步；第7-26行逐项解释各文档入口；第28行定义第一阶段交付与验收问题。正文是当前文档导航和方向说明，不是实现代码或单次实验；日期是核对日期而非明确生效时间。"
+    "basis": "第3行明确哪些评测已运行、进行中或仅调研；第7-27行给出 MTRAG 的固定数据、对照方法、完整指标与有限结论；第41-60行明确 T2 尚未跑完、其他数据集未全量运行；第70-76行给出后续评价方法。它是当前研究记录，不能被解读为所有基准或生产体验均已验证。"
   },
   "generation": {
-    "at": "2026-10-04T10:57:54.785Z",
+    "at": "2026-10-04T10:57:54.789Z",
     "trace": {
       "runId": "899b121d-a2b2-4cee-8150-7aa25327d0b3",
       "roleId": "material-cataloger",

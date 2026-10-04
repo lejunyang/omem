@@ -1,96 +1,86 @@
 {
   "version": 1,
-  "key": "omem:docs/reader-first/operations.md",
-  "digest": "00f11c5c81e403fe99d9232476d8b175844778d8cf32ea467cd1a1acd37fd15e",
+  "key": "omem:docs/reader-first/retrieval-evaluation.md",
+  "digest": "47ee5a54879d5dfb65c461a04520c466ef51183282889d1474119719cf466f84",
   "description": {
-    "role": "reference",
+    "role": "research",
     "status": "current",
-    "summary": "当前运行与维护手册，覆盖开发/生产启动、Agent 与模型配置、知识及材料说明生成、索引和验证、数据清理与远程连接，以及从普通材料整理正式文章的入口。还能确认默认关闭的中文重排实验及单用户边界。",
+    "summary": "记录同一冻结材料库上对符号候选、融合及中文 reranker 的设计和实验判断，说明候选召回、可回答性、上下文补齐、写作是四个不同环节。可用于了解已接入与未接入方案、实验输入和局限，以及为何当前不默认启用 BGE 或 Qwen3 重排。",
     "topics": [
-      "启动运维",
-      "模型配置",
-      "知识生成",
-      "材料整理",
-      "验证检查",
-      "数据安全",
-      "中文重排"
+      "中文重排",
+      "符号召回",
+      "候选融合",
+      "BGE",
+      "Qwen3",
+      "RRF",
+      "检索评测"
     ],
-    "scope": "omem 当前开发与生产运行、仓库验收、个人数据和实验模型配置；端口、路径和命令以该固定版本为准。",
+    "scope": "固定 12,507 个检索单位、16 个问题及本机 CPU 的同库对照；结果不是生产吞吐、最佳模型上限或完整中文 RAG 结论。",
     "validFrom": null,
     "validUntil": null,
     "concepts": [
       {
-        "label": "开发和生产启动、端口与个人配置",
+        "label": "搜索的候选召回、可回答性、上下文与写作四阶段",
         "aliases": [
-          "osdk run dev",
-          "生产启动",
-          "端口配置",
-          "OMEM_CONFIG"
+          "检索四步",
+          "候选缺失",
+          "完整说明",
+          "回答写作"
         ],
         "startLine": 3,
-        "endLine": 7
+        "endLine": 14
       },
       {
-        "label": "知识生成、材料用途整理与本地向量索引",
+        "label": "明确操作名、定义和调用方候选的已改行为",
         "aliases": [
-          "review:guides",
-          "review:generate",
-          "review:catalog",
-          "BGE embedding"
+          "符号入口",
+          "定义检索",
+          "调用方导航",
+          "操作名"
         ],
-        "startLine": 9,
-        "endLine": 15
+        "startLine": 16,
+        "endLine": 22
       },
       {
-        "label": "助手模型选择与工程、浏览器、检索验收命令",
+        "label": "Qdrant、BGE、Qwen3、Zoekt 和 Contextual Retrieval 的采用状态",
         "aliases": [
-          "readingProfileId",
-          "assistant:compare",
-          "review:verify",
-          "knowledge:native-verify"
+          "多阶段检索",
+          "cross-encoder",
+          "Qwen3 reranker",
+          "Zoekt",
+          "组件状态"
         ],
-        "startLine": 17,
-        "endLine": 21
+        "startLine": 24,
+        "endLine": 34
       },
       {
-        "label": "报告清理、数据位置、单用户连接和提醒边界",
+        "label": "冻结快照、问题集、重排输入和计时口径",
         "aliases": [
-          "review:prune",
-          "数据目录",
-          "远程访问",
-          "SQLite 单用户",
-          "站内提醒"
+          "同库对照",
+          "12507 检索单位",
+          "16 个问题",
+          "512 token",
+          "实验限制"
         ],
-        "startLine": 23,
-        "endLine": 33
+        "startLine": 36,
+        "endLine": 46
       },
       {
-        "label": "网页整理文章的两步流程与发布保护",
+        "label": "后续评估方法与 Qwen3 隔离实测结论",
         "aliases": [
-          "整理文章",
-          "选择原始材料",
-          "阅读目标",
-          "生成失败"
+          "候选池诊断",
+          "可回答材料",
+          "Qwen3 实测",
+          "默认不开启"
         ],
-        "startLine": 35,
-        "endLine": 39
-      },
-      {
-        "label": "中文重排器的显式配置与实验边界",
-        "aliases": [
-          "relevance-zh",
-          "BGE reranker v2-m3",
-          "默认关闭",
-          "Qwen3"
-        ],
-        "startLine": 41,
-        "endLine": 43
+        "startLine": 48,
+        "endLine": 56
       }
     ],
-    "basis": "全文以“运行与维护”为目的，直接给出当前启动、生成、检查、数据和网页操作方法（第3—39行）；末段明确两种 reranker 仅为显式实验选项、默认未启用，Qwen3 和 Zoekt 尚未接入（第41—43行）。"
+    "basis": "正文以“怎样决定是否采用”为研究问题（第1—3行），明确记录固定快照、16 个问题、候选数、输入截断和本机计时限制（第36—46行）。Qwen3 隔离实测没有稳定收益且未接入生产（第30、54行），BGE 也明确默认关闭（第29行）。"
   },
   "generation": {
-    "at": "2026-10-04T11:00:01.580Z",
+    "at": "2026-10-04T11:00:01.582Z",
     "trace": {
       "runId": "30737ddf-75af-4cf9-b812-5d411f0aed3a",
       "roleId": "material-cataloger",

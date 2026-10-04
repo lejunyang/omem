@@ -1,67 +1,98 @@
 {
   "version": 1,
-  "key": "omem:docs/reader-first/README.md",
-  "digest": "7904ea7699711543e2bcbd901cf7691c423e8189850e85164b837aaa61745cc8",
+  "key": "omem:docs/reader-first/fast-assistant.md",
+  "digest": "ee6ade54f2051c4171474192eb1894b86b0da6eb9472c511c74baa3719a4aa02",
   "description": {
-    "role": "reference",
+    "role": "implementation",
     "status": "current",
-    "summary": "读者优先文档集的总入口：说明 omem 要把个人材料、代码与行动放进同一助手，并给出 2026-10-04 复审后的核心问题、后续主线、各专题文档用途和第一阶段验收标准。适合先判断应去哪里了解当前实现、检索、知识维护、问答、记忆或运行方式。",
+    "summary": "说明当前助手如何保留准确 materialKey、按命中行读取完整章节，并可通过 `assistant.readingProfileId` 先读材料、必要时交接常规调查；同时保留早期 Luna 单 profile 对照、配置方式、快照复用和耗时观测。可用于配置问答 profile、理解已做的定位/性能改造和复现实验，但小样本耗时不能外推为普遍提速。",
     "topics": [
-      "读者优先文档",
-      "个人记忆助手",
-      "文档导航",
-      "当前主线",
-      "验收目标"
+      "快助手",
+      "先读材料",
+      "调查交接",
+      "材料定位",
+      "问答 profile",
+      "性能对照"
     ],
-    "scope": "omem 读者优先重构的文档地图、2026-10-04 复审结论与第一阶段交付目标。",
+    "scope": "截至 2026-10-04 的 omem 助手读取定位与可选先读路径，以及 2026-10-03 Luna 单 profile 实验记录。",
     "validFrom": null,
     "validUntil": null,
     "concepts": [
       {
-        "label": "统一材料、代码与行动的产品目标",
+        "label": "先读材料作答与调查交接的当前状态",
         "aliases": [
-          "产品目标",
-          "统一知识库",
-          "个人记忆助手"
+          "readingProfileId",
+          "先读后调查",
+          "固定快照交接"
         ],
         "startLine": 1,
         "endLine": 3
       },
       {
-        "label": "复审发现的核心问题与下一步主线",
+        "label": "准确材料定位与按命中行读取章节",
         "aliases": [
-          "当前问题",
-          "重构主线",
-          "下一步优先级"
+          "materialKey",
+          "read_section atLine",
+          "定位解析"
         ],
         "startLine": 5,
-        "endLine": 5
+        "endLine": 11
       },
       {
-        "label": "读者优先专题文档地图",
+        "label": "问答 trace 的时间与工具观测",
         "aliases": [
-          "文档入口",
-          "阅读目录",
-          "专题索引"
+          "ACP trace",
+          "材料准备耗时",
+          "工具失败数"
         ],
-        "startLine": 7,
-        "endLine": 26
+        "startLine": 13,
+        "endLine": 15
       },
       {
-        "label": "第一阶段交付与读者验收问题",
+        "label": "Luna 与 Sol 单 profile 的早期对照",
         "aliases": [
-          "阶段交付",
-          "验收标准",
-          "读懂与行动"
+          "Luna 实验",
+          "快模型对照",
+          "历史基线"
         ],
-        "startLine": 28,
-        "endLine": 28
+        "startLine": 17,
+        "endLine": 21
+      },
+      {
+        "label": "助手 profile 的选择与独立配置",
+        "aliases": [
+          "assistant.profileId",
+          "traex-fast",
+          "模型配置"
+        ],
+        "startLine": 23,
+        "endLine": 27
+      },
+      {
+        "label": "快照复用、材料说明和性能观测的代码改造",
+        "aliases": [
+          "research-snapshot",
+          "fragment 索引",
+          "问答耗时"
+        ],
+        "startLine": 29,
+        "endLine": 40
+      },
+      {
+        "label": "助手模型比较的复现与人工评价方法",
+        "aliases": [
+          "assistant:compare",
+          "同库对照",
+          "答案人工检查"
+        ],
+        "startLine": 42,
+        "endLine": 54
       }
     ],
-    "basis": "第3行直接陈述产品目标；第5行说明 2026-10-04 复审核对范围、已发现问题和下一步；第7-26行逐项解释各文档入口；第28行定义第一阶段交付与验收问题。正文是当前文档导航和方向说明，不是实现代码或单次实验；日期是核对日期而非明确生效时间。"
+    "basis": "第3行明确 2026-10-04 已接入可选先读与调查交接，并说明下文保留早期单 profile 实验；第7-13行描述当前定位和 trace 改造；第25-40行给出配置与代码行为；第42-54行是复现实验和人工评价。材料主体仍是实现/配置说明，Luna 对照属于明确标出的上一轮历史，日期不是生效日期。"
   },
   "generation": {
-    "at": "2026-10-04T10:57:54.785Z",
+    "at": "2026-10-04T10:57:54.789Z",
     "trace": {
       "runId": "899b121d-a2b2-4cee-8150-7aa25327d0b3",
       "roleId": "material-cataloger",

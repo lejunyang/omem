@@ -1,51 +1,25 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-04T11:21:19.763Z",
-  "implementationCommit": "484887198d90de1a110703bc614cbaacb40adea5",
-  "sourceDigest": "96a037480eabbf4f7d5d6f38ee8d017af9109aee66ed48e7cac1e59a54284768",
+  "recordedAt": "2026-10-04T11:03:03.481Z",
+  "implementationCommit": "4e115a4d5172fe3beb566a60e0386cf9763e2fcd",
+  "sourceDigest": "6d2d41eb26a1272e43a90e414cebe00ba469fe18bba95864b7e9e236699f23b0",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
-  "mode": "full",
+  "mode": "repository",
   "checks": [
     {
       "name": "dependencies",
-      "state": "passed",
-      "details": {
-        "command": [
-          "osdk",
-          "deps",
-          "--frozen"
-        ],
-        "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T11-21-19-763Z/dependencies.log",
-        "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
-      }
+      "state": "skipped",
+      "details": "Run with --full; earlier results are not inherited."
     },
     {
       "name": "project",
-      "state": "passed",
-      "details": {
-        "command": [
-          "osdk",
-          "run",
-          "check"
-        ],
-        "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T11-21-19-763Z/project.log",
-        "sha256": "4be9178e7a1b582b851c7162410440dc6e4de546f73510444a5bf564098fb087"
-      }
+      "state": "skipped",
+      "details": "Run with --full; earlier results are not inherited."
     },
     {
       "name": "liveChineseRetrieval",
-      "state": "passed",
-      "details": {
-        "command": [
-          "/Users/bytedance/Library/Application Support/osdk/installs/bun/1.4.2/bin/bun",
-          "scripts/live-retrieval-smoke.ts"
-        ],
-        "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T11-21-19-763Z/liveChineseRetrieval.log",
-        "sha256": "610d62bb64795e9832332aa36374add55c271e33737635d71f1941c7de21c885"
-      }
+      "state": "skipped",
+      "details": "Run with --full; earlier results are not inherited."
     },
     {
       "name": "publishedKnowledgeReferences",
@@ -64,11 +38,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v6",
-        "units": 12088,
+        "units": 12071,
         "semantic": {
           "model": "structure-icu-v6:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 12088,
+          "indexed": 12071,
           "pending": 0,
           "error": null
         },
@@ -83,7 +57,7 @@
       "name": "repositorySearch",
       "state": "failed",
       "details": {
-        "passed": 2,
+        "passed": 3,
         "total": 6
       }
     },
@@ -380,26 +354,18 @@
         ],
         "status": 200,
         "baselineTop5": [
-          "docs/reader-first/component-integration.md",
           "docs/reader-first/retrieval-redesign.md",
           "docs/reader-first/retrieval-redesign.md",
-          "docs/reader-first/component-integration.md",
-          "docs/reader-first/current-system.md"
+          "docs/reader-first/current-system.md",
+          "docs/archive/2026-10-01-baseline/PROJECT-README.md",
+          "packages/agent-runtime/roles/knowledge-researcher/1/prompt.md"
         ],
-        "baselineUniquePathsAt5": 3,
+        "baselineUniquePathsAt5": 4,
         "passed": false,
         "firstExpectedRank": null,
-        "uniquePathsAt5": 3,
-        "elapsedMs": 879,
+        "uniquePathsAt5": 4,
+        "elapsedMs": 1048,
         "top5": [
-          {
-            "path": "docs/reader-first/component-integration.md",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "真实 HTTP 抽查进一步发现章节级引用扩散。现用 marked 解析读者段落、列表项和表格行，仅从实际匹配的文字回溯其引用；代码块/图与同章无关段落不继承分数。跨文章引用有明确章节时保留该章背景，未指定章节则继续找相关段落。这个修复处理了别名回原件的错误扩散，不宣称已解决中文语义、当前/历史适用性和跨文件功能理解。"
-          },
           {
             "path": "docs/reader-first/retrieval-redesign.md",
             "routes": [
@@ -417,20 +383,29 @@
             "snippet": "这借鉴片段上下文检索和元数据过滤，尚不是逐块完整语境生成，也不解决跨文件业务链。当前预处理身份为 `structure-icu-v6`，需要补建向量。原文换版后不沿用旧版分类；人工修正保留。具体流程与适用限制见 [材料用途与概念入口](material-understanding.md)。"
           },
           {
-            "path": "docs/reader-first/component-integration.md",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "[Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval) 给每个片段补它在整份文档中的具体背景，再进入全文与向量索引。omem 已在 `retrieval/units.ts` / `unified.ts` 用结构"
-          },
-          {
             "path": "docs/reader-first/current-system.md",
             "routes": [
               "bm25",
               "purpose:balanced"
             ],
             "snippet": "主要入口现在使用 `UnifiedRetrieval`：ICU 中文分词、SQLite FTS5 BM25、osdk 锁定的 BGE-small-zh-v1.5、CPU ONNX 和 SQLite 向量比较。全文/语义候选融合一次，过滤弱向量尾部，再合并重复、限制同来源摘录。讲解正文、原件、记忆和事项使用共同的 `Re"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "可选的本地 BGE-small-zh-v1.5（量化 ONNX，权重约 24 MB）已接入个人助手、飞书助手和仓库搜索。它与全文、记忆及 Wiki 引用召回合并，最终返回当前原始 Fragment。长片段分窗索引，助手把命中附近的原文送入模型，连续追问也保留已核验窗口；来源更新后自动补建。可见性和时间过滤在结果截断之前"
+          },
+          {
+            "path": "packages/agent-runtime/roles/knowledge-researcher/1/prompt.md",
+            "routes": [
+              "bm25",
+              "purpose:balanced"
+            ],
+            "snippet": "先判断材料领域和读者目的，围绕一个实际问题调查概念、背景、例子和使用步骤。代码主题才从输入到结果追踪入口、核心处理、调用者、类型、配置与示例；需要解释为什么时补读设计背景。搜索实际函数名、路径或关键业务词，不只搜索泛泛的中文标题。读完整相关函数和章节，不只读文件开头。先探索一条完整主流程，再看会改变理解的关键分支。"
           }
         ]
       },
@@ -443,20 +418,20 @@
         ],
         "status": 200,
         "baselineTop5": [
-          ".claude/skills/osdk-guide/reference/configuration/models.md",
           ".agents/skills/osdk-guide/reference/configuration/models.md",
+          ".claude/skills/osdk-guide/reference/configuration/models.md",
           ".agents/skills/osdk-guide/reference/model/guide.md",
           ".claude/skills/osdk-guide/reference/model/guide.md",
           ".claude/skills/osdk-guide/reference/global-options/guide.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
-        "firstExpectedRank": 10,
+        "firstExpectedRank": 9,
         "uniquePathsAt5": 5,
-        "elapsedMs": 688,
+        "elapsedMs": 620,
         "top5": [
           {
-            "path": ".claude/skills/osdk-guide/reference/configuration/models.md",
+            "path": ".agents/skills/osdk-guide/reference/configuration/models.md",
             "routes": [
               "bm25",
               "semantic",
@@ -483,14 +458,6 @@
             "snippet": "| `--source <ID>` | — | 本次调用优先使用指定下载源 |\n| `--refresh-sources` | — | 忽略源测速缓存并重新探测 |\n| `--source-mode <auto\\|env>` | `OSDK_SOURCE_MODE` | `auto` 排序环境镜像与内置源；`env` "
           },
           {
-            "path": "docs/reader-first/component-integration.md",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "本轮先消除可解释的噪声并做真实对照。中文 embedding/reranker 用 osdk 声明锁定、运行禁止下载；可比较 Qwen3/BGE，但不在没有问题集、时延和效果证据时换更大模型。没有直接搬 Elasticsearch 平台的必要，个人 SQLite 原件与检索接口可以保留。"
-          },
-          {
             "path": ".claude/skills/osdk-guide/reference/install/guide.md",
             "routes": [
               "bm25",
@@ -498,6 +465,14 @@
               "purpose:balanced"
             ],
             "snippet": "`install` 安装开发工具；项目自身依赖使用 `osdk deps`。模型不会作为裸 `install` 的副作用\n下载，使用 `osdk model sync`。"
+          },
+          {
+            "path": "docs/reader-first/operations.md",
+            "routes": [
+              "bm25",
+              "purpose:balanced"
+            ],
+            "snippet": "本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / "
           }
         ]
       },
@@ -520,7 +495,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 616,
+        "elapsedMs": 755,
         "top5": [
           {
             "path": "config/wiki-pages.json",
@@ -584,7 +559,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 4,
-        "elapsedMs": 315,
+        "elapsedMs": 203,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -645,7 +620,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 142,
+        "elapsedMs": 170,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -703,15 +678,15 @@
         "baselineTop5": [
           "design.md",
           "docs/archive/2026-10-01-baseline/prototype/build.mjs",
-          "docs/archive/2026-10-01-baseline/prototype/data.js",
           "docs/reader-first/current-system.md",
-          "docs/reader-first/retrieval-redesign.md"
+          "docs/archive/2026-10-01-baseline/prototype/verification.json",
+          "docs/archive/2026-10-01-baseline/prototype/app.jsx"
         ],
         "baselineUniquePathsAt5": 5,
-        "passed": false,
-        "firstExpectedRank": 8,
+        "passed": true,
+        "firstExpectedRank": 5,
         "uniquePathsAt5": 5,
-        "elapsedMs": 676,
+        "elapsedMs": 782,
         "top5": [
           {
             "path": "design.md",
@@ -732,15 +707,6 @@
             "snippet": "id=\"root\"></div><script>window.OMEM_TWEAKS=/*EDITMODE-BEGIN*/{\"fontSize\":16,\"density\":\"舒展\"}/*EDITMODE-END*/;</script><script>${script}</script></body></html>`,\n"
           },
           {
-            "path": "docs/archive/2026-10-01-baseline/prototype/data.js",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "< 100\n        ? [\n            {\n              id: \"long-\" + (i + 1),\n              label: \"继续查看下一份材料\",\n              type: \"明确引用\",\n            },\n          ]\n  "
-          },
-          {
             "path": "docs/reader-first/current-system.md",
             "routes": [
               "bm25",
@@ -750,13 +716,22 @@
             "snippet": "`assistant/runtime.ts` 已通过原生 ACP 调查器反复搜索、补读、查记忆、固定历史与代码导航，再提交答案候选。材料/知识工具共享检索，可按正式用途和明确有效期筛选；这仍不是完整时态推理、跨文件功能链或可靠的无答案判定。长期会话有历史和用户纠正，不是持续维护的项目理解。"
           },
           {
-            "path": "docs/reader-first/retrieval-redesign.md",
+            "path": "docs/archive/2026-10-01-baseline/prototype/verification.json",
             "routes": [
               "bm25",
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "新增可重建的 SQLite 检索投影，不改 Capture、Revision 和历史 Fragment。Markdown 使用现有 marked，保留章节路径、段落、列表和表格；代码使用现有 TS/Vue AST，按符号范围组织，附签名、注释和模块背景；聊天保留参与者、事件时间及会话/回复关系。长单位可以向量化为多个窗"
+            "snippet": "正文\",\n    \"手机布局与全屏引用\",\n    \"无脚本异常且零外部请求\"\n  ],\n  \"errors\": [],\n  \"externalRequests\": [],\n  \"scope\": \"Offline prototype only; no backend or model evaluation\"\n}"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": ") : (\n                        <p className=\"muted\">本例没有记录其他直接引用。</p>\n                      )}\n                    </>\n                  ) : current.tab === \"ver"
           }
         ]
       }

@@ -1,67 +1,108 @@
 {
   "version": 1,
-  "key": "omem:docs/reader-first/README.md",
-  "digest": "7904ea7699711543e2bcbd901cf7691c423e8189850e85164b837aaa61745cc8",
+  "key": "omem:docs/reader-first/fast-decisions.md",
+  "digest": "026e80a8091912ed77c6842dd9e36c551383e8182de615655a7cec18d1ae12e6",
   "description": {
-    "role": "reference",
+    "role": "research",
     "status": "current",
-    "summary": "读者优先文档集的总入口：说明 omem 要把个人材料、代码与行动放进同一助手，并给出 2026-10-04 复审后的核心问题、后续主线、各专题文档用途和第一阶段验收标准。适合先判断应去哪里了解当前实现、检索、知识维护、问答、记忆或运行方式。",
+    "summary": "汇总中文本地快速决策实验：GLiClass、Qwen3.5-4B、Plumb-4B 已安装实跑，但尚未接管线上路由或记忆写入；记录候选选择、运行方式、两组评测、失败样例和端到端耗时，并据此提出只将相关性用于阅读顺序、由写作者判断材料充分性、复杂问题交回 Sol 的窄化方案。也标明先读路径哪些已实现、哪些仍待接。",
     "topics": [
-      "读者优先文档",
-      "个人记忆助手",
-      "文档导航",
-      "当前主线",
-      "验收目标"
+      "中文小模型",
+      "快速决策",
+      "阅读顺序",
+      "先读作答",
+      "模型评测",
+      "记忆候选"
     ],
-    "scope": "omem 读者优先重构的文档地图、2026-10-04 复审结论与第一阶段交付目标。",
+    "scope": "2026-10-04 在 macOS / Apple Silicon 上对 4B 以下模型及 Sol 先读路径的实验与当前接入边界；不支持默认接管所有请求。",
     "validFrom": null,
     "validUntil": null,
     "concepts": [
       {
-        "label": "统一材料、代码与行动的产品目标",
+        "label": "小模型与先读路径的当前状态和结论",
         "aliases": [
-          "产品目标",
-          "统一知识库",
-          "个人记忆助手"
+          "快速决策现状",
+          "阅读顺序",
+          "默认 Sol"
         ],
         "startLine": 1,
-        "endLine": 3
+        "endLine": 7
       },
       {
-        "label": "复审发现的核心问题与下一步主线",
+        "label": "候选模型的选择、量化与语言限制",
         "aliases": [
-          "当前问题",
-          "重构主线",
-          "下一步优先级"
+          "GLiClass",
+          "Qwen3.5-4B",
+          "Plumb-4B"
         ],
-        "startLine": 5,
-        "endLine": 5
+        "startLine": 9,
+        "endLine": 22
       },
       {
-        "label": "读者优先专题文档地图",
+        "label": "离线模型运行与搜索前后只读检查",
         "aliases": [
-          "文档入口",
-          "阅读目录",
-          "专题索引"
+          "decision:evaluate",
+          "decision:inspect",
+          "模型同步"
         ],
-        "startLine": 7,
-        "endLine": 26
+        "startLine": 24,
+        "endLine": 49
       },
       {
-        "label": "第一阶段交付与读者验收问题",
+        "label": "中文场景、真实检索片段与原生重排的评测设计",
         "aliases": [
-          "阶段交付",
-          "验收标准",
-          "读懂与行动"
+          "38个中文场景",
+          "HTTP 搜索对照",
+          "query-as-label"
         ],
-        "startLine": 28,
-        "endLine": 28
+        "startLine": 51,
+        "endLine": 59
+      },
+      {
+        "label": "问题澄清、领域与操作判断的拆分",
+        "aliases": [
+          "对象消歧",
+          "多标签领域",
+          "操作意图"
+        ],
+        "startLine": 61,
+        "endLine": 68
+      },
+      {
+        "label": "相关性、材料充分性与成本的不同职责",
+        "aliases": [
+          "回答充分性",
+          "阅读顺序建议",
+          "端到端成本"
+        ],
+        "startLine": 69,
+        "endLine": 73
+      },
+      {
+        "label": "先读作答、独立复核与调查交接流程",
+        "aliases": [
+          "handoff_to_research",
+          "review_answer",
+          "readingProfileId"
+        ],
+        "startLine": 75,
+        "endLine": 93
+      },
+      {
+        "label": "记忆候选边界与具体代码落点",
+        "aliases": [
+          "MemoryService",
+          "决策模型候选",
+          "reading-stage"
+        ],
+        "startLine": 95,
+        "endLine": 110
       }
     ],
-    "basis": "第3行直接陈述产品目标；第5行说明 2026-10-04 复审核对范围、已发现问题和下一步；第7-26行逐项解释各文档入口；第28行定义第一阶段交付与验收问题。正文是当前文档导航和方向说明，不是实现代码或单次实验；日期是核对日期而非明确生效时间。"
+    "basis": "第3-7行明确哪些模型已实跑、哪些线上能力尚未接管，并报告首轮失败和窄场景结果；第9-59行记录候选依据、命令和评测设计；第61-97行据实验提出职责拆分和记忆安全边界；第99-110行区分已实现与待接代码。材料以实验发现和采用判断为主，状态反映截至 2026-10-04 的当前研究，而非所有方案已上线。"
   },
   "generation": {
-    "at": "2026-10-04T10:57:54.785Z",
+    "at": "2026-10-04T10:57:54.790Z",
     "trace": {
       "runId": "899b121d-a2b2-4cee-8150-7aa25327d0b3",
       "roleId": "material-cataloger",
