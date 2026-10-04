@@ -1,6 +1,6 @@
 # Agent 自主调查、写作与独立补查
 
-更新：2026-10-04。原生 ACP 调查、写作与独立补查已接通；实际仓库生成状态见 progress.md。
+更新：2026-10-05。原生 ACP 调查、写作与独立补查已接通；实际仓库生成状态见 progress.md。
 
 ## 改造前的限制
 
@@ -16,9 +16,9 @@ writePage 的 researcher 返回 requests，宿主最多三轮执行 MaterialRese
 
 | 工具 | 帮助 Agent 完成的调查 |
 | --- | --- |
-| list_materials | 按标题/路径/类型发现原件，分页取得完整目录 |
+| list_material_groups / list_materials | 查看已保存的项目/主题，再按归属、标题、路径或类型发现原件，分页取得本次目录 |
 | read_material / read_section | 整篇、任意行段、完整章节或函数；目录保存父子节点，可按 contextId 向上补条件、向下读子话题；含来源、修订和图片 |
-| search_materials | 共用修复后的混合检索；按明确 key/类型缩范围；弱匹配可为空 |
+| search_materials / search_contexts | 共用混合检索，可按明确 key/项目/类型缩范围；多部分问题分别召回并恢复完整阅读语境 |
 | search_knowledge / read_knowledge | 阅读已有解释和其引用，再回原文核对新增事实 |
 | search_memories / read_memory | 找已有事实、经验、流程及其依据，提供背景 |
 | code_navigation | 定义、import、候选调用位置、路由和测试；不是完整类型调用图 |
@@ -26,6 +26,8 @@ writePage 的 researcher 返回 requests，宿主最多三轮执行 MaterialRese
 | material_history | 查看已捕获版本目录，按修订补读；历史正文只作背景 |
 | read_image | 提供原始图片像素，另有工作区文件路径供原生读取 |
 | submit_result | 校验最终候选；错误留在当前 Agent turn 内修正，成功仍由宿主发布 |
+
+个人调查的项目目录保存在 `groups.json`，材料目录另列所属 `groupIds`。项目范围可用于材料、知识、记忆和代码调查，来自正式保存的 source 归属，不根据标题或路径猜测。目录与成员在快照中固定，只包含本次可读原件涉及的项目；群聊调查不提供个人项目元数据。它不是自动归属、事实有效性判断或记忆写入权限，具体使用见[项目材料](project-contexts.md)。
 
 `agent-runtime/gateway.ts` 在原生知识模式跳过宿主输入/输出 token 预算，skills 按 canonical 名称原生加载；`agents.ts` 处理工具生命周期、计划与实际 usage，丢弃私有思考。候选提交经共享 Zod 合同及引用校验，因此聊天过程不用伪装成最终 JSON。实际 config/review-code-model.json 已移除三项预算配置；模型固有窗口、Traex 自动压缩、超时和取消仍存在。
 
