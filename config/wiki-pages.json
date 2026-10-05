@@ -2,6 +2,36 @@
   "version": 1,
   "pages": [
     {
+      "key": "guide:personal-messages",
+      "title": "让飞书消息进入个人助理：订阅、读材料与跟进",
+      "kind": "how-to",
+      "order": 5,
+      "topicPath": ["软件开发", "omem"],
+      "reader": "想让助手定时查看飞书消息、又不想改变原有消息状态的个人用户",
+      "goal": "读后能选择订阅、处理免打扰例外、理解图片与文档读到了哪一步，并检查后台服务。先讲操作与可见结果，用同一案例说明为什么收到消息不等于已经记住或创建待办。清楚说明当前仍需用户检查的事项，避免把程序测试和复核通过作为文章主线。内部字段和表名放到结尾的小型开发入口表。",
+      "scenario": "教学示例：需求群开启免打扰，同事直接@我确认周三的交付，并附一份飞书文档和流程截图。展示如何配置提及与订阅、检查附件缺口、查看处理建议，以及后台暂停或登录失效时到哪里检查。不能声称已验证这条虚构消息或已实现自动理解所有附件。",
+      "questions": [
+        "怎样发现最近会话、选择普通订阅、开启定时采集和暂停？",
+        "免打扰、屏蔽@所有人与明确排除分别怎样影响读取？",
+        "文档、图片、附件和话题分别保存什么，尚未读全时哪里能看到和重试？",
+        "决策模型负责哪些判断，低分、不可用和缺背景时如何处理，何时才会产生记忆或事项？",
+        "怎样用已有机器人接收变化和故障，怎样检查服务是否持续运行？"
+      ],
+      "entryPaths": [
+        "apps/server/src/integrations/lark-personal/service.ts",
+        "apps/server/src/integrations/lark-personal/client.ts",
+        "apps/server/src/integrations/lark-personal/materials.ts",
+        "apps/server/src/integrations/lark-personal/policy.ts",
+        "apps/server/src/integrations/lark/owner-notice.ts",
+        "apps/server/src/learning/pipeline.ts",
+        "apps/server/src/store.ts",
+        "apps/web/src/PersonalLark.vue",
+        "scripts/service.ts",
+        "docs/reader-first/personal-messages.md",
+        "docs/reader-first/operations.md"
+      ]
+    },
+    {
       "key": "guide:overview",
       "title": "先认识 omem：把材料变成能找回的工作记忆",
       "order": 0,

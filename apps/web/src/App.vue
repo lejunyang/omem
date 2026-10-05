@@ -52,6 +52,7 @@ import LearningView from "./LearningView.vue";
 import DecisionsView from "./DecisionsView.vue";
 import NotificationDetail from "./NotificationDetail.vue";
 import LarkSetup from "./LarkSetup.vue";
+import PersonalLark from "./PersonalLark.vue";
 const navigation = [
   ["daily", "spark", "日常助理"],
   ["knowledge", "book", "知识库"],
@@ -62,6 +63,7 @@ const navigation = [
   ["tasks", "check", "事项与待办"],
   ["changes", "clock", "变更历史"],
   ["notifications", "spark", "通知中心"],
+  ["messages", "layers", "飞书消息"],
   ["lark", "layers", "飞书机器人"],
   ["settings", "layers", "能力与连接"],
 ];
@@ -1132,6 +1134,7 @@ onBeforeUnmount(() => {
         ></OmPanel
       ><OmEmpty v-if="!notifications.length" title="暂无通知" />
     </section>
+    <PersonalLark v-else-if="view === 'messages'" @open-revision="openRevision" />
     <LarkSetup
       v-else-if="view === 'lark'"
       @error="(text) => (error = text)"
