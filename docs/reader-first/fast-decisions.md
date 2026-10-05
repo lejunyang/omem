@@ -1,6 +1,6 @@
 # 中文快速决策：实际接入与选择规则
 
-更新：2026-10-05。StartLux-Decision 0.8B、2B、4B 已在 Apple M2 Pro / 32GB 上以官方 BF16 / MLX 原生方式运行。**共用服务已经接到助手初始选材和原文页用途建议，仍不能把模型判断当事实写入、操作授权或安全证明。** 逐项结果见[同一份实验简报](../../.repo-review/knowledge/verification/fast-decisions.md)。
+更新：2026-10-05。StartLux-Decision 0.8B、2B、4B 已在 Apple M2 Pro / 32GB 上以官方 BF16 / MLX 原生方式运行。**共用服务已经接到助手初始选材、原文页用途建议与个人飞书消息分流，仍不能把模型判断当事实写入、操作授权或安全证明。** 检索逐项结果见[同一份实验简报](../../.repo-review/knowledge/verification/fast-decisions.md)；消息的七维判断、低分与缺资源处理见[个人消息](personal-messages.md)。
 
 ## 本机结果
 

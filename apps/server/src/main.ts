@@ -11,8 +11,14 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
     closing = true;
     // Let native model workers finish tearing down instead of forcing Bun to
     // exit in the middle of native-addon cleanup.
-    void app.close().catch((error) => {
-      console.error("omem shutdown failed", error);
-      process.exitCode = 1;
-    });
+    void app
+      .close()
+      .then(() => {
+        // PM2's IPC channel otherwise keeps an already-closed Node server alive.
+        if (process.connected) process.disconnect();
+      })
+      .catch((error) => {
+        console.error("omem shutdown failed", error);
+        process.exitCode = 1;
+      });
   });

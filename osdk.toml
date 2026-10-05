@@ -381,3 +381,29 @@ help = "Describe Markdown documents only"
 
 [tasks."review:catalog".flags.retry]
 help = "Re-analyze model descriptions; preserve user corrections"
+
+[tasks."service:start"]
+run = "bun scripts/service.ts start"
+description = "Start the built service under project-local PM2"
+[tasks."service:stop"]
+run = "bun scripts/service.ts stop"
+description = "Stop this project's managed service"
+[tasks."service:restart"]
+run = "bun scripts/service.ts restart"
+[tasks."service:status"]
+run = [{ argv = ["bun", "scripts/service.ts", "status", "{{args}}"] }]
+description = "Check the managed process, API health and message collector"
+[tasks."service:status".flags.json]
+help = "Print structured status without exposing process environment"
+
+[tasks.messages]
+run = [{ argv = ["bun", "apps/server/src/cli.ts", "messages", "{{action}}", "{{target}}"] }]
+description = "Personal Lark subscriptions and read-only collection"
+[[tasks.messages.args]]
+name = "action"
+default = "status"
+choices = ["status", "discover", "sync", "inbox", "watch", "unwatch", "exclude", "configure"]
+[[tasks.messages.args]]
+name = "target"
+default = ""
+help = "Chat ID or a settings JSON file"

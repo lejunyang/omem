@@ -8,7 +8,9 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": ".",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "noUncheckedIndexedAccess": true
   },
   "include": [
@@ -35,6 +37,7 @@
     "scripts/assistant-compare.ts",
     "scripts/decision-prepare.ts",
     "scripts/decision-evaluate.ts",
-    "scripts/decision-inspect.ts"
+    "scripts/decision-inspect.ts",
+    "scripts/service.ts"
   ]
 }

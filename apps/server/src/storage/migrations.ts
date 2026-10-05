@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 24;
+export const SUPPORTED_SCHEMA_VERSION = 25;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -1040,6 +1040,18 @@ const assistantProjectStatements = [
   "ALTER TABLE task_revisions ADD COLUMN project_id TEXT",
 ];
 
+const personalLarkStatements = [
+  `CREATE TABLE personal_lark_settings(id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL, owner_id TEXT)`,
+  `INSERT INTO personal_lark_settings VALUES(1,'{}',NULL)`,
+  `CREATE TABLE personal_lark_streams(id TEXT PRIMARY KEY,name TEXT NOT NULL,kind TEXT NOT NULL DEFAULT 'group',mode TEXT NOT NULL DEFAULT 'off',
+    watermark TEXT,window_end TEXT,page_token TEXT,next_at TEXT NOT NULL,last_success TEXT,last_error TEXT)`,
+  `INSERT INTO personal_lark_streams(id,name,mode,next_at) VALUES('@mentions','提到我的消息','mentions','1970-01-01T00:00:00.000Z')`,
+  `CREATE TABLE personal_lark_messages(id TEXT PRIMARY KEY,chat_id TEXT NOT NULL,chat_name TEXT NOT NULL,
+    digest TEXT NOT NULL,raw TEXT NOT NULL,revision_id TEXT,decision TEXT,resources TEXT NOT NULL DEFAULT '[]',
+    state TEXT NOT NULL DEFAULT 'pending',error TEXT,observed_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
+  `CREATE INDEX personal_lark_messages_time ON personal_lark_messages(observed_at)`,
+] as const;
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -1140,6 +1152,7 @@ const migrations: readonly Migration[] = [
   { version: 22, name: "retrieval-context-hierarchy", statements: retrievalContextStatements, checksum: checksum(retrievalContextStatements) },
   { version: 23, name: "assistant-project-context", statements: assistantProjectStatements, checksum: checksum(assistantProjectStatements) },
   { version: 24, name: "staged-role-outputs", statements: stagedRoleOutputStatements, checksum: checksum(stagedRoleOutputStatements) },
+  { version: 25, name: "personal-lark-collection", statements: personalLarkStatements, checksum: checksum(personalLarkStatements) },
 ];
 
 const legacyV1Checksum = createHash("sha256")
