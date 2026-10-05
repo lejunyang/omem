@@ -41,3 +41,7 @@ omem requirements handoff REQUIREMENT_KEY --to ./implementation-handoff
 `osdk run requirements:verify` 使用真实 Traex ACP / gpt-5.6-sol，输入合成需求、群聊、会议纪要、代码，以及未归属的干扰文档。2026-10-06 用时 471.8 秒：正确保留 general 兜底、完成入口尚未实现、内部演示不等于上线，固定依赖包含四类材料而排除干扰。独立复核发现并修订了“建议先确认接口”被写成“小周正在等待”的问题，也纠正了无依据的操作人判断。
 
 最终页面能给出验收表与实现建议，但同一状态在摘要、验收表和进度表间仍重复，未知项的解释偏长。它验证了跨来源调查与修订流程，不证明真实大群的自动需求识别准确率。该样例没有另跑第二轮变更生成；自动持续更新沿用已有队列与重启检查。专项完整输出覆盖写入 `.repo-review/runtime/research/requirement-followup.json`，不逐轮新增整套知识产物。
+
+## 新消息怎样自动进入项目
+
+`requirements track --watch` 跟随正式项目归属，不猜群名。新消息的自动归属依赖已有学习流程：在个人配置启用 `learning.enabled`，设置有效 `learning.profileId` 后重启服务；`omem status --json` 的 `processingEnabled` 与 `learning.running` 可检查是否消费作业。未启用时仍可显式导入并设置归属、主动生成需求页，但不能把采集入队当作已经自动理解项目。
