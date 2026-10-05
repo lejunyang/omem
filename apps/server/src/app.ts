@@ -33,6 +33,10 @@ import { Store } from "./store.js";
 import { Runs } from "./runs.js";
 import { acp } from "./agents.js";
 import { fileInput, gitInput, larkInput, hookInput } from "./connectors.js";
+import { documentInput } from "./imports/documents.js";
+import { DecisionService } from "./decision/service.js";
+import { intakeQuestions } from "./decision/questions.js";
+import { assessPassages } from "./decision/passages.js";
 import { assistantProfile as selectAssistantProfile, assistantReadingProfile, type Config } from "./config.js";
 import { FeedbackService, MemoryService } from "./memory/service.js";
 import { LarkOnboardingService } from "./integrations/lark/onboarding.js";
@@ -71,6 +75,7 @@ export async function buildApp(
     : undefined;
   const runs = new Runs(store, config);
   const memory = new MemoryService(store);
+  const decisions = new DecisionService(config.decisions ?? { mode: "off" });
   const feedback = new FeedbackService(store);
   // Production assistant uses the real ACP adapter against a configured profile.
   // When no ACP profile can actually run (missing CLI / auth / wrong transport)
@@ -117,6 +122,7 @@ export async function buildApp(
     feedback,
     retrieval: assistantRetrieval,
     timezone: config.notifications.external?.timezone,
+    decisions: config.decisions && config.decisions.mode !== "off" ? decisions : undefined,
     turnTimeoutMs: assistantProfile?.timeoutMs ?? 60_000,
   });
   const learningConfig = config.learning;
@@ -263,12 +269,32 @@ export async function buildApp(
     const { contextIds, ...capture } = captureSchema.extend({ contextIds: contextIdsSchema.optional() }).parse(req.body);
     return store.capture(capture, { contextIds });
   });
+  app.get("/api/decisions/status", async () => decisions.status());
+  app.post("/api/decisions/intake", async (req, reply) => {
+    const { revisionId } = z.object({ revisionId: str }).strict().parse(req.body);
+    const revision = store.revision(revisionId);
+    if (!revision) return reply.code(404).send({ error: "材料版本不存在" });
+    const text = revision.parts.filter(p => p.type === "text").map(p => p.text).join("\n\n");
+    const result = await decisions.decide({ title: revision.title, material: text.slice(0, 12_000), partial_excerpt: text.length > 12_000 }, intakeQuestions);
+    return { result, status: decisions.status() };
+  });
+  app.get<{ Querystring: { q?: string } }>("/api/decisions/search", async req => {
+    const question = (req.query.q || "").slice(0, 300);
+    const hits = await assistantRetrieval.search?.({ text: question, limit: 30, diversify: false }) ?? [];
+    return assessPassages(decisions, question, hits);
+  });
   app.post("/api/connectors/file", async (req) => {
     const b = z.object({ path: str, contextIds: contextIdsSchema.optional() }).parse(req.body);
     return store.capture(
-      captureSchema.parse(await fileInput(b.path, config.captureRoots)),
+      captureSchema.parse(await fileInput(b.path, config.captureRoots, config.dataDir)),
       { contextIds: b.contextIds },
     );
+  });
+  app.post("/api/connectors/document", { bodyLimit: 28_000_000 }, async (req) => {
+    const b = z.object({ name: z.string().min(1).max(300), data: z.string().min(1).max(27_000_000), externalId: z.string().min(1).max(300), contextIds: contextIdsSchema.optional() }).strict().parse(req.body);
+    const bytes = Buffer.from(b.data, "base64");
+    if (bytes.toString("base64") !== b.data) throw Error("文件编码无效");
+    return store.capture(captureSchema.parse(await documentInput(bytes, b.name, config.dataDir, b.externalId)), { contextIds: b.contextIds });
   });
   app.post("/api/connectors/git", async (req) => {
     const b = z
@@ -283,7 +309,7 @@ export async function buildApp(
   });
   app.post("/api/connectors/lark", async (req) => {
     const b = z.object({ url: z.url(), contextIds: contextIdsSchema.optional() }).parse(req.body);
-    return store.capture(captureSchema.parse(await larkInput(b.url)), { contextIds: b.contextIds });
+    return store.capture(captureSchema.parse(await larkInput(b.url, config.dataDir)), { contextIds: b.contextIds });
   });
   app.post("/api/hooks/traex", async (req) =>
     store.capture(captureSchema.parse(hookInput(req.body))),
@@ -318,6 +344,22 @@ export async function buildApp(
   app.get<{ Params: { id: string } }>("/api/sources/:id/history", async (req) =>
     store.history(req.params.id),
   );
+  app.get<{ Params: { id: string; asset: string } }>("/api/revisions/:id/document/:asset", async (req, reply) => {
+    const document = store.revision(req.params.id)?.context.document;
+    if (!document) return reply.code(404).send({ error: "此版本没有文档原件" });
+    const asset = req.params.asset;
+    if (asset === "original" || asset === "structure") {
+      const bytes = store.asset(asset === "original" ? document.originalAssetId : document.structureAssetId);
+      if (!bytes) return reply.code(404).send({ error: "文档附件缺失" });
+      if (asset === "original") reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(document.originalName)}`);
+      return reply.header("X-Content-Type-Options", "nosniff").type(asset === "original" ? document.mimeType : "application/json").send(bytes);
+    }
+    const raw = store.asset(document.structureAssetId);
+    const structure = raw ? JSON.parse(raw.toString()) : null;
+    if (!structure?.blocks?.some((b: { imageAssetId?: string }) => b.imageAssetId === asset)) return reply.code(404).send({ error: "文档图片不存在" });
+    const bytes = store.asset(asset);
+    return bytes ? reply.type("image/png").header("X-Content-Type-Options", "nosniff").send(bytes) : reply.code(404).send({ error: "图片附件缺失" });
+  });
   app.get<{ Params: { id: string } }>(
     "/api/evidence/:id",
     async (req, reply) =>
@@ -919,6 +961,7 @@ export async function buildApp(
   learning?.start();
   larkRuntime?.start();
   app.addHook("onClose", async () => {
+    await decisions.close();
     assistant.shutdown();
     await recovery;
     clearInterval(tick);

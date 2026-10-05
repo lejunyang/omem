@@ -3,6 +3,7 @@ packages:
   - packages/*
 
 allowBuilds:
+  '@larksuite/cli': true
   esbuild: true
   protobufjs: true
   onnxruntime-node: true

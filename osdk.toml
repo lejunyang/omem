@@ -4,6 +4,14 @@ node = "24.18.1"
 pnpm = "11"
 bun = "1.4.2"
 
+[models.docling-tables.views]
+
+[models.docling-layout.views]
+
+[models.decision-startlux4b.views]
+
+[models.decision-startlux2b.views]
+
 [models.decision-startlux08.views]
 
 [models.decision-plumb4b-q4.views]
@@ -34,6 +42,34 @@ family = "gliclass"
 [models.relevance-zh.views]
 
 [models.memory-zh.views]
+
+[models.docling-tables]
+source = "hf:docling-project/docling-models@fc0f2d45e2218ea24bce5045f58a389aed16dc23"
+include = ["config.json", "model_artifacts/tableformer/accurate/*"]
+exclude = []
+kind = "other"
+family = "docling"
+
+[models.docling-layout]
+source = "hf:docling-project/docling-layout-heron@8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
+include = ["*.json", "*.safetensors"]
+exclude = []
+kind = "other"
+family = "docling"
+
+[models.decision-startlux4b]
+source = "hf:startlux-models/StartLux-Decision-4B@9302aedb7f7bd889994336f2ae919dffbf5dbee1"
+include = ["*.safetensors", "*.json", "merges.txt", "LICENSE", "NOTICE"]
+exclude = []
+variant = "bf16"
+family = "startlux-decision"
+
+[models.decision-startlux2b]
+source = "hf:startlux-models/StartLux-Decision-2B@3e2e456409a7fe44be69eee231566f7830872ea2"
+include = ["*.safetensors", "*.json", "merges.txt", "LICENSE", "NOTICE"]
+exclude = []
+variant = "bf16"
+family = "startlux-decision"
 
 [models.decision-plumb4b-q4]
 source = "hf:crh225/plumb-4b-GGUF@71c1c57e523219124f7be9c486d475d19891185f"
@@ -183,6 +219,26 @@ run = "bun scripts/live-acp-smoke.ts"
 [tasks."decision:prepare"]
 description = "Install optional local decision-model dependencies in an isolated runtime"
 run = [{ argv = ["bun", "scripts/decision-prepare.ts"] }]
+
+[tasks."documents:prepare"]
+description = "Prepare the optional offline Docling parser; no model downloads"
+run = "bun scripts/document-prepare.ts"
+
+[tasks."documents:models"]
+description = "Download and verify the pinned PDF layout and table models with osdk"
+run = "bun scripts/document-models.ts"
+
+[tasks."decision:native-prepare"]
+description = "Install the pinned upstream StartLux runtime; model downloads remain explicit"
+run = "bun scripts/startlux-prepare.ts"
+
+[tasks."decision:native-evaluate"]
+description = "One fixed Chinese multi-question comparison with the official StartLux MLX runtime"
+run = "bun scripts/startlux-evaluate.ts"
+[tasks."decision:native-evaluate".options.model]
+default = "decision-startlux2b"
+choices = ["decision-startlux08", "decision-startlux2b", "decision-startlux4b"]
+help = "Installed osdk model; run models sequentially for comparable memory use"
 
 [tasks."decision:inspect"]
 description = "Read-only local advice before and after real HTTP retrieval; never applies actions"

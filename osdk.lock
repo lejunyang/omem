@@ -276,6 +276,219 @@ path = "vocab.json"
 size = 6722759
 sha256 = "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
 
+[models.decision-startlux2b]
+provider = "huggingface"
+repository = "startlux-models/StartLux-Decision-2B"
+requested_revision = "3e2e456409a7fe44be69eee231566f7830872ea2"
+revision = "3e2e456409a7fe44be69eee231566f7830872ea2"
+endpoint = "https://huggingface.co"
+variant = "bf16"
+family = "startlux-decision"
+include = [
+    "*.safetensors",
+    "*.json",
+    "merges.txt",
+    "LICENSE",
+    "NOTICE",
+]
+
+[[models.decision-startlux2b.files]]
+path = "LICENSE"
+size = 19347
+sha256 = "41003d4a74749c0220e33dd415042164b5a1093ed401f36277234f772d22d3d0"
+
+[[models.decision-startlux2b.files]]
+path = "NOTICE"
+size = 12330
+sha256 = "ec7d09e98f04667acf3a33358ee4e830f6ee3b41251af388035aec40d4e47fe2"
+
+[[models.decision-startlux2b.files]]
+path = "config.json"
+size = 2908
+sha256 = "ed1c1723241f23f7f4e23430759cbd7dcfb4103cbdfe052bfe7626b57c2615b4"
+
+[[models.decision-startlux2b.files]]
+path = "decision_config.json"
+size = 477
+sha256 = "0ac71f046e50734526b10cc753397e72f8f12d3e0c748de90068d4bf57f47612"
+
+[[models.decision-startlux2b.files]]
+path = "merges.txt"
+size = 3353259
+sha256 = "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d"
+
+[[models.decision-startlux2b.files]]
+path = "model-00001-of-00001.safetensors"
+size = 4548221520
+sha256 = "041687ae49d19ff7f1bf0f30c224e73c57015ecf4cac725f2c6139c12603145d"
+
+[[models.decision-startlux2b.files]]
+path = "model.safetensors.index.json"
+size = 56876
+sha256 = "59e52274bbda6fdec518720f2425138960e014f70d1ef8da585cb6621676f993"
+
+[[models.decision-startlux2b.files]]
+path = "preprocessor_config.json"
+size = 390
+sha256 = "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516"
+
+[[models.decision-startlux2b.files]]
+path = "tokenizer.json"
+size = 12807982
+sha256 = "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
+
+[[models.decision-startlux2b.files]]
+path = "tokenizer_config.json"
+size = 16709
+sha256 = "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c"
+
+[[models.decision-startlux2b.files]]
+path = "video_preprocessor_config.json"
+size = 385
+sha256 = "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+
+[[models.decision-startlux2b.files]]
+path = "vocab.json"
+size = 6722759
+sha256 = "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+
+[models.decision-startlux4b]
+provider = "huggingface"
+repository = "startlux-models/StartLux-Decision-4B"
+requested_revision = "9302aedb7f7bd889994336f2ae919dffbf5dbee1"
+revision = "9302aedb7f7bd889994336f2ae919dffbf5dbee1"
+endpoint = "https://huggingface.co"
+variant = "bf16"
+family = "startlux-decision"
+include = [
+    "*.safetensors",
+    "*.json",
+    "merges.txt",
+    "LICENSE",
+    "NOTICE",
+]
+
+[[models.decision-startlux4b.files]]
+path = "LICENSE"
+size = 19347
+sha256 = "41003d4a74749c0220e33dd415042164b5a1093ed401f36277234f772d22d3d0"
+
+[[models.decision-startlux4b.files]]
+path = "NOTICE"
+size = 12330
+sha256 = "ec7d09e98f04667acf3a33358ee4e830f6ee3b41251af388035aec40d4e47fe2"
+
+[[models.decision-startlux4b.files]]
+path = "config.json"
+size = 3161
+sha256 = "ddc63e1c717afa86c865bb5e01313d89d72bb53b97ad4a8a03ba8510c0621670"
+
+[[models.decision-startlux4b.files]]
+path = "decision_config.json"
+size = 477
+sha256 = "ef0e0865c830c0774e080023c9ab01d2ccbe2403e72c6d434d8bea00a8b4332d"
+
+[[models.decision-startlux4b.files]]
+path = "merges.txt"
+size = 3353259
+sha256 = "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d"
+
+[[models.decision-startlux4b.files]]
+path = "model-00001-of-00002.safetensors"
+size = 5356493792
+sha256 = "52bed9cbbe89fa424e9ab8b057e2cea02eb950333a788f74ce924a005102ce98"
+
+[[models.decision-startlux4b.files]]
+path = "model-00002-of-00002.safetensors"
+size = 3963334448
+sha256 = "26bf7f6ab832d2a1fdb1191ca70e0f5de3395140b7222dce21f6e156e49b5c03"
+
+[[models.decision-startlux4b.files]]
+path = "model.safetensors.index.json"
+size = 67340
+sha256 = "b29366b82be1087a67b2d6328006aa2b85f7b708afc0da48524ccf79494661aa"
+
+[[models.decision-startlux4b.files]]
+path = "preprocessor_config.json"
+size = 390
+sha256 = "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516"
+
+[[models.decision-startlux4b.files]]
+path = "tokenizer.json"
+size = 12807982
+sha256 = "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
+
+[[models.decision-startlux4b.files]]
+path = "tokenizer_config.json"
+size = 16710
+sha256 = "316230d6a809701f4db5ea8f8fc862bc3a6f3229c937c174e674ff3ca0a64ac8"
+
+[[models.decision-startlux4b.files]]
+path = "video_preprocessor_config.json"
+size = 385
+sha256 = "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+
+[[models.decision-startlux4b.files]]
+path = "vocab.json"
+size = 6722759
+sha256 = "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+
+[models.docling-layout]
+provider = "huggingface"
+repository = "docling-project/docling-layout-heron"
+requested_revision = "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
+revision = "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
+endpoint = "https://huggingface.co"
+kind = "other"
+family = "docling"
+include = [
+    "*.json",
+    "*.safetensors",
+]
+
+[[models.docling-layout.files]]
+path = "config.json"
+size = 3268
+sha256 = "fdea30805ce2f5666b147fca941dcdd27ad468e27d6ed21902207d3da056a97d"
+
+[[models.docling-layout.files]]
+path = "model.safetensors"
+size = 171658996
+sha256 = "00333a43451945aaf89db8ca9c0a17e75d1537c17db60fdb91aa95f4c7929e0c"
+
+[[models.docling-layout.files]]
+path = "preprocessor_config.json"
+size = 444
+sha256 = "cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1"
+
+[models.docling-tables]
+provider = "huggingface"
+repository = "docling-project/docling-models"
+requested_revision = "fc0f2d45e2218ea24bce5045f58a389aed16dc23"
+revision = "fc0f2d45e2218ea24bce5045f58a389aed16dc23"
+endpoint = "https://huggingface.co"
+kind = "other"
+family = "docling"
+include = [
+    "config.json",
+    "model_artifacts/tableformer/accurate/*",
+]
+
+[[models.docling-tables.files]]
+path = "config.json"
+size = 41
+sha256 = "9c34024dc28ff47b75818f415e769809798c29bf9bde6f2ccc63a4acb62396d9"
+
+[[models.docling-tables.files]]
+path = "model_artifacts/tableformer/accurate/tableformer_accurate.safetensors"
+size = 212758388
+sha256 = "2a7d6c924b3cd12fb99a09280ca9c33a89c5d60b93253617d2e088c1a40374d9"
+
+[[models.docling-tables.files]]
+path = "model_artifacts/tableformer/accurate/tm_config.json"
+size = 7060
+sha256 = "984e122ceb8ccf84d84c9d2882f6f2302a44b4f1e577babd6289892c36f3cffd"
+
 [models.memory-zh]
 provider = "huggingface"
 repository = "Xenova/bge-small-zh-v1.5"
@@ -415,14 +628,14 @@ installer = "pnpm"
 installer_version = "11.28.4"
 runtime = "node@24.18.1"
 manifest = "package.json"
-manifest_sha256 = "1ce0d50126be55d65dcc23fd68c3c3ea52ba8b435b8332a65fa5e466c69f596a"
+manifest_sha256 = "18f6c08bcbcaf27bf913362a1eefcf5a577c9903c4bb9ddadbb8beb270deea4b"
 run = "pnpm install --frozen-lockfile"
 allow_build_from_source = true
 
 [deps.pnpm.native_lock]
 kind = "pnpm-lock"
 path = "pnpm-lock.yaml"
-sha256 = "2e597dfdf0fac6a3555456df31b46d07bf4f25cf5b257075c24fe81eb840a678"
+sha256 = "660d14eb5dcb27f74a84355068c41d23911dc0b2c51d01e2aaebdba721d539b0"
 
 [skills.osdk-guide]
 source = "github:lejunyang/one-sdk"

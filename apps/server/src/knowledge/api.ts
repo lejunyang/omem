@@ -146,9 +146,10 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
       }
     }
     const filename = m.path ?? (["file", "git"].includes(m.namespace) ? m.title : "");
-    const codeLanguage = filename && !/\.(md|markdown)$/i.test(filename) ? filename.split(".").at(-1)?.toLowerCase() ?? "text" : null;
+    const document = input.store.revision(m.revisionId)?.context.document;
+    const codeLanguage = !document && filename && !/\.(md|markdown)$/i.test(filename) ? filename.split(".").at(-1)?.toLowerCase() ?? "text" : null;
     return { key: m.key, title: m.title, path: m.path, codeLanguage, digest: m.digest, revisionId: m.revisionId, text: m.text, lineCount: m.lineCount, current: entry.current,
-      materialDescription: input.store.descriptions.get(m.revisionId),
+      document, materialDescription: input.store.descriptions.get(m.revisionId),
       images: m.images.map(i => ({ ...i, url: prefix + "/assets/" + i.assetId })), knowledge: knowledge ? meta(knowledge) : null, links, documentLinks };
   });
   app.get<{ Params: { id: string } }>(prefix + "/assets/:id", async (req, reply) => {

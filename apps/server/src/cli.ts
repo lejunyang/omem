@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { captureSchema } from "../../../packages/contracts/src/index.js";
-import { fileInput, gitInput, larkInput, hookInput } from "./connectors.js";
+import { fileInput, gitInput, hookInput } from "./connectors.js";
 import { loadConfig } from "./config.js";
 import { acp } from "./agents.js";
 const [command, ...args] = process.argv.slice(2);
@@ -46,8 +46,8 @@ try {
   } else if (command === "lark") {
     if (!args[0]) throw Error("lark requires document URL");
     result = await send(
-      "/api/captures",
-      captureSchema.parse(await larkInput(args[0])),
+      "/api/connectors/lark",
+      { url: args[0] },
     );
   } else if (command === "hook") {
     result = await send(

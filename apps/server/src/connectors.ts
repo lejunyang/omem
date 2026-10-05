@@ -1,7 +1,9 @@
 /** Connectors are explicit, bounded reads. URLs in captured text are retained, never
  * automatically crawled. Server filesystem imports require configured roots. */
 import { readFile, realpath, stat } from "node:fs/promises";
-import { resolve, relative, isAbsolute } from "node:path";
+import { resolve, relative, isAbsolute, extname } from "node:path";
+import { createRequire } from "node:module";
+import { documentInput, saveImportAsset } from "./imports/documents.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
@@ -19,8 +21,14 @@ export async function allowedPath(path: string, roots: string[]) {
 export async function fileInput(
   path: string,
   roots: string[],
+  dataDir?: string,
 ): Promise<CaptureInput> {
   const file = await allowedPath(path, roots);
+  if ([".pdf", ".docx"].includes(extname(file).toLowerCase())) {
+    if (!dataDir) throw Error("文档导入需要配置数据目录");
+    if ((await stat(file)).size > 20_000_000) throw Error("文件不能超过 20 MB");
+    return documentInput(await readFile(file), file, dataDir, file);
+  }
   if ((await stat(file)).size > 500000) throw Error("Text file exceeds 500 KB");
   const bytes = await readFile(file);
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -73,7 +81,7 @@ export async function gitInput(
     context: {},
   };
 }
-export async function larkInput(url: string): Promise<CaptureInput> {
+export async function larkInput(url: string, dataDir: string): Promise<CaptureInput> {
   const u = new URL(url);
   if (
     !/^\/(docx|wiki)\/[a-zA-Z0-9]+\/?$/.test(u.pathname) ||
@@ -89,8 +97,9 @@ export async function larkInput(url: string): Promise<CaptureInput> {
   )
     throw Error("Unsupported Lark document host");
   const { stdout } = await exec(
-    "lark-cli",
+    process.execPath,
     [
+      createRequire(import.meta.url).resolve("@larksuite/cli/scripts/run.js"),
       "docs",
       "+fetch",
       "--doc",
@@ -103,14 +112,24 @@ export async function larkInput(url: string): Promise<CaptureInput> {
       "with-ids",
     ],
     { timeout: 60000, maxBuffer: 2_000_000 },
-  );
+  ).catch((error: { stderr?: string; stdout?: string; message?: string }) => {
+    const detail = `${error.stderr ?? ""}\n${error.stdout ?? ""}`;
+    if (/keychain.*(blocked|denied)|keychain access/i.test(detail))
+      throw Error("飞书 CLI 无法读取 macOS 钥匙串中的登录凭据。请在系统中允许 lark-cli 访问钥匙串后重试；原有凭据未更改。");
+    if (/unauthori[sz]ed|not.*logged|auth.*login|token.*expired/i.test(detail))
+      throw Error("飞书登录已失效或尚未授权，请先在本机完成 lark-cli auth login，再重试导入。");
+    throw Error("飞书正文读取失败，请检查本机 lark-cli 登录状态和文档访问权限。");
+  });
   const response = JSON.parse(stdout);
   if (!response.ok)
     throw Error("Lark fetch failed; check lark-cli authorization");
   const doc = response.data?.document;
   if (typeof doc?.content !== "string")
     throw Error("Lark response has no document content");
-  // Keep the reference sidecar as source context, not executable markup or inferred links.
+  const originalAssetId = await saveImportAsset(dataDir, Buffer.from(stdout));
+  const parserVersion = createRequire(import.meta.url)("@larksuite/cli/package.json").version as string;
+  // The full official response retains block IDs, media and comments without
+  // polluting readable prose or keyword recall with a JSON metadata paragraph.
   return {
     source: "lark",
     externalId: doc.document_id || u.pathname,
@@ -122,16 +141,10 @@ export async function larkInput(url: string): Promise<CaptureInput> {
     parts: [
       { type: "text", text: doc.content },
       { type: "link", url, label: "飞书原文" },
-      ...(doc.reference_map && Object.keys(doc.reference_map).length
-        ? [
-            {
-              type: "text" as const,
-              text: "来源引用元信息\n" + JSON.stringify(doc.reference_map),
-            },
-          ]
-        : []),
     ],
-    context: {},
+    context: { document: { parser: "lark-cli", parserVersion, originalAssetId,
+      structureAssetId: originalAssetId, originalName: "飞书文档原始响应.json", mimeType: "application/json", pageCount: 0,
+      warnings: doc.tips ? [String(doc.tips).slice(0, 1000)] : [] } },
   };
 }
 export type HookCaptureField =

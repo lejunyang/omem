@@ -97,6 +97,16 @@ export const captureSchema = z
         runId: z.string().max(200).optional(),
         event: z.string().max(100).optional(),
         uiText: z.string().max(30000).optional(),
+        document: z.object({
+          parser: z.enum(["docling", "lark-cli"]),
+          parserVersion: z.string().max(100),
+          originalAssetId: z.string().regex(/^[a-f0-9]{64}$/),
+          structureAssetId: z.string().regex(/^[a-f0-9]{64}$/),
+          originalName: z.string().max(300),
+          mimeType: z.enum(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/json"]),
+          pageCount: z.number().int().nonnegative(),
+          warnings: z.array(z.string().max(1000)).max(20),
+        }).strict().optional(),
         aggregation: z
           .object({
             eventIds: z.array(z.string().min(1).max(500)).min(1).max(500),
