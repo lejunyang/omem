@@ -9,6 +9,7 @@ import type {
   LarkMessage,
 } from "../src/integrations/lark-personal/client.js";
 import { messageMaterial } from "../src/integrations/lark-personal/materials.js";
+import { LarkResourceCache } from "../src/integrations/lark-personal/cache.js";
 const dirs: string[] = [];
 const stores: Store[] = [];
 afterEach(() => {
@@ -40,6 +41,63 @@ const decisions = {
     mode: "auto",
   }),
 };
+it("reuses resource bytes across messages and doc revisions within TTL, with explicit retry bypass", async () => {
+  const s = store();
+  let downloads = 0;
+  const p = port({
+    resource: async () => {
+      downloads++;
+      return Buffer.from("attachment");
+    },
+  });
+  const input = m("one");
+  input.content = "file_shared";
+  await messageMaterial(s, p, input, "群", "owner", true);
+  const result = await messageMaterial(
+    s,
+    p,
+    { ...input, message_id: "two" },
+    "群",
+    "owner",
+    true,
+  );
+  expect(downloads).toBe(1);
+  expect(result.resources[0]?.cached).toBe(true);
+  await messageMaterial(s, p, input, "群", "owner", true, true);
+  expect(downloads).toBe(2);
+  const uri = "https://example.feishu.cn/docx/ABCDEFG";
+  const doc = s.capture(
+    {
+      source: "manual",
+      externalId: "doc",
+      title: "需求文档",
+      parts: [{ type: "text", text: "验收：保留未读状态" }],
+      context: {},
+    },
+    { learning: false, notify: false },
+  );
+  const cache = new LarkResourceCache(s);
+  cache.put(`document:owner:${uri}`, { revisionId: doc.revision.id }, 600000);
+  const linked = await messageMaterial(
+    s,
+    p,
+    { ...input, content: uri },
+    "群",
+    "owner",
+    true,
+  );
+  expect(linked.resources[0]).toMatchObject({
+    cached: true,
+    revisionId: doc.revision.id,
+  });
+  expect(
+    linked.input.parts.some(
+      (part) => part.type === "text" && part.text.includes("保留未读"),
+    ),
+  ).toBe(true);
+  cache.put("expired", { ok: true }, -1);
+  expect(cache.get("expired")).toBe(null);
+});
 function port(overrides: Partial<PersonalLarkPort> = {}): PersonalLarkPort {
   return {
     identity: async () => "ou_owner",

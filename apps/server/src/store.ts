@@ -4,6 +4,8 @@ import { recordSourceRefresh } from "./learning/refresh.js";
 /** SQLite is the single-user foundation. Immutable revisions, changes and notification
  * outbox are committed together. Postgres/team enforcement remains a later migration. */
 import { DatabaseSync } from "node:sqlite";
+import { acquireLibraryReader } from "./storage/library-lock.js";
+import { readAsset } from "./storage/cold.js";
 import { randomUUID, createHash } from "node:crypto";
 import {
   mkdirSync,
@@ -46,6 +48,7 @@ export class Store {
   readonly profiles: SourceProfileService;
   readonly descriptions: MaterialDescriptions;
   readonly contexts: MaterialContexts;
+  private releaseLibrary: () => void;
   constructor(
     readonly dataDir: string,
     options: {
@@ -53,9 +56,11 @@ export class Store {
     } = {},
   ) {
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    this.releaseLibrary = acquireLibraryReader(dataDir);
     const file = join(dataDir, "omem.sqlite");
-    this.db = new DatabaseSync(file);
+    let opened: DatabaseSync | undefined;
     try {
+      this.db = opened = new DatabaseSync(file);
       migrateDatabase(this.db);
       mkdirSync(join(dataDir, "assets"), { recursive: true, mode: 0o700 });
       chmodSync(file, 0o600);
@@ -70,12 +75,13 @@ export class Store {
       this.descriptions = new MaterialDescriptions(this.db);
       this.contexts = new MaterialContexts(this.db);
     } catch (error) {
-      this.db.close();
+      opened?.close();
+      this.releaseLibrary();
       throw error;
     }
   }
   close() {
-    this.db.close();
+    try { this.db.close(); } finally { this.releaseLibrary(); }
   }
   tx<T>(f: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
@@ -598,9 +604,7 @@ export class Store {
     });
   }
   asset(assetId: string) {
-    if (!/^[a-f0-9]{64}$/.test(assetId)) return null;
-    const file = join(this.dataDir, "assets", assetId);
-    return existsSync(file) ? readFileSync(file) : null;
+    return readAsset(this.dataDir, assetId);
   }
   notifications() {
     return this.db

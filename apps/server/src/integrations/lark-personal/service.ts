@@ -13,6 +13,7 @@ import {
 } from "./client.js";
 import { personalLarkSettingsSchema, messageQuestions } from "./policy.js";
 import { messageMaterial, messageTime } from "./materials.js";
+import { hydrateMessage } from "../../storage/cold.js";
 type Row = Record<string, any>;
 export class PersonalLarkService {
   private worker: DurableJobWorker;
@@ -88,8 +89,28 @@ export class PersonalLarkService {
       settings: this.settings(),
       running: !!this.active,
       decisions: this.decisions.status(),
-      streams: this.streams(),
+      streams: this.streams().map((s) => ({
+        ...s,
+        last_batch: s.last_batch ? JSON.parse(String(s.last_batch)) : null,
+      })),
       messages: counts,
+      cache: {
+        mode: "incremental",
+        overlapSeconds: 60,
+        documentTtlSeconds: 600,
+        retainedMessageIds: Number(
+          this.store.db
+            .prepare("SELECT count(*) n FROM personal_lark_messages")
+            .get()!.n,
+        ),
+        coldMessages: Number(
+          this.store.db
+            .prepare(
+              "SELECT count(*) n FROM personal_lark_messages WHERE cold_payload IS NOT NULL",
+            )
+            .get()!.n,
+        ),
+      },
     };
   }
   streams() {
@@ -121,10 +142,11 @@ export class PersonalLarkService {
   inbox() {
     return this.store.db
       .prepare(
-        "SELECT id,chat_id,chat_name,raw,revision_id,decision,resources,state,error,observed_at FROM personal_lark_messages ORDER BY observed_at DESC LIMIT 200",
+        "SELECT id,chat_id,chat_name,raw,revision_id,decision,resources,state,error,observed_at,cold_payload FROM personal_lark_messages ORDER BY observed_at DESC LIMIT 200",
       )
       .all()
       .map((r) => {
+        r = hydrateMessage(this.store.dataDir, r);
         const raw = JSON.parse(String(r.raw)) as LarkMessage;
         return {
           ...r,
@@ -279,6 +301,8 @@ export class PersonalLarkService {
           thread_id: r.thread_id || m.thread_id,
         })),
       ]);
+      let cached = 0,
+        processed = 0;
       for (const m of all) {
         if (!this.settings().enabled) return {};
         if (
@@ -289,15 +313,31 @@ export class PersonalLarkService {
             .get(m.chat_id)
         )
           continue;
-        await this.processMessage(
+        const outcome = await this.processMessage(
           m,
           m.chat_name ||
             (stream.id === "@mentions" ? "提及所在会话" : stream.name),
           ownerId,
         );
+        if (outcome === "cached") cached++;
+        else processed++;
       }
       if (page.has_more && !page.page_token)
         throw Error("飞书返回还有消息但缺少分页游标，未推进同步位置");
+      this.store.db
+        .prepare("UPDATE personal_lark_streams SET last_batch=? WHERE id=?")
+        .run(
+          JSON.stringify({
+            start: ref.start,
+            end: ref.end,
+            fetched: page.messages.length,
+            cached,
+            processed,
+            hasMore: page.has_more,
+            at: new Date().toISOString(),
+          }),
+          stream.id,
+        );
       this.store.db
         .prepare(
           `UPDATE personal_lark_streams SET watermark=?,window_end=?,page_token=?,next_at=?,last_success=?,last_error=NULL WHERE id=?`,
@@ -354,12 +394,12 @@ export class PersonalLarkService {
       previous?.digest === digest &&
       ["ready", "review"].includes(previous.state)
     )
-      return;
+      return "cached";
     const at = new Date().toISOString();
     this.store.db
       .prepare(
         `INSERT INTO personal_lark_messages(id,chat_id,chat_name,digest,raw,observed_at,updated_at) VALUES(?,?,?,?,?,?,?)
-          ON CONFLICT(id) DO UPDATE SET digest=excluded.digest,raw=excluded.raw,state='pending',error=NULL,decision=NULL,updated_at=excluded.updated_at`,
+          ON CONFLICT(id) DO UPDATE SET digest=excluded.digest,raw=excluded.raw,state='pending',error=NULL,decision=NULL,cold_payload=NULL,updated_at=excluded.updated_at`,
       )
       .run(
         m.message_id,
@@ -379,6 +419,7 @@ export class PersonalLarkService {
         name,
         ownerId,
         settings.resources,
+        force,
       );
       const capture = this.store.capture(captureSchema.parse(material.input), {
         learning: false,
@@ -386,11 +427,13 @@ export class PersonalLarkService {
       });
       const neighbors = this.store.db
         .prepare(
-          "SELECT raw FROM personal_lark_messages WHERE chat_id=? AND observed_at<=? AND id<>? ORDER BY observed_at DESC LIMIT 8",
+          "SELECT raw,cold_payload FROM personal_lark_messages WHERE chat_id=? AND observed_at<=? AND id<>? ORDER BY observed_at DESC LIMIT 8",
         )
         .all(m.chat_id, messageTime(m.create_time), m.message_id)
         .reverse()
-        .map((r) => JSON.parse(String(r.raw)));
+        .map((r) =>
+          JSON.parse(String(hydrateMessage(this.store.dataDir, r).raw)),
+        );
       const result = await this.decisions.decide(
         {
           ownerId,
@@ -449,10 +492,10 @@ export class PersonalLarkService {
           suspicious
             ? "包含可疑指令，保留原文但未自动整理"
             : incomplete
-            ? "部分资源或话题尚未读全"
-            : !result
-              ? "决策模型未运行，完整材料已排队等待 Agent 整理"
-              : null,
+              ? "部分资源或话题尚未读全"
+              : !result
+                ? "决策模型未运行，完整材料已排队等待 Agent 整理"
+                : null,
           m.message_id,
         );
     } catch (e) {
@@ -502,7 +545,7 @@ export class PersonalLarkService {
     if (owner && owner !== ownerId)
       throw new JobExecutionError("飞书个人登录身份已变化", "auth");
     await this.processMessage(
-      JSON.parse(row.raw),
+      JSON.parse(hydrateMessage(this.store.dataDir, row).raw),
       row.chat_name,
       ownerId,
       true,

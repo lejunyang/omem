@@ -229,6 +229,86 @@ config
     loadConfig();
     show({ ok: true }, "配置有效；修改后运行 omem service restart 生效。");
   });
+const data = group(
+  "data",
+  "本机个人库：占用、备份、迁移、冷归档与清理（不操作 --url 远程服务）",
+).addHelpText(
+  "after",
+  "\n备份、迁移、归档和清理前先停止服务与前台开发进程。archive/prune 默认只预览，--apply 才执行。恢复仅写入新目录；冷存储必须保持可访问。环境变量密钥和第三方登录不在备份中。",
+);
+async function libraryPaths() {
+  if (program.opts().url || process.env.OMEM_URL)
+    throw Error("data 只管理本机目录，请移除 --url/OMEM_URL 并指定 --data-dir");
+  return { directory: defaultDataDir(), config: configPath() };
+}
+data
+  .command("info")
+  .description("查看实际路径、各类占用、记录数量和冷存储状态")
+  .action(async () => {
+    const paths = await libraryPaths(),
+      lib = await import("./storage/library.js");
+    show(lib.libraryInfo(paths.directory, paths.config));
+  });
+data
+  .command("backup <directory>")
+  .description("创建含冷存储和校验清单的完整数据备份；目标必须为新目录")
+  .action(async (destination) => {
+    const paths = await libraryPaths(),
+      lib = await import("./storage/library.js");
+    const result = lib.backupLibrary(
+      paths.directory,
+      paths.config,
+      destination,
+    );
+    show(
+      result,
+      `已备份到 ${result.destination}，${result.files.length} 个文件。备份含个人材料与凭据，请妥善保存。`,
+    );
+  });
+data
+  .command("restore <backup>")
+  .requiredOption("--to <directory>", "恢复到不存在的新个人库目录")
+  .description("检查完整性后恢复，不覆盖现有库")
+  .action(async (source, opts) => {
+    await libraryPaths();
+    const lib = await import("./storage/library.js");
+    show(lib.restoreLibrary(source, opts.to));
+  });
+data
+  .command("migrate")
+  .requiredOption("--to <directory>", "新个人库目录")
+  .description("备份校验后复制到新位置；原目录保留，之后用 --data-dir 启动")
+  .action(async (opts) => {
+    const paths = await libraryPaths(),
+      lib = await import("./storage/library.js");
+    show(lib.migrateLibrary(paths.directory, paths.config, opts.to));
+  });
+data
+  .command("archive")
+  .requiredOption("--before <date>", "归档早于此日期的消息载荷和附件")
+  .option("--to <directory>", "冷存储目录，首次必须指定")
+  .option("--apply", "执行归档，默认预览")
+  .option("--compact", "归档后收缩 SQLite 文件，需要额外磁盘空间")
+  .description(
+    "迁出旧载荷，保留原文版本、去重与引用；最近 200 条消息保持热存储",
+  )
+  .action(async (opts) => {
+    const paths = await libraryPaths(),
+      lib = await import("./storage/library.js");
+    show(
+      lib.archiveLibrary(paths.directory, { ...opts, destination: opts.to }),
+    );
+  });
+data
+  .command("prune")
+  .requiredOption("--before <date>", "清理早于此日期的已完成 Agent 临时目录")
+  .option("--apply", "执行清理，默认预览")
+  .description("仅清理可重建的运行副本；原件、正式输出、历史和日志保留")
+  .action(async (opts) => {
+    const paths = await libraryPaths(),
+      lib = await import("./storage/library.js");
+    show(lib.pruneLibrary(paths.directory, opts.before, opts.apply));
+  });
 const imports = group(
   "import",
   "把材料保存为带来源、固定版本的个人记忆；不自动扫描目录",
@@ -408,6 +488,139 @@ sources
   .command("history <source-id>")
   .description("列出某个来源的历史版本")
   .action(async (id) => show(await api(`/api/sources/${enc(id)}/history`)));
+const contexts = group(
+  "contexts",
+  "管理项目与主题归属；需求持续跟进按此范围读取新材料",
+);
+read(contexts, "list", "列出项目与主题", "/api/contexts");
+contexts
+  .command("create <name>")
+  .option("--description <text>", "说明项目范围", "")
+  .description("创建一个项目范围")
+  .action(async (name, opts) =>
+    show(
+      await api("/api/contexts", {
+        name,
+        kind: "project",
+        description: opts.description,
+      }),
+    ),
+  );
+contexts
+  .command("assign <source-id> <context-ids...>")
+  .description("设置来源的完整归属列表；从 sources list 获取 source-id")
+  .action(async (id, contextIds) =>
+    show(await api(`/api/sources/${enc(id)}/contexts`, { contextIds }, "PUT")),
+  );
+const requirements = group(
+  "requirements",
+  "需求 Agent：综合文档、消息、纪要与代码持续跟进，导出实现交接",
+).addHelpText(
+  "after",
+  "\n先导入材料并设置项目归属。track 提交调查→实现建议→独立复核，--watch 会跟踪该范围的新材料。不会仅凭群消息改代码或标记需求完成。新消息归属尚待判断时，不会自动进入本需求。生成状态见 list，正文见 show。",
+);
+requirements
+  .command("track <title>")
+  .requiredOption("--goal <text>", "需求目标与期望交付")
+  .option("--context <ids...>", "持续跟进的项目/主题 ID")
+  .option("--revision <ids...>", "明确选择的材料版本 ID")
+  .option("--watch", "在材料更新后持续整理")
+  .description("建立需求跟进页；至少指定一个项目或原文版本")
+  .action(async (title, opts) => {
+    if (!opts.context?.length && !opts.revision?.length)
+      throw Error("请用 --context 或 --revision 明确选材范围");
+    const { requirementBrief } = await import("./knowledge/requirements.js");
+    const key = `requirement:${randomUUID()}`;
+    const brief = requirementBrief({
+      key,
+      title,
+      goal: opts.goal,
+      ...(opts.context?.length ? { contextIds: opts.context } : {}),
+    });
+    const result = await api("/api/knowledge/pages", {
+      brief,
+      revisionIds: opts.revision ?? [],
+    });
+    if (opts.watch)
+      await api(
+        `/api/knowledge/pages/${enc(key)}/maintenance`,
+        { enabled: true },
+        "PUT",
+      );
+    show(
+      { ...result, watch: !!opts.watch },
+      `需求已排队：${key}\n查看：omem requirements show ${key}\n排队不等于完成；omem requirements list 查看状态。`,
+    );
+  });
+requirements
+  .command("list")
+  .description("查看需求目标、跟进状态和失败原因")
+  .action(async () => {
+    const value = await api("/api/knowledge/articles");
+    show(
+      value.pages.filter(
+        (p: any) => p.plan?.workflow === "requirement-followup",
+      ),
+    );
+  });
+requirements
+  .command("show <key>")
+  .description("读取已发布的需求跟进页与固定引用")
+  .action(async (key) =>
+    show(await api(`/api/knowledge/articles/${enc(key)}`)),
+  );
+requirements
+  .command("refresh <key>")
+  .description("请求重新调查与更新同一需求页")
+  .action(async (key) =>
+    show(await api(`/api/knowledge/pages/${enc(key)}/refresh`, {})),
+  );
+requirements
+  .command("watch <key>")
+  .option("--off", "暂停持续更新")
+  .description("启用或暂停材料变化后的自动跟进")
+  .action(async (key, opts) =>
+    show(
+      await api(
+        `/api/knowledge/pages/${enc(key)}/maintenance`,
+        { enabled: !opts.off },
+        "PUT",
+      ),
+    ),
+  );
+requirements
+  .command("handoff <key>")
+  .requiredOption("--to <directory>", "新建交接目录，不能已存在")
+  .description(
+    "导出 TASK.md、固定引用及文本原件，供编码 Agent 继续实现；不执行代码",
+  )
+  .action(async (key, opts) => {
+    const value = await api(`/api/knowledge/pages/${enc(key)}/handoff`),
+      dest = resolve(opts.to);
+    await mkdir(dest, { mode: 0o700 });
+    await mkdir(join(dest, "originals"), { mode: 0o700 });
+    const references = [];
+    for (const [index, m] of value.materials.entries()) {
+      const file = `originals/${index + 1}.txt`;
+      await writeFile(join(dest, file), m.text, { mode: 0o600 });
+      const { text, ...metadata } = m;
+      references.push({ ...metadata, file });
+    }
+    await writeFile(join(dest, "TASK.md"), value.markdown, { mode: 0o600 });
+    await writeFile(
+      join(dest, "references.json"),
+      JSON.stringify(
+        { ...value, markdown: undefined, materials: references },
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
+    show(
+      { directory: dest, current: value.current, materials: references.length },
+      `交接材料：${dest}/TASK.md\n${value.current ? "固定快照已导出；开工前仍需核对实际仓库。" : "材料已有变化，请先复查再实现。"}`,
+    );
+  });
 const knowledge = group("knowledge", "查看知识与材料；按阅读目标提交写作任务");
 read(knowledge, "list", "列出文章、选材及处理状态", "/api/knowledge/articles");
 knowledge

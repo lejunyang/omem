@@ -41,6 +41,7 @@
     "scripts/service.ts",
     "scripts/document-prepare.ts",
     "scripts/document-models.ts",
-    "scripts/startlux-prepare.ts"
+    "scripts/startlux-prepare.ts",
+    "scripts/live-requirement-followup.ts"
   ]
 }

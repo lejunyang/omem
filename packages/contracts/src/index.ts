@@ -719,6 +719,8 @@ export const roleIdSchema = z.enum([
   "code-analyst",
   "conversation-analyst",
   "visual-analyst",
+  "requirement-tracker",
+  "implementation-planner",
   "knowledge-researcher",
   "knowledge-planner",
   "knowledge-writer",

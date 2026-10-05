@@ -19,7 +19,9 @@
         "文档、图片、附件和话题分别保存什么，尚未读全时哪里能看到和重试？",
         "决策模型负责哪些判断，低分、不可用和缺背景时如何处理，何时才会产生记忆或事项？",
         "怎样用已有机器人接收变化和故障，怎样检查服务是否持续运行？",
-        "安装版 omem 如何初始化、管理后台服务与检查状态，Agent 还在输出时会不会因八分钟总时限被中断？"
+        "安装版 omem 如何初始化、管理后台服务与检查状态，Agent 还在输出时会不会因八分钟总时限被中断？",
+        "如何把群聊、需求文档、会议纪要与代码纳入同一个需求跟进页，导出给实现 Agent？哪些步骤尚未自动执行？",
+        "定时读取如何增量和复用资源，如何查看数据占用、备份迁移与冷归档，哪些仍在主库？"
       ],
       "entryPaths": [
         "docs/cli.md",
@@ -36,7 +38,11 @@
         "apps/web/src/PersonalLark.vue",
         "scripts/service.ts",
         "docs/reader-first/personal-messages.md",
-        "docs/reader-first/operations.md"
+        "docs/reader-first/operations.md",
+        "docs/reader-first/requirement-followup.md",
+        "docs/reader-first/data-lifecycle.md",
+        "apps/server/src/knowledge/requirements.ts",
+        "apps/server/src/storage/library.ts"
       ]
     },
     {

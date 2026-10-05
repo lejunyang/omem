@@ -18,10 +18,15 @@ import { parseFile } from "../code/parse.js";
 import { wikiPageBriefSchema } from "../../../../packages/contracts/src/knowledge.js";
 import { KnowledgePageWorker } from "./page-worker.js";
 import { MaterialDescriptionWorker } from "../source-profile/description-worker.js";
+import { requirementHandoff } from "./requirements.js";
 
 export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; retrieval?: RetrievalPort; retrievalConfig?: RetrievalConfig; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void }) {
   const repository = input.repository ?? new KnowledgeRepository(input.store);
   const prefix = input.prefix;
+  app.get<{Params:{key:string}}>(prefix + "/pages/:key/handoff", async (req, reply) => {
+    try { repository.refresh(); return requirementHandoff(repository, req.params.key); }
+    catch (error) { return reply.code(409).send({error: error instanceof Error ? error.message : String(error)}); }
+  });
   const retrieval: RetrievalPort = input.retrieval ?? new KeywordRetrieval(input.store.db);
   let running: KnowledgePipeline | null = null;
   let lastRun: unknown = null;
