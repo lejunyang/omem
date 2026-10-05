@@ -1,0 +1,375 @@
+{
+  "version": 1,
+  "key": "omem:config/wiki-pages.json",
+  "digest": "211f19149c0f6c2809ec66d574682f8c1f19c299e88145da0e793c83dc7be70f",
+  "description": {
+    "role": "plan",
+    "status": "proposed",
+    "summary": "这是一份版本为 1 的 omem 读者指南页面计划，按顺序定义六篇 explanation/how-to 页面各自的标题、目标读者、阅读目标、贯穿场景、待回答问题、调查入口与主题路径。它适合回答“计划写哪些指南、每篇为谁服务、应讲清什么、可从哪些文件开始调查”，但本身不是指南正文，也不能证明所列能力已经实现或页面已经发布。",
+    "topics": [
+      "读者指南规划",
+      "材料导入与引用",
+      "搜索与 RAG",
+      "记忆与事项",
+      "贡献指南",
+      "知识生成 Agent"
+    ],
+    "scope": "omem 的六篇 reader-first 指南页面：面向首次接触产品的个人用户，以及理解导入、检索、记忆维护、功能修改和知识生成流程的开发者。",
+    "validFrom": null,
+    "validUntil": null,
+    "concepts": [
+      {
+        "label": "omem 入门总览页面规划",
+        "aliases": [
+          "产品入门",
+          "材料知识记忆事项",
+          "首次使用 omem"
+        ],
+        "startLine": 4,
+        "endLine": 27
+      },
+      {
+        "label": "材料从导入到阅读与引用的指南规划",
+        "aliases": [
+          "材料旅程",
+          "固定版本",
+          "导入与引用"
+        ],
+        "startLine": 29,
+        "endLine": 53
+      },
+      {
+        "label": "搜索、上下文与 RAG 的指南规划",
+        "aliases": [
+          "提问找答案",
+          "中文召回",
+          "助手补查"
+        ],
+        "startLine": 55,
+        "endLine": 87
+      },
+      {
+        "label": "原文变化后记忆与待办更新的指南规划",
+        "aliases": [
+          "记忆重核验",
+          "规则变更",
+          "事项状态"
+        ],
+        "startLine": 89,
+        "endLine": 113
+      },
+      {
+        "label": "从搜索结果到界面的贡献指南规划",
+        "aliases": [
+          "完整功能链",
+          "搜索章节提示",
+          "首次修改 omem"
+        ],
+        "startLine": 115,
+        "endLine": 140
+      },
+      {
+        "label": "知识 Agent 调查、写作与复核的指南规划",
+        "aliases": [
+          "知识生成过程",
+          "自主调查",
+          "独立复核"
+        ],
+        "startLine": 142,
+        "endLine": 169
+      }
+    ],
+    "basis": "第 2–3 行把内容声明为 version 1 的 pages 列表；第 4–169 行的六个页面对象均以 reader、goal、scenario、questions、entryPaths 和 topicPath 描述预期文章，其中第 8、33、59、93、119、146 行标注页面类型。目标多用“能……”“解释……”等预期表达，且没有正文、发布记录或实施核验，因此按主要用途归为 plan、适用状态归为 proposed。原文未给出生效或失效时间，所以有效期留空。"
+  },
+  "generation": {
+    "at": "2026-10-03T14:24:51.957Z",
+    "trace": {
+      "runId": "7683a4ee-e959-42f5-9772-daec0b28204b",
+      "roleId": "material-cataloger",
+      "roleVersion": "1",
+      "bundleHash": "d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e",
+      "promptHash": "38ab6e9c303a24eb73a9f2639cbd23bacd5a0904d9af932ea0232d7f6b3086c9",
+      "contextHash": "6bf4c37c702b00a9354c9498a01d47b0c1a9090a6fe479bde8391d8393bda414",
+      "skillHash": "17f1adb7fd8d9ede9fe29a82196c041c5546511545129451d08561d35796126b",
+      "toolHash": "9cbdd6db5be65f585db60444789e896b2bd222920cf49d4f531f3e8c5a6d7118",
+      "fingerprint": "1dd2af649a152ddd2697e8c7d8099ddb87be90ad589cb39148a7e84563d68468",
+      "outputSchema": "MaterialDescriptions.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-cataloger",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_materials",
+        "read_material",
+        "read_section",
+        "search_materials",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a10226-54e4-7502-9756-4aea02c6e934"
+      ],
+      "usage": {
+        "used": 34091,
+        "size": 258400,
+        "cost": null,
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_4Cm2HwrfVmYcQPtHdA2ld39D:exec-0344ca5c-e952-46cb-920e-6eede403335d",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_4Cm2HwrfVmYcQPtHdA2ld39D:exec-0344ca5c-e952-46cb-920e-6eede403335d",
+              "process_id": "58947",
+              "turn_id": "01a10226-5a57-7342-81f3-0f2ee75f8da7",
+              "started_at_ms": 1791037450864,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "cat .trae/skills/omem-material-cataloger/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/7683a4ee-e959-42f5-9772-daec0b28204b",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "cat .trae/skills/omem-material-cataloger/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-material-cataloger/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_4Cm2HwrfVmYcQPtHdA2ld39D:exec-0344ca5c-e952-46cb-920e-6eede403335d",
+            "status": "completed",
+            "outputDigest": "773e2cab986e49236c2aa9215de3894fed9818897c42a48ef052189d037df2a8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-cf86a92d-d67c-41a4-8218-85a1dd7cf586",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:config/wiki-pages.json",
+                "startLine": 1,
+                "endLine": 173
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:config/wiki-pages.json",
+              "startLine": 1,
+              "endLine": 173
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-cf86a92d-d67c-41a4-8218-85a1dd7cf586",
+            "status": "completed",
+            "outputDigest": "4a86f8c6436f575c5cb8ecd4d310f2bb234255c7a8c7885e93b8e989df203641"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-1e622875-8681-4aba-a68a-f74889bf89e3",
+            "title": "Read README.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-1e622875-8681-4aba-a68a-f74889bf89e3",
+              "process_id": "59077",
+              "turn_id": "01a10226-5a57-7342-81f3-0f2ee75f8da7",
+              "started_at_ms": 1791037462161,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' README.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' README.md",
+                  "name": "README.md",
+                  "path": "README.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-6eaade08-0f95-4876-aba5-a5efef6ce484",
+            "title": "Search omem:config/wiki-pages\\.json|config/wiki-pages\\.json in catalog.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-6eaade08-0f95-4876-aba5-a5efef6ce484",
+              "process_id": "15235",
+              "turn_id": "01a10226-5a57-7342-81f3-0f2ee75f8da7",
+              "started_at_ms": 1791037462161,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n -C 8 'omem:config/wiki-pages\\.json|config/wiki-pages\\.json' catalog.json"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/7683a4ee-e959-42f5-9772-daec0b28204b",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n -C 8 \"omem:config/wiki-pages\\\\.json|config/wiki-pages\\\\.json\" catalog.json",
+                  "query": "omem:config/wiki-pages\\.json|config/wiki-pages\\.json",
+                  "path": "catalog.json"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-6eaade08-0f95-4876-aba5-a5efef6ce484",
+            "status": "completed",
+            "outputDigest": "64462844c4fb3e140906be0fea4df056624b681ff057ad0e7d292b440c577569"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-1e622875-8681-4aba-a68a-f74889bf89e3",
+            "status": "completed",
+            "outputDigest": "78c828129a99f20cf57bf5b52eab094535c42dda5d25f122b535245e75a826fe"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-98928f05-5263-410d-9d58-5030cb5559ac",
+            "title": "Read README.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-98928f05-5263-410d-9d58-5030cb5559ac",
+              "process_id": "72189",
+              "turn_id": "01a10226-5a57-7342-81f3-0f2ee75f8da7",
+              "started_at_ms": 1791037462205,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,260p' docs/reader-first/README.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,260p' docs/reader-first/README.md",
+                  "name": "README.md",
+                  "path": "docs/reader-first/README.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-98928f05-5263-410d-9d58-5030cb5559ac",
+            "status": "completed",
+            "outputDigest": "8b299292fcc9155d9cafe91fb039feac037eea25f7ceecd9e9654f6b48fb65e5"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-d88a70d9-ebed-49ef-9fa2-81669663551b",
+            "title": "Read progress.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-d88a70d9-ebed-49ef-9fa2-81669663551b",
+              "process_id": "32421",
+              "turn_id": "01a10226-5a57-7342-81f3-0f2ee75f8da7",
+              "started_at_ms": 1791037462234,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,300p' docs/reader-first/progress.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,300p' docs/reader-first/progress.md",
+                  "name": "progress.md",
+                  "path": "docs/reader-first/progress.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_wmoaB7bgpAr5YC6XoShsuDYI:exec-d88a70d9-ebed-49ef-9fa2-81669663551b",
+            "status": "completed",
+            "outputDigest": "7ea27bd62859f87136020e5080224b713b7c603e9dc572a98ac966ef092237ce"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_XbbCHcrgfbAcyxyja41jxgD6:exec-f1216051-1c40-4cff-9a51-95f1fe71bb3b",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:config/wiki-pages.json"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_XbbCHcrgfbAcyxyja41jxgD6:exec-f1216051-1c40-4cff-9a51-95f1fe71bb3b",
+            "status": "completed",
+            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    }
+  }
+}

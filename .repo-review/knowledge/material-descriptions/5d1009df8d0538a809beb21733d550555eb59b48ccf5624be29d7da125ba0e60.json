@@ -1,15 +1,16 @@
 {
   "version": 1,
   "key": "omem:config/omem.example.json",
-  "digest": "9c7cc75e1a9e2aae08169204697060c59668ee6d9eca3e2cf210cfedbe397abd",
+  "digest": "fe32990fce9f2c4a59aad787a7cf93a5eee348f1194a5274ba317815f8506e5b",
   "description": {
     "role": "example",
     "status": "current",
-    "summary": "一份 omem 本地配置示例，集中展示检索模型、默认助手、多个 CLI/ACP profile、通知窗口、后台学习、飞书轮询和采集根目录的配置形态。它适合查询字段如何组合及示例值，不代表某个运行实例实际启用了这些选项。",
+    "summary": "一份 omem 本地配置示例，展示检索模型、默认助手、常规/快速/先读材料等 ACP profile、Codex 与 Claude CLI、通知窗口、后台学习、飞书轮询和采集根目录的配置形态。适合查询字段如何组合及示例值，不代表某个运行实例实际启用了这些选项。",
     "topics": [
       "本地配置",
       "助手模型",
       "ACP",
+      "先读材料",
       "检索模型",
       "通知",
       "后台学习",
@@ -31,9 +32,9 @@
         "endLine": 6
       },
       {
-        "label": "TraeX ACP 主 profile 的命令、只读沙箱、模型与超时示例",
+        "label": "TraeX ACP 主 profile 的只读沙箱、模型与超时示例",
         "aliases": [
-          "TraeX 配置",
+          "TraeX配置",
           "ACP profile",
           "gpt-5.6-sol"
         ],
@@ -51,14 +52,24 @@
         "endLine": 34
       },
       {
+        "label": "先读材料再作答的独立 profile 示例",
+        "aliases": [
+          "traex-reader",
+          "reading profile",
+          "先读材料"
+        ],
+        "startLine": 35,
+        "endLine": 44
+      },
+      {
         "label": "Codex 与 Claude CLI 备选 profile",
         "aliases": [
           "Codex CLI",
           "Claude Code",
           "备选模型入口"
         ],
-        "startLine": 35,
-        "endLine": 46
+        "startLine": 45,
+        "endLine": 56
       },
       {
         "label": "站内即时通知与外部通知窗口",
@@ -67,8 +78,8 @@
           "定时通知",
           "Asia/Shanghai"
         ],
-        "startLine": 48,
-        "endLine": 56
+        "startLine": 58,
+        "endLine": 66
       },
       {
         "label": "后台学习、飞书轮询与采集目录开关",
@@ -77,24 +88,24 @@
           "Lark",
           "captureRoots"
         ],
-        "startLine": 57,
-        "endLine": 66
+        "startLine": 67,
+        "endLine": 76
       }
     ],
-    "basis": "原文把多组 profile、功能开关和空的 captureRoots 放在同一份示例中，并给出具体示例值；当前仓库入口也把本地配置列为现行配置方式。原文没有生效日期，且不能据此判断任一真实实例的启用状态。"
+    "basis": "原文把多组 profile、功能开关和空的 captureRoots 放在同一份示例中，并给出具体示例值；第35至44行新增“先读材料作答”profile。文件自身不声明某个真实实例的生效状态，因此归为当前可用的配置示例，而不是运行现状证明。"
   },
   "generation": {
-    "at": "2026-10-03T12:56:44.326Z",
+    "at": "2026-10-05T00:35:55.354Z",
     "trace": {
-      "runId": "516f5f1e-5846-41ae-b4bf-4ebf6d3886b3",
+      "runId": "a63b698a-665a-4003-8567-876f9eb84cb5",
       "roleId": "material-cataloger",
       "roleVersion": "1",
-      "bundleHash": "d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e",
-      "promptHash": "35c8ef7749a1accb2bbab11b9720f9122efba8f32e4fa01fbe95aca5eef10ebd",
-      "contextHash": "20c043610929e1cf46d64c5105a6490f87d544fb8b1482f7e4775d606ae0d83c",
+      "bundleHash": "55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24",
+      "promptHash": "d53b4f0c27e954a049dbc548c586a19c9b7c5795b8108ed80286beacc16ec0b4",
+      "contextHash": "17ec6e8ae3e034918e885bd1b637c0fdf1b1563bed335c5641e4436d36c6ba9e",
       "skillHash": "17f1adb7fd8d9ede9fe29a82196c041c5546511545129451d08561d35796126b",
-      "toolHash": "9cbdd6db5be65f585db60444789e896b2bd222920cf49d4f531f3e8c5a6d7118",
-      "fingerprint": "b9eec65505e0fae49c902e65082674d6445afdeb5d6daea6acbd092cd8cc9b87",
+      "toolHash": "c63ebed27fd0068222e3a65f2f3139400d62735cd978169855e2c5e739f4d448",
+      "fingerprint": "152d11d1fe5a7a830fb99dfe1788e96f5a030f7ffb041384199c962d7bf04fec",
       "outputSchema": "MaterialDescriptions.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -106,10 +117,13 @@
         }
       ],
       "allowedTools": [
+        "list_material_groups",
         "list_materials",
         "read_material",
+        "read_fragments",
         "read_section",
         "search_materials",
+        "search_contexts",
         "search_knowledge",
         "read_knowledge",
         "search_memories",
@@ -121,215 +135,36 @@
         "submit_result"
       ],
       "sessionIds": [
-        "01a101d5-555b-7eb3-9a6d-eedc329db2c3"
+        "01a10979-ebcd-78c1-889e-21ce97f2b3f8"
       ],
       "usage": {
-        "used": 38179,
+        "used": 118048,
         "size": 258400,
         "cost": null,
+        "acpCompletion": "validated_submission",
         "workflow": "native-research@1",
         "activity": [
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_fE4PcriDKVCHC8kG6R3HFUZc:exec-75881ea1-9bbe-4619-892a-a40c4f16c943",
-            "title": "Read SKILL.md",
+            "id": "code-mode-nested:29:call_bfrV83Rm6VPXuDUpYtsZ78Aq:exec-505523e0-ec72-4646-a2f1-953b2a0103d3",
+            "title": "wc -l .trae/skills/omem-material-cataloger/SKILL.md catalog.json && sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md && jq '{schemaVersion, materialCount:(.materials|length), targets:[.materials[] | select(.key==\"omem:README.md\" or .key==\"omem:apps/server/src/learning/pipeline.ts\" or .key==\"omem:apps/server/src/memory/service.ts\" or .key==\"omem:apps/server/src/retrieval/unified.ts\" or .key==\"omem:config/omem.example.json\" or .key==\"omem:config/wiki-pages.json\" or .key==\"omem:docs/README.md\" or .key==\"omem:docs/reader-first/README.md\") | {key,title,path,lineCount}]}' catalog.json",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_fE4PcriDKVCHC8kG6R3HFUZc:exec-75881ea1-9bbe-4619-892a-a40c4f16c943",
-              "process_id": "80173",
-              "turn_id": "01a101d5-586d-7a02-99a6-4c9c5b21e6b0",
-              "started_at_ms": 1791032137778,
+              "call_id": "code-mode-nested:29:call_bfrV83Rm6VPXuDUpYtsZ78Aq:exec-505523e0-ec72-4646-a2f1-953b2a0103d3",
+              "process_id": "34331",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160362442,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md"
+                "wc -l .trae/skills/omem-material-cataloger/SKILL.md catalog.json && sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md && jq '{schemaVersion, materialCount:(.materials|length), targets:[.materials[] | select(.key==\"omem:README.md\" or .key==\"omem:apps/server/src/learning/pipeline.ts\" or .key==\"omem:apps/server/src/memory/service.ts\" or .key==\"omem:apps/server/src/retrieval/unified.ts\" or .key==\"omem:config/omem.example.json\" or .key==\"omem:config/wiki-pages.json\" or .key==\"omem:docs/README.md\" or .key==\"omem:docs/reader-first/README.md\") | {key,title,path,lineCount}]}' catalog.json"
               ],
-              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/516f5f1e-5846-41ae-b4bf-4ebf6d3886b3",
-              "parsed_cmd": [
-                {
-                  "type": "read",
-                  "cmd": "sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md",
-                  "name": "SKILL.md",
-                  "path": ".trae/skills/omem-material-cataloger/SKILL.md"
-                }
-              ],
-              "source": "unified_exec_startup",
-              "yield_time_ms": 10000
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_fE4PcriDKVCHC8kG6R3HFUZc:exec-75881ea1-9bbe-4619-892a-a40c4f16c943",
-            "status": "completed",
-            "outputDigest": "c00f3506f27b997b146b12b6178e79b71f089ae66a2c21bd993d72c5d36bac14"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_HjTZjCttsIF3RhfOKmOUrXVU:exec-148a1644-974f-4c06-9953-e91bc26b4de9",
-            "title": "Read progress.md",
-            "status": "in_progress",
-            "input": {
-              "call_id": "code-mode-nested:29:call_HjTZjCttsIF3RhfOKmOUrXVU:exec-148a1644-974f-4c06-9953-e91bc26b4de9",
-              "process_id": "16394",
-              "turn_id": "01a101d5-586d-7a02-99a6-4c9c5b21e6b0",
-              "started_at_ms": 1791032145793,
-              "command": [
-                "/bin/zsh",
-                "-lc",
-                "sed -n '1,300p' docs/reader-first/progress.md"
-              ],
-              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/516f5f1e-5846-41ae-b4bf-4ebf6d3886b3",
-              "parsed_cmd": [
-                {
-                  "type": "read",
-                  "cmd": "sed -n '1,300p' docs/reader-first/progress.md",
-                  "name": "progress.md",
-                  "path": "docs/reader-first/progress.md"
-                }
-              ],
-              "source": "unified_exec_startup",
-              "yield_time_ms": 10000
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_HjTZjCttsIF3RhfOKmOUrXVU:exec-148a1644-974f-4c06-9953-e91bc26b4de9",
-            "status": "failed",
-            "outputDigest": "9308ccd0513d4936dc2ee247190840ebaccbe1308941ab0c79c2286faa10d337"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_HjTZjCttsIF3RhfOKmOUrXVU:exec-eda00d3a-7200-4e36-8412-8f69d1721cfe",
-            "title": "Read README.md",
-            "status": "in_progress",
-            "input": {
-              "call_id": "code-mode-nested:29:call_HjTZjCttsIF3RhfOKmOUrXVU:exec-eda00d3a-7200-4e36-8412-8f69d1721cfe",
-              "process_id": "96524",
-              "turn_id": "01a101d5-586d-7a02-99a6-4c9c5b21e6b0",
-              "started_at_ms": 1791032145796,
-              "command": [
-                "/bin/zsh",
-                "-lc",
-                "sed -n '1,260p' docs/reader-first/README.md"
-              ],
-              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/516f5f1e-5846-41ae-b4bf-4ebf6d3886b3",
-              "parsed_cmd": [
-                {
-                  "type": "read",
-                  "cmd": "sed -n '1,260p' docs/reader-first/README.md",
-                  "name": "README.md",
-                  "path": "docs/reader-first/README.md"
-                }
-              ],
-              "source": "unified_exec_startup",
-              "yield_time_ms": 10000
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_HjTZjCttsIF3RhfOKmOUrXVU:exec-46f679cd-b595-4879-bf8e-e366f82ca6a4",
-            "title": "Read README.md",
-            "status": "in_progress",
-            "input": {
-              "call_id": "code-mode-nested:29:call_HjTZjCttsIF3RhfOKmOUrXVU:exec-46f679cd-b595-4879-bf8e-e366f82ca6a4",
-              "process_id": "11426",
-              "turn_id": "01a101d5-586d-7a02-99a6-4c9c5b21e6b0",
-              "started_at_ms": 1791032145796,
-              "command": [
-                "/bin/zsh",
-                "-lc",
-                "sed -n '1,240p' README.md"
-              ],
-              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/516f5f1e-5846-41ae-b4bf-4ebf6d3886b3",
-              "parsed_cmd": [
-                {
-                  "type": "read",
-                  "cmd": "sed -n '1,240p' README.md",
-                  "name": "README.md",
-                  "path": "README.md"
-                }
-              ],
-              "source": "unified_exec_startup",
-              "yield_time_ms": 10000
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_HjTZjCttsIF3RhfOKmOUrXVU:exec-eda00d3a-7200-4e36-8412-8f69d1721cfe",
-            "status": "failed",
-            "outputDigest": "aa5ae9ca777357558620cadd141a53789379ea2d9c2055c7b012a08390dc1708"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_HjTZjCttsIF3RhfOKmOUrXVU:exec-46f679cd-b595-4879-bf8e-e366f82ca6a4",
-            "status": "failed",
-            "outputDigest": "dc429972a61c031006d65f76a15d8343e021ec91f125a328e5d88c1e70416d45"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_HjTZjCttsIF3RhfOKmOUrXVU:exec-61ba22b5-379f-4212-a084-0fa94910f414",
-            "title": "Read catalog.json",
-            "status": "in_progress",
-            "input": {
-              "call_id": "code-mode-nested:29:call_HjTZjCttsIF3RhfOKmOUrXVU:exec-61ba22b5-379f-4212-a084-0fa94910f414",
-              "process_id": "70318",
-              "turn_id": "01a101d5-586d-7a02-99a6-4c9c5b21e6b0",
-              "started_at_ms": 1791032145811,
-              "command": [
-                "/bin/zsh",
-                "-lc",
-                "sed -n '1,260p' catalog.json"
-              ],
-              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/516f5f1e-5846-41ae-b4bf-4ebf6d3886b3",
-              "parsed_cmd": [
-                {
-                  "type": "read",
-                  "cmd": "sed -n '1,260p' catalog.json",
-                  "name": "catalog.json",
-                  "path": "catalog.json"
-                }
-              ],
-              "source": "unified_exec_startup",
-              "yield_time_ms": 10000
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_HjTZjCttsIF3RhfOKmOUrXVU:exec-61ba22b5-379f-4212-a084-0fa94910f414",
-            "status": "completed",
-            "outputDigest": "ff2e423797a4d627eab751668ece8495d9de66a79dd6361ce67387bc333ef54e"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_uxzWZw5FZnUKp2I7q8BHU9WO:exec-1d62c97b-c83e-4fe9-a673-aef340a3b8d6",
-            "title": "git rev-parse --show-toplevel",
-            "status": "in_progress",
-            "input": {
-              "call_id": "code-mode-nested:29:call_uxzWZw5FZnUKp2I7q8BHU9WO:exec-1d62c97b-c83e-4fe9-a673-aef340a3b8d6",
-              "process_id": "89275",
-              "turn_id": "01a101d5-586d-7a02-99a6-4c9c5b21e6b0",
-              "started_at_ms": 1791032152323,
-              "command": [
-                "/bin/zsh",
-                "-lc",
-                "git rev-parse --show-toplevel"
-              ],
-              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/d9913567de17c14c8a1b577c16ab952b271acb53553e08c8e6c16ef9976eb32e/516f5f1e-5846-41ae-b4bf-4ebf6d3886b3",
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
               "parsed_cmd": [
                 {
                   "type": "unknown",
-                  "cmd": "git rev-parse --show-toplevel"
+                  "cmd": "wc -l .trae/skills/omem-material-cataloger/SKILL.md catalog.json && sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md && jq '{schemaVersion, materialCount:(.materials|length), targets:[.materials[] | select(.key==\"omem:README.md\" or .key==\"omem:apps/server/src/learning/pipeline.ts\" or .key==\"omem:apps/server/src/memory/service.ts\" or .key==\"omem:apps/server/src/retrieval/unified.ts\" or .key==\"omem:config/omem.example.json\" or .key==\"omem:config/wiki-pages.json\" or .key==\"omem:docs/README.md\" or .key==\"omem:docs/reader-first/README.md\") | {key,title,path,lineCount}]}' catalog.json"
                 }
               ],
               "source": "unified_exec_startup",
@@ -339,149 +174,36 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_uxzWZw5FZnUKp2I7q8BHU9WO:exec-1d62c97b-c83e-4fe9-a673-aef340a3b8d6"
+            "id": "code-mode-nested:29:call_bfrV83Rm6VPXuDUpYtsZ78Aq:exec-505523e0-ec72-4646-a2f1-953b2a0103d3"
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_uxzWZw5FZnUKp2I7q8BHU9WO:exec-1d62c97b-c83e-4fe9-a673-aef340a3b8d6",
-            "status": "completed",
-            "outputDigest": "cbf11a5055559319f75a1959c3f1960247f25aa710360985e31d5f9edf84fd82"
+            "id": "code-mode-nested:29:call_bfrV83Rm6VPXuDUpYtsZ78Aq:exec-505523e0-ec72-4646-a2f1-953b2a0103d3",
+            "status": "failed",
+            "outputDigest": "293fc770d550975e38987b1a4ec7f6a328a4ecf97323307f70eb8a5ccb89fadf"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-df262107-e903-4160-99b4-91c1c0a7c0b3",
-            "title": "Tool: omem/read_material",
+            "id": "code-mode-nested:29:call_VSipN7JmR7y3hyyxkQw62sVI:exec-dd236a9d-06a2-49de-b3b0-f72d0e5e2f7e",
+            "title": "jq 'type, length, .[0], [.[] | select(.key==\"omem:README.md\" or .key==\"omem:apps/server/src/learning/pipeline.ts\" or .key==\"omem:apps/server/src/memory/service.ts\" or .key==\"omem:apps/server/src/retrieval/unified.ts\" or .key==\"omem:config/omem.example.json\" or .key==\"omem:config/wiki-pages.json\" or .key==\"omem:docs/README.md\" or .key==\"omem:docs/reader-first/README.md\") | {key,title,path,lineCount}]' catalog.json",
             "status": "in_progress",
             "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:config/omem.example.json"
-              }
-            }
-          },
-          {
-            "kind": "mcp",
-            "tool": "read_material",
-            "args": {
-              "key": "omem:config/omem.example.json",
-              "startLine": 1
-            },
-            "success": true
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-df262107-e903-4160-99b4-91c1c0a7c0b3",
-            "status": "completed",
-            "outputDigest": "ef2e2f360a8884cbf4dea1185c772c8d49bbb048996bb6b3134e75da25839853"
-          },
-          {
-            "kind": "mcp",
-            "tool": "read_material",
-            "args": {
-              "key": "omem:config/wiki-pages.json",
-              "startLine": 1
-            },
-            "success": true
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-621372f3-dba1-47fe-b833-164f7c6445e8",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:config/wiki-pages.json"
-              }
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-621372f3-dba1-47fe-b833-164f7c6445e8",
-            "status": "completed",
-            "outputDigest": "bb770a533fed6fb5bcf09566e3b46af4e23c7462d55661d3eacd8496f5431d49"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-06e4ebdf-7ced-4333-bce1-e31201f93fae",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:config/review-code-model.json"
-              }
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-5c9fc7f2-f908-407d-9c45-03c25db24292",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:config/retrieval.json"
-              }
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-b0cea20d-0a35-475f-8984-9f9f3bbb1597",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:config/review-code-model.example.json"
-              }
-            }
-          },
-          {
-            "kind": "mcp",
-            "tool": "read_material",
-            "args": {
-              "key": "omem:config/review-code-model.json",
-              "startLine": 1
-            },
-            "success": true
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-28373ec7-f022-4557-952c-6ec2d77c6972",
-            "title": "Read progress.md",
-            "status": "in_progress",
-            "input": {
-              "call_id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-28373ec7-f022-4557-952c-6ec2d77c6972",
-              "process_id": "17033",
-              "turn_id": "01a101d5-586d-7a02-99a6-4c9c5b21e6b0",
-              "started_at_ms": 1791032159987,
+              "call_id": "code-mode-nested:29:call_VSipN7JmR7y3hyyxkQw62sVI:exec-dd236a9d-06a2-49de-b3b0-f72d0e5e2f7e",
+              "process_id": "11664",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160371886,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "sed -n '1,360p' docs/reader-first/progress.md"
+                "jq 'type, length, .[0], [.[] | select(.key==\"omem:README.md\" or .key==\"omem:apps/server/src/learning/pipeline.ts\" or .key==\"omem:apps/server/src/memory/service.ts\" or .key==\"omem:apps/server/src/retrieval/unified.ts\" or .key==\"omem:config/omem.example.json\" or .key==\"omem:config/wiki-pages.json\" or .key==\"omem:docs/README.md\" or .key==\"omem:docs/reader-first/README.md\") | {key,title,path,lineCount}]' catalog.json"
               ],
-              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem",
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
               "parsed_cmd": [
                 {
-                  "type": "read",
-                  "cmd": "sed -n '1,360p' docs/reader-first/progress.md",
-                  "name": "progress.md",
-                  "path": "docs/reader-first/progress.md"
+                  "type": "unknown",
+                  "cmd": "jq 'type, length, .[0], [.[] | select(.key==\"omem:README.md\" or .key==\"omem:apps/server/src/learning/pipeline.ts\" or .key==\"omem:apps/server/src/memory/service.ts\" or .key==\"omem:apps/server/src/retrieval/unified.ts\" or .key==\"omem:config/omem.example.json\" or .key==\"omem:config/wiki-pages.json\" or .key==\"omem:docs/README.md\" or .key==\"omem:docs/reader-first/README.md\") | {key,title,path,lineCount}]' catalog.json"
                 }
               ],
               "source": "unified_exec_startup",
@@ -491,33 +213,36 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-28373ec7-f022-4557-952c-6ec2d77c6972",
+            "id": "code-mode-nested:29:call_VSipN7JmR7y3hyyxkQw62sVI:exec-dd236a9d-06a2-49de-b3b0-f72d0e5e2f7e"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_VSipN7JmR7y3hyyxkQw62sVI:exec-dd236a9d-06a2-49de-b3b0-f72d0e5e2f7e",
             "status": "completed",
-            "outputDigest": "9dd1ae21f81ef9af59c51f70d3846cbed0c001bb8b697356acc65a8ade8e2c61"
+            "outputDigest": "82cddc8553b1da16e755eebc55bf3eaab1fdb1172773391688d4cb6874856641"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-2b70a018-345b-4790-a366-298ce7118f95",
-            "title": "Read README.md",
+            "id": "code-mode-nested:29:call_vWoB8hfEAPGgO2ebi46yFK46:exec-7dd480aa-ed9f-47fb-a404-5b337fcfd2e8",
+            "title": "jq '[.[] | {key,path,revision,lines}]' catalog.json",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-2b70a018-345b-4790-a366-298ce7118f95",
-              "process_id": "52535",
-              "turn_id": "01a101d5-586d-7a02-99a6-4c9c5b21e6b0",
-              "started_at_ms": 1791032159994,
+              "call_id": "code-mode-nested:29:call_vWoB8hfEAPGgO2ebi46yFK46:exec-7dd480aa-ed9f-47fb-a404-5b337fcfd2e8",
+              "process_id": "95617",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160380375,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "sed -n '1,260p' README.md"
+                "jq '[.[] | {key,path,revision,lines}]' catalog.json"
               ],
-              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem",
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
               "parsed_cmd": [
                 {
-                  "type": "read",
-                  "cmd": "sed -n '1,260p' README.md",
-                  "name": "README.md",
-                  "path": "README.md"
+                  "type": "unknown",
+                  "cmd": "jq '[.[] | {key,path,revision,lines}]' catalog.json"
                 }
               ],
               "source": "unified_exec_startup",
@@ -527,33 +252,36 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-2b70a018-345b-4790-a366-298ce7118f95",
+            "id": "code-mode-nested:29:call_vWoB8hfEAPGgO2ebi46yFK46:exec-7dd480aa-ed9f-47fb-a404-5b337fcfd2e8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_vWoB8hfEAPGgO2ebi46yFK46:exec-7dd480aa-ed9f-47fb-a404-5b337fcfd2e8",
             "status": "completed",
-            "outputDigest": "d165ce3d3e91180035f4a878b4d540cb53f281e388d449b16f5009a271be674f"
+            "outputDigest": "ac00216081c7792c05bc29f0208904b35bbc713f0b82253a5d9884e9ba5565da"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-21be2b95-67a8-4277-b100-fd6987089d79",
-            "title": "Read README.md",
+            "id": "code-mode-nested:29:call_kEPwday4efuhfD7Cp6NCB59p:exec-c3b43049-5ae2-4f2b-8d8b-10b7e6ee1bb5",
+            "title": "for f in originals/README.md originals/config/omem.example.json originals/config/wiki-pages.json originals/docs/README.md originals/docs/reader-first/README.md; do awk '{printf \"%6d\\t%s\\n\", NR, $0}' \"$f\"; done",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-21be2b95-67a8-4277-b100-fd6987089d79",
-              "process_id": "80976",
-              "turn_id": "01a101d5-586d-7a02-99a6-4c9c5b21e6b0",
-              "started_at_ms": 1791032160020,
+              "call_id": "code-mode-nested:29:call_kEPwday4efuhfD7Cp6NCB59p:exec-c3b43049-5ae2-4f2b-8d8b-10b7e6ee1bb5",
+              "process_id": "13753",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160385787,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "sed -n '1,300p' docs/reader-first/README.md"
+                "for f in originals/README.md originals/config/omem.example.json originals/config/wiki-pages.json originals/docs/README.md originals/docs/reader-first/README.md; do awk '{printf \"%6d\\t%s\\n\", NR, $0}' \"$f\"; done"
               ],
-              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem",
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
               "parsed_cmd": [
                 {
-                  "type": "read",
-                  "cmd": "sed -n '1,300p' docs/reader-first/README.md",
-                  "name": "README.md",
-                  "path": "docs/reader-first/README.md"
+                  "type": "unknown",
+                  "cmd": "for f in originals/README.md originals/config/omem.example.json originals/config/wiki-pages.json originals/docs/README.md originals/docs/reader-first/README.md; do awk '{printf \"%6d\\t%s\\n\", NR, $0}' \"$f\"; done"
                 }
               ],
               "source": "unified_exec_startup",
@@ -563,53 +291,624 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-06e4ebdf-7ced-4333-bce1-e31201f93fae",
-            "status": "completed",
-            "outputDigest": "09089fe965bc0d5c9375b70f39e710c5375813c113bcfe0d30976beb6095abfc"
+            "id": "code-mode-nested:29:call_kEPwday4efuhfD7Cp6NCB59p:exec-c3b43049-5ae2-4f2b-8d8b-10b7e6ee1bb5"
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-21be2b95-67a8-4277-b100-fd6987089d79",
+            "id": "code-mode-nested:29:call_kEPwday4efuhfD7Cp6NCB59p:exec-c3b43049-5ae2-4f2b-8d8b-10b7e6ee1bb5"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_kEPwday4efuhfD7Cp6NCB59p:exec-c3b43049-5ae2-4f2b-8d8b-10b7e6ee1bb5"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_kEPwday4efuhfD7Cp6NCB59p:exec-c3b43049-5ae2-4f2b-8d8b-10b7e6ee1bb5"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_kEPwday4efuhfD7Cp6NCB59p:exec-c3b43049-5ae2-4f2b-8d8b-10b7e6ee1bb5"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_kEPwday4efuhfD7Cp6NCB59p:exec-c3b43049-5ae2-4f2b-8d8b-10b7e6ee1bb5",
             "status": "completed",
-            "outputDigest": "e92f09afd475dcfb534fc1770b394eabae93484d5479a47ee30160ce498e1e29"
+            "outputDigest": "48482655e7a8c9f0e7f70c363cb91355ef65d300c30ab9fc97f978cb77cd2827"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_JOTH7GIodW9iMsxDHGNO2Sy2:exec-0ae9a77f-bd28-4276-a2f9-967eb9e87bda",
+            "title": "Read wiki-pages.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_JOTH7GIodW9iMsxDHGNO2Sy2:exec-0ae9a77f-bd28-4276-a2f9-967eb9e87bda",
+              "process_id": "18586",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160403236,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '94,250p' originals/config/wiki-pages.json | awk '{printf \"%6d\\t%s\\n\", NR+93, $0}'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '94,250p' originals/config/wiki-pages.json | awk '{printf \"%6d\\t%s\\n\", NR+93, $0}'",
+                  "name": "wiki-pages.json",
+                  "path": "originals/config/wiki-pages.json"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_JOTH7GIodW9iMsxDHGNO2Sy2:exec-0ae9a77f-bd28-4276-a2f9-967eb9e87bda",
+            "status": "completed",
+            "outputDigest": "fc20dabb9a19c8d4fe1e21a8710b314ab5fe1c6381f711f057da82479fabda14"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_J7t8ElXLKzIs3ESKijl4Jhaw:exec-c66fb920-e50b-4b83-8bf0-879e7cef605b",
+            "title": "Tool: omem/read_section",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_section",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/unified.ts"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_J7t8ElXLKzIs3ESKijl4Jhaw:exec-9bdc9aee-7592-4cdd-b13f-9e256b2473e0",
+            "title": "Tool: omem/read_section",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_section",
+              "arguments": {
+                "key": "omem:apps/server/src/memory/service.ts"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_J7t8ElXLKzIs3ESKijl4Jhaw:exec-5eca1c55-482c-4022-8ef2-6d0b1b120926",
+            "title": "Tool: omem/read_section",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_section",
+              "arguments": {
+                "key": "omem:apps/server/src/learning/pipeline.ts"
+              }
+            }
           },
           {
             "kind": "mcp",
-            "tool": "read_material",
+            "tool": "read_section",
             "args": {
-              "key": "omem:config/retrieval.json",
-              "startLine": 1
+              "key": "omem:apps/server/src/retrieval/unified.ts"
             },
             "success": true
           },
           {
             "kind": "mcp",
-            "tool": "read_material",
+            "tool": "read_section",
             "args": {
-              "key": "omem:config/review-code-model.example.json",
-              "startLine": 1
+              "key": "omem:apps/server/src/memory/service.ts"
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_section",
+            "args": {
+              "key": "omem:apps/server/src/learning/pipeline.ts"
             },
             "success": true
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-5c9fc7f2-f908-407d-9c45-03c25db24292",
+            "id": "code-mode-nested:29:call_J7t8ElXLKzIs3ESKijl4Jhaw:exec-c66fb920-e50b-4b83-8bf0-879e7cef605b",
             "status": "completed",
-            "outputDigest": "8e65c2f1442642d3544268859320f3077cbb6859799f56e84b0c5cecefd4c032"
+            "outputDigest": "6ee29e957c4ee7b1b73aefa6282e465e75a6e67c20a803609fe6b3274e7a1407"
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_kujD5Xr0IPgjFJz9c9QRRVeV:exec-b0cea20d-0a35-475f-8984-9f9f3bbb1597",
+            "id": "code-mode-nested:29:call_J7t8ElXLKzIs3ESKijl4Jhaw:exec-9bdc9aee-7592-4cdd-b13f-9e256b2473e0",
             "status": "completed",
-            "outputDigest": "cb3f0f047eeb3c706f83ec32eddf162c2772791d94d86f6cfcc517f530fd99b1"
+            "outputDigest": "3b69d35a9367bf2015c6aa8f1cde3d8b864e6737d0f09949fccb2739dceb7ec6"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_J7t8ElXLKzIs3ESKijl4Jhaw:exec-5eca1c55-482c-4022-8ef2-6d0b1b120926",
+            "status": "completed",
+            "outputDigest": "c71a5edf113637117b0b34baf551688de6787597bdc96e391c2d3faefbd91b1c"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_Aneggh1PAQ6vjCd0Kk5Gwllw:exec-796cc044-3a20-4b8f-844b-4786da3140a5",
+            "id": "code-mode-nested:29:call_TwWMuXvolYfabDo3bSTremEs:exec-df89894a-3b34-4067-b17b-31614a9a6ba0",
+            "title": "Read pipeline.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_TwWMuXvolYfabDo3bSTremEs:exec-df89894a-3b34-4067-b17b-31614a9a6ba0",
+              "process_id": "19345",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160417205,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,300p' originals/apps/server/src/learning/pipeline.ts | nl -ba -v1"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,300p' originals/apps/server/src/learning/pipeline.ts | nl -ba -v1",
+                  "name": "pipeline.ts",
+                  "path": "originals/apps/server/src/learning/pipeline.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_TwWMuXvolYfabDo3bSTremEs:exec-df89894a-3b34-4067-b17b-31614a9a6ba0",
+            "status": "completed",
+            "outputDigest": "6fde258db5bb6d0ad23878043b70fddf304b754289dc976437e786e0bd1fb7bf"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_NLuNtZZriEMKj62F7iPjgRkr:exec-713408ca-4770-4e35-ad32-b6d1c588090b",
+            "title": "Read pipeline.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_NLuNtZZriEMKj62F7iPjgRkr:exec-713408ca-4770-4e35-ad32-b6d1c588090b",
+              "process_id": "18599",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160423492,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '301,610p' originals/apps/server/src/learning/pipeline.ts | nl -ba -v301"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '301,610p' originals/apps/server/src/learning/pipeline.ts | nl -ba -v301",
+                  "name": "pipeline.ts",
+                  "path": "originals/apps/server/src/learning/pipeline.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_NLuNtZZriEMKj62F7iPjgRkr:exec-713408ca-4770-4e35-ad32-b6d1c588090b",
+            "status": "completed",
+            "outputDigest": "0f88d43914212dfc759446bbed6c71a2d404afb4422512195cc69102e4916b22"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_9ZgVd4uQujWoM0d1Nb1wm624:exec-e557d9b2-50b3-47bd-b28b-ae5b2562363e",
+            "title": "Read pipeline.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_9ZgVd4uQujWoM0d1Nb1wm624:exec-e557d9b2-50b3-47bd-b28b-ae5b2562363e",
+              "process_id": "66149",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160429441,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '611,914p' originals/apps/server/src/learning/pipeline.ts | nl -ba -v611"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '611,914p' originals/apps/server/src/learning/pipeline.ts | nl -ba -v611",
+                  "name": "pipeline.ts",
+                  "path": "originals/apps/server/src/learning/pipeline.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_9ZgVd4uQujWoM0d1Nb1wm624:exec-e557d9b2-50b3-47bd-b28b-ae5b2562363e",
+            "status": "completed",
+            "outputDigest": "ec23a73b46218170c1df97554a6bbfbbf26075adf17008344ee879a89d1d0b0f"
+          },
+          {
+            "kind": "plan",
+            "entries": [
+              {
+                "content": "加载技能并核对 catalog.json 与 8 个目标",
+                "priority": "medium",
+                "status": "completed"
+              },
+              {
+                "content": "通读 5 份文档/配置并重新定位概念行号",
+                "priority": "medium",
+                "status": "completed"
+              },
+              {
+                "content": "通读学习、记忆、检索三份当前实现",
+                "priority": "medium",
+                "status": "in_progress"
+              },
+              {
+                "content": "编制并校验 MaterialDescriptions.v1",
+                "priority": "medium",
+                "status": "pending"
+              },
+              {
+                "content": "调用 omem.submit_result，按校验反馈修正",
+                "priority": "medium",
+                "status": "pending"
+              }
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_r1rOaNtXm3bDwSBzv1m0fbeb:exec-751c3c09-5015-4fce-85a0-6940105d2b13",
+            "title": "Read service.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_r1rOaNtXm3bDwSBzv1m0fbeb:exec-751c3c09-5015-4fce-85a0-6940105d2b13",
+              "process_id": "35588",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160445931,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,350p' originals/apps/server/src/memory/service.ts | nl -ba -v1"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,350p' originals/apps/server/src/memory/service.ts | nl -ba -v1",
+                  "name": "service.ts",
+                  "path": "originals/apps/server/src/memory/service.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_r1rOaNtXm3bDwSBzv1m0fbeb:exec-751c3c09-5015-4fce-85a0-6940105d2b13",
+            "status": "completed",
+            "outputDigest": "306c3aff97c0a2c92719f124d9abfab18aefb962b0b1eea5c96220a2ce25bcee"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_HHqhbk7BRlHT12HnciSV63Zs:exec-7f013d1d-125e-4206-950e-854a3379f732",
+            "title": "Read service.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_HHqhbk7BRlHT12HnciSV63Zs:exec-7f013d1d-125e-4206-950e-854a3379f732",
+              "process_id": "96636",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160452191,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '351,700p' originals/apps/server/src/memory/service.ts | nl -ba -v351"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '351,700p' originals/apps/server/src/memory/service.ts | nl -ba -v351",
+                  "name": "service.ts",
+                  "path": "originals/apps/server/src/memory/service.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_HHqhbk7BRlHT12HnciSV63Zs:exec-7f013d1d-125e-4206-950e-854a3379f732",
+            "status": "completed",
+            "outputDigest": "29d817711155d7a38ae43bdc14afd86c183b8e7017e060068ddd5690afadcf48"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_lNgPdMbN9rMOAdMTHA1i8mej:exec-4c7e0610-ce3e-4f82-8071-b94d48b4fac5",
+            "title": "Read service.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_lNgPdMbN9rMOAdMTHA1i8mej:exec-4c7e0610-ce3e-4f82-8071-b94d48b4fac5",
+              "process_id": "47407",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160459376,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '701,1050p' originals/apps/server/src/memory/service.ts | nl -ba -v701"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '701,1050p' originals/apps/server/src/memory/service.ts | nl -ba -v701",
+                  "name": "service.ts",
+                  "path": "originals/apps/server/src/memory/service.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_lNgPdMbN9rMOAdMTHA1i8mej:exec-4c7e0610-ce3e-4f82-8071-b94d48b4fac5",
+            "status": "completed",
+            "outputDigest": "5f0ee5acf52a2868a22b62ddcaf77b2beb6ca0612af22fe986068786ca2848b7"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_b8r1lJh0DvChJxnu8zsSJQHx:exec-314df32a-1d76-45af-879f-37357a0390a8",
+            "title": "Read service.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_b8r1lJh0DvChJxnu8zsSJQHx:exec-314df32a-1d76-45af-879f-37357a0390a8",
+              "process_id": "89540",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160466998,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1051,1400p' originals/apps/server/src/memory/service.ts | nl -ba -v1051"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1051,1400p' originals/apps/server/src/memory/service.ts | nl -ba -v1051",
+                  "name": "service.ts",
+                  "path": "originals/apps/server/src/memory/service.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_b8r1lJh0DvChJxnu8zsSJQHx:exec-314df32a-1d76-45af-879f-37357a0390a8",
+            "status": "completed",
+            "outputDigest": "85579f9fd65939e1670bf6fa0547c243067896e885e30717a45c1bddcb9ae076"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_tjxy4vuR4Th4qf683pqVVsFo:exec-bd97d318-67d3-4927-b46c-7ea51ba8ce5c",
+            "title": "Read service.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_tjxy4vuR4Th4qf683pqVVsFo:exec-bd97d318-67d3-4927-b46c-7ea51ba8ce5c",
+              "process_id": "66513",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160473974,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1401,1750p' originals/apps/server/src/memory/service.ts | nl -ba -v1401"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1401,1750p' originals/apps/server/src/memory/service.ts | nl -ba -v1401",
+                  "name": "service.ts",
+                  "path": "originals/apps/server/src/memory/service.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_tjxy4vuR4Th4qf683pqVVsFo:exec-bd97d318-67d3-4927-b46c-7ea51ba8ce5c",
+            "status": "completed",
+            "outputDigest": "9c309f1690914037fe7fcd705f42c8a05ae872e7e860ce2c6a3b69de5267bbde"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_6dtdvpRs35QC5EuVyTBYI2ro:exec-3493db8e-39ec-4a05-8a44-5d66a2e2ef85",
+            "title": "Read service.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_6dtdvpRs35QC5EuVyTBYI2ro:exec-3493db8e-39ec-4a05-8a44-5d66a2e2ef85",
+              "process_id": "92717",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160480853,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1751,2088p' originals/apps/server/src/memory/service.ts | nl -ba -v1751"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1751,2088p' originals/apps/server/src/memory/service.ts | nl -ba -v1751",
+                  "name": "service.ts",
+                  "path": "originals/apps/server/src/memory/service.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_6dtdvpRs35QC5EuVyTBYI2ro:exec-3493db8e-39ec-4a05-8a44-5d66a2e2ef85",
+            "status": "completed",
+            "outputDigest": "deb39ced2a1f73a4774327c0c433e7a07eab556e939cac4a084b337f26b1cacd"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_rlyGAHsyJm1h9Isn8qjMqz50:exec-d99be0ac-7db7-48e5-95e3-965986409bc2",
+            "title": "Read unified.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_rlyGAHsyJm1h9Isn8qjMqz50:exec-d99be0ac-7db7-48e5-95e3-965986409bc2",
+              "process_id": "24629",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160488405,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,280p' originals/apps/server/src/retrieval/unified.ts | nl -ba -v1"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,280p' originals/apps/server/src/retrieval/unified.ts | nl -ba -v1",
+                  "name": "unified.ts",
+                  "path": "originals/apps/server/src/retrieval/unified.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_rlyGAHsyJm1h9Isn8qjMqz50:exec-d99be0ac-7db7-48e5-95e3-965986409bc2",
+            "status": "completed",
+            "outputDigest": "a888c4a6df170035f49297df95b382fcee8b989297f6fcfe78b08faccaf63bc6"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_bhNinGMhg9cCw5vPwCeYHl7Z:exec-c3629961-4670-4425-ac51-6ba8a85fcb6c",
+            "title": "Read unified.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_bhNinGMhg9cCw5vPwCeYHl7Z:exec-c3629961-4670-4425-ac51-6ba8a85fcb6c",
+              "process_id": "60699",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160495730,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '281,560p' originals/apps/server/src/retrieval/unified.ts | nl -ba -v281"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '281,560p' originals/apps/server/src/retrieval/unified.ts | nl -ba -v281",
+                  "name": "unified.ts",
+                  "path": "originals/apps/server/src/retrieval/unified.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_bhNinGMhg9cCw5vPwCeYHl7Z:exec-c3629961-4670-4425-ac51-6ba8a85fcb6c",
+            "status": "completed",
+            "outputDigest": "8399becf7defed21c828ffc840be68c9b83749af506c2a1ee328a57cecd51f54"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_JtTQHd3pRe24ZJHUBCIUpX1R:exec-25ab63ff-6255-4856-84de-b43185e4fcbb",
+            "title": "Read unified.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_JtTQHd3pRe24ZJHUBCIUpX1R:exec-25ab63ff-6255-4856-84de-b43185e4fcbb",
+              "process_id": "56756",
+              "turn_id": "01a10979-ee70-71e0-8596-546371089873",
+              "started_at_ms": 1791160502329,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '561,789p' originals/apps/server/src/retrieval/unified.ts | nl -ba -v561"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/description-retrieval-comparison/agents/roles/55ecdde5d16263ed256333f83905ebe384da70edf3e00ccf3875d54d837fdb24/a63b698a-665a-4003-8567-876f9eb84cb5",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '561,789p' originals/apps/server/src/retrieval/unified.ts | nl -ba -v561",
+                  "name": "unified.ts",
+                  "path": "originals/apps/server/src/retrieval/unified.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_JtTQHd3pRe24ZJHUBCIUpX1R:exec-25ab63ff-6255-4856-84de-b43185e4fcbb",
+            "status": "completed",
+            "outputDigest": "3af76574bc07ffff3188642e18c758b679d38d017a4d4c793803606a848e6f83"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_LbHtu6rexHxDmrA5WyXN0vdy:exec-b03967a8-1703-4ad1-bc9b-6e6ca5a3d503",
             "title": "Tool: omem/submit_result",
             "status": "in_progress",
             "input": {
@@ -622,19 +921,18 @@
             "kind": "submission",
             "success": true,
             "reads": [
-              "omem:config/omem.example.json",
               "omem:config/wiki-pages.json",
-              "omem:config/review-code-model.json",
-              "omem:config/retrieval.json",
-              "omem:config/review-code-model.example.json"
+              "omem:apps/server/src/learning/pipeline.ts",
+              "omem:apps/server/src/memory/service.ts",
+              "omem:apps/server/src/retrieval/unified.ts"
             ]
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_Aneggh1PAQ6vjCd0Kk5Gwllw:exec-796cc044-3a20-4b8f-844b-4786da3140a5",
-            "status": "completed",
-            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+            "id": "code-mode-nested:29:call_LbHtu6rexHxDmrA5WyXN0vdy:exec-b03967a8-1703-4ad1-bc9b-6e6ca5a3d503",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
           }
         ],
         "hostTokenBudget": null
