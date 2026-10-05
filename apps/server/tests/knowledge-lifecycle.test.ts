@@ -190,6 +190,28 @@ it("stores page plans independently and keeps internal file notes out of publica
   await retrieval.close();
 });
 
+it("clears a satisfied imported plan change while retaining changed source chapters and reader feedback", () => {
+  const { store, repository, capture, artifact } = setup();
+  const brief: WikiPageBrief = { key: artifact.document.key, title: "活动安排", order: 0,
+    kind: "explanation", reader: "参加者", goal: "了解安排", scenario: "参加活动", questions: ["怎么参加？"], entryPaths: [] };
+  artifact.reading = brief;
+  const original = repository.publish(artifact);
+  repository.reconcileImport("test-import", [{key:brief.key,revision:original.revision}]);
+  const updated = { ...brief, goal: "知道预算和集合地点" };
+  repository.savePlan(updated);
+  capture("# 活动约定\n## 预算\n预算是一百二十元。\n\n## 地点\n地点在图书馆。");
+  const imported = { ...artifact, reading: updated };
+  repository.restoreHistorical(imported, true, "test-import");
+  repository.savePlan(updated);
+  const states = repository.statusReader()(repository.get(brief.key)!);
+  expect(states.budget?.state).toBe("needs-review");
+  expect(states.venue?.state).toBe("current");
+  expect(store.db.prepare("SELECT * FROM knowledge_invalidations WHERE document_key=?").get(brief.key)).toBeUndefined();
+  store.db.prepare("INSERT INTO knowledge_invalidations VALUES(?,?)").run(brief.key,"用户补充了背景，需要重新核对");
+  repository.savePlan(updated);
+  expect(repository.statusReader()(repository.get(brief.key)!).venue?.state).toBe("needs-review");
+});
+
 it("reviews only the chapter whose uncited premise changed", async () => {
   const { store, repository, capture, artifact, source } = setup();
   artifact.document.sections[1]!.reviewSources = [
