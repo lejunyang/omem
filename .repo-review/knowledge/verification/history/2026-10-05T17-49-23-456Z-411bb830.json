@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-05T13:35:46.336Z",
-  "implementationCommit": "0627b7d28f5e7902e72621e05888058be911626f",
-  "sourceDigest": "49205f3480f37b9ca20baad3477a08058185630e9ddd4ef17ca668cea0481398",
+  "recordedAt": "2026-10-05T17:49:23.456Z",
+  "implementationCommit": "307084951a6c9a264c68b2db692e520da0180c8f",
+  "sourceDigest": "e67e667c224d632ea18190099fd693dd7d795c59243e0a15c50396646f8a4b64",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-05T13-35-46-336Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-05T17-49-23-456Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-05T13-35-46-336Z/project.log",
-        "sha256": "d4dee46c2eb587bf6ae495a1cdf963f00b3e8f74e17c063f884397eaccf3aefd"
+        "log": ".repo-review/runtime/verification/2026-10-05T17-49-23-456Z/project.log",
+        "sha256": "6b9174b7b7c5ba73421843855c187fcf4bbbf0ac2004362d51cf09d3abae49c4"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-05T13-35-46-336Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-05T17-49-23-456Z/liveChineseRetrieval.log",
         "sha256": "c633cc8b3935a685907f142b4f178e7f9fd00ac994d0edc6ef224a195357b1e8"
       }
     },
@@ -51,9 +51,9 @@
       "name": "publishedKnowledgeReferences",
       "state": "passed",
       "details": {
-        "articles": 8,
-        "currentArticles": 1,
-        "citations": 232,
+        "articles": 9,
+        "currentArticles": 0,
+        "citations": 262,
         "errors": []
       }
     },
@@ -64,11 +64,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v7",
-        "units": 13592,
+        "units": 14005,
         "semantic": {
           "model": "structure-icu-v7:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 13592,
+          "indexed": 14005,
           "pending": 0,
           "error": null
         },
@@ -95,11 +95,11 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 688,
-    "publishedPages": 8,
-    "currentPages": 1,
-    "plannedPages": 1,
-    "citations": 232,
+    "materials": 720,
+    "publishedPages": 9,
+    "currentPages": 0,
+    "plannedPages": 0,
+    "citations": 262,
     "articleLinks": 0,
     "errors": [],
     "pages": [
@@ -115,18 +115,19 @@
           },
           "capture-input": {
             "state": "needs-review",
-            "reason": "背景前提已有变化：文件、文档、Git 和飞书路由都在适配成功后调用同一 store.capture。"
+            "reason": "背景前提已有变化：文档类型、大小、准备条件、解析成功边界和 CaptureInput 投影会改变本节。"
           },
           "immutable-original": {
             "state": "needs-review",
             "reason": "背景前提已有变化：网页文档每次选取生成随机 documentIdentity，决定同一文件是否自然续成 V2。"
           },
           "retrieval-projection": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "post-capture-branches": {
             "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "reason": "背景前提已有变化：知识文章仍依赖 Agent、阅读目标与选材范围，文档解析不会绕过这些条件。"
           },
           "context-branch": {
             "state": "current"
@@ -327,10 +328,54 @@
         }
       },
       {
+        "key": "guide:personal-messages",
+        "title": "让飞书消息进入个人助理：订阅、读材料与跟进",
+        "role": "article",
+        "current": false,
+        "sections": {
+          "start": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "setup": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "selection": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "materials": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "decision": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "notifications": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "service": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "timeout": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "checklist": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          }
+        }
+      },
+      {
         "key": "guide:retrieval",
         "title": "一次提问如何找到答案：搜索、候选评估与上下文",
         "role": "article",
-        "current": true,
+        "current": false,
         "sections": {
           "what-counts-as-an-answer": {
             "state": "current"
@@ -339,7 +384,8 @@
             "state": "current"
           },
           "select-and-restore-context": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "背景前提已有变化：可选只读服务及失败返回空判断决定主流程的降级语义。"
           },
           "investigate-gaps": {
             "state": "current"
@@ -354,8 +400,7 @@
       }
     ],
     "restore": {
-      "stale": 7,
-      "restored": 1
+      "stale": 9
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -379,7 +424,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 930,
+        "elapsedMs": 1066,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -435,15 +480,15 @@
         "baselineTop5": [
           "docs/reader-first/operations.md",
           "docs/reader-first/operations.md",
-          ".agents/skills/osdk-guide/reference/configuration/models.md",
           ".claude/skills/osdk-guide/reference/configuration/models.md",
-          ".agents/skills/osdk-guide/reference/model/guide.md"
+          ".agents/skills/osdk-guide/reference/configuration/models.md",
+          "docs/cli.md"
         ],
         "baselineUniquePathsAt5": 4,
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 664,
+        "elapsedMs": 604,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -464,13 +509,22 @@
             "snippet": "本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / "
           },
           {
-            "path": ".agents/skills/osdk-guide/reference/configuration/models.md",
+            "path": ".claude/skills/osdk-guide/reference/configuration/models.md",
             "routes": [
               "bm25",
               "semantic",
               "purpose:balanced"
             ],
             "snippet": "`model use` 的 reference/include/exclude/variant/kind/family/derived_from/endpoint 会写入同名声明；`sync` 会识别这些字段的变化。模型配置不触发\n任何信任要求：模型字节是内容，osdk 不执行它们，下载仍按锁定摘要校验。`model "
+          },
+          {
+            "path": "docs/cli.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "- documents 安装锁定的 Docling Python 环境；document-models 下载锁定的 PDF 布局和表格模型。\n- embedding 下载中文向量模型，之后设置 `retrieval.enabled:true` 并重启。\n- decisions 下载 StartLux 2B/4B 并准备"
           },
           {
             "path": ".agents/skills/osdk-guide/reference/model/guide.md",
@@ -480,15 +534,6 @@
               "purpose:balanced"
             ],
             "snippet": "不要手写 OSDK 受管模型声明；使用 `model use/unuse`。`model import` 只创建当前机器的本地快照，不写声明或 lock，并拒绝链接/reparse point 与特殊文件。`install` 不会隐式下载模型。Civitai 引用必须是精确的 `civitai:<model-id>@<"
-          },
-          {
-            "path": "docs/reader-first/personal-messages.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "复用 StartLux 2B/4B 共用服务，`decisions.mode=auto` 根据机器内存余量与负载选择一份常驻模型；不运行时下载模型。查看[准备方法和实测](fast-decisions.md)。"
           }
         ]
       },
@@ -504,14 +549,14 @@
           "docs/reader-first/current-system.md",
           "apps/server/tests/retrieval-unified.test.ts",
           "docs/reader-first/project-contexts.md",
-          "docs/reader-first/publication-lifecycle.md",
-          "docs/archive/2026-10-01-baseline/AGENTS.md"
+          "docs/archive/2026-10-01-baseline/AGENTS.md",
+          "docs/reader-first/publication-lifecycle.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
         "firstExpectedRank": 14,
         "uniquePathsAt5": 5,
-        "elapsedMs": 599,
+        "elapsedMs": 588,
         "top5": [
           {
             "path": "docs/reader-first/current-system.md",
@@ -541,15 +586,6 @@
             "snippet": "后台记忆的工程检查覆盖同名项目隔离、独立新来源更新同一记忆和途中归属变化；真实 Sol 已完成下述明确归属的小库流程，尚不能宣称复杂项目理解可靠。验证进度在本节更新，不混入上面的功能说明。"
           },
           {
-            "path": "docs/reader-first/publication-lifecycle.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "失败保留旧文章并显示重试入口，不反复对同一份失败输入调用模型。新材料版本、范围成员变化或手动重试可以再次执行。界面显示排队、调查写作、完成或失败，固定旧引用继续可读；一次后台维护不会把知识文章变成独立事实，也不会直接修改个人记忆或事项。当前支持明确材料与项目/主题成员，尚未从内容自动判断新材料归属，也未实现周期回顾。"
-          },
-          {
             "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
             "routes": [
               "bm25",
@@ -557,6 +593,15 @@
               "purpose:balanced"
             ],
             "snippet": "1. 修改捕获、AST、知识生成/复核、引用、检索或助手运行后，先通过相关检查并提交实现，再更新受影响的知识资产，单独提交。保持已有用户改动。\n2. 用 `osdk run review:generate <文件或目录> --modules` 更新受影响的原始材料理解和模块正文；多个 `--only` 可合用。需要全库"
+          },
+          {
+            "path": "docs/reader-first/publication-lifecycle.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "失败保留旧文章并显示重试入口，不反复对同一份失败输入调用模型。新材料版本、范围成员变化或手动重试可以再次执行。界面显示排队、调查写作、完成或失败，固定旧引用继续可读；一次后台维护不会把知识文章变成独立事实，也不会直接修改个人记忆或事项。当前支持明确材料与项目/主题成员，尚未从内容自动判断新材料归属，也未实现周期回顾。"
           }
         ]
       },
@@ -567,18 +612,26 @@
         ],
         "status": 200,
         "baselineTop5": [
+          "scripts/live-requirement-followup.ts",
           "scripts/live-native-knowledge-smoke.ts",
           "scripts/live-native-knowledge-smoke.ts",
           "apps/server/src/knowledge/pipeline.ts",
-          "scripts/review-catalog.ts",
-          "scripts/review-guides.ts"
+          "scripts/review-catalog.ts"
         ],
         "baselineUniquePathsAt5": 4,
         "passed": true,
-        "firstExpectedRank": 3,
+        "firstExpectedRank": 4,
         "uniquePathsAt5": 4,
-        "elapsedMs": 219,
+        "elapsedMs": 186,
         "top5": [
+          {
+            "path": "scripts/live-requirement-followup.ts",
+            "routes": [
+              "bm25",
+              "purpose:balanced"
+            ],
+            "snippet": "const pipeline = new KnowledgePipeline(\n  repository,\n  new RoleRuntimeGateway(new RoleBundleRegistry(), join(directory, \"agents\")),\n  profile,\n  { log: console"
+          },
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
             "routes": [
@@ -610,14 +663,6 @@
               "purpose:balanced"
             ],
             "snippet": "const pipeline = new KnowledgePipeline(\n  repository,\n  new RoleRuntimeGateway(\n    new RoleBundleRegistry(),\n    runtime,\n    new RuntimeRequestRepository(stor"
-          },
-          {
-            "path": "scripts/review-guides.ts",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), join(runtime, \"reader-agents\"), new RuntimeRequestRepository"
           }
         ]
       },
@@ -638,7 +683,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 153,
+        "elapsedMs": 137,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -704,7 +749,7 @@
         "passed": false,
         "firstExpectedRank": 7,
         "uniquePathsAt5": 5,
-        "elapsedMs": 659,
+        "elapsedMs": 572,
         "top5": [
           {
             "path": "design.md",

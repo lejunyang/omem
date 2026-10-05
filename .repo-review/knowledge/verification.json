@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-05T17:49:23.456Z",
-  "implementationCommit": "307084951a6c9a264c68b2db692e520da0180c8f",
-  "sourceDigest": "e67e667c224d632ea18190099fd693dd7d795c59243e0a15c50396646f8a4b64",
+  "recordedAt": "2026-10-05T19:05:27.340Z",
+  "implementationCommit": "0e916c34a67c239c63f27fdd789da1cb644be612",
+  "sourceDigest": "aa6ed52dff97e2cb8b913dfd81d4695b491e0a060cdc635a137171da046d0656",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-05T17-49-23-456Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-05T19-05-27-340Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-05T17-49-23-456Z/project.log",
-        "sha256": "6b9174b7b7c5ba73421843855c187fcf4bbbf0ac2004362d51cf09d3abae49c4"
+        "log": ".repo-review/runtime/verification/2026-10-05T19-05-27-340Z/project.log",
+        "sha256": "106b8cc3a6e2fdc1652d1759713fc9ea798a1905ac761eef35d088336dbe9e02"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-05T17-49-23-456Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-05T19-05-27-340Z/liveChineseRetrieval.log",
         "sha256": "c633cc8b3935a685907f142b4f178e7f9fd00ac994d0edc6ef224a195357b1e8"
       }
     },
@@ -51,9 +51,9 @@
       "name": "publishedKnowledgeReferences",
       "state": "passed",
       "details": {
-        "articles": 9,
+        "articles": 10,
         "currentArticles": 0,
-        "citations": 262,
+        "citations": 289,
         "errors": []
       }
     },
@@ -64,11 +64,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v7",
-        "units": 14005,
+        "units": 14174,
         "semantic": {
           "model": "structure-icu-v7:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 14005,
+          "indexed": 14174,
           "pending": 0,
           "error": null
         },
@@ -95,11 +95,11 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 720,
-    "publishedPages": 9,
+    "materials": 736,
+    "publishedPages": 10,
     "currentPages": 0,
     "plannedPages": 0,
-    "citations": 262,
+    "citations": 289,
     "articleLinks": 0,
     "errors": [],
     "pages": [
@@ -372,6 +372,50 @@
         }
       },
       {
+        "key": "guide:requirement-development",
+        "title": "让需求变成可跟进的事项和可评审的代码",
+        "role": "article",
+        "current": false,
+        "sections": {
+          "case-and-finish-line": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "keep-one-requirement-current": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "turn-materials-into-work": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "follow-an-action": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "register-real-project": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "start-implementation": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "checks-review-and-repair": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "inspect-and-apply": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          },
+          "capability-boundaries": {
+            "state": "needs-review",
+            "reason": "已有补充或纠正，需要重新整理这一篇"
+          }
+        }
+      },
+      {
         "key": "guide:retrieval",
         "title": "一次提问如何找到答案：搜索、候选评估与上下文",
         "role": "article",
@@ -388,7 +432,8 @@
             "reason": "背景前提已有变化：可选只读服务及失败返回空判断决定主流程的降级语义。"
           },
           "investigate-gaps": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "背景前提已有变化：按子问题分别检索、独立候选池、共享上下文去重、显式范围和空结果边界决定补查方式。"
           },
           "write-the-answer": {
             "state": "current"
@@ -400,7 +445,7 @@
       }
     ],
     "restore": {
-      "stale": 9
+      "stale": 10
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -424,7 +469,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 1066,
+        "elapsedMs": 958,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -488,7 +533,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 604,
+        "elapsedMs": 733,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -556,7 +601,7 @@
         "passed": false,
         "firstExpectedRank": 14,
         "uniquePathsAt5": 5,
-        "elapsedMs": 588,
+        "elapsedMs": 652,
         "top5": [
           {
             "path": "docs/reader-first/current-system.md",
@@ -612,20 +657,20 @@
         ],
         "status": 200,
         "baselineTop5": [
+          "scripts/live-development.ts",
           "scripts/live-requirement-followup.ts",
           "scripts/live-native-knowledge-smoke.ts",
           "scripts/live-native-knowledge-smoke.ts",
-          "apps/server/src/knowledge/pipeline.ts",
-          "scripts/review-catalog.ts"
+          "apps/server/src/knowledge/pipeline.ts"
         ],
         "baselineUniquePathsAt5": 4,
         "passed": true,
         "firstExpectedRank": 4,
         "uniquePathsAt5": 4,
-        "elapsedMs": 186,
+        "elapsedMs": 227,
         "top5": [
           {
-            "path": "scripts/live-requirement-followup.ts",
+            "path": "scripts/live-development.ts",
             "routes": [
               "bm25",
               "purpose:balanced"
@@ -683,7 +728,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 137,
+        "elapsedMs": 170,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -749,7 +794,7 @@
         "passed": false,
         "firstExpectedRank": 7,
         "uniquePathsAt5": 5,
-        "elapsedMs": 572,
+        "elapsedMs": 658,
         "top5": [
           {
             "path": "design.md",
