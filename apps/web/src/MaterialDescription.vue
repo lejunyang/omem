@@ -19,6 +19,8 @@ const record = ref<MaterialDescriptionRecord | null>(null),
   draft = ref<MaterialDescription | null>(null);
 const error = ref(""),
   busy = ref(false),
+  queued = ref(false),
+  followed = ref(false),
   saving = ref(false),
   editing = ref(false),
   loaded = ref(false);
@@ -54,16 +56,20 @@ async function load(generation: number) {
   loaded.value = true;
 }
 async function poll(generation: number) {
+  clearTimeout(timer);
   try {
     const run = await knowledgeApi<{
+      enabled: boolean;
       state: string;
       revisionIds: string[];
       error?: string;
-    } | null>(props.prefix, "/description-run");
+    } | null>(props.prefix, "/description-run?revisionId=" + encodeURIComponent(props.revisionId));
     if (generation !== epoch) return;
+    followed.value = run?.enabled ?? false;
+    queued.value = run?.state === "queued";
     if (
       run?.revisionIds.includes(props.revisionId) &&
-      run.state === "running"
+      ["running", "queued"].includes(run.state)
     ) {
       busy.value = true;
       timer = setTimeout(() => void poll(generation), 2000);
@@ -72,8 +78,10 @@ async function poll(generation: number) {
     await load(generation);
     if (generation !== epoch) return;
     busy.value = false;
+    queued.value = false;
     if (run?.revisionIds.includes(props.revisionId) && run.state === "failed")
       error.value = run.error || "分析未完成，可重试";
+    if (props.current && followed.value) timer = setTimeout(() => void poll(generation), 3000);
   } catch (e) {
     if (generation === epoch) {
       busy.value = false;
@@ -92,6 +100,8 @@ watch(
     error.value = "";
     loaded.value = false;
     busy.value = false;
+    queued.value = false;
+    followed.value = false;
     try {
       await load(generation);
       if (generation === epoch) await poll(generation);
@@ -112,7 +122,7 @@ async function analyze() {
   try {
     await knowledgeApi(props.prefix, "/describe", {
       method: "POST",
-      body: JSON.stringify({ revisionIds: [props.revisionId] }),
+      body: JSON.stringify({ revisionIds: [props.revisionId], followUpdates: followed.value }),
     });
     if (generation === epoch) await poll(generation);
   } catch (e) {
@@ -120,6 +130,17 @@ async function analyze() {
       busy.value = false;
       error.value = String(e);
     }
+  }
+}
+async function follow(event: Event) {
+  const enabled = (event.target as HTMLInputElement).checked, generation = epoch;
+  try {
+    await knowledgeApi(props.prefix, "/description-maintenance/" + encodeURIComponent(props.revisionId), {
+      method: "PUT", body: JSON.stringify({ enabled }),
+    });
+    if (generation === epoch) { followed.value = enabled; error.value = ""; await poll(generation); }
+  } catch (e) {
+    if (generation === epoch) { error.value = String(e); (event.target as HTMLInputElement).checked = followed.value; }
   }
 }
 function edit() {
@@ -154,7 +175,7 @@ async function save() {
     <p v-if="!loaded && !error" role="status">正在读取材料说明…</p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="busy" role="status">
-      AI 正在阅读原文并整理用途与概念入口，可以继续阅读材料。
+      {{ queued ? "材料用途已排队整理，重启后会继续。" : "AI 正在阅读原文并整理用途与概念入口，可以继续阅读材料。" }}
     </p>
     <template v-if="record && !editing">
       <div class="description-actions">
@@ -313,14 +334,31 @@ async function save() {
         >{{ record ? "AI 重新分析" : "让 AI 分析用途" }}</OmButton
       >
     </div>
+    <label v-if="current && loaded" class="description-follow">
+      <input type="checkbox" :checked="followed" @change="follow" />
+      原文更新后自动重新整理用途
+    </label>
     <p class="muted description-note">
-      说明只用于阅读与检索；材料声明现行不等于已经核实为事实。原文换版后需要重新整理。
+      说明用于阅读与检索。自动整理只跟踪这份材料，需要可用的 Agent；新版会重新阅读和定位概念，保留旧说明和人工修正。
     </p>
   </OmDisclosure>
 </template>
 <style scoped>
 .material-description {
   margin: 24px 0;
+}
+.description-follow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  margin-top: 16px;
+}
+.description-follow input {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0;
 }
 .description-actions {
   display: flex;
