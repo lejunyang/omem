@@ -713,7 +713,7 @@ async function runDevelopment(
   if (!profile) throw Error("请先配置 ACP Agent");
   const store = new Store(config.dataDir),
     abort = new AbortController();
-  const stop = () => abort.abort();
+  const stop = () => { process.exitCode = 130; abort.abort(); };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   try {
@@ -1003,6 +1003,6 @@ try {
     console.error(
       json() ? JSON.stringify({ error: e.message }) : `omem: ${e.message}`,
     );
-    process.exitCode = 1;
+    if (process.exitCode !== 130) process.exitCode = 1;
   }
 }
