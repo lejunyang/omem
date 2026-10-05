@@ -7,7 +7,7 @@
 | 选择 | 具体进入现有项目的方式 | 替换什么／保留什么 | 状态 |
 | --- | --- | --- | --- |
 | DeepWiki 的页面地图与分层写作 | 在 `packages/contracts/src/knowledge.ts`、知识存储/API 中持久化页面目的、发布用途、目录关系；`writePage` 写正式文章，材料分析只产内部笔记，旧批次合成已移除 | 替换文件或计算批次直接进入目录；保留 Traex 自主调查和固定来源 | 核心实现和阅读界面已交付，三篇主题页已真实生成；最新实现变化后仍需维护正文 |
-| Docling 解析组件 | 增加可选解析 worker，输出结构块、标题、表格、页码/位置及解析版本；由 Capture 适配层保存原件和派生文本，再进入 `knowledge/structure.ts` 与检索投影 | 替换 PDF/Office/OCR 自研清洗；TS/Vue 和已有 Markdown 解析继续使用 | 未安装、未接入；Python/解析模型由 osdk 显式管理 |
+| Docling 解析组件 | 增加可选解析 worker，输出结构块、标题、表格、页码/位置及解析版本；由 Capture 适配层保存原件和派生文本，再进入 `knowledge/structure.ts` 与检索投影 | 替换 PDF/Office/OCR 自研清洗；TS/Vue 和已有 Markdown 解析继续使用 | 已接 PDF/DOCX 导入、原件/结构保留和阅读；Python/解析模型由 osdk 显式管理，OCR 未启用 |
 | Haystack 层级检索组件 | 通过 `RetrievalPort` 接组件适配，映射 `sourceId/revisionId/range/parentId`；候选只取叶子，回答上下文按父节点恢复 | 不复制另一套应用；SQLite 继续保存原件，组件索引是可重建投影 | 未安装该组件；已保存固定原文的父子结构和段落归属，助手补章节与上级引言，Agent 可按节点继续补读 |
 | Hindsight 持续综合理解 | 先接可选记忆读取/整合后端；输入原件、事件时间与元数据，返回带来源的观察和主题视图，供 Agent 补查 | 比较替换分散 claim 整合；原件版本和 MemoryService 的事实/事项应用权保留 | 0.10.2 + Traex/Sol 的连续保存、召回、回答及综合视图刷新已跑通合成场景；适配稳定性、时间细节与长期效果未通过，生产未接入 |
 | 公开评测实现 | MTRAG 用官方段落与标注，FreshStack 复用官方要点覆盖评价，LongMemEval 保留原始会话和 oracle 对照 | 替换“预期路径命中＝质量”的判断；工程 smoke 保留 | MTRAG Cloud、FreshStack Godot 和改造后完整中文 T2 词法已运行；LongMemEval 七类 oracle 小样本已比较直接 Sol 与 Hindsight，非长历史召回成绩 |
@@ -16,11 +16,11 @@
 
 ## 下一阶段的可见交付
 
-1. **文件导入后就能阅读原有结构。** 输入页支持上传 PDF、DOCX，继续支持飞书链接、文字、图片与仓库输入。原件先保存，解析后台进行；页面展示原章节目录、表格、图片以及页码定位，解析失败可查看原件并重试。Docling 负责复杂文件解析；`connectors.ts` 负责来源接入，新解析 worker 将结构块映射到 Capture/Revision，`contracts` 补原件页码与区域定位，`knowledge/structure.ts` 接父子关系。保留原文件、结构数据与阅读文本，不能只留下打平的 Markdown；聊天的说话人、时间和回复关系继续使用已有来源元数据。代码沿用 AST，并让 Agent 按功能调查调用方、配置和设计背景。
+1. **文件导入后就能阅读原有结构。** 首个切片已接 Docling 文字 PDF/DOCX，保留原件、结构、表格、插图与 PDF 页码；飞书正文由官方 `@larksuite/cli` 项目依赖读取。当前是带加载状态的请求内解析，成功后发布 Capture，失败可重试；后台持久导入任务、OCR、PDF 原页框选定位仍未完成。详见[实际导入流程](document-import.md)。代码沿用 AST，Agent 可按功能调查调用方、配置与背景。
 2. **多份材料能形成可编辑的知识地图。** 在现有 `ArticleComposer` 上增加按项目/主题整理整组材料的入口。先生成可编辑目录草案：每页说明读者问题、页面用途、已有材料与尚缺背景；用户可合并、移动和修改。由既有 `writePage` 写各页，已有文章优先更新；专题入口展示概览、常见任务、概念及深入阅读，章节模板按用途选择。分类、页面关系和固定引用分别保存，分类不再由文件名或引用图推导。第一版交付目录和数篇有用页面，不为达到统一篇数重写整库。
 3. **日常消息的处理结果可见。** 输入一段消息后，展示它记录了什么、是否改变既有约定、有没有事项，以及所属项目。日程、学习、工作知识可同时成立；快速分类只决定后续处理方式。明确任务进入既有 MemoryService，含糊事项显示具体缺口；消息更新合入已有事项。之后再加入待回复、今日跟进和学习卡片入口，外部消息监听另作显式集成。
 
-决策模型是三项能力共用的辅助层。首先接搜索后的逐段选材和入库的多标签建议；随后复用到父章节扩展、目录归属、重复/变更候选。不同判断使用独立输出和处理策略，不因记忆自动写入尚未可靠而阻止排序、分类建议等可撤销用途。具体模型用法和本机尝试见[快速决策](fast-decisions.md)。
+决策模型是三项能力共用的辅助层。StartLux 2B/4B 已接助手初始选材和原文页多标签建议；父章节主动扩展、目录归属、重复/变更候选尚未接入。不同判断使用独立输出和处理策略，不因记忆自动写入尚未可靠而阻止排序、分类建议等可撤销用途。具体模型用法和本机尝试见[快速决策](fast-decisions.md)。
 
 ### 页面规划：借用流程，不能照搬篇幅配额
 
@@ -30,7 +30,7 @@ omem 已有 `WikiPageBrief`，缺的不是继续加提示字段，而是让计�
 
 ### 结构解析与检索：先把适配数据说清楚
 
-[Docling chunking](https://docling-project.github.io/docling/concepts/chunking/) 能从结构文档产生带上下文的分块。适配器同时保存原件定位与派生文字定位；扫描文本不能伪造源码行号。解析配置和版本进入投影身份，重新解析不改旧引用。异步 worker 可独立重试，解析失败仍能查看原件，不要求全部用户安装这个可选能力。
+[Docling chunking](https://docling-project.github.io/docling/concepts/chunking/) 能从结构文档产生带上下文的分块。适配器同时保存原件定位与派生文字定位；扫描文本不能伪造源码行号。解析配置和版本进入投影身份，重新解析不改旧引用。当前解析请求失败可重试，但尚没有持久任务及失败原件入口；这些是后续改造，不是已交付能力。不要求全部用户安装这个可选解析能力。
 
 [Haystack HierarchicalDocumentSplitter](https://docs.haystack.deepset.ai/docs/hierarchicaldocumentsplitter) 与 [AutoMergingRetriever](https://docs.haystack.deepset.ai/docs/automergingretriever) 依赖明确父子 ID：若多个子块命中，可取父块作为完整语境。应先把这些元数据带入 `retrieval/units.ts` 的持久投影，保持完整章节/函数边界；通过组件适配返回候选后，再由 omem 校验原件身份与可见范围。不是在向量结果后随意多拼几行，也不要求为了使用组件先丢弃现有 SQLite。实际兼容的 DocumentStore 和组件版本要随适配锁定。
 
