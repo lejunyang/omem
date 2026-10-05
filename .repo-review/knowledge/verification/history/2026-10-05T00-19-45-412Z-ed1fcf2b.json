@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-04T22:07:09.891Z",
-  "implementationCommit": "4e0267e7eda9be5ff2d610fae5f5ebf95c97941c",
-  "sourceDigest": "c056ed78fd85df44c9e73306c20540e940093a4aa2bf1902951a8e60d7ff89ad",
+  "recordedAt": "2026-10-05T00:19:45.412Z",
+  "implementationCommit": "94dcd32beaef7a340ed5217f89127b311be3ed8c",
+  "sourceDigest": "5958ca076e64894f3cf63a6fb5220ea4d8f9b63c373811d7287a5f2ce8575e29",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T22-07-09-891Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-05T00-19-45-412Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T22-07-09-891Z/project.log",
-        "sha256": "e270b3bc59fb74733805f2841d3be2a9b5a2964d53c093e65c151ff91bc41d72"
+        "log": ".repo-review/runtime/verification/2026-10-05T00-19-45-412Z/project.log",
+        "sha256": "58fd4c476635fc1bc14fcf544ccccf976f339d7574923b3104bf28c1e8bded45"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-04T22-07-09-891Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-05T00-19-45-412Z/liveChineseRetrieval.log",
         "sha256": "610d62bb64795e9832332aa36374add55c271e33737635d71f1941c7de21c885"
       }
     },
@@ -52,8 +52,8 @@
       "state": "passed",
       "details": {
         "articles": 8,
-        "currentArticles": 3,
-        "citations": 236,
+        "currentArticles": 2,
+        "citations": 229,
         "errors": []
       }
     },
@@ -64,11 +64,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v6",
-        "units": 12915,
+        "units": 12998,
         "semantic": {
           "model": "structure-icu-v6:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 12915,
+          "indexed": 12998,
           "pending": 0,
           "error": null
         },
@@ -95,44 +95,47 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 651,
+    "materials": 657,
     "publishedPages": 8,
-    "currentPages": 3,
+    "currentPages": 2,
     "plannedPages": 0,
-    "citations": 236,
+    "citations": 229,
     "articleLinks": 0,
     "errors": [],
     "pages": [
       {
         "key": "guide:capture",
-        "title": "一份材料如何变成可检索、可追溯的知识",
+        "title": "一份材料的旅程：从导入到阅读与引用",
         "role": "article",
         "current": false,
         "sections": {
-          "example": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "entry": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "commit": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "retrieval": {
+          "walkthrough": {
             "state": "current"
           },
-          "branches": {
+          "capture-input": {
+            "state": "current"
+          },
+          "immutable-original": {
+            "state": "current"
+          },
+          "retrieval-projection": {
+            "state": "current"
+          },
+          "post-capture-branches": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "citations": {
+          "context-branch": {
+            "state": "current"
+          },
+          "pinned-citation": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "media-code": {
+          "images-and-code": {
+            "state": "current"
+          },
+          "change-map": {
             "state": "needs-review",
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           }
@@ -174,25 +177,30 @@
         "key": "guide:knowledge-agent",
         "title": "把材料写成一篇能用的文章",
         "role": "article",
-        "current": true,
+        "current": false,
         "sections": {
           "from-facts-to-page": {
             "state": "current"
           },
           "plan-purpose-and-scope": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "three-roles": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "reader-result": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "change-and-review": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "new-chat-loop": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           }
         }
       },
@@ -200,13 +208,15 @@
         "key": "guide:knowledge-maintenance",
         "title": "整理文章，以及原文更新后怎么处理",
         "role": "article",
-        "current": true,
+        "current": false,
         "sections": {
           "choose-scope": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "compose-article": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "wait-and-retry": {
             "state": "current"
@@ -215,10 +225,12 @@
             "state": "current"
           },
           "change-example": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "maintain-same-article": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           }
         }
       },
@@ -226,19 +238,23 @@
         "key": "guide:knowledge-reference",
         "title": "知识文章的状态、来源与修改入口",
         "role": "reference",
-        "current": true,
+        "current": false,
         "sections": {
           "status-axes": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "scope-classification": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "dynamic-lifecycle": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "evidence-visibility": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "asset-removal": {
             "state": "current"
@@ -249,28 +265,21 @@
         "key": "guide:memory",
         "title": "记住约定，跟进变化：一次活动从保存到提醒",
         "role": "article",
-        "current": false,
+        "current": true,
         "sections": {
-          "route": {
+          "save-and-find": {
             "state": "current"
           },
-          "save-find": {
+          "update-and-check": {
             "state": "current"
           },
-          "confirm-change": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：跨来源消息更新记忆所需的唯一项目范围、复核条件、自动归属限制以及事实与个人待办边界，会改变本节的第二条更新路径。"
-          },
-          "article-update": {
+          "article-maintenance": {
             "state": "current"
           },
-          "project-conversation": {
+          "continue-and-remind": {
             "state": "current"
           },
-          "create-reminder": {
-            "state": "current"
-          },
-          "finish": {
+          "finish-followup": {
             "state": "current"
           }
         }
@@ -313,7 +322,7 @@
         "key": "guide:retrieval",
         "title": "一次提问如何找到答案：搜索、上下文与 RAG",
         "role": "article",
-        "current": false,
+        "current": true,
         "sections": {
           "what-counts-as-an-answer": {
             "state": "current"
@@ -325,8 +334,7 @@
             "state": "current"
           },
           "investigate-gaps": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：项目目录、持久会话项目、首轮范围及其能力边界决定项目身份在调查中的作用。"
+            "state": "current"
           },
           "write-the-answer": {
             "state": "current"
@@ -338,8 +346,8 @@
       }
     ],
     "restore": {
-      "stale": 5,
-      "restored": 3
+      "stale": 6,
+      "restored": 2
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -361,9 +369,9 @@
         ],
         "baselineUniquePathsAt5": 3,
         "passed": false,
-        "firstExpectedRank": null,
+        "firstExpectedRank": 20,
         "uniquePathsAt5": 3,
-        "elapsedMs": 1588,
+        "elapsedMs": 874,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -427,7 +435,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 582,
+        "elapsedMs": 605,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -495,7 +503,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 558,
+        "elapsedMs": 583,
         "top5": [
           {
             "path": "docs/reader-first/assistant-memory-flow.md",
@@ -561,7 +569,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 4,
-        "elapsedMs": 158,
+        "elapsedMs": 178,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -622,7 +630,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 130,
+        "elapsedMs": 160,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -688,7 +696,7 @@
         "passed": false,
         "firstExpectedRank": 8,
         "uniquePathsAt5": 5,
-        "elapsedMs": 611,
+        "elapsedMs": 562,
         "top5": [
           {
             "path": "design.md",
