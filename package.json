@@ -86,6 +86,8 @@
     "scripts/package-check.mjs",
     "skills",
     "docs/cli.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/reader-first/data-lifecycle.md",
+    "docs/reader-first/requirement-followup.md"
   ]
 }

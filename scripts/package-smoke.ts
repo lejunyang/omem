@@ -88,6 +88,8 @@ try {
     [],
     ["--help"],
     ["messages", "--help"],
+    ["data", "archive", "--help"],
+    ["requirements", "track", "--help"],
     ["knowledge", "write", "--help"],
     ["--version"],
   ])
@@ -111,7 +113,7 @@ try {
     [
       "--input-type=module",
       "-e",
-      `const {RoleBundleRegistry}=await import(${JSON.stringify(importPath)}); const r=new RoleBundleRegistry(); r.load('daily-assistant'); r.load('knowledge-researcher'); r.load('knowledge-writer'); r.load('knowledge-verifier');`,
+      `const {RoleBundleRegistry}=await import(${JSON.stringify(importPath)}); const r=new RoleBundleRegistry(); r.load('daily-assistant'); r.load('knowledge-researcher'); r.load('knowledge-writer'); r.load('knowledge-verifier'); r.load('requirement-tracker'); r.load('implementation-planner');`,
     ],
     { cwd, env },
   );
@@ -139,6 +141,26 @@ try {
     "--json",
   ]);
   await cli(["doctor", "--json"]);
+  const scope = JSON.parse(
+    (await cli([
+      "contexts",
+      "create",
+      "发布项目",
+      "--description",
+      "发布约定",
+      "--json",
+    ])) as string,
+  );
+  assert(scope.id);
+  assert.deepEqual(
+    JSON.parse((await cli(["requirements", "list", "--json"])) as string),
+    [],
+  );
+  assert.equal(
+    ((await cli(["data", "backup", join(temp, "busy-backup")], false)) as any)
+      .code,
+    1,
+  );
   if (taskFlag("agent")) {
     console.log("Checking installed CLI with real Traex ACP / gpt-5.6-sol...");
     const answer = JSON.parse(
@@ -160,6 +182,24 @@ try {
   await cli(["service", "stop", "--json"]);
   const stopped = (await cli(["service", "status", "--json"], false)) as any;
   assert.equal(stopped.code, 1);
+  const backup = join(temp, "backup"),
+    restored = join(temp, "restored");
+  await cli(["data", "backup", backup, "--json"]);
+  await cli(["data", "restore", backup, "--to", restored, "--json"]);
+  const storage = JSON.parse(
+    (await cli(["--data-dir", restored, "data", "info", "--json"])) as string,
+  );
+  assert(storage.database.counts.sources >= 2);
+  await cli([
+    "data",
+    "archive",
+    "--before",
+    "2020-01-01",
+    "--to",
+    join(temp, "cold"),
+    "--apply",
+    "--json",
+  ]);
   console.log(
     JSON.stringify(
       {
@@ -176,6 +216,9 @@ try {
           "file/text capture",
           "Chinese search",
           "collector remains disabled",
+          "requirement roles and project CLI",
+          "live-library maintenance refusal",
+          "offline backup, restore and cold-store setup",
         ],
       },
       null,

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "role_id": "implementation-planner",
+  "role_version": "1",
+  "profile_ref": "traex",
+  "prompt_templates": [
+    "prompt.md"
+  ],
+  "skill_bundles": [
+    {
+      "canonical_name": "omem-knowledge-writer",
+      "version": "1",
+      "load_mode": "inline",
+      "artifact_digest": "76bec3c27320ae91a7a7ac520a5dc2d6f49308a0c9fdb69a83e7b83343f51d64"
+    }
+  ],
+  "output_schema": "KnowledgeBatch.v1",
+  "tool_policy": {
+    "mode": "none",
+    "allowed_tools": []
+  },
+  "session_policy": {
+    "reuse": "never",
+    "inherit_user_skills": false,
+    "inherit_user_mcp": false
+  },
+  "budget": {
+    "max_context_tokens": 96000,
+    "max_output_tokens": 24000,
+    "max_repair_attempts": 2
+  }
+}

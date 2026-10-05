@@ -419,3 +419,7 @@ run = "bun scripts/package-smoke.ts"
 
 [tasks."package:verify".flags.agent]
 help = "Also exercise installed ask using the real configured Agent (consumes model calls)"
+
+[tasks."requirements:verify"]
+run = [{ argv = ["bun", "scripts/live-requirement-followup.ts"] }]
+description = "Verify cross-source requirement follow-up with real Traex ACP / Sol on synthetic materials"

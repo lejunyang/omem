@@ -50,6 +50,8 @@ omem status --json
 
 ## 保存、搜索和提问
 
+新增 `omem data info/backup/restore/migrate/archive/prune` 管理本机个人库。`archive/prune` 默认预览，`--apply` 才执行；备份/归档前停止服务及前台开发进程。指定新目录恢复，不覆盖原库。冷存储保留固定 ID，消息游标和去重状态仍在热库。完整目录、保留内容及命令见[个人库与冷存储](reader-first/data-lifecycle.md)。
+
 ```bash
 omem import file ./会议记录.md
 omem import git ./project src/main.ts --ref HEAD
@@ -110,6 +112,8 @@ omem jobs cancel JOB_ID
 若希望每份新材料自动整理记忆，将配置 `learning.enabled` 改为 true，确认 `learning.profileId` 后重启。这会使用 Agent；仅安装或 `init` 不默认启动这类调用。主动整理文章是单独的显式请求。
 
 ## 个人飞书消息和机器人
+
+需求跟进可用 `contexts create/assign` 明确项目范围，然后 `requirements track '名称' --goal '交付目标' --context PROJECT_ID --watch`。`requirements list/show` 查看状态和正文，`handoff KEY --to NEW_DIRECTORY` 导出实现交接。该流程综合需求、群聊、纪要与代码，生成验收/进度/实现建议；不会直接改目标仓库。用法和当前限制见[需求跟进](reader-first/requirement-followup.md)。
 
 ```bash
 omem lark login

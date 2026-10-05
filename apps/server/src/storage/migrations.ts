@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 25;
+export const SUPPORTED_SCHEMA_VERSION = 26;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -1052,6 +1052,13 @@ const personalLarkStatements = [
   `CREATE INDEX personal_lark_messages_time ON personal_lark_messages(observed_at)`,
 ] as const;
 
+const storageLifecycleStatements = [
+  "ALTER TABLE personal_lark_messages ADD COLUMN cold_payload TEXT",
+  "ALTER TABLE personal_lark_streams ADD COLUMN last_batch TEXT",
+  `CREATE INDEX personal_lark_messages_chat_time ON personal_lark_messages(chat_id,observed_at)`,
+  `CREATE TABLE lark_resource_cache(key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at TEXT NOT NULL)`,
+] as const;
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -1153,6 +1160,7 @@ const migrations: readonly Migration[] = [
   { version: 23, name: "assistant-project-context", statements: assistantProjectStatements, checksum: checksum(assistantProjectStatements) },
   { version: 24, name: "staged-role-outputs", statements: stagedRoleOutputStatements, checksum: checksum(stagedRoleOutputStatements) },
   { version: 25, name: "personal-lark-collection", statements: personalLarkStatements, checksum: checksum(personalLarkStatements) },
+  { version: 26, name: "storage-lifecycle-and-message-cache", statements: storageLifecycleStatements, checksum: checksum(storageLifecycleStatements) },
 ];
 
 const legacyV1Checksum = createHash("sha256")

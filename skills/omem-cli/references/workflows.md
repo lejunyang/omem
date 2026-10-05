@@ -56,6 +56,12 @@ inbox 返回消息、资源与处理状态；资源缺失时先补读或说明�
 
 ## 故障与可选能力
 
+需求：`contexts list/create/assign` 管理材料范围；`requirements track '名称' --goal '验收目标' --context ID --watch` 开始持续调查。`requirements list` 的 maintenance 状态为 published 后用 show 阅读。新材料只有归属该范围后才进入调查，别把未归属、待判断的消息算作已调查。`requirements handoff KEY --to NEW_DIRECTORY` 导出 TASK.md 和固定文本；编码前另行检查目标仓库当前版本和用户授权。不能把提议当决定或代码存在当上线。
+
+数据：`data info` 显示热/冷占用；停止对应服务及前台进程后 `data backup NEW_DIRECTORY`。`data restore BACKUP --to NEW_DIRECTORY` 先校验，不覆盖。`data migrate --to NEW_DIRECTORY` 保留原库。`data archive --before YYYY-MM-DD --to COLD_DIRECTORY` 默认预览；范围符合请求再加 --apply，可加 --compact 回收 SQLite 空页。`data prune --before DATE` 仅预览已完成的临时 Agent 目录，--apply 才删除。环境变量密钥、第三方登录与可重装模型不在数据备份里。
+
+个人消息按持久游标增量拉取和摘要去重；status 的 last_batch 可查看最近窗口和复用数。文档链接十分钟缓存，附件字节三十天缓存；显式消息重试绕过缓存。缓存过期不删除已捕获原件。
+
 - 无法连接：检查 --url、端口和 `service status`，区分目标 API 和本机 PM2。
 - Agent 不可用：`agent probe` 读取真实可用模型/思考强度；不要猜参数。检查配置文件后 `config validate`。
 - Sol 超时：idleTimeoutMs 为连续无活动时限，默认 Sol 480000 ms；旧 timeoutMs 兼容同义，maxDurationMs 才是可选总时限。stderr 日志不算模型活动。

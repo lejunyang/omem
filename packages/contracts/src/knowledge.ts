@@ -62,6 +62,7 @@ export const knowledgePlanSchema = z.object({
 }).strict();
 
 export const wikiPageBriefSchema = z.object({
+  workflow: z.enum(["requirement-followup"]).optional(),
   key, title: z.string(), order: z.number().int().nonnegative(),
   kind: z.enum(["tutorial", "explanation", "how-to", "reference"]),
   reader: z.string(), goal: z.string(), scenario: z.string(),
