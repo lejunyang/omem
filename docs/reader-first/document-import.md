@@ -25,7 +25,7 @@ osdk run dev
 | 原件 | `imports/documents.ts` 将原字节按 SHA256 保存为附件，与 Source/Revision 关联；旧版附件不被新导入覆盖 |
 | 解析 | `scripts/document-parser/convert.py` 使用锁定的 Docling 2.133.0；保存完整 DoclingDocument、顺序块、标题层级、表格、图片，以及 PDF 页码和坐标 |
 | 阅读 | `DocumentReading.vue` 按原顺序渲染；图片请求受具体 revision 的附件清单约束，下载原件带用户会话认证 |
-| 检索与写作 | Docling 导出的 Markdown 进入现有 Capture、结构切分和 RetrievalPort；不是建立第二个文件库。Agent 可继续读固定正文 |
+| 检索与写作 | Docling 导出的 Markdown 进入现有 Capture、结构切分和 RetrievalPort；不是建立第二个文件库。Agent 可继续读固定正文；结构附件中的插图目前供页面阅读，尚未映射到 Agent 的视觉材料列表 |
 | 飞书 | `connectors.ts` 解析项目内官方 CLI 的固定包路径，执行 `docs +fetch`，保留 URL、文档身份、修订和原始响应 |
 | 环境 | Python / uv 由 osdk 管理；包版本由独立 `uv.lock` 固定；布局和表格权重由 `osdk.toml` / `osdk.lock` 管理。正常导入不下载依赖或权重 |
 
@@ -35,7 +35,7 @@ osdk run dev
 
 - 本机真实转换了中文 DOCX 和文字 PDF。DOCX 的标题与表格保留；PDF 保留页码/区域，样本中无边框表格被识别成文字，不能声称所有表格都正确。
 - 实际 `dev` 页面上传了明确标注为验收用途的 DOCX，原始材料页显示正文、表格和插图。
-- OCR 当前关闭，纯扫描件会提示缺少可读正文；复杂版式、扫描件和跨页表格没有完成验收。
+- OCR 当前关闭，图内文字不会自动识别，解析没有正文时会报错；图片占主导的扫描件、复杂版式和跨页表格没有完成验收。
 - 原文阅读保留结构不等于生成了易懂的 Wiki。后续知识组织仍应先明确页面问题，再由 Agent 选材、补背景和写作。
 
 下一步扩展持久导入任务和 OCR，再把页码/区域接到引用阅读；不重新实现 Docling 的布局识别。上游的数据结构见 [DoclingDocument](https://docling-project.github.io/docling/concepts/docling_document/)，官方飞书工具见 [larksuite/cli](https://github.com/larksuite/cli)。
