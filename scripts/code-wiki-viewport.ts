@@ -3,7 +3,7 @@
 import { chromium, expect } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 const BASE = process.env.OMEM_WEB_URL || "http://127.0.0.1:5173";
-const OUT = ".repo-review/runtime/browser";
+const OUT = process.env.OMEM_BROWSER_OUT || ".repo-review/runtime/browser";
 mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch({ headless: true, ...(process.env.OMEM_CHROMIUM ? { executablePath: process.env.OMEM_CHROMIUM } : {}) });
 const checks: string[] = [], errors: string[] = [];
@@ -13,6 +13,27 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on("pageerror", e => errors.push(e.message));
   await page.goto(BASE);
+  if (process.env.OMEM_MESSAGES_ONLY === "1") {
+    await page.goto(BASE + "/#/messages");
+    await expect(page.getByRole("heading",{name:"飞书消息",exact:true})).toBeVisible();
+    await expect(page.getByRole("checkbox",{name:"开启定时采集"})).not.toBeChecked();
+    await page.getByRole("button",{name:"读取最近活跃会话"}).click();
+    await expect(page.locator(".stream").first()).toBeVisible({timeout:90000});
+    const first=page.locator(".stream").first();
+    await first.getByRole("combobox").selectOption("watch");
+    await expect(first.getByRole("combobox")).toHaveValue("watch");
+    await first.getByRole("combobox").selectOption("off");
+    await page.getByRole("button",{name:"保存设置",exact:true}).click();
+    await expect(page.getByRole("status")).toContainText("已暂停");
+    for (const width of [1440,768,390]) {
+      await page.setViewportSize({width,height:1000});
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await page.screenshot({path:`${OUT}/messages-${width}.png`,fullPage:false});
+    }
+    expect(errors).toEqual([]);
+    console.log("PASS real personal-message discovery, subscriptions, paused settings and three viewports");
+    await browser.close();process.exit(0);
+  }
   if (process.env.OMEM_DOCUMENT_TITLE) {
     await check("imported document retains headings, table, image and original download", async () => {
       await page.getByRole("button", { name: "原始材料", exact: true }).click();
