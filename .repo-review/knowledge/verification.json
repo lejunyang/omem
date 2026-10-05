@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-05T13:35:46.336Z",
-  "implementationCommit": "0627b7d28f5e7902e72621e05888058be911626f",
-  "sourceDigest": "49205f3480f37b9ca20baad3477a08058185630e9ddd4ef17ca668cea0481398",
+  "recordedAt": "2026-10-05T14:52:18.781Z",
+  "implementationCommit": "182448df768ff32a76faa7703da38b74a30bf58f",
+  "sourceDigest": "02cd941b359f41c20e46a51b7caf231b3dafc192b69e365ae63d8ba4183aff5b",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-05T13-35-46-336Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-05T14-52-18-781Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-05T13-35-46-336Z/project.log",
-        "sha256": "d4dee46c2eb587bf6ae495a1cdf963f00b3e8f74e17c063f884397eaccf3aefd"
+        "log": ".repo-review/runtime/verification/2026-10-05T14-52-18-781Z/project.log",
+        "sha256": "a3e0ef7141d26642e130372bc21469c33c00e07bc17e1f67ef347b981703d1f5"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-05T13-35-46-336Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-05T14-52-18-781Z/liveChineseRetrieval.log",
         "sha256": "c633cc8b3935a685907f142b4f178e7f9fd00ac994d0edc6ef224a195357b1e8"
       }
     },
@@ -51,9 +51,9 @@
       "name": "publishedKnowledgeReferences",
       "state": "passed",
       "details": {
-        "articles": 8,
+        "articles": 9,
         "currentArticles": 1,
-        "citations": 232,
+        "citations": 262,
         "errors": []
       }
     },
@@ -64,11 +64,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v7",
-        "units": 13592,
+        "units": 13833,
         "semantic": {
           "model": "structure-icu-v7:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 13592,
+          "indexed": 13833,
           "pending": 0,
           "error": null
         },
@@ -95,11 +95,11 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 688,
-    "publishedPages": 8,
+    "materials": 702,
+    "publishedPages": 9,
     "currentPages": 1,
-    "plannedPages": 1,
-    "citations": 232,
+    "plannedPages": 0,
+    "citations": 262,
     "articleLinks": 0,
     "errors": [],
     "pages": [
@@ -115,14 +115,15 @@
           },
           "capture-input": {
             "state": "needs-review",
-            "reason": "背景前提已有变化：文件、文档、Git 和飞书路由都在适配成功后调用同一 store.capture。"
+            "reason": "背景前提已有变化：文档类型、大小、准备条件、解析成功边界和 CaptureInput 投影会改变本节。"
           },
           "immutable-original": {
             "state": "needs-review",
             "reason": "背景前提已有变化：网页文档每次选取生成随机 documentIdentity，决定同一文件是否自然续成 V2。"
           },
           "retrieval-projection": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "post-capture-branches": {
             "state": "needs-review",
@@ -327,10 +328,45 @@
         }
       },
       {
+        "key": "guide:personal-messages",
+        "title": "让飞书消息进入个人助理：订阅、读材料与跟进",
+        "role": "article",
+        "current": true,
+        "sections": {
+          "start": {
+            "state": "current"
+          },
+          "setup": {
+            "state": "current"
+          },
+          "selection": {
+            "state": "current"
+          },
+          "materials": {
+            "state": "current"
+          },
+          "decision": {
+            "state": "current"
+          },
+          "notifications": {
+            "state": "current"
+          },
+          "service": {
+            "state": "current"
+          },
+          "timeout": {
+            "state": "current"
+          },
+          "checklist": {
+            "state": "current"
+          }
+        }
+      },
+      {
         "key": "guide:retrieval",
         "title": "一次提问如何找到答案：搜索、候选评估与上下文",
         "role": "article",
-        "current": true,
+        "current": false,
         "sections": {
           "what-counts-as-an-answer": {
             "state": "current"
@@ -339,7 +375,8 @@
             "state": "current"
           },
           "select-and-restore-context": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "背景前提已有变化：可选只读服务及失败返回空判断决定主流程的降级语义。"
           },
           "investigate-gaps": {
             "state": "current"
@@ -354,7 +391,7 @@
       }
     ],
     "restore": {
-      "stale": 7,
+      "stale": 8,
       "restored": 1
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
@@ -379,7 +416,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 930,
+        "elapsedMs": 1689,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -435,15 +472,15 @@
         "baselineTop5": [
           "docs/reader-first/operations.md",
           "docs/reader-first/operations.md",
-          ".agents/skills/osdk-guide/reference/configuration/models.md",
           ".claude/skills/osdk-guide/reference/configuration/models.md",
-          ".agents/skills/osdk-guide/reference/model/guide.md"
+          ".agents/skills/osdk-guide/reference/configuration/models.md",
+          "docs/cli.md"
         ],
         "baselineUniquePathsAt5": 4,
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 664,
+        "elapsedMs": 608,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -464,13 +501,22 @@
             "snippet": "本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / "
           },
           {
-            "path": ".agents/skills/osdk-guide/reference/configuration/models.md",
+            "path": ".claude/skills/osdk-guide/reference/configuration/models.md",
             "routes": [
               "bm25",
               "semantic",
               "purpose:balanced"
             ],
             "snippet": "`model use` 的 reference/include/exclude/variant/kind/family/derived_from/endpoint 会写入同名声明；`sync` 会识别这些字段的变化。模型配置不触发\n任何信任要求：模型字节是内容，osdk 不执行它们，下载仍按锁定摘要校验。`model "
+          },
+          {
+            "path": "docs/cli.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "- documents 安装锁定的 Docling Python 环境；document-models 下载锁定的 PDF 布局和表格模型。\n- embedding 下载中文向量模型，之后设置 `retrieval.enabled:true` 并重启。\n- decisions 下载 StartLux 2B/4B 并准备"
           },
           {
             "path": ".agents/skills/osdk-guide/reference/model/guide.md",
@@ -480,15 +526,6 @@
               "purpose:balanced"
             ],
             "snippet": "不要手写 OSDK 受管模型声明；使用 `model use/unuse`。`model import` 只创建当前机器的本地快照，不写声明或 lock，并拒绝链接/reparse point 与特殊文件。`install` 不会隐式下载模型。Civitai 引用必须是精确的 `civitai:<model-id>@<"
-          },
-          {
-            "path": "docs/reader-first/personal-messages.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "复用 StartLux 2B/4B 共用服务，`decisions.mode=auto` 根据机器内存余量与负载选择一份常驻模型；不运行时下载模型。查看[准备方法和实测](fast-decisions.md)。"
           }
         ]
       },
@@ -511,7 +548,7 @@
         "passed": false,
         "firstExpectedRank": 14,
         "uniquePathsAt5": 5,
-        "elapsedMs": 599,
+        "elapsedMs": 617,
         "top5": [
           {
             "path": "docs/reader-first/current-system.md",
@@ -577,7 +614,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 4,
-        "elapsedMs": 219,
+        "elapsedMs": 230,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -638,7 +675,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 153,
+        "elapsedMs": 217,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -704,7 +741,7 @@
         "passed": false,
         "firstExpectedRank": 7,
         "uniquePathsAt5": 5,
-        "elapsedMs": 659,
+        "elapsedMs": 646,
         "top5": [
           {
             "path": "design.md",
