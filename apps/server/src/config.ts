@@ -1,4 +1,5 @@
 import { retrievalConfigSchema } from "./retrieval/factory.js";
+import { decisionConfigSchema } from "./decision/service.js";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { z } from "zod";
@@ -61,6 +62,7 @@ const schema = z
         },
       }),
     retrieval: retrievalConfigSchema.optional(),
+    decisions: decisionConfigSchema.optional(),
     captureRoots: z.array(z.string()).default([]),
     learning: z
       .object({

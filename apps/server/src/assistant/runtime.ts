@@ -1,5 +1,7 @@
 import { evidenceNeighbors, evidenceSection } from "../retrieval/context.js";
 import { assembleAnswerContext, mergeBackground } from "./context.js";
+import type { DecisionService } from "../decision/service.js";
+import { assessPassages } from "../decision/passages.js";
 import { evidenceForRange } from "./research.js";
 import { materialFromRevision } from "../knowledge/repository.js";
 import { sourceAnchor } from "../retrieval/units.js";
@@ -313,6 +315,7 @@ export class AssistantRuntime {
       memory?: MemoryService;
       feedback?: FeedbackService;
       retrieval?: RetrievalPort;
+      decisions?: DecisionService;
       visibilityPolicy?: VisibilityPolicy;
       /** Hard wall-clock per turn; the model call is aborted after this. */
       turnTimeoutMs?: number;
@@ -992,7 +995,10 @@ export class AssistantRuntime {
       purpose,
       visible,
     });
-    return assembleAnswerContext(this.store, hits, visible);
+    const selected = this.options.decisions
+      ? await assessPassages(this.options.decisions, userText, hits)
+      : { hits };
+    return assembleAnswerContext(this.store, selected.hits, visible);
   }
 
   private async retrieveEvidence(

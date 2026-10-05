@@ -3,7 +3,9 @@
     "enabled": true,
     "osdkModel": "memory-zh"
   },
-  "assistant": { "profileId": "traex" },
+  "assistant": {
+    "profileId": "traex"
+  },
   "profiles": [
     {
       "id": "traex",
@@ -27,7 +29,12 @@
       "name": "TraeX · 日常问答",
       "transport": "acp",
       "command": "traex",
-      "args": ["-c", "sandbox_mode=\"read-only\"", "acp", "serve"],
+      "args": [
+        "-c",
+        "sandbox_mode=\"read-only\"",
+        "acp",
+        "serve"
+      ],
       "model": "gpt-5.6-luna",
       "effort": "medium",
       "timeoutMs": 300000
@@ -37,7 +44,12 @@
       "name": "TraeX · 先读材料作答",
       "transport": "acp",
       "command": "traex",
-      "args": ["-c", "sandbox_mode=\"read-only\"", "acp", "serve"],
+      "args": [
+        "-c",
+        "sandbox_mode=\"read-only\"",
+        "acp",
+        "serve"
+      ],
       "model": "gpt-5.6-sol",
       "effort": "low",
       "timeoutMs": 480000
@@ -73,5 +85,8 @@
     "enabled": false,
     "pollMs": 1000
   },
-  "captureRoots": []
+  "captureRoots": [],
+  "decisions": {
+    "mode": "auto"
+  }
 }
