@@ -147,8 +147,16 @@ export class KnowledgeRepository {
     this.store.db.prepare(`INSERT INTO knowledge_pages VALUES(?,?,?,'planned',NULL,?) ON CONFLICT(document_key)
       DO UPDATE SET role=excluded.role,plan=excluded.plan,state=CASE WHEN knowledge_pages.state='retired' THEN 'planned' ELSE knowledge_pages.state END,updated_at=excluded.updated_at`)
       .run(brief.key, brief.kind === "reference" ? "reference" : "article", JSON.stringify(brief), new Date().toISOString());
-    if (this.get(brief.key) && stableDigest(previous ?? null) !== stableDigest(brief)) {
-      this.store.db.prepare("INSERT OR REPLACE INTO knowledge_invalidations VALUES(?,?)").run(brief.key, "材料范围或阅读目标已调整，等待重新整理");
+    const published = this.get(brief.key);
+    const planReason = "材料范围或阅读目标已调整，等待重新整理";
+    if (published?.reading && stableDigest(published.reading) === stableDigest(brief)) {
+      // An imported, independently reviewed revision may already implement the
+      // new plan even when some original sources have since changed. Clear only
+      // the satisfied plan change; source review and user feedback still apply.
+      const cleared = this.store.db.prepare("DELETE FROM knowledge_invalidations WHERE document_key=? AND reason=?").run(brief.key, planReason);
+      if (cleared.changes) this.refresh();
+    } else if (published && stableDigest(previous ?? null) !== stableDigest(brief)) {
+      this.store.db.prepare("INSERT OR REPLACE INTO knowledge_invalidations VALUES(?,?)").run(brief.key, planReason);
       this.refresh();
     }
   }
