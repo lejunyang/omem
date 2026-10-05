@@ -721,6 +721,8 @@ export const roleIdSchema = z.enum([
   "visual-analyst",
   "requirement-tracker",
   "implementation-planner",
+  "coding-agent",
+  "code-reviewer",
   "knowledge-researcher",
   "knowledge-planner",
   "knowledge-writer",
@@ -757,6 +759,8 @@ export const roleManifestSchema = z
       )
       .max(10),
     output_schema: z.enum([
+      "ImplementationResult.v1",
+      "ImplementationReview.v1",
       "ContextResolution.v1",
       "AnswerReview.v1",
       "MaterialDescriptions.v1",

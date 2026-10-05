@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 26;
+export const SUPPORTED_SCHEMA_VERSION = 27;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -1059,6 +1059,13 @@ const storageLifecycleStatements = [
   `CREATE TABLE lark_resource_cache(key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at TEXT NOT NULL)`,
 ] as const;
 
+const requirementTaskStatements = [
+  `CREATE TABLE requirement_tasks(page_key TEXT NOT NULL, action_id TEXT NOT NULL,
+    task_id TEXT, task_version INTEGER, action_digest TEXT, article_revision TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1, error TEXT, updated_at TEXT NOT NULL,
+    PRIMARY KEY(page_key,action_id))`,
+] as const;
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -1161,6 +1168,7 @@ const migrations: readonly Migration[] = [
   { version: 24, name: "staged-role-outputs", statements: stagedRoleOutputStatements, checksum: checksum(stagedRoleOutputStatements) },
   { version: 25, name: "personal-lark-collection", statements: personalLarkStatements, checksum: checksum(personalLarkStatements) },
   { version: 26, name: "storage-lifecycle-and-message-cache", statements: storageLifecycleStatements, checksum: checksum(storageLifecycleStatements) },
+  { version: 27, name: "requirement-follow-up-tasks", statements: requirementTaskStatements, checksum: checksum(requirementTaskStatements) },
 ];
 
 const legacyV1Checksum = createHash("sha256")

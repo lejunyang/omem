@@ -71,5 +71,6 @@ export function requirementHandoff(
     citations,
     materials,
     questions: article.document.questions,
+    requirement: article.document.requirement,
   };
 }

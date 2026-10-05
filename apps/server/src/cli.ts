@@ -621,6 +621,142 @@ requirements
       `交接材料：${dest}/TASK.md\n${value.current ? "固定快照已导出；开工前仍需核对实际仓库。" : "材料已有变化，请先复查再实现。"}`,
     );
   });
+requirements
+  .command("board <key>")
+  .description("查看结构化验收项、行动项及关联待办")
+  .action(async (key) => show(await api(`/api/requirements/${enc(key)}`)));
+requirements
+  .command("follow <key> <action-id>")
+  .description("跟进明确行动项；创建个人待办并随已复核需求更新")
+  .action(async (key, actionId) => {
+    const board = await api(`/api/requirements/${enc(key)}`);
+    show(
+      await api(
+        `/api/requirements/${enc(key)}/actions/${enc(actionId)}/follow`,
+        { expectedRevision: board.revision },
+      ),
+    );
+  });
+requirements
+  .command("unfollow <key> <action-id>")
+  .description("停止自动同步，保留已有待办")
+  .action(async (key, actionId) =>
+    show(
+      await api(
+        `/api/requirements/${enc(key)}/actions/${enc(actionId)}/follow`,
+        undefined,
+        "DELETE",
+      ),
+    ),
+  );
+import { formatDevelopmentRun } from "./development/format.js";
+const develop = group(
+  "develop",
+  "按需求实施代码、运行项目检查、独立评审与回修",
+).addHelpText(
+  "after",
+  `
+本地编码：读取本个人库中的需求和登记仓库；不接受远程 --url。修改发生在独立 Git 副本，原工作区保留。
+先登记项目 JSON：{name,repository,instructions?,ruleFiles?,commands:[{name,command,args,purpose,required?}]}。
+purpose 可为 setup/test/build/browser/design。只运行明确登记的命令；请包含项目必要的依赖准备和验收。
+start/resume 前台运行，活动超时按 Agent 配置；中断后可 resume。最多三轮编码与独立评审。
+ready 表示本轮检查和 Agent 评审通过，apply 才把补丁应用到原工作区；不提交、不推送、不部署。
+`,
+);
+async function developmentRunner() {
+  if (process.env.OMEM_URL)
+    throw Error("develop 在本机个人库和仓库运行，不能使用 --url/OMEM_URL");
+  const { DevelopmentRunner } = await import("./development/runner.js");
+  return new DevelopmentRunner(defaultDataDir());
+}
+develop
+  .command("register <alias> <config-file>")
+  .description("登记目标仓库、项目规则与允许运行的检查命令")
+  .action(async (alias, file) =>
+    show(
+      await (await developmentRunner()).register(alias, await readJson(file)),
+    ),
+  );
+develop
+  .command("projects")
+  .description("查看已登记编码项目")
+  .action(async () => show((await developmentRunner()).projects()));
+develop
+  .command("list")
+  .description("查看编码任务和结果目录")
+  .action(async () => {
+    const runs = (await developmentRunner()).list();
+    show(
+      runs,
+      runs.length
+        ? runs.map(formatDevelopmentRun).join("\n\n")
+        : "还没有编码任务。先用 omem develop register 登记项目。",
+    );
+  });
+develop
+  .command("show <id>")
+  .description("查看状态、失败原因、实际检查与评审问题")
+  .action(async (id) => {
+    const run = (await developmentRunner()).read(id);
+    show(run, formatDevelopmentRun(run));
+  });
+async function runDevelopment(
+  id: string | undefined,
+  key: string | undefined,
+  alias: string | undefined,
+) {
+  const runner = await developmentRunner();
+  const { loadConfig, assistantProfile } = await import("./config.js");
+  const { Store } = await import("./store.js");
+  const config = loadConfig(),
+    profile = assistantProfile(config);
+  if (!profile) throw Error("请先配置 ACP Agent");
+  const store = new Store(config.dataDir),
+    abort = new AbortController();
+  const stop = () => abort.abort();
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  try {
+    const run = id ? runner.read(id) : await runner.create(alias!, key!, store);
+    console.error(`开发任务 ${run.id}；目录 ${run.directory}`);
+    const result = await runner.execute(run.id, store, profile, {
+      signal: abort.signal,
+      log: (s) => console.error(s),
+    });
+    show(result, formatDevelopmentRun(result));
+    if (result.state !== "ready") process.exitCode = 1;
+  } finally {
+    process.removeListener("SIGINT", stop);
+    process.removeListener("SIGTERM", stop);
+    store.close();
+  }
+}
+develop
+  .command("start <requirement-key>")
+  .requiredOption("--project <alias>", "已登记项目别名")
+  .description("从当前需求与干净仓库创建独立副本并开始编码")
+  .action(async (key, opts) => runDevelopment(undefined, key, opts.project));
+develop
+  .command("resume <id>")
+  .description("保留代码和问题，从中断/受阻状态继续一轮实现与独立评审")
+  .action(async (id) => runDevelopment(id, undefined, undefined));
+develop
+  .command("diff <id>")
+  .description("输出当前编码任务相对原仓库的差异")
+  .action(async (id) => {
+    const runner = await developmentRunner(),
+      run = runner.read(id),
+      { git } = await import("./development/workspace.js");
+    const diff = await git(run.checkout, "diff", run.base, "--");
+    show({ diff }, diff);
+  });
+develop
+  .command("apply <id>")
+  .description("将已评审补丁应用到仍位于原版本的干净工作区，保留未提交供检查")
+  .action(async (id) => {
+    const run = await (await developmentRunner()).apply(id);
+    show(run, formatDevelopmentRun(run));
+  });
 const knowledge = group("knowledge", "查看知识与材料；按阅读目标提交写作任务");
 read(knowledge, "list", "列出文章、选材及处理状态", "/api/knowledge/articles");
 knowledge

@@ -1,3 +1,4 @@
+import { implementationResultSchema, implementationReviewSchema } from "../../../../packages/contracts/src/development.js";
 import {
   knowledgeResearchSchema,
   knowledgeBatchSchema,
@@ -37,6 +38,8 @@ import { RoleBundleRegistry, type RoleBundle } from "./bundles.js";
 import type { RuntimeRequestRepository } from "./requests.js";
 
 const outputSchemas = {
+  "ImplementationResult.v1": implementationResultSchema,
+  "ImplementationReview.v1": implementationReviewSchema,
   "ContextResolution.v1": contextResolutionSchema,
   "MaterialDescriptions.v1": materialDescriptionBatchSchema,
   "KnowledgeResearch.v1": knowledgeResearchSchema,

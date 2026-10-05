@@ -292,6 +292,44 @@
         "omem",
         "知识整理"
       ]
+    },
+    {
+      "key": "guide:requirement-development",
+      "title": "让需求变成可跟进的事项和可评审的代码",
+      "order": 6,
+      "kind": "how-to",
+      "reader": "希望让个人助手跟进需求并启动实现的开发者",
+      "goal": "用一条具体需求讲清材料如何变成验收项和行动项，如何关注待办、登记实际项目、启动编码、看评审、修复并应用代码。以可操作步骤为主，不堆叠证据术语、日志和重复限制。明示当前命令能力与没有实现的可视化/mock/Figma能力。",
+      "scenario": "工单分派已经能选择队列，会议决定补处理完成入口。读者要保留未知类别兜底，跟进同事进展，再在目标仓库实施并检查输入对象不被修改。示例是教学案例，不宣称现实部署。",
+      "questions": [
+        "新讨论怎样进入同一需求，如何区分建议和明确约定？",
+        "怎样把重要行动变成个人跟进事项，人工修改后会怎样？",
+        "怎样登记项目规则、skills、依赖准备和验收命令？",
+        "编码与独立评审分别读取什么，如何处理检查失败或需求改变？",
+        "怎样检查和应用补丁，什么状态还不能叫需求完成？"
+      ],
+      "entryPaths": [
+        "apps/server/src/development/runner.ts",
+        "apps/server/src/development/workspace.ts",
+        "apps/server/src/knowledge/requirement-tasks.ts",
+        "apps/server/src/knowledge/requirements.ts",
+        "packages/contracts/src/development.ts"
+      ],
+      "materialKeys": [
+        "omem:apps/server/src/development/runner.ts",
+        "omem:apps/server/src/development/workspace.ts",
+        "omem:apps/server/src/knowledge/requirement-tasks.ts",
+        "omem:apps/server/src/knowledge/requirements.ts",
+        "omem:packages/contracts/src/development.ts",
+        "omem:apps/server/src/cli.ts",
+        "omem:apps/server/src/memory/service.ts",
+        "omem:docs/reader-first/requirement-followup.md",
+        "omem:skills/omem-cli/references/development.md"
+      ],
+      "topicPath": [
+        "软件开发",
+        "omem"
+      ]
     }
   ]
 }

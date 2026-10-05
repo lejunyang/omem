@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { requirementStateSchema } from "./development.js";
 
 const key = z.string().min(1).max(500);
 export const knowledgeCitationSchema = z.object({
@@ -23,6 +24,7 @@ export const knowledgeQuestionSchema = z.object({
 }).strict();
 
 export const knowledgeDocumentSchema = z.object({
+  requirement: requirementStateSchema.optional(),
   key, title: z.string().min(1).max(240), summary: z.string().min(1).max(1600),
   category: z.string().min(1).max(120),
   topicPath: z.array(z.string().trim().min(1).max(120)).optional().describe("Human topic hierarchy, broad to specific. Organize by the subject and reader purpose, not source directories or internal ids."),

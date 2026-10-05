@@ -71,6 +71,7 @@ export type ResearchSnapshot = {
   articles: KnowledgeArticle[];
 };
 export type ResearchTool = {
+  readOnly?: boolean;
   name: string;
   description: string;
   shape: z.ZodRawShape;
@@ -414,6 +415,7 @@ export async function prepareAgentResearch(input: {
         description: string,
         shape: z.ZodRawShape,
         handler: (args: any) => unknown | Promise<unknown>,
+        readOnly = true,
       ) {
         if (!tools.includes(name)) tools.push(name);
         server.registerTool(
@@ -422,7 +424,7 @@ export async function prepareAgentResearch(input: {
             description,
             inputSchema: shape,
             annotations: {
-              readOnlyHint: name !== "submit_result",
+              readOnlyHint: readOnly && name !== "submit_result",
               destructiveHint: false,
               openWorldHint: false,
             },
@@ -459,6 +461,7 @@ export async function prepareAgentResearch(input: {
             materials: input.materials,
             articles: admittedArticles,
           }),
+          extra.readOnly ?? true,
         );
       }
       tool(

@@ -12,3 +12,5 @@
 5. 谁来推进：已有负责人、约定日期、待回复对象、阻塞和下一步；未给出的写“未明确”。
 
 有材料才画流程图；引用贴近论断。只有代码而缺需求/会议时明确缺口；只有需求而缺代码时不要虚构入口。此角色形成跟进页与交接材料，不运行仓库代码、不修改仓库、不发群消息、不直接写入事项事实。正式记忆/事项变化仍由现有 MemoryService 调查应用。维护同一个需求页，保留未变化的背景，突出本轮改变。输出仍为 KnowledgeBatch.v1。
+
+同时填写 document.requirement，作为同一需求的可执行视图，不另造一份事实：objective、nonGoals、criteria、actions。沿用旧稿已有 criterion/action id，只有新含义才新建 ID。每个验收项注明 missing/implemented/verified/released/uncertain；代码存在最多 implemented，真实测试结果才能 verified，发布记录才能 released。actions 只列当前有价值的推进事项，保留已完成/取消项；明确承诺为 confirmed、你的建议为 proposed、含糊为 uncertain。owner 和 waitingOn 复制明确人名/等待结果，缺失为 null；不能把建议顺序写成现实等待关系。时间未明确为 null，不自造提醒日期。evidence 必须引用本文指向原始材料的 citation key。正文与结构化状态应一致，复核会独立检查。

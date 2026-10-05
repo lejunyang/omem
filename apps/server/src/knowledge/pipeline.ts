@@ -152,6 +152,15 @@ export class KnowledgePipeline {
     const articleMap = new Map(articles.map(a => [a.document.key, a]));
     const offered = new Set([...materials.keys()].map(k => `material:${k}`).concat([...articleMap.keys()].map(k => `article:${k}`)));
     for (const d of batch.documents) {
+      if ((targets.find(t => t.key === d.key) as WikiPageBrief | undefined)?.workflow === "requirement-followup" && !d.requirement)
+        throw Error("Requirement pages must include structured requirement criteria and actions");
+      if (d.requirement) {
+        for (const group of [d.requirement.criteria, d.requirement.actions]) {
+          if (new Set(group.map(x => x.id)).size !== group.length) throw Error("Requirement item ids must be unique");
+          for (const item of group) for (const key of item.evidence)
+            if (!d.citations.some(c => c.key === key && c.target.kind === "material")) throw Error(`Requirement evidence must point to an original citation: ${key}`);
+        }
+      }
       bindKnowledgeQuotes(d, materials);
       validateKnowledgeDocument(d, materials, articleMap, offered);
       for (const c of d.citations.filter(c => c.target.kind === "material")) {

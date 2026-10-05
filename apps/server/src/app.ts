@@ -1,3 +1,4 @@
+import { RequirementTasks, registerRequirementTasks } from "./knowledge/requirement-tasks.js";
 import { agentIdleTimeout } from "./agent-timeout.js";
 import { assetPath } from "./paths.js";
 import { PersonalLarkService } from "./integrations/lark-personal/service.js";
@@ -113,7 +114,10 @@ export async function buildApp(
   const assistantRetrieval = development
     ? developmentRetrieval(store, retrievalService.retrieval)
     : retrievalService.retrieval;
+  const requirementTasks = new RequirementTasks(store);
+  registerRequirementTasks(app, requirementTasks);
   registerKnowledgeRoutes(app, {
+    onPublish: article => requirementTasks.sync(article),
     store,
     repository: development?.repository,
     prefix: "/api/knowledge",

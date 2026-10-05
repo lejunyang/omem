@@ -47,3 +47,7 @@ omem data prune --before 2026-09-01
 `messages status --json` 显示每条流最近一页的时间窗口、拉取数、复用数、处理数及后续分页。这里的 fetched 是顶层消息数，cached/processed 还包括返回的线程回复；并非模型准确率或完成事项数。所有读取继续保留用户未读状态。
 
 实现入口：`storage/library.ts` 管维护，`storage/cold.ts` 管固定 ID 读取，`storage/library-lock.ts` 管维护互斥；个人消息 `service.ts` 管游标/去重，`materials.ts` 与 `cache.ts` 管资源缓存。不引入另一套消息数据库或文件名驱动的业务分类。
+
+## 编码工作区
+
+新增 `development/projects` 保存目标仓库与命令配置，`development/runs` 保存独立代码副本、检查与评审结果。`data info` 单独统计这一部分；当前备份/迁移只覆盖个人事实库、资源与个人配置，不复制这些编码副本。未应用的实现需保留原个人目录或单独保存 run 目录与补丁，不能把它当可随意删除的临时缓存。`data prune` 不清理开发任务。

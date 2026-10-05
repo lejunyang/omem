@@ -74,6 +74,7 @@ export function libraryInfo(directory: string, config: string) {
   const cold = coldDirectory(directory);
   const groups = [
     "assets",
+    "development",
     "agent-workspace",
     "assistant-agents",
     "knowledge-agents",
