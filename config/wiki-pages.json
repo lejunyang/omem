@@ -318,6 +318,9 @@
       "materialKeys": [
         "omem:apps/server/src/development/runner.ts",
         "omem:apps/server/src/development/workspace.ts",
+        "omem:apps/server/src/app.ts",
+        "omem:apps/server/src/knowledge/api.ts",
+        "omem:apps/server/src/knowledge/pipeline.ts",
         "omem:apps/server/src/knowledge/requirement-tasks.ts",
         "omem:apps/server/src/knowledge/requirements.ts",
         "omem:packages/contracts/src/development.ts",
