@@ -1,0 +1,3497 @@
+{
+  "version": 1,
+  "document": {
+    "key": "guide:personal-messages",
+    "title": "让飞书消息进入个人助理：订阅、读材料与跟进",
+    "summary": "面向希望定时查看飞书消息、又不改变原有消息状态的个人用户。用一个免打扰群里的直接提及案例，说明怎样发现可选会话、设置订阅或排除、开启与暂停采集，怎样判断文档、图片、附件和话题是否读全，以及为何“收到消息”“给出建议”“进入队列”和“形成记忆或事项”是四件不同的事。附机器人通知、后台服务检查、八分钟静默时限和当前仍需人工确认的事项。",
+    "category": "个人飞书消息使用指南",
+    "topicPath": [
+      "软件开发",
+      "omem"
+    ],
+    "sections": [
+      {
+        "key": "start",
+        "title": "先记住四个不同的结果",
+        "body": "本文用一个**教学示例**贯穿操作：需求群开着免打扰，同事直接 @你确认周三交付，并附上一份飞书文档和一张流程截图。这不是系统已经处理过的真实消息。\n\n个人消息采集是只读的：它保存消息和资源，没有发送、回复、删除或标记已读的接口；已有机器人只承担另一路通知。因而最重要的判断不是“消息来了没有”，而是依次确认：\n\n1. **已收到**：消息进入“最近消息与判断”。\n2. **已读材料**：正文、文档、图片或附件各自显示读取状态；保存原件不等于理解内容。\n3. **已排队整理**：完整材料可以交给 Agent，但排队和分类仍不是最终结果。\n4. **已应用**：经过抽取、独立复核和治理后，才可能在记忆或事项中出现。\n\n所以，示例里的“直接 @我确认周三交付”可以被判为“可能需要你行动”，却不会仅凭 @ 或一个分类标签自动创建待办。参考 [[c1]] [[c2]]",
+        "reviewSources": [
+          {
+            "key": "omem:apps/server/src/integrations/lark-personal/client.ts",
+            "startLine": 31,
+            "endLine": 49,
+            "reason": "只读端口的能力边界决定本文能否承诺不发送、回复、删除或标记已读。"
+          },
+          {
+            "key": "omem:apps/server/src/integrations/lark-personal/policy.ts",
+            "startLine": 16,
+            "endLine": 42,
+            "reason": "关注标签和上下文判断的定义决定教学案例中哪些只是建议。"
+          }
+        ]
+      },
+      {
+        "key": "setup",
+        "title": "五分钟完成订阅和定时采集",
+        "body": "如果你拿到的是安装包或正式发布版，先在运行服务的电脑上完成：\n\n```bash\nomem init\nomem service start\nomem open\nomem lark login\nomem lark status\n```\n\n公开 npm 版本在当前快照中**尚未上传**，因此 `npm install -g omem` 只能作为发布后的安装方式，不能假定现在从公共仓库一定安装成功。初始化也不会替你订阅消息、运行模型或发送通知。参考 [[c3]] [[c4]]\n\n网页中的最短路径是：\n\n1. 打开“飞书消息”，点**读取最近活跃会话**。这会刷新非免打扰候选，不会自动订阅。\n2. 对已经出现在列表中的会话选择“订阅”；不想读取普通消息时选“仅提及时”；完全不读则选“排除”。\n3. 设置同步间隔和新订阅首次回溯时间。默认分别是 5 分钟和 24 小时，可设范围为 1–1440 分钟、1–168 小时。\n4. 勾选**开启定时采集**和需要的提及、资源选项，然后**保存设置**。\n5. 需要马上检查时点“立即同步”。新库默认暂停；关闭定时采集时，立即同步也不可用。\n\n这里有一个会直接影响首次配置的限制：发现操作明确排除当前处于免打扰的会话，最多读取 300 个候选。因此，示例中的需求群若从未被发现过，不能在它仍免打扰时靠“读取最近活跃会话”加入列表。直接 @你仍可由全局提及例外捕获；若要为该群设置“订阅”或“排除”，它必须已经保留在列表中，或者先在群未免打扰时发现一次。已有订阅不会因为后来免打扰或暂时不活跃而从列表消失。参考 [[c5]] [[c6]] [[c7]]\n\n等价的日常 CLI 是：\n\n```bash\nomem messages discover --json\nomem messages watch CHAT_ID\nomem messages enable\nomem messages sync\nomem messages status\nomem messages inbox --json\nomem messages pause\n```\n\n暂停只停止调度，订阅、历史和同步位置会保留。参考 [[c8]]",
+        "reviewSources": [
+          {
+            "key": "omem:apps/web/src/PersonalLark.vue",
+            "startLine": 181,
+            "endLine": 271,
+            "reason": "网页的发现、会话模式、设置保存和立即同步按钮状态变化会改变操作步骤。"
+          },
+          {
+            "key": "omem:apps/server/src/integrations/lark-personal/policy.ts",
+            "startLine": 7,
+            "endLine": 15,
+            "reason": "默认关闭、间隔和回溯范围是本节操作参数的基础。"
+          },
+          {
+            "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+            "startLine": 102,
+            "endLine": 120,
+            "reason": "只有已发现并保存的会话才能修改订阅模式。"
+          }
+        ]
+      },
+      {
+        "key": "selection",
+        "title": "订阅、提及例外和排除怎样一起生效",
+        "body": "三种会话选择不是同一强度的开关：\n\n| 选择 | 普通消息 | 独立提及通道 |\n| --- | --- | --- |\n| 订阅 | 定时读取 | 开启提及例外时也会检查 |\n| 仅提及时 | 不定时读取普通流 | 开启提及例外时可读取 |\n| 排除 | 不读取 | 也不读取，优先级最高 |\n\n回到示例：即使需求群尚未出现在会话列表中，只要“同时检查所有群里的 @我 / @所有人”已开启，**直接 @你**仍可能从独立提及通道进入。若该群此前已经发现并设为订阅，后来开启免打扰，普通订阅流会跳过免打扰时段并把位置推进到本轮结束；以后解除免打扰，也不会补拉整个静默期。关闭提及例外后，只剩普通订阅流。参考 [[c9]]\n\n还要区分飞书的两个设置和 omem 的明确排除：\n\n- **免打扰**：使发现列表排除当前免打扰会话，并让已有普通群流跳过静默期；它不自动挡住直接提及。\n- **屏蔽 @所有人**：只过滤广播式 @所有人，不挡直接 @你。\n- **omem 明确排除**：普通流和提及流都跳过，但只能对已在列表中的会话设置。\n\n授权可见范围和搜索实际返回范围仍由飞书决定。代码已经接入 @所有人的查询语义和分流，但当前真实样本没有单独确认 @所有人命中，因此不要把它当成已完成的真实验收。参考 [[c10]]",
+        "reviewSources": [
+          {
+            "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+            "startLine": 233,
+            "endLine": 291,
+            "reason": "免打扰、直接提及、@所有人和明确排除的优先级决定哪些消息会进入系统。"
+          },
+          {
+            "key": "omem:apps/server/src/integrations/lark-personal/client.ts",
+            "startLine": 96,
+            "endLine": 116,
+            "reason": "首次发现排除免打扰会话，决定用户能否立即设置会话模式。"
+          }
+        ]
+      },
+      {
+        "key": "materials",
+        "title": "消息到了以后，检查材料读到了哪一步",
+        "body": "在“最近消息与判断”里依次看四处：消息正文和“在飞书打开原消息”、**查看保存的材料**、折叠的“文档、图片与附件”、以及“判断依据与分类”。状态文案的含义很具体：\n\n- **正文已读取**：解析结果已经进入这条材料。\n- **原件已保存，仍需理解内容**：文件可下载，但不能据此说语义已经理解。\n- **资源尚未读取**或具体错误：仍有缺口。\n- 消息不是 `ready` 时可点**重新读取与判断**；它会用已保存的原始消息重做资源处理和判断，已明确排除的会话除外。\n\n参考 [[c11]]\n\n| 输入 | 当前会保存或提供什么 | 仍要检查什么 |\n| --- | --- | --- |\n| 文字、富文本、卡片 | 发言人、时间、展开正文、原始消息和固定材料 | 普通上下文只取此前已入库的 8 条，不是无限回溯 |\n| 飞书 docx/wiki 链接 | 独立文档版本；成功后把文档内容加入本消息 | 不递归读取无限引用，嵌套资源受导入器能力限制 |\n| 图片 | 下载原件；PNG/JPEG/WebP 且不超过 5 MB 时可交给支持视觉的 Agent | 文本决策模型不看像素；下载成功不等于图片已理解 |\n| PDF/DOCX | 保存原件并交给 Docling 解析，成功后形成关联材料 | OCR、复杂版式仍可能读错；超过 20 MB 要单独导入 |\n| TXT/Markdown/CSV/JSON/log | 不超过 200 KB 时作为文字加入 | 更大文件要单独导入 |\n| 视频、音频、其他附件 | 保存可下载原件 | 当前没有自动转写或视频分析 |\n| 话题 | 已返回的回复拆成独立消息保存 | 若仍有更多页或返回错误，会标记未读全；目前不继续分页补齐 |\n\n即使资源失败，原始消息仍会保留。示例中的飞书文档可能显示“正文已读取”和“查看关联材料”；流程截图可能只显示“原件已保存，仍需理解内容”。遇到后一种情况，应先打开原件核对，再重试或人工处理，不要根据消息标签直接行动。参考 [[c12]] [[c13]]",
+        "reviewSources": [
+          {
+            "key": "omem:apps/server/src/integrations/lark-personal/materials.ts",
+            "startLine": 41,
+            "endLine": 198,
+            "reason": "资源类型、保存状态和进入消息材料的条件决定页面状态应如何解释。"
+          },
+          {
+            "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+            "startLine": 416,
+            "endLine": 427,
+            "reason": "资源或话题未完整时会形成完整性缺口并阻断自动整理。"
+          }
+        ]
+      },
+      {
+        "key": "decision",
+        "title": "为什么收到消息还没有变成待办",
+        "body": "一条消息要走完下面四步，才可能成为记忆或事项：\n\n1. **收到并保存**：先保留原消息和能读取的资源。\n2. **完整性检查**：资源失败、只有原件但无法供 Agent 阅读、话题未拉全或出现可疑指令时，状态留在 review，不自动整理。\n3. **小模型建议**：判断安排、学习、业务、代码、关注原因、背景缺口和可疑指令。界面上的模型分数是模型置信度，不是准确率。\n4. **Agent 与治理**：完整材料由 Agent 抽取候选；未处理候选再进入独立复核，最后由 MemoryService 整批裁决为自动应用、等待决定或拒绝。\n\n参考 [[c14]] [[c15]]\n\n实际分流中，高置信噪声（至少 0.85）且没有资源时只保留原件，不进入自动学习；可疑指令留待检查；资源或话题未读全时也不进入学习。除此之外，完整且未删除的材料可以进入学习，**低分、决策服务不可用，或模型认为背景不足本身，都不是丢弃条件**。这正是示例中不能把“直接 @我”直接等同于“创建周三待办”的原因。参考 [[c16]]\n\n还要确认学习后台真的开启：配置需有 `learning.enabled=true`，并让 `learning.profileId` 指向可用的 ACP profile，修改后重启。然后分别检查：\n\n- `omem messages inbox --json`：消息、资源和建议；\n- `omem jobs list` / `omem jobs show JOB_ID`：抽取或复核是否仍在排队、失败或完成；\n- `omem memories list`：最终已应用的记忆；\n- `omem tasks list`：最终已应用的事项。\n\n“ready”“已排队”、模型标签、Agent 输出或复核运行都不等于事项已经应用；以最后两项为准。参考 [[c17]]",
+        "reviewSources": [
+          {
+            "key": "omem:apps/server/src/app.ts",
+            "startLine": 134,
+            "endLine": 151,
+            "reason": "学习管线只有在配置启用且 profile 可用时才创建，决定排队工作能否被消费。"
+          },
+          {
+            "key": "omem:apps/server/src/learning/pipeline.ts",
+            "startLine": 612,
+            "endLine": 653,
+            "reason": "抽取产生候选后才排队独立复核，无候选也可能正常结束。"
+          },
+          {
+            "key": "omem:apps/server/src/learning/pipeline.ts",
+            "startLine": 723,
+            "endLine": 835,
+            "reason": "独立复核和 MemoryService 整批评估决定最终是否应用。"
+          }
+        ]
+      },
+      {
+        "key": "notifications",
+        "title": "用已有机器人收变化和故障通知",
+        "body": "个人登录负责**读取**，机器人绑定负责**通知**，这是两套授权。采集不要求机器人加入每个被读取的群，也不会把故障发回被采集群。\n\n同一会话连续同步失败时，只在第一次记录并尝试向已有的 `owner_notification` 绑定排队通知；恢复后再通知一次。登录身份变化、登录失效或权限错误会保留同步位置，并让**本次同步作业失败**；它不会自动把定时采集设置改成暂停，也不会把会话改成“仅提及时”或“排除”。修复登录后，应重试作业或再次同步，并检查设置是否仍为 enabled：\n\n```bash\nomem lark status\nomem lark login\nomem messages status\nomem messages sync\n```\n\n鉴权错误不自动重试；普通暂时性错误才按作业规则有限重试。没有有效机器人绑定时，变化仍留在站内，但不会发出机器人通知。服务如果彻底退出，也无法给自己发送故障消息；这类故障要靠后台重启和外部状态检查发现。参考 [[c18]] [[c19]] [[c20]]",
+        "reviewSources": [
+          {
+            "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+            "startLine": 319,
+            "endLine": 338,
+            "reason": "首次失败、恢复通知和鉴权错误分类决定通知及恢复步骤，且这里没有改写启用状态或会话模式。"
+          },
+          {
+            "key": "omem:apps/server/src/jobs/repository.ts",
+            "startLine": 640,
+            "endLine": 665,
+            "reason": "鉴权类错误的重试上限为零，因此当前作业进入失败态而不是切换采集设置。"
+          },
+          {
+            "key": "omem:apps/server/src/integrations/lark/owner-notice.ts",
+            "startLine": 19,
+            "endLine": 80,
+            "reason": "只有有效 owner_notification 绑定才会产生飞书投递意图。"
+          }
+        ]
+      },
+      {
+        "key": "service",
+        "title": "检查后台是否持续运行",
+        "body": "安装版日常使用：\n\n```bash\nomem service status --json\nomem status --json\nomem messages status\nomem messages inbox --json\n```\n\n需要控制进程时用 `omem service start|restart|stop`。后台由包内 PM2 管理：终端退出后继续运行，进程异常退出会退避重启，并限制为单实例；目标端口已有服务时会拒绝再启动一个采集实例。它**没有安装系统开机自启动**，电脑休眠时也不会采集。状态输出给出 PM2 状态、PID、重启次数、API 可达性和日志路径；状态检查本身不会启动服务。参考 [[c21]]\n\n排障时分三层看：\n\n1. `service status --json`：进程是否 online、API 是否可达、日志在哪里。\n2. `status --json`：查看 `personalLark.enabled`、`running`、`subscriptions`、`failedStreams`、`lastSuccess`，以及 learning 是否运行。\n3. `messages status` / `inbox`：定位具体流的最近错误，以及消息是 ready、review 还是 failed。\n\n当前实现中，健康接口顶层固定返回 `status: \"ok\"`，同时把 `personalLark` 作为嵌套状态返回；服务管理器只据顶层 `status` 计算 API 是否健康，而两个 CLI 状态命令的非零条件分别是“PM2 非 online 或 API 未通过顶层检查”以及“接口顶层 status 非 ok”。因此 `failedStreams` 虽会出现在 JSON 中，却不会单独保证命令返回非零。不要只看一条绿色退出码，要实际检查上述字段和消息流错误。参考 [[c22]] [[c27]] [[c28]]",
+        "reviewSources": [
+          {
+            "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+            "startLine": 65,
+            "endLine": 93,
+            "reason": "personalLark 的运行、订阅、失败流和最近成功字段是人工检查采集状态的依据。"
+          }
+        ]
+      },
+      {
+        "key": "timeout",
+        "title": "Agent 还在输出时，不会因为总计八分钟被切断",
+        "body": "短答：**持续有有效活动，就不会因为从启动起累计八分钟而必然中断。**\n\n默认的 480000 ms 现在是连续无活动时限。ACP 初始化响应、有效会话更新、工具进展和模型输出都会续期；stderr 日志和宿主轮询不会。完全静默八分钟才超时。一个长工具如果一直没有进展事件，也可能触发静默超时，应按工具实际耗时提高 `idleTimeoutMs`。旧 `timeoutMs` 仍兼容，但也表示无活动时限；同时配置时 `idleTimeoutMs` 优先。默认没有总时长上限，只有显式配置 `maxDurationMs` 才会设置总上限，用户取消始终有效。参考 [[c23]]",
+        "reviewSources": [
+          {
+            "key": "omem:apps/server/src/agent-timeout.ts",
+            "startLine": 3,
+            "endLine": 39,
+            "reason": "兼容字段、静默计时器刷新和可选总时限的实现决定八分钟语义。"
+          }
+        ]
+      },
+      {
+        "key": "checklist",
+        "title": "现在仍需你检查的五件事",
+        "body": "完成配置后，用示例消息做一次人工走查：\n\n1. **范围**：若需求群从未进入列表，确认全局提及例外能否收到直接 @；若要设置订阅或排除，先在非免打扰时发现它。真实 @所有人命中当前仍未验收。\n2. **材料**：文档是否显示“正文已读取”，截图是否只是保存了原件；PDF/DOCX 的 OCR、复杂布局，视频音频和超大附件都不能仅凭“已保存”判断语义正确。\n3. **话题**：是否出现未拉全或错误提示；有缺口就先重试并回飞书核对。\n4. **最终结果**：到 jobs、memories、tasks 分别确认队列、记忆和事项。消息标签与 ready 状态不是应用结果，对方回复是否足以完成已有事项也仍需 Agent 调查。\n5. **运行状态**：检查个人登录、PM2/API、`personalLark.failedStreams` 和具体消息流错误。鉴权失败后设置可能仍保持 enabled，修复登录后需主动重试或再次同步。公开 npm 仍未发布时，应使用你实际获得的安装包或开发环境说明。\n\n参考 [[c24]] [[c25]]\n\n开发排障只需从这些入口开始，内部字段和表名留在这里：\n\n| 入口 | 主要职责与内部定位 |\n| --- | --- |\n| `client.ts` | 只读身份、会话、提及搜索、偏好与资源下载 |\n| `materials.ts` | 消息与多模态资源进入 Capture / Revision |\n| `policy.ts` | 分类问题、默认采集设置 |\n| `service.ts` | `personal_lark_streams`、`personal_lark_messages`；订阅、游标、分页、重试与学习门 |\n| `owner-notice.ts` | `owner_notification` 目标与 `delivery_intents` 通知队列 |\n| `PersonalLark.vue` | 会话选择、资源状态和判断结果 |\n| `service-manager.ts` / `agent-timeout.ts` | PM2 状态、日志位置、静默与总时限 |\n\n文件职责参考 [[c26]]；消息表与通知定位参考 [[c29]] [[c30]]。",
+        "reviewSources": [
+          {
+            "key": "omem:apps/server/src/integrations/lark-personal/client.ts",
+            "startLine": 96,
+            "endLine": 116,
+            "reason": "当前免打扰群不会进入首次发现候选，影响人工走查前提。"
+          },
+          {
+            "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+            "startLine": 319,
+            "endLine": 338,
+            "reason": "登录或权限失败保留位置但不关闭 enabled，影响恢复后的检查动作。"
+          }
+        ]
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "个人消息只读边界",
+        "reason": "说明个人登录采集与机器人通知分离，采集器不发送、回复、删除或标记已读。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/personal-messages.md",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "# 飞书消息：选择会话、保留材料，再决定要不要跟进\n\n个人登录采集和机器人通知是两条通道。官方 `lark-cli` 用你的身份读取消息；已有机器人绑定负责把需要关注的变化和同步故障通知给你。采集器没有发送、回复、删除或标记已读的接口。机器人不需要加入被采集的每一个群。"
+      },
+      {
+        "key": "c2",
+        "label": "标签只是建议",
+        "reason": "说明界面分类不是事项或记忆的最终应用结果。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/PersonalLark.vue",
+          "startLine": 274,
+          "endLine": 277
+        },
+        "quote": "    <h2>最近消息与判断</h2>\n    <p class=\"muted\">\n      小模型判断关注原因、安排、学习、业务与代码，并检查缺失背景及可疑指令。标签只是处理建议，事项和记忆仍由现有\n      Agent 调查与复核。"
+      },
+      {
+        "key": "c3",
+        "label": "安装与初始化边界",
+        "reason": "支持发布后的初始化命令、PM2 行为、休眠限制以及初始化不会自动订阅或运行模型。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/cli.md",
+          "startLine": 5,
+          "endLine": 20
+        },
+        "quote": "## 安装与第一次使用\n\n发布后的安装命令（需要 Node.js 24+）：\n\n```bash\nnpm install -g omem\nomem init\nomem service start\nomem open\n```\n\n`open` 显示网页地址；默认 http://127.0.0.1:4317。`service start` 使用包内 PM2 管理进程；关闭终端后仍运行，进程异常退出会重启。**未安装系统开机自启动，电脑休眠期间也无法拉取消息。** 已有 systemd、容器或其他管理器时用 `omem serve` 前台运行，不再套一层 PM2。\n\n基础保存、全文搜索和 Web 不需要 Bun、osdk、Python 或本地"
+      },
+      {
+        "key": "c4",
+        "label": "公开 npm 尚未上传",
+        "reason": "说明当前快照中的公共发布状态，避免把发布后命令写成当前必然可用。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/progress.md",
+          "startLine": 21,
+          "endLine": 25
+        },
+        "quote": "## 最近完成与正在验收\n\n`omem` npm CLI 已具备分层帮助、init、前台/PM2 服务、材料导入、检索/连续问答、知识写作、记忆/任务查询、个人消息订阅、既有机器人绑定和 skills 分发，许可证为 Apache-2.0。安装资源按包位置解析，个人目录固定为 `~/.omem`，保留源码开发库。已在 macOS arm64 的仓库外完成真实 npm 生产依赖安装、帮助与退出码、重复初始化、角色和技能资源、网页、PM2 启停、文本导入与中文检索验证。普通安装约有 584 MB 依赖（包含官方 lark-cli 与 ONNX 运行层），tarball 本体约 1.5 MB；权重不随包分发。本机公共 npm 账号未登录，"
+      },
+      {
+        "key": "c5",
+        "label": "网页发现和会话列表",
+        "reason": "说明网页发现只报告非免打扰会话，界面允许为已保存的 stream 选择模式。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/PersonalLark.vue",
+          "startLine": 100,
+          "endLine": 104
+        },
+        "quote": "function discover() {\n  return action(async () => {\n    const r = await api<any>(\"/integrations/lark-personal/discover\", {});\n    notice.value = `找到 ${r.chats.length} 个非免打扰会话，已保留已有订阅。`;\n  });"
+      },
+      {
+        "key": "c6",
+        "label": "发现排除免打扰",
+        "reason": "证明发现明确携带 exclude-muted，最多取三页、每页一百条。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark-personal/client.ts",
+          "startLine": 96,
+          "endLine": 116
+        },
+        "quote": "  async chats() {\n    const v = await this.call([\n      \"im\",\n      \"+chat-list\",\n      \"--as\",\n      \"user\",\n      \"--types\",\n      \"p2p,group\",\n      \"--sort\",\n      \"active_time\",\n      \"--exclude-muted\",\n      \"--page-size\",\n      \"100\",\n      \"--page-all\",\n      \"--page-limit\",\n      \"3\",\n      \"--format\",\n      \""
+      },
+      {
+        "key": "c7",
+        "label": "只能设置已发现会话",
+        "reason": "说明发现结果写入 stream，设置模式要求会话已在当前列表中。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+          "startLine": 102,
+          "endLine": 120
+        },
+        "quote": "  async discover() {\n    const result = await this.port.chats();\n    for (const c of result.chats)\n      this.store.db\n        .prepare(\n          `INSERT INTO personal_lark_streams(id,name,kind,next_at) VALUES(?,?,?,'1970-01-01T00:00:00.000Z')\n      ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind`,"
+      },
+      {
+        "key": "c8",
+        "label": "个人消息 CLI",
+        "reason": "支持登录、发现、订阅、启用、同步、查看与暂停命令，以及暂停保留历史和订阅。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/cli.md",
+          "startLine": 112,
+          "endLine": 139
+        },
+        "quote": "## 个人飞书消息和机器人\n\n```bash\nomem lark login\nomem lark status\nomem messages discover --json\nomem messages watch CHAT_ID\nomem messages status\nomem messages enable\nomem messages sync\nomem messages inbox --json\nomem messages pause\nomem messages unwatch CHAT_ID\nomem messages exclude CHAT_ID\nomem messages configure messages.json\n"
+      },
+      {
+        "key": "c9",
+        "label": "免打扰与提及分流",
+        "reason": "说明免打扰普通流不补拉静默期，独立提及流仍运行，并区分直接提及和 @所有人。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+          "startLine": 233,
+          "endLine": 291
+        },
+        "quote": "      if (stream.id !== \"@mentions\" && stream.kind !== \"p2p\") {\n        const pref = (await this.port.preferences([stream.id])).find(\n          (p) => p.chat_id === stream.id,\n        );\n        if (!pref) throw Error(\"无法确认群聊免打扰状态，暂缓普通消息采集\");\n        if (pref.is_muted) {\n          // Do not backfill the muted period wh"
+      },
+      {
+        "key": "c10",
+        "label": "提及真实验收边界",
+        "reason": "支持免打扰、屏蔽 @所有人与直接提及的区别，并明确 @所有人真实命中尚未验收。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/personal-messages.md",
+          "startLine": 13,
+          "endLine": 19
+        },
+        "quote": "## 免打扰和提及\n\n普通群同步前重新读取群设置，免打扰期间跳过普通消息，也不在解除免打扰后补拉整个静默时段。另一个提及通道用官方搜索的 `at_chatter_ids` 查询当前用户：官方语义包含 @我 和 @所有人，可以覆盖没有普通订阅的免打扰群。关闭「同时检查所有群里的 @我 / @所有人」即可收窄到普通订阅。\n\n`is_muted` 和 `is_mute_at_all` 是两个设置：仅免打扰仍保留提及；明确屏蔽 @所有人则忽略此类广播，直接 @我 仍保留。当前授权可见范围和搜索服务返回范围仍由飞书决定。\n\n真实只读实验已得到 18 条提及搜索结果；这组结果没有可单独确认的 @所有人样本，因此 **@所有人的官方查询语义和程序"
+      },
+      {
+        "key": "c11",
+        "label": "消息页可见状态",
+        "reason": "支持查看原材料、回飞书、重试以及资源的已读、已保存和失败状态。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/web/src/PersonalLark.vue",
+          "startLine": 284,
+          "endLine": 355
+        },
+        "quote": "    <article v-for=\"i in items\" :key=\"i.id\" class=\"message\">\n      <div class=\"actions\">\n        <OmBadge>{{ label(i) }}</OmBadge\n        ><span>{{ i.chat_name }}</span\n        ><small>{{ new Date(i.observed_at).toLocaleString() }}</small>\n      </div>\n      <p class=\"message-text\">{{ i.text }}</p>\n      <p v-if=\"i.err"
+      },
+      {
+        "key": "c12",
+        "label": "各类资源处理范围",
+        "reason": "支持文字、文档、图片、PDF/DOCX、文本附件和其他媒体的处理能力与限制。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/personal-messages.md",
+          "startLine": 21,
+          "endLine": 32
+        },
+        "quote": "## 不只处理文字\n\n| 输入 | 当前处理 | 还没有完成 |\n| --- | --- | --- |\n| 文字、富文本、卡片 | 保存 CLI 展开的正文、原始消息、作者、时间和固定版本；话题回复作为独立消息保存 | 普通会话上下文目前只取已入库的前 8 条；不是无限回溯 |\n| 飞书文档链接 | 用现有官方 CLI 导入器保存独立文档版本，并把导入结果提供给本条材料处理 | 不自动递归抓取无限层引用；画板、嵌套资源仍受现有导入器能力限制 |\n| 图片 | 保存原件；PNG/JPEG/WebP 小于 5 MB 时作为图像输入交给支持视觉的 ACP 角色 | 文本决策模型不会读像素，不把下载成功说成图片已理解 |\n| PDF / "
+      },
+      {
+        "key": "c13",
+        "label": "资源保存和读取实现",
+        "reason": "支持文档导入、图片格式与大小、可解析附件和原始消息保存的细节。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark-personal/materials.ts",
+          "startLine": 60,
+          "endLine": 198
+        },
+        "quote": "  ];\n  const resources: MessageResource[] = [];\n  if (!message.deleted) {\n    const found = resourcesIn(content);\n    for (const uri of found.urls) {\n      const resource: MessageResource = {\n        kind: \"document\",\n        label: \"飞书文档\",\n        uri,\n        status: \"saved\",\n      };\n      resources.push(resource);\n"
+      },
+      {
+        "key": "c14",
+        "label": "消息进入学习的门",
+        "reason": "支持完整性、可疑指令、高置信噪声和决策模型不可用时的实际分流。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+          "startLine": 394,
+          "endLine": 455
+        },
+        "quote": "      const result = await this.decisions.decide(\n        {\n          ownerId,\n          conversation: name,\n          current: m,\n          previousMessages: neighbors,\n          tasks: this.store.db\n            .prepare(\n              \"SELECT title,status,next_step FROM tasks WHERE status IN ('open','waiting') LIMIT "
+      },
+      {
+        "key": "c15",
+        "label": "独立复核与整批裁决",
+        "reason": "支持候选经独立复核后由 MemoryService 整批评估为自动应用、等待决定或拒绝。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/learning/pipeline.ts",
+          "startLine": 723,
+          "endLine": 835
+        },
+        "quote": "  private async verify(job: JobLease, signal: AbortSignal) {\n    try {\n      if (job.roleVersion !== \"verifier@1\")\n        throw Error(`LEARNING_ROLE_VERSION_UNSUPPORTED: ${job.roleVersion}`);\n      const reference = job.inputRefs.find(\n        (value) =>\n          typeof value === \"object\" &&\n          value !== null "
+      },
+      {
+        "key": "c16",
+        "label": "决策模型没有写入权",
+        "reason": "说明低分或服务不可用仍可走 Agent，分类标签不能直接写事实，排队不代表记忆已生成。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/personal-messages.md",
+          "startLine": 34,
+          "endLine": 42
+        },
+        "quote": "## 决策模型究竟决定什么\n\n复用 StartLux 2B/4B 共用服务，`decisions.mode=auto` 根据机器内存余量与负载选择一份常驻模型；不运行时下载模型。查看[准备方法和实测](fast-decisions.md)。\n\n每条消息结合本人身份、已保存的前文、当前事项和已读取资源，判断七个维度：安排与跟进、学习、业务知识、代码、关注原因、缺失背景、可疑指令。关注原因区分行动请求、等待的进展、变化、信息、噪声和不确定。被 @ 不直接等于被交办，其他人的承诺不直接变成我的待办。\n\n高分噪声且无资源的消息暂不交给大模型整理，但原件保留；可疑指令单独留待检查。其他完整材料交给现有 Agent 调查、提取和独立复核，最后仍"
+      },
+      {
+        "key": "c17",
+        "label": "学习开关与结果查询",
+        "reason": "支持开启 learning、配置 profile，并用 jobs、memories 和 tasks 区分处理中与最终结果。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/cli.md",
+          "startLine": 78,
+          "endLine": 110
+        },
+        "quote": "## 写作、记忆与事项\n\n```bash\nomem knowledge list --json\nomem knowledge show 'guide:release'\nomem knowledge write page.json\nomem memories list\nomem tasks list\nomem jobs list\nomem jobs show JOB_ID\nomem jobs retry JOB_ID\nomem jobs cancel JOB_ID\n```\n\n`knowledge write` 复用网页的页面计划、原始快照调查、写作与独立补查流程。先从 `knowledge list` 的 materials 获取当前"
+      },
+      {
+        "key": "c18",
+        "label": "同步失败与恢复通知",
+        "reason": "支持连续失败只首次通知、恢复再通知；失败不切换全局或会话模式。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+          "startLine": 319,
+          "endLine": 338
+        },
+        "quote": "      if (stream.last_error)\n        this.notify(\n          \"飞书消息同步已恢复\",\n          \"消息采集已恢复，将从保存的位置继续处理。\",\n        );\n      return {};\n    } catch (e) {\n      const message = e instanceof Error ? e.message : \"飞书同步失败\";\n      this.store.db\n        .prepare(\"UPDATE personal_lark_streams SET last_error=? WHERE id=?\")\n     "
+      },
+      {
+        "key": "c19",
+        "label": "鉴权作业直接失败",
+        "reason": "说明 auth 类错误重试上限为零，当前作业进入 failed，而不是自动暂停采集设置。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/jobs/repository.ts",
+          "startLine": 640,
+          "endLine": 665
+        },
+        "quote": "      const retryLimit =\n        kind === \"bad_output\" ? 2 : kind === \"transient\" ? 3 : 0;\n      const retry =\n        retryLimit > 0 &&\n        kindCount < retryLimit &&\n        generationCount < job.maxAttempts;\n      const next = retry\n        ? \"retry_wait\"\n        : kind === \"cancelled\"\n          ? \"cancelled\"\n   "
+      },
+      {
+        "key": "c20",
+        "label": "通知与个人登录分权",
+        "reason": "说明机器人复用已有绑定，与个人登录是两套授权。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/cli.md",
+          "startLine": 139,
+          "endLine": 141
+        },
+        "quote": "采集只读消息和资源，不改变未读状态，不发送、回复或删除消息。文档、图片与附件的读取/理解状态在 inbox 中区分，排队不代表已经理解。决策模型是可选分流，复杂理解仍交给 Agent。\n\n机器人通知复用已有绑定、投递与重试流程；与个人登录是两套独立授权。`bot setup` 显示既有网页向导入口。`bot apps` 读取可复用应用；`bot defaults` 输出绑定配置模板；`bot connect <json-file>` 接受 `{appId,source,clientSecret?,config}`，source 为 manual 时需 clientSecret，botmux 时由已有本地配置读取密钥。默认 `lark"
+      },
+      {
+        "key": "c21",
+        "label": "后台进程与日志状态",
+        "reason": "支持 PM2 单实例、自动重启、状态字段、日志路径、无开机自启和休眠限制。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/service-manager.ts",
+          "startLine": 64,
+          "endLine": 149
+        },
+        "quote": "  let app = await managed();\n  if (action === \"start\" || action === \"restart\") {\n    if (!existsSync(configPath()))\n      throw Error(\n        \"尚未初始化配置；先运行 omem init（开发环境可用 osdk 管理的 bun 执行 apps/server/src/cli.ts init）\",\n      );\n    const { loadConfig } = await import(\"./config.js\");\n    loadConfig();\n    if (!existsSy"
+      },
+      {
+        "key": "c22",
+        "label": "健康接口顶层状态",
+        "reason": "证明健康接口顶层固定返回 ok，并将 personalLark 作为嵌套状态返回。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/app.ts",
+          "startLine": 231,
+          "endLine": 244
+        },
+        "quote": "  app.get(\"/api/health\", async () => ({\n    status: \"ok\",\n    personalLark: personalLark.health(),\n    storage: \"sqlite\",\n    mode: \"personal\",\n    retrieval: assistantRetrieval.health(),\n    notificationMode: config.notifications.mode,\n    accessProtected: !!config.token,\n    processingEnabled: !!learningConfig?.enabl"
+      },
+      {
+        "key": "c23",
+        "label": "八分钟是静默时限",
+        "reason": "说明有效活动续期、无进展工具风险、兼容字段、可选总时限和取消行为。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/cli.md",
+          "startLine": 160,
+          "endLine": 170
+        },
+        "quote": "## Agent 超时\n\n过去 `timeoutMs:480000` 是从启动开始计算的八分钟总时限，长调查即使持续调用工具也会被打断。现在：\n\n```json\n{\"idleTimeoutMs\":480000}\n```\n\n八分钟内有 ACP 初始化响应、有效会话更新、工具进展或模型输出就续期；思考片段只更新活动时间，不保存其内容。stderr 日志和宿主自己的轮询不会续期。完全静默八分钟才结束进程。工具正在执行但没有任何进展通知时同样可能超时，可按实际工具耗时提高 idleTimeoutMs。一般没有总时长上限；确实要限制成本时显式加入 `maxDurationMs`。\n\n旧配置 `timeoutMs` 继续被接受，但语义改为无活动"
+      },
+      {
+        "key": "c24",
+        "label": "当前个人消息缺口",
+        "reason": "汇总 @所有人、多媒体和自动跟进仍需人工验收的当前状态。",
+        "relation": "tracks",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/progress.md",
+          "startLine": 23,
+          "endLine": 29
+        },
+        "quote": "`omem` npm CLI 已具备分层帮助、init、前台/PM2 服务、材料导入、检索/连续问答、知识写作、记忆/任务查询、个人消息订阅、既有机器人绑定和 skills 分发，许可证为 Apache-2.0。安装资源按包位置解析，个人目录固定为 `~/.omem`，保留源码开发库。已在 macOS arm64 的仓库外完成真实 npm 生产依赖安装、帮助与退出码、重复初始化、角色和技能资源、网页、PM2 启停、文本导入与中文检索验证。普通安装约有 584 MB 依赖（包含官方 lark-cli 与 ONNX 运行层），tarball 本体约 1.5 MB；权重不随包分发。本机公共 npm 账号未登录，**尚未上传公开版本**。使"
+      },
+      {
+        "key": "c25",
+        "label": "消息材料与跟进待验收",
+        "reason": "支持图片、附件、话题和最终跟进不能由保存或分类状态替代检查。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/personal-messages.md",
+          "startLine": 21,
+          "endLine": 48
+        },
+        "quote": "## 不只处理文字\n\n| 输入 | 当前处理 | 还没有完成 |\n| --- | --- | --- |\n| 文字、富文本、卡片 | 保存 CLI 展开的正文、原始消息、作者、时间和固定版本；话题回复作为独立消息保存 | 普通会话上下文目前只取已入库的前 8 条；不是无限回溯 |\n| 飞书文档链接 | 用现有官方 CLI 导入器保存独立文档版本，并把导入结果提供给本条材料处理 | 不自动递归抓取无限层引用；画板、嵌套资源仍受现有导入器能力限制 |\n| 图片 | 保存原件；PNG/JPEG/WebP 小于 5 MB 时作为图像输入交给支持视觉的 ACP 角色 | 文本决策模型不会读像素，不把下载成功说成图片已理解 |\n| PDF / "
+      },
+      {
+        "key": "c26",
+        "label": "个人消息开发入口",
+        "reason": "提供只读客户端、材料、策略、服务、通知和界面的文件职责。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/personal-messages.md",
+          "startLine": 50,
+          "endLine": 56
+        },
+        "quote": "## 修改入口\n\n- `integrations/lark-personal/client.ts`：只有只读方法的官方 CLI 适配；查询、提及、偏好和资源下载。\n- `materials.ts`：多模态资源进入共同 Capture → Source / Revision。\n- `policy.ts`：多维判断问题；`service.ts`：订阅、分页、重试、分类和现有学习流程的连接。\n- `integrations/lark/owner-notice.ts`：复用原有通知投递，消息采集不直接发送。\n- `PersonalLark.vue`：会话选择、资源状态和判断结果；`scripts/service.ts`：后台进程与健康状态。"
+      },
+      {
+        "key": "c27",
+        "label": "服务管理器的健康判断",
+        "reason": "证明 service status 不启动守护进程，并只用接口顶层 status 判断 API 健康。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/service-manager.ts",
+          "startLine": 42,
+          "endLine": 63
+        },
+        "quote": "  async function managed() {\n    if (!(await daemonAlive())) return null; // status must not start a daemon.\n    const apps = JSON.parse(await command([\"jlist\"]));\n    return apps.find((p: { name: string }) => p.name === name) ?? null;\n  }\n  const address = `http://${process.env.OMEM_HOST === \"0.0.0.0\" ? \"127.0.0.1\" : "
+      },
+      {
+        "key": "c28",
+        "label": "两个状态命令的退出码",
+        "reason": "直接证明 service status 和 status 的非零退出码条件，不包含 failedStreams 单独失败。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/cli.ts",
+          "startLine": 126,
+          "endLine": 160
+        },
+        "quote": "const service = group(\n  \"service\",\n  \"PM2 后台服务：启动、停止、重启及状态（不安装开机启动项）\",\n);\nfor (const action of [\"start\", \"stop\", \"restart\", \"status\"] as const)\n  service\n    .command(action)\n    .description(\n      {\n        start: \"启动后台服务，退出终端后继续运行\",\n        stop: \"停止本个人库的服务，保留全部数据\",\n        restart: \"读取新配置并重启服务\",\n        status: \"检"
+      },
+      {
+        "key": "c29",
+        "label": "个人消息表定位",
+        "reason": "直接证明 service.ts 查询和写入 personal_lark_streams 与 personal_lark_messages。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+          "startLine": 42,
+          "endLine": 103
+        },
+        "quote": "          toolHash: hash,\n        }),\n      },\n    );\n  }\n  settings() {\n    return personalLarkSettingsSchema.parse(\n      JSON.parse(\n        String(\n          this.store.db\n            .prepare(\"SELECT value FROM personal_lark_settings WHERE id=1\")\n            .get()!.value,\n        ),\n      ),\n    );\n  }\n  configur"
+      },
+      {
+        "key": "c30",
+        "label": "通知目标与投递队列",
+        "reason": "直接证明 owner_notification 目标筛选和 delivery_intents 通知入队。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/owner-notice.ts",
+          "startLine": 19,
+          "endLine": 79
+        },
+        "quote": "  const larkTargets = db\n    .prepare(\n      `SELECT t.chat_id,t.binding_version,b.id AS binding_id\n           FROM lark_targets t JOIN lark_bindings b\n             ON b.connection_id=t.connection_id\n            AND b.binding_version=t.binding_version\n           JOIN lark_connections c ON c.id=t.connection_id\n         "
+      }
+    ],
+    "questions": [
+      {
+        "question": "公开 npm 版本何时上传？",
+        "why": "当前快照明确尚未上传，影响新用户能否直接执行 npm install -g omem。",
+        "nextStep": "发布后更新进度页并从公共 npm 在仓库外重新验证安装、初始化和服务启动。",
+        "blocking": false,
+        "citationKeys": [
+          "c4"
+        ]
+      },
+      {
+        "question": "@所有人在真实会话中是否会按预期命中并受 is_mute_at_all 过滤？",
+        "why": "查询语义和程序分流已接入，但现有真实样本没有单独可确认的 @所有人消息。",
+        "nextStep": "在授权可见的测试群构造直接 @我、@所有人、屏蔽 @所有人和明确排除四组样本，对照 inbox 结果。",
+        "blocking": false,
+        "citationKeys": [
+          "c10"
+        ]
+      },
+      {
+        "question": "示例截图、复杂文档和附件的语义是否正确？",
+        "why": "系统可证明原件保存或解析状态，但图片视觉理解、OCR、复杂布局和非支持媒体仍可能不完整。",
+        "nextStep": "在消息页打开或下载原件，与关联材料逐项比对；发现缺口时重试或单独导入。",
+        "blocking": false,
+        "citationKeys": [
+          "c12",
+          "c13"
+        ]
+      },
+      {
+        "question": "示例消息最终是否生成或更新了正确事项？",
+        "why": "直接提及、分类、ready 和排队都不是最终应用结果；当前自动跟进可靠性仍需内容级检查。",
+        "nextStep": "查看 jobs 的抽取与复核结果，再以 memories list 和 tasks list 的已应用记录为准。",
+        "blocking": false,
+        "citationKeys": [
+          "c15",
+          "c16",
+          "c17"
+        ]
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/agent-timeout.ts",
+      "digest": "f210ccbc7fd197ee0cfb0bb87998f670487df3ffcbc6d2a48d2522270caabc68"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "f8549eb402fa12af2db53e824aec44da57f04b343f9e6ddfafe1648a72e7c73b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/cli.ts",
+      "digest": "413d559897c4a11a29dcaa672062878e1e62c666134df2759de776ecd1d5e289"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark-personal/client.ts",
+      "digest": "4ef2a9aba01e9af1194bd37f356d6780e5e33881e2b1667710e74abdd54b7b99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark-personal/materials.ts",
+      "digest": "4b0ba718bb26a670d34403d65dc11b0e8ed3e17e3644eee7465318ea3a9551ea"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark-personal/policy.ts",
+      "digest": "2abdf25f5f6a912a7a21f37857460bd45bffd104b44788c81214356f8c913e3d"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+      "digest": "8f7a8dde062f6ab7cd06a32441c424958d70cf0b5fcebc47144b4a75481023eb"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/owner-notice.ts",
+      "digest": "449a2f6a94d01f6c7b75d6fe5c0aff0141e6e34f7ef55ea654768bd3299e07b9"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/jobs/repository.ts",
+      "digest": "e5b2a45f7589879fb9557c5f40d30819640e71219b4627e0d53defb1b7382741"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "313c88d6ecb8141031b58403e54bed8cabd2374f5d7a7bccdf1d794fb6ea7d99"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/service-manager.ts",
+      "digest": "6d9afaa339086279798811b6986215d9eced3c7bfba85d3b03726f566a6bb28f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/web/src/PersonalLark.vue",
+      "digest": "fbb0a3dc833a4dbcab783e5209ddf477a1c5ada69e71fe8fdb736b729dfdb68f"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/cli.md",
+      "digest": "a2fa823bfccf4abc0d69e9c1af92d5ce7b5ecb96aac9660ccffa7f2e8d884f67"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/personal-messages.md",
+      "digest": "644f751c151bb48c2e0de829121437cb9baf0389a208dd312452a0ab9a50321a"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/progress.md",
+      "digest": "0fede0b284ee477ee503b6c183d0da3489e4c523b2fc3acac5c49bab6e027e66"
+    }
+  ],
+  "reading": {
+    "key": "guide:personal-messages",
+    "title": "让飞书消息进入个人助理：订阅、读材料与跟进",
+    "order": 5,
+    "kind": "how-to",
+    "reader": "想让助手定时查看飞书消息、又不想改变原有消息状态的个人用户",
+    "goal": "读后能选择订阅、处理免打扰例外、理解图片与文档读到了哪一步，并检查后台服务。先讲操作与可见结果，用同一案例说明为什么收到消息不等于已经记住或创建待办。清楚说明当前仍需用户检查的事项，避免把程序测试和复核通过作为文章主线。内部字段和表名放到结尾的小型开发入口表。",
+    "scenario": "教学示例：需求群开启免打扰，同事直接@我确认周三的交付，并附一份飞书文档和流程截图。展示如何配置提及与订阅、检查附件缺口、查看处理建议，以及后台暂停或登录失效时到哪里检查。不能声称已验证这条虚构消息或已实现自动理解所有附件。",
+    "questions": [
+      "怎样发现最近会话、选择普通订阅、开启定时采集和暂停？",
+      "免打扰、屏蔽@所有人与明确排除分别怎样影响读取？",
+      "文档、图片、附件和话题分别保存什么，尚未读全时哪里能看到和重试？",
+      "决策模型负责哪些判断，低分、不可用和缺背景时如何处理，何时才会产生记忆或事项？",
+      "怎样用已有机器人接收变化和故障，怎样检查服务是否持续运行？",
+      "安装版 omem 如何初始化、管理后台服务与检查状态，Agent 还在输出时会不会因八分钟总时限被中断？"
+    ],
+    "entryPaths": [
+      "docs/cli.md",
+      "apps/server/src/cli.ts",
+      "apps/server/src/service-manager.ts",
+      "apps/server/src/agent-timeout.ts",
+      "apps/server/src/integrations/lark-personal/service.ts",
+      "apps/server/src/integrations/lark-personal/client.ts",
+      "apps/server/src/integrations/lark-personal/materials.ts",
+      "apps/server/src/integrations/lark-personal/policy.ts",
+      "apps/server/src/integrations/lark/owner-notice.ts",
+      "apps/server/src/learning/pipeline.ts",
+      "apps/server/src/store.ts",
+      "apps/web/src/PersonalLark.vue",
+      "scripts/service.ts",
+      "docs/reader-first/personal-messages.md",
+      "docs/reader-first/operations.md"
+    ],
+    "topicPath": [
+      "软件开发",
+      "omem"
+    ]
+  },
+  "publication": {
+    "role": "article"
+  },
+  "investigation": [
+    {
+      "key": "omem:.agents/skills/omem-design/SKILL.md",
+      "digest": "6991e36884f0a2343720655edaaa45effd15e1b93694da0a42a06b62031de27d"
+    },
+    {
+      "key": "omem:apps/server/src/agent-timeout.ts",
+      "digest": "f210ccbc7fd197ee0cfb0bb87998f670487df3ffcbc6d2a48d2522270caabc68"
+    },
+    {
+      "key": "omem:apps/server/src/agents.ts",
+      "digest": "e35b450d7b2d9c7c9d6abdfda54c8916c4626eb8f6a01dc222a0eb7f5cfe423d"
+    },
+    {
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "f8549eb402fa12af2db53e824aec44da57f04b343f9e6ddfafe1648a72e7c73b"
+    },
+    {
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "d6febe1e9343afb1fde9e7f5b8381f09d2fa5e20ab96c6cf769e64cea1550f1f"
+    },
+    {
+      "key": "omem:apps/server/src/cli.ts",
+      "digest": "413d559897c4a11a29dcaa672062878e1e62c666134df2759de776ecd1d5e289"
+    },
+    {
+      "key": "omem:apps/server/src/code/understanding-model.ts",
+      "digest": "84a4b1ecba7cfd130b244ab905a86bb4e1bd4a44c70d99372f792927a7baf46f"
+    },
+    {
+      "key": "omem:apps/server/src/decision/questions.ts",
+      "digest": "c3b45db8c027d47890adf500f7a1d49f90a09313fead8ba32de46ba046aba63c"
+    },
+    {
+      "key": "omem:apps/server/src/decision/service.ts",
+      "digest": "ddf20daef966920948dfe139bd9d91ad08e04d1a471ddf869562f737864a32d7"
+    },
+    {
+      "key": "omem:apps/server/src/integrations/lark-personal/client.ts",
+      "digest": "4ef2a9aba01e9af1194bd37f356d6780e5e33881e2b1667710e74abdd54b7b99"
+    },
+    {
+      "key": "omem:apps/server/src/integrations/lark-personal/materials.ts",
+      "digest": "4b0ba718bb26a670d34403d65dc11b0e8ed3e17e3644eee7465318ea3a9551ea"
+    },
+    {
+      "key": "omem:apps/server/src/integrations/lark-personal/policy.ts",
+      "digest": "2abdf25f5f6a912a7a21f37857460bd45bffd104b44788c81214356f8c913e3d"
+    },
+    {
+      "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+      "digest": "8f7a8dde062f6ab7cd06a32441c424958d70cf0b5fcebc47144b4a75481023eb"
+    },
+    {
+      "key": "omem:apps/server/src/integrations/lark/owner-notice.ts",
+      "digest": "449a2f6a94d01f6c7b75d6fe5c0aff0141e6e34f7ef55ea654768bd3299e07b9"
+    },
+    {
+      "key": "omem:apps/server/src/integrations/lark/registration.ts",
+      "digest": "ea8a2d9b0b2287fca280b61c015cfe41f13075bf19a7c2a4f4efdbe6491979a9"
+    },
+    {
+      "key": "omem:apps/server/src/jobs/repository.ts",
+      "digest": "e5b2a45f7589879fb9557c5f40d30819640e71219b4627e0d53defb1b7382741"
+    },
+    {
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "313c88d6ecb8141031b58403e54bed8cabd2374f5d7a7bccdf1d794fb6ea7d99"
+    },
+    {
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "d829286f58d41988006212b54ed91d71a90a1127230acc32d32c254338beaca5"
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/keyword.ts",
+      "digest": "e6ed107acb78c6677077b0b8b9ee5bdbcdd7e96c0a785f6a33debf2ef7760b80"
+    },
+    {
+      "key": "omem:apps/server/src/review/app.ts",
+      "digest": "9e9fd6bc16ede8e1c56b27302dc1776c74803523d9b108b84a7bf64c4b59d476"
+    },
+    {
+      "key": "omem:apps/server/src/review/main.ts",
+      "digest": "f8416e928399a07006697ece7f3756de6d4a51918e74a66c4daf05920afde6fc"
+    },
+    {
+      "key": "omem:apps/server/src/review/store.ts",
+      "digest": "692525c23f86255e695dce1cdca7707da8287ab322f3d83dde72b2a547b7572b"
+    },
+    {
+      "key": "omem:apps/server/src/service-manager.ts",
+      "digest": "6d9afaa339086279798811b6986215d9eced3c7bfba85d3b03726f566a6bb28f"
+    },
+    {
+      "key": "omem:apps/server/src/source-profile/service.ts",
+      "digest": "305d884ecaca29fb89f72eb3305dc38c00d5d8812754913baccf94ebbf48c5d0"
+    },
+    {
+      "key": "omem:apps/server/src/store.ts",
+      "digest": "c7874673a6c2c2de9ff6945e4cbca441cd845a67da2713fefac904100129c301"
+    },
+    {
+      "key": "omem:apps/server/tests/agents.test.ts",
+      "digest": "7283c5b56fbba2537fec0bb1938ce348f0a1e3f119a1f1f4867a34911309fd15"
+    },
+    {
+      "key": "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+      "digest": "0ab9832cfb7350b451b3d173d5ba5a35f56c4932570d708b2a2ffece80b734a9"
+    },
+    {
+      "key": "omem:apps/server/tests/conversation-security.test.ts",
+      "digest": "01ec8266dc5c4c7ed5c6d63813758f5fd7ade3782f495e70c3779bc260098bbb"
+    },
+    {
+      "key": "omem:apps/server/tests/lark-personal.test.ts",
+      "digest": "a47e1189a0e57734e847fa09d3e59419c8044d09fd517d54de5766127b167092"
+    },
+    {
+      "key": "omem:apps/server/tests/quality-annotation.test.ts",
+      "digest": "bfaabb4a2ba8357da6dc8280e3617fcb16aefbfc81487305b88b4c7291cfd086"
+    },
+    {
+      "key": "omem:apps/server/tests/review-dev.test.ts",
+      "digest": "a988ab9ce4ebc5c1b21b162de667931bbc994dc24600e0d069ca66b3dabc9bde"
+    },
+    {
+      "key": "omem:apps/server/tests/review-sync.test.ts",
+      "digest": "4a28eb2d0902f1541903c8e396c8a0b15346a22889be266159a34e7ca6e3ce95"
+    },
+    {
+      "key": "omem:apps/web/src/PersonalLark.vue",
+      "digest": "fbb0a3dc833a4dbcab783e5209ddf477a1c5ada69e71fe8fdb736b729dfdb68f"
+    },
+    {
+      "key": "omem:apps/web/src/ReviewApp.vue",
+      "digest": "96a20c8b2de4c48946be7a4a2451f8b87c810968d10180afd2342cc4194bdcdb"
+    },
+    {
+      "key": "omem:apps/web/src/review-api.ts",
+      "digest": "ed0bb78ac53fbdf7149380e303ad151a8aa65b7d09ba39853af11a2a689170f9"
+    },
+    {
+      "key": "omem:config/omem.default.json",
+      "digest": "64c4c49f078c7eaf5a84598d82f5acc3032b405d66b4bad52b90f431b603de90"
+    },
+    {
+      "key": "omem:docs/archive/2026-10-01-baseline/prototype/styles.css",
+      "digest": "c3f02f7ba444bfe662577f604931c38372a76d9500d7cb270b4678131709992b"
+    },
+    {
+      "key": "omem:docs/cli.md",
+      "digest": "a2fa823bfccf4abc0d69e9c1af92d5ce7b5ecb96aac9660ccffa7f2e8d884f67"
+    },
+    {
+      "key": "omem:docs/reader-first/operations.md",
+      "digest": "11e04ebf029597a0b246e69324dce63975b12b4a3e4cd0b8f23bdf5682207c7d"
+    },
+    {
+      "key": "omem:docs/reader-first/personal-messages.md",
+      "digest": "644f751c151bb48c2e0de829121437cb9baf0389a208dd312452a0ab9a50321a"
+    },
+    {
+      "key": "omem:docs/reader-first/progress.md",
+      "digest": "0fede0b284ee477ee503b6c183d0da3489e4c523b2fc3acac5c49bab6e027e66"
+    },
+    {
+      "key": "omem:packages/contracts/src/index.ts",
+      "digest": "0ea04e1b74c03e8f991a721a31351be01a634672fdec053ebd664c3e8cb1afd4"
+    },
+    {
+      "key": "omem:scripts/live-learning-smoke.ts",
+      "digest": "f88a7289400e9f805776100fea75384a55628e822fc9ee11e90a9594dc7b0ac9"
+    },
+    {
+      "key": "omem:scripts/live-pipeline-smoke.ts",
+      "digest": "1433f5b90c00a5c9fcd0d5ecb21403c2496c151d005311fe574dcff68cbbc691"
+    },
+    {
+      "key": "omem:scripts/live-retrieval-smoke.ts",
+      "digest": "d4408991228195128f309c02474c0b1c68ceffe439c91be9d92d375569b7e885"
+    },
+    {
+      "key": "omem:scripts/quality-lark-annotate.ts",
+      "digest": "6dcf37ce6bada61da774bf836f4ab601e0c0e0c13bef627355d397de7672f751"
+    },
+    {
+      "key": "omem:scripts/review-catalog.ts",
+      "digest": "d84e916a4f818920ee828e0beb4a52ec951e1ed7d15aeb530b03e4c538e03b9d"
+    },
+    {
+      "key": "omem:scripts/review-guides.ts",
+      "digest": "e836a2f86c11d0ad136ed803db1bd67c0095bc4edc47e0e42483e75ab80d3f28"
+    },
+    {
+      "key": "omem:scripts/review-knowledge.ts",
+      "digest": "77020d1de124e64b3a4965c08c941f2b96bb689e3d43e2ba32cb0790282e6c57"
+    },
+    {
+      "key": "omem:scripts/service.ts",
+      "digest": "40a694c24a8f41519ec62fe9f50f249edada849a4ef3946a16a7a527dd6f6463"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-05T14:49:21.985Z",
+    "trace": {
+      "runId": "4a2568b9-8736-47f0-9461-3591326bda4d",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "16eaea0fda9f3bd0ade37c41c60719895f10eb6673942833eebc7aad72ad1bda",
+      "promptHash": "38bbe216313197c894875c33c405cb710f5940360bf45bed0b6a2ac7b95e5fa7",
+      "contextHash": "880b23f7b8ceff5cd17e249f72a04e8c854da0d4ba6f986431429900f52c8406",
+      "skillHash": "b611e7f72593c708d1430a1b9867e83f0d95796036e615120cb4aad48fd02fb0",
+      "toolHash": "c63ebed27fd0068222e3a65f2f3139400d62735cd978169855e2c5e739f4d448",
+      "fingerprint": "56d3fcb36a952330cef4f205e20d374d63efc3fc4c18f12e24cfec8afdd5ada8",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_material_groups",
+        "list_materials",
+        "read_material",
+        "read_fragments",
+        "read_section",
+        "search_materials",
+        "search_contexts",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a10c88-e50a-74d2-b732-34b7d1e35080"
+      ],
+      "usage": {
+        "used": 70100,
+        "size": 258400,
+        "cost": null,
+        "acpCompletion": "validated_submission",
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_YbRi9kwLBcfpxricFfzkyrP2:exec-3fa69aa5-5c4b-4d8d-bacc-17b7debfce12",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_YbRi9kwLBcfpxricFfzkyrP2:exec-3fa69aa5-5c4b-4d8d-bacc-17b7debfce12",
+              "process_id": "48342",
+              "turn_id": "01a10c88-e82f-7613-a04d-eb60cd0504c0",
+              "started_at_ms": 1791211680543,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/16eaea0fda9f3bd0ade37c41c60719895f10eb6673942833eebc7aad72ad1bda/4a2568b9-8736-47f0-9461-3591326bda4d",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-refresher/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_YbRi9kwLBcfpxricFfzkyrP2:exec-3fa69aa5-5c4b-4d8d-bacc-17b7debfce12",
+            "status": "completed",
+            "outputDigest": "5ecb51d7e3c88d392ee48c85274865a312c588c090ccfeced9b4339fd8057d43"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_FKhlF6ns2ftw7J8In4aHfuVx:exec-e0f8d820-b7ed-427e-9660-82d81a080bda",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/cli.ts",
+                "startLine": 120,
+                "endLine": 170
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_FKhlF6ns2ftw7J8In4aHfuVx:exec-5a07c3d6-4867-4553-b808-62567ab9cd96",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/app.ts",
+                "startLine": 225,
+                "endLine": 250
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_FKhlF6ns2ftw7J8In4aHfuVx:exec-99a689e3-ad9e-40f1-af60-b14e6fe57f1a",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+                "startLine": 1,
+                "endLine": 130
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_FKhlF6ns2ftw7J8In4aHfuVx:exec-f948930e-ba21-417b-8334-142c5040db75",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/integrations/lark/owner-notice.ts",
+                "startLine": 1,
+                "endLine": 90
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_FKhlF6ns2ftw7J8In4aHfuVx:exec-6cd4f96f-ee0f-45a2-8e24-da54080107fc",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/service-manager.ts",
+                "startLine": 32,
+                "endLine": 160
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+              "startLine": 1,
+              "endLine": 130
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/cli.ts",
+              "startLine": 120,
+              "endLine": 170
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/app.ts",
+              "startLine": 225,
+              "endLine": 250
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/integrations/lark/owner-notice.ts",
+              "startLine": 1,
+              "endLine": 90
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/service-manager.ts",
+              "startLine": 32,
+              "endLine": 160
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_FKhlF6ns2ftw7J8In4aHfuVx:exec-99a689e3-ad9e-40f1-af60-b14e6fe57f1a",
+            "status": "completed",
+            "outputDigest": "8f5e3b596ef899fe9a9fe96a4c427f68e73a6065f118ced043ac5c10263c95c3"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_FKhlF6ns2ftw7J8In4aHfuVx:exec-e0f8d820-b7ed-427e-9660-82d81a080bda",
+            "status": "completed",
+            "outputDigest": "c8046d229ed5ae1836988cd6a15dc52cc8a45e120fb550518ff7c1e52f59927b"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_FKhlF6ns2ftw7J8In4aHfuVx:exec-5a07c3d6-4867-4553-b808-62567ab9cd96",
+            "status": "completed",
+            "outputDigest": "ae6fb629979986f22eeb1d70abd4baa45b4a5faa542480482f63ae088f79f110"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_FKhlF6ns2ftw7J8In4aHfuVx:exec-f948930e-ba21-417b-8334-142c5040db75",
+            "status": "completed",
+            "outputDigest": "7ee7cb9122fe311f6b4312052675c26aff5d38962177f6d38a17b6609c3d8345"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_FKhlF6ns2ftw7J8In4aHfuVx:exec-6cd4f96f-ee0f-45a2-8e24-da54080107fc",
+            "status": "completed",
+            "outputDigest": "ea7473c95e973530635770ccbc2b5aaf22c3205b6cb3f95a4c8eed968ec3763f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_uZw6Bl0xf5SLdsU1gogDb5ow:exec-c4faa33c-9171-4929-89e6-0ab407c16e58",
+            "title": "Read service.ts, Read app.ts, Read owner-notice.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_uZw6Bl0xf5SLdsU1gogDb5ow:exec-c4faa33c-9171-4929-89e6-0ab407c16e58",
+              "process_id": "86448",
+              "turn_id": "01a10c88-e82f-7613-a04d-eb60cd0504c0",
+              "started_at_ms": 1791211699568,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,125p' originals/apps/server/src/integrations/lark-personal/service.ts; sed -n '225,247p' originals/apps/server/src/app.ts; sed -n '15,82p' originals/apps/server/src/integrations/lark/owner-notice.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/16eaea0fda9f3bd0ade37c41c60719895f10eb6673942833eebc7aad72ad1bda/4a2568b9-8736-47f0-9461-3591326bda4d",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,125p' originals/apps/server/src/integrations/lark-personal/service.ts",
+                  "name": "service.ts",
+                  "path": "originals/apps/server/src/integrations/lark-personal/service.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '225,247p' originals/apps/server/src/app.ts",
+                  "name": "app.ts",
+                  "path": "originals/apps/server/src/app.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '15,82p' originals/apps/server/src/integrations/lark/owner-notice.ts",
+                  "name": "owner-notice.ts",
+                  "path": "originals/apps/server/src/integrations/lark/owner-notice.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_uZw6Bl0xf5SLdsU1gogDb5ow:exec-c4faa33c-9171-4929-89e6-0ab407c16e58",
+            "status": "completed",
+            "outputDigest": "21345b660d09243cf550a31982af89836fa710fefdf627c0ecadf8c97348e5af"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_JqImPsnIhbOBKADAlk7cgNoH:exec-b2ffdc6e-6479-4932-9ce6-6a134a99879b",
+            "title": "rg -n 'guide:personal-messages|让飞书消息进入个人助理' knowledge.json . 2>/dev/null",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_JqImPsnIhbOBKADAlk7cgNoH:exec-b2ffdc6e-6479-4932-9ce6-6a134a99879b",
+              "process_id": "86183",
+              "turn_id": "01a10c88-e82f-7613-a04d-eb60cd0504c0",
+              "started_at_ms": 1791211709981,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n 'guide:personal-messages|让飞书消息进入个人助理' knowledge.json . 2>/dev/null"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/16eaea0fda9f3bd0ade37c41c60719895f10eb6673942833eebc7aad72ad1bda/4a2568b9-8736-47f0-9461-3591326bda4d",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "rg -n 'guide:personal-messages|让飞书消息进入个人助理' knowledge.json . 2>/dev/null"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_JqImPsnIhbOBKADAlk7cgNoH:exec-b2ffdc6e-6479-4932-9ce6-6a134a99879b"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_JqImPsnIhbOBKADAlk7cgNoH:exec-b2ffdc6e-6479-4932-9ce6-6a134a99879b",
+            "status": "completed",
+            "outputDigest": "de33eef65f0283032d843c27e696d0d4ed0371a74f80de97976c94b2790dbbf0"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_qLlDZTbOZrDUaeKvPFXuXY0I:exec-9477603a-e5c9-4d1c-8993-5b91186c641f",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/integrations/lark-personal/service.ts",
+              "omem:apps/server/src/cli.ts",
+              "omem:apps/server/src/app.ts",
+              "omem:apps/server/src/integrations/lark/owner-notice.ts",
+              "omem:apps/server/src/service-manager.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_qLlDZTbOZrDUaeKvPFXuXY0I:exec-9477603a-e5c9-4d1c-8993-5b91186c641f",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0,
+      "research": {
+        "trace": {
+          "runId": "9ff12ab4-0ea7-41ad-8e53-1f8da00e77fc",
+          "roleId": "knowledge-researcher",
+          "roleVersion": "1",
+          "bundleHash": "b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431",
+          "promptHash": "30e586926c3350e886d3d91b542e584ce191eb8871faee18cf062eed6b34a064",
+          "contextHash": "2ab4c80c2902a7827198150961d1548701528c99e07dd9c52788bbbb1b7d9f26",
+          "skillHash": "05041a69ea6623a27428757e7de5d4373af4e3f459b2b61d2a5b7169a688c1be",
+          "toolHash": "c63ebed27fd0068222e3a65f2f3139400d62735cd978169855e2c5e739f4d448",
+          "fingerprint": "16d2156231156e6a2347293d72ada6e3a1b876eb6fe36e8626fe424441dfcae6",
+          "outputSchema": "KnowledgeResearch.v1",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-researcher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_material_groups",
+            "list_materials",
+            "read_material",
+            "read_fragments",
+            "read_section",
+            "search_materials",
+            "search_contexts",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ],
+          "sessionIds": [
+            "01a10c79-f6e4-7ab1-99ad-d718dbd8024a"
+          ],
+          "usage": {
+            "used": 135959,
+            "size": 258400,
+            "cost": null,
+            "acpCompletion": "validated_submission",
+            "workflow": "native-research@1",
+            "activity": [
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_6o6mrpUE5wyi6lxUDC3Bs8GY:exec-18a10002-2e18-47d1-8397-5f50ec9d6e46",
+                "title": "Read SKILL.md",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_6o6mrpUE5wyi6lxUDC3Bs8GY:exec-18a10002-2e18-47d1-8397-5f50ec9d6e46",
+                  "process_id": "56452",
+                  "turn_id": "01a10c79-f9d9-7d30-971c-943335f72364",
+                  "started_at_ms": 1791210693915,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '1,240p' .trae/skills/omem-knowledge-researcher/SKILL.md"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/9ff12ab4-0ea7-41ad-8e53-1f8da00e77fc",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-researcher/SKILL.md",
+                      "name": "SKILL.md",
+                      "path": ".trae/skills/omem-knowledge-researcher/SKILL.md"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_6o6mrpUE5wyi6lxUDC3Bs8GY:exec-18a10002-2e18-47d1-8397-5f50ec9d6e46",
+                "status": "completed",
+                "outputDigest": "7bc08a142dcade43a7cab7c1f60db249080ba19779c175eb17246f31e4457d4f"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_SHVAWxFSN19V60o7J7qZyxNp:exec-3b5588f5-fdc8-4929-8ce4-af2db9827797",
+                "title": "Tool: omem/list_materials",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "list_materials",
+                  "arguments": {
+                    "filter": "service-manager",
+                    "limit": 20,
+                    "offset": 0
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_SHVAWxFSN19V60o7J7qZyxNp:exec-4316f547-8659-4672-838c-428aa4f1773e",
+                "title": "Tool: omem/search_knowledge",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "search_knowledge",
+                  "arguments": {
+                    "query": "飞书 个人消息 订阅 免打扰 附件 后台服务",
+                    "limit": 10,
+                    "purpose": "balanced"
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_SHVAWxFSN19V60o7J7qZyxNp:exec-052b3963-77d3-4563-89fb-cab6b34273fe",
+                "title": "Tool: omem/list_materials",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "list_materials",
+                  "arguments": {
+                    "filter": "personal-messages",
+                    "limit": 20,
+                    "offset": 0
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_SHVAWxFSN19V60o7J7qZyxNp:exec-dc505251-4aa6-4f03-b1ca-4e31d615ba44",
+                "title": "Tool: omem/list_materials",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "list_materials",
+                  "arguments": {
+                    "filter": "learning/pipeline",
+                    "limit": 20,
+                    "offset": 0
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_SHVAWxFSN19V60o7J7qZyxNp:exec-c1efdce7-2694-4a29-a2d0-672a5cdeb375",
+                "title": "Tool: omem/list_materials",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "list_materials",
+                  "arguments": {
+                    "filter": "lark-personal",
+                    "limit": 50,
+                    "offset": 0
+                  }
+                }
+              },
+              {
+                "kind": "mcp",
+                "tool": "list_materials",
+                "args": {
+                  "offset": 0,
+                  "limit": 20,
+                  "filter": "service-manager",
+                  "kind": "all"
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "list_materials",
+                "args": {
+                  "offset": 0,
+                  "limit": 20,
+                  "filter": "personal-messages",
+                  "kind": "all"
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "list_materials",
+                "args": {
+                  "offset": 0,
+                  "limit": 20,
+                  "filter": "learning/pipeline",
+                  "kind": "all"
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "list_materials",
+                "args": {
+                  "offset": 0,
+                  "limit": 50,
+                  "filter": "lark-personal",
+                  "kind": "all"
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_SHVAWxFSN19V60o7J7qZyxNp:exec-3b5588f5-fdc8-4929-8ce4-af2db9827797",
+                "status": "completed",
+                "outputDigest": "8a2dc3251330b683aa1e06119f56dc5243ba034aa4b466d566e30a6e6a5988c0"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_SHVAWxFSN19V60o7J7qZyxNp:exec-052b3963-77d3-4563-89fb-cab6b34273fe",
+                "status": "completed",
+                "outputDigest": "8418bd1322c9f773f4ee7fbad6d9472990caf9acdd94c136267a575f836d0201"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_SHVAWxFSN19V60o7J7qZyxNp:exec-dc505251-4aa6-4f03-b1ca-4e31d615ba44",
+                "status": "completed",
+                "outputDigest": "4614eb55bd35c9549074230b30efdd9fc0cb1e5f23883b6e2aa9b589a3deb865"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_SHVAWxFSN19V60o7J7qZyxNp:exec-c1efdce7-2694-4a29-a2d0-672a5cdeb375",
+                "status": "completed",
+                "outputDigest": "88c0d7630d66dcdaf380ace0cbd882f0b92943160b8549fb404e784dd332a8c2"
+              },
+              {
+                "kind": "mcp",
+                "tool": "search_knowledge",
+                "args": {
+                  "query": "飞书 个人消息 订阅 免打扰 附件 后台服务",
+                  "purpose": "balanced",
+                  "limit": 10
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_SHVAWxFSN19V60o7J7qZyxNp:exec-4316f547-8659-4672-838c-428aa4f1773e",
+                "status": "completed",
+                "outputDigest": "03ce78f37301b0839074997d714e358775bcaf5dec3313b863fd51ef5c0b65d6"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_NPIllJmwGyafJhaeWBkYdmGC:exec-358a2a0d-7981-4dd4-a646-c51007b5141f",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:docs/cli.md"
+                  }
+                }
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:docs/cli.md",
+                  "startLine": 1
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_NPIllJmwGyafJhaeWBkYdmGC:exec-9fa216a1-c692-428a-bba9-147e852241d8",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:scripts/service.ts"
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_NPIllJmwGyafJhaeWBkYdmGC:exec-358a2a0d-7981-4dd4-a646-c51007b5141f",
+                "status": "completed",
+                "outputDigest": "3f84f772226cf52d8a3a41deee9aab22fecacd7f577ecf92d390e27d7d4c9584"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_NPIllJmwGyafJhaeWBkYdmGC:exec-bbec83d8-b595-4a2b-827b-fa9b653b6f7f",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:apps/server/src/agent-timeout.ts"
+                  }
+                }
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:apps/server/src/agent-timeout.ts",
+                  "startLine": 1
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:scripts/service.ts",
+                  "startLine": 1
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_NPIllJmwGyafJhaeWBkYdmGC:exec-c885c8b9-ea8a-4c6a-9ef7-e73a4472bdd3",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:docs/reader-first/personal-messages.md"
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_NPIllJmwGyafJhaeWBkYdmGC:exec-bbec83d8-b595-4a2b-827b-fa9b653b6f7f",
+                "status": "completed",
+                "outputDigest": "ee410c934c68c01e6147870b7aae55de6022378f74ebfdd36b87437573b08418"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_NPIllJmwGyafJhaeWBkYdmGC:exec-9fa216a1-c692-428a-bba9-147e852241d8",
+                "status": "completed",
+                "outputDigest": "03d11352ed20b86d330790f49652b992ace42f80a608614599ddaf1455646608"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_NPIllJmwGyafJhaeWBkYdmGC:exec-efb77a03-80c6-4629-8022-525379892928",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:apps/server/src/service-manager.ts"
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_NPIllJmwGyafJhaeWBkYdmGC:exec-f910aa0a-7376-44f2-90cd-728501d4cd7b",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:docs/reader-first/operations.md"
+                  }
+                }
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:apps/server/src/service-manager.ts",
+                  "startLine": 1
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:docs/reader-first/operations.md",
+                  "startLine": 1
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:docs/reader-first/personal-messages.md",
+                  "startLine": 1
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_NPIllJmwGyafJhaeWBkYdmGC:exec-efb77a03-80c6-4629-8022-525379892928",
+                "status": "completed",
+                "outputDigest": "01e9f942c360174ad4890c43453e723e5050137d6aaabf55f5d593599624c882"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_NPIllJmwGyafJhaeWBkYdmGC:exec-f910aa0a-7376-44f2-90cd-728501d4cd7b",
+                "status": "completed",
+                "outputDigest": "a75155b4aaae2b430a60f5a7fcab882c14b890fe77627524ebeb62ca814b188b"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_NPIllJmwGyafJhaeWBkYdmGC:exec-c885c8b9-ea8a-4c6a-9ef7-e73a4472bdd3",
+                "status": "completed",
+                "outputDigest": "313badf8f489f40e0dc7401e1181467bb7994701913386b33c5579eef7fb7b71"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_8o6If91dPv9mJopLgQ2JphJv:exec-560b003a-3e97-49c6-8f74-42e8e0b923b4",
+                "title": "Read cli.md, Read operations.md, Read client.ts, Read materials.ts, Read policy.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_8o6If91dPv9mJopLgQ2JphJv:exec-560b003a-3e97-49c6-8f74-42e8e0b923b4",
+                  "process_id": "82664",
+                  "turn_id": "01a10c79-f9d9-7d30-971c-943335f72364",
+                  "started_at_ms": 1791210726156,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '108,198p' originals/docs/cli.md; sed -n '1,240p' originals/docs/reader-first/operations.md; sed -n '1,260p' originals/apps/server/src/integrations/lark-personal/client.ts; sed -n '1,240p' originals/apps/server/src/integrations/lark-personal/materials.ts; sed -n '1,120p' originals/apps/server/src/integrations/lark-personal/policy.ts"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/9ff12ab4-0ea7-41ad-8e53-1f8da00e77fc",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '108,198p' originals/docs/cli.md",
+                      "name": "cli.md",
+                      "path": "originals/docs/cli.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,240p' originals/docs/reader-first/operations.md",
+                      "name": "operations.md",
+                      "path": "originals/docs/reader-first/operations.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,260p' originals/apps/server/src/integrations/lark-personal/client.ts",
+                      "name": "client.ts",
+                      "path": "originals/apps/server/src/integrations/lark-personal/client.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,240p' originals/apps/server/src/integrations/lark-personal/materials.ts",
+                      "name": "materials.ts",
+                      "path": "originals/apps/server/src/integrations/lark-personal/materials.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,120p' originals/apps/server/src/integrations/lark-personal/policy.ts",
+                      "name": "policy.ts",
+                      "path": "originals/apps/server/src/integrations/lark-personal/policy.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_8o6If91dPv9mJopLgQ2JphJv:exec-560b003a-3e97-49c6-8f74-42e8e0b923b4",
+                "status": "completed",
+                "outputDigest": "33b49b86bf5bd2b63e8b8ea03ca2de2e47211a27e4a74c0448cb326d8b46d8ed"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_PQjiHHD29MUqzZJThtOipFqq:exec-615f384c-c78e-4e47-b086-2c3373ea0f6e",
+                "title": "Search ^(export )?(async )?function|class |mention|muted|is_mute|decision|learning|retry|resource|thread|notify|failure|cursor|subscription|sync in service.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_PQjiHHD29MUqzZJThtOipFqq:exec-615f384c-c78e-4e47-b086-2c3373ea0f6e",
+                  "process_id": "26688",
+                  "turn_id": "01a10c79-f9d9-7d30-971c-943335f72364",
+                  "started_at_ms": 1791210738312,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "rg -n \"^(export )?(async )?function|class |mention|muted|is_mute|decision|learning|retry|resource|thread|notify|failure|cursor|subscription|sync\" originals/apps/server/src/integrations/lark-personal/service.ts originals/apps/web/src/PersonalLark.vue originals/apps/server/src/integrations/lark/owner-notice.ts originals/apps/server/src/store.ts originals/apps/server/src/cli.ts"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/9ff12ab4-0ea7-41ad-8e53-1f8da00e77fc",
+                  "parsed_cmd": [
+                    {
+                      "type": "search",
+                      "cmd": "rg -n '^(export )?(async )?function|class |mention|muted|is_mute|decision|learning|retry|resource|thread|notify|failure|cursor|subscription|sync' originals/apps/server/src/integrations/lark-personal/service.ts originals/apps/web/src/PersonalLark.vue originals/apps/server/src/integrations/lark/owner-notice.ts originals/apps/server/src/store.ts originals/apps/server/src/cli.ts",
+                      "query": "^(export )?(async )?function|class |mention|muted|is_mute|decision|learning|retry|resource|thread|notify|failure|cursor|subscription|sync",
+                      "path": "service.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_PQjiHHD29MUqzZJThtOipFqq:exec-615f384c-c78e-4e47-b086-2c3373ea0f6e",
+                "status": "completed",
+                "outputDigest": "03a36028ae86899148349207f191cc2475dc7e3129f1b95f79d18707b900fd52"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_kiZjQn4zNMKyQMEKi2ozvtFm:exec-7a4f2ebb-7491-4edf-8ca0-406bc3b85201",
+                "title": "Read service.ts, Read service.ts, Read service.ts, Read PersonalLark.vue, Read owner-notice.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_kiZjQn4zNMKyQMEKi2ozvtFm:exec-7a4f2ebb-7491-4edf-8ca0-406bc3b85201",
+                  "process_id": "18948",
+                  "turn_id": "01a10c79-f9d9-7d30-971c-943335f72364",
+                  "started_at_ms": 1791210747315,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '1,220p' originals/apps/server/src/integrations/lark-personal/service.ts; sed -n '221,460p' originals/apps/server/src/integrations/lark-personal/service.ts; sed -n '461,538p' originals/apps/server/src/integrations/lark-personal/service.ts; sed -n '1,380p' originals/apps/web/src/PersonalLark.vue; sed -n '1,120p' originals/apps/server/src/integrations/lark/owner-notice.ts"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/9ff12ab4-0ea7-41ad-8e53-1f8da00e77fc",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,220p' originals/apps/server/src/integrations/lark-personal/service.ts",
+                      "name": "service.ts",
+                      "path": "originals/apps/server/src/integrations/lark-personal/service.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '221,460p' originals/apps/server/src/integrations/lark-personal/service.ts",
+                      "name": "service.ts",
+                      "path": "originals/apps/server/src/integrations/lark-personal/service.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '461,538p' originals/apps/server/src/integrations/lark-personal/service.ts",
+                      "name": "service.ts",
+                      "path": "originals/apps/server/src/integrations/lark-personal/service.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,380p' originals/apps/web/src/PersonalLark.vue",
+                      "name": "PersonalLark.vue",
+                      "path": "originals/apps/web/src/PersonalLark.vue"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,120p' originals/apps/server/src/integrations/lark/owner-notice.ts",
+                      "name": "owner-notice.ts",
+                      "path": "originals/apps/server/src/integrations/lark/owner-notice.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_kiZjQn4zNMKyQMEKi2ozvtFm:exec-7a4f2ebb-7491-4edf-8ca0-406bc3b85201",
+                "status": "completed",
+                "outputDigest": "2eb973115e8a4e3a2a54aba2d444aab2ad3de1a428606b33fe1f20c9da546489"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_ashpfFZq1k3GcvX0iYCr7WJF:exec-25066a00-3ef0-4ff8-90de-b1dd91b9b7e0",
+                "title": "Tool: omem/search_materials",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "search_materials",
+                  "arguments": {
+                    "query": "activityWatchdog maxDurationMs touch idleTimeoutMs",
+                    "kind": "code",
+                    "limit": 20,
+                    "purpose": "implementation"
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_ashpfFZq1k3GcvX0iYCr7WJF:exec-84d2f780-a176-4abc-ad02-07430b39927c",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:apps/server/src/learning/pipeline.ts",
+                    "startLine": 612,
+                    "endLine": 844
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_ashpfFZq1k3GcvX0iYCr7WJF:exec-a70d5333-a008-4273-bb66-605405d63b7a",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:apps/server/src/cli.ts",
+                    "startLine": 430,
+                    "endLine": 510
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_ashpfFZq1k3GcvX0iYCr7WJF:exec-d6973c87-918c-46c2-a7c9-2d576b7b5891",
+                "title": "Tool: omem/search_materials",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "search_materials",
+                  "arguments": {
+                    "query": "service status messages health failedStreams subscriptions",
+                    "kind": "code",
+                    "limit": 20,
+                    "purpose": "implementation"
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_ashpfFZq1k3GcvX0iYCr7WJF:exec-3c48d552-0699-4655-8a8f-747e356e3ce9",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:apps/server/src/store.ts",
+                    "startLine": 108,
+                    "endLine": 210
+                  }
+                }
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:apps/server/src/learning/pipeline.ts",
+                  "startLine": 612,
+                  "endLine": 844
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:apps/server/src/cli.ts",
+                  "startLine": 430,
+                  "endLine": 510
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:apps/server/src/store.ts",
+                  "startLine": 108,
+                  "endLine": 210
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "search_materials",
+                "args": {
+                  "query": "activityWatchdog maxDurationMs touch idleTimeoutMs",
+                  "kind": "code",
+                  "purpose": "implementation",
+                  "limit": 20
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "search_materials",
+                "args": {
+                  "query": "service status messages health failedStreams subscriptions",
+                  "kind": "code",
+                  "purpose": "implementation",
+                  "limit": 20
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_ashpfFZq1k3GcvX0iYCr7WJF:exec-84d2f780-a176-4abc-ad02-07430b39927c",
+                "status": "completed",
+                "outputDigest": "e2b6d05ad735e3cd34a256c62eec7852c536af42025774888e8d1bc77ae12880"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_ashpfFZq1k3GcvX0iYCr7WJF:exec-a70d5333-a008-4273-bb66-605405d63b7a",
+                "status": "completed",
+                "outputDigest": "c442c4bc56c50ff077c3fb330839dc50ac840ebd6e140016cb0ef53abecc2ed3"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_ashpfFZq1k3GcvX0iYCr7WJF:exec-3c48d552-0699-4655-8a8f-747e356e3ce9",
+                "status": "completed",
+                "outputDigest": "503278685f4ff775af28fee50b8ea3c0290ad48ea3bbb8515b66a781a150cb72"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_ashpfFZq1k3GcvX0iYCr7WJF:exec-25066a00-3ef0-4ff8-90de-b1dd91b9b7e0",
+                "status": "completed",
+                "outputDigest": "b7e083bcd796a2813f82c759f10487125ede90f00bf9a7e97ff3ab3cafae3250"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_ashpfFZq1k3GcvX0iYCr7WJF:exec-d6973c87-918c-46c2-a7c9-2d576b7b5891",
+                "status": "completed",
+                "outputDigest": "747617469d34a02d85b432071e3e2c1bed1d727a0abd56bec29961a7548d05c9"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_QtQvBD6sBPAqRPlrcLi07QlJ:exec-56e4614e-f4ea-4d09-97c1-450abcb2e561",
+                "title": "Read store.ts, Read store.ts, Read pipeline.ts, Search activityWatchdog|agentIdleTimeout|maxDurationMs|idleTimeoutMs|touch\\( in server, Read cli.ts, Search larkPersonal|failedStreams|subscriptions|service status|manageService\\( in server",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_QtQvBD6sBPAqRPlrcLi07QlJ:exec-56e4614e-f4ea-4d09-97c1-450abcb2e561",
+                  "process_id": "23253",
+                  "turn_id": "01a10c79-f9d9-7d30-971c-943335f72364",
+                  "started_at_ms": 1791210767073,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '205,308p' originals/apps/server/src/store.ts; sed -n '394,415p' originals/apps/server/src/store.ts; sed -n '612,844p' originals/apps/server/src/learning/pipeline.ts; rg -n \"activityWatchdog|agentIdleTimeout|maxDurationMs|idleTimeoutMs|touch\\(\" originals/apps/server/src originals/packages/contracts/src originals/config | head -200; sed -n '430,510p' originals/apps/server/src/cli.ts; rg -n \"larkPersonal|failedStreams|subscriptions|service status|manageService\\(\" originals/apps/server/src originals/scripts | head -160"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/9ff12ab4-0ea7-41ad-8e53-1f8da00e77fc",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '205,308p' originals/apps/server/src/store.ts",
+                      "name": "store.ts",
+                      "path": "originals/apps/server/src/store.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '394,415p' originals/apps/server/src/store.ts",
+                      "name": "store.ts",
+                      "path": "originals/apps/server/src/store.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '612,844p' originals/apps/server/src/learning/pipeline.ts",
+                      "name": "pipeline.ts",
+                      "path": "originals/apps/server/src/learning/pipeline.ts"
+                    },
+                    {
+                      "type": "search",
+                      "cmd": "rg -n \"activityWatchdog|agentIdleTimeout|maxDurationMs|idleTimeoutMs|touch\\\\(\" originals/apps/server/src originals/packages/contracts/src originals/config",
+                      "query": "activityWatchdog|agentIdleTimeout|maxDurationMs|idleTimeoutMs|touch\\(",
+                      "path": "server"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '430,510p' originals/apps/server/src/cli.ts",
+                      "name": "cli.ts",
+                      "path": "originals/apps/server/src/cli.ts"
+                    },
+                    {
+                      "type": "search",
+                      "cmd": "rg -n \"larkPersonal|failedStreams|subscriptions|service status|manageService\\\\(\" originals/apps/server/src originals/scripts",
+                      "query": "larkPersonal|failedStreams|subscriptions|service status|manageService\\(",
+                      "path": "server"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_QtQvBD6sBPAqRPlrcLi07QlJ:exec-56e4614e-f4ea-4d09-97c1-450abcb2e561",
+                "status": "completed",
+                "outputDigest": "95537231607b990f3953f1f751acf8d4da88c4c5a92aa409a3d718f0c9009103"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_KPvkjqIBLcQGJi7RTc7k1r3r:exec-38f17801-6191-470b-a821-eb38a822d81a",
+                "title": "Search learning\\.enabled|new LearningPipeline|LearningPipeline\\( in server, Read agents.ts, Read agents.ts, Read runtime.ts, Read cli.ts, Read omem.default.json",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_KPvkjqIBLcQGJi7RTc7k1r3r:exec-38f17801-6191-470b-a821-eb38a822d81a",
+                  "process_id": "42608",
+                  "turn_id": "01a10c79-f9d9-7d30-971c-943335f72364",
+                  "started_at_ms": 1791210781238,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "rg -n \"learning\\.enabled|new LearningPipeline|LearningPipeline\\(\" originals/apps/server/src originals/config/omem.default.json; sed -n '130,180p' originals/apps/server/src/agents.ts; sed -n '480,530p' originals/apps/server/src/agents.ts; sed -n '560,605p' originals/apps/server/src/assistant/runtime.ts; sed -n '130,215p' originals/apps/server/src/cli.ts; sed -n '1,120p' originals/config/omem.default.json"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/9ff12ab4-0ea7-41ad-8e53-1f8da00e77fc",
+                  "parsed_cmd": [
+                    {
+                      "type": "search",
+                      "cmd": "rg -n \"learning\\\\.enabled|new LearningPipeline|LearningPipeline\\\\(\" originals/apps/server/src originals/config/omem.default.json",
+                      "query": "learning\\.enabled|new LearningPipeline|LearningPipeline\\(",
+                      "path": "server"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '130,180p' originals/apps/server/src/agents.ts",
+                      "name": "agents.ts",
+                      "path": "originals/apps/server/src/agents.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '480,530p' originals/apps/server/src/agents.ts",
+                      "name": "agents.ts",
+                      "path": "originals/apps/server/src/agents.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '560,605p' originals/apps/server/src/assistant/runtime.ts",
+                      "name": "runtime.ts",
+                      "path": "originals/apps/server/src/assistant/runtime.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '130,215p' originals/apps/server/src/cli.ts",
+                      "name": "cli.ts",
+                      "path": "originals/apps/server/src/cli.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,120p' originals/config/omem.default.json",
+                      "name": "omem.default.json",
+                      "path": "originals/config/omem.default.json"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_KPvkjqIBLcQGJi7RTc7k1r3r:exec-38f17801-6191-470b-a821-eb38a822d81a",
+                "status": "completed",
+                "outputDigest": "91cab98ad8bb7fd8b3e0030d127c00897d0a8d305db086858fbbcff7a6e0feb5"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_vu2qacoKt8YozbrXhHpu83Rx:exec-83b49041-6279-4c39-afca-6c3c3b218875",
+                "title": "Read app.ts, Search api/health|status:.*ok|failedStreams|personalLark\\.health|personal.*health in app.ts, Read agents.ts, Read agents.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_vu2qacoKt8YozbrXhHpu83Rx:exec-83b49041-6279-4c39-afca-6c3c3b218875",
+                  "process_id": "92229",
+                  "turn_id": "01a10c79-f9d9-7d30-971c-943335f72364",
+                  "started_at_ms": 1791210792173,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '120,190p' originals/apps/server/src/app.ts; rg -n \"api/health|status:.*ok|failedStreams|personalLark\\.health|personal.*health\" originals/apps/server/src/app.ts originals/apps/server/src/routes.ts originals/apps/server/src/*.ts; sed -n '150,215p' originals/apps/server/src/agents.ts; sed -n '215,330p' originals/apps/server/src/agents.ts"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/9ff12ab4-0ea7-41ad-8e53-1f8da00e77fc",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '120,190p' originals/apps/server/src/app.ts",
+                      "name": "app.ts",
+                      "path": "originals/apps/server/src/app.ts"
+                    },
+                    {
+                      "type": "search",
+                      "cmd": "rg -n \"api/health|status:.*ok|failedStreams|personalLark\\\\.health|personal.*health\" originals/apps/server/src/app.ts originals/apps/server/src/routes.ts 'originals/apps/server/src/*.ts'",
+                      "query": "api/health|status:.*ok|failedStreams|personalLark\\.health|personal.*health",
+                      "path": "app.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '150,215p' originals/apps/server/src/agents.ts",
+                      "name": "agents.ts",
+                      "path": "originals/apps/server/src/agents.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '215,330p' originals/apps/server/src/agents.ts",
+                      "name": "agents.ts",
+                      "path": "originals/apps/server/src/agents.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_vu2qacoKt8YozbrXhHpu83Rx:exec-83b49041-6279-4c39-afca-6c3c3b218875",
+                "status": "completed",
+                "outputDigest": "a5d9a2ba08f3853c33a7ab74295c192a0fe67fbdd41ceae75df36e91d62979e4"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_R1ZMgfi6YKDEzbm9kG3AhW7v:exec-3b5d7e44-9e6b-41cf-a4b4-14bdb21dde1c",
+                "title": "Read app.ts, Read questions.ts, Read service.ts, Read lark-personal.test.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_R1ZMgfi6YKDEzbm9kG3AhW7v:exec-3b5d7e44-9e6b-41cf-a4b4-14bdb21dde1c",
+                  "process_id": "6709",
+                  "turn_id": "01a10c79-f9d9-7d30-971c-943335f72364",
+                  "started_at_ms": 1791210807645,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '220,245p' originals/apps/server/src/app.ts; sed -n '1,220p' originals/apps/server/src/decision/questions.ts; sed -n '1,280p' originals/apps/server/src/decision/service.ts; sed -n '1,220p' originals/apps/server/tests/lark-personal.test.ts"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/9ff12ab4-0ea7-41ad-8e53-1f8da00e77fc",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '220,245p' originals/apps/server/src/app.ts",
+                      "name": "app.ts",
+                      "path": "originals/apps/server/src/app.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,220p' originals/apps/server/src/decision/questions.ts",
+                      "name": "questions.ts",
+                      "path": "originals/apps/server/src/decision/questions.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,280p' originals/apps/server/src/decision/service.ts",
+                      "name": "service.ts",
+                      "path": "originals/apps/server/src/decision/service.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,220p' originals/apps/server/tests/lark-personal.test.ts",
+                      "name": "lark-personal.test.ts",
+                      "path": "originals/apps/server/tests/lark-personal.test.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_R1ZMgfi6YKDEzbm9kG3AhW7v:exec-3b5d7e44-9e6b-41cf-a4b4-14bdb21dde1c",
+                "status": "completed",
+                "outputDigest": "92a437b1769762ba35a4d26b33b2883c5041cf8b15c8d38144da099fbde8ad94"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_xaZvyySwgOeDHjhnDznSJ1Yw:exec-34838183-460a-452d-ba62-c4b69b270c64",
+                "title": "Read lark-personal.test.ts, Read app.ts, Search personal_lark_(settings|streams|messages)|CREATE TABLE personal_lark in server, Read index.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_xaZvyySwgOeDHjhnDznSJ1Yw:exec-34838183-460a-452d-ba62-c4b69b270c64",
+                  "process_id": "94459",
+                  "turn_id": "01a10c79-f9d9-7d30-971c-943335f72364",
+                  "started_at_ms": 1791210830075,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '220,420p' originals/apps/server/tests/lark-personal.test.ts; sed -n '245,270p' originals/apps/server/src/app.ts; rg -n \"personal_lark_(settings|streams|messages)|CREATE TABLE personal_lark\" originals/apps/server/src; sed -n '175,205p' originals/packages/contracts/src/index.ts"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/9ff12ab4-0ea7-41ad-8e53-1f8da00e77fc",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '220,420p' originals/apps/server/tests/lark-personal.test.ts",
+                      "name": "lark-personal.test.ts",
+                      "path": "originals/apps/server/tests/lark-personal.test.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '245,270p' originals/apps/server/src/app.ts",
+                      "name": "app.ts",
+                      "path": "originals/apps/server/src/app.ts"
+                    },
+                    {
+                      "type": "search",
+                      "cmd": "rg -n 'personal_lark_(settings|streams|messages)|CREATE TABLE personal_lark' originals/apps/server/src",
+                      "query": "personal_lark_(settings|streams|messages)|CREATE TABLE personal_lark",
+                      "path": "server"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '175,205p' originals/packages/contracts/src/index.ts",
+                      "name": "index.ts",
+                      "path": "originals/packages/contracts/src/index.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_xaZvyySwgOeDHjhnDznSJ1Yw:exec-34838183-460a-452d-ba62-c4b69b270c64",
+                "status": "completed",
+                "outputDigest": "bccbc5c0d4b461c5b54de07f04c1910b55709d67e3d978b9e0771e16490922f2"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_aA0evvYYyirqedaH38fA8JUI:exec-687472a6-d086-4db4-9039-4e7d0dee9f74",
+                "title": "sed -n '1,120p' originals/apps/server/src/integrations/lark-personal/api.ts; sed -n '1040,1055p' originals/apps/server/src/storage/migrations.ts; sed -n '1,180p' originals/.agents/skills/omem-design/SKILL.md 2>/dev/null || true; rg -n \"personalLark\\.start|learning\\?\\.start|start\\(\\)\" originals/apps/server/src/app.ts | tail -30",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_aA0evvYYyirqedaH38fA8JUI:exec-687472a6-d086-4db4-9039-4e7d0dee9f74",
+                  "process_id": "20087",
+                  "turn_id": "01a10c79-f9d9-7d30-971c-943335f72364",
+                  "started_at_ms": 1791210855913,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '1,120p' originals/apps/server/src/integrations/lark-personal/api.ts; sed -n '1040,1055p' originals/apps/server/src/storage/migrations.ts; sed -n '1,180p' originals/.agents/skills/omem-design/SKILL.md 2>/dev/null || true; rg -n \"personalLark\\.start|learning\\?\\.start|start\\(\\)\" originals/apps/server/src/app.ts | tail -30"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/9ff12ab4-0ea7-41ad-8e53-1f8da00e77fc",
+                  "parsed_cmd": [
+                    {
+                      "type": "unknown",
+                      "cmd": "sed -n '1,120p' originals/apps/server/src/integrations/lark-personal/api.ts; sed -n '1040,1055p' originals/apps/server/src/storage/migrations.ts; sed -n '1,180p' originals/.agents/skills/omem-design/SKILL.md 2>/dev/null || true; rg -n \"personalLark\\.start|learning\\?\\.start|start\\(\\)\" originals/apps/server/src/app.ts | tail -30"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_aA0evvYYyirqedaH38fA8JUI:exec-687472a6-d086-4db4-9039-4e7d0dee9f74"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_aA0evvYYyirqedaH38fA8JUI:exec-687472a6-d086-4db4-9039-4e7d0dee9f74",
+                "status": "completed",
+                "outputDigest": "0a2e6f77f132381d5e62bd12ce5fb650b64ff16fb3719e133f2b5e0ef68f49ab"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_fe7SoapikXonlmirY4Y3hwh9:exec-b7dd6ae5-e89a-46e1-922f-61f591b470b3",
+                "title": "Read cli.md, Read operations.md, Read service.ts, Read materials.ts, Read PersonalLark.vue, Read app.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_fe7SoapikXonlmirY4Y3hwh9:exec-b7dd6ae5-e89a-46e1-922f-61f591b470b3",
+                  "process_id": "99561",
+                  "turn_id": "01a10c79-f9d9-7d30-971c-943335f72364",
+                  "started_at_ms": 1791210896238,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "nl -ba originals/docs/cli.md | sed -n '1,70p;108,175p'; nl -ba originals/docs/reader-first/operations.md | sed -n '1,70p'; nl -ba originals/apps/server/src/integrations/lark-personal/service.ts | sed -n '45,190p;205,340p;341,510p'; nl -ba originals/apps/server/src/integrations/lark-personal/materials.ts | sed -n '1,205p'; nl -ba originals/apps/web/src/PersonalLark.vue | sed -n '170,360p'; nl -ba originals/apps/server/src/app.ts | sed -n '130,155p;228,250p'"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/9ff12ab4-0ea7-41ad-8e53-1f8da00e77fc",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/docs/cli.md",
+                      "name": "cli.md",
+                      "path": "originals/docs/cli.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/docs/reader-first/operations.md",
+                      "name": "operations.md",
+                      "path": "originals/docs/reader-first/operations.md"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/integrations/lark-personal/service.ts",
+                      "name": "service.ts",
+                      "path": "originals/apps/server/src/integrations/lark-personal/service.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/integrations/lark-personal/materials.ts",
+                      "name": "materials.ts",
+                      "path": "originals/apps/server/src/integrations/lark-personal/materials.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/web/src/PersonalLark.vue",
+                      "name": "PersonalLark.vue",
+                      "path": "originals/apps/web/src/PersonalLark.vue"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/app.ts",
+                      "name": "app.ts",
+                      "path": "originals/apps/server/src/app.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_fe7SoapikXonlmirY4Y3hwh9:exec-b7dd6ae5-e89a-46e1-922f-61f591b470b3",
+                "status": "completed",
+                "outputDigest": "f8ec0bddcc81ffabad99ad8603043f685d9ffe482cac9f163a7a871ab1f3b7bb"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_aW6Mup7yhj4SL35rVI4HaUbZ:exec-ce6d9869-9cd4-4418-acfa-94f84975744a",
+                "title": "Tool: omem/search_materials",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "search_materials",
+                  "arguments": {
+                    "query": "消息 完成 已有事项 自动判断 可靠性",
+                    "keys": [
+                      "omem:docs/reader-first/operations.md"
+                    ],
+                    "kind": "document",
+                    "limit": 10,
+                    "purpose": "background"
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_aW6Mup7yhj4SL35rVI4HaUbZ:exec-e851a58c-ef31-4594-870f-2f62eaab756a",
+                "title": "Tool: omem/search_materials",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "search_materials",
+                  "arguments": {
+                    "query": "@所有人 真实命中 未验收",
+                    "keys": [
+                      "omem:docs/reader-first/personal-messages.md"
+                    ],
+                    "kind": "document",
+                    "limit": 10,
+                    "purpose": "background"
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_aW6Mup7yhj4SL35rVI4HaUbZ:exec-41ba0d4d-dcc7-4532-9aa5-98568e074139",
+                "title": "Tool: omem/search_materials",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "search_materials",
+                  "arguments": {
+                    "query": "npm 发布 安装版 omem 当前验收",
+                    "keys": [
+                      "omem:docs/reader-first/progress.md"
+                    ],
+                    "kind": "document",
+                    "limit": 10,
+                    "purpose": "background"
+                  }
+                }
+              },
+              {
+                "kind": "mcp",
+                "tool": "search_materials",
+                "args": {
+                  "query": "@所有人 真实命中 未验收",
+                  "keys": [
+                    "omem:docs/reader-first/personal-messages.md"
+                  ],
+                  "kind": "document",
+                  "purpose": "background",
+                  "limit": 10
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "search_materials",
+                "args": {
+                  "query": "npm 发布 安装版 omem 当前验收",
+                  "keys": [
+                    "omem:docs/reader-first/progress.md"
+                  ],
+                  "kind": "document",
+                  "purpose": "background",
+                  "limit": 10
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "search_materials",
+                "args": {
+                  "query": "消息 完成 已有事项 自动判断 可靠性",
+                  "keys": [
+                    "omem:docs/reader-first/operations.md"
+                  ],
+                  "kind": "document",
+                  "purpose": "background",
+                  "limit": 10
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_aW6Mup7yhj4SL35rVI4HaUbZ:exec-e851a58c-ef31-4594-870f-2f62eaab756a",
+                "status": "completed",
+                "outputDigest": "c46c9f9e10e753bec44e5ab5f55f24ee24718c8d8191618836815877f03c13fb"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_aW6Mup7yhj4SL35rVI4HaUbZ:exec-41ba0d4d-dcc7-4532-9aa5-98568e074139",
+                "status": "completed",
+                "outputDigest": "efe5ff084ed88dc4fdb194dc750ad76fff5ba0229861f2124a28ab09363b51d8"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_aW6Mup7yhj4SL35rVI4HaUbZ:exec-ce6d9869-9cd4-4418-acfa-94f84975744a",
+                "status": "completed",
+                "outputDigest": "65abfcd99b99a7d2d198b44ab2dded321c45d99f452c2fe95c89bd864c8fc100"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_TPvMk8hM3MUCl79FZUOd9QLN:exec-02a7b7e8-4a0b-483b-9997-803edb738698",
+                "title": "Tool: omem/submit_result",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "submit_result",
+                  "submitted": true
+                }
+              },
+              {
+                "kind": "submission",
+                "success": true,
+                "reads": [
+                  "omem:docs/cli.md",
+                  "omem:apps/server/src/agent-timeout.ts",
+                  "omem:scripts/service.ts",
+                  "omem:apps/server/src/service-manager.ts",
+                  "omem:docs/reader-first/operations.md",
+                  "omem:docs/reader-first/personal-messages.md",
+                  "omem:apps/server/src/integrations/lark-personal/client.ts",
+                  "omem:apps/server/src/integrations/lark-personal/materials.ts",
+                  "omem:apps/server/src/integrations/lark-personal/policy.ts",
+                  "omem:apps/server/src/integrations/lark-personal/service.ts",
+                  "omem:apps/web/src/PersonalLark.vue",
+                  "omem:apps/server/src/integrations/lark/owner-notice.ts",
+                  "omem:apps/server/src/learning/pipeline.ts",
+                  "omem:apps/server/src/cli.ts",
+                  "omem:apps/server/src/store.ts",
+                  "omem:apps/server/src/agents.ts",
+                  "omem:docs/archive/2026-10-01-baseline/prototype/styles.css",
+                  "omem:apps/server/src/review/app.ts",
+                  "omem:apps/server/tests/review-dev.test.ts",
+                  "omem:scripts/live-learning-smoke.ts",
+                  "omem:scripts/review-knowledge.ts",
+                  "omem:scripts/live-pipeline-smoke.ts",
+                  "omem:scripts/review-guides.ts",
+                  "omem:scripts/review-catalog.ts",
+                  "omem:apps/server/src/review/store.ts",
+                  "omem:apps/server/src/code/understanding-model.ts",
+                  "omem:apps/web/src/review-api.ts",
+                  "omem:scripts/quality-lark-annotate.ts",
+                  "omem:apps/server/tests/agents.test.ts",
+                  "omem:apps/server/src/review/main.ts",
+                  "omem:apps/server/src/integrations/lark/registration.ts",
+                  "omem:scripts/live-retrieval-smoke.ts",
+                  "omem:apps/server/src/retrieval/keyword.ts",
+                  "omem:apps/web/src/ReviewApp.vue",
+                  "omem:apps/server/src/source-profile/service.ts",
+                  "omem:apps/server/tests/quality-annotation.test.ts",
+                  "omem:apps/server/src/memory/service.ts",
+                  "omem:apps/server/tests/annotation-cancel-delivery.test.ts",
+                  "omem:apps/server/tests/review-sync.test.ts",
+                  "omem:apps/server/tests/conversation-security.test.ts",
+                  "omem:apps/server/src/assistant/runtime.ts",
+                  "omem:config/omem.default.json",
+                  "omem:apps/server/src/app.ts",
+                  "omem:apps/server/src/decision/questions.ts",
+                  "omem:apps/server/src/decision/service.ts",
+                  "omem:apps/server/tests/lark-personal.test.ts",
+                  "omem:packages/contracts/src/index.ts",
+                  "omem:docs/reader-first/progress.md"
+                ]
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_TPvMk8hM3MUCl79FZUOd9QLN:exec-02a7b7e8-4a0b-483b-9997-803edb738698",
+                "status": "completed",
+                "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+              }
+            ],
+            "hostTokenBudget": null
+          },
+          "repairAttempts": 0
+        },
+        "findings": "研究定位\n本页服务于“想让助手定时查看飞书消息、又不想改变原有消息状态”的个人用户。最有用的解释单位不是模块或测试记录，而是案例中一条消息经过的四个可见阶段：被订阅范围纳入并抓到 → 原消息与可读资源被保存 → 小模型给出处理建议 → Agent 抽取、独立复核并由 MemoryService 决定是否应用。必须反复区分“已收到”“原件已保存”“正文已读取”“已排队”“记忆/事项已应用”。现有说明已包含大多数事实，但将操作、真实实验数字、内部机制和修改入口混在一起，不利于按案例行动（omem:docs/reader-first/personal-messages.md:1-58）。\n\n一、教学案例的正确走法（示例，不是已验证事实）\n用“需求群已免打扰；同事直接 @我，要求周三确认交付；附飞书文档和流程截图”贯穿全文。先明确这是教学示例，不能声称系统实际见过这条消息。预期可见结果应分层：\n1. 若“同时检查所有群里的 @我 / @所有人”开启，直接 @我可经独立提及通道进入，即使群处于免打扰；若该群被设为“排除”，则连提及也跳过。\n2. 原消息先保存为固定材料；文档、截图分别显示读取/保存状态。截图下载成功不等于文字或流程已经理解。\n3. “可能需要你行动”只是建议。直接 @我不自动等于待办，周三交付要求仍需 Agent 结合身份、上下文、已有事项调查。\n4. 只有完整材料进入学习队列，经过抽取、独立复核和 MemoryService 治理后，才可能出现已应用的记忆或事项；排队和分类都不是最终结果。\n这些因果分别由订阅与提及实现（omem:apps/server/src/integrations/lark-personal/service.ts:205-318）、资源处理（omem:apps/server/src/integrations/lark-personal/materials.ts:41-198）、分流与学习连接（omem:apps/server/src/integrations/lark-personal/service.ts:341-467）和学习复核（omem:apps/server/src/learning/pipeline.ts:612-844）支持。\n\n二、发现、订阅、定时采集与暂停\n安装版命令路线是：在服务所在机器完成个人登录，然后 discover → watch → enable；网页对应“读取最近活跃会话”→ 每个会话选择采集方式 → 勾选“开启定时采集”并保存。CLI 列出了 lark login/status、messages discover/watch/status/enable/sync/inbox/pause/unwatch/exclude（omem:docs/cli.md:112-139）。\n- discover 调官方 CLI 按最近活跃排序，限 p2p/group，默认排除免打扰，100 条一页、最多 3 页，即最多 300 个候选；它只刷新候选，不订阅（omem:apps/server/src/integrations/lark-personal/client.ts:83-105；omem:apps/server/src/integrations/lark-personal/service.ts:102-112）。\n- “订阅/watch”持续拉普通消息；“仅提及时/off”不拉普通流，但全局提及例外仍可能纳入；“排除/excluded”连提及流中的消息也跳过。订阅状态持久保存（omem:apps/server/src/integrations/lark-personal/service.ts:113-120,141-189,282-291；omem:apps/web/src/PersonalLark.vue:224-271）。\n- 新库默认 enabled=false；默认间隔 5 分钟、首次回溯 24 小时，允许 1–1440 分钟及 1–168 小时。保存设置才生效。pause 只关定时调度，保留订阅、历史和同步位置；关闭时“立即同步”也不会排队（omem:apps/server/src/integrations/lark-personal/policy.ts:6-13；omem:apps/server/src/integrations/lark-personal/service.ts:141-189；omem:docs/cli.md:131-137）。\n- 每页 50 条。一次同步冻结时间窗，处理完页后才推进游标；分页游标缺失时不推进。最后保留一分钟重叠以去重和捕捉近窗变化，重启可继续，但不能据此承诺发现很久以前的编辑或撤回（omem:apps/server/src/integrations/lark-personal/client.ts:129-159；omem:apps/server/src/integrations/lark-personal/service.ts:151-189,295-318）。\n- 只读边界有代码依据：PersonalLarkPort 只有 identity/preferences/chats/messages/resource，没有 send、reply、delete 或 read-ack（omem:apps/server/src/integrations/lark-personal/client.ts:24-49）。当前文档记录过重读未读消息仍未读，但应作为观察而非对飞书客户端所有行为的保证（omem:docs/reader-first/personal-messages.md:15-19）。\n\n三、免打扰、@所有人与明确排除\n普通订阅群每轮同步前重读偏好。群 is_muted=true 时跳过普通流，并把普通流位置推进到本轮结束；解除免打扰后不会补拉整个静默时段。提及流有独立游标，仍可纳入直接 @我（omem:apps/server/src/integrations/lark-personal/service.ts:233-246）。\n提及搜索使用当前用户的 at_chatter_ids，官方返回语义包含直接 @我 与 @所有人。程序对二者再分流：is_mute_at_all 只过滤 @所有人，直接 @我保留；明确 excluded 的会话最后统一过滤，因此优先级最高（omem:apps/server/src/integrations/lark-personal/client.ts:129-159；omem:apps/server/src/integrations/lark-personal/service.ts:251-291）。关闭 mentionExceptions 会停止这条全群提及通道，只剩普通订阅。\n须把“免打扰”与“屏蔽 @所有人”写成两个独立设置。当前真实实验没有单独的 @所有人命中样本，因此只能说查询语义和程序分流已接入，不能说真实 @所有人已验收（omem:docs/reader-first/personal-messages.md:13-19）。\n\n四、文档、图片、附件、话题分别保存什么\n所有消息先形成 chat Source/Revision：正文含发言人、时间和内容；原始消息 JSON 另存资产；来源上下文保留会话、messageId、threadId、资源状态和可回到飞书的链接。即使资源下载或解析失败，原消息记录仍留在 inbox（omem:apps/server/src/integrations/lark-personal/materials.ts:49-60,155-198；omem:apps/server/src/integrations/lark-personal/service.ts:341-467）。\n- 飞书 docx/wiki 链接：调用现有官方导入器，成功后保存独立文档 revision，并把文档 parts 合入本消息供后续处理；失败标 failed。不会承诺递归抓无限引用（materials.ts:22-39,64-90）。\n- 图片：下载原件并保存 asset。仅 PNG/JPEG/WebP 且不超过 5 MB 时加入 image part，供支持视觉的 ACP Agent；文本决策模型不读像素，资源在界面仍可显示“原件已保存，仍需理解内容”（materials.ts:91-120,148-151；PersonalLark.vue:313-344）。\n- PDF/DOCX：总下载上限 20 MB；合格文件复用 Docling，解析成功后保存独立 revision并标 read。TXT/Markdown/CSV/JSON/log 不超过 200 KB 时直接作为文字 part。视频、音频、其他格式只保存可下载原件，仍属未理解；OCR和复杂布局受解析器能力限制（client.ts:161-193；materials.ts:121-151）。\n- 话题：CLI 返回的 thread_replies 被拆为独立消息保存；若 thread_has_more 或 thread_replies_error，主消息标为未完整，当前没有额外分页补全（service.ts:276-281,417-427）。普通会话供小模型的邻近上下文只取已入库的此前 8 条（service.ts:387-409）。\n界面“最近消息与判断”是主要检查点：消息错误旁出现“重新读取与判断”；资源折叠区区分“正文已读取”“原件已保存，仍需理解内容”“资源尚未读取”及具体失败，并提供下载原件/查看关联材料；消息还可查看固定材料或回飞书原消息（PersonalLark.vue:284-355）。重试会用已保存的原始消息重新执行资源处理与判断，但已明确排除的会话不会重试（service.ts:469-510）。\n\n五、决策模型与真正写入的边界\n决策模型是可选 sidecar，mode 可 off/auto/2b/4b；auto 在已有本地模型中选择，运行时不隐式下载。失败返回 null，让既有工作流继续（omem:apps/server/src/decision/service.ts:1-74）。它针对安排、学习、业务、代码、关注原因、上下文缺口和可疑指令给选择与 confidence；confidence 是模型分数，不是准确率。关注原因包含行动、等待、变化、信息、噪声、不确定；规则明确“被 @ 不等于被交办，别人的承诺不自动成为用户待办”（omem:apps/server/src/integrations/lark-personal/policy.ts:14-52；PersonalLark.vue:274-277,346-353）。\n代码中的实际分支需要清楚写：\n- 高置信 noise（>=0.85）且无资源：保留原件，但不进入自动学习。\n- injection=attempt：标 review，保留原文，不自动整理。\n- 宿主确定资源 failed/仅 saved 未读全，或话题仍有更多/报错：标 review，不进入学习，显示缺口并允许重试。宿主资源状态覆盖模型误判“上下文充分”。\n- 其余未删除且完整的材料进入学习，包括决策分数低、context 选了不确定/需讨论，以及决策服务不可用返回 null。低于 0.6 的关注分在 UI 显示“需要 Agent 补查”。因此“低分/不可用”不是丢弃条件，“模型说缺背景”本身也没有事实写入权；后续 Agent 可以补查、弃权或提出需人工判断（service.ts:394-455；PersonalLark.vue:140-150）。\n实际学习还要求配置 learning.enabled=true、learning.profileId 指向可用 ACP profile并重启；默认配置关闭，关闭时后台 LearningPipeline 不启动，所以“消息完整、extract_claims 已排队”仍不等于已处理（omem:docs/cli.md:108-110；omem:apps/server/src/app.ts:134-151）。\n完整链路是 extractor 形成 proposals → 只把未处理候选排队给独立 verifier → 校验提案/证据摘要及评审覆盖 → MemoryService.evaluateBatch 统一裁决 auto_apply、awaiting_decision 或 reject。若材料项目/主题归属含糊，原文保留而事实抽取暂停，等待人工选择；无提案也可能正常结束。只有 MemoryService 应用后的记录才是记忆或事项；小模型标签、消息 state=ready、任务入队、Agent 输出或复核运行本身均不是（omem:apps/server/src/learning/pipeline.ts:612-721,723-844）。读者可用 messages inbox 看消息/资源/判断，用 jobs list/show 看后台进度与失败，用 memories list 和 tasks list确认最终已应用结果（omem:docs/cli.md:78-110,112-139）。\n\n六、机器人通知、持续运行与安装版\n个人登录采集与机器人通知是两套授权。同步连续失败时仅首次记录并向已有 owner_notification 绑定排队通知，恢复后再通知；没有有效 owner 绑定时不会向采集群发送。投递沿用既有 delivery_intents 与机器人 worker（omem:apps/server/src/integrations/lark-personal/service.ts:193-203,320-339；omem:apps/server/src/integrations/lark/owner-notice.ts:6-77；omem:docs/cli.md:139-141）。登录身份变化、登录或权限错误会暂停/失败并保留同步位置，用户应在服务机器执行 omem lark status/login并重试。服务完全退出时不能自发故障通知，只能依靠 PM2重启和外部状态检查。\n安装版文档给出的初始化路径是 Node.js 24+ 后 npm install -g omem、omem init、omem service start、omem open；init 不自动订阅、跑模型、发通知或下载模型。PM2 为包内依赖，终端关闭后继续、异常退出退避重启；没有开机启动，电脑休眠时不采集。已有 systemd/容器时用 omem serve，不再嵌套 PM2（omem:docs/cli.md:5-20）。但当前进度材料明确公共 npm 尚未上传，所以正文必须把该流程表述为“获得安装包/正式发布后”，不能暗示读者现在一定能从 npm 公网安装（omem:docs/reader-first/progress.md:21-25）。\n日常检查建议分三层：\n- omem service status [--json]：本机 PM2 state、PID、重启次数、API可达性、日志路径；status 不会为检查而启动服务。start/restart 会拒绝与目标端口已有服务并行，防止两个采集实例（omem:apps/server/src/service-manager.ts:32-76,78-143）。\n- omem status --json：API健康体，含 personalLark.enabled/running/subscriptions/failedStreams/lastSuccess/decisions、processingEnabled和learning状态（omem:apps/server/src/app.ts:231-244；service.ts:65-94）。\n- omem messages status / inbox：订阅流的 last_success/last_error，以及消息 ready/review/failed、资源和决策结果。\n当前实现有一处文档与退出码语义差异：/api/health 顶层固定 status=\"ok\"，service status 只以 PM2 online和API body.status判断非零；personalLark.failedStreams 虽在 JSON 中，但不会单独让退出码非零。因此文章应要求用户查看字段/消息状态，不能声称采集异常必然由 service status 的退出码捕获（app.ts:231-244；service-manager.ts:123-149；cli.ts:139-163）。\n\n七、八分钟是否会打断仍在输出的 Agent\n不会因为从启动起累计八分钟就必然中断。timeoutMs 现在是兼容别名，语义为无活动时限；idleTimeoutMs 优先。默认 Sol 480000 ms 时，ACP 初始化、有效 session update、工具进展和模型输出都会 touch/续期；持续有这些活动可运行超过八分钟。完全静默八分钟才超时。stderr、宿主轮询不续期；长工具若没有任何进展事件也可能触发，应按工具耗时提高 idleTimeoutMs。默认没有总时长上限；只有显式 maxDurationMs 才设总上限，用户取消始终有效（omem:apps/server/src/agent-timeout.ts:3-39；omem:apps/server/src/agents.ts:154-159,215-270,500-520；omem:docs/cli.md:160-170）。\n\n应放到结尾的小型开发入口表\n只保留读者排障所需的 6 行：client.ts（只读 CLI/提及/偏好/下载）、materials.ts（资源进入 Capture）、policy.ts（分类问题）、service.ts（订阅分页重试与学习门）、owner-notice.ts（已有机器人通知）、PersonalLark.vue（可见状态）、service-manager.ts/agent-timeout.ts（后台与活动超时）。不要在正文暴露 personal_lark_* 表名、watermark/window_end、job kind 等内部字段；这些只在开发入口附注中出现。",
+        "gaps": [
+          "当前快照说明 omem 公共 npm 版本尚未上传；可以调查和说明安装包命令，但不能把 npm install -g omem 写成当前任何读者都能成功的已发布事实（docs/reader-first/progress.md:23）。",
+          "提及搜索与 is_mute_at_all 分流已实现，但真实私密实验没有可单独确认的 @所有人样本；真实 @所有人命中仍未验收（docs/reader-first/personal-messages.md:19）。",
+          "文档宣称服务状态可覆盖采集异常，但当前顶层健康状态固定为 ok，failedStreams 不参与 service/status 退出码；需要实现或文档择一修正，页面现阶段应指导人工检查 personalLark 与 messages status。",
+          "对方回复是否完成既有事项、消息分类是否可靠仍未完成内容级验收；不能由 @、低模型分或测试通过推断已自动建立/完成事项。",
+          "图片是否被视觉 Agent正确理解、PDF/DOCX 的 OCR/复杂布局、视频音频内容及超大附件仍需用户检查；当前状态只能证明保存、解析或缺口，不证明语义正确。"
+        ],
+        "composition": {
+          "mode": "rewrite",
+          "reason": "没有已发布的 guide:personal-messages 旧稿；现有 personal-messages.md 是实现说明，先放工具、真实实验数字和内部限制，读者难以沿一个消息判断下一步。页面目标明确要求操作与可见结果优先，并用同一案例解释四层状态，因此应重写组织而保留其可靠事实。把测试耗时、样本数、工程验证与数据库字段移出主线；保留只读边界、未验收项和资源限制，但放在对应动作旁，而不是集中成审计报告。",
+          "outline": "1. 开场：这是教学示例\n用一句话标记“免打扰的需求群里，同事直接 @我，要求周三确认交付，并附飞书文档和流程截图”为教学案例。先给出核心结论：助手只读采集；收到消息不等于读全，读全不等于已记住或建待办。\n\n2. 五分钟完成设置\n先给安装版前提和最短命令：已有安装包/正式发布后，init、service start、open；在服务机器 lark login。网页按“读取最近活跃会话 → 需求群选订阅/仅提及时/排除 → 设置间隔和首次回溯 → 开启定时采集并保存 → 立即同步”。并列等价 CLI，只保留 discover/watch/enable/sync/status/inbox/pause。说明 discover 最多 300、默认不含免打扰且不会自动订阅；pause 保留订阅和历史。\n\n3. 三种会话选择与免打扰例外\n用小表比较：订阅=普通消息+提及；仅提及时=只靠全局提及通道；排除=全部跳过。紧接案例说明普通免打扰流不补拉静默期，直接 @我仍可进；屏蔽 @所有人只挡广播，不挡直接 @我；关闭提及例外后只看普通订阅。加一条“@所有人真实命中尚未验收”和飞书授权可见范围限制。\n\n4. 消息到了以后，在页面看哪四个位置\n按页面顺序解释消息正文/回飞书链接、查看保存材料、资源折叠区、判断依据。用案例逐项展示文档可出现“正文已读取+关联材料”，截图可能是“原件已保存，仍需理解内容”；资源失败、话题未拉全会显示错误与“重新读取与判断”。加一张紧凑表覆盖文档、图片、PDF/DOCX、小文本、其他附件、话题，重点写保存内容、完成标志和需人工检查项。\n\n5. 为什么 @我还没有变成待办\n用四阶段箭头或编号：收到并保存 → 资源完整性门 → 小模型建议 → Agent抽取/独立复核/MemoryService应用。明确低分和模型不可用时完整材料仍可交给 Agent；高置信噪声、可疑指令、明确未读全分别怎样处理。指出 learning.enabled/profile 是实际整理的前提。让用户到 inbox、jobs、memories、tasks分别确认消息、队列、最终记忆和事项，避免把 ready/排队当作应用。\n\n6. 机器人通知和故障处理\n说明个人登录负责读、已有机器人绑定负责通知，两套授权。连续失败只首报，恢复再报；没有绑定只保留站内变化。登录失效时检查 lark status/login和消息页错误；服务彻底退出不能自报。\n\n7. 让后台持续运行\n安装版列 service start/status/restart/stop、status --json和日志位置；说明PM2自动重启、单实例、无开机自启、休眠不运行。把当前退出码缺口写成明确检查动作：service status看进程/API，status --json看personalLark，messages status看流错误。不要声称failedStreams必然令命令失败。\n\n8. 八分钟问答\n短答先行：持续有ACP/工具/模型活动不会因总计八分钟被中断；八分钟是静默时限。补充无进展的长工具、显式maxDurationMs和取消。\n\n9. 当前仍需你检查\n集中列五项：附件/图片语义、话题完整性、Agent最终应用结果、登录和后台状态、@所有人真实行为；另以发布提示说明公共 npm 尚未上传。不要列测试数量和模型耗时。\n\n10. 开发入口\n末尾小表仅列文件与职责；数据库表名、游标字段、job kind不进入用户操作正文。"
+        }
+      },
+      "writerVersion": "c9da61133cff64db2caddac74f88ef56c49edf6f054f4eddd8458f16aa5fa5ff"
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-05T14:51:53.269Z",
+    "trace": {
+      "runId": "b2887e26-64fb-4b2c-99e3-0cbbbbdcf0d8",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "3170c70eb28ce56e5b35606cc1cc026be752cadd64c529c4dca14cf0b0a39402",
+      "promptHash": "41aba3f53062925bd99aabb9452161b37c5f49c39f904e16f81821f2163d4239",
+      "contextHash": "db44b0251f87b114ce88bc98b5b2a5ff00e135ba54fdd1193862254bee3d5535",
+      "skillHash": "2871813c1c7d4b649d2e0c3420f23096eb99098fb23f0c70b967fab22a203735",
+      "toolHash": "c63ebed27fd0068222e3a65f2f3139400d62735cd978169855e2c5e739f4d448",
+      "fingerprint": "e1d76ea312c98100b8147b155333829a98a9abdf5ef6b3904fb57ef279c92cef",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_material_groups",
+        "list_materials",
+        "read_material",
+        "read_fragments",
+        "read_section",
+        "search_materials",
+        "search_contexts",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a10c8a-d031-7fd1-a05e-f1fab6a3ee2c"
+      ],
+      "usage": {
+        "used": 75929,
+        "size": 258400,
+        "cost": null,
+        "acpCompletion": "validated_submission",
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_0O4pOpCf2ykn9e5zfsRWzVuV:exec-cee4b49a-c223-43e8-984f-d95a0e0af373",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:.agents/skills/omem-design/SKILL.md",
+                "startLine": 1,
+                "endLine": 18
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:.agents/skills/omem-design/SKILL.md",
+              "startLine": 1,
+              "endLine": 18
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_0O4pOpCf2ykn9e5zfsRWzVuV:exec-cee4b49a-c223-43e8-984f-d95a0e0af373",
+            "status": "completed",
+            "outputDigest": "c0d3e6089b20544cf8e43235624d238347bc7323bd014053536f9b5fd3ba0787"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_UD7L2pMid6ptqhHYXFqZoT3M:exec-4bcf19b4-cc0b-43f4-84b2-e5fc378d5cf1",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_UD7L2pMid6ptqhHYXFqZoT3M:exec-4bcf19b4-cc0b-43f4-84b2-e5fc378d5cf1",
+              "process_id": "18514",
+              "turn_id": "01a10c8a-d31f-77d1-9cd4-32b10490f979",
+              "started_at_ms": 1791211812045,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/3170c70eb28ce56e5b35606cc1cc026be752cadd64c529c4dca14cf0b0a39402/b2887e26-64fb-4b2c-99e3-0cbbbbdcf0d8",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-verifier/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_UD7L2pMid6ptqhHYXFqZoT3M:exec-4bcf19b4-cc0b-43f4-84b2-e5fc378d5cf1",
+            "status": "completed",
+            "outputDigest": "f5cec1ed6544d0a7f3241ec6d5fd3bd5f1d436d8510c3f1132d117ecfffdb471"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-53a5c3b8-b3ce-4e69-8f8e-d18626aaf938",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/integrations/lark-personal/materials.ts",
+                "startLine": 1,
+                "endLine": 240
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/integrations/lark-personal/materials.ts",
+              "startLine": 1,
+              "endLine": 240
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-53a5c3b8-b3ce-4e69-8f8e-d18626aaf938",
+            "status": "completed",
+            "outputDigest": "b81def73999c86d44ffb7c8f0f0007f3fdeaa1af0a3cc5c491e73066b2ece9cb"
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/integrations/lark-personal/client.ts",
+              "startLine": 1,
+              "endLine": 190
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-3640aa7d-0aa9-42c6-8eb1-e6cdd6a1fb98",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/integrations/lark-personal/client.ts",
+                "startLine": 1,
+                "endLine": 190
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-f884a8c9-e4b7-4f65-87f4-c09ed599150b",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:docs/reader-first/personal-messages.md",
+                "startLine": 1,
+                "endLine": 80
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-3640aa7d-0aa9-42c6-8eb1-e6cdd6a1fb98",
+            "status": "completed",
+            "outputDigest": "3f19a36a554a53095024fe140ad53aa4376f5a3bc09aef739206ae1797188fba"
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:docs/reader-first/personal-messages.md",
+              "startLine": 1,
+              "endLine": 80
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-dbf15179-fe23-4fe7-86e4-bb945c425ec7",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/app.ts",
+                "startLine": 120,
+                "endLine": 250
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-c7333a81-3599-41eb-95b2-988b6e7a197d",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/web/src/PersonalLark.vue",
+                "startLine": 1,
+                "endLine": 380
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-a3bbffbe-f368-4191-be0d-76778857a056",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+                "startLine": 1,
+                "endLine": 470
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-bd16d9ab-2933-4a66-97e2-f59ae47c9811",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/cli.ts",
+                "startLine": 110,
+                "endLine": 190
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-5ab61282-2040-48f7-8abf-1a8fa69657bf",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/service-manager.ts",
+                "startLine": 1,
+                "endLine": 180
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-f884a8c9-e4b7-4f65-87f4-c09ed599150b",
+            "status": "completed",
+            "outputDigest": "7ae95015e989624e7b7570cdab6f5640a0c3d08cf62c955721a33876bd650e57"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-7f95020a-3125-4d6f-8fbe-1a70c43c9319",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/learning/pipeline.ts",
+                "startLine": 580,
+                "endLine": 860
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-a06ebec7-0480-4280-911f-922caf0a27e0",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:docs/cli.md",
+                "startLine": 1,
+                "endLine": 190
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-fb36adb4-fdbc-438e-858f-d56484604bed",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/integrations/lark-personal/policy.ts",
+                "startLine": 1,
+                "endLine": 130
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/app.ts",
+              "startLine": 120,
+              "endLine": 250
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/learning/pipeline.ts",
+              "startLine": 580,
+              "endLine": 860
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/web/src/PersonalLark.vue",
+              "startLine": 1,
+              "endLine": 380
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+              "startLine": 1,
+              "endLine": 470
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/cli.ts",
+              "startLine": 110,
+              "endLine": 190
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/service-manager.ts",
+              "startLine": 1,
+              "endLine": 180
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:docs/cli.md",
+              "startLine": 1,
+              "endLine": 190
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/integrations/lark-personal/policy.ts",
+              "startLine": 1,
+              "endLine": 130
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-dbf15179-fe23-4fe7-86e4-bb945c425ec7",
+            "status": "completed",
+            "outputDigest": "94a9adc3faa957741332f9fcddb7c0597316f2ae8d1159cc7caba41286a19ed1"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-7f95020a-3125-4d6f-8fbe-1a70c43c9319",
+            "status": "completed",
+            "outputDigest": "749a3775ba051e5910ee6e2fee67dc2d07568a08615822bd94b2db919c595006"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-c7333a81-3599-41eb-95b2-988b6e7a197d",
+            "status": "completed",
+            "outputDigest": "c42ea3a95ac95ad640d270d76c7ed374ad1e270a184f71ff59809d7f068fd202"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-a3bbffbe-f368-4191-be0d-76778857a056",
+            "status": "completed",
+            "outputDigest": "b1ef58b67cfee1509ee4d6a07c903d808283161ee8e6095be63f9728b59bcdc6"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-bd16d9ab-2933-4a66-97e2-f59ae47c9811",
+            "status": "completed",
+            "outputDigest": "1a376d4d3645e3825e65be6cd3206565e57c54658f31758c637ff6dece680f8e"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-5ab61282-2040-48f7-8abf-1a8fa69657bf",
+            "status": "completed",
+            "outputDigest": "92b35159d40b8f08cf3bc849d2546df7d26d33571ee2992c88ddd03e7eed7545"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-a06ebec7-0480-4280-911f-922caf0a27e0",
+            "status": "completed",
+            "outputDigest": "ffe545ef3a2ff157e6d9e5098c5cc9c4ca091c41eaf81677621f4a3cd4a715a5"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Bszz7EHHaraFOJZASUTTiOmo:exec-fb36adb4-fdbc-438e-858f-d56484604bed",
+            "status": "completed",
+            "outputDigest": "68d69ac70f93d8dfde8946a9613b85f68fb12392832a4165f26b0b9a73a74730"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_dbOcpzl5rTJw6khCP0PlDrAQ:exec-a705584d-5244-4c66-8dfe-9b5b705e2174",
+            "title": "Search function retry|retryJob|sync\\(|disabled|立即同步|thread_has_more|thread_replies|learning|profileId|service status|status --json|messages status|saved|ready|review in PersonalLark.vue",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_dbOcpzl5rTJw6khCP0PlDrAQ:exec-a705584d-5244-4c66-8dfe-9b5b705e2174",
+              "process_id": "34399",
+              "turn_id": "01a10c8a-d31f-77d1-9cd4-32b10490f979",
+              "started_at_ms": 1791211834130,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n \"function retry|retryJob|sync\\(|disabled|立即同步|thread_has_more|thread_replies|learning|profileId|service status|status --json|messages status|saved|ready|review\" originals/apps/web/src/PersonalLark.vue originals/apps/server/src/integrations/lark-personal/service.ts originals/apps/server/src/integrations/lark-personal/materials.ts originals/apps/server/src/integrations/lark-personal/client.ts originals/apps/server/src/app.ts originals/apps/server/src/cli.ts originals/apps/server/src/learning/pipeline.ts originals/apps/server/src/service-manager.ts originals/scripts/service.ts originals/docs/cli.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/3170c70eb28ce56e5b35606cc1cc026be752cadd64c529c4dca14cf0b0a39402/b2887e26-64fb-4b2c-99e3-0cbbbbdcf0d8",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n \"function retry|retryJob|sync\\\\(|disabled|立即同步|thread_has_more|thread_replies|learning|profileId|service status|status --json|messages status|saved|ready|review\" originals/apps/web/src/PersonalLark.vue originals/apps/server/src/integrations/lark-personal/service.ts originals/apps/server/src/integrations/lark-personal/materials.ts originals/apps/server/src/integrations/lark-personal/client.ts originals/apps/server/src/app.ts originals/apps/server/src/cli.ts originals/apps/server/src/learning/pipeline.ts originals/apps/server/src/service-manager.ts originals/scripts/service.ts originals/docs/cli.md",
+                  "query": "function retry|retryJob|sync\\(|disabled|立即同步|thread_has_more|thread_replies|learning|profileId|service status|status --json|messages status|saved|ready|review",
+                  "path": "PersonalLark.vue"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_dbOcpzl5rTJw6khCP0PlDrAQ:exec-a705584d-5244-4c66-8dfe-9b5b705e2174",
+            "status": "completed",
+            "outputDigest": "fc63c2cac931255823ef830d4a785c91c94fbcfed5ef3153ea10a504755ff956"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_mzb40TgKnbzuURwnb5Pqxpla:exec-9e9e5b2f-f6fd-4ee2-a1a3-5ace89402f65",
+            "title": "Read PersonalLark.vue, Read PersonalLark.vue, Read service.ts, Read materials.ts, Read client.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_mzb40TgKnbzuURwnb5Pqxpla:exec-9e9e5b2f-f6fd-4ee2-a1a3-5ace89402f65",
+              "process_id": "94582",
+              "turn_id": "01a10c8a-d31f-77d1-9cd4-32b10490f979",
+              "started_at_ms": 1791211851650,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,180p' originals/apps/web/src/PersonalLark.vue\nsed -n '180,370p' originals/apps/web/src/PersonalLark.vue\nsed -n '340,515p' originals/apps/server/src/integrations/lark-personal/service.ts\nsed -n '1,220p' originals/apps/server/src/integrations/lark-personal/materials.ts\nsed -n '1,240p' originals/apps/server/src/integrations/lark-personal/client.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/3170c70eb28ce56e5b35606cc1cc026be752cadd64c529c4dca14cf0b0a39402/b2887e26-64fb-4b2c-99e3-0cbbbbdcf0d8",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,180p' originals/apps/web/src/PersonalLark.vue",
+                  "name": "PersonalLark.vue",
+                  "path": "originals/apps/web/src/PersonalLark.vue"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '180,370p' originals/apps/web/src/PersonalLark.vue",
+                  "name": "PersonalLark.vue",
+                  "path": "originals/apps/web/src/PersonalLark.vue"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '340,515p' originals/apps/server/src/integrations/lark-personal/service.ts",
+                  "name": "service.ts",
+                  "path": "originals/apps/server/src/integrations/lark-personal/service.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,220p' originals/apps/server/src/integrations/lark-personal/materials.ts",
+                  "name": "materials.ts",
+                  "path": "originals/apps/server/src/integrations/lark-personal/materials.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' originals/apps/server/src/integrations/lark-personal/client.ts",
+                  "name": "client.ts",
+                  "path": "originals/apps/server/src/integrations/lark-personal/client.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_mzb40TgKnbzuURwnb5Pqxpla:exec-9e9e5b2f-f6fd-4ee2-a1a3-5ace89402f65",
+            "status": "completed",
+            "outputDigest": "1c9debc561924de03a0003e8f241c0d49d5d22b6a46305eb7aad28b1716eb94a"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_nfwkm0118sZ8lr3d3KVWQw4V:exec-fece8388-c604-4326-b420-46ae28e8b0fa",
+            "title": "Read service-manager.ts, Read cli.ts, Read app.ts, Read repository.ts, Read owner-notice.ts, Read progress.md, Read agent-timeout.ts, Read policy.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_nfwkm0118sZ8lr3d3KVWQw4V:exec-fece8388-c604-4326-b420-46ae28e8b0fa",
+              "process_id": "70154",
+              "turn_id": "01a10c8a-d31f-77d1-9cd4-32b10490f979",
+              "started_at_ms": 1791211867884,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,190p' originals/apps/server/src/service-manager.ts\nsed -n '120,175p' originals/apps/server/src/cli.ts\nsed -n '225,255p' originals/apps/server/src/app.ts\nsed -n '620,675p' originals/apps/server/src/jobs/repository.ts\nsed -n '1,110p' originals/apps/server/src/integrations/lark/owner-notice.ts\nsed -n '1,45p' originals/docs/reader-first/progress.md\nsed -n '1,220p' originals/apps/server/src/agent-timeout.ts\nsed -n '1,190p' originals/apps/server/src/integrations/lark-personal/policy.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/3170c70eb28ce56e5b35606cc1cc026be752cadd64c529c4dca14cf0b0a39402/b2887e26-64fb-4b2c-99e3-0cbbbbdcf0d8",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,190p' originals/apps/server/src/service-manager.ts",
+                  "name": "service-manager.ts",
+                  "path": "originals/apps/server/src/service-manager.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '120,175p' originals/apps/server/src/cli.ts",
+                  "name": "cli.ts",
+                  "path": "originals/apps/server/src/cli.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '225,255p' originals/apps/server/src/app.ts",
+                  "name": "app.ts",
+                  "path": "originals/apps/server/src/app.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '620,675p' originals/apps/server/src/jobs/repository.ts",
+                  "name": "repository.ts",
+                  "path": "originals/apps/server/src/jobs/repository.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,110p' originals/apps/server/src/integrations/lark/owner-notice.ts",
+                  "name": "owner-notice.ts",
+                  "path": "originals/apps/server/src/integrations/lark/owner-notice.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,45p' originals/docs/reader-first/progress.md",
+                  "name": "progress.md",
+                  "path": "originals/docs/reader-first/progress.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,220p' originals/apps/server/src/agent-timeout.ts",
+                  "name": "agent-timeout.ts",
+                  "path": "originals/apps/server/src/agent-timeout.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,190p' originals/apps/server/src/integrations/lark-personal/policy.ts",
+                  "name": "policy.ts",
+                  "path": "originals/apps/server/src/integrations/lark-personal/policy.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_nfwkm0118sZ8lr3d3KVWQw4V:exec-fece8388-c604-4326-b420-46ae28e8b0fa",
+            "status": "completed",
+            "outputDigest": "8fc0f4a49f39853ce74f4c3e37597f2ed821088655b7d117082d9fa3207161e4"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_z9dzwfdymrtxVTSoYg8zOty3:exec-2e28568e-4112-4a0f-a7c9-3e0af59504a3",
+            "title": "Read pipeline.ts, Search capture\\(|learning in store.ts, Read store.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_z9dzwfdymrtxVTSoYg8zOty3:exec-2e28568e-4112-4a0f-a7c9-3e0af59504a3",
+              "process_id": "77068",
+              "turn_id": "01a10c8a-d31f-77d1-9cd4-32b10490f979",
+              "started_at_ms": 1791211879210,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '600,850p' originals/apps/server/src/learning/pipeline.ts\nrg -n \"capture\\(|learning\" originals/apps/server/src/store.ts | head -80\nsed -n '350,470p' originals/apps/server/src/store.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/3170c70eb28ce56e5b35606cc1cc026be752cadd64c529c4dca14cf0b0a39402/b2887e26-64fb-4b2c-99e3-0cbbbbdcf0d8",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '600,850p' originals/apps/server/src/learning/pipeline.ts",
+                  "name": "pipeline.ts",
+                  "path": "originals/apps/server/src/learning/pipeline.ts"
+                },
+                {
+                  "type": "search",
+                  "cmd": "rg -n \"capture\\\\(|learning\" originals/apps/server/src/store.ts",
+                  "query": "capture\\(|learning",
+                  "path": "store.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '350,470p' originals/apps/server/src/store.ts",
+                  "name": "store.ts",
+                  "path": "originals/apps/server/src/store.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_z9dzwfdymrtxVTSoYg8zOty3:exec-2e28568e-4112-4a0f-a7c9-3e0af59504a3",
+            "status": "completed",
+            "outputDigest": "4ccb36cd1964f10a78b00a86383e822a777e9c83dd47a2e26e2d0e0761908311"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_P4RCVgx71kvNZL2Myy9DfzlD:exec-fbd7bfe8-9ce0-49d0-a894-37765fa70c3c",
+            "title": "Read store.ts, Read store.ts, Search new Store|learningEnabled|processingEnabled|learning: in app.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_P4RCVgx71kvNZL2Myy9DfzlD:exec-fbd7bfe8-9ce0-49d0-a894-37765fa70c3c",
+              "process_id": "32430",
+              "turn_id": "01a10c8a-d31f-77d1-9cd4-32b10490f979",
+              "started_at_ms": 1791211889496,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '95,215p' originals/apps/server/src/store.ts\nsed -n '215,350p' originals/apps/server/src/store.ts\nrg -n \"new Store|learningEnabled|processingEnabled|learning:\" originals/apps/server/src/app.ts originals/apps/server/src/store.ts originals/apps/server/src/config.ts originals/packages/contracts/src -g '*.ts' | head -120"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/3170c70eb28ce56e5b35606cc1cc026be752cadd64c529c4dca14cf0b0a39402/b2887e26-64fb-4b2c-99e3-0cbbbbdcf0d8",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '95,215p' originals/apps/server/src/store.ts",
+                  "name": "store.ts",
+                  "path": "originals/apps/server/src/store.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '215,350p' originals/apps/server/src/store.ts",
+                  "name": "store.ts",
+                  "path": "originals/apps/server/src/store.ts"
+                },
+                {
+                  "type": "search",
+                  "cmd": "rg -n 'new Store|learningEnabled|processingEnabled|learning:' originals/apps/server/src/app.ts originals/apps/server/src/store.ts originals/apps/server/src/config.ts originals/packages/contracts/src -g '*.ts'",
+                  "query": "new Store|learningEnabled|processingEnabled|learning:",
+                  "path": "app.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_P4RCVgx71kvNZL2Myy9DfzlD:exec-fbd7bfe8-9ce0-49d0-a894-37765fa70c3c",
+            "status": "completed",
+            "outputDigest": "98c31e2f0747a3b5aaced5cea2bd693b9b2fea7b28b2a731ef45f43601ab7e3d"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_1cC9F5oAK7IZ18R7qrfG1iXj:exec-8070cf82-51ce-4b05-be97-04fd7e1acc65",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:.agents/skills/omem-design/SKILL.md",
+              "omem:apps/server/src/integrations/lark-personal/materials.ts",
+              "omem:apps/server/src/integrations/lark-personal/client.ts",
+              "omem:docs/reader-first/personal-messages.md",
+              "omem:apps/server/src/app.ts",
+              "omem:apps/server/src/learning/pipeline.ts",
+              "omem:apps/web/src/PersonalLark.vue",
+              "omem:apps/server/src/integrations/lark-personal/service.ts",
+              "omem:apps/server/src/cli.ts",
+              "omem:apps/server/src/service-manager.ts",
+              "omem:docs/cli.md",
+              "omem:apps/server/src/integrations/lark-personal/policy.ts",
+              "omem:apps/server/src/jobs/repository.ts",
+              "omem:apps/server/src/integrations/lark/owner-notice.ts",
+              "omem:docs/reader-first/progress.md",
+              "omem:apps/server/src/agent-timeout.ts",
+              "omem:apps/server/src/store.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_1cC9F5oAK7IZ18R7qrfG1iXj:exec-8070cf82-51ce-4b05-be97-04fd7e1acc65",
+            "status": "completed",
+            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
