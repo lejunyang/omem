@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "checkedAt": "2026-10-05T00:18:28.892Z",
+  "checkedAt": "2026-10-05T09:08:19.356Z",
   "model": "gpt-5.6-sol",
   "workflow": "reader-first",
   "selection": [
@@ -15,7 +15,7 @@
     {
       "key": "guide:capture",
       "title": "一份材料的旅程：从导入到阅读与引用",
-      "state": "stale"
+      "state": "reviewed"
     },
     {
       "key": "guide:retrieval",
@@ -25,7 +25,7 @@
     {
       "key": "guide:memory",
       "title": "记住约定，跟进变化：一次活动从保存到提醒",
-      "state": "reviewed"
+      "state": "stale"
     },
     {
       "key": "guide:contributing",
@@ -1726,6 +1726,12 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/material-descriptions/history/0774df3b20af9f2cb7fefec88b4eaac96e668c0b04db3afab0e0e6271bfa71ba.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/material-descriptions/history/14d6909e5c63cb218c49b0e8513752657da90c917cc1bfdb922e73bbc13068e7.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
@@ -1733,6 +1739,24 @@
     },
     {
       "path": ".repo-review/knowledge/material-descriptions/history/1c507891f9bd4967eaf3a752467d8f74528c077fbadc8f20b6fa531ac1207351.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/1dcf30ad6322371aa38794d6f444c71e967aa55a3500a1077617dc9fa60603a7.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/20f9887ac2ea7a5e23ec387c403c329ac621cff8683cea78e31b4419aa29e5b4.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/2bd7e0069ce62af5ab55480ae3484eca45dea9b37994d355812e10317550a260.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
@@ -1750,7 +1774,37 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/material-descriptions/history/3c5232bbc9343a982929733a6999c522a98f2efb5e4e8d9dc3495c2036178d73.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/43cb8a7dbd8ed6a27a84b88240e87f8b3b577853260f92ba2fea469c489cc1c0.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/48371d54562e786e6efbcf36d9776c2825c67c015ff09413cba1d24d05d74150.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/material-descriptions/history/497379e9c11f500921334cde4f36b218eeef348465fdad1f8a3c61dc001c51de.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/513701b6ecfcd65ff62cb3b10d28e6075f57727031b6d90f7feb21a4bc5a30bb.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/51e8faf3c83199e081e288551032357c723771507bb70138439435cc46b2be4c.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
@@ -1780,6 +1834,30 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/material-descriptions/history/8091b4d4c66b9b43521f412c3c6ed317c8655e917910d25f4844bd0dd2dc9d40.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/8dcde689ca68dae28a6eee8c6f22d05a55d825aba4c727d2376e800ae4634512.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/9713e6ff058e712ff5abb4a028a1b8cfad441435f8a3209dd6f082ed78cf94a5.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/99291228018750cefda0a083bdae02591e5c50516fc49d71a60d1d81d73e150c.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/material-descriptions/history/a3f5d115b2f728c3807f4a1b84cab2b2958ce2cfe56bd1f0c2f77de029f64c54.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
@@ -1792,7 +1870,31 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/material-descriptions/history/aa6943dc92231f9cf12fc54240cf503f7d6907345d480d506e458bce723a396d.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/ab370200a3b8a589abe5a172abbd1e599693490f7f5623831fd66161afba06fd.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/material-descriptions/history/b057f9d867defa8db5b8ee2861d2bc28ca56ea31a5f4c96ab90ce216bf162b63.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/b5059e940d05783871ffaded13c60c7b5281f7bf5f290ea4d3ac507e3016c483.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/b52cf4ddf2b8b56f73bf2249352f0127519fad1361de1f5c5564dd9ff7e2cfcb.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
@@ -1810,6 +1912,18 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/material-descriptions/history/ca60aadbb5c64c18d697bd756a0211974ab71419866851b71b39bfcd62f06357.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/ccb98441043adb9d3fbcf5c7118f1dedfdf2147884087305f0ca93d88008e387.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/material-descriptions/history/cde8d8fb30eb642e577ce14cbcdd294557a41e90c563e568cd808d10834bfd66.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
@@ -1822,7 +1936,31 @@
       "knowledge": "not-applicable"
     },
     {
+      "path": ".repo-review/knowledge/material-descriptions/history/d34208bb6d3e5d49427607be193d8f82797e63829ddd85dfe1f0229bde70f043.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
       "path": ".repo-review/knowledge/material-descriptions/history/debc356aa4f54901b841719a729d52c217713295e196a682a5c47b2f8d8d81a3.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/f427df78009ad276390ca712983bb82e25422bea6d72214e1a7b984febc9fb26.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/f8c64a4a49ff06f9020c902e23b0494aadc80045fb4664f49f20670561c7d755.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/material-descriptions/history/fd7949148c61e468f0c2ed0e848f18332c8534c55bf0f65b231fbdf6376bedde.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
@@ -1889,6 +2027,18 @@
     },
     {
       "path": ".repo-review/knowledge/verification/answer-investigation.md",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/verification/answer-relevance.json",
+      "state": "excluded",
+      "reason": "派生知识或历史运行数据，不作为新的独立证据",
+      "knowledge": "not-applicable"
+    },
+    {
+      "path": ".repo-review/knowledge/verification/answer-relevance.md",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
@@ -2062,13 +2212,13 @@
       "knowledge": "not-applicable"
     },
     {
-      "path": ".repo-review/knowledge/verification/history/2026-10-04T21-18-00-569Z-f50be37b.json",
+      "path": ".repo-review/knowledge/verification/history/2026-10-04T23-10-31-373Z-e0a5068e.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
     },
     {
-      "path": ".repo-review/knowledge/verification/history/2026-10-04T22-07-09-891Z-fdb04bdf.json",
+      "path": ".repo-review/knowledge/verification/history/2026-10-05T00-19-45-412Z-ed1fcf2b.json",
       "state": "excluded",
       "reason": "派生知识或历史运行数据，不作为新的独立证据",
       "knowledge": "not-applicable"
@@ -2325,7 +2475,7 @@
       "path": "README.md",
       "state": "captured",
       "materialKey": "omem:README.md",
-      "digest": "e4878db1752d15db218254543b97a5ec821886f6a7527b970b9ad7d95c908eff",
+      "digest": "71ac850bd9be0fb10bfbd2d1d06219ebe185431750fcb049df1996488684bfe5",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -2381,7 +2531,7 @@
       "path": "apps/server/src/app.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/src/app.ts",
-      "digest": "c485c7639cc975d5eacc073995bb86eab7f18352b8651ce89a185be53bcd1dbf",
+      "digest": "51869a29f54369c97ff7f040b10e5f9bb2f2b42bc1f5f14167156141701a6493",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -2445,7 +2595,7 @@
       "path": "apps/server/src/assistant/runtime.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/src/assistant/runtime.ts",
-      "digest": "919facc599582e55c73ffc609545125792a2b31827785029da95c52e2340d825",
+      "digest": "69f2d9cf9ddcabfc16dd984504a68f017ca8998528a33e09355ede51d8e706db",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -2453,7 +2603,7 @@
       "path": "apps/server/src/cli.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/src/cli.ts",
-      "digest": "1684e70fec5d1fae49d8c7ab9e95c5046a71ab2d4481b591d6d818bd66bc78c5",
+      "digest": "aeb14a75cae099d297d7c1220cce3dd6bd51ed23035049d063ceeb9b8a48ea61",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -2525,7 +2675,7 @@
       "path": "apps/server/src/config.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/src/config.ts",
-      "digest": "06e24af3c8d88823c0e71bfa9c4d4a98a3751472793185465b115154d8fa6cef",
+      "digest": "2b87d75931d96c8ad6d6cc8738565dd73b529f39c143731fc922a2b8d1b56cb2",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -2533,9 +2683,9 @@
       "path": "apps/server/src/connectors.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/src/connectors.ts",
-      "digest": "785cde54d6c6688224ad8d4ed6f55522825911de8ac452aee24cee8a7acb7be9",
+      "digest": "8da883dfc999f8d4a1a3ed510b4ff3248d84a2205ccb24854685235b6dbb03a9",
       "reason": "固定材料已保存",
-      "knowledge": "reviewed"
+      "knowledge": "stale"
     },
     {
       "path": "apps/server/src/contexts/repository.ts",
@@ -2554,12 +2704,44 @@
       "knowledge": "stale"
     },
     {
+      "path": "apps/server/src/decision/passages.ts",
+      "state": "captured",
+      "materialKey": "omem:apps/server/src/decision/passages.ts",
+      "digest": "30b724a684b9cf53167eb7d14bdda3a300688f43fa6e8ce9d2090ea905f5d82c",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "apps/server/src/decision/questions.ts",
+      "state": "captured",
+      "materialKey": "omem:apps/server/src/decision/questions.ts",
+      "digest": "8f8b6839ebec9eef8d474647e2354d88378a24aa48ca2581c35eb91ae6205f7d",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "apps/server/src/decision/service.ts",
+      "state": "captured",
+      "materialKey": "omem:apps/server/src/decision/service.ts",
+      "digest": "dddc9210f07f53c96be0ec2e05fb791df977858302c79b91191f00a31f093ae6",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
       "path": "apps/server/src/hook-forward.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/src/hook-forward.ts",
       "digest": "508ac1463d1c1e179cfd9a7429ae2789db260b1d89da15849038830a1cefda39",
       "reason": "固定材料已保存",
       "knowledge": "reviewed"
+    },
+    {
+      "path": "apps/server/src/imports/documents.ts",
+      "state": "captured",
+      "materialKey": "omem:apps/server/src/imports/documents.ts",
+      "digest": "ea651dafc2d205f1f04ec54aa8635572343f9bc1affa34e08a68d6daffc6135a",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
     },
     {
       "path": "apps/server/src/inputs/aggregator.ts",
@@ -2677,7 +2859,7 @@
       "path": "apps/server/src/knowledge/api.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/src/knowledge/api.ts",
-      "digest": "0de0b1806dc06ee84a839eb8f0371e3741e44205d912bdf26ea1838a354bcaa1",
+      "digest": "4d5e22ed60dec3e4c222102de0e5e2ebf6b9fab73a9f20ab58f29e066703543c",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -2741,7 +2923,7 @@
       "path": "apps/server/src/knowledge/repository.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/src/knowledge/repository.ts",
-      "digest": "21c79cac43e6572c70755fb0f1938ebfbd3150f92c3bfd27a9599bfb1aedbcf4",
+      "digest": "1878ee33f8b4939cc665440e5609247c6112fd6838b368c7973ce0c0fcef968c",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -2949,7 +3131,7 @@
       "path": "apps/server/src/retrieval/units.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/src/retrieval/units.ts",
-      "digest": "228389f9b5e28d150fbe21d9f0caae653665a93af2dbcf0626a333d64d1b9142",
+      "digest": "39c160001075d9132cf20d5dae60e6d48b7a96094b649d5d3d85ff4a6c45d531",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -3279,7 +3461,7 @@
       "materialKey": "omem:apps/server/tests/connectors.test.ts",
       "digest": "8e97348b2a32be592f2b4e75156dd345de89115cafce7d07f05590284c763311",
       "reason": "固定材料已保存",
-      "knowledge": "reviewed"
+      "knowledge": "stale"
     },
     {
       "path": "apps/server/tests/contracts.test.ts",
@@ -3304,6 +3486,14 @@
       "digest": "92aaa2b5612289d24d1ecc4a9957c0e012193b93cd3101e3ebb98643903bb621",
       "reason": "固定材料已保存",
       "knowledge": "reviewed"
+    },
+    {
+      "path": "apps/server/tests/decision-passages.test.ts",
+      "state": "captured",
+      "materialKey": "omem:apps/server/tests/decision-passages.test.ts",
+      "digest": "40b0c5eb33414f6f82fa29e7f1fb71e0c6490a283317a7778039453a4c3cc7ed",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
     },
     {
       "path": "apps/server/tests/description-maintenance.test.ts",
@@ -3389,7 +3579,7 @@
       "path": "apps/server/tests/knowledge-lifecycle.test.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/tests/knowledge-lifecycle.test.ts",
-      "digest": "18ed825671b83cd269f2bd92eeadca9926868096237c294ea52521850a052a8c",
+      "digest": "06c1466f736fda787a5c4f32004f2c7fb48ec58f84d83c19c197bfccd8d6ad87",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -3613,7 +3803,7 @@
       "path": "apps/server/tests/retrieval-unified.test.ts",
       "state": "captured",
       "materialKey": "omem:apps/server/tests/retrieval-unified.test.ts",
-      "digest": "6543ab31d1e0731b7c8d0f46b5055fe47e44f7d968bbd49425174f439a213f2a",
+      "digest": "5143dc5f95ee52921ee30c19694fc960fc20be2e0cf21c9d267cd84220dab125",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -3717,7 +3907,7 @@
       "path": "apps/web/src/App.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/App.vue",
-      "digest": "b940f74791f44c2659b67baf55bb9f4959d85248bbe2a813480cb52c779367b7",
+      "digest": "7aaea90af9ce6618b43ba457a30178cae19465ea314076db196e7ee8bcfd333e",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -3725,9 +3915,9 @@
       "path": "apps/web/src/AssetImage.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/AssetImage.vue",
-      "digest": "b609582b39e9b4ce439a0d48e49e261728b7a69db54dae65f43c2bd661972d0d",
+      "digest": "aebc5293e0ccee797173fb8d0859ada8082882e0b73850bebc64669c1cdc6e3b",
       "reason": "固定材料已保存",
-      "knowledge": "reviewed"
+      "knowledge": "stale"
     },
     {
       "path": "apps/web/src/ChangeComparison.vue",
@@ -3778,6 +3968,14 @@
       "knowledge": "reviewed"
     },
     {
+      "path": "apps/web/src/DocumentReading.vue",
+      "state": "captured",
+      "materialKey": "omem:apps/web/src/DocumentReading.vue",
+      "digest": "edd9f1b3b993c909b7024ce9c6133235f67751e08594fd808ae076d5fd8dfd63",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
       "path": "apps/web/src/EvidenceReader.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/EvidenceReader.vue",
@@ -3800,6 +3998,14 @@
       "digest": "e205e7fa6422a573e6ac572438a76018408007c00f81931d69102c4f378510e7",
       "reason": "固定材料已保存",
       "knowledge": "stale"
+    },
+    {
+      "path": "apps/web/src/MaterialAdvice.vue",
+      "state": "captured",
+      "materialKey": "omem:apps/web/src/MaterialAdvice.vue",
+      "digest": "bf3f73daea3ee73a1d6f0c096b3c8e95fa8efaaa9b6f9d2706c6999dfebdf95a",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
     },
     {
       "path": "apps/web/src/MaterialDescription.vue",
@@ -4021,7 +4227,7 @@
       "path": "apps/web/src/knowledge/KnowledgeSource.vue",
       "state": "captured",
       "materialKey": "omem:apps/web/src/knowledge/KnowledgeSource.vue",
-      "digest": "03b1d0b4f35b4910c620795c44e49bb1fd08fadbe1ce1e47dfc8f888e4573265",
+      "digest": "38e64bf68c35c2cd0b70c0c2e0b84babdc5e75d01b220151d865bf18115f2852",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -4125,7 +4331,7 @@
       "path": "config/omem.example.json",
       "state": "captured",
       "materialKey": "omem:config/omem.example.json",
-      "digest": "d57352bf554a693f34422ec7b104d3f251377c06bde54f86bd161725989d01ad",
+      "digest": "82a10a24ed117f841254921af7220dc61c58bc5d2372e801d07afced4ac665b9",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -4157,7 +4363,7 @@
       "path": "config/wiki-pages.json",
       "state": "captured",
       "materialKey": "omem:config/wiki-pages.json",
-      "digest": "2d143f9b17e1231858712ffacc9618d5b2fdc971a92299a381736afba915b729",
+      "digest": "cef803f8835be443831fc2fde26857223de24da203d14e238814f28aa9b244ee",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -4189,7 +4395,7 @@
       "path": "docs/README.md",
       "state": "captured",
       "materialKey": "omem:docs/README.md",
-      "digest": "003fae86b38b7716fcf800a86f0a2205f4a981c61594421eeeff0dcb757de045",
+      "digest": "bf222025de30a076ec71ce0c7c2b756b33dcbef5d34f72aefe0b7c67733cba39",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -4957,7 +5163,7 @@
       "path": "docs/reader-first/README.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/README.md",
-      "digest": "e8639a09966edfac7efb4a5f0e70ecd8b98a223d40b12509b01765333fc30b46",
+      "digest": "b9d89b7b87c5e661fe566259cd4407c0c30ab16bb61c56daf5878561cba49578",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5013,7 +5219,7 @@
       "path": "docs/reader-first/component-integration.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/component-integration.md",
-      "digest": "2358f2dd04bed55dadc091561147c16f788bc3888125cc57cbd4f233aae1273f",
+      "digest": "9d1ac16c22d5d5cc93eeac2891f08cf7d05dc54eebf6fbb21bb6f742e1b4eced",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5021,7 +5227,15 @@
       "path": "docs/reader-first/current-system.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/current-system.md",
-      "digest": "f4f8fb27ee83a3a1bcd30270b27205f8244866de85e2fc78b53a5898f2009989",
+      "digest": "4eba2b630e2fab47097f2a92c2f2df9c0d5c5d5a285aab9d195538600a933a02",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "docs/reader-first/document-import.md",
+      "state": "captured",
+      "materialKey": "omem:docs/reader-first/document-import.md",
+      "digest": "be61218daf4a7d7ec0d85fa6f450b7d6789c73d440261fb77257b5bd67cd1bc6",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5045,7 +5259,7 @@
       "path": "docs/reader-first/fast-decisions.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/fast-decisions.md",
-      "digest": "d23b4e74dda46c9370c00929073a5171f8d14c44e8c1d798871fa51120fca02e",
+      "digest": "9647ab49f11b865c7eb8dc2a5a5ae40ef1e9c7f9651f709e6b9e9fa17f22d31d",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5061,7 +5275,7 @@
       "path": "docs/reader-first/material-understanding.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/material-understanding.md",
-      "digest": "ff504d3d5438fb8e0f50a59fbf78d2e9fe9a71dea197066ab1ed28f263e22edf",
+      "digest": "a8f8c6530e269c5d0760f2599a4c7b3d4c55e9563b8495548019d6fc8a00620e",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5085,7 +5299,7 @@
       "path": "docs/reader-first/progress.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/progress.md",
-      "digest": "eaec8f295826d393bb07e0188628facac9ef07e06c9a95ec6ae9bb164783e1cd",
+      "digest": "cdf7354f3e7cb23f071a63ffe573d457099f08adcc97afcc43196c61ab18d304",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5117,7 +5331,7 @@
       "path": "docs/reader-first/retrieval-redesign.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/retrieval-redesign.md",
-      "digest": "82b56ea06de3d6f85c52a0a8389c75b12cd5cd2ab341170d330b91c8ca1c6c44",
+      "digest": "884f16ae3c56b0ae00bdf878fbfb7360844e7ccedf2a7dee4a5bac9a57c82b45",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5149,7 +5363,7 @@
       "path": "docs/reader-first/writing.md",
       "state": "captured",
       "materialKey": "omem:docs/reader-first/writing.md",
-      "digest": "6832214c9fc7ac5ec67e5c21931d7c5854985ecb65baff4f0ab817f1ed748b2e",
+      "digest": "b18d097f506621a0b7192aa362f8a236b567e2952b661275ac210981f73f387f",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5181,7 +5395,7 @@
       "path": "osdk.lock",
       "state": "captured",
       "materialKey": "omem:osdk.lock",
-      "digest": "f4997d9f4539e7b01faae77a46d962b3a7a8e5dfb736d4ba040f31589eab96ee",
+      "digest": "ebcf99bcd44bf04282a91c91302be1f15de2df0473631ac1b6d0b3fb6943eb92",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -5189,7 +5403,7 @@
       "path": "osdk.toml",
       "state": "captured",
       "materialKey": "omem:osdk.toml",
-      "digest": "74fecd16b98cf3cd10f4efc68375a8d22741f1e033726a31209d1c3c7390ef3f",
+      "digest": "dfb68c9345c4691a9d506c5ced659a3770a0338206f2f8d837da7a05b54dc335",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -5197,7 +5411,7 @@
       "path": "package.json",
       "state": "captured",
       "materialKey": "omem:package.json",
-      "digest": "1ce0d50126be55d65dcc23fd68c3c3ea52ba8b435b8332a65fa5e466c69f596a",
+      "digest": "18f6c08bcbcaf27bf913362a1eefcf5a577c9903c4bb9ddadbb8beb270deea4b",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -5693,7 +5907,7 @@
       "path": "packages/agent-runtime/roles/material-cataloger/1/manifest.json",
       "state": "captured",
       "materialKey": "omem:packages/agent-runtime/roles/material-cataloger/1/manifest.json",
-      "digest": "bb2667f8ff7a7319710c1314225dd2fc39e073804f8177095e35b599d01afec8",
+      "digest": "54cb5b7eff7e0797d2847d14991c51d78e96de86a576ab45c099382b63de4dd7",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -5717,7 +5931,7 @@
       "path": "packages/agent-runtime/roles/material-cataloger/1/skills/omem-material-cataloger/SKILL.md",
       "state": "captured",
       "materialKey": "omem:packages/agent-runtime/roles/material-cataloger/1/skills/omem-material-cataloger/SKILL.md",
-      "digest": "84bc8b820506495c8f70c33e12702b2fedff92a0a933bf19498aea1825bbab2f",
+      "digest": "9f508102c270569ff3b5a8d9550e3216a2bd51054b252542e366d82a8639b9ca",
       "reason": "固定材料已保存",
       "knowledge": "pending"
     },
@@ -6005,7 +6219,7 @@
       "path": "packages/contracts/src/index.ts",
       "state": "captured",
       "materialKey": "omem:packages/contracts/src/index.ts",
-      "digest": "a009f77027b01e7aa27040cc60efc60bec54996eb590acec24df4071b1fb1e92",
+      "digest": "4ecdf6d70d81d5b0fe792a6e090e2de2db88028444e3dcf01f939378e84e62b4",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -6213,7 +6427,7 @@
       "path": "pnpm-lock.yaml",
       "state": "captured",
       "materialKey": "omem:pnpm-lock.yaml",
-      "digest": "2e597dfdf0fac6a3555456df31b46d07bf4f25cf5b257075c24fe81eb840a678",
+      "digest": "660d14eb5dcb27f74a84355068c41d23911dc0b2c51d01e2aaebdba721d539b0",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -6221,9 +6435,9 @@
       "path": "pnpm-workspace.yaml",
       "state": "captured",
       "materialKey": "omem:pnpm-workspace.yaml",
-      "digest": "b1371daeb26ec3c0a69e2de18e62a43053d670f8de8ab4406dacde6bc05179a1",
+      "digest": "5f8e10eb1a9f170cbcdbb947619fb9844fffd06ceed251a76c37e06cc8835cd7",
       "reason": "固定材料已保存",
-      "knowledge": "reviewed"
+      "knowledge": "stale"
     },
     {
       "path": "scripts/assistant-compare.ts",
@@ -6277,7 +6491,7 @@
       "path": "scripts/code-wiki-viewport.ts",
       "state": "captured",
       "materialKey": "omem:scripts/code-wiki-viewport.ts",
-      "digest": "3ec9f7714477f80f1f28b47b72ffbf1239ea0878d21505c283a8bcd41a77d207",
+      "digest": "0899b12fb2eb36504704f51b85b17cdf4946da8127ae473af40850bdabdb4fea",
       "reason": "固定材料已保存",
       "knowledge": "stale"
     },
@@ -6368,6 +6582,46 @@
       "digest": "d15abc820d2bdf0f736ae6b308e5cfd0777371f7851aef57eed3d56080ca232c",
       "reason": "固定材料已保存",
       "knowledge": "reviewed"
+    },
+    {
+      "path": "scripts/document-models.ts",
+      "state": "captured",
+      "materialKey": "omem:scripts/document-models.ts",
+      "digest": "b58c3b1a5dc658b80b9c3ee01b1a9809dde647c35459265c3fdee6f96c9bcd05",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "scripts/document-parser/convert.py",
+      "state": "captured",
+      "materialKey": "omem:scripts/document-parser/convert.py",
+      "digest": "0859e93a1ed2098cec8109ae973c9d03534a98ae852fc8623900d8c026618910",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "scripts/document-parser/pyproject.toml",
+      "state": "captured",
+      "materialKey": "omem:scripts/document-parser/pyproject.toml",
+      "digest": "2545dd4240939efe8e34dc77444e56ffe4478871ba56ebf503497df0158041c8",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "scripts/document-parser/uv.lock",
+      "state": "captured",
+      "materialKey": "omem:scripts/document-parser/uv.lock",
+      "digest": "7870937eca98255e5dcbc47df1d549df076598011899834b69f486a9cf578b14",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "scripts/document-prepare.ts",
+      "state": "captured",
+      "materialKey": "omem:scripts/document-prepare.ts",
+      "digest": "72b629462042eb72f5a990d2532e3d4916d2678e870f97932b14df5cc297035f",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
     },
     {
       "path": "scripts/knowledge-browser.ts",
@@ -6584,6 +6838,70 @@
       "digest": "9c0d173737ca90db15d9cd27f7825d19eefb855f5eecfc6d6d92ed8136949789",
       "reason": "固定材料已保存",
       "knowledge": "reviewed"
+    },
+    {
+      "path": "scripts/startlux-evaluate.ts",
+      "state": "captured",
+      "materialKey": "omem:scripts/startlux-evaluate.ts",
+      "digest": "c99f770f660f6a3813740d12a77961274bd859e4fbd2216dcdb386738d7f11ff",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "scripts/startlux-prepare.ts",
+      "state": "captured",
+      "materialKey": "omem:scripts/startlux-prepare.ts",
+      "digest": "1b4bd233a645d645a5d11c315813d475c5fac35ad001e1f4821f165712a4efb9",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "scripts/startlux/cases.json",
+      "state": "captured",
+      "materialKey": "omem:scripts/startlux/cases.json",
+      "digest": "65ecd81406401241a4dd45c6615c5feb711da1106147f8835fa7cf4d6227afe3",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "scripts/startlux/evaluate.py",
+      "state": "captured",
+      "materialKey": "omem:scripts/startlux/evaluate.py",
+      "digest": "294e24f4f103442e4d9879d0d20f1e62d2e6d320c41617b8372e4b8d02455649",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "scripts/startlux/pyproject.toml",
+      "state": "captured",
+      "materialKey": "omem:scripts/startlux/pyproject.toml",
+      "digest": "9be15251a6da0260f1fbc65a621312782199abab5608b5a91db3ee06b0f51b85",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "scripts/startlux/upstream.json",
+      "state": "captured",
+      "materialKey": "omem:scripts/startlux/upstream.json",
+      "digest": "1089d787de51cce1f1737a6e479427edafa4f17543cdd5ee4a278b86f17a689c",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "scripts/startlux/uv.lock",
+      "state": "captured",
+      "materialKey": "omem:scripts/startlux/uv.lock",
+      "digest": "b996bb3b89ede87a646caa2af0ba54e45e18caac66ee55d141ed6cc5929d943c",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
+    },
+    {
+      "path": "scripts/startlux/worker.py",
+      "state": "captured",
+      "materialKey": "omem:scripts/startlux/worker.py",
+      "digest": "7c1938aa88fd1586f0bd4a6cf48ab727aa89e565763f81848798387691ad18c9",
+      "reason": "固定材料已保存",
+      "knowledge": "pending"
     },
     {
       "path": "scripts/sync-role-schemas.ts",
