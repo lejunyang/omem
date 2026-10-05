@@ -304,6 +304,7 @@ export class AcpAssistantModel implements AssistantModelPort {
             expectedSkills: bundle.skills.map((s) => s.canonical_name),
             unbounded: true,
             onSessionUpdate: environment.update,
+            onActivity: input.onActivity,
             allowPermission: environment.allowPermission,
             finalSubmission: environment.submission,
           },

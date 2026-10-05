@@ -5,6 +5,7 @@ import { resolve, join } from "node:path";
 import { createInterface } from "node:readline";
 import { z } from "zod";
 import { createHash } from "node:crypto";
+import { assetPath, modelWorkspace, optionalRuntime } from "../paths.js";
 import type { ChoiceQuestion } from "./questions.js";
 const exec = promisify(execFile);
 export const decisionConfigSchema = z.object({ mode: z.enum(["off", "auto", "2b", "4b"]).default("auto") }).strict();
@@ -69,7 +70,7 @@ export class DecisionService {
   }
   private async start() {
     if (this.child) return;
-    const runtime = resolve(".osdk/runtime/decision");
+    const runtime = optionalRuntime("decision");
     const python = join(runtime, "venv/bin/python");
     if (!existsSync(python)) throw Error("快速决策未准备：osdk run decision:native-prepare");
     this.state.status = "loading";
@@ -77,13 +78,13 @@ export class DecisionService {
     for (const size of ["2b", "4b"]) {
       try {
         const alias = `decision-startlux${size}`;
-        const { stdout } = await exec("osdk", ["model", "show", alias, "--json"], { timeout: 10_000 });
+        const { stdout } = await exec("osdk", ["model", "show", alias, "--json"], { timeout: 10_000, cwd: modelWorkspace() });
         const { model } = JSON.parse(stdout);
         if (model.snapshot_path && existsSync(model.snapshot_path)) models[size] = { alias, path: model.snapshot_path, revision: model.revision };
       } catch { /* An uninstalled model is not downloaded at runtime. */ }
     }
     if (!Object.keys(models).length) throw Error("未安装 StartLux 2B/4B");
-    const child = spawn(python, ["-u", resolve("scripts/startlux/worker.py"), JSON.stringify({ models, mode: this.config.mode ?? "auto" })], { env: { ...process.env, PYTHONPATH: join(runtime, "upstream") }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(python, ["-u", assetPath("scripts/startlux/worker.py"), JSON.stringify({ models, mode: this.config.mode ?? "auto" })], { env: { ...process.env, PYTHONPATH: join(runtime, "upstream") }, stdio: ["pipe", "pipe", "pipe"] });
     this.child = child;
     let stderr = "";
     child.stderr.on("data", data => { stderr = (stderr + data).slice(-1500); });

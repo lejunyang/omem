@@ -22,7 +22,7 @@ import { listFiles, edgesTouching } from "../apps/server/src/code/store.js";
 const root = process.env.REVIEW_REPO_ROOT ?? process.cwd();
 const config = loadReviewCodeModelConfig();
 if (config.transport !== "acp" || !config.command) throw Error("Knowledge roles require an explicitly configured ACP profile");
-const profile = profileSchema.parse({ id: "traex", name: "Repository knowledge", transport: "acp", command: config.command, args: config.args ?? [], model: config.model, effort: config.effort, timeoutMs: config.timeoutMs, maxContextChars: 200000 });
+const profile = profileSchema.parse({ id: "traex", name: "Repository knowledge", transport: "acp", command: config.command, args: config.args ?? [], model: config.model, effort: config.effort, timeoutMs: config.timeoutMs, idleTimeoutMs: config.idleTimeoutMs, maxDurationMs: config.maxDurationMs, maxContextChars: 200000 });
 const concurrency = Number(process.env.REVIEW_KNOWLEDGE_CONCURRENCY ?? 3);
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 6) throw Error("REVIEW_KNOWLEDGE_CONCURRENCY must be 1..6");
 const only = taskTargets();

@@ -4,6 +4,7 @@ import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { z } from "zod";
 import { profileSchema } from "../../../packages/contracts/src/index.js";
+import { assetPath, configPath, defaultDataDir, developmentCheckout } from "./paths.js";
 const timezoneSchema = z
   .string()
   .min(1)
@@ -130,11 +131,12 @@ export function assistantReadingProfile(
   return profile;
 }
 export function loadConfig() {
-  const file = resolve(process.env.OMEM_CONFIG || "omem.local.json");
+  const file = configPath();
+  if (process.env.OMEM_CONFIG && !existsSync(file)) throw Error(`配置文件不存在：${file}；运行 omem init 创建`);
   const config = schema.parse(
     JSON.parse(
       readFileSync(
-        existsSync(file) ? file : resolve("config/omem.example.json"),
+        existsSync(file) ? file : assetPath("config", developmentCheckout ? "omem.example.json" : "omem.default.json"),
         "utf8",
       ),
     ),
@@ -142,7 +144,7 @@ export function loadConfig() {
   if (new Set(config.profiles.map((p) => p.id)).size !== config.profiles.length)
     throw Error("Duplicate agent profile ID");
   assistantProfile(config);
-  const dataDir = resolve(process.env.OMEM_DATA_DIR || ".omem");
+  const dataDir = defaultDataDir();
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   return {
     ...config,

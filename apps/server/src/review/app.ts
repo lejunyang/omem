@@ -90,7 +90,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   const app: FastifyInstance = Fastify({ bodyLimit: 2_000_000, logger: false });
   const P = REVIEW_API_PREFIX;
   registerKnowledgeRoutes(app, { store, retrieval, retrievalConfig: deps.retrievalConfig, prefix: P + "/knowledge", workspace: join(repoRoot, ".repo-review/runtime/knowledge-agents"), repository: createReviewKnowledgeRepository(store),
-    profile: deps.codeUnderstandingModel?.transport === "acp" ? profileSchema.parse({ id: "traex", name: "Knowledge", transport: "acp", command: deps.codeUnderstandingModel.command, args: deps.codeUnderstandingModel.args ?? [], model: deps.codeUnderstandingModel.model, effort: deps.codeUnderstandingModel.effort, timeoutMs: deps.codeUnderstandingModel.timeoutMs }) : undefined,
+    profile: deps.codeUnderstandingModel?.transport === "acp" ? profileSchema.parse({ id: "traex", name: "Knowledge", transport: "acp", command: deps.codeUnderstandingModel.command, args: deps.codeUnderstandingModel.args ?? [], model: deps.codeUnderstandingModel.model, effort: deps.codeUnderstandingModel.effort, timeoutMs: deps.codeUnderstandingModel.timeoutMs, idleTimeoutMs: deps.codeUnderstandingModel.idleTimeoutMs, maxDurationMs: deps.codeUnderstandingModel.maxDurationMs }) : undefined,
     budget: deps.codeUnderstandingModel, onAnswer: () => saveReviewAnswerMaterials(store, repoRoot), onPublish: article => publishReviewArticle(repoRoot, article) });
 
   const reviewToken = process.env.REVIEW_TOKEN || "";
@@ -588,7 +588,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       if (!targetId) return reply.code(400).send({ error: "targetId is required" });
       const result = await generateCodeUnderstanding(store, repoRoot, understandingPort, {
         targetId,
-        timeoutMs: req.body?.timeoutMs ?? deps.codeUnderstandingModel?.timeoutMs,
+        timeoutMs: req.body?.timeoutMs ?? deps.codeUnderstandingModel?.idleTimeoutMs ?? deps.codeUnderstandingModel?.timeoutMs,
         maxInputTokens: deps.codeUnderstandingModel?.maxInputTokens,
         maxOutputTokens: deps.codeUnderstandingModel?.maxOutputTokens,
         contextReserveTokens: deps.codeUnderstandingModel?.contextReserveTokens,

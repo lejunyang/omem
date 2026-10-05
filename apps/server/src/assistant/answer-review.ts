@@ -334,6 +334,7 @@ export async function reviewAssistantAnswer(input: {
         mcpServers: environment.servers,
         expectedSkills: bundle.skills.map((s) => s.canonical_name),
         onSessionUpdate: environment.update,
+        onActivity: input.context.onActivity,
         allowPermission: environment.allowPermission,
         finalSubmission: environment.submission,
       },

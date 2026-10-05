@@ -94,6 +94,18 @@ readline.createInterface({ input: process.stdin }).on("line", (raw) => {
       .map((p) => p.text)
       .join("");
     if (text.includes("TIMEOUT")) return;
+    if (text.includes("ACTIVE_SLOW")) {
+      let ticks = 0;
+      const active = setInterval(() => {
+        update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "PRIVATE_THOUGHT" } });
+        if (++ticks === 6) {
+          clearInterval(active);
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "completed after active investigation" } });
+          reply({ stopReason: "end_turn" });
+        }
+      }, 300);
+      return;
+    }
     if (text.includes("ASK_PERMISSION")) {
       permission = true;
       send({

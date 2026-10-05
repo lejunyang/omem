@@ -21,7 +21,7 @@ const plan = z.object({ version: z.literal(1), pages: z.array(wikiPageBriefSchem
 const targets = [...new Set([...taskTargets(), ...process.argv.slice(2).filter(a=>!a.startsWith("-"))])];
 const pages = plan.pages.filter(p => !targets.length || targets.some(t => p.key === t || p.key === `guide:${t}`));
 if (!pages.length) throw Error("No matching reader page");
-const profile = profileSchema.parse({ id: "traex", name: "Reader guide", transport: "acp", command: config.command, args: config.args ?? [], model: config.model, effort: config.effort, timeoutMs: config.timeoutMs, maxContextChars: 200000 });
+const profile = profileSchema.parse({ id: "traex", name: "Reader guide", transport: "acp", command: config.command, args: config.args ?? [], model: config.model, effort: config.effort, timeoutMs: config.timeoutMs, idleTimeoutMs: config.idleTimeoutMs, maxDurationMs: config.maxDurationMs, maxContextChars: 200000 });
 const store = createReviewStore(root), runtime = join(root, ".repo-review/runtime");
 mkdirSync(runtime, { recursive: true });
 const { repository, coverage } = restoreReviewKnowledge(store, root);

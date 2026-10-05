@@ -1,3 +1,5 @@
+import { agentIdleTimeout } from "./agent-timeout.js";
+import { assetPath } from "./paths.js";
 import { PersonalLarkService } from "./integrations/lark-personal/service.js";
 import { registerPersonalLark } from "./integrations/lark-personal/api.js";
 import { evidenceSection } from "./retrieval/context.js";
@@ -127,7 +129,7 @@ export async function buildApp(
     retrieval: assistantRetrieval,
     timezone: config.notifications.external?.timezone,
     decisions: config.decisions && config.decisions.mode !== "off" ? decisions : undefined,
-    turnTimeoutMs: assistantProfile?.timeoutMs ?? 60_000,
+    turnTimeoutMs: assistantProfile ? agentIdleTimeout(assistantProfile) : 60_000,
   });
   const learningConfig = config.learning;
   const learningProfile = learningConfig?.enabled
@@ -166,7 +168,7 @@ export async function buildApp(
         onboarding: lark,
         secrets,
         assistantModel,
-        assistantTimeoutMs: assistantProfile?.timeoutMs,
+        assistantTimeoutMs: assistantProfile ? agentIdleTimeout(assistantProfile) : undefined,
         retrieval: assistantRetrieval,
         pollMs: config.lark.pollMs,
       });
@@ -939,7 +941,7 @@ export async function buildApp(
       return result.ok ? result : reply.code(409).send(result);
     },
   );
-  const web = resolve("apps/web/dist");
+  const web = assetPath("apps/web/dist");
   if (existsSync(web))
     await app.register(staticFiles, { root: web, prefix: "/" });
   // G20: recover any pending/running turns from a previous process.

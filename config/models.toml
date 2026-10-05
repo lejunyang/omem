@@ -1,0 +1,46 @@
+# Optional models for installed omem. Downloads require an explicit omem setup command.
+[models.docling-tables.views]
+
+[models.docling-layout.views]
+
+[models.decision-startlux4b.views]
+
+[models.decision-startlux2b.views]
+
+[models.memory-zh.views]
+
+[models.docling-tables]
+source = "hf:docling-project/docling-models@fc0f2d45e2218ea24bce5045f58a389aed16dc23"
+include = ["config.json", "model_artifacts/tableformer/accurate/*"]
+exclude = []
+kind = "other"
+family = "docling"
+
+[models.docling-layout]
+source = "hf:docling-project/docling-layout-heron@8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
+include = ["*.json", "*.safetensors"]
+exclude = []
+kind = "other"
+family = "docling"
+
+[models.decision-startlux4b]
+source = "hf:startlux-models/StartLux-Decision-4B@9302aedb7f7bd889994336f2ae919dffbf5dbee1"
+include = ["*.safetensors", "*.json", "merges.txt", "LICENSE", "NOTICE"]
+exclude = []
+variant = "bf16"
+family = "startlux-decision"
+
+[models.decision-startlux2b]
+source = "hf:startlux-models/StartLux-Decision-2B@3e2e456409a7fe44be69eee231566f7830872ea2"
+include = ["*.safetensors", "*.json", "merges.txt", "LICENSE", "NOTICE"]
+exclude = []
+variant = "bf16"
+family = "startlux-decision"
+
+[models.memory-zh]
+source = "hf:Xenova/bge-small-zh-v1.5@75c43b069aac4d136ba6bc1122f995fedcfd2781"
+include = ["config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "vocab.txt", "onnx/model_quantized.onnx"]
+exclude = []
+kind = "embedding"
+family = "bge"
+derived_from = "BAAI/bge-small-zh-v1.5"

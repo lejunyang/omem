@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { developmentCheckout, modelWorkspace } from "../paths.js";
 
 export interface EmbeddingModel {
   /** Includes weights, tokenizer, pooling, query instruction and window version. */
@@ -16,6 +17,7 @@ const files = ["config.json", "tokenizer.json", "tokenizer_config.json", "specia
 
 /** osdk owns downloads. The application verifies and reads one immutable snapshot. */
 export async function loadChineseEmbedding(alias = "memory-zh", cwd = process.cwd()): Promise<EmbeddingModel> {
+  if (!developmentCheckout) cwd = modelWorkspace();
   const { stdout } = await promisify(execFile)("osdk", ["model", "show", alias, "--json"], { cwd, timeout: 30_000, maxBuffer: 1_000_000 });
   const { model } = JSON.parse(stdout) as { model: { repository: string; revision: string; snapshot_path: string; files: { path: string; sha256: string }[] } };
   if (model.repository !== "Xenova/bge-small-zh-v1.5" || model.revision !== BGE_REVISION) throw Error("Unsupported embedding snapshot; run osdk model sync memory-zh with the project lock");

@@ -22,7 +22,7 @@
       "maxContextChars": 20000,
       "model": "gpt-5.6-sol",
       "effort": "medium",
-      "timeoutMs": 480000
+      "idleTimeoutMs": 480000
     },
     {
       "id": "traex-fast",
@@ -37,7 +37,7 @@
       ],
       "model": "gpt-5.6-luna",
       "effort": "medium",
-      "timeoutMs": 300000
+      "idleTimeoutMs": 300000
     },
     {
       "id": "traex-reader",
@@ -52,7 +52,7 @@
       ],
       "model": "gpt-5.6-sol",
       "effort": "low",
-      "timeoutMs": 480000
+      "idleTimeoutMs": 480000
     },
     {
       "id": "codex",

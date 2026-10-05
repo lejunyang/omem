@@ -187,6 +187,8 @@ export const profileSchema = z
       ),
     maxContextChars: z.number().int().min(1000).max(200000).default(20000),
     timeoutMs: z.number().int().min(1000).max(600000).default(120000),
+    idleTimeoutMs: z.number().int().min(1000).max(86_400_000).optional(),
+    maxDurationMs: z.number().int().min(1000).max(86_400_000).optional(),
     skills: z.array(z.string()).default([]),
   })
   .strict();

@@ -4,7 +4,20 @@
 
 项目正在进行一次以阅读和实际问题为中心的重构。已有输入、检索、记忆、问答与事项基础；完整的高质量知识整理和主动助理仍在推进。当前能力与计划分开记录，测试通过不等于内容好用。
 
-## 开始使用
+## 命令行安装
+
+已准备可发布的 npm 包，命令名为 `omem`，使用 Apache-2.0 许可证；实际发布状态见[当前进度](docs/reader-first/progress.md)。发布后使用 Node.js 24+：
+
+```bash
+npm install -g omem
+omem init
+omem service start
+omem --help
+```
+
+安装版从任意目录运行都使用 `~/.omem`，CLI 和网页共享个人库。`omem import` 保存材料，`omem search` 查找，`omem ask` 自主调查，`omem messages` 管理只读消息订阅，`omem status` 检查服务。完整命令、帮助、可选依赖、超时和发布步骤见[CLI 使用指南](docs/cli.md)；随包提供的 [omem-cli skill](skills/omem-cli/SKILL.md) 可供其他 Agent 使用。
+
+## 源码开发
 
 ```bash
 osdk install
