@@ -45,6 +45,10 @@ export class KnowledgePipeline {
     const offers = targets.map(material => ({ material, ranges: [{ start: 1, end: material.lineCount }] }));
     const run = await this.runRole("material-cataloger", offers, [], {
       targetKeys: targets.map(m => m.key), descriptionVersions: targets.map(m => versions.get(m.key)?.version ?? 0),
+      previousDescriptions: targets.flatMap(m => {
+        const previous = descriptions.previous(m.revisionId);
+        return previous ? [{ key: m.key, ...previous }] : [];
+      }),
       instruction: "Read each target's original text. Describe what it can answer, distinguish plans, research, examples and implemented behavior. No user question or expected answer is supplied.",
     }, out => {
       const batch = materialDescriptionBatchSchema.parse(out);

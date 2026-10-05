@@ -24,6 +24,13 @@ export class MaterialDescriptions {
         }
       : null;
   }
+  previous(revisionId: string): MaterialDescriptionRecord | null {
+    const row = this.db.prepare(`SELECT older.id FROM revisions current
+      JOIN revisions older ON older.source_id=current.source_id AND older.version<current.version
+      WHERE current.id=? AND EXISTS(SELECT 1 FROM material_descriptions d WHERE d.revision_id=older.id)
+      ORDER BY older.version DESC LIMIT 1`).get(revisionId);
+    return row ? this.get(String(row.id)) : null;
+  }
   save(
     revisionId: string,
     value: unknown,
