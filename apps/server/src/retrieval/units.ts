@@ -15,7 +15,7 @@ import { MaterialDescriptions } from "../source-profile/descriptions.js";
 import type { MaterialDescriptionRecord } from "../../../../packages/contracts/src/material-description.js";
 import type { ProvenanceRef, RetrievalHit, SourceAnchor } from "./port.js";
 
-export const UNIT_VERSION = "structure-icu-v6";
+export const UNIT_VERSION = "structure-icu-v7";
 type Row = Record<string, unknown>;
 export type RetrievalUnit = Omit<RetrievalHit, "score" | "routes"> & {
   owner: string;
@@ -48,11 +48,11 @@ export function markdownPassages(text: string): Passage[] {
       const endLine = text
         .slice(0, cursor - token.raw.match(/\s*$/)![0].length)
         .split("\n").length;
-      // A table/list introduction cannot answer on its own. Keep its explanation
-      // with the block it introduces while retaining the original line range.
+      // An introduction cannot answer on its own. Quoted examples belong to
+      // their explanation just like tables, lists and code blocks do.
       if (
         previous &&
-        ["table", "list", "code"].includes(token.type) &&
+        ["table", "list", "code", "blockquote"].includes(token.type) &&
         /[:：]$/.test(previous.text) &&
         JSON.stringify(previous.headingPath) ===
           JSON.stringify(headings.map((h) => h.title))

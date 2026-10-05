@@ -759,6 +759,34 @@ it("keeps heading context and table structure, ignoring headings inside code fen
   );
 });
 
+it("retrieves a quoted example together with its introduction and fixed source range", async () => {
+  const s = setup();
+  try {
+    const text = "# 借阅手册\n\n## 提醒\n\n可以这样交办：\n\n> 下周二提醒我归还借书。\n\n## 取消\n\n取消后不再提醒。";
+    const saved = s.store.capture({
+      source: "manual",
+      externalId: "loan-handbook",
+      title: "借阅手册",
+      parts: [{ type: "text", text }],
+      context: { format: "markdown" },
+    });
+    const results = await s.retrieval.search({ text: "归还借书" });
+    const hit = results.find((r) => r.target.kind === "source");
+    expect(hit?.text).toContain("可以这样交办：");
+    expect(hit?.text).toContain("> 下周二提醒我归还借书。");
+    expect(hit?.target).toMatchObject({
+      kind: "source",
+      revisionId: saved.revision.id,
+      startLine: 5,
+      endLine: 7,
+    });
+    expect(hit?.text).not.toContain("取消后不再提醒");
+    expect(markdownPassages(text).some((p) => p.text === "可以这样交办：")).toBe(false);
+  } finally {
+    await s.close();
+  }
+});
+
 it("keeps an explicit operation in the hybrid and reranking pools despite whole-question distractors", async () => {
   const s = setup();
   const text =
