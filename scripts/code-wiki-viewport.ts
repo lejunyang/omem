@@ -13,6 +13,32 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on("pageerror", e => errors.push(e.message));
   await page.goto(BASE);
+  if (process.env.OMEM_DOCUMENT_TITLE) {
+    await check("imported document retains headings, table, image and original download", async () => {
+      await page.getByRole("button", { name: "原始材料", exact: true }).click();
+      await page.getByLabel("查找原始材料").fill(process.env.OMEM_DOCUMENT_TITLE!);
+      await page.locator(".source-link").filter({ hasText: process.env.OMEM_DOCUMENT_TITLE! }).click();
+      await expect(page.locator(".document-reading .md-body h2").first()).toBeVisible();
+      await expect(page.locator(".document-reading table")).toBeVisible();
+      await expect(page.locator(".document-reading img")).toBeVisible();
+      const download = page.waitForEvent("download");
+      await page.getByRole("button", { name: "下载原件", exact: true }).click();
+      expect((await download).suggestedFilename()).toBe(process.env.OMEM_DOCUMENT_TITLE);
+      for (const width of [1440, 768, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await page.screenshot({ path: `${OUT}/document-${width}.png`, fullPage: true });
+        await page.locator(".document-reading img").scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `${OUT}/document-content-${width}.png`, fullPage: true });
+      }
+    });
+    if (process.env.OMEM_DOCUMENT_ONLY === "1") {
+      expect(errors).toEqual([]);
+      await browser.close();
+      process.exit(0);
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  }
   await check("unified app has real repository chapters", async () => {
     await page.getByRole("button", { name: "知识库", exact: true }).click();
     await expect(page.getByRole("navigation", { name: "知识目录" })).toBeVisible();

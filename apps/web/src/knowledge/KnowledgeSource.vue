@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import DocumentReading from "../DocumentReading.vue";
+import type { Revision } from "../api";
 import MaterialDescription from "../MaterialDescription.vue";
 import { OmCodeViewer, OmMarkdown, OmButton, OmBadge, OmEmpty } from "@omem/ui";
 import { knowledgeApi, knowledgeFrame, type ArticleMeta, type KnowledgeFrame } from "./api";
 const props = defineProps<{ prefix: string; materialKey: string; digest?: string; startLine?: number; endLine?: number }>();
 const emit = defineEmits<{ navigate: [frame: KnowledgeFrame]; loaded: [title: string] }>();
-type Material = { key: string; revisionId: string; title: string; text: string; path: string | null; codeLanguage?: string | null; current: boolean; knowledge: ArticleMeta | null; images: { url: string; label: string }[]; links: { line: number; label: string; reason: string; target: string }[]; documentLinks?: { href: string; target: string }[] };
+type Material = { document?: Revision["context"]["document"]; key: string; revisionId: string; title: string; text: string; path: string | null; codeLanguage?: string | null; current: boolean; knowledge: ArticleMeta | null; images: { url: string; label: string }[]; links: { line: number; label: string; reason: string; target: string }[]; documentLinks?: { href: string; target: string }[] };
 const material = ref<Material | null>(null), error = ref("");
 const linkError = ref("");
 const from = ref(1), to = ref(1);
@@ -40,7 +42,8 @@ function internal(path: string) {
       <p v-if="linkError" role="status">{{ linkError }}</p>
       <div class="source-actions"><OmBadge>原始材料 · {{ material.current ? '当前版本' : '历史版本' }}</OmBadge><OmButton v-if="material.knowledge" variant="secondary" @click="emit('navigate', knowledgeFrame(material.key, material.knowledge.title))">阅读这份材料的知识解读 ↗</OmButton></div>
       <p v-if="startLine" class="muted">引用位置：第 {{ startLine }}{{ endLine && endLine !== startLine ? `–${endLine}` : '' }} 行</p>
-      <div class="code-excerpt" v-if="material.codeLanguage || (material.path && !/\.(?:md|markdown)$/.test(material.path))">
+      <DocumentReading v-if="material.document" :revision-id="material.revisionId" :document="material.document" :fallback="material.text" />
+      <div class="code-excerpt" v-else-if="material.codeLanguage || (material.path && !/\.(?:md|markdown)$/.test(material.path))">
       <OmButton v-if="from > 1" variant="ghost" @click="from = Math.max(1, from - 20)">向上展开 20 行</OmButton>
       <OmCodeViewer :code="excerpt" :start-line="from" :language="material.codeLanguage || material.path?.split('.').pop()" :anchor-line="startLine" :links="material.links" @open-reference="reference" />
       <OmButton v-if="to < lines.length" variant="ghost" @click="to = Math.min(lines.length, to + 20)">向下展开 20 行</OmButton>
