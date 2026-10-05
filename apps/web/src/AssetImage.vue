@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount } from "vue";
 import { headers } from "./api";
-const props = defineProps<{ id: string; label: string }>();
+const props = defineProps<{ id: string; label: string; path?: string }>();
 const url = ref("");
 const error = ref("");
 let controller: AbortController | undefined;
 watch(
-  () => props.id,
-  async (id) => {
+  () => [props.id, props.path],
+  async () => {
     controller?.abort();
     controller = new AbortController();
     const signal = controller.signal;
@@ -15,7 +15,7 @@ watch(
     url.value = "";
     error.value = "";
     try {
-      const r = await fetch("/api/assets/" + id, {
+      const r = await fetch(props.path || "/api/assets/" + props.id, {
         headers: headers(),
         signal,
       });

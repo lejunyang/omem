@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import ChangeHistory from "./ChangeHistory.vue";
+import DocumentReading from "./DocumentReading.vue";
+import MaterialAdvice from "./MaterialAdvice.vue";
 import DailyAssistant from "./DailyAssistant.vue";
 import SearchAnswer from "./SearchAnswer.vue";
 import TaskFollowUpControls from "./TaskFollowUpControls.vue";
@@ -240,6 +242,19 @@ const image = ref<{
 } | null>(null);
 const taskDraft = ref({ title: "", detail: "", dueAt: "" });
 const importMode = ref("text");
+const documentFile = ref<File | null>(null);
+const documentIdentity = ref(crypto.randomUUID());
+function selectDocument(event: Event) {
+  documentFile.value = (event.target as HTMLInputElement).files?.[0] ?? null;
+  documentIdentity.value = crypto.randomUUID();
+}
+async function fileBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1]!);
+    reader.onerror = () => reject(Error("文件读取失败")); reader.readAsDataURL(file);
+  });
+}
 const captureContextIds = ref<string[]>([]);
 const unread = computed(
   () => notifications.value.filter((n) => !n.readAt).length,
@@ -426,7 +441,11 @@ async function capture() {
   try {
     let response: { revision: Revision; duplicate: boolean };
     const contextIds = captureContextIds.value.length ? captureContextIds.value : undefined;
-    if (importMode.value === "lark")
+    if (importMode.value === "document") {
+      const file = documentFile.value;
+      if (!file || file.size > 20_000_000) throw Error("请选择不超过 20 MB 的 PDF 或 DOCX");
+      response = await api("/connectors/document", { name: file.name, data: await fileBase64(file), externalId: "upload:" + documentIdentity.value, contextIds });
+    } else if (importMode.value === "lark")
       response = await api("/connectors/lark", { url: input.value.url, contextIds });
     else if (importMode.value === "file")
       response = await api("/connectors/file", { path: input.value.filePath, contextIds });
@@ -479,6 +498,7 @@ async function capture() {
     input.value.title = "";
     input.value.text = "";
     image.value = null;
+    documentFile.value = null;
   } catch (e) {
     error.value = String(e);
   } finally {
@@ -825,6 +845,7 @@ onBeforeUnmount(() => {
             >
           </div>
           <h1>{{ revision.title }}</h1>
+          <MaterialAdvice :revision-id="revision.id" />
           <MaterialDescription :revision-id="revision.id" :current="revision.current" />
           <SourceContexts :key="revision.sourceId" :source-id="revision.sourceId" />
           <p class="muted">
@@ -841,6 +862,7 @@ onBeforeUnmount(() => {
             "
             :language="revision.title.split('.').pop()"
           />
+          <DocumentReading v-else-if="revision.context.document" :revision-id="revision.id" :document="revision.context.document" :fallback="revision.parts.filter(p => p.type === 'text').map(p => p.text).join('\n\n')" />
           <OmMarkdown
             v-else
             :source="
@@ -896,9 +918,10 @@ onBeforeUnmount(() => {
         <OmButton
           v-for="[id, label] in [
             ['text', '文本＋图片＋链接'],
+            ['document', 'PDF / Word'],
             ['lark', '飞书文档'],
             ['git', 'Git 文件'],
-            ['file', '服务器文本文件'],
+            ['file', '服务器文件'],
           ]"
           :key="id"
           :variant="importMode === id ? 'primary' : 'ghost'"
@@ -948,7 +971,11 @@ onBeforeUnmount(() => {
               image?.label || "最多一张，5 MB；API 支持多图片。"
             }}</small></label
           ></template
-        ><template v-else-if="importMode === 'lark'"
+        ><template v-else-if="importMode === 'document'">
+          <label>选择文档<input type="file" accept=".pdf,.docx" required :disabled="busy" @change="selectDocument" /></label>
+          <p class="muted">支持文字 PDF 和 DOCX，最多 20 MB、200 页。保存原件、标题、表格和图片；扫描件 OCR 尚未启用。</p>
+          <p v-if="busy" role="status">正在解析并保存文档，首次解析可能需要较长时间…</p>
+        </template><template v-else-if="importMode === 'lark'"
           ><label
             >飞书文档或 Wiki 链接<input
               v-model="input.url"
@@ -957,7 +984,7 @@ onBeforeUnmount(() => {
               placeholder="https://…/docx/…"
           /></label>
           <p class="muted">
-            调用服务器已有的 lark-cli 用户登录态读取，不会自动共享或写回文档。
+            使用项目自带的官方 lark-cli 和你的飞书登录态读取正文，保留版本及引用元数据。
           </p></template
         ><template v-else-if="importMode === 'git'"
           ><label
@@ -974,7 +1001,7 @@ onBeforeUnmount(() => {
             >服务器文件路径<input v-model="input.filePath" required
           /></label>
           <p class="muted">
-            只读取配置 captureRoots 允许的 UTF-8 文件，最多 500 KB。
+            读取已允许目录中的 UTF-8 文件（500 KB）或 PDF / DOCX（20 MB）。
           </p></template
         ><ContextPicker v-model="captureContextIds" :disabled="busy" /><OmButton type="submit" variant="primary" :loading="busy"
           >保存材料与证据</OmButton
