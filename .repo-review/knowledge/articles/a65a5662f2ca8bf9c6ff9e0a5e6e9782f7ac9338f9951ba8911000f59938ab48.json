@@ -1,0 +1,2276 @@
+{
+  "version": 1,
+  "document": {
+    "key": "guide:requirement-development",
+    "title": "让需求变成可跟进的事项和可评审的代码",
+    "summary": "用一条虚构的“工单处理完成入口”需求，走完材料归组、需求整理、行动跟进、项目登记、编码、宿主检查、独立评审、回修和补丁应用。重点说明每一步该运行什么命令、看到什么结果，以及需求约定、代码存在、检查通过、应用与发布的边界；同时明确 browser/design 只是可配置命令类别，omem 当前没有内置 Mock、Figma 或 Studio 验收能力。",
+    "category": "操作指南",
+    "topicPath": [
+      "软件开发",
+      "omem"
+    ],
+    "sections": [
+      {
+        "key": "case-and-finish-line",
+        "title": "先认清终点：一条需求要经过哪些关口",
+        "body": "这篇指南用一条**虚构教学案例**贯穿全程：工单分派已经能按类别选择队列；会议决定新增“处理完成”入口，同时要求保留未知类别的兜底队列；一位同事负责确认状态字段，你要跟进其进展；代码还要证明路由函数不会修改传入对象。材料没有提供这个业务的真实仓库、接口或测试结果，因此这些业务名称和验收项只是演示，不是现实部署事实。\n\n你要走完的是一条有明确关口的链路：\n\n1. 把纪要、消息和代码等原件归入同一范围，生成持续维护的需求页。\n2. 核对目标、非目标、验收项和行动项，分清建议与明确约定。\n3. 把一条 confirmed 行动关注为个人待办。\n4. 登记真实 Git 仓库、项目规则、skills 和允许执行的命令。\n5. 在独立副本中编码，让宿主运行必需检查，再由新会话独立评审。\n6. 查看差异和问题；只有任务到达 ready 才能 apply。\n7. apply 后补丁只是回到原工作区的未提交修改，提交、推送和发布仍由你决定。\n\nomem 把需求事实、个人跟进、代码实现、机器检查、独立评审、应用到工作区和上线分开；后一步的局部成功不能替代整体完成。参考 [[c1]]"
+      },
+      {
+        "key": "keep-one-requirement-current",
+        "title": "第一步：让后续讨论进入同一需求",
+        "body": "先保存原件，再把相关来源归到一个 context。下面的 ID 都要换成你本机实际返回的值：\n\n```bash\nomem contexts create '工单完成入口' --description '工单分派和完成状态'\nomem contexts assign SOURCE_ID CONTEXT_ID\nomem requirements track '工单完成入口' \\\n  --goal '补处理完成入口，保留未知类别兜底，并明确验收与负责人' \\\n  --context CONTEXT_ID --watch\nomem requirements list --json\nomem requirements show REQUIREMENT_KEY\nomem requirements board REQUIREMENT_KEY\n```\n\n`contexts assign` 设置的是该来源的**完整归属列表**；若来源原本属于多个 context，要把仍需保留的 ID 一起传入。后续纪要或消息也要先被捕获并归入这个 context，`--watch` 才会把范围变化带回同一需求；系统不会仅凭群名相似或一条新消息猜测归属。参考 [[c2]]\n\n`--context` 适合持续变化的范围：成员增减也会被跟踪。只想固定选择若干来源时，用 `--revision ID...`；它跟随所选来源的修订，但不随 context 增加成员。暂停维护用 `omem requirements watch KEY --off`，主动重查用 `omem requirements refresh KEY`。参考 [[c3]]\n\n`track` 返回“已排队”只表示任务已提交。用 `list --json` 看处理状态和失败原因，成功后用 `show` 看正文、用 `board` 看结构化验收项和行动项。旧页面没有结构化 requirement 时先 refresh；`current=false` 表示材料已变化，**不要据此开工**。参考 [[c4]]"
+      },
+      {
+        "key": "turn-materials-into-work",
+        "title": "第二步：把讨论拆成验收项和行动项",
+        "body": "需求页要把“要求是什么”和“目前证明到哪一层”分开。针对本教学案例，board 可以整理成下面这样；ID 只是示例：\n\n| 类型 | 示例内容 | 本快照下的初始状态 |\n| --- | --- | --- |\n| 目标 | 增加“处理完成”入口，不破坏现有分派行为 | 需求约定 |\n| 非目标 | 不顺手重做整套工单 UI，不在本任务中发布上线 | 明确排除 |\n| C1 | 存在可调用的处理完成入口 | `missing`：案例明确说这是待新增能力 |\n| C2 | 已知类别仍进入对应队列 | `uncertain`：案例把它设为既有行为，但本快照没有真实代码或检查证据 |\n| C3 | 未知类别继续进入兜底队列 | `uncertain`：这是要保留的行为，本快照没有实现证据 |\n| C4 | 调用路由后传入对象保持不变 | `uncertain`：这是待证明的验收要求，不能假定当前实现一定违反 |\n| A1 | 跟进同事确认完成状态字段 | 只有原文明确记录负责人和约定时才是 `confirmed` |\n\n状态不是进度百分比：`missing` 表示材料确认能力尚不存在；`implemented` 表示有实际代码依据；`verified` 还需检查或验收依据；`released` 还需发布依据；`uncertain` 表示材料不足。因此“尚未核验”不能一律写成 `missing`。验收项使用稳定 ID；行动项另有负责人、等待对象、日期、状态和 `confirmed/proposed/uncertain` 确定性。参考 [[c5]]\n\n判断建议与约定时要回到原文。例如，会议明确决定“由小林确认状态字段”时，A1 才能是 `confirmed`；一句“最好顺便改 UI”应保留为 `proposed` 或 `uncertain`，不能升级为验收承诺。需求整理也要区分决定、待确认、代码存在、测试和发布。参考 [[c6]]"
+      },
+      {
+        "key": "follow-an-action",
+        "title": "第三步：把明确行动变成个人跟进事项",
+        "body": "先从最新 board 复制行动 ID，再关注它：\n\n```bash\nomem requirements board REQUIREMENT_KEY\nomem requirements follow REQUIREMENT_KEY A1\nomem tasks list --json\n```\n\n`follow` 执行时会重新读取当前 board，把本次读到的 revision 随请求提交。后端要求页面仍为 `current`、行动仍存在且是 `confirmed`。它不会校验你更早在终端复制 ACTION_ID 时看到的 revision；如果期间换版而同一 ID 仍存在，命令关注的是新版同名行动。因此执行前要重读 board，确认新版 A1 的含义、负责人和证据仍符合预期。参考 [[c7]][[c8]]\n\n“关注”表示**我负责跟进**，不是把材料中的负责人改成我。生成的个人任务 owner 是当前个人库的 owner，但详情仍保留材料里的负责人、等待对象、日期表达和来源需求；本例中的含义是“我去追踪同事确认状态字段的进展”。参考 [[c9]]\n\n同一 action ID 可以更新同一待办，并会保护人工修改：\n\n- 你或其他流程人工改过待办后，自动同步暂停并保留修改；再次 `follow` 表示认可当前任务状态并恢复同步。\n- `unfollow` 只关闭后续同步，已创建的任务仍保留。\n- 新稿遗漏行动、certainty 不再是 confirmed 或原件证据失效时，旧待办不会被静默删除，而会保留并记录错误。\n\n参考 [[c10]]"
+      },
+      {
+        "key": "register-real-project",
+        "title": "第四步：登记真实项目和验收命令",
+        "body": "创建一个本机 JSON，并把路径和命令换成目标项目真实可用的值：\n\n```json\n{\n  \"name\": \"工单服务\",\n  \"repository\": \"/absolute/path/to/ticket-service\",\n  \"instructions\": \"保持现有队列选择兼容；不要修改调用方传入对象。\",\n  \"ruleFiles\": [\"docs/development.md\"],\n  \"commands\": [\n    {\n      \"name\": \"setup\",\n      \"command\": \"npm\",\n      \"args\": [\"ci\"],\n      \"purpose\": \"setup\",\n      \"required\": true\n    },\n    {\n      \"name\": \"test\",\n      \"command\": \"npm\",\n      \"args\": [\"test\"],\n      \"purpose\": \"test\",\n      \"required\": true,\n      \"timeoutMs\": 600000\n    }\n  ]\n}\n```\n\n然后登记并确认：\n\n```bash\nomem develop register ticket-service ./development-project.json\nomem develop projects\n```\n\n`repository` 必须解析为 Git 仓库根目录；`instructions` 是项目级约束；`ruleFiles` 列出额外规则文件。每条命令有唯一 `name`、`command`、`args`、可选 `cwd`、`purpose`、`required` 和 `timeoutMs`；purpose 只能是 `setup/test/build/browser/design`。项目别名以字母开头，只能含字母、数字、下划线和连字符，已有别名不能原地覆盖。参考 [[c11]][[c12]]\n\n编码角色会按目标文件位置读取从仓库根到子目录的 `AGENTS.md`、`CLAUDE.md`，并叠加 `ruleFiles`；还会枚举 `.agents/skills`、`.claude/skills`、`.trae/skills` 下的 `SKILL.md`，按相关性读取。因为开发副本来自已提交版本，这些规则和 skills 也要存在于该提交中。参考 [[c13]][[c14]]\n\n`setup` 供编码 Agent 按需准备依赖；每轮实现后，宿主自动执行所有 `required=true` 且 purpose 不是 setup 的命令。至少登记一个真实可运行的必需检查，否则任务不能进入 ready。命令以本机用户权限运行，独立副本**不是操作系统沙箱**；只登记你授权且项目确实需要的命令。参考 [[c15]]"
+      },
+      {
+        "key": "start-implementation",
+        "title": "第五步：从当前需求启动编码",
+        "body": "启动前再看一次 `requirements board`：必须已有结构化目标和验收项，且 `current=true`。目标仓库还要停在准备作为基线的提交，并保持工作区干净。然后运行：\n\n```bash\nomem develop start REQUIREMENT_KEY --project ticket-service\n```\n\nrunner 会记录当前 HEAD，在个人库的 development 目录创建无硬链接的独立 checkout，切到该基线并移除 origin。原工作区保持不动；未提交文件、被忽略的凭据和本地依赖目录不会随提交历史复制过去，缺依赖时使用已登记的 setup 命令。参考 [[c16]]\n\n编码角色读取启动时固定的需求版本及其原件、项目规则和独立副本中的真实代码。它能搜索和读取代码、查看完整 diff、运行登记命令；写文件前必须读取适用规则，并带上刚读取内容的 hash，文件后来变化时会拒绝覆盖。参考 [[c17]][[c18]]\n\n编码结果必须逐项覆盖原需求中的每个验收 ID，不能遗漏或新增。角色不能改需求标准，也不能提交、推送或部署。对本例而言，结果应分别对应 C1—C4，而不是只说“功能已完成”。参考 [[c19]]"
+      },
+      {
+        "key": "checks-review-and-repair",
+        "title": "第六步：看宿主检查、独立评审并处理失败",
+        "body": "运行中或结束后查看状态：\n\n```bash\nomem develop list\nomem develop show RUN_ID\n```\n\n一次正常循环是：编码角色修改代码 → runner 保存副本快照 → 宿主实际运行必需的非 setup 命令 → 新的 code-reviewer 会话独立评审。评审不接收开发者自评；它读取固定需求、原件、项目规则、实际代码、完整差异和宿主检查结果，使用只读代码工具，逐项给出 `passed/failed/not_run`，并记录路径、行号、问题和修改建议。参考 [[c20]]\n\n按 `show` 的结果行动：\n\n- **检查失败**：不能进入 ready，流程回到编码修复。\n- **检查改变源码或产生未忽略文件**：本轮不直接送审；下一轮先整理变化再重验。\n- **评审 changes_requested**：上一轮 review 会交回编码角色修复。\n- **编码声明 blocker、评审 verdict=blocked、或没有任何必需宿主检查**：任务停在 `blocked`。\n- **三轮仍未通过**：任务停在 `blocked`，副本和问题保留；解决前提后运行 `omem develop resume RUN_ID`。\n- **Ctrl+C/SIGTERM 中断**：状态为 `interrupted`，用 resume 继续保留的副本。参考 [[c21]]\n- **需求换版**：旧任务固定在启动时的 requirement revision，不能切换到新版标准。保留代码副本，先刷新并确认新版需求为 current，再用 `develop start` 新建任务；不要用旧 run 的 resume 代替新版验收。参考 [[c22]]\n\n只有至少一个必需宿主检查实际执行且全部成功、独立评审 accepted、全部验收 passed 且没有 high/medium 问题，并且需求 revision 与源码指纹仍有效，任务才进入 `ready`。这仍不等于人类验收或上线。参考 [[c21]]"
+      },
+      {
+        "key": "inspect-and-apply",
+        "title": "第七步：人工检查差异，再应用补丁",
+        "body": "先看完整差异和评审详情：\n\n```bash\nomem develop diff RUN_ID\nomem develop show RUN_ID\n```\n\n在教学案例中，人工检查至少回答四个问题：是否真的增加处理完成入口；已知类别分派是否保持；未知类别是否仍走兜底；“输入对象不被修改”对应的验收项是否在 review 中 passed。还要检查是否混入无关改动。这里说明的是检查方法，不表示材料已经证明存在这些代码。相关查看命令见 [[c23]]。\n\n确认任务为 ready 后才运行：\n\n```bash\nomem develop apply RUN_ID\n```\n\napply 会重新核对独立副本、目标仓库和需求，而三类失效情形的恢复动作不同：\n\n1. **评审后的独立 checkout 指纹变化**：现有评审不再覆盖当前代码，先对变化后的代码重新验证，不能直接 apply。\n2. **原仓库 HEAD 已离开 base，或工作区不再干净**：系统拒绝覆盖并保留补丁；人工合并到当前工作区后，重新运行项目验证。\n3. **需求 revision 已变化或页面不再 current**：旧评审不能应用。先确认新版需求，再按新版验收启动新的开发任务并重新评审；不能只把旧补丁人工合并后沿用旧结论。参考 [[c22]][[c24]]\n\n三项都通过后，系统才从已评审 checkout 重新生成二进制 patch，先运行 `git apply --check`，再应用到原工作区。参考 [[c24]]\n\n最后用状态边界判断下一步：\n\n| 状态 | 能说明什么 | 还不能说明什么 |\n| --- | --- | --- |\n| `created/coding/checking/reviewing` | 任务正在推进 | 不能叫完成 |\n| `interrupted/failed/blocked` | 有中断、错误或前提不足 | 需处理原因后 resume；需求换版时新建任务 |\n| `ready` | 固定源码指纹上的必需检查成功，独立评审接受 | 不等于人类验收、发布或上线 |\n| `applied` | 已评审补丁进入原工作区 | 仍是未提交修改；没有自动 commit、push 或部署 |\n| 需求页 `implemented/verified/released` | 分别表达代码存在、验证通过和已经发布 | 开发检查不会自动改写需求页状态 |\n\nCLI 把 ready 与 apply 分开。真实实现、检查和发布若要更新需求页，应先捕获为材料，再 refresh 调查。参考 [[c23]][[c25]]"
+      },
+      {
+        "key": "capability-boundaries",
+        "title": "当前能做什么，哪些视觉能力没有内置",
+        "body": "当前本地 CLI 覆盖两组核心能力：\n\n- requirements：`track/list/show/refresh/watch/handoff/board/follow/unfollow`。\n- develop：`register/projects/start/list/show/resume/diff/apply`。\n\ndevelop 在本机个人库和仓库运行，不接受远端 `--url/OMEM_URL`；start/resume 前台执行，中断后显式 resume。当前编码权限适配只验证 Traex ACP。参考 [[c26]]\n\n`browser` 和 `design` 只是项目命令的 purpose 类别，用来接入项目已经具备的浏览器或设计检查；它们不表示 omem 内置了视觉验收平台。当前没有内嵌 Figma 下载缓存、静态 Mock runtime、测试包或 Studio，也不保证 Agent 能自动完成任意 Figma 验收。真实 UI 需求必须预先准备对应工具、skills 和 browser/design 命令；缺少这些前提时，评审应写“未验证”，普通 build 不能冒充完整视觉验收。参考 [[c27]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "需求到代码的总体边界",
+        "reason": "说明需求跟进、独立副本、独立评审、apply 以及不自动发布的整体流程。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/requirement-followup.md",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "# 从需求跟进到编码与独立评审\n\n需求跟进把文档、消息、纪要和代码组织成同一份可持续更新的需求页。编码任务从明确需求和登记项目开始，在独立 Git 副本里实现、运行项目检查，再交给全新会话的评审 Agent。原工作区保留，评审通过后由 `apply` 应用补丁；不会自动推送、发布或发群消息。"
+      },
+      {
+        "key": "c2",
+        "label": "来源完整归属列表",
+        "reason": "说明 contexts assign 设置来源的完整归属列表。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/cli.ts",
+          "startLine": 509,
+          "endLine": 520
+        },
+        "quote": "contexts\n  .command(\"assign <source-id> <context-ids...>\")\n  .description(\"设置来源的完整归属列表；从 sources list 获取 source-id\")\n  .action(async (id, contextIds) =>\n    show(await api(`/api/sources/${enc(id)}/contexts`, { contextIds }, \"PUT\")),\n  );\nconst requirements = group(\n  \"requirements\",\n  \"需求 Agent：综合文档、消息、纪要与代码持续跟进，导出实现交接"
+      },
+      {
+        "key": "c3",
+        "label": "context 与 revision 的选择",
+        "reason": "说明 context、revision、watch 和 refresh 的操作差异。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/requirement-followup.md",
+          "startLine": 7,
+          "endLine": 21
+        },
+        "quote": "用 `import lark/file/git` 保存原件，个人消息订阅持续带回讨论。建立项目并把来源归属进去：\n\n```bash\nomem contexts create '工单完成入口' --description '工单分派和完成状态'\nomem contexts assign SOURCE_ID CONTEXT_ID\nomem requirements track '工单完成入口' \\\n  --goal '明确验收、当前差距、负责人和实现入口' --context CONTEXT_ID --watch\nomem requirements list --json\nomem requirements show REQUIREME"
+      },
+      {
+        "key": "c4",
+        "label": "结构化需求与 current",
+        "reason": "说明先看 board、旧页 refresh、current=false 不开工。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:skills/omem-cli/references/development.md",
+          "startLine": 3,
+          "endLine": 5
+        },
+        "quote": "先运行 `omem requirements board KEY --json`，查看当前需求是否已生成结构化验收。旧页面先 refresh 并等成功；current=false 不应开工。\n\n行动项通过 `requirements follow KEY ACTION_ID` 成为个人跟进待办，后续需求换版更新同一条。用户改过待办会暂停自动同步；不要为了“看起来最新”强行覆盖。unfollow 保留任务。proposed/uncertain 不能当明确承诺。"
+      },
+      {
+        "key": "c5",
+        "label": "验收与行动状态结构",
+        "reason": "支持验收状态、行动确定性、负责人和等待对象字段。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/development.ts",
+          "startLine": 3,
+          "endLine": 45
+        },
+        "quote": "const id = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/);\nexport const requirementStateSchema = z\n  .object({\n    objective: z.string().min(1),\n    nonGoals: z.array(z.string()),\n    criteria: z\n      .array(\n        z\n          .object({\n            id,\n            description: z.string().min(1),\n            statu"
+      },
+      {
+        "key": "c6",
+        "label": "区分决定和状态",
+        "reason": "说明需求整理要区分明确决定、待确认、代码、测试与发布。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/requirements.ts",
+          "startLine": 17,
+          "endLine": 21
+        },
+        "quote": "    questions: [\n      \"要解决谁的什么问题，验收标准和非目标是什么？\",\n      \"哪些讨论已经成为决定，哪些仍待确认？\",\n      \"代码实现到哪里，测试和发布状态分别是什么？\",\n      \"下一步改哪些入口，如何验收，谁在等谁？\","
+      },
+      {
+        "key": "c7",
+        "label": "CLI follow 读取当前 revision",
+        "reason": "证明 follow 重新读取当前 board 并提交该 revision。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/cli.ts",
+          "startLine": 624,
+          "endLine": 639
+        },
+        "quote": "requirements\n  .command(\"board <key>\")\n  .description(\"查看结构化验收项、行动项及关联待办\")\n  .action(async (key) => show(await api(`/api/requirements/${enc(key)}`)));\nrequirements\n  .command(\"follow <key> <action-id>\")\n  .description(\"跟进明确行动项；创建个人待办并随已复核需求更新\")\n  .action(async (key, actionId) => {\n    const board = await api(`/api/requ"
+      },
+      {
+        "key": "c8",
+        "label": "follow 后端校验",
+        "reason": "证明后端校验 revision、current、行动存在及 confirmed。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/requirement-tasks.ts",
+          "startLine": 33,
+          "endLine": 55
+        },
+        "quote": "  follow(key: string, actionId: string, expectedRevision: string) {\n    const board = this.board(key);\n    if (board.revision !== expectedRevision || !board.current)\n      throw Error(\"需求页已变化，请重新读取当前行动项\");\n    const action = board.requirement?.actions.find((a) => a.id === actionId);\n    if (!action) throw Error(\"行动项不存在"
+      },
+      {
+        "key": "c9",
+        "label": "个人跟进保留材料负责人",
+        "reason": "说明个人任务与材料负责人、等待对象的保留方式。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/memory/service.ts",
+          "startLine": 136,
+          "endLine": 155
+        },
+        "quote": "  /** The subscription is explicit owner intent. Source people remain collaborators;\n   * the personal task asks the owner to follow progress, not perform their work. */\n  applyRequirementFollowUp(input: {key:string;actionId:string;revision:string;action:RequirementState[\"actions\"][number];\n    evidenceId:string;taskId"
+      },
+      {
+        "key": "c10",
+        "label": "行动同步与人工修改保护",
+        "reason": "支持同一行动更新、人工改动保护、取消关注和失效行动保留。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/knowledge/requirement-tasks.ts",
+          "startLine": 64,
+          "endLine": 134
+        },
+        "quote": "  sync(article: KnowledgeArticle) {\n    if (\n      article.reading?.workflow !== \"requirement-followup\" ||\n      !article.current ||\n      !article.document.requirement\n    )\n      return;\n    for (const link of this.store.db\n      .prepare(\"SELECT * FROM requirement_tasks WHERE page_key=? AND enabled=1\")\n      .all(ar"
+      },
+      {
+        "key": "c11",
+        "label": "项目配置字段",
+        "reason": "说明项目、仓库、规则文件、命令、purpose 和默认值。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:packages/contracts/src/development.ts",
+          "startLine": 48,
+          "endLine": 70
+        },
+        "quote": "export const developmentProjectSchema = z\n  .object({\n    name: z.string().min(1),\n    repository: z.string().min(1),\n    instructions: z.string().default(\"\"),\n    ruleFiles: z.array(z.string()).default([]),\n    commands: z\n      .array(\n        z\n          .object({\n            name: id,\n            command: z.string("
+      },
+      {
+        "key": "c12",
+        "label": "项目登记校验",
+        "reason": "支持仓库根目录、命令名唯一和别名不可覆盖等登记条件。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/runner.ts",
+          "startLine": 77,
+          "endLine": 99
+        },
+        "quote": "  projectFile(name: string) {\n    if (!/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/.test(name))\n      throw Error(\"项目别名只能包含字母、数字、下划线和连字符\");\n    return join(this.root, \"projects\", name + \".json\");\n  }\n  async register(alias: string, input: unknown) {\n    const project = developmentProjectSchema.parse(input);\n    project.repository ="
+      },
+      {
+        "key": "c13",
+        "label": "目录规则叠加",
+        "reason": "支持读取根到子目录规则并叠加 ruleFiles。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/workspace.ts",
+          "startLine": 132,
+          "endLine": 158
+        },
+        "quote": "export function applicableRules(\n  root: string,\n  file: string,\n  project: DevelopmentProject,\n) {\n  const full = codePath(root, file);\n  let dir =\n    existsSync(full) && lstatSync(full).isDirectory() ? full : dirname(full);\n  const dirs: string[] = [];\n  while (dir === root || dir.startsWith(root + sep)) {\n    dirs."
+      },
+      {
+        "key": "c14",
+        "label": "仓库 skills 发现",
+        "reason": "支持枚举三类仓库 skill 入口并按相关性读取。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/workspace.ts",
+          "startLine": 228,
+          "endLine": 263
+        },
+        "quote": "export function codeTools(input: {\n  root: string;\n  base: string;\n  project: DevelopmentProject;\n  readOnly: boolean;\n  logs: string;\n  signal?: AbortSignal;\n  onCheck: (result: CommandResult) => void;\n}): ResearchTool[] {\n  const { root, project } = input;\n  const rulesRead = new Map<string, string>();\n  const requir"
+      },
+      {
+        "key": "c15",
+        "label": "setup 与宿主检查边界",
+        "reason": "说明 setup、required 非 setup 检查及本机权限信任边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/requirement-followup.md",
+          "startLine": 51,
+          "endLine": 59
+        },
+        "quote": "```bash\nomem develop register my-service ./development-project.json\nomem develop projects\nomem develop start REQUIREMENT_KEY --project my-service\n```\n\n登记命令是信任边界：它们以本机用户权限在独立副本中运行，**副本不是操作系统沙箱**。只登记该项目确实需要的依赖准备和检查，不把群消息里的命令直接登记进来。purpose 支持 setup/test/build/browser/design；setup 由 Agent 按需执行，其余 required 命令由宿主在每轮实现后实际执行。缺"
+      },
+      {
+        "key": "c16",
+        "label": "创建独立开发副本",
+        "reason": "支持 current 需求、干净仓库、固定 base、无硬链接 clone 与移除 origin。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/runner.ts",
+          "startLine": 130,
+          "endLine": 180
+        },
+        "quote": "  async create(alias: string, key: string, store: Store) {\n    const project = developmentProjectSchema.parse(\n      JSON.parse(readFileSync(this.projectFile(alias), \"utf8\")),\n    );\n    const repository = new KnowledgeRepository(store);\n    repository.refresh();\n    const article = repository.get(key);\n    if (\n      "
+      },
+      {
+        "key": "c17",
+        "label": "编码读取固定需求与原件",
+        "reason": "说明固定需求版本、原始材料和真实代码工具的装配。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/runner.ts",
+          "startLine": 237,
+          "endLine": 257
+        },
+        "quote": "      const repository = new KnowledgeRepository(store);\n      repository.refresh();\n      const article = repository.get(\n        run.requirementKey,\n        run.requirementRevision,\n      );\n      if (!article?.document.requirement) throw Error(\"固定需求版本不可用\");\n      if (\n        repository.get(run.requirementKey)?.revi"
+      },
+      {
+        "key": "c18",
+        "label": "写代码的规则与 hash 保护",
+        "reason": "支持修改前读取适用规则、expectedHash 检查和评审只读。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/workspace.ts",
+          "startLine": 391,
+          "endLine": 430
+        },
+        "quote": "  if (!input.readOnly)\n    tools.push(\n      {\n        name: \"write_code\",\n        readOnly: false,\n        description:\n          \"Create or replace a UTF-8 code file after project_rules. expectedHash must match read_code (null only for a new file). Use the actual repository conventions and keep changes scoped to the "
+      },
+      {
+        "key": "c19",
+        "label": "逐项覆盖验收标准",
+        "reason": "说明编码和评审不能遗漏或新增验收 ID，并限制编码角色职责。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/runner.ts",
+          "startLine": 309,
+          "endLine": 375
+        },
+        "quote": "        const result = await gateway.run({\n          roleId,\n          profile: safeProfile,\n          context,\n          signal,\n          validateOutput: (out) => {\n            const value =\n              roleId === \"coding-agent\"\n                ? implementationResultSchema.parse(out)\n                : implementatio"
+      },
+      {
+        "key": "c20",
+        "label": "宿主检查与独立评审",
+        "reason": "说明宿主实际检查、新会话只读评审及源码污染防护。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/runner.ts",
+          "startLine": 375,
+          "endLine": 429
+        },
+        "quote": "        const written = implementationResultSchema.parse(implementation.result);\n        if (written.blockers.length) {\n          run.state = \"blocked\";\n          run.error = written.blockers.join(\"\\n\");\n          break;\n        }\n        run.head = await snapshotCommit(\n          run.checkout,\n          `omem implemen"
+      },
+      {
+        "key": "c21",
+        "label": "三轮回修与 ready 条件",
+        "reason": "支持失败分流、最多三轮和进入 ready 的必要条件。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/runner.ts",
+          "startLine": 430,
+          "endLine": 478
+        },
+        "quote": "        if (\n          run.review.verdict === \"accepted\" &&\n          hostChecks.every((c) => c.exitCode === 0) &&\n          hostChecks.length > 0\n        ) {\n          repository.refresh();\n          const current = repository.get(run.requirementKey);\n          if (\n            current?.revision !== run.requirementRev"
+      },
+      {
+        "key": "c22",
+        "label": "固定需求版本不能切换",
+        "reason": "说明旧任务固定 requirement revision，需求换版要新建任务。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/runner.ts",
+          "startLine": 202,
+          "endLine": 249
+        },
+        "quote": "  async execute(\n    id: string,\n    store: Store,\n    profile: AgentProfile,\n    options: { signal?: AbortSignal; log?: (s: string) => void } = {},\n  ) {\n    const run = this.read(id);\n    if ([\"ready\", \"applied\"].includes(run.state))\n      throw Error(\"任务已评审或已应用；新需求请新建任务\");\n    const release = this.acquire(run),\n    "
+      },
+      {
+        "key": "c23",
+        "label": "开发任务查看与应用命令",
+        "reason": "支持 list、show、diff、apply 命令及 ready/applied 操作边界。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/cli.ts",
+          "startLine": 680,
+          "endLine": 758
+        },
+        "quote": "develop\n  .command(\"projects\")\n  .description(\"查看已登记编码项目\")\n  .action(async () => show((await developmentRunner()).projects()));\ndevelop\n  .command(\"list\")\n  .description(\"查看编码任务和结果目录\")\n  .action(async () => {\n    const runs = (await developmentRunner()).list();\n    show(\n      runs,\n      runs.length\n        ? runs.map"
+      },
+      {
+        "key": "c24",
+        "label": "apply 三类失效分支",
+        "reason": "区分副本变化需重新验证、原仓库变化需人工合并、需求变化需按新版重新评审。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/runner.ts",
+          "startLine": 492,
+          "endLine": 529
+        },
+        "quote": "  async apply(id: string) {\n    const run = this.read(id),\n      release = this.acquire(run);\n    try {\n      if (run.state !== \"ready\" || !run.reviewedFingerprint)\n        throw Error(\"只有独立评审通过的任务可以应用\");\n      if ((await fingerprint(run.checkout)) !== run.reviewedFingerprint)\n        throw Error(\"评审后代码已变化，请重新验证\");\n   "
+      },
+      {
+        "key": "c25",
+        "label": "检查不会自动标记上线",
+        "reason": "说明需求页发布状态需捕获真实代码或检查材料后重新调查。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/requirement-followup.md",
+          "startLine": 94,
+          "endLine": 96
+        },
+        "quote": "## 当前边界与验收\n\n消息自动归属依赖 learning.enabled 和有效 Agent；watch 只跟随已归属材料，不猜群名，也不自动同步所有远端文档或仓库。代码检查成功不会把需求页自动改成“上线”；需要把真实检查/代码材料捕获后重新调查。实施只验证 Traex ACP；其他 CLI 编码权限适配尚未接通。"
+      },
+      {
+        "key": "c26",
+        "label": "当前本地 develop 能力",
+        "reason": "支持本地运行、无远端 URL、前台执行、恢复和 Traex ACP 范围。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/cli.ts",
+          "startLine": 653,
+          "endLine": 758
+        },
+        "quote": "const develop = group(\n  \"develop\",\n  \"按需求实施代码、运行项目检查、独立评审与回修\",\n).addHelpText(\n  \"after\",\n  `\n本地编码：读取本个人库中的需求和登记仓库；不接受远程 --url。修改发生在独立 Git 副本，原工作区保留。\n先登记项目 JSON：{name,repository,instructions?,ruleFiles?,commands:[{name,command,args,purpose,required?}]}。\npurpose 可为 setup/test/build/browser/design。只运行明确登记的命令；请包含项目必要的依赖准备"
+      },
+      {
+        "key": "c27",
+        "label": "Mock 与 Figma 能力边界",
+        "reason": "说明 browser/design 接入方式和当前未内置的视觉验收组件。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:docs/reader-first/requirement-followup.md",
+          "startLine": 80,
+          "endLine": 92
+        },
+        "quote": "## 借鉴 dev-flow 的哪些能力\n\n已阅读本机 dev-flow 的 README、需求进展约定和独立验证 skill，采用以下设计原则，不把整个测试平台搬入个人库：\n\n| dev-flow 的做法 | 在 omem 中如何使用 |\n| --- | --- |\n| 功能点和验收是权威输入，进度引用同一条目 | 需求文章保存稳定 criteria/actions；编码与评审覆盖相同 ID |\n| 保存代码影响、卡点与每轮问题 | 独立副本、每轮完整差异/检查、评审 findings 和阻塞状态 |\n| 验收不读开发自评 | code-reviewer 全新会话从原需求、代码和运行结果重新判断 |\n| 旧证据不能证明新源码 | "
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/cli.ts",
+      "digest": "cd67a6c5b78643ea9d33ffed9730a0b0ad2ee0b7f9526b4db11722a5fd8c3f49"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/development/runner.ts",
+      "digest": "06f682586e2fbe36e496b265dc8870842a621320563c33f7a3156c656b588754"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/development/workspace.ts",
+      "digest": "d411df7af0b41f44aca5c23d7fb64ba26e86a39f193e26dc3bf1e8a69021d48b"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/requirement-tasks.ts",
+      "digest": "8dc555bf0595fcf029e9ce46c2c08ad0109b7d7ec61b9af8f650c2453da10379"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/knowledge/requirements.ts",
+      "digest": "bea134f59e2561c2b37bcb040aaa46ebd849d2e5fee75bdd90aa5233550bcc69"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "2c16532616841346c9b383f416b4bdeebede0b3514cf33132fd0b87c439ef1c5"
+    },
+    {
+      "kind": "material",
+      "key": "omem:docs/reader-first/requirement-followup.md",
+      "digest": "5b92199cfdad56e263fdc3702c8a9211d2275189a40f2bbd371a75e8d4947599"
+    },
+    {
+      "kind": "material",
+      "key": "omem:packages/contracts/src/development.ts",
+      "digest": "ff01ceaad8d61cbe6c5abca671832972c9b8c98eb64565dada81ab70ecfa5b1c"
+    },
+    {
+      "kind": "material",
+      "key": "omem:skills/omem-cli/references/development.md",
+      "digest": "ef9e11739c38a2327896e6d0c164e8ce2cbf140de941166b4c009ae2ead6dc5f"
+    }
+  ],
+  "reading": {
+    "key": "guide:requirement-development",
+    "title": "让需求变成可跟进的事项和可评审的代码",
+    "order": 6,
+    "kind": "how-to",
+    "reader": "希望让个人助手跟进需求并启动实现的开发者",
+    "goal": "用一条具体需求讲清材料如何变成验收项和行动项，如何关注待办、登记实际项目、启动编码、看评审、修复并应用代码。以可操作步骤为主，不堆叠证据术语、日志和重复限制。明示当前命令能力与没有实现的可视化/mock/Figma能力。",
+    "scenario": "工单分派已经能选择队列，会议决定补处理完成入口。读者要保留未知类别兜底，跟进同事进展，再在目标仓库实施并检查输入对象不被修改。示例是教学案例，不宣称现实部署。",
+    "questions": [
+      "新讨论怎样进入同一需求，如何区分建议和明确约定？",
+      "怎样把重要行动变成个人跟进事项，人工修改后会怎样？",
+      "怎样登记项目规则、skills、依赖准备和验收命令？",
+      "编码与独立评审分别读取什么，如何处理检查失败或需求改变？",
+      "怎样检查和应用补丁，什么状态还不能叫需求完成？"
+    ],
+    "entryPaths": [
+      "apps/server/src/development/runner.ts",
+      "apps/server/src/development/workspace.ts",
+      "apps/server/src/knowledge/requirement-tasks.ts",
+      "apps/server/src/knowledge/requirements.ts",
+      "packages/contracts/src/development.ts"
+    ],
+    "topicPath": [
+      "软件开发",
+      "omem"
+    ],
+    "materialKeys": [
+      "omem:apps/server/src/development/runner.ts",
+      "omem:apps/server/src/development/workspace.ts",
+      "omem:apps/server/src/knowledge/requirement-tasks.ts",
+      "omem:apps/server/src/knowledge/requirements.ts",
+      "omem:packages/contracts/src/development.ts",
+      "omem:apps/server/src/cli.ts",
+      "omem:apps/server/src/memory/service.ts",
+      "omem:docs/reader-first/requirement-followup.md",
+      "omem:skills/omem-cli/references/development.md"
+    ]
+  },
+  "publication": {
+    "role": "article"
+  },
+  "investigation": [
+    {
+      "key": "omem:apps/server/src/cli.ts",
+      "digest": "cd67a6c5b78643ea9d33ffed9730a0b0ad2ee0b7f9526b4db11722a5fd8c3f49"
+    },
+    {
+      "key": "omem:apps/server/src/development/runner.ts",
+      "digest": "06f682586e2fbe36e496b265dc8870842a621320563c33f7a3156c656b588754"
+    },
+    {
+      "key": "omem:apps/server/src/development/workspace.ts",
+      "digest": "d411df7af0b41f44aca5c23d7fb64ba26e86a39f193e26dc3bf1e8a69021d48b"
+    },
+    {
+      "key": "omem:apps/server/src/knowledge/requirement-tasks.ts",
+      "digest": "8dc555bf0595fcf029e9ce46c2c08ad0109b7d7ec61b9af8f650c2453da10379"
+    },
+    {
+      "key": "omem:apps/server/src/knowledge/requirements.ts",
+      "digest": "bea134f59e2561c2b37bcb040aaa46ebd849d2e5fee75bdd90aa5233550bcc69"
+    },
+    {
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "2c16532616841346c9b383f416b4bdeebede0b3514cf33132fd0b87c439ef1c5"
+    },
+    {
+      "key": "omem:docs/reader-first/requirement-followup.md",
+      "digest": "5b92199cfdad56e263fdc3702c8a9211d2275189a40f2bbd371a75e8d4947599"
+    },
+    {
+      "key": "omem:packages/contracts/src/development.ts",
+      "digest": "ff01ceaad8d61cbe6c5abca671832972c9b8c98eb64565dada81ab70ecfa5b1c"
+    },
+    {
+      "key": "omem:skills/omem-cli/references/development.md",
+      "digest": "ef9e11739c38a2327896e6d0c164e8ce2cbf140de941166b4c009ae2ead6dc5f"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-05T19:03:23.981Z",
+    "trace": {
+      "runId": "0b1c75db-c1a4-4a67-be93-17a7ef8c3831",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "0ba8a740a9c0a1066cb89e5b9e3be9a56f395adb07e62aad4b5bc4f5c078da83",
+      "promptHash": "639f54bb91739d96c300d8ffc53024cf4fe65040a5ea4c5a23948bb1bae8bfa2",
+      "contextHash": "a801a1d98d304c8057d5b1849b64dd92d95ca67fa7fe04cb8b446f43ac8d3ae4",
+      "skillHash": "b611e7f72593c708d1430a1b9867e83f0d95796036e615120cb4aad48fd02fb0",
+      "toolHash": "c63ebed27fd0068222e3a65f2f3139400d62735cd978169855e2c5e739f4d448",
+      "fingerprint": "250baaa16f62c4f91b304de0a3638553b95bb96b9d4ccbb07815fc88d551487d",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_material_groups",
+        "list_materials",
+        "read_material",
+        "read_fragments",
+        "read_section",
+        "search_materials",
+        "search_contexts",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a10d71-bc17-78b2-bc5f-5fc855d3b2e7",
+        "01a10d71-efa4-7740-baab-f8d4b2b1213d"
+      ],
+      "usage": {
+        "used": 56396,
+        "size": 258400,
+        "cost": null,
+        "acpCompletion": "validated_submission",
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_3vWys0hvdPm1yEkY7pwMSHuO:exec-a0ae90e9-974b-4610-997f-2b2e59ec420c",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_3vWys0hvdPm1yEkY7pwMSHuO:exec-a0ae90e9-974b-4610-997f-2b2e59ec420c",
+              "process_id": "4186",
+              "turn_id": "01a10d71-f33c-7e63-a90b-c4e921b7fdfb",
+              "started_at_ms": 1791226950508,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/0ba8a740a9c0a1066cb89e5b9e3be9a56f395adb07e62aad4b5bc4f5c078da83/0b1c75db-c1a4-4a67-be93-17a7ef8c3831",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-refresher/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_3vWys0hvdPm1yEkY7pwMSHuO:exec-a0ae90e9-974b-4610-997f-2b2e59ec420c",
+            "status": "completed",
+            "outputDigest": "3d9aed27412b021868e33a6dbbbed064c8e55438b498afb24fee24cbc805ce71"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_CKVvvklnjCVwEENNihkoPyPR:exec-a77fbb8e-1a65-4db2-8dee-ac5e91e3d9dd",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/development/runner.ts",
+                "startLine": 492,
+                "endLine": 529
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/development/runner.ts",
+              "startLine": 492,
+              "endLine": 529
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_CKVvvklnjCVwEENNihkoPyPR:exec-a77fbb8e-1a65-4db2-8dee-ac5e91e3d9dd",
+            "status": "completed",
+            "outputDigest": "3e3412e09e725e09b1559e9aafb7264acaf6295af22384380870736236392eca"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_NT83rLmatrEPVDjtXUgC4pgR:exec-9450c161-75c5-4664-8ca6-678ad2cba8f0",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/development/runner.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_NT83rLmatrEPVDjtXUgC4pgR:exec-9450c161-75c5-4664-8ca6-678ad2cba8f0",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 1,
+      "research": {
+        "trace": {
+          "runId": "a5e965b8-ed9d-4a80-8f82-8cd48b198e53",
+          "roleId": "knowledge-researcher",
+          "roleVersion": "1",
+          "bundleHash": "b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431",
+          "promptHash": "46cf4b32f7b78fff5bf330a0c376c1c0dad908fbd3a4aeda7298507a773bf797",
+          "contextHash": "ed3ebd429e7f8f057f1915e2e598169af07c0e7d7d13fbd420ed879f9ed78d98",
+          "skillHash": "05041a69ea6623a27428757e7de5d4373af4e3f459b2b61d2a5b7169a688c1be",
+          "toolHash": "c63ebed27fd0068222e3a65f2f3139400d62735cd978169855e2c5e739f4d448",
+          "fingerprint": "3697a71a04aa923e503bebce0b224d20dc140bb2874904b47baa7abdeb5c656f",
+          "outputSchema": "KnowledgeResearch.v1",
+          "effectiveModel": "gpt-5.6-sol",
+          "effectiveEffort": "medium",
+          "loadedSkills": [
+            {
+              "name": "omem-knowledge-researcher",
+              "version": "1",
+              "mode": "native"
+            }
+          ],
+          "allowedTools": [
+            "list_material_groups",
+            "list_materials",
+            "read_material",
+            "read_fragments",
+            "read_section",
+            "search_materials",
+            "search_contexts",
+            "search_knowledge",
+            "read_knowledge",
+            "search_memories",
+            "read_memory",
+            "code_navigation",
+            "related_materials",
+            "material_history",
+            "read_image",
+            "submit_result"
+          ],
+          "sessionIds": [
+            "01a10d62-e042-7da3-8dc8-f3dcaa8a5be4"
+          ],
+          "usage": {
+            "used": 110578,
+            "size": 258400,
+            "cost": null,
+            "acpCompletion": "validated_submission",
+            "workflow": "native-research@1",
+            "activity": [
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_AKfgenbnERa4z7TGpKVqRAlw:exec-99e029f0-ab3e-44a6-922d-e426af82ea26",
+                "title": "Read SKILL.md",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_AKfgenbnERa4z7TGpKVqRAlw:exec-99e029f0-ab3e-44a6-922d-e426af82ea26",
+                  "process_id": "98931",
+                  "turn_id": "01a10d62-e370-72c1-9ea3-6554b46c8595",
+                  "started_at_ms": 1791225955779,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '1,240p' .trae/skills/omem-knowledge-researcher/SKILL.md"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/a5e965b8-ed9d-4a80-8f82-8cd48b198e53",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-researcher/SKILL.md",
+                      "name": "SKILL.md",
+                      "path": ".trae/skills/omem-knowledge-researcher/SKILL.md"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_AKfgenbnERa4z7TGpKVqRAlw:exec-99e029f0-ab3e-44a6-922d-e426af82ea26",
+                "status": "completed",
+                "outputDigest": "955f63f53bfbcbe3923563e70dd54213a66cf68042cc4410ac16091cdb3deb50"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_kuKQ2dP6NnoBQAwZALwcHaW3:exec-f0078c04-7e63-4313-9a30-569a3ae19ebc",
+                "title": "Search requirement-development|development/runner|development/workspace|requirement-tasks|knowledge/requirements|contracts/src/development|reader-first/requirement-followup|references/development|memory/service|apps/server/src/cli in catalog.json",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_kuKQ2dP6NnoBQAwZALwcHaW3:exec-f0078c04-7e63-4313-9a30-569a3ae19ebc",
+                  "process_id": "60898",
+                  "turn_id": "01a10d62-e370-72c1-9ea3-6554b46c8595",
+                  "started_at_ms": 1791225963045,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "rg -n 'requirement-development|development/runner|development/workspace|requirement-tasks|knowledge/requirements|contracts/src/development|reader-first/requirement-followup|references/development|memory/service|apps/server/src/cli' catalog.json knowledge.json"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/a5e965b8-ed9d-4a80-8f82-8cd48b198e53",
+                  "parsed_cmd": [
+                    {
+                      "type": "search",
+                      "cmd": "rg -n 'requirement-development|development/runner|development/workspace|requirement-tasks|knowledge/requirements|contracts/src/development|reader-first/requirement-followup|references/development|memory/service|apps/server/src/cli' catalog.json knowledge.json",
+                      "query": "requirement-development|development/runner|development/workspace|requirement-tasks|knowledge/requirements|contracts/src/development|reader-first/requirement-followup|references/development|memory/service|apps/server/src/cli",
+                      "path": "catalog.json"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_kuKQ2dP6NnoBQAwZALwcHaW3:exec-f0078c04-7e63-4313-9a30-569a3ae19ebc",
+                "status": "completed",
+                "outputDigest": "07e0141fe469adf0f3da1821bb6b7e7ada643bb3a621d860d941294f25aab8d6"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_ppdkRcEyweQDuyPGwPASXJzb:exec-36e7d6e7-40fc-4332-9bdb-e7d2e51e3171",
+                "title": "Read catalog.json, Read knowledge.json",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_ppdkRcEyweQDuyPGwPASXJzb:exec-36e7d6e7-40fc-4332-9bdb-e7d2e51e3171",
+                  "process_id": "45736",
+                  "turn_id": "01a10d62-e370-72c1-9ea3-6554b46c8595",
+                  "started_at_ms": 1791225971509,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '1,130p' catalog.json; sed -n '1,220p' knowledge.json"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/a5e965b8-ed9d-4a80-8f82-8cd48b198e53",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,130p' catalog.json",
+                      "name": "catalog.json",
+                      "path": "catalog.json"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,220p' knowledge.json",
+                      "name": "knowledge.json",
+                      "path": "knowledge.json"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_ppdkRcEyweQDuyPGwPASXJzb:exec-36e7d6e7-40fc-4332-9bdb-e7d2e51e3171",
+                "status": "completed",
+                "outputDigest": "b47fbe0dba40e03f9ed3c1ded7825b579e3ec6aaf215bc4fb245a77858e11292"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_s2ns3uT9SQjV7wa52HFcOIu9:exec-99111692-575b-4243-a68a-6dbebb5c4dca",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:apps/server/src/knowledge/requirement-tasks.ts"
+                  }
+                }
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:apps/server/src/knowledge/requirement-tasks.ts",
+                  "startLine": 1
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_s2ns3uT9SQjV7wa52HFcOIu9:exec-904acd22-17af-49f8-88d6-c5e2f607a3f0",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:apps/server/src/knowledge/requirements.ts"
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_s2ns3uT9SQjV7wa52HFcOIu9:exec-99111692-575b-4243-a68a-6dbebb5c4dca",
+                "status": "completed",
+                "outputDigest": "bc03e14a3531b298983fde1dedf3a6bc033290e3d1da4d81989ad92ad5a80b17"
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:apps/server/src/knowledge/requirements.ts",
+                  "startLine": 1
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_s2ns3uT9SQjV7wa52HFcOIu9:exec-a3f96a3d-0ee1-4fd3-84fb-11f79f5c661d",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:docs/reader-first/requirement-followup.md"
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_s2ns3uT9SQjV7wa52HFcOIu9:exec-7638359a-19a7-49aa-a17a-6afe5e38f4c5",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:packages/contracts/src/development.ts"
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_s2ns3uT9SQjV7wa52HFcOIu9:exec-904acd22-17af-49f8-88d6-c5e2f607a3f0",
+                "status": "completed",
+                "outputDigest": "6354754a05fd8d8f53a839c589d8f91e70fb27fcd88a107636c3effd8bf522e3"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_s2ns3uT9SQjV7wa52HFcOIu9:exec-aceb9c54-b6ae-48a9-a149-436e93b88594",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:skills/omem-cli/references/development.md"
+                  }
+                }
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:docs/reader-first/requirement-followup.md",
+                  "startLine": 1
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:skills/omem-cli/references/development.md",
+                  "startLine": 1
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:packages/contracts/src/development.ts",
+                  "startLine": 1
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_s2ns3uT9SQjV7wa52HFcOIu9:exec-a3f96a3d-0ee1-4fd3-84fb-11f79f5c661d",
+                "status": "completed",
+                "outputDigest": "fca4a2d893d47f8ba3e3e03f2f7cfa5834290f270da4e9f4aec680666e4e0020"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_s2ns3uT9SQjV7wa52HFcOIu9:exec-aceb9c54-b6ae-48a9-a149-436e93b88594",
+                "status": "completed",
+                "outputDigest": "b5ce78f0b3d6550ef933116e53d0807fe09780bae43d4f31630bd0b855e16e5c"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_s2ns3uT9SQjV7wa52HFcOIu9:exec-7638359a-19a7-49aa-a17a-6afe5e38f4c5",
+                "status": "completed",
+                "outputDigest": "a13b64126609457407711b9b75ae77263f4189be8ed67ee191d2de3f64a110f5"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_94hrLEjz99aW4ASb7sE2XFtr:exec-be7fbf2c-fbbf-4222-8bb3-e0d80610e00f",
+                "title": "Read requirement-tasks.ts, Search ^(export )?(async )?function|^export class|^[[:space:]]+(async )?[a-zA-Z][a-zA-Z0-9_]*\\( in runner.ts, Search requirements|develop|contexts assign in cli.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_94hrLEjz99aW4ASb7sE2XFtr:exec-be7fbf2c-fbbf-4222-8bb3-e0d80610e00f",
+                  "process_id": "86871",
+                  "turn_id": "01a10d62-e370-72c1-9ea3-6554b46c8595",
+                  "started_at_ms": 1791225987145,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '1,180p' originals/apps/server/src/knowledge/requirement-tasks.ts; rg -n '^(export )?(async )?function|^export class|^[[:space:]]+(async )?[a-zA-Z][a-zA-Z0-9_]*\\(' originals/apps/server/src/development/runner.ts originals/apps/server/src/development/workspace.ts; rg -n 'requirements|develop|contexts assign' originals/apps/server/src/cli.ts"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/a5e965b8-ed9d-4a80-8f82-8cd48b198e53",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,180p' originals/apps/server/src/knowledge/requirement-tasks.ts",
+                      "name": "requirement-tasks.ts",
+                      "path": "originals/apps/server/src/knowledge/requirement-tasks.ts"
+                    },
+                    {
+                      "type": "search",
+                      "cmd": "rg -n '^(export )?(async )?function|''^export class|''^[[:space:]]+(async )?[a-zA-Z][a-zA-Z0-9_]*'\"\\\\(\" originals/apps/server/src/development/runner.ts originals/apps/server/src/development/workspace.ts",
+                      "query": "^(export )?(async )?function|^export class|^[[:space:]]+(async )?[a-zA-Z][a-zA-Z0-9_]*\\(",
+                      "path": "runner.ts"
+                    },
+                    {
+                      "type": "search",
+                      "cmd": "rg -n 'requirements|develop|contexts assign' originals/apps/server/src/cli.ts",
+                      "query": "requirements|develop|contexts assign",
+                      "path": "cli.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_94hrLEjz99aW4ASb7sE2XFtr:exec-be7fbf2c-fbbf-4222-8bb3-e0d80610e00f",
+                "status": "completed",
+                "outputDigest": "5eebd2490b8609d8453a19eaa6af9c615166fd8211ed176d92b7baa49277f920"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_nEviuW8laBwVw1o637F6cRfN:exec-7e65c8bd-645b-44f5-b3cd-ae18d5856b81",
+                "title": "Read cli.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_nEviuW8laBwVw1o637F6cRfN:exec-7e65c8bd-645b-44f5-b3cd-ae18d5856b81",
+                  "process_id": "23063",
+                  "turn_id": "01a10d62-e370-72c1-9ea3-6554b46c8595",
+                  "started_at_ms": 1791225994813,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '500,780p' originals/apps/server/src/cli.ts"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/a5e965b8-ed9d-4a80-8f82-8cd48b198e53",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '500,780p' originals/apps/server/src/cli.ts",
+                      "name": "cli.ts",
+                      "path": "originals/apps/server/src/cli.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_nEviuW8laBwVw1o637F6cRfN:exec-7e65c8bd-645b-44f5-b3cd-ae18d5856b81",
+                "status": "completed",
+                "outputDigest": "d965c2d633ad984a67e990e47134cb77b20527c06bec8a3c15bc37eabc77983c"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_nEviuW8laBwVw1o637F6cRfN:exec-ed436790-f757-4675-bf7d-080c15cb1ac8",
+                "title": "Search applyRequirementFollowUp|requirement_tasks|actionId|dueExpression in service.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_nEviuW8laBwVw1o637F6cRfN:exec-ed436790-f757-4675-bf7d-080c15cb1ac8",
+                  "process_id": "31879",
+                  "turn_id": "01a10d62-e370-72c1-9ea3-6554b46c8595",
+                  "started_at_ms": 1791225994823,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "rg -n 'applyRequirementFollowUp|requirement_tasks|actionId|dueExpression' originals/apps/server/src/memory/service.ts"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/a5e965b8-ed9d-4a80-8f82-8cd48b198e53",
+                  "parsed_cmd": [
+                    {
+                      "type": "search",
+                      "cmd": "rg -n 'applyRequirementFollowUp|requirement_tasks|actionId|dueExpression' originals/apps/server/src/memory/service.ts",
+                      "query": "applyRequirementFollowUp|requirement_tasks|actionId|dueExpression",
+                      "path": "service.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_nEviuW8laBwVw1o637F6cRfN:exec-4095c155-2ddb-49c7-bf62-325be03b9872",
+                "title": "Read runner.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_nEviuW8laBwVw1o637F6cRfN:exec-4095c155-2ddb-49c7-bf62-325be03b9872",
+                  "process_id": "86088",
+                  "turn_id": "01a10d62-e370-72c1-9ea3-6554b46c8595",
+                  "started_at_ms": 1791225994823,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '1,560p' originals/apps/server/src/development/runner.ts"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/a5e965b8-ed9d-4a80-8f82-8cd48b198e53",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,560p' originals/apps/server/src/development/runner.ts",
+                      "name": "runner.ts",
+                      "path": "originals/apps/server/src/development/runner.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_nEviuW8laBwVw1o637F6cRfN:exec-ed436790-f757-4675-bf7d-080c15cb1ac8",
+                "status": "completed",
+                "outputDigest": "e99b3f8c3916c4d682ff816652b32cf31fb714290c6c687e799cb4cee93cb59f"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_nEviuW8laBwVw1o637F6cRfN:exec-27ca5421-d5db-4bf3-9c04-484f8a384c02",
+                "title": "Read workspace.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_nEviuW8laBwVw1o637F6cRfN:exec-27ca5421-d5db-4bf3-9c04-484f8a384c02",
+                  "process_id": "95182",
+                  "turn_id": "01a10d62-e370-72c1-9ea3-6554b46c8595",
+                  "started_at_ms": 1791225994824,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '1,460p' originals/apps/server/src/development/workspace.ts"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/a5e965b8-ed9d-4a80-8f82-8cd48b198e53",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '1,460p' originals/apps/server/src/development/workspace.ts",
+                      "name": "workspace.ts",
+                      "path": "originals/apps/server/src/development/workspace.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_nEviuW8laBwVw1o637F6cRfN:exec-27ca5421-d5db-4bf3-9c04-484f8a384c02",
+                "status": "completed",
+                "outputDigest": "b72b569a56344c6f6fd212408cb1397b68b9280d70c03297b113332f7d477f9b"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_nEviuW8laBwVw1o637F6cRfN:exec-4095c155-2ddb-49c7-bf62-325be03b9872",
+                "status": "completed",
+                "outputDigest": "40b97b9740ac2092111c37a7074b5dc53e14eeffdbd15ab4f189ea473b5a5ac2"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_ffLIb6JIrSgpxp1gJ4x7YkU6:exec-5486888d-4911-43f4-98f4-77b4c8575580",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:apps/server/src/development/runner.ts",
+                    "startLine": 391,
+                    "endLine": 535
+                  }
+                }
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:apps/server/src/development/runner.ts",
+                  "startLine": 391,
+                  "endLine": 535
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_ffLIb6JIrSgpxp1gJ4x7YkU6:exec-a125c72c-d082-4269-954c-76a863d36a7f",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:apps/server/src/memory/service.ts",
+                    "startLine": 90,
+                    "endLine": 165
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_ffLIb6JIrSgpxp1gJ4x7YkU6:exec-94b5d2b4-a2ed-40bb-b65f-8369a4775eb6",
+                "title": "Tool: omem/read_material",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "read_material",
+                  "arguments": {
+                    "key": "omem:apps/server/src/development/runner.ts",
+                    "startLine": 202,
+                    "endLine": 390
+                  }
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_ffLIb6JIrSgpxp1gJ4x7YkU6:exec-5486888d-4911-43f4-98f4-77b4c8575580",
+                "status": "completed",
+                "outputDigest": "060d730c874d37f6f9c5cc452d11d17f4eded4233dc8b88952d6ff9011b15573"
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:apps/server/src/memory/service.ts",
+                  "startLine": 90,
+                  "endLine": 165
+                },
+                "success": true
+              },
+              {
+                "kind": "mcp",
+                "tool": "read_material",
+                "args": {
+                  "key": "omem:apps/server/src/development/runner.ts",
+                  "startLine": 202,
+                  "endLine": 390
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_ffLIb6JIrSgpxp1gJ4x7YkU6:exec-a125c72c-d082-4269-954c-76a863d36a7f",
+                "status": "completed",
+                "outputDigest": "d6f1a2b65d0284a7a52619bc174f15b5004feef5890ba5f4a3465fb9c3a922ee"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_ffLIb6JIrSgpxp1gJ4x7YkU6:exec-94b5d2b4-a2ed-40bb-b65f-8369a4775eb6",
+                "status": "completed",
+                "outputDigest": "225416e2d3d78416d357e35c5dc7ae73d18991267eaf50b3552d8941ec6984d3"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_91CTGk05OLSNqjxarqSKOMLd:exec-bb7606ca-3933-4ec9-b0a3-f7f8bf06e75d",
+                "title": "Read runner.ts, Read service.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_91CTGk05OLSNqjxarqSKOMLd:exec-bb7606ca-3933-4ec9-b0a3-f7f8bf06e75d",
+                  "process_id": "16018",
+                  "turn_id": "01a10d62-e370-72c1-9ea3-6554b46c8595",
+                  "started_at_ms": 1791226011376,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "sed -n '360,535p' originals/apps/server/src/development/runner.ts; sed -n '90,165p' originals/apps/server/src/memory/service.ts"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/a5e965b8-ed9d-4a80-8f82-8cd48b198e53",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '360,535p' originals/apps/server/src/development/runner.ts",
+                      "name": "runner.ts",
+                      "path": "originals/apps/server/src/development/runner.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "sed -n '90,165p' originals/apps/server/src/memory/service.ts",
+                      "name": "service.ts",
+                      "path": "originals/apps/server/src/memory/service.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_91CTGk05OLSNqjxarqSKOMLd:exec-bb7606ca-3933-4ec9-b0a3-f7f8bf06e75d",
+                "status": "completed",
+                "outputDigest": "1c3e1cbaf67714670e1520cbc4109e5f369e0568cd248ad89586c37cee174881"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_b8nRtPswwVSUUTInIgzRv0HL:exec-5e0f96d9-4ee0-4b22-adf3-fcad8df55308",
+                "title": "Tool: omem/search_contexts",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "search_contexts",
+                  "arguments": {
+                    "questions": [
+                      {
+                        "question": "案例的明确决定、建议、验收项和行动项分别是什么？",
+                        "query": "工单 分派 完成入口 未知类别 输入对象 修改",
+                        "keys": [
+                          "omem:docs/reader-first/requirement-followup.md",
+                          "omem:apps/server/src/cli.ts"
+                        ],
+                        "kinds": [
+                          "source"
+                        ],
+                        "purpose": "concept"
+                      },
+                      {
+                        "question": "新讨论怎样归入同一需求，watch 和 context/revision 的边界是什么？",
+                        "query": "track watch context revision 新消息 归属",
+                        "keys": [
+                          "omem:docs/reader-first/requirement-followup.md",
+                          "omem:apps/server/src/cli.ts"
+                        ],
+                        "kinds": [
+                          "source"
+                        ],
+                        "purpose": "implementation"
+                      },
+                      {
+                        "question": "项目配置、skills、检查与视觉能力边界是什么？",
+                        "query": "ruleFiles skills setup browser design Mock Figma required",
+                        "keys": [
+                          "omem:docs/reader-first/requirement-followup.md",
+                          "omem:skills/omem-cli/references/development.md",
+                          "omem:packages/contracts/src/development.ts",
+                          "omem:apps/server/src/development/workspace.ts"
+                        ],
+                        "kinds": [
+                          "source"
+                        ],
+                        "purpose": "implementation"
+                      }
+                    ],
+                    "contextsPerQuestion": 6
+                  }
+                }
+              },
+              {
+                "kind": "mcp",
+                "tool": "search_contexts",
+                "args": {
+                  "questions": [
+                    {
+                      "question": "案例的明确决定、建议、验收项和行动项分别是什么？",
+                      "query": "工单 分派 完成入口 未知类别 输入对象 修改",
+                      "purpose": "concept",
+                      "kinds": [
+                        "source"
+                      ],
+                      "keys": [
+                        "omem:docs/reader-first/requirement-followup.md",
+                        "omem:apps/server/src/cli.ts"
+                      ]
+                    },
+                    {
+                      "question": "新讨论怎样归入同一需求，watch 和 context/revision 的边界是什么？",
+                      "query": "track watch context revision 新消息 归属",
+                      "purpose": "implementation",
+                      "kinds": [
+                        "source"
+                      ],
+                      "keys": [
+                        "omem:docs/reader-first/requirement-followup.md",
+                        "omem:apps/server/src/cli.ts"
+                      ]
+                    },
+                    {
+                      "question": "项目配置、skills、检查与视觉能力边界是什么？",
+                      "query": "ruleFiles skills setup browser design Mock Figma required",
+                      "purpose": "implementation",
+                      "kinds": [
+                        "source"
+                      ],
+                      "keys": [
+                        "omem:docs/reader-first/requirement-followup.md",
+                        "omem:skills/omem-cli/references/development.md",
+                        "omem:packages/contracts/src/development.ts",
+                        "omem:apps/server/src/development/workspace.ts"
+                      ]
+                    }
+                  ],
+                  "contextsPerQuestion": 6
+                },
+                "success": true
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_b8nRtPswwVSUUTInIgzRv0HL:exec-5e0f96d9-4ee0-4b22-adf3-fcad8df55308",
+                "status": "completed",
+                "outputDigest": "f50bea332a0cf25541f8ab97a22eaa086287f827bf681e800a48488c1e5a4679"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_7AkZzBlaADznhddtUzidkWjY:exec-e01301aa-e5ea-4d02-83dd-9543b4f24198",
+                "title": "Read runner.ts, Read workspace.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_7AkZzBlaADznhddtUzidkWjY:exec-e01301aa-e5ea-4d02-83dd-9543b4f24198",
+                  "process_id": "87458",
+                  "turn_id": "01a10d62-e370-72c1-9ea3-6554b46c8595",
+                  "started_at_ms": 1791226036555,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "nl -ba originals/apps/server/src/development/runner.ts | sed -n '72,201p'; nl -ba originals/apps/server/src/development/runner.ts | sed -n '364,535p'; nl -ba originals/apps/server/src/development/workspace.ts | sed -n '132,227p'; nl -ba originals/apps/server/src/development/workspace.ts | sed -n '228,434p'"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/a5e965b8-ed9d-4a80-8f82-8cd48b198e53",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/development/runner.ts",
+                      "name": "runner.ts",
+                      "path": "originals/apps/server/src/development/runner.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/development/workspace.ts",
+                      "name": "workspace.ts",
+                      "path": "originals/apps/server/src/development/workspace.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_7AkZzBlaADznhddtUzidkWjY:exec-e01301aa-e5ea-4d02-83dd-9543b4f24198",
+                "status": "completed",
+                "outputDigest": "47b9e528136ad2f3fb9aad4ffafcd06225bd3b2e8975d92cd9339020fdf9ed65"
+              },
+              {
+                "kind": "plan",
+                "entries": [
+                  {
+                    "content": "核对材料目录、技能规则与既有知识页",
+                    "priority": "medium",
+                    "status": "completed"
+                  },
+                  {
+                    "content": "追踪需求归并、结构化验收与个人待办同步",
+                    "priority": "medium",
+                    "status": "completed"
+                  },
+                  {
+                    "content": "追踪项目登记、编码、检查、独立评审与补丁应用",
+                    "priority": "medium",
+                    "status": "completed"
+                  },
+                  {
+                    "content": "核对教学案例、能力边界与仍未知项",
+                    "priority": "medium",
+                    "status": "in_progress"
+                  },
+                  {
+                    "content": "整理并提交 KnowledgeResearch.v1",
+                    "priority": "medium",
+                    "status": "pending"
+                  }
+                ]
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_oC9vI9Gggk0MhZT38FzwmBt0:exec-17b33c13-9bfc-415b-91cd-0e08e8700eaa",
+                "title": "Search 工单|未知类别|完成入口|输入对象|不被修改|队列|兜底|同事进展 in originals, Search Mock|Figma|Studio|browser|design|可视化|视觉 in requirement-followup.md",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_oC9vI9Gggk0MhZT38FzwmBt0:exec-17b33c13-9bfc-415b-91cd-0e08e8700eaa",
+                  "process_id": "49270",
+                  "turn_id": "01a10d62-e370-72c1-9ea3-6554b46c8595",
+                  "started_at_ms": 1791226054531,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "rg -n '工单|未知类别|完成入口|输入对象|不被修改|队列|兜底|同事进展' originals || true; rg -n 'Mock|Figma|Studio|browser|design|可视化|视觉' originals/docs/reader-first/requirement-followup.md originals/skills/omem-cli/references/development.md originals/packages/contracts/src/development.ts originals/apps/server/src/development/runner.ts originals/apps/server/src/development/workspace.ts"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/a5e965b8-ed9d-4a80-8f82-8cd48b198e53",
+                  "parsed_cmd": [
+                    {
+                      "type": "search",
+                      "cmd": "rg -n '工单|未知类别|完成入口|输入对象|不被修改|队列|兜底|同事进展' originals",
+                      "query": "工单|未知类别|完成入口|输入对象|不被修改|队列|兜底|同事进展",
+                      "path": "originals"
+                    },
+                    {
+                      "type": "search",
+                      "cmd": "rg -n 'Mock|Figma|Studio|browser|design|可视化|视觉' originals/docs/reader-first/requirement-followup.md originals/skills/omem-cli/references/development.md originals/packages/contracts/src/development.ts originals/apps/server/src/development/runner.ts originals/apps/server/src/development/workspace.ts",
+                      "query": "Mock|Figma|Studio|browser|design|可视化|视觉",
+                      "path": "requirement-followup.md"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_oC9vI9Gggk0MhZT38FzwmBt0:exec-17b33c13-9bfc-415b-91cd-0e08e8700eaa",
+                "status": "completed",
+                "outputDigest": "2f9bb0c8cd462e263437565b11d4be620b45bdc1975eed7b4cea89db1c6204fc"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_2FvfThoqoWw1Fe9me7R7JhT4:exec-9bbe84c3-596d-4821-938d-bab8104fb650",
+                "title": "Read cli.ts, Read requirement-tasks.ts, Read service.ts, Read development.ts",
+                "status": "in_progress",
+                "input": {
+                  "call_id": "code-mode-nested:29:call_2FvfThoqoWw1Fe9me7R7JhT4:exec-9bbe84c3-596d-4821-938d-bab8104fb650",
+                  "process_id": "17379",
+                  "turn_id": "01a10d62-e370-72c1-9ea3-6554b46c8595",
+                  "started_at_ms": 1791226069284,
+                  "command": [
+                    "/bin/zsh",
+                    "-lc",
+                    "nl -ba originals/apps/server/src/cli.ts | sed -n '515,760p'; nl -ba originals/apps/server/src/knowledge/requirement-tasks.ts | sed -n '9,139p'; nl -ba originals/apps/server/src/memory/service.ts | sed -n '138,160p'; nl -ba originals/packages/contracts/src/development.ts | sed -n '3,115p'"
+                  ],
+                  "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/b2313e67ef263dd11366bab8003fcf9c92377190c06380fc2adcc56300a6a431/a5e965b8-ed9d-4a80-8f82-8cd48b198e53",
+                  "parsed_cmd": [
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/cli.ts",
+                      "name": "cli.ts",
+                      "path": "originals/apps/server/src/cli.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/knowledge/requirement-tasks.ts",
+                      "name": "requirement-tasks.ts",
+                      "path": "originals/apps/server/src/knowledge/requirement-tasks.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/apps/server/src/memory/service.ts",
+                      "name": "service.ts",
+                      "path": "originals/apps/server/src/memory/service.ts"
+                    },
+                    {
+                      "type": "read",
+                      "cmd": "nl -ba originals/packages/contracts/src/development.ts",
+                      "name": "development.ts",
+                      "path": "originals/packages/contracts/src/development.ts"
+                    }
+                  ],
+                  "source": "unified_exec_startup",
+                  "yield_time_ms": 10000
+                }
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_2FvfThoqoWw1Fe9me7R7JhT4:exec-9bbe84c3-596d-4821-938d-bab8104fb650",
+                "status": "completed",
+                "outputDigest": "379a21d88cc5eacbddd2a25f2e388111b1cdfd827ed3afb0be265397b91471c5"
+              },
+              {
+                "kind": "native",
+                "type": "tool_call",
+                "id": "code-mode-nested:29:call_uDb6h2Y2LezMg6a36i2EWm9q:exec-42a2c1a0-8881-440c-943d-f569d12c7c78",
+                "title": "Tool: omem/submit_result",
+                "status": "in_progress",
+                "input": {
+                  "server": "omem",
+                  "tool": "submit_result",
+                  "submitted": true
+                }
+              },
+              {
+                "kind": "submission",
+                "success": true,
+                "reads": [
+                  "omem:apps/server/src/knowledge/requirement-tasks.ts",
+                  "omem:apps/server/src/knowledge/requirements.ts",
+                  "omem:docs/reader-first/requirement-followup.md",
+                  "omem:skills/omem-cli/references/development.md",
+                  "omem:packages/contracts/src/development.ts",
+                  "omem:apps/server/src/cli.ts",
+                  "omem:apps/server/src/development/runner.ts",
+                  "omem:apps/server/src/development/workspace.ts",
+                  "omem:apps/server/src/memory/service.ts"
+                ]
+              },
+              {
+                "kind": "native",
+                "type": "tool_call_update",
+                "id": "code-mode-nested:29:call_uDb6h2Y2LezMg6a36i2EWm9q:exec-42a2c1a0-8881-440c-943d-f569d12c7c78",
+                "status": "completed",
+                "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+              }
+            ],
+            "hostTokenBudget": null
+          },
+          "repairAttempts": 0
+        },
+        "findings": "## 调查结论与读者任务\n\n这是一个“把持续变化的需求材料转成可执行、可跟进、可复核的本地开发任务”的操作指南，不是需求管理概念介绍。读者最终应能完成一条闭环：把新讨论纳入同一需求范围，查看结构化目标/非目标/验收项/行动项，关注一个明确行动，登记真实仓库和检查命令，启动编码，查看评审并回修，最后检查并应用补丁。系统刻意把“需求事实”“个人跟进”“代码实现”“机器检查”“独立评审”“应用到工作区”“上线”分开，不能用后一步的局部成功替代整体完成。\n\n## 教学案例（不是现实部署事实）\n\n可贯穿全文使用这一条虚构需求：现有工单分派已经按类别选择队列；会议明确决定补一个“处理完成”入口，同时要求未知类别继续走兜底队列；另有同事负责确认状态字段，读者需要跟进其进展；实现验收还要求路由函数不能修改传入对象。材料只给出了“工单完成入口”的命令示例，没有提供该业务的真实仓库、接口、文件或测试结果，因此“未知类别兜底”“跟进同事”“输入对象不变”都应明确标为教学设定，用来示范如何填写验收项和行动项，不能写成已经被材料证明的现状。依据：docs/reader-first/requirement-followup.md 7-17；本任务 scenario。\n\n对这个案例，建议把会议明确决定拆成稳定验收项，例如：C1 存在完成入口；C2 已知类别仍进入对应队列；C3 未知类别仍进入兜底；C4 调用后输入对象保持不变。把“等同事确认状态字段”建成 action，owner 保留原材料中的同事身份，waitingOn 写等待结果，certainty 只有在原文明确承诺时才是 confirmed。个人意见如“最好顺便改 UI”保留为 proposed/uncertain，不升级为验收承诺。这种拆法是基于结构契约的教学映射：验收项有稳定 id、描述、状态和原件证据；状态区分 missing/implemented/verified/released/uncertain；行动项另有 owner、waitingOn、日期、状态、certainty 和至少一个证据。依据：packages/contracts/src/development.ts 3-45。材料没有规定案例实际应采用哪些 ID 或实现入口，这些应由需求页根据捕获原文生成或由作者作为示例命名。\n\n## 1. 新讨论怎样进入同一需求\n\n先导入文档、消息、纪要或代码原件，再创建一个 context，并用 `contexts assign SOURCE_ID CONTEXT_ID` 把来源归入它；该命令设置的是来源的完整归属列表，已有多个归属时需一起传入。随后用 `requirements track TITLE --goal ... --context CONTEXT_ID --watch` 建立需求页。`--context` 的价值是范围会跟随该 context 的成员增减；因此后续会议纪要或消息应先被捕获并正确归入同一 context，watch 才会在该范围变化后维护同一需求。系统不会因群名相似或一条新消息就猜测归属。若只想锁定特定来源，则用 `--revision ID...`；它跟随所选来源后续修订，但不像 context 那样随成员增减。可用 `requirements watch KEY --off` 暂停自动维护，用 `refresh KEY` 主动请求重新调查。依据：apps/server/src/cli.ts 515-552、572-590；docs/reader-first/requirement-followup.md 7-21、94-96。\n\n`track` 返回“已排队”只表示任务提交；用 `requirements list --json` 看状态和失败原因，成功发布后用 `show` 看正文、用 `board` 看结构化验收项和行动项。旧页若没有结构化 requirement，先 refresh 并等成功；`current=false` 表示材料已变化，不应开工。依据：apps/server/src/cli.ts 550-577、624-627；skills/omem-cli/references/development.md 3-5。\n\n建议与明确约定的关键不是语气润色，而是结构化 certainty 和原始证据：action 只有 confirmed 才能 follow；proposed/uncertain 不能被当作承诺。材料说明研究者先补读原件，规划者产出目标、非目标、验收项和行动项，独立复核再读原件；个人提议不应覆盖会议决定，建议也不能伪装成已经存在的等待关系。依据：docs/reader-first/requirement-followup.md 19-21；apps/server/src/knowledge/requirement-tasks.ts 33-40。\n\n## 2. 把重要行动变成个人跟进事项\n\n先运行 `omem requirements board REQUIREMENT_KEY` 找到 action 的稳定 ID，再执行 `omem requirements follow REQUIREMENT_KEY ACTION_ID`。CLI 会先读取当前 board，并把当前 revision 作为 expectedRevision 提交；后端拒绝已换版或 current=false 的页面，也拒绝不存在或非 confirmed 的行动。依据：apps/server/src/cli.ts 624-639；apps/server/src/knowledge/requirement-tasks.ts 16-54。\n\nfollow 的语义是“我要跟进这件事”，不是把原材料里的负责人改成当前用户。生成的个人任务 owner 是 owner，但详情明确保留“材料中的负责人”，waitingOn、原日期表达、行动状态和下一步也进入任务；若需求只有一个 context，该 context 可成为任务 projectId。这样案例中的“同事确认状态字段”会变成“我去跟进同事的进展”，而不是冒充同事执行其工作。依据：apps/server/src/memory/service.ts 138-155；docs/reader-first/requirement-followup.md 23-33。\n\n需求页后续出现已复核更新时，同一 action ID 会更新同一任务，而不是重复创建。同步要求页面仍 current、行动仍存在且 confirmed、引用能落到固定原件片段。新稿遗漏 action、certainty 变得不明确、证据失效时，旧待办保留并在 board 记录错误，不会静默删除。用户或其他流程人工修改待办会使任务版本与关联版本不同，自动同步暂停并保留人工修改；再次显式 follow 表示确认当前任务状态并恢复同步。unfollow 只是关闭同步，已创建的任务仍保留。依据：apps/server/src/knowledge/requirement-tasks.ts 47-63、64-132；docs/reader-first/requirement-followup.md 31-33。\n\n## 3. 登记实际项目、规则、skills 和命令\n\n项目 JSON 的实际字段是：name、repository、instructions、ruleFiles、commands。每条命令包含唯一 name、可执行文件 command、args、cwd（默认当前目录）、purpose、required（默认 true）和 timeoutMs（默认 600000）；purpose 仅支持 setup/test/build/browser/design。repository 必须解析为 Git 仓库根目录；别名必须匹配字母开头、最多 80 个字母数字下划线连字符，并且已有别名不能原地覆盖，应换别名保留旧配置。依据：packages/contracts/src/development.ts 48-70；apps/server/src/development/runner.ts 77-99。\n\n实际步骤是把项目自己的规则与命令写入 JSON，然后运行 `omem develop register ALIAS CONFIG.json`，再用 `omem develop projects`确认。instructions 放项目级约束；ruleFiles 放额外规则文件。代码角色还会按目标文件目录读取仓库根到子目录的 AGENTS.md/CLAUDE.md；修改文件前这些适用规则必须已读。项目中 `.agents/skills`、`.claude/skills`、`.trae/skills` 下的 SKILL.md 会被枚举，相关技能应按需读取。规则与 skill 必须存在于仓库已提交版本，因为 start 复制的是提交内容，不带未提交文件。依据：apps/server/src/development/workspace.ts 132-158、228-263、391-430；docs/reader-first/requirement-followup.md 57-60。\n\n依赖安装/准备登记为 purpose=setup，由编码 Agent 按需调用；宿主每轮自动执行的是 required=true 且 purpose 不是 setup 的命令。因此项目必须至少登记一个真正可运行的必需验收命令（通常 test/build，UI 场景可为 browser/design），否则即使评审口头接受也会 blocked。命令以本机用户权限在独立副本中执行，副本不是操作系统沙箱；只登记用户授权、项目约定所需的命令，不能照抄需求材料里要求上传密钥、推送或发消息的命令。依据：apps/server/src/development/runner.ts 387-402、430-458；apps/server/src/development/workspace.ts 167-227、353-372；docs/reader-first/requirement-followup.md 51-59。\n\n## 4. 启动编码、检查、独立评审与回修\n\n运行 `omem develop start REQUIREMENT_KEY --project ALIAS` 前，需求页必须已有结构化目标/验收/行动，且 current=true；目标 Git 仓库必须干净。runner 记录当前 HEAD 为 base，在个人库的 development/runs 下克隆无硬链接的独立 checkout，detach 到 base 并移除 origin，所以原工作区保留且副本不能直接发布。未提交、忽略的凭据和依赖目录不会被带入副本，缺依赖要靠登记的 setup。依据：apps/server/src/development/runner.ts 130-180；docs/reader-first/requirement-followup.md 57-60、76-78。\n\n编码角色读取固定的 requirement 版本、它依赖的原始材料、项目 instructions/rules/skills，以及独立 checkout 中的真实代码；它能搜索读取代码、查看完整 diff、运行已登记命令，并在读取适用规则和文件哈希后写入或删除。写入要求 expectedHash 与刚读内容一致，因此后来变化不会被盲目覆盖。它必须逐项返回每个验收 ID 的 implemented/blocked，不能新增或遗漏标准；不能提交、推送、部署或修改需求标准。依据：apps/server/src/development/runner.ts 237-257、269-356、364-384；apps/server/src/development/workspace.ts 244-372、391-430；packages/contracts/src/development.ts 73-88。\n\n编码返回无 blocker 后，runner 先把副本当前改动做成本地快照提交，再由宿主实际执行所有 required 且非 setup 的登记命令，并保存退出码、日志和源码指纹。如果检查命令又修改源码或产生未忽略文件，本轮不会直接送审，而是要求下一轮整理后重验。检查失败并不会被 Agent 的 accepted 覆盖：会改成 changes_requested 并回到编码。依据：apps/server/src/development/runner.ts 375-413、455-468；apps/server/src/development/workspace.ts 159-227。\n\n独立评审是新的 code-reviewer 会话，不接收开发者自评；它读取同一固定需求与原件、项目规则、实际代码、完整 diff 和宿主检查结果，可以复跑登记检查，但 codeTools 以 readOnly=true 提供，没有写代码工具。它必须逐项给出 passed/failed/not_run，并用路径、行号、问题和修改建议记录 findings；只有所有验收 passed 且没有 high/medium 问题，accepted 才通过输出校验。评审期间源码指纹若变化，评审立即失效并 blocked。依据：apps/server/src/development/runner.ts 269-355、417-429；packages/contracts/src/development.ts 89-115。\n\n每次 changes_requested 会把上一轮 review 交回编码角色，单次 execute 最多三轮。编码声明 blocker、评审 verdict=blocked、缺必需宿主检查，都会停在 blocked；三轮仍未成功也 blocked，但副本与问题保留。进程被 Ctrl+C/SIGTERM 中断为 interrupted，使用 `develop resume RUN_ID` 延续保留的副本。若需求在 start/resume 或编码期间换版，旧验收不可继续沿用：保留代码，但应基于新需求新建任务或重新评审。依据：apps/server/src/development/runner.ts 364-379、430-478；apps/server/src/cli.ts 703-742；docs/reader-first/requirement-followup.md 66、76。\n\n## 5. 看结果、检查补丁和应用\n\n用 `omem develop list` 看任务，用 `develop show RUN_ID` 看 state、失败原因、实际 checks 与 review findings；用 `develop diff RUN_ID` 查看独立副本相对 base 的改动。对教学案例，读者应在 diff 中人工确认完成入口、未知类别兜底及没有无关改动，并在 review 中确认“输入对象不被修改”对应的验收 ID 已 passed；这只是示范检查路径，不是材料证明存在这些改动。命令入口依据：apps/server/src/cli.ts 680-702、743-751。\n\n只有 state=ready 且存在 reviewedFingerprint 才能 apply。apply 会再次确认：独立副本与评审时指纹相同；原仓库仍停在同一 base 且工作区干净；需求仍是同一 current revision。随后它从已评审 checkout 重新生成二进制 patch（不盲信此前保存的 patch），先执行 git apply --check，再应用到原工作区。原仓库变化时拒绝覆盖，保留补丁让用户人工合并并重新验证。依据：apps/server/src/development/runner.ts 492-529；apps/server/src/cli.ts 753-758。\n\n状态边界必须醒目标出：\n- created/coding/checking/reviewing 是进行中，不能叫完成。\n- interrupted/failed/blocked 都需处理原因后 resume 或在需求换版时新建任务。\n- ready 只表示该固定源码指纹上，至少一个宿主必需检查成功且独立 Agent 评审接受；它不等于人类验收、发布或上线。\n- applied 只表示补丁已放回原工作区，且仍是未提交改动；系统不会自动 commit、push、部署或发群消息。\n- 需求页里的 implemented、verified、released 也是不同层级；代码或测试事实不会自动把需求页改成 released，真实代码/检查材料需再次捕获并刷新需求调查。\n依据：apps/server/src/cli.ts 653-664、734-758；apps/server/src/development/runner.ts 430-453、492-529；docs/reader-first/requirement-followup.md 3、21、66、76、94-96。\n\n## 当前命令能力与明确没有的能力\n\n当前可用的是本地 CLI：requirements 的 track/list/show/refresh/watch/handoff/board/follow/unfollow，以及 develop 的 register/projects/start/list/show/resume/diff/apply。develop 不支持远端 --url/OMEM_URL，不自动后台运行编码任务，不安装全局 hook；当前编码权限适配只验证 Traex ACP。依据：apps/server/src/cli.ts 515-758；apps/server/src/development/runner.ts 202-236；skills/omem-cli/references/development.md 17-19。\n\nbrowser/design 只是可登记的命令类别，项目可以接入已经安装的 dev-flow 命令、仓库配置和 skills；这不表示 omem 内置了可视化验收。当前没有内嵌 Figma 下载缓存、静态 Mock runtime、测试包或 Studio，也不保证 Agent 能自动完成任意 Figma 验收。若真实 UI 需求没有预先配置对应工具、skills 和 browser/design 命令，评审应明确报告未验证；普通 build 不能冒充完整视觉验收。依据：docs/reader-first/requirement-followup.md 80-92；skills/omem-cli/references/development.md 13、19；apps/server/src/development/runner.ts 417-423。",
+        "gaps": [
+          "捕获材料没有教学案例目标仓库的真实代码、接口名、文件路径、项目配置或测试结果；正文必须把“未知类别兜底、完成入口、输入对象不变、跟进同事”标成教学设定，不能给出伪造的实际实现路径或声称已验证。",
+          "捕获材料没有某个真实项目可直接使用的 setup/test/build/browser/design 命令或仓库 skills；配置示例只能说明字段和选择原则，读者必须替换为目标项目的真实命令。"
+        ],
+        "composition": {
+          "mode": "rewrite",
+          "reason": "knowledge.json 中没有可维护的既有知识页；现有 reader-first 文档虽覆盖机制，但把设计背景、内部边界和操作步骤并列，不能直接服务“拿一个需求走完整闭环”的读者目标。应以虚构工单案例串起每个命令和判断点，把证据术语、存储路径、事务细节压到必要解释处，并明确案例非现实部署、ready/applied 非需求完成，以及 Mock/Figma 并未内置。",
+          "outline": "1. 开场给出教学案例与终点：补“处理完成”入口，保留未知类别兜底，跟进同事，验收输入对象不变；声明这是假设案例。\n2. 第一步“把后续讨论留在同一需求”：import/context assign/track --context --watch，解释 --revision 的差别；用 list/show/board 判断是否真正生成且 current。\n3. 第二步“把讨论整理成可执行对象”：直接展示该案例的目标、非目标、4 个验收项和 1 个行动项；用 confirmed/proposed/uncertain 对照会议决定与建议。\n4. 第三步“关注行动项”：board 找 ACTION_ID，follow 后看 tasks；解释同事仍是材料负责人、自己只是跟进者；单独给人工改动暂停同步、重新 follow 恢复、unfollow 保留任务的处理。\n5. 第四步“登记真实项目”：给最小 JSON，并逐项解释 repository、instructions、ruleFiles、commands；说明根/子目录规则和仓库 skills；区分 setup 与宿主自动跑的 required 非 setup 检查。\n6. 第五步“启动实现”：start 前检查需求 current 且仓库干净；解释独立副本读取固定需求/原件/项目规则/真实代码，按哈希写入，不碰原工作区。\n7. 第六步“读检查和独立评审”：用 list/show 看状态；说明宿主真实运行必需命令、评审新会话不读开发自评且逐项验收；按检查失败、评审 changes_requested、blocked、中断、需求换版分别给下一动作，提到最多三轮和 resume。\n8. 第七步“检查并应用”：diff 人工核对案例的四项行为；ready 后 apply，解释三重再校验、补丁留作未提交修改、冲突时人工合并。\n9. 收尾用短状态表区分 ready、applied、verified、released，明确无自动提交/推送/部署/群消息；另设“当前做不到”小节，说明 browser/design 仅是命令类别，未内置 Mock/Figma/Studio/任意视觉验收。\n省略 dev-flow 借鉴史、内部数据库事务与日志文件布局；只在解释用户选择或失败原因时保留实现细节。"
+        }
+      },
+      "writerVersion": "3d7e4a2099359976ca37e09bd133b2f4253610c8f74952222e22191e899190fc"
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-05T19:04:59.423Z",
+    "trace": {
+      "runId": "1040ef62-b429-4085-83f7-bc0e72adbe72",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a5a7a1062712eab31c014fe5cb5821433de81f333a49dd6d97f237ab76f409a",
+      "promptHash": "d1eacab56a44b42b675bbd6e1c5cd8232a89f01b6f5ce608c36645bb19b4f3d2",
+      "contextHash": "2e3ee2870c31e7ba2ff9b824e20d8676bb87bb0c6be55dc98a4007d6289212b1",
+      "skillHash": "2871813c1c7d4b649d2e0c3420f23096eb99098fb23f0c70b967fab22a203735",
+      "toolHash": "c63ebed27fd0068222e3a65f2f3139400d62735cd978169855e2c5e739f4d448",
+      "fingerprint": "0b2cc734c01e13aa6ce2a94d190e889b947d640109967dcbd552ffded17bb977",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_material_groups",
+        "list_materials",
+        "read_material",
+        "read_fragments",
+        "read_section",
+        "search_materials",
+        "search_contexts",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a10d73-2029-7d23-b4b4-5d6a3c836b6d"
+      ],
+      "usage": {
+        "used": 99363,
+        "size": 258400,
+        "cost": null,
+        "acpCompletion": "validated_submission",
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_cvfdlZ2Z43syymJTO0BiojHm:exec-1bb4fd48-d78d-4f31-a9df-bdf112480999",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_cvfdlZ2Z43syymJTO0BiojHm:exec-1bb4fd48-d78d-4f31-a9df-bdf112480999",
+              "process_id": "58073",
+              "turn_id": "01a10d73-2358-7ed3-9fa8-2d5dfc16a249",
+              "started_at_ms": 1791227027495,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/1a5a7a1062712eab31c014fe5cb5821433de81f333a49dd6d97f237ab76f409a/1040ef62-b429-4085-83f7-bc0e72adbe72",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-verifier/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_cvfdlZ2Z43syymJTO0BiojHm:exec-1bb4fd48-d78d-4f31-a9df-bdf112480999",
+            "status": "completed",
+            "outputDigest": "bd9256e91be347240032f0ebc8e99a17e27199ddc41f25f949f291feeec354ec"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_UaKatWoszuoArMOkPX4AkZQZ:exec-9c0d41e9-b8e3-4697-9185-aeccfbc8a329",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/cli.ts",
+                "startLine": 500,
+                "endLine": 780
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/cli.ts",
+              "startLine": 500,
+              "endLine": 780
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_UaKatWoszuoArMOkPX4AkZQZ:exec-9c0d41e9-b8e3-4697-9185-aeccfbc8a329",
+            "status": "completed",
+            "outputDigest": "4e7e91a8eab1d54bcd319e561ec04aeca5d7e11f214940697828f523d6aca6b3"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_UaKatWoszuoArMOkPX4AkZQZ:exec-9010111a-aab1-4108-a6b6-0ad8f8ea27ee",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/development/runner.ts",
+                "startLine": 1,
+                "endLine": 560
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/development/runner.ts",
+              "startLine": 1,
+              "endLine": 560
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_UaKatWoszuoArMOkPX4AkZQZ:exec-9010111a-aab1-4108-a6b6-0ad8f8ea27ee",
+            "status": "completed",
+            "outputDigest": "986f9c1cc3eddc9352fc442945dcb3af4660860659cfd08af477c9d1ef914951"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_UaKatWoszuoArMOkPX4AkZQZ:exec-c979f315-e89c-4f17-9f44-6630c455fa51",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/knowledge/requirement-tasks.ts",
+                "startLine": 1,
+                "endLine": 180
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/knowledge/requirement-tasks.ts",
+              "startLine": 1,
+              "endLine": 180
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_UaKatWoszuoArMOkPX4AkZQZ:exec-c979f315-e89c-4f17-9f44-6630c455fa51",
+            "status": "completed",
+            "outputDigest": "8cd6e88d083e4772b3310138d839a9d74c0d34dc10bac57edbce464b9c4ff937"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_UaKatWoszuoArMOkPX4AkZQZ:exec-ef9c03e6-9772-4ebe-bc0a-698091241316",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:packages/contracts/src/development.ts",
+                "startLine": 1,
+                "endLine": 140
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:packages/contracts/src/development.ts",
+              "startLine": 1,
+              "endLine": 140
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_UaKatWoszuoArMOkPX4AkZQZ:exec-ef9c03e6-9772-4ebe-bc0a-698091241316",
+            "status": "completed",
+            "outputDigest": "55b0975751c7d9d47e3ca417c7077f0eb11417111eb6239e958ad70e48b04f97"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_ugyhfILUmfBZTyry2eAu6gxj:exec-604de80c-e62f-4ea9-82ef-8d0201ca0f34",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/development/runner.ts",
+                "startLine": 70,
+                "endLine": 200
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/development/runner.ts",
+              "startLine": 70,
+              "endLine": 200
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_ugyhfILUmfBZTyry2eAu6gxj:exec-604de80c-e62f-4ea9-82ef-8d0201ca0f34",
+            "status": "completed",
+            "outputDigest": "73bff202108ece16ce04dda7ab5ad92ae536ce9003be1c9c8e57ec2f3f4ec0cc"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_ugyhfILUmfBZTyry2eAu6gxj:exec-c2dfd931-1e54-46db-9ca2-1dac588da414",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/development/runner.ts",
+                "startLine": 200,
+                "endLine": 320
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/development/runner.ts",
+              "startLine": 200,
+              "endLine": 320
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_ugyhfILUmfBZTyry2eAu6gxj:exec-c2dfd931-1e54-46db-9ca2-1dac588da414",
+            "status": "completed",
+            "outputDigest": "315472bd08e85abc32ca12d3c9e85d9e00accb213517e3ff5cd3c5d3023cfa97"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_ugyhfILUmfBZTyry2eAu6gxj:exec-0733a778-7aa8-4455-827e-1d99f07e2de6",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/development/runner.ts",
+                "startLine": 300,
+                "endLine": 410
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/development/runner.ts",
+              "startLine": 300,
+              "endLine": 410
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_ugyhfILUmfBZTyry2eAu6gxj:exec-0733a778-7aa8-4455-827e-1d99f07e2de6",
+            "status": "completed",
+            "outputDigest": "a1353ba9325a1230328e0ce12dba4c0b2985c48d0ffb26c3c7a1fe3c36ea8b6a"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_ugyhfILUmfBZTyry2eAu6gxj:exec-9ff3ab72-495a-467a-aeeb-ce8ba93e3467",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/development/runner.ts",
+                "startLine": 370,
+                "endLine": 490
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/development/runner.ts",
+              "startLine": 370,
+              "endLine": 490
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_ugyhfILUmfBZTyry2eAu6gxj:exec-9ff3ab72-495a-467a-aeeb-ce8ba93e3467",
+            "status": "completed",
+            "outputDigest": "4edf9e0277a1bceb36023c33c4c2453d2aa0529d957ebfa1153af004e17be933"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_ugyhfILUmfBZTyry2eAu6gxj:exec-5796b750-5df1-4f3d-8776-bfaa895697c9",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/development/runner.ts",
+                "startLine": 490,
+                "endLine": 550
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/development/runner.ts",
+              "startLine": 490,
+              "endLine": 550
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_ugyhfILUmfBZTyry2eAu6gxj:exec-5796b750-5df1-4f3d-8776-bfaa895697c9",
+            "status": "completed",
+            "outputDigest": "0b8bfec6274470333b8d27871ab115f9a1c221b97f9201ab8f6731b1ba9b34c2"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_JsT9r7pbuE2322sqr3jfncGv:exec-63e8bcf0-1b90-415f-9830-ed4d4ac5f25f",
+            "title": "Read runner.ts, Read workspace.ts, Read service.ts, Read requirement-followup.md, Read development.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_JsT9r7pbuE2322sqr3jfncGv:exec-63e8bcf0-1b90-415f-9830-ed4d4ac5f25f",
+              "process_id": "12458",
+              "turn_id": "01a10d73-2358-7ed3-9fa8-2d5dfc16a249",
+              "started_at_ms": 1791227051982,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '202,535p' originals/apps/server/src/development/runner.ts\nsed -n '1,470p' originals/apps/server/src/development/workspace.ts\nsed -n '1,180p' originals/apps/server/src/memory/service.ts\nsed -n '1,120p' originals/docs/reader-first/requirement-followup.md\nsed -n '1,130p' originals/skills/omem-cli/references/development.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/1a5a7a1062712eab31c014fe5cb5821433de81f333a49dd6d97f237ab76f409a/1040ef62-b429-4085-83f7-bc0e72adbe72",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '202,535p' originals/apps/server/src/development/runner.ts",
+                  "name": "runner.ts",
+                  "path": "originals/apps/server/src/development/runner.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,470p' originals/apps/server/src/development/workspace.ts",
+                  "name": "workspace.ts",
+                  "path": "originals/apps/server/src/development/workspace.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,180p' originals/apps/server/src/memory/service.ts",
+                  "name": "service.ts",
+                  "path": "originals/apps/server/src/memory/service.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,120p' originals/docs/reader-first/requirement-followup.md",
+                  "name": "requirement-followup.md",
+                  "path": "originals/docs/reader-first/requirement-followup.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,130p' originals/skills/omem-cli/references/development.md",
+                  "name": "development.md",
+                  "path": "originals/skills/omem-cli/references/development.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_JsT9r7pbuE2322sqr3jfncGv:exec-63e8bcf0-1b90-415f-9830-ed4d4ac5f25f",
+            "status": "completed",
+            "outputDigest": "ee4520d1a0f3deaaec6e1c1a0b3ca4eba1a3fe896c92b347a8b78d0fb8332a71"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Ws9qijKHQygZ4zBMLRAQZxeK:exec-ffb0da03-614b-4966-8b1f-5d66c5354d60",
+            "title": "Read workspace.ts, Read requirements.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Ws9qijKHQygZ4zBMLRAQZxeK:exec-ffb0da03-614b-4966-8b1f-5d66c5354d60",
+              "process_id": "88063",
+              "turn_id": "01a10d73-2358-7ed3-9fa8-2d5dfc16a249",
+              "started_at_ms": 1791227059460,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '220,470p' originals/apps/server/src/development/workspace.ts\nsed -n '1,130p' originals/apps/server/src/knowledge/requirements.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/reader-agents/roles/1a5a7a1062712eab31c014fe5cb5821433de81f333a49dd6d97f237ab76f409a/1040ef62-b429-4085-83f7-bc0e72adbe72",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '220,470p' originals/apps/server/src/development/workspace.ts",
+                  "name": "workspace.ts",
+                  "path": "originals/apps/server/src/development/workspace.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,130p' originals/apps/server/src/knowledge/requirements.ts",
+                  "name": "requirements.ts",
+                  "path": "originals/apps/server/src/knowledge/requirements.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Ws9qijKHQygZ4zBMLRAQZxeK:exec-ffb0da03-614b-4966-8b1f-5d66c5354d60",
+            "status": "completed",
+            "outputDigest": "b991773cf9d765d7d85e2f18683f331d0ddc14fa96c4af18324d78832dad90c8"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_g1QaGCa3V3HOdiSZ7SHyOF5o:exec-ad668312-555a-44a3-a263-aa6940b2ba67",
+            "title": "Tool: omem/search_contexts",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_contexts",
+              "arguments": {
+                "contextsPerQuestion": 5,
+                "questions": [
+                  {
+                    "question": "当前是否内置 Figma Mock Studio 或视觉验收能力",
+                    "query": "Figma Mock Studio browser design visual validation current implementation",
+                    "purpose": "implementation",
+                    "kinds": [
+                      "source"
+                    ]
+                  },
+                  {
+                    "question": "setup 与 required 非 setup 命令由谁执行",
+                    "query": "purpose setup required commands host executes every cycle coding agent run_project_command",
+                    "purpose": "implementation",
+                    "kinds": [
+                      "source"
+                    ]
+                  },
+                  {
+                    "question": "项目规则和仓库 skills 如何发现读取",
+                    "query": "project_rules AGENTS CLAUDE .agents .claude .trae SKILL.md relevant read",
+                    "purpose": "implementation",
+                    "kinds": [
+                      "source"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_contexts",
+            "args": {
+              "questions": [
+                {
+                  "question": "当前是否内置 Figma Mock Studio 或视觉验收能力",
+                  "query": "Figma Mock Studio browser design visual validation current implementation",
+                  "purpose": "implementation",
+                  "kinds": [
+                    "source"
+                  ]
+                },
+                {
+                  "question": "setup 与 required 非 setup 命令由谁执行",
+                  "query": "purpose setup required commands host executes every cycle coding agent run_project_command",
+                  "purpose": "implementation",
+                  "kinds": [
+                    "source"
+                  ]
+                },
+                {
+                  "question": "项目规则和仓库 skills 如何发现读取",
+                  "query": "project_rules AGENTS CLAUDE .agents .claude .trae SKILL.md relevant read",
+                  "purpose": "implementation",
+                  "kinds": [
+                    "source"
+                  ]
+                }
+              ],
+              "contextsPerQuestion": 5
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_g1QaGCa3V3HOdiSZ7SHyOF5o:exec-ad668312-555a-44a3-a263-aa6940b2ba67",
+            "status": "completed",
+            "outputDigest": "0025211a5b36c94c101f2312acad53d5828957cf876b9da74dd2db78375e62da"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_3xiSOLYorX4CCOGdgeScXHfz:exec-e66c19a0-b651-4fea-ac4b-2c7b3104f690",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/cli.ts",
+              "omem:apps/server/src/development/runner.ts",
+              "omem:apps/server/src/knowledge/requirement-tasks.ts",
+              "omem:packages/contracts/src/development.ts",
+              "omem:apps/server/src/development/workspace.ts",
+              "omem:apps/server/src/memory/service.ts",
+              "omem:docs/reader-first/requirement-followup.md",
+              "omem:skills/omem-cli/references/development.md",
+              "omem:apps/server/src/knowledge/requirements.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_3xiSOLYorX4CCOGdgeScXHfz:exec-e66c19a0-b651-4fea-ac4b-2c7b3104f690",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
