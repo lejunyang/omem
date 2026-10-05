@@ -90,6 +90,9 @@ try {
     ["messages", "--help"],
     ["data", "archive", "--help"],
     ["requirements", "track", "--help"],
+    ["requirements", "follow", "--help"],
+    ["develop", "start", "--help"],
+    ["develop", "apply", "--help"],
     ["knowledge", "write", "--help"],
     ["--version"],
   ])
@@ -104,6 +107,7 @@ try {
   await cli(["config", "validate"]);
   await cli(["skills", "install", join(temp, "skills")]);
   assert(existsSync(join(temp, "skills/omem-cli/references/workflows.md")));
+  assert(existsSync(join(temp, "skills/omem-cli/references/development.md")));
   const importPath = join(
     prefix,
     "node_modules/omem/dist/apps/server/src/agent-runtime/bundles.js",

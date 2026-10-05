@@ -1,3 +1,4 @@
+import type { RequirementState } from "../../../../packages/contracts/src/development.js";
 import type { TaskAction, TaskFollowUp, TaskStatus } from "../../../../packages/contracts/src/task-flow.js";
 import { validateFollowUp } from "../tasks/follow-up.js";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -130,6 +131,28 @@ export class MemoryService {
         dueAt: input.action === "reschedule" ? input.dueAt : task.due_at ? String(task.due_at) : null,
         dueExpression: input.action === "reschedule" ? input.dueExpression : task.due_expression ? String(task.due_expression) : null },
     });
+  }
+
+  /** The subscription is explicit owner intent. Source people remain collaborators;
+   * the personal task asks the owner to follow progress, not perform their work. */
+  applyRequirementFollowUp(input: {key:string;actionId:string;revision:string;action:RequirementState["actions"][number];
+    evidenceId:string;taskId?:string;expectedVersion?:number;projectId?:string|null}) {
+    const {action}=input;
+    if(action.certainty!=="confirmed"||!this.store.evidence(input.evidenceId))throw Error("REQUIREMENT_ORIGINAL_REQUIRED");
+    const link=this.db.prepare("SELECT enabled FROM requirement_tasks WHERE page_key=? AND action_id=?").get(input.key,input.actionId);
+    if(link?.enabled!==1)throw Error("REQUIREMENT_FOLLOW_NOT_ENABLED");
+    const token=stableDigest({key:input.key,actionId:input.actionId,revision:input.revision,action});
+    const detail=[action.detail,action.owner?`材料中的负责人：${action.owner}`:"负责人未明确",`来源需求：${input.key}`].join("\n");
+    return this.store.applications.applyTask({
+      metadata:{workspaceId:"personal",applicationId:`requirement:${token}`,proposalDigest:token,generation:1,
+        title:`需求跟进：${action.title}`,details:detail,delivery:{channelBindingVersion:1,channel:"in_app",target:"notification-center"}},
+      task:{id:input.taskId,expectedVersion:input.expectedVersion,title:`跟进：${action.title}`,detail,ownerId:"owner",projectId:input.projectId,
+        evidenceId:input.evidenceId,status:action.status,dueAt:action.dueAt,dueExpression:action.dueExpression,nextStep:action.detail,
+        followUp:{waiting_on:action.waitingOn,next_check_at:null,snoozed_until:null,time_expression:null,timezone:"Asia/Shanghai"}},
+    }, {after: receipt => {
+      this.db.prepare(`UPDATE requirement_tasks SET task_id=?,task_version=?,action_digest=?,article_revision=?,error=NULL,updated_at=? WHERE page_key=? AND action_id=?`)
+        .run(receipt.entityId,receipt.entityVersion,stableDigest(action),input.revision,new Date().toISOString(),input.key,input.actionId);
+    }});
   }
 
   private get db(): DatabaseSync {

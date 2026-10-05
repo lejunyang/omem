@@ -13,6 +13,167 @@
       "items": {
         "type": "object",
         "properties": {
+          "requirement": {
+            "type": "object",
+            "properties": {
+              "objective": {
+                "type": "string",
+                "minLength": 1
+              },
+              "nonGoals": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "criteria": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+                    },
+                    "description": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "missing",
+                        "implemented",
+                        "verified",
+                        "released",
+                        "uncertain"
+                      ]
+                    },
+                    "evidence": {
+                      "description": "Keys of original-material citations in this document",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "description",
+                    "status",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "owner": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "waitingOn": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "dueAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "dueExpression": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "open",
+                        "waiting",
+                        "done",
+                        "cancelled"
+                      ]
+                    },
+                    "certainty": {
+                      "type": "string",
+                      "enum": [
+                        "confirmed",
+                        "proposed",
+                        "uncertain"
+                      ]
+                    },
+                    "evidence": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "detail",
+                    "owner",
+                    "waitingOn",
+                    "dueAt",
+                    "dueExpression",
+                    "status",
+                    "certainty",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "objective",
+              "nonGoals",
+              "criteria",
+              "actions"
+            ],
+            "additionalProperties": false
+          },
           "key": {
             "type": "string",
             "minLength": 1,
@@ -258,5 +419,5 @@
     "documents"
   ],
   "additionalProperties": false,
-  "$id": "https://omem.invalid/contracts/KnowledgeBatch.v1"
+  "$id": "KnowledgeBatch.v1"
 }
