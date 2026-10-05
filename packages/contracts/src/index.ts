@@ -97,6 +97,10 @@ export const captureSchema = z
         runId: z.string().max(200).optional(),
         event: z.string().max(100).optional(),
         uiText: z.string().max(30000).optional(),
+        chat: z.object({
+          messageId: z.string(), threadId: z.string().optional(), rawAssetId: z.string(),
+          resources: z.array(z.object({ kind: z.string(), label: z.string(), uri: z.string().optional(), assetId: z.string().optional(), revisionId: z.string().optional(), status: z.enum(["read", "saved", "failed"]), error: z.string().optional() }).strict()),
+        }).strict().optional(),
         document: z.object({
           parser: z.enum(["docling", "lark-cli"]),
           parserVersion: z.string().max(100),

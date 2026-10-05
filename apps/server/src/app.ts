@@ -1,3 +1,5 @@
+import { PersonalLarkService } from "./integrations/lark-personal/service.js";
+import { registerPersonalLark } from "./integrations/lark-personal/api.js";
 import { evidenceSection } from "./retrieval/context.js";
 import { codeIntents, retrievalPurposes } from "./retrieval/port.js";
 import {
@@ -75,7 +77,9 @@ export async function buildApp(
     : undefined;
   const runs = new Runs(store, config);
   const memory = new MemoryService(store);
-  const decisions = new DecisionService(config.decisions ?? { mode: "off" });
+  const decisions = new DecisionService(config.decisions ?? { mode: "auto" });
+  const personalLark = new PersonalLarkService(store, decisions);
+  registerPersonalLark(app, personalLark);
   const feedback = new FeedbackService(store);
   // Production assistant uses the real ACP adapter against a configured profile.
   // When no ACP profile can actually run (missing CLI / auth / wrong transport)
@@ -224,6 +228,7 @@ export async function buildApp(
   });
   app.get("/api/health", async () => ({
     status: "ok",
+    personalLark: personalLark.health(),
     storage: "sqlite",
     mode: "personal",
     retrieval: assistantRetrieval.health(),
@@ -420,7 +425,7 @@ export async function buildApp(
         ? "image/png"
         : bytes[0] === 255
           ? "image/jpeg"
-          : "image/webp";
+          : bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP" ? "image/webp" : "application/octet-stream";
     return reply
       .header("X-Content-Type-Options", "nosniff")
       .type(type)
@@ -958,9 +963,11 @@ export async function buildApp(
     }
   }, 1000);
   inputTick.unref();
+  personalLark.start();
   learning?.start();
   larkRuntime?.start();
   app.addHook("onClose", async () => {
+    await personalLark.stop();
     await decisions.close();
     assistant.shutdown();
     await recovery;

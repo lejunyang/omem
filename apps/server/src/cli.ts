@@ -11,9 +11,9 @@ const stdin = async () => {
   for await (const c of process.stdin) chunks.push(c);
   return Buffer.concat(chunks).toString();
 };
-const send = async (path: string, body: unknown) => {
+const send = async (path: string, body?: unknown, method = "POST") => {
   const r = await fetch(base + path, {
-    method: "POST",
+    method,
     headers: {
       "Content-Type": "application/json",
       ...(config.token ? { Authorization: `Bearer ${config.token}` } : {}),
@@ -26,7 +26,19 @@ const send = async (path: string, body: unknown) => {
 };
 try {
   let result: unknown;
-  if (command === "capture") {
+  if (command === "messages") {
+    const prefix = "/api/integrations/lark-personal";
+    if (args[0] === "discover") result = await send(prefix + "/discover", {});
+    else if (args[0] === "sync") result = await send(prefix + "/sync", {});
+    else if (args[0] === "inbox") result = await send(prefix + "/inbox", undefined, "GET");
+    else if (args[0] === "watch" || args[0] === "exclude" || args[0] === "unwatch") {
+      if (!args[1]) throw Error("请指定会话 ID，先运行 messages discover");
+      result = await send(prefix + "/chats/" + encodeURIComponent(args[1]), {mode: args[0] === "watch" ? "watch" : args[0] === "exclude" ? "excluded" : "off"}, "PUT");
+    } else if (args[0] === "configure") {
+      if (!args[1]) throw Error("请指定配置 JSON 文件；enabled、intervalMinutes、historyHours、mentionExceptions、resources");
+      result = await send(prefix, JSON.parse(await readFile(args[1], "utf8")), "PUT");
+    } else result = await send(prefix, undefined, "GET");
+  } else if (command === "capture") {
     const text = args[0] ? await readFile(args[0], "utf8") : await stdin();
     result = await send("/api/captures", captureSchema.parse(JSON.parse(text)));
   } else if (command === "file") {
@@ -66,7 +78,7 @@ try {
     );
   } else {
     console.log(
-      "omem CLI: capture [json-file] | file <path> | git <repo> <file> [ref] | lark <url> | hook < stdin | probe [profile]",
+      "omem CLI: messages [status|discover|sync|inbox|watch|unwatch|exclude|configure] [chat-id|file] | capture [json-file] | file <path> | git <repo> <file> [ref] | lark <url> | hook < stdin | probe [profile]",
     );
     process.exit(0);
   }

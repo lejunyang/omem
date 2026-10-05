@@ -8,6 +8,38 @@
 
 开发 API 使用项目内 [nodemon](https://github.com/remy/nodemon) 监测服务源码、合同、角色和配置变化，通过 SIGTERM 关闭旧进程后启动新的 Bun 进程；TypeScript 仍由 Bun 执行。这样不会在长期热重载的同一 Bun 进程中累积状态。前端仍由 Vite 热更新，个人数据库与原文历史保留。
 
+## 常驻服务与状态命令
+
+使用已锁定的项目依赖 PM2 7.0.4，不要求全局安装 PM2：
+
+```bash
+osdk run build
+osdk run service:start
+osdk run service:status
+osdk run service:status --json
+osdk run service:restart
+osdk run service:stop
+```
+
+状态包括进程 PID、重启次数、API 健康和个人消息采集概况；服务没有运行、API 不健康时返回非零退出码。状态查询不会为了检查而启动服务。PM2 的进程列表、日志与配置放在所选 `OMEM_DATA_DIR/service`，不接管机器上的其他 PM2 项目。沿用 `OMEM_CONFIG`、`OMEM_DATA_DIR`、`OMEM_HOST`、`OMEM_PORT` 和进程启动时的环境；默认端口 4317。重启前先构建新的源码，避免以为源码修改会自动生效。
+
+单实例运行，异常退出自动退避重启，短时间反复启动失败后停止。这里交付的是终端退出后继续运行的后台管理，没有安装 launchd/systemd 开机启动项，也不能在电脑休眠时拉消息。PM2 日志位于状态命令给出的路径，尚未配置自动轮换。
+
+「飞书消息」页可配置定时只读采集。命令行调用同一服务 API，`OMEM_URL` 可指定开发时实际 API 地址：
+
+```bash
+osdk run messages status
+osdk run messages discover
+osdk run messages watch oc_会话标识
+osdk run messages unwatch oc_会话标识
+osdk run messages exclude oc_会话标识
+osdk run messages configure /absolute/path/personal-messages.json
+osdk run messages sync
+osdk run messages inbox
+```
+
+设置文件示例：`{"enabled":true,"intervalMinutes":5,"historyHours":24,"mentionExceptions":true,"resources":true}`。保存配置才开启定时采集；discover 只发现、watch 只选定，不会替用户开启。`unwatch` 回到仅提及，`exclude` 连提及也排除。全部设置字段及媒体处理范围见[个人飞书消息](personal-messages.md)。机器人绑定继续使用现有「飞书机器人」页面与配对流程。
+
 ## 模型与生成
 
 仓库模型读取 config/review-code-model.json，REVIEW_CODE_MODEL_CONFIG 可覆盖；使用真实 traex ACP 的 gpt-5.6-sol。`osdk run review:generate <路径>` 只生成明确选中材料的内部分析笔记，不进入正式目录，也不自动按文件或模块拼出专题；读者指南用 `osdk run review:guides`，只更新一页可用 `osdk run review:guides retrieval`。页面计划在 config/wiki-pages.json；ACP 知识任务现用原生工具/skill/MCP 自主调查、补读、写作，再独立补查。没有宿主输入输出 token 预算或固定三轮研究限制。`--retry` 可重试失败任务。角色输出、目录、research.jsonl 与 trace 保存在 .repo-review/runtime/；原文和数据库快照是临时副本，角色结束后回收，原始版本仍由正式 Store 保存。发布的文章在 .repo-review/knowledge/。
@@ -36,7 +68,7 @@
 
 当前是 SQLite 单用户服务。默认仅 loopback；远程访问需 OMEM_HOST、OMEM_TOKEN 及适当的 TLS/隧道。浏览器令牌用于连接这台 omem 服务，不是模型令牌。飞书需单独启用、授权和配对；OMEM_SECRET_KEY 是加密 App Secret 的本地主密钥，不能入 Git。外部通知、全局 hooks 与屏幕监听需要独立明确范围。
 
-日常消息支持交办、等待、改期、完成、取消与站内到期提醒；没有自动监听对方回复、周期回顾、日历或学习卡。通知已读不等于事项完成。
+日常消息支持交办、等待、改期、完成、取消与站内到期提醒；个人消息采集已可定时读取订阅与提及，但对方的回复是否完成已有事项仍需 Agent 调查，尚未验证自动判断的可靠性；周期回顾、日历或学习卡尚未实现。通知已读不等于事项完成。
 
 ## 从普通材料整理文章
 

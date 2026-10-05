@@ -105,7 +105,7 @@ export class Store {
       .run(id(), changeId, title, details, date, null, changeId);
     return changeId;
   }
-  capture(input: CaptureInput, selection: { contextIds?: string[] } = {}) {
+  capture(input: CaptureInput, selection: { contextIds?: string[]; learning?: boolean; notify?: boolean } = {}) {
     if (selection.contextIds) this.contexts.validate(selection.contextIds);
     const payloadDigest = stableDigest(input);
     const parts: StoredPart[] = input.parts.map((p) => {
@@ -164,7 +164,7 @@ export class Store {
           const revision = this.revision(String(receipt.revision_id));
           if (!revision) throw Error("Capture receipt revision is missing");
           if (selection.contextIds) this.setSourceContextsInTransaction(revision.sourceId, selection.contextIds);
-          const queued = this.queueCaptureJob(input, revision);
+          const queued = selection.learning === false ? null : this.queueCaptureJob(input, revision);
           return {
             revision,
             duplicate: true,
@@ -195,7 +195,7 @@ export class Store {
           payloadDigest,
           revision.id,
         );
-        const queued = this.queueCaptureJob(input, revision);
+        const queued = selection.learning === false ? null : this.queueCaptureJob(input, revision);
         return {
           revision,
           duplicate: true,
@@ -284,7 +284,7 @@ export class Store {
           cause: "source_update",
         });
       }
-      this.record(
+      if (selection.notify !== false) this.record(
         "capture",
         input.title,
         head ? String(head.id) : null,
@@ -297,7 +297,7 @@ export class Store {
         payloadDigest,
         revision.id,
       );
-      const queued = this.queueCaptureJob(input, revision);
+      const queued = selection.learning === false ? null : this.queueCaptureJob(input, revision);
       return {
         revision,
         duplicate: false,

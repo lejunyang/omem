@@ -20,6 +20,7 @@
 - [按问题调查与答案复核](answer-investigation.md)：Sol 如何选择能够回答问题的材料、补齐关键条件，以及独立补查的能力与限制。
 - [快模型自主问答](fast-assistant.md)：Luna 与 Sol 共用材料工具的实际比较、独立配置、快照准备优化和质量判断。
 - [文档导入与结构阅读](document-import.md)：官方飞书 CLI、Docling 文件解析、原件保留和已验证范围。
+- [个人飞书消息](personal-messages.md)：会话订阅、免打扰提及、多模态资源、模型判断与后台运行。
 - [中文快速决策](fast-decisions.md)：StartLux 2B/4B 实测、负载选择、助手选材与多标签建议，以及仍未接入的用途。
 - [目标流程](architecture.md)：材料、检索、代码研究、知识与记忆如何协作。
 - [写作与阅读](writing.md)：读者任务、页面模板、引用和视觉规范。
