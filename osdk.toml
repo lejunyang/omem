@@ -4,11 +4,20 @@ node = "24.18.1"
 pnpm = "11"
 bun = "1.4.2"
 
+[models.decision-startlux08.views]
+
 [models.decision-plumb4b-q4.views]
 
 [models.decision-plumb4b.views]
 
 [models.decision-gliclass.views]
+
+[models.decision-startlux08]
+source = "hf:startlux-models/StartLux-Decision-0.8B@bd4f76a600e23227547fee7bfc1825e12a32764c"
+include = ["*.safetensors", "*.json", "merges.txt", "LICENSE", "NOTICE"]
+exclude = []
+variant = "bf16"
+family = "startlux-decision"
 
 [models.decision-qwen4b.views]
 

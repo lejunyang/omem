@@ -200,6 +200,82 @@ path = "vocab.json"
 size = 6722759
 sha256 = "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
 
+[models.decision-startlux08]
+provider = "huggingface"
+repository = "startlux-models/StartLux-Decision-0.8B"
+requested_revision = "bd4f76a600e23227547fee7bfc1825e12a32764c"
+revision = "bd4f76a600e23227547fee7bfc1825e12a32764c"
+endpoint = "https://huggingface.co"
+variant = "bf16"
+family = "startlux-decision"
+include = [
+    "*.safetensors",
+    "*.json",
+    "merges.txt",
+    "LICENSE",
+    "NOTICE",
+]
+
+[[models.decision-startlux08.files]]
+path = "LICENSE"
+size = 19347
+sha256 = "41003d4a74749c0220e33dd415042164b5a1093ed401f36277234f772d22d3d0"
+
+[[models.decision-startlux08.files]]
+path = "NOTICE"
+size = 12330
+sha256 = "ec7d09e98f04667acf3a33358ee4e830f6ee3b41251af388035aec40d4e47fe2"
+
+[[models.decision-startlux08.files]]
+path = "config.json"
+size = 2907
+sha256 = "b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204"
+
+[[models.decision-startlux08.files]]
+path = "decision_config.json"
+size = 477
+sha256 = "0b2f6423340f98bd25ab47ce6af44b93e0fb06228ab4e87cca713d54b77f8d44"
+
+[[models.decision-startlux08.files]]
+path = "merges.txt"
+size = 3353259
+sha256 = "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d"
+
+[[models.decision-startlux08.files]]
+path = "model-00001-of-00001.safetensors"
+size = 1746942632
+sha256 = "4305599c32928a093da9f0fb6266cbb3303e6082289662c01fba4b8d99d6d4b1"
+
+[[models.decision-startlux08.files]]
+path = "model.safetensors.index.json"
+size = 45044
+sha256 = "5506511a88989fb3e3c90cb2475e3dc4dae25b0734cf93a6c6913201dcbfc025"
+
+[[models.decision-startlux08.files]]
+path = "preprocessor_config.json"
+size = 390
+sha256 = "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516"
+
+[[models.decision-startlux08.files]]
+path = "tokenizer.json"
+size = 12807196
+sha256 = "fe000e3ed39ed12b8d2481d527d44f93c65d37e87645d2dcc80d1bf9d50d2927"
+
+[[models.decision-startlux08.files]]
+path = "tokenizer_config.json"
+size = 16712
+sha256 = "e611fbccc7c29ef3b1cafb1cb7ea548d189968632901d678fd62be68c47885de"
+
+[[models.decision-startlux08.files]]
+path = "video_preprocessor_config.json"
+size = 386
+sha256 = "d039cd7d88b3502a99edd455496b75b44ecf7dd3b3669748bafac37e6cecc085"
+
+[[models.decision-startlux08.files]]
+path = "vocab.json"
+size = 6722759
+sha256 = "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+
 [models.memory-zh]
 provider = "huggingface"
 repository = "Xenova/bge-small-zh-v1.5"
