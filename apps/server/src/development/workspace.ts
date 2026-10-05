@@ -68,8 +68,10 @@ export function codePath(root: string, path: string) {
   let current = root;
   for (const part of rel.split(sep).filter(Boolean)) {
     current = join(current, part);
-    if (existsSync(current) && lstatSync(current).isSymbolicLink())
-      throw Error("代码工具不跟随符号链接");
+    let linked = false;
+    try { linked = lstatSync(current).isSymbolicLink(); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    if (linked) throw Error("代码工具不跟随符号链接");
   }
   return full;
 }

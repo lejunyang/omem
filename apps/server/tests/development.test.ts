@@ -213,6 +213,8 @@ it("requires applicable nested rules before edits and provides read-only review 
   expect(() =>
     call("read_code", { path: "escape/repo/AGENTS.md", startLine: 1 }),
   ).toThrow("符号链接");
+  symlinkSync(join(dir,"missing-target"),join(root,"broken"));
+  expect(()=>call("write_code",{path:"broken",expectedHash:null,text:"must stay inside"})).toThrow("符号链接");
   const result = await runCommand(root, project, "check", join(dir, "logs"));
   expect(result.exitCode).toBe(3);
 });
