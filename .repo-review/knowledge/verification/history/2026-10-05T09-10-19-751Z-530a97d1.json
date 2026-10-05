@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-05T00:19:45.412Z",
-  "implementationCommit": "94dcd32beaef7a340ed5217f89127b311be3ed8c",
-  "sourceDigest": "5958ca076e64894f3cf63a6fb5220ea4d8f9b63c373811d7287a5f2ce8575e29",
+  "recordedAt": "2026-10-05T09:10:19.751Z",
+  "implementationCommit": "dd9c2c92b8f0be33b30c10a0639ab00c03efe674",
+  "sourceDigest": "469edf4d9eda5edae9e2099ac6a4bbd3a644454f810401615b43919ed4dd533f",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-05T00-19-45-412Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-05T09-10-19-751Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-05T00-19-45-412Z/project.log",
-        "sha256": "58fd4c476635fc1bc14fcf544ccccf976f339d7574923b3104bf28c1e8bded45"
+        "log": ".repo-review/runtime/verification/2026-10-05T09-10-19-751Z/project.log",
+        "sha256": "430d2df432be4cf0bbd712f22640398fa01f5908b61c9bf1a99e14ed3f2a6f69"
       }
     },
     {
@@ -43,8 +43,8 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-05T00-19-45-412Z/liveChineseRetrieval.log",
-        "sha256": "610d62bb64795e9832332aa36374add55c271e33737635d71f1941c7de21c885"
+        "log": ".repo-review/runtime/verification/2026-10-05T09-10-19-751Z/liveChineseRetrieval.log",
+        "sha256": "c633cc8b3935a685907f142b4f178e7f9fd00ac994d0edc6ef224a195357b1e8"
       }
     },
     {
@@ -52,8 +52,8 @@
       "state": "passed",
       "details": {
         "articles": 8,
-        "currentArticles": 2,
-        "citations": 229,
+        "currentArticles": 1,
+        "citations": 232,
         "errors": []
       }
     },
@@ -63,12 +63,12 @@
       "details": {
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
-        "projection": "structure-icu-v6",
-        "units": 12998,
+        "projection": "structure-icu-v7",
+        "units": 13349,
         "semantic": {
-          "model": "structure-icu-v6:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
+          "model": "structure-icu-v7:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 12998,
+          "indexed": 13349,
           "pending": 0,
           "error": null
         },
@@ -95,11 +95,11 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 657,
+    "materials": 678,
     "publishedPages": 8,
-    "currentPages": 2,
+    "currentPages": 1,
     "plannedPages": 0,
-    "citations": 229,
+    "citations": 232,
     "articleLinks": 0,
     "errors": [],
     "pages": [
@@ -122,22 +122,20 @@
             "state": "current"
           },
           "post-capture-branches": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "current"
           },
           "context-branch": {
             "state": "current"
           },
           "pinned-citation": {
             "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "reason": "背景前提已有变化：当前页坐标已保存但未接到引用阅读交互，是本节范围限制的背景前提。"
           },
-          "images-and-code": {
+          "images-documents-code": {
             "state": "current"
           },
           "change-map": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "current"
           }
         }
       },
@@ -165,7 +163,7 @@
           },
           "change": {
             "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "reason": "背景前提已有变化：检索单位版本身份变化会影响何时需要 bump 版本的推断。"
           },
           "verify": {
             "state": "needs-review",
@@ -225,8 +223,7 @@
             "state": "current"
           },
           "change-example": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "current"
           },
           "maintain-same-article": {
             "state": "needs-review",
@@ -265,22 +262,26 @@
         "key": "guide:memory",
         "title": "记住约定，跟进变化：一次活动从保存到提醒",
         "role": "article",
-        "current": true,
+        "current": false,
         "sections": {
           "save-and-find": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "背景前提已有变化：待补充归属入口只在处理成功、当前版本归属仍有歧义时出现；这一条件变化会影响本节的分支提示。"
           },
           "update-and-check": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "article-maintenance": {
             "state": "current"
           },
           "continue-and-remind": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "finish-followup": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           }
         }
       },
@@ -306,7 +307,8 @@
             "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "four-objects": {
-            "state": "current"
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
           "documents-and-code": {
             "state": "needs-review",
@@ -320,7 +322,7 @@
       },
       {
         "key": "guide:retrieval",
-        "title": "一次提问如何找到答案：搜索、上下文与 RAG",
+        "title": "一次提问如何找到答案：搜索、候选评估与上下文",
         "role": "article",
         "current": true,
         "sections": {
@@ -330,7 +332,7 @@
           "retrieve-candidates": {
             "state": "current"
           },
-          "restore-context": {
+          "select-and-restore-context": {
             "state": "current"
           },
           "investigate-gaps": {
@@ -346,8 +348,8 @@
       }
     ],
     "restore": {
-      "stale": 6,
-      "restored": 2
+      "stale": 7,
+      "restored": 1
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -364,14 +366,14 @@
           "docs/archive/2026-10-01-baseline/PROJECT-README.md",
           "docs/reader-first/component-integration.md",
           "docs/reader-first/retrieval-redesign.md",
-          "docs/reader-first/retrieval-redesign.md",
-          "docs/reader-first/component-integration.md"
+          "docs/reader-first/material-understanding.md",
+          "docs/reader-first/retrieval-redesign.md"
         ],
-        "baselineUniquePathsAt5": 3,
+        "baselineUniquePathsAt5": 4,
         "passed": false,
         "firstExpectedRank": 20,
-        "uniquePathsAt5": 3,
-        "elapsedMs": 874,
+        "uniquePathsAt5": 4,
+        "elapsedMs": 806,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -399,20 +401,20 @@
             "snippet": "全文排序复用 SQLite FTS5 的 BM25，对中文先用 ICU 分词。语义检索沿用 osdk 管理的中文 BGE，结构预处理版本进入向量身份，与旧 Fragment 向量隔离。来源或文章当前版本变化时只替换对应投影；原始历史和固定引用保留。"
           },
           {
+            "path": "docs/reader-first/material-understanding.md",
+            "routes": [
+              "bm25",
+              "purpose:balanced"
+            ],
+            "snippet": "索引预处理身份是 `structure-icu-v6`。分类版本参与投影身份；修改概念会让相关材料重新索引，不能继续使用旧预处理的向量。中文 embedding 仍用 osdk 管理的 BGE，运行不隐式下载。"
+          },
+          {
             "path": "docs/reader-first/retrieval-redesign.md",
             "routes": [
               "bm25",
               "purpose:balanced"
             ],
             "snippet": "这借鉴片段上下文检索和元数据过滤，尚不是逐块完整语境生成，也不解决跨文件业务链。当前预处理身份为 `structure-icu-v6`，需要补建向量。原文换版后不沿用旧版分类；人工修正保留。具体流程与适用限制见 [材料用途与概念入口](material-understanding.md)。"
-          },
-          {
-            "path": "docs/reader-first/component-integration.md",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "[Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval) 给每个片段补它在整份文档中的具体背景，再进入全文与向量索引。omem 已在 `retrieval/units.ts` / `unified.ts` 用结构"
           }
         ]
       },
@@ -426,16 +428,16 @@
         "status": 200,
         "baselineTop5": [
           "docs/reader-first/operations.md",
-          "docs/reader-first/operations.md",
           ".agents/skills/osdk-guide/reference/configuration/models.md",
           ".claude/skills/osdk-guide/reference/configuration/models.md",
+          "docs/reader-first/operations.md",
           ".agents/skills/osdk-guide/reference/model/guide.md"
         ],
         "baselineUniquePathsAt5": 4,
         "passed": false,
-        "firstExpectedRank": null,
+        "firstExpectedRank": 9,
         "uniquePathsAt5": 4,
-        "elapsedMs": 605,
+        "elapsedMs": 638,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -447,15 +449,6 @@
             "snippet": "如果服务启动时已经配置 `retrieval.enabled=true`，只是本地模型文件缺失，安装完成后后台会按 30 秒间隔重新尝试加载，不永久缓存失败结果。若刚把检索配置从关闭改为开启，或改了模型别名，需要重启服务：配置在启动时读取，模型加载重试不重新读取配置文件。默认示例启用中文向量检索；个人配置以实际文件为准"
           },
           {
-            "path": "docs/reader-first/operations.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / "
-          },
-          {
             "path": ".agents/skills/osdk-guide/reference/configuration/models.md",
             "routes": [
               "bm25",
@@ -463,6 +456,15 @@
               "purpose:balanced"
             ],
             "snippet": "`model use` 的 reference/include/exclude/variant/kind/family/derived_from/endpoint 会写入同名声明；`sync` 会识别这些字段的变化。模型配置不触发\n任何信任要求：模型字节是内容，osdk 不执行它们，下载仍按锁定摘要校验。`model "
+          },
+          {
+            "path": "docs/reader-first/operations.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / "
           },
           {
             "path": ".agents/skills/osdk-guide/reference/model/guide.md",
@@ -474,13 +476,13 @@
             "snippet": "不要手写 OSDK 受管模型声明；使用 `model use/unuse`。`model import` 只创建当前机器的本地快照，不写声明或 lock，并拒绝链接/reparse point 与特殊文件。`install` 不会隐式下载模型。Civitai 引用必须是精确的 `civitai:<model-id>@<"
           },
           {
-            "path": "docs/reader-first/answer-investigation.md",
+            "path": ".claude/skills/osdk-guide/reference/install/guide.md",
             "routes": [
               "bm25",
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "第二题所选运行说明本身没有讲清“启动时已启用但缺模型”和“现在才修改配置启用”的区别，因此不能把它当作给足材料仍失败的纯写作实验。现已修正说明，并让助手在给步骤前核对前后条件是否真正衔接。随后用真实 Sol 重放指定原文组，仍提供没有补写重启条件的旧版运行说明：约 125 秒完成，主动补读配置入口、检索工厂和后台加载，"
+            "snippet": "`install` 安装开发工具；项目自身依赖使用 `osdk deps`。模型不会作为裸 `install` 的副作用\n下载，使用 `osdk model sync`。"
           }
         ]
       },
@@ -493,35 +495,26 @@
         ],
         "status": 200,
         "baselineTop5": [
-          "docs/reader-first/assistant-memory-flow.md",
-          "docs/reader-first/publication-lifecycle.md",
+          "docs/reader-first/current-system.md",
           "apps/server/tests/retrieval-unified.test.ts",
+          "docs/reader-first/project-contexts.md",
           "docs/reader-first/publication-lifecycle.md",
-          "docs/reader-first/publication-lifecycle.md"
+          "docs/archive/2026-10-01-baseline/AGENTS.md"
         ],
-        "baselineUniquePathsAt5": 3,
+        "baselineUniquePathsAt5": 5,
         "passed": false,
         "firstExpectedRank": null,
-        "uniquePathsAt5": 4,
-        "elapsedMs": 583,
+        "uniquePathsAt5": 5,
+        "elapsedMs": 903,
         "top5": [
           {
-            "path": "docs/reader-first/assistant-memory-flow.md",
+            "path": "docs/reader-first/current-system.md",
             "routes": [
               "bm25",
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "事项即时应用和后台学习原本分别有验收脚本，但普通用户会同时启用它们。助手保存的原始委托也会进入后台提取。现在 LearningPipeline 把这条原始指令的已有应用回执和当前事项状态交给提取者，并按固定片段与任务历史过滤已经生效的重复事项候选；名称相似度不决定是否重复。原始指令、模型候选、观察和其他记忆仍保留，即使"
-          },
-          {
-            "path": "docs/reader-first/publication-lifecycle.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "一次真实维护暴露了这一区别：记忆指南用项目说明的 3–19 行作为文章更新的背景，远处新增验证结果也让它失效；这是把根标题等同于整篇依赖造成的过宽判断。另一处引用与“正在验证”状态写在同一小节，修改状态也牵连引用。前者由通用结构比较修正；后者把实验状态移到独立验证章节、把事实/待办说明独立分节，并让模型按新结构重新核对"
+            "snippet": "材料可正式归入项目或主题。未指定归属时，后台 Agent 可调查已有范围和原文，再独立补查；含糊时保留具体问题，用户选择后重新处理。记忆抽取也能补读项目旧记忆及其依据，明确的新消息可修订同一事实，而不是因来源不同一律要求确认。短材料真实流程已验证，复杂多项目、误归属后的整体恢复，以及“这个人有什么背景、我过去哪些做法有"
           },
           {
             "path": "apps/server/tests/retrieval-unified.test.ts",
@@ -533,15 +526,6 @@
             "snippet": "const passages = rerankPassages(\n    text,\n    \"怎样修改有效记忆，提案从什么入口写入？\",\n    text.slice(0, 400),\n    [{ label: \"原子写入记忆或事项\", aliases: [\"applyTask\", \"applyMemory\"] }"
           },
           {
-            "path": "docs/reader-first/publication-lifecycle.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "“补充背景”会把回答保存成原始材料，同时加入这篇文章的选材计划。下一次重新整理时，研究者、作者和独立复核者都能读取它。保存补充本身不等于正文已经更新；开启持续维护后由后台排队，否则需要手动重新整理。两种方式都应检查新结果。"
-          },
-          {
             "path": "docs/reader-first/project-contexts.md",
             "routes": [
               "bm25",
@@ -549,6 +533,24 @@
               "purpose:balanced"
             ],
             "snippet": "后台记忆的工程检查覆盖同名项目隔离、独立新来源更新同一记忆和途中归属变化；真实 Sol 已完成下述明确归属的小库流程，尚不能宣称复杂项目理解可靠。验证进度在本节更新，不混入上面的功能说明。"
+          },
+          {
+            "path": "docs/reader-first/publication-lifecycle.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "失败保留旧文章并显示重试入口，不反复对同一份失败输入调用模型。新材料版本、范围成员变化或手动重试可以再次执行。界面显示排队、调查写作、完成或失败，固定旧引用继续可读；一次后台维护不会把知识文章变成独立事实，也不会直接修改个人记忆或事项。当前支持明确材料与项目/主题成员，尚未从内容自动判断新材料归属，也未实现周期回顾。"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "1. 修改捕获、AST、知识生成/复核、引用、检索或助手运行后，先通过相关检查并提交实现，再更新受影响的知识资产，单独提交。保持已有用户改动。\n2. 用 `osdk run review:generate <文件或目录> --modules` 更新受影响的原始材料理解和模块正文；多个 `--only` 可合用。需要全库"
           }
         ]
       },
@@ -569,7 +571,7 @@
         "passed": true,
         "firstExpectedRank": 3,
         "uniquePathsAt5": 4,
-        "elapsedMs": 178,
+        "elapsedMs": 220,
         "top5": [
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -630,7 +632,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 160,
+        "elapsedMs": 162,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -689,14 +691,14 @@
           "design.md",
           "docs/archive/2026-10-01-baseline/prototype/build.mjs",
           "docs/archive/2026-10-01-baseline/prototype/data.js",
-          "docs/reader-first/current-system.md",
-          "docs/reader-first/retrieval-redesign.md"
+          "docs/reader-first/retrieval-redesign.md",
+          "docs/archive/2026-10-01-baseline/prototype/smoke.mjs"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
-        "firstExpectedRank": 8,
+        "firstExpectedRank": 7,
         "uniquePathsAt5": 5,
-        "elapsedMs": 562,
+        "elapsedMs": 648,
         "top5": [
           {
             "path": "design.md",
@@ -726,15 +728,6 @@
             "snippet": "< 100\n        ? [\n            {\n              id: \"long-\" + (i + 1),\n              label: \"继续查看下一份材料\",\n              type: \"明确引用\",\n            },\n          ]\n  "
           },
           {
-            "path": "docs/reader-first/current-system.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "`assistant/runtime.ts` 已通过原生 ACP 调查器反复搜索、补读、查记忆、固定历史与代码导航，再提交答案候选。材料/知识工具共享检索，可按正式用途和明确有效期筛选；这仍不是完整时态推理、跨文件功能链或可靠的无答案判定。长期会话有历史和用户纠正，不是持续维护的项目理解。"
-          },
-          {
             "path": "docs/reader-first/retrieval-redesign.md",
             "routes": [
               "bm25",
@@ -742,6 +735,15 @@
               "purpose:balanced"
             ],
             "snippet": "新增可重建的 SQLite 检索投影，不改 Capture、Revision 和历史 Fragment。Markdown 使用现有 marked，保留章节路径、段落、列表和表格；代码使用现有 TS/Vue AST，按符号范围组织，附签名、注释和模块背景；聊天保留参与者、事件时间及会话/回复关系。长单位可以向量化为多个窗"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/prototype/smoke.mjs",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "r.selectNodeContents(el);"
           }
         ]
       }
