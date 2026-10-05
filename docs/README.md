@@ -26,6 +26,9 @@ omem 的目标是让个人材料被读懂、找回并用于行动。文档、代
 
 ## 从哪里继续读
 
+- [需求跟进与实现交接](reader-first/requirement-followup.md)：指定项目范围，综合消息、需求、纪要和代码持续整理；当前提供交接，尚不自动改代码。
+- [个人库与冷存储](reader-first/data-lifecycle.md)：消息缓存、备份恢复、迁移与归档；核心状态仍在 SQLite。
+
 - [整体复审](reader-first/review.md)：实际正文为何仍难读、维护和检索怎样牵连，以及本次改造顺序。
 - [当前实现逐层审查](reader-first/current-system.md)：清洗、RAG、代码、记忆、Wiki、ACP 的实际链路及缺口。
 - [成熟组件如何融入与代码改造](reader-first/component-integration.md)：具体采用什么、进入哪个适配层、哪些代码要替换、怎样判断收益。
