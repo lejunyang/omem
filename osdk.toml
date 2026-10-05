@@ -407,3 +407,15 @@ choices = ["status", "discover", "sync", "inbox", "watch", "unwatch", "exclude",
 name = "target"
 default = ""
 help = "Chat ID or a settings JSON file"
+
+[tasks.package]
+description = "Build and create the public npm tarball in .release; never publish"
+depends = ["build"]
+run = "bun scripts/package.ts"
+
+[tasks."package:verify"]
+description = "Install the tarball outside the repository and exercise the installed CLI"
+run = "bun scripts/package-smoke.ts"
+
+[tasks."package:verify".flags.agent]
+help = "Also exercise installed ask using the real configured Agent (consumes model calls)"

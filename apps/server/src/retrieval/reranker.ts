@@ -1,3 +1,4 @@
+import { developmentCheckout, modelWorkspace } from "../paths.js";
 /** BGE's Chinese/English cross-encoder judges a query and passage together.
  * osdk owns immutable downloads; inference is offline and never fetches weights. */
 import { execFile } from "node:child_process";
@@ -32,6 +33,7 @@ export async function loadChineseReranker(
   alias = "relevance-zh",
   cwd = process.cwd(),
 ): Promise<RerankerModel> {
+  if (!developmentCheckout) cwd = modelWorkspace();
   const { stdout } = await promisify(execFile)(
     "osdk",
     ["model", "show", alias, "--json"],

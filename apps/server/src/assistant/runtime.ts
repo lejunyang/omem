@@ -1,3 +1,4 @@
+import { activityWatchdog } from "../agent-timeout.js";
 import { evidenceNeighbors, evidenceSection } from "../retrieval/context.js";
 import { assembleAnswerContext, mergeBackground } from "./context.js";
 import type { DecisionService } from "../decision/service.js";
@@ -203,6 +204,7 @@ export type AssistantModelPort = {
     purpose?: RetrievalPurpose;
     visible?: (fragmentId: string) => boolean;
     onResearchActivity?: (event: ResearchActivity) => void;
+    onActivity?: () => void;
     signal?: AbortSignal;
   }): Promise<AssistantModelReply>;
 };
@@ -558,24 +560,7 @@ export class AssistantRuntime {
     external: AbortSignal | undefined,
     controller: AbortController,
   ) {
-    const merged = new AbortController();
-    // FENCE: if either upstream signal is ALREADY aborted at creation time,
-    // abort immediately rather than only listening for future events.
-    if (external?.aborted || controller.signal.aborted) {
-      merged.abort();
-      return merged.signal;
-    }
-    const finish = () => {
-      if (!merged.signal.aborted) merged.abort();
-    };
-    external?.addEventListener("abort", finish, { once: true });
-    controller.signal.addEventListener("abort", finish, { once: true });
-    const timer = setTimeout(finish, this.options.turnTimeoutMs ?? 60_000);
-    timer.unref?.();
-    merged.signal.addEventListener("abort", () => clearTimeout(timer), {
-      once: true,
-    });
-    return merged.signal;
+    return AbortSignal.any([controller.signal, ...(external ? [external] : [])]);
   }
 
   private assertNotCancelled(signal: AbortSignal) {
@@ -589,6 +574,9 @@ export class AssistantRuntime {
     transportEventId: string | null;
     signal: AbortSignal;
   }) {
+    const inactivity = new AbortController();
+    const watchdog = activityWatchdog(this.options.turnTimeoutMs ?? 60_000, (reason) => inactivity.abort(new Error(reason)));
+    input = { ...input, signal: AbortSignal.any([input.signal, inactivity.signal]) };
     this.router.startTurn(input.turnId);
     try {
       const refs = this.router.turn(input.turnId)!.inputMessageRefs;
@@ -599,6 +587,7 @@ export class AssistantRuntime {
       const researchActivity: ResearchActivity[] = [];
       const onResearchActivity = (event: ResearchActivity) => {
         if (input.signal.aborted) return;
+        watchdog.touch();
         researchActivity.push(event);
         this.router.recordResearch(input.turnId, researchActivity);
       };
@@ -655,12 +644,12 @@ export class AssistantRuntime {
       const searchQueries: string[] = [];
 
       // 2. Ask the model. Unavailable / cancelled / error never yields a fake answer.
-      //    Hard timeout via Promise.race: if the model ignores abort we still
-      //    actively abort the signal after the wall-clock budget.
+      //    Inactivity aborts the transport; racing cancellation also handles a
+      //    model implementation that ignores its signal.
       let reply: AssistantModelReply;
       let degraded = false;
       try {
-        reply = await this.withTimeout(
+        reply = await this.withCancellation(
           this.model.generate({
             userText: input.userText,
             priorTurns,
@@ -677,10 +666,10 @@ export class AssistantRuntime {
             purpose,
             visible: (id) => this.isVisible(input.conversation, id),
             onResearchActivity,
+            onActivity: watchdog.touch,
             signal: input.signal,
           }),
           input.signal,
-          this.options.turnTimeoutMs ?? 60_000,
         );
         const requests = [
           ...(reply.searchRequests ?? []),
@@ -713,7 +702,7 @@ export class AssistantRuntime {
               ]),
             ).values(),
           ];
-          reply = await this.withTimeout(
+          reply = await this.withCancellation(
             this.model.generate({
               userText: input.userText,
               priorTurns,
@@ -730,10 +719,10 @@ export class AssistantRuntime {
               purpose,
               visible: (id) => this.isVisible(input.conversation, id),
               onResearchActivity,
+              onActivity: watchdog.touch,
               signal: input.signal,
             }),
             input.signal,
-            this.options.turnTimeoutMs ?? 60_000,
           );
         }
         if (reply.researchedEvidence)
@@ -940,38 +929,20 @@ export class AssistantRuntime {
           input.turnId,
           error instanceof Error ? error.message : "turn failed",
         );
+    } finally {
+      watchdog.close();
     }
   }
 
-  /** Hard timeout: race the model against an independent timer.
-   * The timer reject is NOT cleared by external abort — if the model ignores the
-   * abort signal, the timeout still fires so Promise.race never hangs.
-   * External abort rejects the timeout promise immediately for fast cancel. */
-  private async withTimeout<T>(
-    promise: Promise<T>,
-    signal: AbortSignal,
-    ms: number,
-  ): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let rejectTimeout: ((e: Error) => void) | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      rejectTimeout = reject;
-      timer = setTimeout(
-        () => reject(new TurnCancelledError("turn_timeout")),
-        ms,
-      );
-    });
-    // External abort (user cancel, superseded turn, or deriveSignal timer):
-    // reject immediately. Do NOT clear our timer — finally does that. If the
-    // model already settled, race resolves and this is a no-op.
-    const onAbort = () => rejectTimeout?.(new TurnCancelledError("aborted"));
+  /** Reject even when a model ignores cancellation, and always release the listener. */
+  private async withCancellation<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+    let rejectAbort: (e: Error) => void = () => {};
+    const aborted = new Promise<never>((_, reject) => { rejectAbort = reject; });
+    const onAbort = () => rejectAbort(new TurnCancelledError(signal.reason?.message ?? "aborted"));
     signal.addEventListener("abort", onAbort, { once: true });
-    try {
-      return await Promise.race([promise, timeout]);
-    } finally {
-      if (timer) clearTimeout(timer);
-      signal.removeEventListener("abort", onAbort);
-    }
+    if (signal.aborted) onAbort();
+    try { return await Promise.race([promise, aborted]); }
+    finally { signal.removeEventListener("abort", onAbort); }
   }
 
   private async retrieveContext(

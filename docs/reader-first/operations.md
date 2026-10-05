@@ -1,5 +1,9 @@
 # 运行与维护
 
+安装版使用 `omem init`、`omem service start`、`omem status`，数据默认 `~/.omem`。分层帮助、机器人/消息、可选模型准备见 [CLI 使用指南](../cli.md)。下文 osdk 命令用于源码开发，不是 npm 使用前提。
+
+Agent 的 `idleTimeoutMs` 现在表示连续无活动等待；真实 ACP 输出、工具进展和初始化响应会续期。Sol 默认 480000 ms，没有默认总时长限制。旧 `timeoutMs` 兼容为无活动时限，显式 `maxDurationMs` 才设置总上限。助手外层和独立补查同样续期，用户取消仍生效。
+
 ## 启动
 
 使用 osdk 管理 Bun、Node、pnpm 与应用依赖：`osdk install`、`osdk deps --frozen`、`osdk run dev`。开发模式把本仓库与已提交知识接入同一个个人库，默认 API 4317 / web 5173，占用时选择空闲端口；以终端输出为准。`OMEM_PORT`、`OMEM_WEB_PORT` 可指定端口。正式构建 `osdk run build` 后 `osdk run start`：未设置 `OMEM_REPO_ROOT` 时不会在启动时导入仓库，但会保留并使用所选数据目录的已有内容，不能把它理解为每次启动都得到空库。

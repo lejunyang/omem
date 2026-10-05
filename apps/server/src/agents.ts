@@ -13,6 +13,7 @@ import {
   type RequestPermissionRequest,
 } from "@agentclientprotocol/sdk";
 import type { AgentProfile } from "../../../packages/contracts/src/index.js";
+import { activityWatchdog, agentIdleTimeout } from "./agent-timeout.js";
 export type Emit = (
   type: "status" | "text" | "permission",
   text: string,
@@ -25,6 +26,8 @@ export type RuntimeRequestEvent = {
   options: unknown;
 };
 export type AcpOptions = {
+  /** Activity only, never the contents of private reasoning. */
+  onActivity?: () => void;
   mcpServers?: McpServer[];
   expectedSkills?: string[];
   skillDiscoveryTimeoutMs?: number;
@@ -148,11 +151,12 @@ export async function acp(
   });
   // Attaching immediately prevents an unhandled rejection on a spawn failure.
   void exited.catch(() => {});
-  const timeout = setTimeout(() => {
-    terminalFailure = new Error("Agent timed out");
+  const timeout = activityWatchdog(agentIdleTimeout(profile), (reason) => {
+    terminalFailure = new Error(reason);
     rejectExit(terminalFailure);
     stop(child);
-  }, profile.timeoutMs);
+  }, profile.maxDurationMs);
+  const active = () => { timeout.touch(); options.onActivity?.(); };
   let connection: ClientSideConnection | undefined;
   let sessionId: string | undefined;
   let availableCommands: string[] = [];
@@ -212,6 +216,7 @@ export async function acp(
     connection = new ClientSideConnection(
       () => ({
         requestPermission: async (request) => {
+          active();
           const once = request.options.find(o => o.kind === "allow_once");
           if (once && options.allowPermission?.(request)) return { outcome: { outcome: "selected", optionId: once.optionId } };
           await options.onRuntimeRequest?.({
@@ -228,6 +233,7 @@ export async function acp(
           return { outcome: { outcome: "cancelled" } };
         },
         createElicitation: async (request) => {
+          active();
           const scope = request as unknown as {
             sessionId?: unknown;
             requestId?: unknown;
@@ -250,6 +256,7 @@ export async function acp(
           return { action: "decline" };
         },
         sessionUpdate: async ({ update }) => {
+          active();
           if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
             firstToolAt ??= performance.now();
             toolCalls.set(update.toolCallId, update.status ?? toolCalls.get(update.toolCallId) ?? "pending");
@@ -309,6 +316,7 @@ export async function acp(
     if (initialized.protocolVersion !== 1)
       throw Error("Unsupported ACP protocol version");
     initializedAt = performance.now();
+    active();
     const session = await Promise.race([
       connection.newSession({
         cwd,
@@ -320,6 +328,7 @@ export async function acp(
       exited,
     ]);
     sessionId = session.sessionId;
+    active();
     if (options.expectedSkills?.length) {
       const normalized = new Set(
         availableCommands.map((name) =>
@@ -362,6 +371,7 @@ export async function acp(
         exited,
       ]);
       configOptions = reply.configOptions;
+      active();
     }
     const configuredAt = performance.now();
     if (blocks) {
@@ -386,11 +396,9 @@ export async function acp(
         throw Error(`Agent stopped: ${result.result.stopReason}`);
       completion = result.kind === "submission" ? "validated_submission" : "end_turn";
       promptFinishedAt = performance.now();
-      // The agent's prompt has completed. Clear the global timeout now so
-      // session teardown (closeSession) doesn't race it under parallel load —
-      // otherwise a slow prompt leaves no budget for the 1s closeSession race,
-      // turning a clean success into a spurious "Agent timed out".
-      clearTimeout(timeout);
+      // Stop both watchdogs before session teardown so a completed response
+      // cannot turn into a timeout while closeSession is draining.
+      timeout.close();
       // A native role is complete when its final tool submission is accepted.
       // Some CLIs never finish session/prompt after this; cancel that remaining
       // turn without treating it as a user cancellation or losing the result.
@@ -427,7 +435,7 @@ export async function acp(
     if (terminalFailure) throw terminalFailure;
     throw error;
   } finally {
-    clearTimeout(timeout);
+    timeout.close();
     signal.removeEventListener("abort", cancel);
     stop(child);
     // Wait for the child to fully exit and release its cwd handle before
@@ -479,6 +487,7 @@ export async function cli(
   text: string,
   emit: Emit,
   signal: AbortSignal,
+  onActivity?: () => void,
 ) {
   const child = launch(profile, cliArgs(profile), cwd);
   child.stdout.setEncoding("utf8");
@@ -488,23 +497,24 @@ export async function cli(
   let malformed = false;
   let providerError = false;
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
+    const timer = activityWatchdog(agentIdleTimeout(profile), (reason) => {
       stop(child);
-      reject(Error("Agent timed out"));
-    }, profile.timeoutMs);
+      reject(Error(reason));
+    }, profile.maxDurationMs);
     const cancel = () => {
       stop(child);
       reject(Error("CANCELLED"));
     };
     signal.addEventListener("abort", cancel, { once: true });
     const clean = () => {
-      clearTimeout(timer);
+      timer.close();
       signal.removeEventListener("abort", cancel);
     };
     const line = (raw: string) => {
       if (!raw.trim()) return;
       try {
         const item = JSON.parse(raw);
+        if (typeof item.type === "string") { timer.touch(); onActivity?.(); }
         if (
           item.type === "item.completed" &&
           item.item?.type === "agent_message"

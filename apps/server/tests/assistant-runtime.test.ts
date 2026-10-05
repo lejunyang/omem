@@ -1140,3 +1140,15 @@ it("keeps the complete cited chapter and its conditions when a follow-up has no 
     expect(seen[2]!.evidence).toEqual([]);
   } finally { runtime.shutdown(); }
 });
+
+it("renews the assistant outer deadline from model activity", async () => {
+  const { store } = setup();
+  const runtime = new AssistantRuntime(store, { generate: async ({ onActivity }) => {
+    for (let i = 0; i < 6; i++) { await new Promise(r => setTimeout(r, 60)); onActivity?.(); }
+    return { answer: "investigation completed", citationIds: [] };
+  } }, { ownerId: "owner", memory: new MemoryService(store, { ownerId: "owner" }), turnTimeoutMs: 200 });
+  const conversation = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "active", visibility: "private" });
+  const result = await runtime.turn({ conversationId: conversation.id, userText: "investigate" });
+  expect(result.turn.inputMessageRefs.status).toBe("done");
+  expect(result.turn.result).toBe("investigation completed");
+});

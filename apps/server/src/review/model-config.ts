@@ -58,6 +58,8 @@ export function loadReviewCodeModelConfig(
     model: object.model,
     effort: object.effort,
     timeoutMs: object.timeoutMs,
+    idleTimeoutMs: object.idleTimeoutMs,
+    maxDurationMs: object.maxDurationMs,
     endpoint: object.endpoint,
   };
 }

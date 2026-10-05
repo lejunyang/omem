@@ -30,7 +30,7 @@ try {
     if (!model) throw new Error("Set REVIEW_CODE_MODEL_CONFIG before requesting generation");
     for (const targetId of targets) {
       console.log("generate", targetId, config.model);
-      const result = await generateCodeUnderstanding(store, root, model, { targetId, timeoutMs: config.timeoutMs, maxInputTokens: config.maxInputTokens, maxOutputTokens: config.maxOutputTokens, contextReserveTokens: config.contextReserveTokens });
+      const result = await generateCodeUnderstanding(store, root, model, { targetId, timeoutMs: config.idleTimeoutMs ?? config.timeoutMs, maxInputTokens: config.maxInputTokens, maxOutputTokens: config.maxOutputTokens, contextReserveTokens: config.contextReserveTokens });
       console.log("result", result);
       if (!result.ok) throw new Error(`Generation failed for ${targetId}: ${result.errors.join(", ")}`);
       const file = exportGeneratedUnderstanding(store, root, result.understandingId, stage);

@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import type { CaptureInput } from "../../../../packages/contracts/src/index.js";
+import { assetPath, optionalRuntime } from "../paths.js";
 const exec = promisify(execFile);
 export async function saveImportAsset(dataDir: string, bytes: Buffer) {
   const id = createHash("sha256").update(bytes).digest("hex");
@@ -17,9 +18,9 @@ export async function documentInput(bytes: Buffer, name: string, dataDir: string
   const extension = extname(name).toLowerCase();
   if (![".pdf", ".docx"].includes(extension)) throw Error("支持 PDF、DOCX 文件");
   if (!bytes.length || bytes.length > 20_000_000) throw Error("文件不能超过 20 MB");
-  const runtime = resolve(".osdk/runtime/docling");
+  const runtime = optionalRuntime("docling");
   const python = join(runtime, "venv/bin/python");
-  if (!existsSync(python)) throw Error("文档解析器未准备，请先运行 osdk run documents:prepare");
+  if (!existsSync(python)) throw Error("文档解析器未准备，请先运行 omem setup documents（开发环境：osdk run documents:prepare）");
   const workspace = join(dataDir, "imports");
   await mkdir(workspace, { recursive: true, mode: 0o700 });
   const tmp = await mkdtemp(join(workspace, "convert-"));
@@ -27,7 +28,7 @@ export async function documentInput(bytes: Buffer, name: string, dataDir: string
     const path = join(tmp, "input" + extension);
     await writeFile(path, bytes, { mode: 0o600 });
     const artifacts = join(runtime, "models");
-    const { stdout } = await exec(python, [resolve("scripts/document-parser/convert.py"), path, existsSync(artifacts) ? artifacts : ""], { timeout: 180_000, maxBuffer: 50_000_000 });
+    const { stdout } = await exec(python, [assetPath("scripts/document-parser/convert.py"), path, existsSync(artifacts) ? artifacts : ""], { timeout: 180_000, maxBuffer: 50_000_000 });
     const parsed = JSON.parse(stdout);
     if (typeof parsed.markdown !== "string" || !parsed.markdown.trim()) throw Error("解析结果没有正文");
     if (parsed.markdown.length > 200_000) throw Error("解析后的正文超过 20 万字，请按章节拆分后导入");

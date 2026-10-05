@@ -1,3 +1,4 @@
+import { activityWatchdog } from "../agent-timeout.js";
 /** Curated Code Understanding projection.
  *
  * Committed seed assets live under `.repo-review/knowledge/understandings/`.
@@ -678,7 +679,7 @@ export type GenerateResult = ({ budget?: ReturnType<typeof estimateTokens> & Gen
 export async function generateCodeUnderstanding(
   store: Store,
   repoRoot: string,
-  port: { readonly transport: string; run: (r: { prompt: string; signal: AbortSignal; budget?: GenerationBudget & { estimatedInputTokens: number } }) => Promise<{ text: string; model: string }> } | null,
+  port: { readonly transport: string; run: (r: { prompt: string; signal: AbortSignal; onActivity?: () => void; budget?: GenerationBudget & { estimatedInputTokens: number } }) => Promise<{ text: string; model: string }> } | null,
   opts: { targetId: string; timeoutMs?: number; signal?: AbortSignal } & Partial<GenerationBudget>,
 ): Promise<GenerateResult> {
   ensureCodeTables(store);
@@ -788,7 +789,7 @@ export async function generateCodeUnderstanding(
   }
 
   const controller = new AbortController();
-  const budget = setTimeout(() => controller.abort(), opts.timeoutMs ?? 60_000);
+  const budget = activityWatchdog(opts.timeoutMs ?? 120_000, () => controller.abort());
   const onOuterAbort = () => controller.abort();
   opts.signal?.addEventListener("abort", onOuterAbort, { once: true });
 
@@ -800,19 +801,19 @@ export async function generateCodeUnderstanding(
     const aborted = new Promise<never>((_, reject) =>
       controller.signal.addEventListener("abort", () => reject(new Error("RUN_ABORTED")), { once: true }),
     );
-    const out = await Promise.race([port.run({ prompt, signal: controller.signal, budget: { ...limits, estimatedInputTokens: budgetInfo.budgetedTokens } }), aborted]);
+    const out = await Promise.race([port.run({ prompt, signal: controller.signal, onActivity: budget.touch, budget: { ...limits, estimatedInputTokens: budgetInfo.budgetedTokens } }), aborted]);
     // Fence: if we resolved after abort fired, never commit.
     if (controller.signal.aborted) throw new Error("RUN_ABORTED");
     text = out.text;
     modelId = out.model;
   } catch (error) {
-    clearTimeout(budget);
+    budget.close();
     opts.signal?.removeEventListener("abort", onOuterAbort);
     const aborted = controller.signal.aborted;
     persistOutcome("failed", [aborted ? "RUN_ABORTED" : (error instanceof Error ? error.message : "transport failed")], null);
     return { ok: false, understandingId, status: "failed", errors: [aborted ? "RUN_ABORTED" : "transport failed"] };
   }
-  clearTimeout(budget);
+  budget.close();
   opts.signal?.removeEventListener("abort", onOuterAbort);
   if (controller.signal.aborted) {
     persistOutcome("failed", ["RUN_ABORTED"], null);

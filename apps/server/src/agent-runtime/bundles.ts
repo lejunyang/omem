@@ -23,6 +23,7 @@ import {
   type RoleManifest,
 } from "../../../../packages/contracts/src/index.js";
 import { stableDigest } from "../storage/digest.js";
+import { assetPath } from "../paths.js";
 
 export type LoadedSkill = RoleManifest["skill_bundles"][number] & {
   directory: string;
@@ -103,7 +104,7 @@ function copyVerifiedDirectory(source: string, destination: string) {
 }
 
 export class RoleBundleRegistry {
-  constructor(readonly root = resolve("packages/agent-runtime/roles")) {}
+  constructor(readonly root = assetPath("packages/agent-runtime/roles")) {}
 
   load(roleId: string, version = "1"): RoleBundle {
     if (!/^[a-z0-9-]+$/.test(roleId) || !/^[a-zA-Z0-9._-]+$/.test(version))

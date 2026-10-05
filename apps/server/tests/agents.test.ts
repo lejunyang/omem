@@ -128,3 +128,14 @@ it("does not let captured-workspace Git commands discover the enclosing developm
     expect(JSON.parse(output)).toEqual([{ status: 128, stdout: "" }, { status: 128, stdout: "" }]);
   } finally { vi.unstubAllEnvs(); rmSync(root, { recursive: true, force: true }); }
 });
+
+it("keeps active ACP investigation alive beyond the old total limit without exposing thoughts", async () => {
+  const activity = vi.fn();
+  const { result, events } = await run("ACTIVE_SLOW", { idleTimeoutMs: 1000 }, undefined, { onActivity: activity });
+  expect(result.timings.promptMs).toBeGreaterThan(1500);
+  expect(activity.mock.calls.length).toBeGreaterThan(5);
+  expect(JSON.stringify(events)).not.toContain("PRIVATE_THOUGHT");
+});
+it("honors an explicitly configured total duration even while active", async () => {
+  await expect(run("ACTIVE_SLOW", { idleTimeoutMs: 3000, maxDurationMs: 1000 })).rejects.toThrow("maximum duration");
+});

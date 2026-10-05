@@ -1,0 +1,45 @@
+{
+  "retrieval": {
+    "enabled": false,
+    "osdkModel": "memory-zh"
+  },
+  "assistant": {
+    "profileId": "traex"
+  },
+  "profiles": [
+    {
+      "id": "traex",
+      "name": "TraeX · ACP",
+      "transport": "acp",
+      "command": "traex",
+      "args": ["-c", "sandbox_mode=\"read-only\"", "acp", "serve"],
+      "skills": [],
+      "maxContextChars": 20000,
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "idleTimeoutMs": 480000
+    }
+  ],
+  "notifications": {
+    "mode": "instant",
+    "external": {
+      "mode": "window",
+      "windowMs": 300000,
+      "scheduleLocalTime": "09:00",
+      "timezone": "Asia/Shanghai"
+    }
+  },
+  "learning": {
+    "enabled": false,
+    "profileId": "traex",
+    "pollMs": 1000
+  },
+  "lark": {
+    "enabled": false,
+    "pollMs": 1000
+  },
+  "captureRoots": [],
+  "decisions": {
+    "mode": "off"
+  }
+}

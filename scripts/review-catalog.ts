@@ -47,7 +47,7 @@ const profile = profileSchema.parse({
   args: config.args ?? [],
   model: config.model,
   effort: config.effort,
-  timeoutMs: config.timeoutMs,
+  timeoutMs: config.timeoutMs, idleTimeoutMs: config.idleTimeoutMs, maxDurationMs: config.maxDurationMs,
   maxContextChars: 200000,
 });
 const runtime = join(root, ".repo-review/runtime/catalog-agents");

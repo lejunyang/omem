@@ -32,8 +32,10 @@ export type UnderstandingTransportConfig = Partial<GenerationBudget> & {
   /** acp/cli/http: model id to request / echo. Never read from the environment. */
   model?: string;
   effort?: string;
-  /** per-request wall-clock budget. */
+  /** Legacy inactivity timeout for ACP/CLI. */
   timeoutMs?: number;
+  idleTimeoutMs?: number;
+  maxDurationMs?: number;
   /** http: explicit endpoint to POST to. */
   endpoint?: string;
 };
@@ -45,6 +47,7 @@ export type UnderstandingModelPort = {
   run(req: {
     prompt: string;
     signal: AbortSignal;
+    onActivity?: () => void;
     budget?: GenerationBudget & { estimatedInputTokens: number };
   }): Promise<UnderstandingModelReply>;
 };
@@ -73,6 +76,8 @@ function makeProfile(
     instructions: "",
     maxContextChars: 20000,
     timeoutMs: config.timeoutMs ?? 120_000,
+    idleTimeoutMs: config.idleTimeoutMs,
+    maxDurationMs: config.maxDurationMs,
     skills: [],
   };
 }
@@ -89,7 +94,7 @@ export function buildUnderstandingModelPort(
     const profile = makeProfile(config, "acp");
     return {
       transport: "acp",
-      run: async ({ prompt, signal, budget }) => {
+      run: async ({ prompt, signal, budget, onActivity }) => {
         let text = "";
         const emit: Emit = (type, chunk) => {
           if (type === "text") text += chunk;
@@ -100,7 +105,7 @@ export function buildUnderstandingModelPort(
           [{ type: "text", text: prompt }],
           emit,
           signal,
-          { maxOutputChars: budget ? budget.maxOutputTokens * 3 : 80_000, contextBudget: budget },
+          { onActivity, maxOutputChars: budget ? budget.maxOutputTokens * 3 : 80_000, contextBudget: budget },
         );
         return { text, model: profile.model ?? "acp" };
       },
@@ -111,12 +116,12 @@ export function buildUnderstandingModelPort(
     const profile = makeProfile(config, "codex-cli");
     return {
       transport: "cli",
-      run: async ({ prompt, signal }) => {
+      run: async ({ prompt, signal, onActivity }) => {
         let text = "";
         const emit: Emit = (type, chunk) => {
           if (type === "text") text += chunk;
         };
-        await cli(profile, config.workspaceDir ?? join(process.cwd(), ".repo-review/runtime/agent-workspace"), prompt, emit, signal);
+        await cli(profile, config.workspaceDir ?? join(process.cwd(), ".repo-review/runtime/agent-workspace"), prompt, emit, signal, onActivity);
         return { text, model: profile.model ?? "cli" };
       },
     };
@@ -127,7 +132,7 @@ export function buildUnderstandingModelPort(
     const endpoint = config.endpoint as string;
     return {
       transport: "http",
-      run: async ({ prompt, signal }) => {
+      run: async ({ prompt, signal, onActivity }) => {
         const res = await fetch(endpoint, {
           method: "POST",
           signal,

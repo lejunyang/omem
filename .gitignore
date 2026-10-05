@@ -25,3 +25,5 @@ docs/archive/2026-10-01-baseline/implementation/screenshots/*.png
 .repo-review/embeddings/
 
 .DS_Store
+# Local npm release artifacts
+.release/
