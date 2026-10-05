@@ -45,7 +45,11 @@
         "apps/server/src/store.ts",
         "apps/server/src/connectors.ts",
         "apps/server/src/learning/pipeline.ts",
-        "apps/server/src/knowledge/repository.ts"
+        "apps/server/src/knowledge/repository.ts",
+        "apps/server/src/imports/documents.ts",
+        "scripts/document-parser/convert.py",
+        "apps/web/src/DocumentReading.vue",
+        "docs/reader-first/document-import.md"
       ],
       "topicPath": [
         "软件开发",
@@ -84,7 +88,10 @@
         "apps/server/src/config.ts",
         "docs/reader-first/answer-investigation.md",
         "docs/reader-first/retrieval-redesign.md",
-        "apps/server/src/assistant/answer-review.ts"
+        "apps/server/src/assistant/answer-review.ts",
+        "apps/server/src/decision/passages.ts",
+        "apps/server/src/decision/service.ts",
+        "docs/reader-first/fast-decisions.md"
       ],
       "topicPath": [
         "软件开发",
