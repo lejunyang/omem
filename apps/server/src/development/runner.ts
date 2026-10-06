@@ -32,6 +32,7 @@ import {
 } from "./requirement-basis.js";
 import {
   KnowledgeRepository,
+  materialFromRevision,
   type KnowledgeArticle,
 } from "../knowledge/repository.js";
 import { prepareAgentResearch } from "../knowledge/agent-research.js";
@@ -42,6 +43,7 @@ import {
 import { RoleBundleRegistry } from "../agent-runtime/bundles.js";
 import { CapabilityRegistry } from "../capabilities/registry.js";
 import { CapabilitySession } from "../capabilities/session.js";
+import { captureCapabilityMaterial } from "../capabilities/materials.js";
 import {
   receiptSchema,
   receiptDigest,
@@ -342,6 +344,14 @@ export class DevelopmentRunner {
           );
           if (receiptDigest(directory, receipt) !== input.digest)
             throw Error("交接资料已变化，请重新核对原始回执");
+          if (input.material && !materials.some(m => m.revisionId === input.material!.revisionId)) {
+            const captured = store.revision(input.material.revisionId);
+            const material = captured ? repository.resolveMaterial(input.material.key, undefined)?.material : undefined;
+            // Read the handoff revision, never silently use the current head.
+            const fixed = captured ? materialFromRevision(store, captured.id) : null;
+            if (!fixed || !material || fixed.sourceId !== material.sourceId) throw Error("交接的固定材料不可用");
+            materials.push(fixed);
+          }
         }
         capabilities = new CapabilitySession(
           this.capabilities,
@@ -350,6 +360,7 @@ export class DevelopmentRunner {
             directory: join(run.directory, "external-inputs"),
             cwd: run.checkout,
             signal,
+            capture: (directory, receipt, title) => captureCapabilityMaterial(store, directory, receipt, { title, contextIds: article.reading?.contextIds }),
           },
         );
         for (const capability of capabilities.catalog()) {

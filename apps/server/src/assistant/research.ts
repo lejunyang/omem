@@ -79,6 +79,7 @@ export async function prepareAssistantResearch(input: {
     schema: assistantReplySchema,
     onActivity: context.onResearchActivity,
     tools: input.tools,
+    onMaterialAdmitted: material => offered.set(material.key, material),
     validate: (out) => {
       const parsed = assistantReplySchema.parse(out),
         identities = new Set<string>();

@@ -760,6 +760,25 @@ capabilities
     show(r.readSkill(r.read(id), name, path));
   });
 capabilities
+  .command("capture <id> <record-id>")
+  .requiredOption("--title <title>", "这份文档或设计资料的可读标题")
+  .description("把已读取的外部回执保存为可检索材料，正文和图片保留固定版本")
+  .action(async (id, recordId, opts) => {
+    (await capabilityRegistry()).read(id);
+    const { Store } = await import("./store.js");
+    const { receiptSchema } = await import("./capabilities/receipts.js");
+    const { captureCapabilityMaterial } = await import("./capabilities/materials.js");
+    const { codePath } = await import("./development/workspace.js");
+    const directory = join(defaultDataDir(), "capability-runs", id);
+    const receipt = receiptSchema.parse(await readJson(codePath(directory, recordId + ".json")));
+    if (receipt.recordId !== recordId || receipt.capability !== id) throw Error("回执不属于指定能力");
+    const store = new Store(defaultDataDir());
+    try {
+      const material = captureCapabilityMaterial(store, directory, receipt, { title: opts.title });
+      show({ key: material.key, title: material.title, revision: material.revisionId, lines: material.lineCount, images: material.images });
+    } finally { store.close(); }
+  });
+capabilities
   .command("call <id> <tool> [input-file]")
   .option("--kind <kind>", "mcp 或 cli", "mcp")
   .description(

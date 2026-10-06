@@ -79,4 +79,4 @@ Claude 显式使用 default 权限模式；只自动允许本次登记的 `mcp__
 
 复用的上游：[Codex ACP](https://github.com/agentclientprotocol/codex-acp)、[Claude Agent ACP](https://github.com/agentclientprotocol/claude-agent-acp)、[Codex App Server](https://learn.chatgpt.com/docs/app-server)。本轮核对了适配器源码和实际已发布版本；不能用上游 README 的功能清单替代本机验收。
 
-下一步是完成外部资料回执进入统一材料库、私有 Git 的项目准备；Claude 仍需有效认证后跑同一验收。`osdk run development:providers` 使用手写的受控需求，默认两角色均通过真实 Traex/Sol 执行；`OMEM_PROVIDER_CONFIG` 可指定私人两角色配置。脚本验证实际修改、宿主检查、独立评审和原仓库保持不变，结束释放临时库；它不代表真实业务或 Figma 验收，也不冒充模型生成需求。
+外部资料已可选入统一材料库，并在当轮引用和后续检索；下一步是私有 Git 的项目准备；Claude 仍需有效认证后跑同一验收。`osdk run development:providers` 使用手写的受控需求，默认两角色均通过真实 Traex/Sol 执行；`OMEM_PROVIDER_CONFIG` 可指定私人两角色配置。脚本验证实际修改、宿主检查、独立评审和原仓库保持不变，结束释放临时库；它不代表真实业务或 Figma 验收，也不冒充模型生成需求。

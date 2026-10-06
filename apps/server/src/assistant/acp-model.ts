@@ -211,7 +211,7 @@ export class AcpAssistantModel implements AssistantModelPort {
           context: { ...input, signal },
           workTools: [
             ...conversationInputs.filter(
-              (t) => t.name !== "conversation_input_relevance",
+              (t) => t.name !== "conversation_input_relevance" && t.readOnly !== false,
             ),
             ...(work
               ?.tools()
@@ -222,7 +222,7 @@ export class AcpAssistantModel implements AssistantModelPort {
               ) ?? []),
             ...(capabilities
               ?.tools()
-              .filter((t) => t.name !== "capability_relevance") ?? []),
+              .filter((t) => t.name !== "capability_relevance" && t.readOnly !== false) ?? []),
           ],
           onSubmitted: publish,
         }),

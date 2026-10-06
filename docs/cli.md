@@ -156,7 +156,7 @@ omem capabilities attach PROJECT_ALIAS CAPABILITY_ID
 omem capabilities disable CAPABILITY_ID
 ```
 
-实际任务仍由用户自然语言交办，命令供 Agent 配置与排障使用。使用与服务相同的 `--data-dir`；此组暂不支持 `--url` 操作远端配置。完整 JSON、MCP 连接类型、凭据引用和调用方式见随包的[能力装配技能](../skills/omem-cli/references/capabilities.md)。读到外部资料还不代表自动导入个人知识库；真实 Figma、远程私有 Git 与其他编码提供方仍需各自接入验收。
+实际任务仍由用户自然语言交办，命令供 Agent 配置与排障使用。使用与服务相同的 `--data-dir`；此组暂不支持 `--url` 操作远端配置。完整 JSON、MCP 连接类型、凭据引用和调用方式见随包的[能力装配技能](../skills/omem-cli/references/capabilities.md)。主助手可将选中的正文和图片保存为统一材料，当轮引用、后续找回；直接 CLI 读取后可用 `omem capabilities capture CAPABILITY_ID RECORD_ID --title "材料标题"` 保存。保存原件不等于已生成文章或应用记忆。真实 Figma、远程私有 Git 与 Claude 编码仍需分别验收。
 
 ## 可选本地能力
 

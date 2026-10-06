@@ -23,6 +23,8 @@ import type { ResearchTool } from "../knowledge/agent-research.js";
 import { codePath, saveJson } from "../development/workspace.js";
 import { CapabilityRegistry, type RegisteredCapability } from "./registry.js";
 import type { DecisionService } from "../decision/service.js";
+import { receiptSchema, type CapabilityReceipt } from "./receipts.js";
+import type { KnowledgeMaterial } from "../../../../packages/contracts/src/knowledge.js";
 
 const execute = promisify(execFile);
 type Connected = { client: Client; tools: Tool[] };
@@ -46,6 +48,7 @@ export class CapabilitySession {
       onActivity?: () => void;
       decisions?: DecisionService;
       onReceipt?: (directory: string, recordId: string) => void;
+      capture?: (directory: string, receipt: CapabilityReceipt, title: string) => KnowledgeMaterial | Promise<KnowledgeMaterial>;
     },
   ) {
     this.directory = resolve(options.directory);
@@ -382,6 +385,18 @@ export class CapabilitySession {
   }
   tools(): ResearchTool[] {
     return [
+      ...(this.options.capture ? [{
+        name: "capture_external_input", readOnly: false,
+        description: "Save a selected reusable external response as a unified source with fixed text/images. Read the receipt first, choose a human-readable title. Failures and mere locators are not documents. Returns a material key for current reading and future retrieval; it does not mark a requirement complete.",
+        shape: { recordId: z.uuid(), title: z.string().min(1).max(300) },
+        run: async ({ recordId, title }: { recordId: string; title: string }, snapshot: import("../knowledge/agent-research.js").ResearchSnapshot) => {
+          const receipt = receiptSchema.parse(JSON.parse(readFileSync(codePath(this.directory, `${recordId}.json`), "utf8")));
+          if (receipt.recordId !== recordId) throw Error("回执身份不匹配");
+          const material = await this.options.capture!(this.directory, receipt, title);
+          const admitted = snapshot.admit?.(material) ?? material;
+          return { key: admitted.key, materialKey: material.key, revision: material.revisionId, title: material.title, lines: material.lineCount, images: material.images };
+        },
+      }] : []),
       {
         name: "capability_catalog",
         readOnly: true,

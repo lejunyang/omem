@@ -6,8 +6,32 @@ import type { KnowledgeArticle, KnowledgeRepository } from "./repository.js";
 import { migrateDatabase } from "../storage/migrations.js";
 import { RetrievalProjection } from "../retrieval/units.js";
 import { materialFromRevision } from "./repository.js";
+import { ensureMaterialAliases } from "./material-identity.js";
 
 type Row = Record<string, SQLInputValue>;
+
+/** Admit one host-captured observation, not a refresh of the live library. Older
+ * evidence, memories and unrelated sources in the investigation stay fixed. */
+export function appendResearchMaterial(file: string, repository: KnowledgeRepository, material: KnowledgeMaterial) {
+  const original = repository.store.db, db = new DatabaseSync(file);
+  const copy = (table: string, rows: Row[]) => {
+    if (!rows.length) return;
+    const columns = Object.keys(rows[0]!);
+    const insert = db.prepare(`INSERT OR IGNORE INTO "${table}" (${columns.map(c => `"${c}"`).join(",")}) VALUES(${columns.map(() => "?").join(",")})`);
+    for (const row of rows) insert.run(...columns.map(c => row[c]!));
+  };
+  try {
+    db.exec("PRAGMA foreign_keys=OFF; BEGIN");
+    copy("sources", original.prepare("SELECT * FROM sources WHERE id=?").all(material.sourceId) as Row[]);
+    copy("revisions", original.prepare("SELECT * FROM revisions WHERE id=? AND source_id=?").all(material.revisionId, material.sourceId) as Row[]);
+    copy("fragments", original.prepare("SELECT * FROM fragments WHERE revision_id=?").all(material.revisionId) as Row[]);
+    db.prepare("UPDATE sources SET head=? WHERE id=?").run(material.revisionId, material.sourceId);
+    ensureMaterialAliases(db);
+    db.prepare("INSERT OR IGNORE INTO knowledge_material_aliases VALUES(?,?)").run(material.key, material.sourceId);
+    db.exec("COMMIT; PRAGMA foreign_keys=ON");
+    new RetrievalProjection(db).sync();
+  } finally { db.close(); }
+}
 export function researchSnapshot(input: {
   repository: KnowledgeRepository;
   materials: KnowledgeMaterial[];
@@ -278,8 +302,8 @@ export function researchSnapshot(input: {
     db.close();
     throw error;
   }
-  // A sealed snapshot has no writers. Avoid read-only WAL sidecar creation
-  // when its first SQL read happens later inside an Agent tool request.
+  // Agent reads are read-only. The host may separately admit a captured source;
+  // DELETE journaling avoids read-only WAL sidecars during later tool requests.
   db.exec("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE");
   db.close();
   return new DatabaseSync(input.file, { readOnly: true });

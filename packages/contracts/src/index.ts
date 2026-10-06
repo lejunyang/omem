@@ -96,6 +96,11 @@ export const captureSchema = z
         conversationId: z.string().max(200).optional(),
         runId: z.string().max(200).optional(),
         event: z.string().max(100).optional(),
+        externalTool: z.object({
+          capability: z.string(), tool: z.string(), kind: z.enum(["cli", "mcp"]),
+          responseDigest: z.string(), rawAssetId: z.string(),
+          warnings: z.array(z.string()),
+        }).strict().optional(),
         uiText: z.string().max(30000).optional(),
         chat: z.object({
           messageId: z.string(), threadId: z.string().optional(), rawAssetId: z.string(),
