@@ -24,6 +24,7 @@ const emit = defineEmits<{
   open: [id: string];
   navigate: [frame: KnowledgeFrame];
   refresh: [];
+  "open-revision": [id: string];
 }>();
 const conversationId = ref(""),
   draft = ref(""),
@@ -154,7 +155,7 @@ onBeforeUnmount(() => {
         >：{{ item.trigger }}，整理为{{ item.output }}。
       </p>
     </OmDisclosure>
-    <AssistantWorkPanel ref="workPanel" @compose="compose" />
+    <AssistantWorkPanel ref="workPanel" @compose="compose" @open-revision="id => emit('open-revision', id)" />
     <form class="form" @submit.prevent="send">
       <label
         >发给日常助理<textarea

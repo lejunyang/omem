@@ -514,10 +514,13 @@ try {
         true,
       );
       built.work.pages.maintenance.setEnabled(key, false);
+      const followResponse = await page.request.get(base + "/api/work");
+      expect(followResponse.status(), await followResponse.text()).toBe(200);
       await page.getByRole("button", { name: "刷新状态", exact: true }).click();
+      await expect(page.locator(".work-panel .follow-card h3")).toHaveText("退款查询");
       await page
         .locator(".work-panel")
-        .getByRole("button", { name: /退款查询/ })
+        .getByText("关注点与我的反馈", { exact: true })
         .click();
       await expect(page.locator(".work-panel")).toContainText(
         "重点关注：接口验收",
@@ -525,12 +528,15 @@ try {
       await expect(page.locator(".work-panel")).toContainText("暂不关注：页面");
       await page.getByLabel("发给日常助理").fill("这是我还没发出的补充。");
       await page
-        .getByRole("button", { name: "在对话中调整", exact: true })
+        .getByRole("button", { name: "调整关注点", exact: true })
         .click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await expect(page.getByLabel("重点关注（每行一项）")).toHaveValue("接口验收");
+      await page.getByLabel("暂不关注（每行一项）").fill("重复提醒");
+      await page.getByRole("button", { name: "取消", exact: true }).click();
       await expect(page.getByLabel("发给日常助理")).toHaveValue(
-        /这是我还没发出的补充。[\s\S]*退款查询/,
+        "这是我还没发出的补充。",
       );
-      await expect(page.getByLabel("发给日常助理")).toBeFocused();
       for (const width of [1440, 768, 390]) {
         await page.setViewportSize({ width, height: 1000 });
         expect(

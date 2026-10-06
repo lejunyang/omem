@@ -1032,6 +1032,7 @@ onBeforeUnmount(() => {
       v-else-if="view === 'daily'"
       @open="(id) => evidence?.open(id)"
       @navigate="pushSearch"
+      @open-revision="openRevision"
       @refresh="refresh" />
     <section v-else-if="view === 'tasks'" class="page">
       <span class="eyebrow">从工作中记下要推进的事</span>

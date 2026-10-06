@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
-import { OmButton, OmPanel, OmBadge, OmEmpty, OmDisclosure } from "@omem/ui";
+import { OmButton, OmBadge, OmEmpty, OmDisclosure } from "@omem/ui";
 import { api, headers } from "./api";
 import {
   attentionLabels,
   messageQuestions,
 } from "../../server/src/integrations/lark-personal/policy";
 import AssetImage from "./AssetImage.vue";
+import FollowupFeedback from "./FollowupFeedback.vue";
 const emit = defineEmits<{ "open-revision": [id: string] }>();
 const dimensions: Record<string, string> = {
   schedule: "安排与跟进",
@@ -43,6 +44,33 @@ type Item = {
   error?: string;
   observed_at: string;
   decision: any;
+  demonstration?: boolean;
+  understanding: {
+    stage: string;
+    label: string;
+    error?: string | null;
+    note?: string;
+    results: {
+      id: string;
+      text: string;
+      state: string;
+      kind: string;
+      operation: string;
+      applied: boolean;
+      sourceCurrent: boolean;
+    }[];
+    questions: string[];
+    projects: { id: string; name: string }[];
+    requirements: {
+      key: string;
+      title: string;
+      cited: boolean;
+      current: boolean;
+      state: string;
+    }[];
+    feedback: { id: string; text: string; active: number; scope: string }[];
+    preferences?: { text: string }[];
+  };
   resources: {
     kind: string;
     label: string;
@@ -67,6 +95,46 @@ const notice = ref("");
 const query = ref("");
 const limit = ref(30);
 const model = ref("");
+const messageFilter = ref("all"),
+  messageQuery = ref(""),
+  correcting = ref<Item | null>(null);
+const shownItems = computed(() =>
+  items.value.filter(
+    (i) =>
+      (!messageQuery.value ||
+        `${i.text} ${i.chat_name} ${i.understanding.projects.map((p) => p.name).join(" ")}`.includes(
+          messageQuery.value,
+        )) &&
+      (messageFilter.value === "all" ||
+        (messageFilter.value === "needs"
+          ? i.understanding.stage === "needs_context" ||
+            !!i.error ||
+            i.understanding.stage === "failed"
+          : messageFilter.value === "updated"
+            ? i.understanding.stage === "applied"
+            : i.understanding.stage === "understanding")),
+  ),
+);
+const resultLabels: Record<string, string> = {
+  applied: "已保存",
+  awaiting_decision: "等待判断",
+  rejected: "未采用",
+  stale: "已过期，待重查",
+  proposed: "待复查",
+  approved: "已确认",
+  historical: "旧结论，已被后续更新",
+  failed: "未完成",
+};
+async function revoke(i: Item, id: string) {
+  await action(async () => {
+    await api(
+      `/integrations/lark-personal/inbox/${encodeURIComponent(i.id)}/feedback/${id}`,
+      undefined,
+      "DELETE",
+    );
+    notice.value = "已撤销纠正，正在重新理解。";
+  });
+}
 const filtered = computed(() =>
   streams.value.filter(
     (s) =>
@@ -127,6 +195,15 @@ function retry(id: string) {
     notice.value = "已安排重新读取资源和判断。";
   });
 }
+function understand(id: string) {
+  return action(async () => {
+    await api(
+      `/integrations/lark-personal/inbox/${encodeURIComponent(id)}/understand`,
+      {},
+    );
+    notice.value = "已安排重新理解保存的消息，不重新读取飞书。";
+  });
+}
 function sync() {
   return action(async () => {
     const r = await api<any>("/integrations/lark-personal/sync", {});
@@ -178,7 +255,7 @@ onBeforeUnmount(() => clearInterval(timer));
     </p>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
     <p v-if="notice" role="status">{{ notice }}</p>
-    <OmPanel title="采集范围与频率">
+    <OmDisclosure title="采集范围与频率">
       <div class="settings-grid">
         <label
           ><input type="checkbox" v-model="settings.enabled" />
@@ -220,8 +297,8 @@ onBeforeUnmount(() => clearInterval(timer));
           >立即同步</OmButton
         ><span class="muted">决策模型：{{ modelLabels[model] || model }}</span>
       </div>
-    </OmPanel>
-    <OmDisclosure title="选择会话" :default-open="true">
+    </OmDisclosure>
+    <OmDisclosure title="选择会话">
       <div class="actions">
         <OmButton variant="secondary" :loading="busy" @click="discover"
           >读取最近活跃会话</OmButton
@@ -271,23 +348,129 @@ onBeforeUnmount(() => clearInterval(timer));
         description="读取最近活跃会话后，选择需要持续跟进的群聊或单聊。"
       />
     </OmDisclosure>
-    <h2>最近消息与判断</h2>
+    <h2>消息与跟进结果</h2>
     <p class="muted">
-      小模型判断关注原因、安排、学习、业务与代码，并检查缺失背景及可疑指令。标签只是处理建议，事项和记忆仍由现有
-      Agent 调查与复核。
+      查看助手从消息中记下什么、关联了哪些项目，以及还需要补充什么。采集分类与实际更新分开显示。
     </p>
+    <div class="message-filters">
+      <label
+        >处理情况<select v-model="messageFilter">
+          <option value="all">全部消息</option>
+          <option value="needs">需要处理</option>
+          <option value="updated">已有实际更新</option>
+          <option value="understanding">正在理解</option>
+        </select></label
+      ><label
+        >查找消息<input v-model="messageQuery" placeholder="消息、群名或项目"
+      /></label>
+    </div>
     <OmEmpty
       v-if="!items.length"
       title="还没有同步的消息"
       description="选定会话并保存采集设置后，这里会显示原文和判断结果。"
     />
-    <article v-for="i in items" :key="i.id" class="message">
+    <OmEmpty
+      v-if="items.length && !shownItems.length"
+      title="没有符合筛选的消息"
+    />
+    <article v-for="i in shownItems" :key="i.id" class="message">
       <div class="actions">
-        <OmBadge>{{ label(i) }}</OmBadge
+        <OmBadge v-if="i.demonstration">演示消息 · 非真实飞书记录</OmBadge>
+        <OmBadge
+          :tone="
+            ['needs_context', 'failed'].includes(i.understanding.stage)
+              ? 'warning'
+              : 'neutral'
+          "
+          >{{ i.understanding.label }}</OmBadge
         ><span>{{ i.chat_name }}</span
         ><small>{{ new Date(i.observed_at).toLocaleString() }}</small>
       </div>
       <p class="message-text">{{ i.text }}</p>
+      <p v-if="i.understanding.projects.length" class="muted">
+        所属项目：{{ i.understanding.projects.map((p) => p.name).join("、") }}
+      </p>
+      <section v-if="i.understanding.results.length" class="understood">
+        <h3>助手记下了什么</h3>
+        <ul>
+          <li
+            v-for="r in i.understanding.results.filter(
+              (r) => r.state !== 'historical',
+            )"
+            :key="r.id"
+          >
+            <div class="result-heading">
+              <b>{{
+                r.kind === "task"
+                  ? "事项"
+                  : r.operation === "create"
+                    ? "记忆"
+                    : "记忆变化"
+              }}</b
+              ><span class="muted">{{
+                resultLabels[r.state] || "待复查"
+              }}</span>
+            </div>
+            <p>{{ r.text }}</p>
+            <small
+              v-if="i.understanding.stage === 'understanding'"
+              class="muted"
+              >上次结论；正在按新材料或纠正重新核对。</small
+            >
+          </li>
+        </ul>
+        <OmDisclosure
+          v-if="i.understanding.results.some((r) => r.state === 'historical')"
+          title="此前的结论"
+          ><p
+            v-for="r in i.understanding.results.filter(
+              (r) => r.state === 'historical',
+            )"
+            :key="r.id"
+            class="muted"
+          >
+            {{ r.text }} · 已被后续更新
+          </p></OmDisclosure
+        >
+      </section>
+      <section v-if="i.understanding.questions.length" class="missing-context">
+        <h3>需要补充</h3>
+        <p v-for="q in i.understanding.questions" :key="q">{{ q }}</p>
+      </section>
+      <p v-if="i.understanding.note && !i.understanding.results.length" class="muted">
+        {{ i.understanding.note }}
+      </p>
+      <OmDisclosure v-else-if="i.understanding.note" title="处理说明"><p>{{ i.understanding.note }}</p></OmDisclosure>
+      <div v-if="i.understanding.requirements.length" class="related-follows">
+        <p class="muted">关联跟进</p>
+        <a
+          v-for="r in i.understanding.requirements"
+          :key="r.key"
+          :href="'#/knowledge/' + encodeURIComponent(r.key)"
+          >{{ r.title
+          }}<small>{{
+            r.cited
+              ? r.current
+                ? " · 已纳入当前需求"
+                : " · 已引用，等待更新"
+              : " · 在跟进范围内，待整理"
+          }}</small></a
+        >
+      </div>
+      <p v-if="i.understanding.error" class="error">
+        {{ i.understanding.error }}
+      </p>
+      <div
+        v-for="f in i.understanding.feedback.filter((f) => f.active)"
+        :key="f.id"
+        class="saved-feedback"
+      >
+        <p><b>我的纠正：</b>{{ f.text }}</p>
+        <small class="muted">{{
+          f.scope === "conversation" ? "用于这个会话的后续消息" : "针对这条消息"
+        }}</small
+        ><OmButton variant="ghost" @click="revoke(i, f.id)">撤销</OmButton>
+      </div>
       <p v-if="i.error" class="error">{{ i.error }}</p>
       <OmButton
         v-if="i.state !== 'ready'"
@@ -297,6 +480,19 @@ onBeforeUnmount(() => clearInterval(timer));
         >重新读取与判断</OmButton
       >
       <div class="actions">
+        <OmButton
+          v-if="i.understanding.stage === 'failed'"
+          variant="secondary"
+          :disabled="busy"
+          @click="understand(i.id)"
+          >重新理解</OmButton
+        >
+        <OmButton
+          v-if="i.revision_id"
+          variant="secondary"
+          @click="correcting = i"
+          >纠正理解</OmButton
+        >
         <OmButton
           v-if="i.revision_id"
           variant="ghost"
@@ -343,8 +539,11 @@ onBeforeUnmount(() => clearInterval(timer));
           >
         </div></OmDisclosure
       >
-      <OmDisclosure v-if="i.decision" title="判断依据与分类"
-        ><dl>
+      <OmDisclosure v-if="i.decision" title="采集分类（处理建议）"
+        ><p class="muted">
+          {{ label(i) }}。这些标签不代表需求、记忆或待办已经更新。
+        </p>
+        <dl>
           <template v-for="(v, k) in i.decision.answers" :key="k"
             ><dt>{{ dimensions[String(k)] || k }}</dt>
             <dd>
@@ -355,6 +554,18 @@ onBeforeUnmount(() => clearInterval(timer));
         </dl></OmDisclosure
       >
     </article>
+    <FollowupFeedback
+      v-if="correcting"
+      :open="true"
+      :title="correcting.chat_name"
+      :target="correcting.id"
+      kind="message"
+      @close="correcting = null"
+      @saved="
+        notice = '已保存纠正，正在重新理解；关联需求也会更新。';
+        refresh();
+      "
+    />
   </section>
 </template>
 <style scoped>
@@ -412,6 +623,87 @@ onBeforeUnmount(() => clearInterval(timer));
 .message {
   padding: 24px 0;
   border-bottom: 1px solid var(--om-line);
+}
+.message-filters {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin: 24px 0;
+}
+.message-filters label {
+  display: grid;
+  gap: 8px;
+}
+.message-filters select {
+  min-height: 44px;
+  padding: 8px;
+  font: inherit;
+  border: 1px solid var(--om-line);
+  border-radius: 6px;
+  background: var(--om-panel);
+  color: var(--om-ink);
+}
+.understood,
+.missing-context {
+  padding: 16px 20px;
+  margin: 24px 0;
+  background: var(--om-panel);
+  border: 1px solid var(--om-line);
+  border-radius: 8px;
+}
+.understood h3,
+.missing-context h3 {
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 1.7;
+  margin: 0 0 12px;
+}
+.understood ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.understood li + li {
+  margin-top: 20px;
+  border-top: 1px solid var(--om-line);
+  padding-top: 16px;
+}
+.understood p {
+  white-space: pre-wrap;
+  margin: 8px 0;
+}
+.result-heading {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.related-follows {
+  display: grid;
+  gap: 8px;
+  margin: 20px 0;
+}
+.related-follows p {
+  margin: 0;
+}
+.related-follows a {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--om-ink);
+  text-underline-offset: 4px;
+}
+.saved-feedback {
+  padding: 12px 16px;
+  margin: 16px 0;
+  background: var(--om-soft);
+  overflow-wrap: anywhere;
+}
+.saved-feedback p {
+  margin: 4px 0;
 }
 .message-text {
   white-space: pre-wrap;
