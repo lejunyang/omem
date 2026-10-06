@@ -2,6 +2,7 @@ import { MaterialResearch } from "./research.js";
 import { articleWithinMaterials, maintenanceTrace, planMaintenance, type ArticleMaintenance } from "./maintenance.js";
 import { materialDescriptionBatchSchema } from "../../../../packages/contracts/src/material-description.js";
 import { prepareAgentResearch } from "./agent-research.js";
+import { followupStateTools } from "../assistant/followup-state.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
 import { readFileSync } from "node:fs";
 import type { AgentProfile, ContextManifest } from "../../../../packages/contracts/src/index.js";
@@ -124,7 +125,7 @@ export class KnowledgePipeline {
       [`knowledge:${role}`]: async (lease, signal) => {
         this.options.log?.(`AI ${role}: ${String(task.targetKeys ?? task.title ?? "catalog")}`);
         const run = await this.gateway.run({ roleId: role, profile: this.profile, context: this.context(role, lease.id, offers, articles, task), signal, budget: this.options.budget, validateOutput: validate,
-          ...(this.nativeResearch ? { research: (workspace, schema, validate) => prepareAgentResearch({ repository:this.repository, materials:offers.map(o=>o.material), articles, workspace, schema, validate, retrievalConfig:this.options.retrievalConfig }) } : {}),
+          ...(this.nativeResearch ? { research: (workspace, schema, validate) => prepareAgentResearch({ repository:this.repository, materials:offers.map(o=>o.material), articles, workspace, schema, validate, tools:followupStateTools(offers.map(o=>o.material)), retrievalConfig:this.options.retrievalConfig }) } : {}),
           emit: (type, text) => { if (type === "status") this.options.log?.(text); } });
         const saved = this.repository.store.jobs.saveRoleOutput({ jobId: lease.id, leaseToken: lease.leaseToken,
           model: run.trace.effectiveModel, effort: run.trace.effectiveEffort, promptHash: run.trace.promptHash, skillHash: run.trace.skillHash, toolHash: run.trace.toolHash,
@@ -189,7 +190,8 @@ export class KnowledgePipeline {
     } : undefined);
     let remaining = targets;
     const published: KnowledgeArticle[] = [];
-    for (let attempt = 0; attempt < 4; attempt++) {
+    const attempts = publication?.reading.workflow === "requirement-followup" ? 2 : 4;
+    for (let attempt = 0; attempt < attempts; attempt++) {
       const write = await this.runRole(repair && role !== "implementation-planner" ? "knowledge-refresher" : role, offers, articles, { conservative: attempt === 3 ? "Retain only directly supported statements; turn remaining uncertain claims into scoped questions with next steps. Do not reintroduce rejected claims." : undefined, targetKeys: remaining.map(t => t.key), targets: remaining, catalogTopics: [...new Set(this.repository.list().map(a => JSON.stringify(a.document.topicPath ?? [])).filter(p => p !== "[]"))].map(p => JSON.parse(p)), reading: publication?.reading, maintenance, research: publication ? {findings:publication.research.findings,gaps:publication.research.gaps,composition} : undefined, revisionAttempt: attempt, ...(repair ? { revisionRequest: repair } : {}) }, out => this.checkBatch(out, remaining, offers, articles));
       const batch = knowledgeBatchSchema.parse(write.result);
       // Explicit placement is user/page-plan data, not inferred from repository paths.
@@ -316,6 +318,15 @@ export class KnowledgePipeline {
       // The shared snapshot filters searchable sections and read_knowledge
       // labels outdated pages; fixed citations retain their own lifecycle.
       const articles = this.repository.published().filter(a=>a.document.key!==brief.key&&permitted(a));
+      const changes = [...(maintenance?.materialChanges ?? []), ...(maintenance?.newlySelected ?? [])];
+      const progressOnly = !!maintenance?.previousDraft && !maintenance.changedFields.length && changes.length > 0 && changes.every(change => {
+        const material = materials.find(m => m.key === change.key);
+        const revision = material && this.repository.store.revision(material.revisionId);
+        return revision?.provenance?.actorVerifiedBy === "host-execution" &&
+          ["omem.followup-state", "omem.development"].includes(revision.context?.application ?? "");
+      });
+      if (progressOnly) return this.writeAndVerify(writer, [{...brief,purpose:brief.goal}], offers, articles, undefined,
+        {reading:brief,research:{findings:"Only original host execution/task records changed. Read read_followup_state and the changed development result. Preserve objective, criteria definitions, decisions and unaffected prose; update actual progress, waiting state and resolved questions. Investigate via native tools if an observed result is unclear, never ask the owner whether an existing task was created.", gaps:[], composition:{mode:"maintain", reason:"Only saved execution state changed", outline:"Retain the existing explanation and update affected progress/actions."}},writerVersion,maintenance,materialKeys});
       const run = await this.runRole(researcher, offers, articles, {title:brief.title,page:brief,maintenance, investigationHints: this.options.investigationHints,
         ...(maintenance ? {instruction:maintenance.instruction} : {}),
       }, out=>knowledgeResearchSchema.parse(out));

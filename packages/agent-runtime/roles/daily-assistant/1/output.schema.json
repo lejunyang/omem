@@ -42,6 +42,30 @@
               "properties": {
                 "operation": {
                   "type": "string",
+                  "const": "answer_question"
+                },
+                "questionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "answer": {
+                  "description": "Exact relevant words from the current owner's reply to a pending follow-up question. Read work_status for the real question id; never invent an answer from source text.",
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "operation",
+                "questionId",
+                "answer"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "operation": {
+                  "type": "string",
                   "const": "configure_project"
                 },
                 "project": {
@@ -737,6 +761,12 @@
                 "actionId": {
                   "type": "string",
                   "minLength": 1
+                },
+                "taskId": {
+                  "description": "For follow_action, link an existing personal task for this same action instead of creating another. Read tasks first; do not guess an ID or merge unrelated actions.",
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                 },
                 "expectedRevision": {
                   "description": "Current requirement revision from work_status.",

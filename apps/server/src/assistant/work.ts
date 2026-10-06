@@ -26,6 +26,7 @@ import {
   repositoryQuestions,
 } from "../decision/work.js";
 import { queueOwnerNotice } from "../integrations/lark/owner-notice.js";
+import { captureFollowupState } from "./followup-state.js";
 import type { WikiPageBrief } from "../../../../packages/contracts/src/knowledge.js";
 import { CapabilitySession } from "../capabilities/session.js";
 import {
@@ -133,11 +134,22 @@ export class AssistantWork {
     this.store.db
       .exec(`CREATE TABLE IF NOT EXISTS assistant_requirement_updates(
       requirement_key TEXT PRIMARY KEY, revision TEXT NOT NULL, changes TEXT NOT NULL, updated_at TEXT NOT NULL);`);
+    this.store.db.exec(
+      "CREATE TABLE IF NOT EXISTS assistant_question_notices(requirement_key TEXT PRIMARY KEY,digest TEXT NOT NULL)",
+    );
   }
   private plan(key: string) {
     const p = this.pages.repository.pages().find((p) => p.key === key)?.plan;
     if (p?.workflow !== "requirement-followup") throw Error("需求跟进不存在");
     return p;
+  }
+  preparePage(plan: WikiPageBrief) {
+    captureFollowupState(
+      this.store,
+      this.pages.repository,
+      plan,
+      this.development,
+    );
   }
   private ensure(key: string) {
     const plan = this.plan(key),
@@ -196,13 +208,24 @@ export class AssistantWork {
       revision: article?.revision ?? null,
       requirement: article?.document.requirement ?? null,
       actionLinks: links,
-      questions: article?.document.questions ?? [],
+      questions: this.pages.repository
+        .questions()
+        .filter((q) => q.documentKey === key && q.state === "open")
+        .map((q) => ({
+          ...q,
+          kind: q.kind ?? "investigate",
+          blocking: q.kind === "decision" && q.blocking,
+        })),
       summary: article?.document.summary ?? null,
       updatedAt: article?.generation.at ?? null,
       latestChange: this.latestChange(key),
-      personalTasks: todos.filter(t => t.ownerId === "owner" &&
-        !["done", "cancelled"].includes(String(t.status)) &&
-        !!t.projectId && (plan.contextIds ?? []).includes(String(t.projectId))),
+      personalTasks: todos.filter(
+        (t) =>
+          t.ownerId === "owner" &&
+          !["done", "cancelled"].includes(String(t.status)) &&
+          !!t.projectId &&
+          (plan.contextIds ?? []).includes(String(t.projectId)),
+      ),
       actions: (article?.document.requirement?.actions ?? []).map((action) => ({
         ...action,
         sources: action.evidence.flatMap((id) => {
@@ -694,6 +717,31 @@ export class AssistantWork {
             ? "已将行动项关联到个人待办；需求更新后会继续同步到同一条事项。你手动修改待办时会保留你的调整。"
             : "已停止同步这个行动项，原个人待办仍保留。",
       };
+    } else if (action.operation === "answer_question") {
+      if (!actor.userText.includes(action.answer))
+        throw Error("回答必须来自当前本人原话");
+      const question = this.pages.repository
+        .questions()
+        .find((q) => q.id === action.questionId && q.state === "open");
+      if (!question) throw Error("问题已解决或不再适用，请先读取当前问题");
+      const revisionId = this.pages.repository.answer(
+        action.questionId,
+        action.answer,
+        {
+          application: "omem.assistant-answer",
+          conversationId: actor.conversationId,
+          verifiedBy: "assistant-owner-command",
+        },
+      );
+      this.pages.refresh(question.documentKey);
+      receipt = {
+        tool: "work_action",
+        operation: action.operation,
+        key: question.documentKey,
+        message:
+          "已保存你的回答，原问题不再待确认；后续跟进将采用这条回答，正在更新需求。",
+        revisionId,
+      };
     } else if (action.operation === "cancel_development") {
       const task = this.development.cancel(action.taskId, actor.requestId);
       receipt = {
@@ -722,6 +770,19 @@ export class AssistantWork {
               context: {
                 conversationId: actor.conversationId,
                 event: "requirement-feedback",
+              },
+              provenance: {
+                collectorId: "omem.assistant-feedback",
+                actorId: "owner",
+                actorType: "owner",
+                actorVerifiedBy: "assistant-owner-command",
+                sourceUri: null,
+                eventId: actor.requestId,
+                eventAt: new Date().toISOString(),
+                timezone: "Asia/Shanghai",
+                quoted: false,
+                forwarded: false,
+                producerKind: "original",
               },
             },
             { learning: false, notify: false },
@@ -840,6 +901,7 @@ export class AssistantWork {
       return;
     const key = article.document.key,
       state = article.document.requirement;
+    this.notifyQuestions(key, article.document.title);
     const previous = this.store.db
       .prepare(
         "SELECT state FROM assistant_requirement_notices WHERE requirement_key=?",
@@ -920,6 +982,53 @@ export class AssistantWork {
         this.store.applications.externalDeliveryTiming(
           new Date().toISOString(),
         ),
+      );
+    });
+  }
+  private notifyQuestions(key: string, title: string) {
+    const questions = this.status(key, false).questions.filter(
+      (q) => q.kind === "decision" && q.blocking,
+    );
+    const signature = stableDigest(
+      questions.map((q) => ({ id: q.id, question: q.question, why: q.why })),
+    );
+    if (
+      this.store.db
+        .prepare(
+          "SELECT digest FROM assistant_question_notices WHERE requirement_key=?",
+        )
+        .get(key)?.digest === signature
+    )
+      return;
+    this.store.tx(() => {
+      this.store.db
+        .prepare(
+          "INSERT OR REPLACE INTO assistant_question_notices VALUES(?,?)",
+        )
+        .run(key, signature);
+      if (!questions.length) return;
+      const body =
+        questions
+          .slice(0, 3)
+          .map(
+            (q) => `${q.question}\n为什么现在需要决定：${q.why}\n${q.nextStep}`,
+          )
+          .join("\n\n") +
+        "\n\n可以直接回复机器人，说明你的选择；不必打开网页。若你已在订阅的群里明确决定，助手会结合讨论更新，问题不再适用时会关闭。";
+      const at = new Date().toISOString(),
+        change = this.store.record(
+          "requirement",
+          `${title}：需要你的决定`,
+          null,
+          null,
+          body,
+        );
+      queueOwnerNotice(
+        this.store.db,
+        change,
+        `${title}：需要你的决定`,
+        body,
+        at,
       );
     });
   }

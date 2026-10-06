@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,28 @@ const plan: WikiPageBrief = {
 };
 const capture = (store: Store, amount: number, externalId = "agreement") => store.capture({
   source: "manual", externalId, title: "费用约定", parts: [{ type: "text", text: `费用 ${amount} 元，含材料费，不含交通费。` }], context: {},
+});
+
+it("waits for a quiet interval before automatic work, while explicit requests start immediately", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "omem-page-settle-"));
+  const store = new Store(dir), repository = new KnowledgeRepository(store);
+  const worker = new KnowledgePageWorker(repository, { settleMs: 12000 });
+  vi.useFakeTimers();
+  try {
+    capture(store, 80); repository.savePlan(plan, true); publish(repository); worker.setEnabled(plan.key, true);
+    capture(store, 120); worker.observe();
+    vi.advanceTimersByTime(11000); worker.observe();
+    expect(worker.busy()).toBe(false);
+    capture(store, 160); worker.observe();
+    vi.advanceTimersByTime(11000); worker.observe();
+    expect(worker.busy()).toBe(false);
+    vi.advanceTimersByTime(1000); worker.observe();
+    expect(worker.busy()).toBe(true);
+    expect(store.jobs.list().filter(j => j.kind === "knowledge:maintain-page")).toHaveLength(1);
+    worker.setEnabled(plan.key, false);
+    capture(store, 200); worker.request(plan.key);
+    expect(worker.busy()).toBe(true);
+  } finally { vi.useRealTimers(); await worker.stop(); store.close(); rmSync(dir, {recursive:true,force:true}); }
 });
 // This publisher tests queue/host behavior, not model understanding.
 function publish(repository: KnowledgeRepository) {

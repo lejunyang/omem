@@ -27,6 +27,7 @@ import {
 } from "../../assistant/runtime.js";
 import type { VisibilityPolicy } from "../../assistant/runtime.js";
 import { QualityLarkAnnotationService } from "../../quality/lark-annotations.js";
+import type { AssistantWork } from "../../assistant/work.js";
 
 type Row = Record<string, unknown>;
 
@@ -60,6 +61,7 @@ export class LarkRuntimeHost {
       realtimeAdapter?: LarkRealtimeAdapter;
       messageAdapter?: LarkMessageAdapter;
       assistantModel?: AssistantModelPort;
+      work?: AssistantWork;
       assistantTimeoutMs?: number;
       retrieval?: RetrievalPort;
       media?: LarkMediaPort;
@@ -108,6 +110,7 @@ export class LarkRuntimeHost {
           ownerId: "owner",
           memory: input.memory,
           feedback: assistantFeedback,
+          work: input.work,
           retrieval: assistantRetrieval,
           visibilityPolicy,
           turnTimeoutMs: input.assistantTimeoutMs ?? 60_000,

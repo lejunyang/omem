@@ -127,6 +127,7 @@ export async function buildApp(
   const requirementTasks = new RequirementTasks(store);
   registerRequirementTasks(app, requirementTasks);
   const knowledgeRepository = registerKnowledgeRoutes(app, {
+    preparePage: plan => work?.preparePage(plan),
     beforePageRun: (plan, signal) => work.investigationHints(plan, signal),
     onPublish: (article) => {
       requirementTasks.sync(article);
@@ -246,6 +247,7 @@ export async function buildApp(
       larkRuntime = new LarkRuntimeHost({
         store,
         memory,
+        work,
         onboarding: lark,
         secrets,
         assistantModel,
