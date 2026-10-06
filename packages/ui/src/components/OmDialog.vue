@@ -26,7 +26,10 @@ watch(
   },
   { immediate: true },
 );
-onBeforeUnmount(() => dialog.value?.close());
+onBeforeUnmount(() => {
+  dialog.value?.close();
+  if (previous?.isConnected) previous.focus();
+});
 </script>
 <template>
   <dialog

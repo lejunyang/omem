@@ -13,6 +13,60 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on("pageerror", e => errors.push(e.message));
   await page.goto(BASE);
+  if (process.env.OMEM_FOLLOWUP_ONLY === "1") {
+    const catalog = await api("/api/work");
+    expect(catalog.requirements.some((r: any) => r.title.includes("[演示]"))).toBe(true);
+    await page.goto(BASE + "/#/daily");
+    const panel = page.locator(".work-panel");
+    await expect(panel.locator(".follow-card").first()).toBeVisible();
+    await expect(panel).toContainText("小林");
+    await panel.getByRole("button", {name: /等待回复/}).click();
+    await expect(panel.locator(".action-list")).toContainText("小林");
+    await panel.getByRole("button", {name: /^全部/}).click();
+    await panel.getByRole("button", {name: /^个人待办/}).click();
+    await expect(panel.locator(".action-list")).toContainText("检查时间");
+    await panel.getByRole("button", {name: /^全部/}).click();
+    const trigger = panel.getByRole("button", {name: "调整关注点", exact: true}).first();
+    await trigger.click();
+    await expect(page.getByLabel("重点关注（每行一项）")).not.toHaveValue("");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await expect(panel.locator(".change-plan")).toContainText("紧急");
+    await panel.getByRole("button", {name:"查看代码差异",exact:true}).first().click();
+    await expect(panel.locator(".code-diff")).toContainText("urgent");
+    await panel.getByRole("button", {name:"收起代码差异",exact:true}).first().click();
+    for (const width of [1440,768,390]) {
+      await page.setViewportSize({width,height:1000});
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await panel.locator(".work-heading").first().evaluate(el => {
+        el.scrollIntoView({block:"start"});
+        let p: HTMLElement | null = el.parentElement;
+        while (p && p.scrollHeight <= p.clientHeight) p = p.parentElement;
+        if (p) p.scrollTop -= 88; else window.scrollBy(0,-88);
+      });
+      await page.screenshot({path:`${OUT}/followup-${width}.png`});
+      await panel.locator(".change-plan").scrollIntoViewIfNeeded();
+      await page.screenshot({path:`${OUT}/coding-${width}.png`});
+    }
+    await page.goto(BASE + "/#/messages");
+    await expect(page.locator(".message").first()).toContainText("演示消息");
+    const corrected = page.locator(".message").filter({hasText:"建议下一步加紧急优先"});
+    await expect(corrected).toContainText("紧急优先已经由我确认");
+    await corrected.getByRole("button", {name:"纠正理解",exact:true}).click();
+    await page.getByRole("button", {name:"这是提议，尚未决定",exact:true}).click();
+    await expect(page.getByLabel("正确理解应该是什么？")).toHaveValue("这只是提议，还没有决定。");
+    await page.getByRole("button", {name:"取消",exact:true}).click();
+    for (const width of [1440,768,390]) {
+      await page.setViewportSize({width,height:1000});
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await corrected.scrollIntoViewIfNeeded();
+      await page.screenshot({path:`${OUT}/understanding-${width}.png`});
+    }
+    expect(errors).toEqual([]);
+    console.log("PASS real Sol message understanding, project follow-up, correction dialog, saved coding plan/diff and three viewports");
+    await browser.close(); process.exit(0);
+  }
   if (process.env.OMEM_MESSAGES_ONLY === "1") {
     await page.goto(BASE + "/#/messages");
     await expect(page.getByRole("heading",{name:"飞书消息",exact:true})).toBeVisible();
