@@ -77,6 +77,28 @@ omem develop apply RUN_ID
 
 start/resume 在前台运行，Ctrl+C 停止；进程中断后显式 resume，继续保留的副本。活动超时沿用 Agent 配置。apply 重新核对已评审代码、原仓库提交和干净状态，重新生成补丁后应用，不自动提交。原仓库已有新改动时拒绝覆盖，保留补丁供手动合并。新任务冻结材料范围、原件摘要和验收定义：单纯补充本次开发进度允许沿用原任务；原始需求、范围、目标或验收描述改变仍需重新规划和评审。旧任务没有这种基线时仍严格核对需求文章版本。
 
+### 准备远端仓库
+
+用户可以直接说“准备这个仓库的 main 分支，项目别名用 billing”；主助手提交 `prepare_repository`，常驻服务后台执行，随后用 `repository_status` 查实际提交、目录或错误。地址须由本人提供，或者来自已经登记的项目；不会从消息材料中自行选一个新远端。重试沿用同一项目，不把登录失败说成项目不存在。准备完成和失败沿用已有通知流程。
+
+CLI 供 Agent 装配和诊断：
+
+```bash
+omem develop prepare billing git@example.company:team/billing.git --ref main --config ./development-project.json
+omem develop repository billing --json
+omem develop refresh billing
+# 明确切换分支；之前的工作区和编码任务保留
+omem develop refresh billing --ref release/next
+```
+
+本地 Git 仍可 `develop register`。`prepare` 支持 SSH、HTTP(S) 和绝对路径，不依赖 GitHub；`--config` 提供项目名称、规则与检查命令，repository 字段由宿主填写。省略配置时只登记项目，检查列表为空，不能称为已具备项目验收。`refresh --config` 可由装配 Agent 更新配置，未提供则沿用原规则和检查。上述命令运行于服务机器的个人库，不接受 `--url` 去管理另一台服务。
+
+复用 Git 的 [fetch](https://git-scm.com/docs/git-fetch)、[worktree](https://git-scm.com/docs/git-worktree) 和[凭据助手](https://git-scm.com/docs/gitcredentials)。认证留在已有 SSH / Git 配置，地址不能携带密码或 token；不会自动登录。准备过程不执行依赖安装、项目脚本、push 或递归子模块读取。LFS 和子模块尚未自动补齐，发现声明时显示缺口。拉取持续有输出就续期，两分钟没有输出才报无活动；进程中断后可重试，缓存对象保留。
+
+数据在 `development/repositories/ALIAS/`：一个 Git 对象缓存、当前准备状态和按提交保存的工作区。刷新获取新提交后登记新的本地路径，旧工作区及未提交修改保留。编码任务仍按创建时的项目路径和提交建立自己的独立副本；旧任务不会因远端刷新悄悄换基线。对远端项目 apply 只写入该任务对应的本地准备目录，并不推送到远端。工作区/缓存当前没有自动回收策略，不能直接删除仍被任务引用的版本。
+
+快速模型可对失败记录给凭据、网络、版本、本地环境或不确定等原因和排查方向建议；不会因此扩大读取范围、改分支或执行修复。真实 SSH、公司 SSO、子模块/LFS 与大型业务仓库还需要各自验收。
+
 本地路径在 `DATA_DIR/development/projects` 与 `development/runs/RUN_ID`。运行记录包含固定需求、项目配置、代码副本、检查日志、各轮角色结果及最终补丁，不应进入 Git。develop 是本地命令，不使用远端 `--url`。由主助手派发的编码任务保存在同一个个人库中，随常驻服务执行；进程重启会续跑同一任务和副本。前台 CLI start/resume 仍是显式执行。通过聊天询问进度，可读到当前阶段、实际检查和独立评审；完成/失败复用已有通知与机器人绑定。
 
 ## 执行结果如何回到需求和记忆

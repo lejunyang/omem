@@ -19,6 +19,13 @@ const key = z.string().min(1);
 const version = z.number().int().positive();
 /** A proposal, applied by the host after the assistant turn completes. */
 export const workActionSchema = z.discriminatedUnion("operation", [
+  z.object({
+    operation: z.literal("prepare_repository"),
+    alias: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/),
+    url: key.describe("Exact Git address/path supplied by the owner, or the origin of an already registered project. No credentials in URLs."),
+    ref: key.describe("Requested branch, tag or commit; use HEAD only when no version was specified. Preserve a registered project's ref when retrying."),
+    delegation: key.describe("Copy the current owner request to prepare, fetch or retry this repository. This queues preparation, not coding."),
+  }).strict(),
   z
     .object({
       operation: z.literal("track"),

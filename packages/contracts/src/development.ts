@@ -49,6 +49,9 @@ export const developmentProjectSchema = z
   .object({
     name: z.string().min(1),
     repository: z.string().min(1),
+    origin: z.object({
+      url: z.string(), ref: z.string(), commit: z.string(), preparedAt: z.string(),
+    }).strict().optional(),
     instructions: z.string().default(""),
     ruleFiles: z.array(z.string()).default([]),
     capabilities: z.array(z.string()).optional(),

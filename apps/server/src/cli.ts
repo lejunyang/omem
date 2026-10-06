@@ -657,6 +657,7 @@ const develop = group(
   "after",
   `
 本地编码：读取本个人库中的需求和登记仓库；不接受远程 --url。修改发生在独立 Git 副本，原工作区保留。
+远端仓库用 prepare ALIAS GIT_URL --ref REF --config FILE；repository 查准备状态，refresh 重试/获取新版本，保留旧工作区。
 先登记项目 JSON：{name,repository,instructions?,ruleFiles?,commands:[{name,command,args,purpose,required?}]}。
 purpose 可为 setup/test/build/browser/design。只运行明确登记的命令；请包含项目必要的依赖准备和验收。
 start/resume 前台运行，活动超时按 Agent 配置；中断后可 resume。最多三轮编码与独立评审。
@@ -681,6 +682,33 @@ develop
   .command("projects")
   .description("查看已登记编码项目")
   .action(async () => show((await developmentRunner()).projects()));
+develop
+  .command("prepare <alias> <repository>")
+  .option("--ref <ref>", "分支、标签或提交，默认远端 HEAD", "HEAD")
+  .option("--config <file>", "可选项目 JSON，提供名称、规则和检查命令")
+  .description("使用已有 Git/SSH 登录准备指定仓库，固定提交并登记本地项目")
+  .action(async (alias, repository, opts) => show(await (await developmentRunner()).prepareRepository(alias, repository, opts.ref, {
+    configuration: opts.config ? await readJson(opts.config) : undefined,
+  })));
+develop
+  .command("refresh <alias>")
+  .option("--ref <ref>", "显式改用其他分支、标签或提交")
+  .option("--config <file>", "可选更新项目规则和检查命令")
+  .description("重试或刷新原仓库；为新提交准备工作区，保留旧任务与修改")
+  .action(async (alias, opts) => {
+    const runner = await developmentRunner();
+    const origin = runner.projects().find(p => p.alias === alias)?.origin ?? runner.repositories.status(alias);
+    if (!origin) throw Error("项目尚未登记远端地址，请先 prepare");
+    show(await runner.prepareRepository(alias, origin.url, opts.ref ?? origin.ref, {
+      configuration: opts.config ? await readJson(opts.config) : undefined,
+    }));
+  });
+develop
+  .command("repository <alias>")
+  .description("查看准备状态、原地址、固定提交和缺失的子模块/LFS 内容")
+  .action(async alias => { const runner = await developmentRunner(); show({
+    project: runner.projects().find(p => p.alias === alias) ?? null, preparation: runner.repositories.status(alias),
+  }); });
 const capabilities = group(
   "capabilities",
   "登记和检查外部只读 skill、CLI、MCP，按项目装配",

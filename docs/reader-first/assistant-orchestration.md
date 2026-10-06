@@ -12,7 +12,7 @@
 | 维护需求与反馈 | 主助手建立、调整范围、暂停/恢复；独立保存关注点、用户原话和可撤销反馈；变化进入持久调查队列 | 专用关注界面与周期回顾；关注范围选择的模型可靠性 |
 | 跟进个人行动 | 主助手 follow_action/unfollow_action 复用 RequirementTasks，将明确行动关联到同一待办；停止同步保留待办，需求更新保留人工修改 | 多行动的自然语言选择仍需更多真实项目验收 |
 | 后台实施和评审 | 明确交办后持久排队；独立 Git 副本、项目检查、新会话评审；服务重启续跑同一任务；对话恢复受阻任务、显式应用刚查看的评审补丁 | 需求变更后保留已有代码的重新规划；Traex、Codex 已实跑，Claude 实验适配缺认证 |
-| 外部能力 | 个人库登记 skill 快照、只读 CLI、标准 MCP；主助手按需读取，编码任务固定选择，独立评审补查同一回执；Codex 会话关闭继承的个人工具 | 真实 Figma/私有 Git 接入、OAuth 编排、资料更新后的任务重规划，以及 Claude 实际编码验收 |
+| 外部能力 | 个人库登记 skill 快照、只读 CLI、标准 MCP；主助手按需读取，编码任务固定选择，独立评审补查同一回执；Codex 会话关闭继承的个人工具 | 真实 Figma/公司 Git 环境验收、OAuth 编排、资料更新后的任务重规划，以及 Claude 实际编码验收 |
 
 `app.ts` 注入同一个页面服务、AssistantWork 和 DevelopmentQueue。主助手的 `work_catalog` / `work_status` 查询真实状态，模型提交 `work_action` 候选；宿主核对本人会话与当前交办、持久应用后才返回成功回执。阅读材料和快速模型分数不能启动编码。HTTP 的 `/api/work` 也读取同一状态。
 
@@ -36,7 +36,7 @@
 4. 编码 Agent 自主调查、修改和检查；独立评审读原始需求、实际差异、设计和检查结果。需要修改就带着具体问题回修。
 5. 助手返回实现结果、可以查看的差异、实际检查和剩余问题。后续反馈继续进入同一任务；有新目标或验收变化时重新规划受影响部分。
 
-第 1、2 步的管理动作、第 3 步的后台派发，以及结果查询、受阻恢复、显式应用和行动待办关联已接入主助手。通用外部能力装配已实现；具体 Figma 服务、私有仓库准备、变更后的自动重新规划仍待实现与验收；真实自然语言验收的结果及局限见 [progress.md](progress.md)，不沿用旧 CLI 验收冒充本轮通过。
+第 1、2 步的管理动作、第 3 步的后台派发，以及结果查询、受阻恢复、显式应用和行动待办关联已接入主助手。通用外部能力装配已实现；远端 Git 准备、固定提交、刷新和失败重试已接入；具体 Figma 服务、私有业务环境验收与变更后的自动重新规划仍待完成；真实自然语言验收的结果及局限见 [progress.md](progress.md)，不沿用旧 CLI 验收冒充本轮通过。
 
 ```mermaid
 flowchart TD
@@ -116,7 +116,7 @@ ACP 已定义用 `session/new` 传入工作目录与 MCP 服务；可选能力�
 | 场景 | 应复用什么 | 融入 omem 的方式 |
 | --- | --- | --- |
 | Figma 设计 | [官方 Figma MCP](https://developers.figma.com/docs/figma-mcp-server/) 的设计上下文、节点、截图、变量和组件映射；配合项目已有 design/browser skill | 先读明确页面与节点，捕获任务所需的设计材料与版本信息；实现和独立评审读同一份输入，再用项目浏览器流程核对页面。截图下载成功不等于视觉验收通过 |
-| 私有 Git | 通用 Git、现有 SSH/HTTPS 登录，必要时配合公司 CLI 的项目发现和权限检查 | 从远端地址和 ref 准备本地仓库，保存仓库身份和提交，交给现有独立副本流程。当前已支持本地 Git，不依赖 GitHub；远端获取、刷新及认证编排还需接入 |
+| 私有 Git | 通用 Git、现有 SSH/HTTPS 登录，必要时配合公司 CLI 的项目发现和权限检查 | 从远端地址和 ref 准备本地仓库，保存仓库身份和提交，交给现有独立副本流程。已接后台准备、固定提交、刷新/失败重试；复用已有 SSH/凭据助手，不依赖 GitHub。不自动登录，真实公司 SSO、子模块/LFS 尚未验收 |
 | 私有研发平台 | 对应 CLI/MCP 与操作 skill | 按任务提供接口、IDL、Mock、环境等上下文；提交评审、部署等动作分别按用户授权和项目规则处理，不假设全部使用 gh |
 | 可复用知识与约定 | 标准 [Agent Skills](https://agentskills.io/specification) 格式与项目已有规则 | 先展示技能名称和用途，需要时读正文及引用资源；把有关规则提供给对应角色，不将全部技能内容塞入每次调用 |
 
@@ -161,6 +161,7 @@ ACP 已定义用 `session/new` 传入工作目录与 MCP 服务；可选能力�
 | `knowledge/api.ts`、`knowledge/page-worker.ts` | 抽出页面管理服务，让 API、CLI 和助手共用；正在调查时也能保存新反馈，下轮按新版本处理 | 已有持久任务、材料摘要、合并更新和失败保留旧文 |
 | `assistant/acp-model.ts`、`assistant/research.ts` | 装配需求查询/管理、关注反馈、开发派发/状态、能力目录工具；操作返回实际任务与结果 | 现有 `ResearchTool` 与 MCP 装配入口，不让主助手拼 shell 串调用自己 |
 | `assistant/runtime.ts` | 把当前用户交办、会话身份、研究模式和取消状态传给动作服务；回答基于实际回执 | 现有事项动作应用与取消保护；源材料不授予写权限 |
+| `development/repositories.ts`、`development/repository-queue.ts` | Git 对象缓存、按提交准备工作区；独立持久队列、当前状态、失败重试及结果通知；主助手提交 prepare_repository | 复用 Git fetch/worktree/credential helper，不复制一套 Git/登录实现；现有编码任务保持原基线 |
 | `development/runner.ts`、`jobs/worker.ts` | 将前台执行器接为持久后台工作；入队立即返回，保存阶段、进度、问题和恢复位置 | 现有独立 Git 副本、真实检查、独立评审与回修；复用 job lease 和重启恢复机制 |
 | `agents.ts`、`agent-runtime/gateway.ts`、`agent-runtime/bundles.ts` | 抽出提供方装配，编码/评审各自选择 profile；不再限制可执行文件名为 Traex | 现有 ACP 协议、能力发现、活动超时、输出合同与 trace |
 | `capabilities/registry.ts`、`capabilities/session.ts`、`capabilities/receipts.ts`、`capabilities/materials.ts`、`cli.ts` | 已登记 skill/MCP/CLI、检查可用状态、固定项目/任务能力版本；按私聊保存实际读取结果并随交办复制，主助手与编码/评审复用同一组工具 | 标准 MCP SDK 的 stdio/Streamable HTTP；已有登录态或环境凭据引用 |

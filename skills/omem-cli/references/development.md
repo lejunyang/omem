@@ -6,6 +6,10 @@
 
 行动项通过 `requirements follow KEY ACTION_ID` 成为个人跟进待办，后续需求换版更新同一条。用户改过待办会暂停自动同步；不要为了“看起来最新”强行覆盖。unfollow 保留任务。proposed/uncertain 不能当明确承诺。
 
+远端项目用 `develop prepare ALIAS GIT_URL --ref REF --config project.json`。省略版本为远端 HEAD；用户指定的分支、标签或提交不得替换。已有项目先 `develop repository ALIAS --json`，重试/刷新用 `develop refresh ALIAS`，必要时明确 `--ref`。复用服务机器已有 SSH/凭据助手，不把 token 写入地址。能力不依赖 gh 或 GitHub。主助手也可直接提议 prepare_repository，随后查询后台实际状态，不能把排队说成准备成功。
+
+`--config` 提供真实规则和检查，repository 由宿主填写；后续 `refresh --config` 可更新。没有配置时检查列表为空，需由装配 Agent 根据目标项目补齐后再宣称可验收。准备不执行项目脚本、安装依赖或 push；子模块/LFS 若存在会报告未准备。新提交使用新的本地工作区，已有修改与旧任务保留；apply 写回该任务的本地准备目录，不是推送远端。
+
 编码先用 `develop register ALIAS project.json` 登记本机仓库与必要检查：
 
 编码与独立评审分别由个人配置 `development.codingProfileId` / `reviewProfileId` 选择，指向 profiles 中已有 ACP 配置；省略时沿用主助手。先 `agent probe PROFILE_ID --json` 发现可用模型/effort，实际推理成功才说明认证可用。任务入队固定两角色配置，恢复不换成新的默认值。Traex、Codex 已实际完成编码与独立评审；Claude 0.86.0 已接实验适配但本机推理缺认证。Codex 使用 2.1.1 适配器、配套 CLI 和原有登录，会话关闭继承的个人工具并装配本次 omem 工具；不要为解决权限问题打开全局 bypass。详细配置与限制见随包 [Agent 提供方](../../../docs/reader-first/agent-providers.md)。

@@ -113,7 +113,7 @@ omem jobs cancel JOB_ID
 
 ## 个人飞书消息和机器人
 
-需求跟进可用 `contexts create/assign` 明确项目范围，然后 `requirements track '名称' --goal '交付目标' --context PROJECT_ID --watch`。`requirements list/show` 查看状态和正文，`handoff KEY --to NEW_DIRECTORY` 导出实现交接。`requirements board/follow/unfollow` 将明确行动关联到个人待办。`develop register/start/show/resume/diff/apply` 提供独立副本中的编码、项目规则、实际检查及独立评审；应用补丁不自动提交或发布。用法和当前限制见[需求跟进](reader-first/requirement-followup.md)。
+需求跟进可用 `contexts create/assign` 明确项目范围，然后 `requirements track '名称' --goal '交付目标' --context PROJECT_ID --watch`。`requirements list/show` 查看状态和正文，`handoff KEY --to NEW_DIRECTORY` 导出实现交接。`requirements board/follow/unfollow` 将明确行动关联到个人待办。`develop prepare/refresh/repository` 准备远端仓库并查询固定版本；`develop register/start/show/resume/diff/apply` 提供独立副本中的编码、项目规则、实际检查及独立评审；应用补丁不自动提交或发布。用法和当前限制见[需求跟进](reader-first/requirement-followup.md)。
 
 ```bash
 omem lark login

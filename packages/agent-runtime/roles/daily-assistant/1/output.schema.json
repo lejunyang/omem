@@ -42,6 +42,42 @@
               "properties": {
                 "operation": {
                   "type": "string",
+                  "const": "prepare_repository"
+                },
+                "alias": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+                },
+                "url": {
+                  "description": "Exact Git address/path supplied by the owner, or the origin of an already registered project. No credentials in URLs.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "ref": {
+                  "description": "Requested branch, tag or commit; use HEAD only when no version was specified. Preserve a registered project's ref when retrying.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "delegation": {
+                  "description": "Copy the current owner request to prepare, fetch or retry this repository. This queues preparation, not coding.",
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "operation",
+                "alias",
+                "url",
+                "ref",
+                "delegation"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "operation": {
+                  "type": "string",
                   "const": "track"
                 },
                 "title": {
