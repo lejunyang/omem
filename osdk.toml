@@ -428,6 +428,10 @@ description = "Verify cross-source requirement follow-up with real Traex ACP / S
 description = "Real Sol requirement tracking, isolated coding and independent review acceptance"
 run = [{ argv = ["bun", "scripts/live-development.ts"] }]
 
+[tasks."development:providers"]
+description = "真实 ACP 编码与独立评审，使用隔离的受控需求；可用 OMEM_PROVIDER_CONFIG 指定两角色配置"
+run = [{ argv = ["bun", "scripts/live-providers.ts"] }]
+
 [tasks."assistant:work"]
 description = "Real Sol natural-language follow, feedback and durable background coding on a disposable project"
 run = [{ argv = ["bun", "scripts/live-assistant-work.ts"] }]

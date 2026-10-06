@@ -89,6 +89,7 @@
     "LICENSE",
     "docs/reader-first/data-lifecycle.md",
     "docs/reader-first/requirement-followup.md",
-    "docs/reader-first/assistant-orchestration.md"
+    "docs/reader-first/assistant-orchestration.md",
+    "docs/reader-first/agent-providers.md"
   ]
 }

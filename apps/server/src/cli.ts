@@ -802,11 +802,11 @@ async function runDevelopment(
   alias: string | undefined,
 ) {
   const runner = await developmentRunner();
-  const { loadConfig, assistantProfile } = await import("./config.js");
+  const { loadConfig, developmentProfiles } = await import("./config.js");
   const { Store } = await import("./store.js");
   const config = loadConfig(),
-    profile = assistantProfile(config);
-  if (!profile) throw Error("请先配置 ACP Agent");
+    profiles = developmentProfiles(config);
+  if (!profiles) throw Error("请先配置 ACP Agent");
   const store = new Store(config.dataDir),
     abort = new AbortController();
   const stop = () => {
@@ -817,10 +817,11 @@ async function runDevelopment(
   process.once("SIGTERM", stop);
   let runId: string | undefined;
   try {
-    const run = id ? runner.read(id) : await runner.create(alias!, key!, store);
+    const run = id ? runner.read(id) : await runner.create(alias!, key!, store, { profiles });
     runId = run.id;
     console.error(`开发任务 ${run.id}；目录 ${run.directory}`);
-    const result = await runner.execute(run.id, store, profile, {
+    const result = await runner.execute(run.id, store, profiles.coding, {
+      reviewProfile: profiles.review,
       signal: abort.signal,
       log: (s) => console.error(s),
     });

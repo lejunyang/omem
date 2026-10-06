@@ -42,7 +42,7 @@ import { documentInput } from "./imports/documents.js";
 import { DecisionService } from "./decision/service.js";
 import { intakeQuestions } from "./decision/questions.js";
 import { assessPassages } from "./decision/passages.js";
-import { assistantProfile as selectAssistantProfile, assistantReadingProfile, type Config } from "./config.js";
+import { assistantProfile as selectAssistantProfile, assistantReadingProfile, developmentProfiles, type Config } from "./config.js";
 import { FeedbackService, MemoryService } from "./memory/service.js";
 import { LarkOnboardingService } from "./integrations/lark/onboarding.js";
 import { OMEM_LARK_DEFAULT_CONFIG } from "./integrations/lark/defaults.js";
@@ -115,7 +115,8 @@ export async function buildApp(
     beforePageRun: (plan, signal) => work.investigationHints(plan, signal),
     onPublish: article => { requirementTasks.sync(article); work.published(article); },
     onService: pages => {
-      work = new AssistantWork(pages, new DevelopmentQueue(store, pages, assistantProfile, { onError: error => app.log.error(error) }), decisions);
+      const profiles = developmentProfiles(config);
+      work = new AssistantWork(pages, new DevelopmentQueue(store, pages, profiles?.coding ?? null, { reviewProfile: profiles?.review, onError: error => app.log.error(error) }), decisions);
     },
     store,
     repository: development?.repository,

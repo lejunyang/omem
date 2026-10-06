@@ -625,10 +625,10 @@ sha256 = "b87c8703482b0300d3da30e201519aa641f6a450f5eb5bf1e624afbf70c74d80"
 
 [deps.pnpm]
 installer = "pnpm"
-installer_version = "11.28.4"
+installer_version = "11.28.5"
 runtime = "node@24.18.1"
 manifest = "package.json"
-manifest_sha256 = "b93dbccb602bea7843ede956abd05f7384620a19aeef0d6a162b22cab7605728"
+manifest_sha256 = "fb8ce05b7799d3bd23afa6f51a3cd6d3147f8562f4b941ab7caeb80766904be4"
 run = "pnpm install --frozen-lockfile"
 allow_build_from_source = true
 

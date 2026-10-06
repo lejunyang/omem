@@ -24,6 +24,7 @@ import {
   type ImplementationReview,
 } from "../../../../packages/contracts/src/development.js";
 import { Store } from "../store.js";
+import { developmentProfile, freezeDevelopmentProfiles, type DevelopmentProfiles } from "../agent-providers.js";
 import {
   requirementBasis,
   assertRequirementBasis,
@@ -87,6 +88,7 @@ export type DevelopmentRun = {
   capabilities?: import("../../../../packages/contracts/src/capabilities.js").CapabilityReference[];
   handoff?: DevelopmentHandoff;
   continuations?: (WorkActor & { at: string })[];
+  profiles?: DevelopmentProfiles;
 };
 export class DevelopmentRunner {
   readonly root: string;
@@ -167,6 +169,7 @@ export class DevelopmentRunner {
       id?: string;
       capabilities?: import("../../../../packages/contracts/src/capabilities.js").CapabilityReference[];
       handoff?: DevelopmentHandoff;
+      profiles?: DevelopmentProfiles;
     } = {},
   ) {
     // A durable task reuses its own checkout after a host restart.
@@ -213,6 +216,7 @@ export class DevelopmentRunner {
       pid: null,
       checks: [],
       handoff: options.handoff,
+      profiles: options.profiles && freezeDevelopmentProfiles(options.profiles.coding, options.profiles.review),
       capabilities:
         options.capabilities ??
         this.capabilities.references(project.capabilities ?? []),
@@ -275,6 +279,7 @@ export class DevelopmentRunner {
       signal?: AbortSignal;
       log?: (s: string) => void;
       continuation?: WorkActor;
+      reviewProfile?: AgentProfile;
     } = {},
   ) {
     const run = this.read(id);
@@ -296,29 +301,10 @@ export class DevelopmentRunner {
         });
         this.save(run);
       }
-      if (profile.transport !== "acp")
-        throw Error("编码与独立评审需要 ACP Agent");
-      // Native tools remain read-only. Actual edits and approved commands go through scoped MCP tools.
-      if (!/(?:^|[/\\])(?:traex|traecli)(?:\.exe)?$/.test(profile.command))
-        throw Error("当前编码权限适配仅验证了 Traex ACP");
-      const args: string[] = [];
-      for (let i = 0; i < profile.args.length; i++) {
-        const arg = profile.args[i]!;
-        if (arg === "--yolo") continue;
-        if (
-          ["-c", "--config"].includes(arg) &&
-          profile.args[i + 1]?.startsWith("sandbox_mode=")
-        ) {
-          i++;
-          continue;
-        }
-        args.push(arg);
-      }
-      const safeProfile = {
-        ...profile,
-        id: "traex",
-        args: ["-c", 'sandbox_mode="read-only"', ...args],
-      };
+      run.profiles ??= freezeDevelopmentProfiles(profile, options.reviewProfile);
+      this.save(run);
+      const codingProfile = developmentProfile(run.profiles.coding);
+      const reviewProfile = developmentProfile(run.profiles.review);
       const repository = new KnowledgeRepository(store);
       repository.refresh();
       const article = repository.get(
@@ -432,7 +418,8 @@ export class DevelopmentRunner {
         };
         const result = await gateway.run({
           roleId,
-          profile: safeProfile,
+          profile: roleId === "coding-agent" ? codingProfile : reviewProfile,
+          profileBinding: { roleId, profileId: (roleId === "coding-agent" ? codingProfile : reviewProfile).id },
           context,
           signal,
           validateOutput: (out) => {

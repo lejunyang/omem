@@ -57,6 +57,12 @@ it("negotiates model before validating new effort options; drops thoughts", asyn
   expect(result.timings.sessionSetupMs).toBeGreaterThanOrEqual(0);
   expect(result.timings.promptMs).toBeGreaterThanOrEqual(0);
 });
+it("sends Claude isolation settings, selects approval mode and rejects unknown adapter contracts", async () => {
+  const p = profile();
+  const { result } = await run("hello", { acpProvider: "claude", args: [...p.args, "--claude"], model: "beta", effort: "high" });
+  expect(result.completion).toBe("end_turn");
+  await expect(run("hello", { acpProvider: "claude" })).rejects.toThrow("CLAUDE_ADAPTER_UNVERIFIED");
+});
 it("rejects unsupported effort instead of falling back", async () => {
   await expect(run("hello", { effort: "high" })).rejects.toThrow(
     "Unsupported reasoning_effort",

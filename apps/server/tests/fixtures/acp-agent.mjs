@@ -1,5 +1,7 @@
 // Protocol test double: not a production model and never enabled by default.
 import readline from "node:readline";
+import assert from "node:assert/strict";
+const claude = process.argv.includes("--claude");
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\n");
 let model = "alpha";
 let effort = "low";
@@ -68,21 +70,31 @@ readline.createInterface({ input: process.stdin }).on("line", (raw) => {
   if (msg.method === "initialize")
     reply({
       protocolVersion: 1,
-      agentInfo: { name: "test-fixture", version: "1" },
+      agentInfo: claude ? { name: "@agentclientprotocol/claude-agent-acp", version: "0.86.0" } : { name: "test-fixture", version: "1" },
       agentCapabilities: {
         promptCapabilities: { image: true },
         sessionCapabilities: { close: {} },
       },
     });
   else if (msg.method === "session/new") {
+    if (claude) {
+      const options = msg.params._meta.claudeCode.options;
+      assert.deepEqual(options.tools, []);
+      assert.deepEqual(options.allowedTools, ["mcp__omem__*"]);
+      assert.deepEqual(options.settingSources, []);
+      assert.equal(options.strictMcpConfig, true);
+      assert.equal(options.settings.disableAllHooks, true);
+      assert.equal(options.allowDangerouslySkipPermissions, false);
+    }
     nativeSkills = msg.params?._meta?.trae?.options?.skills || [];
     mcpServers = msg.params?.mcpServers || [];
-    reply({ sessionId: "test-session", configOptions: options() });
+    reply({ sessionId: "test-session", configOptions: options(), ...(claude ? { modes: { currentModeId: "default", availableModes: [{ id: "default", name: "Default" }] } } : {}) });
     update({
       sessionUpdate: "available_commands_update",
       availableCommands: nativeSkills.map((name) => ({ name, description: `Fixture loaded ${name}` })),
     });
   }
+  else if (msg.method === "session/set_mode") { assert.equal(msg.params.modeId, "default"); reply({}); }
   else if (msg.method === "session/set_config_option") {
     if (msg.params.configId === "model") model = msg.params.value;
     else effort = msg.params.value;

@@ -14,6 +14,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import type { AgentProfile } from "../../../packages/contracts/src/index.js";
 import { activityWatchdog, agentIdleTimeout } from "./agent-timeout.js";
+import { acpProvider, sessionMetadata } from "./agent-providers.js";
 export type Emit = (
   type: "status" | "text" | "permission",
   text: string,
@@ -44,7 +45,7 @@ export type AcpOptions = {
 /** Run a supplied role in its material workspace without inheriting repository
  * development instructions. This controls prompt discovery, not OS file access. */
 export function withAgentWorkspace(profile: AgentProfile, workspace: string): AgentProfile {
-  if (profile.transport !== "acp" || !/(?:^|[/\\])(?:traex|traecli)(?:\.exe)?$/.test(profile.command)) return profile;
+  if (acpProvider(profile) !== "traex") return profile;
   return { ...profile, args: ["-C", workspace, "-c", "project_doc_max_bytes=0", ...profile.args] };
 }
 
@@ -117,6 +118,8 @@ export async function acp(
   signal: AbortSignal,
   options: AcpOptions = {},
 ) {
+  if (acpProvider(profile) === "codex" && blocks)
+    throw Error("CODEX_SESSION_NOT_READY: only capability probing is enabled until personal tools and skills are isolated");
   const startedAt = performance.now();
   let initializedAt = startedAt;
   let promptStartedAt: number | undefined;
@@ -315,15 +318,16 @@ export async function acp(
     ]);
     if (initialized.protocolVersion !== 1)
       throw Error("Unsupported ACP protocol version");
+    if (acpProvider(profile) === "claude" &&
+      (initialized.agentInfo?.name !== "@agentclientprotocol/claude-agent-acp" || initialized.agentInfo.version !== "0.86.0"))
+      throw Error("CLAUDE_ADAPTER_UNVERIFIED: requires @agentclientprotocol/claude-agent-acp@0.86.0; older adapters may ignore tool isolation settings");
     initializedAt = performance.now();
     active();
     const session = await Promise.race([
       connection.newSession({
         cwd,
         mcpServers: options.mcpServers ?? [],
-        _meta: {
-          trae: { options: { skills: profile.skills, mcpServers: [] } },
-        },
+        _meta: sessionMetadata(profile),
       }),
       exited,
     ]);
@@ -348,6 +352,13 @@ export async function acp(
         ]);
     }
     let configOptions = session.configOptions || [];
+    const modeId = acpProvider(profile) === "claude" ? "default" : acpProvider(profile) === "codex" ? "read-only" : undefined;
+    if (modeId) {
+      if (!session.modes?.availableModes.some((mode) => mode.id === modeId))
+        throw Error(`ACP_PERMISSION_MODE_UNSUPPORTED: requires ${modeId}`);
+      await Promise.race([connection.setSessionMode({ sessionId, modeId }), exited]);
+      configOptions = configOptions.map((o) => o.id === "mode" && o.type === "select" ? { ...o, currentValue: modeId } : o);
+    }
     for (const [key, value] of [
       ["model", profile.model],
       ["reasoning_effort", profile.effort],
