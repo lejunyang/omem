@@ -331,7 +331,7 @@ try {
   // A subsequent production turn must find the saved prior receipts itself.
   rmSync(join(workspace, "external-inputs"), { recursive: true });
   const delegation =
-    "请帮我实现工单展示配置，交给已登记的 preset 项目。只采用刚才的工单归档方案，不采用完成方案；把刚才实际读到的归档资料带给编码和评审，完成本地检查即可，不用开发页面或发布。";
+    "请帮我实现工单展示配置，交给已登记的 preset 项目。只采用刚才的工单归档方案，不采用完成方案；把刚才实际读到的归档资料带给编码和评审，同时装配 design 能力让编码和评审能重新读取该节点，完成本地检查即可，不用开发页面或发布。";
   const delegated = await system.assistant.turn({
     conversationId: conversation.id,
     userText: delegation,
@@ -371,6 +371,10 @@ try {
   );
   // The service disappears after the assistant's read, before background work.
   // This is a real preflight failure, not a fabricated run state.
+  assert.deepEqual(
+    (task.job.inputRefs[0] as any).capabilities.map((c: any) => c.id),
+    ["design"],
+  );
   rmSync(availability);
   await system.app.ready();
   const waitTask = async () => {
@@ -408,20 +412,7 @@ try {
     ),
     JSON.stringify(resumed.turn),
   );
-  let current = system.work.development.read(task.id),
-    previous = "";
-  const deadline = Date.now() + 20 * 60 * 1000;
-  while (
-    ["queued", "leased", "running", "retry_wait"].includes(current.job.state) &&
-    Date.now() < deadline
-  ) {
-    if (current.message !== previous) {
-      console.log(current.message);
-      previous = current.message;
-    }
-    await new Promise((r) => setTimeout(r, 1000));
-    current = system.work.development.read(task.id);
-  }
+  const current = await waitTask();
   assert.equal(current.run?.state, "ready", JSON.stringify(current));
   const run = current.run!;
   assert.equal(run.id, blocked.run!.id);
@@ -484,6 +475,18 @@ try {
     answer: turn.result,
     actions: turn.toolActions,
   }));
+  saveJson(join(output, "development-traces.json"), {
+    roles: readdirSync(run.directory)
+      .filter((name) => /^(coding-agent|code-reviewer)-\d+\.json$/.test(name))
+      .map((name) => ({
+        name,
+        ...JSON.parse(readFileSync(join(run.directory, name), "utf8")),
+      })),
+    checks: run.checks.map((check) => ({
+      ...check,
+      logText: existsSync(check.log) ? readFileSync(check.log, "utf8") : null,
+    })),
+  });
   saveJson(join(output, "handoff.json"), {
     at: new Date().toISOString(),
     passed: true,
