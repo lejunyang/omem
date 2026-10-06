@@ -514,11 +514,17 @@ export class LarkOnboardingService {
           .prepare(
             `SELECT id,expires_at,candidate_open_id,candidate_chat_id,
                candidate_chat_type,consumed_at
-             FROM lark_pairing_codes WHERE connection_id=?
-             ORDER BY created_at DESC LIMIT 1`,
+             FROM lark_pairing_codes WHERE connection_id=? AND connection_version=?
+             ORDER BY created_at DESC, rowid DESC LIMIT 1`,
           )
-          .get(String(row.connection_id)) as Row | undefined)
+          .get(String(row.connection_id), Number(row.connection_version)) as
+          | Row
+          | undefined)
       : undefined;
+    const interrupted =
+      ["draft", "awaiting_scan", "credentials_received", "checking"].includes(
+        String(row.status),
+      ) && !this.active.has(onboardingId);
     return {
       id: String(row.id),
       mode: String(row.mode),
@@ -526,6 +532,10 @@ export class LarkOnboardingService {
         ? String(row.requested_app_id)
         : null,
       status: String(row.status),
+      resumable: !interrupted,
+      resumeHint: interrupted
+        ? "服务已停止或重启，这次平台授权无法继续。请重新配置并优先复用已有应用；已生效的连接保留。"
+        : null,
       qrUrl: row.qr_url ? String(row.qr_url) : null,
       verificationUrl: row.qr_url ? String(row.qr_url) : null,
       qrExpiresAt: row.qr_expires_at ? String(row.qr_expires_at) : null,
@@ -557,6 +567,7 @@ export class LarkOnboardingService {
               ? String(pairing.candidate_chat_type)
               : null,
             consumed: Boolean(pairing.consumed_at),
+            expired: String(pairing.expires_at) <= iso(this.clock()),
           }
         : null,
       errorCode: row.error_code ? String(row.error_code) : null,
@@ -564,6 +575,17 @@ export class LarkOnboardingService {
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };
+  }
+
+  pending() {
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM lark_onboardings
+      WHERE workspace_id='personal' AND status IN ('draft','awaiting_scan','credentials_received','checking','awaiting_pair')
+      ORDER BY created_at DESC, rowid DESC`,
+      )
+      .all() as { id: string }[];
+    return rows.map((row) => this.status(row.id));
   }
 
   issuePairingCode(onboardingId: string, ttlMs = 300_000) {

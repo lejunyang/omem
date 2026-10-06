@@ -15,7 +15,7 @@ description: 使用 omem CLI 保存与检索个人材料、基于来源提问、
 - 写面向读者的文章：先 `knowledge list --json` 选实际材料，明确读者、场景和阅读目标，再 `knowledge write`。排队与发布分别检查。
 - 事项、记忆和处理：`tasks list`、`memories list`、`jobs list/show`；理解失败原因后按用户意图重试。不要直接改数据库。
 - 消息跟进：`messages discover/status/inbox` 只读；订阅范围和调度开关遵循用户明确要求，不能因为发现会话就默认全选。
-- 飞书机器人：先读 [创建、绑定与日常指挥](references/lark-bot.md)。`bot setup` 显示向导地址；创建应用、授权已有应用或导入凭据后，仍须核验能力、私聊配对并确认本人。个人 lark-cli 登录不等于机器人绑定。
+- 飞书机器人：先读 [创建、绑定与日常指挥](references/lark-bot.md)。`bot setup --start` 准备本机配置与密钥并启动服务；CLI 的 create/authorize/connect 和网页可继续同一次接入。仍须核验能力、私聊配对并确认本人；个人 lark-cli 登录不等于机器人绑定。
 - 需求跟进：先确认 contexts 项目范围，再 `requirements track --watch` 综合消息、需求、纪要与代码。`handoff` 只导出实现材料，不代表已执行或获得发布授权。
 - 按需求编码：先读 [需求开发](references/development.md)，明确目标仓库和交办范围，项目规则与检查由编码 Agent 自主读取，再用 `develop`。`ready` 是本轮 Agent 评审通过，`apply` 才修改原工作区，不代表发布。
 - 外部设计或研发资料：读 [能力装配](references/capabilities.md)，登记已有 skill、只读 CLI/MCP，检查连接并按项目选择。工具由 Agent 调用；登记声明不安装依赖、不完成登录，也不授予外部写权限。

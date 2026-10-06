@@ -155,6 +155,54 @@ async function ready(
 }
 
 describe("B2-05 Lark onboarding acceptance", () => {
+  it("restores saved pairing after a service restart and reports interrupted platform authorization", async () => {
+    const x = setup();
+    const status = await ready(x);
+    const code = x.service.issuePairingCode(status.id);
+    x.service.receivePairing({
+      appId: "cli_test1",
+      code: code.code,
+      senderOpenId: "ou_restore",
+      chatId: "oc_restore",
+      chatType: "p2p",
+    });
+    const restarted = new LarkOnboardingService(
+      x.store.db,
+      x.secrets,
+      new FakeRegistration(),
+      new FakeProbe(),
+      () => new Date("2026-09-27T00:00:00.000Z"),
+    );
+    expect(restarted.pending()).toEqual([
+      expect.objectContaining({
+        id: status.id,
+        resumable: true,
+        pairing: expect.objectContaining({
+          id: code.id,
+          candidateOpenId: "ou_restore",
+          expired: false,
+        }),
+      }),
+    ]);
+    restarted.confirmPairing({
+      pairingId: code.id,
+      expectedOpenId: "ou_restore",
+    });
+    expect(restarted.status(status.id).status).toBe("active");
+    expect(restarted.pending()).toEqual([]);
+    const waiting = await x.service.start({
+      mode: "existing",
+      appId: "cli_test1",
+      config: requestedConfig,
+    });
+    expect(x.service.status(waiting.id).resumable).toBe(true);
+    expect(restarted.status(waiting.id)).toMatchObject({
+      resumable: false,
+      resumeHint: expect.stringContaining("重新配置"),
+    });
+    expect(restarted.connections()[0]?.state).toBe("active");
+    x.service.cancel(waiting.id);
+  });
   it("probes public app scopes, callbacks and bot identity without exposing credentials", async () => {
     const requests: { url: string; init?: RequestInit }[] = [];
     const responses = [

@@ -70,7 +70,7 @@ osdk run messages inbox
 
 个人数据库、资产与临时输出在 .omem/，可用 OMEM_DATA_DIR 覆盖。隔离仓库运行数据在 .repo-review/runtime/。保留旧引用依赖的历史，不删除 .repo-review/data/ 等既有档案。原件、会话、密钥、数据库与模型权重不提交 Git。
 
-当前是 SQLite 单用户服务。默认仅 loopback；远程访问需 OMEM_HOST、OMEM_TOKEN 及适当的 TLS/隧道。浏览器令牌用于连接这台 omem 服务，不是模型令牌。飞书需单独启用、授权和配对；OMEM_SECRET_KEY 是加密 App Secret 的本地主密钥，不能入 Git。外部通知、全局 hooks 与屏幕监听需要独立明确范围。
+当前是 SQLite 单用户服务。默认仅 loopback；远程访问需 OMEM_HOST、OMEM_TOKEN 及适当的 TLS/隧道。浏览器令牌用于连接这台 omem 服务，不是模型令牌。飞书用 `omem bot setup --start` 准备本机配置，再授权和配对。App Secret 的加密密钥保存在个人目录 `secrets/master.key`，或沿用显式 `OMEM_SECRET_KEY`；密钥与含密钥的备份都需私密保管，不入 Git。外部通知、全局 hooks 与屏幕监听需要独立明确范围。
 
 日常消息支持交办、等待、改期、完成、取消与站内到期提醒；个人消息采集已可定时读取订阅与提及，但对方的回复是否完成已有事项仍需 Agent 调查，尚未验证自动判断的可靠性；周期回顾、日历或学习卡尚未实现。通知已读不等于事项完成。
 
