@@ -10,6 +10,7 @@ import {
   OmMarkdown,
 } from "@omem/ui";
 import { api } from "./api";
+import AssistantWorkPanel from "./AssistantWorkPanel.vue";
 import { readAssistantAnswer, type AnswerEvidence } from "./assistant-reader";
 import type { KnowledgeFrame } from "./knowledge/api";
 type Turn = {
@@ -29,6 +30,13 @@ const conversationId = ref(""),
   error = ref("");
 const turns = ref<Turn[]>([]),
   sending = ref(false);
+const workPanel = ref<InstanceType<typeof AssistantWorkPanel>>();
+const composer = ref<HTMLTextAreaElement>();
+function compose(text: string) {
+  draft.value = draft.value.trim() ? `${draft.value.trim()}\n${text}` : text;
+  composer.value?.focus();
+  composer.value?.scrollIntoView({ block: "center" });
+}
 const readableTurns = computed(() =>
   turns.value.map((t) => ({
     ...t,
@@ -87,6 +95,7 @@ async function send() {
     pendingRequest = null;
     draft.value = "";
     await reload();
+    void workPanel.value?.reload();
     emit("refresh");
   } catch (e) {
     error.value = String(e);
@@ -145,9 +154,11 @@ onBeforeUnmount(() => {
         >：{{ item.trigger }}，整理为{{ item.output }}。
       </p>
     </OmDisclosure>
+    <AssistantWorkPanel ref="workPanel" @compose="compose" />
     <form class="form" @submit.prevent="send">
       <label
         >发给日常助理<textarea
+          ref="composer"
           v-model="draft"
           rows="3"
           maxlength="2000"
