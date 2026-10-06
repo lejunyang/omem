@@ -72,6 +72,7 @@ import { LarkRuntimeHost } from "./integrations/lark/runtime.js";
 import { AssistantRuntime } from "./assistant/runtime.js";
 import { AcpAssistantModel } from "./assistant/acp-model.js";
 import { AssistantWork } from "./assistant/work.js";
+import { workActionSchema } from "../../../packages/contracts/src/work.js";
 import { DevelopmentQueue } from "./development/queue.js";
 import { KnowledgeRepository } from "./knowledge/repository.js";
 import { createRetrieval } from "./retrieval/factory.js";
@@ -98,7 +99,8 @@ export async function buildApp(
   const memory = new MemoryService(store);
   const decisions = new DecisionService(config.decisions ?? { mode: "auto" });
   const personalLark = new PersonalLarkService(store, decisions);
-  registerPersonalLark(app, personalLark);
+  let work!: AssistantWork;
+  registerPersonalLark(app, personalLark, () => work);
   const feedback = new FeedbackService(store);
   // Production assistant uses the real ACP adapter against a configured profile.
   // When no ACP profile can actually run (missing CLI / auth / wrong transport)
@@ -123,7 +125,6 @@ export async function buildApp(
     ? developmentRetrieval(store, retrievalService.retrieval)
     : retrievalService.retrieval;
   const requirementTasks = new RequirementTasks(store);
-  let work!: AssistantWork;
   registerRequirementTasks(app, requirementTasks);
   const knowledgeRepository = registerKnowledgeRoutes(app, {
     beforePageRun: (plan, signal) => work.investigationHints(plan, signal),
@@ -161,6 +162,14 @@ export async function buildApp(
     work,
   });
   app.get("/api/work", async () => work.catalog());
+  app.post("/api/work/actions", async req => {
+    const input = z.object({ requestId: z.uuid(), action: workActionSchema, userText: z.string().min(1) }).strict().parse(req.body);
+    return work.apply(input.action, { requestId: input.requestId, userText: input.userText, conversationId: "web-followup", principalId: "owner", visibility: "private" });
+  });
+  app.get<{ Params: { id: string } }>("/api/work/development/:id/result", async req => {
+    const query = z.object({ startLine: z.coerce.number().int().positive().default(1), limit: z.coerce.number().int().min(1).max(500).default(200) }).parse(req.query);
+    return work.result(req.params.id, query.startLine, query.limit);
+  });
   app.get<{ Params: { key: string } }>(
     "/api/work/requirements/:key",
     async (req) => work.status(req.params.key),

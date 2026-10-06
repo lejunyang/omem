@@ -150,10 +150,14 @@ export class PersonalLarkService {
         const raw = JSON.parse(String(r.raw)) as LarkMessage;
         return {
           ...r,
+          id: String(r.id),
+          revision_id: r.revision_id ? String(r.revision_id) : null,
+          state: String(r.state),
           raw: undefined,
           text: raw.content,
           sender: raw.sender?.name,
           link: raw.message_app_link,
+          demonstration: (raw as LarkMessage & { demonstration?: boolean }).demonstration === true,
           decision: r.decision ? JSON.parse(String(r.decision)) : null,
           resources: JSON.parse(String(r.resources)),
         };

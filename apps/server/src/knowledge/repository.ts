@@ -131,7 +131,10 @@ export class KnowledgeRepository {
     if ([...explicit].some(key => !available.some(m => m.key === key))) throw Error("所选材料已不可用，请调整材料范围");
     const sources = this.store.contexts.sourceIds(brief.contextIds ?? []);
     for (const row of this.store.db.prepare("SELECT source_id FROM knowledge_page_inputs WHERE document_key=?").all(brief.key)) sources.add(String(row.source_id));
-    return available.filter(m => explicit.has(m.key) || sources.has(m.sourceId));
+    const selected = available.filter(m => explicit.has(m.key) || sources.has(m.sourceId));
+    if (brief.workflow !== "requirement-followup") return selected;
+    const feedbackRevisions = new Set(selected.flatMap(m => this.store.messageFeedback.forSource(m.sourceId).map(f => String(f.revisionId))));
+    return available.filter(m => selected.includes(m) || feedbackRevisions.has(m.revisionId));
   }
 
   /** Explicit host-owned links, separate from the reader's selected scope. */

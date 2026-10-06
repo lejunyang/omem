@@ -33,7 +33,7 @@ osdk run dev
 
 PDF/DOCX 文件可在「输入材料」上传，Docling 保存原件、结构、表格、插图和 PDF 页码；解析环境需显式准备。飞书链接使用已锁定的官方 `@larksuite/cli` 项目依赖读取，不交给 Docling 抓取。入口与当前限制见[文档导入](docs/reader-first/document-import.md)。
 
-个人飞书消息可在「飞书消息」页发现最近会话、选择订阅、设置定时只读采集，默认暂停；免打扰与提及分别处理，消息里的文档、图片和附件进入统一材料库，再由决策模型和 Agent 分工处理。沿用已有机器人通知。用 `osdk run service:start` 在构建后交给项目本地 PM2，`osdk run service:status` 检查进程、接口和采集状态。范围和限制见[个人消息](docs/reader-first/personal-messages.md)与[运行说明](docs/reader-first/operations.md)。
+个人飞书消息可在「飞书消息」页发现最近会话、选择订阅、设置定时只读采集，默认暂停；免打扰与提及分别处理，消息里的文档、图片和附件进入统一材料库，再由决策模型和 Agent 分工处理。沿用已有机器人通知。用 `osdk run service:start` 在构建后交给项目本地 PM2，`osdk run service:status` 检查进程、接口和采集状态。范围和限制见[个人消息](docs/reader-first/personal-messages.md)与[运行说明](docs/reader-first/operations.md)。消息旁现可查看实际记忆/事项结果并纠正理解；日常助理按项目展示变化、等待回复和个人待办，直接调整关注点。编码任务显示保留/调整计划、检查、评审与代码差异，明确区分独立副本和已应用结果。
 
 ## 先读这些
 

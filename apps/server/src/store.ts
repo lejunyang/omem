@@ -35,6 +35,7 @@ import { RuntimeRequestRepository } from "./agent-runtime/requests.js";
 import { SourceProfileService } from "./source-profile/service.js";
 import { MaterialDescriptions } from "./source-profile/descriptions.js";
 import { MaterialContexts } from "./contexts/repository.js";
+import { MessageFeedback } from "./messages/feedback.js";
 const id = () => randomUUID();
 const now = () => new Date().toISOString();
 const hash = (s: string | Buffer) =>
@@ -49,6 +50,7 @@ export class Store {
   readonly profiles: SourceProfileService;
   readonly descriptions: MaterialDescriptions;
   readonly contexts: MaterialContexts;
+  readonly messageFeedback: MessageFeedback;
   private releaseLibrary: () => void;
   constructor(
     readonly dataDir: string,
@@ -75,6 +77,7 @@ export class Store {
       this.profiles = new SourceProfileService(this.db);
       this.descriptions = new MaterialDescriptions(this.db);
       this.contexts = new MaterialContexts(this.db);
+      this.messageFeedback = new MessageFeedback(this);
     } catch (error) {
       opened?.close();
       this.releaseLibrary();
@@ -333,9 +336,10 @@ export class Store {
       let queued = false;
       if ((changed || previous?.status === "ambiguous") && revision.provenance?.producerKind !== "derived") {
         const state = this.db.prepare("SELECT validity_epoch FROM source_state WHERE source_id=?").get(sourceId);
+        const feedback = this.messageFeedback.forSource(sourceId);
         this.jobs.enqueueInCurrentTransaction({ kind: "extract_claims", roleVersion: "extractor@1", policyVersion: "memory-policy@1",
           inputRefs: [{ revisionId: revision.id, sourceId, validityEpoch: Number(state?.validity_epoch ?? 1) },
-            { learningMembership: stableDigest([{ revision: revision.id, groups: this.contexts.forSource(sourceId) }]),
+            { learningMembership: stableDigest([{ revision: revision.id, groups: this.contexts.forSource(sourceId), ...(feedback.length ? { feedback } : {}) }]),
               assignmentVersion: this.contexts.assignment(sourceId)!.version }], cause: "context_correction" });
         queued = true;
       }
