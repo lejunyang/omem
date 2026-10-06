@@ -1,6 +1,6 @@
 # 飞书机器人：创建、绑定与日常指挥
 
-目标是让本人通过飞书私聊指挥同一个 omem 主助手，并收到需要处理的变化。首次接入使用网页向导，之后可以在飞书交办和回复。本文是接入指引，读取它不代表用户已授权创建应用、增加权限或发送测试消息。
+目标是让本人通过飞书私聊指挥同一个 omem 主助手，并收到需要处理的变化。首次接入可用网页或 CLI；两者能继续同一次接入，之后可以在飞书交办和回复。本文是接入指引，读取它不代表用户已授权创建应用、增加权限或发送测试消息。
 
 ## 先分清两个入口
 
@@ -21,20 +21,19 @@ omem service status --json
 omem agent probe --json
 ```
 
-修改 `config path` 指向的个人配置，保留其他字段，将 `lark.enabled` 设为 `true`。默认关闭。若还需要新增材料自动整理记忆，另将 `learning.enabled` 设为 `true`，并确认 `learning.profileId` 指向已登录的 Agent 配置；这不是机器人连接成功就自动开启的功能。
-
-机器人凭据加密还需要服务环境变量 `OMEM_SECRET_KEY`：稳定的 32 字节密钥，编码为 64 位十六进制或 Base64。它用于保护 App Secret，**不是飞书 App Secret，也不是服务器访问令牌**。首次使用默认个人目录时，可在服务机器创建一个仅本人可读的环境文件：
+安装版在服务机器运行：
 
 ```bash
-node -e 'const fs=require("node:fs"), path=require("node:path"), os=require("node:os"), crypto=require("node:crypto"); const dir=path.join(os.homedir(),".omem"); fs.mkdirSync(dir,{recursive:true,mode:0o700}); fs.writeFileSync(path.join(dir,"service-secret.env"),"export OMEM_SECRET_KEY="+crypto.randomBytes(32).toString("hex")+"\n",{mode:0o600,flag:"wx"});'
-. ~/.omem/service-secret.env
-omem service restart
-omem bot setup
+omem bot setup --start
 ```
 
-生成命令遇到已有文件会拒绝覆盖。已有密钥应继续使用；自定义数据目录时将示例的文件位置换为自己的私有目录。环境文件需在启动或重启服务前加载，omem 不自动读取此文件。使用其他进程管理器时，通过该管理器提供同一个环境变量。密钥不放进 Git、消息、模型材料或命令输出；备份时另外安全保管，丢失后不能解密旧凭据。加密凭据保存在实际数据目录的 `secrets/`。
+这会准备个人配置、启用 `lark.enabled`，并启动或重启 PM2 服务。其他配置保留。加密密钥首次保存在实际数据目录的 `secrets/master.key`，以后自动复用；POSIX 文件权限为本人读写。它保护 App Secret，**不是飞书 App Secret，也不是服务器访问令牌**。若已有 `OMEM_SECRET_KEY` 环境变量则沿用它，不写入文件；仍须在以后启动时提供原密钥。旧加密凭据存在但原环境密钥缺失时，setup 会报错，不生成新密钥覆盖旧连接。
 
-`bot setup` 只显示 `/#/lark` 向导地址，不创建应用、不打开浏览器、不完成绑定。安装版默认入口为 http://127.0.0.1:4317/#/lark；连接远端服务用 `--url` 指向那个服务。源码 dev 的 Web 与 API 可能不同端口，应在终端打印的 **Web 地址**打开 `/#/lark`，不要把 API 端口当网页入口。源码服务使用其现有数据目录、配置和启动方式，无需另起一个安装版服务。
+只想准备配置、不启动服务，可运行 `omem bot setup`。自定义目录用 `omem --data-dir /absolute/private/data bot setup --start`。密钥不进入 Git、消息、模型材料或命令输出；本机生成的 `master.key` 随个人库备份一起保存，因此备份也必须私密保管。显式环境密钥不在备份里，需另行保管。丢失密钥后无法解密旧凭据。
+
+setup 不创建应用、不打开浏览器、不完成绑定。安装版默认向导为 http://127.0.0.1:4317/#/lark；连接已有远端服务用 `omem --url https://your-server bot setup`，此时只显示入口，不改配置，也不能用 `--start`。服务机器需先启用连接。
+
+源码 dev 使用其现有数据目录、配置和启动方式，不另起安装版服务。指定相同的 `--data-dir`、`--config`，运行 `bot setup --web-url http://127.0.0.1:65092` 后，按原方式重启 dev。Web 与 API 分端口时，`--url` 连接 API，`--web-url` 指向网页。若还需要新增材料自动整理记忆，另启用 `learning.enabled`，确认 `learning.profileId` 指向已登录的 Agent；机器人配对成功不会自动开启它。
 
 ## 2. 选择创建还是复用
 
@@ -54,7 +53,7 @@ botmux 默认读取服务机器的 `~/.botmux/bots.json`；可用个人配置的
 
 ## 3. 核验后配对本人
 
-收到 App ID 和凭据后，服务核验实际能力。**进入「等待 owner 配对」仍未完成本人绑定。**
+收到 App ID 和凭据后，服务核验实际能力。**进入「等待本人配对」仍未完成本人绑定。**
 
 1. 在向导生成一次性配对码，默认有效期五分钟。
 2. 本人在飞书找到这一个应用机器人，私聊发送完整配对码；不要发到群里，也不要用另一个机器人。
@@ -66,9 +65,11 @@ omem bot status --json
 omem status --json
 ```
 
-`bot status` 中对应 App ID 的 `state` 应为 `active`，且有 `ownerOpenId`。`active` 表示绑定完成，不保证 Agent 登录、个人订阅或材料理解已成功，仍分别查看对应状态。首次本人确认目前在网页完成，CLI 尚没有独立创建或完成配对的命令。
+`bot status` 中对应 App ID 的 `state` 应为 `active`，且有 `ownerOpenId`。`active` 表示绑定完成，不保证 Agent 登录、个人订阅或材料理解已成功，仍分别查看对应状态。
 
-## 已有应用的 CLI 导入
+刷新网页、暂时切到其他页面或从 CLI 进入时，打开返回的 `setupUrl` 即可继续。没有链接时用 `omem bot pending --json` 找到 ID，再用 `omem bot setup --onboarding ID` 取得入口。网页也会列出未完成的接入。配对码不保存明文；没有保留原码可重新生成，已收到的候选本人消息会保留。服务重启后，已保存的配对可以继续；尚在进行的平台授权无法恢复，页面会说明并引导重新配置，优先复用已创建的应用。原有效连接保留。
+
+## CLI 创建、导入与继续配对
 
 这是 Agent 或管理员的可选入口，不要求用户手动拼装日常流程：
 
@@ -76,12 +77,27 @@ omem status --json
 omem bot --help
 omem bot apps --json
 omem bot defaults --json
+omem bot create --json
+omem bot authorize cli_YOUR_APP --json
 omem bot connect /absolute/private/bot-connect.json --json
 ```
 
+create 发起新建授权，authorize 更新已有应用的授权；本人仍要打开返回的授权链接完成平台步骤。可用 `--request /absolute/private/request.json` 提供完整能力配置，否则使用 defaults。返回的 `setupUrl` 与同一次接入 ID 可用于网页继续，源码分端口时增加 `--web-url`。
+
 导入文件包含 `appId`、`source`、`config`。`config` 放入 `bot defaults --json` 返回的完整配置对象，不是只填应用名称；`source` 为 `manual` 时另需 `clientSecret`，为 `botmux` 时由服务机器读取已有配置，不传密钥。文件保存在个人目录，限制为本人可读，不纳入材料或 Git。
 
-`connect` 导入后还会核验能力，并停在配对阶段，不能把 CLI 返回成功称为已可通知。**当前网页不能直接恢复 `connect` 返回的接入 ID，也不能在刷新后恢复未完成的配对。** 首次完整接入建议从网页「直接导入凭据」开始并在该页完成。集成客户端若使用 `connect`，还须通过现有接入查询、配对码和本人确认 API 完成后续步骤；CLI 尚未覆盖这些步骤。它不会自动修改已有应用在平台上的权限与事件配置，缺项需走平台授权更新。
+`connect` 导入后还会核验能力，并停在配对阶段，不能把命令返回成功称为已可通知。它不会自动修改平台权限与事件配置，缺项需走平台授权更新。
+
+```bash
+omem bot show ONBOARDING_ID --json
+omem bot pair ONBOARDING_ID --json
+# 本人私聊同一个机器人发送配对码，再读取候选身份
+omem bot show ONBOARDING_ID --json
+omem bot confirm ONBOARDING_ID --owner CANDIDATE_OPEN_ID --json
+omem bot cancel ONBOARDING_ID --json
+```
+
+confirm 只接受与已收到的配对消息一致的身份。Agent 不能凭候选 ID 自称用户已确认本人；先让本人核对其私聊，再调用确认。配对码短时有效，不放入知识或日志。cancel 结束本次接入，不删除飞书应用。
 
 ## 4. 日常使用与采集范围
 
@@ -113,8 +129,8 @@ omem messages inbox --json
 
 | 现象 | 检查与处理 |
 | --- | --- |
-| `LARK_ONBOARDING_NOT_CONFIGURED` | 检查实际配置的 `lark.enabled`，用同一配置重启，确认 CLI 连到正确服务 |
-| 启动报 `OMEM_SECRET_KEY` 缺失或长度错误 | 在服务进程环境提供原有 32 字节密钥，加载环境文件后重启；不要重新生成覆盖旧密钥 |
+| `LARK_ONBOARDING_NOT_CONFIGURED` | 在服务机器运行 `bot setup`，用同一配置重启；安装版可用 `bot setup --start`，确认 CLI 连到正确服务 |
+| 已有加密凭据但原密钥缺失，或密钥长度错误 | 为服务提供原有 32 字节 `OMEM_SECRET_KEY`；若用文件密钥，恢复原 `secrets/master.key`；不要生成新密钥替换 |
 | 授权失败或缺少能力 | 查看向导的失败原因与缺项，完成平台授权或组织审批；导入密钥本身不会增加权限 |
 | 配对消息没有到达 | 核对同一个 App ID、私聊而非群聊、有效配对码及应用的消息事件/长连接配置 |
 | 已 active，但不回复或不整理材料 | 查看 Agent probe、服务和 jobs 状态；核对后台处理配置，不把配对成功等同于模型调用成功 |

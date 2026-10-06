@@ -142,9 +142,9 @@ omem bot status
 
 采集只读消息和资源，不改变未读状态，不发送、回复或删除消息。文档、图片与附件的读取/理解状态在 inbox 中区分，排队不代表已经理解。决策模型是可选分流，复杂理解仍交给 Agent。
 
-机器人通知复用已有绑定、投递与重试流程；与个人登录是两套独立授权。首次接入按[机器人创建与绑定](../skills/omem-cli/references/lark-bot.md)准备服务、选择应用、核验并私聊配对本人。默认 `lark.enabled:false`，启用时还需为服务提供稳定的 `OMEM_SECRET_KEY`，用于加密保存应用凭据；它不是 App Secret 或服务器访问令牌。
+机器人通知复用已有绑定、投递与重试流程；与个人登录是两套独立授权。首次接入按[机器人创建与绑定](../skills/omem-cli/references/lark-bot.md)操作。安装版 `omem bot setup --start` 准备个人配置、启用连接，并启动或重启服务。加密密钥自动保存在个人数据目录的 `secrets/master.key` 并复用；若设置了 `OMEM_SECRET_KEY` 则沿用环境密钥。已有凭据不能用新密钥替换，备份含本机文件密钥，需私密保管。
 
-`bot setup` 只显示网页向导入口，新建应用、授权已有应用或直接导入凭据均在向导完成。`bot apps` 读取可复用应用；`bot defaults` 输出完整配置对象；`bot connect <json-file>` 接受 `{appId,source,clientSecret?,config}`，source 为 manual 时需 clientSecret，botmux 时由服务机器已有本地配置读取密钥。`connect` 成功仍需配对，当前网页不能直接恢复它返回的接入 ID，推荐首次从网页完成整个接入。机器人权限和个人只读采集分开，后者不因此获得消息写权限。
+`bot setup` 不带 `--start` 时只准备本机配置并显示入口；连接 `--url` 远端时只显示入口，不改配置。`bot create/authorize/connect` 返回可恢复的 `setupUrl`；`pending/show/pair/confirm/cancel` 可继续同一次接入。`connect <json-file>` 接受 `{appId,source,clientSecret?,config}`，source 为 manual 时需 clientSecret，botmux 时由服务机器读取已有密钥。网页刷新后保留授权或配对；服务重启后的未完成平台授权需重新发起，已保存配对可继续。源码独立前端用 `--web-url` 指定网页地址。个人只读采集不因此获得消息写权限。
 
 随包 skill 的读取与复制：
 

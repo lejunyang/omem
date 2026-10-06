@@ -127,7 +127,7 @@ export async function buildApp(
   const requirementTasks = new RequirementTasks(store);
   registerRequirementTasks(app, requirementTasks);
   const knowledgeRepository = registerKnowledgeRoutes(app, {
-    preparePage: plan => work?.preparePage(plan),
+    preparePage: (plan) => work?.preparePage(plan),
     beforePageRun: (plan, signal) => work.investigationHints(plan, signal),
     onPublish: (article) => {
       requirementTasks.sync(article);
@@ -163,14 +163,35 @@ export async function buildApp(
     work,
   });
   app.get("/api/work", async () => work.catalog());
-  app.post("/api/work/actions", async req => {
-    const input = z.object({ requestId: z.uuid(), action: workActionSchema, userText: z.string().min(1) }).strict().parse(req.body);
-    return work.apply(input.action, { requestId: input.requestId, userText: input.userText, conversationId: "web-followup", principalId: "owner", visibility: "private" });
+  app.post("/api/work/actions", async (req) => {
+    const input = z
+      .object({
+        requestId: z.uuid(),
+        action: workActionSchema,
+        userText: z.string().min(1),
+      })
+      .strict()
+      .parse(req.body);
+    return work.apply(input.action, {
+      requestId: input.requestId,
+      userText: input.userText,
+      conversationId: "web-followup",
+      principalId: "owner",
+      visibility: "private",
+    });
   });
-  app.get<{ Params: { id: string } }>("/api/work/development/:id/result", async req => {
-    const query = z.object({ startLine: z.coerce.number().int().positive().default(1), limit: z.coerce.number().int().min(1).max(500).default(200) }).parse(req.query);
-    return work.result(req.params.id, query.startLine, query.limit);
-  });
+  app.get<{ Params: { id: string } }>(
+    "/api/work/development/:id/result",
+    async (req) => {
+      const query = z
+        .object({
+          startLine: z.coerce.number().int().positive().default(1),
+          limit: z.coerce.number().int().min(1).max(500).default(200),
+        })
+        .parse(req.query);
+      return work.result(req.params.id, query.startLine, query.limit);
+    },
+  );
   app.get<{ Params: { key: string } }>(
     "/api/work/requirements/:key",
     async (req) => work.status(req.params.key),
@@ -363,11 +384,9 @@ export async function buildApp(
       try {
         return store.setSourceContexts(req.params.id, contextIds);
       } catch (error) {
-        return reply
-          .code(400)
-          .send({
-            error: String(error instanceof Error ? error.message : error),
-          });
+        return reply.code(400).send({
+          error: String(error instanceof Error ? error.message : error),
+        });
       }
     },
   );
@@ -399,11 +418,9 @@ export async function buildApp(
           ),
         };
       } catch (error) {
-        return reply
-          .code(409)
-          .send({
-            error: String(error instanceof Error ? error.message : error),
-          });
+        return reply.code(409).send({
+          error: String(error instanceof Error ? error.message : error),
+        });
       }
     },
   );
@@ -1023,6 +1040,9 @@ export async function buildApp(
   app.get<{ Params: { id: string } }>(
     "/api/integrations/lark/onboarding/:id",
     async (req) => requireLark().status(req.params.id),
+  );
+  app.get("/api/integrations/lark/onboardings", async () =>
+    requireLark().pending(),
   );
   app.post<{ Params: { id: string } }>(
     "/api/integrations/lark/onboarding/:id/cancel",

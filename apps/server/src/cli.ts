@@ -1153,9 +1153,15 @@ for (const action of ["login", "status"])
     });
 const bot = group(
   "bot",
-  "复用已有飞书机器人绑定与通知流程（与个人只读采集分开）",
+  "创建或复用飞书机器人、继续配对与通知（与个人只读采集分开）",
 );
 read(bot, "status", "查看已绑定机器人", "/api/integrations/lark/status");
+read(
+  bot,
+  "pending",
+  "查看可继续的授权与配对",
+  "/api/integrations/lark/onboardings",
+);
 read(
   bot,
   "defaults",
@@ -1171,15 +1177,123 @@ read(
 bot
   .command("connect <json-file>")
   .description("按既有绑定接口导入应用配置；密钥文件保留在个人目录")
-  .action(async (file) =>
-    show(await api("/api/integrations/lark/existing", await readJson(file))),
+  .option("--web-url <url>", "独立前端或开发服务的网页地址")
+  .action(async (file, options) => {
+    const { larkSetupUrl } = await import("./integrations/lark/setup.js");
+    const result = await api(
+      "/api/integrations/lark/existing",
+      await readJson(file),
+    );
+    show({
+      ...result,
+      setupUrl: larkSetupUrl(options.webUrl || serverAddress(), result.id),
+    });
+  });
+for (const mode of ["new", "existing"] as const) {
+  bot
+    .command(mode === "new" ? "create" : "authorize <app-id>")
+    .description(
+      mode === "new"
+        ? "发起新应用创建授权；由本人在飞书完成授权"
+        : "发起已有应用的能力授权更新",
+    )
+    .option("--request <file>", "完整接入能力配置 JSON；省略使用默认配置")
+    .option("--web-url <url>", "独立前端或开发服务的网页地址")
+    .action(async (...args) => {
+      const options = mode === "new" ? args[0] : args[1];
+      const { larkSetupUrl } = await import("./integrations/lark/setup.js");
+      const config = options.request
+        ? await readJson(options.request)
+        : await api("/api/integrations/lark/default-config");
+      const result = await api("/api/integrations/lark/onboarding", {
+        mode,
+        ...(mode === "existing" ? { appId: args[0] } : {}),
+        config,
+      });
+      show({
+        ...result,
+        setupUrl: larkSetupUrl(options.webUrl || serverAddress(), result.id),
+      });
+    });
+}
+bot
+  .command("show <id>")
+  .description("查看同一次接入的授权、配对与实际状态")
+  .action(async (id) =>
+    show(await api(`/api/integrations/lark/onboarding/${enc(id)}`)),
+  );
+bot
+  .command("pair <id>")
+  .description("生成或重新生成配对码；本人私聊同一机器人发送")
+  .action(async (id) =>
+    show(
+      await api(
+        `/api/integrations/lark/onboarding/${enc(id)}/pairing-code`,
+        {},
+      ),
+    ),
+  );
+bot
+  .command("confirm <id>")
+  .description("核对配对发送者后确认本人绑定；不自动猜测身份")
+  .requiredOption(
+    "--owner <open-id>",
+    "本次本人私聊的发送者身份，必须与候选一致",
+  )
+  .action(async (id, options) => {
+    const current = await api(`/api/integrations/lark/onboarding/${enc(id)}`);
+    if (!current.pairing?.candidateOpenId)
+      throw Error(
+        "尚未收到配对私聊。先生成配对码，并由本人私聊这个机器人发送。",
+      );
+    await api("/api/integrations/lark/bindings/confirm", {
+      pairingId: current.pairing.id,
+      expectedOpenId: options.owner,
+    });
+    show(await api(`/api/integrations/lark/onboarding/${enc(id)}`));
+  });
+bot
+  .command("cancel <id>")
+  .description("结束这次 omem 接入；不删除平台应用")
+  .action(async (id) =>
+    show(await api(`/api/integrations/lark/onboarding/${enc(id)}/cancel`, {})),
   );
 bot
   .command("setup")
-  .description("显示网页绑定入口，由现有向导完成登录与通知对象选择")
-  .action(() =>
-    show({ url: serverAddress() + "/#/lark" }, serverAddress() + "/#/lark"),
-  );
+  .description("准备本机连接配置与私有密钥，显示可恢复的网页向导；不创建应用")
+  .option("--start", "准备后启动或重启本机 PM2 服务")
+  .option("--onboarding <id>", "继续指定接入，不重复创建应用")
+  .option("--web-url <url>", "独立前端或开发服务的网页地址")
+  .action(async (options) => {
+    const { prepareLarkSetup, larkSetupUrl } = await import(
+      "./integrations/lark/setup.js"
+    );
+    const url = larkSetupUrl(
+      options.webUrl || serverAddress(),
+      options.onboarding,
+    );
+    if (program.opts().url || process.env.OMEM_URL) {
+      if (options.start)
+        throw Error("--url 只连接现有服务；不能启动或改写远端服务配置。");
+      show(
+        { url, prepared: false },
+        `现有服务接入向导：${url}\n需要服务机器已启用飞书连接；此命令不会改写本机或远端配置。`,
+      );
+      return;
+    }
+    const prepared = await prepareLarkSetup(configPath(), defaultDataDir());
+    let service;
+    if (options.start) {
+      const { manageService } = await import("./service-manager.js");
+      service = await manageService("restart");
+      if (!service.health.healthy || service.state !== "online")
+        process.exitCode = 1;
+    }
+    show(
+      { ...prepared, url, prepared: true, ...(service ? { service } : {}) },
+      `飞书连接配置已准备：${prepared.config}\n加密密钥：${prepared.keySource === "environment" ? "沿用服务环境" : "保存在个人数据目录并自动复用"}\n${options.start ? "已检查服务启动状态" : "下一步：用同一配置运行 omem service restart；源码服务按现有启动方式重启"}\n接入向导：${url}`,
+    );
+  });
 const skills = group(
   "skills",
   "查看或复制随包提供的 Agent 使用技能；不自动安装全局 hooks",

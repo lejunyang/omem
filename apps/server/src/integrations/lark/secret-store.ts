@@ -12,10 +12,13 @@ import {
   fsyncSync,
   mkdirSync,
   openSync,
+  lstatSync,
+  readdirSync,
   readFileSync,
   renameSync,
   unlinkSync,
   writeSync,
+  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 
@@ -45,9 +48,32 @@ export class EncryptedSecretStore {
   }
 
   static fromEnvironment(dataDir: string) {
-    const key = process.env.OMEM_SECRET_KEY;
-    if (!key) throw Error("OMEM_SECRET_KEY is required for Lark credentials");
-    return new EncryptedSecretStore(join(dataDir, "secrets"), key);
+    const directory = join(dataDir, "secrets");
+    const configured = process.env.OMEM_SECRET_KEY;
+    if (configured) return new EncryptedSecretStore(directory, configured);
+    const file = join(directory, "master.key");
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    if (!existsSync(file)) {
+      if (readdirSync(directory).some((name) => name.endsWith(".json")))
+        throw Error(
+          "已有飞书加密凭据，请提供原来的 OMEM_SECRET_KEY；不能用新密钥覆盖旧连接。",
+        );
+      try {
+        writeFileSync(file, randomBytes(32).toString("hex") + "\n", {
+          mode: 0o600,
+          flag: "wx",
+        });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+    }
+    if (!lstatSync(file).isFile() || lstatSync(file).isSymbolicLink())
+      throw Error("飞书加密密钥必须是个人目录中的普通文件。");
+    chmodSync(file, 0o600);
+    return new EncryptedSecretStore(
+      directory,
+      readFileSync(file, "utf8").trim(),
+    );
   }
 
   private path(reference: string) {
