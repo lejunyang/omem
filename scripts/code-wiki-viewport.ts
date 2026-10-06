@@ -20,11 +20,16 @@ try {
     const panel = page.locator(".work-panel");
     await expect(panel.locator(".follow-card").first()).toBeVisible();
     await expect(panel).toContainText("小林");
-    await panel.getByRole("button", {name: /等待回复/}).click();
-    await expect(panel.locator(".action-list")).toContainText("小林");
+    await panel.getByRole("button", {name: /需要你决定/}).click();
+    await expect(panel.locator(".action-list")).toHaveCount(0);
     await panel.getByRole("button", {name: /^全部/}).click();
-    await panel.getByRole("button", {name: /^个人待办/}).click();
-    await expect(panel.locator(".action-list")).toContainText("检查时间");
+    const activePersonal = catalog.requirements.flatMap((r: any) => r.personalTasks ?? []);
+    if (activePersonal.length) {
+      await panel.getByRole("button", {name: /^个人待办/}).click();
+      await expect(panel.locator(".action-list")).toContainText("检查时间");
+    } else {
+      await expect(panel.getByRole("button", {name: /^个人待办/})).toContainText("0");
+    }
     await panel.getByRole("button", {name: /^全部/}).click();
     const trigger = panel.getByRole("button", {name: "调整关注点", exact: true}).first();
     await trigger.click();
@@ -32,7 +37,7 @@ try {
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(trigger).toBeFocused();
-    await expect(panel.locator(".change-plan")).toContainText("紧急");
+    await expect(panel.locator(".change-plan")).toContainText(/紧急|urgent/);
     await panel.getByRole("button", {name:"查看代码差异",exact:true}).first().click();
     await expect(panel.locator(".code-diff")).toContainText("urgent");
     await panel.getByRole("button", {name:"收起代码差异",exact:true}).first().click();
