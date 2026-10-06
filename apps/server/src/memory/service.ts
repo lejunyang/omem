@@ -361,7 +361,7 @@ export class MemoryService {
     const ownerId = this.options.ownerId ?? "owner";
     if (proposal.kind !== "task") return true;
     if (proposal.body.owner_id !== ownerId) return false;
-    return proposal.evidence.every((evidence) => {
+    const verified = (evidence: Proposal["evidence"][number]) => {
       const revision = this.store.revision(evidence.source_revision_id);
       const provenance = revision?.provenance;
       if (!provenance) return false;
@@ -372,7 +372,16 @@ export class MemoryService {
           provenance.actorVerifiedBy &&
           !provenance.forwarded,
       );
-    });
+    };
+    const allOwner = proposal.evidence.every(verified);
+    if (proposal.operation === "create") return allOwner;
+    if (!proposal.target_id) return false;
+    // A collaborator's reply is evidence of progress, not a new assignment.
+    // A reviewed update may combine it with this exact task's owner assignment.
+    const task = this.db.prepare("SELECT * FROM tasks WHERE id=?").get(proposal.target_id);
+    return !!task && task.owner_id === ownerId && task.workspace_id === proposal.scope.workspace_id &&
+      (task.project_id ?? null) === proposal.scope.project_id &&
+      (allOwner || proposal.evidence.some(e => "fragment_revision_id" in e && e.fragment_revision_id === task.evidence_id && verified(e)));
   }
 
   private hasCrossSourceUpdate(proposal: Proposal) {
@@ -1329,12 +1338,14 @@ export class MemoryService {
             dueAt: proposal.body.due_at,
             dueExpression: proposal.body.due_expression,
             nextStep: proposal.body.next_step,
+            ...(proposal.body.status ? { status: proposal.body.status } : {}),
             ...(proposal.body.follow_up ? { followUp: proposal.body.follow_up,
               ...(proposal.operation === "create" ? { status: proposal.body.follow_up.waiting_on ? "waiting" as const : "open" as const } : {}) } : {}),
-            evidenceId:
-              "exact_quote" in proposal.evidence[0]!
-                ? proposal.evidence[0]!.fragment_revision_id
-                : null,
+            // Preserve the assignment anchor; the full new evidence remains in
+            // the proposal, assessment and application dependencies.
+            evidenceId: proposal.target_id
+              ? this.db.prepare("SELECT evidence_id FROM tasks WHERE id=?").get(proposal.target_id)?.evidence_id as string | null
+              : "exact_quote" in proposal.evidence[0]! ? proposal.evidence[0]!.fragment_revision_id : null,
           },
         },
         hooks,

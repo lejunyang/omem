@@ -195,6 +195,16 @@
                     "type": "string",
                     "maxLength": 2000
                   },
+                  "status": {
+                    "description": "For an existing task, update actual open/waiting/done/cancelled state using the original owner assignment and new reply or verified owner confirmation. Receiving material does not by itself mean the owner reviewed it.",
+                    "type": "string",
+                    "enum": [
+                      "open",
+                      "waiting",
+                      "done",
+                      "cancelled"
+                    ]
+                  },
                   "follow_up": {
                     "type": "object",
                     "properties": {
