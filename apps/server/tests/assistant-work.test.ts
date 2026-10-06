@@ -22,6 +22,7 @@ import { AssistantRuntime } from "../src/assistant/runtime.js";
 import { DevelopmentQueue } from "../src/development/queue.js";
 import { DevelopmentRunner } from "../src/development/runner.js";
 import { inspectRequirementChange } from "../src/development/replanning.js";
+import { MessageUnderstanding } from "../src/messages/understanding.js";
 import {
   git,
   fingerprint,
@@ -183,6 +184,31 @@ function publish(
     },
   });
 }
+
+it("separates saved messages from actual understanding and keeps owner corrections in current requirement inputs", () => {
+  const s = setup();
+  const context = s.store.contexts.create({ name: "退款", kind: "project", description: "退款查询" });
+  const capture = (id: string) => s.store.capture({ source: "chat", externalId: `lark-personal:${id}`, title: "讨论", context: { conversationId: "oc_feedback" }, parts: [{ type: "text", text: "建议小李负责页面，尚未确定。" }] }, { learning: false, notify: false, contextIds: [context.id] });
+  const first = capture("test-first");
+  s.store.db.prepare("INSERT INTO personal_lark_messages(id,chat_id,chat_name,digest,raw,revision_id,observed_at,updated_at) VALUES(?,?,?,'test','{}',?,?,?)").run("test-first", "oc_feedback", "退款讨论", first.revision.id, new Date().toISOString(), new Date().toISOString());
+  const key = s.work.apply({ ...s.action, contextIds: [context.id] }, s.actor("跟进退款")).key!;
+  publish(s.repository, key);
+  const reader = new MessageUnderstanding(s.store, s.work);
+  const read = () => reader.read([{ id: "test-first", revision_id: first.revision.id, state: "ready", resources: [] }])[0]!.understanding;
+  expect(read()).toMatchObject({ stage: "saved", results: [], requirements: [{ key, cited: false }] });
+  const id = randomUUID();
+  const saved = s.store.messageFeedback.save("test-first", { requestId: id, text: "这只是提议，还没有决定；负责人不能当成已确定。", scope: "conversation" });
+  expect(read().stage).toBe("understanding");
+  expect(s.repository.materialsForPlan(s.repository.pages().find(p => p.key === key)!.plan!).some(m => m.revisionId === saved.revisionId)).toBe(true);
+  const later = capture("test-later");
+  expect(s.store.messageFeedback.forSource(later.revision.sourceId)).toMatchObject([{ text: expect.stringContaining("只是提议") }]);
+  expect(s.store.messageFeedback.save("test-first", { requestId: id, text: "这只是提议，还没有决定；负责人不能当成已确定。", scope: "conversation" }).duplicate).toBe(true);
+  expect(s.store.tasks()).toHaveLength(0);
+  expect(s.store.db.prepare("SELECT count(*) n FROM memories").get()!.n).toBe(0);
+  s.store.messageFeedback.revoke(id);
+  expect(s.store.messageFeedback.forSource(later.revision.sourceId)).toEqual([]);
+  expect(s.repository.materialsForPlan(s.repository.pages().find(p => p.key === key)!.plan!).some(m => m.revisionId === saved.revisionId)).toBe(false);
+});
 
 it("applies one natural-language work action with a receipt, persists corrections and attention, and supports revocation while writing", async () => {
   const s = setup();

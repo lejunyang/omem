@@ -213,6 +213,13 @@ run = "pnpm run test:browser"
 [tasks.live-daily]
 run = "bun scripts/live-daily-smoke.ts"
 
+[tasks."demo:followup"]
+description = "Create one private follow-up demo with real Traex / Sol; never reads or writes Lark"
+run = [{ argv = ["bun", "scripts/demo-followup.ts", "--data", "{{data}}"] }]
+[tasks."demo:followup".options.data]
+default = ".repo-review/runtime/followup-demo"
+help = "New demo directory; existing libraries are preserved and not regenerated"
+
 [tasks.live-acp]
 run = "bun scripts/live-acp-smoke.ts"
 

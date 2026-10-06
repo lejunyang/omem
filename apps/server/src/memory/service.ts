@@ -65,7 +65,7 @@ const now = () => new Date().toISOString();
 
 /** Notification prose describes the applied content, never its storage kind or
  * identifiers. Historical bodies are read for display; authority stays in apply. */
-const readableMemory = (kind: string, body: Record<string, unknown>) => {
+export const readableMemory = (kind: string, body: Record<string, unknown>) => {
   const lines = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
   if (kind === "claim") return String(body.statement ?? "");
   if (kind === "episode") {

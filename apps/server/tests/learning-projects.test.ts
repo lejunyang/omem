@@ -76,7 +76,7 @@ it("investigates unassigned input, independently reviews filing, and resumes amb
     expect(active()).toHaveLength(1);
     store.setSourceContexts(unresolved.revision.sourceId, [mobile.id]);
     await pipe.drain();
-    expect(active()).toHaveLength(2);
+    expect(active(), JSON.stringify(store.jobs.list().map(j => ({ kind: j.kind, state: j.state, error: j.lastError })))).toHaveLength(2);
     const prior = active().find(m => JSON.parse(String(m.scope)).project_id === mobile.id)!;
     // Re-importing the same original with a different manual choice is also a correction.
     const original = store.revision(unresolved.revision.id)!;

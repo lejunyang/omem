@@ -130,6 +130,9 @@ export class AssistantWork {
       id TEXT PRIMARY KEY,requirement_key TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL,material_key TEXT,attention TEXT,active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS assistant_work_receipts(request_id TEXT PRIMARY KEY,digest TEXT NOT NULL,body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS assistant_requirement_notices(requirement_key TEXT PRIMARY KEY,state TEXT NOT NULL);`);
+    this.store.db
+      .exec(`CREATE TABLE IF NOT EXISTS assistant_requirement_updates(
+      requirement_key TEXT PRIMARY KEY, revision TEXT NOT NULL, changes TEXT NOT NULL, updated_at TEXT NOT NULL);`);
   }
   private plan(key: string) {
     const p = this.pages.repository.pages().find((p) => p.key === key)?.plan;
@@ -167,13 +170,17 @@ export class AssistantWork {
         at: String(r.created_at),
       }));
   }
-  status(key: string) {
+  status(key: string, refresh = true) {
     const plan = this.plan(key);
     const row = this.store.db
       .prepare("SELECT * FROM assistant_focus WHERE requirement_key=?")
       .get(key);
-    this.pages.repository.refresh();
+    if (refresh) this.pages.repository.refresh();
     const article = this.pages.repository.get(key);
+    const links = this.store.db
+      .prepare("SELECT * FROM requirement_tasks WHERE page_key=?")
+      .all(key);
+    const todos = this.store.tasks();
     return {
       key,
       title: plan.title,
@@ -188,11 +195,31 @@ export class AssistantWork {
       current: article?.current ?? false,
       revision: article?.revision ?? null,
       requirement: article?.document.requirement ?? null,
-      actionLinks:
-        article?.reading?.workflow === "requirement-followup"
-          ? this.actions.board(key).links
-          : [],
+      actionLinks: links,
       questions: article?.document.questions ?? [],
+      summary: article?.document.summary ?? null,
+      updatedAt: article?.generation.at ?? null,
+      latestChange: this.latestChange(key),
+      actions: (article?.document.requirement?.actions ?? []).map((action) => ({
+        ...action,
+        sources: action.evidence.flatMap((id) => {
+          const c = article!.document.citations.find((c) => c.key === id);
+          const d =
+            c &&
+            article!.dependencies.find(
+              (d) => d.kind === "material" && d.key === c.target.key,
+            );
+          const m =
+            d &&
+            this.pages.repository.resolveMaterial(d.key, d.digest)?.material;
+          return m ? [{ title: c!.label, revisionId: m.revisionId }] : [];
+        }),
+        personalTask:
+          links
+            .filter((l) => l.enabled && l.action_id === action.id)
+            .map((l) => todos.find((t) => t.id === l.task_id))
+            .find(Boolean) ?? null,
+      })),
       feedback: this.feedback(key),
       development: this.development
         .list()
@@ -215,6 +242,8 @@ export class AssistantWork {
         exitCode: c.exitCode,
       })),
       review: t.run?.review,
+      changePlan: t.run?.changePlan ?? null,
+      requirementChanges: t.run?.changes ?? [],
       runId: t.runId,
       outcome: t.runId ? developmentResult(this.store, t.runId) : null,
       conversationId: t.conversationId,
@@ -284,22 +313,14 @@ export class AssistantWork {
     };
   }
   catalog() {
+    this.pages.repository.refresh();
     return {
       requirements: this.pages.repository
         .pages()
         .filter((p) => p.plan?.workflow === "requirement-followup")
         .map((p) => {
-          const s = this.status(p.key);
-          return {
-            key: s.key,
-            title: s.title,
-            goal: s.goal,
-            version: s.version,
-            attention: s.attention,
-            contextIds: s.contextIds,
-            maintenance: s.maintenance,
-            current: s.current,
-          };
+          const s = this.status(p.key, false);
+          return s;
         }),
       projects: this.development.runner.projects().map((p) => ({
         alias: p.alias,
@@ -471,8 +492,10 @@ export class AssistantWork {
     };
   }
   async investigationHints(plan: WikiPageBrief, signal: AbortSignal) {
-    if (plan.workflow !== "requirement-followup" || !this.decisions)
-      return undefined;
+    if (plan.workflow !== "requirement-followup") return undefined;
+    const ownerMessageFeedback = this.pages.repository
+      .materialsForPlan(plan)
+      .flatMap((m) => this.store.messageFeedback.forSource(m.sourceId));
     const old = this.pages.repository.get(plan.key);
     const known = new Map(
       [
@@ -484,7 +507,7 @@ export class AssistantWork {
       .materialsForPlan(plan)
       .filter((m) => known.get(m.key) !== m.digest);
     const leads = [];
-    for (const material of changed.slice(0, 6)) {
+    for (const material of this.decisions ? changed.slice(0, 6) : []) {
       signal.throwIfAborted();
       const decision = await decideWork(this.decisions, {
         attention: plan.attention,
@@ -508,9 +531,10 @@ export class AssistantWork {
     );
     return {
       changedMaterialKeys: changed.map((m) => m.key),
+      ownerMessageFeedback,
       prioritizedLeads: leads,
       instruction:
-        "快速模型仅建议优先补读的变化，不是事实或操作许可。直接相关和可能冲突的材料先读；低分不得覆盖用户反馈或移除原材料。结合原件自行决定相关性、缺失背景和重要变化。",
+        "ownerMessageFeedback 是本人对消息的纠正与关注偏好，调查时采用并补读其 revisionId 对应原文；提议不要写成决定，更新旧结论而非并列冲突。快速模型仅建议补读的变化，不是事实或操作许可。直接相关和可能冲突的材料先读；低分不得覆盖用户反馈或移除原材料。",
     };
   }
   apply(value: WorkAction, actor: WorkActor): WorkReceipt {
@@ -863,6 +887,17 @@ export class AssistantWork {
     if (!changes.length && article.reading?.attention?.notifications === "all")
       changes.push(article.document.summary);
     this.store.tx(() => {
+      if (changes.length)
+        this.store.db
+          .prepare(
+            "INSERT OR REPLACE INTO assistant_requirement_updates VALUES(?,?,?,?)",
+          )
+          .run(
+            key,
+            article.revision,
+            JSON.stringify(changes),
+            article.generation.at,
+          );
       this.store.db
         .prepare(
           "INSERT INTO assistant_requirement_notices VALUES(?,?) ON CONFLICT(requirement_key) DO UPDATE SET state=excluded.state",
@@ -883,5 +918,19 @@ export class AssistantWork {
         ),
       );
     });
+  }
+  private latestChange(key: string) {
+    const row = this.store.db
+      .prepare(
+        "SELECT * FROM assistant_requirement_updates WHERE requirement_key=?",
+      )
+      .get(key);
+    return row
+      ? {
+          revision: String(row.revision),
+          lines: JSON.parse(String(row.changes)) as string[],
+          at: String(row.updated_at),
+        }
+      : null;
   }
 }

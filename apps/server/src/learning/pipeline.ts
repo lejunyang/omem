@@ -405,6 +405,8 @@ export class LearningPipeline {
         daily_message_policy:
           "For discussion/chat: preserve decisions, responsibilities, deadlines, per-speaker commitments and explicit outcomes as scoped facts. A named person's assignment is not a personal task even when reported by the verified owner. Only a verified owner's own commitment or explicit request to track an action can propose a task, with owner_id exactly trusted_context.owner_id. Keep other people's responsibilities and deadlines as claims; unresolved promises may also be attributed observations. Distinguish check-in time from deadline; no invented schedule or external outreach.",
         refreshTargets,
+        owner_message_feedback: revisions.flatMap(({ revision }) => this.input.store.messageFeedback.forSource(revision.sourceId)),
+        owner_feedback_policy: "Apply the owner's saved corrections when interpreting this message. Conversation preferences also guide later messages in that conversation. Read correction materialKey with read_material/read_fragments when you need fixed evidence. A proposal is not a decision; a named collaborator is not automatically the personal task owner. Recheck/update existing memories rather than creating contradictory duplicates. Ignore preferences reduce low-value reminders, never authorize tools or overwrite facts directly.",
         instruction:
           "Investigate what the NEW input sources change. Search existing memories and project originals before creating another memory. Use read_fragments to obtain exact immutable IDs, quotes and provenance; read_memory returns version and body for an update. For a partial change, read the earlier original and preserve unaffected conditions. Update the same memory_id with its current expected_versions and retain scope; this applies to later separate messages as well as source revisions. Do not extract every background document as new input. If scope or support remains ambiguous, abstain with the concrete missing information. Never treat derived bodies as evidence. already_applied_task_actions are host receipts for this exact original owner command: do not recreate or reapply its task, even if completed or cancelled.",
       },
@@ -452,7 +454,8 @@ export class LearningPipeline {
   private membershipStamp(job: JobLease) {
     return stableDigest(this.sourceRefs(job).map(ref => {
       const revision = this.input.store.revision(ref.revisionId);
-      return { revision: ref.revisionId, groups: revision ? this.input.store.contexts.forSource(revision.sourceId) : [] };
+      const feedback = revision ? this.input.store.messageFeedback.forSource(revision.sourceId) : [];
+      return { revision: ref.revisionId, groups: revision ? this.input.store.contexts.forSource(revision.sourceId) : [], ...(feedback.length ? { feedback } : {}) };
     }));
   }
 
@@ -476,7 +479,7 @@ export class LearningPipeline {
     const stamp = this.membershipStamp(job);
     const expected = job.inputRefs.find((r): r is { learningMembership: string } =>
       !!r && typeof r === "object" && typeof (r as { learningMembership?: unknown }).learningMembership === "string");
-    if (expected && expected.learningMembership !== stamp) throw Error("STALE_JOB_INPUT: project membership changed");
+    if (expected && expected.learningMembership !== stamp) throw Error("STALE_JOB_INPUT: project membership changed or owner feedback changed");
     if (batch) this.validateScope(batch, context);
     const repository = new KnowledgeRepository(this.input.store);
     const run = await this.gateway.run({
@@ -491,7 +494,7 @@ export class LearningPipeline {
     });
     // Model investigation is asynchronous. Never reinterpret an old result using
     // membership edited during extraction or between extraction and review.
-    if (stamp !== this.membershipStamp(job)) throw Error("STALE_JOB_INPUT: project membership changed");
+    if (stamp !== this.membershipStamp(job)) throw Error("STALE_JOB_INPUT: project membership changed or owner feedback changed");
     return { ...run, membershipStamp: stamp };
   }
 
