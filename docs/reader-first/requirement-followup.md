@@ -105,6 +105,6 @@ start/resume 在前台运行，Ctrl+C 停止；进程中断后显式 resume，�
 
 ## 当前边界与验收
 
-消息自动归属依赖 learning.enabled 和有效 Agent；watch 只跟随已归属材料，不猜群名，也不自动同步所有远端文档或仓库。代码检查成功不会把需求页自动改成“上线”；需要把真实检查/代码材料捕获后重新调查。实施已验证 Traex ACP；Claude 实验适配完成但实际推理缺认证，Codex 暂仅探测。两角色独立配置、固定与支持状态见 [Agent 提供方](agent-providers.md)。
+消息自动归属依赖 learning.enabled 和有效 Agent；watch 只跟随已归属材料，不猜群名，也不自动同步所有远端文档或仓库。代码检查成功不会把需求页自动改成“上线”；需要把真实检查/代码材料捕获后重新调查。实施已验证 Traex、Codex ACP；Claude 实验适配完成但实际推理缺认证。两角色独立配置、固定与支持状态见 [Agent 提供方](agent-providers.md)。
 
 `osdk run development:verify` 用临时合成项目覆盖跨来源需求、关联待办、真实 Sol 编码、子目录规则、独立评审和应用前原工作区保护。具体本轮结果与失败见 [progress.md](progress.md)。固定输出覆盖 `.repo-review/runtime/research/development.json`，不追加重复正文。
