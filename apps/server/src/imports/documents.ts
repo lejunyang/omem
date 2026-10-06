@@ -2,11 +2,18 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import type { CaptureInput } from "../../../../packages/contracts/src/index.js";
 import { assetPath, optionalRuntime } from "../paths.js";
 const exec = promisify(execFile);
+export function saveImportAssetSync(dataDir: string, bytes: Buffer) {
+  const id = createHash("sha256").update(bytes).digest("hex");
+  mkdirSync(join(dataDir, "assets"), { recursive: true, mode: 0o700 });
+  try { writeFileSync(join(dataDir, "assets", id), bytes, { flag: "wx", mode: 0o600 }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+  return id;
+}
 export async function saveImportAsset(dataDir: string, bytes: Buffer) {
   const id = createHash("sha256").update(bytes).digest("hex");
   await mkdir(join(dataDir, "assets"), { recursive: true, mode: 0o700 });

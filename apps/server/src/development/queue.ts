@@ -216,6 +216,21 @@ export class DevelopmentQueue {
         };
     if (!conversation && inputReceipts?.length)
       throw Error("缺少已保存会话，不能交接外部回执");
+    const plan = this.pages.repository.pages().find(p => p.key === key)?.plan;
+    for (const ref of handoff.inputs) {
+      const receipt = inputs.read({ conversationId: actor.conversationId, turnId: actor.requestId }, ref.recordId);
+      const result = receipt.result as { isError?: boolean; exitCode?: number } | null;
+      // Failed reads remain useful diagnostic receipts; they are not evidence.
+      if (!result || result.isError || result.exitCode) continue;
+      try {
+        const material = inputs.capture({ conversationId: actor.conversationId, turnId: actor.requestId }, ref.recordId, `外部资料：${ref.capability} / ${ref.tool}`, plan?.contextIds);
+        ref.material = { key: material.key, revisionId: material.revisionId };
+      } catch (error) {
+        // The exact receipt is still handed over; report a capture gap rather
+        // than treating a locator/image-only unsupported response as a document.
+        ref.materialError = error instanceof Error ? error.message : String(error);
+      }
+    }
     // Export before enqueue returns: restart or removal of a chat workspace must
     // not leave a queued task pointing at transient files.
     inputs.export(

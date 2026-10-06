@@ -40,7 +40,7 @@ import {
   materialFromRevision,
   type KnowledgeArticle,
 } from "./repository.js";
-import { researchSnapshot } from "./research-snapshot.js";
+import { researchSnapshot, appendResearchMaterial } from "./research-snapshot.js";
 import { MaterialDescriptions } from "../source-profile/descriptions.js";
 import { contextHierarchy, enclosingContext, type ContextNode } from "../retrieval/hierarchy.js";
 import { sourceContextRanges } from "../retrieval/context.js";
@@ -69,6 +69,8 @@ export type ResearchSnapshot = {
   file: string;
   materials: KnowledgeMaterial[];
   articles: KnowledgeArticle[];
+  /** Available only to trusted host tools in the investigating session. */
+  admit?: (material: KnowledgeMaterial) => KnowledgeMaterial;
 };
 export type ResearchTool = {
   readOnly?: boolean;
@@ -97,6 +99,7 @@ export async function prepareAgentResearch(input: {
   includeUnanchoredState?: boolean;
   /** Filing an unassigned source may require an existing, still-empty group. */
   includeGroupCatalog?: boolean;
+  onMaterialAdmitted?: (material: KnowledgeMaterial) => void;
   onActivity?: (event: {
     label: string;
     tool?: string;
@@ -142,7 +145,7 @@ export async function prepareAgentResearch(input: {
     mkdirSync(originals, { recursive: true, mode: 0o700 });
     const entries = new Map<string, Entry>(),
       paths = new Map<string, string>();
-    for (const material of input.materials) {
+    const exportMaterial = (material: KnowledgeMaterial) => {
       const given = (material.path ?? "").replaceAll("\\", "/");
       // Preserve relative code/document structure. Absolute or colliding source
       // paths are named separately; never export outside this task directory.
@@ -182,7 +185,8 @@ export async function prepareAgentResearch(input: {
         return { id: image.assetId, file: path, mime: image.mimeType };
       });
       entries.set(material.key, { material, file, images });
-    }
+    };
+    for (const material of input.materials) exportMaterial(material);
     const catalog = [...entries.values()].map((e) => ({
       key: e.material.key,
       title: e.material.title,
@@ -272,6 +276,24 @@ export async function prepareAgentResearch(input: {
       ),
     );
     const articles = new Map(admittedArticles.map((a) => [a.document.key, a]));
+    const admit = (given: KnowledgeMaterial) => {
+      if (input.snapshot) throw Error("独立复核只能读取已固定资料");
+      if (input.visible && !given.fragments.every(f => input.visible!(f.id))) throw Error("新材料不在当前阅读权限中");
+      const existing = [...entries.values()].find(e => e.material.sourceId === given.sourceId && e.material.revisionId === given.revisionId);
+      if (existing) return existing.material;
+      // Preserve earlier locators if this object changes during an investigation.
+      const material = entries.has(given.key) ? { ...given, key: `${given.key}@${given.revisionId}` } : given;
+      appendResearchMaterial(databaseFile, repository, material);
+      exportMaterial(material);
+      input.materials.push(material);
+      for (const f of fragmentPositions(material)) fragments.set(f.id, { material, fragment: f });
+      const e = entries.get(material.key)!;
+      catalog.push({ key: material.key, title: material.title, path: relative(workspace, e.file), revision: material.revisionId, source: material.namespace, lines: material.lineCount, images: e.images, description: null, groupIds: [] });
+      writeFileSync(join(workspace, "catalog.json"), JSON.stringify(catalog, null, 2), { mode: 0o600 });
+      ready = undefined;
+      input.onMaterialAdmitted?.(material);
+      return material;
+    };
     const activity: unknown[] = [];
     const reads = new Set<string>();
     const record = (event: unknown) => {
@@ -458,8 +480,9 @@ export async function prepareAgentResearch(input: {
         tool(extra.name, extra.description, extra.shape, (args) =>
           extra.run(args, {
             file: databaseFile,
-            materials: input.materials,
-            articles: admittedArticles,
+            materials: [...input.materials],
+            articles: [...admittedArticles],
+            ...(input.snapshot ? {} : { admit }),
           }),
           extra.readOnly ?? true,
         );
