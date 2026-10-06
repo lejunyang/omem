@@ -20,19 +20,31 @@ const key = z.string().min(1);
 const version = z.number().int().positive();
 /** A proposal, applied by the host after the assistant turn completes. */
 export const workActionSchema = z.discriminatedUnion("operation", [
-  z.object({
-    operation: z.literal("configure_project"),
-    project: key,
-    configuration: projectConfigurationSchema,
-    delegation: key.describe("Exact current owner request to prepare/configure this project's development checks. Saves configuration only; does not execute commands."),
-  }).strict(),
-  z.object({
-    operation: z.literal("prepare_repository"),
-    alias: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/),
-    url: key.describe("Exact Git address/path supplied by the owner, or the origin of an already registered project. No credentials in URLs."),
-    ref: key.describe("Requested branch, tag or commit; use HEAD only when no version was specified. Preserve a registered project's ref when retrying."),
-    delegation: key.describe("Copy the current owner request to prepare, fetch or retry this repository. This queues preparation, not coding."),
-  }).strict(),
+  z
+    .object({
+      operation: z.literal("configure_project"),
+      project: key,
+      configuration: projectConfigurationSchema,
+      delegation: key.describe(
+        "Exact current owner request to prepare/configure this project's development checks. Saves configuration only; does not execute commands.",
+      ),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("prepare_repository"),
+      alias: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/),
+      url: key.describe(
+        "Exact Git address/path supplied by the owner, or the origin of an already registered project. No credentials in URLs.",
+      ),
+      ref: key.describe(
+        "Requested branch, tag or commit; use HEAD only when no version was specified. Preserve a registered project's ref when retrying.",
+      ),
+      delegation: key.describe(
+        "Copy the current owner request to prepare, fetch or retry this repository. This queues preparation, not coding.",
+      ),
+    })
+    .strict(),
   z
     .object({
       operation: z.literal("track"),
@@ -92,7 +104,11 @@ export const workActionSchema = z.discriminatedUnion("operation", [
       operation: z.literal("start_development"),
       key,
       project: key,
-      configuration: projectConfigurationSchema.optional().describe("If checks are missing or outdated, inspect/read the project and supply its configuration in this same coding assignment. No extra user round trip is needed for routine setup within the assignment."),
+      configuration: projectConfigurationSchema
+        .optional()
+        .describe(
+          "Optional explicit project configuration. Normally dispatch the assignment directly: the coding agent reads repository rules and chooses missing/outdated checks in its own checkout.",
+        ),
       inputReceipts: z
         .array(z.uuid())
         .optional()
@@ -118,7 +134,7 @@ export const workActionSchema = z.discriminatedUnion("operation", [
       operation: z.literal("resume_development"),
       taskId: key,
       delegation: key.describe(
-        "Exact CURRENT user instruction to continue this existing coding task, not requirement maintenance.",
+        "Exact CURRENT user instruction to continue this existing task on the same checkout, including adopting a reviewed changed requirement.",
       ),
     })
     .strict(),

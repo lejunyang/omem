@@ -45,43 +45,96 @@ export const requirementStateSchema = z
   .strict();
 export type RequirementState = z.infer<typeof requirementStateSchema>;
 
-export const projectCommandSchema = z.object({
-  name: id,
-  command: z.string().min(1),
-  args: z.array(z.string()).default([]),
-  cwd: z.string().default("."),
-  purpose: z.enum(["setup", "test", "build", "browser", "design"]),
-  required: z.boolean().default(true),
-  timeoutMs: z.number().int().positive().default(600000),
-}).strict();
-const configurationSourceSchema = z.object({ path: z.string().min(1), hash: z.string().min(1) }).strict();
-export const projectConfigurationSchema = z.object({
-  expectedVersion: z.string().min(1).describe("Current configurationVersion returned by project_inspect."),
-  instructions: z.string().describe("Project-specific implementation and acceptance instructions, preserving existing owner constraints."),
-  ruleFiles: z.array(z.string()).describe("Additional repository-relative instructions; AGENTS.md and CLAUDE.md are already read automatically."),
-  commands: z.array(projectCommandSchema).describe("Full replacement command list. Derive executable/args/cwd from actual project docs and manifests. No publish, push, remote writes or global installation."),
-  sources: z.array(configurationSourceSchema).min(1).describe("Actual paths and hashes returned by project_read or project_inspect; include applicable rules and the command definitions."),
-  summary: z.string().min(1).describe("Briefly explain the chosen setup and checks in user language."),
-  gaps: z.array(z.string()).describe("Missing environment, credentials or acceptance steps. Saving configuration does not mean commands succeeded."),
-}).strict();
+export const projectCommandSchema = z
+  .object({
+    name: id,
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    cwd: z.string().default("."),
+    purpose: z.enum(["setup", "test", "build", "browser", "design"]),
+    required: z.boolean().default(true),
+    timeoutMs: z.number().int().positive().default(600000),
+  })
+  .strict();
+const configurationSourceSchema = z
+  .object({ path: z.string().min(1), hash: z.string().min(1) })
+  .strict();
+export const projectChecksSchema = z
+  .object({
+    commands: z.array(projectCommandSchema).min(1),
+    sources: z.array(configurationSourceSchema).min(1),
+    summary: z.string().min(1),
+    gaps: z.array(z.string()),
+  })
+  .strict();
+export const projectConfigurationSchema = z
+  .object({
+    expectedVersion: z
+      .string()
+      .min(1)
+      .describe("Current configurationVersion returned by project_inspect."),
+    instructions: z
+      .string()
+      .describe(
+        "Project-specific implementation and acceptance instructions, preserving existing owner constraints.",
+      ),
+    ruleFiles: z
+      .array(z.string())
+      .describe(
+        "Additional repository-relative instructions; AGENTS.md and CLAUDE.md are already read automatically.",
+      ),
+    commands: z
+      .array(projectCommandSchema)
+      .describe(
+        "Full replacement command list. Derive executable/args/cwd from actual project docs and manifests. No publish, push, remote writes or global installation.",
+      ),
+    sources: z
+      .array(configurationSourceSchema)
+      .min(1)
+      .describe(
+        "Actual paths and hashes returned by project_read or project_inspect; include applicable rules and the command definitions.",
+      ),
+    summary: z
+      .string()
+      .min(1)
+      .describe(
+        "Briefly explain the chosen setup and checks in user language.",
+      ),
+    gaps: z
+      .array(z.string())
+      .describe(
+        "Missing environment, credentials or acceptance steps. Saving configuration does not mean commands succeeded.",
+      ),
+  })
+  .strict();
 export type ProjectConfiguration = z.infer<typeof projectConfigurationSchema>;
 
 export const developmentProjectSchema = z
   .object({
     name: z.string().min(1),
     repository: z.string().min(1),
-    origin: z.object({
-      url: z.string(), ref: z.string(), commit: z.string(), preparedAt: z.string(),
-    }).strict().optional(),
+    origin: z
+      .object({
+        url: z.string(),
+        ref: z.string(),
+        commit: z.string(),
+        preparedAt: z.string(),
+      })
+      .strict()
+      .optional(),
     instructions: z.string().default(""),
     ruleFiles: z.array(z.string()).default([]),
     capabilities: z.array(z.string()).optional(),
-    configuration: z.object({
-      at: z.string(), summary: z.string(), sources: z.array(configurationSourceSchema), gaps: z.array(z.string()),
-    }).strict().optional(),
-    commands: z
-      .array(projectCommandSchema)
-      .default([]),
+    configuration: z
+      .object({
+        at: z.string(),
+        summary: z.string(),
+        sources: z.array(configurationSourceSchema),
+        gaps: z.array(z.string()),
+      })
+      .strict()
+      .optional(),
+    commands: z.array(projectCommandSchema).default([]),
   })
   .strict();
 export type DevelopmentProject = z.infer<typeof developmentProjectSchema>;

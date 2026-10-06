@@ -493,7 +493,7 @@
                   "minLength": 1
                 },
                 "configuration": {
-                  "description": "If checks are missing or outdated, inspect/read the project and supply its configuration in this same coding assignment. No extra user round trip is needed for routine setup within the assignment.",
+                  "description": "Optional explicit project configuration. Normally dispatch the assignment directly: the coding agent reads repository rules and chooses missing/outdated checks in its own checkout.",
                   "type": "object",
                   "properties": {
                     "expectedVersion": {
@@ -678,7 +678,7 @@
                   "minLength": 1
                 },
                 "delegation": {
-                  "description": "Exact CURRENT user instruction to continue this existing coding task, not requirement maintenance.",
+                  "description": "Exact CURRENT user instruction to continue this existing task on the same checkout, including adopting a reviewed changed requirement.",
                   "type": "string",
                   "minLength": 1
                 }

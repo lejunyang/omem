@@ -10,9 +10,9 @@
 
 `--config` 提供真实规则和检查，repository 由宿主填写；后续 `refresh --config` 可更新。没有配置时检查列表为空，需由装配 Agent 根据目标项目补齐后再宣称可验收。准备不执行项目脚本、安装依赖或 push；子模块/LFS 若存在会报告未准备。新提交使用新的本地工作区，已有修改与旧任务保留；apply 写回该任务的本地准备目录，不是推送远端。
 
-主助手已可自行补齐开发配置：`project_inspect` 读配置版本和规则，`project_files/read/search` 找到实际开发说明、清单与脚本；在 `start_development.configuration` 中一并提交，或用户只要求准备时用 `configure_project`。不让用户手填 JSON，不要求已经交办的常规配置再确认一遍。外部 CLI Agent 使用 `develop inspect ALIAS --json`、`develop read ALIAS PATH --json`，再 `develop configure ALIAS configuration.json`。JSON 含 expectedVersion、完整 instructions/ruleFiles/commands、sources(path/hash)、summary、gaps；版本和文件摘要来自刚才的实际读取。保存只登记配置，不执行命令；后续任务固定该配置。
+普通交办直接派发需求和已登记项目。编码 Agent 在独立副本读取适用项目规则、skills、说明与脚本，选择本任务的准备和检查；主助手不用预先找命令。只有用户要求查看或调整开发配置时才 `develop inspect/read/configure`，保存实际文件与 hash、选择原因和缺项。
 
-优先项目已有且有限时长的 setup/test/build/browser/design 任务，保留人工约束，继续读相关目录规则与脚本，不按语言名猜测。没有依赖不强加安装；缺私有环境说明具体前提。不能把发布、推送、通知、全局安装或修改系统的命令包装成自动检查。配置不证明命令通过；真实检查和未验证范围由执行任务返回。
+编码、宿主和独立评审共用真实检查记录；相同代码、命令和当前执行环境的成功结果复用，失败或重启不复用，具体疑点可以说明原因重跑。依赖准备、源码变化或命令变化后重新确认。检查不是授权，不登记发布、推送、消息或全局系统改动。
 
 编码先用 `develop register ALIAS project.json` 登记本机仓库与必要检查：
 
@@ -26,7 +26,7 @@
 
 `develop start KEY --project ALIAS` 从干净已提交版本创建副本。项目的根/子目录 AGENTS.md、CLAUDE.md、额外 ruleFiles 和仓库 skills 都可被 Agent 读取。开发者自主补读、修改和检查，独立评审不读自评，最多三轮回修。
 
-`develop show/list` 查看进度、检查与问题；中断后 `resume ID`。原始需求、范围或验收条件变化需重新规划和评审；仅补充执行进度的新需求文章可继续原任务。`diff ID` 查看改动，`apply ID` 将评审后的补丁放回仍位于原提交的干净原工作区，保留未提交让用户检查。若原库已有改动，不要替用户 reset/clean。没有 push/部署授权。
+`develop show/list` 查看进度、检查与问题；中断后 `resume ID`。新目标、验收或原始依据生效后，已交办且持续维护开启的未应用任务沿用原副本，由编码 Agent 保存保留/修改/待确认计划后调整并独立评审；仅进度换版不重编码。显式 resume 也采用这个流程，运行中的新指令在当前阶段结束后处理。取消或暂停不自动恢复；已应用任务需从更新后仓库重新交办。`diff ID` 查看改动，`apply ID` 将评审后的补丁放回仍位于原提交的干净原工作区，保留未提交让用户检查。若原库已有改动，不要替用户 reset/clean。没有 push/部署授权。
 
 后台与 CLI 的执行结果会捕获为统一材料，同一次编码的恢复和应用追加版本，并关联原需求。持续跟进开启才自动整理同一需求；暂停时保留材料。主助手读取 `work_result.outcome` 区分已捕获、需求已引用和学习任务状态，不能把排队当正文已更新或记忆已应用。ready 是独立副本检查/评审通过，applied 是写回原库，均不表示上线。
 

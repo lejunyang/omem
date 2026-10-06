@@ -1,4 +1,7 @@
-import { RequirementTasks, registerRequirementTasks } from "./knowledge/requirement-tasks.js";
+import {
+  RequirementTasks,
+  registerRequirementTasks,
+} from "./knowledge/requirement-tasks.js";
 import { agentIdleTimeout } from "./agent-timeout.js";
 import { assetPath } from "./paths.js";
 import { PersonalLarkService } from "./integrations/lark-personal/service.js";
@@ -12,7 +15,10 @@ import {
 import { taskCommandSchema } from "../../../packages/contracts/src/task-flow.js";
 import { messageWorkflows } from "./assistant/message-workflows.js";
 import { registerKnowledgeRoutes } from "./knowledge/api.js";
-import { contextInputSchema, contextIdsSchema } from "../../../packages/contracts/src/contexts.js";
+import {
+  contextInputSchema,
+  contextIdsSchema,
+} from "../../../packages/contracts/src/contexts.js";
 import Fastify from "fastify";
 import staticFiles from "@fastify/static";
 import { existsSync } from "node:fs";
@@ -42,12 +48,20 @@ import { documentInput } from "./imports/documents.js";
 import { DecisionService } from "./decision/service.js";
 import { intakeQuestions } from "./decision/questions.js";
 import { assessPassages } from "./decision/passages.js";
-import { assistantProfile as selectAssistantProfile, assistantReadingProfile, developmentProfiles, type Config } from "./config.js";
+import {
+  assistantProfile as selectAssistantProfile,
+  assistantReadingProfile,
+  developmentProfiles,
+  type Config,
+} from "./config.js";
 import { FeedbackService, MemoryService } from "./memory/service.js";
 import { LarkOnboardingService } from "./integrations/lark/onboarding.js";
 import { OMEM_LARK_DEFAULT_CONFIG } from "./integrations/lark/defaults.js";
 import { LearningPipeline } from "./learning/pipeline.js";
-import { materialDescriptionSchema, materialRoles } from "../../../packages/contracts/src/material-description.js";
+import {
+  materialDescriptionSchema,
+  materialRoles,
+} from "../../../packages/contracts/src/material-description.js";
 import {
   OfficialLarkCapabilityProbe,
   OfficialLarkRegistrationAdapter,
@@ -113,33 +127,67 @@ export async function buildApp(
   registerRequirementTasks(app, requirementTasks);
   const knowledgeRepository = registerKnowledgeRoutes(app, {
     beforePageRun: (plan, signal) => work.investigationHints(plan, signal),
-    onPublish: article => { requirementTasks.sync(article); work.published(article); },
-    onService: pages => {
+    onPublish: (article) => {
+      requirementTasks.sync(article);
+      work.published(article);
+    },
+    onService: (pages) => {
       const profiles = developmentProfiles(config);
-      work = new AssistantWork(pages, new DevelopmentQueue(store, pages, profiles?.coding ?? null, { reviewProfile: profiles?.review, onError: error => app.log.error(error) }), decisions);
+      work = new AssistantWork(
+        pages,
+        new DevelopmentQueue(store, pages, profiles?.coding ?? null, {
+          reviewProfile: profiles?.review,
+          decisions: config.decisions?.mode !== "off" ? decisions : undefined,
+          onError: (error) => app.log.error(error),
+        }),
+        decisions,
+      );
     },
     store,
     repository: development?.repository,
     prefix: "/api/knowledge",
     workspace: resolve(config.dataDir, "knowledge-agents"),
-    profile: config.profiles.find(p => p.transport === "acp"),
+    profile: config.profiles.find((p) => p.transport === "acp"),
     retrievalConfig: config.retrieval,
     retrieval: assistantRetrieval,
   });
   const assistantModel = new AcpAssistantModel({
-    profile: assistantProfile, readingProfile: assistantReadingProfile(config),
-    workspaceRoot: config.agentCwd, repository: knowledgeRepository,
-    researchWorkspace: resolve(config.dataDir, "assistant-agents"), retrievalConfig: config.retrieval, work,
+    profile: assistantProfile,
+    readingProfile: assistantReadingProfile(config),
+    workspaceRoot: config.agentCwd,
+    repository: knowledgeRepository,
+    researchWorkspace: resolve(config.dataDir, "assistant-agents"),
+    retrievalConfig: config.retrieval,
+    work,
   });
   app.get("/api/work", async () => work.catalog());
-  app.get<{ Params: { key: string } }>("/api/work/requirements/:key", async req => work.status(req.params.key));
-  app.get<{ Params: { id: string } }>("/api/work/development/:id", async req => work.development.read(req.params.id));
-  app.get<{ Params: { alias: string } }>("/api/work/repositories/:alias", async req => ({
-    project: work.development.runner.projects().find(p => p.alias === req.params.alias) ?? null,
-    preparation: work.development.runner.repositories.status(req.params.alias),
-  }));
-  app.addHook("onReady", async () => { work.development.start(); work.repositories.start(); });
-  app.addHook("preClose", async () => { await Promise.all([work.development.stop(), work.repositories.stop()]); });
+  app.get<{ Params: { key: string } }>(
+    "/api/work/requirements/:key",
+    async (req) => work.status(req.params.key),
+  );
+  app.get<{ Params: { id: string } }>(
+    "/api/work/development/:id",
+    async (req) => work.development.read(req.params.id),
+  );
+  app.get<{ Params: { alias: string } }>(
+    "/api/work/repositories/:alias",
+    async (req) => ({
+      project:
+        work.development.runner
+          .projects()
+          .find((p) => p.alias === req.params.alias) ?? null,
+      preparation: work.development.runner.repositories.status(
+        req.params.alias,
+      ),
+    }),
+  );
+  app.addHook("onReady", async () => {
+    work.development.start();
+    work.repositories.start();
+  });
+  app.addHook("preClose", async () => {
+    await Promise.all([work.development.stop(), work.repositories.stop()]);
+  });
   const assistant = new AssistantRuntime(store, assistantModel, {
     ownerId: "owner",
     memory,
@@ -147,8 +195,13 @@ export async function buildApp(
     work,
     retrieval: assistantRetrieval,
     timezone: config.notifications.external?.timezone,
-    decisions: config.decisions && config.decisions.mode !== "off" ? decisions : undefined,
-    turnTimeoutMs: assistantProfile ? agentIdleTimeout(assistantProfile) : 60_000,
+    decisions:
+      config.decisions && config.decisions.mode !== "off"
+        ? decisions
+        : undefined,
+    turnTimeoutMs: assistantProfile
+      ? agentIdleTimeout(assistantProfile)
+      : 60_000,
   });
   const learningConfig = config.learning;
   const learningProfile = learningConfig?.enabled
@@ -187,7 +240,9 @@ export async function buildApp(
         onboarding: lark,
         secrets,
         assistantModel,
-        assistantTimeoutMs: assistantProfile ? agentIdleTimeout(assistantProfile) : undefined,
+        assistantTimeoutMs: assistantProfile
+          ? agentIdleTimeout(assistantProfile)
+          : undefined,
         retrieval: assistantRetrieval,
         pollMs: config.lark.pollMs,
       });
@@ -271,60 +326,159 @@ export async function buildApp(
   }));
   app.get("/api/sources", async () => store.list());
   app.get("/api/contexts", async () => store.contexts.list());
-  app.post("/api/contexts", async req => store.contexts.create(contextInputSchema.parse(req.body)));
-  app.get<{ Params: { id: string } }>("/api/sources/:id/contexts", async req => {
-    const assignment = store.contexts.assignment(req.params.id);
-    return { contextIds: store.contexts.forSource(req.params.id), assignment,
-      candidates: store.contexts.list().filter(c => assignment?.candidateIds.includes(c.id)) };
-  });
-  app.put<{ Params: { id: string } }>("/api/sources/:id/contexts", async (req, reply) => {
-    const { contextIds } = z.object({ contextIds: contextIdsSchema }).strict().parse(req.body);
-    try { return store.setSourceContexts(req.params.id, contextIds); }
-    catch (error) { return reply.code(400).send({ error: String(error instanceof Error ? error.message : error) }); }
-  });
-  app.get<{ Params: { revision: string } }>("/api/material-descriptions/:revision", async (req, reply) => {
-    if (!store.revision(req.params.revision)) return reply.code(404).send({error:"材料版本不存在"});
-    return {record: store.descriptions.get(req.params.revision)};
-  });
-  app.put<{ Params: { revision: string } }>("/api/material-descriptions/:revision", async (req, reply) => {
-    const input = z.object({expectedVersion:z.number().int().nonnegative(), description:materialDescriptionSchema}).strict().parse(req.body);
-    try { return {record:store.descriptions.save(req.params.revision, input.description, "user", input.expectedVersion)}; }
-    catch(error) { return reply.code(409).send({error:String(error instanceof Error ? error.message : error)}); }
-  });
+  app.post("/api/contexts", async (req) =>
+    store.contexts.create(contextInputSchema.parse(req.body)),
+  );
+  app.get<{ Params: { id: string } }>(
+    "/api/sources/:id/contexts",
+    async (req) => {
+      const assignment = store.contexts.assignment(req.params.id);
+      return {
+        contextIds: store.contexts.forSource(req.params.id),
+        assignment,
+        candidates: store.contexts
+          .list()
+          .filter((c) => assignment?.candidateIds.includes(c.id)),
+      };
+    },
+  );
+  app.put<{ Params: { id: string } }>(
+    "/api/sources/:id/contexts",
+    async (req, reply) => {
+      const { contextIds } = z
+        .object({ contextIds: contextIdsSchema })
+        .strict()
+        .parse(req.body);
+      try {
+        return store.setSourceContexts(req.params.id, contextIds);
+      } catch (error) {
+        return reply
+          .code(400)
+          .send({
+            error: String(error instanceof Error ? error.message : error),
+          });
+      }
+    },
+  );
+  app.get<{ Params: { revision: string } }>(
+    "/api/material-descriptions/:revision",
+    async (req, reply) => {
+      if (!store.revision(req.params.revision))
+        return reply.code(404).send({ error: "材料版本不存在" });
+      return { record: store.descriptions.get(req.params.revision) };
+    },
+  );
+  app.put<{ Params: { revision: string } }>(
+    "/api/material-descriptions/:revision",
+    async (req, reply) => {
+      const input = z
+        .object({
+          expectedVersion: z.number().int().nonnegative(),
+          description: materialDescriptionSchema,
+        })
+        .strict()
+        .parse(req.body);
+      try {
+        return {
+          record: store.descriptions.save(
+            req.params.revision,
+            input.description,
+            "user",
+            input.expectedVersion,
+          ),
+        };
+      } catch (error) {
+        return reply
+          .code(409)
+          .send({
+            error: String(error instanceof Error ? error.message : error),
+          });
+      }
+    },
+  );
   app.post("/api/captures", async (req) => {
-    const { contextIds, ...capture } = captureSchema.extend({ contextIds: contextIdsSchema.optional() }).parse(req.body);
+    const { contextIds, ...capture } = captureSchema
+      .extend({ contextIds: contextIdsSchema.optional() })
+      .parse(req.body);
     return store.capture(capture, { contextIds });
   });
   app.get("/api/decisions/status", async () => decisions.status());
   app.post("/api/decisions/intake", async (req, reply) => {
-    const { revisionId } = z.object({ revisionId: str }).strict().parse(req.body);
+    const { revisionId } = z
+      .object({ revisionId: str })
+      .strict()
+      .parse(req.body);
     const revision = store.revision(revisionId);
     if (!revision) return reply.code(404).send({ error: "材料版本不存在" });
-    const text = revision.parts.filter(p => p.type === "text").map(p => p.text).join("\n\n");
-    const result = await decisions.decide({ title: revision.title, material: text.slice(0, 12_000), partial_excerpt: text.length > 12_000 }, intakeQuestions);
+    const text = revision.parts
+      .filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .join("\n\n");
+    const result = await decisions.decide(
+      {
+        title: revision.title,
+        material: text.slice(0, 12_000),
+        partial_excerpt: text.length > 12_000,
+      },
+      intakeQuestions,
+    );
     return { result, status: decisions.status() };
   });
-  app.get<{ Querystring: { q?: string } }>("/api/decisions/search", async req => {
-    const question = (req.query.q || "").slice(0, 300);
-    const hits = await assistantRetrieval.search?.({ text: question, limit: 30, diversify: false }) ?? [];
-    return assessPassages(decisions, question, hits);
-  });
+  app.get<{ Querystring: { q?: string } }>(
+    "/api/decisions/search",
+    async (req) => {
+      const question = (req.query.q || "").slice(0, 300);
+      const hits =
+        (await assistantRetrieval.search?.({
+          text: question,
+          limit: 30,
+          diversify: false,
+        })) ?? [];
+      return assessPassages(decisions, question, hits);
+    },
+  );
   app.post("/api/connectors/file", async (req) => {
-    const b = z.object({ path: str, contextIds: contextIdsSchema.optional() }).parse(req.body);
+    const b = z
+      .object({ path: str, contextIds: contextIdsSchema.optional() })
+      .parse(req.body);
     return store.capture(
-      captureSchema.parse(await fileInput(b.path, config.captureRoots, config.dataDir)),
+      captureSchema.parse(
+        await fileInput(b.path, config.captureRoots, config.dataDir),
+      ),
       { contextIds: b.contextIds },
     );
   });
-  app.post("/api/connectors/document", { bodyLimit: 28_000_000 }, async (req) => {
-    const b = z.object({ name: z.string().min(1).max(300), data: z.string().min(1).max(27_000_000), externalId: z.string().min(1).max(300), contextIds: contextIdsSchema.optional() }).strict().parse(req.body);
-    const bytes = Buffer.from(b.data, "base64");
-    if (bytes.toString("base64") !== b.data) throw Error("文件编码无效");
-    return store.capture(captureSchema.parse(await documentInput(bytes, b.name, config.dataDir, b.externalId)), { contextIds: b.contextIds });
-  });
+  app.post(
+    "/api/connectors/document",
+    { bodyLimit: 28_000_000 },
+    async (req) => {
+      const b = z
+        .object({
+          name: z.string().min(1).max(300),
+          data: z.string().min(1).max(27_000_000),
+          externalId: z.string().min(1).max(300),
+          contextIds: contextIdsSchema.optional(),
+        })
+        .strict()
+        .parse(req.body);
+      const bytes = Buffer.from(b.data, "base64");
+      if (bytes.toString("base64") !== b.data) throw Error("文件编码无效");
+      return store.capture(
+        captureSchema.parse(
+          await documentInput(bytes, b.name, config.dataDir, b.externalId),
+        ),
+        { contextIds: b.contextIds },
+      );
+    },
+  );
   app.post("/api/connectors/git", async (req) => {
     const b = z
-      .object({ repo: str, path: str, ref: str.default("HEAD"), contextIds: contextIdsSchema.optional() })
+      .object({
+        repo: str,
+        path: str,
+        ref: str.default("HEAD"),
+        contextIds: contextIdsSchema.optional(),
+      })
       .parse(req.body);
     return store.capture(
       captureSchema.parse(
@@ -334,8 +488,13 @@ export async function buildApp(
     );
   });
   app.post("/api/connectors/lark", async (req) => {
-    const b = z.object({ url: z.url(), contextIds: contextIdsSchema.optional() }).parse(req.body);
-    return store.capture(captureSchema.parse(await larkInput(b.url, config.dataDir)), { contextIds: b.contextIds });
+    const b = z
+      .object({ url: z.url(), contextIds: contextIdsSchema.optional() })
+      .parse(req.body);
+    return store.capture(
+      captureSchema.parse(await larkInput(b.url, config.dataDir)),
+      { contextIds: b.contextIds },
+    );
   });
   app.post("/api/hooks/traex", async (req) =>
     store.capture(captureSchema.parse(hookInput(req.body))),
@@ -370,22 +529,47 @@ export async function buildApp(
   app.get<{ Params: { id: string } }>("/api/sources/:id/history", async (req) =>
     store.history(req.params.id),
   );
-  app.get<{ Params: { id: string; asset: string } }>("/api/revisions/:id/document/:asset", async (req, reply) => {
-    const document = store.revision(req.params.id)?.context.document;
-    if (!document) return reply.code(404).send({ error: "此版本没有文档原件" });
-    const asset = req.params.asset;
-    if (asset === "original" || asset === "structure") {
-      const bytes = store.asset(asset === "original" ? document.originalAssetId : document.structureAssetId);
-      if (!bytes) return reply.code(404).send({ error: "文档附件缺失" });
-      if (asset === "original") reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(document.originalName)}`);
-      return reply.header("X-Content-Type-Options", "nosniff").type(asset === "original" ? document.mimeType : "application/json").send(bytes);
-    }
-    const raw = store.asset(document.structureAssetId);
-    const structure = raw ? JSON.parse(raw.toString()) : null;
-    if (!structure?.blocks?.some((b: { imageAssetId?: string }) => b.imageAssetId === asset)) return reply.code(404).send({ error: "文档图片不存在" });
-    const bytes = store.asset(asset);
-    return bytes ? reply.type("image/png").header("X-Content-Type-Options", "nosniff").send(bytes) : reply.code(404).send({ error: "图片附件缺失" });
-  });
+  app.get<{ Params: { id: string; asset: string } }>(
+    "/api/revisions/:id/document/:asset",
+    async (req, reply) => {
+      const document = store.revision(req.params.id)?.context.document;
+      if (!document)
+        return reply.code(404).send({ error: "此版本没有文档原件" });
+      const asset = req.params.asset;
+      if (asset === "original" || asset === "structure") {
+        const bytes = store.asset(
+          asset === "original"
+            ? document.originalAssetId
+            : document.structureAssetId,
+        );
+        if (!bytes) return reply.code(404).send({ error: "文档附件缺失" });
+        if (asset === "original")
+          reply.header(
+            "Content-Disposition",
+            `attachment; filename*=UTF-8''${encodeURIComponent(document.originalName)}`,
+          );
+        return reply
+          .header("X-Content-Type-Options", "nosniff")
+          .type(asset === "original" ? document.mimeType : "application/json")
+          .send(bytes);
+      }
+      const raw = store.asset(document.structureAssetId);
+      const structure = raw ? JSON.parse(raw.toString()) : null;
+      if (
+        !structure?.blocks?.some(
+          (b: { imageAssetId?: string }) => b.imageAssetId === asset,
+        )
+      )
+        return reply.code(404).send({ error: "文档图片不存在" });
+      const bytes = store.asset(asset);
+      return bytes
+        ? reply
+            .type("image/png")
+            .header("X-Content-Type-Options", "nosniff")
+            .send(bytes)
+        : reply.code(404).send({ error: "图片附件缺失" });
+    },
+  );
   app.get<{ Params: { id: string } }>(
     "/api/evidence/:id",
     async (req, reply) =>
@@ -396,48 +580,64 @@ export async function buildApp(
     const b = z.object({ from: str, to: str }).strict().parse(req.body);
     return store.link(b.from, b.to);
   });
-  app.get<{ Querystring: { q?: string; purpose?: string; codeIntent?: string; role?: string; effectiveAt?: string } }>(
-    "/api/search",
-    async (req, reply) => {
-      const purpose = z
-        .enum(retrievalPurposes)
-        .safeParse(req.query.purpose ?? "balanced");
-      if (!purpose.success)
-        return reply.code(400).send({ error: "查找用途无效" });
-      const codeIntent = z.enum(codeIntents).optional().safeParse(req.query.codeIntent);
-      if (!codeIntent.success) return reply.code(400).send({error:"代码查找方式无效"});
-      const role = z.enum(materialRoles).optional().safeParse(req.query.role || undefined);
-      const effectiveAt = z.iso.datetime({offset:true}).optional().safeParse(req.query.effectiveAt || undefined);
-      if (!role.success || !effectiveAt.success) return reply.code(400).send({error:"材料筛选条件无效"});
-      const query = {
-        text: (req.query.q || "").slice(0, 300),
-        limit: 30,
-        purpose: purpose.data,
-        codeIntent: codeIntent.data,
-        ...(role.data ? {materialRoles:[role.data]} : {}),
-        ...(effectiveAt.data ? {effectiveAt:effectiveAt.data} : {}),
-      };
-      if (assistantRetrieval.search) return assistantRetrieval.search(query);
-      const hits = await (assistantRetrieval.searchSourcesAsync?.(query) ??
-        assistantRetrieval.searchSources(query));
-      return hits.flatMap((hit) => {
-        const entry = store.evidence(hit.fragmentId);
-        return entry
-          ? [
-              {
-                id: hit.fragmentId,
-                text: hit.snippet,
-                title: entry.revision.title,
-                version: entry.revision.version,
-                score: hit.score,
-                routes: hit.routes,
-                section: evidenceSection(store, hit.fragmentId),
-              },
-            ]
-          : [];
-      });
-    },
-  );
+  app.get<{
+    Querystring: {
+      q?: string;
+      purpose?: string;
+      codeIntent?: string;
+      role?: string;
+      effectiveAt?: string;
+    };
+  }>("/api/search", async (req, reply) => {
+    const purpose = z
+      .enum(retrievalPurposes)
+      .safeParse(req.query.purpose ?? "balanced");
+    if (!purpose.success)
+      return reply.code(400).send({ error: "查找用途无效" });
+    const codeIntent = z
+      .enum(codeIntents)
+      .optional()
+      .safeParse(req.query.codeIntent);
+    if (!codeIntent.success)
+      return reply.code(400).send({ error: "代码查找方式无效" });
+    const role = z
+      .enum(materialRoles)
+      .optional()
+      .safeParse(req.query.role || undefined);
+    const effectiveAt = z.iso
+      .datetime({ offset: true })
+      .optional()
+      .safeParse(req.query.effectiveAt || undefined);
+    if (!role.success || !effectiveAt.success)
+      return reply.code(400).send({ error: "材料筛选条件无效" });
+    const query = {
+      text: (req.query.q || "").slice(0, 300),
+      limit: 30,
+      purpose: purpose.data,
+      codeIntent: codeIntent.data,
+      ...(role.data ? { materialRoles: [role.data] } : {}),
+      ...(effectiveAt.data ? { effectiveAt: effectiveAt.data } : {}),
+    };
+    if (assistantRetrieval.search) return assistantRetrieval.search(query);
+    const hits = await (assistantRetrieval.searchSourcesAsync?.(query) ??
+      assistantRetrieval.searchSources(query));
+    return hits.flatMap((hit) => {
+      const entry = store.evidence(hit.fragmentId);
+      return entry
+        ? [
+            {
+              id: hit.fragmentId,
+              text: hit.snippet,
+              title: entry.revision.title,
+              version: entry.revision.version,
+              score: hit.score,
+              routes: hit.routes,
+              section: evidenceSection(store, hit.fragmentId),
+            },
+          ]
+        : [];
+    });
+  });
   app.get<{ Params: { id: string } }>("/api/assets/:id", async (req, reply) => {
     const bytes = store.asset(req.params.id);
     if (!bytes) return reply.code(404).send({ error: "Asset not found" });
@@ -446,7 +646,10 @@ export async function buildApp(
         ? "image/png"
         : bytes[0] === 255
           ? "image/jpeg"
-          : bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP" ? "image/webp" : "application/octet-stream";
+          : bytes.toString("ascii", 0, 4) === "RIFF" &&
+              bytes.toString("ascii", 8, 12) === "WEBP"
+            ? "image/webp"
+            : "application/octet-stream";
     return reply
       .header("X-Content-Type-Options", "nosniff")
       .type(type)
@@ -652,15 +855,21 @@ export async function buildApp(
         const revision = ref?.revisionId
           ? store.revision(String(ref.revisionId))
           : null;
-        const assignment = revision ? store.contexts.assignment(revision.sourceId) : null;
+        const assignment = revision
+          ? store.contexts.assignment(revision.sourceId)
+          : null;
         return {
           ...job,
           materialTitle: revision?.title ?? null,
           evidenceId: revision?.fragments[0]?.id ?? null,
           sourceRevisionId: revision?.id ?? null,
-          contextQuestion: job.kind === "extract_claims" && job.state === "succeeded" &&
-            assignment?.status === "ambiguous" && assignment.revisionId === revision?.id
-            ? assignment.question : null,
+          contextQuestion:
+            job.kind === "extract_claims" &&
+            job.state === "succeeded" &&
+            assignment?.status === "ambiguous" &&
+            assignment.revisionId === revision?.id
+              ? assignment.question
+              : null,
         };
       }),
   );

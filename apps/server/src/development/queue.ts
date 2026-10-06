@@ -7,9 +7,14 @@ import type { DevelopmentProject } from "../../../../packages/contracts/src/deve
 import { DurableJobWorker, JobExecutionError } from "../jobs/worker.js";
 import type { KnowledgePageService } from "../knowledge/page-service.js";
 import { DevelopmentRunner } from "./runner.js";
-import { freezeDevelopmentProfiles, type DevelopmentProfiles } from "../agent-providers.js";
+import {
+  freezeDevelopmentProfiles,
+  type DevelopmentProfiles,
+} from "../agent-providers.js";
 import { captureDevelopmentResult } from "./results.js";
 import { assertRequirementBasis } from "./requirement-basis.js";
+import { inspectRequirementChange } from "./replanning.js";
+import type { DecisionService } from "../decision/service.js";
 import { queueOwnerNotice } from "../integrations/lark/owner-notice.js";
 import {
   CapabilityReceipts,
@@ -27,6 +32,7 @@ type DevelopmentJobInput = {
   handoff?: DevelopmentHandoff;
   profiles?: DevelopmentProfiles;
   project?: DevelopmentProject;
+  replan?: boolean;
 };
 export class DevelopmentQueue {
   readonly runner: DevelopmentRunner;
@@ -42,6 +48,7 @@ export class DevelopmentQueue {
       runner?: DevelopmentRunner;
       reviewProfile?: AgentProfile;
       onError?: (e: unknown) => void;
+      decisions?: DecisionService;
     } = {},
   ) {
     this.runner = options.runner ?? new DevelopmentRunner(store.dataDir);
@@ -49,6 +56,9 @@ export class DevelopmentQueue {
       id TEXT PRIMARY KEY,request_id TEXT NOT NULL UNIQUE,conversation_id TEXT NOT NULL,principal_id TEXT NOT NULL,
       requirement_key TEXT NOT NULL,project TEXT NOT NULL,job_id TEXT NOT NULL,run_id TEXT,
       message TEXT NOT NULL,notified INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);`);
+    store.db.exec(
+      `CREATE TABLE IF NOT EXISTS assistant_development_updates(task_id TEXT PRIMARY KEY,actor TEXT NOT NULL);`,
+    );
     this.worker = new DurableJobWorker(
       store.jobs,
       `development-${randomUUID()}`,
@@ -71,15 +81,25 @@ export class DevelopmentQueue {
               );
             return { resultRef: applied.id };
           }
-          const profiles = task.run?.profiles ?? input.profiles ?? (profile && freezeDevelopmentProfiles(profile, options.reviewProfile));
+          const profiles =
+            task.run?.profiles ??
+            input.profiles ??
+            (profile &&
+              freezeDevelopmentProfiles(profile, options.reviewProfile));
           if (!profiles)
             throw new JobExecutionError("尚未配置编码 Agent", "config");
           const repository = pages.repository;
           for (;;) {
             signal.throwIfAborted();
             if (task.run) {
-              assertRequirementBasis(repository, task.run);
-              break;
+              try {
+                assertRequirementBasis(repository, task.run);
+                break;
+              } catch (error) {
+                if (!input.replan) throw error;
+                repository.refresh();
+                if (repository.get(task.key)?.current) break;
+              }
             }
             repository.refresh();
             const article = repository.get(task.key);
@@ -122,11 +142,16 @@ export class DevelopmentQueue {
             .prepare("UPDATE assistant_development SET run_id=? WHERE id=?")
             .run(run.id, task.id);
           signal.throwIfAborted();
-          if (!["ready", "applied"].includes(run.state))
+          if (
+            !["ready", "applied"].includes(run.state) ||
+            (input.replan && run.state === "ready")
+          )
             run = await this.runner.execute(run.id, store, profiles.coding, {
               reviewProfile: profiles.review,
               signal,
               continuation: input.continuation,
+              replan: input.replan,
+              decisions: this.options.decisions,
               log: (message) =>
                 store.db
                   .prepare(
@@ -189,7 +214,10 @@ export class DevelopmentQueue {
     );
     if (previous) return previous;
     const projectSnapshot = this.runner.configuration.get(project);
-    const profiles = freezeDevelopmentProfiles(this.profile, this.options.reviewProfile);
+    const profiles = freezeDevelopmentProfiles(
+      this.profile,
+      this.options.reviewProfile,
+    );
     const selected = this.runner.capabilities.references(
       capabilities ??
         this.runner.projects().find((p) => p.alias === project)?.capabilities ??
@@ -220,19 +248,31 @@ export class DevelopmentQueue {
         };
     if (!conversation && inputReceipts?.length)
       throw Error("缺少已保存会话，不能交接外部回执");
-    const plan = this.pages.repository.pages().find(p => p.key === key)?.plan;
+    const plan = this.pages.repository.pages().find((p) => p.key === key)?.plan;
     for (const ref of handoff.inputs) {
-      const receipt = inputs.read({ conversationId: actor.conversationId, turnId: actor.requestId }, ref.recordId);
-      const result = receipt.result as { isError?: boolean; exitCode?: number } | null;
+      const receipt = inputs.read(
+        { conversationId: actor.conversationId, turnId: actor.requestId },
+        ref.recordId,
+      );
+      const result = receipt.result as {
+        isError?: boolean;
+        exitCode?: number;
+      } | null;
       // Failed reads remain useful diagnostic receipts; they are not evidence.
       if (!result || result.isError || result.exitCode) continue;
       try {
-        const material = inputs.capture({ conversationId: actor.conversationId, turnId: actor.requestId }, ref.recordId, `外部资料：${ref.capability} / ${ref.tool}`, plan?.contextIds);
+        const material = inputs.capture(
+          { conversationId: actor.conversationId, turnId: actor.requestId },
+          ref.recordId,
+          `外部资料：${ref.capability} / ${ref.tool}`,
+          plan?.contextIds,
+        );
         ref.material = { key: material.key, revisionId: material.revisionId };
       } catch (error) {
         // The exact receipt is still handed over; report a capture gap rather
         // than treating a locator/image-only unsupported response as a document.
-        ref.materialError = error instanceof Error ? error.message : String(error);
+        ref.materialError =
+          error instanceof Error ? error.message : String(error);
       }
     }
     // Export before enqueue returns: restart or removal of a chat workspace must
@@ -244,7 +284,15 @@ export class DevelopmentQueue {
     this.store.tx(() => {
       const { job } = this.store.jobs.enqueueInCurrentTransaction({
         kind,
-        inputRefs: [{ taskId: id, capabilities: selected, handoff, profiles, project: projectSnapshot }],
+        inputRefs: [
+          {
+            taskId: id,
+            capabilities: selected,
+            handoff,
+            profiles,
+            project: projectSnapshot,
+          },
+        ],
         roleVersion: "coding-and-review@1",
         policyVersion: "owner-delegated@1",
         maxAttempts: 30,
@@ -301,13 +349,29 @@ export class DevelopmentQueue {
   }
   /** A new user instruction schedules the next step on the existing checkout.
    * Old jobs and their attempts remain available; external inputs stay frozen. */
-  continueTask(id: string, actor: WorkActor, reviewedFingerprint?: string) {
+  continueTask(
+    id: string,
+    actor: WorkActor,
+    reviewedFingerprint?: string,
+    automatic = false,
+  ) {
     const task = this.read(id);
     if (task.principalId !== actor.principalId)
       throw Error("不能操作其他人的编码任务");
     if (active.has(task.job.state)) {
       if (reviewedFingerprint) throw Error("任务仍在运行，请等待当前操作完成");
-      return task;
+      this.store.db
+        .prepare(
+          "INSERT OR REPLACE INTO assistant_development_updates VALUES(?,?)",
+        )
+        .run(id, JSON.stringify(actor));
+      this.store.db
+        .prepare("UPDATE assistant_development SET message=? WHERE id=?")
+        .run(
+          "已保存继续执行的交办；当前阶段结束后保留副本并核对最新需求。",
+          id,
+        );
+      return this.read(id);
     }
     if (reviewedFingerprint) {
       if (
@@ -317,8 +381,15 @@ export class DevelopmentQueue {
         throw Error("请先读取当前评审结果，再应用同一份补丁");
     } else {
       if (!this.profile) throw Error("尚未配置编码 Agent");
-      if (task.run && ["ready", "applied"].includes(task.run.state))
-        throw Error("任务已评审或已应用；可查看结果，新需求请新建任务");
+      if (task.run?.state === "applied")
+        throw Error("任务已应用到登记仓库；后续变更需从更新后的仓库交办新任务");
+      if (task.run?.state === "ready") {
+        const update = inspectRequirementChange(
+          this.pages.repository,
+          task.run,
+        );
+        if (!update) throw Error("任务已完成且需求未变化，可直接查看结果");
+      }
     }
     this.store.tx(() => {
       const prior = task.job.inputRefs[0] as DevelopmentJobInput;
@@ -333,7 +404,8 @@ export class DevelopmentQueue {
             project: task.run?.project ?? prior.project,
             operation: reviewedFingerprint ? "apply" : "develop",
             reviewedFingerprint,
-            continuation: actor,
+            continuation: automatic ? undefined : actor,
+            replan: !reviewedFingerprint,
           },
         ],
         roleVersion: "coding-and-review@1",
@@ -351,11 +423,74 @@ export class DevelopmentQueue {
           job.id,
           reviewedFingerprint
             ? "已安排应用这份已评审补丁；后台将再次核对需求与仓库状态，目前尚未应用。"
-            : "已安排继续原编码任务，沿用原副本、固定需求和已选资料；后台会重新检查并独立评审。",
+            : "已安排继续原编码任务，保留副本与已选资料；最新需求复核完成后对比变化，调整实现并独立评审。",
           id,
         );
+      this.store.db
+        .prepare("DELETE FROM assistant_development_updates WHERE task_id=?")
+        .run(id);
     });
     return this.read(id);
+  }
+  /** Follow only an already delegated implementation. A newly discovered
+   * requirement does not create a coding task or expand collection scope. */
+  private reconcileChanges() {
+    if (!this.profile) return;
+    this.pages.repository.refresh();
+    for (const task of this.list()) {
+      try {
+        if (
+          active.has(task.job.state) ||
+          task.job.state === "cancelled" ||
+          !task.run ||
+          task.run.state === "applied"
+        )
+          continue;
+        const pending = this.store.db
+          .prepare(
+            "SELECT actor FROM assistant_development_updates WHERE task_id=?",
+          )
+          .get(task.id);
+        const current = this.pages.repository.get(task.key);
+        if (!current?.current) continue;
+        if (
+          !pending &&
+          (!this.pages.maintenance.status(task.key)?.enabled ||
+            current.revision === task.run.requirementRevision)
+        )
+          continue;
+        const update = inspectRequirementChange(
+          this.pages.repository,
+          task.run,
+        );
+        if (!update && task.run.state === "ready") {
+          if (pending)
+            this.store.db
+              .prepare(
+                "DELETE FROM assistant_development_updates WHERE task_id=?",
+              )
+              .run(task.id);
+          continue;
+        }
+        if (!update && !pending) continue;
+        const actor: WorkActor = pending
+          ? JSON.parse(String(pending.actor))
+          : {
+              requestId: `requirement-change:${task.id}:${current.revision}`,
+              conversationId: task.conversationId,
+              principalId: task.principalId,
+              visibility: "private",
+              userText:
+                task.run.handoff?.assignment.text ?? "继续已交办的需求实现",
+            };
+        this.continueTask(task.id, actor, undefined, !pending);
+      } catch (error) {
+        // One unavailable old requirement must not stop unrelated queued work.
+        this.store.db
+          .prepare("UPDATE assistant_development SET message=? WHERE id=?")
+          .run(`保留当前副本，暂未继续：${String(error)}`, task.id);
+      }
+    }
   }
   cancel(id: string, requestId: string) {
     const task = this.read(id);
@@ -415,12 +550,14 @@ export class DevelopmentQueue {
   }
   async processOne() {
     if (this.stopped || this.pending) return;
+    this.reconcileChanges();
     this.pending = this.worker.processOne();
     try {
       return await this.pending;
     } finally {
       this.pending = undefined;
       this.notify();
+      this.reconcileChanges();
     }
   }
   start() {

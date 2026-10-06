@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   developmentProjectSchema,
   projectConfigurationSchema,
+  projectChecksSchema,
   type DevelopmentProject,
 } from "../../../../packages/contracts/src/development.js";
 import { stableDigest } from "../storage/digest.js";
@@ -17,6 +18,37 @@ import {
 import type { ResearchTool } from "../knowledge/agent-research.js";
 import type { DecisionService } from "../decision/service.js";
 import { decideWork, projectQuestions } from "../decision/work.js";
+
+/** Configure the actual coding checkout; owner instructions and rule files stay
+ * in their existing project/repository locations, rather than being rewritten. */
+export function configureProjectChecks(
+  project: DevelopmentProject,
+  value: unknown,
+) {
+  const input = projectChecksSchema.parse(value);
+  for (const source of input.sources)
+    if (
+      stableDigest(
+        readFileSync(codePath(project.repository, source.path), "utf8"),
+      ) !== source.hash
+    )
+      throw Error(`项目文件已变化，请重新读取：${source.path}`);
+  if (new Set(input.commands.map((c) => c.name)).size !== input.commands.length)
+    throw Error("命令名不能重复");
+  for (const command of input.commands)
+    if (!statSync(codePath(project.repository, command.cwd)).isDirectory())
+      throw Error(`检查目录不存在：${command.cwd}`);
+  return {
+    ...project,
+    commands: input.commands,
+    configuration: {
+      at: new Date().toISOString(),
+      summary: input.summary,
+      sources: input.sources,
+      gaps: input.gaps,
+    },
+  };
+}
 
 /** Read a registered project; infer configuration in the assistant, never execute
  * a manifest or install dependencies while inspecting it. */
