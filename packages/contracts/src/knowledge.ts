@@ -17,6 +17,7 @@ export const knowledgeCitationSchema = z.object({
 }).strict();
 
 export const knowledgeQuestionSchema = z.object({
+  kind: z.enum(["investigate", "supplement", "decision"]).optional().describe("investigate: agent must search/read actual state; supplement: useful nonblocking detail; decision: a real owner choice affecting present scope, responsibility or permission. Only decision may be blocking. Missing legacy classification is investigate, never an automatic request for owner approval."),
   question: z.string().min(1).max(1000),
   why: z.string().min(1).max(1200),
   nextStep: z.string().min(1).max(1000),
@@ -51,6 +52,7 @@ export const knowledgeReviewSchema = z.object({
   verdicts: z.array(z.object({
     documentKey: key, verdict: z.enum(["accepted", "needs_revision"]),
     issues: z.array(z.string().min(1).max(1600)).max(30),
+    suggestions: z.array(z.string().min(1).max(1600)).max(20).optional().describe("Nonblocking wording, formatting or optional detail suggestions. Do not reject or require whole-page regeneration for these."),
     questions: z.array(knowledgeQuestionSchema).max(20),
   }).strict()).min(1).max(16),
 }).strict();

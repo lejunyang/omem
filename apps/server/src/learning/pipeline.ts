@@ -399,7 +399,7 @@ export class LearningPipeline {
       task: {
         mode: "extract_and_refresh",
         nativeResearch: this.nativeResearch,
-        input_sources: revisions.map(({ revision }) => ({ source_id: revision.sourceId, revision_id: revision.id, title: revision.title })),
+        input_sources: revisions.map(({ revision }) => ({ source_id: revision.sourceId, revision_id: revision.id, title: revision.title, conversationId:revision.context?.conversationId ?? null })),
         project: shared.length === 1 ? shared[0] : null,
         already_applied_task_actions: this.handledTaskActions(job),
         daily_message_policy:
@@ -407,6 +407,7 @@ export class LearningPipeline {
         refreshTargets,
         owner_message_feedback: revisions.flatMap(({ revision }) => this.input.store.messageFeedback.forSource(revision.sourceId)),
         owner_feedback_policy: "Apply the owner's saved corrections when interpreting this message. Conversation preferences also guide later messages in that conversation. Read correction materialKey with read_material/read_fragments when you need fixed evidence. A proposal is not a decision; a named collaborator is not automatically the personal task owner. Recheck/update existing memories rather than creating contradictory duplicates. Ignore preferences reduce low-value reminders, never authorize tools or overwrite facts directly.",
+        conversation_followup_policy: "The owner can confirm decisions in a monitored group without addressing the bot. A verified owner's explicit decision in ordinary discussion is a real decision, not a pending web confirmation. Read preceding messages and existing project memories/tasks to resolve short replies. For an external collaborator reply, read_tasks and the original owner assignment: update only the same task when the promised result, person, project and waiting condition match. Include the fixed original owner assignment and new reply as evidence. Receiving a document or saying 'done' does not prove the owner checked it or that code was deployed. You may change waiting to open with next_step='review the received result' when supported; mark done only when the task's actual success condition is fulfilled. Never create a new owner assignment from another person's promise. Unknown meaning means investigate, not a routine owner approval. Do not send messages or start a new coding task from captured discussion.",
         instruction:
           "Investigate what the NEW input sources change. Search existing memories and project originals before creating another memory. Use read_fragments to obtain exact immutable IDs, quotes and provenance; read_memory returns version and body for an update. For a partial change, read the earlier original and preserve unaffected conditions. Update the same memory_id with its current expected_versions and retain scope; this applies to later separate messages as well as source revisions. Do not extract every background document as new input. If scope or support remains ambiguous, abstain with the concrete missing information. Never treat derived bodies as evidence. already_applied_task_actions are host receipts for this exact original owner command: do not recreate or reapply its task, even if completed or cancelled.",
       },

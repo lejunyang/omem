@@ -22,12 +22,16 @@ export class KnowledgePageWorker {
     readonly options: {
       run?: (plan: WikiPageBrief, job: JobLease, signal: AbortSignal) => Promise<string | undefined>;
       blocked?: () => boolean;
+      prepare?: (plan: WikiPageBrief) => void;
+      settleMs?: number;
       onError?: (error: unknown) => void;
     } = {},
   ) {
     repository.store.db.exec(`CREATE TABLE IF NOT EXISTS knowledge_page_maintenance(
       document_key TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0,
       target_digest TEXT NOT NULL, processed_digest TEXT, job_id TEXT);`);
+    if (!repository.store.db.prepare("PRAGMA table_info(knowledge_page_maintenance)").all().some(c => c.name === "changed_at"))
+      repository.store.db.exec("ALTER TABLE knowledge_page_maintenance ADD COLUMN changed_at TEXT");
     if (options.run) this.worker = new DurableJobWorker(repository.store.jobs, `knowledge-pages-${randomUUID()}`, {
       [kind]: async (job, signal) => {
         const key = (job.inputRefs[0] as { key: string }).key;
@@ -62,6 +66,7 @@ export class KnowledgePageWorker {
     return plan;
   }
   private scopeDigest(plan: WikiPageBrief) {
+    this.options.prepare?.(plan);
     const materials = this.repository.materialsForPlan(plan);
     const byKey = new Map(materials.map(m => [m.key, m.digest]));
     const keys = materials.map(m => m.key);
@@ -77,7 +82,7 @@ export class KnowledgePageWorker {
     const article = this.repository.get(key);
     const scopeUnchanged = !plan.contextIds?.length || stableDigest(article?.selection?.materialKeys ?? []) === stableDigest(this.repository.materialsForPlan(plan).map(m => m.key).sort());
     const baseline = article?.current && scopeUnchanged ? digest : null;
-    this.repository.store.db.prepare(`INSERT INTO knowledge_page_maintenance VALUES(?,?,?,?,NULL)
+    this.repository.store.db.prepare(`INSERT INTO knowledge_page_maintenance(document_key,enabled,target_digest,processed_digest,job_id) VALUES(?,?,?,?,NULL)
       ON CONFLICT(document_key) DO UPDATE SET enabled=excluded.enabled,target_digest=excluded.target_digest,
       processed_digest=CASE WHEN knowledge_page_maintenance.enabled=0 AND excluded.enabled=1
         THEN excluded.processed_digest ELSE knowledge_page_maintenance.processed_digest END`)
@@ -106,7 +111,7 @@ export class KnowledgePageWorker {
         kind, inputRefs: [{ key, request: randomUUID() }], roleVersion: "page-maintenance@1", policyVersion: "selected-materials@1",
         cause: automatic ? "knowledge-maintenance" : "knowledge-request",
       });
-      this.repository.store.db.prepare(`INSERT INTO knowledge_page_maintenance VALUES(?,0,?,NULL,?)
+      this.repository.store.db.prepare(`INSERT INTO knowledge_page_maintenance(document_key,enabled,target_digest,processed_digest,job_id) VALUES(?,0,?,NULL,?)
         ON CONFLICT(document_key) DO UPDATE SET target_digest=excluded.target_digest,job_id=excluded.job_id`)
         .run(key, digest, job.id);
       return job;
@@ -120,10 +125,11 @@ export class KnowledgePageWorker {
       const plan = plans.get(row.document_key);
       if (!plan || (!plan.materialKeys?.length && !plan.contextIds?.length)) continue;
       const digest = this.scopeDigest(plan);
+      const changedAt = digest !== row.target_digest ? new Date().toISOString() : (row as Follow & {changed_at?:string}).changed_at;
       if (digest !== row.target_digest) this.repository.store.db.prepare(
-        "UPDATE knowledge_page_maintenance SET target_digest=? WHERE document_key=?",
-      ).run(digest, row.document_key);
-      if (digest !== row.processed_digest) this.request(row.document_key, true);
+        "UPDATE knowledge_page_maintenance SET target_digest=?,changed_at=? WHERE document_key=?",
+      ).run(digest, changedAt ?? null, row.document_key);
+      if (digest !== row.processed_digest && (!changedAt || Date.now()-Date.parse(changedAt) >= (this.options.settleMs ?? 0))) this.request(row.document_key, true);
     }
   }
 
@@ -131,8 +137,8 @@ export class KnowledgePageWorker {
     const row = this.follow(key);
     if (!row) return null;
     const job = row.job_id ? this.repository.store.jobs.get(row.job_id) : null;
-    if (row.enabled && row.target_digest !== row.processed_digest && job && !active.has(job.state))
-      return { enabled: true, state: "queued", error: null, updatedAt: job.finishedAt };
+    if (row.enabled && row.target_digest !== row.processed_digest && (!job || !active.has(job.state)))
+      return { enabled: true, state: "queued", error: null, updatedAt: job?.finishedAt ?? null };
     const state = !job ? "idle" : ["queued", "retry_wait"].includes(job.state) ? "queued"
       : ["leased", "running"].includes(job.state) ? "writing" : job.state === "failed" ? "failed"
       : job.state === "succeeded" ? "published" : "idle";

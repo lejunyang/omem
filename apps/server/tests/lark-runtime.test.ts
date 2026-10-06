@@ -19,6 +19,8 @@ import type {
 import type { LarkMessageAdapter } from "../src/integrations/lark/delivery.js";
 import { MemoryService } from "../src/memory/service.js";
 import { Store } from "../src/store.js";
+import type { AssistantWork } from "../src/assistant/work.js";
+import type { WorkActor } from "../../../packages/contracts/src/work.js";
 
 const directories: string[] = [];
 afterEach(() => {
@@ -161,6 +163,7 @@ describe("B2-08 production Lark host", () => {
     );
     const realtime = new FakeRealtime();
     const messages = new FakeMessages();
+    const workCalls: WorkActor[] = [];
     const host = new LarkRuntimeHost({
       store,
       memory,
@@ -168,6 +171,29 @@ describe("B2-08 production Lark host", () => {
       secrets,
       realtimeAdapter: realtime,
       messageAdapter: messages,
+      assistantModel: {
+        generate: async () => ({
+          answer: "模型声称成功",
+          citationIds: [],
+          workAction: {
+            operation: "track",
+            title: "退款需求",
+            goal: "跟进上线",
+            materialKeys: [],
+            contextIds: [],
+          },
+        }),
+      },
+      work: {
+        apply: (_action: unknown, actor: WorkActor) => {
+          workCalls.push(actor);
+          return {
+            tool: "work_action",
+            operation: "track",
+            message: "已保存退款需求，正在调查。",
+          };
+        },
+      } as unknown as AssistantWork,
       workerId: "runtime-test",
       pollMs: 20,
     });
@@ -242,6 +268,28 @@ describe("B2-08 production Lark host", () => {
           )
           .get(),
       ).toEqual({ state: "active", capture_enabled: 1 });
+
+      // The production bot assembler must pass the same managed work service as
+      // web. A receipt, rather than speculative model text, becomes the reply.
+      await realtime.connections[0]!.onEvent({
+        ...event,
+        eventId: "event-owner-track",
+        messageId: "om_owner_track",
+        senderOpenId: "ou_owner",
+        chatId: "oc_owner",
+        chatType: "p2p",
+        text: "帮我跟进退款需求",
+      });
+      expect(workCalls).toHaveLength(1);
+      expect(workCalls[0]).toMatchObject({
+        principalId: "owner",
+        visibility: "private",
+        userText: "帮我跟进退款需求",
+      });
+      const turn = store.db
+        .prepare("SELECT result FROM conversation_turns WHERE input_text=?")
+        .get("帮我跟进退款需求");
+      expect(turn?.result).toBe("已保存退款需求，正在调查。");
     } finally {
       await host.stop();
       expect(realtime.closed).toBe(1);

@@ -923,6 +923,35 @@ export async function prepareAgentResearch(input: {
         },
       );
       tool(
+        "read_conversation",
+        "Read captured messages from one conversation in chronological order, including verified speaker/reply provenance. Use for short confirmations, external replies and resolving a question already answered in ordinary group discussion. Only this fixed permitted snapshot is read; this never contacts Lark, changes unread state or sends a message.",
+        {conversationId:z.string(), ...page},
+        ({conversationId, offset, limit}) => {
+          const messages = input.materials.filter(m => m.conversationId === conversationId)
+            .sort((a,b) => (a.eventAt ?? "").localeCompare(b.eventAt ?? "") || a.key.localeCompare(b.key));
+          const recent = [...messages].reverse();
+          return {total:messages.length, messages:recent.slice(offset,offset+limit).reverse().map(m => ({
+            materialKey:m.key, revisionId:m.revisionId, eventAt:m.eventAt, actorId:m.actorId,
+            actorVerifiedBy:m.actorVerifiedBy, quoted:m.quoted, forwarded:m.forwarded, text:m.text,
+          })), nextOffset:offset+limit<recent.length ? offset+limit : null};
+        },
+      );
+      tool(
+        "read_tasks",
+        "Read actual personal task state in this sealed snapshot, including waiting_on, next_check_at, version and original evidence. Filter by known project or exact id. Before following, rescheduling or interpreting an external reply, inspect the existing task instead of creating another. State is derived; read_fragments for original assignment and new reply evidence.",
+        {id:z.string().optional(), projectId:z.string().optional(), ...page},
+        ({id, projectId, offset, limit}) => {
+          const rows = db.prepare("SELECT * FROM tasks ORDER BY created_at DESC,id").all()
+            .filter(t => (!id || t.id === id) && (!projectId || t.project_id === projectId));
+          return {total:rows.length, tasks:rows.slice(offset, offset + limit).map(t => ({
+            id:t.id, version:t.version, title:t.title, detail:t.detail, status:t.status,
+            ownerId:t.owner_id, projectId:t.project_id, dueAt:t.due_at, nextStep:t.next_step,
+            followUp:t.follow_up ? JSON.parse(String(t.follow_up)) : null,
+            evidenceId:t.evidence_id, derived:true,
+          })), nextOffset:offset+limit<rows.length ? offset+limit : null};
+        },
+      );
+      tool(
         "read_memory",
         "Read active memory content and its fixed evidence set, without treating it as a new independent source.",
         { id: z.string() },

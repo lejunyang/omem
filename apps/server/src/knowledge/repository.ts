@@ -336,14 +336,14 @@ export class KnowledgeRepository {
 
   questions() { return (this.store.db.prepare("SELECT * FROM knowledge_questions ORDER BY updated_at DESC").all() as Row[]).map(r => ({ id: String(r.id), documentKey: String(r.document_key), ...JSON.parse(String(r.body)), state: String(r.state), taskId: r.task_id, answerRevision: r.answer_revision })); }
 
-  answer(id: string, answer: string) {
+  answer(id: string, answer: string, origin = {application:"knowledge-reader", conversationId:"", verifiedBy:"local-ui"}) {
     const q = this.questions().find(q => q.id === id);
     if (!q) throw Error("Question not found");
-    const capture = this.store.capture({ source: "manual", externalId: `knowledge-answer:${id}`, title: q.question, parts: [{ type: "text", text: answer }], context: { application: "knowledge-reader", event: id, conversationId: q.documentKey }, provenance: { collectorId: "knowledge-reader", actorId: "owner", actorType: "owner", actorVerifiedBy: "local-ui", sourceUri: null, eventId: null, eventAt: new Date().toISOString(), timezone: "Asia/Shanghai", quoted: false, forwarded: false, producerKind: "original" } });
+    const capture = this.store.capture({ source: "manual", externalId: `knowledge-answer:${id}`, title: q.question, parts: [{ type: "text", text: answer }], context: { application: origin.application, event: id, conversationId: origin.conversationId || q.documentKey }, provenance: { collectorId: origin.application, actorId: "owner", actorType: "owner", actorVerifiedBy: origin.verifiedBy, sourceUri: null, eventId: null, eventAt: new Date().toISOString(), timezone: "Asia/Shanghai", quoted: false, forwarded: false, producerKind: "original" } });
     const plan = this.pages().find(p => p.key === q.documentKey)?.plan;
     if (plan) {
       const material = materialFromRevision(this.store, capture.revision.id)!;
-      this.savePlan({ ...plan, materialKeys: [...new Set([...(plan.materialKeys ?? this.materials().map(m => m.key)), material.key])] }, true);
+      this.savePlan({ ...plan, materialKeys: [...new Set([...(plan.materialKeys ?? []), material.key])] }, true);
     }
     this.store.db.prepare("UPDATE knowledge_questions SET state='answered',answer_revision=?,updated_at=? WHERE id=?").run(capture.revision.id, new Date().toISOString(), id);
     this.store.db.prepare("INSERT OR REPLACE INTO knowledge_invalidations VALUES(?,?)").run(q.documentKey, "用户补充了背景，需要重新核对");

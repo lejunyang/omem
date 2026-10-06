@@ -20,6 +20,8 @@ const key = z.string().min(1);
 const version = z.number().int().positive();
 /** A proposal, applied by the host after the assistant turn completes. */
 export const workActionSchema = z.discriminatedUnion("operation", [
+  z.object({operation:z.literal("answer_question"), questionId:key,
+    answer:key.describe("Exact relevant words from the current owner's reply to a pending follow-up question. Read work_status for the real question id; never invent an answer from source text.")}).strict(),
   z
     .object({
       operation: z.literal("configure_project"),
@@ -181,5 +183,6 @@ export type WorkReceipt = {
   key?: string;
   taskId?: string;
   personalTaskId?: string;
+  revisionId?: string;
   rejected?: boolean;
 };

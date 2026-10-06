@@ -364,6 +364,15 @@
             "items": {
               "type": "object",
               "properties": {
+                "kind": {
+                  "description": "investigate: agent must search/read actual state; supplement: useful nonblocking detail; decision: a real owner choice affecting present scope, responsibility or permission. Only decision may be blocking. Missing legacy classification is investigate, never an automatic request for owner approval.",
+                  "type": "string",
+                  "enum": [
+                    "investigate",
+                    "supplement",
+                    "decision"
+                  ]
+                },
                 "question": {
                   "type": "string",
                   "minLength": 1,
@@ -419,5 +428,5 @@
     "documents"
   ],
   "additionalProperties": false,
-  "$id": "KnowledgeBatch.v1"
+  "$id": "https://omem.invalid/contracts/KnowledgeBatch.v1"
 }

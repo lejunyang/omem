@@ -970,7 +970,8 @@ export class LarkConnectionManager {
         if (
           event.kind === "im.message.receive_v1" &&
           event.chatType === "p2p" &&
-          this.pairing
+          this.pairing &&
+          /^[A-Za-z0-9_-]{32}$/.test(event.text?.trim() ?? "")
         )
           return this.inbox.processPairing(event, this.pairing);
         return this.inbox.processMessage(event);

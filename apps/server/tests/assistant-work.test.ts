@@ -113,6 +113,7 @@ function publish(
   repository: KnowledgeRepository,
   key: string,
   actionTitle = "实现退款页面",
+  questions: import("../../../packages/contracts/src/knowledge.js").KnowledgeQuestion[] = [],
 ) {
   const plan = repository.pages().find((p) => p.key === key)!.plan!,
     m = repository.materials().find((m) => m.key === "manual:spec")!;
@@ -139,7 +140,7 @@ function publish(
             target: { kind: "material", key: m.key, startLine: 1, endLine: 1 },
           },
         ],
-        questions: [],
+        questions,
         requirement: {
           objective: "退款查询",
           nonGoals: [],
@@ -912,4 +913,48 @@ it("automatically continues only an existing watched task and ignores progress-o
   s.queue.cancel(id, randomUUID());
   await s.queue.processOne();
   expect(executions).toBe(2);
+});
+
+
+it("freezes actual tasks for all page phases without self-triggering another revision", () => {
+  const s = setup();
+  const key = s.work.apply(s.action, s.actor("跟进退款")).key!;
+  const article = publish(s.repository, key);
+  s.work.actions.follow(key, "page", article.revision);
+  const plan = s.repository.pages().find(p => p.key === key)!.plan!;
+  s.work.preparePage(plan);
+  const state = s.repository.materialsForPlan(plan).find(m => m.key.startsWith("hook:followup-state:"))!;
+  expect(state.text).toContain("跟进：实现退款页面");
+  expect(state.text).toContain(String(s.store.tasks()[0]!.id));
+  s.work.preparePage(plan);
+  expect(s.repository.materialsForPlan(plan).find(m => m.key === state.key)!.revisionId).toBe(state.revisionId);
+  s.store.db.prepare("UPDATE tasks SET status='done',version=version+1 WHERE id=?").run(String(s.store.tasks()[0]!.id));
+  s.work.preparePage(plan);
+  const changed = s.repository.materialsForPlan(plan).find(m => m.key === state.key)!;
+  expect(changed.revisionId).not.toBe(state.revisionId);
+  expect(changed.text).toContain('"status": "done"');
+  expect(s.store.revision(state.revisionId)!.fragments.map(f => f.text).join("\n")).toContain('"status": "open"');
+  expect(s.store.jobs.list().filter(j => j.kind === "extract_claims" && j.inputRefs.some((r: any) => r.sourceId === state.sourceId))).toHaveLength(0);
+});
+
+it("answers an actual decision from owner chat without widening the selected project", () => {
+  const s = setup();
+  const group = s.store.contexts.create({name:"退款", kind:"project", description:"退款查询"});
+  const key = s.work.apply({...s.action, contextIds:[group.id]}, s.actor("跟进退款")).key!;
+  publish(s.repository, key, "实现退款页面", [
+    {kind:"investigate", question:"个人事项是否已创建？", why:"核对实际状态", nextStep:"助手查询", blocking:true, citationKeys:["spec"]},
+    {kind:"supplement", question:"非法输入如何处理？", why:"可并行完善", nextStep:"补接口说明", blocking:false, citationKeys:["spec"]},
+    {kind:"decision", question:"本期是否包含批量退款？", why:"影响本期范围", nextStep:"选择本期或后续", blocking:true, citationKeys:["spec"]},
+  ]);
+  const questions = s.work.status(key).questions;
+  expect(questions.filter(q => q.blocking).map(q => q.question)).toEqual(["本期是否包含批量退款？"]);
+  const q = questions.find(q => q.kind === "decision")!;
+  s.work.apply({operation:"answer_question", questionId:q.id, answer:"批量退款放到下期"}, s.actor("批量退款放到下期"));
+  expect(s.work.status(key).questions.some(x => x.id === q.id)).toBe(false);
+  const plan = s.repository.pages().find(p => p.key === key)!.plan!;
+  expect(plan.contextIds).toEqual([group.id]);
+  expect(plan.materialKeys).toHaveLength(2);
+  const answer = s.repository.materialsForPlan(plan).find(m => m.key.startsWith("manual:knowledge-answer:"))!;
+  expect(answer.text).toContain("批量退款放到下期");
+  expect(answer.actorId).toBe("owner");
 });

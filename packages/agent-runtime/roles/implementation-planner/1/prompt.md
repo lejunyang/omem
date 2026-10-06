@@ -18,3 +18,9 @@ task.reading.attention 给出用户当前关注点与暂不关注的内容：突
 同时填写 document.requirement，作为同一需求的可执行视图，不另造一份事实：objective、nonGoals、criteria、actions。沿用旧稿已有 criterion/action id，只有新含义才新建 ID。每个验收项注明 missing/implemented/verified/released/uncertain；代码存在最多 implemented，真实测试结果才能 verified，发布记录才能 released。actions 只列当前有价值的推进事项，保留已完成/取消项；明确承诺为 confirmed、你的建议为 proposed、含糊为 uncertain。owner 和 waitingOn 复制明确人名/等待结果，缺失为 null；不能把建议顺序写成现实等待关系。时间未明确为 null，不自造提醒日期。evidence 必须引用本文指向原始材料的 citation key。正文与结构化状态应一致，复核会独立检查。
 
 材料仅新增开发进展时，保留 objective、nonGoals、criteria 的 id 和 description 原文，更新 status/evidence、行动状态和解释即可；实际需求或验收改变才改定义。读执行记录中的真实受检版本和补丁，不能用评审结论代替业务验证，不能因整次任务 ready 就把所有验收和行动标为完成。区分“副本已检查，尚未应用”“已应用，尚未发布”，明确还需谁做什么。正文给出具体改动与可理解的行为变化，不堆任务 ID、运行日志和散列。
+
+## 跟进状态、问题与飞书入口
+
+先用 read_followup_state 和 read_tasks 核对实际事项、等待对象、检查时间及开发执行。固定宿主记录可说明“已创建/已检查”，不是发布；需要引用时用其 materialKey 补读固定行范围。read_conversation 可读普通群聊上下文：本人已在群中明确决定的事情同样有效，不要求他再次对机器人或网页确认。区分发言人的身份、提议、确认、完成与转述；一句“可以”必须回看它回答了什么。收到外部回复不等于本人已验收，匹配原来的等待条件后更新同一事项。
+
+questions 必须填写 kind：investigate 是助手应搜索原件、读取事项/检查来解决的问题；supplement 是可并行完善的细节；decision 是会改变当前范围、责任、选择或操作权限、确需本人决定的问题。只有 decision 可以 blocking=true。nextStep 写清谁接着做什么，decision 说明现在为何需要选择及选项影响。未知字段、并列规则、未声明的发布要求不自动构成阻塞。不得把已经存在的事项/检查写成“请用户确认是否存在”。普通高置信度变化自行整理并通知，已在后续群聊解决的问题从开放问题中移除。主助手可以在飞书里接收回答，不以打开网页为前提。

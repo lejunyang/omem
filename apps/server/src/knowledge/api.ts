@@ -21,7 +21,7 @@ import { KnowledgePageService } from "./page-service.js";
 import { MaterialDescriptionWorker } from "../source-profile/description-worker.js";
 import { requirementHandoff } from "./requirements.js";
 
-export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; retrieval?: RetrievalPort; retrievalConfig?: RetrievalConfig; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void; onService?: (service: KnowledgePageService) => void; beforePageRun?: (plan: import("../../../../packages/contracts/src/knowledge.js").WikiPageBrief, signal: AbortSignal) => Promise<unknown> }) {
+export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; retrieval?: RetrievalPort; retrievalConfig?: RetrievalConfig; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void; onService?: (service: KnowledgePageService) => void; preparePage?: (plan: import("../../../../packages/contracts/src/knowledge.js").WikiPageBrief) => void; beforePageRun?: (plan: import("../../../../packages/contracts/src/knowledge.js").WikiPageBrief, signal: AbortSignal) => Promise<unknown> }) {
   const repository = input.repository ?? new KnowledgeRepository(input.store);
   const prefix = input.prefix;
   app.get<{Params:{key:string}}>(prefix + "/pages/:key/handoff", async (req, reply) => {
@@ -32,6 +32,8 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
   let running: KnowledgePipeline | null = null;
   let lastRun: unknown = null;
   const maintenance = new KnowledgePageWorker(repository, {
+    prepare: input.preparePage,
+    settleMs: 12000,
     blocked: () => !!running,
     onError: error => app.log.error(error),
     run: input.profile ? async (brief, job, signal) => {

@@ -34,12 +34,31 @@
               "maxLength": 1600
             }
           },
+          "suggestions": {
+            "description": "Nonblocking wording, formatting or optional detail suggestions. Do not reject or require whole-page regeneration for these.",
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1600
+            }
+          },
           "questions": {
             "maxItems": 20,
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
+                "kind": {
+                  "description": "investigate: agent must search/read actual state; supplement: useful nonblocking detail; decision: a real owner choice affecting present scope, responsibility or permission. Only decision may be blocking. Missing legacy classification is investigate, never an automatic request for owner approval.",
+                  "type": "string",
+                  "enum": [
+                    "investigate",
+                    "supplement",
+                    "decision"
+                  ]
+                },
                 "question": {
                   "type": "string",
                   "minLength": 1,
