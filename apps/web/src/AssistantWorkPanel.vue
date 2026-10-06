@@ -31,11 +31,7 @@ const personal = (item: Follow) => [...new Map([
   ...item.actions.flatMap(a => a.personalTask && !["done", "cancelled"].includes(String(a.personalTask.status)) ? [a.personalTask] : []),
 ].map(t => [t.id, t])).values()];
 const needs = (item: Follow) =>
-  item.questions.filter((q) => q.blocking).length +
-  item.actions.filter(
-    (a) =>
-      a.certainty !== "confirmed" && !["done", "cancelled"].includes(a.status),
-  ).length;
+  item.questions.filter((q) => q.kind === "decision" && q.blocking).length;
 const counts = computed(() => ({
   all: visible.value.length,
   needs: visible.value.reduce((n, r) => n + needs(r), 0),
@@ -48,7 +44,7 @@ const counts = computed(() => ({
 function actions(item: Follow) {
   return item.actions.filter((a) =>
     filter.value === "needs"
-      ? a.certainty !== "confirmed" && !["done", "cancelled"].includes(a.status)
+      ? false
       : filter.value === "waiting"
         ? a.status === "waiting"
         : filter.value === "todos"
@@ -204,7 +200,7 @@ defineExpose({ reload });
           <OmButton
             v-for="(name, k) in {
               all: '全部',
-              needs: '待确认与阻塞',
+              needs: '需要你决定',
               waiting: '等待回复',
               todos: '个人待办',
             }"
@@ -248,16 +244,23 @@ defineExpose({ reload });
           }}</small>
         </div>
         <OmDisclosure
-          v-if="(filter === 'all' || filter === 'needs') && item.questions.some(q => q.blocking)"
-          :title="item.current ? '尚待解决' : '上次整理待核对的问题'"
+          v-if="(filter === 'all' || filter === 'needs') && item.questions.some(q => q.kind === 'decision' && (filter !== 'needs' || q.blocking))"
+          :title="item.current ? '需要你决定' : '上次整理留下的选择，请等待更新'"
           :open="filter === 'needs' ? true : undefined"
           class="questions">
           <template
-            v-for="q in item.questions.filter((q) => q.blocking)"
+            v-for="q in item.questions.filter(q => q.kind === 'decision' && (filter !== 'needs' || q.blocking))"
             :key="q.question"
             ><h4>{{ q.question }}</h4>
+            <p class="muted">{{ q.blocking ? '需要现在选择' : '可稍后决定' }} · {{ q.why }}</p>
             <p class="muted">{{ q.nextStep }}</p></template
           >
+        </OmDisclosure>
+        <OmDisclosure v-if="filter === 'all' && item.questions.some(q => q.kind !== 'decision')" title="待补查资料与可并行完善的细节">
+          <div v-for="q in item.questions.filter(q => q.kind !== 'decision')" :key="q.id">
+            <h4>{{ q.question }}</h4>
+            <p class="muted">{{ q.kind === 'supplement' ? '非阻塞补充' : '助手需补查' }} · {{ q.nextStep }}</p>
+          </div>
         </OmDisclosure>
         <ul v-if="filter === 'todos' && personal(item).length" class="action-list">
           <li v-for="t in personal(item)" :key="String(t.id)">
