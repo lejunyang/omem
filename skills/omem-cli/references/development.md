@@ -10,6 +10,10 @@
 
 `--config` 提供真实规则和检查，repository 由宿主填写；后续 `refresh --config` 可更新。没有配置时检查列表为空，需由装配 Agent 根据目标项目补齐后再宣称可验收。准备不执行项目脚本、安装依赖或 push；子模块/LFS 若存在会报告未准备。新提交使用新的本地工作区，已有修改与旧任务保留；apply 写回该任务的本地准备目录，不是推送远端。
 
+主助手已可自行补齐开发配置：`project_inspect` 读配置版本和规则，`project_files/read/search` 找到实际开发说明、清单与脚本；在 `start_development.configuration` 中一并提交，或用户只要求准备时用 `configure_project`。不让用户手填 JSON，不要求已经交办的常规配置再确认一遍。外部 CLI Agent 使用 `develop inspect ALIAS --json`、`develop read ALIAS PATH --json`，再 `develop configure ALIAS configuration.json`。JSON 含 expectedVersion、完整 instructions/ruleFiles/commands、sources(path/hash)、summary、gaps；版本和文件摘要来自刚才的实际读取。保存只登记配置，不执行命令；后续任务固定该配置。
+
+优先项目已有且有限时长的 setup/test/build/browser/design 任务，保留人工约束，继续读相关目录规则与脚本，不按语言名猜测。没有依赖不强加安装；缺私有环境说明具体前提。不能把发布、推送、通知、全局安装或修改系统的命令包装成自动检查。配置不证明命令通过；真实检查和未验证范围由执行任务返回。
+
 编码先用 `develop register ALIAS project.json` 登记本机仓库与必要检查：
 
 编码与独立评审分别由个人配置 `development.codingProfileId` / `reviewProfileId` 选择，指向 profiles 中已有 ACP 配置；省略时沿用主助手。先 `agent probe PROFILE_ID --json` 发现可用模型/effort，实际推理成功才说明认证可用。任务入队固定两角色配置，恢复不换成新的默认值。Traex、Codex 已实际完成编码与独立评审；Claude 0.86.0 已接实验适配但本机推理缺认证。Codex 使用 2.1.1 适配器、配套 CLI 和原有登录，会话关闭继承的个人工具并装配本次 omem 工具；不要为解决权限问题打开全局 bypass。详细配置与限制见随包 [Agent 提供方](../../../docs/reader-first/agent-providers.md)。

@@ -702,3 +702,51 @@ it("continues the same blocked task and queues an exact reviewed patch for guard
   expect((await git(root, "rev-parse", "HEAD")).trim()).toBe(ready.run!.base);
   expect(s.queue.list()).toHaveLength(1);
 });
+
+it("reads project guidance, configures checks during delegation, and freezes queued configuration", async () => {
+  class Runner extends DevelopmentRunner {
+    override async execute(id: string) {
+      const run = this.read(id);
+      run.state = "ready";
+      this.save(run);
+      return run;
+    }
+  }
+  const s = setup(path => new Runner(path)), root = join(s.dir, "project");
+  mkdirSync(root);
+  writeFileSync(join(root, "AGENTS.md"), "Use the registered checks. Do not publish.\n");
+  writeFileSync(join(root, "README.md"), "Verify locally with node --check code.mjs.\n");
+  writeFileSync(join(root, "code.mjs"), "export const answer = 1;\n");
+  await git(root, "init", "-q");
+  await snapshotCommit(root, "initial");
+  await s.queue.runner.register("project", { name: "Project", repository: root, instructions: "Keep owner constraint" });
+  const service = s.queue.runner.configuration;
+  const inspection = await service.inspect("project");
+  expect(inspection.hasVerificationCommands).toBe(false);
+  const doc = await service.read("project", "README.md");
+  const configuration = {
+    expectedVersion: inspection.configurationVersion,
+    instructions: "Keep owner constraint", ruleFiles: [],
+    commands: [{ name: "syntax", command: process.execPath, args: ["--check", "code.mjs"], cwd: ".", purpose: "test" as const, required: true, timeoutMs: 10000 }],
+    sources: [{ path: doc.path, hash: doc.hash }], summary: "检查模块语法", gaps: ["尚无业务行为测试"],
+  };
+  const key = s.work.apply(s.action, s.actor("跟进退款查询")).key!;
+  publish(s.repository, key);
+  const assignment = s.actor("请直接实现退款查询，按项目说明配置检查");
+  const receipt = s.work.apply({ operation: "start_development", key, project: "project", configuration, delegation: assignment.userText }, assignment);
+  expect(receipt.taskId).toBeTruthy();
+  expect(service.get("project").configuration?.gaps).toEqual(["尚无业务行为测试"]);
+  expect(() => service.configure("project", configuration)).toThrow("配置已变化");
+  const current = await service.inspect("project");
+  const update = { ...configuration, expectedVersion: current.configurationVersion, commands: [{ ...configuration.commands[0]!, name: "new-check" }] };
+  const actor = s.actor("调整项目检查配置");
+  s.work.apply({ operation: "configure_project", project: "project", configuration: update, delegation: actor.userText }, actor);
+  await s.queue.processOne();
+  const run = s.queue.read(receipt.taskId!).run!;
+  expect(run.project.commands[0]?.name).toBe("syntax");
+  expect(service.get("project").commands[0]?.name).toBe("new-check");
+  writeFileSync(join(root, "README.md"), "Changed instructions\n");
+  const next = await service.inspect("project");
+  expect(next.configurationStale).toBe(true);
+  expect(() => service.configure("project", { ...update, expectedVersion: next.configurationVersion })).toThrow("文件已变化");
+});

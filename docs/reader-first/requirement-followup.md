@@ -81,6 +81,18 @@ start/resume 在前台运行，Ctrl+C 停止；进程中断后显式 resume，�
 
 用户可以直接说“准备这个仓库的 main 分支，项目别名用 billing”；主助手提交 `prepare_repository`，常驻服务后台执行，随后用 `repository_status` 查实际提交、目录或错误。地址须由本人提供，或者来自已经登记的项目；不会从消息材料中自行选一个新远端。重试沿用同一项目，不把登录失败说成项目不存在。准备完成和失败沿用已有通知流程。
 
+### 让助手配置开发与检查方式
+
+已准备的项目不再要求用户先手填检查 JSON。可以直接说“在 billing 实现这个需求，按项目说明准备并检查”；助手先读现有配置、项目规则、README、依赖清单和实际脚本，再把配置与编码交办一起提交。只想准备配置时可以说“先配置 billing 的开发和检查方式，暂不编码”。两种方式都由宿主保存实际配置；保存本身不运行安装或检查。
+
+`project_inspect` 返回根规则、文件入口、当前配置版本及其依据是否变化；`project_files/read/search` 允许继续补读子目录、CI 和 skill。助手选择明确的执行文件、参数、工作目录与 setup/test/build/browser/design 用途，保留已有用户约束，并说明尚缺的服务、权限或验收方式。配置保存已读文件的内容摘要，避免用过时说明覆盖新设置。它们是项目操作依据，不是另一份知识文章或新的授权。
+
+用户交办本地实现包含通常的项目依赖准备和检查；发布、推送、消息写入、全局安装与系统配置不在这个范围。快速模型可建议文件用途、环境前提和可能的外部副作用，不能代替主助手读脚本或授权执行。没有现成测试时应说明检查覆盖，不能用空命令充数；构建成功也不等于界面或业务验收成功。
+
+后台任务在排队时固定配置，后续调整不影响已排队和运行的任务；本地登记仓库仍在任务创建副本时选择实际 HEAD，远端准备目录则已按提交分开。CLI/外部 Agent 可用 `develop inspect ALIAS`、`develop read ALIAS README.md` 和 `develop configure ALIAS configuration.json` 完成同样操作。配置文件包含 inspect 返回的 expectedVersion、完整 instructions/ruleFiles/commands、已读 sources（path/hash）、summary 和 gaps。实际检查仍在独立编码副本运行，日志和退出码随任务保存。
+
+### CLI 与仓库数据
+
 CLI 供 Agent 装配和诊断：
 
 ```bash

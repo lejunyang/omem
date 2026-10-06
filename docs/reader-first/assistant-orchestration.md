@@ -162,6 +162,7 @@ ACP 已定义用 `session/new` 传入工作目录与 MCP 服务；可选能力�
 | `assistant/acp-model.ts`、`assistant/research.ts` | 装配需求查询/管理、关注反馈、开发派发/状态、能力目录工具；操作返回实际任务与结果 | 现有 `ResearchTool` 与 MCP 装配入口，不让主助手拼 shell 串调用自己 |
 | `assistant/runtime.ts` | 把当前用户交办、会话身份、研究模式和取消状态传给动作服务；回答基于实际回执 | 现有事项动作应用与取消保护；源材料不授予写权限 |
 | `development/repositories.ts`、`development/repository-queue.ts` | Git 对象缓存、按提交准备工作区；独立持久队列、当前状态、失败重试及结果通知；主助手提交 prepare_repository | 复用 Git fetch/worktree/credential helper，不复制一套 Git/登录实现；现有编码任务保持原基线 |
+| `development/project-configuration.ts`、`assistant/work.ts` | 只读登记项目、按规则与脚本配置准备及检查；configure_project 单独保存，start_development 可在同一次交办中补齐配置；排队时固定项目配置 | 复用已有代码读取、搜索与命令执行；配置是可解释的普通项目数据，不新增安装器或另一套 Agent 循环 |
 | `development/runner.ts`、`jobs/worker.ts` | 将前台执行器接为持久后台工作；入队立即返回，保存阶段、进度、问题和恢复位置 | 现有独立 Git 副本、真实检查、独立评审与回修；复用 job lease 和重启恢复机制 |
 | `agents.ts`、`agent-runtime/gateway.ts`、`agent-runtime/bundles.ts` | 抽出提供方装配，编码/评审各自选择 profile；不再限制可执行文件名为 Traex | 现有 ACP 协议、能力发现、活动超时、输出合同与 trace |
 | `capabilities/registry.ts`、`capabilities/session.ts`、`capabilities/receipts.ts`、`capabilities/materials.ts`、`cli.ts` | 已登记 skill/MCP/CLI、检查可用状态、固定项目/任务能力版本；按私聊保存实际读取结果并随交办复制，主助手与编码/评审复用同一组工具 | 标准 MCP SDK 的 stdio/Streamable HTTP；已有登录态或环境凭据引用 |
