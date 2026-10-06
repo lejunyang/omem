@@ -191,7 +191,12 @@ export class AcpAssistantModel implements AssistantModelPort {
       workspace,
       input.signal,
       input.onActivity,
+      input.workScope,
     );
+    const conversationInputs =
+      work && input.workScope
+        ? work.inputs.tools(input.workScope, work.decisions)
+        : [];
     const investigation = answerInvestigation({
       workspace,
       signal: input.signal,
@@ -205,6 +210,9 @@ export class AcpAssistantModel implements AssistantModelPort {
           retrievalConfig: this.deps.retrievalConfig,
           context: { ...input, signal },
           workTools: [
+            ...conversationInputs.filter(
+              (t) => t.name !== "conversation_input_relevance",
+            ),
             ...(work
               ?.tools()
               .filter((tool) =>
@@ -228,6 +236,7 @@ export class AcpAssistantModel implements AssistantModelPort {
         ...(reader ? stage.tools(investigation.tools) : investigation.tools),
         ...(work?.tools() ?? []),
         ...(capabilities?.tools() ?? []),
+        ...conversationInputs,
       ],
       beforeSubmit: (answer, reply) => {
         stage.beforeSubmit(reply);

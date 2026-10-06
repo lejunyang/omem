@@ -66,4 +66,4 @@ omem capabilities call project-design read-node ./node-input.json --kind cli --j
 
 `attach PROJECT_ALIAS` 不传 ID 清空项目默认选择。主助手可为单次任务显式覆盖。编码任务入队即固定配置与技能版本；后续 `add` 更新只影响新任务。`disable ID` 立即阻止尚未发出的调用，保留已有历史，不保证撤回外部已经执行中的请求。重新 add 才重新启用。
 
-能力在个人库 `capabilities/<id>/versions/<revision>/`；编码读取回执与图片在任务 `external-inputs/`，普通问答也有自己的回执目录。独立评审先读同一份回执，再按需补查。直接 CLI 调用的回执在 `capability-runs/<id>/`，目前不自动过期；这些是私人运行数据，不提交 Git，也不等同已经入知识库。能力版本不锁定 CLI 二进制或远端资料，要记录服务返回的 revision/时间。
+能力在个人库 `capabilities/<id>/versions/<revision>/`；编码读取回执与图片在任务 `external-inputs/`，普通问答另在个人库 `capability-receipts/` 保存实际结果/图片，并按私聊建立索引。主助手用 `conversation_inputs` 补读前文，交办时选择 `inputReceipts`；宿主保留当前用户原话、至多 20 轮历史讨论及所选结果，把图片一起复制到后台任务。不要用历史回答替代实际工具结果，也不要让用户重新粘贴已经读取的节点。编码与评审通过 `development_context` 和 `capability_receipts` 读取。独立评审先读同一份回执，再按需补查。直接 CLI 调用的回执在 `capability-runs/<id>/`，目前不自动过期；这些是私人运行数据，不提交 Git，也不等同已经入知识库。能力版本不锁定 CLI 二进制或远端资料，要记录服务返回的 revision/时间。

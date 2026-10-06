@@ -21,6 +21,10 @@ import { decideWork, workQuestions } from "../decision/work.js";
 import { queueOwnerNotice } from "../integrations/lark/owner-notice.js";
 import type { WikiPageBrief } from "../../../../packages/contracts/src/knowledge.js";
 import { CapabilitySession } from "../capabilities/session.js";
+import {
+  CapabilityReceipts,
+  type ConversationScope,
+} from "../capabilities/receipts.js";
 
 type Feedback = {
   id: string;
@@ -54,12 +58,14 @@ export function assertWorkDelegation(action: WorkAction, actor: WorkActor) {
  * return durable receipts; source text and quick-model scores grant no authority. */
 export class AssistantWork {
   readonly store;
+  readonly inputs: CapabilityReceipts;
   constructor(
     readonly pages: KnowledgePageService,
     readonly development: DevelopmentQueue,
     readonly decisions?: DecisionService,
   ) {
     this.store = pages.repository.store;
+    this.inputs = new CapabilityReceipts(this.store);
     this.store.db.exec(`CREATE TABLE IF NOT EXISTS assistant_focus(
       requirement_key TEXT PRIMARY KEY,version INTEGER NOT NULL,attention TEXT NOT NULL,initial_attention TEXT NOT NULL,updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS assistant_work_feedback(
@@ -248,6 +254,7 @@ export class AssistantWork {
     directory: string,
     signal?: AbortSignal,
     onActivity?: () => void,
+    scope?: ConversationScope,
   ) {
     const registry = this.development.runner.capabilities;
     return new CapabilitySession(
@@ -259,6 +266,9 @@ export class AssistantWork {
         signal,
         onActivity,
         decisions: this.decisions,
+        onReceipt: scope
+          ? (from, id) => this.inputs.save(scope, from, id)
+          : undefined,
       },
     );
   }
@@ -436,6 +446,7 @@ export class AssistantWork {
         action.project,
         actor,
         action.capabilities,
+        action.inputReceipts,
       );
       receipt = {
         tool: "work_action",

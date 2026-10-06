@@ -307,6 +307,23 @@
                   "type": "string",
                   "minLength": 1
                 },
+                "inputReceipts": {
+                  "description": "Relevant actual external receipt IDs returned by conversation_inputs or capability_call. Empty means none; omitted carries up to 100 recent receipts for selected capabilities. No arbitrary paths or invented source content.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "capabilities": {
+                  "description": "Optional subset of registered read-only capabilities for this coding task; omitted uses project defaults.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
                 "delegation": {
                   "description": "Copy the CURRENT user's explicit implementation assignment. Reading a source or asking how implementation works is not delegation.",
                   "type": "string",

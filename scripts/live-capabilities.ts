@@ -15,7 +15,12 @@ import { join, resolve } from "node:path";
 import { buildApp } from "../apps/server/src/app.js";
 import { loadReviewCodeModelConfig } from "../apps/server/src/review/model-config.js";
 import { profileSchema } from "../packages/contracts/src/index.js";
-import { saveJson } from "../apps/server/src/development/workspace.js";
+import { randomUUID } from "node:crypto";
+import {
+  KnowledgeRepository,
+  bindKnowledgeQuotes,
+} from "../apps/server/src/knowledge/repository.js";
+import { git, saveJson } from "../apps/server/src/development/workspace.js";
 delete process.env.OMEM_REPO_ROOT;
 const model = loadReviewCodeModelConfig();
 const profile = profileSchema.parse({
@@ -42,7 +47,7 @@ writeFileSync(
 );
 writeFileSync(
   join(skill, "references/workflow.md"),
-  "First use the lookup-node CLI with screen=工单完成; its output gives the node ID. Then call read_design with that node to read layout, spacing and button label. Image is a synthetic one-pixel transport fixture, not a real visual design; do not claim a visual acceptance.",
+  "Use lookup-node with screen=工单完成 or 工单归档 to get each node ID. Then call read_design with that node to read layout, spacing and button label. The coding requirement is a plain configuration module, no UI; use the structured fields, not the synthetic image. Image is a synthetic one-pixel transport fixture, not a real visual design; do not claim a visual acceptance.",
 );
 const system = await buildApp({
   profiles: [profile],
@@ -72,7 +77,7 @@ system.work.development.runner.capabilities.register({
       command: process.execPath,
       args: [
         "-e",
-        "console.log(JSON.stringify({screen:process.argv[1],node:'PANEL-7',version:'design-r3'}))",
+        "console.log(JSON.stringify({screen:process.argv[1],node:process.argv[1]==='工单归档'?'PANEL-9':'PANEL-7',version:'design-r3'}))",
         { input: "screen", description: "页面中文名称" },
       ],
     },
@@ -84,6 +89,160 @@ system.work.development.runner.capabilities.register({
     readOnlyTools: ["read_design"],
   },
 });
+// A fixed synthetic requirement bypasses generation here; this acceptance is
+// specifically about real assistant -> coding -> review context transfer.
+const source = join(directory, "project");
+mkdirSync(source);
+writeFileSync(
+  join(source, "preset.mjs"),
+  "export function completionPreset() { return null; }\n",
+);
+writeFileSync(
+  join(source, "AGENTS.md"),
+  "Implement a headless ESM configuration module only. No UI, dependencies, network writes or deployment. Do not alter acceptance.mjs. Return a fresh plain object each call.\n",
+);
+writeFileSync(
+  join(source, "acceptance.mjs"),
+  `import assert from 'node:assert/strict';
+import {completionPreset} from './preset.mjs';
+const first=completionPreset(),second=completionPreset();
+assert.ok(first && typeof first==='object');
+assert.ok(['vertical','horizontal'].includes(first.layout));
+assert.ok(Number.isInteger(first.gap)&&first.gap>0);
+assert.equal(typeof first.label,'string');
+assert.notEqual(first,second); assert.deepEqual(first,second);
+first.gap=999; assert.notEqual(completionPreset().gap,999);
+console.log('configuration checks passed');
+`,
+);
+await git(source, "init", "-q");
+await git(source, "add", ".");
+await git(
+  source,
+  "-c",
+  "user.name=Test",
+  "-c",
+  "user.email=test@example.invalid",
+  "commit",
+  "-qm",
+  "synthetic base",
+);
+await system.work.development.runner.register("preset", {
+  name: "工单展示配置",
+  repository: source,
+  commands: [
+    {
+      name: "acceptance",
+      command: process.execPath,
+      args: ["acceptance.mjs"],
+      purpose: "test",
+    },
+  ],
+});
+system.store.capture(
+  {
+    source: "manual",
+    externalId: "preset-spec",
+    title: "工单展示配置需求",
+    parts: [
+      {
+        type: "text",
+        text: "实现 completionPreset()：返回用户在交办时选定的设计节点的 layout、gap、label 三个结构化字段。每次返回新对象，修改结果不能影响后续调用。只交付配置模块，不开发页面、不发布；所选节点从已登记设计能力读取。",
+      },
+    ],
+    context: {},
+  },
+  { learning: false, notify: false },
+);
+const key = system.work.apply(
+  {
+    operation: "track",
+    title: "工单展示配置",
+    goal: "实现用户选择的配置方案",
+    materialKeys: ["manual:preset-spec"],
+    contextIds: [],
+    attention: { focus: [], ignore: [], notifications: "important" },
+  },
+  {
+    requestId: randomUUID(),
+    conversationId: "fixture-setup",
+    principalId: "owner",
+    visibility: "private",
+    userText: "跟进工单展示配置",
+  },
+).key!;
+const repository = new KnowledgeRepository(system.store),
+  material = repository
+    .materials()
+    .find((m) => m.key === "manual:preset-spec")!,
+  plan = repository.pages().find((p) => p.key === key)!.plan!;
+repository.publish({
+  version: 1,
+  reading: plan,
+  publication: { role: "article" },
+  document: bindKnowledgeQuotes(
+    {
+      key,
+      title: plan.title,
+      summary: "实现选定配置",
+      category: "需求",
+      sections: [
+        {
+          key: "scope",
+          title: "范围",
+          body: "只实现选定节点的配置模块 [[spec]]",
+        },
+      ],
+      citations: [
+        {
+          key: "spec",
+          label: "配置需求",
+          quote: "",
+          reason: "范围与验收",
+          relation: "supports",
+          target: {
+            kind: "material",
+            key: material.key,
+            startLine: 1,
+            endLine: 1,
+          },
+        },
+      ],
+      questions: [],
+      requirement: {
+        objective: "实现交办时选定的配置",
+        nonGoals: ["页面", "发布"],
+        criteria: [
+          {
+            id: "selected-preset",
+            description:
+              "completionPreset() 返回用户本次选定节点的 layout、gap、label；每次返回新对象，不共享可变结果。",
+            status: "missing",
+            evidence: ["spec"],
+          },
+        ],
+        actions: [],
+      },
+    },
+    new Map([[material.key, material]]),
+  ),
+  dependencies: [
+    { kind: "material", key: material.key, digest: material.digest },
+  ],
+  generation: {
+    model: "fixture",
+    effort: null,
+    at: new Date().toISOString(),
+    trace: {},
+  },
+  review: {
+    model: "fixture",
+    at: new Date().toISOString(),
+    trace: {},
+    verdict: "accepted",
+  },
+});
+await system.work.pages.maintenance.stop();
 await system.app.ready();
 let passed = false;
 let workspace: string | undefined;
@@ -98,7 +257,7 @@ try {
   const response = await system.assistant.turn({
     conversationId: conversation.id,
     userText:
-      "请通过已登记的工单设计资料查一下：工单完成页面要什么布局、间距、按钮文字？按这个能力的技能说明读取实际资料，简要给结论。只读取，不启动编码。",
+      "请通过已登记的工单设计资料分别查一下工单完成和工单归档两个方案的布局、间距、按钮文字。按技能说明读取实际资料，简要列出两者。只读取，不启动编码。",
   });
   const turn = system.assistant.conversations.turn(response.turn.id)!;
   console.log(turn.result);
@@ -136,6 +295,93 @@ try {
   assert.match(turn.result ?? "", /24/);
   assert.match(turn.result ?? "", /完成工单/);
   assert.match(turn.result ?? "", /纵|垂直/);
+  assert.ok(
+    receipts.some(
+      (r) =>
+        r.tool === "read_design" &&
+        r.args.node === "PANEL-9" &&
+        !r.result.isError,
+    ),
+  );
+  // A subsequent production turn must find the saved prior receipts itself.
+  rmSync(join(workspace, "external-inputs"), { recursive: true });
+  const delegation =
+    "请帮我实现工单展示配置，交给已登记的 preset 项目。只采用刚才的工单归档方案，不采用完成方案；把刚才实际读到的归档资料带给编码和评审，完成本地检查即可，不用开发页面或发布。";
+  const delegated = await system.assistant.turn({
+    conversationId: conversation.id,
+    userText: delegation,
+  });
+  console.log(delegated.turn.result);
+  const task = system.work.development
+    .list()
+    .find((t) => t.requestId === delegated.turn.id);
+  assert.ok(task, JSON.stringify(delegated.turn));
+  const saved = (task.job.inputRefs[0] as any).handoff;
+  assert.equal(saved.assignment.text, delegation);
+  assert.equal(saved.selection, "explicit");
+  assert.ok(saved.inputs.length > 0);
+  const handed = saved.inputs.map((r: any) =>
+    JSON.parse(
+      readFileSync(
+        join(
+          system.work.development.runner.root,
+          "runs",
+          task.id,
+          "external-inputs",
+          r.recordId + ".json",
+        ),
+        "utf8",
+      ),
+    ),
+  );
+  assert.ok(
+    handed.some(
+      (r: any) => r.tool === "read_design" && r.args.node === "PANEL-9",
+    ),
+  );
+  assert.ok(
+    !handed.some(
+      (r: any) => r.args.node === "PANEL-7" || r.args.screen === "工单完成",
+    ),
+  );
+  let current = system.work.development.read(task.id),
+    previous = "";
+  const deadline = Date.now() + 20 * 60 * 1000;
+  while (
+    ["queued", "leased", "running", "retry_wait"].includes(current.job.state) &&
+    Date.now() < deadline
+  ) {
+    if (current.message !== previous) {
+      console.log(current.message);
+      previous = current.message;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+    current = system.work.development.read(task.id);
+  }
+  assert.equal(current.run?.state, "ready", JSON.stringify(current));
+  const run = current.run!;
+  const { completionPreset } = await import(join(run.checkout, "preset.mjs"));
+  assert.deepEqual(completionPreset(), {
+    layout: "horizontal",
+    gap: 12,
+    label: "确认归档",
+  });
+  assert.equal(await git(source, "status", "--porcelain"), "");
+  assert.equal(run.review?.verdict, "accepted");
+  saveJson(join(output, "handoff.json"), {
+    at: new Date().toISOString(),
+    passed: true,
+    model: profile.model,
+    elapsedSeconds: (Date.now() - start) / 1000,
+    assignment: saved.assignment.text,
+    selected: handed,
+    discussion: saved.discussion,
+    implementation: readFileSync(join(run.checkout, "preset.mjs"), "utf8"),
+    checks: run.checks,
+    review: run.review,
+    scope:
+      "Seeded synthetic requirement; actual assistant, coding and independent review via Traex. No real Figma/private repository/visual acceptance.",
+  });
   for (const file of ["trace.json", "question-context.json"])
     if (existsSync(join(workspace, file)))
       copyFileSync(join(workspace, file), join(output, file));

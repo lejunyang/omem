@@ -11,7 +11,7 @@
       "canonical_name": "omem-code-reviewer",
       "version": "1",
       "load_mode": "inline",
-      "artifact_digest": "dd094d2a17e8a9483f5bca9f81a33f4fa12e0d31056fee73a9441c3a0dcc7946"
+      "artifact_digest": "838cfdf761d8f484631a922b37a5d5a501c644e264c9eb5e42e5da6a5acff74d"
     }
   ],
   "output_schema": "ImplementationReview.v1",

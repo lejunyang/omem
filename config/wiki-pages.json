@@ -343,6 +343,7 @@
         "omem:docs/reader-first/assistant-orchestration.md",
         "omem:apps/server/src/capabilities/registry.ts",
         "omem:apps/server/src/capabilities/session.ts",
+        "omem:apps/server/src/capabilities/receipts.ts",
         "omem:packages/contracts/src/capabilities.ts",
         "omem:skills/omem-cli/references/capabilities.md"
       ],

@@ -116,7 +116,7 @@ ACP 已定义用 `session/new` 传入工作目录与 MCP 服务；可选能力�
 
 登记、配置示例与 Agent 操作说明在[CLI 能力技能](../../skills/omem-cli/references/capabilities.md)。`capabilities add/list/show/check/skill/call/attach/disable` 均操作服务机器的个人目录，不读取个人所有插件、不自动安装依赖或登录。登记一次后，普通使用由主助手按当前任务选工具。真实项目由用户稍后提供；现在不会将任何合成设计冒充真实 Figma 验收。
 
-一次“查工单页面设计”的实际执行路线是：主助手发现设计能力 → 读 SKILL.md 及其节点说明 → 检查 CLI 与 MCP → 用声明的 CLI 查节点 → 用 MCP 读节点 → 看返回内容并回答。需要编码时，将所选能力 ID 随 `start_development` 提交。项目默认能力可由 `attach` 设置；任务入队时固定其配置和技能摘要，后续更新不会悄悄改变排队任务。停用则拒绝后续调用。
+一次“查工单页面设计”的实际执行路线是：主助手发现设计能力 → 读 SKILL.md 及其节点说明 → 检查 CLI 与 MCP → 用声明的 CLI 查节点 → 用 MCP 读节点 → 看返回内容并回答。需要编码时，用 `conversation_inputs` 查同一私聊先前已完成轮次和当前轮的工具结果；将相关 `recordId` 与能力 ID 随 `start_development` 提交。宿主保存当前交办原话和至多 20 轮历史背景，把选中回执及图片复制进持久任务，不依赖问答临时目录。编码与独立评审通过 `development_context` 读交办和对象选择，通过 `capability_receipts` 读实际结果。项目默认能力可由 `attach` 设置；任务入队时固定其配置和技能摘要，后续更新不会悄悄改变排队任务。停用则拒绝后续调用。
 
 实现复用官方 [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) 的连接、发现、调用和关闭，以及 [Agent Skills](https://agentskills.io/specification) 的目录形式和按需补读。omem 只负责注册、选择、结果留存和已有角色工具的接线；远端的工具实现与编码 CLI 的 Agent 循环继续由原项目承担。
 
@@ -127,9 +127,9 @@ ACP 已定义用 `session/new` 传入工作目录与 MCP 服务；可选能力�
 | MCP 调用 | stdio 与 Streamable HTTP；仅转发明确允许的工具，不接远端 sampling/elicitation | 暂无旧 SSE、OAuth 交互登录或 resources/prompts 转接；不能自动获得写权限 |
 | 技能 | 复制正文和引用资源，按需读取；任务使用已固定版本 | 没有自动安装技能脚本的依赖；能力版本不固定 CLI 二进制或实时远端数据 |
 | 资料与评审 | 保存每次工具输入/结果、时间和能力版本；图片落为私人文件；评审可查相同回执并补读 | 收到图片路径不等于看过图；回执尚未自动 Capture 为可全库检索的固定材料 |
-| 快速判断 | `capability_relevance` 可对需要/背景/无关/不确定给建议；只用已就绪模型，最多等 2.5 秒 | 分数不能批准调用或断言服务可用；本轮未测出准确率或加速收益 |
+| 快速判断 | `capability_relevance` 判断能力用途；`conversation_input_relevance` 对单份已读资料给直接相关/背景/无关/不确定，以及事实/定位/失败/可疑等用途建议；只用已就绪模型，最多等 2.5 秒 | 分数不能批准调用或断言服务可用；本轮未测出准确率或加速收益 |
 
-能力配置位于个人库 `capabilities/`；编码回执位于任务 `external-inputs/`，问答在本轮工作目录保存，直接 CLI 调用在 `capability-runs/<id>/`。凭据只引用环境变量，已引用凭据在文本结果中遮蔽；外部工具仍可能输出业务敏感内容，目录整体按私人材料处理。当前未提供这些回执的自动过期归档策略。外部原件变更、结果入统一记忆与任务重规划是下一层工作，不以保存了一份 JSON 替代。
+能力配置位于个人库 `capabilities/`；编码回执位于任务 `external-inputs/`，问答结果另按私聊索引在 `capability-receipts/` 保存正文和图片，直接 CLI 调用在 `capability-runs/<id>/`。凭据只引用环境变量，已引用凭据在文本结果中遮蔽；外部工具仍可能输出业务敏感内容，目录整体按私人材料处理。明确选择 `inputReceipts` 时只带所选结果；空数组不带，省略时带所选能力最近至多 100 条本会话结果。不会跨会话找私人资料，也不接受模型指定任意本机文件。入队前校验结果及图片摘要，恢复时再次核对。历史回答是理解背景，不作为独立事实；当前交办不能静默覆盖固定验收，冲突需报告并更新需求。当前未提供这些回执的自动过期归档策略。外部原件变更、结果入统一记忆与任务重规划是下一层工作，不以保存了一份 JSON 替代。
 
 ## 对现有代码的具体改造
 
@@ -143,7 +143,7 @@ ACP 已定义用 `session/new` 传入工作目录与 MCP 服务；可选能力�
 | `assistant/runtime.ts` | 把当前用户交办、会话身份、研究模式和取消状态传给动作服务；回答基于实际回执 | 现有事项动作应用与取消保护；源材料不授予写权限 |
 | `development/runner.ts`、`jobs/worker.ts` | 将前台执行器接为持久后台工作；入队立即返回，保存阶段、进度、问题和恢复位置 | 现有独立 Git 副本、真实检查、独立评审与回修；复用 job lease 和重启恢复机制 |
 | `agents.ts`、`agent-runtime/gateway.ts`、`agent-runtime/bundles.ts` | 抽出提供方装配，编码/评审各自选择 profile；不再限制可执行文件名为 Traex | 现有 ACP 协议、能力发现、活动超时、输出合同与 trace |
-| `capabilities/registry.ts`、`capabilities/session.ts`、`cli.ts` | 已登记 skill/MCP/CLI、检查可用状态、固定项目/任务能力版本；主助手与编码/评审复用同一组工具 | 标准 MCP SDK 的 stdio/Streamable HTTP；已有登录态或环境凭据引用 |
+| `capabilities/registry.ts`、`capabilities/session.ts`、`capabilities/receipts.ts`、`cli.ts` | 已登记 skill/MCP/CLI、检查可用状态、固定项目/任务能力版本；按私聊保存实际读取结果并随交办复制，主助手与编码/评审复用同一组工具 | 标准 MCP SDK 的 stdio/Streamable HTTP；已有登录态或环境凭据引用 |
 | `app.ts` 与现有通知应用层 | API 和主助手注入同一组服务；后台任务绑定发起会话、完成后通知；开发结果捕获成材料再回到需求 | `RequirementTasks`、MemoryService、既有通知 outbox；不把 ready 写成已上线 |
 
 后台任务必须保存需求版本、采用的反馈、仓库提交、能力选择和发起者，不能只保存一段 prompt。编码排队/运行/需要补充/评审/可交付等阶段应可查询；进程中断、主动取消与模型静默超时分开处理。用户回来问“做到哪了”时读真实状态，不再启动一个重复任务。 主助手和独立答案复核共用只读 `work_catalog/work_status/work_result`；结果工具给出独立副本位置、保存的评审补丁、检查与评审，以及当前副本是否仍与评审时一致。旧原件和未应用的登记仓库不能用来否定后来在独立副本完成的工作。日常助理页面展示跟进和后台任务，调整入口会保留当前草稿。
