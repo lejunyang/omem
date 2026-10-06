@@ -44,6 +44,7 @@ import { RoleBundleRegistry } from "../agent-runtime/bundles.js";
 import { CapabilityRegistry } from "../capabilities/registry.js";
 import { CapabilitySession } from "../capabilities/session.js";
 import { RepositoryPreparer, repositoryLocation, repositoryRef } from "./repositories.js";
+import { ProjectConfigurationService } from "./project-configuration.js";
 import { captureCapabilityMaterial } from "../capabilities/materials.js";
 import {
   receiptSchema,
@@ -97,10 +98,12 @@ export class DevelopmentRunner {
   readonly root: string;
   readonly capabilities: CapabilityRegistry;
   readonly repositories: RepositoryPreparer;
+  readonly configuration: ProjectConfigurationService;
   constructor(readonly dataDir: string) {
     this.root = join(resolve(dataDir), "development");
     this.capabilities = new CapabilityRegistry(dataDir);
     this.repositories = new RepositoryPreparer(this.root);
+    this.configuration = new ProjectConfigurationService(alias => this.projectFile(alias));
   }
   projectFile(name: string) {
     if (!/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/.test(name))
@@ -193,6 +196,7 @@ export class DevelopmentRunner {
       capabilities?: import("../../../../packages/contracts/src/capabilities.js").CapabilityReference[];
       handoff?: DevelopmentHandoff;
       profiles?: DevelopmentProfiles;
+      project?: DevelopmentProject;
     } = {},
   ) {
     // A durable task reuses its own checkout after a host restart.
@@ -203,7 +207,7 @@ export class DevelopmentRunner {
       return existing;
     }
     const project = developmentProjectSchema.parse(
-      JSON.parse(readFileSync(this.projectFile(alias), "utf8")),
+      options.project ?? JSON.parse(readFileSync(this.projectFile(alias), "utf8")),
     );
     const repository = new KnowledgeRepository(store);
     repository.refresh();

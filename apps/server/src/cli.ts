@@ -658,6 +658,7 @@ const develop = group(
   `
 本地编码：读取本个人库中的需求和登记仓库；不接受远程 --url。修改发生在独立 Git 副本，原工作区保留。
 远端仓库用 prepare ALIAS GIT_URL --ref REF --config FILE；repository 查准备状态，refresh 重试/获取新版本，保留旧工作区。
+inspect/read 只读项目说明与配置版本；configure ALIAS FILE 保存 Agent 根据原文准备的配置，不运行命令。交办编码可在同一轮补齐配置。
 先登记项目 JSON：{name,repository,instructions?,ruleFiles?,commands:[{name,command,args,purpose,required?}]}。
 purpose 可为 setup/test/build/browser/design。只运行明确登记的命令；请包含项目必要的依赖准备和验收。
 start/resume 前台运行，活动超时按 Agent 配置；中断后可 resume。最多三轮编码与独立评审。
@@ -682,6 +683,18 @@ develop
   .command("projects")
   .description("查看已登记编码项目")
   .action(async () => show((await developmentRunner()).projects()));
+develop.command("inspect <alias>")
+  .description("只读项目规则、开发入口、当前配置版本与变化，不安装或执行脚本")
+  .action(async alias => show(await (await developmentRunner()).configuration.inspect(alias)));
+develop.command("read <alias> <path>")
+  .option("--start <line>", "开始行", "1")
+  .option("--end <line>", "结束行")
+  .description("读取登记项目文件，返回行号和用于配置的内容摘要")
+  .action(async (alias, path, opts) => show(await (await developmentRunner()).configuration.read(alias, path,
+    Number(opts.start), opts.end ? Number(opts.end) : undefined)));
+develop.command("configure <alias> <file>")
+  .description("保存含 expectedVersion、commands、sources 的项目配置；已有任务保持原配置")
+  .action(async (alias, file) => show((await developmentRunner()).configuration.configure(alias, await readJson(file))));
 develop
   .command("prepare <alias> <repository>")
   .option("--ref <ref>", "分支、标签或提交，默认远端 HEAD", "HEAD")

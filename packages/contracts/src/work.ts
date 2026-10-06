@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { projectConfigurationSchema } from "./development.js";
 
 export const attentionPolicySchema = z
   .object({
@@ -19,6 +20,12 @@ const key = z.string().min(1);
 const version = z.number().int().positive();
 /** A proposal, applied by the host after the assistant turn completes. */
 export const workActionSchema = z.discriminatedUnion("operation", [
+  z.object({
+    operation: z.literal("configure_project"),
+    project: key,
+    configuration: projectConfigurationSchema,
+    delegation: key.describe("Exact current owner request to prepare/configure this project's development checks. Saves configuration only; does not execute commands."),
+  }).strict(),
   z.object({
     operation: z.literal("prepare_repository"),
     alias: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/),
@@ -85,6 +92,7 @@ export const workActionSchema = z.discriminatedUnion("operation", [
       operation: z.literal("start_development"),
       key,
       project: key,
+      configuration: projectConfigurationSchema.optional().describe("If checks are missing or outdated, inspect/read the project and supply its configuration in this same coding assignment. No extra user round trip is needed for routine setup within the assignment."),
       inputReceipts: z
         .array(z.uuid())
         .optional()

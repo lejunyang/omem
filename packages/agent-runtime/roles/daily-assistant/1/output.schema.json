@@ -42,6 +42,155 @@
               "properties": {
                 "operation": {
                   "type": "string",
+                  "const": "configure_project"
+                },
+                "project": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "configuration": {
+                  "type": "object",
+                  "properties": {
+                    "expectedVersion": {
+                      "description": "Current configurationVersion returned by project_inspect.",
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "instructions": {
+                      "description": "Project-specific implementation and acceptance instructions, preserving existing owner constraints.",
+                      "type": "string"
+                    },
+                    "ruleFiles": {
+                      "description": "Additional repository-relative instructions; AGENTS.md and CLAUDE.md are already read automatically.",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "commands": {
+                      "description": "Full replacement command list. Derive executable/args/cwd from actual project docs and manifests. No publish, push, remote writes or global installation.",
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+                          },
+                          "command": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "args": {
+                            "default": [],
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "cwd": {
+                            "default": ".",
+                            "type": "string"
+                          },
+                          "purpose": {
+                            "type": "string",
+                            "enum": [
+                              "setup",
+                              "test",
+                              "build",
+                              "browser",
+                              "design"
+                            ]
+                          },
+                          "required": {
+                            "default": true,
+                            "type": "boolean"
+                          },
+                          "timeoutMs": {
+                            "default": 600000,
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "command",
+                          "args",
+                          "cwd",
+                          "purpose",
+                          "required",
+                          "timeoutMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sources": {
+                      "description": "Actual paths and hashes returned by project_read or project_inspect; include applicable rules and the command definitions.",
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "hash": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "hash"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "summary": {
+                      "description": "Briefly explain the chosen setup and checks in user language.",
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "gaps": {
+                      "description": "Missing environment, credentials or acceptance steps. Saving configuration does not mean commands succeeded.",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "expectedVersion",
+                    "instructions",
+                    "ruleFiles",
+                    "commands",
+                    "sources",
+                    "summary",
+                    "gaps"
+                  ],
+                  "additionalProperties": false
+                },
+                "delegation": {
+                  "description": "Exact current owner request to prepare/configure this project's development checks. Saves configuration only; does not execute commands.",
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "operation",
+                "project",
+                "configuration",
+                "delegation"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "operation": {
+                  "type": "string",
                   "const": "prepare_repository"
                 },
                 "alias": {
@@ -342,6 +491,131 @@
                 "project": {
                   "type": "string",
                   "minLength": 1
+                },
+                "configuration": {
+                  "description": "If checks are missing or outdated, inspect/read the project and supply its configuration in this same coding assignment. No extra user round trip is needed for routine setup within the assignment.",
+                  "type": "object",
+                  "properties": {
+                    "expectedVersion": {
+                      "description": "Current configurationVersion returned by project_inspect.",
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "instructions": {
+                      "description": "Project-specific implementation and acceptance instructions, preserving existing owner constraints.",
+                      "type": "string"
+                    },
+                    "ruleFiles": {
+                      "description": "Additional repository-relative instructions; AGENTS.md and CLAUDE.md are already read automatically.",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "commands": {
+                      "description": "Full replacement command list. Derive executable/args/cwd from actual project docs and manifests. No publish, push, remote writes or global installation.",
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,79}$"
+                          },
+                          "command": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "args": {
+                            "default": [],
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "cwd": {
+                            "default": ".",
+                            "type": "string"
+                          },
+                          "purpose": {
+                            "type": "string",
+                            "enum": [
+                              "setup",
+                              "test",
+                              "build",
+                              "browser",
+                              "design"
+                            ]
+                          },
+                          "required": {
+                            "default": true,
+                            "type": "boolean"
+                          },
+                          "timeoutMs": {
+                            "default": 600000,
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "command",
+                          "args",
+                          "cwd",
+                          "purpose",
+                          "required",
+                          "timeoutMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sources": {
+                      "description": "Actual paths and hashes returned by project_read or project_inspect; include applicable rules and the command definitions.",
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "hash": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "hash"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "summary": {
+                      "description": "Briefly explain the chosen setup and checks in user language.",
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "gaps": {
+                      "description": "Missing environment, credentials or acceptance steps. Saving configuration does not mean commands succeeded.",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "expectedVersion",
+                    "instructions",
+                    "ruleFiles",
+                    "commands",
+                    "sources",
+                    "summary",
+                    "gaps"
+                  ],
+                  "additionalProperties": false
                 },
                 "inputReceipts": {
                   "description": "Relevant actual external receipt IDs returned by conversation_inputs or capability_call. Empty means none; omitted carries up to 100 recent receipts for selected capabilities. No arbitrary paths or invented source content.",

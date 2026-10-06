@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { AgentProfile } from "../../../../packages/contracts/src/index.js";
 import type { WorkActor } from "../../../../packages/contracts/src/work.js";
 import type { Store } from "../store.js";
+import type { DevelopmentProject } from "../../../../packages/contracts/src/development.js";
 import { DurableJobWorker, JobExecutionError } from "../jobs/worker.js";
 import type { KnowledgePageService } from "../knowledge/page-service.js";
 import { DevelopmentRunner } from "./runner.js";
@@ -25,6 +26,7 @@ type DevelopmentJobInput = {
   capabilities?: import("../../../../packages/contracts/src/capabilities.js").CapabilityReference[];
   handoff?: DevelopmentHandoff;
   profiles?: DevelopmentProfiles;
+  project?: DevelopmentProject;
 };
 export class DevelopmentQueue {
   readonly runner: DevelopmentRunner;
@@ -114,6 +116,7 @@ export class DevelopmentQueue {
                 capabilities: input.capabilities,
                 handoff: input.handoff,
                 profiles,
+                project: input.project,
               });
           store.db
             .prepare("UPDATE assistant_development SET run_id=? WHERE id=?")
@@ -185,6 +188,7 @@ export class DevelopmentQueue {
         (t.key === key && t.project === project && active.has(t.job.state)),
     );
     if (previous) return previous;
+    const projectSnapshot = this.runner.configuration.get(project);
     const profiles = freezeDevelopmentProfiles(this.profile, this.options.reviewProfile);
     const selected = this.runner.capabilities.references(
       capabilities ??
@@ -240,7 +244,7 @@ export class DevelopmentQueue {
     this.store.tx(() => {
       const { job } = this.store.jobs.enqueueInCurrentTransaction({
         kind,
-        inputRefs: [{ taskId: id, capabilities: selected, handoff, profiles }],
+        inputRefs: [{ taskId: id, capabilities: selected, handoff, profiles, project: projectSnapshot }],
         roleVersion: "coding-and-review@1",
         policyVersion: "owner-delegated@1",
         maxAttempts: 30,
@@ -326,6 +330,7 @@ export class DevelopmentQueue {
             capabilities: prior.capabilities,
             handoff: prior.handoff,
             profiles: task.run?.profiles ?? prior.profiles,
+            project: task.run?.project ?? prior.project,
             operation: reviewedFingerprint ? "apply" : "develop",
             reviewedFingerprint,
             continuation: actor,

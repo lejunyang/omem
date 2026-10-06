@@ -52,6 +52,12 @@ export function assertWorkDelegation(action: WorkAction, actor: WorkActor) {
       throw Error("尚未收到准备仓库的交办");
     return;
   }
+  if (action.operation === "configure_project") {
+    if (!/配置|准备|设置|调整|检查|configure|setup|prepare/i.test(quote) ||
+      /(?:不要|先别|不必|暂不).{0,16}(?:配置|设置|调整)|\b(?:do not|don't)\b/i.test(actor.userText))
+      throw Error("尚未收到配置项目的交办");
+    return;
+  }
   if (action.operation !== "start_development") {
     const verbs =
       action.operation === "resume_development"
@@ -281,6 +287,7 @@ export class AssistantWork {
         repository: p.repository,
         origin: p.origin ?? null,
         commands: p.commands,
+        configuration: p.configuration ?? null,
         capabilities: p.capabilities ?? [],
       })),
       development: this.development.list().map((t) => this.taskView(t)),
@@ -320,6 +327,7 @@ export class AssistantWork {
   }
   tools(): ResearchTool[] {
     return [
+      ...this.development.runner.configuration.tools(this.decisions),
       {
         name: "work_catalog",
         readOnly: true,
@@ -478,7 +486,11 @@ export class AssistantWork {
       return JSON.parse(String(previous.body));
     }
     let receipt: WorkReceipt;
-    if (action.operation === "prepare_repository") {
+    if (action.operation === "configure_project") {
+      const result = this.development.runner.configuration.configure(action.project, action.configuration);
+      receipt = { tool: "work_action", operation: action.operation,
+        message: `已保存「${result.project.name}」的开发配置：${result.project.configuration!.summary}。尚未运行安装或检查。${result.project.configuration!.gaps.length ? `仍需注意：${result.project.configuration!.gaps.join("；")}` : ""}` };
+    } else if (action.operation === "prepare_repository") {
       const project = this.development.runner.projects().find(p => p.alias === action.alias);
       const previous = this.development.runner.repositories.status(action.alias);
       const known = project?.origin ?? previous;
@@ -516,6 +528,8 @@ export class AssistantWork {
         message: `已开始跟进「${action.title}」，后台将结合所选材料调查并更新；当前已排队。`,
       };
     } else if (action.operation === "start_development") {
+      this.plan(action.key);
+      if (action.configuration) this.development.runner.configuration.configure(action.project, action.configuration);
       const task = this.development.enqueue(
         action.key,
         action.project,
