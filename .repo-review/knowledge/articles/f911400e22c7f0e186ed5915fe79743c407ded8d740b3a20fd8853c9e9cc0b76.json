@@ -1,0 +1,928 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/messages/understanding.ts",
+    "title": "消息理解结果的统一状态视图",
+    "summary": "该模块把一条已捕获消息在存储、提取、复核、提案应用和知识关联等环节的分散记录，汇总为前端可直接展示的 understanding 视图；它只读取事实并判定展示状态，不负责执行理解或应用提案。",
+    "category": "服务端消息处理",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "服务端",
+      "Agent 运行时",
+      "消息理解状态"
+    ],
+    "sections": [
+      {
+        "key": "purpose-and-entry",
+        "title": "解决的问题与调用入口",
+        "body": "`MessageUnderstanding` 是消息理解流程的**查询投影层**：它依赖 `Store` 读取持久化事实，依赖 `AssistantWork` 获取知识页与需求目录，并用 `readableMemory` 把记忆提案转成人类可读文本。参考 [[c1]]\n\n它刻意区分“模型给出的标签”和“已经实际应用的事实”，也不把项目成员关系误当成消息引用关系；因此返回值适合驱动收件箱状态，而不是作为写入动作。参考 [[c2]]\n\n代表性调用是 `read([{ id, revision_id, state, resources }])`。方法先为所有需求预计算已引用、已选中的来源集合，再逐条保留原始消息字段并附加 `understanding`。参考 [[c3]] 如果 `revision_id` 不存在或找不到版本，它立即返回 `saving`，结果、问题、项目、需求和反馈均为空，表示原文尚未完整落库。参考 [[c4]]"
+      },
+      {
+        "key": "aggregation-flow",
+        "title": "从消息版本聚合可见结果",
+        "body": "找到版本后，代码读取来源所属上下文和分配结果，查询引用该版本的最新 `extract_claims` 作业、其最新 `verify_proposals` 子作业以及角色输出。普通 abstention 会成为待用户回答的问题；`duplicate` 与 `no_durable_value` 留到说明文字；若上下文分配为歧义，其问题会排在最前。参考 [[c5]]\n\n随后它查询证据来自当前版本或其纠正链的提案，并关联应用回执及当前记忆/事项版本。版本已经变化，或实体已失效、被替代、归档时，结果被标为 `historical`；查询最多返回最近 30 条，并额外标记是否已应用、实体 ID 与原来源是否仍为当前头版本。参考 [[c6]]\n\n```mermaid\nflowchart LR\n  A[消息版本] --> B[提取与复核作业]\n  B --> C[问题与提案结果]\n  A --> D[纠正和附加资源来源]\n  D --> E[关联知识需求]\n  C --> F[understanding 视图]\n  E --> F\n```\n\n需求关联不是只看当前消息：来源集合还纳入会话纠正和消息附带资源；任一来源被知识页真实引用或被其计划选中，该需求才进入返回值，并分别保留 `cited`、`current` 与维护状态。参考 [[c7]]"
+      },
+      {
+        "key": "state-and-boundaries",
+        "title": "状态优先级与边界条件",
+        "body": "作业活跃态包括 `queued`、`leased`、`running`、`retry_wait`。参考 [[c8]] 有作业时按固定优先级决定展示阶段：活跃作业或复核 → `understanding`；失败 → `failed`；存在问题或待决定提案 → `needs_context`；存在已应用且非历史的结果 → `applied`；提取成功但无新增结果 → `read`。无作业时保持 `saved`，而消息自身处于 `review` 时只改成“部分内容待补读”的标签。参考 [[c9]]\n\n最终视图还带回错误、无持久价值说明、项目、需求、反馈历史，以及仅限 `conversation` 范围的偏好。参考 [[c10]] 实现假定作业输出和提案正文都是合法 JSON，也假定目录中的需求能找到对应页面计划；这些数据若破坏约束，当前函数没有本地容错，会让解析或下游调用失败。参考 [[c5]] [[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "模块依赖",
+        "reason": "支持该类通过 Store、AssistantWork 与 readableMemory 组合持久化数据和可读结果。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/understanding.ts",
+          "startLine": 1,
+          "endLine": 3
+        },
+        "quote": "import type { Store } from \"../store.js\";\nimport type { AssistantWork } from \"../assistant/work.js\";\nimport { readableMemory } from \"../memory/service.js\";"
+      },
+      {
+        "key": "c2",
+        "label": "事实视图职责",
+        "reason": "支持模块只呈现实际作业和应用事实，并避免把分类标签或项目归属误判为事实。",
+        "relation": "explains",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/understanding.ts",
+          "startLine": 14,
+          "endLine": 20
+        },
+        "quote": "/** A view of actual jobs and applications. Classifier labels never mean facts\n * have been applied, and project membership never means a page cited a message. */\nexport class MessageUnderstanding {\n  constructor(\n    readonly store: Store,\n    readonly work: AssistantWork,\n  ) {}"
+      },
+      {
+        "key": "c3",
+        "label": "批量读取入口",
+        "reason": "支持 read 预计算需求来源关系，并为每个收件箱条目附加 understanding。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/understanding.ts",
+          "startLine": 21,
+          "endLine": 42
+        },
+        "quote": "  read<T extends InboxItem>(items: T[]) {\n    const repository = this.work.pages.repository;\n    const materials = new Map(repository.materials().map((m) => [m.key, m]));\n    const plans = new Map(repository.pages().map((p) => [p.key, p.plan!]));\n    const follows = this.work.catalog().requirements.map((f) => ({\n      "
+      },
+      {
+        "key": "c4",
+        "label": "未保存版本分支",
+        "reason": "支持缺少有效 revision 时返回 saving 及空聚合结果。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/understanding.ts",
+          "startLine": 51,
+          "endLine": 63
+        },
+        "quote": "    const revision = item.revision_id\n      ? this.store.revision(String(item.revision_id))\n      : null;\n    if (!revision)\n      return {\n        stage: \"saving\",\n        label: \"尚未保存完整原文\",\n        results: [],\n        questions: [],\n        projects: [],\n        requirements: [],\n        feedback: [],\n      };"
+      },
+      {
+        "key": "c5",
+        "label": "作业与问题聚合",
+        "reason": "支持查找提取和复核作业、解析输出，并区分问题与说明类 abstention。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/understanding.ts",
+          "startLine": 64,
+          "endLine": 92
+        },
+        "quote": "    const contexts = this.store.contexts.forSource(revision.sourceId);\n    const assignment = this.store.contexts.assignment(revision.sourceId);\n    const job = this.store.db\n      .prepare(\n        `SELECT j.* FROM jobs j WHERE kind='extract_claims'\n      AND EXISTS (SELECT 1 FROM json_each(j.input_refs) r WHERE json_"
+      },
+      {
+        "key": "c6",
+        "label": "提案结果投影",
+        "reason": "支持提案查询范围、应用回执关联、历史状态判定和最多 30 条的输出边界。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/understanding.ts",
+          "startLine": 93,
+          "endLine": 133
+        },
+        "quote": "    const results = this.store.db\n      .prepare(\n        `SELECT DISTINCT p.*,a.entity_id,a.entity_type,a.entity_version,\n      COALESCE(m.status,t.status) AS entity_status, m.version AS memory_version, t.version AS task_version\n      FROM proposals p JOIN json_each(p.evidence) e\n      JOIN fragments f ON f.id=json_ex"
+      },
+      {
+        "key": "c7",
+        "label": "知识需求关联",
+        "reason": "支持将原消息、纠正和附加资源合并为来源集合，并据引用或计划选择筛出需求。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/understanding.ts",
+          "startLine": 134,
+          "endLine": 159
+        },
+        "quote": "    const sourceIds = new Set([\n      revision.sourceId,\n      ...this.store.messageFeedback.forSource(revision.sourceId).flatMap((f) => {\n        const correction = this.store.revision(String(f.revisionId));\n        return correction ? [correction.sourceId] : [];\n      }),\n      ...item.resources.flatMap((r) => {\n    "
+      },
+      {
+        "key": "c8",
+        "label": "活跃作业状态",
+        "reason": "支持 understanding 阶段所识别的四种活跃作业状态。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/understanding.ts",
+          "startLine": 12,
+          "endLine": 12
+        },
+        "quote": "const activeJobs = new Set([\"queued\", \"leased\", \"running\", \"retry_wait\"]);"
+      },
+      {
+        "key": "c9",
+        "label": "展示阶段优先级",
+        "reason": "支持 saved、understanding、failed、needs_context、applied 和 read 的判定顺序及 review 标签特例。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/understanding.ts",
+          "startLine": 160,
+          "endLine": 183
+        },
+        "quote": "    let stage = \"saved\",\n      label = \"原文已保存，尚未安排理解\";\n    if (job) {\n      if ([job.state, review?.state].some((s) => activeJobs.has(String(s)))) {\n        stage = \"understanding\";\n        label = review ? \"正在复查结论\" : \"正在理解消息\";\n      } else if ([job.state, review?.state].includes(\"failed\")) {\n        stage = \"failed\";\n"
+      },
+      {
+        "key": "c10",
+        "label": "最终视图字段",
+        "reason": "支持最终返回错误、说明、项目、需求、反馈和会话偏好等字段。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/understanding.ts",
+          "startLine": 184,
+          "endLine": 205
+        },
+        "quote": "    return {\n      stage,\n      label,\n      results,\n      questions,\n      error: job?.last_error ?? review?.last_error ?? null,\n      note: (batch?.abstentions ?? [])\n        .filter((a: any) =>\n          [\"duplicate\", \"no_durable_value\"].includes(a.reason_code),\n        )\n        .map((a: any) => String(a.detail))\n"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/messages/understanding.ts",
+      "digest": "32c8a2d88ee764d3b813f31ec001ac9f777a9276bdac049b6eaa72ba6cdab428"
+    }
+  ],
+  "publication": {
+    "role": "note"
+  },
+  "investigation": [
+    {
+      "key": "omem:apps/server/src/messages/understanding.ts",
+      "digest": "32c8a2d88ee764d3b813f31ec001ac9f777a9276bdac049b6eaa72ba6cdab428"
+    },
+    {
+      "key": "omem:apps/server/src/cli.ts",
+      "digest": "c45466cc37893e0df4ab72ad242990af0564f641d13160fbbddcab8b16d49bc4"
+    },
+    {
+      "key": "omem:apps/server/src/integrations/lark-personal/api.ts",
+      "digest": "82da7f4b3b8df3e9bf7c7fc2222be2e662f8b9c9c066aa6632f43505a9429153"
+    },
+    {
+      "key": "omem:apps/server/src/knowledge/agent-research.ts",
+      "digest": "92064c1a9eb18bbcc1ceb9abaf95abe19990fafb3977b2ac6077828ad662b649"
+    },
+    {
+      "key": "omem:apps/server/tests/answer-investigation.test.ts",
+      "digest": "88605abd47df31e11336ba0dbf0c32d96bf323224bffbcb42edd0be4c6c6de04"
+    },
+    {
+      "key": "omem:apps/server/tests/assistant-work.test.ts",
+      "digest": "b17ff4e2afb75c570aa423d5af2b4a94d5f7f0fe30d9c29c89d714e23e5d2fd8"
+    },
+    {
+      "key": "omem:scripts/demo-followup.ts",
+      "digest": "dfe8d5b0c5154ad6f5cbfa63f18b37c6d0b160410bf060b0daa6ff8fa3b3e2af"
+    },
+    {
+      "key": "omem:scripts/live-project-configuration.ts",
+      "digest": "16a612b6dce8676d94311b6e1e9fe36eec1798ba82833a6c0d4518827a21a9c0"
+    },
+    {
+      "key": "omem:scripts/live-repositories.ts",
+      "digest": "dde46b91f5c6a88a91dfcc996f6a2b8d1fc981816168aef8b2b5aeb9828f3370"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-06T13:50:46.314Z",
+    "trace": {
+      "profileId": "traex",
+      "acpProvider": "traex",
+      "runId": "d87c7582-ff57-4588-b00f-d8a92f769c86",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "edb35c9a6967ac4d6ebebbc6966e0a96d6c96f16d79dfe0cf0fe9ded6366f54f",
+      "promptHash": "177ffdb8de4a5fa2fbbd8cbcbe3f506ed0a9fa871f005ce37612754749d04d0d",
+      "contextHash": "afed8bcb5af4fad671b86e0a7576088283486035b70e1356c1e8837b04e22410",
+      "skillHash": "879f6a286ece6eab136d61a6e691f1bcbe8771ae6ecaa240cf101809df2be102",
+      "toolHash": "c63ebed27fd0068222e3a65f2f3139400d62735cd978169855e2c5e739f4d448",
+      "fingerprint": "2d284be2abacd105e1a563055ef31a295b92f7cdcbc65bb621512403855a1c4d",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_material_groups",
+        "list_materials",
+        "read_material",
+        "read_fragments",
+        "read_section",
+        "search_materials",
+        "search_contexts",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a11178-e4ff-79d3-81df-b232ca2b5235"
+      ],
+      "usage": {
+        "used": 82173,
+        "size": 258400,
+        "cost": null,
+        "acpCompletion": "validated_submission",
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_jw7Tfe252cUaOzSdZchZjiqb:exec-b3ab7084-86ba-451d-a3e1-36e597a858ee",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_jw7Tfe252cUaOzSdZchZjiqb:exec-b3ab7084-86ba-451d-a3e1-36e597a858ee",
+              "process_id": "26506",
+              "turn_id": "01a11178-e884-7650-8c48-0ab03d80905f",
+              "started_at_ms": 1791294516846,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-code-analyst/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/edb35c9a6967ac4d6ebebbc6966e0a96d6c96f16d79dfe0cf0fe9ded6366f54f/d87c7582-ff57-4588-b00f-d8a92f769c86",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-code-analyst/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-code-analyst/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_jw7Tfe252cUaOzSdZchZjiqb:exec-b3ab7084-86ba-451d-a3e1-36e597a858ee",
+            "status": "completed",
+            "outputDigest": "69df989529e383f921cc32dfe44c48740baeee82aca75a12dc6e18a51dabb974"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_aE5In9CxYiBdkwotE4m5mZXT:exec-1374f442-6d6b-441e-ac86-1093d6cdf126",
+            "title": "Tool: omem/code_navigation",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "code_navigation",
+              "arguments": {
+                "key": "omem:apps/server/src/messages/understanding.ts"
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "code_navigation",
+            "args": {
+              "key": "omem:apps/server/src/messages/understanding.ts"
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_aE5In9CxYiBdkwotE4m5mZXT:exec-1374f442-6d6b-441e-ac86-1093d6cdf126",
+            "status": "completed",
+            "outputDigest": "bfffa655f8802a5721731bb81fe8df08ebf847d914ee598098a357c646b0f31d"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_aE5In9CxYiBdkwotE4m5mZXT:exec-f0a1539a-76e1-4551-ac94-5420a0f779f0",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "UNDERSTANDING_SYSTEM_PROMPT buildUnderstandingPrompt",
+                "codeIntent": "callers",
+                "kind": "code",
+                "limit": 20
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_aE5In9CxYiBdkwotE4m5mZXT:exec-df0aa86d-9343-4793-a96b-309f4d6bbec1",
+            "title": "Tool: omem/search_knowledge",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_knowledge",
+              "arguments": {
+                "query": "understanding prompt 消息理解 inferredNeed summary followUpQuestions clarification",
+                "purpose": "implementation",
+                "limit": 10
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_aE5In9CxYiBdkwotE4m5mZXT:exec-7868225c-d5ef-4bc6-a6cc-e74803f68595",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/messages/understanding.ts",
+                "startLine": 1,
+                "endLine": 208
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_aE5In9CxYiBdkwotE4m5mZXT:exec-4e5e48e0-defd-4616-8a61-f2d66906ad7d",
+            "title": "Tool: omem/related_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "related_materials",
+              "arguments": {
+                "key": "omem:apps/server/src/messages/understanding.ts"
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/messages/understanding.ts",
+              "startLine": 1,
+              "endLine": 208
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "related_materials",
+            "args": {
+              "key": "omem:apps/server/src/messages/understanding.ts"
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_aE5In9CxYiBdkwotE4m5mZXT:exec-7868225c-d5ef-4bc6-a6cc-e74803f68595",
+            "status": "completed",
+            "outputDigest": "1c8060f3336a6a4036b2c9a4883ba5796c4a30d088e0f4faeacf0264312780d6"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_aE5In9CxYiBdkwotE4m5mZXT:exec-4e5e48e0-defd-4616-8a61-f2d66906ad7d",
+            "status": "completed",
+            "outputDigest": "2aaa5c3eb6af2c9961c597fe81241b274bbbe76a1ec1f410e2e153f64f7deb5f"
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "UNDERSTANDING_SYSTEM_PROMPT buildUnderstandingPrompt",
+              "kind": "code",
+              "purpose": "balanced",
+              "codeIntent": "callers",
+              "limit": 20
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_knowledge",
+            "args": {
+              "query": "understanding prompt 消息理解 inferredNeed summary followUpQuestions clarification",
+              "purpose": "implementation",
+              "limit": 10
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_aE5In9CxYiBdkwotE4m5mZXT:exec-f0a1539a-76e1-4551-ac94-5420a0f779f0",
+            "status": "completed",
+            "outputDigest": "a1f8b07320836e5056882836e6ef44906027f908fb55c5f930e8f2c3df7b2305"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_aE5In9CxYiBdkwotE4m5mZXT:exec-df0aa86d-9343-4793-a96b-309f4d6bbec1",
+            "status": "completed",
+            "outputDigest": "2aaa5c3eb6af2c9961c597fe81241b274bbbe76a1ec1f410e2e153f64f7deb5f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_hVAXGFY2U0tlFdFd64npVNVg:exec-3c3394cc-e2b2-41e1-896b-9adac70dd953",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "messageUnderstanding.read",
+                "codeIntent": "callers",
+                "kind": "code",
+                "limit": 20
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_hVAXGFY2U0tlFdFd64npVNVg:exec-5a915a49-3b6f-49c0-88cd-b8a2ce356727",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "MessageUnderstanding",
+                "codeIntent": "callers",
+                "kind": "code",
+                "limit": 20
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_hVAXGFY2U0tlFdFd64npVNVg:exec-fa02c4ba-17e1-404c-9d5b-a4e9eccd195d",
+            "title": "Tool: omem/list_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "list_materials",
+              "arguments": {
+                "filter": "MessageUnderstanding",
+                "kind": "code",
+                "limit": 50,
+                "offset": 0
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "messageUnderstanding.read",
+              "kind": "code",
+              "purpose": "balanced",
+              "codeIntent": "callers",
+              "limit": 20
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "MessageUnderstanding",
+              "kind": "code",
+              "purpose": "balanced",
+              "codeIntent": "callers",
+              "limit": 20
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "list_materials",
+            "args": {
+              "offset": 0,
+              "limit": 50,
+              "filter": "MessageUnderstanding",
+              "kind": "code"
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_hVAXGFY2U0tlFdFd64npVNVg:exec-3c3394cc-e2b2-41e1-896b-9adac70dd953",
+            "status": "completed",
+            "outputDigest": "0387050fef1a1b35e3c478d300beace86e9ce96f820fc55af5a52de8aa82b85f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_hVAXGFY2U0tlFdFd64npVNVg:exec-5a915a49-3b6f-49c0-88cd-b8a2ce356727",
+            "status": "completed",
+            "outputDigest": "1f5ed40512a4ecb87fe376600d05ca7666949c49aa33ecf51555280b93987f2f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_hVAXGFY2U0tlFdFd64npVNVg:exec-fa02c4ba-17e1-404c-9d5b-a4e9eccd195d",
+            "status": "completed",
+            "outputDigest": "ff80507298a751d12f4f3a5845bbdcf04e7df8d59a8ace4fdef77dd24db56694"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_ZEz6Zh45xDoeukdmQqhuHm6C:exec-9edc8f11-d957-47d2-b7ba-834344ed7aae",
+            "title": "Search MessageUnderstanding|understanding|needs_context|尚未保存完整原文|已阅读，本次没有新增记忆 in assistant-work.test.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_ZEz6Zh45xDoeukdmQqhuHm6C:exec-9edc8f11-d957-47d2-b7ba-834344ed7aae",
+              "process_id": "97744",
+              "turn_id": "01a11178-e884-7650-8c48-0ab03d80905f",
+              "started_at_ms": 1791294556852,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n -C 8 'MessageUnderstanding|understanding|needs_context|尚未保存完整原文|已阅读，本次没有新增记忆' originals/apps/server/tests/assistant-work.test.ts originals/apps/server/src/integrations/lark-personal/api.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/edb35c9a6967ac4d6ebebbc6966e0a96d6c96f16d79dfe0cf0fe9ded6366f54f/d87c7582-ff57-4588-b00f-d8a92f769c86",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n -C 8 'MessageUnderstanding|understanding|needs_context|尚未保存完整原文|已阅读，本次没有新增记忆' originals/apps/server/tests/assistant-work.test.ts originals/apps/server/src/integrations/lark-personal/api.ts",
+                  "query": "MessageUnderstanding|understanding|needs_context|尚未保存完整原文|已阅读，本次没有新增记忆",
+                  "path": "assistant-work.test.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_ZEz6Zh45xDoeukdmQqhuHm6C:exec-9edc8f11-d957-47d2-b7ba-834344ed7aae",
+            "status": "completed",
+            "outputDigest": "72ad96ece6d00dcb497851d848d462ed22c7188aecb58f56964d7e8d9a46ff92"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_jQG6tqmACIEAQbWdOjq9W13G:exec-8bcbf675-de80-4984-a73c-1d2f2e5117e8",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/tests/assistant-work.test.ts",
+                "startLine": 188,
+                "endLine": 225
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_jQG6tqmACIEAQbWdOjq9W13G:exec-7323f3b8-c768-42eb-a004-c2888f1f5e32",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/integrations/lark-personal/api.ts",
+                "startLine": 35,
+                "endLine": 55
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/integrations/lark-personal/api.ts",
+              "startLine": 35,
+              "endLine": 55
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/tests/assistant-work.test.ts",
+              "startLine": 188,
+              "endLine": 225
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_jQG6tqmACIEAQbWdOjq9W13G:exec-7323f3b8-c768-42eb-a004-c2888f1f5e32",
+            "status": "completed",
+            "outputDigest": "e9ba62e368580b19c4995a2f98e3f6d9a3765d86faea3ecfb7ab4b1a453e509b"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_jQG6tqmACIEAQbWdOjq9W13G:exec-8bcbf675-de80-4984-a73c-1d2f2e5117e8",
+            "status": "completed",
+            "outputDigest": "bae0350f1d4c3d99b962ac87c628335f62b98500300a833b53dd4900ee901a1d"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Zc7kXVR63ORerLV2S11FIGl7:exec-30929ea6-a9f2-4e80-b485-8a7e1d66a640",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/messages/understanding.ts",
+              "omem:apps/server/tests/assistant-work.test.ts",
+              "omem:apps/server/src/cli.ts",
+              "omem:apps/server/src/knowledge/agent-research.ts",
+              "omem:scripts/live-project-configuration.ts",
+              "omem:scripts/demo-followup.ts",
+              "omem:scripts/live-repositories.ts",
+              "omem:apps/server/tests/answer-investigation.test.ts",
+              "omem:apps/server/src/integrations/lark-personal/api.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Zc7kXVR63ORerLV2S11FIGl7:exec-30929ea6-a9f2-4e80-b485-8a7e1d66a640",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-06T13:52:53.645Z",
+    "trace": {
+      "profileId": "traex",
+      "acpProvider": "traex",
+      "runId": "149bacc6-44ca-424a-8dd6-b9200abab3cb",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a5a7a1062712eab31c014fe5cb5821433de81f333a49dd6d97f237ab76f409a",
+      "promptHash": "e15303bc6ae52ceefb9f86807c61eb162e4a8dd57bc66d6475402b1c957c8e3c",
+      "contextHash": "903115e89cfd859c3d467491ef06ffcf76ee9af478f97ff5a498cf7ab8d1b840",
+      "skillHash": "2871813c1c7d4b649d2e0c3420f23096eb99098fb23f0c70b967fab22a203735",
+      "toolHash": "c63ebed27fd0068222e3a65f2f3139400d62735cd978169855e2c5e739f4d448",
+      "fingerprint": "d8b3048df0c167029c5d3db25dc47fd84d1244c3ff34e16311ab6c31184e4aed",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_material_groups",
+        "list_materials",
+        "read_material",
+        "read_fragments",
+        "read_section",
+        "search_materials",
+        "search_contexts",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a1117b-c3b0-7683-bf23-9e8ed86ef3fd"
+      ],
+      "usage": {
+        "used": 36119,
+        "size": 258400,
+        "cost": null,
+        "acpCompletion": "validated_submission",
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_MsDpLoADzmTV2lfQJ0PzthIn:exec-71f675f0-f0b8-47cc-a445-73be4cba61b1",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_MsDpLoADzmTV2lfQJ0PzthIn:exec-71f675f0-f0b8-47cc-a445-73be4cba61b1",
+              "process_id": "63106",
+              "turn_id": "01a1117b-c878-7c22-b2cc-924d3fcc8159",
+              "started_at_ms": 1791294700546,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/1a5a7a1062712eab31c014fe5cb5821433de81f333a49dd6d97f237ab76f409a/149bacc6-44ca-424a-8dd6-b9200abab3cb",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-verifier/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_MsDpLoADzmTV2lfQJ0PzthIn:exec-71f675f0-f0b8-47cc-a445-73be4cba61b1",
+            "status": "completed",
+            "outputDigest": "dcde0e04ed100b4bfd1ab31aa0eb12a8a544c94f089a80ef0a43f4ba9976934c"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_uIQw84FRwVvE5cPndwGhJRnX:exec-a86650f4-5025-48a7-9990-1eedfe03f9a4",
+            "title": "Tool: omem/code_navigation",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "code_navigation",
+              "arguments": {
+                "key": "omem:apps/server/src/messages/understanding.ts",
+                "symbol": "MessageUnderstanding"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_uIQw84FRwVvE5cPndwGhJRnX:exec-eac8cdbf-beba-482a-921a-151460c12237",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/messages/understanding.ts",
+                "startLine": 1,
+                "endLine": 208
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "code_navigation",
+            "args": {
+              "key": "omem:apps/server/src/messages/understanding.ts",
+              "symbol": "MessageUnderstanding"
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/messages/understanding.ts",
+              "startLine": 1,
+              "endLine": 208
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_uIQw84FRwVvE5cPndwGhJRnX:exec-a86650f4-5025-48a7-9990-1eedfe03f9a4",
+            "status": "completed",
+            "outputDigest": "b7442c44dbc22f5035200fad36021adb761cecdc17a02c22ee9b624b0d2da506"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_uIQw84FRwVvE5cPndwGhJRnX:exec-eac8cdbf-beba-482a-921a-151460c12237",
+            "status": "completed",
+            "outputDigest": "246533a867d695152038c6e68911940dee4c129a76f77d4b09258145a298591f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_OJmrmjz9VOk15lfYUa60xf4j:exec-de6800f7-b746-4928-b53b-03db1d12f7e0",
+            "title": "Tool: omem/material_history",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "material_history",
+              "arguments": {
+                "key": "omem:apps/server/src/messages/understanding.ts"
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "material_history",
+            "args": {
+              "key": "omem:apps/server/src/messages/understanding.ts"
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_OJmrmjz9VOk15lfYUa60xf4j:exec-de6800f7-b746-4928-b53b-03db1d12f7e0",
+            "status": "completed",
+            "outputDigest": "3976b7a66134174b4b5d78bf17b64003b938f77bcc35ea30f6e6b0ce4b4ec4df"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_KA8PvYIbsPnqGSnLivdqkGsO:exec-86262a44-53dc-4e84-882b-7e7f5f4980eb",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/messages/understanding.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_KA8PvYIbsPnqGSnLivdqkGsO:exec-86262a44-53dc-4e84-882b-7e7f5f4980eb",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}

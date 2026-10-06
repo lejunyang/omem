@@ -1,0 +1,471 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/messages/feedback.ts",
+    "title": "消息纠正的保存、作用域与重新处理",
+    "summary": "该模块把用户对已保存消息的纠正保存为独立原始材料，并提供消息级或会话级生效查询、完整历史查询、幂等保存、撤销和重试。新增、撤销或重试会为原 source 排入 extract_claims 作业；本模块本身不直接改写推断事实。",
+    "category": "服务端消息理解",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "服务端",
+      "消息理解",
+      "用户纠正"
+    ],
+    "sections": [
+      {
+        "key": "purpose_and_interface",
+        "title": "模块把纠正保存为独立材料",
+        "body": "当用户需要纠正系统对一条消息的理解时，本模块接收 `requestId`、纠正文案和作用域。`requestId` 必须是 UUID；文案会去除首尾空白，长度为 1–2000；作用域只能是 `message` 或 `conversation`，省略时默认 `message`。设计意图是把本人纠正保存成新的原始材料，而不是直接写入推断事实。参考 [[c1]]\n\n`MessageFeedback` 对外提供两种彼此独立的读取能力：`forSource(sourceId)` 只查仍处于 active 状态、对该 source 生效的反馈；`history(sourceId)` 则查直接属于该 source 的全部反馈，并保留每条记录的 active 状态。前者适合取得当前有效输入，后者适合回看提交历史；仅凭本模块不能断言调用方会把两者合并成同一个输出或如何展示。参考 [[c2]]"
+      },
+      {
+        "key": "save_flow",
+        "title": "保存如何形成可追溯材料并触发重处理",
+        "body": "`save(messageId, input)` 会再次校验输入，并在事务中按消息 ID 查找已保存的原 revision；找不到时以“请先保存原消息，再补充理解”终止。`requestId` 同时充当幂等键：若已有记录的 source、正文和作用域都一致，返回 `duplicate: true`；同一 ID 对应不同反馈则报错。参考 [[c3]]\n\n首次保存时，模块创建一个 `manual` 来源的捕获材料。材料正文同时包含原消息片段和“我的纠正”，上下文记录会话 ID 与 `message-feedback` 事件，provenance 标记 owner 身份；这次 capture 自身关闭 `learning` 与 `notify`。随后反馈表记录 request ID、原 source、会话、作用域、正文和纠正 revision，并调用 `reconsider`。成功结果返回反馈 ID、纠正材料的 `revisionId`、重新处理的 `jobId` 以及 `duplicate: false`。参考 [[c4]]\n\n`reconsider` 不直接改写任何推断结果，而是读取原 source 的当前 head 与有效性 epoch，排入一个 `extract_claims` 作业；输入还带有 `feedbackId`，作业原因是 `owner_correction`。因此本文件能确认的后续边界是“触发重新提取”，至于下游如何把反馈组织进提示上下文、怎样解释或刷新其他页面，需要由相应实现另行证明。参考 [[c6]]"
+      },
+      {
+        "key": "scope_revoke_retry",
+        "title": "作用域、撤销与重试的边界",
+        "body": "`forSource` 先从目标 source 当前 revision 的上下文读取 `conversationId`，再返回 active 反馈：直接属于目标 source 的记录会命中；此外，`scope='conversation'` 且会话 ID 相同的记录也会命中。结果按创建时间和 ID 排序，并为每项生成对应的纠正材料 key。相比之下，`history` 只按原始 `source_id` 查询，不过滤 active，因此撤销记录仍留在历史中。参考 [[c2]]\n\n`revoke(id)` 只接受仍 active 的记录，将其更新为非活动状态，然后以新的随机反馈 ID 对原 source 再次调用 `reconsider`；已撤销或不存在的 ID 会报错。`retry(messageId)` 不新建反馈，而是重新找到该消息的原 revision，并为其 source 再次排入处理；原消息尚未保存时会报错。这两条路径都复用同一重新提取机制。参考 [[c5]] [[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "纠正输入与设计意图",
+        "reason": "支持 requestId、正文长度、作用域默认值，以及纠正保存为原始材料而非直接写入推断事实。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/feedback.ts",
+          "startLine": 5,
+          "endLine": 14
+        },
+        "quote": "export const messageFeedbackInput = z\n  .object({\n    requestId: z.uuid(),\n    text: z.string().trim().min(1).max(2000),\n    scope: z.enum([\"message\", \"conversation\"]).default(\"message\"),\n  })\n  .strict();\n\n/** Owner corrections are saved originals, not direct writes to inferred facts. */\nexport class MessageFeedback {"
+      },
+      {
+        "key": "c2",
+        "label": "有效反馈与历史查询",
+        "reason": "支持 forSource 的 active 与会话作用域规则，以及 history 按 source 返回完整状态历史的差异。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/feedback.ts",
+          "startLine": 23,
+          "endLine": 44
+        },
+        "quote": "  forSource(sourceId: string) {\n    const revision = this.store.db\n      .prepare(\n        \"SELECT json_extract(r.body,'$.context.conversationId') AS chat_id FROM sources s JOIN revisions r ON r.id=s.head WHERE s.id=?\",\n      )\n      .get(sourceId);\n    const chatId = String(revision?.chat_id ?? \"\");\n    return this.st"
+      },
+      {
+        "key": "c3",
+        "label": "保存前置条件与幂等检查",
+        "reason": "支持保存前查找原 revision、原消息未保存时的错误，以及 requestId 重复和冲突处理。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/feedback.ts",
+          "startLine": 45,
+          "endLine": 66
+        },
+        "quote": "  save(messageId: string, input: z.infer<typeof messageFeedbackInput>) {\n    const value = messageFeedbackInput.parse(input);\n    return this.store.tx(() => {\n      const row = this.store.db\n        .prepare(\n          \"SELECT revision_id,chat_id,chat_name FROM personal_lark_messages WHERE id=?\",\n        )\n        .get"
+      },
+      {
+        "key": "c4",
+        "label": "纠正材料捕获与落库",
+        "reason": "支持纠正材料的正文、上下文、provenance、capture 选项、反馈落库及保存返回值。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/feedback.ts",
+          "startLine": 67,
+          "endLine": 117
+        },
+        "quote": "      const capture = this.store.capture(\n        {\n          source: \"manual\",\n          externalId: `message-feedback:${value.requestId}`,\n          title: `${row.chat_name}：我的纠正`,\n          parts: [\n            {\n              type: \"text\",\n              text: `针对消息：\\n${original.fragments.map((f) => f.text).join(\"\\n"
+      },
+      {
+        "key": "c5",
+        "label": "撤销与手动重试",
+        "reason": "支持软撤销、撤销后重新处理，以及按消息 revision 手动重试的条件与行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/feedback.ts",
+          "startLine": 119,
+          "endLine": 141
+        },
+        "quote": "  revoke(id: string) {\n    return this.store.tx(() => {\n      const row = this.store.db\n        .prepare(\"SELECT * FROM message_feedback WHERE id=? AND active=1\")\n        .get(id);\n      if (!row) throw Error(\"这条纠正已撤销或不存在\");\n      this.store.db\n        .prepare(\"UPDATE message_feedback SET active=0 WHERE id=?\")\n       "
+      },
+      {
+        "key": "c6",
+        "label": "重新提取作业",
+        "reason": "支持重新处理读取 source head 和 validity epoch，并以 owner_correction 原因排入 extract_claims 作业。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/messages/feedback.ts",
+          "startLine": 142,
+          "endLine": 162
+        },
+        "quote": "  private reconsider(sourceId: string, feedbackId: string) {\n    const source = this.store.db\n      .prepare(\"SELECT head FROM sources WHERE id=?\")\n      .get(sourceId)!;\n    const state = this.store.db\n      .prepare(\"SELECT validity_epoch FROM source_state WHERE source_id=?\")\n      .get(sourceId)!;\n    return this.st"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/messages/feedback.ts",
+      "digest": "a34c5ed86b55302f1926ebb221ed6721cb26cbc171bdc4fec23be926983735e9"
+    }
+  ],
+  "publication": {
+    "role": "note"
+  },
+  "investigation": [
+    {
+      "key": "omem:apps/server/src/messages/feedback.ts",
+      "digest": "a34c5ed86b55302f1926ebb221ed6721cb26cbc171bdc4fec23be926983735e9"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-06T13:53:36.241Z",
+    "trace": {
+      "profileId": "traex",
+      "acpProvider": "traex",
+      "runId": "046806bc-72d7-4a54-9da2-9e53ed3a1338",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "0ba8a740a9c0a1066cb89e5b9e3be9a56f395adb07e62aad4b5bc4f5c078da83",
+      "promptHash": "8c7d384315496693b30b5f1a4be52a984c4a882e4b2eb7f73a858facfae09fb5",
+      "contextHash": "fea562365f3a1c66ac02db307f4b01a3705aad0a45c92238c5a2e17ae99259b6",
+      "skillHash": "b611e7f72593c708d1430a1b9867e83f0d95796036e615120cb4aad48fd02fb0",
+      "toolHash": "c63ebed27fd0068222e3a65f2f3139400d62735cd978169855e2c5e739f4d448",
+      "fingerprint": "1d9e15f5429bd448eef0c2d8d4b2a8446c0d71ac7453db485145332a3bb92c16",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_material_groups",
+        "list_materials",
+        "read_material",
+        "read_fragments",
+        "read_section",
+        "search_materials",
+        "search_contexts",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a1117c-ffdb-7d40-a40d-466f20dd8e5f"
+      ],
+      "usage": {
+        "used": 35190,
+        "size": 258400,
+        "cost": null,
+        "acpCompletion": "validated_submission",
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_LONEIbtZTxD1tGYZmV54QR0d:exec-5f7eb579-76bd-4161-a2be-9b2b1c89f711",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_LONEIbtZTxD1tGYZmV54QR0d:exec-5f7eb579-76bd-4161-a2be-9b2b1c89f711",
+              "process_id": "27961",
+              "turn_id": "01a1117d-02fb-7e33-b8b3-274f0b85163c",
+              "started_at_ms": 1791294775953,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/0ba8a740a9c0a1066cb89e5b9e3be9a56f395adb07e62aad4b5bc4f5c078da83/046806bc-72d7-4a54-9da2-9e53ed3a1338",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-refresher/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_LONEIbtZTxD1tGYZmV54QR0d:exec-5f7eb579-76bd-4161-a2be-9b2b1c89f711",
+            "status": "completed",
+            "outputDigest": "0d3477abb6cbdbc861cb33eff09350b6f327a3ece27cc661e89f7721cf012c63"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_JD1ZK0OlZp7GofJ5Dbmt0YXF:exec-a2104213-2871-40a8-941b-36ef7ce4147c",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/messages/feedback.ts",
+                "startLine": 1,
+                "endLine": 165
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/messages/feedback.ts",
+              "startLine": 1,
+              "endLine": 165
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_JD1ZK0OlZp7GofJ5Dbmt0YXF:exec-a2104213-2871-40a8-941b-36ef7ce4147c",
+            "status": "completed",
+            "outputDigest": "8c42f800e62efd5bab624c48b435570e51a4a32f01b4728e71a326a5a53d2155"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_LhE3St7cQIaerkBWxV4PL5br:exec-80e3c86f-1cd2-490e-bd6f-64a4da09218c",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/messages/feedback.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_LhE3St7cQIaerkBWxV4PL5br:exec-80e3c86f-1cd2-490e-bd6f-64a4da09218c",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-06T13:54:43.765Z",
+    "trace": {
+      "profileId": "traex",
+      "acpProvider": "traex",
+      "runId": "e33f8966-3cab-4584-89a0-7b3c53fff029",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a5a7a1062712eab31c014fe5cb5821433de81f333a49dd6d97f237ab76f409a",
+      "promptHash": "21735fa3b09399c1912ed420e5fa2f1d9689f47acdf83f4d7ea7ef4986d1546e",
+      "contextHash": "46ca95253a7561454d27469ad675357e83a371f6c9d0dbb768fdef1f3fad34e7",
+      "skillHash": "2871813c1c7d4b649d2e0c3420f23096eb99098fb23f0c70b967fab22a203735",
+      "toolHash": "c63ebed27fd0068222e3a65f2f3139400d62735cd978169855e2c5e739f4d448",
+      "fingerprint": "317f2d4522a825ee56f1f640c51d3f336ef7ce379d4c47284c678ebe249352e2",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_material_groups",
+        "list_materials",
+        "read_material",
+        "read_fragments",
+        "read_section",
+        "search_materials",
+        "search_contexts",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a1117e-42ad-7fd2-8a1d-7999f3eee397"
+      ],
+      "usage": {
+        "used": 31188,
+        "size": 258400,
+        "cost": null,
+        "acpCompletion": "validated_submission",
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_00mIZArV8StDBh5VhtiMGFC2:exec-a39b36e9-411e-484b-b459-48a8ed826e30",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_00mIZArV8StDBh5VhtiMGFC2:exec-a39b36e9-411e-484b-b459-48a8ed826e30",
+              "process_id": "49775",
+              "turn_id": "01a1117e-4587-7163-8480-bec2b8cb65cf",
+              "started_at_ms": 1791294863285,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/1a5a7a1062712eab31c014fe5cb5821433de81f333a49dd6d97f237ab76f409a/e33f8966-3cab-4584-89a0-7b3c53fff029",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-verifier/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_00mIZArV8StDBh5VhtiMGFC2:exec-a39b36e9-411e-484b-b459-48a8ed826e30",
+            "status": "completed",
+            "outputDigest": "a57f702dd6750b1b9eecccc0037b737b451c7c2ee158e2a9eb9157f2924d6c3a"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_dEBjlgqGSbFEYyMl83arnmZO:exec-d72c947f-ac8b-47af-8bf3-4f43a09acaa1",
+            "title": "Tool: omem/code_navigation",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "code_navigation",
+              "arguments": {
+                "key": "omem:apps/server/src/messages/feedback.ts",
+                "symbol": "MessageFeedback"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_dEBjlgqGSbFEYyMl83arnmZO:exec-2cee7539-64f2-48ab-98ae-5cf2ffca2d26",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/messages/feedback.ts",
+                "startLine": 1,
+                "endLine": 165
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "code_navigation",
+            "args": {
+              "key": "omem:apps/server/src/messages/feedback.ts",
+              "symbol": "MessageFeedback"
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/messages/feedback.ts",
+              "startLine": 1,
+              "endLine": 165
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_dEBjlgqGSbFEYyMl83arnmZO:exec-d72c947f-ac8b-47af-8bf3-4f43a09acaa1",
+            "status": "completed",
+            "outputDigest": "7bf54a504a273163fd4c744d544dec1a6a300d9665ed674b16bcf04ba601acb1"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_dEBjlgqGSbFEYyMl83arnmZO:exec-2cee7539-64f2-48ab-98ae-5cf2ffca2d26",
+            "status": "completed",
+            "outputDigest": "a9e64c2d0da1a5a611f746105b7edc0992b9ceda72e1ac8a92bdc6dcc5526eca"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_UokSAqDb1lQ7UHzdzA5oZOXL:exec-c690ccf0-36db-4675-b153-f634b8a3dcd9",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/messages/feedback.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_UokSAqDb1lQ7UHzdzA5oZOXL:exec-c690ccf0-36db-4675-b153-f634b8a3dcd9",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
