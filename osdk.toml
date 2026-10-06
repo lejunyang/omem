@@ -126,6 +126,12 @@ skill = "osdk-guide"
 ref = "02a2f2b3142ded7d73554aaee629a24966a62313"
 agents = ["universal", "claude-code"]
 
+[skills.lieflat-less-ai-tone]
+source = "github:larashero3-dotcom/lieflat-less-ai-tone"
+skill = "lieflat-less-ai-tone"
+ref = "branch:main"
+agents = ["universal"]
+
 [tasks]
 dev = "pnpm run dev"
 "knowledge:verify" = "bun scripts/live-knowledge-smoke.ts"

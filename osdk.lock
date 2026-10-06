@@ -628,7 +628,7 @@ installer = "pnpm"
 installer_version = "11.28.5"
 runtime = "node@24.18.1"
 manifest = "package.json"
-manifest_sha256 = "fb8ce05b7799d3bd23afa6f51a3cd6d3147f8562f4b941ab7caeb80766904be4"
+manifest_sha256 = "d69c32e917987a5acce3d7081626c7ec0313c6c80da0744d95b8903d7fee29d9"
 run = "pnpm install --frozen-lockfile"
 allow_build_from_source = true
 
@@ -636,6 +636,14 @@ allow_build_from_source = true
 kind = "pnpm-lock"
 path = "pnpm-lock.yaml"
 sha256 = "a2cee47db55631e9ee11c9567e36e85343a2629490b72a1633eed8b382112f71"
+
+[skills.lieflat-less-ai-tone]
+source = "github:larashero3-dotcom/lieflat-less-ai-tone"
+content_hash = "b3-v2:6278369adea32899d53db039423e51d99f9109bf60cd602a0ed373e354ad2cae"
+requested_ref = "branch:main"
+resolved_commit = "27d29232f10124db904ca9c0536d0b67cb3b2833"
+agents = ["universal"]
+install_mode = "copy"
 
 [skills.osdk-guide]
 source = "github:lejunyang/one-sdk"

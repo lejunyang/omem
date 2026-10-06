@@ -761,6 +761,7 @@ export const roleManifestSchema = z
               .regex(/^[a-zA-Z0-9._-]+$/)
               .max(100),
             load_mode: z.enum(["inline", "native"]),
+            source: z.enum(["role", "project"]).optional(),
             artifact_digest: z.string().regex(/^[a-f0-9]{64}$/),
           })
           .strict(),

@@ -15,7 +15,10 @@ import {
   type ContextManifest,
 } from "../../../packages/contracts/src/index.js";
 import { RoleBundleRegistry } from "../src/agent-runtime/bundles.js";
-import { RoleRuntimeGateway, renderRolePrompt } from "../src/agent-runtime/gateway.js";
+import {
+  RoleRuntimeGateway,
+  renderRolePrompt,
+} from "../src/agent-runtime/gateway.js";
 import { createRoleJobHandler } from "../src/agent-runtime/job-handler.js";
 import { DurableJobWorker } from "../src/jobs/worker.js";
 import { Store } from "../src/store.js";
@@ -95,8 +98,19 @@ const gateway = (workspace = temporary("omem-role-workspace-")) =>
 describe("B2-03 versioned role runtime acceptance", () => {
   it("honors a trusted explicit role binding and reports the real profile identity", async () => {
     const configured = profile({ id: "independent-review" });
-    await expect(gateway().run({ roleId: "verifier", profile: configured, context: context("verifier") })).rejects.toThrow("ROLE_PROFILE_MISMATCH");
-    const result = await gateway().run({ roleId: "verifier", profile: configured, profileBinding: { roleId: "verifier", profileId: configured.id }, context: context("verifier") });
+    await expect(
+      gateway().run({
+        roleId: "verifier",
+        profile: configured,
+        context: context("verifier"),
+      }),
+    ).rejects.toThrow("ROLE_PROFILE_MISMATCH");
+    const result = await gateway().run({
+      roleId: "verifier",
+      profile: configured,
+      profileBinding: { roleId: "verifier", profileId: configured.id },
+      context: context("verifier"),
+    });
     expect(result.trace.profileId).toBe("independent-review");
   });
   it("A-R01 sends distinct role prompts/skills and records effective hashes", async () => {
@@ -440,19 +454,103 @@ describe("B2-03 versioned role runtime acceptance", () => {
 });
 
 it("runs knowledge roles through the shared gateway and preserves host-bound citations", async () => {
-  const result = await gateway().run({ roleId: "code-analyst", profile: profile(), context: context("code-analyst", "fixed evidence", { task: { targetKeys: ["manual:a"] } }),
-    validateOutput: out => { const normalized = out as { documents: { citations: { quote: string }[] }[] }; normalized.documents[0]!.citations[0]!.quote = "fixed evidence"; return normalized; } });
-  expect((result.result as { documents: { citations: { quote: string }[] }[] }).documents[0]!.citations[0]!.quote).toBe("fixed evidence");
-  expect(result.trace.loadedSkills).toEqual([{ name: "omem-code-analyst", version: "1", mode: "inline" }]);
+  const result = await gateway().run({
+    roleId: "code-analyst",
+    profile: profile(),
+    context: context("code-analyst", "fixed evidence", {
+      task: { targetKeys: ["manual:a"] },
+    }),
+    validateOutput: (out) => {
+      const normalized = out as {
+        documents: { citations: { quote: string }[] }[];
+      };
+      normalized.documents[0]!.citations[0]!.quote = "fixed evidence";
+      return normalized;
+    },
+  });
+  expect(
+    (result.result as { documents: { citations: { quote: string }[] }[] })
+      .documents[0]!.citations[0]!.quote,
+  ).toBe("fixed evidence");
+  expect(result.trace.loadedSkills).toEqual([
+    { name: "omem-code-analyst", version: "1", mode: "inline" },
+    { name: "lieflat-less-ai-tone", version: "27d29232f101", mode: "inline" },
+  ]);
   expect(result.trace.outputSchema).toBe("KnowledgeBatch.v1");
   expect(result.trace.usage).toHaveProperty("budget.maxInputTokens", 96000);
 });
 
+it("preserves shared writing skill resources in the agent workspace and rejects changed source content", () => {
+  const root = temporary("omem-shared-writing-skill-");
+  const roles = join(root, "roles");
+  const shared = join(root, "project-skills");
+  cpSync(
+    "packages/agent-runtime/roles/knowledge-writer",
+    join(roles, "knowledge-writer"),
+    { recursive: true },
+  );
+  cpSync(
+    ".agents/skills/lieflat-less-ai-tone",
+    join(shared, "lieflat-less-ai-tone"),
+    { recursive: true },
+  );
+  const registry = new RoleBundleRegistry(roles, shared);
+  const bundle = registry.load("knowledge-writer");
+  for (const metadata of [".osdk-manifest.json", ".gitignore", ".npmignore"])
+    rmSync(join(shared, "lieflat-less-ai-tone", metadata), { force: true });
+  expect(registry.load("knowledge-writer").bundleHash).toBe(bundle.bundleHash);
+  const style = bundle.skills.find(
+    (skill) => skill.canonical_name === "lieflat-less-ai-tone",
+  )!;
+  style.load_mode = "native";
+  const workspace = registry.prepareWorkspace(
+    bundle,
+    join(root, "workspace"),
+    profile(),
+    "writing",
+  );
+  for (const resource of [
+    "SKILL.md",
+    "LICENSE",
+    "RESEARCH.md",
+    "scripts/check-structure.py",
+  ]) {
+    expect(
+      readFileSync(
+        join(workspace, ".trae/skills/lieflat-less-ai-tone", resource),
+      ),
+    ).toEqual(readFileSync(join(style.directory, resource)));
+  }
+  writeFileSync(
+    join(style.directory, "SKILL.md"),
+    style.content + "\nchanged upstream content",
+  );
+  expect(() => registry.load("knowledge-writer")).toThrow(
+    "ROLE_SKILL_DIGEST_MISMATCH",
+  );
+});
+
 it("keeps model drafts and catalogs outside the trusted task instructions", () => {
   const marker = "UNTRUSTED_DRAFT_DO_NOT_EXECUTE";
-  const rendered = renderRolePrompt(new RoleBundleRegistry().load("code-analyst"), context("code-analyst", "fixed source", { task: { targetKeys: ["manual:a"], drafts: [{ body: marker }], catalog: [{ title: marker }] } }));
+  const rendered = renderRolePrompt(
+    new RoleBundleRegistry().load("code-analyst"),
+    context("code-analyst", "fixed source", {
+      task: {
+        targetKeys: ["manual:a"],
+        drafts: [{ body: marker }],
+        catalog: [{ title: marker }],
+      },
+    }),
+  );
   const first = rendered.blocks[0]!;
   expect(first.type).toBe("text");
   expect(first.type === "text" && first.text.includes(marker)).toBe(false);
-  expect(rendered.blocks.some(b => b.type === "text" && b.text.includes("UNTRUSTED DERIVED KNOWLEDGE") && b.text.includes(marker))).toBe(true);
+  expect(
+    rendered.blocks.some(
+      (b) =>
+        b.type === "text" &&
+        b.text.includes("UNTRUSTED DERIVED KNOWLEDGE") &&
+        b.text.includes(marker),
+    ),
+  ).toBe(true);
 });
