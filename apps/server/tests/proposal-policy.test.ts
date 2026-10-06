@@ -232,6 +232,28 @@ describe("B2-04 extraction policy and application acceptance", () => {
     expect(result.decisionId).toBeUndefined();
   });
 
+  it("updates the same owner follow-up from a collaborator reply and later owner confirmation", () => {
+    const {store, memory} = setup();
+    const assignment=capture(store,"明早9点我检查小林的接口说明，请记下这个跟进。");
+    const initial=taskProposal(assignment);
+    if(initial.kind!=="task") throw Error("task fixture");
+    initial.body={title:"检查小林的接口说明",owner_id:"owner",due_at:null,due_expression:null,next_step:"检查回复",follow_up:{waiting_on:"小林的接口说明",next_check_at:"2026-09-23T01:00:00Z",snoozed_until:null,time_expression:"明早9点",timezone:"Asia/Shanghai"}};
+    const id=memory.evaluate(initial,supported).receipt!.entityId;
+    const reply=capture(store,"接口说明已发送。",{actorId:"xiaolin"});
+    const update=taskProposal(reply,{operation:"update",target_id:id,expected_versions:{[id]:1},
+      evidence:[textEvidence(assignment),textEvidence(reply)],body:{...initial.body,status:"open",next_step:"阅读收到的说明"}});
+    expect(memory.evaluate(update,supported).policy).toBe("auto_apply");
+    expect(store.tasks()).toMatchObject([{id,status:"open",version:2,evidenceId:assignment.fragments[0]!.id}]);
+    // The same mixed sources cannot manufacture a second personal assignment.
+    expect(memory.evaluate(taskProposal(reply,{evidence:update.evidence}),supported).policy).toBe("retain_as_source");
+    const confirmation=capture(store,"我已经检查过，不用明早再提醒了。");
+    const completed=taskProposal(confirmation,{operation:"update",target_id:id,expected_versions:{[id]:2},
+      evidence:[textEvidence(assignment),textEvidence(reply),textEvidence(confirmation)],body:{...initial.body,status:"done",next_step:"已检查说明，无需再次提醒"}});
+    expect(memory.evaluate(completed,supported).policy).toBe("auto_apply");
+    expect(store.tasks()).toMatchObject([{id,status:"done",version:3}]);
+    expect(store.tasks()).toHaveLength(1);
+  });
+
   it("A-K03 defers ambiguous-time owner material until it is actually used", () => {
     const { store, memory } = setup();
     const revision = capture(store, "也许周五能做，下周再看看");

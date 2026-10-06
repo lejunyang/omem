@@ -301,6 +301,7 @@ export const taskProposalBodySchema = z
     due_at: z.iso.datetime({ offset: true }).nullable(),
     due_expression: z.string().min(1).max(500).nullable(),
     next_step: z.string().max(2000),
+    status: taskStatusSchema.optional().describe("For an existing task, update actual open/waiting/done/cancelled state using the original owner assignment and new reply or verified owner confirmation. Receiving material does not by itself mean the owner reviewed it."),
     follow_up: taskFollowUpSchema.optional(),
   })
   .strict();
