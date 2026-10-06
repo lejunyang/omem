@@ -665,7 +665,7 @@ ready 表示本轮检查和 Agent 评审通过，apply 才把补丁应用到原�
 );
 async function developmentRunner() {
   if (process.env.OMEM_URL)
-    throw Error("develop 在本机个人库和仓库运行，不能使用 --url/OMEM_URL");
+    throw Error("编码与外部能力配置在本机个人库运行，不能使用 --url/OMEM_URL");
   const { DevelopmentRunner } = await import("./development/runner.js");
   return new DevelopmentRunner(defaultDataDir());
 }
@@ -681,6 +681,102 @@ develop
   .command("projects")
   .description("查看已登记编码项目")
   .action(async () => show((await developmentRunner()).projects()));
+const capabilities = group(
+  "capabilities",
+  "登记和检查外部只读 skill、CLI、MCP，按项目装配",
+).addHelpText(
+  "after",
+  `\n能力保存在个人库，服务下次调用时读取。先 add 能力 JSON，再 attach 到项目；Agent 可按任务选择已登记能力。\n认证仅引用环境变量或工具现有登录态，不把密钥写入 JSON。此入口不安装软件、不替你登录、不开放消息写入。\nadd <file>：登记/更新；check <id>：执行登记的健康检查并发现允许工具；call：供 Agent 和排障使用。\n查看随包 skills/omem-cli/references/capabilities.md 的完整配置示例。\n`,
+);
+async function capabilityRegistry() {
+  return (await developmentRunner()).capabilities;
+}
+async function withCapability(
+  id: string,
+  action: (
+    session: import("./capabilities/session.js").CapabilitySession,
+  ) => Promise<unknown> | unknown,
+) {
+  const registry = await capabilityRegistry();
+  const { CapabilitySession } = await import("./capabilities/session.js");
+  const refs = registry.references([id]);
+  const session = new CapabilitySession(registry, refs, {
+    directory: join(defaultDataDir(), "capability-runs", id),
+    cwd: process.cwd(),
+  });
+  try {
+    return await action(session);
+  } finally {
+    await session.close();
+  }
+}
+capabilities
+  .command("add <config-file>")
+  .description(
+    "导入能力声明和技能快照；重复 ID 更新当前版本，已有任务保留原版本",
+  )
+  .action(async (file) =>
+    show(
+      (await capabilityRegistry()).register(
+        await readJson(file),
+        dirname(resolve(file)),
+      ),
+    ),
+  );
+capabilities
+  .command("list")
+  .description("列出已启用能力（不自动连接外部服务）")
+  .action(async () => show((await capabilityRegistry()).list()));
+capabilities
+  .command("show <id>")
+  .description("查看用途、技能与允许工具")
+  .action(async (id) => {
+    const r = await capabilityRegistry();
+    show(r.describe(r.read(id)));
+  });
+capabilities
+  .command("disable <id>")
+  .description("停用能力，保留历史；后续调用立即拒绝")
+  .action(async (id) => show((await capabilityRegistry()).disable(id)));
+capabilities
+  .command("attach <project> [ids...]")
+  .description("设置编码项目默认能力；省略 ids 清空，仅影响后续任务")
+  .action(async (project, ids) =>
+    show((await developmentRunner()).selectCapabilities(project, ids)),
+  );
+capabilities
+  .command("check <id>")
+  .description("运行健康/登录检查，并读取允许的 MCP 工具与参数")
+  .action(async (id) => {
+    const r: any = await withCapability(id, (s) => s.inspect(id));
+    show(r);
+    if (!r.available) process.exitCode = 1;
+  });
+capabilities
+  .command("skill <id> <name> [path]")
+  .description("读取已登记技能及其引用资源（默认 SKILL.md）")
+  .action(async (id, name, path = "SKILL.md") => {
+    const r = await capabilityRegistry();
+    show(r.readSkill(r.read(id), name, path));
+  });
+capabilities
+  .command("call <id> <tool> [input-file]")
+  .option("--kind <kind>", "mcp 或 cli", "mcp")
+  .description(
+    "调用允许的只读工具，输入为 JSON 文件或 stdin；返回真实结果并保存回执",
+  )
+  .action(async (id, tool, file, opts) => {
+    if (!["cli", "mcp"].includes(opts.kind))
+      throw Error("--kind 仅支持 cli 或 mcp");
+    const args = await readJson(file);
+    if (!args || typeof args !== "object" || Array.isArray(args))
+      throw Error("工具输入必须为 JSON 对象");
+    const r: any = await withCapability(id, (s) =>
+      s.call(id, opts.kind, tool, args),
+    );
+    show(r);
+    if (r.result?.isError || r.result?.exitCode) process.exitCode = 1;
+  });
 develop
   .command("list")
   .description("查看编码任务和结果目录")
@@ -713,7 +809,10 @@ async function runDevelopment(
   if (!profile) throw Error("请先配置 ACP Agent");
   const store = new Store(config.dataDir),
     abort = new AbortController();
-  const stop = () => { process.exitCode = 130; abort.abort(); };
+  const stop = () => {
+    process.exitCode = 130;
+    abort.abort();
+  };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   try {

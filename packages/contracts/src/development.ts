@@ -51,6 +51,7 @@ export const developmentProjectSchema = z
     repository: z.string().min(1),
     instructions: z.string().default(""),
     ruleFiles: z.array(z.string()).default([]),
+    capabilities: z.array(z.string()).optional(),
     commands: z
       .array(
         z

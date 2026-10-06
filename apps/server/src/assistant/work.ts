@@ -20,6 +20,7 @@ import type { DecisionService } from "../decision/service.js";
 import { decideWork, workQuestions } from "../decision/work.js";
 import { queueOwnerNotice } from "../integrations/lark/owner-notice.js";
 import type { WikiPageBrief } from "../../../../packages/contracts/src/knowledge.js";
+import { CapabilitySession } from "../capabilities/session.js";
 
 type Feedback = {
   id: string;
@@ -232,16 +233,34 @@ export class AssistantWork {
         name: p.name,
         repository: p.repository,
         commands: p.commands,
+        capabilities: p.capabilities ?? [],
       })),
       development: this.development.list().map((t) => this.taskView(t)),
       capabilities: {
         tracking: this.pages.available,
         coding: !!this.development.profile,
         provider: "traex",
-        externalCapabilities:
-          "项目规则、skills 与登记命令；通用外部能力注册尚未接入",
+        externalCapabilities: this.development.runner.capabilities.list(),
       },
     };
+  }
+  capabilitySession(
+    directory: string,
+    signal?: AbortSignal,
+    onActivity?: () => void,
+  ) {
+    const registry = this.development.runner.capabilities;
+    return new CapabilitySession(
+      registry,
+      registry.references(registry.list().map((p) => p.id)),
+      {
+        directory: join(directory, "external-inputs"),
+        cwd: directory,
+        signal,
+        onActivity,
+        decisions: this.decisions,
+      },
+    );
   }
   tools(): ResearchTool[] {
     return [
@@ -412,7 +431,12 @@ export class AssistantWork {
         message: `已开始跟进「${action.title}」，后台将结合所选材料调查并更新；当前已排队。`,
       };
     } else if (action.operation === "start_development") {
-      const task = this.development.enqueue(action.key, action.project, actor);
+      const task = this.development.enqueue(
+        action.key,
+        action.project,
+        actor,
+        action.capabilities,
+      );
       receipt = {
         tool: "work_action",
         operation: action.operation,

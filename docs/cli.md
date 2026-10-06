@@ -144,6 +144,20 @@ omem bot status
 
 机器人通知复用已有绑定、投递与重试流程；与个人登录是两套独立授权。`bot setup` 显示既有网页向导入口。`bot apps` 读取可复用应用；`bot defaults` 输出绑定配置模板；`bot connect <json-file>` 接受 `{appId,source,clientSecret?,config}`，source 为 manual 时需 clientSecret，botmux 时由已有本地配置读取密钥。默认 `lark.enabled:false`；启用并重启后进入绑定向导。它不授予个人消息写权限。
 
+## 外部工具与技能装配
+
+`omem capabilities` 登记已有的只读 CLI、MCP 和技能，不安装依赖或自动登录。它们保存在服务机器的个人目录，主助手按需发现和补读；编码任务固定选择，独立评审可读相同工具回执。
+
+```bash
+omem capabilities add ./capability.json
+omem capabilities list --json
+omem capabilities check CAPABILITY_ID --json
+omem capabilities attach PROJECT_ALIAS CAPABILITY_ID
+omem capabilities disable CAPABILITY_ID
+```
+
+实际任务仍由用户自然语言交办，命令供 Agent 配置与排障使用。使用与服务相同的 `--data-dir`；此组暂不支持 `--url` 操作远端配置。完整 JSON、MCP 连接类型、凭据引用和调用方式见随包的[能力装配技能](../skills/omem-cli/references/capabilities.md)。读到外部资料还不代表自动导入个人知识库；真实 Figma、远程私有 Git 与其他编码提供方仍需各自接入验收。
+
 ## 可选本地能力
 
 先安装 osdk，再在服务机器显式执行：

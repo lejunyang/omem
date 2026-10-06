@@ -78,6 +78,12 @@ export const workActionSchema = z.discriminatedUnion("operation", [
       operation: z.literal("start_development"),
       key,
       project: key,
+      capabilities: z
+        .array(key)
+        .optional()
+        .describe(
+          "Optional subset of registered read-only capabilities for this coding task; omitted uses project defaults.",
+        ),
       delegation: key.describe(
         "Copy the CURRENT user's explicit implementation assignment. Reading a source or asking how implementation works is not delegation.",
       ),
