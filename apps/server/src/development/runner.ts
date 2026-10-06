@@ -43,6 +43,7 @@ import {
 import { RoleBundleRegistry } from "../agent-runtime/bundles.js";
 import { CapabilityRegistry } from "../capabilities/registry.js";
 import { CapabilitySession } from "../capabilities/session.js";
+import { RepositoryPreparer, repositoryLocation, repositoryRef } from "./repositories.js";
 import { captureCapabilityMaterial } from "../capabilities/materials.js";
 import {
   receiptSchema,
@@ -95,9 +96,11 @@ export type DevelopmentRun = {
 export class DevelopmentRunner {
   readonly root: string;
   readonly capabilities: CapabilityRegistry;
+  readonly repositories: RepositoryPreparer;
   constructor(readonly dataDir: string) {
     this.root = join(resolve(dataDir), "development");
     this.capabilities = new CapabilityRegistry(dataDir);
+    this.repositories = new RepositoryPreparer(this.root);
   }
   projectFile(name: string) {
     if (!/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/.test(name))
@@ -122,6 +125,24 @@ export class DevelopmentRunner {
     this.capabilities.references(project.capabilities ?? []);
     saveJson(this.projectFile(alias), project);
     return { alias, ...project };
+  }
+  async prepareRepository(alias: string, url: string, ref = "HEAD", options: {
+    requestId?: string; signal?: AbortSignal; configuration?: unknown;
+  } = {}) {
+    const file = this.projectFile(alias);
+    url = repositoryLocation(url); ref = repositoryRef(ref);
+    const previous = existsSync(file) ? developmentProjectSchema.parse(JSON.parse(readFileSync(file, "utf8"))) : null;
+    if (previous && previous.origin?.url !== url) throw Error("该别名已登记其他本地或远端仓库，请使用新别名");
+    const configured = options.configuration === undefined ? previous : developmentProjectSchema.parse({ ...(options.configuration as object), repository: previous?.repository ?? this.root });
+    this.capabilities.references(configured?.capabilities ?? []);
+    if (new Set(configured?.commands.map(c => c.name)).size !== (configured?.commands.length ?? 0)) throw Error("命令名不能重复");
+    const prepared = await this.repositories.prepare(alias, url, ref, options.requestId ?? randomUUID(), options.signal);
+    const project = developmentProjectSchema.parse({
+      ...(configured ?? { name: alias }), repository: prepared.directory,
+      origin: { url, ref, commit: prepared.commit, preparedAt: prepared.updatedAt },
+    });
+    saveJson(file, project);
+    return { alias, ...project, preparation: prepared };
   }
   projects() {
     const dir = join(this.root, "projects");

@@ -11,6 +11,7 @@ export const workQuestions: Record<string, ChoiceQuestion> = {
       track: "交办持续跟进",
       feedback: "纠正范围、事实或关注点",
       implement: "明确交办实施编码",
+      prepare_repository: "要求准备、拉取、刷新或重试指定 Git 仓库",
       resume_development: "继续已有的受阻、中断或停止的编码任务",
       apply_development: "要求把已评审补丁应用回登记仓库",
       follow_action: "将具体需求行动加入个人待办并持续同步",
@@ -52,21 +53,34 @@ export const workQuestions: Record<string, ChoiceQuestion> = {
   },
 };
 
+export const repositoryQuestions: Record<string, ChoiceQuestion> = {
+  cause: { type: "choice", instructions: "根据真实 Git 错误推断可能原因；仓库不存在与无权限可能无法区分，不要断言。", criteria: {
+    access: "可能缺少登录、凭据或仓库读取权限", network: "网络、代理、DNS 或远端暂时不可用",
+    revision: "指定分支、标签或提交找不到", local: "磁盘、工作区或本地 Git 环境问题",
+    uncertain: "证据不足，需进一步检查",
+  } },
+  next: { type: "choice", instructions: "只建议下一步排查方向，不执行或授权命令，不扩大原仓库/版本范围。", criteria: {
+    login: "检查服务所在机器已有 Git/SSH 登录", connection: "检查服务机器网络与代理",
+    clarify: "需要用户确认地址或版本", retry: "恢复环境后可重试同一项目", inspect: "先读具体错误与本地准备状态",
+  } },
+};
+
 /** Advice is never delegation or a fact write. Cold models do not block a turn. */
 export async function decideWork(
   service: DecisionService | undefined,
   state: unknown,
+  questions: Record<string, ChoiceQuestion> = workQuestions,
 ): Promise<DecisionResult | null> {
   if (!service) return null;
   const status = service.status().status;
   if (status !== "ready") {
-    if (status === "idle") void service.decide(state, workQuestions);
+    if (status === "idle") void service.decide(state, questions);
     return null;
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      service.decide(state, workQuestions),
+      service.decide(state, questions),
       new Promise<null>((resolve) => {
         timer = setTimeout(() => resolve(null), 2500);
       }),

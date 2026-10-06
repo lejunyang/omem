@@ -216,7 +216,7 @@ export class AcpAssistantModel implements AssistantModelPort {
             ...(work
               ?.tools()
               .filter((tool) =>
-                ["work_catalog", "work_status", "work_result"].includes(
+                ["work_catalog", "work_status", "work_result", "repository_status"].includes(
                   tool.name,
                 ),
               ) ?? []),

@@ -134,8 +134,12 @@ export async function buildApp(
   app.get("/api/work", async () => work.catalog());
   app.get<{ Params: { key: string } }>("/api/work/requirements/:key", async req => work.status(req.params.key));
   app.get<{ Params: { id: string } }>("/api/work/development/:id", async req => work.development.read(req.params.id));
-  app.addHook("onReady", async () => work.development.start());
-  app.addHook("preClose", async () => work.development.stop());
+  app.get<{ Params: { alias: string } }>("/api/work/repositories/:alias", async req => ({
+    project: work.development.runner.projects().find(p => p.alias === req.params.alias) ?? null,
+    preparation: work.development.runner.repositories.status(req.params.alias),
+  }));
+  app.addHook("onReady", async () => { work.development.start(); work.repositories.start(); });
+  app.addHook("preClose", async () => { await Promise.all([work.development.stop(), work.repositories.stop()]); });
   const assistant = new AssistantRuntime(store, assistantModel, {
     ownerId: "owner",
     memory,
