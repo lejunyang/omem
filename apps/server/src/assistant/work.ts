@@ -200,6 +200,9 @@ export class AssistantWork {
       summary: article?.document.summary ?? null,
       updatedAt: article?.generation.at ?? null,
       latestChange: this.latestChange(key),
+      personalTasks: todos.filter(t => t.ownerId === "owner" &&
+        !["done", "cancelled"].includes(String(t.status)) &&
+        !!t.projectId && (plan.contextIds ?? []).includes(String(t.projectId))),
       actions: (article?.document.requirement?.actions ?? []).map((action) => ({
         ...action,
         sources: action.evidence.flatMap((id) => {
