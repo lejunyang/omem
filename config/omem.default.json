@@ -6,6 +6,10 @@
   "assistant": {
     "profileId": "traex"
   },
+  "development": {
+    "codingProfileId": "traex",
+    "reviewProfileId": "traex"
+  },
   "profiles": [
     {
       "id": "traex",

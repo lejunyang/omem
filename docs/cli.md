@@ -177,6 +177,8 @@ omem setup decisions
 
 ## Agent 超时
 
+编码和评审可通过 `development.codingProfileId` / `reviewProfileId` 分别选择；已交办任务保留原配置。提供方支持状态、探测与示例见 [Agent 提供方](reader-first/agent-providers.md)。发现模型列表不等于认证或编码已验证。
+
 过去 `timeoutMs:480000` 是从启动开始计算的八分钟总时限，长调查即使持续调用工具也会被打断。现在：
 
 ```json

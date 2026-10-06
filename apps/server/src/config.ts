@@ -20,6 +20,10 @@ const timezoneSchema = z
 const schema = z
   .object({
     profiles: z.array(profileSchema).min(1),
+    development: z.object({
+      codingProfileId: z.string().min(1),
+      reviewProfileId: z.string().min(1),
+    }).strict().optional(),
     assistant: z
       .object({
         profileId: z.string().min(1),
@@ -130,6 +134,19 @@ export function assistantReadingProfile(
     throw Error(`Assistant reading profile requires an existing ACP profile: ${id}`);
   return profile;
 }
+/** Roles select independently; omission preserves the existing assistant default. */
+export function developmentProfiles(config: Pick<Config, "profiles" | "assistant" | "development">) {
+  if (!config.development) {
+    const profile = assistantProfile(config);
+    return profile ? { coding: profile, review: profile } : null;
+  }
+  const get = (id: string) => {
+    const profile = config.profiles.find((p) => p.id === id);
+    if (!profile || profile.transport !== "acp") throw Error(`Development profile requires an existing ACP profile: ${id}`);
+    return profile;
+  };
+  return { coding: get(config.development.codingProfileId), review: get(config.development.reviewProfileId) };
+}
 export function loadConfig() {
   const file = configPath();
   if (process.env.OMEM_CONFIG && !existsSync(file)) throw Error(`配置文件不存在：${file}；运行 omem init 创建`);
@@ -144,6 +161,7 @@ export function loadConfig() {
   if (new Set(config.profiles.map((p) => p.id)).size !== config.profiles.length)
     throw Error("Duplicate agent profile ID");
   assistantProfile(config);
+  developmentProfiles(config);
   const dataDir = defaultDataDir();
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   return {

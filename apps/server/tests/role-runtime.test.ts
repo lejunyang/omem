@@ -93,6 +93,12 @@ const gateway = (workspace = temporary("omem-role-workspace-")) =>
   new RoleRuntimeGateway(new RoleBundleRegistry(), workspace);
 
 describe("B2-03 versioned role runtime acceptance", () => {
+  it("honors a trusted explicit role binding and reports the real profile identity", async () => {
+    const configured = profile({ id: "independent-review" });
+    await expect(gateway().run({ roleId: "verifier", profile: configured, context: context("verifier") })).rejects.toThrow("ROLE_PROFILE_MISMATCH");
+    const result = await gateway().run({ roleId: "verifier", profile: configured, profileBinding: { roleId: "verifier", profileId: configured.id }, context: context("verifier") });
+    expect(result.trace.profileId).toBe("independent-review");
+  });
   it("A-R01 sends distinct role prompts/skills and records effective hashes", async () => {
     const runtime = gateway();
     const extracted = await runtime.run({

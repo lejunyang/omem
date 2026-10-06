@@ -374,6 +374,7 @@ it("resumes the same durable coding checkout after shutdown and returns its real
       options: { signal?: AbortSignal; log?: (s: string) => void } = {},
     ) {
       calls++;
+      expect(p.model).toBe("fixture");
       const run = this.read(id);
       if (calls === 1) {
         await new Promise<void>((resolve) => {
@@ -476,6 +477,7 @@ it("resumes the same durable coding checkout after shutdown and returns its real
   const taskId = s.work.apply(action, a).taskId!;
   rmSync(join(s.dir, "question"), { recursive: true });
   expect(s.queue.read(taskId).job.inputRefs[0]).toMatchObject({
+    profiles: { coding: { model: "fixture" }, review: { model: "fixture" } },
     handoff: {
       assignment: { text: a.userText },
       inputs: [{ recordId: external.recordId }],
@@ -499,7 +501,7 @@ it("resumes the same durable coding checkout after shutdown and returns its real
   s.store.db
     .prepare("UPDATE jobs SET not_before=? WHERE id=?")
     .run("2000-01-01T00:00:00Z", stopped.job.id);
-  const restored = new DevelopmentQueue(s.store, s.pages, profile, {
+  const restored = new DevelopmentQueue(s.store, s.pages, { ...profile, model: "changed-after-enqueue" }, {
     runner: new Runner(s.store.dataDir),
   });
   await restored.processOne();

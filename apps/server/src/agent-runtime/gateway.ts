@@ -34,6 +34,7 @@ import {
 } from "../../../../packages/contracts/src/index.js";
 import { acp, cli, optionValues, withAgentWorkspace, type Emit } from "../agents.js";
 import { canonicalJson, stableDigest } from "../storage/digest.js";
+import { acpProvider } from "../agent-providers.js";
 import { RoleBundleRegistry, type RoleBundle } from "./bundles.js";
 import type { RuntimeRequestRepository } from "./requests.js";
 
@@ -79,6 +80,8 @@ export type RoleRunTrace = {
   runId: string;
   roleId: string;
   roleVersion: string;
+  profileId?: string;
+  acpProvider?: string | null;
   bundleHash: string;
   promptHash: string;
   contextHash: string;
@@ -299,6 +302,8 @@ export class RoleRuntimeGateway {
     roleId: string;
     roleVersion?: string;
     profile: AgentProfile;
+    /** Trusted caller's explicit role binding; never supplied by model output. */
+    profileBinding?: { roleId: string; profileId: string };
     context: ContextManifest;
     signal?: AbortSignal;
     managedTools?: ManagedTool[];
@@ -325,7 +330,7 @@ export class RoleRuntimeGateway {
     const bundle = {
       ...originalBundle,
       skills: originalBundle.skills.map((s) =>
-        native ? { ...s, load_mode: "native" as const } : s,
+        native ? { ...s, load_mode: acpProvider(input.profile) === "claude" ? "inline" as const : "native" as const } : s,
       ),
       manifest: {
         ...originalBundle.manifest,
@@ -336,7 +341,9 @@ export class RoleRuntimeGateway {
         },
       },
     };
-    if (bundle.manifest.profile_ref !== input.profile.id)
+    if (input.profileBinding
+      ? input.profileBinding.roleId !== input.roleId || input.profileBinding.profileId !== input.profile.id
+      : bundle.manifest.profile_ref !== input.profile.id)
       throw Error("ROLE_PROFILE_MISMATCH");
     if (bundle.manifest.session_policy.reuse !== "never")
       throw Error("ROLE_SESSION_REUSE_NOT_IMPLEMENTED");
@@ -506,6 +513,8 @@ export class RoleRuntimeGateway {
             );
           }
           const trace: RoleRunTrace = {
+            profileId: effectiveProfile.id,
+            acpProvider: acpProvider(effectiveProfile),
             runId,
             roleId: bundle.manifest.role_id,
             roleVersion: bundle.manifest.role_version,
@@ -515,6 +524,8 @@ export class RoleRuntimeGateway {
             skillHash,
             toolHash,
             fingerprint: stableDigest({
+              profileId: effectiveProfile.id,
+              provider: acpProvider(effectiveProfile),
               bundleHash: bundle.bundleHash,
               promptHash: finalPromptHash,
               contextHash: stableDigest(context),

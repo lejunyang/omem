@@ -6,6 +6,7 @@ import type { Store } from "../store.js";
 import { DurableJobWorker, JobExecutionError } from "../jobs/worker.js";
 import type { KnowledgePageService } from "../knowledge/page-service.js";
 import { DevelopmentRunner } from "./runner.js";
+import { freezeDevelopmentProfiles, type DevelopmentProfiles } from "../agent-providers.js";
 import { captureDevelopmentResult } from "./results.js";
 import { assertRequirementBasis } from "./requirement-basis.js";
 import { queueOwnerNotice } from "../integrations/lark/owner-notice.js";
@@ -23,6 +24,7 @@ type DevelopmentJobInput = {
   continuation?: WorkActor;
   capabilities?: import("../../../../packages/contracts/src/capabilities.js").CapabilityReference[];
   handoff?: DevelopmentHandoff;
+  profiles?: DevelopmentProfiles;
 };
 export class DevelopmentQueue {
   readonly runner: DevelopmentRunner;
@@ -36,6 +38,7 @@ export class DevelopmentQueue {
     readonly profile: AgentProfile | null,
     readonly options: {
       runner?: DevelopmentRunner;
+      reviewProfile?: AgentProfile;
       onError?: (e: unknown) => void;
     } = {},
   ) {
@@ -66,7 +69,8 @@ export class DevelopmentQueue {
               );
             return { resultRef: applied.id };
           }
-          if (!profile)
+          const profiles = task.run?.profiles ?? input.profiles ?? (profile && freezeDevelopmentProfiles(profile, options.reviewProfile));
+          if (!profiles)
             throw new JobExecutionError("尚未配置编码 Agent", "config");
           const repository = pages.repository;
           for (;;) {
@@ -109,13 +113,15 @@ export class DevelopmentQueue {
                 id: task.id,
                 capabilities: input.capabilities,
                 handoff: input.handoff,
+                profiles,
               });
           store.db
             .prepare("UPDATE assistant_development SET run_id=? WHERE id=?")
             .run(run.id, task.id);
           signal.throwIfAborted();
           if (!["ready", "applied"].includes(run.state))
-            run = await this.runner.execute(run.id, store, profile, {
+            run = await this.runner.execute(run.id, store, profiles.coding, {
+              reviewProfile: profiles.review,
               signal,
               continuation: input.continuation,
               log: (message) =>
@@ -144,8 +150,10 @@ export class DevelopmentQueue {
         heartbeatMs: 10000,
         retryBaseMs: 15000,
         fingerprint: () => ({
-          model: profile?.model ?? null,
-          effort: profile?.effort ?? null,
+          // Each task has two frozen profiles. Actual selected values belong to
+          // its role traces, not the worker's possibly changed startup default.
+          model: null,
+          effort: null,
           promptHash: kind,
           skillHash: "",
           toolHash: "development@1",
@@ -177,6 +185,7 @@ export class DevelopmentQueue {
         (t.key === key && t.project === project && active.has(t.job.state)),
     );
     if (previous) return previous;
+    const profiles = freezeDevelopmentProfiles(this.profile, this.options.reviewProfile);
     const selected = this.runner.capabilities.references(
       capabilities ??
         this.runner.projects().find((p) => p.alias === project)?.capabilities ??
@@ -216,7 +225,7 @@ export class DevelopmentQueue {
     this.store.tx(() => {
       const { job } = this.store.jobs.enqueueInCurrentTransaction({
         kind,
-        inputRefs: [{ taskId: id, capabilities: selected, handoff }],
+        inputRefs: [{ taskId: id, capabilities: selected, handoff, profiles }],
         roleVersion: "coding-and-review@1",
         policyVersion: "owner-delegated@1",
         maxAttempts: 30,
@@ -301,6 +310,7 @@ export class DevelopmentQueue {
             taskId: id,
             capabilities: prior.capabilities,
             handoff: prior.handoff,
+            profiles: task.run?.profiles ?? prior.profiles,
             operation: reviewedFingerprint ? "apply" : "develop",
             reviewedFingerprint,
             continuation: actor,
