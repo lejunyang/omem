@@ -30,7 +30,7 @@ export class RequirementTasks {
         .all(key),
     };
   }
-  follow(key: string, actionId: string, expectedRevision: string) {
+  follow(key: string, actionId: string, expectedRevision: string, taskId?: string) {
     const board = this.board(key);
     if (board.revision !== expectedRevision || !board.current)
       throw Error("需求页已变化，请重新读取当前行动项");
@@ -38,12 +38,22 @@ export class RequirementTasks {
     if (!action) throw Error("行动项不存在；请先更新需求页");
     if (action.certainty !== "confirmed")
       throw Error("该事项尚未明确，先补充材料或澄清，不能自动当作承诺");
+    const existing = taskId ? this.store.tasks().find(t => t.id === taskId) : null;
+    if (taskId && (!existing || existing.workspaceId !== "personal" || existing.ownerId !== "owner" || ["done", "cancelled"].includes(String(existing.status))))
+      throw Error("只能关联本人尚未结束的已有待办");
+    const contexts = this.repository.get(key)!.reading?.contextIds ?? [];
+    if (existing?.projectId && !contexts.includes(String(existing.projectId)))
+      throw Error("已有待办属于另一个项目，不能合并");
     this.store.db
       .prepare(
         `INSERT INTO requirement_tasks(page_key,action_id,enabled,updated_at)
       VALUES(?,?,1,?) ON CONFLICT(page_key,action_id) DO UPDATE SET enabled=1,error=NULL,updated_at=excluded.updated_at`,
       )
       .run(key, actionId, new Date().toISOString());
+    if (existing) {
+      this.store.db.prepare(`UPDATE requirement_tasks SET task_id=?,task_version=?,action_digest=?,article_revision=?,error=NULL WHERE page_key=? AND action_id=?`)
+        .run(String(existing.id),Number(existing.version),stableDigest(action),expectedRevision,key,actionId);
+    }
     // Explicit follow also acknowledges the latest personal task state before resuming sync.
     this.store.db
       .prepare(
@@ -148,12 +158,13 @@ export function registerRequirementTasks(
     "/api/requirements/:key/actions/:id/follow",
     async (req) => {
       const input = z
-        .object({ expectedRevision: z.string().min(1) })
+        .object({ expectedRevision: z.string().min(1), taskId: z.uuid().optional() })
         .parse(req.body);
       return service.follow(
         req.params.key,
         req.params.id,
         input.expectedRevision,
+        input.taskId,
       );
     },
   );

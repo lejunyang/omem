@@ -387,7 +387,7 @@ export class AssistantWork {
         name: "work_status",
         readOnly: true,
         description:
-          "Read current requirement facts, actions and their personal todo links, human feedback, attention/version and background coding/check/review status. Use revision and action IDs for follow_action/unfollow_action.",
+          "Read current requirement facts, actions and their personal todo links, human feedback, attention/version and background coding/check/review status. Use revision and action IDs for follow_action/unfollow_action. Read existing personal tasks before following; if the same action already has a task, supply taskId to link it instead of creating a duplicate.",
         shape: { key: z.string() },
         run: ({ key }) => this.status(key),
       },
@@ -672,6 +672,7 @@ export class AssistantWork {
               action.key,
               action.actionId,
               action.expectedRevision,
+              action.taskId,
             )
           : this.actions.unfollow(action.key, action.actionId);
       const link = board.links.find((l) => l.action_id === action.actionId);

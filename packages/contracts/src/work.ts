@@ -155,6 +155,7 @@ export const workActionSchema = z.discriminatedUnion("operation", [
       operation: z.enum(["follow_action", "unfollow_action"]),
       key,
       actionId: key,
+      taskId: z.uuid().optional().describe("For follow_action, link an existing personal task for this same action instead of creating another. Read tasks first; do not guess an ID or merge unrelated actions."),
       expectedRevision: key.describe(
         "Current requirement revision from work_status.",
       ),
