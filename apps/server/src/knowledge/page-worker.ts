@@ -131,6 +131,8 @@ export class KnowledgePageWorker {
     const row = this.follow(key);
     if (!row) return null;
     const job = row.job_id ? this.repository.store.jobs.get(row.job_id) : null;
+    if (row.enabled && row.target_digest !== row.processed_digest && job && !active.has(job.state))
+      return { enabled: true, state: "queued", error: null, updatedAt: job.finishedAt };
     const state = !job ? "idle" : ["queued", "retry_wait"].includes(job.state) ? "queued"
       : ["leased", "running"].includes(job.state) ? "writing" : job.state === "failed" ? "failed"
       : job.state === "succeeded" ? "published" : "idle";

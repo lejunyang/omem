@@ -427,3 +427,7 @@ description = "Verify cross-source requirement follow-up with real Traex ACP / S
 [tasks."development:verify"]
 description = "Real Sol requirement tracking, isolated coding and independent review acceptance"
 run = [{ argv = ["bun", "scripts/live-development.ts"] }]
+
+[tasks."assistant:work"]
+description = "Real Sol natural-language follow, feedback and durable background coding on a disposable project"
+run = [{ argv = ["bun", "scripts/live-assistant-work.ts"] }]

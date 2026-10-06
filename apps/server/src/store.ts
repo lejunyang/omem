@@ -1,4 +1,5 @@
 import { dispatchTaskReminders } from "./tasks/follow-up.js";
+import { transaction } from "./storage/transaction.js";
 import type { TaskStatus, TaskFollowUp } from "../../../packages/contracts/src/task-flow.js";
 import { recordSourceRefresh } from "./learning/refresh.js";
 /** SQLite is the single-user foundation. Immutable revisions, changes and notification
@@ -84,15 +85,7 @@ export class Store {
     try { this.db.close(); } finally { this.releaseLibrary(); }
   }
   tx<T>(f: () => T): T {
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
-      const v = f();
-      this.db.exec("COMMIT");
-      return v;
-    } catch (e) {
-      this.db.exec("ROLLBACK");
-      throw e;
-    }
+    return transaction(this.db, f);
   }
   record(
     kind: string,

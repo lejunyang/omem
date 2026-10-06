@@ -299,9 +299,12 @@
       "order": 6,
       "kind": "how-to",
       "reader": "希望让个人助手跟进需求并启动实现的开发者",
-      "goal": "用一条具体需求讲清材料如何变成验收项和行动项，如何关注待办、登记实际项目、启动编码、看评审、修复并应用代码。以可操作步骤为主，不堆叠证据术语、日志和重复限制。明示当前命令能力与没有实现的可视化/mock/Figma能力。",
+      "goal": "用一条具体需求讲清用户怎样通过自然语言持续跟进、纠正事实、调整关注与范围、明确交办后台编码、询问真实检查和评审结果。解释同一需求如何随新增材料更新；以具体步骤为主，CLI 留作配置与排障入口。区分已接通的 Traex 流程与尚未完成的外部能力、Figma、多提供方和变更重新规划，不堆叠证据术语或日志。",
       "scenario": "工单分派已经能选择队列，会议决定补处理完成入口。读者要保留未知类别兜底，跟进同事进展，再在目标仓库实施并检查输入对象不被修改。示例是教学案例，不宣称现实部署。",
       "questions": [
+        "用户只说跟进和关注点时助手做什么，后来怎样纠正、撤销和暂停？",
+        "怎样交办后台实现，离开聊天或服务重启后怎样查进度？",
+        "快速决策模型负责哪几类建议，哪些事情仍交给 Sol？",
         "新讨论怎样进入同一需求，如何区分建议和明确约定？",
         "怎样把重要行动变成个人跟进事项，人工修改后会怎样？",
         "怎样登记项目规则、skills、依赖准备和验收命令？",
@@ -327,7 +330,16 @@
         "omem:apps/server/src/cli.ts",
         "omem:apps/server/src/memory/service.ts",
         "omem:docs/reader-first/requirement-followup.md",
-        "omem:skills/omem-cli/references/development.md"
+        "omem:skills/omem-cli/references/development.md",
+        "omem:apps/server/src/assistant/work.ts",
+        "omem:apps/server/src/assistant/runtime.ts",
+        "omem:apps/server/src/assistant/acp-model.ts",
+        "omem:apps/server/src/development/queue.ts",
+        "omem:apps/server/src/knowledge/page-service.ts",
+        "omem:apps/server/src/knowledge/page-worker.ts",
+        "omem:apps/server/src/decision/work.ts",
+        "omem:packages/contracts/src/work.ts",
+        "omem:docs/reader-first/assistant-orchestration.md"
       ],
       "topicPath": [
         "软件开发",

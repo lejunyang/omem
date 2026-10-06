@@ -31,7 +31,7 @@ export class KnowledgePipeline {
   private readonly running = new Set<DurableJobWorker>();
   private stopping = false;
   constructor(readonly repository: KnowledgeRepository, readonly gateway: RoleRuntimeGateway, readonly profile: AgentProfile,
-    readonly options: { budget?: Partial<GenerationBudget>; nativeResearch?: boolean; retrievalConfig?: RetrievalConfig; concurrency?: number; retryTag?: string; onPublish?: (a: KnowledgeArticle) => void; log?: (message: string) => void } = {}) {}
+    readonly options: { budget?: Partial<GenerationBudget>; nativeResearch?: boolean; retrievalConfig?: RetrievalConfig; concurrency?: number; retryTag?: string; investigationHints?: unknown; onPublish?: (a: KnowledgeArticle) => void; log?: (message: string) => void } = {}) {}
 
   private get nativeResearch() { return this.options.nativeResearch ?? this.profile.transport === "acp"; }
 
@@ -211,6 +211,8 @@ export class KnowledgePipeline {
         const dependencies: KnowledgeArtifact["dependencies"] = offers.filter(o=>citedKeys.has(o.material.key)).map(o => ({ kind: "material", key: o.material.key, digest: o.material.digest }));
         for (const a of articles.filter(a=>document.citations.some(c=>c.target.kind==="article"&&c.target.key===a.document.key))) dependencies.push({ kind: "article", key: a.document.key, digest: a.revision });
         if (this.stopping) throw Error("Knowledge publication cancelled");
+        if (publication && stableDigest(this.repository.pages().find(p => p.key === document.key)?.plan) !== stableDigest(publication.reading))
+          throw Error("阅读目标或用户反馈已变化，保留旧稿，按新目标重新调查");
         const artifact: KnowledgeArtifact = { version: 1, document, dependencies, ...(publication ? { reading: publication.reading,
           ...(publication.reading.contextIds?.length ? { selection: { materialKeys: publication.materialKeys } } : {}),
         } : {}),
@@ -314,7 +316,7 @@ export class KnowledgePipeline {
       // The shared snapshot filters searchable sections and read_knowledge
       // labels outdated pages; fixed citations retain their own lifecycle.
       const articles = this.repository.published().filter(a=>a.document.key!==brief.key&&permitted(a));
-      const run = await this.runRole(researcher, offers, articles, {title:brief.title,page:brief,maintenance,
+      const run = await this.runRole(researcher, offers, articles, {title:brief.title,page:brief,maintenance, investigationHints: this.options.investigationHints,
         ...(maintenance ? {instruction:maintenance.instruction} : {}),
       }, out=>knowledgeResearchSchema.parse(out));
       const research = knowledgeResearchSchema.parse(run.result);

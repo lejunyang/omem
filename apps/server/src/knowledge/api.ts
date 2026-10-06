@@ -17,10 +17,11 @@ import { posix } from "node:path";
 import { parseFile } from "../code/parse.js";
 import { wikiPageBriefSchema } from "../../../../packages/contracts/src/knowledge.js";
 import { KnowledgePageWorker } from "./page-worker.js";
+import { KnowledgePageService } from "./page-service.js";
 import { MaterialDescriptionWorker } from "../source-profile/description-worker.js";
 import { requirementHandoff } from "./requirements.js";
 
-export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; retrieval?: RetrievalPort; retrievalConfig?: RetrievalConfig; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void }) {
+export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; retrieval?: RetrievalPort; retrievalConfig?: RetrievalConfig; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void; onService?: (service: KnowledgePageService) => void; beforePageRun?: (plan: import("../../../../packages/contracts/src/knowledge.js").WikiPageBrief, signal: AbortSignal) => Promise<unknown> }) {
   const repository = input.repository ?? new KnowledgeRepository(input.store);
   const prefix = input.prefix;
   app.get<{Params:{key:string}}>(prefix + "/pages/:key/handoff", async (req, reply) => {
@@ -34,8 +35,9 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     blocked: () => !!running,
     onError: error => app.log.error(error),
     run: input.profile ? async (brief, job, signal) => {
+      const investigationHints = await input.beforePageRun?.(brief, signal);
       const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)),
-        { ...input.profile!, id: "traex" }, { retrievalConfig: input.retrievalConfig, budget: input.budget, onPublish: input.onPublish, retryTag: `${job.id}:${job.generation}` });
+        { ...input.profile!, id: "traex" }, { retrievalConfig: input.retrievalConfig, budget: input.budget, investigationHints, onPublish: input.onPublish, retryTag: `${job.id}:${job.generation}` });
       running = pipeline;
       const cancel = () => { void pipeline.stop(); };
       signal.addEventListener("abort", cancel, { once: true });
@@ -49,6 +51,8 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
       }
     } : undefined,
   });
+  const pages = new KnowledgePageService(repository, maintenance, !!input.profile);
+  input.onService?.(pages);
   const descriptions = new MaterialDescriptionWorker(repository, {
     blocked: () => !!running || maintenance.busy(),
     onError: error => app.log.error(error),
@@ -241,7 +245,6 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
   app.route<{ Params: { key?: string }; Body: { brief: unknown; revisionIds: string[] } }>({ method: ["POST", "PUT"], url: prefix + "/pages/:key?", handler: async (req, reply) => {
     if (!input.profile) return reply.code(503).send({ error: "请先在能力与连接中配置 Agent" });
     const editing = req.method === "PUT";
-    if (editing && ["queued", "writing"].includes(maintenance.status(req.params.key!)?.state ?? "")) return reply.code(409).send({ error: "这篇文章正在整理，完成后可调整材料与目标" });
     if (editing && !repository.pages().some(p => p.key === req.params.key && p.plan)) return reply.code(404).send({ error: "这篇文章没有保存阅读目标" });
     const parsed = wikiPageBriefSchema.safeParse(req.body?.brief);
     const ids = req.body?.revisionIds;
@@ -254,8 +257,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     try {
       if (!repository.materialsForPlan(brief).length) return reply.code(400).send({ error: "所选项目或主题还没有材料，请先保存材料" });
     } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "材料范围不可用" }); }
-    repository.savePlan(brief, true);
-    return reply.code(202).send(startPage(brief));
+    return reply.code(202).send(pages.save(brief, editing));
   } });
   app.post<{ Body: { revisionIds: string[] } }>(prefix + "/analyze", async (req, reply) => {
     if (!input.profile) return reply.code(503).send({ error: "未配置可用 Agent" });

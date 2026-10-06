@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { taskActionSchema, taskFollowUpSchema } from "./task-flow.js";
+import { workActionSchema } from "./work.js";
 
 const deadline = z.string().nullable().describe(
   "Actual completion deadline explicitly requested by the owner, with timezone. A reminder/check-in time belongs in follow_up.next_check_at. Null when only a reminder is requested; do not inherit a project's deadline for a new reminder.",
@@ -18,6 +19,7 @@ export const assistantReplySchema = z
   .object({
     answer: z.string().min(1),
     project_selection: assistantProjectSelectionSchema.optional(),
+    work_action: workActionSchema.nullable().optional().describe("Explicit current-user requirement tracking, feedback or implementation delegation. Use work_catalog/work_status before selecting saved identities. Host applies it after the turn, never claim success in advance. Null in research mode; do not also create an ordinary task."),
     citations: z.array(
       z
         .object({
