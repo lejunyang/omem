@@ -541,6 +541,13 @@ it("resumes the same durable coding checkout after shutdown and returns its real
       .prepare("SELECT count(*) n FROM changes WHERE kind='development'")
       .get()!.n;
   expect(notices()).toBe(1);
+  expect(result.outcome?.learningJob?.kind).toBe("extract_claims");
+  expect(result.outcome?.citedByRequirement).toBe(false);
+  expect(
+    s.repository
+      .materialsForPlan(s.repository.pages().find((p) => p.key === key)!.plan!)
+      .some((m) => m.key === result.outcome?.materialKey),
+  ).toBe(true);
   await restored.processOne();
   expect(notices()).toBe(1);
   await restored.stop();

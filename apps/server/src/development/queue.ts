@@ -6,6 +6,8 @@ import type { Store } from "../store.js";
 import { DurableJobWorker, JobExecutionError } from "../jobs/worker.js";
 import type { KnowledgePageService } from "../knowledge/page-service.js";
 import { DevelopmentRunner } from "./runner.js";
+import { captureDevelopmentResult } from "./results.js";
+import { assertRequirementBasis } from "./requirement-basis.js";
 import { queueOwnerNotice } from "../integrations/lark/owner-notice.js";
 import {
   CapabilityReceipts,
@@ -69,6 +71,10 @@ export class DevelopmentQueue {
           const repository = pages.repository;
           for (;;) {
             signal.throwIfAborted();
+            if (task.run) {
+              assertRequirementBasis(repository, task.run);
+              break;
+            }
             repository.refresh();
             const article = repository.get(task.key);
             if (article?.current && article.document.requirement) break;
@@ -342,6 +348,15 @@ export class DevelopmentQueue {
       if (active.has(task.job.state)) continue;
       const body = `${task.job.state === "succeeded" ? task.message : `编码任务未完成：${task.job.lastError ?? task.job.state}`}\n任务：${task.id}`;
       this.store.tx(() => {
+        if (task.run) {
+          captureDevelopmentResult(this.store, task.run, {
+            id: task.job.id,
+            state: task.job.state,
+            error: task.job.lastError,
+          });
+          if (this.pages.maintenance.status(task.key)?.enabled)
+            this.pages.maintenance.request(task.key, true);
+        }
         const changed = this.store.db
           .prepare(
             "UPDATE assistant_development SET notified=1 WHERE id=? AND notified=0",
