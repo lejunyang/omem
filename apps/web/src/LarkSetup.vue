@@ -12,7 +12,11 @@ import {
 
 const emit = defineEmits<{ error: [text: string]; notice: [text: string] }>();
 const pageError = ref("");
-function reportError(text: string) { pageError.value = text.includes("LARK_ONBOARDING_NOT_CONFIGURED") ? "飞书连接尚未启用。请在能力与连接中查看配置说明；其他功能可正常使用。" : text; }
+function reportError(text: string) {
+  pageError.value = text.includes("LARK_ONBOARDING_NOT_CONFIGURED")
+    ? "飞书连接尚未启用。在服务机器运行 omem bot setup，按提示启动或重启服务后再打开这里。"
+    : text;
+}
 const mode = ref<"new" | "update" | "import">("update");
 const credentialSource = ref<"botmux" | "manual">("botmux");
 const appId = ref("");
@@ -20,9 +24,11 @@ const clientSecret = ref("");
 const config = ref<LarkRequestedConfig | null>(null);
 const connections = ref<LarkConnection[]>([]);
 const reusableApps = ref<ReusableLarkApp[]>([]);
+const pending = ref<LarkOnboarding[]>([]);
 const onboarding = ref<LarkOnboarding | null>(null);
 const pairingCode = ref("");
 const busy = ref(false);
+const loading = ref(true);
 let timer: ReturnType<typeof setInterval> | undefined;
 
 const terminal = computed(() =>
@@ -37,7 +43,7 @@ const statusLabel: Record<string, string> = {
   awaiting_scan: "等待授权",
   credentials_received: "已收到凭据",
   checking: "正在核验权限",
-  awaiting_pair: "等待 owner 配对",
+  awaiting_pair: "等待本人配对",
   active: "已启用",
   failed: "核验失败",
   denied: "已拒绝",
@@ -52,25 +58,66 @@ const statusTone = (status: string) =>
       : "warning";
 const needsQr = computed(() =>
   Boolean(
-    onboarding.value?.verificationUrl &&
+    onboarding.value?.resumable !== false &&
+      onboarding.value?.verificationUrl &&
       onboarding.value.status === "awaiting_scan",
   ),
 );
 
+function selectedId() {
+  return new URLSearchParams(location.hash.split("?")[1] || "").get(
+    "onboarding",
+  );
+}
+function selectOnboarding(value: LarkOnboarding) {
+  onboarding.value = value;
+  history.replaceState(
+    history.state,
+    "",
+    "#/lark?" + new URLSearchParams({ onboarding: value.id }),
+  );
+}
+async function resume(id: string) {
+  busy.value = true;
+  pageError.value = "";
+  pairingCode.value = "";
+  try {
+    selectOnboarding(
+      await api<LarkOnboarding>(
+        `/integrations/lark/onboarding/${encodeURIComponent(id)}`,
+      ),
+    );
+  } catch (error) {
+    reportError(String(error));
+  } finally {
+    busy.value = false;
+  }
+}
+function syncLocation() {
+  const id = selectedId();
+  if (id && id !== onboarding.value?.id) void resume(id);
+}
+
 async function loadBase() {
   try {
-    const [nextConfig, nextConnections, apps] = await Promise.all([
+    const [nextConfig, nextConnections, apps, unfinished] = await Promise.all([
       api<LarkRequestedConfig>("/integrations/lark/default-config"),
       api<LarkConnection[]>("/integrations/lark/status"),
       api<ReusableLarkApp[]>("/integrations/lark/reusable-apps"),
+      api<LarkOnboarding[]>("/integrations/lark/onboardings"),
     ]);
     config.value = nextConfig;
     connections.value = nextConnections;
     reusableApps.value = apps;
+    pending.value = unfinished;
     if (!appId.value)
       appId.value = apps[0]?.appId || nextConnections[0]?.appId || "";
+    if (selectedId()) await resume(selectedId()!);
+    else if (unfinished.length === 1) selectOnboarding(unfinished[0]!);
   } catch (error) {
     reportError(String(error));
+  } finally {
+    loading.value = false;
   }
 }
 async function refreshOnboarding() {
@@ -89,6 +136,9 @@ async function loadConnections() {
     connections.value = await api<LarkConnection[]>(
       "/integrations/lark/status",
     );
+    pending.value = await api<LarkOnboarding[]>(
+      "/integrations/lark/onboardings",
+    );
   } catch (error) {
     reportError(String(error));
   }
@@ -100,6 +150,7 @@ async function start() {
     return;
   }
   busy.value = true;
+  pageError.value = "";
   pairingCode.value = "";
   try {
     if (mode.value === "import") {
@@ -125,6 +176,7 @@ async function start() {
         },
       );
     }
+    selectOnboarding(onboarding.value!);
     emit(
       "notice",
       needsQr.value
@@ -175,7 +227,7 @@ async function confirmPairing() {
       expectedOpenId: pairing.candidateOpenId,
     });
     await refreshOnboarding();
-    emit("notice", "owner 与应用已绑定；加入群后会自动开始监控群消息");
+    emit("notice", "本人身份与应用已绑定；加入群后会自动开始读取群消息");
   } catch (error) {
     reportError(String(error));
   } finally {
@@ -186,11 +238,26 @@ function reset() {
   onboarding.value = null;
   pairingCode.value = "";
   clientSecret.value = "";
+  history.replaceState(history.state, "", "#/lark");
+}
+async function restartInterrupted() {
+  const knownApp = onboarding.value?.appId || onboarding.value?.requestedAppId;
+  await cancel();
+  if (onboarding.value?.status !== "cancelled") return;
+  reset();
+  if (knownApp) {
+    appId.value = knownApp;
+    mode.value = "update";
+  }
 }
 watch(
-  () => onboarding.value?.status,
+  () => [onboarding.value?.status, onboarding.value?.resumable],
   () => {
-    if (!onboarding.value || terminal.value) {
+    if (
+      !onboarding.value ||
+      terminal.value ||
+      onboarding.value.resumable === false
+    ) {
       if (timer) clearInterval(timer);
       timer = undefined;
       return;
@@ -199,21 +266,43 @@ watch(
   },
   { immediate: true },
 );
-onMounted(() => void loadBase());
-onBeforeUnmount(() => timer && clearInterval(timer));
+onMounted(() => {
+  window.addEventListener("hashchange", syncLocation);
+  void loadBase();
+});
+onBeforeUnmount(() => {
+  if (timer) clearInterval(timer);
+  window.removeEventListener("hashchange", syncLocation);
+});
 </script>
 
 <template>
   <p v-if="pageError" role="status" class="lark-page-error">{{ pageError }}</p>
   <section class="page lark-page">
-    <span class="eyebrow">同一个应用用于群消息、owner 通知与确认</span>
+    <span class="eyebrow">在飞书交办、接收提醒和确认事项</span>
     <h1>飞书机器人</h1>
     <p class="muted">
       新建或更新应用需要平台授权；也可安全复用 botmux 已有应用。App Secret
       只提交给服务端加密保存，不会出现在状态响应、日志或页面结果中。
     </p>
 
-    <OmPanel v-if="!onboarding" title="选择接入方式">
+    <p v-if="loading" role="status">正在读取已有连接和未完成的接入…</p>
+    <OmPanel
+      v-if="!loading && !onboarding && pending.length"
+      title="继续未完成的接入"
+    >
+      <div v-for="item in pending" :key="item.id" class="pending-row">
+        <div>
+          <b>{{ item.appId || item.requestedAppId || "新应用授权" }}</b
+          ><small
+            >{{ statusLabel[item.status] || item.status }} ·
+            {{ new Date(item.updatedAt).toLocaleString("zh-CN") }}</small
+          >
+        </div>
+        <OmButton :loading="busy" @click="resume(item.id)">继续接入</OmButton>
+      </div>
+    </OmPanel>
+    <OmPanel v-if="!loading && !onboarding && config" title="选择接入方式">
       <div class="tabs" role="tablist" aria-label="飞书应用接入方式">
         <OmButton
           :variant="mode === 'new' ? 'primary' : 'ghost'"
@@ -314,7 +403,7 @@ onBeforeUnmount(() => timer && clearInterval(timer));
       </form>
     </OmPanel>
 
-    <OmPanel v-else title="接入状态">
+    <OmPanel v-if="onboarding" title="接入状态">
       <div class="row">
         <OmBadge :tone="statusTone(onboarding.status)">{{
           statusLabel[onboarding.status] || onboarding.status
@@ -323,14 +412,23 @@ onBeforeUnmount(() => timer && clearInterval(timer));
           onboarding.appId || onboarding.requestedAppId || "等待平台返回 App ID"
         }}</code>
       </div>
-      <div v-if="needsQr" class="authorization-grid">
+      <div
+        v-if="onboarding.resumable === false"
+        class="failure-state"
+        role="status"
+      >
+        <h3>这次授权需要重新配置</h3>
+        <p>{{ onboarding.resumeHint }}</p>
+        <OmButton @click="restartInterrupted">重新配置</OmButton>
+      </div>
+      <div v-else-if="needsQr" class="authorization-grid">
         <div class="qr-box">
           <QrcodeVue
             :value="onboarding.verificationUrl!"
             :size="220"
             level="M"
           />
-          <small>二维码内容就是右侧完整授权链接</small>
+          <small>二维码与授权链接进入同一次授权</small>
         </div>
         <div>
           <h3>
@@ -341,8 +439,7 @@ onBeforeUnmount(() => timer && clearInterval(timer));
             }}
           </h3>
           <p>
-            手机扫码，或在当前设备直接打开完整链接。两种方式进入同一次 device
-            授权，不会重复创建。
+            手机扫码，或在当前设备打开完整链接。两种方式进入同一次授权，不会重复创建。
           </p>
           <a
             class="authorization-link"
@@ -369,27 +466,62 @@ onBeforeUnmount(() => timer && clearInterval(timer));
         <span aria-hidden="true">◌</span>
         <div>
           <b>正在核验实际权限与事件</b>
-          <p>收到凭据不等于可用，完成 capability probe 前不会标记 active。</p>
+          <p>完成权限与消息接收能力核验后，才能进入本人配对。</p>
         </div>
       </div>
       <div
         v-else-if="onboarding.status === 'awaiting_pair'"
         class="pairing-state"
       >
-        <h3>最后一步：确认 owner</h3>
+        <h3>最后一步：确认本人身份</h3>
         <p>
           生成一次性配对码，私聊这个应用发送配对码。网页读回同一应用的发送者后再确认绑定。
         </p>
-        <OmButton v-if="!pairingCode" :loading="busy" @click="issuePairing"
-          >生成配对码</OmButton
+        <p v-if="onboarding.pairing?.expired" class="muted">
+          配对码已过期，重新生成后再发送。
+        </p>
+        <p
+          v-else-if="
+            !pairingCode &&
+            onboarding.pairing &&
+            !onboarding.pairing.candidateOpenId
+          "
+          class="muted"
         >
-        <div v-else class="pairing-code" aria-label="配对码">
+          配对码不保存明文。若没有保留原来的码，可重新生成；同一接入会继续保留。
+        </p>
+        <OmButton
+          v-if="
+            (!pairingCode && !onboarding.pairing?.candidateOpenId) ||
+            onboarding.pairing?.expired ||
+            onboarding.pairing?.consumed
+          "
+          :loading="busy"
+          @click="issuePairing"
+          >{{ onboarding.pairing ? "重新生成配对码" : "生成配对码" }}</OmButton
+        >
+        <div
+          v-if="
+            pairingCode &&
+            !onboarding.pairing?.expired &&
+            !onboarding.pairing?.consumed
+          "
+          class="pairing-code"
+          aria-label="配对码"
+        >
           {{ pairingCode }}
         </div>
-        <template v-if="onboarding.pairing?.candidateOpenId">
+        <template
+          v-if="
+            onboarding.pairing?.candidateOpenId &&
+            !onboarding.pairing.expired &&
+            !onboarding.pairing.consumed
+          "
+        >
+          <p>已经收到配对私聊。请确认这条消息由你本人发出，再启用连接。</p>
           <p class="candidate">
             已收到 {{ onboarding.pairing.candidateChatType }} 消息，候选
-            owner：<code>{{ onboarding.pairing.candidateOpenId }}</code>
+            本人身份：<code>{{ onboarding.pairing.candidateOpenId }}</code>
           </p>
           <OmButton variant="primary" :loading="busy" @click="confirmPairing"
             >确认这是我并启用</OmButton
@@ -402,8 +534,7 @@ onBeforeUnmount(() => timer && clearInterval(timer));
       <div v-else-if="onboarding.status === 'active'" class="success-state">
         <h3>机器人连接已启用</h3>
         <p>
-          owner
-          通知和判断已绑定。机器人加入群聊后会自动读取该群消息；移出群后自动停用采集。
+          通知和待决定事项将发送给已绑定的本人。机器人加入群聊后会自动读取该群消息；移出群后自动停用采集。
         </p>
       </div>
       <div v-else-if="terminal" class="failure-state" role="alert">
@@ -447,12 +578,12 @@ onBeforeUnmount(() => timer && clearInterval(timer));
       <OmBadge :tone="statusTone(connection.state)">{{
         statusLabel[connection.state] || connection.state
       }}</OmBadge>
-      <p v-if="connection.ownerOpenId">owner：{{ connection.ownerOpenId }}</p>
+      <p v-if="connection.ownerOpenId">本人身份：{{ connection.ownerOpenId }}</p>
     </OmPanel>
     <OmEmpty
       v-if="!connections.length"
       title="尚无飞书连接"
-      description="接入完成前不会显示 active。"
+      description="完成授权、权限核验和本人配对后，可在这里查看连接。"
     />
   </section>
 </template>
@@ -556,6 +687,24 @@ onBeforeUnmount(() => timer && clearInterval(timer));
   margin: 0;
   overflow-wrap: anywhere;
 }
+.pending-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--om-line);
+}
+.pending-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pairing-state > .om-button {
+  margin: 8px 0;
+}
 @media (max-width: 700px) {
   .capability-summary {
     grid-template-columns: 1fr 1fr;
@@ -570,4 +719,12 @@ onBeforeUnmount(() => timer && clearInterval(timer));
 }
 </style>
 
-<style scoped>.lark-page-error{margin:24px;padding:16px;background:var(--om-soft);color:var(--om-secondary);line-height:1.8;}</style>
+<style scoped>
+.lark-page-error {
+  margin: 24px;
+  padding: 16px;
+  background: var(--om-soft);
+  color: var(--om-secondary);
+  line-height: 1.8;
+}
+</style>

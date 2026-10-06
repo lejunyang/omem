@@ -13,6 +13,22 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on("pageerror", e => errors.push(e.message));
   await page.goto(BASE);
+  if (process.env.OMEM_LARK_SETUP_ONLY === "1") {
+    await page.goto(BASE + "/#/lark");
+    await expect(page.getByRole("heading", { name: "飞书机器人", exact: true })).toBeVisible();
+    await expect(page.getByText(/在服务机器运行 omem bot setup/)).toBeVisible();
+    for (const width of [1440, 768, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: `${OUT}/lark-setup-${width}.png` });
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByRole("button", { name: "日常助理", exact: true }).click();
+    await expect(page.getByText(/在服务机器运行 omem bot setup/)).toHaveCount(0);
+    expect(errors).toEqual([]);
+    console.log("PASS live dev onboarding guidance at three widths and page-scoped error");
+    await browser.close(); process.exit(0);
+  }
   if (process.env.OMEM_FOLLOWUP_ONLY === "1") {
     const catalog = await api("/api/work");
     expect(catalog.requirements.some((r: any) => r.title.includes("[演示]"))).toBe(true);
