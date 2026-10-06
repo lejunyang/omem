@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fingerprint } from "../development/workspace.js";
 import {
   attentionPolicySchema,
   workActionSchema,
@@ -145,6 +148,65 @@ export class AssistantWork {
       runId: t.runId,
       conversationId: t.conversationId,
       createdAt: t.createdAt,
+      delivery: t.run
+        ? {
+            location: "isolated_checkout",
+            checkout: t.run.checkout,
+            sourceRepository: t.run.project.repository,
+            base: t.run.base,
+            head: t.run.head,
+            requirementRevision: t.run.requirementRevision,
+            applied: t.run.state === "applied",
+            meaning:
+              t.run.state === "applied"
+                ? "已将本次补丁应用到登记仓库；没有由此推断已推送或上线。"
+                : "编码和检查在独立副本进行；ready 表示副本完成本地检查与独立评审。登记仓库尚未应用补丁，原代码不变是预期行为。",
+          }
+        : null,
+    };
+  }
+  async result(taskId: string, startLine = 1, limit = 200) {
+    const task = this.development.read(taskId),
+      run = task.run;
+    if (!run)
+      return {
+        ...this.taskView(task),
+        diff: null,
+        matchesReviewed: null,
+        inspectionError: null,
+        reason: "尚未建立编码副本",
+      };
+    const patch = join(run.directory, "changes.patch");
+    const lines = existsSync(patch)
+      ? readFileSync(patch, "utf8").split("\n")
+      : null;
+    let matchesReviewed: boolean | null = null,
+      inspectionError: string | null = null;
+    if (run.reviewedFingerprint) {
+      try {
+        matchesReviewed =
+          (await fingerprint(run.checkout)) === run.reviewedFingerprint;
+      } catch (error) {
+        inspectionError =
+          error instanceof Error ? error.message : String(error);
+      }
+    }
+    return {
+      ...this.taskView(task),
+      matchesReviewed,
+      inspectionError,
+      checks: run.checks,
+      diff: lines
+        ? {
+            origin: "saved_reviewed_patch",
+            startLine,
+            totalLines: lines.length,
+            text: lines.slice(startLine - 1, startLine - 1 + limit).join("\n"),
+            nextLine:
+              startLine - 1 + limit < lines.length ? startLine + limit : null,
+          }
+        : null,
+      note: "检查和评审对应本次独立副本。已保存差异对应评审时的结果；matchesReviewed 为 false 或 null 时不能声称当前文件仍与已评审版本一致。不要在旧原件或登记仓库重跑检查来否定独立副本的结果。",
     };
   }
   catalog() {
@@ -198,6 +260,19 @@ export class AssistantWork {
           "Read the requirement's current facts, human feedback, attention/version and background coding/check/review status.",
         shape: { key: z.string() },
         run: ({ key }) => this.status(key),
+      },
+      {
+        name: "work_result",
+        readOnly: true,
+        description:
+          "Read a development task's delivery location, saved reviewed patch (paginated), actual check results and independent review. Distinguishes the isolated checkout from the unchanged source repository. Does not rerun checks or apply a patch.",
+        shape: {
+          taskId: z.string(),
+          startLine: z.number().int().positive().default(1),
+          limit: z.number().int().min(1).max(400).default(200),
+        },
+        run: ({ taskId, startLine, limit }) =>
+          this.result(taskId, startLine, limit),
       },
       {
         name: "work_triage",

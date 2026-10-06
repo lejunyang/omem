@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -14,7 +14,7 @@ import { AssistantWork } from "../src/assistant/work.js";
 import { AssistantRuntime } from "../src/assistant/runtime.js";
 import { DevelopmentQueue } from "../src/development/queue.js";
 import { DevelopmentRunner } from "../src/development/runner.js";
-import { git } from "../src/development/workspace.js";
+import { git, fingerprint } from "../src/development/workspace.js";
 import { profileSchema } from "../../../packages/contracts/src/index.js";
 import type {
   WorkAction,
@@ -416,6 +416,25 @@ it("resumes the same durable coding checkout after shutdown and returns its real
   expect(ready.runId).toBe(stopped.runId);
   expect(ready.run?.state).toBe("ready");
   expect(ready.job.state).toBe("succeeded");
+  const run = ready.run!;
+  writeFileSync(join(run.checkout, "code.js"), "export const x = 2;\n");
+  writeFileSync(
+    join(run.directory, "changes.patch"),
+    await git(run.checkout, "diff", run.base),
+  );
+  run.reviewedFingerprint = await fingerprint(run.checkout);
+  restored.runner.save(run);
+  const result = await s.work.result(taskId);
+  expect(result.delivery).toMatchObject({
+    location: "isolated_checkout",
+    sourceRepository: realpathSync(root),
+    applied: false,
+  });
+  expect(result.matchesReviewed).toBe(true);
+  expect(result.diff?.text).toContain("+export const x = 2;");
+  writeFileSync(join(run.checkout, "code.js"), "export const x = 3;\n");
+  expect((await s.work.result(taskId)).matchesReviewed).toBe(false);
+  expect(await git(root, "status", "--porcelain")).toBe("");
   const notices = () =>
     s.store.db
       .prepare("SELECT count(*) n FROM changes WHERE kind='development'")

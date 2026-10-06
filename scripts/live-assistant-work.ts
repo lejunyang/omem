@@ -248,7 +248,8 @@ try {
   }
   saveJson(join(output, "result.json"), {
     at: new Date().toISOString(),
-    passed: true,
+    flowChecksPassed: true,
+    answerQuality: "requires_reading_final_answer",
     seconds: (Date.now() - start) / 1000,
     model: profile.model,
     turns,
@@ -267,7 +268,7 @@ try {
     sourceUnchanged: true,
   });
   passed = true;
-  console.log(`PASS: ${output}`);
+  console.log(`FLOW CHECKS PASSED; read final answer separately: ${output}`);
 } catch (error) {
   saveJson(join(output, "result.json"), {
     at: new Date().toISOString(),
