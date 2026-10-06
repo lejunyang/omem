@@ -2,6 +2,8 @@ import { activityWatchdog } from "../agent-timeout.js";
 import { evidenceNeighbors, evidenceSection } from "../retrieval/context.js";
 import { assembleAnswerContext, mergeBackground } from "./context.js";
 import type { DecisionService } from "../decision/service.js";
+import type { AssistantWork } from "./work.js";
+import type { WorkAction } from "../../../../packages/contracts/src/work.js";
 import { assessPassages } from "../decision/passages.js";
 import { evidenceForRange } from "./research.js";
 import { materialFromRevision } from "../knowledge/repository.js";
@@ -118,6 +120,7 @@ export function validatedDueAt(
 export type AssistantModelReply = {
   /** Final natural-language reply shown to the user. */
   answer: string;
+  workAction?: WorkAction;
   projectSelection?: { project_id: string | null; reason: string };
   /** Evidence citation ids supplied to this turn (legacy fragment ids accepted). */
   citationIds: string[];
@@ -192,6 +195,7 @@ export type AssistantModelPort = {
     /** Derived explanations and applied state, separate from original evidence. */
     background?: AssistantBackground[];
     visibility: Visibility;
+    ownerScoped?: boolean;
     /** Owner-scoped corrections/constraints the model must respect. */
     trustedContext?: string;
     /** Resolved reading scope; never an authorization boundary. Private library only. */
@@ -318,6 +322,7 @@ export class AssistantRuntime {
       feedback?: FeedbackService;
       retrieval?: RetrievalPort;
       decisions?: DecisionService;
+      work?: AssistantWork;
       visibilityPolicy?: VisibilityPolicy;
       /** Hard wall-clock per turn; the model call is aborted after this. */
       turnTimeoutMs?: number;
@@ -656,6 +661,7 @@ export class AssistantRuntime {
             evidence,
             background,
             visibility: input.conversation.visibility,
+            ownerScoped: input.conversation.principalId === (this.options.ownerId ?? "owner") && input.conversation.visibility === "private",
             trustedContext,
             workingProject,
             projects,
@@ -709,6 +715,7 @@ export class AssistantRuntime {
               evidence,
               background,
               visibility: input.conversation.visibility,
+              ownerScoped: input.conversation.principalId === (this.options.ownerId ?? "owner") && input.conversation.visibility === "private",
               trustedContext,
               workingProject,
               projects,
@@ -796,11 +803,24 @@ export class AssistantRuntime {
           trace: reply.researchTrace,
         });
       const createdTaskIds: string[] = [];
+      if (!degraded && reply.workAction) {
+        this.assertNotCancelled(input.signal);
+        try {
+          if (mode === "research" || !this.options.work) throw Error("当前会话没有工作操作权限");
+          if (reply.toolCalls?.length) throw Error("一次只执行一类工作操作，请勿同时创建普通事项");
+          toolActions.push(this.options.work.apply(reply.workAction, {
+            requestId: input.turnId, conversationId: input.conversation.id, principalId: input.conversation.principalId,
+            userText: input.userText, visibility: input.conversation.visibility,
+          }));
+        } catch (error) {
+          toolActions.push({ tool: "work_action", rejected: true, message: `未执行工作操作：${error instanceof Error ? error.message : String(error)}` });
+        }
+      }
       if (!degraded && reply.projectSelection) toolActions.push({
         tool: "select_project", projectId, reason: reply.projectSelection.reason,
       });
       let taskRejectedReason: string | null = null;
-      if (!degraded && mode !== "research") {
+      if (!degraded && mode !== "research" && !reply.workAction) {
         for (const call of reply.toolCalls ?? []) {
           if (call.tool === "update_task") {
             this.assertNotCancelled(input.signal);
@@ -847,7 +867,8 @@ export class AssistantRuntime {
       const mutations = toolActions.filter(
         (a) => a.tool === "create_task" || a.tool === "update_task",
       );
-      const finalAnswer = mutations.length
+      const workReceipts = toolActions.filter(a => a.tool === "work_action");
+      const finalAnswer = workReceipts.length ? workReceipts.map(r => String(r.message)).join("\n") : mutations.length
         ? mutations
             .map((action) => {
               if (action.rejected)

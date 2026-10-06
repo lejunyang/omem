@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { requirementStateSchema } from "./development.js";
+import { attentionPolicySchema } from "./work.js";
 
 const key = z.string().min(1).max(500);
 export const knowledgeCitationSchema = z.object({
@@ -65,6 +66,7 @@ export const knowledgePlanSchema = z.object({
 
 export const wikiPageBriefSchema = z.object({
   workflow: z.enum(["requirement-followup"]).optional(),
+  attention: attentionPolicySchema.optional().describe("Owner-selected investigation priorities; these are not requirement facts. Preserve out-of-focus criteria but emphasize requested changes and blockers."),
   key, title: z.string(), order: z.number().int().nonnegative(),
   kind: z.enum(["tutorial", "explanation", "how-to", "reference"]),
   reader: z.string(), goal: z.string(), scenario: z.string(),

@@ -4,6 +4,8 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -127,7 +129,19 @@ export class DevelopmentRunner {
     run.updatedAt = new Date().toISOString();
     saveJson(this.file(run.id), run);
   }
-  async create(alias: string, key: string, store: Store) {
+  async create(
+    alias: string,
+    key: string,
+    store: Store,
+    options: { id?: string } = {},
+  ) {
+    // A durable task reuses its own checkout after a host restart.
+    if (options.id && existsSync(this.file(options.id))) {
+      const existing = this.read(options.id);
+      if (existing.requirementKey !== key) throw Error("开发任务身份冲突");
+      await this.prepareCheckout(existing);
+      return existing;
+    }
     const project = developmentProjectSchema.parse(
       JSON.parse(readFileSync(this.projectFile(alias), "utf8")),
     );
@@ -145,22 +159,10 @@ export class DevelopmentRunner {
         "目标仓库有未提交改动，请先提交或自行保存；编码任务以当前已提交版本创建独立副本",
       );
     const base = (await git(project.repository, "rev-parse", "HEAD")).trim();
-    const id = randomUUID(),
+    const id = options.id ?? randomUUID(),
       directory = join(this.root, "runs", id),
       checkout = join(directory, "checkout");
     mkdirSync(directory, { recursive: true, mode: 0o700 });
-    await git(
-      dirname(directory),
-      "clone",
-      "--quiet",
-      "--no-hardlinks",
-      "--no-checkout",
-      project.repository,
-      checkout,
-    );
-    await git(checkout, "checkout", "--detach", base);
-    // Do not inherit remotes capable of publishing changes; the runner only exports a patch.
-    await git(checkout, "remote", "remove", "origin");
     const run: DevelopmentRun = {
       id,
       project,
@@ -178,7 +180,33 @@ export class DevelopmentRunner {
     };
     saveJson(join(directory, "requirement.json"), article);
     this.save(run);
+    await this.prepareCheckout(run);
     return run;
+  }
+  private async prepareCheckout(run: DevelopmentRun) {
+    if (existsSync(join(run.checkout, ".git"))) return;
+    if (run.state !== "created")
+      throw Error("开发副本丢失，保留任务供恢复，不能覆盖已完成工作");
+    const release = this.acquire(run),
+      staging = join(run.directory, "checkout.preparing");
+    try {
+      // This is our unfinished clone only, never the user's source checkout.
+      rmSync(staging, { recursive: true, force: true });
+      await git(
+        run.directory,
+        "clone",
+        "--quiet",
+        "--no-hardlinks",
+        "--no-checkout",
+        run.project.repository,
+        staging,
+      );
+      await git(staging, "checkout", "--detach", run.base);
+      await git(staging, "remote", "remove", "origin");
+      renameSync(staging, run.checkout);
+    } finally {
+      release();
+    }
   }
   private acquire(run: DevelopmentRun) {
     const lock = join(run.directory, "lock.json");

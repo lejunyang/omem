@@ -89,6 +89,7 @@ export async function prepareAssistantResearch(input: {
       input.beforeSubmit?.(parsed.answer, parsed);
       if (parsed.create_task && parsed.update_task)
         throw Error("每次只能提议一个事项操作");
+      if (parsed.work_action && (parsed.create_task || parsed.update_task)) throw Error("工作操作与普通事项不能同时提交");
       const update = parsed.update_task;
       if (
         update?.action === "reschedule" &&
@@ -138,7 +139,7 @@ export async function prepareAssistantResearch(input: {
           throw Error(`正文引用没有原文定位：${match[1]}`);
       if (
         context.mode === "research" &&
-        (parsed.create_task || parsed.update_task)
+        (parsed.create_task || parsed.update_task || parsed.work_action)
       )
         throw Error("此次仅调查回答，不允许事项操作；两个事项字段须为 null");
       const reply = parseAssistantReply(

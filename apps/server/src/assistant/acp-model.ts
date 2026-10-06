@@ -3,6 +3,8 @@ import {
   taskFollowUpSchema,
 } from "../../../../packages/contracts/src/task-flow.js";
 import { assistantProjectSelectionSchema } from "../../../../packages/contracts/src/assistant.js";
+import { workActionSchema } from "../../../../packages/contracts/src/work.js";
+import type { AssistantWork } from "./work.js";
 import { dailyWorkflowPrompt } from "./message-workflows.js";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
@@ -48,6 +50,7 @@ export class AcpAssistantModel implements AssistantModelPort {
       repository?: KnowledgeRepository;
       researchWorkspace?: string;
       retrievalConfig?: RetrievalConfig;
+      work?: AssistantWork;
     },
   ) {}
 
@@ -173,6 +176,9 @@ export class AcpAssistantModel implements AssistantModelPort {
     if (reader && reader.transport !== "acp")
       throw new ModelUnavailableError("Assistant reading profile requires ACP");
     const stage = readingStage(!!reader);
+    const work = input.ownerScoped ? this.deps.work : undefined;
+    const workContext = work ? await work.context(input.userText) : undefined;
+    input.onActivity?.();
     const registry = new RoleBundleRegistry();
     const bundle = registry.load("daily-assistant");
     const workspace = registry.prepareWorkspace(
@@ -201,7 +207,7 @@ export class AcpAssistantModel implements AssistantModelPort {
       workspace,
       retrievalConfig: this.deps.retrievalConfig,
       context: input,
-      tools: reader ? stage.tools(investigation.tools) : investigation.tools,
+      tools: [...(reader ? stage.tools(investigation.tools) : investigation.tools), ...(work?.tools() ?? [])],
       beforeSubmit: (answer, reply) => {
         stage.beforeSubmit(reply);
         investigation.beforeSubmit(answer);
@@ -221,6 +227,7 @@ export class AcpAssistantModel implements AssistantModelPort {
       projects: input.projects ?? [],
       initialMatches: input.evidence,
       explanations: input.background ?? [],
+      work: workContext,
     };
     writeFileSync(
       join(workspace, "question-context.json"),
@@ -266,6 +273,7 @@ export class AcpAssistantModel implements AssistantModelPort {
         })}\n</initial_reading_leads>`,
         input.trustedContext ?? "",
         dailyWorkflowPrompt(),
+        work ? `Requirement work tools are available. Read work_catalog and work_status to resolve the saved requirement, version and registered coding project. Current work state and optional quick-model advice: ${JSON.stringify(workContext)}. Advice is not authorization or verified facts. For a direct CURRENT-user request to follow/adjust/pause a requirement or delegate coding, submit work_action (and set create_task/update_task=null); the host applies it only after this turn. Do not tell the user to run commands. Tracking does not authorize coding. Start development only when the current user explicitly delegates implementation; copy the assignment verbatim into delegation. Feedback text copies current user words; facts/corrections become new input for independent investigation, not immediate verified facts. Do not claim completion: a queued task is only queued. Research mode always requires work_action=null.` : "",
         `Mode: ${input.mode ?? "assist"}. ${input.mode === "research" ? "READ-ONLY CONSULTATION: create_task and update_task MUST be null." : "You may propose one explicit owner task action; the host alone applies it and confirms the receipt."}`,
         "Initial matches are leads, not a complete answer or a mandatory reading order. Choose tools and how much to read according to this question and material type. Code navigation is optional, not a workflow imposed on documents, conversations, images or personal questions.",
         "Material descriptions are version-bound reading aids: inspect purpose, status, scope and validity before treating a passage as current behavior. They are annotations, not authority. For current implementation questions distinguish working code from plans; resolve conflicts by reading the relevant operation and its callers. Do not treat an article repeating this question as the answer.",
@@ -460,6 +468,7 @@ export function parseAssistantReply(
     answer: object.answer,
     citationIds,
     ...(object.project_selection ? { projectSelection: assistantProjectSelectionSchema.parse(object.project_selection) } : {}),
+    ...(object.work_action ? { workAction: workActionSchema.parse(object.work_action) } : {}),
     searchQueries: Array.isArray(object.search_queries)
       ? object.search_queries
           .filter((q): q is string => typeof q === "string")

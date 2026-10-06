@@ -57,6 +57,8 @@ import { BotmuxExistingAppProvider } from "./integrations/lark/existing-apps.js"
 import { LarkRuntimeHost } from "./integrations/lark/runtime.js";
 import { AssistantRuntime } from "./assistant/runtime.js";
 import { AcpAssistantModel } from "./assistant/acp-model.js";
+import { AssistantWork } from "./assistant/work.js";
+import { DevelopmentQueue } from "./development/queue.js";
 import { KnowledgeRepository } from "./knowledge/repository.js";
 import { createRetrieval } from "./retrieval/factory.js";
 import { QualityRepository, qualityLabelSchema } from "./quality/repository.js";
@@ -102,22 +104,19 @@ export async function buildApp(
       })),
   );
 
-  const assistantModel = new AcpAssistantModel({
-    profile: assistantProfile,
-    readingProfile: assistantReadingProfile(config),
-    workspaceRoot: config.agentCwd,
-    repository: development?.repository ?? new KnowledgeRepository(store),
-    researchWorkspace: resolve(config.dataDir, "assistant-agents"),
-    retrievalConfig: config.retrieval,
-  });
   const retrievalService = createRetrieval(store.db, config.retrieval);
   const assistantRetrieval = development
     ? developmentRetrieval(store, retrievalService.retrieval)
     : retrievalService.retrieval;
   const requirementTasks = new RequirementTasks(store);
+  let work!: AssistantWork;
   registerRequirementTasks(app, requirementTasks);
-  registerKnowledgeRoutes(app, {
-    onPublish: article => requirementTasks.sync(article),
+  const knowledgeRepository = registerKnowledgeRoutes(app, {
+    beforePageRun: (plan, signal) => work.investigationHints(plan, signal),
+    onPublish: article => { requirementTasks.sync(article); work.published(article); },
+    onService: pages => {
+      work = new AssistantWork(pages, new DevelopmentQueue(store, pages, assistantProfile, { onError: error => app.log.error(error) }), decisions);
+    },
     store,
     repository: development?.repository,
     prefix: "/api/knowledge",
@@ -126,10 +125,21 @@ export async function buildApp(
     retrievalConfig: config.retrieval,
     retrieval: assistantRetrieval,
   });
+  const assistantModel = new AcpAssistantModel({
+    profile: assistantProfile, readingProfile: assistantReadingProfile(config),
+    workspaceRoot: config.agentCwd, repository: knowledgeRepository,
+    researchWorkspace: resolve(config.dataDir, "assistant-agents"), retrievalConfig: config.retrieval, work,
+  });
+  app.get("/api/work", async () => work.catalog());
+  app.get<{ Params: { key: string } }>("/api/work/requirements/:key", async req => work.status(req.params.key));
+  app.get<{ Params: { id: string } }>("/api/work/development/:id", async req => work.development.read(req.params.id));
+  app.addHook("onReady", async () => work.development.start());
+  app.addHook("preClose", async () => work.development.stop());
   const assistant = new AssistantRuntime(store, assistantModel, {
     ownerId: "owner",
     memory,
     feedback,
+    work,
     retrieval: assistantRetrieval,
     timezone: config.notifications.external?.timezone,
     decisions: config.decisions && config.decisions.mode !== "off" ? decisions : undefined,
@@ -995,5 +1005,7 @@ export async function buildApp(
     learning,
     lark,
     larkRuntime,
+    assistant,
+    work,
   };
 }
