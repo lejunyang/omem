@@ -5,6 +5,7 @@ import {
   mkdirSync,
   writeFileSync,
   readFileSync,
+  readdirSync,
   rmSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -213,11 +214,27 @@ try {
     article: article.document,
     updated: updated.document,
     research: updated.investigation,
-    traces: { initial: { generation: article.generation, review: article.review }, update: { generation: updated.generation, review: updated.review } },
+    traces: {
+      initial: { generation: article.generation, review: article.review },
+      update: { generation: updated.generation, review: updated.review },
+    },
     outcome,
     appliedOutcome,
     task: store.tasks()[0],
     run: result,
+    execution: {
+      roles: readdirSync(run.directory)
+        .filter((name) => /^(coding-agent|code-reviewer)-\d+\.json$/.test(name))
+        .map((name) => ({
+          name,
+          ...JSON.parse(readFileSync(join(run.directory, name), "utf8")),
+        })),
+      checks: result.checks.map((check) => ({
+        ...check,
+        logText: readFileSync(check.log, "utf8"),
+      })),
+      finalCheck: { ...checked, logText: readFileSync(checked.log, "utf8") },
+    },
   });
   passed = true;
   console.log(
