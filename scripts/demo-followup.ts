@@ -259,7 +259,10 @@ try {
   const follow = first.actions.find(
     (a) => a.certainty === "confirmed" && /检查|回复|跟进/.test(a.title),
   );
-  if (follow) work.actions.follow(key, follow.id, first.revision!);
+  if (follow) {
+    const existing = store.tasks().find(t => String(t.title).includes("检查小林"));
+    work.actions.follow(key, follow.id, first.revision!, existing ? String(existing.id) : undefined);
+  }
   const task = work.apply(
     {
       operation: "start_development",

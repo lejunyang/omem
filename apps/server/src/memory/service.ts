@@ -138,6 +138,8 @@ export class MemoryService {
   applyRequirementFollowUp(input: {key:string;actionId:string;revision:string;action:RequirementState["actions"][number];
     evidenceId:string;taskId?:string;expectedVersion?:number;projectId?:string|null}) {
     const {action}=input;
+    const prior = input.taskId ? this.store.tasks().find(t => t.id === input.taskId) : undefined;
+    const checkTime = prior?.followUp?.next_check_at;
     if(action.certainty!=="confirmed"||!this.store.evidence(input.evidenceId))throw Error("REQUIREMENT_ORIGINAL_REQUIRED");
     const link=this.db.prepare("SELECT enabled FROM requirement_tasks WHERE page_key=? AND action_id=?").get(input.key,input.actionId);
     if(link?.enabled!==1)throw Error("REQUIREMENT_FOLLOW_NOT_ENABLED");
@@ -147,8 +149,8 @@ export class MemoryService {
       metadata:{workspaceId:"personal",applicationId:`requirement:${token}`,proposalDigest:token,generation:1,
         title:`需求跟进：${action.title}`,details:detail,delivery:{channelBindingVersion:1,channel:"in_app",target:"notification-center"}},
       task:{id:input.taskId,expectedVersion:input.expectedVersion,title:`跟进：${action.title}`,detail,ownerId:"owner",projectId:input.projectId,
-        evidenceId:input.evidenceId,status:action.status,dueAt:action.dueAt,dueExpression:action.dueExpression,nextStep:action.detail,
-        followUp:{waiting_on:action.waitingOn,next_check_at:null,snoozed_until:null,time_expression:null,timezone:"Asia/Shanghai"}},
+        evidenceId:input.evidenceId,status:action.status,dueAt:checkTime ? prior?.dueAt as string|null : action.dueAt,dueExpression:action.dueExpression,nextStep:action.detail,
+        followUp:{waiting_on:action.waitingOn,next_check_at:checkTime ? action.dueAt ?? checkTime : null,snoozed_until:prior?.followUp?.snoozed_until ?? null,time_expression:checkTime ? action.dueExpression : null,timezone:prior?.followUp?.timezone ?? "Asia/Shanghai"}},
     }, {after: receipt => {
       this.db.prepare(`UPDATE requirement_tasks SET task_id=?,task_version=?,action_digest=?,article_revision=?,error=NULL,updated_at=? WHERE page_key=? AND action_id=?`)
         .run(receipt.entityId,receipt.entityVersion,stableDigest(action),input.revision,new Date().toISOString(),input.key,input.actionId);

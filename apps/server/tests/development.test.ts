@@ -352,6 +352,18 @@ it("maintains one linked task across accepted requirement updates and preserves 
   expect(service.board(article.document.key).links[0]!.error).toContain("修改");
 });
 
+it("links an existing personal task without creating a duplicate or rewriting it", async () => {
+  const { store, article } = await setup(), service = new RequirementTasks(store);
+  service.follow(article.document.key, "implement", article.revision);
+  const existing = store.tasks()[0]!;
+  store.db.prepare("DELETE FROM requirement_tasks WHERE page_key=?").run(article.document.key);
+  const before = store.tasks()[0]!;
+  const board = service.follow(article.document.key, "implement", article.revision, String(existing.id));
+  expect(board.links[0]?.task_id).toBe(existing.id);
+  expect(store.tasks()).toHaveLength(1);
+  expect(store.tasks()[0]).toEqual(before);
+});
+
 it("loads executable coding and independent review roles with their actual schemas", () => {
   const registry = new RoleBundleRegistry();
   expect(registry.load("coding-agent").manifest.output_schema).toBe(
