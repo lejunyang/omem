@@ -36,8 +36,9 @@ export function requirementBasis(
     .pages()
     .find((p) => p.key === article.document.key)?.plan;
   if (!plan) throw Error("需求计划不存在");
-  // Only this host's registered outcomes for this requirement are progress.
-  // A similarly named/imported document cannot exempt itself from scope checks.
+  // Registered execution results and the page's host-attached task/run state
+  // describe progress. Including the latter would invalidate a review when the
+  // review itself changes the run state. Ordinary source updates remain inputs.
   const reports = new Set(
     repository.store.db
       .prepare(
@@ -46,6 +47,12 @@ export function requirementBasis(
       .all(article.document.key)
       .map((row) => String(row.source_id)),
   );
+  for (const row of repository.store.db
+    .prepare(
+      "SELECT source_id FROM knowledge_page_inputs WHERE document_key=? AND purpose='followup-state'",
+    )
+    .all(article.document.key))
+    reports.add(String(row.source_id));
   const inputs = new Map(
     repository
       .materialsForPlan(plan)

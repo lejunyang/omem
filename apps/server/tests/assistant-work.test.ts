@@ -22,6 +22,7 @@ import { AssistantRuntime } from "../src/assistant/runtime.js";
 import { DevelopmentQueue } from "../src/development/queue.js";
 import { DevelopmentRunner } from "../src/development/runner.js";
 import { inspectRequirementChange } from "../src/development/replanning.js";
+import { requirementBasis } from "../src/development/requirement-basis.js";
 import { MessageUnderstanding } from "../src/messages/understanding.js";
 import {
   git,
@@ -922,6 +923,7 @@ it("freezes actual tasks for all page phases without self-triggering another rev
   const article = publish(s.repository, key);
   s.work.actions.follow(key, "page", article.revision);
   const plan = s.repository.pages().find(p => p.key === key)!.plan!;
+  const beforeState = requirementBasis(s.repository, article);
   s.work.preparePage(plan);
   const state = s.repository.materialsForPlan(plan).find(m => m.key.startsWith("hook:followup-state:"))!;
   expect(state.text).toContain("跟进：实现退款页面");
@@ -935,6 +937,9 @@ it("freezes actual tasks for all page phases without self-triggering another rev
   expect(changed.text).toContain('"status": "done"');
   expect(s.store.revision(state.revisionId)!.fragments.map(f => f.text).join("\n")).toContain('"status": "open"');
   expect(s.store.jobs.list().filter(j => j.kind === "extract_claims" && j.inputRefs.some((r: any) => r.sourceId === state.sourceId))).toHaveLength(0);
+  // The coding acceptance basis must survive both attaching and revising this
+  // host snapshot, otherwise a successful review invalidates its own result.
+  expect(requirementBasis(s.repository, article)).toEqual(beforeState);
 });
 
 it("answers an actual decision from owner chat without widening the selected project", () => {
