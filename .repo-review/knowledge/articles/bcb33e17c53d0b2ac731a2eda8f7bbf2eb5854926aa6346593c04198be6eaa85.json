@@ -1,0 +1,533 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/development/checks.ts",
+    "title": "项目检查结果的安全复用与并发协调",
+    "summary": "ProjectChecks 为开发流程中的 setup、test、build 等登记命令提供结果缓存、有效性判定和同请求并发合并；它按命令名分别选择仍对应当前源码、命令配置和运行环境的最后结果，并且只复用日志仍存在的成功结果。",
+    "category": "代码机制",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "服务端",
+      "Agent 运行时",
+      "受控执行"
+    ],
+    "sections": [
+      {
+        "key": "purpose",
+        "title": "解决什么问题",
+        "body": "`ProjectChecks` 位于项目配置与真实命令执行之间，避免编码代理、宿主检查和评审对未变化的项目反复运行同一条昂贵命令。一个实例代表一套共享执行环境：随机 ID 区分进程内实例，`generation` 区分 setup 前后的依赖状态；重启或环境代次变化后，旧结果不会被误认为可复用。它从项目回调读取最新命令配置，并依赖 `workspace` 提供源码指纹与实际执行能力、依赖摘要模块比较命令配置。参考 [[c1]]"
+      },
+      {
+        "key": "run-flow",
+        "title": "一次检查如何执行",
+        "body": "以 `run(\"test\")` 为例：先确认名称已登记并计算当前源码指纹；没有 `forceReason` 时，查找同名、同源码指纹、同命令摘要、同环境的最后结果，只有退出码为 0、执行前后源码均未变化且日志仍存在才直接返回，并标记 `reused`。否则以名称、配置、源码和环境生成键；同键任务正在运行时共享其 Promise，避免并发重复执行。参考 [[c2]] [[c3]]\n\n真正执行由 `runCommand` 完成，结果随后追加到共享结果数组并触发 `onResult` 回调，最后无论成功或异常都清除 pending 项。\n\n```mermaid\nflowchart LR\n  A[run(name)] --> B{可复用的最后结果?}\n  B -- 是 --> C[返回 reused]\n  B -- 否 --> D{同键正在执行?}\n  D -- 是 --> C\n  D -- 否 --> E[runCommand]\n  E --> F[记录结果并触发回调]\n```\n参考 [[c4]]"
+      },
+      {
+        "key": "boundaries",
+        "title": "失效规则与使用边界",
+        "body": "`status()` 不执行命令，只给全部历史结果补充当前的 `reusable` 标记。这个“最后一条”是**按命令名分别计算**的：对每条结果，代码用它自己的 `r.name` 查找同名、同源码指纹、同命令摘要、同环境的最后候选。因此，示例中的 `test` 与 `build` 可以各自有一条结果同时标为可复用；只有同一候选集合内，更晚的记录才会覆盖更早记录。相应地，若同名且上述匹配维度相同的较晚重跑失败，它会成为该命令的最后候选，使更早的成功记录不再可复用。参考 [[c5]]\n\n源码变化、命令配置变化、执行期间改写源码、环境变化或日志文件丢失都会使结果失效。传入 `forceReason` 会跳过历史结果复用，但仍会加入同键的在途任务。`setup` 命令只要返回结果就递增环境代次（代码未以退出码为条件），从而使此前环境中的结果失效；新建实例也会因随机环境 ID 而拒绝沿用旧实例结果。未知命令会立即报错。参考 [[c6]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "共享执行环境",
+        "reason": "支持类的职责、构造依赖、随机环境身份、代次以及跨模块依赖的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/checks.ts",
+          "startLine": 3,
+          "endLine": 23
+        },
+        "quote": "import type { DevelopmentProject } from \"../../../../packages/contracts/src/development.js\";\nimport { stableDigest } from \"../storage/digest.js\";\nimport { fingerprint, runCommand, type CommandResult } from \"./workspace.js\";\n\n/** One execution environment shared by coding, host and review. A restart gets\n * a new enviro"
+      },
+      {
+        "key": "c2",
+        "label": "历史结果匹配",
+        "reason": "支持按名称、源码、命令摘要和环境查找最后结果，以及成功、源码未变、日志存在等复用条件。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/checks.ts",
+          "startLine": 24,
+          "endLine": 49
+        },
+        "quote": "  private latest(name: string, source: string) {\n    const command = this.project().commands.find((c) => c.name === name);\n    return (\n      command &&\n      this.results.findLast(\n        (r) =>\n          r.name === name &&\n          r.sourceFingerprint === source &&\n          r.commandFingerprint === stableDigest(co"
+      },
+      {
+        "key": "c3",
+        "label": "检查入口与并发合并",
+        "reason": "支持未知命令校验、强制执行分支、历史复用及相同执行键共享在途任务的流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/checks.ts",
+          "startLine": 62,
+          "endLine": 78
+        },
+        "quote": "  async run(\n    name: string,\n    forceReason?: string,\n  ): Promise<CommandResult & { reused?: boolean }> {\n    const project = this.project(),\n      command = project.commands.find((c) => c.name === name);\n    if (!command) throw Error(\"未知检查命令；先从项目文件确定并登记检查方式\");\n    const source = await fingerprint(this.root);\n    i"
+      },
+      {
+        "key": "c4",
+        "label": "执行、记录与结果回调",
+        "reason": "支持委托 runCommand、推进 setup 环境代次、追加结果、调用 onResult 回调并清理 pending 的流程图。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/checks.ts",
+          "startLine": 79,
+          "endLine": 98
+        },
+        "quote": "    const operation = (async () => {\n      const result = await runCommand(\n        this.root,\n        project,\n        name,\n        this.logs,\n        this.signal,\n      );\n      if (command.purpose === \"setup\") this.generation++;\n      result.environmentId = this.environment();\n      this.results.push(result);\n     "
+      },
+      {
+        "key": "c5",
+        "label": "按命令分别标记可复用性",
+        "reason": "支持 latest 按命令名及其他匹配维度选择最后候选，并支持 status 对每条结果以其自身命令名计算 reusable。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/checks.ts",
+          "startLine": 24,
+          "endLine": 60
+        },
+        "quote": "  private latest(name: string, source: string) {\n    const command = this.project().commands.find((c) => c.name === name);\n    return (\n      command &&\n      this.results.findLast(\n        (r) =>\n          r.name === name &&\n          r.sourceFingerprint === source &&\n          r.commandFingerprint === stableDigest(co"
+      },
+      {
+        "key": "c6",
+        "label": "环境推进与未知命令",
+        "reason": "支持未知命令报错、forceReason 跳过历史复用、setup 返回后无条件递增代次及结果记录的边界说明。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/development/checks.ts",
+          "startLine": 62,
+          "endLine": 90
+        },
+        "quote": "  async run(\n    name: string,\n    forceReason?: string,\n  ): Promise<CommandResult & { reused?: boolean }> {\n    const project = this.project(),\n      command = project.commands.find((c) => c.name === name);\n    if (!command) throw Error(\"未知检查命令；先从项目文件确定并登记检查方式\");\n    const source = await fingerprint(this.root);\n    i"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/development/checks.ts",
+      "digest": "c58ba6127e8608097f735be26feddc5c28fe11269575c080ad38cf3995a8f4d3"
+    }
+  ],
+  "publication": {
+    "role": "note"
+  },
+  "investigation": [
+    {
+      "key": "omem:apps/server/src/development/checks.ts",
+      "digest": "c58ba6127e8608097f735be26feddc5c28fe11269575c080ad38cf3995a8f4d3"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-06T12:12:40.587Z",
+    "trace": {
+      "profileId": "traex",
+      "acpProvider": "traex",
+      "runId": "942f207d-2097-44ba-ac96-6eb79ff1b296",
+      "roleId": "knowledge-refresher",
+      "roleVersion": "1",
+      "bundleHash": "0ba8a740a9c0a1066cb89e5b9e3be9a56f395adb07e62aad4b5bc4f5c078da83",
+      "promptHash": "a537a8bd71d4581084f3bd18e6b9ac8e22483520543b44d6ee75de2dd523b778",
+      "contextHash": "4d611ac85d6f1b59cdaacf2269a22a909b870c4c9979d597429dc5798219229d",
+      "skillHash": "b611e7f72593c708d1430a1b9867e83f0d95796036e615120cb4aad48fd02fb0",
+      "toolHash": "c63ebed27fd0068222e3a65f2f3139400d62735cd978169855e2c5e739f4d448",
+      "fingerprint": "0d554589f0fd19aa3ca09bb2edfe06772d46111af9f7639a2e40bf1bc91a058a",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-refresher",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_material_groups",
+        "list_materials",
+        "read_material",
+        "read_fragments",
+        "read_section",
+        "search_materials",
+        "search_contexts",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a11120-8ff5-70f1-8f75-20e5f666744c"
+      ],
+      "usage": {
+        "used": 33018,
+        "size": 258400,
+        "cost": null,
+        "acpCompletion": "validated_submission",
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Eg2nUuIZ6wQHTCRRzrO4Avim:exec-623c83a2-5b9d-4ea7-a7ae-39f8657c3aab",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Eg2nUuIZ6wQHTCRRzrO4Avim:exec-623c83a2-5b9d-4ea7-a7ae-39f8657c3aab",
+              "process_id": "37802",
+              "turn_id": "01a11120-93ae-7231-9482-024ac479c827",
+              "started_at_ms": 1791288721222,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/0ba8a740a9c0a1066cb89e5b9e3be9a56f395adb07e62aad4b5bc4f5c078da83/942f207d-2097-44ba-ac96-6eb79ff1b296",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-refresher/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Eg2nUuIZ6wQHTCRRzrO4Avim:exec-623c83a2-5b9d-4ea7-a7ae-39f8657c3aab",
+            "status": "completed",
+            "outputDigest": "5ab8866e091fe3193eb9edc1f4ec6712268d0826608a7a1a3dfd11e441a8d339"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_kNn34hg8VZGpvVK6HaCPr2FY:exec-c4eff706-ab0a-4aa9-963b-05140ff543e6",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/development/checks.ts",
+                "startLine": 1,
+                "endLine": 101
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/development/checks.ts",
+              "startLine": 1,
+              "endLine": 101
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_kNn34hg8VZGpvVK6HaCPr2FY:exec-c4eff706-ab0a-4aa9-963b-05140ff543e6",
+            "status": "completed",
+            "outputDigest": "03fa61a34fc7503bffe34d043574b07db2f87de5b7a479fbd7bf48b18847d80d"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_kNn34hg8VZGpvVK6HaCPr2FY:exec-10e856c9-dd4e-4338-9a1b-005b6d9d76ed",
+            "title": "Tool: omem/search_knowledge",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_knowledge",
+              "arguments": {
+                "query": "ProjectChecks 项目检查结果 安全复用 并发协调 status latest reusable",
+                "limit": 5,
+                "purpose": "follow-up"
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_knowledge",
+            "args": {
+              "query": "ProjectChecks 项目检查结果 安全复用 并发协调 status latest reusable",
+              "purpose": "follow-up",
+              "limit": 5
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_kNn34hg8VZGpvVK6HaCPr2FY:exec-10e856c9-dd4e-4338-9a1b-005b6d9d76ed",
+            "status": "completed",
+            "outputDigest": "2aaa5c3eb6af2c9961c597fe81241b274bbbe76a1ec1f410e2e153f64f7deb5f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_oNEVkloQfqcBFtXyw2IqeLX6:exec-bfaeca9b-b75a-4069-9286-00ba7bfd3117",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/development/checks.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_oNEVkloQfqcBFtXyw2IqeLX6:exec-bfaeca9b-b75a-4069-9286-00ba7bfd3117",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-06T12:13:49.613Z",
+    "trace": {
+      "profileId": "traex",
+      "acpProvider": "traex",
+      "runId": "1324aff0-234f-4295-85cb-73aeadcd5772",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "1a5a7a1062712eab31c014fe5cb5821433de81f333a49dd6d97f237ab76f409a",
+      "promptHash": "b055b348dec701d7e6c5c1de58f4c28d65bc5c9ffb93b8320a6981c982aeb59d",
+      "contextHash": "1c11e971dadee9b85cb1f328fdb490747d1cac6fb80242282b4bde5a2822f7cf",
+      "skillHash": "2871813c1c7d4b649d2e0c3420f23096eb99098fb23f0c70b967fab22a203735",
+      "toolHash": "c63ebed27fd0068222e3a65f2f3139400d62735cd978169855e2c5e739f4d448",
+      "fingerprint": "59b9691b2afa44b07eaff8d33efacfe2bd24be741335f523ae7e2ac15de61020",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_material_groups",
+        "list_materials",
+        "read_material",
+        "read_fragments",
+        "read_section",
+        "search_materials",
+        "search_contexts",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a11121-ca37-7e02-a17a-8822bfe14e4a"
+      ],
+      "usage": {
+        "used": 33284,
+        "size": 258400,
+        "cost": null,
+        "acpCompletion": "validated_submission",
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_PjrvqzNWfZb1iJhO5bNCV8FM:exec-fda6a7a5-fbf1-486f-b4ec-05dac46ce9e5",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_PjrvqzNWfZb1iJhO5bNCV8FM:exec-fda6a7a5-fbf1-486f-b4ec-05dac46ce9e5",
+              "process_id": "2489",
+              "turn_id": "01a11121-cd7f-70e1-a1e6-d519f3010ca3",
+              "started_at_ms": 1791288803339,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/1a5a7a1062712eab31c014fe5cb5821433de81f333a49dd6d97f237ab76f409a/1324aff0-234f-4295-85cb-73aeadcd5772",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-verifier/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_PjrvqzNWfZb1iJhO5bNCV8FM:exec-fda6a7a5-fbf1-486f-b4ec-05dac46ce9e5",
+            "status": "completed",
+            "outputDigest": "f07ab19445e1c53ca668cb5f7d0b869096149734aeca93b962ab57684fabeacc"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_McxGtYINQd0Co08LUgg1UhOn:exec-659b1e15-2542-4b50-b460-91e043cea3ee",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/development/checks.ts",
+                "startLine": 1,
+                "endLine": 101
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_McxGtYINQd0Co08LUgg1UhOn:exec-6280f7c8-149e-4fb4-bc16-09318aba4b07",
+            "title": "Tool: omem/read_section",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_section",
+              "arguments": {
+                "key": "omem:apps/server/src/development/checks.ts"
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/development/checks.ts",
+              "startLine": 1,
+              "endLine": 101
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_section",
+            "args": {
+              "key": "omem:apps/server/src/development/checks.ts"
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_McxGtYINQd0Co08LUgg1UhOn:exec-4812bb83-be1b-42a9-86c2-1ef1088a0d0b",
+            "title": "Tool: omem/code_navigation",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "code_navigation",
+              "arguments": {
+                "key": "omem:apps/server/src/development/checks.ts",
+                "symbol": "ProjectChecks"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_McxGtYINQd0Co08LUgg1UhOn:exec-659b1e15-2542-4b50-b460-91e043cea3ee",
+            "status": "completed",
+            "outputDigest": "337f609d1232a154f67d82a7657cd96abb0ec712cc3ae5da7ae1b4971d9715a2"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_McxGtYINQd0Co08LUgg1UhOn:exec-6280f7c8-149e-4fb4-bc16-09318aba4b07",
+            "status": "completed",
+            "outputDigest": "30b72ebad8772c24bf30284065bfa07c787d98340667ccd40e3032e7eb2027de"
+          },
+          {
+            "kind": "mcp",
+            "tool": "code_navigation",
+            "args": {
+              "key": "omem:apps/server/src/development/checks.ts",
+              "symbol": "ProjectChecks"
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_McxGtYINQd0Co08LUgg1UhOn:exec-4812bb83-be1b-42a9-86c2-1ef1088a0d0b",
+            "status": "completed",
+            "outputDigest": "b6ad551f2dfc064d7451d07f986033c77b04ee287a5b875a195b1127de412072"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_WIwVkjxOfsrimoFto5x3zJ2y:exec-0c367b03-d483-4971-ad4f-60d82546d736",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/development/checks.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_WIwVkjxOfsrimoFto5x3zJ2y:exec-0c367b03-d483-4971-ad4f-60d82546d736",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
