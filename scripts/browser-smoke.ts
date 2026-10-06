@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { buildApp } from "../apps/server/src/app.js";
 import { Store } from "../apps/server/src/store.js";
 import { KnowledgeRepository, bindKnowledgeQuotes } from "../apps/server/src/knowledge/repository.js";
+import { requirementBrief } from "../apps/server/src/knowledge/requirements.js";
 import { LarkOnboardingService } from "../apps/server/src/integrations/lark/onboarding.js";
 import { EncryptedSecretStore } from "../apps/server/src/integrations/lark/secret-store.js";
 import type {
@@ -484,6 +485,68 @@ try {
     await page.getByRole("button", { name: "日常助理", exact: true }).click();
     await expect(page.getByText("今天有什么需要跟进的事项？", { exact: true })).toBeVisible();
   });
+  await check(
+    "requirement attention reads persisted scope and composes without losing the user's draft",
+    async () => {
+      // Rendering fixture only; assistant:work verifies real autonomous follow/coding.
+      store.capture(
+        {
+          source: "manual",
+          externalId: "ui-follow",
+          title: "退款验收",
+          parts: [{ type: "text", text: "本期先完成退款查询，页面尚未排期。" }],
+          context: {},
+        },
+        { learning: false, notify: false },
+      );
+      const key = "requirement:browser-attention";
+      built.work.pages.repository.savePlan(
+        {
+          ...requirementBrief({ key, title: "退款查询", goal: "跟进接口验收" }),
+          materialKeys: ["manual:ui-follow"],
+          attention: {
+            focus: ["接口验收"],
+            ignore: ["页面"],
+            notifications: "important",
+            instruction: "只关注接口，暂不关注页面",
+          },
+        },
+        true,
+      );
+      built.work.pages.maintenance.setEnabled(key, false);
+      await page.getByRole("button", { name: "刷新状态", exact: true }).click();
+      await page
+        .locator(".work-panel")
+        .getByRole("button", { name: /退款查询/ })
+        .click();
+      await expect(page.locator(".work-panel")).toContainText(
+        "重点关注：接口验收",
+      );
+      await expect(page.locator(".work-panel")).toContainText("暂不关注：页面");
+      await page.getByLabel("发给日常助理").fill("这是我还没发出的补充。");
+      await page
+        .getByRole("button", { name: "在对话中调整", exact: true })
+        .click();
+      await expect(page.getByLabel("发给日常助理")).toHaveValue(
+        /这是我还没发出的补充。[\s\S]*退款查询/,
+      );
+      await expect(page.getByLabel("发给日常助理")).toBeFocused();
+      for (const width of [1440, 768, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        ).toBe(true);
+        await page.locator(".work-panel").scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: join(out, `requirement-attention-${width}.png`),
+        });
+      }
+      await page.getByLabel("发给日常助理").fill("");
+      await page.setViewportSize({ width: 1440, height: 1000 });
+    },
+  );
   await check("daily follow-up controls: waiting, snooze, cancel and narrow layout", async () => {
     await page.getByRole("button", { name: "事项与待办", exact: true }).click();
     await page.getByLabel("事项", { exact: true }).fill("等待评审回复");
