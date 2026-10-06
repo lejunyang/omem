@@ -13,6 +13,7 @@ import {
 import type { KnowledgePageService } from "../knowledge/page-service.js";
 import type { KnowledgeArticle } from "../knowledge/repository.js";
 import { requirementBrief } from "../knowledge/requirements.js";
+import { RequirementTasks } from "../knowledge/requirement-tasks.js";
 import { DevelopmentQueue } from "../development/queue.js";
 import type { ResearchTool } from "../knowledge/agent-research.js";
 import { stableDigest } from "../storage/digest.js";
@@ -39,8 +40,29 @@ type Feedback = {
 export function assertWorkDelegation(action: WorkAction, actor: WorkActor) {
   if (actor.principalId !== "owner" || actor.visibility !== "private")
     throw Error("需求与编码操作只能由本人私聊交办");
-  if (action.operation !== "start_development") return;
+  if (!("delegation" in action)) return;
   const quote = action.delegation.trim();
+  if (!quote || !actor.userText.includes(quote))
+    throw Error("操作必须来自当前用户的明确交办原话");
+  if (action.operation !== "start_development") {
+    const verbs =
+      action.operation === "resume_development"
+        ? /继续|恢复|重试|resume|retry|continue/i
+        : action.operation === "apply_development"
+          ? /应用|合入|放回|apply|merge/i
+          : action.operation === "follow_action"
+            ? /待办|跟进|关注|todo|follow/i
+            : /取消|停止|不再|移除|unfollow|stop/i;
+    if (
+      !verbs.test(quote) ||
+      (action.operation !== "unfollow_action" &&
+        /(?:不要|先别|不必|暂不|别再).{0,16}(?:继续|恢复|重试|应用|合入|放回|跟进|关注|待办)|\b(?:do not|don't)\b/i.test(
+          actor.userText,
+        ))
+    )
+      throw Error("尚未收到当前用户明确交办该操作");
+    return;
+  }
   if (
     !quote ||
     !actor.userText.includes(quote) ||
@@ -59,6 +81,7 @@ export function assertWorkDelegation(action: WorkAction, actor: WorkActor) {
 export class AssistantWork {
   readonly store;
   readonly inputs: CapabilityReceipts;
+  readonly actions: RequirementTasks;
   constructor(
     readonly pages: KnowledgePageService,
     readonly development: DevelopmentQueue,
@@ -66,6 +89,7 @@ export class AssistantWork {
   ) {
     this.store = pages.repository.store;
     this.inputs = new CapabilityReceipts(this.store);
+    this.actions = new RequirementTasks(this.store);
     this.store.db.exec(`CREATE TABLE IF NOT EXISTS assistant_focus(
       requirement_key TEXT PRIMARY KEY,version INTEGER NOT NULL,attention TEXT NOT NULL,initial_attention TEXT NOT NULL,updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS assistant_work_feedback(
@@ -130,6 +154,10 @@ export class AssistantWork {
       current: article?.current ?? false,
       revision: article?.revision ?? null,
       requirement: article?.document.requirement ?? null,
+      actionLinks:
+        article?.reading?.workflow === "requirement-followup"
+          ? this.actions.board(key).links
+          : [],
       questions: article?.document.questions ?? [],
       feedback: this.feedback(key),
       development: this.development
@@ -144,6 +172,7 @@ export class AssistantWork {
       key: t.key,
       project: t.project,
       state: t.job.state,
+      operation: t.operation,
       phase: t.run?.state ?? "queued",
       message: t.message,
       error: t.job.lastError ?? t.run?.error,
@@ -201,6 +230,7 @@ export class AssistantWork {
     return {
       ...this.taskView(task),
       matchesReviewed,
+      reviewedFingerprint: run.reviewedFingerprint ?? null,
       inspectionError,
       checks: run.checks,
       diff: lines
@@ -286,7 +316,7 @@ export class AssistantWork {
         name: "work_status",
         readOnly: true,
         description:
-          "Read the requirement's current facts, human feedback, attention/version and background coding/check/review status.",
+          "Read current requirement facts, actions and their personal todo links, human feedback, attention/version and background coding/check/review status. Use revision and action IDs for follow_action/unfollow_action.",
         shape: { key: z.string() },
         run: ({ key }) => this.status(key),
       },
@@ -294,7 +324,7 @@ export class AssistantWork {
         name: "work_result",
         readOnly: true,
         description:
-          "Read a development task's delivery location, saved reviewed patch (paginated), actual check results and independent review. Distinguishes the isolated checkout from the unchanged source repository. Does not rerun checks or apply a patch.",
+          "Read a development task's delivery location, saved reviewed patch (paginated), actual check results and independent review. Before proposing apply_development, require phase=ready and matchesReviewed=true and copy reviewedFingerprint. Does not rerun checks or apply a patch.",
         shape: {
           taskId: z.string(),
           startLine: z.number().int().positive().default(1),
@@ -455,6 +485,55 @@ export class AssistantWork {
         taskId: task.id,
         message: `已交办「${this.plan(action.key).title}」的实现。后台将编码、检查并独立评审，有结果会通知你；你也可以直接询问进度。现在尚未完成。`,
       };
+    } else if (
+      action.operation === "resume_development" ||
+      action.operation === "apply_development"
+    ) {
+      const task = this.development.continueTask(
+        action.taskId,
+        actor,
+        action.operation === "apply_development"
+          ? action.reviewedFingerprint
+          : undefined,
+      );
+      receipt = {
+        tool: "work_action",
+        operation: action.operation,
+        key: task.key,
+        taskId: task.id,
+        message: task.message,
+      };
+    } else if (
+      action.operation === "follow_action" ||
+      action.operation === "unfollow_action"
+    ) {
+      const current = this.actions.board(action.key);
+      if (current.revision !== action.expectedRevision)
+        throw Error("需求页已变化，请重新读取当前行动项");
+      const board =
+        action.operation === "follow_action"
+          ? this.actions.follow(
+              action.key,
+              action.actionId,
+              action.expectedRevision,
+            )
+          : this.actions.unfollow(action.key, action.actionId);
+      const link = board.links.find((l) => l.action_id === action.actionId);
+      if (
+        !link ||
+        (action.operation === "follow_action" && (!link.task_id || link.error))
+      )
+        throw Error(String(link?.error ?? "行动项尚未关联个人待办"));
+      receipt = {
+        tool: "work_action",
+        operation: action.operation,
+        key: action.key,
+        personalTaskId: link.task_id ? String(link.task_id) : undefined,
+        message:
+          action.operation === "follow_action"
+            ? "已将行动项关联到个人待办；需求更新后会继续同步到同一条事项。你手动修改待办时会保留你的调整。"
+            : "已停止同步这个行动项，原个人待办仍保留。",
+      };
     } else if (action.operation === "cancel_development") {
       const task = this.development.cancel(action.taskId, actor.requestId);
       receipt = {
@@ -464,6 +543,7 @@ export class AssistantWork {
         message: task.message,
       };
     } else {
+      if (!("expectedVersion" in action)) throw Error("不支持的需求操作");
       const plan = this.plan(action.key),
         row = this.ensure(action.key);
       if (Number(row.version) !== action.expectedVersion)

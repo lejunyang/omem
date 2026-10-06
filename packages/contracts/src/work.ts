@@ -98,6 +98,40 @@ export const workActionSchema = z.discriminatedUnion("operation", [
   z
     .object({ operation: z.literal("cancel_development"), taskId: key })
     .strict(),
+  z
+    .object({
+      operation: z.literal("resume_development"),
+      taskId: key,
+      delegation: key.describe(
+        "Exact CURRENT user instruction to continue this existing coding task, not requirement maintenance.",
+      ),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("apply_development"),
+      taskId: key,
+      reviewedFingerprint: key.describe(
+        "Copy from a fresh work_result with phase=ready and matchesReviewed=true. Never invent or reuse a different task's fingerprint.",
+      ),
+      delegation: key.describe(
+        "Exact CURRENT user instruction to apply this reviewed patch to the registered repository. Does not authorize commit, push or deployment.",
+      ),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.enum(["follow_action", "unfollow_action"]),
+      key,
+      actionId: key,
+      expectedRevision: key.describe(
+        "Current requirement revision from work_status.",
+      ),
+      delegation: key.describe(
+        "Exact CURRENT user instruction to add or stop following this requirement action in personal todos.",
+      ),
+    })
+    .strict(),
 ]);
 export type WorkAction = z.infer<typeof workActionSchema>;
 
@@ -114,5 +148,6 @@ export type WorkReceipt = {
   message: string;
   key?: string;
   taskId?: string;
+  personalTaskId?: string;
   rejected?: boolean;
 };

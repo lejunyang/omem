@@ -14,6 +14,14 @@ import {
 
 const kind = "assistant:develop";
 const active = new Set(["queued", "retry_wait", "leased", "running"]);
+type DevelopmentJobInput = {
+  taskId: string;
+  operation?: "develop" | "apply";
+  reviewedFingerprint?: string;
+  continuation?: WorkActor;
+  capabilities?: import("../../../../packages/contracts/src/capabilities.js").CapabilityReference[];
+  handoff?: DevelopmentHandoff;
+};
 export class DevelopmentQueue {
   readonly runner: DevelopmentRunner;
   private readonly worker: DurableJobWorker;
@@ -39,11 +47,25 @@ export class DevelopmentQueue {
       `development-${randomUUID()}`,
       {
         [kind]: async (job, signal) => {
+          const input = job.inputRefs[0] as DevelopmentJobInput;
+          const task = this.read(input.taskId);
+          if (input.operation === "apply") {
+            if (!task.runId || !input.reviewedFingerprint)
+              throw new JobExecutionError("缺少待应用的已评审版本", "config");
+            const applied = await this.runner.apply(task.runId, {
+              expectedFingerprint: input.reviewedFingerprint,
+              signal,
+            });
+            store.db
+              .prepare("UPDATE assistant_development SET message=? WHERE id=?")
+              .run(
+                "已将评审补丁应用到登记仓库，保留为未提交修改；未推送或部署。",
+                task.id,
+              );
+            return { resultRef: applied.id };
+          }
           if (!profile)
             throw new JobExecutionError("尚未配置编码 Agent", "config");
-          const task = this.read(
-            String((job.inputRefs[0] as { taskId: string }).taskId),
-          );
           const repository = pages.repository;
           for (;;) {
             signal.throwIfAborted();
@@ -79,13 +101,8 @@ export class DevelopmentQueue {
             ? this.runner.read(task.runId)
             : await this.runner.create(task.project, task.key, store, {
                 id: task.id,
-                capabilities: (
-                  job.inputRefs[0] as {
-                    capabilities?: import("../../../../packages/contracts/src/capabilities.js").CapabilityReference[];
-                  }
-                ).capabilities,
-                handoff: (job.inputRefs[0] as { handoff?: DevelopmentHandoff })
-                  .handoff,
+                capabilities: input.capabilities,
+                handoff: input.handoff,
               });
           store.db
             .prepare("UPDATE assistant_development SET run_id=? WHERE id=?")
@@ -94,6 +111,7 @@ export class DevelopmentQueue {
           if (!["ready", "applied"].includes(run.state))
             run = await this.runner.execute(run.id, store, profile, {
               signal,
+              continuation: input.continuation,
               log: (message) =>
                 store.db
                   .prepare(
@@ -222,6 +240,7 @@ export class DevelopmentQueue {
       .get(id);
     if (!row) throw Error("编码任务不存在");
     const runId = row.run_id ? String(row.run_id) : null;
+    const job = this.store.jobs.get(String(row.job_id))!;
     return {
       id: String(row.id),
       requestId: String(row.request_id),
@@ -231,7 +250,9 @@ export class DevelopmentQueue {
       project: String(row.project),
       message: String(row.message),
       createdAt: String(row.created_at),
-      job: this.store.jobs.get(String(row.job_id))!,
+      job,
+      operation:
+        (job.inputRefs[0] as DevelopmentJobInput).operation ?? "develop",
       runId,
       run: runId ? this.runner.read(runId) : null,
     };
@@ -243,6 +264,62 @@ export class DevelopmentQueue {
       )
       .all()
       .map((r) => this.read(String(r.id)));
+  }
+  /** A new user instruction schedules the next step on the existing checkout.
+   * Old jobs and their attempts remain available; external inputs stay frozen. */
+  continueTask(id: string, actor: WorkActor, reviewedFingerprint?: string) {
+    const task = this.read(id);
+    if (task.principalId !== actor.principalId)
+      throw Error("不能操作其他人的编码任务");
+    if (active.has(task.job.state)) {
+      if (reviewedFingerprint) throw Error("任务仍在运行，请等待当前操作完成");
+      return task;
+    }
+    if (reviewedFingerprint) {
+      if (
+        task.run?.state !== "ready" ||
+        task.run.reviewedFingerprint !== reviewedFingerprint
+      )
+        throw Error("请先读取当前评审结果，再应用同一份补丁");
+    } else {
+      if (!this.profile) throw Error("尚未配置编码 Agent");
+      if (task.run && ["ready", "applied"].includes(task.run.state))
+        throw Error("任务已评审或已应用；可查看结果，新需求请新建任务");
+    }
+    this.store.tx(() => {
+      const prior = task.job.inputRefs[0] as DevelopmentJobInput;
+      const { job } = this.store.jobs.enqueueInCurrentTransaction({
+        kind,
+        inputRefs: [
+          {
+            taskId: id,
+            capabilities: prior.capabilities,
+            handoff: prior.handoff,
+            operation: reviewedFingerprint ? "apply" : "develop",
+            reviewedFingerprint,
+            continuation: actor,
+          },
+        ],
+        roleVersion: "coding-and-review@1",
+        policyVersion: "owner-delegated@1",
+        // Filesystem application failures need a fresh owner request after the
+        // source is fixed, rather than repeatedly retrying a possibly applied patch.
+        maxAttempts: reviewedFingerprint ? 1 : 30,
+        cause: `owner-${reviewedFingerprint ? "apply" : "resume"}:${actor.requestId}`,
+      });
+      this.store.db
+        .prepare(
+          "UPDATE assistant_development SET job_id=?,notified=0,message=? WHERE id=?",
+        )
+        .run(
+          job.id,
+          reviewedFingerprint
+            ? "已安排应用这份已评审补丁；后台将再次核对需求与仓库状态，目前尚未应用。"
+            : "已安排继续原编码任务，沿用原副本、固定需求和已选资料；后台会重新检查并独立评审。",
+          id,
+        );
+    });
+    return this.read(id);
   }
   cancel(id: string, requestId: string) {
     const task = this.read(id);

@@ -3,6 +3,7 @@ import { taskFollowUpSchema, type TaskFollowUp, type TaskStatus } from "../../..
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { stableDigest } from "./digest.js";
+import { transaction } from "./transaction.js";
 
 type Row = Record<string, unknown>;
 
@@ -178,15 +179,7 @@ export class ApplicationRepository {
   }
 
   private transaction<T>(work: () => T): T {
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
-      const result = work();
-      this.db.exec("COMMIT");
-      return result;
-    } catch (error) {
-      this.db.exec("ROLLBACK");
-      throw error;
-    }
+    return transaction(this.db, work);
   }
 
   private existingReceipt(

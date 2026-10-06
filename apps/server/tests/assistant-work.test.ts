@@ -21,7 +21,11 @@ import { AssistantWork } from "../src/assistant/work.js";
 import { AssistantRuntime } from "../src/assistant/runtime.js";
 import { DevelopmentQueue } from "../src/development/queue.js";
 import { DevelopmentRunner } from "../src/development/runner.js";
-import { git, fingerprint } from "../src/development/workspace.js";
+import {
+  git,
+  fingerprint,
+  snapshotCommit,
+} from "../src/development/workspace.js";
 import { profileSchema } from "../../../packages/contracts/src/index.js";
 import type {
   WorkAction,
@@ -103,7 +107,11 @@ function setup(runner?: (path: string) => DevelopmentRunner) {
     action,
   };
 }
-function publish(repository: KnowledgeRepository, key: string) {
+function publish(
+  repository: KnowledgeRepository,
+  key: string,
+  actionTitle = "实现退款页面",
+) {
   const plan = repository.pages().find((p) => p.key === key)!.plan!,
     m = repository.materials().find((m) => m.key === "manual:spec")!;
   return repository.publish({
@@ -141,7 +149,20 @@ function publish(repository: KnowledgeRepository, key: string) {
               evidence: ["spec"],
             },
           ],
-          actions: [],
+          actions: [
+            {
+              id: "page",
+              title: actionTitle,
+              detail: "本期查询页面",
+              owner: "我",
+              waitingOn: null,
+              dueAt: null,
+              dueExpression: null,
+              status: "open",
+              certainty: "confirmed",
+              evidence: ["spec"],
+            },
+          ],
         },
       },
       new Map([[m.key, m]]),
@@ -523,4 +544,152 @@ it("resumes the same durable coding checkout after shutdown and returns its real
   await restored.processOne();
   expect(notices()).toBe(1);
   await restored.stop();
+});
+
+it("follows a requirement action into one personal todo, syncs a new revision and stops syncing without deleting it", () => {
+  const s = setup();
+  const key = s.work.apply(s.action, s.actor("跟进退款查询")).key!;
+  const article = publish(s.repository, key);
+  const actor = s.actor("将实现退款页面加入我的待办"),
+    action: WorkAction = {
+      operation: "follow_action",
+      key,
+      actionId: "page",
+      expectedRevision: article.revision,
+      delegation: actor.userText,
+    };
+  const receipt = s.work.apply(action, actor);
+  expect(s.work.apply(action, actor)).toEqual(receipt);
+  const id = receipt.personalTaskId!;
+  expect(s.store.tasks().find((t) => t.id === id)?.title).toBe(
+    "跟进：实现退款页面",
+  );
+  const next = publish(s.repository, key, "实现退款状态页面");
+  s.work.actions.sync(next);
+  expect(s.store.tasks().find((t) => t.id === id)?.title).toBe(
+    "跟进：实现退款状态页面",
+  );
+  expect(s.work.status(key).actionLinks).toHaveLength(1);
+  s.work.apply(
+    {
+      operation: "unfollow_action",
+      key,
+      actionId: "page",
+      expectedRevision: next.revision,
+      delegation: "停止同步这个行动",
+    },
+    s.actor("停止同步这个行动"),
+  );
+  s.work.actions.sync(publish(s.repository, key, "下一次变更"));
+  expect(s.store.tasks().find((t) => t.id === id)?.title).toBe(
+    "跟进：实现退款状态页面",
+  );
+  expect(s.work.status(key).actionLinks[0]?.enabled).toBe(0);
+});
+
+it("continues the same blocked task and queues an exact reviewed patch for guarded application", async () => {
+  let calls = 0;
+  class Runner extends DevelopmentRunner {
+    override async execute(id: string) {
+      const run = this.read(id);
+      if (++calls === 1) {
+        run.state = "blocked";
+        run.error = "检查环境未就绪";
+      } else {
+        writeFileSync(
+          join(run.checkout, "value.js"),
+          "export const value = 2;\n",
+        );
+        run.head = await snapshotCommit(run.checkout, "implementation");
+        run.reviewedFingerprint = await fingerprint(run.checkout);
+        run.state = "ready";
+        delete run.error;
+      }
+      this.save(run);
+      return run;
+    }
+  }
+  const s = setup((path) => new Runner(path));
+  const root = join(s.dir, "project");
+  mkdirSync(root);
+  writeFileSync(join(root, "value.js"), "export const value = 1;\n");
+  await git(root, "init", "-q");
+  await git(root, "add", ".");
+  await git(
+    root,
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.invalid",
+    "commit",
+    "-qm",
+    "base",
+  );
+  await s.queue.runner.register("refund", {
+    name: "退款",
+    repository: root,
+    commands: [],
+  });
+  const key = s.work.apply(s.action, s.actor("跟进退款查询")).key!;
+  publish(s.repository, key);
+  const id = s.work.apply(
+    {
+      operation: "start_development",
+      key,
+      project: "refund",
+      delegation: "请帮我实现退款查询",
+    },
+    s.actor("请帮我实现退款查询"),
+  ).taskId!;
+  await s.queue.processOne();
+  const blocked = s.queue.read(id);
+  expect(blocked.run?.state).toBe("blocked");
+  const resume: WorkAction = {
+    operation: "resume_development",
+    taskId: id,
+    delegation: "环境已修好，继续该任务",
+  };
+  const actor = s.actor(resume.delegation);
+  const queued = s.work.apply(resume, actor);
+  expect(s.work.apply(resume, actor)).toEqual(queued);
+  expect(s.queue.read(id).job.id).not.toBe(blocked.job.id);
+  await s.queue.processOne();
+  const ready = s.queue.read(id);
+  expect(ready.runId).toBe(blocked.runId);
+  expect(ready.run?.checkout).toBe(blocked.run?.checkout);
+  expect((ready.job.inputRefs[0] as any).continuation.userText).toBe(
+    actor.userText,
+  );
+  const result = await s.work.result(id);
+  expect(result.matchesReviewed).toBe(true);
+  const apply: WorkAction = {
+    operation: "apply_development",
+    taskId: id,
+    reviewedFingerprint: ready.run!.reviewedFingerprint!,
+    delegation: "请应用这份补丁",
+  };
+  expect(() => s.work.apply(apply, s.actor("不要应用这份补丁"))).toThrow();
+  expect(() =>
+    s.work.apply(
+      { ...apply, reviewedFingerprint: "old" },
+      s.actor(apply.delegation),
+    ),
+  ).toThrow("当前评审结果");
+  writeFileSync(join(root, "value.js"), "用户尚未提交的修改\n");
+  s.work.apply(apply, s.actor(apply.delegation));
+  await s.queue.processOne();
+  expect(s.queue.read(id).job.state).toBe("failed");
+  expect(readFileSync(join(root, "value.js"), "utf8")).toContain(
+    "用户尚未提交",
+  );
+  writeFileSync(join(root, "value.js"), "export const value = 1;\n");
+  const request = s.actor(apply.delegation);
+  const receipt = s.work.apply(apply, request);
+  expect(receipt.message).toContain("尚未应用");
+  expect(s.work.apply(apply, request)).toEqual(receipt);
+  await s.queue.processOne();
+  expect(s.queue.read(id).run?.state).toBe("applied");
+  expect(readFileSync(join(root, "value.js"), "utf8")).toContain("value = 2");
+  expect((await git(root, "rev-parse", "HEAD")).trim()).toBe(ready.run!.base);
+  expect(s.queue.list()).toHaveLength(1);
 });
