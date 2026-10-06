@@ -7,6 +7,7 @@ import {
 } from "../src/agent-providers.js";
 import { developmentProfiles } from "../src/config.js";
 import { profileSchema } from "../../../packages/contracts/src/index.js";
+import { codexSessionConfig } from "../src/codex-session.js";
 const profile = (id: string, extra = {}) =>
   profileSchema.parse({
     id,
@@ -44,7 +45,7 @@ it("selects separate role profiles without changing identity and freezes their c
   ).toThrow("existing ACP");
 });
 
-it("limits Claude sessions to the registered omem tools and keeps unverified Codex execution closed", () => {
+it("limits Claude sessions to the registered omem tools and accepts explicitly configured Codex", () => {
   const claude = profile("reviewer", { command: "claude-agent-acp" });
   expect(sessionMetadata(claude)).toMatchObject({
     claudeCode: {
@@ -58,7 +59,29 @@ it("limits Claude sessions to the registered omem tools and keeps unverified Cod
     },
   });
   expect(sessionMetadata(claude)).not.toHaveProperty("trae");
-  expect(() =>
-    developmentProfile(profile("codex", { command: "codex-acp" })),
-  ).toThrow("暂仅支持能力探测");
+  expect(
+    developmentProfile(profile("codex", { command: "codex-acp" })).id,
+  ).toBe("codex");
+});
+
+it("disables personal tools without replacing authentication or the adapter's task MCP table", () => {
+  const config = codexSessionConfig(
+    { mcp_servers: { personal: {} }, plugins: { "tools@local": {} } },
+    ["/skill/SKILL.md", "/skill/SKILL.md"],
+  );
+  const assembled = {
+    ...config,
+    mcp_servers: { omem: { url: "http://127.0.0.1/task" } },
+  };
+  expect(assembled["mcp_servers.personal.enabled"]).toBe(false);
+  expect(config).toMatchObject({
+    features: { hooks: false, shell_tool: false, apps: false },
+    plugins: { "tools@local": { enabled: false } },
+    skills: { config: [{ path: "/skill/SKILL.md", enabled: false }] },
+  });
+  expect(config).not.toHaveProperty("model_provider");
+  expect(config).not.toHaveProperty("cli_auth_credentials_store");
+  expect(() => codexSessionConfig({ mcp_servers: { omem: {} } }, [])).toThrow(
+    "CONFLICT",
+  );
 });

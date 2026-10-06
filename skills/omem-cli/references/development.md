@@ -8,7 +8,7 @@
 
 编码先用 `develop register ALIAS project.json` 登记本机仓库与必要检查：
 
-编码与独立评审分别由个人配置 `development.codingProfileId` / `reviewProfileId` 选择，指向 profiles 中已有 ACP 配置；省略时沿用主助手。先 `agent probe PROFILE_ID --json` 发现可用模型/effort，实际推理成功才说明认证可用。任务入队固定两角色配置，恢复不换成新的默认值。Traex 已实际验证；Claude 0.86.0 已接实验适配但本机推理缺认证；Codex 暂只能探测，不能编码。详细配置与权限差异见随包 [Agent 提供方](../../../docs/reader-first/agent-providers.md)。
+编码与独立评审分别由个人配置 `development.codingProfileId` / `reviewProfileId` 选择，指向 profiles 中已有 ACP 配置；省略时沿用主助手。先 `agent probe PROFILE_ID --json` 发现可用模型/effort，实际推理成功才说明认证可用。任务入队固定两角色配置，恢复不换成新的默认值。Traex、Codex 已实际完成编码与独立评审；Claude 0.86.0 已接实验适配但本机推理缺认证。Codex 使用 2.1.1 适配器、配套 CLI 和原有登录，会话关闭继承的个人工具并装配本次 omem 工具；不要为解决权限问题打开全局 bypass。详细配置与限制见随包 [Agent 提供方](../../../docs/reader-first/agent-providers.md)。
 
 ```json
 {"name":"项目","repository":"/absolute/repository","ruleFiles":[],"commands":[{"name":"test","command":"node","args":["--test"],"purpose":"test","required":true}]}
