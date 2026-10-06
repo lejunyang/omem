@@ -69,8 +69,11 @@ export function codePath(root: string, path: string) {
   for (const part of rel.split(sep).filter(Boolean)) {
     current = join(current, part);
     let linked = false;
-    try { linked = lstatSync(current).isSymbolicLink(); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    try {
+      linked = lstatSync(current).isSymbolicLink();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     if (linked) throw Error("代码工具不跟随符号链接");
   }
   return full;
@@ -165,6 +168,9 @@ export type CommandResult = {
   at: string;
   log: string;
   sourceFingerprint: string;
+  commandFingerprint?: string;
+  environmentId?: string;
+  afterFingerprint?: string;
 };
 export async function runCommand(
   root: string,
@@ -225,6 +231,8 @@ export async function runCommand(
     at: new Date().toISOString(),
     log: file,
     sourceFingerprint: before,
+    commandFingerprint: stableDigest(command),
+    afterFingerprint: await fingerprint(root),
   };
 }
 export function codeTools(input: {
@@ -235,6 +243,13 @@ export function codeTools(input: {
   logs: string;
   signal?: AbortSignal;
   onCheck: (result: CommandResult) => void;
+  checks?: {
+    run: (
+      name: string,
+      forceReason?: string,
+    ) => Promise<CommandResult & { reused?: boolean }>;
+    status: () => Promise<unknown>;
+  };
 }): ResearchTool[] {
   const { root, project } = input;
   const rulesRead = new Map<string, string>();
@@ -357,22 +372,39 @@ export function codeTools(input: {
       readOnly: false,
       description:
         "Run a registered setup/test/build/browser/design command by exact name. Commands are trusted project configuration, not taken from source materials. Returns real exit code and log; read log with read_check_log.",
-      shape: { name: z.string() },
-      run: async ({ name }) => {
-        const result = await runCommand(
-          root,
-          project,
-          name,
-          input.logs,
-          input.signal,
-        );
-        input.onCheck(result);
+      shape: {
+        name: z.string(),
+        forceReason: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Only force a fresh execution for a specific suspected environment/test issue; otherwise reuse a successful result on unchanged code and command.",
+          ),
+      },
+      run: async ({ name, forceReason }) => {
+        const result = input.checks
+          ? await input.checks.run(name, forceReason)
+          : await runCommand(root, project, name, input.logs, input.signal);
+        if (!input.checks) input.onCheck(result);
         return {
           ...result,
           output: readFileSync(result.log, "utf8").slice(-24000),
         };
       },
     },
+    ...(input.checks
+      ? [
+          {
+            name: "project_checks",
+            readOnly: true,
+            description:
+              "Read actual shared command results and whether they still match this code and command configuration. Read logs rather than rerunning successful unchanged checks; force only for a concrete new concern.",
+            shape: {},
+            run: () => input.checks!.status(),
+          },
+        ]
+      : []),
     {
       name: "read_check_log",
       description:

@@ -21,6 +21,7 @@ import { AssistantWork } from "../src/assistant/work.js";
 import { AssistantRuntime } from "../src/assistant/runtime.js";
 import { DevelopmentQueue } from "../src/development/queue.js";
 import { DevelopmentRunner } from "../src/development/runner.js";
+import { inspectRequirementChange } from "../src/development/replanning.js";
 import {
   git,
   fingerprint,
@@ -501,9 +502,14 @@ it("resumes the same durable coding checkout after shutdown and returns its real
   s.store.db
     .prepare("UPDATE jobs SET not_before=? WHERE id=?")
     .run("2000-01-01T00:00:00Z", stopped.job.id);
-  const restored = new DevelopmentQueue(s.store, s.pages, { ...profile, model: "changed-after-enqueue" }, {
-    runner: new Runner(s.store.dataDir),
-  });
+  const restored = new DevelopmentQueue(
+    s.store,
+    s.pages,
+    { ...profile, model: "changed-after-enqueue" },
+    {
+      runner: new Runner(s.store.dataDir),
+    },
+  );
   await restored.processOne();
   const ready = restored.read(taskId);
   expect(ready.runId).toBe(stopped.runId);
@@ -712,35 +718,84 @@ it("reads project guidance, configures checks during delegation, and freezes que
       return run;
     }
   }
-  const s = setup(path => new Runner(path)), root = join(s.dir, "project");
+  const s = setup((path) => new Runner(path)),
+    root = join(s.dir, "project");
   mkdirSync(root);
-  writeFileSync(join(root, "AGENTS.md"), "Use the registered checks. Do not publish.\n");
-  writeFileSync(join(root, "README.md"), "Verify locally with node --check code.mjs.\n");
+  writeFileSync(
+    join(root, "AGENTS.md"),
+    "Use the registered checks. Do not publish.\n",
+  );
+  writeFileSync(
+    join(root, "README.md"),
+    "Verify locally with node --check code.mjs.\n",
+  );
   writeFileSync(join(root, "code.mjs"), "export const answer = 1;\n");
   await git(root, "init", "-q");
   await snapshotCommit(root, "initial");
-  await s.queue.runner.register("project", { name: "Project", repository: root, instructions: "Keep owner constraint" });
+  await s.queue.runner.register("project", {
+    name: "Project",
+    repository: root,
+    instructions: "Keep owner constraint",
+  });
   const service = s.queue.runner.configuration;
   const inspection = await service.inspect("project");
   expect(inspection.hasVerificationCommands).toBe(false);
   const doc = await service.read("project", "README.md");
   const configuration = {
     expectedVersion: inspection.configurationVersion,
-    instructions: "Keep owner constraint", ruleFiles: [],
-    commands: [{ name: "syntax", command: process.execPath, args: ["--check", "code.mjs"], cwd: ".", purpose: "test" as const, required: true, timeoutMs: 10000 }],
-    sources: [{ path: doc.path, hash: doc.hash }], summary: "检查模块语法", gaps: ["尚无业务行为测试"],
+    instructions: "Keep owner constraint",
+    ruleFiles: [],
+    commands: [
+      {
+        name: "syntax",
+        command: process.execPath,
+        args: ["--check", "code.mjs"],
+        cwd: ".",
+        purpose: "test" as const,
+        required: true,
+        timeoutMs: 10000,
+      },
+    ],
+    sources: [{ path: doc.path, hash: doc.hash }],
+    summary: "检查模块语法",
+    gaps: ["尚无业务行为测试"],
   };
   const key = s.work.apply(s.action, s.actor("跟进退款查询")).key!;
   publish(s.repository, key);
   const assignment = s.actor("请直接实现退款查询，按项目说明配置检查");
-  const receipt = s.work.apply({ operation: "start_development", key, project: "project", configuration, delegation: assignment.userText }, assignment);
+  const receipt = s.work.apply(
+    {
+      operation: "start_development",
+      key,
+      project: "project",
+      configuration,
+      delegation: assignment.userText,
+    },
+    assignment,
+  );
   expect(receipt.taskId).toBeTruthy();
-  expect(service.get("project").configuration?.gaps).toEqual(["尚无业务行为测试"]);
-  expect(() => service.configure("project", configuration)).toThrow("配置已变化");
+  expect(service.get("project").configuration?.gaps).toEqual([
+    "尚无业务行为测试",
+  ]);
+  expect(() => service.configure("project", configuration)).toThrow(
+    "配置已变化",
+  );
   const current = await service.inspect("project");
-  const update = { ...configuration, expectedVersion: current.configurationVersion, commands: [{ ...configuration.commands[0]!, name: "new-check" }] };
+  const update = {
+    ...configuration,
+    expectedVersion: current.configurationVersion,
+    commands: [{ ...configuration.commands[0]!, name: "new-check" }],
+  };
   const actor = s.actor("调整项目检查配置");
-  s.work.apply({ operation: "configure_project", project: "project", configuration: update, delegation: actor.userText }, actor);
+  s.work.apply(
+    {
+      operation: "configure_project",
+      project: "project",
+      configuration: update,
+      delegation: actor.userText,
+    },
+    actor,
+  );
   await s.queue.processOne();
   const run = s.queue.read(receipt.taskId!).run!;
   expect(run.project.commands[0]?.name).toBe("syntax");
@@ -748,5 +803,87 @@ it("reads project guidance, configures checks during delegation, and freezes que
   writeFileSync(join(root, "README.md"), "Changed instructions\n");
   const next = await service.inspect("project");
   expect(next.configurationStale).toBe(true);
-  expect(() => service.configure("project", { ...update, expectedVersion: next.configurationVersion })).toThrow("文件已变化");
+  expect(() =>
+    service.configure("project", {
+      ...update,
+      expectedVersion: next.configurationVersion,
+    }),
+  ).toThrow("文件已变化");
+});
+
+it("automatically continues only an existing watched task and ignores progress-only refreshes and cancellation", async () => {
+  let executions = 0;
+  class Runner extends DevelopmentRunner {
+    override async execute(id: string) {
+      executions++;
+      const run = this.read(id);
+      const update = inspectRequirementChange(s.repository, run);
+      if (update) {
+        run.requirementRevision = update.article.revision;
+        run.requirementBasis = update.basis;
+      }
+      writeFileSync(
+        join(run.checkout, "value.js"),
+        `export const value=${executions + 1};\n`,
+      );
+      run.head = await snapshotCommit(run.checkout, "implementation");
+      run.state = "ready";
+      run.reviewedFingerprint = await fingerprint(run.checkout);
+      this.save(run);
+      return run;
+    }
+  }
+  const s = setup((path) => new Runner(path)),
+    root = join(s.dir, "project");
+  mkdirSync(root);
+  writeFileSync(join(root, "value.js"), "export const value=1;\n");
+  await git(root, "init", "-q");
+  await snapshotCommit(root, "base");
+  await s.queue.runner.register("refund", {
+    name: "Refund",
+    repository: root,
+    commands: [],
+  });
+  const key = s.work.apply(s.action, s.actor("跟进退款查询")).key!;
+  publish(s.repository, key);
+  const id = s.work.apply(
+    {
+      operation: "start_development",
+      key,
+      project: "refund",
+      delegation: "请帮我实现退款查询",
+    },
+    s.actor("请帮我实现退款查询"),
+  ).taskId!;
+  await s.queue.processOne();
+  const first = s.queue.read(id);
+  const progress = structuredClone(
+    s.repository.get(key, first.run!.requirementRevision)!,
+  );
+  progress.document.requirement!.criteria[0]!.status = "verified";
+  s.repository.publish(progress);
+  await s.queue.processOne();
+  expect(executions).toBe(1);
+  const changed = structuredClone(progress);
+  changed.document.requirement!.criteria[0]!.description = "返回退款状态和原因";
+  s.repository.publish(changed);
+  await s.queue.processOne();
+  const continued = s.queue.read(id);
+  expect(executions).toBe(2);
+  expect(continued.runId).toBe(first.runId);
+  expect(continued.run?.checkout).toBe(first.run?.checkout);
+  expect(s.queue.list()).toHaveLength(1);
+  const again = structuredClone(changed);
+  again.document.requirement!.criteria[0]!.description =
+    "返回退款状态、原因和时间";
+  s.repository.publish(again);
+  // Pause the requirement before the worker notices its new definition.
+  s.pages.maintenance.setEnabled(key, false);
+  await s.queue.processOne();
+  expect(executions).toBe(2);
+  s.pages.maintenance.setEnabled(key, true);
+  s.queue.continueTask(id, s.actor("继续"));
+  s.queue.cancel(id, randomUUID());
+  await s.queue.processOne();
+  expect(executions).toBe(2);
 });

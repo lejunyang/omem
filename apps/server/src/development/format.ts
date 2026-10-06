@@ -19,6 +19,12 @@ export function formatDevelopmentRun(run: DevelopmentRun) {
     `任务：${run.id}`,
     `需求：${run.requirementKey}`,
     `当前轮次：${run.attempt}`,
+    ...(run.changePlan
+      ? [
+          `本轮调整：${run.changePlan.summary}`,
+          ...run.changePlan.questions.map((q) => `待确认：${q}`),
+        ]
+      : []),
     ...(run.error ? [`需要处理：${run.error}`] : []),
     ...(checks.length
       ? [

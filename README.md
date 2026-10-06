@@ -17,6 +17,8 @@ omem --help
 
 安装版从任意目录运行都使用 `~/.omem`，CLI 和网页共享个人库。`omem import` 保存材料，`omem search` 查找，`omem ask` 自主调查，`omem messages` 管理只读消息订阅，`omem status` 检查服务。完整命令、帮助、可选依赖、超时和发布步骤见[CLI 使用指南](docs/cli.md)；随包提供的 [omem-cli skill](skills/omem-cli/SKILL.md) 可供其他 Agent 使用。
 
+普通编码交办直接派发目标与材料，项目规则和检查方式由编码 Agent 在副本读取。相同代码的真实成功检查在编码、宿主和独立评审间复用；已交办且持续维护开启的未应用任务，在需求变更生效后保留副本调整实现。用法与边界见[需求跟进与编码](docs/reader-first/requirement-followup.md)。
+
 ## 源码开发
 
 ```bash

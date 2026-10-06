@@ -683,26 +683,56 @@ develop
   .command("projects")
   .description("查看已登记编码项目")
   .action(async () => show((await developmentRunner()).projects()));
-develop.command("inspect <alias>")
+develop
+  .command("inspect <alias>")
   .description("只读项目规则、开发入口、当前配置版本与变化，不安装或执行脚本")
-  .action(async alias => show(await (await developmentRunner()).configuration.inspect(alias)));
-develop.command("read <alias> <path>")
+  .action(async (alias) =>
+    show(await (await developmentRunner()).configuration.inspect(alias)),
+  );
+develop
+  .command("read <alias> <path>")
   .option("--start <line>", "开始行", "1")
   .option("--end <line>", "结束行")
   .description("读取登记项目文件，返回行号和用于配置的内容摘要")
-  .action(async (alias, path, opts) => show(await (await developmentRunner()).configuration.read(alias, path,
-    Number(opts.start), opts.end ? Number(opts.end) : undefined)));
-develop.command("configure <alias> <file>")
-  .description("保存含 expectedVersion、commands、sources 的项目配置；已有任务保持原配置")
-  .action(async (alias, file) => show((await developmentRunner()).configuration.configure(alias, await readJson(file))));
+  .action(async (alias, path, opts) =>
+    show(
+      await (
+        await developmentRunner()
+      ).configuration.read(
+        alias,
+        path,
+        Number(opts.start),
+        opts.end ? Number(opts.end) : undefined,
+      ),
+    ),
+  );
+develop
+  .command("configure <alias> <file>")
+  .description(
+    "保存含 expectedVersion、commands、sources 的项目配置；已有任务保持原配置",
+  )
+  .action(async (alias, file) =>
+    show(
+      (await developmentRunner()).configuration.configure(
+        alias,
+        await readJson(file),
+      ),
+    ),
+  );
 develop
   .command("prepare <alias> <repository>")
   .option("--ref <ref>", "分支、标签或提交，默认远端 HEAD", "HEAD")
   .option("--config <file>", "可选项目 JSON，提供名称、规则和检查命令")
   .description("使用已有 Git/SSH 登录准备指定仓库，固定提交并登记本地项目")
-  .action(async (alias, repository, opts) => show(await (await developmentRunner()).prepareRepository(alias, repository, opts.ref, {
-    configuration: opts.config ? await readJson(opts.config) : undefined,
-  })));
+  .action(async (alias, repository, opts) =>
+    show(
+      await (
+        await developmentRunner()
+      ).prepareRepository(alias, repository, opts.ref, {
+        configuration: opts.config ? await readJson(opts.config) : undefined,
+      }),
+    ),
+  );
 develop
   .command("refresh <alias>")
   .option("--ref <ref>", "显式改用其他分支、标签或提交")
@@ -710,18 +740,31 @@ develop
   .description("重试或刷新原仓库；为新提交准备工作区，保留旧任务与修改")
   .action(async (alias, opts) => {
     const runner = await developmentRunner();
-    const origin = runner.projects().find(p => p.alias === alias)?.origin ?? runner.repositories.status(alias);
+    const origin =
+      runner.projects().find((p) => p.alias === alias)?.origin ??
+      runner.repositories.status(alias);
     if (!origin) throw Error("项目尚未登记远端地址，请先 prepare");
-    show(await runner.prepareRepository(alias, origin.url, opts.ref ?? origin.ref, {
-      configuration: opts.config ? await readJson(opts.config) : undefined,
-    }));
+    show(
+      await runner.prepareRepository(
+        alias,
+        origin.url,
+        opts.ref ?? origin.ref,
+        {
+          configuration: opts.config ? await readJson(opts.config) : undefined,
+        },
+      ),
+    );
   });
 develop
   .command("repository <alias>")
   .description("查看准备状态、原地址、固定提交和缺失的子模块/LFS 内容")
-  .action(async alias => { const runner = await developmentRunner(); show({
-    project: runner.projects().find(p => p.alias === alias) ?? null, preparation: runner.repositories.status(alias),
-  }); });
+  .action(async (alias) => {
+    const runner = await developmentRunner();
+    show({
+      project: runner.projects().find((p) => p.alias === alias) ?? null,
+      preparation: runner.repositories.status(alias),
+    });
+  });
 const capabilities = group(
   "capabilities",
   "登记和检查外部只读 skill、CLI、MCP，按项目装配",
@@ -808,16 +851,31 @@ capabilities
     (await capabilityRegistry()).read(id);
     const { Store } = await import("./store.js");
     const { receiptSchema } = await import("./capabilities/receipts.js");
-    const { captureCapabilityMaterial } = await import("./capabilities/materials.js");
+    const { captureCapabilityMaterial } = await import(
+      "./capabilities/materials.js"
+    );
     const { codePath } = await import("./development/workspace.js");
     const directory = join(defaultDataDir(), "capability-runs", id);
-    const receipt = receiptSchema.parse(await readJson(codePath(directory, recordId + ".json")));
-    if (receipt.recordId !== recordId || receipt.capability !== id) throw Error("回执不属于指定能力");
+    const receipt = receiptSchema.parse(
+      await readJson(codePath(directory, recordId + ".json")),
+    );
+    if (receipt.recordId !== recordId || receipt.capability !== id)
+      throw Error("回执不属于指定能力");
     const store = new Store(defaultDataDir());
     try {
-      const material = captureCapabilityMaterial(store, directory, receipt, { title: opts.title });
-      show({ key: material.key, title: material.title, revision: material.revisionId, lines: material.lineCount, images: material.images });
-    } finally { store.close(); }
+      const material = captureCapabilityMaterial(store, directory, receipt, {
+        title: opts.title,
+      });
+      show({
+        key: material.key,
+        title: material.title,
+        revision: material.revisionId,
+        lines: material.lineCount,
+        images: material.images,
+      });
+    } finally {
+      store.close();
+    }
   });
 capabilities
   .command("call <id> <tool> [input-file]")
@@ -877,11 +935,14 @@ async function runDevelopment(
   process.once("SIGTERM", stop);
   let runId: string | undefined;
   try {
-    const run = id ? runner.read(id) : await runner.create(alias!, key!, store, { profiles });
+    const run = id
+      ? runner.read(id)
+      : await runner.create(alias!, key!, store, { profiles });
     runId = run.id;
     console.error(`开发任务 ${run.id}；目录 ${run.directory}`);
     const result = await runner.execute(run.id, store, profiles.coding, {
       reviewProfile: profiles.review,
+      replan: !!id,
       signal: abort.signal,
       log: (s) => console.error(s),
     });
@@ -922,7 +983,7 @@ develop
   .action(async (key, opts) => runDevelopment(undefined, key, opts.project));
 develop
   .command("resume <id>")
-  .description("保留代码和问题，从中断/受阻状态继续一轮实现与独立评审")
+  .description("保留原副本，对比最新需求并继续实现与独立评审")
   .action(async (id) => runDevelopment(id, undefined, undefined));
 develop
   .command("diff <id>")

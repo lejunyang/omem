@@ -11,7 +11,7 @@
       "canonical_name": "omem-coding-agent",
       "version": "1",
       "load_mode": "inline",
-      "artifact_digest": "7ce93a21d97abc09b05309f7a0e9cb05f39c5392ff076bd8c9b803bceb890bb2"
+      "artifact_digest": "1b84faa9e646acfde302acefe96049d9ab000513733b5f92632c003af5655519"
     }
   ],
   "output_schema": "ImplementationResult.v1",

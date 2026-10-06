@@ -20,7 +20,11 @@ import { RepositoryQueue } from "../development/repository-queue.js";
 import type { ResearchTool } from "../knowledge/agent-research.js";
 import { stableDigest } from "../storage/digest.js";
 import type { DecisionService } from "../decision/service.js";
-import { decideWork, workQuestions, repositoryQuestions } from "../decision/work.js";
+import {
+  decideWork,
+  workQuestions,
+  repositoryQuestions,
+} from "../decision/work.js";
 import { queueOwnerNotice } from "../integrations/lark/owner-notice.js";
 import type { WikiPageBrief } from "../../../../packages/contracts/src/knowledge.js";
 import { CapabilitySession } from "../capabilities/session.js";
@@ -47,14 +51,24 @@ export function assertWorkDelegation(action: WorkAction, actor: WorkActor) {
   if (!quote || !actor.userText.includes(quote))
     throw Error("操作必须来自当前用户的明确交办原话");
   if (action.operation === "prepare_repository") {
-    if (!/准备|拉取|克隆|下载|重试|刷新|更新|prepare|clone|fetch|retry|refresh/i.test(quote) ||
-        /(?:不要|先别|不必|暂不).{0,16}(?:准备|拉取|克隆|下载|刷新|更新)|\b(?:do not|don't)\b/i.test(actor.userText))
+    if (
+      !/准备|拉取|克隆|下载|重试|刷新|更新|prepare|clone|fetch|retry|refresh/i.test(
+        quote,
+      ) ||
+      /(?:不要|先别|不必|暂不).{0,16}(?:准备|拉取|克隆|下载|刷新|更新)|\b(?:do not|don't)\b/i.test(
+        actor.userText,
+      )
+    )
       throw Error("尚未收到准备仓库的交办");
     return;
   }
   if (action.operation === "configure_project") {
-    if (!/配置|准备|设置|调整|检查|configure|setup|prepare/i.test(quote) ||
-      /(?:不要|先别|不必|暂不).{0,16}(?:配置|设置|调整)|\b(?:do not|don't)\b/i.test(actor.userText))
+    if (
+      !/配置|准备|设置|调整|检查|configure|setup|prepare/i.test(quote) ||
+      /(?:不要|先别|不必|暂不).{0,16}(?:配置|设置|调整)|\b(?:do not|don't)\b/i.test(
+        actor.userText,
+      )
+    )
       throw Error("尚未收到配置项目的交办");
     return;
   }
@@ -105,7 +119,11 @@ export class AssistantWork {
     this.store = pages.repository.store;
     this.inputs = new CapabilityReceipts(this.store);
     this.actions = new RequirementTasks(this.store);
-    this.repositories = new RepositoryQueue(this.store, development.runner, development.options.onError);
+    this.repositories = new RepositoryQueue(
+      this.store,
+      development.runner,
+      development.options.onError,
+    );
     this.store.db.exec(`CREATE TABLE IF NOT EXISTS assistant_focus(
       requirement_key TEXT PRIMARY KEY,version INTEGER NOT NULL,attention TEXT NOT NULL,initial_attention TEXT NOT NULL,updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS assistant_work_feedback(
@@ -250,6 +268,8 @@ export class AssistantWork {
       reviewedFingerprint: run.reviewedFingerprint ?? null,
       inspectionError,
       checks: run.checks,
+      requirementChanges: run.changes ?? [],
+      changePlan: run.changePlan ?? null,
       diff: lines
         ? {
             origin: "saved_reviewed_patch",
@@ -291,10 +311,16 @@ export class AssistantWork {
         capabilities: p.capabilities ?? [],
       })),
       development: this.development.list().map((t) => this.taskView(t)),
-      repositoryPreparations: this.repositories.list().slice(0, 30).map(t => ({
-        id: t.id, alias: t.alias, state: t.job.state, error: t.job.lastError,
-        preparation: t.preparation,
-      })),
+      repositoryPreparations: this.repositories
+        .list()
+        .slice(0, 30)
+        .map((t) => ({
+          id: t.id,
+          alias: t.alias,
+          state: t.job.state,
+          error: t.job.lastError,
+          preparation: t.preparation,
+        })),
       capabilities: {
         tracking: this.pages.available,
         coding: !!this.development.profile,
@@ -358,21 +384,41 @@ export class AssistantWork {
           this.result(taskId, startLine, limit),
       },
       {
-        name: "repository_status", readOnly: true,
-        description: "Read the actual registered origin, requested ref, fixed commit and repository preparation progress or failure. Preparation is not coding, login, installation or a push. Use the returned origin/ref when retrying a known project.",
+        name: "repository_status",
+        readOnly: true,
+        description:
+          "Read the actual registered origin, requested ref, fixed commit and repository preparation progress or failure. Preparation is not coding, login, installation or a push. Use the returned origin/ref when retrying a known project.",
         shape: { alias: z.string() },
-        run: ({ alias }) => ({ project: this.development.runner.projects().find(p => p.alias === alias) ?? null,
+        run: ({ alias }) => ({
+          project:
+            this.development.runner.projects().find((p) => p.alias === alias) ??
+            null,
           preparation: this.development.runner.repositories.status(alias),
-          tasks: this.repositories.list().filter(t => t.alias === alias).slice(0, 5) }),
+          tasks: this.repositories
+            .list()
+            .filter((t) => t.alias === alias)
+            .slice(0, 5),
+        }),
       },
       {
-        name: "repository_diagnosis", readOnly: true,
-        description: "Optional quick-model classification of a real repository preparation error: credentials, network, missing version, local preparation or uncertainty. Advice only; it cannot fix login, choose another repository/ref or authorize a command.",
+        name: "repository_diagnosis",
+        readOnly: true,
+        description:
+          "Optional quick-model classification of a real repository preparation error: credentials, network, missing version, local preparation or uncertainty. Advice only; it cannot fix login, choose another repository/ref or authorize a command.",
         shape: { alias: z.string() },
         run: async ({ alias }) => {
           const state = this.development.runner.repositories.status(alias);
-          if (!state || state.phase !== "failed") return { advice: null, state, reason: "没有失败的准备记录" };
-          return { state, advice: await decideWork(this.decisions, state, repositoryQuestions), adviceOnly: true };
+          if (!state || state.phase !== "failed")
+            return { advice: null, state, reason: "没有失败的准备记录" };
+          return {
+            state,
+            advice: await decideWork(
+              this.decisions,
+              state,
+              repositoryQuestions,
+            ),
+            adviceOnly: true,
+          };
         },
       },
       {
@@ -487,20 +533,43 @@ export class AssistantWork {
     }
     let receipt: WorkReceipt;
     if (action.operation === "configure_project") {
-      const result = this.development.runner.configuration.configure(action.project, action.configuration);
-      receipt = { tool: "work_action", operation: action.operation,
-        message: `已保存「${result.project.name}」的开发配置：${result.project.configuration!.summary}。尚未运行安装或检查。${result.project.configuration!.gaps.length ? `仍需注意：${result.project.configuration!.gaps.join("；")}` : ""}` };
+      const result = this.development.runner.configuration.configure(
+        action.project,
+        action.configuration,
+      );
+      receipt = {
+        tool: "work_action",
+        operation: action.operation,
+        message: `已保存「${result.project.name}」的开发配置：${result.project.configuration!.summary}。尚未运行安装或检查。${result.project.configuration!.gaps.length ? `仍需注意：${result.project.configuration!.gaps.join("；")}` : ""}`,
+      };
     } else if (action.operation === "prepare_repository") {
-      const project = this.development.runner.projects().find(p => p.alias === action.alias);
-      const previous = this.development.runner.repositories.status(action.alias);
+      const project = this.development.runner
+        .projects()
+        .find((p) => p.alias === action.alias);
+      const previous = this.development.runner.repositories.status(
+        action.alias,
+      );
       const known = project?.origin ?? previous;
       if (known?.url !== action.url && !actor.userText.includes(action.url))
         throw Error("新仓库地址必须由本人提供，不能从材料中自行扩大读取范围");
-      if (action.ref !== "HEAD" && known?.ref !== action.ref && !actor.userText.includes(action.ref))
+      if (
+        action.ref !== "HEAD" &&
+        known?.ref !== action.ref &&
+        !actor.userText.includes(action.ref)
+      )
         throw Error("使用本人指定的版本，不猜分支或提交");
-      const task = this.repositories.enqueue(action.alias, action.url, action.ref, actor);
-      receipt = { tool: "work_action", operation: action.operation, taskId: task.id,
-        message: `已安排准备「${action.alias}」仓库，后台读取指定版本；可询问进度。尚未编码、安装依赖或推送。` };
+      const task = this.repositories.enqueue(
+        action.alias,
+        action.url,
+        action.ref,
+        actor,
+      );
+      receipt = {
+        tool: "work_action",
+        operation: action.operation,
+        taskId: task.id,
+        message: `已安排准备「${action.alias}」仓库，后台读取指定版本；可询问进度。尚未编码、安装依赖或推送。`,
+      };
     } else if (action.operation === "track") {
       const key = `requirement:${actor.requestId}`;
       const plan = {
@@ -529,7 +598,11 @@ export class AssistantWork {
       };
     } else if (action.operation === "start_development") {
       this.plan(action.key);
-      if (action.configuration) this.development.runner.configuration.configure(action.project, action.configuration);
+      if (action.configuration)
+        this.development.runner.configuration.configure(
+          action.project,
+          action.configuration,
+        );
       const task = this.development.enqueue(
         action.key,
         action.project,

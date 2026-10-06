@@ -1,4 +1,4 @@
-/** Real assistant discovers project commands, then real coding/check/review uses them. */
+/** Real assistant delegates; coder discovers checks and continues on reviewed requirement changes. */
 import assert from "node:assert/strict";
 import {
   existsSync,
@@ -25,7 +25,7 @@ delete process.env.OMEM_REPO_ROOT;
 const model = loadReviewCodeModelConfig();
 const profile = profileSchema.parse({
   id: "traex",
-  name: "Project configuration acceptance",
+  name: "Development continuation acceptance",
   transport: model.transport,
   command: model.command,
   args: model.args,
@@ -90,7 +90,7 @@ writeFileSync(
 await git(source, "init", "-q", "-b", "main");
 await snapshotCommit(source, "synthetic project");
 const output = resolve(
-  ".repo-review/runtime/research/project-configuration.json",
+  ".repo-review/runtime/research/development-continuation.json",
 );
 mkdirSync(join(output, ".."), { recursive: true });
 const system = await buildApp({
@@ -218,6 +218,7 @@ const conversation = system.assistant.conversations.open({
   }),
   turns: unknown[] = [];
 const started = Date.now();
+const phases: unknown[] = [];
 let passed = false,
   run: any;
 async function ask(userText: string) {
@@ -251,22 +252,15 @@ async function ask(userText: string) {
 }
 try {
   await ask(
-    "请在已准备的 reminders 项目里直接实现‘选择下一个待跟进事项’需求。项目目前还没登记检查方式，你先读项目说明和实际脚本，自主补齐开发配置，再交办后台编码、检查和独立评审。不需要我提供命令，不发布。不要改验收脚本或项目规则。",
+    "请在已准备的 reminders 项目里实现‘选择下一个待跟进事项’需求。不发布，不要改验收脚本或项目规则。",
   );
   const task = system.work.development.list()[0];
   assert.ok(task, "助手没有交办编码");
-  const configured =
-    system.work.development.runner.configuration.get("reminders");
-  assert.ok(configured.configuration?.sources.length);
-  assert.ok(configured.commands.some((c) => c.purpose === "setup"));
-  assert.ok(
-    configured.commands.some((c) => c.required && c.purpose === "test"),
-  );
-  assert.ok(
-    configured.commands.some((c) => c.required && c.purpose === "build"),
-  );
-  assert.ok(
-    !configured.commands.some((c) => JSON.stringify(c).includes("release")),
+  assert.equal(
+    system.work.development.runner.configuration.get("reminders").commands
+      .length,
+    0,
+    "主助手应直接交办，由编码 Agent 在副本内选择检查",
   );
   await system.work.development.processOne();
   const finished = system.work.development.read(task.id);
@@ -281,6 +275,19 @@ try {
     }),
   );
   assert.equal(run.state, "ready");
+  const configured = run.project;
+  assert.ok(configured.configuration?.sources.length);
+  assert.ok(configured.commands.some((c: any) => c.purpose === "setup"));
+  assert.ok(
+    !configured.commands.some((c: any) =>
+      JSON.stringify(c).includes("release"),
+    ),
+  );
+  phases.push({
+    name: "initial",
+    seconds: (Date.now() - started) / 1000,
+    run: structuredClone(run),
+  });
   assert.equal(run.review?.verdict, "accepted");
   assert.ok(existsSync(join(run.checkout, ".cache/ready")));
   assert.ok(existsSync(join(run.checkout, "dist/manifest.json")));
@@ -297,6 +304,80 @@ try {
     "export function nextReminder(tasks) { return null; }\n",
   );
   assert.ok(!existsSync(join(project.repository, ".cache")));
+  const nextSpec =
+    spec +
+    " 新增：同样满足候选条件时，urgent=true 的事项优先于普通事项；同类内仍按时间最早，不变更公开 API。";
+  system.store.capture(
+    {
+      source: "manual",
+      externalId: "reminder-spec",
+      title: "选择下一个待跟进事项",
+      parts: [{ type: "text", text: nextSpec }],
+      context: {},
+    },
+    { learning: false, notify: false },
+  );
+  repository.refresh();
+  const latestMaterial = repository
+    .materials()
+    .find((m) => m.key === material.key)!;
+  const changed = structuredClone(
+    repository.get(key, run.requirementRevision)!,
+  );
+  changed.document.requirement!.objective = nextSpec;
+  changed.document.requirement!.criteria[0]!.description = nextSpec;
+  changed.document.summary = nextSpec;
+  changed.document = bindKnowledgeQuotes(
+    changed.document,
+    new Map([[latestMaterial.key, latestMaterial]]),
+  );
+  changed.dependencies = [
+    {
+      kind: "material",
+      key: latestMaterial.key,
+      digest: latestMaterial.digest,
+    },
+  ];
+  const current = repository.publish(changed);
+  const base = run.base,
+    checkout = run.checkout,
+    runId = run.id;
+  const changedAt = Date.now();
+  // Existing delegation and enabled requirement maintenance should continue it,
+  // without another user coding task or main-assistant planning call.
+  await system.work.development.processOne();
+  const continued = system.work.development.read(task.id);
+  run = continued.run;
+  assert.equal(continued.job.state, "succeeded", continued.job.lastError ?? "");
+  assert.equal(run.state, "ready");
+  assert.equal(run.requirementRevision, current.revision);
+  assert.equal(run.id, runId);
+  assert.equal(run.base, base);
+  assert.equal(run.checkout, checkout);
+  assert.equal(run.changes.length, 1);
+  assert.equal(run.changePlan.kind, "implementation");
+  const { nextReminder } = await import(join(checkout, "reminder.mjs"));
+  const examples = [
+    { id: "ordinary", done: false, nextCheckAt: "2026-10-08T00:00:00Z" },
+    {
+      id: "urgent",
+      urgent: true,
+      done: false,
+      nextCheckAt: "2026-10-10T00:00:00Z",
+    },
+  ];
+  const before = structuredClone(examples);
+  assert.equal(nextReminder(examples)?.id, "urgent");
+  assert.deepEqual(examples, before);
+  assert.equal(
+    nextReminder(examples.map((t) => ({ ...t, urgent: false })))?.id,
+    "ordinary",
+  );
+  phases.push({
+    name: "changed",
+    seconds: (Date.now() - changedAt) / 1000,
+    run: structuredClone(run),
+  });
   await ask(
     "这个任务现在交付在哪里？你选了哪些准备和检查方式，实际通过了什么，还有没有发布？只查询结果，不运行新任务。",
   );
@@ -322,6 +403,7 @@ try {
         passed,
         seconds: (Date.now() - started) / 1000,
         turns,
+        phases,
         project: system.work.development.runner.configuration.get("reminders"),
         task,
         roles,
@@ -330,7 +412,7 @@ try {
           output: readFileSync(c.log, "utf8"),
         })),
         scope:
-          "Real Traex/Sol assistant configuration, coding, checks and independent review; synthetic project and fixed requirement. No business repository, real credentials, UI or quick-model effectiveness acceptance.",
+          "Real Traex/Sol delegation, coder-selected checks, unchanged-result reuse and same-checkout changed-requirement implementation/review; synthetic project and fixed requirement publications (not requirement generation). No business repository, real credentials, UI or quick-model effectiveness acceptance.",
       },
       null,
       2,
