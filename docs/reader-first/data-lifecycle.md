@@ -51,3 +51,5 @@ omem data prune --before 2026-09-01
 ## 编码工作区
 
 新增 `development/projects` 保存目标仓库与命令配置，`development/runs` 保存独立代码副本、检查与评审结果。`data info` 单独统计这一部分；当前备份/迁移只覆盖个人事实库、资源与个人配置，不复制这些编码副本。未应用的实现需保留原个人目录或单独保存 run 目录与补丁，不能把它当可随意删除的临时缓存。`data prune` 不清理开发任务。
+
+开发结果简报进入同一 SQLite 的 Source/Revision，`development_results` 只保存运行到当前来源版本及学习任务的索引，`knowledge_page_inputs` 保存与需求页的明确关联。每个运行复用同一个 Source；恢复和应用追加 Revision，固定旧引用不变。日志和补丁只捕获有限摘录，全文留在上述私人运行目录。这部分材料历史仍需保留，并没有随本轮回流实现自动冷归档。
