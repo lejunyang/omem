@@ -232,6 +232,8 @@ export type LarkOnboarding = {
   requestedAppId: string | null;
   status: string;
   qrUrl: string | null;
+  resumable: boolean;
+  resumeHint: string | null;
   verificationUrl: string | null;
   qrExpiresAt: string | null;
   appId: string | null;
@@ -247,6 +249,7 @@ export type LarkOnboarding = {
     candidateChatId: string | null;
     candidateChatType: string | null;
     consumed: boolean;
+    expired: boolean;
   } | null;
   errorCode: string | null;
   errorMessage: string | null;
@@ -270,7 +273,8 @@ export async function api<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   const r = await fetch("/api" + path, {
-    method, signal,
+    method,
+    signal,
     headers: { "Content-Type": "application/json", ...headers() },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });

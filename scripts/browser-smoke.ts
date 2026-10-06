@@ -1,12 +1,17 @@
 // Real Vue + API + SQLite test. Fixture Agent is used only to make UI assertions deterministic.
 import { chromium, expect } from "@playwright/test";
 import { randomBytes } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildApp } from "../apps/server/src/app.js";
 import { Store } from "../apps/server/src/store.js";
-import { KnowledgeRepository, bindKnowledgeQuotes } from "../apps/server/src/knowledge/repository.js";
+import {
+  KnowledgeRepository,
+  bindKnowledgeQuotes,
+} from "../apps/server/src/knowledge/repository.js";
 import { requirementBrief } from "../apps/server/src/knowledge/requirements.js";
 import { LarkOnboardingService } from "../apps/server/src/integrations/lark/onboarding.js";
 import { EncryptedSecretStore } from "../apps/server/src/integrations/lark/secret-store.js";
@@ -34,7 +39,19 @@ class BrowserRegistration implements LarkRegistrationAdapter {
     );
   }
 }
-const ownerProvenance = { collectorId: "browser-fixture", actorId: "owner", actorType: "owner" as const, actorVerifiedBy: "authenticated-test", sourceUri: null, eventId: null, eventAt: "2026-09-29T00:00:00Z", timezone: "Asia/Shanghai", quoted: false, forwarded: false, producerKind: "original" as const };
+const ownerProvenance = {
+  collectorId: "browser-fixture",
+  actorId: "owner",
+  actorType: "owner" as const,
+  actorVerifiedBy: "authenticated-test",
+  sourceUri: null,
+  eventId: null,
+  eventAt: "2026-09-29T00:00:00Z",
+  timezone: "Asia/Shanghai",
+  quoted: false,
+  forwarded: false,
+  producerKind: "original" as const,
+};
 const larkAppId = "cli_browserfixture";
 const existingApps: ExistingLarkAppProvider = {
   list: () => [
@@ -96,6 +113,17 @@ let built = await buildApp(appConfig, { lark });
 let app = built.app;
 let store = built.store;
 let base = await app.listen({ port: 0, host: "127.0.0.1" });
+async function botCli(...args: string[]) {
+  const result = await promisify(execFile)(process.execPath, [
+    resolve("apps/server/src/cli.ts"),
+    "--url",
+    base,
+    "--json",
+    "bot",
+    ...args,
+  ]);
+  return JSON.parse(result.stdout);
+}
 const browser = await chromium.launch({
   headless: true,
   ...(process.env.OMEM_CHROMIUM
@@ -143,13 +171,21 @@ async function evaluateTask(input: {
           project_id: "browser-acceptance",
           subject_id: "owner",
         },
-        body: input.kind === "claim" ? { statement: input.title, attribution: "authenticated owner evidence", valid_from: null, valid_to: null } : {
-          title: input.title,
-          owner_id: "owner",
-          due_at: null,
-          due_expression: null,
-          next_step: "核对原始材料",
-        },
+        body:
+          input.kind === "claim"
+            ? {
+                statement: input.title,
+                attribution: "authenticated owner evidence",
+                valid_from: null,
+                valid_to: null,
+              }
+            : {
+                title: input.title,
+                owner_id: "owner",
+                due_at: null,
+                due_expression: null,
+                next_step: "核对原始材料",
+              },
         evidence: [
           {
             fragment_revision_id: fragment.id,
@@ -298,33 +334,69 @@ try {
       await page.setViewportSize({ width: 1440, height: 1000 });
     },
   );
-  await check("search loading, empty, failure and superseded requests", async () => {
-    const input = page.getByRole("textbox", { name: "搜索材料", exact: true });
-    let release: (() => void) | undefined;
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    await page.route("**/api/search?*", async route => {
-      const q = new URL(route.request().url()).searchParams.get("q");
-      if (q === "delayed") { await gate; await route.fulfill({ status: 200, contentType: "application/json", body: "[]" }).catch(() => {}); }
-      else if (q === "failed") await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "临时不可用" }) });
-      else await route.continue();
-    });
-    await input.fill("delayed");
-    await expect(page.getByText("正在搜索相关材料…", { exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "未找到相关内容" })).toHaveCount(0);
-    await input.fill("回滚");
-    release!();
-    await expect(page.locator(".page .om-panel").filter({ hasText: "发布前的回滚验证" }).first()).toBeVisible();
-    await expect(page.getByText("正在搜索相关材料…", { exact: true })).toHaveCount(0);
-    await input.fill("no-result-unique-zzz");
-    await expect(page.getByRole("heading", { name: "未找到相关内容" })).toBeVisible();
-    await input.fill("failed");
-    await expect(page.getByText(/搜索失败：.*临时不可用/)).toBeVisible();
-    await expect(page.getByRole("heading", { name: "未找到相关内容" })).toHaveCount(0);
-    await page.getByRole("button", { name: "日常助理", exact: true }).click();
-    await expect(page.getByText(/搜索失败：/)).toHaveCount(0);
-    await page.unroute("**/api/search?*");
-    await page.getByRole("button", { name: "原始材料", exact: true }).click();
-  });
+  await check(
+    "search loading, empty, failure and superseded requests",
+    async () => {
+      const input = page.getByRole("textbox", {
+        name: "搜索材料",
+        exact: true,
+      });
+      let release: (() => void) | undefined;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await page.route("**/api/search?*", async (route) => {
+        const q = new URL(route.request().url()).searchParams.get("q");
+        if (q === "delayed") {
+          await gate;
+          await route
+            .fulfill({
+              status: 200,
+              contentType: "application/json",
+              body: "[]",
+            })
+            .catch(() => {});
+        } else if (q === "failed")
+          await route.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "临时不可用" }),
+          });
+        else await route.continue();
+      });
+      await input.fill("delayed");
+      await expect(
+        page.getByText("正在搜索相关材料…", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "未找到相关内容" }),
+      ).toHaveCount(0);
+      await input.fill("回滚");
+      release!();
+      await expect(
+        page
+          .locator(".page .om-panel")
+          .filter({ hasText: "发布前的回滚验证" })
+          .first(),
+      ).toBeVisible();
+      await expect(
+        page.getByText("正在搜索相关材料…", { exact: true }),
+      ).toHaveCount(0);
+      await input.fill("no-result-unique-zzz");
+      await expect(
+        page.getByRole("heading", { name: "未找到相关内容" }),
+      ).toBeVisible();
+      await input.fill("failed");
+      await expect(page.getByText(/搜索失败：.*临时不可用/)).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "未找到相关内容" }),
+      ).toHaveCount(0);
+      await page.getByRole("button", { name: "日常助理", exact: true }).click();
+      await expect(page.getByText(/搜索失败：/)).toHaveCount(0);
+      await page.unroute("**/api/search?*");
+      await page.getByRole("button", { name: "原始材料", exact: true }).click();
+    },
+  );
   const first = store.list()[0]!.id as string;
   const revision = store.revision(first)!;
   await check(
@@ -465,26 +537,40 @@ try {
       page.getByRole("heading", { name: "新增待办：补充回滚验证记录" }),
     ).toBeVisible();
   });
-  await check("daily assistant submits through native MCP and persists its conversation", async () => {
-    await page.getByRole("button", { name: "日常助理", exact: true }).click();
-    await page.getByLabel("发给日常助理").fill("今天有什么需要跟进的事项？");
-    const turnResponse = page.waitForResponse((response) =>
-      response.request().method() === "POST" &&
-      /\/assistant\/conversations\/[^/]+\/turns$/.test(new URL(response.url()).pathname),
-    );
-    await page.getByRole("button", { name: "发送消息", exact: true }).click();
-    await expect(page.getByText("日常消息已读取；当前没有需要变更的事项。", { exact: true })).toBeVisible({ timeout: 20000 });
-    const result = await (await turnResponse).json();
-    expect(result.degraded).toBe(false);
-    expect(result.turn.inputMessageRefs.status).toBe("done");
-    expect(result.createdTaskIds).toEqual([]);
-    const research = result.turn.toolActions.find((action: { tool: string }) => action.tool === "research");
-    expect(research.trace.tools).toContain("submit_result");
-    expect(research.trace.model).toBe("alpha"); // Deterministic fixture, not a native model acceptance.
-    await page.getByRole("button", { name: "原始材料", exact: true }).click();
-    await page.getByRole("button", { name: "日常助理", exact: true }).click();
-    await expect(page.getByText("今天有什么需要跟进的事项？", { exact: true })).toBeVisible();
-  });
+  await check(
+    "daily assistant submits through native MCP and persists its conversation",
+    async () => {
+      await page.getByRole("button", { name: "日常助理", exact: true }).click();
+      await page.getByLabel("发给日常助理").fill("今天有什么需要跟进的事项？");
+      const turnResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          /\/assistant\/conversations\/[^/]+\/turns$/.test(
+            new URL(response.url()).pathname,
+          ),
+      );
+      await page.getByRole("button", { name: "发送消息", exact: true }).click();
+      await expect(
+        page.getByText("日常消息已读取；当前没有需要变更的事项。", {
+          exact: true,
+        }),
+      ).toBeVisible({ timeout: 20000 });
+      const result = await (await turnResponse).json();
+      expect(result.degraded).toBe(false);
+      expect(result.turn.inputMessageRefs.status).toBe("done");
+      expect(result.createdTaskIds).toEqual([]);
+      const research = result.turn.toolActions.find(
+        (action: { tool: string }) => action.tool === "research",
+      );
+      expect(research.trace.tools).toContain("submit_result");
+      expect(research.trace.model).toBe("alpha"); // Deterministic fixture, not a native model acceptance.
+      await page.getByRole("button", { name: "原始材料", exact: true }).click();
+      await page.getByRole("button", { name: "日常助理", exact: true }).click();
+      await expect(
+        page.getByText("今天有什么需要跟进的事项？", { exact: true }),
+      ).toBeVisible();
+    },
+  );
   await check(
     "requirement attention reads persisted scope and composes without losing the user's draft",
     async () => {
@@ -517,7 +603,9 @@ try {
       const followResponse = await page.request.get(base + "/api/work");
       expect(followResponse.status(), await followResponse.text()).toBe(200);
       await page.getByRole("button", { name: "刷新状态", exact: true }).click();
-      await expect(page.locator(".work-panel .follow-card h3")).toHaveText("退款查询");
+      await expect(page.locator(".work-panel .follow-card h3")).toHaveText(
+        "退款查询",
+      );
       await page
         .locator(".work-panel")
         .getByText("关注点与我的反馈", { exact: true })
@@ -531,7 +619,9 @@ try {
         .getByRole("button", { name: "调整关注点", exact: true })
         .click();
       await expect(page.getByRole("dialog")).toBeVisible();
-      await expect(page.getByLabel("重点关注（每行一项）")).toHaveValue("接口验收");
+      await expect(page.getByLabel("重点关注（每行一项）")).toHaveValue(
+        "接口验收",
+      );
       await page.getByLabel("暂不关注（每行一项）").fill("重复提醒");
       await page.getByRole("button", { name: "取消", exact: true }).click();
       await expect(page.getByLabel("发给日常助理")).toHaveValue(
@@ -553,33 +643,54 @@ try {
       await page.setViewportSize({ width: 1440, height: 1000 });
     },
   );
-  await check("daily follow-up controls: waiting, snooze, cancel and narrow layout", async () => {
-    await page.getByRole("button", { name: "事项与待办", exact: true }).click();
-    await page.getByLabel("事项", { exact: true }).fill("等待评审回复");
-    await page.getByRole("button", { name: "记录待办" }).click();
-    const panel = page.locator(".om-panel").filter({ has: page.getByRole("heading", { name: "等待评审回复", exact: true }) });
-    await panel.getByRole("button", { name: "跟进设置" }).click();
-    await panel.getByLabel("等待对象或结果").fill("张三的评审回复");
-    await panel.getByLabel("下次跟进时间").fill("2030-10-02T09:00");
-    await panel.getByRole("button", { name: "记录等待", exact: true }).click();
-    await expect(panel.getByText("等待回复", { exact: true })).toBeVisible();
-    await expect(panel).toContainText("等待：张三的评审回复");
-    await panel.getByRole("button", { name: "跟进设置" }).click();
-    await panel.getByLabel("下次跟进时间").fill("2030-10-03T10:00");
-    await panel.getByRole("button", { name: "稍后提醒", exact: true }).click();
-    await expect(panel).toContainText("已暂缓提醒至");
-    expect(await page.locator("body").innerText()).not.toMatch(/"taskId"|"requestId"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-    for (const width of [1440,768,390]) {
-      await page.setViewportSize({ width, height: 900 });
-      await expect(panel).toBeVisible();
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-      await page.screenshot({ path: join(out, `daily-${width}.png`) });
-    }
-    await panel.getByRole("button", { name: "跟进设置" }).click();
-    await panel.getByRole("button", { name: "取消事项", exact: true }).click();
-    await expect(panel.getByText("已取消", { exact: true })).toBeVisible();
-    await page.setViewportSize({ width: 1440, height: 900 });
-  });
+  await check(
+    "daily follow-up controls: waiting, snooze, cancel and narrow layout",
+    async () => {
+      await page
+        .getByRole("button", { name: "事项与待办", exact: true })
+        .click();
+      await page.getByLabel("事项", { exact: true }).fill("等待评审回复");
+      await page.getByRole("button", { name: "记录待办" }).click();
+      const panel = page
+        .locator(".om-panel")
+        .filter({
+          has: page.getByRole("heading", { name: "等待评审回复", exact: true }),
+        });
+      await panel.getByRole("button", { name: "跟进设置" }).click();
+      await panel.getByLabel("等待对象或结果").fill("张三的评审回复");
+      await panel.getByLabel("下次跟进时间").fill("2030-10-02T09:00");
+      await panel
+        .getByRole("button", { name: "记录等待", exact: true })
+        .click();
+      await expect(panel.getByText("等待回复", { exact: true })).toBeVisible();
+      await expect(panel).toContainText("等待：张三的评审回复");
+      await panel.getByRole("button", { name: "跟进设置" }).click();
+      await panel.getByLabel("下次跟进时间").fill("2030-10-03T10:00");
+      await panel
+        .getByRole("button", { name: "稍后提醒", exact: true })
+        .click();
+      await expect(panel).toContainText("已暂缓提醒至");
+      expect(await page.locator("body").innerText()).not.toMatch(
+        /"taskId"|"requestId"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+      );
+      for (const width of [1440, 768, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(panel).toBeVisible();
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth + 1,
+          ),
+        ).toBe(true);
+        await page.screenshot({ path: join(out, `daily-${width}.png`) });
+      }
+      await panel.getByRole("button", { name: "跟进设置" }).click();
+      await panel
+        .getByRole("button", { name: "取消事项", exact: true })
+        .click();
+      await expect(panel.getByText("已取消", { exact: true })).toBeVisible();
+      await page.setViewportSize({ width: 1440, height: 900 });
+    },
+  );
   await check(
     "A-U02 decision diff, evidence, receipts and stale state",
     async () => {
@@ -598,8 +709,21 @@ try {
       ].entries()) {
         // Current policy asks for decisions on conflicting active commitments;
         // forwarded unknown-owner statements are retained as source, not cards.
-        const baseline = store.capture({ source: "manual", externalId: `decision-baseline-${index}`, title: `原事项：${title}`, provenance: ownerProvenance, parts: [{ type: "text", text: `原事项：${title}` }], context: {} });
-        const applied = await evaluateTask({ revision: baseline.revision, proposalId: `baseline-proposal-${index}`, title: `原事项：${title}`, kind: "claim", jobId: baseline.job!.id });
+        const baseline = store.capture({
+          source: "manual",
+          externalId: `decision-baseline-${index}`,
+          title: `原事项：${title}`,
+          provenance: ownerProvenance,
+          parts: [{ type: "text", text: `原事项：${title}` }],
+          context: {},
+        });
+        const applied = await evaluateTask({
+          revision: baseline.revision,
+          proposalId: `baseline-proposal-${index}`,
+          title: `原事项：${title}`,
+          kind: "claim",
+          jobId: baseline.job!.id,
+        });
         expect(applied.policy).toBe("auto_apply");
         const externalId = `decision-source-${index}`;
         const captured = store.capture({
@@ -667,7 +791,13 @@ try {
         .click();
       await expect(approvePanel).toContainText("已确认");
       expect(
-        Boolean(store.db.prepare("SELECT 1 FROM memories m JOIN memory_revisions r ON m.head_revision_id=r.id WHERE json_extract(r.body,'$.statement')=?").get(pending[2]!.title)),
+        Boolean(
+          store.db
+            .prepare(
+              "SELECT 1 FROM memories m JOIN memory_revisions r ON m.head_revision_id=r.id WHERE json_extract(r.body,'$.statement')=?",
+            )
+            .get(pending[2]!.title),
+        ),
       ).toBe(true);
 
       const stalePanel = page.locator(".om-panel").filter({
@@ -690,6 +820,15 @@ try {
         page.getByRole("heading", { name: "飞书机器人" }),
       ).toBeVisible();
       await expect(page.getByLabel("App ID")).toHaveValue(larkAppId);
+      const created = await botCli("create");
+      expect(created.setupUrl).toContain(`onboarding=${created.id}`);
+      expect(
+        (await botCli("pending")).some((item: any) => item.id === created.id),
+      ).toBe(true);
+      expect((await botCli("cancel", created.id)).status).toBe("cancelled");
+      const authorized = await botCli("authorize", larkAppId);
+      expect(authorized.requestedAppId).toBe(larkAppId);
+      await botCli("cancel", authorized.id);
       await page.getByRole("button", { name: "生成更新授权" }).click();
       await expect(page.getByText("等待授权", { exact: true })).toBeVisible();
       await expect(page.locator(".qr-box canvas")).toBeVisible();
@@ -701,6 +840,27 @@ try {
         new RegExp(`clientID=${larkAppId}`),
       );
       await expect(authorization).toHaveAttribute("target", "_blank");
+      const authorizationId = new URLSearchParams(
+        new URL(page.url()).hash.split("?")[1],
+      ).get("onboarding");
+      expect(authorizationId).toBeTruthy();
+      await page.reload();
+      await expect(authorization).toHaveAttribute(
+        "href",
+        new RegExp(`clientID=${larkAppId}`),
+      );
+      expect(
+        new URLSearchParams(new URL(page.url()).hash.split("?")[1]).get(
+          "onboarding",
+        ),
+      ).toBe(authorizationId);
+      for (const width of [1440, 768, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await page.locator(".authorization-grid").scrollIntoViewIfNeeded();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await page.screenshot({ path: join(out, `lark-authorization-${width}.png`) });
+      }
+      await page.setViewportSize({ width: 1440, height: 1000 });
       await page.getByRole("button", { name: "取消本次接入" }).click();
       await expect(page.getByRole("heading", { name: "已取消" })).toBeVisible();
       await page.getByRole("button", { name: "重新配置" }).click();
@@ -709,9 +869,23 @@ try {
       await expect(
         page.getByText("从 botmux 复用", { exact: true }),
       ).toBeVisible();
-      await page.getByRole("button", { name: "导入并核验" }).click();
+      const importFile = join(dir, "bot-connect.json");
+      const requested = (
+        await app.inject("/api/integrations/lark/default-config")
+      ).json();
+      writeFileSync(
+        importFile,
+        JSON.stringify({
+          appId: larkAppId,
+          source: "botmux",
+          config: requested,
+        }),
+        { mode: 0o600 },
+      );
+      const imported = await botCli("connect", importFile);
+      await page.goto(imported.setupUrl);
       await expect(
-        page.getByText("等待 owner 配对", { exact: true }),
+        page.getByText("等待本人配对", { exact: true }),
       ).toBeVisible();
       await page.getByRole("button", { name: "生成配对码" }).click();
       const code = (await page.locator(".pairing-code").textContent())!.trim();
@@ -725,8 +899,25 @@ try {
       });
       expect(paired.senderOpenId).toBe("ou_browserowner");
       await page.getByRole("button", { name: "刷新状态" }).click();
-      await expect(page.getByText(/候选 owner/)).toBeVisible();
-      await page.getByRole("button", { name: "确认这是我并启用" }).click();
+      await expect(page.getByText(/候选 本人身份/)).toBeVisible();
+      const pairingUrl = page.url();
+      await page.reload();
+      await expect(page.getByText(/候选 本人身份/)).toContainText(
+        "ou_browserowner",
+      );
+      expect(page.url()).toBe(pairingUrl);
+      await expect(page.locator(".pairing-code")).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "确认这是我并启用" }),
+      ).toBeVisible();
+      expect((await botCli("show", imported.id)).pairing.candidateOpenId).toBe(
+        "ou_browserowner",
+      );
+      expect(
+        (await botCli("confirm", imported.id, "--owner", "ou_browserowner"))
+          .status,
+      ).toBe("active");
+      await page.getByRole("button", { name: "刷新状态" }).click();
       await expect(page.getByText("机器人连接已启用")).toBeVisible();
       await expect(
         page.getByText("加入群聊后会自动读取该群消息"),
@@ -742,7 +933,7 @@ try {
     },
   );
   await check("page reload and desktop rendering", async () => {
-    await page.getByRole("button", {name:"原始材料",exact:true}).click();
+    await page.getByRole("button", { name: "原始材料", exact: true }).click();
     await page.reload();
     await expect(
       page.locator(".source-link").filter({ hasText: "发布前的回滚验证" }),
@@ -897,7 +1088,9 @@ try {
       await page.route("**/api/jobs", (route) => route.abort());
       await new Promise((resolve) => setTimeout(resolve, 2800));
       await expect(page.getByRole("alert")).toContainText("Failed to fetch");
-      await expect(page.getByRole("button", {name:"原始材料",exact:true})).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "原始材料", exact: true }),
+      ).toBeVisible();
       await page.unroute("**/api/jobs");
 
       await app.close();
@@ -906,7 +1099,9 @@ try {
       store = built.store;
       base = await app.listen({ port: 0, host: "127.0.0.1" });
       await page.goto(base);
-      await expect(page.getByRole("button", {name:"原始材料",exact:true})).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "原始材料", exact: true }),
+      ).toBeVisible();
       await page
         .getByRole("button", { name: "事项与待办", exact: true })
         .click();
@@ -918,116 +1113,314 @@ try {
       ).toBeVisible();
     },
   );
-  await check("Markdown tables and Mermaid diagrams render through the real reader", async () => {
-    store.capture({ source: "manual", externalId: "rich-document", title: "结构化阅读验收", context: {}, parts: [{type:"text", text: "# 阅读流程\n\n| 阶段 | 说明 |\n| --- | --- |\n| 捕获 | 保存原文 |\n\n```mermaid\nflowchart LR\n  A[捕获] --> B[阅读]\n```\n\n<script>window.__unsafeDiagram = true</script>"}] });
-    await page.getByRole("button", {name:"原始材料",exact:true}).click();
-    await page.getByLabel("查找原始材料").fill("结构化阅读验收");
-    await page.locator(".source-link").filter({hasText:"结构化阅读验收"}).click();
-    await expect(page.locator(".reader .md-body table")).toContainText("保存原文");
-    await expect(page.locator(".reader .om-diagram svg")).toBeVisible({timeout:30000});
-    await expect(page.locator(".reader .om-diagram svg")).toContainText("捕获");
-    await expect(page.locator(".reader .om-diagram svg")).toContainText("阅读");
-    await expect(page.locator(".reader .om-diagram foreignObject")).toHaveCount(0);
-    await expect(page.locator(".reader script")).toHaveCount(0);
-  });
-  await check("shared disclosures keep content and separate folder navigation from expansion", async () => {
-    await page.goto(base + "/#/design");
-    const heading = page.getByRole("button", { name: "展开阅读补充说明", exact: true });
-    await expect(heading).toHaveAttribute("aria-expanded", "false");
-    const input = page.getByPlaceholder("收起后再展开，内容保持");
-    await expect(input).not.toBeVisible();
-    await heading.focus(); await page.keyboard.press("Enter");
-    await expect(input).toBeVisible(); await input.fill("保留草稿");
-    await heading.click(); await expect(input).not.toBeVisible();
-    await heading.click(); await expect(input).toHaveValue("保留草稿");
-    const folder = page.getByRole("button", { name: /^分类目录\s*2 篇$/ });
-    const arrow = page.getByRole("button", { name: "展开分类目录", exact: true });
-    await folder.click(); await expect(arrow).toHaveAttribute("aria-expanded", "false");
-    await arrow.click();
-    await expect(page.getByText("分类标题与箭头分别执行导航和展开操作。", { exact: true })).toBeVisible();
-    const targetId = await heading.getAttribute("aria-controls");
-    await expect(page.locator(`[id="${targetId}"]`)).toBeVisible();
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    expect(await heading.locator("svg").evaluate(el => getComputedStyle(el).transitionDuration)).toBe("0s");
-    for (const width of [1440, 390]) {
-      await page.setViewportSize({ width, height: 1000 });
-      await heading.scrollIntoViewIfNeeded();
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      await page.screenshot({ path: join(out, `disclosure-${width}.png`) });
-    }
-    await page.emulateMedia({ reducedMotion: "no-preference" });
-  });
-  await check("article maintenance settings persist through the real API", async () => {
-    // Host-rendering fixture only; live-page-maintenance.ts verifies actual AI updates.
-    const repository = new KnowledgeRepository(store), material = repository.materials()[0]!;
-    const plan = { key: "browser-maintenance", title: "文章更新设置验收", order: 0, kind: "reference" as const,
-      reader: "界面验收", goal: "验证已选材料的更新设置", scenario: "打开和关闭持续维护",
-      questions: ["如何开启更新？"], entryPaths: [], materialKeys: [material.key], topicPath: ["界面验收"] };
-    repository.savePlan(plan, true);
-    repository.publish({ version: 1, reading: plan, publication: { role: "reference" },
-      document: bindKnowledgeQuotes({ key: plan.key, title: plan.title, summary: "用于检查文章更新控件的固定界面数据。", category: "界面验收", topicPath: plan.topicPath,
-        sections: [{ key: "source", title: "所选材料", body: "下方设置跟踪这份材料的后续版本。[[source]]" }],
-        citations: [{ key: "source", label: material.title, reason: "所选原文", relation: "background", quote: "", target: { kind: "material", key: material.key, startLine: 1, endLine: 1 } }], questions: [] }, new Map([[material.key, material]])),
-      dependencies: [{ kind: "material", key: material.key, digest: material.digest }],
-      generation: { model: "browser-fixture", effort: null, at: new Date().toISOString(), trace: {} },
-      review: { model: "browser-fixture", at: new Date().toISOString(), verdict: "accepted", trace: {} },
-    });
-    await page.goto(base + "#/knowledge/" + plan.key);
-    const panel = page.getByRole("region", { name: "文章更新方式" });
-    const toggle = panel.getByRole("checkbox", { name: "随所选材料自动更新" });
-    await toggle.check();
-    await expect.poll(() => Number(store.db.prepare("SELECT enabled FROM knowledge_page_maintenance WHERE document_key=?").get(plan.key)?.enabled)).toBe(1);
-    await page.reload();
-    await expect(toggle).toBeChecked();
-    for (const width of [1440, 768, 390]) {
-      await page.setViewportSize({ width, height: 1000 });
-      await panel.scrollIntoViewIfNeeded();
-      expect(await panel.locator("label").evaluate(el => getComputedStyle(el).flexDirection)).toBe("row");
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      await page.screenshot({ path: join(out, `article-maintenance-${width}.png`) });
-    }
-    await toggle.uncheck();
-    await expect.poll(() => Number(store.db.prepare("SELECT enabled FROM knowledge_page_maintenance WHERE document_key=?").get(plan.key)?.enabled)).toBe(0);
-    expect(store.jobs.list().filter(job => job.kind === "knowledge:maintain-page")).toHaveLength(0);
-  });
-  await check("project capture and article scope use persisted memberships", async () => {
-    await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.goto(base + "#/capture");
-    await page.getByRole("button", { name: "新建项目或主题", exact: true }).click();
-    await page.getByLabel("名称", { exact: true }).fill("阅读小组界面验收");
-    await page.getByLabel("范围说明", { exact: true }).fill("报名与场地安排");
-    await page.getByRole("button", { name: "创建并选中", exact: true }).click();
-    await expect.poll(() => store.contexts.list().find(c => c.name === "阅读小组界面验收")?.id).toBeTruthy();
-    await expect(page.getByRole("checkbox", { name: /阅读小组界面验收/ })).toBeChecked();
-    await page.getByLabel("材料标题", { exact: true }).fill("小组场地补充");
-    await page.getByLabel("材料正文", { exact: true }).fill("周五在东侧阅读室集合。小周负责签到。");
-    await page.getByRole("button", { name: "保存材料与证据", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "小组场地补充", exact: true })).toBeVisible();
-    const source = store.list().find(s => s.title === "小组场地补充")!;
-    const contextId = store.contexts.list().find(c => c.name === "阅读小组界面验收")!.id;
-    expect(store.contexts.forSource(source.sourceId)).toEqual([contextId]);
-    await page.getByRole("button", { name: "所属项目与主题", exact: true }).click();
-    await expect(page.getByRole("checkbox", { name: /阅读小组界面验收/ })).toBeChecked();
-    await page.getByRole("button", { name: "保存归属", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "归属已保存" })).toBeVisible();
-    await page.goto(base + "#/knowledge/browser-maintenance");
-    await page.getByRole("button", { name: "调整材料与目标", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "调整材料与目标", exact: true });
-    await dialog.getByRole("checkbox", { name: /阅读小组界面验收/ }).check();
-    await expect(dialog.locator(".material-options")).toContainText("小组场地补充");
-    const linked = dialog.locator(".material-option").filter({ hasText: "小组场地补充" });
-    await expect(linked.getByRole("checkbox")).toBeChecked();
-    await expect(linked.getByRole("checkbox")).toBeDisabled();
-    for (const width of [1440, 768, 390]) {
-      await page.setViewportSize({ width, height: 1000 });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      await page.screenshot({ path: join(out, `project-contexts-${width}.png`) });
-    }
-    await dialog.getByRole("button", { name: "下一步", exact: true }).click();
-    await dialog.getByRole("button", { name: "保存并重新整理", exact: true }).click();
-    await expect(dialog).not.toBeVisible();
-    expect(new KnowledgeRepository(store).pages().find(p => p.key === "browser-maintenance")?.plan?.contextIds).toEqual([contextId]);
-  });
+  await check(
+    "Markdown tables and Mermaid diagrams render through the real reader",
+    async () => {
+      store.capture({
+        source: "manual",
+        externalId: "rich-document",
+        title: "结构化阅读验收",
+        context: {},
+        parts: [
+          {
+            type: "text",
+            text: "# 阅读流程\n\n| 阶段 | 说明 |\n| --- | --- |\n| 捕获 | 保存原文 |\n\n```mermaid\nflowchart LR\n  A[捕获] --> B[阅读]\n```\n\n<script>window.__unsafeDiagram = true</script>",
+          },
+        ],
+      });
+      await page.getByRole("button", { name: "原始材料", exact: true }).click();
+      await page.getByLabel("查找原始材料").fill("结构化阅读验收");
+      await page
+        .locator(".source-link")
+        .filter({ hasText: "结构化阅读验收" })
+        .click();
+      await expect(page.locator(".reader .md-body table")).toContainText(
+        "保存原文",
+      );
+      await expect(page.locator(".reader .om-diagram svg")).toBeVisible({
+        timeout: 30000,
+      });
+      await expect(page.locator(".reader .om-diagram svg")).toContainText(
+        "捕获",
+      );
+      await expect(page.locator(".reader .om-diagram svg")).toContainText(
+        "阅读",
+      );
+      await expect(
+        page.locator(".reader .om-diagram foreignObject"),
+      ).toHaveCount(0);
+      await expect(page.locator(".reader script")).toHaveCount(0);
+    },
+  );
+  await check(
+    "shared disclosures keep content and separate folder navigation from expansion",
+    async () => {
+      await page.goto(base + "/#/design");
+      const heading = page.getByRole("button", {
+        name: "展开阅读补充说明",
+        exact: true,
+      });
+      await expect(heading).toHaveAttribute("aria-expanded", "false");
+      const input = page.getByPlaceholder("收起后再展开，内容保持");
+      await expect(input).not.toBeVisible();
+      await heading.focus();
+      await page.keyboard.press("Enter");
+      await expect(input).toBeVisible();
+      await input.fill("保留草稿");
+      await heading.click();
+      await expect(input).not.toBeVisible();
+      await heading.click();
+      await expect(input).toHaveValue("保留草稿");
+      const folder = page.getByRole("button", { name: /^分类目录\s*2 篇$/ });
+      const arrow = page.getByRole("button", {
+        name: "展开分类目录",
+        exact: true,
+      });
+      await folder.click();
+      await expect(arrow).toHaveAttribute("aria-expanded", "false");
+      await arrow.click();
+      await expect(
+        page.getByText("分类标题与箭头分别执行导航和展开操作。", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      const targetId = await heading.getAttribute("aria-controls");
+      await expect(page.locator(`[id="${targetId}"]`)).toBeVisible();
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      expect(
+        await heading
+          .locator("svg")
+          .evaluate((el) => getComputedStyle(el).transitionDuration),
+      ).toBe("0s");
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await heading.scrollIntoViewIfNeeded();
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        ).toBe(true);
+        await page.screenshot({ path: join(out, `disclosure-${width}.png`) });
+      }
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+    },
+  );
+  await check(
+    "article maintenance settings persist through the real API",
+    async () => {
+      // Host-rendering fixture only; live-page-maintenance.ts verifies actual AI updates.
+      const repository = new KnowledgeRepository(store),
+        material = repository.materials()[0]!;
+      const plan = {
+        key: "browser-maintenance",
+        title: "文章更新设置验收",
+        order: 0,
+        kind: "reference" as const,
+        reader: "界面验收",
+        goal: "验证已选材料的更新设置",
+        scenario: "打开和关闭持续维护",
+        questions: ["如何开启更新？"],
+        entryPaths: [],
+        materialKeys: [material.key],
+        topicPath: ["界面验收"],
+      };
+      repository.savePlan(plan, true);
+      repository.publish({
+        version: 1,
+        reading: plan,
+        publication: { role: "reference" },
+        document: bindKnowledgeQuotes(
+          {
+            key: plan.key,
+            title: plan.title,
+            summary: "用于检查文章更新控件的固定界面数据。",
+            category: "界面验收",
+            topicPath: plan.topicPath,
+            sections: [
+              {
+                key: "source",
+                title: "所选材料",
+                body: "下方设置跟踪这份材料的后续版本。[[source]]",
+              },
+            ],
+            citations: [
+              {
+                key: "source",
+                label: material.title,
+                reason: "所选原文",
+                relation: "background",
+                quote: "",
+                target: {
+                  kind: "material",
+                  key: material.key,
+                  startLine: 1,
+                  endLine: 1,
+                },
+              },
+            ],
+            questions: [],
+          },
+          new Map([[material.key, material]]),
+        ),
+        dependencies: [
+          { kind: "material", key: material.key, digest: material.digest },
+        ],
+        generation: {
+          model: "browser-fixture",
+          effort: null,
+          at: new Date().toISOString(),
+          trace: {},
+        },
+        review: {
+          model: "browser-fixture",
+          at: new Date().toISOString(),
+          verdict: "accepted",
+          trace: {},
+        },
+      });
+      await page.goto(base + "#/knowledge/" + plan.key);
+      const panel = page.getByRole("region", { name: "文章更新方式" });
+      const toggle = panel.getByRole("checkbox", {
+        name: "随所选材料自动更新",
+      });
+      await toggle.check();
+      await expect
+        .poll(() =>
+          Number(
+            store.db
+              .prepare(
+                "SELECT enabled FROM knowledge_page_maintenance WHERE document_key=?",
+              )
+              .get(plan.key)?.enabled,
+          ),
+        )
+        .toBe(1);
+      await page.reload();
+      await expect(toggle).toBeChecked();
+      for (const width of [1440, 768, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await panel.scrollIntoViewIfNeeded();
+        expect(
+          await panel
+            .locator("label")
+            .evaluate((el) => getComputedStyle(el).flexDirection),
+        ).toBe("row");
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        ).toBe(true);
+        await page.screenshot({
+          path: join(out, `article-maintenance-${width}.png`),
+        });
+      }
+      await toggle.uncheck();
+      await expect
+        .poll(() =>
+          Number(
+            store.db
+              .prepare(
+                "SELECT enabled FROM knowledge_page_maintenance WHERE document_key=?",
+              )
+              .get(plan.key)?.enabled,
+          ),
+        )
+        .toBe(0);
+      expect(
+        store.jobs
+          .list()
+          .filter((job) => job.kind === "knowledge:maintain-page"),
+      ).toHaveLength(0);
+    },
+  );
+  await check(
+    "project capture and article scope use persisted memberships",
+    async () => {
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page.goto(base + "#/capture");
+      await page
+        .getByRole("button", { name: "新建项目或主题", exact: true })
+        .click();
+      await page.getByLabel("名称", { exact: true }).fill("阅读小组界面验收");
+      await page.getByLabel("范围说明", { exact: true }).fill("报名与场地安排");
+      await page
+        .getByRole("button", { name: "创建并选中", exact: true })
+        .click();
+      await expect
+        .poll(
+          () =>
+            store.contexts.list().find((c) => c.name === "阅读小组界面验收")
+              ?.id,
+        )
+        .toBeTruthy();
+      await expect(
+        page.getByRole("checkbox", { name: /阅读小组界面验收/ }),
+      ).toBeChecked();
+      await page.getByLabel("材料标题", { exact: true }).fill("小组场地补充");
+      await page
+        .getByLabel("材料正文", { exact: true })
+        .fill("周五在东侧阅读室集合。小周负责签到。");
+      await page
+        .getByRole("button", { name: "保存材料与证据", exact: true })
+        .click();
+      await expect(
+        page.getByRole("heading", { name: "小组场地补充", exact: true }),
+      ).toBeVisible();
+      const source = store.list().find((s) => s.title === "小组场地补充")!;
+      const contextId = store.contexts
+        .list()
+        .find((c) => c.name === "阅读小组界面验收")!.id;
+      expect(store.contexts.forSource(source.sourceId)).toEqual([contextId]);
+      await page
+        .getByRole("button", { name: "所属项目与主题", exact: true })
+        .click();
+      await expect(
+        page.getByRole("checkbox", { name: /阅读小组界面验收/ }),
+      ).toBeChecked();
+      await page.getByRole("button", { name: "保存归属", exact: true }).click();
+      await expect(
+        page.getByRole("status").filter({ hasText: "归属已保存" }),
+      ).toBeVisible();
+      await page.goto(base + "#/knowledge/browser-maintenance");
+      await page
+        .getByRole("button", { name: "调整材料与目标", exact: true })
+        .click();
+      const dialog = page.getByRole("dialog", {
+        name: "调整材料与目标",
+        exact: true,
+      });
+      await dialog.getByRole("checkbox", { name: /阅读小组界面验收/ }).check();
+      await expect(dialog.locator(".material-options")).toContainText(
+        "小组场地补充",
+      );
+      const linked = dialog
+        .locator(".material-option")
+        .filter({ hasText: "小组场地补充" });
+      await expect(linked.getByRole("checkbox")).toBeChecked();
+      await expect(linked.getByRole("checkbox")).toBeDisabled();
+      for (const width of [1440, 768, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        ).toBe(true);
+        await page.screenshot({
+          path: join(out, `project-contexts-${width}.png`),
+        });
+      }
+      await dialog.getByRole("button", { name: "下一步", exact: true }).click();
+      await dialog
+        .getByRole("button", { name: "保存并重新整理", exact: true })
+        .click();
+      await expect(dialog).not.toBeVisible();
+      expect(
+        new KnowledgeRepository(store)
+          .pages()
+          .find((p) => p.key === "browser-maintenance")?.plan?.contextIds,
+      ).toEqual([contextId]);
+    },
+  );
   expect(errors).toEqual([]);
   writeFileSync(
     resolve(".repo-review/runtime/browser/verification.json"),
