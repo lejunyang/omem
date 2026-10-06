@@ -142,7 +142,19 @@ omem bot status
 
 采集只读消息和资源，不改变未读状态，不发送、回复或删除消息。文档、图片与附件的读取/理解状态在 inbox 中区分，排队不代表已经理解。决策模型是可选分流，复杂理解仍交给 Agent。
 
-机器人通知复用已有绑定、投递与重试流程；与个人登录是两套独立授权。`bot setup` 显示既有网页向导入口。`bot apps` 读取可复用应用；`bot defaults` 输出绑定配置模板；`bot connect <json-file>` 接受 `{appId,source,clientSecret?,config}`，source 为 manual 时需 clientSecret，botmux 时由已有本地配置读取密钥。默认 `lark.enabled:false`；启用并重启后进入绑定向导。它不授予个人消息写权限。
+机器人通知复用已有绑定、投递与重试流程；与个人登录是两套独立授权。首次接入按[机器人创建与绑定](../skills/omem-cli/references/lark-bot.md)准备服务、选择应用、核验并私聊配对本人。默认 `lark.enabled:false`，启用时还需为服务提供稳定的 `OMEM_SECRET_KEY`，用于加密保存应用凭据；它不是 App Secret 或服务器访问令牌。
+
+`bot setup` 只显示网页向导入口，新建应用、授权已有应用或直接导入凭据均在向导完成。`bot apps` 读取可复用应用；`bot defaults` 输出完整配置对象；`bot connect <json-file>` 接受 `{appId,source,clientSecret?,config}`，source 为 manual 时需 clientSecret，botmux 时由服务机器已有本地配置读取密钥。`connect` 成功仍需配对，当前网页不能直接恢复它返回的接入 ID，推荐首次从网页完成整个接入。机器人权限和个人只读采集分开，后者不因此获得消息写权限。
+
+随包 skill 的读取与复制：
+
+```bash
+omem skills path
+omem skills show
+omem skills install /absolute/agent-skills
+```
+
+install 会复制 `omem-cli` 及其 references 到指定目录，不安装全局 hooks；目标已存在时拒绝覆盖。升级 omem 会更新包内 skill，但之前复制给其他 Agent 的副本不会自动同步。先比较定制内容，再安装到新目录或合并需要的更新。
 
 ## 外部工具与技能装配
 

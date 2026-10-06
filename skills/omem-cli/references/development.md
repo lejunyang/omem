@@ -2,6 +2,8 @@
 
 在主助手私聊中，用户可以直接说“继续刚才的编码任务”“把这份已评审补丁应用回项目”“将这项行动加入我的待办”。主助手先读取现状，再提议相应 work_action；恢复和应用都由后台执行，返回排队回执后可继续对话。恢复保持原副本及固定资料；应用绑定刚刚查看的评审版本，登记仓库有新改动就停止并解释。下面 CLI 是独立使用或诊断入口，不要求用户手动串联。
 
+飞书私聊也是同一个主助手入口，首次接入见 [机器人创建与绑定](lark-bot.md)。已订阅群聊中的本人回复可调整原需求和事项，但必须补查原交办及讨论背景。区分助手补查、可选补充与阻塞决策，不能把一般建议都变成开工确认。需求研究读取实际待办和编码检查记录；只改变进度时不重做同一实现，普通群聊讨论不自动开启一项从未交办的编码任务。
+
 先运行 `omem requirements board KEY --json`，查看当前需求是否已生成结构化验收。旧页面先 refresh 并等成功；current=false 不应开工。
 
 行动项通过 `requirements follow KEY ACTION_ID` 成为个人跟进待办，后续需求换版更新同一条。用户改过待办会暂停自动同步；不要为了“看起来最新”强行覆盖。unfollow 保留任务。proposed/uncertain 不能当明确承诺。
@@ -16,7 +18,9 @@
 
 编码先用 `develop register ALIAS project.json` 登记本机仓库与必要检查：
 
-编码与独立评审分别由个人配置 `development.codingProfileId` / `reviewProfileId` 选择，指向 profiles 中已有 ACP 配置；省略时沿用主助手。先 `agent probe PROFILE_ID --json` 发现可用模型/effort，实际推理成功才说明认证可用。任务入队固定两角色配置，恢复不换成新的默认值。Traex、Codex 已实际完成编码与独立评审；Claude 0.86.0 已接实验适配但本机推理缺认证。Codex 使用 2.1.1 适配器、配套 CLI 和原有登录，会话关闭继承的个人工具并装配本次 omem 工具；不要为解决权限问题打开全局 bypass。详细配置与限制见随包 [Agent 提供方](../../../docs/reader-first/agent-providers.md)。
+编码与独立评审分别由个人配置 `development.codingProfileId` / `reviewProfileId` 选择，指向 profiles 中已有 ACP 配置；省略时沿用主助手。先 `agent probe PROFILE_ID --json` 发现可用模型/effort，实际推理成功才说明认证可用。任务入队固定两角色配置，恢复不换成新的默认值。Traex、Codex 已实际完成编码与独立评审；Claude 0.86.0 已接实验适配但本机推理缺认证。Codex 使用 2.1.1 适配器、配套 CLI 和原有登录，会话关闭继承的个人工具并装配本次 omem 工具；不要为解决权限问题打开全局 bypass。
+
+ACP 配置的提供方入口：Traex 使用 `acpProvider: "traex"`、`command: "traex"`、`args: ["acp", "serve"]`；Codex 使用 `acpProvider: "codex"`、`command: "codex-acp"`、`args: []`；Claude 使用 `acpProvider: "claude"`、`command: "claude-agent-acp"`、`args: []`。它们都使用 `transport: "acp"` 和独立的 profile ID，模型/effort 由探测确认，不沿用另一个提供方的名称。完整提供方文档随 omem 包保存在 `docs/reader-first/agent-providers.md`，可从 `omem skills path` 返回的包内 skill 目录向上两级找到；复制出去的 skill 不假设旁边有源码 docs。
 
 ```json
 {"name":"项目","repository":"/absolute/repository","ruleFiles":[],"commands":[{"name":"test","command":"node","args":["--test"],"purpose":"test","required":true}]}
