@@ -72,6 +72,8 @@ Wiki 按读者问题调查、讲解：页面计划规定阅读目标和真实案
 
 `requirements track --watch` 维护同一需求页，`board/follow` 将明确行动关联到个人待办。`develop register/start` 在登记项目的独立副本里编码，读取项目规则与 skills，运行项目检查，再交给独立评审 Agent；`develop diff/apply` 查看并应用通过评审的补丁。当前以本地 CLI 操作，不自动推送或部署。完整流程与限制见[需求跟进与编码](docs/reader-first/requirement-followup.md)。
 
+这些操作的目标调用方是主助手。默认策略已确定为“自动跟进指定需求，用户交办实现后自主编码、检查和评审”；内置助手的需求管理、反馈调整和后台编码派发尚未接通。现状、外部 skills/MCP/CLI、多种编码 Agent 与私有仓库的改造见[主助手方案](docs/reader-first/assistant-orchestration.md)。
+
 ## 开发
 
 Vue 3 + TypeScript，公共组件在 `packages/ui`；Bun 执行 TypeScript 脚本，Node 执行构建产物，pnpm 管理工作区依赖，均由 osdk 管理。
