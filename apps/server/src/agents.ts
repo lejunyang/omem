@@ -15,6 +15,7 @@ import {
 import type { AgentProfile } from "../../../packages/contracts/src/index.js";
 import { activityWatchdog, agentIdleTimeout } from "./agent-timeout.js";
 import { acpProvider, sessionMetadata } from "./agent-providers.js";
+import { codexSessionEnvironment } from "./codex-session.js";
 export type Emit = (
   type: "status" | "text" | "permission",
   text: string,
@@ -81,11 +82,11 @@ function stop(child: ChildProcessWithoutNullStreams) {
   }, 1500);
   timer.unref();
 }
-function launch(profile: AgentProfile, args: string[], cwd: string) {
+function launch(profile: AgentProfile, args: string[], cwd: string, environment: NodeJS.ProcessEnv = env(cwd)) {
   mkdirSync(cwd, { recursive: true, mode: 0o700 });
   const child = spawn(profile.command, args, {
     cwd,
-    env: env(cwd),
+    env: environment,
     stdio: "pipe",
     shell: false,
     detached: process.platform !== "win32",
@@ -118,15 +119,16 @@ export async function acp(
   signal: AbortSignal,
   options: AcpOptions = {},
 ) {
-  if (acpProvider(profile) === "codex" && blocks)
-    throw Error("CODEX_SESSION_NOT_READY: only capability probing is enabled until personal tools and skills are isolated");
   const startedAt = performance.now();
   let initializedAt = startedAt;
   let promptStartedAt: number | undefined;
   let promptFinishedAt: number | undefined;
   let firstToolAt: number | undefined;
   const toolCalls = new Map<string, string>();
-  const child = launch(profile, profile.args, cwd);
+  mkdirSync(cwd, { recursive: true, mode: 0o700 });
+  const environment = acpProvider(profile) === "codex"
+    ? await codexSessionEnvironment(profile, cwd, env(cwd), signal) : env(cwd);
+  const child = launch(profile, profile.args, cwd, environment);
   // Track the 'close' event from spawn time so we never miss it after stop().
   // On Windows, 'close' fires only after the process exits AND its stdio
   // streams are destroyed — that is when the OS releases the cwd handle.
@@ -321,6 +323,9 @@ export async function acp(
     if (acpProvider(profile) === "claude" &&
       (initialized.agentInfo?.name !== "@agentclientprotocol/claude-agent-acp" || initialized.agentInfo.version !== "0.86.0"))
       throw Error("CLAUDE_ADAPTER_UNVERIFIED: requires @agentclientprotocol/claude-agent-acp@0.86.0; older adapters may ignore tool isolation settings");
+    if (acpProvider(profile) === "codex" &&
+      (initialized.agentInfo?.name !== "@agentclientprotocol/codex-acp" || initialized.agentInfo.version !== "2.1.1"))
+      throw Error("CODEX_ADAPTER_UNVERIFIED: requires @agentclientprotocol/codex-acp@2.1.1");
     initializedAt = performance.now();
     active();
     const session = await Promise.race([

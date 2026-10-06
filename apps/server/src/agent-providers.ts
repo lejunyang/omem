@@ -66,11 +66,15 @@ export function developmentProfile(profile: AgentProfile): AgentProfile {
       return { ...profile, args: ["-c", 'sandbox_mode="read-only"', ...args] };
     }
     case "codex":
-      throw Error(
-        "Codex ACP 暂仅支持能力探测；个人 MCP/技能隔离尚未验证，不能用于后台编码",
-      );
+      if (profile.args.length)
+        throw Error(
+          "Codex ACP 编码配置不接受启动参数；模型与思考强度通过会话协商",
+        );
+      return profile;
     default:
-      throw Error("请为编码配置声明已支持的 acpProvider（traex 或 claude）");
+      throw Error(
+        "请为编码配置声明已支持的 acpProvider（traex、codex 或 claude）",
+      );
   }
 }
 

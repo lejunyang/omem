@@ -176,6 +176,7 @@ export const profileSchema = z
     name: z.string(),
     transport: z.enum(["acp", "traex-cli", "codex-cli", "claude-cli"]),
     acpProvider: z.enum(["traex", "codex", "claude"]).optional(),
+    codexCommand: z.string().min(1).optional(),
     command: z.string().min(1),
     args: z.array(z.string()).default([]),
     model: z.string().optional(),

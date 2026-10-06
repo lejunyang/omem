@@ -8,6 +8,7 @@
 - [个人库与冷存储](data-lifecycle.md)：空间占用、消息缓存、备份恢复、迁移与归档边界。
 - [需求跟进、编码与独立评审](requirement-followup.md)：综合讨论、文档、纪要和代码，持续维护需求、关联待办并在目标项目实施和评审。
 - [主助手、反馈与外部能力](assistant-orchestration.md)：主助手的关注/反馈/后台派发，技能/CLI/MCP 通用装配，以及仍待接入的私有仓库和多种编码 Agent。
+- [编码与评审 Agent](agent-providers.md)：角色分别选模型，Traex、Codex 实际执行情况，Claude 认证限制，以及每次任务如何装配工具和技能。
 - [整体复审](review.md)：实际能力、问题成因及外部方案。
 - [文章发布与持续维护](publication-lifecycle.md)：正式文章、参考、内部笔记，章节变化判断与重新整理的本轮改造。
 - [项目与主题材料](project-contexts.md)：明确保存材料归属，让后来加入的记录进入同一篇文章；与自动判断归属、事实写入的边界。

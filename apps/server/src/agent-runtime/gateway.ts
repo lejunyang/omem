@@ -330,7 +330,7 @@ export class RoleRuntimeGateway {
     const bundle = {
       ...originalBundle,
       skills: originalBundle.skills.map((s) =>
-        native ? { ...s, load_mode: acpProvider(input.profile) === "claude" ? "inline" as const : "native" as const } : s,
+        native ? { ...s, load_mode: ["claude", "codex"].includes(acpProvider(input.profile) ?? "") ? "inline" as const : "native" as const } : s,
       ),
       manifest: {
         ...originalBundle.manifest,
