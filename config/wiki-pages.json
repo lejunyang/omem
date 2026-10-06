@@ -299,7 +299,7 @@
       "order": 6,
       "kind": "how-to",
       "reader": "希望让个人助手跟进需求并启动实现的开发者",
-      "goal": "用一条具体需求讲清用户怎样通过自然语言持续跟进、纠正事实、调整关注与范围、明确交办后台编码、询问真实检查和评审结果。解释同一需求如何随新增材料更新；以具体步骤为主，CLI 留作配置与排障入口。区分已接通的 Traex 流程与尚未完成的外部能力、Figma、多提供方和变更重新规划，不堆叠证据术语或日志。",
+      "goal": "用一条具体需求讲清用户怎样通过自然语言持续跟进、纠正事实、调整关注与范围、明确交办后台编码、询问真实检查和评审结果。解释同一需求如何随新增材料更新；以具体步骤为主，CLI 留作配置与排障入口。区分已接通的 Traex 流程、已接通的 skill/CLI/MCP 能力装配，以及尚未完成的真实 Figma、多提供方和变更重新规划，不堆叠证据术语或日志。",
       "scenario": "工单分派已经能选择队列，会议决定补处理完成入口。读者要保留未知类别兜底，跟进同事进展，再在目标仓库实施并检查输入对象不被修改。示例是教学案例，不宣称现实部署。",
       "questions": [
         "用户只说跟进和关注点时助手做什么，后来怎样纠正、撤销和暂停？",
@@ -308,6 +308,7 @@
         "新讨论怎样进入同一需求，如何区分建议和明确约定？",
         "怎样把重要行动变成个人跟进事项，人工修改后会怎样？",
         "怎样登记项目规则、skills、依赖准备和验收命令？",
+        "需要外部设计或研发上下文时，助手怎样读技能、检查并调用 CLI/MCP，编码和评审怎样使用相同资料？",
         "编码与独立评审分别读取什么，如何处理检查失败或需求改变？",
         "怎样检查和应用补丁，什么状态还不能叫需求完成？"
       ],
@@ -339,7 +340,11 @@
         "omem:apps/server/src/knowledge/page-worker.ts",
         "omem:apps/server/src/decision/work.ts",
         "omem:packages/contracts/src/work.ts",
-        "omem:docs/reader-first/assistant-orchestration.md"
+        "omem:docs/reader-first/assistant-orchestration.md",
+        "omem:apps/server/src/capabilities/registry.ts",
+        "omem:apps/server/src/capabilities/session.ts",
+        "omem:packages/contracts/src/capabilities.ts",
+        "omem:skills/omem-cli/references/capabilities.md"
       ],
       "topicPath": [
         "软件开发",

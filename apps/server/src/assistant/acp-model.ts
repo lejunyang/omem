@@ -187,6 +187,11 @@ export class AcpAssistantModel implements AssistantModelPort {
       profile,
       randomUUID(),
     );
+    const capabilities = work?.capabilitySession(
+      workspace,
+      input.signal,
+      input.onActivity,
+    );
     const investigation = answerInvestigation({
       workspace,
       signal: input.signal,
@@ -199,13 +204,18 @@ export class AcpAssistantModel implements AssistantModelPort {
           workspaceRoot: this.deps.researchWorkspace ?? this.deps.workspaceRoot,
           retrievalConfig: this.deps.retrievalConfig,
           context: { ...input, signal },
-          workTools: work
-            ?.tools()
-            .filter((tool) =>
-              ["work_catalog", "work_status", "work_result"].includes(
-                tool.name,
-              ),
-            ),
+          workTools: [
+            ...(work
+              ?.tools()
+              .filter((tool) =>
+                ["work_catalog", "work_status", "work_result"].includes(
+                  tool.name,
+                ),
+              ) ?? []),
+            ...(capabilities
+              ?.tools()
+              .filter((t) => t.name !== "capability_relevance") ?? []),
+          ],
           onSubmitted: publish,
         }),
     });
@@ -217,6 +227,7 @@ export class AcpAssistantModel implements AssistantModelPort {
       tools: [
         ...(reader ? stage.tools(investigation.tools) : investigation.tools),
         ...(work?.tools() ?? []),
+        ...(capabilities?.tools() ?? []),
       ],
       beforeSubmit: (answer, reply) => {
         stage.beforeSubmit(reply);
@@ -445,7 +456,11 @@ export class AcpAssistantModel implements AssistantModelPort {
       try {
         await investigation.close();
       } finally {
-        await environment.close();
+        try {
+          await environment.close();
+        } finally {
+          await capabilities?.close();
+        }
       }
     }
   }

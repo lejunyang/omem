@@ -17,6 +17,7 @@ description: 使用 omem CLI 保存与检索个人材料、基于来源提问、
 - 消息跟进：`messages discover/status/inbox` 只读；订阅范围和调度开关遵循用户明确要求，不能因为发现会话就默认全选。
 - 需求跟进：先确认 contexts 项目范围，再 `requirements track --watch` 综合消息、需求、纪要与代码。`handoff` 只导出实现材料，不代表已执行或获得发布授权。
 - 按需求编码：先读 [需求开发](references/development.md)，明确目标仓库、规则和检查命令，再用 `develop`。`ready` 是本轮 Agent 评审通过，`apply` 才修改原工作区，不代表发布。
+- 外部设计或研发资料：读 [能力装配](references/capabilities.md)，登记已有 skill、只读 CLI/MCP，检查连接并按项目选择。工具由 Agent 调用；登记声明不安装依赖、不完成登录，也不授予外部写权限。
 - 数据管理：先 `data info` 查看本机位置与占用，归档/清理先预览；备份恢复或迁移使用新目录。冷存储还承载旧引用，不能当缓存直接删除。
 - 运行问题：先 `config path`、`status --json`、`service status --json` 和 `doctor --json`。只有用户意图需要服务在线时才启动或重启。
 

@@ -1,5 +1,11 @@
 import { afterEach, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -387,6 +393,23 @@ it("resumes the same durable coding checkout after shutdown and returns its real
       { name: "test", command: "node", args: ["--test"], purpose: "test" },
     ],
   });
+  const capability = {
+    version: 1,
+    id: "design",
+    name: "Design",
+    description: "Design context",
+    cli: [
+      {
+        name: "read",
+        description: "Read design",
+        command: process.execPath,
+        args: ["--version"],
+        readOnly: true,
+      },
+    ],
+  };
+  const selected = s.queue.runner.capabilities.register(capability);
+  s.queue.runner.selectCapabilities("refund", ["design"]);
   const key = s.work.apply(s.action, s.actor("跟进退款查询")).key!;
   publish(s.repository, key);
   const a = s.actor("请帮我实现退款查询");
@@ -397,6 +420,10 @@ it("resumes the same durable coding checkout after shutdown and returns its real
     delegation: a.userText,
   };
   const taskId = s.work.apply(action, a).taskId!;
+  s.queue.runner.capabilities.register({
+    ...capability,
+    description: "Updated catalog",
+  });
   expect(s.work.apply(action, s.actor(a.userText)).taskId).toBe(taskId);
   const processing = s.queue.processOne();
   while (!calls) await new Promise((r) => setTimeout(r, 10));
@@ -405,6 +432,9 @@ it("resumes the same durable coding checkout after shutdown and returns its real
   const stopped = s.queue.read(taskId);
   expect(stopped.job.state).toBe("retry_wait");
   expect(stopped.runId).toBe(taskId);
+  expect(stopped.run?.capabilities).toEqual([
+    { id: "design", revision: selected.revision },
+  ]);
   s.store.db
     .prepare("UPDATE jobs SET not_before=? WHERE id=?")
     .run("2000-01-01T00:00:00Z", stopped.job.id);

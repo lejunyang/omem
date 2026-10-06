@@ -27,6 +27,7 @@ omem 的目标是让个人材料被读懂、找回并用于行动。文档、代
 ## 从哪里继续读
 
 - [需求跟进、编码与独立评审](reader-first/requirement-followup.md)：指定项目范围，综合消息、需求、纪要和代码持续整理；支持关联个人待办，并在独立仓库副本编码、检查和独立评审。
+- [主助手与外部能力](reader-first/assistant-orchestration.md)：自然语言关注与交办，skill/CLI/MCP 通用装配、任务版本与评审补查，以及尚未接入的真实业务项目和其他编码提供方。
 - [个人库与冷存储](reader-first/data-lifecycle.md)：消息缓存、备份恢复、迁移与归档；核心状态仍在 SQLite。
 
 - [整体复审](reader-first/review.md)：实际正文为何仍难读、维护和检索怎样牵连，以及本次改造顺序。

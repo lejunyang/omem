@@ -74,6 +74,11 @@ export class DevelopmentQueue {
             ? this.runner.read(task.runId)
             : await this.runner.create(task.project, task.key, store, {
                 id: task.id,
+                capabilities: (
+                  job.inputRefs[0] as {
+                    capabilities?: import("../../../../packages/contracts/src/capabilities.js").CapabilityReference[];
+                  }
+                ).capabilities,
               });
           store.db
             .prepare("UPDATE assistant_development SET run_id=? WHERE id=?")
@@ -117,7 +122,12 @@ export class DevelopmentQueue {
       },
     );
   }
-  enqueue(key: string, project: string, actor: WorkActor) {
+  enqueue(
+    key: string,
+    project: string,
+    actor: WorkActor,
+    capabilities?: string[],
+  ) {
     if (!this.profile) throw Error("尚未配置编码 Agent");
     if (!this.runner.projects().some((p) => p.alias === project))
       throw Error("目标项目尚未登记；需要项目仓库和检查配置");
@@ -135,11 +145,16 @@ export class DevelopmentQueue {
         (t.key === key && t.project === project && active.has(t.job.state)),
     );
     if (previous) return previous;
+    const selected = this.runner.capabilities.references(
+      capabilities ??
+        this.runner.projects().find((p) => p.alias === project)?.capabilities ??
+        [],
+    );
     const id = randomUUID();
     this.store.tx(() => {
       const { job } = this.store.jobs.enqueueInCurrentTransaction({
         kind,
-        inputRefs: [{ taskId: id }],
+        inputRefs: [{ taskId: id, capabilities: selected }],
         roleVersion: "coding-and-review@1",
         policyVersion: "owner-delegated@1",
         maxAttempts: 30,

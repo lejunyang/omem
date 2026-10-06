@@ -294,3 +294,22 @@ it("sends failures back for repair and gives the independent reviewer no develop
    expect(readFileSync(join(root,"src/a.js"),"utf8")).toContain("1");
  }finally{spy.mockRestore();}
 });
+
+it("reports missing external setup as blocked before starting a model", async () => {
+  const { dir, store, project } = await setup();
+  const { profileSchema } = await import("../../../packages/contracts/src/index.js");
+  const runner = new DevelopmentRunner(join(dir, "data"));
+  runner.capabilities.register({
+    version: 1, id: "design", name: "Design", description: "Read design",
+    cli: [{name: "read", description: "Read", readOnly: true, command: "omem-missing-capability-binary"}],
+  });
+  await runner.register("blocked", { ...project, capabilities: ["design"] });
+  const run = await runner.create("blocked", "requirement:test", store);
+  const result = await runner.execute(run.id, store, profileSchema.parse({
+    id: "traex", name: "Not invoked", transport: "acp", command: "traex", args: [],
+  }));
+  expect(result.state).toBe("blocked");
+  expect(result.error).toContain("missingExecutables");
+  expect(result.attempt).toBe(0);
+  expect(result.pid).toBeNull();
+});
