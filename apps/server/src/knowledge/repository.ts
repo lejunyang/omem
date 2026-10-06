@@ -113,6 +113,8 @@ export class KnowledgeRepository {
       CREATE TABLE IF NOT EXISTS knowledge_pages(document_key TEXT PRIMARY KEY, role TEXT NOT NULL, plan TEXT,
         state TEXT NOT NULL DEFAULT 'published', error TEXT, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS knowledge_page_edits(document_key TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS knowledge_page_inputs(document_key TEXT NOT NULL,source_id TEXT NOT NULL,
+        purpose TEXT NOT NULL,PRIMARY KEY(document_key,source_id));
       CREATE TABLE IF NOT EXISTS knowledge_import_memberships(owner TEXT NOT NULL,document_key TEXT NOT NULL,revision_id TEXT NOT NULL,
         PRIMARY KEY(owner,document_key));`);
     // Persist the migration once. Content revisions and their hashes are untouched.
@@ -128,7 +130,15 @@ export class KnowledgeRepository {
     const explicit = new Set(brief.materialKeys ?? []);
     if ([...explicit].some(key => !available.some(m => m.key === key))) throw Error("所选材料已不可用，请调整材料范围");
     const sources = this.store.contexts.sourceIds(brief.contextIds ?? []);
+    for (const row of this.store.db.prepare("SELECT source_id FROM knowledge_page_inputs WHERE document_key=?").all(brief.key)) sources.add(String(row.source_id));
     return available.filter(m => explicit.has(m.key) || sources.has(m.sourceId));
+  }
+
+  /** Explicit host-owned links, separate from the reader's selected scope. */
+  attachInput(key: string, sourceId: string, purpose: string) {
+    if (!this.pages().some(p => p.key === key && p.plan)) throw Error("文章计划不存在");
+    if (!this.store.db.prepare("SELECT id FROM sources WHERE id=?").get(sourceId)) throw Error("原始材料不存在");
+    this.store.db.prepare("INSERT OR REPLACE INTO knowledge_page_inputs VALUES(?,?,?)").run(key, sourceId, purpose);
   }
 
   role(a: KnowledgeArtifact): KnowledgeRole {

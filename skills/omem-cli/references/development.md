@@ -16,6 +16,8 @@
 
 `develop start KEY --project ALIAS` 从干净已提交版本创建副本。项目的根/子目录 AGENTS.md、CLAUDE.md、额外 ruleFiles 和仓库 skills 都可被 Agent 读取。开发者自主补读、修改和检查，独立评审不读自评，最多三轮回修。
 
-`develop show/list` 查看进度、检查与问题；中断后 `resume ID`。需求换版需新任务。`diff ID` 查看改动，`apply ID` 将评审后的补丁放回仍位于原提交的干净原工作区，保留未提交让用户检查。若原库已有改动，不要替用户 reset/clean。没有 push/部署授权。
+`develop show/list` 查看进度、检查与问题；中断后 `resume ID`。原始需求、范围或验收条件变化需重新规划和评审；仅补充执行进度的新需求文章可继续原任务。`diff ID` 查看改动，`apply ID` 将评审后的补丁放回仍位于原提交的干净原工作区，保留未提交让用户检查。若原库已有改动，不要替用户 reset/clean。没有 push/部署授权。
+
+后台与 CLI 的执行结果会捕获为统一材料，同一次编码的恢复和应用追加版本，并关联原需求。持续跟进开启才自动整理同一需求；暂停时保留材料。主助手读取 `work_result.outcome` 区分已捕获、需求已引用和学习任务状态，不能把排队当正文已更新或记忆已应用。ready 是独立副本检查/评审通过，applied 是写回原库，均不表示上线。
 
 记录在个人库 development/ 下。develop 不接受远端 --url，不自动开启后台编码或全局 hook。Mock/Figma 验收需要项目预先配置的工具、skills 和命令；缺少这些应报告未验证。

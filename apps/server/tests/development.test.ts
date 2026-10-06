@@ -25,6 +25,8 @@ import { KnowledgeRepository } from "../src/knowledge/repository.js";
 import { requirementBrief } from "../src/knowledge/requirements.js";
 import { RequirementTasks } from "../src/knowledge/requirement-tasks.js";
 import { stableDigest } from "../src/storage/digest.js";
+import { captureDevelopmentResult, developmentResult } from "../src/development/results.js";
+import { assertRequirementBasis } from "../src/development/requirement-basis.js";
 const directories: string[] = [],
   stores: Store[] = [];
 afterEach(() => {
@@ -238,6 +240,50 @@ it("applies only the reviewed isolated checkout and protects a changed source wo
   await expect(
     runner.create("test", "requirement:test", store),
   ).rejects.toThrow("未提交");
+});
+it("captures execution once, keeps its history and allows progress-only requirement updates without accepting changed criteria", async () => {
+  const { dir, root, project, store, repository, article } = await setup();
+  const runner = new DevelopmentRunner(join(dir, "data"));
+  await runner.register("outcome", project);
+  const run = await runner.create("outcome", article.document.key, store);
+  writeFileSync(join(run.checkout, "src/a.js"), "export const value = 2;\n");
+  run.head = await snapshotCommit(run.checkout, "implementation");
+  run.state = "ready";
+  run.reviewedFingerprint = await fingerprint(run.checkout);
+  writeFileSync(join(run.directory, "changes.patch"), await git(run.checkout, "diff", run.base, "HEAD"));
+  run.checks.push(await runCommand(run.checkout, project, "check", join(run.directory, "logs")));
+  runner.save(run);
+  const first = captureDevelopmentResult(store, run, { id: "job-1", state: "succeeded" });
+  expect(captureDevelopmentResult(store, run, { id: "job-1", state: "succeeded" }).revisionId).toBe(first.revisionId);
+  expect(first.learningJob?.kind).toBe("extract_claims");
+  expect(first.citedByRequirement).toBe(false);
+  const text = repository.resolveMaterial(first.materialKey)!.material.text;
+  expect(text).toContain("退出码：3");
+  expect(text).toContain("尚未应用到登记仓库");
+  expect(text).toContain("+export const value = 2");
+  expect(repository.materialsForPlan(article.reading!).some(m => m.key === first.materialKey)).toBe(true);
+  const progress = structuredClone(article);
+  progress.document.requirement!.criteria[0]!.status = "implemented";
+  repository.publish(progress);
+  expect(repository.get(article.document.key)!.revision).not.toBe(run.requirementRevision);
+  expect(() => assertRequirementBasis(repository, run)).not.toThrow();
+  const changed = structuredClone(progress);
+  changed.document.requirement!.criteria[0]!.description = "Return different API and value";
+  repository.publish(changed);
+  await expect(runner.apply(run.id)).rejects.toThrow("验收条件已变化");
+  expect(await git(root, "status", "--porcelain")).toBe("");
+  repository.publish(progress);
+  const applied = await runner.apply(run.id);
+  const second = captureDevelopmentResult(store, applied, { id: "job-2", state: "succeeded" });
+  expect(second.sourceId).toBe(first.sourceId);
+  expect(second.revisionId).not.toBe(first.revisionId);
+  expect(store.revision(first.revisionId)).not.toBeNull();
+  expect(developmentResult(store, run.id)?.revisionId).toBe(second.revisionId);
+  expect(store.tasks()).toHaveLength(0);
+  // An original source changing, even before the requirement is rewritten, is
+  // not progress and cannot use the old acceptance basis.
+  store.capture({ source: "manual", externalId: "r", title: "Requirement", parts: [{ type: "text", text: "New contract" }], context: {} }, { learning: false });
+  expect(() => assertRequirementBasis(repository, run)).toThrow("验收条件已变化");
 });
 it("maintains one linked task across accepted requirement updates and preserves manual correction", async () => {
   const { store, article, publish } = await setup(),

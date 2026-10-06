@@ -2,6 +2,7 @@ import { z } from "zod";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fingerprint } from "../development/workspace.js";
+import { developmentResult } from "../development/results.js";
 import {
   attentionPolicySchema,
   workActionSchema,
@@ -182,6 +183,7 @@ export class AssistantWork {
       })),
       review: t.run?.review,
       runId: t.runId,
+      outcome: t.runId ? developmentResult(this.store, t.runId) : null,
       conversationId: t.conversationId,
       createdAt: t.createdAt,
       delivery: t.run

@@ -25,6 +25,11 @@ import {
 } from "../../../../packages/contracts/src/development.js";
 import { Store } from "../store.js";
 import {
+  requirementBasis,
+  assertRequirementBasis,
+  type RequirementBasis,
+} from "./requirement-basis.js";
+import {
   KnowledgeRepository,
   type KnowledgeArticle,
 } from "../knowledge/repository.js";
@@ -56,6 +61,7 @@ export type DevelopmentRun = {
   project: DevelopmentProject;
   requirementKey: string;
   requirementRevision: string;
+  requirementBasis?: RequirementBasis;
   base: string;
   directory: string;
   checkout: string;
@@ -196,6 +202,7 @@ export class DevelopmentRunner {
       project,
       requirementKey: key,
       requirementRevision: article.revision,
+      requirementBasis: requirementBasis(repository, article),
       base,
       directory,
       checkout,
@@ -319,12 +326,7 @@ export class DevelopmentRunner {
         run.requirementRevision,
       );
       if (!article?.document.requirement) throw Error("固定需求版本不可用");
-      if (
-        repository.get(run.requirementKey)?.revision !==
-          run.requirementRevision ||
-        !repository.get(run.requirementKey)?.current
-      )
-        throw Error("需求已变化；保留现有改动，请按新需求创建任务");
+      assertRequirementBasis(repository, run);
       const materials = article.dependencies
         .filter((d) => d.kind === "material")
         .map((d) => {
@@ -573,15 +575,11 @@ export class DevelopmentRunner {
           hostChecks.every((c) => c.exitCode === 0) &&
           hostChecks.length > 0
         ) {
-          repository.refresh();
-          const current = repository.get(run.requirementKey);
-          if (
-            current?.revision !== run.requirementRevision ||
-            !current.current
-          ) {
+          try {
+            assertRequirementBasis(repository, run);
+          } catch (error) {
             run.state = "blocked";
-            run.error =
-              "编码期间需求材料发生变化；保留代码，请基于新需求重新评审";
+            run.error = String(error);
             break;
           }
           run.reviewedFingerprint = afterReview;
@@ -660,10 +658,7 @@ export class DevelopmentRunner {
       const store = new Store(this.dataDir);
       try {
         const repository = new KnowledgeRepository(store);
-        repository.refresh();
-        const current = repository.get(run.requirementKey);
-        if (current?.revision !== run.requirementRevision || !current.current)
-          throw Error("需求已变化，旧评审不能应用；请基于新需求重新评审");
+        assertRequirementBasis(repository, run);
       } finally {
         store.close();
       }

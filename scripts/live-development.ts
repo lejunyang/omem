@@ -17,6 +17,7 @@ import { RequirementTasks } from "../apps/server/src/knowledge/requirement-tasks
 import { RoleBundleRegistry } from "../apps/server/src/agent-runtime/bundles.js";
 import { RoleRuntimeGateway } from "../apps/server/src/agent-runtime/gateway.js";
 import { DevelopmentRunner } from "../apps/server/src/development/runner.js";
+import { captureDevelopmentResult } from "../apps/server/src/development/results.js";
 import { git, saveJson } from "../apps/server/src/development/workspace.js";
 import { loadReviewCodeModelConfig } from "../apps/server/src/review/model-config.js";
 import { profileSchema } from "../packages/contracts/src/index.js";
@@ -109,6 +110,7 @@ const pipeline = new KnowledgePipeline(
 );
 const report = ".repo-review/runtime/research/development.json";
 const start = Date.now();
+let passed = false;
 try {
   const brief = requirementBrief({
     key: "requirement:development-acceptance",
@@ -156,7 +158,41 @@ try {
     "source worktree must remain untouched before apply",
   );
   assert.notEqual(result.review?.criteria.length, 0);
-  await runner.apply(run.id);
+  const outcome = captureDevelopmentResult(store, result, {
+    id: "live-ready",
+    state: "succeeded",
+  });
+  assert.equal(outcome.learningJob?.kind, "extract_claims");
+  assert.equal(outcome.citedByRequirement, false);
+  console.log("Updating the same requirement from captured execution results");
+  const [updated] = await pipeline.writePage(brief);
+  assert.ok(updated?.document.requirement);
+  assert.notEqual(updated.revision, article.revision);
+  assert.ok(
+    updated.dependencies.some(
+      (d) => d.kind === "material" && d.key === outcome.materialKey,
+    ),
+    "updated requirement must read actual execution",
+  );
+  assert.ok(
+    updated.document.requirement.criteria.some(
+      (c) => c.status === "verified" || c.status === "implemented",
+    ),
+    "progress must change from actual work",
+  );
+  assert.ok(
+    updated.document.requirement.criteria.every((c) => c.status !== "released"),
+    "local execution is not deployment",
+  );
+  tasks.sync(updated);
+  const applied = await runner.apply(run.id);
+  const appliedOutcome = captureDevelopmentResult(store, applied, {
+    id: "live-applied",
+    state: "succeeded",
+  });
+  assert.equal(appliedOutcome.sourceId, outcome.sourceId);
+  assert.notEqual(appliedOutcome.revisionId, outcome.revisionId);
+  assert.ok(store.revision(outcome.revisionId));
   assert.notEqual(
     readFileSync(join(source, "src/tickets.mjs"), "utf8"),
     original,
@@ -175,9 +211,15 @@ try {
     passed: true,
     model: profile.model,
     article: article.document,
+    updated: updated.document,
+    research: updated.investigation,
+    traces: { initial: { generation: article.generation, review: article.review }, update: { generation: updated.generation, review: updated.review } },
+    outcome,
+    appliedOutcome,
     task: store.tasks()[0],
     run: result,
   });
+  passed = true;
   console.log(
     JSON.stringify({
       passed: true,
@@ -199,4 +241,5 @@ try {
 } finally {
   await pipeline.stop();
   store.close();
+  if (passed) rmSync(directory, { recursive: true, force: true });
 }

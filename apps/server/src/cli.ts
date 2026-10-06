@@ -815,8 +815,10 @@ async function runDevelopment(
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
+  let runId: string | undefined;
   try {
     const run = id ? runner.read(id) : await runner.create(alias!, key!, store);
+    runId = run.id;
     console.error(`开发任务 ${run.id}；目录 ${run.directory}`);
     const result = await runner.execute(run.id, store, profile, {
       signal: abort.signal,
@@ -827,8 +829,30 @@ async function runDevelopment(
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
-    store.close();
+    try {
+      if (runId) await returnDevelopmentResult(store, runner.read(runId));
+    } finally {
+      store.close();
+    }
   }
+}
+async function returnDevelopmentResult(
+  store: import("./store.js").Store,
+  run: import("./development/runner.js").DevelopmentRun,
+) {
+  const { captureDevelopmentResult } = await import("./development/results.js");
+  const { KnowledgeRepository } = await import("./knowledge/repository.js");
+  const { KnowledgePageWorker } = await import("./knowledge/page-worker.js");
+  store.tx(() => {
+    captureDevelopmentResult(store, run, {
+      id: `cli:${run.id}:${run.updatedAt}`,
+      state: run.state,
+      error: run.error,
+    });
+    const maintenance = new KnowledgePageWorker(new KnowledgeRepository(store));
+    if (maintenance.status(run.requirementKey)?.enabled)
+      maintenance.request(run.requirementKey, true);
+  });
 }
 develop
   .command("start <requirement-key>")
@@ -853,7 +877,15 @@ develop
   .command("apply <id>")
   .description("将已评审补丁应用到仍位于原版本的干净工作区，保留未提交供检查")
   .action(async (id) => {
-    const run = await (await developmentRunner()).apply(id);
+    const runner = await developmentRunner();
+    const run = await runner.apply(id);
+    const { Store } = await import("./store.js");
+    const store = new Store(runner.dataDir);
+    try {
+      await returnDevelopmentResult(store, run);
+    } finally {
+      store.close();
+    }
     show(run, formatDevelopmentRun(run));
   });
 const knowledge = group("knowledge", "查看知识与材料；按阅读目标提交写作任务");
