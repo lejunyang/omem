@@ -1,0 +1,1282 @@
+{
+  "version": 1,
+  "document": {
+    "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+    "title": "飞书实时连接、助手应答与可靠投递编排",
+    "summary": "LarkRuntimeHost 是服务端飞书集成的常驻编排层：同步数据库中的有效连接，把实时消息路由到受可见性约束的助手会话，分派卡片动作，并周期性处理通知聚合与回复投递；同时提供重启恢复、状态观测和有序停机。",
+    "category": "代码解析",
+    "topicPath": [
+      "软件开发",
+      "omem",
+      "服务端",
+      "飞书集成",
+      "运行时编排"
+    ],
+    "sections": [
+      {
+        "key": "role_and_composition",
+        "title": "解决什么问题",
+        "body": "该宿主把飞书接入所需的多类组件装配成一个常驻运行时：回复投递 Worker、通知批处理器、卡片动作服务、质量标注服务，以及可选的助手运行时。若调用方未注入适配器或检索器，它会使用官方消息/实时适配器与关键词检索；若未提供 `assistantModel`，助手能力保持关闭，但连接、卡片和投递编排仍可工作。参考 [[c1]]\n\n安全边界由服务端掌握：私聊可访问允许的个人证据，而群聊检索只接受来源会话 ID 与当前群一致的证据。这样飞书群内提问不会看到从私聊、其他群或无对应会话来源收集的内容。参考 [[c2]]"
+      },
+      {
+        "key": "message_flow",
+        "title": "一条消息如何变成回复",
+        "body": "以绑定用户在群里触发助手为例：一次 `processOnce()` 先读取处于 `active` 或 `awaiting_pair` 的连接，停掉已失效实例，并为新连接创建带租约的 `LarkConnectionManager`。实时适配器收到事件后，经 `LarkEventInbox` 调用这里注入的助手回调。参考 [[c3]]\n\n回调用 `appId + bindingVersion` 生成传输线程标识，再按群聊或私聊打开对应会话；若已存会话的可见性与当前绑定不一致，立即失败关闭。随后它把文本和飞书事件 ID 交给 `AssistantRuntime.turn()`，将回复文本、轮次 ID、去重状态及既有 outbox ID 返回给事件收件箱。参考 [[c4]]\n\n下一轮 `processOnce()` 会先生成到期通知批次，再分别最多处理 `limit` 个卡片任务和 `limit` 个投递任务，返回本轮计数及连接数。卡片协议为 `omem.quality.v1` 时走质量标注，其余进入普通卡片队列。参考 [[c5]]"
+      },
+      {
+        "key": "recovery_and_lifecycle",
+        "title": "恢复、错误与生命周期边界",
+        "body": "启动具有幂等保护，并在进入轮询前恢复未完成轮次：已有结果但未终结的轮次补记为完成；没有结果的陈旧轮次直接删除，使同一传输事件重投时可以重新执行。助手未启用时恢复返回零计数。参考 [[c6]]\n\n循环默认每秒执行一次；单轮异常不会终止宿主，而是把错误去换行、截断到 1000 字符，并遮蔽常见密钥前缀后保存到状态中，下一轮成功会清空错误。`status()` 暴露运行状态、活跃连接数及累计处理量。停止时通过 `AbortController` 唤醒等待，关闭所有连接和 onboarding，最后等待循环退出。错误文本的清洗规则参考 [[c7]]；轮询、状态与停机流程参考 [[c8]]"
+      }
+    ],
+    "citations": [
+      {
+        "key": "c1",
+        "label": "运行时组件装配",
+        "reason": "支持宿主创建投递、批处理、卡片、质量服务，并仅在提供模型时创建助手运行时的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+          "startLine": 74,
+          "endLine": 118
+        },
+        "quote": "    const workerId =\n      input.workerId ?? `lark-${process.pid}-${randomUUID().slice(0, 8)}`;\n    const messages = input.messageAdapter ?? new OfficialLarkMessageAdapter();\n    this.delivery = new LarkDeliveryWorker(\n      new LarkDeliveryRepository(input.store.db),\n      input.secrets,\n      messages,\n      `${worke"
+      },
+      {
+        "key": "c2",
+        "label": "群聊证据可见性",
+        "reason": "支持私聊与群聊采用不同证据可见性规则，群聊限定为同一会话来源。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+          "startLine": 92,
+          "endLine": 104
+        },
+        "quote": "    // Real server-owned visibility: a group conversation may see only evidence\n    // actually collected in that group chat. The owner's private/p2p imports and\n    // anything not sourced from this chat are invisible here.\n    const visibilityPolicy: VisibilityPolicy = ({\n      conversation,\n      fragmentId,\n    }) "
+      },
+      {
+        "key": "c3",
+        "label": "连接同步与事件入口",
+        "reason": "支持有效连接筛选、失效连接停止、新连接管理器创建及事件收件箱装配流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+          "startLine": 121,
+          "endLine": 150
+        },
+        "quote": "  private activeConnections() {\n    return this.input.store.db\n      .prepare(\n        `SELECT id FROM lark_connections\n         WHERE state IN ('active','awaiting_pair') ORDER BY created_at`,\n      )\n      .all() as Row[];\n  }\n\n  private syncConnections() {\n    const active = new Set(\n      this.activeConnections().ma"
+      },
+      {
+        "key": "c4",
+        "label": "助手消息路由",
+        "reason": "支持传输线程命名、可见性校验、助手轮次调用及回复元数据返回的代表性调用链。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+          "startLine": 151,
+          "endLine": 183
+        },
+        "quote": "              ? async (routed) => {\n                  // C: namespaced conversation key. The thread_id encodes the\n                  // transport binding (appId + bindingVersion), so a web/forged row\n                  // (channel=web, thread_id='') and rows from a different Lark app or\n                  // a superseded"
+      },
+      {
+        "key": "c5",
+        "label": "卡片分流与队列处理",
+        "reason": "支持质量卡片协议分流，以及每轮通知聚合、卡片和投递任务的限量处理。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+          "startLine": 189,
+          "endLine": 222
+        },
+        "quote": "            enqueue: (event) => {\n              const protocol = (\n                event.payload as { action?: { value?: { protocol?: unknown } } }\n              )?.action?.value?.protocol;\n              return protocol === \"omem.quality.v1\"\n                ? this.quality.handle(event)\n                : this.cards.enqu"
+      },
+      {
+        "key": "c6",
+        "label": "未完成轮次恢复",
+        "reason": "支持有结果轮次补完成、无结果轮次清除，以及无助手时直接返回的恢复语义。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+          "startLine": 225,
+          "endLine": 259
+        },
+        "quote": "  /**\n   * E: recovery worker. At start no model is in flight, so every pending/running\n   * turn left by a previous process is stale. A turn that crashed mid-model (no\n   * result) is removed so a redelivery of the same transport event starts a fresh\n   * turn instead of returning the stale pending record forever. A t"
+      },
+      {
+        "key": "c7",
+        "label": "错误隔离与有序停机",
+        "reason": "支持错误脱敏与截断、轮询不中断、状态暴露、Abort 唤醒及停机清理行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+          "startLine": 34,
+          "endLine": 38
+        },
+        "quote": "const safeError = (error: unknown) =>\n  (error instanceof Error ? error.message : \"Lark runtime failed\")\n    .replace(/\\b(?:cli_|sk-|ghp_)[A-Za-z0-9_-]{12,}/g, \"[REDACTED]\")\n    .replace(/[\\r\\n]+/g, \" \")\n    .slice(0, 1000);"
+      },
+      {
+        "key": "c8",
+        "label": "轮询状态与停止流程",
+        "reason": "支持轮询捕获异常、状态统计以及关闭控制器、连接、onboarding 并等待循环结束的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+          "startLine": 262,
+          "endLine": 305
+        },
+        "quote": "  private async wait() {\n    await new Promise<void>((resolve) => {\n      const finish = () => {\n        clearTimeout(timer);\n        this.controller.signal.removeEventListener(\"abort\", finish);\n        resolve();\n      };\n      const timer = setTimeout(finish, this.input.pollMs ?? 1000);\n      timer.unref();\n      thi"
+      }
+    ],
+    "questions": []
+  },
+  "dependencies": [
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+      "digest": "a0b606ccf8fae5c59d7715d9541ca644fe14ce04bb2df4da6c0b7eeef1e45738"
+    }
+  ],
+  "publication": {
+    "role": "note"
+  },
+  "investigation": [
+    {
+      "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+      "digest": "a0b606ccf8fae5c59d7715d9541ca644fe14ce04bb2df4da6c0b7eeef1e45738"
+    },
+    {
+      "key": "omem:apps/server/src/app.ts",
+      "digest": "ee5a33c161ebd14e0f3813ff439238e4272c99f55c6b5ffba2ce1a741aa15820"
+    },
+    {
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "35ad76f00ccf0864f586519d9809faf04a7b0a723268311d9af87a24b47458a0"
+    },
+    {
+      "key": "omem:apps/server/src/integrations/lark-personal/service.ts",
+      "digest": "cb8306f33f1fe8076c385e6b757e267877b93789725b404b4c1a068b5d9f3afe"
+    },
+    {
+      "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+      "digest": "da924103ae072938c1c5c5d407222972840994392cedbaed7fbe0dbdd9e46779"
+    },
+    {
+      "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+      "digest": "5008856019e3a9fa157481a2c3c9b581755a06bda2b7f5e6b3cc5aed6a70601d"
+    },
+    {
+      "key": "omem:apps/server/tests/conversation-security.test.ts",
+      "digest": "01ec8266dc5c4c7ed5c6d63813758f5fd7ade3782f495e70c3779bc260098bbb"
+    },
+    {
+      "key": "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+      "digest": "2122f70ae900a266b9442fbef49e5138b9110ad613c088960a224ab5b6844348"
+    },
+    {
+      "key": "omem:apps/server/tests/lark-personal.test.ts",
+      "digest": "120d5733d793e0bf1259ad83e742a5b64a6ef916c83109e248f954c23aab86df"
+    },
+    {
+      "key": "omem:apps/server/tests/lark-runtime.test.ts",
+      "digest": "ec7fb8df6d9655a924a4169f8d0609efe31d3bbaad23f7b8f7a3cd89bc20695c"
+    },
+    {
+      "key": "omem:scripts/live-lark-host-smoke.ts",
+      "digest": "da10fc75972adf6fa64420e3c76a2084abe9b5bc928dbdc330d5085f95a72ad3"
+    },
+    {
+      "key": "omem:scripts/quality-lark-annotate.ts",
+      "digest": "6dcf37ce6bada61da774bf836f4ab601e0c0e0c13bef627355d397de7672f751"
+    }
+  ],
+  "generation": {
+    "model": "gpt-5.6-sol",
+    "effort": "medium",
+    "at": "2026-10-06T15:16:12.492Z",
+    "trace": {
+      "profileId": "traex",
+      "acpProvider": "traex",
+      "runId": "a183c8da-ec02-4866-a6d8-b9c2efd42863",
+      "roleId": "code-analyst",
+      "roleVersion": "1",
+      "bundleHash": "9edb09fc7eb9926b2e7c0d623d2f273318bade63cc8fedbc5a0cfe341056928a",
+      "promptHash": "b0b34ca49cb2edec679f505636b80192a2141ae1cdbc4a3f26a48b835134b600",
+      "contextHash": "d0f31b11a22c4a4e295bdf8d8b6c056f18cadae39229d16184aad393333465c7",
+      "skillHash": "879f6a286ece6eab136d61a6e691f1bcbe8771ae6ecaa240cf101809df2be102",
+      "toolHash": "6ecd4cb47ca06f6b86b9c2e46f7cbe547345091d7fd0a8c46a45f14b98cea1a6",
+      "fingerprint": "83a84b32b162fda75483c68825c3afe7fe038b58965ccdcf78c7deb68e38440d",
+      "outputSchema": "KnowledgeBatch.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-code-analyst",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_material_groups",
+        "list_materials",
+        "read_material",
+        "read_fragments",
+        "read_section",
+        "search_materials",
+        "search_contexts",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_conversation",
+        "read_tasks",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a111c7-2076-71b1-a561-0f90d817b315"
+      ],
+      "usage": {
+        "used": 54105,
+        "size": 258400,
+        "cost": null,
+        "acpCompletion": "validated_submission",
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_XopI5PIHsHxaMq9kgHfmEZhD:exec-5fc4dffe-41a4-4008-9018-7100f102d17f",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_XopI5PIHsHxaMq9kgHfmEZhD:exec-5fc4dffe-41a4-4008-9018-7100f102d17f",
+              "process_id": "19788",
+              "turn_id": "01a111c7-2412-7b12-b3df-5cc4511149fa",
+              "started_at_ms": 1791299634236,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-code-analyst/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/9edb09fc7eb9926b2e7c0d623d2f273318bade63cc8fedbc5a0cfe341056928a/a183c8da-ec02-4866-a6d8-b9c2efd42863",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-code-analyst/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-code-analyst/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_XopI5PIHsHxaMq9kgHfmEZhD:exec-5fc4dffe-41a4-4008-9018-7100f102d17f",
+            "status": "completed",
+            "outputDigest": "427fa33736f71d60556a53896610c72e8039aa2573d0379a1f05b6ea5e9853d9"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_hTLeM00J75wSiCKLyhQGNrtK:exec-bde3ffea-45d0-481c-9f67-284c55cc84b4",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+                "startLine": 1,
+                "endLine": 307
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+              "startLine": 1,
+              "endLine": 307
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_hTLeM00J75wSiCKLyhQGNrtK:exec-bde3ffea-45d0-481c-9f67-284c55cc84b4",
+            "status": "completed",
+            "outputDigest": "ee1f4150ecb8b831c22fcdf0a788f3f51aad7d38c6632a80c71c52515fc27604"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_s1HrKH56ak0uQvBErajTzAcr:exec-03b13a72-51af-4e4a-9870-514e4315c021",
+            "title": "List /Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/9edb09fc7eb9926b2e7c0d623d2f273318bade63cc8fedbc5a0cfe341056928a/a183c8da-ec02-4866-a6d8-b9c2efd42863/originals",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_s1HrKH56ak0uQvBErajTzAcr:exec-03b13a72-51af-4e4a-9870-514e4315c021",
+              "process_id": "78274",
+              "turn_id": "01a111c7-2412-7b12-b3df-5cc4511149fa",
+              "started_at_ms": 1791299661557,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg --files originals | sed -n '1,120p'"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/9edb09fc7eb9926b2e7c0d623d2f273318bade63cc8fedbc5a0cfe341056928a/a183c8da-ec02-4866-a6d8-b9c2efd42863",
+              "parsed_cmd": [
+                {
+                  "type": "list_files",
+                  "cmd": "rg --files originals",
+                  "path": "originals"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_s1HrKH56ak0uQvBErajTzAcr:exec-03b13a72-51af-4e4a-9870-514e4315c021",
+            "status": "completed",
+            "outputDigest": "9ce90d27ba08d04fe10f00cc08a947d0985117bb4ff67a24e118f0bf73f2be44"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_E6CwWFQoiSspZsAJ7gNWYNAs:exec-ad86e6ae-f9d6-47ae-90ba-086d18895183",
+            "title": "Search LarkRuntimeHost|recoverUnfinishedTurns|processOnce\\( in server",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_E6CwWFQoiSspZsAJ7gNWYNAs:exec-ad86e6ae-f9d6-47ae-90ba-086d18895183",
+              "process_id": "85570",
+              "turn_id": "01a111c7-2412-7b12-b3df-5cc4511149fa",
+              "started_at_ms": 1791299669360,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n -C 4 \"LarkRuntimeHost|recoverUnfinishedTurns|processOnce\\(\" originals/apps/server originals/scripts/live-lark-host-smoke.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/9edb09fc7eb9926b2e7c0d623d2f273318bade63cc8fedbc5a0cfe341056928a/a183c8da-ec02-4866-a6d8-b9c2efd42863",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n -C 4 \"LarkRuntimeHost|recoverUnfinishedTurns|processOnce\\\\(\" originals/apps/server originals/scripts/live-lark-host-smoke.ts",
+                  "query": "LarkRuntimeHost|recoverUnfinishedTurns|processOnce\\(",
+                  "path": "server"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_E6CwWFQoiSspZsAJ7gNWYNAs:exec-ad86e6ae-f9d6-47ae-90ba-086d18895183",
+            "status": "completed",
+            "outputDigest": "07d817b076ddc4c51b41c690d848e8dd973af6d7b3d37a1e1e8c30155141c9a5"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_C5yNDqFkDXUBbdBCChpKQexA:exec-ada6fb70-7d2d-4749-9ce2-ff4a21983596",
+            "title": "sed -n '220,275p;1210,1245p' originals/apps/server/src/app.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_C5yNDqFkDXUBbdBCChpKQexA:exec-ada6fb70-7d2d-4749-9ce2-ff4a21983596",
+              "process_id": "73594",
+              "turn_id": "01a111c7-2412-7b12-b3df-5cc4511149fa",
+              "started_at_ms": 1791299679630,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '220,275p;1210,1245p' originals/apps/server/src/app.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/9edb09fc7eb9926b2e7c0d623d2f273318bade63cc8fedbc5a0cfe341056928a/a183c8da-ec02-4866-a6d8-b9c2efd42863",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "sed -n '220,275p;1210,1245p' originals/apps/server/src/app.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_C5yNDqFkDXUBbdBCChpKQexA:exec-2e2cc36d-ff7e-479d-9167-e9d252102e59",
+            "title": "Read lark-delivery-recovery.test.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_C5yNDqFkDXUBbdBCChpKQexA:exec-2e2cc36d-ff7e-479d-9167-e9d252102e59",
+              "process_id": "73034",
+              "turn_id": "01a111c7-2412-7b12-b3df-5cc4511149fa",
+              "started_at_ms": 1791299679630,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '150,230p' originals/apps/server/tests/lark-delivery-recovery.test.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/9edb09fc7eb9926b2e7c0d623d2f273318bade63cc8fedbc5a0cfe341056928a/a183c8da-ec02-4866-a6d8-b9c2efd42863",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '150,230p' originals/apps/server/tests/lark-delivery-recovery.test.ts",
+                  "name": "lark-delivery-recovery.test.ts",
+                  "path": "originals/apps/server/tests/lark-delivery-recovery.test.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_C5yNDqFkDXUBbdBCChpKQexA:exec-ada6fb70-7d2d-4749-9ce2-ff4a21983596"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_C5yNDqFkDXUBbdBCChpKQexA:exec-ada6fb70-7d2d-4749-9ce2-ff4a21983596",
+            "status": "completed",
+            "outputDigest": "cbdb448b1a15d286ee96393f228e6029faa05165f6fe49692c53fdf937bcd8d7"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_C5yNDqFkDXUBbdBCChpKQexA:exec-2e2cc36d-ff7e-479d-9167-e9d252102e59",
+            "status": "completed",
+            "outputDigest": "13a2ef1f1e0c05bc583c66f58c97315ee650a3c0bd5a0b8f03d18f4edad18e72"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_C5yNDqFkDXUBbdBCChpKQexA:exec-1110136e-8d18-43a5-b052-fb286fab126f",
+            "title": "Search class LarkEventInbox|class LarkConnectionManager|interface Routed|assistant\\?:|assistant: in realtime.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_C5yNDqFkDXUBbdBCChpKQexA:exec-1110136e-8d18-43a5-b052-fb286fab126f",
+              "process_id": "82412",
+              "turn_id": "01a111c7-2412-7b12-b3df-5cc4511149fa",
+              "started_at_ms": 1791299679647,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n \"class LarkEventInbox|class LarkConnectionManager|interface Routed|assistant\\?:|assistant:\" originals/apps/server/src/integrations/lark/realtime.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/9edb09fc7eb9926b2e7c0d623d2f273318bade63cc8fedbc5a0cfe341056928a/a183c8da-ec02-4866-a6d8-b9c2efd42863",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n \"class LarkEventInbox|class LarkConnectionManager|interface Routed|assistant\\\\?:|assistant:\" originals/apps/server/src/integrations/lark/realtime.ts",
+                  "query": "class LarkEventInbox|class LarkConnectionManager|interface Routed|assistant\\?:|assistant:",
+                  "path": "realtime.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_C5yNDqFkDXUBbdBCChpKQexA:exec-1110136e-8d18-43a5-b052-fb286fab126f",
+            "status": "completed",
+            "outputDigest": "a1ee2120e6b32b74722afadac87399c85e5eea59085f28ac6a8ace09dfc08422"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_tshZYUP3cjKx6vMvjQlC0SCc:exec-27c6958d-0cc6-4922-9802-665813e73b54",
+            "title": "Read realtime.ts, Read realtime.ts, Read realtime.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_tshZYUP3cjKx6vMvjQlC0SCc:exec-27c6958d-0cc6-4922-9802-665813e73b54",
+              "process_id": "97470",
+              "turn_id": "01a111c7-2412-7b12-b3df-5cc4511149fa",
+              "started_at_ms": 1791299687889,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '285,430p' originals/apps/server/src/integrations/lark/realtime.ts; sed -n '430,610p' originals/apps/server/src/integrations/lark/realtime.ts; sed -n '880,1010p' originals/apps/server/src/integrations/lark/realtime.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/9edb09fc7eb9926b2e7c0d623d2f273318bade63cc8fedbc5a0cfe341056928a/a183c8da-ec02-4866-a6d8-b9c2efd42863",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '285,430p' originals/apps/server/src/integrations/lark/realtime.ts",
+                  "name": "realtime.ts",
+                  "path": "originals/apps/server/src/integrations/lark/realtime.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '430,610p' originals/apps/server/src/integrations/lark/realtime.ts",
+                  "name": "realtime.ts",
+                  "path": "originals/apps/server/src/integrations/lark/realtime.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '880,1010p' originals/apps/server/src/integrations/lark/realtime.ts",
+                  "name": "realtime.ts",
+                  "path": "originals/apps/server/src/integrations/lark/realtime.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_tshZYUP3cjKx6vMvjQlC0SCc:exec-27c6958d-0cc6-4922-9802-665813e73b54",
+            "status": "completed",
+            "outputDigest": "203374052e578fc567ee0eeea7ed2579bfff3c73b83affcfa209614fecd9f896"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_5ijeXcANodAZpeHv1ZPUItzh:exec-3d6d59d9-d5a8-4cbb-995c-315e8c801997",
+            "title": "Search larkRuntime\\?\\.start|larkRuntime\\.start|larkRuntime\\?\\.stop|larkRuntime\\.stop in app.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_5ijeXcANodAZpeHv1ZPUItzh:exec-3d6d59d9-d5a8-4cbb-995c-315e8c801997",
+              "process_id": "79492",
+              "turn_id": "01a111c7-2412-7b12-b3df-5cc4511149fa",
+              "started_at_ms": 1791299698113,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n -C 3 \"larkRuntime\\?\\.start|larkRuntime\\.start|larkRuntime\\?\\.stop|larkRuntime\\.stop\" originals/apps/server/src/app.ts originals/apps/server/src/index.ts originals/apps/server/src/*.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/9edb09fc7eb9926b2e7c0d623d2f273318bade63cc8fedbc5a0cfe341056928a/a183c8da-ec02-4866-a6d8-b9c2efd42863",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n -C 3 \"larkRuntime\\\\?\\\\.start|larkRuntime\\\\.start|larkRuntime\\\\?\\\\.stop|larkRuntime\\\\.stop\" originals/apps/server/src/app.ts originals/apps/server/src/index.ts 'originals/apps/server/src/*.ts'",
+                  "query": "larkRuntime\\?\\.start|larkRuntime\\.start|larkRuntime\\?\\.stop|larkRuntime\\.stop",
+                  "path": "app.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_5ijeXcANodAZpeHv1ZPUItzh:exec-3d6d59d9-d5a8-4cbb-995c-315e8c801997",
+            "status": "failed",
+            "outputDigest": "afff8ebe3ab4a5da505dbcf2eb8830775f076655e7461f5a6f8854f87d8ec68e"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_c59qaNedJTjCXHm9NwjCwGKj:exec-775f2528-9645-443e-808a-541eb2afad99",
+            "title": "Tool: omem/search_knowledge",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_knowledge",
+              "arguments": {
+                "query": "飞书 LarkRuntimeHost 运行时编排 连接 消息 助手 投递 恢复",
+                "limit": 5,
+                "purpose": "background"
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_knowledge",
+            "args": {
+              "query": "飞书 LarkRuntimeHost 运行时编排 连接 消息 助手 投递 恢复",
+              "purpose": "background",
+              "limit": 5
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_c59qaNedJTjCXHm9NwjCwGKj:exec-775f2528-9645-443e-808a-541eb2afad99",
+            "status": "completed",
+            "outputDigest": "2aaa5c3eb6af2c9961c597fe81241b274bbbe76a1ec1f410e2e153f64f7deb5f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_U2Gvuht0rKzh9nvudDbceROO:exec-a33ecdb9-0bad-4f23-80ac-9d3706422a0f",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/integrations/lark/runtime.ts",
+              "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+              "omem:apps/server/src/integrations/lark/realtime.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_U2Gvuht0rKzh9nvudDbceROO:exec-a33ecdb9-0bad-4f23-80ac-9d3706422a0f",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    }
+  },
+  "review": {
+    "model": "gpt-5.6-sol",
+    "at": "2026-10-06T15:20:28.313Z",
+    "trace": {
+      "profileId": "traex",
+      "acpProvider": "traex",
+      "runId": "d0958c6e-618b-4694-bb4a-7665d7094852",
+      "roleId": "knowledge-verifier",
+      "roleVersion": "1",
+      "bundleHash": "f7dfcaf1a13cd13d71821d30e8ea1e9d534cb40f8ae7c279d277182aa96fb182",
+      "promptHash": "ceddd049d567756edae12de3d354446ab4ab4dba987b659c439a72c2f7b78057",
+      "contextHash": "bee4279be0db0ec3dbf98a24d35650f247a885577076b64e138fc726d2737704",
+      "skillHash": "2871813c1c7d4b649d2e0c3420f23096eb99098fb23f0c70b967fab22a203735",
+      "toolHash": "6ecd4cb47ca06f6b86b9c2e46f7cbe547345091d7fd0a8c46a45f14b98cea1a6",
+      "fingerprint": "2d62ff591f7ff0a51f1acee133dd61a3ce7de590a55c5750118fba555caf8cd1",
+      "outputSchema": "KnowledgeReview.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-knowledge-verifier",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_material_groups",
+        "list_materials",
+        "read_material",
+        "read_fragments",
+        "read_section",
+        "search_materials",
+        "search_contexts",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_conversation",
+        "read_tasks",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a111ca-6e06-75e0-b0bc-1baa09a526db"
+      ],
+      "usage": {
+        "used": 81223,
+        "size": 258400,
+        "cost": null,
+        "acpCompletion": "validated_submission",
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_N7RHQYVkdEhHL4esMIeaM9jF:exec-59ab2d52-eb35-4551-a9b7-5a3e756496ad",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_N7RHQYVkdEhHL4esMIeaM9jF:exec-59ab2d52-eb35-4551-a9b7-5a3e756496ad",
+              "process_id": "89997",
+              "turn_id": "01a111ca-7113-7950-98b2-6b4d8365aa58",
+              "started_at_ms": 1791299853289,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/f7dfcaf1a13cd13d71821d30e8ea1e9d534cb40f8ae7c279d277182aa96fb182/d0958c6e-618b-4694-bb4a-7665d7094852",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-verifier/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_N7RHQYVkdEhHL4esMIeaM9jF:exec-59ab2d52-eb35-4551-a9b7-5a3e756496ad",
+            "status": "completed",
+            "outputDigest": "3e3b0df468794e0c77974276ec4446a31872a94ecae4fc22ccf82362f69ded37"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_iDsaKksPvt0tcbJQWmG18tCH:exec-034e81f9-e29f-4cc6-9f22-a257b8f238c9",
+            "title": "Tool: omem/read_tasks",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_tasks",
+              "arguments": {
+                "limit": 100,
+                "offset": 0
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_iDsaKksPvt0tcbJQWmG18tCH:exec-ce27b527-9db8-40eb-88ab-6dbfbdeb0f4a",
+            "title": "Tool: omem/code_navigation",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "code_navigation",
+              "arguments": {
+                "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+                "symbol": "LarkRuntimeHost"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_iDsaKksPvt0tcbJQWmG18tCH:exec-9311a581-4afa-4195-8bce-28dc463eed86",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+                "startLine": 1,
+                "endLine": 307
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_tasks",
+            "args": {
+              "offset": 0,
+              "limit": 100
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "code_navigation",
+            "args": {
+              "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+              "symbol": "LarkRuntimeHost"
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/integrations/lark/runtime.ts",
+              "startLine": 1,
+              "endLine": 307
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_iDsaKksPvt0tcbJQWmG18tCH:exec-034e81f9-e29f-4cc6-9f22-a257b8f238c9",
+            "status": "completed",
+            "outputDigest": "883821272f335c5e59f91c526d3d0e1c08c18b676d8fffeaa66d6f726b871241"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_iDsaKksPvt0tcbJQWmG18tCH:exec-ce27b527-9db8-40eb-88ab-6dbfbdeb0f4a",
+            "status": "completed",
+            "outputDigest": "b68cd974d8b02807abc5853feb7a867ffc1a7019d3a8e79dd98b5059d35515b2"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_iDsaKksPvt0tcbJQWmG18tCH:exec-9311a581-4afa-4195-8bce-28dc463eed86",
+            "status": "completed",
+            "outputDigest": "6ed80d06deaf1e2f2c4b7634e5ee53df63bd6bd95f2842f6197d99b3a2257f81"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_XqkFZHHJBtgsmdgtG7TmSOKK:exec-d42f0802-9e2e-42dd-863c-c85f9695e5f7",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "LarkRuntimeHost new LarkRuntimeHost processOnce start",
+                "codeIntent": "callers",
+                "kind": "code",
+                "limit": 20,
+                "purpose": "implementation"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_XqkFZHHJBtgsmdgtG7TmSOKK:exec-a0b053c5-712a-470a-932e-a97271aeed39",
+            "title": "Tool: omem/list_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "list_materials",
+              "arguments": {
+                "filter": "apps/server/src/integrations/lark",
+                "kind": "code",
+                "limit": 100,
+                "offset": 0
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "LarkRuntimeHost new LarkRuntimeHost processOnce start",
+              "kind": "code",
+              "purpose": "implementation",
+              "codeIntent": "callers",
+              "limit": 20
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "list_materials",
+            "args": {
+              "offset": 0,
+              "limit": 100,
+              "filter": "apps/server/src/integrations/lark",
+              "kind": "code"
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_XqkFZHHJBtgsmdgtG7TmSOKK:exec-9d324ea8-2be6-4f89-9df7-deedf4fc102f",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "AssistantRuntime visibilityPolicy retrieval selected evidence private group",
+                "codeIntent": "definition",
+                "kind": "code",
+                "limit": 20,
+                "purpose": "implementation"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_XqkFZHHJBtgsmdgtG7TmSOKK:exec-d42f0802-9e2e-42dd-863c-c85f9695e5f7",
+            "status": "completed",
+            "outputDigest": "d7563754468ffdd8d5cb27d94d698b0d2e87356ed473e55b99eb3ed7d9134e3c"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_XqkFZHHJBtgsmdgtG7TmSOKK:exec-a0b053c5-712a-470a-932e-a97271aeed39",
+            "status": "completed",
+            "outputDigest": "97e44bba7edee4aebf8a782a698df490ef3a81c3d70aab93258712067e3fd208"
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "AssistantRuntime visibilityPolicy retrieval selected evidence private group",
+              "kind": "code",
+              "purpose": "implementation",
+              "codeIntent": "definition",
+              "limit": 20
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_XqkFZHHJBtgsmdgtG7TmSOKK:exec-9d324ea8-2be6-4f89-9df7-deedf4fc102f",
+            "status": "completed",
+            "outputDigest": "e93f313436f908ea281d0cddc99c307d3133053d5631cdeec5acd67aabcc453d"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_3NLGiYyE0Ut897R98OnlKZ5U:exec-be1d1de6-51fd-4001-88ef-976a596e933d",
+            "title": "Search visibilityPolicy|async turn\\(|class LarkEventInbox|assistant\\?|replyOutboxId|class LarkDeliveryWorker|enqueueReply|afterReplyEnqueued in runtime.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_3NLGiYyE0Ut897R98OnlKZ5U:exec-be1d1de6-51fd-4001-88ef-976a596e933d",
+              "process_id": "20262",
+              "turn_id": "01a111ca-7113-7950-98b2-6b4d8365aa58",
+              "started_at_ms": 1791299915691,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n \"visibilityPolicy|async turn\\(|class LarkEventInbox|assistant\\?|replyOutboxId|class LarkDeliveryWorker|enqueueReply|afterReplyEnqueued\" originals/apps/server/src/assistant/runtime.ts originals/apps/server/src/integrations/lark/realtime.ts originals/apps/server/src/integrations/lark/delivery.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/f7dfcaf1a13cd13d71821d30e8ea1e9d534cb40f8ae7c279d277182aa96fb182/d0958c6e-618b-4694-bb4a-7665d7094852",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n \"visibilityPolicy|async turn\\\\(|class LarkEventInbox|assistant\\\\?|replyOutboxId|class LarkDeliveryWorker|enqueueReply|afterReplyEnqueued\" originals/apps/server/src/assistant/runtime.ts originals/apps/server/src/integrations/lark/realtime.ts originals/apps/server/src/integrations/lark/delivery.ts",
+                  "query": "visibilityPolicy|async turn\\(|class LarkEventInbox|assistant\\?|replyOutboxId|class LarkDeliveryWorker|enqueueReply|afterReplyEnqueued",
+                  "path": "runtime.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_3NLGiYyE0Ut897R98OnlKZ5U:exec-be1d1de6-51fd-4001-88ef-976a596e933d",
+            "status": "completed",
+            "outputDigest": "ad4ad0a694e39c77af99a015372f1e8b8107f94272f48bfc7a05686c9cd30f6e"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_cXydxN7jBogxxGjYbpAdAbFr:exec-a6b39048-5b52-436f-b842-9db388ea8ce0",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/assistant/runtime.ts",
+                "startLine": 310,
+                "endLine": 445
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_cXydxN7jBogxxGjYbpAdAbFr:exec-187f58fd-22d6-4e9d-8a48-75892fba9718",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+                "startLine": 560,
+                "endLine": 646
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_cXydxN7jBogxxGjYbpAdAbFr:exec-c0c4cb9c-2b4a-482c-a060-792b7ee9dfe0",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+                "startLine": 280,
+                "endLine": 610
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/assistant/runtime.ts",
+              "startLine": 310,
+              "endLine": 445
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/integrations/lark/delivery.ts",
+              "startLine": 560,
+              "endLine": 646
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/integrations/lark/realtime.ts",
+              "startLine": 280,
+              "endLine": 610
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_cXydxN7jBogxxGjYbpAdAbFr:exec-a6b39048-5b52-436f-b842-9db388ea8ce0",
+            "status": "completed",
+            "outputDigest": "092bf79945e1ad15dbe213f5ef195b25b6c6545bcc93a6a7255a154cc71ea054"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_cXydxN7jBogxxGjYbpAdAbFr:exec-187f58fd-22d6-4e9d-8a48-75892fba9718",
+            "status": "completed",
+            "outputDigest": "249834185d13bd31cbeb7530410504abe83a553b1973c7c6ef1d898314fa476b"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_cXydxN7jBogxxGjYbpAdAbFr:exec-c0c4cb9c-2b4a-482c-a060-792b7ee9dfe0",
+            "status": "completed",
+            "outputDigest": "b2858d7b946500554f4cbb7b2137ead7e7d0ea7bd3feebf8147d9ddf16923348"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_G8fLqMWMa8tCVnW8bNS4PAPa:exec-2a231519-dd6e-4325-85c9-19418c92cc24",
+            "title": "Read realtime.ts, Read realtime.ts, Read runtime.ts, Read runtime.ts, Read delivery.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_G8fLqMWMa8tCVnW8bNS4PAPa:exec-2a231519-dd6e-4325-85c9-19418c92cc24",
+              "process_id": "33573",
+              "turn_id": "01a111ca-7113-7950-98b2-6b4d8365aa58",
+              "started_at_ms": 1791299977797,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '300,345p' originals/apps/server/src/integrations/lark/realtime.ts\nsed -n '500,605p' originals/apps/server/src/integrations/lark/realtime.ts\nsed -n '970,1010p' originals/apps/server/src/assistant/runtime.ts\nsed -n '1300,1335p' originals/apps/server/src/assistant/runtime.ts\nsed -n '598,646p' originals/apps/server/src/integrations/lark/delivery.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/f7dfcaf1a13cd13d71821d30e8ea1e9d534cb40f8ae7c279d277182aa96fb182/d0958c6e-618b-4694-bb4a-7665d7094852",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '300,345p' originals/apps/server/src/integrations/lark/realtime.ts",
+                  "name": "realtime.ts",
+                  "path": "originals/apps/server/src/integrations/lark/realtime.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '500,605p' originals/apps/server/src/integrations/lark/realtime.ts",
+                  "name": "realtime.ts",
+                  "path": "originals/apps/server/src/integrations/lark/realtime.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '970,1010p' originals/apps/server/src/assistant/runtime.ts",
+                  "name": "runtime.ts",
+                  "path": "originals/apps/server/src/assistant/runtime.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1300,1335p' originals/apps/server/src/assistant/runtime.ts",
+                  "name": "runtime.ts",
+                  "path": "originals/apps/server/src/assistant/runtime.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '598,646p' originals/apps/server/src/integrations/lark/delivery.ts",
+                  "name": "delivery.ts",
+                  "path": "originals/apps/server/src/integrations/lark/delivery.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_G8fLqMWMa8tCVnW8bNS4PAPa:exec-2a231519-dd6e-4325-85c9-19418c92cc24",
+            "status": "completed",
+            "outputDigest": "acb82bb2f7bacd909efa3375dcc0e92746372fccfe602a1156ddbebe7fdc67d1"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_c9u7xJiQvbJeghNRUsZp35kI:exec-e68993a0-6436-4a30-9fa5-b7b13557cf2e",
+            "title": "Search readingScope\\(|visible: in runtime.ts, Read runtime.ts, Read realtime.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_c9u7xJiQvbJeghNRUsZp35kI:exec-e68993a0-6436-4a30-9fa5-b7b13557cf2e",
+              "process_id": "30563",
+              "turn_id": "01a111ca-7113-7950-98b2-6b4d8365aa58",
+              "started_at_ms": 1791299989448,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n \"readingScope\\(|visible:\" originals/apps/server/src/assistant/runtime.ts originals/apps/server/src/retrieval -g '*.ts'\nsed -n '1260,1330p' originals/apps/server/src/assistant/runtime.ts\nsed -n '430,505p' originals/apps/server/src/integrations/lark/realtime.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/f7dfcaf1a13cd13d71821d30e8ea1e9d534cb40f8ae7c279d277182aa96fb182/d0958c6e-618b-4694-bb4a-7665d7094852",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n \"readingScope\\\\(|visible:\" originals/apps/server/src/assistant/runtime.ts originals/apps/server/src/retrieval -g '*.ts'",
+                  "query": "readingScope\\(|visible:",
+                  "path": "runtime.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1260,1330p' originals/apps/server/src/assistant/runtime.ts",
+                  "name": "runtime.ts",
+                  "path": "originals/apps/server/src/assistant/runtime.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '430,505p' originals/apps/server/src/integrations/lark/realtime.ts",
+                  "name": "realtime.ts",
+                  "path": "originals/apps/server/src/integrations/lark/realtime.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_c9u7xJiQvbJeghNRUsZp35kI:exec-e68993a0-6436-4a30-9fa5-b7b13557cf2e",
+            "status": "completed",
+            "outputDigest": "68db325b7225d24fe5473c70bca63fc58dc0cea09d75962cc604ffab2a5ddd4d"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_5BQifcC7piXbfTR5gO4YHCrJ:exec-c3c13a62-8468-43b8-be3c-9573d6a3e974",
+            "title": "Read runtime.ts, Read realtime.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_5BQifcC7piXbfTR5gO4YHCrJ:exec-c3c13a62-8468-43b8-be3c-9573d6a3e974",
+              "process_id": "41708",
+              "turn_id": "01a111ca-7113-7950-98b2-6b4d8365aa58",
+              "started_at_ms": 1791300002486,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1048,1080p' originals/apps/server/src/assistant/runtime.ts\nsed -n '332,430p' originals/apps/server/src/integrations/lark/realtime.ts"
+              ],
+              "cwd": "/Users/bytedance/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/f7dfcaf1a13cd13d71821d30e8ea1e9d534cb40f8ae7c279d277182aa96fb182/d0958c6e-618b-4694-bb4a-7665d7094852",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1048,1080p' originals/apps/server/src/assistant/runtime.ts",
+                  "name": "runtime.ts",
+                  "path": "originals/apps/server/src/assistant/runtime.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '332,430p' originals/apps/server/src/integrations/lark/realtime.ts",
+                  "name": "realtime.ts",
+                  "path": "originals/apps/server/src/integrations/lark/realtime.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_5BQifcC7piXbfTR5gO4YHCrJ:exec-c3c13a62-8468-43b8-be3c-9573d6a3e974",
+            "status": "completed",
+            "outputDigest": "524b98e4e6bfacd4bd294b8bf960a3c296605ee2f7183ac3df2d5a5ddf0769d9"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_MY3E9fYuA5Pq3vmDPIbPBDOz:exec-f3997adc-09c9-4007-9a7d-cf375cd802d4",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/integrations/lark/runtime.ts",
+              "omem:apps/server/tests/conversation-security.test.ts",
+              "omem:scripts/live-lark-host-smoke.ts",
+              "omem:scripts/quality-lark-annotate.ts",
+              "omem:apps/server/tests/lark-delivery-recovery.test.ts",
+              "omem:apps/server/src/integrations/lark-personal/service.ts",
+              "omem:apps/server/tests/lark-personal.test.ts",
+              "omem:apps/server/tests/lark-runtime.test.ts",
+              "omem:apps/server/src/app.ts",
+              "omem:apps/server/src/assistant/runtime.ts",
+              "omem:apps/server/src/integrations/lark/delivery.ts",
+              "omem:apps/server/src/integrations/lark/realtime.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_MY3E9fYuA5Pq3vmDPIbPBDOz:exec-f3997adc-09c9-4007-9a7d-cf375cd802d4",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    },
+    "verdict": "accepted"
+  }
+}
