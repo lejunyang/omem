@@ -12,6 +12,13 @@
       "version": "1",
       "load_mode": "inline",
       "artifact_digest": "1d54592e7c37173646cbc79b7853e4ee205216a74996511788f9f43e6285d729"
+    },
+    {
+      "canonical_name": "lieflat-less-ai-tone",
+      "version": "27d29232f101",
+      "load_mode": "inline",
+      "source": "project",
+      "artifact_digest": "4d23d6d8eff7a3f33a6a073ba7a5fe2e5df05477d4e9f479e8313b3195ec6177"
     }
   ],
   "output_schema": "KnowledgeBatch.v1",

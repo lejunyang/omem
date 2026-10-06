@@ -60,6 +60,9 @@ function safeFile(root: string, path: string) {
 function files(directory: string, root = directory): string[] {
   const result: string[] = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    // Installer metadata and ignore rules are not runtime assets. npm omits
+    // or renames them, so they cannot participate in a portable skill digest.
+    if ([".osdk-manifest.json", ".gitignore", ".npmignore"].includes(entry.name)) continue;
     const path = join(directory, entry.name);
     if (entry.isSymbolicLink())
       throw Error(`ROLE_ASSET_SYMLINK_REJECTED: ${relative(root, path)}`);
@@ -104,7 +107,10 @@ function copyVerifiedDirectory(source: string, destination: string) {
 }
 
 export class RoleBundleRegistry {
-  constructor(readonly root = assetPath("packages/agent-runtime/roles")) {}
+  constructor(
+    readonly root = assetPath("packages/agent-runtime/roles"),
+    readonly projectSkills = assetPath(".agents/skills"),
+  ) {}
 
   load(roleId: string, version = "1"): RoleBundle {
     if (!/^[a-z0-9-]+$/.test(roleId) || !/^[a-zA-Z0-9._-]+$/.test(version))
@@ -134,9 +140,14 @@ export class RoleBundleRegistry {
     const skills = manifest.skill_bundles.map((entry) => {
       if (names.has(entry.canonical_name)) throw Error("ROLE_SKILL_DUPLICATE");
       names.add(entry.canonical_name);
-      const skillDirectory = resolve(directory, "skills", entry.canonical_name);
-      if (!inside(directory, skillDirectory) || !existsSync(skillDirectory))
+      const skillRoot =
+        entry.source === "project"
+          ? resolve(this.projectSkills)
+          : resolve(directory, "skills");
+      const skillDirectory = resolve(skillRoot, entry.canonical_name);
+      if (!inside(skillRoot, skillDirectory) || !existsSync(skillDirectory))
         throw Error(`ROLE_SKILL_MISSING: ${entry.canonical_name}`);
+      safeFile(skillRoot, entry.canonical_name);
       const skillFile = safeFile(skillDirectory, "SKILL.md");
       const content = readFileSync(skillFile, "utf8");
       const frontmatterName = content

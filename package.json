@@ -85,6 +85,7 @@
     "scripts/startlux/upstream.json",
     "scripts/package-check.mjs",
     "skills",
+    ".agents/skills/lieflat-less-ai-tone",
     "docs/cli.md",
     "LICENSE",
     "docs/reader-first/data-lifecycle.md",
