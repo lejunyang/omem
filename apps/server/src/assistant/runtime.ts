@@ -196,6 +196,8 @@ export type AssistantModelPort = {
     background?: AssistantBackground[];
     visibility: Visibility;
     ownerScoped?: boolean;
+    /** Host-owned identity; never provided by the model or source content. */
+    workScope?: { conversationId: string; turnId: string };
     /** Owner-scoped corrections/constraints the model must respect. */
     trustedContext?: string;
     /** Resolved reading scope; never an authorization boundary. Private library only. */
@@ -662,6 +664,7 @@ export class AssistantRuntime {
             background,
             visibility: input.conversation.visibility,
             ownerScoped: input.conversation.principalId === (this.options.ownerId ?? "owner") && input.conversation.visibility === "private",
+            workScope: { conversationId: input.conversation.id, turnId: input.turnId },
             trustedContext,
             workingProject,
             projects,
@@ -716,6 +719,7 @@ export class AssistantRuntime {
               background,
               visibility: input.conversation.visibility,
               ownerScoped: input.conversation.principalId === (this.options.ownerId ?? "owner") && input.conversation.visibility === "private",
+              workScope: { conversationId: input.conversation.id, turnId: input.turnId },
               trustedContext,
               workingProject,
               projects,

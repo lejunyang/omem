@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   mkdirSync,
   realpathSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -412,7 +413,39 @@ it("resumes the same durable coding checkout after shutdown and returns its real
   s.queue.runner.selectCapabilities("refund", ["design"]);
   const key = s.work.apply(s.action, s.actor("跟进退款查询")).key!;
   publish(s.repository, key);
-  const a = s.actor("请帮我实现退款查询");
+  const conversation = s.work.inputs.conversations.open({
+    principalId: "owner",
+    channel: "web",
+    chatId: "coding",
+    visibility: "private",
+  });
+  const first = s.work.inputs.conversations.enqueueTurn({
+    conversationId: conversation.id,
+    inputText: "读取退款背景",
+  }).turn;
+  const session = s.work.capabilitySession(
+    join(s.dir, "question"),
+    undefined,
+    undefined,
+    { conversationId: conversation.id, turnId: first.id },
+  );
+  const external = await session.call("design", "cli", "read", {});
+  await session.close();
+  s.work.inputs.conversations.completeTurn({
+    turnId: first.id,
+    result: "已读取背景",
+    selectedEvidence: [],
+    toolActions: [],
+  });
+  const current = s.work.inputs.conversations.enqueueTurn({
+    conversationId: conversation.id,
+    inputText: "请帮我实现退款查询，只做刚刚讨论的入口",
+  }).turn;
+  const a = {
+    ...s.actor(current.inputText),
+    conversationId: conversation.id,
+    requestId: current.id,
+  };
   const action: WorkAction = {
     operation: "start_development",
     key,
@@ -420,6 +453,13 @@ it("resumes the same durable coding checkout after shutdown and returns its real
     delegation: a.userText,
   };
   const taskId = s.work.apply(action, a).taskId!;
+  rmSync(join(s.dir, "question"), { recursive: true });
+  expect(s.queue.read(taskId).job.inputRefs[0]).toMatchObject({
+    handoff: {
+      assignment: { text: a.userText },
+      inputs: [{ recordId: external.recordId }],
+    },
+  });
   s.queue.runner.capabilities.register({
     ...capability,
     description: "Updated catalog",
@@ -447,6 +487,16 @@ it("resumes the same durable coding checkout after shutdown and returns its real
   expect(ready.run?.state).toBe("ready");
   expect(ready.job.state).toBe("succeeded");
   const run = ready.run!;
+  expect(run.handoff?.assignment.text).toBe(a.userText);
+  expect(run.handoff?.discussion[0]?.userText).toBe("读取退款背景");
+  expect(
+    JSON.parse(
+      readFileSync(
+        join(run.directory, "external-inputs", external.recordId + ".json"),
+        "utf8",
+      ),
+    ).result.exitCode,
+  ).toBe(0);
   writeFileSync(join(run.checkout, "code.js"), "export const x = 2;\n");
   writeFileSync(
     join(run.directory, "changes.patch"),

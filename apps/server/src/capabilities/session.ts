@@ -45,6 +45,7 @@ export class CapabilitySession {
       signal?: AbortSignal;
       onActivity?: () => void;
       decisions?: DecisionService;
+      onReceipt?: (directory: string, recordId: string) => void;
     },
   ) {
     this.directory = resolve(options.directory);
@@ -275,6 +276,7 @@ export class CapabilitySession {
   private saveResult(id: string, result: unknown) {
     const saved = this.redact(result);
     saveJson(join(this.directory, `${id}.json`), saved);
+    this.options.onReceipt?.(this.directory, id);
     return saved;
   }
   async call(

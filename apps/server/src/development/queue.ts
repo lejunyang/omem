@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import type { AgentProfile } from "../../../../packages/contracts/src/index.js";
 import type { WorkActor } from "../../../../packages/contracts/src/work.js";
 import type { Store } from "../store.js";
@@ -6,6 +7,10 @@ import { DurableJobWorker, JobExecutionError } from "../jobs/worker.js";
 import type { KnowledgePageService } from "../knowledge/page-service.js";
 import { DevelopmentRunner } from "./runner.js";
 import { queueOwnerNotice } from "../integrations/lark/owner-notice.js";
+import {
+  CapabilityReceipts,
+  type DevelopmentHandoff,
+} from "../capabilities/receipts.js";
 
 const kind = "assistant:develop";
 const active = new Set(["queued", "retry_wait", "leased", "running"]);
@@ -79,6 +84,8 @@ export class DevelopmentQueue {
                     capabilities?: import("../../../../packages/contracts/src/capabilities.js").CapabilityReference[];
                   }
                 ).capabilities,
+                handoff: (job.inputRefs[0] as { handoff?: DevelopmentHandoff })
+                  .handoff,
               });
           store.db
             .prepare("UPDATE assistant_development SET run_id=? WHERE id=?")
@@ -127,6 +134,7 @@ export class DevelopmentQueue {
     project: string,
     actor: WorkActor,
     capabilities?: string[],
+    inputReceipts?: string[],
   ) {
     if (!this.profile) throw Error("尚未配置编码 Agent");
     if (!this.runner.projects().some((p) => p.alias === project))
@@ -151,10 +159,40 @@ export class DevelopmentQueue {
         [],
     );
     const id = randomUUID();
+    const inputs = new CapabilityReceipts(this.store);
+    const conversation = inputs.conversations.get(actor.conversationId);
+    const handoff: DevelopmentHandoff = conversation
+      ? inputs.handoff(
+          { conversationId: actor.conversationId, turnId: actor.requestId },
+          actor.userText,
+          selected.map((c) => c.id),
+          inputReceipts,
+        )
+      : {
+          version: 1,
+          assignment: {
+            requestId: actor.requestId,
+            conversationId: actor.conversationId,
+            principalId: actor.principalId,
+            text: actor.userText,
+            at: new Date().toISOString(),
+          },
+          discussion: [],
+          inputs: [],
+          selection: "explicit",
+        };
+    if (!conversation && inputReceipts?.length)
+      throw Error("缺少已保存会话，不能交接外部回执");
+    // Export before enqueue returns: restart or removal of a chat workspace must
+    // not leave a queued task pointing at transient files.
+    inputs.export(
+      handoff.inputs,
+      join(this.runner.root, "runs", id, "external-inputs"),
+    );
     this.store.tx(() => {
       const { job } = this.store.jobs.enqueueInCurrentTransaction({
         kind,
-        inputRefs: [{ taskId: id, capabilities: selected }],
+        inputRefs: [{ taskId: id, capabilities: selected, handoff }],
         roleVersion: "coding-and-review@1",
         policyVersion: "owner-delegated@1",
         maxAttempts: 30,

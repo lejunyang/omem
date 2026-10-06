@@ -78,6 +78,12 @@ export const workActionSchema = z.discriminatedUnion("operation", [
       operation: z.literal("start_development"),
       key,
       project: key,
+      inputReceipts: z
+        .array(z.uuid())
+        .optional()
+        .describe(
+          "Relevant actual external receipt IDs returned by conversation_inputs or capability_call. Empty means none; omitted carries up to 100 recent receipts for selected capabilities. No arbitrary paths or invented source content.",
+        ),
       capabilities: z
         .array(key)
         .optional()

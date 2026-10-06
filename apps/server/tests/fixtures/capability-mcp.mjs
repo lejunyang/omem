@@ -40,9 +40,9 @@ server.setRequestHandler(CallToolRequestSchema, async ({ params }) => ({
       type: "text",
       text: JSON.stringify({
         node: params.arguments.node,
-        layout: "vertical",
-        gap: 24,
-        label: "完成工单",
+        layout: params.arguments.node === "PANEL-9" ? "horizontal" : "vertical",
+        gap: params.arguments.node === "PANEL-9" ? 12 : 24,
+        label: params.arguments.node === "PANEL-9" ? "确认归档" : "完成工单",
         readOnly: true,
       }),
     },
