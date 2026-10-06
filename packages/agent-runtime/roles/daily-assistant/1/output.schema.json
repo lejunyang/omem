@@ -355,6 +355,98 @@
                 "taskId"
               ],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "operation": {
+                  "type": "string",
+                  "const": "resume_development"
+                },
+                "taskId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "delegation": {
+                  "description": "Exact CURRENT user instruction to continue this existing coding task, not requirement maintenance.",
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "operation",
+                "taskId",
+                "delegation"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "operation": {
+                  "type": "string",
+                  "const": "apply_development"
+                },
+                "taskId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reviewedFingerprint": {
+                  "description": "Copy from a fresh work_result with phase=ready and matchesReviewed=true. Never invent or reuse a different task's fingerprint.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "delegation": {
+                  "description": "Exact CURRENT user instruction to apply this reviewed patch to the registered repository. Does not authorize commit, push or deployment.",
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "operation",
+                "taskId",
+                "reviewedFingerprint",
+                "delegation"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "operation": {
+                  "type": "string",
+                  "enum": [
+                    "follow_action",
+                    "unfollow_action"
+                  ]
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "actionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "expectedRevision": {
+                  "description": "Current requirement revision from work_status.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "delegation": {
+                  "description": "Exact CURRENT user instruction to add or stop following this requirement action in personal todos.",
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "operation",
+                "key",
+                "actionId",
+                "expectedRevision",
+                "delegation"
+              ],
+              "additionalProperties": false
             }
           ]
         },

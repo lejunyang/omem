@@ -39,6 +39,8 @@ assert.equal(profile.model, "gpt-5.6-sol");
 const directory = mkdtempSync(join(tmpdir(), "omem-capabilities-live-"));
 const output = resolve(".repo-review/runtime/research/capabilities");
 mkdirSync(output, { recursive: true });
+const availability = join(directory, "design-available");
+writeFileSync(availability, "ready");
 const skill = join(directory, "design-reading");
 mkdirSync(join(skill, "references"), { recursive: true });
 writeFileSync(
@@ -68,6 +70,17 @@ system.work.development.runner.capabilities.register({
   id: "design",
   name: "工单设计资料",
   description: "读取工单页面节点及布局要求",
+  checks: [
+    {
+      name: "设计服务可用",
+      command: process.execPath,
+      args: [
+        "-e",
+        "process.exit(require('node:fs').existsSync(process.argv[1])?0:2)",
+        availability,
+      ],
+    },
+  ],
   skills: [{ name: "design-reading", directory: skill }],
   cli: [
     {
@@ -147,7 +160,7 @@ system.store.capture(
     parts: [
       {
         type: "text",
-        text: "实现 completionPreset()：返回用户在交办时选定的设计节点的 layout、gap、label 三个结构化字段。每次返回新对象，修改结果不能影响后续调用。只交付配置模块，不开发页面、不发布；所选节点从已登记设计能力读取。",
+        text: "实现 completionPreset()：返回用户在交办时选定的设计节点的 layout、gap、label 三个结构化字段。每次返回新对象，修改结果不能影响后续调用。只交付配置模块，不开发页面、不发布；所选节点从已登记设计能力读取。行动：由我验收工单展示配置，尚未约定日期。",
       },
     ],
     context: {},
@@ -221,7 +234,20 @@ repository.publish({
             evidence: ["spec"],
           },
         ],
-        actions: [],
+        actions: [
+          {
+            id: "accept-preset",
+            title: "验收工单展示配置",
+            detail: "核对选定配置及检查结果",
+            owner: "我",
+            waitingOn: null,
+            dueAt: null,
+            dueExpression: null,
+            status: "open",
+            certainty: "confirmed",
+            evidence: ["spec"],
+          },
+        ],
       },
     },
     new Map([[material.key, material]]),
@@ -243,7 +269,6 @@ repository.publish({
   },
 });
 await system.work.pages.maintenance.stop();
-await system.app.ready();
 let passed = false;
 let workspace: string | undefined;
 const start = Date.now();
@@ -344,6 +369,45 @@ try {
       (r: any) => r.args.node === "PANEL-7" || r.args.screen === "工单完成",
     ),
   );
+  // The service disappears after the assistant's read, before background work.
+  // This is a real preflight failure, not a fabricated run state.
+  rmSync(availability);
+  await system.app.ready();
+  const waitTask = async () => {
+    const until = Date.now() + 20 * 60 * 1000;
+    let taskState = system.work.development.read(task.id),
+      message = "";
+    while (
+      ["queued", "leased", "running", "retry_wait"].includes(
+        taskState.job.state,
+      ) &&
+      Date.now() < until
+    ) {
+      if (message !== taskState.message) {
+        console.log(taskState.message);
+        message = taskState.message;
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+      taskState = system.work.development.read(task.id);
+    }
+    return taskState;
+  };
+  const blocked = await waitTask();
+  assert.equal(blocked.run?.state, "blocked", JSON.stringify(blocked));
+  assert.match(blocked.run!.error!, /外部能力不可用/);
+  writeFileSync(availability, "ready");
+  const resumed = await system.assistant.turn({
+    conversationId: conversation.id,
+    userText:
+      "设计服务已经恢复，请继续刚才受阻的工单配置编码任务，沿用原副本和工单归档方案，不要新建任务。",
+  });
+  console.log(resumed.turn.result);
+  assert.ok(
+    resumed.turn.toolActions.some(
+      (a: any) => a.operation === "resume_development" && !a.rejected,
+    ),
+    JSON.stringify(resumed.turn),
+  );
   let current = system.work.development.read(task.id),
     previous = "";
   const deadline = Date.now() + 20 * 60 * 1000;
@@ -360,6 +424,9 @@ try {
   }
   assert.equal(current.run?.state, "ready", JSON.stringify(current));
   const run = current.run!;
+  assert.equal(run.id, blocked.run!.id);
+  assert.equal(run.checkout, blocked.run!.checkout);
+  assert.equal(run.continuations?.[0]?.requestId, resumed.turn.id);
   const { completionPreset } = await import(join(run.checkout, "preset.mjs"));
   assert.deepEqual(completionPreset(), {
     layout: "horizontal",
@@ -368,6 +435,55 @@ try {
   });
   assert.equal(await git(source, "status", "--porcelain"), "");
   assert.equal(run.review?.verdict, "accepted");
+  const followed = await system.assistant.turn({
+    conversationId: conversation.id,
+    userText:
+      "把这个需求里由我验收工单展示配置的行动加入我的待办，随需求继续同步。",
+  });
+  console.log(followed.turn.result);
+  const link = system.work
+    .status(key)
+    .actionLinks.find((l) => l.action_id === "accept-preset");
+  assert.equal(link?.enabled, 1, JSON.stringify(followed.turn));
+  assert.ok(link?.task_id);
+  const applied = await system.assistant.turn({
+    conversationId: conversation.id,
+    userText:
+      "请查看刚才工单配置任务的实际修改和评审，通过后将这份已评审补丁应用回已登记的 preset 仓库，保持未提交，不要推送或部署。",
+  });
+  console.log(applied.turn.result);
+  assert.ok(
+    applied.turn.toolActions.some(
+      (a: any) => a.operation === "apply_development" && !a.rejected,
+    ),
+    JSON.stringify(applied.turn),
+  );
+  const completed = await waitTask();
+  assert.equal(completed.run?.state, "applied", JSON.stringify(completed));
+  assert.equal((await git(source, "rev-parse", "HEAD")).trim(), run.base);
+  const original = await import(join(source, "preset.mjs"));
+  assert.deepEqual(original.completionPreset(), completionPreset());
+  const unfollowed = await system.assistant.turn({
+    conversationId: conversation.id,
+    userText:
+      "停止同步刚才那项验收行动，保留已经创建的个人待办，不要取消待办本身。",
+  });
+  console.log(unfollowed.turn.result);
+  assert.equal(
+    system.work.status(key).actionLinks[0]?.enabled,
+    0,
+    JSON.stringify(unfollowed.turn),
+  );
+  assert.ok(
+    system.store
+      .tasks()
+      .some((t) => t.id === link!.task_id && t.status === "open"),
+  );
+  const commands = [resumed, followed, applied, unfollowed].map(({ turn }) => ({
+    user: turn.inputText,
+    answer: turn.result,
+    actions: turn.toolActions,
+  }));
   saveJson(join(output, "handoff.json"), {
     at: new Date().toISOString(),
     passed: true,
@@ -379,6 +495,10 @@ try {
     implementation: readFileSync(join(run.checkout, "preset.mjs"), "utf8"),
     checks: run.checks,
     review: run.review,
+    commands,
+    resumedSameCheckout: true,
+    appliedUncommitted: true,
+    unfollowPreservedTodo: true,
     scope:
       "Seeded synthetic requirement; actual assistant, coding and independent review via Traex. No real Figma/private repository/visual acceptance.",
   });
