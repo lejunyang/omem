@@ -17,7 +17,12 @@ const bun = process.execPath;
 
 function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
   return new Promise((resolve) => {
-    if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return resolve();
+    if (
+      child.exitCode !== null ||
+      child.signalCode !== null ||
+      child.pid === undefined
+    )
+      return resolve();
     let done = false;
     const finish = () => {
       if (done) return;
@@ -83,8 +88,16 @@ async function main(): Promise<void> {
   // Preflight: fail fast with a clear message instead of letting the API/Vite
   // child die with an opaque EADDRINUSE after a partial boot.
   try {
-    API_PORT = await selectDevPort(review ? process.env.REVIEW_PORT : process.env.OMEM_PORT, review ? 5180 : 4317, `${label} API`);
-    WEB_PORT = await selectDevPort(review ? process.env.REVIEW_WEB_PORT : process.env.OMEM_WEB_PORT, review ? 5181 : 5173, `${label} web`);
+    API_PORT = await selectDevPort(
+      review ? process.env.REVIEW_PORT : process.env.OMEM_PORT,
+      review ? 5180 : 4317,
+      `${label} API`,
+    );
+    WEB_PORT = await selectDevPort(
+      review ? process.env.REVIEW_WEB_PORT : process.env.OMEM_WEB_PORT,
+      review ? 5181 : 5173,
+      `${label} web`,
+    );
     if (API_PORT === WEB_PORT) throw new Error("API 与 web 必须使用不同端口");
   } catch (err) {
     console.error(`${label}: ${(err as Error).message}`);
@@ -93,27 +106,36 @@ async function main(): Promise<void> {
 
   apiChild = spawn(
     review ? bun : "node",
-    review ? ["apps/server/src/review/main.ts"] : [
-      createRequire(import.meta.url).resolve("nodemon/bin/nodemon.js"),
-      "--config", "nodemon.json", "apps/server/src/main.ts",
-    ],
-    { cwd: repoRoot, stdio: "inherit", detached: process.platform !== "win32",
-      env: { ...process.env, OMEM_PORT: String(API_PORT), REVIEW_PORT: String(API_PORT), REVIEW_WEB_PORT: String(WEB_PORT) } },
-  );
-  webChild = spawn(
-    bun,
-    ["scripts/dev-review-vite.ts"],
+    review
+      ? ["apps/server/src/review/main.ts"]
+      : [
+          createRequire(import.meta.url).resolve("nodemon/bin/nodemon.js"),
+          "--config",
+          "nodemon.json",
+          "apps/server/src/main.ts",
+        ],
     {
       cwd: repoRoot,
       stdio: "inherit",
       detached: process.platform !== "win32",
       env: {
         ...process.env,
-        REVIEW_API_PORT: String(API_PORT),
+        OMEM_PORT: String(API_PORT),
+        REVIEW_PORT: String(API_PORT),
         REVIEW_WEB_PORT: String(WEB_PORT),
       },
     },
   );
+  webChild = spawn(bun, ["scripts/dev-review-vite.ts"], {
+    cwd: repoRoot,
+    stdio: "inherit",
+    detached: process.platform !== "win32",
+    env: {
+      ...process.env,
+      REVIEW_API_PORT: String(API_PORT),
+      REVIEW_WEB_PORT: String(WEB_PORT),
+    },
+  });
 
   const onChildExit =
     (which: "API" | "web") =>
@@ -125,7 +147,8 @@ async function main(): Promise<void> {
       const exitCode = code ?? (signal ? 1 : 0);
       void shutdown(`${which} child exited`, exitCode);
     };
-  for (const child of [apiChild, webChild]) child.on("error", (error) => void shutdown(error.message, 1));
+  for (const child of [apiChild, webChild])
+    child.on("error", (error) => void shutdown(error.message, 1));
   apiChild.on("exit", onChildExit("API"));
   webChild.on("exit", onChildExit("web"));
 
@@ -133,9 +156,10 @@ async function main(): Promise<void> {
     process.on(sig, () => void shutdown(`received ${sig}`, 0));
 
   // Wait for the API health endpoint before printing ready URLs. The API does a
-  // (possibly incremental) sync on boot, so allow up to 60s.
+  // (possibly incremental) sync on boot. A large personal library can exceed
+  // one minute before the server can accept even its first health request.
   const healthUrl = `http://127.0.0.1:${API_PORT}${review ? "/api/review/health" : "/api/health"}`;
-  const deadline = Date.now() + 60_000;
+  const deadline = Date.now() + 180_000;
   let healthy = false;
   while (Date.now() < deadline && !shuttingDown) {
     try {

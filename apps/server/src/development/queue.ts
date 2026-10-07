@@ -444,34 +444,42 @@ export class DevelopmentQueue {
    * requirement does not create a coding task or expand collection scope. */
   private reconcileChanges() {
     if (!this.profile) return;
-    this.pages.repository.refresh();
-    for (const task of this.list()) {
-      try {
-        if (
-          active.has(task.job.state) ||
-          task.job.state === "cancelled" ||
-          !task.run ||
-          task.run.state === "applied"
+    // Refresh applicability only when a delegated task could continue.
+    const candidates = this.list().flatMap((task) => {
+      const run = task.run;
+      if (
+        active.has(task.job.state) ||
+        task.job.state === "cancelled" ||
+        !run ||
+        run.state === "applied"
+      )
+        return [];
+      const pending = this.store.db
+        .prepare(
+          "SELECT actor FROM assistant_development_updates WHERE task_id=?",
         )
-          continue;
-        const pending = this.store.db
-          .prepare(
-            "SELECT actor FROM assistant_development_updates WHERE task_id=?",
-          )
-          .get(task.id);
+        .get(task.id);
+      if (!pending && !this.pages.maintenance.status(task.key)?.enabled)
+        return [];
+      return [{ task, run, pending }];
+    });
+    if (!candidates.length) return;
+    this.pages.repository.refresh();
+    for (const { task, run, pending } of candidates) {
+      try {
         const current = this.pages.repository.get(task.key);
         if (!current?.current) continue;
         if (
           !pending &&
           (!this.pages.maintenance.status(task.key)?.enabled ||
-            current.revision === task.run.requirementRevision)
+            current.revision === run.requirementRevision)
         )
           continue;
         const update = inspectRequirementChange(
           this.pages.repository,
-          task.run,
+          run,
         );
-        if (!update && task.run.state === "ready") {
+        if (!update && run.state === "ready") {
           if (pending)
             this.store.db
               .prepare(
@@ -489,7 +497,7 @@ export class DevelopmentQueue {
               principalId: task.principalId,
               visibility: "private",
               userText:
-                task.run.handoff?.assignment.text ?? "继续已交办的需求实现",
+                run.handoff?.assignment.text ?? "继续已交办的需求实现",
             };
         this.continueTask(task.id, actor, undefined, !pending);
       } catch (error) {

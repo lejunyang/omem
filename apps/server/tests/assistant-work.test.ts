@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   mkdtempSync,
   mkdirSync,
@@ -839,6 +839,13 @@ it("reads project guidance, configures checks during delegation, and freezes que
   ).toThrow("文件已变化");
 });
 
+it("does not refresh the knowledge library while the coding queue has no tasks", async () => {
+  const s = setup();
+  const refresh = vi.spyOn(s.repository, "refresh");
+  await s.queue.processOne();
+  expect(refresh).not.toHaveBeenCalled();
+});
+
 it("automatically continues only an existing watched task and ignores progress-only refreshes and cancellation", async () => {
   let executions = 0;
   class Runner extends DevelopmentRunner {
@@ -863,6 +870,7 @@ it("automatically continues only an existing watched task and ignores progress-o
   }
   const s = setup((path) => new Runner(path)),
     root = join(s.dir, "project");
+  const refresh = vi.spyOn(s.repository, "refresh");
   mkdirSync(root);
   writeFileSync(join(root, "value.js"), "export const value=1;\n");
   await git(root, "init", "-q");
@@ -890,7 +898,9 @@ it("automatically continues only an existing watched task and ignores progress-o
   );
   progress.document.requirement!.criteria[0]!.status = "verified";
   s.repository.publish(progress);
+  refresh.mockClear();
   await s.queue.processOne();
+  expect(refresh).toHaveBeenCalled();
   expect(executions).toBe(1);
   const changed = structuredClone(progress);
   changed.document.requirement!.criteria[0]!.description = "返回退款状态和原因";
@@ -907,12 +917,16 @@ it("automatically continues only an existing watched task and ignores progress-o
   s.repository.publish(again);
   // Pause the requirement before the worker notices its new definition.
   s.pages.maintenance.setEnabled(key, false);
+  refresh.mockClear();
   await s.queue.processOne();
+  expect(refresh).not.toHaveBeenCalled();
   expect(executions).toBe(2);
   s.pages.maintenance.setEnabled(key, true);
   s.queue.continueTask(id, s.actor("继续"));
   s.queue.cancel(id, randomUUID());
+  refresh.mockClear();
   await s.queue.processOne();
+  expect(refresh).not.toHaveBeenCalled();
   expect(executions).toBe(2);
 });
 
