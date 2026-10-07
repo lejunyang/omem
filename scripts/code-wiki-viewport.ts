@@ -29,6 +29,165 @@ try {
   });
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(BASE);
+  if (process.env.OMEM_OUTLINES_ONLY === "1") {
+    const catalog = await api("/api/knowledge/articles");
+    const context = catalog.contexts.find(
+      (c: { name: string }) => c.name === "[演示] 学会维护工单分派",
+    );
+    if (!context)
+      throw Error("Run the synthetic knowledge:outline-verify preview first");
+    const title = "[界面检查] 知识目录（临时）";
+    const input = {
+      title,
+      reader: "首次接手项目的开发者",
+      goal: "理解工单如何分派并能修改规则",
+      topicPath: ["界面演示"],
+      materialKeys: [],
+      contextIds: [context.id],
+      pages: ["看懂一张工单", "新增分派主题", "核对状态与限制"].map(
+        (title, i) => ({
+          id: `ui-${i}`,
+          title,
+          kind: "explanation",
+          reader: "首次接手项目的开发者",
+          goal: title,
+          scenario: "billing 与未知主题的合成示例",
+          questions: [title + "要看哪些材料？"],
+          entryPaths: [],
+          topicPath: ["界面演示"],
+          materialKeys: [],
+          contextIds: [context.id],
+          existingKey: null,
+        }),
+      ),
+    };
+    const response = await fetch(BASE + "/api/knowledge/outlines", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) throw Error(await response.text());
+    const draft = await response.json();
+    try {
+      await page.goto(BASE + "/#/knowledge");
+      await expect(
+        page.getByRole("button", { name: "规划知识目录", exact: true }).first(),
+      ).toBeVisible({ timeout: 90000 });
+      await page
+        .getByRole("button", { name: "规划知识目录", exact: true })
+        .first()
+        .click();
+      const dialog = page.getByRole("dialog");
+      await dialog.getByRole("button").filter({ hasText: title }).click();
+      await page
+        .getByLabel("页面标题", { exact: true })
+        .fill("读懂工单与处理状态");
+      await page
+        .getByLabel("页面目录路径", { exact: true })
+        .fill("界面演示 / 入门");
+      await page.getByLabel("页面下移", { exact: true }).click();
+      await expect(
+        page.getByLabel("草案页面目录").locator("li").first(),
+      ).toContainText("新增分派主题");
+      await page
+        .getByRole("button", { name: "合并重复页面", exact: true })
+        .click();
+      await page
+        .getByLabel("合并目标页面", { exact: true })
+        .selectOption("ui-1");
+      await page.getByRole("button", { name: "合并页面", exact: true }).click();
+      await expect(page.getByLabel("草案页面目录").locator("li")).toHaveCount(
+        2,
+      );
+      await expect(
+        page.getByLabel("页面阅读目标", { exact: true }),
+      ).toHaveValue(/新增分派主题.*看懂一张工单/s);
+      await page
+        .getByLabel("页面目录路径", { exact: true })
+        .fill("界面演示 / 修改流程");
+      await page.getByRole("button", { name: "上一步", exact: true }).click();
+      await page.getByLabel("目录分类路径", { exact: true }).fill("界面演示 / 系统学习");
+      await page.getByLabel("目录分类路径", { exact: true }).press("Tab");
+      await page.getByRole("button", { name: "手动编排目录", exact: true }).click();
+      await expect(page.getByLabel("页面目录路径", { exact: true })).toHaveValue("界面演示 / 系统学习 / 修改流程");
+      await page.getByRole("button", { name: "保存草案", exact: true }).click();
+      await expect(
+        page.getByText("草案已保存。确认目录后才会开始写作。", { exact: true }),
+      ).toBeVisible();
+      const restored = await api("/api/knowledge/outlines/" + draft.id);
+      expect(restored.pages.map((p: { id: string }) => p.id)).toEqual([
+        "ui-1",
+        "ui-2",
+      ]);
+      expect(restored.pages[0].topicPath).toEqual(["界面演示", "系统学习", "修改流程"]);
+      expect(restored.pages[1].topicPath).toEqual(["界面演示", "系统学习"]);
+      expect(restored.state).toBe("editing");
+      checks.push(
+        "rename, move, reorder, merge and persist an unconfirmed outline through the actual UI",
+      );
+      await page.reload();
+      await page
+        .getByRole("button", { name: "规划知识目录", exact: true })
+        .first()
+        .click();
+      await page
+        .getByRole("dialog")
+        .getByRole("button")
+        .filter({ hasText: title })
+        .click();
+      await expect(
+        page.getByLabel("页面目录路径", { exact: true }),
+      ).toHaveValue("界面演示 / 系统学习 / 修改流程");
+      checks.push(
+        "restore saved directory after a full page reload without applying it",
+      );
+      for (const width of [1440, 768, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        ).toBe(true);
+        expect(
+          await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+        ).toBe(true);
+        await page.getByLabel("页面计划编辑器").scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: `${OUT}/outline-editor-${width}.png`,
+          fullPage: true,
+        });
+      }
+      checks.push(
+        "readable outline editor at 1440/768/390 without horizontal overflow",
+      );
+      expect(errors).toEqual([]);
+      writeFileSync(
+        `${OUT}/report.json`,
+        JSON.stringify({ base: BASE, checks, errors }, null, 2),
+      );
+    } finally {
+      const saved = await api("/api/knowledge/outlines/" + draft.id);
+      const deleted = await fetch(
+        BASE +
+          "/api/knowledge/outlines/" +
+          draft.id +
+          "?version=" +
+          saved.version,
+        { method: "DELETE" },
+      );
+      if (!deleted.ok)
+        throw Error("Could not remove this test's temporary outline");
+    }
+    await page.getByRole("dialog").getByRole("button", { name: "关闭全部", exact: true }).click();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.reload();
+    await page.getByRole("button", { name: "规划知识目录", exact: true }).first().click();
+    await page.getByRole("dialog").getByRole("button").filter({ hasText: "[演示] 可继续编辑的工单知识目录" }).click();
+    await expect(page.getByLabel("页面计划编辑器")).toBeVisible();
+    await page.screenshot({ path: `${OUT}/outline-preview.png`, fullPage: true });
+    await browser.close();
+    process.exit(0);
+  }
   if (process.env.OMEM_SCHEDULES_ONLY === "1") {
     await page.goto(BASE + "/#/schedules");
     await expect(

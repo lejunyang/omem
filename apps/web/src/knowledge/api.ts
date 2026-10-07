@@ -11,6 +11,8 @@ export type ArticleMeta = {
   children?: string[];
   key: string;
   title: string;
+  publishedTitle?: string;
+  planChanged?: boolean;
   summary: string;
   category: string;
   topicPath?: string[];

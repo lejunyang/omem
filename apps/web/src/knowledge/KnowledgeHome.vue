@@ -5,7 +5,9 @@ import KnowledgeDocument from "./KnowledgeDocument.vue";
 import KnowledgeTree from "./KnowledgeTree.vue";
 import KnowledgeFolder from "./KnowledgeFolder.vue";
 import ArticleComposer, { type MaterialOption } from "./ArticleComposer.vue";
+import KnowledgeOutline from "./KnowledgeOutline.vue";
 import type { MaterialContext } from "../../../../packages/contracts/src/contexts";
+import type { KnowledgeOutlineDraft } from "../../../../packages/contracts/src/knowledge-outline";
 import ArticleMaintenance from "./ArticleMaintenance.vue";
 import type { WikiPageBrief } from "../../../../packages/contracts/src/knowledge";
 import { topicTree, inTopic, articleOrder } from "./topics";
@@ -26,7 +28,14 @@ const emit = defineEmits<{
 }>();
 const loading = ref(true),
   mobileNavigation = ref(false),
-  composerOpen = ref(false);
+  composerOpen = ref(false),
+  outlineOpen = ref(false);
+const outlineId = ref<string>();
+const outlineDrafts = ref<KnowledgeOutlineDraft[]>([]);
+const planningOutline = computed(() =>
+  outlineDrafts.value.find((draft) => draft.state === "planning"),
+);
+const outlineError = ref("");
 const composerPlan = ref<WikiPageBrief>();
 const allArticles = ref<ArticleMeta[]>([]),
   materials = ref<MaterialOption[]>([]),
@@ -96,6 +105,30 @@ const pageBusy = (key?: string) =>
 function compose(plan?: WikiPageBrief) {
   composerPlan.value = plan;
   composerOpen.value = true;
+}
+function planDirectory(id?: string) {
+  outlineId.value = id;
+  outlineOpen.value = true;
+}
+const outlineStateLabel = (state: KnowledgeOutlineDraft["state"]) =>
+  ({
+    editing: "未确认",
+    planning: "正在调查目录",
+    ready: "待确认目录",
+    failed: "目录调查未完成",
+    applied: "目录已确认",
+  })[state];
+async function loadOutlines() {
+  try {
+    const result = await knowledgeApi<{ drafts: KnowledgeOutlineDraft[] }>(
+      props.prefix,
+      "/outlines",
+    );
+    outlineDrafts.value = result.drafts;
+    outlineError.value = "";
+  } catch (caught) {
+    outlineError.value = String(caught);
+  }
 }
 const activePath = computed(() => current.value?.topicPath ?? topic.value);
 const scopedArticles = computed(() =>
@@ -227,7 +260,11 @@ async function load() {
 }
 onMounted(() => {
   void load();
-  timer = setInterval(() => void load(), 5000);
+  void loadOutlines();
+  timer = setInterval(() => {
+    void load();
+    void loadOutlines();
+  }, 5000);
 });
 onBeforeUnmount(() => {
   clearInterval(timer);
@@ -324,14 +361,33 @@ onBeforeUnmount(() => {
             </OmDisclosure>
           </template>
         </nav>
+        <OmButton
+          class="outline-navigation-action"
+          variant="secondary"
+          @click="planDirectory()"
+          >规划知识目录</OmButton
+        >
       </div>
     </aside>
     <div class="book-content">
       <p v-if="error" class="error" role="alert">{{ error }}</p>
-      <p v-if="running" class="generation-status" role="status">
-        {{ lastRun?.state === "queued" ? "已排队整理" : "正在整理" }}“{{
-          lastRun?.title || "所选材料"
-        }}”。完成调查、撰写与复核后，文章会出现在目录中。
+      <p v-if="planningOutline" class="generation-status" role="status">
+        正在调查目录“{{
+          planningOutline.title || "尚未命名的目录"
+        }}”，此时不会撰写正文。
+        <OmButton variant="ghost" @click="planDirectory(planningOutline.id)"
+          >打开草案查看</OmButton
+        >
+      </p>
+      <p v-else-if="running" class="generation-status" role="status">
+        <template
+          v-if="lastRun && ['queued', 'writing'].includes(lastRun.state ?? '')"
+          >{{ lastRun.state === "queued" ? "已排队整理" : "正在整理" }}“{{
+            lastRun.title || "所选文章"
+          }}”。</template
+        >
+        <template v-else>正在处理文章整理任务。</template>
+        完成调查、撰写与复核后，文章会出现在目录中。
       </p>
       <p
         v-else-if="!current && lastRun?.state === 'failed'"
@@ -349,6 +405,9 @@ onBeforeUnmount(() => {
         <OmButton variant="ghost" @click="select(lastRun!.key!)"
           >阅读文章</OmButton
         >
+      </p>
+      <p v-if="current?.planChanged" class="generation-status" role="status">
+        目录与阅读目标已调整，当前仍显示原正文。新文章完成写作与复核后会更新。
       </p>
       <KnowledgeDocument
         v-if="current"
@@ -397,10 +456,48 @@ onBeforeUnmount(() => {
               }}
             </p>
           </div>
-          <OmButton variant="primary" @click="compose()"
-            ><OmIcon name="plus" />整理文章</OmButton
-          >
+          <div class="overview-actions">
+            <OmButton variant="secondary" @click="planDirectory()"
+              >规划知识目录</OmButton
+            ><OmButton variant="primary" @click="compose()"
+              ><OmIcon name="plus" />整理文章</OmButton
+            >
+          </div>
         </header>
+        <section
+          v-if="outlineDrafts.length"
+          class="outline-drafts"
+          aria-label="目录草案"
+        >
+          <div>
+            <h2>目录草案</h2>
+            <p>先安排读者的学习路线，确认后再写各篇文章。</p>
+          </div>
+          <ul>
+            <li v-for="draft in outlineDrafts.slice(0, 3)" :key="draft.id">
+              <div>
+                <strong>{{ draft.title || "尚未命名的目录" }}</strong
+                ><span
+                  >{{ outlineStateLabel(draft.state) }} ·
+                  {{ draft.pages.length }} 页</span
+                ><small>{{ draft.goal || "阅读目标待补充" }}</small>
+              </div>
+              <OmButton @click="planDirectory(draft.id)">{{
+                draft.state === "applied" ? "查看写作进度" : "继续编辑目录草案"
+              }}</OmButton>
+            </li>
+          </ul>
+          <OmButton
+            v-if="outlineDrafts.length > 3"
+            variant="ghost"
+            @click="planDirectory()"
+            >查看全部目录草案</OmButton
+          >
+        </section>
+        <p v-if="outlineError" class="error" role="alert">
+          目录草案未能读取：{{ outlineError }}
+          <OmButton variant="ghost" @click="loadOutlines">重新读取</OmButton>
+        </p>
         <div v-if="!topic.length && tree.children.length" class="topic-cards">
           <button
             v-for="node in tree.children"
@@ -425,8 +522,9 @@ onBeforeUnmount(() => {
                 ><span class="article-summary">{{ a.summary }}</span
                 ><span class="article-meta"
                   >{{ (a.topicPath ?? []).join(" / ") || "未分类"
-                  }}<span v-if="!a.current" class="stale-label"
-                    >待更新</span
+                  }}<span v-if="!a.current" class="stale-label">待更新</span
+                  ><span v-if="a.planChanged" class="stale-label"
+                    >目录已调整，正文待更新</span
                   ></span
                 ></span
               ><OmIcon name="arrow" />
@@ -510,6 +608,19 @@ onBeforeUnmount(() => {
       @close="composerOpen = false"
       @submitted="load"
     />
+    <KnowledgeOutline
+      :open="outlineOpen"
+      :prefix="prefix"
+      :materials="materials"
+      :contexts="contexts"
+      :plans="pages"
+      :topic-path="topic"
+      :draft-id="outlineId"
+      @close="outlineOpen = false"
+      @updated="loadOutlines"
+      @applied="load"
+      @read="select"
+    />
   </section>
 </template>
 <style scoped>
@@ -518,6 +629,64 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 24px;
+}
+.outline-navigation-action {
+  width: 100%;
+  margin-top: 16px;
+}
+.overview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.outline-drafts {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--om-line);
+  border-radius: 8px;
+  background: var(--om-paper);
+  margin-bottom: 32px;
+}
+.outline-drafts h2 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+.outline-drafts p {
+  font-size: 14px;
+  color: var(--om-secondary);
+  margin: 0;
+}
+.outline-drafts ul {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.outline-drafts li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px 0;
+  border-top: 1px solid var(--om-line);
+}
+.outline-drafts li > div {
+  display: grid;
+  gap: 6px;
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.outline-drafts strong {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.outline-drafts span,
+.outline-drafts small {
+  color: var(--om-secondary);
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 .planned-pages {
   border-top: 1px solid var(--om-line);
