@@ -60,7 +60,7 @@ export class AcpAssistantModel implements AssistantModelPort {
     // G: reject when no profile configured.
     if (!this.deps.profile)
       throw new ModelUnavailableError("no assistant agent profile configured");
-    const profile = this.deps.profile;
+    const profile = structuredClone(this.deps.profile);
 
     // G: reject CLI transports — do NOT pipe a codex CLI through ACP.
     if (profile.transport !== "acp")

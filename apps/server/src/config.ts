@@ -25,6 +25,11 @@ const timezoneSchema = z
 const schema = z
   .object({
     profiles: z.array(profileSchema).min(1),
+    agentsConfiguredAt: z.iso.datetime().optional(),
+    knowledge: z
+      .object({ profileId: z.string().min(1) })
+      .strict()
+      .optional(),
     development: z
       .object({
         codingProfileId: z.string().min(1),
@@ -113,7 +118,21 @@ export type Config = Omit<
   token?: string;
   host: string;
   port: number;
+  configFile?: string;
 };
+
+export function knowledgeProfile(
+  config: Pick<Config, "profiles" | "knowledge">,
+) {
+  if (!config.knowledge)
+    return config.profiles.find((p) => p.transport === "acp");
+  const profile = config.profiles.find(
+    (p) => p.id === config.knowledge!.profileId,
+  );
+  if (!profile || profile.transport !== "acp")
+    throw Error("Knowledge profile requires an existing ACP profile");
+  return profile;
+}
 
 /** Answering can use a faster agent without changing learning or Wiki writing. */
 export function assistantProfile(
@@ -171,6 +190,14 @@ export function parseConfig(input: unknown) {
     throw Error("Duplicate agent profile ID");
   assistantProfile(config);
   developmentProfiles(config);
+  knowledgeProfile(config);
+  if (
+    config.learning.enabled &&
+    !config.profiles.some(
+      (p) => p.id === config.learning.profileId && p.transport === "acp",
+    )
+  )
+    throw Error("Learning profile requires an existing ACP profile");
   return config;
 }
 
@@ -195,6 +222,7 @@ export function loadConfig() {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   return {
     ...config,
+    configFile: file,
     dataDir,
     agentCwd: join(dataDir, "agent-workspace"),
     token: process.env.OMEM_TOKEN,

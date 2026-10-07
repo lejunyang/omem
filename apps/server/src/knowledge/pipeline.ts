@@ -124,7 +124,7 @@ export class KnowledgePipeline {
     const worker = new DurableJobWorker(this.repository.store.jobs, `knowledge-${job.id}`, {
       [`knowledge:${role}`]: async (lease, signal) => {
         this.options.log?.(`AI ${role}: ${String(task.targetKeys ?? task.title ?? "catalog")}`);
-        const run = await this.gateway.run({ roleId: role, profile: this.profile, context: this.context(role, lease.id, offers, articles, task), signal, budget: this.options.budget, validateOutput: validate,
+        const run = await this.gateway.run({ roleId: role, profile: this.profile, profileBinding: { roleId: role, profileId: this.profile.id }, context: this.context(role, lease.id, offers, articles, task), signal, budget: this.options.budget, validateOutput: validate,
           ...(this.nativeResearch ? { research: (workspace, schema, validate) => prepareAgentResearch({ repository:this.repository, materials:offers.map(o=>o.material), articles, workspace, schema, validate, tools:followupStateTools(offers.map(o=>o.material)), retrievalConfig:this.options.retrievalConfig }) } : {}),
           emit: (type, text) => { if (type === "status") this.options.log?.(text); } });
         const saved = this.repository.store.jobs.saveRoleOutput({ jobId: lease.id, leaseToken: lease.leaseToken,

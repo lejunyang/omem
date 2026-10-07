@@ -10,6 +10,8 @@ Agent 的 `idleTimeoutMs` 现在表示连续无活动等待；真实 ACP 输出�
 
 个人配置读取 `OMEM_CONFIG` 或忽略提交的 `omem.local.json`，没有时用 config/omem.example.json。profiles 配置 CLI/ACP 与模型；能力动态探测。启动不会自动生成整库知识。已启用的检索索引可后台补建。
 
+首次打开网页提示进入「能力与连接」。Agent 设置按服务实际 PATH 检测命令，连接 ACP 后读取模型；切换模型后读取它的思考强度，可另发一句无个人材料的调用检查。五种工作可以分别配置，保存到原个人配置后新任务立即使用。未安装适配器、无法认证和不支持的选项会说明原因，不自动换提供方或开启后台处理。命令与使用范围见[Agent 设置](../../skills/omem-cli/references/agents.md)。手动编辑其他配置仍需重启服务。
+
 开发 API 使用项目内 [nodemon](https://github.com/remy/nodemon) 监测服务源码、合同、角色和配置变化，通过 SIGTERM 关闭旧进程后启动新的 Bun 进程；TypeScript 仍由 Bun 执行。这样不会在长期热重载的同一 Bun 进程中累积状态。前端仍由 Vite 热更新，个人数据库与原文历史保留。
 
 ## 常驻服务与状态命令

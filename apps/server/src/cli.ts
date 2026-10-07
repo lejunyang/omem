@@ -114,7 +114,7 @@ program
     }
     show(
       { created, config: file, dataDir: defaultDataDir() },
-      `${created ? "已创建" : "已保留"}配置：${file}\n个人库：${defaultDataDir()}\n下一步：omem service start，然后打开 http://127.0.0.1:${process.env.OMEM_PORT || 4317}\nAI 默认使用 Traex / gpt-5.6-sol；omem agent probe 检查登录和模型。`,
+      `${created ? "已创建" : "已保留"}配置：${file}\n个人库：${defaultDataDir()}\n下一步：omem service start，然后打开 http://127.0.0.1:${process.env.OMEM_PORT || 4317}/#/settings 选择 Agent、模型与思考强度。\nomem agent discover 检测本机命令；能力列表不代表实际调用权限。`,
     );
   });
 program
@@ -1104,6 +1104,43 @@ messages
     show(await api(mp + "/inbox/" + enc(id) + "/retry", {})),
   );
 const agent = group("agent", "配置的 Agent 与实际模型/思考强度发现");
+agent
+  .command("discover")
+  .description(
+    "检测服务启动环境可见的本机 Agent 命令；不安装、不登录、不调用模型",
+  )
+  .action(async () => {
+    const { loadConfig } = await import("./config.js"),
+      { AgentSettings } = await import("./agent-settings.js");
+    show(new AgentSettings(loadConfig()).status());
+  });
+agent
+  .command("settings")
+  .description("查看服务当前的主助手、整理、编码与评审设置")
+  .action(async () => show(await api("/api/agents/settings")));
+agent
+  .command("setup <json-file>")
+  .description(
+    "核验并保存五种工作的 Agent/模型设置，新任务立即使用；需服务运行",
+  )
+  .action(async (file) =>
+    show(await api("/api/agents/settings", await readJson(file), "PUT")),
+  );
+agent
+  .command("check <candidate>")
+  .description("读取实际模型能力；可单独检查所选模型的调用权限")
+  .option("--model <id>", "协商模型后读取其思考强度")
+  .option("--effort <value>", "核验所选模型的思考强度")
+  .option("--test", "发送一句不含个人材料的调用检查，会使用模型额度")
+  .action(async (candidateId, options) => {
+    const { loadConfig } = await import("./config.js"),
+      { AgentSettings, agentProbeSchema } = await import("./agent-settings.js");
+    show(
+      await new AgentSettings(loadConfig()).probe(
+        agentProbeSchema.parse({ candidateId, ...options }),
+      ),
+    );
+  });
 read(agent, "list", "列出服务启用的 Agent", "/api/profiles");
 agent
   .command("probe [profile]")

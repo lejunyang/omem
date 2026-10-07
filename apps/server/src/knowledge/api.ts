@@ -39,7 +39,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     run: input.profile ? async (brief, job, signal) => {
       const investigationHints = await input.beforePageRun?.(brief, signal);
       const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)),
-        { ...input.profile!, id: "traex" }, { retrievalConfig: input.retrievalConfig, budget: input.budget, investigationHints, onPublish: input.onPublish, retryTag: `${job.id}:${job.generation}` });
+        structuredClone(input.profile!), { retrievalConfig: input.retrievalConfig, budget: input.budget, investigationHints, onPublish: input.onPublish, retryTag: `${job.id}:${job.generation}` });
       running = pipeline;
       const cancel = () => { void pipeline.stop(); };
       signal.addEventListener("abort", cancel, { once: true });
@@ -60,7 +60,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     onError: error => app.log.error(error),
     run: input.profile ? async (material, job, signal) => {
       const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)),
-        { ...input.profile!, id: "traex" }, { retrievalConfig: input.retrievalConfig, budget: input.budget, retryTag: `${job.id}:${job.generation}` });
+        structuredClone(input.profile!), { retrievalConfig: input.retrievalConfig, budget: input.budget, retryTag: `${job.id}:${job.generation}` });
       running = pipeline;
       const cancel = () => { void pipeline.stop(); };
       signal.addEventListener("abort", cancel, { once: true });

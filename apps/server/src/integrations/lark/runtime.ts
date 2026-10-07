@@ -113,7 +113,9 @@ export class LarkRuntimeHost {
           work: input.work,
           retrieval: assistantRetrieval,
           visibilityPolicy,
-          turnTimeoutMs: input.assistantTimeoutMs ?? 60_000,
+          get turnTimeoutMs() {
+            return input.assistantTimeoutMs ?? 60_000;
+          },
         })
       : null;
   }

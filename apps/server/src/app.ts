@@ -50,6 +50,7 @@ import { intakeQuestions } from "./decision/questions.js";
 import { assessPassages } from "./decision/passages.js";
 import {
   assistantProfile as selectAssistantProfile,
+  knowledgeProfile,
   assistantReadingProfile,
   developmentProfiles,
   type Config,
@@ -71,6 +72,11 @@ import { BotmuxExistingAppProvider } from "./integrations/lark/existing-apps.js"
 import { LarkRuntimeHost } from "./integrations/lark/runtime.js";
 import { AssistantRuntime } from "./assistant/runtime.js";
 import { AcpAssistantModel } from "./assistant/acp-model.js";
+import {
+  AgentSettings,
+  agentProbeSchema,
+  agentSetupSchema,
+} from "./agent-settings.js";
 import { AssistantWork } from "./assistant/work.js";
 import { workActionSchema } from "../../../packages/contracts/src/work.js";
 import { DevelopmentQueue } from "./development/queue.js";
@@ -85,7 +91,7 @@ export async function buildApp(
     larkRuntime?: LarkRuntimeHost;
   } = {},
 ) {
-  const assistantProfile = selectAssistantProfile(config);
+  const assistantProfile = () => selectAssistantProfile(config);
   if (!["127.0.0.1", "localhost", "::1"].includes(config.host) && !config.token)
     throw Error("OMEM_TOKEN is required for a non-loopback bind");
   const app = Fastify({ bodyLimit: 12_000_000, logger: false });
@@ -96,6 +102,14 @@ export async function buildApp(
     ? importDevelopmentKnowledge(store, resolve(process.env.OMEM_REPO_ROOT))
     : undefined;
   const runs = new Runs(store, config);
+  const agentSettings = new AgentSettings(config);
+  app.get("/api/agents/settings", async () => agentSettings.status());
+  app.post("/api/agents/probe", async (req) =>
+    agentSettings.probe(agentProbeSchema.parse(req.body)),
+  );
+  app.put("/api/agents/settings", async (req) =>
+    agentSettings.save(agentSetupSchema.parse(req.body)),
+  );
   const memory = new MemoryService(store);
   const decisions = new DecisionService(config.decisions ?? { mode: "auto" });
   const personalLark = new PersonalLarkService(store, decisions);
@@ -134,14 +148,20 @@ export async function buildApp(
       work.published(article);
     },
     onService: (pages) => {
-      const profiles = developmentProfiles(config);
       work = new AssistantWork(
         pages,
-        new DevelopmentQueue(store, pages, profiles?.coding ?? null, {
-          reviewProfile: profiles?.review,
-          decisions: config.decisions?.mode !== "off" ? decisions : undefined,
-          onError: (error) => app.log.error(error),
-        }),
+        new DevelopmentQueue(
+          store,
+          pages,
+          () => developmentProfiles(config)?.coding ?? null,
+          {
+            get reviewProfile() {
+              return developmentProfiles(config)?.review;
+            },
+            decisions: config.decisions?.mode !== "off" ? decisions : undefined,
+            onError: (error) => app.log.error(error),
+          },
+        ),
         decisions,
       );
     },
@@ -149,13 +169,19 @@ export async function buildApp(
     repository: development?.repository,
     prefix: "/api/knowledge",
     workspace: resolve(config.dataDir, "knowledge-agents"),
-    profile: config.profiles.find((p) => p.transport === "acp"),
+    get profile() {
+      return knowledgeProfile(config);
+    },
     retrievalConfig: config.retrieval,
     retrieval: assistantRetrieval,
   });
   const assistantModel = new AcpAssistantModel({
-    profile: assistantProfile,
-    readingProfile: assistantReadingProfile(config),
+    get profile() {
+      return assistantProfile();
+    },
+    get readingProfile() {
+      return assistantReadingProfile(config);
+    },
     workspaceRoot: config.agentCwd,
     repository: knowledgeRepository,
     researchWorkspace: resolve(config.dataDir, "assistant-agents"),
@@ -230,9 +256,10 @@ export async function buildApp(
       config.decisions && config.decisions.mode !== "off"
         ? decisions
         : undefined,
-    turnTimeoutMs: assistantProfile
-      ? agentIdleTimeout(assistantProfile)
-      : 60_000,
+    get turnTimeoutMs() {
+      const profile = assistantProfile();
+      return profile ? agentIdleTimeout(profile) : 60_000;
+    },
   });
   const learningConfig = config.learning;
   const learningProfile = learningConfig?.enabled
@@ -245,7 +272,11 @@ export async function buildApp(
         store,
         memory,
         feedback,
-        profile: learningProfile,
+        get profile() {
+          return config.profiles.find(
+            (p) => p.id === config.learning!.profileId,
+          )!;
+        },
         workspaceRoot: config.agentCwd,
         pollMs: learningConfig?.pollMs,
         retrieval: assistantRetrieval,
@@ -272,9 +303,10 @@ export async function buildApp(
         onboarding: lark,
         secrets,
         assistantModel,
-        assistantTimeoutMs: assistantProfile
-          ? agentIdleTimeout(assistantProfile)
-          : undefined,
+        get assistantTimeoutMs() {
+          const profile = assistantProfile();
+          return profile ? agentIdleTimeout(profile) : undefined;
+        },
         retrieval: assistantRetrieval,
         pollMs: config.lark.pollMs,
       });

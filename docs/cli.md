@@ -15,7 +15,7 @@ omem open
 
 `open` 显示网页地址；默认 http://127.0.0.1:4317。`service start` 使用包内 PM2 管理进程；关闭终端后仍运行，进程异常退出会重启。**未安装系统开机自启动，电脑休眠期间也无法拉取消息。** 已有 systemd、容器或其他管理器时用 `omem serve` 前台运行，不再套一层 PM2。
 
-基础保存、全文搜索和 Web 不需要 Bun、osdk、Python 或本地模型。AI 需要另行安装并登录 Agent CLI，默认配置为 Traex ACP / gpt-5.6-sol。初始化不自动运行模型、不订阅消息、不发送通知、不下载模型。`omem agent probe` 检查当前登录、可选模型与思考强度。
+基础保存、全文搜索和 Web 不需要 Bun、osdk、Python 或本地模型。AI 需要另行安装并登录 Agent CLI，默认配置为 Traex ACP / gpt-5.6-sol。初始化不自动运行模型、不订阅消息、不发送通知、不下载模型。`omem agent probe` 读取 ACP 的可选模型与思考强度；实际调用权限需使用 `agent check --test` 或网页的调用检查。
 
 发布包只包含运行代码、网页、角色资源、配置模板和使用技能；不包含本仓库的 `.repo-review`、个人配置、数据库、消息、原件、密钥与模型权重。许可证为 Apache-2.0。是否已实际发布、当前验收结果见[实施进度](reader-first/progress.md)；打包成功不代表 npm 已发布。
 
@@ -49,6 +49,8 @@ omem status --json
 退出码：0 成功；1 执行失败或服务不健康；2 参数错误/未知命令；130 用户中断。普通数据命令支持 `--json`，stdout 为结果，stderr 为错误或进度。`serve`、`setup` 和交互登录直接显示各运行工具的输出，不作为 JSON 数据命令。`doctor` 不启动服务、不调用模型、不下载依赖。
 
 ## 保存、搜索和提问
+
+首次启动网页提示设置主助手与工作 Agent。打开 `/#/settings`，检测服务机器可见的 Traex、Codex ACP、Claude ACP，选择实际支持的模型；切换模型后重新读取思考强度。可共用或分别选择主助手、材料与文章整理、记忆整理、编码和代码评审，保存后新任务立即使用，已排队编码保留原配置。设置不会开启采集或学习。`omem agent discover/settings/check/setup` 提供相同的检测和配置入口；命令可用、ACP 连接和模型实际调用分别显示，完整步骤及 JSON 示例见[Agent 设置](../skills/omem-cli/references/agents.md)。
 
 新增 `omem data info/backup/restore/migrate/archive/prune` 管理本机个人库。`archive/prune` 默认预览，`--apply` 才执行；备份/归档前停止服务及前台开发进程。指定新目录恢复，不覆盖原库。冷存储保留固定 ID，消息游标和去重状态仍在热库。完整目录、保留内容及命令见[个人库与冷存储](reader-first/data-lifecycle.md)。
 

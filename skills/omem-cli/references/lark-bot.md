@@ -18,8 +18,10 @@
 ```bash
 omem config path
 omem service status --json
-omem agent probe --json
+omem agent settings --json
 ```
+
+首次打开服务网页先在「能力与连接」选择主助手、模型和思考强度。检测与调用检查见 [Agent 设置](agents.md)；机器人绑定成功不保证模型可调用。
 
 安装版在服务机器运行：
 
