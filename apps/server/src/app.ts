@@ -1030,7 +1030,8 @@ export async function buildApp(
   app.get("/api/jobs", async () =>
     store.db
       .prepare(
-        `SELECT id FROM jobs WHERE workspace_id='personal'
+        // Recurring runs have their own board and must not crowd out material history.
+        `SELECT id FROM jobs WHERE workspace_id='personal' AND kind!='scheduled_task'
     ORDER BY CASE WHEN state IN ('running','leased') THEN 0 WHEN state IN ('failed','retry_wait','awaiting_decision') THEN 1 WHEN state='queued' THEN 3 ELSE 2 END, created_at DESC LIMIT 200`,
       )
       .all()

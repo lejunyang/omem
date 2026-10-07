@@ -306,6 +306,64 @@ try {
       await page.getByRole("button", { name: "知识库", exact: true }).click();
     },
   );
+  await check(
+    "persistent schedules can be configured and inspected",
+    async () => {
+      await page.goto(base + "/#/schedules");
+      await expect(
+        page.getByRole("heading", { name: "定时任务", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "事项提醒检查", exact: true }),
+      ).toBeVisible();
+      const template = page.locator(".task-card").filter({
+        has: page.getByRole("heading", { name: "每日简报", exact: true }),
+      });
+      await expect(template).toContainText("已暂停");
+      await template.getByRole("button", { name: "设置", exact: true }).click();
+      await page
+        .getByLabel("任务名称", { exact: true })
+        .fill("验收：工作日简报");
+      await page
+        .getByLabel("简报要求", { exact: true })
+        .fill("整理今天要处理的事项和等待回复，缺材料时说明。");
+      await page.getByRole("button", { name: "保存任务", exact: true }).click();
+      const card = page.locator(".task-card").filter({
+        has: page.getByRole("heading", {
+          name: "验收：工作日简报",
+          exact: true,
+        }),
+      });
+      await expect(card).toContainText("缺材料时说明");
+      await card.getByRole("button", { name: "恢复", exact: true }).click();
+      await expect(card).toContainText("已开启");
+      await card.getByRole("button", { name: "暂停", exact: true }).click();
+      await expect(card).toContainText("已暂停");
+      await card.getByRole("button", { name: "立即执行", exact: true }).click();
+      await expect(card).toContainText("暂时没有可整理的", { timeout: 20000 });
+      await card.getByRole("button", { name: "查看结果", exact: true }).click();
+      await expect(page.getByRole("dialog")).toContainText(
+        "没有生成或发送简报",
+      );
+      await page
+        .getByRole("button", { name: "关闭", exact: true })
+        .last()
+        .click();
+      await page.reload();
+      await expect(card).toContainText("已暂停");
+      expect(
+        store.db
+          .prepare(
+            "SELECT count(*) n FROM scheduled_tasks WHERE kind='daily_brief'",
+          )
+          .get()!.n,
+      ).toBe(1);
+      expect(
+        store.db.prepare("SELECT count(*) n FROM delivery_intents").get()!.n,
+      ).toBe(0);
+      await page.goto(base + "/#/knowledge");
+    },
+  );
   await check("empty real workspace and material capture", async () => {
     await expect(
       page.getByRole("heading", { name: "知识从你的材料开始" }),
@@ -324,6 +382,34 @@ try {
       page.getByRole("heading", { name: "发布前的回滚验证" }),
     ).toBeVisible();
     expect(store.list()).toHaveLength(1);
+  });
+  await check("brief citations open the fixed original revision", async () => {
+    const revision = store.revision(store.list()[0]!.id)!;
+    // Rendering fixture only; the live Sol run verifies brief generation separately.
+    store.db
+      .prepare("UPDATE schedule_runs SET detail=? WHERE task_id='daily-brief'")
+      .run(
+        `回滚前检查镜像和配置。参考：[发布前的回滚验证](/__omem/revision/${revision.id})`,
+      );
+    await page.goto(base + "/#/schedules");
+    await page
+      .locator(".task-card")
+      .filter({
+        has: page.getByRole("heading", {
+          name: "验收：工作日简报",
+          exact: true,
+        }),
+      })
+      .getByRole("button", { name: "查看结果", exact: true })
+      .click();
+    await page
+      .getByRole("dialog")
+      .getByRole("link", { name: "发布前的回滚验证", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "发布前的回滚验证", exact: true }),
+    ).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`revision=${revision.id}`));
   });
   await check(
     "reading-first library and two-step article composer",
@@ -516,8 +602,9 @@ try {
       await page.reload();
       await page.getByRole("button", { name: "材料处理", exact: true }).click();
       await expect(
-        page.getByRole("heading", { name: "材料处理" }),
+        page.getByRole("heading", { name: "材料处理", level: 1, exact: true }),
       ).toBeVisible();
+      await expect(page.getByRole("heading", { name: "材料处理", level: 3, exact: true })).toHaveCount(0);
       await expect(page.getByText("处理完成", { exact: true })).toBeVisible();
       await expect(
         page.getByRole("heading", { name: "提交发布前回滚验证报告" }),

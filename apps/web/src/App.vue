@@ -61,6 +61,7 @@ import DecisionsView from "./DecisionsView.vue";
 import NotificationDetail from "./NotificationDetail.vue";
 import LarkSetup from "./LarkSetup.vue";
 import PersonalLark from "./PersonalLark.vue";
+import ScheduledTasks from "./ScheduledTasks.vue";
 const navigation = [
   ["daily", "spark", "日常助理"],
   ["knowledge", "book", "知识库"],
@@ -69,6 +70,7 @@ const navigation = [
   ["learning", "spark", "材料处理"],
   ["decisions", "check", "待判断"],
   ["tasks", "check", "事项与待办"],
+  ["schedules", "clock", "定时任务"],
   ["changes", "clock", "变更历史"],
   ["notifications", "spark", "通知中心"],
   ["messages", "layers", "飞书消息"],
@@ -88,6 +90,10 @@ const view = ref(
 );
 function syncView() {
   view.value = hashView();
+  const revisionId = new URLSearchParams(location.hash.split("?")[1] ?? "").get(
+    "revision",
+  );
+  if (view.value === "read" && revisionId) void openRevision(revisionId, false);
 }
 const pageTitle = computed(
   () =>
@@ -395,7 +401,12 @@ async function boot() {
       profileId.value = profiles.value[0]?.id || "";
     setProfile();
     await refresh();
-    if (sources.value[0] && !revision.value)
+    const linkedRevision = new URLSearchParams(
+      location.hash.split("?")[1] ?? "",
+    ).get("revision");
+    if (view.value === "read" && linkedRevision)
+      await openRevision(linkedRevision, false);
+    else if (sources.value[0] && !revision.value)
       await openRevision(sources.value[0].id, false);
   } catch (e) {
     error.value = String(e);
@@ -412,6 +423,12 @@ async function openRevision(id: string, navigate = true) {
     history.value = await api(
       "/sources/" + revision.value!.sourceId + "/history",
     );
+    if (navigate)
+      window.history.replaceState(
+        null,
+        "",
+        "#/read?revision=" + encodeURIComponent(id),
+      );
   } catch (e) {
     error.value = String(e);
   }
@@ -1211,6 +1228,9 @@ onBeforeUnmount(() => {
     </section>
     <PersonalLark
       v-else-if="view === 'messages'"
+      @open-revision="openRevision" />
+    <ScheduledTasks
+      v-else-if="view === 'schedules'"
       @open-revision="openRevision" />
     <LarkSetup
       v-else-if="view === 'lark'"
