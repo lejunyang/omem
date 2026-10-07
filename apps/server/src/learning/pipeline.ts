@@ -91,23 +91,19 @@ export class LearningPipeline {
   ) {
     const registry = new RoleBundleRegistry();
     for (const role of ["extractor", "verifier"] as const) {
-      const bundle = registry.load(role);
-      if (bundle.manifest.profile_ref !== input.profile.id)
-        throw Error(
-          `LEARNING_PROFILE_MISMATCH: ${role} requires ${bundle.manifest.profile_ref}`,
-        );
+      registry.load(role);
     }
     this.gateway = new RoleRuntimeGateway(
       registry,
       input.workspaceRoot,
       input.store.runtimeRequests,
     );
-    const fingerprintSeed = {
+    const fingerprintSeed = () => ({
       pipeline: "learning-pipeline@1",
       profileId: input.profile.id,
       model: input.profile.model ?? null,
       effort: input.profile.effort ?? null,
-    };
+    });
     this.worker = new DurableJobWorker(
       input.store.jobs,
       input.workerId ?? `learning-${process.pid}-${randomUUID()}`,
@@ -121,9 +117,9 @@ export class LearningPipeline {
         fingerprint: () => ({
           model: input.profile.model ?? null,
           effort: input.profile.effort ?? null,
-          promptHash: stableDigest({ ...fingerprintSeed, stage: "prompt" }),
-          skillHash: stableDigest({ ...fingerprintSeed, stage: "skills" }),
-          toolHash: stableDigest({ ...fingerprintSeed, stage: "tools" }),
+          promptHash: stableDigest({ ...fingerprintSeed(), stage: "prompt" }),
+          skillHash: stableDigest({ ...fingerprintSeed(), stage: "skills" }),
+          toolHash: stableDigest({ ...fingerprintSeed(), stage: "tools" }),
         }),
       },
     );
@@ -484,7 +480,7 @@ export class LearningPipeline {
     if (batch) this.validateScope(batch, context);
     const repository = new KnowledgeRepository(this.input.store);
     const run = await this.gateway.run({
-      roleId: context.role_id, profile: this.input.profile, context, signal,
+      roleId: context.role_id, profile: structuredClone(this.input.profile), profileBinding: { roleId: context.role_id, profileId: this.input.profile.id }, context, signal,
       ...(context.role_id === "extractor" ? { validateOutput: (output: unknown) => {
         const batch = proposalBatchSchema.parse(output); this.validateScope(batch, context); return batch;
       } } : {}),
@@ -683,7 +679,7 @@ export class LearningPipeline {
       const outputIds: string[] = [];
       const investigate = async (draft?: ContextResolution) => {
         const run = await this.gateway.run({
-          roleId: "context-resolver", profile: this.input.profile, signal,
+          roleId: "context-resolver", profile: structuredClone(this.input.profile), profileBinding: { roleId: "context-resolver", profileId: this.input.profile.id }, signal,
           context: { ...context, related_memories: [], confirmed_corrections: [],
             task: { nativeResearch: true, mode: draft ? "independent_review" : "investigation",
               input_source: { source_id: revision.sourceId, revision_id: revision.id, title: revision.title },

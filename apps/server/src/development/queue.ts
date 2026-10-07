@@ -35,6 +35,11 @@ type DevelopmentJobInput = {
   replan?: boolean;
 };
 export class DevelopmentQueue {
+  get profile() {
+    return typeof this.configuredProfile === "function"
+      ? this.configuredProfile()
+      : this.configuredProfile;
+  }
   readonly runner: DevelopmentRunner;
   private readonly worker: DurableJobWorker;
   private timer?: ReturnType<typeof setInterval>;
@@ -43,7 +48,10 @@ export class DevelopmentQueue {
   constructor(
     readonly store: Store,
     readonly pages: KnowledgePageService,
-    readonly profile: AgentProfile | null,
+    private readonly configuredProfile:
+      | AgentProfile
+      | null
+      | (() => AgentProfile | null),
     readonly options: {
       runner?: DevelopmentRunner;
       reviewProfile?: AgentProfile;
@@ -84,8 +92,8 @@ export class DevelopmentQueue {
           const profiles =
             task.run?.profiles ??
             input.profiles ??
-            (profile &&
-              freezeDevelopmentProfiles(profile, options.reviewProfile));
+            (this.profile &&
+              freezeDevelopmentProfiles(this.profile, options.reviewProfile));
           if (!profiles)
             throw new JobExecutionError("尚未配置编码 Agent", "config");
           const repository = pages.repository;

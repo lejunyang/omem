@@ -9,6 +9,7 @@ description: 使用 omem CLI 保存与检索个人材料、基于来源提问、
 
 ## 选择入口
 
+- 首次设置 AI：先读 [Agent、模型与工作分配](references/agents.md)。用 `agent discover/settings` 辨明本机与服务环境，网页选择模型后读取对应思考强度；能力发现不代表实际调用权限。保存设置不会开启消息采集或后台学习。
 - 找原文、事实或代码：`omem search "问题" --json`；需要综合解释和补读：`omem ask "问题" --research --json`。
 - 延续讨论：保存 ask 返回的 conversation.id，下次用 `--conversation`，不要重复新建不相干会话。
 - 记录材料：`omem import file`、`import git`、`import lark` 或 `import text`。已有记录更新应保持同一个来源标识，别把重复导入当新增事实。
