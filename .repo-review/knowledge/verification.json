@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-07T10:21:40.142Z",
-  "implementationCommit": "f32667d1236f5b6b25c4930d8f72503e5b37ccd8",
-  "sourceDigest": "38c99d75020a01c00db2eef5a93273c50beac57897b1d625490b92d411c73854",
+  "recordedAt": "2026-10-07T12:16:13.554Z",
+  "implementationCommit": "1522b78e760cfc12af3f06bcca46dbfa107ea679",
+  "sourceDigest": "c79e347bd6739eeaefa358c6ca4a7407a88c87030d8e323d448714f59d4c31cf",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T10-21-40-142Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-07T12-16-13-554Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T10-21-40-142Z/project.log",
-        "sha256": "5761fd252aacb5d9324e40c82012097a97fc599a1f47dc996f2d9ae58a50ca0f"
+        "log": ".repo-review/runtime/verification/2026-10-07T12-16-13-554Z/project.log",
+        "sha256": "7c010c93a90d32e8bdc33e8166dbdf8032c38f221349970e4c46232d5ea55fdf"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T10-21-40-142Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-07T12-16-13-554Z/liveChineseRetrieval.log",
         "sha256": "c633cc8b3935a685907f142b4f178e7f9fd00ac994d0edc6ef224a195357b1e8"
       }
     },
@@ -64,11 +64,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v7",
-        "units": 16954,
+        "units": 17180,
         "semantic": {
           "model": "structure-icu-v7:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 16954,
+          "indexed": 17180,
           "pending": 0,
           "error": null
         },
@@ -95,7 +95,7 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 832,
+    "materials": 840,
     "publishedPages": 10,
     "currentPages": 1,
     "plannedPages": 0,
@@ -433,7 +433,7 @@
       }
     ],
     "restore": {
-      "restored": 13,
+      "restored": 16,
       "stale": 14
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
@@ -458,7 +458,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 1309,
+        "elapsedMs": 1229,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -513,16 +513,16 @@
         "status": 200,
         "baselineTop5": [
           "docs/reader-first/operations.md",
-          "docs/reader-first/operations.md",
+          "apps/server/src/cli/osdk.ts",
+          "apps/server/src/cli/osdk.ts",
           "docs/cli.md",
-          ".agents/skills/osdk-guide/reference/configuration/models.md",
-          ".claude/skills/osdk-guide/reference/configuration/models.md"
+          "docs/reader-first/operations.md"
         ],
-        "baselineUniquePathsAt5": 4,
+        "baselineUniquePathsAt5": 3,
         "passed": false,
-        "firstExpectedRank": null,
-        "uniquePathsAt5": 4,
-        "elapsedMs": 859,
+        "firstExpectedRank": 6,
+        "uniquePathsAt5": 3,
+        "elapsedMs": 1044,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -534,13 +534,22 @@
             "snippet": "如果服务启动时已经配置 `retrieval.enabled=true`，只是本地模型文件缺失，安装完成后后台会按 30 秒间隔重新尝试加载，不永久缓存失败结果。若刚把检索配置从关闭改为开启，或改了模型别名，需要重启服务：配置在启动时读取，模型加载重试不重新读取配置文件。默认示例启用中文向量检索；个人配置以实际文件为准"
           },
           {
-            "path": "docs/reader-first/operations.md",
+            "path": "apps/server/src/cli/osdk.ts",
             "routes": [
               "bm25",
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / "
+            "snippet": "export const osdkInstallHelp =\n  \"请先按 https://github.com/lejunyang/one-sdk 安装 osdk，确认 osdk --version 可用后重跑本次 omem setup。npm 安装与普通启动不会下载模型。\";"
+          },
+          {
+            "path": "apps/server/src/cli/osdk.ts",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "export const osdkInstallHelp =\n  \"请先按 https://github.com/lejunyang/one-sdk 安装 osdk，确认 osdk --version 可用后重跑本次 omem setup。npm 安装与普通启动不会下载模型。\";"
           },
           {
             "path": "docs/cli.md",
@@ -549,25 +558,16 @@
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "- documents 安装锁定的 Docling Python 环境；document-models 下载锁定的 PDF 布局和表格模型。\n- embedding 下载中文向量模型，之后设置 `retrieval.enabled:true` 并重启。\n- decisions 下载 StartLux 2B/4B 并准备"
+            "snippet": "可选运行环境与模型声明在个人库 `optional/`，模型字节由 osdk 的用户级数据与缓存目录保存，`--data-dir` 不自动迁移共享权重。普通服务启动不会隐式下载。重新 setup 更新未定制的包内资源，保留用户修改并说明冲突；不会自动开启功能。Windows Python 路径已适配，跨平台完整安装验收"
           },
           {
-            "path": ".agents/skills/osdk-guide/reference/configuration/models.md",
+            "path": "docs/reader-first/operations.md",
             "routes": [
               "bm25",
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "`model use` 的 reference/include/exclude/variant/kind/family/derived_from/endpoint 会写入同名声明；`sync` 会识别这些字段的变化。模型配置不触发\n任何信任要求：模型字节是内容，osdk 不执行它们，下载仍按锁定摘要校验。`model "
-          },
-          {
-            "path": ".agents/skills/osdk-guide/reference/model/guide.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "不要手写 OSDK 受管模型声明；使用 `model use/unuse`。`model import` 只创建当前机器的本地快照，不写声明或 lock，并拒绝链接/reparse point 与特殊文件。`install` 不会隐式下载模型。Civitai 引用必须是精确的 `civitai:<model-id>@<"
+            "snippet": "本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / "
           }
         ]
       },
@@ -590,7 +590,7 @@
         "passed": false,
         "firstExpectedRank": 17,
         "uniquePathsAt5": 5,
-        "elapsedMs": 912,
+        "elapsedMs": 826,
         "top5": [
           {
             "path": "docs/reader-first/current-system.md",
@@ -655,7 +655,7 @@
         "passed": true,
         "firstExpectedRank": 5,
         "uniquePathsAt5": 3,
-        "elapsedMs": 347,
+        "elapsedMs": 196,
         "top5": [
           {
             "path": "scripts/live-development.ts",
@@ -716,7 +716,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 318,
+        "elapsedMs": 225,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -782,7 +782,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 5,
-        "elapsedMs": 831,
+        "elapsedMs": 855,
         "top5": [
           {
             "path": "design.md",
