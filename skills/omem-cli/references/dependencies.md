@@ -37,7 +37,7 @@ Python 依赖下载使用系统信任证书，适配已在系统中信任公司�
 | 两种决策模型 | `omem setup decisions --model both` | 下载 2B 和 4B，auto 才能在已安装的两种大小之间选择；不会按负载临时下载缺少的权重 |
 | 三种决策模型 | `omem setup decisions --model all` | 下载 2B、4B 和 9B；只按需要选用，9B 仍需明确配置 |
 
-StartLux 当前仅支持 Apple Silicon Mac。9B 已提供安装和显式选择，尚未完成本机推理验收；它的权重和内存要求高于 4B，不用于后台自动切换。Windows 的 Python 路径已适配，但 Windows/Linux 的全新安装仍需实际验收，不能把路径适配当作平台验证。未安装决策模型或资源不足时保留原流程，由常规 Agent 继续调查。
+StartLux 当前仅支持 Apple Silicon Mac。9B 已提供安装和显式选择，尚未完成本机推理验收；暂按可用内存 28 GiB 才允许加载，该预算还未通过真实推理校准。它不用于后台自动切换。Windows 的 Python 路径已适配，但 Windows/Linux 的全新安装仍需实际验收，不能把路径适配当作平台验证。未安装决策模型或资源不足时保留原流程，由常规 Agent 继续调查。
 
 修改个人配置时保留其他字段；用 `omem config path` 找到实际文件，`omem config validate` 检查结构。上述 setup 只准备资源，不自动打开向量检索、快速决策或消息采集。
 
