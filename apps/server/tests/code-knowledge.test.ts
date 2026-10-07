@@ -318,7 +318,7 @@ describe("real omem repo coverage", () => {
     expect(g.files.length).toBeGreaterThan(50);
     expect(g.symbols.length).toBeGreaterThan(0);
     expect(g.edges.length).toBeGreaterThan(0);
-  });
+  }, 60_000); // Full-repository capture and AST projection scale with the checkout.
 });
 
 // ---------------------------------------------------------------------------

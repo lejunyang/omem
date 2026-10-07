@@ -50,9 +50,11 @@ omem sources revision REVISION_ID --json
 
 ## 消息与通知
 
-在服务机器运行 `omem lark login`，再 `omem messages discover --json`。按用户选择 watch 会话，用 enable 开启调度。configure 接受 `{enabled,intervalMinutes,historyHours,mentionExceptions,resources}`，intervalMinutes 为 1–1440，historyHours 为 1–168。
+在服务机器运行 `omem lark login`，再 `omem messages discover --json`；`messages chats '名称' --json` 查询缓存候选。同名会话先辨明实际对象。本人可以直接要求主助手订阅或自动关注，无需逐个填 ID；主助手查询对象与设置，再通过 work_action 应用本人交办。手动 watch 选择会话，enable 开启采集。configure 接受 `{enabled,intervalMinutes,historyHours,mentionExceptions,resources,autoWatch}`，保留未修改字段；intervalMinutes 为 1–1440，historyHours 为 1–168。
 
-inbox 返回消息、资源与处理状态；资源缺失时先补读或说明未理解。unwatch 停止订阅，exclude 明确排除会话（包括提及例外），pause 暂停整个调度。读取不会修改飞书已读状态。
+inbox 返回消息、资源与处理状态；资源缺失时先补读或说明未理解。unwatch 停止普通消息订阅，提及例外仍按原设置处理；exclude 明确排除会话（包括提及例外），pause 暂停全部个人消息采集与自动发现。读取不会修改飞书已读状态。
+
+`messages auto-watch status/configure/run` 管理自动关注政策；自动发现需同时开启采集，先过滤人工选择与免打扰，再按少量抽样和已有关注背景判断。快速决策不可用时保留待判断，不自动订阅全部群。focus/ignore 文本变更先暂停旧自动群、取消旧同步，再按新政策重评；人工设置优先。`schedules list/show/add/configure/pause/resume/run/delete` 管理唯一自动发现任务及简报，两个默认模板首次暂停。先查询已有任务，修改同一任务并提供实际 version，避免重复通知。完整 JSON、自然语言操作与失败处理见 [会话关注与定时简报](schedules.md)。
 
 创建或绑定机器人先读 [飞书机器人](lark-bot.md)，按准备服务、选择应用、核验、本人配对、检查状态完成。`omem bot setup --start` 准备本机配置和密钥并启动服务；CLI 与网页可继续同一次接入。`bot connect` 导入已有应用后仍需本人配对。只有明确要求接入时才创建或更改应用。个人采集不等于机器人自动进入全部群聊。
 

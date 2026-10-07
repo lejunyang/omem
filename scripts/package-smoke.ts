@@ -25,6 +25,11 @@ assert(
   ),
 );
 assert(!files.some((p) => /\.(?:sqlite|db|safetensors|jsonl)$/.test(p)));
+const schedulesReference = "skills/omem-cli/references/schedules.md";
+assert(
+  files.includes(`package/${schedulesReference}`),
+  "The tarball must include the conversation and schedule reference",
+);
 const temp = await mkdtemp(join(tmpdir(), "omem-npm-")),
   prefix = join(temp, "install"),
   cwd = join(temp, "outside"),
@@ -97,6 +102,31 @@ try {
     ["--version"],
   ])
     await cli(args);
+  const scheduleCommands = [
+    "list",
+    "show",
+    "add",
+    "configure",
+    "pause",
+    "resume",
+    "run",
+    "delete",
+  ];
+  const scheduleHelp = String(await cli(["schedules", "--help"]));
+  for (const command of scheduleCommands) {
+    assert.match(scheduleHelp, new RegExp(`\\b${command}\\b`));
+    assert.match(String(await cli(["schedules", command, "--help"])), /Usage:/);
+  }
+  assert.match(String(await cli(["messages", "chats", "--help"])), /Usage:/);
+  const autoWatchCommands = ["status", "configure", "run"];
+  const autoWatchHelp = String(await cli(["messages", "auto-watch", "--help"]));
+  for (const command of autoWatchCommands) {
+    assert.match(autoWatchHelp, new RegExp(`\\b${command}\\b`));
+    assert.match(
+      String(await cli(["messages", "auto-watch", command, "--help"])),
+      /Usage:/,
+    );
+  }
   assert(!existsSync(data), "Help must not create data or load configuration");
   assert.equal(((await cli(["nonexistent"], false)) as any).code, 2);
   const first = JSON.parse((await cli(["init", "--json"])) as string);
@@ -108,6 +138,24 @@ try {
   await cli(["skills", "install", join(temp, "skills")]);
   assert(existsSync(join(temp, "skills/omem-cli/references/workflows.md")));
   assert(existsSync(join(temp, "skills/omem-cli/references/development.md")));
+  const packagedSchedules = await readFile(
+    join(prefix, "node_modules/omem", schedulesReference),
+    "utf8",
+  );
+  assert.equal(
+    packagedSchedules,
+    await readFile(join(root, schedulesReference), "utf8"),
+    "The installed reference must match the current packaged source",
+  );
+  assert.equal(
+    await readFile(join(temp, schedulesReference), "utf8"),
+    packagedSchedules,
+    "skills install must copy the complete schedule reference",
+  );
+  assert.match(
+    await readFile(join(temp, "skills/omem-cli/SKILL.md"), "utf8"),
+    /references\/schedules\.md/,
+  );
   const importPath = join(
     prefix,
     "node_modules/omem/dist/apps/server/src/agent-runtime/bundles.js",
@@ -213,8 +261,10 @@ try {
         checks: [
           "production install",
           "nested help and exit codes",
+          "schedule and automatic watch help",
           "idempotent init",
           "packaged roles and skills",
+          "complete schedule reference installation",
           "Web assets",
           "PM2 start/stop",
           "file/text capture",

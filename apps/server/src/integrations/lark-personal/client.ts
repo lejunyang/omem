@@ -40,6 +40,8 @@ export interface PersonalLarkPort {
     start: string;
     end: string;
     token?: string;
+    order?: "asc" | "desc";
+    limit?: number;
   }): Promise<MessagePage>;
   resource(
     messageId: string,
@@ -143,12 +145,20 @@ export class PersonalLarkClient implements PersonalLarkPort {
     start: string;
     end: string;
     token?: string;
+    order?: "asc" | "desc";
+    limit?: number;
   }): Promise<MessagePage> {
     // The upstream search API rejects fractional seconds in some CLI versions.
     const time = (s: string) =>
       new Date(s).toISOString().replace(/\.\d{3}Z$/, "+00:00");
     const args = input.chatId
-      ? ["+chat-messages-list", "--chat-id", input.chatId, "--order", "asc"]
+      ? [
+          "+chat-messages-list",
+          "--chat-id",
+          input.chatId,
+          "--order",
+          input.order ?? "asc",
+        ]
       : [
           "+messages-search",
           "--at-chatter-ids",
@@ -164,7 +174,7 @@ export class PersonalLarkClient implements PersonalLarkPort {
       "--end",
       time(input.end),
       "--page-size",
-      "50",
+      String(Math.max(1, Math.min(50, input.limit ?? 50))),
       "--no-reactions",
       ...(input.token ? ["--page-token", input.token] : []),
       "--as",

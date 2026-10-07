@@ -12,25 +12,41 @@ import {
   type LarkMessage,
 } from "./client.js";
 import { personalLarkSettingsSchema, messageQuestions } from "./policy.js";
+import {
+  PersonalLarkAutoWatch,
+  type PersonalLarkOptions,
+} from "./auto-watch.js";
 import { messageMaterial, messageTime } from "./materials.js";
 import { hydrateMessage } from "../../storage/cold.js";
 type Row = Record<string, any>;
+export type PersonalLarkStream = Row &
+  ReturnType<PersonalLarkAutoWatch["annotations"]>;
 export class PersonalLarkService {
   private worker: DurableJobWorker;
   private timer?: ReturnType<typeof setTimeout>;
   private active?: Promise<unknown>;
   private stopped = false;
+  private autoWatch: PersonalLarkAutoWatch;
   constructor(
     readonly store: Store,
     private decisions: Pick<DecisionService, "decide" | "status">,
     private port: PersonalLarkPort = new PersonalLarkClient(store.dataDir),
+    private options: PersonalLarkOptions = {},
   ) {
+    this.autoWatch = new PersonalLarkAutoWatch(
+      store,
+      decisions,
+      port,
+      () => this.settings(),
+      () => this.discover(),
+      options,
+    );
     const hash = stableDigest({ version: "lark-personal@1" });
     this.worker = new DurableJobWorker(
       store.jobs,
       `lark-personal-${randomUUID()}`,
       {
-        lark_personal_sync: (job) => this.sync(job),
+        lark_personal_sync: (job, signal) => this.sync(job, signal),
         lark_personal_retry: (job) => this.retryJob(job),
       },
       {
@@ -57,11 +73,55 @@ export class PersonalLarkService {
     );
   }
   configure(value: unknown) {
-    const settings = personalLarkSettingsSchema.parse(value);
-    this.store.db
-      .prepare("UPDATE personal_lark_settings SET value=? WHERE id=1")
-      .run(JSON.stringify(settings));
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw Error("飞书消息设置须为对象");
+    const previous = this.settings();
+    const input = value as Record<string, unknown>;
+    if (
+      input.autoWatch !== undefined &&
+      (!input.autoWatch ||
+        typeof input.autoWatch !== "object" ||
+        Array.isArray(input.autoWatch))
+    )
+      throw Error("自动关注设置须为对象");
+    const settings = personalLarkSettingsSchema.parse({
+      ...previous,
+      ...input,
+      autoWatch: {
+        ...previous.autoWatch,
+        ...(input.autoWatch as Record<string, unknown> | undefined),
+      },
+    });
+    this.store.tx(() => {
+      this.store.db
+        .prepare("UPDATE personal_lark_settings SET value=? WHERE id=1")
+        .run(JSON.stringify(settings));
+      if (
+        previous.autoWatch.focus !== settings.autoWatch.focus ||
+        previous.autoWatch.ignore !== settings.autoWatch.ignore
+      )
+        for (const id of this.autoWatch.policyChanged())
+          this.cancelStreamJobs(id);
+      if (previous.enabled && !settings.enabled)
+        for (const stream of this.streams())
+          this.cancelStreamJobs(String(stream.id));
+    });
+    const autoWatchChanged =
+      stableDigest(previous.autoWatch) !== stableDigest(settings.autoWatch);
+    if (autoWatchChanged || (previous.enabled && !settings.enabled))
+      this.autoWatch.cancelCurrent();
+    if (autoWatchChanged)
+      this.options.onAutoWatchConfigured?.(settings.autoWatch);
     return settings;
+  }
+  autoWatchSettings() {
+    return this.settings().autoWatch;
+  }
+  configureAutoWatch(value: unknown) {
+    return this.configure({ autoWatch: value }).autoWatch;
+  }
+  discoverAndWatch(signal?: AbortSignal) {
+    return this.autoWatch.run(signal);
   }
   health() {
     const streams = this.streams() as Row[];
@@ -77,6 +137,7 @@ export class PersonalLarkService {
           .sort()
           .at(-1) ?? null,
       decisions: this.decisions.status().status,
+      autoWatch: this.autoWatch.status(),
     };
   }
   status() {
@@ -89,6 +150,7 @@ export class PersonalLarkService {
       settings: this.settings(),
       running: !!this.active,
       decisions: this.decisions.status(),
+      autoWatch: this.autoWatch.status(),
       streams: this.streams().map((s) => ({
         ...s,
         last_batch: s.last_batch ? JSON.parse(String(s.last_batch)) : null,
@@ -113,12 +175,28 @@ export class PersonalLarkService {
       },
     };
   }
-  streams() {
+  streams(): PersonalLarkStream[] {
     return this.store.db
       .prepare(
         "SELECT * FROM personal_lark_streams ORDER BY id='@mentions' DESC,name",
       )
-      .all();
+      .all()
+      .map((s) => ({ ...s, ...this.autoWatch.annotations(String(s.id)) }));
+  }
+  searchChats(query = "", limit = 30) {
+    const needle = query.trim().toLocaleLowerCase();
+    if (needle.length > 200) throw Error("会话搜索内容不能超过200字");
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+      throw Error("会话候选数量须在1到100之间");
+    return this.streams()
+      .filter(
+        (s) =>
+          s.id !== "@mentions" &&
+          (!needle ||
+            String(s.name).toLocaleLowerCase().includes(needle) ||
+            s.id === query.trim()),
+      )
+      .slice(0, limit);
   }
   async discover() {
     const result = await this.port.chats();
@@ -133,10 +211,14 @@ export class PersonalLarkService {
   }
   subscribe(id: string, mode: "watch" | "off" | "excluded") {
     if (!/^oc_[A-Za-z0-9]+$/.test(id)) throw Error("请选择已经发现的会话");
-    const r = this.store.db
-      .prepare("UPDATE personal_lark_streams SET mode=?,next_at=? WHERE id=?")
-      .run(mode, new Date().toISOString(), id);
-    if (!r.changes) throw Error("会话不在当前列表中");
+    this.store.tx(() => {
+      const r = this.store.db
+        .prepare("UPDATE personal_lark_streams SET mode=?,next_at=? WHERE id=?")
+        .run(mode, new Date().toISOString(), id);
+      if (!r.changes) throw Error("会话不在当前列表中");
+      this.autoWatch.manual(id, mode);
+      if (mode !== "watch") this.cancelStreamJobs(id);
+    });
     return this.streams();
   }
   inbox() {
@@ -151,13 +233,18 @@ export class PersonalLarkService {
         return {
           ...r,
           id: String(r.id),
+          chat_id: String(r.chat_id),
+          chat_name: String(r.chat_name),
+          observed_at: String(r.observed_at),
           revision_id: r.revision_id ? String(r.revision_id) : null,
           state: String(r.state),
           raw: undefined,
           text: raw.content,
           sender: raw.sender?.name,
           link: raw.message_app_link,
-          demonstration: (raw as LarkMessage & { demonstration?: boolean }).demonstration === true,
+          demonstration:
+            (raw as LarkMessage & { demonstration?: boolean }).demonstration ===
+            true,
           decision: r.decision ? JSON.parse(String(r.decision)) : null,
           resources: JSON.parse(String(r.resources)),
         };
@@ -185,9 +272,15 @@ export class PersonalLarkService {
         .get(s.id);
       if (existing) continue;
       // Freeze the end of the window until all pages have been committed.
-      const start =
+      let start =
         s.watermark ||
         new Date(Date.now() - settings.historyHours * 3600000).toISOString();
+      if (
+        s.subscription?.source === "automatic" &&
+        s.subscription.startedAt &&
+        start < s.subscription.startedAt
+      )
+        start = s.subscription.startedAt;
       const end = s.window_end || now;
       const ref = {
         streamId: s.id,
@@ -228,7 +321,52 @@ export class PersonalLarkService {
       );
     });
   }
-  async sync(job: JobLease) {
+  private cancelStreamJobs(id: string) {
+    const jobs = this.store.db
+      .prepare(
+        `SELECT id,generation FROM jobs WHERE kind='lark_personal_sync'
+      AND state IN ('queued','leased','running','retry_wait') AND json_extract(input_refs,'$[0].streamId')=?`,
+      )
+      .all(id);
+    for (const job of jobs)
+      this.worker.cancel({
+        jobId: String(job.id),
+        expectedGeneration: Number(job.generation),
+        requestId: randomUUID(),
+      });
+  }
+  private syncAllowed(
+    job: JobLease,
+    streamId: string,
+    start: string,
+    signal?: AbortSignal,
+  ) {
+    const settings = this.settings();
+    if (
+      signal?.aborted ||
+      !settings.enabled ||
+      this.store.jobs.get(job.id)?.cancelRequested
+    )
+      return false;
+    const stream = this.store.db
+      .prepare("SELECT mode FROM personal_lark_streams WHERE id=?")
+      .get(streamId);
+    if (
+      !stream ||
+      !(
+        stream.mode === "watch" ||
+        (streamId === "@mentions" && settings.mentionExceptions)
+      )
+    )
+      return false;
+    const subscription = this.autoWatch.annotations(streamId).subscription;
+    return !(
+      subscription?.source === "automatic" &&
+      subscription.startedAt &&
+      start < subscription.startedAt
+    );
+  }
+  async sync(job: JobLease, signal?: AbortSignal) {
     const ref = job.inputRefs[0] as {
       streamId: string;
       start: string;
@@ -239,6 +377,8 @@ export class PersonalLarkService {
       .prepare("SELECT * FROM personal_lark_streams WHERE id=?")
       .get(ref.streamId) as Row;
     const settings = this.settings();
+    const stillAllowed = () =>
+      this.syncAllowed(job, ref.streamId, ref.start, signal);
     if (
       !settings.enabled ||
       !stream ||
@@ -246,8 +386,10 @@ export class PersonalLarkService {
         !(stream.id === "@mentions" && settings.mentionExceptions))
     )
       return {};
+    if (!stillAllowed()) return {};
     try {
       const ownerId = await this.port.identity();
+      if (!stillAllowed()) return {};
       const owner = this.store.db
         .prepare("SELECT owner_id FROM personal_lark_settings WHERE id=1")
         .get()!.owner_id;
@@ -260,6 +402,7 @@ export class PersonalLarkService {
         const pref = (await this.port.preferences([stream.id])).find(
           (p) => p.chat_id === stream.id,
         );
+        if (!stillAllowed()) return {};
         if (!pref) throw Error("无法确认群聊免打扰状态，暂缓普通消息采集");
         if (pref.is_muted) {
           // Do not backfill the muted period when this group becomes active again.
@@ -279,12 +422,14 @@ export class PersonalLarkService {
         end: ref.end,
         token: ref.token ?? undefined,
       });
+      if (!stillAllowed()) return {};
       const prefs =
         stream.id === "@mentions"
           ? await this.port.preferences([
               ...new Set(page.messages.map((m) => m.chat_id)),
             ])
           : [];
+      if (!stillAllowed()) return {};
       const selected = page.messages.filter((m) => {
         if (stream.id !== "@mentions") return true;
         const direct = m.mentions?.some((v) => v.id === ownerId);
@@ -308,7 +453,7 @@ export class PersonalLarkService {
       let cached = 0,
         processed = 0;
       for (const m of all) {
-        if (!this.settings().enabled) return {};
+        if (!stillAllowed()) return {};
         if (
           this.store.db
             .prepare(
@@ -322,7 +467,11 @@ export class PersonalLarkService {
           m.chat_name ||
             (stream.id === "@mentions" ? "提及所在会话" : stream.name),
           ownerId,
+          false,
+          stillAllowed,
         );
+        if (!stillAllowed()) return {};
+        if (outcome === "stopped") continue;
         if (outcome === "cached") cached++;
         else processed++;
       }
@@ -367,6 +516,7 @@ export class PersonalLarkService {
         );
       return {};
     } catch (e) {
+      if (!stillAllowed()) return {};
       const message = e instanceof Error ? e.message : "飞书同步失败";
       this.store.db
         .prepare("UPDATE personal_lark_streams SET last_error=? WHERE id=?")
@@ -387,7 +537,16 @@ export class PersonalLarkService {
     name: string,
     ownerId: string,
     force = false,
+    stillAllowed: () => boolean = () => true,
   ) {
+    const sourceAllowed = () =>
+      stillAllowed() &&
+      !this.store.db
+        .prepare(
+          "SELECT 1 FROM personal_lark_streams WHERE id=? AND mode='excluded'",
+        )
+        .get(m.chat_id);
+    if (!sourceAllowed()) return "stopped";
     const settings = this.settings();
     const digest = stableDigest(m);
     const previous = this.store.db
@@ -424,7 +583,12 @@ export class PersonalLarkService {
         ownerId,
         settings.resources,
         force,
+        () => {
+          if (!sourceAllowed())
+            throw new JobExecutionError("飞书采集范围已变化", "cancelled");
+        },
       );
+      if (!sourceAllowed()) return "stopped";
       const capture = this.store.capture(captureSchema.parse(material.input), {
         learning: false,
         notify: false,
@@ -459,6 +623,7 @@ export class PersonalLarkService {
         },
         messageQuestions,
       );
+      if (!sourceAllowed()) return "stopped";
       const a = result?.answers;
       const incomplete =
         material.resources.some(
@@ -503,6 +668,7 @@ export class PersonalLarkService {
           m.message_id,
         );
     } catch (e) {
+      if (!sourceAllowed()) return "stopped";
       this.store.db
         .prepare(
           "UPDATE personal_lark_messages SET state='failed',error=? WHERE id=?",
@@ -579,6 +745,7 @@ export class PersonalLarkService {
     this.stopped = true;
     clearTimeout(this.timer);
     this.worker.stop();
+    await this.autoWatch.close();
     await this.active;
   }
 }

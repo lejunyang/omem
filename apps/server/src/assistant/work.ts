@@ -33,6 +33,12 @@ import {
   CapabilityReceipts,
   type ConversationScope,
 } from "../capabilities/receipts.js";
+import {
+  AssistantScheduleActions,
+  isScheduleAction,
+  scheduleSummaries,
+  type AssistantSchedulePorts,
+} from "./schedules.js";
 
 type Feedback = {
   id: string;
@@ -51,6 +57,34 @@ export function assertWorkDelegation(action: WorkAction, actor: WorkActor) {
   const quote = action.delegation.trim();
   if (!quote || !actor.userText.includes(quote))
     throw Error("操作必须来自当前用户的明确交办原话");
+  if (isScheduleAction(action)) {
+    if (
+      !/关注|采集|读取|订阅|排除|忽略|设置|创建|改|启用|开启|停止|暂停|恢复|删除|取消|运行|立即|每天|每周|每个|每隔|watch|subscribe|exclude|set|create|pause|resume|delete|run|daily|weekly/i.test(
+        quote,
+      )
+    )
+      throw Error("需要本人明确交办会话设置或定时任务");
+    const enabling =
+      action.operation === "subscribe_chat"
+        ? action.mode === "watch"
+        : action.operation === "configure_messages"
+          ? action.settings.enabled === true
+          : action.operation === "configure_auto_watch"
+            ? action.settings.enabled === true ||
+              action.collectionEnabled === true
+            : action.operation === "save_schedule"
+              ? action.task.enabled
+              : action.operation === "resume_schedule" ||
+                action.operation === "run_schedule";
+    if (
+      enabling &&
+      /^(?:请)?\s*(?:不要|先别|不必|暂不).{0,12}(?:关注|采集|读取|订阅|创建|设置|启用|开启|恢复|运行)|^(?:please\s+)?(?:do not|don't)\b/i.test(
+        quote,
+      )
+    )
+      throw Error("本人尚未交办开启该任务或采集");
+    return;
+  }
   if (action.operation === "prepare_repository") {
     if (
       !/准备|拉取|克隆|下载|重试|刷新|更新|prepare|clone|fetch|retry|refresh/i.test(
@@ -112,13 +146,18 @@ export class AssistantWork {
   readonly inputs: CapabilityReceipts;
   readonly actions: RequirementTasks;
   readonly repositories: RepositoryQueue;
+  readonly scheduling?: AssistantScheduleActions;
   constructor(
     readonly pages: KnowledgePageService,
     readonly development: DevelopmentQueue,
     readonly decisions?: DecisionService,
+    schedulePorts?: AssistantSchedulePorts,
   ) {
     this.store = pages.repository.store;
     this.inputs = new CapabilityReceipts(this.store);
+    this.scheduling = schedulePorts
+      ? new AssistantScheduleActions(schedulePorts)
+      : undefined;
     this.actions = new RequirementTasks(this.store);
     this.repositories = new RepositoryQueue(
       this.store,
@@ -374,6 +413,10 @@ export class AssistantWork {
         provider: "traex",
         externalCapabilities: this.development.runner.capabilities.list(),
       },
+      messageCollection: this.scheduling?.ports.personalLark.health() ?? null,
+      schedules: this.scheduling
+        ? scheduleSummaries(this.scheduling.ports.schedules)
+        : [],
     };
   }
   capabilitySession(
@@ -400,6 +443,7 @@ export class AssistantWork {
   }
   tools(): ResearchTool[] {
     return [
+      ...(this.scheduling?.tools() ?? []),
       ...this.development.runner.configuration.tools(this.decisions),
       {
         name: "work_catalog",
@@ -582,6 +626,14 @@ export class AssistantWork {
       return JSON.parse(String(previous.body));
     }
     let receipt: WorkReceipt;
+    if (isScheduleAction(action)) {
+      const result = this.scheduling?.apply(action);
+      if (!result) throw Error("此环境未接入消息采集或定时任务");
+      this.store.db
+        .prepare("INSERT INTO assistant_work_receipts VALUES(?,?,?)")
+        .run(actor.requestId, signature, JSON.stringify(result));
+      return result;
+    }
     if (action.operation === "configure_project") {
       const result = this.development.runner.configuration.configure(
         action.project,

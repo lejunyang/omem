@@ -13,6 +13,35 @@ export function registerPersonalLark(
   app.put("/api/integrations/lark-personal", async (req) =>
     service.configure(req.body),
   );
+  app.get("/api/integrations/lark-personal/settings", async () =>
+    service.settings(),
+  );
+  app.put("/api/integrations/lark-personal/settings", async (req) =>
+    service.configure(req.body),
+  );
+  app.get(
+    "/api/integrations/lark-personal/auto-watch",
+    async () => service.status().autoWatch,
+  );
+  app.put("/api/integrations/lark-personal/auto-watch", async (req) =>
+    service.configureAutoWatch(req.body),
+  );
+  app.post("/api/integrations/lark-personal/auto-watch/run", async () =>
+    service.discoverAndWatch(),
+  );
+  app.get("/api/integrations/lark-personal/chats", async (req) => {
+    const input = z
+      .object({
+        query: z.string().max(200).default(""),
+        limit: z.coerce.number().int().min(1).max(100).default(30),
+      })
+      .strict()
+      .parse(req.query);
+    return {
+      chats: service.searchChats(input.query, input.limit),
+      cached: true,
+    };
+  });
   app.post("/api/integrations/lark-personal/discover", async () =>
     service.discover(),
   );
