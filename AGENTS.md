@@ -28,6 +28,7 @@
 - 新增或调整 CLI 命令、参数、默认行为、连接方式或助手工作流时，同步更新随包 `skills/omem-cli/SKILL.md`、相关 `references/` 与 CLI 使用文档；不能只更新实现和内部说明。指引应从用户起点写到实际可用状态，明确前提、授权、失败处理与当前限制，不把计划写成能力。
 - 区分随包使用技能、`.agents/skills/` 开发技能与 `packages/agent-runtime/roles/` 运行时角色技能，按受影响范围更新。新增引用文件须确认随包发布、`omem skills install` 能完整复制；核对实际命令帮助，既有安装副本不会自动更新，不覆盖用户定制。
 - 每个完整功能切片通过相关检查后立即本地提交；实现、阅读界面、模型派生资产分别提交。只暂存该切片，保留用户修改；不 push，除非用户要求。
+- 工作中发现的流程问题须在交付说明中交代修正结果与剩余影响，并更新当前 progress.md；尚未解决的问题不能只留在中途消息里。
 - 多人共用工作区时明确文件归属并由一人提交。不能把仍在编辑的内容一起提交。
 - 运行 osdk deps --frozen 和 osdk run check。测试真实行为和退出码；协议 fixture 不能算外部 CLI 验证。不围绕低价值边界重复堆测试。
 - UI 在 osdk run dev 的实际页面进行浏览器检查；使用 scripts/code-wiki-viewport.ts 和 osdk run browser，截图检查间距与阅读效果。未验证项记录在 progress.md。

@@ -56,7 +56,7 @@ PDF/DOCX 文件可在「输入材料」上传，Docling 保存原件、结构、
 
 ## 当前基础
 
-原始材料按来源保存固定版本，知识和代码引用可以回看当时原文。模型运行通过可配置 CLI/ACP；仓库生成使用 `config/review-code-model.json` 的 traex ACP / gpt-5.6-sol。生成与独立复核的实际产物在 `.repo-review/knowledge`，运行数据在 `.repo-review/runtime`。
+代码和文档只保留最新版原件，消息与更正保留当时原文。知识和代码引用固定到写作时的材料身份与范围；对应原件仍可用时可以回看，旧原件已被替换则说明原因，不自动指向新版。模型运行通过可配置 CLI/ACP；仓库生成使用 `config/review-code-model.json` 的 traex ACP / gpt-5.6-sol。生成与独立复核的实际产物在 `.repo-review/knowledge`，运行数据在 `.repo-review/runtime`。
 
 检索已有全文、中文短词、符号、记忆和知识路径，可选本地 BGE-small-zh-v1.5。安装中文向量模型：
 
@@ -70,6 +70,8 @@ osdk model verify memory-zh --json
 原始材料可以让 AI 阅读并整理用途、适用状态和概念别称，随后人工修正。搜索用保存的分类减少旧计划和调研噪声，概念按对应原文行进入全文和中文向量索引。入口在原文的“材料用途与适用范围”，可开启这份材料换版后的自动整理；任务重启继续，旧说明保留，当前人工修正优先。仓库批量使用 `osdk run review:catalog docs --documents`，导入说明不会自动开启整库跟踪。分类并不证明内容正确。详见 [材料用途与概念入口](docs/reader-first/material-understanding.md)。
 
 Wiki 按读者问题调查、讲解：页面计划规定阅读目标和真实案例，模型在已捕获材料中搜索、补读，撰写后由独立角色复核。运行 `osdk run review:guides` 按 `config/wiki-pages.json` 的页面计划生成和维护指南（实际调用 traex ACP / gpt-5.6-sol）；局部重跑可用 `osdk run review:guides retrieval`。这些页面用于本仓库实验，不决定产品目录。知识库先展示分类与文章；点击“整理文章”，在两步弹窗中选择原始材料、填写阅读目标。分类路径随文章保存，按领域组织，引用不充当目录。生成通过不代表阅读质量已经验收。
+
+完整独立复核若只剩引用行范围问题，可直接给出准确范围，由宿主修改行号和原文摘录，再交给新会话只补查相关段落。无需让作者重写全文；实质问题仍回到写作和全文复核。处理中原件换版会阻止旧输入进入后续阶段或发布，普通整理保留已发表文章；重启可恢复完整草稿，但仍需重新复核。行为与限制见[文章持续维护](docs/reader-first/publication-lifecycle.md)。
 
 文章末尾可开启“随所选材料自动更新”：材料换版后自动排队调查、更新与独立复核，更新期间和失败后仍可阅读旧版，重启可继续。选材可以是明确材料，也可以持续跟踪一个项目或主题。保存新材料时可选择归属；未指定时，后台原生 ACP 可结合已有项目和原文调查归属，再独立补查。含糊材料显示待补充的问题，手动选择优先。真实 Sol 已跑通同名项目中的明确续接、含糊提问和人工纠正；这是短材料验证，复杂场景仍待评估。详见[文章持续维护](docs/reader-first/publication-lifecycle.md)与[项目材料](docs/reader-first/project-contexts.md)。
 

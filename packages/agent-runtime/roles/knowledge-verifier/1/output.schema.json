@@ -94,6 +94,46 @@
               ],
               "additionalProperties": false
             }
+          },
+          "rangeRepair": {
+            "description": "Only for needs_revision after completing full review: all other facts, premises and reader goals passed, and every blocking issue is solely an existing material citation's line range. Provide exact replacement ranges. Omit when ranges are unknown or prose, citation relations, new citations or reviewSources need changes. During citation_ranges review, preserve the host-supplied full-review baseline; revoke range repair if a substantive issue is discovered.",
+            "type": "object",
+            "properties": {
+              "citations": {
+                "minItems": 1,
+                "maxItems": 160,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,39}$"
+                    },
+                    "startLine": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "endLine": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "startLine",
+                    "endLine"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "citations"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [
