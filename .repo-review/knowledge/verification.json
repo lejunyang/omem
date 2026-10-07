@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-07T13:26:05.140Z",
-  "implementationCommit": "b3d37450679c60997c2d72c95125c3a5a5c0d9f5",
-  "sourceDigest": "5271f5bad1463e138def4af90556bc8727b62cb2a865128256cdf7b97dd3fb97",
+  "recordedAt": "2026-10-07T17:11:29.673Z",
+  "implementationCommit": "f6cabd014c2235f5f1926d71e179ae16babd0ba6",
+  "sourceDigest": "052a7e2352bbe74d10b95d6d8cb66b76014d95764730227fb8b48e1fcb88824c",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T13-26-05-140Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-07T17-11-29-673Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T13-26-05-140Z/project.log",
-        "sha256": "8685fa3b9b48cb9369cf8964314b0677a8179ee83ae32abbd8ce4f9be123e975"
+        "log": ".repo-review/runtime/verification/2026-10-07T17-11-29-673Z/project.log",
+        "sha256": "5605110aa14c7429eda7de5a0f3d59b2d0859c4a28c50a2e35ea12937030de3a"
       }
     },
     {
@@ -43,18 +43,55 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T13-26-05-140Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-07T17-11-29-673Z/liveChineseRetrieval.log",
         "sha256": "c633cc8b3935a685907f142b4f178e7f9fd00ac994d0edc6ef224a195357b1e8"
       }
     },
     {
       "name": "publishedKnowledgeReferences",
-      "state": "passed",
+      "state": "failed",
       "details": {
         "articles": 10,
         "currentArticles": 1,
-        "citations": 291,
-        "errors": []
+        "citations": 43,
+        "errors": [
+          {
+            "key": "guide:contributing",
+            "error": "Error: Invalid review source range: omem:config/wiki-pages.json"
+          },
+          {
+            "key": "guide:knowledge-agent",
+            "error": "Error: Invalid review source range: omem:docs/reader-first/architecture.md"
+          },
+          {
+            "key": "guide:knowledge-maintenance",
+            "error": "Error: Unknown material omem:apps/web/src/ContextPicker.vue"
+          },
+          {
+            "key": "guide:knowledge-reference",
+            "error": "Error: Unknown material omem:packages/contracts/src/knowledge.ts"
+          },
+          {
+            "key": "guide:memory",
+            "error": "Error: Invalid review source range: omem:apps/server/src/app.ts"
+          },
+          {
+            "key": "guide:overview",
+            "error": "Error: Unknown material omem:README.md"
+          },
+          {
+            "key": "guide:personal-messages",
+            "error": "Error: Invalid review source range: omem:apps/server/src/integrations/lark-personal/client.ts"
+          },
+          {
+            "key": "guide:requirement-development",
+            "error": "Error: Unknown material omem:packages/contracts/src/work.ts"
+          },
+          {
+            "key": "guide:retrieval",
+            "error": "Error: Invalid review source range: omem:apps/server/src/assistant/runtime.ts"
+          }
+        ]
       }
     },
     {
@@ -64,11 +101,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v7",
-        "units": 17339,
+        "units": 17873,
         "semantic": {
           "model": "structure-icu-v7:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 17339,
+          "indexed": 17873,
           "pending": 0,
           "error": null
         },
@@ -95,55 +132,77 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 845,
+    "materials": 865,
     "publishedPages": 10,
     "currentPages": 1,
     "plannedPages": 0,
-    "citations": 291,
+    "citations": 43,
     "articleLinks": 0,
-    "errors": [],
+    "errors": [
+      {
+        "key": "guide:contributing",
+        "error": "Error: Invalid review source range: omem:config/wiki-pages.json"
+      },
+      {
+        "key": "guide:knowledge-agent",
+        "error": "Error: Invalid review source range: omem:docs/reader-first/architecture.md"
+      },
+      {
+        "key": "guide:knowledge-maintenance",
+        "error": "Error: Unknown material omem:apps/web/src/ContextPicker.vue"
+      },
+      {
+        "key": "guide:knowledge-reference",
+        "error": "Error: Unknown material omem:packages/contracts/src/knowledge.ts"
+      },
+      {
+        "key": "guide:memory",
+        "error": "Error: Invalid review source range: omem:apps/server/src/app.ts"
+      },
+      {
+        "key": "guide:overview",
+        "error": "Error: Unknown material omem:README.md"
+      },
+      {
+        "key": "guide:personal-messages",
+        "error": "Error: Invalid review source range: omem:apps/server/src/integrations/lark-personal/client.ts"
+      },
+      {
+        "key": "guide:requirement-development",
+        "error": "Error: Unknown material omem:packages/contracts/src/work.ts"
+      },
+      {
+        "key": "guide:retrieval",
+        "error": "Error: Invalid review source range: omem:apps/server/src/assistant/runtime.ts"
+      }
+    ],
     "pages": [
       {
         "key": "guide:capture",
         "title": "一份材料的旅程：从导入到阅读与引用",
         "role": "article",
-        "current": false,
+        "current": true,
         "sections": {
-          "walkthrough": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：Source 查找、重复判断、新 Revision 与 head 更新是 V1 到 V2 结论的前提。"
+          "case": {
+            "state": "current"
           },
-          "capture-input": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：文档类型、大小、准备条件、解析成功边界和 CaptureInput 投影会改变本节。"
+          "branches": {
+            "state": "current"
           },
-          "immutable-original": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：网页文档每次选取生成随机 documentIdentity，决定同一文件是否自然续成 V2。"
+          "layers": {
+            "state": "current"
           },
-          "retrieval-projection": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          "citations": {
+            "state": "current"
           },
-          "post-capture-branches": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：知识文章仍依赖 Agent、阅读目标与选材范围，文档解析不会绕过这些条件。"
+          "assignment": {
+            "state": "current"
           },
-          "context-branch": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：归属调查的前置条件、独立复核和含糊暂停决定本节行为。"
+          "special_inputs": {
+            "state": "current"
           },
-          "pinned-citation": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：当前页坐标已保存但未接到引用阅读交互，是本节范围限制的背景前提。"
-          },
-          "images-documents-code": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
-          },
-          "change-map": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+          "change_points": {
+            "state": "current"
           }
         }
       },
@@ -154,28 +213,28 @@
         "current": false,
         "sections": {
           "outcome": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：当前排序能力和真实 HTTP 搜索边界变化时，需要重审教学例子中的非承诺说明。"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "start-dev": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：仓库材料纳入和排除规则改变时，需要更新 dev 数据来源说明。"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "trace-request": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "section-origin": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：回答上下文扩展边界变化会影响三类上下文的区别。"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "change": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：检索单位版本身份变化会影响何时需要 bump 版本的推断。"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "verify": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：知识更新命令、模型流程或检查入口变化时，需要更新收尾步骤。"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           }
         }
       },
@@ -183,10 +242,11 @@
         "key": "guide:knowledge-agent",
         "title": "把材料写成一篇能用的文章",
         "role": "article",
-        "current": true,
+        "current": false,
         "sections": {
           "plan-route": {
-            "state": "current"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "edit-outline": {
             "state": "current"
@@ -195,13 +255,16 @@
             "state": "current"
           },
           "write-one-page": {
-            "state": "current"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "reader-results": {
-            "state": "current"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "keep-current": {
-            "state": "current"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           }
         }
       },
@@ -212,26 +275,28 @@
         "current": false,
         "sections": {
           "choose-scope": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "compose-article": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "wait-and-retry": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "reader-check": {
-            "state": "current"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "change-example": {
-            "state": "current"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "maintain-same-article": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           }
         }
       },
@@ -242,24 +307,24 @@
         "current": false,
         "sections": {
           "status-axes": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "scope-classification": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "dynamic-lifecycle": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "evidence-visibility": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "asset-removal": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           }
         }
       },
@@ -270,24 +335,24 @@
         "current": false,
         "sections": {
           "save-and-find": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：待补充归属入口只在处理成功、当前版本归属仍有歧义时出现；这一条件变化会影响本节的分支提示。"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "update-and-check": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "article-maintenance": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "continue-and-remind": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "finish-followup": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           }
         }
       },
@@ -298,31 +363,32 @@
         "current": false,
         "sections": {
           "start-with-agreement": {
-            "state": "current"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "save-and-read": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "ask-and-check": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "organize-article": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "four-objects": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "documents-and-code": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "delegate-and-close": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           }
         }
       },
@@ -377,28 +443,28 @@
         "current": false,
         "sections": {
           "one_requirement": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "state_and_maintenance": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "prepare": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "receipt_and_decisions": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "run_and_status": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "delivery_boundary": {
-            "state": "needs-review",
-            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           }
         }
       },
@@ -412,29 +478,31 @@
             "state": "current"
           },
           "retrieve-candidates": {
-            "state": "current"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "select-and-restore-context": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：可选只读服务及失败返回空判断决定主流程的降级语义。"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "investigate-gaps": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：按子问题分别检索、独立候选池、共享上下文去重、显式范围和空结果边界决定补查方式。"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "write-the-answer": {
-            "state": "needs-review",
-            "reason": "背景前提已有变化：项目选择、授权材料、历史同源性、可见范围和正文引用定位决定提交门禁能保证什么。"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "locate-failures": {
-            "state": "current"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           }
         }
       }
     ],
     "restore": {
-      "restored": 17,
-      "stale": 14
+      "restored": 14,
+      "stale": 17
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -458,7 +526,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 1407,
+        "elapsedMs": 2021,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -522,7 +590,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 3,
-        "elapsedMs": 788,
+        "elapsedMs": 1187,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -580,18 +648,27 @@
         ],
         "status": 200,
         "baselineTop5": [
+          "docs/reader-first/publication-lifecycle.md",
           "docs/reader-first/current-system.md",
           "apps/server/tests/retrieval-unified.test.ts",
-          "docs/reader-first/project-contexts.md",
-          "docs/archive/2026-10-01-baseline/AGENTS.md",
-          "docs/reader-first/publication-lifecycle.md"
+          "docs/reader-first/publication-lifecycle.md",
+          "docs/reader-first/project-contexts.md"
         ],
-        "baselineUniquePathsAt5": 5,
+        "baselineUniquePathsAt5": 4,
         "passed": false,
-        "firstExpectedRank": 17,
-        "uniquePathsAt5": 5,
-        "elapsedMs": 804,
+        "firstExpectedRank": 20,
+        "uniquePathsAt5": 4,
+        "elapsedMs": 792,
         "top5": [
+          {
+            "path": "docs/reader-first/publication-lifecycle.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "一次真实维护暴露了这一区别：记忆指南用项目说明的 3–19 行作为文章更新的背景，远处新增验证结果也让它失效；这是把根标题等同于整篇依赖造成的过宽判断。另一处引用与“正在验证”状态写在同一小节，修改状态也牵连引用。前者由通用结构比较修正；后者把实验状态移到独立验证章节、把事实/待办说明独立分节，并让模型按新结构重新核对"
+          },
           {
             "path": "docs/reader-first/current-system.md",
             "routes": [
@@ -611,6 +688,15 @@
             "snippet": "const passages = rerankPassages(\n    text,\n    \"怎样修改有效记忆，提案从什么入口写入？\",\n    text.slice(0, 400),\n    [{ label: \"原子写入记忆或事项\", aliases: [\"applyTask\", \"applyMemory\"] }"
           },
           {
+            "path": "docs/reader-first/publication-lifecycle.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "“补充背景”会把回答保存成原始材料，同时加入这篇文章的选材计划。下一次重新整理时，研究者、作者和独立复核者都能读取它。保存补充本身不等于正文已经更新；开启持续维护后由后台排队，否则需要手动重新整理。两种方式都应检查新结果。"
+          },
+          {
             "path": "docs/reader-first/project-contexts.md",
             "routes": [
               "bm25",
@@ -618,23 +704,6 @@
               "purpose:balanced"
             ],
             "snippet": "后台记忆的工程检查覆盖同名项目隔离、独立新来源更新同一记忆和途中归属变化；真实 Sol 已完成下述明确归属的小库流程，尚不能宣称复杂项目理解可靠。验证进度在本节更新，不混入上面的功能说明。"
-          },
-          {
-            "path": "docs/archive/2026-10-01-baseline/AGENTS.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "1. 修改捕获、AST、知识生成/复核、引用、检索或助手运行后，先通过相关检查并提交实现，再更新受影响的知识资产，单独提交。保持已有用户改动。\n2. 用 `osdk run review:generate <文件或目录> --modules` 更新受影响的原始材料理解和模块正文；多个 `--only` 可合用。需要全库"
-          },
-          {
-            "path": "docs/reader-first/publication-lifecycle.md",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "一次真实维护暴露了这一区别：记忆指南用项目说明的 3–19 行作为文章更新的背景，远处新增验证结果也让它失效；这是把根标题等同于整篇依赖造成的过宽判断。另一处引用与“正在验证”状态写在同一小节，修改状态也牵连引用。前者由通用结构比较修正；后者把实验状态移到独立验证章节、把事实/待办说明独立分节，并让模型按新结构重新核对"
           }
         ]
       },
@@ -655,7 +724,7 @@
         "passed": true,
         "firstExpectedRank": 5,
         "uniquePathsAt5": 3,
-        "elapsedMs": 206,
+        "elapsedMs": 273,
         "top5": [
           {
             "path": "scripts/live-development.ts",
@@ -716,7 +785,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 238,
+        "elapsedMs": 201,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -782,7 +851,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 5,
-        "elapsedMs": 852,
+        "elapsedMs": 873,
         "top5": [
           {
             "path": "design.md",
