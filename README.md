@@ -31,6 +31,8 @@ osdk run dev
 
 打开终端打印的 web 地址。默认 API / web 为 4317 / 5173，占用时自动选择空闲端口；可用 `OMEM_PORT` / `OMEM_WEB_PORT` 指定。开发模式在统一界面中载入本仓库材料和已发布知识，保留已有个人数据。启动不自动生成整库 Wiki；若已启用后台材料处理，待处理任务会继续使用对应 Agent。
 
+较大个人库的首次载入可能超过一分钟。开发入口最多等待三分钟，并在 API 就绪后打印可用地址；超时会停止本次启动的进程，保留库内数据。
+
 生产运行：`osdk run build`、`osdk run start`，默认 `http://127.0.0.1:4317`，从“输入材料”开始。需要已安装并登录的 Agent CLI；运行不强制依赖本地大语言模型、Docker 或 Python。
 
 PDF/DOCX 文件可在「输入材料」上传，Docling 保存原件、结构、表格、插图和 PDF 页码；解析环境需显式准备。飞书链接使用已锁定的官方 `@larksuite/cli` 项目依赖读取，不交给 Docling 抓取。入口与当前限制见[文档导入](docs/reader-first/document-import.md)。
