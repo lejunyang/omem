@@ -1,6 +1,9 @@
 import { dispatchTaskReminders } from "./tasks/follow-up.js";
 import { transaction } from "./storage/transaction.js";
-import type { TaskStatus, TaskFollowUp } from "../../../packages/contracts/src/task-flow.js";
+import type {
+  TaskStatus,
+  TaskFollowUp,
+} from "../../../packages/contracts/src/task-flow.js";
 import { recordSourceRefresh } from "./learning/refresh.js";
 /** SQLite is the single-user foundation. Immutable revisions, changes and notification
  * outbox are committed together. Postgres/team enforcement remains a later migration. */
@@ -36,6 +39,7 @@ import { SourceProfileService } from "./source-profile/service.js";
 import { MaterialDescriptions } from "./source-profile/descriptions.js";
 import { MaterialContexts } from "./contexts/repository.js";
 import { MessageFeedback } from "./messages/feedback.js";
+import { MaterialRetention } from "./storage/retention.js";
 const id = () => randomUUID();
 const now = () => new Date().toISOString();
 const hash = (s: string | Buffer) =>
@@ -51,6 +55,7 @@ export class Store {
   readonly descriptions: MaterialDescriptions;
   readonly contexts: MaterialContexts;
   readonly messageFeedback: MessageFeedback;
+  readonly retention: MaterialRetention;
   private releaseLibrary: () => void;
   constructor(
     readonly dataDir: string,
@@ -64,6 +69,7 @@ export class Store {
     let opened: DatabaseSync | undefined;
     try {
       this.db = opened = new DatabaseSync(file);
+      this.db.exec("PRAGMA busy_timeout=30000");
       migrateDatabase(this.db);
       mkdirSync(join(dataDir, "assets"), { recursive: true, mode: 0o700 });
       chmodSync(file, 0o600);
@@ -78,6 +84,8 @@ export class Store {
       this.descriptions = new MaterialDescriptions(this.db);
       this.contexts = new MaterialContexts(this.db);
       this.messageFeedback = new MessageFeedback(this);
+      this.retention = new MaterialRetention(this);
+      this.retention.compactAllMutable();
     } catch (error) {
       opened?.close();
       this.releaseLibrary();
@@ -85,7 +93,11 @@ export class Store {
     }
   }
   close() {
-    try { this.db.close(); } finally { this.releaseLibrary(); }
+    try {
+      this.db.close();
+    } finally {
+      this.releaseLibrary();
+    }
   }
   tx<T>(f: () => T): T {
     return transaction(this.db, f);
@@ -107,7 +119,14 @@ export class Store {
       .run(id(), changeId, title, details, date, null, changeId);
     return changeId;
   }
-  capture(input: CaptureInput, selection: { contextIds?: string[]; learning?: boolean; notify?: boolean } = {}) {
+  capture(
+    input: CaptureInput,
+    selection: {
+      contextIds?: string[];
+      learning?: boolean;
+      notify?: boolean;
+    } = {},
+  ) {
     if (selection.contextIds) this.contexts.validate(selection.contextIds);
     const payloadDigest = stableDigest(input);
     const parts: StoredPart[] = input.parts.map((p) => {
@@ -150,7 +169,7 @@ export class Store {
       upstreamVersion: input.upstreamVersion,
     };
     const fingerprint = hash(JSON.stringify({ title: input.title, ...body }));
-    return this.tx(() => {
+    const captured = this.tx(() => {
       const producer = input.provenance?.collectorId;
       const eventId = input.provenance?.eventId;
       if (producer && eventId) {
@@ -164,9 +183,20 @@ export class Store {
           if (receipt.payload_digest !== payloadDigest)
             throw Error("CAPTURE_EVENT_CONFLICT");
           const revision = this.revision(String(receipt.revision_id));
-          if (!revision) throw Error("Capture receipt revision is missing");
-          if (selection.contextIds) this.setSourceContextsInTransaction(revision.sourceId, selection.contextIds);
-          const queued = selection.learning === false ? null : this.queueCaptureJob(input, revision);
+          if (!revision)
+            throw Error(
+              this.retention.revisionAvailability(String(receipt.revision_id))
+                ?.reason ?? "Capture receipt revision is missing",
+            );
+          if (selection.contextIds)
+            this.setSourceContextsInTransaction(
+              revision.sourceId,
+              selection.contextIds,
+            );
+          const queued =
+            selection.learning === false
+              ? null
+              : this.queueCaptureJob(input, revision);
           return {
             revision,
             duplicate: true,
@@ -184,6 +214,7 @@ export class Store {
           .prepare("INSERT INTO sources VALUES(?,?,?,?)")
           .run(String(source.id), input.source, input.externalId, null);
       }
+      this.retention.register(String(source.id), input);
       const head = source.head
         ? (this.db
             .prepare("SELECT * FROM revisions WHERE id=?")
@@ -191,13 +222,20 @@ export class Store {
         : undefined;
       if (head?.fingerprint === fingerprint) {
         const revision = this.revision(String(head.id))!;
-        if (selection.contextIds) this.setSourceContextsInTransaction(revision.sourceId, selection.contextIds);
+        if (selection.contextIds)
+          this.setSourceContextsInTransaction(
+            revision.sourceId,
+            selection.contextIds,
+          );
         const receipt = this.writeCaptureReceipt(
           input,
           payloadDigest,
           revision.id,
         );
-        const queued = selection.learning === false ? null : this.queueCaptureJob(input, revision);
+        const queued =
+          selection.learning === false
+            ? null
+            : this.queueCaptureJob(input, revision);
         return {
           revision,
           duplicate: true,
@@ -205,14 +243,22 @@ export class Store {
           job: queued?.job ?? null,
         };
       }
-      if (selection.contextIds) this.contexts.setForSource(String(source.id), selection.contextIds);
+      if (selection.contextIds)
+        this.contexts.setForSource(String(source.id), selection.contextIds);
       const revisionId = id();
+      const nextVersion = Number(
+        this.db
+          .prepare(
+            "SELECT COALESCE(max(version),0)+1 version FROM revisions WHERE source_id=?",
+          )
+          .get(String(source.id))!.version,
+      );
       this.db
         .prepare("INSERT INTO revisions VALUES(?,?,?,?,?,?,?,?)")
         .run(
           revisionId,
           String(source.id),
-          Number(head?.version || 0) + 1,
+          nextVersion,
           input.title,
           JSON.stringify(body),
           fingerprint,
@@ -271,35 +317,46 @@ export class Store {
              )`,
           )
           .run(now(), String(source.id));
-        recordSourceRefresh(this.db, "personal", [{ sourceId: String(source.id), previousRevisionId: String(head.id), revisionId }]);
-        if (selection.learning !== false) this.jobs.enqueueInCurrentTransaction({
-          kind: "refresh_dependents",
-          inputRefs: [
-            {
-              sourceId: String(source.id),
-              previousRevisionId: String(head.id),
-              revisionId,
-            },
-          ],
-          roleVersion: "deterministic@1",
-          policyVersion: "memory-policy@1",
-          cause: "source_update",
-        });
+        recordSourceRefresh(this.db, "personal", [
+          {
+            sourceId: String(source.id),
+            previousRevisionId: String(head.id),
+            revisionId,
+          },
+        ]);
+        if (selection.learning !== false)
+          this.jobs.enqueueInCurrentTransaction({
+            kind: "refresh_dependents",
+            inputRefs: [
+              {
+                sourceId: String(source.id),
+                previousRevisionId: String(head.id),
+                revisionId,
+              },
+            ],
+            roleVersion: "deterministic@1",
+            policyVersion: "memory-policy@1",
+            cause: "source_update",
+          });
       }
-      if (selection.notify !== false) this.record(
-        "capture",
-        input.title,
-        head ? String(head.id) : null,
-        revisionId,
-        `材料${head ? "更新" : "录入"}为第 ${Number(head?.version || 0) + 1} 版。${head ? "可展开比较完整内容差异。" : "原始内容已保存，可查看原文。"}`,
-      );
+      if (selection.notify !== false)
+        this.record(
+          "capture",
+          input.title,
+          head ? String(head.id) : null,
+          revisionId,
+          `材料${head ? "更新" : "录入"}为第 ${nextVersion} 版。${head ? (this.retention.policy(String(source.id)).policy === "latest" ? "最新原件已替换；旧原件只保留标识与移除原因。" : "会话事件与更正记录分别保留。") : "原始内容已保存，可查看原文。"}`,
+        );
       const revision = this.revision(revisionId)!;
       const receipt = this.writeCaptureReceipt(
         input,
         payloadDigest,
         revision.id,
       );
-      const queued = selection.learning === false ? null : this.queueCaptureJob(input, revision);
+      const queued =
+        selection.learning === false
+          ? null
+          : this.queueCaptureJob(input, revision);
       return {
         revision,
         duplicate: false,
@@ -307,43 +364,92 @@ export class Store {
         job: queued?.job ?? null,
       };
     });
+    this.retention.compactSource(captured.revision.sourceId);
+    return captured;
   }
   setSourceContexts(sourceId: string, ids: string[]) {
     return this.tx(() => this.setSourceContextsInTransaction(sourceId, ids));
   }
   private setSourceContextsInTransaction(sourceId: string, ids: string[]) {
-      const source = this.db.prepare("SELECT head FROM sources WHERE id=?").get(sourceId);
-      if (!source) throw Error("原始材料不存在");
-      const revision = this.revision(String(source.head))!;
-      const before = this.contexts.forSource(sourceId), previous = this.contexts.assignment(sourceId);
-      const contextIds = this.contexts.setForSource(sourceId, ids);
-      const changed = stableDigest(before) !== stableDigest([...contextIds].sort());
-      if (changed) {
-        const projects = new Set(this.contexts.list().filter(c => c.kind === "project").map(c => c.id));
-        const newProjects = contextIds.filter(id => projects.has(id));
-        const newProject = newProjects.length === 1 ? newProjects[0] : null;
-        // A corrected filing must not leave facts active under the wrong project.
-        // Preserve the old history and let normal extraction recreate/review facts
-        // in the chosen scope; do not silently move a memory or a personal task.
-        const rows = this.db.prepare(`SELECT DISTINCT m.id,m.head_revision_id,m.scope FROM memories m
-          JOIN memory_dependencies md ON md.memory_revision_id=m.head_revision_id WHERE md.source_id=? AND m.status='active'`).all(sourceId);
-        for (const row of rows) if ((JSON.parse(String(row.scope)).project_id ?? null) !== newProject) {
-          this.db.prepare("UPDATE memories SET status='invalidated' WHERE id=?").run(String(row.id));
-          this.db.prepare("UPDATE memory_dependencies SET state='stale' WHERE memory_revision_id=? AND source_id=?")
+    const source = this.db
+      .prepare("SELECT head FROM sources WHERE id=?")
+      .get(sourceId);
+    if (!source) throw Error("原始材料不存在");
+    const revision = this.revision(String(source.head))!;
+    const before = this.contexts.forSource(sourceId),
+      previous = this.contexts.assignment(sourceId);
+    const contextIds = this.contexts.setForSource(sourceId, ids);
+    const changed =
+      stableDigest(before) !== stableDigest([...contextIds].sort());
+    if (changed) {
+      const projects = new Set(
+        this.contexts
+          .list()
+          .filter((c) => c.kind === "project")
+          .map((c) => c.id),
+      );
+      const newProjects = contextIds.filter((id) => projects.has(id));
+      const newProject = newProjects.length === 1 ? newProjects[0] : null;
+      // A corrected filing must not leave facts active under the wrong project.
+      // Preserve the old history and let normal extraction recreate/review facts
+      // in the chosen scope; do not silently move a memory or a personal task.
+      const rows = this.db
+        .prepare(
+          `SELECT DISTINCT m.id,m.head_revision_id,m.scope FROM memories m
+          JOIN memory_dependencies md ON md.memory_revision_id=m.head_revision_id WHERE md.source_id=? AND m.status='active'`,
+        )
+        .all(sourceId);
+      for (const row of rows)
+        if ((JSON.parse(String(row.scope)).project_id ?? null) !== newProject) {
+          this.db
+            .prepare("UPDATE memories SET status='invalidated' WHERE id=?")
+            .run(String(row.id));
+          this.db
+            .prepare(
+              "UPDATE memory_dependencies SET state='stale' WHERE memory_revision_id=? AND source_id=?",
+            )
             .run(String(row.head_revision_id), sourceId);
         }
-      }
-      let queued = false;
-      if ((changed || previous?.status === "ambiguous") && revision.provenance?.producerKind !== "derived") {
-        const state = this.db.prepare("SELECT validity_epoch FROM source_state WHERE source_id=?").get(sourceId);
-        const feedback = this.messageFeedback.forSource(sourceId);
-        this.jobs.enqueueInCurrentTransaction({ kind: "extract_claims", roleVersion: "extractor@1", policyVersion: "memory-policy@1",
-          inputRefs: [{ revisionId: revision.id, sourceId, validityEpoch: Number(state?.validity_epoch ?? 1) },
-            { learningMembership: stableDigest([{ revision: revision.id, groups: this.contexts.forSource(sourceId), ...(feedback.length ? { feedback } : {}) }]),
-              assignmentVersion: this.contexts.assignment(sourceId)!.version }], cause: "context_correction" });
-        queued = true;
-      }
-      return { contextIds, assignment: this.contexts.assignment(sourceId), queued };
+    }
+    let queued = false;
+    if (
+      (changed || previous?.status === "ambiguous") &&
+      revision.provenance?.producerKind !== "derived"
+    ) {
+      const state = this.db
+        .prepare("SELECT validity_epoch FROM source_state WHERE source_id=?")
+        .get(sourceId);
+      const feedback = this.messageFeedback.forSource(sourceId);
+      this.jobs.enqueueInCurrentTransaction({
+        kind: "extract_claims",
+        roleVersion: "extractor@1",
+        policyVersion: "memory-policy@1",
+        inputRefs: [
+          {
+            revisionId: revision.id,
+            sourceId,
+            validityEpoch: Number(state?.validity_epoch ?? 1),
+          },
+          {
+            learningMembership: stableDigest([
+              {
+                revision: revision.id,
+                groups: this.contexts.forSource(sourceId),
+                ...(feedback.length ? { feedback } : {}),
+              },
+            ]),
+            assignmentVersion: this.contexts.assignment(sourceId)!.version,
+          },
+        ],
+        cause: "context_correction",
+      });
+      queued = true;
+    }
+    return {
+      contextIds,
+      assignment: this.contexts.assignment(sourceId),
+      queued,
+    };
   }
   private captureReceipt(row: Row) {
     return {
@@ -434,6 +540,8 @@ export class Store {
     }));
   }
   revision(revisionId: string): Revision | null {
+    if (this.retention.revisionAvailability(revisionId)?.available === false)
+      return null;
     const r = this.db
       .prepare(
         "SELECT r.*,s.namespace,s.head FROM revisions r JOIN sources s ON r.source_id=s.id WHERE r.id=?",
@@ -457,6 +565,8 @@ export class Store {
     };
   }
   fragments(revisionId: string) {
+    if (this.retention.revisionAvailability(revisionId)?.available === false)
+      return [];
     return (
       this.db
         .prepare("SELECT * FROM fragments WHERE revision_id=? ORDER BY ordinal")
@@ -473,7 +583,8 @@ export class Store {
       .prepare("SELECT * FROM fragments WHERE id=?")
       .get(fragmentId) as Row | undefined;
     if (!f) return null;
-    const revision = this.revision(String(f.revision_id))!;
+    const revision = this.revision(String(f.revision_id));
+    if (!revision) return null;
     const fragment = revision.fragments.find((x) => x.id === fragmentId)!;
     const relation = (column: string, target: string) =>
       this.db
@@ -523,7 +634,7 @@ export class Store {
   history(sourceId: string) {
     return this.db
       .prepare(
-        "SELECT id,title,version,created_at AS createdAt FROM revisions WHERE source_id=? ORDER BY version DESC",
+        "SELECT id,title,version,created_at AS createdAt FROM revisions WHERE source_id=? AND id NOT IN (SELECT revision_id FROM revision_tombstones) ORDER BY version DESC",
       )
       .all(sourceId);
   }
@@ -543,7 +654,11 @@ export class Store {
         throw Error("Change has no restorable predecessor");
       const old = this.revision(String(c.before_id));
       const after = this.revision(String(c.after_id));
-      if (!old || !after) throw Error("Revision not found");
+      if (!old || !after)
+        throw Error(
+          this.retention.revisionAvailability(String(c.before_id))?.reason ??
+            "Revision not found",
+        );
       const source = this.db
         .prepare("SELECT head FROM sources WHERE id=?")
         .get(old.sourceId) as Row;
@@ -687,7 +802,11 @@ export class Store {
            due_expression AS dueExpression,next_step AS nextStep,follow_up AS followUp
          FROM tasks ORDER BY created_at DESC`,
       )
-      .all().map(row => ({ ...row, followUp: row.followUp ? JSON.parse(String(row.followUp)) : null }));
+      .all()
+      .map((row) => ({
+        ...row,
+        followUp: row.followUp ? JSON.parse(String(row.followUp)) : null,
+      }));
   }
   createTask(input: {
     title: string;
@@ -737,11 +856,7 @@ export class Store {
       return { id: taskId };
     });
   }
-  setTaskStatus(
-    taskId: string,
-    status: TaskStatus,
-    expectedVersion: number,
-  ) {
+  setTaskStatus(taskId: string, status: TaskStatus, expectedVersion: number) {
     return this.tx(() => {
       const old = this.db
         .prepare("SELECT * FROM tasks WHERE id=?")

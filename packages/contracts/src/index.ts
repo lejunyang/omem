@@ -91,6 +91,13 @@ export const captureSchema = z
     provenance: captureProvenanceSchema.optional(),
     context: z
       .object({
+        connector: z.object({
+          kind: z.enum(["file", "git", "lark"]),
+          path: z.string().max(2000).optional(),
+          repo: z.string().max(2000).optional(),
+          ref: z.string().max(200).optional(),
+          url: z.url().optional(),
+        }).strict().optional(),
         application: z.string().max(200).optional(),
         windowTitle: z.string().max(500).optional(),
         conversationId: z.string().max(200).optional(),
@@ -107,7 +114,7 @@ export const captureSchema = z
           resources: z.array(z.object({ kind: z.string(), label: z.string(), uri: z.string().optional(), assetId: z.string().optional(), revisionId: z.string().optional(), status: z.enum(["read", "saved", "failed"]), error: z.string().optional() }).strict()),
         }).strict().optional(),
         document: z.object({
-          parser: z.enum(["docling", "lark-cli"]),
+          parser: z.enum(["docling", "lark-cli", "lark-api"]),
           parserVersion: z.string().max(100),
           originalAssetId: z.string().regex(/^[a-f0-9]{64}$/),
           structureAssetId: z.string().regex(/^[a-f0-9]{64}$/),

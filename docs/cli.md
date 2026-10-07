@@ -37,14 +37,14 @@ omem doctor --local --verify-models --json
 omem status --json
 ```
 
-| 设置 | 已安装版本默认值 | 用途 |
-| --- | --- | --- |
-| `--data-dir` / `OMEM_DATA_DIR` | `~/.omem` | 数据库、原件、运行轨迹、PM2 状态和日志 |
-| `--config` / `OMEM_CONFIG` | 个人库中的 `config.json` | Agent、学习处理、模型和机器人配置 |
-| `--port` / `OMEM_PORT` | `4317` | 本地监听端口及默认连接端口 |
-| `--url` / `OMEM_URL` | `http://127.0.0.1:4317` | CLI 连接现有服务，适合远程部署 |
-| `OMEM_TOKEN` | 无 | 已有服务器访问令牌；CLI 放入 Authorization，不作为模型输入 |
-| `OMEM_HOST` | `127.0.0.1` | 服务监听地址；对外部署仍需自行配置网络和访问控制 |
+| 设置                           | 已安装版本默认值         | 用途                                                       |
+| ------------------------------ | ------------------------ | ---------------------------------------------------------- |
+| `--data-dir` / `OMEM_DATA_DIR` | `~/.omem`                | 数据库、原件、运行轨迹、PM2 状态和日志                     |
+| `--config` / `OMEM_CONFIG`     | 个人库中的 `config.json` | Agent、学习处理、模型和机器人配置                          |
+| `--port` / `OMEM_PORT`         | `4317`                   | 本地监听端口及默认连接端口                                 |
+| `--url` / `OMEM_URL`           | `http://127.0.0.1:4317`  | CLI 连接现有服务，适合远程部署                             |
+| `OMEM_TOKEN`                   | 无                       | 已有服务器访问令牌；CLI 放入 Authorization，不作为模型输入 |
+| `OMEM_HOST`                    | `127.0.0.1`              | 服务监听地址；对外部署仍需自行配置网络和访问控制           |
 
 全局选项可放在子命令后，例如 `omem service status --json`。`init` 遇到已有配置会保留它，指定不存在的 `--config` 不会静默换成另一份配置。改变配置后用相同目录、配置、端口运行 `omem service restart`。`service` 管理本机实例，`--url` 只改变 API 连接目标，不能用它控制远程 PM2。
 
@@ -78,10 +78,21 @@ omem ask '解释实现过程' --research
 完整 Capture 可用 `omem import capture input.json` 或 stdin，最小示例：
 
 ```json
-{"source":"file","externalId":"notes:release","title":"发布记录","parts":[{"type":"text","text":"发布前由负责人确认回滚方案。"}]}
+{
+  "source": "file",
+  "externalId": "notes:release",
+  "title": "发布记录",
+  "parts": [{ "type": "text", "text": "发布前由负责人确认回滚方案。" }]
+}
 ```
 
 `omem sources revision <revision-id>` 读取固定版本；`omem sources history <source-id>` 回看来源历史。来源、版本 ID 用于连接，不用文件名猜测。
+
+代码和文档现在只保存同一来源的最新版原件。旧引用保留定位和摘要，并提示原件已替换；聊天和反馈保留事件原文。PDF/DOCX 先保存原文件再后台解析，失败后也能下载和重试。`omem imports list/show` 查询导入状态，`omem materials list/show` 查询当前原件。
+
+重新处理使用 `omem reprocess run <对象> <ID> --action <方式> --replace --wait`。方式分为解析原件、重新理解、重写用途、读取远端新版和重新写作；省略 `--replace` 保留处理中的旧成果。`reprocess delete` 删除派生成果，保留原件，已人工调整的事项也保留。`list/show/retry` 跟踪或重试实际处理阶段，排队不代表完成。步骤与失败语义见[原件与重新处理](../skills/omem-cli/references/reprocessing.md)。
+
+日志默认 `info`，可用 `omem config logging debug` 调整，重启服务后生效；`OMEM_LOG_LEVEL` 优先。`omem service logs --lines 100 --level warn --job JOB_ID` 按等级和任务查询脱敏记录，也支持 `--source` 与 `--message`。后台 PM2 日志按大小和日期轮换，默认每文件 10 MiB、保留 7 份归档，详见[日志设置](../skills/omem-cli/references/logging.md)。
 
 ## 写作、记忆与事项
 
@@ -102,12 +113,16 @@ omem jobs cancel JOB_ID
 ```json
 {
   "brief": {
-    "key": "guide:release", "title": "第一次发布项目", "order": 0,
-    "kind": "tutorial", "reader": "第一次负责发布的同事",
+    "key": "guide:release",
+    "title": "第一次发布项目",
+    "order": 0,
+    "kind": "tutorial",
+    "reader": "第一次负责发布的同事",
     "goal": "能准备、执行并验证一次发布",
     "scenario": "准备将一个小改动发布到生产环境",
     "questions": ["发布前要准备什么？", "失败后如何回滚？"],
-    "entryPaths": [], "topicPath": ["项目指南"]
+    "entryPaths": [],
+    "topicPath": ["项目指南"]
   },
   "revisionIds": ["替换为实际的当前版本ID"]
 }
@@ -161,7 +176,13 @@ omem bot status
 `messages.json` 示例：
 
 ```json
-{"enabled":false,"intervalMinutes":10,"historyHours":24,"mentionExceptions":true,"resources":true}
+{
+  "enabled": false,
+  "intervalMinutes": 10,
+  "historyHours": 24,
+  "mentionExceptions": true,
+  "resources": true
+}
 ```
 
 采集只读消息和资源，不改变未读状态，不发送、回复或删除消息。文档、图片与附件的读取/理解状态在 inbox 中区分，排队不代表已经理解。决策模型是可选分流，复杂理解仍交给 Agent。
@@ -246,7 +267,7 @@ omem setup decisions --model all
 过去 `timeoutMs:480000` 是从启动开始计算的八分钟总时限，长调查即使持续调用工具也会被打断。现在：
 
 ```json
-{"idleTimeoutMs":480000}
+{ "idleTimeoutMs": 480000 }
 ```
 
 八分钟内有 ACP 初始化响应、有效会话更新、工具进展或模型输出就续期；思考片段只更新活动时间，不保存其内容。stderr 日志和宿主自己的轮询不会续期。完全静默八分钟才结束进程。工具正在执行但没有任何进展通知时同样可能超时，可按实际工具耗时提高 idleTimeoutMs。一般没有总时长上限；确实要限制成本时显式加入 `maxDurationMs`。

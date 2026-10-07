@@ -1,5 +1,6 @@
 import { retrievalConfigSchema } from "./retrieval/factory.js";
 import { decisionConfigSchema } from "./decision/service.js";
+import { loggingConfigSchema, loggingSettings } from "./logging/config.js";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { z } from "zod";
@@ -81,6 +82,7 @@ const schema = z
       }),
     retrieval: retrievalConfigSchema.optional(),
     decisions: decisionConfigSchema.optional(),
+    logging: loggingConfigSchema.optional(),
     captureRoots: z.array(z.string()).default([]),
     learning: z
       .object({
@@ -219,6 +221,7 @@ export function loadConfig() {
     ),
   );
   const dataDir = defaultDataDir();
+  loggingSettings(config.logging);
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   return {
     ...config,

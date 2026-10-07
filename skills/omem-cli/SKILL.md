@@ -14,6 +14,7 @@ description: 使用 omem CLI 保存与检索个人材料、基于来源提问、
 - 找原文、事实或代码：`omem search "问题" --json`；需要综合解释和补读：`omem ask "问题" --research --json`。
 - 延续讨论：保存 ask 返回的 conversation.id，下次用 `--conversation`，不要重复新建不相干会话。
 - 记录材料：`omem import file`、`import git`、`import lark` 或 `import text`。已有记录更新应保持同一个来源标识，别把重复导入当新增事实。
+- 重新生成或删除旧成果：先读 [原件与重新处理](references/reprocessing.md)，区分解析保存的原文件、重新理解、读取远端新版和文章写作。`reprocess run --replace` 删除对应旧成果后再生成；明确要删除时用 `reprocess delete`。PDF/DOCX 从 `imports list/show` 查原件和失败记录，不能把解析排队当作完成。
 - 组织一批知识：先读[知识目录草案](references/knowledge-outlines.md)。从 `knowledge list` / `contexts list` 选择真实来源和范围，用 `knowledge outline create/propose/show/save` 拟定并修改阅读路线，用户确认后再 apply；提议与正文发布分别检查。主助手当前尚未注册草案操作，已加载本技能且可运行 CLI 的外部 Agent 可以代办。
 - 写单篇文章：先 `knowledge list --json` 选实际材料，明确读者、场景和阅读目标，再 `knowledge write`。排队与发布分别检查。
 - 事项、记忆和处理：`tasks list`、`memories list`、`jobs list/show`；理解失败原因后按用户意图重试。不要直接改数据库。
@@ -24,6 +25,7 @@ description: 使用 omem CLI 保存与检索个人材料、基于来源提问、
 - 外部设计或研发资料：读 [能力装配](references/capabilities.md)，登记已有 skill、只读 CLI/MCP，检查连接并按项目选择。工具由 Agent 调用；登记声明不安装依赖、不完成登录，也不授予外部写权限。
 - 数据管理：先 `data info` 查看本机位置与占用，归档/清理先预览；备份恢复或迁移使用新目录。冷存储还承载旧引用，不能当缓存直接删除。
 - 运行问题：先 `config path`、`status --json`、`service status --json` 和 `doctor --json`；仅查本机安装用 `doctor --local`。只有用户意图需要服务在线时才启动或重启。
+- 定位失败：读 [日志设置与查询](references/logging.md)，`service logs --level warn --job JOB_ID` 读取本机脱敏日志。`config logging debug` 保存配置，服务重启后生效；`OMEM_LOG_LEVEL` 优先。日志不能代替原件与模型研究记录。
 
 ## 重要语义
 

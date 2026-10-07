@@ -9,6 +9,8 @@ for (const path of [
   "skills/omem-cli/SKILL.md",
   "skills/omem-cli/references/dependencies.md",
   "skills/omem-cli/references/knowledge-outlines.md",
+  "skills/omem-cli/references/reprocessing.md",
+  "skills/omem-cli/references/logging.md",
   "config/models.toml",
   "dist/scripts/document-prepare.js",
   "dist/scripts/document-models.js",

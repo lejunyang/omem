@@ -16,6 +16,8 @@ import type { AgentProfile } from "../../../packages/contracts/src/index.js";
 import { activityWatchdog, agentIdleTimeout } from "./agent-timeout.js";
 import { acpProvider, sessionMetadata } from "./agent-providers.js";
 import { codexSessionEnvironment } from "./codex-session.js";
+import { createHash, randomUUID } from "node:crypto";
+import { errorSummary, getLogger, withLogContext } from "./logging/logger.js";
 export type Emit = (
   type: "status" | "text" | "permission",
   text: string,
@@ -39,15 +41,25 @@ export type AcpOptions = {
   finalSubmission?: Promise<void>;
   onSessionUpdate?: (update: SessionUpdate) => void;
   allowPermission?: (request: RequestPermissionRequest) => boolean;
-  contextBudget?: { estimatedInputTokens: number; maxOutputTokens: number; contextReserveTokens: number };
+  contextBudget?: {
+    estimatedInputTokens: number;
+    maxOutputTokens: number;
+    contextReserveTokens: number;
+  };
   onRuntimeRequest?: (request: RuntimeRequestEvent) => void | Promise<void>;
 };
 
 /** Run a supplied role in its material workspace without inheriting repository
  * development instructions. This controls prompt discovery, not OS file access. */
-export function withAgentWorkspace(profile: AgentProfile, workspace: string): AgentProfile {
+export function withAgentWorkspace(
+  profile: AgentProfile,
+  workspace: string,
+): AgentProfile {
   if (acpProvider(profile) !== "traex") return profile;
-  return { ...profile, args: ["-C", workspace, "-c", "project_doc_max_bytes=0", ...profile.args] };
+  return {
+    ...profile,
+    args: ["-C", workspace, "-c", "project_doc_max_bytes=0", ...profile.args],
+  };
 }
 
 const env = (cwd: string) => ({
@@ -55,8 +67,16 @@ const env = (cwd: string) => ({
     Object.entries(process.env).filter(
       ([key]) =>
         !key.startsWith("BOTMUX_") &&
-        !["OMEM_TOKEN", "CLAUDECODE", "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR",
-          "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"].includes(key),
+        ![
+          "OMEM_TOKEN",
+          "CLAUDECODE",
+          "GIT_DIR",
+          "GIT_WORK_TREE",
+          "GIT_COMMON_DIR",
+          "GIT_INDEX_FILE",
+          "GIT_OBJECT_DIRECTORY",
+          "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        ].includes(key),
     ),
   ),
   // Exported originals are a captured workspace, not the enclosing development
@@ -64,7 +84,13 @@ const env = (cwd: string) => ({
   // This avoids accidental context leakage; it is not a filesystem sandbox.
   // Git ignores a ceiling equal to its starting directory. Include the parent
   // as well so a command from either the workspace root or a child stops here.
-  GIT_CEILING_DIRECTORIES: [realpathSync(cwd), dirname(realpathSync(cwd)), process.env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(delimiter),
+  GIT_CEILING_DIRECTORIES: [
+    realpathSync(cwd),
+    dirname(realpathSync(cwd)),
+    process.env.GIT_CEILING_DIRECTORIES,
+  ]
+    .filter(Boolean)
+    .join(delimiter),
 });
 function stop(child: ChildProcessWithoutNullStreams) {
   if (child.exitCode !== null) return;
@@ -82,7 +108,12 @@ function stop(child: ChildProcessWithoutNullStreams) {
   }, 1500);
   timer.unref();
 }
-function launch(profile: AgentProfile, args: string[], cwd: string, environment: NodeJS.ProcessEnv = env(cwd)) {
+function launch(
+  profile: AgentProfile,
+  args: string[],
+  cwd: string,
+  environment: NodeJS.ProcessEnv = env(cwd),
+) {
   mkdirSync(cwd, { recursive: true, mode: 0o700 });
   const child = spawn(profile.command, args, {
     cwd,
@@ -100,15 +131,30 @@ export function optionValues(option: SessionConfigOption) {
   if (option.type !== "select") return [];
   return option.options.flatMap((o) => ("options" in o ? o.options : [o]));
 }
-export function assertContextBudget(configOptions: SessionConfigOption[], budget: NonNullable<AcpOptions["contextBudget"]>): number | null {
-  const option = configOptions.find(o => o.category === "model" || o.id === "model");
+export function assertContextBudget(
+  configOptions: SessionConfigOption[],
+  budget: NonNullable<AcpOptions["contextBudget"]>,
+): number | null {
+  const option = configOptions.find(
+    (o) => o.category === "model" || o.id === "model",
+  );
   if (!option) return null;
-  const selected = optionValues(option).find(o => o.value === option.currentValue);
-  const metadata = selected?._meta as { trae?: { contextWindow?: number } } | undefined;
+  const selected = optionValues(option).find(
+    (o) => o.value === option.currentValue,
+  );
+  const metadata = selected?._meta as
+    | { trae?: { contextWindow?: number } }
+    | undefined;
   const contextWindow = metadata?.trae?.contextWindow;
   if (!contextWindow || !Number.isFinite(contextWindow)) return null;
-  const required = budget.estimatedInputTokens + budget.maxOutputTokens + budget.contextReserveTokens;
-  if (required > contextWindow) throw new Error(`Model context budget exceeded: estimated input + output + reserve ${required} > discovered context window ${contextWindow}`);
+  const required =
+    budget.estimatedInputTokens +
+    budget.maxOutputTokens +
+    budget.contextReserveTokens;
+  if (required > contextWindow)
+    throw new Error(
+      `Model context budget exceeded: estimated input + output + reserve ${required} > discovered context window ${contextWindow}`,
+    );
   return contextWindow;
 }
 export async function acp(
@@ -119,6 +165,74 @@ export async function acp(
   signal: AbortSignal,
   options: AcpOptions = {},
 ) {
+  return withLogContext({ acpCallId: randomUUID() }, async () => {
+    const logger = getLogger({ component: "acp" });
+    const startedAt = performance.now();
+    const diagnostic: AcpDiagnostic = { phase: "prepare", stderrBytes: 0 };
+    logger.debug(
+      {
+        event: "acp.started",
+        profileId: profile.id,
+        provider: acpProvider(profile),
+        model: profile.model,
+        effort: profile.effort,
+      },
+      "acp.started",
+    );
+    try {
+      const result = await acpSession(
+        profile,
+        cwd,
+        blocks,
+        emit,
+        signal,
+        options,
+        diagnostic,
+      );
+      logger.info(
+        {
+          event: "acp.completed",
+          profileId: profile.id,
+          sessionId: result.sessionId,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          completion: result.completion,
+          timings: result.timings,
+        },
+        "acp.completed",
+      );
+      return result;
+    } catch (error) {
+      logger[signal.aborted ? "info" : "error"](
+        {
+          event: signal.aborted ? "acp.cancelled" : "acp.failed",
+          profileId: profile.id,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          error: errorSummary(error),
+          diagnostic,
+        },
+        signal.aborted ? "acp.cancelled" : "acp.failed",
+      );
+      throw error;
+    }
+  });
+}
+type AcpDiagnostic = {
+  phase: string;
+  stderrBytes: number;
+  stderrDigest?: string;
+  authenticationHint?: boolean;
+  exitCode?: number | null;
+  sessionId?: string;
+};
+async function acpSession(
+  profile: AgentProfile,
+  cwd: string,
+  blocks: ContentBlock[] | null,
+  emit: Emit,
+  signal: AbortSignal,
+  options: AcpOptions,
+  diagnostic: AcpDiagnostic,
+) {
   const startedAt = performance.now();
   let initializedAt = startedAt;
   let promptStartedAt: number | undefined;
@@ -126,9 +240,12 @@ export async function acp(
   let firstToolAt: number | undefined;
   const toolCalls = new Map<string, string>();
   mkdirSync(cwd, { recursive: true, mode: 0o700 });
-  const environment = acpProvider(profile) === "codex"
-    ? await codexSessionEnvironment(profile, cwd, env(cwd), signal) : env(cwd);
+  const environment =
+    acpProvider(profile) === "codex"
+      ? await codexSessionEnvironment(profile, cwd, env(cwd), signal)
+      : env(cwd);
   const child = launch(profile, profile.args, cwd, environment);
+  diagnostic.phase = "initialize";
   // Track the 'close' event from spawn time so we never miss it after stop().
   // On Windows, 'close' fires only after the process exits AND its stdio
   // streams are destroyed — that is when the OS releases the cwd handle.
@@ -141,27 +258,40 @@ export async function acp(
   let terminalFailure: Error | undefined;
   child.stderr.on("data", (data) => {
     failure = (failure + data.toString()).slice(-4000);
+    diagnostic.stderrBytes += data.length;
+    diagnostic.stderrDigest = createHash("sha256")
+      .update(failure)
+      .digest("hex");
+    diagnostic.authenticationHint = /auth|login|登录/i.test(failure);
   });
   let rejectExit: (e: Error) => void = () => {};
   const exited = new Promise<never>((_, reject) => {
     rejectExit = reject;
     child.once("error", reject);
-    child.once("exit", (code) =>
+    child.once("exit", (code) => {
+      diagnostic.exitCode = code;
       reject(
         new Error(
           `ACP process exited (${code}); check agent login and profile. ${failure.includes("auth") ? "Authentication required." : ""}`,
         ),
-      ),
-    );
+      );
+    });
   });
   // Attaching immediately prevents an unhandled rejection on a spawn failure.
   void exited.catch(() => {});
-  const timeout = activityWatchdog(agentIdleTimeout(profile), (reason) => {
-    terminalFailure = new Error(reason);
-    rejectExit(terminalFailure);
-    stop(child);
-  }, profile.maxDurationMs);
-  const active = () => { timeout.touch(); options.onActivity?.(); };
+  const timeout = activityWatchdog(
+    agentIdleTimeout(profile),
+    (reason) => {
+      terminalFailure = new Error(reason);
+      rejectExit(terminalFailure);
+      stop(child);
+    },
+    profile.maxDurationMs,
+  );
+  const active = () => {
+    timeout.touch();
+    options.onActivity?.();
+  };
   let connection: ClientSideConnection | undefined;
   let sessionId: string | undefined;
   let availableCommands: string[] = [];
@@ -222,8 +352,11 @@ export async function acp(
       () => ({
         requestPermission: async (request) => {
           active();
-          const once = request.options.find(o => o.kind === "allow_once");
-          if (once && options.allowPermission?.(request)) return { outcome: { outcome: "selected", optionId: once.optionId } };
+          const once = request.options.find((o) => o.kind === "allow_once");
+          if (once && options.allowPermission?.(request))
+            return {
+              outcome: { outcome: "selected", optionId: once.optionId },
+            };
           await options.onRuntimeRequest?.({
             kind: "permission",
             sessionId: sessionId || request.sessionId,
@@ -262,17 +395,31 @@ export async function acp(
         },
         sessionUpdate: async ({ update }) => {
           active();
-          if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+          if (
+            update.sessionUpdate === "tool_call" ||
+            update.sessionUpdate === "tool_call_update"
+          ) {
             firstToolAt ??= performance.now();
-            toolCalls.set(update.toolCallId, update.status ?? toolCalls.get(update.toolCallId) ?? "pending");
+            toolCalls.set(
+              update.toolCallId,
+              update.status ?? toolCalls.get(update.toolCallId) ?? "pending",
+            );
           }
-          if (["tool_call", "tool_call_update", "plan", "usage_update"].includes(update.sessionUpdate)) options.onSessionUpdate?.(update);
+          if (
+            ["tool_call", "tool_call_update", "plan", "usage_update"].includes(
+              update.sessionUpdate,
+            )
+          )
+            options.onSessionUpdate?.(update);
           if (
             update.sessionUpdate === "agent_message_chunk" &&
             update.content.type === "text"
           ) {
             outputChars += update.content.text.length;
-            if (!options.unbounded && outputChars > (options.maxOutputChars ?? 250_000)) {
+            if (
+              !options.unbounded &&
+              outputChars > (options.maxOutputChars ?? 250_000)
+            ) {
               terminalFailure = new Error("Agent output limit exceeded");
               rejectExit(terminalFailure);
               stop(child);
@@ -312,7 +459,10 @@ export async function acp(
         clientCapabilities: {
           fs: { readTextFile: false, writeTextFile: false },
           terminal: false,
-          _meta: { terminal_output: true, traex_subagent_parent_tool_call_id: true },
+          _meta: {
+            terminal_output: true,
+            traex_subagent_parent_tool_call_id: true,
+          },
         },
         clientInfo: { name: "omem", version: "0.1.0" },
       }),
@@ -320,14 +470,26 @@ export async function acp(
     ]);
     if (initialized.protocolVersion !== 1)
       throw Error("Unsupported ACP protocol version");
-    if (acpProvider(profile) === "claude" &&
-      (initialized.agentInfo?.name !== "@agentclientprotocol/claude-agent-acp" || initialized.agentInfo.version !== "0.86.0"))
-      throw Error("CLAUDE_ADAPTER_UNVERIFIED: requires @agentclientprotocol/claude-agent-acp@0.86.0; older adapters may ignore tool isolation settings");
-    if (acpProvider(profile) === "codex" &&
-      (initialized.agentInfo?.name !== "@agentclientprotocol/codex-acp" || initialized.agentInfo.version !== "2.1.1"))
-      throw Error("CODEX_ADAPTER_UNVERIFIED: requires @agentclientprotocol/codex-acp@2.1.1");
+    if (
+      acpProvider(profile) === "claude" &&
+      (initialized.agentInfo?.name !==
+        "@agentclientprotocol/claude-agent-acp" ||
+        initialized.agentInfo.version !== "0.86.0")
+    )
+      throw Error(
+        "CLAUDE_ADAPTER_UNVERIFIED: requires @agentclientprotocol/claude-agent-acp@0.86.0; older adapters may ignore tool isolation settings",
+      );
+    if (
+      acpProvider(profile) === "codex" &&
+      (initialized.agentInfo?.name !== "@agentclientprotocol/codex-acp" ||
+        initialized.agentInfo.version !== "2.1.1")
+    )
+      throw Error(
+        "CODEX_ADAPTER_UNVERIFIED: requires @agentclientprotocol/codex-acp@2.1.1",
+      );
     initializedAt = performance.now();
     active();
+    diagnostic.phase = "session";
     const session = await Promise.race([
       connection.newSession({
         cwd,
@@ -337,6 +499,7 @@ export async function acp(
       exited,
     ]);
     sessionId = session.sessionId;
+    diagnostic.sessionId = sessionId;
     active();
     if (options.expectedSkills?.length) {
       const normalized = new Set(
@@ -357,12 +520,24 @@ export async function acp(
         ]);
     }
     let configOptions = session.configOptions || [];
-    const modeId = acpProvider(profile) === "claude" ? "default" : acpProvider(profile) === "codex" ? "read-only" : undefined;
+    const modeId =
+      acpProvider(profile) === "claude"
+        ? "default"
+        : acpProvider(profile) === "codex"
+          ? "read-only"
+          : undefined;
     if (modeId) {
       if (!session.modes?.availableModes.some((mode) => mode.id === modeId))
         throw Error(`ACP_PERMISSION_MODE_UNSUPPORTED: requires ${modeId}`);
-      await Promise.race([connection.setSessionMode({ sessionId, modeId }), exited]);
-      configOptions = configOptions.map((o) => o.id === "mode" && o.type === "select" ? { ...o, currentValue: modeId } : o);
+      await Promise.race([
+        connection.setSessionMode({ sessionId, modeId }),
+        exited,
+      ]);
+      configOptions = configOptions.map((o) =>
+        o.id === "mode" && o.type === "select"
+          ? { ...o, currentValue: modeId }
+          : o,
+      );
     }
     for (const [key, value] of [
       ["model", profile.model],
@@ -391,7 +566,10 @@ export async function acp(
     }
     const configuredAt = performance.now();
     if (blocks) {
-      if (options.contextBudget) assertContextBudget(configOptions, options.contextBudget);
+      diagnostic.phase = "prompt";
+      diagnostic.sessionId = sessionId;
+      if (options.contextBudget)
+        assertContextBudget(configOptions, options.contextBudget);
       if (
         blocks.some((b) => b.type === "image") &&
         !initialized.agentCapabilities?.promptCapabilities?.image
@@ -400,18 +578,26 @@ export async function acp(
       emit("status", "Agent 已连接，正在基于固定证据回答");
       promptStartedAt = performance.now();
       const result = await Promise.race([
-        connection.prompt({ sessionId, prompt: blocks }).then(result => ({ kind: "prompt" as const, result })),
+        connection
+          .prompt({ sessionId, prompt: blocks })
+          .then((result) => ({ kind: "prompt" as const, result })),
         exited,
         ...(options.finalSubmission
-          ? [options.finalSubmission.then(() => ({ kind: "submission" as const }))]
+          ? [
+              options.finalSubmission.then(() => ({
+                kind: "submission" as const,
+              })),
+            ]
           : []),
       ]);
       if (signal.aborted) throw Error("CANCELLED");
       if (terminalFailure) throw terminalFailure;
       if (result.kind === "prompt" && result.result.stopReason !== "end_turn")
         throw Error(`Agent stopped: ${result.result.stopReason}`);
-      completion = result.kind === "submission" ? "validated_submission" : "end_turn";
+      completion =
+        result.kind === "submission" ? "validated_submission" : "end_turn";
       promptFinishedAt = performance.now();
+      diagnostic.phase = "teardown";
       // Stop both watchdogs before session teardown so a completed response
       // cannot turn into a timeout while closeSession is draining.
       timeout.close();
@@ -423,7 +609,7 @@ export async function acp(
     }
     if (initialized.agentCapabilities?.sessionCapabilities?.close)
       await Promise.race([
-        connection.closeSession({ sessionId }).catch(error => {
+        connection.closeSession({ sessionId }).catch((error) => {
           if (completion !== "validated_submission") throw error;
         }),
         new Promise((r) => setTimeout(r, 1000)),
@@ -441,10 +627,20 @@ export async function acp(
       timings: {
         initializeMs: Math.round(initializedAt - startedAt),
         sessionSetupMs: Math.round(configuredAt - initializedAt),
-        promptMs: promptStartedAt === undefined ? 0 : Math.round((promptFinishedAt ?? performance.now()) - promptStartedAt),
-        firstToolMs: promptStartedAt === undefined || firstToolAt === undefined ? null : Math.round(Math.max(0, firstToolAt - promptStartedAt)),
+        promptMs:
+          promptStartedAt === undefined
+            ? 0
+            : Math.round(
+                (promptFinishedAt ?? performance.now()) - promptStartedAt,
+              ),
+        firstToolMs:
+          promptStartedAt === undefined || firstToolAt === undefined
+            ? null
+            : Math.round(Math.max(0, firstToolAt - promptStartedAt)),
         toolCalls: toolCalls.size,
-        failedToolCalls: [...toolCalls.values()].filter(status => status === "failed").length,
+        failedToolCalls: [...toolCalls.values()].filter(
+          (status) => status === "failed",
+        ).length,
       },
     };
   } catch (error) {
@@ -505,6 +701,8 @@ export async function cli(
   signal: AbortSignal,
   onActivity?: () => void,
 ) {
+  const logger = getLogger({ component: "agent-cli" });
+  const startedAt = performance.now();
   const child = launch(profile, cliArgs(profile), cwd);
   child.stdout.setEncoding("utf8");
   let buffer = "";
@@ -513,10 +711,14 @@ export async function cli(
   let malformed = false;
   let providerError = false;
   await new Promise<void>((resolve, reject) => {
-    const timer = activityWatchdog(agentIdleTimeout(profile), (reason) => {
-      stop(child);
-      reject(Error(reason));
-    }, profile.maxDurationMs);
+    const timer = activityWatchdog(
+      agentIdleTimeout(profile),
+      (reason) => {
+        stop(child);
+        reject(Error(reason));
+      },
+      profile.maxDurationMs,
+    );
     const cancel = () => {
       stop(child);
       reject(Error("CANCELLED"));
@@ -530,7 +732,10 @@ export async function cli(
       if (!raw.trim()) return;
       try {
         const item = JSON.parse(raw);
-        if (typeof item.type === "string") { timer.touch(); onActivity?.(); }
+        if (typeof item.type === "string") {
+          timer.touch();
+          onActivity?.();
+        }
         if (
           item.type === "item.completed" &&
           item.item?.type === "agent_message"
@@ -588,5 +793,28 @@ export async function cli(
     });
     if (signal.aborted) cancel();
     else child.stdin.end(text);
-  }).finally(() => stop(child));
+  })
+    .then(() => {
+      logger.info(
+        {
+          event: "agent_cli.completed",
+          profileId: profile.id,
+          elapsedMs: Math.round(performance.now() - startedAt),
+        },
+        "agent_cli.completed",
+      );
+    })
+    .catch((error) => {
+      logger.error(
+        {
+          event: "agent_cli.failed",
+          profileId: profile.id,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          error: errorSummary(error),
+        },
+        "agent_cli.failed",
+      );
+      throw error;
+    })
+    .finally(() => stop(child));
 }

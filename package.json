@@ -39,7 +39,9 @@
     "diff": "9.0.0",
     "fastify": "5.12.5",
     "marked": "18.0.14",
+    "pino": "10.3.1",
     "pm2": "7.0.4",
+    "pm2-logrotate": "2.7.0",
     "smol-toml": "1.9.0",
     "typescript": "5.9.3",
     "zod": "4.1.12"
@@ -93,6 +95,7 @@
     "docs/cli.md",
     "LICENSE",
     "docs/reader-first/data-lifecycle.md",
+    "docs/reader-first/logging.md",
     "docs/reader-first/requirement-followup.md",
     "docs/reader-first/assistant-orchestration.md",
     "docs/reader-first/agent-providers.md"

@@ -26,6 +26,8 @@
 - [按问题调查与答案复核](answer-investigation.md)：Sol 如何选择能够回答问题的材料、补齐关键条件，以及独立补查的能力与限制。
 - [快模型自主问答](fast-assistant.md)：Luna 与 Sol 共用材料工具的实际比较、独立配置、快照准备优化和质量判断。
 - [文档导入与结构阅读](document-import.md)：官方飞书 CLI、Docling 文件解析、原件保留和已验证范围。
+- [原件与重新处理](../../skills/omem-cli/references/reprocessing.md)：最新版原件、失败后重试，以及删除替换旧成果。
+- [日志与诊断](logging.md)：日志等级、任务关联、脱敏查询和有界轮换。
 - [个人飞书消息](personal-messages.md)：会话订阅、免打扰提及、多模态资源、模型判断与后台运行。
 - [定时任务与自动关注](../../skills/omem-cli/references/schedules.md)：消息轮询、最近群筛选、定时简报的设置、机器人指挥与实际结果。
 - [机器人创建与绑定](../../skills/omem-cli/references/lark-bot.md)：服务配置、新建或复用应用、本人配对、飞书指挥与当前接入限制；随 npm 包提供。

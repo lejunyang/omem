@@ -27,7 +27,8 @@ export async function fileInput(
   if ([".pdf", ".docx"].includes(extname(file).toLowerCase())) {
     if (!dataDir) throw Error("文档导入需要配置数据目录");
     if ((await stat(file)).size > 20_000_000) throw Error("文件不能超过 20 MB");
-    return documentInput(await readFile(file), file, dataDir, file);
+    const input = await documentInput(await readFile(file), file, dataDir, file);
+    return { ...input, context: { ...input.context, connector: { kind: "file", path: file } } };
   }
   if ((await stat(file)).size > 500000) throw Error("Text file exceeds 500 KB");
   const bytes = await readFile(file);
@@ -38,7 +39,7 @@ export async function fileInput(
     externalId: file,
     title: file.split("/").at(-1)!,
     parts: [{ type: "text", text }],
-    context: {},
+    context: { connector: { kind: "file", path: file } },
   };
 }
 export async function gitInput(
@@ -78,7 +79,7 @@ export async function gitInput(
     title: path,
     upstreamVersion: sha.trim(),
     parts: [{ type: "text", text }],
-    context: {},
+    context: { connector: { kind: "git", repo: cwd, path, ref } },
   };
 }
 export async function larkInput(url: string, dataDir: string): Promise<CaptureInput> {
@@ -142,7 +143,7 @@ export async function larkInput(url: string, dataDir: string): Promise<CaptureIn
       { type: "text", text: doc.content },
       { type: "link", url, label: "飞书原文" },
     ],
-    context: { document: { parser: "lark-cli", parserVersion, originalAssetId,
+    context: { connector: { kind: "lark", url }, document: { parser: "lark-cli", parserVersion, originalAssetId,
       structureAssetId: originalAssetId, originalName: "飞书文档原始响应.json", mimeType: "application/json", pageCount: 0,
       warnings: doc.tips ? [String(doc.tips).slice(0, 1000)] : [] } },
   };

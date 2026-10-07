@@ -1,4 +1,8 @@
-import { restoreReviewKnowledge, saveReviewAnswerMaterials, publishReviewArticle } from "./knowledge.js";
+import {
+  restoreReviewKnowledge,
+  saveReviewAnswerMaterials,
+  publishReviewArticle,
+} from "./knowledge.js";
 import { registerKnowledgeRoutes } from "../knowledge/api.js";
 import { createReviewKnowledgeRepository } from "./materials.js";
 import { profileSchema } from "../../../../packages/contracts/src/index.js";
@@ -12,7 +16,9 @@ import { profileSchema } from "../../../../packages/contracts/src/index.js";
  * same-origin browser requests from the local Vite/dev origin; with REVIEW_TOKEN
  * set the token gates every /api route. Absolute host paths are never returned. */
 import { join } from "node:path";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyBaseLogger } from "fastify";
+import { createLogger, installDefaultLogger } from "../logging/logger.js";
+import { createHttpLogController } from "../logging/http.js";
 import staticFiles from "@fastify/static";
 import { timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -73,25 +79,68 @@ export type ReviewAppDeps = {
 
 export async function buildReviewApp(deps: ReviewAppDeps) {
   const { store, repoRoot } = deps;
-  const allowedOrigins = new Set([deps.port ?? 5180, deps.webPort ?? 5181].flatMap(
-    (port) => [`http://127.0.0.1:${port}`, `http://localhost:${port}`],
-  ));
+  const allowedOrigins = new Set(
+    [deps.port ?? 5180, deps.webPort ?? 5181].flatMap((port) => [
+      `http://127.0.0.1:${port}`,
+      `http://localhost:${port}`,
+    ]),
+  );
   ensureReviewMetaTable(store);
   ensureReviewRelationsTable(store);
   const memory = new MemoryService(store);
-  const retrievalService = createRetrieval(store.db, deps.retrievalConfig, repoRoot);
+  const retrievalService = createRetrieval(
+    store.db,
+    deps.retrievalConfig,
+    repoRoot,
+  );
   const retrieval = retrievalService.retrieval;
   const code = new CodeKnowledgeService(store, repoRoot);
   // Opt-in model port. Null by default: review mode serves the raw graph and
   // curated seeds honestly and never calls a live LLM.
-  const understandingPort = buildUnderstandingModelPort(deps.codeUnderstandingModel ? { ...deps.codeUnderstandingModel, workspaceDir: join(repoRoot, ".repo-review/runtime/agent-workspace") } : null);
+  const understandingPort = buildUnderstandingModelPort(
+    deps.codeUnderstandingModel
+      ? {
+          ...deps.codeUnderstandingModel,
+          workspaceDir: join(repoRoot, ".repo-review/runtime/agent-workspace"),
+        }
+      : null,
+  );
   let codeSyncing = false;
   let lastCodeSync: Awaited<ReturnType<typeof code.sync>> | null = null;
-  const app: FastifyInstance = Fastify({ bodyLimit: 2_000_000, logger: false });
+  const logger = createLogger();
+  const releaseLogger = installDefaultLogger(logger);
+  const app: FastifyInstance = Fastify({
+    bodyLimit: 2_000_000,
+    loggerInstance: logger as FastifyBaseLogger,
+    logController: createHttpLogController(),
+  });
   const P = REVIEW_API_PREFIX;
-  registerKnowledgeRoutes(app, { store, retrieval, retrievalConfig: deps.retrievalConfig, prefix: P + "/knowledge", workspace: join(repoRoot, ".repo-review/runtime/knowledge-agents"), repository: createReviewKnowledgeRepository(store),
-    profile: deps.codeUnderstandingModel?.transport === "acp" ? profileSchema.parse({ id: "traex", name: "Knowledge", transport: "acp", command: deps.codeUnderstandingModel.command, args: deps.codeUnderstandingModel.args ?? [], model: deps.codeUnderstandingModel.model, effort: deps.codeUnderstandingModel.effort, timeoutMs: deps.codeUnderstandingModel.timeoutMs, idleTimeoutMs: deps.codeUnderstandingModel.idleTimeoutMs, maxDurationMs: deps.codeUnderstandingModel.maxDurationMs }) : undefined,
-    budget: deps.codeUnderstandingModel, onAnswer: () => saveReviewAnswerMaterials(store, repoRoot), onPublish: article => publishReviewArticle(repoRoot, article) });
+  registerKnowledgeRoutes(app, {
+    store,
+    retrieval,
+    retrievalConfig: deps.retrievalConfig,
+    prefix: P + "/knowledge",
+    workspace: join(repoRoot, ".repo-review/runtime/knowledge-agents"),
+    repository: createReviewKnowledgeRepository(store),
+    profile:
+      deps.codeUnderstandingModel?.transport === "acp"
+        ? profileSchema.parse({
+            id: "traex",
+            name: "Knowledge",
+            transport: "acp",
+            command: deps.codeUnderstandingModel.command,
+            args: deps.codeUnderstandingModel.args ?? [],
+            model: deps.codeUnderstandingModel.model,
+            effort: deps.codeUnderstandingModel.effort,
+            timeoutMs: deps.codeUnderstandingModel.timeoutMs,
+            idleTimeoutMs: deps.codeUnderstandingModel.idleTimeoutMs,
+            maxDurationMs: deps.codeUnderstandingModel.maxDurationMs,
+          })
+        : undefined,
+    budget: deps.codeUnderstandingModel,
+    onAnswer: () => saveReviewAnswerMaterials(store, repoRoot),
+    onPublish: (article) => publishReviewArticle(repoRoot, article),
+  });
 
   const reviewToken = process.env.REVIEW_TOKEN || "";
 
@@ -116,7 +165,10 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       return reply.code(403).send({ error: "Local host required" });
     if (req.headers.origin) {
       const origin = String(req.headers.origin).replace(/\/$/, "");
-      if (!allowedOrigins.has(origin) && origin !== "http://" + req.headers.host)
+      if (
+        !allowedOrigins.has(origin) &&
+        origin !== "http://" + req.headers.host
+      )
         return reply.code(403).send({ error: "Cross-origin request rejected" });
     }
   });
@@ -137,7 +189,9 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       ${where}
       ORDER BY r.created_at DESC`;
     const rows = (
-      category ? store.db.prepare(sql).all(category) : store.db.prepare(sql).all()
+      category
+        ? store.db.prepare(sql).all(category)
+        : store.db.prepare(sql).all()
     ) as Row[];
     return rows.map((r) => ({
       sourceId: String(r.sourceId),
@@ -232,7 +286,8 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     P + "/fragments/:id",
     async (req, reply) => {
       const evidence = store.evidence(req.params.id);
-      if (!evidence) return reply.code(404).send({ error: "Fragment not found" });
+      if (!evidence)
+        return reply.code(404).send({ error: "Fragment not found" });
       const { fragment, revision } = evidence;
       return {
         id: fragment.id,
@@ -258,7 +313,10 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   }>(P + "/fragments/:id/relations", async (req, reply) => {
     const evidence = store.evidence(req.params.id);
     if (!evidence) return reply.code(404).send({ error: "Fragment not found" });
-    return { fragmentId: req.params.id, relations: relationsForFragment(store, req.params.id) };
+    return {
+      fragmentId: req.params.id,
+      relations: relationsForFragment(store, req.params.id),
+    };
   });
 
   app.get<{
@@ -270,11 +328,14 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     }),
   );
 
-  app.get<{ Querystring: { path?: string } }>(P + "/code-relations", async (req, reply) => {
-    const path = (req.query.path ?? "").trim();
-    if (!path) return reply.code(400).send({ error: "path query required" });
-    return relationsForCodePath(store, path);
-  });
+  app.get<{ Querystring: { path?: string } }>(
+    P + "/code-relations",
+    async (req, reply) => {
+      const path = (req.query.path ?? "").trim();
+      if (!path) return reply.code(400).send({ error: "path query required" });
+      return relationsForCodePath(store, path);
+    },
+  );
 
   app.get(P + "/associations", async () => {
     let seedCount = 0;
@@ -287,19 +348,37 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   });
 
   // The same evidence retrieval as the personal assistant; filters run before top-N.
-  const reviewSearch = async (q: string, opts: { category?: string; includeRemoved?: boolean }) => {
-    const eligible = store.db.prepare(`SELECT f.id,r.title,r.version,f.text,
+  const reviewSearch = async (
+    q: string,
+    opts: { category?: string; includeRemoved?: boolean },
+  ) => {
+    const eligible = store.db
+      .prepare(
+        `SELECT f.id,r.title,r.version,f.text,
       json_extract(r.body,'$.context.category') AS category,
       json_extract(r.body,'$.context.filePath') AS filePath
       FROM fragments f JOIN revisions r ON r.id=f.revision_id JOIN sources s ON s.head=r.id
       LEFT JOIN review_source_meta m ON m.source_id=s.id
       WHERE (?=1 OR m.removed IS NULL OR m.removed=0)
-        AND (? IS NULL OR json_extract(r.body,'$.context.category')=?)`).all(
-          opts.includeRemoved ? 1 : 0, opts.category ?? null, opts.category ?? null) as Row[];
-    const byId = new Map(eligible.map(row => [String(row.id),row]));
+        AND (? IS NULL OR json_extract(r.body,'$.context.category')=?)`,
+      )
+      .all(
+        opts.includeRemoved ? 1 : 0,
+        opts.category ?? null,
+        opts.category ?? null,
+      ) as Row[];
+    const byId = new Map(eligible.map((row) => [String(row.id), row]));
     const query = { text: q, limit: 20, visible: (id: string) => byId.has(id) };
-    const hits = retrieval.searchSourcesAsync ? await retrieval.searchSourcesAsync(query) : retrieval.searchSources(query);
-    return hits.map(hit => ({ ...byId.get(hit.id)!, id: hit.fragmentId, score: hit.score, snippet: hit.snippet, routes: hit.routes }));
+    const hits = retrieval.searchSourcesAsync
+      ? await retrieval.searchSourcesAsync(query)
+      : retrieval.searchSources(query);
+    return hits.map((hit) => ({
+      ...byId.get(hit.id)!,
+      id: hit.fragmentId,
+      score: hit.score,
+      snippet: hit.snippet,
+      routes: hit.routes,
+    }));
   };
 
   app.get<{
@@ -320,7 +399,8 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   }));
 
   app.post(P + "/sync", async (_req, reply) => {
-    if (syncing || codeSyncing) return reply.code(409).send({ error: "Sync already running" });
+    if (syncing || codeSyncing)
+      return reply.code(409).send({ error: "Sync already running" });
     syncing = true;
     try {
       lastSync = await runReviewSync(store, repoRoot);
@@ -332,13 +412,16 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     }
   });
 
-  app.get<{ Querystring: { path?: string } }>(P + "/code", async (req, reply) => {
-    const path = (req.query.path ?? "").trim();
-    if (!path) return reply.code(400).send({ error: "path query required" });
-    const rows = sourceList();
-    const match = rows.find((r) => r.filePath === path);
-    return match ?? reply.code(404).send({ error: "Source not found" });
-  });
+  app.get<{ Querystring: { path?: string } }>(
+    P + "/code",
+    async (req, reply) => {
+      const path = (req.query.path ?? "").trim();
+      if (!path) return reply.code(400).send({ error: "path query required" });
+      const rows = sourceList();
+      const match = rows.find((r) => r.filePath === path);
+      return match ?? reply.code(404).send({ error: "Source not found" });
+    },
+  );
 
   // ---------------------------------------------------------------------
   // Code Knowledge read surface (deterministic graph; no model required).
@@ -347,12 +430,19 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
 
   app.get(CP + "/repositories", async () => code.listRepositories());
 
-  app.get(CP + "/snapshots", async () => code.listSnapshots().map(snapshotMeta));
+  app.get(CP + "/snapshots", async () =>
+    code.listSnapshots().map(snapshotMeta),
+  );
 
-  app.get<{ Params: { id: string } }>(CP + "/snapshots/:id", async (req, reply) => {
-    const snap = code.listSnapshots().find((s) => s.snapshotId === req.params.id);
-    return snap ?? reply.code(404).send({ error: "Snapshot not found" });
-  });
+  app.get<{ Params: { id: string } }>(
+    CP + "/snapshots/:id",
+    async (req, reply) => {
+      const snap = code
+        .listSnapshots()
+        .find((s) => s.snapshotId === req.params.id);
+      return snap ?? reply.code(404).send({ error: "Snapshot not found" });
+    },
+  );
 
   app.get(CP + "/current-snapshot", async () => {
     const c = code.currentSnapshot();
@@ -365,7 +455,8 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     const groups = new Map<string, number>();
     for (const f of files) {
       const segs = f.path.split("/");
-      const mod = segs.length >= 2 ? segs.slice(0, 2).join("/") : (segs[0] ?? f.path);
+      const mod =
+        segs.length >= 2 ? segs.slice(0, 2).join("/") : (segs[0] ?? f.path);
       groups.set(mod, (groups.get(mod) ?? 0) + 1);
     }
     return [...groups.entries()]
@@ -389,10 +480,15 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     return f ?? reply.code(404).send({ error: "File not found" });
   });
 
-  app.get<{ Params: { id: string } }>(CP + "/files/:id/symbols", async (req) => {
-    const file = code.fileById(req.params.id);
-    return code.symbolsOfFile(req.params.id).map((sym) => symbolDTO(sym, file));
-  });
+  app.get<{ Params: { id: string } }>(
+    CP + "/files/:id/symbols",
+    async (req) => {
+      const file = code.fileById(req.params.id);
+      return code
+        .symbolsOfFile(req.params.id)
+        .map((sym) => symbolDTO(sym, file));
+    },
+  );
 
   // Source range: return the FIXED text the given snapshot pinned for this file
   // (default: the current head snapshot). We read the review revision bound when
@@ -406,7 +502,12 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     if (!file) return reply.code(404).send({ error: "File not found" });
     const start = Number(req.query.startLine ?? 1);
     const end = Number(req.query.endLine ?? 1);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 1 || end < start)
+    if (
+      !Number.isFinite(start) ||
+      !Number.isFinite(end) ||
+      start < 1 ||
+      end < start
+    )
       return reply.code(400).send({ error: "invalid line range" });
     const snapId = req.query.snapshotId ?? currentSnapshotId(store);
     if (!snapId) return reply.code(404).send({ error: "No snapshot" });
@@ -432,41 +533,44 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     };
   });
 
-  app.get<{ Params: { id: string } }>(CP + "/symbols/:id", async (req, reply) => {
-    const row = store.db
-      .prepare("SELECT * FROM code_symbols WHERE symbol_id=?")
-      .get(req.params.id) as Row | undefined;
-    if (!row) return reply.code(404).send({ error: "Symbol not found" });
-    return {
-      symbolId: String(row.symbol_id),
-      fileId: String(row.file_id),
-      snapshotId: String(row.snapshot_id),
-      name: String(row.name),
-      qualifiedName: String(row.qualified_name),
-      kind: String(row.kind),
-      rangeStart: row.range_start ? JSON.parse(String(row.range_start)) : null,
-      rangeEnd: row.range_end ? JSON.parse(String(row.range_end)) : null,
-      fragmentId: row.fragment_id ? String(row.fragment_id) : null,
-      exported: Number(row.exported) === 1,
-      signature: row.signature ? String(row.signature) : null,
-    };
-  });
+  app.get<{ Params: { id: string } }>(
+    CP + "/symbols/:id",
+    async (req, reply) => {
+      const row = store.db
+        .prepare("SELECT * FROM code_symbols WHERE symbol_id=?")
+        .get(req.params.id) as Row | undefined;
+      if (!row) return reply.code(404).send({ error: "Symbol not found" });
+      return {
+        symbolId: String(row.symbol_id),
+        fileId: String(row.file_id),
+        snapshotId: String(row.snapshot_id),
+        name: String(row.name),
+        qualifiedName: String(row.qualified_name),
+        kind: String(row.kind),
+        rangeStart: row.range_start
+          ? JSON.parse(String(row.range_start))
+          : null,
+        rangeEnd: row.range_end ? JSON.parse(String(row.range_end)) : null,
+        fragmentId: row.fragment_id ? String(row.fragment_id) : null,
+        exported: Number(row.exported) === 1,
+        signature: row.signature ? String(row.signature) : null,
+      };
+    },
+  );
 
   app.get<{ Params: { id: string } }>(CP + "/symbols/:id/edges", async (req) =>
     code.edgesOf({ symbolId: req.params.id }, { includeStale: false }),
   );
 
-  app.get<{ Querystring: { symbolId?: string; fileId?: string; includeStale?: string } }>(
-    CP + "/edges",
-    async (req) => {
-      if (!req.query.symbolId && !req.query.fileId)
-        return { edges: [] };
-      return code.edgesOf(
-        { symbolId: req.query.symbolId, fileId: req.query.fileId },
-        { includeStale: req.query.includeStale === "true" },
-      );
-    },
-  );
+  app.get<{
+    Querystring: { symbolId?: string; fileId?: string; includeStale?: string };
+  }>(CP + "/edges", async (req) => {
+    if (!req.query.symbolId && !req.query.fileId) return { edges: [] };
+    return code.edgesOf(
+      { symbolId: req.query.symbolId, fileId: req.query.fileId },
+      { includeStale: req.query.includeStale === "true" },
+    );
+  });
 
   app.get<{ Querystring: { snapshotId?: string; includeStale?: string } }>(
     CP + "/graph",
@@ -477,14 +581,26 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       });
       const files = new Map(g.files.map((f) => [f.fileId, f]));
       const labelForSym = (sid?: string | null) =>
-        sid ? g.symbols.find((x) => x.symbolId === sid)?.name ?? null : null;
+        sid ? (g.symbols.find((x) => x.symbolId === sid)?.name ?? null) : null;
       return {
         files: g.files.map((f) => fileDTO(f, code.currentSnapshot())),
         symbols: g.symbols.map((sym) => symbolDTO(sym, files.get(sym.fileId))),
         edges: g.edges.map((e) =>
           edgeDTO(e, {
-            fromLabel: labelForSym(e.fromSymbolId) ?? files.get(e.fromFileId ?? "")?.path?.split("/").pop() ?? null,
-            toLabel: labelForSym(e.toSymbolId) ?? files.get(e.toFileId ?? "")?.path?.split("/").pop() ?? null,
+            fromLabel:
+              labelForSym(e.fromSymbolId) ??
+              files
+                .get(e.fromFileId ?? "")
+                ?.path?.split("/")
+                .pop() ??
+              null,
+            toLabel:
+              labelForSym(e.toSymbolId) ??
+              files
+                .get(e.toFileId ?? "")
+                ?.path?.split("/")
+                .pop() ??
+              null,
           }),
         ),
       };
@@ -496,7 +612,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     async (req) => {
       const type = req.query.type;
       const id = req.query.id;
-      if (type !== "file" && type !== "symbol" || !id)
+      if ((type !== "file" && type !== "symbol") || !id)
         return { understanding: null };
       return { understanding: code.understandingOf({ type, id }) };
     },
@@ -504,74 +620,89 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
 
   app.get(CP + "/model-status", async () => ({
     ...modelAvailability(understandingPort),
-    graphEndpoints: ["/api/review/code/graph", "/api/review/code/files", "/api/review/code/symbols"],
+    graphEndpoints: [
+      "/api/review/code/graph",
+      "/api/review/code/files",
+      "/api/review/code/symbols",
+    ],
   }));
 
   // Read-only Code Understanding surface. Curated seeds are projected onto the
   // head graph; there is no generation endpoint here (no production model).
-  app.get<{ Querystring: { all?: string } }>(CP + "/understandings", async (req) => {
-    const rows = listUnderstandings(store, { all: req.query.all === "true" });
-    return {
-      model: modelAvailability(understandingPort),
-      count: rows.length,
-      items: rows.map((r) => ({
-        understandingId: String(r.understanding_id),
-        targetType: String(r.target_type),
-        targetId: String(r.target_id),
-        snapshotId: String(r.snapshot_id),
-        role: String(r.role_id),
-        status: String(r.status),
-        confidence: r.confidence == null ? null : Number(r.confidence),
-        seed: Number(r.seed) === 1,
-        verifiedByAgent: Number(r.verified_by_agent) === 1,
-        verifiedBy: r.verified_by ? String(r.verified_by) : null,
-        stale: Number(r.stale) === 1,
-        source: String(r.source),
-        curatedBy: r.curated_by ? String(r.curated_by) : null,
-        curatedAt: r.curated_at ? String(r.curated_at) : null,
-        generatedAt: String(r.generated_at),
-        supersedesId: r.supersedes_id ? String(r.supersedes_id) : null,
-      })),
-    };
-  });
+  app.get<{ Querystring: { all?: string } }>(
+    CP + "/understandings",
+    async (req) => {
+      const rows = listUnderstandings(store, { all: req.query.all === "true" });
+      return {
+        model: modelAvailability(understandingPort),
+        count: rows.length,
+        items: rows.map((r) => ({
+          understandingId: String(r.understanding_id),
+          targetType: String(r.target_type),
+          targetId: String(r.target_id),
+          snapshotId: String(r.snapshot_id),
+          role: String(r.role_id),
+          status: String(r.status),
+          confidence: r.confidence == null ? null : Number(r.confidence),
+          seed: Number(r.seed) === 1,
+          verifiedByAgent: Number(r.verified_by_agent) === 1,
+          verifiedBy: r.verified_by ? String(r.verified_by) : null,
+          stale: Number(r.stale) === 1,
+          source: String(r.source),
+          curatedBy: r.curated_by ? String(r.curated_by) : null,
+          curatedAt: r.curated_at ? String(r.curated_at) : null,
+          generatedAt: String(r.generated_at),
+          supersedesId: r.supersedes_id ? String(r.supersedes_id) : null,
+        })),
+      };
+    },
+  );
 
-  app.get<{ Params: { id: string } }>(CP + "/understandings/:id", async (req, reply) => {
-    const row = understandingDetail(store, req.params.id);
-    if (!row) return reply.code(404).send({ error: "Understanding not found" });
-    return {
-      understandingId: String(row.understanding_id),
-      targetType: String(row.target_type),
-      targetId: String(row.target_id),
-      snapshotId: String(row.snapshot_id),
-      role: String(row.role_id),
-      status: String(row.status),
-      confidence: row.confidence == null ? null : Number(row.confidence),
-      seed: Number(row.seed) === 1,
-      verifiedByAgent: Number(row.verified_by_agent) === 1,
-      verifiedBy: row.verified_by ? String(row.verified_by) : null,
-      stale: Number(row.stale) === 1,
-      source: String(row.source),
-      model: row.model ? String(row.model) : null,
-      curatedBy: row.curated_by ? String(row.curated_by) : null,
-      curatedAt: row.curated_at ? String(row.curated_at) : null,
-      curatedNote: row.curated_note ? String(row.curated_note) : null,
-      generatedAt: String(row.generated_at),
-      supersedesId: row.supersedes_id ? String(row.supersedes_id) : null,
-      inputHash: String(row.input_hash),
-      promptHash: row.prompt_hash ? String(row.prompt_hash) : null,
-      schemaDigest: row.schema_digest ? String(row.schema_digest) : null,
-      unknowns: (() => {
-        try { return JSON.parse(String(row.unknowns || "[]")); } catch { return []; }
-      })(),
-      output: row.output,
-      refs: (row.refs as Row[]).map((r) => ({
-        kind: String(r.ref_kind),
-        id: String(r.ref_id),
-        selector: r.selector ? JSON.parse(String(r.selector)) : null,
-        note: r.note ? String(r.note) : "",
-      })),
-    };
-  });
+  app.get<{ Params: { id: string } }>(
+    CP + "/understandings/:id",
+    async (req, reply) => {
+      const row = understandingDetail(store, req.params.id);
+      if (!row)
+        return reply.code(404).send({ error: "Understanding not found" });
+      return {
+        understandingId: String(row.understanding_id),
+        targetType: String(row.target_type),
+        targetId: String(row.target_id),
+        snapshotId: String(row.snapshot_id),
+        role: String(row.role_id),
+        status: String(row.status),
+        confidence: row.confidence == null ? null : Number(row.confidence),
+        seed: Number(row.seed) === 1,
+        verifiedByAgent: Number(row.verified_by_agent) === 1,
+        verifiedBy: row.verified_by ? String(row.verified_by) : null,
+        stale: Number(row.stale) === 1,
+        source: String(row.source),
+        model: row.model ? String(row.model) : null,
+        curatedBy: row.curated_by ? String(row.curated_by) : null,
+        curatedAt: row.curated_at ? String(row.curated_at) : null,
+        curatedNote: row.curated_note ? String(row.curated_note) : null,
+        generatedAt: String(row.generated_at),
+        supersedesId: row.supersedes_id ? String(row.supersedes_id) : null,
+        inputHash: String(row.input_hash),
+        promptHash: row.prompt_hash ? String(row.prompt_hash) : null,
+        schemaDigest: row.schema_digest ? String(row.schema_digest) : null,
+        unknowns: (() => {
+          try {
+            return JSON.parse(String(row.unknowns || "[]"));
+          } catch {
+            return [];
+          }
+        })(),
+        output: row.output,
+        refs: (row.refs as Row[]).map((r) => ({
+          kind: String(r.ref_kind),
+          id: String(r.ref_id),
+          selector: r.selector ? JSON.parse(String(r.selector)) : null,
+          note: r.note ? String(r.note) : "",
+        })),
+      };
+    },
+  );
 
   // Explicit, opt-in generation entry point. Without a configured port this is
   // a 503; the raw graph and curated seeds remain usable. Any transport/validation
@@ -585,24 +716,42 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
           ...modelAvailability(understandingPort),
         });
       const targetId = String(req.body?.targetId ?? "");
-      if (!targetId) return reply.code(400).send({ error: "targetId is required" });
-      const result = await generateCodeUnderstanding(store, repoRoot, understandingPort, {
-        targetId,
-        timeoutMs: req.body?.timeoutMs ?? deps.codeUnderstandingModel?.idleTimeoutMs ?? deps.codeUnderstandingModel?.timeoutMs,
-        maxInputTokens: deps.codeUnderstandingModel?.maxInputTokens,
-        maxOutputTokens: deps.codeUnderstandingModel?.maxOutputTokens,
-        contextReserveTokens: deps.codeUnderstandingModel?.contextReserveTokens,
-      });
+      if (!targetId)
+        return reply.code(400).send({ error: "targetId is required" });
+      const result = await generateCodeUnderstanding(
+        store,
+        repoRoot,
+        understandingPort,
+        {
+          targetId,
+          timeoutMs:
+            req.body?.timeoutMs ??
+            deps.codeUnderstandingModel?.idleTimeoutMs ??
+            deps.codeUnderstandingModel?.timeoutMs,
+          maxInputTokens: deps.codeUnderstandingModel?.maxInputTokens,
+          maxOutputTokens: deps.codeUnderstandingModel?.maxOutputTokens,
+          contextReserveTokens:
+            deps.codeUnderstandingModel?.contextReserveTokens,
+        },
+      );
       if (!result.ok)
         return reply
           .code(result.status === "rejected" ? 422 : 502)
-          .send({ error: result.status, errors: result.errors, understandingId: result.understandingId || null });
-      return { ...result, detail: understandingDetail(store, result.understandingId) };
+          .send({
+            error: result.status,
+            errors: result.errors,
+            understandingId: result.understandingId || null,
+          });
+      return {
+        ...result,
+        detail: understandingDetail(store, result.understandingId),
+      };
     },
   );
 
   app.post(CP + "/sync", async (_req, reply) => {
-    if (codeSyncing || syncing) return reply.code(409).send({ error: "Code sync already running" });
+    if (codeSyncing || syncing)
+      return reply.code(409).send({ error: "Code sync already running" });
     codeSyncing = true;
     try {
       lastSync = await runReviewSync(store, repoRoot);
@@ -621,6 +770,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   app.addHook("onClose", async () => {
     await retrievalService.close();
     store.close();
+    releaseLogger();
   });
 
   return { app, store, memory, retrieval };

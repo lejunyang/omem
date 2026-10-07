@@ -24,7 +24,7 @@ import {
   contextInputSchema,
   contextIdsSchema,
 } from "../../../packages/contracts/src/contexts.js";
-import Fastify from "fastify";
+import Fastify, { type FastifyBaseLogger } from "fastify";
 import staticFiles from "@fastify/static";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -48,8 +48,22 @@ import {
 import { Store } from "./store.js";
 import { Runs } from "./runs.js";
 import { acp } from "./agents.js";
-import { fileInput, gitInput, larkInput, hookInput } from "./connectors.js";
-import { documentInput } from "./imports/documents.js";
+import {
+  fileInput,
+  gitInput,
+  larkInput,
+  hookInput,
+  allowedPath,
+} from "./connectors.js";
+import { DocumentImportService } from "./imports/service.js";
+import { readFile, stat } from "node:fs/promises";
+import { extname } from "node:path";
+import { ReprocessingService, registerReprocessing } from "./reprocessing.js";
+import { reprocessingOperations } from "./reprocessing-operations.js";
+import type { KnowledgePageService } from "./knowledge/page-service.js";
+import type { MaterialDescriptionWorker } from "./source-profile/description-worker.js";
+import { createLogger, installDefaultLogger } from "./logging/logger.js";
+import { createHttpLogController } from "./logging/http.js";
 import { DecisionService } from "./decision/service.js";
 import { intakeQuestions } from "./decision/questions.js";
 import { assessPassages } from "./decision/passages.js";
@@ -75,6 +89,7 @@ import {
 import { EncryptedSecretStore } from "./integrations/lark/secret-store.js";
 import { BotmuxExistingAppProvider } from "./integrations/lark/existing-apps.js";
 import { LarkRuntimeHost } from "./integrations/lark/runtime.js";
+import { LarkEventInbox } from "./integrations/lark/realtime.js";
 import { AssistantRuntime } from "./assistant/runtime.js";
 import { AcpAssistantModel } from "./assistant/acp-model.js";
 import {
@@ -100,7 +115,13 @@ export async function buildApp(
   const assistantProfile = () => selectAssistantProfile(config);
   if (!["127.0.0.1", "localhost", "::1"].includes(config.host) && !config.token)
     throw Error("OMEM_TOKEN is required for a non-loopback bind");
-  const app = Fastify({ bodyLimit: 12_000_000, logger: false });
+  const logger = createLogger(config.logging);
+  const releaseLogger = installDefaultLogger(logger);
+  const app = Fastify({
+    bodyLimit: 12_000_000,
+    loggerInstance: logger as FastifyBaseLogger,
+    logController: createHttpLogController(),
+  });
   const store = new Store(config.dataDir, {
     externalNotifications: config.notifications.external,
   });
@@ -108,6 +129,9 @@ export async function buildApp(
     ? importDevelopmentKnowledge(store, resolve(process.env.OMEM_REPO_ROOT))
     : undefined;
   const runs = new Runs(store, config);
+  const documentImports = new DocumentImportService(store, {
+    learningEnabled: !!config.learning?.enabled,
+  });
   const agentSettings = new AgentSettings(config);
   app.get("/api/agents/settings", async () => agentSettings.status());
   app.post("/api/agents/probe", async (req) =>
@@ -259,6 +283,8 @@ export async function buildApp(
     : retrievalService.retrieval;
   const requirementTasks = new RequirementTasks(store);
   registerRequirementTasks(app, requirementTasks);
+  let pageService!: KnowledgePageService;
+  let descriptionService!: MaterialDescriptionWorker;
   const knowledgeRepository = registerKnowledgeRoutes(app, {
     preparePage: (plan) => work?.preparePage(plan),
     beforePageRun: (plan, signal) => work.investigationHints(plan, signal),
@@ -267,6 +293,7 @@ export async function buildApp(
       work.published(article);
     },
     onService: (pages) => {
+      pageService = pages;
       work = new AssistantWork(
         pages,
         new DevelopmentQueue(
@@ -284,6 +311,9 @@ export async function buildApp(
         decisions,
         { personalLark, schedules },
       );
+    },
+    onDescriptions: (service) => {
+      descriptionService = service;
     },
     store,
     repository: development?.repository,
@@ -443,6 +473,78 @@ export async function buildApp(
   }
   const quality =
     larkRuntime?.quality.repository ?? new QualityRepository(store.db);
+  const savedBotInbox = larkRuntime?.inbox ?? new LarkEventInbox(store);
+  const reprocessing = new ReprocessingService(store, {
+    ...reprocessingOperations({
+      store,
+      config,
+      repository: knowledgeRepository,
+      pages: pageService,
+      descriptions: descriptionService,
+      documents: documentImports,
+      personalLark,
+      bot: async (id, remote, replace, requestId) => {
+        if (remote && !larkRuntime)
+          throw Error("读取远端资源需要启用飞书机器人连接");
+        const saved = savedBotInbox.material(id);
+        const revision = saved?.revisionId && store.revision(saved.revisionId);
+        const cleared =
+          replace && revision
+            ? store.retention.clearDerived(revision.sourceId, {
+                learning: true,
+                descriptions: true,
+                articles: true,
+              })
+            : undefined;
+        const result = savedBotInbox.reprocess(id, {
+          mode: remote ? "remote" : "saved",
+          requestId,
+          replace,
+        });
+        return {
+          jobIds: [result.job.id],
+          summary: remote
+            ? "正在补读机器人消息资源并重新理解"
+            : "正在重新理解保存的机器人原件",
+          cleared,
+        };
+      },
+    }),
+    onError: (error) => app.log.error(error),
+  });
+  registerReprocessing(app, reprocessing);
+  app.get("/api/document-imports", async () => documentImports.list());
+  app.get<{ Params: { id: string } }>(
+    "/api/document-imports/:id",
+    async (req, reply) =>
+      documentImports.get(req.params.id) ??
+      reply.code(404).send({ error: "导入记录不存在" }),
+  );
+  app.get<{ Params: { id: string } }>(
+    "/api/document-imports/:id/original",
+    async (req, reply) => {
+      const item = documentImports.get(req.params.id);
+      const bytes = item && store.asset(item.originalAssetId);
+      if (!item || !bytes)
+        return reply.code(404).send({ error: "原件不可用，请检查冷存储" });
+      return reply
+        .header("X-Content-Type-Options", "nosniff")
+        .header(
+          "Content-Disposition",
+          `attachment; filename*=UTF-8''${encodeURIComponent(item.name)}`,
+        )
+        .type("application/octet-stream")
+        .send(bytes);
+    },
+  );
+  app.addHook("onReady", async () => {
+    documentImports.start();
+    reprocessing.start();
+  });
+  app.addHook("preClose", async () => {
+    await reprocessing.stop();
+    await documentImports.stop();
+  });
   const requireLark = () => {
     if (!lark) throw Error("LARK_ONBOARDING_NOT_CONFIGURED");
     return lark;
@@ -474,6 +576,7 @@ export async function buildApp(
   });
   app.setErrorHandler((error, _req, reply) => {
     const e = error as Error;
+    app.log.error({ err: e, requestId: _req.id }, "API request failed");
     const code =
       e.message.includes("REBASE_REQUIRED") ||
       e.message.includes("STALE_") ||
@@ -632,6 +735,17 @@ export async function buildApp(
     const b = z
       .object({ path: str, contextIds: contextIdsSchema.optional() })
       .parse(req.body);
+    if ([".pdf", ".docx"].includes(extname(b.path).toLowerCase())) {
+      const path = await allowedPath(b.path, config.captureRoots);
+      if ((await stat(path)).size > 20_000_000)
+        throw Error("文件不能超过 20 MB");
+      return documentImports.save({
+        bytes: await readFile(path),
+        name: path,
+        externalId: path,
+        contextIds: b.contextIds,
+      });
+    }
     return store.capture(
       captureSchema.parse(
         await fileInput(b.path, config.captureRoots, config.dataDir),
@@ -654,12 +768,12 @@ export async function buildApp(
         .parse(req.body);
       const bytes = Buffer.from(b.data, "base64");
       if (bytes.toString("base64") !== b.data) throw Error("文件编码无效");
-      return store.capture(
-        captureSchema.parse(
-          await documentInput(bytes, b.name, config.dataDir, b.externalId),
-        ),
-        { contextIds: b.contextIds },
-      );
+      return documentImports.save({
+        bytes,
+        name: b.name,
+        externalId: b.externalId,
+        contextIds: b.contextIds,
+      });
     },
   );
   app.post("/api/connectors/git", async (req) => {
@@ -713,19 +827,40 @@ export async function buildApp(
   );
   app.get<{ Params: { id: string } }>(
     "/api/revisions/:id",
-    async (req, reply) =>
-      store.revision(req.params.id) ||
-      reply.code(404).send({ error: "Revision not found" }),
+    async (req, reply) => {
+      const revision = store.revision(req.params.id);
+      if (revision) return revision;
+      const retired = store.retention.revisionAvailability(req.params.id);
+      return reply
+        .code(retired ? 410 : 404)
+        .send({ error: retired?.reason ?? "原文版本不存在" });
+    },
   );
   app.get<{ Params: { id: string } }>("/api/sources/:id/history", async (req) =>
     store.history(req.params.id),
+  );
+  app.get<{ Params: { id: string } }>(
+    "/api/sources/:id",
+    async (req, reply) => {
+      const row = store.db
+        .prepare("SELECT head FROM sources WHERE id=?")
+        .get(req.params.id);
+      const revision = row && store.revision(String(row.head));
+      return revision
+        ? { revision, retention: store.retention.policy(req.params.id) }
+        : reply.code(404).send({ error: "来源不存在或原件不可用" });
+    },
   );
   app.get<{ Params: { id: string; asset: string } }>(
     "/api/revisions/:id/document/:asset",
     async (req, reply) => {
       const document = store.revision(req.params.id)?.context.document;
-      if (!document)
-        return reply.code(404).send({ error: "此版本没有文档原件" });
+      if (!document) {
+        const retired = store.retention.revisionAvailability(req.params.id);
+        return reply
+          .code(retired?.removedAt ? 410 : 404)
+          .send({ error: retired?.reason ?? "此版本没有文档原件" });
+      }
       const asset = req.params.asset;
       if (asset === "original" || asset === "structure") {
         const bytes = store.asset(
@@ -763,9 +898,14 @@ export async function buildApp(
   );
   app.get<{ Params: { id: string } }>(
     "/api/evidence/:id",
-    async (req, reply) =>
-      store.evidence(req.params.id) ||
-      reply.code(404).send({ error: "Evidence not found" }),
+    async (req, reply) => {
+      const evidence = store.evidence(req.params.id);
+      if (evidence) return evidence;
+      const retired = store.retention.fragmentAvailability(req.params.id);
+      return reply
+        .code(retired ? 410 : 404)
+        .send({ error: retired?.reason ?? "原文引用不存在" });
+    },
   );
   app.post("/api/relations", async (req) => {
     const b = z.object({ from: str, to: str }).strict().parse(req.body);
@@ -1379,14 +1519,25 @@ export async function buildApp(
   }, 30000);
   tick.unref();
   let lastInputError = "";
+  let savedBotPending: Promise<unknown> | undefined;
   const inputTick = setInterval(() => {
+    if (!larkRuntime && !savedBotPending) {
+      savedBotPending = savedBotInbox
+        .processSavedOnce()
+        .catch((error) =>
+          app.log.error({ err: error }, "bot.saved_reprocess_failed"),
+        )
+        .finally(() => {
+          savedBotPending = undefined;
+        });
+    }
     try {
       store.inputs.flushReady((input) => store.capture(input));
       lastInputError = "";
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
       if (message !== lastInputError)
-        console.error(`omem input aggregation failed: ${message}`);
+        app.log.error({ err: error }, "capture.aggregation_failed");
       lastInputError = message;
     }
   }, 1000);
@@ -1403,11 +1554,16 @@ export async function buildApp(
     await recovery;
     clearInterval(tick);
     clearInterval(inputTick);
+    if (!larkRuntime) {
+      savedBotInbox.stop();
+      await savedBotPending;
+    }
     await learning?.stop();
     await larkRuntime?.stop();
     await runs.close();
     await retrievalService.close();
     store.close();
+    releaseLogger();
   });
   return {
     app,
@@ -1424,5 +1580,7 @@ export async function buildApp(
     personalLark,
     schedules,
     brief,
+    documentImports,
+    reprocessing,
   };
 }

@@ -61,6 +61,15 @@ export function restoreMaterialDescriptions(
       unavailable++;
       continue;
     }
+    const cleared = repository.store.db
+      .prepare(
+        "SELECT removed_at FROM description_clear_epochs WHERE revision_id=?",
+      )
+      .get(material.revisionId);
+    if (cleared && artifact.generation.at <= String(cleared.removed_at)) {
+      unavailable++;
+      continue;
+    }
     const previous = repository.store.descriptions.get(material.revisionId);
     if (
       previous?.author === "user" ||
@@ -74,7 +83,7 @@ export function restoreMaterialDescriptions(
       artifact.description,
       "model",
       previous?.version ?? 0,
-      artifact.generation.trace,
+      { ...artifact.generation.trace, generatedAt: artifact.generation.at },
     );
     restored++;
   }

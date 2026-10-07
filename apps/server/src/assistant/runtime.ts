@@ -33,6 +33,7 @@ import type {
 import { fragmentPositions } from "../knowledge/structure.js";
 import { stableDigest } from "../storage/digest.js";
 import { assistantProjectSelectionSchema } from "../../../../packages/contracts/src/assistant.js";
+import { getLogger, logFailure, withLogContext } from "../logging/logger.js";
 import type { MaterialContext } from "../../../../packages/contracts/src/contexts.js";
 
 export type ResearchActivity = {
@@ -567,14 +568,34 @@ export class AssistantRuntime {
     external: AbortSignal | undefined,
     controller: AbortController,
   ) {
-    return AbortSignal.any([controller.signal, ...(external ? [external] : [])]);
+    return AbortSignal.any([
+      controller.signal,
+      ...(external ? [external] : []),
+    ]);
   }
 
   private assertNotCancelled(signal: AbortSignal) {
     if (signal.aborted) throw new TurnCancelledError();
   }
 
-  private async executeTurn(input: {
+  private executeTurn(input: {
+    turnId: string;
+    conversation: Conversation;
+    userText: string;
+    transportEventId: string | null;
+    signal: AbortSignal;
+  }) {
+    return withLogContext(
+      {
+        turnId: input.turnId,
+        conversationId: input.conversation.id,
+        messageId: input.transportEventId ?? undefined,
+      },
+      () => this.executeTurnLogged(input),
+    );
+  }
+
+  private async executeTurnLogged(input: {
     turnId: string;
     conversation: Conversation;
     userText: string;
@@ -582,8 +603,14 @@ export class AssistantRuntime {
     signal: AbortSignal;
   }) {
     const inactivity = new AbortController();
-    const watchdog = activityWatchdog(this.options.turnTimeoutMs ?? 60_000, (reason) => inactivity.abort(new Error(reason)));
-    input = { ...input, signal: AbortSignal.any([input.signal, inactivity.signal]) };
+    const watchdog = activityWatchdog(
+      this.options.turnTimeoutMs ?? 60_000,
+      (reason) => inactivity.abort(new Error(reason)),
+    );
+    input = {
+      ...input,
+      signal: AbortSignal.any([input.signal, inactivity.signal]),
+    };
     this.router.startTurn(input.turnId);
     try {
       const refs = this.router.turn(input.turnId)!.inputMessageRefs;
@@ -606,12 +633,13 @@ export class AssistantRuntime {
         .filter(
           (t) => t.id !== input.turnId && t.inputMessageRefs.status === "done",
         );
-      const priorTurns = (maxPrior > 0 ? completedTurns.slice(-maxPrior) : [])
-        .map((t) => ({
-          ordinal: t.ordinal,
-          userText: t.inputText,
-          result: t.result,
-        }));
+      const priorTurns = (
+        maxPrior > 0 ? completedTurns.slice(-maxPrior) : []
+      ).map((t) => ({
+        ordinal: t.ordinal,
+        userText: t.inputText,
+        result: t.result,
+      }));
 
       // 1. Read-only retrieval via RetrievalPort, then visibility filtering.
       //    G08: also merge prior turn working context so the model sees fragments
@@ -624,8 +652,9 @@ export class AssistantRuntime {
       const retrieved = context.evidence;
       let background = context.background;
       const inScope = this.readingScope(input.conversation);
-      const priorCtx = this.priorWorkingContext(input.conversation).filter(e =>
-        (e.sourceTarget?.fragmentIds ?? [e.fragmentId]).every(inScope));
+      const priorCtx = this.priorWorkingContext(input.conversation).filter(
+        (e) => (e.sourceTarget?.fragmentIds ?? [e.fragmentId]).every(inScope),
+      );
       let evidence = [
         ...retrieved,
         ...priorCtx.filter(
@@ -640,9 +669,12 @@ export class AssistantRuntime {
 
       // 1b. Read owner-scoped corrections from FeedbackService (H-G16).
       const trustedContext = this.readScopedCorrections(input.conversation);
-      const projects = input.conversation.visibility === "private"
-        ? this.store.contexts.list().filter(c => c.kind === "project") : [];
-      const workingProject = projects.find(p => p.id === input.conversation.projectId) ?? null;
+      const projects =
+        input.conversation.visibility === "private"
+          ? this.store.contexts.list().filter((c) => c.kind === "project")
+          : [];
+      const workingProject =
+        projects.find((p) => p.id === input.conversation.projectId) ?? null;
       const tasks = this.visibleTasks(input.conversation);
       const clock = {
         now: new Date().toISOString(),
@@ -663,8 +695,14 @@ export class AssistantRuntime {
             evidence,
             background,
             visibility: input.conversation.visibility,
-            ownerScoped: input.conversation.principalId === (this.options.ownerId ?? "owner") && input.conversation.visibility === "private",
-            workScope: { conversationId: input.conversation.id, turnId: input.turnId },
+            ownerScoped:
+              input.conversation.principalId ===
+                (this.options.ownerId ?? "owner") &&
+              input.conversation.visibility === "private",
+            workScope: {
+              conversationId: input.conversation.id,
+              turnId: input.turnId,
+            },
             trustedContext,
             workingProject,
             projects,
@@ -718,8 +756,14 @@ export class AssistantRuntime {
               evidence,
               background,
               visibility: input.conversation.visibility,
-              ownerScoped: input.conversation.principalId === (this.options.ownerId ?? "owner") && input.conversation.visibility === "private",
-              workScope: { conversationId: input.conversation.id, turnId: input.turnId },
+              ownerScoped:
+                input.conversation.principalId ===
+                  (this.options.ownerId ?? "owner") &&
+                input.conversation.visibility === "private",
+              workScope: {
+                conversationId: input.conversation.id,
+                turnId: input.turnId,
+              },
               trustedContext,
               workingProject,
               projects,
@@ -758,6 +802,11 @@ export class AssistantRuntime {
         }
         const unavailable = error instanceof ModelUnavailableError;
         if (unavailable) {
+          logFailure(
+            getLogger({ component: "assistant" }),
+            "assistant.model_unavailable",
+            error,
+          );
           // H-G20: model unavailable leaves the turn PENDING so it can be retried.
           this.router.markPending(
             input.turnId,
@@ -780,8 +829,13 @@ export class AssistantRuntime {
       // visibility or action authority; topic changes can explicitly clear it.
       let projectId = workingProject?.id ?? null;
       if (!degraded && reply.projectSelection) {
-        const selection = assistantProjectSelectionSchema.parse(reply.projectSelection);
-        if (selection.project_id && !projects.some(p => p.id === selection.project_id))
+        const selection = assistantProjectSelectionSchema.parse(
+          reply.projectSelection,
+        );
+        if (
+          selection.project_id &&
+          !projects.some((p) => p.id === selection.project_id)
+        )
           throw Error("所选项目不在本次可用项目中");
         projectId = selection.project_id;
       }
@@ -810,19 +864,33 @@ export class AssistantRuntime {
       if (!degraded && reply.workAction) {
         this.assertNotCancelled(input.signal);
         try {
-          if (mode === "research" || !this.options.work) throw Error("当前会话没有工作操作权限");
-          if (reply.toolCalls?.length) throw Error("一次只执行一类工作操作，请勿同时创建普通事项");
-          toolActions.push(this.options.work.apply(reply.workAction, {
-            requestId: input.turnId, conversationId: input.conversation.id, principalId: input.conversation.principalId,
-            userText: input.userText, visibility: input.conversation.visibility,
-          }));
+          if (mode === "research" || !this.options.work)
+            throw Error("当前会话没有工作操作权限");
+          if (reply.toolCalls?.length)
+            throw Error("一次只执行一类工作操作，请勿同时创建普通事项");
+          toolActions.push(
+            this.options.work.apply(reply.workAction, {
+              requestId: input.turnId,
+              conversationId: input.conversation.id,
+              principalId: input.conversation.principalId,
+              userText: input.userText,
+              visibility: input.conversation.visibility,
+            }),
+          );
         } catch (error) {
-          toolActions.push({ tool: "work_action", rejected: true, message: `未执行工作操作：${error instanceof Error ? error.message : String(error)}` });
+          toolActions.push({
+            tool: "work_action",
+            rejected: true,
+            message: `未执行工作操作：${error instanceof Error ? error.message : String(error)}`,
+          });
         }
       }
-      if (!degraded && reply.projectSelection) toolActions.push({
-        tool: "select_project", projectId, reason: reply.projectSelection.reason,
-      });
+      if (!degraded && reply.projectSelection)
+        toolActions.push({
+          tool: "select_project",
+          projectId,
+          reason: reply.projectSelection.reason,
+        });
       let taskRejectedReason: string | null = null;
       if (!degraded && mode !== "research" && !reply.workAction) {
         for (const call of reply.toolCalls ?? []) {
@@ -871,44 +939,46 @@ export class AssistantRuntime {
       const mutations = toolActions.filter(
         (a) => a.tool === "create_task" || a.tool === "update_task",
       );
-      const workReceipts = toolActions.filter(a => a.tool === "work_action");
-      const finalAnswer = workReceipts.length ? workReceipts.map(r => String(r.message)).join("\n") : mutations.length
-        ? mutations
-            .map((action) => {
-              if (action.rejected)
-                return `${action.tool === "create_task" ? "未创建任务" : "未执行事项变更"}：${action.detail ?? action.reason}。`;
-              const task = this.store
-                .tasks()
-                .find((t) => t.id === action.taskId);
-              if (!task) return "事项变更尚未确认。";
-              const verb =
-                action.tool === "create_task"
-                  ? "已创建任务"
-                  : ((
-                      {
-                        complete: "已完成",
-                        reopen: "已重新打开",
-                        reschedule: "已改期",
-                        wait: "已设为等待",
-                        snooze: "已暂缓提醒",
-                        cancel: "已取消",
-                      } as Record<string, string>
-                    )[String(action.action)] ?? "已更新");
-              const time = task.dueAt
-                ? `；截止时间：${new Intl.DateTimeFormat("zh-CN", { timeZone: clock.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(String(task.dueAt)))}（${clock.timezone}）`
-                : "";
-              const follow = task.followUp
-                ? taskFollowUpSchema.parse(task.followUp)
-                : null;
-              const check = follow?.next_check_at
-                ? `；下次跟进：${new Intl.DateTimeFormat("zh-CN", { timeZone: follow.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(follow.next_check_at))}（${follow.timezone}）`
-                : follow?.waiting_on
-                  ? "；尚未设置跟进时间"
+      const workReceipts = toolActions.filter((a) => a.tool === "work_action");
+      const finalAnswer = workReceipts.length
+        ? workReceipts.map((r) => String(r.message)).join("\n")
+        : mutations.length
+          ? mutations
+              .map((action) => {
+                if (action.rejected)
+                  return `${action.tool === "create_task" ? "未创建任务" : "未执行事项变更"}：${action.detail ?? action.reason}。`;
+                const task = this.store
+                  .tasks()
+                  .find((t) => t.id === action.taskId);
+                if (!task) return "事项变更尚未确认。";
+                const verb =
+                  action.tool === "create_task"
+                    ? "已创建任务"
+                    : ((
+                        {
+                          complete: "已完成",
+                          reopen: "已重新打开",
+                          reschedule: "已改期",
+                          wait: "已设为等待",
+                          snooze: "已暂缓提醒",
+                          cancel: "已取消",
+                        } as Record<string, string>
+                      )[String(action.action)] ?? "已更新");
+                const time = task.dueAt
+                  ? `；截止时间：${new Intl.DateTimeFormat("zh-CN", { timeZone: clock.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(String(task.dueAt)))}（${clock.timezone}）`
                   : "";
-              return `${verb}：${task.title}${["complete", "cancel"].includes(String(action.action)) ? "" : time + (follow?.waiting_on ? `；等待：${follow.waiting_on}` : "") + check}。`;
-            })
-            .join("\n")
-        : reply.answer;
+                const follow = task.followUp
+                  ? taskFollowUpSchema.parse(task.followUp)
+                  : null;
+                const check = follow?.next_check_at
+                  ? `；下次跟进：${new Intl.DateTimeFormat("zh-CN", { timeZone: follow.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(follow.next_check_at))}（${follow.timezone}）`
+                  : follow?.waiting_on
+                    ? "；尚未设置跟进时间"
+                    : "";
+                return `${verb}：${task.title}${["complete", "cancel"].includes(String(action.action)) ? "" : time + (follow?.waiting_on ? `；等待：${follow.waiting_on}` : "") + check}。`;
+              })
+              .join("\n")
+          : reply.answer;
 
       // 4. Only allow citations the runtime actually supplied.
       const allowed = new Set(
@@ -947,6 +1017,12 @@ export class AssistantRuntime {
           this.router.setProject(input.conversation.id, projectId);
       });
     } catch (error) {
+      if (!input.signal.aborted)
+        logFailure(
+          getLogger({ component: "assistant" }),
+          "assistant.turn_failed",
+          error,
+        );
       if (input.signal.aborted || error instanceof TurnCancelledError)
         this.router.cancelTurn(input.turnId, "cancelled");
       else
@@ -960,14 +1036,23 @@ export class AssistantRuntime {
   }
 
   /** Reject even when a model ignores cancellation, and always release the listener. */
-  private async withCancellation<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  private async withCancellation<T>(
+    promise: Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
     let rejectAbort: (e: Error) => void = () => {};
-    const aborted = new Promise<never>((_, reject) => { rejectAbort = reject; });
-    const onAbort = () => rejectAbort(new TurnCancelledError(signal.reason?.message ?? "aborted"));
+    const aborted = new Promise<never>((_, reject) => {
+      rejectAbort = reject;
+    });
+    const onAbort = () =>
+      rejectAbort(new TurnCancelledError(signal.reason?.message ?? "aborted"));
     signal.addEventListener("abort", onAbort, { once: true });
     if (signal.aborted) onAbort();
-    try { return await Promise.race([promise, aborted]); }
-    finally { signal.removeEventListener("abort", onAbort); }
+    try {
+      return await Promise.race([promise, aborted]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
   }
 
   private async retrieveContext(
@@ -992,7 +1077,15 @@ export class AssistantRuntime {
       visible,
     });
     const selected = this.options.decisions
-      ? await assessPassages(this.options.decisions, userText, hits)
+      ? await assessPassages(this.options.decisions, userText, hits, {
+          sourceIdFor: (hit) => {
+            if (hit.target.kind !== "source") return undefined;
+            const row = this.store.db
+              .prepare("SELECT source_id FROM revisions WHERE id=?")
+              .get(hit.target.revisionId);
+            return row ? String(row.source_id) : undefined;
+          },
+        })
       : { hits };
     return assembleAnswerContext(this.store, selected.hits, visible);
   }
@@ -1063,12 +1156,28 @@ export class AssistantRuntime {
   /** Apply the saved material membership before ranking/limiting. Native Agent
    * tools remain free to investigate another project or necessary background. */
   private readingScope(conversation: Conversation): (id: string) => boolean {
-    const project = conversation.visibility === "private" && conversation.projectId
-      ? this.store.contexts.list().find(c => c.kind === "project" && c.id === conversation.projectId) : null;
-    const members = project ? new Set(this.store.db.prepare(`SELECT f.id FROM fragments f
+    const project =
+      conversation.visibility === "private" && conversation.projectId
+        ? this.store.contexts
+            .list()
+            .find(
+              (c) => c.kind === "project" && c.id === conversation.projectId,
+            )
+        : null;
+    const members = project
+      ? new Set(
+          this.store.db
+            .prepare(
+              `SELECT f.id FROM fragments f
       JOIN revisions r ON r.id=f.revision_id
-      JOIN material_context_sources s ON s.source_id=r.source_id WHERE s.context_id=?`).all(project.id).map(r => String(r.id))) : null;
-    return id => this.isVisible(conversation, id) && (!members || members.has(id));
+      JOIN material_context_sources s ON s.source_id=r.source_id WHERE s.context_id=?`,
+            )
+            .all(project.id)
+            .map((r) => String(r.id)),
+        )
+      : null;
+    return (id) =>
+      this.isVisible(conversation, id) && (!members || members.has(id));
   }
 
   private visibleTasks(conversation: Conversation): AssistantTask[] {
@@ -1140,31 +1249,37 @@ export class AssistantRuntime {
           : null;
       if (call.action === "reschedule" && !dueAt)
         return reject("请给出明确的改期时间");
-      const taskProject = tasks.find(t => t.id === call.taskId)?.projectId;
-      const contextIds = taskProject && this.store.contexts.list().some(c => c.id === taskProject)
-        ? [taskProject] : [];
-      const revision = this.store.capture({
-        source: "manual",
-        externalId: `turn:${input.turnId}`,
-        title: "事项变更指令",
-        parts: [{ type: "text", text: input.userText }],
-        context: {
-          conversationId: input.conversation.chatId ?? input.conversation.id,
+      const taskProject = tasks.find((t) => t.id === call.taskId)?.projectId;
+      const contextIds =
+        taskProject &&
+        this.store.contexts.list().some((c) => c.id === taskProject)
+          ? [taskProject]
+          : [];
+      const revision = this.store.capture(
+        {
+          source: "manual",
+          externalId: `turn:${input.turnId}`,
+          title: "事项变更指令",
+          parts: [{ type: "text", text: input.userText }],
+          context: {
+            conversationId: input.conversation.chatId ?? input.conversation.id,
+          },
+          provenance: {
+            collectorId: "assistant",
+            actorId: this.options.ownerId ?? "owner",
+            actorType: "owner",
+            actorVerifiedBy: "runtime",
+            sourceUri: null,
+            eventId: input.turnId,
+            eventAt: new Date().toISOString(),
+            timezone: this.options.timezone ?? "Asia/Shanghai",
+            quoted: false,
+            forwarded: false,
+            producerKind: "original",
+          },
         },
-        provenance: {
-          collectorId: "assistant",
-          actorId: this.options.ownerId ?? "owner",
-          actorType: "owner",
-          actorVerifiedBy: "runtime",
-          sourceUri: null,
-          eventId: input.turnId,
-          eventAt: new Date().toISOString(),
-          timezone: this.options.timezone ?? "Asia/Shanghai",
-          quoted: false,
-          forwarded: false,
-          producerKind: "original",
-        },
-      }, { contextIds }).revision;
+        { contextIds },
+      ).revision;
       const receipt = this.options.memory.commandTask({
         taskId: call.taskId,
         expectedVersion: call.expectedVersion,
@@ -1387,26 +1502,29 @@ export class AssistantRuntime {
     {
       try {
         const extId = `turn:${input.requestId}`;
-        const rev = this.store.capture({
-          source: "manual",
-          externalId: extId,
-          title: "owner direct message",
-          parts: [{ type: "text", text: input.userText.slice(0, 2000) }],
-          context: { conversationId: input.conversation.id },
-          provenance: {
-            collectorId: "assistant",
-            actorId: ownerId,
-            actorType: "owner",
-            actorVerifiedBy: "runtime",
-            sourceUri: null,
-            eventId: input.transportEventId,
-            eventAt: new Date().toISOString(),
-            timezone: this.options.timezone ?? "Asia/Shanghai",
-            quoted: false,
-            forwarded: false,
-            producerKind: "original",
+        const rev = this.store.capture(
+          {
+            source: "manual",
+            externalId: extId,
+            title: "owner direct message",
+            parts: [{ type: "text", text: input.userText.slice(0, 2000) }],
+            context: { conversationId: input.conversation.id },
+            provenance: {
+              collectorId: "assistant",
+              actorId: ownerId,
+              actorType: "owner",
+              actorVerifiedBy: "runtime",
+              sourceUri: null,
+              eventId: input.transportEventId,
+              eventAt: new Date().toISOString(),
+              timezone: this.options.timezone ?? "Asia/Shanghai",
+              quoted: false,
+              forwarded: false,
+              producerKind: "original",
+            },
           },
-        }, { contextIds: input.projectId ? [input.projectId] : [] }).revision;
+          { contextIds: input.projectId ? [input.projectId] : [] },
+        ).revision;
         if (rev.fragments[0]) {
           directEvidence = [
             {

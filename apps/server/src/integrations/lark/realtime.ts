@@ -10,6 +10,14 @@ import type { Store } from "../../store.js";
 import type { CaptureInput } from "../../../../../packages/contracts/src/index.js";
 import { stableDigest } from "../../storage/digest.js";
 import { EncryptedSecretStore } from "./secret-store.js";
+import { saveImportAssetSync } from "../../imports/documents.js";
+import {
+  messageMaterial,
+  type MessageResource,
+} from "../lark-personal/materials.js";
+import type { LarkResourcePort } from "./resources.js";
+import { DurableJobWorker, JobExecutionError } from "../../jobs/worker.js";
+import type { JobLease } from "../../jobs/repository.js";
 
 type Row = Record<string, unknown>;
 export type LarkInboundEvent = {
@@ -45,7 +53,10 @@ export interface LarkMediaPort {
     appId: string;
     messageId: string;
     imageKey: string;
-  }): Promise<{ dataBase64: string; mimeType: "image/png" | "image/jpeg" | "image/webp" }>;
+  }): Promise<{
+    dataBase64: string;
+    mimeType: "image/png" | "image/jpeg" | "image/webp";
+  }>;
 }
 
 export interface LarkRealtimeAdapter {
@@ -312,6 +323,9 @@ export class LarkEventInbox {
   private readonly ownerId: string;
   private readonly assistant?: LarkAssistantHook;
   private readonly media?: LarkMediaPort;
+  private readonly resources?: LarkResourcePort;
+  private readonly worker: DurableJobWorker;
+  private readonly activeWorkers = new Set<DurableJobWorker>();
   /** Test seam: invoked after the reply outbox row is committed but before the
    *  inbox event is marked processed. Throwing here simulates a crash and must
    *  leave the outbox row in place so a restart / redelivery still delivers. */
@@ -325,13 +339,228 @@ export class LarkEventInbox {
       ownerId?: string;
       assistant?: LarkAssistantHook;
       media?: LarkMediaPort;
+      resources?: LarkResourcePort;
       afterReplyEnqueued?: (info: { turnId: string; outboxId: string }) => void;
     } = {},
   ) {
     this.ownerId = options.ownerId ?? "owner";
     this.assistant = options.assistant;
     this.media = options.media;
+    this.resources = options.resources;
     this.afterReplyEnqueued = options.afterReplyEnqueued;
+    store.db.exec(`CREATE TABLE IF NOT EXISTS lark_message_materials(
+      inbox_id TEXT PRIMARY KEY,event_json TEXT NOT NULL,raw_asset_id TEXT NOT NULL,
+      resources TEXT NOT NULL DEFAULT '[]',revision_id TEXT,last_result TEXT,updated_at TEXT NOT NULL)`);
+    this.worker = this.createWorker();
+  }
+
+  private createWorker(jobIds?: string[]) {
+    return new DurableJobWorker(
+      this.store.jobs,
+      `lark-inbound-${randomUUID()}`,
+      {
+        lark_inbound: (job, signal) => this.processJob(job, signal),
+      },
+      {
+        kinds: ["lark_inbound"],
+        jobIds,
+        fingerprint: () => ({
+          model: null,
+          effort: null,
+          promptHash: "lark-inbound@1",
+          skillHash: "lark-inbound@1",
+          toolHash: "lark-inbound@1",
+        }),
+      },
+    );
+  }
+  enqueue(event: LarkInboundEvent) {
+    const receipt = this.persist(event);
+    const queued = this.store.jobs.enqueue({
+      kind: "lark_inbound",
+      inputRefs: [{ inboxId: receipt.id, mode: "receive" }],
+      roleVersion: "lark-inbound@1",
+      policyVersion: "original-first@1",
+      maxAttempts: 5,
+    });
+    return { ...receipt, job: queued.job };
+  }
+  async receive(event: LarkInboundEvent) {
+    const queued = this.enqueue(event);
+    if (queued.duplicate && queued.job.state === "retry_wait")
+      this.store.db
+        .prepare(
+          "UPDATE jobs SET not_before=? WHERE id=? AND state='retry_wait'",
+        )
+        .run(new Date().toISOString(), queued.job.id);
+    // A callback can wait for its result, while a crash leaves the same job for the host worker.
+    const result = await this.processJobId(queued.job.id);
+    if (result.processed && "job" in result && result.job?.lastError)
+      throw Error(result.job.lastError);
+    const row = this.store.db
+      .prepare(
+        "SELECT last_result FROM lark_message_materials WHERE inbox_id=?",
+      )
+      .get(queued.id);
+    return row?.last_result
+      ? JSON.parse(String(row.last_result))
+      : { ...queued, outcome: "queued" };
+  }
+  material(inboxId: string) {
+    const row = this.store.db
+      .prepare("SELECT * FROM lark_message_materials WHERE inbox_id=?")
+      .get(inboxId);
+    return row
+      ? {
+          inboxId,
+          rawAssetId: String(row.raw_asset_id),
+          revisionId: row.revision_id ? String(row.revision_id) : null,
+          sourceId: row.revision_id
+            ? (this.store.revision(String(row.revision_id))?.sourceId ?? null)
+            : null,
+          resources: JSON.parse(String(row.resources)) as MessageResource[],
+        }
+      : null;
+  }
+  reprocess(
+    inboxId: string,
+    options: {
+      mode?: "saved" | "remote";
+      requestId?: string;
+      replace?: boolean;
+    } = {},
+  ) {
+    this.restoreLegacyMaterial(inboxId);
+    const material = this.material(inboxId);
+    if (!material) throw Error("机器人原始事件不存在");
+    const queued = this.store.jobs.enqueue({
+      kind: "lark_inbound",
+      inputRefs: [
+        {
+          inboxId,
+          mode: options.mode ?? "saved",
+          requestId: options.requestId ?? randomUUID(),
+          replace: options.replace ?? false,
+        },
+      ],
+      roleVersion: "lark-inbound@1",
+      policyVersion: "original-first@1",
+      maxAttempts: 3,
+      cause: "reprocess_bot_original",
+    });
+    return { material, job: queued.job };
+  }
+  private restoreLegacyMaterial(inboxId: string) {
+    if (this.material(inboxId)) return;
+    const row = this.store.db
+      .prepare("SELECT * FROM event_inbox WHERE id=?")
+      .get(inboxId);
+    if (!row?.payload || !row.event_kind) return;
+    const payload = JSON.parse(String(row.payload));
+    const normalized = normalizeLarkEvent(
+      String(row.app_id),
+      String(row.event_kind) as LarkInboundEvent["kind"],
+      payload,
+    );
+    const event: LarkInboundEvent = {
+      ...normalized,
+      eventId: String(row.event_id),
+      eventTime: String(row.event_time),
+      senderOpenId: safeString(row.sender_open_id),
+      chatId: safeString(row.chat_id),
+      messageId: safeString(row.message_id),
+    };
+    const rawAssetId = saveImportAssetSync(
+      this.store.dataDir,
+      Buffer.from(JSON.stringify(payload)),
+    );
+    const revision = this.store.db
+      .prepare(
+        "SELECT head FROM sources WHERE namespace='chat' AND external_id=?",
+      )
+      .get(`${event.appId}:${event.messageId}`);
+    this.store.db
+      .prepare(
+        "INSERT INTO lark_message_materials(inbox_id,event_json,raw_asset_id,revision_id,updated_at) VALUES(?,?,?,?,?)",
+      )
+      .run(
+        inboxId,
+        JSON.stringify(event),
+        rawAssetId,
+        revision?.head ?? null,
+        new Date().toISOString(),
+      );
+  }
+  processOnce() {
+    return this.worker.processOne();
+  }
+  async processJobId(jobId: string) {
+    const worker = this.createWorker([jobId]);
+    this.activeWorkers.add(worker);
+    try {
+      return await worker.processOne();
+    } finally {
+      this.activeWorkers.delete(worker);
+    }
+  }
+  async processSavedOnce() {
+    const ids = this.store.db
+      .prepare(
+        "SELECT id FROM jobs WHERE kind='lark_inbound' AND json_extract(input_refs,'$[0].mode')='saved' AND state IN ('queued','retry_wait','leased','running') ORDER BY created_at LIMIT 500",
+      )
+      .all()
+      .map((row) => String(row.id));
+    if (!ids.length) return { processed: false as const };
+    const worker = this.createWorker(ids);
+    this.activeWorkers.add(worker);
+    try {
+      return await worker.processOne();
+    } finally {
+      this.activeWorkers.delete(worker);
+    }
+  }
+  stop() {
+    this.worker.stop();
+    for (const worker of this.activeWorkers) worker.stop();
+  }
+  private async processJob(job: JobLease, signal: AbortSignal) {
+    const ref = job.inputRefs[0] as {
+      inboxId: string;
+      mode: "receive" | "saved" | "remote";
+      requestId?: string;
+      replace?: boolean;
+    };
+    const row = this.store.db
+      .prepare("SELECT event_json FROM lark_message_materials WHERE inbox_id=?")
+      .get(ref.inboxId);
+    if (!row) throw new JobExecutionError("机器人原件不存在", "permanent");
+    if (signal.aborted)
+      throw new JobExecutionError("收件处理已中断", "transient");
+    try {
+      const event = JSON.parse(String(row.event_json)) as LarkInboundEvent;
+      const result = await this.processMessage(event, ref.mode, job.id);
+      this.store.db
+        .prepare(
+          "UPDATE lark_message_materials SET last_result=?,updated_at=? WHERE inbox_id=?",
+        )
+        .run(JSON.stringify(result), new Date().toISOString(), ref.inboxId);
+      if (
+        "outcome" in result &&
+        result.outcome === "needs_resources" &&
+        ref.mode !== "receive"
+      )
+        throw new JobExecutionError(
+          "部分资源没有保存原件或暂不支持理解；未排队学习。可恢复原件或明确重新读取飞书后重试",
+          "config",
+        );
+      return { resultRef: ref.inboxId };
+    } catch (error) {
+      if (error instanceof JobExecutionError) throw error;
+      throw new JobExecutionError(
+        error instanceof Error ? error.message : "机器人收件失败",
+        "transient",
+      );
+    }
   }
 
   persist(event: LarkInboundEvent) {
@@ -356,6 +585,22 @@ export class LarkEventInbox {
       if (existing) {
         if (existing.payload_digest !== digest)
           throw Error("LARK_EVENT_CONFLICT");
+        if (!this.material(String(existing.id))) {
+          const rawAssetId = saveImportAssetSync(
+            this.store.dataDir,
+            Buffer.from(JSON.stringify(event.payload)),
+          );
+          this.store.db
+            .prepare(
+              "INSERT INTO lark_message_materials(inbox_id,event_json,raw_asset_id,updated_at) VALUES(?,?,?,?)",
+            )
+            .run(
+              String(existing.id),
+              JSON.stringify(event),
+              rawAssetId,
+              new Date().toISOString(),
+            );
+        }
         return {
           id: String(existing.id),
           duplicate: true,
@@ -363,6 +608,10 @@ export class LarkEventInbox {
         };
       }
       const id = randomUUID();
+      const rawAssetId = saveImportAssetSync(
+        this.store.dataDir,
+        Buffer.from(JSON.stringify(event.payload)),
+      );
       this.store.db
         .prepare(
           `INSERT INTO event_inbox(
@@ -385,6 +634,11 @@ export class LarkEventInbox {
           event.messageId,
           JSON.stringify(event.payload),
         );
+      this.store.db
+        .prepare(
+          "INSERT INTO lark_message_materials(inbox_id,event_json,raw_asset_id,updated_at) VALUES(?,?,?,?)",
+        )
+        .run(id, JSON.stringify(event), rawAssetId, new Date().toISOString());
       if (connection.connection_version) {
         const version = this.store.db
           .prepare(
@@ -416,9 +670,42 @@ export class LarkEventInbox {
     });
   }
 
-  async processMessage(event: LarkInboundEvent) {
-    const receipt = this.persist(event);
-    if (receipt.duplicate && receipt.state !== "received") return receipt;
+  async processMessage(
+    event: LarkInboundEvent,
+    mode: "receive" | "saved" | "remote" = "receive",
+    requestId?: string,
+  ) {
+    const stored =
+      mode !== "receive"
+        ? this.store.db
+            .prepare(
+              "SELECT id,state FROM event_inbox WHERE app_id=? AND event_id=?",
+            )
+            .get(event.appId, event.eventId)
+        : null;
+    const receipt = stored
+      ? { id: String(stored.id), state: String(stored.state), duplicate: true }
+      : this.persist(event);
+    if (mode === "receive" && receipt.duplicate && receipt.state !== "received")
+      return receipt;
+    // A user-requested saved replay is independent of the current bot connection.
+    // It never routes an old command to the assistant or replays target changes.
+    if (mode === "saved") {
+      if (!event.chatId || !event.messageId)
+        throw Error("此事件不是可重新理解的消息");
+      const saved = this.material(receipt.id);
+      const previous = saved?.revisionId
+        ? this.store.revision(saved.revisionId)
+        : null;
+      return this.rebuildMaterial(
+        event,
+        receipt,
+        previous?.provenance?.actorPrincipalId === this.ownerId,
+        mode,
+        requestId,
+        previous?.provenance,
+      );
+    }
     if (event.kind === "im.chat.member.bot.deleted_v1" && event.chatId) {
       this.store.tx(() => {
         const binding = this.store.db
@@ -527,11 +814,38 @@ export class LarkEventInbox {
         bindingOwnerOpenId &&
         event.senderOpenId === bindingOwnerOpenId,
     );
+    if (mode !== "receive") {
+      return this.rebuildMaterial(
+        event,
+        receipt,
+        isBoundOwner,
+        mode,
+        requestId,
+      );
+    }
     if (
       this.assistant &&
       isBoundOwner &&
-      (event.chatType !== "group" || this.botMentioned(event, capability.botOpenId))
+      (event.chatType !== "group" ||
+        this.botMentioned(event, capability.botOpenId))
     ) {
+      const material = await this.captureMaterial(
+        event,
+        receipt.id,
+        isBoundOwner,
+        "capture",
+      );
+      const saved = this.store.capture(material, {
+        learning: false,
+        notify: false,
+      });
+      this.store.db
+        .prepare(
+          "UPDATE lark_message_materials SET revision_id=? WHERE inbox_id=?",
+        )
+        .run(saved.revision.id, receipt.id);
+      if (!this.completeMaterial(material))
+        throw Error("消息资源尚未读取完整，原件已保留，尚未交给助手处理");
       const routed = await this.assistant({
         appId: event.appId,
         connectionId: String(connection.id),
@@ -626,14 +940,38 @@ export class LarkEventInbox {
       this.finish(receipt.id, "processed");
       return { ...receipt, outcome: "ignored_not_allowed" };
     }
-    const parts = await this.buildCaptureParts(event);
+    const material = await this.captureMaterial(
+      event,
+      receipt.id,
+      isBoundOwner,
+      "capture",
+    );
+    const original = this.store.capture(material, {
+      learning: false,
+      notify: false,
+    });
+    this.store.db
+      .prepare(
+        "UPDATE lark_message_materials SET revision_id=? WHERE inbox_id=?",
+      )
+      .run(original.revision.id, receipt.id);
+    if (!this.completeMaterial(material)) {
+      if (material.context.chat?.resources.some((r) => r.status === "failed"))
+        throw Error("部分消息资源读取失败，原件已保留，可重试");
+      this.finish(receipt.id, "processed");
+      return {
+        ...receipt,
+        outcome: "needs_resources",
+        revisionId: original.revision.id,
+      };
+    }
     const capture = this.store.inputs.ingest({
       source: "chat",
       externalId: `${event.appId}:${event.messageId}`,
       title: `飞书群消息 ${event.chatId}`,
       observedAt: event.eventTime,
-      parts,
-      context: { conversationId: event.chatId, event: event.kind },
+      parts: material.parts,
+      context: material.context,
       provenance: {
         collectorId: `lark:${event.appId}`,
         actorId: isBoundOwner ? this.ownerId : (event.senderOpenId ?? null),
@@ -655,6 +993,60 @@ export class LarkEventInbox {
     });
     this.finish(receipt.id, "processed");
     return { ...receipt, outcome: "captured", capture };
+  }
+
+  private async rebuildMaterial(
+    event: LarkInboundEvent,
+    receipt: { id: string; state: string; duplicate: boolean },
+    isOwner: boolean,
+    mode: "saved" | "remote",
+    requestId?: string,
+    originalProvenance?: CaptureInput["provenance"],
+  ) {
+    const input = await this.captureMaterial(event, receipt.id, isOwner, mode);
+    if (originalProvenance)
+      input.provenance = { ...originalProvenance, eventId: null };
+    const capture = this.store.capture(input, {
+      learning: false,
+      notify: false,
+    });
+    this.store.db
+      .prepare(
+        "UPDATE lark_message_materials SET revision_id=? WHERE inbox_id=?",
+      )
+      .run(capture.revision.id, receipt.id);
+    if (!this.completeMaterial(input))
+      return {
+        ...receipt,
+        outcome: "needs_resources",
+        revisionId: capture.revision.id,
+        message: "原件已保存，部分资源尚未读取或不支持理解；未排队学习",
+      };
+    const state = this.store.db
+      .prepare("SELECT validity_epoch FROM source_state WHERE source_id=?")
+      .get(capture.revision.sourceId)!;
+    const learning = this.store.jobs.enqueue({
+      kind: "extract_claims",
+      inputRefs: [
+        {
+          sourceId: capture.revision.sourceId,
+          revisionId: capture.revision.id,
+          validityEpoch: Number(state.validity_epoch),
+          reprocessRequestId: requestId ?? randomUUID(),
+        },
+      ],
+      roleVersion: "extractor@1",
+      policyVersion: "memory-policy@1",
+      cause: "reprocess_bot_original",
+      parentJobId:
+        requestId && this.store.jobs.get(requestId) ? requestId : null,
+    });
+    return {
+      ...receipt,
+      outcome: "reprocessed",
+      revisionId: capture.revision.id,
+      learningJobId: learning.job.id,
+    };
   }
 
   processPairing(
@@ -709,11 +1101,145 @@ export class LarkEventInbox {
   private botMentioned(event: LarkInboundEvent, botOpenId?: string) {
     if (!botOpenId) return false;
     const mentions = (
-      event.payload as { message?: { mentions?: Array<{ id?: { open_id?: string } }> } }
+      event.payload as {
+        message?: { mentions?: Array<{ id?: { open_id?: string } }> };
+      }
     )?.message?.mentions;
-    if (Array.isArray(mentions) && mentions.some((m) => m?.id?.open_id === botOpenId))
+    if (
+      Array.isArray(mentions) &&
+      mentions.some((m) => m?.id?.open_id === botOpenId)
+    )
       return true;
     return typeof event.text === "string" && event.text.includes(botOpenId);
+  }
+
+  private async captureMaterial(
+    event: LarkInboundEvent,
+    inboxId: string,
+    isOwner: boolean,
+    mode: "saved" | "remote" | "capture",
+  ): Promise<CaptureInput> {
+    const saved = this.material(inboxId)!;
+    const message = (event.payload as { message?: { content?: string } })
+      ?.message;
+    const resources: MessageResource[] = [...saved.resources];
+    const input = await messageMaterial(
+      this.store,
+      {
+        resource: async (messageId, key, type) => {
+          if (this.resources)
+            return this.resources.resource(event.appId, messageId, key, type);
+          if (type === "image" && this.media) {
+            const result = await this.media.downloadImage({
+              appId: event.appId,
+              messageId,
+              imageKey: key,
+            });
+            return Buffer.from(result.dataBase64, "base64");
+          }
+          throw Error("机器人资源读取未配置，原消息已保留");
+        },
+      },
+      {
+        message_id: event.messageId!,
+        chat_id: event.chatId!,
+        content: message?.content ?? event.text ?? "[非文本消息]",
+        create_time: event.eventTime,
+        msg_type: event.messageType ?? "text",
+        sender: { id: event.senderOpenId ?? undefined },
+      },
+      `飞书${event.chatType === "group" ? "群" : "私聊"}`,
+      `bot:${event.appId}`,
+      true,
+      mode === "remote",
+      () => {},
+      {
+        mode,
+        savedResources: saved.resources,
+        rawAssetId: saved.rawAssetId,
+        readDocument: (uri) => {
+          if (!this.resources?.document)
+            throw Error("机器人文档读取未配置；原链接仍保留");
+          return this.resources.document(event.appId, uri);
+        },
+        onResource: (resource) => {
+          const index = resources.findIndex((r) =>
+            resource.key ? r.key === resource.key : r.uri === resource.uri,
+          );
+          if (index >= 0) resources[index] = resource;
+          else resources.push(resource);
+          this.store.db
+            .prepare(
+              "UPDATE lark_message_materials SET resources=?,updated_at=? WHERE inbox_id=?",
+            )
+            .run(JSON.stringify(resources), new Date().toISOString(), inboxId);
+        },
+      },
+    );
+    const textParts =
+      event.messageType === "image" ? [] : await this.buildCaptureParts(event);
+    const richParts = input.input.parts.slice(1);
+    const parts = [...textParts, ...richParts].map((part) => ({
+      ...part,
+      provenance: {
+        actorExternalId: event.senderOpenId,
+        actorPrincipalId: isOwner ? this.ownerId : null,
+        observedAt: event.eventTime,
+        eventId: event.eventId,
+        replyTo: event.parentMessageId ?? null,
+        quoted: Boolean(event.parentMessageId),
+        forwarded: false,
+        producerKind: "original" as const,
+      },
+    }));
+    if (!parts.length)
+      parts.push({
+        type: "text",
+        text: "[图片消息；原件尚未读取]",
+        provenance: {
+          actorExternalId: event.senderOpenId,
+          actorPrincipalId: isOwner ? this.ownerId : null,
+          observedAt: event.eventTime,
+          eventId: event.eventId,
+          replyTo: event.parentMessageId ?? null,
+          quoted: Boolean(event.parentMessageId),
+          forwarded: false,
+          producerKind: "original",
+        },
+      });
+    return {
+      ...input.input,
+      externalId: `${event.appId}:${event.messageId}`,
+      title: `飞书消息 ${event.chatId}`,
+      parts,
+      context: { ...input.input.context, event: event.kind },
+      provenance: {
+        collectorId: `lark:${event.appId}`,
+        actorId: isOwner ? this.ownerId : event.senderOpenId,
+        actorType: isOwner ? "owner" : event.senderType,
+        actorVerifiedBy: isOwner ? "lark-binding" : null,
+        sourceUri: null,
+        eventId: null,
+        eventAt: event.eventTime,
+        timezone: null,
+        quoted: Boolean(event.parentMessageId),
+        forwarded: false,
+        producerKind: "original",
+        actorExternalId: event.senderOpenId,
+        actorPrincipalId: isOwner ? this.ownerId : null,
+      },
+    };
+  }
+  private completeMaterial(input: CaptureInput) {
+    return !input.context.chat?.resources.some(
+      (resource) =>
+        resource.status === "failed" ||
+        (resource.status === "saved" &&
+          !(
+            resource.kind === "image" &&
+            input.parts.some((part) => part.type === "image")
+          )),
+    );
   }
 
   /**
@@ -739,7 +1265,9 @@ export class LarkEventInbox {
       }
     }
     const replyTo = event.parentMessageId ?? null;
-    const withProvenance = <T extends CaptureInput["parts"][number]>(part: T) => ({
+    const withProvenance = <T extends CaptureInput["parts"][number]>(
+      part: T,
+    ) => ({
       ...part,
       provenance: {
         actorExternalId: event.senderOpenId ?? null,
@@ -792,9 +1320,7 @@ export class LarkEventInbox {
           if (tag === "text" && typeof text === "string") segments.push(text);
           else if (tag === "a" && typeof text === "string") {
             const href = (node as Record<string, unknown>).href;
-            segments.push(
-              typeof href === "string" ? `${text}(${href})` : text,
-            );
+            segments.push(typeof href === "string" ? `${text}(${href})` : text);
           } else if (tag === "at") {
             const name = (node as Record<string, unknown>).user_name;
             if (typeof name === "string") segments.push(`@${name}`);
@@ -822,7 +1348,9 @@ export class LarkEventInbox {
     const card = {
       schema: "2.0",
       config: { width_mode: "default" },
-      body: { elements: [{ tag: "markdown", content: replyText.slice(0, 8000) }] },
+      body: {
+        elements: [{ tag: "markdown", content: replyText.slice(0, 8000) }],
+      },
     };
     const payloadJson = JSON.stringify(card);
     const intentId = randomUUID();
@@ -876,9 +1404,7 @@ export class LarkEventInbox {
       // has a dangling outbox reference or an orphaned pending delivery.
       if (turnId)
         this.store.db
-          .prepare(
-            "UPDATE conversation_turns SET reply_outbox_id=? WHERE id=?",
-          )
+          .prepare("UPDATE conversation_turns SET reply_outbox_id=? WHERE id=?")
           .run(intentId, turnId);
     });
     return intentId;
@@ -974,7 +1500,7 @@ export class LarkConnectionManager {
           /^[A-Za-z0-9_-]{32}$/.test(event.text?.trim() ?? "")
         )
           return this.inbox.processPairing(event, this.pairing);
-        return this.inbox.processMessage(event);
+        return this.inbox.receive(event);
       },
       onState: recordState,
     });

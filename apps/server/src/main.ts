@@ -3,7 +3,10 @@ import { loadConfig } from "./config.js";
 const config = loadConfig();
 const { app } = await buildApp(config);
 await app.listen({ port: config.port, host: config.host });
-console.log(`omem listening at http://${config.host}:${config.port}`);
+app.log.info(
+  { event: "service.listening", host: config.host, port: config.port },
+  "service.listening",
+);
 let closing = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, () => {
@@ -18,7 +21,10 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
         if (process.connected) process.disconnect();
       })
       .catch((error) => {
-        console.error("omem shutdown failed", error);
+        app.log.error(
+          { event: "service.shutdown_failed", err: error },
+          "service.shutdown_failed",
+        );
         process.exitCode = 1;
       });
   });

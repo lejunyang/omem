@@ -46,6 +46,10 @@ export function restoreKnowledgeArticles(repository: KnowledgeRepository, direct
     let progress = false;
     for (let i = pending.length - 1; i >= 0; i--) {
       const { file, artifact } = pending[i]!;
+      if (repository.removedArtifact(artifact)) {
+        result.push({ file, state: "removed", reason: "用户已清除这份旧成果，启动导入不会恢复旧正文。" });
+        pending.splice(i, 1); progress = true; continue;
+      }
       if (artifact.dependencies?.some(d => d.kind === "article" && (
         !repository.get(d.key) ||
         // Existing heads may still be the previous generation. Restore the

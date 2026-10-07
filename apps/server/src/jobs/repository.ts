@@ -272,7 +272,9 @@ export class JobRepository {
                 (state IN ('leased','running') AND lease_expires_at<=?))
              ORDER BY not_before,created_at LIMIT 1`,
           )
-          .get(...(input.kinds ?? []), ...(input.jobIds ?? []), at, at) as Row | undefined;
+          .get(...(input.kinds ?? []), ...(input.jobIds ?? []), at, at) as
+          | Row
+          | undefined;
         if (!row) return null;
         const job = fromRow(row);
         if (job.state === "leased" || job.state === "running")
@@ -507,6 +509,88 @@ export class JobRepository {
          FROM role_outputs WHERE job_id=? ORDER BY attempt,created_at`,
       )
       .all(jobId);
+  }
+
+  /** Discard results tied to inputs explicitly being replaced. Expire leases
+   * immediately so a late role response cannot be applied after removal. */
+  invalidateInputs(values: string[], reason: string, kinds?: string[]) {
+    const wanted = new Set(values);
+    const contains = (value: unknown): boolean =>
+      typeof value === "string"
+        ? wanted.has(value)
+        : Array.isArray(value)
+          ? value.some(contains)
+          : !!value &&
+            typeof value === "object" &&
+            Object.values(value).some(contains);
+    const matched = (
+      this.db
+        .prepare("SELECT id,input_refs,kind,input_digest FROM jobs")
+        .all() as Row[]
+    ).filter(
+      (row) =>
+        (!kinds || kinds.includes(String(row.kind))) &&
+        contains(JSON.parse(String(row.input_refs))),
+    );
+    const ids = matched.map((row) => String(row.id));
+    // Verification is a child job and must not escape source invalidation merely
+    // because its own input names a proposal rather than the original revision.
+    for (let cursor = 0; cursor < ids.length; cursor++)
+      for (const row of this.db
+        .prepare("SELECT id FROM jobs WHERE parent_job_id=?")
+        .all(ids[cursor]!))
+        if (!ids.includes(String(row.id))) ids.push(String(row.id));
+    const at = iso(new Date());
+    for (const id of ids) {
+      this.db
+        .prepare(
+          `UPDATE job_attempts SET ended_at=COALESCE(ended_at,?),outcome=CASE WHEN ended_at IS NULL THEN 'cancelled' ELSE outcome END,
+        error_kind=CASE WHEN ended_at IS NULL THEN 'cancelled' ELSE error_kind END,error=CASE WHEN ended_at IS NULL THEN ? ELSE error END WHERE job_id=?`,
+        )
+        .run(at, reason, id);
+      this.db
+        .prepare(
+          `UPDATE jobs SET state='cancelled',cancel_requested=1,result_ref=NULL,last_error=?,error_kind='cancelled',
+        finished_at=?,updated_at=?,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL WHERE id=?`,
+        )
+        .run(reason, at, at, id);
+      this.db.prepare("DELETE FROM role_outputs WHERE job_id=?").run(id);
+      const row =
+        matched.find((row) => String(row.id) === id) ??
+        this.db
+          .prepare("SELECT input_refs,input_digest FROM jobs WHERE id=?")
+          .get(id)!;
+      const locators: { field: string; value: string }[] = [];
+      const collect = (value: unknown, field = "") => {
+        if (
+          typeof value === "string" &&
+          /^(?:key|revisionId|sourceId|documentKey|sourceRevisionId|digest|revision|targetKeys)$/.test(
+            field,
+          )
+        )
+          locators.push({ field, value });
+        else if (Array.isArray(value))
+          value.forEach((item) => collect(item, field));
+        else if (value && typeof value === "object")
+          Object.entries(value).forEach(([name, item]) => collect(item, name));
+      };
+      collect(JSON.parse(String(row.input_refs)));
+      // Preserve input identity and source locators, not embedded prose/drafts.
+      this.db
+        .prepare("UPDATE jobs SET input_refs=? WHERE id=?")
+        .run(
+          JSON.stringify([
+            {
+              removed: true,
+              reason,
+              inputDigest: String(row.input_digest),
+              locators,
+            },
+          ]),
+          id,
+        );
+    }
+    return ids;
   }
 
   roleOutput(outputId: string): RoleOutputRecord | null {

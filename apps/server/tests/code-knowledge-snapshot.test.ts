@@ -1,10 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import {
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-  mkdirSync,
-} from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -27,7 +22,9 @@ function setup(dir: string) {
 }
 afterEach(() => {
   for (const { store, dir } of stores.splice(0)) {
-    try { store.close(); } catch {}
+    try {
+      store.close();
+    } catch {}
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -58,7 +55,7 @@ const V2 = "export function alpha() { return 2; }\n";
 const TEMP = "export function tempOnly() { return 9; }\n";
 
 describe("code snapshot lifecycle: explicit head pointer + immutable snapshots", () => {
-  it("A->B(dirty)->A: reused snapshot becomes head; B stays readable; /source pinned per snapshot", async () => {
+  it("A->B(dirty)->A: latest source remains readable and old snapshot links never change target", async () => {
     const root = makeRepo();
     w(root, "apps/server/src/a.ts", V1);
     commit(root, "v1");
@@ -90,12 +87,12 @@ describe("code snapshot lifecycle: explicit head pointer + immutable snapshots",
     rmSync(join(root, "apps", "server", "src", "temp.ts"));
     await runReviewSync(store, root);
     const C = await runCodeSync(store, root);
-    expect(C.reused).toBe(true);
-    expect(C.snapshotId).toBe(A.snapshotId);
+    expect(C.reused).toBe(false);
+    expect(C.snapshotId).not.toBe(A.snapshotId);
     expect(C.fileCount).toBe(1);
 
-    // Explicit pointer now back at A (NOT B, despite B's later captured_at).
-    expect(currentSnapshotId(store)).toBe(A.snapshotId);
+    // The reverted bytes have a fresh captured identity; old A cannot be rebound.
+    expect(currentSnapshotId(store)).toBe(C.snapshotId);
     // capturedAt of A immutable.
     expect(getSnapshot(store, A.snapshotId)!.capturedAt).toBe(capturedA);
 
@@ -103,7 +100,9 @@ describe("code snapshot lifecycle: explicit head pointer + immutable snapshots",
     let gHead = graphView(store, {});
     expect(gHead.files.some((f) => f.path.endsWith("temp.ts"))).toBe(false);
     expect(
-      listFiles(store, { includeRemoved: true }).find((f) => f.path.endsWith("temp.ts"))!.removed,
+      listFiles(store, { includeRemoved: true }).find((f) =>
+        f.path.endsWith("temp.ts"),
+      )!.removed,
     ).toBe(true);
 
     // B snapshot STILL readable and still contains temp (history preserved).
@@ -114,27 +113,36 @@ describe("code snapshot lifecycle: explicit head pointer + immutable snapshots",
     const { app } = await buildReviewApp({ store, repoRoot: root });
     await app.ready();
     const hdr = { host: "127.0.0.1:5180", origin: "http://127.0.0.1:5181" };
-    const aFile = listFiles(store, { includeRemoved: true }).find((f) => f.path.endsWith("/a.ts"))!;
+    const aFile = listFiles(store, { includeRemoved: true }).find((f) =>
+      f.path.endsWith("/a.ts"),
+    )!;
 
     const srcA = await app.inject({
       method: "GET",
       url: `/api/review/code/files/${aFile.fileId}/source?snapshotId=${A.snapshotId}&startLine=1&endLine=1`,
       headers: hdr,
     });
-    expect(srcA.statusCode).toBe(200);
-    expect(JSON.parse(srcA.body).text).toContain("return 1");
+    expect(srcA.statusCode).toBe(404);
+    const srcCurrent = await app.inject({
+      method: "GET",
+      url: `/api/review/code/files/${aFile.fileId}/source?snapshotId=${C.snapshotId}&startLine=1&endLine=1`,
+      headers: hdr,
+    });
+    expect(srcCurrent.statusCode).toBe(200);
+    expect(JSON.parse(srcCurrent.body).text).toContain("return 1");
 
     const srcB = await app.inject({
       method: "GET",
       url: `/api/review/code/files/${aFile.fileId}/source?snapshotId=${B.snapshotId}&startLine=1&endLine=1`,
       headers: hdr,
     });
-    expect(srcB.statusCode).toBe(200);
-    expect(JSON.parse(srcB.body).text).toContain("return 2");
+    expect(srcB.statusCode).toBe(404);
 
     // The deleted temp file's source at B is the pinned immutable blob, NOT a
     // live read (it no longer exists on disk at A).
-    const tempFileB = listFiles(store, { includeRemoved: true }).find((f) => f.path.endsWith("temp.ts"))!;
+    const tempFileB = listFiles(store, { includeRemoved: true }).find((f) =>
+      f.path.endsWith("temp.ts"),
+    )!;
     const srcTemp = await app.inject({
       method: "GET",
       url: `/api/review/code/files/${tempFileB.fileId}/source?snapshotId=${B.snapshotId}&startLine=1&endLine=1`,
@@ -151,9 +159,13 @@ describe("code snapshot lifecycle: explicit head pointer + immutable snapshots",
     expect(srcTempA.statusCode).toBe(404);
 
     // Understanding of the removed temp file is flagged stale.
-    const tempFile = listFiles(store, { includeRemoved: true }).find((f) => f.path.endsWith("temp.ts"))!;
+    const tempFile = listFiles(store, { includeRemoved: true }).find((f) =>
+      f.path.endsWith("temp.ts"),
+    )!;
     const cu = store.db
-      .prepare("SELECT stale FROM code_understandings WHERE target_type='file' AND target_id=?")
+      .prepare(
+        "SELECT stale FROM code_understandings WHERE target_type='file' AND target_id=?",
+      )
       .get(tempFile.fileId) as { stale: number } | undefined;
     expect(cu).toBeDefined();
     expect(Number(cu!.stale)).toBe(1);
