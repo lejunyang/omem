@@ -34,7 +34,11 @@ export class DocumentImportService {
   private stopped = false;
   constructor(
     readonly store: Store,
-    private options: { parser?: DocumentParser; pollMs?: number; learningEnabled?: boolean } = {},
+    private options: {
+      parser?: DocumentParser;
+      pollMs?: number;
+      learningEnabled?: boolean;
+    } = {},
   ) {
     store.db.exec(`CREATE TABLE IF NOT EXISTS document_imports(
       id TEXT PRIMARY KEY, external_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
@@ -107,11 +111,13 @@ export class DocumentImportService {
     if (input.contextIds) this.store.contexts.validate(input.contextIds);
     const assetId = await saveImportAsset(this.store.dataDir, input.bytes),
       at = new Date().toISOString();
-    const previous = this.store.db
-      .prepare("SELECT id FROM document_imports WHERE external_id=?")
-      .get(input.externalId);
-    const id = previous ? String(previous.id) : randomUUID();
-    return this.store.tx(() => {
+    const result = this.store.tx(() => {
+      const previous = this.store.db
+        .prepare(
+          "SELECT id,original_asset_id FROM document_imports WHERE external_id=?",
+        )
+        .get(input.externalId);
+      const id = previous ? String(previous.id) : randomUUID();
       this.store.db
         .prepare(
           `INSERT INTO document_imports VALUES(?,?,?,?,?,'saved',NULL,NULL,NULL,?,?)
@@ -131,8 +137,16 @@ export class DocumentImportService {
           at,
           at,
         );
+      if (previous && previous.original_asset_id !== assetId)
+        this.store.db
+          .prepare(
+            "INSERT OR IGNORE INTO retention_asset_candidates VALUES(?,?)",
+          )
+          .run(String(previous.original_asset_id), at);
       return this.reparse(id);
     });
+    this.store.retention.sweepAssets();
+    return result;
   }
   reparse(id: string, options: { requestId?: string } = {}) {
     const row = this.store.db
@@ -163,6 +177,29 @@ export class DocumentImportService {
         "UPDATE document_imports SET job_id=?,state='queued',error=NULL,updated_at=? WHERE id=?",
       )
       .run(queued.job.id, new Date().toISOString(), id);
+    const previousJob = row.job_id
+      ? this.store.jobs.get(String(row.job_id))
+      : null;
+    if (
+      previousJob &&
+      previousJob.id !== queued.job.id &&
+      previousJob.kind === "document_parse" &&
+      [
+        "queued",
+        "leased",
+        "running",
+        "retry_wait",
+        "awaiting_decision",
+      ].includes(previousJob.state)
+    )
+      // Running jobs remain pinned until their worker exits; cancellation prevents publication.
+      this.worker.cancel({
+        jobId: previousJob.id,
+        expectedGeneration: previousJob.generation,
+        requestId: randomUUID(),
+        workspaceId: previousJob.workspaceId,
+      });
+    this.store.retention.sweepAssets();
     return { import: this.get(id)!, job: queued.job };
   }
   private async parse(job: JobLease, signal: AbortSignal) {
@@ -205,7 +242,8 @@ export class DocumentImportService {
         learning: false,
       });
       const learningJob =
-        this.options.learningEnabled !== false && ref.selection.learning !== false
+        this.options.learningEnabled !== false &&
+        ref.selection.learning !== false
           ? this.store.jobs.enqueue({
               kind: "extract_claims",
               inputRefs: [
@@ -258,8 +296,12 @@ export class DocumentImportService {
       throw error;
     }
   }
-  processOnce() {
-    return this.worker.processOne();
+  async processOnce() {
+    try {
+      return await this.worker.processOne();
+    } finally {
+      this.store.retention.sweepAssets();
+    }
   }
   start() {
     this.stopped = false;

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -84,6 +84,72 @@ it("retains uploaded bytes through failure and restart, reparses those bytes and
   expect(
     store.jobs.list().find((job) => job.kind === "extract_claims")?.parentJobId,
   ).toBe(service.get(saved.import.id)?.jobId);
+});
+
+it("reclaims replaced upload bytes after active parsing finishes and after a failed upload is replaced", async () => {
+  const store = database();
+  const firstBytes = Buffer.from("合成旧DOCX原件，正在解析");
+  const failedBytes = Buffer.from("合成新DOCX原件，解析失败");
+  const latestBytes = Buffer.from("合成最新版DOCX原件");
+  let started!: () => void;
+  let release!: () => void;
+  const parsingStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const parsingReleased = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const service = new DocumentImportService(store, {
+    parser: async (bytes, name, _dataDir, externalId) => {
+      if (bytes.equals(firstBytes)) {
+        started();
+        await parsingReleased;
+      } else if (bytes.equals(failedBytes)) throw Error("合成解析失败");
+      return {
+        source: "file",
+        externalId,
+        title: name,
+        parts: [{ type: "text", text: bytes.toString() }],
+        context: {},
+      };
+    },
+  });
+  const save = (bytes: Buffer) =>
+    service.save({
+      bytes,
+      name: "重复上传.docx",
+      externalId: "replace-upload",
+      learning: false,
+    });
+  const first = await save(firstBytes);
+  const active = service.processOnce();
+  await parsingStarted;
+  const failed = await save(failedBytes);
+  expect(store.jobs.get(first.job.id)).toMatchObject({
+    state: "running",
+    cancelRequested: true,
+  });
+  expect(store.asset(first.import.originalAssetId)).toEqual(firstBytes);
+  expect(
+    existsSync(join(store.dataDir, "assets", first.import.originalAssetId)),
+  ).toBe(true);
+  release();
+  await active;
+  expect(store.jobs.get(first.job.id)?.state).toBe("cancelled");
+  expect(
+    existsSync(join(store.dataDir, "assets", first.import.originalAssetId)),
+  ).toBe(false);
+  expect(store.asset(failed.import.originalAssetId)).toEqual(failedBytes);
+  await service.processOnce();
+  expect(service.get(failed.import.id)?.state).toBe("failed");
+  expect(store.asset(failed.import.originalAssetId)).toEqual(failedBytes);
+  const latest = await save(latestBytes);
+  expect(latest.import.id).toBe(first.import.id);
+  expect(
+    existsSync(join(store.dataDir, "assets", failed.import.originalAssetId)),
+  ).toBe(false);
+  expect(store.asset(latest.import.originalAssetId)).toEqual(latestBytes);
+  expect(store.list()).toHaveLength(0);
 });
 
 function bind(store: Store) {
