@@ -28,3 +28,5 @@ docs/archive/2026-10-01-baseline/implementation/screenshots/*.png
 # Local npm release artifacts
 .release/
 .pnpm-store/
+__pycache__/
+*.py[cod]
