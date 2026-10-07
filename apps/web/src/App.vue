@@ -18,6 +18,8 @@ import {
   OmEmpty,
   OmCitation,
   OmDisclosure,
+  OmFormShowcase,
+  OmSelect,
   OmTrailDrawer,
   useEvidenceTrail,
 } from "@omem/ui";
@@ -728,13 +730,13 @@ onBeforeUnmount(() => {
       </p>
       <label class="search-purpose"
         >查找用途
-        <select v-model="searchPurpose">
+        <OmSelect v-model="searchPurpose">
           <option value="balanced">综合查找</option>
           <option value="concept">理解概念</option>
           <option value="implementation">定位实现</option>
           <option value="background">了解背景</option>
           <option value="follow-up">跟进事项</option>
-        </select></label
+        </OmSelect></label
       >
       <SearchAnswer
         :query="query"
@@ -748,12 +750,12 @@ onBeforeUnmount(() => {
         <small v-if="!searching && !searchError">{{ results.length }} 条</small>
       </h2>
       <label class="search-purpose"
-        >筛选命中材料<select v-model="searchRole">
+        >筛选命中材料<OmSelect v-model="searchRole">
           <option value="">所有用途</option>
           <option v-for="role in materialRoles" :key="role" :value="role">
             {{ materialRoleLabels[role] }}
           </option>
-        </select></label
+        </OmSelect></label
       >
       <p
         v-if="results.some((r) => r.codeMatches?.length)"
@@ -888,14 +890,6 @@ onBeforeUnmount(() => {
           </div>
           <h1>{{ revision.title }}</h1>
           <MaterialAdvice :revision-id="revision.id" />
-          <MaterialDescription
-            :revision-id="revision.id"
-            :current="revision.current"
-          />
-          <SourceContexts
-            :key="revision.sourceId"
-            :source-id="revision.sourceId"
-          />
           <p class="muted">
             保存于 {{ new Date(revision.createdAt).toLocaleString("zh-CN") }} ·
             每个片段都有固定身份
@@ -945,6 +939,14 @@ onBeforeUnmount(() => {
               :id="p.assetId"
               :label="p.label"
           /></template>
+          <MaterialDescription
+            :revision-id="revision.id"
+            :current="revision.current"
+          />
+          <SourceContexts
+            :key="revision.sourceId"
+            :source-id="revision.sourceId"
+          />
           <OmDisclosure class="stack" title="版本历史"
             ><template #title>版本历史 · {{ history.length }}</template>
             <div class="row">
@@ -997,12 +999,12 @@ onBeforeUnmount(() => {
           /></label>
           <div class="form-grid">
             <label
-              >来源类型<select v-model="input.source">
+              >来源类型<OmSelect v-model="input.source">
                 <option value="manual">主动输入</option>
                 <option value="chat">群聊材料</option>
                 <option value="screen">屏幕观测</option>
                 <option value="agent">Agent 会话</option>
-              </select></label
+              </OmSelect></label
             ><label
               >来源标识（相同标识产生新版本）<input
                 v-model="input.externalId"
@@ -1263,7 +1265,8 @@ onBeforeUnmount(() => {
           ><OmBadge tone="danger">读取失败</OmBadge
           ><OmBadge tone="success">已验证</OmBadge>
         </div></OmPanel
-      ><OmPanel class="stack" title="引用片段"
+      ><OmPanel class="stack" title="表单与选择"><OmFormShowcase /></OmPanel>
+      <OmPanel class="stack" title="引用片段"
         ><p class="sample-quote">每一个结论，都应该保留可以继续阅读的来路。</p>
         <OmCitation
           label="选择真实材料后可体验引用"
@@ -1449,8 +1452,9 @@ onBeforeUnmount(() => {
 }
 .search-purpose {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  align-items: stretch;
+  max-width: 420px;
+  gap: 8px;
   margin: 24px 0;
 }
 .search-results-heading {

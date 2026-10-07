@@ -632,6 +632,18 @@ try {
           exact: true,
         }),
       ).toBeVisible({ timeout: 20000 });
+      expect(
+        await page
+          .locator(".daily-replies")
+          .evaluate(
+            (reply) =>
+              !!(
+                reply.compareDocumentPosition(
+                  document.querySelector(".work-panel")!,
+                ) & Node.DOCUMENT_POSITION_FOLLOWING
+              ),
+          ),
+      ).toBe(true);
       const result = await (await turnResponse).json();
       expect(result.degraded).toBe(false);
       expect(result.turn.inputMessageRefs.status).toBe("done");
@@ -1235,6 +1247,52 @@ try {
     },
   );
   await check(
+    "shared form controls preserve selection, keyboard and disabled semantics",
+    async () => {
+      await page.goto(base + "/#/design");
+      const scope = page.getByLabel("回答范围", { exact: true });
+      await scope.selectOption("library");
+      const status = page.locator(".form-showcase [role='status']");
+      await expect(status).toContainText("当前范围：整个知识库");
+      const enabled = page.getByRole("checkbox", {
+        name: "随材料自动更新",
+        exact: true,
+      });
+      await enabled.focus();
+      await page.keyboard.press("Space");
+      await expect(enabled).not.toBeChecked();
+      await expect(status).toContainText("自动更新未开启");
+      const document = page.getByRole("checkbox", {
+        name: "文档",
+        exact: true,
+      });
+      const chat = page.getByRole("checkbox", {
+        name: "聊天记录",
+        exact: true,
+      });
+      await chat.check();
+      await expect(document).toBeChecked();
+      await expect(status).toContainText("已选 2 类材料");
+      await document.uncheck();
+      await expect(chat).toBeChecked();
+      await expect(status).toContainText("已选 1 类材料");
+      await page.getByRole("radio", { name: "自动维护", exact: true }).check();
+      await expect(
+        page.getByRole("radio", { name: "手动整理", exact: true }),
+      ).not.toBeChecked();
+      await expect(
+        page.getByRole("checkbox", { name: "部分材料已选择", exact: true }),
+      ).toHaveJSProperty("indeterminate", true);
+      await expect(
+        page.getByRole("checkbox", { name: "等待权限后可开启", exact: true }),
+      ).toBeDisabled();
+      await expect(page.getByLabel("暂不可用", { exact: true })).toBeDisabled();
+      await expect(
+        page.getByLabel("需要补充", { exact: true }),
+      ).toHaveAttribute("aria-invalid", "true");
+    },
+  );
+  await check(
     "shared disclosures keep content and separate folder navigation from expansion",
     async () => {
       await page.goto(base + "/#/design");
@@ -1454,7 +1512,7 @@ try {
         .find((c) => c.name === "阅读小组界面验收")!.id;
       expect(store.contexts.forSource(source.sourceId)).toEqual([contextId]);
       await page
-        .getByRole("button", { name: "所属项目与主题", exact: true })
+        .getByRole("button", { name: "调整材料归属", exact: true })
         .click();
       await expect(
         page.getByRole("checkbox", { name: /阅读小组界面验收/ }),

@@ -27,7 +27,7 @@
 .workspace-title small {
   display: block;
   margin-top: 6px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .navigation {
   display: flex;
@@ -45,7 +45,7 @@
   background: none;
   color: var(--om-secondary);
   min-height: 44px;
-  font-size: 13px;
+  font-size: 14px;
 }
 .navigation button:hover {
   background: #e7e7e7;
@@ -76,7 +76,7 @@
   overflow-wrap: anywhere;
 }
 .source-link small {
-  font-size: 11px;
+  font-size: 12px;
 }
 .source-link.selected {
   background: #e7e7e7;
@@ -86,12 +86,13 @@
   background: #eee;
 }
 .page-bar {
-  height: 51px;
+  min-height: 52px;
   border-bottom: 1px solid var(--om-line);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 28px;
+  padding: 12px 24px;
+  gap: 12px;
   font-size: 12px;
   color: var(--om-muted);
   background: white;
@@ -99,11 +100,15 @@
 .page {
   max-width: 950px;
   margin: auto;
-  padding: 42px 44px 60px;
+  padding: 48px 48px 64px;
 }
 .page h1 {
-  margin: 8px 0 14px;
+  margin: 8px 0 12px;
   overflow-wrap: anywhere;
+}
+.page > h1 + p {
+  max-width: 76ch;
+  margin: 0 0 24px;
 }
 .eyebrow {
   font-size: 12px;
@@ -117,7 +122,7 @@
 .row,
 .tabs {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
   flex-wrap: wrap;
   margin: 16px 0;
@@ -127,10 +132,10 @@
   gap: 10px;
   align-items: center;
   background: #eee;
-  padding: 17px;
+  padding: 16px;
   border-radius: 6px;
   font-size: 13px;
-  margin: 26px 0;
+  margin: 24px 0;
 }
 .fragment {
   padding: 18px 0;
@@ -154,18 +159,21 @@
 .form {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 24px;
+}
+.form > p {
+  margin: 0;
 }
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
 .form button[type="submit"] {
   align-self: flex-start;
 }
 .stack {
-  margin-top: 22px;
+  margin-top: 24px;
 }
 .error-banner {
   margin: 18px 28px;
@@ -205,7 +213,11 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.toast-actions { display: flex; flex-shrink: 0; gap: 4px; }
+.toast-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
 .excerpt {
   max-height: 140px;
   overflow: auto;
@@ -217,18 +229,23 @@
   color: var(--om-secondary);
   font-size: 13px;
 }
-.error-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
 .sample-quote {
   font: 20px/2 var(--om-serif);
   background: var(--om-soft);
-  padding: 22px;
+  padding: 24px;
 }
 .disclosure-content > p {
   overflow-wrap: anywhere;
 }
 @media (max-width: 1100px) {
   .page {
-    padding: 36px 36px;
+    padding: 32px;
   }
   .page-bar {
     padding: 0 24px;
@@ -236,14 +253,14 @@
 }
 @media (max-width: 700px) {
   .page {
-    padding: 27px 20px 40px;
+    padding: 24px 20px 48px;
   }
   .page h1 {
     font-size: 27px;
   }
   .page-bar {
     padding: 0 18px;
-    font-size: 11px;
+    font-size: 12px;
     gap: 8px;
   }
   .page-bar .om-badge {
@@ -253,22 +270,22 @@
     gap: 4px;
   }
   .top-controls input {
-    font-size: 11px;
-    padding: 8px;
+    font-size: 14px;
+    padding: 10px 12px;
     width: 100%;
   }
   .notification-button {
     padding: 8px !important;
-    font-size: 11px !important;
+    font-size: 14px !important;
   }
   .form-grid {
     grid-template-columns: 1fr;
   }
   .tabs {
-    gap: 5px;
+    gap: 8px;
   }
   .tabs button {
-    font-size: 12px;
+    font-size: 14px;
   }
   .error-banner {
     margin: 14px 18px;
@@ -277,7 +294,7 @@
     font-size: 16px;
   }
   .row {
-    gap: 7px;
+    gap: 8px;
   }
   .reading-note {
     align-items: flex-start;

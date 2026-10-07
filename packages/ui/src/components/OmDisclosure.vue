@@ -123,10 +123,22 @@ function toggle() {
   color: var(--om-muted);
 }
 .disclosure-content {
-  padding-top: 8px;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  margin-left: 15px;
+  padding: 16px 0 0 16px;
+  border-left: 1px solid var(--om-line);
+}
+.om-disclosure:not(.selectable) > .disclosure-content :deep(> *) {
+  min-width: 0;
+  margin-block: 0;
 }
 .selectable > .disclosure-content {
-  padding-top: 0;
+  display: block;
+  margin-left: 0;
+  padding: 0;
+  border-left: 0;
 }
 @media (prefers-reduced-motion: reduce) {
   .disclosure-arrow {

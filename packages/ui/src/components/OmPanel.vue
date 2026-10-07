@@ -7,7 +7,7 @@ defineProps<{ title?: string }>();
       <h3 v-if="title">{{ title }}</h3>
       <slot name="heading" />
     </header>
-    <slot />
+    <div class="panel-content"><slot /></div>
     <footer v-if="$slots.actions"><slot name="actions" /></footer>
   </section>
 </template>
@@ -19,8 +19,19 @@ defineProps<{ title?: string }>();
   border-radius: var(--om-radius);
   min-width: 0;
 }
-.om-panel :deep(> p:first-child) { margin-top: 0; }
-.om-panel :deep(> p:last-child) { margin-bottom: 0; }
+.panel-content {
+  display: grid;
+  justify-items: start;
+  gap: 16px;
+  min-width: 0;
+}
+.panel-content :deep(> *) {
+  min-width: 0;
+  margin-block: 0;
+}
+.panel-content :deep(> :not(.om-badge):not(.om-button):not(.om-citation)) {
+  width: 100%;
+}
 header {
   display: flex;
   align-items: center;
@@ -35,7 +46,11 @@ footer {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
-  margin-top: 20px;
+  margin-top: 24px;
 }
-@media (max-width: 700px) { .om-panel { padding: 20px 16px; } }
+@media (max-width: 700px) {
+  .om-panel {
+    padding: 20px 16px;
+  }
+}
 </style>
