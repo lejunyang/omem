@@ -79,4 +79,4 @@ inbox 返回消息、资源与处理状态；资源缺失时先补读或说明�
 - 本地决策：Apple Silicon Mac 上 `setup decisions` 默认只下载 2B；`--model 4b|9b|both|all` 按需准备，both 是 2B+4B，all 是三种。准备后设置 decisions.mode 为 auto / 2b / 4b / 9b；auto 只在已安装的 2B/4B 中按负载选择，9B 尚未实际推理验收。缺少模型时不伪造判断结果。
 - 安装诊断：`doctor --local --json` 跳过 HTTP、区分功能开关与实际资源；`doctor --local --verify-models --json` 才核对已下载权重的完整摘要。未启用能力不要求下载，检查不调用模型。
 
-退出码 0/1/2/130 分别是成功、执行失败、参数错误、用户中断。`serve`、`setup`、`lark login/status` 使用工具自身输出，不把它们当统一 JSON 接口。
+退出码 0/1/2/130 分别是成功、执行失败、参数错误、用户中断。`setup --json` 成功后将准备摘要写到 stdout，进度写到 stderr；它不改变功能开关。`serve` 和 `lark login/status` 使用工具自身输出，不把它们当统一 JSON 接口。
