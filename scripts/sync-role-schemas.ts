@@ -15,6 +15,11 @@ import {
 import { assistantReplySchema } from "../packages/contracts/src/assistant.js";
 import { contextResolutionSchema } from "../packages/contracts/src/contexts.js";
 import { materialDescriptionBatchSchema } from "../packages/contracts/src/material-description.js";
+import { knowledgeOutlineProposalSchema } from "../packages/contracts/src/knowledge-outline.js";
+writeFileSync(
+  "packages/agent-runtime/roles/knowledge-outliner/1/output.schema.json",
+  JSON.stringify({ ...z.toJSONSchema(knowledgeOutlineProposalSchema), $id: "https://omem.invalid/contracts/KnowledgeOutline.v1" }, null, 2) + "\n",
+);
 writeFileSync(
   "packages/agent-runtime/roles/material-cataloger/1/output.schema.json",
   JSON.stringify(
@@ -122,6 +127,7 @@ for (const role of [
   "knowledge-writer",
   "knowledge-refresher",
   "knowledge-planner",
+  "knowledge-outliner",
   "knowledge-researcher",
   "knowledge-verifier",
   "code-analyst",

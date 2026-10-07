@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 6000
+    },
+    "gaps": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1600
+      }
+    },
+    "pages": {
+      "minItems": 1,
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "tutorial",
+              "explanation",
+              "how-to",
+              "reference"
+            ]
+          },
+          "reader": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1200
+          },
+          "goal": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 3000
+          },
+          "scenario": {
+            "type": "string",
+            "maxLength": 3000
+          },
+          "questions": {
+            "minItems": 1,
+            "maxItems": 12,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 800
+            }
+          },
+          "entryPaths": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
+          },
+          "topicPath": {
+            "maxItems": 12,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            }
+          },
+          "materialKeys": {
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          },
+          "contextIds": {
+            "maxItems": 40,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          },
+          "existingKey": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "title",
+          "kind",
+          "reader",
+          "goal",
+          "scenario",
+          "questions",
+          "entryPaths",
+          "topicPath",
+          "materialKeys",
+          "contextIds",
+          "existingKey"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "rationale",
+    "gaps",
+    "pages"
+  ],
+  "additionalProperties": false,
+  "$id": "https://omem.invalid/contracts/KnowledgeOutline.v1"
+}

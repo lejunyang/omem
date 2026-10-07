@@ -109,7 +109,21 @@ omem jobs cancel JOB_ID
 }
 ```
 
-成功响应表示写作已排队；用 `knowledge list` 查看 pages 的 maintenance 状态，失败不冒充已发布。复杂的选材、目录调整和记忆纠正继续使用 Web。CLI 不绕开 MemoryService 直接改事实。
+成功响应表示写作已排队；用 `knowledge list` 查看 pages 的 maintenance 状态，失败不冒充已发布。记忆纠正继续使用 Web。CLI 不绕开 MemoryService 直接改事实。
+
+需要先规划目录再生成多篇文章，用 `omem knowledge outline`。Web 的知识库也提供同一草案流程；保存草案不启动写作，提议可由已配置 Agent 调查材料，确认后才应用正式页面计划。完整 JSON 与命令步骤见[随包目录草案指引](../skills/omem-cli/references/knowledge-outlines.md)，实现与范围说明见[知识目录草案](reader-first/knowledge-outlines.md)。
+
+```bash
+omem knowledge outline list --json
+omem knowledge outline create outline.json --json
+omem knowledge outline show OUTLINE_ID --json
+omem knowledge outline propose OUTLINE_ID --version VERSION --json
+omem knowledge outline save OUTLINE_ID edited-outline.json --json
+omem knowledge outline apply OUTLINE_ID --version VERSION --json
+omem knowledge outline delete OUTLINE_ID --version VERSION --json
+```
+
+create 文件是 `{title,reader,goal,topicPath,materialKeys,contextIds,pages}`；pages 可为空，后续让 Agent 拟目录。save 文件是 `{version,draft}`，draft 使用同一完整结构。来源 key 从 `knowledge list` 获取，项目/主题 ID 从 `contexts list` 获取；不要把 revisionId 填成 materialKey。propose 和 apply 是后台排队，随后读取 show 的 state、error 与 pageStatuses；ready 只代表草案可编辑，正文是否已发表要逐页检查。版本冲突后读取现状再合并修改。
 
 若希望每份新材料自动整理记忆，将配置 `learning.enabled` 改为 true，确认 `learning.profileId` 后重启。这会使用 Agent；仅安装或 `init` 不默认启动这类调用。主动整理文章是单独的显式请求。
 

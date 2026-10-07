@@ -20,6 +20,9 @@ import { KnowledgePageWorker } from "./page-worker.js";
 import { KnowledgePageService } from "./page-service.js";
 import { MaterialDescriptionWorker } from "../source-profile/description-worker.js";
 import { requirementHandoff } from "./requirements.js";
+import { KnowledgeOutlineService } from "./outlines.js";
+import { registerOutlineRoutes } from "./outline-api.js";
+import { stableDigest } from "../storage/digest.js";
 
 export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: Store; prefix: string; workspace: string; repository?: KnowledgeRepository; retrieval?: RetrievalPort; retrievalConfig?: RetrievalConfig; profile?: AgentProfile; budget?: Partial<GenerationBudget>; onAnswer?: () => void; onPublish?: (a: KnowledgeArticle) => void; onService?: (service: KnowledgePageService) => void; preparePage?: (plan: import("../../../../packages/contracts/src/knowledge.js").WikiPageBrief) => void; beforePageRun?: (plan: import("../../../../packages/contracts/src/knowledge.js").WikiPageBrief, signal: AbortSignal) => Promise<unknown> }) {
   const repository = input.repository ?? new KnowledgeRepository(input.store);
@@ -31,10 +34,10 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
   const retrieval: RetrievalPort = input.retrieval ?? new KeywordRetrieval(input.store.db);
   let running: KnowledgePipeline | null = null;
   let lastRun: unknown = null;
-  const maintenance = new KnowledgePageWorker(repository, {
+  const maintenance: KnowledgePageWorker = new KnowledgePageWorker(repository, {
     prepare: input.preparePage,
     settleMs: 12000,
-    blocked: () => !!running,
+    blocked: (): boolean => !!running || outlines.busy(),
     onError: error => app.log.error(error),
     run: input.profile ? async (brief, job, signal) => {
       const investigationHints = await input.beforePageRun?.(brief, signal);
@@ -53,10 +56,32 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
       }
     } : undefined,
   });
-  const pages = new KnowledgePageService(repository, maintenance, !!input.profile);
+  const pages: KnowledgePageService = new KnowledgePageService(repository, maintenance, !!input.profile);
   input.onService?.(pages);
+  const outlines: KnowledgeOutlineService = new KnowledgeOutlineService(repository, pages, {
+    blocked: (): boolean => !!running || maintenance.busy(),
+    onError: error => app.log.error(error),
+    run: input.profile ? async (draft, job, signal) => {
+      const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)),
+        structuredClone(input.profile!), { retrievalConfig: input.retrievalConfig, budget: input.budget, retryTag: `${job.id}:${job.generation}` });
+      running = pipeline;
+      const cancel = () => { void pipeline.stop(); };
+      signal.addEventListener("abort", cancel, { once: true });
+      try {
+        if (signal.aborted) throw Error("目录规划已暂停");
+        return await pipeline.proposeOutline(draft, result => {
+          outlines.validateScope({ ...draft, pages: result.pages.map((page, index) => ({ ...page, id: String(index) })) }, true);
+        });
+      } finally {
+        signal.removeEventListener("abort", cancel);
+        await pipeline.stop();
+        running = null;
+      }
+    } : undefined,
+  });
+  registerOutlineRoutes(app, prefix, outlines);
   const descriptions = new MaterialDescriptionWorker(repository, {
-    blocked: () => !!running || maintenance.busy(),
+    blocked: () => !!running || maintenance.busy() || outlines.busy(),
     onError: error => app.log.error(error),
     run: input.profile ? async (material, job, signal) => {
       const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), input.workspace, new RuntimeRequestRepository(input.store.db)),
@@ -74,7 +99,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
       }
     } : undefined,
   });
-  app.addHook("onReady", async () => { maintenance.start(); descriptions.start(); });
+  app.addHook("onReady", async () => { maintenance.start(); descriptions.start(); outlines.start(); });
   app.get<{ Querystring: { revisionId: string } }>(prefix + "/description-run", async (req, reply) => {
     if (!req.query.revisionId) return reply.code(400).send({error:"请选择材料版本"});
     try { return descriptions.status(req.query.revisionId); }
@@ -102,6 +127,11 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
   });
   const meta = (a: KnowledgeArticle) => ({ key: a.document.key, title: a.document.title, summary: a.document.summary, category: a.document.category, current: a.current, revision: a.revision,
     topicPath: a.document.topicPath ?? [], generatedAt: a.generation.at, model: a.generation.model, reviewedBy: a.review.model, questionCount: a.document.questions.length, reading: a.reading, role: repository.role(a) });
+  const directoryMeta = (a: KnowledgeArticle) => {
+    const plan = repository.pages().find(p => p.key === a.document.key)?.plan;
+    return { ...meta(a), ...(plan ? { title: plan.title, topicPath: plan.topicPath ?? [], reading: plan } : {}),
+      publishedTitle: a.document.title, planChanged: !!plan && stableDigest(plan) !== stableDigest(a.reading ?? null) };
+  };
   const resolveCitation = (a: KnowledgeArticle, key: string) => {
     const c = a.document.citations.find(c => c.key === key);
     if (!c) return null;
@@ -116,7 +146,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     return { ...c, actionable: !!target, unavailableReason: target ? null : "被引用的原始材料版本不可用", current: target?.current ?? false,
       resolved: target ? { kind: "material", key: target.material.key, digest: target.material.digest, title: target.material.title, startLine: c.target.startLine, endLine: c.target.endLine } : null };
   };
-  app.get(prefix + "/articles", async () => { repository.refresh(); return { articles: repository.published().map(meta), pages: repository.pages().map(p => ({ ...p, maintenance: maintenance.status(p.key) })), contexts: input.store.contexts.list(), materials: repository.materials().map(m => ({ key: m.key, title: m.title, path: m.path, revisionId: m.revisionId, contextIds: input.store.contexts.forSource(m.sourceId) })), running: !!running || maintenance.busy(), lastRun: maintenance.lastRun() ?? lastRun }; });
+  app.get(prefix + "/articles", async () => { repository.refresh(); return { articles: repository.published().map(directoryMeta), pages: repository.pages().map(p => ({ ...p, maintenance: maintenance.status(p.key) })), contexts: input.store.contexts.list(), materials: repository.materials().map(m => ({ key: m.key, title: m.title, path: m.path, revisionId: m.revisionId, contextIds: input.store.contexts.forSource(m.sourceId) })), running: !!running || maintenance.busy() || outlines.busy(), lastRun: maintenance.lastRun() ?? lastRun }; });
   app.get<{ Params: { key: string }; Querystring: { revision?: string } }>(prefix + "/articles/:key", async (req, reply) => {
     repository.refresh();
     const a = repository.get(req.params.key, req.query.revision);
@@ -186,18 +216,21 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     let topic: string[] = [];
     try { if (req.query.topic) { topic = JSON.parse(req.query.topic); if (!Array.isArray(topic) || topic.some(p => typeof p !== "string")) throw Error(); } }
     catch { return reply.code(400).send({ error: "分类路径无效" }); }
-    const articles = repository.published().filter(a => topic.every((part, i) => a.document.topicPath?.[i] === part));
+    const articles = repository.published().filter(a => topic.every((part, i) => directoryMeta(a).topicPath[i] === part));
     if (retrieval.search) {
       const purpose = req.query.purpose ?? "concept";
       if (!retrievalPurposes.includes(purpose as typeof retrievalPurposes[number])) return reply.code(400).send({ error: "查找用途无效" });
-      const hits = await retrieval.search({ text, limit: 50, kinds: ["knowledge"], topicPath: topic, purpose: purpose as typeof retrievalPurposes[number] });
+      // Formal directory plans change immediately, while indexed article text
+      // remains the old fixed publication until writing completes. Search the
+      // real texts, then filter by the current plans rather than stale categories.
+      const hits = await retrieval.search({ text, limit: topic.length ? 150 : 50, kinds: ["knowledge"], purpose: purpose as typeof retrievalPurposes[number] });
       const byKey = new Map(articles.map(a => [a.document.key, a]));
       const seen = new Set<string>();
       return hits.flatMap(hit => {
         if (hit.target.kind !== "knowledge" || seen.has(hit.target.key)) return [];
         const a = byKey.get(hit.target.key); if (!a || a.revision !== hit.target.revision) return [];
         seen.add(hit.target.key);
-        return [{ ...meta(a), section: hit.target.section, sectionTitle: hit.headingPath.join(" / "), excerpt: hit.text, derived: true, score: hit.score, routes: hit.routes }];
+        return [{ ...directoryMeta(a), section: hit.target.section, sectionTitle: hit.headingPath.join(" / "), excerpt: hit.text, derived: true, score: hit.score, routes: hit.routes }];
       });
     }
     const materials = new Map(repository.materials().map(m => [m.key, m]));
@@ -219,7 +252,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
         }
       }
       const score = lexical + evidence * .4;
-      return score ? [{ ...meta(a), section: section.key, sectionTitle: section.title, excerpt: bestSnippet(section.body, terms, 600), derived: true, score }] : [];
+      return score ? [{ ...directoryMeta(a), section: section.key, sectionTitle: section.title, excerpt: bestSnippet(section.body, terms, 600), derived: true, score }] : [];
     })).sort((a, b) => b.score - a.score);
     // One article per result, with its best matching section. Long articles do
     // not consume the whole result window simply by repeating related words.
@@ -263,7 +296,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
   } });
   app.post<{ Body: { revisionIds: string[] } }>(prefix + "/analyze", async (req, reply) => {
     if (!input.profile) return reply.code(503).send({ error: "未配置可用 Agent" });
-    if (running || maintenance.busy()) return reply.code(409).send({ error: "知识整理正在进行" });
+    if (running || maintenance.busy() || outlines.busy()) return reply.code(409).send({ error: "知识整理正在进行" });
     if (!Array.isArray(req.body?.revisionIds) || !req.body.revisionIds.length || req.body.revisionIds.length > 500) return reply.code(400).send({ error: "请选择要整理的固定材料版本" });
     const ids = new Set(req.body.revisionIds), selected = repository.materials().filter(m => ids.has(m.revisionId));
     if (selected.length !== ids.size) return reply.code(400).send({ error: "部分材料已更新或不可用，请刷新后重试" });
@@ -272,6 +305,6 @@ export function registerKnowledgeRoutes(app: FastifyInstance, input: { store: St
     void pipeline.analyze(selected).then(result => { lastRun = result; }).catch(error => { lastRun = { error: String(error) }; }).finally(() => { running = null; });
     return reply.code(202).send({ state: "running", materials: selected.length });
   });
-  app.addHook("preClose", async () => { await descriptions.stop(); await maintenance.stop(); await running?.stop(); });
+  app.addHook("preClose", async () => { await outlines.stop(); await descriptions.stop(); await maintenance.stop(); await running?.stop(); });
   return repository;
 }

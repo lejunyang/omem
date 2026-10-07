@@ -8,6 +8,10 @@ import { registerKnowledgeRoutes } from "../src/knowledge/api.js";
 import { bindKnowledgeQuotes } from "../src/knowledge/repository.js";
 import type { KnowledgeDocument } from "../../../packages/contracts/src/knowledge.js";
 import { KnowledgeRepository } from "../src/knowledge/repository.js";
+import { createRetrieval } from "../src/retrieval/factory.js";
+import { KnowledgeOutlineService } from "../src/knowledge/outlines.js";
+import { KnowledgePageWorker } from "../src/knowledge/page-worker.js";
+import { KnowledgePageService } from "../src/knowledge/page-service.js";
 
 it("serves fixed inline citations and explicit question actions through the same API for manual materials", async () => {
   const dir = mkdtempSync(join(tmpdir(), "knowledge-api-")), store = new Store(dir), app = Fastify();
@@ -36,6 +40,37 @@ it("serves fixed inline citations and explicit question actions through the same
     expect(historicalImage.statusCode).toBe(200);
     expect(historicalImage.headers["content-type"]).toContain("image/png");
   } finally { await app.close(); store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+it("shows a confirmed directory move immediately, searches the new path and retains the fixed old publication", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "knowledge-directory-")), store = new Store(dir), app = Fastify();
+  const retrieval = createRetrieval(store.db), repository = registerKnowledgeRoutes(app, { store, prefix: "/api/knowledge", workspace: dir, retrieval: retrieval.retrieval });
+  const worker = new KnowledgePageWorker(repository), outlines = new KnowledgeOutlineService(repository, new KnowledgePageService(repository, worker, true));
+  try {
+    store.capture({ source: "manual", externalId: "activity", title: "费用约定", parts: [{ type: "text", text: "费用八十元，含材料。" }], context: {} }, { learning: false, notify: false });
+    const m = repository.materials()[0]!;
+    const old = { key: "workshop", title: "工作坊费用", reader: "参加者", goal: "了解费用", scenario: "参加工作坊", kind: "reference" as const, order: 5, questions: ["费用多少？"], entryPaths: [], topicPath: ["旧目录"], materialKeys: [m.key] };
+    repository.savePlan(old, true);
+    const article = repository.publish({ version: 1, reading: old, publication: { role: "reference" },
+      document: bindKnowledgeQuotes({ key: old.key, title: old.title, summary: "了解费用", category: "活动", topicPath: old.topicPath,
+        sections: [{ key: "cost", title: "费用", body: "费用八十元，含材料。[[source]]" }],
+        citations: [{ key: "source", label: "费用约定", reason: "原文约定", relation: "supports", target: { kind: "material", key: m.key, startLine: 1, endLine: 1 }, quote: "" }], questions: [] }, new Map([[m.key, m]])),
+      dependencies: [{ kind: "material", key: m.key, digest: m.digest }], generation: { model: "fixture", effort: null, at: new Date().toISOString(), trace: {} }, review: { model: "fixture", at: new Date().toISOString(), verdict: "accepted", trace: {} } });
+    const { key: _key, order: _order, ...content } = old;
+    const draft = outlines.create({ title: "活动知识", reader: old.reader, goal: old.goal, topicPath: ["新目录"], materialKeys: [m.key], contextIds: [],
+      pages: [{ ...content, id: "existing", existingKey: old.key, title: "参加前的费用准备", topicPath: ["新目录", "工作坊"], contextIds: [] }] });
+    // Editing data cannot include formal Wiki identities or ordering fields.
+    expect(draft.state).toBe("editing");
+    outlines.apply(draft.id, draft.version);
+    const catalog = (await app.inject("/api/knowledge/articles")).json();
+    expect(catalog.articles[0]).toMatchObject({ title: "参加前的费用准备", publishedTitle: old.title, planChanged: true, topicPath: ["新目录", "工作坊"], reading: { order: 0 } });
+    const search = (topic: string) => app.inject("/api/knowledge/search?" + new URLSearchParams({ q: "费用", topic: JSON.stringify([topic]) }));
+    expect((await search("新目录")).json().map((hit: { key: string }) => hit.key)).toEqual([old.key]);
+    expect((await search("旧目录")).json()).toEqual([]);
+    const fixed = (await app.inject("/api/knowledge/articles/" + old.key + "?revision=" + article.revision)).json();
+    expect(fixed).toMatchObject({ title: old.title, document: { topicPath: ["旧目录"] } });
+    expect(fixed.citations[0].resolved.digest).toBe(m.digest);
+  } finally { await app.close(); await outlines.stop(); await worker.stop(); await retrieval.close(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 it("persists independent topic paths, scopes discovery and returns one best section per article", async () => {

@@ -3,6 +3,7 @@ import { articleWithinMaterials, maintenanceTrace, planMaintenance, type Article
 import { materialDescriptionBatchSchema } from "../../../../packages/contracts/src/material-description.js";
 import { prepareAgentResearch } from "./agent-research.js";
 import { followupStateTools } from "../assistant/followup-state.js";
+import { knowledgeOutlineProposalSchema, type KnowledgeOutlineDraft, type KnowledgeOutlineProposal } from "../../../../packages/contracts/src/knowledge-outline.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
 import { readFileSync } from "node:fs";
 import type { AgentProfile, ContextManifest } from "../../../../packages/contracts/src/index.js";
@@ -35,6 +36,41 @@ export class KnowledgePipeline {
     readonly options: { budget?: Partial<GenerationBudget>; nativeResearch?: boolean; retrievalConfig?: RetrievalConfig; concurrency?: number; retryTag?: string; investigationHints?: unknown; onPublish?: (a: KnowledgeArticle) => void; log?: (message: string) => void } = {}) {}
 
   private get nativeResearch() { return this.options.nativeResearch ?? this.profile.transport === "acp"; }
+
+  /** Investigate a reader's whole selected scope before suggesting pages.
+   * This produces an editable candidate and never saves a formal page plan. */
+  async proposeOutline(draft: KnowledgeOutlineDraft, validate?: (proposal: KnowledgeOutlineProposal) => void) {
+    const scope: WikiPageBrief = { key: `outline:${draft.id}`, title: draft.title, order: 0, kind: "explanation", reader: draft.reader,
+      goal: draft.goal, scenario: "阅读和组织所选材料", questions: [draft.goal], entryPaths: [], materialKeys: draft.materialKeys,
+      ...(draft.contextIds.length ? { contextIds: draft.contextIds } : {}) };
+    const materials = this.repository.materialsForPlan(scope);
+    if (!materials.length) throw Error("所选范围尚无材料，请先保存材料");
+    const permitted = articleWithinMaterials(this.repository, materials);
+    const articles = this.repository.published().filter(permitted);
+    const keys = new Set(materials.map(m => m.key));
+    const existingPages = this.repository.pages().flatMap(page => {
+      if (!page.plan || page.plan.workflow === "requirement-followup") return [];
+      try {
+        const selected = this.repository.materialsForPlan(page.plan);
+        return selected.length && selected.every(m => keys.has(m.key)) ? [{ key: page.key, plan: page.plan, state: page.state }] : [];
+      } catch { return []; }
+    });
+    const run = await this.runRole("knowledge-outliner", materials.map(material => ({ material, ranges: [{ start: 1, end: material.lineCount }] })), articles,
+      { title: draft.title, directory: { title: draft.title, reader: draft.reader, goal: draft.goal, topicPath: draft.topicPath, materialKeys: draft.materialKeys, contextIds: draft.contextIds },
+        selectedMaterials: materials.map(material => ({ key: material.key, title: material.title, path: material.path, lineCount: material.lineCount, source: material.namespace })),
+        previousDraft: draft.pages, existingPages, instruction: "Investigate the selected originals and existing explanations. Return a reader-oriented editable page proposal only; never publish or change facts. Each page must state what the reader will understand or do, its scenario, questions and independently selected materials. Avoid a file inventory or fixed universal chapter template." },
+      out => {
+        const proposal = knowledgeOutlineProposalSchema.parse(out);
+        for (const page of proposal.pages) {
+          if (page.materialKeys.some(key => !keys.has(key))) throw Error(`「${page.title}」选择了范围外或不存在的材料`);
+          if (page.contextIds.some(id => !draft.contextIds.includes(id))) throw Error(`「${page.title}」选择了范围外的项目`);
+          if (page.existingKey && !existingPages.some(p => p.key === page.existingKey)) throw Error("延续文章请从 existingPages 选择，不要创造文章身份");
+        }
+        validate?.(proposal);
+        return proposal;
+      });
+    return knowledgeOutlineProposalSchema.parse(run.result);
+  }
 
   /** Optional catalog work shares the native investigation harness. It creates
    * navigation metadata, not personal facts or a replacement for original prose. */

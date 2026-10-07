@@ -732,6 +732,7 @@ export const roleIdSchema = z.enum([
   "coding-agent",
   "code-reviewer",
   "knowledge-researcher",
+  "knowledge-outliner",
   "knowledge-planner",
   "knowledge-writer",
   "knowledge-verifier",
@@ -782,6 +783,7 @@ export const roleManifestSchema = z
       "KnowledgeReview.v1",
       "KnowledgePlan.v1",
       "KnowledgeResearch.v1",
+      "KnowledgeOutline.v1",
       "AssistantReply.v1",
     ]),
     tool_policy: z

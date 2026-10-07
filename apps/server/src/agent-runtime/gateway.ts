@@ -7,6 +7,7 @@ import {
 } from "../../../../packages/contracts/src/knowledge.js";
 import { assistantReplySchema, answerReviewSchema } from "../../../../packages/contracts/src/assistant.js";
 import { materialDescriptionBatchSchema } from "../../../../packages/contracts/src/material-description.js";
+import { knowledgeOutlineProposalSchema } from "../../../../packages/contracts/src/knowledge-outline.js";
 import { contextResolutionSchema } from "../../../../packages/contracts/src/contexts.js";
 import {
   estimateTokens,
@@ -44,6 +45,7 @@ const outputSchemas = {
   "ContextResolution.v1": contextResolutionSchema,
   "MaterialDescriptions.v1": materialDescriptionBatchSchema,
   "KnowledgeResearch.v1": knowledgeResearchSchema,
+  "KnowledgeOutline.v1": knowledgeOutlineProposalSchema,
   "KnowledgeBatch.v1": knowledgeBatchSchema,
   "KnowledgeReview.v1": knowledgeReviewSchema,
   "KnowledgePlan.v1": knowledgePlanSchema,
