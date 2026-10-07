@@ -12,11 +12,20 @@ export type MessageResource = {
   kind: string;
   label: string;
   uri?: string;
+  key?: string;
   assetId?: string;
   revisionId?: string;
   cached?: boolean;
+  document?: CaptureInput["context"]["document"];
   status: "read" | "saved" | "failed";
   error?: string;
+};
+export type MessageMaterialOptions = {
+  mode?: "remote" | "saved" | "capture";
+  savedResources?: MessageResource[];
+  rawAssetId?: string;
+  readDocument?: (uri: string) => Promise<CaptureInput>;
+  onResource?: (resource: MessageResource) => void;
 };
 export function messageTime(value: string) {
   const n = Number(value);
@@ -45,13 +54,14 @@ export function resourcesIn(content: string) {
 }
 export async function messageMaterial(
   store: Store,
-  port: PersonalLarkPort,
+  port: Pick<PersonalLarkPort, "resource">,
   message: LarkMessage,
   name: string,
   ownerId: string,
   readResources: boolean,
   refresh = false,
   ensureActive: () => void = () => {},
+  options: MessageMaterialOptions = {},
 ) {
   ensureActive();
   const cache = new LarkResourceCache(store);
@@ -82,7 +92,15 @@ export async function messageMaterial(
       if (!readResources) continue;
       try {
         const cacheKey = `document:${ownerId}:${uri}`;
-        const cached = !refresh && cache.get<{ revisionId: string }>(cacheKey);
+        const stored = options.savedResources?.find(
+          (r) => r.kind === "document" && r.uri === uri,
+        );
+        const useSaved =
+          options.mode === "saved" ||
+          (options.mode === "capture" &&
+            Boolean(stored?.revisionId || stored?.assetId));
+        const cached =
+          !useSaved && !refresh && cache.get<{ revisionId: string }>(cacheKey);
         const previous = cached && store.revision(cached.revisionId);
         if (previous && previous.current) {
           const restored: CaptureInput["parts"] = previous.parts.map((part) => {
@@ -97,6 +115,8 @@ export async function messageMaterial(
             });
           });
           resource.revisionId = previous.id;
+          resource.assetId = previous.context.document?.originalAssetId;
+          resource.document = previous.context.document;
           resource.label = previous.title;
           resource.status = "read";
           resource.cached = true;
@@ -106,7 +126,69 @@ export async function messageMaterial(
           );
           continue;
         }
-        const input = await larkInput(uri, store.dataDir);
+        let input: CaptureInput;
+        if (useSaved) {
+          const revision =
+            stored?.revisionId && store.revision(stored.revisionId);
+          const document =
+            stored?.document ?? (revision && revision.context.document);
+          if (document && ["lark-cli", "lark-api"].includes(document.parser)) {
+            const assetId = stored?.assetId ?? document.originalAssetId;
+            const raw = JSON.parse(
+              requiredAsset(store, assetId).toString("utf8"),
+            );
+            const content =
+              document.parser === "lark-cli"
+                ? raw.data?.document?.content
+                : raw.response?.data?.content;
+            if (typeof content !== "string" || !content.trim())
+              throw Error("保存的飞书文档响应缺少正文，不能重新解析");
+            input = captureSchema.parse({
+              source: "lark",
+              externalId: uri,
+              title: revision ? revision.title : stored!.label,
+              parts: [
+                { type: "text", text: content },
+                { type: "link", url: uri, label: "飞书原文" },
+              ],
+              context: { ...(revision ? revision.context : {}), document },
+            });
+            resource.assetId = assetId;
+            resource.document = document;
+          } else {
+            if (!revision)
+              throw Error("此文档尚无保存原件；需要明确重新读取远端");
+            input = captureSchema.parse({
+              source: revision.source,
+              externalId: uri,
+              title: revision.title,
+              parts: revision.parts.map((p) =>
+                p.type === "image"
+                  ? {
+                      type: "image",
+                      data: requiredAsset(store, p.assetId).toString("base64"),
+                      mimeType: p.mimeType,
+                      label: p.label,
+                    }
+                  : p,
+              ),
+              context: revision.context,
+            });
+          }
+          resource.revisionId = revision ? revision.id : undefined;
+          resource.label = input.title;
+          resource.status = "read";
+          parts.push(
+            { type: "text", text: `关联文档「${input.title}」` },
+            ...input.parts,
+          );
+          continue;
+        }
+        input = await (
+          options.readDocument ?? ((url) => larkInput(url, store.dataDir))
+        )(uri);
+        resource.assetId = input.context.document?.originalAssetId;
+        resource.document = input.context.document;
         ensureActive();
         const captured = store.capture(input, {
           learning: false,
@@ -114,6 +196,7 @@ export async function messageMaterial(
         });
         cache.put(cacheKey, { revisionId: captured.revision.id }, 10 * 60_000);
         resource.revisionId = captured.revision.id;
+        resource.assetId = input.context.document?.originalAssetId;
         resource.label = input.title;
         resource.status = "read";
         parts.push(
@@ -123,6 +206,8 @@ export async function messageMaterial(
       } catch (e) {
         resource.status = "failed";
         resource.error = e instanceof Error ? e.message : "文档读取失败";
+      } finally {
+        options.onResource?.(resource);
       }
     }
     for (const key of found.keys) {
@@ -132,14 +217,28 @@ export async function messageMaterial(
         new RegExp(`<file[^>]*key=["']${key}["'][^>]*name=["']([^"']+)`),
       );
       const label =
-        nameMatch?.[1] || (kind === "image" ? "消息图片" : "消息附件");
-      const resource: MessageResource = { kind, label, status: "saved" };
+        nameMatch?.[1] ||
+        jsonFileName(content, key) ||
+        (kind === "image" ? "消息图片" : "消息附件");
+      const resource: MessageResource = { kind, key, label, status: "saved" };
       resources.push(resource);
       if (!readResources) continue;
       try {
         const cacheKey = `resource:${ownerId}:${kind}:${key}`;
-        const cached = !refresh && cache.get<{ assetId: string }>(cacheKey);
+        const stored = options.savedResources?.find(
+          (r) =>
+            r.key === key || (!r.key && r.kind === kind && r.label === label),
+        );
+        const cached =
+          options.mode === "saved" ||
+          (options.mode === "capture" && stored?.assetId)
+            ? stored?.assetId
+              ? { assetId: stored.assetId }
+              : null
+            : !refresh && cache.get<{ assetId: string }>(cacheKey);
         const local = cached ? store.asset(cached.assetId) : null;
+        if (options.mode === "saved" && !local)
+          throw Error("此附件尚无保存原件；需要明确重新读取远端");
         const bytes =
           local ?? (await port.resource(message.message_id, key, kind));
         ensureActive();
@@ -203,16 +302,20 @@ export async function messageMaterial(
       } catch (e) {
         resource.status = "failed";
         resource.error = e instanceof Error ? e.message : "资源读取失败";
+      } finally {
+        options.onResource?.(resource);
       }
     }
   }
   if (parts.length > 50)
     throw Error("消息资源过多，需要分批读取，原始消息仍保留");
   ensureActive();
-  const rawAssetId = await saveImportAsset(
-    store.dataDir,
-    Buffer.from(JSON.stringify(message)),
-  );
+  const rawAssetId =
+    options.rawAssetId ??
+    (await saveImportAsset(
+      store.dataDir,
+      Buffer.from(JSON.stringify(message)),
+    ));
   ensureActive();
   const input: CaptureInput = {
     source: "chat",
@@ -227,7 +330,9 @@ export async function messageMaterial(
         messageId: message.message_id,
         threadId: message.thread_id,
         rawAssetId,
-        resources,
+        resources: resources.map(
+          ({ key, cached, document, ...resource }) => resource,
+        ),
       },
     },
     provenance: {
@@ -252,4 +357,19 @@ export async function messageMaterial(
     },
   };
   return { input, resources };
+}
+function requiredAsset(store: Store, id: string) {
+  const bytes = store.asset(id);
+  if (!bytes) throw Error("保存的原件不可用，请挂载冷存储或恢复备份");
+  return bytes;
+}
+function jsonFileName(content: string, key: string): string | null {
+  try {
+    const value = JSON.parse(content);
+    if (value.file_key === key && typeof value.file_name === "string")
+      return value.file_name;
+  } catch {
+    /* The CLI can return rich HTML rather than JSON. */
+  }
+  return null;
 }

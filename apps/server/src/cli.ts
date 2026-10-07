@@ -145,6 +145,40 @@ for (const action of ["start", "stop", "restart", "status"] as const)
       )
         process.exitCode = 1;
     });
+service
+  .command("logs")
+  .description("读取本机最近的脱敏结构化日志；不启动服务")
+  .option("--lines <number>", "最近记录数，1–1000", (v) => Number(v), 100)
+  .addOption(
+    new Option("--level <level>", "只显示此等级及更严重的记录").choices([
+      "trace",
+      "debug",
+      "info",
+      "warn",
+      "error",
+      "fatal",
+    ]),
+  )
+  .option("--job <id>", "按任务筛选")
+  .option("--source <id>", "按来源筛选")
+  .option("--message <id>", "按消息筛选")
+  .action(async (opts) => {
+    if (program.opts().url || process.env.OMEM_URL)
+      throw Error("service logs 读取本机日志，请移除 --url/OMEM_URL");
+    const { readServiceLogs } = await import("./logging/files.js");
+    const value = await readServiceLogs({
+      lines: opts.lines,
+      level: opts.level,
+      jobId: opts.job,
+      sourceId: opts.source,
+      messageId: opts.message,
+    });
+    show(
+      value,
+      `日志目录：${value.directory}\n等级：${value.settings.level}\n` +
+        value.entries.map((e) => JSON.stringify(e)).join("\n"),
+    );
+  });
 program
   .command("status")
   .description("检查目标 HTTP 服务、索引和个人消息采集是否健康")
@@ -242,6 +276,26 @@ config
     loadConfig();
     show({ ok: true }, "配置有效；修改后运行 omem service restart 生效。");
   });
+config
+  .command("logging <level>")
+  .description("保存日志等级；重启服务后生效，OMEM_LOG_LEVEL 可覆盖")
+  .action(async (level) => {
+    const { logLevelSchema } = await import("./logging/config.js");
+    logLevelSchema.parse(level);
+    const file = configPath();
+    if (!existsSync(file)) throw Error("请先运行 omem setup 初始化配置");
+    const value = await readJson(file);
+    value.logging = { ...value.logging, level };
+    const { parseConfig } = await import("./config.js");
+    parseConfig(value);
+    await writeFile(file, JSON.stringify(value, null, 2) + "\n", {
+      mode: 0o600,
+    });
+    show(
+      { level, config: file },
+      `日志等级已设为 ${level}；运行 omem service restart 生效。`,
+    );
+  });
 const data = group(
   "data",
   "本机个人库：占用、备份、迁移、冷归档与清理（不操作 --url 远程服务）",
@@ -329,6 +383,15 @@ const imports = group(
   "after",
   "\n示例：\n  omem import file ./notes.md\n  omem import git ./project src/main.ts --ref HEAD\n  omem import lark https://example.feishu.cn/docx/TOKEN\n  printf '周五前完成方案' | omem import text --title 项目记录\nPDF/DOCX 需显式运行 omem setup documents。飞书读取使用随包提供的官方 lark-cli。",
 );
+const documentImports = group("imports", "查看已保存文件的导入与解析记录");
+documentImports
+  .command("list")
+  .description("查看持久文档导入状态与失败原因")
+  .action(async () => show(await api("/api/document-imports")));
+documentImports
+  .command("show <id>")
+  .description("查看文档原件与解析任务状态")
+  .action(async (id) => show(await api("/api/document-imports/" + enc(id))));
 async function importFile(path: string) {
   const file = resolve(path);
   if ([".pdf", ".docx"].includes(extname(file).toLowerCase())) {
@@ -1024,6 +1087,89 @@ develop
     show(run, formatDevelopmentRun(run));
   });
 const knowledge = group("knowledge", "查看知识与材料；按阅读目标提交写作任务");
+const materials = group("materials", "查找已保存原件的来源与当前版本");
+read(materials, "list", "列出材料来源及当前版本", "/api/sources");
+materials
+  .command("show <id>")
+  .description("读取一个来源的当前原文及保留策略")
+  .action(async (id) => show(await api("/api/sources/" + enc(id))));
+const reprocess = group(
+  "reprocess",
+  "重新解析、理解或写作；可删除替换旧成果",
+).addHelpText(
+  "after",
+  "\n目标：source（来源/当前revision/material key）、document（导入ID）、message（个人飞书消息ID）、article（文章key）、bot-event（机器人收件ID）。\n动作：parse 保存原件重新解析；understand 重新提取记忆/事项；describe 重写用途；write 重写文章；refresh 从来源读取新版。\n示例：omem reprocess run source ID --action understand --replace --wait\n       omem reprocess run document ID --action parse --wait\n       omem reprocess delete article KEY\n--replace 会直接清除对应旧成果与正文历史，原件保留。未指定则生成期间保留旧成果。refresh 会访问来源当前内容；其他动作使用已保存材料。失败仍可重试，不会自动恢复已删除成果。",
+);
+read(reprocess, "list", "查看重新处理记录和实际状态", "/api/reprocessing");
+reprocess
+  .command("show <id>")
+  .description("查看解析、生成和复核任务的实际状态")
+  .action(async (id) => show(await api("/api/reprocessing/" + enc(id))));
+async function startReprocessing(
+  target: string,
+  id: string,
+  action: string,
+  replace: boolean,
+  wait: boolean,
+) {
+  let record: any = await api("/api/reprocessing", {
+    requestId: randomUUID(),
+    target,
+    targetId: id,
+    action,
+    replace,
+  });
+  if (wait) {
+    const controller = new AbortController();
+    const interrupt = () => controller.abort();
+    process.once("SIGINT", interrupt);
+    try {
+      const { setTimeout: delay } = await import("node:timers/promises");
+      while (
+        ["queued", "leased", "running", "retry_wait"].includes(record.state)
+      ) {
+        await delay(1000, undefined, { signal: controller.signal });
+        record = await api("/api/reprocessing/" + enc(record.id));
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) throw error;
+      process.exitCode = 130;
+    } finally {
+      process.off("SIGINT", interrupt);
+    }
+  }
+  show(
+    record,
+    `重新处理：${record.id}\n状态：${record.state}\n${record.result?.summary ?? record.error ?? "请求已保存；排队不等于完成"}\n查询：omem reprocess show ${record.id}`,
+  );
+  if (wait && record.state !== "succeeded" && process.exitCode !== 130)
+    process.exitCode = 1;
+}
+reprocess
+  .command("run <target> <id>")
+  .description("提交重新处理任务；--wait 等待生成与复核，失败退出 1")
+  .addOption(
+    new Option("--action <action>", "处理方式")
+      .choices(["parse", "understand", "describe", "write", "refresh"])
+      .makeOptionMandatory(),
+  )
+  .option("--replace", "删除对应旧成果后重新生成")
+  .option("--wait", "等待实际完成；Ctrl+C 停止等待，后台任务继续")
+  .action(async (target, id, opts) =>
+    startReprocessing(target, id, opts.action, !!opts.replace, !!opts.wait),
+  );
+reprocess
+  .command("delete <target> <id>")
+  .description("删除旧成果，保留原件；文章保留阅读目标")
+  .action(async (target, id) =>
+    startReprocessing(target, id, "delete", true, true),
+  );
+reprocess
+  .command("retry <id>")
+  .description("重试失败的处理阶段")
+  .action(async (id) =>
+    show(await api(`/api/reprocessing/${enc(id)}/retry`, {})),
+  );
 read(knowledge, "list", "列出文章、选材及处理状态", "/api/knowledge/articles");
 knowledge
   .command("show <key>")

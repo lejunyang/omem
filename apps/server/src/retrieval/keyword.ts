@@ -31,6 +31,7 @@ export class KeywordRetrieval implements RetrievalPort {
     revisionId: string,
     fragmentId?: string,
   ): EvidenceFragment | null {
+    if (this.db.prepare("SELECT 1 FROM revision_tombstones WHERE revision_id=?").get(revisionId)) return null;
     const row = fragmentId
       ? (this.db
           .prepare(

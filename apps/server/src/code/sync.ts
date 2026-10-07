@@ -4,8 +4,9 @@
  * over already-captured fragments; fragment_id is filled by locating the head
  * review fragment that contains a symbol's declaration line.
  *
- * Snapshot identity = repo + commit + dirty + sorted content-hash list. Two runs
- * over identical input reuse the same snapshot row (idempotent). When the tree
+ * Snapshot identity includes repo/commit/dirty and captured revision identities
+ * with their content hashes. Repeating the same capture reuses the snapshot.
+ * Reverting after a replaced original was removed creates a new snapshot. When the tree
  * changes, a new snapshot row appears and edges/symbols from the previous parse
  * are re-upserted onto the new head; anything not re-produced flips stale.
  */
@@ -185,14 +186,15 @@ export async function runCodeSync(
   }
   const knownPaths = new Set(files.map(f => f.path));
 
-  // Snapshot identity: repo + commit + dirty + sorted hashes.
+  // Include captured identity: a reverted file gets a new head revision after
+  // its prior raw version was removed. Old snapshot links must stay unavailable.
   const status = await git(["status", "--porcelain"], repoRoot);
   const dirty = !!status && status.length > 0;
   const snapId = snapshotIdFor(
     repoId,
     commit,
     dirty,
-    captured.map(row => `${row.external_id}:${sha256(revisionText(store, row.id) ?? "")}`),
+    captured.map(row => `${row.external_id}:${row.id}:${sha256(revisionText(store, row.id) ?? "")}`),
   );
   const existing = getSnapshot(store, snapId);
 

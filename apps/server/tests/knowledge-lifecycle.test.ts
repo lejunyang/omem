@@ -238,7 +238,7 @@ it("reviews only the chapter whose uncited premise changed", async () => {
   await retrieval.close();
 });
 
-it("keeps documented code citations current when an unrelated function moves their lines", () => {
+it("keeps removed code citation identities unavailable even when the new text only moves their lines", () => {
   const { store, repository, artifact } = setup();
   const text = "/** 每人预算八十元。 */\nexport const budget = () => 80;\n\n/** 集合地点在图书馆。 */\nexport function venue() { return '图书馆'; }";
   const capture = (text: string) => store.capture({
@@ -255,12 +255,14 @@ it("keeps documented code citations current when an unrelated function moves the
   const moved = "export function unrelated() { return 0; }\n\n" + text;
   capture(moved);
   repository.refresh();
-  expect(repository.get(page.document.key)?.current).toBe(true);
+  expect(repository.get(page.document.key)?.current).toBe(false);
   // Code navigation still locates the declaration rather than its comment.
   expect(parseFile("outing.ts", text).symbols.find(s => s.name === "budget")?.rangeStart.line).toBe(2);
-  expect(repository.resolveMaterial(source.key, source.digest)?.material.revisionId).toBe(source.revisionId);
+  expect(repository.resolveMaterial(source.key, source.digest)).toBeNull();
+  expect(store.retention.revisionAvailability(source.revisionId)?.available).toBe(false);
+  expect(repository.resolveMaterial(source.key)?.material.revisionId).not.toBe(source.revisionId);
   capture(moved.replace("每人预算八十元", "每人预算一百二十元"));
   expect(repository.statusReader()(page)).toMatchObject({
-    budget: { state: "needs-review" }, venue: { state: "current" },
+    budget: { state: "unavailable" }, venue: { state: "unavailable" },
   });
 });

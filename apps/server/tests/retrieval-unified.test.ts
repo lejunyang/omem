@@ -995,9 +995,8 @@ it("finds captured call sites instead of definitions, imports or comments, prese
     ).toEqual(["mobile.ts"]);
     if (oldTarget.kind === "source")
       expect(
-        s.retrieval.readEvidence(oldTarget.revisionId, oldTarget.fragmentIds[0])
-          ?.text,
-      ).toContain("reserveParcel");
+        s.retrieval.readEvidence(oldTarget.revisionId, oldTarget.fragmentIds[0]),
+      ).toBeNull();
   } finally {
     await s.close();
   }

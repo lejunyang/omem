@@ -4,6 +4,12 @@ import {
   type JobFailureKind,
   type JobLease,
 } from "./repository.js";
+import {
+  errorSummary,
+  getLogger,
+  withLogContext,
+  type LogContext,
+} from "../logging/logger.js";
 
 export class JobExecutionError extends Error {
   constructor(
@@ -56,6 +62,21 @@ export class DurableJobWorker {
       now: now(),
     });
     if (!lease) return { processed: false as const };
+    const identifiers: LogContext = { jobId: lease.id, jobKind: lease.kind };
+    for (const ref of lease.inputRefs) {
+      if (!ref || typeof ref !== "object") continue;
+      for (const key of ["sourceId", "revisionId", "messageId"] as const) {
+        const value = (ref as Record<string, unknown>)[key];
+        if (typeof value === "string" && !identifiers[key])
+          identifiers[key] = value;
+      }
+    }
+    const logger = getLogger({ ...identifiers, component: "worker" });
+    const startedAt = performance.now();
+    logger.debug(
+      { event: "job.started", attempt: lease.attempt, workerId: this.workerId },
+      "job.started",
+    );
     const handler = this.handlers[lease.kind];
     if (!handler) {
       this.repository.markRunning(lease.id, lease.leaseToken, now());
@@ -66,6 +87,16 @@ export class DurableJobWorker {
         message: `No handler registered for job kind ${lease.kind}`,
         now: now(),
       });
+      logger.error(
+        {
+          event: "job.failed",
+          attempt: lease.attempt,
+          state: job.state,
+          failureKind: "config",
+          reason: "handler_not_registered",
+        },
+        "job.failed",
+      );
       return { processed: true as const, job };
     }
 
@@ -78,14 +109,20 @@ export class DurableJobWorker {
       heartbeat = setInterval(() => {
         try {
           this.repository.heartbeat(lease.id, lease.leaseToken, now(), leaseMs);
-        } catch {
+        } catch (error) {
+          logger.warn(
+            { event: "job.heartbeat_failed", error: errorSummary(error) },
+            "job.heartbeat_failed",
+          );
           controller.abort();
         }
       }, heartbeatMs);
       heartbeat.unref();
     }
     try {
-      const result = await handler(lease, controller.signal);
+      const result = await withLogContext(identifiers, () =>
+        handler(lease, controller.signal),
+      );
       const job = this.repository.succeed({
         jobId: lease.id,
         leaseToken: lease.leaseToken,
@@ -93,6 +130,15 @@ export class DurableJobWorker {
         usage: result.usage,
         now: now(),
       });
+      logger.info(
+        {
+          event: "job.completed",
+          attempt: lease.attempt,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          state: job.state,
+        },
+        "job.completed",
+      );
       return { processed: true as const, job };
     } catch (error) {
       const failure =
@@ -119,6 +165,17 @@ export class DurableJobWorker {
           now: now(),
           retryBaseMs: this.options.retryBaseMs,
         });
+        logger.warn(
+          {
+            event: "job.failed",
+            attempt: lease.attempt,
+            elapsedMs: Math.round(performance.now() - startedAt),
+            state: job.state,
+            failureKind: job.errorKind,
+            error: errorSummary(error),
+          },
+          "job.failed",
+        );
         return { processed: true as const, job };
       } catch (finishError) {
         if (

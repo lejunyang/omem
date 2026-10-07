@@ -13,6 +13,7 @@ export type KnowledgeArticle = KnowledgeArtifact & { revision: string; current: 
 export function materialFromRevision(store: Store, revisionId: string): KnowledgeMaterial | null {
   let cache = materialCache.get(store);
   if (!cache) { cache = new Map(); materialCache.set(store, cache); }
+  if (store.retention.revisionAvailability(revisionId)?.available === false) { cache.delete(revisionId); return null; }
   if (cache.has(revisionId)) return cache.get(revisionId)!;
   const r = store.revision(revisionId);
   const context = (r?.context ?? {}) as Record<string, unknown>;
@@ -240,7 +241,18 @@ export class KnowledgeRepository {
     return r ? { ...JSON.parse(String(r.artifact)), revision: String(r.id), current: r.head === r.id && !!r.current } : null;
   }
 
+  clear(key: string) { return this.store.retention.clearArticle(key); }
+  availability(key: string, revisionId?: string) { return this.store.retention.articleAvailability(key, revisionId); }
+  removedArtifact(artifact: KnowledgeArtifact) {
+    if (!artifact?.document?.key || !artifact.generation?.at) return false;
+    const revision = digest(stableDigest(artifact));
+    if (this.store.db.prepare("SELECT 1 FROM knowledge_revision_tombstones WHERE revision_id=?").get(revision)) return true;
+    const cleared = this.store.db.prepare("SELECT removed_at FROM knowledge_clear_epochs WHERE document_key=?").get(artifact.document.key);
+    return !!cleared && artifact.generation.at <= String(cleared.removed_at);
+  }
+
   publish(artifact: KnowledgeArtifact, expectedPlan?: WikiPageBrief) {
+    if (this.removedArtifact(artifact)) throw Error("旧写作任务的成果已清除，请重新生成。");
     if (expectedPlan && stableDigest(this.pages().find(p => p.key === artifact.document.key)?.plan ?? null) !== stableDigest(expectedPlan))
       throw Error("阅读目标或补充材料在整理期间发生变化，请重新整理；已保留旧文和最新选材。");
     if (expectedPlan && artifact.selection && stableDigest(this.materialsForPlan(expectedPlan).map(m => m.key).sort()) !== stableDigest([...artifact.selection.materialKeys].sort()))
@@ -288,6 +300,9 @@ export class KnowledgeRepository {
   /** Restore reviewed bytes and their fixed inputs. An import can advance only
    * its own previously managed head; applicability is recalculated separately. */
   restoreHistorical(artifact: KnowledgeArtifact, asHead = true, importOwner?: string) {
+    // Restart/import cannot resurrect explicitly cleared bytes. New model runs
+    // with a newer generation time and a new artifact identity remain eligible.
+    if (this.removedArtifact(artifact)) return;
     if (artifact.version !== 1 || artifact.review?.verdict !== "accepted" || !artifact.generation?.model || !artifact.review.model) throw Error("Missing review provenance");
     const materials = new Map<string, KnowledgeMaterial>(), articles = new Map<string, KnowledgeArticle>();
     for (const dependency of artifact.dependencies) {

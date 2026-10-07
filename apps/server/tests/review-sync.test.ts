@@ -158,7 +158,7 @@ describe("group 1: source identity and revisions", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("appends a revision on content change; old revision current=false and not default-recalled", async () => {
+  it("replaces mutable original on content change; old identity stays unavailable and is not recalled", async () => {
     const root = makeFixtureRepo();
     archFile(root, "live", "VERSION_ONE_TOKEN_XYZ");
     commitAll(root, "v1");
@@ -180,8 +180,8 @@ describe("group 1: source identity and revisions", () => {
     expect(search(store, "VERSION_ONE_TOKEN_XYZ", 20).length).toBe(0);
     expect(search(store, "VERSION_TWO_TOKEN_UVW", 20).length).toBeGreaterThan(0);
 
-    const oldRev = store.revision(revs[0]!.id)!;
-    expect(oldRev.current).toBe(false);
+    expect(store.revision(revs[0]!.id)).toBeNull();
+    expect(store.retention.revisionAvailability(revs[0]!.id)).toMatchObject({available:false,replacementRevisionId:revs[1]!.id});
     rmSync(root, { recursive: true, force: true });
   });
 

@@ -12,7 +12,7 @@ Agent 的 `idleTimeoutMs` 现在表示连续无活动等待；真实 ACP 输出�
 
 首次打开网页提示进入「能力与连接」。Agent 设置按服务实际 PATH 检测命令，连接 ACP 后读取模型；切换模型后读取它的思考强度，可另发一句无个人材料的调用检查。五种工作可以分别配置，保存到原个人配置后新任务立即使用。未安装适配器、无法认证和不支持的选项会说明原因，不自动换提供方或开启后台处理。命令与使用范围见[Agent 设置](../../skills/omem-cli/references/agents.md)。手动编辑其他配置仍需重启服务。
 
-开发 API 使用项目内 [nodemon](https://github.com/remy/nodemon) 监测服务源码、合同、角色和配置变化，通过 SIGTERM 关闭旧进程后启动新的 Bun 进程；TypeScript 仍由 Bun 执行。这样不会在长期热重载的同一 Bun 进程中累积状态。前端仍由 Vite 热更新，个人数据库与原文历史保留。
+开发 API 使用项目内 [nodemon](https://github.com/remy/nodemon) 监测服务源码、合同、角色和配置变化，通过 SIGTERM 关闭旧进程后启动新的 Bun 进程；TypeScript 仍由 Bun 执行。这样不会在长期热重载的同一 Bun 进程中累积状态。前端仍由 Vite 热更新，个人数据库保留；原件按下文的正式保留策略管理。
 
 ## 常驻服务与状态命令
 
@@ -29,7 +29,25 @@ osdk run service:stop
 
 状态包括进程 PID、重启次数、API 健康和个人消息采集概况；服务没有运行、API 不健康时返回非零退出码。状态查询不会为了检查而启动服务。PM2 的进程列表、日志与配置放在所选 `OMEM_DATA_DIR/service`，不接管机器上的其他 PM2 项目。沿用 `OMEM_CONFIG`、`OMEM_DATA_DIR`、`OMEM_HOST`、`OMEM_PORT` 和进程启动时的环境；默认端口 4317。重启前先构建新的源码，避免以为源码修改会自动生效。
 
-单实例运行，异常退出自动退避重启，短时间反复启动失败后停止。这里交付的是终端退出后继续运行的后台管理，没有安装 launchd/systemd 开机启动项，也不能在电脑休眠时拉消息。PM2 日志位于状态命令给出的路径，尚未配置自动轮换。
+单实例运行，异常退出自动退避重启，短时间反复启动失败后停止。这里交付的是终端退出后继续运行的后台管理，没有安装 launchd/systemd 开机启动项，也不能在电脑休眠时拉消息。
+
+服务启动和重启会准备随包锁定的 `pm2-logrotate`，使用这份个人库专属的 PM2 环境。默认日志每个文件达到 10 MB 后轮换，保留 7 份压缩归档，也每天轮换；大小每 10 秒检查一次，文件可能短暂超过阈值。轮换模块无法启动会阻止本次服务启动，错误会指向个人目录中的 PM2 日志。`service:status` 展示轮换是否运行和当前配置。
+
+日志位于 `OMEM_DATA_DIR/service/pm2/logs`，包含 `omem-out.log` 和 `omem-error.log`。默认等级为 `info`，可在个人配置中设置 `logging`，或用 `OMEM_LOG_LEVEL` 覆盖等级；常驻服务改完配置后需重新启动。
+
+```json
+{ "logging": { "level": "info", "maxSizeMB": 10, "retain": 7 } }
+```
+
+结构化日志记录请求失败和任务阶段，带任务、来源或消息标识，便于对应重新处理记录；错误保留类别和代码位置。消息正文与模型输入输出会脱敏，完整原件仍在个人库；不能通过开启 debug 找回正文。需要排查一次重新处理，可先找到失败子任务 ID，再筛选本机日志。
+
+```bash
+omem service logs --lines 100 --level warn
+omem service logs --job <任务ID>
+omem service logs --source <来源ID>
+```
+
+该命令只读本机当前日志，不连接远端、不启动服务。每次最多 1000 条；旧日志中的非结构化文本不会复制到诊断输出。源码开发的终端输出不经过 PM2 文件轮换。
 
 「飞书消息」页可配置定时只读采集。命令行调用同一服务 API，`OMEM_URL` 可指定开发时实际 API 地址：
 
@@ -48,7 +66,7 @@ osdk run messages inbox
 
 ## 模型与生成
 
-仓库模型读取 config/review-code-model.json，REVIEW_CODE_MODEL_CONFIG 可覆盖；使用真实 traex ACP 的 gpt-5.6-sol。`osdk run review:generate <路径>` 只生成明确选中材料的内部分析笔记，不进入正式目录，也不自动按文件或模块拼出专题；读者指南用 `osdk run review:guides`，只更新一页可用 `osdk run review:guides retrieval`。页面计划在 config/wiki-pages.json；ACP 知识任务现用原生工具/skill/MCP 自主调查、补读、写作，再独立补查。没有宿主输入输出 token 预算或固定三轮研究限制。`--retry` 可重试失败任务。角色输出、目录、research.jsonl 与 trace 保存在 .repo-review/runtime/；原文和数据库快照是临时副本，角色结束后回收，原始版本仍由正式 Store 保存。发布的文章在 .repo-review/knowledge/。
+仓库模型读取 config/review-code-model.json，REVIEW_CODE_MODEL_CONFIG 可覆盖；使用真实 traex ACP 的 gpt-5.6-sol。`osdk run review:generate <路径>` 只生成明确选中材料的内部分析笔记，不进入正式目录，也不自动按文件或模块拼出专题；读者指南用 `osdk run review:guides`，只更新一页可用 `osdk run review:guides retrieval`。页面计划在 config/wiki-pages.json；ACP 知识任务现用原生工具/skill/MCP 自主调查、补读、写作，再独立补查。没有宿主输入输出 token 预算或固定三轮研究限制。`--retry` 可重试失败任务。角色输出、目录、research.jsonl 与 trace 保存在 .repo-review/runtime/；原文和数据库快照是临时副本，角色结束后回收。正式 Store 中的代码与文档保留最新版原件，不能靠临时工作区长期保留旧原文。发布的文章在 .repo-review/knowledge/。
 
 本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / `osdk run retrieval:index --review` 补建索引。
 
@@ -68,9 +86,15 @@ osdk run messages inbox
 
 仓库验收清理：`osdk run review:prune` 预览，`osdk run review:prune --apply` 执行。自动检查只保留当前报告、最近两份成功与两份失败归档，以及当前文档直接引用的报告；`review:verify` 结束时自动执行这个保留规则。旧记录仍可从 Git 找回，不能用旧成功覆盖当前失败。
 
-`assistant:compare` 结束时释放本次复制的数据库，保留答案、模型配置、意见和读取记录；只保留同一输出父目录最近三次已结束运行。自动检查日志也只保留最近三次。进行中的运行和没有归属标记的旧实验目录不会自动删除，需核对后清理。原件版本、材料说明历史、文章固定引用、正式 `.omem` 和 `.repo-review/runtime/data` 不在此清理范围。专项验收用一份现行简报和必要样例，不反复提交整库正文、重复 HTML 或临时调试日志。
+`assistant:compare` 结束时释放本次复制的数据库，保留答案、模型配置、意见和读取记录；只保留同一输出父目录最近三次已结束运行。自动检查日志也只保留最近三次。进行中的运行和没有归属标记的旧实验目录不会自动删除，需核对后清理。正式 `.omem` 和 `.repo-review/runtime/data` 不属于实验副本清理范围；它们内部的原件和派生成果仍执行正式保留规则。专项验收用一份现行简报和必要样例，不反复提交整库正文、重复 HTML 或临时调试日志。
 
-个人数据库、资产与临时输出在 .omem/，可用 OMEM_DATA_DIR 覆盖。隔离仓库运行数据在 .repo-review/runtime/。保留旧引用依赖的历史，不删除 .repo-review/data/ 等既有档案。原件、会话、密钥、数据库与模型权重不提交 Git。
+个人数据库、资产与临时输出在 .omem/，可用 OMEM_DATA_DIR 覆盖。隔离仓库运行数据在 .repo-review/runtime/。不自行清理 `.repo-review/data/` 等未知既有档案；原件、会话、密钥、数据库与模型权重不提交 Git。
+
+代码和文档默认使用 `latest` 保留策略，同一来源更新后只保留当前正文和原件。聊天、hook 和手动反馈使用 `event` 策略，保留事件与更正。策略是持久数据，不由前端目录或文件名决定；来源读取接口会返回当前策略。启动时也会整理已有代码和文档的旧版本，不能继续假设老库保存全部旧正文。
+
+旧版本移除后留下版本身份及原因，原正文、检索片段和不再被使用的资源会回收。读取已移除的原文、证据或文档原件返回 410，真正不存在的对象返回 404；引用不会跳到最新版。导入失败记录的原文件、运行任务仍需读取的字节，以及消息资源清单引用的原件会保留，不能因为未解析成功就当作垃圾清理。
+
+「重新处理」中的“删除旧成果后重新生成”会按处理方式清除对应派生成果，原件保留。例如重新理解会清除该材料的模型记忆和未被人工调整的待办；重写用途会清除模型用途说明；删除文章会清除该文章的全部正文历史并保留阅读目标。人工调整的记忆、用途说明与已处理事项会保留；被清除的旧文章不会因重启恢复已提交资产而重新出现。后续失败可以用原件重试，失败不会自动恢复被删成果。不同处理方式和原件恢复入口见[飞书与文档导入](document-import.md)。
 
 当前是 SQLite 单用户服务。默认仅 loopback；远程访问需 OMEM_HOST、OMEM_TOKEN 及适当的 TLS/隧道。浏览器令牌用于连接这台 omem 服务，不是模型令牌。飞书用 `omem bot setup --start` 准备本机配置，再授权和配对。App Secret 的加密密钥保存在个人目录 `secrets/master.key`，或沿用显式 `OMEM_SECRET_KEY`；密钥与含密钥的备份都需私密保管，不入 Git。外部通知、全局 hooks 与屏幕监听需要独立明确范围。
 

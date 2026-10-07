@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-export const SUPPORTED_SCHEMA_VERSION = 27;
+export const SUPPORTED_SCHEMA_VERSION = 29;
 
 export class UnsupportedSchemaVersionError extends Error {
   constructor(
@@ -1066,6 +1066,29 @@ const requirementTaskStatements = [
     PRIMARY KEY(page_key,action_id))`,
 ] as const;
 
+const materialRetentionStatements = [
+  `CREATE TABLE source_retention(source_id TEXT PRIMARY KEY REFERENCES sources(id),
+    policy TEXT NOT NULL CHECK(policy IN ('latest','event')),reason TEXT NOT NULL,updated_at TEXT NOT NULL)`,
+  `CREATE TABLE revision_tombstones(revision_id TEXT PRIMARY KEY REFERENCES revisions(id),
+    source_id TEXT NOT NULL,version INTEGER NOT NULL,title TEXT NOT NULL,body_digest TEXT NOT NULL,
+    material_digest TEXT,removed_at TEXT NOT NULL,reason TEXT NOT NULL,replacement_revision_id TEXT)`,
+  `CREATE TABLE derived_result_tombstones(kind TEXT NOT NULL,result_id TEXT NOT NULL,
+    source_id TEXT,title TEXT NOT NULL,removed_at TEXT NOT NULL,reason TEXT NOT NULL,
+    PRIMARY KEY(kind,result_id))`,
+  `CREATE TABLE retention_asset_candidates(asset_id TEXT PRIMARY KEY,created_at TEXT NOT NULL)`,
+] as const;
+
+const retainedResultStatements = [
+  `CREATE TABLE knowledge_revision_tombstones(revision_id TEXT PRIMARY KEY,document_key TEXT NOT NULL,
+    title TEXT NOT NULL,removed_at TEXT NOT NULL,reason TEXT NOT NULL)`,
+  `CREATE TABLE knowledge_clear_epochs(document_key TEXT PRIMARY KEY,removed_at TEXT NOT NULL)`,
+  `CREATE TABLE description_clear_epochs(revision_id TEXT PRIMARY KEY,removed_at TEXT NOT NULL)`,
+  `CREATE TABLE revision_asset_refs(revision_id TEXT NOT NULL REFERENCES revisions(id),asset_id TEXT NOT NULL,
+    PRIMARY KEY(revision_id,asset_id))`,
+  `CREATE INDEX revision_asset_refs_asset_idx ON revision_asset_refs(asset_id)`,
+  `CREATE TABLE retention_state(key TEXT PRIMARY KEY,value TEXT NOT NULL)`,
+] as const;
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -1157,18 +1180,90 @@ const migrations: readonly Migration[] = [
     statements: retrievalIndexStatements,
     checksum: checksum(retrievalIndexStatements),
   },
-  { version: 16, name: "memory-refresh-outcomes", statements: memoryRefreshStatements, checksum: checksum(memoryRefreshStatements) },
-  { version: 17, name: "fragment-semantic-index", statements: embeddingStatements, checksum: checksum(embeddingStatements) },
-  { version: 18, name: "task-follow-up-lifecycle", statements: taskFollowUpStatements, checksum: checksum(taskFollowUpStatements) },
-  { version: 19, name: "contextual-retrieval-units", statements: retrievalUnitStatements, checksum: checksum(retrievalUnitStatements) },
-  { version: 20, name: "material-descriptions", statements: materialDescriptionStatements, checksum: checksum(materialDescriptionStatements) },
-  { version: 21, name: "revision-fragment-read-index", statements: revisionReadIndexStatements, checksum: checksum(revisionReadIndexStatements) },
-  { version: 22, name: "retrieval-context-hierarchy", statements: retrievalContextStatements, checksum: checksum(retrievalContextStatements) },
-  { version: 23, name: "assistant-project-context", statements: assistantProjectStatements, checksum: checksum(assistantProjectStatements) },
-  { version: 24, name: "staged-role-outputs", statements: stagedRoleOutputStatements, checksum: checksum(stagedRoleOutputStatements) },
-  { version: 25, name: "personal-lark-collection", statements: personalLarkStatements, checksum: checksum(personalLarkStatements) },
-  { version: 26, name: "storage-lifecycle-and-message-cache", statements: storageLifecycleStatements, checksum: checksum(storageLifecycleStatements) },
-  { version: 27, name: "requirement-follow-up-tasks", statements: requirementTaskStatements, checksum: checksum(requirementTaskStatements) },
+  {
+    version: 16,
+    name: "memory-refresh-outcomes",
+    statements: memoryRefreshStatements,
+    checksum: checksum(memoryRefreshStatements),
+  },
+  {
+    version: 17,
+    name: "fragment-semantic-index",
+    statements: embeddingStatements,
+    checksum: checksum(embeddingStatements),
+  },
+  {
+    version: 18,
+    name: "task-follow-up-lifecycle",
+    statements: taskFollowUpStatements,
+    checksum: checksum(taskFollowUpStatements),
+  },
+  {
+    version: 19,
+    name: "contextual-retrieval-units",
+    statements: retrievalUnitStatements,
+    checksum: checksum(retrievalUnitStatements),
+  },
+  {
+    version: 20,
+    name: "material-descriptions",
+    statements: materialDescriptionStatements,
+    checksum: checksum(materialDescriptionStatements),
+  },
+  {
+    version: 21,
+    name: "revision-fragment-read-index",
+    statements: revisionReadIndexStatements,
+    checksum: checksum(revisionReadIndexStatements),
+  },
+  {
+    version: 22,
+    name: "retrieval-context-hierarchy",
+    statements: retrievalContextStatements,
+    checksum: checksum(retrievalContextStatements),
+  },
+  {
+    version: 23,
+    name: "assistant-project-context",
+    statements: assistantProjectStatements,
+    checksum: checksum(assistantProjectStatements),
+  },
+  {
+    version: 24,
+    name: "staged-role-outputs",
+    statements: stagedRoleOutputStatements,
+    checksum: checksum(stagedRoleOutputStatements),
+  },
+  {
+    version: 25,
+    name: "personal-lark-collection",
+    statements: personalLarkStatements,
+    checksum: checksum(personalLarkStatements),
+  },
+  {
+    version: 26,
+    name: "storage-lifecycle-and-message-cache",
+    statements: storageLifecycleStatements,
+    checksum: checksum(storageLifecycleStatements),
+  },
+  {
+    version: 27,
+    name: "requirement-follow-up-tasks",
+    statements: requirementTaskStatements,
+    checksum: checksum(requirementTaskStatements),
+  },
+  {
+    version: 28,
+    name: "latest-material-and-replace-derived",
+    statements: materialRetentionStatements,
+    checksum: checksum(materialRetentionStatements),
+  },
+  {
+    version: 29,
+    name: "retained-result-barriers-and-assets",
+    statements: retainedResultStatements,
+    checksum: checksum(retainedResultStatements),
+  },
 ];
 
 const legacyV1Checksum = createHash("sha256")

@@ -25,10 +25,14 @@ export class MaterialDescriptions {
       : null;
   }
   previous(revisionId: string): MaterialDescriptionRecord | null {
-    const row = this.db.prepare(`SELECT older.id FROM revisions current
+    const row = this.db
+      .prepare(
+        `SELECT older.id FROM revisions current
       JOIN revisions older ON older.source_id=current.source_id AND older.version<current.version
       WHERE current.id=? AND EXISTS(SELECT 1 FROM material_descriptions d WHERE d.revision_id=older.id)
-      ORDER BY older.version DESC LIMIT 1`).get(revisionId);
+      ORDER BY older.version DESC LIMIT 1`,
+      )
+      .get(revisionId);
     return row ? this.get(String(row.id)) : null;
   }
   save(
@@ -39,6 +43,24 @@ export class MaterialDescriptions {
     trace: unknown = null,
   ): MaterialDescriptionRecord {
     const description = materialDescriptionSchema.parse(value);
+    if (
+      this.db
+        .prepare("SELECT 1 FROM revision_tombstones WHERE revision_id=?")
+        .get(revisionId)
+    )
+      throw Error("旧原件已移除，不能保存材料说明。");
+    const cleared = this.db
+      .prepare(
+        "SELECT removed_at FROM description_clear_epochs WHERE revision_id=?",
+      )
+      .get(revisionId);
+    const generatedAt = (trace as { generatedAt?: string } | null)?.generatedAt;
+    if (
+      author === "model" &&
+      cleared &&
+      (!generatedAt || generatedAt <= String(cleared.removed_at))
+    )
+      throw Error("旧材料说明已清除，请重新生成。");
     const revision = this.db
       .prepare("SELECT body FROM revisions WHERE id=?")
       .get(revisionId);

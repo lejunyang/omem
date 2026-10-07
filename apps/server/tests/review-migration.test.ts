@@ -358,8 +358,8 @@ describe("relation lifecycle: invalidateStaleRelations", () => {
     expect(withStale.length).toBe(1);
     expect(withStale[0]!.relationStatus).toBe("stale");
 
-    // The new head fragment has no relation yet -> code-path trace is empty by
-    // default, but historical mode surfaces the old one.
+    // Removed raw context cannot be restored via the code path. The old locator
+    // remains a tombstone, and never changes to the new fragment.
     expect(
       relationsForCodePath(store, "apps/server/src/code.ts").length,
     ).toBe(0);
@@ -368,7 +368,9 @@ describe("relation lifecycle: invalidateStaleRelations", () => {
         includeHistorical: true,
         includeStale: true,
       }).length,
-    ).toBe(1);
+    ).toBe(0);
+    expect(store.evidence(oldCodeFrag.id)).toBeNull();
+    expect(store.retention.fragmentAvailability(oldCodeFrag.id)?.available).toBe(false);
 
     // v2 head exists and is the current one.
     expect(v2.revision.version).toBe(2);

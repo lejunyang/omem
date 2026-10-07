@@ -1,11 +1,17 @@
-import { implementationResultSchema, implementationReviewSchema } from "../../../../packages/contracts/src/development.js";
+import {
+  implementationResultSchema,
+  implementationReviewSchema,
+} from "../../../../packages/contracts/src/development.js";
 import {
   knowledgeResearchSchema,
   knowledgeBatchSchema,
   knowledgeReviewSchema,
   knowledgePlanSchema,
 } from "../../../../packages/contracts/src/knowledge.js";
-import { assistantReplySchema, answerReviewSchema } from "../../../../packages/contracts/src/assistant.js";
+import {
+  assistantReplySchema,
+  answerReviewSchema,
+} from "../../../../packages/contracts/src/assistant.js";
 import { materialDescriptionBatchSchema } from "../../../../packages/contracts/src/material-description.js";
 import { knowledgeOutlineProposalSchema } from "../../../../packages/contracts/src/knowledge-outline.js";
 import { contextResolutionSchema } from "../../../../packages/contracts/src/contexts.js";
@@ -33,11 +39,18 @@ import {
   type AgentProfile,
   type ContextManifest,
 } from "../../../../packages/contracts/src/index.js";
-import { acp, cli, optionValues, withAgentWorkspace, type Emit } from "../agents.js";
+import {
+  acp,
+  cli,
+  optionValues,
+  withAgentWorkspace,
+  type Emit,
+} from "../agents.js";
 import { canonicalJson, stableDigest } from "../storage/digest.js";
 import { acpProvider } from "../agent-providers.js";
 import { RoleBundleRegistry, type RoleBundle } from "./bundles.js";
 import type { RuntimeRequestRepository } from "./requests.js";
+import { withLogContext } from "../logging/logger.js";
 
 const outputSchemas = {
   "ImplementationResult.v1": implementationResultSchema,
@@ -332,7 +345,16 @@ export class RoleRuntimeGateway {
     const bundle = {
       ...originalBundle,
       skills: originalBundle.skills.map((s) =>
-        native ? { ...s, load_mode: ["claude", "codex"].includes(acpProvider(input.profile) ?? "") ? "inline" as const : "native" as const } : s,
+        native
+          ? {
+              ...s,
+              load_mode: ["claude", "codex"].includes(
+                acpProvider(input.profile) ?? "",
+              )
+                ? ("inline" as const)
+                : ("native" as const),
+            }
+          : s,
       ),
       manifest: {
         ...originalBundle.manifest,
@@ -343,9 +365,12 @@ export class RoleRuntimeGateway {
         },
       },
     };
-    if (input.profileBinding
-      ? input.profileBinding.roleId !== input.roleId || input.profileBinding.profileId !== input.profile.id
-      : bundle.manifest.profile_ref !== input.profile.id)
+    if (
+      input.profileBinding
+        ? input.profileBinding.roleId !== input.roleId ||
+          input.profileBinding.profileId !== input.profile.id
+        : bundle.manifest.profile_ref !== input.profile.id
+    )
       throw Error("ROLE_PROFILE_MISMATCH");
     if (bundle.manifest.session_policy.reuse !== "never")
       throw Error("ROLE_SESSION_REUSE_NOT_IMPLEMENTED");
@@ -434,41 +459,45 @@ export class RoleRuntimeGateway {
         };
         try {
           if (effectiveProfile.transport === "acp") {
-            const result = await acp(
-              effectiveProfile,
-              workspace,
-              rendered.blocks,
-              emit,
-              signal,
-              {
-                mcpServers:
-                  environment?.servers ??
-                  allowed.map((name) => supplied.get(name)!),
-                expectedSkills: nativeSkills.map(
-                  (skill) => skill.canonical_name,
+            const result = await withLogContext(
+              { runId, jobId: context.job_id, roleId: bundle.manifest.role_id },
+              () =>
+                acp(
+                  effectiveProfile,
+                  workspace,
+                  rendered.blocks,
+                  emit,
+                  signal,
+                  {
+                    mcpServers:
+                      environment?.servers ??
+                      allowed.map((name) => supplied.get(name)!),
+                    expectedSkills: nativeSkills.map(
+                      (skill) => skill.canonical_name,
+                    ),
+                    unbounded: native,
+                    finalSubmission: environment?.submission,
+                    onSessionUpdate: environment?.update,
+                    allowPermission: environment?.allowPermission,
+                    ...(native
+                      ? {}
+                      : {
+                          maxOutputChars: limits.maxOutputTokens * 4,
+                          contextBudget: {
+                            estimatedInputTokens: estimate.budgetedTokens,
+                            maxOutputTokens: limits.maxOutputTokens,
+                            contextReserveTokens: limits.contextReserveTokens,
+                          },
+                        }),
+                    onRuntimeRequest: async (request) => {
+                      this.runtimeRequests?.recordDenied({
+                        workspaceId: context.trusted_context.workspace_id,
+                        jobId: context.job_id,
+                        ...request,
+                      });
+                    },
+                  },
                 ),
-                unbounded: native,
-                finalSubmission: environment?.submission,
-                onSessionUpdate: environment?.update,
-                allowPermission: environment?.allowPermission,
-                ...(native
-                  ? {}
-                  : {
-                      maxOutputChars: limits.maxOutputTokens * 4,
-                      contextBudget: {
-                        estimatedInputTokens: estimate.budgetedTokens,
-                        maxOutputTokens: limits.maxOutputTokens,
-                        contextReserveTokens: limits.contextReserveTokens,
-                      },
-                    }),
-                onRuntimeRequest: async (request) => {
-                  this.runtimeRequests?.recordDenied({
-                    workspaceId: context.trusted_context.workspace_id,
-                    jobId: context.job_id,
-                    ...request,
-                  });
-                },
-              },
             );
             sessionIds.push(result.sessionId);
             usage = { ...result.usage, acpCompletion: result.completion };

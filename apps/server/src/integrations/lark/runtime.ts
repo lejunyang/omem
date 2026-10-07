@@ -19,7 +19,12 @@ import {
   OfficialLarkRealtimeAdapter,
   type LarkMediaPort,
   type LarkRealtimeAdapter,
+  type LarkAssistantInput,
 } from "./realtime.js";
+import {
+  OfficialLarkResourcePort,
+  type LarkResourcePort,
+} from "./resources.js";
 import type { EncryptedSecretStore } from "./secret-store.js";
 import {
   AssistantRuntime,
@@ -45,6 +50,7 @@ export class LarkRuntimeHost {
   private readonly cards: LarkCardActionService;
   readonly quality: QualityLarkAnnotationService;
   private readonly assistant: AssistantRuntime | null;
+  readonly inbox: LarkEventInbox;
   private loopPromise: Promise<void> | null = null;
   private processedDeliveries = 0;
   private processedCards = 0;
@@ -65,6 +71,7 @@ export class LarkRuntimeHost {
       assistantTimeoutMs?: number;
       retrieval?: RetrievalPort;
       media?: LarkMediaPort;
+      resources?: LarkResourcePort;
       /** Test seam: invoked after the reply outbox row is committed but before the
        *  inbox event is acked. Throwing here simulates a crash and must leave the
        *  outbox row durable. */
@@ -118,6 +125,49 @@ export class LarkRuntimeHost {
           },
         })
       : null;
+    this.inbox = new LarkEventInbox(input.store, {
+      media: input.media,
+      resources:
+        input.resources ??
+        (input.media
+          ? undefined
+          : new OfficialLarkResourcePort(input.store, input.secrets)),
+      afterReplyEnqueued: input.afterReplyEnqueued,
+      assistant: this.assistant ? (routed) => this.answer(routed) : undefined,
+    });
+  }
+
+  private async answer(routed: LarkAssistantInput) {
+    const conversation = this.assistant!.conversations.open({
+      principalId: routed.principalId,
+      channel: routed.chatType === "group" ? "lark_group" : "lark_p2p",
+      chatId: routed.chatId,
+      threadId: `lark:${routed.appId}:v${routed.bindingVersion}`,
+      visibility: routed.chatType === "group" ? "group" : "private",
+    });
+    if (
+      conversation.visibility !==
+      (routed.chatType === "group" ? "group" : "private")
+    )
+      throw Error("LARK_CONVERSATION_VISIBILITY_MISMATCH");
+    const result = await this.assistant!.turn({
+      conversationId: conversation.id,
+      userText: routed.text,
+      transportEventId: routed.eventId,
+    });
+    return {
+      replyText: result.turn.result,
+      turnId: result.turn.id,
+      status: result.turn.inputMessageRefs.status,
+      duplicate: result.duplicate,
+      replyOutboxId: result.turn.replyOutboxId,
+    };
+  }
+  reprocess(
+    inboxId: string,
+    options: Parameters<LarkEventInbox["reprocess"]>[1] = {},
+  ) {
+    return this.inbox.reprocess(inboxId, options);
   }
 
   private activeConnections() {
@@ -146,46 +196,7 @@ export class LarkRuntimeHost {
           new LarkConnectionLeaseRepository(this.input.store.db),
           this.input.secrets,
           this.input.realtimeAdapter ?? new OfficialLarkRealtimeAdapter(),
-          new LarkEventInbox(this.input.store, {
-            media: this.input.media,
-            afterReplyEnqueued: this.input.afterReplyEnqueued,
-            assistant: this.assistant
-              ? async (routed) => {
-                  // C: namespaced conversation key. The thread_id encodes the
-                  // transport binding (appId + bindingVersion), so a web/forged row
-                  // (channel=web, thread_id='') and rows from a different Lark app or
-                  // a superseded binding can never be reused here. Web cannot create
-                  // lark_* conversations at all (app.ts forces channel=web).
-                  const transportThread = `lark:${routed.appId}:v${routed.bindingVersion}`;
-                  const expectedVisibility =
-                    routed.chatType === "group" ? "group" : "private";
-                  const conversation = this.assistant!.conversations.open({
-                    principalId: routed.principalId,
-                    channel:
-                      routed.chatType === "group" ? "lark_group" : "lark_p2p",
-                    chatId: routed.chatId,
-                    threadId: transportThread,
-                    visibility: expectedVisibility,
-                  });
-                  // Fail-closed: never adopt a row whose visibility disagrees with the
-                  // current Lark binding (a tampered/forged private group row).
-                  if (conversation.visibility !== expectedVisibility)
-                    throw Error("LARK_CONVERSATION_VISIBILITY_MISMATCH");
-                  const result = await this.assistant!.turn({
-                    conversationId: conversation.id,
-                    userText: routed.text,
-                    transportEventId: routed.eventId,
-                  });
-                  return {
-                    replyText: result.turn.result,
-                    turnId: result.turn.id,
-                    status: result.turn.inputMessageRefs.status,
-                    duplicate: result.duplicate,
-                    replyOutboxId: result.turn.replyOutboxId,
-                  };
-                }
-              : undefined,
-          }),
+          this.inbox,
           `connection-${process.pid}-${randomUUID().slice(0, 8)}`,
           {
             enqueue: (event) => {
@@ -207,6 +218,12 @@ export class LarkRuntimeHost {
 
   async processOnce(limit = 100) {
     this.syncConnections();
+    // Incoming originals are separate jobs from outgoing delivery and card actions.
+    for (
+      let n = 0;
+      n < limit && (await this.inbox.processOnce()).processed;
+      n++
+    ) {}
     const aggregation = this.batcher.prepareDue();
     let cards = 0;
     let deliveries = 0;
@@ -300,6 +317,7 @@ export class LarkRuntimeHost {
 
   async stop() {
     this.controller.abort();
+    this.inbox.stop();
     for (const [id, manager] of this.connections) manager.stop(id);
     this.connections.clear();
     await this.input.onboarding.stop();

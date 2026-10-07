@@ -101,7 +101,7 @@ export class KnowledgePipeline {
     if (this.stopping) throw Error("Material description cancelled");
     return materialDescriptionBatchSchema.parse(run.result).descriptions.map(entry => {
       const m = targets.find(m => m.key === entry.key)!;
-      const record = descriptions.save(m.revisionId, entry.description, "model", versions.get(m.key)?.version ?? 0, run.trace);
+      const record = descriptions.save(m.revisionId, entry.description, "model", versions.get(m.key)?.version ?? 0, { ...run.trace, generatedAt: run.at });
       return { key: m.key, digest: m.digest, ...record, trace: run.trace };
     });
   }
