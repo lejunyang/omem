@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from "vue";
-import { OmButton, OmDialog, OmIcon } from "@omem/ui";
+import { OmButton, OmDialog, OmIcon, OmCheckbox } from "@omem/ui";
 import { knowledgeApi } from "./api";
 import ContextPicker from "../ContextPicker.vue";
 import type { WikiPageBrief } from "../../../../packages/contracts/src/knowledge";
@@ -34,16 +34,22 @@ const step = ref(1),
   limit = ref(40),
   onlySelected = ref(false);
 let draftKey: string | undefined;
-const fromContext = (m: MaterialOption) => m.contextIds?.some(id => selectedContexts.value.includes(id)) ?? false;
-const isSelected = (m: MaterialOption) => selected.value.includes(m.revisionId) || fromContext(m);
+const fromContext = (m: MaterialOption) =>
+  m.contextIds?.some((id) => selectedContexts.value.includes(id)) ?? false;
+const isSelected = (m: MaterialOption) =>
+  selected.value.includes(m.revisionId) || fromContext(m);
 const selectedCount = computed(() => props.materials.filter(isSelected).length);
 watch(selectedContexts, () => {
   // Choosing a dynamic scope replaces duplicate fixed selections; otherwise a
   // source moved out of that scope would silently remain pinned to this page.
-  selected.value = selected.value.filter(id => !props.materials.some(m => m.revisionId === id && fromContext(m)));
+  selected.value = selected.value.filter(
+    (id) => !props.materials.some((m) => m.revisionId === id && fromContext(m)),
+  );
 });
 function toggleMaterial(m: MaterialOption, checked: boolean) {
-  selected.value = checked ? [...new Set([...selected.value, m.revisionId])] : selected.value.filter(id => id !== m.revisionId);
+  selected.value = checked
+    ? [...new Set([...selected.value, m.revisionId])]
+    : selected.value.filter((id) => id !== m.revisionId);
 }
 watch(
   () => step.value,
@@ -107,7 +113,9 @@ async function submit() {
           revisionIds: selected.value,
           brief: {
             ...(plan ?? {}),
-            contextIds: selectedContexts.value.length ? selectedContexts.value : undefined,
+            contextIds: selectedContexts.value.length
+              ? selectedContexts.value
+              : undefined,
             key: plan?.key ?? "article:" + crypto.randomUUID(),
             title: title.value.trim(),
             order: plan?.order ?? 0,
@@ -171,8 +179,13 @@ async function submit() {
             }}
           </p>
         </div>
-        <ContextPicker v-model="selectedContexts" label="持续跟踪项目或主题（可选）" />
-        <p v-if="selectedContexts.length" class="material-count">包含这些项目或主题中的现有材料，以及以后加入的材料。开启文章自动更新后，新材料会触发重新整理；也可在下面另选背景材料。</p>
+        <ContextPicker
+          v-model="selectedContexts"
+          label="持续跟踪项目或主题（可选）"
+        />
+        <p v-if="selectedContexts.length" class="material-count">
+          包含这些项目或主题中的现有材料，以及以后加入的材料。开启文章自动更新后，新材料会触发重新整理；也可在下面另选背景材料。
+        </p>
         <div class="material-toolbar">
           <label class="filter-field"
             ><span>查找材料</span
@@ -191,23 +204,25 @@ async function submit() {
           </button>
         </div>
         <div class="material-options" aria-label="可选材料">
-          <label
+          <OmCheckbox
             v-for="m in candidates.slice(0, limit)"
             :key="m.revisionId"
             class="material-option"
             :class="{ checked: isSelected(m) }"
-            ><input
-              type="checkbox"
-              :checked="isSelected(m)"
-              :disabled="fromContext(m)"
-              @change="toggleMaterial(m, ($event.target as HTMLInputElement).checked)"
-              :value="m.revisionId" /><span
+            :checked="isSelected(m)"
+            :disabled="fromContext(m)"
+            @change="
+              toggleMaterial(m, ($event.target as HTMLInputElement).checked)
+            "
+            :value="m.revisionId"
+            ><span
               ><strong>{{ m.title }}</strong
-              ><small v-if="fromContext(m)">随项目或主题加入</small><small v-if="m.path && m.path !== m.title">{{
+              ><small v-if="fromContext(m)">随项目或主题加入</small
+              ><small v-if="m.path && m.path !== m.title">{{
                 m.path
               }}</small></span
-            ><OmIcon v-if="isSelected(m)" name="check"
-          /></label>
+            ></OmCheckbox
+          >
           <p v-if="!candidates.length" class="empty-materials">
             {{
               onlySelected
@@ -273,9 +288,7 @@ async function submit() {
     <template #actions>
       <div class="composer-actions">
         <span>{{
-          step === 1
-            ? "已选 " + selectedCount + " 项材料"
-            : "第 2 步，共 2 步"
+          step === 1 ? "已选 " + selectedCount + " 项材料" : "第 2 步，共 2 步"
         }}</span>
         <div>
           <OmButton v-if="step === 1" variant="ghost" @click="emit('close')"
@@ -415,14 +428,7 @@ async function submit() {
 .material-option.checked {
   background: var(--om-soft);
 }
-.material-option input {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
-  margin: 0;
-  accent-color: var(--om-ink);
-}
-.material-option > span {
+.material-option :deep(.om-choice-copy) {
   flex: 1;
   min-width: 0;
 }

@@ -39,7 +39,7 @@ function compose(text: string) {
   composer.value?.scrollIntoView({ block: "center" });
 }
 const readableTurns = computed(() =>
-  turns.value.map((t) => ({
+  turns.value.toReversed().map((t) => ({
     ...t,
     reading: readAssistantAnswer(t.result || "", t.selectedEvidence || []),
   })),
@@ -149,14 +149,7 @@ onBeforeUnmount(() => {
     <p class="muted">
       直接交办、回顾事项或查找记忆。等待与跟进时间会保存，完成和取消以实际操作结果为准。
     </p>
-    <OmDisclosure title="可以怎样使用">
-      <p v-for="item in workflows" :key="item.id">
-        <b>{{ item.title }}</b
-        >：{{ item.trigger }}，整理为{{ item.output }}。
-      </p>
-    </OmDisclosure>
-    <AssistantWorkPanel ref="workPanel" @compose="compose" @open-revision="id => emit('open-revision', id)" />
-    <form class="form" @submit.prevent="send">
+    <form class="form daily-composer" @submit.prevent="send">
       <label
         >发给日常助理<textarea
           ref="composer"
@@ -175,12 +168,17 @@ onBeforeUnmount(() => {
       >
     </form>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
-    <OmEmpty
-      v-if="!turns.length"
-      title="还没有日常消息"
-      description="可以先记一件要跟进的事，或问今天有哪些待办。"
-    />
-    <div aria-live="polite">
+    <OmDisclosure
+      v-if="workflows.length"
+      class="usage-help"
+      title="可以怎样使用"
+    >
+      <p v-for="item in workflows" :key="item.id">
+        <b>{{ item.title }}</b
+        >：{{ item.trigger }}，整理为{{ item.output }}。
+      </p>
+    </OmDisclosure>
+    <div v-if="turns.length" class="daily-replies" aria-live="polite">
       <OmPanel
         v-for="turn in readableTurns"
         :key="turn.id"
@@ -221,9 +219,40 @@ onBeforeUnmount(() => {
         </template>
       </OmPanel>
     </div>
+    <AssistantWorkPanel
+      ref="workPanel"
+      @compose="compose"
+      @open-revision="(id) => emit('open-revision', id)"
+    />
+    <OmEmpty
+      v-if="!turns.length"
+      title="还没有日常消息"
+      description="可以先记一件要跟进的事，或问今天有哪些待办。"
+    />
   </section>
 </template>
 <style scoped>
+.daily-composer {
+  margin-top: 24px;
+  padding: 24px;
+  border: 1px solid var(--om-line);
+  border-radius: var(--om-radius);
+  background: var(--om-panel);
+}
+.usage-help {
+  margin-top: 12px;
+}
+.daily-replies {
+  display: grid;
+  gap: 24px;
+  margin-top: 24px;
+}
+.daily-replies > .stack {
+  margin: 0;
+}
+.error {
+  color: var(--om-danger);
+}
 .message-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -231,5 +260,10 @@ onBeforeUnmount(() => {
 .assistant-answer {
   margin-top: 24px;
   max-width: 76ch;
+}
+@media (max-width: 700px) {
+  .daily-composer {
+    padding: 20px 16px;
+  }
 }
 </style>

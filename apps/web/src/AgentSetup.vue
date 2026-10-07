@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import { OmButton, OmPanel } from "@omem/ui";
+import { OmButton, OmCheckbox, OmPanel, OmSelect } from "@omem/ui";
 import { api } from "./api";
 const emit = defineEmits<{ saved: []; notice: [text: string] }>();
 const names = {
@@ -172,29 +172,35 @@ onMounted(detect);
 
 <template>
   <div class="agent-setup">
-    <p>
-      选择运行 omem 的电脑上已安装、已登录的 Agent。可用模型和思考强度从实际 ACP
-      会话读取，切换模型后会重新读取。
-    </p>
-    <div class="actions">
+    <div class="detection-toolbar">
+      <p>
+        选择运行 omem 的电脑上已安装、已登录的 Agent。可用模型和思考强度从实际
+        ACP 会话读取，切换模型后会重新读取。
+      </p>
       <OmButton :loading="loading" @click="detect">重新检测本机 Agent</OmButton>
     </div>
     <p v-if="loading" role="status">正在检测并读取 Agent 能力…</p>
-    <p v-if="error" role="alert">{{ error }}</p>
+    <p v-if="error" class="error" role="alert">{{ error }}</p>
     <template v-if="settings">
       <div class="agent-inventory">
-        <p
-          v-for="candidate in settings.candidates.filter(
-            (c) => !c.id.startsWith('omem-'),
-          )"
-          :key="candidate.id"
-        >
-          {{ candidate.name }}：{{
-            candidate.installed
-              ? "命令可用，连接后核验能力"
-              : "服务环境未找到命令"
-          }}
-        </p>
+        <h3>本机检测结果</h3>
+        <dl>
+          <div
+            v-for="candidate in settings.candidates.filter(
+              (c) => !c.id.startsWith('omem-'),
+            )"
+            :key="candidate.id"
+          >
+            <dt>{{ candidate.name }}</dt>
+            <dd>
+              {{
+                candidate.installed
+                  ? "命令可用，连接后核验能力"
+                  : "服务环境未找到命令"
+              }}
+            </dd>
+          </div>
+        </dl>
         <p
           v-if="
             settings.nativeCli.codex &&
@@ -216,109 +222,111 @@ onMounted(detect);
           检测到 Claude Code CLI；还需要 claude-agent-acp 适配器才能连接 ACP。
         </p>
       </div>
-      <label class="separate"
-        ><input
-          v-model="separate"
-          type="checkbox"
-          @change="changeSeparate"
-        />为不同工作分别设置 Agent、模型与思考强度</label
-      >
+      <div class="separate">
+        <OmCheckbox v-model="separate" @change="changeSeparate"
+          >为不同工作分别设置 Agent、模型与思考强度</OmCheckbox
+        >
+      </div>
       <p v-if="!separate" class="muted">
         以下选择用于主助手、材料与文章整理、记忆整理、编码和代码评审。评审仍使用独立会话。
       </p>
-      <OmPanel v-for="role in displayed" :key="role" :title="names[role]">
-        <div class="form">
-          <label
-            >{{ names[role] }} Agent<select
-              v-model="choices[role].candidateId"
-              :aria-label="`${names[role]} Agent`"
-              :disabled="saving"
-              @change="inspect(role, true)"
-            >
-              <option disabled value="">请选择已安装的 Agent</option>
-              <option
-                v-for="c in settings.candidates"
-                :key="c.id"
-                :value="c.id"
-                :disabled="!c.installed"
-              >
-                {{ c.name }}{{ c.installed ? "" : "（未找到命令）" }}
-              </option>
-            </select></label
-          >
-          <div class="agent-model-grid">
+      <div class="agent-role-list">
+        <OmPanel v-for="role in displayed" :key="role" :title="names[role]">
+          <div class="agent-role-form">
             <label
-              >{{ names[role] }}模型<select
-                v-model="choices[role].model"
-                :aria-label="`${names[role]}模型`"
-                :disabled="busy[role] || saving || !results[role]"
-                @change="inspect(role)"
+              >{{ names[role] }} Agent<OmSelect
+                v-model="choices[role].candidateId"
+                :aria-label="`${names[role]} Agent`"
+                :disabled="saving"
+                @change="inspect(role, true)"
               >
-                <option value="">使用 Agent 默认模型</option>
+                <option disabled value="">请选择已安装的 Agent</option>
                 <option
-                  v-for="v in results[role]?.model.values ?? []"
-                  :key="v.value"
-                  :value="v.value"
+                  v-for="c in settings.candidates"
+                  :key="c.id"
+                  :value="c.id"
+                  :disabled="!c.installed"
                 >
-                  {{ v.name }}
+                  {{ c.name }}{{ c.installed ? "" : "（未找到命令）" }}
                 </option>
-              </select></label
+              </OmSelect></label
             >
-            <label
-              >{{ names[role] }}思考强度<select
-                v-model="choices[role].effort"
-                :aria-label="`${names[role]}思考强度`"
-                :disabled="
-                  busy[role] || saving || !results[role]?.effort.values.length
-                "
-                @change="effortChanged(role)"
-              >
-                <option value="">使用 Agent 默认强度</option>
-                <option
-                  v-for="v in results[role]?.effort.values ?? []"
-                  :key="v.value"
-                  :value="v.value"
+            <div class="agent-model-grid">
+              <label
+                >{{ names[role] }}模型<OmSelect
+                  v-model="choices[role].model"
+                  :aria-label="`${names[role]}模型`"
+                  :disabled="busy[role] || saving || !results[role]"
+                  @change="inspect(role)"
                 >
-                  {{ v.name }}
-                </option>
-              </select></label
+                  <option value="">使用 Agent 默认模型</option>
+                  <option
+                    v-for="v in results[role]?.model.values ?? []"
+                    :key="v.value"
+                    :value="v.value"
+                  >
+                    {{ v.name }}
+                  </option>
+                </OmSelect></label
+              >
+              <label
+                >{{ names[role] }}思考强度<OmSelect
+                  v-model="choices[role].effort"
+                  :aria-label="`${names[role]}思考强度`"
+                  :disabled="
+                    busy[role] || saving || !results[role]?.effort.values.length
+                  "
+                  @change="effortChanged(role)"
+                >
+                  <option value="">使用 Agent 默认强度</option>
+                  <option
+                    v-for="v in results[role]?.effort.values ?? []"
+                    :key="v.value"
+                    :value="v.value"
+                  >
+                    {{ v.name }}
+                  </option>
+                </OmSelect></label
+              >
+            </div>
+            <p v-if="busy[role]" role="status">
+              正在连接 Agent，读取模型对应的思考强度…
+            </p>
+            <p v-else-if="errors[role]" class="error" role="alert">
+              {{ errors[role] }}
+            </p>
+            <p v-else-if="results[role]" role="status">
+              ACP 已连接 ·
+              {{
+                results[role]?.inference === "passed"
+                  ? "所选模型实际调用通过"
+                  : "模型实际调用尚未检查"
+              }}
+            </p>
+            <p
+              v-if="results[role] && !results[role]?.effort.values.length"
+              class="muted"
+            >
+              此模型未提供可选择的思考强度，使用 Agent 默认行为。
+            </p>
+            <div class="actions">
+              <OmButton
+                :loading="busy[role]"
+                :disabled="!choices[role].candidateId || saving"
+                @click="inspect(role)"
+                >读取能力</OmButton
+              ><OmButton
+                :disabled="!results[role] || busy[role] || saving"
+                @click="inspect(role, false, true)"
+                >检查所选模型调用</OmButton
+              >
+            </div>
+            <small
+              >调用检查仅发送一句连接测试，不传入个人材料；会使用模型额度。能力列表本身不能证明账号已获模型调用权限。</small
             >
           </div>
-          <p v-if="busy[role]" role="status">
-            正在连接 Agent，读取模型对应的思考强度…
-          </p>
-          <p v-else-if="errors[role]" role="alert">{{ errors[role] }}</p>
-          <p v-else-if="results[role]" role="status">
-            ACP 已连接 ·
-            {{
-              results[role]?.inference === "passed"
-                ? "所选模型实际调用通过"
-                : "模型实际调用尚未检查"
-            }}
-          </p>
-          <p
-            v-if="results[role] && !results[role]?.effort.values.length"
-            class="muted"
-          >
-            此模型未提供可选择的思考强度，使用 Agent 默认行为。
-          </p>
-          <div class="actions">
-            <OmButton
-              :loading="busy[role]"
-              :disabled="!choices[role].candidateId || saving"
-              @click="inspect(role)"
-              >读取能力</OmButton
-            ><OmButton
-              :disabled="!results[role] || busy[role] || saving"
-              @click="inspect(role, false, true)"
-              >检查所选模型调用</OmButton
-            >
-          </div>
-          <small
-            >调用检查仅发送一句连接测试，不传入个人材料；会使用模型额度。能力列表本身不能证明账号已获模型调用权限。</small
-          >
-        </div>
-      </OmPanel>
+        </OmPanel>
+      </div>
       <p class="muted">
         {{
           settings.learningEnabled
@@ -348,20 +356,32 @@ onMounted(detect);
 .agent-setup p {
   margin: 0;
 }
-.agent-setup .form {
+.detection-toolbar {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+}
+.detection-toolbar p {
+  flex: 1 1 400px;
+  max-width: 64ch;
+}
+.detection-toolbar button {
+  flex-shrink: 0;
+}
+.agent-role-list {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+.agent-setup .agent-role-form {
   display: grid;
   gap: 16px;
 }
-.agent-setup label {
+.agent-role-form label {
   display: grid;
   gap: 8px;
   min-width: 0;
-}
-.agent-setup select {
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
-  min-height: 44px;
 }
 .agent-model-grid {
   display: grid;
@@ -369,21 +389,7 @@ onMounted(detect);
   gap: 16px;
 }
 .agent-setup .separate {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  justify-content: flex-start;
-  text-align: left;
-  min-height: 44px;
-  gap: 8px;
-}
-.agent-setup .separate input {
-  flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
-  min-height: 18px;
-  margin: 5px 0 0;
-  padding: 0;
+  padding-top: 8px;
 }
 .agent-inventory {
   display: grid;
@@ -393,17 +399,48 @@ onMounted(detect);
   border-radius: 8px;
   overflow-wrap: anywhere;
 }
+.agent-inventory h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+.agent-inventory dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.agent-inventory dl > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(0, 3fr);
+  gap: 16px;
+}
+.agent-inventory dt,
+.agent-inventory dd {
+  margin: 0;
+}
+.agent-inventory dd {
+  color: var(--om-secondary);
+}
 .actions {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
+  margin: 0;
 }
 .agent-setup small {
   color: var(--om-secondary);
+  line-height: 1.8;
+}
+.agent-setup .error {
+  color: var(--om-danger);
 }
 @media (max-width: 700px) {
   .agent-model-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .agent-inventory dl > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
   }
 }
 </style>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, computed } from "vue";
-import { OmBadge, OmButton, OmDisclosure, OmEmpty } from "@omem/ui";
+import { OmBadge, OmButton, OmDisclosure, OmEmpty, OmSelect } from "@omem/ui";
 import type { AssistantWork } from "../../server/src/assistant/work";
 import { api } from "./api";
 import FollowupFeedback from "./FollowupFeedback.vue";
@@ -26,10 +26,19 @@ const visible = computed(() =>
     (r) => !project.value || r.key === project.value,
   ),
 );
-const personal = (item: Follow) => [...new Map([
-  ...item.personalTasks,
-  ...item.actions.flatMap(a => a.personalTask && !["done", "cancelled"].includes(String(a.personalTask.status)) ? [a.personalTask] : []),
-].map(t => [t.id, t])).values()];
+const personal = (item: Follow) => [
+  ...new Map(
+    [
+      ...item.personalTasks,
+      ...item.actions.flatMap((a) =>
+        a.personalTask &&
+        !["done", "cancelled"].includes(String(a.personalTask.status))
+          ? [a.personalTask]
+          : [],
+      ),
+    ].map((t) => [t.id, t]),
+  ).values(),
+];
 const needs = (item: Follow) =>
   item.questions.filter((q) => q.kind === "decision" && q.blocking).length;
 const counts = computed(() => ({
@@ -57,7 +66,11 @@ const shown = computed(() =>
   visible.value.filter(
     (r) =>
       filter.value === "all" ||
-      (filter.value === "needs" ? needs(r) > 0 : filter.value === "todos" ? personal(r).length > 0 : actions(r).length > 0),
+      (filter.value === "needs"
+        ? needs(r) > 0
+        : filter.value === "todos"
+          ? personal(r).length > 0
+          : actions(r).length > 0),
   ),
 );
 let timer: ReturnType<typeof setInterval> | undefined,
@@ -128,9 +141,11 @@ async function showDiff(task: Task, more = false) {
   resultBusy.value = task.id;
   try {
     const r = await api<Awaited<ReturnType<AssistantWork["result"]>>>(
-      `/work/development/${task.id}/result?startLine=${more ? nextLine.value[task.id] ?? 1 : 1}`,
+      `/work/development/${task.id}/result?startLine=${more ? (nextLine.value[task.id] ?? 1) : 1}`,
     );
-    diff.value[task.id] = (more ? diff.value[task.id] + "\n" : "") + (r.diff?.text ?? "还没有保存代码差异。");
+    diff.value[task.id] =
+      (more ? diff.value[task.id] + "\n" : "") +
+      (r.diff?.text ?? "还没有保存代码差异。");
     nextLine.value[task.id] = r.diff?.nextLine ?? null;
   } catch (e) {
     error.value = String(e);
@@ -185,7 +200,7 @@ defineExpose({ reload });
     <template v-if="catalog?.requirements.length">
       <div class="work-filters">
         <label
-          >查看项目<select v-model="project">
+          >查看项目<OmSelect v-model="project">
             <option value="">所有跟进项目</option>
             <option
               v-for="r in catalog.requirements"
@@ -194,7 +209,7 @@ defineExpose({ reload });
             >
               {{ r.title }}
             </option>
-          </select></label
+          </OmSelect></label
         >
         <div class="filter-tabs" aria-label="跟进内容">
           <OmButton
@@ -243,30 +258,68 @@ defineExpose({ reload });
             new Date(item.latestChange.at).toLocaleString("zh-CN")
           }}</small>
         </div>
-        <OmDisclosure
-          v-if="(filter === 'all' || filter === 'needs') && item.questions.some(q => q.kind === 'decision' && (filter !== 'needs' || q.blocking))"
-          :title="item.current ? '需要你决定' : '上次整理留下的选择，请等待更新'"
-          :open="filter === 'needs' ? true : undefined"
-          class="questions">
-          <template
-            v-for="q in item.questions.filter(q => q.kind === 'decision' && (filter !== 'needs' || q.blocking))"
-            :key="q.question"
-            ><h4>{{ q.question }}</h4>
-            <p class="muted">{{ q.blocking ? '需要现在选择' : '可稍后决定' }} · {{ q.why }}</p>
-            <p class="muted">{{ q.nextStep }}</p></template
+        <section
+          v-if="
+            (filter === 'all' || filter === 'needs') &&
+            item.questions.some(
+              (q) =>
+                q.kind === 'decision' && (filter !== 'needs' || q.blocking),
+            )
+          "
+          class="questions"
+          aria-label="需要你决定"
+        >
+          <h4>
+            {{ item.current ? "需要你决定" : "上次整理留下的选择，请等待更新" }}
+          </h4>
+          <div
+            v-for="q in item.questions.filter(
+              (q) =>
+                q.kind === 'decision' && (filter !== 'needs' || q.blocking),
+            )"
+            :key="q.id"
+            class="decision-question"
           >
-        </OmDisclosure>
-        <OmDisclosure v-if="filter === 'all' && item.questions.some(q => q.kind !== 'decision')" title="待补查资料与可并行完善的细节">
-          <div v-for="q in item.questions.filter(q => q.kind !== 'decision')" :key="q.id">
+            <strong>{{ q.question }}</strong>
+            <p class="muted">
+              {{ q.blocking ? "需要现在选择" : "可稍后决定" }} · {{ q.why }}
+            </p>
+            <p>{{ q.nextStep }}</p>
+          </div>
+        </section>
+        <OmDisclosure
+          v-if="
+            filter === 'all' &&
+            item.questions.some((q) => q.kind !== 'decision')
+          "
+          title="待补查资料与可并行完善的细节"
+        >
+          <div
+            v-for="q in item.questions.filter((q) => q.kind !== 'decision')"
+            :key="q.id"
+          >
             <h4>{{ q.question }}</h4>
-            <p class="muted">{{ q.kind === 'supplement' ? '非阻塞补充' : '助手需补查' }} · {{ q.nextStep }}</p>
+            <p class="muted">
+              {{ q.kind === "supplement" ? "非阻塞补充" : "助手需补查" }} ·
+              {{ q.nextStep }}
+            </p>
           </div>
         </OmDisclosure>
-        <ul v-if="filter === 'todos' && personal(item).length" class="action-list">
+        <ul
+          v-if="filter === 'todos' && personal(item).length"
+          class="action-list"
+        >
           <li v-for="t in personal(item)" :key="String(t.id)">
-            <b>{{ t.title }}</b><p>{{ t.nextStep || t.detail }}</p>
-            <p v-if="t.followUp?.waiting_on" class="muted">等待：{{ t.followUp.waiting_on }}</p>
-            <p v-if="t.followUp?.next_check_at" class="muted">检查时间：{{ new Date(t.followUp.next_check_at).toLocaleString('zh-CN') }}</p>
+            <b>{{ t.title }}</b>
+            <p>{{ t.nextStep || t.detail }}</p>
+            <p v-if="t.followUp?.waiting_on" class="muted">
+              等待：{{ t.followUp.waiting_on }}
+            </p>
+            <p v-if="t.followUp?.next_check_at" class="muted">
+              检查时间：{{
+                new Date(t.followUp.next_check_at).toLocaleString("zh-CN")
+              }}
+            </p>
             <a class="work-link" href="#/tasks">打开个人待办</a>
           </li>
         </ul>
@@ -289,7 +342,7 @@ defineExpose({ reload });
                 }}</OmBadge
               >
             </div>
-            <OmDisclosure title="行动说明"><p>{{ a.detail }}</p></OmDisclosure>
+            <p v-if="a.detail" class="action-detail">{{ a.detail }}</p>
             <p v-if="a.owner || a.waitingOn || a.dueExpression" class="muted">
               {{ a.owner ? `负责人：${a.owner}` : ""
               }}{{ a.waitingOn ? ` · 等待：${a.waitingOn}` : ""
@@ -377,7 +430,9 @@ defineExpose({ reload });
           <h4>{{ title(task.key) }}</h4>
           <OmBadge>{{ phase(task) }}</OmBadge>
         </div>
-        <p v-if="task.phase === 'ready'">本轮实现已完成，检查与独立评审通过。</p>
+        <p v-if="task.phase === 'ready'">
+          本轮实现已完成，检查与独立评审通过。
+        </p>
         <p v-else>{{ task.message }}</p>
         <p v-if="task.phase === 'ready'" class="muted">
           修改在独立副本中，尚未应用到原仓库，也未发布。
@@ -441,7 +496,10 @@ defineExpose({ reload });
           </ul>
           <p v-if="task.review">{{ task.review.summary }}</p></OmDisclosure
         >
-        <OmDisclosure v-if="task.phase === 'ready'" title="实现说明"><p>{{ task.message }}</p></OmDisclosure>
+        <section v-if="task.phase === 'ready'" class="implementation-summary">
+          <h4>实现说明</h4>
+          <p class="action-detail">{{ task.message }}</p>
+        </section>
         <p v-if="task.error" class="error">{{ task.error }}</p>
         <div class="work-actions">
           <OmButton
@@ -461,7 +519,13 @@ defineExpose({ reload });
           >
         </div>
         <pre v-if="diff[task.id]" class="code-diff">{{ diff[task.id] }}</pre>
-        <OmButton v-if="diff[task.id] && nextLine[task.id]" variant="secondary" :loading="resultBusy === task.id" @click="showDiff(task, true)">继续查看差异</OmButton>
+        <OmButton
+          v-if="diff[task.id] && nextLine[task.id]"
+          variant="secondary"
+          :loading="resultBusy === task.id"
+          @click="showDiff(task, true)"
+          >继续查看差异</OmButton
+        >
       </article>
     </section>
     <FollowupFeedback
@@ -523,19 +587,8 @@ p {
   gap: 16px;
 }
 label {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-select {
-  min-height: 44px;
-  max-width: 100%;
-  padding: 8px 12px;
-  font: inherit;
-  border: 1px solid var(--om-line);
-  background: var(--om-panel);
-  border-radius: 6px;
+  max-width: 420px;
+  min-width: 0;
 }
 .filter-tabs,
 .work-actions {
@@ -592,7 +645,24 @@ li + li {
   margin: 8px 0;
 }
 .questions {
-  margin: 20px 0;
+  margin: 24px 0;
+  padding: 16px 20px;
+  border-left: 2px solid var(--om-ink);
+  background: var(--om-paper);
+}
+.decision-question {
+  margin-top: 16px;
+}
+.decision-question + .decision-question {
+  padding-top: 16px;
+  border-top: 1px solid var(--om-line);
+}
+.decision-question p {
+  margin: 8px 0 0;
+}
+.action-detail {
+  max-width: 72ch;
+  white-space: pre-wrap;
 }
 .feedback-line {
   margin: 16px 0;

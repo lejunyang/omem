@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from "vue";
-import { OmBadge, OmButton, OmDisclosure } from "@omem/ui";
+import {
+  OmBadge,
+  OmButton,
+  OmDisclosure,
+  OmSelect,
+  OmCheckbox,
+} from "@omem/ui";
 import { api } from "./api";
 import { knowledgeApi } from "./knowledge/api";
 import {
@@ -63,7 +69,10 @@ async function poll(generation: number) {
       state: string;
       revisionIds: string[];
       error?: string;
-    } | null>(props.prefix, "/description-run?revisionId=" + encodeURIComponent(props.revisionId));
+    } | null>(
+      props.prefix,
+      "/description-run?revisionId=" + encodeURIComponent(props.revisionId),
+    );
     if (generation !== epoch) return;
     followed.value = run?.enabled ?? false;
     queued.value = run?.state === "queued";
@@ -81,7 +90,8 @@ async function poll(generation: number) {
     queued.value = false;
     if (run?.revisionIds.includes(props.revisionId) && run.state === "failed")
       error.value = run.error || "分析未完成，可重试";
-    if (props.current && followed.value) timer = setTimeout(() => void poll(generation), 3000);
+    if (props.current && followed.value)
+      timer = setTimeout(() => void poll(generation), 3000);
   } catch (e) {
     if (generation === epoch) {
       busy.value = false;
@@ -122,7 +132,10 @@ async function analyze() {
   try {
     await knowledgeApi(props.prefix, "/describe", {
       method: "POST",
-      body: JSON.stringify({ revisionIds: [props.revisionId], followUpdates: followed.value }),
+      body: JSON.stringify({
+        revisionIds: [props.revisionId],
+        followUpdates: followed.value,
+      }),
     });
     if (generation === epoch) await poll(generation);
   } catch (e) {
@@ -133,14 +146,27 @@ async function analyze() {
   }
 }
 async function follow(event: Event) {
-  const enabled = (event.target as HTMLInputElement).checked, generation = epoch;
+  const enabled = (event.target as HTMLInputElement).checked,
+    generation = epoch;
   try {
-    await knowledgeApi(props.prefix, "/description-maintenance/" + encodeURIComponent(props.revisionId), {
-      method: "PUT", body: JSON.stringify({ enabled }),
-    });
-    if (generation === epoch) { followed.value = enabled; error.value = ""; await poll(generation); }
+    await knowledgeApi(
+      props.prefix,
+      "/description-maintenance/" + encodeURIComponent(props.revisionId),
+      {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      },
+    );
+    if (generation === epoch) {
+      followed.value = enabled;
+      error.value = "";
+      await poll(generation);
+    }
   } catch (e) {
-    if (generation === epoch) { error.value = String(e); (event.target as HTMLInputElement).checked = followed.value; }
+    if (generation === epoch) {
+      error.value = String(e);
+      (event.target as HTMLInputElement).checked = followed.value;
+    }
   }
 }
 function edit() {
@@ -171,11 +197,16 @@ async function save() {
 }
 </script>
 <template>
-  <OmDisclosure class="material-description" title="材料用途与适用范围">
+  <section class="material-description" aria-label="材料用途与适用范围">
+    <h3>材料用途与适用范围</h3>
     <p v-if="!loaded && !error" role="status">正在读取材料说明…</p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="busy" role="status">
-      {{ queued ? "材料用途已排队整理，重启后会继续。" : "AI 正在阅读原文并整理用途与概念入口，可以继续阅读材料。" }}
+      {{
+        queued
+          ? "材料用途已排队整理，重启后会继续。"
+          : "AI 正在阅读原文并整理用途与概念入口，可以继续阅读材料。"
+      }}
     </p>
     <template v-if="record && !editing">
       <div class="description-actions">
@@ -186,9 +217,6 @@ async function save() {
         }}</small>
       </div>
       <p>{{ record.description.summary }}</p>
-      <p v-if="record.description.topics.length">
-        主题：{{ record.description.topics.join("、") }}
-      </p>
       <p v-if="record.description.scope">
         适用范围：{{ record.description.scope }}
       </p>
@@ -205,16 +233,28 @@ async function save() {
             : "结束未注明"
         }}
       </p>
-      <p v-if="record.description.basis" class="muted">
-        判断依据：{{ record.description.basis }}
-      </p>
-      <ul v-if="record.description.concepts.length" class="concepts">
-        <li v-for="(c, i) in record.description.concepts" :key="i">
-          <strong>{{ c.label }}</strong
-          ><span v-if="c.aliases.length"> · {{ c.aliases.join("、") }}</span
-          ><small>原文 {{ c.startLine }}–{{ c.endLine }} 行</small>
-        </li>
-      </ul>
+      <OmDisclosure
+        v-if="
+          record.description.topics.length ||
+          record.description.basis ||
+          record.description.concepts.length
+        "
+        title="查看判断依据与概念入口"
+      >
+        <p v-if="record.description.topics.length">
+          主题：{{ record.description.topics.join("、") }}
+        </p>
+        <p v-if="record.description.basis" class="muted">
+          判断依据：{{ record.description.basis }}
+        </p>
+        <ul v-if="record.description.concepts.length" class="concepts">
+          <li v-for="(c, i) in record.description.concepts" :key="i">
+            <strong>{{ c.label }}</strong
+            ><span v-if="c.aliases.length"> · {{ c.aliases.join("、") }}</span
+            ><small>原文 {{ c.startLine }}–{{ c.endLine }} 行</small>
+          </li>
+        </ul>
+      </OmDisclosure>
     </template>
     <p v-else-if="loaded && !editing && !busy" class="muted">
       尚未整理这版材料的用途。可让 AI 阅读原文，也可以直接填写。
@@ -226,13 +266,13 @@ async function save() {
     >
       <div class="description-fields">
         <label
-          >主要用途<select v-model="draft.role">
+          >主要用途<OmSelect v-model="draft.role">
             <option v-for="role in materialRoles" :key="role" :value="role">
               {{ materialRoleLabels[role] }}
             </option>
-          </select></label
+          </OmSelect></label
         ><label
-          >适用状态<select v-model="draft.status">
+          >适用状态<OmSelect v-model="draft.status">
             <option
               v-for="status in materialStatuses"
               :key="status"
@@ -240,7 +280,7 @@ async function save() {
             >
               {{ materialStatusLabels[status] }}
             </option>
-          </select></label
+          </OmSelect></label
         >
       </div>
       <label
@@ -334,18 +374,35 @@ async function save() {
         >{{ record ? "AI 重新分析" : "让 AI 分析用途" }}</OmButton
       >
     </div>
-    <label v-if="current && loaded" class="description-follow">
-      <input type="checkbox" :checked="followed" @change="follow" />
+    <OmCheckbox
+      v-if="current && loaded"
+      class="description-follow"
+      :checked="followed"
+      @change="follow"
+    >
       原文更新后自动重新整理用途
-    </label>
+    </OmCheckbox>
     <p class="muted description-note">
-      说明用于阅读与检索。自动整理只跟踪这份材料，需要可用的 Agent；新版会重新阅读和定位概念，保留旧说明和人工修正。
+      说明用于阅读与检索。自动整理只跟踪这份材料，需要可用的
+      Agent；新版会重新阅读和定位概念，保留旧说明和人工修正。
     </p>
-  </OmDisclosure>
+  </section>
 </template>
 <style scoped>
 .material-description {
-  margin: 24px 0;
+  margin: 32px 0;
+  padding: 24px 0;
+  border-top: 1px solid var(--om-line);
+}
+.material-description h3 {
+  margin: 0 0 16px;
+  font-size: 16px;
+}
+.material-description > p {
+  margin: 12px 0;
+}
+.material-description > .description-actions {
+  margin-top: 16px;
 }
 .description-follow {
   display: flex;
@@ -410,6 +467,7 @@ async function save() {
 }
 .description-note {
   font-size: 13px;
+  margin-bottom: 0;
 }
 .error {
   color: var(--om-danger);

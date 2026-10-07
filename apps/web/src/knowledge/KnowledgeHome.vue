@@ -79,10 +79,20 @@ const current = computed(() =>
 const currentPlan = computed(
   () => pages.value.find((p) => p.key === selected.value)?.plan,
 );
-const currentMaintenance = computed(() => pages.value.find(p => p.key === selected.value)?.maintenance);
+const currentMaintenance = computed(
+  () => pages.value.find((p) => p.key === selected.value)?.maintenance,
+);
 const contexts = ref<MaterialContext[]>([]);
-const currentContexts = computed(() => contexts.value.filter(c => currentPlan.value?.contextIds?.includes(c.id)).map(c => c.name));
-const pageBusy = (key?: string) => !!key && ["queued", "writing"].includes(pages.value.find(p => p.key === key)?.maintenance?.state ?? "");
+const currentContexts = computed(() =>
+  contexts.value
+    .filter((c) => currentPlan.value?.contextIds?.includes(c.id))
+    .map((c) => c.name),
+);
+const pageBusy = (key?: string) =>
+  !!key &&
+  ["queued", "writing"].includes(
+    pages.value.find((p) => p.key === key)?.maintenance?.state ?? "",
+  );
 function compose(plan?: WikiPageBrief) {
   composerPlan.value = plan;
   composerOpen.value = true;
@@ -319,11 +329,15 @@ onBeforeUnmount(() => {
     <div class="book-content">
       <p v-if="error" class="error" role="alert">{{ error }}</p>
       <p v-if="running" class="generation-status" role="status">
-        {{ lastRun?.state === 'queued' ? '已排队整理' : '正在整理' }}“{{
+        {{ lastRun?.state === "queued" ? "已排队整理" : "正在整理" }}“{{
           lastRun?.title || "所选材料"
         }}”。完成调查、撰写与复核后，文章会出现在目录中。
       </p>
-      <p v-else-if="!current && lastRun?.state === 'failed'" class="error" role="alert">
+      <p
+        v-else-if="!current && lastRun?.state === 'failed'"
+        class="error"
+        role="alert"
+      >
         “{{ lastRun.title }}”未完成：{{ lastRun.error }}
       </p>
       <p
@@ -407,13 +421,14 @@ onBeforeUnmount(() => {
           <li v-for="a in scopedArticles.slice(0, pageSize)" :key="a.key">
             <button @click="select(a.key)">
               <span class="article-copy"
+                ><strong>{{ a.title }}</strong
+                ><span class="article-summary">{{ a.summary }}</span
                 ><span class="article-meta"
                   >{{ (a.topicPath ?? []).join(" / ") || "未分类"
                   }}<span v-if="!a.current" class="stale-label"
                     >待更新</span
                   ></span
-                ><strong>{{ a.title }}</strong
-                ><span class="article-summary">{{ a.summary }}</span></span
+                ></span
               ><OmIcon name="arrow" />
             </button>
           </li>
@@ -449,10 +464,17 @@ onBeforeUnmount(() => {
           description="点击「整理文章」，选择材料和想弄懂的问题。"
         />
       </section>
-      <ArticleMaintenance v-if="current && currentPlan" :key="current.key"
-        :prefix="prefix" :document-key="current.key" :selected-count="currentPlan.materialKeys?.length ?? 0"
+      <ArticleMaintenance
+        v-if="current && currentPlan"
+        :key="current.key"
+        :prefix="prefix"
+        :document-key="current.key"
+        :selected-count="currentPlan.materialKeys?.length ?? 0"
         :contexts="currentContexts"
-        :status="currentMaintenance" @updated="load" @retry="refreshPage(current.key)" />
+        :status="currentMaintenance"
+        @updated="load"
+        @retry="refreshPage(current.key)"
+      />
       <footer v-if="current" class="next-guide">
         <OmButton
           v-if="currentPlan"
@@ -728,7 +750,7 @@ nav ul {
   gap: 12px;
   font-size: 12px;
   color: var(--om-muted);
-  margin-bottom: 8px;
+  margin-top: 12px;
 }
 .article-copy > strong {
   display: block;
@@ -736,7 +758,18 @@ nav ul {
   color: var(--om-ink);
   overflow-wrap: anywhere;
 }
-.article- .article-list svg {
+.article-summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--om-secondary);
+}
+.article-list svg {
   width: 16px;
   flex-shrink: 0;
   color: var(--om-muted);
@@ -845,7 +878,7 @@ nav ul {
   .article-copy > strong {
     font-size: 16px;
   }
-  .article- .topic-breadcrumb {
+  .topic-breadcrumb {
     margin-top: -8px;
   }
 }
