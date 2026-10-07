@@ -1,9 +1,22 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
-import { OmBadge, OmButton, OmCitation, OmEmpty, OmPanel, OmDisclosure } from "@omem/ui";
+import {
+  OmBadge,
+  OmButton,
+  OmCitation,
+  OmEmpty,
+  OmPanel,
+  OmDisclosure,
+} from "@omem/ui";
 import { api, type Job, type Proposal, type Source } from "./api";
+import ReprocessingHistory from "./ReprocessingHistory.vue";
 
-const props = defineProps<{ jobs: Job[]; proposals: Proposal[]; sources: Source[]; processing: { enabled: boolean; running: boolean } }>();
+const props = defineProps<{
+  jobs: Job[];
+  proposals: Proposal[];
+  sources: Source[];
+  processing: { enabled: boolean; running: boolean };
+}>();
 const emit = defineEmits<{
   refresh: [];
   open: [id: string];
@@ -14,19 +27,61 @@ const details = ref<Record<string, Job>>({});
 const busy = ref("");
 const filter = ref("active");
 const limit = ref(40);
-const names: Record<string,string> = { extract_claims: "提炼记忆", verify_proposals: "核验候选记忆", refresh_dependents: "复查受影响记忆", knowledge_analyze: "分析材料", knowledge_synthesize: "整理知识正文" };
-const materialJobs = computed(() => props.jobs.filter(j => j.kind !== "scheduled_task"));
-const waiting = computed(() => materialJobs.value.filter(j => j.state === "queued").length);
-const filtered = computed(() => materialJobs.value.filter(j => filter.value === "all" || (filter.value === "queued" ? j.state === "queued" : filter.value === "failed" ? ["failed","retry_wait"].includes(j.state) : j.state !== "queued")));
+const names: Record<string, string> = {
+  document_parse: "解析文档",
+  lark_inbound: "保存机器人消息资源",
+  "material:reprocess": "重新处理材料",
+  extract_claims: "提炼记忆",
+  verify_proposals: "核验候选记忆",
+  refresh_dependents: "复查受影响记忆",
+  knowledge_analyze: "分析材料",
+  knowledge_synthesize: "整理知识正文",
+};
+const materialJobs = computed(() =>
+  props.jobs.filter((j) => j.kind !== "scheduled_task"),
+);
+const waiting = computed(
+  () => materialJobs.value.filter((j) => j.state === "queued").length,
+);
+const filtered = computed(() =>
+  materialJobs.value.filter(
+    (j) =>
+      filter.value === "all" ||
+      (filter.value === "queued"
+        ? j.state === "queued"
+        : filter.value === "failed"
+          ? ["failed", "retry_wait"].includes(j.state)
+          : j.state !== "queued"),
+  ),
+);
 function title(job: Job) {
-  return job.materialTitle || props.sources.find(s => job.inputRefs.some(r => r.sourceId === s.sourceId || r.revisionId === s.id))?.title || names[job.kind] || "材料处理";
+  return (
+    job.materialTitle ||
+    props.sources.find((s) =>
+      job.inputRefs.some(
+        (r) => r.sourceId === s.sourceId || r.revisionId === s.id,
+      ),
+    )?.title ||
+    names[job.kind] ||
+    "材料处理"
+  );
 }
 function outcome(job: Job) {
   const results = jobProposals(job);
-  if (job.contextQuestion) return `${job.contextQuestion} 原文已保留，选择归属后会继续提炼记忆。`;
-  if (job.state === "queued") return props.processing.enabled ? "已保存原文，等待后台处理。尚未调用模型。" : "自动处理未启用，原文已经保存；此任务还没有调用模型。";
-  if (job.state === "succeeded") return results.length ? `形成 ${results.length} 条候选记忆，其中 ${results.filter(p => p.state === "applied").length} 条已应用。` : job.kind === "refresh_dependents" ? "已完成依赖检查；需要重新提炼的材料会进入后续任务。" : "此步骤已结束，没有直接关联的候选记忆。后续核验结果见对应任务。";
-  if (job.state === "skipped") return "无需继续处理此任务，原材料仍可阅读与检索。";
+  if (job.contextQuestion)
+    return `${job.contextQuestion} 原文已保留，选择归属后会继续提炼记忆。`;
+  if (job.state === "queued")
+    return props.processing.enabled
+      ? "已保存原文，等待后台处理。尚未调用模型。"
+      : "自动处理未启用，原文已经保存；此任务还没有调用模型。";
+  if (job.state === "succeeded")
+    return results.length
+      ? `形成 ${results.length} 条候选记忆，其中 ${results.filter((p) => p.state === "applied").length} 条已应用。`
+      : job.kind === "refresh_dependents"
+        ? "已完成依赖检查；需要重新提炼的材料会进入后续任务。"
+        : "此步骤已结束，没有直接关联的候选记忆。后续核验结果见对应任务。";
+  if (job.state === "skipped")
+    return "无需继续处理此任务，原材料仍可阅读与检索。";
   return "处理结果和候选记忆会显示在下方。";
 }
 
@@ -85,11 +140,38 @@ async function control(job: Job, action: "cancel" | "retry") {
   <section class="page learning-page">
     <span class="eyebrow">从原始材料提炼可用记忆</span>
     <h1>材料处理</h1>
-    <p class="muted">保存新材料或更新原文后，系统排队提炼事实、经历、流程和待办，再独立核验；明确可靠的结果可写入记忆，需要你判断的内容进入“待判断”。语言学习与记忆卡复习尚未接入。当前最多显示 200 条，优先展示运行中、需处理和已有结果的任务。</p>
-    <p role="status">{{ processing.running ? '后台处理服务已启动' : processing.enabled ? '自动处理已启用，当前后台未运行' : '自动处理未启用' }} · {{ waiting }} 个展示中的任务等待处理</p>
-    <p v-if="!processing.enabled" class="muted">原文保存与检索仍可使用。启用自动处理需要在服务配置中开启 learning.enabled 并配置可用的 Agent；此页不会自动替你开启模型调用。</p>
-    <label>查看任务<select v-model="filter" @change="limit = 40"><option value="active">已开始处理与已有结果</option><option value="failed">失败或等待重试</option><option value="queued">等待处理</option><option value="all">全部</option></select></label>
-    <OmPanel v-for="job in filtered.slice(0, limit)" :key="job.id" class="stack">
+    <ReprocessingHistory />
+    <p class="muted">
+      保存新材料或更新原文后，系统排队提炼事实、经历、流程和待办，再独立核验；明确可靠的结果可写入记忆，需要你判断的内容进入“待判断”。语言学习与记忆卡复习尚未接入。当前最多显示
+      200 条，优先展示运行中、需处理和已有结果的任务。
+    </p>
+    <p role="status">
+      {{
+        processing.running
+          ? "后台处理服务已启动"
+          : processing.enabled
+            ? "自动处理已启用，当前后台未运行"
+            : "自动处理未启用"
+      }}
+      · {{ waiting }} 个展示中的任务等待处理
+    </p>
+    <p v-if="!processing.enabled" class="muted">
+      原文保存与检索仍可使用。启用自动处理需要在服务配置中开启 learning.enabled
+      并配置可用的 Agent；此页不会自动替你开启模型调用。
+    </p>
+    <label
+      >查看任务<select v-model="filter" @change="limit = 40">
+        <option value="active">已开始处理与已有结果</option>
+        <option value="failed">失败或等待重试</option>
+        <option value="queued">等待处理</option>
+        <option value="all">全部</option>
+      </select></label
+    >
+    <OmPanel
+      v-for="job in filtered.slice(0, limit)"
+      :key="job.id"
+      class="stack"
+    >
       <template #heading>
         <div class="panel-heading">
           <div>
@@ -97,14 +179,24 @@ async function control(job: Job, action: "cancel" | "retry") {
             <h3>{{ title(job) }}</h3>
           </div>
           <OmBadge :tone="job.contextQuestion ? 'warning' : tone(job.state)">{{
-            job.contextQuestion ? '待补充归属' : stateText[job.state] || job.state
+            job.contextQuestion
+              ? "待补充归属"
+              : stateText[job.state] || job.state
           }}</OmBadge>
         </div>
       </template>
       <p>{{ outcome(job) }}</p>
       <div class="result-actions">
-        <OmButton v-if="job.contextQuestion && job.sourceRevisionId" @click="emit('openRevision', job.sourceRevisionId)">选择所属项目或主题</OmButton>
-        <OmCitation v-if="job.evidenceId" label="阅读这份原始材料" @open="emit('open', job.evidenceId)" />
+        <OmButton
+          v-if="job.contextQuestion && job.sourceRevisionId"
+          @click="emit('openRevision', job.sourceRevisionId)"
+          >选择所属项目或主题</OmButton
+        >
+        <OmCitation
+          v-if="job.evidenceId"
+          label="阅读这份原始材料"
+          @open="emit('open', job.evidenceId)"
+        />
       </div>
       <p v-if="job.lastError" class="inline-error">
         {{ job.errorKind || "error" }}：{{ job.lastError }}
@@ -195,7 +287,9 @@ async function control(job: Job, action: "cancel" | "retry") {
         >
       </template>
     </OmPanel>
-    <OmButton v-if="filtered.length > limit" @click="limit += 40">显示更多任务</OmButton>
+    <OmButton v-if="filtered.length > limit" @click="limit += 40"
+      >显示更多任务</OmButton
+    >
     <OmEmpty
       v-if="!filtered.length"
       title="此范围暂无处理记录"
@@ -205,7 +299,13 @@ async function control(job: Job, action: "cancel" | "retry") {
 </template>
 
 <style scoped>
-.result-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0; }
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+}
 .panel-heading {
   display: flex;
   width: 100%;

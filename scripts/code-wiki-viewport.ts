@@ -3,7 +3,11 @@
 import { chromium, expect } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 const BASE = process.env.OMEM_WEB_URL || "http://127.0.0.1:5173";
-const OUT = process.env.OMEM_BROWSER_OUT || ".repo-review/runtime/browser";
+const OUT =
+  process.env.OMEM_BROWSER_OUT ||
+  (process.env.OMEM_REPROCESSING_ONLY === "1"
+    ? ".repo-review/runtime/browser/reprocessing"
+    : ".repo-review/runtime/browser");
 mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch({
   headless: true,
@@ -29,6 +33,301 @@ try {
   });
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(BASE);
+  if (process.env.OMEM_REPROCESSING_ONLY === "1") {
+    if (!process.env.OMEM_WEB_URL)
+      throw Error(
+        "Reprocessing acceptance requires an explicit isolated preview URL",
+      );
+    const identity = crypto.randomUUID();
+    const documentName = `[界面检查] 无效 Word 原件-${identity.slice(0, 8)}.docx`;
+    const materialTitle = `[界面检查] 保存原件后重新处理-${identity.slice(0, 8)}`;
+    const bytes = Buffer.from(
+      "Synthetic invalid DOCX for original-first browser acceptance.\n",
+    );
+    let imported: { import: { id: string } };
+    let captured: { revision: { id: string; sourceId: string } };
+    const layoutIssues: string[] = [];
+    const request = async (path: string, body: unknown) => {
+      const response = await fetch(BASE + path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok)
+        throw Error(`${path}: ${response.status} ${await response.text()}`);
+      return response.json();
+    };
+    const widths = async (name: string, container = page.locator("main")) => {
+      for (const width of [1440, 768, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        if (await container.count())
+          await container.first().scrollIntoViewIfNeeded();
+        const documentLayout = await page.evaluate(() => ({
+          width: innerWidth,
+          content: document.documentElement.scrollWidth,
+        }));
+        if (documentLayout.content > documentLayout.width)
+          layoutIssues.push(
+            `${name} at ${width}px: page content is ${documentLayout.content}px`,
+          );
+        if (await container.count()) {
+          const contentLayout = await container.first().evaluate((el) => ({
+            width: el.clientWidth,
+            content: el.scrollWidth,
+          }));
+          if (contentLayout.content > contentLayout.width + 1)
+            layoutIssues.push(
+              `${name} at ${width}px: container ${contentLayout.width}px, content ${contentLayout.content}px`,
+            );
+        }
+        await page.screenshot({
+          path: `${OUT}/${name}-${width}.png`,
+          fullPage: true,
+        });
+      }
+      await page.setViewportSize({ width: 1440, height: 1000 });
+    };
+    try {
+      const health = await api("/api/health");
+      expect(health.status).toBe("ok");
+      imported = await request("/api/connectors/document", {
+        name: documentName,
+        externalId: "browser-invalid-document-" + identity,
+        data: bytes.toString("base64"),
+      });
+      await expect
+        .poll(
+          async () =>
+            (await api("/api/document-imports/" + imported.import.id)).state,
+          {
+            timeout: 90_000,
+          },
+        )
+        .toBe("failed");
+      captured = await request("/api/captures", {
+        externalId: "browser-reprocessing-material-" + identity,
+        source: "manual",
+        title: materialTitle,
+        parts: [
+          {
+            type: "text",
+            text: "# 原件与重新处理\n\n这是完全合成的界面检查材料。原文保留在个人库，重新处理可以选择保留旧成果。\n\n## 本次阅读目标\n\n核对入口、选项和处理记录，不调用外部模型。",
+          },
+        ],
+      });
+      await check(
+        "failed document remains downloadable through the actual input page",
+        async () => {
+          await page.goto(BASE + "/#/capture");
+          await expect(
+            page.getByRole("heading", { name: "输入材料", exact: true }),
+          ).toBeVisible();
+          const item = page.locator(".imports article").filter({
+            has: page.getByRole("heading", {
+              name: documentName,
+              exact: true,
+            }),
+          });
+          await expect(item).toContainText("解析失败，原件仍保留");
+          const download = page.waitForEvent("download");
+          await item
+            .getByRole("button", { name: "下载保存的原件", exact: true })
+            .click();
+          expect((await download).suggestedFilename()).toBe(documentName);
+          const original = await fetch(
+            BASE + "/api/document-imports/" + imported.import.id + "/original",
+          );
+          expect(original.status).toBe(200);
+          expect(Buffer.from(await original.arrayBuffer())).toEqual(bytes);
+          await item.scrollIntoViewIfNeeded();
+          await widths("input-failed-document", item);
+          await item
+            .getByRole("button", { name: "重新处理", exact: true })
+            .click();
+          const dialog = page.getByRole("dialog", {
+            name: "重新处理材料",
+            exact: true,
+          });
+          await expect(
+            dialog.getByRole("combobox", { name: /^处理方式/ }),
+          ).toHaveValue("parse");
+          await expect(dialog).toContainText("使用本机保存的文件");
+          await dialog
+            .getByRole("checkbox", {
+              name: "删除旧成果后重新生成",
+              exact: true,
+            })
+            .uncheck();
+          await expect(dialog).toContainText("生成过程中保留旧成果");
+          await widths("document-reparse-dialog", dialog);
+          const submitted = page.waitForResponse(
+            (response) =>
+              response.url().endsWith("/api/reprocessing") &&
+              response.request().method() === "POST",
+          );
+          await dialog
+            .getByRole("button", { name: "开始处理", exact: true })
+            .click();
+          const record = await (await submitted).json();
+          expect(record).toMatchObject({
+            target: "document",
+            targetId: imported.import.id,
+            action: "parse",
+            replace: false,
+          });
+          await expect
+            .poll(
+              async () => (await api("/api/reprocessing/" + record.id)).state,
+              { timeout: 90_000 },
+            )
+            .toBe("failed");
+          expect(
+            Buffer.from(
+              await (
+                await fetch(
+                  BASE +
+                    "/api/document-imports/" +
+                    imported.import.id +
+                    "/original",
+                )
+              ).arrayBuffer(),
+            ),
+          ).toEqual(bytes);
+        },
+      );
+      await check(
+        "saved material offers readable processing choices and explicit replacement",
+        async () => {
+          await page.goto(BASE + "/#/read?revision=" + captured.revision.id);
+          await expect(
+            page.getByRole("heading", { name: materialTitle, exact: true }),
+          ).toBeVisible();
+          await page
+            .getByRole("region", { name: "重新处理", exact: true })
+            .getByRole("button", { name: "重新处理", exact: true })
+            .click();
+          const dialog = page.getByRole("dialog", {
+            name: "重新处理材料",
+            exact: true,
+          });
+          const select = dialog.getByRole("combobox", { name: /^处理方式/ });
+          expect(
+            await select
+              .locator("option")
+              .evaluateAll((options) =>
+                options.map((option) => (option as HTMLOptionElement).value),
+              ),
+          ).toEqual(["describe", "understand", "delete"]);
+          await select.selectOption("understand");
+          await expect(dialog).toContainText(
+            "使用已保存材料和当前 Agent 设置重新生成",
+          );
+          const replace = dialog.getByRole("checkbox", {
+            name: "删除旧成果后重新生成",
+            exact: true,
+          });
+          await expect(replace).toBeChecked();
+          await replace.uncheck();
+          await expect(dialog).toContainText("生成过程中保留旧成果");
+          await widths("material-reprocess-dialog", dialog);
+          await select.selectOption("delete");
+          await expect(replace).toHaveCount(0);
+          await expect(dialog).toContainText("保留原件");
+          const submitted = page.waitForResponse(
+            (response) =>
+              response.url().endsWith("/api/reprocessing") &&
+              response.request().method() === "POST",
+          );
+          await dialog
+            .getByRole("button", { name: "删除成果", exact: true })
+            .click();
+          const record = await (await submitted).json();
+          expect(record).toMatchObject({
+            target: "source",
+            targetId: captured.revision.sourceId,
+            action: "delete",
+          });
+          await expect
+            .poll(
+              async () => (await api("/api/reprocessing/" + record.id)).state,
+            )
+            .toBe("succeeded");
+          await expect(
+            page.getByRole("heading", { name: materialTitle, exact: true }),
+          ).toBeVisible();
+          await expect(page.locator(".reader")).toContainText(
+            "这是完全合成的界面检查材料",
+          );
+        },
+      );
+      await check(
+        "material processing history distinguishes successful clearing from failed parsing",
+        async () => {
+          await page.goto(BASE + "/#/learning");
+          await expect(
+            page.getByRole("heading", { name: "材料处理", exact: true }),
+          ).toBeVisible();
+          const history = page.locator(".learning-page .history");
+          await expect(
+            history.locator("article").filter({
+              has: page.getByRole("heading", {
+                name: documentName,
+                exact: true,
+              }),
+            }),
+          ).toContainText("解析原件 · 失败");
+          const completed = history.locator("article").filter({
+            has: page.getByRole("heading", {
+              name: materialTitle,
+              exact: true,
+            }),
+          });
+          await expect(completed).toContainText("删除成果 · 已完成");
+          await expect(completed).toContainText("原件保留");
+          await history.scrollIntoViewIfNeeded();
+          await widths("reprocessing-history", history);
+        },
+      );
+      expect(errors).toEqual([]);
+      expect(layoutIssues).toEqual([]);
+      writeFileSync(
+        `${OUT}/report.json`,
+        JSON.stringify(
+          {
+            base: BASE,
+            checks,
+            errors,
+            layoutIssues,
+            fixture: {
+              documentId: imported.import.id,
+              sourceId: captured.revision.sourceId,
+            },
+          },
+          null,
+          2,
+        ),
+      );
+    } catch (error) {
+      await page.screenshot({ path: `${OUT}/failure.png`, fullPage: true });
+      writeFileSync(
+        `${OUT}/report.json`,
+        JSON.stringify(
+          {
+            base: BASE,
+            checks,
+            errors,
+            layoutIssues,
+            failure: error instanceof Error ? error.message : String(error),
+          },
+          null,
+          2,
+        ),
+      );
+      throw error;
+    }
+    await browser.close();
+    process.exit(0);
+  }
   if (process.env.OMEM_OUTLINES_ONLY === "1") {
     const catalog = await api("/api/knowledge/articles");
     const context = catalog.contexts.find(
@@ -106,10 +405,16 @@ try {
         .getByLabel("页面目录路径", { exact: true })
         .fill("界面演示 / 修改流程");
       await page.getByRole("button", { name: "上一步", exact: true }).click();
-      await page.getByLabel("目录分类路径", { exact: true }).fill("界面演示 / 系统学习");
+      await page
+        .getByLabel("目录分类路径", { exact: true })
+        .fill("界面演示 / 系统学习");
       await page.getByLabel("目录分类路径", { exact: true }).press("Tab");
-      await page.getByRole("button", { name: "手动编排目录", exact: true }).click();
-      await expect(page.getByLabel("页面目录路径", { exact: true })).toHaveValue("界面演示 / 系统学习 / 修改流程");
+      await page
+        .getByRole("button", { name: "手动编排目录", exact: true })
+        .click();
+      await expect(
+        page.getByLabel("页面目录路径", { exact: true }),
+      ).toHaveValue("界面演示 / 系统学习 / 修改流程");
       await page.getByRole("button", { name: "保存草案", exact: true }).click();
       await expect(
         page.getByText("草案已保存。确认目录后才会开始写作。", { exact: true }),
@@ -119,7 +424,11 @@ try {
         "ui-1",
         "ui-2",
       ]);
-      expect(restored.pages[0].topicPath).toEqual(["界面演示", "系统学习", "修改流程"]);
+      expect(restored.pages[0].topicPath).toEqual([
+        "界面演示",
+        "系统学习",
+        "修改流程",
+      ]);
       expect(restored.pages[1].topicPath).toEqual(["界面演示", "系统学习"]);
       expect(restored.state).toBe("editing");
       checks.push(
@@ -178,13 +487,26 @@ try {
       if (!deleted.ok)
         throw Error("Could not remove this test's temporary outline");
     }
-    await page.getByRole("dialog").getByRole("button", { name: "关闭全部", exact: true }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "关闭全部", exact: true })
+      .click();
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.reload();
-    await page.getByRole("button", { name: "规划知识目录", exact: true }).first().click();
-    await page.getByRole("dialog").getByRole("button").filter({ hasText: "[演示] 可继续编辑的工单知识目录" }).click();
+    await page
+      .getByRole("button", { name: "规划知识目录", exact: true })
+      .first()
+      .click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button")
+      .filter({ hasText: "[演示] 可继续编辑的工单知识目录" })
+      .click();
     await expect(page.getByLabel("页面计划编辑器")).toBeVisible();
-    await page.screenshot({ path: `${OUT}/outline-preview.png`, fullPage: true });
+    await page.screenshot({
+      path: `${OUT}/outline-preview.png`,
+      fullPage: true,
+    });
     await browser.close();
     process.exit(0);
   }

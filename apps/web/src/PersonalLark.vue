@@ -15,6 +15,7 @@ import {
 } from "../../server/src/integrations/lark-personal/policy";
 import AssetImage from "./AssetImage.vue";
 import FollowupFeedback from "./FollowupFeedback.vue";
+import ReprocessControls from "./ReprocessControls.vue";
 const emit = defineEmits<{ "open-revision": [id: string] }>();
 const dimensions: Record<string, string> = {
   schedule: "安排与跟进",
@@ -435,6 +436,13 @@ onBeforeUnmount(() => clearInterval(timer));
       <div v-if="shownItems.length" class="message-list">
         <article v-for="i in shownItems" :key="i.id" class="message">
           <div class="actions">
+            <ReprocessControls
+              v-if="i.revision_id"
+              target="message"
+              :target-id="i.id"
+              :title="i.chat_name"
+              :actions="['understand', 'describe', 'refresh', 'delete']"
+            />
             <OmBadge v-if="i.demonstration">演示消息 · 非真实飞书记录</OmBadge>
             <OmBadge
               :tone="

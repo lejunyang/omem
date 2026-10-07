@@ -2,6 +2,8 @@
 import AgentSetup from "./AgentSetup.vue";
 import ChangeHistory from "./ChangeHistory.vue";
 import DocumentReading from "./DocumentReading.vue";
+import DocumentImports from "./DocumentImports.vue";
+import ReprocessControls from "./ReprocessControls.vue";
 import MaterialAdvice from "./MaterialAdvice.vue";
 import DailyAssistant from "./DailyAssistant.vue";
 import SearchAnswer from "./SearchAnswer.vue";
@@ -256,10 +258,11 @@ const image = ref<{
 const taskDraft = ref({ title: "", detail: "", dueAt: "" });
 const importMode = ref("text");
 const documentFile = ref<File | null>(null);
-const documentIdentity = ref(crypto.randomUUID());
+const documentIdentity = ref<string>(crypto.randomUUID());
+const readerGeneration = ref(0);
 function selectDocument(event: Event) {
   documentFile.value = (event.target as HTMLInputElement).files?.[0] ?? null;
-  documentIdentity.value = crypto.randomUUID();
+  documentIdentity.value = documentFile.value?.name ?? crypto.randomUUID();
 }
 async function fileBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -433,6 +436,14 @@ async function openRevision(id: string, navigate = true) {
     error.value = String(e);
   }
 }
+async function materialUpdated() {
+  await refresh();
+  const head = sources.value.find(
+    (item) => item.sourceId === revision.value?.sourceId,
+  );
+  if (head) await openRevision(head.id, false);
+  readerGeneration.value++;
+}
 async function search(version: number, text: string) {
   const controller = new AbortController();
   searchController = controller;
@@ -481,7 +492,9 @@ async function capture() {
   busy.value = true;
   error.value = "";
   try {
-    let response: { revision: Revision; duplicate: boolean };
+    let response:
+      | { revision: Revision; duplicate: boolean }
+      | { import: { id: string; name: string }; job: { id: string } };
     const contextIds = captureContextIds.value.length
       ? captureContextIds.value
       : undefined;
@@ -545,6 +558,11 @@ async function capture() {
       });
     }
     await refresh();
+    if ("import" in response) {
+      say("文档原件已保存，后台正在解析；失败后也可以从导入记录重试。");
+      documentFile.value = null;
+      return;
+    }
     await openRevision(response.revision.id);
     say(
       response.duplicate
@@ -906,10 +924,23 @@ onBeforeUnmount(() => {
             >
           </div>
           <h1>{{ revision.title }}</h1>
+          <ReprocessControls
+            target="source"
+            :target-id="revision.sourceId"
+            :title="revision.title"
+            :actions="
+              revision.context.document?.parser === 'docling'
+                ? ['parse', 'describe', 'understand', 'delete']
+                : revision.context.connector
+                  ? ['describe', 'understand', 'refresh', 'delete']
+                  : ['describe', 'understand', 'delete']
+            "
+            @updated="materialUpdated"
+          />
           <MaterialAdvice :revision-id="revision.id" />
           <p class="muted">
             保存于 {{ new Date(revision.createdAt).toLocaleString("zh-CN") }} ·
-            每个片段都有固定身份
+            文档和代码只保留最新版原件，消息记录保留原文
           </p>
           <OmCodeViewer
             v-if="/\.(?:[cm]?[jt]sx?|vue|json|toml|css)$/.test(revision.title)"
@@ -957,6 +988,7 @@ onBeforeUnmount(() => {
               :label="p.label"
           /></template>
           <MaterialDescription
+            :key="revision.id + ':' + readerGeneration"
             :revision-id="revision.id"
             :current="revision.current"
           />
@@ -1057,13 +1089,17 @@ onBeforeUnmount(() => {
               :disabled="busy"
               @change="selectDocument"
           /></label>
+          <label
+            >文档标识<input v-model="documentIdentity" required maxlength="290"
+          /></label>
+          <p class="muted">
+            更新同一份文档时保持标识一致，替换旧原件；同名但不同的文档请修改标识。
+          </p>
           <p class="muted">
             支持文字 PDF 和 DOCX，最多 20 MB、200
             页。保存原件、标题、表格和图片；扫描件 OCR 尚未启用。
           </p>
-          <p v-if="busy" role="status">
-            正在解析并保存文档，首次解析可能需要较长时间…
-          </p> </template
+          <p v-if="busy" role="status">正在上传并保存原件…</p> </template
         ><template v-else-if="importMode === 'lark'"
           ><label
             >飞书文档或 Wiki 链接<input
@@ -1100,6 +1136,7 @@ onBeforeUnmount(() => {
           >保存材料与证据</OmButton
         >
       </form>
+      <DocumentImports @open="openRevision" />
     </section>
     <PersonalKnowledge v-else-if="view === 'knowledge'" />
     <LearningView

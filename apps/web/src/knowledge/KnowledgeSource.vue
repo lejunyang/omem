@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import DocumentReading from "../DocumentReading.vue";
+import ReprocessControls from "../ReprocessControls.vue";
 import type { Revision } from "../api";
 import MaterialDescription from "../MaterialDescription.vue";
 import { OmCodeViewer, OmMarkdown, OmButton, OmBadge, OmEmpty } from "@omem/ui";
@@ -40,6 +41,7 @@ const material = ref<Material | null>(null),
 const linkError = ref("");
 const from = ref(1),
   to = ref(1);
+const reload = ref(0);
 const lines = computed(() => material.value?.text.split("\n") ?? []);
 const excerpt = computed(() =>
   lines.value.slice(from.value - 1, to.value).join("\n"),
@@ -59,7 +61,7 @@ watch(
 );
 let generation = 0;
 watch(
-  () => [props.materialKey, props.digest],
+  () => [props.materialKey, props.digest, reload.value],
   async () => {
     const current = ++generation;
     material.value = null;
@@ -104,6 +106,18 @@ function internal(path: string) {
     <p v-else-if="!material">正在读取固定原文…</p>
     <template v-else>
       <h2>{{ material.title }}</h2>
+      <ReprocessControls
+        v-if="material.current"
+        target="source"
+        :target-id="material.revisionId"
+        :title="material.title"
+        :actions="
+          material.document?.parser === 'docling'
+            ? ['parse', 'describe', 'understand', 'delete']
+            : ['describe', 'understand', 'refresh', 'delete']
+        "
+        @updated="reload++"
+      />
       <p v-if="linkError" role="status">{{ linkError }}</p>
       <div class="source-actions">
         <OmBadge
