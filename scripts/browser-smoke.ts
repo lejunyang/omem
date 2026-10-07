@@ -229,6 +229,83 @@ const out = resolve(".repo-review/runtime/browser/screenshots");
 mkdirSync(out, { recursive: true });
 try {
   await page.goto(base);
+  await check(
+    "first-use Agent setup negotiates each model, persists roles and applies without restart",
+    async () => {
+      await page
+        .getByRole("button", { name: "设置 Agent 与模型", exact: true })
+        .click();
+      await expect(
+        page.getByLabel("主助手模型", { exact: true }),
+      ).toBeEnabled();
+      await page.getByLabel("主助手模型", { exact: true }).selectOption("beta");
+      await expect(
+        page
+          .getByLabel("主助手思考强度", { exact: true })
+          .locator('option[value="high"]'),
+      ).toHaveCount(1);
+      await page
+        .getByLabel("主助手思考强度", { exact: true })
+        .selectOption("high");
+      await page
+        .getByRole("button", { name: "检查所选模型调用", exact: true })
+        .click();
+      await expect(
+        page.getByText("ACP 已连接 · 所选模型实际调用通过", { exact: true }),
+      ).toBeVisible();
+      await page.getByLabel("为不同工作分别设置 Agent、模型与思考强度").check();
+      await page.getByLabel("编码模型", { exact: true }).selectOption("alpha");
+      await expect(
+        page
+          .getByLabel("编码思考强度", { exact: true })
+          .locator('option[value="high"]'),
+      ).toHaveCount(0);
+      await expect(
+        page.getByLabel("编码思考强度", { exact: true }),
+      ).toHaveValue("low");
+      await page
+        .getByRole("button", { name: "保存并用于新任务", exact: true })
+        .click();
+      await expect(
+        page.getByText(/已保存 Agent 设置，新任务开始使用/),
+      ).toBeVisible();
+      const settings = await (
+        await fetch(base + "/api/agents/settings")
+      ).json();
+      expect(settings.roles.assistant.model).toBe("beta");
+      expect(settings.roles.assistant.effort).toBe("high");
+      expect(settings.roles.coding.model).toBe("alpha");
+      expect(settings.roles.coding.effort).toBe("low");
+      expect(settings.learningEnabled).toBe(false);
+      expect(
+        appConfig.profiles.find((p) => p.id === "omem-assistant")?.model,
+      ).toBe("beta");
+      await page.reload();
+      await expect(page.getByLabel("主助手模型", { exact: true })).toHaveValue(
+        "beta",
+      );
+      await expect(page.getByLabel("编码模型", { exact: true })).toHaveValue(
+        "alpha",
+      );
+      for (const width of [1440, 768, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        ).toBe(true);
+        await page.screenshot({
+          path: join(out, `agent-settings-${width}.png`),
+        });
+      }
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page.getByRole("button", { name: "日常助理", exact: true }).click();
+      await expect(
+        page.getByRole("button", { name: "设置 Agent 与模型", exact: true }),
+      ).toHaveCount(0);
+      await page.getByRole("button", { name: "知识库", exact: true }).click();
+    },
+  );
   await check("empty real workspace and material capture", async () => {
     await expect(
       page.getByRole("heading", { name: "知识从你的材料开始" }),
@@ -563,7 +640,8 @@ try {
         (action: { tool: string }) => action.tool === "research",
       );
       expect(research.trace.tools).toContain("submit_result");
-      expect(research.trace.model).toBe("alpha"); // Deterministic fixture, not a native model acceptance.
+      expect(research.trace.model).toBe("beta"); // The new main-assistant selection is active without restarting.
+      expect(research.trace.effort).toBe("high"); // Protocol fixture, not native model quality acceptance.
       await page.getByRole("button", { name: "原始材料", exact: true }).click();
       await page.getByRole("button", { name: "日常助理", exact: true }).click();
       await expect(
@@ -651,11 +729,9 @@ try {
         .click();
       await page.getByLabel("事项", { exact: true }).fill("等待评审回复");
       await page.getByRole("button", { name: "记录待办" }).click();
-      const panel = page
-        .locator(".om-panel")
-        .filter({
-          has: page.getByRole("heading", { name: "等待评审回复", exact: true }),
-        });
+      const panel = page.locator(".om-panel").filter({
+        has: page.getByRole("heading", { name: "等待评审回复", exact: true }),
+      });
       await panel.getByRole("button", { name: "跟进设置" }).click();
       await panel.getByLabel("等待对象或结果").fill("张三的评审回复");
       await panel.getByLabel("下次跟进时间").fill("2030-10-02T09:00");
@@ -857,8 +933,14 @@ try {
       for (const width of [1440, 768, 390]) {
         await page.setViewportSize({ width, height: 1000 });
         await page.locator(".authorization-grid").scrollIntoViewIfNeeded();
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-        await page.screenshot({ path: join(out, `lark-authorization-${width}.png`) });
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        ).toBe(true);
+        await page.screenshot({
+          path: join(out, `lark-authorization-${width}.png`),
+        });
       }
       await page.setViewportSize({ width: 1440, height: 1000 });
       await page.getByRole("button", { name: "取消本次接入" }).click();

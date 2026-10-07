@@ -13,6 +13,33 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on("pageerror", e => errors.push(e.message));
   await page.goto(BASE);
+  if (process.env.OMEM_AGENT_SETUP_ONLY === "1") {
+    await page.goto(BASE + "/#/settings");
+    const model = page.getByLabel("主助手模型", { exact: true });
+    await expect(model).toBeEnabled({ timeout: 60000 });
+    expect(await model.locator("option").count()).toBeGreaterThan(2);
+    await expect(page.getByText(/ACP 已连接 · 模型实际调用尚未检查/).first()).toBeVisible();
+    const choices = await model.locator("option").evaluateAll(options => options.map(o => ({ value: (o as HTMLOptionElement).value, label: o.textContent ?? "" })));
+    const current = await model.inputValue();
+    const other = choices.find(o => o.value && o.value !== current);
+    if (other) {
+      const response = page.waitForResponse(r => r.url().endsWith("/agents/probe") && r.request().method() === "POST", { timeout: 60000 });
+      await model.selectOption(other.value);
+      expect((await response).ok()).toBe(true);
+      await expect(model).toBeEnabled({ timeout: 60000 });
+      await model.selectOption(current);
+      await expect(model).toBeEnabled({ timeout: 60000 });
+    }
+    await expect(page.getByText("当前已连接本地服务，未启用访问令牌，无需填写。")).toBeVisible();
+    for (const width of [1440, 768, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: `${OUT}/agent-settings-${width}.png`, fullPage: true });
+    }
+    expect(errors).toEqual([]);
+    console.log("PASS live Agent setup with real model-dependent effort negotiation at three widths; configuration unchanged");
+    await browser.close(); process.exit(0);
+  }
   if (process.env.OMEM_LARK_SETUP_ONLY === "1") {
     await page.goto(BASE + "/#/lark");
     await expect(page.getByRole("heading", { name: "飞书机器人", exact: true })).toBeVisible();
