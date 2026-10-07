@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command, Option } from "commander";
+import { Command, Option, InvalidArgumentError } from "commander";
 import { readFile, writeFile, mkdir, cp, stat } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve, join, basename, extname } from "node:path";
@@ -1028,6 +1028,70 @@ knowledge
   .action(async (file) =>
     show(await api("/api/knowledge/pages", await readJson(file))),
   );
+const outline = knowledge
+  .command("outline")
+  .description("保存、修改并确认一组知识文章的目录草案")
+  .addHelpText(
+    "after",
+    "\n先 create 保存材料范围和阅读目标，再 propose 请求 Agent 调查目录。\nshow 查看建议，save 修改；apply 才保存正式目录并逐页开始写作。\n版本取 show 的 version，过期修改会拒绝覆盖。完整 JSON 见随包 references/knowledge-outlines.md。\n删除草案保留已发表文章和历史。主助手尚无目录草案的自然语言操作，外部 Agent 可按本指引调用 CLI。",
+  );
+read(
+  outline,
+  "list",
+  "列出可继续编辑的草案及 Agent 可用状态",
+  "/api/knowledge/outlines",
+);
+outline
+  .command("show <id>")
+  .description("查看目录、阅读目标和每篇文章的实际处理状态")
+  .action(async (id) => show(await api(`/api/knowledge/outlines/${enc(id)}`)));
+outline
+  .command("create <file>")
+  .description("从 JSON 保存草案；不会开始模型调用或写作")
+  .action(async (file) =>
+    show(await api("/api/knowledge/outlines", await readJson(file))),
+  );
+outline
+  .command("save <id> <file>")
+  .description("用 {version,draft} JSON 保存编辑；版本冲突时保留当前草案")
+  .action(async (id, file) =>
+    show(
+      await api(
+        `/api/knowledge/outlines/${enc(id)}`,
+        await readJson(file),
+        "PUT",
+      ),
+    ),
+  );
+const outlineVersion = (value: string) => {
+  const version = Number(value);
+  if (!Number.isSafeInteger(version) || version < 1)
+    throw new InvalidArgumentError("版本必须是正整数，请先查看草案");
+  return version;
+};
+for (const [action, description] of [
+  ["propose", "让 Agent 在已选材料中调查并提出目录，结果仍为待确认草案"],
+  ["apply", "确认保存的目录并开始逐页调查、写作和独立复核"],
+  ["delete", "删除草案，保留正式文章和固定历史"],
+] as const) {
+  outline
+    .command(`${action} <id>`)
+    .description(description)
+    .requiredOption(
+      "--version <number>",
+      "当前草案版本，取 show 输出",
+      outlineVersion,
+    )
+    .action(async (id, options) =>
+      show(
+        await api(
+          `/api/knowledge/outlines/${enc(id)}${action === "delete" ? `?version=${options.version}` : `/${action}`}`,
+          action === "delete" ? undefined : { version: options.version },
+          action === "delete" ? "DELETE" : "POST",
+        ),
+      ),
+    );
+}
 for (const [name, desc, path] of [
   ["memories", "已应用的持续记忆", "/api/memories"],
   ["tasks", "事项与待办", "/api/tasks"],

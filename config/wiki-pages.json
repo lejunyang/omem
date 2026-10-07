@@ -206,9 +206,10 @@
       "order": 0,
       "kind": "explanation",
       "reader": "想理解并改进知识生成过程的开发者",
-      "goal": "读者能够沿一篇文章说清页面目标、调查、写作、独立补查和发布各解决什么问题。用具体内容展示从材料到解释的变化，区分内部笔记、参考页和正式讲解；让新人能理解与使用，而非枚举协议和检查规则。示例只标注一次，不用夹具、验收实录等术语组织正文；固定版本等机制放在它们解决具体问题的位置，不铺成限制清单。",
-      "scenario": "教学示例：一份活动约定同时写了预算八十元和图书馆集合，需要整理成一篇解释参加者怎样准备的文章。用这份简短内容串起选材、阅读目标、补背景、文章与引用。",
+      "goal": "读者能够先为多份材料规划一条阅读路线，再沿其中一篇文章说清页面目标、调查、写作、独立补查和发布各解决什么问题。用具体内容展示从材料到解释的变化，区分内部笔记、参考页和正式讲解；让新人能理解与使用，而非枚举协议和检查规则。目录草案中要展示读者如何修改每页目的、合并重复讲解、移动分类、确认后才安排正文；草案与原文、正式计划、已发表正文各自承担什么作用，在具体操作处说明。固定版本等机制放在它们解决具体问题的位置，不铺成限制清单。",
+      "scenario": "教学示例：活动约定写了预算八十元、图书馆集合，后来补入报名须知。读者先规划“参加活动如何准备”和“组织者如何确认报名”两页，发现目标重复时合并，调整分类并保存草案，再确认写作。沿参加者这一页说明调查、补背景、正文和引用如何形成。以已实现网页与CLI为操作入口，机器人自然语言目录操作尚未接入。",
       "questions": [
+        "多份材料如何先形成可编辑目录，修改、合并、保存与确认分别改变什么？",
         "如何把一个读者问题变成页面计划，而不是每文件生成说明？",
         "Agent 如何补读缺少的背景，作者和独立复核分别做什么？",
         "新读者最终读到什么，引用和参考页怎样帮助继续了解？",
@@ -222,7 +223,11 @@
         "apps/web/src/knowledge/ArticleComposer.vue",
         "apps/server/src/knowledge/agent-research.ts",
         "docs/reader-first/project-contexts.md",
-        "apps/server/src/contexts/repository.ts"
+        "apps/server/src/contexts/repository.ts",
+        "apps/server/src/knowledge/outlines.ts",
+        "apps/web/src/knowledge/KnowledgeOutline.vue",
+        "packages/contracts/src/knowledge-outline.ts",
+        "docs/reader-first/knowledge-outlines.md"
       ],
       "topicPath": [
         "软件开发",

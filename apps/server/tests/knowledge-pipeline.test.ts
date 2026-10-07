@@ -9,6 +9,7 @@ import { RoleBundleRegistry } from "../src/agent-runtime/bundles.js";
 import { RoleRuntimeGateway } from "../src/agent-runtime/gateway.js";
 import { profileSchema } from "../../../packages/contracts/src/index.js";
 import type { KnowledgeResearch } from "../../../packages/contracts/src/knowledge.js";
+import type { KnowledgeOutlineDraft } from "../../../packages/contracts/src/knowledge-outline.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => cleanups.splice(0).reverse().forEach(fn => fn()));
@@ -78,6 +79,32 @@ it("distinguishes Lark documents from conversations and recognizes ordinary impo
   expect(analystFor({ ...base, namespace: "lark", path: null, conversationId: "chat-1" })).toBe("conversation-analyst");
   expect(analystFor({ ...base, namespace: "git", path: null, title: "src/main.ts" })).toBe("code-analyst");
   expect(analystFor({ ...base, namespace: "file", path: null, title: "main.py" })).toBe("code-analyst");
+});
+
+it("gives the directory planner an explicit inventory of dynamic project materials without exposing unselected originals", async () => {
+  const f = setup();
+  f.pipeline.options.nativeResearch = true;
+  const project = f.store.contexts.create({ name: "排班工具", kind: "project", description: "安排参与者" });
+  for (const [externalId, title, filePath, text] of [
+    ["planning-note", "排班规则", "notes/rules.md", "阅读安排实现和配置后选择参加方式。"],
+    ["participant-picker", "参与者选择实现", "lib/pick.ts", "export function pickParticipant(names: string[]) {\n  return names[0];\n}"],
+  ]) f.store.capture({ source: "file", externalId, title: title!, parts: [{ type: "text", text: text! }], context: { filePath } }, { contextIds: [project.id], learning: false, notify: false });
+  const selected = f.repository.materials().filter(m => f.store.contexts.forSource(m.sourceId).includes(project.id));
+  const draft: KnowledgeOutlineDraft = { id: "saved-outline", version: 2, title: "如何排班", reader: "新参与者", goal: "理解参加方式和选择规则", topicPath: ["活动"], materialKeys: [], contextIds: [project.id], pages: [],
+    state: "planning", rationale: "", gaps: [], error: null, jobId: "outline-job", appliedPages: [], createdAt: "2026-10-07", updatedAt: "2026-10-07" };
+  f.run.mockImplementation(async input => {
+    expect(input.roleId).toBe("knowledge-outliner");
+    expect(input.context.task!.selectedMaterials).toEqual(selected.map(m => ({ key: m.key, title: m.title, path: m.path, lineCount: m.lineCount, source: m.namespace })));
+    expect(JSON.stringify(input.context)).not.toContain("The release uses fixed evidence.");
+    expect(typeof input.research).toBe("function");
+    const bundle = f.pipeline.registry.load(input.roleId);
+    const result = { schema_version: 1, rationale: "先认识安排规则，再看选择过程。", gaps: [], pages: [{ title: "参加方式", kind: "explanation", reader: draft.reader, goal: draft.goal, scenario: "参加一次活动", questions: ["怎么选择参与者？"], entryPaths: [], topicPath: draft.topicPath, materialKeys: selected.map(m => m.key), contextIds: [], existingKey: null }] };
+    input.validateOutput?.(result);
+    return { result, bundle, trace: { runId: "fixture-outline", roleId: input.roleId, roleVersion: "1", bundleHash: bundle.bundleHash, promptHash: "p", contextHash: "c", skillHash: "s", toolHash: "t", fingerprint: "f", outputSchema: bundle.manifest.output_schema, effectiveModel: "fixture", effectiveEffort: null, loadedSkills: [], allowedTools: [], sessionIds: ["fixture-outline"], usage: {}, repairAttempts: 0 } } as Awaited<ReturnType<RoleRuntimeGateway["run"]>>;
+  });
+  const result = await f.pipeline.proposeOutline(draft);
+  expect(result.pages[0]!.materialKeys).toEqual(selected.map(m => m.key));
+  expect(f.repository.pages()).toEqual([]);
 });
 
 it("investigates a requested range beyond the entry preview before writing and independently reviewing a reader page", async () => {

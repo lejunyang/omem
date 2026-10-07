@@ -145,6 +145,14 @@ run = "bun scripts/live-retrieval-smoke.ts"
 [tasks."retrieval:verify".flags.reranker]
 help = "Compare the installed Chinese cross-encoder (not enabled by default)"
 
+[tasks."knowledge:outline-verify"]
+description = "Exercise an editable directory proposal and article writing with real Traex/Sol on synthetic materials"
+run = [{ argv = ["bun", "scripts/live-knowledge-outlines.ts", "{{args}}"] }]
+[tasks."knowledge:outline-verify".options.api]
+help = "Owned development API URL; must accompany data-dir to retain the preview"
+[tasks."knowledge:outline-verify".options.data-dir]
+help = "Owned .repo-review/runtime preview data directory; never a private library"
+
 [tasks."benchmark:mtrag"]
 run = "bun scripts/benchmark-mtrag.ts"
 description = "Compare lexical ranking on the pinned public MTRAG Cloud corpus; downloads benchmark data, no model calls"

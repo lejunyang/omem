@@ -32,6 +32,8 @@ omem sources revision REVISION_ID --json
 
 ## 写知识文章
 
+一批材料需要目录和多篇文章时，先用 `omem knowledge outline`，完整的选材、草案 JSON、编辑确认与失败处理见[知识目录草案](knowledge-outlines.md)。它先保存阅读路线，用户确认后才开始正文写作；单篇明确目标仍可用下面的 write。
+
 先 `omem knowledge list --json`，从 materials 选择 revisionId，建立 JSON：
 
 ```json

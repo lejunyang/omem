@@ -7,6 +7,8 @@ for (const path of [
   "apps/web/dist/index.html",
   "packages/agent-runtime/roles/daily-assistant/1/manifest.json",
   "skills/omem-cli/SKILL.md",
+  "skills/omem-cli/references/knowledge-outlines.md",
+  "packages/agent-runtime/roles/knowledge-outliner/1/manifest.json",
   ".agents/skills/lieflat-less-ai-tone/SKILL.md",
   ".agents/skills/lieflat-less-ai-tone/LICENSE",
   "packages/agent-runtime/roles/coding-agent/1/manifest.json",

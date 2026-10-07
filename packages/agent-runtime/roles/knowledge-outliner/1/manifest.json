@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "role_id": "knowledge-outliner",
+  "role_version": "1",
+  "profile_ref": "traex",
+  "prompt_templates": [
+    "prompt.md"
+  ],
+  "skill_bundles": [
+    {
+      "canonical_name": "omem-knowledge-outliner",
+      "version": "1",
+      "load_mode": "inline",
+      "artifact_digest": "9640038a620d98331502fe08eab88b8f0fcb1ac65d023cee5a9ba05ae664cc4d"
+    },
+    {
+      "canonical_name": "lieflat-less-ai-tone",
+      "version": "27d29232f101",
+      "load_mode": "inline",
+      "source": "project",
+      "artifact_digest": "4d23d6d8eff7a3f33a6a073ba7a5fe2e5df05477d4e9f479e8313b3195ec6177"
+    }
+  ],
+  "output_schema": "KnowledgeOutline.v1",
+  "tool_policy": {
+    "mode": "none",
+    "allowed_tools": []
+  },
+  "session_policy": {
+    "reuse": "never",
+    "inherit_user_skills": false,
+    "inherit_user_mcp": false
+  },
+  "budget": {
+    "max_context_tokens": 96000,
+    "max_output_tokens": 24000,
+    "max_repair_attempts": 2
+  }
+}

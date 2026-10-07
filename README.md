@@ -76,6 +76,8 @@ Wiki 按读者问题调查、讲解：页面计划规定阅读目标和真实案
 
 普通助手现已接入原生自主调查：按问题选择搜索、补读、记忆、历史或代码导航，再提交答案与行动候选。预算80元换为120元、更新同一记忆、创建跟进、重启提醒、延后及完成的真实Traex流程已通过。搜索页同时提供综合回答与实际命中，真实网页首题与追问均完成；基础排序仍会把计划和旧说明排在实现前，不能用Agent补查成功代替检索质量。具体实际内容与成熟方案见 [助手检索调研](docs/reader-first/assistant-search-research.md)，保存、换版、记忆更新和跟进的成功/失败见 [个人全流程](docs/reader-first/assistant-memory-flow.md)。
 
+多篇文章可从“规划知识目录”开始：选择材料或项目，说明读者和阅读目标，先让 Agent 补读并建议目录，再修改页面标题、问题、范围、所属目录与顺序。草案可以保存、合并和继续编辑，确认后才建立正式页面计划并逐篇写作。已有文章保留正文与固定历史，目录已调整而新正文未完成时明确提示。网页与 `omem knowledge outline` 共用草案，操作与限制见[知识目录草案](docs/reader-first/knowledge-outlines.md)。
+
 ## 需求跟进与编码
 
 `requirements track --watch` 维护同一需求页，`board/follow` 将明确行动关联到个人待办。`develop register/start` 在登记项目的独立副本里编码，读取项目规则与 skills，运行项目检查，再交给独立评审 Agent；`develop diff/apply` 查看并应用通过评审的补丁。这些本地命令仍可供 Agent 调用与排障，不自动推送或部署。完整流程与限制见[需求跟进与编码](docs/reader-first/requirement-followup.md)。

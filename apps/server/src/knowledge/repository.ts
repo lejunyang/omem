@@ -169,6 +169,13 @@ export class KnowledgeRepository {
       const cleared = this.store.db.prepare("DELETE FROM knowledge_invalidations WHERE document_key=? AND reason=?").run(brief.key, planReason);
       if (cleared.changes) this.refresh();
     } else if (published && stableDigest(previous ?? null) !== stableDigest(brief)) {
+      const contentPlan = (plan: WikiPageBrief) => {
+        const { title: _title, topicPath: _path, order: _order, ...content } = plan;
+        return content;
+      };
+      // A navigation label, category or reading order does not invalidate
+      // supported claims. Scope/reader/purpose changes still await new prose.
+      if (previous && stableDigest(contentPlan(previous)) === stableDigest(contentPlan(brief))) return;
       this.store.db.prepare("INSERT OR REPLACE INTO knowledge_invalidations VALUES(?,?)").run(brief.key, planReason);
       this.refresh();
     }
