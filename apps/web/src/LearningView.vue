@@ -15,8 +15,9 @@ const busy = ref("");
 const filter = ref("active");
 const limit = ref(40);
 const names: Record<string,string> = { extract_claims: "提炼记忆", verify_proposals: "核验候选记忆", refresh_dependents: "复查受影响记忆", knowledge_analyze: "分析材料", knowledge_synthesize: "整理知识正文" };
-const waiting = computed(() => props.jobs.filter(j => j.state === "queued").length);
-const filtered = computed(() => props.jobs.filter(j => filter.value === "all" || (filter.value === "queued" ? j.state === "queued" : filter.value === "failed" ? ["failed","retry_wait"].includes(j.state) : j.state !== "queued")));
+const materialJobs = computed(() => props.jobs.filter(j => j.kind !== "scheduled_task"));
+const waiting = computed(() => materialJobs.value.filter(j => j.state === "queued").length);
+const filtered = computed(() => materialJobs.value.filter(j => filter.value === "all" || (filter.value === "queued" ? j.state === "queued" : filter.value === "failed" ? ["failed","retry_wait"].includes(j.state) : j.state !== "queued")));
 function title(job: Job) {
   return job.materialTitle || props.sources.find(s => job.inputRefs.some(r => r.sourceId === s.sourceId || r.revisionId === s.id))?.title || names[job.kind] || "材料处理";
 }

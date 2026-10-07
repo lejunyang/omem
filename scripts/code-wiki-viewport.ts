@@ -29,6 +29,63 @@ try {
   });
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(BASE);
+  if (process.env.OMEM_SCHEDULES_ONLY === "1") {
+    await page.goto(BASE + "/#/schedules");
+    await expect(
+      page.getByRole("heading", { name: "定时任务", exact: true }),
+    ).toBeVisible({ timeout: 90000 });
+    await expect(
+      page.getByRole("heading", { name: "事项提醒检查", exact: true }),
+    ).toBeVisible();
+    for (const width of [1440, 768, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: `${OUT}/schedules-${width}.png`,
+        fullPage: true,
+      });
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page
+      .locator(".task-card")
+      .filter({
+        has: page.getByRole("heading", { name: "每日简报", exact: true }),
+      })
+      .getByRole("button", { name: "设置", exact: true })
+      .click();
+    await expect(page.getByLabel("简报要求", { exact: true })).toBeVisible();
+    for (const width of [1440, 768, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: `${OUT}/schedules-settings-${width}.png`,
+        fullPage: true,
+      });
+    }
+    expect(errors).toEqual([]);
+    writeFileSync(
+      `${OUT}/report.json`,
+      JSON.stringify(
+        {
+          base: BASE,
+          checks: ["scheduler and settings at 1440/768/390"],
+          errors,
+        },
+        null,
+        2,
+      ),
+    );
+    await browser.close();
+    process.exit(0);
+  }
   if (process.env.OMEM_UI_ONLY === "1") {
     await check(
       "shared form controls at desktop, tablet and mobile widths",
@@ -67,33 +124,30 @@ try {
         }
       },
     );
-    await check(
-      "daily composer is before project follow-up",
-      async () => {
-        await page.goto(BASE + "/#/daily");
-        await expect(page.getByLabel("发给日常助理")).toBeVisible();
+    await check("daily composer is before project follow-up", async () => {
+      await page.goto(BASE + "/#/daily");
+      await expect(page.getByLabel("发给日常助理")).toBeVisible();
+      expect(
+        await page.evaluate(() => {
+          const composer = document.querySelector(".daily-composer")!,
+            work = document.querySelector(".work-panel")!;
+          return !!(
+            composer.compareDocumentPosition(work) &
+            Node.DOCUMENT_POSITION_FOLLOWING
+          );
+        }),
+      ).toBe(true);
+      for (const width of [1440, 768, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await page.locator(".daily-composer").scrollIntoViewIfNeeded();
         expect(
-          await page.evaluate(() => {
-            const composer = document.querySelector(".daily-composer")!,
-              work = document.querySelector(".work-panel")!;
-            return !!(
-              composer.compareDocumentPosition(work) &
-              Node.DOCUMENT_POSITION_FOLLOWING
-            );
-          }),
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
         ).toBe(true);
-        for (const width of [1440, 768, 390]) {
-          await page.setViewportSize({ width, height: 1000 });
-          await page.locator(".daily-composer").scrollIntoViewIfNeeded();
-          expect(
-            await page.evaluate(
-              () => document.documentElement.scrollWidth <= innerWidth,
-            ),
-          ).toBe(true);
-          await page.screenshot({ path: `${OUT}/daily-layout-${width}.png` });
-        }
-      },
-    );
+        await page.screenshot({ path: `${OUT}/daily-layout-${width}.png` });
+      }
+    });
     await check(
       "message collection status and conversation tools stay visible",
       async () => {
