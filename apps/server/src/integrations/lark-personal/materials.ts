@@ -51,7 +51,9 @@ export async function messageMaterial(
   ownerId: string,
   readResources: boolean,
   refresh = false,
+  ensureActive: () => void = () => {},
 ) {
+  ensureActive();
   const cache = new LarkResourceCache(store);
   const content =
     typeof message.content === "string"
@@ -69,6 +71,7 @@ export async function messageMaterial(
   if (!message.deleted) {
     const found = resourcesIn(content);
     for (const uri of found.urls) {
+      ensureActive();
       const resource: MessageResource = {
         kind: "document",
         label: "飞书文档",
@@ -104,6 +107,7 @@ export async function messageMaterial(
           continue;
         }
         const input = await larkInput(uri, store.dataDir);
+        ensureActive();
         const captured = store.capture(input, {
           learning: false,
           notify: false,
@@ -122,6 +126,7 @@ export async function messageMaterial(
       }
     }
     for (const key of found.keys) {
+      ensureActive();
       const kind = key.startsWith("img_") ? "image" : "file";
       const nameMatch = content.match(
         new RegExp(`<file[^>]*key=["']${key}["'][^>]*name=["']([^"']+)`),
@@ -137,11 +142,13 @@ export async function messageMaterial(
         const local = cached ? store.asset(cached.assetId) : null;
         const bytes =
           local ?? (await port.resource(message.message_id, key, kind));
+        ensureActive();
         resource.cached = !!local;
         resource.assetId =
           local && cached
             ? cached.assetId
             : await saveImportAsset(store.dataDir, bytes);
+        ensureActive();
         cache.put(
           cacheKey,
           { assetId: resource.assetId },
@@ -171,6 +178,7 @@ export async function messageMaterial(
             store.dataDir,
             `lark-attachment:${message.message_id}:${key}`,
           );
+          ensureActive();
           const captured = store.capture(input, {
             learning: false,
             notify: false,
@@ -200,10 +208,12 @@ export async function messageMaterial(
   }
   if (parts.length > 50)
     throw Error("消息资源过多，需要分批读取，原始消息仍保留");
+  ensureActive();
   const rawAssetId = await saveImportAsset(
     store.dataDir,
     Buffer.from(JSON.stringify(message)),
   );
+  ensureActive();
   const input: CaptureInput = {
     source: "chat",
     externalId: `lark-personal:${message.message_id}`,

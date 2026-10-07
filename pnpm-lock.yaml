@@ -32,6 +32,9 @@ importers:
       commander:
         specifier: 15.0.0
         version: 15.0.0
+      croner:
+        specifier: 10.0.0
+        version: 10.0.0
       diff:
         specifier: 9.0.0
         version: 9.0.0
@@ -1334,6 +1337,10 @@ packages:
 
   cose-base@2.2.0:
     resolution: {integrity: sha512-AzlgcsCbUMymkADOJtQm3wO9S3ltPfYOFD5033keQn9NJzIbtnZj+UdBJe7DYml/8TdbtHJW3j58SOnKhWY/5g==}
+
+  croner@10.0.0:
+    resolution: {integrity: sha512-k+jJ/QcNbRLZrPWE+2F0DsAeJpSGlSz4epvR82YULYGEP6rFsAQ+DukibrJncHiRATAQ8UuE3mgvGld9Qgx+BA==}
+    engines: {node: '>=18.0'}
 
   croner@4.1.97:
     resolution: {integrity: sha512-/f6gpQuxDaqXu+1kwQYSckUglPaOrHdbIlBAu0YuW8/Cdb45XwXYNUBXg3r/9Mo6n540Kn/smKcZWko5x99KrQ==}
@@ -3796,6 +3803,8 @@ snapshots:
   cose-base@2.2.0:
     dependencies:
       layout-base: 2.0.1
+
+  croner@10.0.0: {}
 
   croner@4.1.97: {}
 

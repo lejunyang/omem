@@ -211,18 +211,34 @@ export class AcpAssistantModel implements AssistantModelPort {
           context: { ...input, signal },
           workTools: [
             ...conversationInputs.filter(
-              (t) => t.name !== "conversation_input_relevance" && t.readOnly !== false,
+              (t) =>
+                t.name !== "conversation_input_relevance" &&
+                t.readOnly !== false,
             ),
             ...(work
               ?.tools()
               .filter((tool) =>
-                ["work_catalog", "work_status", "work_result", "repository_status", "project_inspect", "project_files", "project_read", "project_search"].includes(
-                  tool.name,
-                ),
+                [
+                  "work_catalog",
+                  "work_status",
+                  "work_result",
+                  "repository_status",
+                  "project_inspect",
+                  "project_files",
+                  "project_read",
+                  "project_search",
+                  "messages_status",
+                  "message_chats",
+                  "schedule_list",
+                  "schedule_get",
+                ].includes(tool.name),
               ) ?? []),
             ...(capabilities
               ?.tools()
-              .filter((t) => t.name !== "capability_relevance" && t.readOnly !== false) ?? []),
+              .filter(
+                (t) =>
+                  t.name !== "capability_relevance" && t.readOnly !== false,
+              ) ?? []),
           ],
           onSubmitted: publish,
         }),
@@ -304,7 +320,7 @@ export class AcpAssistantModel implements AssistantModelPort {
         input.trustedContext ?? "",
         dailyWorkflowPrompt(),
         work
-          ? `Requirement work tools are available. Read work_catalog and work_status to resolve the saved requirement, version and registered coding project. Current work state and optional quick-model advice: ${JSON.stringify(workContext)}. Advice is not authorization or verified facts. For a direct CURRENT-user request to follow/adjust/pause a requirement or delegate coding, submit work_action (and set create_task/update_task=null); the host applies it only after this turn. Do not tell the user to run commands. Tracking does not authorize coding. Start development only when the current user explicitly delegates implementation; copy the assignment verbatim into delegation. Feedback text copies current user words; facts/corrections become new input for independent investigation, not immediate verified facts. Do not claim completion: a queued task is only queued. Research mode always requires work_action=null.`
+          ? `Message and schedule tools are available too: resolve real conversations with message_chats (refresh when missing), read messages_status and schedule_list/get before configuring. Explicit owner requests can propose subscribe_chat, configure_messages, configure_auto_watch or save/pause/resume/delete/run_schedule; copy the current request into delegation. Preserve unrelated settings. Auto discovery and collection are separate switches; collectionEnabled=true is for an owner request to start automatic reading. A reminder for one event is an ordinary task; a recurring brief is a schedule with the user timezone. Update the existing matching schedule/version, do not duplicate it. Scheduling and subscribing are host-applied actions, never write to personal Feishu or claim a queued result is delivered. Requirement work tools are available. Read work_catalog and work_status to resolve the saved requirement, version and registered coding project. Current work state and optional quick-model advice: ${JSON.stringify(workContext)}. Advice is not authorization or verified facts. For a direct CURRENT-user request to follow/adjust/pause a requirement or delegate coding, submit work_action (and set create_task/update_task=null); the host applies it only after this turn. Do not tell the user to run commands. Tracking does not authorize coding. Start development only when the current user explicitly delegates implementation; copy the assignment verbatim into delegation. Feedback text copies current user words; facts/corrections become new input for independent investigation, not immediate verified facts. Do not claim completion: a queued task is only queued. Research mode always requires work_action=null.`
           : "",
         `Mode: ${input.mode ?? "assist"}. ${input.mode === "research" ? "READ-ONLY CONSULTATION: create_task and update_task MUST be null." : "You may propose one explicit owner task action; the host alone applies it and confirms the receipt."}`,
         "Initial matches are leads, not a complete answer or a mandatory reading order. Choose tools and how much to read according to this question and material type. Code navigation is optional, not a workflow imposed on documents, conversations, images or personal questions.",

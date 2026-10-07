@@ -448,3 +448,7 @@ run = [{ argv = ["osdk", "exec", "--no-deps", "-t", "node", "-t", "bun", "--", "
 [tasks."assistant:work"]
 description = "Real Sol natural-language follow, feedback and durable background coding on a disposable project"
 run = [{ argv = ["bun", "scripts/live-assistant-work.ts"] }]
+
+[tasks."assistant:schedules"]
+description = "Real Sol conversation watching and scheduled briefs on synthetic materials; no private Feishu or bot delivery"
+run = "bun scripts/live-scheduled-assistant.ts"

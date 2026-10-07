@@ -6,6 +6,11 @@ import { agentIdleTimeout } from "./agent-timeout.js";
 import { assetPath } from "./paths.js";
 import { PersonalLarkService } from "./integrations/lark-personal/service.js";
 import { registerPersonalLark } from "./integrations/lark-personal/api.js";
+import type { PersonalLarkPort } from "./integrations/lark-personal/client.js";
+import { ScheduleService } from "./schedules/service.js";
+import { JobExecutionError } from "./jobs/worker.js";
+import { registerSchedules } from "./schedules/api.js";
+import { ScheduledBriefService } from "./assistant/scheduled-brief.js";
 import { evidenceSection } from "./retrieval/context.js";
 import { codeIntents, retrievalPurposes } from "./retrieval/port.js";
 import {
@@ -89,6 +94,7 @@ export async function buildApp(
   dependencies: {
     lark?: LarkOnboardingService;
     larkRuntime?: LarkRuntimeHost;
+    personalLarkPort?: PersonalLarkPort;
   } = {},
 ) {
   const assistantProfile = () => selectAssistantProfile(config);
@@ -112,8 +118,121 @@ export async function buildApp(
   );
   const memory = new MemoryService(store);
   const decisions = new DecisionService(config.decisions ?? { mode: "auto" });
-  const personalLark = new PersonalLarkService(store, decisions);
   let work!: AssistantWork;
+  let schedules!: ScheduleService;
+  let brief!: ScheduledBriefService;
+  const personalLark = new PersonalLarkService(
+    store,
+    decisions,
+    dependencies.personalLarkPort,
+    {
+      watchedContextSummary: () => ({
+        projects: store.contexts
+          .list()
+          .map((p) => ({ id: p.id, name: p.name, description: p.description })),
+        requirements:
+          work?.catalog().requirements.map((r) => ({
+            title: r.title,
+            goal: r.goal,
+            attention: r.attention,
+            summary: r.summary,
+            contextIds: r.contextIds,
+          })) ?? [],
+      }),
+      autoWatchNextAt: () =>
+        schedules?.list().find((t) => t.kind === "lark_discovery")?.nextRunAt ??
+        null,
+      onAutoWatchConfigured: (settings) => {
+        if (!schedules) return;
+        const task = schedules.list().find((t) => t.kind === "lark_discovery");
+        if (!task && !settings.enabled) return;
+        if (
+          task?.enabled === settings.enabled &&
+          task.timing.type === "interval" &&
+          task.timing.everyMinutes === settings.intervalMinutes
+        )
+          return;
+        schedules.save(
+          {
+            kind: "lark_discovery",
+            name: task?.name ?? "发现飞书会话",
+            instruction: task?.instruction ?? "按已保存关注策略筛选最近活跃群",
+            contextIds: [],
+            enabled: settings.enabled,
+            timing: {
+              type: "interval",
+              everyMinutes: settings.intervalMinutes,
+            },
+            ...(task ? { expectedVersion: task.version } : {}),
+          },
+          task?.id,
+        );
+      },
+    },
+  );
+  schedules = new ScheduleService(
+    store,
+    async (task, signal, occurrence) => {
+      if (task.kind === "daily_brief")
+        return brief.run(task, signal, occurrence);
+      const result = await personalLark.discoverAndWatch(signal);
+      occurrence.assertCurrent();
+      if (result.status === "cancelled")
+        throw new JobExecutionError(
+          "飞书自动关注已取消或政策已变化",
+          "cancelled",
+        );
+      if (result.status === "failed")
+        throw Error(result.notice ?? "飞书会话发现失败");
+      return {
+        summary:
+          result.status === "disabled"
+            ? (result.notice ?? "自动发现或消息采集已暂停")
+            : `检查${result.discovered}个最近会话，新增关注${result.selected.length}个群；${result.pending.length}个待判断。`,
+        detail: JSON.stringify(result, null, 2),
+        skipped: result.status === "disabled",
+      };
+    },
+    {
+      onSaved: (task) => {
+        if (task.kind === "lark_discovery")
+          personalLark.configureAutoWatch({
+            enabled: task.enabled,
+            intervalMinutes:
+              task.timing.type === "interval" ? task.timing.everyMinutes : 30,
+          });
+      },
+      onDeleted: (task) => {
+        if (task.kind === "lark_discovery")
+          personalLark.configureAutoWatch({ enabled: false });
+      },
+      onBackgroundError: (error) => app.log.error(error),
+    },
+  );
+  let reminderLastCheckedAt: string | null = null;
+  registerSchedules(app, schedules, {
+    systemTasks: () => [
+      {
+        id: "task-reminders",
+        name: "事项提醒检查",
+        kind: "task_reminders",
+        enabled: true,
+        intervalSeconds: 30,
+        lastCheckedAt: reminderLastCheckedAt,
+        nextRunAt: reminderLastCheckedAt
+          ? new Date(Date.parse(reminderLastCheckedAt) + 30000).toISOString()
+          : null,
+        pendingCount: store
+          .tasks()
+          .filter(
+            (t) =>
+              !["done", "cancelled"].includes(String(t.status)) &&
+              (t.followUp?.next_check_at || t.dueAt),
+          ).length,
+        detail: "每30秒检查已设置的事项提醒；具体提醒时间在事项与待办中设置。",
+      },
+    ],
+  });
   registerPersonalLark(app, personalLark, () => work);
   const feedback = new FeedbackService(store);
   // Production assistant uses the real ACP adapter against a configured profile.
@@ -163,6 +282,7 @@ export async function buildApp(
           },
         ),
         decisions,
+        { personalLark, schedules },
       );
     },
     store,
@@ -188,6 +308,12 @@ export async function buildApp(
     retrievalConfig: config.retrieval,
     work,
   });
+  brief = new ScheduledBriefService(
+    store,
+    work,
+    assistantModel,
+    config.notifications.external?.timezone ?? "Asia/Shanghai",
+  );
   app.get("/api/work", async () => work.catalog());
   app.post("/api/work/actions", async (req) => {
     const input = z
@@ -369,6 +495,11 @@ export async function buildApp(
   app.get("/api/health", async () => ({
     status: "ok",
     personalLark: personalLark.health(),
+    schedules: {
+      enabled: schedules.list().filter((t) => t.enabled).length,
+      running: schedules.list().filter((t) => t.lastRun?.state === "running")
+        .length,
+    },
     storage: "sqlite",
     mode: "personal",
     retrieval: assistantRetrieval.health(),
@@ -1241,7 +1372,10 @@ export async function buildApp(
   const recovery = assistant
     .recoverUnfinishedTurns()
     .catch((error) => app.log.error(error));
-  const tick = setInterval(() => store.remind(), 30000);
+  const tick = setInterval(() => {
+    store.remind();
+    reminderLastCheckedAt = new Date().toISOString();
+  }, 30000);
   tick.unref();
   let lastInputError = "";
   const inputTick = setInterval(() => {
@@ -1257,9 +1391,11 @@ export async function buildApp(
   }, 1000);
   inputTick.unref();
   personalLark.start();
+  schedules.start();
   learning?.start();
   larkRuntime?.start();
   app.addHook("onClose", async () => {
+    await schedules.stop();
     await personalLark.stop();
     await decisions.close();
     assistant.shutdown();
@@ -1284,5 +1420,8 @@ export async function buildApp(
     larkRuntime,
     assistant,
     work,
+    personalLark,
+    schedules,
+    brief,
   };
 }

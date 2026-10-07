@@ -1058,6 +1058,35 @@ const messages = group(
 );
 const mp = "/api/integrations/lark-personal";
 read(messages, "status", "查看开关、订阅与采集状态", mp);
+messages
+  .command("chats [query]")
+  .description("按名称查询已发现的最近会话，返回真实会话ID和关注理由")
+  .action(async (query = "") =>
+    show(await api(mp + "/chats?" + new URLSearchParams({ query }))),
+  );
+const autoWatch = messages
+  .command("auto-watch")
+  .description("自动发现并按关注方向筛选最近活跃群；个人登录只读");
+read(
+  autoWatch,
+  "status",
+  "查看关注政策、候选理由和最近筛选结果",
+  mp + "/auto-watch",
+);
+autoWatch
+  .command("configure <json-file>")
+  .description(
+    "修改enabled、intervalMinutes、recentLimit、maxAutoSubscriptions、focus、ignore；保留未修改字段",
+  )
+  .action(async (file) =>
+    show(await api(mp + "/auto-watch", await readJson(file), "PUT")),
+  );
+write(
+  autoWatch,
+  "run",
+  "立即筛选最近活跃群；需开启消息采集和自动发现",
+  mp + "/auto-watch/run",
+);
 write(
   messages,
   "discover",
@@ -1103,6 +1132,83 @@ messages
   .action(async (id) =>
     show(await api(mp + "/inbox/" + enc(id) + "/retry", {})),
   );
+const schedules = group(
+  "schedules",
+  "定时任务：查询、设置、暂停与运行自动发现和AI简报",
+);
+read(
+  schedules,
+  "list",
+  "查看定时任务、下一次运行和系统提醒检查",
+  "/api/schedules",
+);
+schedules
+  .command("show <id>")
+  .description("查看设置、最近运行、结果和失败原因")
+  .action(async (id) => show(await api("/api/schedules/" + enc(id))));
+schedules
+  .command("add <json-file>")
+  .description(
+    "创建定时简报：kind、name、instruction、contextIds、enabled、timing",
+  )
+  .addHelpText(
+    "after",
+    '\n示例：{"kind":"daily_brief","name":"工作简报","instruction":"整理今天的行动、阻塞和等待回复","enabled":true,"timing":{"type":"cron","expression":"0 9 * * 1-5","timezone":"Asia/Shanghai"}}\n保存后服务常驻运行；没有绑定通知机器人时，结果保留在定时任务页面。',
+  )
+  .action(async (file) =>
+    show(await api("/api/schedules", await readJson(file))),
+  );
+schedules
+  .command("configure <id> <json-file>")
+  .description("修改同一定时任务；完整设置须含show返回的expectedVersion")
+  .action(async (id, file) =>
+    show(await api("/api/schedules/" + enc(id), await readJson(file), "PUT")),
+  );
+for (const action of ["pause", "run", "delete"] as const)
+  schedules
+    .command(`${action} <id>`)
+    .description(
+      action === "pause"
+        ? "暂停并停止当前执行，保留结果"
+        : action === "run"
+          ? "安排立即执行；不改变周期与启用设置"
+          : "删除定时任务，重启不会重新添加",
+    )
+    .action(async (id) => {
+      const task = await api("/api/schedules/" + enc(id));
+      show(
+        await api(
+          "/api/schedules/" +
+            enc(id) +
+            (action === "delete" ? "" : "/" + action),
+          { expectedVersion: task.version },
+          action === "delete" ? "DELETE" : "POST",
+        ),
+      );
+    });
+schedules
+  .command("resume <id>")
+  .description("恢复同一任务并计算下次时间，不补跑全部漏过的日期")
+  .action(async (id) => {
+    const { kind, name, instruction, contextIds, timing, version } = await api(
+      "/api/schedules/" + enc(id),
+    );
+    show(
+      await api(
+        "/api/schedules/" + enc(id),
+        {
+          kind,
+          name,
+          instruction,
+          contextIds,
+          timing,
+          enabled: true,
+          expectedVersion: version,
+        },
+        "PUT",
+      ),
+    );
+  });
 const agent = group("agent", "配置的 Agent 与实际模型/思考强度发现");
 agent
   .command("discover")

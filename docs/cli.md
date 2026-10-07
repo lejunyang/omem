@@ -121,6 +121,7 @@ omem jobs cancel JOB_ID
 omem lark login
 omem lark status
 omem messages discover --json
+omem messages chats '会话名称' --json
 omem messages watch CHAT_ID
 omem messages status
 omem messages enable
@@ -130,11 +131,14 @@ omem messages pause
 omem messages unwatch CHAT_ID
 omem messages exclude CHAT_ID
 omem messages configure messages.json
+omem messages auto-watch status --json
+omem messages auto-watch configure auto-watch.json --json
+omem messages auto-watch run --json
 omem bot setup
 omem bot status
 ```
 
-登录和采集需在服务所在机器完成；使用随包锁定的官方 lark-cli，不要求手动寻找 node_modules。discover 只发现会话，不自动订阅。watch 选择会话，enable 开启调度，pause 保留订阅和历史。exclude 明确排除的会话也不会被提及例外重新纳入。免打扰默认过滤；@自己/所有人由独立提及来源处理，实际限制仍见[个人消息](reader-first/personal-messages.md)。
+登录和采集需在服务所在机器完成；使用随包锁定的官方 lark-cli，不要求手动寻找 node_modules。discover 刷新最多300个最近活跃会话，不自动订阅；chats 按名称查询本地候选，同名群先消歧。watch 选择会话，enable 开启采集，pause 停止个人采集与自动发现并保留订阅和历史。unwatch 停止普通订阅，提及例外仍按原设置处理；exclude 明确排除的会话也不会被提及例外重新纳入。免打扰默认过滤；@自己/所有人由独立提及来源处理，实际限制仍见[个人消息](reader-first/personal-messages.md)。
 
 `messages.json` 示例：
 
@@ -143,6 +147,8 @@ omem bot status
 ```
 
 采集只读消息和资源，不改变未读状态，不发送、回复或删除消息。文档、图片与附件的读取/理解状态在 inbox 中区分，排队不代表已经理解。决策模型是可选分流，复杂理解仍交给 Agent。
+
+本人可直接要求主助手「每半小时关注我参与的需求群，忽略推广群」，无需逐个指定 ID 或拉机器人进群。自动关注由 `auto-watch configure` 保存本人政策，未修改字段保留；自动关注和采集开关需同时开启。默认每30分钟查看最近100个候选、自动关注最多20个群。先排除人工设置和免打扰，再抽最近24小时最多6条文字，缓存30分钟，按快速模型的六个维度判断。模型不可用或含糊就待判断，来源、理由和是否模型判断都可查询；自动订阅从当前时刻增量读取。focus/ignore 变化先暂停旧自动群并重评，人工订阅优先；暂停自动发现仅停止新选择。字段范围与完整配置见随包的[会话关注与定时简报](../skills/omem-cli/references/schedules.md)。
 
 机器人通知复用已有绑定、投递与重试流程；与个人登录是两套独立授权。首次接入按[机器人创建与绑定](../skills/omem-cli/references/lark-bot.md)操作。安装版 `omem bot setup --start` 准备个人配置、启用连接，并启动或重启服务。加密密钥自动保存在个人数据目录的 `secrets/master.key` 并复用；若设置了 `OMEM_SECRET_KEY` 则沿用环境密钥。已有凭据不能用新密钥替换，备份含本机文件密钥，需私密保管。
 
@@ -157,6 +163,27 @@ omem skills install /absolute/agent-skills
 ```
 
 install 会复制 `omem-cli` 及其 references 到指定目录，不安装全局 hooks；目标已存在时拒绝覆盖。升级 omem 会更新包内 skill，但之前复制给其他 Agent 的副本不会自动同步。先比较定制内容，再安装到新目录或合并需要的更新。
+
+## 定时任务与简报
+
+网页「定时任务」与 `schedules` 共用保存的设置和运行记录。本人也可通过普通 ask 或机器人私聊要求「工作日九点整理等待回复和今天要做的事」，主助手先查同用途任务，再用 work_action 保存或调整。默认「发现飞书会话」和「每日简报」模板均暂停，不开启私人采集。
+
+```bash
+omem schedules list --json
+omem schedules show TASK_ID --json
+omem schedules configure TASK_ID brief.json --json
+omem schedules add new-brief.json --json
+omem schedules pause TASK_ID --json
+omem schedules resume TASK_ID --json
+omem schedules run TASK_ID --json
+omem schedules delete TASK_ID --json
+```
+
+configure 的文件包含 kind、name、instruction、contextIds、enabled、timing 和 show 返回的实际 `expectedVersion`；add 用于没有对应任务的新用途，不需要版本。kind 为 `daily_brief` 或唯一的 `lark_discovery`。间隔格式为 `{"type":"interval","everyMinutes":30}`；简报还支持五字段 Cron，例如 `{"type":"cron","expression":"0 9 * * 1-5","timezone":"Asia/Shanghai"}`。自动发现仅支持间隔，其启停和频率同步到 autoWatch 政策。
+
+简报用主助手 research 模式读取实际事项、跟进需求、编码状态与已采集材料，不能修改事项或发起编码。同一天且状态未变保留旧结果，不重复通知；跨日可生成当天简报，未绑定机器人时保留站内结果。run 只安排一次执行，不改变周期或启用状态；暂停的简报可手动执行，自动发现仍须两个授权开关开启。queued 或通知入队不代表已生成或送达，show 返回实际结果、失败原因和通知状态。
+
+服务停止、关机或休眠期间不运行；启动最多补一次到期任务，不补跑全部遗漏时段。暂停或删除停止旧执行，删除的模板不因重启恢复。完整文件示例、授权和恢复步骤见[随包指引](../skills/omem-cli/references/schedules.md)。
 
 ## 外部工具与技能装配
 
