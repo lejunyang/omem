@@ -2,6 +2,7 @@
 import { ref, watch, nextTick } from "vue";
 import { OmMarkdown, OmBadge, OmEmpty, OmButton, OmDisclosure } from "@omem/ui";
 import KnowledgeQuestions from "./KnowledgeQuestions.vue";
+import ReprocessControls from "../ReprocessControls.vue";
 import { knowledgeApi, type Article, type KnowledgeFrame } from "./api";
 const props = defineProps<{
   prefix: string;
@@ -18,9 +19,10 @@ const article = ref<Article | null>(null),
   error = ref("");
 const root = ref<HTMLElement>();
 const mobileOutline = ref(false);
+const reload = ref(0);
 let generation = 0;
 watch(
-  () => [props.documentKey, props.revision],
+  () => [props.documentKey, props.revision, reload.value],
   async () => {
     const current = ++generation;
     error.value = "";
@@ -86,6 +88,14 @@ async function answered() {
     <template v-else>
       <div class="article-body">
         <h2>{{ article.title }}</h2>
+        <ReprocessControls
+          v-if="!revision"
+          target="article"
+          :target-id="documentKey"
+          :title="article.title"
+          :actions="['write', 'delete']"
+          @updated="reload++"
+        />
         <p class="knowledge-summary">{{ article.summary }}</p>
         <div v-if="article.reading" class="reading-goal">
           <strong>读完这一篇</strong>
