@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-07T10:21:40.142Z",
-  "implementationCommit": "f32667d1236f5b6b25c4930d8f72503e5b37ccd8",
-  "sourceDigest": "38c99d75020a01c00db2eef5a93273c50beac57897b1d625490b92d411c73854",
+  "recordedAt": "2026-10-07T09:11:50.971Z",
+  "implementationCommit": "d155b64e44349a849b921bc0dd3070567ae8db1e",
+  "sourceDigest": "59417e0ffce1088c8fc21c0e3e3a4ba8f3b106bfa8f1ce219eb9f85d3be54c4b",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T10-21-40-142Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-07T09-11-50-971Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T10-21-40-142Z/project.log",
-        "sha256": "5761fd252aacb5d9324e40c82012097a97fc599a1f47dc996f2d9ae58a50ca0f"
+        "log": ".repo-review/runtime/verification/2026-10-07T09-11-50-971Z/project.log",
+        "sha256": "f615b8192144befe06c0f407d3b32b6b585ac0f5bf8ae8390dde328523a86433"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T10-21-40-142Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-07T09-11-50-971Z/liveChineseRetrieval.log",
         "sha256": "c633cc8b3935a685907f142b4f178e7f9fd00ac994d0edc6ef224a195357b1e8"
       }
     },
@@ -52,8 +52,8 @@
       "state": "passed",
       "details": {
         "articles": 10,
-        "currentArticles": 1,
-        "citations": 291,
+        "currentArticles": 0,
+        "citations": 295,
         "errors": []
       }
     },
@@ -64,11 +64,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v7",
-        "units": 16954,
+        "units": 16623,
         "semantic": {
           "model": "structure-icu-v7:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 16954,
+          "indexed": 16623,
           "pending": 0,
           "error": null
         },
@@ -95,11 +95,11 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 832,
+    "materials": 818,
     "publishedPages": 10,
-    "currentPages": 1,
+    "currentPages": 0,
     "plannedPages": 0,
-    "citations": 291,
+    "citations": 295,
     "articleLinks": 0,
     "errors": [],
     "pages": [
@@ -183,25 +183,30 @@
         "key": "guide:knowledge-agent",
         "title": "把材料写成一篇能用的文章",
         "role": "article",
-        "current": true,
+        "current": false,
         "sections": {
-          "plan-route": {
+          "from-facts-to-page": {
             "state": "current"
           },
-          "edit-outline": {
-            "state": "current"
+          "plan-purpose-and-scope": {
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "four-objects": {
-            "state": "current"
+          "three-roles": {
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "write-one-page": {
-            "state": "current"
+          "reader-result": {
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "reader-results": {
-            "state": "current"
+          "change-and-review": {
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           },
-          "keep-current": {
-            "state": "current"
+          "new-chat-loop": {
+            "state": "needs-review",
+            "reason": "这一节引用的原文章节或函数已有变化，需重新核对"
           }
         }
       },
@@ -433,8 +438,8 @@
       }
     ],
     "restore": {
-      "restored": 13,
-      "stale": 14
+      "restored": 12,
+      "stale": 15
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -458,7 +463,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 1309,
+        "elapsedMs": 1428,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -522,7 +527,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 859,
+        "elapsedMs": 810,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -590,7 +595,7 @@
         "passed": false,
         "firstExpectedRank": 17,
         "uniquePathsAt5": 5,
-        "elapsedMs": 912,
+        "elapsedMs": 781,
         "top5": [
           {
             "path": "docs/reader-first/current-system.md",
@@ -655,7 +660,7 @@
         "passed": true,
         "firstExpectedRank": 5,
         "uniquePathsAt5": 3,
-        "elapsedMs": 347,
+        "elapsedMs": 206,
         "top5": [
           {
             "path": "scripts/live-development.ts",
@@ -716,7 +721,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 318,
+        "elapsedMs": 193,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -782,7 +787,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 5,
-        "elapsedMs": 831,
+        "elapsedMs": 895,
         "top5": [
           {
             "path": "design.md",
