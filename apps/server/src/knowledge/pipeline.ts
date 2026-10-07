@@ -14,10 +14,11 @@ import { DurableJobWorker } from "../jobs/worker.js";
 import { stableDigest } from "../storage/digest.js";
 import { type GenerationBudget } from "../agent-runtime/budget.js";
 import { KnowledgeRepository, materialFromRevision, bindKnowledgeQuotes, validateKnowledgeDocument, type KnowledgeArticle } from "./repository.js";
+import { citationReviewExcerpt, repairCitationRanges } from "./citation-repair.js";
 
 type Offer = { material: KnowledgeMaterial; ranges: { start: number; end: number }[] };
 type Target = { key: string; title: string; purpose?: string };
-type RunResult = { result: unknown; trace: RoleRunTrace; at: string };
+type RunResult = { result: unknown; trace: RoleRunTrace; at: string; jobId: string };
 type WritingResearch = Pick<KnowledgeResearch, "findings" | "gaps" | "composition"> & {
   trace?: RoleRunTrace; rounds?: unknown[]; materials?: unknown[];
 };
@@ -36,6 +37,13 @@ export class KnowledgePipeline {
     readonly options: { budget?: Partial<GenerationBudget>; nativeResearch?: boolean; retrievalConfig?: RetrievalConfig; concurrency?: number; retryTag?: string; investigationHints?: unknown; onPublish?: (a: KnowledgeArticle) => void; log?: (message: string) => void } = {}) {}
 
   private get nativeResearch() { return this.options.nativeResearch ?? this.profile.transport === "acp"; }
+
+  private assertOriginals(offers: Offer[]) {
+    const head = this.repository.store.db.prepare("SELECT head FROM sources WHERE id=?");
+    const changed = offers.find(({material}) => !this.repository.store.revision(material.revisionId) ||
+      (head.get(material.sourceId) as {head: string} | undefined)?.head !== material.revisionId);
+    if (changed) throw Error(`KNOWLEDGE_INPUT_CHANGED: 「${changed.material.title}」的原件已变化或移除，请按最新材料重新整理；已有文章保留。`);
+  }
 
   /** Investigate a reader's whole selected scope before suggesting pages.
    * This produces an editable candidate and never saves a formal page plan. */
@@ -146,14 +154,16 @@ export class KnowledgePipeline {
 
   private async runRole(role: string, offers: Offer[], articles: KnowledgeArticle[], task: Record<string, unknown>, validate?: (out: unknown) => unknown): Promise<RunResult> {
     if (this.stopping) throw Error("Knowledge pipeline stopped");
+    this.assertOriginals(offers);
     const bundle = this.registry.load(role);
-    const refs = [{ role, task, workflow: this.nativeResearch ? "native-research@1" : "bounded-context@1", retryTag: this.options.retryTag, materials: offers.map(o => ({ key: o.material.key, digest: o.material.digest, ranges: o.ranges })),
+    const refs = [{ role, task, workflow: this.nativeResearch ? "native-research@1" : "bounded-context@1", retryTag: this.options.retryTag, materials: offers.map(o => ({ key: o.material.key, revisionId: o.material.revisionId, digest: o.material.digest, identityDigest: stableDigest({title:o.material.title,path:o.material.path,namespace:o.material.namespace,conversationId:o.material.conversationId,actorId:o.material.actorId,actorVerifiedBy:o.material.actorVerifiedBy,eventAt:o.material.eventAt,quoted:o.material.quoted,forwarded:o.material.forwarded}), ranges: o.ranges })),
       articles: articles.map(a => ({ key: a.document.key, revision: a.revision })), model: this.profile.model, effort: this.profile.effort, budget: this.options.budget, bundleHash: bundle.bundleHash }];
     const { job } = this.repository.store.jobs.enqueue({ kind: `knowledge:${role}`, inputRefs: refs, roleVersion: bundle.bundleHash, policyVersion: "knowledge@1", maxAttempts: 3, cause: "knowledge-generation" });
     const result = () => {
+      this.assertOriginals(offers);
       const row = this.repository.store.db.prepare("SELECT output_json,trace_json,created_at FROM role_outputs WHERE job_id=? ORDER BY attempt DESC LIMIT 1").get(job.id) as { output_json: string; trace_json: string; created_at: string } | undefined;
       if (!row) throw Error("Completed knowledge job has no output");
-      const out = JSON.parse(row.output_json); const normalized = validate?.(out); return { result: normalized ?? out, trace: JSON.parse(row.trace_json) as RoleRunTrace, at: row.created_at };
+      const out = JSON.parse(row.output_json); const normalized = validate?.(out); return { result: normalized ?? out, trace: JSON.parse(row.trace_json) as RoleRunTrace, at: row.created_at, jobId: job.id };
     };
     if (job.state === "succeeded") return result();
     if (["failed", "cancelled", "awaiting_user"].includes(job.state)) throw Error(`${role} requires retry: ${job.lastError ?? job.state} (job ${job.id})`);
@@ -179,7 +189,8 @@ export class KnowledgePipeline {
         await worker.processOne();
         if (this.repository.store.jobs.get(job.id)?.state !== "succeeded") await new Promise(r => setTimeout(r, 300));
       }
-    } finally { this.running.delete(worker); }
+    } catch (error) { this.assertOriginals(offers); throw error; }
+    finally { this.running.delete(worker); }
   }
 
   private checkBatch(out: unknown, targets: Target[], offers: Offer[], articles: KnowledgeArticle[]) {
@@ -227,28 +238,57 @@ export class KnowledgePipeline {
     let remaining = targets;
     const published: KnowledgeArticle[] = [];
     const attempts = publication?.reading.workflow === "requirement-followup" ? 2 : 4;
+    type Verdict = ReturnType<typeof knowledgeReviewSchema.parse>["verdicts"][number];
+    let rangePass: { batch: ReturnType<typeof knowledgeBatchSchema.parse>; write: RunResult; previousReview: RunResult; verdicts: Verdict[]; changed: Record<string, string[]> } | undefined;
+    const reviewRounds: { jobId: string; runId: string; mode: "full" | "citation_ranges"; previousJobId?: string; rangeRepairs?: {documentKey:string;key:string;startLine:number;endLine:number}[]; drafts: {key:string;digest:string}[] }[] = [];
+    const reviewReadKeys = new Set<string>();
+    const checkReading = () => {
+      if (publication && stableDigest(this.repository.pages().find(p => p.key === publication.reading.key)?.plan) !== stableDigest(publication.reading))
+        throw Error("阅读目标或用户反馈已变化，保留旧稿，按新目标重新调查");
+    };
     for (let attempt = 0; attempt < attempts; attempt++) {
-      const write = await this.runRole(repair && role !== "implementation-planner" ? "knowledge-refresher" : role, offers, articles, { conservative: attempt === 3 ? "Retain only directly supported statements; turn remaining uncertain claims into scoped questions with next steps. Do not reintroduce rejected claims." : undefined, targetKeys: remaining.map(t => t.key), targets: remaining, catalogTopics: [...new Set(this.repository.list().map(a => JSON.stringify(a.document.topicPath ?? [])).filter(p => p !== "[]"))].map(p => JSON.parse(p)), reading: publication?.reading, maintenance, research: publication ? {findings:publication.research.findings,gaps:publication.research.gaps,composition} : undefined, revisionAttempt: attempt, ...(repair ? { revisionRequest: repair } : {}) }, out => this.checkBatch(out, remaining, offers, articles));
-      const batch = knowledgeBatchSchema.parse(write.result);
+      checkReading();
+      const scoped = rangePass;
+      rangePass = undefined;
+      if (scoped && this.repository.store.jobs.get(scoped.previousReview.jobId)?.state !== "succeeded")
+        throw Error("前次复核已失效，请重新整理；已有文章保留。");
+      const write = scoped?.write ?? await this.runRole(repair && role !== "implementation-planner" ? "knowledge-refresher" : role, offers, articles, { conservative: attempt === 3 ? "Retain only directly supported statements; turn remaining uncertain claims into scoped questions with next steps. Do not reintroduce rejected claims." : undefined, targetKeys: remaining.map(t => t.key), targets: remaining, catalogTopics: [...new Set(this.repository.list().map(a => JSON.stringify(a.document.topicPath ?? [])).filter(p => p !== "[]"))].map(p => JSON.parse(p)), reading: publication?.reading, maintenance, research: publication ? {findings:publication.research.findings,gaps:publication.research.gaps,composition} : undefined, revisionAttempt: attempt, ...(repair ? { revisionRequest: repair } : {}) }, out => this.checkBatch(out, remaining, offers, articles));
+      const batch = scoped?.batch ?? knowledgeBatchSchema.parse(write.result);
       // Explicit placement is user/page-plan data, not inferred from repository paths.
       if (publication?.reading.topicPath) for (const document of batch.documents) document.topicPath = publication.reading.topicPath;
-      const review = await this.runRole("knowledge-verifier", offers, articles, { targetKeys: remaining.map(t => t.key), drafts: batch.documents, targets: remaining, reading: publication?.reading, maintenance, composition,
-        ...(maintenance ? { instruction: "独立核查本次变化及受影响的解释，试用完整新稿回答阅读目标。检查是否沿用了过时前提，或删掉了仍必要的步骤与条件。旧文和作者结论都不是事实来源；自己补读当前原件。允许根据新目标调整结构，不要求逐字保留旧文。" } : {}),
+      checkReading();
+      const reviewScope = scoped ? { mode: "citation_ranges" as const, changedCitations: scoped.changed,
+        previousReview: {jobId:scoped.previousReview.jobId,runId:scoped.previousReview.trace.runId,at:scoped.previousReview.at},
+        previousVerdicts: scoped.verdicts, instruction: "前次独立复核已完成全文及读者目的检查，只留下列出的引用范围问题。宿主仅调整这些固定行范围并重新提取 quote，正文、结构与来源均未改变。task.drafts 是相应章节的摘录；独立补读原件，判断新范围是否支持不变论断，不重审无关章节。发现事实错误或决定性前提遗漏时返回普通 needs_revision，撤销局部资格。" }
+        : {mode:"full" as const};
+      const review = await this.runRole("knowledge-verifier", offers, articles, { targetKeys: remaining.map(t => t.key), drafts: batch.documents.map(d=>scoped?citationReviewExcerpt(d,scoped.changed[d.key]!):d), targets: remaining, reading: publication?.reading, composition, reviewScope,
+        ...(!scoped && maintenance ? { maintenance, instruction: "独立核查本次变化及受影响的解释，试用完整新稿回答阅读目标。检查是否沿用了过时前提，或删掉了仍必要的步骤与条件。旧文和作者结论都不是事实来源；自己补读当前原件。允许根据新目标调整结构，不要求逐字保留旧文。" } : {}),
       }, out => {
         const r = knowledgeReviewSchema.parse(out);
-        if (r.verdicts.length !== remaining.length || remaining.some(t => !r.verdicts.some(v => v.documentKey === t.key))) throw Error("Review every target exactly once");
+        if (r.verdicts.length !== remaining.length || new Set(r.verdicts.map(v=>v.documentKey)).size !== remaining.length || remaining.some(t => !r.verdicts.some(v => v.documentKey === t.key))) throw Error("Review every target exactly once");
+        for (const verdict of r.verdicts) if (verdict.rangeRepair) {
+          const document = batch.documents.find(d=>d.key===verdict.documentKey)!;
+          const corrected = repairCitationRanges(document,verdict.rangeRepair,new Map(offers.map(o=>[o.material.key,o.material])));
+          if (!corrected)
+            throw Error("rangeRepair 必须给出已有材料引用的不同且有效行范围；需要新增引用或修改正文时不要填写它。");
+          this.checkBatch({schema_version:1,documents:[corrected]},[remaining.find(t=>t.key===verdict.documentKey)!],offers,articles);
+        }
       });
-      const verdicts = knowledgeReviewSchema.parse(review.result).verdicts;
+      reviewRounds.push({jobId:review.jobId,runId:review.trace.runId,mode:reviewScope.mode,...(scoped?{previousJobId:scoped.previousReview.jobId,
+        rangeRepairs:scoped.verdicts.flatMap(v=>v.rangeRepair!.citations.map(c=>({documentKey:v.documentKey,...c})))}:{}),drafts:batch.documents.map(d=>({key:d.key,digest:stableDigest(d)}))});
+      for (const event of (review.trace.usage.activity ?? []) as {reads?:string[]}[]) for (const key of event.reads ?? []) reviewReadKeys.add(key);
+      const verdicts = knowledgeReviewSchema.parse(review.result).verdicts.map(v=>scoped?{...v,questions:[...scoped.verdicts.find(p=>p.documentKey===v.documentKey)!.questions,...v.questions].filter((q,i,all)=>all.findIndex(x=>x.question===q.question)===i).slice(0,20)}:v);
       const rejected = verdicts.filter(v => v.verdict !== "accepted");
       for (const document of batch.documents.filter(d => !rejected.some(v => v.documentKey === d.key))) {
         const extraQuestions = verdicts.find(v => v.documentKey === document.key)!.questions;
         document.questions = [...document.questions, ...extraQuestions].filter((q, i, all) => all.findIndex(x => x.question === q.question) === i).slice(0, 20);
         const citedKeys = new Set([...document.citations.filter(c=>c.target.kind==="material").map(c=>c.target.key), ...document.sections.flatMap(s=>(s.reviewSources ?? []).map(r=>r.key))]);
-        const readKeys = new Set<string>(this.nativeResearch ? [] : offers.map(o=>o.material.key));
-        if (this.nativeResearch) for (const t of [write.trace,review.trace,(publication?.research as {trace?:RoleRunTrace})?.trace].filter((t):t is RoleRunTrace=>!!t)) for (const event of (t.usage.activity ?? []) as {reads?:string[]}[]) for(const key of event.reads??[])readKeys.add(key);
+        const readKeys = new Set<string>(this.nativeResearch ? reviewReadKeys : offers.map(o=>o.material.key));
+        if (this.nativeResearch) for (const t of [write.trace,review.trace,scoped?.previousReview.trace,(publication?.research as {trace?:RoleRunTrace})?.trace].filter((t):t is RoleRunTrace=>!!t)) for (const event of (t.usage.activity ?? []) as {reads?:string[]}[]) for(const key of event.reads??[])readKeys.add(key);
         const dependencies: KnowledgeArtifact["dependencies"] = offers.filter(o=>citedKeys.has(o.material.key)).map(o => ({ kind: "material", key: o.material.key, digest: o.material.digest }));
         for (const a of articles.filter(a=>document.citations.some(c=>c.target.kind==="article"&&c.target.key===a.document.key))) dependencies.push({ kind: "article", key: a.document.key, digest: a.revision });
         if (this.stopping) throw Error("Knowledge publication cancelled");
+        this.assertOriginals(offers);
         if (publication && stableDigest(this.repository.pages().find(p => p.key === document.key)?.plan) !== stableDigest(publication.reading))
           throw Error("阅读目标或用户反馈已变化，保留旧稿，按新目标重新调查");
         const artifact: KnowledgeArtifact = { version: 1, document, dependencies, ...(publication ? { reading: publication.reading,
@@ -257,19 +297,47 @@ export class KnowledgePipeline {
           publication: {role: publication ? publication.reading.kind === "reference" ? "reference" : "article" : "note"},
           investigation: offers.filter(o=>readKeys.has(o.material.key)).map(o=>({key:o.material.key,digest:o.material.digest})),
           generation: { model: write.trace.effectiveModel!, effort: write.trace.effectiveEffort, at: write.at, trace: { ...write.trace, ...(publication ? { research: publication.research, writerVersion: publication.writerVersion } : {}), ...(maintenance ? { maintenance: maintenanceTrace(maintenance) } : {}) } as unknown as Record<string, unknown> },
-          review: { model: review.trace.effectiveModel!, at: review.at, trace: review.trace as unknown as Record<string, unknown>, verdict: "accepted" } };
+          review: { model: review.trace.effectiveModel!, at: review.at, trace: {...review.trace,scope:reviewScope.mode,rounds:reviewRounds.filter(r=>r.drafts.some(d=>d.key===document.key))}, verdict: "accepted" } };
         const article = this.repository.publish(artifact, publication?.reading);
         this.options.onPublish?.(article); this.options.log?.(`Published ${document.key}`); published.push(article);
       }
       if (!rejected.length) return published;
       remaining = remaining.filter(t => rejected.some(v => v.documentKey === t.key));
       repair = { previousDrafts: batch.documents.filter(d => remaining.some(t => t.key === d.key)), issues: rejected };
+      // Precise range-only corrections require neither another writer call nor
+      // another full-page review. Legacy/semantic feedback uses normal repair.
+      if (rejected.every(v=>v.rangeRepair)) {
+        const materials = new Map(offers.map(o=>[o.material.key,o.material]));
+        const corrected = batch.documents.filter(d=>remaining.some(t=>t.key===d.key)).map(d=>repairCitationRanges(d,rejected.find(v=>v.documentKey===d.key)!.rangeRepair!,materials)!);
+        const repaired = this.checkBatch({schema_version:1,documents:corrected},remaining,offers,articles);
+        rangePass = {batch:repaired,write,previousReview:review,verdicts:rejected,changed:Object.fromEntries(rejected.map(v=>[v.documentKey,v.rangeRepair!.citations.map(c=>c.key)]))};
+        this.options.log?.(`引用范围已调整，下一轮仅独立补查：${remaining.map(t=>t.title).join("、")}`);
+      }
     }
     throw Error(`Semantic review still requests changes: ${remaining.map(t => t.key).join(", ")}`);
   }
 
   private previousFeedback(targets: Target[], offers: Offer[], articles: KnowledgeArticle[] = [], reading?: WikiPageBrief, maintenance?: ArticleMaintenance, composition?: KnowledgeResearch["composition"]) {
     const drafts: KnowledgeDocument[] = [], issues: unknown[] = [];
+    type ReviewInput = { materials?: {key:string;revisionId?:string;digest:string}[]; task?: {drafts?:KnowledgeDocument[];reviewScope?:{mode:string;previousReview?:{jobId:string}}} };
+    // A scoped review stores an excerpt for the model, not a replacement page.
+    // Reconstruct its complete candidate from durable parent reviews before
+    // resuming normal writing. Never inherit review acceptance across a restart.
+    const completeDraft = (input: ReviewInput, key: string, seen = new Set<string>()): KnowledgeDocument | undefined => {
+      if (input.task?.reviewScope?.mode !== "citation_ranges") return input.task?.drafts?.find(d=>d.key===key);
+      const parentId = input.task.reviewScope.previousReview?.jobId;
+      if (!parentId || seen.has(parentId)) return undefined;
+      seen.add(parentId);
+      const parent = this.repository.store.db.prepare(`SELECT j.input_refs,o.output_json FROM jobs j JOIN role_outputs o ON o.job_id=j.id
+        WHERE j.id=? AND j.state='succeeded' AND o.output_schema='KnowledgeReview.v1' ORDER BY o.attempt DESC LIMIT 1`).get(parentId) as {input_refs:string;output_json:string} | undefined;
+      if (!parent) return undefined;
+      const previousInput = JSON.parse(parent.input_refs)[0] as ReviewInput;
+      if (!previousInput.materials?.every(m=>offers.some(o=>o.material.key===m.key && o.material.revisionId===m.revisionId && o.material.digest===m.digest))) return undefined;
+      const draft = completeDraft(previousInput,key,seen);
+      const parsed = knowledgeReviewSchema.safeParse(JSON.parse(parent.output_json));
+      const correction = parsed.success ? parsed.data.verdicts.find(v=>v.documentKey===key)?.rangeRepair : undefined;
+      return draft && correction ? repairCitationRanges(draft,correction,new Map(offers.map(o=>[o.material.key,o.material]))) ?? undefined : undefined;
+    };
     for (const target of targets) {
       const rows = this.repository.store.db.prepare(`SELECT o.output_json,j.input_refs FROM role_outputs o JOIN jobs j ON j.id=o.job_id
         WHERE o.output_schema='KnowledgeReview.v1' AND EXISTS(SELECT 1 FROM json_each(o.output_json,'$.verdicts') v WHERE json_extract(v.value,'$.documentKey')=? AND json_extract(v.value,'$.verdict')='needs_revision') ORDER BY o.created_at DESC LIMIT 1`).all(target.key) as { output_json: string; input_refs: string }[];
@@ -282,7 +350,7 @@ export class KnowledgePipeline {
         // A draft from an old multi-document batch may rely on a sibling that
         // is no longer supplied. Do not smuggle that context into a repair.
         if (!input.materials.every((m: {key:string;digest:string}) => offers.some(o => o.material.key === m.key && o.material.digest === m.digest))) continue;
-        const draft = input.task?.drafts?.find((d: KnowledgeDocument) => d.key === target.key);
+        const draft = completeDraft(input,target.key);
         const verdict = JSON.parse(row.output_json).verdicts.find((v: {documentKey:string}) => v.documentKey === target.key);
         if (draft && verdict) { drafts.push(draft); issues.push(verdict); }
       }

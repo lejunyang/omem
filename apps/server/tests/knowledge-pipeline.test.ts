@@ -8,7 +8,7 @@ import { KnowledgePipeline, analystFor } from "../src/knowledge/pipeline.js";
 import { RoleBundleRegistry } from "../src/agent-runtime/bundles.js";
 import { RoleRuntimeGateway } from "../src/agent-runtime/gateway.js";
 import { profileSchema } from "../../../packages/contracts/src/index.js";
-import type { KnowledgeResearch } from "../../../packages/contracts/src/knowledge.js";
+import type { KnowledgeBatch, KnowledgeResearch } from "../../../packages/contracts/src/knowledge.js";
 import type { KnowledgeOutlineDraft } from "../../../packages/contracts/src/knowledge-outline.js";
 
 const cleanups: (() => void)[] = [];
@@ -60,6 +60,124 @@ it("does not promote rejected knowledge or a result whose source changed during 
   const stale = setup(false, true);
   expect((await stale.pipeline.analyze(stale.repository.materials())).failures[0]!.error).toContain("KNOWLEDGE_INPUT_CHANGED");
   expect(stale.repository.list()).toEqual([]);
+  expect(stale.run.mock.calls.map(([input])=>input.roleId)).toEqual(["material-analyst"]);
+});
+
+it("applies exact citation corrections without rewriting and independently checks only the affected argument", async () => {
+  const f = setup();
+  f.capture("Introduction\nThe release requires a review.\nOther background.");
+  const fallback = f.run.getMockImplementation()!;
+  f.run.mockImplementation(async input => {
+    const out = await fallback({...input, validateOutput: undefined});
+    if (input.roleId === "knowledge-verifier") {
+      const scope = input.context.task!.reviewScope as {mode:string;previousReview?:{jobId:string}};
+      if (scope.mode === "citation_ranges") {
+        expect((input.context.task!.drafts as {sections:{key:string}[]}[])[0]!.sections.map(s=>s.key)).toEqual(["behavior"]);
+        expect(f.store.jobs.get(scope.previousReview!.jobId)?.state).toBe("succeeded");
+      }
+      out.result = {schema_version:1,verdicts:[{documentKey:"manual:example",verdict:scope.mode==="full"?"needs_revision":"accepted",
+        issues:scope.mode==="full"?["c1 must include the review requirement on line 2"]:[],
+        ...(scope.mode==="full"?{rangeRepair:{citations:[{key:"c1",startLine:2,endLine:2}]}}:{}),
+        questions:scope.mode==="full"?[{question:"Who reviews?",why:"The owner is unspecified.",nextStep:"Read the project ownership note.",blocking:false,citationKeys:["c1"]}]:[]} ]};
+    } else {
+      const document = (out.result as KnowledgeBatch).documents[0]!;
+      document.sections.push({key:"background",title:"Background",body:"Other context.[[c2]]"});
+      document.citations.push({...structuredClone(document.citations[0]),key:"c2",target:{kind:"material",key:"manual:example",startLine:3,endLine:3}});
+    }
+    input.validateOutput?.(out.result);
+    return out;
+  });
+  expect((await f.pipeline.analyze(f.repository.materials())).failures).toEqual([]);
+  expect(f.run.mock.calls.map(([input])=>input.roleId)).toEqual(["material-analyst","knowledge-verifier","knowledge-verifier"]);
+  const article = f.repository.get("manual:example")!;
+  expect(article.document.sections).toHaveLength(2);
+  expect(article.document.citations[0]!.quote).toBe("The release requires a review.");
+  expect(article.document.questions[0]!.question).toBe("Who reviews?");
+  expect(article.review.trace.scope).toBe("citation_ranges");
+  expect((article.review.trace.rounds as {mode:string}[]).map(r=>r.mode)).toEqual(["full","citation_ranges"]);
+});
+
+it("returns to writing and full review when citation followup finds a substantive error", async () => {
+  const f = setup();
+  f.capture("Introduction\nThe release requires a review.");
+  const fallback = f.run.getMockImplementation()!;
+  let reviews = 0;
+  f.run.mockImplementation(async input => {
+    const out = await fallback({...input, validateOutput:undefined});
+    if (input.roleId === "knowledge-verifier") {
+      reviews++;
+      expect(input.context.task!.reviewScope).toMatchObject({mode:reviews===2?"citation_ranges":"full"});
+      out.result={schema_version:1,verdicts:[{documentKey:"manual:example",verdict:reviews<3?"needs_revision":"accepted",issues:reviews<3?[reviews===1?"The required line is missing":"The body says recommended, but review is required"]:[],questions:[],
+        ...(reviews===1?{rangeRepair:{citations:[{key:"c1",startLine:2,endLine:2}]}}:{})}]};
+    } else if (input.roleId === "knowledge-refresher") {
+      const document = (out.result as KnowledgeBatch).documents[0]!;
+      document.sections[0].body="A review is required.[[c1]]";
+      document.citations[0].target={kind:"material",key:"manual:example",startLine:2,endLine:2};
+    }
+    input.validateOutput?.(out.result);
+    return out;
+  });
+  expect((await f.pipeline.analyze(f.repository.materials())).failures).toEqual([]);
+  expect(f.run.mock.calls.map(([input])=>input.roleId)).toEqual(["material-analyst","knowledge-verifier","knowledge-verifier","knowledge-refresher","knowledge-verifier"]);
+  expect(f.repository.get("manual:example")!.review.trace.scope).toBe("full");
+});
+
+it("does not reuse a prior role output for an identical body in a different original revision", async () => {
+  const f = setup();
+  await f.pipeline.analyze(f.repository.materials());
+  const before=f.run.mock.calls.length;
+  f.store.capture({source:"manual",externalId:"example",title:"User note",parts:[{type:"text",text:"The release uses fixed evidence."}],context:{},observedAt:"2026-10-08T00:00:00.000Z"});
+  f.store.db.exec("DELETE FROM knowledge_heads");
+  expect((await f.pipeline.analyze(f.repository.materials())).failures).toEqual([]);
+  expect(f.run.mock.calls.length-before).toBe(2);
+});
+
+it("reconstructs the complete candidate after a stopped citation followup instead of resuming its excerpt", async () => {
+  const f = setup();
+  f.capture("Introduction\nThe release requires a review.\nOther background.");
+  const fallback = f.run.getMockImplementation()!;
+  let interrupted = false;
+  f.run.mockImplementation(async input => {
+    const out = await fallback({...input, validateOutput:undefined});
+    if (input.roleId === "knowledge-verifier") {
+      const scoped = (input.context.task!.reviewScope as {mode:string}).mode === "citation_ranges";
+      out.result={schema_version:1,verdicts:[{documentKey:"manual:example",verdict:"needs_revision",issues:[scoped?"Clarify the requirement":"Include line 2"],questions:[],
+        ...(!scoped?{rangeRepair:{citations:[{key:"c1",startLine:2,endLine:2}]}}:{})}]};
+      if (scoped) { interrupted = true; await f.pipeline.stop(); }
+    } else {
+      const document = (out.result as KnowledgeBatch).documents[0]!;
+      document.sections.push({key:"background",title:"Background",body:"Other context.[[c2]]"});
+      document.citations.push({...structuredClone(document.citations[0]),key:"c2",target:{kind:"material",key:"manual:example",startLine:3,endLine:3}});
+    }
+    input.validateOutput?.(out.result);
+    return out;
+  });
+  expect((await f.pipeline.analyze(f.repository.materials())).failures).toHaveLength(1);
+  expect(interrupted).toBe(true);
+  f.run.mockImplementation(async input => {
+    if (input.roleId === "knowledge-refresher") {
+      const drafts = (input.context.task!.revisionRequest as {previousDrafts:KnowledgeBatch["documents"]}).previousDrafts;
+      expect(drafts[0]!.sections.map(s=>s.key)).toEqual(["behavior","background"]);
+      expect(drafts[0]!.citations[0]!.target.startLine).toBe(2);
+      expect(drafts[0]!.citations[0]!.quote).toBe("The release requires a review.");
+    }
+    return fallback(input);
+  });
+  const resumed = new KnowledgePipeline(f.repository, f.pipeline.gateway, f.pipeline.profile, {concurrency:1,nativeResearch:false});
+  expect((await resumed.analyze(f.repository.materials())).failures).toEqual([]);
+  expect(f.repository.list()).toHaveLength(1);
+});
+
+it("refuses publication if an event keeps its old raw body but gains a new revision during final review", async () => {
+  const f = setup();
+  const fallback=f.run.getMockImplementation()!;
+  f.run.mockImplementation(async input => {
+    const out=await fallback(input);
+    if (input.roleId === "knowledge-verifier") f.store.capture({source:"manual",externalId:"example",title:"User note",parts:[{type:"text",text:"The release uses fixed evidence."}],context:{},observedAt:"2026-10-08T00:00:00.000Z"});
+    return out;
+  });
+  expect((await f.pipeline.analyze(f.repository.materials())).failures[0]!.error).toContain("KNOWLEDGE_INPUT_CHANGED");
+  expect(f.repository.list()).toEqual([]);
 });
 
 it("resumes a semantic rejection with its exact prior draft and reviewer feedback", async () => {

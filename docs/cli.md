@@ -86,7 +86,7 @@ omem ask '解释实现过程' --research
 }
 ```
 
-`omem sources revision <revision-id>` 读取固定版本；`omem sources history <source-id>` 回看来源历史。来源、版本 ID 用于连接，不用文件名猜测。
+`omem sources revision <revision-id>` 读取仍可用的固定原件；`omem sources history <source-id>` 查询来源历史身份。已回收的旧原件会提示原因，不自动改读新版。来源、版本 ID 用于连接，不用文件名猜测。
 
 代码和文档现在只保存同一来源的最新版原件。旧引用保留定位和摘要，并提示原件已替换；聊天和反馈保留事件原文。PDF/DOCX 先保存原文件再后台解析，失败后也能下载和重试。`omem imports list/show` 查询导入状态，`omem materials list/show` 查询当前原件。
 
@@ -129,6 +129,10 @@ omem jobs cancel JOB_ID
 ```
 
 成功响应表示写作已排队；用 `knowledge list` 查看 pages 的 maintenance 状态，失败不冒充已发布。记忆纠正继续使用 Web。CLI 不绕开 MemoryService 直接改事实。
+
+独立复核若确认正文和阅读目的，只需修正已有材料引用的行范围，会直接提供准确范围，由服务修改行号和原文摘录，再启动新独立会话补查相关段落。其余获准原件仍可补读；需要修改正文或发现实质问题时回到写作与全文复核。这个分支不新增 CLI 参数，不要求用户手工修引用。
+
+处理中原件换版或移除会停止旧输入，并提示 `KNOWLEDGE_INPUT_CHANGED`。先查看当前材料，再重新发起写作或重试重新处理请求；普通整理保留已发表旧文，`--replace` 已删除旧文的请求则不会恢复它。重启可从持久父复核记录恢复匹配的完整草稿，随后按普通返修和全文复核继续，不沿用上轮接受结论。详细行为见[文章持续维护](reader-first/publication-lifecycle.md)与[重新处理](../skills/omem-cli/references/reprocessing.md)。
 
 需要先规划目录再生成多篇文章，用 `omem knowledge outline`。Web 的知识库也提供同一草案流程；保存草案不启动写作，提议可由已配置 Agent 调查材料，确认后才应用正式页面计划。完整 JSON 与命令步骤见[随包目录草案指引](../skills/omem-cli/references/knowledge-outlines.md)，实现与范围说明见[知识目录草案](reader-first/knowledge-outlines.md)。
 

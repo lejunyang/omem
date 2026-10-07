@@ -54,7 +54,14 @@ export const knowledgeReviewSchema = z.object({
     issues: z.array(z.string().min(1).max(1600)).max(30),
     suggestions: z.array(z.string().min(1).max(1600)).max(20).optional().describe("Nonblocking wording, formatting or optional detail suggestions. Do not reject or require whole-page regeneration for these."),
     questions: z.array(knowledgeQuestionSchema).max(20),
-  }).strict()).min(1).max(16),
+    rangeRepair: z.object({
+      citations: z.array(z.object({
+        key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,39}$/),
+        startLine: z.number().int().positive(), endLine: z.number().int().positive(),
+      }).strict().refine(range => range.endLine >= range.startLine, { message: "Citation range end must be at or after its start", path: ["endLine"] })).min(1).max(160)
+        .refine(ranges => new Set(ranges.map(range => range.key)).size === ranges.length, "Citation repair keys must be unique"),
+    }).strict().optional().describe("Only for needs_revision after completing full review: all other facts, premises and reader goals passed, and every blocking issue is solely an existing material citation's line range. Provide exact replacement ranges. Omit when ranges are unknown or prose, citation relations, new citations or reviewSources need changes. During citation_ranges review, preserve the host-supplied full-review baseline; revoke range repair if a substantive issue is discovered."),
+  }).strict().refine(verdict => !verdict.rangeRepair || verdict.verdict === "needs_revision", { message: "rangeRepair is only valid for needs_revision", path: ["rangeRepair"] })).min(1).max(16),
 }).strict();
 
 export const knowledgePlanSchema = z.object({
