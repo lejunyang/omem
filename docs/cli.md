@@ -17,6 +17,8 @@ omem open
 
 基础保存、全文搜索和 Web 不需要 Bun、osdk、Python 或本地模型。AI 需要另行安装并登录 Agent CLI，默认配置为 Traex ACP / gpt-5.6-sol。初始化不自动运行模型、不订阅消息、不发送通知、不下载模型。`omem agent probe` 读取 ACP 的可选模型与思考强度；实际调用权限需使用 `agent check --test` 或网页的调用检查。
 
+npm 安装会取得生产依赖，包含官方 lark-cli、PM2 和本地向量推理库；本人登录仍需 `omem lark login`。Docling 和模型权重按需准备，具体安装、下载体积、存储和升级见[依赖与模型](../skills/omem-cli/references/dependencies.md)。
+
 发布包只包含运行代码、网页、角色资源、配置模板和使用技能；不包含本仓库的 `.repo-review`、个人配置、数据库、消息、原件、密钥与模型权重。许可证为 Apache-2.0。是否已实际发布、当前验收结果见[实施进度](reader-first/progress.md)；打包成功不代表 npm 已发布。
 
 ## 帮助、目录和连接
@@ -30,6 +32,7 @@ omem config path
 omem config show
 omem config validate
 omem doctor
+omem doctor --local --verify-models --json
 omem status --json
 ```
 
@@ -46,7 +49,7 @@ omem status --json
 
 源码开发继续使用 `osdk run dev`，默认数据仍在仓库 `.omem`；开发配置仍为 `omem.local.json`，不迁移、不覆盖已有库。安装版从任意目录运行都使用固定的个人目录。想连接已有开发服务可显式指定 `omem --url http://127.0.0.1:65091 ...`；该端口以开发终端显示为准。
 
-退出码：0 成功；1 执行失败或服务不健康；2 参数错误/未知命令；130 用户中断。普通数据命令支持 `--json`，stdout 为结果，stderr 为错误或进度。`serve`、`setup` 和交互登录直接显示各运行工具的输出，不作为 JSON 数据命令。`doctor` 不启动服务、不调用模型、不下载依赖。
+退出码：0 成功；1 执行失败或服务不健康；2 参数错误/未知命令；130 用户中断。普通数据命令支持 `--json`，stdout 为结果，stderr 为错误或进度。`setup --json` 成功后返回准备摘要，各安装工具的进度写 stderr；它不改变功能开关。`serve` 和交互登录直接显示运行输出，不作为 JSON 数据命令。`doctor` 不启动服务、不调用模型、不下载依赖；默认检查安装和文件元数据，`--local` 跳过 HTTP 服务检查，`--verify-models` 才完整读取已下载权重校验摘要，功能启用、安装与校验状态分别显示。
 
 ## 保存、搜索和提问
 
@@ -215,20 +218,25 @@ omem capabilities disable CAPABILITY_ID
 
 ## 可选本地能力
 
-先安装 osdk，再在服务机器显式执行：
+先按 [one-sdk 官方安装说明](https://github.com/lejunyang/one-sdk#install) 安装 osdk，用 `osdk --version` 确认当前账户能找到命令。相应 setup 会准备 Python / uv，无需自行安装。以下命令在服务机器执行，`--url` 不支持远程准备：
 
 ```bash
 omem setup documents
 omem setup document-models
 omem setup embedding
 omem setup decisions
+# 可选；默认只下载 2B
+omem setup decisions --model 4b
+omem setup decisions --model 9b
+omem setup decisions --model both
+omem setup decisions --model all
 ```
 
 - documents 安装锁定的 Docling Python 环境；document-models 下载锁定的 PDF 布局和表格模型。
 - embedding 下载中文向量模型，之后设置 `retrieval.enabled:true` 并重启。
-- decisions 下载 StartLux 2B/4B 并准备 MLX 环境，当前需要 Apple Silicon Mac。之后设置 `decisions.mode:"auto"` 并重启；模型选择仍遵循本机负载策略。
+- decisions 默认下载 StartLux 2B 并准备 MLX 环境，`--model 2b|4b|9b|both|all` 可选择；both 为 2B+4B，all 为三种。当前需要 Apple Silicon Mac。之后设置 `decisions.mode:"auto"`、`"2b"`、`"4b"` 或 `"9b"` 并重启；auto 只在已安装 2B/4B 中按内存和负载选择，不动态下载或自动加载 9B。9B 尚未实际推理验收。
 
-所有可选环境与安装元数据位于个人库 `optional/`，运行路径与包内资源分开。普通服务启动不会隐式下载。其他平台的基础 CLI/服务应可运行，但本轮实际安装验收平台以 progress.md 为准。
+可选运行环境与模型声明在个人库 `optional/`，模型字节由 osdk 的用户级数据与缓存目录保存，`--data-dir` 不自动迁移共享权重。普通服务启动不会隐式下载。重新 setup 更新未定制的包内资源，保留用户修改并说明冲突；不会自动开启功能。Windows Python 路径已适配，跨平台完整安装验收仍以 progress.md 为准；PDF OCR 尚未开启。下载来源、体积、诊断与升级操作见[依赖和模型](../skills/omem-cli/references/dependencies.md)。
 
 ## Agent 超时
 

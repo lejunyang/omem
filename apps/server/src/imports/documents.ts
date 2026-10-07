@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import type { CaptureInput } from "../../../../packages/contracts/src/index.js";
-import { assetPath, optionalRuntime } from "../paths.js";
+import { assetPath, optionalRuntime, pythonInVenv } from "../paths.js";
 const exec = promisify(execFile);
 export function saveImportAssetSync(dataDir: string, bytes: Buffer) {
   const id = createHash("sha256").update(bytes).digest("hex");
@@ -26,7 +26,7 @@ export async function documentInput(bytes: Buffer, name: string, dataDir: string
   if (![".pdf", ".docx"].includes(extension)) throw Error("支持 PDF、DOCX 文件");
   if (!bytes.length || bytes.length > 20_000_000) throw Error("文件不能超过 20 MB");
   const runtime = optionalRuntime("docling");
-  const python = join(runtime, "venv/bin/python");
+  const python = pythonInVenv(runtime);
   if (!existsSync(python)) throw Error("文档解析器未准备，请先运行 omem setup documents（开发环境：osdk run documents:prepare）");
   const workspace = join(dataDir, "imports");
   await mkdir(workspace, { recursive: true, mode: 0o700 });

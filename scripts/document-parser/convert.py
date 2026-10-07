@@ -16,7 +16,7 @@ options.enable_remote_services = False
 if len(sys.argv) > 2 and sys.argv[2]:
     options.artifacts_path = pathlib.Path(sys.argv[2])
 elif source.suffix.lower() == ".pdf":
-    raise ValueError("PDF 解析模型未准备；请运行 osdk run documents:models。DOCX 无需模型。")
+    raise ValueError("PDF 解析模型未准备；请运行 omem setup document-models。DOCX 无需这些模型。")
 converter = DocumentConverter(allowed_formats=[InputFormat.PDF, InputFormat.DOCX], format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)})
 result = converter.convert(source, max_file_size=20_000_000, max_num_pages=200)
 if result.status != ConversionStatus.SUCCESS:

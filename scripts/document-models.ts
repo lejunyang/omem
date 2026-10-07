@@ -11,6 +11,6 @@ for (const [alias, folder] of [["docling-layout", "docling-project--docling-layo
   const target = join(root, folder!);
   try { if (await readlink(target) === model.snapshot_path) continue; await unlink(target); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  await symlink(model.snapshot_path, target, "dir");
+  await symlink(model.snapshot_path, target, process.platform === "win32" ? "junction" : "dir");
 }
 console.log("PDF 解析模型已准备；导入时仅使用已安装模型。");

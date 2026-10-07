@@ -38,13 +38,17 @@
 
 ## 负载如何选择
 
-`decisions.mode` 支持 `off`、`auto`、`2b`、`4b`。示例配置启用 `auto`；旧个人配置未写此字段则关闭。没有安装运行环境或权重时回到原流程，运行不会下载。
+`decisions.mode` 支持 `off`、`auto`、`2b`、`4b`、`9b`。未配置时采用机会性 `auto`，无环境或权重则回到常规 Agent；运行不会下载。自动模式只选择 2B/4B，9B 必须显式选择，目前暂按可用内存 28 GiB 才准入，这个预算尚未通过真实 9B 推理校准。
 
 自动模式用可用内存加当前模型可释放内存估算余量：余量至少 14 GiB 且一分钟 load average / CPU 数 < .85 时选 4B；至少 8 GiB 时选 2B，否则暂不运行。一次只驻留一个模型，正常切换间隔至少五分钟，内存压力可以触发提前降级；空闲三分钟释放。也可显式固定 2B/4B，但仍执行内存准入。
 
 这是可调整的本机资源策略，CPU load 只是压力信号，不是 GPU 忙闲的精确测量，也不保证 macOS 不发生交换。没有做边运行所有应用边强制压力的实验；真实 HTTP 曾按当时负载选到 2B。
 
 ## 怎样准备和观察
+
+安装版在服务机器准备 osdk 后运行 `omem setup decisions`，默认只下载 2B；`--model 4b|9b|both|all` 按需选择，both 为 2B+4B，all 为三种。当前仅支持 Apple Silicon Mac。配置 decisions.mode 并重启才启用，auto 只选择已安装的 2B/4B；9B 需显式配置 `"9b"`，尚未实际推理验收。安装、完整摘要校验与实际推理分开检查，详见[依赖与模型](../../skills/omem-cli/references/dependencies.md)。
+
+源码开发与实验使用以下任务。
 
 ```bash
 osdk run decision:native-prepare
@@ -60,7 +64,7 @@ osdk run decision:native-evaluate --model decision-startlux4b
 
 模型、上游 Python 文件哈希和依赖分别固定在 `osdk.lock`、`scripts/startlux/upstream.json`、`scripts/startlux/uv.lock`。原生源码固定 `0e7a2e81b9c92756e26d8edd843a44d50e362669`。API `/api/decisions/status` 可读状态，`/api/decisions/search?q=...` 返回实际候选与多维结果；首次可能只启动预热，后续请求复用常驻模型。`/api/decisions/intake` 接收 revisionId，返回用途建议。
 
-模型范围和接口见 [StartLux 官方仓库](https://github.com/StartLuxLabs/StartLux-Decision)、[2B 模型卡](https://huggingface.co/startlux-models/StartLux-Decision-2B)和[4B 模型卡](https://huggingface.co/startlux-models/StartLux-Decision-4B)。权重 CC BY-NC 4.0、推理代码 Apache-2.0；本轮只验证 Apple Silicon 文本后端，图片先由导入流程提取内容。9B+ 本机排除。
+模型范围和接口见 [StartLux 官方仓库](https://github.com/StartLuxLabs/StartLux-Decision)、[2B 模型卡](https://huggingface.co/startlux-models/StartLux-Decision-2B)、[4B 模型卡](https://huggingface.co/startlux-models/StartLux-Decision-4B)和[9B 模型卡](https://huggingface.co/startlux-models/StartLux-Decision-9B)。权重 CC BY-NC 4.0、推理代码 Apache-2.0；实际验收过 Apple Silicon 的 0.8B/2B/4B 文本后端，9B 安装选择已接入但未实际推理验收，图片先由导入流程提取内容。
 
 ## 已有其他路径与后续
 
