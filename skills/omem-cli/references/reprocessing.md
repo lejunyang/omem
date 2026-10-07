@@ -2,6 +2,8 @@
 
 先确认服务地址及个人库，再选择要更新的对象。用 `omem materials list --json` 取得来源 ID，`omem imports list --json` 取得文件导入 ID；文章 key 来自 `knowledge list`，消息 ID 来自 `messages inbox`。这些 ID 不可互换。
 
+机器人事件的 ID 可从 `omem jobs list --json` 找到 `kind` 为 `lark_inbound` 的任务，再用 `omem jobs show JOB_ID --json` 读取 `inputRefs[0].inboxId`，这个值才是 `bot-event` 的 ID。目前没有单独列出机器人事件原件的命令。
+
 ## 保存了什么
 
 代码、普通文件和独立文档按同一来源标识只保留最新原件，包括对应正文、结构及资源。更新时旧版本保留身份和摘要，旧引用会说明原件已被替换，不能展示新内容冒充旧版本。已经生成的文章默认仍保留，直到更新或显式删除。
