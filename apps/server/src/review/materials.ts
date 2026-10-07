@@ -13,7 +13,7 @@ import { ensureMaterialAliases } from "../knowledge/material-identity.js";
 
 export type RepositoryCoverage = { path: string; state: "captured" | "excluded" | "failed"; reason: string; materialKey?: string; digest?: string };
 
-export function captureRepositoryMaterials(store: Store, repoRoot: string): RepositoryCoverage[] {
+export function captureRepositoryMaterials(store: Store, repoRoot: string, captureOptions: { learning?: boolean; notify?: boolean } = {}): RepositoryCoverage[] {
   let paths: string[];
   try { paths = [...new Set(execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { cwd: repoRoot, encoding: "utf8", maxBuffer: 10_000_000, stdio: ["ignore", "pipe", "pipe"] }).split("\0").filter(Boolean))].sort(); }
   catch {
@@ -50,7 +50,7 @@ export function captureRepositoryMaterials(store: Store, repoRoot: string): Repo
           parts = Array.from({ length: Math.ceil(text.length / 180000) }, (_, i) => ({ type: "text" as const, text: text.slice(i * 180000, (i + 1) * 180000) }));
         }
         store.capture({ source: "file", externalId, title: path, parts,
-          context: { filePath: path, contentHash: hash, captureFormat: "verbatim-v1", category: path.startsWith("docs/research/") ? "research" : path.startsWith("docs/") ? "decisions" : "architecture" } as CaptureInput["context"] });
+          context: { filePath: path, contentHash: hash, captureFormat: "verbatim-v1", category: path.startsWith("docs/research/") ? "research" : path.startsWith("docs/") ? "decisions" : "architecture" } as CaptureInput["context"] }, captureOptions);
       }
       result.push({ path, state: "captured", materialKey: externalId, digest: hash, reason: "固定材料已保存" });
     } catch (error) { result.push({ path, state: "failed", reason: error instanceof Error ? error.message : String(error) }); }

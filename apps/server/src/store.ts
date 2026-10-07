@@ -272,7 +272,7 @@ export class Store {
           )
           .run(now(), String(source.id));
         recordSourceRefresh(this.db, "personal", [{ sourceId: String(source.id), previousRevisionId: String(head.id), revisionId }]);
-        this.jobs.enqueueInCurrentTransaction({
+        if (selection.learning !== false) this.jobs.enqueueInCurrentTransaction({
           kind: "refresh_dependents",
           inputRefs: [
             {

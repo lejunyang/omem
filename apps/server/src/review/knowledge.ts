@@ -9,13 +9,13 @@ import { restoreMaterialDescriptions } from "../knowledge/material-descriptions.
 import { publicationRole } from "../knowledge/lifecycle.js";
 import { wikiPageBriefSchema } from "../../../../packages/contracts/src/knowledge.js";
 
-export function restoreReviewKnowledge(store: Store, root: string) {
+export function restoreReviewKnowledge(store: Store, root: string, captureOptions: { learning?: boolean; notify?: boolean } = {}) {
   const notes = join(root, ".repo-review/knowledge/user-notes.json");
   if (existsSync(notes)) for (const input of JSON.parse(readFileSync(notes, "utf8")) as CaptureInput[]) {
     if (input.source !== "manual" || !input.externalId?.startsWith("knowledge-answer:")) throw Error("Invalid review user note");
-    store.capture(captureSchema.parse(input));
+    store.capture(captureSchema.parse(input), captureOptions);
   }
-  const coverage = captureRepositoryMaterials(store, root);
+  const coverage = captureRepositoryMaterials(store, root, captureOptions);
   const repository = createReviewKnowledgeRepository(store);
   restoreMaterialDescriptions(repository, join(root,".repo-review/knowledge/material-descriptions"));
   const restored = restoreKnowledgeArticles(repository, join(root, ".repo-review/knowledge/articles"));

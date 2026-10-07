@@ -61,14 +61,14 @@ export function importDevelopmentKnowledge(store: Store, root: string) {
           if (!material || !digests.has(material.digest)) continue;
           const revision = prior.revision(material.revisionId)!;
           const parts = revision.parts.map(p => p.type === "image" ? { type: "image", mimeType: p.mimeType, label: p.label, data: prior.asset(p.assetId)?.toString("base64") } : p);
-          store.capture({ source: "file", externalId: key, title: revision.title, parts, context: revision.context, provenance: revision.provenance } as CaptureInput);
+          store.capture({ source: "file", externalId: key, title: revision.title, parts, context: revision.context, provenance: revision.provenance } as CaptureInput, { learning: false, notify: false });
           digests.delete(material.digest); if (!digests.size) break;
         }
       }
     } finally { prior.close(); }
   }
   // Capture live files last so importing history never moves the live head back.
-  const restored = restoreReviewKnowledge(store, root);
+  const restored = restoreReviewKnowledge(store, root, { learning: false, notify: false });
   const historyFailures: { title: string; reason: string }[] = [];
   // History can still be read when an old source is no longer available.
   // Its unresolved citations are disabled by the API; refresh marks it stale.
