@@ -3,8 +3,24 @@ import { prepareOptionalWorkspace } from "./optional-workspace.js";
 import { requireOsdk, runSetupCommand } from "./osdk.js";
 
 export type DecisionModelChoice = "2b" | "4b" | "9b" | "both" | "all";
-export type SetupOptionalOptions = { model?: DecisionModelChoice };
-export function decisionModelAliases(choice: DecisionModelChoice = "2b") {
+export type DecisionModelSize = "2b" | "4b" | "9b";
+export type SetupOptionalOptions = {
+  model?: DecisionModelChoice;
+  models?: readonly DecisionModelSize[];
+  /** Interactive setup saves its own plan and supplies the next step. */
+  manualGuidance?: boolean;
+};
+export function decisionModelAliases(
+  choice: DecisionModelChoice | readonly DecisionModelSize[] = "2b",
+) {
+  if (typeof choice !== "string") {
+    if (
+      !choice.length ||
+      choice.some((size) => !["2b", "4b", "9b"].includes(size))
+    )
+      throw Error("请至少选择一个有效决策模型：2b、4b、9b。");
+    return [...new Set(choice)].map((size) => `decision-startlux${size}`);
+  }
   if (!["2b", "4b", "9b", "both", "all"].includes(choice))
     throw Error(
       "决策模型可选：2b、4b、9b、both（2b 和 4b）、all（三个模型）。",
@@ -28,10 +44,17 @@ export async function setupOptional(
     )
   )
     throw Error("可选能力：documents、document-models、decisions、embedding");
-  if (options.model !== undefined && component !== "decisions")
+  if (
+    (options.model !== undefined || options.models !== undefined) &&
+    component !== "decisions"
+  )
     throw Error("--model 仅用于 omem setup decisions。");
+  if (options.model !== undefined && options.models !== undefined)
+    throw Error("决策模型不能同时使用单项与多项选择。");
   const aliases =
-    component === "decisions" ? decisionModelAliases(options.model) : [];
+    component === "decisions"
+      ? decisionModelAliases(options.models ?? options.model)
+      : [];
   if (component === "decisions") {
     if (process.platform !== "darwin" || process.arch !== "arm64")
       throw Error(
@@ -55,9 +78,10 @@ export async function setupOptional(
       await run(process.execPath, [
         assetPath("dist/scripts/document-prepare.js"),
       ]);
-      console.error(
-        "Docling 已准备；PDF 布局与表格模型可用 omem setup document-models 单独准备。",
-      );
+      if (options.manualGuidance !== false)
+        console.error(
+          "Docling 已准备；PDF 布局与表格模型可用 omem setup document-models 单独准备。",
+        );
     } else if (component === "document-models") {
       console.error("正在下载并校验 PDF 布局与表格模型；已经验证的缓存会复用…");
       await run(process.execPath, [
@@ -71,30 +95,29 @@ export async function setupOptional(
       for (const alias of aliases) {
         console.error(`正在下载并校验 ${alias}；已经验证的缓存会复用…`);
         await run("osdk", ["model", "sync", alias]);
-        await run("osdk", ["model", "verify", alias, "--json"]);
+        await run("osdk", ["model", "verify", alias]);
       }
       const mode =
-        options.model === "9b"
-          ? "9b"
-          : options.model === "4b"
-            ? "4b"
-            : options.model === "both" || options.model === "all"
-              ? "auto"
-              : "2b";
-      console.error(
-        `已准备所选 StartLux；配置 decisions.mode 为 "${mode}" 后重启服务。未选择的权重不会下载。`,
-      );
+        aliases.length === 1
+          ? aliases[0]!.replace("decision-startlux", "")
+          : "auto";
+      if (options.manualGuidance !== false)
+        console.error(
+          `已准备所选 StartLux；配置 decisions.mode 为 "${mode}" 后重启服务。未选择的权重不会下载。`,
+        );
     } else {
       console.error("正在下载并校验中文向量模型 memory-zh…");
       await run("osdk", ["model", "sync", "memory-zh"]);
-      await run("osdk", ["model", "verify", "memory-zh", "--json"]);
-      console.error(
-        "已准备中文向量模型；配置 retrieval.enabled 为 true 后重启服务。",
-      );
+      await run("osdk", ["model", "verify", "memory-zh"]);
+      if (options.manualGuidance !== false)
+        console.error(
+          "已准备中文向量模型；配置 retrieval.enabled 为 true 后重启服务。",
+        );
     }
-    console.error(
-      "准备完成。可运行 omem doctor --local 检查依赖；能力开关不会自动修改。",
-    );
+    if (options.manualGuidance !== false)
+      console.error(
+        "准备完成。可运行 omem doctor --local 检查依赖；能力开关不会自动修改。",
+      );
     return {
       status: "prepared",
       component,

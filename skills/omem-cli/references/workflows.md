@@ -5,13 +5,14 @@
 需要 Node.js 24+。发布包安装后：
 
 ```bash
-omem init
-omem service start
+omem setup
 omem status --json
 omem agent probe --json
 ```
 
-init 保留已有配置。基础导入、全文搜索和网页不要求模型；AI 使用已登录的 Traex ACP，配置中默认 gpt-5.6-sol。服务默认为 127.0.0.1:4317，数据 ~/.omem。`omem config path` 获取实际位置。PM2 后台不等于开机自启动，也不能阻止电脑休眠。
+可选解析与模型需要服务机器已安装 osdk，具体前提见 [安装、依赖与模型](dependencies.md)。本人在交互终端多选能力，进入子选项后选择只准备或准备后启用；成功后保存所选配置，缺失配置会创建，无需另行 init。不勾选任何能力可选「只用基础功能」，不要求 osdk，已有配置保持原样。最后可选择启动或重启服务，默认稍后启动；上述状态查询需要服务已在线。无参数 setup 不用于脚本。
+
+AI 使用已安装并登录的 Agent CLI，默认配置为 Traex ACP / gpt-5.6-sol；setup 不代为登录或绑定飞书。服务默认为 127.0.0.1:4317，数据 ~/.omem。`omem config path` 获取实际位置。PM2 后台不等于开机自启动，也不能阻止电脑休眠。
 
 `omem skills path/show` 查看当前安装包的技能，`omem skills install /absolute/agent-skills` 复制完整 omem-cli 目录和 references。升级包不会同步此前复制出去的副本，已有目标会拒绝覆盖；先比较用户定制，再安装到新目录或合并更新。不要自动覆盖用户的其他技能或安装全局 hooks。
 
@@ -73,10 +74,12 @@ inbox 返回消息、资源与处理状态；资源缺失时先补读或说明�
 - 无法连接：检查 --url、端口和 `service status`，区分目标 API 和本机 PM2。
 - Agent 不可用：`agent probe` 读取真实可用模型/思考强度；不要猜参数。检查配置文件后 `config validate`。
 - Sol 超时：idleTimeoutMs 为连续无活动时限，默认 Sol 480000 ms；旧 timeoutMs 兼容同义，maxDurationMs 才是可选总时限。stderr 日志不算模型活动。
-- 可选依赖准备先读[安装、依赖与模型](dependencies.md)。需要服务机器已安装 osdk，`setup` 不通过 --url 准备远端资源。
-- PDF/DOCX：`omem setup documents` 安装 Docling；`setup document-models` 显式下载 PDF 模型；当前 OCR 关闭。
-- 中文向量：`setup embedding` 后启用 retrieval.enabled。
-- 本地决策：Apple Silicon Mac 上 `setup decisions` 默认只下载 2B；`--model 4b|9b|both|all` 按需准备，both 是 2B+4B，all 是三种。准备后设置 decisions.mode 为 auto / 2b / 4b / 9b；auto 只在已安装的 2B/4B 中按负载选择，9B 尚未实际推理验收。缺少模型时不伪造判断结果。
+- 可选依赖准备先读[安装、依赖与模型](dependencies.md)。本人推荐 `omem setup` 一次选择；解析或模型需要服务机器已安装 osdk，只用基础功能无需。setup 不通过 --url 准备远端资源，支持 --data-dir / --config。
+- PDF/DOCX：向导选择 documents，再选择只解析 DOCX 或一起准备 PDF 模型；单选 document-models 会自动加入解析环境。当前 OCR 关闭。脚本用 `omem setup documents --json` 和 `omem setup document-models --json`。
+- 中文向量：向导选择 embedding，并选择准备后启用 BGE；保存 retrieval.enabled:true 与 retrieval.osdkModel:memory-zh，保留重排等其他设置。选仅准备或脚本执行 `setup embedding` 不改开关。
+- 本地决策：Apple Silicon Mac 上在向导多选 2B / 4B / 9B，再选运行模式或仅准备。脚本 `setup decisions` 默认 2B，`--model 4b|9b|both|all` 按需准备，both 是 2B+4B，all 是三种；仍不改开关。auto 只在已准备的 2B/4B 中按负载选择，9B 尚未实际推理验收。缺少模型时不伪造判断结果。
 - 安装诊断：`doctor --local --json` 跳过 HTTP、区分功能开关与实际资源；`doctor --local --verify-models --json` 才核对已下载权重的完整摘要。未启用能力不要求下载，检查不调用模型。
 
-退出码 0/1/2/130 分别是成功、执行失败、参数错误、用户中断。`setup --json` 成功后将准备摘要写到 stdout，进度写到 stderr；它不改变功能开关。`serve` 和 `lark login/status` 使用工具自身输出，不把它们当统一 JSON 接口。
+向导在执行前可返回调整或退出；所选资源全部成功才保存配置。失败不保存新开关，已准备资源保留；非法配置或安装期间的配置变更拒绝覆盖。选择仅准备保留既有设置，首次成功向导仍创建默认配置。服务启动是最后单独的可选动作；启动失败不撤回已经保存的配置。
+
+退出码 0/1/2/130 分别是成功、执行失败、参数错误、用户中断。`setup --json` 仍要求交互终端，选择和进度写到 stderr，结束后把计划、准备结果及配置变更写到 stdout。无终端须指定组件，例如 `omem setup embedding --json`；显式形式输出原准备摘要，仍不改变配置。`serve` 和 `lark login/status` 使用工具自身输出，不把它们当统一 JSON 接口。

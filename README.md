@@ -10,14 +10,15 @@
 
 ```bash
 npm install -g omem
-omem init
-omem service start
+omem setup
 omem --help
 ```
 
 安装版从任意目录运行都使用 `~/.omem`，CLI 和网页共享个人库。`omem import` 保存材料，`omem search` 查找，`omem ask` 自主调查，`omem messages` 管理只读消息订阅，`omem status` 检查服务。完整命令、帮助、可选依赖、超时和发布步骤见[CLI 使用指南](docs/cli.md)；随包提供的 [omem-cli skill](skills/omem-cli/SKILL.md) 可供其他 Agent 使用。
 
-npm 自动安装基础运行依赖，包括官方 lark-cli；普通保存、全文搜索和网页只需要 Node。AI 另需安装并登录 Agent CLI。PDF/DOCX、中文向量检索和本地决策按需准备：先按 [osdk 官方说明](https://github.com/lejunyang/one-sdk#install) 安装，再在服务机器执行 `omem setup documents`、`setup document-models`、`setup embedding` 或 `setup decisions`。决策默认只下载 2B，`--model 4b|9b|both|all` 可显式选择；auto 仅选择 2B/4B，9B 需明确启用且尚未推理验收。当前 StartLux 仅支持 Apple Silicon Mac。模型不会在启动时自动下载，安装位置、体积、启用与升级步骤见[依赖和模型](skills/omem-cli/references/dependencies.md)。
+npm 自动安装基础运行依赖，包括官方 lark-cli；普通保存、全文搜索和网页只需要 Node。`omem setup` 在终端列出文档解析、PDF 模型、中文向量检索与本地决策，可多选，再选择模型、启用方式并确认汇总。PDF 模型会补上解析环境；成功后保存所选设置并可启动服务，不用记多条安装命令或手改开关。只用基础功能也可在向导中跳过可选能力，或继续使用 `omem init`、`omem service start`。
+
+解析与模型安装需要先按 [osdk 官方说明](https://github.com/lejunyang/one-sdk#install) 准备 osdk；AI 另需安装并登录 Agent CLI。显式 `omem setup <组件>` 保留给脚本和 Agent，仍只准备资源。决策默认预选 2B，auto 仅选择 2B/4B，9B 需明确选择且尚未推理验收。当前 StartLux 仅支持 Apple Silicon Mac。模型不会在启动时自动下载，安装位置、体积、启用与升级步骤见[依赖和模型](skills/omem-cli/references/dependencies.md)。
 
 普通编码交办直接派发目标与材料，项目规则和检查方式由编码 Agent 在副本读取。相同代码的真实成功检查在编码、宿主和独立评审间复用；已交办且持续维护开启的未应用任务，在需求变更生效后保留副本调整实现。用法与边界见[需求跟进与编码](docs/reader-first/requirement-followup.md)。
 

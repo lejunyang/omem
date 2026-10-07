@@ -36,7 +36,7 @@ const program = new Command()
   .showSuggestionAfterError()
   .addHelpText(
     "after",
-    `\n快速开始：\n  omem init\n  omem service start\n  omem import file ./notes.md\n  omem search "发布流程"\n  omem ask "这个项目如何发布？"\n\n逐层帮助：omem <命令> --help；如 omem messages watch --help。\n退出码：0 成功，1 执行失败/状态异常，2 参数或未知命令错误，130 用户中断。\n基础导入、全文搜索和网页不依赖 Bun/osdk；AI 需已登录 Agent CLI。\n飞书采集默认暂停，仅只读；机器人通知使用独立的显式绑定。`,
+    `\n快速开始：\n  omem setup                  逐步选择能力、模型和启用设置\n  omem import file ./notes.md\n  omem search "发布流程"\n  omem ask "这个项目如何发布？"\n\n只用基础功能：omem setup 不勾选任何能力，继续初始化并选择启动服务。\n逐层帮助：omem <命令> --help；如 omem messages watch --help。\n退出码：0 成功，1 执行失败/状态异常，2 参数或未知命令错误，130 用户中断。\n基础导入、全文搜索和网页不依赖 Bun/osdk；AI 需已登录 Agent CLI。\n飞书采集默认暂停，仅只读；机器人通知使用独立的显式绑定。`,
   );
 program.hook("preAction", () => {
   const opts = program.opts();
@@ -1550,9 +1550,9 @@ skills
     show({ path: target }, `已复制：${target}`);
   });
 program
-  .command("setup <component>")
+  .command("setup [component]")
   .description(
-    "显式准备可选能力：documents、document-models、decisions、embedding（需 osdk）",
+    "交互选择可选能力、模型与启用设置；指定组件时仅准备资源（需 osdk）",
   )
   .addOption(
     new Option(
@@ -1562,15 +1562,29 @@ program
   )
   .addHelpText(
     "after",
-    "\n在服务所在机器运行，只准备运行环境和模型，不自动开启功能。\ndocuments 安装解析器；document-models 下载 PDF 模型；embedding 下载中文向量模型。\ndecisions 默认只下载 2B，可用 --model 4b|9b|both|all 选择；9B 约 18 GiB，仅显式启用。\n如 omem setup decisions --model 9b；配置 decisions.mode 为 9b 后重启。\n安装后用 omem doctor --local 检查；--verify-models 可完整校验模型。",
+    "\n推荐直接运行 omem setup：空格多选、方向键移动、回车继续；按需要进入子选项。\n可选 documents（解析环境）、document-models（PDF 布局/表格）、embedding（中文向量）、decisions（快速决策）。\nPDF 模型会补上解析环境；可选只准备或准备后启用，汇总后可返回调整。\n不勾选可选能力可只初始化基础配置，无需 osdk。\n成功后保存所选配置，缺失配置会初始化；最后可启动或重启本机服务。\n决策默认预选 2B，9B 约 18 GiB，只能明确选择；auto 只用 2B/4B。\n脚本/Agent 保留显式形式：omem setup decisions --model 9b --json。\n指定组件只准备资源，不改开关；both=2B+4B，all=2B+4B+9B。非交互环境须指定组件。\n在服务机器运行，拒绝 --url 远端安装；可用 --data-dir / --config 指定目标。\n安装后用 omem doctor --local 检查；--verify-models 可完整校验模型。",
   )
   .action(async (name, options) => {
     if (process.env.OMEM_URL)
       throw Error(
         "setup 只准备本机依赖，不能通过 --url 或 OMEM_URL 为远端安装。请在服务所在机器运行，并使用该服务的 --data-dir。",
       );
-    const { setupOptional } = await import("./cli/setup.js");
-    const result = await setupOptional(name, { model: options.model });
+    let result;
+    if (!name) {
+      if (options.model)
+        throw Error(
+          "--model 用于显式 omem setup decisions；交互向导会直接列出模型供选择。",
+        );
+      if (!process.stdin.isTTY || !process.stderr.isTTY)
+        throw Error(
+          "omem setup 的选择向导需要交互终端。脚本或 Agent 请指定组件，例如 omem setup embedding --json；选项见 omem setup --help。",
+        );
+      const { setupInteractive } = await import("./cli/setup-interactive.js");
+      result = await setupInteractive();
+    } else {
+      const { setupOptional } = await import("./cli/setup.js");
+      result = await setupOptional(name, { model: options.model });
+    }
     if (json()) show(result);
   });
 // Existing local integrations keep their command spellings; new users see grouped help.
@@ -1595,7 +1609,10 @@ try {
   else await program.parseAsync(process.argv);
 } catch (error) {
   const e = error as Error & { code?: string; exitCode?: number };
-  if (e.code?.startsWith("commander."))
+  if (e.name === "ExitPromptError" || e.name === "AbortPromptError") {
+    console.error("设置已中断；已完成资源保留，已保存的设置不会撤销。");
+    process.exitCode = 130;
+  } else if (e.code?.startsWith("commander."))
     process.exitCode = e.exitCode === 0 ? 0 : 2;
   else {
     console.error(

@@ -4,7 +4,7 @@
 
 ## 怎样使用
 
-安装版先按[依赖与模型](../../skills/omem-cli/references/dependencies.md)准备 osdk，在服务机器执行 `omem setup documents`；文字 PDF 再执行 `omem setup document-models`。Docling 环境在个人库 optional/，权重由 osdk 管理；运行不隐式下载。Windows Python 路径已适配，但本轮未实际验收 Windows/Linux 安装；OCR 仍关闭。
+安装版先按[依赖与模型](../../skills/omem-cli/references/dependencies.md)准备 osdk，再在服务机器运行 `omem setup`，选择 documents，并在子选项中选择是否一起准备 PDF 模型；直接选择 document-models 也会补上解析环境。无需手动串联两条命令。Docling 环境在个人库 optional/，权重由 osdk 管理；运行不隐式下载。Windows Python 路径已适配，但尚未实际验收 Windows/Linux 全新安装；OCR 仍关闭。
 
 源码开发使用以下任务。
 
