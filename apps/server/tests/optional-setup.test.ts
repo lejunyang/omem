@@ -47,6 +47,6 @@ it("verifies the model after synchronization and uses the prepared personal work
   await setupOptional("embedding");
   expect(mock.run.mock.calls).toEqual([
     ["osdk", ["model", "sync", "memory-zh"], "/personal/optional"],
-    ["osdk", ["model", "verify", "memory-zh", "--json"], "/personal/optional"],
+    ["osdk", ["model", "verify", "memory-zh"], "/personal/optional"],
   ]);
 });

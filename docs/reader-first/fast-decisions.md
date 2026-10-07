@@ -46,7 +46,7 @@
 
 ## 怎样准备和观察
 
-安装版在服务机器准备 osdk 后运行 `omem setup decisions`，默认只下载 2B；`--model 4b|9b|both|all` 按需选择，both 为 2B+4B，all 为三种。当前仅支持 Apple Silicon Mac。配置 decisions.mode 并重启才启用，auto 只选择已安装的 2B/4B；9B 需显式配置 `"9b"`，尚未实际推理验收。安装、完整摘要校验与实际推理分开检查，详见[依赖与模型](../../skills/omem-cli/references/dependencies.md)。
+安装版在服务机器准备 osdk 后运行 `omem setup`，勾选 decisions，再选择 2B、4B 或 9B（可多选）以及准备后的运行方式。默认只预选 2B；全部准备成功后保存本人选择的模式，最后可重启服务。选择“仅准备”保留现有设置。当前仅支持 Apple Silicon Mac，其他平台的向导会说明不能选用的原因。auto 只选择已安装的 2B/4B，9B 需明确选择且尚未实际推理验收。脚本和 Agent 仍可用 `omem setup decisions --model 9b`，模型选项为 2b、4b、9b、both、all；显式命令只准备资源。安装、完整摘要校验与实际推理分开检查，详见[依赖与模型](../../skills/omem-cli/references/dependencies.md)。
 
 源码开发与实验使用以下任务。
 

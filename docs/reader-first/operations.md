@@ -1,6 +1,6 @@
 # 运行与维护
 
-安装版使用 `omem init`、`omem service start`、`omem status`，数据默认 `~/.omem`。npm 自动安装基础运行依赖，AI 另需登录 Agent CLI；Docling 与本地模型需要按需安装 osdk 后运行 `omem setup`，入口、存放位置和升级见[依赖与模型](../../skills/omem-cli/references/dependencies.md)。下文 osdk 任务用于源码开发。
+安装版从 `omem setup` 开始：多选需要的能力，按需选模型和启用方式，确认后准备资源、保存设置并选择是否启动服务；也可跳过可选能力，只初始化基础配置。数据默认 `~/.omem`，原有 `init`、`service start` 和 `status` 保留。npm 自动安装基础运行依赖，AI 另需登录 Agent CLI；Docling 与本地模型需要服务机器已安装 osdk。入口、存放位置和升级见[依赖与模型](../../skills/omem-cli/references/dependencies.md)。下文 osdk 任务用于源码开发。
 
 Agent 的 `idleTimeoutMs` 现在表示连续无活动等待；真实 ACP 输出、工具进展和初始化响应会续期。Sol 默认 480000 ms，没有默认总时长限制。旧 `timeoutMs` 兼容为无活动时限，显式 `maxDurationMs` 才设置总上限。助手外层和独立补查同样续期，用户取消仍生效。
 

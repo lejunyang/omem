@@ -8,14 +8,15 @@
 
 ```bash
 npm install -g omem
-omem init
-omem service start
+omem setup
 omem open
 ```
 
-`open` 显示网页地址；默认 http://127.0.0.1:4317。`service start` 使用包内 PM2 管理进程；关闭终端后仍运行，进程异常退出会重启。**未安装系统开机自启动，电脑休眠期间也无法拉取消息。** 已有 systemd、容器或其他管理器时用 `omem serve` 前台运行，不再套一层 PM2。
+`setup` 在交互终端显示可选能力：方向键移动，空格多选，回车进入子选项。文档解析可选择 DOCX 环境或连同 PDF 模型；中文向量和决策模型可选安装后启用，也可仅准备资源。最终汇总支持返回调整或退出，确认后才安装；全部准备成功后保存所选设置并初始化缺失配置，最后可选择启动或重启服务。跳过可选能力仍可只初始化基础配置。已有配置的其他设置保留，安装期间配置被别人修改则拒绝覆盖。
 
-基础保存、全文搜索和 Web 不需要 Bun、osdk、Python 或本地模型。AI 需要另行安装并登录 Agent CLI，默认配置为 Traex ACP / gpt-5.6-sol。初始化不自动运行模型、不订阅消息、不发送通知、不下载模型。`omem agent probe` 读取 ACP 的可选模型与思考强度；实际调用权限需使用 `agent check --test` 或网页的调用检查。
+`open` 显示网页地址；默认 http://127.0.0.1:4317。向导中的启动或重启，以及独立的 `service start`，都使用包内 PM2 管理进程；关闭终端后仍运行，进程异常退出会重启。**未安装系统开机自启动，电脑休眠期间也无法拉取消息。** 已有 systemd、容器或其他管理器时按原方式读取新配置，不再套一层 PM2。
+
+基础保存、全文搜索和 Web 不需要 Bun、osdk、Python 或本地模型；原有 `init`、`service start` 仍可使用。向导选择解析或本地模型前，按[依赖与模型](../skills/omem-cli/references/dependencies.md)准备服务机器上的 osdk。AI 需要另行安装并登录 Agent CLI，默认配置为 Traex ACP / gpt-5.6-sol。setup 只下载本人选中的资源；消息采集和机器人绑定不会随初始化开启。`omem agent probe` 读取 ACP 的可选模型与思考强度；实际调用权限需使用 `agent check --test` 或网页的调用检查。
 
 npm 安装会取得生产依赖，包含官方 lark-cli、PM2 和本地向量推理库；本人登录仍需 `omem lark login`。Docling 和模型权重按需准备，具体安装、下载体积、存储和升级见[依赖与模型](../skills/omem-cli/references/dependencies.md)。
 
@@ -49,7 +50,7 @@ omem status --json
 
 源码开发继续使用 `osdk run dev`，默认数据仍在仓库 `.omem`；开发配置仍为 `omem.local.json`，不迁移、不覆盖已有库。安装版从任意目录运行都使用固定的个人目录。想连接已有开发服务可显式指定 `omem --url http://127.0.0.1:65091 ...`；该端口以开发终端显示为准。
 
-退出码：0 成功；1 执行失败或服务不健康；2 参数错误/未知命令；130 用户中断。普通数据命令支持 `--json`，stdout 为结果，stderr 为错误或进度。`setup --json` 成功后返回准备摘要，各安装工具的进度写 stderr；它不改变功能开关。`serve` 和交互登录直接显示运行输出，不作为 JSON 数据命令。`doctor` 不启动服务、不调用模型、不下载依赖；默认检查安装和文件元数据，`--local` 跳过 HTTP 服务检查，`--verify-models` 才完整读取已下载权重校验摘要，功能启用、安装与校验状态分别显示。
+退出码：0 成功；1 执行失败或服务不健康；2 参数错误/未知命令；130 用户中断。普通数据命令支持 `--json`，stdout 为结果，stderr 为错误或进度。交互 `setup --json` 在终端完成选择后返回设置摘要；选择和安装进度写 stderr。脚本或 Agent 没有交互终端时须指定组件，例如 `omem setup embedding --json`；显式组件形式只准备资源，不改变功能开关。`serve` 和交互登录直接显示运行输出，不作为 JSON 数据命令。`doctor` 不启动服务、不调用模型、不下载依赖；默认检查安装和文件元数据，`--local` 跳过 HTTP 服务检查，`--verify-models` 才完整读取已下载权重校验摘要，功能启用、安装与校验状态分别显示。
 
 ## 保存、搜索和提问
 

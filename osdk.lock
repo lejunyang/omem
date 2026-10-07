@@ -628,14 +628,14 @@ installer = "pnpm"
 installer_version = "11.28.5"
 runtime = "node@24.18.1"
 manifest = "package.json"
-manifest_sha256 = "1f101d8e5c72c9dc2b255a1a1016ae82f9ad837ce1323979e89e27c75115212e"
+manifest_sha256 = "6599bd9cf233412103ed4a2a00eaf56f49deae9cbf9f647cef5fc29450d3ad51"
 run = "pnpm install --frozen-lockfile"
 allow_build_from_source = true
 
 [deps.pnpm.native_lock]
 kind = "pnpm-lock"
 path = "pnpm-lock.yaml"
-sha256 = "5498d05a23565101d12eeb046b052e4fca8ab4cce79d5db04d8b0897856dfc91"
+sha256 = "115345c35cf1e4406963c8049ff96b3e88e421a4da192db7deb48e7d6418656c"
 
 [skills.lieflat-less-ai-tone]
 source = "github:larashero3-dotcom/lieflat-less-ai-tone"

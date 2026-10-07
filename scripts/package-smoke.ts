@@ -211,6 +211,17 @@ try {
     assert.match(setupHelp, new RegExp(`\\b${size}\\b`));
   assert.match(String(await cli(["doctor", "--help"])), /--verify-models/);
   assert.match(String(await cli(["doctor", "--help"])), /--local/);
+  assert.match(setupHelp, /setup .*\[component\]/);
+  const withoutTerminal = (await cli(["setup"], false)) as {
+    code: number;
+    stderr: string;
+  };
+  assert.equal(withoutTerminal.code, 1);
+  assert.match(withoutTerminal.stderr, /交互终端/);
+  assert(
+    !existsSync(data),
+    "Non-interactive setup must fail before creating user data",
+  );
   const emptyPath = join(temp, "no-optional-tools");
   await mkdir(emptyPath);
   const missingOsdk = (await cli(["setup", "embedding"], false, {
@@ -300,7 +311,7 @@ try {
     [
       "--input-type=module",
       "-e",
-      `const {RoleBundleRegistry}=await import(${JSON.stringify(importPath)}); const r=new RoleBundleRegistry(); r.load('daily-assistant'); r.load('knowledge-researcher'); r.load('knowledge-writer'); r.load('knowledge-verifier'); r.load('requirement-tracker'); r.load('implementation-planner'); const {decisionModelAliases}=await import(${JSON.stringify(join(prefix, "node_modules/omem/dist/apps/server/src/cli/setup.js"))}); const {default:assert}=await import('node:assert/strict'); assert.deepEqual(decisionModelAliases(),['decision-startlux2b']); assert.deepEqual(decisionModelAliases('9b'),['decision-startlux9b']); assert.deepEqual(decisionModelAliases('both'),['decision-startlux2b','decision-startlux4b']); assert.deepEqual(decisionModelAliases('all'),['decision-startlux2b','decision-startlux4b','decision-startlux9b']);`,
+      `const {RoleBundleRegistry}=await import(${JSON.stringify(importPath)}); const r=new RoleBundleRegistry(); r.load('daily-assistant'); r.load('knowledge-researcher'); r.load('knowledge-writer'); r.load('knowledge-verifier'); r.load('requirement-tracker'); r.load('implementation-planner'); const {decisionModelAliases}=await import(${JSON.stringify(join(prefix, "node_modules/omem/dist/apps/server/src/cli/setup.js"))}); const {default:assert}=await import('node:assert/strict'); assert.deepEqual(decisionModelAliases(),['decision-startlux2b']); assert.deepEqual(decisionModelAliases('9b'),['decision-startlux9b']); assert.deepEqual(decisionModelAliases('both'),['decision-startlux2b','decision-startlux4b']); assert.deepEqual(decisionModelAliases('all'),['decision-startlux2b','decision-startlux4b','decision-startlux9b']); assert.deepEqual(decisionModelAliases(['2b','9b']),['decision-startlux2b','decision-startlux9b']); await import(${JSON.stringify(join(prefix, "node_modules/omem/dist/apps/server/src/cli/setup-wizard.js"))});`,
     ],
     { cwd, env },
   );
