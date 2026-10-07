@@ -184,7 +184,7 @@ export function reprocessingOperations(deps: {
             });
         return {
           jobIds: [result.job.id],
-          summary: "正在使用保存的原文件重新解析",
+          summary: "输入来自保存的原文件",
           cleared,
         };
       }
