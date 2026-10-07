@@ -73,8 +73,10 @@ inbox 返回消息、资源与处理状态；资源缺失时先补读或说明�
 - 无法连接：检查 --url、端口和 `service status`，区分目标 API 和本机 PM2。
 - Agent 不可用：`agent probe` 读取真实可用模型/思考强度；不要猜参数。检查配置文件后 `config validate`。
 - Sol 超时：idleTimeoutMs 为连续无活动时限，默认 Sol 480000 ms；旧 timeoutMs 兼容同义，maxDurationMs 才是可选总时限。stderr 日志不算模型活动。
-- PDF/DOCX：`omem setup documents` 安装 Docling；`setup document-models` 显式下载 PDF 模型，需 osdk。
+- 可选依赖准备先读[安装、依赖与模型](dependencies.md)。需要服务机器已安装 osdk，`setup` 不通过 --url 准备远端资源。
+- PDF/DOCX：`omem setup documents` 安装 Docling；`setup document-models` 显式下载 PDF 模型；当前 OCR 关闭。
 - 中文向量：`setup embedding` 后启用 retrieval.enabled。
-- 本地决策：Apple Silicon Mac 上 `setup decisions` 后设置 decisions.mode 为 auto，2B/4B 随负载选择。缺少本地模型时不伪造判断结果。
+- 本地决策：Apple Silicon Mac 上 `setup decisions` 默认只下载 2B；`--model 4b|9b|both|all` 按需准备，both 是 2B+4B，all 是三种。准备后设置 decisions.mode 为 auto / 2b / 4b / 9b；auto 只在已安装的 2B/4B 中按负载选择，9B 尚未实际推理验收。缺少模型时不伪造判断结果。
+- 安装诊断：`doctor --local --json` 跳过 HTTP、区分功能开关与实际资源；`doctor --local --verify-models --json` 才核对已下载权重的完整摘要。未启用能力不要求下载，检查不调用模型。
 
 退出码 0/1/2/130 分别是成功、执行失败、参数错误、用户中断。`serve`、`setup`、`lark login/status` 使用工具自身输出，不把它们当统一 JSON 接口。

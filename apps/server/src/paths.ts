@@ -39,3 +39,13 @@ export const modelWorkspace = () =>
   developmentCheckout ? packageRoot : join(defaultDataDir(), "optional");
 export const optionalRuntime = (name: string) =>
   join(modelWorkspace(), ".osdk/runtime", name);
+
+export const pythonInVenv = (
+  runtime: string,
+  platform: NodeJS.Platform = process.platform,
+) =>
+  join(
+    runtime,
+    "venv",
+    ...(platform === "win32" ? ["Scripts", "python.exe"] : ["bin", "python"]),
+  );

@@ -5,10 +5,10 @@ import { resolve, join } from "node:path";
 import { createInterface } from "node:readline";
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { assetPath, modelWorkspace, optionalRuntime } from "../paths.js";
+import { assetPath, modelWorkspace, optionalRuntime, pythonInVenv } from "../paths.js";
 import type { ChoiceQuestion } from "./questions.js";
 const exec = promisify(execFile);
-export const decisionConfigSchema = z.object({ mode: z.enum(["off", "auto", "2b", "4b"]).default("auto") }).strict();
+export const decisionConfigSchema = z.object({ mode: z.enum(["off", "auto", "2b", "4b", "9b"]).default("auto") }).strict();
 export type DecisionConfig = z.input<typeof decisionConfigSchema>;
 const answerSchema = z.object({ choice: z.string(), confidence: z.number().min(0).max(1), probabilities: z.record(z.string(), z.number().min(0).max(1)) });
 export const resultSchema = z.object({ answers: z.record(z.string(), answerSchema), elapsedMs: z.number(), model: z.object({ alias: z.string(), size: z.string(), revision: z.string(), switched: z.boolean(), availableGiB: z.number(), loadPerCpu: z.number() }), peakModelBytes: z.number() });
@@ -71,19 +71,22 @@ export class DecisionService {
   private async start() {
     if (this.child) return;
     const runtime = optionalRuntime("decision");
-    const python = join(runtime, "venv/bin/python");
-    if (!existsSync(python)) throw Error("快速决策未准备：osdk run decision:native-prepare");
+    const python = pythonInVenv(runtime);
+    if (!existsSync(python)) throw Error("快速决策环境未准备，请运行 omem setup decisions --model 2b（需要 Apple Silicon Mac）");
     this.state.status = "loading";
     const models: Record<string, unknown> = {};
-    for (const size of ["2b", "4b"]) {
+    // Automatic selection only uses the smaller models. An installed 9B is
+    // discovered only when the user explicitly selects it.
+    const mode = this.config.mode ?? "auto";
+    for (const size of mode === "auto" ? ["2b", "4b"] : [mode]) {
       try {
         const alias = `decision-startlux${size}`;
-        const { stdout } = await exec("osdk", ["model", "show", alias, "--json"], { timeout: 10_000, cwd: modelWorkspace() });
+        const { stdout } = await exec("osdk", ["model", "show", alias, "--json", "--offline"], { timeout: 10_000, cwd: modelWorkspace() });
         const { model } = JSON.parse(stdout);
         if (model.snapshot_path && existsSync(model.snapshot_path)) models[size] = { alias, path: model.snapshot_path, revision: model.revision };
       } catch { /* An uninstalled model is not downloaded at runtime. */ }
     }
-    if (!Object.keys(models).length) throw Error("未安装 StartLux 2B/4B");
+    if (!Object.keys(models).length) throw Error(`未安装所选 StartLux 模型；请运行 omem setup decisions --model ${mode === "auto" ? "2b" : mode}`);
     const child = spawn(python, ["-u", assetPath("scripts/startlux/worker.py"), JSON.stringify({ models, mode: this.config.mode ?? "auto" })], { env: { ...process.env, PYTHONPATH: join(runtime, "upstream") }, stdio: ["pipe", "pipe", "pipe"] });
     this.child = child;
     let stderr = "";

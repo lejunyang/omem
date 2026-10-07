@@ -17,6 +17,8 @@ omem --help
 
 安装版从任意目录运行都使用 `~/.omem`，CLI 和网页共享个人库。`omem import` 保存材料，`omem search` 查找，`omem ask` 自主调查，`omem messages` 管理只读消息订阅，`omem status` 检查服务。完整命令、帮助、可选依赖、超时和发布步骤见[CLI 使用指南](docs/cli.md)；随包提供的 [omem-cli skill](skills/omem-cli/SKILL.md) 可供其他 Agent 使用。
 
+npm 自动安装基础运行依赖，包括官方 lark-cli；普通保存、全文搜索和网页只需要 Node。AI 另需安装并登录 Agent CLI。PDF/DOCX、中文向量检索和本地决策按需准备：先按 [osdk 官方说明](https://github.com/lejunyang/one-sdk#install) 安装，再在服务机器执行 `omem setup documents`、`setup document-models`、`setup embedding` 或 `setup decisions`。决策默认只下载 2B，`--model 4b|9b|both|all` 可显式选择；auto 仅选择 2B/4B，9B 需明确启用且尚未推理验收。当前 StartLux 仅支持 Apple Silicon Mac。模型不会在启动时自动下载，安装位置、体积、启用与升级步骤见[依赖和模型](skills/omem-cli/references/dependencies.md)。
+
 普通编码交办直接派发目标与材料，项目规则和检查方式由编码 Agent 在副本读取。相同代码的真实成功检查在编码、宿主和独立评审间复用；已交办且持续维护开启的未应用任务，在需求变更生效后保留副本调整实现。用法与边界见[需求跟进与编码](docs/reader-first/requirement-followup.md)。
 
 飞书机器人是主助手的日常指挥入口：私聊可跟进需求、改关注点、回答待决定问题、交办编码和查询结果。已订阅群聊里的本人确认也进入调查，不要求再来网页确认。助手补读讨论、实际待办和执行记录，再更新同一需求与事项；真正需要本人选择的事才通知机器人。前提是有效机器人绑定、明确采集范围和已启用的后台处理。首次创建、复用应用、本人配对与故障处理见[机器人接入指南](skills/omem-cli/references/lark-bot.md)，工作流程见[主助手方案](docs/reader-first/assistant-orchestration.md)。

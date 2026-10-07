@@ -39,6 +39,7 @@
     "fastify": "5.12.5",
     "marked": "18.0.14",
     "pm2": "7.0.4",
+    "smol-toml": "1.9.0",
     "typescript": "5.9.3",
     "zod": "4.1.12"
   },
@@ -81,6 +82,7 @@
     "scripts/document-parser/pyproject.toml",
     "scripts/document-parser/uv.lock",
     "scripts/startlux/worker.py",
+    "scripts/startlux/selection.py",
     "scripts/startlux/pyproject.toml",
     "scripts/startlux/uv.lock",
     "scripts/startlux/upstream.json",

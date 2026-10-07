@@ -6,12 +6,7 @@ import { dirname, resolve, join, basename, extname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
-import {
-  assetPath,
-  configPath,
-  defaultDataDir,
-  optionalRuntime,
-} from "./paths.js";
+import { assetPath, configPath, defaultDataDir } from "./paths.js";
 import { requestJson as api, serverAddress } from "./cli/client.js";
 
 const pkg = JSON.parse(readFileSync(assetPath("package.json"), "utf8"));
@@ -164,15 +159,22 @@ program
   .action(() => show({ url: serverAddress() }, serverAddress()));
 program
   .command("doctor")
-  .description("检查安装资源、配置、服务及可选解析器；不下载、不调用模型")
-  .action(async () => {
+  .description("检查本机安装、可选依赖及服务；不下载、不执行推理")
+  .option("--local", "只检查本机安装，跳过服务连接检查")
+  .option("--verify-models", "完整校验已安装的模型文件；耗时更长，不下载")
+  .action(async (options) => {
     const { loadConfig } = await import("./config.js");
+    const { inspectOptionalDependencies, formatOptionalReport } = await import(
+      "./cli/doctor.js"
+    );
     const config = loadConfig();
-    let health;
-    try {
-      health = await api("/api/health");
-    } catch (error) {
-      health = { error: String(error) };
+    let health: { error?: string; status?: string } = { status: "skipped" };
+    if (!options.local) {
+      try {
+        health = await api("/api/health");
+      } catch (error) {
+        health = { error: String(error) };
+      }
     }
     const assets = [
       "apps/web/dist/index.html",
@@ -193,16 +195,27 @@ program
         idleTimeoutMs: p.idleTimeoutMs ?? p.timeoutMs,
         maxDurationMs: p.maxDurationMs ?? null,
       })),
-      optional: {
-        docling: existsSync(
-          join(optionalRuntime("docling"), "venv/bin/python"),
-        ),
-        decisions: config.decisions?.mode ?? "off",
-        semanticSearch: config.retrieval?.enabled ?? false,
-      },
+      optional: await inspectOptionalDependencies(config, {
+        verifyModels: !!options.verifyModels,
+      }),
     };
-    show(result);
-    if (assets.some((a) => !a.present) || health.error) process.exitCode = 1;
+    show(
+      result,
+      [
+        `Node.js：${result.node}`,
+        `配置：${result.config}`,
+        `个人库：${result.dataDir}`,
+        `安装资源：${assets.every((a) => a.present) ? "完整" : "缺失"}`,
+        `服务：${options.local ? "已跳过连接检查" : health.error ? health.error : `${result.url}（已连接）`}`,
+        formatOptionalReport(result.optional),
+      ].join("\n"),
+    );
+    if (
+      assets.some((a) => !a.present) ||
+      health.error ||
+      !result.optional.healthy
+    )
+      process.exitCode = 1;
   });
 const config = group(
   "config",
@@ -1541,13 +1554,24 @@ program
   .description(
     "显式准备可选能力：documents、document-models、decisions、embedding（需 osdk）",
   )
+  .addOption(
+    new Option(
+      "--model <size>",
+      "决策模型大小，默认 2b；both=2b+4b，all=2b+4b+9b",
+    ).choices(["2b", "4b", "9b", "both", "all"]),
+  )
   .addHelpText(
     "after",
-    "\n只准备运行环境和模型，不自动开启功能。documents 安装解析器；document-models 下载 PDF 模型；\ndecisions 安装 StartLux 并下载 2B/4B；embedding 下载中文向量模型。安装后按帮助修改配置并重启。",
+    "\n在服务所在机器运行，只准备运行环境和模型，不自动开启功能。\ndocuments 安装解析器；document-models 下载 PDF 模型；embedding 下载中文向量模型。\ndecisions 默认只下载 2B，可用 --model 4b|9b|both|all 选择；9B 约 18 GiB，仅显式启用。\n如 omem setup decisions --model 9b；配置 decisions.mode 为 9b 后重启。\n安装后用 omem doctor --local 检查；--verify-models 可完整校验模型。",
   )
-  .action(async (name) => {
+  .action(async (name, options) => {
+    if (process.env.OMEM_URL)
+      throw Error(
+        "setup 只准备本机依赖，不能通过 --url 或 OMEM_URL 为远端安装。请在服务所在机器运行，并使用该服务的 --data-dir。",
+      );
     const { setupOptional } = await import("./cli/setup.js");
-    await setupOptional(name);
+    const result = await setupOptional(name, { model: options.model });
+    if (json()) show(result);
   });
 // Existing local integrations keep their command spellings; new users see grouped help.
 program

@@ -1,6 +1,8 @@
 # Optional models for installed omem. Downloads require an explicit omem setup command.
 [models.docling-tables.views]
 
+[models.decision-startlux9b.views]
+
 [models.docling-layout.views]
 
 [models.decision-startlux4b.views]
@@ -8,6 +10,13 @@
 [models.decision-startlux2b.views]
 
 [models.memory-zh.views]
+
+[models.decision-startlux9b]
+source = "hf:startlux-models/StartLux-Decision-9B@342aad64840be8eee314455428a5a775f18ef547"
+include = ["*.safetensors", "*.json", "merges.txt", "LICENSE", "NOTICE"]
+exclude = []
+variant = "bf16"
+family = "startlux-decision"
 
 [models.docling-tables]
 source = "hf:docling-project/docling-models@fc0f2d45e2218ea24bce5045f58a389aed16dc23"
