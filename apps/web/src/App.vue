@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AgentSetup from "./AgentSetup.vue";
 import ChangeHistory from "./ChangeHistory.vue";
 import DocumentReading from "./DocumentReading.vue";
 import MaterialAdvice from "./MaterialAdvice.vue";
@@ -44,7 +45,12 @@ import EvidenceReader from "./EvidenceReader.vue";
 import MaterialDescription from "./MaterialDescription.vue";
 import ContextPicker from "./ContextPicker.vue";
 import SourceContexts from "./SourceContexts.vue";
-import { materialRoles, materialRoleLabels, materialStatusLabels, type MaterialRole } from "../../../packages/contracts/src/material-description";
+import {
+  materialRoles,
+  materialRoleLabels,
+  materialStatusLabels,
+  type MaterialRole,
+} from "../../../packages/contracts/src/material-description";
 import ChatPane from "./ChatPane.vue";
 import AssetImage from "./AssetImage.vue";
 import PersonalKnowledge from "./knowledge/PersonalKnowledge.vue";
@@ -90,6 +96,7 @@ const sources = ref<Source[]>([]);
 const revision = ref<Revision | null>(null);
 const focus = ref<Fragment | null>(null);
 const profiles = ref<Profile[]>([]);
+const agentsConfigured = ref(true);
 const profileId = ref("traex");
 const model = ref("");
 const effort = ref("");
@@ -116,9 +123,6 @@ const connectionError = ref("");
 let bootRetryTimer: ReturnType<typeof setTimeout>;
 const booting = ref(false);
 const busy = ref(false);
-const probing = ref(false);
-const probeError = ref("");
-const probeNote = ref("");
 const accessProtected = ref(false);
 const processing = ref({ running: false, enabled: false });
 const toast = ref("");
@@ -132,7 +136,9 @@ const searchResultsHeading = ref<HTMLElement>();
 function showSearchResults() {
   searchResultsHeading.value?.scrollIntoView({
     block: "start",
-    behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "auto"
+      : "smooth",
   });
 }
 const searchPurpose = ref<RetrievalPurpose>("balanced");
@@ -195,9 +201,6 @@ function readSearchCitation(result: RetrievalHit, citation: string) {
   });
 }
 const history = ref<{ id: string; title: string; version: number }[]>([]);
-const options = ref<
-  { id: string; name: string; values: { value: string; name: string }[] }[]
->([]);
 const notificationMode = ref("instant");
 let pollTimer: ReturnType<typeof setInterval>;
 let toastTimer: ReturnType<typeof setTimeout>;
@@ -254,7 +257,8 @@ async function fileBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result).split(",")[1]!);
-    reader.onerror = () => reject(Error("文件读取失败")); reader.readAsDataURL(file);
+    reader.onerror = () => reject(Error("文件读取失败"));
+    reader.readAsDataURL(file);
   });
 }
 const captureContextIds = ref<string[]>([]);
@@ -304,10 +308,16 @@ async function refresh() {
       latest &&
       latest.id !== lastNotificationId
     ) {
-      const previous = notifications.value.findIndex(n => n.id === lastNotificationId);
-      const summary = previous === 1
-        ? Array.from(latest.title).slice(0, 80).join("") + (Array.from(latest.title).length > 80 ? "…" : "")
-        : previous > 1 ? `收到 ${previous} 条新通知` : "有新通知";
+      const previous = notifications.value.findIndex(
+        (n) => n.id === lastNotificationId,
+      );
+      const summary =
+        previous === 1
+          ? Array.from(latest.title).slice(0, 80).join("") +
+            (Array.from(latest.title).length > 80 ? "…" : "")
+          : previous > 1
+            ? `收到 ${previous} 条新通知`
+            : "有新通知";
       say(summary, true);
     }
     lastNotificationId = latest?.id || "none";
@@ -371,6 +381,13 @@ async function boot() {
     return;
   }
   try {
+    const agentStatus = await api<{
+      configured: boolean;
+      roles: { assistant: { id: string } | null };
+    }>("/agents/settings");
+    agentsConfigured.value = agentStatus.configured;
+    if (agentStatus.roles.assistant)
+      profileId.value = agentStatus.roles.assistant.id;
     profiles.value = await api("/profiles");
     if (!profiles.value.some((p) => p.id === profileId.value))
       profileId.value = profiles.value[0]?.id || "";
@@ -403,7 +420,11 @@ async function search(version: number, text: string) {
   try {
     const response = await api<typeof results.value>(
       "/search?" +
-        new URLSearchParams({ q: text, purpose: searchPurpose.value, ...(searchRole.value ? {role:searchRole.value} : {}) }),
+        new URLSearchParams({
+          q: text,
+          purpose: searchPurpose.value,
+          ...(searchRole.value ? { role: searchRole.value } : {}),
+        }),
       undefined,
       "GET",
       controller.signal,
@@ -442,15 +463,29 @@ async function capture() {
   error.value = "";
   try {
     let response: { revision: Revision; duplicate: boolean };
-    const contextIds = captureContextIds.value.length ? captureContextIds.value : undefined;
+    const contextIds = captureContextIds.value.length
+      ? captureContextIds.value
+      : undefined;
     if (importMode.value === "document") {
       const file = documentFile.value;
-      if (!file || file.size > 20_000_000) throw Error("请选择不超过 20 MB 的 PDF 或 DOCX");
-      response = await api("/connectors/document", { name: file.name, data: await fileBase64(file), externalId: "upload:" + documentIdentity.value, contextIds });
+      if (!file || file.size > 20_000_000)
+        throw Error("请选择不超过 20 MB 的 PDF 或 DOCX");
+      response = await api("/connectors/document", {
+        name: file.name,
+        data: await fileBase64(file),
+        externalId: "upload:" + documentIdentity.value,
+        contextIds,
+      });
     } else if (importMode.value === "lark")
-      response = await api("/connectors/lark", { url: input.value.url, contextIds });
+      response = await api("/connectors/lark", {
+        url: input.value.url,
+        contextIds,
+      });
     else if (importMode.value === "file")
-      response = await api("/connectors/file", { path: input.value.filePath, contextIds });
+      response = await api("/connectors/file", {
+        path: input.value.filePath,
+        contextIds,
+      });
     else if (importMode.value === "git")
       response = await api("/connectors/git", {
         repo: input.value.repo,
@@ -574,56 +609,20 @@ async function restore(c: Change) {
     error.value = String(e);
   }
 }
-let probeGeneration = 0;
-async function probe() {
-  const requestedProfile = profileId.value;
-  if (!requestedProfile) return;
-  const run = ++probeGeneration;
-  probing.value = true;
-  probeError.value = "";
-  probeNote.value = "";
-  try {
-    const response = await api<{
-      configOptions?: {
-        id: string;
-        name: string;
-        type: string;
-        options?: (
-          | { value: string; name: string }
-          | { options: { value: string; name: string }[] }
-        )[];
-      }[];
-      note?: string;
-    }>("/profiles/" + requestedProfile + "/probe", {});
-    if (run !== probeGeneration) return;
-    options.value = (response.configOptions || [])
-      .filter((o) => o.type === "select")
-      .map((o) => ({
-        id: o.id,
-        name: o.name,
-        values: (o.options || []).flatMap((v) =>
-          "options" in v ? v.options : [v],
-        ),
-      }));
-    probeNote.value = response.note || "已读取此 Agent 支持的模型与思考强度";
-  } catch (e) {
-    if (run === probeGeneration) probeError.value = String(e);
-  } finally {
-    if (run === probeGeneration) probing.value = false;
-  }
-}
 function setProfile() {
   model.value = selectedProfile.value?.model || "";
   effort.value = selectedProfile.value?.effort || "";
-  options.value = [];
-  probeNote.value = "";
-  probeGeneration++;
-  probing.value = false;
-  if (view.value === "settings") void probe();
 }
-watch(view, (v) => {
-  if (v === "settings" && !probeNote.value && !probing.value) void probe();
-});
+async function agentsSaved() {
+  const status = await api<{
+    configured: boolean;
+    roles: { assistant: { id: string } };
+  }>("/agents/settings");
+  agentsConfigured.value = status.configured;
+  profiles.value = await api("/profiles");
+  profileId.value = status.roles.assistant.id;
+  setProfile();
+}
 function saveToken() {
   sessionStorage.setItem("omem-token", token.value);
   token.value = "";
@@ -714,6 +713,14 @@ onBeforeUnmount(() => {
         >关闭提示</OmButton
       >
     </div>
+    <aside
+      v-if="!agentsConfigured && view !== 'settings'"
+      class="agent-first-use"
+      role="status"
+    >
+      <p>先设置主助手与工作 Agent：检测本机接入，选择模型和思考强度。</p>
+      <OmButton @click="view = 'settings'">设置 Agent 与模型</OmButton>
+    </aside>
     <section v-if="query.trim()" class="page" :aria-busy="searching">
       <h1>搜索“{{ query }}”</h1>
       <p class="muted">
@@ -729,10 +736,29 @@ onBeforeUnmount(() => {
           <option value="follow-up">跟进事项</option>
         </select></label
       >
-      <SearchAnswer :query="query" :purpose="searchPurpose" @navigate="pushSearch" @open="(id) => evidence?.open(id)" @results="showSearchResults" />
-      <h2 ref="searchResultsHeading" class="search-results-heading">实际搜索命中 <small v-if="!searching && !searchError">{{ results.length }} 条</small></h2>
-      <label class="search-purpose">筛选命中材料<select v-model="searchRole"><option value="">所有用途</option><option v-for="role in materialRoles" :key="role" :value="role">{{materialRoleLabels[role]}}</option></select></label>
-      <p v-if="results.some(r => r.codeMatches?.length)" class="muted call-candidate-note">
+      <SearchAnswer
+        :query="query"
+        :purpose="searchPurpose"
+        @navigate="pushSearch"
+        @open="(id) => evidence?.open(id)"
+        @results="showSearchResults"
+      />
+      <h2 ref="searchResultsHeading" class="search-results-heading">
+        实际搜索命中
+        <small v-if="!searching && !searchError">{{ results.length }} 条</small>
+      </h2>
+      <label class="search-purpose"
+        >筛选命中材料<select v-model="searchRole">
+          <option value="">所有用途</option>
+          <option v-for="role in materialRoles" :key="role" :value="role">
+            {{ materialRoleLabels[role] }}
+          </option>
+        </select></label
+      >
+      <p
+        v-if="results.some((r) => r.codeMatches?.length)"
+        class="muted call-candidate-note"
+      >
         以下是按名称找到的调用位置。同名方法可能属于不同对象，需结合上下文确认；别名和动态调用可能未被找到。
       </p>
       <p v-if="searching" class="search-loading" role="status">
@@ -758,8 +784,22 @@ onBeforeUnmount(() => {
             · 第 {{ r.target.startLine }}–{{ r.target.endLine }} 行</span
           >
         </p>
-        <p v-if="r.target.kind === 'knowledge' && r.target.reviewState === 'needs-review'" class="muted">待复核的讲解背景 · 引用依据仍匹配原文，其他材料已有变化</p>
-        <p v-if="r.materialDescription" class="muted">{{materialRoleLabels[r.materialDescription.description.role]}} · {{materialStatusLabels[r.materialDescription.description.status]}}<span v-if="r.materialDescription.description.scope"> · {{r.materialDescription.description.scope}}</span></p>
+        <p
+          v-if="
+            r.target.kind === 'knowledge' &&
+            r.target.reviewState === 'needs-review'
+          "
+          class="muted"
+        >
+          待复核的讲解背景 · 引用依据仍匹配原文，其他材料已有变化
+        </p>
+        <p v-if="r.materialDescription" class="muted">
+          {{ materialRoleLabels[r.materialDescription.description.role] }} ·
+          {{ materialStatusLabels[r.materialDescription.description.status]
+          }}<span v-if="r.materialDescription.description.scope">
+            · {{ r.materialDescription.description.scope }}</span
+          >
+        </p>
         <OmMarkdown
           v-if="r.kind === 'knowledge'"
           :source="r.text"
@@ -848,8 +888,14 @@ onBeforeUnmount(() => {
           </div>
           <h1>{{ revision.title }}</h1>
           <MaterialAdvice :revision-id="revision.id" />
-          <MaterialDescription :revision-id="revision.id" :current="revision.current" />
-          <SourceContexts :key="revision.sourceId" :source-id="revision.sourceId" />
+          <MaterialDescription
+            :revision-id="revision.id"
+            :current="revision.current"
+          />
+          <SourceContexts
+            :key="revision.sourceId"
+            :source-id="revision.sourceId"
+          />
           <p class="muted">
             保存于 {{ new Date(revision.createdAt).toLocaleString("zh-CN") }} ·
             每个片段都有固定身份
@@ -864,7 +910,17 @@ onBeforeUnmount(() => {
             "
             :language="revision.title.split('.').pop()"
           />
-          <DocumentReading v-else-if="revision.context.document" :revision-id="revision.id" :document="revision.context.document" :fallback="revision.parts.filter(p => p.type === 'text').map(p => p.text).join('\n\n')" />
+          <DocumentReading
+            v-else-if="revision.context.document"
+            :revision-id="revision.id"
+            :document="revision.context.document"
+            :fallback="
+              revision.parts
+                .filter((p) => p.type === 'text')
+                .map((p) => p.text)
+                .join('\n\n')
+            "
+          />
           <OmMarkdown
             v-else
             :source="
@@ -974,10 +1030,22 @@ onBeforeUnmount(() => {
             }}</small></label
           ></template
         ><template v-else-if="importMode === 'document'">
-          <label>选择文档<input type="file" accept=".pdf,.docx" required :disabled="busy" @change="selectDocument" /></label>
-          <p class="muted">支持文字 PDF 和 DOCX，最多 20 MB、200 页。保存原件、标题、表格和图片；扫描件 OCR 尚未启用。</p>
-          <p v-if="busy" role="status">正在解析并保存文档，首次解析可能需要较长时间…</p>
-        </template><template v-else-if="importMode === 'lark'"
+          <label
+            >选择文档<input
+              type="file"
+              accept=".pdf,.docx"
+              required
+              :disabled="busy"
+              @change="selectDocument"
+          /></label>
+          <p class="muted">
+            支持文字 PDF 和 DOCX，最多 20 MB、200
+            页。保存原件、标题、表格和图片；扫描件 OCR 尚未启用。
+          </p>
+          <p v-if="busy" role="status">
+            正在解析并保存文档，首次解析可能需要较长时间…
+          </p> </template
+        ><template v-else-if="importMode === 'lark'"
           ><label
             >飞书文档或 Wiki 链接<input
               v-model="input.url"
@@ -986,7 +1054,8 @@ onBeforeUnmount(() => {
               placeholder="https://…/docx/…"
           /></label>
           <p class="muted">
-            使用项目自带的官方 lark-cli 和你的飞书登录态读取正文，保留版本及引用元数据。
+            使用项目自带的官方 lark-cli
+            和你的飞书登录态读取正文，保留版本及引用元数据。
           </p></template
         ><template v-else-if="importMode === 'git'"
           ><label
@@ -1005,7 +1074,10 @@ onBeforeUnmount(() => {
           <p class="muted">
             读取已允许目录中的 UTF-8 文件（500 KB）或 PDF / DOCX（20 MB）。
           </p></template
-        ><ContextPicker v-model="captureContextIds" :disabled="busy" /><OmButton type="submit" variant="primary" :loading="busy"
+        ><ContextPicker v-model="captureContextIds" :disabled="busy" /><OmButton
+          type="submit"
+          variant="primary"
+          :loading="busy"
           >保存材料与证据</OmButton
         >
       </form>
@@ -1135,81 +1207,17 @@ onBeforeUnmount(() => {
         ></OmPanel
       ><OmEmpty v-if="!notifications.length" title="暂无通知" />
     </section>
-    <PersonalLark v-else-if="view === 'messages'" @open-revision="openRevision" />
+    <PersonalLark
+      v-else-if="view === 'messages'"
+      @open-revision="openRevision" />
     <LarkSetup
       v-else-if="view === 'lark'"
       @error="(text) => (error = text)"
       @notice="say" />
     <section v-else-if="view === 'settings'" class="page">
       <h1>能力与连接</h1>
-      <p class="muted">
-        使用运行 omem 的电脑上已登录的
-        Agent。进入此页会自动读取可用模型与思考强度；问答使用这里选择的配置。
-      </p>
-      <OmPanel title="问答运行配置"
-        ><div class="form">
-          <label
-            >Agent 接入<select v-model="profileId" @change="setProfile">
-              <option v-for="p in profiles" :key="p.id" :value="p.id">
-                {{ p.name }}
-              </option>
-            </select></label
-          >
-          <div class="form-grid">
-            <label
-              >模型（留空使用宿主默认）<input
-                v-model="model"
-                list="model-values"
-                placeholder="模型 ID"
-              /><datalist id="model-values">
-                <option
-                  v-for="o in options.find((o) => o.id === 'model')?.values ||
-                  []"
-                  :key="o.value"
-                  :value="o.value"
-                >
-                  {{ o.name }}
-                </option>
-              </datalist></label
-            ><label
-              >Effort（留空使用宿主默认）<input
-                v-model="effort"
-                list="effort-values"
-                placeholder="思考强度"
-              /><datalist id="effort-values">
-                <option
-                  v-for="o in options.find((o) => o.id === 'reasoning_effort')
-                    ?.values || []"
-                  :key="o.value"
-                  :value="o.value"
-                >
-                  {{ o.name }}
-                </option>
-              </datalist></label
-            >
-          </div>
-          <small
-            >上下文上限
-            {{ selectedProfile?.maxContextChars }}
-            字符；超限明确拒绝，不静默截断焦点。</small
-          >
-          <p v-if="probing" role="status">
-            正在连接 Agent，读取支持的模型与思考强度…
-          </p>
-          <p v-else-if="probeError" role="alert">
-            能力读取失败：{{ probeError }}
-          </p>
-          <p v-else-if="probeNote" class="muted">{{ probeNote }}</p>
-          <OmButton :loading="probing" @click="probe"
-            >重新读取 Agent 能力</OmButton
-          >
-          <OmDisclosure v-if="options.length" title="已发现的配置选项">
-            <p v-for="o in options" :key="o.id">
-              {{ o.name }}：{{ o.values.map((v) => v.name).join("、") }}
-            </p>
-          </OmDisclosure>
-        </div></OmPanel
-      ><OmPanel class="stack" title="浏览器与 omem 的连接"
+      <AgentSetup @saved="agentsSaved" @notice="say" />
+      <OmPanel class="stack" title="浏览器与 omem 的连接"
         ><p>
           {{
             accessProtected
@@ -1329,8 +1337,18 @@ onBeforeUnmount(() => {
     <div v-if="toast" class="toast" role="status">
       <span class="toast-message">{{ toast }}</span>
       <div class="toast-actions">
-        <OmButton v-if="toastHasNotifications" variant="ghost" @click="view = 'notifications'; toast = ''">查看通知</OmButton>
-        <OmButton variant="ghost" aria-label="关闭提示" @click="toast = ''">关闭</OmButton>
+        <OmButton
+          v-if="toastHasNotifications"
+          variant="ghost"
+          @click="
+            view = 'notifications';
+            toast = '';
+          "
+          >查看通知</OmButton
+        >
+        <OmButton variant="ghost" aria-label="关闭提示" @click="toast = ''"
+          >关闭</OmButton
+        >
       </div>
     </div>
     <template v-if="view === 'read'" #assistant
@@ -1346,6 +1364,25 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.agent-first-use {
+  margin: 24px 32px;
+  padding: 16px;
+  background: var(--om-soft);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.agent-first-use p {
+  margin: 0;
+  flex: 1 1 240px;
+}
+@media (max-width: 700px) {
+  .agent-first-use {
+    margin: 16px;
+  }
+}
 .materials-layout {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
