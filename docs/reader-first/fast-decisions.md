@@ -76,7 +76,11 @@ osdk run decision:native-evaluate --model decision-startlux4b
 
 语义判断只说明用户表达的动作与对象；本人身份、私聊范围、实际对象、版本、请求去重和最终写入由程序核对。StartLux 当前仍提供机会性建议，没有接成操作批准器，选项分数也未经概率校准。
 
-旧 `detectTaskIntent` 把句末“吧”排为咨询，“帮我建个待办吧”因此漏判；“不要提醒我”仍命中创建意图。普通事项变更、开发交办和材料时态也有类似的词表判断，本轮没有声称全部替换。迁移顺序是事项创建与状态变更、其余工作交办、材料语义标签；日期/ID 格式、权限与版本规则保留确定性检查。每步对照真实请求及上下文，分别统计误执行、漏执行、含糊保留和耗时，格式通过不能当语义准确率。
+事项创建与状态变更也已移除语义词表，复用独立 `request-interpreter`；入口是 `AssistantRuntime.interpretTaskCall`。它核对完整本人请求、实际事项和近期原话；“刚才那条”还可以引用同一对话中实际保存的操作回执，候选列表和模型回答不能代替这份依据。未获批准时不保存任务原件、不修改事项；模型调用期间取消或事项版本改变也不能晚到覆盖。事项查询和同一请求重放不调用判断模型。随包用法见[自然语言交办](../../skills/omem-cli/references/task-requests.md)。
+
+本轮真实 Sol 独立判定通过十条合成请求，覆盖礼貌创建、否定、咨询、混合请求中的错误候选、未完成否定、对象错配、无背景指代、实际回执指代、英文重开与中文改期。这里主助手候选是受控输入，独立判定、MemoryService 写入和版本是真实路径，每次独立调用约 11–15 秒。另用真实主助手和独立判定经 HTTP 跑通创建、只查询不改动、礼貌改期和上一轮任务完成四轮，核对了唯一事项、日期时区和保存版本。它们不能证明大样本准确率，也没有验收 StartLux 替代模型。
+
+开发交办和材料时态仍有词表判断，继续按实际消费者迁移；日期/ID 格式、权限与版本规则保留确定性检查。旧 `detectTaskIntent` 曾把“帮我建个待办吧”漏判、把“不要提醒我”命中为创建，相关函数与测试已删除，没有保留关键词兜底。每步对照真实请求及上下文，分别统计误执行、漏执行、含糊保留和耗时，格式通过不能当语义准确率。
 
 采用模型返回结构化选择的方式，可参考 [LangGraph routing](https://docs.langchain.com/oss/javascript/langgraph/workflows-agents)、[LlamaIndex selectors](https://developers.llamaindex.ai/python/framework/module_guides/querying/router/) 和 [Anthropic routing](https://www.anthropic.com/engineering/building-effective-agents)。它们支持这种组合方式，不证明本项目的中文意图识别已经准确；无需仅为替换词表迁移整个框架。
 
