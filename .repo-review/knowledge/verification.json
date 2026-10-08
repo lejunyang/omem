@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-07T18:07:52.702Z",
-  "implementationCommit": "2a9297354bbaf2952b5ac95ef395fdfc0acc4b34",
-  "sourceDigest": "bffb6c41c87533328607fb2d6b12096a0020339c97492f66c3455413024a2212",
+  "recordedAt": "2026-10-08T13:12:26.916Z",
+  "implementationCommit": "446c0c766c765e0e1051a1274f482df10f778953",
+  "sourceDigest": "6bfac5eb6b447106be67b8b8da008c97483a3792ee5ec818bb3cd6d0f6ce36c6",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T18-07-52-702Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-08T13-12-26-916Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T18-07-52-702Z/project.log",
-        "sha256": "bef0fc8c80ded50d16d8feda3325272bb2954e224c58ba1d432038935c63b2bf"
+        "log": ".repo-review/runtime/verification/2026-10-08T13-12-26-916Z/project.log",
+        "sha256": "8e0539171d4a9d62fac32d61e68a7cb92efb1093480937032b778a809118b60a"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T18-07-52-702Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-08T13-12-26-916Z/liveChineseRetrieval.log",
         "sha256": "c633cc8b3935a685907f142b4f178e7f9fd00ac994d0edc6ef224a195357b1e8"
       }
     },
@@ -57,7 +57,7 @@
         "errors": [
           {
             "key": "guide:capture",
-            "error": "Error: Unknown material omem:apps/server/src/knowledge/pipeline.ts"
+            "error": "Error: Unknown material omem:packages/contracts/src/index.ts"
           },
           {
             "key": "guide:contributing",
@@ -105,11 +105,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v7",
-        "units": 17938,
+        "units": 18097,
         "semantic": {
           "model": "structure-icu-v7:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 17938,
+          "indexed": 18097,
           "pending": 0,
           "error": null
         },
@@ -136,7 +136,7 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 866,
+    "materials": 875,
     "publishedPages": 10,
     "currentPages": 0,
     "plannedPages": 0,
@@ -145,7 +145,7 @@
     "errors": [
       {
         "key": "guide:capture",
-        "error": "Error: Unknown material omem:apps/server/src/knowledge/pipeline.ts"
+        "error": "Error: Unknown material omem:packages/contracts/src/index.ts"
       },
       {
         "key": "guide:contributing",
@@ -192,23 +192,27 @@
         "current": false,
         "sections": {
           "case": {
-            "state": "current"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "branches": {
             "state": "unavailable",
             "reason": "这一节的来源已移除或无法读取"
           },
           "layers": {
-            "state": "current"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "citations": {
-            "state": "current"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "assignment": {
             "state": "current"
           },
           "special_inputs": {
-            "state": "current"
+            "state": "unavailable",
+            "reason": "这一节的来源已移除或无法读取"
           },
           "change_points": {
             "state": "unavailable",
@@ -512,7 +516,7 @@
     ],
     "restore": {
       "restored": 14,
-      "stale": 18
+      "stale": 19
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -536,7 +540,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 1969,
+        "elapsedMs": 2173,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -600,7 +604,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 3,
-        "elapsedMs": 734,
+        "elapsedMs": 790,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -668,7 +672,7 @@
         "passed": false,
         "firstExpectedRank": 20,
         "uniquePathsAt5": 4,
-        "elapsedMs": 768,
+        "elapsedMs": 806,
         "top5": [
           {
             "path": "docs/reader-first/publication-lifecycle.md",
@@ -734,7 +738,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 3,
-        "elapsedMs": 215,
+        "elapsedMs": 231,
         "top5": [
           {
             "path": "scripts/live-development.ts",
@@ -795,7 +799,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 216,
+        "elapsedMs": 274,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -861,7 +865,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 5,
-        "elapsedMs": 865,
+        "elapsedMs": 937,
         "top5": [
           {
             "path": "design.md",

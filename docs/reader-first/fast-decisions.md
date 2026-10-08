@@ -70,7 +70,9 @@ osdk run decision:native-evaluate --model decision-startlux4b
 
 ### 自然语言交办与执行检查
 
-2026-10-08 开始迁移语义正则。新增的项目理解操作由 `request-interpreter` 在独立会话中判断完整请求、最近对话和候选项目，返回 `execute`、`decline` 或 `uncertain` 及当前原话。沿用已配置主助手的 CLI/ACP；只在拟执行项目理解操作时调用，普通查询和同一请求的回执重放不调用。没有模型、判断含糊或取消时不应用，也不回退到动词词表。实际代码入口是 `assistant/request-interpretation.ts` 和 `AssistantWork.applyRequested`。
+2026-10-08 开始迁移语义正则。新增的项目理解操作由 `request-interpreter` 在独立会话中判断完整请求、最近对话和候选项目，返回 `execute`、`decline` 或 `uncertain`，同时给出当前原话及对象依据。沿用已配置主助手的 CLI/ACP；只在拟执行项目理解操作时调用，普通查询和同一请求的回执重放不调用。没有模型、判断含糊或取消时不应用，也不回退到动词词表。实际代码入口是 `assistant/request-interpretation.ts` 和 `AssistantWork.applyRequested`。
+
+首轮真实 Traex ACP / gpt-5.6-sol 通过六条表达，但在第七条把无上下文的“这个项目”按候选对象直接执行。修正要求对象依据来自当前或近期本人原话，也可以是已保存讨论范围；候选列表不能补出授权。随后九条真实请求通过，涵盖礼貌交办和混合否定，也检查了纯咨询、错误对象及中英文表达，以及同一句指代在不同上下文中的不同处理。每次独立调用约 9–17 秒，尚未进行大样本或 StartLux 替代模型对照。完整结果见[持续项目理解简报](../../.repo-review/knowledge/verification/context-views.md)，不把结构化输出或小样本通过等同于可靠准确率。
 
 语义判断只说明用户表达的动作与对象；本人身份、私聊范围、实际对象、版本、请求去重和最终写入由程序核对。StartLux 当前仍提供机会性建议，没有接成操作批准器，选项分数也未经概率校准。
 
