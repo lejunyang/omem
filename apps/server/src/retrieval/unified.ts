@@ -28,7 +28,24 @@ type ScoredUnit = {
   routes: string[];
   excerpt?: string;
   codeMatches?: RetrievalHit["codeMatches"];
+  reranking?: RetrievalHit["reranking"];
 };
+export type RetrievalTrace = {
+  stage:
+    | "lexical"
+    | "symbols"
+    | "semantic"
+    | "fusion"
+    | "reranker-input"
+    | "reranker"
+    | "selection"
+    | "decision"
+    | "final";
+  hits: RetrievalHit[];
+  model?: string;
+  error?: string;
+};
+export type RetrievalObserver = (trace: RetrievalTrace) => void;
 const normalize = (v: number[]) => {
   const norm = Math.hypot(...v);
   if (!norm || v.some((x) => !Number.isFinite(x)))
@@ -481,16 +498,66 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     }
     return pool;
   }
-  async search(q: SearchQuery): Promise<RetrievalHit[]> {
+  private observe(
+    observer: RetrievalObserver | undefined,
+    stage: RetrievalTrace["stage"],
+    hits: ScoredUnit[],
+    model?: string,
+    error?: string,
+  ) {
+    if (!observer) return;
+    // Diagnostics see the actual stage before later host preferences and limits.
+    // Copies prevent an observer from changing subsequent retrieval behavior.
+    observer({
+      stage,
+      model,
+      error,
+      hits: structuredClone(
+        hits.map((h) => ({
+          id: h.unit.id,
+          kind: h.unit.kind,
+          title: h.unit.title,
+          text: h.excerpt ?? h.unit.text,
+          context: h.unit.context,
+          headingPath: h.unit.headingPath,
+          score: h.score,
+          routes: h.routes,
+          target: h.unit.target,
+          references: h.unit.references,
+          provenance: h.unit.provenance,
+          eventAt: h.unit.eventAt,
+          ...(h.unit.materialDescription
+            ? { materialDescription: h.unit.materialDescription }
+            : {}),
+          ...(h.reranking ? { reranking: h.reranking } : {}),
+        })),
+      ),
+    });
+  }
+  async search(
+    q: SearchQuery,
+    observer?: RetrievalObserver,
+  ): Promise<RetrievalHit[]> {
     await this.syncAsync();
     const navigation = this.navigationCandidates(q);
-    if (navigation) return this.finish(navigation.hits, navigation.query);
+    if (navigation) {
+      const hits = this.finish(navigation.hits, navigation.query);
+      observer?.({ stage: "final", hits: structuredClone(hits) });
+      return hits;
+    }
     const lexical = this.lexical(q);
     const symbols = this.symbols(q);
+    this.observe(observer, "lexical", lexical);
+    this.observe(observer, "symbols", symbols);
     const lexicalOnly = () =>
       symbols.length ? this.fuse([lexical, symbols]) : lexical;
-    if (!q.text.trim() || exactLookup(q.text) || !this.model)
-      return this.select(lexicalOnly(), q);
+    if (!q.text.trim() || exactLookup(q.text))
+      return this.select(lexicalOnly(), q, observer);
+    if (!this.model) {
+      const hits = lexicalOnly();
+      this.observe(observer, "fusion", hits);
+      return this.select(await this.rerank(hits, q, observer), q, observer);
+    }
     const dense = new Map<string, ScoredUnit>();
     try {
       const [raw] = await this.model.embed([q.text.slice(0, 400)], "query"),
@@ -533,7 +600,16 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       }
     } catch (error) {
       this.error = String(error);
-      return this.select(lexicalOnly(), q);
+      const hits = lexicalOnly();
+      this.observe(
+        observer,
+        "semantic",
+        [],
+        this.modelId ?? undefined,
+        this.error,
+      );
+      this.observe(observer, "fusion", hits);
+      return this.select(await this.rerank(hits, q, observer), q, observer);
     }
     const sorted = [...dense.values()].sort((a, b) => b.score - a.score);
     const floor = Math.max(0.4, (sorted[0]?.score ?? 1) - 0.075);
@@ -545,12 +621,26 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           a.score * this.applicability(a.unit, q),
       )
       .slice(0, 100);
-    let hits = this.fuse([lexical.slice(0, 100), accepted, symbols]);
+    this.observe(observer, "semantic", accepted, this.modelId ?? undefined);
+    const hits = this.fuse([lexical.slice(0, 100), accepted, symbols]);
+    this.observe(observer, "fusion", hits);
+    return this.select(await this.rerank(hits, q, observer), q, observer);
+  }
+  private async rerank(
+    hits: ScoredUnit[],
+    q: SearchQuery,
+    observer?: RetrievalObserver,
+  ) {
     if (this.loadReranker && hits.length) {
       try {
-        this.rankingLoad ??= this.loadReranker().then(
-          (model) => (this.reranker = model),
-        );
+        this.rankingLoad ??= this.loadReranker()
+          .then((model) => (this.reranker = model))
+          .catch((error) => {
+            // Explicitly installed resources may become available after startup.
+            // A rejected load is not a permanent model cache.
+            this.rankingLoad = undefined;
+            throw error;
+          });
         const model = await this.rankingLoad,
           pool = hits
             .sort(
@@ -582,6 +672,21 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           q.text,
           passages.map((p) => p.input),
         );
+        if (
+          scores.length !== passages.length ||
+          scores.some((score) => !Number.isFinite(score))
+        )
+          throw Error("Invalid reranker score batch");
+        this.observe(
+          observer,
+          "reranker-input",
+          passages.map((p, i) => ({
+            ...pool[p.unitIndex]!,
+            excerpt: p.input,
+            score: scores[i]!,
+          })),
+          model.id,
+        );
         const best = new Map<number, { score: number; text: string }>();
         passages.forEach((p, i) => {
           if (scores[i]! > (best.get(p.unitIndex)?.score ?? -Infinity))
@@ -594,6 +699,11 @@ export class UnifiedRetrieval extends KeywordRetrieval {
                 {
                   ...h,
                   score: best.get(i)!.score * 0.7 + (h.score / max) * 0.3,
+                  reranking: {
+                    model: model.id,
+                    relevance: best.get(i)!.score,
+                    retrievalScore: h.score,
+                  },
                   excerpt: best.get(i)!.text,
                   routes: [...h.routes, "cross-encoder"],
                 },
@@ -601,15 +711,25 @@ export class UnifiedRetrieval extends KeywordRetrieval {
             : [],
         );
         this.rankingError = null;
+        this.observe(observer, "reranker", hits, model.id);
       } catch (error) {
         this.rankingError = String(error);
+        this.observe(observer, "reranker", hits, undefined, this.rankingError);
       }
     }
-    return this.select(hits, q);
+    return hits;
   }
-  private async select(hits: ScoredUnit[], q: SearchQuery) {
-    if (!this.rank || !q.text.trim() || exactLookup(q.text))
-      return this.finish(hits, q);
+  private async select(
+    hits: ScoredUnit[],
+    q: SearchQuery,
+    observer?: RetrievalObserver,
+  ) {
+    const finish = () => {
+      const selected = this.finish(hits, q);
+      observer?.({ stage: "final", hits: structuredClone(selected) });
+      return selected;
+    };
+    if (!this.rank || !q.text.trim() || exactLookup(q.text)) return finish();
     // Score a pool before spending the requested reading slots. Do not allow a
     // model to see hidden/out-of-scope units or force a cold model load here.
     const pool = this.finish(hits, {
@@ -617,23 +737,41 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       diversify: false,
       limit: Math.max(q.limit ?? 20, 40),
     });
+    observer?.({ stage: "selection", hits: structuredClone(pool) });
     try {
       const ranked = await this.rank(q, pool);
-      if (ranked === pool) return this.finish(hits, q);
-      const owners = new Map<string, number>(), sections = new Set<string>(), seen = new Set<string>();
-      return ranked.filter((hit) => {
-        if (q.diversify === false) return true;
-        const owner = hit.target.kind === "source" || hit.target.kind === "knowledge" ? hit.target.key : hit.target.id;
-        const section = hit.target.kind === "knowledge" ? `${hit.target.revision}:${hit.target.section}` : null;
-        const text = hit.text.replace(/\s+/g, " ").trim();
-        if ((section ? sections.has(section) : (owners.get(owner) ?? 0) >= 2) || seen.has(text)) return false;
-        if (section) sections.add(section);
-        owners.set(owner, (owners.get(owner) ?? 0) + 1);
-        seen.add(text);
-        return true;
-      }).slice(0, q.limit ?? 20);
+      if (ranked === pool) return finish();
+      observer?.({ stage: "decision", hits: structuredClone(ranked) });
+      const owners = new Map<string, number>(),
+        sections = new Set<string>(),
+        seen = new Set<string>();
+      const selected = ranked
+        .filter((hit) => {
+          if (q.diversify === false) return true;
+          const owner =
+            hit.target.kind === "source" || hit.target.kind === "knowledge"
+              ? hit.target.key
+              : hit.target.id;
+          const section =
+            hit.target.kind === "knowledge"
+              ? `${hit.target.revision}:${hit.target.section}`
+              : null;
+          const text = hit.text.replace(/\s+/g, " ").trim();
+          if (
+            (section ? sections.has(section) : (owners.get(owner) ?? 0) >= 2) ||
+            seen.has(text)
+          )
+            return false;
+          if (section) sections.add(section);
+          owners.set(owner, (owners.get(owner) ?? 0) + 1);
+          seen.add(text);
+          return true;
+        })
+        .slice(0, q.limit ?? 20);
+      observer?.({ stage: "final", hits: structuredClone(selected) });
+      return selected;
     } catch {
-      return this.finish(hits, q);
+      return finish();
     }
   }
   private finish(hits: ScoredUnit[], q: SearchQuery): RetrievalHit[] {
@@ -755,6 +893,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         headingPath: u.headingPath,
         score: h.score * priority(u),
         routes: [...h.routes, "purpose:" + (q.purpose ?? "balanced")],
+        ...(h.reranking ? { reranking: h.reranking } : {}),
         ...(h.codeMatches ? { codeMatches: h.codeMatches } : {}),
         target: u.target,
         references: u.references,

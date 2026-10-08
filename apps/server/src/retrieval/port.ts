@@ -53,6 +53,13 @@ export type RetrievalHit = {
   headingPath: string[];
   score: number;
   routes: string[];
+  /** Optional cross-encoder score, separate from fusion and host preferences.
+   * Relevance is an uncalibrated model output, not an answer probability. */
+  reranking?: {
+    model: string;
+    relevance: number;
+    retrievalScore: number;
+  };
   /** Optional local judgment, separate from the uncalibrated retrieval score. */
   assessment?: {
     model: string;
