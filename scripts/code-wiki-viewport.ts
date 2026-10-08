@@ -33,6 +33,29 @@ try {
   });
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(BASE);
+  if (process.env.OMEM_EMPTY_KNOWLEDGE_ONLY === "1") {
+    if (!process.env.OMEM_WEB_URL)
+      throw Error("Empty library acceptance requires an explicit isolated preview URL");
+    const library = await api("/api/knowledge/articles");
+    expect(library.articles).toEqual([]);
+    expect(library.pages).toEqual([]);
+    await page.goto(BASE + "/#/knowledge");
+    await expect(page.getByText("知识从你的材料开始", {exact: true})).toBeVisible();
+    await expect(page.getByRole("button", {name: "整理文章", exact: true})).toBeVisible();
+    await page.reload();
+    await expect(page.getByText("知识从你的材料开始", {exact: true})).toBeVisible();
+    for (const width of [1440, 768, 390]) {
+      await page.setViewportSize({width, height:1000});
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({path:`${OUT}/empty-knowledge-${width}.png`,fullPage:true});
+    }
+    expect(errors).toEqual([]);
+    checks.push("retired library stays empty after reload; compose entry and three viewports");
+    writeFileSync(`${OUT}/report.json`, JSON.stringify({checks,errors},null,2));
+    console.log("PASS",checks.at(-1));
+    await browser.close();
+    process.exit(0);
+  }
   if (process.env.OMEM_CONTEXT_VIEW_ID) {
     if (!process.env.OMEM_WEB_URL) throw Error("Project view acceptance requires an explicit isolated preview URL");
     const view = await api("/api/knowledge/context-views/" + encodeURIComponent(process.env.OMEM_CONTEXT_VIEW_ID));

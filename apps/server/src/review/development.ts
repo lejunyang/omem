@@ -67,7 +67,7 @@ export function importDevelopmentKnowledge(store: Store, root: string) {
   const directory = join(root, ".repo-review/knowledge/articles");
   const artifacts: KnowledgeArtifact[] = existsSync(directory)
     ? readdirSync(directory)
-        .filter((f) => f.endsWith(".json"))
+        .filter((f) => f.endsWith(".json") && f !== ".retirements.json")
         .map((f) => JSON.parse(readFileSync(join(directory, f), "utf8")))
     : [];
   const historical = new Map(
