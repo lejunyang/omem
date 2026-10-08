@@ -286,6 +286,7 @@ export async function buildApp(
   registerRequirementTasks(app, requirementTasks);
   let pageService!: KnowledgePageService;
   let descriptionService!: MaterialDescriptionWorker;
+  const interpretRequest = configuredRequestInterpreter({profile:assistantProfile,directory:resolve(config.dataDir,"request-agents")});
   const knowledgeRepository = registerKnowledgeRoutes(app, {
     preparePage: (plan) => work?.preparePage(plan),
     beforePageRun: (plan, signal) => work.investigationHints(plan, signal),
@@ -311,7 +312,7 @@ export async function buildApp(
         ),
         decisions,
         { personalLark, schedules },
-        configuredRequestInterpreter({profile:assistantProfile,directory:resolve(config.dataDir,"request-agents")}),
+        interpretRequest,
       );
     },
     onDescriptions: (service) => {
@@ -408,6 +409,7 @@ export async function buildApp(
     memory,
     feedback,
     work,
+    interpretRequest,
     retrieval: assistantRetrieval,
     timezone: config.notifications.external?.timezone,
     decisions:
