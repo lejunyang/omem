@@ -33,6 +33,34 @@ try {
   });
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(BASE);
+  if (process.env.OMEM_CONTEXT_VIEW_ID) {
+    if (!process.env.OMEM_WEB_URL) throw Error("Project view acceptance requires an explicit isolated preview URL");
+    const view = await api("/api/knowledge/context-views/" + encodeURIComponent(process.env.OMEM_CONTEXT_VIEW_ID));
+    expect(view.current).toBe(true);
+    await page.goto(BASE + "/#/knowledge/" + encodeURIComponent(view.key));
+    const body = page.locator(".book-content .knowledge-document");
+    await expect(body.locator("h2")).toHaveText(view.document.title);
+    await expect(body).toContainText("9000");
+    await expect(body).toContainText("3500");
+    await expect(body).not.toContainText("99999");
+    const citation = body.locator(".om-inline-citation[href]").first();
+    await citation.click();
+    await expect(page.locator("dialog[open] .md-body").first()).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("dialog[open]")).toHaveCount(0);
+    await expect(citation).toBeFocused();
+    for (const width of [1440, 768, 390]) {
+      await page.setViewportSize({width, height:1000});
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({path:`${OUT}/context-view-${width}.png`,fullPage:true});
+    }
+    expect(errors).toEqual([]);
+    checks.push("real Sol project view, fixed citation, focus restoration and three viewports");
+    writeFileSync(`${OUT}/report.json`, JSON.stringify({checks,errors},null,2));
+    console.log("PASS",checks.at(-1));
+    await browser.close();
+    process.exit(0);
+  }
   if (process.env.OMEM_REPROCESSING_ONLY === "1") {
     if (!process.env.OMEM_WEB_URL)
       throw Error(
