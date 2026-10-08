@@ -869,13 +869,13 @@ export class AssistantRuntime {
           if (reply.toolCalls?.length)
             throw Error("一次只执行一类工作操作，请勿同时创建普通事项");
           toolActions.push(
-            this.options.work.apply(reply.workAction, {
+            await this.options.work.applyRequested(reply.workAction, {
               requestId: input.turnId,
               conversationId: input.conversation.id,
               principalId: input.conversation.principalId,
               userText: input.userText,
               visibility: input.conversation.visibility,
-            }),
+            }, {signal:input.signal,activeProjectId:input.conversation.projectId ?? undefined,priorTurns:this.router.turns(input.conversation.id).filter(t=>t.id!==input.turnId && t.inputMessageRefs.status==="done").slice(-4).map(t=>({userText:t.inputText,result:t.result ?? ""}))}),
           );
         } catch (error) {
           toolActions.push({

@@ -185,7 +185,7 @@ describe("B2-08 production Lark host", () => {
         }),
       },
       work: {
-        apply: (_action: unknown, actor: WorkActor) => {
+        applyRequested: async (_action: unknown, actor: WorkActor) => {
           workCalls.push(actor);
           return {
             tool: "work_action",

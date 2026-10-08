@@ -220,6 +220,8 @@ it("detects uncited new events immediately, isolates same-name projects and pres
   expect(s.pages.views.read(s.context.id).current).toBe(true);
   s.capture("change", "改到周六，费用条件不变。");
   expect(s.pages.views.read(s.context.id).current).toBe(false);
+  // The ordinary reading page must also show old content as awaiting update.
+  expect(s.repository.get(first.key!)?.current).toBe(false);
   s.setFail(true);
   s.worker.observe();
   await s.worker.processOne();
@@ -235,6 +237,7 @@ it("detects uncited new events immediately, isolates same-name projects and pres
   s.pages.views.apply(s.context.id, "refresh");
   await s.worker.processOne();
   expect(s.pages.views.read(s.context.id).current).toBe(true);
+  expect(s.repository.get(first.key!)?.current).toBe(true);
   expect(s.pages.views.read(s.context.id).key).toBe(first.key);
 });
 

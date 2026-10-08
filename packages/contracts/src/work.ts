@@ -2,6 +2,14 @@ import { z } from "zod";
 import { projectConfigurationSchema } from "./development.js";
 import { scheduleInputSchema } from "./schedules.js";
 
+/** Semantic interpretation is advice to the host, never a write capability. */
+export const requestInterpretationSchema = z.object({
+  verdict: z.enum(["execute", "decline", "uncertain"]),
+  instruction: z.string().min(1).nullable(),
+  reason: z.string().min(1).max(1000),
+}).strict();
+export type RequestInterpretation = z.infer<typeof requestInterpretationSchema>;
+
 const messageSettings = z
   .object({
     enabled: z.boolean().optional(),

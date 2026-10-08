@@ -2,6 +2,7 @@ import {
   implementationResultSchema,
   implementationReviewSchema,
 } from "../../../../packages/contracts/src/development.js";
+import { requestInterpretationSchema } from "../../../../packages/contracts/src/work.js";
 import {
   knowledgeResearchSchema,
   knowledgeBatchSchema,
@@ -53,6 +54,7 @@ import type { RuntimeRequestRepository } from "./requests.js";
 import { withLogContext } from "../logging/logger.js";
 
 const outputSchemas = {
+  "RequestInterpretation.v1": requestInterpretationSchema,
   "ImplementationResult.v1": implementationResultSchema,
   "ImplementationReview.v1": implementationReviewSchema,
   "ContextResolution.v1": contextResolutionSchema,

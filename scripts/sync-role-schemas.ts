@@ -1,6 +1,7 @@
 /** Keep model-facing contracts identical to the schemas the host validates. */
 import { readFileSync, writeFileSync } from "node:fs";
 import { directoryDigest } from "../apps/server/src/agent-runtime/bundles.js";
+import { requestInterpretationSchema } from "../packages/contracts/src/work.js";
 import { z } from "zod";
 import {
   proposalBatchSchema,
@@ -16,6 +17,7 @@ import { assistantReplySchema } from "../packages/contracts/src/assistant.js";
 import { contextResolutionSchema } from "../packages/contracts/src/contexts.js";
 import { materialDescriptionBatchSchema } from "../packages/contracts/src/material-description.js";
 import { knowledgeOutlineProposalSchema } from "../packages/contracts/src/knowledge-outline.js";
+writeFileSync("packages/agent-runtime/roles/request-interpreter/1/output.schema.json", JSON.stringify({...z.toJSONSchema(requestInterpretationSchema),$id:"RequestInterpretation.v1"},null,2)+"\n");
 writeFileSync(
   "packages/agent-runtime/roles/knowledge-outliner/1/output.schema.json",
   JSON.stringify({ ...z.toJSONSchema(knowledgeOutlineProposalSchema), $id: "https://omem.invalid/contracts/KnowledgeOutline.v1" }, null, 2) + "\n",
