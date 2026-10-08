@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-08T15:06:40.972Z",
-  "implementationCommit": "6d454c34d055614ae3cf2653ad04046a07f00a2c",
-  "sourceDigest": "59d6277fcda76f182217c8e192a3cbd0c63fc170b961387ce6884f0f7ce059fa",
+  "recordedAt": "2026-10-08T15:27:54.309Z",
+  "implementationCommit": "a37670f162b2725750fca2cd98cc7325f91ee7eb",
+  "sourceDigest": "0119fde29aad71e8ecc045630959115cb8c8c3c661e6d7562019788988c1d196",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-08T15-06-40-972Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-08T15-27-54-309Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-08T15-06-40-972Z/project.log",
-        "sha256": "0142d176dacd71399a5c861fd9d75cf14acc7a970a40c7f8b4dd8e13b6b4e66f"
+        "log": ".repo-review/runtime/verification/2026-10-08T15-27-54-309Z/project.log",
+        "sha256": "2c8c887f3deac3e9e532d59a74f08135cb21869e749d2889eb76a8110dd2ac27"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-08T15-06-40-972Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-08T15-27-54-309Z/liveChineseRetrieval.log",
         "sha256": "c633cc8b3935a685907f142b4f178e7f9fd00ac994d0edc6ef224a195357b1e8"
       }
     },
@@ -64,11 +64,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v7",
-        "units": 18162,
+        "units": 18171,
         "semantic": {
           "model": "structure-icu-v7:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 18162,
+          "indexed": 18171,
           "pending": 0,
           "error": null
         },
@@ -104,7 +104,7 @@
     "errors": [],
     "pages": [],
     "restore": {
-      "restored": 15,
+      "restored": 16,
       "stale": 9
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
@@ -129,7 +129,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 1488,
+        "elapsedMs": 1913,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -193,7 +193,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 3,
-        "elapsedMs": 832,
+        "elapsedMs": 1069,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -261,7 +261,7 @@
         "passed": false,
         "firstExpectedRank": 20,
         "uniquePathsAt5": 4,
-        "elapsedMs": 918,
+        "elapsedMs": 726,
         "top5": [
           {
             "path": "docs/reader-first/publication-lifecycle.md",
@@ -327,7 +327,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 3,
-        "elapsedMs": 438,
+        "elapsedMs": 271,
         "top5": [
           {
             "path": "scripts/live-development.ts",
@@ -388,7 +388,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 219,
+        "elapsedMs": 202,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -454,7 +454,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 5,
-        "elapsedMs": 913,
+        "elapsedMs": 775,
         "top5": [
           {
             "path": "design.md",

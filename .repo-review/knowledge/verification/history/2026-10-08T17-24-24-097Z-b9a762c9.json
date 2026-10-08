@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-08T15:23:14.536Z",
-  "implementationCommit": "a37670f162b2725750fca2cd98cc7325f91ee7eb",
-  "sourceDigest": "934019795bf2eb511ed0cb9cadc85e14066059f20a5edf6e8b8431ffc8846ced",
+  "recordedAt": "2026-10-08T17:24:24.097Z",
+  "implementationCommit": "973f83d09870c85e0aa04f486ebb32bf0c8a4703",
+  "sourceDigest": "fa003891be1d8edaed687160fc2580599080136e04dfa523ad006fdbcc995960",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-08T15-23-14-536Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-08T17-24-24-097Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 1,
-        "log": ".repo-review/runtime/verification/2026-10-08T15-23-14-536Z/project.log",
-        "sha256": "bb8e6eb35ae57508757704405c902f29a1a1505bafafc0761bbb47e950cac4f0"
+        "log": ".repo-review/runtime/verification/2026-10-08T17-24-24-097Z/project.log",
+        "sha256": "124413fd1628936f9b2f575f5184767e91dccaf725b66d20a9c5d75558b9c86a"
       }
     },
     {
@@ -43,8 +43,8 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-08T15-23-14-536Z/liveChineseRetrieval.log",
-        "sha256": "c633cc8b3935a685907f142b4f178e7f9fd00ac994d0edc6ef224a195357b1e8"
+        "log": ".repo-review/runtime/verification/2026-10-08T17-24-24-097Z/liveChineseRetrieval.log",
+        "sha256": "ea851f04dd6253946ba352a8438dd8e678a25f6dad004a0482177906e9a19216"
       }
     },
     {
@@ -63,12 +63,12 @@
       "details": {
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
-        "projection": "structure-icu-v7",
-        "units": 18169,
+        "projection": "structure-icu-v8",
+        "units": 18214,
         "semantic": {
-          "model": "structure-icu-v7:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
+          "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 18169,
+          "indexed": 18214,
           "pending": 0,
           "error": null
         },
@@ -83,13 +83,13 @@
       "name": "repositorySearch",
       "state": "failed",
       "details": {
-        "passed": 1,
+        "passed": 2,
         "total": 6
       }
     },
     {
       "name": "unchangedSourcesDuringVerification",
-      "state": "failed"
+      "state": "passed"
     }
   ],
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
@@ -104,7 +104,7 @@
     "errors": [],
     "pages": [],
     "restore": {
-      "restored": 16,
+      "restored": 18,
       "stale": 9
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
@@ -129,7 +129,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 2409,
+        "elapsedMs": 2822,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -185,15 +185,15 @@
         "baselineTop5": [
           "docs/reader-first/operations.md",
           "apps/server/src/cli/osdk.ts",
-          "apps/server/src/cli/osdk.ts",
           "docs/cli.md",
-          "docs/reader-first/operations.md"
+          "docs/reader-first/operations.md",
+          ".claude/skills/osdk-guide/reference/configuration/models.md"
         ],
-        "baselineUniquePathsAt5": 3,
+        "baselineUniquePathsAt5": 4,
         "passed": false,
         "firstExpectedRank": null,
-        "uniquePathsAt5": 3,
-        "elapsedMs": 1003,
+        "uniquePathsAt5": 4,
+        "elapsedMs": 1110,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -203,15 +203,6 @@
               "purpose:balanced"
             ],
             "snippet": "如果服务启动时已经配置 `retrieval.enabled=true`，只是本地模型文件缺失，安装完成后后台会按 30 秒间隔重新尝试加载，不永久缓存失败结果。若刚把检索配置从关闭改为开启，或改了模型别名，需要重启服务：配置在启动时读取，模型加载重试不重新读取配置文件。默认示例启用中文向量检索；个人配置以实际文件为准"
-          },
-          {
-            "path": "apps/server/src/cli/osdk.ts",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "export const osdkInstallHelp =\n  \"请先按 https://github.com/lejunyang/one-sdk 安装 osdk，确认 osdk --version 可用后重跑本次 omem setup。npm 安装与普通启动不会下载模型。\";"
           },
           {
             "path": "apps/server/src/cli/osdk.ts",
@@ -239,6 +230,15 @@
               "purpose:balanced"
             ],
             "snippet": "本地中文 embedding 可选：`osdk model sync memory-zh` 下载 BGE-small-zh-v1.5，`osdk model verify memory-zh --json` 校验；应用不隐式下载。缺少模型保留全文检索并报告状态。`osdk run retrieval:index` / "
+          },
+          {
+            "path": ".claude/skills/osdk-guide/reference/configuration/models.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "`model use` 的 reference/include/exclude/variant/kind/family/derived_from/endpoint 会写入同名声明；`sync` 会识别这些字段的变化。模型配置不触发\n任何信任要求：模型字节是内容，osdk 不执行它们，下载仍按锁定摘要校验。`model "
           }
         ]
       },
@@ -259,9 +259,9 @@
         ],
         "baselineUniquePathsAt5": 4,
         "passed": false,
-        "firstExpectedRank": 20,
+        "firstExpectedRank": 17,
         "uniquePathsAt5": 4,
-        "elapsedMs": 743,
+        "elapsedMs": 986,
         "top5": [
           {
             "path": "docs/reader-first/publication-lifecycle.md",
@@ -317,25 +317,26 @@
         ],
         "status": 200,
         "baselineTop5": [
-          "scripts/live-development.ts",
+          "apps/server/src/knowledge/pipeline.ts",
           "scripts/live-development.ts",
           "scripts/live-requirement-followup.ts",
           "scripts/live-native-knowledge-smoke.ts",
-          "scripts/live-native-knowledge-smoke.ts"
+          "apps/server/tests/knowledge-pipeline.test.ts"
         ],
-        "baselineUniquePathsAt5": 3,
-        "passed": false,
-        "firstExpectedRank": 6,
-        "uniquePathsAt5": 3,
-        "elapsedMs": 521,
+        "baselineUniquePathsAt5": 5,
+        "passed": true,
+        "firstExpectedRank": 1,
+        "uniquePathsAt5": 5,
+        "elapsedMs": 359,
         "top5": [
           {
-            "path": "scripts/live-development.ts",
+            "path": "apps/server/src/knowledge/pipeline.ts",
             "routes": [
               "bm25",
+              "code-symbol",
               "purpose:balanced"
             ],
-            "snippet": "const pipeline = new KnowledgePipeline(\n  repository,\n  new RoleRuntimeGateway(new RoleBundleRegistry(), join(directory, \"agents\")),\n  profile,\n  { log: console"
+            "snippet": "export class KnowledgePipeline {\n  readonly registry = new RoleBundleRegistry();\n  private readonly running = new Set<DurableJobWorker>();\n  private stopping = "
           },
           {
             "path": "scripts/live-development.ts",
@@ -344,14 +345,6 @@
               "purpose:balanced"
             ],
             "snippet": "const pipeline = new KnowledgePipeline(\n  repository,\n  new RoleRuntimeGateway(new RoleBundleRegistry(), join(directory, \"agents\")),\n  profile,\n  { log: console"
-          },
-          {
-            "path": "scripts/live-native-knowledge-smoke.ts",
-            "routes": [
-              "bm25",
-              "purpose:balanced"
-            ],
-            "snippet": "const pipeline = new KnowledgePipeline(\n  repository,\n  new RoleRuntimeGateway(new RoleBundleRegistry(), join(dir, \"agents\")),\n  profile,\n  { log: console.log }"
           },
           {
             "path": "scripts/live-native-knowledge-smoke.ts",
@@ -368,6 +361,14 @@
               "purpose:balanced"
             ],
             "snippet": "const resumed = new KnowledgePipeline(f.repository, f.pipeline.gateway, f.pipeline.profile, {concurrency:1,nativeResearch:false});"
+          },
+          {
+            "path": "scripts/review-catalog.ts",
+            "routes": [
+              "bm25",
+              "purpose:balanced"
+            ],
+            "snippet": "const pipeline = new KnowledgePipeline(\n  repository,\n  new RoleRuntimeGateway(\n    new RoleBundleRegistry(),\n    runtime,\n    new RuntimeRequestRepository(stor"
           }
         ]
       },
@@ -380,15 +381,15 @@
         "baselineTop5": [
           "apps/server/src/retrieval/unified.ts",
           "apps/server/src/retrieval/semantic.ts",
-          "apps/server/src/retrieval/semantic.ts",
-          "apps/server/src/retrieval/semantic.ts",
-          "apps/server/src/retrieval/semantic.ts"
+          "scripts/review-verify.ts",
+          "scripts/live-retrieval-smoke.ts",
+          "scripts/live-retrieval-smoke.ts"
         ],
-        "baselineUniquePathsAt5": 2,
+        "baselineUniquePathsAt5": 4,
         "passed": true,
         "firstExpectedRank": 2,
-        "uniquePathsAt5": 2,
-        "elapsedMs": 207,
+        "uniquePathsAt5": 4,
+        "elapsedMs": 255,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -409,31 +410,28 @@
             "snippet": "/** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const "
           },
           {
-            "path": "apps/server/src/retrieval/semantic.ts",
+            "path": "scripts/review-verify.ts",
             "routes": [
               "bm25",
-              "code-symbol",
               "purpose:balanced"
             ],
-            "snippet": "/** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const "
+            "snippet": "const raw=built.retrieval.searchSourcesAsync?await built.retrieval.searchSourcesAsync(rawQuery):built.retrieval.searchSources(rawQuery);"
           },
           {
-            "path": "apps/server/src/retrieval/semantic.ts",
+            "path": "scripts/live-retrieval-smoke.ts",
             "routes": [
               "bm25",
-              "code-symbol",
               "purpose:balanced"
             ],
-            "snippet": "/** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const "
+            "snippet": "const hits = await retrieval.searchSourcesAsync({ text: c.query, limit: 3 });"
           },
           {
-            "path": "apps/server/src/retrieval/semantic.ts",
+            "path": "scripts/live-retrieval-smoke.ts",
             "routes": [
               "bm25",
-              "code-symbol",
               "purpose:balanced"
             ],
-            "snippet": "/** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const "
+            "snippet": "const excluded = await retrieval.searchSourcesAsync({ text: cases[0]!.query, visible: id => id !== ids[0] });"
           }
         ]
       },
@@ -454,7 +452,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 5,
-        "elapsedMs": 1817,
+        "elapsedMs": 894,
         "top5": [
           {
             "path": "design.md",
