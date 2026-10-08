@@ -125,6 +125,22 @@ it("restores latest originals and reviewed prose without scheduling learning or 
     expect(personal.notifications()).toEqual([]);
     expect(imported.resolveMaterial(material.key, material.digest)).toBeNull();
 
+    // Explicit retirement reaches the personal development adapter too. A
+    // leftover old asset and the prior review DB cannot restore its history.
+    writeFileSync(join(root, ".repo-review/knowledge/articles/.retirements.json"),
+      JSON.stringify({version:1,removals:[{
+        key:article.document.key,title:article.document.title,
+        before:"2026-10-02T00:00:00Z",reason:"用户删除陈旧指南。",revisions:[article.revision],
+      }]}));
+    importDevelopmentKnowledge(personal, root);
+    importDevelopmentKnowledge(personal, root);
+    expect(imported.get(article.document.key)).toBeNull();
+    expect(imported.get(article.document.key,article.revision)).toBeNull();
+    expect(imported.pages()).toEqual([]);
+    expect(imported.availability(article.document.key,article.revision)?.reason).toContain("用户删除");
+    expect(personal.db.prepare("SELECT count(*) n FROM knowledge_revisions WHERE document_key=?").get(article.document.key)!.n).toBe(0);
+    expect(new KeywordRetrieval(personal.db).searchSources({text:article.document.title})).toEqual([]);
+
     // Explicit review input still uses the ordinary learning/notification defaults.
     writeFileSync(join(root, "README.md"), "# 显式研究\n\n现在调查新材料。\n");
     captureRepositoryMaterials(personal, root);
