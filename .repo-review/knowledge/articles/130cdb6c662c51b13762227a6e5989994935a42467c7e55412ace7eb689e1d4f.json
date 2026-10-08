@@ -2,9 +2,9 @@
   "version": 1,
   "document": {
     "key": "omem:apps/server/src/retrieval/units.ts",
-    "title": "可检索内容的统一投影与增量刷新",
-    "summary": "该模块把原始材料、知识文章、事项和记忆转换为带固定证据锚点的统一检索单位，并按 owner 增量替换 SQLite 与 FTS 投影。它同时控制结构切分、知识可用性、证据可见范围和中文分词。",
-    "category": "代码机制",
+    "title": "统一检索单位的生成与增量投影",
+    "summary": "该实现把原始材料、知识文章、任务和记忆转换成统一、可替换的检索单位，保留固定版本的证据锚点与可见性范围，并同步写入结构化表、全文索引和材料层级。它同时负责内容切分、有效性过滤、增量失效判断、原子替换及中文分词。",
+    "category": "服务端检索",
     "topicPath": [
       "软件开发",
       "omem",
@@ -14,135 +14,104 @@
     ],
     "sections": [
       {
-        "key": "role",
-        "title": "把异构内容变成统一检索单位",
-        "body": "这个模块把数据库中的异构内容整理成同一种 `RetrievalUnit`，供后续检索与回答上下文读取。单位在普通命中字段之外保存 `owner`、可见证据 ID、主题路径和子类型；原始修订仍留在权威表中，投影可以整体替换。参考 [[c1]] [[c2]]\n\n它与相邻模块的分工由导入关系直接体现。`parseFile` 提供代码符号，`fragmentPositions` 把行区间映射回不可变 fragment，`saveContextHierarchy` 保存父子结构，生命周期函数判断知识章节能否进入索引。参考 [[c3]]"
+        "key": "purpose",
+        "title": "为什么需要检索投影",
+        "body": "这段代码维护一层可替换的检索投影，使检索不必直接扫描不可变的材料、知识文章、任务和记忆表。`RetrievalUnit` 在命中结构上增加 `owner`、`visibilityIds`、`topicPath` 与 `subtype`：`owner` 用来成组替换，`visibilityIds` 把结果约束到原始片段，目标和引用则负责把命中带回可阅读的固定内容。原始数据仍留在各自表中，投影只承担检索与导航。参考 [[c1]]\n\n原始材料从 revision 的 `body.parts` 还原文本；文本与链接会按捕获格式拼接。若材料标为派生内容，`materialFromRow` 直接返回 `null`，避免生成内容再次冒充原始证据。参考 [[c2]]"
       },
       {
         "key": "source_flow",
-        "title": "一份 TypeScript 材料如何进入索引",
-        "body": "统一检索层的启动和后台轮询走 `syncAsync()`，异步搜索也先等待 `syncAsync()`；词面检索与同步 source 搜索则走 `sync()`。参考 [[c18]] [[c19]] [[c20]] `changes()` 先对发布状态和描述版本求稳定签名，并纳入 source head、知识 head，以及任务与记忆状态；签名未变便直接结束。随后它读取每个 source 的当前修订，并以版本和描述版本组成 identity，只重建发生变化的 owner。参考 [[c4]] [[c5]]\n\n```mermaid\nflowchart LR\n  A[当前 source 修订行] --> B[materialFromRow]\n  B --> C[sourceUnits]\n  C --> D{按材料类型切分}\n  D -->|代码| E[codePassages]\n  D -->|文本| F[markdownPassages]\n  D -->|纯图片| G[图片标签 passage]\n  E --> H[返回 sourceUnits 组装单位]\n  F --> H\n  G --> H\n  H --> I[replace]\n  I --> J[retrieval_units 与 FTS]\n  I --> K[上下文层级]\n```\n\n输入行先由 `materialFromRow` 还原为材料。派生内容会被排除，文本与链接按捕获格式拼接，图片单独保留，同时生成稳定摘要并加载 fragment。参考 [[c6]] 对 TypeScript 文件，`codePassages` 以 AST 符号为边界，把操作内部的局部常量留在所属函数或方法中；类入口只保留到首个操作之前，未被符号覆盖的导入与顶层配置也会形成片段。参考 [[c7]]\n\n`sourceUnits` 在内部按材料类型调用 `codePassages` 或 `markdownPassages`，纯图片材料则用图片标签生成可检索文本；这些分支返回的 passage 随后由 `sourceUnits` 组装成检索单位，再交给 `replace`。参考 [[c8]] [[c5]] 每段通过行号生成固定 source anchor；找不到任何 fragment 的段落会被丢弃。输出单位携带标题和层级，也记录会话或发言上下文、可见 fragment 以及 provenance。参考 [[c9]]"
-      },
-      {
-        "key": "knowledge_state",
-        "title": "知识、事项与记忆的准入规则",
-        "body": "知识文章进入投影前，会递归确认调查材料和依赖文章仍可取得，并只保留状态为 current 的章节；note、retired 和 planned 页面不参与检索。参考 [[c10]] 单位的 `visibilityIds` 覆盖写作时使用的全部原始材料，`references` 则只沿正文实际出现的引用标签追到 source anchor，并能继续展开文章引用。参考 [[c11]] 每个合格章节再按 Markdown 块拆成知识单位，部分章节过期时目标会标为 `needs-review`。参考 [[c12]]\n\n事项按当前版本生成一个单位，正文包含详情以及已有的下一步、到期时间和跟进数据；若事项绑定证据 fragment，也会附上 source anchor。参考 [[c13]] 记忆只读取 active 记录，把结构化正文递归展开为文本，并把 fragment 或整份 source revision 的证据集合转成可见范围与引用。参考 [[c14]]"
+        "title": "一份源文件如何变成可搜索结果",
+        "body": "以当前 source 头版本的一份 TypeScript 文件为例，`sync` 或 `syncAsync` 驱动 `changes`。后者先对材料头、知识状态、任务和记忆状态计算总签名；签名没变便停止。材料版本或描述版本变化时，它调用 `sourceUnits` 重建该 owner，只有上下文层级版本变化时则保留单位与向量 ID，仅回填层级。参考 [[c8]] [[c9]]\n\n```mermaid\nflowchart LR\n  A[sync / syncAsync] --> B[changes 检查签名与 owner identity]\n  B --> C[materialFromRow 还原当前材料]\n  C --> D[sourceUnits 选择切分器]\n  D --> E[codePassages 或 markdownPassages]\n  E --> F[sourceAnchor 绑定版本、行号与片段]\n  F --> G[replace 原子替换单位、FTS 与层级]\n```\n代码材料按 AST 符号切分，函数或方法中的局部常量留在所属操作内；类条目不重复索引整段方法体，未被符号覆盖的 import、初始化与配置仍会形成独立段落。参考 [[c4]] [[c5]] 文档材料按 Markdown 块切分，并记录标题路径；冒号结尾的说明可与紧随的表格、列表、代码块或引用合并，只有标题的文档也能形成结果。参考 [[c3]]\n\n`sourceUnits` 根据扩展名选择代码或文档切分；纯图片材料以图片标签形成段落。每段必须能映射到至少一个 fragment，随后写入正文、标题路径、上下文、来源信息和固定 `SourceAnchor`。该锚点包含材料 key、revision、digest、行号及相交片段 ID，因此一次检索命中可以返回确切版本和范围。参考 [[c6]] [[c7]]\n\n`replace` 在一个事务中删除 owner 的旧单位，再写入结构化表、FTS5 表和材料层级；写 FTS 前会移除引用标记。标题、上下文与正文都经过 ICU 中文分词和小写化，所以标准 BM25 可以按中文词搜索。失败会回滚整个替换。参考 [[c14]] [[c15]]"
       },
       {
         "key": "boundaries",
-        "title": "替换事务与可调整边界",
-        "body": "`replace` 以 owner 为原子范围，在同一事务中删除旧普通索引、FTS、上下文层级和 head，再写入新单位；任何异常都会回滚。同步结束后，不再存在的 owner 会被清除，材料缓存也只保留当前 source head。参考 [[c15]]\n\n需要调整检索粒度时，可修改 `markdownPassages` 或 `codePassages`。Markdown 切分会保留标题路径，并把冒号结尾的引导段与紧随的表格、列表、代码块或引用块合并；空文档不产出片段，只有标题的文档仍可检索。参考 [[c16]] 需要改变中文词面索引时，则修改 `indexText`：它用 `Intl.Segmenter(\"zh\")` 取出 word-like 片段、转小写并用空格连接。数据库行返回业务层时由 `decodeUnit` 还原 JSON 字段。参考 [[c17]]"
+        "title": "不同来源的准入规则与修改位置",
+        "body": "知识文章不会无条件进入索引。调查材料与递归依赖必须仍可取得，章节状态必须为 `current`；note、retired、planned 文章被排除。可用文章只投影受支持章节，并递归收集原始片段作为可见性范围；若文章还有其他章节需要复核，命中目标会带 `needs-review`。参考 [[c10]] [[c11]]\n\n任务按当前版本生成一个单位，正文包含详情、下一步、到期时间与跟进状态；若任务绑定证据 fragment，会反查材料行号并建立引用。记忆只处理 `active` 项，将结构化 body 展开为可搜索文本，并把证据集中的 fragment 或 source revision 转成可见性与引用。参考 [[c12]] [[c13]]\n\n边界处理集中在三处：切分粒度由 `markdownPassages`、`codePassages` 调整；来源是否可见由 `sourceUnits` 和文章有效性判断控制；索引字段与中文分词由 `replace`、`indexText` 控制。修改投影结构或切分规则时还应更新 `UNIT_VERSION`，使 owner identity 失效并触发重建。已不再需要的 owner 会被清空，材料缓存也只保留当前 source 头版本。参考 [[c1]] [[c14]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "检索单位字段",
-        "reason": "支持统一检索单位在普通命中信息之外保存 owner、可见范围、主题路径和子类型。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/units.ts",
-          "startLine": 20,
-          "endLine": 31
-        },
-        "quote": "export type RetrievalUnit = Omit<RetrievalHit, \"score\" | \"routes\"> & {\n  owner: string;\n  visibilityIds: string[];\n  topicPath: string[];\n  subtype: string;\n};\nexport type Passage = {\n  text: string;\n  startLine: number;\n  endLine: number;\n  headingPath: string[];\n};"
-      },
-      {
-        "key": "c2",
-        "label": "可替换投影定位",
-        "reason": "说明投影按 owner 增量维护，旧版本仍保留在原始表中。",
+        "label": "检索单位结构",
+        "reason": "说明该文件的投影职责、版本常量以及检索单位新增的 owner、可见性、主题和子类型字段。",
         "relation": "explains",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/units.ts",
-          "startLine": 443,
-          "endLine": 448
+          "startLine": 1,
+          "endLine": 31
         },
-        "quote": "/** Incremental owner projections; old versions remain in their original tables. */\nexport class RetrievalProjection {\n  private materialCache = new Map<string, KnowledgeMaterial | null>();\n  private signature = \"\";\n  private work: Promise<void> | null = null;\n  constructor(readonly db: DatabaseSync) {}"
+        "quote": "/** Replaceable retrieval units, separate from immutable storage and reader pages. */\nimport { createHash } from \"node:crypto\";\nimport type { DatabaseSync } from \"node:sqlite\";\nimport { marked } from \"marked\";\nimport type {\n  KnowledgeArtifact,\n  KnowledgeMaterial,\n} from \"../../../../packages/contracts/src/knowledge.j"
       },
       {
-        "key": "c3",
-        "label": "相邻模块依赖",
-        "reason": "展示代码解析、fragment 定位、上下文层级、知识生命周期和材料描述等直接依赖。",
-        "relation": "depends_on",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/units.ts",
-          "startLine": 9,
-          "endLine": 16
-        },
-        "quote": "import { parseFile } from \"../code/parse.js\";\nimport { fragmentPositions } from \"../knowledge/structure.js\";\nimport { CONTEXT_VERSION, saveContextHierarchy } from \"./hierarchy.js\";\nimport { knowledgeStatus, publicationRole } from \"../knowledge/lifecycle.js\";\nimport { stableDigest } from \"../storage/digest.js\";\nimport {"
-      },
-      {
-        "key": "c4",
-        "label": "投影同步入口与变更签名",
-        "reason": "支持同步与异步投影入口的互斥行为，以及 changes 对各类状态计算签名并跳过未变化投影。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/units.ts",
-          "startLine": 456,
-          "endLine": 503
-        },
-        "quote": "  sync() {\n    if (this.work) return;\n    for (const _ of this.changes()) {\n      /* Native snapshot preparation is synchronous. */\n    }\n  }\n  syncAsync(): Promise<void> {\n    if (this.work) return this.work;\n    this.work = (async () => {\n      for (const _ of this.changes())\n        await new Promise<void>((resolve)"
-      },
-      {
-        "key": "c5",
-        "label": "当前材料增量刷新",
-        "reason": "支持读取 source 当前 head、组成 owner identity、由 sourceUnits 生成单位并仅替换变化 owner，同时回填上下文层级。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/units.ts",
-          "startLine": 513,
-          "endLine": 549
-        },
-        "quote": "    const sourceRows = this.db\n      .prepare(\n        \"SELECT r.*,s.namespace,s.external_id FROM sources s JOIN revisions r ON r.id=s.head\",\n      )\n      .all() as Row[];\n    const materials = new Map<string, KnowledgeMaterial>();\n    const sourceById = new Map(\n      sourceRows.map((row) => [String(row.source_id), r"
-      },
-      {
-        "key": "c6",
-        "label": "修订行还原材料",
-        "reason": "支持排除派生内容、组合文本链接、保存图片、计算摘要并载入 fragment 的过程。",
+        "key": "c2",
+        "label": "材料正文还原",
+        "reason": "支持从 revision body 还原文本并排除派生材料的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/units.ts",
           "startLine": 199,
-          "endLine": 260
+          "endLine": 216
         },
         "quote": "export function materialFromRow(\n  db: DatabaseSync,\n  row: Row,\n): KnowledgeMaterial | null {\n  const body = JSON.parse(String(row.body));\n  if (body.context?.derived || body.provenance?.producerKind === \"derived\")\n    return null;\n  const parts = body.parts as (KnowledgeMaterial[\"images\"][number] & {\n    type: string"
       },
       {
-        "key": "c7",
-        "label": "代码结构切分",
-        "reason": "支持按符号切分代码、保留操作内部局部声明、缩短容器入口并补齐未覆盖顶层内容。",
+        "key": "c3",
+        "label": "Markdown 切分",
+        "reason": "支持按块和标题路径切分、合并引导段与复杂块，以及标题-only文档回退行为。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/units.ts",
+          "startLine": 33,
+          "endLine": 90
+        },
+        "quote": "/** Parse block boundaries once. Code fences, tables and lists remain coherent. */\nexport function markdownPassages(text: string): Passage[] {\n  let cursor = 0;\n  const headings: { depth: number; title: string }[] = [],\n    output: Passage[] = [];\n  for (const token of marked.lexer(text)) {\n    const offset = text.inde"
+      },
+      {
+        "key": "c4",
+        "label": "代码符号筛选",
+        "reason": "支持 AST 符号切分时将局部常量保留在所属函数、方法或容器内。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/units.ts",
           "startLine": 92,
-          "endLine": 188
+          "endLine": 116
         },
         "quote": "export function codePassages(material: KnowledgeMaterial): Passage[] {\n  const parsed = parseFile(material.path ?? material.title, material.text);\n  const contains = (\n    parent: (typeof parsed.symbols)[number],\n    child: (typeof parsed.symbols)[number],\n  ) =>\n    parent !== child &&\n    parent.rangeStart.line <= ch"
       },
       {
-        "key": "c8",
-        "label": "材料切分选择",
-        "reason": "支持 sourceUnits 内部选择代码、Markdown 与纯图片三种切分分支并继续组装检索单位。",
+        "key": "c5",
+        "label": "代码段落构造",
+        "reason": "支持类与方法去重、注释归属、标题路径以及未覆盖模块内容的补充索引。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/units.ts",
-          "startLine": 284,
-          "endLine": 343
+          "startLine": 127,
+          "endLine": 188
         },
-        "quote": "function sourceUnits(\n  material: KnowledgeMaterial,\n  row: Row,\n  description?: MaterialDescriptionRecord,\n): RetrievalUnit[] {\n  const body = JSON.parse(String(row.body)),\n    code = /\\.(?:[cm]?[jt]sx?|vue)$/i.test(material.path ?? material.title);\n  const passages = code\n    ? codePassages(material)\n    : material.t"
+        "quote": "  const output: Passage[] = symbols.map((s) => {\n    let start = s.rangeStart.line;\n    // Adjacent comments belong with the declaration, without inventing intent.\n    while (start > 1 && /^\\s*(?:\\/\\*|\\*|\\/\\/)/.test(lines[start - 2]!)) start--;\n    // Keep a named container entry without indexing its whole body again b"
       },
       {
-        "key": "c9",
-        "label": "原始材料检索单位",
-        "reason": "支持 source anchor、无 fragment 过滤、上下文、可见范围和 provenance 的组装。",
+        "key": "c6",
+        "label": "证据锚点与切分选择",
+        "reason": "支持 SourceAnchor 固定材料版本、行号和片段，并说明代码、文档及图片材料的切分分支。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/units.ts",
+          "startLine": 263,
+          "endLine": 304
+        },
+        "quote": "export function sourceAnchor(\n  material: KnowledgeMaterial,\n  startLine: number,\n  endLine: number,\n): SourceAnchor {\n  return {\n    kind: \"source\",\n    key: material.key,\n    revisionId: material.revisionId,\n    digest: material.digest,\n    startLine,\n    endLine,\n    fragmentIds:\n      !material.text.trim() && mater"
+      },
+      {
+        "key": "c7",
+        "label": "源材料单位生成",
+        "reason": "支持无 fragment 段落被排除，以及检索单位正文、上下文、目标、可见性和来源信息的构造。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -153,48 +122,61 @@
         "quote": "  return passages.flatMap((p, index) => {\n    const target = sourceAnchor(material, p.startLine, p.endLine);\n    if (!target.fragmentIds.length) return [];\n    const parts = partContext.filter(\n      (part) => part.startLine <= p.endLine && part.endLine >= p.startLine,\n    );\n    const actors = [\n      ...new Set(\n    "
       },
       {
-        "key": "c10",
-        "label": "知识准入条件",
-        "reason": "支持递归检查输入可用性，并按发布角色、页面状态和章节 current 状态筛选文章。",
+        "key": "c8",
+        "label": "同步与总签名",
+        "reason": "支持同步和异步驱动 changes，以及总签名未变化时跳过投影工作的说明。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/units.ts",
+          "startLine": 456,
+          "endLine": 503
+        },
+        "quote": "  sync() {\n    if (this.work) return;\n    for (const _ of this.changes()) {\n      /* Native snapshot preparation is synchronous. */\n    }\n  }\n  syncAsync(): Promise<void> {\n    if (this.work) return this.work;\n    this.work = (async () => {\n      for (const _ of this.changes())\n        await new Promise<void>((resolve)"
+      },
+      {
+        "key": "c9",
+        "label": "材料增量重建",
+        "reason": "支持按材料 revision 与描述版本替换 owner，并在仅层级版本变化时回填上下文。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/units.ts",
-          "startLine": 604,
-          "endLine": 643
+          "startLine": 530,
+          "endLine": 549
         },
-        "quote": "    const inputsAvailable = (a: KnowledgeArtifact): boolean => {\n      const prior = availability.get(a);\n      if (prior !== undefined) return prior;\n      availability.set(a, false);\n      const available = (a.investigation ?? []).every(d=>materials.has(d.key)) && a.dependencies.every((d) => {\n        if (d.kind === "
+        "quote": "    for (const row of sourceRows) {\n      const m = material(row);\n      if (!m) continue;\n      const description = descriptions.get(m.revisionId) ?? undefined;\n      const owner = \"source:\" + m.sourceId,\n        identity =\n          UNIT_VERSION + \":\" + m.revisionId + \":\" + (description?.version ?? 0);\n      wanted.a"
+      },
+      {
+        "key": "c10",
+        "label": "文章有效性与可见性",
+        "reason": "支持递归检查输入、排除不发布状态，并从材料依赖计算文章可见片段范围。",
+        "relation": "depends_on",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/units.ts",
+          "startLine": 601,
+          "endLine": 655
+        },
+        "quote": "    // All material used while writing must remain in the visibility scope, even\n    // when only the cited original inputs decide whether prose can be recalled.\n    const availability = new WeakMap<KnowledgeArtifact, boolean>();\n    const inputsAvailable = (a: KnowledgeArtifact): boolean => {\n      const prior = avail"
       },
       {
         "key": "c11",
-        "label": "知识可见范围与引用",
-        "reason": "支持递归收集全部依赖材料的可见 fragment，并从正文引用标签解析固定 source anchor。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/units.ts",
-          "startLine": 644,
-          "endLine": 682
-        },
-        "quote": "    const articleVisibility = (\n      a: KnowledgeArtifact,\n      seen = new Set<string>(),\n    ): string[] =>\n      [...a.dependencies, ...(a.investigation ?? []).map(d=>({...d,kind:\"material\" as const}))].flatMap((d) => {\n        if (d.kind === \"material\")\n          return materials.get(d.key)?.fragments.map((f) => f"
-      },
-      {
-        "key": "c12",
-        "label": "知识章节单位",
-        "reason": "支持按合格章节生成知识检索单位，以及 needs-review、引用和主题路径字段。",
+        "label": "知识章节投影",
+        "reason": "支持只投影受支持章节、标注复核状态并构造知识检索单位。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/units.ts",
           "startLine": 684,
-          "endLine": 748
+          "endLine": 749
         },
         "quote": "    for (const [key, { revision, artifact: a }] of validArticles) {\n      const sections = a.document.sections.filter((s) => supported(a, s.key));\n      const original = materials.get(key);\n      const description = original\n        ? (descriptions.get(original.revisionId) ?? undefined)\n        : undefined;\n      const"
       },
       {
-        "key": "c13",
-        "label": "事项投影",
-        "reason": "支持事项正文、状态上下文、版本目标与绑定证据锚点的组装。",
+        "key": "c12",
+        "label": "任务检索单位",
+        "reason": "支持任务文本、状态上下文、证据引用和可见性字段的生成方式。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -205,9 +187,9 @@
         "quote": "    for (const row of this.db.prepare(\"SELECT * FROM tasks\").all()) {\n      const owner = \"task:\" + row.id,\n        identity =\n          UNIT_VERSION + \":evidence-range-v1:\" + row.version + \":\" + row.status;\n      wanted.add(owner);\n      if (heads.get(owner) === identity) continue;\n      const fragment = row.evidence_"
       },
       {
-        "key": "c14",
-        "label": "活动记忆投影",
-        "reason": "支持只读取 active 记忆、展开结构化正文并从证据集合生成可见范围与引用。",
+        "key": "c13",
+        "label": "记忆检索单位",
+        "reason": "支持只处理 active 记忆、展开结构化正文并从证据集还原引用与可见性。",
         "relation": "implements",
         "target": {
           "kind": "material",
@@ -218,82 +200,30 @@
         "quote": "    for (const row of this.db\n      .prepare(\n        `SELECT m.*,r.id revision_id,r.body,r.evidence_set,r.valid_from FROM memories m\n      JOIN memory_revisions r ON r.id=m.head_revision_id WHERE m.status='active'`,\n      )\n      .all()) {\n      const owner = \"memory:\" + row.id,\n        identity = UNIT_VERSION + \":\" +"
       },
       {
-        "key": "c15",
-        "label": "按 owner 事务替换",
-        "reason": "支持清理失效 owner 和缓存，并在事务内删除旧投影、写入新单位及上下文层级。",
+        "key": "c14",
+        "label": "原子替换与清理",
+        "reason": "支持清理失效 owner、裁剪缓存，以及在事务内同步替换结构化单位、FTS 和层级。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/units.ts",
           "startLine": 903,
-          "endLine": 975
+          "endLine": 976
         },
         "quote": "    for (const owner of heads.keys())\n      if (!wanted.has(owner)) this.replace(owner, null, []);\n    // Do not retain every old document in memory after sources have moved on.\n    const live = new Set(sourceRows.map((r) => String(r.id)));\n    for (const key of this.materialCache.keys())\n      if (!live.has(key)) this"
       },
       {
-        "key": "c16",
-        "label": "Markdown 块切分",
-        "reason": "支持标题路径、引导段合并、空文档与仅标题文档的边界行为。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/units.ts",
-          "startLine": 34,
-          "endLine": 90
-        },
-        "quote": "export function markdownPassages(text: string): Passage[] {\n  let cursor = 0;\n  const headings: { depth: number; title: string }[] = [],\n    output: Passage[] = [];\n  for (const token of marked.lexer(text)) {\n    const offset = text.indexOf(token.raw, cursor);\n    if (offset < 0) continue;\n    cursor = offset + token.r"
-      },
-      {
-        "key": "c17",
-        "label": "中文索引与行解码",
-        "reason": "支持 ICU 中文分词以及从 SQLite 行恢复 RetrievalUnit 字段。",
+        "key": "c15",
+        "label": "中文索引与解码",
+        "reason": "支持 ICU 中文分词、小写化以及数据库行还原为 RetrievalUnit 的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/units.ts",
           "startLine": 979,
-          "endLine": 1006
+          "endLine": 1007
         },
         "quote": "const segmenter = new Intl.Segmenter(\"zh\", { granularity: \"word\" });\n/** ICU segmentation makes Chinese searchable with FTS5's standard BM25. */\nexport function indexText(text: string) {\n  return [...segmenter.segment(text)]\n    .filter((s) => s.isWordLike)\n    .map((s) => s.segment.toLowerCase())\n    .join(\" \");\n}\nexp"
-      },
-      {
-        "key": "c18",
-        "label": "后台异步刷新入口",
-        "reason": "支持统一检索层封装同步与异步投影入口，并在 start 的后台 tick 中等待 syncAsync。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/unified.ts",
-          "startLine": 68,
-          "endLine": 103
-        },
-        "quote": "  private sync() {\n    if (!this.readOnly) this.projection.sync();\n  }\n  private async syncAsync() {\n    if (!this.readOnly) await this.projection.syncAsync();\n  }\n  private ready() {\n    this.loading ??= this.load!()\n      .then((model) => (this.model = model))\n      .catch((error) => {\n        // A failed startup is "
-      },
-      {
-        "key": "c19",
-        "label": "词面与异步搜索刷新",
-        "reason": "支持 lexical 在检索前调用 sync，而异步 search 在检索前等待 syncAsync。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/unified.ts",
-          "startLine": 431,
-          "endLine": 485
-        },
-        "quote": "  private lexical(q: SearchQuery): ScoredUnit[] {\n    this.sync();\n    const terms = queryTerms(q.text);\n    if (!terms.length) return [];\n    const phrase = [\n      ...new Set(terms.flatMap((term) => indexText(term).split(\" \"))),\n    ]\n      .filter(Boolean)\n      .map((t) => '\"' + t.replaceAll('\"', '\"\"') + '\"')\n     "
-      },
-      {
-        "key": "c20",
-        "label": "同步与异步 source 搜索",
-        "reason": "支持同步 searchSources 调用 sync，以及 searchSourcesAsync 复用异步 search。",
-        "relation": "calls",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/unified.ts",
-          "startLine": 772,
-          "endLine": 787
-        },
-        "quote": "  override searchSources(q: SearchQuery): SourceCandidate[] {\n    this.sync();\n    const sourceQuery = { ...q, kinds: [\"source\" as const] };\n    const navigation = this.navigationCandidates(sourceQuery);\n    if (navigation)\n      return this.sources(this.finish(navigation.hits, navigation.query), q);\n    const lexical "
       }
     ],
     "questions": []
@@ -303,11 +233,6 @@
       "kind": "material",
       "key": "omem:apps/server/src/retrieval/units.ts",
       "digest": "1595331b1ff7e315b7b92bdc5434d9b81f7d209f83d53b07779b6300c0419d76"
-    },
-    {
-      "kind": "material",
-      "key": "omem:apps/server/src/retrieval/unified.ts",
-      "digest": "4f0dd54b90f00316539a3a5ff85c9474ba6f9d61845de7efea2a9251ae367e9e"
     }
   ],
   "publication": {
@@ -317,46 +242,30 @@
     {
       "key": "omem:apps/server/src/retrieval/units.ts",
       "digest": "1595331b1ff7e315b7b92bdc5434d9b81f7d209f83d53b07779b6300c0419d76"
-    },
-    {
-      "key": "omem:apps/server/src/knowledge/research-snapshot.ts",
-      "digest": "3771d0da8add408e7e2ae90a214553c2f0bbd6baeb7ff74a25e97f32e7d1237c"
-    },
-    {
-      "key": "omem:apps/server/src/retrieval/unified.ts",
-      "digest": "4f0dd54b90f00316539a3a5ff85c9474ba6f9d61845de7efea2a9251ae367e9e"
-    },
-    {
-      "key": "omem:apps/server/tests/material-descriptions.test.ts",
-      "digest": "5a9430d3f5474c43a137836453f9295d03ab1c1ff6d01db3969b6dccb0bdfd04"
-    },
-    {
-      "key": "omem:apps/server/tests/retrieval-hierarchy.test.ts",
-      "digest": "328f2e460bf7ca55644eecfef5cd7904a819713c81cda40f6509a6d9a4411a85"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-08T17:20:39.389Z",
+    "at": "2026-10-08T18:26:31.816Z",
     "trace": {
       "profileId": "traex",
       "acpProvider": "traex",
-      "runId": "604d7611-6878-49ac-afd3-86121a9ab25b",
-      "roleId": "knowledge-refresher",
+      "runId": "9d9efbe6-dced-4b4d-b442-9c75148e7f45",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9",
-      "promptHash": "c4eac87ec7c51aa3fe6ff127eeade2b0fe78834f3833fa54d8cd0e1800d232c9",
-      "contextHash": "7a42a65634853f38d7ef12e2af147881a4c4e293a4728c91b434625d1eef1c0d",
-      "skillHash": "a72a1d28866edde0b26ba3e0e42b2ac3d0141425c5af39808ce5364931c5e40b",
+      "bundleHash": "7edf0895af309cb6968c13abfcdf155753293a02c685afe651fe8fdd34684abf",
+      "promptHash": "f38ee1138c0c968015f6ed55ad0a8ff4e7a62184e14a9e1b42f93cdb37720e13",
+      "contextHash": "b3cb983fcbc98fafb560157a97e8828e24cfa66275b5d0beeb5cc0c1cfed8bf0",
+      "skillHash": "652382ed250f3b635820e922009c9fc92c5935cd63cec7e4cde38f90a0406c32",
       "toolHash": "6ecd4cb47ca06f6b86b9c2e46f7cbe547345091d7fd0a8c46a45f14b98cea1a6",
-      "fingerprint": "0134ac19d36f4d61acd5abd9a3cfbe89ddb96efbaf6ca128e85432fdde98b66b",
+      "fingerprint": "b2f73098ce4098863b71e6e94522df654ec4c15fbfb109853a947e5cce5a4a9e",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "native"
         },
@@ -387,10 +296,10 @@
         "submit_result"
       ],
       "sessionIds": [
-        "01a11c86-b560-7181-9019-7bc4ce4ec1a7"
+        "01a11cc2-9b02-7fc0-bd17-92a65749c9a7"
       ],
       "usage": {
-        "used": 80194,
+        "used": 82023,
         "size": 258400,
         "cost": null,
         "acpCompletion": "validated_submission",
@@ -399,26 +308,26 @@
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_KonB8nmle60PAfxGYOe8b29n:exec-4a326c21-ca8e-4b24-8872-b76a6a8aeab1",
+            "id": "code-mode-nested:29:call_9fLJqQbd3Uci9lUiZZwFbeKQ:exec-1325ec03-3e92-47a7-9585-588dd701b8cb",
             "title": "Read SKILL.md",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_KonB8nmle60PAfxGYOe8b29n:exec-4a326c21-ca8e-4b24-8872-b76a6a8aeab1",
-              "process_id": "23390",
-              "turn_id": "01a11c86-b870-7903-ae14-4d36937baeeb",
-              "started_at_ms": 1791479969862,
+              "call_id": "code-mode-nested:29:call_9fLJqQbd3Uci9lUiZZwFbeKQ:exec-1325ec03-3e92-47a7-9585-588dd701b8cb",
+              "process_id": "75172",
+              "turn_id": "01a11cc2-9e39-7e80-abec-fd21cd80c74a",
+              "started_at_ms": 1791483893499,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md"
+                "sed -n '1,240p' .trae/skills/omem-code-analyst/SKILL.md"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/604d7611-6878-49ac-afd3-86121a9ab25b",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/7edf0895af309cb6968c13abfcdf155753293a02c685afe651fe8fdd34684abf/9d9efbe6-dced-4b4d-b442-9c75148e7f45",
               "parsed_cmd": [
                 {
                   "type": "read",
-                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-code-analyst/SKILL.md",
                   "name": "SKILL.md",
-                  "path": ".trae/skills/omem-knowledge-refresher/SKILL.md"
+                  "path": ".trae/skills/omem-code-analyst/SKILL.md"
                 }
               ],
               "source": "unified_exec_startup",
@@ -428,44 +337,71 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_KonB8nmle60PAfxGYOe8b29n:exec-4a326c21-ca8e-4b24-8872-b76a6a8aeab1",
+            "id": "code-mode-nested:29:call_9fLJqQbd3Uci9lUiZZwFbeKQ:exec-1325ec03-3e92-47a7-9585-588dd701b8cb",
             "status": "completed",
-            "outputDigest": "f8fadc171c1dd313e8c56319c5f158702e79da9efab52b51d3a153289c8c4cff"
+            "outputDigest": "c85b5c74763aa96a3dd2760250012892509309bb3e93647843298f91dcc7695d"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_f7E0IoPCNjiaC4fMnj7bZnJy:exec-676c43e3-3a98-4951-8916-c571c4163a04",
-            "title": "Tool: omem/search_materials",
+            "id": "code-mode-nested:29:call_j1VXab8U5YLsw0yyJvO1duIM:exec-f7cfc682-14ae-4abe-b26d-f62c3596ff38",
+            "title": "Tool: omem/code_navigation",
             "status": "in_progress",
             "input": {
               "server": "omem",
-              "tool": "search_materials",
+              "tool": "code_navigation",
               "arguments": {
-                "query": "RetrievalProjection syncAsync start tick lexical search source",
-                "codeIntent": "callers",
+                "key": "omem:apps/server/src/retrieval/units.ts"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_j1VXab8U5YLsw0yyJvO1duIM:exec-7ab0c194-21ad-42c8-b6c6-fdb94992a3ec",
+            "title": "Tool: omem/list_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "list_materials",
+              "arguments": {
+                "filter": "apps/server/src/retrieval/units.ts",
                 "kind": "code",
                 "limit": 10,
-                "purpose": "implementation"
+                "offset": 0
               }
             }
           },
           {
             "kind": "mcp",
-            "tool": "search_materials",
+            "tool": "list_materials",
             "args": {
-              "query": "RetrievalProjection syncAsync start tick lexical search source",
-              "kind": "code",
-              "purpose": "implementation",
-              "codeIntent": "callers",
-              "limit": 10
+              "offset": 0,
+              "limit": 10,
+              "filter": "apps/server/src/retrieval/units.ts",
+              "kind": "code"
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "code_navigation",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/units.ts"
             },
             "success": true
           },
           {
             "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_j1VXab8U5YLsw0yyJvO1duIM:exec-7ab0c194-21ad-42c8-b6c6-fdb94992a3ec",
+            "status": "completed",
+            "outputDigest": "ca198e96496324d835e32c5565bb4185d579f0297f02f6704a0a7a7e57cf5c83"
+          },
+          {
+            "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_f7E0IoPCNjiaC4fMnj7bZnJy:exec-d30ab3fa-da8f-4d37-822f-b2e6d06f5635",
+            "id": "code-mode-nested:29:call_j1VXab8U5YLsw0yyJvO1duIM:exec-581a7b84-d1af-4440-8b2d-1ab28aa3fba1",
             "title": "Tool: omem/read_material",
             "status": "in_progress",
             "input": {
@@ -473,132 +409,74 @@
               "tool": "read_material",
               "arguments": {
                 "key": "omem:apps/server/src/retrieval/units.ts",
-                "startLine": 270,
-                "endLine": 310
+                "startLine": 351,
+                "endLine": 700
               }
             }
           },
           {
             "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_f7E0IoPCNjiaC4fMnj7bZnJy:exec-676c43e3-3a98-4951-8916-c571c4163a04",
-            "status": "completed",
-            "outputDigest": "574f12c217624790895d23759e63f169e31efba3fa4e899a31c8cfbd3de4209c"
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_j1VXab8U5YLsw0yyJvO1duIM:exec-595afa88-6d2f-460a-a03f-05865043f3ba",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/units.ts",
+                "startLine": 1,
+                "endLine": 350
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_j1VXab8U5YLsw0yyJvO1duIM:exec-c831cef9-8b7b-496b-8545-6c813bbd1990",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/units.ts",
+                "startLine": 701,
+                "endLine": 1008
+              }
+            }
           },
           {
             "kind": "mcp",
             "tool": "read_material",
             "args": {
               "key": "omem:apps/server/src/retrieval/units.ts",
-              "startLine": 270,
-              "endLine": 310
+              "startLine": 351,
+              "endLine": 700
             },
             "success": true
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_f7E0IoPCNjiaC4fMnj7bZnJy:exec-d30ab3fa-da8f-4d37-822f-b2e6d06f5635",
+            "id": "code-mode-nested:29:call_j1VXab8U5YLsw0yyJvO1duIM:exec-f7cfc682-14ae-4abe-b26d-f62c3596ff38",
             "status": "completed",
-            "outputDigest": "38367ca72a6ab7a56e199755716dbbe243460d4c2ef09d06d5a393e65c1594cb"
+            "outputDigest": "6abab6f8c904a3a1003cc60618a99804801ebc04e8aba6f0dcef844a7ec79bf7"
           },
           {
             "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_v4csSMy6rYHlEDNzuaaNPvuE:exec-d42827ee-107e-4973-9643-115daccaff9b",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/unified.ts",
-                "startLine": 760,
-                "endLine": 780
-              }
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_v4csSMy6rYHlEDNzuaaNPvuE:exec-0d86ac7d-d01d-4518-8017-ef7f57c483f3",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/unified.ts",
-                "startLine": 420,
-                "endLine": 495
-              }
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_v4csSMy6rYHlEDNzuaaNPvuE:exec-bdf40da7-e10b-4cda-b416-200a2964b30e",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/units.ts",
-                "startLine": 284,
-                "endLine": 345
-              }
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_v4csSMy6rYHlEDNzuaaNPvuE:exec-e0fbb5f5-fd86-4b71-a2ac-950a79e09b5b",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/units.ts",
-                "startLine": 443,
-                "endLine": 550
-              }
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_v4csSMy6rYHlEDNzuaaNPvuE:exec-563d1b44-000e-443f-97d7-c8bd55f40482",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/unified.ts",
-                "startLine": 60,
-                "endLine": 110
-              }
-            }
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_j1VXab8U5YLsw0yyJvO1duIM:exec-581a7b84-d1af-4440-8b2d-1ab28aa3fba1",
+            "status": "completed",
+            "outputDigest": "79e311c2ec74901fc66ff358a8ad87d08973700262e7a4bd70ec2e1e1f6baaa7"
           },
           {
             "kind": "mcp",
             "tool": "read_material",
             "args": {
-              "key": "omem:apps/server/src/retrieval/unified.ts",
-              "startLine": 760,
-              "endLine": 780
-            },
-            "success": true
-          },
-          {
-            "kind": "mcp",
-            "tool": "read_material",
-            "args": {
-              "key": "omem:apps/server/src/retrieval/unified.ts",
-              "startLine": 420,
-              "endLine": 495
+              "key": "omem:apps/server/src/retrieval/units.ts",
+              "startLine": 1,
+              "endLine": 350
             },
             "success": true
           },
@@ -607,107 +485,48 @@
             "tool": "read_material",
             "args": {
               "key": "omem:apps/server/src/retrieval/units.ts",
-              "startLine": 284,
-              "endLine": 345
-            },
-            "success": true
-          },
-          {
-            "kind": "mcp",
-            "tool": "read_material",
-            "args": {
-              "key": "omem:apps/server/src/retrieval/units.ts",
-              "startLine": 443,
-              "endLine": 550
-            },
-            "success": true
-          },
-          {
-            "kind": "mcp",
-            "tool": "read_material",
-            "args": {
-              "key": "omem:apps/server/src/retrieval/unified.ts",
-              "startLine": 60,
-              "endLine": 110
+              "startLine": 701,
+              "endLine": 1008
             },
             "success": true
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_v4csSMy6rYHlEDNzuaaNPvuE:exec-d42827ee-107e-4973-9643-115daccaff9b",
+            "id": "code-mode-nested:29:call_j1VXab8U5YLsw0yyJvO1duIM:exec-595afa88-6d2f-460a-a03f-05865043f3ba",
             "status": "completed",
-            "outputDigest": "8814f76a5623feb328cd62c2897523f045fc7a57a60c1893a936f841f20f2628"
+            "outputDigest": "72210a0efc1bdc1304e90a21b11654e1d6ab98eac10da091d6c0a3425e33868b"
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_v4csSMy6rYHlEDNzuaaNPvuE:exec-0d86ac7d-d01d-4518-8017-ef7f57c483f3",
+            "id": "code-mode-nested:29:call_j1VXab8U5YLsw0yyJvO1duIM:exec-c831cef9-8b7b-496b-8545-6c813bbd1990",
             "status": "completed",
-            "outputDigest": "956be5bd042564f491b12e0df467824844c6afe6b9399864009c18b434b73b84"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_v4csSMy6rYHlEDNzuaaNPvuE:exec-bdf40da7-e10b-4cda-b416-200a2964b30e",
-            "status": "completed",
-            "outputDigest": "718c9cb169fba5a62a73d934ace2829ca92a1794637a21b1e1d05da5750046a6"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_v4csSMy6rYHlEDNzuaaNPvuE:exec-e0fbb5f5-fd86-4b71-a2ac-950a79e09b5b",
-            "status": "completed",
-            "outputDigest": "ab7bb09713ba63e39ae960be4e585695f0d6862b633f97d15ace29aadf31af16"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_v4csSMy6rYHlEDNzuaaNPvuE:exec-563d1b44-000e-443f-97d7-c8bd55f40482",
-            "status": "completed",
-            "outputDigest": "87799a4f5bdea9b81f243ffb4ed67973cd89d2cd2c3d5979ad426962ba3d37be"
+            "outputDigest": "dfa83dc6dec669998e5ed09c953e9758b261837ce12619ae2864cc0d0cce1b52"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_a9LGfEDnYIqNIv8FlDQN5icc:exec-7f122e96-cd77-4cb2-a25b-e43bd62b694e",
-            "title": "Read units.ts, Read units.ts, Read unified.ts, Read unified.ts",
+            "id": "code-mode-nested:29:call_v9TZpDPpinIRgj6qnSt2DmcD:exec-06b695e4-3c93-4d04-9b73-2335992f8ca6",
+            "title": "Read units.ts",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_a9LGfEDnYIqNIv8FlDQN5icc:exec-7f122e96-cd77-4cb2-a25b-e43bd62b694e",
-              "process_id": "34269",
-              "turn_id": "01a11c86-b870-7903-ae14-4d36937baeeb",
-              "started_at_ms": 1791479994745,
+              "call_id": "code-mode-nested:29:call_v9TZpDPpinIRgj6qnSt2DmcD:exec-06b695e4-3c93-4d04-9b73-2335992f8ca6",
+              "process_id": "98214",
+              "turn_id": "01a11cc2-9e39-7e80-abec-fd21cd80c74a",
+              "started_at_ms": 1791483907810,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "sed -n '284,310p' originals/apps/server/src/retrieval/units.ts; sed -n '456,550p' originals/apps/server/src/retrieval/units.ts; sed -n '425,492p' originals/apps/server/src/retrieval/unified.ts; sed -n '768,790p' originals/apps/server/src/retrieval/unified.ts"
+                "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '1,260p'"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/604d7611-6878-49ac-afd3-86121a9ab25b",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/7edf0895af309cb6968c13abfcdf155753293a02c685afe651fe8fdd34684abf/9d9efbe6-dced-4b4d-b442-9c75148e7f45",
               "parsed_cmd": [
                 {
                   "type": "read",
-                  "cmd": "sed -n '284,310p' originals/apps/server/src/retrieval/units.ts",
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '1,260p'",
                   "name": "units.ts",
                   "path": "originals/apps/server/src/retrieval/units.ts"
-                },
-                {
-                  "type": "read",
-                  "cmd": "sed -n '456,550p' originals/apps/server/src/retrieval/units.ts",
-                  "name": "units.ts",
-                  "path": "originals/apps/server/src/retrieval/units.ts"
-                },
-                {
-                  "type": "read",
-                  "cmd": "sed -n '425,492p' originals/apps/server/src/retrieval/unified.ts",
-                  "name": "unified.ts",
-                  "path": "originals/apps/server/src/retrieval/unified.ts"
-                },
-                {
-                  "type": "read",
-                  "cmd": "sed -n '768,790p' originals/apps/server/src/retrieval/unified.ts",
-                  "name": "unified.ts",
-                  "path": "originals/apps/server/src/retrieval/unified.ts"
                 }
               ],
               "source": "unified_exec_startup",
@@ -717,27 +536,214 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_a9LGfEDnYIqNIv8FlDQN5icc:exec-7f122e96-cd77-4cb2-a25b-e43bd62b694e",
+            "id": "code-mode-nested:29:call_v9TZpDPpinIRgj6qnSt2DmcD:exec-06b695e4-3c93-4d04-9b73-2335992f8ca6",
             "status": "completed",
-            "outputDigest": "a83ad5fb43aed0e824ed8b7ca1caec84da92f381f52078cceeb9609bbb4f0acd"
+            "outputDigest": "a446a784190c42021baf150e6bf2ef6714a6901b081c50f5b1c8cf6e2cf3a88e"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_oaPndLESFP1CF6mYPjnShOkc:exec-6b5fc640-cdd8-4f0c-a042-f856b08ca0c5",
+            "id": "code-mode-nested:29:call_Fyu2ZqDnurf84LExQV7MdpYz:exec-eca36250-2c93-42d3-a411-0ce303eff327",
+            "title": "Read units.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Fyu2ZqDnurf84LExQV7MdpYz:exec-eca36250-2c93-42d3-a411-0ce303eff327",
+              "process_id": "23455",
+              "turn_id": "01a11cc2-9e39-7e80-abec-fd21cd80c74a",
+              "started_at_ms": 1791483913525,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '261,520p'"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/7edf0895af309cb6968c13abfcdf155753293a02c685afe651fe8fdd34684abf/9d9efbe6-dced-4b4d-b442-9c75148e7f45",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '261,520p'",
+                  "name": "units.ts",
+                  "path": "originals/apps/server/src/retrieval/units.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Fyu2ZqDnurf84LExQV7MdpYz:exec-eca36250-2c93-42d3-a411-0ce303eff327",
+            "status": "completed",
+            "outputDigest": "e535ae3101b6ca84d71bebdb6904a8dc162ece164a15323c9dd255c927172f5c"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_KeB67DTdpiFjOSuVVS21Bjtf:exec-ac5e34f7-b563-42cd-aab4-a00ab1fd626b",
+            "title": "Read units.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_KeB67DTdpiFjOSuVVS21Bjtf:exec-ac5e34f7-b563-42cd-aab4-a00ab1fd626b",
+              "process_id": "60014",
+              "turn_id": "01a11cc2-9e39-7e80-abec-fd21cd80c74a",
+              "started_at_ms": 1791483919137,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '521,780p'"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/7edf0895af309cb6968c13abfcdf155753293a02c685afe651fe8fdd34684abf/9d9efbe6-dced-4b4d-b442-9c75148e7f45",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '521,780p'",
+                  "name": "units.ts",
+                  "path": "originals/apps/server/src/retrieval/units.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_KeB67DTdpiFjOSuVVS21Bjtf:exec-ac5e34f7-b563-42cd-aab4-a00ab1fd626b",
+            "status": "completed",
+            "outputDigest": "856fdfa692a00ae854bd01c0ff4607936a6e4921a48a4a8be27e9476754b55a6"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_IPKiD5k0JGBgUdkzkzgMq8Ld:exec-2c00628f-85d5-4d0e-ad2d-b7cd34ec96d9",
+            "title": "Read units.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_IPKiD5k0JGBgUdkzkzgMq8Ld:exec-2c00628f-85d5-4d0e-ad2d-b7cd34ec96d9",
+              "process_id": "41193",
+              "turn_id": "01a11cc2-9e39-7e80-abec-fd21cd80c74a",
+              "started_at_ms": 1791483924355,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '781,1008p'"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/7edf0895af309cb6968c13abfcdf155753293a02c685afe651fe8fdd34684abf/9d9efbe6-dced-4b4d-b442-9c75148e7f45",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '781,1008p'",
+                  "name": "units.ts",
+                  "path": "originals/apps/server/src/retrieval/units.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_IPKiD5k0JGBgUdkzkzgMq8Ld:exec-2c00628f-85d5-4d0e-ad2d-b7cd34ec96d9",
+            "status": "completed",
+            "outputDigest": "c56f0f99389ccf7cc9bfaf2b43e6fc35543dea0e958465cdc24c6fc17af92705"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_LL3SjCcFhsjSkuJcA2SnzkuN:exec-5d40938b-d6a8-4515-97bb-3c5e7d31646a",
+            "title": "Tool: omem/search_contexts",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_contexts",
+              "arguments": {
+                "contextsPerQuestion": 4,
+                "questions": [
+                  {
+                    "question": "检索投影如何把原始材料切成可搜索单位并保留证据边界？",
+                    "query": "sourceUnits codePassages markdownPassages sourceAnchor fragmentIds replace retrieval_units_fts",
+                    "keys": [
+                      "omem:apps/server/src/retrieval/units.ts"
+                    ],
+                    "kinds": [
+                      "source"
+                    ],
+                    "purpose": "implementation",
+                    "codeIntent": "definition"
+                  },
+                  {
+                    "question": "知识文章、任务和记忆进入投影时有哪些有效性与可见性限制？",
+                    "query": "validArticles supported inputsAvailable articleVisibility task memory visibilityIds",
+                    "keys": [
+                      "omem:apps/server/src/retrieval/units.ts"
+                    ],
+                    "kinds": [
+                      "source"
+                    ],
+                    "purpose": "implementation"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_contexts",
+            "args": {
+              "questions": [
+                {
+                  "question": "检索投影如何把原始材料切成可搜索单位并保留证据边界？",
+                  "query": "sourceUnits codePassages markdownPassages sourceAnchor fragmentIds replace retrieval_units_fts",
+                  "purpose": "implementation",
+                  "codeIntent": "definition",
+                  "kinds": [
+                    "source"
+                  ],
+                  "keys": [
+                    "omem:apps/server/src/retrieval/units.ts"
+                  ]
+                },
+                {
+                  "question": "知识文章、任务和记忆进入投影时有哪些有效性与可见性限制？",
+                  "query": "validArticles supported inputsAvailable articleVisibility task memory visibilityIds",
+                  "purpose": "implementation",
+                  "kinds": [
+                    "source"
+                  ],
+                  "keys": [
+                    "omem:apps/server/src/retrieval/units.ts"
+                  ]
+                }
+              ],
+              "contextsPerQuestion": 4
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_LL3SjCcFhsjSkuJcA2SnzkuN:exec-5d40938b-d6a8-4515-97bb-3c5e7d31646a",
+            "status": "completed",
+            "outputDigest": "04960dd9d62fdb30dbbcc6475e9ddff9d39af2beba6f077d3975d487a5ddd1db"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_iKzBbY256FGlhg7ZqQVAFf9A:exec-3ceaf976-37bb-421d-9a2f-ab46e1f6aafd",
             "title": "Read SKILL.md",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_oaPndLESFP1CF6mYPjnShOkc:exec-6b5fc640-cdd8-4f0c-a042-f856b08ca0c5",
-              "process_id": "43244",
-              "turn_id": "01a11c86-b870-7903-ae14-4d36937baeeb",
-              "started_at_ms": 1791480003774,
+              "call_id": "code-mode-nested:29:call_iKzBbY256FGlhg7ZqQVAFf9A:exec-3ceaf976-37bb-421d-9a2f-ab46e1f6aafd",
+              "process_id": "54744",
+              "turn_id": "01a11cc2-9e39-7e80-abec-fd21cd80c74a",
+              "started_at_ms": 1791483948113,
               "command": [
                 "/bin/zsh",
                 "-lc",
                 "sed -n '1,260p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/604d7611-6878-49ac-afd3-86121a9ab25b",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/7edf0895af309cb6968c13abfcdf155753293a02c685afe651fe8fdd34684abf/9d9efbe6-dced-4b4d-b442-9c75148e7f45",
               "parsed_cmd": [
                 {
                   "type": "read",
@@ -753,27 +759,27 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_oaPndLESFP1CF6mYPjnShOkc:exec-6b5fc640-cdd8-4f0c-a042-f856b08ca0c5",
+            "id": "code-mode-nested:29:call_iKzBbY256FGlhg7ZqQVAFf9A:exec-3ceaf976-37bb-421d-9a2f-ab46e1f6aafd",
             "status": "completed",
-            "outputDigest": "72c1d077fccad0d4dedf573971d8bf3c04ee37629fb07eb6898a69da86f1cba0"
+            "outputDigest": "9374fe97f3527c194d2e5d52323d4c2f66fd0ed749c27237a4135bfc21054398"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_T0A02pV79PgTqTFbeGEOor7l:exec-9f14dbfc-c56c-4c64-b699-5d0a99e4d95c",
+            "id": "code-mode-nested:29:call_xsWs37J1B13K6rzet9sfaptY:exec-ae1bf437-ca7e-4e2d-8f53-05629ffaa84f",
             "title": "Read SKILL.md",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_T0A02pV79PgTqTFbeGEOor7l:exec-9f14dbfc-c56c-4c64-b699-5d0a99e4d95c",
-              "process_id": "87996",
-              "turn_id": "01a11c86-b870-7903-ae14-4d36937baeeb",
-              "started_at_ms": 1791480009885,
+              "call_id": "code-mode-nested:29:call_xsWs37J1B13K6rzet9sfaptY:exec-ae1bf437-ca7e-4e2d-8f53-05629ffaa84f",
+              "process_id": "99146",
+              "turn_id": "01a11cc2-9e39-7e80-abec-fd21cd80c74a",
+              "started_at_ms": 1791483956029,
               "command": [
                 "/bin/zsh",
                 "-lc",
                 "sed -n '261,520p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/604d7611-6878-49ac-afd3-86121a9ab25b",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/7edf0895af309cb6968c13abfcdf155753293a02c685afe651fe8fdd34684abf/9d9efbe6-dced-4b4d-b442-9c75148e7f45",
               "parsed_cmd": [
                 {
                   "type": "read",
@@ -789,14 +795,14 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_T0A02pV79PgTqTFbeGEOor7l:exec-9f14dbfc-c56c-4c64-b699-5d0a99e4d95c",
+            "id": "code-mode-nested:29:call_xsWs37J1B13K6rzet9sfaptY:exec-ae1bf437-ca7e-4e2d-8f53-05629ffaa84f",
             "status": "completed",
-            "outputDigest": "9ff742c45d72d10ea668fa7c6465ca7341d0dfb72588c072ecb13b7cdd27328c"
+            "outputDigest": "a804ba7e49fff8c0548d48028afa1ca528e13e11d97c09f499f9d6a44dc7d7d0"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_x1a7plakkDEum43v8PlCDOMR:exec-d969056b-c397-4c3f-a0a8-da7b06e9cf42",
+            "id": "code-mode-nested:29:call_ufbkqbgOfrhH7DL9YEp1gOS6:exec-7e775364-754e-46a3-8df1-fb1fea957078",
             "title": "Tool: omem/submit_result",
             "status": "in_progress",
             "input": {
@@ -809,17 +815,13 @@
             "kind": "submission",
             "success": true,
             "reads": [
-              "omem:apps/server/tests/retrieval-hierarchy.test.ts",
-              "omem:apps/server/src/retrieval/unified.ts",
-              "omem:apps/server/tests/material-descriptions.test.ts",
-              "omem:apps/server/src/knowledge/research-snapshot.ts",
               "omem:apps/server/src/retrieval/units.ts"
             ]
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_x1a7plakkDEum43v8PlCDOMR:exec-d969056b-c397-4c3f-a0a8-da7b06e9cf42",
+            "id": "code-mode-nested:29:call_ufbkqbgOfrhH7DL9YEp1gOS6:exec-7e775364-754e-46a3-8df1-fb1fea957078",
             "status": "failed",
             "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
           }
@@ -831,19 +833,19 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-08T17:23:42.918Z",
+    "at": "2026-10-08T18:28:37.949Z",
     "trace": {
       "profileId": "traex",
       "acpProvider": "traex",
-      "runId": "4129ddbc-09de-4ebb-9628-d4008c5e268b",
+      "runId": "6959cdd0-858f-42c0-ac27-a5a410abcd28",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a",
-      "promptHash": "843adfae66f8ecaa835c0b8f38df78445fc453c90904bf0ce82987a47b984519",
-      "contextHash": "95b215854a4d561f3ff61af145f0018ea595d23cf497898331e2a8ba48df0b5f",
+      "promptHash": "eea3caac1ae47cce1b8fcad5882aff02fd13a91f2e07b5d9b747ec6ab16621eb",
+      "contextHash": "373e36f45d4c3166f761f200ac9fe64562850d497fd7feb2ac5db4f5b035469a",
       "skillHash": "0122dffd6ec08e44096acc44801f392b2878aab19f3daa0b825d33eb8b385b0a",
       "toolHash": "6ecd4cb47ca06f6b86b9c2e46f7cbe547345091d7fd0a8c46a45f14b98cea1a6",
-      "fingerprint": "d998ecf2907fafdce7c9947ed10b1f8ca608bcca0541a82eb70ddef56d0e9164",
+      "fingerprint": "1a5b3535d36875e80e4750a54ef8600e0436443bdd4aba72d47d03ffb4fc8ed1",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -880,10 +882,10 @@
         "submit_result"
       ],
       "sessionIds": [
-        "01a11c88-7408-7023-ad60-179da10d5a05"
+        "01a11cc4-b9f1-7062-956a-ff7fe2e473e2"
       ],
       "usage": {
-        "used": 78393,
+        "used": 75033,
         "size": 258400,
         "cost": null,
         "acpCompletion": "validated_submission",
@@ -892,24 +894,24 @@
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_2HT1Y2wARloovpGyKK2CJXOn:exec-c733ac92-9e64-481b-b428-a2d3010889a4",
+            "id": "code-mode-nested:29:call_nQxWIRY86lhbxYxTwAY8MSCZ:exec-8cbcf137-0564-45ef-8ffc-36d08328ff2a",
             "title": "Read SKILL.md, Read SKILL.md",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_2HT1Y2wARloovpGyKK2CJXOn:exec-c733ac92-9e64-481b-b428-a2d3010889a4",
-              "process_id": "99830",
-              "turn_id": "01a11c88-7786-7963-aacb-7b9b38e32ef7",
-              "started_at_ms": 1791480083182,
+              "call_id": "code-mode-nested:29:call_nQxWIRY86lhbxYxTwAY8MSCZ:exec-8cbcf137-0564-45ef-8ffc-36d08328ff2a",
+              "process_id": "26924",
+              "turn_id": "01a11cc4-bd46-7840-bb33-455e0f35ab1a",
+              "started_at_ms": 1791484032164,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "wc -l .trae/skills/omem-knowledge-verifier/SKILL.md .trae/skills/lieflat-less-ai-tone/SKILL.md && sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md && sed -n '1,260p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
+                "wc -l .trae/skills/omem-knowledge-verifier/SKILL.md .trae/skills/lieflat-less-ai-tone/SKILL.md && sed -n '1,260p' .trae/skills/omem-knowledge-verifier/SKILL.md && sed -n '1,260p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/4129ddbc-09de-4ebb-9628-d4008c5e268b",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/6959cdd0-858f-42c0-ac27-a5a410abcd28",
               "parsed_cmd": [
                 {
                   "type": "read",
-                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md",
+                  "cmd": "sed -n '1,260p' .trae/skills/omem-knowledge-verifier/SKILL.md",
                   "name": "SKILL.md",
                   "path": ".trae/skills/omem-knowledge-verifier/SKILL.md"
                 },
@@ -927,27 +929,27 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_2HT1Y2wARloovpGyKK2CJXOn:exec-c733ac92-9e64-481b-b428-a2d3010889a4",
+            "id": "code-mode-nested:29:call_nQxWIRY86lhbxYxTwAY8MSCZ:exec-8cbcf137-0564-45ef-8ffc-36d08328ff2a",
             "status": "completed",
-            "outputDigest": "fd73f56eccbd04a79fd5fb5666479657d94c1c75c59250ca506dcb4cf1c874c4"
+            "outputDigest": "577fc140931caa4c9ba4b21b5ce16df0fc97a96796856dd2b3890d6455528dee"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_su3gAxnuB2SoAF2dptEvMtb0:exec-fca0ac43-6e62-46be-b294-54bfddae2bea",
+            "id": "code-mode-nested:29:call_3mjolubQaJFZYf4473KtIX7Z:exec-948a0cc2-5c02-4112-bebf-fe386fbda42c",
             "title": "Read SKILL.md",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_su3gAxnuB2SoAF2dptEvMtb0:exec-fca0ac43-6e62-46be-b294-54bfddae2bea",
-              "process_id": "96259",
-              "turn_id": "01a11c88-7786-7963-aacb-7b9b38e32ef7",
-              "started_at_ms": 1791480089168,
+              "call_id": "code-mode-nested:29:call_3mjolubQaJFZYf4473KtIX7Z:exec-948a0cc2-5c02-4112-bebf-fe386fbda42c",
+              "process_id": "97554",
+              "turn_id": "01a11cc4-bd46-7840-bb33-455e0f35ab1a",
+              "started_at_ms": 1791484041473,
               "command": [
                 "/bin/zsh",
                 "-lc",
                 "sed -n '261,520p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/4129ddbc-09de-4ebb-9628-d4008c5e268b",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/6959cdd0-858f-42c0-ac27-a5a410abcd28",
               "parsed_cmd": [
                 {
                   "type": "read",
@@ -963,30 +965,14 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_su3gAxnuB2SoAF2dptEvMtb0:exec-fca0ac43-6e62-46be-b294-54bfddae2bea",
+            "id": "code-mode-nested:29:call_3mjolubQaJFZYf4473KtIX7Z:exec-948a0cc2-5c02-4112-bebf-fe386fbda42c",
             "status": "completed",
-            "outputDigest": "274c8bd55e8a129aba456ff91ba057009113b81d0bb109daf459bb869acf731a"
+            "outputDigest": "cf559ac776cae1eb232dda3169d1c2e7a2f40365777a293e112ca6ff5680778b"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-dd93a3cc-ede1-4cfb-b1ff-0964b034d0c2",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/unified.ts",
-                "startLine": 1,
-                "endLine": 810
-              }
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-2d5ae79d-a032-47af-b4a8-f0bd5c413d90",
+            "id": "code-mode-nested:29:call_7Wsey9mlpbLPMKv30gvEkyyc:exec-6fc8afff-17fb-4b64-9322-083d5c0a9622",
             "title": "Tool: omem/read_material",
             "status": "in_progress",
             "input": {
@@ -994,38 +980,22 @@
               "tool": "read_material",
               "arguments": {
                 "key": "omem:apps/server/src/retrieval/units.ts",
-                "startLine": 781,
-                "endLine": 1008
+                "startLine": 501,
+                "endLine": 760
               }
             }
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-ed17cd7e-1dde-422c-bc01-a2a79e978d3e",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/units.ts",
-                "startLine": 261,
-                "endLine": 520
-              }
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-e1c7a9d8-295f-4c40-bee4-9aa9497254a0",
+            "id": "code-mode-nested:29:call_7Wsey9mlpbLPMKv30gvEkyyc:exec-c1f33854-9249-41d6-9903-4168fe7bc18c",
             "title": "Tool: omem/read_tasks",
             "status": "in_progress",
             "input": {
               "server": "omem",
               "tool": "read_tasks",
               "arguments": {
-                "limit": 50,
+                "limit": 100,
                 "offset": 0
               }
             }
@@ -1033,7 +1003,330 @@
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-a3e6e627-4d55-4cc2-ab85-6a5df4d6eba2",
+            "id": "code-mode-nested:29:call_7Wsey9mlpbLPMKv30gvEkyyc:exec-7d78fc69-2e66-417a-8894-61c39e8ebd8d",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/units.ts",
+                "startLine": 761,
+                "endLine": 1008
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_7Wsey9mlpbLPMKv30gvEkyyc:exec-a88a56d1-e866-4e87-badb-b41f734840d7",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/units.ts",
+                "startLine": 221,
+                "endLine": 500
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_7Wsey9mlpbLPMKv30gvEkyyc:exec-3f632a9f-5082-4f01-a6a4-1ae192f9f582",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/units.ts",
+                "startLine": 1,
+                "endLine": 220
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_7Wsey9mlpbLPMKv30gvEkyyc:exec-0141f7be-abc8-495d-9379-57bf5304d3e2",
+            "title": "Tool: omem/code_navigation",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "code_navigation",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/units.ts",
+                "symbol": "RetrievalUnitProjector"
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/units.ts",
+              "startLine": 761,
+              "endLine": 1008
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_tasks",
+            "args": {
+              "offset": 0,
+              "limit": 100
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/units.ts",
+              "startLine": 221,
+              "endLine": 500
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/units.ts",
+              "startLine": 501,
+              "endLine": 760
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/units.ts",
+              "startLine": 1,
+              "endLine": 220
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "code_navigation",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/units.ts",
+              "symbol": "RetrievalUnitProjector"
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_7Wsey9mlpbLPMKv30gvEkyyc:exec-7d78fc69-2e66-417a-8894-61c39e8ebd8d",
+            "status": "completed",
+            "outputDigest": "13a0e9f8deed62ce8bac295afec8329181fab2acf1218cb2d6191ddde4de0d3f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_7Wsey9mlpbLPMKv30gvEkyyc:exec-c1f33854-9249-41d6-9903-4168fe7bc18c",
+            "status": "completed",
+            "outputDigest": "883821272f335c5e59f91c526d3d0e1c08c18b676d8fffeaa66d6f726b871241"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_7Wsey9mlpbLPMKv30gvEkyyc:exec-a88a56d1-e866-4e87-badb-b41f734840d7",
+            "status": "completed",
+            "outputDigest": "44b47622a7736c65776c503f7bf812289d47fe5caae06a2a26c9288bd3e835c4"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_7Wsey9mlpbLPMKv30gvEkyyc:exec-6fc8afff-17fb-4b64-9322-083d5c0a9622",
+            "status": "completed",
+            "outputDigest": "557a64981b4b98a50e990157c815172ce46636dc2adc59c71e7f7eb1b174802b"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_7Wsey9mlpbLPMKv30gvEkyyc:exec-3f632a9f-5082-4f01-a6a4-1ae192f9f582",
+            "status": "completed",
+            "outputDigest": "0d13f0f4e3bded81f4c9c1dfee966f41eec5eb0736a6e162ed443e911b07584f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_7Wsey9mlpbLPMKv30gvEkyyc:exec-0141f7be-abc8-495d-9379-57bf5304d3e2",
+            "status": "completed",
+            "outputDigest": "2aaa5c3eb6af2c9961c597fe81241b274bbbe76a1ec1f410e2e153f64f7deb5f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_DFINSvvZVmN3XRoO4q2XKvf7:exec-8b340fee-6040-4307-a16b-ed23809772cf",
+            "title": "Read units.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_DFINSvvZVmN3XRoO4q2XKvf7:exec-8b340fee-6040-4307-a16b-ed23809772cf",
+              "process_id": "94210",
+              "turn_id": "01a11cc4-bd46-7840-bb33-455e0f35ab1a",
+              "started_at_ms": 1791484064856,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '190,450p'"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/6959cdd0-858f-42c0-ac27-a5a410abcd28",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '190,450p'",
+                  "name": "units.ts",
+                  "path": "originals/apps/server/src/retrieval/units.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_DFINSvvZVmN3XRoO4q2XKvf7:exec-8b340fee-6040-4307-a16b-ed23809772cf",
+            "status": "completed",
+            "outputDigest": "3db17d4c9903d9914ae8314892da34c8c95e258577ed85170f595d320f32b87e"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_kKni4MjqRxa98EZCGa1KTSQ1:exec-89cbffe8-b2b4-4219-906d-0d63ab1b8f6d",
+            "title": "Read units.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_kKni4MjqRxa98EZCGa1KTSQ1:exec-89cbffe8-b2b4-4219-906d-0d63ab1b8f6d",
+              "process_id": "59038",
+              "turn_id": "01a11cc4-bd46-7840-bb33-455e0f35ab1a",
+              "started_at_ms": 1791484069821,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '443,760p'"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/6959cdd0-858f-42c0-ac27-a5a410abcd28",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '443,760p'",
+                  "name": "units.ts",
+                  "path": "originals/apps/server/src/retrieval/units.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_kKni4MjqRxa98EZCGa1KTSQ1:exec-89cbffe8-b2b4-4219-906d-0d63ab1b8f6d",
+            "status": "completed",
+            "outputDigest": "102c68915a7bae3a230bbfa8eafa5585031b12f519ea2bef72d62fe8c16d2b24"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_WhzkwvRw1k4KMeX9pRhZw0UL:exec-7cbea5ee-0ee1-45fe-b961-d90e060ebc22",
+            "title": "Read units.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_WhzkwvRw1k4KMeX9pRhZw0UL:exec-7cbea5ee-0ee1-45fe-b961-d90e060ebc22",
+              "process_id": "70055",
+              "turn_id": "01a11cc4-bd46-7840-bb33-455e0f35ab1a",
+              "started_at_ms": 1791484075309,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '751,1008p'"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/6959cdd0-858f-42c0-ac27-a5a410abcd28",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '751,1008p'",
+                  "name": "units.ts",
+                  "path": "originals/apps/server/src/retrieval/units.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_WhzkwvRw1k4KMeX9pRhZw0UL:exec-7cbea5ee-0ee1-45fe-b961-d90e060ebc22",
+            "status": "completed",
+            "outputDigest": "8a4384979de05144bad53e0eea9004d13988040c9a73bcdb54110d997521082d"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_GSNbKzBXcTt2BYBq6qRo8Jbh:exec-04eb493c-a63a-4d65-8e1d-ead46a3605c2",
+            "title": "Tool: omem/related_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "related_materials",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/units.ts"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_GSNbKzBXcTt2BYBq6qRo8Jbh:exec-c8809176-5697-4cf1-89cc-43251878d398",
+            "title": "Tool: omem/list_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "list_materials",
+              "arguments": {
+                "filter": "apps/server/src/retrieval/units.ts",
+                "kind": "code",
+                "limit": 20,
+                "offset": 0
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_GSNbKzBXcTt2BYBq6qRo8Jbh:exec-4c129b2a-3137-48ec-b187-d87dfa3f14bc",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "keys": [
+                  "omem:apps/server/src/retrieval/units.ts"
+                ],
+                "kind": "code",
+                "codeIntent": "definition",
+                "query": "RetrievalProjection sync syncAsync changes replace sourceUnits",
+                "limit": 20,
+                "purpose": "implementation"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_GSNbKzBXcTt2BYBq6qRo8Jbh:exec-329d7222-0e25-42bc-80a0-554f23888fa2",
             "title": "Tool: omem/code_navigation",
             "status": "in_progress",
             "input": {
@@ -1046,73 +1339,21 @@
             }
           },
           {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-0dd64626-f99a-4aee-8b11-15c263ed728a",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/units.ts",
-                "startLine": 521,
-                "endLine": 780
-              }
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-ec415bbb-c645-4a2e-a369-10dab0e65021",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/units.ts",
-                "startLine": 1,
-                "endLine": 260
-              }
-            }
-          },
-          {
             "kind": "mcp",
-            "tool": "read_material",
+            "tool": "related_materials",
             "args": {
-              "key": "omem:apps/server/src/retrieval/unified.ts",
-              "startLine": 1,
-              "endLine": 810
+              "key": "omem:apps/server/src/retrieval/units.ts"
             },
             "success": true
           },
           {
             "kind": "mcp",
-            "tool": "read_material",
-            "args": {
-              "key": "omem:apps/server/src/retrieval/units.ts",
-              "startLine": 781,
-              "endLine": 1008
-            },
-            "success": true
-          },
-          {
-            "kind": "mcp",
-            "tool": "read_material",
-            "args": {
-              "key": "omem:apps/server/src/retrieval/units.ts",
-              "startLine": 261,
-              "endLine": 520
-            },
-            "success": true
-          },
-          {
-            "kind": "mcp",
-            "tool": "read_tasks",
+            "tool": "list_materials",
             "args": {
               "offset": 0,
-              "limit": 50
+              "limit": 20,
+              "filter": "apps/server/src/retrieval/units.ts",
+              "kind": "code"
             },
             "success": true
           },
@@ -1126,354 +1367,52 @@
             "success": true
           },
           {
-            "kind": "mcp",
-            "tool": "read_material",
-            "args": {
-              "key": "omem:apps/server/src/retrieval/units.ts",
-              "startLine": 521,
-              "endLine": 780
-            },
-            "success": true
-          },
-          {
-            "kind": "mcp",
-            "tool": "read_material",
-            "args": {
-              "key": "omem:apps/server/src/retrieval/units.ts",
-              "startLine": 1,
-              "endLine": 260
-            },
-            "success": true
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_GSNbKzBXcTt2BYBq6qRo8Jbh:exec-04eb493c-a63a-4d65-8e1d-ead46a3605c2",
+            "status": "completed",
+            "outputDigest": "2aaa5c3eb6af2c9961c597fe81241b274bbbe76a1ec1f410e2e153f64f7deb5f"
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-dd93a3cc-ede1-4cfb-b1ff-0964b034d0c2",
+            "id": "code-mode-nested:29:call_GSNbKzBXcTt2BYBq6qRo8Jbh:exec-c8809176-5697-4cf1-89cc-43251878d398",
             "status": "completed",
-            "outputDigest": "895b7a7c12c7ff0a56c25a0d117fe109d1427abc39a7af30c5fc9a10accd8784"
+            "outputDigest": "ca198e96496324d835e32c5565bb4185d579f0297f02f6704a0a7a7e57cf5c83"
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-2d5ae79d-a032-47af-b4a8-f0bd5c413d90",
+            "id": "code-mode-nested:29:call_GSNbKzBXcTt2BYBq6qRo8Jbh:exec-329d7222-0e25-42bc-80a0-554f23888fa2",
             "status": "completed",
-            "outputDigest": "7f1c07d33de29429f565b4efd816cd9076c9329fe0a40fd82b2ce3c2b8d29afe"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-ed17cd7e-1dde-422c-bc01-a2a79e978d3e",
-            "status": "completed",
-            "outputDigest": "26acca1358ff1dc284cda44cb61b25c85ac3ea723cd222474b383040007acf7e"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-e1c7a9d8-295f-4c40-bee4-9aa9497254a0",
-            "status": "completed",
-            "outputDigest": "883821272f335c5e59f91c526d3d0e1c08c18b676d8fffeaa66d6f726b871241"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-a3e6e627-4d55-4cc2-ab85-6a5df4d6eba2",
-            "status": "completed",
-            "outputDigest": "f5ab8b82eef2223348320c1fad0d10038d7150831887ca57fcba4c8c5549a4d5"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-0dd64626-f99a-4aee-8b11-15c263ed728a",
-            "status": "completed",
-            "outputDigest": "8522a0c2913dd705cc05f073936bec0b6d9e9cfc181ccbd7cebc6fce4be49c79"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_8ihupWqTscMTiV0mxAWSXWqM:exec-ec415bbb-c645-4a2e-a369-10dab0e65021",
-            "status": "completed",
-            "outputDigest": "d574f7b696b1a90f36169bca907064f72d0a977348135308635716c1a1109cf4"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_xce7a4A7kywFnSlRWP3fhiut:exec-169314c5-dc51-4bc8-922e-e9e39c86dc94",
-            "title": "Read units.ts, Read unified.ts, Read unified.ts, Read unified.ts",
-            "status": "in_progress",
-            "input": {
-              "call_id": "code-mode-nested:29:call_xce7a4A7kywFnSlRWP3fhiut:exec-169314c5-dc51-4bc8-922e-e9e39c86dc94",
-              "process_id": "38857",
-              "turn_id": "01a11c88-7786-7963-aacb-7b9b38e32ef7",
-              "started_at_ms": 1791480112145,
-              "command": [
-                "/bin/zsh",
-                "-lc",
-                "sed -n '261,1008p' originals/apps/server/src/retrieval/units.ts && sed -n '1,120p' originals/apps/server/src/retrieval/unified.ts && sed -n '420,510p' originals/apps/server/src/retrieval/unified.ts && sed -n '760,800p' originals/apps/server/src/retrieval/unified.ts"
-              ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/4129ddbc-09de-4ebb-9628-d4008c5e268b",
-              "parsed_cmd": [
-                {
-                  "type": "read",
-                  "cmd": "sed -n '261,1008p' originals/apps/server/src/retrieval/units.ts",
-                  "name": "units.ts",
-                  "path": "originals/apps/server/src/retrieval/units.ts"
-                },
-                {
-                  "type": "read",
-                  "cmd": "sed -n '1,120p' originals/apps/server/src/retrieval/unified.ts",
-                  "name": "unified.ts",
-                  "path": "originals/apps/server/src/retrieval/unified.ts"
-                },
-                {
-                  "type": "read",
-                  "cmd": "sed -n '420,510p' originals/apps/server/src/retrieval/unified.ts",
-                  "name": "unified.ts",
-                  "path": "originals/apps/server/src/retrieval/unified.ts"
-                },
-                {
-                  "type": "read",
-                  "cmd": "sed -n '760,800p' originals/apps/server/src/retrieval/unified.ts",
-                  "name": "unified.ts",
-                  "path": "originals/apps/server/src/retrieval/unified.ts"
-                }
-              ],
-              "source": "unified_exec_startup",
-              "yield_time_ms": 10000
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_xce7a4A7kywFnSlRWP3fhiut:exec-169314c5-dc51-4bc8-922e-e9e39c86dc94",
-            "status": "completed",
-            "outputDigest": "c9cf6ace812bcb53f7a75e7281bf5c487140a157947161797f454804fe15033e"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_h3wlSGPixMMRu3mbmGngg03f:exec-168a887b-9342-4856-9d52-796d782d2d59",
-            "title": "Read units.ts",
-            "status": "in_progress",
-            "input": {
-              "call_id": "code-mode-nested:29:call_h3wlSGPixMMRu3mbmGngg03f:exec-168a887b-9342-4856-9d52-796d782d2d59",
-              "process_id": "67130",
-              "turn_id": "01a11c88-7786-7963-aacb-7b9b38e32ef7",
-              "started_at_ms": 1791480131946,
-              "command": [
-                "/bin/zsh",
-                "-lc",
-                "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '440,760p'"
-              ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/4129ddbc-09de-4ebb-9628-d4008c5e268b",
-              "parsed_cmd": [
-                {
-                  "type": "read",
-                  "cmd": "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '440,760p'",
-                  "name": "units.ts",
-                  "path": "originals/apps/server/src/retrieval/units.ts"
-                }
-              ],
-              "source": "unified_exec_startup",
-              "yield_time_ms": 10000
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_h3wlSGPixMMRu3mbmGngg03f:exec-168a887b-9342-4856-9d52-796d782d2d59",
-            "status": "completed",
-            "outputDigest": "edcfde6f693191ea439bd1d75bc94e12516b93845b7816de9dd1ac09f6d57ec1"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_UyeZ60VFJKWPUipr6fCcPSkq:exec-d834e2cb-e20f-44dd-84d2-51fd9f3ff926",
-            "title": "Read unified.ts, Search *style* in .",
-            "status": "in_progress",
-            "input": {
-              "call_id": "code-mode-nested:29:call_UyeZ60VFJKWPUipr6fCcPSkq:exec-d834e2cb-e20f-44dd-84d2-51fd9f3ff926",
-              "process_id": "23633",
-              "turn_id": "01a11c88-7786-7963-aacb-7b9b38e32ef7",
-              "started_at_ms": 1791480149807,
-              "command": [
-                "/bin/zsh",
-                "-lc",
-                "nl -ba originals/apps/server/src/retrieval/unified.ts | sed -n '60,110p;425,492p;768,793p' && find . -maxdepth 3 -type f \\( -iname '*style*' -o -iname '*语言*' -o -iname '*dna*' \\) -print"
-              ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/4129ddbc-09de-4ebb-9628-d4008c5e268b",
-              "parsed_cmd": [
-                {
-                  "type": "read",
-                  "cmd": "nl -ba originals/apps/server/src/retrieval/unified.ts",
-                  "name": "unified.ts",
-                  "path": "originals/apps/server/src/retrieval/unified.ts"
-                },
-                {
-                  "type": "search",
-                  "cmd": "find . -maxdepth 3 -type f \"\\\\(\" -iname '*style*' -o -iname '*语言*' -o -iname '*dna*' \"\\\\)\" -print",
-                  "query": "*style*",
-                  "path": "."
-                }
-              ],
-              "source": "unified_exec_startup",
-              "yield_time_ms": 10000
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_UyeZ60VFJKWPUipr6fCcPSkq:exec-d834e2cb-e20f-44dd-84d2-51fd9f3ff926",
-            "status": "completed",
-            "outputDigest": "c5487fcc0f59c15db5608ffb04082425f2fb24c170393d1250b5af02a34bc6f8"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_mDIVNcbOgR83jCDDK58zDfDB:exec-3752784a-b648-4ae1-8336-afa488ddd70b",
-            "title": "Search markdownPassages|codePassages|RetrievalProjection|sourceUnits|knowledge:|memory: in server",
-            "status": "in_progress",
-            "input": {
-              "call_id": "code-mode-nested:29:call_mDIVNcbOgR83jCDDK58zDfDB:exec-3752784a-b648-4ae1-8336-afa488ddd70b",
-              "process_id": "29146",
-              "turn_id": "01a11c88-7786-7963-aacb-7b9b38e32ef7",
-              "started_at_ms": 1791480158039,
-              "command": [
-                "/bin/zsh",
-                "-lc",
-                "rg -n \"markdownPassages|codePassages|RetrievalProjection|sourceUnits|knowledge:|memory:\" originals/apps/server -g '*test*' -g '*.spec.ts' -g '*.test.ts'"
-              ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/4129ddbc-09de-4ebb-9628-d4008c5e268b",
-              "parsed_cmd": [
-                {
-                  "type": "search",
-                  "cmd": "rg -n 'markdownPassages|codePassages|RetrievalProjection|sourceUnits|knowledge:|memory:' originals/apps/server -g '*test*' -g '*.spec.ts' -g '*.test.ts'",
-                  "query": "markdownPassages|codePassages|RetrievalProjection|sourceUnits|knowledge:|memory:",
-                  "path": "server"
-                }
-              ],
-              "source": "unified_exec_startup",
-              "yield_time_ms": 10000
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_mDIVNcbOgR83jCDDK58zDfDB:exec-3752784a-b648-4ae1-8336-afa488ddd70b",
-            "status": "completed",
-            "outputDigest": "8df99c377ec238c7af2e59d0dac3b417ebb377df71e5e65ed9b6d46f269a4c98"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_tXHfQVOSGIX6OMFTpGoLBG0I:exec-3cc2f77e-adc1-476d-960c-7c1e45754019",
-            "title": "List /Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/4129ddbc-09de-4ebb-9628-d4008c5e268b, Read knowledge.json",
-            "status": "in_progress",
-            "input": {
-              "call_id": "code-mode-nested:29:call_tXHfQVOSGIX6OMFTpGoLBG0I:exec-3cc2f77e-adc1-476d-960c-7c1e45754019",
-              "process_id": "51774",
-              "turn_id": "01a11c88-7786-7963-aacb-7b9b38e32ef7",
-              "started_at_ms": 1791480186220,
-              "command": [
-                "/bin/zsh",
-                "-lc",
-                "ls -la && sed -n '1,220p' knowledge.json"
-              ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/4129ddbc-09de-4ebb-9628-d4008c5e268b",
-              "parsed_cmd": [
-                {
-                  "type": "list_files",
-                  "cmd": "ls -la",
-                  "path": null
-                },
-                {
-                  "type": "read",
-                  "cmd": "sed -n '1,220p' knowledge.json",
-                  "name": "knowledge.json",
-                  "path": "knowledge.json"
-                }
-              ],
-              "source": "unified_exec_startup",
-              "yield_time_ms": 10000
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_tXHfQVOSGIX6OMFTpGoLBG0I:exec-3cc2f77e-adc1-476d-960c-7c1e45754019",
-            "status": "completed",
-            "outputDigest": "e26c61388abccd9a8ed46bf77595645659ddc017b5b44823cac3a0ab1906e41c"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_zXzrsIa74SnD1qEEcRGf0apO:exec-64260f59-4911-46c9-ac33-421637291d2f",
-            "title": "Search apps/server/src/retrieval/(units|unified)\\.ts in catalog.json",
-            "status": "in_progress",
-            "input": {
-              "call_id": "code-mode-nested:29:call_zXzrsIa74SnD1qEEcRGf0apO:exec-64260f59-4911-46c9-ac33-421637291d2f",
-              "process_id": "43704",
-              "turn_id": "01a11c88-7786-7963-aacb-7b9b38e32ef7",
-              "started_at_ms": 1791480192993,
-              "command": [
-                "/bin/zsh",
-                "-lc",
-                "rg -n -C 3 'apps/server/src/retrieval/(units|unified)\\.ts' catalog.json | head -80"
-              ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/4129ddbc-09de-4ebb-9628-d4008c5e268b",
-              "parsed_cmd": [
-                {
-                  "type": "search",
-                  "cmd": "rg -n -C 3 \"apps/server/src/retrieval/(units|unified)\\\\.ts\" catalog.json",
-                  "query": "apps/server/src/retrieval/(units|unified)\\.ts",
-                  "path": "catalog.json"
-                }
-              ],
-              "source": "unified_exec_startup",
-              "yield_time_ms": 10000
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_zXzrsIa74SnD1qEEcRGf0apO:exec-64260f59-4911-46c9-ac33-421637291d2f",
-            "status": "completed",
-            "outputDigest": "99bc759ed9fa40c168c70f3a9653f2d54c1936af0a91bd337236100cd53d3e9b"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_6vGDrCdzk6aBXNfQ2QEPPG5f:exec-cd26979e-6a67-4b88-8512-c9ae62dc0d78",
-            "title": "Tool: omem/read_tasks",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_tasks",
-              "arguments": {
-                "limit": 50,
-                "offset": 0
-              }
-            }
+            "outputDigest": "6b67d9bcd64ea678c4b6b357816deeb0aff4cca78af4b3c0a8a36efdffd9e2f4"
           },
           {
             "kind": "mcp",
-            "tool": "read_tasks",
+            "tool": "search_materials",
             "args": {
-              "offset": 0,
-              "limit": 50
+              "query": "RetrievalProjection sync syncAsync changes replace sourceUnits",
+              "keys": [
+                "omem:apps/server/src/retrieval/units.ts"
+              ],
+              "kind": "code",
+              "purpose": "implementation",
+              "codeIntent": "definition",
+              "limit": 20
             },
             "success": true
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_6vGDrCdzk6aBXNfQ2QEPPG5f:exec-cd26979e-6a67-4b88-8512-c9ae62dc0d78",
+            "id": "code-mode-nested:29:call_GSNbKzBXcTt2BYBq6qRo8Jbh:exec-4c129b2a-3137-48ec-b187-d87dfa3f14bc",
             "status": "completed",
-            "outputDigest": "883821272f335c5e59f91c526d3d0e1c08c18b676d8fffeaa66d6f726b871241"
+            "outputDigest": "319c8f9f3252a9ef83ae453ea42463ba4e7d74784e0631581524e4627a177f47"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_jLRCoXdjufaeNC6zTKnbE0IM:exec-8b7d7d36-8bed-45c2-8c2a-e573e84c5aba",
+            "id": "code-mode-nested:29:call_H2dYkxsMEsu5zDNswJnmmeyE:exec-82c26857-f2f9-48fd-a84f-d6e27b376e83",
             "title": "Tool: omem/submit_result",
             "status": "in_progress",
             "input": {
@@ -1486,16 +1425,15 @@
             "kind": "submission",
             "success": true,
             "reads": [
-              "omem:apps/server/src/retrieval/unified.ts",
               "omem:apps/server/src/retrieval/units.ts"
             ]
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_jLRCoXdjufaeNC6zTKnbE0IM:exec-8b7d7d36-8bed-45c2-8c2a-e573e84c5aba",
-            "status": "completed",
-            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+            "id": "code-mode-nested:29:call_H2dYkxsMEsu5zDNswJnmmeyE:exec-82c26857-f2f9-48fd-a84f-d6e27b376e83",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
           }
         ],
         "hostTokenBudget": null
@@ -1504,24 +1442,13 @@
       "scope": "full",
       "rounds": [
         {
-          "jobId": "6b30d942-013f-45a0-a000-3f1db545ef7b",
-          "runId": "7fa7dafd-8a78-4ab5-87a0-cec760313fc3",
+          "jobId": "f33de6fe-3672-4607-9671-c3da16ece9a1",
+          "runId": "6959cdd0-858f-42c0-ac27-a5a410abcd28",
           "mode": "full",
           "drafts": [
             {
               "key": "omem:apps/server/src/retrieval/units.ts",
-              "digest": "2ddcbaa70bf15a41390c1f9507ee4346fd11a555dedf94d1754be4f7cea8ba40"
-            }
-          ]
-        },
-        {
-          "jobId": "92f5704c-5292-40ce-830c-c9d1f2a8fdbb",
-          "runId": "4129ddbc-09de-4ebb-9628-d4008c5e268b",
-          "mode": "full",
-          "drafts": [
-            {
-              "key": "omem:apps/server/src/retrieval/units.ts",
-              "digest": "0a8a14abc015d671911440135226b5812ed6c69541a2d2cd7e85a3bc18650142"
+              "digest": "3e64a48a4f3c2db5c928e1e040ea63f9b230d0860fc53fbe7639989917385f20"
             }
           ]
         }
