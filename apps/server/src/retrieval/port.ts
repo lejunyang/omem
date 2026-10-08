@@ -53,6 +53,19 @@ export type RetrievalHit = {
   headingPath: string[];
   score: number;
   routes: string[];
+  /** Optional local judgment, separate from the uncalibrated retrieval score. */
+  assessment?: {
+    model: string;
+    priority: number;
+    answers: Record<
+      string,
+      {
+        choice: string;
+        confidence: number;
+        probabilities: Record<string, number>;
+      }
+    >;
+  };
   /** Name-level AST call sites, not type-resolved cross-file edges. */
   codeMatches?: {
     symbol: string;

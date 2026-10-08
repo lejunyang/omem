@@ -55,6 +55,10 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     private load?: () => Promise<EmbeddingModel>,
     private loadReranker?: () => Promise<RerankerModel>,
     private readOnly = false,
+    private rank?: (
+      query: SearchQuery,
+      hits: RetrievalHit[],
+    ) => Promise<RetrievalHit[]>,
   ) {
     super(database);
     this.projection = new RetrievalProjection(database);
@@ -486,7 +490,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     const lexicalOnly = () =>
       symbols.length ? this.fuse([lexical, symbols]) : lexical;
     if (!q.text.trim() || exactLookup(q.text) || !this.model)
-      return this.finish(lexicalOnly(), q);
+      return this.select(lexicalOnly(), q);
     const dense = new Map<string, ScoredUnit>();
     try {
       const [raw] = await this.model.embed([q.text.slice(0, 400)], "query"),
@@ -529,7 +533,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       }
     } catch (error) {
       this.error = String(error);
-      return this.finish(lexicalOnly(), q);
+      return this.select(lexicalOnly(), q);
     }
     const sorted = [...dense.values()].sort((a, b) => b.score - a.score);
     const floor = Math.max(0.4, (sorted[0]?.score ?? 1) - 0.075);
@@ -601,7 +605,22 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         this.rankingError = String(error);
       }
     }
-    return this.finish(hits, q);
+    return this.select(hits, q);
+  }
+  private async select(hits: ScoredUnit[], q: SearchQuery) {
+    if (!this.rank || !q.text.trim() || exactLookup(q.text))
+      return this.finish(hits, q);
+    // Score a pool before spending the requested reading slots. Do not allow a
+    // model to see hidden/out-of-scope units or force a cold model load here.
+    const pool = this.finish(hits, {
+      ...q,
+      limit: Math.max(q.limit ?? 20, 40),
+    });
+    try {
+      return (await this.rank(q, pool)).slice(0, q.limit ?? 20);
+    } catch {
+      return pool.slice(0, q.limit ?? 20);
+    }
   }
   private finish(hits: ScoredUnit[], q: SearchQuery): RetrievalHit[] {
     const articles = new Map<string, KnowledgeArtifact>();
@@ -754,25 +773,40 @@ export class UnifiedRetrieval extends KeywordRetrieval {
   }
   private sources(hits: RetrievalHit[], q: SearchQuery): SourceCandidate[] {
     const seen = new Set<string>();
+    const terms = queryTerms(q.text);
     return hits
       .flatMap((h) =>
-        h.references.flatMap((r) =>
-          r.fragmentIds.flatMap((id) => {
-            if (seen.has(id) || (q.visible && !q.visible(id))) return [];
-            seen.add(id);
-            return [
-              {
-                id,
-                fragmentId: id,
-                sourceRevisionId: r.revisionId,
-                score: h.score,
-                snippet: h.text,
-                routes: h.routes,
-                provenance: h.provenance,
-              },
-            ];
-          }),
-        ),
+        h.references.flatMap((r) => {
+          // One structured passage occupies one result slot. Its overlapping
+          // storage fragments are evidence anchors, not extra search results.
+          const fragments = r.fragmentIds
+            .filter((id) => !seen.has(id) && (!q.visible || q.visible(id)))
+            .map((id) => ({
+              id,
+              text: this.readEvidence(r.revisionId, id)?.text ?? "",
+            }))
+            .filter((f) => f.text)
+            .sort((a, b) => {
+              const relevance = (text: string) =>
+                Number(text.includes(h.text)) * (terms.length + 1) +
+                terms.filter((t) => text.toLowerCase().includes(t)).length;
+              return relevance(b.text) - relevance(a.text);
+            });
+          const id = fragments[0]?.id;
+          if (!id) return [];
+          seen.add(id);
+          return [
+            {
+              id,
+              fragmentId: id,
+              sourceRevisionId: r.revisionId,
+              score: h.score,
+              snippet: h.text,
+              routes: h.routes,
+              provenance: h.provenance,
+            },
+          ];
+        }),
       )
       .slice(0, q.limit ?? 20);
   }

@@ -6,7 +6,6 @@ import type { AssistantWork } from "./work.js";
 import type { WorkAction } from "../../../../packages/contracts/src/work.js";
 import type { RequestInterpretation } from "../../../../packages/contracts/src/work.js";
 import { assertRequestInterpretation, type RequestInterpreter } from "./request-interpretation.js";
-import { assessPassages } from "../decision/passages.js";
 import { evidenceForRange } from "./research.js";
 import { materialFromRevision } from "../knowledge/repository.js";
 import { sourceAnchor } from "../retrieval/units.js";
@@ -1015,18 +1014,7 @@ export class AssistantRuntime {
       purpose,
       visible,
     });
-    const selected = this.options.decisions
-      ? await assessPassages(this.options.decisions, userText, hits, {
-          sourceIdFor: (hit) => {
-            if (hit.target.kind !== "source") return undefined;
-            const row = this.store.db
-              .prepare("SELECT source_id FROM revisions WHERE id=?")
-              .get(hit.target.revisionId);
-            return row ? String(row.source_id) : undefined;
-          },
-        })
-      : { hits };
-    return assembleAnswerContext(this.store, selected.hits, visible);
+    return assembleAnswerContext(this.store, hits, visible);
   }
 
   private async retrieveEvidence(
