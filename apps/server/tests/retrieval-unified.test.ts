@@ -87,9 +87,7 @@ it("does not spend source result slots on overlapping storage fragments of one p
     });
     const hits = await s.retrieval.search({ text: "网络重试", limit: 2 });
     expect(hits).toHaveLength(2);
-    expect(
-      hits.some((h) => h.references.some((r) => r.fragmentIds.length > 1)),
-    ).toBe(true);
+    expect(hits[0]!.references[0]!.fragmentIds.length).toBeGreaterThan(1);
     const candidates = await s.retrieval.searchSourcesAsync({
       text: "网络重试",
       limit: 2,
