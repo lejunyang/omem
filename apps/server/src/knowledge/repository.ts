@@ -133,7 +133,7 @@ export class KnowledgeRepository {
     const sources = this.store.contexts.sourceIds(brief.contextIds ?? []);
     for (const row of this.store.db.prepare("SELECT source_id FROM knowledge_page_inputs WHERE document_key=?").all(brief.key)) sources.add(String(row.source_id));
     const selected = available.filter(m => explicit.has(m.key) || sources.has(m.sourceId));
-    if (brief.workflow !== "requirement-followup") return selected;
+    if (!["requirement-followup", "project-understanding"].includes(brief.workflow ?? "")) return selected;
     const feedbackRevisions = new Set(selected.flatMap(m => this.store.messageFeedback.forSource(m.sourceId).map(f => String(f.revisionId))));
     return available.filter(m => selected.includes(m) || feedbackRevisions.has(m.revisionId));
   }

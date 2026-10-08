@@ -162,6 +162,10 @@ help = "Owned development API URL; must accompany data-dir to retain the preview
 [tasks."knowledge:outline-verify".options.data-dir]
 help = "Owned .repo-review/runtime preview data directory; never a private library"
 
+[tasks."knowledge:context-verify"]
+description = "Verify one persistent project understanding with real Traex/Sol on synthetic events; preserves one owned browser preview"
+run = "bun scripts/live-context-views.ts"
+
 [tasks."benchmark:mtrag"]
 run = "bun scripts/benchmark-mtrag.ts"
 description = "Compare lexical ranking on the pinned public MTRAG Cloud corpus; downloads benchmark data, no model calls"

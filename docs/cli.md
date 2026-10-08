@@ -154,6 +154,8 @@ create 文件是 `{title,reader,goal,topicPath,materialKeys,contextIds,pages}`�
 
 需求跟进可用 `contexts create/assign` 明确项目范围，然后 `requirements track '名称' --goal '交付目标' --context PROJECT_ID --watch`。`requirements list/show` 查看状态和正文，`handoff KEY --to NEW_DIRECTORY` 导出实现交接。`requirements board/follow/unfollow` 将明确行动关联到个人待办。`develop prepare/refresh/repository` 准备远端仓库并查询固定版本；`develop inspect/read/configure` 让 Agent 从项目原文补齐开发配置；`develop register/start/show/resume/diff/apply` 提供独立副本中的编码、项目规则、实际检查及独立评审；应用补丁不自动提交或发布。用法和当前限制见[需求跟进](reader-first/requirement-followup.md)。
 
+只需持续理解项目安排与变化时，使用 `contexts view start PROJECT_ID`，再用 `contexts view show PROJECT_ID` 查看同一文章和处理状态。`list` 查看所有范围，`refresh` 重试，`pause/resume` 控制自动维护。需要已归属材料和可用 Agent；新增材料进入同一范围后自动更新，失败保留旧文。`current=false` 须补读原文；不新增采集、待办或通知。操作和限制见[项目视图](../skills/omem-cli/references/context-views.md)。
+
 ```bash
 omem lark login
 omem lark status

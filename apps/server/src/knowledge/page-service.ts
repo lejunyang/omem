@@ -4,15 +4,17 @@ import {
 } from "../../../../packages/contracts/src/knowledge.js";
 import type { KnowledgeRepository } from "./repository.js";
 import type { KnowledgePageWorker } from "./page-worker.js";
+import { ContextViews } from "./context-views.js";
 
 /** Shared by HTTP and the assistant; saving an updated plan never replaces a
  * running worker's frozen input. Observation schedules the latest plan next. */
 export class KnowledgePageService {
+  readonly views: ContextViews;
   constructor(
     readonly repository: KnowledgeRepository,
     readonly maintenance: KnowledgePageWorker,
     readonly available: boolean,
-  ) {}
+  ) { this.views = new ContextViews(this); }
   save(value: WikiPageBrief, editing: boolean) {
     if (!this.available) throw Error("请先在能力与连接中配置 Agent");
     const plan = wikiPageBriefSchema.parse(value);

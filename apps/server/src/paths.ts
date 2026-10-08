@@ -9,7 +9,9 @@ function locatePackage() {
     const manifest = join(dir, "package.json");
     if (
       existsSync(manifest) &&
-      JSON.parse(readFileSync(manifest, "utf8")).name === "omem"
+      ["omem", "omem-assistant"].includes(
+        JSON.parse(readFileSync(manifest, "utf8")).name,
+      )
     )
       return dir;
     if (dirname(dir) === dir)

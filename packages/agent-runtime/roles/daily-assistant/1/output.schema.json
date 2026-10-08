@@ -42,11 +42,45 @@
               "properties": {
                 "operation": {
                   "type": "string",
+                  "const": "maintain_context"
+                },
+                "contextId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "start",
+                    "refresh",
+                    "pause",
+                    "resume"
+                  ]
+                },
+                "delegation": {
+                  "description": "Exact current owner request to maintain, refresh, pause or resume this project's understanding. Use context_view's returned context ID. This does not authorize coding or notifications.",
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "operation",
+                "contextId",
+                "mode",
+                "delegation"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "operation": {
+                  "type": "string",
                   "const": "subscribe_chat"
                 },
                 "chatId": {
                   "type": "string",
-                  "pattern": "^oc_[A-Za-z0-9_-]+$"
+                  "pattern": "^oc_[A-Za-z0-9]+$"
                 },
                 "mode": {
                   "type": "string",

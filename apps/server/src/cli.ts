@@ -588,6 +588,17 @@ contexts
   .action(async (id, contextIds) =>
     show(await api(`/api/sources/${enc(id)}/contexts`, { contextIds }, "PUT")),
   );
+const contextView = contexts.command("view").description("持续整理同一项目理解，查看正文与更新状态")
+  .addHelpText("after", "\n先 contexts list 获取范围 ID，保存并归属材料，配置 Agent 后 start。\nshow 查看 current、maintenance 和正文；开始/刷新只排队，失败保留旧文，可 refresh 重试。\n暂停保留内容；不新增采集范围、个人待办或外部通知。详见随包 references/context-views.md。\n");
+contextView.command("list").description("列出项目理解与状态")
+  .action(async()=>show(await api("/api/knowledge/context-views")));
+contextView.command("show <context-id>").description("读取项目理解；待更新内容须补读原文")
+  .action(async id=>show(await api(`/api/knowledge/context-views/${enc(id)}`)));
+for (const [mode, description] of [
+  ["start", "建立或继续维护同一份理解"], ["refresh", "重试或重新整理"],
+  ["pause", "暂停自动更新，保留正文"], ["resume", "恢复，按当前材料继续"],
+] as const) contextView.command(`${mode} <context-id>`).description(description)
+  .action(async id=>show(await api(`/api/knowledge/context-views/${enc(id)}`, {mode})));
 const requirements = group(
   "requirements",
   "需求 Agent：综合文档、消息、纪要与代码持续跟进，导出实现交接",

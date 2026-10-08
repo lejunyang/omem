@@ -220,6 +220,7 @@ export class AcpAssistantModel implements AssistantModelPort {
               .filter((tool) =>
                 [
                   "work_catalog",
+                  "context_view",
                   "work_status",
                   "work_result",
                   "repository_status",

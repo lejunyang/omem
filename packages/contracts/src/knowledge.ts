@@ -74,7 +74,7 @@ export const knowledgePlanSchema = z.object({
 }).strict();
 
 export const wikiPageBriefSchema = z.object({
-  workflow: z.enum(["requirement-followup"]).optional(),
+  workflow: z.enum(["requirement-followup", "project-understanding"]).optional(),
   attention: attentionPolicySchema.optional().describe("Owner-selected investigation priorities; these are not requirement facts. Preserve out-of-focus criteria but emphasize requested changes and blockers."),
   key, title: z.string(), order: z.number().int().nonnegative(),
   kind: z.enum(["tutorial", "explanation", "how-to", "reference"]),
@@ -133,7 +133,7 @@ export type KnowledgeArtifact = {
   review: { model: string; at: string; trace: Record<string, unknown>; verdict: "accepted" };
   reading?: WikiPageBrief;
   /** Host snapshot of the chosen source catalog; the reading plan keeps its dynamic scope. */
-  selection?: { materialKeys: string[] };
+  selection?: { materialKeys: string[]; materialDigests?: { key: string; digest: string }[] };
   /** Publication intent is assigned by the host, never inferred from a path. */
   publication?: { role: KnowledgeRole };
   /** Read during investigation; not an assertion that every byte supports the page. */

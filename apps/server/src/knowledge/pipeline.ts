@@ -237,7 +237,7 @@ export class KnowledgePipeline {
     } : undefined);
     let remaining = targets;
     const published: KnowledgeArticle[] = [];
-    const attempts = publication?.reading.workflow === "requirement-followup" ? 2 : 4;
+    const attempts = publication?.reading.workflow ? 2 : 4;
     type Verdict = ReturnType<typeof knowledgeReviewSchema.parse>["verdicts"][number];
     let rangePass: { batch: ReturnType<typeof knowledgeBatchSchema.parse>; write: RunResult; previousReview: RunResult; verdicts: Verdict[]; changed: Record<string, string[]> } | undefined;
     const reviewRounds: { jobId: string; runId: string; mode: "full" | "citation_ranges"; previousJobId?: string; rangeRepairs?: {documentKey:string;key:string;startLine:number;endLine:number}[]; drafts: {key:string;digest:string}[] }[] = [];
@@ -292,7 +292,8 @@ export class KnowledgePipeline {
         if (publication && stableDigest(this.repository.pages().find(p => p.key === document.key)?.plan) !== stableDigest(publication.reading))
           throw Error("阅读目标或用户反馈已变化，保留旧稿，按新目标重新调查");
         const artifact: KnowledgeArtifact = { version: 1, document, dependencies, ...(publication ? { reading: publication.reading,
-          ...(publication.reading.contextIds?.length ? { selection: { materialKeys: publication.materialKeys } } : {}),
+          ...(publication.reading.contextIds?.length ? { selection: { materialKeys: publication.materialKeys,
+            materialDigests: offers.map(o=>({key:o.material.key,digest:o.material.digest})).sort((a,b)=>a.key.localeCompare(b.key)) } } : {}),
         } : {}),
           publication: {role: publication ? publication.reading.kind === "reference" ? "reference" : "article" : "note"},
           investigation: offers.filter(o=>readKeys.has(o.material.key)).map(o=>({key:o.material.key,digest:o.material.digest})),
