@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-07T18:07:52.702Z",
-  "implementationCommit": "2a9297354bbaf2952b5ac95ef395fdfc0acc4b34",
-  "sourceDigest": "bffb6c41c87533328607fb2d6b12096a0020339c97492f66c3455413024a2212",
+  "recordedAt": "2026-10-08T15:06:40.972Z",
+  "implementationCommit": "6d454c34d055614ae3cf2653ad04046a07f00a2c",
+  "sourceDigest": "59d6277fcda76f182217c8e192a3cbd0c63fc170b961387ce6884f0f7ce059fa",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T18-07-52-702Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-08T15-06-40-972Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T18-07-52-702Z/project.log",
-        "sha256": "bef0fc8c80ded50d16d8feda3325272bb2954e224c58ba1d432038935c63b2bf"
+        "log": ".repo-review/runtime/verification/2026-10-08T15-06-40-972Z/project.log",
+        "sha256": "0142d176dacd71399a5c861fd9d75cf14acc7a970a40c7f8b4dd8e13b6b4e66f"
       }
     },
     {
@@ -43,59 +43,18 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-07T18-07-52-702Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-08T15-06-40-972Z/liveChineseRetrieval.log",
         "sha256": "c633cc8b3935a685907f142b4f178e7f9fd00ac994d0edc6ef224a195357b1e8"
       }
     },
     {
       "name": "publishedKnowledgeReferences",
-      "state": "failed",
+      "state": "skipped",
       "details": {
-        "articles": 10,
+        "articles": 0,
         "currentArticles": 0,
         "citations": 0,
-        "errors": [
-          {
-            "key": "guide:capture",
-            "error": "Error: Unknown material omem:apps/server/src/knowledge/pipeline.ts"
-          },
-          {
-            "key": "guide:contributing",
-            "error": "Error: Invalid review source range: omem:config/wiki-pages.json"
-          },
-          {
-            "key": "guide:knowledge-agent",
-            "error": "Error: Invalid review source range: omem:docs/reader-first/architecture.md"
-          },
-          {
-            "key": "guide:knowledge-maintenance",
-            "error": "Error: Unknown material omem:apps/web/src/ContextPicker.vue"
-          },
-          {
-            "key": "guide:knowledge-reference",
-            "error": "Error: Unknown material omem:packages/contracts/src/knowledge.ts"
-          },
-          {
-            "key": "guide:memory",
-            "error": "Error: Invalid review source range: omem:apps/server/src/app.ts"
-          },
-          {
-            "key": "guide:overview",
-            "error": "Error: Unknown material omem:README.md"
-          },
-          {
-            "key": "guide:personal-messages",
-            "error": "Error: Invalid review source range: omem:apps/server/src/integrations/lark-personal/client.ts"
-          },
-          {
-            "key": "guide:requirement-development",
-            "error": "Error: Unknown material omem:packages/contracts/src/work.ts"
-          },
-          {
-            "key": "guide:retrieval",
-            "error": "Error: Invalid review source range: omem:apps/server/src/assistant/runtime.ts"
-          }
-        ]
+        "errors": []
       }
     },
     {
@@ -105,11 +64,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v7",
-        "units": 17938,
+        "units": 18162,
         "semantic": {
           "model": "structure-icu-v7:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 17938,
+          "indexed": 18162,
           "pending": 0,
           "error": null
         },
@@ -136,383 +95,17 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 866,
-    "publishedPages": 10,
+    "materials": 878,
+    "publishedPages": 0,
     "currentPages": 0,
     "plannedPages": 0,
     "citations": 0,
     "articleLinks": 0,
-    "errors": [
-      {
-        "key": "guide:capture",
-        "error": "Error: Unknown material omem:apps/server/src/knowledge/pipeline.ts"
-      },
-      {
-        "key": "guide:contributing",
-        "error": "Error: Invalid review source range: omem:config/wiki-pages.json"
-      },
-      {
-        "key": "guide:knowledge-agent",
-        "error": "Error: Invalid review source range: omem:docs/reader-first/architecture.md"
-      },
-      {
-        "key": "guide:knowledge-maintenance",
-        "error": "Error: Unknown material omem:apps/web/src/ContextPicker.vue"
-      },
-      {
-        "key": "guide:knowledge-reference",
-        "error": "Error: Unknown material omem:packages/contracts/src/knowledge.ts"
-      },
-      {
-        "key": "guide:memory",
-        "error": "Error: Invalid review source range: omem:apps/server/src/app.ts"
-      },
-      {
-        "key": "guide:overview",
-        "error": "Error: Unknown material omem:README.md"
-      },
-      {
-        "key": "guide:personal-messages",
-        "error": "Error: Invalid review source range: omem:apps/server/src/integrations/lark-personal/client.ts"
-      },
-      {
-        "key": "guide:requirement-development",
-        "error": "Error: Unknown material omem:packages/contracts/src/work.ts"
-      },
-      {
-        "key": "guide:retrieval",
-        "error": "Error: Invalid review source range: omem:apps/server/src/assistant/runtime.ts"
-      }
-    ],
-    "pages": [
-      {
-        "key": "guide:capture",
-        "title": "一份材料的旅程：从导入到阅读与引用",
-        "role": "article",
-        "current": false,
-        "sections": {
-          "case": {
-            "state": "current"
-          },
-          "branches": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "layers": {
-            "state": "current"
-          },
-          "citations": {
-            "state": "current"
-          },
-          "assignment": {
-            "state": "current"
-          },
-          "special_inputs": {
-            "state": "current"
-          },
-          "change_points": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          }
-        }
-      },
-      {
-        "key": "guide:contributing",
-        "title": "改一条完整功能链：从搜索结果到界面",
-        "role": "article",
-        "current": false,
-        "sections": {
-          "outcome": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "start-dev": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "trace-request": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "section-origin": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "change": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "verify": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          }
-        }
-      },
-      {
-        "key": "guide:knowledge-agent",
-        "title": "把材料写成一篇能用的文章",
-        "role": "article",
-        "current": false,
-        "sections": {
-          "plan-route": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "edit-outline": {
-            "state": "current"
-          },
-          "four-objects": {
-            "state": "current"
-          },
-          "write-one-page": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "reader-results": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "keep-current": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          }
-        }
-      },
-      {
-        "key": "guide:knowledge-maintenance",
-        "title": "整理文章，以及原文更新后怎么处理",
-        "role": "article",
-        "current": false,
-        "sections": {
-          "choose-scope": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "compose-article": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "wait-and-retry": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "reader-check": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "change-example": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "maintain-same-article": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          }
-        }
-      },
-      {
-        "key": "guide:knowledge-reference",
-        "title": "知识文章的状态、来源与修改入口",
-        "role": "reference",
-        "current": false,
-        "sections": {
-          "status-axes": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "scope-classification": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "dynamic-lifecycle": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "evidence-visibility": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "asset-removal": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          }
-        }
-      },
-      {
-        "key": "guide:memory",
-        "title": "记住约定，跟进变化：一次活动从保存到提醒",
-        "role": "article",
-        "current": false,
-        "sections": {
-          "save-and-find": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "update-and-check": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "article-maintenance": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "continue-and-remind": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "finish-followup": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          }
-        }
-      },
-      {
-        "key": "guide:overview",
-        "title": "先认识 omem：把材料变成能找回的工作记忆",
-        "role": "article",
-        "current": false,
-        "sections": {
-          "start-with-agreement": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "save-and-read": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "ask-and-check": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "organize-article": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "four-objects": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "documents-and-code": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "delegate-and-close": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          }
-        }
-      },
-      {
-        "key": "guide:personal-messages",
-        "title": "让飞书消息进入个人助理：订阅、读材料与跟进",
-        "role": "article",
-        "current": false,
-        "sections": {
-          "start": {
-            "state": "needs-review",
-            "reason": "已有补充或纠正，需要重新整理这一篇"
-          },
-          "setup": {
-            "state": "needs-review",
-            "reason": "已有补充或纠正，需要重新整理这一篇"
-          },
-          "selection": {
-            "state": "needs-review",
-            "reason": "已有补充或纠正，需要重新整理这一篇"
-          },
-          "materials": {
-            "state": "needs-review",
-            "reason": "已有补充或纠正，需要重新整理这一篇"
-          },
-          "decision": {
-            "state": "needs-review",
-            "reason": "已有补充或纠正，需要重新整理这一篇"
-          },
-          "notifications": {
-            "state": "needs-review",
-            "reason": "已有补充或纠正，需要重新整理这一篇"
-          },
-          "service": {
-            "state": "needs-review",
-            "reason": "已有补充或纠正，需要重新整理这一篇"
-          },
-          "timeout": {
-            "state": "needs-review",
-            "reason": "已有补充或纠正，需要重新整理这一篇"
-          },
-          "checklist": {
-            "state": "needs-review",
-            "reason": "已有补充或纠正，需要重新整理这一篇"
-          }
-        }
-      },
-      {
-        "key": "guide:requirement-development",
-        "title": "让需求变成可跟进的事项和可评审的代码",
-        "role": "article",
-        "current": false,
-        "sections": {
-          "one_requirement": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "state_and_maintenance": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "prepare": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "receipt_and_decisions": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "run_and_status": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "delivery_boundary": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          }
-        }
-      },
-      {
-        "key": "guide:retrieval",
-        "title": "一次提问如何找到答案：搜索、候选评估与上下文",
-        "role": "article",
-        "current": false,
-        "sections": {
-          "what-counts-as-an-answer": {
-            "state": "current"
-          },
-          "retrieve-candidates": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "select-and-restore-context": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "investigate-gaps": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "write-the-answer": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          },
-          "locate-failures": {
-            "state": "unavailable",
-            "reason": "这一节的来源已移除或无法读取"
-          }
-        }
-      }
-    ],
+    "errors": [],
+    "pages": [],
     "restore": {
-      "restored": 14,
-      "stale": 18
+      "restored": 15,
+      "stale": 9
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -536,7 +129,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 1969,
+        "elapsedMs": 1488,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -600,7 +193,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 3,
-        "elapsedMs": 734,
+        "elapsedMs": 832,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -668,7 +261,7 @@
         "passed": false,
         "firstExpectedRank": 20,
         "uniquePathsAt5": 4,
-        "elapsedMs": 768,
+        "elapsedMs": 918,
         "top5": [
           {
             "path": "docs/reader-first/publication-lifecycle.md",
@@ -734,7 +327,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 3,
-        "elapsedMs": 215,
+        "elapsedMs": 438,
         "top5": [
           {
             "path": "scripts/live-development.ts",
@@ -795,7 +388,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 216,
+        "elapsedMs": 219,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -861,7 +454,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 5,
-        "elapsedMs": 865,
+        "elapsedMs": 913,
         "top5": [
           {
             "path": "design.md",
