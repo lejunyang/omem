@@ -39,7 +39,7 @@ import {
   scheduleSummaries,
   type AssistantSchedulePorts,
 } from "./schedules.js";
-import type { RequestInterpreter } from "./request-interpretation.js";
+import { assertRequestInterpretation, type RequestInterpreter } from "./request-interpretation.js";
 
 type Feedback = {
   id: string;
@@ -665,15 +665,7 @@ export class AssistantWork {
       actor,candidate:action,target:{context:target.context,maintenance:target.maintenance},...options,
     });
     options.signal?.throwIfAborted();
-    const groundedTarget = interpretation.targetBasis === "active_project"
-      ? options.activeProjectId === action.contextId
-      : interpretation.targetBasis === "current_request"
-        ? !!interpretation.targetQuote && actor.userText.includes(interpretation.targetQuote)
-        : interpretation.targetBasis === "prior_turn"
-          ? !!interpretation.targetQuote && !!options.priorTurns?.some(t => t.userText.includes(interpretation.targetQuote!))
-          : false;
-    if (interpretation.verdict !== "execute" || !groundedTarget || !interpretation.instruction || !actor.userText.includes(interpretation.instruction))
-      throw Error(`尚未收到本人明确交办：${interpretation.reason}`);
+    assertRequestInterpretation(interpretation, {actor,candidate:action,target,...options}, {projectId:action.contextId});
     return this.store.tx(() => this.applyInTransaction(action, actor));
   }
   private applyInTransaction(

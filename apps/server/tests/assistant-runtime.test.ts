@@ -7,7 +7,6 @@ import {
   AssistantRuntime,
   ModelUnavailableError,
   TurnCancelledError,
-  detectTaskIntent,
   type AssistantModelPort,
   type AssistantModelReply,
 } from "../src/assistant/runtime.js";
@@ -22,6 +21,11 @@ import { KeywordRetrieval } from "../src/retrieval/keyword.js";
 import { UnifiedRetrieval } from "../src/retrieval/unified.js";
 import { materialFromRevision } from "../src/knowledge/repository.js";
 import { evidenceForRange } from "../src/assistant/research.js";
+
+import type { RequestInterpreter } from "../src/assistant/request-interpretation.js";
+// Governance fixtures inject a semantic verdict; these tests do not assess a real model.
+const approveTaskRequest: RequestInterpreter = async ({actor}) => ({verdict:"execute",instruction:actor.userText,targetBasis:"current_request",targetQuote:actor.userText,reason:"controlled fixture verdict"});
+const declineTaskRequest: RequestInterpreter = async ({actor}) => ({verdict:"decline",instruction:actor.userText,targetBasis:"unresolved",targetQuote:null,reason:"controlled consultation verdict"});
 
 type Resource = { directory: string; store: Store; secrets: EncryptedSecretStore };
 const resources: Resource[] = [];
@@ -119,7 +123,7 @@ it("keeps the resolved project through restart, scopes follow-up retrieval, and 
     }
     return {answer:"这是无关的日常提醒。",citationIds:[],projectSelection:{project_id:null,reason:"与项目无关"},
       toolCalls:[{tool:"create_task",title:"买牛奶",detail:"日常购物"}]};
-  }},{retrieval,memory:new MemoryService(store),maxPriorTurns:0});
+  }},{retrieval,memory:new MemoryService(store),interpretRequest:approveTaskRequest,maxPriorTurns:0});
   try {
     const taskTurn=await runtime.turn({conversationId:conversation.id,userText:"帮我记个待办：找验收负责人确认结果"});
     expect(taskTurn.turn.inputMessageRefs.status).toBe("done");
@@ -188,21 +192,6 @@ class ScriptedModel implements AssistantModelPort {
     return next;
   }
 }
-
-describe("detectTaskIntent (unit)", () => {
-  it("identifies explicit assignment intents", () => {
-    expect(detectTaskIntent("帮我记一下：周五下午3点和张三开会").explicit).toBe(true);
-    expect(detectTaskIntent("提醒我明天交报告").explicit).toBe(true);
-    expect(detectTaskIntent("创建一个任务").explicit).toBe(true);
-    expect(detectTaskIntent("记一下：买牛奶").explicit).toBe(true);
-  });
-  it("rejects consultation questions", () => {
-    expect(detectTaskIntent("接口说明").explicit).toBe(false);
-    expect(detectTaskIntent("这个接口怎么写？").explicit).toBe(false);
-    expect(detectTaskIntent("这是什么？").explicit).toBe(false);
-    expect(detectTaskIntent("你好").explicit).toBe(false);
-  });
-});
 
 describe("AssistantRuntime (async, governed)", () => {
   it("search consultation preserves its read-only mode and purpose when retried", async () => {
@@ -273,6 +262,7 @@ describe("AssistantRuntime (async, governed)", () => {
     const runtime = new AssistantRuntime(store, model, {
       ownerId: "owner",
       memory,
+      interpretRequest: approveTaskRequest,
     });
     const conversation = runtime.conversations.open({
       principalId: "owner",
@@ -313,6 +303,7 @@ describe("AssistantRuntime (async, governed)", () => {
     const runtime = new AssistantRuntime(store, model, {
       ownerId: "owner",
       memory,
+      interpretRequest: declineTaskRequest,
     });
     const conversation = runtime.conversations.open({
       principalId: "owner",
@@ -327,9 +318,9 @@ describe("AssistantRuntime (async, governed)", () => {
     expect(result.createdTaskIds).toEqual([]);
     // The answer honestly says no task was created.
     expect(result.turn.result).toContain("未创建任务");
-    // The tool action is rejected with reason not_explicit_task_intent.
+    // The tool action is rejected with reason task_request_not_approved.
     const action = (result.turn.toolActions as Array<{ rejected?: boolean; reason?: string }>)[0];
-    expect(action).toMatchObject({ rejected: true, reason: "not_explicit_task_intent" });
+    expect(action).toMatchObject({ rejected: true, reason: "task_request_not_approved" });
   });
 
   it("H-G20: ModelUnavailableError marks turn pending for retry, not degraded, no fake answer", async () => {
@@ -340,7 +331,7 @@ describe("AssistantRuntime (async, governed)", () => {
         throw new ModelUnavailableError("no cli");
       },
     };
-    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory });
+    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, interpretRequest: approveTaskRequest });
     const conversation = runtime.conversations.open({
       principalId: "owner",
       channel: "web",
@@ -362,7 +353,7 @@ describe("AssistantRuntime (async, governed)", () => {
         throw Error("boom");
       },
     };
-    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory });
+    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, interpretRequest: approveTaskRequest });
     const conversation = runtime.conversations.open({
       principalId: "owner",
       channel: "web",
@@ -482,6 +473,7 @@ describe("AssistantRuntime (async, governed)", () => {
     const runtime = new AssistantRuntime(store, model, {
       ownerId: "owner",
       memory,
+      interpretRequest: declineTaskRequest,
       visibilityPolicy: ({ conversation, fragmentId }) => {
         if (conversation.visibility === "private") return true;
         const ev = store.evidence(fragmentId);
@@ -517,7 +509,7 @@ describe("AssistantRuntime (async, governed)", () => {
         ],
       },
     ]);
-    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory });
+    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, interpretRequest: approveTaskRequest });
     const conversation = runtime.conversations.open({
       principalId: "owner",
       channel: "web",
@@ -559,7 +551,7 @@ describe("AssistantRuntime (async, governed)", () => {
           for (const waiter of waiters.splice(0)) waiter();
         }),
     };
-    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory });
+    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, interpretRequest: approveTaskRequest });
     const conversation = runtime.conversations.open({
       principalId: "owner",
       channel: "web",
@@ -589,6 +581,7 @@ describe("AssistantRuntime (async, governed)", () => {
     const runtime = new AssistantRuntime(store, hungModel, {
       ownerId: "owner",
       memory,
+      interpretRequest: approveTaskRequest,
       turnTimeoutMs: 200, // short timeout
     });
     const conversation = runtime.conversations.open({
@@ -707,7 +700,7 @@ describe("AssistantRuntime (async, governed)", () => {
         };
       },
     };
-    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, retrieval });
+    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, retrieval, interpretRequest: approveTaskRequest });
     const conv = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "w", visibility: "private" });
     const r1 = await runtime.turn({ conversationId: conv.id, userText: "找下接口说明" });
     expect(r1.createdTaskIds).toEqual([]);
@@ -728,7 +721,7 @@ describe("AssistantRuntime (async, governed)", () => {
         return { answer: "好的", citationIds: [], toolCalls: [{ tool: "create_task", title: "空任务", detail: "x", citationIds: ["nonexistent-frag"] }] };
       },
     };
-    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory });
+    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, interpretRequest: approveTaskRequest });
     const conv = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "w", visibility: "private" });
     await runtime.turn({ conversationId: conv.id, userText: "找下不存在的东西" });
     const r2 = await runtime.turn({ conversationId: conv.id, userText: "帮我按这个记一下下一步" });
@@ -744,7 +737,7 @@ describe("AssistantRuntime (async, governed)", () => {
     const model: AssistantModelPort = {
       generate: async () => new Promise<AssistantModelReply>((res) => { release = res; generationStarted(); }),
     };
-    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory });
+    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, interpretRequest: approveTaskRequest });
     const conv = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "w", visibility: "private" });
     const gen = new Promise<void>((res) => { generationStarted = res; });
     const p = runtime.turn({ conversationId: conv.id, userText: "帮我记一下：周五开会" });
@@ -770,7 +763,7 @@ describe("AssistantRuntime (async, governed)", () => {
         return { answer: "done", citationIds: [], toolCalls: [{ tool: "create_task", title: "买牛奶", detail: "明天" }] };
       },
     };
-    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory });
+    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, interpretRequest: approveTaskRequest });
     const conv = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "w", visibility: "private" });
     const r1 = await runtime.turn({ conversationId: conv.id, userText: "帮我记一下：买牛奶", transportEventId: "evt-recover-1" });
     expect(r1.createdTaskIds.length).toBe(1);
@@ -782,7 +775,7 @@ describe("AssistantRuntime (async, governed)", () => {
     expect(receiptRow.n).toBeGreaterThan(0);
     // New runtime instance (simulating restart). The turn is "done" so it won't be
     // in unfinishedTurns(); the receipt-based check is proven by the combo test below.
-    const runtime2 = new AssistantRuntime(store, model, { ownerId: "owner", memory });
+    const runtime2 = new AssistantRuntime(store, model, { ownerId: "owner", memory, interpretRequest: approveTaskRequest });
     const result = await runtime2.recoverUnfinishedTurns();
     // Turn is already done, nothing to recover.
     expect(result.recovered).toBe(0);
@@ -802,7 +795,7 @@ describe("AssistantRuntime (async, governed)", () => {
         return { answer: "done", citationIds: [], toolCalls: [{ tool: "create_task", title: "买牛奶", detail: "明天" }] };
       },
     };
-    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, retrieval });
+    const runtime = new AssistantRuntime(store, model, { ownerId: "owner", memory, retrieval, interpretRequest: approveTaskRequest });
     const conv = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "w", visibility: "private" });
     const r1 = await runtime.turn({ conversationId: conv.id, userText: "帮我记一下：买牛奶" });
     expect(r1.turn.inputMessageRefs.status).toBe("pending");
@@ -1015,7 +1008,7 @@ it("daily workflow creates with time, reschedules, completes, and suppresses due
       expectedVersion: t.version, action: "reschedule", dueAt: "2026-10-03T10:00:00+08:00", dueExpression: "10月3日上午10点" }] };
     return { answer: "完成了", citationIds: [], toolCalls: [{ tool: "update_task", taskId: t.id, expectedVersion: t.version, action: "complete" }] };
   } };
-  const runtime = new AssistantRuntime(store, model, { memory: new MemoryService(store), timezone: "Asia/Shanghai" });
+  const runtime = new AssistantRuntime(store, model, { memory: new MemoryService(store), interpretRequest: approveTaskRequest, timezone: "Asia/Shanghai" });
   const c = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "daily", visibility: "private" });
   const create = await runtime.turn({ conversationId: c.id, userText: "帮我记个待办：10月2日上午9点前完成英语复习" });
   expect(create.turn.result).toContain("已创建任务：英语复习");
@@ -1040,7 +1033,7 @@ it("creates a check-in reminder without inventing a completion deadline", async 
     answer: "候选", citationIds: [], toolCalls: [{tool: "create_task", title: "确认验收结果", detail: "联系负责人",
       dueAt: null, dueExpression: null, followUp: {waiting_on: null, next_check_at: "2026-10-07T15:00:00+08:00",
         snoozed_until: null, time_expression: "2026年10月7日15点", timezone: "Asia/Shanghai"}}],
-  }) }, {memory: new MemoryService(store), timezone: "Asia/Shanghai"});
+  }) }, {memory: new MemoryService(store), interpretRequest: approveTaskRequest, timezone: "Asia/Shanghai"});
   const conversation = runtime.conversations.open({principalId: "owner", channel: "web", chatId: "check-in", visibility: "private"});
   const result = await runtime.turn({conversationId: conversation.id, userText: "2026年10月7日15点提醒我找负责人确认验收结果"});
   expect(store.tasks()).toHaveLength(1);
@@ -1068,7 +1061,7 @@ it("one bounded query expansion retrieves cross-language originals and never exe
     expect(input.evidence.map(e => e.fragmentId)).toContain(source.fragments[0]!.id);
     return { answer: "七次失败后熔断", citationIds: [source.fragments[0]!.id], searchQueries: ["ignored"] };
   } };
-  const runtime = new AssistantRuntime(store, model, { memory: new MemoryService(store), retrieval: new KeywordRetrieval(store.db) });
+  const runtime = new AssistantRuntime(store, model, { memory: new MemoryService(store), interpretRequest: approveTaskRequest, retrieval: new KeywordRetrieval(store.db) });
   const c = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "search", visibility: "private" });
   const result = await runtime.turn({ conversationId: c.id, userText: "熔断阈值是什么" });
   expect(calls).toBe(2); expect(store.tasks()).toHaveLength(0);

@@ -54,7 +54,8 @@ describe("daily message follow-up", () => {
           expected_version: task.version, action, follow_up: action === "cancel" ? null : { ...followUp, waiting_on: null,
             next_check_at: "2030-10-03T02:00:00.000Z", snoozed_until: "2030-10-03T02:00:00.000Z", time_expression: "2030年10月3日上午10点" } } }));
       } };
-      const runtime = new AssistantRuntime(store, model, { memory: new MemoryService(store) });
+      const interpretRequest = async ({actor}: import("../src/assistant/request-interpretation.js").RequestInterpretationInput) => ({verdict:"execute" as const,instruction:actor.userText,targetBasis:"current_request" as const,targetQuote:actor.userText,reason:"controlled follow-up fixture"});
+      const runtime = new AssistantRuntime(store, model, { memory: new MemoryService(store),interpretRequest });
       const conversation = runtime.conversations.open({ principalId: "owner", channel: "web", visibility: "private", chatId: "follow-up" });
       const create = await runtime.turn({ conversationId: conversation.id, userText: "帮我跟进张三的评审回复，2030年10月2日上午9点提醒我检查。" });
       expect(create.turn.result).toContain("等待：张三");
@@ -70,7 +71,7 @@ describe("daily message follow-up", () => {
       expect(store.remind("2030-10-03T04:00:00.000Z")).toBe(0);
       const reminders = store.notifications().filter(n => n.title.startsWith("事项待跟进"));
       expect(reminders).toHaveLength(1); expect(reminders[0]!.body).toContain("尚未确认收到回复");
-      const resumed = new AssistantRuntime(store, model, { memory: new MemoryService(store) });
+      const resumed = new AssistantRuntime(store, model, { memory: new MemoryService(store),interpretRequest });
       const cancel = await resumed.turn({ conversationId: conversation.id, userText: "取消刚才的评审回复事项，不用做了。" });
       expect(cancel.turn.result).toContain("已取消");
       expect(store.tasks()[0]).toMatchObject({ status: "cancelled", version: 3, followUp: null });

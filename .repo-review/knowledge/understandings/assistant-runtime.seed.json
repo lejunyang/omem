@@ -7,9 +7,9 @@
   },
   "curated": {
     "by": "doubao-agent",
-    "at": "2026-09-28T14:00:00+08:00",
+    "at": "2026-10-08T22:48:00+08:00",
     "against_commit": "e031523",
-    "note": "Hand-curated against commit e031523. Not model-produced; verified_by_agent stays false because no independent verifier ran. Re-run /api/review/code/sync to re-project after edits."
+    "note": "Hand-curated seed; the intent locator was updated for the 2026-10-08 request interpreter change. Not model-produced; verified_by_agent stays false. Re-run /api/review/code/sync to re-project after edits."
   },
   "output": {
     "module_responsibilities": [
@@ -32,9 +32,9 @@
       },
       {
         "name": "intent",
-        "description": "detectTaskIntent classifies whether the user request asks for a task or is a consultation before governance.",
+        "description": "interpretTaskCall independently interprets the current request against the candidate task, recent owner turns and persisted task receipts before host governance.",
         "nodes": [
-          { "path": "apps/server/src/assistant/runtime.ts", "qualified": "detectTaskIntent", "kind": "function" }
+          { "path": "apps/server/src/assistant/runtime.ts", "qualified": "AssistantRuntime.interpretTaskCall", "kind": "method" }
         ]
       }
     ],

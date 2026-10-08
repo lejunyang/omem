@@ -18,11 +18,29 @@ export type RequestInterpretationInput = {
   target: unknown;
   priorTurns?: { userText: string; result: string }[];
   activeProjectId?: string;
+  /** Last unique persisted task receipt in the recent conversation, never a model-proposed id. */
+  priorTaskId?: string;
+  timezone?: string;
+  onActivity?: () => void;
   signal?: AbortSignal;
 };
 export type RequestInterpreter = (
   input: RequestInterpretationInput,
 ) => Promise<RequestInterpretation>;
+
+export function assertRequestInterpretation(result: RequestInterpretation, input: RequestInterpretationInput, target: {projectId?: string; taskId?: string} = {}) {
+  const grounded = result.targetBasis === "active_project"
+    ? !!target.projectId && input.activeProjectId === target.projectId
+    : result.targetBasis === "prior_action"
+      ? !!target.taskId && input.priorTaskId === target.taskId
+      : result.targetBasis === "current_request"
+        ? !!result.targetQuote && input.actor.userText.includes(result.targetQuote)
+        : result.targetBasis === "prior_turn"
+          ? !!result.targetQuote && !!input.priorTurns?.some(t => t.userText.includes(result.targetQuote!))
+          : false;
+  if (result.verdict !== "execute" || !grounded || !result.instruction || !input.actor.userText.includes(result.instruction))
+    throw Error(`尚未收到本人明确交办：${result.reason}`);
+}
 
 /** Independent, tool-free interpretation using the configured Agent transport.
  * Never silently substitutes a keyword classifier when the model is absent. */
@@ -48,6 +66,7 @@ export function configuredRequestInterpreter(options: {
       profile: structuredClone(profile),
       profileBinding: { roleId, profileId: profile.id },
       signal: input.signal,
+      emit: () => input.onActivity?.(),
       context: contextManifestSchema.parse({
         schema_version: 1,
         job_id: input.actor.requestId,
@@ -58,7 +77,7 @@ export function configuredRequestInterpreter(options: {
           project_trusted: !!input.activeProjectId,
           owner_id: input.actor.principalId,
           observed_at: new Date().toISOString(),
-          timezone: "Asia/Shanghai",
+          timezone: input.timezone ?? "Asia/Shanghai",
           actor_binding: {
             id: input.actor.principalId,
             verified_by: "conversation-owner",
@@ -76,7 +95,7 @@ export function configuredRequestInterpreter(options: {
         ],
         related_memories: [],
         confirmed_corrections: [],
-        task: { drafts: [{candidate: input.candidate,target:input.target,priorTurns:input.priorTurns?.slice(-4) ?? []}] },
+        task: { drafts: [{candidate: input.candidate,target:input.target,priorTaskId:input.priorTaskId ?? null,priorTurns:input.priorTurns?.slice(-4) ?? []}] },
       }),
     });
     const result = requestInterpretationSchema.parse(run.result);

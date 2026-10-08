@@ -31,7 +31,7 @@
         "apps/server/tests/assistant-runtime.test.ts::G08 negative: Turn1 has no fragments"
       ],
       "status": "confirmed",
-      "evidence": "governCreateTask 先 capture owner 消息为 source 证据再走 MemoryService.evaluate；detectTaskIntent 拒绝咨询类 create_task。"
+      "evidence": "interpretTaskCall 核对完整本人请求及实际对象；governCreateTask 保存 owner 原话并通过 MemoryService.evaluate 应用，咨询或含糊时不写入。"
     },
     {
       "codePath": "apps/server/src/assistant/runtime.ts",
@@ -89,8 +89,8 @@
     },
     {
       "codePath": "apps/server/src/assistant/runtime.ts",
-      "symbol": "detectTaskIntent",
-      "intent": "任务意图门控：21 祈使模式 + 11 咨询模式，咨询类即使模型发 create_task 也拒绝",
+      "symbol": "interpretTaskCall",
+      "intent": "独立语义判定创建或更新事项，结合本人原话及实际待办；拒绝、含糊或失败不应用",
       "requirementRefs": ["G08"],
       "decisionRefs": ["docs/archive/2026-10-01-baseline/implementation/assistant-v3/processing-policy.md"],
       "researchRefs": [],
@@ -98,7 +98,7 @@
         "apps/server/tests/assistant-runtime.test.ts::pure consultation (no explicit intent) creates ZERO tasks"
       ],
       "status": "confirmed",
-      "evidence": "确定性正则门控，咨询类零写入；群成员材料 retain_as_source 不建 owner task。"
+      "evidence": "候选不是授权，request-interpreter 独立判定；宿主核对对象依据、版本和取消，再由 MemoryService 应用。"
     },
     {
       "codePath": "apps/server/src/assistant/acp-model.ts",

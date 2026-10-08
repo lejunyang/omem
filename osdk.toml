@@ -170,6 +170,10 @@ run = "bun scripts/live-context-views.ts"
 description = "Verify independent interpretation with real configured Agent on synthetic requests; no mutations"
 run = "bun scripts/live-request-interpretation.ts"
 
+[tasks."decision:task-verify"]
+description = "Verify real semantic interpretation and governed task writes using synthetic requests and controlled candidates"
+run = "bun scripts/live-task-interpretation.ts"
+
 [tasks."benchmark:mtrag"]
 run = "bun scripts/benchmark-mtrag.ts"
 description = "Compare lexical ranking on the pinned public MTRAG Cloud corpus; downloads benchmark data, no model calls"

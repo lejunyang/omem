@@ -4,6 +4,8 @@ import { assembleAnswerContext, mergeBackground } from "./context.js";
 import type { DecisionService } from "../decision/service.js";
 import type { AssistantWork } from "./work.js";
 import type { WorkAction } from "../../../../packages/contracts/src/work.js";
+import type { RequestInterpretation } from "../../../../packages/contracts/src/work.js";
+import { assertRequestInterpretation, type RequestInterpreter } from "./request-interpretation.js";
 import { assessPassages } from "../decision/passages.js";
 import { evidenceForRange } from "./research.js";
 import { materialFromRevision } from "../knowledge/repository.js";
@@ -238,68 +240,6 @@ export type VisibilityPolicy = (input: {
 }) => boolean;
 
 /**
- * Deterministic detection of an explicit owner task-creation / assignment intent.
- * The model is NOT trusted to decide this: a consultation question that mentions
- * a task topic must never auto-create a task, even if the model emits create_task.
- */
-const TASK_INTENT_PATTERNS = [
-  /帮我跟进/,
-  /帮我追踪/,
-  /记录.*等待/,
-  /帮我记/,
-  /帮我建/,
-  /帮我创建/,
-  /帮我写/,
-  /帮我安排/,
-  /帮我提/,
-  /提醒我/,
-  /记得/,
-  /待办/,
-  /建一个?任务/,
-  /创建一个?任务/,
-  /加个?任务/,
-  /记录一下/,
-  /记一下/,
-  /安排一下/,
-  /设个?提醒/,
-  /明天?要/,
-  /周五?要/,
-  /周[一二三四五六日天]要/,
-  /^\s*todo\b/i,
-  /^\s*task[:：]/i,
-];
-
-const CONSULTATION_PATTERNS = [
-  /怎么写/,
-  /是什么/,
-  /为什么/,
-  /什么是/,
-  /如何/,
-  /能不能/,
-  /可不可以/,
-  /好不好/,
-  /吗[?？]?\s*$/,
-  /呢[?？]?\s*$/,
-  /吧[?？]?\s*$/,
-];
-
-export function detectTaskIntent(userText: string): {
-  explicit: boolean;
-  reason: string;
-} {
-  const text = userText.trim();
-  if (!text) return { explicit: false, reason: "empty_input" };
-  // Strong consultation markers win over weak task verbs.
-  const isConsultation = CONSULTATION_PATTERNS.some((re) => re.test(text));
-  const hits = TASK_INTENT_PATTERNS.filter((re) => re.test(text));
-  if (hits.length && !isConsultation)
-    return { explicit: true, reason: `intent:${hits[0]!.source}` };
-  if (isConsultation)
-    return { explicit: false, reason: "consultation_question" };
-  return { explicit: false, reason: "no_explicit_task_intent" };
-}
-
-/**
  * The single main-assistant runtime. Both Lark and Web go through this class so
  * there is one product surface. It owns context assembly, evidence retrieval
  * (read-only, visibility-filtered via RetrievalPort), low-risk governance tool
@@ -326,6 +266,7 @@ export class AssistantRuntime {
       retrieval?: RetrievalPort;
       decisions?: DecisionService;
       work?: AssistantWork;
+      interpretRequest?: RequestInterpreter;
       visibilityPolicy?: VisibilityPolicy;
       /** Hard wall-clock per turn; the model call is aborted after this. */
       turnTimeoutMs?: number;
@@ -842,9 +783,8 @@ export class AssistantRuntime {
 
       // 3. Structured, server-enforced tool calls. No prompt-as-permission: every
       //    create_task goes through MemoryService (owner/version/receipt/idempotency).
-      //    B: we ALSO check the user's actual intent — consultation questions
-      //    must never auto-create tasks even if the model emits one.
-      const intent = detectTaskIntent(input.userText);
+      // Independent interpretation checks the full request against each actual
+      // proposed action. Formatting, identity and state remain host checks.
       const toolActions: Array<Record<string, unknown>> = searchQueries.length
         ? [
             {
@@ -891,27 +831,25 @@ export class AssistantRuntime {
           projectId,
           reason: reply.projectSelection.reason,
         });
-      let taskRejectedReason: string | null = null;
       if (!degraded && mode !== "research" && !reply.workAction) {
         for (const call of reply.toolCalls ?? []) {
+          this.assertNotCancelled(input.signal);
+          let interpretation: RequestInterpretation;
+          try {
+            interpretation = await this.interpretTaskCall(call,input,tasks,projectId,watchdog.touch);
+            this.assertNotCancelled(input.signal);
+          } catch (error) {
+            this.assertNotCancelled(input.signal);
+            toolActions.push({tool:call.tool,rejected:true,reason:"task_request_not_approved",detail:error instanceof Error ? error.message : "交办判断不可用，未执行操作"});
+            continue;
+          }
           if (call.tool === "update_task") {
             this.assertNotCancelled(input.signal);
             const action = this.governTaskUpdate(call, input, tasks);
-            toolActions.push(action);
+            toolActions.push({...action,interpretation});
             continue;
           }
           if (call.tool !== "create_task") continue;
-          if (!intent.explicit) {
-            // B: consultation / non-assignment intent → zero write, honest rejection.
-            toolActions.push({
-              tool: "create_task",
-              rejected: true,
-              reason: "not_explicit_task_intent",
-              detail: intent.reason,
-            });
-            taskRejectedReason = intent.reason;
-            continue;
-          }
           this.assertNotCancelled(input.signal);
           const governed = this.governCreateTask({
             call: {
@@ -928,8 +866,9 @@ export class AssistantRuntime {
             userText: input.userText,
             requestId: input.turnId,
             projectId,
+            interpretation,
           });
-          toolActions.push(governed.action);
+          toolActions.push({...governed.action,interpretation});
           if (governed.taskId) createdTaskIds.push(governed.taskId);
         }
       }
@@ -1203,6 +1142,40 @@ export class AssistantRuntime {
       }));
   }
 
+  private async interpretTaskCall(
+    call: AssistantCreateTaskCall | AssistantUpdateTaskCall,
+    input: {turnId:string;userText:string;conversation:Conversation;signal:AbortSignal},
+    tasks: AssistantTask[],
+    projectId: string | null,
+    onActivity?: () => void,
+  ): Promise<RequestInterpretation> {
+    if (input.conversation.principalId !== (this.options.ownerId ?? "owner")) throw Error("事项操作只能来自已确认的本人请求");
+    if (!this.options.memory || !this.options.interpretRequest) throw Error("事项服务或交办判断模型不可用，未执行操作");
+    const task = call.tool === "update_task" ? tasks.find(t=>t.id===call.taskId && t.version===call.expectedVersion) : undefined;
+    if (call.tool === "update_task" && !task) throw Error("事项不存在、不可见或已被修改，请重新读取");
+    const recent = this.router.turns(input.conversation.id).filter(t=>t.id!==input.turnId && t.inputMessageRefs.status==="done").slice(-4);
+    const previousActions = [...recent].reverse().map(t=>(t.toolActions as Array<Record<string,unknown>>).filter(a=>!a.rejected && (a.tool==="create_task" || a.tool==="update_task") && typeof a.taskId==="string")).find(a=>a.length);
+    const previousIds = new Set(previousActions?.map(a=>String(a.taskId)) ?? []);
+    const priorTaskId = previousIds.size === 1 ? [...previousIds][0] : undefined;
+    const projects = new Map(this.store.contexts.list().map(c=>[c.id,c]));
+    const request = {
+      actor: {requestId:input.turnId,conversationId:input.conversation.id,principalId:input.conversation.principalId,userText:input.userText,visibility:input.conversation.visibility},
+      candidate:call,
+      target:{kind:task ? "existing_task" : "new_task",task:task ?? null,project:projects.get(task?.projectId ?? projectId ?? "") ?? null,
+        visibleTasks:tasks.map(t=>({id:t.id,title:t.title,status:t.status,project:projects.get(t.projectId ?? "") ?? null}))},
+      priorTurns:recent.map(t=>({userText:t.inputText,result:t.result ?? ""})),
+      activeProjectId:input.conversation.projectId ?? undefined,
+      priorTaskId,
+      timezone:this.options.timezone,
+      onActivity,
+      signal:input.signal,
+    };
+    const interpretation = await this.options.interpretRequest(request);
+    this.assertNotCancelled(input.signal);
+    assertRequestInterpretation(interpretation,request,{taskId:task?.id});
+    return interpretation;
+  }
+
   private governTaskUpdate(
     call: AssistantUpdateTaskCall,
     input: { turnId: string; userText: string; conversation: Conversation },
@@ -1213,21 +1186,8 @@ export class AssistantRuntime {
       rejected: true,
       reason,
     });
-    const patterns = {
-      complete: /完成|做完|办完|标.*完成|\bdone\b|\bcomplete\b/i,
-      reopen: /重新打开|还没完成|恢复.*待办|\breopen\b/i,
-      reschedule: /改到|改为|改期|推迟|延后|提前|挪到|\breschedule\b/i,
-      wait: /等待|等.*回复|等.*确认|等.*结果|\bwait\b/i,
-      snooze: /稍后|再提醒|再跟进|先不提醒|暂停提醒|晚点|\bsnooze\b/i,
-      cancel: /取消|不用做|不做了|\bcancel\b/i,
-    };
     if (
-      !patterns[call.action].test(input.userText) ||
-      /怎么|如何|是否|吗[？?]?$/.test(input.userText)
-    )
-      return reject("没有明确的事项变更指令");
-    if (
-      !tasks.some(
+      !this.store.tasks().some(
         (t) => t.id === call.taskId && t.version === call.expectedVersion,
       )
     )
@@ -1450,10 +1410,8 @@ export class AssistantRuntime {
    *  - the proposal id is derived from the transport event id, so a re-delivered
    *    event does not create a second task (MemoryService also dedups by digest).
    *
-   * B: the assessment verdict is now based on deterministic owner intent detection
-   * upstream. We only reach here when detectTaskIntent() returned explicit=true,
-   * meaning the user explicitly asked to record/assign. The evidence is the
-   * current turn's userText itself (direct assignment), not a hardcoded verifier.
+   * Independent request interpretation has matched the proposed action to the
+   * full current instruction and its object. Preserve that original as evidence.
    */
   private governCreateTask(input: {
     call: AssistantCreateTaskCall;
@@ -1464,6 +1422,7 @@ export class AssistantRuntime {
     userText: string;
     requestId: string;
     projectId: string | null;
+    interpretation: RequestInterpretation;
   }): { action: Record<string, unknown>; taskId?: string } {
     const ownerId = this.options.ownerId ?? "owner";
     const reject = (reason: string, extra: Record<string, unknown> = {}) => ({
@@ -1507,7 +1466,7 @@ export class AssistantRuntime {
             source: "manual",
             externalId: extId,
             title: "owner direct message",
-            parts: [{ type: "text", text: input.userText.slice(0, 2000) }],
+            parts: [{ type: "text", text: input.userText }],
             context: { conversationId: input.conversation.id },
             provenance: {
               collectorId: "assistant",
@@ -1581,15 +1540,15 @@ export class AssistantRuntime {
               : {}),
           },
           evidence: allEvidence.map((e) => {
-            const codePoints = Array.from(e.text);
-            const quote = codePoints.slice(0, 2000).join("");
+            const quote = input.interpretation.instruction!;
+            const start = Array.from(e.text.slice(0,e.text.indexOf(quote))).length;
             return {
               fragment_revision_id: e.fragmentId,
               source_revision_id: e.sourceRevisionId,
               exact_quote: quote,
               selector: {
-                start: 0,
-                end: Array.from(quote).length,
+                start,
+                end: start + Array.from(quote).length,
                 unit: "unicode_codepoint" as const,
               },
             };
@@ -1605,15 +1564,11 @@ export class AssistantRuntime {
           },
         },
         {
-          // B: this IS a direct owner assignment — the user explicitly asked to
-          // record something. semantic_verdict=supported reflects that the
-          // user's own message is the authoritative evidence, not a hardcoded
-          // verifier claim.
           semantic_verdict: "supported",
-          reviewer_version: "assistant-intent-v1",
+          reviewer_version: "request-interpreter-v1",
           role_version: "1",
           reason_code: "owner_direct_assignment",
-          details: `owner explicitly requested task recording in turn: "${input.userText.slice(0, 200)}"`,
+          details: input.interpretation.reason,
         },
         { impactCount: 1 },
       );
