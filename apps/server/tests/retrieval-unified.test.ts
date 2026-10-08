@@ -167,6 +167,21 @@ it("uses shared Decision judgments before the search limit and falls back when u
   }
 });
 
+it("lets judgment see a third fact in one original before applying browse diversity", async () => {
+  const s = setup();
+  const retrieval = new UnifiedRetrieval(s.store.db, undefined, undefined, false, async (_q, hits) => {
+    expect(hits).toHaveLength(3);
+    return [...hits].sort((a, b) => Number(b.text.includes("身份令牌")) - Number(a.text.includes("身份令牌")));
+  });
+  try {
+    s.store.capture({ source: "manual", externalId: "retry-policy", title: "重复提交", context: {},
+      parts: [{ type: "text", text: "# 重复提交\n\n重复重复重复重复提交曾出现在网络重试中。\n\n重复重复提交的讨论记录还在整理。\n\n身份令牌可以防止重复提交。" }],
+    });
+    const [hit] = await retrieval.search({ text: "重复提交怎么处理", limit: 1 });
+    expect(hit?.text).toContain("身份令牌");
+  } finally { await retrieval.close(); await s.close(); }
+});
+
 function setup() {
   const directory = mkdtempSync(join(tmpdir(), "omem-unified-")),
     store = new Store(directory);
