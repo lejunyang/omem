@@ -45,7 +45,10 @@ watch(
           ?.querySelector(`[data-section="${CSS.escape(props.section)}"]`)
           ?.scrollIntoView({ block: "start" });
     } catch (e) {
-      if (current === generation) error.value = String(e);
+      if (current === generation) {
+        error.value = e instanceof Error ? e.message : String(e);
+        emit("loaded", "知识暂不可用");
+      }
     }
   },
   { immediate: true },
@@ -77,7 +80,8 @@ async function answered() {
     );
     if (key === props.documentKey) article.value = result;
   } catch (e) {
-    error.value = String(e);
+    error.value = e instanceof Error ? e.message : String(e);
+    emit("loaded", "知识暂不可用");
   }
 }
 </script>
