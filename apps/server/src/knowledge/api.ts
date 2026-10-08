@@ -392,7 +392,10 @@ export function registerKnowledgeRoutes(
     async (req, reply) => {
       repository.refresh();
       const a = repository.get(req.params.key, req.query.revision);
-      if (!a) return reply.code(404).send({ error: "尚未生成这份知识" });
+      if (!a) {
+        const removed = repository.availability(req.params.key, req.query.revision);
+        return reply.code(removed ? 410 : 404).send({ error: removed?.reason ?? "尚未生成这份知识" });
+      }
       return {
         ...meta(a),
         document: a.document,
