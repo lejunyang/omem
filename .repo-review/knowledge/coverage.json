@@ -10,52 +10,62 @@
     {
       "key": "guide:personal-messages",
       "title": "让助理定时看飞书：关注会话、读材料与简报",
-      "state": "stale"
+      "state": "retired",
+      "reason": "用户要求删除陈旧指南；正文和历史不再发布。"
     },
     {
       "key": "guide:overview",
       "title": "先认识 omem：把材料变成能找回的工作记忆",
-      "state": "stale"
+      "state": "retired",
+      "reason": "用户要求删除陈旧指南；正文和历史不再发布。"
     },
     {
       "key": "guide:capture",
       "title": "一份材料的旅程：从导入到阅读与引用",
-      "state": "reviewed"
+      "state": "retired",
+      "reason": "用户要求删除陈旧指南；正文和历史不再发布。"
     },
     {
       "key": "guide:retrieval",
       "title": "一次提问如何找到答案：搜索、上下文与 RAG",
-      "state": "stale"
+      "state": "retired",
+      "reason": "用户要求删除陈旧指南；正文和历史不再发布。"
     },
     {
       "key": "guide:memory",
       "title": "记住约定，跟进变化：一次活动从保存到提醒",
-      "state": "stale"
+      "state": "retired",
+      "reason": "用户要求删除陈旧指南；正文和历史不再发布。"
     },
     {
       "key": "guide:contributing",
       "title": "改一条完整功能链：从搜索结果到界面",
-      "state": "stale"
+      "state": "retired",
+      "reason": "用户要求删除陈旧指南；正文和历史不再发布。"
     },
     {
       "key": "guide:knowledge-agent",
       "title": "把材料写成一篇能用的文章",
-      "state": "stale"
+      "state": "retired",
+      "reason": "用户要求删除陈旧指南；正文和历史不再发布。"
     },
     {
       "key": "guide:knowledge-maintenance",
       "title": "整理文章，以及原文更新后怎么处理",
-      "state": "stale"
+      "state": "retired",
+      "reason": "用户要求删除陈旧指南；正文和历史不再发布。"
     },
     {
       "key": "guide:knowledge-reference",
       "title": "知识文章的状态、来源与修改入口",
-      "state": "stale"
+      "state": "retired",
+      "reason": "用户要求删除陈旧指南；正文和历史不再发布。"
     },
     {
       "key": "guide:requirement-development",
       "title": "让需求变成可跟进的事项和可评审的代码",
-      "state": "stale"
+      "state": "retired",
+      "reason": "用户要求删除陈旧指南；正文和历史不再发布。"
     }
   ],
   "files": [
@@ -8744,5 +8754,6 @@
       "knowledge": "reviewed"
     }
   ],
-  "failures": []
+  "failures": [],
+  "retiredAt": "2026-10-08T14:35:34.426Z"
 }
