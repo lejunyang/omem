@@ -6,6 +6,8 @@ import { scheduleInputSchema } from "./schedules.js";
 export const requestInterpretationSchema = z.object({
   verdict: z.enum(["execute", "decline", "uncertain"]),
   instruction: z.string().min(1).nullable(),
+  targetBasis: z.enum(["current_request", "prior_turn", "active_project", "unresolved"]),
+  targetQuote: z.string().min(1).nullable(),
   reason: z.string().min(1).max(1000),
 }).strict();
 export type RequestInterpretation = z.infer<typeof requestInterpretationSchema>;
