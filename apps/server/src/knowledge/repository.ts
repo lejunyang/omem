@@ -248,7 +248,7 @@ export class KnowledgeRepository {
     const revision = digest(stableDigest(artifact));
     if (this.store.db.prepare("SELECT 1 FROM knowledge_revision_tombstones WHERE revision_id=?").get(revision)) return true;
     const cleared = this.store.db.prepare("SELECT removed_at FROM knowledge_clear_epochs WHERE document_key=?").get(artifact.document.key);
-    return !!cleared && artifact.generation.at <= String(cleared.removed_at);
+    return !!cleared && Date.parse(artifact.generation.at) <= Date.parse(String(cleared.removed_at));
   }
 
   publish(artifact: KnowledgeArtifact, expectedPlan?: WikiPageBrief) {

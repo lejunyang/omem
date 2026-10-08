@@ -4,6 +4,31 @@ import { join, resolve } from "node:path";
 import type { KnowledgeArtifact, KnowledgeCitation } from "../../../../packages/contracts/src/knowledge.js";
 import { knowledgeDocumentSchema } from "../../../../packages/contracts/src/knowledge.js";
 import { digest, KnowledgeRepository, type KnowledgeArticle } from "./repository.js";
+import { z } from "zod";
+
+const retirementsSchema = z.object({ version: z.literal(1), removals: z.array(z.object({
+  key: z.string().min(1), title: z.string().min(1), before: z.string().datetime(), reason: z.string().min(1),
+  revisions: z.array(z.string().min(1)).default([]),
+}).strict()) }).strict();
+
+/** Explicit asset deletion audit. Never derives deletion from a missing file,
+ * failed import, stale label, or a name/path heuristic. Newer prose survives. */
+export function applyKnowledgeRetirements(repository: KnowledgeRepository, directory: string) {
+  const path = join(directory, ".retirements.json");
+  if (!existsSync(path)) return;
+  const audit = retirementsSchema.parse(JSON.parse(readFileSync(path, "utf8")));
+  for (const entry of audit.removals) {
+    repository.store.retention.clearArticle(entry.key, entry);
+    for (const revision of entry.revisions) repository.store.db.prepare(
+      "INSERT OR IGNORE INTO knowledge_revision_tombstones VALUES(?,?,?,?,?)",
+    ).run(revision, entry.key, entry.title, entry.before, entry.reason);
+    if (!repository.get(entry.key)) {
+      repository.pageState(entry.key, "retired", entry.reason);
+      if (repository.store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_page_maintenance'").get())
+        repository.store.db.prepare("UPDATE knowledge_page_maintenance SET enabled=0 WHERE document_key=?").run(entry.key);
+    }
+  }
+}
 
 export function articleMarkdown(a: KnowledgeArticle, materialHref?: (target: KnowledgeCitation["target"]) => string | undefined) {
   const links = new Map(a.document.citations.map(c => [c.key, c]));
@@ -30,10 +55,11 @@ export function writeKnowledgeArticle(directory: string, a: KnowledgeArticle, ma
 }
 
 export function restoreKnowledgeArticles(repository: KnowledgeRepository, directory: string) {
+  applyKnowledgeRetirements(repository, directory);
   const owner = resolve(directory);
   const result: { file: string; state: string; reason: string }[] = [];
   const pending: { file: string; artifact: KnowledgeArtifact }[] = [];
-  for (const file of (existsSync(directory) ? readdirSync(directory) : []).filter(f => f.endsWith(".json")).sort()) {
+  for (const file of (existsSync(directory) ? readdirSync(directory) : []).filter(f => f.endsWith(".json") && f !== ".retirements.json").sort()) {
     try { pending.push({ file, artifact: JSON.parse(readFileSync(join(directory, file), "utf8")) as KnowledgeArtifact }); }
     catch (error) { result.push({ file, state: "rejected", reason: String(error) }); }
   }
