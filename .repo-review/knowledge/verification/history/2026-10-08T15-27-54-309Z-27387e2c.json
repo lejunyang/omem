@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-08T15:23:14.536Z",
+  "recordedAt": "2026-10-08T15:27:54.309Z",
   "implementationCommit": "a37670f162b2725750fca2cd98cc7325f91ee7eb",
-  "sourceDigest": "934019795bf2eb511ed0cb9cadc85e14066059f20a5edf6e8b8431ffc8846ced",
+  "sourceDigest": "0119fde29aad71e8ecc045630959115cb8c8c3c661e6d7562019788988c1d196",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,22 +16,22 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-08T15-23-14-536Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-08T15-27-54-309Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
     {
       "name": "project",
-      "state": "failed",
+      "state": "passed",
       "details": {
         "command": [
           "osdk",
           "run",
           "check"
         ],
-        "exitCode": 1,
-        "log": ".repo-review/runtime/verification/2026-10-08T15-23-14-536Z/project.log",
-        "sha256": "bb8e6eb35ae57508757704405c902f29a1a1505bafafc0761bbb47e950cac4f0"
+        "exitCode": 0,
+        "log": ".repo-review/runtime/verification/2026-10-08T15-27-54-309Z/project.log",
+        "sha256": "2c8c887f3deac3e9e532d59a74f08135cb21869e749d2889eb76a8110dd2ac27"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-08T15-23-14-536Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-08T15-27-54-309Z/liveChineseRetrieval.log",
         "sha256": "c633cc8b3935a685907f142b4f178e7f9fd00ac994d0edc6ef224a195357b1e8"
       }
     },
@@ -64,11 +64,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v7",
-        "units": 18169,
+        "units": 18171,
         "semantic": {
           "model": "structure-icu-v7:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 18169,
+          "indexed": 18171,
           "pending": 0,
           "error": null
         },
@@ -89,7 +89,7 @@
     },
     {
       "name": "unchangedSourcesDuringVerification",
-      "state": "failed"
+      "state": "passed"
     }
   ],
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
@@ -129,7 +129,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 4,
-        "elapsedMs": 2409,
+        "elapsedMs": 1913,
         "top5": [
           {
             "path": "docs/archive/2026-10-01-baseline/PROJECT-README.md",
@@ -193,7 +193,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 3,
-        "elapsedMs": 1003,
+        "elapsedMs": 1069,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -261,7 +261,7 @@
         "passed": false,
         "firstExpectedRank": 20,
         "uniquePathsAt5": 4,
-        "elapsedMs": 743,
+        "elapsedMs": 726,
         "top5": [
           {
             "path": "docs/reader-first/publication-lifecycle.md",
@@ -327,7 +327,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 3,
-        "elapsedMs": 521,
+        "elapsedMs": 271,
         "top5": [
           {
             "path": "scripts/live-development.ts",
@@ -388,7 +388,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 2,
-        "elapsedMs": 207,
+        "elapsedMs": 202,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -454,7 +454,7 @@
         "passed": false,
         "firstExpectedRank": 6,
         "uniquePathsAt5": 5,
-        "elapsedMs": 1817,
+        "elapsedMs": 775,
         "top5": [
           {
             "path": "design.md",

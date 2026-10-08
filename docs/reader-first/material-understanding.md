@@ -41,7 +41,7 @@
 | `MaterialDescription.vue` | 查看、AI 分析、人工修正和加载态；正文不被编辑表单取代 |
 | `scripts/review-catalog.ts`、`knowledge/material-descriptions.ts` | 仓库输入适配、真实模型产物发布、按材料 digest 恢复；这部分不决定通用排序 |
 
-索引预处理身份是 `structure-icu-v6`。分类版本参与投影身份；修改概念会让相关材料重新索引，不能继续使用旧预处理的向量。中文 embedding 仍用 osdk 管理的 BGE，运行不隐式下载。
+索引预处理身份是 `structure-icu-v8`。分类版本参与投影身份；修改概念会让相关材料重新索引，不能继续使用旧预处理的向量。中文 embedding 仍用 osdk 管理的 BGE，运行不隐式下载。
 
 ## 运行与检查
 
