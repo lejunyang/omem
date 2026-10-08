@@ -23,6 +23,7 @@ import { requirementHandoff } from "./requirements.js";
 import { KnowledgeOutlineService } from "./outlines.js";
 import { registerOutlineRoutes } from "./outline-api.js";
 import { stableDigest } from "../storage/digest.js";
+import { contextViewActionSchema } from "../../../../packages/contracts/src/contexts.js";
 
 export function registerKnowledgeRoutes(
   app: FastifyInstance,
@@ -115,6 +116,17 @@ export function registerKnowledgeRoutes(
     !!input.profile,
   );
   input.onService?.(pages);
+  app.get(prefix + "/context-views", async () => pages.views.list());
+  app.get<{ Params: { id: string } }>(prefix + "/context-views/:id", async (req, reply) => {
+    try { return pages.views.read(req.params.id); }
+    catch (error) { return reply.code(404).send({error:String(error)}); }
+  });
+  app.post<{ Params: { id: string } }>(prefix + "/context-views/:id", async (req, reply) => {
+    const parsed = contextViewActionSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({error:"请选择开始、刷新、暂停或恢复"});
+    try { return pages.views.apply(req.params.id, parsed.data.mode); }
+    catch (error) { return reply.code(409).send({error:String(error)}); }
+  });
   const outlines: KnowledgeOutlineService = new KnowledgeOutlineService(
     repository,
     pages,

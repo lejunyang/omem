@@ -110,6 +110,25 @@ function setup(runner?: (path: string) => DevelopmentRunner) {
     action,
   };
 }
+it("maintains one project view from an explicit owner instruction and exposes a read-only tool",()=>{
+  const s=setup();
+  const project=s.store.contexts.create({name:"退款查询",kind:"project",description:"本期安排"});
+  const material=s.repository.materials().find(m=>m.key==="manual:spec")!;
+  s.store.contexts.setForSource(material.sourceId,[project.id]);
+  const action: WorkAction={operation:"maintain_context",contextId:project.id,mode:"start",delegation:"持续整理这个项目"};
+  const actor=s.actor(action.delegation);
+  const receipt=s.work.apply(action,actor);
+  expect(receipt.key).toBeTruthy();
+  expect(s.work.apply(action,actor)).toEqual(receipt);
+  expect(s.work.apply(action,s.actor(action.delegation)).key).toBe(receipt.key);
+  const tool=s.work.tools().find(t=>t.name==="context_view")!;
+  expect(tool.readOnly).toBe(true);
+  expect(s.store.jobs.list().filter(j=>j.kind==="knowledge:maintain-page")).toHaveLength(1);
+  expect(()=>s.work.apply(action,{...actor,requestId:randomUUID(),visibility:"group"})).toThrow("本人私聊");
+  expect(()=>s.work.apply({...action,delegation:"不要持续整理"},s.actor("不要持续整理"))).toThrow("明确交办");
+  expect(s.store.tasks()).toHaveLength(0);
+});
+
 function publish(
   repository: KnowledgeRepository,
   key: string,

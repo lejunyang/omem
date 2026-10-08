@@ -57,6 +57,23 @@ export function assertWorkDelegation(action: WorkAction, actor: WorkActor) {
   const quote = action.delegation.trim();
   if (!quote || !actor.userText.includes(quote))
     throw Error("操作必须来自当前用户的明确交办原话");
+  if (action.operation === "maintain_context") {
+    const verb =
+      action.mode === "pause"
+        ? /暂停|停止|不再|pause|stop/i
+        : action.mode === "refresh"
+          ? /更新|刷新|重整|重新整理|refresh|update/i
+          : /整理|维护|持续|跟进|恢复|开启|开始|maintain|follow|resume|start/i;
+    if (
+      !verb.test(quote) ||
+      (action.mode !== "pause" &&
+        /(?:不要|先别|不必|暂不|别再).{0,16}(?:整理|维护|跟进|更新|刷新|恢复|开启|开始)|\b(?:do not|don't)\b/i.test(
+          actor.userText,
+        ))
+    )
+      throw Error("尚未收到本人明确交办维护这个项目的理解");
+    return;
+  }
   if (isScheduleAction(action)) {
     if (
       !/关注|采集|读取|订阅|排除|忽略|设置|创建|改|启用|开启|停止|暂停|恢复|删除|取消|运行|立即|每天|每周|每个|每隔|watch|subscribe|exclude|set|create|pause|resume|delete|run|daily|weekly/i.test(
@@ -409,6 +426,7 @@ export class AssistantWork {
         })),
       capabilities: {
         tracking: this.pages.available,
+        contextUnderstanding: this.pages.available,
         coding: !!this.development.profile,
         provider: "traex",
         externalCapabilities: this.development.runner.capabilities.list(),
@@ -445,6 +463,22 @@ export class AssistantWork {
     return [
       ...(this.scheduling?.tools() ?? []),
       ...this.development.runner.configuration.tools(this.decisions),
+      {
+        name: "context_view",
+        readOnly: true,
+        description:
+          "Read the saved project/topic understanding and maintenance state by its real contextId. Omit contextId to list projects and view summaries. Reuse the same view when following a project. current=false requires investigating new/changed originals; an old view is background, not proof of the current arrangement. A GET never runs a model.",
+        shape: { contextId: z.string().optional() },
+        run: ({ contextId }) =>
+          contextId
+            ? this.pages.views.read(contextId)
+            : this.pages.views
+                .list()
+                .map(({ document, ...status }) => ({
+                  ...status,
+                  summary: document?.summary ?? null,
+                })),
+      },
       {
         name: "work_catalog",
         readOnly: true,
@@ -562,7 +596,12 @@ export class AssistantWork {
     };
   }
   async investigationHints(plan: WikiPageBrief, signal: AbortSignal) {
-    if (plan.workflow !== "requirement-followup") return undefined;
+    if (
+      !["requirement-followup", "project-understanding"].includes(
+        plan.workflow ?? "",
+      )
+    )
+      return undefined;
     const ownerMessageFeedback = this.pages.repository
       .materialsForPlan(plan)
       .flatMap((m) => this.store.messageFeedback.forSource(m.sourceId));
@@ -577,7 +616,10 @@ export class AssistantWork {
       .materialsForPlan(plan)
       .filter((m) => known.get(m.key) !== m.digest);
     const leads = [];
-    for (const material of this.decisions ? changed.slice(0, 6) : []) {
+    for (const material of this.decisions &&
+    plan.workflow === "requirement-followup"
+      ? changed.slice(0, 6)
+      : []) {
       signal.throwIfAborted();
       const decision = await decideWork(this.decisions, {
         attention: plan.attention,
@@ -634,7 +676,15 @@ export class AssistantWork {
         .run(actor.requestId, signature, JSON.stringify(result));
       return result;
     }
-    if (action.operation === "configure_project") {
+    if (action.operation === "maintain_context") {
+      const view = this.pages.views.apply(action.contextId, action.mode);
+      receipt = {
+        tool: "work_action",
+        operation: action.operation,
+        key: view.key ?? undefined,
+        message: `${action.mode === "pause" ? "已暂停自动整理" : action.mode === "refresh" ? "已安排重新整理" : "已开启持续整理"}「${view.context.name}」的同一份理解。${view.current ? "当前已有可读内容。" : "请查询处理状态；排队不等于已经更新。"}`,
+      };
+    } else if (action.operation === "configure_project") {
       const result = this.development.runner.configuration.configure(
         action.project,
         action.configuration,

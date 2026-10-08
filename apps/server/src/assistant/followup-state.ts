@@ -16,7 +16,12 @@ export function captureFollowupState(
   plan: WikiPageBrief,
   development: DevelopmentQueue,
 ) {
-  if (plan.workflow !== "requirement-followup") return;
+  if (
+    !["requirement-followup", "project-understanding"].includes(
+      plan.workflow ?? "",
+    )
+  )
+    return;
   const linked = new Set(
     store.db
       .prepare(
@@ -34,9 +39,24 @@ export function captureFollowupState(
           (!!t.projectId &&
             (plan.contextIds ?? []).includes(String(t.projectId)))),
     );
+  const projectRequirements = new Set(
+    repository
+      .pages()
+      .filter(
+        (p) =>
+          p.plan?.workflow === "requirement-followup" &&
+          p.plan.contextIds?.some((id) => plan.contextIds?.includes(id)),
+      )
+      .map((p) => p.key),
+  );
   const runs = development
     .list()
-    .filter((t) => t.key === plan.key)
+    .filter(
+      (t) =>
+        t.key === plan.key ||
+        (plan.workflow === "project-understanding" &&
+          projectRequirements.has(t.key)),
+    )
     .map((t) => ({
       taskId: t.id,
       state: t.job.state,

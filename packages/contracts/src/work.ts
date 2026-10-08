@@ -43,6 +43,16 @@ const version = z.number().int().positive();
 export const workActionSchema = z.discriminatedUnion("operation", [
   z
     .object({
+      operation: z.literal("maintain_context"),
+      contextId: key,
+      mode: z.enum(["start", "refresh", "pause", "resume"]),
+      delegation: key.describe(
+        "Exact current owner request to maintain, refresh, pause or resume this project's understanding. Use context_view's returned context ID. This does not authorize coding or notifications.",
+      ),
+    })
+    .strict(),
+  z
+    .object({
       operation: z.literal("subscribe_chat"),
       chatId: z.string().regex(/^oc_[A-Za-z0-9]+$/),
       mode: z.enum(["watch", "off", "excluded"]),
