@@ -154,6 +154,15 @@ run = "bun scripts/live-retrieval-smoke.ts"
 [tasks."retrieval:verify".flags.reranker]
 help = "Compare the installed Chinese cross-encoder (not enabled by default)"
 
+[tasks."retrieval:compare"]
+description = "Read-only stage and core-evidence comparison on the indexed review library; never downloads models"
+run = "bun scripts/retrieval-compare.ts"
+[tasks."retrieval:compare".options.models]
+help = "Installed model aliases, comma-separated: relevance-zh,relevance-zh-v2"
+default = "relevance-zh,relevance-zh-v2"
+[tasks."retrieval:compare".flags.decision]
+help = "Also attempt native 2B Decision; resource admission and failures are recorded"
+
 [tasks."knowledge:outline-verify"]
 description = "Exercise an editable directory proposal and article writing with real Traex/Sol on synthetic materials"
 run = [{ argv = ["bun", "scripts/live-knowledge-outlines.ts", "{{args}}"] }]

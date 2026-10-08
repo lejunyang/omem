@@ -180,6 +180,115 @@ it("lets judgment see a third fact in one original before applying browse divers
   } finally { await retrieval.close(); await s.close(); }
 });
 
+it("reranks lexical candidates without an embedding and exposes isolated score stages", async () => {
+  const s = setup();
+  const stages: import("../src/retrieval/unified.js").RetrievalTrace[] = [];
+  const inputs: string[] = [];
+  const retrieval = new UnifiedRetrieval(s.store.db, undefined, async () => ({
+    id: "pair-model",
+    score: async (_q, texts) => {
+      inputs.push(...texts);
+      return texts.map((text) => (text.includes("身份令牌") ? 0.9 : 0.2));
+    },
+    close: async () => {},
+  }));
+  try {
+    for (const [id, text] of [
+      ["discussion", "重复重复重复提交需要讨论。"],
+      ["answer", "身份令牌可以防止重复提交。"],
+      ["hidden", "秘密身份令牌重复提交规则。"],
+    ])
+      s.store.capture({
+        source: "manual",
+        externalId: id!,
+        title: id!,
+        parts: [{ type: "text", text: text! }],
+        context: {},
+      });
+    const hidden = s.repository
+      .materials()
+      .find((m) => m.title === "hidden")!
+      .fragments.map((f) => f.id);
+    const q = {
+      text: "重复提交怎么处理",
+      limit: 1,
+      visible: (id: string) => !hidden.includes(id),
+    };
+    const before = await s.retrieval.search(q);
+    expect(before[0]?.title).toBe("discussion");
+    const [hit] = await retrieval.search(q, (trace) => {
+      stages.push(structuredClone(trace));
+      // Observers cannot alter the caller's actual candidates.
+      if (trace.stage === "lexical")
+        for (const h of trace.hits) {
+          h.text = "changed";
+          h.score = -100;
+        }
+    });
+    expect(hit?.title).toBe("answer");
+    expect(hit?.reranking).toMatchObject({
+      model: "pair-model",
+      relevance: 0.9,
+      retrievalScore: expect.any(Number),
+    });
+    expect(hit?.text).toContain("身份令牌");
+    expect(hit?.routes).toContain("cross-encoder");
+    expect(inputs).toHaveLength(2);
+    expect(inputs.some((text) => text.includes("秘密"))).toBe(false);
+    expect(stages.map((s) => s.stage)).toEqual([
+      "lexical",
+      "symbols",
+      "fusion",
+      "reranker-input",
+      "reranker",
+      "final",
+    ]);
+    expect(
+      stages
+        .find((s) => s.stage === "reranker-input")!
+        .hits.find((h) => h.title === "answer")!.score,
+    ).toBe(0.9);
+    expect(retrieval.health().semantic.state).toBe("disabled");
+  } finally {
+    await retrieval.close();
+    await s.close();
+  }
+});
+
+it("retries an unavailable explicit reranker without restarting or changing candidates", async () => {
+  const s = setup();
+  let loads = 0;
+  const retrieval = new UnifiedRetrieval(s.store.db, undefined, async () => {
+    if (++loads === 1) throw Error("resources not installed");
+    return {
+      id: "installed-later",
+      score: async (_q, texts) => texts.map(() => 0.8),
+      close: async () => {},
+    };
+  });
+  try {
+    s.store.capture({
+      source: "manual",
+      externalId: "policy",
+      title: "保存规则",
+      parts: [{ type: "text", text: "重复提交需要保留身份令牌。" }],
+      context: {},
+    });
+    const q = { text: "重复提交怎么处理" };
+    const baseline = await s.retrieval.search(q);
+    expect(await retrieval.search(q)).toEqual(baseline);
+    expect(retrieval.health().reranker.state).toBe("degraded");
+    const [recovered] = await retrieval.search(q);
+    expect(recovered?.id).toBe(baseline[0]!.id);
+    expect(recovered?.reranking?.model).toBe("installed-later");
+    expect(retrieval.health().reranker.state).toBe("ready");
+    expect(loads).toBe(2);
+  } finally {
+    await retrieval.close();
+    await s.close();
+  }
+});
+
 function setup() {
   const directory = mkdtempSync(join(tmpdir(), "omem-unified-")),
     store = new Store(directory);

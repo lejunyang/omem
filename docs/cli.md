@@ -75,6 +75,8 @@ omem ask '解释实现过程' --research
 
 `search` 直接返回检索结果，不调用生成式模型；目的支持 balanced、concept、implementation、background、follow-up。已准备并启用的本地 Decision 模型可对前排候选判断相关性和证据作用，调整阅读顺序，最多增加八秒等待；模型未就绪或不可用时保留原排序，首次可后台预热，运行不下载。精确名称与显式代码导航直接定位。评分依据见 JSON 结果的 assessment，分数尚未校准。`ask` 让 Agent 自主检索和补读，普通模式可沿现有流程提出事项变更，`--research` 只调查作答。返回会话 ID 可继续追问。Ctrl+C 尝试取消本轮服务端调用；无法送达时明确提示，不能假装已停止。CLI 等待问答不设固定总时限，实际 Agent 由活动超时管理。
 
+已提前准备并显式配置 `retrieval.reranker` 的 cross-encoder 也能重排词面候选，向量模型关闭或暂未就绪时仍可使用。加载失败保留原检索，资源恢复后可重试，运行不下载。JSON 的 reranking 记录实际模型、相关分与重排前检索分；相关分不是答案正确概率。默认配置没有开启重排器，setup 向导也没有重排器选项。
+
 完整 Capture 可用 `omem import capture input.json` 或 stdin，最小示例：
 
 ```json
