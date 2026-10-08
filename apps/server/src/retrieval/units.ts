@@ -917,12 +917,11 @@ export class RetrievalProjection {
   ) {
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      for (const row of this.db
-        .prepare("SELECT id FROM retrieval_units WHERE owner=?")
-        .all(owner))
-        this.db
-          .prepare("DELETE FROM retrieval_units_fts WHERE id=?")
-          .run(String(row.id));
+      // FTS5's unindexed ID requires a scan. Delete one owner's old units in a
+      // single scan rather than scanning the whole corpus once per passage.
+      this.db
+        .prepare("DELETE FROM retrieval_units_fts WHERE id IN (SELECT id FROM retrieval_units WHERE owner=?)")
+        .run(owner);
       this.db.prepare("DELETE FROM retrieval_units WHERE owner=?").run(owner);
       this.db.prepare("DELETE FROM retrieval_contexts WHERE owner=?").run(owner);
       this.db
