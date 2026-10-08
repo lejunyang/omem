@@ -33,6 +33,14 @@ it("serves fixed inline citations and explicit question actions through the same
     expect(task.json().taskId).toBeTruthy(); expect(store.tasks()).toHaveLength(1);
     const noModel = await app.inject({ method: "POST", url: "/api/knowledge/analyze", payload: { revisionIds: [m.revisionId] } });
     expect(noModel.statusCode).toBe(503);
+    store.retention.clearArticle(article.document.key,{reason:"用户删除陈旧指南。"});
+    for (const url of ["/api/knowledge/articles/" + encodeURIComponent(article.document.key),
+      "/api/knowledge/articles/" + encodeURIComponent(article.document.key) + "?revision=" + article.revision]) {
+      const removed = await app.inject(url);
+      expect(removed.statusCode).toBe(410);
+      expect(removed.json()).toEqual({error:"用户删除陈旧指南。"});
+    }
+    expect((await app.inject("/api/knowledge/articles/never-published")).statusCode).toBe(404);
     const image = store.capture({ source: "manual", externalId: "diagram", title: "历史图像", parts: [{ type: "image", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=", label: "原图" }], context: {} });
     const assetId = (image.revision.parts[0] as { assetId: string }).assetId;
     store.capture({ source: "manual", externalId: "diagram", title: "新材料", parts: [{ type: "text", text: "图片已被新版本替代" }], context: {} });
