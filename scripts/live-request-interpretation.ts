@@ -1,7 +1,7 @@
 /** Real model interpretation of synthetic owner requests; no mutations. */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { configuredRequestInterpreter } from "../apps/server/src/assistant/request-interpretation.js";
@@ -22,6 +22,7 @@ const profile = profileSchema.parse({
 });
 const directory = resolve(".repo-review/runtime/request-interpretation");
 mkdirSync(directory, { recursive: true });
+if (existsSync(join(directory,"report.json")) && !existsSync(join(directory,"baseline.json"))) copyFileSync(join(directory,"report.json"),join(directory,"baseline.json"));
 const judge = configuredRequestInterpreter({
   profile: () => profile,
   directory,
@@ -52,7 +53,7 @@ const persist = () =>
     join(directory, "report.json"),
     JSON.stringify(report, null, 2) + "\n",
   );
-const cases = [
+const cases: {text:string;expected:"execute"|"decline"|"uncertain";activeProjectId?:string;priorTurns?:{userText:string;result:string}[]}[] = [
   { text: "能帮我持续整理发布协调的当前安排吗？", expected: "execute" },
   {
     text: "不要创建待办，只帮我把发布协调的当前安排持续整理起来。",
@@ -66,7 +67,9 @@ const cases = [
     expected: "execute",
   },
   { text: "帮我持续整理这个项目。", expected: "uncertain" },
-] as const;
+  { text: "帮我持续整理这个项目。", expected: "execute", activeProjectId:context.id },
+  { text: "帮我持续整理刚才说的项目。", expected: "execute", priorTurns:[{userText:"这里说的项目是发布协调。",result:"我们继续讨论发布协调。"}] },
+];
 try {
   for (const item of cases) {
     const started = performance.now();
@@ -85,6 +88,8 @@ try {
         delegation: item.text,
       },
       target: { context, maintenance: null },
+      activeProjectId:item.activeProjectId,
+      priorTurns:item.priorTurns,
     });
     report.cases.push({
       ...item,

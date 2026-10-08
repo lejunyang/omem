@@ -665,7 +665,14 @@ export class AssistantWork {
       actor,candidate:action,target:{context:target.context,maintenance:target.maintenance},...options,
     });
     options.signal?.throwIfAborted();
-    if (interpretation.verdict !== "execute" || !interpretation.instruction || !actor.userText.includes(interpretation.instruction))
+    const groundedTarget = interpretation.targetBasis === "active_project"
+      ? options.activeProjectId === action.contextId
+      : interpretation.targetBasis === "current_request"
+        ? !!interpretation.targetQuote && actor.userText.includes(interpretation.targetQuote)
+        : interpretation.targetBasis === "prior_turn"
+          ? !!interpretation.targetQuote && !!options.priorTurns?.some(t => t.userText.includes(interpretation.targetQuote!))
+          : false;
+    if (interpretation.verdict !== "execute" || !groundedTarget || !interpretation.instruction || !actor.userText.includes(interpretation.instruction))
       throw Error(`尚未收到本人明确交办：${interpretation.reason}`);
     return this.store.tx(() => this.applyInTransaction(action, actor));
   }

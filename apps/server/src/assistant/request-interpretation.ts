@@ -54,7 +54,8 @@ export function configuredRequestInterpreter(options: {
         role_id: roleId,
         trusted_context: {
           workspace_id: "personal",
-          project_id: null,
+          project_id: input.activeProjectId ?? null,
+          project_trusted: !!input.activeProjectId,
           owner_id: input.actor.principalId,
           observed_at: new Date().toISOString(),
           timezone: "Asia/Shanghai",
@@ -75,12 +76,7 @@ export function configuredRequestInterpreter(options: {
         ],
         related_memories: [],
         confirmed_corrections: [],
-        task: {
-          candidate: input.candidate,
-          target: input.target,
-          priorTurns: input.priorTurns?.slice(-4) ?? [],
-          activeProjectId: input.activeProjectId ?? null,
-        },
+        task: { drafts: [{candidate: input.candidate,target:input.target,priorTurns:input.priorTurns?.slice(-4) ?? []}] },
       }),
     });
     const result = requestInterpretationSchema.parse(run.result);
