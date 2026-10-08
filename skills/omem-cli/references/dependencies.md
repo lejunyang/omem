@@ -48,7 +48,7 @@ omem setup
 
 Python 依赖下载使用系统信任证书，适配已在系统中信任公司代理证书的环境；仍会校验证书和锁文件摘要。遇到 `UnknownIssuer` 时检查系统证书是否正确安装；自定义 CA 可按 [uv 官方说明](https://docs.astral.sh/uv/concepts/authentication/certificates/) 设置 `SSL_CERT_FILE` 或 `SSL_CERT_DIR` 后重跑，不关闭证书校验。
 
-StartLux 当前仅支持 Apple Silicon Mac。9B 已提供安装和显式选择，尚未完成本机推理验收；暂按可用内存 28 GiB 才允许加载，该预算还未通过真实推理校准。它不用于后台自动切换。Windows 的 Python 路径已适配，但 Windows/Linux 的全新安装仍需实际验收，不能把路径适配当作平台验证。未安装决策模型或资源不足时保留原流程，由常规 Agent 继续调查。
+StartLux 当前仅支持 Apple Silicon Mac。普通 search、助手初始选材和调查工具共用可选的材料判断；模型已就绪时最多等待八秒，未就绪沿原排序继续并可后台预热。关闭可在个人配置中设置 `decisions.mode:"off"` 后重启服务；模型资源仍保留。JSON 搜索结果的 assessment 给出实际模型、阅读优先分及选项分布，尚未经大样本校准。9B 已提供安装和显式选择，尚未完成本机推理验收；暂按可用内存 28 GiB 才允许加载，该预算还未通过真实推理校准。它不用于后台自动切换。Windows 的 Python 路径已适配，但 Windows/Linux 的全新安装仍需实际验收，不能把路径适配当作平台验证。未安装决策模型或资源不足时保留原流程，由常规 Agent 继续调查。
 
 ## 会占用多少空间
 

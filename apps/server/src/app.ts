@@ -66,7 +66,6 @@ import { createLogger, installDefaultLogger } from "./logging/logger.js";
 import { createHttpLogController } from "./logging/http.js";
 import { DecisionService } from "./decision/service.js";
 import { intakeQuestions } from "./decision/questions.js";
-import { assessPassages } from "./decision/passages.js";
 import {
   assistantProfile as selectAssistantProfile,
   knowledgeProfile,
@@ -278,7 +277,7 @@ export async function buildApp(
       })),
   );
 
-  const retrievalService = createRetrieval(store.db, config.retrieval);
+  const retrievalService = createRetrieval(store.db, config.retrieval, process.cwd(), decisions);
   const assistantRetrieval = development
     ? developmentRetrieval(store, retrievalService.retrieval)
     : retrievalService.retrieval;
@@ -732,7 +731,11 @@ export async function buildApp(
           limit: 30,
           diversify: false,
         })) ?? [];
-      return assessPassages(decisions, question, hits);
+      return {
+        hits,
+        decisions: hits.filter((hit) => hit.assessment).map((hit) => ({ id: hit.id, ...hit.assessment })),
+        status: decisions.status(),
+      };
     },
   );
   app.post("/api/connectors/file", async (req) => {

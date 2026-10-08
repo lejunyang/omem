@@ -14,12 +14,158 @@ import { rerankPassages } from "../src/retrieval/rerank-passages.js";
 import { sourceContextRange } from "../src/retrieval/context.js";
 import { assembleAnswerContext } from "../src/assistant/context.js";
 import { sourceAnchor } from "../src/retrieval/units.js";
+import { createRetrieval } from "../src/retrieval/factory.js";
+import type { DecisionService } from "../src/decision/service.js";
 import { ensureMaterialAliases } from "../src/knowledge/material-identity.js";
 import type { EmbeddingModel } from "../src/retrieval/embedding.js";
 import {
   AssistantRuntime,
   type AssistantModelPort,
 } from "../src/assistant/runtime.js";
+
+it("finds a class declaration independently of its methods and expands its parent on reading", async () => {
+  const s = setup();
+  try {
+    s.store.capture({
+      source: "file",
+      externalId: "reservations",
+      title: "reservations.ts",
+      context: { filePath: "reservations.ts", captureFormat: "verbatim-v1" },
+      parts: [
+        {
+          type: "text",
+          text: "export class ReservationLedger {\n  capacity = 3;\n  /** Create a reservation. */\n  reserve(id: string) {\n    return { id, capacity: this.capacity };\n  }\n}",
+        },
+      ],
+    });
+    const [definition] = await s.retrieval.search({
+      text: "ReservationLedger",
+      codeIntent: "definition",
+    });
+    expect(definition?.headingPath.at(-1)).toBe("ReservationLedger");
+    expect(definition?.routes).toContain("code-symbol");
+    expect(definition?.target).toMatchObject({ startLine: 1, endLine: 2 });
+    expect(definition?.text).not.toContain("return");
+    const [method] = await s.retrieval.search({
+      text: "ReservationLedger.reserve",
+      codeIntent: "definition",
+    });
+    expect(method?.target).toMatchObject({ startLine: 3, endLine: 6 });
+    const material = s.repository.materials()[0]!;
+    expect(
+      sourceContextRange(material, definition!.references[0]!, () => true)
+        .endLine,
+    ).toBe(7);
+  } finally {
+    await s.close();
+  }
+});
+
+it("does not spend source result slots on overlapping storage fragments of one passage", async () => {
+  const s = setup();
+  try {
+    s.store.capture({
+      source: "manual",
+      externalId: "retry-handbook",
+      title: "网络重试手册",
+      context: { captureFormat: "verbatim-v1" },
+      parts: [
+        { type: "text", text: "# 网络重试\n\n" },
+        ...Array.from({ length: 4 }, (_, block) => ({
+          type: "text" as const,
+          text: Array.from(
+            { length: 40 },
+            (_, i) =>
+              `网络重试阶段 ${block * 40 + i} 必须保留请求身份，防止重复提交。\n`,
+          ).join(""),
+        })),
+        {
+          type: "text",
+          text: "\n# 取消\n\n网络重试期间，取消信号必须结束排队，不能继续发起请求。",
+        },
+      ],
+    });
+    const hits = await s.retrieval.search({ text: "网络重试", limit: 2 });
+    expect(hits).toHaveLength(2);
+    expect(
+      hits.some((h) => h.references.some((r) => r.fragmentIds.length > 1)),
+    ).toBe(true);
+    const candidates = await s.retrieval.searchSourcesAsync({
+      text: "网络重试",
+      limit: 2,
+    });
+    expect(candidates).toHaveLength(2);
+    expect(new Set(candidates.map((h) => h.snippet)).size).toBe(2);
+    for (const hit of candidates)
+      expect(
+        s.retrieval.readEvidence(hit.sourceRevisionId, hit.fragmentId),
+      ).not.toBeNull();
+  } finally {
+    await s.close();
+  }
+});
+
+it("uses shared Decision judgments before the search limit and falls back when unavailable", async () => {
+  const s = setup();
+  let available = true,
+    calls = 0;
+  const service = {
+    status: () => ({ status: available ? "ready" : "unavailable" }),
+    decide: async (state: { material: string }) => {
+      calls++;
+      const answer = state.material.includes("身份令牌");
+      return {
+        answers: {
+          relevance: {
+            choice: answer ? "answer" : "background",
+            confidence: 0.9,
+            probabilities: answer
+              ? { answer: 0.9, background: 0.1 }
+              : { answer: 0.1, background: 0.9 },
+          },
+        },
+        model: { alias: "fixture" },
+      };
+    },
+  } as unknown as DecisionService;
+  const shared = createRetrieval(s.store.db, undefined, process.cwd(), service);
+  try {
+    for (const [id, text] of [
+      ["discussion", "重复重复重复提交需要讨论。"],
+      ["answer", "身份令牌可以防止重复提交。"],
+    ])
+      s.store.capture({
+        source: "manual",
+        externalId: id!,
+        title: id!,
+        context: {},
+        parts: [{ type: "text", text: text! }],
+      });
+    const before = await s.retrieval.search({
+      text: "重复提交怎么处理",
+      limit: 1,
+    });
+    const [ranked] = await shared.retrieval.search!({
+      text: "重复提交怎么处理",
+      limit: 1,
+    });
+    expect(calls).toBe(2);
+    expect(ranked?.text).toContain("身份令牌");
+    expect(ranked?.routes).toContain("decision");
+    expect(ranked?.assessment).toMatchObject({
+      model: "fixture",
+      priority: 0.935,
+    });
+    available = false;
+    expect(
+      await shared.retrieval.search!({ text: "重复提交怎么处理", limit: 1 }),
+    ).toEqual(before);
+    expect(calls).toBe(2);
+  } finally {
+    await shared.close();
+    await s.close();
+  }
+});
 
 function setup() {
   const directory = mkdtempSync(join(tmpdir(), "omem-unified-")),

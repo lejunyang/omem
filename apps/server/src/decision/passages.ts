@@ -168,7 +168,22 @@ export async function assessPassages(
   );
   return {
     hits: kept.length
-      ? [...kept.map((a) => a.hit), ...hits.slice(assessed.length)]
+      ? [
+          ...kept.map((a) =>
+            a.result
+              ? {
+                  ...a.hit,
+                  routes: [...a.hit.routes, "decision"],
+                  assessment: {
+                    model: a.result.model.alias,
+                    priority: passagePolicy(a.result).priority,
+                    answers: a.result.answers,
+                  },
+                }
+              : a.hit,
+          ),
+          ...hits.slice(assessed.length),
+        ]
       : hits,
     decisions,
     status: service.status(),

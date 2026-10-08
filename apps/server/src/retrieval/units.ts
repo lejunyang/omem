@@ -15,7 +15,7 @@ import { MaterialDescriptions } from "../source-profile/descriptions.js";
 import type { MaterialDescriptionRecord } from "../../../../packages/contracts/src/material-description.js";
 import type { ProvenanceRef, RetrievalHit, SourceAnchor } from "./port.js";
 
-export const UNIT_VERSION = "structure-icu-v7";
+export const UNIT_VERSION = "structure-icu-v8";
 type Row = Record<string, unknown>;
 export type RetrievalUnit = Omit<RetrievalHit, "score" | "routes"> & {
   owner: string;
@@ -112,10 +112,6 @@ export function codePassages(material: KnowledgeMaterial): Passage[] {
           contains(p, s) &&
           (callable(p.kind) || p.kind === "class" || p.kind === "component"),
       );
-    if (s.kind === "class" || s.kind === "component")
-      return !parsed.symbols.some(
-        (child) => contains(s, child) && callable(child.kind),
-      );
     return true;
   });
   if (!symbols.length)
@@ -132,6 +128,24 @@ export function codePassages(material: KnowledgeMaterial): Passage[] {
     let start = s.rangeStart.line;
     // Adjacent comments belong with the declaration, without inventing intent.
     while (start > 1 && /^\s*(?:\/\*|\*|\/\/)/.test(lines[start - 2]!)) start--;
+    // Keep a named container entry without indexing its whole body again beside
+    // every method. Its fixed target opens the declaration; parent reading can
+    // still expand to the complete class/component.
+    const firstOperation =
+      s.kind === "class" || s.kind === "component"
+        ? parsed.symbols
+            .filter((child) => contains(s, child) && callable(child.kind))
+            .sort((a, b) => a.rangeStart.line - b.rangeStart.line)[0]
+        : undefined;
+    let end = firstOperation
+      ? Math.max(s.rangeStart.line, firstOperation.rangeStart.line - 1)
+      : s.rangeEnd.line;
+    // A method's documentation belongs to the method, not to the class entry.
+    while (
+      end > s.rangeStart.line &&
+      /^\s*(?:\/\*|\*|\/\/|$)/.test(lines[end - 1]!)
+    )
+      end--;
     const parents = parsed.symbols
       .filter(
         (p) =>
@@ -141,9 +155,9 @@ export function codePassages(material: KnowledgeMaterial): Passage[] {
       )
       .sort((a, b) => a.rangeStart.line - b.rangeStart.line);
     return {
-      text: lines.slice(start - 1, s.rangeEnd.line).join("\n"),
+      text: lines.slice(start - 1, end).join("\n"),
       startLine: start,
-      endLine: s.rangeEnd.line,
+      endLine: end,
       headingPath: [...parents.map((p) => p.qualifiedName), s.qualifiedName],
     };
   });

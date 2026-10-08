@@ -1,6 +1,6 @@
 # 中文快速决策：实际接入与选择规则
 
-更新：2026-10-05。StartLux-Decision 0.8B、2B、4B 已在 Apple M2 Pro / 32GB 上以官方 BF16 / MLX 原生方式运行。**共用服务已经接到助手初始选材、原文页用途建议与个人飞书消息分流，仍不能把模型判断当事实写入、操作授权或安全证明。** 检索逐项结果见[同一份实验简报](../../.repo-review/knowledge/verification/fast-decisions.md)；消息的七维判断、低分与缺资源处理见[个人消息](personal-messages.md)。
+更新：2026-10-09。StartLux-Decision 0.8B、2B、4B 已在 Apple M2 Pro / 32GB 上以官方 BF16 / MLX 原生方式运行。**共用服务已接到共享异步检索、原文页用途建议与个人飞书消息分流，仍不能把模型判断当事实写入、操作授权或安全证明。** 检索逐项结果见[同一份实验简报](../../.repo-review/knowledge/verification/fast-decisions.md)；消息的七维判断、低分与缺资源处理见[个人消息](personal-messages.md)。
 
 ## 本机结果
 
@@ -22,7 +22,7 @@
 
 | 判断 | 输出 | 当前消费者 |
 | --- | --- | --- |
-| 相关性 | 无关、仅话题、背景、答案/关键条件、未知 | 助手初始召回的阅读顺序 |
+| 相关性 | 无关、仅话题、背景、答案/关键条件、未知 | 普通搜索、助手初始选材与调查工具的阅读顺序 |
 | 回答覆盖 | 无、部分、充分、未知 | 诊断保留，不据此自动快答 |
 | 内容支持 | 明确陈述、条件性、讨论/示例、无支持、未知 | 联合判断明显无关项是否省略；来源版本仍由宿主校验 |
 | 前提冲突 | 冲突、不冲突、未知 | 冲突候选保留给 Agent，不能当负面材料过滤 |
@@ -30,9 +30,9 @@
 | 父章节需求 | 需要、自足、未知 | 保留需要背景的候选；尚未按此结果自动二次补读 |
 | 入库用途 | 日常安排、学习、代码、业务各自是/否/未知 | 原始材料页显示可同时成立的用途建议；不是持久分类或自动目录 |
 
-`AssistantRuntime.retrieveContext` 在 RetrievalPort 召回后调用 `assessPassages`，再进入原有上下文装配。最多判断前 12 段、等待最多 8 秒；未评估候选保留。联合省略门槛为无关 ≥ .98、无回答 ≥ .95、无支持 ≥ .95，冲突、背景需求或不确定选项较高时保留；如果评估项全被省略，则退回原候选。门槛是保守初始策略，**尚未经大样本概率校准，不代表可靠错误率**。实际 HTTP 的 12 条判断没有触发省略，不能宣称已明显过滤噪声。
+`createRetrieval` 将共用 DecisionService 接入 `UnifiedRetrieval.search`：全文、向量、符号召回及可选 cross-encoder 排序后，取至少 40 个候选，再调用 `assessPassages` 并截取请求数量。最多判断前 12 段、等待最多 8 秒；未评估候选保留。相关性中的答案/关键条件与前提冲突取较高分，再加 0.35 倍背景分，调整已评估候选的阅读顺序；原检索 score 保留，结果的 assessment 单独记录模型、priority 及各维度选项分布。联合省略门槛为无关 ≥ .98、无回答 ≥ .95、无支持 ≥ .95，冲突、背景需求或不确定选项较高时保留；如果评估项全被省略，则退回原候选。门槛是保守初始策略，**尚未经大样本概率校准，不代表可靠错误率**。此前实际 HTTP 的 12 条判断没有触发省略，不能宣称已明显过滤噪声。
 
-冷启动在后台预热，当前问答沿原候选继续；模型故障或切换耗时也不阻塞主流程。普通搜索列表未换排序，Agent 自主搜索仍能找回原候选。问答默认继续使用 Sol。近期对话的对象消歧仍由原有助手处理；此次没有把小模型接成所有请求的前置路由。
+冷启动在后台预热，当前搜索沿原候选继续；模型故障或切换耗时也不阻塞主流程。普通搜索、助手初始选材和 Agent 自主调查共享这一轮判断，助手及诊断接口不再重复评分。精确名称与显式 AST 导航直接定位，同步兼容端口仍只做确定性检索；独立仓库验收应用不传 DecisionService，不把该报告当作小模型排序验收。问答默认继续使用 Sol。近期对话的对象消歧仍由原有助手处理；此次没有把小模型接成所有请求的前置路由。
 
 用途建议按固定 revision 自动读取，长文先看前 12,000 字符并明确标为摘录，只展示正向建议；缓存保留五分钟，原文版本、问题和判断模板属于输入身份。服务运行期间配置固定；模型切换后同一输入可能短期复用之前的结果，并带原结果模型身份，不把它冒充新模型输出。
 
@@ -62,7 +62,7 @@ osdk run decision:native-evaluate --model decision-startlux2b
 osdk run decision:native-evaluate --model decision-startlux4b
 ```
 
-模型、上游 Python 文件哈希和依赖分别固定在 `osdk.lock`、`scripts/startlux/upstream.json`、`scripts/startlux/uv.lock`。原生源码固定 `0e7a2e81b9c92756e26d8edd843a44d50e362669`。API `/api/decisions/status` 可读状态，`/api/decisions/search?q=...` 返回实际候选与多维结果；首次可能只启动预热，后续请求复用常驻模型。`/api/decisions/intake` 接收 revisionId，返回用途建议。
+模型、上游 Python 文件哈希和依赖分别固定在 `osdk.lock`、`scripts/startlux/upstream.json`、`scripts/startlux/uv.lock`。原生源码固定 `0e7a2e81b9c92756e26d8edd843a44d50e362669`。API `/api/decisions/status` 可读状态，`/api/decisions/search?q=...` 返回实际候选、已保留候选的 assessment 与模型状态；被省略项及原因记录在 debug 日志。首次可能只启动预热，后续请求复用常驻模型。`/api/decisions/intake` 接收 revisionId，返回用途建议。
 
 模型范围和接口见 [StartLux 官方仓库](https://github.com/StartLuxLabs/StartLux-Decision)、[2B 模型卡](https://huggingface.co/startlux-models/StartLux-Decision-2B)、[4B 模型卡](https://huggingface.co/startlux-models/StartLux-Decision-4B)和[9B 模型卡](https://huggingface.co/startlux-models/StartLux-Decision-9B)。权重 CC BY-NC 4.0、推理代码 Apache-2.0；实际验收过 Apple Silicon 的 0.8B/2B/4B 文本后端，9B 安装选择已接入但未实际推理验收，图片先由导入流程提取内容。
 
