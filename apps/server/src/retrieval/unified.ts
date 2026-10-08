@@ -614,12 +614,26 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     // model to see hidden/out-of-scope units or force a cold model load here.
     const pool = this.finish(hits, {
       ...q,
+      diversify: false,
       limit: Math.max(q.limit ?? 20, 40),
     });
     try {
-      return (await this.rank(q, pool)).slice(0, q.limit ?? 20);
+      const ranked = await this.rank(q, pool);
+      if (ranked === pool) return this.finish(hits, q);
+      const owners = new Map<string, number>(), sections = new Set<string>(), seen = new Set<string>();
+      return ranked.filter((hit) => {
+        if (q.diversify === false) return true;
+        const owner = hit.target.kind === "source" || hit.target.kind === "knowledge" ? hit.target.key : hit.target.id;
+        const section = hit.target.kind === "knowledge" ? `${hit.target.revision}:${hit.target.section}` : null;
+        const text = hit.text.replace(/\s+/g, " ").trim();
+        if ((section ? sections.has(section) : (owners.get(owner) ?? 0) >= 2) || seen.has(text)) return false;
+        if (section) sections.add(section);
+        owners.set(owner, (owners.get(owner) ?? 0) + 1);
+        seen.add(text);
+        return true;
+      }).slice(0, q.limit ?? 20);
     } catch {
-      return pool.slice(0, q.limit ?? 20);
+      return this.finish(hits, q);
     }
   }
   private finish(hits: ScoredUnit[], q: SearchQuery): RetrievalHit[] {

@@ -462,7 +462,7 @@ imports
   );
 program
   .command("search <query>")
-  .description("检索原文、知识、记忆与代码，不调用大模型")
+  .description("直接检索原文、知识、记忆与代码；可选本地模型调整阅读顺序")
   .addOption(
     new Option("--purpose <purpose>", "查找目的")
       .choices([
