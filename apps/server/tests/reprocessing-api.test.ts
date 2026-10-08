@@ -210,17 +210,16 @@ it("deletes generated results through HTTP while retaining the current original 
   expect(built.store.asset(source.originalAssetId)).toEqual(
     Buffer.from("活动预算上限120元。"),
   );
-  expect(
-    (await built.app.inject("/api/knowledge/articles/activity-guide"))
-      .statusCode,
-  ).toBe(404);
+  const removedArticle = await built.app.inject("/api/knowledge/articles/activity-guide");
+  expect(removedArticle.statusCode).toBe(410);
+  expect(removedArticle.json().error).toContain("清除");
   expect(restoreKnowledgeArticles(repository, artifacts)[0]?.state).toBe(
     "removed",
   );
   expect(
     (await built.app.inject("/api/knowledge/articles/activity-guide"))
       .statusCode,
-  ).toBe(404);
+  ).toBe(410);
   expect(
     repository.pages().find((page) => page.key === brief.key)?.plan?.goal,
   ).toBe(brief.goal);
