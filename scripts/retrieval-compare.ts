@@ -275,7 +275,9 @@ try {
             h.target.kind === "source" &&
             expected.includes(h.target.key.replace(/^omem:/, "")),
         );
-        const pool = traces.find((s) => s.stage === "fusion")?.hits ?? [],
+        const pool = traces.find((s) => s.stage === "fusion")?.hits ??
+          [...new Map(traces.filter(s=>s.stage==="lexical"||s.stage==="symbols")
+            .flatMap(s=>s.hits).map(h=>[h.id,h])).values()],
           candidateIds = new Set(pool.map((h) => h.id));
         const windowInputs = traces.find((s) => s.stage === "reranker-input");
         const modelRank = windowInputs
