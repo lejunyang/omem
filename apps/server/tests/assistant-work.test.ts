@@ -19,6 +19,7 @@ import { KnowledgePageWorker } from "../src/knowledge/page-worker.js";
 import { KnowledgePageService } from "../src/knowledge/page-service.js";
 import { AssistantWork } from "../src/assistant/work.js";
 import { AssistantRuntime } from "../src/assistant/runtime.js";
+import type { RequestInterpreter } from "../src/assistant/request-interpretation.js";
 import { DevelopmentQueue } from "../src/development/queue.js";
 import { DevelopmentRunner } from "../src/development/runner.js";
 import { inspectRequirementChange } from "../src/development/replanning.js";
@@ -48,7 +49,7 @@ const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
   for (const f of cleanup.splice(0).reverse()) await f();
 });
-function setup(runner?: (path: string) => DevelopmentRunner) {
+function setup(runner?: (path: string) => DevelopmentRunner, interpreter?: RequestInterpreter) {
   const dir = mkdtempSync(join(tmpdir(), "omem-work-")),
     store = new Store(join(dir, "data"));
   const repository = new KnowledgeRepository(store),
@@ -57,7 +58,7 @@ function setup(runner?: (path: string) => DevelopmentRunner) {
   const queue = new DevelopmentQueue(store, pages, profile, {
     runner: runner?.(store.dataDir),
   });
-  const work = new AssistantWork(pages, queue);
+  const work = new AssistantWork(pages, queue, undefined, undefined, interpreter);
   const actor = (userText: string): WorkActor => ({
     requestId: randomUUID(),
     conversationId: "test-chat",
@@ -110,23 +111,48 @@ function setup(runner?: (path: string) => DevelopmentRunner) {
     action,
   };
 }
-it("maintains one project view from an explicit owner instruction and exposes a read-only tool",()=>{
-  const s=setup();
+it("maintains one project view after independent interpretation, while replay and reads never call the model",async()=>{
+  const judge=vi.fn<RequestInterpreter>(async input=>({verdict:"execute",instruction:input.actor.userText,reason:"本人交办同一项目"}));
+  const s=setup(undefined,judge);
   const project=s.store.contexts.create({name:"退款查询",kind:"project",description:"本期安排"});
   const material=s.repository.materials().find(m=>m.key==="manual:spec")!;
   s.store.contexts.setForSource(material.sourceId,[project.id]);
   const action: WorkAction={operation:"maintain_context",contextId:project.id,mode:"start",delegation:"持续整理这个项目"};
   const actor=s.actor(action.delegation);
-  const receipt=s.work.apply(action,actor);
+  const receipt=await s.work.applyRequested(action,actor);
   expect(receipt.key).toBeTruthy();
-  expect(s.work.apply(action,actor)).toEqual(receipt);
-  expect(s.work.apply(action,s.actor(action.delegation)).key).toBe(receipt.key);
+  expect(await s.work.applyRequested(action,actor)).toEqual(receipt);
+  expect(judge).toHaveBeenCalledTimes(1);
+  expect(await s.work.applyRequested(action,s.actor(action.delegation))).toMatchObject({key:receipt.key});
   const tool=s.work.tools().find(t=>t.name==="context_view")!;
   expect(tool.readOnly).toBe(true);
   expect(s.store.jobs.list().filter(j=>j.kind==="knowledge:maintain-page")).toHaveLength(1);
-  expect(()=>s.work.apply(action,{...actor,requestId:randomUUID(),visibility:"group"})).toThrow("本人私聊");
-  expect(()=>s.work.apply({...action,delegation:"不要持续整理"},s.actor("不要持续整理"))).toThrow("明确交办");
+  await expect(s.work.applyRequested(action,{...actor,requestId:randomUUID(),visibility:"group"})).rejects.toThrow("本人私聊");
+  judge.mockResolvedValueOnce({verdict:"decline",instruction:"不要持续整理",reason:"本人禁止整理"});
+  await expect(s.work.applyRequested({...action,delegation:"不要持续整理"},s.actor("不要持续整理"))).rejects.toThrow("明确交办");
+  expect(()=>s.work.apply(action,actor)).toThrow("独立核对");
   expect(s.store.tasks()).toHaveLength(0);
+});
+
+it("does not write when semantic interpretation is absent, ambiguous or interrupted",async()=>{
+  const judge=vi.fn<RequestInterpreter>(async()=>({verdict:"uncertain",instruction:null,reason:"两个项目未确定"}));
+  const s=setup(undefined,judge);
+  const project=s.store.contexts.create({name:"退款查询",kind:"project",description:""});
+  const material=s.repository.materials().find(m=>m.key==="manual:spec")!;
+  s.store.contexts.setForSource(material.sourceId,[project.id]);
+  const action: WorkAction={operation:"maintain_context",contextId:project.id,mode:"start",delegation:"能帮我持续整理吗"};
+  await expect(s.work.applyRequested(action,s.actor(action.delegation))).rejects.toThrow("两个项目未确定");
+  const cancelled=new AbortController();
+  judge.mockImplementationOnce(async input=>{
+    cancelled.abort();
+    return {verdict:"execute",instruction:input.actor.userText,reason:"交办"};
+  });
+  await expect(s.work.applyRequested(action,s.actor(action.delegation),{signal:cancelled.signal})).rejects.toThrow();
+  expect(s.pages.views.read(project.id).key).toBeNull();
+  expect(s.store.jobs.list()).toHaveLength(0);
+  const noModel=setup();
+  const other=noModel.store.contexts.create({name:"退款查询",kind:"project",description:""});
+  await expect(noModel.work.applyRequested({...action,contextId:other.id},noModel.actor(action.delegation))).rejects.toThrow("判断模型不可用");
 });
 
 function publish(

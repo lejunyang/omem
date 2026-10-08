@@ -39,6 +39,7 @@ import {
   scheduleSummaries,
   type AssistantSchedulePorts,
 } from "./schedules.js";
+import type { RequestInterpreter } from "./request-interpretation.js";
 
 type Feedback = {
   id: string;
@@ -58,21 +59,7 @@ export function assertWorkDelegation(action: WorkAction, actor: WorkActor) {
   if (!quote || !actor.userText.includes(quote))
     throw Error("操作必须来自当前用户的明确交办原话");
   if (action.operation === "maintain_context") {
-    const verb =
-      action.mode === "pause"
-        ? /暂停|停止|不再|pause|stop/i
-        : action.mode === "refresh"
-          ? /更新|刷新|重整|重新整理|refresh|update/i
-          : /整理|维护|持续|跟进|恢复|开启|开始|maintain|follow|resume|start/i;
-    if (
-      !verb.test(quote) ||
-      (action.mode !== "pause" &&
-        /(?:不要|先别|不必|暂不|别再).{0,16}(?:整理|维护|跟进|更新|刷新|恢复|开启|开始)|\b(?:do not|don't)\b/i.test(
-          actor.userText,
-        ))
-    )
-      throw Error("尚未收到本人明确交办维护这个项目的理解");
-    return;
+    throw Error("项目理解操作需要先独立核对当前交办");
   }
   if (isScheduleAction(action)) {
     if (
@@ -169,6 +156,7 @@ export class AssistantWork {
     readonly development: DevelopmentQueue,
     readonly decisions?: DecisionService,
     schedulePorts?: AssistantSchedulePorts,
+    readonly interpretRequest?: RequestInterpreter,
   ) {
     this.store = pages.repository.store;
     this.inputs = new CapabilityReceipts(this.store);
@@ -652,6 +640,33 @@ export class AssistantWork {
   apply(value: WorkAction, actor: WorkActor): WorkReceipt {
     const action = workActionSchema.parse(value);
     assertWorkDelegation(action, actor);
+    return this.store.tx(() => this.applyInTransaction(action, actor));
+  }
+  async applyRequested(value: WorkAction, actor: WorkActor, options: {
+    signal?: AbortSignal;
+    priorTurns?: {userText:string;result:string}[];
+    activeProjectId?: string;
+  } = {}): Promise<WorkReceipt> {
+    const action = workActionSchema.parse(value);
+    if (action.operation !== "maintain_context") return this.apply(action, actor);
+    if (actor.principalId !== "owner" || actor.visibility !== "private")
+      throw Error("项目理解操作只能由本人私聊交办");
+    if (!action.delegation.trim() || !actor.userText.includes(action.delegation.trim()))
+      throw Error("操作必须来自当前用户的交办原话");
+    const signature = stableDigest({action,actor});
+    const previous = this.store.db.prepare("SELECT digest,body FROM assistant_work_receipts WHERE request_id=?").get(actor.requestId);
+    if (previous) {
+      if (previous.digest !== signature) throw Error("同一请求已应用不同操作，请读取现状");
+      return JSON.parse(String(previous.body));
+    }
+    if (!this.interpretRequest) throw Error("交办判断模型不可用，未执行项目理解操作");
+    const target = this.pages.views.read(action.contextId);
+    const interpretation = await this.interpretRequest({
+      actor,candidate:action,target:{context:target.context,maintenance:target.maintenance},...options,
+    });
+    options.signal?.throwIfAborted();
+    if (interpretation.verdict !== "execute" || !interpretation.instruction || !actor.userText.includes(interpretation.instruction))
+      throw Error(`尚未收到本人明确交办：${interpretation.reason}`);
     return this.store.tx(() => this.applyInTransaction(action, actor));
   }
   private applyInTransaction(

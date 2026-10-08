@@ -721,6 +721,7 @@ export type JobState = z.infer<typeof jobStateSchema>;
 export type JobAttemptFingerprint = z.infer<typeof jobAttemptFingerprintSchema>;
 
 export const roleIdSchema = z.enum([
+  "request-interpreter",
   "context-resolver",
   "material-cataloger",
   "daily-assistant",
@@ -776,6 +777,7 @@ export const roleManifestSchema = z
       )
       .max(10),
     output_schema: z.enum([
+      "RequestInterpretation.v1",
       "ImplementationResult.v1",
       "ImplementationReview.v1",
       "ContextResolution.v1",

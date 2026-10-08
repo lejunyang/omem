@@ -40,10 +40,11 @@ const config = {
   decisions: { mode: "off" as const },
   learning: { enabled: false, profileId: "traex", pollMs: 1000 },
 };
+const { host: _host, port: _port, dataDir: _dataDir, agentCwd: _agentCwd, ...savedConfig } = config;
 writeFileSync(
   join(directory, "config.json"),
   JSON.stringify(
-    { ...config, agentsConfiguredAt: new Date().toISOString() },
+    { ...savedConfig, agentsConfiguredAt: new Date().toISOString() },
     null,
     2,
   ) + "\n",

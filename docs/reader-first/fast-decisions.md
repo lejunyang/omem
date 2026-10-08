@@ -68,6 +68,16 @@ osdk run decision:native-evaluate --model decision-startlux4b
 
 ## 已有其他路径与后续
 
+### 自然语言交办与执行检查
+
+2026-10-08 开始迁移语义正则。新增的项目理解操作由 `request-interpreter` 在独立会话中判断完整请求、最近对话和候选项目，返回 `execute`、`decline` 或 `uncertain` 及当前原话。沿用已配置主助手的 CLI/ACP；只在拟执行项目理解操作时调用，普通查询和同一请求的回执重放不调用。没有模型、判断含糊或取消时不应用，也不回退到动词词表。实际代码入口是 `assistant/request-interpretation.ts` 和 `AssistantWork.applyRequested`。
+
+语义判断只说明用户表达的动作与对象；本人身份、私聊范围、实际对象、版本、请求去重和最终写入由程序核对。StartLux 当前仍提供机会性建议，没有接成操作批准器，选项分数也未经概率校准。
+
+旧 `detectTaskIntent` 把句末“吧”排为咨询，“帮我建个待办吧”因此漏判；“不要提醒我”仍命中创建意图。普通事项变更、开发交办和材料时态也有类似的词表判断，本轮没有声称全部替换。迁移顺序是事项创建与状态变更、其余工作交办、材料语义标签；日期/ID 格式、权限与版本规则保留确定性检查。每步对照真实请求及上下文，分别统计误执行、漏执行、含糊保留和耗时，格式通过不能当语义准确率。
+
+采用模型返回结构化选择的方式，可参考 [LangGraph routing](https://docs.langchain.com/oss/javascript/langgraph/workflows-agents)、[LlamaIndex selectors](https://developers.llamaindex.ai/python/framework/module_guides/querying/router/) 和 [Anthropic routing](https://www.anthropic.com/engineering/building-effective-agents)。它们支持这种组合方式，不证明本项目的中文意图识别已经准确；无需仅为替换词表迁移整个框架。
+
 GLiClass multilingual mini、Qwen3.5-4B MLX Q4、Plumb-4B Q8/Q4 已实跑，结果及失败保留在同份简报与结构化结果，不重复模型清单试验。English-only 候选低优先级；不再测 Luna。原有 `decision:evaluate` / `decision:inspect` 仍是离线或只读试验入口。
 
 助手可显式配置 `assistant.readingProfileId` 采用 Sol / low 先读作答，再由 `review_answer` 独立核对或 `handoff_to_research` 交回调查，复用同一材料快照。复杂仓库题曾遗漏关键条件，短生活材料有局部速度收益，仍未默认启用。小模型的充分性分数不决定快答或免复核。

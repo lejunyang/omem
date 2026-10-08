@@ -340,8 +340,18 @@ export class KnowledgeRepository {
   /** Refresh applicability per chapter; page identity and its plan remain stable. */
   refresh() {
     const assess = this.statusReader();
+    const plans = new Map(this.pages().map(p => [p.key, p.plan]));
     for (const a of this.list()) this.store.db.prepare("UPDATE knowledge_heads SET current=? WHERE document_key=?")
-      .run(Object.values(assess(a)).every(s=>s.state==="current") ? 1 : 0, a.document.key);
+      .run(Object.values(assess(a)).every(s=>s.state==="current") && this.scopeCurrent(a, plans.get(a.document.key) ?? a.reading) ? 1 : 0, a.document.key);
+  }
+
+  /** New uncited events can change a project's understanding while its old
+   * citations remain valid. The article and assistant share this scope check. */
+  scopeCurrent(a: KnowledgeArtifact, plan = a.reading) {
+    if (plan?.workflow !== "project-understanding") return true;
+    return !!a.selection?.materialDigests && stableDigest(a.selection.materialDigests) === stableDigest(
+      this.materialsForPlan(plan).map(m => ({key:m.key,digest:m.digest})).sort((x,y) => x.key.localeCompare(y.key)),
+    );
   }
 
   resolveMaterial(key: string, expectedDigest?: string) {

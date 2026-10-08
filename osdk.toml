@@ -166,6 +166,10 @@ help = "Owned .repo-review/runtime preview data directory; never a private libra
 description = "Verify one persistent project understanding with real Traex/Sol on synthetic events; preserves one owned browser preview"
 run = "bun scripts/live-context-views.ts"
 
+[tasks."decision:request-verify"]
+description = "Verify independent interpretation with real configured Agent on synthetic requests; no mutations"
+run = "bun scripts/live-request-interpretation.ts"
+
 [tasks."benchmark:mtrag"]
 run = "bun scripts/benchmark-mtrag.ts"
 description = "Compare lexical ranking on the pinned public MTRAG Cloud corpus; downloads benchmark data, no model calls"

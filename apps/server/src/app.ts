@@ -99,6 +99,7 @@ import {
 } from "./agent-settings.js";
 import { AssistantWork } from "./assistant/work.js";
 import { workActionSchema } from "../../../packages/contracts/src/work.js";
+import { configuredRequestInterpreter } from "./assistant/request-interpretation.js";
 import { DevelopmentQueue } from "./development/queue.js";
 import { KnowledgeRepository } from "./knowledge/repository.js";
 import { createRetrieval } from "./retrieval/factory.js";
@@ -310,6 +311,7 @@ export async function buildApp(
         ),
         decisions,
         { personalLark, schedules },
+        configuredRequestInterpreter({profile:assistantProfile,directory:resolve(config.dataDir,"request-agents")}),
       );
     },
     onDescriptions: (service) => {
@@ -354,7 +356,7 @@ export async function buildApp(
       })
       .strict()
       .parse(req.body);
-    return work.apply(input.action, {
+    return work.applyRequested(input.action, {
       requestId: input.requestId,
       userText: input.userText,
       conversationId: "web-followup",

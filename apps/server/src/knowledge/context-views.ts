@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { stableDigest } from "../storage/digest.js";
 import type { MaterialContext } from "../../../../packages/contracts/src/contexts.js";
 import type { WikiPageBrief } from "../../../../packages/contracts/src/knowledge.js";
 import type { KnowledgePageService } from "./page-service.js";
@@ -40,16 +39,8 @@ export class ContextViews {
       ? this.pages.repository.pages().find((p) => p.key === key)?.plan
       : null;
     const maintenance = key ? this.pages.maintenance.status(key) : null;
-    const materials = plan ? this.pages.repository.materialsForPlan(plan) : [];
-    const snapshot = article?.selection?.materialDigests;
     const sameScope =
-      !!snapshot &&
-      stableDigest(snapshot) ===
-        stableDigest(
-          materials
-            .map((m) => ({ key: m.key, digest: m.digest }))
-            .sort((a, b) => a.key.localeCompare(b.key)),
-        );
+      !!article && !!plan && this.pages.repository.scopeCurrent(article, plan);
     const current =
       !!article?.current &&
       sameScope &&

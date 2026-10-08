@@ -294,6 +294,9 @@ export function registerKnowledgeRoutes(
     summary: a.document.summary,
     category: a.document.category,
     current: a.current,
+    updateReason: !repository.scopeCurrent(a)
+      ? "项目材料有新增或变化，这份理解尚未更新；下方保留原有解释，请结合最新原文阅读。"
+      : null,
     revision: a.revision,
     topicPath: a.document.topicPath ?? [],
     generatedAt: a.generation.at,
