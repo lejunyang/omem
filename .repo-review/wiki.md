@@ -1,17 +1,3 @@
 # 知识目录
 
-## 软件开发 / omem
-
-- [先认识 omem：把材料变成能找回的工作记忆](knowledge/articles/e3a688af2ed1ce2734e7f6a41ed91e4369645398f90a03e28b92c27028f48e1f.md) · 部分内容待核对
-- [一份材料的旅程：从导入到阅读与引用](knowledge/articles/08e8de8e7788195db049c6fb0184ebc7888d9ec16a991ed19523deb074181035.md) · 部分内容待核对
-- [一次提问如何找到答案：搜索、候选评估与上下文](knowledge/articles/c7ef9ab86227b21952d1f3567bf0ff43a7d5e858dd8fb114a0775b4a78d08de5.md) · 部分内容待核对
-- [记住约定，跟进变化：一次活动从保存到提醒](knowledge/articles/d4de0ea627a2bb808daffc14026246c2dbde153c0450431a2116482269c8270c.md) · 部分内容待核对
-- [改一条完整功能链：从搜索结果到界面](knowledge/articles/0fc1372e659c300a4a7193e2de27f7d10a3c14baf8d61d9cee5f74f4a67a1d4a.md) · 部分内容待核对
-- [让飞书消息进入个人助理：订阅、读材料与跟进](knowledge/articles/95b639d468d877f072191c747aa3f262fb3a18fa95fc5e102e4dfdbf6f7aa4db.md) · 部分内容待核对
-- [让需求变成可跟进的事项和可评审的代码](knowledge/articles/a65a5662f2ca8bf9c6ff9e0a5e6e9782f7ac9338f9951ba8911000f59938ab48.md) · 部分内容待核对
-
-## 软件开发 / omem / 知识整理
-
-- [把材料写成一篇能用的文章](knowledge/articles/8a78e7c7634bdf870e9fc4ddcb0670e345ae0a629b2af3c08bd864ef0f1482aa.md) · 部分内容待核对
-- [整理文章，以及原文更新后怎么处理](knowledge/articles/6e759d62e9d979106e38f747df2b358de8e7de1b87bc619a0cf7673070409bef.md) · 部分内容待核对
-- [知识文章的状态、来源与修改入口](knowledge/articles/08debc9dce56ab4b9a9c94566ff90c5d9660bd199684c1a371e5cf691502dbae.md) · 部分内容待核对
+此前十篇指南的原件或引用已失效，按用户要求移除。当前使用说明见 [README](../README.md) 和 [命令行指南](../docs/cli.md)。新文章须完成当前材料调查与独立复核后发布。
