@@ -17,6 +17,7 @@ export type ArticleMeta = {
   category: string;
   topicPath?: string[];
   current: boolean;
+  updateReason?: string | null;
   revision: string;
   model: string;
   reviewedBy: string;

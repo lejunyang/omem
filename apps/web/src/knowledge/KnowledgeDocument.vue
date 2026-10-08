@@ -102,7 +102,7 @@ async function answered() {
           <p>{{ article.reading.goal }}</p>
         </div>
         <p v-if="!article.current" class="update-note" role="status">
-          部分内容需要核对，已在对应章节标出；其他章节仍可阅读，引用保留写作时的原文。
+          {{ article.updateReason || "部分内容需要核对，已在对应章节标出；其他章节仍可阅读，引用保留写作时的原文。" }}
         </p>
         <section
           v-for="section in article.document.sections"
