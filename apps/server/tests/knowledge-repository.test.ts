@@ -79,6 +79,34 @@ it("restores reviewed knowledge in a fresh DB and preserves question actions", (
   expect(second.repository.questions()[0]!.state).toBe("answered");
 });
 
+it("removes retired asset history and recall across restart while preserving a newer revision", () => {
+  const s = setup(); s.capture("function value() {\n  return 42;\n}");
+  const m = s.repository.materials()[0]!;
+  const d = {...document("page:guide"), title:"RetiredAuroraGuide"};
+  const old = s.repository.publish(artifact(bindKnowledgeQuotes(d,new Map([[m.key,m]])),[{kind:"material",key:m.key,digest:m.digest}]));
+  const assets = join(s.dir,"articles"); writeKnowledgeArticle(assets,old);
+  const newer = s.repository.publish({...old,document:{...old.document,summary:"old second draft"}});
+  writeFileSync(join(assets,".retirements.json"),JSON.stringify({version:1,removals:[{
+    key:d.key,title:d.title,before:"2026-06-01T00:00:00Z",reason:"用户已移除陈旧指南。",revisions:[old.revision],
+  }]}));
+  restoreKnowledgeArticles(s.repository,assets);
+  expect(s.repository.get(d.key)).toBeNull();
+  expect(s.repository.get(d.key,newer.revision)).toBeNull();
+  expect(s.repository.availability(d.key)?.reason).toContain("用户已移除");
+  expect(new KeywordRetrieval(s.store.db).searchSources({text:d.title})).toEqual([]);
+  // Fresh startup cannot import even a leftover copy, and preserves its reason.
+  const fresh=setup(); fresh.capture(m.text);
+  expect(restoreKnowledgeArticles(fresh.repository,assets)[0]?.state).toBe("removed");
+  expect(fresh.repository.get(d.key)).toBeNull();
+  expect(fresh.repository.availability(d.key,old.revision)?.reason).toContain("用户已移除");
+  // The deletion cutoff does not delete later writing or its history on restart.
+  const live=s.repository.publish({...old,generation:{...old.generation,at:"2026-07-01T00:00:00Z"},document:{...old.document,summary:"new current guide"}});
+  restoreKnowledgeArticles(s.repository,assets);
+  expect(s.repository.get(d.key)?.revision).toBe(live.revision);
+  expect(s.repository.get(d.key,old.revision)).toBeNull();
+  expect(new KeywordRetrieval(s.store.db).searchSources({text:d.title})).toHaveLength(1);
+});
+
 it("publishes a planned imported page and advances only managed heads even when inputs are stale", () => {
   const s = setup(); s.capture("function value() {\n  return 42;\n}");
   const m = s.repository.materials()[0]!;

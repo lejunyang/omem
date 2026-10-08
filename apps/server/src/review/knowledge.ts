@@ -2,7 +2,7 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { captureSchema, type CaptureInput } from "../../../../packages/contracts/src/index.js";
 import type { Store } from "../store.js";
-import { restoreKnowledgeArticles, writeKnowledgeArticle } from "../knowledge/artifacts.js";
+import { applyKnowledgeRetirements, restoreKnowledgeArticles, writeKnowledgeArticle } from "../knowledge/artifacts.js";
 import { digest, type KnowledgeArticle } from "../knowledge/repository.js";
 import { captureRepositoryMaterials, createReviewKnowledgeRepository } from "./materials.js";
 import { restoreMaterialDescriptions } from "../knowledge/material-descriptions.js";
@@ -21,6 +21,7 @@ export function restoreReviewKnowledge(store: Store, root: string, captureOption
   const restored = restoreKnowledgeArticles(repository, join(root, ".repo-review/knowledge/articles"));
   const plans = join(root,"config/wiki-pages.json");
   if (existsSync(plans)) for (const page of JSON.parse(readFileSync(plans,"utf8")).pages) repository.savePlan(wikiPageBriefSchema.parse(page));
+  applyKnowledgeRetirements(repository, join(root, ".repo-review/knowledge/articles"));
   for (const m of repository.materials().filter(m => m.key.startsWith("manual:knowledge-answer:"))) {
     const id = m.key.slice("manual:knowledge-answer:".length);
     store.db.prepare("UPDATE knowledge_questions SET state='answered',answer_revision=? WHERE id=?").run(m.revisionId, id);

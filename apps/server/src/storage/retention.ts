@@ -628,18 +628,22 @@ export class MaterialRetention {
         }
       : null;
   }
-  clearArticle(key: string) {
-    const reason = "此文章的旧生成正文已清除，等待重新写作。";
+  clearArticle(key: string, options: { before?: string; reason?: string } = {}) {
+    const reason = options.reason ?? "此文章的旧生成正文已清除，等待重新写作。";
+    if (options.before && !Number.isFinite(Date.parse(options.before))) throw Error("Invalid article removal time");
     return this.store.tx(() => {
-      const at = now();
+      const at = options.before ?? now();
+      const previous = this.store.db.prepare("SELECT removed_at FROM knowledge_clear_epochs WHERE document_key=?").get(key);
       const revisions = table(this.store, "knowledge_revisions")
         ? this.store.db
             .prepare(
               "SELECT id,artifact FROM knowledge_revisions WHERE document_key=?",
             )
-            .all(key)
+            .all(key).filter(row => !options.before || Date.parse(JSON.parse(String(row.artifact)).generation.at) <= Date.parse(at))
         : [];
       const removedRevisions = revisions.map((row) => String(row.id));
+      const head = this.store.db.prepare("SELECT revision_id FROM knowledge_heads WHERE document_key=?").get(key);
+      const removedHead = !head || removedRevisions.includes(String(head.revision_id));
       for (const row of revisions) {
         const artifact = JSON.parse(String(row.artifact));
         this.store.db
@@ -658,34 +662,31 @@ export class MaterialRetention {
         .prepare(
           "INSERT INTO knowledge_clear_epochs VALUES(?,?) ON CONFLICT(document_key) DO UPDATE SET removed_at=excluded.removed_at",
         )
-        .run(key, at);
-      if (table(this.store, "knowledge_heads"))
+        .run(key, previous && Date.parse(String(previous.removed_at)) > Date.parse(at) ? String(previous.removed_at) : at);
+      if (removedHead && table(this.store, "knowledge_heads"))
         this.store.db
           .prepare("DELETE FROM knowledge_heads WHERE document_key=?")
           .run(key);
-      if (table(this.store, "knowledge_questions"))
+      if (removedHead && table(this.store, "knowledge_questions"))
         this.store.db
           .prepare("DELETE FROM knowledge_questions WHERE document_key=?")
           .run(key);
-      if (table(this.store, "knowledge_invalidations"))
+      if (removedHead && table(this.store, "knowledge_invalidations"))
         this.store.db
           .prepare("DELETE FROM knowledge_invalidations WHERE document_key=?")
           .run(key);
-      if (table(this.store, "knowledge_revisions"))
-        this.store.db
-          .prepare("DELETE FROM knowledge_revisions WHERE document_key=?")
-          .run(key);
-      if (table(this.store, "knowledge_pages"))
+      if (table(this.store, "knowledge_revisions")) for (const id of removedRevisions)
+        this.store.db.prepare("DELETE FROM knowledge_revisions WHERE id=?").run(id);
+      if (removedHead && table(this.store, "knowledge_pages"))
         this.store.db
           .prepare(
             "UPDATE knowledge_pages SET state='planned',error=NULL,updated_at=? WHERE document_key=?",
           )
           .run(at, key);
-      this.clearProjection("knowledge:" + key);
-      const jobs = this.store.jobs.invalidateInputs(
-        [key, ...removedRevisions],
-        reason,
-      );
+      if (removedHead) this.clearProjection("knowledge:" + key);
+      const jobs = removedRevisions.length || !previous ? this.store.jobs.invalidateInputs(
+        [...(removedHead ? [key] : []), ...removedRevisions], reason,
+      ) : [];
       return { key, removedRevisions, jobs };
     });
   }
