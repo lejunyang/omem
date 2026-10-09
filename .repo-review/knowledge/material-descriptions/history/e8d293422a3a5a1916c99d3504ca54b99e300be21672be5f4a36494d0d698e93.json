@@ -1,0 +1,549 @@
+{
+  "version": 1,
+  "key": "omem:apps/server/src/retrieval/unified.ts",
+  "digest": "f89624807c4a74b969c60063569557f8056d9acaa0de5ab69e2cd48368934c61",
+  "description": {
+    "role": "implementation",
+    "status": "current",
+    "summary": "实现 UnifiedRetrieval 统一检索服务，把检索单元同步、正文与概念向量索引、材料适用性和可见性过滤、代码符号与调用点导航、BM25、概念词法召回、正文及概念语义召回、RRF 融合、交叉编码器重排、可选主机排序、结果多样化和旧 source 接口投影串成一条管线，并暴露健康状态与阶段追踪。",
+    "topics": [
+      "统一检索",
+      "混合召回",
+      "向量索引",
+      "BM25",
+      "代码导航",
+      "RRF融合",
+      "重排",
+      "结果过滤",
+      "检索追踪",
+      "SQLite"
+    ],
+    "scope": "SQLite 检索单元上的同步、索引、搜索、排序、结果选择、旧 source 接口适配和资源关闭。",
+    "validFrom": null,
+    "validUntil": null,
+    "concepts": [
+      {
+        "label": "统一检索器的依赖、模型状态与检索单元投影初始化",
+        "aliases": [
+          "UnifiedRetrieval",
+          "统一检索器",
+          "RetrievalProjection",
+          "CodeNavigation"
+        ],
+        "startLine": 63,
+        "endLine": 91
+      },
+      {
+        "label": "后台同步和向量索引状态、错误与重排器状态的健康检查",
+        "aliases": [
+          "start",
+          "health",
+          "后台索引",
+          "降级状态"
+        ],
+        "startLine": 93,
+        "endLine": 203
+      },
+      {
+        "label": "分批建立正文向量与概念向量索引，并在写锁内确认单元仍存在后提交",
+        "aliases": [
+          "indexBatch",
+          "index",
+          "向量索引",
+          "conceptModelId",
+          "写锁"
+        ],
+        "startLine": 204,
+        "endLine": 301
+      },
+      {
+        "label": "按材料角色、生效时间、任务状态、项目、类型、主题、可见性和时间范围筛选候选",
+        "aliases": [
+          "eligible",
+          "候选资格",
+          "范围过滤",
+          "可见性过滤"
+        ],
+        "startLine": 302,
+        "endLine": 355
+      },
+      {
+        "label": "依据材料角色与状态设置导航优先权重，而不把权重当作真假判断",
+        "aliases": [
+          "applicability",
+          "适用性权重",
+          "材料角色权重"
+        ],
+        "startLine": 356,
+        "endLine": 379
+      },
+      {
+        "label": "按代码符号定义或调用点执行结构化导航，并去重重叠调用位置",
+        "aliases": [
+          "symbols",
+          "navigationCandidates",
+          "callers",
+          "code-symbol",
+          "code-call-candidate"
+        ],
+        "startLine": 380,
+        "endLine": 478
+      },
+      {
+        "label": "用倒数排名融合不同评分尺度的召回分支，并合并命中路线",
+        "aliases": [
+          "fuse",
+          "RRF",
+          "倒数排名融合"
+        ],
+        "startLine": 479,
+        "endLine": 497
+      },
+      {
+        "label": "只在当前段落实际覆盖的材料概念中做词法概念匹配并截取概念范围",
+        "aliases": [
+          "concepts",
+          "material-concept",
+          "概念词法召回"
+        ],
+        "startLine": 498,
+        "endLine": 561
+      },
+      {
+        "label": "通过 FTS BM25 召回词法候选，在资格过滤后维护带适用性权重的有界候选池",
+        "aliases": [
+          "lexical",
+          "BM25",
+          "FTS",
+          "词法召回"
+        ],
+        "startLine": 562,
+        "endLine": 614
+      },
+      {
+        "label": "向观察器复制各检索阶段的真实候选、模型和错误信息",
+        "aliases": [
+          "observe",
+          "RetrievalTrace",
+          "检索追踪"
+        ],
+        "startLine": 615,
+        "endLine": 650
+      },
+      {
+        "label": "编排代码导航、词法、符号、概念、正文语义和概念语义召回，失败时回退到可用分支",
+        "aliases": [
+          "search",
+          "混合检索",
+          "semantic-concepts",
+          "语义降级"
+        ],
+        "startLine": 651,
+        "endLine": 784
+      },
+      {
+        "label": "加载交叉编码重排模型，对候选段落评分并合并重排分与原检索分",
+        "aliases": [
+          "rerank",
+          "cross-encoder",
+          "交叉编码器重排"
+        ],
+        "startLine": 785,
+        "endLine": 877
+      },
+      {
+        "label": "在消耗最终阅读槽位前调用可选排序器，并对来源、知识章节和重复文本做多样化选择",
+        "aliases": [
+          "select",
+          "selection",
+          "decision",
+          "结果多样化"
+        ],
+        "startLine": 878,
+        "endLine": 932
+      },
+      {
+        "label": "按查询目的、代码定义和材料状态计算最终优先级，生成带引用和来源信息的检索结果",
+        "aliases": [
+          "finish",
+          "purpose",
+          "最终结果",
+          "优先级"
+        ],
+        "startLine": 933,
+        "endLine": 1066
+      },
+      {
+        "label": "把统一检索结果投影回旧版 source 候选，并选择可见且相关的证据片段",
+        "aliases": [
+          "searchSources",
+          "searchSourcesAsync",
+          "sources",
+          "旧 source 接口"
+        ],
+        "startLine": 1067,
+        "endLine": 1120
+      },
+      {
+        "label": "停止后台工作并等待投影、索引和模型资源安全关闭",
+        "aliases": [
+          "close",
+          "资源关闭"
+        ],
+        "startLine": 1122,
+        "endLine": 1130
+      }
+    ],
+    "basis": "该文件定义可执行的 UnifiedRetrieval 类及完整检索控制流，包含数据库查询、模型调用、过滤、融合和结果构造；没有计划态或已废弃标记，旧 source 端口仅是兼容投影，因此整体按快照中的现行实现标为 current。"
+  },
+  "generation": {
+    "at": "2026-10-09T17:03:15.528Z",
+    "trace": {
+      "profileId": "traex",
+      "acpProvider": "traex",
+      "runId": "194a82f9-4380-4aa3-8469-ecb0d5af33fb",
+      "roleId": "material-cataloger",
+      "roleVersion": "1",
+      "bundleHash": "fa4af10399ee49591751cd5a0d32d823f3d1d41e16ab91002b9ab878b2d3e194",
+      "promptHash": "8585bea46748c05628cd1d051c561f589b55535cdfa03ab2c3d1981ecbe3c92f",
+      "contextHash": "3d2abe636f02c52e170e02ecba29fff02aec5c40d8be14f483a1de1164b108ac",
+      "skillHash": "17f1adb7fd8d9ede9fe29a82196c041c5546511545129451d08561d35796126b",
+      "toolHash": "6ecd4cb47ca06f6b86b9c2e46f7cbe547345091d7fd0a8c46a45f14b98cea1a6",
+      "fingerprint": "b06b7cd9d720990eae7291827fc7138a334f81e28786de1e9b0a5feae41b865c",
+      "outputSchema": "MaterialDescriptions.v1",
+      "effectiveModel": "gpt-5.6-sol",
+      "effectiveEffort": "medium",
+      "loadedSkills": [
+        {
+          "name": "omem-material-cataloger",
+          "version": "1",
+          "mode": "native"
+        }
+      ],
+      "allowedTools": [
+        "list_material_groups",
+        "list_materials",
+        "read_material",
+        "read_fragments",
+        "read_section",
+        "search_materials",
+        "search_contexts",
+        "search_knowledge",
+        "read_knowledge",
+        "search_memories",
+        "read_conversation",
+        "read_tasks",
+        "read_memory",
+        "code_navigation",
+        "related_materials",
+        "material_history",
+        "read_image",
+        "submit_result"
+      ],
+      "sessionIds": [
+        "01a1219d-9e72-79a3-b16c-090ce85998cd"
+      ],
+      "usage": {
+        "used": 41509,
+        "size": 258400,
+        "cost": null,
+        "acpCompletion": "validated_submission",
+        "workflow": "native-research@1",
+        "activity": [
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_3TNmCPO0wvFtc6hTWBuyMIa9:exec-6737c1be-fd1c-43d0-98f5-8dd0e3f5c63c",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_3TNmCPO0wvFtc6hTWBuyMIa9:exec-6737c1be-fd1c-43d0-98f5-8dd0e3f5c63c",
+              "process_id": "47590",
+              "turn_id": "01a1219d-a1cb-73e3-a72a-590cc5468577",
+              "started_at_ms": 1791565349874,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/fa4af10399ee49591751cd5a0d32d823f3d1d41e16ab91002b9ab878b2d3e194/194a82f9-4380-4aa3-8469-ecb0d5af33fb",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-material-cataloger/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-material-cataloger/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_3TNmCPO0wvFtc6hTWBuyMIa9:exec-6737c1be-fd1c-43d0-98f5-8dd0e3f5c63c",
+            "status": "completed",
+            "outputDigest": "acaba22bc3f7c4b7d1172fe1747d73cef9e7bc7e471d9b8342360a4bdd5262f7"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_5eJfCRLjjYdUKyxfUr1sPXeo:exec-6a90d59e-3299-4ce7-8ac4-89fa56712f63",
+            "title": "Search omem:apps/server/src/retrieval/(concept-vectors|unified)\\.ts|targetKeys|allowedMaterials in catalog.json, List /Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/fa4af10399ee49591751cd5a0d32d823f3d1d41e16ab91002b9ab878b2d3e194/194a82f9-4380-4aa3-8469-ecb0d5af33fb/originals, Search apps/server/src/retrieval/(concept-vectors|unified)\\.ts$",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_5eJfCRLjjYdUKyxfUr1sPXeo:exec-6a90d59e-3299-4ce7-8ac4-89fa56712f63",
+              "process_id": "31325",
+              "turn_id": "01a1219d-a1cb-73e3-a72a-590cc5468577",
+              "started_at_ms": 1791565355814,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n 'omem:apps/server/src/retrieval/(concept-vectors|unified)\\.ts|targetKeys|allowedMaterials' catalog.json && rg --files originals | rg 'apps/server/src/retrieval/(concept-vectors|unified)\\.ts$'"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/fa4af10399ee49591751cd5a0d32d823f3d1d41e16ab91002b9ab878b2d3e194/194a82f9-4380-4aa3-8469-ecb0d5af33fb",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n \"omem:apps/server/src/retrieval/(concept-vectors|unified)\\\\.ts|targetKeys|allowedMaterials\" catalog.json",
+                  "query": "omem:apps/server/src/retrieval/(concept-vectors|unified)\\.ts|targetKeys|allowedMaterials",
+                  "path": "catalog.json"
+                },
+                {
+                  "type": "list_files",
+                  "cmd": "rg --files originals",
+                  "path": "originals"
+                },
+                {
+                  "type": "search",
+                  "cmd": "rg \"apps/server/src/retrieval/(concept-vectors|unified)\\\\.ts\"'$'",
+                  "query": "apps/server/src/retrieval/(concept-vectors|unified)\\.ts$",
+                  "path": null
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_5eJfCRLjjYdUKyxfUr1sPXeo:exec-6a90d59e-3299-4ce7-8ac4-89fa56712f63",
+            "status": "completed",
+            "outputDigest": "510e86bc9ec89b9b15ab6e8f1cd0e1bfa03acf7cbb7bf464fac59b61ea4757fa"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_oDCoIQaHxcjyezAaqIW4VuE8:exec-cacdcd30-d23b-4ece-bc6a-1852f18cd73f",
+            "title": "Read catalog.json",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_oDCoIQaHxcjyezAaqIW4VuE8:exec-cacdcd30-d23b-4ece-bc6a-1852f18cd73f",
+              "process_id": "61388",
+              "turn_id": "01a1219d-a1cb-73e3-a72a-590cc5468577",
+              "started_at_ms": 1791565362492,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,45p' catalog.json"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/fa4af10399ee49591751cd5a0d32d823f3d1d41e16ab91002b9ab878b2d3e194/194a82f9-4380-4aa3-8469-ecb0d5af33fb",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,45p' catalog.json",
+                  "name": "catalog.json",
+                  "path": "catalog.json"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_oDCoIQaHxcjyezAaqIW4VuE8:exec-cacdcd30-d23b-4ece-bc6a-1852f18cd73f",
+            "status": "completed",
+            "outputDigest": "a12eb6cdbc0e27fe36c2210013abd27b9670d0b0c8c5cf67b52b5d246e3346da"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_oDCoIQaHxcjyezAaqIW4VuE8:exec-74f89704-4999-4859-9d51-2bdbc4d05407",
+            "title": "Read concept-vectors.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_oDCoIQaHxcjyezAaqIW4VuE8:exec-74f89704-4999-4859-9d51-2bdbc4d05407",
+              "process_id": "25014",
+              "turn_id": "01a1219d-a1cb-73e3-a72a-590cc5468577",
+              "started_at_ms": 1791565362513,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba originals/apps/server/src/retrieval/concept-vectors.ts"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/fa4af10399ee49591751cd5a0d32d823f3d1d41e16ab91002b9ab878b2d3e194/194a82f9-4380-4aa3-8469-ecb0d5af33fb",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/concept-vectors.ts",
+                  "name": "concept-vectors.ts",
+                  "path": "originals/apps/server/src/retrieval/concept-vectors.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_oDCoIQaHxcjyezAaqIW4VuE8:exec-74f89704-4999-4859-9d51-2bdbc4d05407",
+            "status": "completed",
+            "outputDigest": "89c7cea1dcf91e5d94b37b40948ce634ded9e6fdde05f10a5e22824286daa5e9"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_oDCoIQaHxcjyezAaqIW4VuE8:exec-accae325-d20c-4aac-9e8f-f43db9a05b8f",
+            "title": "Read unified.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_oDCoIQaHxcjyezAaqIW4VuE8:exec-accae325-d20c-4aac-9e8f-f43db9a05b8f",
+              "process_id": "88627",
+              "turn_id": "01a1219d-a1cb-73e3-a72a-590cc5468577",
+              "started_at_ms": 1791565362513,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba originals/apps/server/src/retrieval/unified.ts"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/fa4af10399ee49591751cd5a0d32d823f3d1d41e16ab91002b9ab878b2d3e194/194a82f9-4380-4aa3-8469-ecb0d5af33fb",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/unified.ts",
+                  "name": "unified.ts",
+                  "path": "originals/apps/server/src/retrieval/unified.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_oDCoIQaHxcjyezAaqIW4VuE8:exec-accae325-d20c-4aac-9e8f-f43db9a05b8f",
+            "status": "completed",
+            "outputDigest": "32ff916b53b581d36a0048242dd8f6b2c3e014b387fdc0325dbd6ff75b145ff3"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_j2XceJQUi4RTx5yBVhy5mjXd:exec-be111c9a-51bc-4423-98cc-fc3f317451eb",
+            "title": "Search ^  (private |override |async |start\\(|indexBatch\\()|^export class|^  [a-zA-Z].*\\{ in unified.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_j2XceJQUi4RTx5yBVhy5mjXd:exec-be111c9a-51bc-4423-98cc-fc3f317451eb",
+              "process_id": "1050",
+              "turn_id": "01a1219d-a1cb-73e3-a72a-590cc5468577",
+              "started_at_ms": 1791565368565,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n '^  (private |override |async |start\\(|indexBatch\\()|^export class|^  [a-zA-Z].*\\{' originals/apps/server/src/retrieval/unified.ts"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/fa4af10399ee49591751cd5a0d32d823f3d1d41e16ab91002b9ab878b2d3e194/194a82f9-4380-4aa3-8469-ecb0d5af33fb",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n '^  (private |override |async |start'\"\\\\(|indexBatch\\\\()|\"'^export class|''^  [a-zA-Z].*'\"\\\\{\" originals/apps/server/src/retrieval/unified.ts",
+                  "query": "^  (private |override |async |start\\(|indexBatch\\()|^export class|^  [a-zA-Z].*\\{",
+                  "path": "unified.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_j2XceJQUi4RTx5yBVhy5mjXd:exec-be111c9a-51bc-4423-98cc-fc3f317451eb",
+            "status": "completed",
+            "outputDigest": "57e84eb2d602ccc46d7354a607cd1834d36cd14b2d8b89ce030ec195cd3cd800"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_j2XceJQUi4RTx5yBVhy5mjXd:exec-17cb8542-022a-4e73-952b-0cd67208895c",
+            "title": "Read unified.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_j2XceJQUi4RTx5yBVhy5mjXd:exec-17cb8542-022a-4e73-952b-0cd67208895c",
+              "process_id": "65428",
+              "turn_id": "01a1219d-a1cb-73e3-a72a-590cc5468577",
+              "started_at_ms": 1791565368566,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '300,655p' originals/apps/server/src/retrieval/unified.ts | nl -ba -v300"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/catalog-agents/roles/fa4af10399ee49591751cd5a0d32d823f3d1d41e16ab91002b9ab878b2d3e194/194a82f9-4380-4aa3-8469-ecb0d5af33fb",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '300,655p' originals/apps/server/src/retrieval/unified.ts | nl -ba -v300",
+                  "name": "unified.ts",
+                  "path": "originals/apps/server/src/retrieval/unified.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_j2XceJQUi4RTx5yBVhy5mjXd:exec-17cb8542-022a-4e73-952b-0cd67208895c",
+            "status": "completed",
+            "outputDigest": "b2094576265c34c33506616b3f733e1f95e4a93b4bfccd96115e110e615002e2"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_1HQSlRcjsrfBGpAXyTe6Udis:exec-507447e4-d55d-4c3b-b21b-e6719e192f24",
+            "title": "Tool: omem/submit_result",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "submit_result",
+              "submitted": true
+            }
+          },
+          {
+            "kind": "submission",
+            "success": true,
+            "reads": [
+              "omem:apps/server/src/retrieval/concept-vectors.ts",
+              "omem:apps/server/src/retrieval/unified.ts"
+            ]
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_1HQSlRcjsrfBGpAXyTe6Udis:exec-507447e4-d55d-4c3b-b21b-e6719e192f24",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
+          }
+        ],
+        "hostTokenBudget": null
+      },
+      "repairAttempts": 0
+    }
+  }
+}

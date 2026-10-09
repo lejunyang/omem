@@ -1,38 +1,10 @@
 {
   "version": 1,
   "document": {
-    "requirement": {
-      "objective": "说明概念向量模块如何把材料概念映射到源码范围，并从已建索引中生成语义检索候选。",
-      "nonGoals": [
-        "不展开统一检索器的融合、重排与最终结果选择实现。"
-      ],
-      "criteria": [
-        {
-          "id": "concept_windows",
-          "description": "解释概念窗口的生成、身份和范围裁剪规则。",
-          "status": "implemented",
-          "evidence": [
-            "c1",
-            "c2"
-          ]
-        },
-        {
-          "id": "concept_candidates",
-          "description": "解释向量读取、打分、去重和候选输出。",
-          "status": "implemented",
-          "evidence": [
-            "c3",
-            "c4",
-            "c5"
-          ]
-        }
-      ],
-      "actions": []
-    },
     "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-    "title": "概念向量的窗口映射与语义候选召回",
-    "summary": "该模块把源材料描述中的概念标签和别名转换为可嵌入的概念文本，并记录其在检索单元正文中的字符范围；查询时按传入的 modelId 从 retrieval_unit_vectors 读取概念向量，计算点积分数，按概念身份与检索单元两级去重，输出带源码摘录和 semantic-concept 路由的候选。独立版本常量表达了让概念文本避开正文向量缓存的设计意图。",
-    "category": "服务端检索",
+    "title": "概念描述驱动的语义召回",
+    "summary": "将材料描述中的概念标签与别名单独向量化，在查询时把语义命中映射回原始材料的准确行段；通过独立版本标识、概念级与检索单元级去重，以及维度校验，为统一混合检索补充一条可解释的概念语义通道。",
+    "category": "代码机制",
     "topicPath": [
       "软件开发",
       "omem",
@@ -42,86 +14,138 @@
     ],
     "sections": [
       {
-        "key": "purpose_and_dependencies",
-        "title": "解决什么问题",
-        "body": "该模块为概念文本设置独立向量身份 `range-concepts-v1`，使其不进入正文向量缓存；它只处理 `target.kind === \"source\"` 的检索单元。参考 [[c1]]\n\n模块从检索单元读取正文、固定材料范围及 `materialDescription.description.concepts`，查询接口另接收 SQLite、模型标识、已筛选的单元映射和查询向量。调用方提供合格单元，本模块只在传入单元内召回。参考 [[c3]]"
+        "key": "purpose_and_windows",
+        "title": "为什么单独建立概念向量",
+        "body": "正文用词和用户提问可能不一致。该实现把材料描述里的概念标签及别名拼成独立的嵌入文本，让“旅途票据”一类问法可以命中“差旅凭证向财务登记”，同时把结果仍锚定到概念覆盖的原始行段。`CONCEPT_VECTOR_VERSION` 为这套表示提供独立身份，避免与正文向量缓存混用。参考 [[c1]]\n\n`conceptWindows` 只处理 `source` 检索单元。它筛出与当前单元行区间相交的概念，把材料绝对行号换算为单元内字符偏移，并丢弃空范围。概念键还包含材料键、修订、标签、别名和行范围，因此同一修订中同一概念投影到多个 passage 时仍可被识别为同一张概念卡。参考 [[c2]]"
       },
       {
         "key": "representative_flow",
-        "title": "一条代表性调用",
-        "body": "假设一个源码单元覆盖第 10—20 行，其中概念“费用登记”覆盖第 12—14 行，并带有别名。`conceptWindows` 先建立逐行字符偏移，只选取与单元范围相交的概念，再把概念标签和别名用中文分号拼成嵌入文本；窗口起止位置会裁剪到当前单元正文内。概念身份同时包含材料键、修订、标签、别名和原始行范围。参考 [[c2]]\n\n```mermaid\nflowchart LR\n  A[源材料检索单元] --> B[生成概念文本与字符窗口]\n  B --> C[按 modelId 读取已存向量]\n  C --> D[与查询向量计算点积]\n  D --> E[概念级去重]\n  E --> F[单元级最高分候选]\n```\n\n`conceptCandidates` 用数据库行的 `part` 找回对应窗口，把二进制向量恢复为 `Float32Array` 并计算点积；最终候选携带原单元、分数、`semantic-concept` 路由以及窗口内的正文摘录。参考 [[c4]] [[c5]]"
+        "title": "一次查询如何得到范围化结果",
+        "body": "以“旅途票据应当交给谁”为例，索引阶段先调用 `conceptWindows`，对“差旅凭证向财务登记；registerExpense”生成向量，并用独立的概念模型标识写入向量表。参考 [[c3]]\n\n```mermaid\nflowchart LR\n  A[概念标签与别名] --> B[概念窗口]\n  B --> C[独立向量记录]\n  D[查询向量] --> E[点积评分]\n  C --> E\n  E --> F[概念级去重]\n  F --> G[检索单元级去重]\n  G --> H[范围化摘录]\n```\n\n查询阶段读取指定模型的向量记录，用 `part` 找回对应窗口，再计算查询向量与存储向量的点积。相同概念卡先保留高分投影；分数相同时保留跨度更大的投影。随后每个检索单元只留下最高分候选，输出 `semantic-concept` 路由、原文摘录和匹配字符范围。参考 [[c4]]\n\n统一检索会先构造通过资格过滤的单元映射，再调用这里的 `conceptCandidates`；返回结果经过阈值、适用性排序与多路融合后进入最终选择。测试中的代表性调用确认，概念语义命中落在第 1—3 行，最终文本不包含范围外的 `repaint`。参考 [[c5]] [[c6]]"
       },
       {
-        "key": "boundaries_and_deduplication",
-        "title": "边界与去重规则",
-        "body": "非源码单元、没有相交概念的单元以及裁剪后长度为零的窗口不会产生概念卡片。读取索引时，数据库中的单元已不在调用方映射内，或 `part` 找不到窗口，都会被跳过；已存向量和查询向量维度不同则直接抛错，提示模型身份没有随维度变化而更新。参考 [[c2]] [[c4]]\n\n同一概念可能因跨检索单元投影而出现多次。模块先用完整概念身份合并这些投影：保留分数更高者，同分时保留字符跨度更长者；随后每个检索单元只留下最高分概念候选。返回数组本身没有在此处排序，后续排序或融合属于上层检索流程。参考 [[c5]]"
+        "key": "boundaries_and_failure",
+        "title": "边界条件与降级方式",
+        "body": "没有材料描述、没有重叠概念、目标不是 `source`，或数据库记录对应不到当前单元及窗口时，该分支会跳过并返回较少或空候选。存储向量与查询向量维度不一致则直接抛错，提示概念表示发生变化却没有更新身份。参考 [[c7]]\n\n返回数组本身不负责阈值过滤或全局排序；这些工作由统一检索调用方完成。调用方把概念分支视为可选表示：概念向量损坏时清空该分支并记录错误，健康的正文向量仍继续召回。测试验证了此时结果保留 `semantic` 路由，同时不再带 `semantic-concept`。参考 [[c8]] [[c9]]"
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "概念向量身份与适用对象",
-        "reason": "支持概念向量采用独立版本身份以避免概念文本进入正文向量缓存，并且窗口生成只接受 source 检索单元。",
+        "label": "独立概念向量身份",
+        "reason": "支持概念文本使用独立版本标识、避免混入正文向量缓存的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
           "startLine": 4,
-          "endLine": 8
+          "endLine": 5
         },
-        "quote": "/** A separate vector identity keeps concept text out of the body-vector cache. */\nexport const CONCEPT_VECTOR_VERSION = \"range-concepts-v1\";\n\nexport function conceptWindows(unit: RetrievalUnit) {\n  if (unit.target.kind !== \"source\") return [];"
+        "quote": "/** A separate vector identity keeps concept text out of the body-vector cache. */\nexport const CONCEPT_VECTOR_VERSION = \"range-concepts-v1\";"
       },
       {
         "key": "c2",
-        "label": "概念窗口映射",
-        "reason": "支持重叠概念筛选、字符偏移换算、概念身份组成、嵌入文本拼接及空窗口过滤。",
+        "label": "概念窗口构造",
+        "reason": "支持 source 限定、重叠筛选、概念键、嵌入文本和字符范围换算的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-          "startLine": 10,
+          "startLine": 7,
           "endLine": 37
         },
-        "quote": "  const lines = unit.text.split(\"\\n\");\n  const offsets = [0];\n  for (const line of lines) offsets.push(offsets.at(-1)! + line.length + 1);\n  return (unit.materialDescription?.description.concepts ?? [])\n    .filter(\n      (c) => c.startLine <= target.endLine && c.endLine >= target.startLine,\n    )\n    .map((c) => {\n   "
+        "quote": "export function conceptWindows(unit: RetrievalUnit) {\n  if (unit.target.kind !== \"source\") return [];\n  const target = unit.target;\n  const lines = unit.text.split(\"\\n\");\n  const offsets = [0];\n  for (const line of lines) offsets.push(offsets.at(-1)! + line.length + 1);\n  return (unit.materialDescription?.description.c"
       },
       {
         "key": "c3",
-        "label": "概念候选输入边界",
-        "reason": "支持调用方提供合格单元，以及候选函数所依赖的数据库、模型标识、单元映射和查询向量。",
-        "relation": "depends_on",
+        "label": "概念向量索引",
+        "reason": "证明统一检索在概念索引阶段调用 conceptWindows，并把窗口文本嵌入后写入独立模型命名空间。",
+        "relation": "calls",
         "target": {
           "kind": "material",
-          "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-          "startLine": 40,
-          "endLine": 47
+          "key": "omem:apps/server/src/retrieval/unified.ts",
+          "startLine": 231,
+          "endLine": 295
         },
-        "quote": "/** The caller supplies only eligible units. Concept vectors stay bound to those\n * units; repeated projections of one concept spend one recall slot. */\nexport function conceptCandidates(\n  db: DatabaseSync,\n  modelId: string,\n  units: ReadonlyMap<string, RetrievalUnit>,\n  query: number[],\n) {"
+        "quote": "    const conceptIndex = !rows.length;\n    const vectorModelId = conceptIndex ? this.conceptModelId : this.modelId;\n    if (conceptIndex)\n      rows = this.database\n        .prepare(\n          `SELECT u.* FROM retrieval_units u\n      WHERE u.description_json IS NOT NULL AND NOT EXISTS (\n        SELECT 1 FROM retrieval_"
       },
       {
         "key": "c4",
-        "label": "向量读取与点积评分",
-        "reason": "支持按传入的模型标识读取向量、跳过失配单元或窗口、恢复浮点向量、检查维度并计算点积。",
+        "label": "评分与两级去重",
+        "reason": "支持向量读取、维度检查、点积评分、概念卡去重及单元去重的流程说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-          "startLine": 56,
-          "endLine": 76
+          "startLine": 57,
+          "endLine": 101
         },
         "quote": "  for (const row of db\n    .prepare(\n      \"SELECT unit_id,part,vector FROM retrieval_unit_vectors WHERE model_id=?\",\n    )\n    .iterate(modelId)) {\n    const unit = units.get(String(row.unit_id));\n    if (!unit) continue;\n    let windows = windowsByUnit.get(unit.id);\n    if (!windows) {\n      windows = conceptWindows("
       },
       {
         "key": "c5",
-        "label": "两级候选去重",
-        "reason": "支持概念级的分数及跨度取舍、候选摘录与路由生成，以及单元级最高分保留。",
+        "label": "统一检索调用",
+        "reason": "证明调用方先建立合格单元集合，再调用概念候选并对结果做阈值、排序与融合。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/unified.ts",
+          "startLine": 713,
+          "endLine": 817
+        },
+        "quote": "      const [raw] = await this.model.embed([q.text.slice(0, 400)], \"query\"),\n        vector = normalize(raw!);\n      const units = new Map(\n        this.database\n          .prepare(\"SELECT * FROM retrieval_units\")\n          .all()\n          .map(decodeUnit)\n          .filter((u) => this.eligible(u, q))\n          .map(("
+      },
+      {
+        "key": "c6",
+        "label": "范围化召回示例",
+        "reason": "测试以语义不同的用户问法验证概念命中、原始行范围和范围外文本排除。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/material-descriptions.test.ts",
+          "startLine": 329,
+          "endLine": 350
+        },
+        "quote": "it(\"recalls a range-bound concept semantically without mixing body vectors, hidden sources or old revisions\", async () => {\n  const {store,retrieval:lexical}=setup();\n  const source=capture(store,\"expense-process\", \"submitExpense();\\ncollectReceipt();\\nrecordEntry();\\n\\nrepaintDashboard();\");\n  store.descriptions.save("
+      },
+      {
+        "key": "c7",
+        "label": "候选跳过与维度保护",
+        "reason": "支持缺失单元、无对应窗口时跳过，以及向量维度变化时抛错的边界说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-          "startLine": 77,
-          "endLine": 99
+          "startLine": 57,
+          "endLine": 77
         },
-        "quote": "    const previous = cards.get(card.key);\n    const span = card.end - card.start;\n    if (\n      previous &&\n      (previous.hit.score > score ||\n        (previous.hit.score === score && previous.span >= span))\n    )\n      continue;\n    cards.set(card.key, {\n      span,\n      hit: {\n        unit,\n        score,\n       "
+        "quote": "  for (const row of db\n    .prepare(\n      \"SELECT unit_id,part,vector FROM retrieval_unit_vectors WHERE model_id=?\",\n    )\n    .iterate(modelId)) {\n    const unit = units.get(String(row.unit_id));\n    if (!unit) continue;\n    let windows = windowsByUnit.get(unit.id);\n    if (!windows) {\n      windows = conceptWindows("
+      },
+      {
+        "key": "c8",
+        "label": "概念分支故障隔离",
+        "reason": "证明统一检索捕获概念候选错误并清空该分支，不让它破坏正文语义召回。",
+        "relation": "calls",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/unified.ts",
+          "startLine": 754,
+          "endLine": 779
+        },
+        "quote": "      try {\n        for (const hit of conceptCandidates(\n          this.database,\n          this.conceptModelId!,\n          units,\n          vector,\n        ))\n          conceptDense.set(hit.unit.id, hit);\n        this.conceptError = null;\n      } catch (error) {\n        // An optional representation failing does not d"
+      },
+      {
+        "key": "c9",
+        "label": "降级行为验证",
+        "reason": "测试验证概念向量维度损坏后正文 semantic 结果仍保留，并报告概念分支错误。",
+        "relation": "supports",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/tests/material-descriptions.test.ts",
+          "startLine": 371,
+          "endLine": 385
+        },
+        "quote": "it(\"retains healthy body vectors when a concept representation is damaged\", async () => {\n  const {store}=setup();\n  const revision=capture(store,\"entry\",\"registerExpense();\");\n  store.descriptions.save(revision.id,description({concepts:[{label:\"差旅凭证\",aliases:[\"expense\"],startLine:1,endLine:1}]}),\"model\",0);\n  const mo"
       }
     ],
     "questions": []
@@ -130,7 +154,17 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-      "digest": "39bbf003df60ea73542ef0706d5f37e500d8d79e3c97689687f891c7aaf3e910"
+      "digest": "2bf050cb82a70f8d8b5c61ce4f9eaf8bab853454cc3d98cb4284e9ebe38dc9cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/src/retrieval/unified.ts",
+      "digest": "75c2f5d81086eba0b6e325dc34da19c919f968f779f78c792ac9b6ed659118cc"
+    },
+    {
+      "kind": "material",
+      "key": "omem:apps/server/tests/material-descriptions.test.ts",
+      "digest": "ac63869bf8492358244f34d1fd1db76e5f6957bb44e9e884b8f56d09cfc13f62"
     }
   ],
   "publication": {
@@ -139,31 +173,143 @@
   "investigation": [
     {
       "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-      "digest": "39bbf003df60ea73542ef0706d5f37e500d8d79e3c97689687f891c7aaf3e910"
+      "digest": "2bf050cb82a70f8d8b5c61ce4f9eaf8bab853454cc3d98cb4284e9ebe38dc9cc"
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/units.ts",
+      "digest": "1595331b1ff7e315b7b92bdc5434d9b81f7d209f83d53b07779b6300c0419d76"
+    },
+    {
+      "key": "omem:apps/server/src/assistant/acp-model.ts",
+      "digest": "5ad2f78a6cd4ad6f1542bc83a5376c6e2d48212d1fff1bf15d848cab0b4cfa3f"
+    },
+    {
+      "key": "omem:apps/server/src/assistant/runtime.ts",
+      "digest": "36f861148fd32265e0a9591a0a160131098d92c5cba218e926dd2f5fe7eb8c25"
+    },
+    {
+      "key": "omem:apps/server/src/code/artifacts.ts",
+      "digest": "c8d9e1e89958c06653470ccad26bc2961c5873393d11f355376b5d8603255e23"
+    },
+    {
+      "key": "omem:apps/server/src/development/checks.ts",
+      "digest": "c58ba6127e8608097f735be26feddc5c28fe11269575c080ad38cf3995a8f4d3"
+    },
+    {
+      "key": "omem:apps/server/src/jobs/repository.ts",
+      "digest": "5a47a67185d83f37ed93ec44d397441051966f0d1ff6f40a1c1b4008f854e5e0"
+    },
+    {
+      "key": "omem:apps/server/src/knowledge/agent-research.ts",
+      "digest": "1f51f1623d40b7049f296012542b81072140807aa1a108a15d1883e3f46e119d"
+    },
+    {
+      "key": "omem:apps/server/src/knowledge/api.ts",
+      "digest": "ffa1ed0ecdc44e656482ca326150019887f6f020a1c61d72a03de746274bf31b"
+    },
+    {
+      "key": "omem:apps/server/src/knowledge/pipeline.ts",
+      "digest": "4cfbede6017e844c878976292c1fc8c5f215bca55d4f2f33398a3a73729d1ee0"
+    },
+    {
+      "key": "omem:apps/server/src/learning/pipeline.ts",
+      "digest": "bb65eec863fd4377437904cc5059ac6bbf514ac5d652d02111fafb7fbcd3cb8e"
+    },
+    {
+      "key": "omem:apps/server/src/memory/service.ts",
+      "digest": "10d703d4dff70c030fba1b437b1afd2d197d9598a3b04efd26f9bccf83b4c3ce"
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/code-navigation.ts",
+      "digest": "fa302a69dc301e32c4749f3f0c4b2de90afbbbc68d42555e28031fb4092872bd"
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/context.ts",
+      "digest": "808507217e95eeda44059a6980040d95179976c74e0e96140646e5a23e79232b"
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/factory.ts",
+      "digest": "a7c4561d592d2e980dc833ca8bf2a6cff79a653cd9c816af4c441e109fec202c"
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/hierarchy.ts",
+      "digest": "417eb21f3556611185eda228d03bbe2ddc10df26f16d79347ee869d9766bb3bd"
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/semantic.ts",
+      "digest": "3d0b1e6d25e4b7fb048b8a4eb6e9b77fa955a612c490a9e27e1db386f594a386"
+    },
+    {
+      "key": "omem:apps/server/src/retrieval/unified.ts",
+      "digest": "75c2f5d81086eba0b6e325dc34da19c919f968f779f78c792ac9b6ed659118cc"
+    },
+    {
+      "key": "omem:apps/server/src/review/knowledge.ts",
+      "digest": "a4fc22e4b1dc64788cd57586d1b2a9fee120c76aaa6e8574823b8f5e652d5999"
+    },
+    {
+      "key": "omem:apps/server/src/review/sync.ts",
+      "digest": "6dd61dc81d3579e2c69eba9a6fc1a777dc4d04627e7f2170b201e0e53b403950"
+    },
+    {
+      "key": "omem:apps/server/tests/material-descriptions.test.ts",
+      "digest": "ac63869bf8492358244f34d1fd1db76e5f6957bb44e9e884b8f56d09cfc13f62"
+    },
+    {
+      "key": "omem:apps/server/tests/retrieval-unified.test.ts",
+      "digest": "9a3afffbeaac58b70e446623b302a7bb8775be2bbe226c0f5a660bd74d2b4666"
+    },
+    {
+      "key": "omem:apps/web/src/MaterialDescription.vue",
+      "digest": "b37d9eacb7a2c6df59eeba51661abdd9f249aaec4e47c3cb3f8a52621fcf1865"
+    },
+    {
+      "key": "omem:apps/web/src/knowledge/outline-editing.ts",
+      "digest": "b48d46feb9f10a35c7c269570ea1a6cd4939e3b7e961ecd834c3d1d717749657"
+    },
+    {
+      "key": "omem:packages/contracts/src/material-description.ts",
+      "digest": "e7aa6965ec323cd4d41d127c7d571cb97d80c91f8f9bd1225db8d62596d3a6f9"
+    },
+    {
+      "key": "omem:scripts/benchmark-freshstack.ts",
+      "digest": "a958845de548711fb426a2bfe282c01fe7e9582e4bc697fe6d065001c4ebaf11"
+    },
+    {
+      "key": "omem:scripts/benchmark-t2.ts",
+      "digest": "8d4c9ea976485864aeed545bc24dddb89e85165773fb52c072528a650a75c23f"
+    },
+    {
+      "key": "omem:scripts/retrieval-compare.ts",
+      "digest": "2ab45b0f56ac02d45ac1e58d503ae76c6038925fcf1a1db3949ce0cce0af79e2"
+    },
+    {
+      "key": "omem:scripts/review-catalog.ts",
+      "digest": "d84e916a4f818920ee828e0beb4a52ec951e1ed7d15aeb530b03e4c538e03b9d"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-09T17:11:40.189Z",
+    "at": "2026-10-09T18:44:54.036Z",
     "trace": {
       "profileId": "traex",
       "acpProvider": "traex",
-      "runId": "91361fa1-12c7-4915-9129-0fdeebb4ed50",
-      "roleId": "knowledge-refresher",
+      "runId": "5092d10a-fd9a-4449-ae70-513dc708dce9",
+      "roleId": "code-analyst",
       "roleVersion": "1",
-      "bundleHash": "e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9",
-      "promptHash": "16ff1fe7cd8f95e754989063adddef5644ca949307ee029d305660e819b87032",
-      "contextHash": "67199c881056f59f8da0be44655a491cb7d921fc2536cfc59b4a5fb5a086f97a",
-      "skillHash": "a72a1d28866edde0b26ba3e0e42b2ac3d0141425c5af39808ce5364931c5e40b",
+      "bundleHash": "5a6f3daf1f8a2d414b0273d624c90ad887096166a0409b623e5262c809334de0",
+      "promptHash": "6d9b4fd62d6b1e79091c7815766f89de7454ee53ad65a94b05a919a2d3b5ecf9",
+      "contextHash": "76b5e714892cf9bba0fd8d4c802c4491c89093423588b047642b19910643936b",
+      "skillHash": "652382ed250f3b635820e922009c9fc92c5935cd63cec7e4cde38f90a0406c32",
       "toolHash": "6ecd4cb47ca06f6b86b9c2e46f7cbe547345091d7fd0a8c46a45f14b98cea1a6",
-      "fingerprint": "6db9f28814263a8ba535123067d68a2be0d24aa383c5cde6aec9e7170edf2f6d",
+      "fingerprint": "927fd38fdb4698b06864c77996529fd53e37367057f35be45d1cbdea2163824f",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
       "loadedSkills": [
         {
-          "name": "omem-knowledge-refresher",
+          "name": "omem-code-analyst",
           "version": "1",
           "mode": "native"
         },
@@ -194,10 +340,10 @@
         "submit_result"
       ],
       "sessionIds": [
-        "01a121a5-2e8e-75b2-b5b9-0fc8fb216737"
+        "01a121f9-8e4a-7612-b3a0-49c17e926ce2"
       ],
       "usage": {
-        "used": 43307,
+        "used": 113942,
         "size": 258400,
         "cost": null,
         "acpCompletion": "validated_submission",
@@ -206,26 +352,32 @@
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_JVMBweywC6MmdKUZs0YuxWGk:exec-8734d9e2-9ca1-4360-b498-fa3797052413",
-            "title": "Read SKILL.md",
+            "id": "code-mode-nested:29:call_FGZ17hOJwCNIHubf81XHtJrC:exec-ba166462-1206-4c64-991b-47b6d722fe3d",
+            "title": "Read SKILL.md, Read SKILL.md",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_JVMBweywC6MmdKUZs0YuxWGk:exec-8734d9e2-9ca1-4360-b498-fa3797052413",
-              "process_id": "47754",
-              "turn_id": "01a121a5-31e5-7232-a20a-304967b531ec",
-              "started_at_ms": 1791565846781,
+              "call_id": "code-mode-nested:29:call_FGZ17hOJwCNIHubf81XHtJrC:exec-ba166462-1206-4c64-991b-47b6d722fe3d",
+              "process_id": "70373",
+              "turn_id": "01a121f9-93f7-7e93-a753-691a031dc73f",
+              "started_at_ms": 1791571380774,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md"
+                "sed -n '1,240p' .trae/skills/omem-code-analyst/SKILL.md && sed -n '1,260p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/91361fa1-12c7-4915-9129-0fdeebb4ed50",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/5a6f3daf1f8a2d414b0273d624c90ad887096166a0409b623e5262c809334de0/5092d10a-fd9a-4449-ae70-513dc708dce9",
               "parsed_cmd": [
                 {
                   "type": "read",
-                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-code-analyst/SKILL.md",
                   "name": "SKILL.md",
-                  "path": ".trae/skills/omem-knowledge-refresher/SKILL.md"
+                  "path": ".trae/skills/omem-code-analyst/SKILL.md"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,260p' .trae/skills/lieflat-less-ai-tone/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/lieflat-less-ai-tone/SKILL.md"
                 }
               ],
               "source": "unified_exec_startup",
@@ -235,14 +387,50 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_JVMBweywC6MmdKUZs0YuxWGk:exec-8734d9e2-9ca1-4360-b498-fa3797052413",
+            "id": "code-mode-nested:29:call_FGZ17hOJwCNIHubf81XHtJrC:exec-ba166462-1206-4c64-991b-47b6d722fe3d",
             "status": "completed",
-            "outputDigest": "7d3a7bfd45ef101b9d492e46fd7c7f4587b7399f50a6a09a407efc19599bed10"
+            "outputDigest": "76e35b1928f940886d325d3d13e8a931f89a0f73c59786fb3abe6347af60e24c"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_1gqICQXfTmbyDLqvyVHRVUau:exec-84a3e726-847d-4b50-80c5-855d8040e7f5",
+            "id": "code-mode-nested:29:call_Bz0P2kOIzhYx9iQIF5sVAirS:exec-1ac72e52-7e10-4186-ab7b-a2732c573974",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_Bz0P2kOIzhYx9iQIF5sVAirS:exec-1ac72e52-7e10-4186-ab7b-a2732c573974",
+              "process_id": "20480",
+              "turn_id": "01a121f9-93f7-7e93-a753-691a031dc73f",
+              "started_at_ms": 1791571387364,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '261,620p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/5a6f3daf1f8a2d414b0273d624c90ad887096166a0409b623e5262c809334de0/5092d10a-fd9a-4449-ae70-513dc708dce9",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '261,620p' .trae/skills/lieflat-less-ai-tone/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/lieflat-less-ai-tone/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Bz0P2kOIzhYx9iQIF5sVAirS:exec-1ac72e52-7e10-4186-ab7b-a2732c573974",
+            "status": "completed",
+            "outputDigest": "9e082d6e84d64bf7aa22d9343757c991c70da4f10d64a71b50434e5a14b4b609"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_LIWbEOp4o8941ZxKEKOtb13t:exec-239b8bc6-b8e2-423d-b1a8-5b2341f049db",
             "title": "Tool: omem/read_material",
             "status": "in_progress",
             "input": {
@@ -251,7 +439,38 @@
               "arguments": {
                 "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
                 "startLine": 1,
-                "endLine": 101
+                "endLine": 103
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_LIWbEOp4o8941ZxKEKOtb13t:exec-73c31b58-a71a-4bdb-9e19-ebf344697728",
+            "title": "Tool: omem/list_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "list_materials",
+              "arguments": {
+                "filter": "concept-vectors.ts",
+                "kind": "code",
+                "limit": 20,
+                "offset": 0
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_LIWbEOp4o8941ZxKEKOtb13t:exec-2294edb1-5978-4a7e-aee2-66322a382fbe",
+            "title": "Tool: omem/code_navigation",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "code_navigation",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/concept-vectors.ts"
               }
             }
           },
@@ -261,40 +480,324 @@
             "args": {
               "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
               "startLine": 1,
-              "endLine": 101
+              "endLine": 103
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "list_materials",
+            "args": {
+              "offset": 0,
+              "limit": 20,
+              "filter": "concept-vectors.ts",
+              "kind": "code"
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "code_navigation",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/concept-vectors.ts"
             },
             "success": true
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_1gqICQXfTmbyDLqvyVHRVUau:exec-84a3e726-847d-4b50-80c5-855d8040e7f5",
+            "id": "code-mode-nested:29:call_LIWbEOp4o8941ZxKEKOtb13t:exec-239b8bc6-b8e2-423d-b1a8-5b2341f049db",
             "status": "completed",
-            "outputDigest": "5e9e2a4f3c77cc8e389ea40b42f0559a82fa45e6fb3002dcc1ce1507fd70bb3a"
+            "outputDigest": "47eb631cd2788fdc6d5648b62278b85408a044801e6afda2be05c4c1a0c3f418"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_LIWbEOp4o8941ZxKEKOtb13t:exec-73c31b58-a71a-4bdb-9e19-ebf344697728",
+            "status": "completed",
+            "outputDigest": "39749b5f9dafdae688ee1ee05c923fefdb2703e31be5ed4d530369e55f6d1f02"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_LIWbEOp4o8941ZxKEKOtb13t:exec-2294edb1-5978-4a7e-aee2-66322a382fbe",
+            "status": "completed",
+            "outputDigest": "1a8efd8d4e600fe1914c48421db893811494930089fa21509723125c64508848"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_rO63qkJK9MTQg1ADChTMKZ4c:exec-77911a62-3d45-4696-9f6a-c2404ddf3922",
-            "title": "Read SKILL.md",
+            "id": "code-mode-nested:29:call_Nr41uOj5Qw9dKe7YbOnKXIiC:exec-e03ccbc3-d41b-42d3-9ad5-81d8ccb9200b",
+            "title": "Tool: omem/search_materials",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_rO63qkJK9MTQg1ADChTMKZ4c:exec-77911a62-3d45-4696-9f6a-c2404ddf3922",
-              "process_id": "26929",
-              "turn_id": "01a121a5-31e5-7232-a20a-304967b531ec",
-              "started_at_ms": 1791565866525,
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "conceptWindows",
+                "codeIntent": "callers",
+                "kind": "code",
+                "limit": 20,
+                "purpose": "implementation"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Nr41uOj5Qw9dKe7YbOnKXIiC:exec-addfa81d-d05c-4ad8-8083-d78ba65815e2",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "conceptCandidates",
+                "codeIntent": "callers",
+                "kind": "code",
+                "limit": 20,
+                "purpose": "implementation"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Nr41uOj5Qw9dKe7YbOnKXIiC:exec-03f6ae5a-0a3a-414a-a4e4-cbfca9673092",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "RetrievalUnit target materialDescription",
+                "kind": "code",
+                "limit": 20,
+                "purpose": "implementation"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_Nr41uOj5Qw9dKe7YbOnKXIiC:exec-931c54b6-f437-4801-b1e4-e5c852a375f1",
+            "title": "Tool: omem/search_knowledge",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_knowledge",
+              "arguments": {
+                "query": "概念向量召回 conceptCandidates 检索单元",
+                "limit": 10,
+                "purpose": "background"
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "conceptWindows",
+              "kind": "code",
+              "purpose": "implementation",
+              "codeIntent": "callers",
+              "limit": 20
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "conceptCandidates",
+              "kind": "code",
+              "purpose": "implementation",
+              "codeIntent": "callers",
+              "limit": 20
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "RetrievalUnit target materialDescription",
+              "kind": "code",
+              "purpose": "implementation",
+              "limit": 20
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_knowledge",
+            "args": {
+              "query": "概念向量召回 conceptCandidates 检索单元",
+              "purpose": "background",
+              "limit": 10
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Nr41uOj5Qw9dKe7YbOnKXIiC:exec-e03ccbc3-d41b-42d3-9ad5-81d8ccb9200b",
+            "status": "completed",
+            "outputDigest": "1ba4d4c55743576795c6d39b0c60f3f8d9377d5dbcce33dd4e996d43a5dff9f4"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Nr41uOj5Qw9dKe7YbOnKXIiC:exec-addfa81d-d05c-4ad8-8083-d78ba65815e2",
+            "status": "completed",
+            "outputDigest": "918da50eb8c64e078335f6b6f7c58f8b69f146d8f0edca98eae14b6b1e5fe116"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Nr41uOj5Qw9dKe7YbOnKXIiC:exec-03f6ae5a-0a3a-414a-a4e4-cbfca9673092",
+            "status": "completed",
+            "outputDigest": "93c1c0f1168a3de579df5e507e57ca7919a5c8ddcf9a9bfe2d88e12dd3d40d01"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_Nr41uOj5Qw9dKe7YbOnKXIiC:exec-931c54b6-f437-4801-b1e4-e5c852a375f1",
+            "status": "completed",
+            "outputDigest": "2aaa5c3eb6af2c9961c597fe81241b274bbbe76a1ec1f410e2e153f64f7deb5f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_bEJ2QaskmEZWqFnayb0qVJFN:exec-9e6a51ef-fd52-4129-ac05-76a3686a8cf3",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/unified.ts",
+                "startLine": 207,
+                "endLine": 304
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_bEJ2QaskmEZWqFnayb0qVJFN:exec-e8efe49e-e671-4a38-bd2a-7075667be422",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "export type RetrievalUnit",
+                "codeIntent": "definition",
+                "kind": "code",
+                "limit": 10,
+                "purpose": "implementation"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_bEJ2QaskmEZWqFnayb0qVJFN:exec-6756bc67-6c1a-4c8b-9526-c3638348075e",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/unified.ts",
+                "startLine": 682,
+                "endLine": 818
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/unified.ts",
+              "startLine": 207,
+              "endLine": 304
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/unified.ts",
+              "startLine": 682,
+              "endLine": 818
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "export type RetrievalUnit",
+              "kind": "code",
+              "purpose": "implementation",
+              "codeIntent": "definition",
+              "limit": 10
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_bEJ2QaskmEZWqFnayb0qVJFN:exec-9e6a51ef-fd52-4129-ac05-76a3686a8cf3",
+            "status": "completed",
+            "outputDigest": "14105d7c269416be2775999ffed120751c4e3dab520a21411d101bdc9ccd1b59"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_bEJ2QaskmEZWqFnayb0qVJFN:exec-6756bc67-6c1a-4c8b-9526-c3638348075e",
+            "status": "completed",
+            "outputDigest": "152ec32231f09dce94afe633aa88f227ec75b8e4d14fd23576d68ce7aab89d6f"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_bEJ2QaskmEZWqFnayb0qVJFN:exec-e8efe49e-e671-4a38-bd2a-7075667be422",
+            "status": "completed",
+            "outputDigest": "ce03a162fb887e7360f8af7c615c3cf33cc227fc1216e1518d843cd04a4db8a0"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_yv9yRG6Rr0SQbegK3p6UfjPn:exec-1332b65f-078f-4f62-a22f-e1f74b835159",
+            "title": "Read unified.ts, Read units.ts",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_yv9yRG6Rr0SQbegK3p6UfjPn:exec-1332b65f-078f-4f62-a22f-e1f74b835159",
+              "process_id": "16218",
+              "turn_id": "01a121f9-93f7-7e93-a753-691a031dc73f",
+              "started_at_ms": 1791571417158,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "sed -n '1,300p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
+                "nl -ba originals/apps/server/src/retrieval/unified.ts | sed -n '1,35p;66,118p;221,304p;305,358p;682,818p'\nnl -ba originals/apps/server/src/retrieval/units.ts | sed -n '1,30p;284,360p'"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/91361fa1-12c7-4915-9129-0fdeebb4ed50",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/5a6f3daf1f8a2d414b0273d624c90ad887096166a0409b623e5262c809334de0/5092d10a-fd9a-4449-ae70-513dc708dce9",
               "parsed_cmd": [
                 {
                   "type": "read",
-                  "cmd": "sed -n '1,300p' .trae/skills/lieflat-less-ai-tone/SKILL.md",
-                  "name": "SKILL.md",
-                  "path": ".trae/skills/lieflat-less-ai-tone/SKILL.md"
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/unified.ts",
+                  "name": "unified.ts",
+                  "path": "originals/apps/server/src/retrieval/unified.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/units.ts",
+                  "name": "units.ts",
+                  "path": "originals/apps/server/src/retrieval/units.ts"
                 }
               ],
               "source": "unified_exec_startup",
@@ -304,33 +807,33 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_rO63qkJK9MTQg1ADChTMKZ4c:exec-77911a62-3d45-4696-9f6a-c2404ddf3922",
+            "id": "code-mode-nested:29:call_yv9yRG6Rr0SQbegK3p6UfjPn:exec-1332b65f-078f-4f62-a22f-e1f74b835159",
             "status": "completed",
-            "outputDigest": "603e41a540c6580ab384a994aa76937ee01a5082cf838220cf615ca49687ee21"
+            "outputDigest": "04599de9c4a7df6c3767187703389fad1dc2963790175720170176b340231696"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_OuPYbAjCnDcC35yV8Tg5JytG:exec-0db86fd0-3af4-40b2-a9de-c62e5d3970ac",
-            "title": "Read SKILL.md",
+            "id": "code-mode-nested:29:call_jggs8FRgHpLpYtBfYFk9hwYv:exec-04e2b513-246c-44fe-be9d-3c3beabe14c2",
+            "title": "Read units.ts",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_OuPYbAjCnDcC35yV8Tg5JytG:exec-0db86fd0-3af4-40b2-a9de-c62e5d3970ac",
-              "process_id": "87560",
-              "turn_id": "01a121a5-31e5-7232-a20a-304967b531ec",
-              "started_at_ms": 1791565874410,
+              "call_id": "code-mode-nested:29:call_jggs8FRgHpLpYtBfYFk9hwYv:exec-04e2b513-246c-44fe-be9d-3c3beabe14c2",
+              "process_id": "43114",
+              "turn_id": "01a121f9-93f7-7e93-a753-691a031dc73f",
+              "started_at_ms": 1791571425086,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "sed -n '301,620p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
+                "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '343,441p'"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/91361fa1-12c7-4915-9129-0fdeebb4ed50",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/5a6f3daf1f8a2d414b0273d624c90ad887096166a0409b623e5262c809334de0/5092d10a-fd9a-4449-ae70-513dc708dce9",
               "parsed_cmd": [
                 {
                   "type": "read",
-                  "cmd": "sed -n '301,620p' .trae/skills/lieflat-less-ai-tone/SKILL.md",
-                  "name": "SKILL.md",
-                  "path": ".trae/skills/lieflat-less-ai-tone/SKILL.md"
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/units.ts | sed -n '343,441p'",
+                  "name": "units.ts",
+                  "path": "originals/apps/server/src/retrieval/units.ts"
                 }
               ],
               "source": "unified_exec_startup",
@@ -340,14 +843,227 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_OuPYbAjCnDcC35yV8Tg5JytG:exec-0db86fd0-3af4-40b2-a9de-c62e5d3970ac",
+            "id": "code-mode-nested:29:call_jggs8FRgHpLpYtBfYFk9hwYv:exec-04e2b513-246c-44fe-be9d-3c3beabe14c2",
             "status": "completed",
-            "outputDigest": "aec24ca27d0714cb8dd8e444948e24b369e2615090139f311776d6853cfdccbb"
+            "outputDigest": "abb8c91438df0444832386959b2a47a967ffae66ce14e10733e2c8d52b0a79e4"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_kjPZ2gwCvvBmnm6vs5Mc8qyU:exec-1efea72a-0650-49b4-99b1-b36f0d1260a3",
+            "id": "code-mode-nested:29:call_UpyUXiU7uwYSVFHoNvAjtH35:exec-eb9579d3-59ab-4bcd-86b5-551f36d29291",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "conceptWindows(",
+                "codeIntent": "callers",
+                "kind": "code",
+                "limit": 20,
+                "purpose": "implementation"
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_UpyUXiU7uwYSVFHoNvAjtH35:exec-b3523232-79ef-49f5-b9c1-1edbf637f1ce",
+            "title": "Tool: omem/search_materials",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "search_materials",
+              "arguments": {
+                "query": "semantic-concept Concept embedding dimensions changed without new identity",
+                "kind": "code",
+                "limit": 20,
+                "purpose": "implementation"
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "conceptWindows(",
+              "kind": "code",
+              "purpose": "implementation",
+              "codeIntent": "callers",
+              "limit": 20
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "search_materials",
+            "args": {
+              "query": "semantic-concept Concept embedding dimensions changed without new identity",
+              "kind": "code",
+              "purpose": "implementation",
+              "limit": 20
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_UpyUXiU7uwYSVFHoNvAjtH35:exec-eb9579d3-59ab-4bcd-86b5-551f36d29291",
+            "status": "completed",
+            "outputDigest": "1ba4d4c55743576795c6d39b0c60f3f8d9377d5dbcce33dd4e996d43a5dff9f4"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_UpyUXiU7uwYSVFHoNvAjtH35:exec-b3523232-79ef-49f5-b9c1-1edbf637f1ce",
+            "status": "completed",
+            "outputDigest": "2882a0a2687cb6f48c59c93fb189233cbf16a2385f03ab6d587fd5e71950a191"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_WFKY2MvASy4RET80uSPd5QIw:exec-0dad5270-79a8-4917-aa02-bc4a0722fda3",
+            "title": "rg -n --glob '*.ts' 'conceptWindows|conceptCandidates|range-concepts-v1|semantic-concept' originals/apps/server originals/packages originals/test* 2>/dev/null",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_WFKY2MvASy4RET80uSPd5QIw:exec-0dad5270-79a8-4917-aa02-bc4a0722fda3",
+              "process_id": "36592",
+              "turn_id": "01a121f9-93f7-7e93-a753-691a031dc73f",
+              "started_at_ms": 1791571439302,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n --glob '*.ts' 'conceptWindows|conceptCandidates|range-concepts-v1|semantic-concept' originals/apps/server originals/packages originals/test* 2>/dev/null"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/5a6f3daf1f8a2d414b0273d624c90ad887096166a0409b623e5262c809334de0/5092d10a-fd9a-4449-ae70-513dc708dce9",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "rg -n --glob '*.ts' 'conceptWindows|conceptCandidates|range-concepts-v1|semantic-concept' originals/apps/server originals/packages originals/test* 2>/dev/null"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_WFKY2MvASy4RET80uSPd5QIw:exec-0dad5270-79a8-4917-aa02-bc4a0722fda3"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_WFKY2MvASy4RET80uSPd5QIw:exec-0dad5270-79a8-4917-aa02-bc4a0722fda3",
+            "status": "failed",
+            "outputDigest": "0ecc745cbc296f41905b92bf28abeaff26ca0be962d0146394902fde3e767fb0"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_v10WmsYGkaCFmt4ZAxQIFT7E:exec-b6e27ed2-ed1e-40dd-be70-1fb8a8eb1b45",
+            "title": "Search conceptWindows|conceptCandidates|range-concepts-v1|semantic-concept in originals",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_v10WmsYGkaCFmt4ZAxQIFT7E:exec-b6e27ed2-ed1e-40dd-be70-1fb8a8eb1b45",
+              "process_id": "8753",
+              "turn_id": "01a121f9-93f7-7e93-a753-691a031dc73f",
+              "started_at_ms": 1791571445769,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "rg -n --glob '*.ts' 'conceptWindows|conceptCandidates|range-concepts-v1|semantic-concept' originals"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/5a6f3daf1f8a2d414b0273d624c90ad887096166a0409b623e5262c809334de0/5092d10a-fd9a-4449-ae70-513dc708dce9",
+              "parsed_cmd": [
+                {
+                  "type": "search",
+                  "cmd": "rg -n --glob '*.ts' 'conceptWindows|conceptCandidates|range-concepts-v1|semantic-concept' originals",
+                  "query": "conceptWindows|conceptCandidates|range-concepts-v1|semantic-concept",
+                  "path": "originals"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_v10WmsYGkaCFmt4ZAxQIFT7E:exec-b6e27ed2-ed1e-40dd-be70-1fb8a8eb1b45",
+            "status": "completed",
+            "outputDigest": "abe45ad0402ca57d6848c8e11b5081feb60601fa079a5d0d63253e0341281c52"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_duRztLs5QS5SmJvwyQQEBc8e:exec-2e7e1d2c-1a97-4e85-aaeb-24e53d7d71d8",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/unified.ts",
+                "startLine": 482,
+                "endLine": 520
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_duRztLs5QS5SmJvwyQQEBc8e:exec-8fb8c9b6-69ed-4e0e-862d-091548508f1e",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/tests/material-descriptions.test.ts",
+                "startLine": 300,
+                "endLine": 390
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/unified.ts",
+              "startLine": 482,
+              "endLine": 520
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/tests/material-descriptions.test.ts",
+              "startLine": 300,
+              "endLine": 390
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_duRztLs5QS5SmJvwyQQEBc8e:exec-2e7e1d2c-1a97-4e85-aaeb-24e53d7d71d8",
+            "status": "completed",
+            "outputDigest": "1d7be3c4b30f8bcc79a58c1d4119810ac5401876ccd455cc90467414a96f89ec"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_duRztLs5QS5SmJvwyQQEBc8e:exec-8fb8c9b6-69ed-4e0e-862d-091548508f1e",
+            "status": "completed",
+            "outputDigest": "42ad9a96f2e38a261362cc35be963135e0879cb0042604ec1894a5142be380aa"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_81Zn97NWAzYPzPoGAh04wBvN:exec-e68f5555-8cc0-445d-b097-20b0e4075d20",
             "title": "Tool: omem/submit_result",
             "status": "in_progress",
             "input": {
@@ -360,13 +1076,41 @@
             "kind": "submission",
             "success": true,
             "reads": [
-              "omem:apps/server/src/retrieval/concept-vectors.ts"
+              "omem:apps/server/src/retrieval/concept-vectors.ts",
+              "omem:apps/server/src/retrieval/unified.ts",
+              "omem:apps/server/src/retrieval/units.ts",
+              "omem:packages/contracts/src/material-description.ts",
+              "omem:apps/web/src/MaterialDescription.vue",
+              "omem:apps/server/src/retrieval/code-navigation.ts",
+              "omem:apps/server/src/assistant/runtime.ts",
+              "omem:apps/server/src/knowledge/agent-research.ts",
+              "omem:apps/server/src/review/sync.ts",
+              "omem:apps/server/src/knowledge/api.ts",
+              "omem:apps/server/src/review/knowledge.ts",
+              "omem:apps/server/tests/retrieval-unified.test.ts",
+              "omem:scripts/retrieval-compare.ts",
+              "omem:apps/web/src/knowledge/outline-editing.ts",
+              "omem:scripts/review-catalog.ts",
+              "omem:apps/server/src/retrieval/hierarchy.ts",
+              "omem:apps/server/src/code/artifacts.ts",
+              "omem:apps/server/src/retrieval/semantic.ts",
+              "omem:apps/server/src/retrieval/factory.ts",
+              "omem:apps/server/src/learning/pipeline.ts",
+              "omem:apps/server/src/retrieval/context.ts",
+              "omem:scripts/benchmark-freshstack.ts",
+              "omem:apps/server/src/assistant/acp-model.ts",
+              "omem:apps/server/src/memory/service.ts",
+              "omem:apps/server/src/development/checks.ts",
+              "omem:apps/server/src/jobs/repository.ts",
+              "omem:scripts/benchmark-t2.ts",
+              "omem:apps/server/src/knowledge/pipeline.ts",
+              "omem:apps/server/tests/material-descriptions.test.ts"
             ]
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_kjPZ2gwCvvBmnm6vs5Mc8qyU:exec-1efea72a-0650-49b4-99b1-b36f0d1260a3",
+            "id": "code-mode-nested:29:call_81Zn97NWAzYPzPoGAh04wBvN:exec-e68f5555-8cc0-445d-b097-20b0e4075d20",
             "status": "failed",
             "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
           }
@@ -378,19 +1122,19 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-09T17:12:47.405Z",
+    "at": "2026-10-09T18:48:03.351Z",
     "trace": {
       "profileId": "traex",
       "acpProvider": "traex",
-      "runId": "93298b5c-f258-4270-8a36-c4b7776698ce",
+      "runId": "192788a1-8a4a-4dcf-9e3d-d0b18aa11bc5",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
-      "bundleHash": "ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a",
-      "promptHash": "87ca1343d707463597b46276edf17d1d9353a8e908428f015e443f62ae94bae0",
-      "contextHash": "facc6b8759c787c92561f5d33525457bb95fa1df555a6b13a7190f0b40226aa3",
+      "bundleHash": "48a57b15d569d21579ddeb08312beed51981477dbc5f3f88a082bc3a2753dee6",
+      "promptHash": "27b843b53f2dfbff6a7863a93165679734d890931598cbf234dfb96dc17313d7",
+      "contextHash": "9d06e7cfbcfce53f43e44f32c91e9708297558b02ab786279e2ad99eeea74b06",
       "skillHash": "0122dffd6ec08e44096acc44801f392b2878aab19f3daa0b825d33eb8b385b0a",
       "toolHash": "6ecd4cb47ca06f6b86b9c2e46f7cbe547345091d7fd0a8c46a45f14b98cea1a6",
-      "fingerprint": "c96f748b7e067e033c2cd6cc1e28fff49a6fc052c86accc5d14e6b47b6d22351",
+      "fingerprint": "2e711f9d808111fe44b97a4d5fea87d2fd4c2e96b635d041ad343801bc4fc6d7",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -427,10 +1171,10 @@
         "submit_result"
       ],
       "sessionIds": [
-        "01a121a6-53ee-7eb2-bb64-386b9126b0b2"
+        "01a121fd-a133-70a3-b42b-150ce04f7617"
       ],
       "usage": {
-        "used": 44202,
+        "used": 53623,
         "size": 258400,
         "cost": null,
         "acpCompletion": "validated_submission",
@@ -439,21 +1183,27 @@
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_fG5R880UKQpoDsMQeZiXncj1:exec-a8e22510-41b4-4a2b-96d0-c65727f1828e",
-            "title": "Read SKILL.md",
+            "id": "code-mode-nested:29:call_j1U3a5BVozYRbLlpoITBGx3z:exec-a20916d0-2bf0-4c61-8d10-669336c228c5",
+            "title": "Read SKILL.md, Read SKILL.md",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_fG5R880UKQpoDsMQeZiXncj1:exec-a8e22510-41b4-4a2b-96d0-c65727f1828e",
-              "process_id": "46380",
-              "turn_id": "01a121a6-5710-7781-90a8-7a20f93690e0",
-              "started_at_ms": 1791565926581,
+              "call_id": "code-mode-nested:29:call_j1U3a5BVozYRbLlpoITBGx3z:exec-a20916d0-2bf0-4c61-8d10-669336c228c5",
+              "process_id": "60159",
+              "turn_id": "01a121fd-c052-77f2-9afd-907136d3040d",
+              "started_at_ms": 1791571655055,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "sed -n '1,260p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
+                "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md && sed -n '1,260p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/93298b5c-f258-4270-8a36-c4b7776698ce",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/48a57b15d569d21579ddeb08312beed51981477dbc5f3f88a082bc3a2753dee6/192788a1-8a4a-4dcf-9e3d-d0b18aa11bc5",
               "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/omem-knowledge-verifier/SKILL.md"
+                },
                 {
                   "type": "read",
                   "cmd": "sed -n '1,260p' .trae/skills/lieflat-less-ai-tone/SKILL.md",
@@ -467,64 +1217,28 @@
           },
           {
             "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_fG5R880UKQpoDsMQeZiXncj1:exec-7bfb1975-ae1f-4ce5-9ac5-3b1e4a078810",
-            "title": "Read SKILL.md",
-            "status": "in_progress",
-            "input": {
-              "call_id": "code-mode-nested:29:call_fG5R880UKQpoDsMQeZiXncj1:exec-7bfb1975-ae1f-4ce5-9ac5-3b1e4a078810",
-              "process_id": "38758",
-              "turn_id": "01a121a6-5710-7781-90a8-7a20f93690e0",
-              "started_at_ms": 1791565926581,
-              "command": [
-                "/bin/zsh",
-                "-lc",
-                "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md"
-              ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/93298b5c-f258-4270-8a36-c4b7776698ce",
-              "parsed_cmd": [
-                {
-                  "type": "read",
-                  "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md",
-                  "name": "SKILL.md",
-                  "path": ".trae/skills/omem-knowledge-verifier/SKILL.md"
-                }
-              ],
-              "source": "unified_exec_startup",
-              "yield_time_ms": 10000
-            }
-          },
-          {
-            "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_fG5R880UKQpoDsMQeZiXncj1:exec-7bfb1975-ae1f-4ce5-9ac5-3b1e4a078810",
+            "id": "code-mode-nested:29:call_j1U3a5BVozYRbLlpoITBGx3z:exec-a20916d0-2bf0-4c61-8d10-669336c228c5",
             "status": "completed",
-            "outputDigest": "85489a161185d00db58d5eefddd9dad5f5faa498a8f3abce744335cd85ddae35"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_fG5R880UKQpoDsMQeZiXncj1:exec-a8e22510-41b4-4a2b-96d0-c65727f1828e",
-            "status": "completed",
-            "outputDigest": "c845231b9dd1f7f21742983483b0440da1643aa5738d4a180b790693590b6ca2"
+            "outputDigest": "33ffff6f206b2b1356cde356ac4828ff6299b2964c80c874f8840e5d9e3c858c"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_TPYwfijaXYk2uNkrCHtsiFzw:exec-8b4f22b8-9394-4a99-a8fa-056defbb0855",
+            "id": "code-mode-nested:29:call_Phe8xaBBYXWAO2WiCWfRmktw:exec-ef4ce871-3380-4301-85ca-fa2e8c8a679c",
             "title": "Read SKILL.md",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_TPYwfijaXYk2uNkrCHtsiFzw:exec-8b4f22b8-9394-4a99-a8fa-056defbb0855",
-              "process_id": "83442",
-              "turn_id": "01a121a6-5710-7781-90a8-7a20f93690e0",
-              "started_at_ms": 1791565933741,
+              "call_id": "code-mode-nested:29:call_Phe8xaBBYXWAO2WiCWfRmktw:exec-ef4ce871-3380-4301-85ca-fa2e8c8a679c",
+              "process_id": "23534",
+              "turn_id": "01a121fd-c052-77f2-9afd-907136d3040d",
+              "started_at_ms": 1791571661964,
               "command": [
                 "/bin/zsh",
                 "-lc",
                 "sed -n '261,520p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/93298b5c-f258-4270-8a36-c4b7776698ce",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/48a57b15d569d21579ddeb08312beed51981477dbc5f3f88a082bc3a2753dee6/192788a1-8a4a-4dcf-9e3d-d0b18aa11bc5",
               "parsed_cmd": [
                 {
                   "type": "read",
@@ -540,38 +1254,23 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_TPYwfijaXYk2uNkrCHtsiFzw:exec-8b4f22b8-9394-4a99-a8fa-056defbb0855",
+            "id": "code-mode-nested:29:call_Phe8xaBBYXWAO2WiCWfRmktw:exec-ef4ce871-3380-4301-85ca-fa2e8c8a679c",
             "status": "completed",
-            "outputDigest": "f69f4aa42861e0614366064223870f18f98d62bbae13fce900777155de2a8fcf"
+            "outputDigest": "48aa5b5e2988642a8e1a90bf78ef6b79c8c4aee2014bd4997e510d893dea2e82"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_lb8vEnmE0paCbvQKS0rGlLkh:exec-e5c01d9b-1589-4a07-8298-b2fab0d2c3da",
+            "id": "code-mode-nested:29:call_7Q5wBUMvrfDqWnY9FfwD82df:exec-7af66399-c68f-438d-82e6-d377d9c183fc",
             "title": "Tool: omem/read_material",
             "status": "in_progress",
             "input": {
               "server": "omem",
               "tool": "read_material",
               "arguments": {
-                "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-                "startLine": 1,
-                "endLine": 101
-              }
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_lb8vEnmE0paCbvQKS0rGlLkh:exec-bf44cebe-b941-4caf-a111-50215ad107c4",
-            "title": "Tool: omem/code_navigation",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "code_navigation",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-                "symbol": "conceptCandidates"
+                "key": "omem:apps/server/src/retrieval/unified.ts",
+                "startLine": 221,
+                "endLine": 305
               }
             }
           },
@@ -579,101 +1278,23 @@
             "kind": "mcp",
             "tool": "read_material",
             "args": {
-              "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-              "startLine": 1,
-              "endLine": 101
+              "key": "omem:apps/server/src/retrieval/unified.ts",
+              "startLine": 221,
+              "endLine": 305
             },
             "success": true
           },
           {
-            "kind": "mcp",
-            "tool": "code_navigation",
-            "args": {
-              "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-              "symbol": "conceptCandidates"
-            },
-            "success": true
-          },
-          {
-            "kind": "mcp",
-            "tool": "code_navigation",
-            "args": {
-              "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-              "symbol": "conceptWindows"
-            },
-            "success": true
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_7Q5wBUMvrfDqWnY9FfwD82df:exec-7af66399-c68f-438d-82e6-d377d9c183fc",
+            "status": "completed",
+            "outputDigest": "1bc5b5d0a58a460725d34e02845fe8e1d043d96528711b1ca3a94f74dfedde09"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_lb8vEnmE0paCbvQKS0rGlLkh:exec-98f10757-7706-4583-8152-09c5a5f95da4",
-            "title": "Tool: omem/read_tasks",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_tasks",
-              "arguments": {
-                "limit": 100,
-                "offset": 0
-              }
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_lb8vEnmE0paCbvQKS0rGlLkh:exec-e5c01d9b-1589-4a07-8298-b2fab0d2c3da",
-            "status": "completed",
-            "outputDigest": "9d48c506438da4a91c347a556906132b5339af06c4ed130ec472ad060f9b267a"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_lb8vEnmE0paCbvQKS0rGlLkh:exec-286d8bc4-aba7-4bcd-be38-a1a5e5f8b214",
-            "title": "Tool: omem/code_navigation",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "code_navigation",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-                "symbol": "conceptWindows"
-              }
-            }
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_lb8vEnmE0paCbvQKS0rGlLkh:exec-bf44cebe-b941-4caf-a111-50215ad107c4",
-            "status": "completed",
-            "outputDigest": "a71572c035e28912cc48ed012e7625d6abb58eaa1f5a9eb23cfbcaa1fabc7992"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_lb8vEnmE0paCbvQKS0rGlLkh:exec-286d8bc4-aba7-4bcd-be38-a1a5e5f8b214",
-            "status": "completed",
-            "outputDigest": "90605128834867d958fe98e3f8a78fd9401808282d4b5d3ba9587b87e10f84ad"
-          },
-          {
-            "kind": "mcp",
-            "tool": "read_tasks",
-            "args": {
-              "offset": 0,
-              "limit": 100
-            },
-            "success": true
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_lb8vEnmE0paCbvQKS0rGlLkh:exec-98f10757-7706-4583-8152-09c5a5f95da4",
-            "status": "completed",
-            "outputDigest": "883821272f335c5e59f91c526d3d0e1c08c18b676d8fffeaa66d6f726b871241"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_YQuCpSECPEGOiY7l1vinmfYL:exec-946fc86a-bf77-4806-ba7c-dc0733687042",
+            "id": "code-mode-nested:29:call_AmefyZSJoIEtlPnxiQn0wY2b:exec-c5cac1ce-7a74-4079-9aa5-9a02628c5bcc",
             "title": "Tool: omem/submit_result",
             "status": "in_progress",
             "input": {
@@ -686,13 +1307,13 @@
             "kind": "submission",
             "success": true,
             "reads": [
-              "omem:apps/server/src/retrieval/concept-vectors.ts"
+              "omem:apps/server/src/retrieval/unified.ts"
             ]
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_YQuCpSECPEGOiY7l1vinmfYL:exec-946fc86a-bf77-4806-ba7c-dc0733687042",
+            "id": "code-mode-nested:29:call_AmefyZSJoIEtlPnxiQn0wY2b:exec-c5cac1ce-7a74-4079-9aa5-9a02628c5bcc",
             "status": "failed",
             "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
           }
@@ -700,27 +1321,37 @@
         "hostTokenBudget": null
       },
       "repairAttempts": 0,
-      "scope": "full",
+      "scope": "citation_ranges",
       "rounds": [
         {
-          "jobId": "1070cae4-9520-4f8f-9c01-69906282c8a9",
-          "runId": "165b71fd-be12-4a85-aaa9-7134fc3349cc",
+          "jobId": "b55f1e93-37c0-4ae5-816c-0d5c5dbab98c",
+          "runId": "dc69ec80-6689-4b17-a098-fa707844d4ae",
           "mode": "full",
           "drafts": [
             {
               "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-              "digest": "09fb33452972b533e7a812dfc5aca3badc2a7812f58377ef105943394d6d8388"
+              "digest": "5cdb7bbcc2d1195949730a90b381971ae3f6a64efcf7811c47fb498ab42b4b9c"
             }
           ]
         },
         {
-          "jobId": "e2eed47d-a877-4816-b08f-42418804beea",
-          "runId": "93298b5c-f258-4270-8a36-c4b7776698ce",
-          "mode": "full",
+          "jobId": "2705dc06-add4-4cff-a21f-ba75a0c0a3fd",
+          "runId": "192788a1-8a4a-4dcf-9e3d-d0b18aa11bc5",
+          "mode": "citation_ranges",
+          "previousJobId": "b55f1e93-37c0-4ae5-816c-0d5c5dbab98c",
+          "rangeRepairs": [
+            {
+              "documentKey": "omem:apps/server/src/retrieval/concept-vectors.ts",
+              "key": "c3",
+              "startLine": 231,
+              "endLine": 295
+            }
+          ],
+          "reviewSourceRepairs": [],
           "drafts": [
             {
               "key": "omem:apps/server/src/retrieval/concept-vectors.ts",
-              "digest": "5a24b4f704e07e3dfe5781f1047fe2fd776cdaefd67ab87778a28fda2f876629"
+              "digest": "1db0ea6bcae918d1b085df540b6890108d87fc796b6dbaf5300d0367048f5017"
             }
           ]
         }
