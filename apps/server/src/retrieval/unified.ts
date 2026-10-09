@@ -34,6 +34,7 @@ export type RetrievalTrace = {
   stage:
     | "lexical"
     | "symbols"
+    | "concepts"
     | "semantic"
     | "fusion"
     | "reranker-input"
@@ -445,6 +446,38 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     }
     return [...fused.values()];
   }
+  private concepts(q: SearchQuery): ScoredUnit[] {
+    const terms = [...new Set(queryTerms(q.text).flatMap(t => indexText(t).split(" ")))];
+    if (!terms.length || exactLookup(q.text)) return [];
+    const phrase = terms.filter(Boolean).map(t => '"' + t.replaceAll('"', '""') + '"').join(" OR ");
+    if (!phrase) return [];
+    // Reuse the context FTS index, then require a match in a saved concept for
+    // this exact passage. Headings and a file-wide summary are not concept hits.
+    const rows = this.database.prepare(`SELECT u.*,bm25(retrieval_units_fts,0,0,1,0) rank
+      FROM retrieval_units_fts JOIN retrieval_units u ON u.id=retrieval_units_fts.id
+      WHERE retrieval_units_fts MATCH ? AND u.kind='source' AND u.description_json IS NOT NULL
+      ORDER BY rank`).iterate(`context : (${phrase})`);
+    const hits: ScoredUnit[] = [];
+    for (const row of rows) {
+      const unit = decodeUnit(row);
+      if (!this.eligible(unit,q) || unit.target.kind !== "source") continue;
+      const target = unit.target;
+      const matching = unit.materialDescription!.description.concepts.filter(c => {
+        if(c.startLine > target.endLine || c.endLine < target.startLine) return false;
+        const words = new Set(indexText([c.label,...c.aliases].join(" ")).split(" "));
+        return terms.some(t=>words.has(t));
+      });
+      if(!matching.length) continue;
+      const first = matching[0]!;
+      const start = Math.max(target.startLine,first.startLine);
+      const end = Math.min(target.endLine,first.endLine);
+      hits.push({unit,score:-Number(row.rank),routes:["material-concept"],
+        excerpt:unit.text.split("\n").slice(start-target.startLine,end-target.startLine+1).join("\n")});
+      // Visibility/scope filtering precedes the bound; hidden passages consume no slots.
+      if(hits.length===40) break;
+    }
+    return hits;
+  }
   private lexical(q: SearchQuery): ScoredUnit[] {
     this.sync();
     const terms = queryTerms(q.text);
@@ -547,10 +580,12 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     }
     const lexical = this.lexical(q);
     const symbols = this.symbols(q);
+    const concepts = this.concepts(q);
     this.observe(observer, "lexical", lexical);
     this.observe(observer, "symbols", symbols);
+    this.observe(observer, "concepts", concepts);
     const lexicalOnly = () =>
-      symbols.length ? this.fuse([lexical, symbols]) : lexical;
+      symbols.length || concepts.length ? this.fuse([lexical, symbols, concepts]) : lexical;
     if (!q.text.trim() || exactLookup(q.text))
       return this.select(lexicalOnly(), q, observer);
     if (!this.model) {
@@ -622,7 +657,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       )
       .slice(0, 100);
     this.observe(observer, "semantic", accepted, this.modelId ?? undefined);
-    const hits = this.fuse([lexical.slice(0, 100), accepted, symbols]);
+    const hits = this.fuse([lexical.slice(0, 100), accepted, symbols, concepts]);
     this.observe(observer, "fusion", hits);
     return this.select(await this.rerank(hits, q, observer), q, observer);
   }
