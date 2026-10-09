@@ -238,6 +238,7 @@ it("reranks lexical candidates without an embedding and exposes isolated score s
     expect(stages.map((s) => s.stage)).toEqual([
       "lexical",
       "symbols",
+      "concepts",
       "fusion",
       "reranker-input",
       "reranker",

@@ -19,7 +19,7 @@ PDF/DOCX 原字节先保存再解析。解析失败也有导入记录、错误�
 | `document`                                 | `parse`      | 保存的 PDF/DOCX 原字节，重新提取结构，再按启用设置理解 |
 | `source`                                   | `parse`      | 已有 Docling 材料保存的原文件                          |
 | `source`、`message`、`bot-event`           | `understand` | 保存的材料，重新整理记忆与事项；须启用学习 Agent       |
-| `source`、`document`、`message`            | `describe`   | 保存的正文，重写用途和概念说明；须配置知识 Agent       |
+| `source`、`document`、`message`            | `describe`   | 保存的正文，重写用途和概念说明；须配置知识 Agent。代码概念可独立召回所标实现范围，原件换版后须重新整理才生效 |
 | `source`、`message`、`bot-event`           | `refresh`    | 访问来源读取当前内容；需要有效路径或连接与权限         |
 | `article`                                  | `write`      | 保留阅读目标，重新调查、写作并独立补查                 |
 | `source`、`document`、`message`、`article` | `delete`     | 删除相关派生成果，保留原件或文章阅读目标               |

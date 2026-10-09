@@ -11,7 +11,7 @@
       "canonical_name": "omem-material-cataloger",
       "version": "1",
       "load_mode": "native",
-      "artifact_digest": "d48633a8cf74443f1aaee52a9f1291856768a10d6ef466d3ab73e8fd0c298f73"
+      "artifact_digest": "07aeb7eb85f2078ebfd9ef0e9b35da7afa671802496027f2d68f3527a89cfe91"
     }
   ],
   "output_schema": "MaterialDescriptions.v1",

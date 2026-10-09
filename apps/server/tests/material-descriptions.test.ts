@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.js";
-import { UnifiedRetrieval } from "../src/retrieval/unified.js";
+import { UnifiedRetrieval, type RetrievalTrace } from "../src/retrieval/unified.js";
 import {
   markdownPassages,
   RetrievalProjection,
@@ -53,6 +53,28 @@ const description = (
   concepts: [],
   basis: "根据材料正文",
   ...change,
+});
+
+it("recalls a saved code concept independently of a crowded body pool without spreading aliases or old revisions", async () => {
+  const {store,retrieval}=setup();
+  const source=capture(store,"receiver.ts", "export function accept(key: string) {\n  return ledger.get(key);\n}\n\nexport function repaint() {\n  return redraw();\n}");
+  store.descriptions.save(source.id,description({role:"implementation",status:"current",concepts:[{label:"确认受理结果",aliases:["通知受理账本"],startLine:1,endLine:3}]}),"model",0);
+  for(let i=0;i<260;i++)capture(store,`discussion-${i}`,"通知受理账本 通知受理账本 通知受理账本需要讨论。");
+  const traces:RetrievalTrace[]=[];
+  await retrieval.search({text:"通知受理账本如何确认",limit:10},t=>traces.push(t));
+  const concepts=traces.find(t=>t.stage==="concepts")!.hits;
+  expect(concepts).toHaveLength(1);
+  expect(concepts[0]!.target).toMatchObject({revisionId:source.id,startLine:1,endLine:3});
+  expect(concepts[0]!.text).toContain("ledger.get");
+  expect(concepts[0]!.text).not.toContain("redraw");
+  expect(traces.find(t=>t.stage==="fusion")!.hits.some(h=>h.id===concepts[0]!.id&&h.routes.includes("material-concept"))).toBe(true);
+  const hidden:RetrievalTrace[]=[];
+  await retrieval.search({text:"通知受理账本如何确认",visible:()=>false},t=>hidden.push(t));
+  expect(hidden.find(t=>t.stage==="concepts")!.hits).toEqual([]);
+  capture(store,"receiver.ts","export function repaint() { return redraw(); }");
+  const updated:RetrievalTrace[]=[];
+  await retrieval.search({text:"通知受理账本如何确认"},t=>updated.push(t));
+  expect(updated.find(t=>t.stage==="concepts")!.hits).toEqual([]);
 });
 
 it("keeps user corrections and historical descriptions tied to their own revision", () => {
