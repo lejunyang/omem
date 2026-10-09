@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-09T17:21:31.526Z",
-  "implementationCommit": "07745ae864321b7157d50354485261dad6ea3442",
-  "sourceDigest": "4f2d208f843a1c4a871c8c121743b9eb9c6bfbad326541e2820d34c7a1ae16d4",
+  "recordedAt": "2026-10-09T19:16:26.940Z",
+  "implementationCommit": "f05d6eac18866975a159ae2d1fef01f0c5c9032d",
+  "sourceDigest": "7eee5506ed5c34ae0e8944edc2b55dcd40cd1c539c55ddb6c0f1c495fa957151",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-09T17-21-31-526Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-09T19-16-26-940Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-09T17-21-31-526Z/project.log",
-        "sha256": "4215ed50312460f0b828a8182e4efb2907d4d7e5dcef3ebf00ea09a33d023be6"
+        "log": ".repo-review/runtime/verification/2026-10-09T19-16-26-940Z/project.log",
+        "sha256": "4b6ee4c906cecb6345a1a84fa92572a017f6bbf5c939848463199e958ccdff8c"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-09T17-21-31-526Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-09T19-16-26-940Z/liveChineseRetrieval.log",
         "sha256": "660562c5bc9996e0c643cc27389dca13bbf013e49793ef048911cd4abf345e6d"
       }
     },
@@ -64,16 +64,16 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v8",
-        "units": 18458,
+        "units": 18515,
         "semantic": {
           "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 18458,
+          "indexed": 18515,
           "pending": 0,
           "error": null,
           "concepts": {
             "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3:range-concepts-v1",
-            "indexed": 1649,
+            "indexed": 1615,
             "pending": 0,
             "error": null
           }
@@ -101,7 +101,7 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 882,
+    "materials": 883,
     "publishedPages": 0,
     "currentPages": 0,
     "plannedPages": 0,
@@ -110,8 +110,8 @@
     "errors": [],
     "pages": [],
     "restore": {
-      "restored": 19,
-      "stale": 10
+      "restored": 21,
+      "stale": 9
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -126,16 +126,16 @@
         "status": 200,
         "baselineTop5": [
           "apps/server/src/retrieval/keyword.ts",
-          "apps/server/src/retrieval/units.ts",
+          "apps/server/src/retrieval/unified.ts",
           "config/retrieval.json",
-          "apps/server/src/retrieval/port.ts",
+          "apps/server/src/retrieval/units.ts",
           "apps/server/src/retrieval/units.ts"
         ],
         "baselineUniquePathsAt5": 4,
         "passed": false,
         "firstExpectedRank": 8,
         "uniquePathsAt5": 4,
-        "elapsedMs": 2901,
+        "elapsedMs": 2741,
         "top5": [
           {
             "path": "apps/server/src/retrieval/keyword.ts",
@@ -148,6 +148,26 @@
             "snippet": "const eligible = (row: Row) => {\n      const time = Date.parse(String(row.revision_created_at));\n      if (query.timeRange?.from && time < Date.parse(query.time"
           },
           {
+            "path": "apps/server/src/retrieval/unified.ts",
+            "routes": [
+              "semantic",
+              "material-concept",
+              "semantic-concept",
+              "purpose:balanced"
+            ],
+            "snippet": "private observe(\n    observer: RetrievalObserver | undefined,\n    stage: RetrievalTrace[\"stage\"],\n    hits: ScoredUnit[],\n    model?: string,\n    error?: string"
+          },
+          {
+            "path": "config/retrieval.json",
+            "routes": [
+              "semantic",
+              "material-concept",
+              "semantic-concept",
+              "purpose:balanced"
+            ],
+            "snippet": "\"enabled\": true,\n  \"osdkModel\": \"memory-zh\""
+          },
+          {
             "path": "apps/server/src/retrieval/units.ts",
             "routes": [
               "bm25",
@@ -158,33 +178,13 @@
             "snippet": "const callable = (kind: string) => kind === \"function\" || kind === \"method\";"
           },
           {
-            "path": "config/retrieval.json",
-            "routes": [
-              "semantic",
-              "material-concept",
-              "semantic-concept",
-              "purpose:balanced"
-            ],
-            "snippet": "{\n  \"enabled\": true,\n  \"osdkModel\": \"memory-zh\"\n}"
-          },
-          {
-            "path": "apps/server/src/retrieval/port.ts",
-            "routes": [
-              "semantic",
-              "material-concept",
-              "semantic-concept",
-              "purpose:balanced"
-            ],
-            "snippet": "export interface RetrievalPort {\n  /** Shared retrieval over original units, readable explanations and applied state. */\n  search?(query: SearchQuery): Promise<"
-          },
-          {
             "path": "apps/server/src/retrieval/units.ts",
             "routes": [
               "semantic",
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "ithout indexing its whole body again beside\n    // every method. Its fixed target opens the declaration; parent reading can\n    // still expand to the complete "
+            "snippet": "export function codePassages(material: KnowledgeMaterial): Passage[] {\n  const parsed = parseFile(material.path ?? material.title, material.text);\n  const conta"
           }
         ]
       },
@@ -199,15 +199,15 @@
         "baselineTop5": [
           "apps/server/src/retrieval/embedding.ts",
           "apps/server/src/retrieval/reranker.ts",
+          "apps/server/src/retrieval/unified.ts",
           "docs/reader-first/operations.md",
-          "apps/server/src/cli/osdk.ts",
-          "docs/archive/2026-10-01-baseline/implementation/review-startup.md"
+          "apps/server/src/cli/osdk.ts"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 1225,
+        "elapsedMs": 788,
         "top5": [
           {
             "path": "apps/server/src/retrieval/embedding.ts",
@@ -217,7 +217,7 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "/** osdk owns downloads. The application verifies and reads one immutable snapshot. */\nexport async function loadChineseEmbedding(alias = \"memory-zh\", cwd = pro"
+            "snippet": "const { env, pipeline } = await import(\"@huggingface/transformers\");\n  env.allowRemoteModels = false;\n  env.useFSCache = false;\n  const extractor = await pipeli"
           },
           {
             "path": "apps/server/src/retrieval/reranker.ts",
@@ -227,7 +227,17 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "revision)\n    throw Error(\n      \"Unsupported reranker snapshot; sync a locked relevance-zh or relevance-zh-v2 model\",\n    );\n  const hashes: string[] = [];\n  f"
+            "snippet": "const { AutoTokenizer, AutoModelForSequenceClassification, env } =\n    await import(\"@huggingface/transformers\");\n  env.allowRemoteModels = false;\n  env.useFSCa"
+          },
+          {
+            "path": "apps/server/src/retrieval/unified.ts",
+            "routes": [
+              "semantic",
+              "material-concept",
+              "semantic-concept",
+              "purpose:balanced"
+            ],
+            "snippet": "async close() {\n    this.stopped = true;\n    clearTimeout(this.timer);\n    await this.projection.settle().catch(() => {});\n    await this.work?.catch(() => {});"
           },
           {
             "path": "docs/reader-first/operations.md",
@@ -246,16 +256,6 @@
               "purpose:balanced"
             ],
             "snippet": "export const osdkInstallHelp =\n  \"请先按 https://github.com/lejunyang/one-sdk 安装 osdk，确认 osdk --version 可用后重跑本次 omem setup。npm 安装与普通启动不会下载模型。\";"
-          },
-          {
-            "path": "docs/archive/2026-10-01-baseline/implementation/review-startup.md",
-            "routes": [
-              "bm25",
-              "material-concept",
-              "semantic-concept",
-              "purpose:balanced"
-            ],
-            "snippet": "另一个独立环境问题：用户服务使用 Desktop/osdk-home，原中文模型位于默认 osdk 目录。已在用户服务的 OSDK_DATA_DIR 下用 `osdk model sync memory-zh` 恢复锁定快照并校验，重启后 health 为 ready。应用仍不隐式下载模型；没有修改用户 osdk 路径"
           }
         ]
       },
@@ -278,7 +278,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 815,
+        "elapsedMs": 841,
         "top5": [
           {
             "path": "docs/reader-first/assistant-memory-flow.md",
@@ -323,7 +323,7 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "&&\n          typeof (value as { roleOutputId?: unknown }).roleOutputId ===\n            \"string\",\n      ) as { roleOutputId: string; extractionJobId: string } | "
+            "snippet": "private async verify(job: JobLease, signal: AbortSignal) {\n    try {\n      if (job.roleVersion !== \"verifier@1\")\n        throw Error(`LEARNING_ROLE_VERSION_UNSU"
           }
         ]
       },
@@ -344,7 +344,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 342,
+        "elapsedMs": 243,
         "top5": [
           {
             "path": "apps/server/src/knowledge/pipeline.ts",
@@ -406,7 +406,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 4,
-        "elapsedMs": 285,
+        "elapsedMs": 266,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -463,13 +463,13 @@
           "docs/archive/2026-10-01-baseline/README.md",
           "docs/archive/2026-10-01-baseline/prototype/build.mjs",
           "docs/archive/2026-10-01-baseline/prototype/data.js",
-          "apps/server/src/retrieval/port.ts"
+          "docs/reader-first/retrieval-redesign.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
-        "firstExpectedRank": null,
+        "firstExpectedRank": 16,
         "uniquePathsAt5": 5,
-        "elapsedMs": 1864,
+        "elapsedMs": 873,
         "top5": [
           {
             "path": "design.md",
@@ -509,13 +509,13 @@
             "snippet": "< 100\n        ? [\n            {\n              id: \"long-\" + (i + 1),\n              label: \"继续查看下一份材料\",\n              type: \"明确引用\",\n            },\n          ]\n  "
           },
           {
-            "path": "apps/server/src/retrieval/port.ts",
+            "path": "docs/reader-first/retrieval-redesign.md",
             "routes": [
+              "bm25",
               "semantic",
-              "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "export interface RetrievalPort {\n  /** Shared retrieval over original units, readable explanations and applied state. */\n  search?(query: SearchQuery): Promise<"
+            "snippet": "新增可重建的 SQLite 检索投影，不改 Capture、Revision 和历史 Fragment。Markdown 使用现有 marked，保留章节路径、段落、列表和表格；代码使用现有 TS/Vue AST，按符号范围组织，附签名、注释和模块背景；聊天保留参与者、事件时间及会话/回复关系。长单位可以向量化为多个窗"
           }
         ]
       }
