@@ -51,6 +51,9 @@ export type RetrievalHit = {
   text: string;
   context: string;
   headingPath: string[];
+  /** Fixed original line ranges that actually matched body/concept vectors.
+   * The full structural target remains available for contextual reading. */
+  matchedRanges?: { startLine: number; endLine: number }[];
   score: number;
   routes: string[];
   /** Optional cross-encoder score, separate from fusion and host preferences.

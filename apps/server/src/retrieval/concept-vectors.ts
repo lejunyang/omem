@@ -50,6 +50,7 @@ export function conceptCandidates(
     score: number;
     routes: string[];
     excerpt: string;
+    matchedRanges: { start: number; end: number }[];
   };
   const cards = new Map<string, { hit: Candidate; span: number }>();
   const windowsByUnit = new Map<string, ReturnType<typeof conceptWindows>>();
@@ -89,6 +90,7 @@ export function conceptCandidates(
         score,
         routes: ["semantic-concept"],
         excerpt: unit.text.slice(card.start, card.end),
+        matchedRanges: [{ start: card.start, end: card.end }],
       },
     });
   }

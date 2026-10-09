@@ -19,3 +19,5 @@ task.reading.workflow=project-understanding 时，检查最新事件和纠正是
 完成全文复核后，若其余事实和关键前提已经通过，页面也能完成读者目的，所有阻塞问题仅是已有 material 引用或章节 reviewSources 的行范围，可在 needs_revision 的 verdict 填写 rangeRepair。正文引用填 citations；背景依赖填 reviewSources，以 sectionKey、key、previousStartLine、previousEndLine 唯一定位已有项，再填新 startLine/endLine。每项填写已有 citation key 和经补读确认的准确 startLine/endLine，key 不重复。宿主会直接修改这些范围并重新提取 quote，再交给独立会话补查；正文保持原样。涉及正文修正、引用关系改变、新增引用或背景依赖来源、原因与前提调整时，不填写 rangeRepair；尚不知道正确范围时也走普通返修。
 
 task.reviewScope.mode 为 citation_ranges 时，宿主已经核对本次仅修改指定引用和背景依赖范围，并提供匹配的前次全文检查。继承那次检查，独立补读改动的引用及背景依赖范围与相关不变论断，判断新范围能否完整支持陈述。不再重新调查整篇文章或要求作者重写。搜索和补读工具仍可使用；发现新的事实错误、关键前提遗漏或阅读目的未完成时，以普通 needs_revision 指出具体问题，不填写 rangeRepair，交由后续全文返修。若仍只是指定引用范围不合适，已确认准确替代范围后可继续提交 rangeRepair。
+
+按 task.terminology 和实际类型定义解释术语。source 表示原始材料类别，包含文档、代码、消息等，不称为“源码”；材料子类型明确为 code 时才称代码。区分原始材料与派生解释。

@@ -1,6 +1,6 @@
 import { bestSnippet, querySymbols, queryTerms } from "./relevance.js";
 
-/** Score at most two local passages per unit (lexical and dense), then take
+/** Score bounded local passages per unit (lexical and matched ranges), then take
  * their maximum. A long function must not be represented by its prefix alone.
  * These excerpts only rank; the fixed full unit remains available for reading. */
 export function rerankPassages(
@@ -8,6 +8,7 @@ export function rerankPassages(
   query: string,
   denseExcerpt?: string,
   concepts: { label: string; aliases: string[] }[] = [],
+  matchedRanges: { start: number; end: number }[] = [],
 ) {
   if (text.length <= 800) return [text];
   const symbols = new Set(querySymbols(query));
@@ -32,13 +33,41 @@ export function rerankPassages(
     800,
   ).replace(/^…/, "");
   const ranges: { start: number; end: number }[] = [];
-  if (denseExcerpt) {
-    const offset = text.indexOf(denseExcerpt);
-    if (offset >= 0) {
-      const start = Math.max(0, offset - 120);
-      ranges.push({ start, end: Math.min(text.length, start + 800) });
+  const matched = matchedRanges.length
+    ? matchedRanges
+    : denseExcerpt && text.includes(denseExcerpt)
+      ? [
+          {
+            start: text.indexOf(denseExcerpt),
+            end: text.indexOf(denseExcerpt) + denseExcerpt.length,
+          },
+        ]
+      : [];
+  const windows = matched.flatMap((range) => {
+    const start = Math.max(0, range.start - 120),
+      end = Math.min(text.length, range.end + 120);
+    const result: { start: number; end: number }[] = [];
+    for (let offset = start; offset < end; offset += 640) {
+      result.push({ start: offset, end: Math.min(end, offset + 800) });
+      if (offset + 800 >= end) break;
     }
-  }
+    return result;
+  });
+  // Cover the whole match when it fits. For oversized matches, spread a bounded
+  // sample across the range including its tail rather than taking its prefix.
+  const selected =
+    windows.length <= 5
+      ? windows
+      : Array.from(
+          { length: 5 },
+          (_, i) => windows[Math.round((i * (windows.length - 1)) / 4)]!,
+        );
+  ranges.push(
+    ...selected.filter(
+      (r, i, all) =>
+        all.findIndex((x) => x.start === r.start && x.end === r.end) === i,
+    ),
+  );
   const start = Math.max(0, text.indexOf(lexical));
   const candidate = { start, end: Math.min(text.length, start + 800) };
   if (
