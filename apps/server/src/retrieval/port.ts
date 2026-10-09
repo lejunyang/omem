@@ -62,6 +62,7 @@ export type RetrievalHit = {
   };
   /** Optional local judgment, separate from the uncalibrated retrieval score. */
   assessment?: {
+    advisoryOnly?: boolean;
     model: string;
     priority: number;
     answers: Record<

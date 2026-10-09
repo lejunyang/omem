@@ -38,7 +38,7 @@ omem setup
 
 决策模型默认预选 2B；可以只选 9B，也可以按需要选任意组合。auto 在已准备的 0.8B/2B/4B 中按机器余量选择，不使用 9B，也不会临时下载缺少的模型。固定模式可选择本次准备或已发现的模型，实际可用性仍需校验和调用检查。
 
-低内存机器可在向导勾选 0.8B，再选择 auto 或固定 0.8b；全部资源准备成功后保存设置，再重启服务。0.8B 暂按 4 GiB 可用内存准入，2B/4B 分别为 8/14 GiB；这些是运行预算，权重体积不能代替实际内存。降级立即生效，升级至少间隔五分钟。0.8B 只建议阅读顺序，不按评分删除材料；不足 4 GiB 或资源缺失时保留原检索并交给常规 Agent。模型判断仍不能批准操作或覆盖记忆。
+低内存机器可在向导勾选 0.8B，再选择 auto 或固定 0.8b；全部资源准备成功后保存设置，再重启服务。0.8B 暂按 4 GiB 可用内存准入，2B/4B 分别为 8/14 GiB；这些是运行预算，权重体积不能代替实际内存。降级立即生效，升级至少间隔五分钟。0.8B 只附评分建议，保留原顺序和全部材料；不足 4 GiB 或资源缺失时保留原检索并交给常规 Agent。模型判断仍不能批准操作或覆盖记忆。
 
 每个子选项都选好后，向导显示下载和配置计划。选择「返回调整」会保留刚才的选择；「退出」不安装或修改配置。确认执行后依次准备并校验资源，全部成功才保存所选设置。只准备会保留已有开关；首次没有配置文件时，成功向导仍创建默认配置。安装中断保留已完成资源，不保存新的功能设置。
 
@@ -119,7 +119,7 @@ JSON 的 `optional.checks` 每项包含 `enabled`、`installed` 与 `state`。�
 | `omem setup documents --json` | Python 3.12.14、uv 0.12.23 与锁定的 Docling 2.133.0 依赖 |
 | `omem setup document-models --json` | 固定修订的 Docling Heron / TableFormer |
 | `omem setup embedding --json` | 固定修订的 BGE-small-zh-v1.5 量化 ONNX，别名 memory-zh |
-| `omem setup decisions --model 0.8b --json` | StartLux 运行环境和 0.8B 权重；低内存阅读顺序建议 |
+| `omem setup decisions --model 0.8b --json` | StartLux 运行环境和 0.8B 权重；低内存材料评分建议 |
 | `omem setup decisions --model 2b --json` | StartLux 运行环境和 2B 权重；不写 --model 时也只准备 2B |
 | `omem setup decisions --model 4b --json` | StartLux 运行环境和 4B 权重 |
 | `omem setup decisions --model 9b --json` | StartLux 运行环境和 9B 权重；仍需明确配置为 9b 才使用 |
