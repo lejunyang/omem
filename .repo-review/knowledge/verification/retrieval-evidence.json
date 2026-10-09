@@ -19,7 +19,7 @@
           "alternatives": [
             {
               "path": "apps/server/src/retrieval/unified.ts",
-              "needle": "windows = embeddingWindows(unit.text)"
+              "needle": ": embeddingWindows(unit.text),"
             },
             {
               "path": "apps/server/src/retrieval/semantic.ts",
