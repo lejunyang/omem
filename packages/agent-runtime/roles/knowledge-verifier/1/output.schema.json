@@ -96,11 +96,11 @@
             }
           },
           "rangeRepair": {
-            "description": "Only for needs_revision after completing full review: all other facts, premises and reader goals passed, and every blocking issue is solely an existing material citation's line range. Provide exact replacement ranges. Omit when ranges are unknown or prose, citation relations, new citations or reviewSources need changes. During citation_ranges review, preserve the host-supplied full-review baseline; revoke range repair if a substantive issue is discovered.",
+            "description": "Only after full review: remaining blocking issues are exact line ranges of existing material citations or reviewSources. Keep prose, sources, reasons and relations unchanged. Identify background dependencies by sectionKey, key and previousStartLine/previousEndLine. Unknown ranges or substantive changes require normal revision.",
             "type": "object",
             "properties": {
               "citations": {
-                "minItems": 1,
+                "minItems": 0,
                 "maxItems": 160,
                 "type": "array",
                 "items": {
@@ -128,12 +128,74 @@
                   ],
                   "additionalProperties": false
                 }
+              },
+              "reviewSources": {
+                "type": "array",
+                "maxItems": 160,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "sectionKey": {
+                      "type": "string",
+                      "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,59}$"
+                    },
+                    "key": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "previousStartLine": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "previousEndLine": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "startLine": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "endLine": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "sectionKey",
+                    "key",
+                    "previousStartLine",
+                    "previousEndLine",
+                    "startLine",
+                    "endLine"
+                  ],
+                  "additionalProperties": false
+                }
               }
             },
-            "required": [
-              "citations"
-            ],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "anyOf": [
+              {
+                "required": [
+                  "citations"
+                ],
+                "properties": {
+                  "citations": {
+                    "minItems": 1
+                  }
+                }
+              },
+              {
+                "required": [
+                  "reviewSources"
+                ],
+                "properties": {
+                  "reviewSources": {
+                    "minItems": 1
+                  }
+                }
+              }
+            ]
           }
         },
         "required": [

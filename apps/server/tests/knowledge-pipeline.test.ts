@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.js";
 import { KnowledgeRepository, bindKnowledgeQuotes } from "../src/knowledge/repository.js";
 import { KnowledgePipeline, analystFor } from "../src/knowledge/pipeline.js";
+import { repairCitationRanges } from "../src/knowledge/citation-repair.js";
 import { RoleBundleRegistry } from "../src/agent-runtime/bundles.js";
 import { RoleRuntimeGateway } from "../src/agent-runtime/gateway.js";
 import { profileSchema } from "../../../packages/contracts/src/index.js";
@@ -95,6 +96,43 @@ it("applies exact citation corrections without rewriting and independently check
   expect(article.document.questions[0]!.question).toBe("Who reviews?");
   expect(article.review.trace.scope).toBe("citation_ranges");
   expect((article.review.trace.rounds as {mode:string}[]).map(r=>r.mode)).toEqual(["full","citation_ranges"]);
+});
+
+it.each([false, true])("repairs background ranges with citations=%s without rewriting unrelated sections", async combined => {
+  const f = setup();
+  f.capture("Introduction\nThe release requires a review.\nOther background.");
+  const fallback = f.run.getMockImplementation()!;
+  f.run.mockImplementation(async input => {
+    const out = await fallback({...input, validateOutput: undefined});
+    if (input.roleId === "knowledge-verifier") {
+      const scope = input.context.task!.reviewScope as {mode:string;changedSections:Record<string,string[]>};
+      const scoped = scope.mode === "citation_ranges";
+      if (scoped) {
+        expect(scope.changedSections["manual:example"]).toEqual(["premise"]);
+        expect((input.context.task!.drafts as KnowledgeBatch["documents"])[0].sections.map(s=>s.key)).toEqual(combined ? ["behavior","premise"] : ["premise"]);
+      }
+      out.result = {schema_version:1,verdicts:[{documentKey:"manual:example",verdict:scoped?"accepted":"needs_revision",issues:scoped?[]:["Read the review requirement"],questions:[],
+        ...(!scoped ? {rangeRepair:{...(combined?{citations:[{key:"c1",startLine:2,endLine:2}]}:{}),reviewSources:[{sectionKey:"premise",key:"manual:example",previousStartLine:1,previousEndLine:1,startLine:2,endLine:2}]}} : {})}]};
+    } else {
+      const document = (out.result as KnowledgeBatch).documents[0];
+      document.sections.push({key:"premise",title:"Review premise",body:"A review is required.[[c1]]",reviewSources:[{key:"manual:example",startLine:1,endLine:1,reason:"Review prerequisite"}]}, {key:"unrelated",title:"Background",body:"Other background.[[c2]]"});
+      document.citations.push({...structuredClone(document.citations[0]),key:"c2",target:{kind:"material",key:"manual:example",startLine:3,endLine:3}});
+      const materialMap = new Map(f.repository.materials().map(m=>[m.key,m]));
+      const repair = {reviewSources:[{sectionKey:"premise",key:"manual:example",previousStartLine:1,previousEndLine:1,startLine:2,endLine:2}]};
+      expect(repairCitationRanges(document,{reviewSources:[{...repair.reviewSources[0],previousStartLine:3,previousEndLine:3}]},materialMap)).toBeNull();
+      expect(repairCitationRanges(document,{reviewSources:[...repair.reviewSources,...repair.reviewSources]},materialMap)).toBeNull();
+      const ambiguous = structuredClone(document); ambiguous.sections[1].reviewSources!.push({...ambiguous.sections[1].reviewSources![0]});
+      expect(repairCitationRanges(ambiguous,repair,materialMap)).toBeNull();
+    }
+    input.validateOutput?.(out.result); return out;
+  });
+  expect((await f.pipeline.analyze(f.repository.materials())).failures).toEqual([]);
+  expect(f.run.mock.calls.map(([input])=>input.roleId)).toEqual(["material-analyst","knowledge-verifier","knowledge-verifier"]);
+  const article = f.repository.get("manual:example")!;
+  expect(article.document.sections.map(s=>s.key)).toEqual(["behavior","premise","unrelated"]);
+  expect(article.document.sections[1].reviewSources).toEqual([{key:"manual:example",startLine:2,endLine:2,reason:"Review prerequisite"}]);
+  expect(article.document.sections[1].body).toBe("A review is required.[[c1]]");
+  expect((article.review.trace.rounds as {reviewSourceRepairs?:unknown[]}[])[1].reviewSourceRepairs).toHaveLength(1);
 });
 
 it("returns to writing and full review when citation followup finds a substantive error", async () => {
