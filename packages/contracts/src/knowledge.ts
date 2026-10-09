@@ -58,9 +58,14 @@ export const knowledgeReviewSchema = z.object({
       citations: z.array(z.object({
         key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,39}$/),
         startLine: z.number().int().positive(), endLine: z.number().int().positive(),
-      }).strict().refine(range => range.endLine >= range.startLine, { message: "Citation range end must be at or after its start", path: ["endLine"] })).min(1).max(160)
-        .refine(ranges => new Set(ranges.map(range => range.key)).size === ranges.length, "Citation repair keys must be unique"),
-    }).strict().optional().describe("Only for needs_revision after completing full review: all other facts, premises and reader goals passed, and every blocking issue is solely an existing material citation's line range. Provide exact replacement ranges. Omit when ranges are unknown or prose, citation relations, new citations or reviewSources need changes. During citation_ranges review, preserve the host-supplied full-review baseline; revoke range repair if a substantive issue is discovered."),
+      }).strict().refine(range => range.endLine >= range.startLine, { message: "Citation range end must be at or after its start", path: ["endLine"] })).max(160)
+        .refine(ranges => new Set(ranges.map(range => range.key)).size === ranges.length, "Citation repair keys must be unique").optional(),
+      reviewSources: z.array(z.object({
+        sectionKey: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,59}$/), key,
+        previousStartLine: z.number().int().positive(), previousEndLine: z.number().int().positive(),
+        startLine: z.number().int().positive(), endLine: z.number().int().positive(),
+      }).strict().refine(range => range.endLine >= range.startLine && range.previousEndLine >= range.previousStartLine, "Invalid review source range")).max(160).optional(),
+    }).strict().refine(repair => !!(repair.citations?.length || repair.reviewSources?.length), "Provide at least one range correction").optional().describe("Only for needs_revision after full review: all other facts, premises and reader goals passed; every blocking issue is solely an existing material citation or reviewSources line range. Identify existing reviewSources by sectionKey, key and previousStartLine/previousEndLine. Sources, reasons, relations and prose must stay unchanged. Omit for unknown ranges, new dependencies or substantive changes; revoke range repair if a substantive issue is discovered."),
   }).strict().refine(verdict => !verdict.rangeRepair || verdict.verdict === "needs_revision", { message: "rangeRepair is only valid for needs_revision", path: ["rangeRepair"] })).min(1).max(16),
 }).strict();
 

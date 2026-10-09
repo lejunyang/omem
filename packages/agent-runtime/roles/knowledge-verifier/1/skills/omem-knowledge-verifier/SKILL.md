@@ -44,8 +44,8 @@ task.composition 是调查者提出的组织方式，不是已经通过的读者
 
 ## 只需修改引用范围时
 
-全文复核已经完成，且其余事实、关键前提和阅读目的均通过时，若所有 blocking issues 仅来自已有 material 引用的行范围，在 needs_revision 中提供 rangeRepair.citations。每项使用草稿已有 citation key，填入亲自补读确认的 startLine/endLine；范围为正整数、endLine 不小于 startLine，key 唯一。issues 仍说明对应论断和原范围的问题，不能用 rangeRepair 掩盖正文错误。宿主会直接替换范围并重新绑定 quote，无须再调用作者生成全文。
+全文复核已经完成，且其余事实、关键前提和阅读目的均通过时，若所有 blocking issues 仅来自已有 material 引用或章节 reviewSources 的行范围，在 needs_revision 中提供 rangeRepair。正文引用填 citations；背景依赖填 reviewSources，以 sectionKey、key、previousStartLine、previousEndLine 唯一定位已有项，再填新 startLine/endLine。每项使用草稿已有 citation key，填入亲自补读确认的 startLine/endLine；范围为正整数、endLine 不小于 startLine，key 唯一。issues 仍说明对应论断和原范围的问题，不能用 rangeRepair 掩盖正文错误。宿主会直接替换范围并重新绑定 quote，无须再调用作者生成全文。
 
-rangeRepair 只修已有 material 引用的行号。引用的原件和关系保持不变，不能借此增删引用、修改正文或调整 reviewSources。正确范围尚未找到，或者论断本身需要限定、改写、删除时，省略该字段，给出普通返修意见。
+rangeRepair 只修已有 material 引用和章节背景依赖的行号。引用的原件和关系保持不变，不能借此增删引用、修改正文或改变背景依赖的来源、原因、前提。正确范围尚未找到，或者论断本身需要限定、改写、删除时，省略该字段，给出普通返修意见。
 
-当 task.reviewScope.mode 为 citation_ranges，前次全文检查的其余结论由宿主验证后提供。本次独立补查指定引用与相关不变论断是否匹配，并核对原件中的必要上下文；使用现有搜索和读取工具，按需扩大补读范围。不要重新执行全文试读、文风检查或无关章节调查。若发现新的事实错误、遗漏关键前提或页面目的没有完成，返回普通 needs_revision，说明需要修正的句子与依据，不提供 rangeRepair；局部资格随即撤销。仅剩范围问题且能给出准确替代范围时，可再次提供 rangeRepair。accepted 表示这次范围补查通过，全文检查的来源由宿主保留，不能把本次补查描述成重新完成了全文复核。
+当 task.reviewScope.mode 为 citation_ranges，前次全文检查的其余结论由宿主验证后提供。本次独立补查指定引用、背景依赖与相关不变论断是否匹配，并核对原件中的必要上下文；使用现有搜索和读取工具，按需扩大补读范围。不要重新执行全文试读、文风检查或无关章节调查。若发现新的事实错误、遗漏关键前提或页面目的没有完成，返回普通 needs_revision，说明需要修正的句子与依据，不提供 rangeRepair；局部资格随即撤销。仅剩范围问题且能给出准确替代范围时，可再次提供 rangeRepair。accepted 表示这次范围补查通过，全文检查的来源由宿主保留，不能把本次补查描述成重新完成了全文复核。

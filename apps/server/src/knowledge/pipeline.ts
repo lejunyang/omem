@@ -146,7 +146,7 @@ export class KnowledgePipeline {
       trusted_context: { workspace_id: "personal", project_id: null, owner_id: "owner", observed_at: new Date().toISOString(), timezone: "Asia/Shanghai",
         actor_binding: { id: null, verified_by: null }, source_kind: (offers[0]?.material.namespace ?? "file") as ContextManifest["trusted_context"]["source_kind"], is_forwarded: offers.some(o => o.material.forwarded), producer_kind: "original", source_epoch: 1, project_trusted: false },
       materials, related_memories: [], confirmed_corrections: [],
-      task: { ...task, nativeResearch: this.nativeResearch,
+      task: { ...task, terminology: { source: "原始材料类别，包含文档、代码、消息等；source 不等于源码。代码是材料子类型，需结合 metadata/namespace 和实际内容判断。", derived: "整理出的派生解释，不能作为第二份独立事实。" }, nativeResearch: this.nativeResearch,
         ...(this.nativeResearch ? { materialCatalog: "catalog.json", articleCatalog: "knowledge.json" } : { articles: articles.map(a => ({ ...a.document, revision: a.revision, provenance: "derived knowledge, not independent evidence" })) }),
         allowedMaterials: (this.nativeResearch ? offers.slice(0, 1) : offers).map(o => ({ key: o.material.key, title: o.material.title, ranges: o.ranges, image: !!o.material.images.length })) },
     };
@@ -239,8 +239,9 @@ export class KnowledgePipeline {
     const published: KnowledgeArticle[] = [];
     const attempts = publication?.reading.workflow ? 2 : 4;
     type Verdict = ReturnType<typeof knowledgeReviewSchema.parse>["verdicts"][number];
-    let rangePass: { batch: ReturnType<typeof knowledgeBatchSchema.parse>; write: RunResult; previousReview: RunResult; verdicts: Verdict[]; changed: Record<string, string[]> } | undefined;
-    const reviewRounds: { jobId: string; runId: string; mode: "full" | "citation_ranges"; previousJobId?: string; rangeRepairs?: {documentKey:string;key:string;startLine:number;endLine:number}[]; drafts: {key:string;digest:string}[] }[] = [];
+    type BackgroundRepair = NonNullable<NonNullable<Verdict["rangeRepair"]>["reviewSources"]>[number];
+    let rangePass: { batch: ReturnType<typeof knowledgeBatchSchema.parse>; write: RunResult; previousReview: RunResult; verdicts: Verdict[]; changed: Record<string, string[]>; changedSections: Record<string, string[]> } | undefined;
+    const reviewRounds: { jobId: string; runId: string; mode: "full" | "citation_ranges"; previousJobId?: string; rangeRepairs?: {documentKey:string;key:string;startLine:number;endLine:number}[]; reviewSourceRepairs?: (BackgroundRepair & {documentKey:string})[]; drafts: {key:string;digest:string}[] }[] = [];
     const reviewReadKeys = new Set<string>();
     const checkReading = () => {
       if (publication && stableDigest(this.repository.pages().find(p => p.key === publication.reading.key)?.plan) !== stableDigest(publication.reading))
@@ -257,11 +258,11 @@ export class KnowledgePipeline {
       // Explicit placement is user/page-plan data, not inferred from repository paths.
       if (publication?.reading.topicPath) for (const document of batch.documents) document.topicPath = publication.reading.topicPath;
       checkReading();
-      const reviewScope = scoped ? { mode: "citation_ranges" as const, changedCitations: scoped.changed,
+      const reviewScope = scoped ? { mode: "citation_ranges" as const, changedCitations: scoped.changed, changedSections: scoped.changedSections,
         previousReview: {jobId:scoped.previousReview.jobId,runId:scoped.previousReview.trace.runId,at:scoped.previousReview.at},
-        previousVerdicts: scoped.verdicts, instruction: "前次独立复核已完成全文及读者目的检查，只留下列出的引用范围问题。宿主仅调整这些固定行范围并重新提取 quote，正文、结构与来源均未改变。task.drafts 是相应章节的摘录；独立补读原件，判断新范围是否支持不变论断，不重审无关章节。发现事实错误或决定性前提遗漏时返回普通 needs_revision，撤销局部资格。" }
+        previousVerdicts: scoped.verdicts, instruction: "前次独立复核已完成全文及读者目的检查，只留下列出的引用或已有背景依赖范围问题。宿主仅调整这些固定行范围并重新提取 quote，正文、结构、来源与依赖原因均未改变。task.drafts 是相应章节的摘录；独立补读原件，判断新范围是否支持不变论断和背景前提，不重审无关章节。发现事实错误或决定性前提遗漏时返回普通 needs_revision，撤销局部资格。" }
         : {mode:"full" as const};
-      const review = await this.runRole("knowledge-verifier", offers, articles, { targetKeys: remaining.map(t => t.key), drafts: batch.documents.map(d=>scoped?citationReviewExcerpt(d,scoped.changed[d.key]!):d), targets: remaining, reading: publication?.reading, composition, reviewScope,
+      const review = await this.runRole("knowledge-verifier", offers, articles, { targetKeys: remaining.map(t => t.key), drafts: batch.documents.map(d=>scoped?citationReviewExcerpt(d,scoped.changed[d.key]!,scoped.changedSections[d.key]!):d), targets: remaining, reading: publication?.reading, composition, reviewScope,
         ...(!scoped && maintenance ? { maintenance, instruction: "独立核查本次变化及受影响的解释，试用完整新稿回答阅读目标。检查是否沿用了过时前提，或删掉了仍必要的步骤与条件。旧文和作者结论都不是事实来源；自己补读当前原件。允许根据新目标调整结构，不要求逐字保留旧文。" } : {}),
       }, out => {
         const r = knowledgeReviewSchema.parse(out);
@@ -270,12 +271,13 @@ export class KnowledgePipeline {
           const document = batch.documents.find(d=>d.key===verdict.documentKey)!;
           const corrected = repairCitationRanges(document,verdict.rangeRepair,new Map(offers.map(o=>[o.material.key,o.material])));
           if (!corrected)
-            throw Error("rangeRepair 必须给出已有材料引用的不同且有效行范围；需要新增引用或修改正文时不要填写它。");
+            throw Error("rangeRepair 必须给出已有材料引用或背景依赖的不同且有效行范围；旧范围须唯一匹配。新增依赖或修改正文、原因时不要填写它。");
           this.checkBatch({schema_version:1,documents:[corrected]},[remaining.find(t=>t.key===verdict.documentKey)!],offers,articles);
         }
       });
       reviewRounds.push({jobId:review.jobId,runId:review.trace.runId,mode:reviewScope.mode,...(scoped?{previousJobId:scoped.previousReview.jobId,
-        rangeRepairs:scoped.verdicts.flatMap(v=>v.rangeRepair!.citations.map(c=>({documentKey:v.documentKey,...c})))}:{}),drafts:batch.documents.map(d=>({key:d.key,digest:stableDigest(d)}))});
+        rangeRepairs:scoped.verdicts.flatMap(v=>(v.rangeRepair!.citations ?? []).map(c=>({documentKey:v.documentKey,...c}))),
+        reviewSourceRepairs:scoped.verdicts.flatMap(v=>(v.rangeRepair!.reviewSources ?? []).map(c=>({documentKey:v.documentKey,...c})))}:{}),drafts:batch.documents.map(d=>({key:d.key,digest:stableDigest(d)}))});
       for (const event of (review.trace.usage.activity ?? []) as {reads?:string[]}[]) for (const key of event.reads ?? []) reviewReadKeys.add(key);
       const verdicts = knowledgeReviewSchema.parse(review.result).verdicts.map(v=>scoped?{...v,questions:[...scoped.verdicts.find(p=>p.documentKey===v.documentKey)!.questions,...v.questions].filter((q,i,all)=>all.findIndex(x=>x.question===q.question)===i).slice(0,20)}:v);
       const rejected = verdicts.filter(v => v.verdict !== "accepted");
@@ -311,7 +313,9 @@ export class KnowledgePipeline {
         const materials = new Map(offers.map(o=>[o.material.key,o.material]));
         const corrected = batch.documents.filter(d=>remaining.some(t=>t.key===d.key)).map(d=>repairCitationRanges(d,rejected.find(v=>v.documentKey===d.key)!.rangeRepair!,materials)!);
         const repaired = this.checkBatch({schema_version:1,documents:corrected},remaining,offers,articles);
-        rangePass = {batch:repaired,write,previousReview:review,verdicts:rejected,changed:Object.fromEntries(rejected.map(v=>[v.documentKey,v.rangeRepair!.citations.map(c=>c.key)]))};
+        rangePass = {batch:repaired,write,previousReview:review,verdicts:rejected,
+          changed:Object.fromEntries(rejected.map(v=>[v.documentKey,(v.rangeRepair!.citations ?? []).map(c=>c.key)])),
+          changedSections:Object.fromEntries(rejected.map(v=>[v.documentKey,[...new Set((v.rangeRepair!.reviewSources ?? []).map(c=>c.sectionKey))]]))};
         this.options.log?.(`引用范围已调整，下一轮仅独立补查：${remaining.map(t=>t.title).join("、")}`);
       }
     }
