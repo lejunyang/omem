@@ -58,6 +58,8 @@
 osdk run assistant:compare --questions /absolute/path/questions.json --review --variant research --context both
 ```
 
+对照沿用 `config/review-code-model.json`（或 `REVIEW_CODE_MODEL_CONFIG` 指定文件）的连接与生命周期配置：`idleTimeoutMs` 是无活动超时，兼容字段为 `timeoutMs`；`maxDurationMs` 仅在明确设置时限制单次 Agent 总时长。请求的模型与思考强度仍由任务参数指定并动态核对。实际超时配置写入对照报告；工具持续活动的调查不会仅因经过空闲超时时长而结束。
+
 报告记录为模型准备的初始全文、来源范围、后续调查、复核与最终回答。常规调查在提示里收到定位，全文在 `question-context.json` 和可读取的原件里；先读阶段才会把全文直接放入提示。因此还要检查模型是否实际补读，不能把“已提供”当成“已理解”。两组都仍执行初始搜索，耗时单独列出，不能把指定原文组当成已经优化了生产搜索的速度。人工所选材料也可能不足；先核对必要事实，再比较答案是否直接回应、保留条件、给出需要的操作。只有实际结果才能区分初始召回缺口、补读不足、重复调查和表达失焦，不能以两组都成功提交代表质量通过。
 
 ## 当前对照发现
