@@ -94,6 +94,8 @@ omem ask '解释实现过程' --research
 
 重新处理使用 `omem reprocess run <对象> <ID> --action <方式> --replace --wait`。方式分为解析原件、重新理解、重写用途、读取远端新版和重新写作；省略 `--replace` 保留处理中的旧成果。`reprocess delete` 删除派生成果，保留原件，已人工调整的事项也保留。`list/show/retry` 跟踪或重试实际处理阶段，排队不代表完成。步骤与失败语义见[原件与重新处理](../skills/omem-cli/references/reprocessing.md)。
 
+保留既有记忆并按新版重核验时，启用学习 Agent，使用 `omem reprocess run source SOURCE_ID --action refresh --wait`，省略 `--replace`；网页需要取消默认勾选的删除旧成果选项。学习关闭时读取新版只更新原文。重新处理作业完成与记忆刷新 `applied` 分开核对，当前刷新记录通过 `GET /api/memory-refreshes` 查询；操作前提与失败处理见同一使用指引。
+
 日志默认 `info`，可用 `omem config logging debug` 调整，重启服务后生效；`OMEM_LOG_LEVEL` 优先。`omem service logs --lines 100 --level warn --job JOB_ID` 按等级和任务查询脱敏记录，也支持 `--source` 与 `--message`。后台 PM2 日志按大小和日期轮换，默认每文件 10 MiB、保留 7 份归档，详见[日志设置](../skills/omem-cli/references/logging.md)。
 
 ## 写作、记忆与事项
