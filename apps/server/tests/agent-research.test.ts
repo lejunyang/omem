@@ -197,6 +197,8 @@ it("lets a research agent request caller candidates and read their fixed enclosi
       ],
     });
     const repository = new KnowledgeRepository(store);
+    const material = repository.materials()[0]!;
+    store.descriptions.save(material.revisionId,{role:"implementation",status:"current",summary:"配送结账",topics:["配送"],scope:null,validFrom:null,validUntil:null,basis:"当前原件",concepts:[{label:"完成配送结账",aliases:["checkout"],startLine:2,endLine:2}]},"model",0);
     const schema = z.object({ summary: z.string() });
     env = await prepareAgentResearch({
       repository,
@@ -252,6 +254,12 @@ it("lets a research agent request caller candidates and read their fixed enclosi
     expect(parentBody.text).toContain("function reserveParcel");
     expect(parentBody.text).toContain("function checkout");
     expect(parentBody.context.children).toContain(body.context.id);
+    const match = await client.callTool({name:"search_materials",arguments:{query:"完成配送结账",keys:["originals/shipping.ts"]}});
+    const matches = JSON.parse((match.content as {text:string}[])[0]!.text).hits;
+    const matched = matches.find((h:{matchedRanges?:unknown[]})=>h.matchedRanges?.length);
+    expect(matched.matchedRanges).toContainEqual({startLine:2,endLine:2});
+    const original = await client.callTool({name:"read_material",arguments:{key:matched.key,...matched.matchedRanges[0]}});
+    expect(JSON.stringify(original)).toContain("export function checkout() { return reserveParcel(); }");
     const unknown = await client.callTool({
       name: "search_materials",
       arguments: { query: "reserveParcel", keys: ["invented:shipping.ts"] },
