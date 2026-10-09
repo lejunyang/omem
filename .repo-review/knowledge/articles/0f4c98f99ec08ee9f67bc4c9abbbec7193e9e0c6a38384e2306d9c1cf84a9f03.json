@@ -1,10 +1,54 @@
 {
   "version": 1,
   "document": {
+    "requirement": {
+      "objective": "解释 UnifiedRetrieval 如何准备索引、执行混合召回、处理代码导航与降级，并把结果投影到旧版证据接口。",
+      "nonGoals": [
+        "不扩展到 UnifiedRetrieval 之外的检索组件实现。",
+        "不把教学示例描述为真实运行记录。"
+      ],
+      "criteria": [
+        {
+          "id": "pipeline_explained",
+          "description": "说明统一检索从候选生成、融合和重排到最终选择的完整路径。",
+          "status": "verified",
+          "evidence": [
+            "c4",
+            "c5",
+            "c6",
+            "c7",
+            "c8",
+            "c9"
+          ]
+        },
+        {
+          "id": "boundaries_explained",
+          "description": "准确说明资格过滤、导航快捷路径、降级行为和旧版证据接口的边界。",
+          "status": "verified",
+          "evidence": [
+            "c10",
+            "c11",
+            "c12",
+            "c13"
+          ]
+        },
+        {
+          "id": "indexing_explained",
+          "description": "说明检索单元同步、向量索引顺序和写入一致性保护。",
+          "status": "verified",
+          "evidence": [
+            "c1",
+            "c2",
+            "c3"
+          ]
+        }
+      ],
+      "actions": []
+    },
     "key": "omem:apps/server/src/retrieval/unified.ts",
-    "title": "统一检索的多路召回、重排与证据投影",
-    "summary": "UnifiedRetrieval 为读者与 Agent 提供同一套检索入口：先按查询范围过滤结构化检索单元，再组合词法与代码导航，以及材料概念和可选语义召回，经重排、用途加权与多样化后返回 RetrievalHit；旧处理器可把同一结果投影回不可变证据片段。模型不可用或排序失败时，流程会退回已有候选。",
-    "category": "服务端检索",
+    "title": "统一检索的混合召回、降级与结果选择",
+    "summary": "UnifiedRetrieval 先同步检索单元，再完成词面检索和代码导航，并召回正文及概念语义候选。后续经过 RRF 融合、可选重排与结果多样化，形成统一管线；同一实现也向旧处理器投影不可变证据片段，并在语义或排序组件不可用时保留可用检索路径。",
+    "category": "代码解析",
     "topicPath": [
       "软件开发",
       "omem",
@@ -14,162 +58,242 @@
     ],
     "sections": [
       {
-        "key": "role_and_call",
-        "title": "解决什么问题",
-        "body": "这个类把读者检索与 Agent 检索统一到 `RetrievalUnit` 上，同时保留向旧版证据接口投影的能力。构造时接入 SQLite、检索单元投影和代码导航；嵌入模型、交叉编码器及宿主排序器均为可选依赖，因此同一入口可以按部署能力逐级增强。参考 [[c1]]\n\n一条说明性调用可以写成 `search({ text: \"统一检索如何降级\", purpose: \"implementation\", limit: 5 })`。输入是 `SearchQuery`，输出是 `RetrievalHit[]`；`purpose` 影响最终偏好，`limit` 控制返回槽位。实际调用方不在本材料范围内，这里只解释公开 `search` 方法内部可确认的行为。"
+        "key": "purpose_and_index",
+        "title": "统一入口与索引准备",
+        "body": "## 解决的问题\n\n`UnifiedRetrieval` 是读者和 Agent 共用的检索入口。它继承关键词检索能力，在构造时接入 SQLite、检索单元投影与代码导航；嵌入模型与交叉编码重排器，以及主机排序函数都由外部注入，因此部署可以只启用词面检索，也可以逐步开启语义与决策层。旧版 source 接口继续使用同一批命中，再投影到不可变证据片段。参考 [[c1]]\n\n## 数据如何就绪\n\n后台任务先同步 `RetrievalProjection`，再分批补正文向量；正文完成后才补带材料描述的概念向量。每个单元按窗口嵌入，写入前在 `BEGIN IMMEDIATE` 锁内复查单元是否仍存在，防止维护过程替换材料后写入过期向量。只读模式不建索引，没有嵌入加载器时仍会同步词面检索单元。参考 [[c2]]、[[c3]]",
+        "reviewSources": [
+          {
+            "key": "omem:apps/server/src/retrieval/unified.ts",
+            "startLine": 63,
+            "endLine": 91,
+            "reason": "统一入口的依赖注入方式或旧 source 兼容定位变化时，需要复核本节。"
+          },
+          {
+            "key": "omem:apps/server/src/retrieval/unified.ts",
+            "startLine": 204,
+            "endLine": 301,
+            "reason": "向量索引顺序、批量策略或写锁一致性变化时，需要复核数据准备说明。"
+          }
+        ]
       },
       {
-        "key": "hybrid_pipeline",
-        "title": "从查询到结果的核心流程",
-        "body": "普通查询先同步投影，再生成 BM25、符号和材料概念候选。空查询或精确查找跳过语义分支；未加载嵌入模型时，已有候选仍可进入重排与选择。参考 [[c2]]\n\n```mermaid\nflowchart LR\n  Q[SearchQuery] --> F[范围与可见性过滤]\n  F --> R[词法、符号、概念与可选语义召回]\n  R --> U[RRF 融合]\n  U --> X[可选交叉编码器重排]\n  X --> H[可选宿主排序]\n  H --> O[用途加权、多样化并生成 RetrievalHit]\n```\n\n语义分支把查询限制为前 400 个字符，按余弦点积为每个检索单元保留最佳窗口，再用动态阈值和最多 100 个候选控制规模；异常时回退到词法侧候选。参考 [[c3]] 不同召回分数不能直接比较，所以融合只使用各分支名次，并保留已有的相关摘录。参考 [[c4]]\n\n交叉编码器只处理排序靠前的 40 个单元，把上下文与局部片段送入模型；相关度低于 0.1 的普通候选会被剔除，代码定义候选例外。随后可选宿主排序在已过滤的候选池上运行；抛错时回到内置 `finish`。参考 [[c5]]、[[c6]] 最终阶段先按用途和定义匹配调整优先级，再结合材料状态与适用性排序，并对同一来源和重复文本做限额，组装目标、引用、路由及来源信息。参考 [[c7]]、[[c8]]"
+        "key": "representative_search",
+        "title": "一条普通查询如何产生结果",
+        "body": "## 代表性调用\n\n以教学输入 `search({ text: \"统一检索如何降级\", purpose: \"implementation\", limit: 5 })` 为例。方法先同步检索单元并检查是否应走代码导航；普通查询随后产生 BM25、符号定义和材料概念候选。嵌入模型已加载时，查询文本最多取 400 个字符生成向量，再从每个单元保留余弦分数最高的正文窗口，同时尝试概念向量召回。参考 [[c4]]、[[c5]]\n\n```mermaid\nflowchart LR\n  Q[SearchQuery] --> A[资格过滤]\n  A --> B[词面/符号/概念/两类语义召回]\n  B --> C[RRF 融合]\n  C --> D[交叉编码器重排]\n  D --> E[主机排序与多样化]\n  E --> F[RetrievalHit]\n```\n\n各路分数尺度不同，`fuse` 只按分支内名次累加倒数排名，并合并命中路线；语义正文窗口不会被同单元的符号摘要覆盖。随后，交叉编码器最多处理 40 个单元的候选段落，以 70% 重排相关性和 30% 归一化检索分合成新分数。可选的 `rank` 在最终阅读名额截断前处理候选池，其容量上限为 `max(q.limit ?? 20, 40)`；已有候选不足该上限时，池的实际数量会更少。排序后按来源和知识章节做多样化，并去除重复文本。最终返回不超过 5 条结果，其中包含目标位置和来源引用，并保留命中路线及可选重排信息。参考 [[c6]]、[[c7]]、[[c8]]、[[c9]]",
+        "reviewSources": [
+          {
+            "key": "omem:apps/server/src/retrieval/unified.ts",
+            "startLine": 651,
+            "endLine": 784,
+            "reason": "召回分支、语义阈值或降级控制流变化时，需要复核代表性调用。"
+          },
+          {
+            "key": "omem:apps/server/src/retrieval/unified.ts",
+            "startLine": 785,
+            "endLine": 932,
+            "reason": "交叉编码器或主机排序选择策略变化时，需要复核排序阶段。"
+          },
+          {
+            "key": "omem:apps/server/src/retrieval/unified.ts",
+            "startLine": 933,
+            "endLine": 1066,
+            "reason": "最终优先级和 RetrievalHit 字段变化时，需要复核输出说明。"
+          }
+        ]
       },
       {
-        "key": "boundaries_and_relations",
-        "title": "过滤边界、代码导航与兼容接口",
-        "body": "候选会按查询给出的角色、有效期、种类、主题路径、可见性和时间范围接受检查；任务状态检查只在 `purpose=\"follow-up\"` 且候选为 task 时启用，只保留 open 或 waiting，项目范围检查则只在查询同时给出 `project_id`、`project_trusted=true` 且候选目标为 memory 时启用，并仅在该 memory 的 `scope.project_id` 是字符串且与查询值不同时排除。材料角色与历史状态通常只改变排序先验；显式角色筛选或背景检索不会套用这组默认降权。参考 [[c9]]\n\n代码查询有独立短路：显式 `codeIntent` 直接选择定义或调用者候选；自然语言被识别为“查调用者”时，只有找到 AST 匹配才短路，否则继续普通召回。调用点结果优先选择最小包围操作，并标记为候选，因此它用于导航，不等同于类型解析后的完整调用图。参考 [[c10]]\n\n旧版 `searchSources` 只检索源码，并把结构化命中的引用恢复为不可变片段。实现会遍历每个结构化命中的 `references`，按每个 reference 选择至多一个尚未使用且可见的片段；一个命中包含多个 reference 时，可以投影出多个 `SourceCandidate`。片段按结果正文包含度和查询词命中数排序，最后生成 `SourceCandidate`；异步版本则复用完整统一检索。参考 [[c11]]"
+        "key": "filters_and_fallbacks",
+        "title": "范围约束、快捷路径与降级边界",
+        "body": "## 查询边界\n\n候选首先受材料角色和生效时间约束；follow-up 查询还会排除非 open、waiting 状态的 task。受信项目查询只对 memory 候选执行项目 scope 检查：仅当 `q.project_id`、`q.project_trusted` 同时成立且候选目标为 `memory` 时才读取 scope，并且只在 scope 中存在不同的 `project_id` 时排除该候选。这项检查不会直接约束 source、knowledge 或 task 候选。随后，候选按类型和主题前缀过滤，并检查可见性及时间范围。材料角色和历史状态还会形成适用性权重；该权重影响导航顺序，不会把未知来源排除。读者若要改变访问范围，应按候选类型选择 `SearchQuery` 的筛选条件，不能把 `project_id` 当作所有候选的通用范围条件；若要调整计划、研究或历史材料的优先级，入口在 `applicability`。参考 [[c10]]、[[c11]]\n\n显式 `codeIntent` 会绕过普通混合召回：定义请求查 AST 投影出的标题，调用者请求先做文本预筛，再由 `CodeNavigation.matches` 确认调用位置，并优先返回最小包围操作。根据自然语言推断出的调用者快捷路径只有实际命中时才生效，避免不支持的语言失去普通召回结果。参考 [[c12]]\n\n空查询和精确查询不做语义召回。嵌入模型尚未加载或查询嵌入失败时，流程退回词面、符号与概念候选；概念向量失败只清空该分支；重排器或主机排序异常则保留进入该阶段前的结果。最终 `finish` 仍会再次检查资格，并按查询目的和代码定义命中计算优先级，同时结合知识新鲜度与材料适用性。同步旧接口会先尝试显式或成功推断的 callers 导航；没有导航快捷路径时，才走词面与符号路线。异步旧接口可复用完整 `search`。两者在投影证据时，都会遍历每个结构化命中的每条引用，从该引用中选出一个可见且相关性最高的 fragment，最后再施加查询的总 `limit`。参考 [[c4]]、[[c5]]、[[c7]]、[[c8]]、[[c9]]、[[c13]]",
+        "reviewSources": [
+          {
+            "key": "omem:apps/server/src/retrieval/unified.ts",
+            "startLine": 302,
+            "endLine": 379,
+            "reason": "查询资格或材料适用性规则变化时，需要复核范围约束。"
+          },
+          {
+            "key": "omem:apps/server/src/retrieval/unified.ts",
+            "startLine": 389,
+            "endLine": 478,
+            "reason": "代码导航快捷路径或调用点确认方式变化时，需要复核本节。"
+          },
+          {
+            "key": "omem:apps/server/src/retrieval/unified.ts",
+            "startLine": 1067,
+            "endLine": 1120,
+            "reason": "旧 source 接口的同步、异步投影方式变化时，需要复核兼容说明。"
+          }
+        ]
       }
     ],
     "citations": [
       {
         "key": "c1",
-        "label": "统一检索器依赖",
-        "reason": "说明统一检索单元的定位、可选模型依赖以及投影和代码导航组件的初始化。",
-        "relation": "explains",
+        "label": "统一检索入口",
+        "reason": "支持统一入口、依赖注入以及旧 source 接口共用命中的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/unified.ts",
-          "startLine": 57,
-          "endLine": 84
+          "startLine": 63,
+          "endLine": 91
         },
         "quote": "/** All reader and Agent searches use these units. The legacy source port only\n * projects the same results back to immutable evidence for older processors. */\nexport class UnifiedRetrieval extends KeywordRetrieval {\n  private projection: RetrievalProjection;\n  private navigation: CodeNavigation;\n  private model?: Embe"
       },
       {
         "key": "c2",
-        "label": "主搜索入口",
-        "reason": "支持同步、导航短路、多路候选生成，以及空查询、精确查询和无语义模型时的分支行为。",
+        "label": "索引调度",
+        "reason": "支持无嵌入加载器、并发批次与只读模式下的索引行为。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/unified.ts",
-          "startLine": 570,
-          "endLine": 595
+          "startLine": 204,
+          "endLine": 221
+        },
+        "quote": "  indexBatch(limit = 8): Promise<number> {\n    if (!this.load) {\n      this.sync();\n      return Promise.resolve(0);\n    }\n    if (this.work) return this.work;\n    this.work = this.index(limit)\n      .catch((error) => {\n        this.error = String(error);\n        throw error;\n      })\n      .finally(() => (this.work = "
+      },
+      {
+        "key": "c3",
+        "label": "向量写入一致性",
+        "reason": "支持正文和概念窗口嵌入、锁内复查以及事务写入的说明。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/unified.ts",
+          "startLine": 222,
+          "endLine": 301
+        },
+        "quote": "    let rows = this.database\n      .prepare(\n        `SELECT u.* FROM retrieval_units u WHERE NOT EXISTS (\n      SELECT 1 FROM retrieval_unit_vector_heads h WHERE h.unit_id=u.id AND h.model_id=?) LIMIT ?`,\n      )\n      .all(this.modelId, limit);\n    const conceptIndex = !rows.length;\n    const vectorModelId = conceptI"
+      },
+      {
+        "key": "c4",
+        "label": "普通查询入口",
+        "reason": "支持同步、代码导航判断、基础召回以及无模型时降级的调用流程。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/unified.ts",
+          "startLine": 651,
+          "endLine": 678
         },
         "quote": "  async search(\n    q: SearchQuery,\n    observer?: RetrievalObserver,\n  ): Promise<RetrievalHit[]> {\n    await this.syncAsync();\n    const navigation = this.navigationCandidates(q);\n    if (navigation) {\n      const hits = this.finish(navigation.hits, navigation.query);\n      observer?.({ stage: \"final\", hits: structur"
       },
       {
-        "key": "c3",
-        "label": "语义召回与降级",
-        "reason": "支持查询截断、向量相似度、最佳窗口、候选阈值，以及语义异常后回退的说明。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/unified.ts",
-          "startLine": 596,
-          "endLine": 662
-        },
-        "quote": "    const dense = new Map<string, ScoredUnit>();\n    try {\n      const [raw] = await this.model.embed([q.text.slice(0, 400)], \"query\"),\n        vector = normalize(raw!);\n      const units = new Map(\n        this.database\n          .prepare(\"SELECT * FROM retrieval_units\")\n          .all()\n          .map(decodeUnit)\n   "
-      },
-      {
-        "key": "c4",
-        "label": "名次融合",
-        "reason": "说明各召回分支通过 RRF 按名次合并，并保留先前摘录和路由。",
-        "relation": "implements",
-        "target": {
-          "kind": "material",
-          "key": "omem:apps/server/src/retrieval/unified.ts",
-          "startLine": 430,
-          "endLine": 447
-        },
-        "quote": "  private fuse(branches: ScoredUnit[][]): ScoredUnit[] {\n    const fused = new Map<string, ScoredUnit>();\n    for (const branch of branches) {\n      branch.forEach((h, rank) => {\n        const prior = fused.get(h.unit.id);\n        fused.set(h.unit.id, {\n          ...h,\n          // The symbol route contributes navigati"
-      },
-      {
         "key": "c5",
-        "label": "交叉编码器重排",
-        "reason": "支持重排候选池、局部片段输入、分数校验、阈值筛选和失败保留原候选的说明。",
-        "relation": "calls",
+        "label": "语义召回与降级",
+        "reason": "支持查询向量、正文和概念语义召回、固定阈值及异常降级的说明。",
+        "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/unified.ts",
           "startLine": 679,
-          "endLine": 755
+          "endLine": 784
         },
-        "quote": "        const model = await this.rankingLoad,\n          pool = hits\n            .sort(\n              (a, b) =>\n                Number(b.routes.includes(\"code-symbol\")) -\n                  Number(a.routes.includes(\"code-symbol\")) || b.score - a.score,\n            )\n            .slice(0, 40);\n        const passages = poo"
+        "quote": "    const dense = new Map<string, ScoredUnit>();\n    const conceptDense = new Map<string, ScoredUnit>();\n    try {\n      const [raw] = await this.model.embed([q.text.slice(0, 400)], \"query\"),\n        vector = normalize(raw!);\n      const units = new Map(\n        this.database\n          .prepare(\"SELECT * FROM retrieval"
       },
       {
         "key": "c6",
-        "label": "宿主排序与回退",
-        "reason": "说明宿主排序只看到已完成内置筛选的候选池，并在异常时回到内置完成流程。",
+        "label": "倒数排名融合",
+        "reason": "支持跨评分尺度按分支名次融合、保留摘要和合并路线的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/unified.ts",
-          "startLine": 757,
-          "endLine": 809
+          "startLine": 479,
+          "endLine": 497
         },
-        "quote": "  private async select(\n    hits: ScoredUnit[],\n    q: SearchQuery,\n    observer?: RetrievalObserver,\n  ) {\n    const finish = () => {\n      const selected = this.finish(hits, q);\n      observer?.({ stage: \"final\", hits: structuredClone(selected) });\n      return selected;\n    };\n    if (!this.rank || !q.text.trim() ||"
+        "quote": "  private fuse(branches: ScoredUnit[][]): ScoredUnit[] {\n    const fused = new Map<string, ScoredUnit>();\n    for (const branch of branches) {\n      branch.forEach((h, rank) => {\n        const prior = fused.get(h.unit.id);\n        fused.set(h.unit.id, {\n          ...h,\n          // The symbol route contributes navigati"
       },
       {
         "key": "c7",
-        "label": "用途与优先级",
-        "reason": "支持按查询用途、代码定义、知识新鲜度和材料适用性调整最终排序的论断。",
+        "label": "交叉编码器重排",
+        "reason": "支持候选池规模、段落评分、分数合成以及异常保留原结果的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/unified.ts",
-          "startLine": 812,
-          "endLine": 864
+          "startLine": 785,
+          "endLine": 877
         },
-        "quote": "  private finish(hits: ScoredUnit[], q: SearchQuery): RetrievalHit[] {\n    const articles = new Map<string, KnowledgeArtifact>();\n    const preference = (u: RetrievalUnit) => {\n      switch (q.purpose) {\n        case \"concept\":\n          return u.kind === \"knowledge\" ? 1.35 : 1;\n        case \"implementation\":\n         "
+        "quote": "  private async rerank(\n    hits: ScoredUnit[],\n    q: SearchQuery,\n    observer?: RetrievalObserver,\n  ) {\n    if (this.loadReranker && hits.length) {\n      try {\n        this.rankingLoad ??= this.loadReranker()\n          .then((model) => (this.reranker = model))\n          .catch((error) => {\n            // Explicitly"
       },
       {
         "key": "c8",
-        "label": "结果去重与装配",
-        "reason": "说明来源限额、文本去重、摘要选择、知识引用恢复以及 RetrievalHit 字段装配。",
+        "label": "主机排序与多样化",
+        "reason": "支持最终名额截断前按容量上限构造候选池、调用可选排序、执行来源多样化和失败回退。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/unified.ts",
           "startLine": 878,
-          "endLine": 942
+          "endLine": 932
         },
-        "quote": "    for (const h of ordered) {\n      if (!this.eligible(h.unit, q)) continue;\n      const u = h.unit,\n        fingerprint = u.text.replace(/\\s+/g, \" \").trim();\n      const section =\n        u.target.kind === \"knowledge\"\n          ? `${u.target.revision}:${u.target.section}`\n          : null;\n      if (\n        q.divers"
+        "quote": "  private async select(\n    hits: ScoredUnit[],\n    q: SearchQuery,\n    observer?: RetrievalObserver,\n  ) {\n    const finish = () => {\n      const selected = this.finish(hits, q);\n      observer?.({ stage: \"final\", hits: structuredClone(selected) });\n      return selected;\n    };\n    if (!this.rank || !q.text.trim() ||"
       },
       {
         "key": "c9",
-        "label": "候选资格过滤",
-        "reason": "支持角色、时效、任务状态、项目范围、种类、主题、可见性和时间过滤的触发条件与边界说明。",
+        "label": "最终结果构造",
+        "reason": "支持查询目的优先级、再次资格检查、多样化和 RetrievalHit 输出字段。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/unified.ts",
-          "startLine": 253,
-          "endLine": 329
+          "startLine": 933,
+          "endLine": 1066
+        },
+        "quote": "  private finish(hits: ScoredUnit[], q: SearchQuery): RetrievalHit[] {\n    const articles = new Map<string, KnowledgeArtifact>();\n    const preference = (u: RetrievalUnit) => {\n      switch (q.purpose) {\n        case \"concept\":\n          return u.kind === \"knowledge\" ? 1.35 : 1;\n        case \"implementation\":\n         "
+      },
+      {
+        "key": "c10",
+        "label": "候选资格过滤",
+        "reason": "支持材料、受信项目 memory scope、类型、可见性与时间等查询边界。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/unified.ts",
+          "startLine": 302,
+          "endLine": 355
         },
         "quote": "  private eligible(u: RetrievalUnit, q: SearchQuery) {\n    const description = u.materialDescription?.description;\n    if (\n      q.materialRoles?.length &&\n      !q.materialRoles.includes(description?.role ?? \"unknown\")\n    )\n      return false;\n    if (q.effectiveAt && description) {\n      const at = Date.parse(q.eff"
       },
       {
-        "key": "c10",
-        "label": "代码导航候选",
-        "reason": "说明显式和推断式代码导航分支，以及调用点候选的最小包围操作和去重逻辑。",
+        "key": "c11",
+        "label": "材料适用性权重",
+        "reason": "支持角色与状态只影响排序权重、未知来源仍可进入候选的说明。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/unified.ts",
-          "startLine": 367,
-          "endLine": 428
+          "startLine": 356,
+          "endLine": 379
         },
-        "quote": "  private navigationCandidates(\n    q: SearchQuery,\n  ): { query: SearchQuery; hits: ScoredUnit[] } | null {\n    if (q.codeIntent)\n      return {\n        query: q,\n        hits: q.codeIntent === \"callers\" ? this.callers(q) : this.symbols(q),\n      };\n    if (querySymbols(q.text).length && asksForCallers(q.text)) {\n    "
+        "quote": "  private applicability(u: RetrievalUnit, q: SearchQuery) {\n    const d = u.materialDescription?.description;\n    if (!d || q.materialRoles?.length || q.purpose === \"background\") return 1;\n    // Navigation preferences, not truth decisions. Unknown sources remain fully\n    // eligible; explicit role/history searches re"
       },
       {
-        "key": "c11",
-        "label": "旧来源接口投影",
-        "reason": "支持同步与异步来源检索如何复用统一结果，并按每个 reference 至多选择一个可见证据片段生成 SourceCandidate。",
+        "key": "c12",
+        "label": "代码导航快捷路径",
+        "reason": "支持显式或推断代码意图、AST 调用位置确认及最小包围操作优先。",
         "relation": "implements",
         "target": {
           "kind": "material",
           "key": "omem:apps/server/src/retrieval/unified.ts",
-          "startLine": 946,
-          "endLine": 999
+          "startLine": 389,
+          "endLine": 478
+        },
+        "quote": "  private symbols(q: SearchQuery): ScoredUnit[] {\n    const names = querySymbols(q.text);\n    if (!names.length) return [];\n    const definition = \"lower(json_extract(heading_path, '$[#-1]'))\";\n    // AST-backed operation names have their own route. They must not depend on\n    // a whole-question BM25 rank surviving it"
+      },
+      {
+        "key": "c13",
+        "label": "旧证据接口投影",
+        "reason": "支持同步接口先尝试导航、无快捷路径时使用词面与符号路线，以及按每条引用选择证据片段并施加总 limit。",
+        "relation": "implements",
+        "target": {
+          "kind": "material",
+          "key": "omem:apps/server/src/retrieval/unified.ts",
+          "startLine": 1067,
+          "endLine": 1120
         },
         "quote": "  override searchSources(q: SearchQuery): SourceCandidate[] {\n    this.sync();\n    const sourceQuery = { ...q, kinds: [\"source\" as const] };\n    const navigation = this.navigationCandidates(sourceQuery);\n    if (navigation)\n      return this.sources(this.finish(navigation.hits, navigation.query), q);\n    const lexical "
       }
@@ -180,7 +304,7 @@
     {
       "kind": "material",
       "key": "omem:apps/server/src/retrieval/unified.ts",
-      "digest": "9945d923cdf3325cae6da73eb4312b6ed88c0e8c25e59c0b4d694becb731d8a9"
+      "digest": "f89624807c4a74b969c60063569557f8056d9acaa0de5ab69e2cd48368934c61"
     }
   ],
   "publication": {
@@ -189,25 +313,25 @@
   "investigation": [
     {
       "key": "omem:apps/server/src/retrieval/unified.ts",
-      "digest": "9945d923cdf3325cae6da73eb4312b6ed88c0e8c25e59c0b4d694becb731d8a9"
+      "digest": "f89624807c4a74b969c60063569557f8056d9acaa0de5ab69e2cd48368934c61"
     }
   ],
   "generation": {
     "model": "gpt-5.6-sol",
     "effort": "medium",
-    "at": "2026-10-09T06:21:46.165Z",
+    "at": "2026-10-09T17:17:33.818Z",
     "trace": {
       "profileId": "traex",
       "acpProvider": "traex",
-      "runId": "e8aef27a-e6a7-43ec-8b36-c6244a7bfbb0",
+      "runId": "08cfbe36-3ac9-4e02-ae2c-1bcfb14f1a26",
       "roleId": "knowledge-refresher",
       "roleVersion": "1",
       "bundleHash": "e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9",
-      "promptHash": "ae8f6c8ca08ddb0156f8915012427eb8c254554cb7d86cb24b9a0278006cbca6",
-      "contextHash": "f1978a4878d7975866742ef6d7ff187daa090f366e3bfd4fa481d5cae3c1410d",
+      "promptHash": "c856345e0ff76dd84bf319c7f23324035e257e0d3b9b132da99ee83e5330763e",
+      "contextHash": "6cf98775cf1fcbefc532d418d95e78ea30cce656741290532667d393081d7bcf",
       "skillHash": "a72a1d28866edde0b26ba3e0e42b2ac3d0141425c5af39808ce5364931c5e40b",
       "toolHash": "6ecd4cb47ca06f6b86b9c2e46f7cbe547345091d7fd0a8c46a45f14b98cea1a6",
-      "fingerprint": "280bc2f7c85004ca8dc7da21f55957357691e8f2485cdf401b54b21a3371712f",
+      "fingerprint": "6cc5969580cf74230a3e8aee28a46d012b132361dce4d0bbb6f5fb5aed6debe9",
       "outputSchema": "KnowledgeBatch.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -244,10 +368,10 @@
         "submit_result"
       ],
       "sessionIds": [
-        "01a11f52-177e-7f13-a557-01bf30c42d4a"
+        "01a121aa-ba8e-76c3-9fc6-bd3e2461779f"
       ],
       "usage": {
-        "used": 41580,
+        "used": 65544,
         "size": 258400,
         "cost": null,
         "acpCompletion": "validated_submission",
@@ -256,44 +380,59 @@
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_VsUd3KMBmhqbKa7PcXEnjQJj:exec-6738fbae-88f3-49b7-93f1-ca2d93372569",
-            "title": "Read SKILL.md, Read SKILL.md, Read unified.ts, Read unified.ts",
+            "id": "code-mode-nested:29:call_aUaHir0fXUidnbEaVwSsVrHT:exec-ea063d64-b2bd-4577-9411-1463a5d188b9",
+            "title": "Tool: omem/read_material",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_VsUd3KMBmhqbKa7PcXEnjQJj:exec-6738fbae-88f3-49b7-93f1-ca2d93372569",
-              "process_id": "72131",
-              "turn_id": "01a11f52-1b41-7bb2-8e9e-5e23b393a5f9",
-              "started_at_ms": 1791526846727,
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/unified.ts",
+                "startLine": 302,
+                "endLine": 379
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/unified.ts",
+              "startLine": 302,
+              "endLine": 379
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_aUaHir0fXUidnbEaVwSsVrHT:exec-ea063d64-b2bd-4577-9411-1463a5d188b9",
+            "status": "completed",
+            "outputDigest": "76d899efc5e945f4d12df0bf5c54cbf2f9443c1fad4919316e05d3c6296a9244"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_aUaHir0fXUidnbEaVwSsVrHT:exec-23aa48bb-f15f-4cf5-9b75-3939e06381c7",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_aUaHir0fXUidnbEaVwSsVrHT:exec-23aa48bb-f15f-4cf5-9b75-3939e06381c7",
+              "process_id": "80541",
+              "turn_id": "01a121aa-bd92-7ad2-ae99-e992b6e5fc53",
+              "started_at_ms": 1791566213135,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md && sed -n '1,240p' .trae/skills/lieflat-less-ai-tone/SKILL.md && sed -n '240,340p' originals/apps/server/src/retrieval/unified.ts && sed -n '940,1011p' originals/apps/server/src/retrieval/unified.ts"
+                "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/e8aef27a-e6a7-43ec-8b36-c6244a7bfbb0",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/08cfbe36-3ac9-4e02-ae2c-1bcfb14f1a26",
               "parsed_cmd": [
                 {
                   "type": "read",
                   "cmd": "sed -n '1,240p' .trae/skills/omem-knowledge-refresher/SKILL.md",
                   "name": "SKILL.md",
                   "path": ".trae/skills/omem-knowledge-refresher/SKILL.md"
-                },
-                {
-                  "type": "read",
-                  "cmd": "sed -n '1,240p' .trae/skills/lieflat-less-ai-tone/SKILL.md",
-                  "name": "SKILL.md",
-                  "path": ".trae/skills/lieflat-less-ai-tone/SKILL.md"
-                },
-                {
-                  "type": "read",
-                  "cmd": "sed -n '240,340p' originals/apps/server/src/retrieval/unified.ts",
-                  "name": "unified.ts",
-                  "path": "originals/apps/server/src/retrieval/unified.ts"
-                },
-                {
-                  "type": "read",
-                  "cmd": "sed -n '940,1011p' originals/apps/server/src/retrieval/unified.ts",
-                  "name": "unified.ts",
-                  "path": "originals/apps/server/src/retrieval/unified.ts"
                 }
               ],
               "source": "unified_exec_startup",
@@ -303,39 +442,129 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_VsUd3KMBmhqbKa7PcXEnjQJj:exec-6738fbae-88f3-49b7-93f1-ca2d93372569",
+            "id": "code-mode-nested:29:call_aUaHir0fXUidnbEaVwSsVrHT:exec-23aa48bb-f15f-4cf5-9b75-3939e06381c7",
             "status": "completed",
-            "outputDigest": "d08076cf3bbc344790a7c75a88bc7bd1585e46878e0c16a5dddaf977f1c6efca"
+            "outputDigest": "3281b1aa177e108fececd0c53eccc42a140cc314ace046f36d56f62863512472"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_0Nf43qy2VlMuPA1GWxPAhsj6:exec-66d0c97f-0d3c-4aff-b2b5-410f0ff626b9",
-            "title": "Read SKILL.md, Search 语言DNA.md in .",
+            "id": "code-mode-nested:29:call_aUaHir0fXUidnbEaVwSsVrHT:exec-0e051ab4-2b95-4bf0-8817-c314aa5e7ad4",
+            "title": "Read SKILL.md",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_0Nf43qy2VlMuPA1GWxPAhsj6:exec-66d0c97f-0d3c-4aff-b2b5-410f0ff626b9",
-              "process_id": "71527",
-              "turn_id": "01a11f52-1b41-7bb2-8e9e-5e23b393a5f9",
-              "started_at_ms": 1791526853303,
+              "call_id": "code-mode-nested:29:call_aUaHir0fXUidnbEaVwSsVrHT:exec-0e051ab4-2b95-4bf0-8817-c314aa5e7ad4",
+              "process_id": "97746",
+              "turn_id": "01a121aa-bd92-7ad2-ae99-e992b6e5fc53",
+              "started_at_ms": 1791566213135,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "sed -n '241,520p' .trae/skills/lieflat-less-ai-tone/SKILL.md && find . -maxdepth 3 -type f \\( -name '语言DNA.md' -o -iname '*style*' -o -iname '*风格*' \\) -print"
+                "sed -n '1,260p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/e8aef27a-e6a7-43ec-8b36-c6244a7bfbb0",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/08cfbe36-3ac9-4e02-ae2c-1bcfb14f1a26",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,260p' .trae/skills/lieflat-less-ai-tone/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/lieflat-less-ai-tone/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_aUaHir0fXUidnbEaVwSsVrHT:exec-0e051ab4-2b95-4bf0-8817-c314aa5e7ad4",
+            "status": "completed",
+            "outputDigest": "a3d7ad9db6ff5c47308e3956353781958b083511bed2735700930b8199b44212"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_kwm1FSuleAkkgcAgtlGaD8fb:exec-ff715c7f-0a33-4c3c-b038-4eb920f52fa4",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/unified.ts",
+                "startLine": 302,
+                "endLine": 355
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/unified.ts",
+              "startLine": 302,
+              "endLine": 355
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_kwm1FSuleAkkgcAgtlGaD8fb:exec-ff715c7f-0a33-4c3c-b038-4eb920f52fa4",
+            "status": "completed",
+            "outputDigest": "8d984419f82e19b59da34bcb7fe0850bb24e0c360623eb9726cafa8a29f2afbe"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_kwm1FSuleAkkgcAgtlGaD8fb:exec-6dea2063-a3d4-4aa0-a603-48b7a36abfc6",
+            "title": "wc -l .trae/skills/lieflat-less-ai-tone/SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_kwm1FSuleAkkgcAgtlGaD8fb:exec-6dea2063-a3d4-4aa0-a603-48b7a36abfc6",
+              "process_id": "76619",
+              "turn_id": "01a121aa-bd92-7ad2-ae99-e992b6e5fc53",
+              "started_at_ms": 1791566221250,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "wc -l .trae/skills/lieflat-less-ai-tone/SKILL.md"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/08cfbe36-3ac9-4e02-ae2c-1bcfb14f1a26",
+              "parsed_cmd": [
+                {
+                  "type": "unknown",
+                  "cmd": "wc -l .trae/skills/lieflat-less-ai-tone/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_kwm1FSuleAkkgcAgtlGaD8fb:exec-ad888918-b5b1-40bf-8e14-31fc117d1097",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_kwm1FSuleAkkgcAgtlGaD8fb:exec-ad888918-b5b1-40bf-8e14-31fc117d1097",
+              "process_id": "2085",
+              "turn_id": "01a121aa-bd92-7ad2-ae99-e992b6e5fc53",
+              "started_at_ms": 1791566221250,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '241,520p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/08cfbe36-3ac9-4e02-ae2c-1bcfb14f1a26",
               "parsed_cmd": [
                 {
                   "type": "read",
                   "cmd": "sed -n '241,520p' .trae/skills/lieflat-less-ai-tone/SKILL.md",
                   "name": "SKILL.md",
                   "path": ".trae/skills/lieflat-less-ai-tone/SKILL.md"
-                },
-                {
-                  "type": "search",
-                  "cmd": "find . -maxdepth 3 -type f \"\\\\(\" -name '语言DNA.md' -o -iname '*style*' -o -iname '*风格*' \"\\\\)\" -print",
-                  "query": "语言DNA.md",
-                  "path": "."
                 }
               ],
               "source": "unified_exec_startup",
@@ -345,14 +574,98 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_0Nf43qy2VlMuPA1GWxPAhsj6:exec-66d0c97f-0d3c-4aff-b2b5-410f0ff626b9",
+            "id": "code-mode-nested:29:call_kwm1FSuleAkkgcAgtlGaD8fb:exec-6dea2063-a3d4-4aa0-a603-48b7a36abfc6"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_kwm1FSuleAkkgcAgtlGaD8fb:exec-6dea2063-a3d4-4aa0-a603-48b7a36abfc6",
             "status": "completed",
-            "outputDigest": "03daf12ad28fe8d754cd85686cd03c80a758323d0207fba58e566b4d6af3c0a6"
+            "outputDigest": "aff17f7873636021aa8f4e93c66ba83c4e81b14b702e151570c811c6e94f7b22"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_kwm1FSuleAkkgcAgtlGaD8fb:exec-ad888918-b5b1-40bf-8e14-31fc117d1097",
+            "status": "completed",
+            "outputDigest": "4f113027480d63eb2ba72c950b4228e4a00b81a7459ed8d512188c5f1feee735"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_HFgVYdRhtPhWSQrfEYp40gU1:exec-55de7605-3be2-4663-bf88-66dd45f32617",
+            "id": "code-mode-nested:29:call_nHR3WFfffH8vQy0DVxDTmRen:exec-c4aa403c-f265-46a6-a233-e258a7173b3e",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_nHR3WFfffH8vQy0DVxDTmRen:exec-c4aa403c-f265-46a6-a233-e258a7173b3e",
+              "process_id": "2906",
+              "turn_id": "01a121aa-bd92-7ad2-ae99-e992b6e5fc53",
+              "started_at_ms": 1791566228956,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '121,240p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/08cfbe36-3ac9-4e02-ae2c-1bcfb14f1a26",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '121,240p' .trae/skills/lieflat-less-ai-tone/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/lieflat-less-ai-tone/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_nHR3WFfffH8vQy0DVxDTmRen:exec-48c1268b-d36b-4ec6-b8e9-c44cd1b0b51c",
+            "title": "Read SKILL.md",
+            "status": "in_progress",
+            "input": {
+              "call_id": "code-mode-nested:29:call_nHR3WFfffH8vQy0DVxDTmRen:exec-48c1268b-d36b-4ec6-b8e9-c44cd1b0b51c",
+              "process_id": "99937",
+              "turn_id": "01a121aa-bd92-7ad2-ae99-e992b6e5fc53",
+              "started_at_ms": 1791566228956,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "sed -n '1,120p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/e378a9f6bfc79ab06461b1c1650ce08777526e8a971e128de47626ea826f45c9/08cfbe36-3ac9-4e02-ae2c-1bcfb14f1a26",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "sed -n '1,120p' .trae/skills/lieflat-less-ai-tone/SKILL.md",
+                  "name": "SKILL.md",
+                  "path": ".trae/skills/lieflat-less-ai-tone/SKILL.md"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_nHR3WFfffH8vQy0DVxDTmRen:exec-c4aa403c-f265-46a6-a233-e258a7173b3e",
+            "status": "completed",
+            "outputDigest": "29fff98a55a350838dbcfaaf5f8041b9e59022f3fc10786a9dd5b03ac3f79c7b"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_nHR3WFfffH8vQy0DVxDTmRen:exec-48c1268b-d36b-4ec6-b8e9-c44cd1b0b51c",
+            "status": "completed",
+            "outputDigest": "5e3f9ba19bd57368d13c6d2cef81517e2a2def7d4452d1c81ecaf6900a31bb48"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_V70cpRGwWRkrSRhCwrtMDl6V:exec-e6db8bfb-253c-4c64-96fd-e42ee3c2d0fc",
             "title": "Tool: omem/submit_result",
             "status": "in_progress",
             "input": {
@@ -371,7 +684,7 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_HFgVYdRhtPhWSQrfEYp40gU1:exec-55de7605-3be2-4663-bf88-66dd45f32617",
+            "id": "code-mode-nested:29:call_V70cpRGwWRkrSRhCwrtMDl6V:exec-e6db8bfb-253c-4c64-96fd-e42ee3c2d0fc",
             "status": "failed",
             "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
           }
@@ -383,19 +696,19 @@
   },
   "review": {
     "model": "gpt-5.6-sol",
-    "at": "2026-10-09T06:24:19.285Z",
+    "at": "2026-10-09T17:18:57.143Z",
     "trace": {
       "profileId": "traex",
       "acpProvider": "traex",
-      "runId": "2aa4965e-d669-4066-94ec-3f8016f8ca38",
+      "runId": "de2f47fd-dc6a-4d9b-a043-4f87b30486ad",
       "roleId": "knowledge-verifier",
       "roleVersion": "1",
       "bundleHash": "ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a",
-      "promptHash": "5f4512e3c38a425f05619b3065a0f9092705a6b8da1ef832fd40f8171b003e77",
-      "contextHash": "a5de788f58fcb0f84d24334d19202b140e61c37c32ebd1927f1696ede312bb8c",
+      "promptHash": "09c6922416e7eec5bf93cbcfed2cf90e2e47611eef25ac901c5266e53367fc82",
+      "contextHash": "ba4f7e99c262ce2c29ff01279ca6d6b943088ea58152ffd24793085104e7e028",
       "skillHash": "0122dffd6ec08e44096acc44801f392b2878aab19f3daa0b825d33eb8b385b0a",
       "toolHash": "6ecd4cb47ca06f6b86b9c2e46f7cbe547345091d7fd0a8c46a45f14b98cea1a6",
-      "fingerprint": "db267ba4cbe5749252700856064a97d7cb58025d7142f502354eec6042a3369d",
+      "fingerprint": "50cd69b78a7bdb193737f71f0b4ae64a45ff6023beb3caf7c2d0d882dc781e39",
       "outputSchema": "KnowledgeReview.v1",
       "effectiveModel": "gpt-5.6-sol",
       "effectiveEffort": "medium",
@@ -432,10 +745,10 @@
         "submit_result"
       ],
       "sessionIds": [
-        "01a11f53-90aa-7341-b98f-2419ac03cfea"
+        "01a121ab-b6f6-75c3-a352-3df1796f741e"
       ],
       "usage": {
-        "used": 68469,
+        "used": 70672,
         "size": 258400,
         "cost": null,
         "acpCompletion": "validated_submission",
@@ -444,20 +757,20 @@
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_0Tsjto6q3HLe960EMdLym0iI:exec-73b930f6-09a2-419c-b4f5-0631ebcc1b0c",
+            "id": "code-mode-nested:29:call_BhfDbyw7KJXWhOk60pwG7QSp:exec-6de7a152-cfef-4ff7-a354-33012e6bb6ca",
             "title": "Read SKILL.md, Read SKILL.md",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_0Tsjto6q3HLe960EMdLym0iI:exec-73b930f6-09a2-419c-b4f5-0631ebcc1b0c",
-              "process_id": "99886",
-              "turn_id": "01a11f53-9497-7533-9427-45ad883cb4a6",
-              "started_at_ms": 1791526956194,
+              "call_id": "code-mode-nested:29:call_BhfDbyw7KJXWhOk60pwG7QSp:exec-6de7a152-cfef-4ff7-a354-33012e6bb6ca",
+              "process_id": "43278",
+              "turn_id": "01a121ab-b9e4-7231-8f1e-d44272b159c4",
+              "started_at_ms": 1791566279736,
               "command": [
                 "/bin/zsh",
                 "-lc",
                 "sed -n '1,240p' .trae/skills/omem-knowledge-verifier/SKILL.md && sed -n '1,260p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/2aa4965e-d669-4066-94ec-3f8016f8ca38",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/de2f47fd-dc6a-4d9b-a043-4f87b30486ad",
               "parsed_cmd": [
                 {
                   "type": "read",
@@ -479,31 +792,31 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_0Tsjto6q3HLe960EMdLym0iI:exec-73b930f6-09a2-419c-b4f5-0631ebcc1b0c",
+            "id": "code-mode-nested:29:call_BhfDbyw7KJXWhOk60pwG7QSp:exec-6de7a152-cfef-4ff7-a354-33012e6bb6ca",
             "status": "completed",
-            "outputDigest": "318f41c099f084c31c901013a1f1c798aaae4e947c910a6c85f6f8a43caa6fc6"
+            "outputDigest": "256d73189f7c9f1e7edd910b4390021343359cadeea59308a299973de2333be7"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_USzKRPo4ThWdoMRObCSK9bqX:exec-587e9633-ec76-4eeb-bc94-bca6165eee5e",
+            "id": "code-mode-nested:29:call_StCyCeXeI87fXA94oWA1WPW7:exec-ade68448-0f49-4322-b973-a435f16361a8",
             "title": "Read SKILL.md",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_USzKRPo4ThWdoMRObCSK9bqX:exec-587e9633-ec76-4eeb-bc94-bca6165eee5e",
-              "process_id": "65854",
-              "turn_id": "01a11f53-9497-7533-9427-45ad883cb4a6",
-              "started_at_ms": 1791526980446,
+              "call_id": "code-mode-nested:29:call_StCyCeXeI87fXA94oWA1WPW7:exec-ade68448-0f49-4322-b973-a435f16361a8",
+              "process_id": "67951",
+              "turn_id": "01a121ab-b9e4-7231-8f1e-d44272b159c4",
+              "started_at_ms": 1791566284647,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "sed -n '261,620p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
+                "sed -n '261,560p' .trae/skills/lieflat-less-ai-tone/SKILL.md"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/2aa4965e-d669-4066-94ec-3f8016f8ca38",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/de2f47fd-dc6a-4d9b-a043-4f87b30486ad",
               "parsed_cmd": [
                 {
                   "type": "read",
-                  "cmd": "sed -n '261,620p' .trae/skills/lieflat-less-ai-tone/SKILL.md",
+                  "cmd": "sed -n '261,560p' .trae/skills/lieflat-less-ai-tone/SKILL.md",
                   "name": "SKILL.md",
                   "path": ".trae/skills/lieflat-less-ai-tone/SKILL.md"
                 }
@@ -515,72 +828,142 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_USzKRPo4ThWdoMRObCSK9bqX:exec-587e9633-ec76-4eeb-bc94-bca6165eee5e",
+            "id": "code-mode-nested:29:call_StCyCeXeI87fXA94oWA1WPW7:exec-ade68448-0f49-4322-b973-a435f16361a8",
             "status": "completed",
-            "outputDigest": "81f32db4946686dbaf9533643485568a6832bba361cc4ff39a9c1749d5f17b53"
+            "outputDigest": "fddd4cfe36a1d2b5aa08f302d2a48226cd2ce8886e7dd2da795cc0a9215fa606"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_EGnxFhziEqpHNsvrvRauRN1T:exec-f26b0328-56c2-455b-a5e7-aa43aefb78f2",
-            "title": "List /Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/2aa4965e-d669-4066-94ec-3f8016f8ca38/originals, Search unified\\.ts$|catalog\\.json$|knowledge\\.json$",
+            "id": "code-mode-nested:29:call_b8sHyiUObKGpI7CvbfAh33dj:exec-1c87eef5-98cb-4ef7-a778-1435f0566d47",
+            "title": "Tool: omem/read_material",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_EGnxFhziEqpHNsvrvRauRN1T:exec-f26b0328-56c2-455b-a5e7-aa43aefb78f2",
-              "process_id": "3672",
-              "turn_id": "01a11f53-9497-7533-9427-45ad883cb4a6",
-              "started_at_ms": 1791526985899,
-              "command": [
-                "/bin/zsh",
-                "-lc",
-                "rg --files originals | rg 'unified\\.ts$|catalog\\.json$|knowledge\\.json$'"
-              ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/2aa4965e-d669-4066-94ec-3f8016f8ca38",
-              "parsed_cmd": [
-                {
-                  "type": "list_files",
-                  "cmd": "rg --files originals",
-                  "path": "originals"
-                },
-                {
-                  "type": "search",
-                  "cmd": "rg \"unified\\\\.ts\"'$|catalog'\"\\\\.json\"'$|knowledge'\"\\\\.json\"'$'",
-                  "query": "unified\\.ts$|catalog\\.json$|knowledge\\.json$",
-                  "path": null
-                }
-              ],
-              "source": "unified_exec_startup",
-              "yield_time_ms": 10000
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/unified.ts",
+                "startLine": 761,
+                "endLine": 1132
+              }
+            }
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/unified.ts",
+              "startLine": 761,
+              "endLine": 1132
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_b8sHyiUObKGpI7CvbfAh33dj:exec-5bdb8edd-94ec-4417-a3f0-4e686d7f6516",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/unified.ts",
+                "startLine": 381,
+                "endLine": 760
+              }
+            }
+          },
+          {
+            "kind": "native",
+            "type": "tool_call",
+            "id": "code-mode-nested:29:call_b8sHyiUObKGpI7CvbfAh33dj:exec-9f08a135-dde0-4644-98bc-cb3b28cfb24d",
+            "title": "Tool: omem/read_material",
+            "status": "in_progress",
+            "input": {
+              "server": "omem",
+              "tool": "read_material",
+              "arguments": {
+                "key": "omem:apps/server/src/retrieval/unified.ts",
+                "startLine": 1,
+                "endLine": 380
+              }
             }
           },
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_EGnxFhziEqpHNsvrvRauRN1T:exec-f26b0328-56c2-455b-a5e7-aa43aefb78f2",
+            "id": "code-mode-nested:29:call_b8sHyiUObKGpI7CvbfAh33dj:exec-1c87eef5-98cb-4ef7-a778-1435f0566d47",
             "status": "completed",
-            "outputDigest": "eceb73fa419ac9708ee982e088d0b4595d5a87952e081ad935c3ea15d7a284d0"
+            "outputDigest": "1b77849f55866d0a61ff5e58225fb2aedd5fe1b08c3ae375ae895c2e769dd7e7"
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/unified.ts",
+              "startLine": 381,
+              "endLine": 760
+            },
+            "success": true
+          },
+          {
+            "kind": "mcp",
+            "tool": "read_material",
+            "args": {
+              "key": "omem:apps/server/src/retrieval/unified.ts",
+              "startLine": 1,
+              "endLine": 380
+            },
+            "success": true
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_b8sHyiUObKGpI7CvbfAh33dj:exec-5bdb8edd-94ec-4417-a3f0-4e686d7f6516",
+            "status": "completed",
+            "outputDigest": "6c1166c753a47539d5eb4c513543f94c9358c7c25853b76395f0aae821c100ca"
+          },
+          {
+            "kind": "native",
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_b8sHyiUObKGpI7CvbfAh33dj:exec-9f08a135-dde0-4644-98bc-cb3b28cfb24d",
+            "status": "completed",
+            "outputDigest": "6cdab27116e39ac0d9efd1a264c590c4638759ff59fb3c0d37fc1e05ae72c644"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_GLG11nRjcf8BYLevAsOGu7To:exec-5957bcaf-eeb3-4b3e-b16f-6dc146a022a7",
-            "title": "Read unified.ts",
+            "id": "code-mode-nested:29:call_q0xufpQlTL5D0dyDSnxG7LNe:exec-c10959c1-f49e-40d8-9ec0-e10b715e50a4",
+            "title": "Read unified.ts, Read unified.ts, Read unified.ts",
             "status": "in_progress",
             "input": {
-              "call_id": "code-mode-nested:29:call_GLG11nRjcf8BYLevAsOGu7To:exec-5957bcaf-eeb3-4b3e-b16f-6dc146a022a7",
-              "process_id": "64531",
-              "turn_id": "01a11f53-9497-7533-9427-45ad883cb4a6",
-              "started_at_ms": 1791526992952,
+              "call_id": "code-mode-nested:29:call_q0xufpQlTL5D0dyDSnxG7LNe:exec-c10959c1-f49e-40d8-9ec0-e10b715e50a4",
+              "process_id": "32238",
+              "turn_id": "01a121ab-b9e4-7231-8f1e-d44272b159c4",
+              "started_at_ms": 1791566298242,
               "command": [
                 "/bin/zsh",
                 "-lc",
-                "nl -ba originals/apps/server/src/retrieval/unified.ts | sed -n '1,1011p'"
+                "sed -n '380,650p' originals/apps/server/src/retrieval/unified.ts; sed -n '651,932p' originals/apps/server/src/retrieval/unified.ts; sed -n '933,1132p' originals/apps/server/src/retrieval/unified.ts"
               ],
-              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/2aa4965e-d669-4066-94ec-3f8016f8ca38",
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/de2f47fd-dc6a-4d9b-a043-4f87b30486ad",
               "parsed_cmd": [
                 {
                   "type": "read",
-                  "cmd": "nl -ba originals/apps/server/src/retrieval/unified.ts | sed -n '1,1011p'",
+                  "cmd": "sed -n '380,650p' originals/apps/server/src/retrieval/unified.ts",
+                  "name": "unified.ts",
+                  "path": "originals/apps/server/src/retrieval/unified.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '651,932p' originals/apps/server/src/retrieval/unified.ts",
+                  "name": "unified.ts",
+                  "path": "originals/apps/server/src/retrieval/unified.ts"
+                },
+                {
+                  "type": "read",
+                  "cmd": "sed -n '933,1132p' originals/apps/server/src/retrieval/unified.ts",
                   "name": "unified.ts",
                   "path": "originals/apps/server/src/retrieval/unified.ts"
                 }
@@ -592,113 +975,50 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_GLG11nRjcf8BYLevAsOGu7To:exec-5957bcaf-eeb3-4b3e-b16f-6dc146a022a7",
+            "id": "code-mode-nested:29:call_q0xufpQlTL5D0dyDSnxG7LNe:exec-c10959c1-f49e-40d8-9ec0-e10b715e50a4",
             "status": "completed",
-            "outputDigest": "98b57fd1c64f962e67f6871195f3e44cc1f557712c306fe379bbc37e54e24b37"
+            "outputDigest": "df1c216aba8dc9028dbf1444c354cacf0ba6bd7f62d51f2f0de2d12dcbb1ffbd"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_fh4dkBPZve8fN1SfJ9Qq3ZNG:exec-111ac30c-85a5-4724-9279-23e95898ae44",
-            "title": "Tool: omem/read_material",
+            "id": "code-mode-nested:29:call_cyF0SJ4W8bEZTyrA5DwnrNVc:exec-75b691a1-a76a-45ef-a1aa-597b201ef628",
+            "title": "Read unified.ts",
             "status": "in_progress",
             "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/unified.ts",
-                "startLine": 430,
-                "endLine": 569
-              }
+              "call_id": "code-mode-nested:29:call_cyF0SJ4W8bEZTyrA5DwnrNVc:exec-75b691a1-a76a-45ef-a1aa-597b201ef628",
+              "process_id": "12916",
+              "turn_id": "01a121ab-b9e4-7231-8f1e-d44272b159c4",
+              "started_at_ms": 1791566321623,
+              "command": [
+                "/bin/zsh",
+                "-lc",
+                "nl -ba originals/apps/server/src/retrieval/unified.ts | sed -n '204,379p'; nl -ba originals/apps/server/src/retrieval/unified.ts | sed -n '651,932p'; nl -ba originals/apps/server/src/retrieval/unified.ts | sed -n '933,1120p'"
+              ],
+              "cwd": "/Users/me/Desktop/Projects/lejunyang/omem/.repo-review/runtime/knowledge-agents/roles/ad4b2fa7e1ffba81032a2b90b0d047d8ab5f37fc5f8fc5d17e491e37f6a0421a/de2f47fd-dc6a-4d9b-a043-4f87b30486ad",
+              "parsed_cmd": [
+                {
+                  "type": "read",
+                  "cmd": "nl -ba originals/apps/server/src/retrieval/unified.ts",
+                  "name": "unified.ts",
+                  "path": "originals/apps/server/src/retrieval/unified.ts"
+                }
+              ],
+              "source": "unified_exec_startup",
+              "yield_time_ms": 10000
             }
           },
           {
             "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_fh4dkBPZve8fN1SfJ9Qq3ZNG:exec-1fa3cdb0-fa8c-4b26-b3ef-622f149b83bb",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/unified.ts",
-                "startLine": 570,
-                "endLine": 810
-              }
-            }
+            "type": "tool_call_update",
+            "id": "code-mode-nested:29:call_cyF0SJ4W8bEZTyrA5DwnrNVc:exec-75b691a1-a76a-45ef-a1aa-597b201ef628",
+            "status": "completed",
+            "outputDigest": "8f7877e1eeccd47065738d64bd72514498f4f0e60cfa670831496926093b1343"
           },
           {
             "kind": "native",
             "type": "tool_call",
-            "id": "code-mode-nested:29:call_fh4dkBPZve8fN1SfJ9Qq3ZNG:exec-ea58e9be-b8ef-43c5-9274-f3c61710ca11",
-            "title": "Tool: omem/read_material",
-            "status": "in_progress",
-            "input": {
-              "server": "omem",
-              "tool": "read_material",
-              "arguments": {
-                "key": "omem:apps/server/src/retrieval/unified.ts",
-                "startLine": 812,
-                "endLine": 1000
-              }
-            }
-          },
-          {
-            "kind": "mcp",
-            "tool": "read_material",
-            "args": {
-              "key": "omem:apps/server/src/retrieval/unified.ts",
-              "startLine": 430,
-              "endLine": 569
-            },
-            "success": true
-          },
-          {
-            "kind": "mcp",
-            "tool": "read_material",
-            "args": {
-              "key": "omem:apps/server/src/retrieval/unified.ts",
-              "startLine": 812,
-              "endLine": 1000
-            },
-            "success": true
-          },
-          {
-            "kind": "mcp",
-            "tool": "read_material",
-            "args": {
-              "key": "omem:apps/server/src/retrieval/unified.ts",
-              "startLine": 570,
-              "endLine": 810
-            },
-            "success": true
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_fh4dkBPZve8fN1SfJ9Qq3ZNG:exec-111ac30c-85a5-4724-9279-23e95898ae44",
-            "status": "completed",
-            "outputDigest": "21ade7b478a71866bab9966bcea62b5db7a3e5d5d513d72626c9754207bc6a87"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_fh4dkBPZve8fN1SfJ9Qq3ZNG:exec-ea58e9be-b8ef-43c5-9274-f3c61710ca11",
-            "status": "completed",
-            "outputDigest": "53d58d4b68b3bf3618340826b983ef0e98cbc0d27a8d9f449866e908a0101eb9"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_fh4dkBPZve8fN1SfJ9Qq3ZNG:exec-1fa3cdb0-fa8c-4b26-b3ef-622f149b83bb",
-            "status": "completed",
-            "outputDigest": "4ce75d38f33f2b3ff0c5021101cdfbef65d85e793aa93170476d7b4070e3b69d"
-          },
-          {
-            "kind": "native",
-            "type": "tool_call",
-            "id": "code-mode-nested:29:call_aXWrLXSG57FvYpIjDvMn2ThK:exec-47b16645-ae98-4f78-99fb-04472bbdfd53",
+            "id": "code-mode-nested:29:call_DYjTmznDySRbVuhXkJ8LGXmp:exec-fd41bd5f-62e2-406c-a32d-d4d21f1266a8",
             "title": "Tool: omem/submit_result",
             "status": "in_progress",
             "input": {
@@ -717,9 +1037,9 @@
           {
             "kind": "native",
             "type": "tool_call_update",
-            "id": "code-mode-nested:29:call_aXWrLXSG57FvYpIjDvMn2ThK:exec-47b16645-ae98-4f78-99fb-04472bbdfd53",
-            "status": "completed",
-            "outputDigest": "62e74363d6ba267c59d1024e5736e16d4102da82ae415b650970d0966cf131e4"
+            "id": "code-mode-nested:29:call_DYjTmznDySRbVuhXkJ8LGXmp:exec-fd41bd5f-62e2-406c-a32d-d4d21f1266a8",
+            "status": "failed",
+            "outputDigest": "87b89c44947708075cdd682fd5112f564d128faac173dfe0ff5e84c4f91e83c6"
           }
         ],
         "hostTokenBudget": null
@@ -728,24 +1048,46 @@
       "scope": "full",
       "rounds": [
         {
-          "jobId": "c6384719-6c81-4a29-b908-772a519a60c4",
-          "runId": "458ea032-659e-45ed-bd76-bec5a59c5d12",
+          "jobId": "4236fd43-e5d1-4ef1-9bfc-50037939a143",
+          "runId": "3e62d463-9b16-4256-bc73-2780b2cb91cc",
           "mode": "full",
           "drafts": [
             {
               "key": "omem:apps/server/src/retrieval/unified.ts",
-              "digest": "bf853dde12939c1f062424240e9fab64f27d40cbf803618c091315661c1c1174"
+              "digest": "7a210ae9a80017c25a1d94461d97a6b97936fa9f47214aa30efcd219694cbd4a"
             }
           ]
         },
         {
-          "jobId": "2cde3235-3cc6-4d41-a2f1-649e74da1f67",
-          "runId": "2aa4965e-d669-4066-94ec-3f8016f8ca38",
+          "jobId": "6ed7cc9f-abed-4786-9b6c-aace836ea371",
+          "runId": "f937f092-61e5-489e-8cd0-f8d07f8a1696",
           "mode": "full",
           "drafts": [
             {
               "key": "omem:apps/server/src/retrieval/unified.ts",
-              "digest": "a6939fb31ee54e1228c59dd8b8ec9959f986d5ff78e4b09d58ea1e656f91992c"
+              "digest": "3477b54d513548ad0e3c6a45fab0357f7dc101837fa831dd1884eddc32dbe4a3"
+            }
+          ]
+        },
+        {
+          "jobId": "cae7d070-a50a-425d-8d2b-054eba12d35f",
+          "runId": "e6950241-2e80-409a-95d9-1564d92b4faa",
+          "mode": "full",
+          "drafts": [
+            {
+              "key": "omem:apps/server/src/retrieval/unified.ts",
+              "digest": "447cf3b839d993c7d41d30f5d4ec8258a5a13f7d6f891a5b11999b366b42f53c"
+            }
+          ]
+        },
+        {
+          "jobId": "405d55a4-c2c7-4169-b172-8e5278e319c4",
+          "runId": "de2f47fd-dc6a-4d9b-a043-4f87b30486ad",
+          "mode": "full",
+          "drafts": [
+            {
+              "key": "omem:apps/server/src/retrieval/unified.ts",
+              "digest": "e7fed81db8802d9c0eae0096b936b705d70afa0c6dab65a47abb502bf997efeb"
             }
           ]
         }
