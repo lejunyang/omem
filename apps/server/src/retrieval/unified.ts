@@ -17,6 +17,7 @@ import {
 } from "./relevance.js";
 import { CodeNavigation } from "./code-navigation.js";
 import { rerankPassages } from "./rerank-passages.js";
+import { candidatePool } from "./candidate-pool.js";
 import {
   RetrievalProjection,
   decodeUnit,
@@ -32,6 +33,8 @@ type ScoredUnit = {
   score: number;
   routes: string[];
   excerpt?: string;
+  matchedRanges?: { start: number; end: number }[];
+  routeRanks?: Record<string, number>;
   codeMatches?: RetrievalHit["codeMatches"];
   reranking?: RetrievalHit["reranking"];
 };
@@ -485,7 +488,27 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           ...h,
           // The symbol route contributes navigation; it must not overwrite a
           // query-relevant dense window with the beginning of the same method.
-          excerpt: prior?.excerpt ?? h.excerpt,
+          excerpt: h.routes.includes("semantic-concept")
+            ? h.excerpt
+            : (prior?.excerpt ?? h.excerpt),
+          matchedRanges: [
+            ...(prior?.matchedRanges ?? []),
+            ...(h.matchedRanges ?? []),
+          ].filter(
+            (range, i, all) =>
+              all.findIndex(
+                (r) => r.start === range.start && r.end === range.end,
+              ) === i,
+          ),
+          routeRanks: {
+            ...prior?.routeRanks,
+            ...Object.fromEntries(
+              h.routes.map((route) => [
+                route,
+                Math.min(prior?.routeRanks?.[route] ?? Infinity, rank),
+              ]),
+            ),
+          },
           // Standard RRF: scores from BM25, cosine and symbol lookup have
           // different scales. Only each route's one-based rank contributes.
           score: (prior?.score ?? 0) + 1 / (60 + rank + 1),
@@ -545,14 +568,22 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       seenConcepts.add(identity(first));
       const start = Math.max(target.startLine, first.startLine);
       const end = Math.min(target.endLine, first.endLine);
+      const lines = unit.text.split("\n"),
+        offset = start - target.startLine;
+      const startOffset = offset
+        ? lines.slice(0, offset).join("\n").length + 1
+        : 0;
+      const excerpt = lines
+        .slice(offset, end - target.startLine + 1)
+        .join("\n");
       hits.push({
         unit,
         score: -Number(row.rank),
         routes: ["material-concept"],
-        excerpt: unit.text
-          .split("\n")
-          .slice(start - target.startLine, end - target.startLine + 1)
-          .join("\n"),
+        excerpt,
+        matchedRanges: [
+          { start: startOffset, end: startOffset + excerpt.length },
+        ],
       });
       // Visibility/scope filtering precedes the bound; hidden passages consume no slots.
       if (hits.length === 40) break;
@@ -711,6 +742,9 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           unit,
           score,
           routes: ["semantic"],
+          matchedRanges: [
+            { start: Number(row.start_offset), end: Number(row.end_offset) },
+          ],
           excerpt: unit.text.slice(
             Number(row.start_offset),
             Number(row.end_offset),
@@ -798,13 +832,10 @@ export class UnifiedRetrieval extends KeywordRetrieval {
             throw error;
           });
         const model = await this.rankingLoad,
-          pool = hits
-            .sort(
-              (a, b) =>
-                Number(b.routes.includes("code-symbol")) -
-                  Number(a.routes.includes("code-symbol")) || b.score - a.score,
-            )
-            .slice(0, 40);
+          pool = candidatePool(
+            hits.map((h) => ({ ...h, id: h.unit.id, owner: h.unit.owner })),
+            40,
+          );
         const passages = pool.flatMap((h, unitIndex) =>
           rerankPassages(
             h.unit.text,
@@ -818,6 +849,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
                     c.endLine >= h.unit.target.startLine,
                 )
               : [],
+            h.matchedRanges,
           ).map((text) => ({
             unitIndex,
             text,
@@ -848,24 +880,23 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           if (scores[i]! > (best.get(p.unitIndex)?.score ?? -Infinity))
             best.set(p.unitIndex, { score: scores[i]!, text: p.text });
         });
-        const max = Math.max(...pool.map((h) => h.score), 1e-6);
-        hits = pool.flatMap((h, i) =>
-          best.get(i)!.score >= 0.1 || h.routes.includes("code-symbol")
-            ? [
-                {
-                  ...h,
-                  score: best.get(i)!.score * 0.7 + (h.score / max) * 0.3,
-                  reranking: {
-                    model: model.id,
-                    relevance: best.get(i)!.score,
-                    retrievalScore: h.score,
-                  },
-                  excerpt: best.get(i)!.text,
-                  routes: [...h.routes, "cross-encoder"],
+        const max = Math.max(...hits.map((h) => h.score), 1e-6);
+        const scored = new Map(pool.map((h, i) => [h.unit.id, best.get(i)!]));
+        hits = hits.map((h) => {
+          const result = scored.get(h.unit.id);
+          return result
+            ? {
+                ...h,
+                score: result.score * 0.7 + (h.score / max) * 0.3,
+                reranking: {
+                  model: model.id,
+                  relevance: result.score,
+                  retrievalScore: h.score,
                 },
-              ]
-            : [],
-        );
+                routes: [...h.routes, "cross-encoder"],
+              }
+            : { ...h, score: (h.score / max) * 0.3 };
+        });
         this.rankingError = null;
         this.observe(observer, "reranker", hits, model.id);
       } catch (error) {
@@ -880,15 +911,19 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     q: SearchQuery,
     observer?: RetrievalObserver,
   ) {
-    const finish = () => {
+    const finish = (emit = true) => {
       const selected = this.finish(hits, q);
-      observer?.({ stage: "final", hits: structuredClone(selected) });
+      if (emit) observer?.({ stage: "final", hits: structuredClone(selected) });
       return selected;
     };
     if (!this.rank || !q.text.trim() || exactLookup(q.text)) return finish();
     // Score a pool before spending the requested reading slots. Do not allow a
     // model to see hidden/out-of-scope units or force a cold model load here.
-    const pool = this.finish(hits, {
+    const admitted = candidatePool(
+      hits.map((h) => ({ ...h, id: h.unit.id, owner: h.unit.owner })),
+      Math.max(q.limit ?? 20, 40),
+    );
+    const pool = this.finish(admitted, {
       ...q,
       diversify: false,
       limit: Math.max(q.limit ?? 20, 40),
@@ -898,10 +933,38 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       const ranked = await this.rank(q, pool);
       if (ranked === pool) return finish();
       observer?.({ stage: "decision", hits: structuredClone(ranked) });
+      if (ranked.some((h) => h.assessment?.advisoryOnly)) {
+        const assessments = new Map(ranked.map((h) => [h.id, h.assessment]));
+        const selected = finish(false).map((h) => ({
+          ...h,
+          ...(assessments.get(h.id)
+            ? { assessment: assessments.get(h.id) }
+            : {}),
+        }));
+        observer?.({ stage: "final", hits: structuredClone(selected) });
+        return selected;
+      }
       const owners = new Map<string, number>(),
         sections = new Set<string>(),
         seen = new Set<string>();
-      const selected = ranked
+      const allowed = new Map(pool.map((h) => [h.id, h]));
+      const poolIds = new Set(pool.map((h) => h.id));
+      const selected = [
+        ...ranked
+          .filter((h) => allowed.has(h.id))
+          .map((h) => ({
+            ...allowed.get(h.id)!,
+            assessment: h.assessment,
+            ...(h.assessment
+              ? { routes: [...allowed.get(h.id)!.routes, "decision"] }
+              : {}),
+          })),
+        ...this.finish(hits, {
+          ...q,
+          diversify: false,
+          limit: hits.length,
+        }).filter((h) => !poolIds.has(h.id)),
+      ]
         .filter((hit) => {
           if (q.diversify === false) return true;
           const owner =
@@ -1047,6 +1110,25 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         text,
         context: u.context,
         headingPath: u.headingPath,
+        ...(u.target.kind === "source" && h.matchedRanges?.length
+          ? {
+              matchedRanges: h.matchedRanges.map((r) => ({
+                startLine:
+                  u.target.kind === "source"
+                    ? u.target.startLine +
+                      u.text.slice(0, r.start).split("\n").length -
+                      1
+                    : 1,
+                endLine:
+                  u.target.kind === "source"
+                    ? u.target.startLine +
+                      u.text.slice(0, Math.max(r.start, r.end - 1)).split("\n")
+                        .length -
+                      1
+                    : 1,
+              })),
+            }
+          : {}),
         score: h.score * priority(u),
         routes: [...h.routes, "purpose:" + (q.purpose ?? "balanced")],
         ...(h.reranking ? { reranking: h.reranking } : {}),
@@ -1086,6 +1168,12 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     return hits
       .flatMap((h) =>
         h.references.flatMap((r) => {
+          const matchedLines = new Set(
+            h.text
+              .split("\n")
+              .map((line) => line.trim())
+              .filter((line) => line.length > 3),
+          );
           // One structured passage occupies one result slot. Its overlapping
           // storage fragments are evidence anchors, not extra search results.
           const fragments = r.fragmentIds
@@ -1097,6 +1185,14 @@ export class UnifiedRetrieval extends KeywordRetrieval {
             .filter((f) => f.text)
             .sort((a, b) => {
               const relevance = (text: string) =>
+                text
+                  .split("\n")
+                  .reduce(
+                    (total, line) =>
+                      total +
+                      (matchedLines.has(line.trim()) ? line.trim().length : 0),
+                    0,
+                  ) +
                 Number(text.includes(h.text)) * (terms.length + 1) +
                 terms.filter((t) => text.toLowerCase().includes(t)).length;
               return relevance(b.text) - relevance(a.text);

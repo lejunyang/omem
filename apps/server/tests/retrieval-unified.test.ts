@@ -10,6 +10,7 @@ import {
 import { UnifiedRetrieval } from "../src/retrieval/unified.js";
 import { markdownPassages } from "../src/retrieval/units.js";
 import { asksForCallers, querySymbols } from "../src/retrieval/relevance.js";
+import { candidatePool } from "../src/retrieval/candidate-pool.js";
 import { rerankPassages } from "../src/retrieval/rerank-passages.js";
 import { sourceContextRange } from "../src/retrieval/context.js";
 import { assembleAnswerContext } from "../src/assistant/context.js";
@@ -1333,6 +1334,7 @@ it("keeps a dense match near the end of a named operation and sends local passag
     expect(inputs.flat().some((p) => p.includes("TAIL_ACTION"))).toBe(true);
     expect(inputs.flat().every((p) => p.length <= 961)).toBe(true);
     expect(hits[0]?.text).toContain("commitReservation");
+    expect(hits[0]?.matchedRanges?.some(r=>r.startLine<=92 && r.endLine>=92)).toBe(true);
     expect(hits[0]?.target).toMatchObject({ startLine: 1, endLine: 93 });
     expect(hits[0]?.routes).toEqual(
       expect.arrayContaining(["semantic", "code-symbol", "cross-encoder"]),
@@ -1574,4 +1576,87 @@ it("keeps a semantic answer candidate when an unusually close question would oth
     await r.search({text:"参加手续有哪些前提",visible:id=>!hidden.includes(id)});
     expect(pools[1]).not.toContain("valid-answer");
   } finally {await r.close();await s.close();}
+});
+
+
+it("admits distinct recall routes and original owners before spending model slots", () => {
+  const repeated = Array.from({ length: 45 }, (_, i) => ({
+    id: `repeat-${i}`,
+    owner: "one-original",
+    score: 100 - i,
+    routes: ["bm25"],
+    routeRanks: { bm25: i },
+  }));
+  const evidence = {
+    id: "evidence",
+    owner: "another-original",
+    score: 1,
+    routes: ["semantic-concept"],
+    routeRanks: { "semantic-concept": 0 },
+  };
+  const otherOperation = {
+    id: "other-operation",
+    owner: "one-original",
+    score: 0.5,
+    routes: ["material-concept"],
+    routeRanks: { "material-concept": 0 },
+  };
+  const pool = candidatePool([...repeated, evidence, otherOperation], 40);
+  expect(pool).toHaveLength(40);
+  expect(pool.slice(0, 2).map((h) => h.id)).toContain("evidence");
+  expect(pool.slice(0, 3).map((h) => h.id)).toContain("other-operation");
+  expect(new Set(pool.map((h) => h.id)).size).toBe(40);
+});
+
+it("keeps unscored and low-scored recall candidates outside bounded reranker work", async () => {
+  const s = setup();
+  let scored = 0;
+  const retrieval = new UnifiedRetrieval(s.store.db, undefined, async () => ({
+    id: "low-score",
+    close: async () => {},
+    score: async (_q, texts) => {
+      scored += texts.length;
+      return texts.map(() => 0.01);
+    },
+  }));
+  try {
+    for (let i = 0; i < 45; i++)
+      s.store.capture({
+        source: "manual",
+        externalId: `candidate-${i}`,
+        title: `Candidate ${i}`,
+        parts: [{ type: "text", text: `配送问题的原始材料 ${i}` }],
+        context: {},
+      });
+    const hits = await retrieval.search({
+      text: "配送问题",
+      limit: 100,
+      diversify: false,
+    });
+    expect(scored).toBe(40);
+    expect(hits).toHaveLength(45);
+    expect(hits.filter((h) => !h.reranking)).toHaveLength(5);
+    expect(hits.filter((h) => h.reranking?.relevance === 0.01)).toHaveLength(
+      40,
+    );
+  } finally {
+    await retrieval.close();
+    await s.close();
+  }
+});
+
+it("scores the complete matched implementation range without replacing its reading excerpt", () => {
+  const prefix = "prepare();\n".repeat(90),
+    range = "setup();\n".repeat(120) + "commitActualChange();\n";
+  const text = prefix + range + "cleanup();\n";
+  const passages = rerankPassages(
+    text,
+    "怎样完成这一步",
+    range,
+    [],
+    [{ start: prefix.length, end: prefix.length + range.length }],
+  );
+  expect(passages.some((p) => p.includes("commitActualChange();"))).toBe(true);
+  expect(passages.every((p) => p.length <= 800)).toBe(true);
+  expect(passages.length).toBeLessThanOrEqual(6);
 });
