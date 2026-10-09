@@ -14,7 +14,7 @@ description: 使用 omem CLI 保存与检索个人材料、基于来源提问、
 - 找原文、事实或代码：`omem search "问题" --json`；需要综合解释和补读：`omem ask "问题" --research --json`。
 - 延续讨论：保存 ask 返回的 conversation.id，下次用 `--conversation`，不要重复新建不相干会话。
 - 记录材料：`omem import file`、`import git`、`import lark` 或 `import text`。已有记录更新应保持同一个来源标识，别把重复导入当新增事实。
-- 重新生成或删除旧成果：先读 [原件与重新处理](references/reprocessing.md)，区分解析保存的原文件、重新理解、读取远端新版和文章写作。`reprocess run --replace` 删除对应旧成果后再生成；明确要删除时用 `reprocess delete`。PDF/DOCX 从 `imports list/show` 查原件和失败记录，不能把解析排队当作完成。
+- 重新生成或删除旧成果：先读 [原件与重新处理](references/reprocessing.md)，区分解析保存的原文件、重新理解、读取远端新版和文章写作。`reprocess run --replace` 删除对应旧成果后再生成；保留记忆并重核验时省略该参数，网页则取消默认勾选的删除选项，并确认学习已启用。作业完成与记忆刷新实际应用分开核对。明确要删除时用 `reprocess delete`。PDF/DOCX 从 `imports list/show` 查原件和失败记录，不能把解析排队当作完成。
 - 组织一批知识：先读[知识目录草案](references/knowledge-outlines.md)。从 `knowledge list` / `contexts list` 选择真实来源和范围，用 `knowledge outline create/propose/show/save` 拟定并修改阅读路线，用户确认后再 apply；提议与正文发布分别检查。主助手当前尚未注册草案操作，已加载本技能且可运行 CLI 的外部 Agent 可以代办。
 - 写单篇文章：先 `knowledge list --json` 选实际材料，明确读者、场景和阅读目标，再 `knowledge write`。排队与发布分别检查。
 - 事项、记忆和处理：`tasks list`、`memories list`、`jobs list/show`；理解失败原因后按用户意图重试。不要直接改数据库。
