@@ -22,6 +22,7 @@ description: 使用 omem CLI 保存与检索个人材料、基于来源提问、
 - 飞书机器人：先读 [创建、绑定与日常指挥](references/lark-bot.md)。`bot setup --start` 准备本机配置与密钥并启动服务；CLI 的 create/authorize/connect 和网页可继续同一次接入。仍须核验能力、私聊配对并确认本人；个人 lark-cli 登录不等于机器人绑定。
 - 需求跟进：先确认 contexts 项目范围，再 `requirements track --watch` 综合消息、需求、纪要与代码。`handoff` 只导出实现材料，不代表已执行或获得发布授权。
 - 持续项目理解：先读[项目视图](references/context-views.md)，通过 `contexts view start/show` 维护同一篇当前理解；失败用 refresh，暂停和恢复保留身份。current=false 时补读当前原文，不能沿旧稿宣称新安排。
+- 问答调查与独立复核：按 [命令与工作流](references/workflows.md) 使用 `ask`；复核检查问题与同版原文，完成不等于答案必然正确，也不自动应用事实。
 - 按需求编码：先读 [需求开发](references/development.md)，明确目标仓库和交办范围，项目规则与检查由编码 Agent 自主读取，再用 `develop`。`ready` 是本轮 Agent 评审通过，`apply` 才修改原工作区，不代表发布。
 - 外部设计或研发资料：读 [能力装配](references/capabilities.md)，登记已有 skill、只读 CLI/MCP，检查连接并按项目选择。工具由 Agent 调用；登记声明不安装依赖、不完成登录，也不授予外部写权限。
 - 数据管理：先 `data info` 查看本机位置与占用，归档/清理先预览；备份恢复或迁移使用新目录。冷存储还承载旧引用，不能当缓存直接删除。

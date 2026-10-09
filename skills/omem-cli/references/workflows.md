@@ -31,6 +31,8 @@ omem sources revision REVISION_ID --json
 
 不要对返回 ID 硬编码。搜索目的选项 balanced / concept / implementation / background / follow-up。`ask` 的 turn.inputMessageRefs.status 必须为 done 才能把它称为完成；degraded 和引用的缺口照实说明。旧原文和当前知识状态应区分。
 
+助手会围绕问题自主补查，仍有重要推断或适用条件不确定时可请求独立复核。复核从问题、草稿与同版引用原文开始，仍能补读获准材料；发现问题后作者修改答案并保留已确认的前提。复核完成不代表答案一定正确，也不应用个人记忆或事项。
+
 ## 写知识文章
 
 一批材料需要目录和多篇文章时，先用 `omem knowledge outline`，完整的选材、草案 JSON、编辑确认与失败处理见[知识目录草案](knowledge-outlines.md)。它先保存阅读路线，用户确认后才开始正文写作；单篇明确目标仍可用下面的 write。

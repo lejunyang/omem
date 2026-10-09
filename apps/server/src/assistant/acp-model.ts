@@ -460,6 +460,7 @@ export class AcpAssistantModel implements AssistantModelPort {
         sessionId: result.sessionId,
         tools: environment.tools,
         acpTimings: result.timings,
+        preparation: environment.preparation,
         stages,
         timings: {
           prepareMs: Math.round(preparedAt - startedAt),

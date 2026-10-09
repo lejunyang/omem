@@ -10,6 +10,7 @@ import {
   appendFileSync,
   rmSync,
   copyFileSync,
+  constants,
 } from "node:fs";
 import {
   dirname,
@@ -111,6 +112,14 @@ export async function prepareAgentResearch(input: {
   }) => void;
 }): Promise<NativeResearchEnvironment> {
   const { workspace, repository } = input;
+  const started = performance.now();
+  let stageStarted = started;
+  const stages: Record<string, number> = {};
+  const timed = (stage: string) => {
+    const finished = performance.now();
+    stages[stage] = finished - stageStarted;
+    stageStarted = finished;
+  };
   let databaseHandle: DatabaseSync | undefined;
   let httpHandle: ReturnType<typeof createServer> | undefined;
   let semanticHandle: UnifiedRetrieval | undefined;
@@ -187,6 +196,7 @@ export async function prepareAgentResearch(input: {
       entries.set(material.key, { material, file, images });
     };
     for (const material of input.materials) exportMaterial(material);
+    timed("originalExport");
     const catalog = [...entries.values()].map((e) => ({
       key: e.material.key,
       title: e.material.title,
@@ -195,11 +205,13 @@ export async function prepareAgentResearch(input: {
       source: e.material.namespace,
       lines: e.material.lineCount,
       images: e.images,
-      description: repository.store.descriptions.get(e.material.revisionId),
+      description: null as ReturnType<MaterialDescriptions["get"]>,
       groupIds: [] as string[],
     }));
     const databaseFile = join(workspace, "snapshot.sqlite");
-    if (input.snapshot) copyFileSync(input.snapshot.file, databaseFile);
+    // Best-effort filesystem clone preserves an independent sealed database;
+    // unlike a hard link, host admission into the author cannot alter a reader.
+    if (input.snapshot) copyFileSync(input.snapshot.file, databaseFile, constants.COPYFILE_FICLONE);
     const db = input.snapshot
       ? new DatabaseSync(databaseFile, { readOnly: true })
       : researchSnapshot({
@@ -208,8 +220,10 @@ export async function prepareAgentResearch(input: {
           includeUnanchoredState:
             input.includeUnanchoredState ?? !input.visible,
           includeGroupCatalog: input.includeGroupCatalog,
+          onTiming: (stage, ms) => { stages[`snapshot.${stage}`] = ms; },
         });
     databaseHandle = db;
+    timed(input.snapshot ? "snapshotClone" : "snapshotBuild");
     const hasGroups = !!db.prepare("SELECT 1 FROM sqlite_master WHERE name='material_contexts'").get();
     const groups = hasGroups ? db.prepare(`SELECT c.id,c.name,c.kind,c.description,count(s.source_id) AS sourceCount
       FROM material_contexts c LEFT JOIN material_context_sources s ON s.context_id=c.id
@@ -275,6 +289,7 @@ export async function prepareAgentResearch(input: {
         ),
       ),
     );
+    timed("catalogAndLocators");
     const articles = new Map(admittedArticles.map((a) => [a.document.key, a]));
     const admit = (given: KnowledgeMaterial) => {
       if (input.snapshot) throw Error("独立复核只能读取已固定资料");
@@ -1234,7 +1249,11 @@ export async function prepareAgentResearch(input: {
       http.listen(0, "127.0.0.1", () => r());
     });
     const port = (http.address() as { port: number }).port;
+    timed("toolServer");
+    const preparation = { totalMs: performance.now() - started, stages };
+    writeFileSync(join(workspace, "preparation.json"), JSON.stringify(preparation, null, 2), { mode: 0o600 });
     return {
+      preparation,
       servers: [
         {
           type: "http",
