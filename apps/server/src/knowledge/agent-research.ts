@@ -625,7 +625,7 @@ export async function prepareAgentResearch(input: {
       );
       tool(
         "search_materials",
-        "Hybrid lexical/Chinese semantic search within this snapshot. For code navigation put the symbol in query and set codeIntent to definition or callers. Callers are name-level AST candidates, not type-resolved links; aliases/dynamic calls may be missing. Read the enclosing operation to confirm. Empty results mean no match in scope; refine concepts or use native Grep.",
+        "Hybrid lexical/Chinese semantic search within this snapshot. matchedRanges gives actual matched original lines: read those first with read_material, then read the enclosing section or operation for prerequisites. For code navigation put the symbol in query and set codeIntent to definition or callers. Callers are name-level AST candidates, not type-resolved links; aliases/dynamic calls may be missing. Empty results mean no match in scope; refine concepts or use native Grep.",
         {
           query: z.string(),
           groupIds: groupIdsOption,
@@ -706,6 +706,7 @@ export async function prepareAgentResearch(input: {
                   codeMatches: h.codeMatches,
                   startLine: h.target.startLine,
                   endLine: h.target.endLine,
+                  matchedRanges: h.matchedRanges,
                   snippet: h.text,
                   context: h.context,
                   description: h.materialDescription,
