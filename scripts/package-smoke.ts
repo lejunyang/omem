@@ -49,7 +49,7 @@ const node = (await exec("node", ["-p", "process.execPath"])).stdout.trim();
 const bin = join(prefix, "node_modules/.bin/omem");
 const installedCli = join(
   prefix,
-  "node_modules/omem/dist/apps/server/src/cli.js",
+  "node_modules", pkg.name, "dist/apps/server/src/cli.js",
 );
 const optional = taskFlag("optional");
 const optionalChecks: string[] = [];
@@ -255,7 +255,7 @@ try {
   assert(existsSync(join(temp, "skills/omem-cli/references/workflows.md")));
   assert(existsSync(join(temp, "skills/omem-cli/references/development.md")));
   const packagedSchedules = await readFile(
-    join(prefix, "node_modules/omem", schedulesReference),
+    join(prefix, "node_modules", pkg.name, schedulesReference),
     "utf8",
   );
   assert.equal(
@@ -273,7 +273,7 @@ try {
     /references\/schedules\.md/,
   );
   const packagedDependencies = await readFile(
-    join(prefix, "node_modules/omem", dependenciesReference),
+    join(prefix, "node_modules", pkg.name, dependenciesReference),
     "utf8",
   );
   assert.equal(
@@ -304,14 +304,14 @@ try {
   );
   const importPath = join(
     prefix,
-    "node_modules/omem/dist/apps/server/src/agent-runtime/bundles.js",
+    "node_modules", pkg.name, "dist/apps/server/src/agent-runtime/bundles.js",
   );
   await exec(
     node,
     [
       "--input-type=module",
       "-e",
-      `const {RoleBundleRegistry}=await import(${JSON.stringify(importPath)}); const r=new RoleBundleRegistry(); r.load('daily-assistant'); r.load('knowledge-researcher'); r.load('knowledge-writer'); r.load('knowledge-verifier'); r.load('requirement-tracker'); r.load('implementation-planner'); const {decisionModelAliases}=await import(${JSON.stringify(join(prefix, "node_modules/omem/dist/apps/server/src/cli/setup.js"))}); const {default:assert}=await import('node:assert/strict'); assert.deepEqual(decisionModelAliases(),['decision-startlux2b']); assert.deepEqual(decisionModelAliases('9b'),['decision-startlux9b']); assert.deepEqual(decisionModelAliases('both'),['decision-startlux2b','decision-startlux4b']); assert.deepEqual(decisionModelAliases('all'),['decision-startlux2b','decision-startlux4b','decision-startlux9b']); assert.deepEqual(decisionModelAliases(['2b','9b']),['decision-startlux2b','decision-startlux9b']); await import(${JSON.stringify(join(prefix, "node_modules/omem/dist/apps/server/src/cli/setup-wizard.js"))});`,
+      `const {RoleBundleRegistry}=await import(${JSON.stringify(importPath)}); const r=new RoleBundleRegistry(); r.load('daily-assistant'); r.load('knowledge-researcher'); r.load('knowledge-writer'); r.load('knowledge-verifier'); r.load('requirement-tracker'); r.load('implementation-planner'); const {decisionModelAliases}=await import(${JSON.stringify(join(prefix, "node_modules", pkg.name, "dist/apps/server/src/cli/setup.js"))}); const {default:assert}=await import('node:assert/strict'); assert.deepEqual(decisionModelAliases(),['decision-startlux2b']); assert.deepEqual(decisionModelAliases('9b'),['decision-startlux9b']); assert.deepEqual(decisionModelAliases('both'),['decision-startlux2b','decision-startlux4b']); assert.deepEqual(decisionModelAliases('0.8b'),['decision-startlux08']); assert.deepEqual(decisionModelAliases('all'),['decision-startlux08','decision-startlux2b','decision-startlux4b','decision-startlux9b']); assert.deepEqual(decisionModelAliases(['2b','9b']),['decision-startlux2b','decision-startlux9b']); await import(${JSON.stringify(join(prefix, "node_modules", pkg.name, "dist/apps/server/src/cli/setup-wizard.js"))});`,
     ],
     { cwd, env },
   );
