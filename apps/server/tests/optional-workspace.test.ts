@@ -188,6 +188,7 @@ it("leaves working configuration and the baseline unchanged when a declaration c
 
 it("defaults to only 2b and downloads larger choices only when requested", () => {
   expect(decisionModelAliases()).toEqual(["decision-startlux2b"]);
+  expect(decisionModelAliases("0.8b")).toEqual(["decision-startlux08"]);
   expect(decisionModelAliases("4b")).toEqual(["decision-startlux4b"]);
   expect(decisionModelAliases("9b")).toEqual(["decision-startlux9b"]);
   expect(decisionModelAliases("both")).toEqual([
@@ -195,6 +196,7 @@ it("defaults to only 2b and downloads larger choices only when requested", () =>
     "decision-startlux4b",
   ]);
   expect(decisionModelAliases("all")).toEqual([
+    "decision-startlux08",
     "decision-startlux2b",
     "decision-startlux4b",
     "decision-startlux9b",

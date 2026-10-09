@@ -1,3 +1,11 @@
+[models.decision-startlux08]
+source = "hf:startlux-models/StartLux-Decision-0.8B@bd4f76a600e23227547fee7bfc1825e12a32764c"
+include = ["*.safetensors", "*.json", "merges.txt", "LICENSE", "NOTICE"]
+exclude = []
+variant = "bf16"
+family = "startlux-decision"
+
+[models.decision-startlux08.views]
 # Optional models for installed omem. Downloads require an explicit omem setup command.
 [models.docling-tables.views]
 

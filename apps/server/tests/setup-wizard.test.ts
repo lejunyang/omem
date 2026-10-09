@@ -120,6 +120,17 @@ it("keeps a 2B and 9B combination without silently adding 4B", async () => {
   expect(plan?.decisionMode).toBe("auto");
   expect(script.output.join("\n")).not.toContain("StartLux 4B");
 });
+it("can enable automatic selection with only the small model prepared", async () => {
+  const script = scriptedIO([
+    {kind:"checkbox",value:["decisions"]},
+    {kind:"checkbox",value:["0.8b"]},
+    {kind:"select",value:"auto"},
+    {kind:"select",value:"execute"},
+  ]);
+  expect(await createSetupPlan({decisionsSupported:true},script.io)).toEqual({components:["decisions"],decisionModels:["0.8b"],decisionMode:"auto"});
+  const modes=script.prompts[2]!.options.choices as {value:string}[];
+  expect(modes.map(c=>c.value)).toEqual(["auto","0.8b","prepare"]);
+});
 
 it("only prepares resources when requested, preserving existing enabled choices", async () => {
   const script = scriptedIO([

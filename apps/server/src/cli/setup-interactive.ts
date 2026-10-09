@@ -26,6 +26,7 @@ export async function discoverSetupResources(): Promise<
     "memory-zh",
     "docling-layout",
     "docling-tables",
+    "decision-startlux08",
     "decision-startlux2b",
     "decision-startlux4b",
     "decision-startlux9b",
@@ -58,6 +59,7 @@ export async function discoverSetupResources(): Promise<
   installed["document-models"] =
     !!resources.get("docling-layout") && !!resources.get("docling-tables");
   for (const alias of [
+    "decision-startlux08",
     "decision-startlux2b",
     "decision-startlux4b",
     "decision-startlux9b",

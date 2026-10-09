@@ -90,8 +90,10 @@ if (!aliases.length || aliases.some((s) => !/^relevance-zh(?:-v2)?$/.test(s)))
 const db = new DatabaseSync(file, { readOnly: true });
 const embedding = await loadChineseEmbedding(config.osdkModel, root);
 const sharedEmbedding = { ...embedding, close: async () => {} };
+const decisionMode = z.enum(["auto", "0.8b", "2b", "4b"]).parse(process.env.osdk_arg_decision_mode ?? "auto");
+const decisionModeKey = `decision-${decisionMode}`;
 const decision = taskFlag("decision")
-  ? new DecisionService({ mode: "2b" })
+  ? new DecisionService({ mode: decisionMode })
   : undefined;
 const digest = (text: string) =>
   createHash("sha256").update(text).digest("hex");
@@ -178,7 +180,7 @@ try {
     textLength: hit.text.length,
   });
   const baseline = new Map<string, RetrievalHit[]>();
-  const modes = ["baseline", ...aliases, ...(decision ? ["decision-2b"] : [])];
+  const modes = ["baseline", ...aliases, ...(decision ? [decisionModeKey] : [])];
   let actualDecisionScoring = 0;
   for (const mode of modes) {
     const retrieval = new UnifiedRetrieval(
@@ -188,7 +190,7 @@ try {
         ? () => loadChineseReranker(mode, root)
         : undefined,
       true,
-      mode === "decision-2b" && decision
+      mode === decisionModeKey && decision
         ? async (q, hits) => (await assessPassages(decision, q.text, hits)).hits
         : undefined,
     );
@@ -200,7 +202,7 @@ try {
         );
       for (const item of gold) {
         if (
-          mode === "decision-2b" &&
+          mode === decisionModeKey &&
           decision &&
           decision.status().status === "idle"
         ) {

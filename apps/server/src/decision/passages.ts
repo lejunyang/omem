@@ -13,7 +13,7 @@ export function passagePolicy(result: DecisionResult) {
     p("premise", "contradicts") >= 0.2 ||
     p("parent_context", "needed") >= 0.2 ||
     p("relevance", "uncertain") >= 0.2;
-  const omit =
+  const omit = result.model.size !== "0.8b" &&
     !protectedContext &&
     p("relevance", "unrelated") >= 0.98 &&
     p("answer_coverage", "none") >= 0.95 &&
