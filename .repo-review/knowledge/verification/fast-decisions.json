@@ -7057,7 +7057,7 @@
     ]
   },
   "latestSharedHttpAdmission": {
-    "recordedAt": "2026-10-09T05:45:32.549Z",
+    "recordedAt": "2026-10-09T06:40:46.099Z",
     "scope": "Owned synthetic app, actual loopback HTTP, installed native 0.8B explicitly selected, embedding disabled; no generated answers.",
     "limitations": [
       "Two known short synthetic questions; no generated answers, no production accuracy claim.",
@@ -7065,14 +7065,14 @@
       "Automatic selection depends on current available memory; fixed mode is used for a repeatable 0.8B comparison."
     ],
     "fixed": {
-      "at": "2026-10-09T05:45:32.549Z",
+      "at": "2026-10-09T06:40:46.099Z",
       "scope": "Owned synthetic app, actual loopback HTTP, installed native 0.8B explicitly selected, embedding disabled; no generated answers.",
       "passed": true,
       "cases": [
         {
           "query": "重复提交怎么处理",
           "status": 200,
-          "elapsedMs": 667,
+          "elapsedMs": 715,
           "baseline": [
             {
               "title": "topic",
@@ -7093,82 +7093,6 @@
           "actualAssessed": 3,
           "hits": [
             {
-              "title": "rule",
-              "text": "客户端为每次请求附上唯一幂等键，服务端以此查找已保存回执，重复请求返回同一结果。",
-              "score": 0.0000015648535564853555,
-              "routes": [
-                "bm25",
-                "purpose:balanced",
-                "decision"
-              ],
-              "assessment": {
-                "model": "decision-startlux08",
-                "priority": 0.500109001994133,
-                "answers": {
-                  "relevance": {
-                    "choice": "answer",
-                    "confidence": 0.24478590488433838,
-                    "probabilities": {
-                      "unrelated": 0.053295113146305084,
-                      "topic_only": 0.18522517383098602,
-                      "background": 0.297943651676178,
-                      "answer": 0.3958287239074707,
-                      "uncertain": 0.06770734488964081
-                    }
-                  },
-                  "answer_coverage": {
-                    "choice": "sufficient",
-                    "confidence": 0.24837025006612143,
-                    "probabilities": {
-                      "none": 0.14440816640853882,
-                      "partial": 0.2538580000400543,
-                      "sufficient": 0.43627768754959106,
-                      "uncertain": 0.16545610129833221
-                    }
-                  },
-                  "premise": {
-                    "choice": "no_conflict",
-                    "confidence": 0.24833278357982635,
-                    "probabilities": {
-                      "contradicts": 0.19384442269802094,
-                      "no_conflict": 0.4988885223865509,
-                      "uncertain": 0.30726706981658936
-                    }
-                  },
-                  "evidence": {
-                    "choice": "statement",
-                    "confidence": 0.43222776055336,
-                    "probabilities": {
-                      "statement": 0.545782208442688,
-                      "conditional": 0.11371368169784546,
-                      "mention": 0.06408241391181946,
-                      "none": 0.18160229921340942,
-                      "uncertain": 0.09481939673423767
-                    }
-                  },
-                  "injection": {
-                    "choice": "ordinary",
-                    "confidence": 0.6986815929412842,
-                    "probabilities": {
-                      "ordinary": 0.7740111947059631,
-                      "quoted_example": 0.08971718698740005,
-                      "attempt": 0.03998388722538948,
-                      "uncertain": 0.09628770500421524
-                    }
-                  },
-                  "parent_context": {
-                    "choice": "not_needed",
-                    "confidence": 0.24944625794887543,
-                    "probabilities": {
-                      "needed": 0.2520684599876404,
-                      "not_needed": 0.4996308386325836,
-                      "uncertain": 0.24830064177513123
-                    }
-                  }
-                }
-              }
-            },
-            {
               "title": "topic",
               "text": "重复重复重复提交需要讨论。",
               "score": 0.951677209583303,
@@ -7180,6 +7104,7 @@
               "assessment": {
                 "model": "decision-startlux08",
                 "priority": 0.2919031649827957,
+                "advisoryOnly": true,
                 "answers": {
                   "relevance": {
                     "choice": "topic_only",
@@ -7256,6 +7181,7 @@
               "assessment": {
                 "model": "decision-startlux08",
                 "priority": 0.23728424832224845,
+                "advisoryOnly": true,
                 "answers": {
                   "relevance": {
                     "choice": "topic_only",
@@ -7319,13 +7245,90 @@
                   }
                 }
               }
+            },
+            {
+              "title": "rule",
+              "text": "客户端为每次请求附上唯一幂等键，服务端以此查找已保存回执，重复请求返回同一结果。",
+              "score": 0.0000015648535564853555,
+              "routes": [
+                "bm25",
+                "purpose:balanced",
+                "decision"
+              ],
+              "assessment": {
+                "model": "decision-startlux08",
+                "priority": 0.500109001994133,
+                "advisoryOnly": true,
+                "answers": {
+                  "relevance": {
+                    "choice": "answer",
+                    "confidence": 0.24478590488433838,
+                    "probabilities": {
+                      "unrelated": 0.053295113146305084,
+                      "topic_only": 0.18522517383098602,
+                      "background": 0.297943651676178,
+                      "answer": 0.3958287239074707,
+                      "uncertain": 0.06770734488964081
+                    }
+                  },
+                  "answer_coverage": {
+                    "choice": "sufficient",
+                    "confidence": 0.24837025006612143,
+                    "probabilities": {
+                      "none": 0.14440816640853882,
+                      "partial": 0.2538580000400543,
+                      "sufficient": 0.43627768754959106,
+                      "uncertain": 0.16545610129833221
+                    }
+                  },
+                  "premise": {
+                    "choice": "no_conflict",
+                    "confidence": 0.24833278357982635,
+                    "probabilities": {
+                      "contradicts": 0.19384442269802094,
+                      "no_conflict": 0.4988885223865509,
+                      "uncertain": 0.30726706981658936
+                    }
+                  },
+                  "evidence": {
+                    "choice": "statement",
+                    "confidence": 0.43222776055336,
+                    "probabilities": {
+                      "statement": 0.545782208442688,
+                      "conditional": 0.11371368169784546,
+                      "mention": 0.06408241391181946,
+                      "none": 0.18160229921340942,
+                      "uncertain": 0.09481939673423767
+                    }
+                  },
+                  "injection": {
+                    "choice": "ordinary",
+                    "confidence": 0.6986815929412842,
+                    "probabilities": {
+                      "ordinary": 0.7740111947059631,
+                      "quoted_example": 0.08971718698740005,
+                      "attempt": 0.03998388722538948,
+                      "uncertain": 0.09628770500421524
+                    }
+                  },
+                  "parent_context": {
+                    "choice": "not_needed",
+                    "confidence": 0.24944625794887543,
+                    "probabilities": {
+                      "needed": 0.2520684599876404,
+                      "not_needed": 0.4996308386325836,
+                      "uncertain": 0.24830064177513123
+                    }
+                  }
+                }
+              }
             }
           ]
         },
         {
           "query": "取消订单后，退款通常多久到账？",
           "status": 200,
-          "elapsedMs": 212,
+          "elapsedMs": 222,
           "baseline": [
             {
               "title": "refund",
@@ -7347,6 +7350,7 @@
               "assessment": {
                 "model": "decision-startlux08",
                 "priority": 0.7465651817619801,
+                "advisoryOnly": true,
                 "answers": {
                   "relevance": {
                     "choice": "answer",
@@ -7420,10 +7424,10 @@
           "size": "0.8b",
           "revision": "bd4f76a600e23227547fee7bfc1825e12a32764c",
           "switched": true,
-          "availableGiB": 9.701339721679688,
-          "loadPerCpu": 0.3955891927083333
+          "availableGiB": 7.4402618408203125,
+          "loadPerCpu": 1.4580485026041667
         },
-        "elapsedMs": 27955.704082967713,
+        "elapsedMs": 12727.77987504378,
         "peakModelBytes": 2317346921,
         "cached": false
       },
@@ -7433,10 +7437,10 @@
           "size": "0.8b",
           "revision": "bd4f76a600e23227547fee7bfc1825e12a32764c",
           "switched": false,
-          "availableGiB": 6.910888671875,
-          "loadPerCpu": 0.3490397135416667
+          "availableGiB": 5.144134521484375,
+          "loadPerCpu": 1.2950846354166667
         },
-        "elapsedMs": 0.33595808781683445,
+        "elapsedMs": 0.11699995957314968,
         "cached": true
       },
       "temporaryDatabaseRemoved": true
@@ -7469,6 +7473,106 @@
         }
       ],
       "temporaryDatabaseRemoved": true
+    },
+    "policy": "0.8B is advisory only; actual scores are attached but candidate ordering and count remain unchanged.",
+    "previousRankingPolicy": {
+      "recordedAt": "2026-10-09T05:45:32.549Z",
+      "orders": [
+        {
+          "query": "重复提交怎么处理",
+          "order": [
+            "rule",
+            "topic",
+            "refund"
+          ]
+        },
+        {
+          "query": "取消订单后，退款通常多久到账？",
+          "order": [
+            "refund"
+          ]
+        }
+      ],
+      "peakModelBytes": 2317346921
+    },
+    "knowledgeRefresh": {
+      "successful": {
+        "at": "2026-10-09T06:25:16.324Z",
+        "notes": [
+          {
+            "key": "omem:apps/server/src/decision/service.ts",
+            "role": "note",
+            "currentDependencies": true,
+            "citations": 10,
+            "generationModel": "gpt-5.6-sol",
+            "generationRun": "dbd35a20-89af-4bc9-90c1-787dd473e951",
+            "reviewModel": "gpt-5.6-sol",
+            "reviewRun": "1128ea8c-203d-4725-a943-a5ad667b5586",
+            "verdict": "accepted",
+            "issues": []
+          },
+          {
+            "key": "omem:apps/server/src/retrieval/unified.ts",
+            "role": "note",
+            "currentDependencies": true,
+            "citations": 11,
+            "generationModel": "gpt-5.6-sol",
+            "generationRun": "e8aef27a-e6a7-43ec-8b36-c6244a7bfbb0",
+            "reviewModel": "gpt-5.6-sol",
+            "reviewRun": "2aa4965e-d669-4066-94ec-3f8016f8ca38",
+            "verdict": "accepted",
+            "issues": []
+          }
+        ]
+      },
+      "advisoryNoteAttempt": {
+        "checkedAt": "2026-10-09T07:01:05.444Z",
+        "selection": [
+          "apps/server/src/decision/passages.ts"
+        ],
+        "total": 1,
+        "reused": 0,
+        "failures": [
+          {
+            "keys": [
+              "omem:apps/server/src/decision/passages.ts"
+            ],
+            "error": "Error: Agent timed out: no activity for 480000 ms"
+          }
+        ]
+      }
+    },
+    "currentRetrievalComparison": {
+      "recordedAt": "2026-10-09T07:20:23.661Z",
+      "implementationCommit": "f14dbf927dd63eae68951cbde52f45dfd5d21cda",
+      "units": 18361,
+      "actualAssessedHits": 48,
+      "modes": [
+        {
+          "mode": "baseline",
+          "pathAt5": 2,
+          "allCoreAt5": 3,
+          "coreGroupsAt5": 3
+        },
+        {
+          "mode": "relevance-zh",
+          "pathAt5": 4,
+          "allCoreAt5": 4,
+          "coreGroupsAt5": 4
+        },
+        {
+          "mode": "decision-0.8b",
+          "pathAt5": 2,
+          "allCoreAt5": 3,
+          "coreGroupsAt5": 3
+        }
+      ]
+    },
+    "materialConceptAudit": {
+      "at": "2026-10-09T07:18:07.808Z",
+      "materials": 16,
+      "concepts": 84,
+      "scope": "Current repository original text digests and concept line bounds; not semantic review or database state."
     }
   }
 }
