@@ -325,3 +325,63 @@ it("keeps scoped vector bytes and searches usable without rebuilding canonical f
     expect(hits.every(h=>h.target.revisionId===kept.id)).toBe(true);
   } finally { await reader?.close(); db?.close(); await sourceRetrieval.close(); }
 });
+
+it("recalls a range-bound concept semantically without mixing body vectors, hidden sources or old revisions", async () => {
+  const {store,retrieval:lexical}=setup();
+  const source=capture(store,"expense-process", "submitExpense();\ncollectReceipt();\nrecordEntry();\n\nrepaintDashboard();");
+  store.descriptions.save(source.id,description({concepts:[{label:"差旅凭证向财务登记",aliases:["registerExpense"],startLine:1,endLine:3}]}),"model",0);
+  const model={id:"concept-fixture-v1",close:async()=>{},embed:async(texts:string[],purpose:"query"|"passage")=>texts.map(text=>purpose==="query"?[1,0]:text==="差旅凭证向财务登记；registerExpense"?[.9,Math.sqrt(1-.9*.9)]:[0,1])};
+  const retrieval=new UnifiedRetrieval(store.db,async()=>model);
+  try {
+    while(await retrieval.indexBatch()) {}
+    const traces:RetrievalTrace[]=[];
+    const hits=await retrieval.search({text:"旅途票据应当交给谁"},t=>traces.push(t));
+    expect(traces.find(t=>t.stage==="concepts")!.hits).toEqual([]);
+    const concepts=traces.find(t=>t.stage==="semantic-concepts")!.hits;
+    expect(concepts).toHaveLength(1);
+    expect(concepts[0]!.target).toMatchObject({revisionId:source.id,startLine:1,endLine:3});
+    expect(hits[0]!.routes).toContain("semantic-concept");
+    expect(hits[0]!.text).not.toContain("repaint");
+    const namespaces=store.db.prepare("SELECT DISTINCT model_id FROM retrieval_unit_vectors ORDER BY model_id").all().map(r=>String(r.model_id));
+    expect(namespaces).toHaveLength(2);
+    expect(namespaces[1]).toBe(namespaces[0]+":range-concepts-v1");
+    expect(retrieval.health().semantic.concepts.pending).toBe(0);
+    expect(await retrieval.indexBatch()).toBe(0);
+    expect(await retrieval.search({text:"旅途票据应当交给谁",visible:()=>false})).toEqual([]);
+    capture(store,"expense-process","repaintDashboard();");
+    while(await retrieval.indexBatch()) {}
+    expect(await retrieval.search({text:"旅途票据应当交给谁"})).toEqual([]);
+  } finally {await retrieval.close();}
+});
+
+it("does not let many passages of one saved concept consume the whole concept candidate pool", async () => {
+  const {store,retrieval}=setup();
+  const text=Array.from({length:60},()=>"受理记录需要留存。").join("\n\n");
+  const broad=capture(store,"broad-record",text);
+  store.descriptions.save(broad.id,description({concepts:[{label:"资料验收",aliases:["资料验收规范","资料验收登记"],startLine:1,endLine:119}]}),"model",0);
+  const specific=capture(store,"specific-record","ledger.confirm();");
+  store.descriptions.save(specific.id,description({concepts:[{label:"资料验收",aliases:["登记背景".repeat(20)],startLine:1,endLine:1}]}),"model",0);
+  const stages:RetrievalTrace[]=[];
+  await retrieval.search({text:"资料验收",limit:10},t=>stages.push(t));
+  const hits=stages.find(t=>t.stage==="concepts")!.hits;
+  expect(hits).toHaveLength(2);
+  expect(hits.some(h=>h.target.kind==="source"&&h.target.revisionId===specific.id)).toBe(true);
+});
+
+it("retains healthy body vectors when a concept representation is damaged", async () => {
+  const {store}=setup();
+  const revision=capture(store,"entry","registerExpense();");
+  store.descriptions.save(revision.id,description({concepts:[{label:"差旅凭证",aliases:["expense"],startLine:1,endLine:1}]}),"model",0);
+  const model={id:"concept-failure-fixture",close:async()=>{},embed:async(texts:string[])=>texts.map(()=>[.8,.6])};
+  const r=new UnifiedRetrieval(store.db,async()=>model);
+  try {
+    while(await r.indexBatch()){}
+    store.db.prepare("UPDATE retrieval_unit_vectors SET vector=? WHERE model_id LIKE ?").run(Buffer.from(new Float32Array([1]).buffer),"%:range-concepts-v1");
+    const stages:RetrievalTrace[]=[];
+    const hits=await r.search({text:"旅途票据"},t=>stages.push(t));
+    expect(hits[0]!.routes).toContain("semantic");
+    expect(hits[0]!.routes).not.toContain("semantic-concept");
+    expect(stages.find(t=>t.stage==="semantic-concepts")!.error).toContain("dimensions");
+    expect(r.health().semantic.concepts.error).toContain("dimensions");
+  } finally {await r.close();}
+});

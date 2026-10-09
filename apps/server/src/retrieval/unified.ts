@@ -1,6 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { EmbeddingModel } from "./embedding.js";
 import type { RerankerModel } from "./reranker.js";
+import {
+  conceptCandidates,
+  conceptWindows,
+  CONCEPT_VECTOR_VERSION,
+} from "./concept-vectors.js";
 import { KeywordRetrieval } from "./keyword.js";
 import { embeddingWindows } from "./semantic.js";
 import {
@@ -36,6 +41,7 @@ export type RetrievalTrace = {
     | "symbols"
     | "concepts"
     | "semantic"
+    | "semantic-concepts"
     | "fusion"
     | "reranker-input"
     | "reranker"
@@ -67,6 +73,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
   private work: Promise<number> | null = null;
   private stopped = false;
   private error: string | null = null;
+  private conceptError: string | null = null;
   private rankingError: string | null = null;
   constructor(
     private database: DatabaseSync,
@@ -103,6 +110,9 @@ export class UnifiedRetrieval extends KeywordRetrieval {
   private get modelId() {
     return this.model ? UNIT_VERSION + ":" + this.model.id : null;
   }
+  private get conceptModelId() {
+    return this.modelId ? this.modelId + ":" + CONCEPT_VECTOR_VERSION : null;
+  }
   start() {
     const tick = async () => {
       if (this.stopped) return;
@@ -134,6 +144,22 @@ export class UnifiedRetrieval extends KeywordRetrieval {
             .get(this.modelId)!.n,
         )
       : 0;
+    const conceptTotal = Number(
+      this.database
+        .prepare(
+          "SELECT count(*) n FROM retrieval_units WHERE description_json IS NOT NULL",
+        )
+        .get()!.n,
+    );
+    const conceptIndexed = this.conceptModelId
+      ? Number(
+          this.database
+            .prepare(
+              "SELECT count(*) n FROM retrieval_unit_vector_heads WHERE model_id=?",
+            )
+            .get(this.conceptModelId)!.n,
+        )
+      : 0;
     return {
       available: true,
       backend: "sqlite-context-bm25-bge@1",
@@ -141,16 +167,26 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       units: total,
       semantic: {
         model: this.modelId,
-        state: this.error
-          ? "degraded"
-          : !this.load
-            ? "disabled"
-            : this.model && indexed === total && !this.projection.preparing
-              ? "ready"
-              : "indexing",
+        state:
+          this.error || this.conceptError
+            ? "degraded"
+            : !this.load
+              ? "disabled"
+              : this.model &&
+                  indexed === total &&
+                  conceptIndexed === conceptTotal &&
+                  !this.projection.preparing
+                ? "ready"
+                : "indexing",
         indexed,
         pending: total - indexed,
         error: this.error,
+        concepts: {
+          model: this.conceptModelId,
+          indexed: conceptIndexed,
+          pending: conceptTotal - conceptIndexed,
+          error: this.conceptError,
+        },
       },
       reranker: {
         model: this.reranker?.id ?? null,
@@ -183,25 +219,38 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     await this.syncAsync();
     const model = await this.ready();
     if (!limit || this.readOnly) return 0;
-    const rows = this.database
+    let rows = this.database
       .prepare(
         `SELECT u.* FROM retrieval_units u WHERE NOT EXISTS (
       SELECT 1 FROM retrieval_unit_vector_heads h WHERE h.unit_id=u.id AND h.model_id=?) LIMIT ?`,
       )
       .all(this.modelId, limit);
+    const conceptIndex = !rows.length;
+    const vectorModelId = conceptIndex ? this.conceptModelId : this.modelId;
+    if (conceptIndex)
+      rows = this.database
+        .prepare(
+          `SELECT u.* FROM retrieval_units u
+      WHERE u.description_json IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM retrieval_unit_vector_heads h WHERE h.unit_id=u.id AND h.model_id=?) LIMIT ?`,
+        )
+        .all(vectorModelId, limit);
     for (const row of rows) {
       if (this.stopped) break;
       const unit = decodeUnit(row),
-        windows = embeddingWindows(unit.text),
+        windows = conceptIndex
+          ? conceptWindows(unit)
+          : embeddingWindows(unit.text),
         vectors: number[][] = [];
       for (let i = 0; i < windows.length; i += 16) {
         const batch = windows.slice(i, i + 16);
         const result = await model.embed(
-          batch.map(
-            (w) =>
-              unit.context.slice(0, 180) +
-              "\n" +
-              unit.text.slice(w.start, w.end).replace(/\[\[[\w-]+\]\]/g, ""),
+          batch.map((w) =>
+            "text" in w && typeof w.text === "string"
+              ? w.text
+              : unit.context.slice(0, 180) +
+                "\n" +
+                unit.text.slice(w.start, w.end).replace(/\[\[[\w-]+\]\]/g, ""),
           ),
           "passage",
         );
@@ -229,7 +278,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
             )
             .run(
               unit.id,
-              this.modelId,
+              vectorModelId,
               i,
               windows[i]!.start,
               windows[i]!.end,
@@ -240,7 +289,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           .prepare(
             "INSERT OR REPLACE INTO retrieval_unit_vector_heads VALUES(?,?)",
           )
-          .run(unit.id, this.modelId);
+          .run(unit.id, vectorModelId);
         this.database.exec("COMMIT");
       } catch (error) {
         this.database.exec("ROLLBACK");
@@ -447,34 +496,66 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     return [...fused.values()];
   }
   private concepts(q: SearchQuery): ScoredUnit[] {
-    const terms = [...new Set(queryTerms(q.text).flatMap(t => indexText(t).split(" ")))];
+    const terms = [
+      ...new Set(queryTerms(q.text).flatMap((t) => indexText(t).split(" "))),
+    ];
     if (!terms.length || exactLookup(q.text)) return [];
-    const phrase = terms.filter(Boolean).map(t => '"' + t.replaceAll('"', '""') + '"').join(" OR ");
+    const phrase = terms
+      .filter(Boolean)
+      .map((t) => '"' + t.replaceAll('"', '""') + '"')
+      .join(" OR ");
     if (!phrase) return [];
     // Reuse the context FTS index, then require a match in a saved concept for
     // this exact passage. Headings and a file-wide summary are not concept hits.
-    const rows = this.database.prepare(`SELECT u.*,bm25(retrieval_units_fts,0,0,1,0) rank
+    const rows = this.database
+      .prepare(
+        `SELECT u.*,bm25(retrieval_units_fts,0,0,1,0) rank
       FROM retrieval_units_fts JOIN retrieval_units u ON u.id=retrieval_units_fts.id
       WHERE retrieval_units_fts MATCH ? AND u.kind='source' AND u.description_json IS NOT NULL
-      ORDER BY rank`).iterate(`context : (${phrase})`);
+      ORDER BY rank`,
+      )
+      .iterate(`context : (${phrase})`);
     const hits: ScoredUnit[] = [];
+    const seenConcepts = new Set<string>();
     for (const row of rows) {
       const unit = decodeUnit(row);
-      if (!this.eligible(unit,q) || unit.target.kind !== "source") continue;
+      if (!this.eligible(unit, q) || unit.target.kind !== "source") continue;
       const target = unit.target;
-      const matching = unit.materialDescription!.description.concepts.filter(c => {
-        if(c.startLine > target.endLine || c.endLine < target.startLine) return false;
-        const words = new Set(indexText([c.label,...c.aliases].join(" ")).split(" "));
-        return terms.some(t=>words.has(t));
+      const matching = unit.materialDescription!.description.concepts.filter(
+        (c) => {
+          if (c.startLine > target.endLine || c.endLine < target.startLine)
+            return false;
+          const words = new Set(
+            indexText([c.label, ...c.aliases].join(" ")).split(" "),
+          );
+          return terms.some((t) => words.has(t));
+        },
+      );
+      if (!matching.length) continue;
+      const identity = (c: (typeof matching)[number]) =>
+        JSON.stringify([
+          target.key,
+          target.revisionId,
+          c.label,
+          c.startLine,
+          c.endLine,
+        ]);
+      const first = matching.find((c) => !seenConcepts.has(identity(c)));
+      if (!first) continue;
+      seenConcepts.add(identity(first));
+      const start = Math.max(target.startLine, first.startLine);
+      const end = Math.min(target.endLine, first.endLine);
+      hits.push({
+        unit,
+        score: -Number(row.rank),
+        routes: ["material-concept"],
+        excerpt: unit.text
+          .split("\n")
+          .slice(start - target.startLine, end - target.startLine + 1)
+          .join("\n"),
       });
-      if(!matching.length) continue;
-      const first = matching[0]!;
-      const start = Math.max(target.startLine,first.startLine);
-      const end = Math.min(target.endLine,first.endLine);
-      hits.push({unit,score:-Number(row.rank),routes:["material-concept"],
-        excerpt:unit.text.split("\n").slice(start-target.startLine,end-target.startLine+1).join("\n")});
       // Visibility/scope filtering precedes the bound; hidden passages consume no slots.
-      if(hits.length===40) break;
+      if (hits.length === 40) break;
     }
     return hits;
   }
@@ -585,7 +666,9 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     this.observe(observer, "symbols", symbols);
     this.observe(observer, "concepts", concepts);
     const lexicalOnly = () =>
-      symbols.length || concepts.length ? this.fuse([lexical, symbols, concepts]) : lexical;
+      symbols.length || concepts.length
+        ? this.fuse([lexical, symbols, concepts])
+        : lexical;
     if (!q.text.trim() || exactLookup(q.text))
       return this.select(lexicalOnly(), q, observer);
     if (!this.model) {
@@ -594,6 +677,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       return this.select(await this.rerank(hits, q, observer), q, observer);
     }
     const dense = new Map<string, ScoredUnit>();
+    const conceptDense = new Map<string, ScoredUnit>();
     try {
       const [raw] = await this.model.embed([q.text.slice(0, 400)], "query"),
         vector = normalize(raw!);
@@ -633,6 +717,20 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           ),
         });
       }
+      try {
+        for (const hit of conceptCandidates(
+          this.database,
+          this.conceptModelId!,
+          units,
+          vector,
+        ))
+          conceptDense.set(hit.unit.id, hit);
+        this.conceptError = null;
+      } catch (error) {
+        // An optional representation failing does not discard healthy body vectors.
+        conceptDense.clear();
+        this.conceptError = String(error);
+      }
     } catch (error) {
       this.error = String(error);
       const hits = lexicalOnly();
@@ -647,7 +745,9 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       return this.select(await this.rerank(hits, q, observer), q, observer);
     }
     const sorted = [...dense.values()].sort((a, b) => b.score - a.score);
-    const floor = Math.max(0.4, (sorted[0]?.score ?? 1) - 0.075);
+    // The best match may be a question with no answer. It must not raise the
+    // admission floor for all other candidates before a reader/model sees them.
+    const floor = 0.4;
     const accepted = sorted
       .filter((h) => h.score >= floor)
       .sort(
@@ -657,7 +757,28 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       )
       .slice(0, 100);
     this.observe(observer, "semantic", accepted, this.modelId ?? undefined);
-    const hits = this.fuse([lexical.slice(0, 100), accepted, symbols, concepts]);
+    const semanticConcepts = [...conceptDense.values()]
+      .filter((h) => h.score >= floor)
+      .sort(
+        (a, b) =>
+          b.score * this.applicability(b.unit, q) -
+          a.score * this.applicability(a.unit, q),
+      )
+      .slice(0, 100);
+    this.observe(
+      observer,
+      "semantic-concepts",
+      semanticConcepts,
+      this.conceptModelId ?? undefined,
+      this.conceptError ?? undefined,
+    );
+    const hits = this.fuse([
+      lexical.slice(0, 100),
+      accepted,
+      symbols,
+      concepts,
+      semanticConcepts,
+    ]);
     this.observe(observer, "fusion", hits);
     return this.select(await this.rerank(hits, q, observer), q, observer);
   }
