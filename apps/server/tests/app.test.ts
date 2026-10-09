@@ -14,6 +14,7 @@ async function setup(token?: string) {
     host: "127.0.0.1",
     port: 4317,
     captureRoots: [],
+    decisions: { mode: "off" },
     notifications: { mode: "instant" },
     profiles: [
       profileSchema.parse({
