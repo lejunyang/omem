@@ -219,6 +219,8 @@ try {
       command: config.command,
       args: config.args,
       timeoutMs: config.timeoutMs,
+      idleTimeoutMs: config.idleTimeoutMs,
+      maxDurationMs: config.maxDurationMs,
       model: option("reading-model"),
     });
     const discovery = await acp(
@@ -268,6 +270,8 @@ try {
       command: config.command,
       args: config.args,
       timeoutMs: config.timeoutMs,
+      idleTimeoutMs: config.idleTimeoutMs,
+      maxDurationMs: config.maxDurationMs,
       model,
       effort: option("effort", "medium"),
     });
@@ -279,7 +283,9 @@ try {
       new AbortController().signal,
     );
     report.profiles.push({
-      requested: { model: profile.model, effort: profile.effort },
+      requested: { model: profile.model, effort: profile.effort,
+        idleTimeoutMs: profile.idleTimeoutMs ?? profile.timeoutMs,
+        maxDurationMs: profile.maxDurationMs ?? null },
       actual: probe.configOptions.map((o) => ({
         id: o.id,
         currentValue: o.currentValue,
@@ -365,7 +371,7 @@ try {
             }
           },
         },
-        { ownerId: "owner", retrieval: port, turnTimeoutMs: profile.timeoutMs },
+        { ownerId: "owner", retrieval: port, turnTimeoutMs: profile.idleTimeoutMs ?? profile.timeoutMs },
       );
       const conversation = runtime.conversations.open({
         principalId: "owner",
