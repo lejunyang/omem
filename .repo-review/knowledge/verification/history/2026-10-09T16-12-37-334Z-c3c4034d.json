@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-09T07:20:59.716Z",
-  "implementationCommit": "f14dbf927dd63eae68951cbde52f45dfd5d21cda",
-  "sourceDigest": "9053d68790400e5f8ee5da37d7210d9f30f5276e2da0bc378c84453144da14dd",
+  "recordedAt": "2026-10-09T16:12:37.334Z",
+  "implementationCommit": "e79ed40ed173c5e97110f361aac2bd1cdaaa7c07",
+  "sourceDigest": "106d76e591816f8b507696a2c6c271426c2d7929963c7f31ccfcd3edb1f403a1",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,22 +16,22 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-09T07-20-59-716Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-09T16-12-37-334Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
     {
       "name": "project",
-      "state": "failed",
+      "state": "passed",
       "details": {
         "command": [
           "osdk",
           "run",
           "check"
         ],
-        "exitCode": 1,
-        "log": ".repo-review/runtime/verification/2026-10-09T07-20-59-716Z/project.log",
-        "sha256": "9e606c630bb16be78a839871e6b128b3601d3e0b0a5a85575efafabc25fd36df"
+        "exitCode": 0,
+        "log": ".repo-review/runtime/verification/2026-10-09T16-12-37-334Z/project.log",
+        "sha256": "bb2e426a0bf1557dee52123fa953f8f4dad0798a42bca540728a6b02f5c1468e"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-09T07-20-59-716Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-09T16-12-37-334Z/liveChineseRetrieval.log",
         "sha256": "ea851f04dd6253946ba352a8438dd8e678a25f6dad004a0482177906e9a19216"
       }
     },
@@ -64,11 +64,11 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v8",
-        "units": 18361,
+        "units": 18402,
         "semantic": {
           "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 18361,
+          "indexed": 18402,
           "pending": 0,
           "error": null
         },
@@ -104,7 +104,7 @@
     "errors": [],
     "pages": [],
     "restore": {
-      "restored": 17,
+      "restored": 18,
       "stale": 10
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
@@ -129,7 +129,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 3,
-        "elapsedMs": 3692,
+        "elapsedMs": 2878,
         "top5": [
           {
             "path": "apps/server/src/retrieval/units.ts",
@@ -198,7 +198,7 @@
         "passed": false,
         "firstExpectedRank": 19,
         "uniquePathsAt5": 4,
-        "elapsedMs": 1812,
+        "elapsedMs": 932,
         "top5": [
           {
             "path": "docs/reader-first/operations.md",
@@ -257,18 +257,27 @@
         ],
         "status": 200,
         "baselineTop5": [
+          "docs/reader-first/assistant-memory-flow.md",
           "docs/reader-first/publication-lifecycle.md",
           "docs/archive/2026-10-01-baseline/AGENTS.md",
           "docs/reader-first/current-system.md",
-          "apps/server/tests/retrieval-unified.test.ts",
-          "docs/reader-first/publication-lifecycle.md"
+          "apps/server/tests/retrieval-unified.test.ts"
         ],
-        "baselineUniquePathsAt5": 4,
+        "baselineUniquePathsAt5": 5,
         "passed": false,
-        "firstExpectedRank": 19,
-        "uniquePathsAt5": 4,
-        "elapsedMs": 1324,
+        "firstExpectedRank": null,
+        "uniquePathsAt5": 5,
+        "elapsedMs": 1637,
         "top5": [
+          {
+            "path": "docs/reader-first/assistant-memory-flow.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "事项即时应用和后台学习原本分别有验收脚本，但普通用户会同时启用它们。助手保存的原始委托也会进入后台提取。现在 LearningPipeline 把这条原始指令的已有应用回执和当前事项状态交给提取者，并按固定片段与任务历史过滤已经生效的重复事项候选；名称相似度不决定是否重复。原始指令、模型候选、观察和其他记忆仍保留，即使"
+          },
           {
             "path": "docs/reader-first/publication-lifecycle.md",
             "routes": [
@@ -305,15 +314,6 @@
               "purpose:balanced"
             ],
             "snippet": "const passages = rerankPassages(\n    text,\n    \"怎样修改有效记忆，提案从什么入口写入？\",\n    text.slice(0, 400),\n    [{ label: \"原子写入记忆或事项\", aliases: [\"applyTask\", \"applyMemory\"] }"
-          },
-          {
-            "path": "docs/reader-first/publication-lifecycle.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "purpose:balanced"
-            ],
-            "snippet": "“补充背景”会把回答保存成原始材料，同时加入这篇文章的选材计划。下一次重新整理时，研究者、作者和独立复核者都能读取它。保存补充本身不等于正文已经更新；开启持续维护后由后台排队，否则需要手动重新整理。两种方式都应检查新结果。"
           }
         ]
       },
@@ -334,7 +334,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 322,
+        "elapsedMs": 458,
         "top5": [
           {
             "path": "apps/server/src/knowledge/pipeline.ts",
@@ -396,7 +396,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 4,
-        "elapsedMs": 251,
+        "elapsedMs": 243,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -457,9 +457,9 @@
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
-        "firstExpectedRank": 7,
+        "firstExpectedRank": 13,
         "uniquePathsAt5": 5,
-        "elapsedMs": 1681,
+        "elapsedMs": 1814,
         "top5": [
           {
             "path": "design.md",
