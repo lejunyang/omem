@@ -1554,3 +1554,24 @@ it("does not expand a visible hit into a hidden part of its chapter", async () =
     expect(sourceContextRange(m, hit, () => true, projection).startLine).toBe(1);
   } finally { await s.close(); }
 });
+
+it("keeps a semantic answer candidate when an unusually close question would otherwise raise the admission floor", async () => {
+  const s=setup();
+  const model:EmbeddingModel={id:"semantic-outlier-fixture",close:async()=>{},embed:async(texts,purpose)=>texts.map(text=>{
+    const cosine=purpose==="query"?1:text.includes("question-sheet")?.99:text.includes("valid-answer")?.75:.1;
+    return [cosine,Math.sqrt(1-cosine*cosine)];
+  })};
+  const pools:string[][]=[];
+  const r=new UnifiedRetrieval(s.store.db,async()=>model,undefined,false,async(_q,hits)=>{pools.push(hits.map(h=>h.title));return hits;});
+  try {
+    for(const title of ["question-sheet","valid-answer","unrelated"])
+      s.store.capture({source:"manual",externalId:title,title,parts:[{type:"text",text:title+" has independent content."}],context:{}});
+    while(await r.indexBatch()) {}
+    const hits=await r.search({text:"参加手续有哪些前提"});
+    expect(pools[0]).toContain("valid-answer");
+    expect(hits.map(h=>h.title)).not.toContain("unrelated");
+    const hidden=s.repository.materials().find(m=>m.title==="valid-answer")!.fragments.map(f=>f.id);
+    await r.search({text:"参加手续有哪些前提",visible:id=>!hidden.includes(id)});
+    expect(pools[1]).not.toContain("valid-answer");
+  } finally {await r.close();await s.close();}
+});
