@@ -689,8 +689,8 @@ export async function inspectOptionalDependencies(
         "onnx/model_quantized.onnx",
       ],
     },
-    ...["2b", "4b", "9b"].map((size) => ({
-      alias: `decision-startlux${size}`,
+    ...["0.8b", "2b", "4b", "9b"].map((size) => ({
+      alias: size === "0.8b" ? "decision-startlux08" : `decision-startlux${size}`,
       component: "decisions",
       enabled: decisionsEnabled && decisionMode === size,
       fix: `omem setup decisions --model ${size}`,
@@ -717,7 +717,7 @@ export async function inspectOptionalDependencies(
     supportsDecisions &&
     !checks.some(
       (check) =>
-        ["model.decision-startlux2b", "model.decision-startlux4b"].includes(
+        ["model.decision-startlux08", "model.decision-startlux2b", "model.decision-startlux4b"].includes(
           check.id,
         ) && !failing.has(check.state),
     )
@@ -728,8 +728,8 @@ export async function inspectOptionalDependencies(
       state: "missing",
       enabled: true,
       installed: false,
-      message: "自动选择至少需要一份可用的 2B 或 4B 本地快照。",
-      fix: "omem setup decisions --model 2b",
+      message: "自动选择至少需要一份可用的 0.8B、2B 或 4B 本地快照。",
+      fix: "omem setup decisions --model 0.8b",
     });
   const healthy = !checks.some(
     (check) => failing.has(check.state) && (check.enabled || check.installed),
@@ -769,6 +769,7 @@ export function formatOptionalReport(
     "model.docling-tables": "PDF 表格模型",
     "model.memory-zh": "BGE 中文向量模型",
     "model.decision-startlux2b": "StartLux 2B 模型",
+    "model.decision-startlux08": "StartLux 0.8B 模型",
     "model.decision-startlux4b": "StartLux 4B 模型",
     "model.decision-startlux9b": "StartLux 9B 模型",
   };

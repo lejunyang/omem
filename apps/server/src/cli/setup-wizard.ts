@@ -1,13 +1,14 @@
 import { checkbox, confirm, select } from "@inquirer/prompts";
+import { decisionModelAlias, decisionModelSizes, automaticDecisionSizes, type DecisionModelSize } from "../decision/models.js";
 
 export type SetupComponent =
   | "documents"
   | "document-models"
   | "embedding"
   | "decisions";
-export type DecisionMode = "off" | "auto" | "2b" | "4b" | "9b";
-export type ModelSize = "2b" | "4b" | "9b";
-type InstallationKey = SetupComponent | `decision-startlux${ModelSize}`;
+export type ModelSize = DecisionModelSize;
+export type DecisionMode = "off" | "auto" | ModelSize;
+type InstallationKey = SetupComponent | ReturnType<typeof decisionModelAlias>;
 
 export type SetupPlan = {
   components: SetupComponent[];
@@ -63,8 +64,9 @@ const componentOrder: SetupComponent[] = [
   "embedding",
   "decisions",
 ];
-const modelSizes: ModelSize[] = ["2b", "4b", "9b"];
+const modelSizes: readonly ModelSize[] = decisionModelSizes;
 const modelLabels: Record<ModelSize, string> = {
+  "0.8b": "StartLux 0.8B · 约 1.63 GiB；低内存阅读建议",
   "2b": "StartLux 2B · 约 4.26 GiB",
   "4b": "StartLux 4B · 约 8.70 GiB",
   "9b": "StartLux 9B · 约 18 GiB；暂定需 28 GiB 可用内存",
@@ -184,26 +186,28 @@ export async function createSetupPlan(
         shortcuts: { all: null, invert: null },
         choices: modelSizes.map((size) => ({
           value: size,
-          name: `${modelLabels[size]}${installedLabel(state, `decision-startlux${size}`)}`,
+          name: `${modelLabels[size]}${installedLabel(state, decisionModelAlias(size))}`,
           checked: selectedModels.includes(size),
           description:
             size === "9b"
               ? "9B 必须显式选择；28 GiB 是尚未实测校准的内存准入预算，自动模式不会使用它。"
               : size === "4b"
                 ? "暂定需 14 GiB 可用内存；可配合 2B 自动按负载选择。"
-                : "暂定需 8 GiB 可用内存；首次使用可先选择此模型。",
+                : size === "0.8b"
+                  ? "暂定需 4 GiB 可用内存；用于排序建议，不按评分删除候选。"
+                  : "暂定需 8 GiB 可用内存；首次使用可先选择此模型。",
         })),
       });
       const availableModels = modelSizes.filter(
         (size) =>
           selectedModels.includes(size) ||
-          state.installed?.[`decision-startlux${size}`],
+          state.installed?.[decisionModelAlias(size)],
       );
       const modes: Choice<Exclude<DecisionMode, "off"> | "prepare">[] = [];
-      if (availableModels.includes("2b") || availableModels.includes("4b"))
+      if (automaticDecisionSizes.some(size => availableModels.includes(size)))
         modes.push({
           value: "auto",
-          name: "启用 auto · 根据机器余量在已准备的 2B / 4B 中选择",
+          name: "启用 auto · 根据机器余量在已准备的 0.8B / 2B / 4B 中选择",
           description: "自动模式不使用 9B；不能保证一定比 ACP Agent 更快。",
         });
       modes.push(

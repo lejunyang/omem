@@ -161,7 +161,12 @@ run = "bun scripts/retrieval-compare.ts"
 help = "Installed model aliases, comma-separated: relevance-zh,relevance-zh-v2"
 default = "relevance-zh,relevance-zh-v2"
 [tasks."retrieval:compare".flags.decision]
-help = "Also attempt native 2B Decision; resource admission and failures are recorded"
+help = "Also attempt native Decision; resource admission and failures are recorded"
+
+[tasks."retrieval:compare".options.decision-mode]
+default = "auto"
+choices = ["auto", "0.8b", "2b", "4b"]
+help = "Mode when --decision is set; automatic mode admits installed models only"
 
 [tasks."knowledge:outline-verify"]
 description = "Exercise an editable directory proposal and article writing with real Traex/Sol on synthetic materials"

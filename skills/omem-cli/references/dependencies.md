@@ -34,9 +34,11 @@ omem setup
 | documents · 文档解析 | 只准备 Docling 解析环境用于 DOCX，或一起准备 PDF 布局与表格模型 |
 | document-models · PDF 模型 | 准备完整布局与表格包，自动加入 Docling 解析环境；当前 OCR 关闭 |
 | embedding · 中文向量 | 准备 BGE-small-zh-v1.5；可选准备后启用，或仅准备并保留当前设置 |
-| decisions · 快速决策 | 多选 StartLux 2B / 4B / 9B；再选择固定模型、auto 或仅准备 |
+| decisions · 快速决策 | 多选 StartLux 0.8B / 2B / 4B / 9B；再选择固定模型、auto 或仅准备 |
 
-决策模型默认预选 2B；可以只选 9B，也可以按需要选任意组合。auto 在已准备的 2B/4B 中按机器余量选择，不使用 9B，也不会临时下载缺少的模型。固定模式可选择本次准备或已发现的模型，实际可用性仍需校验和调用检查。
+决策模型默认预选 2B；可以只选 9B，也可以按需要选任意组合。auto 在已准备的 0.8B/2B/4B 中按机器余量选择，不使用 9B，也不会临时下载缺少的模型。固定模式可选择本次准备或已发现的模型，实际可用性仍需校验和调用检查。
+
+低内存机器可在向导勾选 0.8B，再选择 auto 或固定 0.8b；全部资源准备成功后保存设置，再重启服务。0.8B 暂按 4 GiB 可用内存准入，2B/4B 分别为 8/14 GiB；这些是运行预算，权重体积不能代替实际内存。降级立即生效，升级至少间隔五分钟。0.8B 只建议阅读顺序，不按评分删除材料；不足 4 GiB 或资源缺失时保留原检索并交给常规 Agent。模型判断仍不能批准操作或覆盖记忆。
 
 每个子选项都选好后，向导显示下载和配置计划。选择「返回调整」会保留刚才的选择；「退出」不安装或修改配置。确认执行后依次准备并校验资源，全部成功才保存所选设置。只准备会保留已有开关；首次没有配置文件时，成功向导仍创建默认配置。安装中断保留已完成资源，不保存新的功能设置。
 
@@ -106,7 +108,7 @@ JSON 的 `optional.checks` 每项包含 `enabled`、`installed` 与 `state`。�
 | 下载失败或中断 | 保留已完成资源，检查终端中失败的来源后重跑同一 setup。不要因为失败就删除个人库 |
 | 校验失败 | 依 doctor 显示的模型名与修复建议处理，再运行深度校验；不把损坏文件当作安装成功 |
 | 模型已安装却功能关闭 | 重跑向导，选择该能力及准备后启用；已有资源会复用。仅准备与显式组件命令不会改开关 |
-| StartLux 内存不足 | 保留常规 Agent 流程，关闭占用较大的应用，或在已安装 2B 时选用 `decisions.mode:"2b"`；不降低准入假装成功 |
+| StartLux 内存不足 | 保留常规 Agent 流程，在向导准备 0.8B 并启用 auto，或固定 `decisions.mode:"0.8b"`；仍不足时不运行决策模型；不降低准入假装成功 |
 
 ## 脚本、Agent 与单项排障
 
@@ -117,15 +119,16 @@ JSON 的 `optional.checks` 每项包含 `enabled`、`installed` 与 `state`。�
 | `omem setup documents --json` | Python 3.12.14、uv 0.12.23 与锁定的 Docling 2.133.0 依赖 |
 | `omem setup document-models --json` | 固定修订的 Docling Heron / TableFormer |
 | `omem setup embedding --json` | 固定修订的 BGE-small-zh-v1.5 量化 ONNX，别名 memory-zh |
+| `omem setup decisions --model 0.8b --json` | StartLux 运行环境和 0.8B 权重；低内存阅读顺序建议 |
 | `omem setup decisions --model 2b --json` | StartLux 运行环境和 2B 权重；不写 --model 时也只准备 2B |
 | `omem setup decisions --model 4b --json` | StartLux 运行环境和 4B 权重 |
 | `omem setup decisions --model 9b --json` | StartLux 运行环境和 9B 权重；仍需明确配置为 9b 才使用 |
 | `omem setup decisions --model both --json` | 2B 和 4B |
-| `omem setup decisions --model all --json` | 2B、4B 和 9B |
+| `omem setup decisions --model all --json` | 0.8B、2B、4B 和 9B |
 
 显式组件的 JSON 结果保持原有准备摘要，stdout 输出结果，stderr 输出进度。无参数 `omem setup --json` 仍需要交互终端，在 stderr 显示选择，结束后把计划、准备结果和配置变更写到 stdout；加 --json 不会自动决定选项。脚本不能用没有终端的无参数形式。
 
-手动修改开关时用 `omem config path` 找到实际文件，保留其他设置，再 `omem config validate` 和 `omem service restart`。若显式准备 BGE 后启用，需同时设置 `retrieval.enabled:true` 与 `retrieval.osdkModel:"memory-zh"`；决策模式为 auto / 2b / 4b / 9b。setup 不登录 Agent 或飞书，也不开启消息采集。
+手动修改开关时用 `omem config path` 找到实际文件，保留其他设置，再 `omem config validate` 和 `omem service restart`。若显式准备 BGE 后启用，需同时设置 `retrieval.enabled:true` 与 `retrieval.osdkModel:"memory-zh"`；决策模式为 auto / 0.8b / 2b / 4b / 9b。setup 不登录 Agent 或飞书，也不开启消息采集。
 
 ## 更新安装
 

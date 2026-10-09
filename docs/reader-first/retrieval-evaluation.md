@@ -47,7 +47,7 @@
 
 ## 下一步怎么做比较合适
 
-2026-10-09 新增 `osdk run retrieval:compare`，对当前已索引的仓库库做只读阶段对照。先运行 `osdk run retrieval:index --review`，然后确保服务机器已有锁定的 relevance-zh / relevance-zh-v2 资源；对照运行不下载，也不复制数据库。默认顺序比较原检索和两种 BGE，`--models relevance-zh` 可以只测一种；`--decision` 另尝试真实 2B，资源不足会记录未评分。原六题和预期路径保持不变，人工标注的核心依据行范围独立记录，不交给检索或评分模型。
+2026-10-09 新增 `osdk run retrieval:compare`，对当前已索引的仓库库做只读阶段对照。先运行 `osdk run retrieval:index --review`，然后确保服务机器已有锁定的 relevance-zh / relevance-zh-v2 资源；对照运行不下载，也不复制数据库。默认顺序比较原检索和两种 BGE，`--models relevance-zh` 可以只测一种；`--decision` 另尝试真实 Decision，默认 auto 按余量选择已安装的 0.8B/2B/4B；`--decision-mode 0.8b` 可固定大小，资源不足会记录未评分。原六题和预期路径保持不变，人工标注的核心依据行范围独立记录，不交给检索或评分模型。
 
 阶段记录区分词面与向量候选、融合、送入重排器的文本、模型原始分、用途偏好及最终顺序；诊断观察不会改变检索结果。新增 JSON 字段 reranking 保留实际模型、原始相关分及重排前检索分。显式重排器已能在向量未就绪时使用词面候选，加载失败不再永久缓存；默认配置仍关闭。完整阶段报告保存于 `.repo-review/knowledge/verification/retrieval-candidates.json`，本次原始评分输入覆盖同一个 gitignored 文件；核心依据覆盖不等于完整回答正确，传入文本也不代表已核对分词后的截断范围。
 

@@ -18,7 +18,7 @@ omem --help
 
 npm 自动安装基础运行依赖，包括官方 lark-cli；普通保存、全文搜索和网页只需要 Node。`omem setup` 在终端列出文档解析、PDF 模型、中文向量检索与本地决策，可多选，再选择模型、启用方式并确认汇总。PDF 模型会补上解析环境；成功后保存所选设置并可启动服务，不用记多条安装命令或手改开关。只用基础功能也可在向导中跳过可选能力，或继续使用 `omem init`、`omem service start`。
 
-解析与模型安装需要先按 [osdk 官方说明](https://github.com/lejunyang/one-sdk#install) 准备 osdk；AI 另需安装并登录 Agent CLI。显式 `omem setup <组件>` 保留给脚本和 Agent，仍只准备资源。决策默认预选 2B，auto 仅选择 2B/4B，9B 需明确选择且尚未推理验收。当前 StartLux 仅支持 Apple Silicon Mac。模型不会在启动时自动下载，安装位置、体积、启用与升级步骤见[依赖和模型](skills/omem-cli/references/dependencies.md)。
+解析与模型安装需要先按 [osdk 官方说明](https://github.com/lejunyang/one-sdk#install) 准备 osdk；AI 另需安装并登录 Agent CLI。显式 `omem setup <组件>` 保留给脚本和 Agent，仍只准备资源。决策默认预选 2B，auto 选择已安装的 0.8B/2B/4B，9B 需明确选择且尚未推理验收。当前 StartLux 仅支持 Apple Silicon Mac。模型不会在启动时自动下载，安装位置、体积、启用与升级步骤见[依赖和模型](skills/omem-cli/references/dependencies.md)。
 
 普通编码交办直接派发目标与材料，项目规则和检查方式由编码 Agent 在副本读取。相同代码的真实成功检查在编码、宿主和独立评审间复用；已交办且持续维护开启的未应用任务，在需求变更生效后保留副本调整实现。用法与边界见[需求跟进与编码](docs/reader-first/requirement-followup.md)。
 
@@ -81,7 +81,7 @@ Wiki 按读者问题调查、讲解：页面计划规定阅读目标和真实案
 
 日常助理支持持久会话、事项交办、等待、改期、完成、取消与站内提醒。来源更新后已有记忆重核验。新增材料可调查所属项目再更新记忆，含糊时在处理页提供补充入口；个人飞书订阅可带回外部回复，但是否完成已有事项仍需调查。完整持续项目理解、周期回顾与英语卡片仍是后续能力。
 
-中文本地快速决策已接入共用服务：StartLux 2B/4B 按本机余量与负载选择，用于助手初始选材和原文页多标签用途建议；冷启动或不可用时沿原流程继续。默认仍由 Sol 调查和作答，小模型不直接覆盖记忆或批准操作。2B/4B 的实测收益、失败、资源占用和准备方法见[中文快速决策](docs/reader-first/fast-decisions.md)。
+中文本地快速决策已接入共用服务：StartLux 0.8B/2B/4B 按本机余量与负载选择，用于助手初始选材和原文页多标签用途建议；冷启动或不可用时沿原流程继续。默认仍由 Sol 调查和作答，小模型不直接覆盖记忆或批准操作。2B/4B 的实测收益、失败、资源占用和准备方法见[中文快速决策](docs/reader-first/fast-decisions.md)。
 
 普通助手现已接入原生自主调查：按问题选择搜索、补读、记忆、历史或代码导航，再提交答案与行动候选。预算80元换为120元、更新同一记忆、创建跟进、重启提醒、延后及完成的真实Traex流程已通过。搜索页同时提供综合回答与实际命中，真实网页首题与追问均完成；基础排序仍会把计划和旧说明排在实现前，不能用Agent补查成功代替检索质量。具体实际内容与成熟方案见 [助手检索调研](docs/reader-first/assistant-search-research.md)，保存、换版、记忆更新和跟进的成功/失败见 [个人全流程](docs/reader-first/assistant-memory-flow.md)。
 

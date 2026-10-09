@@ -266,7 +266,7 @@ omem setup decisions --model all
 
 - documents 安装锁定的 Docling Python 环境；document-models 下载锁定的 PDF 布局和表格模型。
 - embedding 下载中文向量模型，之后设置 `retrieval.enabled:true` 并重启。
-- decisions 默认下载 StartLux 2B 并准备 MLX 环境，`--model 2b|4b|9b|both|all` 可选择；both 为 2B+4B，all 为三种。当前需要 Apple Silicon Mac。之后设置 `decisions.mode:"auto"`、`"2b"`、`"4b"` 或 `"9b"` 并重启；auto 只在已安装 2B/4B 中按内存和负载选择，不动态下载或自动加载 9B。9B 尚未实际推理验收。
+- decisions 默认下载 StartLux 2B 并准备 MLX 环境，`--model 0.8b|2b|4b|9b|both|all` 可选择；both 为 2B+4B，all 为四种。当前需要 Apple Silicon Mac。之后设置 `decisions.mode:"auto"`、`"0.8b"`、`"2b"`、`"4b"` 或 `"9b"` 并重启；auto 只在已安装 0.8B/2B/4B 中按内存和负载选择，不动态下载或自动加载 9B。9B 尚未实际推理验收。
 
 可选运行环境与模型声明在个人库 `optional/`，模型字节由 osdk 的用户级数据与缓存目录保存，`--data-dir` 不自动迁移共享权重。普通服务启动不会隐式下载。重新 setup 更新未定制的包内资源，保留用户修改并说明冲突；不会自动开启功能。Windows Python 路径已适配，跨平台完整安装验收仍以 progress.md 为准；PDF OCR 尚未开启。下载来源、体积、诊断与升级操作见[依赖和模型](../skills/omem-cli/references/dependencies.md)。
 

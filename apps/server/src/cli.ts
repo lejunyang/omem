@@ -1714,12 +1714,12 @@ program
   .addOption(
     new Option(
       "--model <size>",
-      "决策模型大小，默认 2b；both=2b+4b，all=2b+4b+9b",
-    ).choices(["2b", "4b", "9b", "both", "all"]),
+      "决策模型大小，默认 2b；0.8b 可用于低内存建议，both=2b+4b，all=四种大小",
+    ).choices(["0.8b", "2b", "4b", "9b", "both", "all"]),
   )
   .addHelpText(
     "after",
-    "\n推荐直接运行 omem setup：空格多选、方向键移动、回车继续；按需要进入子选项。\n可选 documents（解析环境）、document-models（PDF 布局/表格）、embedding（中文向量）、decisions（快速决策）。\nPDF 模型会补上解析环境；可选只准备或准备后启用，汇总后可返回调整。\n不勾选可选能力可只初始化基础配置，无需 osdk。\n成功后保存所选配置，缺失配置会初始化；最后可启动或重启本机服务。\n决策默认预选 2B，9B 约 18 GiB，只能明确选择；auto 只用 2B/4B。\n脚本/Agent 保留显式形式：omem setup decisions --model 9b --json。\n指定组件只准备资源，不改开关；both=2B+4B，all=2B+4B+9B。非交互环境须指定组件。\n在服务机器运行，拒绝 --url 远端安装；可用 --data-dir / --config 指定目标。\n安装后用 omem doctor --local 检查；--verify-models 可完整校验模型。",
+    "\n推荐直接运行 omem setup：空格多选、方向键移动、回车继续；按需要进入子选项。\n可选 documents（解析环境）、document-models（PDF 布局/表格）、embedding（中文向量）、decisions（快速决策）。\nPDF 模型会补上解析环境；可选只准备或准备后启用，汇总后可返回调整。\n不勾选可选能力可只初始化基础配置，无需 osdk。\n成功后保存所选配置，缺失配置会初始化；最后可启动或重启本机服务。\n决策默认预选 2B，9B 约 18 GiB，只能明确选择；auto 按余量选择已安装的 4B/2B/0.8B。\n脚本/Agent 保留显式形式：omem setup decisions --model 9b --json。\n指定组件只准备资源，不改开关；both=2B+4B，all=0.8B+2B+4B+9B。非交互环境须指定组件。\n在服务机器运行，拒绝 --url 远端安装；可用 --data-dir / --config 指定目标。\n安装后用 omem doctor --local 检查；--verify-models 可完整校验模型。",
   )
   .action(async (name, options) => {
     if (process.env.OMEM_URL)

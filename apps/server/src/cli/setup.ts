@@ -1,9 +1,10 @@
 import { assetPath, modelWorkspace } from "../paths.js";
 import { prepareOptionalWorkspace } from "./optional-workspace.js";
 import { requireOsdk, runSetupCommand } from "./osdk.js";
+import { decisionModelAlias, decisionModelSizes, type DecisionModelSize } from "../decision/models.js";
 
-export type DecisionModelChoice = "2b" | "4b" | "9b" | "both" | "all";
-export type DecisionModelSize = "2b" | "4b" | "9b";
+export type DecisionModelChoice = DecisionModelSize | "both" | "all";
+export type { DecisionModelSize };
 export type SetupOptionalOptions = {
   model?: DecisionModelChoice;
   models?: readonly DecisionModelSize[];
@@ -16,22 +17,22 @@ export function decisionModelAliases(
   if (typeof choice !== "string") {
     if (
       !choice.length ||
-      choice.some((size) => !["2b", "4b", "9b"].includes(size))
+      choice.some((size) => !decisionModelSizes.includes(size))
     )
-      throw Error("请至少选择一个有效决策模型：2b、4b、9b。");
-    return [...new Set(choice)].map((size) => `decision-startlux${size}`);
+      throw Error("请至少选择一个有效决策模型：0.8b、2b、4b、9b。");
+    return [...new Set(choice)].map(decisionModelAlias);
   }
-  if (!["2b", "4b", "9b", "both", "all"].includes(choice))
+  if (![...decisionModelSizes, "both", "all"].includes(choice))
     throw Error(
-      "决策模型可选：2b、4b、9b、both（2b 和 4b）、all（三个模型）。",
+      "决策模型可选：0.8b、2b、4b、9b、both（2b 和 4b）、all（四个模型）。",
     );
   return (
     choice === "all"
-      ? ["2b", "4b", "9b"]
+      ? [...decisionModelSizes]
       : choice === "both"
         ? ["2b", "4b"]
         : [choice]
-  ).map((size) => `decision-startlux${size}`);
+  ).map((size) => decisionModelAlias(size as DecisionModelSize));
 }
 
 export async function setupOptional(
@@ -99,7 +100,7 @@ export async function setupOptional(
       }
       const mode =
         aliases.length === 1
-          ? aliases[0]!.replace("decision-startlux", "")
+          ? decisionModelSizes.find(size => decisionModelAlias(size) === aliases[0])!
           : "auto";
       if (options.manualGuidance !== false)
         console.error(

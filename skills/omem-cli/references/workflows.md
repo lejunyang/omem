@@ -77,7 +77,7 @@ inbox 返回消息、资源与处理状态；资源缺失时先补读或说明�
 - 可选依赖准备先读[安装、依赖与模型](dependencies.md)。本人推荐 `omem setup` 一次选择；解析或模型需要服务机器已安装 osdk，只用基础功能无需。setup 不通过 --url 准备远端资源，支持 --data-dir / --config。
 - PDF/DOCX：向导选择 documents，再选择只解析 DOCX 或一起准备 PDF 模型；单选 document-models 会自动加入解析环境。当前 OCR 关闭。脚本用 `omem setup documents --json` 和 `omem setup document-models --json`。
 - 中文向量：向导选择 embedding，并选择准备后启用 BGE；保存 retrieval.enabled:true 与 retrieval.osdkModel:memory-zh，保留重排等其他设置。选仅准备或脚本执行 `setup embedding` 不改开关。
-- 本地决策：Apple Silicon Mac 上在向导多选 2B / 4B / 9B，再选运行模式或仅准备。脚本 `setup decisions` 默认 2B，`--model 4b|9b|both|all` 按需准备，both 是 2B+4B，all 是三种；仍不改开关。auto 只在已准备的 2B/4B 中按负载选择，9B 尚未实际推理验收。缺少模型时不伪造判断结果。
+- 本地决策：Apple Silicon Mac 上在向导多选 0.8B / 2B / 4B / 9B，再选运行模式或仅准备。脚本 `setup decisions` 默认 2B，`--model 0.8b|4b|9b|both|all` 按需准备，both 是 2B+4B，all 是四种；仍不改开关。auto 只在已准备的 0.8B/2B/4B 中按负载选择，9B 尚未实际推理验收。缺少模型时不伪造判断结果。
 - 安装诊断：`doctor --local --json` 跳过 HTTP、区分功能开关与实际资源；`doctor --local --verify-models --json` 才核对已下载权重的完整摘要。未启用能力不要求下载，检查不调用模型。
 
 向导在执行前可返回调整或退出；所选资源全部成功才保存配置。失败不保存新开关，已准备资源保留；非法配置或安装期间的配置变更拒绝覆盖。选择仅准备保留既有设置，首次成功向导仍创建默认配置。服务启动是最后单独的可选动作；启动失败不撤回已经保存的配置。

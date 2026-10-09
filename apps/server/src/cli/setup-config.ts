@@ -8,7 +8,7 @@ import { assetPath, configPath, defaultDataDir } from "../paths.js";
 export type SetupConfigurationChanges = {
   embedding?: boolean;
   embeddingModel?: string;
-  decisions?: "off" | "auto" | "2b" | "4b" | "9b";
+  decisions?: "off" | "auto" | "0.8b" | "2b" | "4b" | "9b";
 };
 export type SetupConfigurationSnapshot = {
   path: string;

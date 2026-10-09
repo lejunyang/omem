@@ -31,7 +31,9 @@ it("keeps removed repository copies out of dev searches while preserving history
 
 it("retrieves a Chinese question through the global API without requiring a literal substring", async () => {
   const dir = mkdtempSync(join(tmpdir(), "reading-search-"));
-  const { app, store } = await buildApp({ dataDir: dir, agentCwd: dir, host: "127.0.0.1", port: 4317, captureRoots: [], notifications: { mode: "instant" }, profiles: [] });
+  // This checks the search API contract; optional native-model inference has its
+  // own real HTTP acceptance and must not depend on the developer's weights.
+  const { app, store } = await buildApp({ dataDir: dir, agentCwd: dir, host: "127.0.0.1", port: 4317, captureRoots: [], notifications: { mode: "instant" }, profiles: [], decisions:{mode:"off"} });
   try {
     store.capture({ source: "manual", externalId: "message", title: "消息处理", parts: [{ type: "text", text: "飞书群中的消息先保存，再交给后台任务处理。" }], context: {} });
     const response = await app.inject("/api/search?q=" + encodeURIComponent("飞书 消息 后台"));

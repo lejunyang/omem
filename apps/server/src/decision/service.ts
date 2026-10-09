@@ -9,6 +9,7 @@ import { resolve, join } from "node:path";
 import { createInterface } from "node:readline";
 import { z } from "zod";
 import { createHash } from "node:crypto";
+import { automaticDecisionSizes, decisionModelAlias, decisionModelSizes } from "./models.js";
 import {
   assetPath,
   modelWorkspace,
@@ -19,7 +20,7 @@ import type { ChoiceQuestion } from "./questions.js";
 import { getLogger, errorSummary } from "../logging/logger.js";
 const exec = promisify(execFile);
 export const decisionConfigSchema = z
-  .object({ mode: z.enum(["off", "auto", "2b", "4b", "9b"]).default("auto") })
+  .object({ mode: z.enum(["off", "auto", ...decisionModelSizes]).default("auto") })
   .strict();
 export type DecisionConfig = z.input<typeof decisionConfigSchema>;
 const answerSchema = z.object({
@@ -39,6 +40,7 @@ export const resultSchema = z.object({
     loadPerCpu: z.number(),
   }),
   peakModelBytes: z.number(),
+  cached: z.boolean().optional(),
 });
 export type DecisionResult = z.infer<typeof resultSchema>;
 
@@ -54,7 +56,6 @@ export class DecisionService {
   private queue: Promise<unknown> = Promise.resolve();
   private idle?: ReturnType<typeof setTimeout>;
   private stopped = false;
-  private cache = new Map<string, { at: number; value: DecisionResult }>();
   private state = { status: "idle", model: "", lastError: "" };
   constructor(private config: DecisionConfig = {}) {
     if (config.mode === "off") this.state.status = "disabled";
@@ -73,18 +74,6 @@ export class DecisionService {
     const logger = getLogger({ component: "decision" });
     const run = this.queue.then(async () => {
       if (this.stopped) return null;
-      const cached = this.cache.get(key);
-      if (cached && Date.now() - cached.at < 300_000) {
-        logger.debug(
-          {
-            event: "decision.cached",
-            requestDigest: key,
-            model: cached.value.model.alias,
-          },
-          "decision.cached",
-        );
-        return cached.value;
-      }
       clearTimeout(this.idle);
       try {
         await this.start();
@@ -112,9 +101,6 @@ export class DecisionService {
           model: result.model.alias,
           lastError: "",
         };
-        this.cache.set(key, { at: Date.now(), value: result });
-        if (this.cache.size > 128)
-          this.cache.delete(this.cache.keys().next().value!);
         logger.debug(
           {
             event: "decision.completed",
@@ -124,6 +110,7 @@ export class DecisionService {
             model: result.model.alias,
             modelSize: result.model.size,
             switched: result.model.switched,
+            cached: result.cached ?? false,
           },
           "decision.completed",
         );
@@ -145,6 +132,7 @@ export class DecisionService {
         this.state = {
           ...this.state,
           status: "unavailable",
+          model: "",
           lastError: error instanceof Error ? error.message : String(error),
         };
         return null;
@@ -193,9 +181,10 @@ export class DecisionService {
     // Automatic selection only uses the smaller models. An installed 9B is
     // discovered only when the user explicitly selects it.
     const mode = this.config.mode ?? "auto";
-    for (const size of mode === "auto" ? ["2b", "4b"] : [mode]) {
+    if (mode === "off") return;
+    for (const size of mode === "auto" ? automaticDecisionSizes : [mode]) {
       try {
-        const alias = `decision-startlux${size}`;
+        const alias = decisionModelAlias(size);
         const { stdout } = await exec(
           "osdk",
           ["model", "show", alias, "--json", "--offline"],
