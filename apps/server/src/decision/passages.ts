@@ -97,13 +97,17 @@ export async function assessPassages(
     }
     assessed.push({ hit, result, index });
   }
+  // Small-model advice has not earned authority to reorder retrieved evidence.
+  // A batch that switches model revisions also cannot compare uncalibrated scores.
+  const modelIdentities = new Set(assessed.flatMap(({result}) => result ? [`${result.model.alias}:${result.model.revision}`] : []));
+  const advisoryOnly = assessed.some(({result}) => result?.model.size === "0.8b") || modelIdentities.size > 1;
   const decisions = assessed.map(({ hit, result }) => ({
     id: hit.id,
     result,
-    policy: result ? passagePolicy(result) : null,
+    policy: result ? {...passagePolicy(result),advisoryOnly,omit:!advisoryOnly && passagePolicy(result).omit} : null,
   }));
   const kept = assessed.filter(
-    ({ result }) => !result || !passagePolicy(result).omit,
+    ({ result }) => advisoryOnly || !result || !passagePolicy(result).omit,
   );
   const abstained = kept.length === 0;
   for (const { hit, result } of assessed) {
@@ -132,9 +136,11 @@ export async function assessPassages(
         revisionId:
           hit.target.kind === "source" ? hit.target.revisionId : undefined,
         kind: hit.kind,
-        outcome: policy?.omit && !abstained ? "omitted" : "kept",
+        outcome: policy?.omit && !abstained && !advisoryOnly ? "omitted" : "kept",
         reason: !result
           ? "decision_unavailable"
+          : advisoryOnly
+            ? "advisory_only"
           : abstained
             ? "all_omitted_abstention"
             : policy?.omit
@@ -147,7 +153,7 @@ export async function assessPassages(
       "retrieval.passage_decision",
     );
   }
-  kept.sort((a, b) => {
+  if (!advisoryOnly) kept.sort((a, b) => {
     const priority = (r: DecisionResult | null) =>
       r ? passagePolicy(r).priority : 0.5;
     return priority(b.result) - priority(a.result) || a.index - b.index;
@@ -163,6 +169,7 @@ export async function assessPassages(
       omitted: abstained ? 0 : assessed.length - kept.length,
       retainedWithoutAssessment: hits.length - assessed.length,
       abstained,
+      advisoryOnly,
     },
     "retrieval.selection",
   );
@@ -177,6 +184,7 @@ export async function assessPassages(
                   assessment: {
                     model: a.result.model.alias,
                     priority: passagePolicy(a.result).priority,
+                    advisoryOnly,
                     answers: a.result.answers,
                   },
                 }
