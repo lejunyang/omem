@@ -90,7 +90,7 @@ if (!aliases.length || aliases.some((s) => !/^relevance-zh(?:-v2)?$/.test(s)))
 const db = new DatabaseSync(file, { readOnly: true });
 const embedding = await loadChineseEmbedding(config.osdkModel, root);
 const sharedEmbedding = { ...embedding, close: async () => {} };
-const decisionMode = z.enum(["auto", "0.8b", "2b", "4b"]).parse(process.env.osdk_arg_decision_mode ?? "auto");
+const decisionMode = z.enum(["auto", "0.8b", "2b", "4b"]).parse(process.env.osdk_arg_decision_mode ?? process.env["osdk_arg_decision-mode"] ?? "auto");
 const decisionModeKey = `decision-${decisionMode}`;
 const decision = taskFlag("decision")
   ? new DecisionService({ mode: decisionMode })
