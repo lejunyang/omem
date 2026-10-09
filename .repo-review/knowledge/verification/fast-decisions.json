@@ -7055,5 +7055,420 @@
         ]
       }
     ]
+  },
+  "latestSharedHttpAdmission": {
+    "recordedAt": "2026-10-09T05:45:32.549Z",
+    "scope": "Owned synthetic app, actual loopback HTTP, installed native 0.8B explicitly selected, embedding disabled; no generated answers.",
+    "limitations": [
+      "Two known short synthetic questions; no generated answers, no production accuracy claim.",
+      "0.8B keeps all candidates. 4 GiB budget has not been calibrated for long inputs.",
+      "Automatic selection depends on current available memory; fixed mode is used for a repeatable 0.8B comparison."
+    ],
+    "fixed": {
+      "at": "2026-10-09T05:45:32.549Z",
+      "scope": "Owned synthetic app, actual loopback HTTP, installed native 0.8B explicitly selected, embedding disabled; no generated answers.",
+      "passed": true,
+      "cases": [
+        {
+          "query": "重复提交怎么处理",
+          "status": 200,
+          "elapsedMs": 667,
+          "baseline": [
+            {
+              "title": "topic",
+              "text": "重复重复重复提交需要讨论。",
+              "score": 0.951677209583303
+            },
+            {
+              "title": "refund",
+              "text": "订单取消以后，退款通常在三个工作日内原路退回；银行处理可能延迟。",
+              "score": 0.8557616272720293
+            },
+            {
+              "title": "rule",
+              "text": "客户端为每次请求附上唯一幂等键，服务端以此查找已保存回执，重复请求返回同一结果。",
+              "score": 0.0000015648535564853555
+            }
+          ],
+          "actualAssessed": 3,
+          "hits": [
+            {
+              "title": "rule",
+              "text": "客户端为每次请求附上唯一幂等键，服务端以此查找已保存回执，重复请求返回同一结果。",
+              "score": 0.0000015648535564853555,
+              "routes": [
+                "bm25",
+                "purpose:balanced",
+                "decision"
+              ],
+              "assessment": {
+                "model": "decision-startlux08",
+                "priority": 0.500109001994133,
+                "answers": {
+                  "relevance": {
+                    "choice": "answer",
+                    "confidence": 0.24478590488433838,
+                    "probabilities": {
+                      "unrelated": 0.053295113146305084,
+                      "topic_only": 0.18522517383098602,
+                      "background": 0.297943651676178,
+                      "answer": 0.3958287239074707,
+                      "uncertain": 0.06770734488964081
+                    }
+                  },
+                  "answer_coverage": {
+                    "choice": "sufficient",
+                    "confidence": 0.24837025006612143,
+                    "probabilities": {
+                      "none": 0.14440816640853882,
+                      "partial": 0.2538580000400543,
+                      "sufficient": 0.43627768754959106,
+                      "uncertain": 0.16545610129833221
+                    }
+                  },
+                  "premise": {
+                    "choice": "no_conflict",
+                    "confidence": 0.24833278357982635,
+                    "probabilities": {
+                      "contradicts": 0.19384442269802094,
+                      "no_conflict": 0.4988885223865509,
+                      "uncertain": 0.30726706981658936
+                    }
+                  },
+                  "evidence": {
+                    "choice": "statement",
+                    "confidence": 0.43222776055336,
+                    "probabilities": {
+                      "statement": 0.545782208442688,
+                      "conditional": 0.11371368169784546,
+                      "mention": 0.06408241391181946,
+                      "none": 0.18160229921340942,
+                      "uncertain": 0.09481939673423767
+                    }
+                  },
+                  "injection": {
+                    "choice": "ordinary",
+                    "confidence": 0.6986815929412842,
+                    "probabilities": {
+                      "ordinary": 0.7740111947059631,
+                      "quoted_example": 0.08971718698740005,
+                      "attempt": 0.03998388722538948,
+                      "uncertain": 0.09628770500421524
+                    }
+                  },
+                  "parent_context": {
+                    "choice": "not_needed",
+                    "confidence": 0.24944625794887543,
+                    "probabilities": {
+                      "needed": 0.2520684599876404,
+                      "not_needed": 0.4996308386325836,
+                      "uncertain": 0.24830064177513123
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "title": "topic",
+              "text": "重复重复重复提交需要讨论。",
+              "score": 0.951677209583303,
+              "routes": [
+                "bm25",
+                "purpose:balanced",
+                "decision"
+              ],
+              "assessment": {
+                "model": "decision-startlux08",
+                "priority": 0.2919031649827957,
+                "answers": {
+                  "relevance": {
+                    "choice": "topic_only",
+                    "confidence": 0.18894793838262558,
+                    "probabilities": {
+                      "unrelated": 0.03238820657134056,
+                      "topic_only": 0.35115835070610046,
+                      "background": 0.26227694749832153,
+                      "answer": 0.20010623335838318,
+                      "uncertain": 0.15407030284404755
+                    }
+                  },
+                  "answer_coverage": {
+                    "choice": "none",
+                    "confidence": 0.11376953125,
+                    "probabilities": {
+                      "none": 0.3353271484375,
+                      "partial": 0.25295495986938477,
+                      "sufficient": 0.13462115824222565,
+                      "uncertain": 0.27709680795669556
+                    }
+                  },
+                  "premise": {
+                    "choice": "no_conflict",
+                    "confidence": 0.19457098841667175,
+                    "probabilities": {
+                      "contradicts": 0.14081133902072906,
+                      "no_conflict": 0.4630473256111145,
+                      "uncertain": 0.39614129066467285
+                    }
+                  },
+                  "evidence": {
+                    "choice": "mention",
+                    "confidence": 0.3842541426420212,
+                    "probabilities": {
+                      "statement": 0.11710958927869797,
+                      "conditional": 0.09693705290555954,
+                      "mention": 0.5074033141136169,
+                      "none": 0.15724138915538788,
+                      "uncertain": 0.12130862474441528
+                    }
+                  },
+                  "injection": {
+                    "choice": "ordinary",
+                    "confidence": 0.5217049916585287,
+                    "probabilities": {
+                      "ordinary": 0.6412787437438965,
+                      "quoted_example": 0.09166724234819412,
+                      "attempt": 0.10032305121421814,
+                      "uncertain": 0.16673097014427185
+                    }
+                  },
+                  "parent_context": {
+                    "choice": "needed",
+                    "confidence": 0.08630473911762238,
+                    "probabilities": {
+                      "needed": 0.3908698260784149,
+                      "not_needed": 0.25713491439819336,
+                      "uncertain": 0.3519952595233917
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "title": "refund",
+              "text": "订单取消以后，退款通常在三个工作日内原路退回；银行处理可能延迟。",
+              "score": 0.8557616272720293,
+              "routes": [
+                "bm25",
+                "purpose:balanced",
+                "decision"
+              ],
+              "assessment": {
+                "model": "decision-startlux08",
+                "priority": 0.23728424832224845,
+                "answers": {
+                  "relevance": {
+                    "choice": "topic_only",
+                    "confidence": 0.15574204176664352,
+                    "probabilities": {
+                      "unrelated": 0.21456487476825714,
+                      "topic_only": 0.3245936334133148,
+                      "background": 0.20617546141147614,
+                      "answer": 0.08184877038002014,
+                      "uncertain": 0.17281721532344818
+                    }
+                  },
+                  "answer_coverage": {
+                    "choice": "none",
+                    "confidence": 0.22860137621561685,
+                    "probabilities": {
+                      "none": 0.42145103216171265,
+                      "partial": 0.25614985823631287,
+                      "sufficient": 0.08401452749967575,
+                      "uncertain": 0.23838454484939575
+                    }
+                  },
+                  "premise": {
+                    "choice": "no_conflict",
+                    "confidence": 0.1945887804031372,
+                    "probabilities": {
+                      "contradicts": 0.1651228368282318,
+                      "no_conflict": 0.4630591869354248,
+                      "uncertain": 0.3718179762363434
+                    }
+                  },
+                  "evidence": {
+                    "choice": "none",
+                    "confidence": 0.21002458781003952,
+                    "probabilities": {
+                      "statement": 0.14925841987133026,
+                      "conditional": 0.14338301122188568,
+                      "mention": 0.17225055396556854,
+                      "none": 0.3680196702480316,
+                      "uncertain": 0.1670883446931839
+                    }
+                  },
+                  "injection": {
+                    "choice": "ordinary",
+                    "confidence": 0.6985820929209391,
+                    "probabilities": {
+                      "ordinary": 0.7739365696907043,
+                      "quoted_example": 0.06177325174212456,
+                      "attempt": 0.052575234323740005,
+                      "uncertain": 0.1117149144411087
+                    }
+                  },
+                  "parent_context": {
+                    "choice": "uncertain",
+                    "confidence": 0.06275784969329834,
+                    "probabilities": {
+                      "needed": 0.3067476749420166,
+                      "not_needed": 0.31808042526245117,
+                      "uncertain": 0.3751718997955322
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "query": "取消订单后，退款通常多久到账？",
+          "status": 200,
+          "elapsedMs": 212,
+          "baseline": [
+            {
+              "title": "refund",
+              "text": "订单取消以后，退款通常在三个工作日内原路退回；银行处理可能延迟。",
+              "score": 3.4230465090881173
+            }
+          ],
+          "actualAssessed": 1,
+          "hits": [
+            {
+              "title": "refund",
+              "text": "订单取消以后，退款通常在三个工作日内原路退回；银行处理可能延迟。",
+              "score": 3.4230465090881173,
+              "routes": [
+                "bm25",
+                "purpose:balanced",
+                "decision"
+              ],
+              "assessment": {
+                "model": "decision-startlux08",
+                "priority": 0.7465651817619801,
+                "answers": {
+                  "relevance": {
+                    "choice": "answer",
+                    "confidence": 0.634569063782692,
+                    "probabilities": {
+                      "unrelated": 0.020292825996875763,
+                      "topic_only": 0.11742469668388367,
+                      "background": 0.11117123067378998,
+                      "answer": 0.7076552510261536,
+                      "uncertain": 0.04345604404807091
+                    }
+                  },
+                  "answer_coverage": {
+                    "choice": "sufficient",
+                    "confidence": 0.41564249992370605,
+                    "probabilities": {
+                      "none": 0.0680544301867485,
+                      "partial": 0.2685145437717438,
+                      "sufficient": 0.5617318749427795,
+                      "uncertain": 0.1016991138458252
+                    }
+                  },
+                  "premise": {
+                    "choice": "no_conflict",
+                    "confidence": 0.34071803092956543,
+                    "probabilities": {
+                      "contradicts": 0.21847061812877655,
+                      "no_conflict": 0.560478687286377,
+                      "uncertain": 0.22105073928833008
+                    }
+                  },
+                  "evidence": {
+                    "choice": "statement",
+                    "confidence": 0.5697841793298721,
+                    "probabilities": {
+                      "statement": 0.6558273434638977,
+                      "conditional": 0.14406800270080566,
+                      "mention": 0.040197767317295074,
+                      "none": 0.07141102105379105,
+                      "uncertain": 0.08849587291479111
+                    }
+                  },
+                  "injection": {
+                    "choice": "ordinary",
+                    "confidence": 0.7947306632995605,
+                    "probabilities": {
+                      "ordinary": 0.8460479974746704,
+                      "quoted_example": 0.07138880342245102,
+                      "attempt": 0.027964912354946136,
+                      "uncertain": 0.05459826812148094
+                    }
+                  },
+                  "parent_context": {
+                    "choice": "not_needed",
+                    "confidence": 0.32943281531333923,
+                    "probabilities": {
+                      "needed": 0.28152817487716675,
+                      "not_needed": 0.5529552102088928,
+                      "uncertain": 0.16551654040813446
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "warmup": {
+        "model": {
+          "alias": "decision-startlux08",
+          "size": "0.8b",
+          "revision": "bd4f76a600e23227547fee7bfc1825e12a32764c",
+          "switched": true,
+          "availableGiB": 9.701339721679688,
+          "loadPerCpu": 0.3955891927083333
+        },
+        "elapsedMs": 27955.704082967713,
+        "peakModelBytes": 2317346921,
+        "cached": false
+      },
+      "repeat": {
+        "model": {
+          "alias": "decision-startlux08",
+          "size": "0.8b",
+          "revision": "bd4f76a600e23227547fee7bfc1825e12a32764c",
+          "switched": false,
+          "availableGiB": 6.910888671875,
+          "loadPerCpu": 0.3490397135416667
+        },
+        "elapsedMs": 0.33595808781683445,
+        "cached": true
+      },
+      "temporaryDatabaseRemoved": true
+    },
+    "automatic": {
+      "recordedAt": "2026-10-09T05:35:20.832Z",
+      "actualModels": [
+        "decision-startlux08"
+      ],
+      "cases": [
+        {
+          "query": "重复提交怎么处理",
+          "actualAssessed": 3,
+          "status": 200,
+          "elapsedMs": 1557,
+          "order": [
+            "rule",
+            "topic",
+            "refund"
+          ]
+        },
+        {
+          "query": "取消订单后，退款通常多久到账？",
+          "actualAssessed": 1,
+          "status": 200,
+          "elapsedMs": 270,
+          "order": [
+            "refund"
+          ]
+        }
+      ],
+      "temporaryDatabaseRemoved": true
+    }
   }
 }
