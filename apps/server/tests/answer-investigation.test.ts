@@ -8,9 +8,29 @@ import { Store } from "../src/store.js";
 import { KnowledgeRepository } from "../src/knowledge/repository.js";
 import { prepareAgentResearch } from "../src/knowledge/agent-research.js";
 import { prepareAssistantResearch } from "../src/assistant/research.js";
-import { answerInvestigation } from "../src/assistant/answer-review.js";
+import { answerInvestigation, answerReviewEvidence } from "../src/assistant/answer-review.js";
 import { answerReviewSchema } from "../../../packages/contracts/src/assistant.js";
 import { RoleBundleRegistry } from "../src/agent-runtime/bundles.js";
+
+it("prefills exact frozen citation bytes without substituting a newer revision or an unoffered source", () => {
+  const root = mkdtempSync(join(tmpdir(), "omem-review-excerpts-"));
+  const store = new Store(root);
+  try {
+    store.capture({ source: "manual", externalId: "contract", title: "约定", parts: [{type:"text",text:"配送只在周五。\n中午前登记才生效。"}], context: {} });
+    const repository = new KnowledgeRepository(store), material = repository.materials()[0]!;
+    store.capture({ source: "manual", externalId: "contract", title: "约定", parts: [{type:"text",text:"新约定：周一配送。"}], context: {} });
+    const citations = [
+      {id:"cite_1",key:material.key,startLine:2,endLine:2},
+      {id:"cite_2",key:material.key,revision:"another-version",startLine:1,endLine:1},
+      {id:"cite_3",key:"manual:hidden",startLine:1,endLine:1},
+    ];
+    const result = answerReviewEvidence({answer:"周五可以配送。",citations}, {file:"unused",materials:[material],articles:[]});
+    expect(result[0]).toMatchObject({revision:material.revisionId,digest:material.digest,lines:[{line:2,text:"中午前登记才生效。"}]});
+    expect(result[1]).toMatchObject({revision:"another-version",lines:null});
+    expect(result[2]?.lines).toBeNull();
+    expect(JSON.stringify(result)).not.toContain("周一配送");
+  } finally { store.close(); rmSync(root,{recursive:true,force:true}); }
+});
 
 it("lets an independent reader inspect the same frozen originals and returns an actionable omission before publication", async () => {
   const root = mkdtempSync(join(tmpdir(), "omem-answer-review-"));

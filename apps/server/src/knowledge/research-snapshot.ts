@@ -40,11 +40,27 @@ export function researchSnapshot(input: {
   visible?: (fragmentId: string) => boolean;
   includeUnanchoredState?: boolean;
   includeGroupCatalog?: boolean;
+  onTiming?: (stage: string, elapsedMs: number) => void;
 }) {
+  let stageStarted = performance.now();
+  const timed = (stage: string) => {
+    const finished = performance.now();
+    input.onTiming?.(stage, finished - stageStarted);
+    stageStarted = finished;
+  };
   const original = input.repository.store.db;
   const db = new DatabaseSync(input.file);
   try {
     migrateDatabase(db);
+    // Native research searches the scoped context projection below, not the
+    // legacy fragment FTS. Rebuilding both indexes during every export repeats
+    // trigram tokenization for every original fragment. Canonical indexes stay
+    // intact; this disposable reader database needs only the context index.
+    db.exec(`DROP TRIGGER IF EXISTS fragment_search_insert;
+      DROP TRIGGER IF EXISTS fragment_search_delete;
+      DROP TRIGGER IF EXISTS fragment_search_update;
+      DROP TABLE IF EXISTS fragment_search`);
+    timed("schema");
     db.exec("PRAGMA foreign_keys=OFF; BEGIN");
     const exists = (name: string) =>
       !!original
@@ -60,13 +76,19 @@ export function researchSnapshot(input: {
       }
       return true;
     };
-    const copy = (name: string, rows: Row[]) => {
-      if (!schema(name) || !rows.length) return;
-      const columns = Object.keys(rows[0]!);
-      const sql = db.prepare(
-        `INSERT OR REPLACE INTO "${name}" (${columns.map((c) => `"${c}"`).join(",")}) VALUES(${columns.map(() => "?").join(",")})`,
-      );
-      for (const row of rows) sql.run(...columns.map((c) => row[c]!));
+    const copy = (name: string, rows: Iterable<Row>) => {
+      if (!schema(name)) return;
+      let columns: string[] | undefined;
+      let sql: ReturnType<DatabaseSync["prepare"]> | undefined;
+      for (const row of rows) {
+        if (!columns) {
+          columns = Object.keys(row);
+          sql = db.prepare(
+            `INSERT OR REPLACE INTO "${name}" (${columns.map((c) => `"${c}"`).join(",")}) VALUES(${columns.map(() => "?").join(",")})`,
+          );
+        }
+        sql!.run(...columns.map((c) => row[c]!));
+      }
     };
     const all = (name: string) =>
       exists(name)
@@ -112,6 +134,7 @@ export function researchSnapshot(input: {
         sourceIds.has(String(r.source_id)),
       ),
     );
+    timed("originals");
     // Project names/descriptions are personal metadata, not evidence granted by
     // one shared fragment. Only personal research receives this catalog, and
     // memberships/counts are limited to originals admitted into this snapshot.
@@ -191,6 +214,7 @@ export function researchSnapshot(input: {
         input.articles.some((a) => a.document.key === r.document_key),
       ),
     );
+    timed("knowledge");
     const allowedEvidence = (raw: SQLInputValue) => {
       const refs = JSON.parse(String(raw)) as {
         fragment_revision_id?: string;
@@ -232,6 +256,7 @@ export function researchSnapshot(input: {
           taskIds.has(String(r.task_id)) && allowedEvidence(r.evidence_set!),
       ),
     );
+    timed("state");
     // Warm the source projection from the host instead of parsing every AST and
     // segmenting every paragraph again for each question. Only fully admitted
     // owners can be reused. sync() below checks version/description identities
@@ -282,7 +307,9 @@ export function researchSnapshot(input: {
       all("retrieval_units_fts").filter((r) => warmIds.has(String(r.id))),
     );
     db.exec("COMMIT; PRAGMA foreign_keys=ON");
+    timed("projectionCopy");
     new RetrievalProjection(db).sync();
+    timed("projectionSync");
     // Reuse only vectors whose immutable unit IDs are actually in this scope.
     const unitIds = new Set(
       db
@@ -290,14 +317,22 @@ export function researchSnapshot(input: {
         .all()
         .map((r) => String(r.id)),
     );
+    // Vector reuse is one export operation. Autocommitting every vector and
+    // vector head adds thousands of independent WAL commits to each question.
+    db.exec("BEGIN");
     for (const name of [
       "retrieval_unit_vectors",
       "retrieval_unit_vector_heads",
     ])
-      copy(
-        name,
-        all(name).filter((r) => unitIds.has(String(r.unit_id))),
-      );
+      copy(name, (function* () {
+        if (!exists(name)) return;
+        // Stream potentially large blobs; do not materialize vectors from the
+        // entire personal library merely to discard owners outside this scope.
+        for (const row of original.prepare(`SELECT * FROM "${name}"`).iterate())
+          if (unitIds.has(String(row.unit_id))) yield row as Row;
+      })());
+    db.exec("COMMIT");
+    timed("vectors");
   } catch (error) {
     db.close();
     throw error;
@@ -305,6 +340,7 @@ export function researchSnapshot(input: {
   // Agent reads are read-only. The host may separately admit a captured source;
   // DELETE journaling avoids read-only WAL sidecars during later tool requests.
   db.exec("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE");
+  timed("seal");
   db.close();
   return new DatabaseSync(input.file, { readOnly: true });
 }

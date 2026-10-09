@@ -300,3 +300,28 @@ it("reuses admitted source indices but rebuilds outdated annotations and exclude
     db.close();
   }
 });
+
+it("keeps scoped vector bytes and searches usable without rebuilding canonical fragment FTS in the reader", async () => {
+  const {store,dir}=setup();
+  const kept=capture(store,"visible-vector","退票安排：取消后原路退还票款。"),
+    hidden=capture(store,"hidden-vector","秘密航线不会公开。");
+  const model={id:"scoped-vectors-v1",embed:async(texts:string[])=>texts.map(()=>[1,0]),close:async()=>{}};
+  const sourceRetrieval=new UnifiedRetrieval(store.db,async()=>model);
+  let db: DatabaseSync | undefined;
+  let reader: UnifiedRetrieval | undefined;
+  try {
+    await sourceRetrieval.indexBatch(20);
+    const repository=new KnowledgeRepository(store);
+    db=researchSnapshot({repository,materials:repository.materials().filter(m=>m.revisionId===kept.id),articles:[],file:join(dir,"vector-reader.sqlite"),visible:id=>kept.fragments.some(f=>f.id===id)});
+    const rows=db.prepare("SELECT * FROM retrieval_unit_vectors").all();
+    expect(rows.length).toBeGreaterThan(0);
+    for(const row of rows)expect(row).toEqual(store.db.prepare("SELECT * FROM retrieval_unit_vectors WHERE unit_id=? AND model_id=? AND start_offset=?").get(row.unit_id,row.model_id,row.start_offset));
+    expect(db.prepare("SELECT 1 FROM retrieval_units WHERE owner=?").get("source:"+hidden.sourceId)).toBeUndefined();
+    expect(store.db.prepare("SELECT text FROM fragment_search WHERE text MATCH '退票安排'").all().length).toBeGreaterThan(0);
+    reader=new UnifiedRetrieval(db,async()=>model,undefined,true);
+    await reader.indexBatch(0);
+    const hits=await reader.search({text:"退票如何退款"});
+    expect(hits.some(h=>h.routes.includes("semantic"))).toBe(true);
+    expect(hits.every(h=>h.target.revisionId===kept.id)).toBe(true);
+  } finally { await reader?.close(); db?.close(); await sourceRetrieval.close(); }
+});
