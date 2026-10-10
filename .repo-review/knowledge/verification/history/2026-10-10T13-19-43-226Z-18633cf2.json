@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-09T17:21:31.526Z",
-  "implementationCommit": "07745ae864321b7157d50354485261dad6ea3442",
-  "sourceDigest": "4f2d208f843a1c4a871c8c121743b9eb9c6bfbad326541e2820d34c7a1ae16d4",
+  "recordedAt": "2026-10-10T13:19:43.226Z",
+  "implementationCommit": "4c64cce3accdcc5dccde3dbd8d85a86ad11e6bdc",
+  "sourceDigest": "4fd975de5ecdd15fd9d9d7462f8c318754b15fabe608fe7dab49017640857115",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-09T17-21-31-526Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-10T13-19-43-226Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-09T17-21-31-526Z/project.log",
-        "sha256": "4215ed50312460f0b828a8182e4efb2907d4d7e5dcef3ebf00ea09a33d023be6"
+        "log": ".repo-review/runtime/verification/2026-10-10T13-19-43-226Z/project.log",
+        "sha256": "6a2cff6c22a7cb789d186d2321d3815f5890dfe7fd165473ea8b5034ba7d3cb5"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-09T17-21-31-526Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-10T13-19-43-226Z/liveChineseRetrieval.log",
         "sha256": "660562c5bc9996e0c643cc27389dca13bbf013e49793ef048911cd4abf345e6d"
       }
     },
@@ -64,16 +64,16 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v8",
-        "units": 18458,
+        "units": 18590,
         "semantic": {
           "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 18458,
+          "indexed": 18590,
           "pending": 0,
           "error": null,
           "concepts": {
             "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3:range-concepts-v1",
-            "indexed": 1649,
+            "indexed": 1676,
             "pending": 0,
             "error": null
           }
@@ -101,7 +101,7 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 882,
+    "materials": 884,
     "publishedPages": 0,
     "currentPages": 0,
     "plannedPages": 0,
@@ -110,8 +110,8 @@
     "errors": [],
     "pages": [],
     "restore": {
-      "restored": 19,
-      "stale": 10
+      "restored": 23,
+      "stale": 9
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -128,14 +128,14 @@
           "apps/server/src/retrieval/keyword.ts",
           "apps/server/src/retrieval/units.ts",
           "config/retrieval.json",
-          "apps/server/src/retrieval/port.ts",
-          "apps/server/src/retrieval/units.ts"
+          "apps/server/src/retrieval/units.ts",
+          "docs/reader-first/component-integration.md"
         ],
         "baselineUniquePathsAt5": 4,
         "passed": false,
-        "firstExpectedRank": 8,
+        "firstExpectedRank": 6,
         "uniquePathsAt5": 4,
-        "elapsedMs": 2901,
+        "elapsedMs": 2953,
         "top5": [
           {
             "path": "apps/server/src/retrieval/keyword.ts",
@@ -165,17 +165,7 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "{\n  \"enabled\": true,\n  \"osdkModel\": \"memory-zh\"\n}"
-          },
-          {
-            "path": "apps/server/src/retrieval/port.ts",
-            "routes": [
-              "semantic",
-              "material-concept",
-              "semantic-concept",
-              "purpose:balanced"
-            ],
-            "snippet": "export interface RetrievalPort {\n  /** Shared retrieval over original units, readable explanations and applied state. */\n  search?(query: SearchQuery): Promise<"
+            "snippet": "\"enabled\": true,\n  \"osdkModel\": \"memory-zh\""
           },
           {
             "path": "apps/server/src/retrieval/units.ts",
@@ -184,7 +174,16 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "ithout indexing its whole body again beside\n    // every method. Its fixed target opens the declaration; parent reading can\n    // still expand to the complete "
+            "snippet": "export function codePassages(material: KnowledgeMaterial): Passage[] {\n  const parsed = parseFile(material.path ?? material.title, material.text);\n  const conta"
+          },
+          {
+            "path": "docs/reader-first/component-integration.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "真实 HTTP 抽查进一步发现章节级引用扩散。现用 marked 解析读者段落、列表项和表格行，仅从实际匹配的文字回溯其引用；代码块/图与同章无关段落不继承分数。跨文章引用有明确章节时保留该章背景，未指定章节则继续找相关段落。这个修复处理了别名回原件的错误扩散，不宣称已解决中文语义、当前/历史适用性和跨文件功能理解。"
           }
         ]
       },
@@ -197,28 +196,18 @@
         ],
         "status": 200,
         "baselineTop5": [
-          "apps/server/src/retrieval/embedding.ts",
           "apps/server/src/retrieval/reranker.ts",
+          "apps/server/src/retrieval/embedding.ts",
+          "apps/server/src/retrieval/unified.ts",
           "docs/reader-first/operations.md",
-          "apps/server/src/cli/osdk.ts",
-          "docs/archive/2026-10-01-baseline/implementation/review-startup.md"
+          "apps/server/src/cli/osdk.ts"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": true,
-        "firstExpectedRank": 1,
+        "firstExpectedRank": 2,
         "uniquePathsAt5": 5,
-        "elapsedMs": 1225,
+        "elapsedMs": 1044,
         "top5": [
-          {
-            "path": "apps/server/src/retrieval/embedding.ts",
-            "routes": [
-              "semantic",
-              "material-concept",
-              "semantic-concept",
-              "purpose:balanced"
-            ],
-            "snippet": "/** osdk owns downloads. The application verifies and reads one immutable snapshot. */\nexport async function loadChineseEmbedding(alias = \"memory-zh\", cwd = pro"
-          },
           {
             "path": "apps/server/src/retrieval/reranker.ts",
             "routes": [
@@ -227,7 +216,27 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "revision)\n    throw Error(\n      \"Unsupported reranker snapshot; sync a locked relevance-zh or relevance-zh-v2 model\",\n    );\n  const hashes: string[] = [];\n  f"
+            "snippet": "export async function loadChineseReranker(\n  alias = \"relevance-zh\",\n  cwd = process.cwd(),\n): Promise<RerankerModel> {\n  if (!developmentCheckout) cwd = modelW"
+          },
+          {
+            "path": "apps/server/src/retrieval/embedding.ts",
+            "routes": [
+              "semantic",
+              "material-concept",
+              "semantic-concept",
+              "purpose:balanced"
+            ],
+            "snippet": "const { env, pipeline } = await import(\"@huggingface/transformers\");\n  env.allowRemoteModels = false;\n  env.useFSCache = false;\n  const extractor = await pipeli"
+          },
+          {
+            "path": "apps/server/src/retrieval/unified.ts",
+            "routes": [
+              "semantic",
+              "material-concept",
+              "semantic-concept",
+              "purpose:balanced"
+            ],
+            "snippet": "async close() {\n    this.stopped = true;\n    clearTimeout(this.timer);\n    await this.projection.settle().catch(() => {});\n    await this.work?.catch(() => {});"
           },
           {
             "path": "docs/reader-first/operations.md",
@@ -246,16 +255,6 @@
               "purpose:balanced"
             ],
             "snippet": "export const osdkInstallHelp =\n  \"请先按 https://github.com/lejunyang/one-sdk 安装 osdk，确认 osdk --version 可用后重跑本次 omem setup。npm 安装与普通启动不会下载模型。\";"
-          },
-          {
-            "path": "docs/archive/2026-10-01-baseline/implementation/review-startup.md",
-            "routes": [
-              "bm25",
-              "material-concept",
-              "semantic-concept",
-              "purpose:balanced"
-            ],
-            "snippet": "另一个独立环境问题：用户服务使用 Desktop/osdk-home，原中文模型位于默认 osdk 目录。已在用户服务的 OSDK_DATA_DIR 下用 `osdk model sync memory-zh` 恢复锁定快照并校验，重启后 health 为 ready。应用仍不隐式下载模型；没有修改用户 osdk 路径"
           }
         ]
       },
@@ -278,7 +277,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 815,
+        "elapsedMs": 1424,
         "top5": [
           {
             "path": "docs/reader-first/assistant-memory-flow.md",
@@ -323,7 +322,7 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "&&\n          typeof (value as { roleOutputId?: unknown }).roleOutputId ===\n            \"string\",\n      ) as { roleOutputId: string; extractionJobId: string } | "
+            "snippet": "private async verify(job: JobLease, signal: AbortSignal) {\n    try {\n      if (job.roleVersion !== \"verifier@1\")\n        throw Error(`LEARNING_ROLE_VERSION_UNSU"
           }
         ]
       },
@@ -344,7 +343,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 342,
+        "elapsedMs": 444,
         "top5": [
           {
             "path": "apps/server/src/knowledge/pipeline.ts",
@@ -406,7 +405,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 4,
-        "elapsedMs": 285,
+        "elapsedMs": 291,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -463,13 +462,13 @@
           "docs/archive/2026-10-01-baseline/README.md",
           "docs/archive/2026-10-01-baseline/prototype/build.mjs",
           "docs/archive/2026-10-01-baseline/prototype/data.js",
-          "apps/server/src/retrieval/port.ts"
+          "apps/server/src/retrieval/unified.ts"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 1864,
+        "elapsedMs": 1780,
         "top5": [
           {
             "path": "design.md",
@@ -509,13 +508,13 @@
             "snippet": "< 100\n        ? [\n            {\n              id: \"long-\" + (i + 1),\n              label: \"继续查看下一份材料\",\n              type: \"明确引用\",\n            },\n          ]\n  "
           },
           {
-            "path": "apps/server/src/retrieval/port.ts",
+            "path": "apps/server/src/retrieval/unified.ts",
             "routes": [
               "semantic",
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "export interface RetrievalPort {\n  /** Shared retrieval over original units, readable explanations and applied state. */\n  search?(query: SearchQuery): Promise<"
+            "snippet": "private sources(hits: RetrievalHit[], q: SearchQuery): SourceCandidate[] {\n    const seen = new Set<string>();\n    const terms = queryTerms(q.text);\n    return "
           }
         ]
       }
