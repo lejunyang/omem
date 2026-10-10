@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-09T19:16:26.940Z",
-  "implementationCommit": "f05d6eac18866975a159ae2d1fef01f0c5c9032d",
-  "sourceDigest": "7eee5506ed5c34ae0e8944edc2b55dcd40cd1c539c55ddb6c0f1c495fa957151",
+  "recordedAt": "2026-10-10T13:19:43.226Z",
+  "implementationCommit": "4c64cce3accdcc5dccde3dbd8d85a86ad11e6bdc",
+  "sourceDigest": "4fd975de5ecdd15fd9d9d7462f8c318754b15fabe608fe7dab49017640857115",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-09T19-16-26-940Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-10T13-19-43-226Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-09T19-16-26-940Z/project.log",
-        "sha256": "4b6ee4c906cecb6345a1a84fa92572a017f6bbf5c939848463199e958ccdff8c"
+        "log": ".repo-review/runtime/verification/2026-10-10T13-19-43-226Z/project.log",
+        "sha256": "6a2cff6c22a7cb789d186d2321d3815f5890dfe7fd165473ea8b5034ba7d3cb5"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-09T19-16-26-940Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-10T13-19-43-226Z/liveChineseRetrieval.log",
         "sha256": "660562c5bc9996e0c643cc27389dca13bbf013e49793ef048911cd4abf345e6d"
       }
     },
@@ -64,16 +64,16 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v8",
-        "units": 18515,
+        "units": 18590,
         "semantic": {
           "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 18515,
+          "indexed": 18590,
           "pending": 0,
           "error": null,
           "concepts": {
             "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3:range-concepts-v1",
-            "indexed": 1615,
+            "indexed": 1676,
             "pending": 0,
             "error": null
           }
@@ -101,7 +101,7 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 883,
+    "materials": 884,
     "publishedPages": 0,
     "currentPages": 0,
     "plannedPages": 0,
@@ -110,7 +110,7 @@
     "errors": [],
     "pages": [],
     "restore": {
-      "restored": 21,
+      "restored": 23,
       "stale": 9
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
@@ -126,16 +126,16 @@
         "status": 200,
         "baselineTop5": [
           "apps/server/src/retrieval/keyword.ts",
-          "apps/server/src/retrieval/unified.ts",
+          "apps/server/src/retrieval/units.ts",
           "config/retrieval.json",
           "apps/server/src/retrieval/units.ts",
-          "apps/server/src/retrieval/units.ts"
+          "docs/reader-first/component-integration.md"
         ],
         "baselineUniquePathsAt5": 4,
         "passed": false,
-        "firstExpectedRank": 8,
+        "firstExpectedRank": 6,
         "uniquePathsAt5": 4,
-        "elapsedMs": 2741,
+        "elapsedMs": 2953,
         "top5": [
           {
             "path": "apps/server/src/retrieval/keyword.ts",
@@ -148,14 +148,14 @@
             "snippet": "const eligible = (row: Row) => {\n      const time = Date.parse(String(row.revision_created_at));\n      if (query.timeRange?.from && time < Date.parse(query.time"
           },
           {
-            "path": "apps/server/src/retrieval/unified.ts",
+            "path": "apps/server/src/retrieval/units.ts",
             "routes": [
+              "bm25",
               "semantic",
               "material-concept",
-              "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "private observe(\n    observer: RetrievalObserver | undefined,\n    stage: RetrievalTrace[\"stage\"],\n    hits: ScoredUnit[],\n    model?: string,\n    error?: string"
+            "snippet": "const callable = (kind: string) => kind === \"function\" || kind === \"method\";"
           },
           {
             "path": "config/retrieval.json",
@@ -170,21 +170,20 @@
           {
             "path": "apps/server/src/retrieval/units.ts",
             "routes": [
-              "bm25",
-              "semantic",
-              "material-concept",
-              "purpose:balanced"
-            ],
-            "snippet": "const callable = (kind: string) => kind === \"function\" || kind === \"method\";"
-          },
-          {
-            "path": "apps/server/src/retrieval/units.ts",
-            "routes": [
               "semantic",
               "semantic-concept",
               "purpose:balanced"
             ],
             "snippet": "export function codePassages(material: KnowledgeMaterial): Passage[] {\n  const parsed = parseFile(material.path ?? material.title, material.text);\n  const conta"
+          },
+          {
+            "path": "docs/reader-first/component-integration.md",
+            "routes": [
+              "bm25",
+              "semantic",
+              "purpose:balanced"
+            ],
+            "snippet": "真实 HTTP 抽查进一步发现章节级引用扩散。现用 marked 解析读者段落、列表项和表格行，仅从实际匹配的文字回溯其引用；代码块/图与同章无关段落不继承分数。跨文章引用有明确章节时保留该章背景，未指定章节则继续找相关段落。这个修复处理了别名回原件的错误扩散，不宣称已解决中文语义、当前/历史适用性和跨文件功能理解。"
           }
         ]
       },
@@ -197,18 +196,28 @@
         ],
         "status": 200,
         "baselineTop5": [
-          "apps/server/src/retrieval/embedding.ts",
           "apps/server/src/retrieval/reranker.ts",
+          "apps/server/src/retrieval/embedding.ts",
           "apps/server/src/retrieval/unified.ts",
           "docs/reader-first/operations.md",
           "apps/server/src/cli/osdk.ts"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": true,
-        "firstExpectedRank": 1,
+        "firstExpectedRank": 2,
         "uniquePathsAt5": 5,
-        "elapsedMs": 788,
+        "elapsedMs": 1044,
         "top5": [
+          {
+            "path": "apps/server/src/retrieval/reranker.ts",
+            "routes": [
+              "semantic",
+              "material-concept",
+              "semantic-concept",
+              "purpose:balanced"
+            ],
+            "snippet": "export async function loadChineseReranker(\n  alias = \"relevance-zh\",\n  cwd = process.cwd(),\n): Promise<RerankerModel> {\n  if (!developmentCheckout) cwd = modelW"
+          },
           {
             "path": "apps/server/src/retrieval/embedding.ts",
             "routes": [
@@ -218,16 +227,6 @@
               "purpose:balanced"
             ],
             "snippet": "const { env, pipeline } = await import(\"@huggingface/transformers\");\n  env.allowRemoteModels = false;\n  env.useFSCache = false;\n  const extractor = await pipeli"
-          },
-          {
-            "path": "apps/server/src/retrieval/reranker.ts",
-            "routes": [
-              "semantic",
-              "material-concept",
-              "semantic-concept",
-              "purpose:balanced"
-            ],
-            "snippet": "const { AutoTokenizer, AutoModelForSequenceClassification, env } =\n    await import(\"@huggingface/transformers\");\n  env.allowRemoteModels = false;\n  env.useFSCa"
           },
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -278,7 +277,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 841,
+        "elapsedMs": 1424,
         "top5": [
           {
             "path": "docs/reader-first/assistant-memory-flow.md",
@@ -344,7 +343,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 243,
+        "elapsedMs": 444,
         "top5": [
           {
             "path": "apps/server/src/knowledge/pipeline.ts",
@@ -406,7 +405,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 4,
-        "elapsedMs": 266,
+        "elapsedMs": 291,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -463,13 +462,13 @@
           "docs/archive/2026-10-01-baseline/README.md",
           "docs/archive/2026-10-01-baseline/prototype/build.mjs",
           "docs/archive/2026-10-01-baseline/prototype/data.js",
-          "docs/reader-first/retrieval-redesign.md"
+          "apps/server/src/retrieval/unified.ts"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": false,
-        "firstExpectedRank": 16,
+        "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 873,
+        "elapsedMs": 1780,
         "top5": [
           {
             "path": "design.md",
@@ -509,13 +508,13 @@
             "snippet": "< 100\n        ? [\n            {\n              id: \"long-\" + (i + 1),\n              label: \"继续查看下一份材料\",\n              type: \"明确引用\",\n            },\n          ]\n  "
           },
           {
-            "path": "docs/reader-first/retrieval-redesign.md",
+            "path": "apps/server/src/retrieval/unified.ts",
             "routes": [
-              "bm25",
               "semantic",
+              "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "新增可重建的 SQLite 检索投影，不改 Capture、Revision 和历史 Fragment。Markdown 使用现有 marked，保留章节路径、段落、列表和表格；代码使用现有 TS/Vue AST，按符号范围组织，附签名、注释和模块背景；聊天保留参与者、事件时间及会话/回复关系。长单位可以向量化为多个窗"
+            "snippet": "private sources(hits: RetrievalHit[], q: SearchQuery): SourceCandidate[] {\n    const seen = new Set<string>();\n    const terms = queryTerms(q.text);\n    return "
           }
         ]
       }
