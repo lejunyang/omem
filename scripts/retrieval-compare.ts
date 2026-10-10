@@ -281,7 +281,8 @@ try {
           [...new Map(traces.filter(s=>s.stage==="lexical"||s.stage==="symbols")
             .flatMap(s=>s.hits).map(h=>[h.id,h])).values()],
           candidateIds = new Set(pool.map((h) => h.id));
-        const windowInputs = traces.find((s) => s.stage === "reranker-input");
+        const inputBatches = traces.filter(s => s.stage === "reranker-input");
+        const windowInputs = inputBatches.length ? { ...inputBatches[0]!, hits: inputBatches.flatMap(s=>s.hits) } : undefined;
         const modelRank = windowInputs
           ? windowInputs.hits.reduce((map, h) => {
               if (h.score > (map.get(h.id)?.score ?? -Infinity))
@@ -405,7 +406,7 @@ try {
     limits: [
       "Six known repository regression questions; manual core-evidence coverage does not prove complete or correct generated answers.",
       "Models share one read-only SQLite snapshot, current originals, embedding and production ranking; no private data, downloads or database copies.",
-      "Raw cross-encoder input is before tokenizer truncation at 512 tokens; firstInputRank only checks supplied text.",
+      "Cross-encoder inputs are tokenizer-sized paired windows, at most 512 tokens without silent truncation. Time budget may leave candidates unscored; firstInputRank checks supplied text, not answer understanding.",
       "Timing includes loading and exact vector scans; sequential local measurements, not a throughput benchmark.",
       "Old expected-path metric is kept separately and unchanged. Evidence annotations are never passed to retrievers or models.",
       "Default reranker configuration remains unchanged. Native Decision admission can fail; an unavailable model is not an accuracy result.",

@@ -273,3 +273,36 @@ it("lets a research agent request caller candidates and read their fixed enclosi
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+it("clones one workflow snapshot across independent readers and releases it only when the workflow ends", async () => {
+  const { ResearchSession } = await import("../src/knowledge/research-session.js");
+  const root = mkdtempSync(join(tmpdir(),"omem-shared-snapshot-")), store = new Store(join(root,"data"));
+  const repo = new KnowledgeRepository(store), schema = z.object({answer:z.string()});
+  const capture = (text:string) => store.capture({source:"manual",externalId:"fixed",title:"固定输入",parts:[{type:"text",text}]});
+  capture("原始安排保持120元。");
+  const material=repo.materials()[0]!, session=new ResearchSession(repo);
+  const envs:Awaited<ReturnType<typeof prepareAgentResearch>>[]=[];
+  const client = new Client({name:"shared-snapshot",version:"1"});
+  let baseFile="";
+  try {
+    const make = (name:string) => prepareAgentResearch({repository:repo,materials:[material],articles:[],workspace:join(root,name),schema,validate:x=>schema.parse(x),retrievalConfig:{enabled:false},snapshotFactory:()=>{
+      if(name==="second") expect(existsSync(join(root,"first/preparation.json"))).toBe(true);
+      const snapshot=session.snapshot([material],[]);baseFile=snapshot.file;return snapshot;
+    }});
+    envs.push(...await Promise.all([make("first"),make("second")]));
+    expect(readFileSync(join(root,"first/snapshot.sqlite"))).toEqual(readFileSync(join(root,"second/snapshot.sqlite")));
+    expect(envs.every(e=>e.preparation?.stages.snapshotClone!==undefined)).toBe(true);
+    capture("新安排变为300元。");
+    await envs[0]!.close();
+    expect(existsSync(baseFile)).toBe(true);
+    const server=envs[1]!.servers[0]!;if(server.type!=="http")throw Error("HTTP required");
+    await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+    const read=await client.callTool({name:"read_material",arguments:{key:material.key,startLine:1,endLine:1}});
+    expect(JSON.stringify(read)).toContain("120元");expect(JSON.stringify(read)).not.toContain("300元");
+    const changed=repo.materials()[0]!;
+    expect(()=>session.snapshot([changed],[])).toThrow("KNOWLEDGE_INPUT_CHANGED");
+  } finally {
+    await client.close();for(const env of envs)await env.close();session.close();
+    expect(existsSync(baseFile)).toBe(false);store.close();rmSync(root,{recursive:true,force:true});
+  }
+});

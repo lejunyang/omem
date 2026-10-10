@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { ResearchSession } from "./research-session.js";
 import { MaterialResearch } from "./research.js";
 import { articleWithinMaterials, maintenanceTrace, planMaintenance, type ArticleMaintenance } from "./maintenance.js";
 import { materialDescriptionBatchSchema } from "../../../../packages/contracts/src/material-description.js";
@@ -35,6 +37,13 @@ export class KnowledgePipeline {
   private stopping = false;
   constructor(readonly repository: KnowledgeRepository, readonly gateway: RoleRuntimeGateway, readonly profile: AgentProfile,
     readonly options: { budget?: Partial<GenerationBudget>; nativeResearch?: boolean; retrievalConfig?: RetrievalConfig; concurrency?: number; retryTag?: string; investigationHints?: unknown; onPublish?: (a: KnowledgeArticle) => void; log?: (message: string) => void } = {}) {}
+
+  private readonly sessions = new AsyncLocalStorage<ResearchSession>();
+  private async withSession<T>(work: () => Promise<T>): Promise<T> {
+    const session = new ResearchSession(this.repository);
+    try { return await this.sessions.run(session, work); }
+    finally { session.close(); }
+  }
 
   private get nativeResearch() { return this.options.nativeResearch ?? this.profile.transport === "acp"; }
 
@@ -153,6 +162,7 @@ export class KnowledgePipeline {
   }
 
   private async runRole(role: string, offers: Offer[], articles: KnowledgeArticle[], task: Record<string, unknown>, validate?: (out: unknown) => unknown): Promise<RunResult> {
+    if (this.nativeResearch && !this.sessions.getStore()) return this.withSession(() => this.runRole(role, offers, articles, task, validate));
     if (this.stopping) throw Error("Knowledge pipeline stopped");
     this.assertOriginals(offers);
     const bundle = this.registry.load(role);
@@ -171,7 +181,7 @@ export class KnowledgePipeline {
       [`knowledge:${role}`]: async (lease, signal) => {
         this.options.log?.(`AI ${role}: ${String(task.targetKeys ?? task.title ?? "catalog")}`);
         const run = await this.gateway.run({ roleId: role, profile: this.profile, profileBinding: { roleId: role, profileId: this.profile.id }, context: this.context(role, lease.id, offers, articles, task), signal, budget: this.options.budget, validateOutput: validate,
-          ...(this.nativeResearch ? { research: (workspace, schema, validate) => prepareAgentResearch({ repository:this.repository, materials:offers.map(o=>o.material), articles, workspace, schema, validate, tools:followupStateTools(offers.map(o=>o.material)), retrievalConfig:this.options.retrievalConfig }) } : {}),
+          ...(this.nativeResearch ? { research: (workspace, schema, validate) => prepareAgentResearch({ repository:this.repository, materials:offers.map(o=>o.material), articles, workspace, schema, validate, signal, snapshotFactory:()=>this.sessions.getStore()!.snapshot(offers.map(o=>o.material),articles), tools:followupStateTools(offers.map(o=>o.material)), retrievalConfig:this.options.retrievalConfig }) } : {}),
           emit: (type, text) => { if (type === "status") this.options.log?.(text); } });
         const saved = this.repository.store.jobs.saveRoleOutput({ jobId: lease.id, leaseToken: lease.leaseToken,
           model: run.trace.effectiveModel, effort: run.trace.effectiveEffort, promptHash: run.trace.promptHash, skillHash: run.trace.skillHash, toolHash: run.trace.toolHash,
@@ -223,7 +233,8 @@ export class KnowledgePipeline {
     return batch;
   }
 
-  private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[], priorFeedback?: unknown, publication?: { reading: WikiPageBrief; research: WritingResearch; writerVersion: string; maintenance?: ArticleMaintenance; materialKeys: string[] }) {
+  private async writeAndVerify(role: string, targets: Target[], offers: Offer[], articles: KnowledgeArticle[], priorFeedback?: unknown, publication?: { reading: WikiPageBrief; research: WritingResearch; writerVersion: string; maintenance?: ArticleMaintenance; materialKeys: string[] }) : Promise<KnowledgeArticle[]> {
+    if (this.nativeResearch && !this.sessions.getStore()) return this.withSession(() => this.writeAndVerify(role, targets, offers, articles, priorFeedback, publication));
     if (this.nativeResearch) offers = offers.map(o=>({material:o.material,ranges:[{start:1,end:o.material.lineCount}]}));
     const composition = publication?.research.composition;
     // Investigation can retire an unhelpful structure without deleting the old
@@ -408,7 +419,8 @@ export class KnowledgePipeline {
     }
   }
 
-  private async writePlannedPage(brief: WikiPageBrief) {
+  private async writePlannedPage(brief: WikiPageBrief) : Promise<KnowledgeArticle[]> {
+    if (this.nativeResearch && !this.sessions.getStore()) return this.withSession(() => this.writePlannedPage(brief));
     this.repository.refresh();
     const researcher = brief.workflow === "requirement-followup" ? "requirement-tracker" : "knowledge-researcher";
     const writer = brief.workflow === "requirement-followup" ? "implementation-planner" : "knowledge-writer";
