@@ -87,7 +87,10 @@ if (!aliases.length || aliases.some((s) => !/^relevance-zh(?:-v2)?$/.test(s)))
   throw Error(
     "models must be relevance-zh and/or relevance-zh-v2. Resources must already be installed.",
   );
-const db = new DatabaseSync(file, { readOnly: true });
+// A closed WAL database may have no sidecars. Allow SQLite to initialize them,
+// then prohibit SQL writes before reading; no source or index writes are allowed.
+const db = new DatabaseSync(file);
+db.exec("PRAGMA query_only=ON");
 const embedding = await loadChineseEmbedding(config.osdkModel, root);
 const sharedEmbedding = { ...embedding, close: async () => {} };
 const decisionMode = z.enum(["auto", "0.8b", "2b", "4b"]).parse(process.env.osdk_arg_decision_mode ?? process.env["osdk_arg_decision-mode"] ?? "auto");
