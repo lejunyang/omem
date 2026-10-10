@@ -4,8 +4,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { KnowledgeMaterial } from "../../../../packages/contracts/src/knowledge.js";
 import type { KnowledgeArticle, KnowledgeRepository } from "./repository.js";
 import { migrateDatabase } from "../storage/migrations.js";
-import { RetrievalProjection } from "../retrieval/units.js";
-import { materialFromRevision } from "./repository.js";
+import { RetrievalProjection, materialFromRow } from "../retrieval/units.js";
 import { ensureMaterialAliases } from "./material-identity.js";
 
 type Row = Record<string, SQLInputValue>;
@@ -33,7 +32,8 @@ export function appendResearchMaterial(file: string, repository: KnowledgeReposi
   } finally { db.close(); }
 }
 export function researchSnapshot(input: {
-  repository: KnowledgeRepository;
+  repository?: KnowledgeRepository;
+  original?: DatabaseSync;
   materials: KnowledgeMaterial[];
   articles: KnowledgeArticle[];
   file: string;
@@ -48,7 +48,8 @@ export function researchSnapshot(input: {
     input.onTiming?.(stage, finished - stageStarted);
     stageStarted = finished;
   };
-  const original = input.repository.store.db;
+  const original = input.original ?? input.repository?.store.db;
+  if (!original) throw Error("Research snapshot requires a source database");
   const db = new DatabaseSync(input.file);
   try {
     migrateDatabase(db);
@@ -100,6 +101,7 @@ export function researchSnapshot(input: {
     const visible = input.visible ?? (() => true);
     const revisions = all("revisions").filter((r) => {
       if (!sourceIds.has(String(r.source_id))) return false;
+      if (exists("revision_tombstones") && original.prepare("SELECT 1 FROM revision_tombstones WHERE revision_id=?").get(r.id!)) return false;
       const fragments = original
         .prepare("SELECT id FROM fragments WHERE revision_id=?")
         .all(r.id!);
@@ -109,9 +111,10 @@ export function researchSnapshot(input: {
       fragments.forEach((f) => fragmentIds.add(String(f.id)));
       return true;
     });
+    const admittedSourceIds = new Set(revisions.map(r=>String(r.source_id)));
     copy(
       "sources",
-      all("sources").filter((r) => sourceIds.has(String(r.id))),
+      all("sources").filter((r) => admittedSourceIds.has(String(r.id))),
     );
     copy("revisions", revisions);
     copy(
@@ -162,10 +165,8 @@ export function researchSnapshot(input: {
     );
     const permittedMaterialVersions = new Set(
       revisions.flatMap((r) => {
-        const material = materialFromRevision(
-          input.repository.store,
-          String(r.id),
-        );
+        const source = original.prepare("SELECT namespace,external_id FROM sources WHERE id=?").get(r.source_id!);
+        const material = source && materialFromRow(original, {...r,...source});
         return material
           ? [`${materialKeys.get(material.sourceId)}\n${material.digest}`]
           : [];

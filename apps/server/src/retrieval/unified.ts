@@ -16,7 +16,7 @@ import {
   asksForCallers,
 } from "./relevance.js";
 import { CodeNavigation } from "./code-navigation.js";
-import { rerankPassages } from "./rerank-passages.js";
+import { scoringPassages } from "./rerank-passages.js";
 import { candidatePool } from "./candidate-pool.js";
 import {
   RetrievalProjection,
@@ -838,7 +838,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         q.signal?.throwIfAborted();
         const deadline = performance.now() + (this.rankingOptions.budgetMs ?? 20_000);
         const pool = candidatePool(hits.map(h => ({ ...h, id: h.unit.id, owner: h.unit.owner })), hits.length);
-        const scored = new Map<string, number>();
+        const scored = new Map<string, { score: number; text: string; start: number; end: number }>();
         let reason: "budget" | "failed" | undefined;
         // Eight-unit batches impose no global admission cutoff and keep checks frequent.
         // Cancellation and time budgets retain scores from previously completed batches.
@@ -846,16 +846,19 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           q.signal?.throwIfAborted();
           if (performance.now() >= deadline) { reason = "budget"; break; }
           const batch = pool.slice(offset, offset + 8);
-          const passages = batch.flatMap(h => rerankPassages(h.unit.text, q.text, h.excerpt,
-            h.unit.materialDescription?.description.concepts ?? [], h.matchedRanges)
-            .flatMap(text => {
-              const input = h.unit.context.slice(0, 160) + "\n" + text;
-              return (model.windows?.(q.text, input) ?? [input]).map(input => ({ h, input }));
-            }));
           try {
+            const passages = batch.flatMap(h => scoringPassages(h.unit, q.text, h.excerpt, h.matchedRanges)
+              .flatMap(p => (model.windows?.(q.text, p.text, p.context) ?? [p.context + "\n" + p.text]).map(input => {
+                const text = input.startsWith(p.context + "\n") ? input.slice(p.context.length + 1) : input;
+                const start = p.start + Math.max(0, p.text.indexOf(text));
+                return {h,input,text,start,end:start + text.length};
+              })));
             const scores = await model.score(q.text, passages.map(p => p.input), { signal: q.signal, deadline });
             if (scores.length !== passages.length || scores.some(s => !Number.isFinite(s))) throw Error("Invalid reranker score batch");
-            passages.forEach((p, i) => scored.set(p.h.unit.id, Math.max(scored.get(p.h.unit.id) ?? -Infinity, scores[i]!)));
+            passages.forEach((p, i) => {
+              if (scores[i]! > (scored.get(p.h.unit.id)?.score ?? -Infinity))
+                scored.set(p.h.unit.id, {score:scores[i]!,text:p.text,start:p.start,end:p.end});
+            });
             this.observe(observer, "reranker-input", passages.map((p, i) => ({ ...p.h, excerpt: p.input, score: scores[i]! })), model.id);
           } catch (error) {
             q.signal?.throwIfAborted();
@@ -866,12 +869,13 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         }
         const max = Math.max(...hits.map(h => h.score), 1e-6);
         hits = hits.map(h => {
-          const score = scored.get(h.unit.id);
-          return score === undefined
+          const winner = scored.get(h.unit.id);
+          return winner === undefined
             ? { ...h, score: h.score / max * 0.3, rankingStatus: { state: "unscored" as const, reason: reason ?? "failed", model: model.id } }
-            : { ...h, score: score * 0.7 + h.score / max * 0.3,
+            : { ...h, score: winner.score * 0.7 + h.score / max * 0.3,
+                excerpt: winner.text, matchedRanges: [{start:winner.start,end:winner.end}],
                 rankingStatus: { state: "scored" as const, model: model.id },
-                reranking: { model: model.id, relevance: score, retrievalScore: h.score }, routes: [...h.routes, "cross-encoder"] };
+                reranking: { model: model.id, relevance: winner.score, retrievalScore: h.score }, routes: [...h.routes, "cross-encoder"] };
         });
         if (!reason) this.rankingError = null;
         this.observe(observer, "reranker", hits, model.id, reason);
@@ -896,15 +900,17 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     if (!this.rank || !q.text.trim() || exactLookup(q.text)) return finish();
     // Score a pool before spending the requested reading slots. Do not allow a
     // model to see hidden/out-of-scope units or force a cold model load here.
-    const admitted = candidatePool(
-      hits.map((h) => ({ ...h, id: h.unit.id, owner: h.unit.owner })),
-      Math.max(q.limit ?? 20, 40),
-    );
-    const pool = this.finish(admitted, {
+    const leading = this.finish([...hits],{...q,diversify:false,limit:6});
+    const leadingIds=new Set(leading.map(h=>h.id));
+    const coverage = candidatePool(
+      hits.filter(h=>!leadingIds.has(h.unit.id)).map((h) => ({ ...h, id: h.unit.id, owner: h.unit.owner })), 6);
+    const inspected=[...leading,...coverage.flatMap(h=>this.finish([h],{...q,diversify:false,limit:1}))];
+    const inspectedIds=new Set(inspected.map(h=>h.id));
+    const pool = [...inspected,...this.finish(hits.filter(h=>!inspectedIds.has(h.unit.id)), {
       ...q,
       diversify: false,
-      limit: Math.max(q.limit ?? 20, 40),
-    });
+      limit: Math.max(q.limit ?? 20, 40)-inspected.length,
+    })];
     observer?.({ stage: "selection", hits: structuredClone(pool) });
     try {
       const ranked = await this.rank(q, pool);
@@ -967,6 +973,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       observer?.({ stage: "final", hits: structuredClone(selected) });
       return selected;
     } catch {
+      q.signal?.throwIfAborted();
       return finish();
     }
   }
