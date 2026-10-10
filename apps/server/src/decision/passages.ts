@@ -49,7 +49,10 @@ export async function assessPassages(
     source_kind: hit.kind,
     matched_ranges: hit.matchedRanges,
     original_locator: hit.target,
-    material_description: hit.materialDescription?.description,
+    material_description: hit.materialDescription ? {
+      role:hit.materialDescription.description.role,
+      status:hit.materialDescription.description.status,
+    } : undefined,
     instruction: "标题、概念及用途是检索元数据，不是论断证据。根据 material 中实际原文判断能回答的步骤或条件；只提到问题词语的注释、文案和目录是 topic_only。原文摘录未覆盖完整实现时按缺背景处理，不把缺失当成无关。",
   });
   // Cold loading must not add tens of seconds before the regular Agent can work.
