@@ -23,6 +23,9 @@ const questions = z.array(z.object({ id: z.string().regex(/^[a-z0-9-]+$/), quest
 if (new Set(questions.map(q => q.id)).size !== questions.length) throw Error("Question IDs must be unique");
 const directory = resolve(option("output"));
 if (!option("output")) throw Error("Provide a fresh ignored output directory");
+const config = loadReviewCodeModelConfig();
+if (config.transport !== "acp") throw Error("This experiment requires real ACP");
+const profile = profileSchema.parse({ transport: config.transport, command: config.command, args: config.args, model: config.model, effort: config.effort, timeoutMs: config.timeoutMs, idleTimeoutMs: config.idleTimeoutMs, id: "reading-comparison", name: "Same-model reading comparison" });
 const finish = beginReviewRun(directory, "reading-compare");
 const dataDir = join(directory, "data");
 mkdirSync(dataDir, { recursive: true });
@@ -36,9 +39,6 @@ const retrieval = new UnifiedRetrieval(store.db, () => loadChineseEmbedding("mem
 const session = new ResearchSession(repository);
 const budgetMs = Number(option("budget", "600")) * 1000;
 if (!Number.isFinite(budgetMs) || budgetMs < 60_000) throw Error("Budget must be at least 60 seconds");
-const config = loadReviewCodeModelConfig();
-if (config.transport !== "acp") throw Error("This experiment requires real ACP");
-const profile = profileSchema.parse({ ...config, id: "reading-comparison", name: "Same-model reading comparison", maxDurationMs: undefined });
 const cite = z.object({ id: z.string(), path: z.string(), startLine: z.number().int().positive(), endLine: z.number().int().positive() }).strict();
 const answer = z.object({ answer: z.string().min(1), citations: z.array(cite).min(1) }).strict();
 const review = z.object({ verdict: z.enum(["accepted", "needs_revision"]), findings: z.array(z.object({ problem: z.string(), consequence: z.string(), citations: z.array(cite).min(1) }).strict()) }).strict();
@@ -83,11 +83,14 @@ async function runStage(test: typeof questions[number], kind: string, tools: boo
     writeFileSync(join(workspace, "comparison-prompt.txt"), prompt);
     const response = await acp(withAgentWorkspace(profile, workspace), workspace, [{ type: "text", text: prompt }], (type, value) => { if (type === "text") text += value; }, controller.signal, {
       mcpServers: tools ? environment.servers : [],
+      allowPermission: environment.allowPermission,
       onSessionUpdate: update => {
+        environment!.update(update);
         if (["tool_call", "tool_call_update"].includes(update.sessionUpdate)) appendFileSync(trace, JSON.stringify({ elapsedMs: Math.round(performance.now() - started), update }) + "\n");
       },
     });
     result.response = response;
+    result.activity = environment.activity();
     const actual = (category: string) => response.configOptions.find(o => o.category === category || o.id === category)?.currentValue;
     result.actual = { model: actual("model"), effort: actual("reasoning_effort") };
     if (result.actual.model !== profile.model || result.actual.effort !== profile.effort) throw Error("Actual model/effort differs from requested comparison profile");
