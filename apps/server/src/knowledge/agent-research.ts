@@ -81,7 +81,7 @@ export type ResearchTool = {
   run: (args: any, snapshot: ResearchSnapshot) => unknown | Promise<unknown>;
 };
 
-export async function prepareAgentResearch(input: {
+type ResearchInput = {
   repository: KnowledgeRepository;
   materials: KnowledgeMaterial[];
   articles: KnowledgeArticle[];
@@ -93,6 +93,8 @@ export async function prepareAgentResearch(input: {
   /** Internal only: an independent reader uses the author's sealed snapshot,
    * including memory/history, never a second view of the changing live store. */
   snapshot?: ResearchSnapshot;
+  snapshotFactory?: () => ResearchSnapshot;
+  signal?: AbortSignal;
   tools?: ResearchTool[];
   retrievalConfig?: RetrievalConfig;
   /** Host policy; native files and MCP share this same snapshot scope. */
@@ -110,7 +112,21 @@ export async function prepareAgentResearch(input: {
     startLine?: number;
     endLine?: number;
   }) => void;
-}): Promise<NativeResearchEnvironment> {
+};
+// Serialize preparation only, not model sessions. Synchronous SQLite exports in
+// concurrent preparations otherwise delay an already-starting HTTP listener.
+let preparationTail: Promise<void> = Promise.resolve();
+export async function prepareAgentResearch(input: ResearchInput): Promise<NativeResearchEnvironment> {
+  const queuedAt = performance.now(), previous = preparationTail;
+  let release!: () => void;
+  preparationTail = new Promise<void>(resolve => { release = resolve; });
+  await previous;
+  try {
+    input.signal?.throwIfAborted();
+    return await prepareResearch(input, performance.now() - queuedAt);
+  } finally { release(); }
+}
+async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promise<NativeResearchEnvironment> {
   const { workspace, repository } = input;
   const started = performance.now();
   let stageStarted = started;
@@ -150,6 +166,8 @@ export async function prepareAgentResearch(input: {
     }
   };
   try {
+    if (input.snapshotFactory) { input = { ...input, snapshot: input.snapshotFactory() }; timed("sharedSnapshot"); }
+    input.signal?.throwIfAborted();
     const originals = join(workspace, "originals");
     mkdirSync(originals, { recursive: true, mode: 0o700 });
     const entries = new Map<string, Entry>(),
@@ -279,6 +297,8 @@ export async function prepareAgentResearch(input: {
         ? () => loadChineseReranker(config.reranker, process.cwd())
         : undefined,
       true,
+      undefined,
+      { budgetMs: config.rerankBudgetMs ?? 20_000 },
     );
     semanticHandle = retrieval;
     let ready: Promise<unknown> | undefined;
@@ -1252,7 +1272,7 @@ export async function prepareAgentResearch(input: {
     });
     const port = (http.address() as { port: number }).port;
     timed("toolServer");
-    const preparation = { totalMs: performance.now() - started, stages };
+    const preparation = { totalMs: performance.now() - started, queueWaitMs, stages };
     writeFileSync(join(workspace, "preparation.json"), JSON.stringify(preparation, null, 2), { mode: 0o600 });
     return {
       preparation,

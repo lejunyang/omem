@@ -318,3 +318,5 @@ osdk run package:verify
 package 输出到 Git 忽略的 `.release/`，先构建再打包；package:verify 在临时目录用 npm 正式安装依赖、运行包内 omem，检查帮助、初始化、服务、导入、搜索及技能资源。测试包不能借用源码 node_modules。加 `osdk run package:verify --agent` 会进一步调用已登录的 Traex/Sol 验证安装版问答，实际消耗模型调用。
 
 核对 `.release/manifest.json` 中的包清单和 README 后，拥有 npm 包发布权限的账号执行 `npm publish .release/omem-0.1.0.tgz --access public`。发布是公开不可随意回收的版本操作，仓库任务不会自动发布。`omem` 名称当前查询未发现已发布版本，不等于已获得发布权限。
+
+同一次知识整理的调查、写作、返修与独立复核共用固定资料底本，各模型会话使用独立只读副本；不会跨问题复用。材料换版阻止旧结果发布，重启从当前获准材料重建并重新复核。准备工作串行排队，模型会话仍可并发；排队、快照构建和克隆分别计时，不能把排队移位当作总耗时下降。流程结束释放临时底本，个人库保留。
