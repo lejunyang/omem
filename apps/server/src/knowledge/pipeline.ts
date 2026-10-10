@@ -49,6 +49,18 @@ export class KnowledgePipeline {
 
   private get nativeResearch() { return this.options.nativeResearch ?? this.profile.transport === "acp"; }
 
+  private analysisWriterVersion(role: string) {
+    return stableDigest(["analysis-writers@1", this.nativeResearch, ...[role, "knowledge-refresher"].map(id => this.registry.load(id).bundleHash)]);
+  }
+
+  private currentAnalysisWriter(article: KnowledgeArticle, role: string) {
+    const version = article.generation.trace.analysisWriterVersion;
+    // Legacy analyst outputs can be compared directly. A legacy corrected
+    // draft has no record of its original analyst version, so renew it once.
+    return version ? version === this.analysisWriterVersion(role)
+      : article.generation.trace.bundleHash === this.registry.load(role).bundleHash;
+  }
+
   private assertOriginals(offers: Offer[]) {
     const head = this.repository.store.db.prepare("SELECT head FROM sources WHERE id=?");
     const changed = offers.find(({material}) => !this.repository.store.revision(material.revisionId) ||
@@ -332,7 +344,7 @@ export class KnowledgePipeline {
         } : {}),
           publication: {role: publication ? publication.reading.kind === "reference" ? "reference" : "article" : "note"},
           investigation: offers.filter(o=>readKeys.has(o.material.key)).map(o=>({key:o.material.key,digest:o.material.digest})),
-          generation: { model: write.trace.effectiveModel!, effort: write.trace.effectiveEffort, at: write.at, trace: { ...write.trace, sourceFootprints:sourceFootprints(document,new Map(offers.map(o=>[o.material.key,o.material]))), ...(sourceRefresh?{sourceRefresh:{previousRevision:sourceRefresh.previousRevision,bindings:sourceRefresh.bindings,bodyPreserved:stableDigest(document.sections.map(s=>[s.key,s.title,s.body]))===stableDigest(sourceRefresh.previous.document.sections.map(s=>[s.key,s.title,s.body]))}}:{}), ...(publication ? { research: publication.research, writerVersion: publication.writerVersion } : {}), ...(maintenance ? { maintenance: maintenanceTrace(maintenance) } : {}) } as unknown as Record<string, unknown> },
+          generation: { model: write.trace.effectiveModel!, effort: write.trace.effectiveEffort, at: write.at, trace: { ...write.trace, sourceFootprints:sourceFootprints(document,new Map(offers.map(o=>[o.material.key,o.material]))), ...(sourceRefresh?{sourceRefresh:{previousRevision:sourceRefresh.previousRevision,bindings:sourceRefresh.bindings,bodyPreserved:stableDigest(document.sections.map(s=>[s.key,s.title,s.body]))===stableDigest(sourceRefresh.previous.document.sections.map(s=>[s.key,s.title,s.body]))}}:{}), ...(publication ? { research: publication.research, writerVersion: publication.writerVersion } : {analysisWriterVersion:this.analysisWriterVersion(role)}), ...(maintenance ? { maintenance: maintenanceTrace(maintenance) } : {}) } as unknown as Record<string, unknown> },
           review: { model: review.trace.effectiveModel!, at: review.at, trace: {...review.trace,scope:reviewScope.mode,rounds:reviewRounds.filter(r=>r.drafts.some(d=>d.key===document.key))}, verdict: "accepted" } };
         const article = this.repository.publish(artifact, publication?.reading);
         this.options.onPublish?.(article); this.options.log?.(`Published ${document.key}`); published.push(article);
@@ -407,7 +419,7 @@ export class KnowledgePipeline {
     const verifierHash = this.nativeResearch ? this.registry.load("knowledge-verifier").bundleHash : null;
     const pending = materials.filter(m => {
       const a = current.get(m.key);
-      return !a?.current || (this.nativeResearch && (a.generation.trace.bundleHash !== this.registry.load(analystFor(m)).bundleHash || a.review.trace.bundleHash !== verifierHash));
+      return !a?.current || (this.nativeResearch && (!this.currentAnalysisWriter(a,analystFor(m)) || a.review.trace.bundleHash !== verifierHash));
     });
     // Each article gets its own original and explicit linked context. Sharing a
     // prompt to save calls made unrelated batch siblings permanent dependencies.
@@ -427,7 +439,7 @@ export class KnowledgePipeline {
         if (this.nativeResearch) for (const material of this.repository.materials()) if (!offers.some(o=>o.material.key===material.key)) offers.push({material,ranges:[{start:1,end:material.lineCount}]});
         try {
           const previous=current.get(targets[0]!.key);
-          const eligible=previous && previous.generation.trace.bundleHash===this.registry.load(analystFor(targets[0]!)).bundleHash && previous.review.trace.bundleHash===verifierHash;
+          const eligible=previous && this.currentAnalysisWriter(previous,analystFor(targets[0]!)) && previous.review.trace.bundleHash===verifierHash;
           const refreshed=eligible ? refreshSourceBindings(previous,new Map(offers.map(o=>[o.material.key,o.material]))) : null;
           const feedback=this.previousFeedback(targets,offers) ?? (previous && previous.dependencies.every(d=>d.kind==="material" && offers.some(o=>o.material.key===d.key)) ? {previousDrafts:[previous.document],issues:[],instruction:"旧原件可能已被清除。保持仍适用的正文、案例和结构，依据当前原件修改受影响论断并明确更新引用；旧正文和旧引用不构成当前事实证明。"} : undefined);
           await this.writeAndVerify(analystFor(targets[0]!),targets.map(m=>({key:m.key,title:m.title})),offers,[],feedback,undefined,refreshed?{...refreshed,previous:previous!}:undefined);

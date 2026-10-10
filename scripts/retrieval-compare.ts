@@ -177,6 +177,7 @@ try {
     score: hit.score,
     routes: hit.routes,
     reranking: hit.reranking,
+    rankingStatus: hit.rankingStatus,
     assessment: hit.assessment,
     excerpt: hit.text.slice(0, 160),
     textDigest: digest(hit.text),
