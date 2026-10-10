@@ -21,6 +21,7 @@ import {
   isAbsolute,
 } from "node:path";
 import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import type { KnowledgeMaterial } from "../../../../packages/contracts/src/knowledge.js";
 import type { NativeResearchEnvironment } from "../agent-runtime/gateway.js";
@@ -41,7 +42,8 @@ import {
   materialFromRevision,
   type KnowledgeArticle,
 } from "./repository.js";
-import { researchSnapshot, appendResearchMaterial } from "./research-snapshot.js";
+import { appendResearchMaterial } from "./research-snapshot.js";
+import { buildResearchSnapshot } from "./snapshot-build.js";
 import { MaterialDescriptions } from "../source-profile/descriptions.js";
 import { contextHierarchy, enclosingContext, type ContextNode } from "../retrieval/hierarchy.js";
 import { sourceContextRanges } from "../retrieval/context.js";
@@ -69,6 +71,7 @@ const codeFile = (m: KnowledgeMaterial) =>
 export type ResearchSnapshot = {
   /** Host workflow identity; not a content digest or ACP session ID. */
   identity?: string;
+  buildTiming?: {queueWaitMs:number;stages:Record<string,number>};
   file: string;
   materials: KnowledgeMaterial[];
   articles: KnowledgeArticle[];
@@ -95,7 +98,7 @@ type ResearchInput = {
   /** Internal only: an independent reader uses the author's sealed snapshot,
    * including memory/history, never a second view of the changing live store. */
   snapshot?: ResearchSnapshot;
-  snapshotFactory?: () => ResearchSnapshot;
+  snapshotFactory?: () => ResearchSnapshot | Promise<ResearchSnapshot>;
   signal?: AbortSignal;
   allowedTools?: string[];
   rangeEvidence?: { key: string; startLine: number; endLine: number }[];
@@ -117,18 +120,11 @@ type ResearchInput = {
     endLine?: number;
   }) => void;
 };
-// Serialize preparation only, not model sessions. Synchronous SQLite exports in
-// concurrent preparations otherwise delay an already-starting HTTP listener.
-let preparationTail: Promise<void> = Promise.resolve();
+// Only heavy snapshot builds queue, in a background thread. Independent reader
+// clones and model startup no longer wait for unrelated preparations.
 export async function prepareAgentResearch(input: ResearchInput): Promise<NativeResearchEnvironment> {
-  const queuedAt = performance.now(), previous = preparationTail;
-  let release!: () => void;
-  preparationTail = new Promise<void>(resolve => { release = resolve; });
-  await previous;
-  try {
-    input.signal?.throwIfAborted();
-    return await prepareResearch(input, performance.now() - queuedAt);
-  } finally { release(); }
+  input.signal?.throwIfAborted();
+  return prepareResearch(input, 0);
 }
 async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promise<NativeResearchEnvironment> {
   const { workspace, repository } = input;
@@ -171,13 +167,13 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
     }
   };
   try {
-    if (input.snapshotFactory) { input = { ...input, snapshot: input.snapshotFactory() }; timed("sharedSnapshot"); }
+    if (input.snapshotFactory) { input = { ...input, snapshot: await input.snapshotFactory() }; timed("sharedSnapshot"); }
     input.signal?.throwIfAborted();
     const originals = join(workspace, "originals");
     mkdirSync(originals, { recursive: true, mode: 0o700 });
     const entries = new Map<string, Entry>(),
       paths = new Map<string, string>();
-    const exportMaterial = (material: KnowledgeMaterial) => {
+    const exportMaterial = (material: KnowledgeMaterial, pending?: {file:string;data:string|Buffer}[]) => {
       const given = (material.path ?? "").replaceAll("\\", "/");
       // Preserve relative code/document structure. Absolute or colliding source
       // paths are named separately; never export outside this task directory.
@@ -196,8 +192,8 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
           stableDigest(material.key).slice(0, 12),
           basename(file),
         );
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, material.text, { mode: 0o600 });
+      if(pending)pending.push({file,data:material.text});
+      else {mkdirSync(dirname(file), { recursive: true });writeFileSync(file, material.text, { mode: 0o600 });}
       paths.set(file, material.key);
       const images = material.images.map((image) => {
         const data = repository.store.asset(image.assetId);
@@ -212,13 +208,18 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
                 ? ".jpg"
                 : ".webp"),
         );
-        mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, data, { mode: 0o600 });
+        if(pending)pending.push({file:path,data});
+        else {mkdirSync(dirname(path), { recursive: true });writeFileSync(path, data, { mode: 0o600 });}
         return { id: image.assetId, file: path, mime: image.mimeType };
       });
       entries.set(material.key, { material, file, images });
     };
-    for (const material of input.materials) exportMaterial(material);
+    for(let offset=0;offset<input.materials.length;offset+=8) {
+      input.signal?.throwIfAborted();
+      const writes:{file:string;data:string|Buffer}[]=[];
+      for(const material of input.materials.slice(offset,offset+8))exportMaterial(material,writes);
+      await Promise.all(writes.map(async ({file,data})=>{await mkdir(dirname(file),{recursive:true});await writeFile(file,data,{mode:0o600});}));
+    }
     timed("originalExport");
     const catalog = [...entries.values()].map((e) => ({
       key: e.material.key,
@@ -235,16 +236,18 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
     // Best-effort filesystem clone preserves an independent sealed database;
     // unlike a hard link, host admission into the author cannot alter a reader.
     if (input.snapshot) copyFileSync(input.snapshot.file, databaseFile, constants.COPYFILE_FICLONE);
-    const db = input.snapshot
-      ? new DatabaseSync(databaseFile, { readOnly: true })
-      : researchSnapshot({
+    if (!input.snapshot) {
+      const timing = await buildResearchSnapshot({
           ...input,
           file: databaseFile,
           includeUnanchoredState:
             input.includeUnanchoredState ?? !input.visible,
           includeGroupCatalog: input.includeGroupCatalog,
-          onTiming: (stage, ms) => { stages[`snapshot.${stage}`] = ms; },
         });
+      queueWaitMs += timing.queueWaitMs;
+      for (const [stage,ms] of Object.entries(timing.stages)) stages[`snapshot.${stage}`] = ms;
+    }
+    const db = new DatabaseSync(databaseFile, {readOnly:true});
     databaseHandle = db;
     timed(input.snapshot ? "snapshotClone" : "snapshotBuild");
     const hasGroups = !!db.prepare("SELECT 1 FROM sqlite_master WHERE name='material_contexts'").get();
@@ -1283,7 +1286,8 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
     });
     const port = (http.address() as { port: number }).port;
     timed("toolServer");
-    const preparation = { totalMs: performance.now() - started, queueWaitMs, snapshotId: input.snapshot?.identity, stages };
+    const totalMs=performance.now()-started;
+    const preparation = { totalMs, queueWaitMs, workMs:totalMs-queueWaitMs, snapshotBuild:input.snapshot?.buildTiming, snapshotId: input.snapshot?.identity, stages };
     writeFileSync(join(workspace, "preparation.json"), JSON.stringify(preparation, null, 2), { mode: 0o600 });
     return {
       preparation,

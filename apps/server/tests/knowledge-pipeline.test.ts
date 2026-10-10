@@ -483,3 +483,50 @@ it("keeps a partially outdated explanation available to every native writing rol
   expect(jobs).toHaveLength(3);
   for(const row of jobs) expect(JSON.parse(String(row.input_refs))[0].articles).toContainEqual({key:brief.key,revision:previous.revision});
 });
+
+it("keeps accepted prose and explicitly rebinds moved unchanged code after the old original is removed", async () => {
+  const f=setup();f.pipeline.options.nativeResearch=true;
+  const capture=(text:string)=>f.store.capture({source:"file",externalId:"refresh-code",title:"reservation.ts",context:{filePath:"reservation.ts",captureFormat:"verbatim-v1"},parts:[{type:"text",text}]});
+  const initial=capture("export function reserve() { return 120; }");
+  const material=()=>f.repository.materials().find(m=>m.sourceId===initial.revision.sourceId)!;
+  expect((await f.pipeline.analyze([material()])).failures).toEqual([]);
+  const previous=f.repository.get(material().key)!;
+  const calls=f.run.mock.calls.length;
+  capture("// Updated housekeeping comment.\nexport function reserve() { return 120; }");
+  expect(f.store.revision(initial.revision.id)).toBeNull();
+  expect((await f.pipeline.analyze([material()])).failures).toEqual([]);
+  const next=f.repository.get(material().key)!;
+  expect(f.run.mock.calls.slice(calls).map(([input])=>input.roleId)).toEqual(["knowledge-verifier"]);
+  expect(f.run.mock.calls.at(-1)![0].context.task!.reviewScope).toMatchObject({mode:"source_refresh",previousRevision:previous.revision});
+  expect(next.document.sections).toEqual(previous.document.sections);
+  expect(next.document.citations[0]!.target).toMatchObject({startLine:2,endLine:2});
+  expect(next.dependencies[0]!.digest).not.toBe(previous.dependencies[0]!.digest);
+  expect(next.review.trace.scope).toBe("source_refresh");
+  expect(next.review.trace.sessionIds).not.toEqual(previous.review.trace.sessionIds);
+  expect(f.repository.get(previous.document.key,previous.revision)!.document.citations[0]!.target.startLine).toBe(1);
+  expect(f.repository.resolveMaterial(previous.document.key,previous.dependencies[0]!.digest)).toBeNull();
+  const after=f.run.mock.calls.length;
+  capture("// Updated housekeeping comment.\nexport function reserve() { return 240; }");
+  expect((await f.pipeline.analyze([material()])).failures).toEqual([]);
+  expect(f.run.mock.calls.slice(after).map(([input])=>input.roleId)).toEqual(["knowledge-refresher","knowledge-verifier"]);
+  expect(f.run.mock.calls.at(-1)![0].context.task!.reviewScope).toMatchObject({mode:"full"});
+});
+
+it("revokes preserved-body eligibility when the fresh source review finds a changed premise", async () => {
+  const f=setup();f.pipeline.options.nativeResearch=true;
+  const capture=(text:string)=>f.store.capture({source:"file",externalId:"premise-code",title:"allocation.ts",context:{filePath:"allocation.ts",captureFormat:"verbatim-v1"},parts:[{type:"text",text}]});
+  const initial=capture("export function allocate() { return 120; }");
+  const material=()=>f.repository.materials().find(m=>m.sourceId===initial.revision.sourceId)!;
+  await f.pipeline.analyze([material()]);
+  const original=f.run.getMockImplementation()!;
+  f.run.mockImplementation(async input=>{
+    if((input.context.task!.reviewScope as {mode?:string}|undefined)?.mode!=="source_refresh")return original(input);
+    const run=await original(input);
+    return {...run,result:{schema_version:1,verdicts:[{documentKey:material().key,verdict:"needs_revision",issues:["Current comment changes the intended allocation premise."],questions:[]}]}};
+  });
+  const before=f.run.mock.calls.length;
+  capture("// Allocation is a provisional limit.\nexport function allocate() { return 120; }");
+  expect((await f.pipeline.analyze([material()])).failures).toEqual([]);
+  expect(f.run.mock.calls.slice(before).map(([input])=>input.roleId)).toEqual(["knowledge-verifier","knowledge-refresher","knowledge-verifier"]);
+  expect(f.run.mock.calls.at(-1)![0].context.task!.reviewScope).toMatchObject({mode:"full"});
+});

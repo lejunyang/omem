@@ -8,7 +8,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 export interface RerankerModel {
   id: string;
-  windows?(query: string, passage: string): string[];
+  windows?(query: string, passage: string, context?: string): string[];
   score(query: string, passages: string[], options?: { signal?: AbortSignal; deadline?: number }): Promise<number[]>;
   close(): Promise<void>;
 }
@@ -102,10 +102,12 @@ export async function loadChineseReranker(
   return {
     id:
       supported.label +
-      "-q8-pair512-tokenwindows-temp3-v2:" +
+      "-q8-pair512-rangecontext-temp3-v3:" +
       createHash("sha256").update(hashes.join(":")).digest("hex"),
-    windows(query, passage) {
-      return tokenWindows(passage, text => tokenizer.encode(query, { text_pair: text }).length);
+    windows(query, passage, context = "") {
+      const prefix = context ? context + "\n" : "";
+      return tokenWindows(passage, text => tokenizer.encode(query, { text_pair: prefix + text }).length)
+        .map(text => prefix + text);
     },
     score(query, passages, options = {}) {
       const work = serial.then(async () => {

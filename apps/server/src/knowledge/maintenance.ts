@@ -115,7 +115,10 @@ export function planMaintenance(
       stableDigest(brief[k] ?? null) !==
         stableDigest(previous.reading?.[k] ?? null),
   );
-  const reusable = articleWithinMaterials(repository, materials)(previous);
+  // A retired original makes its old citation unavailable, not its derived
+  // explanation unusable as an editable draft. Never expand the selected scope.
+  const reusable = (previous.investigation ?? []).every(m=>available.has(m.key)) && previous.dependencies.every(d=>
+    d.kind === "material" ? available.has(d.key) : !!repository.get(d.key,d.digest) && articleWithinMaterials(repository,materials)(repository.get(d.key,d.digest)!));
   const states = reusable ? repository.statusReader()(previous) : {};
   return {
     previousRevision: previous.revision,

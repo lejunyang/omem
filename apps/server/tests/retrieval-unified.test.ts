@@ -12,7 +12,7 @@ import { markdownPassages } from "../src/retrieval/units.js";
 import { asksForCallers, querySymbols } from "../src/retrieval/relevance.js";
 import { candidatePool } from "../src/retrieval/candidate-pool.js";
 import { tokenWindows } from "../src/retrieval/reranker.js";
-import { rerankPassages } from "../src/retrieval/rerank-passages.js";
+import { rerankPassages, scoringPassages } from "../src/retrieval/rerank-passages.js";
 import { sourceContextRange } from "../src/retrieval/context.js";
 import { assembleAnswerContext } from "../src/assistant/context.js";
 import { sourceAnchor } from "../src/retrieval/units.js";
@@ -1302,6 +1302,7 @@ it("keeps a dense match near the end of a named operation and sends local passag
     async () => ({
       id: "record-inputs",
       close: async () => {},
+      windows: (_q,text,context="")=>tokenWindows(text,t=>t.length+context.length+1,961).map(t=>context+"\n"+t),
       score: async (_q, passages) => {
         inputs.push(passages);
         return passages.map((p) => (p.includes("TAIL_ACTION") ? 0.9 : 0.2));
@@ -1694,4 +1695,17 @@ it("fits complete Unicode passages to a paired token budget without dropping the
   expect(windows.every(w=>pairedLength(w)<=512 && text.includes(w))).toBe(true);
   expect(windows.at(-1)).toContain("真正调用在最后");
   expect(() => tokenWindows(text,()=>512)).toThrow("query leaves no passage");
+});
+
+it("keeps passage offsets and restricts concept hints to their original operation", () => {
+  const text="// shared wording\n"+"prepare();\n".repeat(150)+"commitRecord();\n";
+  const unit={text,title:"record.ts",headingPath:["commit"],target:{kind:"source",startLine:1,endLine:152},materialDescription:{description:{concepts:[
+    {label:"登记实际结果",aliases:["commitRecord"],startLine:152,endLine:152},
+    {label:"其他操作的结果",aliases:["unrelated"],startLine:300,endLine:302},
+  ]}}} as Parameters<typeof scoringPassages>[0];
+  const passages=scoringPassages(unit,"如何登记实际结果",undefined,[{start:text.length-16,end:text.length}]);
+  const implementation=passages.find(p=>p.text.includes("commitRecord"))!;
+  expect(implementation.context).toContain("登记实际结果");
+  expect(passages.every(p=>!p.context.includes("其他操作"))).toBe(true);
+  for(const p of passages)expect(text.slice(p.start,p.end)).toBe(p.text);
 });
