@@ -1697,6 +1697,26 @@ it("fits complete Unicode passages to a paired token budget without dropping the
   expect(() => tokenWindows(text,()=>512)).toThrow("query leaves no passage");
 });
 
+it("covers other candidates before extra windows and reports incomplete scoring", async () => {
+  const s=setup();let calls=0;
+  const r=new UnifiedRetrieval(s.store.db,undefined,async()=>({
+    id:"breadth-fixture",close:async()=>{},
+    windows:(_q,text)=>[text,text+"\nSECOND_WINDOW"],
+    score:async(_q,texts)=>{
+      if(++calls===3)throw Error("RERANK_BUDGET_EXHAUSTED");
+      expect(texts.every(t=>!t.includes("SECOND_WINDOW"))).toBe(true);
+      return texts.map(()=>0.5);
+    },
+  }));
+  try{
+    for(let i=0;i<12;i++)s.store.capture({source:"manual",externalId:`breadth-${i}`,title:`Breadth ${i}`,parts:[{type:"text",text:`配送问题材料 ${i}`}],context:{}});
+    const hits=await r.search({text:"配送问题",limit:20,diversify:false});
+    expect(hits).toHaveLength(12);
+    expect(hits.every(h=>h.rankingStatus?.state==="scored")).toBe(true);
+    expect(hits.every(h=>h.rankingStatus?.evaluatedWindows===1&&h.rankingStatus.plannedWindows===2&&h.rankingStatus.reason==="budget")).toBe(true);
+  }finally{await r.close();await s.close();}
+});
+
 it("keeps passage offsets and restricts concept hints to their original operation", () => {
   const text="// shared wording\n"+"prepare();\n".repeat(150)+"commitRecord();\n";
   const unit={text,title:"record.ts",headingPath:["commit"],target:{kind:"source",startLine:1,endLine:152},materialDescription:{description:{concepts:[

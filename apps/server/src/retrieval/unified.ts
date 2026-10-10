@@ -839,23 +839,35 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         const deadline = performance.now() + (this.rankingOptions.budgetMs ?? 20_000);
         const pool = candidatePool(hits.map(h => ({ ...h, id: h.unit.id, owner: h.unit.owner })), hits.length);
         const scored = new Map<string, { score: number; text: string; start: number; end: number }>();
+        const planned = new Map<string, {h:ScoredUnit;input:string;text:string;start:number;end:number}[]>();
+        const evaluated = new Map<string,number>();
+        let rounds = 1;
         let reason: "budget" | "failed" | undefined;
-        // Eight-unit batches impose no global admission cutoff and keep checks frequent.
-        // Cancellation and time budgets retain scores from previously completed batches.
-        for (let offset = 0; offset < pool.length; offset += 8) {
+        // Give candidates one window each before spending more on long units.
+        // Budget/cancellation still retain every previously completed score.
+        scoring: for (let round=0;round<rounds;round++) for (let offset = 0; offset < pool.length; offset += 8) {
           q.signal?.throwIfAborted();
-          if (performance.now() >= deadline) { reason = "budget"; break; }
+          if (performance.now() >= deadline) { reason = "budget"; break scoring; }
           const batch = pool.slice(offset, offset + 8);
           try {
-            const passages = batch.flatMap(h => scoringPassages(h.unit, q.text, h.excerpt, h.matchedRanges)
-              .flatMap(p => (model.windows?.(q.text, p.text, p.context) ?? [p.context + "\n" + p.text]).map(input => {
+            const passages = batch.flatMap(h => {
+              if(!planned.has(h.unit.id)) {
+                const windows=scoringPassages(h.unit, q.text, h.excerpt, h.matchedRanges)
+                  .flatMap(p => (model.windows?.(q.text, p.text, p.context) ?? [p.context + "\n" + p.text]).map(input => {
                 const text = input.startsWith(p.context + "\n") ? input.slice(p.context.length + 1) : input;
                 const start = p.start + Math.max(0, p.text.indexOf(text));
                 return {h,input,text,start,end:start + text.length};
-              })));
+                  }));
+                planned.set(h.unit.id,windows);rounds=Math.max(rounds,windows.length);
+              }
+              const window=planned.get(h.unit.id)![round];
+              return window ? [window] : [];
+            });
+            if(!passages.length)continue;
             const scores = await model.score(q.text, passages.map(p => p.input), { signal: q.signal, deadline });
             if (scores.length !== passages.length || scores.some(s => !Number.isFinite(s))) throw Error("Invalid reranker score batch");
             passages.forEach((p, i) => {
+              evaluated.set(p.h.unit.id,(evaluated.get(p.h.unit.id) ?? 0)+1);
               if (scores[i]! > (scored.get(p.h.unit.id)?.score ?? -Infinity))
                 scored.set(p.h.unit.id, {score:scores[i]!,text:p.text,start:p.start,end:p.end});
             });
@@ -864,7 +876,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
             q.signal?.throwIfAborted();
             reason = String(error).includes("RERANK_BUDGET_EXHAUSTED") ? "budget" : "failed";
             this.rankingError = String(error);
-            break;
+            break scoring;
           }
         }
         const max = Math.max(...hits.map(h => h.score), 1e-6);
@@ -874,7 +886,8 @@ export class UnifiedRetrieval extends KeywordRetrieval {
             ? { ...h, score: h.score / max * 0.3, rankingStatus: { state: "unscored" as const, reason: reason ?? "failed", model: model.id } }
             : { ...h, score: winner.score * 0.7 + h.score / max * 0.3,
                 excerpt: winner.text, matchedRanges: [{start:winner.start,end:winner.end}],
-                rankingStatus: { state: "scored" as const, model: model.id },
+                rankingStatus: { state: "scored" as const, model: model.id, evaluatedWindows:evaluated.get(h.unit.id),plannedWindows:planned.get(h.unit.id)?.length,
+                  ...(evaluated.get(h.unit.id)!<planned.get(h.unit.id)!.length ? {reason:reason ?? "failed"} : {}) },
                 reranking: { model: model.id, relevance: winner.score, retrievalScore: h.score }, routes: [...h.routes, "cross-encoder"] };
         });
         if (!reason) this.rankingError = null;

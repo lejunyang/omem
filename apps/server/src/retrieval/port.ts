@@ -63,7 +63,7 @@ export type RetrievalHit = {
     relevance: number;
     retrievalScore: number;
   };
-  rankingStatus?: { state: "scored" | "unscored"; reason?: "budget" | "failed"; model: string };
+  rankingStatus?: { state: "scored" | "unscored"; reason?: "budget" | "failed"; model: string; evaluatedWindows?: number; plannedWindows?: number };
   /** Optional local judgment, separate from the uncalibrated retrieval score. */
   assessment?: {
     advisoryOnly?: boolean;

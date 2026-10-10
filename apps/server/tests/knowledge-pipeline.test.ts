@@ -530,3 +530,27 @@ it("revokes preserved-body eligibility when the fresh source review finds a chan
   expect(f.run.mock.calls.slice(before).map(([input])=>input.roleId)).toEqual(["knowledge-verifier","knowledge-refresher","knowledge-verifier"]);
   expect(f.run.mock.calls.at(-1)![0].context.task!.reviewScope).toMatchObject({mode:"full"});
 });
+
+it("reuses independently accepted corrected notes and reviews only the next source binding", async () => {
+  const f=setup();f.pipeline.options.nativeResearch=true;
+  const capture=(text:string)=>f.store.capture({source:"file",externalId:"corrected-code",title:"capacity.ts",context:{filePath:"capacity.ts",captureFormat:"verbatim-v1"},parts:[{type:"text",text}]});
+  const initial=capture("export function capacity() { return 120; }");
+  const material=()=>f.repository.materials().find(m=>m.sourceId===initial.revision.sourceId)!;
+  const fallback=f.run.getMockImplementation()!;let rejected=false;
+  f.run.mockImplementation(async input=>{
+    const out=await fallback(input);
+    if(input.roleId==="knowledge-verifier"&&!rejected){rejected=true;return {...out,result:{schema_version:1,verdicts:[{documentKey:material().key,verdict:"needs_revision",issues:["Clarify the capacity condition."],questions:[]}]}};}
+    if(input.roleId==="knowledge-refresher") (out.result as KnowledgeBatch).documents[0]!.sections[0]!.body="The fixed capacity is 120.[[c1]]";
+    return out;
+  });
+  expect((await f.pipeline.analyze([material()])).failures).toEqual([]);
+  const previous=f.repository.get(material().key)!;
+  expect(previous.generation.trace.roleId).toBe("knowledge-refresher");
+  const before=f.run.mock.calls.length;
+  expect(await f.pipeline.analyze([material()])).toMatchObject({reused:1,failures:[]});
+  expect(f.run).toHaveBeenCalledTimes(before);
+  capture("export function capacity() { return 120; }\n// Housekeeping only.");
+  expect((await f.pipeline.analyze([material()])).failures).toEqual([]);
+  expect(f.run.mock.calls.slice(before).map(([input])=>input.roleId)).toEqual(["knowledge-verifier"]);
+  expect(f.repository.get(material().key)!.review.trace.scope).toBe("source_refresh");
+});
