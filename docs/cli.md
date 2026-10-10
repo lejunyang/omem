@@ -306,6 +306,14 @@ omem skills install ./my-agent-skills
 
 ## 开发与发布
 
+源码环境可运行同模型阅读对照，安装版没有这个命令。先准备 osdk、锁定依赖、已登录的 ACP Agent，以及 `.repo-review/runtime/data` 仓库验收库；实际模型和思考强度取自 `config/review-code-model.json`。在不进入捕获范围的 `.repo-review/runtime/questions.json` 保存 `[{"id":"case-id","question":"实际问题"}]`，再运行：
+
+```bash
+osdk run assistant:reading-compare --questions .repo-review/runtime/questions.json --output .repo-review/runtime/reading-compare/new-run --budget 600
+```
+
+任务只更新验收库的独立副本，固定当前仓库原件与相对路径；直接阅读组用原生文件工具，自主工具组额外提供原文检索和代码导航，复核组继续检查同一份自主工具草稿。每组总预算包含准备时间，复核与返修共享原草稿剩余预算；这只是实验条件，不改变助手默认超时。输出目录必须为空或不存在，失败保留记录，不重试格式错误冒充成功。`report.json` 保存答案、实际模型、耗时和引用定位检查，工具调用另存记录；结束释放数据库副本。题目和评分标准不得进入原件，不根据这批问题调权重。定位检查不判断事实正确，需要逐项对照原件评阅答案；这个对照也不包含生产助手的事项写入和个人记忆流程。
+
 开发工具仍由 osdk 统一管理，用户安装包只需要 Node。正式发布前：
 
 ```bash

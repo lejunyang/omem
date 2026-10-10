@@ -5,6 +5,8 @@ description: 使用 omem CLI 保存与检索个人材料、基于来源提问、
 
 # 使用 omem 个人助手
 
+需要诊断源码环境的阅读路径时，见[同模型阅读对照](references/development.md#同模型阅读对照)。该入口只用于实验，会调用已配置的真实模型；安装版没有此命令，不能把定位校验当回答质量通过。
+
 先用 `omem --help` 确认安装版命令；具体参数以 `omem <命令> --help` 为准。脚本读取结果加 `--json`，解析字段，不从自然语言输出猜 ID。需要 CLI 的完整命令流程时读 [命令与工作流](references/workflows.md)。
 
 ## 选择入口
