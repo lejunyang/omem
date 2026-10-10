@@ -360,6 +360,7 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
         search_materials: "搜索原始材料",
         search_contexts: "按问题查找完整阅读材料",
         read_material: "补读原文",
+        read_materials: "批量补读原文与完整章节",
         read_fragments: "读取原文与记忆引用定位",
         read_section: "阅读完整章节",
         search_knowledge: "查找已有讲解",
@@ -437,7 +438,7 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
       if (!outlines.has(m.revisionId)) outlines.set(m.revisionId, contextHierarchy(m, db).nodes);
       return outlines.get(m.revisionId)!;
     };
-    const read = (key: string, start = 1, end?: number) => {
+    const read = (key: string, start = 1, end?: number, includeOutline = true) => {
       const e = entry(key),
         m = e.material;
       end ??= m.lineCount;
@@ -457,7 +458,7 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
           .slice(start - 1, end)
           .map((l, i) => `${start + i}: ${l}`)
           .join("\n"),
-        outline: outlineFor(m),
+        ...(includeOutline ? { outline: outlineFor(m) } : {}),
         description:
           catalog.find((item) => item.revision === m.revisionId)?.description ??
           null,
@@ -590,6 +591,68 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
           endLine: z.number().int().positive().optional(),
         },
         (a) => read(a.key, a.startLine, a.endLine),
+      );
+      tool(
+        "read_materials",
+        "Batch up to 16 authorized original reads across files. Choose explicit startLine/endLine, an enclosing section/function with atLine, or an exact contextId. With no selector reads the full original. Adjacent/overlapping ranges in the same original are merged, with original line numbers and request indexes retained. Metadata appears once per original; outline is optional. No passage truncation or relevance scoring. All selectors are checked before any text is returned. Use this instead of repeated small-window calls when the needed locations are already known.",
+        {
+          requests: z.array(z.object({
+            key: z.string(),
+            startLine: z.number().int().positive().optional(),
+            endLine: z.number().int().positive().optional(),
+            atLine: z.number().int().positive().optional(),
+            contextId: z.string().optional(),
+          }).strict()).min(1).max(16),
+          includeOutline: z.boolean().default(false),
+        },
+        ({ requests, includeOutline }) => {
+          type ResolvedRead = { index: number; key: string; startLine: number; endLine: number; contextId: string | null };
+          const resolved: ResolvedRead[] = requests.map((request: {
+            key: string; startLine?: number; endLine?: number;
+            atLine?: number; contextId?: string;
+          }, index: number) => {
+            const m = entry(request.key).material;
+            const byRange = request.startLine !== undefined || request.endLine !== undefined;
+            if ([byRange, request.atLine !== undefined, request.contextId !== undefined].filter(Boolean).length > 1)
+              throw Error("Choose only a range, atLine or contextId for each request");
+            let node: ContextNode | undefined;
+            if (request.contextId !== undefined) {
+              node = outlineFor(m).find(n => n.id === request.contextId);
+              if (!node) throw Error("Context missing in this fixed original; choose an id from its outline");
+            } else if (request.atLine !== undefined) {
+              if (request.atLine > m.lineCount) throw Error(`Invalid line; ${m.title} has ${m.lineCount} lines`);
+              node = enclosingContext(outlineFor(m), request.atLine);
+              if (!node) throw Error("No enclosing section or function at this line; request an explicit line range");
+            }
+            const startLine = node?.startLine ?? request.startLine ?? 1;
+            const endLine = node?.endLine ?? request.endLine ?? m.lineCount;
+            if (startLine > m.lineCount || endLine < startLine || endLine > m.lineCount)
+              throw Error(`Invalid range; ${m.title} has ${m.lineCount} lines`);
+            return { index, key: m.key, startLine, endLine, contextId: node?.id ?? null };
+          });
+          const grouped = new Map<string, typeof resolved>();
+          for (const request of resolved) {
+            const ranges = grouped.get(request.key) ?? [];
+            ranges.push(request); grouped.set(request.key, ranges);
+          }
+          const materials = [], passages = [];
+          for (const [key, ranges] of grouped) {
+            const merged: { startLine: number; endLine: number; requestIndexes: number[] }[] = [];
+            for (const range of ranges.sort((a, b) => a.startLine - b.startLine)) {
+              const last = merged.at(-1);
+              if (last && range.startLine <= last.endLine + 1) {
+                last.endLine = Math.max(last.endLine, range.endLine);
+                last.requestIndexes.push(range.index);
+              } else merged.push({ startLine: range.startLine, endLine: range.endLine, requestIndexes: [range.index] });
+            }
+            for (const [index, range] of merged.entries()) {
+              const { text, startLine, endLine, ...metadata } = read(key, range.startLine, range.endLine, includeOutline && index === 0);
+              if (index === 0) materials.push(metadata);
+              passages.push({ key, startLine, endLine, text, requestIndexes: range.requestIndexes });
+            }
+          }
+          return { materials, passages, requests: resolved.sort((a, b) => a.index - b.index) };
+        },
       );
       tool(
         "read_fragments",

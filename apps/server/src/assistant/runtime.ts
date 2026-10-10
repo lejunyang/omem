@@ -182,10 +182,14 @@ export class TurnCancelledError extends Error {
 }
 
 export type AssistantModelPort = {
+  /** Native investigators choose their own source reads and optional searches.
+   * Evidence-only adapters retain host retrieval. This is transport capability,
+   * never a keyword decision about the user's question or reading permission. */
+  contextStrategy?: "investigate" | "provided-evidence";
   /**
    * Compose a reply from real evidence and conversation history. The model may
-   * only cite evidence the runtime passed in and may only request the managed
-   * tools declared here; it cannot read arbitrary data or grant permissions.
+   * cite host-supplied evidence or host-bound reads of authorized originals, and
+   * request only managed actions; it cannot grant itself reading/write permission.
    *
    * The call is async and cancellable via `signal` (external cancel, superseded
    * by a newer message, or turn timeout).
@@ -581,10 +585,13 @@ export class AssistantRuntime {
         result: t.result,
       }));
 
-      // 1. Read-only retrieval via RetrievalPort, then visibility filtering.
+      // Native investigators start from authorized originals, history and state;
+      // retrieval/ranking is a tool choice, not an obligatory startup stage.
       //    G08: also merge prior turn working context so the model sees fragments
       //    from the previous consultation turn (anaphora like "按这个").
-      const context = await this.retrieveContext(
+      const context = this.model.contextStrategy === "investigate"
+        ? { evidence: [] as AssistantEvidence[], background: [] as AssistantBackground[] }
+        : await this.retrieveContext(
         input.userText,
         input.conversation,
         purpose,

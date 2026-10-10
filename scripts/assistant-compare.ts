@@ -83,10 +83,10 @@ const cases = z
   .parse(JSON.parse(readFileSync(resolve(option("questions")), "utf8")));
 const review = taskFlag("review");
 const contextSelection = z
-  .enum(["retrieved", "provided", "both"])
-  .parse(option("context", "retrieved"));
+  .enum(["autonomous", "retrieved", "provided", "both"])
+  .parse(option("context", "autonomous"));
 if (
-  contextSelection !== "retrieved" &&
+  ["provided", "both"].includes(contextSelection) &&
   cases.some((c) => c.turns.some((t) => !t.materialRanges.length))
 )
   throw Error(
@@ -192,7 +192,7 @@ const report: Record<string, any> = {
   corpusDigest: digest(),
   materialCount: repository.materials().length,
   method:
-    "One frozen corpus, real native ACP and all research tools. Independent conversations per case and condition; follow-ups preserve that condition's history. Order alternates per case. Provided context replaces only the initial matches and explanations with evaluator-selected original ranges, not an answer or restricted corpus. Initial search still runs in both conditions and is timed separately. Check final answers manually; submission is not correctness and selected ranges may be insufficient.",
+    "One frozen corpus, real native ACP and all research tools. Independent conversations per case and condition; follow-ups preserve that condition's history. Autonomous is the production default: the model investigates originals without initial search/ranking. Retrieved explicitly retains the old host-prefetch baseline. Provided supplies selected original ranges without initial search, not an answer or restricted corpus. Order alternates per case. Check final answers manually; submission is not correctness and selected ranges may be insufficient.",
   profiles: [],
   variantSelection,
   contextSelection,
@@ -260,7 +260,7 @@ try {
     profile: ReturnType<typeof profileSchema.parse>;
     variant: string;
     reader?: ReturnType<typeof profileSchema.parse>;
-    context: "retrieved" | "provided";
+    context: "autonomous" | "retrieved" | "provided";
   }[] = [];
   for (const model of models) {
     const profile = profileSchema.parse({
@@ -326,6 +326,7 @@ try {
       const runtime = new AssistantRuntime(
         store,
         {
+          contextStrategy: contextVariant === "retrieved" ? "provided-evidence" : adapter.contextStrategy,
           generate: async (input) => {
             modelStart = performance.now();
             const provided =
@@ -414,9 +415,12 @@ try {
               context: contextVariant,
               effort: profile.effort,
               elapsedMs: Math.round(performance.now() - start),
-              initialRetrievalMs: modelStart
+              hostContextMs: modelStart
                 ? Math.round(modelStart - start)
                 : null,
+              initialRetrievalMs: contextVariant === "retrieved" && modelStart
+                ? Math.round(modelStart - start)
+                : 0,
               initialContext,
               events,
               result,

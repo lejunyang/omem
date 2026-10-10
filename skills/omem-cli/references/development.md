@@ -1,5 +1,17 @@
 # 需求跟进和项目编码
 
+## 主助手真实验证
+
+源码入口 `osdk run assistant:compare` 默认 `--context autonomous`，运行实际主助手的自由查读流程，不做开场检索。先准备锁定依赖、已登录的 ACP Agent、`config/review-code-model.json` 与仓库验收库；题目放在不捕获的 `.repo-review/runtime/assistant-questions.json`，格式为 `[{"id":"问题标识","turns":["真实问题"]}]`。例如：
+
+```bash
+osdk run assistant:compare --review --questions .repo-review/runtime/assistant-questions.json --variant research --output .repo-review/runtime/assistant-compare/new-run
+```
+
+模型与思考强度会核对实际 ACP 选项；默认 gpt-5.6-sol / medium，其他模型可用任务参数指定。`--context retrieved` 显式保留旧的开场检索基线；`provided` 用题目文件中的真实 materialRanges 提供初始范围，`both` 运行 retrieved 与 provided。后两种需逐题填写原件范围；它们用于实验，不改变助手权限。不要将预期答案或评分标准捕获到材料库。
+
+报告记录初始输入、模型回答、实际工具调用和耗时。副本只读调查，不创建真实事项或发送消息；模型提交和引用存在不等于答案正确。结束释放复制库，失败保留真实错误，查看完整回答和其操作条件后再判断质量。安装版没有这些源码任务；个人库的日常入口仍是 `omem ask`。
+
 ## 同模型阅读对照
 
 工具条件会明确提供工具名并要求实际搜索、读原件，原生文件工具作为补查；没有成功使用原文工具的运行标记为无效条件，不拿它证明工具质量。模型额外回显 JSON Schema 描述时，宿主只移除这五个已知描述字段，保留原始输出和原样答案；未知字段、缺字段或无效引用仍失败，不重写正文。

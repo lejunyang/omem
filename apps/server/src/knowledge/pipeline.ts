@@ -209,7 +209,7 @@ export class KnowledgePipeline {
               articles:rangeOnly ? articles.filter(a=>articleKeys.has(a.document.key)) : articles,
               workspace, schema, validate, signal,
               snapshotFactory:()=>this.sessions.getStore()!.snapshot(offers.map(o=>o.material),articles,signal),
-              ...(rangeOnly ? {allowedTools:["read_material","read_fragments","read_section","read_image","read_knowledge","submit_result"],rangeEvidence:ranges} : {tools:followupStateTools(offers.map(o=>o.material))}),
+              ...(rangeOnly ? {allowedTools:["read_material","read_materials","read_fragments","read_section","read_image","read_knowledge","submit_result"],rangeEvidence:ranges} : {tools:followupStateTools(offers.map(o=>o.material))}),
               retrievalConfig:this.options.retrievalConfig });
           } } : {}),
           emit: (type, text) => { if (type === "status") this.options.log?.(text); } });

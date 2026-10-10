@@ -83,7 +83,7 @@ it("applies exact citation corrections without rewriting and independently check
         const env=await input.research!(workspace,z.any(),x=>x);
         const client=new Client({name:"scoped-review",version:"1"});
         try {
-          expect(env.tools.sort()).toEqual(["read_fragments","read_image","read_knowledge","read_material","read_section","submit_result"].sort());
+          expect(env.tools.sort()).toEqual(["read_fragments","read_image","read_knowledge","read_material","read_materials","read_section","submit_result"].sort());
           expect(readFileSync(join(workspace,"range-evidence.json"),"utf8")).toContain("The release requires a review.");
           const server=env.servers[0]!;if(server.type!=="http")throw Error("HTTP required");
           await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));

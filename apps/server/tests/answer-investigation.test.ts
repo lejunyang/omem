@@ -72,7 +72,8 @@ it("lets an independent reader inspect the same frozen originals and returns an 
     });
     const investigation = answerInvestigation({
       workspace,
-      review: async (_draft, snapshot, signal, publish) => {
+      review: async (_draft, snapshot, signal, publish, focus) => {
+        expect(focus).toEqual(["登记或地址还有哪些未确认且会影响行动的前提？"]);
         calls++;
         await waiting;
         capture("规则已经变更：周一配送。");
@@ -147,13 +148,16 @@ it("lets an independent reader inspect the same frozen originals and returns an 
     });
     expect((await submit(draft.answer)).isError).toBe(true);
     expect(env.result()).toBeUndefined();
-    const review = await call("review_answer", { draft });
+    expect((await call("review_answer", { draft })).isError).toBe(true);
+    expect(calls).toBe(0);
+    const review = await call("review_answer", { draft, focus: ["登记或地址还有哪些未确认且会影响行动的前提？"] });
     const payload = (result: any) => JSON.parse(result.content[0].text);
     const started = payload(review);
     expect(started.status).toBe("running");
-    const again = payload(await call("review_answer", { draft }));
+    const again = payload(await call("review_answer", { draft, focus: ["登记或地址还有哪些未确认且会影响行动的前提？"] }));
     expect(again.reviewId).toBe(started.reviewId);
     expect(calls).toBe(1);
+    expect(JSON.parse(readFileSync(join(workspace, "answer-review.json"), "utf8")).focus).toHaveLength(1);
     expect(JSON.stringify(await submit(draft.answer))).toContain(
       "read_answer_review",
     );
@@ -232,7 +236,7 @@ it("retains failures without an implicit second model call and cancels the owned
   const snapshot = {} as Parameters<typeof start.run>[1];
   const draft = { answer: "需要核对", citations: [] };
   try {
-    const first: any = await start.run({ draft }, snapshot);
+    const first: any = await start.run({ draft, focus: ["登记或地址还有哪些未确认且会影响行动的前提？"] }, snapshot);
     const failed: any = await read.run(
       { reviewId: first.reviewId, waitSeconds: 20 },
       snapshot,
@@ -241,13 +245,13 @@ it("retains failures without an implicit second model call and cancels the owned
       status: "failed",
       error: "Agent connection closed",
     });
-    expect(await start.run({ draft }, snapshot)).toMatchObject({
+    expect(await start.run({ draft, focus: ["登记或地址还有哪些未确认且会影响行动的前提？"] }, snapshot)).toMatchObject({
       reviewId: first.reviewId,
       status: "failed",
     });
     expect(calls).toBe(1);
     expect(() => investigation.beforeSubmit("最终答案")).toThrow();
-    const retry: any = await start.run({ draft, retry: true }, snapshot);
+    const retry: any = await start.run({ draft, focus: ["登记或地址还有哪些未确认且会影响行动的前提？"], retry: true }, snapshot);
     expect(retry.reviewId).not.toBe(first.reviewId);
     await investigation.close();
     expect(cancelled).toBe(true);
