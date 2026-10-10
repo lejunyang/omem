@@ -18,7 +18,7 @@ import { acp, withAgentWorkspace } from "../apps/server/src/agents.js";
 import { profileSchema } from "../packages/contracts/src/index.js";
 import { beginReviewRun } from "./review-retention.js";
 
-const option = (name: string, fallback = "") => process.env[`osdk_arg_${name.replaceAll("-", "_")}`] || process.argv.find(a => a.startsWith(`--${name}=`))?.slice(name.length + 3) || fallback;
+const option = (name: string, fallback = "") => process.env[`osdk_arg_${name.replaceAll("-", "_")}`] || process.env[`osdk_arg_${name}`] || process.argv.find(a => a.startsWith(`--${name}=`))?.slice(name.length + 3) || fallback;
 const questions = z.array(z.object({ id: z.string().regex(/^[a-z0-9-]+$/), question: z.string().min(1).max(4000) }).strict()).min(1).parse(JSON.parse(readFileSync(resolve(option("questions")), "utf8")));
 const previous = option("frozen-report") ? JSON.parse(readFileSync(resolve(option("frozen-report")), "utf8")) : undefined;
 if (previous && JSON.stringify(previous.questions) !== JSON.stringify(questions)) throw Error("Frozen replay must use identical questions");
@@ -146,6 +146,7 @@ try {
   report.materialCount = materials.length;
   report.manifest = materials.map(m => ({ key: m.key, path: m.path, revision: m.revisionId, digest: m.digest, bytesHash: hash(m.text) }));
   save();
+  console.log(JSON.stringify({ state: "corpus-fixed", replay: !!previous, corpusDigest: report.corpusDigest, materialCount: materials.length }));
   const probe = await acp(withAgentWorkspace(profile, join(directory, "probe")), join(directory, "probe"), null, () => {}, new AbortController().signal);
   report.probe = probe;
   save();
