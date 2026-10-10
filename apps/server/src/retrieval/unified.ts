@@ -840,8 +840,8 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         const pool = candidatePool(hits.map(h => ({ ...h, id: h.unit.id, owner: h.unit.owner })), hits.length);
         const scored = new Map<string, number>();
         let reason: "budget" | "failed" | undefined;
-        // Forty is a batch size, never a global admission cutoff. Small sub-batches
-        // let cancellation and elapsed-time budgets take effect without losing all work.
+        // Eight-unit batches impose no global admission cutoff and keep checks frequent.
+        // Cancellation and time budgets retain scores from previously completed batches.
         for (let offset = 0; offset < pool.length; offset += 8) {
           q.signal?.throwIfAborted();
           if (performance.now() >= deadline) { reason = "budget"; break; }
