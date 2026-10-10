@@ -259,6 +259,20 @@ help = "Use the repository input adapter and its captured knowledge"
 
 [tasks.browser]
 run = "pnpm run test:browser"
+
+[tasks."assistant:reading-compare"]
+run = "bun scripts/assistant-reading-compare.ts"
+description = "Compare native repository reading, source tools and paired independent review with the same real ACP model"
+[tasks."assistant:reading-compare".options.questions]
+help = "JSON [{id,question}] outside the captured corpus, for example under .repo-review/runtime/"
+[tasks."assistant:reading-compare".options.data]
+default = ".repo-review/runtime/data"
+help = "Existing repository review data; only an owned backup is synchronized and indexed"
+[tasks."assistant:reading-compare".options.output]
+help = "Fresh ignored directory for answers, tool traces and report; existing nonempty outputs are rejected"
+[tasks."assistant:reading-compare".options.budget]
+default = "600"
+help = "Total seconds per condition, including preparation; review shares the source-tools draft budget"
 [tasks.live-daily]
 run = "bun scripts/live-daily-smoke.ts"
 
