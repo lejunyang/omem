@@ -314,7 +314,7 @@ try {
                     !windowInputs.hits.some((h) =>
                       group.alternatives.some((a) => supports(h, a)),
                     )
-                  ? "model-pool-cutoff"
+                  ? (traces.some(s=>s.stage==="reranker" && s.error==="budget") ? "model-budget-exhausted" : "model-pool-cutoff")
                   : windowInputs &&
                       !windowInputs.hits.some((h) =>
                         group.alternatives.some(

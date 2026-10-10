@@ -1,5 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { z } from "zod";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.js";
@@ -66,6 +69,9 @@ it("does not promote rejected knowledge or a result whose source changed during 
 
 it("applies exact citation corrections without rewriting and independently checks only the affected argument", async () => {
   const f = setup();
+  f.pipeline.options.nativeResearch = true;
+  const nativeRoot=mkdtempSync(join(tmpdir(),"knowledge-scope-tools-"));
+  cleanups.push(()=>rmSync(nativeRoot,{recursive:true,force:true}));
   f.capture("Introduction\nThe release requires a review.\nOther background.");
   const fallback = f.run.getMockImplementation()!;
   f.run.mockImplementation(async input => {
@@ -73,6 +79,22 @@ it("applies exact citation corrections without rewriting and independently check
     if (input.roleId === "knowledge-verifier") {
       const scope = input.context.task!.reviewScope as {mode:string;previousReview?:{jobId:string}};
       if (scope.mode === "citation_ranges") {
+        const workspace=join(nativeRoot,"scoped");
+        const env=await input.research!(workspace,z.any(),x=>x);
+        const client=new Client({name:"scoped-review",version:"1"});
+        try {
+          expect(env.tools.sort()).toEqual(["read_fragments","read_image","read_knowledge","read_material","read_section","submit_result"].sort());
+          expect(readFileSync(join(workspace,"range-evidence.json"),"utf8")).toContain("The release requires a review.");
+          const server=env.servers[0]!;if(server.type!=="http")throw Error("HTTP required");
+          await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+          const discovery=await client.listTools();
+          expect(discovery.tools.some(t=>t.name==="search_materials")).toBe(false);
+          const blocked=await client.callTool({name:"search_materials",arguments:{query:"release"}});
+          expect(blocked.isError).toBe(true);
+          const read=await client.callTool({name:"read_material",arguments:{key:"manual:example",startLine:2,endLine:2}});
+          expect(JSON.stringify(read)).toContain("The release requires a review.");
+        } finally { await client.close();await env.close(); }
+        expect(existsSync(join(workspace,"range-evidence.json"))).toBe(false);
         expect((input.context.task!.drafts as {sections:{key:string}[]}[])[0]!.sections.map(s=>s.key)).toEqual(["behavior"]);
         expect(f.store.jobs.get(scope.previousReview!.jobId)?.state).toBe("succeeded");
       }
