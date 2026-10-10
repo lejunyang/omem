@@ -11,7 +11,7 @@
       "canonical_name": "omem-answer-review",
       "version": "1",
       "load_mode": "native",
-      "artifact_digest": "af4dc6e3d3bca63a8fc3ca13071b527738bcd9f8a41f2c71a6d5876eecec58ad"
+      "artifact_digest": "72d395144079c1fb4b69fd893911b8ca264d44283401b6f325ff325c36164d4a"
     }
   ],
   "output_schema": "AnswerReview.v1",

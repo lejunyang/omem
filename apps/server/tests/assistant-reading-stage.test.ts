@@ -8,6 +8,7 @@ import { profileSchema } from "../../../packages/contracts/src/index.js";
 import { Store } from "../src/store.js";
 import { KnowledgeRepository } from "../src/knowledge/repository.js";
 import { AcpAssistantModel } from "../src/assistant/acp-model.js";
+import type { AssistantWork } from "../src/assistant/work.js";
 import { evidenceForRange } from "../src/assistant/research.js";
 import { acp } from "../src/agents.js";
 
@@ -68,6 +69,7 @@ it.each(["answer", "review", "handoff", "unavailable", "cancel"] as const)(
               readFileSync(join(cwd, "review-question.json"), "utf8"),
             );
             expect(question.question).toBe("会议安排？");
+            expect(question.focus).toHaveLength(1);
             expect(question.draft).toBeUndefined();
             expect(
               readFileSync(join(cwd, "review-draft.json"), "utf8"),
@@ -138,7 +140,7 @@ it.each(["answer", "review", "handoff", "unavailable", "cancel"] as const)(
               const started = payload(
                 await client.callTool({
                   name: "review_answer",
-                  arguments: { draft },
+                  arguments: { draft, focus: ["登记或地址还有哪些未确认且会影响行动的前提？"] },
                 }),
               );
               expect(started.reviewId).toBeTypeOf("string");
@@ -212,11 +214,19 @@ it.each(["answer", "review", "handoff", "unavailable", "cancel"] as const)(
           model: "fixture",
           effort: id === "reader" ? "low" : "medium",
         });
+      const catalog = vi.fn(() => ({ requirements: [] }));
+      const work = {
+        catalog,
+        get context() { throw Error("An implicit decision must not run at startup"); },
+        capabilitySession: () => undefined,
+        tools: () => [],
+      } as unknown as AssistantWork;
       const adapter = new AcpAssistantModel({
         profile: profile("researcher"),
         readingProfile: profile("reader"),
         workspaceRoot: root,
         repository,
+        work,
         retrievalConfig: { enabled: false },
       });
       const pending = adapter.generate({
@@ -224,6 +234,7 @@ it.each(["answer", "review", "handoff", "unavailable", "cancel"] as const)(
         priorTurns: [],
         evidence: [evidenceForRange(material, 1, 2, () => true)],
         visibility: "private",
+        ownerScoped: true,
         signal: controller.signal,
       });
       if (mode === "cancel") await expect(pending).rejects.toThrow("cancelled");
@@ -245,6 +256,7 @@ it.each(["answer", "review", "handoff", "unavailable", "cancel"] as const)(
           ? ["reader", "researcher"]
           : ["reader"],
       );
+      expect(catalog).toHaveBeenCalledTimes(1);
       expect(existsSync(join(workspace, "snapshot.sqlite"))).toBe(false);
     } finally {
       vi.mocked(acp).mockReset();

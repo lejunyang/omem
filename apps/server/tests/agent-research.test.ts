@@ -10,6 +10,51 @@ import { KnowledgeRepository } from "../src/knowledge/repository.js";
 import { prepareAgentResearch } from "../src/knowledge/agent-research.js";
 import { parseFile } from "../src/code/parse.js";
 
+it("batches fixed code and document reads, merges ranges, and refuses an unoffered source", async () => {
+  const root = mkdtempSync(join(tmpdir(), "omem-batch-reading-")), store = new Store(join(root, "data"));
+  const client = new Client({ name: "batch-reader", version: "1" });
+  let env: Awaited<ReturnType<typeof prepareAgentResearch>> | undefined;
+  try {
+    const capture = (id: string, text: string) => store.capture({ source: "file", externalId: id, title: id, context: { filePath: id }, parts: [{ type: "text", text }] });
+    capture("dispatch.ts", 'export function dispatch(enabled: boolean) {\n  if (!enabled) return "paused";\n  return "queued";\n}\nexport const unrelated = "not part of this read";');
+    capture("guide.md", "# 配送\n先完成登记。\n\n## 查询\n用订单号查询配送状态。\n## 取消\n未派送时可取消。");
+    capture("private.md", "不在本次授权范围的原文。");
+    const repo = new KnowledgeRepository(store);
+    const materials = repo.materials().filter(m => m.path !== "private.md");
+    const code = materials.find(m => m.path === "dispatch.ts")!, doc = materials.find(m => m.path === "guide.md")!;
+    const schema = z.object({ answer: z.string() });
+    env = await prepareAgentResearch({ repository: repo, materials, articles: [], workspace: join(root, "agent"), schema, validate: x => schema.parse(x), retrievalConfig: { enabled: false } });
+    const server = env.servers[0]!;
+    if (server.type !== "http") throw Error("HTTP MCP expected");
+    await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+    capture("dispatch.ts", 'export function dispatch() { return "new behavior"; }');
+    const result = await client.callTool({ name: "read_materials", arguments: { requests: [
+      { key: "originals/dispatch.ts", atLine: 2 },
+      { key: code.key, startLine: 2, endLine: 3 },
+      { key: doc.key, startLine: 1, endLine: 2 },
+      { key: "originals/guide.md", startLine: 3, endLine: 5 },
+    ] } });
+    expect(result.isError).not.toBe(true);
+    const data = JSON.parse((result.content as { text: string }[])[0]!.text);
+    expect(data.materials).toHaveLength(2);
+    expect(data.materials.every((m: any) => m.outline === undefined)).toBe(true);
+    expect(data.passages).toHaveLength(2);
+    expect(data.passages[0]).toMatchObject({ key: code.key, startLine: 1, endLine: 4, requestIndexes: [0, 1] });
+    expect(data.passages[0].text).toContain('2:   if (!enabled) return "paused";');
+    expect(JSON.stringify(data)).not.toContain("new behavior");
+    expect(JSON.stringify(data)).not.toContain("not part of this read");
+    expect(data.materials[0].revision).toBe(code.revisionId);
+    expect(data.passages[1]).toMatchObject({ startLine: 1, endLine: 5, requestIndexes: [2, 3] });
+    expect(data.passages[1].text).toContain("用订单号查询配送状态");
+    const denied = await client.callTool({ name: "read_materials", arguments: { requests: [{ key: code.key, startLine: 1 }, { key: "originals/private.md" }] } });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied)).not.toContain("paused");
+    const context = await client.callTool({ name: "read_materials", arguments: { requests: [{ key: code.key, contextId: data.requests[0].contextId }], includeOutline: true } });
+    expect(context.isError).not.toBe(true);
+    expect(JSON.parse((context.content as { text: string }[])[0]!.text).materials[0].outline.length).toBeGreaterThan(0);
+  } finally { await client.close(); await env?.close(); store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
 it("keeps reading contexts for each question, including parent conditions and the sealed original", async () => {
   const root = mkdtempSync(join(tmpdir(), "omem-question-contexts-"));
   const store = new Store(join(root, "data"));

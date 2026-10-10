@@ -232,9 +232,9 @@ description = "Compare real answering agents on a frozen material corpus; consum
 [tasks."assistant:compare".options.questions]
 help = "JSON cases with string turns, or {question, materialRanges:[{key,startLine,endLine}]} for supplied-context diagnosis"
 [tasks."assistant:compare".options.context]
-default = "retrieved"
-choices = ["retrieved", "provided", "both"]
-help = "Compare normal initial search with selected original passages; all native investigation tools stay available"
+default = "autonomous"
+choices = ["autonomous", "retrieved", "provided", "both"]
+help = "autonomous uses the default free investigation; retrieved retains host-prefetch baseline; provided/both require selected original ranges"
 [tasks."assistant:compare".options.models]
 default = "gpt-5.6-sol"
 help = "Comma-separated model IDs; each is validated through ACP"

@@ -124,6 +124,8 @@ for (const role of [
   "extractor",
   "verifier",
   "daily-assistant",
+  "answer-reviewer",
+  "requirement-tracker",
   "coding-agent",
   "code-reviewer",
   "knowledge-writer",

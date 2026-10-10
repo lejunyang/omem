@@ -76,6 +76,32 @@ const captureSource = (
     provenance: { ...ownerProvenance, ...(extra.provenance ?? {}) },
   }).revision;
 
+it("starts a native investigator without host search and binds its authorized original evidence", async () => {
+  const { store } = setup();
+  const captured = captureSource(store, "delivery-entry", "必须先登记，随后才安排配送。");
+  const material = materialFromRevision(store, captured.id)!;
+  const retrieval = new UnifiedRetrieval(store.db);
+  const search = vi.spyOn(retrieval, "search").mockRejectedValue(Error("ranking must not run at startup"));
+  const model: AssistantModelPort = {
+    contextStrategy: "investigate",
+    async generate(input) {
+      expect(input.evidence).toEqual([]);
+      expect(input.background).toEqual([]);
+      const evidence = evidenceForRange(material, 1, 1, input.visible!);
+      return { answer: "先登记再配送。", citationIds: [evidence.citationId!], researchedEvidence: [evidence] };
+    },
+  };
+  const runtime = new AssistantRuntime(store, model, { retrieval });
+  try {
+    const conversation = runtime.conversations.open({ principalId: "owner", channel: "web", chatId: "native-start", visibility: "private" });
+    const result = await runtime.turn({ conversationId: conversation.id, userText: "怎么安排配送？" });
+    expect(result.degraded).toBe(false);
+    expect(result.turn.inputMessageRefs.status).toBe("done");
+    expect(result.evidence[0]?.sourceRevisionId).toBe(captured.id);
+    expect(search).not.toHaveBeenCalled();
+  } finally { runtime.shutdown(); await retrieval.close(); }
+});
+
 it("keeps the resolved project through restart, scopes follow-up retrieval, and preserves a task's own project when the conversation changes", async () => {
   const resource = setup();
   let store = resource.store;

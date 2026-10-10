@@ -570,19 +570,6 @@ export class AssistantWork {
       },
     ];
   }
-  async context(userText: string) {
-    const catalog = this.catalog();
-    const decision = await decideWork(this.decisions, {
-      current_user_message: userText,
-      requirements: catalog.requirements,
-    });
-    return {
-      ...catalog,
-      decision,
-      decisionUsage:
-        "建议调查方向；不构成交办、事实更新或过滤授权。含糊时先读已有需求。",
-    };
-  }
   async investigationHints(plan: WikiPageBrief, signal: AbortSignal) {
     if (
       !["requirement-followup", "project-understanding"].includes(
