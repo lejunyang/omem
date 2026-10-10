@@ -306,6 +306,8 @@ omem skills install ./my-agent-skills
 
 ## 开发与发布
 
+阅读对照的工具条件要求模型实际使用原文工具；没有使用的条件不纳入工具效果结论。额外回显的 JSON Schema 描述由宿主机械移除，原始输出保留，正文和引用不改写。入口修复后可用 `--data <固定验收备份目录> --frozen-report <旧报告>` 续跑；必须是相同题目与原件摘要，只复用完成的直接阅读答案，不重新捕获当前工作区。运行结束会释放数据库，备份需在此之前显式保留，重放完成再释放，完整方法见随包[开发指引](../skills/omem-cli/references/development.md#同模型阅读对照)。
+
 源码环境可运行同模型阅读对照，安装版没有这个命令。先准备 osdk、锁定依赖、已登录的 ACP Agent，以及 `.repo-review/runtime/data` 仓库验收库；实际模型和思考强度取自 `config/review-code-model.json`。在不进入捕获范围的 `.repo-review/runtime/questions.json` 保存 `[{"id":"case-id","question":"实际问题"}]`，再运行：
 
 ```bash
