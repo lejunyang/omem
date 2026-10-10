@@ -32,7 +32,9 @@ const finish = beginReviewRun(directory, "reading-compare");
 const dataDir = join(directory, "data");
 mkdirSync(dataDir, { recursive: true });
 const sourceDir = resolve(option("data", ".repo-review/runtime/data"));
-const source = new DatabaseSync(join(sourceDir, "omem.sqlite"), { readOnly: true });
+// SQLite may need WAL/SHM handles after the last writer closed. No business
+// writes run on this connection; backup itself fixes a consistent read view.
+const source = new DatabaseSync(join(sourceDir, "omem.sqlite"));
 try { await backup(source, join(dataDir, "omem.sqlite")); } finally { source.close(); }
 if (existsSync(join(sourceDir, "assets"))) cpSync(join(sourceDir, "assets"), join(dataDir, "assets"), { recursive: true });
 const store = new Store(dataDir);
