@@ -63,6 +63,7 @@ export type RetrievalHit = {
     relevance: number;
     retrievalScore: number;
   };
+  rankingStatus?: { state: "scored" | "unscored"; reason?: "budget" | "failed"; model: string };
   /** Optional local judgment, separate from the uncalibrated retrieval score. */
   assessment?: {
     advisoryOnly?: boolean;
@@ -119,6 +120,8 @@ export type TimeRange = {
  */
 export type SearchQuery = {
   text: string;
+  /** Host cancellation; inference stops between model batches. */
+  signal?: AbortSignal;
   scope?: RetrievalScope;
   /** Confirmed project id (from a confirmed ContextLink). Null when unknown. */
   project_id?: string | null;

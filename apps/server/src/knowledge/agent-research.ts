@@ -707,6 +707,7 @@ export async function prepareAgentResearch(input: {
                   startLine: h.target.startLine,
                   endLine: h.target.endLine,
                   matchedRanges: h.matchedRanges,
+                  rankingStatus: h.rankingStatus,
                   snippet: h.text,
                   context: h.context,
                   description: h.materialDescription,

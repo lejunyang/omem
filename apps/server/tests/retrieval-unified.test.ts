@@ -11,6 +11,7 @@ import { UnifiedRetrieval } from "../src/retrieval/unified.js";
 import { markdownPassages } from "../src/retrieval/units.js";
 import { asksForCallers, querySymbols } from "../src/retrieval/relevance.js";
 import { candidatePool } from "../src/retrieval/candidate-pool.js";
+import { tokenWindows } from "../src/retrieval/reranker.js";
 import { rerankPassages } from "../src/retrieval/rerank-passages.js";
 import { sourceContextRange } from "../src/retrieval/context.js";
 import { assembleAnswerContext } from "../src/assistant/context.js";
@@ -1608,7 +1609,7 @@ it("admits distinct recall routes and original owners before spending model slot
   expect(new Set(pool.map((h) => h.id)).size).toBe(40);
 });
 
-it("keeps unscored and low-scored recall candidates outside bounded reranker work", async () => {
+it("scores later batches beyond forty and retains low-scored candidates", async () => {
   const s = setup();
   let scored = 0;
   const retrieval = new UnifiedRetrieval(s.store.db, undefined, async () => ({
@@ -1633,11 +1634,11 @@ it("keeps unscored and low-scored recall candidates outside bounded reranker wor
       limit: 100,
       diversify: false,
     });
-    expect(scored).toBe(40);
+    expect(scored).toBe(45);
     expect(hits).toHaveLength(45);
-    expect(hits.filter((h) => !h.reranking)).toHaveLength(5);
+    expect(hits.filter((h) => !h.reranking)).toHaveLength(0);
     expect(hits.filter((h) => h.reranking?.relevance === 0.01)).toHaveLength(
-      40,
+      45,
     );
   } finally {
     await retrieval.close();
@@ -1659,4 +1660,38 @@ it("scores the complete matched implementation range without replacing its readi
   expect(passages.some((p) => p.includes("commitActualChange();"))).toBe(true);
   expect(passages.every((p) => p.length <= 800)).toBe(true);
   expect(passages.length).toBeLessThanOrEqual(6);
+});
+
+it("retains completed batches and marks budget-exhausted candidates unscored, and propagates cancellation", async () => {
+  const s = setup(); let calls = 0;
+  const controller = new AbortController();
+  let cancel = false;
+  const r = new UnifiedRetrieval(s.store.db, undefined, async () => ({
+    id: "budget-fixture", close: async () => {},
+    score: async (_q, texts) => {
+      if (cancel) { controller.abort(new Error("search cancelled")); controller.signal.throwIfAborted(); }
+      if (++calls > 1) throw Error("RERANK_BUDGET_EXHAUSTED");
+      return texts.map(() => 0.9);
+    },
+  }));
+  try {
+    for (let i=0;i<45;i++) s.store.capture({source:"manual",externalId:`budget-${i}`,title:`Budget ${i}`,parts:[{type:"text",text:`配送问题材料 ${i}`}],context:{}});
+    const hits = await r.search({text:"配送问题",limit:100,diversify:false});
+    expect(hits).toHaveLength(45);
+    expect(hits.filter(h=>h.rankingStatus?.state==="scored")).toHaveLength(8);
+    expect(hits.filter(h=>h.rankingStatus?.reason==="budget")).toHaveLength(37);
+    expect(hits.filter(h=>h.rankingStatus?.state==="unscored").every(h=>!h.reranking)).toBe(true);
+    cancel = true;
+    await expect(r.search({text:"配送问题",signal:controller.signal})).rejects.toThrow("search cancelled");
+  } finally { await r.close(); await s.close(); }
+});
+
+it("fits complete Unicode passages to a paired token budget without dropping their tails", () => {
+  const text = "中文实现😀".repeat(200)+"真正调用在最后";
+  const pairedLength = (text:string) => 12+Array.from(text).length*3;
+  const windows = tokenWindows(text,pairedLength,512);
+  expect(windows.length).toBeGreaterThan(1);
+  expect(windows.every(w=>pairedLength(w)<=512 && text.includes(w))).toBe(true);
+  expect(windows.at(-1)).toContain("真正调用在最后");
+  expect(() => tokenWindows(text,()=>512)).toThrow("query leaves no passage");
 });
