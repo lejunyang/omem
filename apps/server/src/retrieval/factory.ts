@@ -15,6 +15,7 @@ export const retrievalConfigSchema = z
       .string()
       .regex(/^[a-zA-Z0-9_-]+$/)
       .default("memory-zh"),
+    rerankBudgetMs: z.number().int().min(1).max(120_000).optional(),
     reranker: z
       .string()
       .regex(/^[a-zA-Z0-9_-]+$/)
@@ -54,6 +55,7 @@ export function createRetrieval(
             })
           ).hits
       : undefined,
+    { budgetMs: config?.rerankBudgetMs ?? 20_000 },
   );
   retrieval.start();
   return { retrieval, close: () => retrieval.close() };

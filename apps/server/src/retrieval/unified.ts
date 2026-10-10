@@ -37,6 +37,7 @@ type ScoredUnit = {
   routeRanks?: Record<string, number>;
   codeMatches?: RetrievalHit["codeMatches"];
   reranking?: RetrievalHit["reranking"];
+  rankingStatus?: RetrievalHit["rankingStatus"];
 };
 export type RetrievalTrace = {
   stage:
@@ -87,6 +88,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       query: SearchQuery,
       hits: RetrievalHit[],
     ) => Promise<RetrievalHit[]>,
+    private readonly rankingOptions: { budgetMs?: number } = {},
   ) {
     super(database);
     this.projection = new RetrievalProjection(database);
@@ -675,6 +677,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
             ? { materialDescription: h.unit.materialDescription }
             : {}),
           ...(h.reranking ? { reranking: h.reranking } : {}),
+        ...(h.rankingStatus ? { rankingStatus: h.rankingStatus } : {}),
         })),
       ),
     });
@@ -831,75 +834,49 @@ export class UnifiedRetrieval extends KeywordRetrieval {
             this.rankingLoad = undefined;
             throw error;
           });
-        const model = await this.rankingLoad,
-          pool = candidatePool(
-            hits.map((h) => ({ ...h, id: h.unit.id, owner: h.unit.owner })),
-            40,
-          );
-        const passages = pool.flatMap((h, unitIndex) =>
-          rerankPassages(
-            h.unit.text,
-            q.text,
-            h.excerpt,
-            h.unit.target.kind === "source"
-              ? h.unit.materialDescription?.description.concepts.filter(
-                  (c) =>
-                    h.unit.target.kind === "source" &&
-                    c.startLine <= h.unit.target.endLine &&
-                    c.endLine >= h.unit.target.startLine,
-                )
-              : [],
-            h.matchedRanges,
-          ).map((text) => ({
-            unitIndex,
-            text,
-            input: h.unit.context.slice(0, 160) + "\n" + text,
-          })),
-        );
-        const scores = await model.score(
-          q.text,
-          passages.map((p) => p.input),
-        );
-        if (
-          scores.length !== passages.length ||
-          scores.some((score) => !Number.isFinite(score))
-        )
-          throw Error("Invalid reranker score batch");
-        this.observe(
-          observer,
-          "reranker-input",
-          passages.map((p, i) => ({
-            ...pool[p.unitIndex]!,
-            excerpt: p.input,
-            score: scores[i]!,
-          })),
-          model.id,
-        );
-        const best = new Map<number, { score: number; text: string }>();
-        passages.forEach((p, i) => {
-          if (scores[i]! > (best.get(p.unitIndex)?.score ?? -Infinity))
-            best.set(p.unitIndex, { score: scores[i]!, text: p.text });
+        const model = await this.rankingLoad;
+        q.signal?.throwIfAborted();
+        const deadline = performance.now() + (this.rankingOptions.budgetMs ?? 20_000);
+        const pool = candidatePool(hits.map(h => ({ ...h, id: h.unit.id, owner: h.unit.owner })), hits.length);
+        const scored = new Map<string, number>();
+        let reason: "budget" | "failed" | undefined;
+        // Forty is a batch size, never a global admission cutoff. Small sub-batches
+        // let cancellation and elapsed-time budgets take effect without losing all work.
+        for (let offset = 0; offset < pool.length; offset += 8) {
+          q.signal?.throwIfAborted();
+          if (performance.now() >= deadline) { reason = "budget"; break; }
+          const batch = pool.slice(offset, offset + 8);
+          const passages = batch.flatMap(h => rerankPassages(h.unit.text, q.text, h.excerpt,
+            h.unit.materialDescription?.description.concepts ?? [], h.matchedRanges)
+            .flatMap(text => {
+              const input = h.unit.context.slice(0, 160) + "\n" + text;
+              return (model.windows?.(q.text, input) ?? [input]).map(input => ({ h, input }));
+            }));
+          try {
+            const scores = await model.score(q.text, passages.map(p => p.input), { signal: q.signal, deadline });
+            if (scores.length !== passages.length || scores.some(s => !Number.isFinite(s))) throw Error("Invalid reranker score batch");
+            passages.forEach((p, i) => scored.set(p.h.unit.id, Math.max(scored.get(p.h.unit.id) ?? -Infinity, scores[i]!)));
+            this.observe(observer, "reranker-input", passages.map((p, i) => ({ ...p.h, excerpt: p.input, score: scores[i]! })), model.id);
+          } catch (error) {
+            q.signal?.throwIfAborted();
+            reason = String(error).includes("RERANK_BUDGET_EXHAUSTED") ? "budget" : "failed";
+            this.rankingError = String(error);
+            break;
+          }
+        }
+        const max = Math.max(...hits.map(h => h.score), 1e-6);
+        hits = hits.map(h => {
+          const score = scored.get(h.unit.id);
+          return score === undefined
+            ? { ...h, score: h.score / max * 0.3, rankingStatus: { state: "unscored" as const, reason: reason ?? "failed", model: model.id } }
+            : { ...h, score: score * 0.7 + h.score / max * 0.3,
+                rankingStatus: { state: "scored" as const, model: model.id },
+                reranking: { model: model.id, relevance: score, retrievalScore: h.score }, routes: [...h.routes, "cross-encoder"] };
         });
-        const max = Math.max(...hits.map((h) => h.score), 1e-6);
-        const scored = new Map(pool.map((h, i) => [h.unit.id, best.get(i)!]));
-        hits = hits.map((h) => {
-          const result = scored.get(h.unit.id);
-          return result
-            ? {
-                ...h,
-                score: result.score * 0.7 + (h.score / max) * 0.3,
-                reranking: {
-                  model: model.id,
-                  relevance: result.score,
-                  retrievalScore: h.score,
-                },
-                routes: [...h.routes, "cross-encoder"],
-              }
-            : { ...h, score: (h.score / max) * 0.3 };
-        });
-        this.rankingError = null;
-        this.observe(observer, "reranker", hits, model.id);
+        if (!reason) this.rankingError = null;
+        this.observe(observer, "reranker", hits, model.id, reason);
       } catch (error) {
+        q.signal?.throwIfAborted();
         this.rankingError = String(error);
         this.observe(observer, "reranker", hits, undefined, this.rankingError);
       }
@@ -1132,6 +1109,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         score: h.score * priority(u),
         routes: [...h.routes, "purpose:" + (q.purpose ?? "balanced")],
         ...(h.reranking ? { reranking: h.reranking } : {}),
+        ...(h.rankingStatus ? { rankingStatus: h.rankingStatus } : {}),
         ...(h.codeMatches ? { codeMatches: h.codeMatches } : {}),
         target: u.target,
         references: u.references,
