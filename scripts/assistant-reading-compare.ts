@@ -20,6 +20,8 @@ import { beginReviewRun } from "./review-retention.js";
 
 const option = (name: string, fallback = "") => process.env[`osdk_arg_${name.replaceAll("-", "_")}`] || process.argv.find(a => a.startsWith(`--${name}=`))?.slice(name.length + 3) || fallback;
 const questions = z.array(z.object({ id: z.string().regex(/^[a-z0-9-]+$/), question: z.string().min(1).max(4000) }).strict()).min(1).parse(JSON.parse(readFileSync(resolve(option("questions")), "utf8")));
+const previous = option("frozen-report") ? JSON.parse(readFileSync(resolve(option("frozen-report")), "utf8")) : undefined;
+if (previous && JSON.stringify(previous.questions) !== JSON.stringify(questions)) throw Error("Frozen replay must use identical questions");
 if (new Set(questions.map(q => q.id)).size !== questions.length) throw Error("Question IDs must be unique");
 const directory = resolve(option("output"));
 if (!option("output")) throw Error("Provide a fresh ignored output directory");
@@ -46,7 +48,15 @@ const allowedTools = ["list_materials", "read_material", "read_section", "read_f
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const report: Record<string, any> = { startedAt: new Date().toISOString(), implementationCommit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), requested: { model: profile.model, effort: profile.effort, budgetMs, idleTimeoutMs: profile.idleTimeoutMs }, method: "Source-only paired comparison. Fresh ACP sessions; same profile, prompt, original bytes, relative paths and source catalog. Native files are available in all groups; only tools groups receive source MCP tools. No initial retrieval, derived articles, applied memory or expected answers. Review reuses the identical tools draft and shares its total wall-clock budget. Author order alternates. No format retries. Host checks locators, not factual correctness. This is a frozen repository copy, not live Git or a production end-to-end assistant benchmark.", cases: [], questions };
 const save = () => writeFileSync(join(directory, "report.json"), JSON.stringify(report, null, 2) + "\n");
-const parse = (text: string, schema: z.ZodType) => schema.parse(JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)));
+const parse = (text: string, schema: z.ZodType) => {
+  const value = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
+  // Some agents echo the supplied schema alongside the actual answer. Remove
+  // only these known transport annotations; never rewrite answer/citation data.
+  const annotations = ["$schema", "type", "properties", "required", "additionalProperties"];
+  const removed = annotations.filter(key => Object.hasOwn(value, key));
+  for (const key of removed) delete value[key];
+  return { output: schema.parse(value), protocolAnnotationsRemoved: removed };
+};
 let materials = repository.materials();
 const identity = () => hash(JSON.stringify(repository.materials().map(m => [m.key, m.revisionId, m.digest]).sort()));
 const verifyCitations = (citations: z.infer<typeof cite>[]) => citations.map(c => {
@@ -67,6 +77,7 @@ async function runStage(test: typeof questions[number], kind: string, tools: boo
   const trace = join(directory, `${test.id}-${kind}.jsonl`);
   try {
     prompt += "\n成稿表达检查读取本工作区 tone-skill.md，仅按明确规则处理表达，不改变事实、条件、结构、引用或代码。";
+    if (tools) prompt += `\n本条件使用 omem 自主阅读工具调查。可用工具：${allowedTools.join(", ")}。先用 search_materials 自己提出查询，再用 read_material 或 read_section 阅读实际原件；可以继续搜索、导航与补读。原生 Read/Grep 可用于工具没有覆盖的必要补查。不要用 shell 调用模型或读取数据库。`;
     environment = await prepareAgentResearch({ repository, materials, articles: [], workspace, schema, validate: value => schema.parse(value), allowedTools: tools ? allowedTools : [], snapshotFactory: () => session.snapshot(materials, [], controller.signal), retrievalConfig: { enabled: true, osdkModel: "memory-zh" }, signal: controller.signal });
     result.preparation = environment.preparation;
     // Both groups can inspect the same source metadata. Never expose expected
@@ -95,7 +106,9 @@ async function runStage(test: typeof questions[number], kind: string, tools: boo
     result.actual = { model: actual("model"), effort: actual("reasoning_effort") };
     if (result.actual.model !== profile.model || result.actual.effort !== profile.effort) throw Error("Actual model/effort differs from requested comparison profile");
     result.raw = text;
-    result.output = parse(text, schema);
+    Object.assign(result, parse(text, schema));
+    result.sourceToolCalls = result.activity.filter((e: any) => e.kind === "mcp" && e.success && allowedTools.includes(e.tool)).length;
+    if (tools && !result.sourceToolCalls) throw Error("INVALID_TREATMENT: source tools were offered but never used");
     result.citationAudit = verifyCitations(schema === answer ? result.output.citations : result.output.findings.flatMap((f: any) => f.citations));
     writeFileSync(join(directory, `${test.id}-${kind}.md`), schema === answer ? result.output.answer : JSON.stringify(result.output, null, 2));
   } catch (error) {
@@ -114,15 +127,20 @@ async function runStage(test: typeof questions[number], kind: string, tools: boo
 try {
   // Synchronize only this owned evaluation copy to the committed working tree.
   // No model generation, personal-library writes or restoration of old originals.
-  report.capture = captureRepositoryMaterials(store, process.cwd(), { learning: false, notify: false });
-  if (report.capture.some((c: any) => c.state === "failed")) throw Error("Repository capture has failed inputs");
-  report.codeSync = await runCodeSync(store, process.cwd());
+  if (!previous) {
+    report.capture = captureRepositoryMaterials(store, process.cwd(), { learning: false, notify: false });
+    if (report.capture.some((c: any) => c.state === "failed")) throw Error("Repository capture has failed inputs");
+    report.codeSync = await runCodeSync(store, process.cwd());
+  } else {
+    report.replay = { previousReport: option("frozen-report"), sourceCommit: previous.implementationCommit, method: "Reuse completed direct drafts, including unchanged answer/citations after removal of echoed schema annotations. Explicitly discover/use source MCP tools for the treatment; no initial candidates or expected answers supplied. No recapture of the changed live checkout." };
+  }
   let indexed = 0;
   while (true) { const count = await retrieval.indexBatch(32); if (!count) break; indexed += count; }
   report.retrieval = { indexed, health: retrieval.health() };
   materials = repository.materials();
   if (materials.some(m => m.path === relative(process.cwd(), resolve(option("questions"))))) throw Error("Questions must be outside the captured repository corpus, for example under .repo-review/runtime/");
   report.corpusDigest = identity();
+  if (previous && report.corpusDigest !== previous.corpusDigest) throw Error("Frozen replay corpus differs");
   report.materialCount = materials.length;
   report.manifest = materials.map(m => ({ key: m.key, path: m.path, revision: m.revisionId, digest: m.digest, bytesHash: hash(m.text) }));
   save();
@@ -134,7 +152,9 @@ try {
     report.cases.push(row);
     for (const kind of index % 2 ? ["tools", "direct"] : ["direct", "tools"]) {
       console.log(JSON.stringify({ case: test.id, stage: kind, state: "running" }));
-      const stage = await runStage(test, kind, kind === "tools", common(test.question), answer, budgetMs);
+      const prior = kind === "direct" && previous?.cases.find((c: any) => c.id === test.id)?.stages.find((s: any) => s.kind === "direct" && s.raw && s.actual?.model === profile.model && s.actual?.effort === profile.effort);
+      const stage = prior ? { ...prior, ...parse(prior.raw, answer), originalProtocolError: prior.error, error: undefined, reusedFrom: option("frozen-report") } : await runStage(test, kind, kind === "tools", common(test.question), answer, budgetMs);
+      if (prior) stage.citationAudit = verifyCitations(stage.output.citations);
       row.stages.push(stage);
       row.conditions[kind] = { output: stage.output, elapsedMs: stage.elapsedMs, error: stage.error };
       save();

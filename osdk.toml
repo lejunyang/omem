@@ -273,6 +273,8 @@ help = "Fresh ignored directory for answers, tool traces and report; existing no
 [tasks."assistant:reading-compare".options.budget]
 default = "600"
 help = "Total seconds per condition, including preparation; review shares the source-tools draft budget"
+[tasks."assistant:reading-compare".options.frozen-report]
+help = "Replay with an exact preserved evaluation database and identical questions; reuse completed direct drafts and verify corpus identity"
 [tasks.live-daily]
 run = "bun scripts/live-daily-smoke.ts"
 
