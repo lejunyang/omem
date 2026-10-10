@@ -181,7 +181,23 @@ export class KnowledgePipeline {
       [`knowledge:${role}`]: async (lease, signal) => {
         this.options.log?.(`AI ${role}: ${String(task.targetKeys ?? task.title ?? "catalog")}`);
         const run = await this.gateway.run({ roleId: role, profile: this.profile, profileBinding: { roleId: role, profileId: this.profile.id }, context: this.context(role, lease.id, offers, articles, task), signal, budget: this.options.budget, validateOutput: validate,
-          ...(this.nativeResearch ? { research: (workspace, schema, validate) => prepareAgentResearch({ repository:this.repository, materials:offers.map(o=>o.material), articles, workspace, schema, validate, signal, snapshotFactory:()=>this.sessions.getStore()!.snapshot(offers.map(o=>o.material),articles), tools:followupStateTools(offers.map(o=>o.material)), retrievalConfig:this.options.retrievalConfig }) } : {}),
+          ...(this.nativeResearch ? { research: (workspace, schema, validate) => {
+            const rangeOnly = (task.reviewScope as {mode?:string}|undefined)?.mode === "citation_ranges";
+            const drafts = (task.drafts ?? []) as KnowledgeDocument[];
+            const ranges = rangeOnly ? drafts.flatMap(d=>[
+              ...d.citations.flatMap(c=>c.target.kind==="material"?[{key:c.target.key,startLine:c.target.startLine!,endLine:c.target.endLine!}]:[]),
+              ...d.sections.flatMap(s=>s.reviewSources ?? []),
+            ]) : undefined;
+            const keys = new Set(ranges?.map(r=>r.key));
+            const articleKeys = new Set(drafts.flatMap(d=>d.citations.filter(c=>c.target.kind==="article").map(c=>c.target.key)));
+            return prepareAgentResearch({ repository:this.repository,
+              materials:offers.filter(o=>!rangeOnly || keys.has(o.material.key)).map(o=>o.material),
+              articles:rangeOnly ? articles.filter(a=>articleKeys.has(a.document.key)) : articles,
+              workspace, schema, validate, signal,
+              snapshotFactory:()=>this.sessions.getStore()!.snapshot(offers.map(o=>o.material),articles),
+              ...(rangeOnly ? {allowedTools:["read_material","read_fragments","read_section","read_image","read_knowledge","submit_result"],rangeEvidence:ranges} : {tools:followupStateTools(offers.map(o=>o.material))}),
+              retrievalConfig:this.options.retrievalConfig });
+          } } : {}),
           emit: (type, text) => { if (type === "status") this.options.log?.(text); } });
         const saved = this.repository.store.jobs.saveRoleOutput({ jobId: lease.id, leaseToken: lease.leaseToken,
           model: run.trace.effectiveModel, effort: run.trace.effectiveEffort, promptHash: run.trace.promptHash, skillHash: run.trace.skillHash, toolHash: run.trace.toolHash,

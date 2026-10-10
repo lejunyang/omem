@@ -76,7 +76,7 @@ const outputSchemas = {
 type OutputSchemaName = keyof typeof outputSchemas;
 
 export type NativeResearchEnvironment = {
-  preparation?: { totalMs: number; stages: Record<string, number> };
+  preparation?: { totalMs: number; stages: Record<string, number>; queueWaitMs?: number; snapshotId?: string };
   servers: McpServer[];
   tools: string[];
   instructions: string;

@@ -1,4 +1,5 @@
 /** One workflow, one fixed view. Never cache across questions or live jobs. */
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,7 +27,7 @@ export class ResearchSession {
     const db = researchSnapshot({repository:this.repository,materials,articles,file,includeUnanchoredState:true});
     db.close();
     this.identity = identity;
-    this.fixed = {file,materials:[...materials],articles:[...articles]};
+    this.fixed = {identity:randomUUID(),file,materials:[...materials],articles:[...articles]};
     return this.fixed;
   }
   close() {

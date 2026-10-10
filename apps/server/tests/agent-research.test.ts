@@ -292,6 +292,8 @@ it("clones one workflow snapshot across independent readers and releases it only
     envs.push(...await Promise.all([make("first"),make("second")]));
     expect(readFileSync(join(root,"first/snapshot.sqlite"))).toEqual(readFileSync(join(root,"second/snapshot.sqlite")));
     expect(envs.every(e=>e.preparation?.stages.snapshotClone!==undefined)).toBe(true);
+    expect(envs[0]!.preparation!.snapshotId).toBe(envs[1]!.preparation!.snapshotId);
+    expect(envs[0]!.preparation!.snapshotId).toBeTruthy();
     capture("新安排变为300元。");
     await envs[0]!.close();
     expect(existsSync(baseFile)).toBe(true);
