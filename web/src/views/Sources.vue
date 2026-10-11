@@ -1,0 +1,352 @@
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { del, get, post, type Source } from "../api";
+import CodeView from "../components/CodeView.vue";
+import Icon from "../components/Icon.vue";
+import Markdown from "../components/Markdown.vue";
+import { currentSpace, fmtTime, relTime, state, toast } from "../store";
+
+type Detail = {
+  source: Source & { lines: number };
+  lineStart: number;
+  lineEnd: number;
+  text: string;
+  outline: { symbols: { name: string; qname: string; kind: string; line_start: number; line_end: number; exported: number }[]; sections: { title: string; path: string; line_start: number; line_end: number; kind: string }[] };
+  citedBy: { page_id: string; title: string }[];
+};
+
+const route = useRoute();
+const router = useRouter();
+const list = ref<Source[]>([]);
+const total = ref(0);
+const q = ref("");
+const kind = ref("");
+const detail = ref<Detail | null>(null);
+const raw = ref(false);
+const collapsed = ref(new Set<string>());
+const space = computed(() => currentSpace());
+const id = computed(() => route.params.id as string | undefined);
+const hl = computed(() => (route.query.from ? { from: Number(route.query.from), to: Number(route.query.to ?? route.query.from) } : null));
+
+async function load() {
+  const p = new URLSearchParams({ space: state.space, limit: "3000" });
+  if (q.value) p.set("q", q.value);
+  if (kind.value) p.set("kind", kind.value);
+  const r = await get<{ total: number; sources: Source[] }>(`/api/sources?${p}`);
+  list.value = r.sources;
+  total.value = r.total;
+}
+async function loadDetail() {
+  if (!id.value) return void (detail.value = null);
+  detail.value = await get<Detail>(`/api/sources/${id.value}?from=1&to=100000`);
+  raw.value = !!hl.value || detail.value.source.kind === "code";
+}
+onMounted(() => {
+  void load();
+  void loadDetail();
+});
+watch([q, kind], load);
+watch(id, loadDetail);
+
+/** Directory tree for repo-like spaces; flat list otherwise. */
+const tree = computed(() => {
+  type Node = { name: string; path: string; dirs: Map<string, Node>; files: Source[] };
+  const root: Node = { name: "", path: "", dirs: new Map(), files: [] };
+  for (const s of list.value) {
+    const parts = s.uri.split("/");
+    let node = root;
+    for (const part of parts.slice(0, -1)) {
+      if (!node.dirs.has(part)) node.dirs.set(part, { name: part, path: node.path ? `${node.path}/${part}` : part, dirs: new Map(), files: [] });
+      node = node.dirs.get(part)!;
+    }
+    node.files.push(s);
+  }
+  const rows: { depth: number; dir?: string; path?: string; source?: Source; count?: number }[] = [];
+  const count = (n: Node): number => n.files.length + [...n.dirs.values()].reduce((a, d) => a + count(d), 0);
+  const walk = (n: Node, depth: number) => {
+    for (const d of [...n.dirs.values()].sort((a, b) => a.name.localeCompare(b.name))) {
+      rows.push({ depth, dir: d.name, path: d.path, count: count(d) });
+      if (!collapsed.value.has(d.path) || q.value) walk(d, depth + 1);
+    }
+    for (const f of n.files.sort((a, b) => a.uri.localeCompare(b.uri))) rows.push({ depth, source: f });
+  };
+  walk(root, 0);
+  return rows;
+});
+const isTree = computed(() => list.value.some((s) => s.uri.includes("/")) && list.value.length > 12);
+function toggle(path: string) {
+  const next = new Set(collapsed.value);
+  next.has(path) ? next.delete(path) : next.add(path);
+  collapsed.value = next;
+}
+const isMarkdown = computed(() => detail.value && /\.(md|markdown|mdx)$/i.test(detail.value.source.uri) || detail.value?.source.kind === "note" || detail.value?.source.kind === "web" || detail.value?.source.kind === "doc");
+const outline = computed(() => {
+  if (!detail.value) return [];
+  const o = detail.value.outline;
+  if (o.symbols.length) return o.symbols.filter((s) => !s.qname.includes(".") || s.line_end - s.line_start > 3).map((s) => ({ label: s.qname, kind: s.kind, line: s.line_start, end: s.line_end }));
+  const seen = new Set<string>();
+  return o.sections.filter((s) => s.path && !seen.has(s.path) && seen.add(s.path)).map((s) => ({ label: s.path.split(" / ").pop()!, kind: "", line: s.line_start, end: s.line_end, depth: s.path.split(" / ").length }));
+});
+function goLine(line: number, end: number) {
+  raw.value = true;
+  router.replace({ query: { from: String(line), to: String(end) } });
+}
+async function remove() {
+  if (!detail.value || !confirm(`移除原件「${detail.value.source.title}」？引用它的页面会提示原件已移除。`)) return;
+  await del(`/api/sources/${detail.value.source.id}`);
+  router.push("/sources");
+  void load();
+}
+async function makeCards() {
+  if (!detail.value) return;
+  await post("/api/learn/generate", { space: detail.value.source.spaceId, sourceIds: [detail.value.source.id] });
+  toast("正在生成复习卡片", "ok", "#/learn");
+}
+async function sync() {
+  await post(`/api/spaces/${state.space}/sync`);
+  toast("开始同步目录", "ok");
+}
+const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "chat", note: "edit", web: "link", image: "eye", conversation: "chat" };
+</script>
+
+<template>
+  <div class="sources">
+    <aside class="list-col">
+      <div class="head">
+        <div class="row">
+          <strong>原件</strong>
+          <span class="muted small">{{ total }}</span>
+          <span class="spacer" />
+          <button v-if="space?.rootPath" class="btn ghost sm icon" title="同步关联目录" @click="sync"><Icon name="refresh" :size="15" /></button>
+          <button class="btn ghost sm icon" title="保存材料" @click="state.capture = true"><Icon name="plus" :size="15" /></button>
+        </div>
+        <input v-model="q" class="input" placeholder="按标题或路径筛选" />
+        <div class="kinds row wrap">
+          <button v-for="k in ['', 'doc', 'code', 'chat', 'note', 'web']" :key="k" class="kind" :class="{ on: kind === k }" @click="kind = k">{{ { "": "全部", doc: "文档", code: "代码", chat: "聊天", note: "笔记", web: "网页" }[k] }}</button>
+        </div>
+      </div>
+      <div class="items">
+        <template v-if="isTree">
+          <template v-for="(r, i) in tree" :key="i">
+            <button v-if="r.dir" class="row-btn dir" :style="{ paddingLeft: 8 + r.depth * 14 + 'px' }" @click="toggle(r.path!)">
+              <Icon :name="collapsed.has(r.path!) && !q ? 'right' : 'down'" :size="13" /><Icon name="folder" :size="14" /><span class="ellipsis">{{ r.dir }}</span><span class="muted small">{{ r.count }}</span>
+            </button>
+            <router-link v-else :to="`/sources/${r.source!.id}`" class="row-btn" :class="{ on: r.source!.id === id }" :style="{ paddingLeft: 26 + r.depth * 14 + 'px' }">
+              <span class="ellipsis">{{ r.source!.uri.split("/").pop() }}</span>
+            </router-link>
+          </template>
+        </template>
+        <template v-else>
+          <router-link v-for="s in list" :key="s.id" :to="`/sources/${s.id}`" class="row-btn flat" :class="{ on: s.id === id }">
+            <Icon :name="kindIcon[s.kind] ?? 'file'" :size="15" />
+            <div class="grow"><div class="ellipsis">{{ s.title }}</div><div class="muted small">{{ relTime(s.updatedAt) }} · {{ s.lines }} 行</div></div>
+          </router-link>
+        </template>
+        <div v-if="!list.length" class="empty small">
+          <p>这个空间还没有原件。</p>
+          <button class="btn sm" @click="state.capture = true"><Icon name="plus" :size="14" />保存材料</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="detail">
+      <div v-if="!detail" class="empty">
+        <Icon name="file" :size="34" />
+        <h3>选择一份原件</h3>
+        <p>原件是知识库的依据：文档、代码、聊天记录、笔记和网页。Wiki、记忆和回答都引用它们。</p>
+      </div>
+      <template v-else>
+        <header class="dh">
+          <div class="muted small mono ellipsis">{{ detail.source.spaceId }} / {{ detail.source.uri }}</div>
+          <h1>{{ detail.source.title.split("/").pop() }}</h1>
+          <div class="row wrap meta">
+            <span class="badge">{{ detail.source.kind }}</span>
+            <span class="muted small">{{ detail.source.lines }} 行 · 更新于 {{ fmtTime(detail.source.updatedAt) }} · 首次保存 {{ fmtTime(detail.source.capturedAt, false) }}</span>
+            <span class="spacer" />
+            <button v-if="isMarkdown" class="btn ghost sm" @click="raw = !raw">{{ raw ? "排版视图" : "原文行号" }}</button>
+            <button class="btn ghost sm" @click="makeCards"><Icon name="cap" :size="14" />生成卡片</button>
+            <button class="btn ghost sm icon danger" title="移除" @click="remove"><Icon name="trash" :size="14" /></button>
+          </div>
+          <div v-if="detail.citedBy.length" class="cited small">
+            被引用：<router-link v-for="p in detail.citedBy" :key="p.page_id" :to="`/wiki/${p.page_id.split('/')[0]}/${p.page_id.split('/').slice(1).join('/')}`" class="badge accent">{{ p.title }}</router-link>
+          </div>
+        </header>
+        <div v-if="detail.source.deletedAt" class="card pad muted">这份原件已于 {{ fmtTime(detail.source.deletedAt) }} 移除，只保留了身份记录。</div>
+        <div v-else class="body">
+          <div class="text">
+            <CodeView v-if="raw || !isMarkdown" :text="detail.text" :start="1" :path="detail.source.uri" :from="hl?.from" :to="hl?.to" :wrap="isMarkdown" />
+            <div v-else class="card pad doc"><Markdown :source="detail.text" :space="detail.source.spaceId" /></div>
+          </div>
+          <aside v-if="outline.length" class="outline">
+            <div class="section-title">结构</div>
+            <a v-for="(o, i) in outline" :key="i" href="#" class="ol" :style="{ paddingLeft: ((o as any).depth ?? 1) * 8 - 8 + 'px' }" @click.prevent="goLine(o.line, o.end)">
+              <span v-if="o.kind" class="k">{{ o.kind.slice(0, 2) }}</span><span class="ellipsis">{{ o.label }}</span>
+            </a>
+          </aside>
+        </div>
+      </template>
+    </main>
+  </div>
+</template>
+
+<style scoped>
+.sources {
+  display: flex;
+  height: 100%;
+}
+.list-col {
+  width: 300px;
+  flex: none;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.head {
+  padding: 14px 12px 10px;
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.kinds {
+  gap: 4px;
+}
+.kind {
+  border: 1px solid var(--line);
+  background: none;
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--ink-2);
+}
+.kind.on {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+.items {
+  overflow-y: auto;
+  padding: 6px;
+  flex: 1;
+}
+.row-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--ink-2);
+  font-size: 13px;
+  cursor: pointer;
+  min-width: 0;
+}
+.row-btn:hover {
+  background: var(--hover);
+  text-decoration: none;
+}
+.row-btn.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.row-btn.flat {
+  padding: 8px 10px;
+  align-items: flex-start;
+}
+.dir {
+  color: var(--ink);
+  font-weight: 500;
+}
+.dir .muted {
+  margin-left: auto;
+}
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+.detail {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 22px 28px 60px;
+}
+.dh {
+  margin-bottom: 16px;
+  display: grid;
+  gap: 6px;
+}
+.dh h1 {
+  font-size: 22px;
+}
+.meta {
+  gap: 6px;
+}
+.cited {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.body {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+.text {
+  flex: 1;
+  min-width: 0;
+}
+.doc {
+  max-width: 820px;
+}
+.outline {
+  width: 220px;
+  flex: none;
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  display: grid;
+  gap: 1px;
+}
+.ol {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--ink-2);
+  padding: 2px 0;
+  font-family: var(--mono);
+  min-width: 0;
+}
+.k {
+  font-size: 10px;
+  color: var(--muted);
+  width: 16px;
+  flex: none;
+}
+@media (max-width: 1100px) {
+  .outline {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .sources {
+    flex-direction: column;
+  }
+  .list-col {
+    width: 100%;
+    max-height: 40vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .detail {
+    padding: 16px;
+  }
+}
+</style>

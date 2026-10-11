@@ -29,7 +29,7 @@ const open = () => {
 };
 
 /** Start an in-process service (random port) so agents can call omem tools, run one job, stream it. */
-async function runJob(make: (app: App) => Run | { runId: string }, opts: { stream?: boolean } = {}) {
+async function runJob(make: (app: App) => Run | { runId: string }, opts: { stream?: boolean; children?: boolean } = {}) {
   const { app, server } = await boot(home(), { port: 0, quiet: true, background: false });
   const created = make(app);
   const runId = "runId" in created ? created.runId : created.id;
@@ -46,6 +46,14 @@ async function runJob(make: (app: App) => Run | { runId: string }, opts: { strea
     import("./agents/runs.ts").then((m) => m.cancelRun(app, runId));
   });
   const r = await waitForRun(app, runId);
+  if (opts.children) {
+    const { listRuns } = await import("./agents/runs.ts");
+    for (const child of listRuns(app, { parentId: runId, limit: 200 }).reverse()) {
+      process.stderr.write(`\x1b[2m等待：${child.title}\x1b[0m\n`);
+      const c = await waitForRun(app, child.id);
+      process.stderr.write(`${c.status === "done" ? "✓" : "✗"} ${c.title}${c.error ? "：" + c.error : ""}\n`);
+    }
+  }
   process.stdout.write("\n");
   if (r.status === "failed") console.error(`\n运行失败：${r.error}`);
   await server.close();
@@ -159,7 +167,7 @@ wiki
   .option("-f, --focus <text>", "重点或读者")
   .option("--no-write", "只规划不写")
   .action(async (sp, o) => {
-    const r = await runJob((app) => createRun(app, { kind: "wiki-plan", spaceId: sp, title: "规划 Wiki 目录", input: { focus: o.focus, autoWrite: o.write } }), { stream: false });
+    const r = await runJob((app) => createRun(app, { kind: "wiki-plan", spaceId: sp, title: "规划 Wiki 目录", input: { focus: o.focus, autoWrite: o.write } }), { stream: false, children: true });
     console.log((r.output as { summary?: string }).summary ?? "");
   });
 wiki
