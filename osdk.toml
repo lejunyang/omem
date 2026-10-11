@@ -192,6 +192,32 @@ run = "bun scripts/live-task-interpretation.ts"
 run = "bun scripts/benchmark-mtrag.ts"
 description = "Compare lexical ranking on the pinned public MTRAG Cloud corpus; downloads benchmark data, no model calls"
 
+[tasks."benchmark:cosqa"]
+run = "bun scripts/benchmark-cosqa.ts"
+description = "Pinned public code retrieval with installed rerankers and separate model/host stage ranks; no model download"
+[[tasks."benchmark:cosqa".args]]
+name = "directory"
+default = ".repo-review/runtime/benchmarks/cosqa"
+help = "Ignored benchmark data cache and current report"
+[tasks."benchmark:cosqa".options.offset]
+default = "50"
+help = "Zero-based offset in positive query ID SHA256 order"
+[tasks."benchmark:cosqa".options.count]
+default = "50"
+help = "Number of registered positive queries, 1–500"
+[tasks."benchmark:cosqa".options.budget-ms]
+default = "6000"
+help = "Warm per-query cross-encoder budget, 1–120000 milliseconds"
+[tasks."benchmark:cosqa".options.models]
+default = "relevance-zh"
+help = "Already installed aliases, comma-separated: relevance-zh,relevance-zh-v2"
+[tasks."benchmark:cosqa".options.baseline]
+help = "Optional Git commit for old return/host projection with identical current shared recall/inference modules"
+[tasks."benchmark:cosqa".flags.reset]
+help = "Replace the result in this directory; registered questions stay fixed"
+[tasks."benchmark:cosqa".flags.register-only]
+help = "Verify public files and register questions without indexing or model inference"
+
 [tasks."benchmark:t2"]
 run = [{ argv = ["bun", "scripts/benchmark-t2.ts", "{{args}}"] }]
 description = "Resumable full Chinese T2Retrieval lexical comparison; isolated corpus, no model calls"
