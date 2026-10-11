@@ -132,7 +132,11 @@ JSON 的 `optional.checks` 每项包含 `enabled`、`installed` 与 `state`。�
 
 手动修改开关时用 `omem config path` 找到实际文件，保留其他设置，再 `omem config validate` 和 `omem service restart`。若显式准备 BGE 后启用，需同时设置 `retrieval.enabled:true` 与 `retrieval.osdkModel:"memory-zh"`；决策模式为 auto / 0.8b / 2b / 4b / 9b。setup 不登录 Agent 或飞书，也不开启消息采集。
 
+命令行 search 的等待不设固定总时限，可按 Ctrl+C 取消本次请求；服务停止后续评分，已经执行的本地批次须先返回。
+
 无时限检索使用实际配置文件（`omem config path`）：在 retrieval 中设置 `rerankBudgetMs:0` 和 `decisionBudgetMs:0`，保留已安装模型及其他配置，再运行 `omem config validate` 和 `omem service restart`。两项分别控制 BGE 和 Decision；只配置其中一项不会关闭另一项时限。其他 Decision 调用默认有两分钟单次等待，可用 `decisions.timeoutMs:0` 关闭，正整数表示毫秒。无时限仍支持取消，模型失败或内存不足保留未判断材料，不下载资源。它可能等待很久，应观察实际完成窗口和耗时，再决定交互配置；当前公开任务没有测云端 API。
+
+同一次材料分析按获准范围复用冻结底本，作者和独立复核使用各自副本；不同范围分开准备，整批结束释放。后续任务重新冻结材料及状态，不复用已经结束任务的底本。
 
 ## 更新安装
 

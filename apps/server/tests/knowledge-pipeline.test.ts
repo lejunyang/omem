@@ -57,6 +57,25 @@ it("publishes only after independent review and reuses durable outputs after pro
   expect(repository.list()[0]!.revision).toBe(article.revision);
 });
 
+it("shares one fixed scope across concurrent note authors and independent reviewers in one analysis run",async()=>{
+  const f=setup();f.pipeline.options.nativeResearch=true;f.pipeline.options.concurrency=2;
+  f.store.capture({source:"manual",externalId:"second",title:"Second note",parts:[{type:"text",text:"The second release also uses fixed evidence."}]});
+  const root=mkdtempSync(join(tmpdir(),"omem-note-batch-"));cleanups.push(()=>rmSync(root,{recursive:true,force:true}));
+  const fallback=f.run.getMockImplementation()!,ids:string[]=[],files:string[]=[],bytes:Buffer[]=[];
+  let count=0;
+  f.run.mockImplementation(async input=>{
+    const workspace=join(root,String(++count)),env=await input.research!(workspace,z.any(),x=>x);
+    try{
+      ids.push(env.preparation!.snapshotId!);files.push(join(workspace,"snapshot.sqlite"));bytes.push(readFileSync(files.at(-1)!));
+      return await fallback(input);
+    }finally{await env.close();}
+  });
+  expect((await f.pipeline.analyze(f.repository.materials())).failures).toEqual([]);
+  expect(ids).toHaveLength(4);expect(new Set(ids).size).toBe(1);expect(new Set(files).size).toBe(4);
+  expect(bytes.every(b=>b.equals(bytes[0]!))).toBe(true);
+  expect(f.repository.list()).toHaveLength(2);
+});
+
 it("does not promote rejected knowledge or a result whose source changed during analysis", async () => {
   const rejected = setup(true);
   expect((await rejected.pipeline.analyze(rejected.repository.materials())).failures).toHaveLength(1);

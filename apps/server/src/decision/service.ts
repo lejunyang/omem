@@ -122,7 +122,12 @@ export class DecisionService {
         );
         return result;
       } catch (error) {
-        options.signal?.throwIfAborted();
+        if (options.signal?.aborted) {
+          // The canceled worker is gone. Leave the next request able to warm a
+          // replacement rather than appearing busy until the idle timer expires.
+          this.state = {status:"idle",model:"",lastError:""};
+          options.signal.throwIfAborted();
+        }
         const repeat =
           this.state.lastError ===
           (error instanceof Error ? error.message : String(error));

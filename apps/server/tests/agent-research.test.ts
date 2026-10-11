@@ -359,3 +359,18 @@ it("clones one workflow snapshot across independent readers and releases it only
     expect(existsSync(baseFile)).toBe(false);store.close();rmSync(root,{recursive:true,force:true});
   }
 });
+
+it("lets one caller cancel while another finishes the same workflow snapshot",async()=>{
+  const {ResearchSession}=await import("../src/knowledge/research-session.js");
+  const root=mkdtempSync(join(tmpdir(),"omem-session-cancel-")),store=new Store(join(root,"data"));
+  const repo=new KnowledgeRepository(store),session=new ResearchSession(repo),controller=new AbortController();
+  try{
+    store.capture({source:"manual",externalId:"fixed",title:"固定输入",parts:[{type:"text",text:"原件保持120元。"}]});
+    const materials=repo.materials(),first=session.snapshot(materials,[],controller.signal);
+    const rejected=expect(first).rejects.toThrow("first reader ended");
+    const other=session.snapshot(materials,[]);controller.abort(Error("first reader ended"));
+    const result=await other;await rejected;expect(existsSync(result.file)).toBe(true);
+    expect((await session.snapshot(materials,[])).identity).toBe(result.identity);
+    session.close();expect(existsSync(result.file)).toBe(false);
+  }finally{session.close();store.close();rmSync(root,{recursive:true,force:true});}
+});

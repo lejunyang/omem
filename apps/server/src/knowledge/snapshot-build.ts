@@ -95,7 +95,11 @@ export async function buildResearchSnapshot(input: SnapshotInput) {
     local: store.db.prepare("SELECT total_changes() n").get()!.n,
     external: store.db.prepare("PRAGMA data_version").get()!.data_version,
   };
-  const key = stableDigest({generation,materials:input.materials,articles:input.articles,
+  // A target may be offered first in its own writing catalog. Snapshot scope is
+  // a set; catalog order alone must not trigger another identical database build.
+  const materials = [...input.materials].sort((a,b)=>a.key.localeCompare(b.key));
+  const articles = [...input.articles].sort((a,b)=>a.document.key.localeCompare(b.document.key));
+  const key = stableDigest({generation,materials,articles,
     visibleIds,includeUnanchoredState:!!input.includeUnanchoredState,includeGroupCatalog:!!input.includeGroupCatalog});
   let builds = pending.get(store);
   if (!builds) { builds = new Map(); pending.set(store, builds); }
@@ -105,7 +109,7 @@ export async function buildResearchSnapshot(input: SnapshotInput) {
     const root = mkdtempSync(join(tmpdir(), "omem-snapshot-build-"));
     const file = join(root, "snapshot.sqlite"), controller = new AbortController();
     entry = {id:randomUUID(),root,file,controller,consumers:0,settled:false,
-      promise:buildOnce({...input,file,visibleIds,signal:controller.signal})};
+      promise:buildOnce({...input,materials,articles,file,visibleIds,signal:controller.signal})};
     builds.set(key,entry);
   }
   const current = entry;

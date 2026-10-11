@@ -11,10 +11,11 @@ it("coalesces overlapping identical builds into independent files, with independ
   const root=mkdtempSync(join(tmpdir(),"omem-coalesced-snapshot-")),store=new Store(join(root,"data"));
   try{
     store.capture({source:"manual",externalId:"fixed",title:"原件",parts:[{type:"text",text:"原件保持120元。"}]});
+    store.capture({source:"manual",externalId:"second",title:"另一原件",parts:[{type:"text",text:"这一份保持240元。"}]});
     const repo=new KnowledgeRepository(store),materials=repo.materials(),controller=new AbortController();
     const a=join(root,"a.sqlite"),b=join(root,"b.sqlite"),c=join(root,"c.sqlite");
     const first=buildResearchSnapshot({repository:repo,materials,articles:[],file:a});
-    const second=buildResearchSnapshot({repository:repo,materials,articles:[],file:b});
+    const second=buildResearchSnapshot({repository:repo,materials:[...materials].reverse(),articles:[],file:b});
     const canceled=buildResearchSnapshot({repository:repo,materials,articles:[],file:c,signal:controller.signal});
     const rejected=expect(canceled).rejects.toThrow("reader canceled");
     controller.abort(Error("reader canceled"));
