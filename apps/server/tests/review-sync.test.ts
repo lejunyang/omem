@@ -12,12 +12,37 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Store } from "../src/store.js";
 import { runReviewSync, readSyncStatus } from "../src/review/sync.js";
-import { removedSourceIds } from "../src/review/store.js";
+import { removedSourceIds,ensureReviewMetaTable,setSourceMeta,getSourceMeta } from "../src/review/store.js";
 import { buildReviewApp } from "../src/review/app.js";
 import { KeywordRetrieval } from "../src/retrieval/keyword.js";
+import {runCodeSync} from "../src/code/sync.js";
 
 const realRepoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const TARGET = "apps/server/src/assistant/runtime.ts";
+
+it("preserves metadata timestamps and database generation when state does not change",()=>{
+  const store=setup();
+  setSourceMeta(store,"source",{removed:false});
+  const row=store.db.prepare("SELECT * FROM review_source_meta WHERE source_id='source'").get();
+  const generation=store.db.prepare("SELECT total_changes() n").get()!.n;
+  setSourceMeta(store,"source",{removed:false,movedTo:null});
+  expect(store.db.prepare("SELECT total_changes() n").get()!.n).toBe(generation);
+  expect(store.db.prepare("SELECT * FROM review_source_meta WHERE source_id='source'").get()).toEqual(row);
+  setSourceMeta(store,"source",{removed:true,movedTo:"new-path"});
+  expect(getSourceMeta(store,"source")).toMatchObject({removed:true,movedTo:"new-path"});
+  setSourceMeta(store,"source",{removed:false,movedTo:null});
+  expect(getSourceMeta(store,"source")).toMatchObject({removed:false,movedTo:null});
+});
+
+it("rechecks metadata schema after a migration rolls back or another caller drops it",()=>{
+  const store=setup();store.db.exec("DROP TABLE IF EXISTS review_source_meta");
+  expect(()=>store.tx(()=>{ensureReviewMetaTable(store);throw Error("rollback");})).toThrow("rollback");
+  setSourceMeta(store,"source",{removed:true});
+  expect(getSourceMeta(store,"source").removed).toBe(true);
+  store.db.exec("DROP TABLE review_source_meta");
+  ensureReviewMetaTable(store);
+  expect(getSourceMeta(store,"source").removed).toBe(false);
+});
 
 const stores: { store: Store; dir: string }[] = [];
 function setup(dir?: string) {
@@ -696,4 +721,17 @@ it("rebuilds a fresh database even when another database left a clean sync basel
     expect(synced.totalScanned).toBeGreaterThanOrEqual(2);
     expect(fresh.list().some(r => r.title === "apps/server/src/second.ts")).toBe(true);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it("keeps all source revisions and the code projection current on an unchanged full scan",async()=>{
+  const root=makeFixtureRepo(),store=setup();
+  try{
+    archFile(root,"same","UNCHANGED");commitAll(root,"fixture");
+    await runReviewSync(store,root);await runCodeSync(store,root);
+    const heads=store.db.prepare("SELECT id,head FROM sources ORDER BY id").all();
+    const scanned=await runReviewSync(store,root);
+    expect(scanned.updated).toBe(0);
+    expect(store.db.prepare("SELECT id,head FROM sources ORDER BY id").all()).toEqual(heads);
+    expect((await runCodeSync(store,root)).analysis?.projectionReused).toBe(true);
+  }finally{rmSync(root,{recursive:true,force:true});}
 });

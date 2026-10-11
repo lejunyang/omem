@@ -409,7 +409,7 @@ function extractDecisionDate(text: string): string | null {
   return m ? m[0] : null;
 }
 
-function headContentHash(store: Store, externalId: string): string | null {
+function headContentHash(store: Store, externalId: string, format = "verbatim-v1"): string | null {
   const row = store.db
     .prepare(
       `SELECT r.body AS body FROM sources s JOIN revisions r ON s.head=r.id
@@ -421,7 +421,7 @@ function headContentHash(store: Store, externalId: string): string | null {
     const parsed = JSON.parse(row.body) as {
       context?: { contentHash?: string; captureFormat?: string };
     };
-    return parsed.context?.captureFormat === "verbatim-v1" ? parsed.context.contentHash ?? null : null;
+    return parsed.context?.captureFormat === format ? parsed.context.contentHash ?? null : null;
   } catch {
     return null;
   }
@@ -744,7 +744,10 @@ export function buildReviewRelations(
       ].join("\n"),
     };
   });
-  store.capture({
+  // This adapter projection must not acquire a new revision just because a
+  // scan ran at a different time. Changed parts still replace its old head.
+  const intentDigest = createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+  if (headContentHash(store, INTENT_INDEX_EXTERNAL_ID, "intent-index-v1") !== intentDigest) store.capture({
     source: "file",
     externalId: INTENT_INDEX_EXTERNAL_ID,
     title: "repo-review 实现意图索引",
@@ -754,6 +757,8 @@ export function buildReviewRelations(
       filePath: "docs/repo-review/associations.json",
       curated: true,
       derived: true,
+      captureFormat: "intent-index-v1",
+      contentHash: intentDigest,
       syncedAt: new Date().toISOString(),
     } as unknown as CaptureInput["context"],
   });
@@ -959,7 +964,7 @@ export async function runReviewSync(
     }
 
     const all = collectCandidates(repoRoot);
-    const legacyCapture = store.db.prepare("SELECT 1 FROM revisions r JOIN sources s ON s.head=r.id WHERE s.external_id LIKE 'omem:%' AND json_extract(r.body,'$.context.contentHash') IS NOT NULL AND COALESCE(json_extract(r.body,'$.context.captureFormat'),'') <> 'verbatim-v1' LIMIT 1").get();
+    const legacyCapture = store.db.prepare("SELECT 1 FROM revisions r JOIN sources s ON s.head=r.id WHERE s.external_id LIKE 'omem:%' AND json_extract(r.body,'$.context.contentHash') IS NOT NULL AND COALESCE(json_extract(r.body,'$.context.captureFormat'),'') NOT IN ('verbatim-v1','intent-index-v1') LIMIT 1").get();
 
     if (fullRescan || legacyCapture) {
       targets = all;
@@ -973,7 +978,9 @@ export async function runReviewSync(
       targets = all.filter((t) => changed.has(t.rel));
     }
 
-    reconcileSources(store, repoRoot, renames);
+    // Reconciliation is one metadata update, rather than an autocommit for
+    // every captured original. Unchanged metadata does not write a row.
+    store.tx(() => reconcileSources(store, repoRoot, renames));
   }
 
   for (const target of targets) {
