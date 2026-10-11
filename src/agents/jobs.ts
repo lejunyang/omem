@@ -253,6 +253,29 @@ registerHandler("dream", async (ctx) => {
   return { summary: r.text.trim() };
 });
 
+// -------------------------------------------------------------------- brief
+
+registerHandler("brief", async (ctx) => {
+  const app = ctx.app;
+  const since = one<{ value: string }>(app.db, "select value from kv where key = 'brief_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
+  const items = listItems(app, { status: "active" });
+  const fresh = all<{ id: string; space_id: string; uri: string; title: string; kind: string }>(
+    app.db,
+    "select id, space_id, uri, title, kind from sources where updated_at > ? and deleted_at is null and kind != 'code' order by updated_at desc limit 60",
+    since,
+  );
+  const runs = all<{ id: string; kind: string; title: string; status: string }>(app.db, "select id, kind, title, status from runs where finished_at > ? and kind in ('code','wiki-plan','wiki-write','ingest') order by finished_at desc limit 30", since);
+  run(app.db, "insert into kv(key,value) values('brief_at', ?) on conflict(key) do update set value = excluded.value", now());
+  const task = [
+    `时间范围：${since} 至今`,
+    `进行中的事项（${items.length}）：\n${items.map((i) => `- ${i.id} [${i.kind}/${i.status}] ${i.title}${i.dueAt ? " 截止 " + i.dueAt : ""}${i.remindAt ? " 提醒 " + i.remindAt : ""}${i.waitingOn ? " 等待 " + i.waitingOn : ""}（更新于 ${i.updatedAt.slice(0, 16)}）`).join("\n") || "（无）"}`,
+    `期间新增或更新的材料（${fresh.length}）：\n${fresh.map((s) => `- ${s.id} ${s.space_id}:${s.uri}「${s.title}」(${s.kind})`).join("\n") || "（无）"}`,
+    `期间完成的后台运行：\n${runs.map((r) => `- ${r.id} [${r.kind}/${r.status}] ${r.title}`).join("\n") || "（无）"}`,
+  ].join("\n\n");
+  const r = await agent(ctx, "brief", "personal", task, null);
+  return { summary: r.text.trim() };
+});
+
 // -------------------------------------------------------------------- tutor
 
 registerHandler("tutor", async (ctx) => {

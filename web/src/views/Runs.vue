@@ -58,7 +58,7 @@ async function act(action: "cancel" | "retry" | "apply" | "discard") {
     toast((e as Error).message, "error");
   }
 }
-const kinds = ["", "ask", "ingest", "wiki-plan", "wiki-write", "wiki-lint", "code", "heartbeat", "dream", "tutor", "sync"];
+const kinds = ["", "ask", "ingest", "wiki-plan", "wiki-write", "wiki-lint", "code", "heartbeat", "dream", "tutor", "brief", "sync"];
 </script>
 
 <template>

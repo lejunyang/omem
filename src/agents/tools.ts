@@ -495,6 +495,31 @@ def({
 });
 
 def({
+  name: "list_lark_chats",
+  description: "列出本人飞书最近活跃的会话，以及哪些已被订阅采集（只读）。用于帮本人挑选要关注的群。",
+  schema: z.object({}),
+  handler: async (ctx) => {
+    const { listLarkChats, getSubscriptions } = await import("../channels/lark-personal.ts");
+    const subs = new Map(getSubscriptions(ctx.app).map((s) => [s.chatId, s]));
+    const chats = await listLarkChats();
+    return chats.map((c) => `- ${c.chatId} ${c.name}（${c.mode === "p2p" ? "单聊" : "群聊"}）${subs.has(c.chatId) ? ` 已订阅 → 空间 ${subs.get(c.chatId)!.spaceId}` : ""}`).join("\n") || "（没有会话）";
+  },
+});
+
+def({
+  name: "set_lark_subscription",
+  description: "订阅或取消订阅一个飞书会话的只读采集（新消息会保存为聊天原件并整理）。只在本人要求关注/取消关注某个群时使用。",
+  write: true,
+  schema: z.object({ chat_id: z.string(), name: z.string(), subscribe: z.boolean(), space: z.string().optional() }),
+  handler: async (ctx, a) => {
+    const { getSubscriptions, setSubscriptions } = await import("../channels/lark-personal.ts");
+    const rest = getSubscriptions(ctx.app).filter((s) => s.chatId !== a.chat_id);
+    setSubscriptions(ctx.app, a.subscribe ? [...rest, { chatId: a.chat_id, name: a.name, spaceId: space(ctx, a.space) }] : rest);
+    return a.subscribe ? `已订阅「${a.name}」，采集到空间 ${space(ctx, a.space)}（需要在定时任务中开启飞书采集）` : `已取消订阅「${a.name}」`;
+  },
+});
+
+def({
   name: "submit_plan",
   description: "提交 Wiki 目录计划（只在规划任务中使用）。每页写清读者问题和调查入口，宿主随后按计划逐页安排写作。",
   write: true,
