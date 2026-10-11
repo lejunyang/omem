@@ -84,7 +84,9 @@ export function answerInvestigation(input: {
   const issues = () => reviews.flatMap(job=>(job.report?.issues ?? []).map((issue,index)=>({issueId:`${job.reviewId}:${index+1}`,issue,job})));
   const ownedWork: Promise<void>[] = [];
   const persist = (job: Review) => {
-    const { work, completion, ...record } = job;
+    // An older CLI can finish after a newer focused review has started.
+    // Its history changes must not replace the current status file.
+    const { work, completion, ...record } = last ?? job;
     writeFileSync(
       join(input.workspace, "answer-review.json"),
       JSON.stringify(record, null, 2),

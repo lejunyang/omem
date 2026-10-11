@@ -292,5 +292,6 @@ it("keeps prior issues across focused checks and distinguishes mapping from inde
     expect(saved.resolutions[0]).toMatchObject({status:"no_issue_found",checkedBy:checking.reviewId,start:0,end:answer.length});
     expect(scopes).toEqual([{mode:"answer"},{mode:"correction",issues:[{issueId,problem:"缺登记条件",whyItMatters:"影响操作"}]}]);
     expect((await read.run({reviewId:initial.reviewId,waitSeconds:0},snapshot) as any).report.issues[0].issueId).toBe(issueId);
+    expect(JSON.parse(readFileSync(join(workspace,"answer-review.json"),"utf8")).reviewId).toBe(checking.reviewId);
   }finally{await investigation.close();rmSync(workspace,{recursive:true,force:true});}
 });
