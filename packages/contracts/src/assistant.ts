@@ -18,6 +18,12 @@ export const assistantProjectSelectionSchema = z.object({
 export const assistantReplySchema = z
   .object({
     answer: z.string().min(1),
+    review_resolutions: z.array(z.object({
+      issueId: z.string().min(1),
+      finalQuote: z.string().min(1),
+      basisCitationIds: z.array(z.string()),
+      unresolvedReason: z.string().trim().min(1).nullable(),
+    }).strict()).optional().describe("When independent feedback contains issues, map EVERY host-issued issueId to exact final answer text and source citation IDs. An unresolved reason must also appear in the answer. This records a proposal, not semantic approval."),
     project_selection: assistantProjectSelectionSchema.optional(),
     work_action: workActionSchema.nullable().optional().describe("Explicit current-user requirement tracking, feedback or implementation delegation. Use work_catalog/work_status before selecting saved identities. Host applies it after the turn, never claim success in advance. Null in research mode; do not also create an ordinary task."),
     citations: z.array(

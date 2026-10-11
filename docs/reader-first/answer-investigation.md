@@ -26,7 +26,9 @@
 
 ## 宿主究竟检查什么
 
-`assistant/answer-review.ts` 提供笔记和复核工具，`assistant/acp-model.ts` 接入独立 ACP 会话，`assistant/research.ts` 仍校验来源与事项候选。作者标记需要复核后，未完成复核不能提交；有重要意见的原样草稿也不能直接提交。修订稿由作者负责吸收反馈，宿主不能用“字符串变了”证明语义已经改好。是否需要复核仍由模型判断，可能漏判；复核者也可能遗漏。
+`assistant/answer-review.ts` 提供笔记和复核工具，`assistant/acp-model.ts` 接入独立 ACP 会话，`assistant/research.ts` 校验来源与事项候选。作者标记需要复核后，未完成复核不能提交；有重要意见的原样草稿也不能直接提交。每条意见分配稳定的 issueId，最终候选用 review_resolutions 对应唯一正文段落、真实原文引用及未解决原因；宿主检查覆盖、位置与引用身份，保存 answer-review-resolution.json。取得意见后立即持久化 retrieved，answer-review-history.json 保留本次调查的各次意见；新补查不清空旧问题。
+
+记录对应关系只标为 unverified，不能证明修正正确。确有疑问时，review_answer 使用 issueIds 指向此前意见，草稿仅提供对应的最终段落和引用。独立会话未发现问题，且最终段落与引用和受检文本一致时，记录 no_issue_found；未解决原因须在正文写明。两种记录都不能代替整个答案的完整性或用户验收。模型仍可能漏判是否需要补查，独立读者也可能漏掉问题。
 
 复核以本次调查内的后台任务执行：`review_answer` 立即返回任务 ID，相同草稿重复调用复用结果；运行中提交另一稿也不会悄悄启动第二个模型。`read_answer_review` 每次最多等 20 秒，返回运行中、完成、失败或取消及实际意见。20 秒是单次工具等待时间，不是模型生成上限。作者取得意见后才能提交，不用 shell sleep，也无需重新发起复核。失败需明确 retry 才重试。结束作者调查会取消并等待其复核退出，再释放封存快照。
 

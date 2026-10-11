@@ -7,6 +7,7 @@ import {
   answerReviewSchema,
   type AnswerDraft,
   type AnswerReview,
+  type AssistantReply,
 } from "../../../../packages/contracts/src/assistant.js";
 import type { AgentProfile } from "../../../../packages/contracts/src/index.js";
 import { RoleBundleRegistry } from "../agent-runtime/bundles.js";
@@ -71,10 +72,13 @@ export function answerInvestigation(input: {
     report?: AnswerReview;
     error?: string;
     retrieved: boolean;
+    issueIds: string[];
     work?: Promise<void>;
     completion?: Promise<void>;
   };
   let last: Review | undefined;
+  const reviews: Review[] = [];
+  const issues = () => reviews.flatMap(job=>(job.report?.issues ?? []).map((issue,index)=>({issueId:`${job.reviewId}:${index+1}`,issue,job})));
   const ownedWork: Promise<void>[] = [];
   const persist = (job: Review) => {
     const { work, completion, ...record } = job;
@@ -83,9 +87,13 @@ export function answerInvestigation(input: {
       JSON.stringify(record, null, 2),
       { mode: 0o600 },
     );
+    writeFileSync(join(input.workspace,"answer-review-history.json"),JSON.stringify(reviews.map(({work,completion,...r})=>r),null,2),{mode:0o600});
   };
   const status = (job: Review) => {
-    if (job.status === "completed") job.retrieved = true;
+    if (job.status === "completed" && !job.retrieved) {
+      job.retrieved = true;
+      persist(job);
+    }
     return {
       reviewId: job.reviewId,
       status: job.status,
@@ -94,8 +102,9 @@ export function answerInvestigation(input: {
       elapsedMs:
         Date.parse(job.finishedAt ?? new Date().toISOString()) -
         Date.parse(job.startedAt),
-      report: job.report,
+      report: job.report && {...job.report,issues:job.report.issues.map((issue,index)=>({...issue,issueId:`${job.reviewId}:${index+1}`}))},
       focus: job.focus,
+      issuesToAddress:issues().map(i=>({issueId:i.issueId,problem:i.issue.problem})),
       error: job.error,
       next:
         job.status === "running"
@@ -128,12 +137,13 @@ export function answerInvestigation(input: {
     {
       name: "review_answer",
       description:
-        "Start an independent Agent for 1–6 concrete unresolved questions in focus, using the SAME source snapshot. Explain the uncertainty as a question, not an author conclusion or a request for full-answer approval. Frozen cited excerpts are preloaded; the reader can supplement enclosing conditions or missing sources, including actual setup and how to find an object ID needed by an operation. Returns a reviewId; collect feedback with read_answer_review. Same draft AND focus reuses its review; running reviews are never duplicated. Established facts do not need review. Does not publish knowledge or apply actions.",
-      shape: { draft: answerDraftSchema, focus: z.array(z.string().trim().min(1)).min(1).max(6), retry: z.boolean().default(false) },
-      run: ({ draft, focus, retry }, snapshot) => {
+        "Start an independent Agent for 1–6 unresolved questions in focus over the SAME sources. For uncertain corrections provide existing issueIds and only their final passages as draft; a new whole-answer review is unnecessary. Frozen cited excerpts are preloaded, enclosing conditions remain readable. Collect feedback with read_answer_review. Same draft, focus and issueIds reuse feedback. Final submit_result must map every issued issueId in review_resolutions to exact finalQuote, basisCitationIds and unresolvedReason. Mapping never means semantic approval. Established facts need no review; no knowledge or actions are applied.",
+      shape: { draft: answerDraftSchema, focus: z.array(z.string().trim().min(1)).min(1).max(6), issueIds:z.array(z.string()).default([]), retry: z.boolean().default(false) },
+      run: ({ draft, focus, issueIds = [], retry }, snapshot) => {
         controller.signal.throwIfAborted();
+        if(new Set(issueIds).size!==issueIds.length || issueIds.some((id:string)=>!issues().some(i=>i.issueId===id))) throw Error("Use existing host-issued issueIds for a focused correction check.");
         const fingerprint = createHash("sha256")
-          .update(JSON.stringify({ draft, focus }))
+          .update(JSON.stringify({ draft, focus, issueIds }))
           .digest("hex");
         if (
           last &&
@@ -151,7 +161,9 @@ export function answerInvestigation(input: {
           status: "running",
           startedAt: new Date().toISOString(),
           retrieved: false,
+          issueIds,
         });
+        reviews.push(job);
         persist(job);
         let finish!: () => void;
         job.completion = new Promise<void>((resolve) => {
@@ -168,7 +180,7 @@ export function answerInvestigation(input: {
         };
         // The task owns this promise, not the lifetime of an individual MCP request.
         job.work = Promise.resolve()
-          .then(() => input.review(draft, snapshot, controller.signal, publish, focus))
+          .then(() => input.review(draft, snapshot, controller.signal, publish, [...focus,...issueIds.map((id:string)=>`Check correction of ${id}: ${issues().find(i=>i.issueId===id)!.issue.problem}. Only assess the supplied corresponding passages and necessary source conditions.`)]))
           .then(publish)
           .catch((error) => {
             // A validated, saved review remains available even if the CLI is
@@ -195,7 +207,7 @@ export function answerInvestigation(input: {
         waitSeconds: z.number().int().min(0).max(20).default(20),
       },
       run: async ({ reviewId, waitSeconds }) => {
-        const job = last;
+        const job = reviews.find(job=>job.reviewId===reviewId);
         if (!job || job.reviewId !== reviewId)
           throw Error(
             "Unknown reviewId; use the ID returned by review_answer.",
@@ -224,7 +236,7 @@ export function answerInvestigation(input: {
       controller.abort(new Error("Investigation ended"));
       await Promise.allSettled(ownedWork);
     },
-    beforeSubmit(answer: string) {
+    beforeSubmit(answer: string, reply?: AssistantReply) {
       if (last?.status === "running")
         throw Error(
           `Review is still running. Retrieve it with read_answer_review (reviewId: ${last.reviewId}) before submitting.`,
@@ -241,6 +253,22 @@ export function answerInvestigation(input: {
         throw Error(
           "The review found material issues. Read its feedback and revise this unchanged draft before submitting.",
         );
+      const pending=issues();
+      if(!pending.length)return;
+      if(reviews.some(j=>j.report?.issues.length && !j.retrieved))throw Error("Read each completed review's feedback before submitting.");
+      const records=reply?.review_resolutions ?? [];
+      if(records.length!==pending.length || new Set(records.map(r=>r.issueId)).size!==pending.length || records.some(r=>!pending.some(p=>p.issueId===r.issueId)))throw Error(`Supply review_resolutions for each issue: ${pending.map(p=>p.issueId).join(", ")}. Map exact finalQuote, basisCitationIds and unresolvedReason; a changed answer alone is insufficient.`);
+      const resolutions=records.map(record=>{
+        const start=answer.indexOf(record.finalQuote);
+        if(start<0 || start!==answer.lastIndexOf(record.finalQuote))throw Error(`finalQuote must uniquely locate actual final answer text: ${record.issueId}`);
+        const basis=record.basisCitationIds.map(id=>reply!.citations.find(c=>c.id===id));
+        if(!record.unresolvedReason && !basis.length)throw Error(`Supply source evidence for the proposed correction: ${record.issueId}`);
+        if(basis.some(c=>!c))throw Error(`Unknown final citation basis: ${record.issueId}`);
+        if(record.unresolvedReason && !record.finalQuote.includes(record.unresolvedReason))throw Error(`State the unresolved reason in the final passage: ${record.issueId}`);
+        const checked=reviews.find(j=>j.status==="completed" && j.retrieved && j.issueIds.includes(record.issueId) && !j.report!.issues.length && j.draft.answer.includes(record.finalQuote) && basis.every(c=>j.draft.citations.some(b=>JSON.stringify(b)===JSON.stringify(c))));
+        return {...record,start,end:start+record.finalQuote.length,basis,status:record.unresolvedReason?"unresolved":checked?"no_issue_found":"unverified",checkedBy:checked?.reviewId};
+      });
+      writeFileSync(join(input.workspace,"answer-review-resolution.json"),JSON.stringify({answerFingerprint:createHash("sha256").update(answer).digest("hex"),resolutions,note:"Exact final passages and source locators. Mapping is not semantic acceptance; no_issue_found requires a separate focused reader over identical passages and citation bindings."},null,2),{mode:0o600});
     },
   };
 }

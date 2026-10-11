@@ -6,6 +6,47 @@
       "type": "string",
       "minLength": 1
     },
+    "review_resolutions": {
+      "description": "When independent feedback contains issues, map EVERY host-issued issueId to exact final answer text and source citation IDs. An unresolved reason must also appear in the answer. This records a proposal, not semantic approval.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "issueId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "finalQuote": {
+            "type": "string",
+            "minLength": 1
+          },
+          "basisCitationIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unresolvedReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "issueId",
+          "finalQuote",
+          "basisCitationIds",
+          "unresolvedReason"
+        ],
+        "additionalProperties": false
+      }
+    },
     "project_selection": {
       "description": "The project this conversation is now about, chosen from the supplied saved projects. Resolve from the current question, prior clarification and material context, not a similar name alone. Null clears the project for unrelated/general questions, comparisons or unresolved ambiguity. This is a reading scope, not permission or a fact update.",
       "type": "object",
