@@ -17,6 +17,7 @@ registerScheduleKind("repo-sync", (app) => {
   for (const s of listSpaces(app)) if (s.rootPath) scheduleSpaceSync(app, s.id);
 });
 
+registerScheduleKind("brief", (app) => createRun(app, { kind: "brief", spaceId: "personal", title: "简报" }));
 registerScheduleKind("lark-poll", (app) => {
   import("./channels/lark-personal.ts").then((m) => m.pollLark(app)).catch((e) => console.warn("[omem] 飞书消息采集失败：", e.message));
 });

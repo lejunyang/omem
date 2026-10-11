@@ -29,6 +29,7 @@ export const roleNames = [
   "coder",
   "reviewer",
   "tutor",
+  "brief",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
 

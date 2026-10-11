@@ -10,6 +10,7 @@ const toSchedule = (r: Row): Schedule => ({ id: r.id, kind: r.kind, cron: r.cron
 /** Built-in schedules exist from the start; background ones begin disabled except reminders. */
 const DEFAULTS: { id: string; kind: string; cron: string; enabled: boolean; label: string }[] = [
   { id: "heartbeat", kind: "heartbeat", cron: "*/15 * * * *", enabled: true, label: "巡检：到期提醒、等待回复与关注事项" },
+  { id: "brief", kind: "brief", cron: "45 8 * * 1-5", enabled: false, label: "工作日早上的简报：今天要处理的、在等的、发生的变化" },
   { id: "dream", kind: "dream", cron: "30 3 * * *", enabled: false, label: "每晚整理记忆与页面" },
   { id: "repo-sync", kind: "repo-sync", cron: "0 * * * *", enabled: false, label: "每小时同步代码仓库空间并检查受影响页面" },
   { id: "lark-poll", kind: "lark-poll", cron: "*/10 * * * *", enabled: false, label: "采集已订阅的飞书会话和 @我 的消息（只读）" },

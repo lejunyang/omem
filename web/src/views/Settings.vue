@@ -60,6 +60,7 @@ const roles = [
   ["coder", "编码"],
   ["reviewer", "评审"],
   ["tutor", "生成卡片"],
+  ["brief", "简报"],
 ];
 
 async function load() {
