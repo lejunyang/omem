@@ -209,10 +209,14 @@ registerHandler("heartbeat", async (ctx) => {
   const watching = listItems(app, { status: "active" }).filter((i) => i.kind === "watch" || i.kind === "waiting");
   run(app.db, "insert into kv(key,value) values('heartbeat_at', ?) on conflict(key) do update set value = excluded.value", started);
   if (!fresh.length || !watching.length) return { quiet: true, reminders: due.length, summary: due.length ? `发送了 ${due.length} 条提醒` : "QUIET" };
+  const sent = all<{ at: string; title: string }>(app.db, "select at, title from notifications where at > ? order by at", last);
   const task = [
+    sent.length ? `上次巡检以来已经发给本人的通知（不要重复这些内容）：\n${sent.map((n) => `- ${n.at.slice(0, 16)} ${n.title}`).join("\n")}` : "",
     `关注/等待中的事项：\n${watching.map((i) => `- ${i.id} [${i.kind}] ${i.title}${i.waitingOn ? `（等待 ${i.waitingOn}）` : ""}${i.watch?.query ? `：关注 ${i.watch.query}` : ""}`).join("\n")}`,
     `上次巡检（${last}）以来新增或变化的材料：\n${fresh.map((s) => `- ${s.id} ${s.space_id}:${s.uri}「${s.title}」(${s.kind})`).join("\n")}`,
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const r = await agent(ctx, "heartbeat", "personal", task, null);
   return { quiet: QUIET.test(r.text), reminders: due.length, summary: r.text.trim() };
 });
