@@ -1,6 +1,6 @@
 /** Paired live experiment: native files, source tools, and review of the SAME
  * tool draft. Questions/assessment stay outside the exported source corpus. */
-import { DatabaseSync, backup } from "node:sqlite";
+import { copyEvaluationLibrary } from "./evaluation-copy.js";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, appendFileSync, cpSync } from "node:fs";
@@ -34,9 +34,7 @@ mkdirSync(dataDir, { recursive: true });
 const sourceDir = resolve(option("data", ".repo-review/runtime/data"));
 // SQLite may need WAL/SHM handles after the last writer closed. No business
 // writes run on this connection; backup itself fixes a consistent read view.
-const source = new DatabaseSync(join(sourceDir, "omem.sqlite"));
-try { await backup(source, join(dataDir, "omem.sqlite")); } finally { source.close(); }
-if (existsSync(join(sourceDir, "assets"))) cpSync(join(sourceDir, "assets"), join(dataDir, "assets"), { recursive: true });
+const setup=await copyEvaluationLibrary(sourceDir,dataDir,event=>writeFileSync(join(directory,"setup.json"),JSON.stringify(event,null,2)+"\n"));
 const store = new Store(dataDir);
 const repository = createReviewKnowledgeRepository(store);
 const retrieval = new UnifiedRetrieval(store.db, () => loadChineseEmbedding("memory-zh"));
@@ -48,7 +46,7 @@ const answer = z.object({ answer: z.string().min(1), citations: z.array(cite).mi
 const review = z.object({ verdict: z.enum(["accepted", "needs_revision"]), findings: z.array(z.object({ problem: z.string(), consequence: z.string(), citations: z.array(cite).min(1) }).strict()) }).strict();
 const allowedTools = ["list_materials", "read_material", "read_section", "read_fragments", "search_materials", "code_navigation", "read_image"];
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
-const report: Record<string, any> = { startedAt: new Date().toISOString(), implementationCommit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), requested: { model: profile.model, effort: profile.effort, budgetMs, idleTimeoutMs: profile.idleTimeoutMs }, method: "Source-only paired comparison. Fresh ACP sessions; same profile, prompt, original bytes, relative paths and source catalog. Native files are available in all groups; only tools groups receive source MCP tools. No initial retrieval, derived articles, applied memory or expected answers. Review reuses the identical tools draft and shares its total wall-clock budget. Author order alternates. No format retries. Host checks locators, not factual correctness. This is a frozen repository copy, not live Git or a production end-to-end assistant benchmark.", cases: [], questions };
+const report: Record<string, any> = { startedAt: setup.startedAt, setup, implementationCommit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), requested: { model: profile.model, effort: profile.effort, budgetMs, idleTimeoutMs: profile.idleTimeoutMs }, method: "Source-only paired comparison. Fresh ACP sessions; same profile, prompt, original bytes, relative paths and source catalog. Native files are available in all groups; only tools groups receive source MCP tools. No initial retrieval, derived articles, applied memory or expected answers. Review reuses the identical tools draft and shares its total wall-clock budget. Author order alternates. No format retries. Host checks locators, not factual correctness. This is a frozen repository copy, not live Git or a production end-to-end assistant benchmark.", cases: [], questions };
 const save = () => writeFileSync(join(directory, "report.json"), JSON.stringify(report, null, 2) + "\n");
 const parse = (text: string, schema: z.ZodType) => {
   const value = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
