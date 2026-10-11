@@ -435,6 +435,22 @@ describe("group 4: retrieval and API safety", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it("guards knowledge and review routes with the same configured token", async () => {
+    const oldToken=process.env.REVIEW_TOKEN;
+    process.env.REVIEW_TOKEN="fixture-token";
+    const store=setup();
+    const {app}=await buildReviewApp({store,repoRoot:stores.at(-1)!.dir});
+    try {
+      for(const url of ["/api/review/knowledge/articles","/api/review/sources"]){
+        expect((await app.inject({url})).statusCode).toBe(401);
+        expect((await app.inject({url,headers:{authorization:"Bearer fixture-token"}})).statusCode).toBe(200);
+      }
+    } finally {
+      await app.close();
+      if(oldToken===undefined)delete process.env.REVIEW_TOKEN;else process.env.REVIEW_TOKEN=oldToken;
+    }
+  });
+
   it("health never exposes an absolute dataDir", async () => {
     const root = makeFixtureRepo();
     archFile(root, "y", "Y_TOKEN");
