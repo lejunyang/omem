@@ -238,14 +238,20 @@ it("reranks lexical candidates without an embedding and exposes isolated score s
     expect(inputs).toHaveLength(2);
     expect(inputs.some((text) => text.includes("秘密"))).toBe(false);
     expect(stages.map((s) => s.stage)).toEqual([
+      "lexical-recall",
       "lexical",
       "symbols",
       "concepts",
       "fusion",
       "reranker-input",
       "reranker",
+      "host-ranking",
+      "diversification",
       "final",
     ]);
+    expect(stages.find(s=>s.stage==="diversification")!.hits).toHaveLength(2);
+    expect(JSON.stringify(stages)).not.toContain("秘密");
+    expect(await retrieval.search(q)).toEqual([hit]);
     expect(
       stages
         .find((s) => s.stage === "reranker-input")!

@@ -157,7 +157,7 @@ try {
       }),
     })),
   }));
-  const supports = (hit: RetrievalHit, a: Gold) =>
+  const supports = (hit: Pick<RetrievalHit,"references">, a: Gold) =>
     hit.references.some(
       (r) =>
         r.key === a.key &&
@@ -241,11 +241,11 @@ try {
         const summarize = (stage: RetrievalTrace) => {
           const ordered = [...stage.hits].sort((a, b) => b.score - a.score);
           // Final/Decision order may intentionally differ from raw score order.
-          const ranked = ["final", "selection", "decision"].includes(
+          const ranked = stage.candidates ?? (["final", "selection", "decision", "diversification", "lexical", "semantic", "semantic-concepts"].includes(
             stage.stage,
           )
             ? stage.hits
-            : ordered;
+            : ordered);
           const evidence = item.groups.map((group) => {
             const found = ranked.findIndex((h) =>
               group.alternatives.some((a) => supports(h, a)),
@@ -253,13 +253,13 @@ try {
             const input = ranked.findIndex((h) =>
               group.alternatives.some(
                 (a) =>
-                  supports(h, a) && (!a.needle || h.text.includes(a.needle)),
+                  supports(h, a) && "text" in h && (!a.needle || h.text.includes(a.needle)),
               ),
             );
             return {
               label: group.label,
               firstRank: found < 0 ? null : found + 1,
-              firstInputRank: input < 0 ? null : input + 1,
+              firstInputRank: stage.candidates || input < 0 ? null : input + 1,
             };
           });
           return {
@@ -267,8 +267,9 @@ try {
             model: stage.model,
             error: stage.error,
             count: ranked.length,
+            cutoff:stage.cutoff,
             evidence,
-            top10: ranked.slice(0, 10).map(compact),
+            top10: stage.candidates ? stage.candidates.slice(0,10) : (ranked as RetrievalHit[]).slice(0, 10).map(compact),
           };
         };
         const stages = traces.map(summarize),

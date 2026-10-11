@@ -41,18 +41,29 @@ type ScoredUnit = {
 };
 export type RetrievalTrace = {
   stage:
+    | "lexical-recall"
     | "lexical"
+    | "lexical-admitted"
     | "symbols"
     | "concepts"
     | "semantic"
+    | "semantic-recall"
+    | "semantic-filtered"
     | "semantic-concepts"
+    | "semantic-concepts-recall"
+    | "semantic-concepts-filtered"
     | "fusion"
     | "reranker-input"
     | "reranker"
     | "selection"
     | "decision"
+    | "host-ranking"
+    | "diversification"
     | "final";
   hits: RetrievalHit[];
+  /** Lightweight, eligible candidates before a cutoff; no copied source bodies. */
+  candidates?: { id: string; score: number; weightedScore?: number; routeRanks?: Record<string,number>; target: RetrievalHit["target"]; references: RetrievalHit["references"] }[];
+  cutoff?: { limit?: number; floor?: number; considered?: number; stoppedByUpperBound?: boolean };
   model?: string;
   error?: string;
 };
@@ -592,7 +603,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     }
     return hits;
   }
-  private lexical(q: SearchQuery): ScoredUnit[] {
+  private lexical(q: SearchQuery, observer?: RetrievalObserver): ScoredUnit[] {
     this.sync();
     const terms = queryTerms(q.text);
     if (!terms.length) return [];
@@ -609,6 +620,8 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       )
       .iterate(phrase);
     const pool: ScoredUnit[] = [];
+    const recalled: ScoredUnit[] | undefined = observer ? [] : undefined;
+    let stoppedByUpperBound = false;
     // Sort only IDs/scores in SQLite. Carrying every full source through its
     // sort buffer is costly even when JavaScript stops consuming rows early.
     const readUnit = this.database.prepare(
@@ -624,7 +637,10 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       // in [0,1], so no remaining row can beat this upper bound. Stop only
       // after collecting eligible candidates: hidden/out-of-scope rows never
       // consume the pool. Strict inequality retains stable ties.
-      if (pool.length === limit && score < weighted(pool.at(-1)!)) break;
+      if (pool.length === limit && score < weighted(pool.at(-1)!)) {
+        stoppedByUpperBound = true;
+        break;
+      }
       const stored = readUnit.get(row.id!);
       if (!stored) continue;
       const unit = decodeUnit(stored);
@@ -639,11 +655,18 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       // BM25 supplies lexical relevance. A second minimum matched-word count
       // rejects concise answers to verbose questions and unsupported-language
       // symbol references; context selection happens after candidate recall.
-      pool.push({ unit, score, routes: ["bm25"] });
+      const hit = { unit, score, routes: ["bm25"] };
+      recalled?.push(hit);
+      pool.push(hit);
       pool.sort((a, b) => weighted(b) - weighted(a));
       if (pool.length > limit) pool.pop();
     }
+    if (recalled) this.observeCandidates(observer, "lexical-recall", recalled.sort((a,b)=>weighted(b)-weighted(a)), {limit,considered:recalled.length,stoppedByUpperBound});
     return pool;
+  }
+  private observeCandidates(observer: RetrievalObserver | undefined, stage: RetrievalTrace["stage"], hits: ScoredUnit[], cutoff?: RetrievalTrace["cutoff"], weight?: (hit: ScoredUnit) => number) {
+    if (!observer) return;
+    observer({stage,hits:[],cutoff,candidates:structuredClone(hits.map(h=>({id:h.unit.id,score:h.score,...(weight?{weightedScore:weight(h)}:{}),routeRanks:h.routeRanks,target:h.unit.target,references:h.unit.references})))});
   }
   private observe(
     observer: RetrievalObserver | undefined,
@@ -693,7 +716,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       observer?.({ stage: "final", hits: structuredClone(hits) });
       return hits;
     }
-    const lexical = this.lexical(q);
+    const lexical = this.lexical(q, observer);
     const symbols = this.symbols(q);
     const concepts = this.concepts(q);
     this.observe(observer, "lexical", lexical);
@@ -782,26 +805,31 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       return this.select(await this.rerank(hits, q, observer), q, observer);
     }
     const sorted = [...dense.values()].sort((a, b) => b.score - a.score);
+    this.observeCandidates(observer, "semantic-recall", sorted);
     // The best match may be a question with no answer. It must not raise the
     // admission floor for all other candidates before a reader/model sees them.
     const floor = 0.4;
-    const accepted = sorted
+    const filtered = sorted
       .filter((h) => h.score >= floor)
       .sort(
         (a, b) =>
           b.score * this.applicability(b.unit, q) -
           a.score * this.applicability(a.unit, q),
-      )
-      .slice(0, 100);
+      );
+    this.observeCandidates(observer, "semantic-filtered", filtered, {floor,limit:100});
+    const accepted = filtered.slice(0, 100);
     this.observe(observer, "semantic", accepted, this.modelId ?? undefined);
-    const semanticConcepts = [...conceptDense.values()]
+    const conceptRecalled = [...conceptDense.values()].sort((a,b)=>b.score-a.score);
+    this.observeCandidates(observer, "semantic-concepts-recall", conceptRecalled);
+    const conceptFiltered = conceptRecalled
       .filter((h) => h.score >= floor)
       .sort(
         (a, b) =>
           b.score * this.applicability(b.unit, q) -
           a.score * this.applicability(a.unit, q),
-      )
-      .slice(0, 100);
+      );
+    this.observeCandidates(observer, "semantic-concepts-filtered", conceptFiltered, {floor,limit:100});
+    const semanticConcepts = conceptFiltered.slice(0, 100);
     this.observe(
       observer,
       "semantic-concepts",
@@ -816,6 +844,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       concepts,
       semanticConcepts,
     ]);
+    this.observeCandidates(observer, "lexical-admitted", lexical.slice(0,100), {limit:100});
     this.observe(observer, "fusion", hits);
     return this.select(await this.rerank(hits, q, observer), q, observer);
   }
@@ -906,7 +935,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     observer?: RetrievalObserver,
   ) {
     const finish = (emit = true) => {
-      const selected = this.finish(hits, q);
+      const selected = this.finish(hits, q, emit ? observer : undefined);
       if (emit) observer?.({ stage: "final", hits: structuredClone(selected) });
       return selected;
     };
@@ -990,7 +1019,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       return finish();
     }
   }
-  private finish(hits: ScoredUnit[], q: SearchQuery): RetrievalHit[] {
+  private finish(hits: ScoredUnit[], q: SearchQuery, observer?: RetrievalObserver): RetrievalHit[] {
     const articles = new Map<string, KnowledgeArtifact>();
     const preference = (u: RetrievalUnit) => {
       switch (q.purpose) {
@@ -1043,6 +1072,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     const ordered = hits.sort(
       (a, b) => b.score * priority(b.unit) - a.score * priority(a.unit),
     );
+    this.observeCandidates(observer, "host-ranking", ordered, undefined, h=>h.score*priority(h.unit));
     if (q.codeIntent === "callers" && q.diversify !== false) {
       // Show the breadth of entry points before more sites in the same file.
       // Unlike a per-owner cap, this does not discard the remaining call sites.
@@ -1140,9 +1170,10 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           ? { materialDescription: u.materialDescription }
           : {}),
       });
-      if (output.length >= (q.limit ?? 20)) break;
+      if (!observer && output.length >= (q.limit ?? 20)) break;
     }
-    return output;
+    if (observer) observer({stage:"diversification",hits:structuredClone(output),cutoff:{limit:q.limit ?? 20}});
+    return output.slice(0, q.limit ?? 20);
   }
   override searchSources(q: SearchQuery): SourceCandidate[] {
     this.sync();
