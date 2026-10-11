@@ -1,6 +1,6 @@
 /** Live native Agent comparison on one frozen corpus. Questions are supplied by
  * the evaluator and are never captured as source material. No synthetic pass rate. */
-import { DatabaseSync, backup } from "node:sqlite";
+import { copyEvaluationLibrary } from "./evaluation-copy.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   cpSync,
@@ -119,20 +119,15 @@ const finishRun = beginReviewRun(directory, "assistant");
 mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 // SQLite may need to create WAL/SHM handles after the last writer closed.
 // No business-data writes run on this connection; backup owns the consistent read.
-const source = new DatabaseSync(sourceFile);
+let setup: Awaited<ReturnType<typeof copyEvaluationLibrary>>;
 try {
-  await backup(source, file);
+  setup = await copyEvaluationLibrary(sourceDir,dataDir,event=>writeFileSync(join(directory,"setup.json"),JSON.stringify(event,null,2)+"\n"));
 } catch (error) {
   rmSync(dataDir, { recursive: true, force: true });
   finishRun();
   throw error;
-} finally {
-  source.close();
 }
-if (existsSync(join(sourceDir, "assets")))
-  cpSync(join(sourceDir, "assets"), join(dataDir, "assets"), {
-    recursive: true,
-  });
+const storeStarted=performance.now();
 const store = new Store(dataDir);
 const repository = review
   ? createReviewKnowledgeRepository(store)
@@ -167,7 +162,8 @@ if (config.transport !== "acp")
   throw Error("Assistant comparison requires an ACP configuration");
 const models = option("models", "gpt-5.6-sol").split(",").filter(Boolean);
 const report: Record<string, any> = {
-  startedAt: new Date().toISOString(),
+  startedAt: setup.startedAt,
+  setup: {...setup,storeAndRepositoryMs:performance.now()-storeStarted},
   implementationCommit: execFileSync("git", ["rev-parse", "HEAD"], {
     encoding: "utf8",
   }).trim(),
