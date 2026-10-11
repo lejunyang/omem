@@ -45,7 +45,7 @@ export function parsePage(raw: string): { meta: PageMeta; body: string } {
     meta = { title: "未命名" };
   }
   if (!meta.title) meta.title = /^#\s+(.+)$/m.exec(raw.slice(m[0].length))?.[1] ?? "未命名";
-  return { meta, body: raw.slice(m[0].length) };
+  return { meta, body: raw.slice(m[0].length).replace(/^\n+/, "") };
 }
 
 export function serializePage(meta: PageMeta, body: string) {
