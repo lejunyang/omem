@@ -27,8 +27,26 @@ const concurrency = Number(process.env.REVIEW_KNOWLEDGE_CONCURRENCY ?? 3);
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 6) throw Error("REVIEW_KNOWLEDGE_CONCURRENCY must be 1..6");
 const only = taskTargets();
 if (!only.length) throw Error("Select a file or directory for internal notes; use review:guides for reader pages");
-const store = createReviewStore(root), repository = createReviewKnowledgeRepository(store);
 const runtime = join(root, ".repo-review/runtime");
+mkdirSync(runtime, { recursive: true });
+const setup = { startedAt: new Date().toISOString(), finishedAt: null as string | null, elapsedMs: 0, wallElapsedMs: 0, stages: {} as Record<string, number> };
+const setupStart = performance.now(), setupPath = join(runtime, "internal-analysis-setup.json");
+async function setupStep<T>(name: string, run: () => T | Promise<T>): Promise<T> {
+  const start = performance.now();
+  console.log(new Date().toISOString(), "Setup", name, "started");
+  writeFileSync(setupPath, JSON.stringify({ ...setup, stage: name }, null, 2) + "\n");
+  let state = "failed";
+  try { const result = await run(); state = "completed"; return result; }
+  finally {
+    setup.stages[name] = performance.now() - start;
+    setup.elapsedMs = performance.now() - setupStart;
+    setup.finishedAt = new Date().toISOString();
+    setup.wallElapsedMs = Date.parse(setup.finishedAt) - Date.parse(setup.startedAt);
+    writeFileSync(setupPath, JSON.stringify({ ...setup, stage: name, state }, null, 2) + "\n");
+    console.log(new Date().toISOString(), "Setup", name, setup.stages[name], "ms");
+  }
+}
+const store = await setupStep("storeOpen", () => createReviewStore(root)), repository = createReviewKnowledgeRepository(store);
 const stage = join(runtime, "knowledge-staging"), assets = join(root, ".repo-review/knowledge/articles");
 mkdirSync(stage, { recursive: true }); mkdirSync(assets, { recursive: true });
 const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new RoleBundleRegistry(), join(runtime, "knowledge-agents"), new RuntimeRequestRepository(store.db)), profile,
@@ -39,10 +57,11 @@ const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new Ro
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => void pipeline.stop());
 try {
   console.log("Actual profile:", reviewModelConfigPath(), profile.model, { input: config.maxInputTokens, output: config.maxOutputTokens, concurrency });
-  await runReviewSync(store, root);
-  const coverage = restoreReviewKnowledge(store, root).coverage;
-  await runCodeSync(store, root);
-  console.log("Restore:", restoreKnowledgeArticles(repository, assets).reduce((n, r) => { n[r.state] = (n[r.state] ?? 0) + 1; return n; }, {} as Record<string, number>));
+  await setupStep("capture", () => runReviewSync(store, root));
+  const coverage = (await setupStep("restorePages", () => restoreReviewKnowledge(store, root))).coverage;
+  await setupStep("codeSync", () => runCodeSync(store, root));
+  const restored = await setupStep("restoreNotes", () => restoreKnowledgeArticles(repository, assets));
+  console.log("Restore:", restored.reduce((n, r) => { n[r.state] = (n[r.state] ?? 0) + 1; return n; }, {} as Record<string, number>));
   const allMaterials = repository.materials().filter(m => m.key.startsWith("omem:"));
   const byKey = new Map(allMaterials.map(m => [m.key, m]));
   const requested = allMaterials.filter(m => !only.length || only.some(path => m.path === path || m.path?.startsWith(path + "/")));
@@ -60,7 +79,7 @@ try {
     }
     return [...linkedMaterialOffers(allMaterials, targets), ...[...extra].filter(k => !targets.some(t => t.key === k)).slice(0, 4).map(k => byKey.get(k)).filter(m => !!m).map(material => ({ material, ranges: [{ start: 1, end: Math.min(material.lineCount, 70) }] }))];
   });
-  const summary = { checkedAt: new Date().toISOString(), selection: only, total: report.total, reused: report.reused, failures: report.failures };
+  const summary = { checkedAt: new Date().toISOString(), selection: only, setup, total: report.total, reused: report.reused, failures: report.failures };
   writeFileSync(join(runtime, "internal-analysis.json"), JSON.stringify(summary, null, 2) + "\n");
   if (report.failures.length) process.exitCode = 1;
   writeReviewKnowledgeIndex(root, repository.published());
