@@ -162,6 +162,7 @@ it.each(["answer", "review", "handoff", "unavailable", "cancel"] as const)(
               expect(unchanged.isError).toBe(true);
               reply.answer = "周五开会，地址待确认。[[cite_1]]";
               reply.citations[0]!.endLine = 2;
+              (reply as any).review_resolutions=[{issueId:completed.report.issues[0].issueId,finalQuote:reply.answer,basisCitationIds:["cite_1"],unresolvedReason:null}];
             }
             if (mode === "handoff") {
               expect(

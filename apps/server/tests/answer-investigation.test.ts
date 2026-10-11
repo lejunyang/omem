@@ -138,9 +138,9 @@ it("lets an independent reader inspect the same frozen originals and returns an 
         { id: "cite_1", key: material.key, startLine: 1, endLine: 1 },
       ],
     };
-    const submit = (answer: string) =>
+    const submit = (answer: string, review_resolutions?: import("../../../packages/contracts/src/assistant.js").AssistantReply["review_resolutions"]) =>
       call("submit_result", {
-        result: { ...draft, answer, create_task: null, update_task: null },
+        result: { ...draft, answer, review_resolutions, create_task: null, update_task: null },
       });
     await call("investigation_notes", {
       notes: "已找到配送日；需要核对登记截止时间。",
@@ -174,19 +174,23 @@ it("lets an independent reader inspect the same frozen originals and returns an 
       await call("read_answer_review", { reviewId: started.reviewId }),
     );
     expect(completed.status).toBe("completed");
+    expect(JSON.parse(readFileSync(join(workspace, "answer-review.json"), "utf8")).retrieved).toBe(true);
     expect(JSON.stringify(completed.report)).toContain("中午前");
     expect(
       payload(await call("read_answer_review", { reviewId: started.reviewId }))
         .report,
     ).toEqual(completed.report);
     expect((await submit(draft.answer)).isError).toBe(true);
+    const finalQuote="根据本次保存的约定，周五中午前登记才会当天配送；逾期顺延下周。[[cite_1]]";
+    expect((await submit(finalQuote)).isError).toBe(true);
     expect(
       (
         await submit(
-          "根据本次保存的约定，周五中午前登记才会当天配送；逾期顺延下周。[[cite_1]]",
+          finalQuote,[{issueId:completed.report.issues[0].issueId,finalQuote,basisCitationIds:["cite_1"],unresolvedReason:null}],
         )
       ).isError,
     ).not.toBe(true);
+    expect(JSON.parse(readFileSync(join(workspace,"answer-review-resolution.json"),"utf8")).resolutions[0].status).toBe("unverified");
     expect(calls).toBe(1);
     expect(
       readFileSync(join(workspace, "answer-review.json"), "utf8"),
@@ -263,4 +267,28 @@ it("retains failures without an implicit second model call and cancels the owned
     await investigation.close();
     rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+it("keeps prior issues across focused checks and distinguishes mapping from independent clearance",async()=>{
+  const workspace=mkdtempSync(join(tmpdir(),"omem-answer-closure-"));
+  const cite={id:"cite_1",key:"manual:rule",startLine:1,endLine:1};let calls=0;
+  const investigation=answerInvestigation({workspace,review:async()=>++calls===1?{summary:"缺条件",issues:[{problem:"缺登记条件",whyItMatters:"影响操作",suggestion:"补齐条件",sources:[cite]}]}:{summary:"对应段落未发现问题",issues:[]}});
+  const start=investigation.tools.find(t=>t.name==="review_answer")!,read=investigation.tools.find(t=>t.name==="read_answer_review")!,snapshot={} as Parameters<typeof start.run>[1];
+  try{
+    const initial:any=await start.run({draft:{answer:"当天配送",citations:[cite]},focus:["登记条件是什么？"]},snapshot);
+    const feedback:any=await read.run({reviewId:initial.reviewId,waitSeconds:20},snapshot),issueId=feedback.report.issues[0].issueId;
+    const answer="中午前登记当天配送。[[cite_1]]",records=[{issueId,finalQuote:answer,basisCitationIds:["cite_1"],unresolvedReason:null}];
+    const reply={answer,citations:[cite],create_task:null,update_task:null,review_resolutions:records};
+    expect(()=>investigation.beforeSubmit(answer,{...reply,review_resolutions:[]})).toThrow("review_resolutions");
+    expect(()=>investigation.beforeSubmit(answer,{...reply,review_resolutions:[{...records[0]!,finalQuote:"不存在的段落"}]})).toThrow("actual final answer");
+    investigation.beforeSubmit(answer,reply);
+    expect(JSON.parse(readFileSync(join(workspace,"answer-review-resolution.json"),"utf8")).resolutions[0].status).toBe("unverified");
+    const checking:any=await start.run({draft:{answer,citations:[cite]},focus:["仅核对登记前提"],issueIds:[issueId]},snapshot);
+    await read.run({reviewId:checking.reviewId,waitSeconds:20},snapshot);
+    expect(()=>investigation.beforeSubmit(answer,{...reply,review_resolutions:[]})).toThrow("review_resolutions");
+    investigation.beforeSubmit(answer,reply);
+    const saved=JSON.parse(readFileSync(join(workspace,"answer-review-resolution.json"),"utf8"));
+    expect(saved.resolutions[0]).toMatchObject({status:"no_issue_found",checkedBy:checking.reviewId,start:0,end:answer.length});
+    expect((await read.run({reviewId:initial.reviewId,waitSeconds:0},snapshot) as any).report.issues[0].issueId).toBe(issueId);
+  }finally{await investigation.close();rmSync(workspace,{recursive:true,force:true});}
 });

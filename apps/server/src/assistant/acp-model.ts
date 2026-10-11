@@ -261,7 +261,7 @@ export class AcpAssistantModel implements AssistantModelPort {
       ],
       beforeSubmit: (answer, reply) => {
         stage.beforeSubmit(reply);
-        investigation.beforeSubmit(answer);
+        investigation.beforeSubmit(answer, reply);
       },
     });
     const context = {
