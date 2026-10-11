@@ -44,6 +44,10 @@ function space(ctx: ToolContext, requested?: string | null) {
   if (ctx.spaces && !ctx.spaces.includes(id)) throw new HttpError(403, `本次任务不能访问空间 ${id}`);
   return id;
 }
+/** Reject objects that live outside the spaces this caller may touch. */
+function inScope(ctx: ToolContext, spaceId: string, what: string) {
+  if (ctx.spaces && !ctx.spaces.includes(spaceId)) throw new HttpError(403, `本次任务不能修改空间 ${spaceId} 中的${what}`);
+}
 function spacesFor(ctx: ToolContext, requested?: string | null, all = false) {
   if (requested === "*" || all) return ctx.spaces ?? undefined;
   return [space(ctx, requested)];
@@ -362,6 +366,7 @@ def({
   write: true,
   schema: z.object({ memory_id: z.string(), content: z.string(), reason: z.string().optional(), source_refs: refs, valid_from: z.string().optional() }),
   handler: (ctx, a) => {
+    inScope(ctx, getMemory(ctx.app, a.memory_id).spaceId, "记忆");
     const m = supersede(ctx.app, a.memory_id, { content: a.content, sourceRefs: a.source_refs, validFrom: a.valid_from, createdBy: ctx.actor, reason: a.reason });
     return `已更正：${a.memory_id} → ${m.id}`;
   },
@@ -373,6 +378,7 @@ def({
   write: true,
   schema: z.object({ memory_id: z.string(), reason: z.string() }),
   handler: (ctx, a) => {
+    inScope(ctx, getMemory(ctx.app, a.memory_id).spaceId, "记忆");
     retract(ctx.app, a.memory_id, a.reason);
     return `已撤回 ${a.memory_id}`;
   },
@@ -400,6 +406,7 @@ def({
   }),
   handler: (ctx, a) => {
     const existing = a.id ? getItem(ctx.app, a.id) : null;
+    if (existing) inScope(ctx, existing.spaceId, "事项");
     const item = upsertItem(
       ctx.app,
       a.id,

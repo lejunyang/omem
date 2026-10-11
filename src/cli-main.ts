@@ -28,20 +28,66 @@ const open = () => {
   return app;
 };
 
-/** Start an in-process service (random port) so agents can call omem tools, run one job, stream it. */
+/** Is an omem service already running on this library? Then let it run the job. */
+async function runningServer(app: App) {
+  try {
+    const res = await fetch(`http://127.0.0.1:${app.config.port}/api/settings`, { signal: AbortSignal.timeout(800), headers: app.config.token ? { authorization: `Bearer ${app.config.token}` } : {} });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { home?: string };
+    return body.home && resolve(body.home) === resolve(app.home) ? `http://127.0.0.1:${app.config.port}` : null;
+  } catch {
+    return null;
+  }
+}
+
+function printEvent(ev: { type: string; data: { text?: string; title?: string; status?: string } }, stream: boolean, state: { last: string }) {
+  if (stream && ev.type === "text-delta") process.stdout.write(ev.data.text ?? "");
+  else if (ev.type === "tool" && ev.data.status !== "completed") process.stderr.write(`\x1b[2m· ${ev.data.title}\x1b[0m\n`);
+  else if (ev.type === "status" && ev.data.text !== state.last) process.stderr.write(`\x1b[2m${(state.last = ev.data.text ?? "")}\x1b[0m\n`);
+}
+
+/**
+ * Run one job and stream its progress. Uses the running service when there is
+ * one (it holds the agent tools); otherwise starts a temporary in-process one.
+ */
 async function runJob(make: (app: App) => Run | { runId: string }, opts: { stream?: boolean; children?: boolean } = {}) {
-  const { app, server } = await boot(home(), { port: 0, quiet: true, background: false });
+  const local = open();
+  const remote = await runningServer(local);
+  const booted = remote ? null : await boot(home(), { port: 0, quiet: true, background: false });
+  const app = booted?.app ?? local;
   const created = make(app);
   const runId = "runId" in created ? created.runId : created.id;
-  let lastStatus = "";
-  const listener = (e: AppEvent) => {
-    if (e.type !== "run-event" || e.runId !== runId) return;
-    const ev = e.event as { type: string; data: { text?: string; title?: string; status?: string; message?: string } };
-    if (opts.stream !== false && ev.type === "text-delta") process.stdout.write(ev.data.text ?? "");
-    else if (ev.type === "tool" && ev.data.status !== "completed") process.stderr.write(`\x1b[2m· ${ev.data.title}\x1b[0m\n`);
-    else if (ev.type === "status" && ev.data.text !== lastStatus) process.stderr.write(`\x1b[2m${(lastStatus = ev.data.text ?? "")}\x1b[0m\n`);
-  };
-  app.events.on("event", listener);
+  const state = { last: "" };
+  const stream = opts.stream !== false;
+  let abortSse: AbortController | undefined;
+  if (remote) {
+    abortSse = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(`${remote}/api/events?run=${runId}${app.config.token ? `&token=${app.config.token}` : ""}`, { signal: abortSse!.signal });
+        const reader = res.body!.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let i;
+          while ((i = buf.indexOf("\n\n")) >= 0) {
+            const line = buf.slice(0, i);
+            buf = buf.slice(i + 2);
+            if (line.startsWith("data: ")) {
+              const e = JSON.parse(line.slice(6)) as AppEvent;
+              if (e.type === "run-event") printEvent(e.event as never, stream, state);
+            }
+          }
+        }
+      } catch {}
+    })();
+  } else
+    app.events.on("event", (e: AppEvent) => {
+      if (e.type === "run-event" && e.runId === runId) printEvent(e.event as never, stream, state);
+    });
   process.on("SIGINT", () => {
     import("./agents/runs.ts").then((m) => m.cancelRun(app, runId));
   });
@@ -56,7 +102,8 @@ async function runJob(make: (app: App) => Run | { runId: string }, opts: { strea
   }
   process.stdout.write("\n");
   if (r.status === "failed") console.error(`\n运行失败：${r.error}`);
-  await server.close();
+  abortSse?.abort();
+  await booted?.server.close();
   return r;
 }
 
