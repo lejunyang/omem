@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 
@@ -36,7 +38,14 @@ async function getEmbedder(app: App): Promise<Embedder | null> {
   }
   try {
     const mod = (await import("@huggingface/transformers")) as any;
-    const extractor = await mod.pipeline("feature-extraction", cfg.model, { dtype: "q8" });
+    // A local directory (e.g. an osdk-managed model view) loads offline.
+    let modelId = cfg.model;
+    if (existsSync(cfg.model)) {
+      mod.env.localModelPath = dirname(resolve(cfg.model)) + "/";
+      mod.env.allowRemoteModels = false;
+      modelId = basename(resolve(cfg.model));
+    }
+    const extractor = await mod.pipeline("feature-extraction", modelId, { dtype: "q8" });
     const isBge = /bge/i.test(cfg.model);
     embedder = {
       id: `local:${cfg.model}`,

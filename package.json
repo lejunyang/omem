@@ -62,6 +62,7 @@
     "scripts/document-parser/pyproject.toml",
     "scripts/document-parser/uv.lock",
     "skills",
+    ".agents/skills/lieflat-less-ai-tone",
     "LICENSE",
     "README.md"
   ],
