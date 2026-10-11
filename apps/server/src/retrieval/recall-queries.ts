@@ -14,6 +14,7 @@ export function recallQueries(text: string, variants?: string[]): string[] {
 type Recalled = {
   unit: {id: string}; score: number; routes: string[];
   routeRanks?: Record<string, number>;
+  recallRanks?: Record<string, number>;
   matchedRanges?: {start: number; end: number}[];
 };
 
@@ -21,20 +22,23 @@ type Recalled = {
  * Every independently admitted candidate survives until the normal selection. */
 export function mergeQueryRecall<T extends Recalled>(branches: T[][]): T[] {
   const merged = new Map<string, T>();
-  for (const branch of branches) branch.forEach((hit, index) => {
+  branches.forEach((branch, queryIndex) => branch.forEach((hit, index) => {
     const prior = merged.get(hit.unit.id);
     const ranks = hit.routeRanks ?? Object.fromEntries(hit.routes.map(route => [route, index]));
     const routeRanks = {...prior?.routeRanks};
+    const recallRanks = {...prior?.recallRanks};
     for (const [route, rank] of Object.entries(ranks))
       routeRanks[route] = Math.min(routeRanks[route] ?? Infinity, rank);
+    for (const [route, rank] of Object.entries(ranks))
+      recallRanks[`${queryIndex}:${route}`] = rank;
     const better = !prior || Math.min(...Object.values(ranks)) < Math.min(...Object.values(prior.routeRanks!));
     const matchedRanges = [...(prior?.matchedRanges ?? []), ...(hit.matchedRanges ?? [])]
       .filter((range, i, all) => all.findIndex(r => r.start === range.start && r.end === range.end) === i);
     merged.set(hit.unit.id, {
-      ...(better ? hit : prior!), routeRanks, matchedRanges,
+      ...(better ? hit : prior!), routeRanks, recallRanks, matchedRanges,
       routes: [...new Set([...(prior?.routes ?? []), ...hit.routes])],
       score: Object.values(routeRanks).reduce((sum, rank) => sum + 1 / (60 + rank + 1), 0),
     });
-  });
+  }));
   return [...merged.values()].sort((a,b) => b.score - a.score);
 }

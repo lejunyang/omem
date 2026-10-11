@@ -3,6 +3,7 @@ import { passageQuestions } from "./questions.js";
 import type { DecisionResult, DecisionService } from "./service.js";
 import { getLogger } from "../logging/logger.js";
 import { stableDigest } from "../storage/digest.js";
+import { evaluatedOrder } from "../retrieval/evaluated-order.js";
 
 export function passagePolicy(result: DecisionResult) {
   const p = (key: string, option: string) =>
@@ -31,7 +32,7 @@ export async function assessPassages(
   service: DecisionService,
   question: string,
   hits: RetrievalHit[],
-  options: { sourceIdFor?: (hit: RetrievalHit) => string | undefined } = {},
+  options: { sourceIdFor?: (hit: RetrievalHit) => string | undefined; onInput?: (hit: RetrievalHit) => void } = {},
 ) {
   const logger = getLogger({ component: "retrieval" });
   const queryDigest = stableDigest(question);
@@ -75,11 +76,12 @@ export async function assessPassages(
   const started = performance.now();
   // Bound added interactive latency; untouched candidates retain their ranking.
   // The full corpus remains available to the Agent's autonomous search tools.
-  for (const [index, hit] of hits.slice(0, 12).entries()) {
+  for (const [index, hit] of hits.entries()) {
     if (performance.now() - started > 8_000) break;
     // A load-driven model switch may be cold even though the previous model was
     // ready. Let it finish in the background without stalling this user turn.
     let timer: ReturnType<typeof setTimeout> | undefined;
+    options.onInput?.(hit);
     const result = await Promise.race([
       service.decide(stateFor(hit), passageQuestions),
       new Promise<null>((resolve) => {
@@ -160,11 +162,7 @@ export async function assessPassages(
       "retrieval.passage_decision",
     );
   }
-  if (!advisoryOnly) kept.sort((a, b) => {
-    const priority = (r: DecisionResult | null) =>
-      r ? passagePolicy(r).priority : 0.5;
-    return priority(b.result) - priority(a.result) || a.index - b.index;
-  });
+  const ordered = advisoryOnly ? kept : evaluatedOrder(kept,a=>a.result ? passagePolicy(a.result).priority : undefined);
   // If every assessed item would disappear, abstain rather than asserting that
   // the library has no answer. The writer still sees ordinary untrusted sources.
   logger.info(
@@ -183,7 +181,7 @@ export async function assessPassages(
   return {
     hits: kept.length
       ? [
-          ...kept.map((a) =>
+          ...ordered.map((a) =>
             a.result
               ? {
                   ...a.hit,
