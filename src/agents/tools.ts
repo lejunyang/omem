@@ -247,8 +247,9 @@ def({
   }),
   handler: async (ctx, a) => {
     const sp = spacesFor(ctx, a.space ?? "*");
-    let mems = a.query
-      ? (await search(ctx.app, a.query, { spaces: sp, types: ["memory"], limit: 20, includeHistory: a.include_history })).map((h) => getMemory(ctx.app, h.id))
+    const query = a.query?.replace(/[*?%\s]+/g, " ").trim();
+    let mems = query
+      ? (await search(ctx.app, query, { spaces: sp, types: ["memory"], limit: 20, includeHistory: a.include_history })).map((h) => getMemory(ctx.app, h.id))
       : listMemories(ctx.app, { spaceId: sp?.length === 1 ? sp[0] : undefined, status: a.include_history ? "all" : "active", subject: a.subject, limit: 50 });
     if (a.subject) mems = mems.filter((m) => m.subject.includes(a.subject!));
     if (!mems.length) return "没有相关记忆。";
