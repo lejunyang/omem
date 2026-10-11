@@ -47,7 +47,8 @@ it("does not count paraphrase duplication as independent route corroboration", (
   const original=[make("A",0),make("B",1)];
   const one=mergeQueryRecall([original,[make("B",0)]]);
   const repeated=mergeQueryRecall([original,[make("B",0)],[make("B",0)]]);
-  expect(repeated).toEqual(one);
+  expect(repeated.map(({recallRanks, ...h})=>h)).toEqual(one.map(({recallRanks, ...h})=>h));
+  expect(repeated.find(h=>h.unit.id==="B")!.recallRanks).toEqual({"0:bm25":1,"1:bm25":0,"2:bm25":0});
   expect(repeated[0]!.score).toBe(repeated[1]!.score);
   expect(recallQueries("中文问题",[" 中文问题 ","ＡＢＣ","abc","", "x".repeat(401),"four", "five", "six"]))
     .toEqual(["中文问题","ＡＢＣ","four","five"]);

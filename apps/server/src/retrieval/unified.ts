@@ -19,6 +19,7 @@ import { CodeNavigation } from "./code-navigation.js";
 import { scoringPassages } from "./rerank-passages.js";
 import { candidatePool } from "./candidate-pool.js";
 import { recallQueries, mergeQueryRecall } from "./recall-queries.js";
+import { evaluatedOrder } from "./evaluated-order.js";
 import {
   RetrievalProjection,
   decodeUnit,
@@ -36,6 +37,7 @@ type ScoredUnit = {
   excerpt?: string;
   matchedRanges?: { start: number; end: number }[];
   routeRanks?: Record<string, number>;
+  recallRanks?: Record<string, number>;
   codeMatches?: RetrievalHit["codeMatches"];
   reranking?: RetrievalHit["reranking"];
   rankingStatus?: RetrievalHit["rankingStatus"];
@@ -59,12 +61,13 @@ export type RetrievalTrace = {
     | "reranker"
     | "selection"
     | "decision"
+    | "decision-input"
     | "host-ranking"
     | "diversification"
     | "final";
   hits: RetrievalHit[];
   /** Lightweight, eligible candidates before a cutoff; no copied source bodies. */
-  candidates?: { id: string; score: number; weightedScore?: number; routeRanks?: Record<string,number>; target: RetrievalHit["target"]; references: RetrievalHit["references"] }[];
+  candidates?: { id: string; score: number; weightedScore?: number; routeRanks?: Record<string,number>; recallRanks?: Record<string,number>; target: RetrievalHit["target"]; references: RetrievalHit["references"] }[];
   cutoff?: { limit?: number; floor?: number; considered?: number; stoppedByUpperBound?: boolean };
   model?: string;
   error?: string;
@@ -101,6 +104,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     private rank?: (
       query: SearchQuery,
       hits: RetrievalHit[],
+      onInput?: (hit: RetrievalHit) => void,
     ) => Promise<RetrievalHit[]>,
     private readonly rankingOptions: { budgetMs?: number } = {},
   ) {
@@ -669,7 +673,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
   }
   private observeCandidates(observer: RetrievalObserver | undefined, stage: RetrievalTrace["stage"], hits: ScoredUnit[], cutoff?: RetrievalTrace["cutoff"], weight?: (hit: ScoredUnit) => number) {
     if (!observer) return;
-    observer({stage,hits:[],cutoff,candidates:structuredClone(hits.map(h=>({id:h.unit.id,score:h.score,...(weight?{weightedScore:weight(h)}:{}),routeRanks:h.routeRanks,target:h.unit.target,references:h.unit.references})))});
+    observer({stage,hits:[],cutoff,candidates:structuredClone(hits.map(h=>({id:h.unit.id,score:h.score,...(weight?{weightedScore:weight(h)}:{}),routeRanks:h.routeRanks,recallRanks:h.recallRanks,target:h.unit.target,references:h.unit.references})))});
   }
   private observe(
     observer: RetrievalObserver | undefined,
@@ -925,12 +929,11 @@ export class UnifiedRetrieval extends KeywordRetrieval {
             break scoring;
           }
         }
-        const max = Math.max(...hits.map(h => h.score), 1e-6);
         hits = hits.map(h => {
           const winner = scored.get(h.unit.id);
           return winner === undefined
-            ? { ...h, score: h.score / max * 0.3, rankingStatus: { state: "unscored" as const, reason: reason ?? "failed", model: model.id } }
-            : { ...h, score: winner.score * 0.7 + h.score / max * 0.3,
+            ? { ...h, rankingStatus: { state: "unscored" as const, reason: reason ?? "failed", model: model.id } }
+            : { ...h,
                 excerpt: winner.text, matchedRanges: [{start:winner.start,end:winner.end}],
                 rankingStatus: { state: "scored" as const, model: model.id, evaluatedWindows:evaluated.get(h.unit.id),plannedWindows:planned.get(h.unit.id)?.length,
                   ...(evaluated.get(h.unit.id)!<planned.get(h.unit.id)!.length ? {reason:reason ?? "failed"} : {}) },
@@ -959,20 +962,15 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     if (!this.rank || !q.text.trim() || exactLookup(q.text)) return finish();
     // Score a pool before spending the requested reading slots. Do not allow a
     // model to see hidden/out-of-scope units or force a cold model load here.
-    const leading = this.finish([...hits],{...q,diversify:false,limit:6});
-    const leadingIds=new Set(leading.map(h=>h.id));
-    const coverage = candidatePool(
-      hits.filter(h=>!leadingIds.has(h.unit.id)).map((h) => ({ ...h, id: h.unit.id, owner: h.unit.owner })), 6);
-    const inspected=[...leading,...coverage.flatMap(h=>this.finish([h],{...q,diversify:false,limit:1}))];
-    const inspectedIds=new Set(inspected.map(h=>h.id));
-    const pool = [...inspected,...this.finish(hits.filter(h=>!inspectedIds.has(h.unit.id)), {
-      ...q,
-      diversify: false,
-      limit: Math.max(q.limit ?? 20, 40)-inspected.length,
-    })];
-    observer?.({ stage: "selection", hits: structuredClone(pool) });
+    const fallback = this.finish([...hits], {...q,diversify:false,limit:hits.length});
+    const admission = candidatePool(hits.map(h=>({...h,id:h.unit.id,owner:h.unit.owner})),hits.length);
+    // A cheaper model ranks expensive model work when available. Otherwise
+    // visit recall frontiers without imposing a second head-only cutoff.
+    const pool = hits.some(h=>h.reranking) ? fallback :
+      this.finish(admission,{...q,diversify:false,limit:hits.length},undefined,true);
+    observer?.({ stage: "selection", hits: structuredClone(pool),cutoff:{considered:hits.length} });
     try {
-      const ranked = await this.rank(q, pool);
+      const ranked = await this.rank(q, pool, hit => observer?.({stage:"decision-input",hits:structuredClone([hit])}));
       if (ranked === pool) return finish();
       observer?.({ stage: "decision", hits: structuredClone(ranked) });
       if (ranked.some((h) => h.assessment?.advisoryOnly)) {
@@ -990,23 +988,14 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         sections = new Set<string>(),
         seen = new Set<string>();
       const allowed = new Map(pool.map((h) => [h.id, h]));
-      const poolIds = new Set(pool.map((h) => h.id));
-      const selected = [
-        ...ranked
-          .filter((h) => allowed.has(h.id))
-          .map((h) => ({
-            ...allowed.get(h.id)!,
-            assessment: h.assessment,
-            ...(h.assessment
-              ? { routes: [...allowed.get(h.id)!.routes, "decision"] }
-              : {}),
-          })),
-        ...this.finish(hits, {
-          ...q,
-          diversify: false,
-          limit: hits.length,
-        }).filter((h) => !poolIds.has(h.id)),
-      ]
+      const decisions = new Map(ranked.filter(h=>allowed.has(h.id)).map(h=>[h.id,h.assessment]));
+      const retained = fallback.filter(h=>decisions.has(h.id)).map(h=>({
+        ...h, assessment:decisions.get(h.id),
+        ...(decisions.get(h.id)?{routes:[...h.routes,"decision"]}:{})
+      }));
+      const ordered = ranked.some(h=>h.assessment) ? evaluatedOrder(retained,h=>h.assessment?.priority) :
+        ranked.filter(h=>allowed.has(h.id)).map(h=>allowed.get(h.id)!);
+      const selected = ordered
         .filter((hit) => {
           if (q.diversify === false) return true;
           const owner =
@@ -1036,7 +1025,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       return finish();
     }
   }
-  private finish(hits: ScoredUnit[], q: SearchQuery, observer?: RetrievalObserver): RetrievalHit[] {
+  private finish(hits: ScoredUnit[], q: SearchQuery, observer?: RetrievalObserver, preserveOrder = false): RetrievalHit[] {
     const articles = new Map<string, KnowledgeArtifact>();
     const preference = (u: RetrievalUnit) => {
       switch (q.purpose) {
@@ -1086,10 +1075,11 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       seen = new Set<string>(),
       output: RetrievalHit[] = [];
     const terms = queryTerms(q.text);
-    const ordered = hits.sort(
-      (a, b) => b.score * priority(b.unit) - a.score * priority(a.unit),
+    const ordered = preserveOrder ? [...hits] : evaluatedOrder(
+      [...hits].sort((a,b)=>b.score*priority(b.unit)-a.score*priority(a.unit)),
+      h=>h.reranking?.relevance,
     );
-    this.observeCandidates(observer, "host-ranking", ordered, undefined, h=>h.score*priority(h.unit));
+    this.observeCandidates(observer, "host-ranking", ordered, undefined, h=>h.reranking?.relevance ?? h.score*priority(h.unit));
     if (q.codeIntent === "callers" && q.diversify !== false) {
       // Show the breadth of entry points before more sites in the same file.
       // Unlike a per-owner cap, this does not discard the remaining call sites.
@@ -1173,7 +1163,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
               })),
             }
           : {}),
-        score: h.score * priority(u),
+        score: h.reranking?.relevance ?? h.score * priority(u),
         routes: [...h.routes, "purpose:" + (q.purpose ?? "balanced")],
         ...(h.reranking ? { reranking: h.reranking } : {}),
         ...(h.rankingStatus ? { rankingStatus: h.rankingStatus } : {}),

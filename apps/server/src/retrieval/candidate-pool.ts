@@ -1,55 +1,45 @@
-/** Bound model work after covering recall routes and original owners. This is
+/** Bound model work after covering query/route frontiers. This is
  * admission, not relevance scoring; candidates outside the pool stay available. */
 export function candidatePool<
   T extends {
     id: string;
-    owner: string;
     score: number;
     routes: string[];
     routeRanks?: Record<string, number>;
+    recallRanks?: Record<string, number>;
   },
 >(hits: T[], limit: number): T[] {
   const ordered = [...hits].sort((a, b) => b.score - a.score);
-  const routes = [...new Set(ordered.flatMap((h) => h.routes))];
+  const ranks = new Map(ordered.map((h,index)=>[h.id,h.recallRanks ?? h.routeRanks ?? Object.fromEntries(h.routes.map(r=>[r,index]))]));
+  const routes = [...new Set(ordered.flatMap((h) => Object.keys(ranks.get(h.id)!)))];
   const queues = routes.map((route) =>
     ordered
-      .filter((h) => h.routes.includes(route))
+      .filter((h) => route in ranks.get(h.id)!)
       .sort(
         (a, b) =>
-          (a.routeRanks?.[route] ?? Infinity) -
-            (b.routeRanks?.[route] ?? Infinity) || b.score - a.score,
+          (ranks.get(a.id)![route] ?? Infinity) -
+            (ranks.get(b.id)![route] ?? Infinity) || b.score - a.score,
       ),
   );
-  const result: T[] = [],
-    seen = new Set<string>(),
-    owners = new Map<string, number>();
+  const result: T[] = [], seen = new Set<string>();
   const add = (hit: T) => {
     if (result.length < limit && !seen.has(hit.id)) {
       result.push(hit);
       seen.add(hit.id);
-      owners.set(hit.owner, (owners.get(hit.owner) ?? 0) + 1);
     }
   };
-  // Preserve explicit operation lookup admission before ordinary route coverage.
-  for (const hit of ordered.filter((h) => h.routes.includes("code-symbol")))
-    add(hit);
-  for (const coverOwners of [true, false]) {
-    const pending = queues.map((queue) => queue.filter((h) => !seen.has(h.id)));
-    while (result.length < limit) {
-      let changed = false;
-      for (const queue of pending) {
-        const index = queue.findIndex(
-          (h) =>
-            !seen.has(h.id) && (!coverOwners || (owners.get(h.owner) ?? 0) < 2),
-        );
-        if (index < 0) continue;
-        const [hit] = queue.splice(index, 1);
-        add(hit!);
-        changed = true;
-        if (result.length === limit) break;
-      }
-      if (!changed) break;
+  // Named operations share the frontier budget; one route cannot exhaust it.
+  const offsets = queues.map(()=>0);
+  while (result.length < limit) {
+    let changed = false;
+    for (const [index, queue] of queues.entries()) {
+      while (queue[offsets[index]!] && seen.has(queue[offsets[index]!]!.id)) offsets[index]!++;
+      const hit=queue[offsets[index]!];
+      if (!hit) continue;
+      offsets[index]!++; add(hit); changed=true;
+      if (result.length === limit) break;
     }
+    if (!changed) break;
   }
   return result;
 }
