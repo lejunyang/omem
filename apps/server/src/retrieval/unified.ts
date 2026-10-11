@@ -21,6 +21,8 @@ import { candidatePool } from "./candidate-pool.js";
 import { recallQueries, mergeQueryRecall } from "./recall-queries.js";
 import { evaluatedOrder, promotedOrder } from "./evaluated-order.js";
 import { readParentContext } from "./reading-context.js";
+import { readingExcerpt } from "./reading-excerpt.js";
+import { stableDigest } from "../storage/digest.js";
 import {
   RetrievalProjection,
   decodeUnit,
@@ -995,19 +997,49 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       hits: structuredClone(pool),
       cutoff: { considered: hits.length },
     });
+    const supplements = new Map<string, RetrievalHit>();
+    const includeSupplement = (hit: RetrievalHit): RetrievalHit => {
+      const expanded = supplements.get(hit.id);
+      const input = hit.assessment?.input;
+      // Return only the original bytes the host offered and the model actually
+      // reread. A model-supplied range/body cannot widen visible material.
+      if (
+        !expanded || hit.assessment?.contextRead !== "expanded" || !input ||
+        input.digest !== stableDigest(expanded.text) ||
+        JSON.stringify(input.target) !== JSON.stringify(expanded.target) ||
+        expanded.target.kind !== "source"
+      ) return hit;
+      const line = hit.matchedRanges?.[0]?.startLine ??
+        (hit.target.kind === "source" ? hit.target.startLine : expanded.target.startLine);
+      const anchor = expanded.text.split("\n")
+        .slice(0, Math.max(0, line - expanded.target.startLine)).join("\n").length;
+      const reading = readingExcerpt(expanded.text, anchor);
+      return { ...hit, text: reading.text, target: expanded.target,
+        references: expanded.references, headingPath: expanded.headingPath,
+        readingRange: {
+          complete: reading.complete,
+          startLine: expanded.target.startLine + expanded.text.slice(0, reading.start).split("\n").length - 1,
+          endLine: expanded.target.startLine + expanded.text.slice(0, Math.max(reading.start, reading.end - 1)).split("\n").length - 1,
+        },
+      };
+    };
     try {
       const ranked = await this.rank(
         q,
         pool,
         (hit) =>
           observer?.({ stage: "decision-input", hits: structuredClone([hit]) }),
-        (hit) => readParentContext(this.database, hit, q),
+        (hit) => {
+          const expanded = readParentContext(this.database, hit, q);
+          if (expanded) supplements.set(hit.id, expanded);
+          return expanded;
+        },
       );
       if (ranked === pool) return finish();
       observer?.({ stage: "decision", hits: structuredClone(ranked) });
       if (ranked.some((h) => h.assessment?.advisoryOnly)) {
         const assessments = new Map(ranked.map((h) => [h.id, h.assessment]));
-        const selected = finish(false).map((h) => ({
+        const selected = finish(false).map((h) => includeSupplement({
           ...h,
           ...(assessments.get(h.id)
             ? { assessment: assessments.get(h.id) }
@@ -1027,7 +1059,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       );
       const retained = fallback
         .filter((h) => decisions.has(h.id))
-        .map((h) => ({
+        .map((h) => includeSupplement({
           ...h,
           assessment: decisions.get(h.id),
           ...(decisions.get(h.id) ? { routes: [...h.routes, "decision"] } : {}),
@@ -1157,7 +1189,10 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       if (section) sections.add(section);
       owners.set(u.owner, (owners.get(u.owner) ?? 0) + 1);
       seen.add(fingerprint);
-      const text = (
+      const reading = u.target.kind === "source"
+        ? readingExcerpt(u.text, h.matchedRanges?.[0]?.start ?? Math.max(0, u.text.indexOf(h.excerpt ?? "")))
+        : undefined;
+      const text = reading?.text ?? (
         u.kind === "knowledge" && u.text.length <= 1200
           ? u.text
           : (h.excerpt ?? bestSnippet(u.text, terms, 800))
@@ -1190,6 +1225,13 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         text,
         context: u.context,
         headingPath: u.headingPath,
+        ...(reading && u.target.kind === "source" ? {
+          readingRange: {
+            complete: reading.complete,
+            startLine: u.target.startLine + u.text.slice(0, reading.start).split("\n").length - 1,
+            endLine: u.target.startLine + u.text.slice(0, Math.max(reading.start, reading.end - 1)).split("\n").length - 1,
+          },
+        } : {}),
         ...(u.target.kind === "source" && h.matchedRanges?.length
           ? {
               matchedRanges: h.matchedRanges.map((r) => ({
@@ -1292,6 +1334,8 @@ export class UnifiedRetrieval extends KeywordRetrieval {
               sourceRevisionId: r.revisionId,
               score: h.score,
               snippet: h.text,
+              sourceTarget: r,
+              readingRange: h.readingRange,
               routes: h.routes,
               provenance: h.provenance,
             },

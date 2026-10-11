@@ -51,6 +51,13 @@ export type RetrievalHit = {
   text: string;
   context: string;
   headingPath: string[];
+  /** Actual returned source text, separate from the matched/scored window and
+   * the full structural target. Partial reads remain explicit and fixed. */
+  readingRange?: {
+    complete: boolean;
+    startLine: number;
+    endLine: number;
+  };
   /** Fixed original line ranges that actually matched body/concept vectors.
    * The full structural target remains available for contextual reading. */
   matchedRanges?: { startLine: number; endLine: number }[];
@@ -181,6 +188,9 @@ export type SourceCandidate = {
   id: string;
   score: number;
   snippet: string;
+  /** Structured reading may span several storage fragments. */
+  sourceTarget?: SourceAnchor;
+  readingRange?: RetrievalHit["readingRange"];
   sourceRevisionId: string;
   fragmentId: string;
   provenance: ProvenanceRef;

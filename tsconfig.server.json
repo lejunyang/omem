@@ -26,6 +26,7 @@
     "scripts/retrieval-index.ts",
     "scripts/live-retrieval-smoke.ts",
     "scripts/benchmark-mtrag.ts",
+    "scripts/benchmark-cosqa.ts",
     "scripts/benchmark-t2.ts",
     "scripts/benchmark-freshstack.ts",
     "scripts/review-guides.ts",

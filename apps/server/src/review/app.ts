@@ -377,6 +377,8 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       id: hit.fragmentId,
       score: hit.score,
       snippet: hit.snippet,
+      sourceTarget: hit.sourceTarget,
+      readingRange: hit.readingRange,
       routes: hit.routes,
     }));
   };

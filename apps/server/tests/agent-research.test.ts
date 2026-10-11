@@ -303,6 +303,7 @@ it("lets a research agent request caller candidates and read their fixed enclosi
     const matches = JSON.parse((match.content as {text:string}[])[0]!.text).hits;
     const matched = matches.find((h:{matchedRanges?:unknown[]})=>h.matchedRanges?.length);
     expect(matched.matchedRanges).toContainEqual({startLine:2,endLine:2});
+    expect(matched.readingRange).toEqual({complete:true,startLine:2,endLine:2});
     const original = await client.callTool({name:"read_material",arguments:{key:matched.key,...matched.matchedRanges[0]}});
     expect(JSON.stringify(original)).toContain("export function checkout() { return reserveParcel(); }");
     const expanded = await client.callTool({name:"search_materials",arguments:{query:"怎样完成这次结账？",variants:["shipping checkout"],keys:["originals/shipping.ts"]}});
