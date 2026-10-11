@@ -7,6 +7,42 @@ import {Store} from "../src/store.js";
 import {KnowledgeRepository} from "../src/knowledge/repository.js";
 import {buildResearchSnapshot} from "../src/knowledge/snapshot-build.js";
 
+it("coalesces overlapping identical builds into independent files, with independent cancellation",async()=>{
+  const root=mkdtempSync(join(tmpdir(),"omem-coalesced-snapshot-")),store=new Store(join(root,"data"));
+  try{
+    store.capture({source:"manual",externalId:"fixed",title:"原件",parts:[{type:"text",text:"原件保持120元。"}]});
+    const repo=new KnowledgeRepository(store),materials=repo.materials(),controller=new AbortController();
+    const a=join(root,"a.sqlite"),b=join(root,"b.sqlite"),c=join(root,"c.sqlite");
+    const first=buildResearchSnapshot({repository:repo,materials,articles:[],file:a});
+    const second=buildResearchSnapshot({repository:repo,materials,articles:[],file:b});
+    const canceled=buildResearchSnapshot({repository:repo,materials,articles:[],file:c,signal:controller.signal});
+    const rejected=expect(canceled).rejects.toThrow("reader canceled");
+    controller.abort(Error("reader canceled"));
+    const [one,two]=await Promise.all([first,second]);await rejected;
+    expect(one.buildId).toBe(two.buildId);expect(one.coalesced).toBe(false);expect(two.coalesced).toBe(true);
+    expect(readFileSync(a)).toEqual(readFileSync(b));expect(existsSync(c)).toBe(false);
+    rmSync(a);expect(existsSync(b)).toBe(true);
+    const later=await buildResearchSnapshot({repository:repo,materials,articles:[],file:join(root,"later.sqlite")});
+    expect(later.buildId).not.toBe(one.buildId);expect(later.coalesced).toBe(false);
+  }finally{store.close();rmSync(root,{recursive:true,force:true});}
+});
+
+it("separates visibility scopes and source database generations",async()=>{
+  const root=mkdtempSync(join(tmpdir(),"omem-snapshot-scope-")),store=new Store(join(root,"data"));
+  try{
+    const original=store.capture({source:"manual",externalId:"fixed",title:"原件",parts:[{type:"text",text:"限定范围的原文。"}]});
+    const repo=new KnowledgeRepository(store),materials=repo.materials();
+    const first=buildResearchSnapshot({repository:repo,materials,articles:[],file:join(root,"first.sqlite"),visible:()=>false});
+    const second=buildResearchSnapshot({repository:repo,materials,articles:[],file:join(root,"second.sqlite"),visible:id=>original.revision.fragments.some(f=>f.id===id)});
+    store.capture({source:"manual",externalId:"another",title:"新状态",parts:[{type:"text",text:"此后捕获的状态。"}]});
+    const third=buildResearchSnapshot({repository:repo,materials,articles:[],file:join(root,"third.sqlite"),visible:()=>false});
+    const results=await Promise.all([first,second,third]);
+    expect(new Set(results.map(r=>r.buildId)).size).toBe(3);
+    const db=new DatabaseSync(join(root,"first.sqlite"),{readOnly:true});
+    try{expect(db.prepare("SELECT count(*) n FROM fragments").get()!.n).toBe(0);}finally{db.close();}
+  }finally{store.close();rmSync(root,{recursive:true,force:true});}
+});
+
 it("builds scoped evidence off the event loop and leaves the canonical library unchanged",async()=>{
   const root=mkdtempSync(join(tmpdir(),"omem-background-snapshot-")),store=new Store(join(root,"data"));
   try {

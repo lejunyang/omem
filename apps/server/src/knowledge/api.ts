@@ -1,4 +1,5 @@
 import { relevance, bestSnippet } from "../retrieval/relevance.js";
+import { requestSignal } from "../request-signal.js";
 import type { RetrievalConfig } from "../retrieval/factory.js";
 import type { RetrievalPort } from "../retrieval/port.js";
 import { retrievalPurposes } from "../retrieval/port.js";
@@ -585,6 +586,7 @@ export function registerKnowledgeRoutes(
         // real texts, then filter by the current plans rather than stale categories.
         const hits = await retrieval.search({
           text,
+          signal:requestSignal(req,reply),
           limit: topic.length ? 150 : 50,
           kinds: ["knowledge"],
           purpose: purpose as (typeof retrievalPurposes)[number],
@@ -622,6 +624,7 @@ export function registerKnowledgeRoutes(
       );
       const query = {
         text,
+        signal:requestSignal(req,reply),
         limit: 60,
         ...(topic.length
           ? { visible: (id: string) => scopedFragments.has(id) }

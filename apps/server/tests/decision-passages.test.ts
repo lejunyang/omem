@@ -1,4 +1,4 @@
-import { it, expect } from "vitest";
+import { it, expect, vi } from "vitest";
 import { assessPassages, passagePolicy } from "../src/decision/passages.js";
 import type {
   DecisionService,
@@ -39,6 +39,22 @@ const result = (change: Record<string, Record<string, number>> = {}) =>
       }).map(([k, probabilities]) => [k, { probabilities }]),
     ),
   }) as unknown as DecisionResult;
+it("waits for cold and slow decisions without either hidden timeout, and keeps cancellation",async()=>{
+  vi.useFakeTimers();
+  const controller=new AbortController(),inputs:string[]=[];
+  const service={status:()=>({status:"idle"}),decide:async(state:{material:string},_questions:unknown,options:{timeoutMs:number;signal:AbortSignal})=>{
+    expect(options.timeoutMs).toBe(0);expect(options.signal).toBe(controller.signal);
+    inputs.push(state.material);await new Promise(resolve=>setTimeout(resolve,130_000));
+    return result({relevance:{answer:0.99},evidence:{statement:0.99}});
+  }} as unknown as DecisionService;
+  try{
+    const task=assessPassages(service,"问题",[hit("a"),hit("b")],{budgetMs:0,signal:controller.signal});
+    await vi.advanceTimersByTimeAsync(260_001);
+    const out=await task;expect(inputs).toEqual(["a","b"]);expect(out.decisions).toHaveLength(2);
+    controller.abort(Error("cancelled"));
+    await expect(assessPassages(service,"问题",[hit("c")],{budgetMs:0,signal:controller.signal})).rejects.toThrow("cancelled");
+  }finally{vi.useRealTimers();}
+});
 it("omits clearly irrelevant passages but keeps contradictory evidence and missing conditions", () => {
   expect(passagePolicy(result()).omit).toBe(true);
   expect(passagePolicy(result({ premise: { contradicts: 0.98 } })).omit).toBe(

@@ -71,7 +71,7 @@ const codeFile = (m: KnowledgeMaterial) =>
 export type ResearchSnapshot = {
   /** Host workflow identity; not a content digest or ACP session ID. */
   identity?: string;
-  buildTiming?: {queueWaitMs:number;stages:Record<string,number>};
+  buildTiming?: {queueWaitMs:number;stages:Record<string,number>;buildId?:string;coalesced?:boolean};
   file: string;
   materials: KnowledgeMaterial[];
   articles: KnowledgeArticle[];
@@ -128,6 +128,8 @@ export async function prepareAgentResearch(input: ResearchInput): Promise<Native
 }
 async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promise<NativeResearchEnvironment> {
   const { workspace, repository } = input;
+  const controller=new AbortController();
+  const researchSignal=input.signal?AbortSignal.any([input.signal,controller.signal]):controller.signal;
   const started = performance.now();
   let stageStarted = started;
   const stages: Record<string, number> = {};
@@ -143,6 +145,7 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
   const close = async () => {
     if (closed) return;
     closed = true;
+    controller.abort(new Error("Research session ended"));
     try {
       httpHandle?.closeAllConnections();
       if (httpHandle?.listening)
@@ -773,6 +776,7 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
           };
           const queryInput = {
             text: query,
+            signal: researchSignal,
             queryVariants: variants,
             limit,
             diversify: false,
@@ -857,6 +861,7 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
             kinds?: ("source" | "knowledge" | "memory" | "task")[];
           }, i: number) => retrieval.search({
             text: q.query, purpose: q.purpose, kinds: q.kinds,
+            signal: researchSignal,
             codeIntent: q.codeIntent, materialRoles: q.materialRoles, effectiveAt: q.effectiveAt,
             limit: 50, diversify: false,
             visible: id => {
@@ -933,6 +938,7 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
           }
           const hits = await retrieval.search({
             text: query,
+            signal: researchSignal,
             limit,
             diversify: false,
             purpose,
@@ -1033,6 +1039,7 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
           const selected = selection({groupIds});
           return retrieval.search({
             text: query,
+            signal: researchSignal,
             limit,
             purpose,
             kinds: ["memory"],

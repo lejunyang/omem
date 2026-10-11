@@ -1,3 +1,4 @@
+import {requestSignal} from "../request-signal.js";
 import {
   restoreReviewKnowledge,
   saveReviewAnswerMaterials,
@@ -350,7 +351,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
   // The same evidence retrieval as the personal assistant; filters run before top-N.
   const reviewSearch = async (
     q: string,
-    opts: { category?: string; includeRemoved?: boolean },
+    opts: { category?: string; includeRemoved?: boolean; signal?:AbortSignal },
   ) => {
     const eligible = store.db
       .prepare(
@@ -368,7 +369,7 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
         opts.category ?? null,
       ) as Row[];
     const byId = new Map(eligible.map((row) => [String(row.id), row]));
-    const query = { text: q, limit: 20, visible: (id: string) => byId.has(id) };
+    const query = { text: q, limit: 20, visible: (id: string) => byId.has(id),signal:opts.signal };
     const hits = retrieval.searchSourcesAsync
       ? await retrieval.searchSourcesAsync(query)
       : retrieval.searchSources(query);
@@ -385,12 +386,13 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
 
   app.get<{
     Querystring: { q?: string; category?: string; includeRemoved?: string };
-  }>(P + "/search", async (req) => {
+  }>(P + "/search", async (req,reply) => {
     const q = (req.query.q ?? "").trim();
     if (!q) return [];
     return reviewSearch(q, {
       category: req.query.category,
       includeRemoved: req.query.includeRemoved === "true",
+      signal: requestSignal(req,reply),
     });
   });
 

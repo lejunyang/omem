@@ -890,7 +890,8 @@ export class UnifiedRetrieval extends KeywordRetrieval {
           });
         const model = await this.rankingLoad;
         q.signal?.throwIfAborted();
-        const deadline = performance.now() + (this.rankingOptions.budgetMs ?? 20_000);
+        const budgetMs = this.rankingOptions.budgetMs ?? 20_000;
+        const deadline = budgetMs === 0 ? undefined : performance.now() + budgetMs;
         const pool = candidatePool(hits.map(h => ({ ...h, id: h.unit.id, owner: h.unit.owner })), hits.length);
         const scored = new Map<string, { score: number; text: string; start: number; end: number }>();
         const planned = new Map<string, {h:ScoredUnit;input:string;text:string;start:number;end:number}[]>();
@@ -901,7 +902,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         // Budget/cancellation still retain every previously completed score.
         scoring: for (let round=0;round<rounds;round++) for (let offset = 0; offset < pool.length; offset += 8) {
           q.signal?.throwIfAborted();
-          if (performance.now() >= deadline) { reason = "budget"; break scoring; }
+          if (deadline !== undefined && performance.now() >= deadline) { reason = "budget"; break scoring; }
           const batch = pool.slice(offset, offset + 8);
           try {
             const passages = batch.flatMap(h => {

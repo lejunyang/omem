@@ -1,4 +1,4 @@
-/** Code Knowledge sync: walks the repo, parses TS/Vue files deterministically,
+/** Code Knowledge sync: parses captured TS/Vue originals deterministically,
  * and projects them onto the isolated review SQLite side tables. It does NOT
  * capture file bodies 鈥?that is review/sync.ts's job. Code rows are a projection
  * over already-captured fragments; fragment_id is filled by locating the head
@@ -23,6 +23,7 @@ import type {
 import {
   PARSER_VERSION,
   codeRepositoryId,
+  currentSnapshotId,
   ensureCodeTables,
   fileById,
   fileIdFor,
@@ -154,6 +155,8 @@ export async function runCodeSync(
   store: Store,
   repoRoot: string,
 ): Promise<CodeKnowledgeSyncResult> {
+  const started = performance.now();
+  let parsedFiles = 0, cacheHits = 0, parseMs = 0;
   ensureCodeTables(store);
   ensureReviewMetaTable(store);
 
@@ -175,28 +178,40 @@ export async function runCodeSync(
     LEFT JOIN review_source_meta m ON m.source_id=s.id
     WHERE s.namespace='file' AND s.external_id LIKE 'omem:%'
       AND COALESCE(m.removed,0)=0 ORDER BY s.external_id`).all() as { id: string; external_id: string }[];
-  type FileRec = { path: string; text: string; hash: string; size: number; parsed: ParsedFile };
-  const files: FileRec[] = [];
-  for (const row of captured) {
-    const path = row.external_id.slice(EXTERNAL_ID_PREFIX.length);
-    if (!/^(apps|packages|scripts)\//.test(path) || !/\.(ts|tsx|vue|mjs|js|json|toml|md)$/.test(path)) continue;
+  // Read each captured original once. Determine fixed identity before parsing;
+  // an already-current projection needs neither AST parsing nor graph rewriting.
+  const sources = captured.map(row => {
     const text = revisionText(store, row.id);
-    if (text === null || !text.trim()) continue;
-    files.push({ path, text, hash: sha256(text), size: Buffer.byteLength(text), parsed: parseFile(path, text) });
-  }
-  const knownPaths = new Set(files.map(f => f.path));
-
-  // Include captured identity: a reverted file gets a new head revision after
-  // its prior raw version was removed. Old snapshot links must stay unavailable.
+    return { ...row, text, hash: sha256(text ?? "") };
+  });
   const status = await git(["status", "--porcelain"], repoRoot);
   const dirty = !!status && status.length > 0;
-  const snapId = snapshotIdFor(
-    repoId,
-    commit,
-    dirty,
-    captured.map(row => `${row.external_id}:${row.id}:${sha256(revisionText(store, row.id) ?? "")}`),
-  );
+  const snapId = snapshotIdFor(repoId, commit, dirty,
+    sources.map(row => `${row.external_id}:${row.id}:${row.hash}`));
   const existing = getSnapshot(store, snapId);
+  const projectionReused = !!existing && currentSnapshotId(store) === snapId;
+  const cached = store.db.prepare("SELECT parsed_json,output_hash FROM code_parse_cache WHERE path=? AND content_hash=? AND parser_version=?");
+  type FileRec = { path: string; text: string; hash: string; size: number; parsed?: ParsedFile };
+  const files: FileRec[] = [];
+  for (const row of sources) {
+    const path = row.external_id.slice(EXTERNAL_ID_PREFIX.length);
+    if (!/^(apps|packages|scripts)\//.test(path) || !/\.(ts|tsx|vue|mjs|js|json|toml|md)$/.test(path)) continue;
+    if (row.text === null || !row.text.trim()) continue;
+    let parsed: ParsedFile | undefined;
+    if (!projectionReused) {
+      const cache = cached.get(path, row.hash, PARSER_VERSION);
+      if (cache && sha256(String(cache.parsed_json)) === cache.output_hash) {
+        try { parsed = JSON.parse(String(cache.parsed_json)); cacheHits++; } catch { /* rebuild damaged cache */ }
+      }
+      if (!parsed) {
+        const before = performance.now();
+        parsed = parseFile(path, row.text); parseMs += performance.now() - before; parsedFiles++;
+      }
+    }
+    files.push({path, text:row.text, hash:row.hash, size:Buffer.byteLength(row.text), parsed});
+  }
+  const readMs = performance.now() - started - parseMs;
+  const knownPaths = new Set(files.map(f => f.path));
 
   insertSnapshot(store, {
     snapshotId: snapId,
@@ -210,30 +225,33 @@ export async function runCodeSync(
     partial: false,
   });
 
-  // Both a brand-new snapshot AND a reused one (tree returned to an earlier
-  // state) must reconcile head/files/edges/understandings. Rows are upserted
-  // idempotently; the snapshot row and its capturedAt stay immutable.
+  // Returning to an older snapshot reconciles the current graph and bindings.
+  // An already-current projection keeps its graph. Snapshot identity and its
+  // capturedAt stay immutable in both cases.
   const reused = !!existing;
   const pathToFileId = new Map<string, string>();
   for (const f of files) pathToFileId.set(f.path, fileIdFor(repoId, f.path));
 
   const liveSeeds = new Set<string>();
 
-  store.tx(() => {
-    for (const row of captured) {
+  const projectionStarted = performance.now();
+  if (!projectionReused) store.tx(() => {
+    for (const row of sources) {
       const path = row.external_id.slice(EXTERNAL_ID_PREFIX.length);
-      const text = revisionText(store, row.id);
-      if (text === null) continue;
-      store.db.prepare("INSERT OR IGNORE INTO code_snapshot_sources VALUES(?,?,?,?)").run(snapId, path, row.id, sha256(text));
+      if (row.text === null) continue;
+      store.db.prepare("INSERT OR IGNORE INTO code_snapshot_sources VALUES(?,?,?,?)").run(snapId, path, row.id, row.hash);
     }
     for (const f of files) {
+      const parsed = f.parsed!;
+      const json = JSON.stringify(parsed);
+      store.db.prepare("INSERT OR REPLACE INTO code_parse_cache VALUES(?,?,?,?,?)").run(f.path,f.hash,PARSER_VERSION,json,sha256(json));
       const fileId = fileIdFor(repoId, f.path);
       const bf = bindFile(store, f.path);
       upsertFile(store, {
         fileId,
         repoId,
         path: f.path,
-        language: f.parsed.language,
+        language: parsed.language,
         sizeBytes: f.size,
         contentHash: f.hash,
         headSnapshotId: snapId,
@@ -251,7 +269,7 @@ export async function runCodeSync(
 
       // 1) Symbols.
       const localQNames = new Map<string, string>();
-      for (const sym of f.parsed.symbols) {
+      for (const sym of parsed.symbols) {
         const sid = symbolIdFor(repoId, f.path, sym.qualifiedName, sym.kind);
         const declLine = f.text.split("\n")[sym.rangeStart.line - 1] ?? null;
         upsertSymbol(store, {
@@ -272,7 +290,7 @@ export async function runCodeSync(
       }
 
       // defines edges.
-      for (const sym of f.parsed.symbols) {
+      for (const sym of parsed.symbols) {
         const toSym = symbolIdFor(repoId, f.path, sym.qualifiedName, sym.kind);
         const seed = `defines|${f.path}|${sym.qualifiedName}|${sym.kind}`;
         liveSeeds.add(seed);
@@ -291,7 +309,7 @@ export async function runCodeSync(
       }
 
       // 2) Imports.
-      for (const imp of f.parsed.imports) {
+      for (const imp of parsed.imports) {
         const target = resolveImport(f.path, imp.specifier, knownPaths);
         const toFile = target ? pathToFileId.get(target) ?? null : null;
         const seed = `imports|${f.path}|${imp.specifier}`;
@@ -311,7 +329,7 @@ export async function runCodeSync(
       }
 
       // 3) Calls.
-      for (const call of f.parsed.calls) {
+      for (const call of parsed.calls) {
         const fromSym = localQNames.get(call.callerQName);
         const toSym = localQNames.get(call.callee);
         if (!toSym) continue;
@@ -332,7 +350,7 @@ export async function runCodeSync(
       }
 
       // 4) Routes.
-      for (const route of f.parsed.routes) {
+      for (const route of parsed.routes) {
         const qname = `${route.method} ${route.path}`;
         const rid = symbolIdFor(repoId, f.path, qname, "route");
         upsertSymbol(store, {
@@ -365,7 +383,7 @@ export async function runCodeSync(
       }
 
       // 5) Tests.
-      for (const t of f.parsed.tests) {
+      for (const t of parsed.tests) {
         const qname = `test:${t.name}`;
         const tid = symbolIdFor(repoId, f.path, qname, "test");
         upsertSymbol(store, {
@@ -398,9 +416,9 @@ export async function runCodeSync(
       }
 
       // 6) Vue components.
-      if (f.parsed.componentName) {
-        const compSym = symbolIdFor(repoId, f.path, f.parsed.componentName, "component");
-        for (const used of f.parsed.templateComponents) {
+      if (parsed.componentName) {
+        const compSym = symbolIdFor(repoId, f.path, parsed.componentName, "component");
+        for (const used of parsed.templateComponents) {
           const seed = `uses_component|${f.path}|${used}`;
           liveSeeds.add(seed);
           upsertEdge(store, {
@@ -425,9 +443,9 @@ export async function runCodeSync(
         snapshotId: snapId,
         inputHash: f.hash,
         outputJson: JSON.stringify({
-          language: f.parsed.language,
-          symbolCount: f.parsed.symbols.length,
-          importCount: f.parsed.imports.length,
+          language: parsed.language,
+          symbolCount: parsed.symbols.length,
+          importCount: parsed.imports.length,
         }),
         unknowns: ["call resolution is name-level within one file, no cross-file types"],
         evidenceRefs: [],
@@ -456,7 +474,8 @@ export async function runCodeSync(
     }
   });
 
-  const stale = invalidateStaleEdges(store, liveSeeds, snapId);
+  store.db.exec("DELETE FROM code_parse_cache WHERE path NOT IN (SELECT path FROM code_files WHERE removed=0)");
+  const stale = projectionReused ? 0 : invalidateStaleEdges(store, liveSeeds, snapId);
 
   // Invalidate understandings for files that are no longer on disk.
   store.db
@@ -470,6 +489,8 @@ export async function runCodeSync(
   setCurrentSnapshot(store, repoId, snapId);
 
   store.db.prepare("UPDATE code_understandings SET stale=1 WHERE source='model-generated' AND snapshot_id<>?").run(snapId);
+  const projectionMs = performance.now() - projectionStarted;
+  const restoreStarted = performance.now();
   projectCuratedSeeds(store, repoRoot, snapId);
   const restored = restoreGeneratedUnderstandings(store, repoRoot);
   for (const row of restored) if (row.status !== "restored") console.warn(`Wiki ${row.status}: ${row.file}: ${row.reason}`);
@@ -485,5 +506,7 @@ export async function runCodeSync(
     ),
     staleEdgeCount: stale,
     reused,
+    analysis: {parsedFiles,cacheHits,skippedFiles:projectionReused ? files.length : 0,projectionReused},
+    timingsMs: {read:readMs,parse:parseMs,projection:projectionMs,restore:performance.now()-restoreStarted,total:performance.now()-started},
   };
 }

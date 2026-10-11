@@ -20,7 +20,10 @@ import type { ChoiceQuestion } from "./questions.js";
 import { getLogger, errorSummary } from "../logging/logger.js";
 const exec = promisify(execFile);
 export const decisionConfigSchema = z
-  .object({ mode: z.enum(["off", "auto", ...decisionModelSizes]).default("auto") })
+  .object({
+    mode: z.enum(["off", "auto", ...decisionModelSizes]).default("auto"),
+    timeoutMs: z.number().int().nonnegative().max(2_147_483_647).optional(),
+  })
   .strict();
 export type DecisionConfig = z.input<typeof decisionConfigSchema>;
 const answerSchema = z.object({
@@ -43,6 +46,7 @@ export const resultSchema = z.object({
   cached: z.boolean().optional(),
 });
 export type DecisionResult = z.infer<typeof resultSchema>;
+type RequestOptions = { signal?: AbortSignal; timeoutMs?: number };
 
 /** Optional sidecar shared by reading and intake. No writes and no implicit setup.
  * Failure leaves the existing workflow usable. Requests are serialized so two
@@ -66,6 +70,7 @@ export class DecisionService {
   async decide(
     state: unknown,
     questions: Record<string, ChoiceQuestion>,
+    options: RequestOptions = {},
   ): Promise<DecisionResult | null> {
     if (this.stopped || this.config.mode === "off") return null;
     const key = createHash("sha256")
@@ -73,13 +78,14 @@ export class DecisionService {
       .digest("hex");
     const logger = getLogger({ component: "decision" });
     const run = this.queue.then(async () => {
+      options.signal?.throwIfAborted();
       if (this.stopped) return null;
       clearTimeout(this.idle);
       try {
-        await this.start();
+        await this.start(options);
         this.state.status = "running";
         const raw = await this.next(() =>
-          this.child!.stdin.write(JSON.stringify({ state, questions }) + "\n"),
+          this.child!.stdin.write(JSON.stringify({ state, questions }) + "\n"), options,
         );
         if ((raw as { error?: string }).error)
           throw Error((raw as { error: string }).error);
@@ -116,6 +122,7 @@ export class DecisionService {
         );
         return result;
       } catch (error) {
+        options.signal?.throwIfAborted();
         const repeat =
           this.state.lastError ===
           (error instanceof Error ? error.message : String(error));
@@ -147,28 +154,35 @@ export class DecisionService {
     this.queue = run.catch(() => undefined);
     return run;
   }
-  private next(write?: () => void) {
+  private next(write?: () => void, options: RequestOptions = {}) {
+    options.signal?.throwIfAborted();
     return new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.stopWorker();
-        reject(Error("决策模型超时，已释放运行进程"));
-      }, 120_000);
+      const timeoutMs = options.timeoutMs ?? this.config.timeoutMs ?? 120_000;
+      const timer = timeoutMs === 0 ? undefined : setTimeout(() => {
+        this.stopWorker(Error("决策模型超时，已释放运行进程"));
+      }, timeoutMs);
+      const abort = () => this.stopWorker();
+      const clean = () => {
+        clearTimeout(timer);
+        options.signal?.removeEventListener("abort", abort);
+        this.pending = undefined;
+      };
       this.pending = {
         resolve: (v) => {
-          clearTimeout(timer);
-          this.pending = undefined;
+          clean();
           resolve(v);
         },
         reject: (e) => {
-          clearTimeout(timer);
-          this.pending = undefined;
+          clean();
           reject(e);
         },
       };
+      options.signal?.addEventListener("abort", abort, { once: true });
+      if (options.signal?.aborted) { abort(); return; }
       write?.();
     });
   }
-  private async start() {
+  private async start(options: RequestOptions) {
     if (this.child) return;
     const runtime = optionalRuntime("decision");
     const python = pythonInVenv(runtime);
@@ -183,6 +197,7 @@ export class DecisionService {
     const mode = this.config.mode ?? "auto";
     if (mode === "off") return;
     for (const size of mode === "auto" ? automaticDecisionSizes : [mode]) {
+      options.signal?.throwIfAborted();
       try {
         const alias = decisionModelAlias(size);
         const { stdout } = await exec(
@@ -222,7 +237,7 @@ export class DecisionService {
     child.stderr.on("data", (data) => {
       stderr = (stderr + data).slice(-1500);
     });
-    const ready = this.next();
+    const ready = this.next(undefined, options);
     createInterface({ input: child.stdout }).on("line", (line) => {
       try {
         this.pending?.resolve(JSON.parse(line));
@@ -247,10 +262,10 @@ export class DecisionService {
       throw error;
     }
   }
-  private stopWorker() {
+  private stopWorker(error = Error("决策进程已释放")) {
     const child = this.child;
     this.child = undefined;
-    this.pending?.reject(Error("决策进程已释放"));
+    this.pending?.reject(error);
     child?.kill("SIGKILL");
   }
   async close() {

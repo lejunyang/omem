@@ -73,6 +73,7 @@ export async function assessPassages(
     onInput?: (hit: RetrievalHit) => void;
     readContext?: (hit: RetrievalHit) => RetrievalHit | undefined;
     budgetMs?: number;
+    signal?: AbortSignal;
   } = {},
 ) {
   const logger = getLogger({ component: "retrieval" });
@@ -84,9 +85,12 @@ export async function assessPassages(
     contextRead?: "expanded" | "unavailable" | "budget";
   }[] = [];
   const stateFor = (hit: RetrievalHit) => passageState(question, hit);
+  const budgetMs = options.budgetMs ?? 8_000;
+  const unlimited = budgetMs === 0;
+  options.signal?.throwIfAborted();
   // Cold loading must not add tens of seconds before the regular Agent can work.
   // Warm one real request in the background; the next turn can reuse residency.
-  if (service.status().status !== "ready") {
+  if (!unlimited && service.status().status !== "ready") {
     if (hits[0] && service.status().status === "idle")
       void service.decide(stateFor(hits[0]), passageQuestions);
     logger.info(
@@ -104,26 +108,29 @@ export async function assessPassages(
   const started = performance.now();
   // Bound added interactive latency; untouched candidates retain their ranking.
   // The full corpus remains available to the Agent's autonomous search tools.
-  const budgetMs = options.budgetMs ?? 8_000;
   const decide = async (hit: RetrievalHit) => {
     // A load-driven model switch may be cold even though the previous model was
     // ready. Let it finish in the background without stalling this user turn.
     let timer: ReturnType<typeof setTimeout> | undefined;
+    options.signal?.throwIfAborted();
     options.onInput?.(hit);
-    const result = await Promise.race([
-      service.decide(stateFor(hit), passageQuestions),
+    const request = service.decide(stateFor(hit), passageQuestions, {
+      ...(unlimited ? { timeoutMs: 0 } : {}), signal: options.signal,
+    });
+    if (unlimited) return request;
+    try { return await Promise.race([
+      request,
       new Promise<null>((resolve) => {
         timer = setTimeout(
           () => resolve(null),
           Math.max(1, budgetMs - (performance.now() - started)),
         );
       }),
-    ]);
-    clearTimeout(timer);
-    return result;
+    ]); } finally { clearTimeout(timer); }
   };
   for (const [index, original] of hits.entries()) {
-    if (performance.now() - started > budgetMs) break;
+    options.signal?.throwIfAborted();
+    if (!unlimited && performance.now() - started > budgetMs) break;
     let hit = original,
       result = await decide(hit);
     let contextRead: "expanded" | "unavailable" | "budget" | undefined;
@@ -132,7 +139,7 @@ export async function assessPassages(
       passagePolicy(result).judgment === "needs_context" &&
       options.readContext
     ) {
-      if (performance.now() - started >= budgetMs) contextRead = "budget";
+      if (!unlimited && performance.now() - started >= budgetMs) contextRead = "budget";
       else {
         const expanded = options.readContext(hit);
         if (!expanded || expanded.text === hit.text)

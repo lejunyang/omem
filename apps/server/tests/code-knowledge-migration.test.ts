@@ -20,6 +20,13 @@ afterEach(() => {
 });
 
 describe("code side-table migration preserves history", () => {
+  it("rechecks schema after a rolled-back first initialization",()=>{
+    const store=setup();
+    expect(()=>store.tx(()=>{ensureCodeTables(store);throw Error("rollback");})).toThrow("rollback");
+    expect(store.db.prepare("SELECT name FROM sqlite_schema WHERE name='code_symbols'").get()).toBeUndefined();
+    ensureCodeTables(store);
+    expect(store.db.prepare("SELECT name FROM sqlite_schema WHERE name='code_symbols'").get()).toEqual({name:"code_symbols"});
+  });
   it("copies old single-PK symbols/edges into composite schema without dropping rows", () => {
     const store = setup();
     // Simulate a pre-migration database: old-shape tables keyed by id alone.

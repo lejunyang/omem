@@ -3,6 +3,7 @@ import {
   registerRequirementTasks,
 } from "./knowledge/requirement-tasks.js";
 import { agentIdleTimeout } from "./agent-timeout.js";
+import { requestSignal } from "./request-signal.js";
 import { assetPath } from "./paths.js";
 import { PersonalLarkService } from "./integrations/lark-personal/service.js";
 import { registerPersonalLark } from "./integrations/lark-personal/api.js";
@@ -950,6 +951,7 @@ export async function buildApp(
       return reply.code(400).send({ error: "材料筛选条件无效" });
     const query = {
       text: (req.query.q || "").slice(0, 300),
+      signal: requestSignal(req,reply),
       limit: 30,
       purpose: purpose.data,
       codeIntent: codeIntent.data,

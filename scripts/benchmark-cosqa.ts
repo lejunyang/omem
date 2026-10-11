@@ -46,7 +46,13 @@ const integer = (name: string, fallback: string, min: number, max: number) => {
 };
 const offset = integer("offset", "50", 0, 499),
   count = integer("count", "50", 1, 500);
-const budgetMs = integer("budget-ms", "6000", 1, 120000);
+const budgetMs = integer("budget-ms", "0", 0, Number.MAX_SAFE_INTEGER);
+const budgetsMs = option("budgets-ms", "")
+  ? option("budgets-ms", "").split(",").map(Number)
+  : [budgetMs];
+if (!budgetsMs.length || new Set(budgetsMs).size !== budgetsMs.length ||
+    budgetsMs.some(n => !Number.isSafeInteger(n) || n < 0)) throw Error("Invalid budgets-ms");
+const armName = (alias: string, budget: number) => budgetsMs.length === 1 ? alias : `${alias}@${budget}`;
 const aliases = option("models", "relevance-zh").split(",").filter(Boolean);
 if (
   !aliases.length ||
@@ -55,6 +61,8 @@ if (
 )
   throw Error("Unsupported/duplicate installed model alias");
 const baselineRef = option("baseline", "");
+if (baselineRef && (budgetsMs.length > 1 || budgetsMs.includes(0)))
+  throw Error("Old return projection replay requires one positive budget; use current arms for unlimited comparison");
 mkdirSync(directory, { recursive: true });
 const hash = (text: string | Buffer) =>
   createHash("sha256").update(text).digest("hex");
@@ -146,7 +154,7 @@ if (
   throw Error("Registered public questions changed; choose another directory");
 writeFileSync(registrationPath, JSON.stringify(registration, null, 2) + "\n");
 const identity = hash(
-  JSON.stringify({ manifest, cases, budgetMs, aliases, baselineCommit }) +
+  JSON.stringify({ manifest, cases, budgetsMs, aliases, baselineCommit }) +
     [
       "apps/server/src/retrieval/unified.ts",
       "apps/server/src/retrieval/rerank-passages.ts",
@@ -177,9 +185,11 @@ const failures: { model: string; error: string }[] = [];
 const modelIds: Record<string, string> = {};
 let stopped = false,
   complete = false;
+const controller = new AbortController();
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.on(signal, () => {
     stopped = true;
+    controller.abort(new Error("Benchmark cancelled"));
   });
 const corpus = (await readRows("corpus")) as {
   _id: string;
@@ -205,6 +215,8 @@ function evaluate(
     traces.filter((t) => t.stage === "reranker-input").flatMap((t) => t.hits),
   );
   const models = traces.find((t) => t.stage === "reranker")?.hits ?? [];
+  const fullInput = documentIds(models.filter(h => h.rankingStatus?.state === "scored" &&
+    h.rankingStatus.evaluatedWindows === h.rankingStatus.plannedWindows));
   const byDocument = new Map<string, number>();
   for (const h of models)
     if (h.reranking)
@@ -221,6 +233,7 @@ function evaluate(
   return {
     recalled,
     input,
+    fullInput,
     modelOrder,
     hostOrder: documentIds(host),
     ranked: documentIds(hits),
@@ -228,6 +241,9 @@ function evaluate(
     scoredWindows: traces
       .filter((t) => t.stage === "reranker-input")
       .reduce((n, t) => n + t.hits.length, 0),
+    plannedWindows: models.reduce((n,h) => n + (h.rankingStatus?.plannedWindows ?? 0),0),
+    scoredUnits: models.filter(h=>h.rankingStatus?.state === "scored").length,
+    candidateUnits: models.length,
     relevantScores: relevant.map((id) => ({ id, score: byDocument.get(id) })),
     results: hits
       .filter(
@@ -266,6 +282,8 @@ function save() {
           questions: measured.length,
           recall: mean((r) => coverage(r, r.arms[arm]!.recalled)),
           input: mean((r) => coverage(r, r.arms[arm]!.input)),
+          fullInput: mean((r) => coverage(r, r.arms[arm]!.fullInput)),
+          meanElapsedMs: mean((r) => r.arms[arm]!.elapsedMs),
           recall5: mean((r) => coverage(r, r.arms[arm]!.ranked.slice(0, 5))),
           recall20: mean((r) => coverage(r, r.arms[arm]!.ranked.slice(0, 20))),
           recall100: mean((r) =>
@@ -289,6 +307,7 @@ function save() {
     corpusSize: corpus.length,
     units: store.db.prepare("SELECT count(*) n FROM retrieval_units").get()!.n,
     budgetMs,
+    budgetsMs,
     modelIds,
     failures,
     metrics,
@@ -353,17 +372,17 @@ try {
       modelIds[alias] = model.id;
       await model.score("python process data", [
         "A function processes the data.",
-      ]);
+      ], {signal:controller.signal});
       for (const [index, c] of rows.entries()) {
-        const definitions =
+        const definitions: [string, typeof UnifiedRetrieval, number][] =
           Baseline && alias === aliases[0]
-            ? ([
-                ["baseline:" + alias, Baseline],
-                [alias, UnifiedRetrieval],
-              ] as const)
-            : ([[alias, UnifiedRetrieval]] as const);
+            ? [
+                ["baseline:" + alias, Baseline, budgetsMs[0]!],
+                [alias, UnifiedRetrieval, budgetsMs[0]!],
+              ]
+            : budgetsMs.map(budget => [armName(alias,budget), UnifiedRetrieval, budget]);
         const ordered = index % 2 ? [...definitions].reverse() : definitions;
-        for (const [arm, Type] of ordered) {
+        for (const [arm, Type, armBudget] of ordered) {
           const traces: RetrievalTrace[] = [];
           const retrieval = new Type(
             store.db,
@@ -371,7 +390,7 @@ try {
             async () => ({ ...model!, close: async () => {} }),
             true,
             undefined,
-            { budgetMs },
+            { budgetMs: armBudget },
           );
           const started = performance.now();
           try {
@@ -381,6 +400,7 @@ try {
                 kinds: ["source"],
                 limit: 200,
                 diversify: false,
+                signal: controller.signal,
               },
               (t) => traces.push(t),
             );
@@ -416,7 +436,7 @@ try {
     !failures.length &&
     rows.every(
       (r) =>
-        aliases.every((a) => r.arms[a]) &&
+        aliases.every((a) => budgetsMs.every(budget=>r.arms[armName(a,budget)])) &&
         (!Baseline || r.arms["baseline:" + aliases[0]]),
     );
   console.log(JSON.stringify({ complete, metrics: save().metrics, failures }));

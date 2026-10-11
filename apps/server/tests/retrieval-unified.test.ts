@@ -1693,6 +1693,25 @@ it("retains completed batches and marks budget-exhausted candidates unscored, an
   } finally { await r.close(); await s.close(); }
 });
 
+it("finishes every planned window with zero budget and passes cancellation through",async()=>{
+  const s=setup(),controller=new AbortController();let cancel=false;
+  const r=new UnifiedRetrieval(s.store.db,undefined,async()=>({
+    id:"unlimited-fixture",close:async()=>{},windows:(_q,text)=>[text,text+" second"],
+    score:async(_q,texts,options)=>{
+      expect(options?.deadline).toBeUndefined();
+      if(cancel){controller.abort(Error("search cancelled"));controller.signal.throwIfAborted();}
+      return texts.map(()=>0.9);
+    },
+  }),false,undefined,{budgetMs:0});
+  try{
+    for(let i=0;i<17;i++)s.store.capture({source:"manual",externalId:`all-${i}`,title:`All ${i}`,parts:[{type:"text",text:`配送问题材料 ${i}`}],context:{}});
+    const hits=await r.search({text:"配送问题",limit:100,diversify:false});
+    expect(hits).toHaveLength(17);
+    expect(hits.every(h=>h.rankingStatus?.evaluatedWindows===2&&h.rankingStatus.plannedWindows===2&&!h.rankingStatus.reason)).toBe(true);
+    cancel=true;await expect(r.search({text:"配送问题",signal:controller.signal})).rejects.toThrow("search cancelled");
+  }finally{await r.close();await s.close();}
+});
+
 it("fits complete Unicode passages to a paired token budget without dropping their tails", () => {
   const text = "中文实现😀".repeat(200)+"真正调用在最后";
   const pairedLength = (text:string) => 12+Array.from(text).length*3;

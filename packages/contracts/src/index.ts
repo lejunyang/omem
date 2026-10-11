@@ -1104,6 +1104,8 @@ export type CodeKnowledgeSyncResult = {
   edgeCount: number;
   staleEdgeCount: number;
   reused: boolean;
+  analysis?: { parsedFiles: number; cacheHits: number; skippedFiles: number; projectionReused: boolean };
+  timingsMs?: { read: number; parse: number; projection: number; restore: number; total: number };
 };
 
 /** Read surface exposed to the review HTTP layer. */
