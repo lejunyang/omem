@@ -203,10 +203,11 @@ export class AcpAssistantModel implements AssistantModelPort {
     const investigation = answerInvestigation({
       workspace,
       signal: input.signal,
-      review: (draft, snapshot, signal, publish, focus) =>
+      review: (draft, snapshot, signal, publish, focus, scope) =>
         reviewAssistantAnswer({
           draft,
           focus,
+          scope,
           snapshot,
           repository: this.deps.repository!,
           profile,

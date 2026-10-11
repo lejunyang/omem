@@ -272,7 +272,8 @@ it("retains failures without an implicit second model call and cancels the owned
 it("keeps prior issues across focused checks and distinguishes mapping from independent clearance",async()=>{
   const workspace=mkdtempSync(join(tmpdir(),"omem-answer-closure-"));
   const cite={id:"cite_1",key:"manual:rule",startLine:1,endLine:1};let calls=0;
-  const investigation=answerInvestigation({workspace,review:async()=>++calls===1?{summary:"缺条件",issues:[{problem:"缺登记条件",whyItMatters:"影响操作",suggestion:"补齐条件",sources:[cite]}]}:{summary:"对应段落未发现问题",issues:[]}});
+  const scopes:unknown[]=[];
+  const investigation=answerInvestigation({workspace,review:async(_draft,_snapshot,_signal,_publish,_focus,scope)=>{scopes.push(scope);return ++calls===1?{summary:"缺条件",issues:[{problem:"缺登记条件",whyItMatters:"影响操作",suggestion:"补齐条件",sources:[cite]}]}:{summary:"对应段落未发现问题",issues:[]};}});
   const start=investigation.tools.find(t=>t.name==="review_answer")!,read=investigation.tools.find(t=>t.name==="read_answer_review")!,snapshot={} as Parameters<typeof start.run>[1];
   try{
     const initial:any=await start.run({draft:{answer:"当天配送",citations:[cite]},focus:["登记条件是什么？"]},snapshot);
@@ -289,6 +290,7 @@ it("keeps prior issues across focused checks and distinguishes mapping from inde
     investigation.beforeSubmit(answer,reply);
     const saved=JSON.parse(readFileSync(join(workspace,"answer-review-resolution.json"),"utf8"));
     expect(saved.resolutions[0]).toMatchObject({status:"no_issue_found",checkedBy:checking.reviewId,start:0,end:answer.length});
+    expect(scopes).toEqual([{mode:"answer"},{mode:"correction",issues:[{issueId,problem:"缺登记条件",whyItMatters:"影响操作"}]}]);
     expect((await read.run({reviewId:initial.reviewId,waitSeconds:0},snapshot) as any).report.issues[0].issueId).toBe(issueId);
   }finally{await investigation.close();rmSync(workspace,{recursive:true,force:true});}
 });
