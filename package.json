@@ -47,6 +47,7 @@
     "highlight.js": "11.12.0",
     "marked": "18.0.14",
     "mermaid": "11.17.2",
+    "playwright": "^1.58.2",
     "vite": "7.3.1",
     "vitest": "3.2.4",
     "vue": "3.5.43",

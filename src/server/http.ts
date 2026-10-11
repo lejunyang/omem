@@ -134,6 +134,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const o = q(z.object({ space: z.string().optional(), kind: z.string().optional(), q: z.string().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
     return listSources(app, { spaceId: o.space, kind: o.kind, q: o.q, limit: o.limit, offset: o.offset });
   });
+  server.get("/api/sources/resolve", async (req) => {
+    const o = q(z.object({ uri: z.string().min(1), space: z.string().optional() }), req.query);
+    const clean = o.uri.replace(/^\.\//, "");
+    const row =
+      one<{ id: string }>(app.db, `select id from sources where uri = ? ${o.space ? "and space_id = ?" : ""} and deleted_at is null order by updated_at desc`, clean, ...(o.space ? [o.space] : [])) ??
+      one<{ id: string }>(app.db, `select id from sources where uri like ? ${o.space ? "and space_id = ?" : ""} and deleted_at is null order by length(uri)`, `%/${clean}`, ...(o.space ? [o.space] : []));
+    if (!row) throw new HttpError(404, `找不到原件 ${o.uri}`);
+    return { id: row.id };
+  });
+  server.get("/api/messages/:id", async (req) => {
+    const m = one<{ id: string; conversation_id: string; role: string; text: string; created_at: string }>(app.db, "select * from messages where id = ?", (req.params as { id: string }).id.replace(/^msg:/, ""));
+    if (!m) throw new HttpError(404, "消息不存在");
+    return { id: m.id, conversationId: m.conversation_id, role: m.role, text: m.text, createdAt: m.created_at };
+  });
   server.get("/api/sources/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     const o = q(z.object({ from: z.coerce.number().optional(), to: z.coerce.number().optional() }), req.query);
