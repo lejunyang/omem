@@ -44,6 +44,14 @@ export async function boot(home?: string, opts: BootOptions = {}) {
       };
       setTimeout(loop, 3000).unref();
     }
+    if (app.config.telegram.enabled) {
+      const { startTelegram } = await import("./channels/telegram.ts");
+      startTelegram(app).catch((e) => console.warn("[omem] Telegram 启动失败：", e.message));
+    }
+    if (app.config.onebot.enabled) {
+      const { startOneBot } = await import("./channels/onebot.ts");
+      startOneBot(app).catch((e) => console.warn("[omem] OneBot 启动失败：", e.message));
+    }
     if (app.config.lark.enabled) {
       const { startLarkBot } = await import("./channels/lark-bot.ts");
       startLarkBot(app).catch((e) => console.warn("[omem] 飞书机器人启动失败：", e.message));

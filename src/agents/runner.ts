@@ -5,6 +5,7 @@ import YAML from "yaml";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile, type RoleName } from "../core/config.ts";
 import { findSpace, spaceDir } from "../core/spaces.ts";
+import { all } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { spaceGuide } from "../wiki/store.ts";
 import { runAcp } from "./acp.ts";
@@ -80,6 +81,22 @@ function localTime(app: App) {
   return `${fmt.format(now)}（时区 ${app.config.timezone}，ISO ${now.toISOString()}）`;
 }
 
+/**
+ * Self-improvement loop: preferences the owner stated and lessons distilled by
+ * the dreamer (experience memories) are handed to every future run.
+ */
+function learnedContext(app: App, spaceId: string) {
+  const rows = all<{ kind: string; subject: string; content: string }>(
+    app.db,
+    `select kind, subject, content from memories where status = 'active' and (
+       (kind = 'preference' and space_id in ('personal', ?)) or (kind = 'experience' and space_id = ?)
+     ) order by kind = 'preference' desc, updated_at desc limit 24`,
+    spaceId,
+    spaceId,
+  );
+  return rows.map((r) => `- ${r.kind === "preference" ? "偏好" : "经验"}${r.subject ? `（${r.subject}）` : ""}：${r.content}`).join("\n");
+}
+
 export type RoleRunInput = {
   role: RoleName;
   spaceId: string;
@@ -110,10 +127,11 @@ export async function runRole(app: App, input: RoleRunInput): Promise<AgentResul
     actor: "agent",
   });
   const guide = spaceGuide(app, space.id).trim();
+  const lessons = learnedContext(app, space.id);
   const prompt = [
     commonGuide(),
     `# 角色：${role.description}\n\n${role.body}`,
-    `# 环境\n\n- 现在：${localTime(app)}\n- 当前空间：${space.id}（${space.name}，${space.kind}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}`,
+    `# 环境\n\n- 现在：${localTime(app)}\n- 当前空间：${space.id}（${space.name}，${space.kind}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}`,
     `# 任务\n\n${input.task}`,
   ].join("\n\n---\n\n");
   const emit = input.onEvent ?? (() => {});

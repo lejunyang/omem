@@ -305,7 +305,6 @@ kbd {
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--muted);
-  text-transform: uppercase;
   margin: 0 0 8px;
 }
 .list {
