@@ -1,0 +1,12 @@
+{
+  "registeredAt": "2026-10-11",
+  "baselineCommit": "1ed1a4a",
+  "scope": "Five new investigation questions, registered before ranking changes or baseline retrieval. Core implementation ranges are entry evidence, not complete answer acceptance. Variants are neutral evaluation inputs authored before retrieval, not model-generated answers. No paths or annotations enter inference.",
+  "cases": [
+    {"query":"后台任务的租约过期后，旧 worker 为什么不能继续把任务标成运行中？", "variants":["expired worker lease running state guard","后台任务 租约失效 状态更新"], "groups":[{"label":"租约与有效期同时检查", "alternatives":[{"path":"apps/server/src/jobs/repository.ts", "needle":"WHERE id=? AND lease_token=? AND state='leased' AND cancel_requested=0"}]}]},
+    {"query":"文章生成过程中原始材料被替换或删除，发布前怎样阻止旧输入覆盖已有文章？", "variants":["knowledge publish source revision changed removed","文章发布 原件变化 保留已有文章"], "groups":[{"label":"发布前固定原件核对", "alternatives":[{"path":"apps/server/src/knowledge/pipeline.ts", "needle":"(head.get(material.sourceId) as {head: string} | undefined)?.head !== material.revisionId"}]}]},
+    {"query":"检索切换嵌入模型以后，怎样避免拿以前模型算的向量和新问题向量比较？", "variants":["embedding model identity stored vectors isolation","检索向量 更换模型 身份隔离"], "groups":[{"label":"按实际模型身份读取向量", "alternatives":[{"path":"apps/server/src/retrieval/unified.ts", "needle":"SELECT unit_id,vector,start_offset,end_offset FROM retrieval_unit_vectors WHERE model_id=?"}]}]},
+    {"query":"把一条记忆恢复到历史版本前，会检查哪些条件，避免覆盖新修改或恢复已经过期的依据？", "variants":["restore memory history version stale dependencies","记忆恢复 历史版本 并发变化 依据过期"], "groups":[{"label":"当前版本核对", "alternatives":[{"path":"apps/server/src/memory/service.ts", "needle":"if (Number(memory.version) !== input.expectedVersion)"}]},{"label":"旧版本依据核对", "alternatives":[{"path":"apps/server/src/memory/service.ts", "needle":"if (dependencies.some((dependency) => dependency.state === \"stale\"))"}]}]},
+    {"query":"注册一个技能后，原来的技能文件被修改，会直接改变后续 Agent 使用的内容吗，版本内容保存在什么地方？", "variants":["registered skill immutable snapshot revision files","技能注册 原文件修改 固定版本"], "groups":[{"label":"内容版本与快照目录", "alternatives":[{"path":"apps/server/src/capabilities/registry.ts", "needle":"const directory = join(this.path(definition.id), \"versions\", revision)"}]}]}
+  ]
+}
