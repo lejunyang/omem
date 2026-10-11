@@ -1,6 +1,21 @@
 # 外部测试集与本轮检索诊断
 
-更新：2026-10-04。目的在于判断设计和上下文是否真的有效，不再用本仓库几个预期路径或模型复核 accepted 代表质量。MTRAG Cloud、FreshStack Godot 和改造后 T2Retrieval 的完整词法检索对照已运行。其他数据集仅调研/抽查格式，尚未得到 omem 分数。
+更新：2026-10-11。当前新增 CosQA 保留题的真实本地重排对照；MTRAG Cloud、FreshStack Godot 和 T2Retrieval 的完整词法结果仍对应 2026-10-04 的实现。它们不是本轮完整 RAG、长期记忆或答案质量分数。不能用本仓库几个预期路径或模型复核 accepted 代表质量。
+
+## 当前：CosQA 50 道新保留题
+
+固定 [CoIR CosQA 数据](https://huggingface.co/datasets/CoIR-Retrieval/cosqa/tree/0846fa3b963a21bead36e9fab61451fc83b777a6)，在完整 20,604 份代码上按 query ID 的 SHA256 顺序选第 51–100 题，先登记再运行，与前两组不重叠。当前实现 edfc45a，BGE base 还交替回放 37c025a 的返回与宿主排序；共享的召回和推理模块使用当前实现，不能当完整旧程序。每题采用暖机后六秒预算，不下载模型。
+
+| 方法 | Recall@5 | Recall@20 | 成功评分输入覆盖 | MRR@10 |
+| --- | ---: | ---: | ---: | ---: |
+| 词法 | 16% | 50% | 不适用 | 0.1297 |
+| BGE base 旧返回投影 | 28% | 50% | 68% | 0.1414 |
+| BGE base 当前返回 | 28% | 50% | 68% | 0.1414 |
+| BGE v2-m3 当前返回 | 26% | 54% | 60% | 0.1765 |
+
+base 的 14 题未召回，2 题召回后因预算未完成评分，9 题已评分但模型内排名超过 20；v2 对应 14 / 6 / 3 题。这组没有模型内前 20 被宿主压到最终前 20 之外的题。v2 前 20 改善四题、退步两题，实际评分窗口中位数 48，base 为 136；更强相关性与较小评分覆盖同时存在。未做显著性检验，不能称为稳定提升或仅由模型大小带来的效果。
+
+新旧返回的 45 个相关结构均与原单元字节一致，这批相关代码较短，不能验证长代码漏条件。没有向量、AST、变体、Decision 或答案生成；部分运行与 Sol 准备并行，也没有做硬件吞吐隔离。普通 HTTP 的长仓库操作回归另列，不能合并计算公开指标。源码复现入口是 osdk run benchmark:cosqa，前提及参数见[依赖和模型](../../skills/omem-cli/references/dependencies.md)。逐题与范围记录在[本轮结果](../../.repo-review/knowledge/verification/reading-evidence.json)。
 
 ## 已运行：MTRAG Cloud
 
