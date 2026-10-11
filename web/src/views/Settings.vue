@@ -155,7 +155,7 @@ function editProfile(p: Profile) {
   <div class="page">
     <div class="page-head"><div><h1>设置</h1><p v-if="home" class="mono small">数据目录：{{ home }}</p></div></div>
     <div class="tabs">
-      <button v-for="[k, l] in [['spaces', '空间'], ['agents', 'Agent'], ['schedules', '定时任务'], ['search', '检索'], ['lark', '飞书'], ['about', '外观与说明']]" :key="k" :class="{ on: tab === k }" @click="tab = k as any">{{ l }}</button>
+      <button v-for="[k, l] in [['spaces', '空间'], ['agents', 'Agent'], ['schedules', '定时任务'], ['search', '检索'], ['lark', '渠道'], ['about', '外观与说明']]" :key="k" :class="{ on: tab === k }" @click="tab = k as any">{{ l }}</button>
     </div>
 
     <section v-if="tab === 'spaces'" class="stack">
@@ -255,6 +255,22 @@ function editProfile(p: Profile) {
         <template v-for="c in larkChats" :key="c.chatId">
           <label v-if="!subOf(c.chatId)" class="row sub"><input type="checkbox" @change="toggleSub(c)" /><span class="grow ellipsis">{{ c.name }}</span><span class="muted small">{{ c.mode === "p2p" ? "单聊" : "群聊" }}</span></label>
         </template>
+      </div>
+
+      <div class="card pad stack">
+        <label class="row"><input type="checkbox" :checked="config.telegram.enabled" @change="saveConfig({ telegram: { ...config.telegram, enabled: ($event.target as HTMLInputElement).checked } })" /><strong>Telegram 机器人</strong></label>
+        <p class="muted small">用 @BotFather 创建机器人，把 token 放在环境变量 <span class="mono">{{ config.telegram.tokenEnv }}</span>。首次给机器人发消息会回复你的 chat id。</p>
+        <label class="field"><span>本人 chat id</span><input class="input mono" :value="config.telegram.ownerChatId ?? ''" @change="saveConfig({ telegram: { ...config.telegram, ownerChatId: ($event.target as HTMLInputElement).value || undefined } })" /></label>
+      </div>
+
+      <div class="card pad stack">
+        <label class="row"><input type="checkbox" :checked="config.onebot.enabled" @change="saveConfig({ onebot: { ...config.onebot, enabled: ($event.target as HTMLInputElement).checked } })" /><strong>QQ / 微信（OneBot v11）</strong></label>
+        <p class="muted small">连接 NapCat、LLOneBot、Lagrange 等 OneBot 实现（正向 WebSocket）。私聊里只有本人能指挥助理；群消息保存为聊天原件并交给助理整理。</p>
+        <div class="grid2">
+          <label class="field"><span>WebSocket 地址</span><input class="input mono" :value="config.onebot.url ?? ''" placeholder="ws://127.0.0.1:3001" @change="saveConfig({ onebot: { ...config.onebot, url: ($event.target as HTMLInputElement).value || undefined } })" /></label>
+          <label class="field"><span>显示名</span><input class="input" :value="config.onebot.name" @change="saveConfig({ onebot: { ...config.onebot, name: ($event.target as HTMLInputElement).value } })" /></label>
+        </div>
+        <label class="field"><span>本人账号（QQ 号 / 微信 id）</span><input class="input mono" :value="config.onebot.ownerUserId ?? ''" @change="saveConfig({ onebot: { ...config.onebot, ownerUserId: ($event.target as HTMLInputElement).value || undefined } })" /></label>
       </div>
     </section>
 

@@ -1,6 +1,6 @@
 import * as lark from "@larksuiteoapi/node-sdk";
-import { ask, scheduleIngest } from "../agents/jobs.ts";
-import { getRun, waitForRun } from "../agents/runs.ts";
+import { scheduleIngest } from "../agents/jobs.ts";
+import { answerFromChannel } from "./common.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { addNotificationSink } from "../core/notify.ts";
@@ -105,10 +105,8 @@ export async function startLarkBot(app: App) {
     if (m.chatType === "p2p") kv(app, "lark_owner_chat", m.chatId);
     const text = m.text.replace(/@_user_\d+/g, "").trim();
     if (!text) return;
-    const { runId } = ask(app, { text, spaceId: cfg.defaultSpace, channel: "lark", externalId: m.chatId });
-    const r = await waitForRun(app, runId);
-    const answer = r.status === "done" ? String((getRun(app, runId).output as { answer?: string }).answer ?? "") : `处理失败：${r.error ?? r.status}`;
-    await send(m.chatId, answer.replace(/\]\(src:[^)]+\)/g, "]").replace(/\]\(mem:[^)]+\)/g, "]"), m.messageId);
+    const answer = await answerFromChannel(app, { channel: "lark", chatId: m.chatId, text, spaceId: cfg.defaultSpace });
+    await send(m.chatId, answer, m.messageId);
   };
 
   const dispatcher = new lark.EventDispatcher({ loggerLevel: lark.LoggerLevel.warn }).register({

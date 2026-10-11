@@ -72,6 +72,26 @@ export const configSchema = z.object({
       defaultSpace: z.string().default("personal"),
     })
     .default({ enabled: false, appSecretEnv: "OMEM_LARK_APP_SECRET", defaultSpace: "personal" }),
+  telegram: z
+    .object({
+      enabled: z.boolean().default(false),
+      tokenEnv: z.string().default("OMEM_TELEGRAM_TOKEN"),
+      ownerChatId: z.string().optional(),
+      defaultSpace: z.string().default("personal"),
+    })
+    .default({ enabled: false, tokenEnv: "OMEM_TELEGRAM_TOKEN", defaultSpace: "personal" }),
+  /** OneBot v11 forward WebSocket: QQ (NapCat / LLOneBot / Lagrange) and compatible WeChat bridges. */
+  onebot: z
+    .object({
+      enabled: z.boolean().default(false),
+      name: z.string().default("QQ"),
+      url: z.string().optional(),
+      tokenEnv: z.string().optional(),
+      ownerUserId: z.string().optional(),
+      defaultSpace: z.string().default("personal"),
+      groupSpaces: z.record(z.string(), z.string()).default({}),
+    })
+    .default({ enabled: false, name: "QQ", defaultSpace: "personal", groupSpaces: {} }),
 });
 export type Config = z.infer<typeof configSchema>;
 
