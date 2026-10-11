@@ -305,6 +305,12 @@ it("lets a research agent request caller candidates and read their fixed enclosi
     expect(matched.matchedRanges).toContainEqual({startLine:2,endLine:2});
     const original = await client.callTool({name:"read_material",arguments:{key:matched.key,...matched.matchedRanges[0]}});
     expect(JSON.stringify(original)).toContain("export function checkout() { return reserveParcel(); }");
+    const expanded = await client.callTool({name:"search_materials",arguments:{query:"怎样完成这次结账？",variants:["shipping checkout"],keys:["originals/shipping.ts"]}});
+    const expandedHits = JSON.parse((expanded.content as {text:string}[])[0]!.text).hits;
+    expect(expandedHits.some((hit:{snippet:string})=>hit.snippet.includes("return reserveParcel()"))).toBe(true);
+    expect(expandedHits.every((hit:{key:string})=>hit.key===body.key)).toBe(true);
+    const overLimit = await client.callTool({name:"search_materials",arguments:{query:"结账",variants:["one","two","three","four"]}});
+    expect(overLimit.isError).toBe(true);
     const unknown = await client.callTool({
       name: "search_materials",
       arguments: { query: "reserveParcel", keys: ["invented:shipping.ts"] },

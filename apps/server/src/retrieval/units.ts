@@ -458,12 +458,14 @@ export class RetrievalProjection {
     for (const _ of this.changes()) {
       /* Native snapshot preparation is synchronous. */
     }
+    refreshLexicalIndex(this.db);
   }
   syncAsync(): Promise<void> {
     if (this.work) return this.work;
     this.work = (async () => {
       for (const _ of this.changes())
         await new Promise<void>((resolve) => setImmediate(resolve));
+      refreshLexicalIndex(this.db);
     })().finally(() => (this.work = null));
     return this.work;
   }
@@ -977,12 +979,40 @@ export class RetrievalProjection {
 }
 
 const segmenter = new Intl.Segmenter("zh", { granularity: "word" });
-/** ICU segmentation makes Chinese searchable with FTS5's standard BM25. */
+export const LEXICAL_VERSION = "icu-identifier-components-v1";
+/** Retain exact spelling and index identifier words alongside it. These are
+ * syntax boundaries, not semantic intent rules or a domain synonym dictionary. */
 export function indexText(text: string) {
   return [...segmenter.segment(text)]
     .filter((s) => s.isWordLike)
-    .map((s) => s.segment.toLowerCase())
+    .flatMap(({segment}) => {
+      const original = segment.toLowerCase();
+      const parts = segment.replace(/([A-Z])([A-Z][a-z])/g, "$1 $2")
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[\s_$.-]+/)
+        .map(word=>word.toLowerCase()).filter(word=>word.length>=2 && word!==original);
+      return [original,...new Set(parts)];
+    })
     .join(" ");
+}
+
+/** Lexical preprocessing has its own identity. Rebuild only FTS rows, preserving
+ * original/unit identities, vector heads and embedding preprocessing versions. */
+export function refreshLexicalIndex(db: DatabaseSync): boolean {
+  if (tableExists(db, "retrieval_lexical_state") &&
+      db.prepare("SELECT version FROM retrieval_lexical_state WHERE id=1").get()?.version === LEXICAL_VERSION) return false;
+  db.exec("SAVEPOINT retrieval_lexical_refresh");
+  try {
+    db.exec("CREATE TABLE IF NOT EXISTS retrieval_lexical_state(id INTEGER PRIMARY KEY CHECK(id=1),version TEXT NOT NULL); DELETE FROM retrieval_units_fts;");
+    const insert=db.prepare("INSERT INTO retrieval_units_fts(id,title,context,body) VALUES(?,?,?,?)");
+    for(const row of db.prepare("SELECT id,title,context,text FROM retrieval_units").iterate())
+      insert.run(String(row.id), indexText(String(row.title)), indexText(String(row.context)), indexText(String(row.text).replace(/\[\[[\w-]+\]\]/g, "")));
+    db.prepare("INSERT OR REPLACE INTO retrieval_lexical_state VALUES(1,?)").run(LEXICAL_VERSION);
+    db.exec("RELEASE retrieval_lexical_refresh");
+    return true;
+  } catch(error) {
+    db.exec("ROLLBACK TO retrieval_lexical_refresh; RELEASE retrieval_lexical_refresh");
+    throw error;
+  }
 }
 export function decodeUnit(row: Row): RetrievalUnit {
   return {

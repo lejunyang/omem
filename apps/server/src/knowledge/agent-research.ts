@@ -722,9 +722,10 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
       );
       tool(
         "search_materials",
-        "Hybrid lexical/Chinese semantic search within this snapshot. matchedRanges gives actual matched original lines: read those first with read_material, then read the enclosing section or operation for prerequisites. For code navigation put the symbol in query and set codeIntent to definition or callers. Callers are name-level AST candidates, not type-resolved links; aliases/dynamic calls may be missing. Empty results mean no match in scope; refine concepts or use native Grep.",
+        "Hybrid lexical/Chinese semantic search within this snapshot. For conceptual questions, supply up to three short query variants focused on distinct aspects: English search terms for implementation code, neutral synonyms or complementary subquestions. Avoid conversational framing and lists of hypothetical implementations; do not guess paths, symbol names or answers. Each variant recalls independently before merging; the original query is always kept and used for final ranking. matchedRanges gives actual matched original lines: read those first with read_material, then read the enclosing section or operation for prerequisites. For code navigation put the symbol in query and set codeIntent to definition or callers. Callers are name-level AST candidates, not type-resolved links; aliases/dynamic calls may be missing. Empty results mean no match in scope; refine concepts or use native Grep.",
         {
           query: z.string(),
+          variants: z.array(z.string().trim().min(1).max(400)).max(3).optional(),
           groupIds: groupIdsOption,
           keys: z
             .array(z.string())
@@ -741,6 +742,7 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
         },
         async ({
           query,
+          variants,
           groupIds,
           keys,
           kind,
@@ -771,6 +773,7 @@ async function prepareResearch(input: ResearchInput, queueWaitMs: number): Promi
           };
           const queryInput = {
             text: query,
+            queryVariants: variants,
             limit,
             diversify: false,
             visible,

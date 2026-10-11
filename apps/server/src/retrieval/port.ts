@@ -120,6 +120,9 @@ export type TimeRange = {
  */
 export type SearchQuery = {
   text: string;
+  /** Up to three Agent-proposed paraphrases/subquestions, <=400 characters each.
+   * Original text remains the question used by reranking and selection. */
+  queryVariants?: string[];
   /** Host cancellation; inference stops between model batches. */
   signal?: AbortSignal;
   scope?: RetrievalScope;
