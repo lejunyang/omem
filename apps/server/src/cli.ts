@@ -474,21 +474,36 @@ program
       ])
       .default("balanced"),
   )
+  .addHelpText("after", "\n检索等待不设固定总时限；评分预算由服务配置决定。Ctrl+C 取消本次请求。")
   .action(async (query, opts) => {
-    const hits = await api(
-      `/api/search?${new URLSearchParams({ q: query, purpose: opts.purpose })}`,
-    );
-    show(
-      hits,
-      hits.length
-        ? hits
-            .map(
-              (h: any, i: number) =>
-                `${i + 1}. ${h.title || h.section?.title || h.id}\n${h.text || h.snippet || ""}\n`,
-            )
-            .join("\n")
-        : "没有找到材料。先导入相关原文，或换一个关键词。",
-    );
+    const controller = new AbortController();
+    const interrupt = () => controller.abort();
+    process.once("SIGINT", interrupt);
+    process.once("SIGTERM", interrupt);
+    try {
+      const hits = await api(
+        `/api/search?${new URLSearchParams({ q: query, purpose: opts.purpose })}`,
+        undefined, "GET", controller.signal, 0,
+      );
+      show(
+        hits,
+        hits.length
+          ? hits
+              .map(
+                (h: any, i: number) =>
+                  `${i + 1}. ${h.title || h.section?.title || h.id}\n${h.text || h.snippet || ""}\n`,
+              )
+              .join("\n")
+          : "没有找到材料。先导入相关原文，或换一个关键词。",
+      );
+    } catch (error) {
+      if (!controller.signal.aborted) throw error;
+      console.error("已取消本次检索请求。");
+      process.exitCode = 130;
+    } finally {
+      process.removeListener("SIGINT", interrupt);
+      process.removeListener("SIGTERM", interrupt);
+    }
   });
 program
   .command("ask <question>")

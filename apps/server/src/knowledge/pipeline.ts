@@ -426,8 +426,12 @@ export class KnowledgePipeline {
     // Concurrency still bounds cost; genuinely supplied context stays tracked.
     const batches = pending.map(material => [material]);
     const failures: { keys: string[]; error: string }[] = [];
+    // One explicit analysis run can write several independent notes from the
+    // same fixed scope. Job/output writes do not require another evidence copy.
+    // Different offered scopes keep separate sessions; nothing survives this run.
+    const snapshots = new Map<string,ResearchSession>();
     let next = 0;
-    await Promise.all(Array.from({ length: Math.min(this.options.concurrency ?? 3, batches.length) }, async () => {
+    try { await Promise.all(Array.from({ length: Math.min(this.options.concurrency ?? 3, batches.length) }, async () => {
       while (next < batches.length && !this.stopping) {
         const targets = batches[next++]!;
         const offers: Offer[] = targets.map(m => ({ material: m, ranges: [{ start: 1, end: m.lineCount }] }));
@@ -442,11 +446,17 @@ export class KnowledgePipeline {
           const eligible=previous && this.currentAnalysisWriter(previous,analystFor(targets[0]!)) && previous.review.trace.bundleHash===verifierHash;
           const refreshed=eligible ? refreshSourceBindings(previous,new Map(offers.map(o=>[o.material.key,o.material]))) : null;
           const feedback=this.previousFeedback(targets,offers) ?? (previous && previous.dependencies.every(d=>d.kind==="material" && offers.some(o=>o.material.key===d.key)) ? {previousDrafts:[previous.document],issues:[],instruction:"旧原件可能已被清除。保持仍适用的正文、案例和结构，依据当前原件修改受影响论断并明确更新引用；旧正文和旧引用不构成当前事实证明。"} : undefined);
-          await this.writeAndVerify(analystFor(targets[0]!),targets.map(m=>({key:m.key,title:m.title})),offers,[],feedback,undefined,refreshed?{...refreshed,previous:previous!}:undefined);
+          const write = () => this.writeAndVerify(analystFor(targets[0]!),targets.map(m=>({key:m.key,title:m.title})),offers,[],feedback,undefined,refreshed?{...refreshed,previous:previous!}:undefined);
+          if (this.nativeResearch && !this.sessions.getStore()) {
+            const scope = stableDigest(offers.map(o=>o.material).sort((a,b)=>a.key.localeCompare(b.key)));
+            let session = snapshots.get(scope);
+            if (!session) { session = new ResearchSession(this.repository); snapshots.set(scope,session); }
+            await this.sessions.run(session,write);
+          } else await write();
         }
         catch (error) { const failure = { keys: targets.map(m => m.key), error: String(error) }; failures.push(failure); this.options.log?.(`FAILED ${failure.keys.join(", ")}: ${failure.error}`); }
       }
-    }));
+    })); } finally { for (const session of snapshots.values()) session.close(); }
     return { total: materials.length, reused: materials.length - pending.length, failures };
   }
 

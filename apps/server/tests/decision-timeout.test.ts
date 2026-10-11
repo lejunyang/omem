@@ -33,5 +33,6 @@ it("cancels an unlimited running worker without waiting for its reply",async()=>
     const rejected=expect(task).rejects.toThrow("stop now");
     await vi.advanceTimersByTimeAsync(1);controller.abort(Error("stop now"));
     await rejected;expect(f.killed()).toBe(1);
+    expect(f.service.status().status).toBe("idle");
   }finally{await f.service.close();vi.clearAllTimers();vi.useRealTimers();}
 });
