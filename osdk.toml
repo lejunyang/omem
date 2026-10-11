@@ -206,8 +206,10 @@ help = "Zero-based offset in positive query ID SHA256 order"
 default = "50"
 help = "Number of registered positive queries, 1–500"
 [tasks."benchmark:cosqa".options.budget-ms]
-default = "6000"
-help = "Warm per-query cross-encoder budget, 1–120000 milliseconds"
+default = "0"
+help = "Warm per-query cross-encoder budget in milliseconds; 0 waits for all windows, cancellation remains active"
+[tasks."benchmark:cosqa".options.budgets-ms]
+help = "Optional comma-separated budgets, e.g. 6000,0; alternates arms on each question with the same resident model"
 [tasks."benchmark:cosqa".options.models]
 default = "relevance-zh"
 help = "Already installed aliases, comma-separated: relevance-zh,relevance-zh-v2"

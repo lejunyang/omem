@@ -89,8 +89,17 @@ function nullableStr(v: unknown): string | null {
   return v == null ? null : String(v);
 }
 
+const initialized = new WeakMap<Store["db"],number>();
 export function ensureCodeTables(store: Store): void {
   const db = store.db;
+  const version = Number(db.prepare("PRAGMA schema_version").get()!.schema_version);
+  if (initialized.get(db) === version) return;
+  // One derived parse per current path. Replacing/removing a source also drops
+  // its old parse; cached syntax never supplies a revision or evidence binding.
+  db.exec(`CREATE TABLE IF NOT EXISTS code_parse_cache(
+    path TEXT PRIMARY KEY, content_hash TEXT NOT NULL, parser_version TEXT NOT NULL,
+    parsed_json TEXT NOT NULL, output_hash TEXT NOT NULL
+  )`);
   db.exec(`CREATE TABLE IF NOT EXISTS code_repositories(
     repo_id TEXT PRIMARY KEY,
     root_path TEXT NOT NULL,
@@ -299,6 +308,7 @@ export function ensureCodeTables(store: Store): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS code_understandings_status_idx ON code_understandings(stale, status)`,
   );
+  initialized.set(db,Number(db.prepare("PRAGMA schema_version").get()!.schema_version));
 }
 
 // ---------------------------------------------------------------------------

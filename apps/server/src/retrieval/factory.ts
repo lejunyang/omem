@@ -15,7 +15,9 @@ export const retrievalConfigSchema = z
       .string()
       .regex(/^[a-zA-Z0-9_-]+$/)
       .default("memory-zh"),
-    rerankBudgetMs: z.number().int().min(1).max(120_000).optional(),
+    // Zero explicitly waits for all scoring work; positive values bound latency.
+    rerankBudgetMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    decisionBudgetMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     reranker: z
       .string()
       .regex(/^[a-zA-Z0-9_-]+$/)
@@ -45,6 +47,8 @@ export function createRetrieval(
       ? async (query, hits, onInput, readContext) =>
           (
             await assessPassages(decisions, query.text, hits, {
+              budgetMs: config?.decisionBudgetMs,
+              signal: query.signal,
               onInput,
               readContext,
               sourceIdFor: (hit) => {
