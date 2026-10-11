@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-11T06:05:13.414Z",
-  "implementationCommit": "a4640bacc59d99e6f40f2f0428e575e0837ed8b8",
-  "sourceDigest": "8564b4045f1eb80f77405ec654267da10c3f82d4a379543cf6a33e92e7fc6459",
+  "recordedAt": "2026-10-11T11:57:17.385Z",
+  "implementationCommit": "ed9caffe235cb5ef37fccd3c44f9bb5b3f773117",
+  "sourceDigest": "899efc776849bb386950f4e24e655858d577d4df6be3e1f6b0fd351e6e232830",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-11T06-05-13-414Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-11T11-57-17-385Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-11T06-05-13-414Z/project.log",
-        "sha256": "d82558b54a574113692a15aadb7985e57edbde616d18b3fe20dfa14ef03b5938"
+        "log": ".repo-review/runtime/verification/2026-10-11T11-57-17-385Z/project.log",
+        "sha256": "d3192a4f496648e22568bf8936ba9d86849cea6f8ac71968192b160a720cff7a"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-11T06-05-13-414Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-11T11-57-17-385Z/liveChineseRetrieval.log",
         "sha256": "660562c5bc9996e0c643cc27389dca13bbf013e49793ef048911cd4abf345e6d"
       }
     },
@@ -64,16 +64,16 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v8",
-        "units": 19076,
+        "units": 19402,
         "semantic": {
           "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 19076,
+          "indexed": 19402,
           "pending": 0,
           "error": null,
           "concepts": {
             "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3:range-concepts-v1",
-            "indexed": 1628,
+            "indexed": 1540,
             "pending": 0,
             "error": null
           }
@@ -101,7 +101,7 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 899,
+    "materials": 907,
     "publishedPages": 0,
     "currentPages": 0,
     "plannedPages": 0,
@@ -110,7 +110,7 @@
     "errors": [],
     "pages": [],
     "restore": {
-      "restored": 43
+      "restored": 50
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -134,7 +134,7 @@
         "passed": true,
         "firstExpectedRank": 5,
         "uniquePathsAt5": 5,
-        "elapsedMs": 3322,
+        "elapsedMs": 2208,
         "top5": [
           {
             "path": "apps/server/src/retrieval/keyword.ts",
@@ -144,7 +144,7 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "const eligible = (row: Row) => {\n      const time = Date.parse(String(row.revision_created_at));\n      if (query.timeRange?.from && time < Date.parse(query.time"
+            "snippet": "    const eligible = (row: Row) => {\n      const time = Date.parse(String(row.revision_created_at));\n      if (query.timeRange?.from && time < Date.parse(query."
           },
           {
             "path": "config/retrieval.json",
@@ -154,7 +154,7 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "\"enabled\": true,\n  \"osdkModel\": \"memory-zh\""
+            "snippet": "{\n  \"enabled\": true,\n  \"osdkModel\": \"memory-zh\"\n}"
           },
           {
             "path": "apps/server/src/knowledge/research-snapshot.ts",
@@ -164,7 +164,7 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "const timed = (stage: string) => {\n    const finished = performance.now();\n    input.onTiming?.(stage, finished - stageStarted);\n    stageStarted = finished;\n  "
+            "snippet": "  const timed = (stage: string) => {\n    const finished = performance.now();\n    input.onTiming?.(stage, finished - stageStarted);\n    stageStarted = finished;\n"
           },
           {
             "path": "docs/reader-first/component-integration.md",
@@ -182,7 +182,7 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "private async index(limit: number) {\n    const model = await this.ready();\n    const fragments = this.database.prepare(`SELECT ${COLUMNS} ${CURRENT} AND NOT EXI"
+            "snippet": "  private async index(limit: number) {\n    const model = await this.ready();\n    const fragments = this.database.prepare(`SELECT ${COLUMNS} ${CURRENT} AND NOT E"
           }
         ]
       },
@@ -205,7 +205,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 1055,
+        "elapsedMs": 1078,
         "top5": [
           {
             "path": "apps/server/src/retrieval/embedding.ts",
@@ -215,7 +215,7 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "const { env, pipeline } = await import(\"@huggingface/transformers\");\n  env.allowRemoteModels = false;\n  env.useFSCache = false;\n  const extractor = await pipeli"
+            "snippet": "/** osdk owns downloads. The application verifies and reads one immutable snapshot. */\nexport async function loadChineseEmbedding(alias = \"memory-zh\", cwd = pro"
           },
           {
             "path": "apps/server/src/retrieval/reranker.ts",
@@ -225,7 +225,7 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "const { AutoTokenizer, AutoModelForSequenceClassification, env } =\n    await import(\"@huggingface/transformers\");\n  env.allowRemoteModels = false;\n  env.useFSCa"
+            "snippet": "export async function loadChineseReranker(\n  alias = \"relevance-zh\",\n  cwd = process.cwd(),\n): Promise<RerankerModel> {\n  if (!developmentCheckout) cwd = modelW"
           },
           {
             "path": "docs/reader-first/operations.md",
@@ -276,7 +276,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 836,
+        "elapsedMs": 1359,
         "top5": [
           {
             "path": "docs/reader-first/assistant-memory-flow.md",
@@ -312,7 +312,7 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "private async verify(job: JobLease, signal: AbortSignal) {\n    try {\n      if (job.roleVersion !== \"verifier@1\")\n        throw Error(`LEARNING_ROLE_VERSION_UNSU"
+            "snippet": "  private async verify(job: JobLease, signal: AbortSignal) {\n    try {\n      if (job.roleVersion !== \"verifier@1\")\n        throw Error(`LEARNING_ROLE_VERSION_UN"
           },
           {
             "path": "apps/server/src/knowledge/snapshot-worker.ts",
@@ -321,7 +321,7 @@
               "semantic-concept",
               "purpose:balanced"
             ],
-            "snippet": "} catch (error) {\n  parentPort!.postMessage({error:String(error)});\n} finally {\n  original.close();\n}"
+            "snippet": "  db.close();\n  parentPort!.postMessage({stages});\n} catch (error) {\n  parentPort!.postMessage({error:String(error)});\n} finally {\n  original.close();\n}\n"
           }
         ]
       },
@@ -342,7 +342,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 448,
+        "elapsedMs": 397,
         "top5": [
           {
             "path": "apps/server/src/knowledge/pipeline.ts",
@@ -375,7 +375,7 @@
               "bm25",
               "purpose:balanced"
             ],
-            "snippet": "const resumed = new KnowledgePipeline(f.repository, f.pipeline.gateway, f.pipeline.profile, {concurrency:1,nativeResearch:false});"
+            "snippet": "  const resumed = new KnowledgePipeline(f.repository, f.pipeline.gateway, f.pipeline.profile, {concurrency:1,nativeResearch:false});"
           },
           {
             "path": "apps/server/src/knowledge/page-worker.ts",
@@ -404,7 +404,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 4,
-        "elapsedMs": 245,
+        "elapsedMs": 390,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -413,7 +413,7 @@
               "code-symbol",
               "purpose:balanced"
             ],
-            "snippet": "async searchSourcesAsync(q: SearchQuery): Promise<SourceCandidate[]> {\n    return this.sources(await this.search({ ...q, kinds: [\"source\"] }), q);\n  }"
+            "snippet": "  async searchSourcesAsync(q: SearchQuery): Promise<SourceCandidate[]> {\n    return this.sources(await this.search({ ...q, kinds: [\"source\"] }), q);\n  }"
           },
           {
             "path": "apps/server/src/retrieval/semantic.ts",
@@ -422,7 +422,7 @@
               "code-symbol",
               "purpose:balanced"
             ],
-            "snippet": "/** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    const "
+            "snippet": "  /** Separate async hook keeps synchronous lexical callers compatible. */\n  async searchSourcesAsync(query: SearchQuery): Promise<SourceCandidate[]> {\n    cons"
           },
           {
             "path": "scripts/review-verify.ts",
@@ -430,7 +430,7 @@
               "bm25",
               "purpose:balanced"
             ],
-            "snippet": "const raw=built.retrieval.searchSourcesAsync?await built.retrieval.searchSourcesAsync(rawQuery):built.retrieval.searchSources(rawQuery);"
+            "snippet": "    const raw=built.retrieval.searchSourcesAsync?await built.retrieval.searchSourcesAsync(rawQuery):built.retrieval.searchSources(rawQuery);"
           },
           {
             "path": "scripts/live-retrieval-smoke.ts",
@@ -438,7 +438,7 @@
               "bm25",
               "purpose:balanced"
             ],
-            "snippet": "const hits = await retrieval.searchSourcesAsync({ text: c.query, limit: 3 });"
+            "snippet": "    const hits = await retrieval.searchSourcesAsync({ text: c.query, limit: 3 });"
           },
           {
             "path": "scripts/live-retrieval-smoke.ts",
@@ -446,7 +446,7 @@
               "bm25",
               "purpose:balanced"
             ],
-            "snippet": "const excluded = await retrieval.searchSourcesAsync({ text: cases[0]!.query, visible: id => id !== ids[0] });"
+            "snippet": "  const excluded = await retrieval.searchSourcesAsync({ text: cases[0]!.query, visible: id => id !== ids[0] });"
           }
         ]
       },
@@ -467,7 +467,7 @@
         "passed": true,
         "firstExpectedRank": 4,
         "uniquePathsAt5": 5,
-        "elapsedMs": 2012,
+        "elapsedMs": 1032,
         "top5": [
           {
             "path": "design.md",
@@ -495,7 +495,7 @@
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "id=\"root\"></div><script>window.OMEM_TWEAKS=/*EDITMODE-BEGIN*/{\"fontSize\":16,\"density\":\"舒展\"}/*EDITMODE-END*/;</script><script>${script}</script></body></html>`,\n"
+            "snippet": "await writeFile(\n  new URL(\"./index.html\", import.meta.url),\n  `<!doctype html>\n<!-- omem v0.1 interaction prototype. Fictional examples; simulated AI; no netwo"
           },
           {
             "path": "docs/archive/2026-10-01-baseline/prototype/app.jsx",
@@ -504,7 +504,7 @@
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": ") : (\n                        <p className=\"muted\">本例没有记录其他直接引用。</p>\n                      )}\n                    </>\n                  ) : current.tab === \"ver"
+            "snippet": "                    <div className=\"state-banner\">\n                      <I name=\"clock\" size={17} />\n                      <span>正在查看历史版本 r6，现行版本是 r7。</span>\n "
           },
           {
             "path": "docs/archive/2026-10-01-baseline/prototype/data.js",
@@ -513,7 +513,7 @@
               "semantic",
               "purpose:balanced"
             ],
-            "snippet": "< 100\n        ? [\n            {\n              id: \"long-\" + (i + 1),\n              label: \"继续查看下一份材料\",\n              type: \"明确引用\",\n            },\n          ]\n  "
+            "snippet": "for (let i = 1; i <= 100; i++)\n  nodes[\"long-\" + i] = {\n    title: `长链演示 · 材料 ${i}`,\n    section: `固定片段 ${i}`,\n    kind: \"层级演示\",\n    version: \"r1\",\n    date: \"2"
           }
         ]
       }
