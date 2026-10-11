@@ -17,6 +17,37 @@ const newSpace = ref({ name: "", kind: "project", rootPath: "", description: "" 
 const editing = ref<Space | null>(null);
 const guide = ref("");
 const profileJson = ref("");
+const larkChats = ref<{ chatId: string; name: string; mode: string }[]>([]);
+const larkSubs = ref<{ chatId: string; name: string; spaceId: string; since?: string }[]>([]);
+const larkError = ref("");
+async function loadLark() {
+  larkSubs.value = (await get<{ subscriptions: typeof larkSubs.value }>("/api/lark/subscriptions")).subscriptions;
+}
+async function loadLarkChats() {
+  larkError.value = "";
+  try {
+    larkChats.value = (await get<{ chats: typeof larkChats.value }>("/api/lark/chats")).chats;
+  } catch (e) {
+    larkError.value = (e as Error).message;
+  }
+}
+function subOf(chatId: string) {
+  return larkSubs.value.find((s) => s.chatId === chatId);
+}
+async function toggleSub(c: { chatId: string; name: string }, spaceId?: string) {
+  const exists = subOf(c.chatId);
+  const next = exists && !spaceId ? larkSubs.value.filter((s) => s.chatId !== c.chatId) : [...larkSubs.value.filter((s) => s.chatId !== c.chatId), { chatId: c.chatId, name: c.name, spaceId: spaceId ?? state.space }];
+  larkSubs.value = (await put<{ subscriptions: typeof larkSubs.value }>("/api/lark/subscriptions", { subscriptions: next })).subscriptions;
+}
+async function pollNow() {
+  try {
+    await post("/api/lark/poll");
+    toast("采集完成，新消息交给助理整理", "ok");
+    void loadLark();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 
 const roles = [
   ["assistant", "日常助理（问答、记忆、事项）"],
@@ -41,7 +72,10 @@ async function load() {
   next.value = sc.next;
   labels.value = sc.labels;
 }
-onMounted(load);
+onMounted(() => {
+  void load();
+  void loadLark();
+});
 
 async function saveConfig(partial: Record<string, unknown>, note = "已保存") {
   try {
@@ -208,6 +242,20 @@ function editProfile(p: Profile) {
       <label class="field"><span>本人 open_id</span><input class="input mono" :value="config.lark.ownerOpenId ?? ''" placeholder="首次私聊机器人时会回复你的 open_id" @change="saveConfig({ lark: { ...config.lark, ownerOpenId: ($event.target as HTMLInputElement).value } })" /></label>
       <label class="field"><span>默认空间</span><select class="select" :value="config.lark.defaultSpace" @change="saveConfig({ lark: { ...config.lark, defaultSpace: ($event.target as HTMLSelectElement).value } })"><option v-for="s in state.spaces" :key="s.id" :value="s.id">{{ s.name }}</option></select></label>
       <p class="muted small">在飞书开放平台创建企业自建应用，开启机器人能力，事件订阅选择“长连接”，添加 im.message.receive_v1 事件和 im:message 权限。个人文档读取使用官方 lark-cli 的用户登录。</p>
+
+      <div class="card pad stack">
+        <div class="row"><strong>个人消息采集（只读）</strong><span class="spacer" /><button class="btn sm" @click="loadLarkChats">读取最近会话</button><button class="btn sm" @click="pollNow">立即采集</button></div>
+        <p class="muted small">使用本机 lark-cli 的个人登录，只读取你选中的会话，以及任意群里 @你 的消息。定时采集在“定时任务”中开启。从不以你的身份发消息。</p>
+        <div v-if="larkError" class="badge danger">{{ larkError }}</div>
+        <div v-for="s in larkSubs" :key="s.chatId" class="row sub">
+          <input type="checkbox" checked @change="toggleSub(s)" /><span class="grow ellipsis">{{ s.name }}</span>
+          <select class="select" style="width: 160px" :value="s.spaceId" @change="toggleSub(s, ($event.target as HTMLSelectElement).value)"><option v-for="sp in state.spaces" :key="sp.id" :value="sp.id">{{ sp.name }}</option></select>
+          <span class="muted small">{{ s.since ? `已采集到 ${fmtTime(s.since)}` : "尚未采集" }}</span>
+        </div>
+        <template v-for="c in larkChats" :key="c.chatId">
+          <label v-if="!subOf(c.chatId)" class="row sub"><input type="checkbox" @change="toggleSub(c)" /><span class="grow ellipsis">{{ c.name }}</span><span class="muted small">{{ c.mode === "p2p" ? "单聊" : "群聊" }}</span></label>
+        </template>
+      </div>
     </section>
 
     <section v-else-if="tab === 'about'" class="stack">

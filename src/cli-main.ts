@@ -275,6 +275,16 @@ program
   });
 
 program
+  .command("import-v1 <db>")
+  .description("从 v1 的 omem.db 导入原件、有效记忆和未完成事项（只读旧库）")
+  .option("-s, --space <id>", "导入到哪个空间", "personal")
+  .option("--dry-run", "只统计不写入")
+  .action(async (db, o) => {
+    const { importV1 } = await import("./migrate-v1.ts");
+    console.log(importV1(open(), db, { spaceId: o.space, dryRun: o.dryRun }));
+  });
+
+program
   .command("run <runId>")
   .description("查看一次运行")
   .action((id) => {
