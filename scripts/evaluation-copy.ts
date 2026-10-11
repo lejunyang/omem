@@ -37,7 +37,8 @@ export async function copyEvaluationLibrary(sourceDir: string, dataDir: string, 
   } finally { source.close(); }
   const copyingAssets=performance.now(),assets=join(sourceDir,"assets");
   if(existsSync(assets))cpSync(assets,join(dataDir,"assets"),{recursive:true});
-  const result={startedAt,totalMs:performance.now()-start,databaseOpenMs,snapshotReadMs,backupMs,assetsMs:performance.now()-copyingAssets,
+  const finishedAt=new Date().toISOString();
+  const result={startedAt,finishedAt,wallElapsedMs:Date.parse(finishedAt)-Date.parse(startedAt),totalMs:performance.now()-start,databaseOpenMs,snapshotReadMs,backupMs,assetsMs:performance.now()-copyingAssets,
     inputBytes:statSync(file).size,pages,pageSize,callbacks,progressBackwards,maxStepGapMs,samples,
     lockWaitMs:null,lockTimingNote:"SQLite backup does not expose busy-wait duration. snapshotReadMs includes read-lock establishment; callback gaps are observations, not measured lock waits."};
   publish({stage:"completed",...result});return result;
