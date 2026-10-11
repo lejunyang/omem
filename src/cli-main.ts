@@ -322,6 +322,25 @@ program
   });
 
 program
+  .command("setup <component>")
+  .description("准备可选组件：embeddings（本地中文向量模型，首次会下载约 25MB）")
+  .option("--model <id-or-dir>", "模型 id 或本地目录", "Xenova/bge-small-zh-v1.5")
+  .action(async (component, o) => {
+    if (component !== "embeddings") throw new Error("目前只支持：omem setup embeddings");
+    const app = open();
+    const { saveConfig } = await import("./core/config.ts");
+    const { embedPending } = await import("./search/embeddings.ts");
+    app.config.embeddings = { ...app.config.embeddings, provider: "local", model: o.model };
+    let n = 0;
+    for (let k = await embedPending(app, 64); k; k = await embedPending(app, 64)) {
+      n += k;
+      process.stderr.write(`\r已生成 ${n} 个片段的向量…`);
+    }
+    saveConfig(app.config, app.home);
+    console.log(`\n向量检索已开启（${o.model}）。之后新增的材料由服务在后台补齐向量。`);
+  });
+
+program
   .command("import-v1 <db>")
   .description("从 v1 的 omem.db 导入原件、有效记忆和未完成事项（只读旧库）")
   .option("-s, --space <id>", "导入到哪个空间", "personal")
