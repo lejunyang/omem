@@ -29,7 +29,7 @@ const only = taskTargets();
 if (!only.length) throw Error("Select a file or directory for internal notes; use review:guides for reader pages");
 const runtime = join(root, ".repo-review/runtime");
 mkdirSync(runtime, { recursive: true });
-const setup = { startedAt: new Date().toISOString(), finishedAt: null as string | null, elapsedMs: 0, wallElapsedMs: 0, stages: {} as Record<string, number> };
+const setup = { startedAt: new Date().toISOString(), finishedAt: null as string | null, elapsedMs: 0, wallElapsedMs: 0, stages: {} as Record<string, number>, details: {} as Record<string, unknown> };
 const setupStart = performance.now(), setupPath = join(runtime, "internal-analysis-setup.json");
 async function setupStep<T>(name: string, run: () => T | Promise<T>): Promise<T> {
   const start = performance.now();
@@ -57,9 +57,10 @@ const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new Ro
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => void pipeline.stop());
 try {
   console.log("Actual profile:", reviewModelConfigPath(), profile.model, { input: config.maxInputTokens, output: config.maxOutputTokens, concurrency });
-  await setupStep("sourceScan", () => runReviewSync(store, root));
+  setup.details.sourceScan = await setupStep("sourceScan", () => runReviewSync(store, root));
   const coverage = (await setupStep("restoreMaterialLibrary", () => restoreReviewKnowledge(store, root))).coverage;
-  await setupStep("codeSync", () => runCodeSync(store, root));
+  const codeSync = await setupStep("codeSync", () => runCodeSync(store, root));
+  setup.details.codeSync = {analysis:codeSync.analysis,timingsMs:codeSync.timingsMs};
   const restored = await setupStep("restoreNotes", () => restoreKnowledgeArticles(repository, assets));
   console.log("Restore:", restored.reduce((n, r) => { n[r.state] = (n[r.state] ?? 0) + 1; return n; }, {} as Record<string, number>));
   const allMaterials = repository.materials().filter(m => m.key.startsWith("omem:"));
