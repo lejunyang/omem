@@ -42,7 +42,13 @@ onMounted(async () => {
   }
 });
 onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
-watch(() => route.fullPath, () => (menu.value = false));
+watch(
+  () => route.path,
+  () => {
+    menu.value = false;
+    state.trail = [];
+  },
+);
 const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.theme === "dark" ? "light" : "auto");
 </script>
 
