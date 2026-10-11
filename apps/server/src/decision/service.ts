@@ -123,6 +123,7 @@ export class DecisionService {
         return result;
       } catch (error) {
         if (options.signal?.aborted) {
+          this.stopWorker();
           // The canceled worker is gone. Leave the next request able to warm a
           // replacement rather than appearing busy until the idle timer expires.
           this.state = {status:"idle",model:"",lastError:""};
@@ -149,11 +150,13 @@ export class DecisionService {
         };
         return null;
       } finally {
-        this.idle = setTimeout(() => {
-          this.stopWorker();
-          this.state.status = "idle";
-        }, 180_000);
-        this.idle.unref();
+        if (!this.stopped) {
+          this.idle = setTimeout(() => {
+            this.stopWorker();
+            this.state.status = "idle";
+          }, 180_000);
+          this.idle.unref();
+        }
       }
     });
     this.queue = run.catch(() => undefined);
@@ -203,12 +206,13 @@ export class DecisionService {
     if (mode === "off") return;
     for (const size of mode === "auto" ? automaticDecisionSizes : [mode]) {
       options.signal?.throwIfAborted();
+      if (this.stopped) throw Error("决策服务已关闭");
       try {
         const alias = decisionModelAlias(size);
         const { stdout } = await exec(
           "osdk",
           ["model", "show", alias, "--json", "--offline"],
-          { timeout: 10_000, cwd: modelWorkspace() },
+          { timeout: 10_000, cwd: modelWorkspace(), signal: options.signal },
         );
         const { model } = JSON.parse(stdout);
         if (model.snapshot_path && existsSync(model.snapshot_path))
@@ -221,6 +225,8 @@ export class DecisionService {
         /* An uninstalled model is not downloaded at runtime. */
       }
     }
+    options.signal?.throwIfAborted();
+    if (this.stopped) throw Error("决策服务已关闭");
     if (!Object.keys(models).length)
       throw Error(
         `未安装所选 StartLux 模型；请运行 omem setup decisions --model ${mode === "auto" ? "2b" : mode}`,

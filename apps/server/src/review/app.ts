@@ -116,32 +116,6 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
     logController: createHttpLogController(),
   });
   const P = REVIEW_API_PREFIX;
-  registerKnowledgeRoutes(app, {
-    store,
-    retrieval,
-    retrievalConfig: deps.retrievalConfig,
-    prefix: P + "/knowledge",
-    workspace: join(repoRoot, ".repo-review/runtime/knowledge-agents"),
-    repository: createReviewKnowledgeRepository(store),
-    profile:
-      deps.codeUnderstandingModel?.transport === "acp"
-        ? profileSchema.parse({
-            id: "traex",
-            name: "Knowledge",
-            transport: "acp",
-            command: deps.codeUnderstandingModel.command,
-            args: deps.codeUnderstandingModel.args ?? [],
-            model: deps.codeUnderstandingModel.model,
-            effort: deps.codeUnderstandingModel.effort,
-            timeoutMs: deps.codeUnderstandingModel.timeoutMs,
-            idleTimeoutMs: deps.codeUnderstandingModel.idleTimeoutMs,
-            maxDurationMs: deps.codeUnderstandingModel.maxDurationMs,
-          })
-        : undefined,
-    budget: deps.codeUnderstandingModel,
-    onAnswer: () => saveReviewAnswerMaterials(store, repoRoot),
-    onPublish: (article) => publishReviewArticle(repoRoot, article),
-  });
 
   const reviewToken = process.env.REVIEW_TOKEN || "";
 
@@ -172,6 +146,33 @@ export async function buildReviewApp(deps: ReviewAppDeps) {
       )
         return reply.code(403).send({ error: "Cross-origin request rejected" });
     }
+  });
+
+  registerKnowledgeRoutes(app, {
+    store,
+    retrieval,
+    retrievalConfig: deps.retrievalConfig,
+    prefix: P + "/knowledge",
+    workspace: join(repoRoot, ".repo-review/runtime/knowledge-agents"),
+    repository: createReviewKnowledgeRepository(store),
+    profile:
+      deps.codeUnderstandingModel?.transport === "acp"
+        ? profileSchema.parse({
+            id: "traex",
+            name: "Knowledge",
+            transport: "acp",
+            command: deps.codeUnderstandingModel.command,
+            args: deps.codeUnderstandingModel.args ?? [],
+            model: deps.codeUnderstandingModel.model,
+            effort: deps.codeUnderstandingModel.effort,
+            timeoutMs: deps.codeUnderstandingModel.timeoutMs,
+            idleTimeoutMs: deps.codeUnderstandingModel.idleTimeoutMs,
+            maxDurationMs: deps.codeUnderstandingModel.maxDurationMs,
+          })
+        : undefined,
+    budget: deps.codeUnderstandingModel,
+    onAnswer: () => saveReviewAnswerMaterials(store, repoRoot),
+    onPublish: (article) => publishReviewArticle(repoRoot, article),
   });
 
   let syncing = false;
