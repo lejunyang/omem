@@ -1,0 +1,6 @@
+allowBuilds:
+  '@larksuite/cli': true
+  esbuild: true
+  onnxruntime-node: true
+  protobufjs: true
+  sharp: true
