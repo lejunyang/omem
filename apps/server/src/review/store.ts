@@ -122,7 +122,10 @@ export type SourceMeta = {
   legacyAliasOf: string | null;
 };
 
+const initializedMeta = new WeakMap<Store["db"],number>();
 export function ensureReviewMetaTable(store: Store): void {
+  const version = Number(store.db.prepare("PRAGMA schema_version").get()!.schema_version);
+  if (initializedMeta.get(store.db) === version) return;
   store.db.exec(`CREATE TABLE IF NOT EXISTS review_source_meta(
     source_id TEXT PRIMARY KEY,
     removed INTEGER NOT NULL DEFAULT 0,
@@ -138,6 +141,7 @@ export function ensureReviewMetaTable(store: Store): void {
     store.db.exec(
       "ALTER TABLE review_source_meta ADD COLUMN legacy_alias_of TEXT",
     );
+  initializedMeta.set(store.db,Number(store.db.prepare("PRAGMA schema_version").get()!.schema_version));
 }
 
 export function sourceIdForExternalId(
@@ -204,7 +208,11 @@ export function setSourceMeta(
          moved_to=excluded.moved_to,
          migrated=excluded.migrated,
          legacy_alias_of=excluded.legacy_alias_of,
-         updated_at=excluded.updated_at`,
+         updated_at=excluded.updated_at
+       WHERE review_source_meta.removed IS NOT excluded.removed
+          OR review_source_meta.moved_to IS NOT excluded.moved_to
+          OR review_source_meta.migrated IS NOT excluded.migrated
+          OR review_source_meta.legacy_alias_of IS NOT excluded.legacy_alias_of`,
     )
     .run(
       sourceId,
@@ -404,7 +412,10 @@ export const RELATION_INVERSES: Record<RelationType, string> = {
   candidate_for: "candidate_of",
 };
 
+const initializedRelations = new WeakMap<Store["db"],number>();
 export function ensureReviewRelationsTable(store: Store): void {
+  const version = Number(store.db.prepare("PRAGMA schema_version").get()!.schema_version);
+  if (initializedRelations.get(store.db) === version) return;
   // Older derived tables (pre seed_identity) are disposable: relations are rebuilt
   // from the seed on every sync, so dropping a stale-shaped table loses nothing.
   const cols = store.db
@@ -425,6 +436,7 @@ export function ensureReviewRelationsTable(store: Store): void {
     created_at TEXT NOT NULL,
     UNIQUE(seed_identity)
   )`);
+  initializedRelations.set(store.db,Number(store.db.prepare("PRAGMA schema_version").get()!.schema_version));
 }
 
 /** Deterministic relation id so repeated syncs never mint a duplicate row and
@@ -465,7 +477,14 @@ export function upsertReviewRelation(
          status=excluded.status,
          evidence=excluded.evidence,
          source_revision_id=excluded.source_revision_id,
-         target_revision_id=excluded.target_revision_id`,
+         target_revision_id=excluded.target_revision_id
+       WHERE review_relations.source_fragment_id IS NOT excluded.source_fragment_id
+          OR review_relations.target_fragment_id IS NOT excluded.target_fragment_id
+          OR review_relations.relation_type IS NOT excluded.relation_type
+          OR review_relations.status IS NOT excluded.status
+          OR review_relations.evidence IS NOT excluded.evidence
+          OR review_relations.source_revision_id IS NOT excluded.source_revision_id
+          OR review_relations.target_revision_id IS NOT excluded.target_revision_id`,
     )
     .run(
       id,
