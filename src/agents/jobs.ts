@@ -226,12 +226,30 @@ registerHandler("heartbeat", async (ctx) => {
 registerHandler("dream", async (ctx) => {
   const app = ctx.app;
   const since = one<{ value: string }>(app.db, "select value from kv where key = 'dream_at'")?.value ?? "1970-01-01";
-  const mems = all<{ n: number }>(app.db, "select count(*) n from memories where updated_at > ?", since)[0]?.n ?? 0;
-  const items = all<{ n: number }>(app.db, "select count(*) n from items where updated_at > ?", since)[0]?.n ?? 0;
+  const mems = all<{ id: string; space_id: string; kind: string; subject: string; content: string; status: string }>(
+    app.db,
+    "select id, space_id, kind, subject, content, status from memories where updated_at > ? order by updated_at desc limit 80",
+    since,
+  );
+  const items = all<{ id: string; space_id: string; kind: string; title: string; status: string; remind_at: string | null; due_at: string | null }>(
+    app.db,
+    "select id, space_id, kind, title, status, remind_at, due_at from items where updated_at > ? or (status in ('open','waiting','snoozed') and coalesce(due_at, remind_at, '9999') < ?) order by updated_at desc limit 80",
+    since,
+    now(),
+  );
+  const runs = all<{ kind: string; title: string; status: string; error: string | null }>(app.db, "select kind, title, status, error from runs where created_at > ? and kind != 'dream' order by created_at desc limit 40", since);
   run(app.db, "insert into kv(key,value) values('dream_at', ?) on conflict(key) do update set value = excluded.value", now());
-  if (!mems && !items) return { quiet: true, summary: "自上次整理以来没有新的记忆或事项" };
-  const spaceId = ctx.run.spaceId ?? "personal";
-  const r = await agent(ctx, "dreamer", spaceId, `自 ${since} 以来：${mems} 条记忆、${items} 个事项有变化。用 recall / list_items 查看并整理（可跨空间）。`, null);
+  if (!mems.length && !items.length) return { quiet: true, summary: "自上次整理以来没有新的记忆或事项" };
+  const task = [
+    `上次整理：${since}`,
+    `有变化的记忆（${mems.length}）：\n${mems.map((m) => `- ${m.id} [${m.space_id}/${m.kind}/${m.status}] ${m.subject ? m.subject + "：" : ""}${truncate(m.content, 160)}`).join("\n")}`,
+    `有变化或已过期的事项（${items.length}）：\n${items.map((i) => `- ${i.id} [${i.space_id}/${i.kind}/${i.status}] ${i.title}${i.due_at ? " 截止 " + i.due_at : ""}${i.remind_at ? " 提醒 " + i.remind_at : ""}`).join("\n")}`,
+    runs.length ? `期间的后台运行（用于提炼经验）：\n${runs.map((r) => `- [${r.kind}/${r.status}] ${r.title}${r.error ? "：" + truncate(r.error, 120) : ""}`).join("\n")}` : "",
+    "需要更多上下文时用 recall（可加 include_history）和 list_items 查同主题的其他记录。",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const r = await agent(ctx, "dreamer", ctx.run.spaceId ?? "personal", task, null);
   return { summary: r.text.trim() };
 });
 
