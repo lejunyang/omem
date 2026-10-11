@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-11T03:42:42.379Z",
-  "implementationCommit": "9350c47e93f80dee8291cd6573ab2ac6457bb686",
-  "sourceDigest": "8af6874de63ca081eb487f808847506cbc65dd399caad89a410bb28774a2de47",
+  "recordedAt": "2026-10-11T04:27:49.945Z",
+  "implementationCommit": "f70a80dda431eeda0388f20a94fa41fa53365b57",
+  "sourceDigest": "5cf714aa767e423ce85a053a1c26ee42bedce483fddc6b44938f4bc6847b57e2",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-11T03-42-42-379Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-11T04-27-49-945Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-11T03-42-42-379Z/project.log",
-        "sha256": "a68d0b7636519ba166a3353e0f7367a9239dcd691de62ae8e09586880252fc73"
+        "log": ".repo-review/runtime/verification/2026-10-11T04-27-49-945Z/project.log",
+        "sha256": "cff116107095f1f76bec9bf0498435a3c09b72ef85293ad74ac7baf722946344"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-11T03-42-42-379Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-11T04-27-49-945Z/liveChineseRetrieval.log",
         "sha256": "660562c5bc9996e0c643cc27389dca13bbf013e49793ef048911cd4abf345e6d"
       }
     },
@@ -64,16 +64,16 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v8",
-        "units": 18955,
+        "units": 18980,
         "semantic": {
           "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 18955,
+          "indexed": 18980,
           "pending": 0,
           "error": null,
           "concepts": {
             "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3:range-concepts-v1",
-            "indexed": 1682,
+            "indexed": 1633,
             "pending": 0,
             "error": null
           }
@@ -101,7 +101,7 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 893,
+    "materials": 895,
     "publishedPages": 0,
     "currentPages": 0,
     "plannedPages": 0,
@@ -110,7 +110,7 @@
     "errors": [],
     "pages": [],
     "restore": {
-      "restored": 38
+      "restored": 40
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -134,7 +134,7 @@
         "passed": true,
         "firstExpectedRank": 5,
         "uniquePathsAt5": 5,
-        "elapsedMs": 2922,
+        "elapsedMs": 2952,
         "top5": [
           {
             "path": "apps/server/src/retrieval/keyword.ts",
@@ -196,16 +196,16 @@
         "status": 200,
         "baselineTop5": [
           "apps/server/src/retrieval/embedding.ts",
-          "skills/omem-cli/references/dependencies.md",
           "apps/server/src/retrieval/reranker.ts",
           "docs/reader-first/operations.md",
-          "apps/server/src/cli/osdk.ts"
+          "apps/server/src/cli/osdk.ts",
+          "docs/archive/2026-10-01-baseline/implementation/review-startup.md"
         ],
         "baselineUniquePathsAt5": 5,
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 1155,
+        "elapsedMs": 855,
         "top5": [
           {
             "path": "apps/server/src/retrieval/embedding.ts",
@@ -216,16 +216,6 @@
               "purpose:balanced"
             ],
             "snippet": "const { env, pipeline } = await import(\"@huggingface/transformers\");\n  env.allowRemoteModels = false;\n  env.useFSCache = false;\n  const extractor = await pipeli"
-          },
-          {
-            "path": "skills/omem-cli/references/dependencies.md",
-            "routes": [
-              "bm25",
-              "semantic",
-              "material-concept",
-              "purpose:balanced"
-            ],
-            "snippet": "下表按当前锁定模型的文件清单估算下载体积。Python、Torch 等依赖和下载缓存另占空间，模型文件体积也不等于运行内存。"
           },
           {
             "path": "apps/server/src/retrieval/reranker.ts",
@@ -254,6 +244,16 @@
               "purpose:balanced"
             ],
             "snippet": "export const osdkInstallHelp =\n  \"请先按 https://github.com/lejunyang/one-sdk 安装 osdk，确认 osdk --version 可用后重跑本次 omem setup。npm 安装与普通启动不会下载模型。\";"
+          },
+          {
+            "path": "docs/archive/2026-10-01-baseline/implementation/review-startup.md",
+            "routes": [
+              "bm25",
+              "material-concept",
+              "semantic-concept",
+              "purpose:balanced"
+            ],
+            "snippet": "另一个独立环境问题：用户服务使用 Desktop/osdk-home，原中文模型位于默认 osdk 目录。已在用户服务的 OSDK_DATA_DIR 下用 `osdk model sync memory-zh` 恢复锁定快照并校验，重启后 health 为 ready。应用仍不隐式下载模型；没有修改用户 osdk 路径"
           }
         ]
       },
@@ -276,7 +276,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 1641,
+        "elapsedMs": 1063,
         "top5": [
           {
             "path": "docs/reader-first/assistant-memory-flow.md",
@@ -342,7 +342,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 334,
+        "elapsedMs": 885,
         "top5": [
           {
             "path": "apps/server/src/knowledge/pipeline.ts",
@@ -404,7 +404,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 4,
-        "elapsedMs": 331,
+        "elapsedMs": 241,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -467,7 +467,7 @@
         "passed": true,
         "firstExpectedRank": 4,
         "uniquePathsAt5": 5,
-        "elapsedMs": 2049,
+        "elapsedMs": 1846,
         "top5": [
           {
             "path": "design.md",
