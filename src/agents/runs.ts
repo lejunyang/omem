@@ -186,7 +186,8 @@ function kick(app: App) {
       run(app.db, "update runs set status='failed', error=?, finished_at=? where id=?", `没有处理器：${next.kind}`, now(), next.id);
       continue;
     }
-    run(app.db, "update runs set status='running', started_at=? where id=?", now(), next.id);
+    // Atomic claim: several processes (server, CLI) may share one library.
+    if (run(app.db, "update runs set status='running', started_at=? where id=? and status='queued'", now(), next.id).changes !== 1) continue;
     app.emit({ type: "run", runId: next.id, status: "running" });
     active++;
     const controller = new AbortController();
@@ -235,17 +236,22 @@ export function cancelRun(app: App, id: string) {
 /** Resolve when a run reaches a terminal state (used by CLI and tests). */
 export function waitForRun(app: App, id: string): Promise<Run> {
   return new Promise((resolve) => {
+    let timer: NodeJS.Timeout | undefined;
+    const finish = (r: Run) => {
+      clearInterval(timer);
+      app.events.off("event", listener);
+      resolve(r);
+    };
     const check = () => {
       const r = getRun(app, id);
-      if (["done", "failed", "cancelled"].includes(r.status)) {
-        app.events.off("event", listener);
-        resolve(r);
-      }
+      if (["done", "failed", "cancelled"].includes(r.status)) finish(r);
     };
     const listener = (e: { type: string; runId?: string }) => {
       if (e.type === "run" && e.runId === id) check();
     };
     app.events.on("event", listener);
+    // Another process sharing the library may be the one running it.
+    timer = setInterval(check, 1500);
     check();
   });
 }

@@ -114,6 +114,11 @@ describe("tools", () => {
     expect((await callTool(ctx, "read_source", { source: s.id })).isError).toBe(true);
     expect((await callTool(ctx, "search", { query: "机密", space: "secret" })).text).toMatch(/不能访问/);
     expect((await callTool(ctx, "remember", { content: "x", kind: "fact" })).text).toMatch(/不可用/);
+    const { remember } = await import("../src/memory/store.ts");
+    const foreign = remember(app, { spaceId: "secret", kind: "fact", content: "外部记忆" });
+    const writer = { ...ctx, tools: null };
+    expect((await callTool(writer, "supersede", { memory_id: foreign.id, content: "改" })).text).toMatch(/不能修改空间 secret/);
+    expect((await callTool(writer, "forget", { memory_id: foreign.id, reason: "x" })).isError).toBe(true);
     const open = { ...ctx, spaces: null, tools: null };
     const r = await callTool(open, "read_source", { source: s.id });
     expect(r.isError).toBe(false);
