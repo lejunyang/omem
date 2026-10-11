@@ -18,6 +18,7 @@ import {
 import { CodeNavigation } from "./code-navigation.js";
 import { scoringPassages } from "./rerank-passages.js";
 import { candidatePool } from "./candidate-pool.js";
+import { recallQueries, mergeQueryRecall } from "./recall-queries.js";
 import {
   RetrievalProjection,
   decodeUnit,
@@ -53,6 +54,7 @@ export type RetrievalTrace = {
     | "semantic-concepts-recall"
     | "semantic-concepts-filtered"
     | "fusion"
+    | "query-expansion"
     | "reranker-input"
     | "reranker"
     | "selection"
@@ -66,6 +68,7 @@ export type RetrievalTrace = {
   cutoff?: { limit?: number; floor?: number; considered?: number; stoppedByUpperBound?: boolean };
   model?: string;
   error?: string;
+  queries?: string[];
 };
 export type RetrievalObserver = (trace: RetrievalTrace) => void;
 const normalize = (v: number[]) => {
@@ -674,6 +677,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     hits: ScoredUnit[],
     model?: string,
     error?: string,
+    queries?: string[],
   ) {
     if (!observer) return;
     // Diagnostics see the actual stage before later host preferences and limits.
@@ -682,6 +686,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       stage,
       model,
       error,
+      queries,
       hits: structuredClone(
         hits.map((h) => ({
           id: h.unit.id,
@@ -716,6 +721,17 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       observer?.({ stage: "final", hits: structuredClone(hits) });
       return hits;
     }
+    const queries = recallQueries(q.text, q.queryVariants);
+    const branches: ScoredUnit[][] = [];
+    for (const text of queries) {
+      q.signal?.throwIfAborted();
+      branches.push(await this.recall({ ...q, text, queryVariants: undefined }, observer ? trace => observer({...trace, queries:[text]}) : undefined));
+    }
+    const hits = queries.length === 1 ? branches[0]! : mergeQueryRecall(branches);
+    if (queries.length > 1) this.observe(observer, "query-expansion", hits, undefined, undefined, queries);
+    return this.select(await this.rerank(hits, q, observer), q, observer);
+  }
+  private async recall(q: SearchQuery, observer?: RetrievalObserver): Promise<ScoredUnit[]> {
     const lexical = this.lexical(q, observer);
     const symbols = this.symbols(q);
     const concepts = this.concepts(q);
@@ -727,11 +743,11 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         ? this.fuse([lexical, symbols, concepts])
         : lexical;
     if (!q.text.trim() || exactLookup(q.text))
-      return this.select(lexicalOnly(), q, observer);
+      return lexicalOnly();
     if (!this.model) {
       const hits = lexicalOnly();
       this.observe(observer, "fusion", hits);
-      return this.select(await this.rerank(hits, q, observer), q, observer);
+      return hits;
     }
     const dense = new Map<string, ScoredUnit>();
     const conceptDense = new Map<string, ScoredUnit>();
@@ -802,7 +818,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         this.error,
       );
       this.observe(observer, "fusion", hits);
-      return this.select(await this.rerank(hits, q, observer), q, observer);
+      return hits;
     }
     const sorted = [...dense.values()].sort((a, b) => b.score - a.score);
     this.observeCandidates(observer, "semantic-recall", sorted);
@@ -846,7 +862,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     ]);
     this.observeCandidates(observer, "lexical-admitted", lexical.slice(0,100), {limit:100});
     this.observe(observer, "fusion", hits);
-    return this.select(await this.rerank(hits, q, observer), q, observer);
+    return hits;
   }
   private async rerank(
     hits: ScoredUnit[],
@@ -1181,10 +1197,13 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     const navigation = this.navigationCandidates(sourceQuery);
     if (navigation)
       return this.sources(this.finish(navigation.hits, navigation.query), q);
-    const lexical = this.lexical(sourceQuery),
-      symbols = this.symbols(sourceQuery);
+    const branches = recallQueries(q.text, q.queryVariants).map(text => {
+      const query = {...sourceQuery, text};
+      const lexical = this.lexical(query), symbols = this.symbols(query);
+      return symbols.length ? this.fuse([lexical, symbols]) : lexical;
+    });
     return this.sources(
-      this.finish(symbols.length ? this.fuse([lexical, symbols]) : lexical, q),
+      this.finish(branches.length === 1 ? branches[0]! : mergeQueryRecall(branches), q),
       q,
     );
   }

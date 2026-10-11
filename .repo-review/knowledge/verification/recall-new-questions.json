@@ -1,0 +1,12 @@
+{
+  "registeredAt": "2026-10-11",
+  "method": "New questions and original-range annotations fixed before baseline search. Annotations never enter query rewriting or retrieval. Existing six questions and previous four held-out questions are regression only.",
+  "cases": [
+    {"query":"我纠正了助手对一条消息的理解，这个纠正怎样保存，什么时候才会改变正式记忆？","groups":[{"label":"保存更正原文","alternatives":[{"path":"apps/server/src/messages/feedback.ts","needle":"externalId: `message-feedback:${value.requestId}`"}]},{"label":"提交重新调查","alternatives":[{"path":"apps/server/src/messages/feedback.ts","needle":"cause: \"owner_correction\""}]}]},
+    {"query":"文档上传后的解析失败了，重新处理会用之前保存的文件，还是要求再次上传？","groups":[{"label":"从保存原件重新解析","alternatives":[{"path":"apps/server/src/imports/service.ts","needle":"originalAssetId: row.original_asset_id"}]}]},
+    {"query":"我同时打开两个页面修改同一定时任务，旧页面保存时怎样避免覆盖新设置？","groups":[{"label":"版本冲突保护","alternatives":[{"path":"apps/server/src/schedules/repository.ts","needle":"old.version !== input.expectedVersion"}]}]},
+    {"query":"群聊免打扰期间停止读取普通消息后，再开启会补读整个暂停期间吗，提到我的消息怎么办？","groups":[{"label":"推进普通消息游标并单独读取提及","alternatives":[{"path":"apps/server/src/integrations/lark-personal/service.ts","needle":"UPDATE personal_lark_streams SET watermark=?,window_end=NULL,page_token=NULL WHERE id=?"}]}]},
+    {"query":"模型任务一直失败时，重试间隔和最终停止重试是怎样决定的？","groups":[{"label":"重试上限","alternatives":[{"path":"apps/server/src/jobs/repository.ts","needle":"generationCount < job.maxAttempts"}]},{"label":"延后重试","alternatives":[{"path":"apps/server/src/jobs/repository.ts","needle":"const notBefore = retry ? iso(new Date(now.getTime() + delay)) : at;"}]}]},
+    {"query":"当前会话看起来在聊某个项目，检索会直接排除其他项目的个人记忆吗？","groups":[{"label":"仅确认项目限制记忆范围","alternatives":[{"path":"apps/server/src/retrieval/keyword.ts","needle":"query.project_trusted &&"}]}]}
+  ]
+}

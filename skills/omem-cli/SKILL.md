@@ -14,6 +14,7 @@ description: 使用 omem CLI 保存与检索个人材料、基于来源提问、
 - 安装与可选依赖：先读 [安装、依赖与模型](references/dependencies.md)。本人在服务机器运行 `omem setup`，多选能力后进入文档、向量与决策的子选项；汇总计划后可执行或调整，也可退出。准备解析或模型需先安装 osdk；不勾选任何能力可选「只用基础功能」，无需 osdk，保留已有配置或创建默认配置。所选资源全部准备成功后保存明确选择的开关，缺失配置会初始化，最后可选启动或重启服务。脚本或 Agent 用 `setup <component>`，仍仅准备资源；快速决策默认 2B，`--model 0.8b|4b|9b|both|all` 按授权选择。auto 按余量选择已安装的 0.8B/2B/4B，不加载 9B；0.8B 只附评分建议，保留原顺序和全部候选。用 doctor 区分启用、安装和校验，只有 `--verify-models` 才读取整份权重，不下载或推理。
 - 首次设置 AI：先读 [Agent、模型与工作分配](references/agents.md)。用 `agent discover/settings` 辨明本机与服务环境，网页选择模型后读取对应思考强度；能力发现不代表实际调用权限。保存设置不会开启消息采集或后台学习。
 - 找原文、事实或代码：`omem search "问题" --json`；需要综合解释和补读：`omem ask "问题" --research --json`。
+- 自主调查的 `search_materials` 接受 `variants`，最多三条、每条 400 字符；模型可提供英文表达或互补子问题，宿主保留原问题分别召回后合并。变体不改变材料授权和最终问题。普通 `search` 不自动调用模型改写，查找不足时用 `ask --research` 补查；配置与限制见 [Agent](references/agents.md)。
 - 延续讨论：保存 ask 返回的 conversation.id，下次用 `--conversation`，不要重复新建不相干会话。
 - 记录材料：`omem import file`、`import git`、`import lark` 或 `import text`。已有记录更新应保持同一个来源标识，别把重复导入当新增事实。
 - 重新生成或删除旧成果：先读 [原件与重新处理](references/reprocessing.md)，区分解析保存的原文件、重新理解、读取远端新版和文章写作。`reprocess run --replace` 删除对应旧成果后再生成；保留记忆并重核验时省略该参数，网页则取消默认勾选的删除选项，并确认学习已启用。作业完成与记忆刷新实际应用分开核对。明确要删除时用 `reprocess delete`。PDF/DOCX 从 `imports list/show` 查原件和失败记录，不能把解析排队当作完成。
