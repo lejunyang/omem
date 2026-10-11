@@ -818,7 +818,8 @@ onBeforeUnmount(() => {
           }}<span v-if="r.headingPath.length">
             · {{ r.headingPath.join(" / ") }}</span
           ><span v-if="r.target.kind === 'source'">
-            · 第 {{ r.target.startLine }}–{{ r.target.endLine }} 行</span
+            · {{ r.readingRange?.complete === false ? "节选 · " : "" }}第
+            {{ r.readingRange?.startLine ?? r.target.startLine }}–{{ r.readingRange?.endLine ?? r.target.endLine }} 行</span
           >
         </p>
         <p
