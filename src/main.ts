@@ -17,6 +17,10 @@ registerScheduleKind("repo-sync", (app) => {
   for (const s of listSpaces(app)) if (s.rootPath) scheduleSpaceSync(app, s.id);
 });
 
+registerScheduleKind("lark-poll", (app) => {
+  import("./channels/lark-personal.ts").then((m) => m.pollLark(app)).catch((e) => console.warn("[omem] 飞书消息采集失败：", e.message));
+});
+
 export type BootOptions = { port?: number; host?: string; quiet?: boolean; background?: boolean };
 
 /** Open the library, start the API, the run worker and (optionally) background schedules. */

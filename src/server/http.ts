@@ -415,6 +415,25 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/schedules/:id/run", async (req) => ({ ok: triggerSchedule(app, (req.params as { id: string }).id) }));
 
+  // ------------------------------------------------------------ lark personal
+  server.get("/api/lark/chats", async () => {
+    const { listLarkChats } = await import("../channels/lark-personal.ts");
+    return { chats: await listLarkChats() };
+  });
+  server.get("/api/lark/subscriptions", async () => {
+    const { getSubscriptions } = await import("../channels/lark-personal.ts");
+    return { subscriptions: getSubscriptions(app) };
+  });
+  server.put("/api/lark/subscriptions", async (req) => {
+    const { setSubscriptions } = await import("../channels/lark-personal.ts");
+    const b = q(z.object({ subscriptions: z.array(z.object({ chatId: z.string(), name: z.string(), spaceId: z.string() })) }), req.body);
+    return { subscriptions: setSubscriptions(app, b.subscriptions) };
+  });
+  server.post("/api/lark/poll", async () => {
+    const { pollLark } = await import("../channels/lark-personal.ts");
+    return pollLark(app);
+  });
+
   // ----------------------------------------------------------------- settings
   server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home }));
   server.put("/api/settings", async (req) => {
