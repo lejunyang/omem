@@ -42,6 +42,7 @@
     "scripts/decision-prepare.ts",
     "scripts/decision-evaluate.ts",
     "scripts/decision-inspect.ts",
+    "scripts/decision-reading-compare.ts",
     "scripts/service.ts",
     "scripts/document-prepare.ts",
     "scripts/document-models.ts",

@@ -12,7 +12,7 @@ function passageRanges(
   matchedRanges: { start: number; end: number }[] = [],
   size = 800,
 ) {
-  if (text.length <= size) return [{start:0,end:text.length}];
+  if (text.length <= size) return [{ start: 0, end: text.length }];
   const symbols = new Set(querySymbols(query));
   const terms = queryTerms(query).filter((t) => !symbols.has(t));
   // Formal, range-bound concepts bridge Chinese questions to code spelling.
@@ -86,29 +86,75 @@ function passageRanges(
   return ranges;
 }
 
-export function rerankPassages(text:string,query:string,denseExcerpt?:string,concepts:{label:string;aliases:string[]}[]=[],matchedRanges:{start:number;end:number}[]=[]) {
-  return passageRanges(text,query,denseExcerpt,concepts,matchedRanges).map(r=>text.slice(r.start,r.end));
+export function rerankPassages(
+  text: string,
+  query: string,
+  denseExcerpt?: string,
+  concepts: { label: string; aliases: string[] }[] = [],
+  matchedRanges: { start: number; end: number }[] = [],
+) {
+  return passageRanges(text, query, denseExcerpt, concepts, matchedRanges).map(
+    (r) => text.slice(r.start, r.end),
+  );
 }
 
 /** Hints belong only to the original range they describe. They are retrieval
  * metadata, never a replacement for implementation bytes or factual evidence. */
-export function scoringPassages(unit: RetrievalUnit, query: string, excerpt?: string,
-  matches: { start: number; end: number }[] = []) {
+export function scoringPassages(
+  unit: RetrievalUnit,
+  query: string,
+  excerpt?: string,
+  matches: { start: number; end: number }[] = [],
+) {
   const baseLine = unit.target.kind === "source" ? unit.target.startLine : 1;
-  const concepts = (unit.materialDescription?.description.concepts ?? [])
-    .filter(c => unit.target.kind === "source" && c.startLine <= unit.target.endLine && c.endLine >= baseLine);
+  const concepts = (
+    unit.materialDescription?.description.concepts ?? []
+  ).filter(
+    (c) =>
+      unit.target.kind === "source" &&
+      c.startLine <= unit.target.endLine &&
+      c.endLine >= baseLine,
+  );
   const lines = unit.text.split("\n");
-  const offset = (line: number) => line <= baseLine ? 0 : lines.slice(0, line - baseLine).join("\n").length + 1;
+  const offset = (line: number) =>
+    line <= baseLine
+      ? 0
+      : lines.slice(0, line - baseLine).join("\n").length + 1;
   const terms = new Set(queryTerms(query));
-  const relevant = concepts.filter(c => queryTerms([c.label, ...c.aliases].join(" ")).some(t => terms.has(t)));
-  const anchors = relevant.map(c => ({start:offset(c.startLine),end:Math.min(unit.text.length, offset(c.endLine + 1) - 1)}));
-  // Bound work by passages, but put known matched implementations before generic
-  // word overlap. Keep range positions so the winning input can be read verbatim.
-  return passageRanges(unit.text, query, excerpt, relevant, [...anchors, ...matches], 1600).map(({start,end}) => {
-    const text=unit.text.slice(start,end);
-    const local = concepts.filter(c => offset(c.startLine) < end && offset(c.endLine + 1) > start);
+  const relevant = concepts.filter((c) =>
+    queryTerms([c.label, ...c.aliases].join(" ")).some((t) => terms.has(t)),
+  );
+  const anchors = relevant.map((c) => ({
+    start: offset(c.startLine),
+    end: Math.min(unit.text.length, offset(c.endLine + 1) - 1),
+  }));
+  // Visit matched operations first, then cover every remaining original byte.
+  // Inference has a time budget; planning must not silently sample away a guard
+  // in the middle of a long operation. Partial reading is reported separately.
+  const ranges = passageRanges(
+    unit.text,
+    query,
+    excerpt,
+    relevant,
+    [...anchors, ...matches],
+    1600,
+  );
+  for (let start = 0; start < unit.text.length; start += 1280) {
+    const end = Math.min(unit.text.length, start + 1600);
+    if (!ranges.some((r) => r.start <= start && r.end >= end))
+      ranges.push({ start, end });
+    if (end === unit.text.length) break;
+  }
+  return ranges.map(({ start, end }) => {
+    const text = unit.text.slice(start, end);
+    const local = concepts.filter(
+      (c) => offset(c.startLine) < end && offset(c.endLine + 1) > start,
+    );
     const heading = unit.headingPath.at(-1) ?? unit.title;
-    const context = [heading.slice(0, 120), ...local.slice(0, 2).map(c => `检索概念（需核对原文）：${c.label}`)].join("\n");
-    return {text,start,end,context};
+    const context = [
+      heading.slice(0, 120),
+      ...local.slice(0, 2).map((c) => `检索概念（需核对原文）：${c.label}`),
+    ].join("\n");
+    return { text, start, end, context };
   });
 }

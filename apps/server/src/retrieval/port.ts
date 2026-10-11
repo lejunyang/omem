@@ -63,12 +63,27 @@ export type RetrievalHit = {
     relevance: number;
     retrievalScore: number;
   };
-  rankingStatus?: { state: "scored" | "unscored"; reason?: "budget" | "failed"; model: string; evaluatedWindows?: number; plannedWindows?: number };
+  rankingStatus?: {
+    state: "scored" | "unscored";
+    reason?: "budget" | "failed";
+    model: string;
+    evaluatedWindows?: number;
+    plannedWindows?: number;
+  };
   /** Optional local judgment, separate from the uncalibrated retrieval score. */
   assessment?: {
     advisoryOnly?: boolean;
     model: string;
     priority: number;
+    /** Native option preferences, not calibrated correctness probabilities. */
+    judgment?:
+      | "strong_answer"
+      | "needs_context"
+      | "strong_unrelated"
+      | "uncertain";
+    /** Exact complete structural input used for the last judgment. */
+    input?: { digest: string; characters: number; target: RetrievalTarget };
+    contextRead?: "expanded" | "unavailable" | "budget";
     answers: Record<
       string,
       {

@@ -312,6 +312,13 @@ default = "decision-startlux2b"
 choices = ["decision-startlux08", "decision-startlux2b", "decision-startlux4b"]
 help = "Installed osdk model; run models sequentially for comparable memory use"
 
+[tasks."decision:reading-compare"]
+description = "Compare installed Decision sizes on the same fixed reading inputs and warm time budget"
+run = "bun scripts/decision-reading-compare.ts"
+[tasks."decision:reading-compare".options.cases]
+default = ".repo-review/knowledge/verification/decision-reading-questions.json"
+help = "Registered repository question/evidence JSON; annotations never enter inference"
+
 [tasks."decision:inspect"]
 description = "Read-only local advice before and after real HTTP retrieval; never applies actions"
 run = [{ argv = ["bun", "scripts/decision-inspect.ts", "{{args}}"] }]
