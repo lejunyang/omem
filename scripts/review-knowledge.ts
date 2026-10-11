@@ -57,8 +57,8 @@ const pipeline = new KnowledgePipeline(repository, new RoleRuntimeGateway(new Ro
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => void pipeline.stop());
 try {
   console.log("Actual profile:", reviewModelConfigPath(), profile.model, { input: config.maxInputTokens, output: config.maxOutputTokens, concurrency });
-  await setupStep("capture", () => runReviewSync(store, root));
-  const coverage = (await setupStep("restorePages", () => restoreReviewKnowledge(store, root))).coverage;
+  await setupStep("sourceScan", () => runReviewSync(store, root));
+  const coverage = (await setupStep("restoreMaterialLibrary", () => restoreReviewKnowledge(store, root))).coverage;
   await setupStep("codeSync", () => runCodeSync(store, root));
   const restored = await setupStep("restoreNotes", () => restoreKnowledgeArticles(repository, assets));
   console.log("Restore:", restored.reduce((n, r) => { n[r.state] = (n[r.state] ?? 0) + 1; return n; }, {} as Record<string, number>));
