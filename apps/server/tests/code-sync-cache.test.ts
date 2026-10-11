@@ -5,6 +5,23 @@ import {tmpdir} from "node:os";
 import {Store} from "../src/store.js";
 import {runReviewSync} from "../src/review/sync.js";
 import {runCodeSync} from "../src/code/sync.js";
+import {ensureCodeTables} from "../src/code/store.js";
+
+it("restricts current graph reads to snapshot indexes instead of scanning historical graphs",()=>{
+  const root=mkdtempSync(join(tmpdir(),"omem-graph-plan-")),store=new Store(root);
+  try{
+    ensureCodeTables(store);
+    for(const sql of [
+      "SELECT * FROM code_symbols WHERE snapshot_id=?",
+      "SELECT COUNT(*) FROM code_symbols WHERE snapshot_id=?",
+      "SELECT edge_id,seed FROM code_edges WHERE snapshot_id=? AND status<>'stale'",
+    ]){
+      const plan=store.db.prepare("EXPLAIN QUERY PLAN "+sql).all("current").map(r=>String(r.detail)).join("\n");
+      expect(plan).toContain("SEARCH");expect(plan).toContain("snapshot_id=?");
+      expect(plan).not.toMatch(/SCAN code_(symbols|edges)/);
+    }
+  }finally{store.close();rmSync(root,{recursive:true,force:true});}
+});
 
 it("skips a current projection and reuses syntax while rebinding changed captured originals",async()=>{
   const root=mkdtempSync(join(tmpdir(),"omem-parse-reuse-")),store=new Store(join(root,"data"));

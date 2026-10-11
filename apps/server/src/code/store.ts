@@ -179,6 +179,9 @@ export function ensureCodeTables(store: Store): void {
     db.exec("DROP TABLE code_symbols_legacy");
   }
   db.exec(`CREATE INDEX IF NOT EXISTS code_symbols_file_idx ON code_symbols(file_id, snapshot_id)`);
+  // Snapshot reads must not scan symbols from every historical graph. The
+  // symbol-first primary key and file-first index cannot serve this predicate.
+  db.exec(`CREATE INDEX IF NOT EXISTS code_symbols_snapshot_idx ON code_symbols(snapshot_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS code_symbols_frag_idx ON code_symbols(fragment_id)`);
   db.exec(`CREATE TABLE IF NOT EXISTS code_edges(
     edge_id TEXT NOT NULL,
@@ -232,6 +235,7 @@ export function ensureCodeTables(store: Store): void {
   db.exec(`CREATE INDEX IF NOT EXISTS code_edges_from_idx ON code_edges(from_symbol_id, from_file_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS code_edges_to_idx ON code_edges(to_symbol_id, to_file_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS code_edges_status_idx ON code_edges(status, edge_kind)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS code_edges_snapshot_idx ON code_edges(snapshot_id, status)`);
   db.exec(`CREATE TABLE IF NOT EXISTS code_understandings(
     understanding_id TEXT PRIMARY KEY,
     target_type TEXT NOT NULL,
