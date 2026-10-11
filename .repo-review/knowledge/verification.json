@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "recordedAt": "2026-10-11T07:32:54.366Z",
-  "implementationCommit": "e6572f08c39f1d55673908cebc458dd640175cf2",
-  "sourceDigest": "d8d7daae0aa131ea07d0c09ab966bccf040eb4fe87f154c675a86b213b445d77",
+  "recordedAt": "2026-10-11T12:05:45.238Z",
+  "implementationCommit": "24ca2a2fc5d24f4ff120df1d1c2e4661fbef3e1f",
+  "sourceDigest": "9d838ea5aa013d7f38543de00b2cc27d8e17d7099759953087499baca926106c",
   "queryDigest": "504378d7cf6408103ec1363e984c3d48f0d64038c42186d7d07c8b3226293b76",
   "mode": "full",
   "checks": [
@@ -16,7 +16,7 @@
           "--frozen"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-11T07-32-54-366Z/dependencies.log",
+        "log": ".repo-review/runtime/verification/2026-10-11T12-05-45-238Z/dependencies.log",
         "sha256": "0421dddc74e3eb94185e49c58bb157ef738e9f5a44d0061236a5e5d7cec3d680"
       }
     },
@@ -30,8 +30,8 @@
           "check"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-11T07-32-54-366Z/project.log",
-        "sha256": "7aaaae278012e2dc557c2612dbcfe3c87c4813a57e5b9804473a8c0ca8a82aa4"
+        "log": ".repo-review/runtime/verification/2026-10-11T12-05-45-238Z/project.log",
+        "sha256": "b39835c6a4c03b27313c56ff9bd1dd97e0bf8ec53c795bc03a34fd77363901a7"
       }
     },
     {
@@ -43,7 +43,7 @@
           "scripts/live-retrieval-smoke.ts"
         ],
         "exitCode": 0,
-        "log": ".repo-review/runtime/verification/2026-10-11T07-32-54-366Z/liveChineseRetrieval.log",
+        "log": ".repo-review/runtime/verification/2026-10-11T12-05-45-238Z/liveChineseRetrieval.log",
         "sha256": "660562c5bc9996e0c643cc27389dca13bbf013e49793ef048911cd4abf345e6d"
       }
     },
@@ -64,16 +64,16 @@
         "available": true,
         "backend": "sqlite-context-bm25-bge@1",
         "projection": "structure-icu-v8",
-        "units": 19187,
+        "units": 19405,
         "semantic": {
           "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3",
           "state": "ready",
-          "indexed": 19187,
+          "indexed": 19405,
           "pending": 0,
           "error": null,
           "concepts": {
             "model": "structure-icu-v8:bge-zh-cls-q8-window400-v1:7556bde190512e88209bb701b889b797fcb0d9beb520b15352d0de4f59d9d2d3:range-concepts-v1",
-            "indexed": 1551,
+            "indexed": 1540,
             "pending": 0,
             "error": null
           }
@@ -101,7 +101,7 @@
   "scope": "本次自动检查；不继承历史通过率，不调用生成式模型。独立语义复核记录读取自知识文章。",
   "history": "当前报告加最近两次成功、两次失败归档；当前文档引用的归档额外保留。运行日志只保留最近三次已结束运行，旧记录可查 Git。",
   "knowledge": {
-    "materials": 902,
+    "materials": 907,
     "publishedPages": 0,
     "currentPages": 0,
     "plannedPages": 0,
@@ -110,7 +110,7 @@
     "errors": [],
     "pages": [],
     "restore": {
-      "restored": 46
+      "restored": 50
     },
     "note": "按正式页面与章节记录当前状态；不要求每份原件生成文章。程序检查不能证明文章已读懂或回答已有效。"
   },
@@ -134,7 +134,7 @@
         "passed": true,
         "firstExpectedRank": 5,
         "uniquePathsAt5": 5,
-        "elapsedMs": 3174,
+        "elapsedMs": 3313,
         "top5": [
           {
             "path": "apps/server/src/retrieval/keyword.ts",
@@ -205,7 +205,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 1400,
+        "elapsedMs": 973,
         "top5": [
           {
             "path": "apps/server/src/retrieval/embedding.ts",
@@ -276,7 +276,7 @@
         "passed": false,
         "firstExpectedRank": null,
         "uniquePathsAt5": 5,
-        "elapsedMs": 1659,
+        "elapsedMs": 1326,
         "top5": [
           {
             "path": "docs/reader-first/assistant-memory-flow.md",
@@ -342,7 +342,7 @@
         "passed": true,
         "firstExpectedRank": 1,
         "uniquePathsAt5": 5,
-        "elapsedMs": 294,
+        "elapsedMs": 924,
         "top5": [
           {
             "path": "apps/server/src/knowledge/pipeline.ts",
@@ -404,7 +404,7 @@
         "passed": true,
         "firstExpectedRank": 2,
         "uniquePathsAt5": 4,
-        "elapsedMs": 339,
+        "elapsedMs": 250,
         "top5": [
           {
             "path": "apps/server/src/retrieval/unified.ts",
@@ -467,7 +467,7 @@
         "passed": true,
         "firstExpectedRank": 4,
         "uniquePathsAt5": 5,
-        "elapsedMs": 2273,
+        "elapsedMs": 2069,
         "top5": [
           {
             "path": "design.md",
