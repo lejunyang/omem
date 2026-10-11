@@ -27,7 +27,8 @@ const opt = (name: string, fallback: string) => {
 const [corpusPath, queriesPath] = args.filter((a, i) => !a.startsWith("--") && !args[i - 1]?.startsWith("--"));
 const home = opt("--home", join(process.cwd(), ".scratch", "eval-home"));
 const limitQ = Number(opt("--limit", "100000"));
-const vector = flag("--vector");
+const vectorOnly = flag("--vector-only");
+const vector = flag("--vector") || vectorOnly;
 
 const read = (p: string) => readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
 const fresh = !existsSync(join(home, "omem.db"));
@@ -59,7 +60,7 @@ const dcg = (grades: number[]) => grades.reduce((s, g, i) => s + (2 ** g - 1) / 
 let ndcg = 0, r10 = 0, r50 = 0, mrr = 0, ms = 0;
 for (const q of queries) {
   const t = performance.now();
-  const hits = await search(app, q.text, { types: ["chunk"], limit: 50, perSource: 1 });
+  const hits = await search(app, q.text, { types: ["chunk"], limit: 50, perSource: 1, routes: vectorOnly ? { fts: false, symbol: false } : undefined, ftsWeight: opt("--fts-weight", "") ? Number(opt("--fts-weight", "")) : undefined });
   ms += performance.now() - t;
   const ranked = hits.map((h) => uriOf.get(h.sourceId!)!).filter(Boolean);
   const relevant = Object.entries(q.rels).filter(([, g]) => g > 0);
@@ -73,4 +74,4 @@ for (const q of queries) {
 }
 const n = queries.length;
 const pct = (x: number) => ((100 * x) / n).toFixed(2);
-console.log(JSON.stringify({ mode: vector ? "fts+vector (RRF)" : "fts", queries: n, "nDCG@10": pct(ndcg), "Recall@10": pct(r10), "Recall@50": pct(r50), "MRR@10": pct(mrr), avgMs: (ms / n).toFixed(1) }));
+console.log(JSON.stringify({ mode: vectorOnly ? "vector" : vector ? "fts+vector (RRF)" : "fts", queries: n, "nDCG@10": pct(ndcg), "Recall@10": pct(r10), "Recall@50": pct(r50), "MRR@10": pct(mrr), avgMs: (ms / n).toFixed(1) }));

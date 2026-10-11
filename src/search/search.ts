@@ -31,6 +31,10 @@ export type SearchOptions = {
   perSource?: number;
   includeHistory?: boolean;
   sourceKinds?: string[];
+  /** Disable individual recall routes (evaluation and debugging). */
+  routes?: { fts?: boolean; vector?: boolean; symbol?: boolean };
+  /** RRF weight of the full-text route when dense vectors are also used. */
+  ftsWeight?: number;
 };
 
 const RRF_K = 60;
@@ -59,7 +63,7 @@ export function snippet(text: string, query: string, size = 360): string {
   return (best > 1 ? "…" : "") + out.slice(0, size).trim() + (out.length > size ? "…" : "");
 }
 
-type Ranked = { key: string; hit: Omit<Hit, "score" | "via">; rank: number; via: string };
+type Ranked = { key: string; hit: Omit<Hit, "score" | "via">; rank: number; via: string; weight?: number };
 
 export async function search(app: App, query: string, opts: SearchOptions = {}): Promise<Hit[]> {
   const limit = opts.limit ?? 20;
@@ -68,7 +72,8 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
   const lists: Ranked[][] = [];
   const match = matchQuery(query);
 
-  if (match && types.has("chunk")) {
+  const route = { fts: true, vector: true, symbol: true, ...opts.routes };
+  if (match && types.has("chunk") && route.fts) {
     const sf = spaceFilter("c.space_id", opts.spaces);
     const kinds = opts.sourceKinds?.length ? ` and s.kind in (${opts.sourceKinds.map(() => "?").join(",")})` : "";
     const rows = all<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; line_start: number; line_end: number; text: string; stitle: string }>(
@@ -104,7 +109,7 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
     );
   }
 
-  if (types.has("chunk") || types.has("symbol")) {
+  if ((types.has("chunk") || types.has("symbol")) && route.symbol) {
     const idents = [...new Set(query.match(/[A-Za-z_$][\w$]{2,}/g) ?? [])];
     if (idents.length) {
       const sf = spaceFilter("y.space_id", opts.spaces);
@@ -181,7 +186,7 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
     );
   }
 
-  if (types.has("chunk")) {
+  if (types.has("chunk") && route.vector) {
     const vec = await vectorSearch(app, query, opts.spaces, pool).catch(() => []);
     if (vec.length) {
       const ids = vec.map((v) => v.chunkId);
@@ -220,11 +225,16 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
   }
 
   // Reciprocal rank fusion: robust, parameter-light, explains itself ("via").
+  // Dense retrieval is markedly stronger on natural-language questions, so the
+  // lexical list gets a lower weight when both exist; it still decides exact
+  // names, rare terms and code identifiers (the symbol route keeps full weight).
+  const hasVector = lists.some((l) => l[0]?.via === "语义");
+  const ftsWeight = hasVector ? (opts.ftsWeight ?? 0.5) : 1;
   const fused = new Map<string, Hit>();
   for (const list of lists)
     for (const item of list) {
       const prev = fused.get(item.key);
-      const add = 1 / (RRF_K + item.rank + 1);
+      const add = (item.via === "全文" ? ftsWeight : 1) / (RRF_K + item.rank + 1);
       if (prev) {
         prev.score += add;
         if (!prev.via.includes(item.via)) prev.via.push(item.via);
