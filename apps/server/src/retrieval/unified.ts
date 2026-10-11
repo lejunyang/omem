@@ -19,7 +19,8 @@ import { CodeNavigation } from "./code-navigation.js";
 import { scoringPassages } from "./rerank-passages.js";
 import { candidatePool } from "./candidate-pool.js";
 import { recallQueries, mergeQueryRecall } from "./recall-queries.js";
-import { evaluatedOrder } from "./evaluated-order.js";
+import { evaluatedOrder, promotedOrder } from "./evaluated-order.js";
+import { readParentContext } from "./reading-context.js";
 import {
   RetrievalProjection,
   decodeUnit,
@@ -105,6 +106,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
       query: SearchQuery,
       hits: RetrievalHit[],
       onInput?: (hit: RetrievalHit) => void,
+      readContext?: (hit: RetrievalHit) => RetrievalHit | undefined,
     ) => Promise<RetrievalHit[]>,
     private readonly rankingOptions: { budgetMs?: number } = {},
   ) {
@@ -962,15 +964,45 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     if (!this.rank || !q.text.trim() || exactLookup(q.text)) return finish();
     // Score a pool before spending the requested reading slots. Do not allow a
     // model to see hidden/out-of-scope units or force a cold model load here.
-    const fallback = this.finish([...hits], {...q,diversify:false,limit:hits.length});
-    const admission = candidatePool(hits.map(h=>({...h,id:h.unit.id,owner:h.unit.owner})),hits.length);
+    const fallback = this.finish([...hits], {
+      ...q,
+      diversify: false,
+      limit: hits.length,
+    });
+    const admission = candidatePool(
+      hits.map((h) => ({ ...h, id: h.unit.id, owner: h.unit.owner })),
+      hits.length,
+    );
     // A cheaper model ranks expensive model work when available. Otherwise
     // visit recall frontiers without imposing a second head-only cutoff.
-    const pool = hits.some(h=>h.reranking) ? fallback :
-      this.finish(admission,{...q,diversify:false,limit:hits.length},undefined,true);
-    observer?.({ stage: "selection", hits: structuredClone(pool),cutoff:{considered:hits.length} });
+    const readingOrder = hits.some((h) => h.reranking)
+      ? fallback
+      : this.finish(
+          admission,
+          { ...q, diversify: false, limit: hits.length },
+          undefined,
+          true,
+        );
+    const originals = new Map(hits.map((h) => [h.unit.id, h.unit]));
+    // Display snippets and model reading inputs have separate jobs. Decision
+    // reads the complete eligible structural unit, including later guards.
+    const pool = readingOrder.map((hit) => ({
+      ...hit,
+      text: originals.get(hit.id)!.text,
+    }));
+    observer?.({
+      stage: "selection",
+      hits: structuredClone(pool),
+      cutoff: { considered: hits.length },
+    });
     try {
-      const ranked = await this.rank(q, pool, hit => observer?.({stage:"decision-input",hits:structuredClone([hit])}));
+      const ranked = await this.rank(
+        q,
+        pool,
+        (hit) =>
+          observer?.({ stage: "decision-input", hits: structuredClone([hit]) }),
+        (hit) => readParentContext(this.database, hit, q),
+      );
       if (ranked === pool) return finish();
       observer?.({ stage: "decision", hits: structuredClone(ranked) });
       if (ranked.some((h) => h.assessment?.advisoryOnly)) {
@@ -988,13 +1020,27 @@ export class UnifiedRetrieval extends KeywordRetrieval {
         sections = new Set<string>(),
         seen = new Set<string>();
       const allowed = new Map(pool.map((h) => [h.id, h]));
-      const decisions = new Map(ranked.filter(h=>allowed.has(h.id)).map(h=>[h.id,h.assessment]));
-      const retained = fallback.filter(h=>decisions.has(h.id)).map(h=>({
-        ...h, assessment:decisions.get(h.id),
-        ...(decisions.get(h.id)?{routes:[...h.routes,"decision"]}:{})
-      }));
-      const ordered = ranked.some(h=>h.assessment) ? evaluatedOrder(retained,h=>h.assessment?.priority) :
-        ranked.filter(h=>allowed.has(h.id)).map(h=>allowed.get(h.id)!);
+      const decisions = new Map(
+        ranked
+          .filter((h) => allowed.has(h.id))
+          .map((h) => [h.id, h.assessment]),
+      );
+      const retained = fallback
+        .filter((h) => decisions.has(h.id))
+        .map((h) => ({
+          ...h,
+          assessment: decisions.get(h.id),
+          ...(decisions.get(h.id) ? { routes: [...h.routes, "decision"] } : {}),
+        }));
+      const ordered = ranked.some((h) => h.assessment)
+        ? promotedOrder(
+            retained,
+            (h) => h.assessment?.priority,
+            (h) => h.assessment?.judgment === "strong_answer",
+          )
+        : ranked
+            .filter((h) => allowed.has(h.id))
+            .map((h) => allowed.get(h.id)!);
       const selected = ordered
         .filter((hit) => {
           if (q.diversify === false) return true;

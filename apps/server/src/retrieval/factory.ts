@@ -42,10 +42,11 @@ export function createRetrieval(
       : undefined,
     false,
     decisions
-      ? async (query, hits, onInput) =>
+      ? async (query, hits, onInput, readContext) =>
           (
             await assessPassages(decisions, query.text, hits, {
               onInput,
+              readContext,
               sourceIdFor: (hit) => {
                 if (hit.target.kind !== "source") return undefined;
                 const row = db
