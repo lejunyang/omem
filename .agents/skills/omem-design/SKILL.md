@@ -1,17 +1,13 @@
 ---
 name: omem-design
-description: 为 omem 个人助理构建或修改 Vue 界面、公共组件、证据阅读和递归引用弹窗；在涉及主题色、排版、移动端、无障碍或问答交互时使用。沿用用户确认的黑白灰三栏阅读风格，复用项目 design.md 和 packages/ui。
+description: 修改 omem v2 的 Vue 网页（web/）时使用：阅读优先的排版、浅色/深色 token、引用抽屉、命令面板、移动端与无障碍要求。
 ---
 
-# omem 界面实现
+# omem 网页实现
 
-1. 先读仓库根 `design.md`；系统功能见 `docs/reader-first/architecture.md`，不要把架构文档当视觉 token。
-2. 在 `packages/ui/src` 搜索已有组件。使用 Vue 3 `<script setup lang="ts">`，从 `@omem/ui` 复用控件与 tokens.css。公共组件只接收 props/slots/emits，网络与状态留给 apps/web。
-3. 沿用近黑主色、浅灰目录、白色面板、衬线标题和无衬线正文；不要新增任意渐变/品牌色。错误、冲突必须包含文本。
-4. 以完整文章、读者目的和当前问题为阅读中心，固定证据片段用于按需追溯。递归引用仅使用一个 dialog，保存路径、当前层滚动与草稿；Esc 返回一层，关闭恢复焦点；环显示跳回目标。问答不得丢失当前证据。
-5. 正文当作不可信资料渲染为文本/审查后的 AST，不直接 v-html；图片必须由已验证 asset ID 加载。模型回包不能直接操作 DOM 或触发工具。
-6. 所有普通点击区域至少 44px，输入有可见 label；700px 以下全屏引用和折叠导航；测试 390/768/1440px，不能横向溢出。尊重 reduced-motion。
-7. 接入真实 API，配置与状态必须实际生效。未连接/没有材料时提供诚实空态；不得借演示数据掩盖错误。通知要描述具体变更。
-8. 段落、列表、表格、代码与按钮组必须有明确间距；桌面限制正文行宽，移动端允许内部目录折叠，不牺牲可读字号。运行 `osdk run check`，涉及页面再运行 `osdk run browser`（如已注册），截图检查桌面和手机。记录未验证的边界。
-
-新增通用行为先加入 packages/ui，并在设计系统展示页面验证；不要复制整页原型 CSS 建第二套组件。
+1. 页面在 `web/src/views`，公共组件在 `web/src/components`，样式 token 在 `web/src/styles.css`。新增颜色先加 token（同时给深色值），不要在组件里写死色值。
+2. 用 `<script setup lang="ts">`，数据走 `web/src/api.ts`，全局状态在 `web/src/store.ts`。实时更新订阅 `onServerEvent`。
+3. 正文用 `Markdown.vue` 渲染（marked + DOMPurify + highlight.js + 懒加载 mermaid）。`src:` / `mem:` / `msg:` 链接和 `path:行号` 会变成引用，点击后由 `CitationDrawer` 逐层展示；`[[slug]]` 是 Wiki 链接。
+4. 阅读区限宽（正文约 760px），标题用衬线体，元信息小号灰色；按钮组用 gap。空状态说明现状并给一个能执行的动作。
+5. 所有可点击元素可键盘操作；弹层 Esc 关闭并归还焦点；不依赖 hover 才能看到关键操作。≤860px 侧栏折叠，≤760px 单列。
+6. 改完运行 `pnpm run typecheck`，并用 `node scripts/screens.ts <url> <dir>` 截 1440 和 390 宽度检查，不能横向溢出。
