@@ -729,6 +729,7 @@ export class UnifiedRetrieval extends KeywordRetrieval {
     }
     const hits = queries.length === 1 ? branches[0]! : mergeQueryRecall(branches);
     if (queries.length > 1) this.observe(observer, "query-expansion", hits, undefined, undefined, queries);
+    if (!q.text.trim() || exactLookup(q.text)) return this.select(hits, q, observer);
     return this.select(await this.rerank(hits, q, observer), q, observer);
   }
   private async recall(q: SearchQuery, observer?: RetrievalObserver): Promise<ScoredUnit[]> {

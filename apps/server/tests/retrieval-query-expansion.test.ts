@@ -53,6 +53,17 @@ it("does not count paraphrase duplication as independent route corroboration", (
     .toEqual(["中文问题","ＡＢＣ","four","five"]);
 });
 
+it("keeps exact lexical lookups out of model reranking", async () => {
+  const directory=mkdtempSync(join(tmpdir(),"omem-exact-lookup-")),store=new Store(directory);
+  let loads=0;
+  const retrieval=new UnifiedRetrieval(store.db,undefined,async()=>{loads++;throw Error("should not load");});
+  try{
+    store.capture({source:"manual",externalId:"records",title:"Archive",parts:[{type:"text",text:"ReservationId is retained with the booking reference."}]});
+    const hits=await retrieval.search({text:"ReservationId",queryVariants:["booking reference"]});
+    expect(hits.length).toBeGreaterThan(0);expect(loads).toBe(0);
+  }finally{await retrieval.close();store.close();rmSync(directory,{recursive:true,force:true});}
+});
+
 it("migrates identifier word recall without changing original identities or already computed vectors", async () => {
   const directory=mkdtempSync(join(tmpdir(),"omem-lexical-migration-")),store=new Store(directory);
   const retrieval=new UnifiedRetrieval(store.db);
