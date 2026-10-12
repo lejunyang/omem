@@ -228,7 +228,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { conversation: c, messages: conversationMessages(app, id) };
   });
   server.delete("/api/conversations/:id", async (req) => {
-    app.db.prepare("delete from conversations where id = ?").run((req.params as { id: string }).id);
+    const id = (req.params as { id: string }).id;
+    const src = one<{ id: string }>(app.db, "select id from sources where uri = ? and deleted_at is null", `conversation:${id}`);
+    if (src) deleteSource(app, src.id);
+    app.db.prepare("delete from conversations where id = ?").run(id);
     return { ok: true };
   });
 
@@ -402,7 +405,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       runs: listRuns(app, { limit: 8 }),
       study: studyStats(app),
       notifications: listNotifications(app, 8),
-      recentSources: all(app.db, "select id, space_id spaceId, kind, uri, title, updated_at updatedAt from sources where deleted_at is null and kind != 'code' order by updated_at desc limit 8"),
+      recentSources: all(app.db, "select id, space_id spaceId, kind, uri, title, updated_at updatedAt from sources where deleted_at is null and kind not in ('code', 'conversation') order by updated_at desc limit 8"),
     };
   });
   server.get("/api/schedules", async () => ({ schedules: listSchedules(app), next: nextRuns(app), labels: scheduleLabels }));
