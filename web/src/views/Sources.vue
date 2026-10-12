@@ -80,7 +80,7 @@ function toggle(path: string) {
   next.has(path) ? next.delete(path) : next.add(path);
   collapsed.value = next;
 }
-const isMarkdown = computed(() => detail.value && /\.(md|markdown|mdx)$/i.test(detail.value.source.uri) || detail.value?.source.kind === "note" || detail.value?.source.kind === "web" || detail.value?.source.kind === "doc");
+const isMarkdown = computed(() => detail.value && /\.(md|markdown|mdx)$/i.test(detail.value.source.uri) || detail.value?.source.kind === "note" || detail.value?.source.kind === "web" || detail.value?.source.kind === "doc" || detail.value?.source.kind === "image" || detail.value?.source.kind === "conversation");
 const outline = computed(() => {
   if (!detail.value) return [];
   const o = detail.value.outline;
@@ -123,7 +123,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
         </div>
         <input v-model="q" class="input" placeholder="按标题或路径筛选" />
         <div class="kinds row wrap">
-          <button v-for="k in ['', 'doc', 'code', 'chat', 'note', 'web']" :key="k" class="kind" :class="{ on: kind === k }" @click="kind = k">{{ { "": "全部", doc: "文档", code: "代码", chat: "聊天", note: "笔记", web: "网页" }[k] }}</button>
+          <button v-for="k in ['', 'doc', 'code', 'chat', 'note', 'web', 'image', 'conversation']" :key="k" class="kind" :class="{ on: kind === k }" @click="kind = k">{{ { "": "全部", doc: "文档", code: "代码", chat: "聊天", note: "笔记", web: "网页", image: "图片", conversation: "对话" }[k] }}</button>
         </div>
       </div>
       <div class="items">

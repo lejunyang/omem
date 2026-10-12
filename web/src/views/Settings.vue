@@ -5,7 +5,7 @@ import Icon from "../components/Icon.vue";
 import { fmtTime, kindLabel, loadSpaces, state, toast } from "../store";
 
 type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean };
-type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null };
+type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
 const tab = ref<"spaces" | "agents" | "schedules" | "search" | "lark" | "about">("spaces");
 const config = ref<any>(null);
 const profiles = ref<Profile[]>([]);
@@ -121,6 +121,11 @@ async function saveCron(s: Schedule, cron: string) {
     toast((e as Error).message, "error");
   }
 }
+async function saveScheduleConfig(s: Schedule, config: Record<string, unknown>) {
+  await put(`/api/schedules/${s.id}`, { config: { ...s.config, ...config } });
+  toast("已保存", "ok");
+  void load();
+}
 async function runNow(s: Schedule) {
   await post(`/api/schedules/${s.id}/run`);
   toast("已触发", "ok", "#/runs");
@@ -145,6 +150,22 @@ async function addProfile() {
   } catch (e) {
     toast(`配置不是合法 JSON：${(e as Error).message}`, "error");
   }
+}
+const probes = ref<Record<string, { loading?: boolean; error?: string; data?: { agent: string; options: { id: string; category: string | null; values: string[]; current: string | null }[] } }>>({});
+async function probe(p: Profile) {
+  probes.value[p.id] = { loading: true };
+  try {
+    probes.value[p.id] = { data: await post(`/api/agents/${p.id}/probe`) };
+  } catch (e) {
+    probes.value[p.id] = { error: (e as Error).message };
+  }
+}
+async function setProfileOption(p: Profile, key: "model" | "effort", value: string) {
+  const { installed, ...rest } = p;
+  const next = { ...rest, [key]: value === "default" ? undefined : value };
+  const list = [...config.value.agents.profiles.filter((x: Profile) => x.id !== p.id), next];
+  await saveConfig({ agents: { ...config.value.agents, profiles: list } }, `${p.name ?? p.id}：${key} = ${value}`);
+  void load();
 }
 function editProfile(p: Profile) {
   const { installed, ...rest } = p;
@@ -190,8 +211,20 @@ function editProfile(p: Profile) {
             <div><strong>{{ p.name ?? p.id }}</strong> <span class="muted small mono">{{ p.id }}</span></div>
             <div class="muted small mono">{{ p.transport }} · {{ p.command }} {{ p.args.join(" ") }}<template v-if="p.model"> · {{ p.model }}</template><template v-if="p.effort"> · {{ p.effort }}</template></div>
           </div>
+          <button v-if="p.transport === 'acp' && p.installed" class="btn ghost sm" @click="probe(p)">{{ probes[p.id]?.loading ? "连接中…" : "检测模型" }}</button>
           <button class="btn ghost sm" @click="editProfile(p)">编辑</button>
         </div>
+        <template v-for="p in profiles" :key="'probe-' + p.id">
+          <div v-if="probes[p.id]?.data || probes[p.id]?.error" class="probe">
+            <div class="small muted">{{ p.name ?? p.id }}：{{ probes[p.id].error ?? probes[p.id].data!.agent }}</div>
+            <template v-for="o in probes[p.id].data?.options.filter((o) => o.category === 'model' || o.category === 'thought_level') ?? []" :key="o.id">
+              <div class="row wrap small">
+                <span class="muted">{{ o.category === "model" ? "模型" : "推理强度" }}：</span>
+                <button v-for="v in o.values" :key="v" class="chip" :class="{ on: (o.category === 'model' ? p.model : p.effort) === v }" @click="setProfileOption(p, o.category === 'model' ? 'model' : 'effort', v)">{{ v }}</button>
+              </div>
+            </template>
+          </div>
+        </template>
       </div>
       <label class="field"><span>默认 Agent</span>
         <select v-model="defaultProfile" class="select"><option value="">自动（第一个已安装的）</option><option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name ?? p.id }}</option></select>
@@ -220,6 +253,7 @@ function editProfile(p: Profile) {
           <input class="input mono cron" :value="s.cron" @change="saveCron(s, ($event.target as HTMLInputElement).value)" />
           <button class="btn sm" @click="runNow(s)"><Icon name="play" :size="13" />立即运行</button>
         </div>
+        <label v-if="s.kind === 'lark-curate'" class="field"><span>筛选方向</span><textarea class="textarea" rows="2" :value="s.config.direction ?? ''" placeholder="例如：和项目A、后端架构、我负责的模块相关的群；需要我回复或决定的讨论" @change="saveScheduleConfig(s, { direction: ($event.target as HTMLTextAreaElement).value })" /></label>
         <div class="muted small">上次：{{ s.lastRunAt ? fmtTime(s.lastRunAt) : "从未" }}<template v-if="next[s.id]"> · 下次：{{ fmtTime(next[s.id]) }}</template></div>
       </div>
     </section>
@@ -326,6 +360,26 @@ function editProfile(p: Profile) {
 .grow {
   flex: 1;
   min-width: 0;
+}
+.probe {
+  padding: 10px 16px;
+  border-top: 1px dashed var(--line);
+  display: grid;
+  gap: 6px;
+}
+.chip {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 999px;
+  padding: 1px 10px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.chip.on {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
 }
 .roles {
   display: grid;

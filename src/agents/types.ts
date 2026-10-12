@@ -24,6 +24,9 @@ export type AgentRequest = {
   modes?: string[];
   env?: Record<string, string>;
   signal?: AbortSignal;
+  /** Only connect and report the agent's models/modes, no prompt. */
+  probe?: boolean;
 };
 
-export type AgentResult = { text: string; stopReason: string; sessionId?: string; agent: string };
+export type AgentProbe = { agent: string; modes: string[]; options: { id: string; category: string | null; current: string | null; values: string[] }[] };
+export type AgentResult = { text: string; stopReason: string; sessionId?: string; agent: string; probe?: AgentProbe };

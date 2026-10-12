@@ -52,6 +52,10 @@ marked.use({
       if (language === "mermaid") return `<div class="mermaid-box" data-mermaid="${escapeHtml(text)}"><pre>${escapeHtml(text)}</pre></div>`;
       return `<pre><code class="hljs${language ? " language-" + escapeHtml(language) : ""}">${highlight(text, language)}</code></pre>`;
     },
+    image({ href, title, text }) {
+      const src = href.startsWith("omem-file:") ? `/api/files/${encodeURIComponent(href.slice(10))}` : /^https?:/i.test(href) ? href : "";
+      return src ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(text)}"${title ? ` title="${escapeHtml(title)}"` : ""} loading="lazy" />` : escapeHtml(text);
+    },
     link({ href, title, tokens }) {
       const inner = this.parser.parseInline(tokens);
       const t = title ? ` title="${escapeHtml(title)}"` : "";

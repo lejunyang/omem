@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { accessSync, constants } from "node:fs";
-import { delimiter, extname, isAbsolute, join } from "node:path";
+import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
 
 /**
  * Find an executable on PATH. On Windows npm installs `.cmd` shims, which
@@ -15,12 +15,31 @@ export function resolveCommand(command: string, env: NodeJS.ProcessEnv = process
       const file = base + ext;
       try {
         accessSync(file, isWin ? constants.F_OK : constants.X_OK);
-        if (isWin && /\.(cmd|bat)$/i.test(file)) return { file: env.ComSpec ?? "cmd.exe", prefix: ["/d", "/s", "/c", file] };
+        if (isWin && /\.(cmd|bat)$/i.test(file)) {
+          // npm shims just run `node <script>`: call node directly so arguments
+          // (JSON, quotes) are not re-parsed by cmd.exe.
+          const script = npmShimTarget(file);
+          if (script) return { file: process.execPath, prefix: [script] };
+          return { file: env.ComSpec ?? "cmd.exe", prefix: ["/d", "/s", "/c", file] };
+        }
         return { file, prefix: [] };
       } catch {}
     }
   }
   return null;
+}
+
+/** Extract the JavaScript entry from an npm-generated .cmd shim, if it is one. */
+export function npmShimTarget(cmdFile: string): string | null {
+  try {
+    const text = readFileSync(cmdFile, "utf8");
+    const m = /"%(?:~)?dp0%?\\([^"]+?\.(?:c|m)?js)"/i.exec(text);
+    if (!m) return null;
+    const script = join(dirname(cmdFile), m[1].replace(/\\/g, "/"));
+    return existsSync(script) ? script : null;
+  } catch {
+    return null;
+  }
 }
 
 export function commandExists(command: string) {

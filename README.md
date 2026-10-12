@@ -2,7 +2,7 @@
 
 个人记忆与助理：把文档、代码、聊天、笔记放进同一个知识库，带依据地回答问题，记住约定并在被纠正时更新，持续跟进事项，还能把编码任务交给其他 Agent 并保留检查与评审结果。
 
-> v2 是一次精简重写（2026-10）。v1 的代码与文档在 Git 历史和 `docs/archive/v1/` 中；设计取舍见 [docs/v2/architecture.md](docs/v2/architecture.md)。
+> v2 是一次精简重写（2026-10）。v1 的代码与文档在 Git 历史和 `docs/archive/v1/` 中；设计取舍见 [docs/v2/architecture.md](docs/v2/architecture.md)，评测见 [evaluation.md](docs/v2/evaluation.md)，验收步骤见 [acceptance.md](docs/v2/acceptance.md)。
 
 ## 它怎么工作
 
@@ -67,7 +67,8 @@ pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 | 交办等待、提醒、待办，并在改期或完成后维护同一事项 | 问答里交代，或在“事项”页添加；每个事项都有时间线 |
 | 交办编码、看进度、看实际差异与评审结果 | 问答里说“在 xx 仓库实现…”，或 `omem delegate`；在“运行”页看检查输出、diff、评审，确认后应用 |
 | 采集消息、筛选关注群、生成简报 | 设置 → 飞书：订阅会话（只读）；定时任务里开启采集与巡检 |
-| 用间隔重复学习（如英语） | 打开材料点“生成卡片”，在“学习”页按 FSRS 复习 |
+| 用间隔重复学习（如英语） | 打开材料点“生成卡片”，在“学习”页按 FSRS 复习；可与 Anki 互相导入导出（制表符文本） |
+| 每天早上知道今天该处理什么 | 定时任务开启“简报”，通过站内和机器人推送 |
 
 ## 命令行
 
@@ -84,9 +85,20 @@ omem delegate omem "给 search 加按时间过滤" --check "pnpm test"
 omem mcp [--read-only]                      # 把个人库作为 MCP 服务给其他 Agent 用
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
 omem agents                                 # 查看 Agent 配置与安装状态
+omem setup embeddings                       # 开启本地中文向量检索（推荐）
+omem hook claude|codex                      # 记录编码 Agent 会话（配在钩子里）
 ```
 
 数据目录默认 `~/.omem`（`--home` 或 `OMEM_HOME` 可改）：`config.json` 配置，`omem.db` 索引与记录，`library/` 是 Wiki 的 Git 仓库，`files/` 存原始文件，`runs/` 存交办编码的工作区和补丁。
+
+## 记录编码 Agent 的会话
+
+把你和 Claude Code / Codex 的工作过程也存进知识库（按工作目录归入对应的代码仓库空间，否则进个人空间）：
+
+- Claude Code：在 `~/.claude/settings.json` 的 `hooks.Stop` 里加命令 `omem hook claude`。
+- Codex：在 `~/.codex/config.toml` 里设置 `notify = ["omem", "hook", "codex"]`。
+
+之后可以问“上周让 Claude 改登录流程时是怎么决定的”。
 
 ## 飞书
 
