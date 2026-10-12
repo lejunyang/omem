@@ -139,6 +139,17 @@ export async function runAcp(profile: AgentProfile, req: AgentRequest, emit: (e:
     if (wanted && session.modes?.currentModeId !== wanted) await Promise.race([connection.setSessionMode({ sessionId, modeId: wanted }), failed]);
 
     let options = session.configOptions ?? [];
+    if (req.probe)
+      return {
+        text: "",
+        stopReason: "probe",
+        agent: init.agentInfo?.name ?? profile.command,
+        probe: {
+          agent: `${init.agentInfo?.name ?? profile.command} ${init.agentInfo?.version ?? ""}`.trim(),
+          modes: (session.modes?.availableModes ?? []).map((m) => m.id),
+          options: options.map((o) => ({ id: o.id, category: (o as { category?: string }).category ?? null, current: (o as { currentValue?: string }).currentValue ?? null, values: optionValues(o) })),
+        },
+      };
     for (const [key, value] of [
       ["model", profile.model],
       ["effort", profile.effort],

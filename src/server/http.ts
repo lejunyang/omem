@@ -457,6 +457,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return pollLark(app);
   });
 
+  server.post("/api/agents/:id/probe", async (req) => {
+    const { allProfiles } = await import("../core/config.ts");
+    const { runAcp } = await import("../agents/acp.ts");
+    const p = allProfiles(app.config).find((x) => x.id === (req.params as { id: string }).id);
+    if (!p) throw new HttpError(404, "没有这个 Agent 配置");
+    if (p.transport !== "acp") return { agent: p.command, note: "命令行 Agent 不支持探测，请直接填写 model / effort" };
+    const r = await runAcp({ ...p, model: undefined, effort: undefined, idleTimeoutMs: 60_000 }, { cwd: app.home, prompt: "", probe: true }, () => {});
+    return r.probe;
+  });
+
   // ----------------------------------------------------------------- settings
   server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home }));
   server.put("/api/settings", async (req) => {
