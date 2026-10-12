@@ -15,6 +15,7 @@ const router = createRouter({
     { path: "/sources/:id?", component: () => import("./views/Sources.vue") },
     { path: "/learn", component: () => import("./views/Learn.vue") },
     { path: "/runs/:id?", component: () => import("./views/Runs.vue") },
+    { path: "/agents", component: () => import("./views/Agents.vue") },
     { path: "/notifications", component: () => import("./views/Notifications.vue") },
     { path: "/settings", component: () => import("./views/Settings.vue") },
   ],

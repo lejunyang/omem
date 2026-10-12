@@ -206,3 +206,30 @@ export function agentIndex(app: App) {
     .map((a) => `- ${a.name}：${a.description}`)
     .join("\n");
 }
+
+// ---- raw files (web editor) ---------------------------------------------------
+
+export function readRaw(app: App, kind: "agent" | "skill", name: string) {
+  const file = kind === "agent" ? join(agentsDir(app), `${checkName(name)}.md`) : join(skillsDir(app), checkName(name), "SKILL.md");
+  if (!existsSync(file)) throw new HttpError(404, `不存在：${name}`);
+  return readFileSync(file, "utf8");
+}
+
+/** Save an edited file after checking it parses; invalid content is rejected, not written. */
+export function saveRaw(app: App, kind: "agent" | "skill", name: string, raw: string) {
+  checkName(name);
+  const { meta, body } = splitFrontmatter(raw);
+  if (kind === "agent") {
+    agentSpecSchema.parse({ ...meta, name });
+    if (!body) throw new HttpError(400, "需要写 system prompt（正文）");
+    mkdirSync(agentsDir(app), { recursive: true });
+    writeFileSync(join(agentsDir(app), `${name}.md`), raw.endsWith("\n") ? raw : raw + "\n");
+    commitLibrary(app.libraryDir, `user: edit agent ${name}`);
+    return readAgentSpec(app, name);
+  }
+  if (!String(meta.description ?? "").trim()) throw new HttpError(400, "技能需要 description");
+  mkdirSync(join(skillsDir(app), name), { recursive: true });
+  writeFileSync(join(skillsDir(app), name, "SKILL.md"), raw.endsWith("\n") ? raw : raw + "\n");
+  commitLibrary(app.libraryDir, `user: edit skill ${name}`);
+  return readSkill(app, name);
+}
