@@ -170,6 +170,67 @@ def({
 });
 
 def({
+  name: "scan",
+  description:
+    "穷举扫描：在空间内所有原件全文与有效记忆里找出包含任一关键词的每一行（不是排序后的前几条）。用于“一共几次 / 列出所有 / 总共花了多少”这类需要汇总多处材料的问题：给多个同义词、单复数、中英文写法。",
+  schema: z.object({
+    terms: z.array(z.string().min(1)).min(1).max(12).describe("关键词，命中任一即可（不区分大小写）"),
+    space: z.string().optional().describe("空间 id；'*' 表示所有可访问空间"),
+    source_kind: z.string().optional(),
+    since: z.string().optional().describe("只看此时间之后的材料（ISO 日期，按材料日期或保存时间）"),
+    until: z.string().optional(),
+    context: z.number().int().min(0).max(3).optional().describe("每处命中前后各带几行，默认 0"),
+    limit: z.number().int().min(1).max(400).optional().describe("最多返回多少行，默认 150"),
+  }),
+  handler: (ctx, a) => {
+    const sp = spacesFor(ctx, a.space);
+    const terms = a.terms.map((t) => t.toLowerCase());
+    const where = [
+      "deleted_at is null",
+      sp ? `space_id in (${sp.map(() => "?").join(",")})` : "1=1",
+      a.source_kind ? "kind = ?" : "1=1",
+      a.since ? "coalesce(json_extract(meta,'$.date'), captured_at) >= ?" : "1=1",
+      a.until ? "coalesce(json_extract(meta,'$.date'), captured_at) <= ?" : "1=1",
+      `(${terms.map(() => "instr(lower(text), ?) > 0").join(" or ")})`,
+    ].join(" and ");
+    const params = [...(sp ?? []), ...(a.source_kind ? [a.source_kind] : []), ...(a.since ? [a.since] : []), ...(a.until ? [a.until] : []), ...terms];
+    const rows = all<{ id: string; uri: string; title: string; text: string; date: string }>(
+      ctx.app.db,
+      `select id, uri, title, text, coalesce(json_extract(meta,'$.date'), captured_at) as date from sources where ${where} order by date`,
+      ...params,
+    );
+    const limit = a.limit ?? 150;
+    const ctxLines = a.context ?? 0;
+    const out: string[] = [];
+    let hits = 0;
+    let shown = 0;
+    for (const r of rows) {
+      const lines = r.text.split("\n");
+      const matched = lines.map((l, i) => (terms.some((t) => l.toLowerCase().includes(t)) ? i : -1)).filter((i) => i >= 0);
+      hits += matched.length;
+      if (shown >= limit) continue;
+      out.push(`\n## ${r.id} ${r.uri}（${String(r.date).slice(0, 10)}，${matched.length} 处）`);
+      for (const i of matched) {
+        if (shown >= limit) break;
+        const from = Math.max(0, i - ctxLines);
+        const to = Math.min(lines.length - 1, i + ctxLines);
+        out.push(`L${i + 1}: ${truncate(lines.slice(from, to + 1).join(" ⏎ "), 400)}`);
+        shown++;
+      }
+    }
+    const mems = all<{ id: string; kind: string; subject: string; content: string; valid_from: string | null }>(
+      ctx.app.db,
+      `select id, kind, subject, content, valid_from from memories where status = 'active' ${sp ? `and space_id in (${sp.map(() => "?").join(",")})` : ""} and (${terms.map(() => "instr(lower(subject || ' ' || content), ?) > 0").join(" or ")}) limit 60`,
+      ...(sp ?? []),
+      ...terms,
+    );
+    const head = `${rows.length} 个原件共 ${hits} 行命中${shown < hits ? `，显示前 ${shown} 行（可缩小时间范围或关键词后再扫）` : ""}；有效记忆 ${mems.length} 条。`;
+    const memText = mems.length ? `\n\n## 记忆\n${mems.map((m) => `- ${m.id} [${m.kind}] ${m.subject ? m.subject + "：" : ""}${truncate(m.content, 200)}`).join("\n")}` : "";
+    return head + out.join("\n") + memText;
+  },
+});
+
+def({
   name: "list_sources",
   description: "按标题/路径浏览某空间的原件列表（不是全文检索）。",
   schema: z.object({ space: z.string().optional(), query: z.string().optional(), kind: z.string().optional(), limit: z.number().int().optional() }),
@@ -181,7 +242,8 @@ def({
 
 def({
   name: "find_symbol",
-  description: "代码导航：按名称找定义位置，以及调用/引用它的地方（名称级匹配，可能有同名误报）。",
+  description:
+    "代码导航：按名称（或 Class.method）找定义，以及谁调用它、它调用了谁。已按导入关系解析到具体定义的列在“已解析”，只能按名称匹配的（可能同名误报）单独列出。",
   schema: z.object({ name: z.string(), space: z.string().optional() }),
   handler: (ctx, a) => {
     const sp = spacesFor(ctx, a.space);
@@ -193,15 +255,30 @@ def({
       a.name,
       ...(sp ?? []),
     );
+    type R = { source_id: string; uri: string; from_qname: string; line: number; kind: string; qualifier: string | null; to_qname: string | null; to_uri: string | null; to_name: string };
+    const sel = `select r.source_id, s.uri, r.from_qname, r.line, r.kind, r.qualifier, r.to_qname, r.to_name, t.uri as to_uri from code_refs r join sources s on s.id = r.source_id left join sources t on t.id = r.to_source_id`;
+    const at = (r: R) => `${r.uri}:${r.line} 在 ${r.from_qname || "(模块顶层)"} 中`;
+    const out = [`定义（${defs.length}）：`, ...defs.map((d) => `- ${d.kind} ${d.qname} @ ${d.uri}:${d.line_start}-${d.line_end} [${d.source_id}]\n  ${truncate(d.signature, 160)}`)];
+    for (const d of defs.slice(0, 5)) {
+      const callers = all<R>(ctx.app.db, `${sel} where r.to_source_id = ? and r.to_qname = ? and r.kind = 'call' and s.deleted_at is null limit 40`, d.source_id, d.qname);
+      const callees = all<R>(ctx.app.db, `${sel} where r.source_id = ? and r.from_qname = ? and r.kind = 'call' order by r.line limit 60`, d.source_id, d.qname);
+      const importers = all<R>(ctx.app.db, `${sel} where r.to_source_id = ? and r.kind = 'import' and s.deleted_at is null limit 30`, d.source_id);
+      out.push(`\n## ${d.qname}（${d.uri}）`);
+      out.push(`被调用（已解析 ${callers.length}）：`, ...callers.map((r) => `- ${at(r)}${r.qualifier ? `（${r.qualifier}.${r.to_name}）` : ""}`));
+      const inner = callees.filter((r) => r.to_qname);
+      const outer = callees.filter((r) => !r.to_qname);
+      out.push(`调用（已解析 ${inner.length}）：`, ...inner.map((r) => `- ${r.to_qname} @ ${r.to_uri}（第 ${r.line} 行）`));
+      if (outer.length) out.push(`调用（外部或未解析）：${outer.map((r) => (r.qualifier ? `${r.qualifier}.` : "") + r.to_name).join(", ")}`);
+      if (importers.length) out.push(`导入此文件的模块：${[...new Set(importers.map((r) => r.uri))].join(", ")}`);
+    }
     const short = a.name.split(".").pop()!;
-    const refs = all<{ source_id: string; uri: string; from_qname: string; line: number; kind: string }>(
+    const loose = all<R>(
       ctx.app.db,
-      `select r.source_id, s.uri, r.from_qname, r.line, r.kind from code_refs r join sources s on s.id = r.source_id where r.to_name = ? ${filter.replace(/y\./g, "r.")} and s.deleted_at is null limit 60`,
+      `${sel} where r.to_name = ? and r.kind = 'call' and r.to_qname is null ${filter.replace(/y\./g, "r.")} and s.deleted_at is null limit 40`,
       short,
       ...(sp ?? []),
     );
-    const out = [`定义（${defs.length}）：`, ...defs.map((d) => `- ${d.kind} ${d.qname} @ ${d.uri}:${d.line_start}-${d.line_end} [${d.source_id}]\n  ${truncate(d.signature, 160)}`)];
-    out.push(`\n调用/引用（${refs.length}）：`, ...refs.map((r) => `- ${r.uri}:${r.line} 在 ${r.from_qname || "(模块顶层)"} 中${r.kind === "import" ? "导入" : "调用"}`));
+    if (loose.length) out.push(`\n仅按名称匹配的调用（未能解析，可能是同名或动态调用，${loose.length}）：`, ...loose.map((r) => `- ${at(r)}${r.qualifier ? `（${r.qualifier}.${r.to_name}）` : ""}`));
     return out.join("\n");
   },
 });

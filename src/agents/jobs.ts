@@ -270,12 +270,19 @@ registerHandler("dream", async (ctx) => {
     now(),
   );
   const runs = all<{ kind: string; title: string; status: string; error: string | null }>(app.db, "select kind, title, status, error from runs where created_at > ? and kind != 'dream' order by created_at desc limit 40", since);
+  // What the user said since last time: a second pass for plans and promises the live turn missed.
+  const said = all<{ id: string; conversation_id: string; text: string; created_at: string }>(
+    app.db,
+    "select id, conversation_id, text, created_at from messages where role = 'user' and created_at > ? order by created_at desc limit 60",
+    since,
+  ).reverse();
   run(app.db, "insert into kv(key,value) values('dream_at', ?) on conflict(key) do update set value = excluded.value", now());
-  if (!mems.length && !items.length) return { quiet: true, summary: "自上次整理以来没有新的记忆或事项" };
+  if (!mems.length && !items.length && !said.length) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
   const task = [
     `上次整理：${since}`,
     `有变化的记忆（${mems.length}）：\n${mems.map((m) => `- ${m.id} [${m.space_id}/${m.kind}/${m.status}] ${m.subject ? m.subject + "：" : ""}${truncate(m.content, 160)}`).join("\n")}`,
     `有变化或已过期的事项（${items.length}）：\n${items.map((i) => `- ${i.id} [${i.space_id}/${i.kind}/${i.status}] ${i.title}${i.due_at ? " 截止 " + i.due_at : ""}${i.remind_at ? " 提醒 " + i.remind_at : ""}`).join("\n")}`,
+    said.length ? `期间本人说过的话（检查有没有漏记的计划、承诺、等待和长期事实；来源写 msg:<id>）：\n${said.map((m) => `- msg:${m.id} ${m.created_at.slice(0, 16)}：${truncate(m.text.replace(/\s+/g, " "), 300)}`).join("\n")}` : "",
     runs.length ? `期间的后台运行（用于提炼经验）：\n${runs.map((r) => `- [${r.kind}/${r.status}] ${r.title}${r.error ? "：" + truncate(r.error, 120) : ""}`).join("\n")}` : "",
     "需要更多上下文时用 recall（可加 include_history）和 list_items 查同主题的其他记录。",
   ]

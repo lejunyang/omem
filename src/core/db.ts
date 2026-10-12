@@ -220,6 +220,18 @@ const migrations: string[] = [
     read_at text
   );
   `,
+  // Cross-file call resolution: qualifier of `ns.fn()` calls, import bindings,
+  // and the resolved target symbol when the import chain can be followed.
+  `
+  alter table code_refs add column qualifier text;
+  alter table code_refs add column bindings text;
+  alter table code_refs add column to_source_id text;
+  alter table code_refs add column to_qname text;
+  create index code_refs_target on code_refs(to_source_id, to_qname);
+  create index code_refs_from on code_refs(source_id, from_qname);
+  -- force code files to be re-parsed on the next sync so refs get bindings
+  update sources set hash = '' where kind = 'code';
+  `,
 ];
 
 export type Db = DatabaseSync;

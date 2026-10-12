@@ -1,6 +1,6 @@
 ---
 description: 定期检查关注事项与到期提醒，只在有重要变化时通知
-tools: [search, read_source, list_sources, read_page, recall, list_items, upsert_item, notify]
+tools: [search, scan, read_source, list_sources, read_page, recall, list_items, upsert_item, notify]
 writes: false
 modes: [read-only, default, plan]
 ---

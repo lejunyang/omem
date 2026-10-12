@@ -302,7 +302,7 @@ program
   .action(async (o) => {
     const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
     const app = open();
-    const readOnly = new Set(["list_spaces", "search", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "list_runs", "read_run"]);
+    const readOnly = new Set(["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "list_runs", "read_run"]);
     const ctx = { app, runId: null, spaceId: "personal", spaces: null, tools: o.readOnly ? readOnly : null, actor: "agent" as const };
     const tools = new Set(toolSchemas(ctx.tools).map((t) => t.name).filter((n) => n !== "submit_plan" && n !== "delegate_code"));
     const server = createMcpServer({ list: async () => toolSchemas(tools), call: (name, args) => callTool({ ...ctx, tools }, name, args) });

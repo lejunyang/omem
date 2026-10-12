@@ -1,6 +1,6 @@
 ---
 description: 新材料进入后，更新记忆、事项与相关页面
-tools: [describe_source, search, read_source, source_outline, list_sources, list_pages, read_page, recall, list_items, remember, supersede, forget, upsert_item, write_page, notify]
+tools: [describe_source, search, scan, read_source, source_outline, list_sources, list_pages, read_page, recall, list_items, remember, supersede, forget, upsert_item, write_page, notify]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -20,6 +20,7 @@ modes: [read-only, default, plan]
    - 有人给本人分配了任务、约了时间、提出需要本人决定的问题 → 新建对应事项；
    - 已有事项被改期/取消/完成 → 更新同一事项。
 4. **页面。** 这个空间如果有项目页、人物页或主题页涉及这份材料（`list_pages` 看），而材料改变了其中的结论，读页面后更新相应段落，保留其余内容。不要为每份材料新建页面。
+   - 聊天里**本人自己**说的话同样要看：本人答应别人的事、说自己要做的事、问了别人还没得到答复的问题，都是事项；本人表达的决定和偏好是记忆。
 5. **通知。** 只有出现需要本人知道或决定的变化（新的待决定事项、截止提前、有人点名本人且未回复、与已有约定冲突）才 `notify`，写清楚是什么和为什么重要。
 
 做完后用两三行说明改了什么；什么都不需要改就回复 `QUIET`。

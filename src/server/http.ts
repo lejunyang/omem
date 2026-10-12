@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { symbolRelations } from "../sources/callgraph.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -154,6 +155,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const r = readSource(app, id, o.from, o.to);
     const citedBy = all<{ page_id: string; title: string }>(app.db, "select distinct c.page_id, p.title from page_cites c join pages p on p.id = c.page_id where c.source_id = ?", id);
     return { ...r, outline: sourceOutline(app, id), citedBy };
+  });
+  server.get("/api/sources/:id/relations", async (req) => {
+    const o = q(z.object({ qname: z.string() }), req.query);
+    return symbolRelations(app, (req.params as { id: string }).id, o.qname);
   });
   server.delete("/api/sources/:id", async (req) => {
     deleteSource(app, (req.params as { id: string }).id);

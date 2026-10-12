@@ -1,6 +1,6 @@
 ---
 description: 按时生成简报：今天要做什么、在等什么、发生了什么变化
-tools: [search, read_source, list_sources, read_page, recall, list_items, list_runs, read_run, notify, upsert_item]
+tools: [search, scan, read_source, list_sources, read_page, recall, list_items, list_runs, read_run, notify, upsert_item]
 writes: false
 modes: [read-only, default, plan]
 ---

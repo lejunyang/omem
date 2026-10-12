@@ -1,6 +1,6 @@
 ---
 description: 独立评审编码 Agent 的改动
-tools: [search, read_source, find_symbol, read_page]
+tools: [search, scan, read_source, find_symbol, read_page]
 writes: false
 modes: [read-only, default, plan]
 ---
