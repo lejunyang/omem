@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { resolveCodeRefs } from "./callgraph.ts";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -162,6 +163,7 @@ export function syncDirectorySpace(app: App, spaceId: string, onProgress?: (done
       report.removed++;
     }
   }
+  if (report.created || report.updated || report.removed || !space.settings.lastSync) resolveCodeRefs(app, spaceId);
   updateSpace(app, spaceId, { settings: { ...space.settings, lastSync: new Date().toISOString(), commit: headCommit(space.rootPath) } });
   return report;
 }
@@ -179,6 +181,7 @@ export function importDirectory(app: App, spaceId: string, dir: string): ImportR
       report.skipped.push(rel);
     }
   }
+  resolveCodeRefs(app, spaceId);
   return report;
 }
 

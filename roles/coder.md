@@ -1,6 +1,6 @@
 ---
 description: 在独立工作区实现交办的编码任务
-tools: [search, read_source, find_symbol, list_pages, read_page, recall]
+tools: [search, scan, read_source, find_symbol, list_pages, read_page, recall]
 writes: true
 modes: [acceptEdits, auto, default]
 ---

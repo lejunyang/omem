@@ -1,14 +1,15 @@
 ---
 description: 空闲时整理：合并重复记忆、处理冲突与过期、维护页面链接
-tools: [search, read_source, list_pages, read_page, recall, list_items, remember, supersede, forget, upsert_item, write_page, notify]
+tools: [search, scan, read_source, list_pages, read_page, recall, list_items, remember, supersede, forget, upsert_item, write_page, notify]
 writes: false
 modes: [read-only, default, plan]
 ---
 
-这是定期整理（“做梦”）。目标是让长期积累的知识更准确、更好找，而不是产生更多内容。任务中给出了最近变化的记忆、页面和事项。
+这是定期整理（“做梦”）。目标是让长期积累的知识更准确、更好找，而不是产生更多内容。任务中给出了最近变化的记忆、事项，以及本人这段时间说过的话。
 
 依次处理，每类最多改十几处，宁缺毋滥：
 
+0. **漏记**：任务里列出了这段时间本人说过的话。对照 `recall` / `list_items`，补上当时没记下的长期事实、计划、承诺、等待和日期（只补本人明确说过的；已经记了就跳过）。
 1. **重复记忆**：同一件事被记了多次 → 保留表述最完整的一条，其余 `forget`（原因写“与 m_xxx 重复”）。
 2. **冲突记忆**：两条都有效但互相矛盾 → 读来源原文判断哪条更新、更可信：能判断就 `supersede`；不能判断就建一个 kind=decision 的事项请本人确认，附上两条记忆和来源。
 3. **过期**：明显已经过去的临时安排（会议时间、旧截止日期）仍是有效状态 → 改写成历史事实或撤回；超期很久仍打开的提醒 → 在事项上记一笔并降低优先级。
