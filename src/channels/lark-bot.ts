@@ -5,6 +5,10 @@ import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { addNotificationSink } from "../core/notify.ts";
 import { findSpace } from "../core/spaces.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { importFile } from "../sources/import.ts";
 import { appendToSource, findSourceByUri } from "../sources/store.ts";
 
 /**
@@ -109,6 +113,27 @@ export async function startLarkBot(app: App) {
     await send(m.chatId, answer, m.messageId);
   };
 
+  /** Images and files sent to the bot (or in its groups) become sources; the ingest role reads them. */
+  const saveResource = async (msg: { message_id: string; message_type: string; content: string }, m: Inbound) => {
+    const c = JSON.parse(msg.content || "{}") as { image_key?: string; file_key?: string; file_name?: string };
+    const key = c.image_key ?? c.file_key;
+    if (!key) return;
+    const dir = await mkdtemp(join(tmpdir(), "omem-lark-"));
+    try {
+      const name = c.file_name ?? `${msg.message_id}.png`;
+      const file = join(dir, name.replace(/[\\/]/g, "_"));
+      const res = await client.im.messageResource.get({ path: { message_id: msg.message_id, file_key: key }, params: { type: msg.message_type === "image" ? "image" : "file" } });
+      await res.writeFile(file);
+      const map = (findSpace(app, "personal")?.settings.larkGroups ?? {}) as Record<string, string>;
+      const spaceId = m.chatType === "group" ? (map[m.chatId] ?? cfg.defaultSpace) : cfg.defaultSpace;
+      const r = importFile(app, spaceId, file, `lark:${m.chatId}/${name}`);
+      if (r && r.status !== "unchanged") scheduleIngest(app, spaceId, [r.id], `飞书${m.chatType === "group" ? "群" : "私聊"}附件`);
+      if (m.chatType === "p2p") await send(m.chatId, r ? `已保存「${name}」，助理会读取并整理。` : `「${name}」的格式暂不支持。`, m.messageId);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
+
   const dispatcher = new lark.EventDispatcher({ loggerLevel: lark.LoggerLevel.warn }).register({
     "im.message.receive_v1": async (data: any) => {
       const msg = data.message;
@@ -122,7 +147,9 @@ export async function startLarkBot(app: App) {
         mentionsBot: (msg.mentions ?? []).some((x: { id?: { open_id?: string }; name?: string }) => !x.id?.open_id || x.name === kv(app, "lark_bot_name")),
         createTime: msg.create_time,
       };
-      handle(m).catch((e) => console.warn("[omem] 飞书消息处理失败", e));
+      if ((msg.message_type === "image" || msg.message_type === "file") && (m.chatType === "group" || m.senderId === cfg.ownerOpenId))
+        saveResource(msg, m).catch((e) => console.warn("[omem] 飞书附件保存失败", e));
+      else handle(m).catch((e) => console.warn("[omem] 飞书消息处理失败", e));
       return {};
     },
   });
