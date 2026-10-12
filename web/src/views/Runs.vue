@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { get, onServerEvent, post, type Run, type RunEvent } from "../api";
 import Icon from "../components/Icon.vue";
 import Markdown from "../components/Markdown.vue";
 import RunActivity from "../components/RunActivity.vue";
-import { fmtTime, relTime, runKindLabel, statusLabel, toast } from "../store";
+import { fmtTime, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 
 const route = useRoute();
+const router = useRouter();
 const runs = ref<Run[]>([]);
 const kind = ref("");
 const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; patch?: string } | null>(null);
@@ -58,6 +59,19 @@ async function act(action: "cancel" | "retry" | "apply" | "discard") {
     toast((e as Error).message, "error");
   }
 }
+const delegateOpen = ref(false);
+const task = ref({ space: "", task: "", check: "" });
+const repos = computed(() => state.spaces.filter((s) => s.rootPath));
+async function delegate() {
+  try {
+    const r = await post<Run>("/api/delegate", { space: task.value.space || repos.value[0]?.id, task: task.value.task, checkCommand: task.value.check || undefined });
+    delegateOpen.value = false;
+    task.value = { space: "", task: "", check: "" };
+    router.push(`/runs/${r.id}`);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 const kinds = ["", "ask", "ingest", "wiki-plan", "wiki-write", "wiki-lint", "code", "heartbeat", "dream", "tutor", "brief", "sync"];
 </script>
 
@@ -67,6 +81,7 @@ const kinds = ["", "ask", "ingest", "wiki-plan", "wiki-write", "wiki-lint", "cod
       <div class="head row">
         <strong>运行记录</strong>
         <span class="spacer" />
+        <button class="btn sm" title="交办编码任务" @click="delegateOpen = true"><Icon name="code" :size="14" />交办</button>
         <select v-model="kind" class="select sm-select">
           <option v-for="k in kinds" :key="k" :value="k">{{ k ? runKindLabel[k] : "全部" }}</option>
         </select>
@@ -154,6 +169,20 @@ const kinds = ["", "ask", "ingest", "wiki-plan", "wiki-write", "wiki-lint", "cod
         </section>
       </template>
     </main>
+
+    <div v-if="delegateOpen" class="modal-overlay" @mousedown.self="delegateOpen = false">
+      <div class="modal stack">
+        <div class="row"><strong>交办编码任务</strong><span class="spacer" /><button class="btn ghost sm icon" @click="delegateOpen = false"><Icon name="x" /></button></div>
+        <p class="muted small">编码 Agent 在独立的 Git worktree 里实现，运行检查命令，再由评审 Agent 审查。确认后才会应用到你的仓库。</p>
+        <div v-if="!repos.length" class="muted">还没有关联代码目录的空间，请先在设置里新建代码仓库空间。</div>
+        <template v-else>
+          <label class="field"><span>仓库</span><select v-model="task.space" class="select"><option value="">{{ repos[0].name }}</option><option v-for="r in repos.slice(1)" :key="r.id" :value="r.id">{{ r.name }}</option></select></label>
+          <label class="field"><span>任务</span><textarea v-model="task.task" class="textarea" rows="6" placeholder="目标、背景、验收标准、相关讨论" /></label>
+          <label class="field"><span>检查命令（可选，默认用空间设置）</span><input v-model="task.check" class="input mono" placeholder="pnpm test" /></label>
+          <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!task.task.trim()" @click="delegate">交办</button></div>
+        </template>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -293,6 +322,24 @@ const kinds = ["", "ask", "ingest", "wiki-plan", "wiki-write", "wiki-lint", "cod
 }
 .diff .h {
   color: var(--muted);
+}
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 12, 16, 0.35);
+  z-index: 55;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 10vh;
+}
+.modal {
+  width: min(620px, calc(100vw - 24px));
+  background: var(--panel);
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-lg);
+  padding: 18px;
 }
 @media (max-width: 760px) {
   .runs {
