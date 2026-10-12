@@ -308,6 +308,22 @@ registerHandler("brief", async (ctx) => {
   return { summary: r.text.trim() };
 });
 
+// ------------------------------------------------------------------ curate
+
+registerHandler("curate", async (ctx) => {
+  const { direction } = ctx.run.input as { direction?: string };
+  if (!direction?.trim()) return { quiet: true, summary: "还没有设置筛选方向" };
+  const { previewUnsubscribed } = await import("../channels/lark-personal.ts");
+  const chats = await previewUnsubscribed(ctx.app);
+  if (!chats.length) return { quiet: true, summary: "没有新的候选群" };
+  const task = [
+    `筛选方向：${direction}`,
+    `还没订阅的群（最近三天的消息预览）：\n${chats.map((c) => `### ${c.name}（${c.chatId}）\n${c.preview.map((p) => `- ${p}`).join("\n") || "（最近没有消息）"}`).join("\n\n")}`,
+  ].join("\n\n");
+  const r = await agent(ctx, "curator", ctx.run.spaceId ?? "personal", task, null);
+  return { quiet: QUIET.test(r.text), summary: r.text.trim() };
+});
+
 // -------------------------------------------------------------------- tutor
 
 registerHandler("tutor", async (ctx) => {
