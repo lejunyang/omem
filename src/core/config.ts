@@ -31,6 +31,7 @@ export const roleNames = [
   "tutor",
   "brief",
   "curator",
+  "summarizer",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
 
@@ -41,7 +42,24 @@ export const configSchema = z.object({
   token: z.string().optional(),
   timezone: z.string().default(Intl.DateTimeFormat().resolvedOptions().timeZone),
   language: z.string().default("zh-CN"),
+  /** Background runs (ingest, wiki, dream…) at the same time. */
   concurrency: z.number().int().min(1).max(8).default(2),
+  /** Conversation turns at the same time (one per thread; threads run in parallel). */
+  interactiveConcurrency: z.number().int().min(1).max(16).default(4),
+  sessions: z
+    .object({
+      /** Keep a thread's agent process alive this long after a reply (ACP agents). */
+      liveMinutes: z.number().min(0).default(20),
+      /** At most this many live agent processes; the least recently used is released first. */
+      maxLive: z.number().int().min(0).default(3),
+      /** After this many turns in one agent session, start a fresh one from the thread summary. */
+      maxTurns: z.number().int().min(4).default(40),
+      /** Chats (not web, not topics) idle this long start a new thread that remembers the previous one. */
+      idleHours: z.number().min(0).default(12),
+      /** Wait this long for more messages before starting a turn, so bursts become one turn. */
+      mergeMs: z.number().int().min(0).default(1500),
+    })
+    .default({ liveMinutes: 20, maxLive: 3, maxTurns: 40, idleHours: 12, mergeMs: 1500 }),
   agents: z
     .object({
       default: z.string().optional(),

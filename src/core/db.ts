@@ -232,6 +232,30 @@ const migrations: string[] = [
   -- force code files to be re-parsed on the next sync so refs get bindings
   update sources set hash = '' where kind = 'code';
   `,
+  // Conversations become threads: a channel key (chat, topic, thread), a live or
+  // resumable agent session, a rolling summary for cold starts, per-chat settings.
+  // Runs get a lane (one at a time per thread) and a not-before time (burst merge).
+  `
+  alter table conversations add column status text not null default 'active';
+  alter table conversations add column parent_id text;
+  alter table conversations add column summary text not null default '';
+  alter table conversations add column summary_at text;
+  alter table conversations add column settings text not null default '{}';
+  alter table conversations add column agent_profile text;
+  alter table conversations add column agent_session text;
+  alter table conversations add column agent_cwd text;
+  alter table conversations add column agent_turns integer not null default 0;
+  create index conversations_key on conversations(channel, external_id, status);
+  create table chat_settings (
+    channel text not null,
+    chat_id text not null,
+    settings text not null default '{}',
+    primary key(channel, chat_id)
+  );
+  alter table runs add column lane text;
+  alter table runs add column not_before text;
+  create index runs_lane on runs(lane, status);
+  `,
 ];
 
 export type Db = DatabaseSync;

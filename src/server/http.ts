@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { symbolRelations } from "../sources/callgraph.ts";
+import { agentSpecHistory, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "../agents/specs.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -225,6 +226,28 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/conversations", async (req) => {
     const o = q(z.object({ space: z.string().optional() }), req.query);
     return all(app.db, `select * from conversations ${o.space ? "where space_id = ?" : ""} order by updated_at desc limit 100`, ...(o.space ? [o.space] : []));
+  });
+
+  // ----------------------------------------------------------- agents & skills
+  server.get("/api/agents", async () => listAgentSpecs(app, { includeDrafts: true }));
+  server.get("/api/agents/:name", async (req) => {
+    const name = (req.params as { name: string }).name;
+    return { ...readAgentSpec(app, name), history: agentSpecHistory(app, name) };
+  });
+  server.put("/api/agents/:name", async (req) => saveAgentSpec(app, { ...(req.body as object), name: (req.params as { name: string }).name } as never, "user"));
+  server.delete("/api/agents/:name", async (req) => {
+    deleteAgentSpec(app, (req.params as { name: string }).name, "user");
+    return { ok: true };
+  });
+  server.get("/api/skills", async () => listSkills(app, { includeDrafts: true }));
+  server.get("/api/skills/:name", async (req) => readSkill(app, (req.params as { name: string }).name));
+  server.put("/api/skills/:name", async (req) => {
+    const b = q(z.object({ description: z.string(), body: z.string(), status: z.enum(["active", "draft"]).optional() }), req.body);
+    return saveSkill(app, { name: (req.params as { name: string }).name, ...b }, "user");
+  });
+  server.delete("/api/skills/:name", async (req) => {
+    deleteSkill(app, (req.params as { name: string }).name, "user");
+    return { ok: true };
   });
   server.get("/api/conversations/:id", async (req) => {
     const id = (req.params as { id: string }).id;

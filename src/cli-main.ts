@@ -50,13 +50,24 @@ function printEvent(ev: { type: string; data: { text?: string; title?: string; s
  * Run one job and stream its progress. Uses the running service when there is
  * one (it holds the agent tools); otherwise starts a temporary in-process one.
  */
-async function runJob(make: (app: App) => Run | { runId: string }, opts: { stream?: boolean; children?: boolean } = {}) {
+function abortQuiet(booted: { server: { close(): unknown } } | null) {
+  try {
+    booted?.server.close();
+  } catch {}
+}
+
+async function runJob(make: (app: App) => Run | { runId: string | null; reply?: string | null } | Promise<{ runId: string | null; reply?: string | null }>, opts: { stream?: boolean; children?: boolean } = {}) {
   const local = open();
   const remote = await runningServer(local);
   const booted = remote ? null : await boot(home(), { port: 0, quiet: true, background: false });
   const app = booted?.app ?? local;
-  const created = make(app);
-  const runId = "runId" in created ? created.runId : created.id;
+  const created = await make(app);
+  if ("reply" in created && created.reply) {
+    console.log(created.reply);
+    abortQuiet(booted);
+    return { status: "done", output: { answer: created.reply } } as unknown as Run;
+  }
+  const runId = ("runId" in created ? created.runId : created.id)!;
   const state = { last: "" };
   const stream = opts.stream !== false;
   let abortSse: AbortController | undefined;
