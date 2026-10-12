@@ -88,6 +88,15 @@ omem agents                                 # 查看 Agent 配置与安装状态
 
 数据目录默认 `~/.omem`（`--home` 或 `OMEM_HOME` 可改）：`config.json` 配置，`omem.db` 索引与记录，`library/` 是 Wiki 的 Git 仓库，`files/` 存原始文件，`runs/` 存交办编码的工作区和补丁。
 
+## 记录编码 Agent 的会话
+
+把你和 Claude Code / Codex 的工作过程也存进知识库（按工作目录归入对应的代码仓库空间，否则进个人空间）：
+
+- Claude Code：在 `~/.claude/settings.json` 的 `hooks.Stop` 里加命令 `omem hook claude`。
+- Codex：在 `~/.codex/config.toml` 里设置 `notify = ["omem", "hook", "codex"]`。
+
+之后可以问“上周让 Claude 改登录流程时是怎么决定的”。
+
 ## 飞书
 
 - **机器人**（日常指挥）：设置 → 飞书，填写 App ID，App Secret 放在环境变量 `OMEM_LARK_APP_SECRET`。首次私聊机器人会告诉你自己的 open_id，填入后只有你能指挥它。群里的消息会作为聊天原件保存并交给助理整理。

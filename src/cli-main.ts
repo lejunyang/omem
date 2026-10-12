@@ -322,6 +322,22 @@ program
   });
 
 program
+  .command("hook <agent> [payload]")
+  .description("记录编码 Agent 的会话：claude（Stop 钩子，从标准输入读 JSON）或 codex（notify，JSON 作为参数）")
+  .action(async (agent, payload) => {
+    const { captureClaudeHook, captureCodexNotify } = await import("./hooks.ts");
+    const app = open();
+    try {
+      if (agent === "claude") captureClaudeHook(app, JSON.parse(readFileSync(0, "utf8") || "{}"));
+      else if (agent === "codex") captureCodexNotify(app, JSON.parse(payload ?? "{}"));
+      else throw new Error("agent 只能是 claude 或 codex");
+    } catch (e) {
+      // Hooks must never break the agent that calls them.
+      console.error(`[omem hook] ${(e as Error).message}`);
+    }
+  });
+
+program
   .command("setup <component>")
   .description("准备可选组件：embeddings（本地中文向量模型，首次会下载约 25MB）")
   .option("--model <id-or-dir>", "模型 id 或本地目录", "Xenova/bge-small-zh-v1.5")
