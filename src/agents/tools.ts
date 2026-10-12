@@ -564,6 +564,20 @@ def({
   },
 });
 
+def({
+  name: "apply_code_run",
+  description: "把已完成并通过评审的交办改动应用到仓库工作区（未提交的修改）。只在本人明确要求应用/合入时使用。",
+  write: true,
+  schema: z.object({ run_id: z.string() }),
+  handler: async (ctx, a) => {
+    const r = getRun(ctx.app, a.run_id);
+    if (r.spaceId) inScope(ctx, r.spaceId, "代码");
+    const { applyCodeRun } = await import("./code.ts");
+    applyCodeRun(ctx.app, a.run_id);
+    return `已把运行 ${a.run_id} 的改动应用到 ${r.spaceId} 的工作区（未提交），请在仓库里检查后提交。`;
+  },
+});
+
 // ------------------------------------------------------------------ registry
 
 export function toolList(filter?: Set<string> | null) {
