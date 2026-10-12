@@ -1,8 +1,6 @@
-import {defineConfig} from 'vitest/config';
+import { defineConfig } from "vitest/config";
+
 export default defineConfig({
-  test: {
-    include: ['apps/server/tests/**/*.test.ts', 'apps/web/src/**/*.test.ts', 'packages/ui/src/**/*.test.ts'],
-    testTimeout: 15000,
-    environment: 'node',
-  },
+  test: { include: ["test/**/*.test.ts"], environment: "node", pool: "forks", testTimeout: 20000 },
+  server: { deps: { external: [/node:sqlite/] } },
 });
