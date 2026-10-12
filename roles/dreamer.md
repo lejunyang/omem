@@ -1,6 +1,6 @@
 ---
 description: 空闲时整理：合并重复记忆、处理冲突与过期、维护页面链接
-tools: [search, scan, read_source, list_pages, read_page, recall, list_items, remember, supersede, forget, upsert_item, write_page, notify]
+tools: [search, scan, read_source, list_pages, read_page, recall, list_items, list_conversations, read_conversation, remember, supersede, forget, upsert_item, write_page, notify, list_skills, read_skill, save_skill, list_agents, save_agent]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -14,6 +14,7 @@ modes: [read-only, default, plan]
 2. **冲突记忆**：两条都有效但互相矛盾 → 读来源原文判断哪条更新、更可信：能判断就 `supersede`；不能判断就建一个 kind=decision 的事项请本人确认，附上两条记忆和来源。
 3. **过期**：明显已经过去的临时安排（会议时间、旧截止日期）仍是有效状态 → 改写成历史事实或撤回；超期很久仍打开的提醒 → 在事项上记一笔并降低优先级。
 4. **页面**：把多次被问到、但只散落在记忆和聊天里的主题，补进相关页面（项目页、人物页、主题页）；修复指向不存在页面的链接。
-5. **经验**：最近的运行里如果反复出现同类问题或同类操作，用 `remember`（kind=experience）记下可复用的做法。
+5. **经验**：最近的运行里如果反复出现同类问题或同类操作，用 `remember`（kind=experience）记下可复用的做法。已有经验被新情况证实或推翻时，更新或撤回它，不要只增不减。
+6. **技能与 Agent**：同一类多步骤工作（例如写周报、排查某类故障、整理某个群的需求）在会话或运行里出现了两次以上，且做法已经比较固定，就 `save_skill`（draft=true）起草成技能；某类事需要固定的角色、工具和目录，就 `save_agent`（draft=true）起草档案。先 `list_skills` / `list_agents` 看有没有可以改进的现有条目。草稿要在报告里列出，等本人 /approve。
 
 最后写一份简短报告（改了什么、为什么、需要本人确认什么）。只有存在需要本人确认的事项时才 `notify`。

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
@@ -14,6 +15,8 @@ import { importText, importUrl } from "../sources/import.ts";
 import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
 import { listPages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
 import { createRun, getRun, listRuns, runEvents, setRunOutput } from "./runs.ts";
+import { findAgentSpec, listAgentSpecs, listSkills, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
+import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
 
 export type ToolContext = {
   app: App;
@@ -280,6 +283,125 @@ def({
     );
     if (loose.length) out.push(`\n仅按名称匹配的调用（未能解析，可能是同名或动态调用，${loose.length}）：`, ...loose.map((r) => `- ${at(r)}${r.qualifier ? `（${r.qualifier}.${r.to_name}）` : ""}`));
     return out.join("\n");
+  },
+});
+
+def({
+  name: "list_conversations",
+  description: "列出会话（网页、飞书私聊/群/话题、Telegram、QQ 等），带摘要。用来找“上次在哪个群/话题里聊过 X”，再用 read_conversation 读原话。",
+  schema: z.object({ query: z.string().optional().describe("按标题或摘要筛选"), channel: z.string().optional(), include_archived: z.boolean().optional(), limit: z.number().int().min(1).max(50).optional() }),
+  handler: (ctx, a) => {
+    const list = listThreads(ctx.app, { query: a.query, channel: a.channel, includeArchived: a.include_archived ?? !!a.query, limit: a.limit ?? 20 }).filter((t) => !ctx.spaces || ctx.spaces.includes(t.spaceId));
+    return list.length ? list.map(describeThread).join("\n") : "没有找到会话。也可以用 search 搜对话内容（原件类型 conversation）。";
+  },
+});
+
+def({
+  name: "read_conversation",
+  description: "读取一个会话的消息记录（默认最近 30 条；before 往前翻）。",
+  schema: z.object({ conversation: z.string(), limit: z.number().int().min(1).max(200).optional(), before: z.string().optional().describe("只看这个时间（ISO）之前的消息") }),
+  handler: (ctx, a) => {
+    const t = findThread(ctx.app, a.conversation.replace(/^conv:/, ""));
+    if (!t) throw new HttpError(404, `会话不存在：${a.conversation}`);
+    if (ctx.spaces && !ctx.spaces.includes(t.spaceId)) throw new HttpError(403, `本次任务不能访问空间 ${t.spaceId} 的会话`);
+    const msgs = threadMessages(ctx.app, t.id, { limit: a.limit ?? 30, before: a.before });
+    const head = describeThread(t);
+    return `${head}\n\n${msgs.map((m) => `[${m.createdAt.slice(0, 16).replace("T", " ")}] ${m.role === "user" ? "本人" : "助理"}（msg:${m.id}）：${truncate(m.text, 2000)}`).join("\n\n")}`;
+  },
+});
+
+def({
+  name: "list_agents",
+  description: "列出 Agent 档案（可交办的专门 Agent：用途、后端、工具、技能）。",
+  schema: z.object({ include_drafts: z.boolean().optional() }),
+  handler: (ctx, a) => {
+    const list = listAgentSpecs(ctx.app, { includeDrafts: a.include_drafts });
+    return list.length
+      ? list.map((x) => `- ${x.name}${x.status === "draft" ? "（草稿）" : ""}：${x.description}\n  后端 ${x.agent ?? "默认"}${x.model ? `/${x.model}` : ""} · 工具 ${x.tools.length ? x.tools.join(",") : "默认只读"}${x.writes ? " · 可改文件" : ""}${x.skills.length ? ` · 技能 ${x.skills.join(",")}` : ""}${Object.keys(x.mcp).length ? ` · MCP ${Object.keys(x.mcp).join(",")}` : ""}${x.cwd ? ` · 目录 ${x.cwd}` : ""}`).join("\n")
+      : "还没有 Agent 档案。";
+  },
+});
+
+def({
+  name: "save_agent",
+  description:
+    "新建或修改 Agent 档案：一个专门做某类事的 Agent（system prompt、后端与模型、可用的 omem 工具、额外 MCP 服务、技能、工作目录、AGENTS.md 式约定）。本人明确要求时直接建；你自己觉得有用时用 draft=true 起草，等本人 /approve。",
+  schema: z.object({
+    name: z.string().describe("小写字母、数字、连字符"),
+    description: z.string().optional().describe("做什么、什么时候该交给它（用于自动挑选）"),
+    prompt: z.string().optional().describe("system prompt 正文：职责、步骤、输出格式、注意事项"),
+    agent: z.string().optional().describe("后端 Agent id（codex、claude…），不填用默认"),
+    model: z.string().optional(),
+    effort: z.string().optional(),
+    tools: z.array(z.string()).optional().describe("可用的 omem 工具；不填为只读检索工具"),
+    writes: z.boolean().optional().describe("是否允许改工作目录里的文件"),
+    space: z.string().optional(),
+    spaces: z.array(z.string()).optional(),
+    cwd: z.string().optional(),
+    skills: z.array(z.string()).optional(),
+    mcp: z.record(z.string(), z.any()).optional().describe('额外 MCP，如 {"github": {"command": "gh-mcp", "args": []}} 或 {"x": {"url": "https://…"}}'),
+    instructions: z.string().optional().describe("像 AGENTS.md 那样的长期约定"),
+    draft: z.boolean().optional(),
+  }),
+  handler: (ctx, a) => {
+    const { draft, ...rest } = a;
+    const spec = saveAgentSpec(ctx.app, { ...rest, status: draft ? "draft" : (findAgentSpec(ctx.app, a.name)?.status ?? "active") } as never, ctx.actor);
+    return `已保存 Agent 档案 ${spec.name}${spec.status === "draft" ? "（草稿，本人 /approve agent " + spec.name + " 后启用）" : ""}。`;
+  },
+});
+
+def({
+  name: "run_agent",
+  description: "把一件事交给某个 Agent 档案去做（后台运行，完成后结果自动发回当前会话）。返回运行 id。",
+  schema: z.object({ name: z.string(), task: z.string().describe("完整的任务说明：背景、目标、交付物、相关会话或原件 id"), space: z.string().optional() }),
+  handler: (ctx, a) => {
+    const spec = readAgentSpec(ctx.app, a.name);
+    if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
+    const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
+    const threadId = origin ? (JSON.parse(origin.input) as { conversationId?: string; threadId?: string }).conversationId : undefined;
+    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? space(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, threadId }, parentId: ctx.runId });
+    return `已交给 ${spec.name}，运行 ${r.id}${threadId ? "，完成后结果会发回本会话" : ""}。`;
+  },
+});
+
+def({
+  name: "list_skills",
+  description: "列出技能（可复用的做法：步骤、格式、检查清单）。",
+  schema: z.object({ include_drafts: z.boolean().optional() }),
+  handler: (ctx, a) => {
+    const list = listSkills(ctx.app, { includeDrafts: a.include_drafts });
+    return list.length ? list.map((x) => `- ${x.name}${x.status === "draft" ? "（草稿）" : ""}：${x.description}`).join("\n") : "还没有技能。";
+  },
+});
+
+def({
+  name: "read_skill",
+  description: "读取技能全文（以及它附带的文件列表）。做技能对应的事之前先读。",
+  schema: z.object({ name: z.string(), file: z.string().optional().describe("读技能目录里的附带文件") }),
+  handler: (ctx, a) => {
+    const sk = readSkill(ctx.app, a.name);
+    if (a.file) {
+      if (a.file.includes("..")) throw new HttpError(400, "文件名不合法");
+      return readFileSync(join(sk.dir, a.file), "utf8");
+    }
+    return `# ${sk.name}${sk.status === "draft" ? "（草稿）" : ""}\n${sk.description}\n\n${sk.body}${sk.files.length ? `\n\n附带文件：${sk.files.join(", ")}` : ""}`;
+  },
+});
+
+def({
+  name: "save_skill",
+  description:
+    "新建或修改技能：把一套做法（步骤、格式、命令、检查清单）写成可复用的 SKILL.md。本人明确要求时直接保存；从经验中提炼、本人没要求时用 draft=true。",
+  schema: z.object({
+    name: z.string().describe("小写字母、数字、连字符"),
+    description: z.string().describe("一句话：做什么、什么时候用"),
+    body: z.string().describe("Markdown 正文：何时用、步骤、示例、注意事项"),
+    files: z.record(z.string(), z.string()).optional().describe("附带文件（模板、脚本），文件名 → 内容"),
+    draft: z.boolean().optional(),
+  }),
+  handler: (ctx, a) => {
+    const sk = saveSkill(ctx.app, { name: a.name, description: a.description, body: a.body, files: a.files, status: a.draft ? "draft" : "active" }, ctx.actor);
+    return `已保存技能 ${sk.name}${sk.status === "draft" ? "（草稿，本人 /approve skill " + sk.name + " 后启用）" : ""}。`;
   },
 });
 
@@ -686,6 +808,11 @@ export function issueToolToken(ctx: Omit<ToolContext, "app">) {
   const token = "ot_" + randomBytes(18).toString("base64url");
   tokens.set(token, ctx);
   return token;
+}
+/** A live agent session keeps its token; each turn points it at the current run. */
+export function retargetToolToken(token: string, runId: string | null) {
+  const ctx = tokens.get(token);
+  if (ctx) ctx.runId = runId;
 }
 export function revokeToolToken(token: string) {
   tokens.delete(token);

@@ -19,14 +19,14 @@ describe("agent loop over ACP + MCP bridge", async () => {
 
   it("answers with tools, records events and writes a memory through the bridge", async () => {
     importText(app, "personal", { title: "约定", text: "每周四下午三点和小王同步项目A进度。" });
-    const { runId, conversationId } = ask(app, { text: "和小王什么时候同步" });
-    const run = await waitForRun(app, runId);
+    const { runId, conversationId } = await ask(app, { text: "和小王什么时候同步" });
+    const run = await waitForRun(app, runId!);
     expect(run.error).toBeNull();
     expect(run.status).toBe("done");
     const answer = (run.output as { answer: string }).answer;
     expect(answer).toMatch(/^tools=\d+; search=1\. 原件/);
     expect(listMemories(app, {}).map((m) => m.content)).toContain("FAKE: 和小王什么时候同步");
-    const types = runEvents(app, runId).map((e) => e.type);
+    const types = runEvents(app, runId!).map((e) => e.type);
     expect(types).toContain("tool");
     expect(types).toContain("text");
     expect(conversationId).toBeTruthy();

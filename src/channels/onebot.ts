@@ -1,7 +1,8 @@
 import { scheduleIngest } from "../agents/jobs.ts";
 import type { App } from "../core/app.ts";
 import { addNotificationSink } from "../core/notify.ts";
-import { appendToSource } from "../sources/store.ts";
+import { appendToSource, sourceText } from "../sources/store.ts";
+import { registerThreadSender } from "../agents/inbox.ts";
 import { answerFromChannel, chunkMessage } from "./common.ts";
 
 /**
@@ -46,6 +47,12 @@ export async function startOneBot(app: App) {
   const sendPrivate = (userId: string | number, text: string) => chunkMessage(text, 3000).forEach((part) => call("send_private_msg", { user_id: Number(userId), message: part }));
   const sendGroup = (groupId: number, text: string) => chunkMessage(text, 3000).forEach((part) => call("send_group_msg", { group_id: groupId, message: part }));
 
+  registerThreadSender("onebot", async (thread, text) => {
+    const [kind, id] = (thread.key ?? "").split(":");
+    if (kind === "group") sendGroup(Number(id), text);
+    else if (kind === "private") sendPrivate(id, text);
+  });
+
   addNotificationSink((n) => {
     if (cfg.ownerUserId) sendPrivate(cfg.ownerUserId, `${n.title}\n${n.body}`);
   });
@@ -76,13 +83,26 @@ export async function startOneBot(app: App) {
         }, 5 * 60_000),
       );
       const mentionsBot = Array.isArray(e.message) && e.message.some((s) => s.type === "at" && String(s.data.qq) === String(e.self_id));
-      if (fromOwner && mentionsBot) sendGroup(e.group_id, await answerFromChannel(app, { channel: "onebot", chatId: `group:${e.group_id}`, text: text.replace(/@\d+/g, "").trim(), spaceId }));
+      if (fromOwner && mentionsBot) {
+        const lines = sourceText(app, r.id).split("\n").filter(Boolean);
+        lines.pop();
+        const answer = await answerFromChannel(app, {
+          channel: "onebot",
+          chatId: `group:${e.group_id}`,
+          isGroup: true,
+          text: text.replace(/@\d+/g, "").trim(),
+          spaceId,
+          context: lines.slice(-15).join("\n"),
+        });
+        if (answer !== null) sendGroup(e.group_id, answer);
+      }
       return;
     }
     if (e.message_type === "private") {
       if (!cfg.ownerUserId) return sendPrivate(e.user_id!, `还没有绑定本人。请在 omem 配置中设置 onebot.ownerUserId 为 ${e.user_id}，然后重启服务。`);
       if (!fromOwner) return;
-      sendPrivate(e.user_id!, await answerFromChannel(app, { channel: "onebot", chatId: `private:${e.user_id}`, text, spaceId: cfg.defaultSpace }));
+      const answer = await answerFromChannel(app, { channel: "onebot", chatId: `private:${e.user_id}`, text, spaceId: cfg.defaultSpace });
+      if (answer !== null) sendPrivate(e.user_id!, answer);
     }
   };
 

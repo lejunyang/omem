@@ -7,7 +7,7 @@ import Markdown from "../components/Markdown.vue";
 import RunActivity from "../components/RunActivity.vue";
 import { currentSpace, relTime, state, toast } from "../store";
 
-type Conversation = { id: string; space_id: string; channel: string; title: string; updated_at: string };
+type Conversation = { id: string; space_id: string; channel: string; title: string; updated_at: string; status?: string; external_id?: string | null; summary?: string };
 type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string };
 
 const route = useRoute();
@@ -54,7 +54,7 @@ onBeforeUnmount(() => off());
 /** Runs that belong to a user message but have no assistant reply yet. */
 const pending = computed(() => {
   const answered = new Set(messages.value.filter((m) => m.role === "assistant").map((m) => m.runId));
-  return messages.value.filter((m) => m.role === "user" && m.runId && !answered.has(m.runId)).map((m) => m.runId!);
+  return [...new Set(messages.value.filter((m) => m.role === "user" && m.runId && !answered.has(m.runId)).map((m) => m.runId!))];
 });
 
 async function send() {
@@ -62,10 +62,11 @@ async function send() {
   if (!t || sending.value) return;
   sending.value = true;
   try {
-    const r = await post<{ conversationId: string; messageId: string; runId: string }>("/api/ask", { text: t, space: state.space, conversationId: id.value });
+    const r = await post<{ conversationId: string; messageId: string | null; runId: string | null; reply: string | null }>("/api/ask", { text: t, space: state.space, conversationId: id.value });
     text.value = "";
     if (r.conversationId !== id.value) await router.push(`/ask/${r.conversationId}`);
-    else messages.value.push({ id: r.messageId, role: "user", text: t, runId: r.runId, createdAt: new Date().toISOString() });
+    else if (r.reply !== null) await loadConversation();
+    else messages.value.push({ id: r.messageId!, role: "user", text: t, runId: r.runId, createdAt: new Date().toISOString() });
     void loadList();
     await scrollDown();
   } catch (e) {
@@ -73,6 +74,11 @@ async function send() {
   } finally {
     sending.value = false;
   }
+}
+function channelLabel(c: Conversation) {
+  const name = ({ lark: "飞书", telegram: "Telegram", onebot: "QQ/微信", cli: "命令行" } as Record<string, string>)[c.channel] ?? c.channel;
+  const key = c.external_id ?? "";
+  return `${name}${key.includes("#") ? " · 话题" : /group|^oc_|^-/.test(key) ? " · 群" : ""}`;
 }
 async function cancel(runId: string) {
   await post(`/api/runs/${runId}/cancel`);
@@ -102,7 +108,7 @@ function autosize(e: Event) {
         <router-link v-for="c in conversations" :key="c.id" :to="`/ask/${c.id}`" class="li conv" :class="{ active: c.id === id }">
           <div class="grow">
             <div class="ellipsis">{{ c.title || "新对话" }}</div>
-            <div class="muted small">{{ relTime(c.updated_at) }}<span v-if="c.channel !== 'web'"> · {{ c.channel === "lark" ? "飞书" : c.channel }}</span></div>
+            <div class="muted small" :title="c.summary || ''">{{ relTime(c.updated_at) }}<span v-if="c.channel !== 'web'"> · {{ channelLabel(c) }}</span><span v-if="c.status === 'archived'"> · 已归档</span></div>
           </div>
           <button class="btn ghost sm icon del" title="删除" @click.prevent="remove(c)"><Icon name="trash" :size="14" /></button>
         </router-link>
@@ -141,7 +147,7 @@ function autosize(e: Event) {
         </div>
       </div>
       <form class="composer" @submit.prevent="send">
-        <textarea ref="input" v-model="text" rows="1" placeholder="提问或交代事情… (Shift+Enter 换行)" @input="autosize" @keydown.enter.exact.prevent="send" />
+        <textarea ref="input" v-model="text" rows="1" placeholder="提问或交代事情；/help 查看命令（Shift+Enter 换行）" @input="autosize" @keydown.enter.exact.prevent="send" />
         <button class="btn primary icon" :disabled="sending || !text.trim()" aria-label="发送"><Icon name="send" :size="16" /></button>
       </form>
     </section>

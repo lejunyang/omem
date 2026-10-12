@@ -9,7 +9,11 @@ import { syncDirectorySpace } from "../sources/import.ts";
 import { appendToSource, getSource } from "../sources/store.ts";
 import { listPages, pageExists, syncWiki } from "../wiki/store.ts";
 import { runCodeTask } from "./code.ts";
+import { deliverToThread, receive } from "./inbox.ts";
 import { runRole } from "./runner.ts";
+import { maybeSummarize, threadTurn } from "./sessions.ts";
+import { readAgentSpec } from "./specs.ts";
+import { addMessage, getThread, threadMessages, updateThread } from "./threads.ts";
 import { createRun, registerHandler, type RunContext } from "./runs.ts";
 
 const QUIET = /^\s*QUIET\s*$/i;
@@ -30,71 +34,67 @@ async function agent(ctx: RunContext, role: RoleName, spaceId: string, task: str
 
 // ---------------------------------------------------------------- conversations
 
-export function ensureConversation(app: App, input: { id?: string; spaceId: string; channel?: string; externalId?: string; title?: string }) {
-  if (input.id) {
-    const c = one<{ id: string }>(app.db, "select id from conversations where id = ?", input.id);
-    if (c) return c.id;
-  }
-  if (input.externalId) {
-    const c = one<{ id: string }>(app.db, "select id from conversations where channel = ? and external_id = ?", input.channel ?? "web", input.externalId);
-    if (c) return c.id;
-  }
-  const id = input.id ?? newId("c");
-  run(app.db, "insert into conversations(id,space_id,channel,title,external_id,created_at,updated_at) values(?,?,?,?,?,?,?)", id, input.spaceId, input.channel ?? "web", input.title ?? "", input.externalId ?? null, now(), now());
-  return id;
-}
+export { addMessage, conversationMessages, ensureConversation } from "./threads.ts";
 
-export function addMessage(app: App, conversationId: string, role: "user" | "assistant", text: string, runId?: string | null, meta: Record<string, unknown> = {}) {
-  const id = newId("msg");
-  run(app.db, "insert into messages(id,conversation_id,role,text,run_id,meta,created_at) values(?,?,?,?,?,?,?)", id, conversationId, role, text, runId ?? null, JSON.stringify(meta), now());
-  run(app.db, "update conversations set updated_at = ?, title = case when title = '' then ? else title end where id = ?", now(), truncate(text.replace(/\s+/g, " "), 40), conversationId);
-  // Conversations are part of the library too: "what did I tell you last week" must be searchable.
-  const conv = one<{ space_id: string; title: string; channel: string }>(app.db, "select space_id, title, channel from conversations where id = ?", conversationId);
-  if (conv)
-    appendToSource(app, {
-      spaceId: conv.space_id,
-      kind: "conversation",
-      uri: `conversation:${conversationId}`,
-      title: `对话：${conv.title || truncate(text, 40)}`,
-      lines: ["", `**${role === "user" ? "本人" : "助理"}**（${now().slice(0, 16).replace("T", " ")}，msg:${id}）：${text}`],
-      meta: { conversationId, channel: conv.channel },
-    });
-  return id;
-}
-
-export function conversationMessages(app: App, conversationId: string, limit = 200) {
-  return all<{ id: string; role: string; text: string; run_id: string | null; meta: string; created_at: string }>(
-    app.db,
-    "select * from (select * from messages where conversation_id = ? order by created_at desc limit ?) order by created_at",
-    conversationId,
-    limit,
-  ).map((m) => ({ id: m.id, role: m.role, text: m.text, runId: m.run_id, meta: json(m.meta, {}), createdAt: m.created_at }));
-}
-
-/** Ask the assistant. Creates the user message immediately and an `ask` run that answers it. */
-export function ask(app: App, input: { text: string; spaceId?: string; conversationId?: string; channel?: string; externalId?: string }) {
-  const spaceId = input.spaceId ?? "personal";
-  const conversationId = ensureConversation(app, { id: input.conversationId, spaceId, channel: input.channel, externalId: input.externalId });
-  const messageId = addMessage(app, conversationId, "user", input.text);
-  const r = createRun(app, { kind: "ask", spaceId, title: truncate(input.text.replace(/\s+/g, " "), 60), input: { conversationId, messageId, text: input.text } });
-  run(app.db, "update messages set run_id = ? where id = ?", r.id, messageId);
-  return { conversationId, messageId, runId: r.id };
+/**
+ * Ask the assistant (web, CLI, tests). Goes through the same inbox as chat
+ * channels: commands, thread resolution, burst merging, per-thread lanes.
+ */
+export async function ask(app: App, input: { text: string; spaceId?: string; conversationId?: string; channel?: string; externalId?: string }) {
+  const r = await receive(app, {
+    text: input.text,
+    spaceId: input.spaceId ?? "personal",
+    conversationId: input.conversationId ?? (input.externalId ? undefined : newId("c")),
+    channel: input.channel ?? "web",
+    chatId: input.externalId,
+  });
+  return { conversationId: r.thread.id, messageId: r.messageId, runId: r.runId, reply: r.reply, merged: r.merged };
 }
 
 registerHandler("ask", async (ctx) => {
-  const { conversationId, messageId, text } = ctx.run.input as { conversationId: string; messageId: string; text: string };
-  const history = conversationMessages(ctx.app, conversationId, 13).filter((m) => m.id !== messageId);
-  const task = [
-    history.length ? `## 本次对话之前的内容（供理解指代）\n\n${history.map((m) => `${m.role === "user" ? "本人" : "助理"}：${truncate(m.text, 1500)}`).join("\n\n")}` : "",
-    `## 本人刚发来的消息\n\n${text}`,
-    `（消息 id：msg:${messageId}，记忆来源可引用它。）`,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-  const r = await agent(ctx, "assistant", ctx.run.spaceId ?? "personal", task, null);
+  const input = ctx.run.input as { conversationId: string; messageIds?: string[]; messageId?: string };
+  const ids = input.messageIds ?? (input.messageId ? [input.messageId] : []);
+  const all = threadMessages(ctx.app, input.conversationId, { limit: 400 });
+  const msgs = all.filter((m) => ids.includes(m.id));
+  if (!msgs.length) return { answer: "", skipped: "消息已不存在" };
+  const r = await threadTurn(ctx, input.conversationId, msgs);
+  run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   const answer = r.text.trim() || "（Agent 没有给出文字回答）";
-  const id = addMessage(ctx.app, conversationId, "assistant", answer, ctx.run.id, { agent: r.agent });
-  return { answer, messageId: id };
+  const id = addMessage(ctx.app, input.conversationId, "assistant", answer, ctx.run.id, { agent: r.agent, session: r.mode, replyTo: ids });
+  maybeSummarize(ctx.app, input.conversationId);
+  return { answer, messageId: id, session: r.mode };
+});
+
+// Delegation to an agent spec ("/as name task", run_agent): answer goes back to the thread it came from.
+registerHandler("agent", async (ctx) => {
+  const { spec: name, task, threadId } = ctx.run.input as { spec: string; task: string; threadId?: string };
+  const spec = readAgentSpec(ctx.app, name);
+  const r = await runRole(ctx.app, {
+    role: "assistant",
+    spec,
+    spaceId: ctx.run.spaceId ?? spec.space ?? "personal",
+    task,
+    runId: ctx.run.id,
+    signal: ctx.signal,
+    onEvent: (e) => ctx.event(e.type, e),
+  });
+  run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
+  const answer = r.text.trim() || "（没有输出）";
+  if (threadId) await deliverToThread(ctx.app, threadId, `**${spec.name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: spec.name });
+  return { answer };
+});
+
+registerHandler("thread-summary", async (ctx) => {
+  const { threadId } = ctx.run.input as { threadId: string };
+  const t = getThread(ctx.app, threadId);
+  const fresh = threadMessages(ctx.app, threadId, { after: t.summaryAt, limit: 80 }).filter((m) => !m.meta.command);
+  if (!fresh.length) return { quiet: true };
+  const transcript = fresh.map((m) => `${m.role === "user" ? "本人" : "助理"}（${m.createdAt.slice(0, 16).replace("T", " ")}）：${truncate(m.text, 1200)}`).join("\n\n");
+  const task = `${t.summary ? `## 之前的摘要\n\n${t.summary}\n\n` : ""}## 之后的新对话\n\n${transcript}`;
+  const r = await agent(ctx, "summarizer", t.spaceId, task, [t.spaceId]);
+  const summary = r.text.trim();
+  if (summary) updateThread(ctx.app, threadId, { summary, summaryAt: fresh[fresh.length - 1].createdAt });
+  return { summary };
 });
 
 // ------------------------------------------------------------------- ingest
