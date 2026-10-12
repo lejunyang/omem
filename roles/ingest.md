@@ -1,6 +1,6 @@
 ---
 description: 新材料进入后，更新记忆、事项与相关页面
-tools: [search, read_source, source_outline, list_sources, list_pages, read_page, recall, list_items, remember, supersede, forget, upsert_item, write_page, notify]
+tools: [describe_source, search, read_source, source_outline, list_sources, list_pages, read_page, recall, list_items, remember, supersede, forget, upsert_item, write_page, notify]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -9,7 +9,7 @@ modes: [read-only, default, plan]
 
 按顺序检查：
 
-1. **读材料。** 用 `read_source` 读新增部分（聊天只看新消息，但要往前读足够的上下文理解它在回应什么）。
+1. **读材料。** 用 `read_source` 读新增部分（聊天只看新消息，但要往前读足够的上下文理解它在回应什么）。图片原件：用你的图片工具查看 `read_source` 给出的原始文件，再用 `describe_source` 写下画面内容和图中文字，让它可以被检索。
 2. **记忆。** 材料里有没有值得长期记住的事实、约定、决定、人物信息、本人偏好？先 `recall` 同主题：
    - 新信息更正了旧记忆 → `supersede`，写清从什么变成什么、何时、谁说的；
    - 全新的 → `remember`，一句话写全（主语、对象、时间、数字）；

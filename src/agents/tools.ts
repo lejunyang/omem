@@ -11,7 +11,7 @@ import { listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede } from "../memory/store.ts";
 import { search, type HitType } from "../search/search.ts";
 import { importText, importUrl } from "../sources/import.ts";
-import { getSource, listSources, readSource, sourceOutline } from "../sources/store.ts";
+import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
 import { listPages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
 import { createRun, getRun, listRuns, runEvents, setRunOutput } from "./runs.ts";
 
@@ -453,6 +453,22 @@ def({
   handler: (ctx, a) => {
     notify(ctx.app, { title: a.title, body: a.body, link: a.link ?? (ctx.runId ? `#/runs/${ctx.runId}` : null) });
     return "已通知";
+  },
+});
+
+def({
+  name: "describe_source",
+  description: "为图片（或扫描件）原件补充文字：画面内容、图中文字（OCR）、要点。补充后可以被检索和引用。先用 read_source 拿到原始文件路径并用你的图片工具查看。",
+  write: true,
+  schema: z.object({ source: z.string(), description: z.string().describe("Markdown：先一句话概括，再写图中文字和细节") }),
+  handler: (ctx, a) => {
+    const id = resolveSource(ctx, a.source);
+    const s = getSource(ctx.app, id);
+    inScope(ctx, s.spaceId, "原件");
+    if (s.kind !== "image") throw new HttpError(400, "只能为图片原件补充描述");
+    const head = sourceText(ctx.app, id).split("\n")[0];
+    upsertSource(ctx.app, { spaceId: s.spaceId, kind: s.kind, uri: s.uri, title: s.title, mime: s.mime, meta: { ...s.meta, describedAt: new Date().toISOString() }, text: `${head}\n\n${a.description.trim()}` });
+    return `已为 ${s.uri} 补充描述`;
   },
 });
 
