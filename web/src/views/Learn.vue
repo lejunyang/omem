@@ -50,6 +50,16 @@ async function add() {
   toast("已添加卡片", "ok");
   void load();
 }
+const importText = ref("");
+async function importCards(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  const text = file ? await file.text() : importText.value;
+  if (!text.trim()) return;
+  const r = await post<{ created: number; skipped: number }>("/api/cards/import", { space: state.space, text });
+  toast(`导入 ${r.created} 张，跳过重复 ${r.skipped} 张`, "ok");
+  importText.value = "";
+  void load();
+}
 async function suspend(c: Card) {
   await patch(`/api/cards/${c.id}`, { suspended: !c.suspended });
   void load();
@@ -119,6 +129,11 @@ const ratings = [
         </div>
         <div class="row"><span class="spacer" /><button class="btn primary sm">添加卡片</button></div>
       </form>
+      <div class="row wrap small">
+        <a class="btn sm" :href="`/api/cards/export.txt${scope === 'space' ? `?space=${state.space}` : ''}`" download><Icon name="upload" :size="14" />导出给 Anki</a>
+        <label class="btn sm"><Icon name="plus" :size="14" />从 Anki 文本导入<input type="file" accept=".txt,.tsv,.csv" hidden @change="importCards" /></label>
+        <span class="muted">Anki：文件 → 导出 → “纯文本格式的笔记”；导入时选择制表符分隔。</span>
+      </div>
       <div class="cardlist">
         <div v-for="c in all" :key="c.id" class="cl" :class="{ suspended: c.suspended }">
           <div class="grow"><div>{{ c.front }}</div><div class="muted small">{{ c.back.slice(0, 120) }}</div></div>

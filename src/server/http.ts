@@ -382,6 +382,26 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ front: z.string().optional(), back: z.string().optional(), suspended: z.boolean().optional() }), req.body);
     return updateCard(app, (req.params as { id: string }).id, b);
   });
+  // Anki-compatible plain text: one card per line, front<TAB>back (HTML allowed by Anki).
+  server.get("/api/cards/export.txt", async (req, reply) => {
+    const o = q(z.object({ space: z.string().optional() }), req.query);
+    const clean = (s: string) => s.replace(/\t/g, " ").replace(/\r?\n/g, "<br>");
+    reply.header("content-disposition", `attachment; filename="omem-cards${o.space ? "-" + o.space : ""}.txt"`).type("text/plain; charset=utf-8");
+    return "#separator:tab\n#html:true\n" + listCards(app, o.space).map((c) => `${clean(c.front)}\t${clean(c.back)}`).join("\n") + "\n";
+  });
+  server.post("/api/cards/import", async (req) => {
+    const b = q(z.object({ space: z.string().default("personal"), text: z.string().min(1) }), req.body);
+    let created = 0;
+    let skipped = 0;
+    const sep = /\t/.test(b.text) ? "\t" : ";";
+    for (const line of b.text.split(/\r?\n/)) {
+      if (!line.trim() || line.startsWith("#")) continue;
+      const [front, ...rest] = line.split(sep);
+      const r = createCard(app, { spaceId: b.space, front: front.replace(/<br\s*\/?>/g, "\n"), back: rest.join(sep).replace(/<br\s*\/?>/g, "\n") });
+      r.created ? created++ : skipped++;
+    }
+    return { created, skipped };
+  });
   server.post("/api/learn/generate", async (req) => {
     const b = q(z.object({ space: z.string(), sourceIds: z.array(z.string()).min(1), focus: z.string().optional() }), req.body);
     return createRun(app, { kind: "tutor", spaceId: b.space, title: "生成复习卡片", input: { sourceIds: b.sourceIds, focus: b.focus } });
