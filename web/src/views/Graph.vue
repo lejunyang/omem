@@ -11,6 +11,7 @@ type Edge = { from_id: string; to_id: string };
 const route = useRoute();
 const router = useRouter();
 const space = computed(() => (route.params.space as string) || state.space);
+if (route.params.space && route.params.space !== state.space && state.spaces.some((x) => x.id === route.params.space)) state.space = route.params.space as string;
 const nodes = ref<Node[]>([]);
 const edges = ref<Edge[]>([]);
 const hover = ref<string | null>(null);
@@ -45,7 +46,7 @@ function simulate(steps: number) {
           const dx = ns[a].x - ns[b].x || 0.01;
           const dy = ns[a].y - ns[b].y || 0.01;
           const d2 = dx * dx + dy * dy;
-          const f = 2400 / d2;
+          const f = 9000 / d2;
           ns[a].vx += dx * f * 0.05;
           ns[a].vy += dy * f * 0.05;
           ns[b].vx -= dx * f * 0.05;
@@ -58,7 +59,7 @@ function simulate(steps: number) {
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
-        const f = (d - 130) * 0.01;
+        const f = (d - 170) * 0.008;
         a.vx += (dx / d) * f;
         a.vy += (dy / d) * f;
         b.vx -= (dx / d) * f;
@@ -136,7 +137,7 @@ function open(n: Node) {
   padding: 8px;
   overflow: hidden;
 }
-svg {
+.canvas svg {
   width: 100%;
   height: auto;
   display: block;
