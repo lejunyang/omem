@@ -84,7 +84,7 @@ const isMarkdown = computed(() => detail.value && /\.(md|markdown|mdx)$/i.test(d
 const outline = computed(() => {
   if (!detail.value) return [];
   const o = detail.value.outline;
-  if (o.symbols.length) return o.symbols.filter((s) => !s.qname.includes(".") || s.line_end - s.line_start > 3).map((s) => ({ label: s.qname, kind: s.kind, line: s.line_start, end: s.line_end }));
+  if (o.symbols.length) return o.symbols.filter((s) => !s.qname.includes(".") || s.line_end - s.line_start > 3).map((s) => ({ label: s.qname, qname: s.qname, kind: s.kind, line: s.line_start, end: s.line_end }));
   const seen = new Set<string>();
   return o.sections.filter((s) => s.path && !seen.has(s.path) && seen.add(s.path)).map((s) => ({ label: s.path.split(" / ").pop()!, kind: "", line: s.line_start, end: s.line_end, depth: s.path.split(" / ").length }));
 });
@@ -226,9 +226,14 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
 
 <style scoped>
 .rel {
+  min-width: 0;
   margin-top: 14px;
   border-top: 1px solid var(--line);
   padding-top: 6px;
+}
+.rel .ol > .ellipsis:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .rel .file {
   margin-left: auto;
@@ -363,6 +368,8 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
   max-height: calc(100vh - 40px);
   overflow-y: auto;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   gap: 1px;
 }
 .ol {
