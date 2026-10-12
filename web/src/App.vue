@@ -20,7 +20,8 @@ const nav = [
   { to: "/learn", label: "学习", icon: "cap" },
   { to: "/runs", label: "运行", icon: "activity" },
 ];
-const isActive = (to: string, exact?: boolean) => (exact ? route.path === to : route.path === to || route.path.startsWith(to + "/"));
+const isActive = (to: string, exact?: boolean) =>
+  exact ? route.path === to : route.path === to || route.path.startsWith(to + "/") || (to === "/wiki" && route.path.startsWith("/graph"));
 
 function onKey(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey;

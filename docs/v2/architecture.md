@@ -125,4 +125,22 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 ## 从 v1 迁移
 
-保留：飞书接入（机器人、个人消息采集）、Docling 解析脚本、TS/Vue 解析思路、osdk 配置。其余模块退役。v1 数据库不自动迁移；提供一次性导入：把 v1 的原件重新导入 v2，记忆和事项按表导出再导入。
+保留：飞书接入（机器人、个人消息采集）、Docling 解析脚本、TS/Vue 解析思路、osdk 配置。其余模块退役。v1 数据库不自动迁移；`omem import-v1 <旧 omem.db>` 一次性导入原件最新版、有效记忆和未完成事项（代码评审材料跳过，改为重新建仓库空间）。
+
+## 实现状态（2026-10-12）
+
+| 能力 | 状态 | 入口 |
+| --- | --- | --- |
+| 空间、原件、切分、全文 + 符号 + 可选向量检索 | 已实现，测试覆盖 | `src/sources`、`src/search` |
+| Agent 运行时（ACP、claude/codex 命令行后备）与 MCP 工具（HTTP 与 stdio 桥） | 已实现；假 ACP Agent 端到端测试；真实 Claude Code ACP 已跑通 | `src/agents/acp.ts`、`tools.ts` |
+| 问答、记忆更正与版本链、事项与时间线 | 已实现，真实模型抽查通过 | `roles/assistant.md` |
+| 新材料整理（记忆/事项/页面/通知） | 已实现，真实模型抽查通过 | `roles/ingest.md` |
+| 代码仓库 Wiki：规划 → 逐页写作 → 原件变化后检查 | 已实现；zustand 12 页实测 | `roles/wiki-*.md` |
+| 巡检（到期提醒不调模型；关注/等待有新材料时才调用） | 已实现 | `roles/heartbeat.md` |
+| 简报、做梦整理、经验与偏好回灌到后续任务 | 已实现 | `roles/brief.md`、`dreamer.md`、`runner.ts` |
+| 交办编码：worktree → 检查 → 独立评审 → 确认后应用 | 已实现，演示仓库实测 | `src/agents/code.ts` |
+| 学习卡片（FSRS） | 已实现 | `src/learn` |
+| 渠道：网页、CLI、MCP、飞书机器人、飞书个人消息（只读）、Telegram、OneBot（QQ/微信桥） | 已实现；OneBot 有模拟服务端测试；飞书与 Telegram 需真实账号验收 | `src/channels` |
+| v1 导入 | 已实现，合成库测试 | `src/migrate-v1.ts` |
+
+尚未做：扫描件 OCR；跨文件精确调用图（目前名称级）；多用户；微信官方接口（只能通过 OneBot 兼容桥）。评测数字见 [evaluation.md](evaluation.md)。
