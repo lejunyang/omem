@@ -228,7 +228,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { conversation: c, messages: conversationMessages(app, id) };
   });
   server.delete("/api/conversations/:id", async (req) => {
-    app.db.prepare("delete from conversations where id = ?").run((req.params as { id: string }).id);
+    const id = (req.params as { id: string }).id;
+    const src = one<{ id: string }>(app.db, "select id from sources where uri = ? and deleted_at is null", `conversation:${id}`);
+    if (src) deleteSource(app, src.id);
+    app.db.prepare("delete from conversations where id = ?").run(id);
     return { ok: true };
   });
 
@@ -379,6 +382,26 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ front: z.string().optional(), back: z.string().optional(), suspended: z.boolean().optional() }), req.body);
     return updateCard(app, (req.params as { id: string }).id, b);
   });
+  // Anki-compatible plain text: one card per line, front<TAB>back (HTML allowed by Anki).
+  server.get("/api/cards/export.txt", async (req, reply) => {
+    const o = q(z.object({ space: z.string().optional() }), req.query);
+    const clean = (s: string) => s.replace(/\t/g, " ").replace(/\r?\n/g, "<br>");
+    reply.header("content-disposition", `attachment; filename="omem-cards${o.space ? "-" + o.space : ""}.txt"`).type("text/plain; charset=utf-8");
+    return "#separator:tab\n#html:true\n" + listCards(app, o.space).map((c) => `${clean(c.front)}\t${clean(c.back)}`).join("\n") + "\n";
+  });
+  server.post("/api/cards/import", async (req) => {
+    const b = q(z.object({ space: z.string().default("personal"), text: z.string().min(1) }), req.body);
+    let created = 0;
+    let skipped = 0;
+    const sep = /\t/.test(b.text) ? "\t" : ";";
+    for (const line of b.text.split(/\r?\n/)) {
+      if (!line.trim() || line.startsWith("#")) continue;
+      const [front, ...rest] = line.split(sep);
+      const r = createCard(app, { spaceId: b.space, front: front.replace(/<br\s*\/?>/g, "\n"), back: rest.join(sep).replace(/<br\s*\/?>/g, "\n") });
+      r.created ? created++ : skipped++;
+    }
+    return { created, skipped };
+  });
   server.post("/api/learn/generate", async (req) => {
     const b = q(z.object({ space: z.string(), sourceIds: z.array(z.string()).min(1), focus: z.string().optional() }), req.body);
     return createRun(app, { kind: "tutor", spaceId: b.space, title: "生成复习卡片", input: { sourceIds: b.sourceIds, focus: b.focus } });
@@ -402,7 +425,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       runs: listRuns(app, { limit: 8 }),
       study: studyStats(app),
       notifications: listNotifications(app, 8),
-      recentSources: all(app.db, "select id, space_id spaceId, kind, uri, title, updated_at updatedAt from sources where deleted_at is null and kind != 'code' order by updated_at desc limit 8"),
+      recentSources: all(app.db, "select id, space_id spaceId, kind, uri, title, updated_at updatedAt from sources where deleted_at is null and kind not in ('code', 'conversation') order by updated_at desc limit 8"),
     };
   });
   server.get("/api/schedules", async () => ({ schedules: listSchedules(app), next: nextRuns(app), labels: scheduleLabels }));
@@ -432,6 +455,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/lark/poll", async () => {
     const { pollLark } = await import("../channels/lark-personal.ts");
     return pollLark(app);
+  });
+
+  server.post("/api/agents/:id/probe", async (req) => {
+    const { allProfiles } = await import("../core/config.ts");
+    const { runAcp } = await import("../agents/acp.ts");
+    const p = allProfiles(app.config).find((x) => x.id === (req.params as { id: string }).id);
+    if (!p) throw new HttpError(404, "没有这个 Agent 配置");
+    if (p.transport !== "acp") return { agent: p.command, note: "命令行 Agent 不支持探测，请直接填写 model / effort" };
+    const r = await runAcp({ ...p, model: undefined, effort: undefined, idleTimeoutMs: 60_000 }, { cwd: app.home, prompt: "", probe: true }, () => {});
+    return r.probe;
   });
 
   // ----------------------------------------------------------------- settings

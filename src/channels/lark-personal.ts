@@ -114,3 +114,22 @@ export async function pollLark(app: App) {
   for (const [spaceId, ids] of touched) scheduleIngest(app, spaceId, [...new Set(ids)], "飞书新消息");
   return { chats: subs.length, spaces: [...touched.keys()] };
 }
+
+/** Recent messages of chats that are not subscribed yet, for the curator role to judge. */
+export async function previewUnsubscribed(app: App, maxChats = 30) {
+  const subscribed = new Set(getSubscriptions(app).map((s) => s.chatId));
+  const excluded = new Set<string>(json(one<{ value: string }>(app.db, "select value from kv where key = 'lark_curate_excluded'")?.value, []));
+  const chats = (await listLarkChats()).filter((c) => c.mode !== "p2p" && !subscribed.has(c.chatId) && !excluded.has(c.chatId)).slice(0, maxChats);
+  const start = new Date(Date.now() - 3 * 86400_000).toISOString();
+  const end = new Date().toISOString();
+  const out: { chatId: string; name: string; preview: string[] }[] = [];
+  for (const c of chats) {
+    try {
+      const msgs = await fetchMessages(["+chat-messages-list", "--chat-id", c.chatId, "--order", "desc"], start, end);
+      out.push({ chatId: c.chatId, name: c.name, preview: msgs.slice(0, 12).reverse().map((m) => `${m.sender?.name ?? "?"}: ${text(m).replace(/\n/g, " ").slice(0, 120)}`) });
+    } catch {
+      out.push({ chatId: c.chatId, name: c.name, preview: [] });
+    }
+  }
+  return out;
+}

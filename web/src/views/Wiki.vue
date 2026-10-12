@@ -43,6 +43,8 @@ const draft = ref({ title: "", summary: "", body: "" });
 const rewriteOpen = ref(false);
 const rewriteNote = ref("");
 const planOpen = ref(false);
+const newOpen = ref(false);
+const newPage = ref({ title: "", question: "", outline: "", slug: "" });
 const planFocus = ref("");
 const navOpen = ref(false);
 const version = ref<{ hash: string; diff: string } | null>(null);
@@ -159,6 +161,14 @@ async function rewrite() {
   toast("已安排重写，完成后自动刷新", "ok");
   void loadSpace();
 }
+async function createPage() {
+  const slug = newPage.value.slug.trim() || newPage.value.title.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 60);
+  await post(`/api/wiki/${space.value}/write`, { slug, title: newPage.value.title, question: newPage.value.question, outline: newPage.value.outline, kind: "guide", entry_points: [] });
+  newOpen.value = false;
+  newPage.value = { title: "", question: "", outline: "", slug: "" };
+  toast("助理开始调查并写作这一页", "ok");
+  void loadSpace();
+}
 async function plan() {
   await post(`/api/wiki/${space.value}/plan`, { focus: planFocus.value || undefined, autoWrite: true });
   planOpen.value = false;
@@ -186,6 +196,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
           <strong class="ellipsis">{{ spaceName }}</strong>
           <span class="spacer" />
           <router-link :to="`/graph/${space}`" class="btn ghost sm icon" title="页面关系图"><Icon name="graph" :size="16" /></router-link>
+          <button class="btn ghost sm icon" title="写一页新文章" @click="newOpen = true"><Icon name="plus" :size="16" /></button>
           <button class="btn ghost sm icon" title="规划/更新目录" @click="planOpen = true"><Icon name="sparkles" :size="16" /></button>
         </div>
         <input v-model="filter" class="input filter" placeholder="筛选页面" />
@@ -311,6 +322,17 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         <p class="muted small">助理会重新调查原文，在现有内容基础上改进。可以写下哪里不清楚、想补充什么。</p>
         <textarea v-model="rewriteNote" class="textarea" rows="5" placeholder="例如：开头太抽象，先用一个真实请求走一遍；补充失败时怎么排查。" />
         <div class="row"><span class="spacer" /><button class="btn primary" @click="rewrite">开始改写</button></div>
+      </div>
+    </div>
+
+    <div v-if="newOpen" class="modal-overlay" @mousedown.self="newOpen = false">
+      <div class="modal">
+        <header class="row"><strong>写一页新文章</strong><span class="spacer" /><button class="btn ghost sm icon" @click="newOpen = false"><Icon name="x" /></button></header>
+        <p class="muted small">说清楚读者想弄明白什么，助理会在「{{ spaceName }}」的材料里调查后写作，并引用原文。</p>
+        <label class="field"><span>标题</span><input v-model="newPage.title" class="input" placeholder="例如：一条飞书消息进来之后发生了什么" /></label>
+        <label class="field"><span>读者问题</span><textarea v-model="newPage.question" class="textarea" rows="3" placeholder="读者读完应该能回答什么、能做什么" /></label>
+        <label class="field"><span>讲解思路（可选）</span><textarea v-model="newPage.outline" class="textarea" rows="2" placeholder="例如：先用一个真实例子走完全流程，再讲设计取舍" /></label>
+        <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!newPage.title.trim() || !newPage.question.trim()" @click="createPage">开始写作</button></div>
       </div>
     </div>
 

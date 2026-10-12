@@ -6,7 +6,7 @@ import { findSpace, getSpace, updateSpace } from "../core/spaces.ts";
 import { json, newId, now, truncate } from "../core/util.ts";
 import { addItemEvent, dueReminders, listItems, upsertItem } from "../items/store.ts";
 import { syncDirectorySpace } from "../sources/import.ts";
-import { getSource } from "../sources/store.ts";
+import { appendToSource, getSource } from "../sources/store.ts";
 import { listPages, pageExists, syncWiki } from "../wiki/store.ts";
 import { runCodeTask } from "./code.ts";
 import { runRole } from "./runner.ts";
@@ -48,6 +48,17 @@ export function addMessage(app: App, conversationId: string, role: "user" | "ass
   const id = newId("msg");
   run(app.db, "insert into messages(id,conversation_id,role,text,run_id,meta,created_at) values(?,?,?,?,?,?,?)", id, conversationId, role, text, runId ?? null, JSON.stringify(meta), now());
   run(app.db, "update conversations set updated_at = ?, title = case when title = '' then ? else title end where id = ?", now(), truncate(text.replace(/\s+/g, " "), 40), conversationId);
+  // Conversations are part of the library too: "what did I tell you last week" must be searchable.
+  const conv = one<{ space_id: string; title: string; channel: string }>(app.db, "select space_id, title, channel from conversations where id = ?", conversationId);
+  if (conv)
+    appendToSource(app, {
+      spaceId: conv.space_id,
+      kind: "conversation",
+      uri: `conversation:${conversationId}`,
+      title: `对话：${conv.title || truncate(text, 40)}`,
+      lines: ["", `**${role === "user" ? "本人" : "助理"}**（${now().slice(0, 16).replace("T", " ")}，msg:${id}）：${text}`],
+      meta: { conversationId, channel: conv.channel },
+    });
   return id;
 }
 
@@ -282,7 +293,7 @@ registerHandler("brief", async (ctx) => {
   const items = listItems(app, { status: "active" });
   const fresh = all<{ id: string; space_id: string; uri: string; title: string; kind: string }>(
     app.db,
-    "select id, space_id, uri, title, kind from sources where updated_at > ? and deleted_at is null and kind != 'code' order by updated_at desc limit 60",
+    "select id, space_id, uri, title, kind from sources where updated_at > ? and deleted_at is null and kind not in ('code', 'conversation') order by updated_at desc limit 60",
     since,
   );
   const runs = all<{ id: string; kind: string; title: string; status: string }>(app.db, "select id, kind, title, status from runs where finished_at > ? and kind in ('code','wiki-plan','wiki-write','ingest') order by finished_at desc limit 30", since);
@@ -295,6 +306,22 @@ registerHandler("brief", async (ctx) => {
   ].join("\n\n");
   const r = await agent(ctx, "brief", "personal", task, null);
   return { summary: r.text.trim() };
+});
+
+// ------------------------------------------------------------------ curate
+
+registerHandler("curate", async (ctx) => {
+  const { direction } = ctx.run.input as { direction?: string };
+  if (!direction?.trim()) return { quiet: true, summary: "还没有设置筛选方向" };
+  const { previewUnsubscribed } = await import("../channels/lark-personal.ts");
+  const chats = await previewUnsubscribed(ctx.app);
+  if (!chats.length) return { quiet: true, summary: "没有新的候选群" };
+  const task = [
+    `筛选方向：${direction}`,
+    `还没订阅的群（最近三天的消息预览）：\n${chats.map((c) => `### ${c.name}（${c.chatId}）\n${c.preview.map((p) => `- ${p}`).join("\n") || "（最近没有消息）"}`).join("\n\n")}`,
+  ].join("\n\n");
+  const r = await agent(ctx, "curator", ctx.run.spaceId ?? "personal", task, null);
+  return { quiet: QUIET.test(r.text), summary: r.text.trim() };
 });
 
 // -------------------------------------------------------------------- tutor

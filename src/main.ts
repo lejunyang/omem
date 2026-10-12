@@ -18,6 +18,7 @@ registerScheduleKind("repo-sync", (app) => {
 });
 
 registerScheduleKind("brief", (app) => createRun(app, { kind: "brief", spaceId: "personal", title: "简报" }));
+registerScheduleKind("lark-curate", (app, s) => createRun(app, { kind: "curate", spaceId: "personal", title: "筛选值得关注的飞书群", input: { direction: (s.config as { direction?: string }).direction } }));
 registerScheduleKind("lark-poll", (app) => {
   import("./channels/lark-personal.ts").then((m) => m.pollLark(app)).catch((e) => console.warn("[omem] 飞书消息采集失败：", e.message));
 });
