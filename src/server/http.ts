@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { symbolRelations } from "../sources/callgraph.ts";
-import { agentSpecHistory, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "../agents/specs.ts";
+import { agentSpecHistory, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -238,6 +238,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.delete("/api/agents/:name", async (req) => {
     deleteAgentSpec(app, (req.params as { name: string }).name, "user");
     return { ok: true };
+  });
+  server.get("/api/library-files/:kind/:name", async (req) => {
+    const { kind, name } = req.params as { kind: "agent" | "skill"; name: string };
+    return { raw: readRaw(app, kind === "agent" ? "agent" : "skill", name) };
+  });
+  server.put("/api/library-files/:kind/:name", async (req) => {
+    const { kind, name } = req.params as { kind: "agent" | "skill"; name: string };
+    const b = q(z.object({ raw: z.string().min(1) }), req.body);
+    return saveRaw(app, kind === "agent" ? "agent" : "skill", name, b.raw);
   });
   server.get("/api/skills", async () => listSkills(app, { includeDrafts: true }));
   server.get("/api/skills/:name", async (req) => readSkill(app, (req.params as { name: string }).name));

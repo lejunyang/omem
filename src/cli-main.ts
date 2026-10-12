@@ -349,22 +349,47 @@ program
   });
 
 program
-  .command("setup <component>")
-  .description("准备可选组件：embeddings（本地中文向量模型，首次会下载约 25MB）")
-  .option("--model <id-or-dir>", "模型 id 或本地目录", "Xenova/bge-small-zh-v1.5")
-  .action(async (component, o) => {
-    if (component !== "embeddings") throw new Error("目前只支持：omem setup embeddings");
+  .command("setup [component]")
+  .description("设置向导：Agent、向量模型、文档解析、渠道、会话、定时任务。也可直接 setup embeddings | documents")
+  .option("--model <id-or-dir>", "embeddings：模型 id、本地目录，或 bge-small-zh / bge-base-zh / bge-m3（经 osdk 下载）")
+  .option("--no-osdk", "不经 osdk，直接从 Hugging Face 下载")
+  .action(async (component: string | undefined, o) => {
     const app = open();
     const { saveConfig } = await import("./core/config.ts");
-    const { embedPending } = await import("./search/embeddings.ts");
-    app.config.embeddings = { ...app.config.embeddings, provider: "local", model: o.model };
-    let n = 0;
-    for (let k = await embedPending(app, 64); k; k = await embedPending(app, 64)) {
-      n += k;
-      process.stderr.write(`\r已生成 ${n} 个片段的向量…`);
+    const setup = await import("./setup.ts");
+    if (!component) {
+      try {
+        await setup.setupInteractive(app);
+      } catch (e) {
+        if ((e as Error).name === "ExitPromptError") return console.error("\n已退出，未保存的部分没有改动。");
+        throw e;
+      }
+      return;
     }
-    saveConfig(app.config, app.home);
-    console.log(`\n向量检索已开启（${o.model}）。之后新增的材料由服务在后台补齐向量。`);
+    if (component === "embeddings") {
+      const { embedPending } = await import("./search/embeddings.ts");
+      const named = setup.EMBEDDINGS.find((e) => e.id === (o.model ?? "bge-small-zh"));
+      let model = o.model ?? named!.repo;
+      if (named) model = o.osdk !== false && setup.osdkAvailable() ? setup.osdkEmbedding(named) : named.repo;
+      app.config.embeddings = { ...app.config.embeddings, provider: "local", model, family: named?.id === "bge-m3" ? "bge-m3" : named ? "bge-zh" : undefined };
+      let n = 0;
+      for (let k = await embedPending(app, 64); k; k = await embedPending(app, 64)) {
+        n += k;
+        process.stderr.write(`\r已生成 ${n} 个片段的向量…`);
+      }
+      saveConfig(app.config, app.home);
+      console.log(`\n向量检索已开启（${model}）。之后新增的材料由服务在后台补齐向量。`);
+      return;
+    }
+    if (component === "documents" || component === "document-models") {
+      if (!setup.osdkAvailable()) throw new Error("需要 osdk 来下载 Docling 模型；或运行 omem setup 选择 pdftotext / pandoc。");
+      app.config.documents.doclingArtifacts = setup.prepareDoclingModels(app.home);
+      app.config.documents.engines = ["docling", "pdftotext", "pandoc"];
+      saveConfig(app.config, app.home);
+      console.log(`Docling 模型已就绪：${app.config.documents.doclingArtifacts}`);
+      return;
+    }
+    throw new Error("用法：omem setup（交互式）| omem setup embeddings [--model …] | omem setup documents");
   });
 
 program

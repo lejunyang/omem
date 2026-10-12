@@ -33,6 +33,11 @@ function tally(report: ImportReport, r: UpsertResult) {
   if (r.status !== "unchanged") report.sourceIds.push(r.id);
 }
 
+export function doclingScript() {
+  const script = resolve(fileURLToPath(new URL("../../scripts/document-parser/convert.py", import.meta.url)));
+  return existsSync(script) ? script : null;
+}
+
 /**
  * Convert PDF/DOCX/HTML to Markdown. Order: configured converter command,
  * bundled Docling script via uv, then pdftotext / pandoc when installed.
@@ -45,11 +50,16 @@ export function convertDocument(app: App, file: string): string {
     const parts = configured.split(" ").map((p) => p.replace("{file}", file));
     attempts.push([parts[0], parts.slice(1)]);
   }
-  const script = resolve(fileURLToPath(new URL("../../scripts/document-parser/convert.py", import.meta.url)));
-  if ((ext === ".pdf" || ext === ".docx") && existsSync(script))
-    attempts.push(["uv", ["run", "--project", resolve(script, ".."), "--quiet", "python", script, file]]);
-  if (ext === ".pdf") attempts.push(["pdftotext", ["-layout", file, "-"]]);
-  attempts.push(["pandoc", [file, "-t", "gfm", "--wrap=none"]]);
+  for (const engine of app.config.documents.engines) {
+    if (engine === "docling") {
+      const script = doclingScript();
+      const artifacts = app.config.documents.doclingArtifacts;
+      // Docling needs its layout models for PDF; DOCX works without them.
+      if (script && (ext === ".docx" || (ext === ".pdf" && artifacts && existsSync(artifacts))))
+        attempts.push(["uv", ["run", "--project", resolve(script, ".."), "--quiet", "python", script, file, artifacts ?? ""]]);
+    } else if (engine === "pdftotext" && ext === ".pdf") attempts.push(["pdftotext", ["-layout", file, "-"]]);
+    else if (engine === "pandoc" && ext !== ".pdf") attempts.push(["pandoc", [file, "-t", "gfm", "--wrap=none"]]);
+  }
   const errors: string[] = [];
   for (const [cmd, args] of attempts) {
     const r = spawnSync(cmd, args, { encoding: "utf8", maxBuffer: 200 * 1024 * 1024, windowsHide: true, timeout: 10 * 60_000 });
@@ -64,7 +74,7 @@ export function convertDocument(app: App, file: string): string {
     }
     errors.push(`${cmd}: ${(r.stderr || String(r.error ?? "")).trim().slice(0, 300)}`);
   }
-  throw new HttpError(422, `无法解析 ${basename(file)}。可安装 pandoc / pdftotext，或在设置中配置文档转换命令。\n${errors.join("\n")}`);
+  throw new HttpError(422, `无法解析 ${basename(file)}。运行 omem setup 选择文档解析方式（Docling / pdftotext / pandoc），或配置转换命令。\n${errors.join("\n")}`);
 }
 
 /** Import one file into a space. Binary documents are converted; originals are kept in files/. */

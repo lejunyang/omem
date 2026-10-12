@@ -72,6 +72,8 @@ export const configSchema = z.object({
       provider: z.enum(["none", "local", "openai"]).default("none"),
       /** local: model id or directory for transformers.js. openai: model name. */
       model: z.string().default("Xenova/bge-small-zh-v1.5"),
+      /** bge-zh (query prefix + CLS), bge-m3 / bge (CLS), other (mean pooling). Inferred from the model name when absent. */
+      family: z.enum(["bge-zh", "bge-m3", "bge", "other"]).optional(),
       url: z.string().optional(),
       apiKeyEnv: z.string().default("OPENAI_API_KEY"),
     })
@@ -80,8 +82,12 @@ export const configSchema = z.object({
     .object({
       /** Command that prints Markdown for PDF/DOCX on stdout. {file} is replaced. */
       converter: z.string().optional(),
+      /** Which built-in converters to try, in order. */
+      engines: z.array(z.enum(["docling", "pdftotext", "pandoc"])).default(["docling", "pdftotext", "pandoc"]),
+      /** Docling layout/table models (a directory prepared by `omem setup`); without it Docling reads DOCX only. */
+      doclingArtifacts: z.string().optional(),
     })
-    .default({}),
+    .default({ engines: ["docling", "pdftotext", "pandoc"] }),
   lark: z
     .object({
       enabled: z.boolean().default(false),

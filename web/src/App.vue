@@ -18,6 +18,7 @@ const nav = [
   { to: "/memory", label: "记忆", icon: "brain" },
   { to: "/sources", label: "原件", icon: "file" },
   { to: "/learn", label: "学习", icon: "cap" },
+  { to: "/agents", label: "Agent", icon: "layers" },
   { to: "/runs", label: "运行", icon: "activity" },
 ];
 const isActive = (to: string, exact?: boolean) =>

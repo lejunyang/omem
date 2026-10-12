@@ -46,11 +46,13 @@ async function getEmbedder(app: App): Promise<Embedder | null> {
       modelId = basename(resolve(cfg.model));
     }
     const extractor = await mod.pipeline("feature-extraction", modelId, { dtype: "q8" });
-    const isBge = /bge/i.test(cfg.model);
+    // osdk paths do not name the model, so setup records its family.
+    const family = cfg.family ?? (/bge-m3/i.test(cfg.model) ? "bge-m3" : /bge.*zh/i.test(cfg.model) ? "bge-zh" : /bge/i.test(cfg.model) ? "bge" : "other");
+    const isBge = family.startsWith("bge");
     embedder = {
       id: `local:${cfg.model}`,
       async embed(texts, kind) {
-        const input = isBge && kind === "query" && /zh/.test(cfg.model) ? texts.map((t) => "为这个句子生成表示以用于检索相关文章：" + t) : texts;
+        const input = family === "bge-zh" && kind === "query" ? texts.map((t) => "为这个句子生成表示以用于检索相关文章：" + t) : texts;
         const out = await extractor(input, { pooling: isBge ? "cls" : "mean", normalize: true });
         const [n, dim] = out.dims as number[];
         const data = out.data as Float32Array;
