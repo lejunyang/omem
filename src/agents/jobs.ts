@@ -112,6 +112,26 @@ registerHandler("ingest", async (ctx) => {
 
 // --------------------------------------------------------------------- wiki
 
+/** Compact directory map of a space (files per folder, a few names) to orient planners. */
+function sourceMap(app: App, spaceId: string, maxLines = 120) {
+  const rows = all<{ uri: string; lines: number }>(
+    app.db,
+    "select uri, length(text) - length(replace(text, char(10), '')) + 1 lines from sources where space_id = ? and deleted_at is null order by uri",
+    spaceId,
+  );
+  const dirs = new Map<string, { files: number; lines: number; names: string[] }>();
+  for (const r of rows) {
+    const dir = r.uri.includes("/") ? r.uri.slice(0, r.uri.lastIndexOf("/")) : ".";
+    const d = dirs.get(dir) ?? { files: 0, lines: 0, names: [] };
+    d.files++;
+    d.lines += r.lines;
+    if (d.names.length < 6) d.names.push(r.uri.split("/").pop()!);
+    dirs.set(dir, d);
+  }
+  const out = [...dirs].map(([dir, d]) => `${dir}/  ${d.files} 个文件，${d.lines} 行：${d.names.join(", ")}${d.files > d.names.length ? "…" : ""}`);
+  return `${rows.length} 个原件。目录概况：\n` + out.slice(0, maxLines).join("\n") + (out.length > maxLines ? `\n…另有 ${out.length - maxLines} 个目录` : "");
+}
+
 registerHandler("wiki-plan", async (ctx) => {
   const spaceId = ctx.run.spaceId!;
   const { focus, autoWrite = true } = ctx.run.input as { focus?: string; autoWrite?: boolean };
@@ -123,6 +143,7 @@ registerHandler("wiki-plan", async (ctx) => {
     [
       focus ? `本人的要求：${focus}` : "为这个空间规划完整的 Wiki。",
       existing.length ? `已有页面：\n${existing.map((p) => `- ${p.slug}「${p.title}」`).join("\n")}` : "目前还没有页面。",
+      sourceMap(ctx.app, spaceId),
     ].join("\n\n"),
   );
   const plan = (one<{ output: string }>(ctx.app.db, "select output from runs where id = ?", ctx.run.id)?.output ?? "{}");

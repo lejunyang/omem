@@ -185,6 +185,7 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         <div class="row">
           <strong class="ellipsis">{{ spaceName }}</strong>
           <span class="spacer" />
+          <router-link :to="`/graph/${space}`" class="btn ghost sm icon" title="页面关系图"><Icon name="graph" :size="16" /></router-link>
           <button class="btn ghost sm icon" title="规划/更新目录" @click="planOpen = true"><Icon name="sparkles" :size="16" /></button>
         </div>
         <input v-model="filter" class="input filter" placeholder="筛选页面" />

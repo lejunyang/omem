@@ -8,6 +8,7 @@ const router = createRouter({
   routes: [
     { path: "/", component: () => import("./views/Home.vue") },
     { path: "/ask/:id?", component: () => import("./views/Ask.vue") },
+    { path: "/graph/:space?", component: () => import("./views/Graph.vue") },
     { path: "/wiki/:space?/:slug(.*)*", component: () => import("./views/Wiki.vue") },
     { path: "/items/:id?", component: () => import("./views/Items.vue") },
     { path: "/memory", component: () => import("./views/Memory.vue") },

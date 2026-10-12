@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
@@ -147,7 +148,9 @@ def({
     const s = r.source;
     if (s.deletedAt) return `原件 ${s.id}（${s.uri}）已在 ${s.deletedAt} 移除，内容不可用。`;
     const more = r.lineEnd < (s.lines ?? 0) ? `\n……还有 ${(s.lines ?? 0) - r.lineEnd} 行，继续用 from=${r.lineEnd + 1}` : "";
-    return `原件 ${s.id} · ${s.spaceId}:${s.uri} · ${s.kind} · 共 ${s.lines} 行 · 更新于 ${s.updatedAt.slice(0, 10)}\n引用格式：[${s.uri}:${r.lineStart}-${r.lineEnd}](src:${s.id}#L${r.lineStart}-L${r.lineEnd})\n\n${fmtLines(r.text, r.lineStart)}${more}`;
+    const original = (s.meta as { original?: string }).original;
+    const file = original ? `\n原始文件：${join(ctx.app.filesDir, original)}${s.kind === "image" ? "（图片，可用你的文件或图片工具查看）" : ""}` : "";
+    return `原件 ${s.id} · ${s.spaceId}:${s.uri} · ${s.kind} · 共 ${s.lines} 行 · 更新于 ${s.updatedAt.slice(0, 10)}${file}\n引用格式：[${s.uri}:${r.lineStart}-${r.lineEnd}](src:${s.id}#L${r.lineStart}-L${r.lineEnd})\n\n${fmtLines(r.text, r.lineStart)}${more}`;
   },
 });
 
