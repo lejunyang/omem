@@ -66,12 +66,14 @@ export function createRun(
     lane?: string | null;
     /** Do not start before this time (lets a burst of messages merge into one run). */
     notBefore?: string | null;
+    /** Who asked for it (for per-user history and limits). */
+    userId?: string | null;
   },
 ) {
   const id = newId("r");
   run(
     app.db,
-    "insert into runs(id,kind,space_id,status,title,input,parent_id,created_at,lane,not_before) values(?,?,?,?,?,?,?,?,?,?)",
+    "insert into runs(id,kind,space_id,status,title,input,parent_id,created_at,lane,not_before,user_id) values(?,?,?,?,?,?,?,?,?,?,?)",
     id,
     input.kind,
     input.spaceId ?? null,
@@ -82,6 +84,7 @@ export function createRun(
     now(),
     input.lane ?? null,
     input.notBefore ?? null,
+    input.userId ?? null,
   );
   app.emit({ type: "run", runId: id, status: "queued" });
   queueMicrotask(() => kick(app));

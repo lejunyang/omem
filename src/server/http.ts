@@ -23,6 +23,7 @@ import { listNotifications, markRead } from "../core/notify.ts";
 import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
 import { createSpace, getSpace, listSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
+import { accessibleSpaces, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
 import { getItem, itemEvents, listItems, upsertItem } from "../items/store.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede, updateMemoryText } from "../memory/store.ts";
@@ -59,10 +60,23 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     reply.status(status).send({ error: error.message });
   });
 
-  // API auth: loopback is trusted unless a token is configured.
+  // API auth: loopback is trusted as the owner unless a token is configured; per-user
+  // API tokens (omem user token) identify other people. Members get a small API:
+  // asking, their own conversations and items, search within their spaces.
+  const MEMBER_ROUTES = [/^\/api\/ask$/, /^\/api\/conversations(\/[^/?]+)?(\?.*)?$/, /^\/api\/search(\?.*)?$/, /^\/api\/items(\?.*)?$/, /^\/api\/runs\/[^/?]+(\/events)?(\?.*)?$/, /^\/api\/me$/];
+  server.decorateRequest("userId", "owner");
   server.addHook("onRequest", async (req, reply) => {
-    if (!req.url.startsWith("/api/") || req.url.startsWith("/api/tools") || !app.config.token) return;
-    if (bearer(req) !== app.config.token) reply.status(401).send({ error: "需要访问令牌" });
+    if (!req.url.startsWith("/api/") || req.url.startsWith("/api/tools")) return;
+    const token = bearer(req);
+    const userId = token ? userForToken(app, token) : app.config.token ? null : OWNER;
+    if (!userId) return void reply.status(401).send({ error: "需要访问令牌" });
+    (req as FastifyRequest & { userId: string }).userId = userId;
+    if (userId !== OWNER && !MEMBER_ROUTES.some((re) => re.test(req.url))) reply.status(403).send({ error: "这个接口只对 omem 的主人开放" });
+  });
+  const who = (req: FastifyRequest) => (req as FastifyRequest & { userId?: string }).userId ?? OWNER;
+  server.get("/api/me", async (req) => {
+    const u = getUser(app, who(req));
+    return { ...u, spaces: accessibleSpaces(app, u.id) };
   });
 
   // ---------------------------------------------------------------- tools/MCP
@@ -214,18 +228,22 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // ------------------------------------------------------------------- search
   server.get("/api/search", async (req) => {
     const o = q(z.object({ q: z.string().min(1), space: z.string().optional(), types: z.string().optional(), limit: z.coerce.number().optional() }), req.query);
-    const spaces = o.space && o.space !== "*" ? o.space.split(",") : undefined;
+    const requested = o.space && o.space !== "*" ? o.space.split(",") : null;
+    const spaces = scopeFor(app, who(req), requested) ?? undefined;
     return { hits: await search(app, o.q, { spaces, types: o.types ? (o.types.split(",") as never) : undefined, limit: o.limit ?? 30, perSource: 2 }) };
   });
 
   // --------------------------------------------------------------------- chat
   server.post("/api/ask", async (req) => {
     const b = q(z.object({ text: z.string().min(1), space: z.string().optional(), conversationId: z.string().optional() }), req.body);
-    return ask(app, { text: b.text, spaceId: b.space, conversationId: b.conversationId });
+    const userId = who(req);
+    if (b.space && userId !== OWNER && !(accessibleSpaces(app, userId) ?? []).includes(b.space)) throw new HttpError(403, `不能访问空间 ${b.space}`);
+    return ask(app, { text: b.text, spaceId: b.space, conversationId: b.conversationId, userId });
   });
   server.get("/api/conversations", async (req) => {
     const o = q(z.object({ space: z.string().optional() }), req.query);
-    return all(app.db, `select * from conversations ${o.space ? "where space_id = ?" : ""} order by updated_at desc limit 100`, ...(o.space ? [o.space] : []));
+    const where = ["user_id = ?", ...(o.space ? ["space_id = ?"] : [])];
+    return all(app.db, `select * from conversations where ${where.join(" and ")} order by updated_at desc limit 100`, who(req), ...(o.space ? [o.space] : []));
   });
 
   // ----------------------------------------------------------- agents & skills
@@ -260,8 +278,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/conversations/:id", async (req) => {
     const id = (req.params as { id: string }).id;
-    const c = one(app.db, "select * from conversations where id = ?", id);
-    if (!c) throw new HttpError(404, "对话不存在");
+    const c = one<{ user_id: string }>(app.db, "select * from conversations where id = ?", id);
+    if (!c || (who(req) !== OWNER && c.user_id !== who(req))) throw new HttpError(404, "对话不存在");
     return { conversation: c, messages: conversationMessages(app, id) };
   });
   server.delete("/api/conversations/:id", async (req) => {
@@ -359,7 +377,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/items", async (req) => {
     const o = q(z.object({ space: z.string().optional(), status: z.string().optional(), kind: z.string().optional(), q: z.string().optional() }), req.query);
-    return listItems(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, q: o.q });
+    return listItems(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, q: o.q, userId: who(req) === OWNER ? undefined : who(req) });
   });
   server.get("/api/items/:id", async (req) => {
     const id = (req.params as { id: string }).id;
@@ -383,6 +401,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const id = (req.params as { id: string }).id;
     const o = q(z.object({ after: z.coerce.number().optional() }), req.query);
     const r = getRun(app, id);
+    const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
+    if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
     return { run: r, events: runEvents(app, id, o.after ?? 0), children: listRuns(app, { parentId: id }), patch: r.kind === "code" ? codePatch(app, id) : undefined };
   });
   server.post("/api/runs/:id/cancel", async (req) => cancelRun(app, (req.params as { id: string }).id));

@@ -74,6 +74,12 @@ function normalize(v: Float32Array) {
   return v;
 }
 
+/** Benchmarks and tests: use a stand-in embedder. */
+export function setEmbedderForTests(e: Embedder | null) {
+  embedder = e;
+  cache.clear();
+}
+
 export function invalidateVectors() {
   cache.clear();
 }

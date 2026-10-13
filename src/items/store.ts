@@ -20,6 +20,8 @@ export type Item = {
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;
+  /** Whose item it is (the owner unless omem has more users). */
+  userId: string;
 };
 export type ItemEvent = { id: number; itemId: string; at: string; kind: string; text: string; sourceRefs: string[]; actor: string };
 
@@ -39,6 +41,7 @@ type Row = {
   created_at: string;
   updated_at: string;
   closed_at: string | null;
+  user_id: string;
 };
 const toItem = (r: Row): Item => ({
   id: r.id,
@@ -56,6 +59,7 @@ const toItem = (r: Row): Item => ({
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   closedAt: r.closed_at,
+  userId: r.user_id ?? "owner",
 });
 
 export function getItem(app: App, id: string): Item {
@@ -100,7 +104,7 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
     tx(app.db, () => {
       run(
         app.db,
-        "insert into items(id,space_id,kind,title,detail,status,priority,due_at,remind_at,waiting_on,watch,source_refs,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "insert into items(id,space_id,kind,title,detail,status,priority,due_at,remind_at,waiting_on,watch,source_refs,created_at,updated_at,user_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         newIdValue,
         input.spaceId ?? "personal",
         kind,
@@ -115,6 +119,7 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
         JSON.stringify(input.sourceRefs ?? []),
         at,
         at,
+        input.userId ?? "owner",
       );
       addItemEvent(app, newIdValue, "created", input.note || `创建：${input.title}`, actor, input.sourceRefs ?? []);
     });
@@ -158,9 +163,10 @@ function fmt(v: unknown) {
   return String(v);
 }
 
-export function listItems(app: App, opts: { spaceId?: string; status?: string; kind?: string; q?: string; limit?: number }) {
+export function listItems(app: App, opts: { spaceId?: string; status?: string; kind?: string; q?: string; limit?: number; userId?: string }) {
   const where: string[] = [];
   const params: (string | number)[] = [];
+  if (opts.userId) where.push("user_id = ?"), params.push(opts.userId);
   if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);
   if (opts.status === "active") where.push("status in ('open','waiting','snoozed')");
   else if (opts.status && opts.status !== "all") where.push("status = ?"), params.push(opts.status);
