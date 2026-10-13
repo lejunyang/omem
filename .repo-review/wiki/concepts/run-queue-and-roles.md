@@ -2,8 +2,8 @@
 title: 任务队列、Run 与角色
 summary: 一个后台任务从 createRun 入队、按 lane 与并发槽被领取、执行到结束或在重启后恢复的完整过程；以及 roles/*.md
   如何变成一次带工具令牌和上下文的 Agent 运行。
-kind: page
-updated: 2026-10-12
+kind: concept
+updated: 2026-10-13
 ---
 
 这一页回答两个问题：后台任务（整理、Wiki、做梦、编码）怎么排队、并发、在重启后恢复；`roles/*.md` 里的一份角色说明怎么变成一次具体的 Agent 运行。读完你应该能判断：新增一种后台任务要改哪几处，一个 run 卡住或重复执行时去哪里查。
@@ -14,7 +14,7 @@ updated: 2026-10-12
 
 飞书群来了新消息，`lark-bot` 把它存成原件后调用 `scheduleIngest(app, spaceId, [r.id], "飞书群新消息")`。HTTP 导入文本、CLI、OneBot、个人飞书采集也走同一个函数。
 
-`scheduleIngest` 先判断这个空间要不要自动整理：空间不存在、`autoIngest === false`，或者是 `repo` 类空间且没有显式设 `autoIngest: true`，都直接返回 null（代码仓库空间默认不自动整理）。通过后只做一件事：[createRun](../../../src/agents/jobs.ts#L102-L107) 插入一行 `kind: "ingest"`，`input` 里放 `sourceIds` 和 `note`。
+`scheduleIngest` 先判断这个空间要不要自动整理：空间不存在、`autoIngest === false`，或者是 `repo` 类空间且没有显式设 `autoIngest: true`，都直接返回 null（代码仓库空间默认不自动整理）。通过后只做一件事：[createRun](../../../src/agents/jobs.ts#L104-L109) 插入一行 `kind: "ingest"`，`input` 里放 `sourceIds` 和 `note`。
 
 `createRun` 的动作很少（[runs.ts:57-90](../../../src/agents/runs.ts#L57-L90)）：
 
@@ -93,7 +93,7 @@ claim 成功后，建 `AbortController`（存在内存 `controllers`），构造
 
 ## 从 RunKind 到角色
 
-`RunKind` 有 15 种（[runs.ts:5](../../../src/agents/runs.ts#L5)）。每种在 `jobs.ts` 里用 `registerHandler(kind, fn)` 登记一个 handler。`sync` 是纯代码（同步目录），`code` 走 `runCodeTask`（另有流程）；其余大多数 handler 结构一致：从库里取材料，拼成一段 task 文本，调用本文件里的 `agent(ctx, role, spaceId, task, spaces)`。它只是 `runRole` 的包装，把 `ctx.signal` 传下去、把 Agent 事件转成 `ctx.event`、并把用到的后端写进 `runs.profile_id`（[jobs.ts:21-33](../../../src/agents/jobs.ts#L21-L33)）。heartbeat 和 wiki-lint 在没有材料时直接返回 `quiet`，不启动 Agent。
+`RunKind` 有 15 种（[runs.ts:5](../../../src/agents/runs.ts#L5)）。每种在 `jobs.ts` 里用 `registerHandler(kind, fn)` 登记一个 handler。`sync` 是纯代码（同步目录），`code` 走 `runCodeTask`（另有流程）；其余大多数 handler 结构一致：从库里取材料，拼成一段 task 文本，调用本文件里的 `agent(ctx, role, spaceId, task, spaces)`。它只是 `runRole` 的包装，把 `ctx.signal` 传下去、把 Agent 事件转成 `ctx.event`、并把用到的后端写进 `runs.profile_id`（[jobs.ts:22-35](../../../src/agents/jobs.ts#L22-L35)）。heartbeat 和 wiki-lint 在没有材料时直接返回 `quiet`，不启动 Agent。
 
 | kind | 角色 | task 里放什么 |
 |---|---|---|
@@ -103,9 +103,9 @@ claim 成功后，建 `AbortController`（存在内存 `controllers`），构造
 | heartbeat / dream / brief | 同名 | 见下文 |
 | thread-summary | summarizer | 旧摘要加新对话 |
 
-`ingest` 的 handler 是最短的例子（[jobs.ts:109-122](../../../src/agents/jobs.ts#L109-L122)）：把每个 sourceId 查成一行"原件 id：uri（种类，「标题」）"，加上 `note`，调 `agent(ctx, "ingest", spaceId, task)`，最后用 `QUIET` 正则判断模型是否回复了"无事发生"，写进 `output.quiet`。读原文、判断要不要记忆或事项、写什么，全部由角色自己决定。
+`ingest` 的 handler 是最短的例子（[jobs.ts:111-134](../../../src/agents/jobs.ts#L111-L134)）：把每个 sourceId 查成一行"原件 id：uri（种类，「标题」）"，加上 `note`，调 `agent(ctx, "ingest", spaceId, task)`，最后用 `QUIET` 正则判断模型是否回复了"无事发生"，写进 `output.quiet`。读原文、判断要不要记忆或事项、写什么，全部由角色自己决定。唯一的例外是开启注入标记（`guard.provider`）时：handler 先对每个原件调 `guardSource`，有标记的原件在对应那一行后面多一段"⚠ 注入检测"提示，要求角色只当材料、不执行、不据此改记忆事项页面，并发一条 status 事件。这仍然是给模型的一句话，宿主不拦截 ingest。
 
-`wiki-plan` 的产出不是回复文本，而是模型通过工具 `submit_plan` 写进该 run 的 `output`（从 handler 读 `runs.output` 的做法推断）；handler 再读出来，逐页创建 `wiki-write` run，`parentId` 指向规划 run（[jobs.ts:146-166](../../../src/agents/jobs.ts#L146-L166)）。后台任务就是这样串起来的：一个 run 的 handler 调 `createRun` 生成下一批。
+`wiki-plan` 的产出不是回复文本，而是模型通过工具 `submit_plan` 写进该 run 的 `output`（从 handler 读 `runs.output` 的做法推断）；handler 再读出来，逐页创建 `wiki-write` run，`parentId` 指向规划 run（[jobs.ts:158-178](../../../src/agents/jobs.ts#L158-L178)）。后台任务就是这样串起来的：一个 run 的 handler 调 `createRun` 生成下一批。
 
 ## 角色文件
 
@@ -134,7 +134,7 @@ modes: [read-only, default, plan]
 
 1. 后端：`profileFor(app, role)` 先查 `config.agents.roles[role]`，没有用 `agents.default`，都没配就取第一个已安装的 profile；都没有则报 503（[runner.ts:60-71](../../../src/agents/runner.ts#L60-L71)）。所以可以只给 `dreamer` 配便宜的模型，其余用默认。
 2. 工作目录：空间有关联目录（repo 类）就是它，否则是该空间的知识库目录。
-3. 工具与空间范围：`role.tools` 加上 `list_skills`、`read_skill`，连同 `runId`、`spaceId`、`spaces` 一起签发工具令牌（`issueToolToken`）。`spaces` 默认只有当前空间，只有 `assistant` 角色是 null（全部空间）；heartbeat、dream、brief 等 handler 显式传 `null` 放开全库。工具层用令牌校验每次调用的工具名和空间（[tools.ts:47-53](../../../src/agents/tools.ts#L47-L53)），不在白名单的返回"工具 x 不可用"（[callTool](../../../src/agents/tools.ts#L790-L793)）。模型没有绕过这层的直接写库路径，这也是 AGENTS.md 里的原则。
+3. 工具与空间范围：`role.tools` 加上 `list_skills`、`read_skill`，连同 `runId`、`spaceId`、`spaces` 一起签发工具令牌（`issueToolToken`）。`spaces` 默认只有当前空间，只有 `assistant` 角色是 null（全部空间）；heartbeat、dream、brief 等 handler 显式传 `null` 放开全库。工具层用令牌校验每次调用的工具名和空间（[tools.ts:47-53](../../../src/agents/tools.ts#L47-L53)），不在白名单的返回"工具 x 不可用"（[callTool](../../../src/agents/tools.ts#L792-L795)）。模型没有绕过这层的直接写库路径，这也是 AGENTS.md 里的原则。
 4. system 由 `---` 分隔的几段拼成：`_common.md`、`# 角色：<description>` 加角色正文、`# 环境`（当前时间、空间、工作目录）。环境段后面按有无追加：空间的 `SPACE.md`、偏好与经验（`learnedContext`）、技能索引、（仅 assistant）已有 Agent 档案。
 5. `learnedContext` 取最多 24 条 active 记忆：`personal` 和当前空间的 `preference`，以及当前空间的 `experience`，偏好排前。这就是 dream 角色"记下经验"之后下次运行能用上的通路（[runner.ts:89-99](../../../src/agents/runner.ts#L89-L99)）。
 
@@ -162,11 +162,11 @@ sequenceDiagram
 
 两个 handler 展示了"宿主取数、模型判断"的分工。
 
-heartbeat 每 15 分钟由调度器触发（默认计划 `*/15 * * * *`，[scheduler.ts:11-12](../../../src/core/scheduler.ts#L11-L12)）。注册时先查有没有 queued 或 running 的 heartbeat，有就不再建，避免堆积（[main.ts:11-14](../../../src/main.ts#L11-L14)）。handler 里：到期提醒不需要模型，直接 `notify` 并清掉 `remind_at`；然后查上次巡检后新增的材料和 active 的 watch/waiting 事项，任何一边为空就直接返回 `quiet: true`，根本不启动 Agent（[jobs.ts:224-243](../../../src/agents/jobs.ts#L224-L243)）。两边都有时，task 只是三段清单：已发过的通知、关注事项、新材料，并提示"不要重复这些内容"。判断哪条变化值得通知，写在 [heartbeat.md](../../../roles/heartbeat.md#L10-L18) 里："其他情况保持安静"，结尾"没有就只回复 `QUIET`"。
+heartbeat 每 15 分钟由调度器触发（默认计划 `*/15 * * * *`，[scheduler.ts:11-12](../../../src/core/scheduler.ts#L11-L12)）。注册时先查有没有 queued 或 running 的 heartbeat，有就不再建，避免堆积（[main.ts:11-14](../../../src/main.ts#L11-L14)）。handler 里：到期提醒不需要模型，直接 `notify` 并清掉 `remind_at`；然后查上次巡检后新增的材料和 active 的 watch/waiting 事项，任何一边为空就直接返回 `quiet: true`，根本不启动 Agent（[jobs.ts:236-255](../../../src/agents/jobs.ts#L236-L255)）。两边都有时，task 只是三段清单：已发过的通知、关注事项、新材料，并提示"不要重复这些内容"。判断哪条变化值得通知，写在 [heartbeat.md](../../../roles/heartbeat.md#L10-L18) 里："其他情况保持安静"，结尾"没有就只回复 `QUIET`"。
 
-QUIET 是宿主和角色之间唯一的结构化约定：`const QUIET = /^\s*QUIET\s*$/i`（[jobs.ts:19](../../../src/agents/jobs.ts#L19)），ingest、heartbeat、wiki-lint、curate 用它设置 `output.quiet`，据此区分"没事发生"的运行（从 `output.quiet` 的使用推断，界面如何展示我没有查）。没有强制 JSON，模型回复整个就是一个词。
+QUIET 是宿主和角色之间唯一的结构化约定：`const QUIET = /^\s*QUIET\s*$/i`（[jobs.ts:21](../../../src/agents/jobs.ts#L21)），ingest、heartbeat、wiki-lint、curate 用它设置 `output.quiet`，据此区分"没事发生"的运行（从 `output.quiet` 的使用推断，界面如何展示我没有查）。没有强制 JSON，模型回复整个就是一个词。
 
-dream 默认每晚 03:30，且默认关闭（[scheduler.ts:14](../../../src/core/scheduler.ts#L14)）。handler 以 `kv.dream_at` 为界，取四类材料：变化的记忆（最多 80）、变化或已到期的事项、本人说过的话、期间的后台 run（含失败原因）；各自按 id 列成一行行清单，最后一句提示"需要更多上下文时用 recall 和 list_items"（[jobs.ts:258-293](../../../src/agents/jobs.ts#L258-L293)）。没有规划步骤，也没有"先做 A 再做 B"的程序化流程：[dreamer.md](../../../roles/dreamer.md#L10-L17) 里列了处理顺序和"每类最多改十几处，宁缺毋滥"，其余让模型自己用工具查。"期间的后台运行"一段也是自我改进环的输入：模型据此 `remember(kind=experience)`，下一次 `learnedContext` 再把它交给所有角色。
+dream 默认每晚 03:30，且默认关闭（[scheduler.ts:14](../../../src/core/scheduler.ts#L14)）。handler 以 `kv.dream_at` 为界，取四类材料：变化的记忆（最多 80）、变化或已到期的事项、本人说过的话、期间的后台 run（含失败原因）；各自按 id 列成一行行清单，最后一句提示"需要更多上下文时用 recall 和 list_items"（[jobs.ts:270-305](../../../src/agents/jobs.ts#L270-L305)）。没有规划步骤，也没有"先做 A 再做 B"的程序化流程：[dreamer.md](../../../roles/dreamer.md#L10-L17) 里列了处理顺序和"每类最多改十几处，宁缺毋滥"，其余让模型自己用工具查。"期间的后台运行"一段也是自我改进环的输入：模型据此 `remember(kind=experience)`，下一次 `learnedContext` 再把它交给所有角色。
 
 ## 取舍
 

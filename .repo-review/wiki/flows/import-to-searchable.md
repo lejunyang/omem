@@ -3,7 +3,7 @@ title: 一份文件导入到能被搜到
 summary: 跟着一个 Markdown 和一个 TS 仓库走完 omem 的导入路径：文件筛选与转换、按类型切分、FTS
   与符号表写入、调用关系解析、整理任务的触发条件和删除墓碑；读完知道每张表是谁在什么时候写的，以及改切分或解析该动哪里。
 kind: guide
-updated: 2026-10-12
+updated: 2026-10-13
 ---
 
 这页回答：把一个文档或一个代码仓库交给 omem 之后，文本怎么切块、怎么进搜索索引、代码的符号和调用关系从哪来、什么时候会叫 Agent 去整理。读完你能判断一个文件为什么搜不到（或搜到的块不对），也知道改切分、解析、调用关系各应该动哪个函数。
@@ -12,7 +12,7 @@ updated: 2026-10-12
 
 **例 1：一份 Markdown。** `omem add notes.md -s personal`（[cli-main.ts:166-200](../../../src/cli-main.ts#L166-L200)）走到 `importFile`。它按扩展名分三种：`DOC_EXT`（pdf/docx/pptx/xlsx/html/epub 等）先过 `convertDocument` 转成 Markdown；图片只存原图，正文是一行 `![](omem-file:…)`；其余按文本读，超过 `MAX_TEXT_BYTES`（1MB）或前 8000 字节里有 NUL 就返回 `null`，CLI 提示“不支持的文件类型”（[import.ts:81-106](../../../src/sources/import.ts#L81-L106)）。`notes.md` 的扩展名不在代码或配置表里，`classify` 归为 `doc`，所以 `kind = "doc"`。
 
-**例 2：一个 TS 仓库。** `omem space add myrepo --path ./myrepo` 创建空间后立刻调 `syncDirectorySpace`（[cli-main.ts:138-155](../../../src/cli-main.ts#L138-L155)）。它不走 `importFile`，自己逐文件读，`uri` 是相对仓库根的路径，`.md/.txt/.rst/.adoc` 为 `doc`，其余一律 `code`（[import.ts:155-187](../../../src/sources/import.ts#L155-L187)）。
+**例 2：一个 TS 仓库。** `omem space add myrepo --path ./myrepo` 创建空间后立刻调 `syncDirectorySpace`；之后用 `omem space sync myrepo` 追平改动，两个命令都可以带 `--exclude <路径或 glob>` 把 `docs/archive` 这类目录写进空间设置（[cli-main.ts:138-165](../../../src/cli-main.ts#L138-L165)）。它不走 `importFile`，自己逐文件读，`uri` 是相对仓库根的路径，`.md/.txt/.rst/.adoc` 为 `doc`，其余一律 `code`（[import.ts:155-187](../../../src/sources/import.ts#L155-L187)）。
 
 两条路最后都落到同一个函数 `upsertSource`：
 
@@ -101,36 +101,38 @@ flowchart LR
 
 测试里有个典型场景：`main.ts` 里 `fmt(' a ')` 经 `util/index.ts` 的 `export *` 追到 `util/format.ts#format`，`renamed()` 经 `export { other as renamed }` 追到 `other`，`new Store().save()` 里的 `Store` 经默认导入解析到类，`other/format.ts` 里同名的 `format` 不会被混淆；`node:fs` 的 `readFileSync` 保持未解析（[callgraph.test.ts:29-63](../../../test/callgraph.test.ts#L29-L63)）。
 
-解析结果有两个读者：`find_symbol` 工具把“已解析”的调用方和被调用者与“只按名字匹配”的分开列，后者标明可能是同名误报（[tools.ts:246-287](../../../src/agents/tools.ts#L246-L287)）；网页原件页右侧“结构”栏点一个符号，请求 `/api/sources/:id/relations`，由 `symbolRelations` 返回调用方和被调用者（[callgraph.ts:178-195](../../../src/sources/callgraph.ts#L178-L195)，[Sources.vue:203-213](../../../web/src/views/Sources.vue#L203-L213)）。
+解析结果有两个读者：`find_symbol` 工具把“已解析”的调用方和被调用者与“只按名字匹配”的分开列，后者标明可能是同名误报（[tools.ts:248-289](../../../src/agents/tools.ts#L248-L289)）；网页原件页右侧“结构”栏点一个符号，请求 `/api/sources/:id/relations`，由 `symbolRelations` 返回调用方和被调用者（[callgraph.ts:178-195](../../../src/sources/callgraph.ts#L178-L195)，[Sources.vue:203-213](../../../web/src/views/Sources.vue#L203-L213)）。
 
 取舍：这是靠 import 绑定的静态解析，不做类型推断，所以变量上的方法调用（`foo.bar()`，`foo` 是实例）、动态分派、包内符号都不会解析。从实现看，选择“解析不了就只留名字”而不是猜，是宁缺毋滥；`find_symbol` 因此把两类分开显示。
 
 ## 聊天追加
 
-聊天不是整份重导入，而是 `appendToSource`：取现有文本，拼上新行，记下新内容从第几行开始（`meta.appendedFrom`），再调 `upsertSource`（[store.ts:216-222](../../../src/sources/store.ts#L216-L222)）。飞书群、QQ 群、网页对话（uri 为 `conversation:<id>`，kind 为 `conversation`）都这样写（[lark-bot.ts:85-95](../../../src/channels/lark-bot.ts#L85-L95)，[threads.ts:283-293](../../../src/agents/threads.ts#L283-L293)）。每次追加都会整份重切、重建该原件的全部块，聊天很长时单次开销随长度增长；`appendedFrom` 则交给整理角色，让它只关注新增部分（[jobs.ts:109-119](../../../src/agents/jobs.ts#L109-L119)）。`conversation` 不等于 `chat`，会落到 `chunkSource` 最后两个分支（有标题行按 Markdown，否则按窗口）。
+聊天不是整份重导入，而是 `appendToSource`：取现有文本，拼上新行，记下新内容从第几行开始（`meta.appendedFrom`），再调 `upsertSource`（[store.ts:216-222](../../../src/sources/store.ts#L216-L222)）。飞书群、QQ 群、网页对话（uri 为 `conversation:<id>`，kind 为 `conversation`）都这样写（[lark-bot.ts:85-95](../../../src/channels/lark-bot.ts#L85-L95)，[threads.ts:283-293](../../../src/agents/threads.ts#L283-L293)）。每次追加都会整份重切、重建该原件的全部块，聊天很长时单次开销随长度增长；`appendedFrom` 则交给整理角色，让它只关注新增部分（[jobs.ts:111-134](../../../src/agents/jobs.ts#L111-L134)）。`conversation` 不等于 `chat`，会落到 `chunkSource` 最后两个分支（有标题行按 Markdown，否则按窗口）。
 
 ## 什么时候叫 Agent 整理
 
-切块和索引是纯本地、无模型的。整理是另一步：`scheduleIngest` 创建一个 `ingest` run，输入是原件 id 列表，处理时把每个原件的 uri、类型和 `appendedFrom` 写进任务交给 ingest 角色（[jobs.ts:102-119](../../../src/agents/jobs.ts#L102-L119)）。返回 `null`（不整理）的条件：没有新原件，或空间设了 `autoIngest === false`，或空间是 `repo` 且没有显式 `autoIngest: true`（[jobs.ts:105](../../../src/agents/jobs.ts#L105)）。所以：
+切块和索引是纯本地、无模型的。整理是另一步：`scheduleIngest` 创建一个 `ingest` run，输入是原件 id 列表，处理时把每个原件的 uri、类型和 `appendedFrom` 写进任务交给 ingest 角色（[jobs.ts:104-134](../../../src/agents/jobs.ts#L104-L134)）。如果开启了注入标记（`guard.provider`），处理函数会先对这些原件跑一遍判官，有疑似“写给 AI 的指令”的行时，在对应那一行任务文字后面加警告，要求角色只当材料记录；判官结果也会写进原件 `meta.guard`，`read_source` 读到被标记的行范围时同样给出警告（[jobs.ts:113-126](../../../src/agents/jobs.ts#L113-L126)，[tools.ts:156-158](../../../src/agents/tools.ts#L156-L158)）。只标记，不拦截、不改变是否入库。
+
+返回 `null`（不整理）的条件：没有新原件，或空间设了 `autoIngest === false`，或空间是 `repo` 且没有显式 `autoIngest: true`（[jobs.ts:107](../../../src/agents/jobs.ts#L107)）。所以：
 
 - 导入文档、笔记、网页，默认触发整理（CLI 可 `--no-ingest` 关掉，网页上传接口也是导入后调用它）。
-- 仓库空间的同步本身从不调 `scheduleIngest`；整理要手动，或把 `autoIngest` 设为 true。仓库更新后的后续动作是 `sync` 任务里的 `wiki-lint`：有更新或删除、已有页面、且存在引用了变化原件的页面时才创建（[jobs.ts:212-221](../../../src/agents/jobs.ts#L212-L221)）。
+- 仓库空间的同步本身从不调 `scheduleIngest`；整理要手动，或把 `autoIngest` 设为 true。仓库更新后的后续动作是 `sync` 任务里的 `wiki-lint`：有更新或删除、已有页面、且存在引用了变化原件的页面时才创建（[jobs.ts:224-233](../../../src/agents/jobs.ts#L224-L233)）。
 - 定时同步是 `repo-sync` 计划（每小时，默认关闭），对每个有 `rootPath` 的空间创建 `sync` run（[main.ts:16-18](../../../src/main.ts#L16-L18)，[scheduler.ts:15](../../../src/core/scheduler.ts#L15)）。
 
 ## 删除与墓碑
 
-`deleteSource` 在事务里 `clearIndex`，再把 `text` 置空、写 `deleted_at`，行本身保留（[store.ts:145-152](../../../src/sources/store.ts#L145-L152)）。搜索带 `deleted_at is null`，所以找不到它；但 Wiki 页面里的 `src:<id>` 引用仍能解析到一条“已删除”的记录，而不是 404。陈旧页面检测也靠这个：`stalePages` 把 `hash` 变了或 `deleted_at` 非空的原件视为引用已变化（[jobs.ts:191-198](../../../src/agents/jobs.ts#L191-L198)）。
+`deleteSource` 在事务里 `clearIndex`，再把 `text` 置空、写 `deleted_at`，行本身保留（[store.ts:145-152](../../../src/sources/store.ts#L145-L152)）。搜索带 `deleted_at is null`，所以找不到它；但 Wiki 页面里的 `src:<id>` 引用仍能解析到一条“已删除”的记录，而不是 404。陈旧页面检测也靠这个：`stalePages` 把 `hash` 变了或 `deleted_at` 非空的原件视为引用已变化（[jobs.ts:203-210](../../../src/agents/jobs.ts#L203-L210)）。
 
-仓库同步里，磁盘上不再出现的 `code/doc` 原件被删。`seen` 只在通过大小和二进制检查后才记录，所以一个文件长到超过 1MB 也会被当作消失而打墓碑（[import.ts:167-183](../../../src/sources/import.ts#L167-L183)，这是从代码顺序推出的）。同一个 uri 之后重新出现时，`upsertSource` 复用旧行 id 并清掉 `deleted_at`；因为“未变”的判断要求 `!deleted_at`，即使内容与删除前一致也会重建索引，返回 `updated`，旧引用重新生效（[store.ts:75-76](../../../src/sources/store.ts#L75-L76)）。
+仓库同步里，磁盘上不再出现的 `code/doc` 原件被删。`seen` 只在通过大小和二进制检查后才记录，所以一个文件长到超过 1MB 也会被当作消失而打墓碑（[import.ts:167-183](../../../src/sources/import.ts#L167-L183)，这是从代码顺序推出的）。`exclude` 新增匹配项时同理：已导入的匹配文件下次同步会变成墓碑。同一个 uri 之后重新出现时，`upsertSource` 复用旧行 id 并清掉 `deleted_at`；因为“未变”的判断要求 `!deleted_at`，即使内容与删除前一致也会重建索引，返回 `updated`，旧引用重新生效（[store.ts:75-76](../../../src/sources/store.ts#L75-L76)）。
 
 ## 要改这里从哪下手
 
-- **文件该不该进来**：`repoFiles`、`SKIP_DIRS`、`BINARY_EXT`（import.ts）；单个空间的排除用 `settings.exclude`，不要写死项目名，这是 AGENTS.md 的约定。
+- **文件该不该进来**：`repoFiles`、`SKIP_DIRS`、`BINARY_EXT`（import.ts）；单个空间的排除用 `settings.exclude`（`omem space sync <id> --exclude …`），不要写死项目名，这是 AGENTS.md 的约定。
 - **文档转换**：`convertDocument` 和 `documents.engines` 配置（core/config.ts:84-90）。
 - **切分粒度**：`TARGET/MAX_CHUNK`、`windows`、各 `chunk*` 函数。改了以后已有原件不会自动重切，因为哈希没变；需要像 db.ts 里那条迁移一样把相关原件 `hash` 清空，下次同步才会重建（[db.ts:231-233](../../../src/core/db.ts#L231-L233)）。同时更新 chunk.test.ts。
 - **分词**：`tokenize.ts` 同时用于建索引和查询，两边必须一致，改动后旧索引需要重建。
 - **新语言的符号**：TS 系改 `parseTs`；其它语言目前只有 `parseGeneric` 正则和 Python 的 `pythonRefs`，新增模块解析规则要在 `resolveModule` 里补，并在 callgraph.test.ts 加一个小仓库用例。
 - **改表结构**：db.ts 的迁移数组追加新条目，不改旧条目。
-- **整理触发条件**：`scheduleIngest`（jobs.ts:102）；怎么整理是 `roles/ingest.md` 的事，行为变化优先改角色说明。
+- **整理触发条件**：`scheduleIngest`（jobs.ts:104）；怎么整理是 `roles/ingest.md` 的事，行为变化优先改角色说明。
 
 相关页面：[一条消息从进来到回复发出](./message-to-reply.md)（对话如何被追加为原件）、[线程与 Agent 会话](../concepts/threads-and-agent-sessions.md)、[跑起来、调试、测试](../howto/run-and-develop.md)、[omem 是什么、怎么组成](../overview.md)。
