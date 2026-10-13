@@ -22,6 +22,10 @@ export type ThreadSettings = {
   links?: string[];
   /** Last channel message id seen in this thread (replies go under it, e.g. inside a topic). */
   lastMessageId?: string;
+  /** An in-chat review session (/review): the card being asked and whether its answer was shown. */
+  review?: { cardId: string; stage: "front" | "rate"; goalId?: string; done: number } | null;
+  /** Feishu chats this thread's agent may post into, and whether posts are drafts for the owner. */
+  lark?: { chats: string[] | null; draft?: boolean };
 };
 export type Thread = {
   id: string;
@@ -38,6 +42,8 @@ export type Thread = {
   agentSession: string | null;
   agentCwd: string | null;
   agentTurns: number;
+  /** Who started it; turns run as the sender of their messages. */
+  userId: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -56,6 +62,7 @@ type Row = {
   agent_session: string | null;
   agent_cwd: string | null;
   agent_turns: number;
+  user_id: string;
   created_at: string;
   updated_at: string;
 };
@@ -74,6 +81,7 @@ const toThread = (r: Row): Thread => ({
   agentSession: r.agent_session,
   agentCwd: r.agent_cwd,
   agentTurns: r.agent_turns ?? 0,
+  userId: r.user_id ?? "owner",
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -96,6 +104,20 @@ export type ChatSettings = {
   idleHours?: number;
   /** Agent spec that answers in this chat by default. */
   spec?: string;
+  /** Feishu posting scope for threads of this chat (watched chats). */
+  lark?: { chats: string[] | null; draft?: boolean };
+  /** Watched chats: which spec handles which messages, and how it may reply. */
+  watch?: WatchRule;
+};
+export type WatchRule = {
+  spec: string;
+  /** all: every message; mention: messages that @ the owner or the bot; keyword: messages matching `pattern`. */
+  on: "all" | "mention" | "keyword";
+  pattern?: string;
+  /** none: never post; draft: posts go to the owner for approval; auto: post directly through the bot. */
+  reply: "none" | "draft" | "auto";
+  spaceId?: string;
+  note?: string;
 };
 
 export function chatSettings(app: App, channel: string, chatId: string): ChatSettings {
@@ -108,12 +130,12 @@ export function setChatSettings(app: App, channel: string, chatId: string, patch
   return next;
 }
 
-export function createThread(app: App, input: { spaceId: string; channel: string; key?: string | null; title?: string; parentId?: string | null; settings?: ThreadSettings; id?: string }) {
+export function createThread(app: App, input: { spaceId: string; channel: string; key?: string | null; title?: string; parentId?: string | null; settings?: ThreadSettings; id?: string; userId?: string }) {
   const id = input.id ?? newId("c");
   const at = now();
   run(
     app.db,
-    "insert into conversations(id,space_id,channel,title,external_id,created_at,updated_at,status,parent_id,settings) values(?,?,?,?,?,?,?,?,?,?)",
+    "insert into conversations(id,space_id,channel,title,external_id,created_at,updated_at,status,parent_id,settings,user_id) values(?,?,?,?,?,?,?,?,?,?,?)",
     id,
     input.spaceId,
     input.channel,
@@ -124,6 +146,7 @@ export function createThread(app: App, input: { spaceId: string; channel: string
     "active",
     input.parentId ?? null,
     JSON.stringify(input.settings ?? {}),
+    input.userId ?? "owner",
   );
   return getThread(app, id);
 }
@@ -136,6 +159,7 @@ export type ThreadAddress = {
   isGroup?: boolean;
   spaceId?: string;
   title?: string;
+  userId?: string;
 };
 
 /**
@@ -149,18 +173,18 @@ export function resolveThread(app: App, addr: ThreadAddress): { thread: Thread; 
   const key = mode === "topic" && addr.topicId ? `${addr.chatId}#${addr.topicId}` : addr.chatId;
   const spaceId = cs.spaceId ?? addr.spaceId ?? "personal";
   const row = one<Row>(app.db, "select * from conversations where channel = ? and external_id = ? and status = 'active' order by updated_at desc limit 1", addr.channel, key);
-  const settings: ThreadSettings = cs.spec ? { spec: cs.spec } : {};
+  const settings: ThreadSettings = { ...(cs.spec ? { spec: cs.spec } : {}), ...(cs.lark ? { lark: cs.lark } : {}) };
   if (!row) {
     // A pinned "/resume" may have re-attached an archived thread to this key; otherwise start fresh.
     const prev = one<Row>(app.db, "select * from conversations where channel = ? and external_id = ? order by updated_at desc limit 1", addr.channel, key);
-    return { thread: createThread(app, { spaceId, channel: addr.channel, key, title: addr.title, parentId: prev?.id ?? null, settings }), started: "new" };
+    return { thread: createThread(app, { spaceId, channel: addr.channel, key, title: addr.title, parentId: prev?.id ?? null, settings, userId: addr.userId }), started: "new" };
   }
   const t = toThread(row);
   const idleHours = cs.idleHours ?? app.config.sessions.idleHours;
   const idle = (Date.now() - Date.parse(t.updatedAt)) / 3_600_000;
   if (key === addr.chatId && idleHours > 0 && idle > idleHours) {
     archiveThread(app, t.id);
-    return { thread: createThread(app, { spaceId: t.spaceId, channel: addr.channel, key, title: addr.title, parentId: t.id, settings: { ...t.settings, links: [] } }), started: "renewed" };
+    return { thread: createThread(app, { spaceId: t.spaceId, channel: addr.channel, key, title: addr.title, parentId: t.id, settings: { ...t.settings, links: [] }, userId: t.userId }), started: "renewed" };
   }
   return { thread: t, started: null };
 }
@@ -230,9 +254,10 @@ export function threadMessages(app: App, id: string, opts: { limit?: number; aft
   ).map((m) => ({ id: m.id, role: m.role, text: m.text, createdAt: m.created_at, meta: json(m.meta, {}) }));
 }
 
-export function listThreads(app: App, opts: { channel?: string; spaceId?: string; query?: string; limit?: number; includeArchived?: boolean } = {}) {
+export function listThreads(app: App, opts: { channel?: string; spaceId?: string; query?: string; limit?: number; includeArchived?: boolean; userId?: string } = {}) {
   const where: string[] = [];
   const params: (string | number)[] = [];
+  if (opts.userId) where.push("c.user_id = ?") && params.push(opts.userId);
   if (!opts.includeArchived) where.push("c.status = 'active'");
   if (opts.channel) where.push("c.channel = ?") && params.push(opts.channel);
   if (opts.spaceId) where.push("c.space_id = ?") && params.push(opts.spaceId);

@@ -8,6 +8,7 @@ import { notify } from "../core/notify.ts";
 import { findSpace, listSpaces } from "../core/spaces.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { createCard } from "../learn/cards.ts";
+import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede } from "../memory/store.ts";
 import { search, type HitType } from "../search/search.ts";
@@ -27,6 +28,12 @@ export type ToolContext = {
   spaces: string[] | null;
   tools: Set<string> | null;
   actor: "agent" | "user";
+  /** Whose run this is; defaults to the owner. Items, preferences and cards are per user. */
+  userId?: string;
+  /** Feishu chats this run may post into through the bot; null = any, [] or absent = none. */
+  larkChats?: string[] | null;
+  /** Posts become drafts the owner approves before they are sent. */
+  larkDraft?: boolean;
 };
 
 type Tool = {
@@ -293,7 +300,7 @@ def({
   description: "列出会话（网页、飞书私聊/群/话题、Telegram、QQ 等），带摘要。用来找“上次在哪个群/话题里聊过 X”，再用 read_conversation 读原话。",
   schema: z.object({ query: z.string().optional().describe("按标题或摘要筛选"), channel: z.string().optional(), include_archived: z.boolean().optional(), limit: z.number().int().min(1).max(50).optional() }),
   handler: (ctx, a) => {
-    const list = listThreads(ctx.app, { query: a.query, channel: a.channel, includeArchived: a.include_archived ?? !!a.query, limit: a.limit ?? 20 }).filter((t) => !ctx.spaces || ctx.spaces.includes(t.spaceId));
+    const list = listThreads(ctx.app, { query: a.query, channel: a.channel, includeArchived: a.include_archived ?? !!a.query, limit: a.limit ?? 20, userId: ctx.userId ?? "owner" }).filter((t) => !ctx.spaces || ctx.spaces.includes(t.spaceId));
     return list.length ? list.map(describeThread).join("\n") : "没有找到会话。也可以用 search 搜对话内容（原件类型 conversation）。";
   },
 });
@@ -306,6 +313,7 @@ def({
     const t = findThread(ctx.app, a.conversation.replace(/^conv:/, ""));
     if (!t) throw new HttpError(404, `会话不存在：${a.conversation}`);
     if (ctx.spaces && !ctx.spaces.includes(t.spaceId)) throw new HttpError(403, `本次任务不能访问空间 ${t.spaceId} 的会话`);
+    if (t.userId !== (ctx.userId ?? "owner") && (ctx.userId ?? "owner") !== "owner") throw new HttpError(403, "不能读别人的会话");
     const msgs = threadMessages(ctx.app, t.id, { limit: a.limit ?? 30, before: a.before });
     const head = describeThread(t);
     return `${head}\n\n${msgs.map((m) => `[${m.createdAt.slice(0, 16).replace("T", " ")}] ${m.role === "user" ? "本人" : "助理"}（msg:${m.id}）：${truncate(m.text, 2000)}`).join("\n\n")}`;
@@ -479,7 +487,9 @@ def({
     with_timeline: z.boolean().optional(),
   }),
   handler: (ctx, a) => {
-    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, spaceId: a.space ? space(ctx, a.space) : undefined, limit: 100 });
+    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, spaceId: a.space ? space(ctx, a.space) : undefined, userId: ctx.userId ?? "owner", limit: 100 }).filter(
+      (i) => !ctx.spaces || ctx.spaces.includes(i.spaceId),
+    );
     if (!items.length) return "没有符合条件的事项。";
     return items
       .map((i) => {
@@ -560,7 +570,17 @@ def({
     space: z.string().optional(),
   }),
   handler: (ctx, a) => {
-    const m = remember(ctx.app, { spaceId: space(ctx, a.space), kind: a.kind, subject: a.subject, content: a.content, sourceRefs: a.source_refs, validFrom: a.valid_from, createdBy: ctx.actor });
+    const m = remember(ctx.app, {
+      spaceId: space(ctx, a.space),
+      kind: a.kind,
+      subject: a.subject,
+      content: a.content,
+      sourceRefs: a.source_refs,
+      validFrom: a.valid_from,
+      createdBy: ctx.actor,
+      // Preferences belong to the person who stated them; facts are shared knowledge of the space.
+      userId: a.kind === "preference" ? (ctx.userId ?? "owner") : null,
+    });
     return `已记住 ${m.id}`;
   },
 });
@@ -628,6 +648,7 @@ def({
         watch: a.watch_query ? { ...(existing?.watch ?? {}), query: a.watch_query } : undefined,
         note: a.note,
         sourceRefs: a.source_refs,
+        userId: existing ? undefined : (ctx.userId ?? "owner"),
       },
       ctx.actor,
     );
@@ -637,12 +658,226 @@ def({
 
 def({
   name: "create_card",
-  description: "创建一张复习卡片（间隔重复）。正面是问题/提示，背面是答案/解释；一卡一知识点。",
+  description: "创建一张复习卡片（间隔重复）。正面是问题/提示，背面是答案/解释；一卡一知识点。属于某个学习目标时带上 goal。",
   write: true,
-  schema: z.object({ front: z.string(), back: z.string(), source_refs: refs, space: z.string().optional() }),
+  schema: z.object({ front: z.string(), back: z.string(), source_refs: refs, space: z.string().optional(), goal: z.string().optional().describe("学习目标 id") }),
   handler: (ctx, a) => {
-    const r = createCard(ctx.app, { spaceId: space(ctx, a.space), front: a.front, back: a.back, sourceRefs: a.source_refs });
+    const goal = a.goal ? getGoal(ctx.app, a.goal) : null;
+    const r = createCard(ctx.app, { spaceId: goal?.spaceId ?? space(ctx, a.space), front: a.front, back: a.back, sourceRefs: a.source_refs, userId: goal?.userId ?? ctx.userId ?? "owner", goalId: goal?.id ?? null });
     return r.created ? `已创建卡片 ${r.card.id}` : `已有相同卡片 ${r.card.id}`;
+  },
+});
+
+def({
+  name: "set_learning_goal",
+  description:
+    "新建或修改学习目标（本人说“我想学/想练 X”时）：学什么、材料放在哪个空间、每天几张新卡、几点提醒复习。之后每天会从该空间的新材料出卡，到点提醒复习，复习也能在聊天里用 /review 进行。",
+  write: true,
+  schema: z.object({
+    id: z.string().optional().describe("修改已有目标时填"),
+    title: z.string().optional().describe("如“英语：开会和写邮件的常用表达”"),
+    detail: z.string().optional().describe("具体想达到什么、偏好什么样的卡片"),
+    space: z.string().optional().describe("材料所在空间；没有合适的就先用 list_spaces 看，通常是 learning 类空间"),
+    daily_new: z.number().int().min(0).max(100).optional(),
+    remind_at: z.string().optional().describe("每天提醒复习的时间 HH:MM（本人时区）"),
+    status: z.enum(["active", "paused", "done"]).optional(),
+  }),
+  handler: (ctx, a) => {
+    const g = upsertGoal(ctx.app, a.id, {
+      title: a.title,
+      detail: a.detail,
+      spaceId: a.space ? space(ctx, a.space) : a.id ? undefined : ctx.spaceId,
+      dailyNew: a.daily_new,
+      remindAt: a.remind_at,
+      status: a.status,
+      userId: a.id ? undefined : (ctx.userId ?? "owner"),
+    });
+    return `学习目标 ${g.id}「${g.title}」：空间 ${g.spaceId}，每天 ${g.dailyNew} 张新卡，${g.remindAt} 提醒（${g.status}）。`;
+  },
+});
+
+def({
+  name: "learning_progress",
+  description: "查看学习目标的进度：卡片数、已掌握、到期、近 30 天复习次数与记住率、连续天数、反复忘记的卡。",
+  schema: z.object({ goal: z.string().optional() }),
+  handler: (ctx, a) => {
+    const goals = a.goal ? [getGoal(ctx.app, a.goal)] : listGoals(ctx.app, { userId: ctx.userId ?? "owner", status: "all" });
+    if (!goals.length) return "还没有学习目标。本人想学什么时可以用 set_learning_goal 建一个。";
+    return goals.map((g) => `- ${g.id} [${g.status}] ${goalSummary(ctx.app, g).text}（每天 ${g.dailyNew} 张新卡，${g.remindAt} 提醒）`).join("\n");
+  },
+});
+
+// ---- Feishu bot messaging ---------------------------------------------------------
+
+const larkTarget = z.object({
+  chat_id: z.string().optional().describe("群或单聊 chat_id（oc_…）"),
+  reply_to: z.string().optional().describe("回复某条消息（om_…）"),
+  in_thread: z.boolean().optional().describe("回复时开话题 / 在话题里回复"),
+  user_id: z.string().optional().describe("私聊某人（open_id，ou_…）"),
+});
+type LarkTargetArgs = z.infer<typeof larkTarget>;
+
+/** Which chat a target lands in, and whether this run may post there. */
+async function larkGuard(ctx: ToolContext, t: LarkTargetArgs) {
+  const { larkClient } = await import("../channels/lark-send.ts");
+  larkClient();
+  let chat = t.chat_id;
+  if (!chat && t.reply_to) {
+    const r = await larkClient().im.message.get({ path: { message_id: t.reply_to } }).catch(() => null);
+    chat = r?.data?.items?.[0]?.chat_id;
+  }
+  if (ctx.larkChats === undefined || (ctx.larkChats && !(chat && ctx.larkChats.includes(chat)) && !(t.user_id && ctx.larkChats.includes(t.user_id))))
+    throw new HttpError(403, `本次任务不能往这个飞书会话发消息${chat ? `（${chat}）` : ""}`);
+  return chat ?? null;
+}
+
+/** The thread a run belongs to (card callbacks come back there). */
+function runThread(ctx: ToolContext) {
+  if (!ctx.runId) return null;
+  const r = one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId);
+  const input = r ? (JSON.parse(r.input) as { conversationId?: string; threadId?: string }) : {};
+  return input.conversationId ?? input.threadId ?? null;
+}
+
+async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("../channels/lark-send.ts").Content, opts: { allowed?: string[]; waitForAction?: boolean } = {}) {
+  const send = await import("../channels/lark-send.ts");
+  const chat = await larkGuard(ctx, t);
+  const target = { chatId: t.chat_id, userId: t.user_id, replyTo: t.reply_to, inThread: t.in_thread };
+  if (ctx.larkDraft) {
+    // Draft: the owner sees exactly what would be sent and decides.
+    const ownerTarget = ctx.app.config.lark.ownerOpenId;
+    if (!ownerTarget) throw new HttpError(400, "草稿需要知道本人的飞书 open_id（lark.ownerOpenId）");
+    const preview = "markdown" in content ? content.markdown : "text" in content ? content.text : "card" in content ? "（一张交互卡片，发送后可见）" : "（图片或文件）";
+    const card = send.buildCard({
+      title: "待确认的回复",
+      color: "orange",
+      blocks: [{ markdown: `将发到 ${chat ?? t.user_id}${t.reply_to ? `，回复 ${t.reply_to}${t.in_thread ? "（话题内）" : ""}` : ""}：` }, { markdown: preview.slice(0, 6000) }, { buttons: [{ text: "发送", value: "send", style: "primary" }, { text: "不发", value: "drop" }] }],
+    });
+    const sent = await send.sendLark({ userId: ownerTarget }, { card });
+    send.recordInteraction(ctx.app, { messageId: sent.messageId, chatId: null, conversationId: runThread(ctx), runId: ctx.runId, purpose: "draft", allowed: [ownerTarget], payload: { target, content } });
+    return `已作为草稿发给本人确认（还没有发出）。`;
+  }
+  const sent = await send.sendLark(target, content);
+  if (opts.waitForAction)
+    send.recordInteraction(ctx.app, { messageId: sent.messageId, chatId: chat, conversationId: runThread(ctx), runId: ctx.runId, purpose: "agent", allowed: opts.allowed ?? [], payload: {} });
+  return `已发送 ${sent.messageId}${sent.threadId ? `（话题 ${sent.threadId}）` : ""}`;
+}
+
+def({
+  name: "lark_send",
+  description:
+    "用飞书机器人发消息或回复：文本、Markdown（标题、列表、加粗、链接、<at id=ou_xx></at> @人、<font color='red'>颜色</font>）。reply_to + in_thread=true 可以开话题回复。发之前想清楚是否真的需要发、发给谁。",
+  write: true,
+  schema: larkTarget.extend({ text: z.string().optional(), markdown: z.string().optional(), title: z.string().optional() }),
+  handler: async (ctx, a) => {
+    if (!a.text && !a.markdown) throw new HttpError(400, "需要 text 或 markdown");
+    return larkPost(ctx, a, a.markdown ? { markdown: a.markdown, title: a.title } : { text: a.text! });
+  },
+});
+
+def({
+  name: "lark_react",
+  description: "给一条飞书消息加表情回应（表示收到/处理中/完成）。常用：OnIt（处理中）、DONE、OK、THUMBSUP、Get、CheckMark、CrossMark。",
+  write: true,
+  schema: z.object({ message_id: z.string(), emoji: z.string().optional() }),
+  handler: async (ctx, a) => {
+    await larkGuard(ctx, { reply_to: a.message_id });
+    if (ctx.larkDraft) return "草稿模式下不加表情。";
+    const { reactLark } = await import("../channels/lark-send.ts");
+    await reactLark(a.message_id, a.emoji ?? "OnIt");
+    return "已加表情";
+  },
+});
+
+const cardField = z.union([
+  z.object({ type: z.literal("input"), name: z.string(), label: z.string().optional(), placeholder: z.string().optional(), required: z.boolean().optional(), multiline: z.boolean().optional(), default: z.string().optional() }),
+  z.object({ type: z.enum(["select", "multi_select"]), name: z.string(), label: z.string().optional(), placeholder: z.string().optional(), options: z.array(z.object({ text: z.string(), value: z.string() })), required: z.boolean().optional(), default: z.string().optional() }),
+  z.object({ type: z.enum(["person", "multi_person", "date", "datetime"]), name: z.string(), label: z.string().optional(), placeholder: z.string().optional(), required: z.boolean().optional() }),
+  z.object({ type: z.literal("checkbox"), name: z.string(), label: z.string(), checked: z.boolean().optional() }),
+]);
+const cardBlock = z.union([
+  z.object({ markdown: z.string() }),
+  z.object({ fields: z.array(z.object({ label: z.string(), value: z.string() })) }),
+  z.object({ buttons: z.array(z.object({ text: z.string(), value: z.string().optional(), style: z.enum(["primary", "danger", "default"]).optional(), url: z.string().optional(), confirm: z.string().optional() })) }),
+  z.object({ form: z.object({ name: z.string().optional(), fields: z.array(cardField), submit: z.string().optional(), cancel: z.string().optional() }) }),
+  z.object({ note: z.string() }),
+  z.object({ hr: z.literal(true) }),
+]);
+
+def({
+  name: "lark_card",
+  description:
+    "发一张飞书交互卡片：标题+颜色、Markdown、字段、按钮、表单（输入框、下拉、选人、日期、勾选）。有人点按钮或提交表单时，操作会作为新消息回到本会话，由你继续处理。allowed 限定谁可以操作（open_id 列表；'owner' 表示本人），其他人点了会被拒绝。复杂排版可传 raw_card（Card 2.0 JSON，结构见 lark-cli skills read lark-im/references/card/card-2.0-schema.md）。",
+  write: true,
+  schema: larkTarget.extend({
+    title: z.string().optional(),
+    color: z.string().optional().describe("blue wathet turquoise green yellow orange red carmine violet purple indigo grey"),
+    blocks: z.array(cardBlock).optional(),
+    raw_card: z.record(z.string(), z.any()).optional(),
+    allowed: z.array(z.string()).optional(),
+    wide: z.boolean().optional(),
+  }),
+  handler: async (ctx, a) => {
+    const { buildCard } = await import("../channels/lark-send.ts");
+    const card = a.raw_card ?? buildCard({ title: a.title, color: a.color, blocks: (a.blocks ?? []) as never, wide: a.wide });
+    const owner = ctx.app.config.lark.ownerOpenId;
+    const allowed = (a.allowed ?? []).map((x) => (x === "owner" ? (owner ?? x) : x));
+    const interactive = JSON.stringify(card).includes('"callback"') || JSON.stringify(card).includes('"form"');
+    return larkPost(ctx, a, { card }, { allowed, waitForAction: interactive });
+  },
+});
+
+def({
+  name: "lark_update_card",
+  description: "原地更新一张机器人发过的卡片（例如处理完后把按钮换成“已处理 by xx”）。传完整的新卡片：blocks 或 raw_card。",
+  write: true,
+  schema: z.object({ message_id: z.string(), title: z.string().optional(), color: z.string().optional(), blocks: z.array(cardBlock).optional(), raw_card: z.record(z.string(), z.any()).optional() }),
+  handler: async (ctx, a) => {
+    await larkGuard(ctx, { reply_to: a.message_id });
+    const { buildCard, updateLarkCard } = await import("../channels/lark-send.ts");
+    await updateLarkCard(a.message_id, a.raw_card ?? buildCard({ title: a.title, color: a.color, blocks: (a.blocks ?? []) as never }));
+    return "已更新卡片";
+  },
+});
+
+def({
+  name: "lark_send_file",
+  description: "用飞书机器人发送本地图片或文件（图片按图片消息发，其他按文件发，≤30MB）。路径必须是你能读到的本机文件。",
+  write: true,
+  schema: larkTarget.extend({ path: z.string() }),
+  handler: async (ctx, a) => {
+    const { uploadLark } = await import("../channels/lark-send.ts");
+    await larkGuard(ctx, a);
+    if (ctx.larkDraft) return larkPost(ctx, a, { text: `（文件 ${a.path}）` });
+    return larkPost(ctx, a, await uploadLark(a.path));
+  },
+});
+
+def({
+  name: "set_chat_watch",
+  description:
+    "让某个飞书群/会话的消息交给一个 Agent 档案处理（如报警群→告警处理 Agent，oncall 群→答疑 Agent）。on：all 全部消息 / mention 只在 @本人或机器人时 / keyword 匹配 pattern；reply：none 只处理不回复 / draft 回复先给本人确认 / auto 直接用机器人回复（机器人需在群里）。传 remove=true 取消。只在本人明确要求时设置。",
+  write: true,
+  schema: z.object({
+    chat_id: z.string().describe("群 chat_id（oc_…），可用 list_lark_chats 查"),
+    spec: z.string().optional().describe("处理它的 Agent 档案名"),
+    on: z.enum(["all", "mention", "keyword"]).optional(),
+    pattern: z.string().optional(),
+    reply: z.enum(["none", "draft", "auto"]).optional(),
+    space: z.string().optional().describe("这个群的材料与记录放哪个空间"),
+    note: z.string().optional(),
+    remove: z.boolean().optional(),
+  }),
+  handler: async (ctx, a) => {
+    if ((ctx.userId ?? "owner") !== "owner") throw new HttpError(403, "只有本人可以设置群监听");
+    const { setWatchRule } = await import("../channels/lark-watch.ts");
+    if (a.remove) {
+      setWatchRule(ctx.app, a.chat_id, null);
+      return `已取消 ${a.chat_id} 的监听处理。`;
+    }
+    if (!a.spec) throw new HttpError(400, "需要 spec（处理它的 Agent 档案）");
+    setWatchRule(ctx.app, a.chat_id, { spec: a.spec, on: a.on ?? "all", pattern: a.pattern, reply: a.reply ?? "draft", spaceId: a.space ? space(ctx, a.space) : undefined, note: a.note });
+    return `已设置：${a.chat_id} 的${a.on === "mention" ? " @ 消息" : a.on === "keyword" ? `匹配 ${a.pattern} 的消息` : "新消息"}交给 ${a.spec} 处理，回复方式 ${a.reply ?? "draft"}。`;
   },
 });
 

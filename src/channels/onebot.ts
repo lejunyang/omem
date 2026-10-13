@@ -3,6 +3,7 @@ import type { App } from "../core/app.ts";
 import { addNotificationSink } from "../core/notify.ts";
 import { appendToSource, sourceText } from "../sources/store.ts";
 import { registerThreadSender } from "../agents/inbox.ts";
+import { identitiesOf, resolveIdentity } from "../core/users.ts";
 import { answerFromChannel, chunkMessage } from "./common.ts";
 
 /**
@@ -54,7 +55,8 @@ export async function startOneBot(app: App) {
   });
 
   addNotificationSink((n) => {
-    if (cfg.ownerUserId) sendPrivate(cfg.ownerUserId, `${n.title}\n${n.body}`);
+    const to = n.userId === "owner" ? cfg.ownerUserId : identitiesOf(app, n.userId).find((i) => i.channel === "onebot")?.external_id;
+    if (to) sendPrivate(to, `${n.title}\n${n.body}`);
   });
 
   const pending = new Map<string, NodeJS.Timeout>();
@@ -62,7 +64,8 @@ export async function startOneBot(app: App) {
     if (e.post_type !== "message") return;
     const text = plain(e);
     if (!text) return;
-    const fromOwner = cfg.ownerUserId && String(e.user_id) === String(cfg.ownerUserId);
+    const userId = resolveIdentity(app, "onebot", e.user_id);
+    const fromOwner = !!userId;
     if (e.message_type === "group" && e.group_id) {
       const spaceId = cfg.groupSpaces[String(e.group_id)] ?? cfg.defaultSpace;
       const at = new Date((e.time ?? Date.now() / 1000) * 1000).toISOString().slice(0, 16).replace("T", " ");
@@ -93,6 +96,7 @@ export async function startOneBot(app: App) {
           text: text.replace(/@\d+/g, "").trim(),
           spaceId,
           context: lines.slice(-15).join("\n"),
+          userId: userId!,
         });
         if (answer !== null) sendGroup(e.group_id, answer);
       }
@@ -101,7 +105,7 @@ export async function startOneBot(app: App) {
     if (e.message_type === "private") {
       if (!cfg.ownerUserId) return sendPrivate(e.user_id!, `还没有绑定本人。请在 omem 配置中设置 onebot.ownerUserId 为 ${e.user_id}，然后重启服务。`);
       if (!fromOwner) return;
-      const answer = await answerFromChannel(app, { channel: "onebot", chatId: `private:${e.user_id}`, text, spaceId: cfg.defaultSpace });
+      const answer = await answerFromChannel(app, { channel: "onebot", chatId: `private:${e.user_id}`, text, spaceId: userId === "owner" ? cfg.defaultSpace : undefined, userId: userId! });
       if (answer !== null) sendPrivate(e.user_id!, answer);
     }
   };

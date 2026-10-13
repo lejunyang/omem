@@ -14,9 +14,10 @@ import { runRole } from "./runner.ts";
 import { maybeSummarize, threadTurn } from "./sessions.ts";
 import { readAgentSpec } from "./specs.ts";
 import { describeFlags, guardSource } from "../sources/guard.ts";
-import { studyStats } from "../learn/cards.ts";
+import { learningProgress, studyStats } from "../learn/cards.ts";
+import { getGoal, listGoals, localClock, upsertGoal } from "../learn/goals.ts";
 import { addMessage, getThread, threadMessages, updateThread } from "./threads.ts";
-import { createRun, registerHandler, type RunContext } from "./runs.ts";
+import { createRun, listRuns, registerHandler, type RunContext } from "./runs.ts";
 
 const QUIET = /^\s*QUIET\s*$/i;
 
@@ -42,10 +43,11 @@ export { addMessage, conversationMessages, ensureConversation } from "./threads.
  * Ask the assistant (web, CLI, tests). Goes through the same inbox as chat
  * channels: commands, thread resolution, burst merging, per-thread lanes.
  */
-export async function ask(app: App, input: { text: string; spaceId?: string; conversationId?: string; channel?: string; externalId?: string }) {
+export async function ask(app: App, input: { text: string; spaceId?: string; conversationId?: string; channel?: string; externalId?: string; userId?: string }) {
   const r = await receive(app, {
+    userId: input.userId,
     text: input.text,
-    spaceId: input.spaceId ?? "personal",
+    spaceId: input.spaceId,
     conversationId: input.conversationId ?? (input.externalId ? undefined : newId("c")),
     channel: input.channel ?? "web",
     chatId: input.externalId,
@@ -54,12 +56,12 @@ export async function ask(app: App, input: { text: string; spaceId?: string; con
 }
 
 registerHandler("ask", async (ctx) => {
-  const input = ctx.run.input as { conversationId: string; messageIds?: string[]; messageId?: string };
+  const input = ctx.run.input as { conversationId: string; messageIds?: string[]; messageId?: string; userId?: string };
   const ids = input.messageIds ?? (input.messageId ? [input.messageId] : []);
   const all = threadMessages(ctx.app, input.conversationId, { limit: 400 });
   const msgs = all.filter((m) => ids.includes(m.id));
   if (!msgs.length) return { answer: "", skipped: "消息已不存在" };
-  const r = await threadTurn(ctx, input.conversationId, msgs);
+  const r = await threadTurn(ctx, input.conversationId, msgs, input.userId ?? "owner");
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   const answer = r.text.trim() || "（Agent 没有给出文字回答）";
   const id = addMessage(ctx.app, input.conversationId, "assistant", answer, ctx.run.id, { agent: r.agent, session: r.mode, replyTo: ids });
@@ -360,6 +362,62 @@ registerHandler("tutor", async (ctx) => {
   const r = await agent(ctx, "tutor", ctx.run.spaceId!, `材料：\n${list.join("\n")}${focus ? `\n\n学习重点：${focus}` : ""}`);
   return { summary: r.text.trim() };
 });
+
+/**
+ * Daily feed for a learning goal: new cards from material that arrived in the
+ * goal's space since the last feed, plus another angle on cards that keep
+ * being forgotten.
+ */
+registerHandler("learn-feed", async (ctx) => {
+  const { goalId } = ctx.run.input as { goalId: string };
+  const g = getGoal(ctx.app, goalId);
+  const since = g.lastFedAt ?? new Date(Date.now() - 7 * 86400_000).toISOString();
+  const fresh = all<{ id: string; uri: string; title: string; kind: string }>(
+    ctx.app.db,
+    "select id, uri, title, kind from sources where space_id = ? and updated_at > ? and deleted_at is null and kind != 'conversation' order by updated_at desc limit 20",
+    g.spaceId,
+    since,
+  );
+  const p = learningProgress(ctx.app, { goalId: g.id, userId: g.userId });
+  upsertGoal(ctx.app, g.id, { lastFedAt: now() });
+  if (!fresh.length && !p.weak.length) return { quiet: true, summary: "没有新材料，也没有反复忘记的卡" };
+  const task = [
+    `学习目标 ${g.id}：${g.title}${g.detail ? `\n${g.detail}` : ""}`,
+    `今天最多新建 ${g.dailyNew} 张卡片，create_card 时带 goal=${g.id}。`,
+    fresh.length ? `上次出卡以来新进入的材料：\n${fresh.map((s) => `- ${s.id} ${s.uri}「${s.title}」(${s.kind})`).join("\n")}` : "没有新材料。",
+    p.weak.length ? `反复忘记的卡（可以换个角度、补例句或拆成更小的卡，不要重复原卡）：\n${p.weak.map((w) => `- ${w.front}（忘了 ${w.lapses} 次）`).join("\n")}` : "",
+    `近 30 天：复习 ${p.reviews} 次，记住率 ${p.recall === null ? "—" : Math.round(p.recall * 100) + "%"}。`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const r = await agent(ctx, "tutor", g.spaceId, task, [g.spaceId]);
+  return { summary: r.text.trim() };
+});
+
+/** Every 15 minutes: feed goals once a day, remind at each goal's time when cards are due. */
+export function learningTick(app: App) {
+  const clock = localClock(app);
+  for (const g of listGoals(app, { status: "active" })) {
+    const fedToday = g.lastFedAt && localClock(app, new Date(g.lastFedAt)).date === clock.date;
+    const [h, m] = g.remindAt.split(":").map(Number);
+    const remindMin = h * 60 + m;
+    // Feed a couple of hours before the reminder so new cards are ready.
+    if (!fedToday && clock.minutes >= Math.max(0, remindMin - 120) && !listRuns(app, { kind: "learn-feed", status: "queued" }).some((r) => r.input.goalId === g.id))
+      createRun(app, { kind: "learn-feed", spaceId: g.spaceId, title: `学习出卡：${g.title}`, input: { goalId: g.id }, userId: g.userId });
+    const remindedToday = g.lastRemindedAt && localClock(app, new Date(g.lastRemindedAt)).date === clock.date;
+    if (!remindedToday && clock.minutes >= remindMin) {
+      const s = studyStats(app, { goalId: g.id, userId: g.userId });
+      upsertGoal(app, g.id, { lastRemindedAt: now() });
+      if (s.due)
+        notify(app, {
+          title: `该复习了：${g.title}`,
+          body: `${s.due} 张卡到期（今天已复习 ${s.reviewedToday} 张）。在聊天里发 /review 开始，或打开“学习”页。`,
+          link: "#/learn",
+          userId: g.userId,
+        });
+    }
+  }
+}
 
 registerHandler("code", runCodeTask);
 

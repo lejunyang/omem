@@ -4,8 +4,15 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 
+let override: ((args: string[], cwd?: string) => Promise<any>) | null = null;
+/** Tests: answer lark-cli calls without the CLI. */
+export function setLarkCliForTests(fn: ((args: string[], cwd?: string) => Promise<any>) | null) {
+  override = fn;
+}
+
 /** Run the official lark-cli (bundled npm dependency) and parse its JSON output. */
-export async function larkCli(args: string[], timeoutMs = 90_000): Promise<any> {
+export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string): Promise<any> {
+  if (override) return override(args, cwd);
   let script: string;
   try {
     script = createRequire(import.meta.url).resolve("@larksuite/cli/scripts/run.js");
@@ -13,7 +20,7 @@ export async function larkCli(args: string[], timeoutMs = 90_000): Promise<any> 
     throw new Error("未安装 @larksuite/cli；请重新安装 omem 依赖");
   }
   try {
-    const { stdout } = await exec(process.execPath, [script, ...args], { timeout: timeoutMs, maxBuffer: 20_000_000, windowsHide: true });
+    const { stdout } = await exec(process.execPath, [script, ...args], { timeout: timeoutMs, maxBuffer: 50_000_000, windowsHide: true, cwd });
     const value = JSON.parse(stdout);
     if (value.ok === false) throw new Error(value.error?.message || "飞书读取失败");
     return value;

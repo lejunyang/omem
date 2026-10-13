@@ -109,8 +109,33 @@ export const configSchema = z.object({
       /** open_id of the owner; only the owner may command the bot. */
       ownerOpenId: z.string().optional(),
       defaultSpace: z.string().default("personal"),
+      /** Reading the owner's own Feishu (lark-cli, user identity, read-only). */
+      capture: z
+        .object({
+          /** all: every chat with new messages (minus excluded); subscribed: only chosen chats; off. */
+          mode: z.enum(["all", "subscribed", "off"]).default("subscribed"),
+          exclude: z.array(z.string()).default([]),
+          /** Space for captured chats without their own mapping. */
+          space: z.string().default("personal"),
+          /** First read of a chat goes back this far. */
+          lookbackHours: z.number().default(72),
+          /** Stop scanning after this many chats in a row without anything new (chats come most-recent first). */
+          quietStop: z.number().int().default(8),
+          maxChats: z.number().int().default(300),
+          /** Download images/files in messages and import them; import Feishu docs linked in messages. */
+          attachments: z.boolean().default(true),
+          docs: z.boolean().default(true),
+          calendar: z.boolean().default(true),
+          minutes: z.boolean().default(true),
+        })
+        .default({ mode: "subscribed", exclude: [], space: "personal", lookbackHours: 72, quietStop: 8, maxChats: 300, attachments: true, docs: true, calendar: true, minutes: true }),
     })
-    .default({ enabled: false, appSecretEnv: "OMEM_LARK_APP_SECRET", defaultSpace: "personal" }),
+    .default({
+      enabled: false,
+      appSecretEnv: "OMEM_LARK_APP_SECRET",
+      defaultSpace: "personal",
+      capture: { mode: "subscribed", exclude: [], space: "personal", lookbackHours: 72, quietStop: 8, maxChats: 300, attachments: true, docs: true, calendar: true, minutes: true },
+    }),
   telegram: z
     .object({
       enabled: z.boolean().default(false),

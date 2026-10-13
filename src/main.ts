@@ -1,5 +1,5 @@
 import "./agents/jobs.ts";
-import { scheduleSpaceSync } from "./agents/jobs.ts";
+import { learningTick, scheduleSpaceSync } from "./agents/jobs.ts";
 import { createRun, listRuns, startWorker } from "./agents/runs.ts";
 import { App } from "./core/app.ts";
 import { ensureDefaultSchedules, registerScheduleKind, restartScheduler } from "./core/scheduler.ts";
@@ -17,6 +17,10 @@ registerScheduleKind("repo-sync", (app) => {
   for (const s of listSpaces(app)) if (s.rootPath) scheduleSpaceSync(app, s.id);
 });
 
+registerScheduleKind("learn", (app) => learningTick(app));
+registerScheduleKind("activity", (app) => {
+  import("./sources/activity.ts").then((m) => m.recordCodeActivity(app)).catch((e) => console.warn("[omem] 记录代码活动失败：", e.message));
+});
 registerScheduleKind("brief", (app) => createRun(app, { kind: "brief", spaceId: "personal", title: "简报" }));
 registerScheduleKind("lark-curate", (app, s) => createRun(app, { kind: "curate", spaceId: "personal", title: "筛选值得关注的飞书群", input: { direction: (s.config as { direction?: string }).direction } }));
 registerScheduleKind("lark-poll", (app) => {
@@ -26,11 +30,16 @@ registerScheduleKind("lark-poll", (app) => {
 export type BootOptions = { port?: number; host?: string; quiet?: boolean; background?: boolean };
 
 /** Open the library, start the API, the run worker and (optionally) background schedules. */
+const require_vectors = await import("./search/vectors.ts");
+
 export async function boot(home?: string, opts: BootOptions = {}) {
   const app = App.open(home);
   ensurePersonalSpace(app);
   ensureDefaultSchedules(app);
   for (const s of listSpaces(app)) syncWiki(app, s.id);
+  const { seedBuiltinSkills } = await import("./agents/specs.ts");
+  const { packageRoot } = await import("./setup.ts");
+  seedBuiltinSkills(app, packageRoot());
   const server = await startServer(app, opts);
   startWorker(app);
   if (opts.background !== false) {
@@ -45,6 +54,13 @@ export async function boot(home?: string, opts: BootOptions = {}) {
         setTimeout(loop, 30_000).unref();
       };
       setTimeout(loop, 3000).unref();
+      // Load the vector matrices before the first question needs them.
+      setTimeout(() => {
+        try {
+          const { vectorIndex } = require_vectors;
+          vectorIndex().search(app, new Float32Array(0), undefined, 1);
+        } catch {}
+      }, 1000).unref();
     }
     if (app.config.telegram.enabled) {
       const { startTelegram } = await import("./channels/telegram.ts");

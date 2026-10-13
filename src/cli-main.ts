@@ -223,6 +223,62 @@ program
     await runJob((app) => ask(app, { text: question.join(" "), spaceId: o.space, conversationId: o.conversation, channel: "cli" }));
   });
 
+const user = program.command("user").description("用户与身份（omem 默认只有主人；给同事开放时在这里登记）");
+user
+  .command("list")
+  .description("列出用户、渠道身份和可访问的空间")
+  .action(async () => {
+    const { listUsers, identitiesOf, accessibleSpaces } = await import("./core/users.ts");
+    const app = open();
+    for (const u of listUsers(app))
+      console.log(`${u.id.padEnd(14)} ${u.role.padEnd(7)} ${u.name}${u.disabledAt ? "（已停用）" : ""}\n  身份：${identitiesOf(app, u.id).map((i) => `${i.channel}:${i.external_id}`).join(", ") || "（配置中的主人身份）"}\n  空间：${accessibleSpaces(app, u.id)?.join(", ") ?? "全部"}`);
+  });
+user
+  .command("add <name>")
+  .description("登记一个用户（会建好 personal-<id> 个人空间）；用渠道 id 绑定他在飞书/Telegram/QQ 的身份")
+  .option("--id <id>", "用户 id（默认由名称生成）")
+  .option("--lark <openId>", "飞书 open_id")
+  .option("--telegram <userId>", "Telegram 用户 id")
+  .option("--onebot <userId>", "QQ / 微信桥账号")
+  .option("--space <ids...>", "可以读的空间")
+  .option("--edit <ids...>", "可以写的空间")
+  .action(async (name, o) => {
+    const { createUser, linkIdentity, addMember } = await import("./core/users.ts");
+    const app = open();
+    const u = createUser(app, { name, id: o.id });
+    for (const [ch, v] of [["lark", o.lark], ["telegram", o.telegram], ["onebot", o.onebot]] as const) if (v) linkIdentity(app, u.id, ch, String(v));
+    for (const sp of o.space ?? []) addMember(app, sp, u.id, "reader");
+    for (const sp of o.edit ?? []) addMember(app, sp, u.id, "editor");
+    console.log(`已登记 ${u.id}（${u.name}），个人空间 personal-${u.id}`);
+  });
+user
+  .command("link <userId> <channel> <externalId>")
+  .description("绑定渠道身份（channel: lark | telegram | onebot）")
+  .action(async (userId, channel, externalId) => {
+    const { linkIdentity } = await import("./core/users.ts");
+    linkIdentity(open(), userId, channel, externalId);
+    console.log("已绑定");
+  });
+user
+  .command("token <userId> [label]")
+  .description("为用户生成 API 令牌（只显示一次）")
+  .action(async (userId, label) => {
+    const { createApiToken } = await import("./core/users.ts");
+    console.log(createApiToken(open(), userId, label ?? ""));
+  });
+space
+  .command("share <spaceId> <userId>")
+  .description("让用户访问一个空间")
+  .option("--edit", "允许写入（记忆、事项、页面）")
+  .option("--remove", "取消访问")
+  .action(async (spaceId, userId, o) => {
+    const { addMember, removeMember } = await import("./core/users.ts");
+    const app = open();
+    if (o.remove) removeMember(app, spaceId, userId);
+    else addMember(app, spaceId, userId, o.edit ? "editor" : "reader");
+    console.log("已更新");
+  });
+
 const wiki = program.command("wiki").description("Wiki：规划、写作、检查");
 wiki
   .command("plan <space>")

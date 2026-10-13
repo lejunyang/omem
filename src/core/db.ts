@@ -256,6 +256,104 @@ const migrations: string[] = [
   alter table runs add column not_before text;
   create index runs_lane on runs(lane, status);
   `,
+  // Room for more than one person: users, their channel identities, space
+  // membership and per-user API tokens. Everything existing belongs to "owner".
+  `
+  create table users (
+    id text primary key,
+    name text not null,
+    role text not null default 'member',      -- owner | member
+    settings text not null default '{}',
+    created_at text not null,
+    disabled_at text
+  );
+  insert into users(id, name, role, created_at) values ('owner', '本人', 'owner', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+  create table identities (
+    channel text not null,                    -- lark | telegram | onebot | web …
+    external_id text not null,                -- open_id, Telegram user id, QQ number…
+    user_id text not null references users(id),
+    created_at text not null,
+    primary key(channel, external_id)
+  );
+  create table space_members (
+    space_id text not null,
+    user_id text not null,
+    role text not null default 'reader',      -- reader | editor | owner
+    primary key(space_id, user_id)
+  );
+  create table api_tokens (
+    token_hash text primary key,
+    user_id text not null,
+    label text not null default '',
+    created_at text not null,
+    last_used_at text
+  );
+  alter table spaces add column owner_id text not null default 'owner';
+  alter table conversations add column user_id text not null default 'owner';
+  alter table items add column user_id text not null default 'owner';
+  alter table memories add column user_id text;
+  alter table cards add column user_id text not null default 'owner';
+  alter table card_reviews add column user_id text not null default 'owner';
+  alter table runs add column user_id text;
+  alter table notifications add column user_id text not null default 'owner';
+  create index items_user on items(user_id, status);
+  create index conversations_user on conversations(user_id, updated_at);
+  create index cards_user on cards(user_id, suspended, due_at);
+  `,
+  // Learning goals: what someone is learning, how many new cards a day, when to remind.
+  `
+  create table learn_goals (
+    id text primary key,
+    user_id text not null default 'owner',
+    space_id text not null,
+    title text not null,
+    detail text not null default '',
+    daily_new integer not null default 10,
+    remind_at text not null default '20:30',     -- local HH:MM
+    status text not null default 'active',       -- active | paused | done
+    created_at text not null,
+    updated_at text not null,
+    last_fed_at text,
+    last_reminded_at text
+  );
+  alter table cards add column goal_id text;
+  `,
+  // Feishu: interactive cards the bot sent and who may act on them; per-chat
+  // capture cursors for the owner's messages; messages already handed to a handler.
+  `
+  create table card_interactions (
+    id text primary key,
+    channel text not null default 'lark',
+    message_id text,
+    chat_id text,
+    conversation_id text,
+    run_id text,
+    purpose text not null,                    -- agent | draft
+    allowed text not null default '[]',       -- open_ids allowed to act; [] = anyone in the chat
+    payload text not null default '{}',
+    status text not null default 'open',      -- open | done | expired
+    created_at text not null,
+    handled_at text,
+    handled_by text
+  );
+  create index card_interactions_msg on card_interactions(message_id);
+  create table lark_cursors (
+    chat_id text primary key,
+    name text not null default '',
+    chat_mode text not null default '',
+    last_time integer not null default 0,
+    last_ids text not null default '[]',
+    updated_at text
+  );
+  create table handled_messages (
+    channel text not null,
+    message_id text not null,
+    rule text not null default '',
+    run_id text,
+    at text not null,
+    primary key(channel, message_id)
+  );
+  `,
 ];
 
 export type Db = DatabaseSync;

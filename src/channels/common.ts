@@ -9,10 +9,18 @@ import type { App } from "../core/app.ts";
  * labels (other apps cannot open them). Returns null when the message was
  * merged into a turn whose answer another call is already waiting for.
  */
-export async function answerFromChannel(app: App, input: Inbound & { channel: string; chatId: string }): Promise<string | null> {
+export async function answerFromChannel(
+  app: App,
+  input: Inbound & { channel: string; chatId: string },
+  hooks: { onStart?: (runId: string) => void | Promise<void>; onMerged?: () => void | Promise<void> } = {},
+): Promise<string | null> {
   const r = await receive(app, input);
   if (r.reply !== null) return r.reply;
-  if (r.merged || !r.runId) return null;
+  if (r.merged || !r.runId) {
+    await hooks.onMerged?.();
+    return null;
+  }
+  await hooks.onStart?.(r.runId);
   const done = await waitForRun(app, r.runId);
   const answer = done.status === "done" ? String((getRun(app, r.runId).output as { answer?: string }).answer ?? "") : done.status === "cancelled" ? "（已停止）" : `处理失败：${done.error ?? done.status}`;
   const note = r.started === "renewed" ? "（距上次对话较久，已开始新会话并带上之前的摘要；/resume 可回到原会话）\n\n" : "";

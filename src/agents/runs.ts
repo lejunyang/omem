@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 
-export type RunKind = "ask" | "agent" | "thread-summary" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate";
+export type RunKind = "ask" | "agent" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 export type Run = {
   id: string;
@@ -66,12 +66,14 @@ export function createRun(
     lane?: string | null;
     /** Do not start before this time (lets a burst of messages merge into one run). */
     notBefore?: string | null;
+    /** Who asked for it (for per-user history and limits). */
+    userId?: string | null;
   },
 ) {
   const id = newId("r");
   run(
     app.db,
-    "insert into runs(id,kind,space_id,status,title,input,parent_id,created_at,lane,not_before) values(?,?,?,?,?,?,?,?,?,?)",
+    "insert into runs(id,kind,space_id,status,title,input,parent_id,created_at,lane,not_before,user_id) values(?,?,?,?,?,?,?,?,?,?,?)",
     id,
     input.kind,
     input.spaceId ?? null,
@@ -82,6 +84,7 @@ export function createRun(
     now(),
     input.lane ?? null,
     input.notBefore ?? null,
+    input.userId ?? null,
   );
   app.emit({ type: "run", runId: id, status: "queued" });
   queueMicrotask(() => kick(app));
