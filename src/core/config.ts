@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
+import { acpCatalog, catalogProfile } from "../agents/catalog.ts";
 
 export const agentProfileSchema = z.object({
   id: z.string().min(1),
@@ -160,59 +161,13 @@ export const configSchema = z.object({
 export type Config = z.infer<typeof configSchema>;
 
 /** Built-in profiles; users override or extend them in config.json. */
-export const builtinProfiles: AgentProfile[] = [
-  {
-    id: "codex",
-    name: "Codex (ACP)",
-    transport: "acp",
-    command: "codex-acp",
-    args: [],
-    model: "gpt-6.1-sol",
-    effort: "low",
-    env: {},
-    idleTimeoutMs: 600_000,
-  },
-  {
-    id: "traex",
-    name: "TraeX (ACP)",
-    transport: "acp",
-    command: "traex",
-    args: ["acp", "serve"],
-    model: "gpt-6.1-sol",
-    effort: "low",
-    env: {},
-    idleTimeoutMs: 600_000,
-  },
-  {
-    id: "claude",
-    name: "Claude Code (ACP)",
-    transport: "acp",
-    command: "claude-agent-acp",
-    args: [],
-    env: {},
-    idleTimeoutMs: 600_000,
-  },
-  {
-    id: "claude-cli",
-    name: "Claude Code (CLI)",
-    transport: "claude-cli",
-    command: "claude",
-    args: [],
-    env: {},
-    idleTimeoutMs: 600_000,
-  },
-  {
-    id: "codex-cli",
-    name: "Codex (CLI)",
-    transport: "codex-cli",
-    command: "codex",
-    args: [],
-    model: "gpt-6.1-sol",
-    effort: "low",
-    env: {},
-    idleTimeoutMs: 600_000,
-  },
+const cliProfiles: AgentProfile[] = [
+  { id: "claude-cli", name: "Claude Code (CLI)", transport: "claude-cli", command: "claude", args: [], env: {}, idleTimeoutMs: 600_000 },
+  { id: "codex-cli", name: "Codex (CLI)", transport: "codex-cli", command: "codex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000 },
 ];
+
+/** ACP agents from the catalog (codex, claude, gemini, copilot, …) plus the one-shot CLI fallbacks. Order = auto-pick priority. */
+export const builtinProfiles: AgentProfile[] = [...acpCatalog.slice(0, 3).map(catalogProfile), ...cliProfiles, ...acpCatalog.slice(3).map(catalogProfile)];
 
 export function omemHome(): string {
   if (process.env.OMEM_HOME) return resolve(process.env.OMEM_HOME);

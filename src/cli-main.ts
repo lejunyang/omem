@@ -367,13 +367,65 @@ program
     console.log(`${out.diffStat ?? ""}\n\n${out.review ?? ""}\n\n结论：${out.verdict ?? r.status}\n运行 id：${r.id}`);
   });
 
-program
-  .command("agents")
-  .description("列出可用的 Agent 配置")
-  .action(() => {
+const agents = program.command("agents").description("Agent 后端：列出、从 ACP 注册表添加");
+agents
+  .command("list", { isDefault: true })
+  .description("列出 Agent 配置（✓ 已安装）")
+  .option("--all", "也列出未安装的")
+  .action(async (o) => {
     const app = open();
-    for (const p of listAgentProfiles(app)) console.log(`${p.installed ? "✓" : "✗"} ${p.id.padEnd(12)} ${p.transport.padEnd(10)} ${p.command} ${p.args.join(" ")}${p.model ? `  model=${p.model}` : ""}${p.effort ? ` effort=${p.effort}` : ""}`);
+    const { catalogEntry, installHint } = await import("./agents/catalog.ts");
+    const all = listAgentProfiles(app);
+    for (const p of all.filter((p) => p.installed)) console.log(`✓ ${p.id.padEnd(12)} ${p.transport.padEnd(10)} ${p.command} ${p.args.join(" ")}${p.model ? `  model=${p.model}` : ""}${p.effort ? ` effort=${p.effort}` : ""}`);
+    const missing = all.filter((p) => !p.installed);
+    if (o.all) for (const p of missing) {
+      const e = catalogEntry(p.id);
+      console.log(`· ${p.id.padEnd(12)} ${p.command} ${p.args.join(" ")}${e ? `  安装：${installHint(e) || "见官网"}` : ""}`);
+    }
+    else if (missing.length) console.log(`\n另有 ${missing.length} 个未安装（${missing.map((p) => p.id).join("、")}），--all 查看安装方式；ACP 注册表里更多：omem agents registry`);
     console.log(`\n配置文件：${configPath(app.home)}（agents.default / agents.roles / agents.profiles）`);
+  });
+agents
+  .command("registry")
+  .description("列出官方 ACP 注册表中的 Agent 及本机可用的运行方式")
+  .action(async () => {
+    const { fetchRegistry, registryOptions, platformKey } = await import("./agents/catalog.ts");
+    const list = await fetchRegistry();
+    for (const a of list) {
+      const ways = registryOptions(a).map((o) => `${o.kind}${o.available ? "" : "(缺)"}`).join(" / ") || `无 ${platformKey()} 版本`;
+      console.log(`${a.id.padEnd(22)} ${a.name.padEnd(22)} v${a.version.padEnd(12)} ${ways}`);
+    }
+    console.log("\n添加：omem agents add <id> [--via npx|uvx|binary]");
+  });
+agents
+  .command("add <id>")
+  .description("添加 Agent：内置目录里的 id（npm 全局安装或 npx），或 ACP 注册表里的 id（npx / uvx / 下载二进制）")
+  .option("--via <how>", "global | npx | uvx | binary")
+  .option("--default", "设为默认 Agent")
+  .action(async (id: string, o) => {
+    const app = open();
+    const { catalogEntry, catalogProfile, npxProfile, fetchRegistry } = await import("./agents/catalog.ts");
+    const { addRegistryAgent } = await import("./setup.ts");
+    const { saveConfig } = await import("./core/config.ts");
+    const { commandExists } = await import("./agents/spawn.ts");
+    const { spawnSync } = await import("node:child_process");
+    const e = catalogEntry(id);
+    let p;
+    if (e && commandExists(e.command) && !o.via) p = catalogProfile(e);
+    else if (e?.npm && (o.via === "npx" || (!o.via && !commandExists("npm")))) {
+      p = npxProfile(e);
+      app.config.agents.profiles = [...app.config.agents.profiles.filter((x) => x.id !== p!.id), p];
+    } else if (e?.npm && (!o.via || o.via === "global")) {
+      if (spawnSync("npm", ["i", "-g", e.npm], { stdio: "inherit", shell: process.platform === "win32" }).status !== 0) throw new Error("npm 安装失败");
+      p = catalogProfile(e);
+    } else {
+      const agent = (await fetchRegistry()).find((a) => a.id === id);
+      if (!agent) throw new Error(e ? `${e.name}：${e.install ?? "请按官方说明安装"}` : `内置目录和 ACP 注册表里都没有 ${id}（omem agents registry 查看）`);
+      p = await addRegistryAgent(agent, app.config, app.home, o.via);
+    }
+    if (o.default) app.config.agents.default = p.id;
+    saveConfig(app.config, app.home);
+    console.log(`✓ ${p.id} → ${p.command} ${p.args.join(" ")}\n第一次使用前，先在终端直接运行该 Agent 登录一次。`);
   });
 
 program

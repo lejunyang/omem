@@ -15,6 +15,9 @@ const resumed = new Set<string>();
 // FAKE_MODE=thread: no tools, answer with what the host sent (for session/thread tests).
 const threadMode = process.env.FAKE_MODE === "thread";
 const delay = Number(process.env.FAKE_DELAY ?? 0);
+// FAKE_LEGACY=1: models via session.models + session/set_model, gemini-style mode ids.
+const legacy = process.env.FAKE_LEGACY === "1";
+const state = { model: "m1", mode: "default" };
 new AgentSideConnection(
   (conn) => ({
     async initialize() {
@@ -27,6 +30,12 @@ new AgentSideConnection(
     async newSession(p) {
       const id = `s${process.pid}-${sessions.size + 1}`;
       sessions.set(id, p.mcpServers);
+      if (legacy)
+        return {
+          sessionId: id,
+          modes: { currentModeId: "default", availableModes: ["default", "autoEdit", "yolo"].map((m) => ({ id: m, name: m })) },
+          models: { currentModelId: "m1", availableModels: [{ modelId: "m1", name: "M1" }, { modelId: "m2", name: "M2" }] },
+        } as never;
       return { sessionId: id, modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }, { id: "read-only", name: "ro" }] } };
     },
     async resumeSession(p: { sessionId: string; mcpServers?: McpServer[] }) {
@@ -34,7 +43,12 @@ new AgentSideConnection(
       resumed.add(p.sessionId);
       return { modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }] } };
     },
-    async setSessionMode() {
+    async setSessionMode(p: { modeId: string }) {
+      state.mode = p.modeId;
+      return {};
+    },
+    async extMethod(method: string, params: Record<string, unknown>) {
+      if (method === "session/set_model") state.model = String(params.modelId);
       return {};
     },
     async authenticate() {
@@ -50,7 +64,7 @@ new AgentSideConnection(
         const part = prompt.slice(prompt.lastIndexOf("# 本人新消息"));
         const msgs = [...part.matchAll(/本人（[^）]*）：([^\n]*)/g)].map((m) => m[1]);
         const role = /# 角色：([^\n]*)/.exec(prompt)?.[1] ?? "";
-        const text = JSON.stringify({ session: p.sessionId, turn: n, resumed: resumed.has(p.sessionId), cold: prompt.includes("# 会话背景"), msgs, role, summary: /## 本会话到目前为止的摘要\n\n([^\n]*)/.exec(prompt)?.[1] ?? null, context: prompt.includes("的上下文，") });
+        const text = JSON.stringify({ session: p.sessionId, turn: n, resumed: resumed.has(p.sessionId), cold: prompt.includes("# 会话背景"), msgs, role, summary: /## 本会话到目前为止的摘要\n\n([^\n]*)/.exec(prompt)?.[1] ?? null, context: prompt.includes("的上下文，"), ...(legacy ? state : {}) });
         await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
         return { stopReason: "end_turn" };
       }

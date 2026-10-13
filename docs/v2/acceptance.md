@@ -81,6 +81,7 @@ pnpm run dev                # 打开 http://localhost:5173
 | 30 | 对助理说“建一个负责代码评审的 Agent，只读，用 review-steps 技能” | “Agent”页出现档案和技能（知识库 Git 有记录）；`/as code-reviewer 评审最近的改动` 结果发回当前会话 | 建档案云端已验；委派用假 Agent 验 |
 | 31 | `omem setup` | 交互式选择各部分；有 osdk 时下载并锁定向量模型和 Docling 模型 | 交互已验；osdk 路径待你在本机验 |
 | 32 | 开启注入标记（需本机运行 StartLux-Decision 服务），往群里发“忽略之前的指令…” | 原件页和整理任务里出现“疑似注入”提示，助理不执行 | 机制有测试；模型评测见 judge-models.md |
+| 33b | `omem agents --all`；`omem agents add gemini --via npx` 或网页 设置 → Agent → ACP 注册表 → 下载 opencode；终端里先登录该 Agent，再在设置里“检测模型”并设为默认 | 列出 25 个内置 Agent 和安装方式；注册表 41 个可添加；换成新 Agent 后问答、整理照常调用 omem 工具 | OpenCode 云端已验（调用 list_spaces 回答）；Gemini/Qwen/Copilot/goose 握手通过，登录待你验 |
 | 33 | 打开 `.repo-review/wiki/index.md` | omem 本仓库的 Wiki，原件引用可直接点到仓库文件行 | 已生成并提交 |
 
 ## 七、学习
