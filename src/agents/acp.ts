@@ -170,7 +170,13 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         else emitSetup({ type: "status", text: `该 Agent 不支持 HTTP MCP，跳过 ${name}` });
       } else mcpServers.push({ name, command: srv.command, args: srv.args, env: Object.entries(srv.env).map(([n, value]) => ({ name: n, value })) });
     }
-    type SessionInfo = { sessionId?: string; modes?: { availableModes: { id: string }[]; currentModeId: string } | null; configOptions?: SessionConfigOption[] | null };
+    type SessionInfo = {
+      sessionId?: string;
+      modes?: { availableModes: { id: string }[]; currentModeId: string } | null;
+      configOptions?: SessionConfigOption[] | null;
+      /** Older agents (gemini, qwen, …) list models here and switch with session/set_model. */
+      models?: { availableModels?: { modelId: string; name?: string }[]; currentModelId?: string } | null;
+    };
     let session: SessionInfo | null = null;
     let sessionId = "";
     let resumed = false;
@@ -198,7 +204,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     touch();
     // Permission mode: prefer the role's choice when the agent offers it.
     const modes = session.modes?.availableModes ?? [];
-    const wanted = (opts.modes ?? []).find((m) => modes.some((x) => x.id === m));
+    const wanted = pickMode(opts.modes ?? [], modes.map((m) => m.id));
     if (wanted && session.modes?.currentModeId !== wanted) await Promise.race([connection.setSessionMode({ sessionId, modeId: wanted }), failed]);
     let options = session.configOptions ?? [];
     const agentName = init.agentInfo?.name ?? profile.command;
@@ -206,7 +212,12 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       const probe = {
         agent: `${init.agentInfo?.name ?? profile.command} ${init.agentInfo?.version ?? ""}`.trim(),
         modes: modes.map((m) => m.id),
-        options: options.map((o) => ({ id: o.id, category: (o as { category?: string }).category ?? null, current: (o as { currentValue?: string }).currentValue ?? null, values: optionValues(o) })),
+        options: [
+          ...options.map((o) => ({ id: o.id, category: (o as { category?: string }).category ?? null, current: (o as { currentValue?: string }).currentValue ?? null, values: optionValues(o) })),
+          ...(!options.some(isModelOption) && session.models?.availableModels?.length
+            ? [{ id: "model", category: "model", current: session.models.currentModelId ?? null, values: session.models.availableModels.map((m) => m.modelId) }]
+            : []),
+        ],
       };
       close();
       return { sessionId, agent: agentName, resumed, alive: () => false, prompt: async () => ({ text: "", stopReason: "probe", agent: agentName }), close, probe };
@@ -216,7 +227,13 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       ["effort", profile.effort],
     ] as const) {
       if (!value) continue;
-      const option = options.find((o) => (key === "model" ? o.category === "model" || o.id === "model" : o.category === "thought_level" || /effort|reasoning/.test(o.id)));
+      const option = options.find((o) => (key === "model" ? isModelOption(o) : o.category === "thought_level" || /effort|reasoning/.test(o.id)));
+      if (!option && key === "model" && session.models?.availableModels?.length) {
+        const ids = session.models.availableModels.map((m) => m.modelId);
+        if (!ids.includes(value)) throw new Error(`Agent 不支持 model=${value}。可选：${ids.join(", ")}`);
+        if (session.models.currentModelId !== value) await Promise.race([connection.extMethod("session/set_model", { sessionId, modelId: value }), failed]);
+        continue;
+      }
       if (!option) {
         emitSetup({ type: "status", text: `该 Agent 不支持设置 ${key}，使用其默认值` });
         continue;
@@ -271,8 +288,19 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
   } catch (error) {
     setupWatch.close();
     close();
-    throw error;
+    throw explain(error, profile);
   }
+}
+
+/** JSON-RPC errors carry the useful part ("GOOSE_PROVIDER not set", "please log in") in `data`. */
+function explain(error: unknown, profile: AgentProfile) {
+  if (!(error instanceof Error) || !("code" in error)) return error;
+  const e = error as Error & { data?: unknown };
+  const detail = e.data === undefined || e.data === null ? "" : typeof e.data === "string" ? e.data : JSON.stringify(e.data).slice(0, 400);
+  const text = `${e.message}${detail ? "：" + detail : ""}`;
+  const cli = profile.command === "npx" || profile.command === "uvx" ? `${profile.command} ${profile.args.filter((a) => !a.startsWith("-") || a === "-y").slice(0, 2).join(" ")}` : profile.command;
+  const hint = /auth|login|log in|api.?key|credential|provider|configur/i.test(text) ? `（先在终端直接运行 ${cli} 完成登录或配置，再回来使用）` : "";
+  return new Error(text + hint);
 }
 
 /** One prompt turn against an ACP agent (Codex/TraeX/Claude Code adapters…). */
@@ -288,4 +316,21 @@ export async function runAcp(profile: AgentProfile, req: AgentRequest, emit: (e:
     req.signal?.removeEventListener("abort", onAbort);
     handle.close();
   }
+}
+
+function isModelOption(o: SessionConfigOption) {
+  return (o as { category?: string }).category === "model" || o.id === "model";
+}
+
+/** Agents name permission modes differently; map omem's role modes onto what the agent offers. */
+const MODE_ALIASES: Record<string, string[]> = {
+  "read-only": ["read-only", "readonly", "read_only", "ask"],
+  plan: ["plan", "architect"],
+  default: ["default", "normal", "code"],
+  acceptEdits: ["acceptEdits", "accept-edits", "auto_edit", "autoEdit", "auto-edit"],
+  auto: ["auto", "agent", "act"],
+};
+export function pickMode(wanted: string[], available: string[]) {
+  for (const w of wanted) for (const alias of MODE_ALIASES[w] ?? [w]) if (available.includes(alias)) return alias;
+  return undefined;
 }
