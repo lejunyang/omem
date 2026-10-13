@@ -2,7 +2,7 @@
 title: omem 是什么、怎么组成
 summary: 用“飞书里问一句话、助理答并顺手记下一件事”走通整条链路，讲清宿主与 Agent 的分工、十个核心术语、src 下各目录的职责，以及建议的阅读顺序。
 kind: guide
-updated: 2026-10-12
+updated: 2026-10-13
 ---
 
 omem 是本人的个人记忆与助理：文档、代码、聊天、笔记进同一个知识库，Agent 带着依据回答问题、记住约定、跟进事项、交办编码。这页回答四件事：它解决什么问题；宿主（omem 进程）和 Agent 各管什么；`src/` 下的目录怎么对应这些职责；先读什么、后读什么。读完你能在脑子里把一条消息从进来到答复发出的路径走一遍，并知道要改某个行为该先打开哪个文件。
@@ -12,12 +12,12 @@ omem 是本人的个人记忆与助理：文档、代码、聊天、笔记进同
 本人在飞书私聊机器人：“项目A的预算之前是多少？另外我周五前要把方案给老板。”
 
 1. **渠道收消息。** 飞书机器人用 WebSocket 收 `im.message.receive_v1` 事件，转成统一的 `Inbound`；只有 `ownerOpenId` 对得上的发送者才会被处理，私聊时顺带记下这个 chat 作为通知落点 ([lark-bot.ts:122-148](../../src/channels/lark-bot.ts#L122-L148))。
-2. **进收件箱。** 所有渠道共用 `answerFromChannel → receive`。`receive` 先找到或创建这条消息所属的 Thread；以 `/` 开头的命令不经过模型直接答；其他消息写入 `messages`，并创建一个 `kind: "ask"` 的 Run，`lane` 设为 Thread id。如果同一个 Thread 里已有一个还没开始的 ask，新消息并进去（突发的几条合成一轮）([inbox.ts:31-84](../../src/agents/inbox.ts#L31-L84))。
+2. **进收件箱。** 所有渠道共用 `answerFromChannel → receive`。`receive` 先找到或创建这条消息所属的 Thread；以 `/` 开头的命令不经过模型直接答；其他消息写入 `messages`，并创建一个 `kind: "ask"` 的 Run，`lane` 设为 Thread id。如果同一个 Thread 里已有一个还没开始的 ask，新消息并进去（突发的几条合成一轮）([inbox.ts:32-88](../../src/agents/inbox.ts#L32-L88))。
 3. **队列调度。** `startWorker` 每 2 秒、也在每次 `createRun` 后 `kick`。同一 lane 里同时只跑一个 Run，且只有最老的排队项能启动；不同 Thread 并行。问答类（`ask`、`agent`）和后台类（整理、巡检等）各有并发上限，所以长时间的后台任务不会堵住回复 ([runs.ts:207-246](../../src/agents/runs.ts#L207-L246))。
 4. **组装上下文。** `ask` 处理器调用 `threadTurn`，后者调用 `prepareRun`：选 Agent 配置，给这次运行签一个工具令牌，把角色说明、环境（当前时间、空间、`SPACE.md`）、本人的偏好和以往经验、可用技能拼成 system 文本 ([runner.ts:134-180](../../src/agents/runner.ts#L134-L180))。
 5. **交给 Agent。** 优先走 ACP：起一个 Codex 或 Claude Code 的 ACP 进程，在 `newSession` 里注入名为 `omem` 的 MCP 服务器；Agent 支持 HTTP MCP 就直连 `/mcp`，否则起 `mcp-bridge.ts` 这个 stdio 桥，两种方式都带上那个令牌 ([acp.ts:152-166](../../src/agents/acp.ts#L152-L166))。没有 ACP 时退回 `claude -p` / `codex exec`（`src/agents/cli.ts`）。
 6. **Agent 自己调查。** 它用 `recall` 找项目A的预算记忆（带版本链），必要时 `search` / `read_source` 读聊天原文；同时从“周五前把方案给老板”里看出一个待办。`roles/assistant.md` 的要求就是：回答之外顺手检查有没有值得记的事实和隐含的事项，先 `recall` 去重，已有就更新 ([assistant.md:34-44](../../roles/assistant.md#L34-L44))。于是它调用 `upsert_item` 建一个 todo，并在答复末尾写一行 `已记录：…`。
-7. **工具层把关并落库。** 每次工具调用先查这次令牌允许的工具清单，再用 zod 校验参数，处理器里再校验空间范围，然后写 SQLite；写入类工具还会向这次 Run 发 `tool-write` 事件 ([tools.ts:790-805](../../src/agents/tools.ts#L790-L805))。
+7. **工具层把关并落库。** 每次工具调用先查这次令牌允许的工具清单，再用 zod 校验参数，处理器里再校验空间范围，然后写 SQLite；写入类工具还会向这次 Run 发 `tool-write` 事件 ([tools.ts:792-807](../../src/agents/tools.ts#L792-L807))。
 8. **答复回到渠道。** 处理器把答案存成一条 assistant 消息、写进 Run 的 `output`；`answerFromChannel` 里 `waitForRun` 等到 Run 结束，取出答案，把 `src:`、`mem:` 链接和页面双链这类飞书打不开的内部链接还原成纯文字，再由机器人回复 ([common.ts:12-27](../../src/channels/common.ts#L12-L27))。
 
 ```mermaid
@@ -72,13 +72,14 @@ flowchart LR
 - **没有长 prompt。** `_common.md` 只有 23 行，是所有角色共享的工作方式、引用格式和表达要求；各角色正文也是几十行的目的与标准。`prepareRun` 拼接的内容是：共享说明、角色说明、环境、本人偏好，以及技能和 Agent 档案的名称索引（正文让 Agent 按需 `read_skill`）([runner.ts:164-168](../../src/agents/runner.ts#L164-L168))。宿主没有任何“根据问题类型决定搜几轮”的代码。
 - **没有宿主多轮检索。** 搜索、`scan`（穷举命中行）、`read_source`、`find_symbol` 都是 Agent 可调用的工具。汇总类问题该怎么穷举、怎么计数，写在 `assistant.md` 里，而不是宿主代码里。
 - **模型不直接写库。** 写入只能走 `remember` / `supersede` / `forget` / `upsert_item` / `write_page` 等工具。`write_page` 先写 Markdown，再更新索引，再向 Git 提交，提交信息里带 Run id，所以“这份理解什么时候被谁改的”可追溯 ([wiki/store.ts:129-143](../../src/wiki/store.ts#L129-L143))。
+- **别人写的内容只标记、不过滤。** 群聊、网页、文档里可能夹着“写给 AI 的指令”。可选的注入标记（`config.guard`，需要本机跑一个小判官模型）在原件入库整理时和群上下文进线程时打分，超过阈值就在 `read_source`、ingest 任务和线程提示里附一句警告，要求 Agent 只当材料；宿主不拦截、不删除，也不替模型判断该不该执行 ([architecture.md:145](../../docs/v2/architecture.md#L145))。
 
 ## 分支与边界
 
 - **渠道不同，入口相同。** 群里的消息先作为 `kind: "chat"` 的 Source 追加保存，等 5 分钟安静期后再触发 `ingest` 运行；只有 @ 机器人且发送者是本人才进入问答 ([lark-bot.ts:80-108](../../src/channels/lark-bot.ts#L80-L108))。
 - **Agent 会话分三层延续。** ACP 进程保活（live）、用保存的 session id 恢复（resumed）、冷启动时带摘要和最近消息（fresh）；超过 `sessions.maxTurns` 轮就换新会话 ([sessions.ts:12-28](../../src/agents/sessions.ts#L12-L28))。
 - **进程重启。** `startWorker` 启动时把 `running` 的 Run 改回 `queued`，要求处理器可重入 ([runs.ts:218-219](../../src/agents/runs.ts#L218-L219))。多个进程（服务、CLI）共用一个库，所以领取任务时用带 `status='queued'` 条件的 update 做原子认领 ([runs.ts:259-260](../../src/agents/runs.ts#L259-L260))。
-- **没有可用 Agent。** `profileFor` 在没配置也没装任何 Agent 时直接抛 503，提示安装 `codex-acp`、`claude-agent-acp` 或 CLI ([runner.ts:60-71](../../src/agents/runner.ts#L60-L71))。omem 不自带模型。
+- **没有可用 Agent。** `profileFor` 在没配置也没装任何 Agent 时直接抛 503，提示安装 `codex-acp`、`claude-agent-acp` 或 CLI ([runner.ts:60-71](../../src/agents/runner.ts#L60-L71))。omem 不自带模型。第一次用可以跑 `omem setup`，向导会列出本机已装的 Agent 并写入配置。
 
 ## 为什么这样设计
 
@@ -91,12 +92,13 @@ flowchart LR
 | 目录 | 管什么 |
 | --- | --- |
 | `src/core` | `App`（共享上下文：配置、数据库、事件、目录）、`db.ts` 迁移、`spaces`、`git`、`scheduler`、`notify` |
-| `src/sources` | 导入（文件、目录、URL、飞书文档）、转文本、切片、符号与调用图 |
+| `src/sources` | 导入（文件、目录、URL、飞书文档）、转文本、切片、符号与调用图；`guard.ts` 是可选的注入标记 |
 | `src/search` | 分词、FTS 与向量召回、RRF 融合 |
-| `src/memory`、`src/items`、`src/wiki`、`src/learn` | 记忆（含版本链）、事项（含时间线）、Wiki 页面（文件 + Git + 索引）、学习卡片 |
-| `src/agents` | 本系统的核心：`inbox` / `threads` / `sessions`（会话）、`runs`（队列）、`jobs`（各类 Run 的处理器）、`runner`（`prepareRun`）、`acp` / `cli`（Agent 传输）、`tools`（MCP 工具与令牌）、`specs`（Agent 档案与技能）、`code`（交办编码） |
+| `src/memory`、`src/items`、`src/wiki`、`src/learn` | 记忆（含版本链）、事项（含时间线）、Wiki 页面（文件 + Git + 索引，含 `exportWiki`）、学习卡片 |
+| `src/agents` | 本系统的核心：`inbox` / `threads` / `sessions`（会话）、`commands`（斜杠命令）、`runs`（队列）、`jobs`（各类 Run 的处理器）、`runner`（`prepareRun`）、`acp` / `cli`（Agent 传输）、`tools`（MCP 工具与令牌）、`specs`（Agent 档案与技能）、`code`（交办编码） |
 | `src/channels` | 飞书机器人、飞书个人消息、Telegram、OneBot，都只负责收发，把消息交给 `receive` |
 | `src/server` | Fastify：REST API、`/api/tools`、`/mcp`、事件流、静态网页 |
+| `src/setup.ts`、`src/cli-main.ts` | `omem setup` 交互向导；命令行入口（`ask`、`space`、`wiki`、`delegate`、`mcp` 等） |
 | `roles/`、`web/`、`test/`、`scripts/` | 角色说明；Vue 3 网页；测试；评测与截图脚本 |
 
 建议顺序：

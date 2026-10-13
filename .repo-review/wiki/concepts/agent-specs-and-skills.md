@@ -2,7 +2,7 @@
 title: Agent 档案与技能
 summary: 讲清 Agent 档案（spec）与内置角色（role）的区别，档案和技能如何存储、审批、被发现和使用，以及谁能创建和修改它们。
 kind: concept
-updated: 2026-10-12
+updated: 2026-10-13
 ---
 
 这页回答四个问题：Agent 档案（spec）和角色（role）差在哪；技能（skill）怎么创建、怎么被 Agent 发现并使用；档案怎么被交办任务；谁可以改它们。读完你能手写一个档案、判断它运行时拿到哪些工具和空间，并知道要改行为该动哪个文件。运行时与工具权限的总体机制在 [Agent 运行时与 MCP 工具权限](./agent-runtime-and-tools.md)，内置角色和任务队列在 [任务队列、Run 与角色](./run-queue-and-roles.md)，这里不重复。
@@ -43,7 +43,7 @@ sequenceDiagram
   J->>U: deliverToThread(原线程)
 ```
 
-`/as` 先查档案，草稿直接拒绝并提示 `/approve agent <名>`；带任务时只建一个 `agent` 类型的 run，不改线程设置，返回“已交给……”后命令就结束了（[commands.ts:183-207](../../../src/agents/commands.ts#L183-L207)）。run 由 `registerHandler("agent")` 执行：读出档案，用 `runRole` 跑，把答案以“**档案名** 完成了「任务」：……”发回原线程（[jobs.ts:68-85](../../../src/agents/jobs.ts#L68-L85)）。`/as reviewer-lite` 不带任务则相反：把 `thread.settings.spec` 设为该档案，之后这个线程的每条消息都由它回答（见后文“线程级默认”）。
+`/as` 先查档案，草稿直接拒绝并提示 `/approve agent <名>`；带任务时只建一个 `agent` 类型的 run，不改线程设置，返回“已交给……”后命令就结束了（[commands.ts:183-207](../../../src/agents/commands.ts#L183-L207)）。run 由 `registerHandler("agent")` 执行：读出档案，用 `runRole` 跑，把答案以“**档案名** 完成了「任务」：……”发回原线程（[jobs.ts:71-88](../../../src/agents/jobs.ts#L71-L88)）。`/as reviewer-lite` 不带任务则相反：把 `thread.settings.spec` 设为该档案，之后这个线程的每条消息都由它回答（见后文“线程级默认”）。
 
 ## 档案与角色的区别
 
@@ -85,7 +85,7 @@ schema 是 zod 定义（[specs.ts:32-52](../../../src/agents/specs.ts#L32-L52)�
 
 ## 创建：save_agent 与 save_skill
 
-助理想建档案时调用 `save_agent`，工具描述写明规矩：本人明确要求时直接建；自己觉得有用时 `draft=true` 起草，等本人 `/approve`（[tools.ts:325-351](../../../src/agents/tools.ts#L325-L351)）。handler 的状态逻辑是：`draft` 为真 → 草稿；否则沿用已有档案的状态，新建则为 `active`。所以“agent 创建的默认草稿”靠的是工具说明和角色提示，不是代码强制：schema 默认值是 `active`，助理不传 `draft` 就会直接生效。`save_skill` 同理，且校验 description 与正文非空，附带文件名不得含 `..`、不得以 `/` 开头、不得覆盖 `SKILL.md`（[specs.ts:165-182](../../../src/agents/specs.ts#L165-L182)）。
+助理想建档案时调用 `save_agent`，工具描述写明规矩：本人明确要求时直接建；自己觉得有用时 `draft=true` 起草，等本人 `/approve`（[tools.ts:327-353](../../../src/agents/tools.ts#L327-L353)）。handler 的状态逻辑是：`draft` 为真 → 草稿；否则沿用已有档案的状态，新建则为 `active`。所以“agent 创建的默认草稿”靠的是工具说明和角色提示，不是代码强制：schema 默认值是 `active`，助理不传 `draft` 就会直接生效。`save_skill` 同理，且校验 description 与正文非空，附带文件名不得含 `..`、不得以 `/` 开头、不得覆盖 `SKILL.md`（[specs.ts:165-182](../../../src/agents/specs.ts#L165-L182)）。
 
 哪些角色有这些工具由角色 frontmatter 决定：`assistant` 同时有 `list_agents/save_agent/run_agent/save_skill`，`dreamer` 有 `save_skill/save_agent` 但没有 `run_agent`（从 `roles/assistant.md`、`roles/dreamer.md` 的 `tools` 行看）。dreamer 的提示要求同类多步骤工作出现两次以上才起草。起草出的东西不会被任何 Agent 使用，直到本人启用：`listAgentSpecs`/`listSkills` 默认只返回 `active`，`run_agent` 和 `/as` 都拒绝草稿。
 
@@ -113,7 +113,7 @@ schema 是 zod 定义（[specs.ts:32-52](../../../src/agents/specs.ts#L32-L52)�
 
 ## 技能：渐进披露
 
-技能不会整篇塞进 prompt。`skillIndex` 只输出每个技能一行：`- 名称：description（全文：read_skill，或读取 …/SKILL.md）`；档案配了 `skills` 就只列这些，没配则列全部 active 技能（[specs.ts:196-202](../../../src/agents/specs.ts#L196-L202)）。环境段里标题是“可用技能（做对应的事之前先读全文并照做）”（[runner.ts:167](../../../src/agents/runner.ts#L167)）。Agent 判断匹配后调用 `read_skill` 拿正文和附带文件列表，需要时再用 `file` 参数读附带文件（[tools.ts:377-389](../../../src/agents/tools.ts#L377-L389)）。所以 `description` 的质量决定技能会不会被用上，它要写成“做什么、什么时候用”。
+技能不会整篇塞进 prompt。`skillIndex` 只输出每个技能一行：`- 名称：description（全文：read_skill，或读取 …/SKILL.md）`；档案配了 `skills` 就只列这些，没配则列全部 active 技能（[specs.ts:196-202](../../../src/agents/specs.ts#L196-L202)）。环境段里标题是“可用技能（做对应的事之前先读全文并照做）”（[runner.ts:167](../../../src/agents/runner.ts#L167)）。Agent 判断匹配后调用 `read_skill` 拿正文和附带文件列表，需要时再用 `file` 参数读附带文件（[tools.ts:379-391](../../../src/agents/tools.ts#L379-L391)）。所以 `description` 的质量决定技能会不会被用上，它要写成“做什么、什么时候用”。
 
 `skills` 只限制索引，不限制 `read_skill`：因为 `list_skills/read_skill` 始终在工具集里，档案仍可以按名字读到未列出的技能（从实现看，没有对 `read_skill` 做名单过滤）。
 
@@ -121,7 +121,7 @@ schema 是 zod 定义（[specs.ts:32-52](../../../src/agents/specs.ts#L32-L52)�
 
 ## 交办与线程级默认
 
-交办有两种入口，都落到同一个 `agent` run：命令 `/as 名 任务`，和助理调用的 `run_agent`。后者从当前 run 的输入里取线程 id，找不到则没有回传目标；档案是草稿时抛错；空间取参数、档案 `space`、当前空间中的第一个可用（[tools.ts:353-365](../../../src/agents/tools.ts#L353-L365)）。run 的 `parentId` 指向发起它的 run，方便追溯。
+交办有两种入口，都落到同一个 `agent` run：命令 `/as 名 任务`，和助理调用的 `run_agent`。后者从当前 run 的输入里取线程 id，找不到则没有回传目标；档案是草稿时抛错；空间取参数、档案 `space`、当前空间中的第一个可用（[tools.ts:355-367](../../../src/agents/tools.ts#L355-L367)）。run 的 `parentId` 指向发起它的 run，方便追溯。
 
 线程级默认是 `thread.settings.spec`。`/as 名` 设置它，`/as off` 清除，同时清掉群级 `chat_settings.spec`（[commands.ts:189-193](../../../src/agents/commands.ts#L189-L193)）。新线程在 `resolveThread` 里从群设置继承 `spec`（[threads.ts:152](../../../src/agents/threads.ts#L152)）；`/new` 也把当前线程的 `spec` 带到新线程（[commands.ts:63](../../../src/agents/commands.ts#L63)）。每轮回答时 `actorFor` 重新读档案，只有仍是 `active` 才使用，否则悄悄回落到助理（[sessions.ts:85-90](../../../src/agents/sessions.ts#L85-L90)）。
 
@@ -138,7 +138,7 @@ schema 是 zod 定义（[specs.ts:32-52](../../../src/agents/specs.ts#L32-L52)�
 
 ## 要改这里从哪下手
 
-- 新增档案字段：先改 `agentSpecSchema`（[specs.ts:32](../../../src/agents/specs.ts#L32)），再在 `prepareRun` 里用上；`save_agent` 的 zod 参数（[tools.ts:329-345](../../../src/agents/tools.ts#L329-L345)）、`list_agents` 的展示、`Agents.vue` 顶部的 `Spec` 类型要同步。`saveAgentSpec` 会自动保存新字段，但工具层和网页类型不会。
+- 新增档案字段：先改 `agentSpecSchema`（[specs.ts:32](../../../src/agents/specs.ts#L32)），再在 `prepareRun` 里用上；`save_agent` 的 zod 参数（[tools.ts:331-347](../../../src/agents/tools.ts#L331-L347)）、`list_agents` 的展示、`Agents.vue` 顶部的 `Spec` 类型要同步。`saveAgentSpec` 会自动保存新字段，但工具层和网页类型不会。
 - 改默认工具：`DEFAULT_SPEC_TOOLS`；注意工具名必须是 `tools.ts` 里实际注册的。
 - 改“agent 创建默认草稿”的策略：目前只在 `save_agent` handler 与 `roles/assistant.md`；要强制就在 handler 里对 `ctx.actor === "agent"` 的新建固定写 `draft`。
 - 改技能被发现的方式：`skillIndex` 和 `prepareRun` 的“可用技能”段。
