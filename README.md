@@ -30,14 +30,23 @@ flowchart LR
 
 ## 快速开始
 
-需要 Node.js 22.18+（推荐 24），以及至少一个已登录的 Agent：
+需要 Node.js 22.18+（推荐 24），以及至少一个已登录的 Agent。任何支持 [Agent Client Protocol](https://agentclientprotocol.com) 的 Agent 都能用，装在 PATH 里就会被自动识别：
 
-| Agent | 安装 | omem 配置 id |
+| Agent | 安装 | 配置 id |
 | --- | --- | --- |
-| Codex（ACP） | `npm i -g @agentclientprotocol/codex-acp`，并登录 codex | `codex` |
-| Claude Code（ACP） | `npm i -g @agentclientprotocol/claude-agent-acp`，并登录 claude | `claude` |
-| TraeX（ACP） | 已安装 `traex` | `traex` |
-| Claude / Codex 命令行 | `claude` 或 `codex` 在 PATH 中 | `claude-cli` / `codex-cli` |
+| Codex | `npm i -g @agentclientprotocol/codex-acp` | `codex` |
+| Claude Code | `npm i -g @agentclientprotocol/claude-agent-acp` | `claude` |
+| Gemini CLI | `npm i -g @google/gemini-cli` | `gemini` |
+| GitHub Copilot CLI | `npm i -g @github/copilot` | `copilot` |
+| Qwen Code | `npm i -g @qwen-code/qwen-code` | `qwen` |
+| Cursor Agent | `curl https://cursor.com/install -fsS \| bash` | `cursor` |
+| OpenCode | `npm i -g opencode-ai` | `opencode` |
+| CodeBuddy Code / Qoder / iFlow | `npm i -g @tencent-ai/codebuddy-code` / `@qoder-ai/qodercli` / `@iflow-ai/iflow-cli` | `codebuddy` / `qoder` / `iflow` |
+| Kimi CLI / Mistral Vibe | `uv tool install kimi-cli` / `mistral-vibe` | `kimi` / `vibe` |
+| goose、Kilo、Auggie、Cline、Factory Droid、Grok、MiniMax、Amp、Junie、Devin、pi、DeepAgents、TraeX | 见 `omem agents --all` | 同名 |
+| Claude / Codex 命令行（非 ACP 兜底） | `claude` 或 `codex` 在 PATH 中 | `claude-cli` / `codex-cli` |
+
+`omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → Agent → ACP 注册表”做同样的事。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。
 
 ```bash
 # 源码运行（osdk 管理 Node/pnpm 与模型）

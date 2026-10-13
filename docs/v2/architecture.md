@@ -72,7 +72,7 @@ Channel（渠道）        Web、CLI、飞书机器人，后续 Telegram/QQ/微�
 
 ## Agent 运行时
 
-- **传输**：ACP（Codex/traex、Claude Code ACP 适配器等，命令可配置）为主；`claude -p` / `codex exec` 作为无 ACP 时的后备。模型与 effort 来自配置，启动时从 ACP 会话动态读取可选项。
+- **传输**：ACP 为主，`claude -p` / `codex exec` 作为无 ACP 时的后备。内置目录（`src/agents/catalog.ts`）列了 25 个 ACP Agent 的启动命令（Codex、Claude Code、Gemini、Copilot、Qwen、Cursor、OpenCode、goose、Kimi、Kilo、CodeBuddy、Qoder、iFlow、Droid…），PATH 里有就自动识别；其余从官方 ACP 注册表添加（npx / uvx，或下载对应平台的程序并校验 sha256 到 `~/.omem/agents/`）。模型与 effort 来自配置，启动时从 ACP 会话动态读取可选项：优先 session config options（model / thought_level），没有时用旧式 `session.models` + `session/set_model`。角色要求的权限模式按别名映射到各家的模式名（如 acceptEdits ↔ autoEdit、read-only ↔ ask）。Agent 返回的 JSON-RPC 错误把 `data`（如“未登录”“缺少 provider 配置”）带给用户并提示先在终端登录。
 - **工具**：omem 自身以 MCP 服务暴露工具（`search`、`read_source`、`read_page`、`write_page`、`remember`、`forget`、`list_items`、`upsert_item`、`list_spaces` ……），通过 ACP `newSession.mcpServers` 注入。Agent 同时保有原生的文件读取与 shell（代码仓库只读）。
 - **角色**由短技能文件定义（`roles/*.md`）：`assistant`（问答与交办）、`wiki-planner`、`wiki-writer`、`ingest`（新材料进来时更新记忆/页面/事项）、`dreamer`（整理）、`coder`、`reviewer`、`tutor`。每个文件写目的、工具用法和质量标准，不写几十条禁令。
 - **权限**：模型不直接写数据库，所有写入经 MCP 工具，工具层校验并记录到 Run。危险操作（发消息、应用补丁、删除）生成“待确认”事项。
@@ -132,7 +132,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
 | 空间、原件、切分、全文 + 符号 + 可选向量检索 | 已实现，测试覆盖 | `src/sources`、`src/search` |
-| Agent 运行时（ACP、claude/codex 命令行后备）与 MCP 工具（HTTP 与 stdio 桥） | 已实现；假 ACP Agent 端到端测试；真实 Claude Code ACP 已跑通 | `src/agents/acp.ts`、`tools.ts` |
+| Agent 运行时（ACP、claude/codex 命令行后备）与 MCP 工具（HTTP 与 stdio 桥）；25 个内置 ACP Agent + 官方注册表添加 | 已实现；假 ACP Agent 端到端测试；真实 Claude Code、OpenCode（含 MCP 工具调用）已跑通，Gemini / Qwen / Copilot / goose 握手通过（需登录） | `src/agents/acp.ts`、`tools.ts` |
 | 问答、记忆更正与版本链、事项与时间线 | 已实现，真实模型抽查通过 | `roles/assistant.md` |
 | 新材料整理（记忆/事项/页面/通知） | 已实现，真实模型抽查通过 | `roles/ingest.md` |
 | 代码仓库 Wiki：规划 → 逐页写作 → 原件变化后检查 | 已实现；zustand 12 页实测 | `roles/wiki-*.md` |

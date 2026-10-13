@@ -531,6 +531,34 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return r.probe;
   });
 
+  // Official ACP registry: agents beyond the built-in catalog, runnable via npx / uvx / a downloaded binary.
+  server.get("/api/agent-registry", async () => {
+    const { fetchRegistry, registryOptions } = await import("../agents/catalog.ts");
+    const have = new Set(listAgentProfiles(app).filter((p) => p.installed).map((p) => p.id));
+    return (await fetchRegistry()).map((a) => ({
+      id: a.id,
+      name: a.name,
+      version: a.version,
+      description: a.description,
+      website: a.website ?? a.repository,
+      added: have.has(a.id),
+      ways: registryOptions(a).filter((o) => o.available).map((o) => o.kind),
+    }));
+  });
+  server.post("/api/agent-registry/:id", async (req) => {
+    const { fetchRegistry } = await import("../agents/catalog.ts");
+    const { addRegistryAgent } = await import("../setup.ts");
+    const id = (req.params as { id: string }).id;
+    const b = q(z.object({ via: z.enum(["npx", "uvx", "binary"]).optional() }), req.body ?? {});
+    const agent = (await fetchRegistry()).find((a) => a.id === id);
+    if (!agent) throw new HttpError(404, `ACP 注册表里没有 ${id}`);
+    const next = structuredClone(app.config);
+    const profile = await addRegistryAgent(agent, next, app.home, b.via);
+    saveConfig(next, app.home);
+    Object.assign(app.config, next);
+    return { profile, agents: listAgentProfiles(app) };
+  });
+
   // ----------------------------------------------------------------- settings
   server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home }));
   server.put("/api/settings", async (req) => {

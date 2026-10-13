@@ -11,6 +11,7 @@ import { spaceGuide } from "../wiki/store.ts";
 import { runAcp } from "./acp.ts";
 import { runCli } from "./cli.ts";
 import { commandExists } from "./spawn.ts";
+import { catalogEntry, installHint } from "./catalog.ts";
 import { issueToolToken, revokeToolToken } from "./tools.ts";
 import type { AgentEvent, AgentResult, McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
@@ -55,7 +56,10 @@ function installed(p: AgentProfile) {
 }
 
 export function listAgentProfiles(app: App) {
-  return allProfiles(app.config).map((p) => ({ ...p, installed: installed(p) }));
+  return allProfiles(app.config).map((p) => {
+    const e = catalogEntry(p.id);
+    return { ...p, installed: installed(p), install: e && e.command === p.command ? installHint(e) : undefined };
+  });
 }
 
 export function profileFor(app: App, role: RoleName | string): AgentProfile {
@@ -67,7 +71,7 @@ export function profileFor(app: App, role: RoleName | string): AgentProfile {
     return p;
   }
   const p = profiles.find(installed);
-  if (!p) throw new HttpError(503, "没有可用的 Agent。请安装 codex-acp、claude-agent-acp 或 claude/codex CLI，并在设置中选择。");
+  if (!p) throw new HttpError(503, "没有可用的 Agent。请安装任一支持 ACP 的 Agent（codex-acp、claude-agent-acp、gemini、copilot、qwen、opencode、cursor-agent…），运行 omem agents --all 查看安装方式。");
   return p;
 }
 

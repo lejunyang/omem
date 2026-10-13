@@ -4,7 +4,7 @@ import { get, patch, post, put, type Space } from "../api";
 import Icon from "../components/Icon.vue";
 import { fmtTime, kindLabel, loadSpaces, state, toast } from "../store";
 
-type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean };
+type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string };
 type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
 const tab = ref<"spaces" | "agents" | "schedules" | "search" | "lark" | "about">("spaces");
 const config = ref<any>(null);
@@ -161,14 +161,39 @@ async function probe(p: Profile) {
   }
 }
 async function setProfileOption(p: Profile, key: "model" | "effort", value: string) {
-  const { installed, ...rest } = p;
+  const { installed, install, ...rest } = p;
   const next = { ...rest, [key]: value === "default" ? undefined : value };
   const list = [...config.value.agents.profiles.filter((x: Profile) => x.id !== p.id), next];
   await saveConfig({ agents: { ...config.value.agents, profiles: list } }, `${p.name ?? p.id}：${key} = ${value}`);
   void load();
 }
+const installedProfiles = computed(() => profiles.value.filter((p) => p.installed));
+const missingProfiles = computed(() => profiles.value.filter((p) => !p.installed));
+type RegistryAgent = { id: string; name: string; version: string; description?: string; website?: string; added: boolean; ways: string[] };
+const registry = ref<RegistryAgent[] | null>(null);
+const registryBusy = ref("");
+async function loadRegistry() {
+  try {
+    registry.value = await get("/api/agent-registry");
+  } catch (e) {
+    toast(`读取 ACP 注册表失败：${(e as Error).message}`, "error");
+  }
+}
+async function addFromRegistry(a: RegistryAgent, via?: string) {
+  registryBusy.value = a.id;
+  try {
+    const r = await post<{ profile: Profile }>(`/api/agent-registry/${a.id}`, via ? { via } : {});
+    toast(`已添加 ${a.name}：${r.profile.command} ${r.profile.args.join(" ")}。第一次用前先在终端运行它登录。`);
+    a.added = true;
+    void load();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    registryBusy.value = "";
+  }
+}
 function editProfile(p: Profile) {
-  const { installed, ...rest } = p;
+  const { installed, install, ...rest } = p;
   profileJson.value = JSON.stringify(rest, null, 2);
 }
 </script>
@@ -205,15 +230,27 @@ function editProfile(p: Profile) {
     <section v-else-if="tab === 'agents' && config" class="stack">
       <p class="muted">omem 不内置模型：理解、写作和编码交给你已安装并登录的 Agent（通过 ACP 或命令行）。不同角色可以用不同 Agent，例如问答用快的模型，Wiki 和评审用强的模型。</p>
       <div class="card">
-        <div v-for="p in profiles" :key="p.id" class="prow">
-          <span class="badge" :class="p.installed ? 'ok' : ''">{{ p.installed ? "已安装" : "未找到" }}</span>
+        <div v-for="p in installedProfiles" :key="p.id" class="prow">
+          <span class="badge ok">已安装</span>
           <div class="grow">
             <div><strong>{{ p.name ?? p.id }}</strong> <span class="muted small mono">{{ p.id }}</span></div>
             <div class="muted small mono">{{ p.transport }} · {{ p.command }} {{ p.args.join(" ") }}<template v-if="p.model"> · {{ p.model }}</template><template v-if="p.effort"> · {{ p.effort }}</template></div>
           </div>
-          <button v-if="p.transport === 'acp' && p.installed" class="btn ghost sm" @click="probe(p)">{{ probes[p.id]?.loading ? "连接中…" : "检测模型" }}</button>
+          <button v-if="p.transport === 'acp'" class="btn ghost sm" @click="probe(p)">{{ probes[p.id]?.loading ? "连接中…" : "检测模型" }}</button>
           <button class="btn ghost sm" @click="editProfile(p)">编辑</button>
         </div>
+        <div v-if="!installedProfiles.length" class="prow muted">还没有可用的 Agent，从下面任选一个安装。</div>
+        <details v-if="missingProfiles.length" class="more">
+          <summary class="small muted">其他支持的 Agent（{{ missingProfiles.length }} 个，未安装）</summary>
+          <div v-for="p in missingProfiles" :key="p.id" class="prow">
+            <span class="badge">未找到</span>
+            <div class="grow">
+              <div><strong>{{ p.name ?? p.id }}</strong> <span class="muted small mono">{{ p.command }} {{ p.args.join(" ") }}</span></div>
+              <div v-if="p.install" class="muted small mono">安装：{{ p.install }}</div>
+            </div>
+            <button class="btn ghost sm" @click="editProfile(p)">编辑</button>
+          </div>
+        </details>
         <template v-for="p in profiles" :key="'probe-' + p.id">
           <div v-if="probes[p.id]?.data || probes[p.id]?.error" class="probe">
             <div class="small muted">{{ p.name ?? p.id }}：{{ probes[p.id].error ?? probes[p.id].data!.agent }}</div>
@@ -226,14 +263,29 @@ function editProfile(p: Profile) {
           </div>
         </template>
       </div>
+      <div class="card pad stack">
+        <div class="row"><div class="section-title grow">ACP 注册表</div><button class="btn ghost sm" @click="loadRegistry">{{ registry ? "刷新" : "浏览" }}</button></div>
+        <p class="muted small">任何支持 Agent Client Protocol 的 Agent 都能接入。这里列出官方注册表里的 Agent，可以用 npx / uvx 运行，或下载对应平台的程序到数据目录。</p>
+        <div v-for="a in registry ?? []" :key="a.id" class="prow">
+          <div class="grow">
+            <div><strong>{{ a.name }}</strong> <span class="muted small mono">{{ a.id }} v{{ a.version }}</span></div>
+            <div v-if="a.description" class="muted small">{{ a.description }}</div>
+          </div>
+          <span v-if="a.added" class="badge ok">已可用</span>
+          <template v-else>
+            <button v-for="w in a.ways" :key="w" class="btn ghost sm" :disabled="!!registryBusy" @click="addFromRegistry(a, w)">{{ registryBusy === a.id ? "添加中…" : w === "binary" ? "下载" : w }}</button>
+            <span v-if="!a.ways.length" class="muted small">本机不可用</span>
+          </template>
+        </div>
+      </div>
       <label class="field"><span>默认 Agent</span>
-        <select v-model="defaultProfile" class="select"><option value="">自动（第一个已安装的）</option><option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name ?? p.id }}</option></select>
+        <select v-model="defaultProfile" class="select"><option value="">自动（第一个已安装的）</option><option v-for="p in installedProfiles" :key="p.id" :value="p.id">{{ p.name ?? p.id }}</option></select>
       </label>
       <div class="card pad">
         <div class="section-title">按角色指定</div>
         <div class="roles">
           <label v-for="[r, l] in roles" :key="r" class="row role"><span class="grow">{{ l }}</span>
-            <select class="select" :value="config.agents.roles[r] ?? ''" @change="setRole(r, ($event.target as HTMLSelectElement).value)"><option value="">默认</option><option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name ?? p.id }}</option></select>
+            <select class="select" :value="config.agents.roles[r] ?? ''" @change="setRole(r, ($event.target as HTMLSelectElement).value)"><option value="">默认</option><option v-for="p in installedProfiles" :key="p.id" :value="p.id">{{ p.name ?? p.id }}</option></select>
           </label>
         </div>
       </div>
@@ -360,6 +412,17 @@ function editProfile(p: Profile) {
 .grow {
   flex: 1;
   min-width: 0;
+}
+.prow .grow .mono {
+  overflow-wrap: anywhere;
+}
+.prow .badge,
+.prow .btn {
+  flex-shrink: 0;
+}
+.more summary {
+  cursor: pointer;
+  padding: 8px 12px;
 }
 .probe {
   padding: 10px 16px;
