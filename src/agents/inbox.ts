@@ -1,0 +1,118 @@
+import type { App } from "../core/app.ts";
+import { now, truncate } from "../core/util.ts";
+import { injectionScore } from "../sources/guard.ts";
+import { runCommand } from "./commands.ts";
+import { createRun, queuedInLane, updateQueuedRun } from "./runs.ts";
+import { addMessage, createThread, findThread, resolveThread, updateThread, type Thread, type ThreadAddress } from "./threads.ts";
+
+/**
+ * Every message from the owner, whatever the channel, enters here:
+ *
+ * - `/command` lines are handled directly (no model) and answered at once.
+ * - Otherwise the message joins its thread. If the thread already has a turn
+ *   waiting to start, the message is merged into it (bursts become one turn);
+ *   otherwise a new turn is queued in the thread's lane, so turns of one thread
+ *   run in order while different threads run in parallel.
+ */
+export type Inbound = Partial<ThreadAddress> & {
+  text: string;
+  /** Web / CLI: an explicit conversation (thread) id. */
+  conversationId?: string;
+  /** What was being discussed around the message (group lines before an @mention). */
+  context?: string;
+  contextLabel?: string;
+  /** Channel message id, so later replies can land in the right place (topic). */
+  externalMessageId?: string;
+  /** Wait this long for more messages before starting (defaults to sessions.mergeMs for chats, 0 for web). */
+  mergeMs?: number;
+};
+
+export type Received = { thread: Thread; messageId: string | null; runId: string | null; merged: boolean; reply: string | null; started: "new" | "renewed" | null };
+
+export async function receive(app: App, inb: Inbound): Promise<Received> {
+  let thread: Thread;
+  let started: Received["started"] = null;
+  if (inb.conversationId) {
+    thread = findThread(app, inb.conversationId) ?? createThread(app, { id: inb.conversationId, spaceId: inb.spaceId ?? "personal", channel: inb.channel ?? "web" });
+  } else if (inb.channel && inb.chatId) {
+    const r = resolveThread(app, inb as ThreadAddress);
+    thread = r.thread;
+    started = r.started;
+  } else {
+    thread = createThread(app, { spaceId: inb.spaceId ?? "personal", channel: inb.channel ?? "web" });
+    started = "new";
+  }
+  if (inb.externalMessageId) updateThread(app, thread.id, { settings: { ...thread.settings, lastMessageId: inb.externalMessageId } as Thread["settings"] });
+
+  const text = inb.text.trim();
+  if (text.startsWith("/")) {
+    const reply = await runCommand(app, thread, text, inb);
+    if (reply !== null) {
+      addMessage(app, thread.id, "user", text, null, { command: true });
+      addMessage(app, thread.id, "assistant", reply, null, { command: true });
+      return { thread: findThread(app, thread.id)!, messageId: null, runId: null, merged: false, reply, started };
+    }
+  }
+
+  const meta: Record<string, unknown> = {};
+  if (inb.context) {
+    meta.context = inb.context;
+    meta.contextLabel = inb.contextLabel ?? "群里";
+    // Other people's lines reach the agent here directly, before any ingest: check them now.
+    const score = await injectionScore(app, inb.context);
+    if (score !== null && score >= app.config.guard.threshold) meta.contextSuspect = Math.round(score * 100) / 100;
+  }
+  if (inb.externalMessageId) meta.externalId = inb.externalMessageId;
+  const messageId = addMessage(app, thread.id, "user", text, null, meta);
+  const mergeMs = inb.mergeMs ?? (inb.conversationId || !inb.channel || inb.channel === "web" || inb.channel === "cli" ? 0 : app.config.sessions.mergeMs);
+  const notBefore = new Date(Date.now() + mergeMs).toISOString();
+
+  const waiting = queuedInLane(app, thread.id, "ask");
+  if (waiting) {
+    const ids = [...((waiting.input.messageIds as string[] | undefined) ?? []), messageId];
+    if (updateQueuedRun(app, waiting.id, { input: { ...waiting.input, messageIds: ids }, notBefore: mergeMs ? notBefore : undefined, title: truncate(`${waiting.title} / ${text.replace(/\s+/g, " ")}`, 80) })) {
+      app.db.prepare("update messages set run_id = ? where id = ?").run(waiting.id, messageId);
+      return { thread, messageId, runId: waiting.id, merged: true, reply: null, started };
+    }
+  }
+  const run = createRun(app, {
+    kind: "ask",
+    spaceId: thread.spaceId,
+    title: truncate(text.replace(/\s+/g, " "), 60),
+    input: { conversationId: thread.id, messageIds: [messageId] },
+    lane: thread.id,
+    notBefore: mergeMs ? notBefore : null,
+  });
+  app.db.prepare("update messages set run_id = ? where id = ?").run(run.id, messageId);
+  return { thread, messageId, runId: run.id, merged: false, reply: null, started };
+}
+
+// ---- delivering to threads -------------------------------------------------
+
+type Sender = (thread: Thread, markdown: string) => Promise<void>;
+const senders = new Map<string, Sender>();
+
+/** Channels register how to post into one of their threads (chat, topic). */
+export function registerThreadSender(channel: string, send: Sender) {
+  senders.set(channel, send);
+}
+
+/**
+ * Post something into a thread later (a delegated agent finished, a reminder
+ * for that chat): it becomes part of the thread and reaches the chat/topic
+ * when its channel is connected.
+ */
+export async function deliverToThread(app: App, threadId: string, markdown: string, meta: Record<string, unknown> = {}) {
+  const t = findThread(app, threadId);
+  if (!t) return false;
+  addMessage(app, t.id, "assistant", markdown, null, { ...meta, deliveredAt: now() });
+  const send = senders.get(t.channel);
+  if (!send) return false;
+  try {
+    await send(t, markdown);
+    return true;
+  } catch (e) {
+    console.warn(`[omem] 发送到会话 ${t.id} 失败：${(e as Error).message}`);
+    return false;
+  }
+}

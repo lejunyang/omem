@@ -1,6 +1,6 @@
 ---
 description: 原件变化后检查并修正受影响的 Wiki 页面
-tools: [search, read_source, source_outline, find_symbol, list_pages, read_page, write_page]
+tools: [search, scan, read_source, source_outline, find_symbol, list_pages, read_page, write_page]
 writes: false
 modes: [read-only, default, plan]
 ---

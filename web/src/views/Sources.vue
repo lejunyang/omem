@@ -84,13 +84,35 @@ const isMarkdown = computed(() => detail.value && /\.(md|markdown|mdx)$/i.test(d
 const outline = computed(() => {
   if (!detail.value) return [];
   const o = detail.value.outline;
-  if (o.symbols.length) return o.symbols.filter((s) => !s.qname.includes(".") || s.line_end - s.line_start > 3).map((s) => ({ label: s.qname, kind: s.kind, line: s.line_start, end: s.line_end }));
+  if (o.symbols.length) return o.symbols.filter((s) => !s.qname.includes(".") || s.line_end - s.line_start > 3).map((s) => ({ label: s.qname, qname: s.qname, kind: s.kind, line: s.line_start, end: s.line_end }));
   const seen = new Set<string>();
   return o.sections.filter((s) => s.path && !seen.has(s.path) && seen.add(s.path)).map((s) => ({ label: s.path.split(" / ").pop()!, kind: "", line: s.line_start, end: s.line_end, depth: s.path.split(" / ").length }));
 });
-function goLine(line: number, end: number) {
+type Relations = {
+  callers: { sourceId: string; uri: string; fromQname: string; line: number }[];
+  callees: { sourceId: string | null; uri: string | null; qname: string | null; name: string; line: number }[];
+};
+const symbol = ref<string | null>(null);
+const relations = ref<Relations | null>(null);
+async function goLine(line: number, end: number, qname?: string) {
   raw.value = true;
   router.replace({ query: { from: String(line), to: String(end) } });
+  if (!qname || !detail.value || detail.value.source.kind !== "code") return;
+  symbol.value = qname;
+  relations.value = await get<Relations>(`/api/sources/${detail.value.source.id}/relations?qname=${encodeURIComponent(qname)}`);
+}
+watch(id, () => {
+  symbol.value = null;
+  relations.value = null;
+});
+const resolvedCallees = computed(() => relations.value?.callees.filter((c) => c.qname) ?? []);
+const otherCallees = computed(() => [...new Set(relations.value?.callees.filter((c) => !c.qname).map((c) => c.name) ?? [])]);
+async function openSymbol(sourceId: string, qname: string) {
+  const o = await get<{ outline: Detail["outline"] }>(`/api/sources/${sourceId}?from=1&to=1`);
+  const s = o.outline.symbols.find((x) => x.qname === qname);
+  await router.push({ path: `/sources/${sourceId}`, query: s ? { from: String(s.line_start), to: String(s.line_end) } : {} });
+  symbol.value = qname;
+  relations.value = await get<Relations>(`/api/sources/${sourceId}/relations?qname=${encodeURIComponent(qname)}`);
 }
 async function remove() {
   if (!detail.value || !confirm(`移除原件「${detail.value.source.title}」？引用它的页面会提示原件已移除。`)) return;
@@ -180,9 +202,21 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           </div>
           <aside v-if="outline.length" class="outline">
             <div class="section-title">结构</div>
-            <a v-for="(o, i) in outline" :key="i" href="#" class="ol" :style="{ paddingLeft: ((o as any).depth ?? 1) * 8 - 8 + 'px' }" @click.prevent="goLine(o.line, o.end)">
+            <a v-for="(o, i) in outline" :key="i" href="#" class="ol" :class="{ on: symbol && (o as any).qname === symbol }" :style="{ paddingLeft: ((o as any).depth ?? 1) * 8 - 8 + 'px' }" @click.prevent="goLine(o.line, o.end, (o as any).qname)">
               <span v-if="o.kind" class="k">{{ o.kind.slice(0, 2) }}</span><span class="ellipsis">{{ o.label }}</span>
             </a>
+            <div v-if="relations && symbol" class="rel">
+              <div class="section-title">{{ symbol }} 被调用 · {{ relations.callers.length }}</div>
+              <a v-for="(c, i) in relations.callers" :key="'c' + i" href="#" class="ol" :title="`${c.uri}:${c.line}`" @click.prevent="openSymbol(c.sourceId, c.fromQname)">
+                <span class="ellipsis">{{ c.fromQname || "(顶层)" }}</span><span class="muted small ellipsis file">{{ c.uri.split("/").pop() }}</span>
+              </a>
+              <p v-if="!relations.callers.length" class="muted small">没有解析到调用方（可能是入口、动态调用或外部使用）。</p>
+              <div class="section-title">调用 · {{ resolvedCallees.length }}</div>
+              <a v-for="(c, i) in resolvedCallees" :key="'e' + i" href="#" class="ol" :title="`${c.uri}`" @click.prevent="openSymbol(c.sourceId!, c.qname!)">
+                <span class="ellipsis">{{ c.qname }}</span><span class="muted small ellipsis file">{{ c.uri?.split("/").pop() }}</span>
+              </a>
+              <p v-if="otherCallees.length" class="muted small ext">外部/未解析：{{ otherCallees.slice(0, 30).join("、") }}</p>
+            </div>
           </aside>
         </div>
       </template>
@@ -191,6 +225,28 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
 </template>
 
 <style scoped>
+.rel {
+  min-width: 0;
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+.rel .ol > .ellipsis:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.rel .file {
+  margin-left: auto;
+  flex: none;
+  max-width: 45%;
+}
+.rel .ext {
+  word-break: break-all;
+  margin: 4px 0 0;
+}
+.ol.on {
+  color: var(--accent);
+}
 .sources {
   display: flex;
   height: 100%;
@@ -312,6 +368,8 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
   max-height: calc(100vh - 40px);
   overflow-y: auto;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   gap: 1px;
 }
 .ol {

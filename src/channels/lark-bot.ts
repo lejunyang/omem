@@ -9,7 +9,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { importFile } from "../sources/import.ts";
-import { appendToSource, findSourceByUri } from "../sources/store.ts";
+import { appendToSource, findSourceByUri, sourceText } from "../sources/store.ts";
+import { registerThreadSender } from "../agents/inbox.ts";
 
 /**
  * Feishu/Lark bot channel. Private chat with the owner is a command channel to
@@ -25,6 +26,8 @@ type Inbound = {
   text: string;
   mentionsBot: boolean;
   createTime: string;
+  /** Topic (话题) the message belongs to: thread_id in topic groups and threaded replies. */
+  topicId?: string;
 };
 
 function messageText(raw: string | undefined, type: string | undefined): string {
@@ -56,11 +59,18 @@ export async function startLarkBot(app: App) {
   if (!cfg.appId || !appSecret) throw new Error(`需要配置 lark.appId 和环境变量 ${cfg.appSecretEnv}`);
   const client = new lark.Client({ appId: cfg.appId, appSecret, domain: lark.Domain.Feishu });
 
-  const send = async (chatId: string, markdown: string, replyTo?: string) => {
+  const send = async (chatId: string, markdown: string, replyTo?: string, inThread = false) => {
     const card = { config: { wide_screen_mode: true }, elements: [{ tag: "markdown", content: markdown.slice(0, 28000) }] };
-    if (replyTo) await client.im.message.reply({ path: { message_id: replyTo }, data: { msg_type: "interactive", content: JSON.stringify(card) } });
+    if (replyTo) await client.im.message.reply({ path: { message_id: replyTo }, data: { msg_type: "interactive", content: JSON.stringify(card), reply_in_thread: inThread } });
     else await client.im.message.create({ params: { receive_id_type: "chat_id" }, data: { receive_id: chatId, msg_type: "interactive", content: JSON.stringify(card) } });
   };
+
+  // Later results for a thread (delegated agents…) go back to the same chat, inside the topic when there is one.
+  registerThreadSender("lark", async (thread, markdown) => {
+    const [chatId, topic] = (thread.key ?? "").split("#");
+    if (!chatId) return;
+    await send(chatId, markdown, thread.settings.lastMessageId, !!topic);
+  });
 
   addNotificationSink(async (n) => {
     const chat = kv(app, "lark_owner_chat");
@@ -79,9 +89,10 @@ export async function startLarkBot(app: App) {
       kind: "chat",
       uri,
       title: (before?.title as string) ?? `飞书群 ${m.chatId.slice(-6)}`,
-      lines: [`[${at}] ${m.senderName || m.senderId}: ${m.text.replace(/\n/g, " ⏎ ")}`],
+      lines: [`[${at}${m.topicId ? ` · 话题 ${m.topicId}` : ""}] ${m.senderName || m.senderId}: ${m.text.replace(/\n/g, " ⏎ ")}`],
       meta: { chatId: m.chatId },
     });
+    lastCapture.set(m.messageId, { spaceId, sourceId: r.id });
     // Debounce: hand a burst of messages to the ingest role once.
     const key = `${spaceId}:${r.id}`;
     const p = pending.get(key);
@@ -96,6 +107,18 @@ export async function startLarkBot(app: App) {
     });
   };
 
+  const lastCapture = new Map<string, { spaceId: string; sourceId: string }>();
+  /** What was said just before an @mention, in the same topic when there is one. */
+  const groupContext = (m: Inbound) => {
+    const cap = lastCapture.get(m.messageId);
+    lastCapture.delete(m.messageId);
+    if (!cap) return "";
+    const lines = sourceText(app, cap.sourceId).split("\n").filter(Boolean);
+    lines.pop(); // the mention itself
+    const pick = m.topicId ? lines.filter((l) => l.includes(`话题 ${m.topicId}]`)) : lines;
+    return pick.slice(-15).join("\n");
+  };
+
   const handle = async (m: Inbound) => {
     if (m.chatType === "group") {
       captureGroup(m);
@@ -108,9 +131,21 @@ export async function startLarkBot(app: App) {
     if (m.senderId !== cfg.ownerOpenId) return;
     if (m.chatType === "p2p") kv(app, "lark_owner_chat", m.chatId);
     const text = m.text.replace(/@_user_\d+/g, "").trim();
+    const context = m.chatType === "group" ? groupContext(m) : "";
     if (!text) return;
-    const answer = await answerFromChannel(app, { channel: "lark", chatId: m.chatId, text, spaceId: cfg.defaultSpace });
-    await send(m.chatId, answer, m.messageId);
+    const map = (findSpace(app, "personal")?.settings.larkGroups ?? {}) as Record<string, string>;
+    const answer = await answerFromChannel(app, {
+      channel: "lark",
+      chatId: m.chatId,
+      topicId: m.topicId,
+      isGroup: m.chatType === "group",
+      text,
+      spaceId: m.chatType === "group" ? (map[m.chatId] ?? cfg.defaultSpace) : cfg.defaultSpace,
+      context,
+      contextLabel: m.topicId ? "话题里" : "群里",
+      externalMessageId: m.messageId,
+    });
+    if (answer !== null) await send(m.chatId, answer, m.messageId, !!m.topicId);
   };
 
   /** Images and files sent to the bot (or in its groups) become sources; the ingest role reads them. */
@@ -146,6 +181,7 @@ export async function startLarkBot(app: App) {
         text: messageText(msg.content, msg.message_type),
         mentionsBot: (msg.mentions ?? []).some((x: { id?: { open_id?: string }; name?: string }) => !x.id?.open_id || x.name === kv(app, "lark_bot_name")),
         createTime: msg.create_time,
+        topicId: msg.thread_id || undefined,
       };
       if ((msg.message_type === "image" || msg.message_type === "file") && (m.chatType === "group" || m.senderId === cfg.ownerOpenId))
         saveResource(msg, m).catch((e) => console.warn("[omem] 飞书附件保存失败", e));

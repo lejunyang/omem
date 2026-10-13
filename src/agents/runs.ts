@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 
-export type RunKind = "ask" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate";
+export type RunKind = "ask" | "agent" | "thread-summary" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 export type Run = {
   id: string;
@@ -18,6 +18,7 @@ export type Run = {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  lane: string | null;
 };
 type Row = {
   id: string;
@@ -33,6 +34,8 @@ type Row = {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  lane: string | null;
+  not_before: string | null;
 };
 const toRun = (r: Row): Run => ({
   id: r.id,
@@ -48,13 +51,27 @@ const toRun = (r: Row): Run => ({
   createdAt: r.created_at,
   startedAt: r.started_at,
   finishedAt: r.finished_at,
+  lane: r.lane ?? null,
 });
 
-export function createRun(app: App, input: { kind: RunKind; spaceId?: string | null; title: string; input?: Record<string, unknown>; parentId?: string | null }) {
+export function createRun(
+  app: App,
+  input: {
+    kind: RunKind;
+    spaceId?: string | null;
+    title: string;
+    input?: Record<string, unknown>;
+    parentId?: string | null;
+    /** Runs sharing a lane (a conversation thread) run one at a time, in order. */
+    lane?: string | null;
+    /** Do not start before this time (lets a burst of messages merge into one run). */
+    notBefore?: string | null;
+  },
+) {
   const id = newId("r");
   run(
     app.db,
-    "insert into runs(id,kind,space_id,status,title,input,parent_id,created_at) values(?,?,?,?,?,?,?,?)",
+    "insert into runs(id,kind,space_id,status,title,input,parent_id,created_at,lane,not_before) values(?,?,?,?,?,?,?,?,?,?)",
     id,
     input.kind,
     input.spaceId ?? null,
@@ -63,10 +80,36 @@ export function createRun(app: App, input: { kind: RunKind; spaceId?: string | n
     JSON.stringify(input.input ?? {}),
     input.parentId ?? null,
     now(),
+    input.lane ?? null,
+    input.notBefore ?? null,
   );
   app.emit({ type: "run", runId: id, status: "queued" });
   queueMicrotask(() => kick(app));
+  if (input.notBefore) setTimeout(() => kick(app), Math.max(0, Date.parse(input.notBefore) - Date.now()) + 20).unref();
   return getRun(app, id);
+}
+
+/** The run still waiting in a lane (for merging new messages into it), if any. */
+export function queuedInLane(app: App, lane: string, kind: RunKind): Run | null {
+  const r = one<Row>(app.db, "select * from runs where lane = ? and kind = ? and status = 'queued' order by created_at desc limit 1", lane, kind);
+  return r ? toRun(r) : null;
+}
+
+export function updateQueuedRun(app: App, id: string, patch: { input?: Record<string, unknown>; notBefore?: string; title?: string }) {
+  const changed = run(
+    app.db,
+    "update runs set input = coalesce(?, input), not_before = coalesce(?, not_before), title = coalesce(?, title) where id = ? and status = 'queued'",
+    patch.input ? JSON.stringify(patch.input) : null,
+    patch.notBefore ?? null,
+    patch.title ?? null,
+    id,
+  ).changes;
+  if (changed && patch.notBefore) setTimeout(() => kick(app), Math.max(0, Date.parse(patch.notBefore) - Date.now()) + 20).unref();
+  return changed === 1;
+}
+
+export function runsInLane(app: App, lane: string) {
+  return all<Row>(app.db, "select * from runs where lane = ? and status in ('queued','running') order by created_at", lane).map(toRun);
 }
 
 export function getRun(app: App, id: string): Run {
@@ -160,7 +203,9 @@ export type RunContext = {
 type Handler = (ctx: RunContext) => Promise<Record<string, unknown> | void>;
 const handlers = new Map<string, Handler>();
 const controllers = new Map<string, AbortController>();
-let active = 0;
+/** Conversations get their own slots so a long background job never delays a reply. */
+const INTERACTIVE = new Set<string>(["ask", "agent"]);
+const active = { interactive: 0, background: 0 };
 let started = false;
 
 export function registerHandler(kind: RunKind, handler: Handler) {
@@ -176,11 +221,36 @@ export function startWorker(app: App) {
   kick(app);
 }
 
+function nextRunnable(app: App): Row | undefined {
+  const candidates = all<Row>(
+    app.db,
+    `select * from runs q where q.status = 'queued' and (q.not_before is null or q.not_before <= ?)
+       and (q.lane is null or not exists (select 1 from runs r where r.lane = q.lane and r.status = 'running'))
+     order by q.created_at limit 100`,
+    now(),
+  );
+  const seenLanes = new Set<string>();
+  for (const c of candidates) {
+    // Strict order inside a lane: only its oldest queued run may start.
+    if (c.lane) {
+      if (seenLanes.has(c.lane)) continue;
+      seenLanes.add(c.lane);
+      const older = one<{ n: number }>(app.db, "select count(*) n from runs where lane = ? and status = 'queued' and created_at < ?", c.lane, c.created_at);
+      if (older?.n) continue;
+    }
+    const cls = INTERACTIVE.has(c.kind) ? "interactive" : "background";
+    const limit = cls === "interactive" ? app.config.interactiveConcurrency : app.config.concurrency;
+    if (active[cls] < limit) return c;
+  }
+  return undefined;
+}
+
 function kick(app: App) {
   if (!started) return;
-  while (active < app.config.concurrency) {
-    const next = one<Row>(app.db, "select * from runs where status = 'queued' order by created_at limit 1");
+  for (;;) {
+    const next = nextRunnable(app);
     if (!next) return;
+    const cls = INTERACTIVE.has(next.kind) ? "interactive" : "background";
     const handler = handlers.get(next.kind);
     if (!handler) {
       run(app.db, "update runs set status='failed', error=?, finished_at=? where id=?", `没有处理器：${next.kind}`, now(), next.id);
@@ -189,7 +259,7 @@ function kick(app: App) {
     // Atomic claim: several processes (server, CLI) may share one library.
     if (run(app.db, "update runs set status='running', started_at=? where id=? and status='queued'", now(), next.id).changes !== 1) continue;
     app.emit({ type: "run", runId: next.id, status: "running" });
-    active++;
+    active[cls]++;
     const controller = new AbortController();
     controllers.set(next.id, controller);
     const r = toRun({ ...next, status: "running" });
@@ -216,7 +286,7 @@ function kick(app: App) {
         app.emit({ type: "run", runId: r.id, status: cancelled ? "cancelled" : "failed" });
       })
       .finally(() => {
-        active--;
+        active[cls]--;
         controllers.delete(r.id);
         seqs.delete(r.id);
         kick(app);

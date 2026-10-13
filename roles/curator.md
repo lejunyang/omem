@@ -1,6 +1,6 @@
 ---
 description: 按本人设定的方向，从最近活跃的飞书群里挑出值得关注的会话
-tools: [list_spaces, list_lark_chats, set_lark_subscription, recall, list_items, search, notify]
+tools: [list_spaces, list_lark_chats, set_lark_subscription, recall, list_items, search, scan, notify]
 writes: false
 modes: [read-only, default, plan]
 ---

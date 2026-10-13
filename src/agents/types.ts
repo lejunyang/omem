@@ -26,6 +26,11 @@ export type AgentRequest = {
   signal?: AbortSignal;
   /** Only connect and report the agent's models/modes, no prompt. */
   probe?: boolean;
+  /** Extra MCP servers from an agent spec (stdio command or HTTP url). */
+  extraMcp?: Record<string, { command: string; args: string[]; env: Record<string, string> } | { url: string; headers: Record<string, string> }>;
+  /** CLI transports: keep the agent's own session on disk and/or continue one. */
+  persistSession?: boolean;
+  resumeSessionId?: string;
 };
 
 export type AgentProbe = { agent: string; modes: string[]; options: { id: string; category: string | null; current: string | null; values: string[] }[] };
