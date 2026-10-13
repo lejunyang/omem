@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { App } from "../core/app.ts";
+import { vectorIndex } from "./vectors.ts";
 import { all, one, run } from "../core/db.ts";
 
 /**
@@ -12,7 +13,6 @@ import { all, one, run } from "../core/db.ts";
 type Embedder = { id: string; embed(texts: string[], kind: "query" | "passage"): Promise<Float32Array[]> };
 
 let embedder: Embedder | null | undefined;
-const cache = new Map<string, { ids: number[]; vecs: Float32Array[] }>();
 
 async function getEmbedder(app: App): Promise<Embedder | null> {
   if (embedder !== undefined) return embedder;
@@ -77,11 +77,11 @@ function normalize(v: Float32Array) {
 /** Benchmarks and tests: use a stand-in embedder. */
 export function setEmbedderForTests(e: Embedder | null) {
   embedder = e;
-  cache.clear();
+  vectorIndex().clear();
 }
 
 export function invalidateVectors() {
-  cache.clear();
+  vectorIndex().clear();
 }
 
 /** Embed chunks that have no vector yet. Returns how many were embedded. */
@@ -92,11 +92,11 @@ export async function embedPending(app: App, batch = 32): Promise<number> {
   if (current !== e.id) {
     run(app.db, "update chunks set embedding = null");
     run(app.db, "insert into kv(key,value) values('embedding_model', ?) on conflict(key) do update set value = excluded.value", e.id);
-    cache.clear();
+    vectorIndex().clear();
   }
-  const rows = all<{ id: number; title: string; path: string; text: string }>(
+  const rows = all<{ id: number; space_id: string; title: string; path: string; text: string }>(
     app.db,
-    "select id, title, path, text from chunks where embedding is null limit ?",
+    "select id, space_id, title, path, text from chunks where embedding is null limit ?",
     batch,
   );
   if (!rows.length) return 0;
@@ -106,37 +106,14 @@ export async function embedPending(app: App, batch = 32): Promise<number> {
   );
   const upd = app.db.prepare("update chunks set embedding = ? where id = ?");
   rows.forEach((r, i) => upd.run(new Uint8Array(vecs[i].buffer, vecs[i].byteOffset, vecs[i].byteLength), r.id));
-  cache.clear();
+  vectorIndex().add(app, rows.map((r, i) => ({ id: r.id, spaceId: r.space_id, vec: vecs[i] })));
   return rows.length;
-}
-
-function load(app: App, spaces?: string[]) {
-  const key = spaces?.slice().sort().join(",") ?? "*";
-  let hit = cache.get(key);
-  if (hit) return hit;
-  const where = spaces?.length ? `and space_id in (${spaces.map(() => "?").join(",")})` : "";
-  const rows = all<{ id: number; embedding: Uint8Array }>(app.db, `select id, embedding from chunks where embedding is not null ${where}`, ...(spaces ?? []));
-  hit = {
-    ids: rows.map((r) => r.id),
-    vecs: rows.map((r) => new Float32Array(r.embedding.buffer.slice(r.embedding.byteOffset, r.embedding.byteOffset + r.embedding.byteLength))),
-  };
-  cache.set(key, hit);
-  return hit;
 }
 
 export async function vectorSearch(app: App, query: string, spaces: string[] | undefined, limit: number) {
   if (app.config.embeddings.provider === "none") return [];
   const e = await getEmbedder(app);
   if (!e) return [];
-  const { ids, vecs } = load(app, spaces);
-  if (!ids.length) return [];
   const [q] = await e.embed([query], "query");
-  const scored = ids.map((id, i) => {
-    const v = vecs[i];
-    let s = 0;
-    for (let k = 0; k < v.length; k++) s += v[k] * q[k];
-    return { chunkId: id, score: s };
-  });
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, limit);
+  return vectorIndex().search(app, q, spaces, limit);
 }
