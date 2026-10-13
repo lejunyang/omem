@@ -1,6 +1,6 @@
 # omem v2：精简重写方案
 
-日期：2026-10-12。v1 的代码保留在 Git 历史中（`main` 分支 `12b4a55` 之前），本方案取代 `docs/reader-first/` 中的实施路线。
+日期：2026-10-12，最后更新 2026-10-14。v1 的代码保留在 Git 历史中（`main` 分支 `12b4a55` 之前），本方案取代 `docs/archive/v1/reader-first/` 中的实施路线。
 
 ## 为什么重写
 
@@ -19,7 +19,7 @@ v2 的原则：**宿主只做数据、索引、调度和权限；理解和写作
 | Karpathy “LLM Wiki” 模式 | 原件（raw）只读；Wiki 是 LLM 维护的 Markdown；`ingest / query / lint` 三种操作；`index.md` + `log.md` | 只适合单一主题，v2 加“空间”隔离领域 |
 | DeepWiki / deepwiki-open | 先规划整套目录（页面目的 + 相关文件），再逐页写；Mermaid 图 | 不限制图表配额 |
 | OpenClaw / Hermes 类个人助理 | 记忆是可读文件；心跳（heartbeat）主动检查，无事时静默；技能文件；多渠道网关 | 不做屏幕监听等全局钩子 |
-| 腾讯 Octop | 专家（agent）按工作区隔离；ACP 双向：外部 Agent 可调 omem，omem 可派活给 Codex/Claude Code；渠道网关统一消息 | 单用户，不做多租户 |
+| 腾讯 Octop | 专家（agent）按工作区隔离；ACP 双向：外部 Agent 可调 omem，omem 可派活给 Codex/Claude Code；渠道网关统一消息 | 不做多租户；只留了多用户的口子（用户、身份、空间成员、令牌） |
 | Graphiti / Zep | 事实带有效期：新事实使旧事实失效（`valid_to`），而不是覆盖 | 不引入图数据库，SQLite 足够 |
 | mem0 | 抽取后对已有记忆做 ADD / UPDATE / DELETE / NOOP 决策 | 由 Agent 调工具完成，不单独训练 |
 | Letta sleep-time | “做梦”：空闲时整理记忆、合并重复、标记冲突与过期 | — |
@@ -34,38 +34,44 @@ Space（空间/领域）
  ├─ Page（Wiki 页）    Agent 维护的 Markdown；[[链接]] + 原件引用
  ├─ Memory（记忆）     一句话事实/约定/偏好/经验，带来源与有效期
  └─ Item（事项）       待办、等待回复、提醒、关注；状态机 + 时间线
+Conversation（会话）   网页对话、私聊、群、话题；绑定一个 Agent 会话，带滚动摘要
 Run（运行）            一次 Agent 执行：问答、整理、交办编码、评审、做梦
-Channel（渠道）        Web、CLI、飞书机器人，后续 Telegram/QQ/微信
+Agent 档案 / 技能       library/_agents、library/_skills：可复用的专门 Agent 和做法
+User（用户）           默认只有主人；登记的同事有自己的个人空间和可访问空间
+Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消息（只读）、Telegram、OneBot（QQ/微信）
 ```
 
 - **空间**隔离不同领域，检索默认只在当前空间，跨空间要显式指定。“个人”是默认空间；一个代码仓库、一个项目、“英语学习”各自一个空间。
 - **原件**按身份（路径/URL/会话 ID）只保留最新版；聊天和纠正是事件，保留原文。
 - **Wiki 页**是派生知识，存为文件，整个库目录是一个 Git 仓库：页面历史、差异、回滚、“这份理解什么时候被谁改了”都直接来自 Git。
 - **记忆**存在 SQLite，带 `valid_from / valid_to / superseded_by`。纠正不会删旧记忆，而是让它失效并链接到新记忆，因此问“之前怎么约定的”和“现在是什么”都能答。
-- **引用**格式统一：`[^1]` 脚注指向 `source:<id>#L10-L20` 或 `memory:<id>`，界面可点开原文。
+- **引用**格式统一：原件 `[文字](src:<原件id>#L10-L20)`，Wiki 页面 `[[slug]]`，记忆 `mem:<id>`；界面点击后在右侧抽屉显示原文并高亮。
 
 ## 存储布局
 
 ```
 ~/.omem/                      （开发时为 ./.omem）
   config.json
-  omem.db                     SQLite：sources/chunks/FTS/向量/memories/items/runs/messages
+  omem.db                     SQLite：原件/片段/FTS/向量/记忆/事项/运行/会话/用户/卡片
   library/                    Git 仓库
     <space>/
       wiki/index.md           空间首页与目录（Agent 维护）
       wiki/*.md               页面，frontmatter 含 title/summary/sources/updated
       log.md                  整理日志（追加）
       SPACE.md                空间说明：读者、范围、写作要求（人可编辑）
-  sources/<space>/...         导入的原件副本（代码仓库只记录路径，不复制）
-  runs/<run-id>/              Agent 运行记录（transcript.jsonl、diff、结果）
+    _agents/*.md              Agent 档案
+    _skills/<名称>/SKILL.md    技能（内置技能从 skills/library 播种）
+  files/                      上传与采集的原始文件（代码仓库只记录路径，不复制）
+  runs/<run-id>/              交办编码的 worktree 与补丁
+  agents/<id>/<版本>/          从 ACP 注册表下载的 Agent 程序
 ```
 
 ## 检索
 
 一条路线，三个召回源，RRF 融合：
 
-1. SQLite FTS5 全文（`trigram` 分词器，中文无需额外分词；短于 3 字的查询退回 LIKE）。
-2. 向量（可选）：本地 `bge-small-zh-v1.5`（transformers.js）或 OpenAI 兼容接口；存 SQLite BLOB，暴力余弦（个人库规模足够）。
+1. SQLite FTS5 全文（unicode61；入库和查询时由 `src/search/tokenize.ts` 生成中文双字词和拆开的标识符，如 `upsertSource` → `upsert source`）。
+2. 向量（可选）：本地 bge 中文模型（bge-small-zh / bge-base-zh / bge-m3，transformers.js，经 osdk 下载）或 OpenAI 兼容接口；SQLite 存原始向量，内存里按空间存 int8 量化矩阵做暴力余弦（17 万片段常驻约 0.4GB，见 evaluation.md）。
 3. 符号名精确匹配（代码）。
 
 结果携带父结构（章节标题路径/所在函数），并可按 `read_source(id, lines)` 补读。**检索只负责给 Agent 线索**，回答前由 Agent 自己决定继续搜、读全文还是看 Wiki——不再由宿主替它做多轮规划。
@@ -74,7 +80,10 @@ Channel（渠道）        Web、CLI、飞书机器人，后续 Telegram/QQ/微�
 
 - **传输**：ACP 为主，`claude -p` / `codex exec` 作为无 ACP 时的后备。内置目录（`src/agents/catalog.ts`）列了 25 个 ACP Agent 的启动命令（Codex、Claude Code、Gemini、Copilot、Qwen、Cursor、OpenCode、goose、Kimi、Kilo、CodeBuddy、Qoder、iFlow、Droid…），PATH 里有就自动识别；其余从官方 ACP 注册表添加（npx / uvx，或下载对应平台的程序并校验 sha256 到 `~/.omem/agents/`）。模型与 effort 来自配置，启动时从 ACP 会话动态读取可选项：优先 session config options（model / thought_level），没有时用旧式 `session.models` + `session/set_model`。角色要求的权限模式按别名映射到各家的模式名（如 acceptEdits ↔ autoEdit、read-only ↔ ask）。Agent 返回的 JSON-RPC 错误把 `data`（如“未登录”“缺少 provider 配置”）带给用户并提示先在终端登录。
 - **工具**：omem 自身以 MCP 服务暴露工具（`search`、`read_source`、`read_page`、`write_page`、`remember`、`forget`、`list_items`、`upsert_item`、`list_spaces` ……），通过 ACP `newSession.mcpServers` 注入。Agent 同时保有原生的文件读取与 shell（代码仓库只读）。
-- **角色**由短技能文件定义（`roles/*.md`）：`assistant`（问答与交办）、`wiki-planner`、`wiki-writer`、`ingest`（新材料进来时更新记忆/页面/事项）、`dreamer`（整理）、`coder`、`reviewer`、`tutor`。每个文件写目的、工具用法和质量标准，不写几十条禁令。
+- **角色**由短技能文件定义（`roles/*.md`）：`assistant`（问答与交办）、`ingest`（新材料进来时更新记忆/页面/事项）、`wiki-planner` / `wiki-writer` / `wiki-linter`、`heartbeat`（巡检）、`brief`（简报）、`dreamer`（整理）、`curator`（筛选关注群）、`summarizer`（会话滚动摘要）、`coder`、`reviewer`、`tutor`（出卡）。共同约定在 `_common.md`。每个文件写目的、工具用法和质量标准，不写几十条禁令。可以按角色指定不同的 Agent 后端（`config.agents.roles`）。
+- **Agent 档案与技能**：本人或助理建的专门 Agent（`library/_agents`，可指定后端、工具、写权限、技能、额外 MCP、工作目录）用 `run_agent` 或 `/as` 调用；技能（`library/_skills`）按名称列在提示里，Agent 需要时用 `read_skill` 读取。
+- **会话**：`src/agents/threads.ts`、`sessions.ts`、`inbox.ts`。每个会话一次一轮，连发合并；Agent 会话在线保留 → 恢复 → 从摘要冷启动。斜杠命令在 `commands.ts`，不经过模型。
+- **多用户口子**：工具令牌带 userId，`scopeFor` / `accessibleSpaces` 决定能看哪些空间；非主人只有问答与自己的数据。
 - **权限**：模型不直接写数据库，所有写入经 MCP 工具，工具层校验并记录到 Run。危险操作（发消息、应用补丁、删除）生成“待确认”事项。
 
 ## 五条主流程
@@ -99,7 +108,7 @@ Channel（渠道）        Web、CLI、飞书机器人，后续 Telegram/QQ/微�
 `coder` 在目标仓库的 Git worktree 中工作；完成后宿主运行项目检查命令，`reviewer`（可配置为不同模型）评审 diff；Run 页面显示计划、实际命令、检查输出、diff、评审结论。应用补丁需本人确认。
 
 ### 6. 学习
-从材料或对话生成卡片（问答/完形/例句），FSRS 调度；每日到期卡片在 Web 与机器人里复习。
+从材料或对话生成卡片（问答/完形/例句），FSRS 调度；每日到期卡片在 Web 与机器人里复习（聊天里 `/review` 逐张出题打分）。学习目标（`src/learn/goals.ts`）记录方向、每日张数和提醒时间：提醒前从该空间新材料出卡，反复忘的卡换角度补卡，统计记住率与连续天数。
 
 ### 7. 做梦（整理）
 每晚：合并重复记忆、标记冲突（两条同时有效又互相矛盾）、过期提醒、Wiki 断链与孤立页、从运行记录提炼可复用技能建议。结果写进“整理报告”，变更走工具并可回滚（Git）。
@@ -127,7 +136,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 保留：飞书接入（机器人、个人消息采集）、Docling 解析脚本、TS/Vue 解析思路、osdk 配置。其余模块退役。v1 数据库不自动迁移；`omem import-v1 <旧 omem.db>` 一次性导入原件最新版、有效记忆和未完成事项（代码评审材料跳过，改为重新建仓库空间）。
 
-## 实现状态（2026-10-12）
+## 实现状态（2026-10-14）
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
@@ -150,8 +159,10 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 飞书个人采集（lark-cli）：全部或订阅会话增量拉取（每会话游标、话题回复）、附件与文档链接入库、日程、妙记 | 已实现；模拟 lark-cli 测试覆盖，真实账号待验收 | `src/channels/lark-personal.ts` |
 | 监听群：规则（档案、触发、回复方式 none/draft/auto），每条消息只处理一次，群/话题即处理会话 | 已实现 | `src/channels/lark-watch.ts`、`/watch`、`set_chat_watch` |
 | 代码活动：仓库新提交与未提交改动，每仓库每天一份活动原件 | 已实现 | `src/sources/activity.ts` |
-| 学习卡片（FSRS） | 已实现 | `src/learn` |
+| 学习卡片（FSRS）、学习目标与主动提醒、聊天里复习 | 已实现，测试覆盖 | `src/learn` |
+| 多用户口子：用户、渠道身份、空间成员、API 令牌；工具与接口按用户限定空间 | 已实现，测试覆盖；不做多租户隔离 | `src/core/users.ts`、`omem user` |
+| 向量规模：按空间 int8 矩阵 | 已实现；17 万片段 nDCG 86.76 → 86.62，常驻 1.5GB → 0.42GB | `src/search/vectors.ts`、`scripts/bench-scale.ts` |
 | 渠道：网页、CLI、MCP、飞书机器人、飞书个人消息（只读）、Telegram、OneBot（QQ/微信桥） | 已实现；OneBot 有模拟服务端测试；飞书与 Telegram 需真实账号验收 | `src/channels` |
 | v1 导入 | 已实现，合成库测试 | `src/migrate-v1.ts` |
 
-尚未做：扫描件 OCR；动态派发与依赖注入的调用无法静态解析（这些仍按名称列为候选）；tsconfig 的自定义 paths 只识别 `@/`、`~/`；多用户；微信官方接口（只能通过 OneBot 兼容桥）。评测数字见 [evaluation.md](evaluation.md)。
+尚未做：扫描件 OCR；动态派发与依赖注入的调用无法静态解析（这些仍按名称列为候选）；tsconfig 的自定义 paths 只识别 `@/`、`~/`；多租户（只有多用户的口子）；微信官方接口（只能通过 OneBot 兼容桥）。评测数字见 [evaluation.md](evaluation.md)。

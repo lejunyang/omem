@@ -6,9 +6,9 @@
 
 ```powershell
 cd E:\Projects\omem
-git fetch .\omem-v2.bundle v2:v2
+git fetch .\omem-v2.bundle v2:v2   # 已在 v2 分支上时改用：git fetch .\omem-v2.bundle v2; git merge FETCH_HEAD
 git switch v2
-osdk lock; osdk deps        # 或 pnpm install
+osdk install && osdk deps --frozen   # 或 pnpm install
 pnpm run dev                # 打开 http://localhost:5173
 ```
 
@@ -107,7 +107,7 @@ pnpm run dev                # 打开 http://localhost:5173
 
 | # | 操作 | 预期 | 状态 |
 | --- | --- | --- | --- |
-| 34 | `omem user add 小王 --lark ou_xxx --space team`，小王私聊机器人 | 他的会话进 personal-wang 空间，只能看到自己和 team 空间；/whoami 显示可访问空间；事项和偏好各归各的 | 测试已验 |
+| 34 | `omem user add 小王 --id wang --lark ou_xxx --space team`，小王私聊机器人 | 他的会话进 personal-wang 空间，只能看到自己和 team 空间；/whoami 显示可访问空间；事项和偏好各归各的 | 测试已验 |
 | 35 | `omem user token wang`，用这个令牌调 API | 只能提问、看自己的会话/事项、在可访问空间里检索 | 测试已验 |
 | 36 | `node scripts/bench-scale.ts <语料> --copies 10` | 17 万片段：全文 p50 约 40～60 ms，向量全空间 p50 约 0.4 s，常驻约 0.4GB | 云端已测（evaluation.md） |
 
@@ -115,5 +115,6 @@ pnpm run dev                # 打开 http://localhost:5173
 
 - 扫描版 PDF 没有 OCR（图片原件由 Agent 看图补文字）。
 - 跨文件调用：TS/JS/Vue/Python 按导入解析；动态派发、依赖注入和其他语言仍是名称级候选。
-- 单用户；不做多租户。
+- 多人只到“留口子”：用户、身份、空间成员、令牌；不做多租户隔离。
+- 除 Claude Code、OpenCode 外的 ACP Agent 只验证了握手，登录后的实际表现待你验。
 - LongMemEval 跨会话计数题小样本由 1/3 提升到 5/6（见 evaluation.md），样本很小。

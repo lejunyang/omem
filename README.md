@@ -78,8 +78,8 @@ pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 | 关注一个项目或讨论，持续整理需求、责任和下一步 | 在问答里说“关注 X”，或订阅飞书会话；巡检只在有需要你知道的变化时通知 |
 | 交办等待、提醒、待办，并在改期或完成后维护同一事项 | 问答里交代，或在“事项”页添加；每个事项都有时间线 |
 | 交办编码、看进度、看实际差异与评审结果 | 问答里说“在 xx 仓库实现…”，或 `omem delegate`；在“运行”页看检查输出、diff、评审，确认后应用 |
-| 采集消息、筛选关注群、生成简报 | 设置 → 飞书：订阅会话（只读）；定时任务里开启采集与巡检 |
-| 用间隔重复学习（如英语） | 打开材料点“生成卡片”，在“学习”页按 FSRS 复习；可与 Anki 互相导入导出（制表符文本） |
+| 采集消息、筛选关注群、生成简报 | `omem setup` 选择读取方式，或设置 → 渠道 勾选会话（只读）；定时任务里开启采集、巡检和“筛选值得关注的飞书群” |
+| 用间隔重复学习（如英语） | 打开材料点“生成卡片”，在“学习”页按 FSRS 复习；或对助理说“我想练英语开会表达，每天 8 张，晚上九点提醒我”建学习目标；聊天里 `/review` 复习；可与 Anki 互相导入导出（制表符文本） |
 | 每天早上知道今天该处理什么 | 定时任务开启“简报”，通过站内和机器人推送 |
 | 某类事以后都按固定做法办，或交给专门的 Agent | 说“把这个做法记成技能”“建一个负责代码评审的 Agent”；在“Agent”页查看和编辑；`/as 名称 任务` 交给它，结果发回当前会话 |
 
@@ -120,7 +120,10 @@ omem items / omem todo "交报销单" --remind 2026-10-19T09:00+09:00
 omem delegate omem "给 search 加按时间过滤" --check "pnpm test"
 omem mcp [--read-only]                      # 把个人库作为 MCP 服务给其他 Agent 用
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
-omem agents                                 # 查看 Agent 配置与安装状态
+omem agents [--all]                         # 查看 Agent 配置与安装状态（--all 含未安装的和安装方式）
+omem agents registry                        # 官方 ACP 注册表里的 Agent
+omem agents add gemini --via npx            # 加入 Agent（npm 全局 / npx / uvx / 下载程序）
+omem user add 小王 --id wang --lark ou_xxx --space team  # 登记同事，见“多人使用”
 omem setup                                  # 设置向导（Agent、模型、文档解析、渠道、会话…）
 omem setup embeddings --model bge-small-zh  # 只开启向量检索（经 osdk 下载，也可 bge-base-zh / bge-m3）
 omem space sync omem --exclude docs/archive # 同步仓库空间并排除路径
@@ -141,7 +144,7 @@ omem hook claude|codex                      # 记录编码 Agent 会话（配在
 
 ## 飞书
 
-**机器人**（指挥助理、代你回复）：设置 → 飞书或 `omem setup`，填写 App ID，App Secret 放在环境变量 `OMEM_LARK_APP_SECRET`。首次私聊机器人会告诉你自己的 open_id，填入后只有你（和 `omem user add` 登记的人）能指挥它。
+**机器人**（指挥助理、代你回复）：设置 → 渠道或 `omem setup`，填写 App ID，App Secret 放在环境变量 `OMEM_LARK_APP_SECRET`。首次私聊机器人会告诉你自己的 open_id，填入后只有你（和 `omem user add` 登记的人）能指挥它。
 
 - 回答时先在你的消息上加“处理中”表情，再发一张进度卡片，实时显示 Agent 的步骤、思考片段和正在写的答案，完成后原地变成答案。
 - Agent 可以用机器人回复或开话题回复、加表情、发 Markdown、图片和文件、带按钮/下拉/输入框/表单的卡片，并限定只有某些人能操作；别人点了按钮或提交了表单，会作为新消息回到原来的会话继续处理。用法见内置技能 `lark-messaging`。
@@ -158,6 +161,22 @@ omem hook claude|codex                      # 记录编码 Agent 会话（配在
 - `none` 只处理不回复；`draft` 回复先变成草稿卡片发给你，你点“发送”才发出；`auto` 直接用机器人回复（机器人需在群里）。
 - 每个群（或话题）是处理 Agent 的一个连续会话，每条消息只处理一次；机器人在群里时实时处理，不在时随采集处理。
 
+## Telegram 与 QQ / 微信
+
+`omem setup` 的渠道部分开启。Telegram 的机器人 token 放在环境变量 `OMEM_TELEGRAM_TOKEN`，再填你的 chat id，私聊、群、论坛话题与飞书一样各是一个会话；QQ / 微信经 OneBot v11 兼容桥（NapCat、LLOneBot 等）接入，没有话题，每个私聊或群一个会话。命令与飞书相同。
+
+## 多人使用
+
+omem 默认只服务你自己。要给同事用：
+
+```bash
+omem user add 小王 --id wang --lark ou_xxx --space team   # 建用户、绑定飞书身份、可读 team 空间（--edit 可写）
+omem user token wang                                # 给他发一个 API 令牌（只显示一次）
+omem space share project-a wang [--edit]           # 再开放一个空间
+```
+
+他私聊机器人时，会话进他自己的个人空间，只能检索自己和被共享的空间；`/whoami` 显示他能访问什么。事项和偏好各归各的。这是“留口子”级别的支持：同一台机器、同一个数据目录，不做多租户隔离。
+
 ## 开发
 
 ```bash
@@ -170,16 +189,18 @@ node scripts/eval-retrieval.ts corpus.jsonl queries.jsonl [--vector]
 代码结构：
 
 ```
-src/core      配置、SQLite、空间、Git、调度、通知
-src/sources   导入、切分（Markdown 章节 / 代码符号 / 聊天窗口）、原件存储
-src/search    分词（中文双字 + 标识符拆分）、FTS、向量、RRF 融合
+src/core      配置、SQLite、空间、用户、Git、调度、通知
+src/sources   导入、切分（Markdown 章节 / 代码符号 / 聊天窗口）、调用图、代码活动、注入标记
+src/search    分词（中文双字 + 标识符拆分）、FTS、向量（按空间 int8 矩阵）、RRF 融合
 src/memory    记忆（有效期、版本链）
 src/items     事项（时间线）
 src/wiki      页面文件、链接与引用索引、过期检测
-src/learn     FSRS 卡片
-src/agents    ACP/CLI 运行、MCP 工具、角色、后台任务、交办编码
-src/channels  飞书机器人、个人消息、飞书文档
-roles/        各角色的工作说明（问答、整理、规划、写作、巡检、做梦、编码、评审、出卡）
+src/learn     FSRS 卡片、学习目标
+src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能、后台任务、交办编码
+src/channels  飞书机器人（发送、卡片、进度、回调、监听群）、飞书个人采集（lark-cli）、Telegram、OneBot
+src/setup.ts  omem setup 交互式向导
+roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查、巡检、简报、做梦、筛群、摘要、编码、评审、出卡）
+skills/library  内置技能（如 lark-messaging），首次启动播种到 library/_skills
 web/          Vue 3 网页
 ```
 
@@ -187,9 +208,10 @@ web/          Vue 3 网页
 
 ## 当前限制
 
-- 单用户；HTTP 只监听本机，远程访问需配置 `token`。
+- 多人只到“留口子”：用户、身份、空间成员和令牌，不做多租户隔离；HTTP 只监听本机，远程访问需配置 `token`。
+- 除 Claude Code、OpenCode 外，其他 ACP Agent 只验证过连接握手；各家登录和模型名以实际“检测模型”结果为准。
 - 代码解析：TS/JS/Vue 用 TypeScript AST，Python 和其他语言用通用声明识别。跨文件调用按导入关系解析到具体定义（TS/JS/Vue/Python）；其他语言、动态派发与第三方包只有名称级候选。
 - 扫描版 PDF 需要 OCR，当前只解析文字 PDF / DOCX（Docling、pdftotext 或 pandoc 任一可用即可）。
 - 微信只能通过 OneBot 兼容桥接入，没有话题概念，每个私聊或群是一个会话。
 
-本仓库的 Wiki（由 omem 生成）在 [.repo-review/wiki](.repo-review/wiki/index.md)。
+本仓库的 Wiki（由 omem 生成）在 [.repo-review/wiki](.repo-review/wiki/index.md)。它生成于 2026-10-13，之后加的飞书工作流、多 Agent 目录等还没写进去；建仓库空间后 `omem wiki lint omem` 会按改动更新受影响的页面，再 `omem wiki export omem .repo-review/wiki` 导出。
