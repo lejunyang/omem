@@ -24,6 +24,7 @@ import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedul
 import { createSpace, getSpace, listSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { accessibleSpaces, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
+import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
 import { getItem, itemEvents, listItems, upsertItem } from "../items/store.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede, updateMemoryText } from "../memory/store.ts";
@@ -458,6 +459,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       r.created ? created++ : skipped++;
     }
     return { created, skipped };
+  });
+  server.get("/api/learn/goals", async () => listGoals(app, { userId: OWNER, status: "all" }).map((g) => goalSummary(app, g)));
+  server.post("/api/learn/goals", async (req) => {
+    const b = q(z.object({ id: z.string().optional(), title: z.string().optional(), detail: z.string().optional(), spaceId: z.string().optional(), dailyNew: z.number().int().optional(), remindAt: z.string().optional(), status: z.enum(["active", "paused", "done"]).optional() }), req.body);
+    const { id, ...rest } = b;
+    return upsertGoal(app, id, { ...rest, userId: id ? undefined : OWNER });
   });
   server.post("/api/learn/generate", async (req) => {
     const b = q(z.object({ space: z.string(), sourceIds: z.array(z.string()).min(1), focus: z.string().optional() }), req.body);

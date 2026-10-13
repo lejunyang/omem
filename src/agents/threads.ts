@@ -22,6 +22,8 @@ export type ThreadSettings = {
   links?: string[];
   /** Last channel message id seen in this thread (replies go under it, e.g. inside a topic). */
   lastMessageId?: string;
+  /** An in-chat review session (/review): the card being asked and whether its answer was shown. */
+  review?: { cardId: string; stage: "front" | "rate"; goalId?: string; done: number } | null;
 };
 export type Thread = {
   id: string;

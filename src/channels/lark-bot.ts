@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { importFile } from "../sources/import.ts";
 import { appendToSource, findSourceByUri, sourceText } from "../sources/store.ts";
 import { registerThreadSender } from "../agents/inbox.ts";
-import { OWNER, resolveIdentity } from "../core/users.ts";
+import { identitiesOf, OWNER, resolveIdentity } from "../core/users.ts";
 
 /**
  * Feishu/Lark bot channel. Private chat with the owner is a command channel to
@@ -74,8 +74,16 @@ export async function startLarkBot(app: App) {
   });
 
   addNotificationSink(async (n) => {
-    const chat = kv(app, "lark_owner_chat");
-    if (chat) await send(chat, `**${n.title}**\n${n.body}`);
+    const text = `**${n.title}**\n${n.body}`;
+    if (n.userId === OWNER) {
+      const chat = kv(app, "lark_owner_chat");
+      if (chat) await send(chat, text);
+      return;
+    }
+    // Other users: a private message to their open_id.
+    const id = identitiesOf(app, n.userId).find((i) => i.channel === "lark")?.external_id;
+    const card = { config: { wide_screen_mode: true }, elements: [{ tag: "markdown", content: text }] };
+    if (id) await client.im.message.create({ params: { receive_id_type: "open_id" }, data: { receive_id: id, msg_type: "interactive", content: JSON.stringify(card) } });
   });
 
   const pending = new Map<string, { spaceId: string; sourceId: string; timer: NodeJS.Timeout }>();

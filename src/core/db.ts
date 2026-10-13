@@ -300,6 +300,24 @@ const migrations: string[] = [
   create index conversations_user on conversations(user_id, updated_at);
   create index cards_user on cards(user_id, suspended, due_at);
   `,
+  // Learning goals: what someone is learning, how many new cards a day, when to remind.
+  `
+  create table learn_goals (
+    id text primary key,
+    user_id text not null default 'owner',
+    space_id text not null,
+    title text not null,
+    detail text not null default '',
+    daily_new integer not null default 10,
+    remind_at text not null default '20:30',     -- local HH:MM
+    status text not null default 'active',       -- active | paused | done
+    created_at text not null,
+    updated_at text not null,
+    last_fed_at text,
+    last_reminded_at text
+  );
+  alter table cards add column goal_id text;
+  `,
 ];
 
 export type Db = DatabaseSync;

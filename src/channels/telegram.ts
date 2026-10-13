@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { addNotificationSink } from "../core/notify.ts";
 import { answerFromChannel, chunkMessage } from "./common.ts";
 import { registerThreadSender } from "../agents/inbox.ts";
-import { resolveIdentity } from "../core/users.ts";
+import { identitiesOf, resolveIdentity } from "../core/users.ts";
 
 /**
  * Telegram bot channel (Bot API long polling — no public URL needed). Only the
@@ -26,7 +26,9 @@ export async function startTelegram(app: App) {
     if (chatId) await send(chatId, text, topic);
   });
   addNotificationSink(async (n) => {
-    if (cfg.ownerChatId) await send(cfg.ownerChatId, `${n.title}\n${n.body}`);
+    // A Telegram user's id is also their private chat id.
+    const to = n.userId === "owner" ? cfg.ownerChatId : identitiesOf(app, n.userId).find((i) => i.channel === "telegram")?.external_id;
+    if (to) await send(to, `${n.title}\n${n.body}`);
   });
   let botName = "";
   let offset = 0;
