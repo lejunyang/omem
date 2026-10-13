@@ -2,6 +2,7 @@ import { posix } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, tx } from "../core/db.ts";
 import type { ImportBinding } from "./code.ts";
+import { sourceText } from "./store.ts";
 
 /**
  * Resolve calls and imports to the symbol they actually reach by following the
@@ -15,6 +16,9 @@ type Target = { sourceId: string; qname: string } | { sourceId: string; module: 
 
 const TS_EXTS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".d.ts"];
 const PY = /\.py$/;
+/** Languages whose names resolve by package / module rather than by file imports. Java and Kotlin share one namespace. */
+const PKG_LANG: Record<string, "go" | "rust" | "jvm" | "swift"> = { ".go": "go", ".rs": "rust", ".java": "jvm", ".kt": "jvm", ".kts": "jvm", ".swift": "swift" };
+const pkgLang = (uri: string) => PKG_LANG[posix.extname(uri).toLowerCase()];
 
 export function resolveCodeRefs(app: App, spaceId: string): { resolved: number; total: number } {
   const files = all<{ id: string; uri: string }>(app.db, "select id, uri from sources where space_id = ? and kind = 'code' and deleted_at is null", spaceId);
@@ -139,12 +143,21 @@ export function resolveCodeRefs(app: App, spaceId: string): { resolved: number; 
     return null;
   };
 
+  const pkg = packageResolver(files, syms, bySource, parse, (id) => sourceText(app, id));
+
   const updates: [string | null, string | null, number][] = [];
   let resolved = 0;
   let total = 0;
   for (const r of refs) {
     let t: Target | null = null;
-    if (r.kind === "import" || (r.kind === "export" && r.to_name)) {
+    const lang = pkgLang(uriOf.get(r.source_id)!);
+    if (lang) {
+      if (r.kind === "call") {
+        total++;
+        t = pkg.call(r);
+        if (t) resolved++;
+      } else if (r.kind === "import") t = pkg.importTarget(r);
+    } else if (r.kind === "import" || (r.kind === "export" && r.to_name)) {
       const mod = resolveModule(r.source_id, r.to_name);
       t = mod ? { sourceId: mod, module: true } : null;
     } else if (r.kind === "call") {
@@ -167,6 +180,226 @@ export function resolveCodeRefs(app: App, spaceId: string): { resolved: number; 
     for (const u of updates) st.run(...u);
   });
   return { resolved, total };
+}
+
+/**
+ * Go, Rust, Java/Kotlin and Swift: names are visible by package or module, not
+ * per file. A call resolves when exactly one definition fits, searching in
+ * order: the enclosing type (implicit this/self), the same file, the
+ * explicitly imported module or type, then the same package (directory) — for
+ * Swift the whole module (all Swift files of the space).
+ */
+function packageResolver(
+  files: { id: string; uri: string }[],
+  syms: Map<string, Map<string, string>>,
+  bySource: Map<string, RefRow[]>,
+  parse: (r: RefRow) => ImportBinding[],
+  readText: (id: string) => string,
+) {
+  const uriOf = new Map(files.map((f) => [f.id, f.uri]));
+  // Rust workspace crates: `use other_crate::x` → <crate dir>/src/lib.rs (name from Cargo.toml).
+  const crates = new Map<string, string>();
+  for (const f of files) {
+    if (posix.basename(f.uri) !== "Cargo.toml") continue;
+    const m = /\[package\][^[]*?\bname\s*=\s*"([^"]+)"/.exec(readText(f.id));
+    if (m) crates.set(m[1].replace(/-/g, "_"), posix.join(posix.dirname(f.uri), "src"));
+  }
+  const byDir = new Map<string, string[]>(); // `${lang}|${dir}` → files
+  const byLang = new Map<string, string[]>();
+  for (const f of files) {
+    const lang = pkgLang(f.uri);
+    if (!lang) continue;
+    const key = `${lang}|${posix.dirname(f.uri)}`;
+    if (!byDir.has(key)) byDir.set(key, []);
+    byDir.get(key)!.push(f.id);
+    if (!byLang.has(lang)) byLang.set(lang, []);
+    byLang.get(lang)!.push(f.id);
+  }
+  const idOfUri = new Map(files.map((f) => [f.uri, f.id]));
+  const dirsCache = new Map<string, string[]>();
+  const dirsOf = (lang: string) => {
+    if (!dirsCache.has(lang)) dirsCache.set(lang, [...byDir.keys()].filter((k) => k.startsWith(lang + "|")).map((k) => k.slice(lang.length + 1)));
+    return dirsCache.get(lang)!;
+  };
+  const pkgCache = new Map<string, string[]>();
+  const has = (id: string, qname: string) => !!syms.get(id)?.has(qname);
+  /** The single file among `ids` defining qname (null when none or ambiguous). */
+  const unique = (ids: string[], qname: string): Target | null => {
+    const hits = ids.filter((id) => has(id, qname));
+    return hits.length === 1 ? { sourceId: hits[0], qname } : null;
+  };
+  /** JVM package of a directory: the path below the last java/ or kotlin/ source root. */
+  const jvmPackage = (dir: string) => /(?:^|\/)(?:java|kotlin)\/(.+)$/.exec(dir)?.[1] ?? dir;
+  const jvmByPackage = new Map<string, string[]>();
+  for (const id of byLang.get("jvm") ?? []) {
+    const key = jvmPackage(posix.dirname(uriOf.get(id)!));
+    if (!jvmByPackage.has(key)) jvmByPackage.set(key, []);
+    jvmByPackage.get(key)!.push(id);
+  }
+  const samePackage = (id: string) => {
+    const uri = uriOf.get(id)!;
+    const lang = pkgLang(uri)!;
+    if (lang === "swift") return byLang.get(lang) ?? [];
+    if (lang === "jvm") return jvmByPackage.get(jvmPackage(posix.dirname(uri))) ?? [];
+    return byDir.get(`${lang}|${posix.dirname(uri)}`) ?? [];
+  };
+
+  /** Directory (files) that a dotted package or Go import path names: the longest matching path suffix wins. */
+  const packageFiles = (lang: string, path: string): string[] => {
+    const key = `${lang}|${path}`;
+    if (!pkgCache.has(key)) pkgCache.set(key, packageFilesUncached(lang, path));
+    return pkgCache.get(key)!;
+  };
+  const packageFilesUncached = (lang: string, path: string): string[] => {
+    const want = path.split(/[./]/).filter(Boolean);
+    let best: string[] = [];
+    let bestLen = 0;
+    for (const dir of dirsOf(lang)) {
+      const have = dir.split("/");
+      let n = 0;
+      while (n < want.length && n < have.length && want[want.length - 1 - n] === have[have.length - 1 - n]) n++;
+      if (!n) continue;
+      // The same package can live in several roots (src/main/java and src/test/java): equal matches add up.
+      if (n > bestLen) [best, bestLen] = [[...byDir.get(`${lang}|${dir}`)!], n];
+      else if (n === bestLen) best.push(...byDir.get(`${lang}|${dir}`)!);
+    }
+    return best;
+  };
+
+  /** Rust module path (`crate::a::b`, `self::x`, `super::y`, `a::b`) → the file implementing it. */
+  const rustModuleFile = (fromId: string, path: string): string | null => {
+    const fromUri = uriOf.get(fromId)!;
+    const segs = path.split("::").filter(Boolean);
+    const isRoot = (u: string) => /(^|\/)(lib|main|mod)\.rs$/.test(u);
+    let dir = isRoot(fromUri) ? posix.dirname(fromUri) : posix.join(posix.dirname(fromUri), posix.basename(fromUri, ".rs"));
+    if (segs[0] === "crate") {
+      // crate root: nearest ancestor holding lib.rs or main.rs
+      let d = posix.dirname(fromUri);
+      while (d !== "." && d !== "/" && !idOfUri.has(posix.join(d, "lib.rs")) && !idOfUri.has(posix.join(d, "main.rs"))) d = posix.dirname(d);
+      dir = d;
+      segs.shift();
+    } else if (segs[0] === "self") segs.shift();
+    else if (crates.has(segs[0])) {
+      dir = crates.get(segs.shift()!)!;
+      if (!segs.length) return idOfUri.get(posix.join(dir, "lib.rs")) ?? null;
+    }
+    while (segs[0] === "super") {
+      dir = posix.dirname(dir);
+      segs.shift();
+    }
+    if (!segs.length) return null;
+    const rel = posix.join(dir, ...segs);
+    const byUri = (u: string) => idOfUri.get(posix.normalize(u)) ?? null;
+    return byUri(`${rel}.rs`) ?? byUri(`${rel}/mod.rs`);
+  };
+
+  /** A name brought in by an import of this file: the definition it names, or a module/package. */
+  const imported = (fromId: string, local: string, depth = 0): { files: string[]; qname?: string } | null => {
+    const lang = pkgLang(uriOf.get(fromId)!)!;
+    for (const r of bySource.get(fromId) ?? []) {
+      if (r.kind !== "import") continue;
+      const b = parse(r).find((x) => x.local === local);
+      if (!b) continue;
+      if (lang === "go") return { files: packageFiles("go", r.to_name) };
+      if (lang === "swift") return { files: byLang.get("swift") ?? [] };
+      if (lang === "rust") {
+        const mod = rustModuleFile(fromId, r.to_name);
+        if (b.imported === "*") return mod ? { files: [mod] } : null;
+        const sub = rustModuleFile(fromId, `${r.to_name}::${b.imported}`);
+        if (sub) return { files: [sub] };
+        if (!mod) return null;
+        // `pub use` re-exports: follow the module's own import of that name.
+        if (!has(mod, b.imported) && depth < 4) return imported(mod, b.imported, depth + 1) ?? { files: [mod], qname: b.imported };
+        return { files: [mod], qname: b.imported };
+      }
+      // jvm: `import a.b.C` (class), `import a.b.C.m` (static member), `import a.b.f` (Kotlin top-level fun)
+      const inPkg = packageFiles("jvm", r.to_name);
+      if (inPkg.some((id) => has(id, b.imported))) return { files: inPkg, qname: b.imported };
+      const cls = r.to_name.split(".").pop()!;
+      const outer = packageFiles("jvm", r.to_name.split(".").slice(0, -1).join("."));
+      if (outer.some((id) => has(id, `${cls}.${b.imported}`))) return { files: outer, qname: `${cls}.${b.imported}` };
+      return { files: byLang.get("jvm") ?? [], qname: b.imported };
+    }
+    return null;
+  };
+  const wildcardPackages = (fromId: string) =>
+    (bySource.get(fromId) ?? []).filter((r) => r.kind === "import" && parse(r).some((b) => b.local === "*")).flatMap((r) => packageFiles("jvm", r.to_name));
+
+  /** Where a type name visible in this file is defined. */
+  const typeTarget = (fromId: string, name: string): { files: string[]; qname: string } | null => {
+    if (has(fromId, name)) return { files: [fromId], qname: name };
+    const imp = imported(fromId, name);
+    if (imp?.qname) return { files: imp.files, qname: imp.qname };
+    const pk = samePackage(fromId);
+    if (pk.some((id) => has(id, name))) return { files: pk, qname: name };
+    return null;
+  };
+
+  const call = (r: RefRow): Target | null => {
+    const from = r.source_id;
+    const lang = pkgLang(uriOf.get(from)!)!;
+    const n = r.to_name;
+    const q = r.qualifier;
+    const owner = r.from_qname;
+    const enclosing: string[] = [];
+    for (let parts = owner.split(".").slice(0, -1); parts.length; parts.pop()) enclosing.push(parts.join("."));
+    if (q === "self" || q === "this") {
+      for (const cls of enclosing) {
+        const t = unique([from], `${cls}.${n}`) ?? unique(samePackage(from), `${cls}.${n}`);
+        if (t) return t;
+      }
+      return null;
+    }
+    if (!q) {
+      if (lang !== "go" && lang !== "rust")
+        for (const cls of enclosing) {
+          const t = unique([from], `${cls}.${n}`) ?? (lang === "swift" ? unique(samePackage(from), `${cls}.${n}`) : null);
+          if (t) return t;
+        }
+      if (has(from, n)) return { sourceId: from, qname: n };
+      const imp = imported(from, n);
+      if (imp) return unique(imp.files, imp.qname ?? n);
+      if (lang === "rust") {
+        // Rust needs a `use` for anything outside the file; `use path::*` brings a module's items.
+        const globs = (bySource.get(from) ?? []).filter((x) => x.kind === "import" && parse(x).some((b) => b.local === "*")).map((x) => rustModuleFile(from, x.to_name)).filter((x): x is string => !!x);
+        return unique(globs, n);
+      }
+      return unique(samePackage(from), n) ?? (lang === "jvm" ? unique(wildcardPackages(from), n) : null);
+    }
+    // Qualified: Rust paths and modules, an imported package, or a type with a static / associated member.
+    if (lang === "rust") {
+      if (has(from, `${q}.${n}`)) return { sourceId: from, qname: `${q}.${n}` }; // inline `mod` or impl in this file
+      const head = q.split("::")[0];
+      const imp = q.includes("::") ? null : imported(from, head);
+      if (imp && !imp.qname) return unique(imp.files, n);
+      if (imp?.qname) return unique(imp.files, `${imp.qname}.${n}`);
+      const mod = rustModuleFile(from, q);
+      if (mod) return unique([mod], n);
+      const [m, last] = [q.slice(0, q.lastIndexOf("::")), q.slice(q.lastIndexOf("::") + 2)];
+      const mf = m ? rustModuleFile(from, m) : null;
+      return mf ? unique([mf], `${last}.${n}`) : null;
+    }
+    const imp = imported(from, q);
+    if (imp && !imp.qname) return unique(imp.files, n); // Go package / Swift module
+    const type = imp?.qname ? { files: imp.files, qname: imp.qname } : typeTarget(from, q);
+    return type ? unique(type.files, `${type.qname}.${n}`) : null;
+  };
+
+  const importTarget = (r: RefRow): Target | null => {
+    const lang = pkgLang(uriOf.get(r.source_id)!)!;
+    if (lang === "rust") {
+      const f = rustModuleFile(r.source_id, r.to_name);
+      return f ? { sourceId: f, module: true } : null;
+    }
+    if (lang === "jvm") {
+      const b = parse(r)[0];
+      const t = b && b.imported !== "*" ? unique(packageFiles("jvm", r.to_name), b.imported) : null;
+      return t;
+    }
+    return null;
+  };
+
+  return { call, importTarget };
 }
 
 export type SymbolRelations = {

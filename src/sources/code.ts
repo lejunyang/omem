@@ -1,5 +1,6 @@
 import { extname } from "node:path";
 import ts from "typescript";
+import { parseTreeSitter } from "./treesitter.ts";
 
 export type CodeSymbol = {
   name: string;
@@ -51,6 +52,8 @@ export function parseCode(path: string, text: string): CodeOutline {
     };
   }
   if (TS_EXT[ext] !== undefined) return { ...parseTs(text, TS_EXT[ext]), language: ext.slice(1) };
+  const tree = parseTreeSitter(ext, text);
+  if (tree) return { ...tree, language: ext.slice(1) };
   return parseGeneric(ext.slice(1), text);
 }
 

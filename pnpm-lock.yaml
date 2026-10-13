@@ -38,12 +38,18 @@ importers:
       fastify:
         specifier: 5.12.5
         version: 5.12.5
+      tree-sitter-wasms:
+        specifier: 0.1.13
+        version: 0.1.13
       ts-fsrs:
         specifier: 5.4.2
         version: 5.4.2
       typescript:
         specifier: 5.9.3
         version: 5.9.3
+      web-tree-sitter:
+        specifier: 0.22.6
+        version: 0.22.6
       yaml:
         specifier: 2.9.1
         version: 2.9.1
@@ -2154,6 +2160,9 @@ packages:
     resolution: {integrity: sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA==}
     engines: {node: '>=0.6'}
 
+  tree-sitter-wasms@0.1.13:
+    resolution: {integrity: sha512-wT+cR6DwaIz80/vho3AvSF0N4txuNx/5bcRKoXouOfClpxh/qqrF4URNLQXbbt8MaAxeksZcZd1j8gcGjc+QxQ==}
+
   ts-dedent@2.3.0:
     resolution: {integrity: sha512-JfJeIHke7y2egdGGgRAvpCwYFUsHlM2gPcrVOxFkznt/4uzQ7HFmvE63iFHVLBJNDuyDOQgijDK/tXH/f6Msjg==}
     engines: {node: '>=6.10'}
@@ -2287,6 +2296,9 @@ packages:
     peerDependenciesMeta:
       typescript:
         optional: true
+
+  web-tree-sitter@0.22.6:
+    resolution: {integrity: sha512-hS87TH71Zd6mGAmYCvlgxeGDjqd9GTeqXNqTT+u0Gs51uIozNIaaq/kUAbV/Zf56jb2ZOyG8BxZs2GG9wbLi6Q==}
 
   which@2.0.2:
     resolution: {integrity: sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==}
@@ -4434,6 +4446,8 @@ snapshots:
 
   toidentifier@1.0.1: {}
 
+  tree-sitter-wasms@0.1.13: {}
+
   ts-dedent@2.3.0: {}
 
   ts-fsrs@5.4.2: {}
@@ -4557,6 +4571,8 @@ snapshots:
       '@vue/shared': 3.5.43
     optionalDependencies:
       typescript: 5.9.3
+
+  web-tree-sitter@0.22.6: {}
 
   which@2.0.2:
     dependencies:

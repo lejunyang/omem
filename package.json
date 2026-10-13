@@ -33,8 +33,10 @@
     "commander": "15.0.0",
     "croner": "10.0.0",
     "fastify": "5.12.5",
+    "tree-sitter-wasms": "0.1.13",
     "ts-fsrs": "5.4.2",
     "typescript": "5.9.3",
+    "web-tree-sitter": "0.22.6",
     "yaml": "2.9.1",
     "zod": "4.1.12"
   },
