@@ -49,6 +49,8 @@ pnpm install
 pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 ```
 
+第一次使用先运行 `omem setup`（或 `osdk run cli -- setup`）：交互式选择 Agent 后端与模型、向量模型（经 osdk 下载并锁定）、PDF/DOCX 解析（Docling 及其模型）、飞书 / Telegram / QQ·微信渠道、注入标记、会话与并发、定时任务。每一项都会先显示本机已安装什么、各选项的代价，缺东西时告诉你怎么装。
+
 打开网页后：
 
 1. **设置 → Agent**：确认至少一个 Agent 显示“已安装”，可以按角色指定（问答用快模型，Wiki 与评审用强模型）。默认配置里 Codex 使用 `gpt-6.1-sol`、低 effort。
@@ -70,6 +72,30 @@ pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 | 采集消息、筛选关注群、生成简报 | 设置 → 飞书：订阅会话（只读）；定时任务里开启采集与巡检 |
 | 用间隔重复学习（如英语） | 打开材料点“生成卡片”，在“学习”页按 FSRS 复习；可与 Anki 互相导入导出（制表符文本） |
 | 每天早上知道今天该处理什么 | 定时任务开启“简报”，通过站内和机器人推送 |
+| 某类事以后都按固定做法办，或交给专门的 Agent | 说“把这个做法记成技能”“建一个负责代码评审的 Agent”；在“Agent”页查看和编辑；`/as 名称 任务` 交给它，结果发回当前会话 |
+
+## 会话
+
+每个网页对话、飞书私聊、群、群里的话题（Telegram 论坛话题同理）各是一个会话，接着上下文继续聊：
+
+- **连续**：回复后 Agent 进程保留一段时间（默认 20 分钟），下一条消息直接进同一个 Agent 会话；释放或重启后用 Agent 自己的会话恢复（Claude Code、Codex 都支持）；都不行时，新会话会拿到本会话的滚动摘要和最近消息，需要细节时自己读原话。
+- **独立**：每个会话一次只处理一轮，不同会话并行；对话和后台任务用不同的并发槽，生成 Wiki 不会拖慢回复。几秒内连发的消息合并成一轮。
+- **过期**：私聊或整群会话空闲超过 12 小时（`/idle` 可改），下一条消息开始新会话并带上上一段的摘要；`/resume` 回到旧会话。
+- **跨会话**：问“上次在 xx 群里怎么说的”时，助理会查找并阅读其他会话；`/link <id>` 把另一个会话的摘要固定为本会话背景。
+- **群聊**：被 @ 时，助理能看到群里（或话题里）前面的发言；`/mode topic` 让每个话题独立，`/mode chat` 让整个群共用一个会话。
+
+在任何渠道都可以直接输入命令（不经过模型）：
+
+```
+/help                      全部命令
+/new [标题]  /resume <id>   开新会话 / 回到旧会话
+/status  /stop  /sessions  当前状态 / 停止 / 最近的会话
+/link <id>  /summary  /compact   关联会话 / 查看摘要 / 从摘要重开 Agent 会话
+/space <id>  /agent <后端>  /as <档案> [任务]   切空间 / 换后端 / 让某个 Agent 档案接管或做一件事
+/agents  /skills  /approve agent|skill <名称>
+/mode chat|topic  /idle <小时>
+/remember <内容>  /todo <事项>  /search <关键词>  /runs
+```
 
 ## 命令行
 
@@ -86,7 +112,10 @@ omem delegate omem "给 search 加按时间过滤" --check "pnpm test"
 omem mcp [--read-only]                      # 把个人库作为 MCP 服务给其他 Agent 用
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
 omem agents                                 # 查看 Agent 配置与安装状态
-omem setup embeddings                       # 开启本地中文向量检索（推荐）
+omem setup                                  # 设置向导（Agent、模型、文档解析、渠道、会话…）
+omem setup embeddings --model bge-small-zh  # 只开启向量检索（经 osdk 下载，也可 bge-base-zh / bge-m3）
+omem space sync omem --exclude docs/archive # 同步仓库空间并排除路径
+omem wiki export omem .repo-review/wiki     # 把 Wiki 导出成仓库里可读的 Markdown
 omem hook claude|codex                      # 记录编码 Agent 会话（配在钩子里）
 ```
 
@@ -138,4 +167,6 @@ web/          Vue 3 网页
 - 单用户；HTTP 只监听本机，远程访问需配置 `token`。
 - 代码解析：TS/JS/Vue 用 TypeScript AST，Python 和其他语言用通用声明识别。跨文件调用按导入关系解析到具体定义（TS/JS/Vue/Python）；其他语言、动态派发与第三方包只有名称级候选。
 - 扫描版 PDF 需要 OCR，当前只解析文字 PDF / DOCX（Docling、pdftotext 或 pandoc 任一可用即可）。
-- 微信、QQ、Telegram 渠道还没有接入（通知与消息入口已抽象，可按飞书的方式扩展）。
+- 微信只能通过 OneBot 兼容桥接入，没有话题概念，每个私聊或群是一个会话。
+
+本仓库的 Wiki（由 omem 生成）在 [.repo-review/wiki](.repo-review/wiki/index.md)。

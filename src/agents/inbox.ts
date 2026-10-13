@@ -1,5 +1,6 @@
 import type { App } from "../core/app.ts";
 import { now, truncate } from "../core/util.ts";
+import { injectionScore } from "../sources/guard.ts";
 import { runCommand } from "./commands.ts";
 import { createRun, queuedInLane, updateQueuedRun } from "./runs.ts";
 import { addMessage, createThread, findThread, resolveThread, updateThread, type Thread, type ThreadAddress } from "./threads.ts";
@@ -57,6 +58,9 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   if (inb.context) {
     meta.context = inb.context;
     meta.contextLabel = inb.contextLabel ?? "群里";
+    // Other people's lines reach the agent here directly, before any ingest: check them now.
+    const score = await injectionScore(app, inb.context);
+    if (score !== null && score >= app.config.guard.threshold) meta.contextSuspect = Math.round(score * 100) / 100;
   }
   if (inb.externalMessageId) meta.externalId = inb.externalMessageId;
   const messageId = addMessage(app, thread.id, "user", text, null, meta);

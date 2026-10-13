@@ -209,6 +209,50 @@ async function setupDocumentsSection(config: Config, home: string) {
   return true;
 }
 
+// ---- injection guard --------------------------------------------------------
+
+const GUARD_MODELS = [
+  { value: "decision-2b", repo: "startlux-models/StartLux-Decision-2B-Q8_0-GGUF", name: "StartLux-Decision 2B（推荐）", description: "自建 60 条中文测试 F1 0.96，能分清“讨论攻击”和“同事请求”；约 2GB，运行约 2.8GB 内存，CPU 每段约 5 秒" },
+  { value: "decision-08b", repo: "startlux-models/StartLux-Decision-0.8B-Q8_0-GGUF", name: "StartLux-Decision 0.8B（低配）", description: "约 0.8GB，快一倍，但会把“请删掉/重启/转发”这类对人的请求误标为注入" },
+];
+
+async function setupGuardSection(config: Config) {
+  const g = config.guard;
+  out(`\n注入标记：${g.provider === "none" ? "未开启" : `${g.provider} · ${g.url}`}。别人写的群聊、网页、文档入库时，用本地小模型标出像是写给 AI 的指令，提醒 Agent 只当材料看；不拦截、不删除。评测见 docs/v2/judge-models.md。`);
+  const choice = await select({
+    message: "注入标记",
+    choices: [
+      { value: "on", name: "开启（StartLux-Decision 本地服务）" },
+      { value: "off", name: "关闭", description: "Agent 仍按规则把材料当数据，只是没有额外标记" },
+      { value: "keep", name: "保持不变" },
+    ],
+    default: "keep",
+  });
+  if (choice === "keep") return false;
+  if (choice === "off") {
+    config.guard = { ...g, provider: "none" };
+    return true;
+  }
+  const model = await select({ message: "判官模型", choices: GUARD_MODELS.map((m) => ({ value: m.value, name: m.name, description: m.description })) });
+  const m = GUARD_MODELS.find((x) => x.value === model)!;
+  let dir = "<模型目录>";
+  if (osdkAvailable() && (await confirm({ message: `用 osdk 下载 ${m.repo}？`, default: true }))) {
+    try {
+      osdk(["model", "show", m.value, "--json", "--offline"]);
+    } catch {
+      osdk(["model", "use", m.value, `hf:${m.repo}@main`, "--kind", "other", "--family", "startlux-decision"], { inherit: true });
+    }
+    osdk(["model", "sync", m.value], { inherit: true });
+    dir = osdkModelPath(m.value) ?? dir;
+  } else if (!osdkAvailable()) out(`  没有 osdk：用 hf download ${m.repo} --local-dir <目录> 下载。`);
+  out("  这个模型需要两个本地服务（omem 不替你常驻启动，按需开即可）：");
+  out(`    llama-server -m ${dir}/*.gguf -c 8192 --parallel 1 --cache-ram 0 -ctxcp 0 --port 8081`);
+  out(`    cd ${dir} && pip install -r requirements.txt && python -m startlux_decision.gguf_server --model-dir . --llama http://127.0.0.1:8081 --port 8090`);
+  out("  llama-server 用 llama.cpp 的预编译包即可；不加 --cache-ram 0 -ctxcp 0 内存会持续上涨。");
+  config.guard = { ...g, provider: "startlux", url: await input({ message: "判官服务地址", default: g.url ?? "http://127.0.0.1:8090" }) };
+  return true;
+}
+
 // ---- agents ---------------------------------------------------------------
 
 const QUICK_ROLES = ["assistant", "ingest", "heartbeat", "summarizer", "brief", "curator"];
@@ -315,6 +359,7 @@ export async function setupInteractive(app: App) {
       { value: "embeddings", name: "向量检索模型", checked: config.embeddings.provider === "none" },
       { value: "documents", name: "PDF / DOCX 解析（Docling 等）" },
       { value: "channels", name: "渠道：飞书 / Telegram / QQ·微信" },
+      { value: "guard", name: "注入标记（本地小模型，可选）" },
       { value: "sessions", name: "会话与并发" },
       { value: "schedules", name: "定时任务（巡检、简报、做梦、同步…）" },
     ],
@@ -326,6 +371,7 @@ export async function setupInteractive(app: App) {
       if (s === "embeddings") await setupEmbeddingsSection(config);
       if (s === "documents") await setupDocumentsSection(config, app.home);
       if (s === "channels") await setupChannelsSection(config);
+      if (s === "guard") await setupGuardSection(config);
       if (s === "sessions") await setupSessionsSection(config);
       if (s === "schedules") await setupSchedulesSection(app);
     } catch (e) {

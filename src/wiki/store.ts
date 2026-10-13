@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import YAML from "yaml";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { commitLibrary, fileAt, fileDiff, fileHistory } from "../core/git.ts";
-import { spaceDir } from "../core/spaces.ts";
+import { getSpace, spaceDir } from "../core/spaces.ts";
 import { HttpError, now, sha256 } from "../core/util.ts";
 import { indexText } from "../search/tokenize.ts";
 
@@ -293,4 +293,53 @@ export function appendLog(app: App, spaceId: string, line: string) {
   mkdirSync(dirname(file), { recursive: true });
   const prev = existsSync(file) ? readFileSync(file, "utf8") : "# 整理日志\n\n";
   writeFileSync(file, prev + `- ${now().slice(0, 16).replace("T", " ")} ${line}\n`);
+}
+
+/**
+ * Copy a space's wiki into a plain Markdown folder that reads well on GitHub or
+ * in an editor: `[[slug]]` become relative links, citations to files of the
+ * space's repository become relative links with line anchors (`#L10-L20`),
+ * other internal links (memories, messages, non-file sources) keep their text.
+ */
+export function exportWiki(app: App, spaceId: string, outDir: string, opts: { repoRoot?: string } = {}) {
+  const space = getSpace(app, spaceId);
+  const root = wikiDir(app, spaceId);
+  const repoRoot = opts.repoRoot ?? space.rootPath ?? null;
+  const out = resolve(outDir);
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.name.endsWith(".md")) files.push(full);
+    }
+  };
+  if (!existsSync(root)) throw new HttpError(404, `空间 ${spaceId} 还没有 Wiki`);
+  walk(root);
+  const uriOf = new Map(all<{ id: string; uri: string }>(app.db, "select id, uri from sources where space_id = ?", spaceId).map((r) => [r.id, r.uri]));
+  let links = 0;
+  for (const file of files) {
+    const rel = relative(root, file);
+    const target = join(out, rel);
+    const here = dirname(target);
+    const toPage = (slug: string) => {
+      const [s, anchor] = slug.split("#");
+      const p = relative(here, join(out, `${s.replace(/^[^:]+:/, "")}.md`)).split(sep).join("/");
+      return (p.startsWith(".") ? p : `./${p}`) + (anchor ? `#${anchor}` : "");
+    };
+    let text = readFileSync(file, "utf8");
+    text = text.replace(/\[([^\]]*)\]\(src:([^)#\s]+)(?:#L(\d+)(?:-L(\d+))?)?\)/g, (m, label, id, a, b) => {
+      const uri = uriOf.get(id);
+      if (!uri || !repoRoot || !existsSync(join(repoRoot, uri))) return label;
+      links++;
+      const p = relative(here, join(repoRoot, uri)).split(sep).join("/");
+      return `[${label}](${p}${a ? `#L${a}${b && b !== a ? `-L${b}` : ""}` : ""})`;
+    });
+    text = text.replace(/\[([^\]]*)\]\((?:mem|msg|conv|wiki):[^)]+\)/g, "$1");
+    text = text.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, (_, slug, label) => `[${label}](${toPage(slug)})`);
+    text = text.replace(/\[\[([^\]]+)\]\]/g, (_, slug) => `[${slug}](${toPage(slug)})`);
+    mkdirSync(here, { recursive: true });
+    writeFileSync(target, text);
+  }
+  return { pages: files.length, links, outDir: out };
 }
