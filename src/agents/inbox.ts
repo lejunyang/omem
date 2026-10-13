@@ -28,6 +28,8 @@ export type Inbound = Partial<ThreadAddress> & {
   mergeMs?: number;
   /** Who sent it (resolved from the channel identity); the owner by default. */
   userId?: string;
+  /** For watched chats: the person who actually wrote it (not a user of omem). */
+  speaker?: string;
 };
 
 export type Received = { thread: Thread; messageId: string | null; runId: string | null; merged: boolean; reply: string | null; started: "new" | "renewed" | null };
@@ -77,6 +79,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     if (score !== null && score >= app.config.guard.threshold) meta.contextSuspect = Math.round(score * 100) / 100;
   }
   if (inb.externalMessageId) meta.externalId = inb.externalMessageId;
+  if (inb.speaker) meta.speaker = inb.speaker;
   const messageId = addMessage(app, thread.id, "user", text, null, meta);
   const mergeMs = inb.mergeMs ?? (inb.conversationId || !inb.channel || inb.channel === "web" || inb.channel === "cli" ? 0 : app.config.sessions.mergeMs);
   const notBefore = new Date(Date.now() + mergeMs).toISOString();

@@ -22,6 +22,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 /** The package root, where osdk.toml declares omem's models. */
 export function packageRoot() {
   for (const c of [resolve(here, ".."), resolve(here, "../..")]) if (existsSync(join(c, "osdk.toml"))) return c;
+  for (const c of [resolve(here, ".."), resolve(here, "../..")]) if (existsSync(join(c, "package.json"))) return c;
   return resolve(here, "..");
 }
 
@@ -308,6 +309,25 @@ async function setupChannelsSection(config: Config) {
     config.lark.appId = (await input({ message: "飞书 App ID", default: config.lark.appId ?? "" })) || undefined;
     config.lark.ownerOpenId = (await input({ message: "你的 open_id（不知道就留空，私聊机器人一次它会告诉你）", default: config.lark.ownerOpenId ?? "" })) || undefined;
     out(`  App Secret 放在环境变量 ${config.lark.appSecretEnv}，不写进配置文件。`);
+    out("  卡片按钮/表单回调：在飞书开放平台 → 应用 → 事件与回调 → 回调配置 里选择“长连接”并订阅 card.action.trigger；机器人还需要 im:message、im:message:send_as_bot、im:resource 等权限。");
+  }
+  // Reading the owner's own Feishu through lark-cli (separate from the bot).
+  const cap = config.lark.capture;
+  const mode = await select({
+    message: "读取你自己的飞书（lark-cli 个人登录，只读）",
+    choices: [
+      { value: "all", name: "所有有新消息的会话（群和私聊）", description: "增量拉取，附件和文档链接一并处理；可在配置里 exclude 掉不想要的群" },
+      { value: "subscribed", name: "只读订阅的会话 + @我 的消息", description: "在网页设置 → 飞书里勾选会话" },
+      { value: "off", name: "不读" },
+    ],
+    default: cap.mode,
+  });
+  cap.mode = mode as typeof cap.mode;
+  if (mode !== "off") {
+    cap.calendar = await confirm({ message: "同时读取日程（前一天到未来一周）？", default: cap.calendar });
+    cap.minutes = await confirm({ message: "同时读取妙记（总结、待办、逐字稿）？", default: cap.minutes });
+    cap.attachments = await confirm({ message: "下载消息里的图片和文件并入库？", default: cap.attachments });
+    out("  需要先在这台电脑上运行 lark-cli auth login（omem 自带 lark-cli）；在“定时任务”里开启“采集飞书消息…”。");
   }
   if (config.telegram.enabled) {
     config.telegram.ownerChatId = (await input({ message: "你的 Telegram 用户 id（留空则私聊机器人时告诉你）", default: config.telegram.ownerChatId ?? "" })) || undefined;

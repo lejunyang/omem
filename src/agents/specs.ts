@@ -233,3 +233,23 @@ export function saveRaw(app: App, kind: "agent" | "skill", name: string, raw: st
   commitLibrary(app.libraryDir, `user: edit skill ${name}`);
   return readSkill(app, name);
 }
+
+/**
+ * Skills that ship with omem (skills/library/<name>/SKILL.md in the package)
+ * are copied into the library the first time; afterwards the library copy is
+ * the owner's to edit.
+ */
+export function seedBuiltinSkills(app: App, packageRoot: string) {
+  const dir = join(packageRoot, "skills", "library");
+  if (!existsSync(dir)) return [];
+  const added: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const src = join(dir, name, "SKILL.md");
+    if (!existsSync(src) || existsSync(join(skillsDir(app), name, "SKILL.md"))) continue;
+    mkdirSync(join(skillsDir(app), name), { recursive: true });
+    writeFileSync(join(skillsDir(app), name, "SKILL.md"), readFileSync(src, "utf8"));
+    added.push(name);
+  }
+  if (added.length) commitLibrary(app.libraryDir, `omem: add built-in skills ${added.join(", ")}`);
+  return added;
+}

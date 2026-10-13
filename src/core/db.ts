@@ -318,6 +318,42 @@ const migrations: string[] = [
   );
   alter table cards add column goal_id text;
   `,
+  // Feishu: interactive cards the bot sent and who may act on them; per-chat
+  // capture cursors for the owner's messages; messages already handed to a handler.
+  `
+  create table card_interactions (
+    id text primary key,
+    channel text not null default 'lark',
+    message_id text,
+    chat_id text,
+    conversation_id text,
+    run_id text,
+    purpose text not null,                    -- agent | draft
+    allowed text not null default '[]',       -- open_ids allowed to act; [] = anyone in the chat
+    payload text not null default '{}',
+    status text not null default 'open',      -- open | done | expired
+    created_at text not null,
+    handled_at text,
+    handled_by text
+  );
+  create index card_interactions_msg on card_interactions(message_id);
+  create table lark_cursors (
+    chat_id text primary key,
+    name text not null default '',
+    chat_mode text not null default '',
+    last_time integer not null default 0,
+    last_ids text not null default '[]',
+    updated_at text
+  );
+  create table handled_messages (
+    channel text not null,
+    message_id text not null,
+    rule text not null default '',
+    run_id text,
+    at text not null,
+    primary key(channel, message_id)
+  );
+  `,
 ];
 
 export type Db = DatabaseSync;
