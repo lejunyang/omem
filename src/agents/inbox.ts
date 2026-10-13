@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { canWrite, OWNER, personalSpaceId } from "../core/users.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { injectionScore } from "../sources/guard.ts";
-import { runCommand } from "./commands.ts";
+import { reviewReply, runCommand } from "./commands.ts";
 import { createRun, queuedInLane, updateQueuedRun } from "./runs.ts";
 import { addMessage, createThread, findThread, resolveThread, updateThread, type Thread, type ThreadAddress } from "./threads.ts";
 
@@ -50,6 +50,15 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   if (inb.externalMessageId) updateThread(app, thread.id, { settings: { ...thread.settings, lastMessageId: inb.externalMessageId } as Thread["settings"] });
 
   const text = inb.text.trim();
+  // An in-chat review takes plain replies until it ends.
+  if (!text.startsWith("/") && thread.settings.review) {
+    const reply = reviewReply(app, thread, text, userId);
+    if (reply !== null) {
+      addMessage(app, thread.id, "user", text, null, { command: true });
+      addMessage(app, thread.id, "assistant", reply, null, { command: true });
+      return { thread: findThread(app, thread.id)!, messageId: null, runId: null, merged: false, reply, started };
+    }
+  }
   if (text.startsWith("/")) {
     const reply = await runCommand(app, thread, text, inb);
     if (reply !== null) {

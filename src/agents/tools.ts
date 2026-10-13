@@ -8,6 +8,7 @@ import { notify } from "../core/notify.ts";
 import { findSpace, listSpaces } from "../core/spaces.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { createCard } from "../learn/cards.ts";
+import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede } from "../memory/store.ts";
 import { search, type HitType } from "../search/search.ts";
@@ -653,12 +654,52 @@ def({
 
 def({
   name: "create_card",
-  description: "创建一张复习卡片（间隔重复）。正面是问题/提示，背面是答案/解释；一卡一知识点。",
+  description: "创建一张复习卡片（间隔重复）。正面是问题/提示，背面是答案/解释；一卡一知识点。属于某个学习目标时带上 goal。",
   write: true,
-  schema: z.object({ front: z.string(), back: z.string(), source_refs: refs, space: z.string().optional() }),
+  schema: z.object({ front: z.string(), back: z.string(), source_refs: refs, space: z.string().optional(), goal: z.string().optional().describe("学习目标 id") }),
   handler: (ctx, a) => {
-    const r = createCard(ctx.app, { spaceId: space(ctx, a.space), front: a.front, back: a.back, sourceRefs: a.source_refs });
+    const goal = a.goal ? getGoal(ctx.app, a.goal) : null;
+    const r = createCard(ctx.app, { spaceId: goal?.spaceId ?? space(ctx, a.space), front: a.front, back: a.back, sourceRefs: a.source_refs, userId: goal?.userId ?? ctx.userId ?? "owner", goalId: goal?.id ?? null });
     return r.created ? `已创建卡片 ${r.card.id}` : `已有相同卡片 ${r.card.id}`;
+  },
+});
+
+def({
+  name: "set_learning_goal",
+  description:
+    "新建或修改学习目标（本人说“我想学/想练 X”时）：学什么、材料放在哪个空间、每天几张新卡、几点提醒复习。之后每天会从该空间的新材料出卡，到点提醒复习，复习也能在聊天里用 /review 进行。",
+  write: true,
+  schema: z.object({
+    id: z.string().optional().describe("修改已有目标时填"),
+    title: z.string().optional().describe("如“英语：开会和写邮件的常用表达”"),
+    detail: z.string().optional().describe("具体想达到什么、偏好什么样的卡片"),
+    space: z.string().optional().describe("材料所在空间；没有合适的就先用 list_spaces 看，通常是 learning 类空间"),
+    daily_new: z.number().int().min(0).max(100).optional(),
+    remind_at: z.string().optional().describe("每天提醒复习的时间 HH:MM（本人时区）"),
+    status: z.enum(["active", "paused", "done"]).optional(),
+  }),
+  handler: (ctx, a) => {
+    const g = upsertGoal(ctx.app, a.id, {
+      title: a.title,
+      detail: a.detail,
+      spaceId: a.space ? space(ctx, a.space) : a.id ? undefined : ctx.spaceId,
+      dailyNew: a.daily_new,
+      remindAt: a.remind_at,
+      status: a.status,
+      userId: a.id ? undefined : (ctx.userId ?? "owner"),
+    });
+    return `学习目标 ${g.id}「${g.title}」：空间 ${g.spaceId}，每天 ${g.dailyNew} 张新卡，${g.remindAt} 提醒（${g.status}）。`;
+  },
+});
+
+def({
+  name: "learning_progress",
+  description: "查看学习目标的进度：卡片数、已掌握、到期、近 30 天复习次数与记住率、连续天数、反复忘记的卡。",
+  schema: z.object({ goal: z.string().optional() }),
+  handler: (ctx, a) => {
+    const goals = a.goal ? [getGoal(ctx.app, a.goal)] : listGoals(ctx.app, { userId: ctx.userId ?? "owner", status: "all" });
+    if (!goals.length) return "还没有学习目标。本人想学什么时可以用 set_learning_goal 建一个。";
+    return goals.map((g) => `- ${g.id} [${g.status}] ${goalSummary(ctx.app, g).text}（每天 ${g.dailyNew} 张新卡，${g.remindAt} 提醒）`).join("\n");
   },
 });
 

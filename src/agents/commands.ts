@@ -3,6 +3,7 @@ import { allProfiles } from "../core/config.ts";
 import { findSpace, listSpaces } from "../core/spaces.ts";
 import { truncate } from "../core/util.ts";
 import { upsertItem } from "../items/store.ts";
+import { dueCards, getCard, reviewCard, studyStats } from "../learn/cards.ts";
 import { accessibleSpaces, OWNER, userName } from "../core/users.ts";
 import { remember } from "../memory/store.ts";
 import { search } from "../search/search.ts";
@@ -49,7 +50,7 @@ const commands: Record<string, Command> = {
         ...["space", "agent", "as", "agents", "skills", "approve", "mode", "idle"].map(line),
         "",
         "**快捷**",
-        ...["remember", "todo", "search", "runs", "whoami"].map(line),
+        ...["remember", "todo", "search", "review", "runs", "whoami"].map(line),
         "",
         "其他文字照常交给助理。",
       ].join("\n"),
@@ -286,6 +287,19 @@ const commands: Record<string, Command> = {
         : "没有命中。";
     },
   },
+  review: {
+    usage: "/review [目标id|stop]",
+    help: "在聊天里复习到期的卡片：看题 → 回任意内容看答案 → 回 1～4 打分",
+    run: ({ app, thread, args, inb }) => {
+      const arg = args.trim();
+      if (arg === "stop") {
+        const done = thread.settings.review?.done ?? 0;
+        updateThread(app, thread.id, { settings: { review: null } });
+        return `已结束复习，本次复习了 ${done} 张。`;
+      }
+      return nextCard(app, thread, inb.userId ?? OWNER, arg || undefined, 0);
+    },
+  },
   whoami: {
     usage: "/whoami",
     help: "我是谁、能访问哪些空间",
@@ -304,6 +318,36 @@ const commands: Record<string, Command> = {
         .join("\n") || "没有任务。",
   },
 };
+
+function nextCard(app: App, thread: Thread, userId: string, goalId: string | undefined, done: number): string {
+  const [card] = dueCards(app, { userId, goalId }, 1);
+  if (!card) {
+    updateThread(app, thread.id, { settings: { review: null } });
+    return done ? `复习完了，本次 ${done} 张，暂时没有到期的卡。` : "现在没有到期的卡片。";
+  }
+  const left = studyStats(app, { userId, goalId }).due;
+  updateThread(app, thread.id, { settings: { review: { cardId: card.id, stage: "front", goalId, done } } });
+  return `**${card.front}**\n\n（还有 ${left} 张。先想一想，回复任意内容看答案；/review stop 结束）`;
+}
+
+/**
+ * While a review is running in this thread, plain replies drive it instead of
+ * going to the assistant. Returns null when no review is active.
+ */
+export function reviewReply(app: App, thread: Thread, text: string, userId: string): string | null {
+  const r = thread.settings.review;
+  if (!r) return null;
+  const t = text.trim();
+  if (r.stage === "front") {
+    const card = getCard(app, r.cardId);
+    updateThread(app, thread.id, { settings: { review: { ...r, stage: "rate" } } });
+    return `${card.back}\n\n记得怎么样？回复 1 忘了 · 2 很吃力 · 3 记得 · 4 很轻松`;
+  }
+  const m = /^[1-4]$/.exec(t);
+  if (!m) return "回复 1～4 给这张卡打分，或 /review stop 结束复习。";
+  reviewCard(app, r.cardId, Number(t) as 1 | 2 | 3 | 4);
+  return nextCard(app, thread, userId, r.goalId, r.done + 1);
+}
 
 function line(name: string) {
   const c = commands[name];

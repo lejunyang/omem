@@ -1,5 +1,5 @@
 import "./agents/jobs.ts";
-import { scheduleSpaceSync } from "./agents/jobs.ts";
+import { learningTick, scheduleSpaceSync } from "./agents/jobs.ts";
 import { createRun, listRuns, startWorker } from "./agents/runs.ts";
 import { App } from "./core/app.ts";
 import { ensureDefaultSchedules, registerScheduleKind, restartScheduler } from "./core/scheduler.ts";
@@ -17,6 +17,7 @@ registerScheduleKind("repo-sync", (app) => {
   for (const s of listSpaces(app)) if (s.rootPath) scheduleSpaceSync(app, s.id);
 });
 
+registerScheduleKind("learn", (app) => learningTick(app));
 registerScheduleKind("brief", (app) => createRun(app, { kind: "brief", spaceId: "personal", title: "简报" }));
 registerScheduleKind("lark-curate", (app, s) => createRun(app, { kind: "curate", spaceId: "personal", title: "筛选值得关注的飞书群", input: { direction: (s.config as { direction?: string }).direction } }));
 registerScheduleKind("lark-poll", (app) => {

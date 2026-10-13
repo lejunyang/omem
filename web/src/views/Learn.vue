@@ -5,7 +5,24 @@ import Icon from "../components/Icon.vue";
 import Markdown from "../components/Markdown.vue";
 import { fmtTime, openCitation, state, toast } from "../store";
 
-const tab = ref<"review" | "cards" | "generate">("review");
+const tab = ref<"review" | "goals" | "cards" | "generate">("review");
+type Goal = { id: string; title: string; detail: string; spaceId: string; dailyNew: number; remindAt: string; status: string; text: string; stats: { total: number; due: number }; progress: { recall: number | null; streak: number; mature: number; reviews: number; weak: { front: string; lapses: number }[] } };
+const goals = ref<Goal[]>([]);
+const goalForm = ref({ title: "", detail: "", dailyNew: 10, remindAt: "20:30" });
+async function loadGoals() {
+  goals.value = await get<Goal[]>("/api/learn/goals");
+}
+async function addGoal() {
+  if (!goalForm.value.title.trim()) return;
+  await post("/api/learn/goals", { ...goalForm.value, spaceId: state.space });
+  goalForm.value = { title: "", detail: "", dailyNew: 10, remindAt: "20:30" };
+  toast("已添加学习目标：每天会从这个空间的新材料出卡，到点提醒复习", "ok");
+  void loadGoals();
+}
+async function setGoalStatus(g: Goal, status: string) {
+  await post("/api/learn/goals", { id: g.id, status });
+  void loadGoals();
+}
 const due = ref<Card[]>([]);
 const all = ref<Card[]>([]);
 const stats = ref({ total: 0, due: 0, reviewedToday: 0 });
@@ -25,6 +42,7 @@ async function load() {
   all.value = (await get<{ cards: Card[] }>(`/api/cards?${space.slice(1)}`)).cards;
 }
 onMounted(load);
+onMounted(loadGoals);
 const current = computed(() => due.value[0]);
 
 async function rate(rating: 1 | 2 | 3 | 4) {
@@ -97,6 +115,7 @@ const ratings = [
     </div>
     <div class="tabs">
       <button :class="{ on: tab === 'review' }" @click="tab = 'review'">复习 <span class="badge">{{ due.length }}</span></button>
+      <button :class="{ on: tab === 'goals' }" @click="(tab = 'goals'), loadGoals()">学习目标 <span class="badge">{{ goals.filter((g) => g.status === "active").length }}</span></button>
       <button :class="{ on: tab === 'cards' }" @click="tab = 'cards'">全部卡片</button>
       <button :class="{ on: tab === 'generate' }" @click="(tab = 'generate'), loadSources()">从材料生成</button>
     </div>
@@ -119,6 +138,38 @@ const ratings = [
         <h3>{{ done ? `完成！本轮复习了 ${done} 张` : "现在没有需要复习的卡片" }}</h3>
         <p>打开任何材料点“生成卡片”，或在“从材料生成”中批量选择。英语材料会生成词汇、搭配和例句卡。</p>
       </div>
+    </section>
+
+    <section v-else-if="tab === 'goals'" class="stack">
+      <div v-for="g in goals" :key="g.id" class="card pad goal" :class="{ paused: g.status !== 'active' }">
+        <div class="row">
+          <strong>{{ g.title }}</strong>
+          <span class="badge">{{ g.status === "active" ? "进行中" : g.status === "paused" ? "暂停" : "完成" }}</span>
+          <span class="spacer" />
+          <button v-if="g.status === 'active'" class="btn ghost sm" @click="setGoalStatus(g, 'paused')">暂停</button>
+          <button v-else class="btn ghost sm" @click="setGoalStatus(g, 'active')">继续</button>
+        </div>
+        <p v-if="g.detail" class="muted small">{{ g.detail }}</p>
+        <div class="row wrap small metrics">
+          <span>{{ g.stats.total }} 张卡 · {{ g.progress.mature }} 张已掌握</span>
+          <span>{{ g.stats.due }} 张到期</span>
+          <span>记住率 {{ g.progress.recall === null ? "—" : Math.round(g.progress.recall * 100) + "%" }}（近 30 天 {{ g.progress.reviews }} 次）</span>
+          <span>连续 {{ g.progress.streak }} 天</span>
+          <span class="muted">空间 {{ g.spaceId }} · 每天 {{ g.dailyNew }} 张新卡 · {{ g.remindAt }} 提醒</span>
+        </div>
+        <div v-if="g.progress.weak.length" class="small muted">反复忘记：{{ g.progress.weak.slice(0, 6).map((w) => w.front.slice(0, 24)).join("、") }}</div>
+      </div>
+      <form class="card pad stack" @submit.prevent="addGoal">
+        <strong class="small">新的学习目标（材料放在当前空间：{{ state.space }}）</strong>
+        <input v-model="goalForm.title" class="input" placeholder="学什么，如“英语：开会和写邮件的常用表达”" />
+        <textarea v-model="goalForm.detail" class="textarea" rows="2" placeholder="想达到什么程度、喜欢什么样的卡片（可选）" />
+        <div class="row small">
+          每天 <input v-model.number="goalForm.dailyNew" class="input num" type="number" min="0" max="100" /> 张新卡，
+          <input v-model="goalForm.remindAt" class="input num" placeholder="20:30" /> 提醒复习
+          <span class="spacer" /><button class="btn primary sm">添加</button>
+        </div>
+        <p class="muted small">也可以直接对助理说“我想练英语口语，每天 15 张，晚上九点提醒我”。复习可以在这里，也可以在飞书 / Telegram 里发 /review。</p>
+      </form>
     </section>
 
     <section v-else-if="tab === 'cards'" class="stack">
@@ -156,6 +207,17 @@ const ratings = [
 </template>
 
 <style scoped>
+.goal.paused {
+  opacity: 0.6;
+}
+.goal .metrics {
+  gap: 14px;
+  margin: 6px 0 2px;
+}
+.input.num {
+  width: 70px;
+  display: inline-block;
+}
 .study {
   max-width: 640px;
   margin: 10px auto;

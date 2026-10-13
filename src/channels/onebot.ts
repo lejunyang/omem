@@ -3,7 +3,7 @@ import type { App } from "../core/app.ts";
 import { addNotificationSink } from "../core/notify.ts";
 import { appendToSource, sourceText } from "../sources/store.ts";
 import { registerThreadSender } from "../agents/inbox.ts";
-import { resolveIdentity } from "../core/users.ts";
+import { identitiesOf, resolveIdentity } from "../core/users.ts";
 import { answerFromChannel, chunkMessage } from "./common.ts";
 
 /**
@@ -55,7 +55,8 @@ export async function startOneBot(app: App) {
   });
 
   addNotificationSink((n) => {
-    if (cfg.ownerUserId) sendPrivate(cfg.ownerUserId, `${n.title}\n${n.body}`);
+    const to = n.userId === "owner" ? cfg.ownerUserId : identitiesOf(app, n.userId).find((i) => i.channel === "onebot")?.external_id;
+    if (to) sendPrivate(to, `${n.title}\n${n.body}`);
   });
 
   const pending = new Map<string, NodeJS.Timeout>();
