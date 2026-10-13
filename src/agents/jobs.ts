@@ -14,6 +14,7 @@ import { runRole } from "./runner.ts";
 import { maybeSummarize, threadTurn } from "./sessions.ts";
 import { readAgentSpec } from "./specs.ts";
 import { describeFlags, guardSource } from "../sources/guard.ts";
+import { studyStats } from "../learn/cards.ts";
 import { addMessage, getThread, threadMessages, updateThread } from "./threads.ts";
 import { createRun, registerHandler, type RunContext } from "./runs.ts";
 
@@ -321,7 +322,13 @@ registerHandler("brief", async (ctx) => {
     `进行中的事项（${items.length}）：\n${items.map((i) => `- ${i.id} [${i.kind}/${i.status}] ${i.title}${i.dueAt ? " 截止 " + i.dueAt : ""}${i.remindAt ? " 提醒 " + i.remindAt : ""}${i.waitingOn ? " 等待 " + i.waitingOn : ""}（更新于 ${i.updatedAt.slice(0, 16)}）`).join("\n") || "（无）"}`,
     `期间新增或更新的材料（${fresh.length}）：\n${fresh.map((s) => `- ${s.id} ${s.space_id}:${s.uri}「${s.title}」(${s.kind})`).join("\n") || "（无）"}`,
     `期间完成的后台运行：\n${runs.map((r) => `- ${r.id} [${r.kind}/${r.status}] ${r.title}`).join("\n") || "（无）"}`,
-  ].join("\n\n");
+    (() => {
+      const s = studyStats(app);
+      return s.due ? `学习：${s.due} 张卡片到期待复习（共 ${s.total} 张，今天已复习 ${s.reviewedToday} 张），简报里提一句并给出“学习”页入口。` : "";
+    })(),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const r = await agent(ctx, "brief", "personal", task, null);
   return { summary: r.text.trim() };
 });

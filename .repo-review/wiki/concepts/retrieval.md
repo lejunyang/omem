@@ -3,7 +3,7 @@ title: 检索：FTS、符号、向量与 RRF 融合
 summary: 讲清 search 工具的排序从哪来：中文双字切分、四路召回、RRF 融合与去重、可选向量检索（开关与换模型的后果），以及 scan 与
   search 的分工和评测方法。
 kind: concept
-updated: 2026-10-12
+updated: 2026-10-13
 ---
 
 这页回答三个问题：Agent 调 `search` 拿到的排序是怎么算出来的；中文怎么分词；向量检索怎么开、换模型会发生什么。读完你能判断一条结果为什么排在前面，也知道调检索质量该动哪里。
@@ -81,7 +81,7 @@ flowchart LR
 
 `config.embeddings.provider` 有三个值：`none`（默认）、`local`、`openai` ([config.ts:70-78](../../../src/core/config.ts#L70-L78))。设成 `none` 时 `vectorSearch` 直接返回空，行为就是纯全文 ([embeddings.ts:121-123](../../../src/search/embeddings.ts#L121-L123))。
 
-开启的命令是 `omem setup embeddings [--model …]`：它把配置改成 `provider: "local"`，立刻循环调 `embedPending` 补完所有向量，最后保存配置 ([cli-main.ts:374-387](../../../src/cli-main.ts#L374-L387))。`--model` 可以是模型 id、本地目录，或 bge-small-zh / bge-base-zh / bge-m3（有 osdk 时经 osdk 下载）([cli-main.ts:356-360](../../../src/cli-main.ts#L356-L360))。交互式 `omem setup` 里也有这一节。
+开启的命令是 `omem setup embeddings [--model …]`：它把配置改成 `provider: "local"`，立刻循环调 `embedPending` 补完所有向量，最后保存配置 ([cli-main.ts:383-397](../../../src/cli-main.ts#L383-L397))。`--model` 可以是模型 id、本地目录，或 bge-small-zh / bge-base-zh / bge-m3（有 osdk 时经 osdk 下载）([cli-main.ts:368](../../../src/cli-main.ts#L368)，[cli-main.ts:385-387](../../../src/cli-main.ts#L385-L387))。交互式 `omem setup` 里也有这一节。
 
 - **local**：用 `@huggingface/transformers` 加载 q8 量化模型；`cfg.model` 是已存在的目录时离线加载（osdk 管理的模型走这条）。按 `family` 决定池化：bge 系 CLS，其它 mean；`bge-zh` 的**查询**（不是文档）前面加检索指令前缀 ([embeddings.ts:39-61](../../../src/search/embeddings.ts#L39-L61))。加载失败只打一条警告并退回纯全文 ([embeddings.ts:62-65](../../../src/search/embeddings.ts#L62-L65))。
 - **openai**：向 `<url>/embeddings` POST，key 取自 `apiKeyEnv` 指定的环境变量，返回后自行归一化 ([embeddings.ts:21-38](../../../src/search/embeddings.ts#L21-L38))。`url` 可指向其它兼容该协议的服务。
@@ -104,7 +104,7 @@ flowchart LR
 
 ## scan：另一种问题用的另一个工具
 
-`search` 返回的是“最像的前几条”，适合找线索；“一共去过几次”“列出所有……”需要的是**不漏**。`scan` 为此存在：不排序，对空间内所有未删除原件的全文做不区分大小写的子串匹配（`instr(lower(text), ?)`，任一关键词命中即可），逐行列出命中，并附上有效记忆里的命中；可按 `since`/`until` 限定时间，默认最多显示 150 行 ([tools.ts:175-233](../../../src/agents/tools.ts#L175-L233))。开头一行会写“N 个原件共 M 行命中，显示前 K 行”，让 Agent 知道有没有被截断。
+`search` 返回的是“最像的前几条”，适合找线索；“一共去过几次”“列出所有……”需要的是**不漏**。`scan` 为此存在：不排序，对空间内所有未删除原件的全文做不区分大小写的子串匹配（`instr(lower(text), ?)`，任一关键词命中即可），逐行列出命中，并附上有效记忆里的命中；可按 `since`/`until` 限定时间，默认最多显示 150 行 ([tools.ts:177-235](../../../src/agents/tools.ts#L177-L235))。开头一行会写“N 个原件共 M 行命中，显示前 K 行”，让 Agent 知道有没有被截断。
 
 | | `search` | `scan` |
 | --- | --- | --- |

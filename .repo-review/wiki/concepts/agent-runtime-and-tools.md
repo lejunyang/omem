@@ -2,14 +2,14 @@
 title: Agent 运行时与 MCP 工具权限
 summary: 讲清 omem 怎样把工具交给外部 Agent，“模型没有直接写库权限”靠哪几道检查落实，以及 ACP 与 CLI 两条路径的差别和修改入口。
 kind: concept
-updated: 2026-10-12
+updated: 2026-10-13
 ---
 
 omem 自己不理解、不写作，这些交给外部 Agent（Codex、Claude Code 等）。宿主要解决的问题是：怎样让一个别人的进程只能用我们允许的工具、只能碰允许的空间，并且每一次写入都留下痕迹。读完这页，你能说清一个 token 从发放到失效的全过程，知道权限在哪一层被拦，也知道要加一个工具、换一种权限策略时该改哪里。
 
 ## 一个例子：wiki-writer 写出一页
 
-Wiki 生成时，`wiki-write` 任务把页面计划拼成任务文本，再调用 `agent(ctx, "wiki-writer", spaceId, task)`（[jobs.ts:185](../../../src/agents/jobs.ts#L185)）。这条路径最终进入 `runRole`，先走 `prepareRun`。
+Wiki 生成时，`wiki-write` 任务把页面计划拼成任务文本，再调用 `agent(ctx, "wiki-writer", spaceId, task)`（[jobs.ts:197](../../../src/agents/jobs.ts#L197)）。这条路径最终进入 `runRole`，先走 `prepareRun`。
 
 ```mermaid
 sequenceDiagram
@@ -35,7 +35,7 @@ sequenceDiagram
 const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces, tools, actor: "agent" });
 ```
 
-见 [runner.ts:150-156](../../../src/agents/runner.ts#L150-L156)。token 是 `ot_` 加随机串，对应的 `{runId, spaceId, spaces, tools, actor}` 只存在服务进程的内存 Map 里（[tools.ts:806-811](../../../src/agents/tools.ts#L806-L811)）。Agent 拿到的只是这个不透明字符串，改不了其中的范围。
+见 [runner.ts:150-156](../../../src/agents/runner.ts#L150-L156)。token 是 `ot_` 加随机串，对应的 `{runId, spaceId, spaces, tools, actor}` 只存在服务进程的内存 Map 里（[tools.ts:808-813](../../../src/agents/tools.ts#L808-L813)）。Agent 拿到的只是这个不透明字符串，改不了其中的范围。
 
 **2. 生成 MCP 接入信息。** `prepareRun` 返回的 `mcp` 同时备好两种连法：HTTP 地址 `${app.baseUrl}/mcp`，和 stdio 桥（`node mcp-bridge.ts/js`，优先用编译后的 js）（[runner.ts:73-77](../../../src/agents/runner.ts#L73-L77)、[runner.ts:174](../../../src/agents/runner.ts#L174)）。类型见 [types.ts:62-69](../../../src/agents/types.ts#L62-L69)。用哪种由下游的 ACP/CLI 代码按 Agent 的能力决定。
 
@@ -47,12 +47,12 @@ const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces, to
 
 ## “模型没有直接写库权限”靠哪几道检查
 
-写库的唯一入口是 `callTool`（[tools.ts:790-802](../../../src/agents/tools.ts#L790-L802)）。依次发生：
+写库的唯一入口是 `callTool`（[tools.ts:792-804](../../../src/agents/tools.ts#L792-L804)）。依次发生：
 
 1. **工具白名单**：工具不存在，或 `ctx.tools` 不含该名字，返回 `工具 X 不可用`。列表接口也按 `ctx.tools` 过滤，所以 Agent 一开始就看不到不该有的工具；这里是第二道。
 2. **zod 校验**：`tool.schema.safeParse(args)` 失败返回 `参数错误：…`，handler 不会收到未校验的参数。
-3. **空间范围**：handler 里用两个辅助函数。`space(ctx, requested)` 把可选的 `space` 参数解析为空间 id，空间不存在报 400，不在 `ctx.spaces` 里报 403（[tools.ts:45-50](../../../src/agents/tools.ts#L45-L50)）；`inScope(ctx, spaceId, what)` 用于“按对象 id 修改”的工具，先查出对象所在空间再检查（[tools.ts:52-54](../../../src/agents/tools.ts#L52-L54)）。`write_page` 的第一行就是 `space(ctx, a.space)`（[tools.ts:536](../../../src/agents/tools.ts#L536)）；`supersede`、`forget` 这类用记忆 id 的工具走 `inScope`。
-4. **记录**：工具声明了 `write: true` 且有 `runId` 时，成功后发出 `tool-write` 事件，带上工具名和参数（[tools.ts:797](../../../src/agents/tools.ts#L797)）。`write_page` 另外发一个 `change` 事件指向页面 id，并写页面 Git 历史，message 里带 run id（[tools.ts:539-541](../../../src/agents/tools.ts#L539-L541)）。
+3. **空间范围**：handler 里用两个辅助函数。`space(ctx, requested)` 把可选的 `space` 参数解析为空间 id，空间不存在报 400，不在 `ctx.spaces` 里报 403（[tools.ts:45-50](../../../src/agents/tools.ts#L45-L50)）；`inScope(ctx, spaceId, what)` 用于“按对象 id 修改”的工具，先查出对象所在空间再检查（[tools.ts:52-54](../../../src/agents/tools.ts#L52-L54)）。`write_page` 的第一行就是 `space(ctx, a.space)`（[tools.ts:538](../../../src/agents/tools.ts#L538)）；`supersede`、`forget` 这类用记忆 id 的工具走 `inScope`。
+4. **记录**：工具声明了 `write: true` 且有 `runId` 时，成功后发出 `tool-write` 事件，带上工具名和参数（[tools.ts:799](../../../src/agents/tools.ts#L799)）。`write_page` 另外发一个 `change` 事件指向页面 id，并写页面 Git 历史，message 里带 run id（[tools.ts:541-543](../../../src/agents/tools.ts#L541-L543)）。
 
 有现成测试覆盖前三条：[library.test.ts:109-121](../../../test/library.test.ts#L109-L121) 构造 `spaces: ["personal"]`、`tools: {read_source, search}` 的上下文，断言读 `secret` 空间的原件失败、`search` 指定 `secret` 返回“不能访问”、`remember` 返回“不可用”；换成 `tools: null` 后，`supersede`/`forget` 仍因 `inScope` 被拒。
 
@@ -61,7 +61,7 @@ const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces, to
 - **tool-write 是否落库**：从实现看，它用 `app.emit` 并且 `seq: -1`，是广播给实时监听者的事件；真正落到 `run_events` 表的路径是 `runs.ts` 里的 `writeEvent`（带递增 seq）（[runs.ts:151-153](../../../src/agents/runs.ts#L151-L153)）。我没有在 `src`、`web/src` 里找到把 `seq: -1` 事件另存的代码，所以“写入记录在运行里”目前更像实时可见，而不是持久审计。要做审计，需要在这里补落库。
 - **工具内部的写**：权限判断散在各 handler 里，靠每个工具作者记得调 `space()`/`inScope()`。`callTool` 本身不替你检查空间，只检查白名单和参数。
 
-另外 `toolContextForToken` 还有一个后门：token 等于 `app.internalToken` 时返回 `tools: null、spaces: null、actor: "user"` 的全权限上下文（[tools.ts:820-825](../../../src/agents/tools.ts#L820-L825)），给宿主自己和界面用。
+另外 `toolContextForToken` 还有一个后门：token 等于 `app.internalToken` 时返回 `tools: null、spaces: null、actor: "user"` 的全权限上下文（[tools.ts:822-827](../../../src/agents/tools.ts#L822-L827)），给宿主自己和界面用。
 
 ## 工具怎么注册
 
@@ -75,7 +75,7 @@ def({
 });
 ```
 
-`schema` 是 `z.object`，同一份定义既用来校验，也通过 `z.toJSONSchema` 生成 MCP 的 `inputSchema`（[tools.ts:786-788](../../../src/agents/tools.ts#L786-L788)）。handler 的 `args` 类型由 `z.infer` 推出，返回字符串，抛异常会被 `callTool` 捕获成 `isError: true` 的文本。`write` 只影响事件记录，不会自动阻止任何调用——是否允许由角色的 `tools` 清单决定。
+`schema` 是 `z.object`，同一份定义既用来校验，也通过 `z.toJSONSchema` 生成 MCP 的 `inputSchema`（[tools.ts:788-790](../../../src/agents/tools.ts#L788-L790)）。handler 的 `args` 类型由 `z.infer` 推出，返回字符串，抛异常会被 `callTool` 捕获成 `isError: true` 的文本。`write` 只影响事件记录，不会自动阻止任何调用——是否允许由角色的 `tools` 清单决定。
 
 ## ACP 路径
 
@@ -116,7 +116,7 @@ revokeToolToken(prep.token);
 retargetToolToken(l.token, ctx.run.id);
 ```
 
-见 [sessions.ts:192-196](../../../src/agents/sessions.ts#L192-L196)。`retargetToolToken` 直接改 Map 里那份上下文的 `runId`（[tools.ts:812-816](../../../src/agents/tools.ts#L812-L816)），而 `toolContextForToken` 每次请求都复制一份，所以下一次工具调用立刻按新的 run 记账。从实现看，这个旧 token 的工具清单和空间范围沿用会话创建时的值；会话键 `profile|label|cwd` 变了就会换新会话（[sessions.ts:139](../../../src/agents/sessions.ts#L139)、[187-190](../../../src/agents/sessions.ts#L187-L190)），但键里没有空间，改线程空间后是否复用我没有验证。会话释放时 token 一并撤销。CLI 路径每轮是新进程，所以直接在 `finally` 里撤销新 token，不需要 retarget（[sessions.ts:180-182](../../../src/agents/sessions.ts#L180-L182)）。
+见 [sessions.ts:193-197](../../../src/agents/sessions.ts#L193-L197)。`retargetToolToken` 直接改 Map 里那份上下文的 `runId`（[tools.ts:814-818](../../../src/agents/tools.ts#L814-L818)），而 `toolContextForToken` 每次请求都复制一份，所以下一次工具调用立刻按新的 run 记账。从实现看，这个旧 token 的工具清单和空间范围沿用会话创建时的值；会话键 `profile|label|cwd` 变了就会换新会话（[sessions.ts:140](../../../src/agents/sessions.ts#L140)、[188-191](../../../src/agents/sessions.ts#L188-L191)），但键里没有空间，改线程空间后是否复用我没有验证。会话释放时 token 一并撤销。CLI 路径每轮是新进程，所以直接在 `finally` 里撤销新 token，不需要 retarget（[sessions.ts:181-183](../../../src/agents/sessions.ts#L181-L183)）。
 
 ## 为什么这样设计
 
