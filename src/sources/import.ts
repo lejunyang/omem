@@ -142,6 +142,12 @@ export function repoFiles(root: string): string[] {
   });
 }
 
+function globToRegex(pattern: string) {
+  const p = pattern.replace(/^\.\//, "").replace(/\/$/, "/**");
+  const re = p.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, ".*");
+  return new RegExp(`^${re}${p.includes("*") ? "" : "(/.*)?"}$`);
+}
+
 /**
  * Bring a repo/directory space up to date with its working tree. Only changed
  * files are re-chunked; files that disappeared become tombstones.
@@ -150,7 +156,9 @@ export function syncDirectorySpace(app: App, spaceId: string, onProgress?: (done
   const space = getSpace(app, spaceId);
   if (!space.rootPath) throw new HttpError(400, "这个空间没有关联目录");
   const report = emptyReport();
-  const files = repoFiles(space.rootPath);
+  // Space settings may exclude paths (archives, vendored docs): prefixes or simple globs.
+  const exclude = ((space.settings.exclude as string[] | undefined) ?? []).map(globToRegex);
+  const files = repoFiles(space.rootPath).filter((f) => !exclude.some((re) => re.test(f)));
   const seen = new Set<string>();
   files.forEach((rel, i) => {
     const full = join(space.rootPath!, rel);

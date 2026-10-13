@@ -9,7 +9,7 @@ import { createRun, getRun, waitForRun, type Run } from "./agents/runs.ts";
 import { callTool, toolSchemas } from "./agents/tools.ts";
 import { App, type AppEvent } from "./core/app.ts";
 import { configPath, omemHome } from "./core/config.ts";
-import { createSpace, ensurePersonalSpace, listSpaces } from "./core/spaces.ts";
+import { createSpace, ensurePersonalSpace, getSpace, listSpaces, updateSpace } from "./core/spaces.ts";
 import { listItems, upsertItem } from "./items/store.ts";
 import { listMemories } from "./memory/store.ts";
 import { boot } from "./main.ts";
@@ -141,9 +141,11 @@ space
   .option("--path <dir>", "关联目录（代码仓库）")
   .option("--kind <kind>", "personal | project | repo | learning | topic")
   .option("-d, --description <text>", "说明")
+  .option("--exclude <patterns...>", "不导入的路径（前缀或 glob，如 docs/archive '**/*.lock'）")
   .action((name, o) => {
     const app = open();
     const s = createSpace(app, { id: o.id, name, kind: o.kind, rootPath: o.path, description: o.description });
+    if (o.exclude?.length) updateSpace(app, s.id, { settings: { ...s.settings, exclude: o.exclude } });
     console.log(`已创建空间 ${s.id}`);
     if (s.rootPath) {
       const r = syncDirectorySpace(app, s.id);
@@ -153,8 +155,11 @@ space
 space
   .command("sync <id>")
   .description("同步空间关联目录的最新内容")
-  .action((id) => {
-    const r = syncDirectorySpace(open(), id);
+  .option("--exclude <patterns...>", "设置不导入的路径（替换原有设置；已导入的会被移除）")
+  .action((id, o) => {
+    const app = open();
+    if (o.exclude) updateSpace(app, id, { settings: { ...getSpace(app, id).settings, exclude: o.exclude } });
+    const r = syncDirectorySpace(app, id);
     console.log(`新增 ${r.created}，更新 ${r.updated}，移除 ${r.removed}，未变 ${r.unchanged}`);
   });
 
@@ -246,6 +251,15 @@ wiki
   .action(async (sp) => {
     const r = await runJob((app) => createRun(app, { kind: "wiki-lint", spaceId: sp, title: "检查受影响页面" }), { stream: false });
     console.log((r.output as { summary?: string }).summary ?? "");
+  });
+wiki
+  .command("export <space> <dir>")
+  .description("把 Wiki 导出成普通 Markdown 目录（页面互链、原件引用改成仓库内相对链接，适合提交到仓库或在 GitHub 上看）")
+  .option("--repo-root <dir>", "引用原件所在的仓库根目录（默认是空间关联的目录）")
+  .action(async (sp, dir, o) => {
+    const { exportWiki } = await import("./wiki/store.ts");
+    const r = exportWiki(open(), sp, dir, { repoRoot: o.repoRoot });
+    console.log(`已导出 ${r.pages} 页到 ${r.outDir}，${r.links} 处原件引用改成了相对链接。`);
   });
 wiki
   .command("show <space> [slug]")
