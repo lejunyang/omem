@@ -13,6 +13,7 @@ import { runCli } from "./cli.ts";
 import { commandExists } from "./spawn.ts";
 import { issueToolToken, revokeToolToken } from "./tools.ts";
 import type { AgentEvent, AgentResult, McpAccess } from "./types.ts";
+import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, type AgentSpec, type McpServerSpec } from "./specs.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -86,13 +87,15 @@ function localTime(app: App) {
  * Self-improvement loop: preferences the owner stated and lessons distilled by
  * the dreamer (experience memories) are handed to every future run.
  */
-function learnedContext(app: App, spaceId: string) {
+function learnedContext(app: App, spaceId: string, userId: string) {
   const rows = all<{ kind: string; subject: string; content: string }>(
     app.db,
     `select kind, subject, content from memories where status = 'active' and (
-       (kind = 'preference' and space_id in ('personal', ?)) or (kind = 'experience' and space_id = ?)
+       (kind = 'preference' and space_id in (?, ?) and coalesce(user_id, 'owner') = ?) or (kind = 'experience' and space_id = ?)
      ) order by kind = 'preference' desc, updated_at desc limit 24`,
+    personalSpaceId(userId),
     spaceId,
+    userId,
     spaceId,
   );
   return rows.map((r) => `- ${r.kind === "preference" ? "偏好" : "经验"}${r.subject ? `（${r.subject}）` : ""}：${r.content}`).join("\n");
@@ -131,7 +134,11 @@ export type PreparedRun = {
  * Resolve backend, working directory, tool token and the standing context for
  * a role or agent spec. The caller owns the token (revoke it when done).
  */
-export function prepareRun(app: App, input: { actor: Actor; spaceId: string; spaces?: string[] | null; runId: string | null; cwd?: string; profileId?: string }): PreparedRun {
+export function prepareRun(
+  app: App,
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; runId: string | null; cwd?: string; profileId?: string; userId?: string; lark?: { chats: string[] | null; draft?: boolean } },
+): PreparedRun {
+  const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
   const role = spec ? null : loadRole((input.actor as { role: RoleName }).role);
   const roleName = role ? (input.actor as { role: RoleName }).role : "assistant";
@@ -151,11 +158,17 @@ export function prepareRun(app: App, input: { actor: Actor; spaceId: string; spa
   // Skills are offered to everyone who can read them.
   tools.add("list_skills");
   tools.add("read_skill");
+  // A thread that may post into specific Feishu chats (watched groups) gets the bot's voice and notify.
+  if (input.lark?.chats?.length) for (const t of ["lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "notify"]) tools.add(t);
   const spaces =
     input.spaces !== undefined ? input.spaces : spec ? (spec.spaces.includes("*") ? null : [...new Set([space.id, ...spec.spaces])]) : roleName === "assistant" ? null : [space.id];
-  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces, tools, actor: "agent" });
+  const scoped = scopeFor(app, userId, spaces);
+  if (scoped && !scoped.includes(space.id)) throw new HttpError(403, `${userName(app, userId)} 不能访问空间 ${space.id}`);
+  // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
+  const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
+  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: scoped, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft });
   const guide = spaceGuide(app, space.id).trim();
-  const lessons = learnedContext(app, space.id);
+  const lessons = learnedContext(app, space.id, userId);
   const skills = skillIndex(app, spec?.skills);
   const agents = roleName === "assistant" && !spec ? agentIndex(app) : "";
   const body = spec
@@ -164,7 +177,7 @@ export function prepareRun(app: App, input: { actor: Actor; spaceId: string; spa
   const system = [
     commonGuide(),
     body,
-    `# 环境\n\n- 现在：${localTime(app)}\n- 当前空间：${space.id}（${space.name}，${space.kind}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}`,
+    `# 环境\n\n- 现在：${localTime(app)}${userId !== OWNER ? `\n- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}` : ""}\n- 当前空间：${space.id}（${space.name}，${space.kind}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}`,
   ].join("\n\n---\n\n");
   return {
     profile,
@@ -180,8 +193,8 @@ export function prepareRun(app: App, input: { actor: Actor; spaceId: string; spa
 }
 
 /** Run a role-defined agent turn with omem tools attached. */
-export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec }): Promise<AgentResult & { profileId: string }> {
-  const prep = prepareRun(app, { actor: input.spec ? { spec: input.spec } : { role: input.role }, spaceId: input.spaceId, spaces: input.spaces, runId: input.runId, cwd: input.cwd, profileId: input.profileId });
+export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string }> {
+  const prep = prepareRun(app, { actor: input.spec ? { spec: input.spec } : { role: input.role }, spaceId: input.spaceId, spaces: input.spaces, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId });
   const emit = input.onEvent ?? (() => {});
   try {
     const req = {

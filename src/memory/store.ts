@@ -74,6 +74,8 @@ export type RememberInput = {
   sourceRefs?: string[];
   validFrom?: string | null;
   createdBy?: "agent" | "user";
+  /** Set for memories about or for one person (their preferences); null = shared knowledge of the space. */
+  userId?: string | null;
 };
 
 export function remember(app: App, input: RememberInput): Memory {
@@ -82,7 +84,7 @@ export function remember(app: App, input: RememberInput): Memory {
   tx(app.db, () => {
     run(
       app.db,
-      "insert into memories(id,space_id,kind,subject,content,status,valid_from,source_refs,created_by,created_at,updated_at) values(?,?,?,?,?,'active',?,?,?,?,?)",
+      "insert into memories(id,space_id,kind,subject,content,status,valid_from,source_refs,created_by,created_at,updated_at,user_id) values(?,?,?,?,?,'active',?,?,?,?,?,?)",
       id,
       input.spaceId,
       input.kind,
@@ -93,6 +95,7 @@ export function remember(app: App, input: RememberInput): Memory {
       input.createdBy ?? "agent",
       at,
       at,
+      input.userId ?? null,
     );
     index(app, id, input.subject ?? "", input.content);
   });
@@ -126,6 +129,8 @@ export function supersede(app: App, oldId: string, input: Omit<RememberInput, "s
       at,
       at,
     );
+    // A correction keeps whose memory it was.
+    run(app.db, "update memories set user_id = (select user_id from memories where id = ?) where id = ?", oldId, id);
     run(app.db, "update memories set status='superseded', valid_to=?, superseded_by=?, updated_at=? where id=?", input.validFrom ?? at, id, at, oldId);
     index(app, id, input.subject ?? old.subject, input.content);
   });

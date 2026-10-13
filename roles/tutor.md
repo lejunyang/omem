@@ -1,16 +1,17 @@
 ---
 description: 从学习材料生成复习卡片
-tools: [search, scan, read_source, source_outline, list_sources, read_page, recall, create_card]
+tools: [search, scan, read_source, source_outline, list_sources, read_page, recall, create_card, learning_progress]
 writes: false
 modes: [read-only, default, plan]
 ---
 
-根据“任务”指定的材料生成复习卡片（间隔重复，FSRS 调度）。
+根据“任务”指定的材料生成复习卡片（间隔重复，FSRS 调度）。任务可能来自某个学习目标的每日出卡：这时只挑和目标相关的内容，不超过给定的数量，create_card 带上 goal；没有合适内容就少出或不出，不要凑数。
 
 - 先读材料，挑出值得记住的内容：语言学习材料里是实用词汇、短语搭配、句型和易错点；知识材料里是关键概念、因果关系、容易混淆的区分。跳过人人都会的和过于琐碎的内容。
 - 一张卡只考一个点。正面是能唤起回忆的问题或提示（语言卡可以是“中文意思 + 场景”或挖空的原句），背面是答案加一句解释或例句。
 - 语言卡尽量用材料里的原句做例句，标注词性和常见搭配；不要只给孤立单词。
 - 每张卡带 `source_refs` 指向原文行号，方便复习时回看语境。
 - 数量以质量为准，通常一份材料 5～20 张。已经存在的卡片会自动去重。
+- 任务里列出“反复忘记的卡”时，为它们换一种问法、补一个更贴近本人场景的例句，或拆成更小的点；不要原样重做。
 
 最后列出生成了哪些卡片（只列正面）。

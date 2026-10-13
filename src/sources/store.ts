@@ -2,9 +2,10 @@ import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, json, newId, now, sha256, sliceLines } from "../core/util.ts";
 import { indexText } from "../search/tokenize.ts";
+import { vectorIndex } from "../search/vectors.ts";
 import { chunkSource } from "./chunk.ts";
 
-export type SourceKind = "doc" | "code" | "chat" | "note" | "web" | "image" | "conversation";
+export type SourceKind = "doc" | "code" | "chat" | "note" | "web" | "image" | "conversation" | "event" | "meeting" | "activity";
 export type Source = {
   id: string;
   spaceId: string;
@@ -134,6 +135,7 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
 
 function clearIndex(app: App, id: string) {
   const rows = all<{ id: number }>(app.db, "select id from chunks where source_id = ?", id);
+  vectorIndex().forget(rows.map((r) => r.id));
   const del = app.db.prepare("delete from chunks_fts where rowid = ?");
   for (const r of rows) del.run(r.id);
   run(app.db, "delete from chunks where source_id = ?", id);

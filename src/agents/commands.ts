@@ -3,6 +3,8 @@ import { allProfiles } from "../core/config.ts";
 import { findSpace, listSpaces } from "../core/spaces.ts";
 import { truncate } from "../core/util.ts";
 import { upsertItem } from "../items/store.ts";
+import { dueCards, getCard, reviewCard, studyStats } from "../learn/cards.ts";
+import { accessibleSpaces, OWNER, userName } from "../core/users.ts";
 import { remember } from "../memory/store.ts";
 import { search } from "../search/search.ts";
 import type { Inbound } from "./inbox.ts";
@@ -45,10 +47,10 @@ const commands: Record<string, Command> = {
         ...["new", "status", "stop", "sessions", "resume", "link", "summary", "compact"].map(line),
         "",
         "**路由**",
-        ...["space", "agent", "as", "agents", "skills", "approve", "mode", "idle"].map(line),
+        ...["space", "agent", "as", "agents", "skills", "approve", "mode", "idle", "watch"].map(line),
         "",
         "**快捷**",
-        ...["remember", "todo", "search", "runs"].map(line),
+        ...["remember", "todo", "search", "review", "runs", "whoami"].map(line),
         "",
         "其他文字照常交给助理。",
       ].join("\n"),
@@ -99,8 +101,8 @@ const commands: Record<string, Command> = {
   sessions: {
     usage: "/sessions [关键词]",
     help: "最近的会话（含其他群和渠道）",
-    run: ({ app, args }) => {
-      const list = listThreads(app, { query: args || undefined, limit: 12, includeArchived: !!args });
+    run: ({ app, args, inb }) => {
+      const list = listThreads(app, { query: args || undefined, limit: 12, includeArchived: !!args, userId: inb.userId ?? OWNER });
       return list.length ? list.map(describeThread).join("\n") : "没有找到会话。";
     },
   },
@@ -156,10 +158,12 @@ const commands: Record<string, Command> = {
   space: {
     usage: "/space [空间id]",
     help: "查看或切换本会话的空间（群里同时设为该群默认空间）",
-    run: ({ app, thread, args }) => {
+    run: ({ app, thread, args, inb }) => {
       const id = args.trim();
       if (!id) return `当前空间：${thread.spaceId}\n可选：${listSpaces(app).map((s) => s.id).join(", ")}`;
       if (!findSpace(app, id)) return `没有空间 ${id}。可选：${listSpaces(app).map((s) => s.id).join(", ")}`;
+      const allowed = accessibleSpaces(app, inb.userId ?? OWNER);
+      if (allowed && !allowed.includes(id)) return `你不能访问空间 ${id}。`;
       updateThread(app, thread.id, { spaceId: id });
       if (thread.key) setChatSettings(app, thread.channel, chatKey(thread), { spaceId: id });
       resetAgentSession(app, thread.id);
@@ -256,30 +260,78 @@ const commands: Record<string, Command> = {
   remember: {
     usage: "/remember <内容>",
     help: "直接记一条记忆（不经过助理）",
-    run: ({ app, thread, args }) => {
+    run: ({ app, thread, args, inb }) => {
       if (!args.trim()) return "用法：/remember 内容";
-      const m = remember(app, { spaceId: thread.spaceId, kind: "fact", content: args.trim(), createdBy: "user", sourceRefs: [`conv:${thread.id}`] });
+      const m = remember(app, { spaceId: thread.spaceId, kind: "fact", content: args.trim(), createdBy: "user", sourceRefs: [`conv:${thread.id}`], userId: inb.userId && inb.userId !== OWNER ? inb.userId : null });
       return `已记住（${m.id}）。`;
     },
   },
   todo: {
     usage: "/todo <事项>",
     help: "直接记一条待办",
-    run: ({ app, thread, args }) => {
+    run: ({ app, thread, args, inb }) => {
       if (!args.trim()) return "用法：/todo 事项";
-      const i = upsertItem(app, undefined, { spaceId: thread.spaceId, kind: "todo", title: args.trim(), sourceRefs: [`conv:${thread.id}`] }, "user");
+      const i = upsertItem(app, undefined, { spaceId: thread.spaceId, kind: "todo", title: args.trim(), sourceRefs: [`conv:${thread.id}`], userId: inb.userId ?? OWNER }, "user");
       return `已加待办（${i.id}）。`;
     },
   },
   search: {
     usage: "/search <关键词>",
     help: "直接检索知识库（不经过助理）",
-    run: async ({ app, thread, args }) => {
+    run: async ({ app, thread, args, inb }) => {
       if (!args.trim()) return "用法：/search 关键词";
-      const hits = await search(app, args.trim(), { spaces: [thread.spaceId, "personal"], limit: 8 });
+      const own = inb.userId && inb.userId !== OWNER ? `personal-${inb.userId}` : "personal";
+      const hits = await search(app, args.trim(), { spaces: [...new Set([thread.spaceId, own])], limit: 8 });
       return hits.length
         ? hits.map((h, i) => `${i + 1}. ${h.type === "page" ? `页面 ${h.path}` : h.type === "memory" ? `记忆 ${h.id}` : `${h.uri ?? h.title}${h.lineStart ? `:${h.lineStart}` : ""}`}\n   ${truncate(h.snippet.replace(/\s+/g, " "), 120)}`).join("\n")
         : "没有命中。";
+    },
+  },
+  review: {
+    usage: "/review [目标id|stop]",
+    help: "在聊天里复习到期的卡片：看题 → 回任意内容看答案 → 回 1～4 打分",
+    run: ({ app, thread, args, inb }) => {
+      const arg = args.trim();
+      if (arg === "stop") {
+        const done = thread.settings.review?.done ?? 0;
+        updateThread(app, thread.id, { settings: { review: null } });
+        return `已结束复习，本次复习了 ${done} 张。`;
+      }
+      return nextCard(app, thread, inb.userId ?? OWNER, arg || undefined, 0);
+    },
+  },
+  watch: {
+    usage: "/watch <档案|off> [all|mention|keyword:<正则>] [none|draft|auto]",
+    help: "（在群里或带 oc_ 群 id）把这个群的消息交给某个 Agent 档案处理",
+    run: async ({ app, thread, args, inb }) => {
+      if ((inb.userId ?? OWNER) !== OWNER) return "只有本人可以设置群监听。";
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      const chatId = parts[0]?.startsWith("oc_") ? parts.shift()! : thread.channel === "lark" ? chatKey(thread) : "";
+      if (!chatId) return "在飞书群里发这个命令，或写上群 id：/watch oc_xxx 档案名 …";
+      const { setWatchRule, watchRule } = await import("../channels/lark-watch.ts");
+      const spec = parts[0];
+      if (!spec) {
+        const r = watchRule(app, chatId);
+        return r ? `${chatId} 交给 ${r.spec} 处理：${r.on}${r.pattern ? ` ${r.pattern}` : ""}，回复 ${r.reply}` : `${chatId} 没有设置监听。`;
+      }
+      if (spec === "off") {
+        setWatchRule(app, chatId, null);
+        return `已取消 ${chatId} 的监听。`;
+      }
+      const onArg = parts.find((p) => /^(all|mention|keyword:)/.test(p)) ?? "all";
+      const reply = (parts.find((p) => /^(none|draft|auto)$/.test(p)) ?? "draft") as "none" | "draft" | "auto";
+      const on = onArg.startsWith("keyword:") ? "keyword" : (onArg as "all" | "mention");
+      setWatchRule(app, chatId, { spec, on, pattern: on === "keyword" ? onArg.slice(8) : undefined, reply });
+      return `已设置：${chatId} 的${on === "all" ? "新消息" : on === "mention" ? " @ 消息" : `匹配 ${onArg.slice(8)} 的消息`}交给 ${spec}，回复方式 ${reply}${reply === "auto" ? "（机器人需要在群里）" : ""}。`;
+    },
+  },
+  whoami: {
+    usage: "/whoami",
+    help: "我是谁、能访问哪些空间",
+    run: ({ app, inb }) => {
+      const id = inb.userId ?? OWNER;
+      const spaces = accessibleSpaces(app, id);
+      return `${userName(app, id)}（${id}）· 可访问空间：${spaces ? spaces.join(", ") || "无" : "全部"}`;
     },
   },
   runs: {
@@ -291,6 +343,36 @@ const commands: Record<string, Command> = {
         .join("\n") || "没有任务。",
   },
 };
+
+function nextCard(app: App, thread: Thread, userId: string, goalId: string | undefined, done: number): string {
+  const [card] = dueCards(app, { userId, goalId }, 1);
+  if (!card) {
+    updateThread(app, thread.id, { settings: { review: null } });
+    return done ? `复习完了，本次 ${done} 张，暂时没有到期的卡。` : "现在没有到期的卡片。";
+  }
+  const left = studyStats(app, { userId, goalId }).due;
+  updateThread(app, thread.id, { settings: { review: { cardId: card.id, stage: "front", goalId, done } } });
+  return `**${card.front}**\n\n（还有 ${left} 张。先想一想，回复任意内容看答案；/review stop 结束）`;
+}
+
+/**
+ * While a review is running in this thread, plain replies drive it instead of
+ * going to the assistant. Returns null when no review is active.
+ */
+export function reviewReply(app: App, thread: Thread, text: string, userId: string): string | null {
+  const r = thread.settings.review;
+  if (!r) return null;
+  const t = text.trim();
+  if (r.stage === "front") {
+    const card = getCard(app, r.cardId);
+    updateThread(app, thread.id, { settings: { review: { ...r, stage: "rate" } } });
+    return `${card.back}\n\n记得怎么样？回复 1 忘了 · 2 很吃力 · 3 记得 · 4 很轻松`;
+  }
+  const m = /^[1-4]$/.exec(t);
+  if (!m) return "回复 1～4 给这张卡打分，或 /review stop 结束复习。";
+  reviewCard(app, r.cardId, Number(t) as 1 | 2 | 3 | 4);
+  return nextCard(app, thread, userId, r.goalId, r.done + 1);
+}
 
 function line(name: string) {
   const c = commands[name];
