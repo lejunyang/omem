@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdirSync, readlinkSync, symlinkSync, unlinkSync
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkbox, confirm, input, number, select } from "@inquirer/prompts";
+import { acpCatalog, catalogProfile, fetchRegistry, installHint, installRegistryBinary, npxProfile, platformKey, registryOptions, type CatalogEntry, type RegistryAgent } from "./agents/catalog.ts";
 import { commandExists } from "./agents/spawn.ts";
 import type { App } from "./core/app.ts";
 import { builtinProfiles, roleNames, saveConfig, type AgentProfile, type Config } from "./core/config.ts";
@@ -259,20 +260,31 @@ async function setupGuardSection(config: Config) {
 const QUICK_ROLES = ["assistant", "ingest", "heartbeat", "summarizer", "brief", "curator"];
 const DEEP_ROLES = roleNames.filter((r) => !QUICK_ROLES.includes(r));
 
-async function setupAgentsSection(config: Config) {
-  const profiles = new Map(builtinProfiles.map((p) => [p.id, p]));
-  for (const p of config.agents.profiles) profiles.set(p.id, p);
-  const list = [...profiles.values()].map((p) => ({ ...p, installed: commandExists(p.command) }));
-  out("\nAgent 后端：");
-  for (const p of list) out(`  ${ok(p.installed)} ${p.id.padEnd(11)} ${p.name ?? ""}${p.model ? ` · ${p.model}` : ""}${p.effort ? `/${p.effort}` : ""}${p.installed ? "" : `（未找到 ${p.command}）`}`);
+export async function setupAgentsSection(config: Config, home: string) {
+  const profileMap = () => {
+    const m = new Map(builtinProfiles.map((p) => [p.id, p]));
+    for (const p of config.agents.profiles) m.set(p.id, p);
+    return m;
+  };
+  const listAll = () => [...profileMap().values()].map((p) => ({ ...p, installed: commandExists(p.command) }));
+  let list = listAll();
+  out("\nAgent 后端（已安装）：");
+  for (const p of list.filter((p) => p.installed)) out(`  ✓ ${p.id.padEnd(11)} ${p.name ?? ""}${p.model ? ` · ${p.model}` : ""}${p.effort ? `/${p.effort}` : ""}`);
+  const missing = list.filter((p) => !p.installed);
+  if (missing.length) out(`  未安装：${missing.map((p) => p.id).join("、")}（任何支持 ACP 的 Agent 都能用，下一步可以安装或从 ACP 注册表添加）`);
+  if (await confirm({ message: "添加或安装其他 Agent？（Gemini、Copilot、Qwen、Cursor、OpenCode、Kimi、goose、CodeBuddy… 或 ACP 注册表里的任意一个）", default: !list.some((p) => p.installed) })) {
+    await addAgentsInteractive(config, home);
+    list = listAll();
+  }
   if (!list.some((p) => p.installed)) {
-    out("  一个都没装。推荐：npm i -g @agentclientprotocol/codex-acp（并登录 codex），或 npm i -g @agentclientprotocol/claude-agent-acp（并登录 claude）。");
+    out("  还没有可用的 Agent。推荐：npm i -g @agentclientprotocol/codex-acp（并登录 codex），或 npm i -g @agentclientprotocol/claude-agent-acp（并登录 claude）。");
     return false;
   }
+  const profiles = profileMap();
   const installed = list.filter((p) => p.installed);
   const pick = (message: string, def?: string) =>
     select({ message, choices: [...installed.map((p) => ({ value: p.id, name: `${p.id}${p.model ? ` · ${p.model}` : ""}` })), { value: "", name: "跟随默认" }], default: def ?? "" });
-  const def = await select({ message: "默认 Agent", choices: installed.map((p) => ({ value: p.id, name: `${p.id} · ${p.name ?? p.command}` })), default: config.agents.default ?? installed[0].id });
+  const def = await select({ message: "默认 Agent", choices: installed.map((p) => ({ value: p.id, name: `${p.id} · ${p.name ?? p.command}` })), default: installed.some((p) => p.id === config.agents.default) ? config.agents.default : installed[0].id });
   config.agents.default = def;
   if (await confirm({ message: "按任务分开指定？（日常问答与整理用快的，Wiki、编码、评审、做梦用强的）", default: false })) {
     const quick = await pick(`日常（${QUICK_ROLES.join("、")}）`, config.agents.roles.assistant);
@@ -286,9 +298,82 @@ async function setupAgentsSection(config: Config) {
     const model = await input({ message: "模型（留空用 Agent 自己的默认；可在网页设置里“检测模型”看可选值）", default: base.model ?? "" });
     const effort = await input({ message: "effort（low / medium / high，留空用默认）", default: base.effort ?? "" });
     const next: AgentProfile = { ...base, model: model || undefined, effort: effort || undefined };
-    config.agents.profiles = [...config.agents.profiles.filter((p) => p.id !== id), next];
+    saveProfile(config, next);
   }
   return true;
+}
+
+function saveProfile(config: Config, p: AgentProfile) {
+  config.agents.profiles = [...config.agents.profiles.filter((x) => x.id !== p.id), p];
+}
+
+/** Pick agents from the built-in catalog or the ACP registry and make them runnable. */
+async function addAgentsInteractive(config: Config, home: string) {
+  let registry: RegistryAgent[] = [];
+  try {
+    registry = await fetchRegistry();
+  } catch (e) {
+    out(`  读取 ACP 注册表失败（${(e as Error).message}），只列内置目录。`);
+  }
+  const configured = new Set(config.agents.profiles.map((p) => p.id));
+  const choices = [
+    ...acpCatalog
+      .filter((e) => !commandExists(e.command) && !configured.has(e.id))
+      .map((e) => ({ value: `catalog:${e.id}`, name: `${e.name.padEnd(20)} ${installHint(e) || "（需要自行安装）"}` })),
+    ...registry
+      .filter((a) => !acpCatalog.some((e) => e.id === a.id || registryAlias(a.id) === e.id) && !configured.has(a.id))
+      .map((a) => ({ value: `registry:${a.id}`, name: `${a.name.padEnd(20)} 注册表 v${a.version}${a.description ? " · " + a.description.slice(0, 50) : ""}` })),
+  ];
+  if (!choices.length) return out("  目录里的 Agent 都已可用。");
+  const picked = await checkbox({ message: "选择要添加的 Agent（空格勾选）", choices, pageSize: 20 });
+  for (const key of picked) {
+    const [kind, id] = key.split(":");
+    try {
+      const p = kind === "catalog" ? await addCatalogAgent(acpCatalog.find((e) => e.id === id)!, config) : await addRegistryAgent(registry.find((a) => a.id === id)!, config, home);
+      if (p) out(`  ✓ ${p.id} → ${p.command} ${p.args.join(" ")}`);
+    } catch (e) {
+      out(`  ✗ ${id}：${(e as Error).message}`);
+    }
+  }
+  out("  多数 Agent 第一次用前要在终端里登录一次（直接运行它的命令，按提示登录）。");
+}
+
+/** Registry ids that the built-in catalog already covers under another id. */
+function registryAlias(id: string) {
+  return ({ "claude-acp": "claude", "codex-acp": "codex", "github-copilot-cli": "copilot", "qwen-code": "qwen", "codebuddy-code": "codebuddy", "factory-droid": "droid", "grok-build": "grok", "minimax-code": "minimax", "amp-acp": "amp", "mistral-vibe": "vibe", "pi-acp": "pi" } as Record<string, string>)[id];
+}
+
+async function addCatalogAgent(e: CatalogEntry, config: Config): Promise<AgentProfile | null> {
+  if (!e.npm) {
+    out(`  ${e.name}：${e.install ?? "请按官方说明安装"}，装好后会被自动识别。`);
+    return null;
+  }
+  const how = await select({
+    message: `${e.name} 怎么运行`,
+    choices: [
+      { value: "global", name: `现在全局安装（npm i -g ${e.npm}）` },
+      { value: "npx", name: "用 npx 运行，不安装（每次启动稍慢）", disabled: !commandExists("npx") && "没有 npx" },
+      { value: "skip", name: "跳过" },
+    ],
+  });
+  if (how === "skip") return null;
+  if (how === "npx") {
+    const p = npxProfile(e);
+    saveProfile(config, p);
+    return p;
+  }
+  const r = spawnSync("npm", ["i", "-g", e.npm], { stdio: "inherit", shell: process.platform === "win32" });
+  if (r.status !== 0) throw new Error("npm 安装失败");
+  return catalogProfile(e);
+}
+
+export async function addRegistryAgent(agent: RegistryAgent, config: Config, home: string, prefer?: "npx" | "uvx" | "binary"): Promise<AgentProfile> {
+  const opts = registryOptions(agent).filter((o) => o.available && (!prefer || o.kind === prefer));
+  if (!opts.length) throw new Error(`没有适合本机（${platformKey()}）的运行方式${prefer ? `（${prefer}）` : ""}`);
+  const o = opts[0];
+  const p = o.kind === "binary" ? await installRegistryBinary(agent, o.target, home, (s) => out(`  ${s}`)) : o.profile;
+  saveProfile(config, p);
+  return p;
 }
 
 // ---- channels -------------------------------------------------------------
@@ -387,7 +472,7 @@ export async function setupInteractive(app: App) {
   const before = JSON.stringify(config.embeddings);
   for (const s of sections) {
     try {
-      if (s === "agents") await setupAgentsSection(config);
+      if (s === "agents") await setupAgentsSection(config, app.home);
       if (s === "embeddings") await setupEmbeddingsSection(config);
       if (s === "documents") await setupDocumentsSection(config, app.home);
       if (s === "channels") await setupChannelsSection(config);
