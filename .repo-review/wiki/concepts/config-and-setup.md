@@ -3,7 +3,7 @@ title: 配置、setup 与定时任务
 summary: 说清哪些设置在 config.json、哪些在数据库，omem setup 改了什么，怎样让日常问答和 Wiki/评审用不同的 Agent
   与模型，以及定时任务从注册到触发的路径。
 kind: concept
-updated: 2026-10-12
+updated: 2026-10-13
 ---
 
 这页回答四件事：哪些东西可配置、存在哪；`omem setup` 到底改了什么；怎样给不同角色指定不同模型；定时任务怎么注册和触发。读完你可以自己改 `config.json`、判断改动要不要重启，也知道新增一个定时任务或设置项该动哪几处。
@@ -24,15 +24,15 @@ updated: 2026-10-12
 }
 ```
 
-没列出的角色（assistant、ingest、heartbeat 等）走 `default`，也就是 codex。内置的 codex 档案已经是 `gpt-6.1-sol` + `low`（[config.ts:125-136](../../../src/core/config.ts#L125-L136)），所以不用再写 `profiles`；内置的 claude 档案没有指定 model 和 effort，用 Agent 自己的默认（[config.ts:148-156](../../../src/core/config.ts#L148-L156)）。
+没列出的角色（assistant、ingest、heartbeat 等）走 `default`，也就是 codex。内置的 codex 档案已经是 `gpt-6.1-sol` + `low`（[config.ts:138-149](../../../src/core/config.ts#L138-L149)），所以不用再写 `profiles`；内置的 claude 档案没有指定 model 和 effort，用 Agent 自己的默认（[config.ts:161-169](../../../src/core/config.ts#L161-L169)）。
 
-不想手写的话，`omem setup` 的 agents 分区问的就是这件事：选默认 Agent，再回答“按任务分开指定？”，分别给“日常”和“深度”各选一个后端（[setup.ts:232-237](../../../src/setup.ts#L232-L237)）。
+不想手写的话，`omem setup` 的 agents 分区问的就是这件事：选默认 Agent，再回答“按任务分开指定？”，分别给“日常”和“深度”各选一个后端（[setup.ts:276-281](../../../src/setup.ts#L276-L281)）。
 
 ## config.json 里有什么
 
-`loadConfig` 读 `$OMEM_HOME/config.json`（默认 `~/.omem`），文件不存在就当 `{}`，再用 `configSchema` 解析补全默认值；环境变量 `OMEM_PORT` 会覆盖端口（[config.ts:188-195](../../../src/core/config.ts#L188-L195)）。`saveConfig` 把解析后的完整对象整个写回（[config.ts:197-200](../../../src/core/config.ts#L197-L200)），所以 setup 或网页保存一次之后，文件里会出现所有默认值。
+`loadConfig` 读 `$OMEM_HOME/config.json`（默认 `~/.omem`），文件不存在就当 `{}`，再用 `configSchema` 解析补全默认值；环境变量 `OMEM_PORT` 会覆盖端口（[config.ts:201-208](../../../src/core/config.ts#L201-L208)）。`saveConfig` 把解析后的完整对象整个写回（[config.ts:210-213](../../../src/core/config.ts#L210-L213)），所以 setup 或网页保存一次之后，文件里会出现所有默认值。
 
-按块看 [configSchema](../../../src/core/config.ts#L38-L121)：
+按块看 [configSchema](../../../src/core/config.ts#L38-L134)：
 
 - 基础：`host`、`port`、`token`（非回环地址时需要）、`timezone`（默认取系统时区，也是 cron 的时区）、`language`。
 - 并发：`concurrency`（后台运行，1～8，默认 2）和 `interactiveConcurrency`（会话轮次，默认 4）。队列怎么用这两个数见 [任务队列、Run 与角色](./run-queue-and-roles.md)。
@@ -40,6 +40,7 @@ updated: 2026-10-12
 - `agents`：`default`、`roles`（角色名 → 档案 id）、`profiles`（自定义档案）。
 - `embeddings`：`provider`（none / local / openai）、`model`、`family`、`url`、`apiKeyEnv`。检索侧怎么用见 [检索](./retrieval.md)。
 - `documents`：自定义 `converter`、`engines` 尝试顺序、`doclingArtifacts` 模型目录。
+- `guard`：可选的注入标记。`provider`（`none` 或 `startlux`，默认 `none`）、判官服务的 `url`、`threshold`（默认 0.6）、要检查的原件类型 `kinds`（默认 chat、web、doc）、单段上限 `maxChars` 和 `timeoutMs`。只做标记，不拦截（[config.ts:91-103](../../../src/core/config.ts#L91-L103)）。
 - `lark`、`telegram`、`onebot`：各自的 `enabled`、所有者 id、`defaultSpace`，以及密钥所在的环境变量名。
 
 **密钥不进 config.json，只写环境变量名。** `lark.appSecretEnv`（默认 `OMEM_LARK_APP_SECRET`）、`telegram.tokenEnv`、`onebot.tokenEnv`、`embeddings.apiKeyEnv` 都是“变量名”，渠道启动时才用 `process.env[名字]` 取值，取不到就报错（[lark-bot.ts:58-59](../../../src/channels/lark-bot.ts#L58-L59)、[telegram.ts:12-13](../../../src/channels/telegram.ts#L12-L13)）。[.env.example](../../../src/core/config.ts#L1) 里列的就是这些变量加 `OMEM_HOME`。
@@ -48,7 +49,7 @@ updated: 2026-10-12
 
 一个档案（[agentProfileSchema](../../../src/core/config.ts#L6-L18)）包含 `transport`（acp / claude-cli / codex-cli）、`command`、`args`、可选的 `model` 与 `effort`、额外 `env` 和空闲超时。内置五个：`codex`、`traex`、`claude`（以上 ACP）、`claude-cli`、`codex-cli`。
 
-**覆盖规则是按 id 整体替换，不是字段合并。** `allProfiles` 先放内置，再让 `config.agents.profiles` 里同 id 的条目覆盖，新 id 追加（[config.ts:202-206](../../../src/core/config.ts#L202-L206)）。所以想只把 codex 的 effort 改成 medium，`profiles` 里要写一份完整的 codex 档案（`transport`、`command` 是必填）。setup 的做法就是 `{ ...base, model, effort }` 后整条替换（[setup.ts:238-245](../../../src/setup.ts#L238-L245)）。
+**覆盖规则是按 id 整体替换，不是字段合并。** `allProfiles` 先放内置，再让 `config.agents.profiles` 里同 id 的条目覆盖，新 id 追加（[config.ts:215-219](../../../src/core/config.ts#L215-L219)）。所以想只把 codex 的 effort 改成 medium，`profiles` 里要写一份完整的 codex 档案（`transport`、`command` 是必填）。setup 的做法就是 `{ ...base, model, effort }` 后整条替换（[setup.ts:282-289](../../../src/setup.ts#L282-L289)）。
 
 `profileFor(app, role)` 的选择顺序（[runner.ts:60-71](../../../src/agents/runner.ts#L60-L71)）：
 
@@ -74,7 +75,7 @@ flowchart TD
 
 ## omem setup 改了什么
 
-入口是 CLI 的 `setup` 命令：不带参数调用 `setupInteractive`；`setup embeddings`、`setup documents` 是给脚本用的非交互形式（[cli-main.ts:355-398](../../../src/cli-main.ts#L355-L398)）。`setupInteractive` 先让你勾选要设置的分区，逐个执行，**每个分区跑完立刻 `saveConfig`**，所以中途退出，已完成的分区已经保存（[setup.ts:306-336](../../../src/setup.ts#L306-L336)）。六个分区：
+入口是 CLI 的 `setup` 命令：不带参数调用 `setupInteractive`；`setup embeddings`、`setup documents` 是给脚本用的非交互形式（[cli-main.ts:365-408](../../../src/cli-main.ts#L365-L408)）。`setupInteractive` 先让你勾选要设置的分区，逐个执行，**每个分区跑完立刻 `saveConfig`**，所以中途退出，已完成的分区已经保存（[setup.ts:350-382](../../../src/setup.ts#L350-L382)）。七个分区：
 
 | 分区 | 改动 |
 | --- | --- |
@@ -82,14 +83,17 @@ flowchart TD
 | embeddings | `embeddings` 整块；可能经 osdk 下载模型 |
 | documents | `documents.engines`、`converter`、`doclingArtifacts` |
 | channels | 三个渠道的 `enabled`、id；提示密钥该放哪个环境变量 |
+| guard | `guard.provider` 与 `guard.url`；可选经 osdk 下载 StartLux-Decision 判官模型，并打印启动 llama-server 与判官服务的命令（omem 不替你常驻启动） |
 | sessions | `sessions.*` 与两个并发数 |
 | schedules | **数据库** `schedules` 表的 `enabled`，不在 config.json |
 
-**QUICK_ROLES / DEEP_ROLES 分组。** `QUICK_ROLES` 是 assistant、ingest、heartbeat、summarizer、brief、curator，`DEEP_ROLES` 是 `roleNames` 里的其余角色（wiki-planner、wiki-writer、wiki-linter、dreamer、coder、reviewer、tutor）（[setup.ts:214-215](../../../src/setup.ts#L214-L215)）。选“跟随默认”会把对应角色从 `roles` 里删掉，而不是写空串（[setup.ts:235-236](../../../src/setup.ts#L235-L236)）。分组本身是 setup 的约定，`profileFor` 并不知道它。
+guard 分区在 [setup.ts:212-255](../../../src/setup.ts#L212-L255)：选“开启”时在 2B（推荐）与 0.8B（低配）两个模型里选一个，写入 `guard = { ...旧值, provider: "startlux", url }`；选“关闭”只把 `provider` 改回 `none`。它不会改 `threshold` 等其他字段。
 
-**osdk 管理模型。** 仓库根的 `osdk.toml` 声明工具链（node、pnpm）和三个模型：`memory-zh`（bge-small-zh）和两个 Docling 模型，都锁定到具体 commit（[osdk.toml:31-65](../../../src/core/config.ts#L1)）。setup 里选 osdk 下载时调用 `osdk model sync <alias>`，再用 `osdk model path <alias> --stable` 取本地目录，把这个目录写进 `embeddings.model`（[setup.ts:86-98](../../../src/setup.ts#L86-L98)）。`memory-zh` 以外的向量模型（base、m3）在 toml 里没有，setup 会先 `osdk model use` 临时登记。没装 osdk 就改为首次使用时从 Hugging Face 下载，不锁版本（[setup.ts:136-139](../../../src/setup.ts#L136-L139)）。
+**QUICK_ROLES / DEEP_ROLES 分组。** `QUICK_ROLES` 是 assistant、ingest、heartbeat、summarizer、brief、curator，`DEEP_ROLES` 是 `roleNames` 里的其余角色（wiki-planner、wiki-writer、wiki-linter、dreamer、coder、reviewer、tutor）（[setup.ts:258-259](../../../src/setup.ts#L258-L259)）。选“跟随默认”会把对应角色从 `roles` 里删掉，而不是写空串（[setup.ts:279-280](../../../src/setup.ts#L279-L280)）。分组本身是 setup 的约定，`profileFor` 并不知道它。
 
-**换 embedding 模型的后果。** setup 本身不清向量。清除发生在 `embedPending`：它比较数据库 `kv` 里记录的 `embedding_model` 和当前嵌入器的 id，不一致就 `update chunks set embedding = null` 并更新记录（[embeddings.ts:85-90](../../../src/search/embeddings.ts#L85-L90)）。setup 结束时如果 `embeddings` 变了且不是 none，会问“现在为已有材料生成向量？”，同意就循环调用 `embedPending` 直到补完（[setup.ts:337-347](../../../src/setup.ts#L337-L347)）；不同意则由服务启动后每 30 秒的后台循环慢慢补（[main.ts:37-48](../../../src/main.ts#L37-L48)）。在补完之前，向量路召回只有部分片段。
+**osdk 管理模型。** 仓库根的 `osdk.toml` 声明工具链（node、pnpm）和三个模型：`memory-zh`（bge-small-zh）和两个 Docling 模型，都锁定到具体 commit（[osdk.toml:31-65](../../../src/core/config.ts#L1)）。setup 里选 osdk 下载时调用 `osdk model sync <alias>`，再用 `osdk model path <alias> --stable` 取本地目录，把这个目录写进 `embeddings.model`（[setup.ts:86-98](../../../src/setup.ts#L86-L98)）。`memory-zh` 以外的向量模型（base、m3）在 toml 里没有，setup 会先 `osdk model use` 临时登记；guard 的判官模型同理，不在 toml 里，用 `osdk model use … --kind other` 登记。没装 osdk 就改为首次使用时从 Hugging Face 下载，不锁版本（[setup.ts:136-139](../../../src/setup.ts#L136-L139)）。
+
+**换 embedding 模型的后果。** setup 本身不清向量。清除发生在 `embedPending`：它比较数据库 `kv` 里记录的 `embedding_model` 和当前嵌入器的 id，不一致就 `update chunks set embedding = null` 并更新记录（[embeddings.ts:85-90](../../../src/search/embeddings.ts#L85-L90)）。setup 结束时如果 `embeddings` 变了且不是 none，会问“现在为已有材料生成向量？”，同意就循环调用 `embedPending` 直到补完（[setup.ts:383-393](../../../src/setup.ts#L383-L393)）；不同意则由服务启动后每 30 秒的后台循环慢慢补（[main.ts:37-48](../../../src/main.ts#L37-L48)）。在补完之前，向量路召回只有部分片段。
 
 ## 定时任务
 
@@ -100,7 +104,7 @@ flowchart TD
 3. **启动调度**：`boot` 在 `background !== false` 时调用 `restartScheduler`，它停掉旧 job，对每个启用且已注册 runner 的行建一个 `croner` 的 `Cron`，时区取 `config.timezone`，并开 `protect: true` 防止上一次没跑完时重叠触发。触发时先写 `last_run_at`，再在 try/catch 里执行 runner（[scheduler.ts:55-73](../../../src/core/scheduler.ts#L55-L73)）。已启用但没注册 runner 的 kind 会被静默跳过。
 4. **手动触发与修改**：`triggerSchedule` 立即运行一次（不检查 enabled，也不 try/catch），网页对应 `POST /api/schedules/:id/run`；`upsertSchedule` 先用 croner 校验 cron 表达式，写库后调用 `restartScheduler`，所以通过网页 `PUT /api/schedules/:id` 改 cron 或开关**立即生效**（[scheduler.ts:30-46](../../../src/core/scheduler.ts#L30-L46)、[scheduler.ts:75-81](../../../src/core/scheduler.ts#L75-L81)、[http.ts:468-476](../../../src/server/http.ts#L468-L476)）。
 
-setup 的 schedules 分区只是一组勾选框，直接 `update schedules set enabled`，**没有**调用 `restartScheduler`（[setup.ts:294-302](../../../src/setup.ts#L294-L302)）。它是另一个进程，改的是库；正在运行的服务要重启，或者在网页里再保存一次，才会按新开关建 job。
+setup 的 schedules 分区只是一组勾选框，直接 `update schedules set enabled`，**没有**调用 `restartScheduler`（[setup.ts:338-346](../../../src/setup.ts#L338-L346)）。它是另一个进程，改的是库；正在运行的服务要重启，或者在网页里再保存一次，才会按新开关建 job。
 
 从实现看，现有 runner 全部把任务建在 `personal` 空间，没有读 `schedule.spaceId`；表里有 `space_id` 列，但内置 kind 还用不上它。
 
@@ -121,8 +125,9 @@ sequenceDiagram
 
 每个空间在 `spaces.settings` 里存一段 JSON（[spaces.ts:15](../../../src/core/spaces.ts#L15)）。网页 `PUT` 空间时是和旧值合并（[http.ts:130](../../../src/server/http.ts#L130)），但 `updateSpace` 本身是整体替换（[spaces.ts:92-106](../../../src/core/spaces.ts#L92-L106)）。目前代码里用到的键：
 
-- `autoIngest`：新材料入库后是否自动排一个 ingest。设为 `false` 关闭；`repo` 类空间默认**不**自动整理，必须显式设为 `true`（[jobs.ts:105](../../../src/agents/jobs.ts#L105)）。
-- `autoLint`：目录同步发现改动后，是否自动排 wiki-lint 检查过期页面；只有显式 `false` 才关闭（[jobs.ts:217](../../../src/agents/jobs.ts#L217)）。
+- `autoIngest`：新材料入库后是否自动排一个 ingest。设为 `false` 关闭；`repo` 类空间默认**不**自动整理，必须显式设为 `true`（[jobs.ts:107](../../../src/agents/jobs.ts#L107)）。
+- `autoLint`：目录同步发现改动后，是否自动排 wiki-lint 检查过期页面；只有显式 `false` 才关闭（[jobs.ts:229](../../../src/agents/jobs.ts#L229)）。
+- `exclude`：关联目录同步时不导入的路径，前缀或简单 glob，字符串数组。`syncDirectorySpace` 在 `repoFiles` 的结果上过滤；改了之后再同步，已导入的匹配文件会变成墓碑（[import.ts:145-161](../../../src/sources/import.ts#L145-L161)）。命令行用 `omem space sync <id> --exclude <patterns...>` 设置，会替换原有值；`omem space add` 也带同名选项。
 - `checkCommand`：交办编码在 worktree 里跑的检查命令；任务本身带 `checkCommand` 时优先用任务的（[code.ts:68](../../../src/agents/code.ts#L68)）。见 [flows/delegated-coding](../flows/delegated-coding.md)。
 - `larkGroups`：只读 **personal** 空间上的这个映射，把飞书群 chatId 对应到空间，没有映射的群落到 `lark.defaultSpace`（[lark-bot.ts:82-83](../../../src/channels/lark-bot.ts#L82-L83)）。它每条消息都从库里读，改了不用重启。
 
@@ -138,7 +143,7 @@ sequenceDiagram
 
 ## 要改这里从哪下手
 
-- **加一个配置项**：在 `configSchema` 里加字段并给默认值（[config.ts:38](../../../src/core/config.ts#L38)），读的地方用 `app.config`；要在 setup 里问，就在 `setup.ts` 对应分区加一问；网页设置页在 `web/src/views/Settings.vue`。密钥只加 `xxxEnv` 变量名，并补到 `.env.example`。
+- **加一个配置项**：在 `configSchema` 里加字段并给默认值（[config.ts:38](../../../src/core/config.ts#L38)），读的地方用 `app.config`；要在 setup 里问，就在 `setup.ts` 对应分区加一问，新分区还要加进 `setupInteractive` 的勾选列表和分发；网页设置页在 `web/src/views/Settings.vue`。密钥只加 `xxxEnv` 变量名，并补到 `.env.example`。
 - **加一个角色**：在 `roleNames` 加名字、写 `roles/<名字>.md`，再决定归 QUICK 还是 DEEP（它会自动进 DEEP，除非加入 `QUICK_ROLES`）。
 - **加一个内置 Agent 后端**：往 `builtinProfiles` 加一项，并确认 setup 列表和 `commandExists` 能识别。
 - **加一个定时任务**：在 `DEFAULTS` 加一行（给 `label`，setup 和网页靠它显示），在 `main.ts` 注册同名 kind 的 runner；记住已有数据库不会因此改 cron。若 runner 里要做重活，用 `createRun` 入队而不是在回调里直接跑。

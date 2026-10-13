@@ -3,7 +3,7 @@ title: 交办编码：从一句话到应用改动
 summary: 说“在 xx 仓库实现…”之后，改动在独立 worktree
   里完成，检查和评审在应用之前跑完；读完能说清每一步发生在哪、什么时候才会碰到你的工作区，以及要改这条链路该从哪下手。
 kind: guide
-updated: 2026-10-12
+updated: 2026-10-13
 ---
 
 这页回答三个问题：交办之后代码是在哪里改的，检查和评审怎么进行，以及改动什么时候才真正落到你的工作区。结论先说：编码 Agent 只在 `~/.omem/runs/<runId>/worktree` 这个独立 Git worktree 里写文件；检查和评审都针对这份副本；只有你（或你明确要求助理）触发“应用”，补丁才会进入你的仓库，而且不会提交。
@@ -34,11 +34,11 @@ sequenceDiagram
   U->>H: apply（git apply --3way）
 ```
 
-**1. 助理交办。** 助理角色的工具清单里有 `delegate_code` 和 `apply_code_run`（[assistant.md:3](../../../roles/assistant.md#L3)），并被要求“明确要求实现或修改代码才交办，背景、验收标准写完整”（[assistant.md:49-50](../../../roles/assistant.md#L49-L50)）。工具本身只做三件事：校验空间在本次任务范围内且有 `rootPath`，创建一条 `kind: "code"` 的 run，把 `parentId` 设为当前问答 run，然后立刻返回“已交办，运行 r_…”（[tools.ts:697-713](../../../src/agents/tools.ts#L697-L713)）。它不等结果，所以对话不会被几分钟的编码卡住。输入里只有 `task` 和可选的 `checkCommand`。
+**1. 助理交办。** 助理角色的工具清单里有 `delegate_code` 和 `apply_code_run`（[assistant.md:3](../../../roles/assistant.md#L3)），并被要求“明确要求实现或修改代码才交办，背景、验收标准写完整”（[assistant.md:49-50](../../../roles/assistant.md#L49-L50)）。工具本身只做三件事：校验空间在本次任务范围内且有 `rootPath`，创建一条 `kind: "code"` 的 run，把 `parentId` 设为当前问答 run，然后立刻返回“已交办，运行 r_…”（[tools.ts:699-715](../../../src/agents/tools.ts#L699-L715)）。它不等结果，所以对话不会被几分钟的编码卡住。输入里只有 `task` 和可选的 `checkCommand`。
 
-网页“运行”页的“交办”按钮走 `POST /api/delegate`，命令行 `omem delegate <空间> <任务> --check "pnpm test"` 直接 `createRun`，都建同样的 run，只是没有 `parentId`（[http.ts:397-403](../../../src/server/http.ts#L397-L403)，[cli-main.ts:296-304](../../../src/cli-main.ts#L296-L304)）。
+网页“运行”页的“交办”按钮走 `POST /api/delegate`，命令行 `omem delegate <空间> <任务> --check "pnpm test"` 直接 `createRun`，都建同样的 run，只是没有 `parentId`（[http.ts:397-403](../../../src/server/http.ts#L397-L403)，[cli-main.ts:305-313](../../../src/cli-main.ts#L305-L313)）。
 
-**2. 排队。** `code` 不在“交互”类里，占的是后台并发槽（`config.concurrency`），不会挤掉对话回复（[runs.ts:207-208](../../../src/agents/runs.ts#L207-L208)，细节见 [任务队列、Run 与角色](../concepts/run-queue-and-roles.md)）。处理器注册在 [jobs.ts:346](../../../src/agents/jobs.ts#L346)：`registerHandler("code", runCodeTask)`。
+**2. 排队。** `code` 不在“交互”类里，占的是后台并发槽（`config.concurrency`），不会挤掉对话回复（[runs.ts:207-208](../../../src/agents/runs.ts#L207-L208)，细节见 [任务队列、Run 与角色](../concepts/run-queue-and-roles.md)）。处理器注册在 [jobs.ts:364](../../../src/agents/jobs.ts#L364)：`registerHandler("code", runCodeTask)`。
 
 **3. 建 worktree。** `runCodeTask` 先要求空间有 `rootPath` 且是 Git 仓库，否则直接失败。然后：
 
@@ -72,7 +72,7 @@ if (!existsSync(worktree)) {
 
 到第 8 步为止，你的仓库只多了两样东西：一个 `omem/<runId>` 分支和一个登记在 `.git/worktrees` 里的 worktree，工作区文件一个字没动。
 
-应用有两个入口，都落到 `applyCodeRun`：运行页的“应用到仓库”按钮（先 `confirm`，[Runs.vue:53](../../../web/src/views/Runs.vue#L53)）→ `POST /api/runs/:id/apply`（[http.ts:393](../../../src/server/http.ts#L393)）；或者你对助理说“应用吧”→ `apply_code_run`（[tools.ts:766-777](../../../src/agents/tools.ts#L766-L777)，描述要求“只在本人明确要求时使用”）。
+应用有两个入口，都落到 `applyCodeRun`：运行页的“应用到仓库”按钮（先 `confirm`，[Runs.vue:53](../../../web/src/views/Runs.vue#L53)）→ `POST /api/runs/:id/apply`（[http.ts:393](../../../src/server/http.ts#L393)）；或者你对助理说“应用吧”→ `apply_code_run`（[tools.ts:768-779](../../../src/agents/tools.ts#L768-L779)，描述要求“只在本人明确要求时使用”）。
 
 ```ts
 if (r.kind !== "code" || r.status !== "done") throw new HttpError(400, …);
@@ -106,7 +106,7 @@ git(root, ["apply", "--3way", patch]);
 - **隔离靠 worktree，而不是沙箱。** 宿主只负责把 `cwd` 设成 worktree，防止 coder 改到主仓库靠的是角色说明和任务里那句话。而 `prepareRun` 生成的环境段会写“工作目录是该空间关联的目录：`<rootPath>`”（[runner.ts:167](../../../src/agents/runner.ts#L167)），也就是你真实的检出路径。在 code.ts 和 runner.ts 里我没有看到路径限制；能否真正写到 worktree 之外，取决于所选 Agent 后端自己的权限模式。这是已知的薄弱点，不是已验证的问题。
 - **补丁是文本 diff。** 生成时没带 `--binary`（[code.ts:79](../../../src/agents/code.ts#L79)），含真正二进制文件的改动能否原样应用我没验证。
 - **宿主不做修复循环。** 检查失败、评审要求修改，都不会自动把意见送回 coder；你看到结果后再发起一次新的交办，或者自己接手。这样每次交办的流程是线性的、容易回看。
-- **外部 MCP 看不到 `delegate_code`。** `omem mcp` 暴露工具时会去掉它和 `submit_plan`（[cli-main.ts:323](../../../src/cli-main.ts#L323)），防止外部编码 Agent 反过来派活；`apply_code_run` 没被去掉，非只读模式下可用。
+- **外部 MCP 看不到 `delegate_code`。** `omem mcp` 暴露工具时会去掉它和 `submit_plan`（[cli-main.ts:332](../../../src/cli-main.ts#L332)），防止外部编码 Agent 反过来派活；`apply_code_run` 没被去掉，非只读模式下可用。
 - 仓库里没有覆盖 `code.ts` 的测试（`test/` 下检索不到相关用例），行为靠 `docs/v2/acceptance.md` 的手工验收（第 17、18 条）。
 
 ## 要改这里从哪下手

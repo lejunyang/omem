@@ -2,7 +2,7 @@
 title: 记忆与事项：版本链、时间线与主动整理
 summary: 说清用户纠正一句话后记忆表怎么变、事项状态与时间线怎么记，以及巡检、做梦、简报三类后台运行各自读什么、改什么、怎样把经验回灌给后续运行。
 kind: concept
-updated: 2026-10-12
+updated: 2026-10-13
 ---
 
 本页回答三个问题：用户说“不对，预算改成 120”时，记忆怎么变；事项的状态和时间线怎么记；巡检（heartbeat）、做梦（dream）、简报（brief）分别在什么时候做什么。读完你能判断一条纠正会在哪张表留下什么、一次后台运行会不会调用模型，以及要改这套行为时从哪个文件下手。
@@ -13,11 +13,11 @@ updated: 2026-10-12
 
 这条消息经 [一条消息从进来到回复发出](../flows/message-to-reply.md) 到达 assistant 角色。角色说明要求先 `recall` 查同主题，已有旧版本就用 `supersede` 更正，并在新内容里写清变化，例如“预算由 80 元改为 120 元（2026-10-12 本人更正）”（[roles/assistant.md:30](../../../roles/assistant.md#L30)）。所以模型的动作序列是：
 
-1. `recall(query="项目A 预算")`：只返回 status=active 的记忆，每条带 id、有效期和来源（[tools.ts:442-466](../../../src/agents/tools.ts#L442-L466)）。
+1. `recall(query="项目A 预算")`：只返回 status=active 的记忆，每条带 id、有效期和来源（[tools.ts:444-468](../../../src/agents/tools.ts#L444-L468)）。
 2. `supersede(memory_id="m_a", content="项目A 预算上限由 100 元改为 120 元（2026-10-13 本人更正）")`。
 3. 回答末尾写一行“已更新：…”，让本人看到后可以再纠正（[roles/assistant.md:62](../../../roles/assistant.md#L62)）。
 
-工具层先用 `inScope` 检查旧记忆所属空间在本次运行允许的范围内，不在就 403，然后才调 store（[tools.ts:567-576](../../../src/agents/tools.ts#L567-L576)）。权限与工具清单的机制见 [concepts/agent-runtime-and-tools](./agent-runtime-and-tools.md)。
+工具层先用 `inScope` 检查旧记忆所属空间在本次运行允许的范围内，不在就 403，然后才调 store（[tools.ts:569-578](../../../src/agents/tools.ts#L569-L578)）。权限与工具清单的机制见 [concepts/agent-runtime-and-tools](./agent-runtime-and-tools.md)。
 
 store 里的 `supersede` 在一个事务里做两件事（[memory/store.ts:108-134](../../../src/memory/store.ts#L108-L134)）：
 
@@ -46,7 +46,7 @@ flowchart LR
 ### 版本链的几条规则
 
 - **只能更正有效版本。** 对已经不是 active 的记忆再 `supersede` 会抛 409，信息里带着 `superseded_by` 指向的最新版 id，提示先读最新版（[memory/store.ts:110](../../../src/memory/store.ts#L110)）。这挡住的情形是：模型拿着一个过期的 id 再改一次，会在链上分叉出两个 active 版本。
-- **读历史。** `memoryHistory` 先沿 `supersedes` 往回走到链头，再沿 `superseded_by` 往前走，返回从旧到新的数组；往回走时用 `guard` 集合防止环（[memory/store.ts:161-172](../../../src/memory/store.ts#L161-L172)）。`recall(include_history=true)` 会把这条链拼成“版本链：m_a(superseded) … → m_b(active) …”附在结果后面（[tools.ts:460-463](../../../src/agents/tools.ts#L460-L463)）。assistant 回答“之前怎么约定的、什么时候改的”就靠这个（[roles/assistant.md:19](../../../roles/assistant.md#L19)）。
+- **读历史。** `memoryHistory` 先沿 `supersedes` 往回走到链头，再沿 `superseded_by` 往前走，返回从旧到新的数组；往回走时用 `guard` 集合防止环（[memory/store.ts:161-172](../../../src/memory/store.ts#L161-L172)）。`recall(include_history=true)` 会把这条链拼成“版本链：m_a(superseded) … → m_b(active) …”附在结果后面（[tools.ts:462-465](../../../src/agents/tools.ts#L462-L465)）。assistant 回答“之前怎么约定的、什么时候改的”就靠这个（[roles/assistant.md:19](../../../roles/assistant.md#L19)）。
 - **检索默认只看有效版本。** 记忆的全文索引查询里拼了 `m.status = 'active'`，只有 `includeHistory` 才去掉这个条件（[search.ts:168-172](../../../src/search/search.ts#L168-L172)）。测试里搜“项目A 预算”默认只返回 m2，带 `includeHistory` 返回两条（[library.test.ts:66-69](../../../test/library.test.ts#L66-L69)）。融合与排序见 [concepts/retrieval](./retrieval.md)。
 - **`reason` 参数目前不落库。** 工具 schema 接收 `reason` 并传给 store，但 `supersede` 的实现没有用它。从实现看，“为什么改”只能写进新内容，这也是角色说明要求在内容里写清“由 X 改为 Y、何时、谁说的”的原因。
 
@@ -74,7 +74,7 @@ flowchart LR
 
 状态是否“进入已关闭”由两个布尔值决定：新状态是 done/cancelled 而旧状态不是，是 closing，写入 `closed_at = now`；反过来是 reopening，把 `closed_at` 清成 null；其他情况保持原值（[items/store.ts:130-131](../../../src/items/store.ts#L130-L131)，[147](../../../src/items/store.ts#L147)）。done 改成 cancelled 不会改动已有的 `closed_at`。
 
-每条事件有 `actor`（agent 或 user），所以时间线能区分是本人在网页里改的，还是模型改的。工具层把 `ctx.actor` 传下去（[tools.ts:591-640](../../../src/agents/tools.ts#L591-L640)）。
+每条事件有 `actor`（agent 或 user），所以时间线能区分是本人在网页里改的，还是模型改的。工具层把 `ctx.actor` 传下去（[tools.ts:593-642](../../../src/agents/tools.ts#L593-L642)）。
 
 和记忆的对比：记忆更正产生新行并串成链，事项更新是原行改字段加时间线。从设计上看，事项是“同一件事的进展”，记忆是“某一刻成立的断言”，两者的更正方式因此不同（这是从实现推断的说法，代码里没有注释说明）。
 
@@ -101,38 +101,40 @@ flowchart TD
 
 ### heartbeat：先不调模型
 
-`heartbeat` 处理函数分两段（[jobs.ts:224-254](../../../src/agents/jobs.ts#L224-L254)）。
+`heartbeat` 处理函数分两段（[jobs.ts:236-266](../../../src/agents/jobs.ts#L236-L266)）。
 
-第一段处理到期提醒，**不经过模型**：`dueReminders` 查出状态为 open/waiting/snoozed 且 `remind_at` 已过的事项（[items/store.ts:178-181](../../../src/items/store.ts#L178-L181)），对每条直接 `notify`，写一条 `reminded` 事件，再用 `upsertItem` 把 `remind_at` 清空（snoozed 的顺便改回 open）（[jobs.ts:226-232](../../../src/agents/jobs.ts#L226-L232)）。清空 `remind_at` 是不重复提醒的保证。这样做的好处从实现看很直接：时间到了就发，不依赖模型是否在线、是否花费 token。
+第一段处理到期提醒，**不经过模型**：`dueReminders` 查出状态为 open/waiting/snoozed 且 `remind_at` 已过的事项（[items/store.ts:178-181](../../../src/items/store.ts#L178-L181)），对每条直接 `notify`，写一条 `reminded` 事件，再用 `upsertItem` 把 `remind_at` 清空（snoozed 的顺便改回 open）（[jobs.ts:238-244](../../../src/agents/jobs.ts#L238-L244)）。清空 `remind_at` 是不重复提醒的保证。这样做的好处从实现看很直接：时间到了就发，不依赖模型是否在线、是否花费 token。
 
-第二段处理关注和等待：读 `kv.heartbeat_at` 作为上次巡检时间（没有就取 24 小时前），查这之后更新过的 chat/doc/note/web 原件，最多 60 条；再取 kind 为 watch 或 waiting 的活跃事项。两者缺一，就直接返回 `quiet: true`，不调模型（[jobs.ts:234-243](../../../src/agents/jobs.ts#L234-L243)）。注意 `heartbeat_at` 在调用模型**之前**就写入了，所以若这一次模型运行失败，这个时间窗内的材料下一轮不会再被看到。这是从代码顺序看出的行为，没有文档说明是有意为之。
+第二段处理关注和等待：读 `kv.heartbeat_at` 作为上次巡检时间（没有就取 24 小时前），查这之后更新过的 chat/doc/note/web 原件，最多 60 条；再取 kind 为 watch 或 waiting 的活跃事项。两者缺一，就直接返回 `quiet: true`，不调模型（[jobs.ts:246-255](../../../src/agents/jobs.ts#L246-L255)）。注意 `heartbeat_at` 在调用模型**之前**就写入了，所以若这一次模型运行失败，这个时间窗内的材料下一轮不会再被看到。这是从代码顺序看出的行为，没有文档说明是有意为之。
 
-两者都有时才调 `heartbeat` 角色。任务里放三样东西：上次巡检以来已经发给本人的通知标题（要求不要重复）、关注/等待事项清单、新增材料清单，运行范围是全部空间（[jobs.ts:244-253](../../../src/agents/jobs.ts#L244-L253)）。角色说明要求：等待的事项看新材料里有没有对方回复，关注的事项看有没有需求变化、阻塞、点名本人或与约定冲突，有就通知并在时间线记一笔，其余保持安静，结尾没发通知就只回 `QUIET`（[roles/heartbeat.md:12-18](../../../roles/heartbeat.md#L12-L18)）。
+两者都有时才调 `heartbeat` 角色。任务里放三样东西：上次巡检以来已经发给本人的通知标题（要求不要重复）、关注/等待事项清单、新增材料清单，运行范围是全部空间（[jobs.ts:256-265](../../../src/agents/jobs.ts#L256-L265)）。角色说明要求：等待的事项看新材料里有没有对方回复，关注的事项看有没有需求变化、阻塞、点名本人或与约定冲突，有就通知并在时间线记一笔，其余保持安静，结尾没发通知就只回 `QUIET`（[roles/heartbeat.md:12-18](../../../roles/heartbeat.md#L12-L18)）。
 
-**QUIET 约定**：`QUIET` 是各后台角色共用的“没事”暗号。宿主用正则 `/^\s*QUIET\s*$/i` 判断整个回复是不是只有这个词，是就在运行输出里标 `quiet: true`（[jobs.ts:19](../../../src/agents/jobs.ts#L19)，[jobs.ts:253](../../../src/agents/jobs.ts#L253)）。heartbeat、ingest、wiki-lint、curate 的处理函数都做这个判断。
+**QUIET 约定**：`QUIET` 是各后台角色共用的“没事”暗号。宿主用正则 `/^\s*QUIET\s*$/i` 判断整个回复是不是只有这个词，是就在运行输出里标 `quiet: true`（[jobs.ts:21](../../../src/agents/jobs.ts#L21)，[jobs.ts:265](../../../src/agents/jobs.ts#L265)）。heartbeat、ingest、wiki-lint、curate 的处理函数都做这个判断。
 
 角色说明里有一处与代码不一致：heartbeat.md 开头说任务里列了“到期的提醒”（[roles/heartbeat.md:10](../../../roles/heartbeat.md#L10)），但代码构造的任务里没有这一项，到期提醒已经在第一段处理完。从实现看这是角色说明没跟上代码，对行为影响不大，改 heartbeat 时可以顺手对齐。
 
 ### dream：补漏记、清冲突、提炼经验
 
-`dream` 先从 `kv.dream_at` 取上次整理时间（没有就从 1970 年起），然后收集四样东西（[jobs.ts:258-278](../../../src/agents/jobs.ts#L258-L278)）：
+`dream` 先从 `kv.dream_at` 取上次整理时间（没有就从 1970 年起），然后收集四样东西（[jobs.ts:270-290](../../../src/agents/jobs.ts#L270-L290)）：
 
 - 这之后有变化的记忆，最多 80 条；
 - 有变化的事项，以及虽没变化但已过了截止或提醒时间的活跃事项，最多 80 条；
 - 这之后的后台运行（不含 dream 自己），用来提炼经验；
 - 这之后**本人说过的话**（`messages` 里 role=user），最多 60 条，每条带 `msg:<id>`。
 
-最后一项是“二次检查”：assistant 在实时对话里可能漏记计划或承诺，dreamer 对照 `recall` 和 `list_items` 补上；角色说明规定只补本人明确说过的，已记过的跳过（[roles/dreamer.md:12](../../../roles/dreamer.md#L12)）。记忆、事项、本人的话三样都为空就直接返回 quiet，不调模型（[jobs.ts:280](../../../src/agents/jobs.ts#L280)）。同样，`dream_at` 在调用模型前已更新（[jobs.ts:279](../../../src/agents/jobs.ts#L279)）。
+最后一项是“二次检查”：assistant 在实时对话里可能漏记计划或承诺，dreamer 对照 `recall` 和 `list_items` 补上；角色说明规定只补本人明确说过的，已记过的跳过（[roles/dreamer.md:12](../../../roles/dreamer.md#L12)）。记忆、事项、本人的话三样都为空就直接返回 quiet，不调模型（[jobs.ts:292](../../../src/agents/jobs.ts#L292)）。同样，`dream_at` 在调用模型前已更新（[jobs.ts:291](../../../src/agents/jobs.ts#L291)）。
 
 dreamer 的处理顺序写在角色说明里：漏记、重复、冲突、过期、页面、经验、技能与 Agent，每类最多改十几处，“宁缺毋滥”（[roles/dreamer.md:10-18](../../../roles/dreamer.md#L10-L18)）。有几处要点：重复记忆用 `forget` 并写“与 m_xxx 重复”；两条有效记忆互相矛盾时，能从原文判断新旧就 `supersede`，不能判断就新建一个 kind=decision 的事项请本人确认；只有存在需要本人确认的事才 `notify`。它的工具清单里有 `write_page` 和 `save_skill`，所以也会补页面、起草技能草稿，草稿要等本人 `/approve`。
 
 ### brief：给本人看的摘要
 
-`brief` 用 `kv.brief_at`（没有就取 24 小时前）划时间窗，收集活跃事项、新增材料（排除代码和会话）、窗口内完成的 code/wiki/ingest 运行（[jobs.ts:297-316](../../../src/agents/jobs.ts#L297-L316)）。它**没有** quiet 短路：即使没有新内容也会调模型。角色说明要求按“今天必须处理的、在等别人的、期间的重要变化、后台完成的工作”写，长度一两屏，发现事项状态过时（已完成没关闭）就顺手更新，最后用 `notify` 发送，标题“简报 · 日期”（[roles/brief.md:23](../../../roles/brief.md#L23)）。
+`brief` 用 `kv.brief_at`（没有就取 24 小时前）划时间窗，收集活跃事项、新增材料（排除代码和会话）、窗口内完成的 code/wiki/ingest 运行，有学习卡片到期时再加一行到期数量（`studyStats`），让简报提一句（[jobs.ts:309-331](../../../src/agents/jobs.ts#L309-L331)）。它**没有** quiet 短路：即使没有新内容也会调模型。角色说明要求按“今天必须处理的、在等别人的、期间的重要变化、后台完成的工作”写，长度一两屏，发现事项状态过时（已完成没关闭）就顺手更新，最后用 `notify` 发送，标题“简报 · 日期”（[roles/brief.md:23](../../../roles/brief.md#L23)）。
 
 ### 平时：实时对话与 ingest
 
-除了这三类定时运行，记忆和事项在两个场合被写入。一是实时对话：assistant 被要求在回答之外“主动留意”，把本人明确说出的长期事实记成记忆，把隐含的计划、等待、承诺、日期记成事项（[roles/assistant.md:39-40](../../../roles/assistant.md#L39-L40)）。二是新材料进入后的 `ingest` 运行：先 `recall` 同主题，更正就 `supersede`，新信息就 `remember`，每条带 `source_refs`；等待的回复到了，就在事项上加 note（[roles/ingest.md:14-24](../../../roles/ingest.md#L14-L24)）。`scheduleIngest` 创建这个运行，空间把 `autoIngest` 设为 false 时不创建，repo 类空间必须显式设为 true 才创建（[jobs.ts:102-107](../../../src/agents/jobs.ts#L102-L107)）。
+除了这三类定时运行，记忆和事项在两个场合被写入。一是实时对话：assistant 被要求在回答之外“主动留意”，把本人明确说出的长期事实记成记忆，把隐含的计划、等待、承诺、日期记成事项（[roles/assistant.md:39-40](../../../roles/assistant.md#L39-L40)）。二是新材料进入后的 `ingest` 运行：先 `recall` 同主题，更正就 `supersede`，新信息就 `remember`，每条带 `source_refs`；等待的回复到了，就在事项上加 note（[roles/ingest.md:14-24](../../../roles/ingest.md#L14-L24)）。`scheduleIngest` 创建这个运行，空间把 `autoIngest` 设为 false 时不创建，repo 类空间必须显式设为 true 才创建（[jobs.ts:104-109](../../../src/agents/jobs.ts#L104-L109)）。
+
+ingest 是别人写的内容进入记忆的主要入口，所以处理函数在拼任务文本前会对每个原件调 `guardSource`（开启注入标记时才有效）。有标记的原件，任务里这一行后面会多一段“⚠ 注入检测”，要求 Agent 把这些内容只当材料记录、不执行、不据此改记忆事项页面，必要时 `notify` 本人，同时在运行里发一条 status 事件（[jobs.ts:112-130](../../../src/agents/jobs.ts#L112-L130)）。这只是提示，不阻止 ingest 继续运行。
 
 这几条路径会重叠：新材料先由 ingest 处理，heartbeat 之后又会扫到同一批材料，所以 heartbeat 角色被告知先看事项时间线，已记录或通知过的变化不要重复（[roles/heartbeat.md:15](../../../roles/heartbeat.md#L15)）。
 
@@ -146,7 +148,7 @@ dreamer 的第五步：近期运行里反复出现同类问题或操作时，用
 
 ## 通知
 
-`notify` 做三件事（[core/notify.ts:21-27](../../../src/core/notify.ts#L21-L27)）：写 `notifications` 表；发一个 `notification` 事件，供网页实时显示；遍历已注册的 sink 并忽略各自的失败（只打警告）。sink 是外部渠道的挂载点：飞书机器人、Telegram、OneBot 在启动时各调用 `addNotificationSink`，例如飞书把标题加粗后发给 `lark_owner_chat` 记录的会话（[lark-bot.ts:75-78](../../../src/channels/lark-bot.ts#L75-L78)）。heartbeat 的到期提醒直接调 `notify` 函数，模型发通知则通过 `notify` 工具，链接默认指向当前运行 `#/runs/<id>`（[tools.ts:648-656](../../../src/agents/tools.ts#L648-L656)）。
+`notify` 做三件事（[core/notify.ts:21-27](../../../src/core/notify.ts#L21-L27)）：写 `notifications` 表；发一个 `notification` 事件，供网页实时显示；遍历已注册的 sink 并忽略各自的失败（只打警告）。sink 是外部渠道的挂载点：飞书机器人、Telegram、OneBot 在启动时各调用 `addNotificationSink`，例如飞书把标题加粗后发给 `lark_owner_chat` 记录的会话（[lark-bot.ts:75-78](../../../src/channels/lark-bot.ts#L75-L78)）。heartbeat 的到期提醒直接调 `notify` 函数，模型发通知则通过 `notify` 工具，链接默认指向当前运行 `#/runs/<id>`（[tools.ts:650-658](../../../src/agents/tools.ts#L650-L658)）。
 
 ## 为什么这样设计
 
