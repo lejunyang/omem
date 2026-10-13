@@ -3,6 +3,7 @@ import { allProfiles } from "../core/config.ts";
 import { findSpace, listSpaces } from "../core/spaces.ts";
 import { truncate } from "../core/util.ts";
 import { upsertItem } from "../items/store.ts";
+import { accessibleSpaces, OWNER, userName } from "../core/users.ts";
 import { remember } from "../memory/store.ts";
 import { search } from "../search/search.ts";
 import type { Inbound } from "./inbox.ts";
@@ -48,7 +49,7 @@ const commands: Record<string, Command> = {
         ...["space", "agent", "as", "agents", "skills", "approve", "mode", "idle"].map(line),
         "",
         "**快捷**",
-        ...["remember", "todo", "search", "runs"].map(line),
+        ...["remember", "todo", "search", "runs", "whoami"].map(line),
         "",
         "其他文字照常交给助理。",
       ].join("\n"),
@@ -99,8 +100,8 @@ const commands: Record<string, Command> = {
   sessions: {
     usage: "/sessions [关键词]",
     help: "最近的会话（含其他群和渠道）",
-    run: ({ app, args }) => {
-      const list = listThreads(app, { query: args || undefined, limit: 12, includeArchived: !!args });
+    run: ({ app, args, inb }) => {
+      const list = listThreads(app, { query: args || undefined, limit: 12, includeArchived: !!args, userId: inb.userId ?? OWNER });
       return list.length ? list.map(describeThread).join("\n") : "没有找到会话。";
     },
   },
@@ -156,10 +157,12 @@ const commands: Record<string, Command> = {
   space: {
     usage: "/space [空间id]",
     help: "查看或切换本会话的空间（群里同时设为该群默认空间）",
-    run: ({ app, thread, args }) => {
+    run: ({ app, thread, args, inb }) => {
       const id = args.trim();
       if (!id) return `当前空间：${thread.spaceId}\n可选：${listSpaces(app).map((s) => s.id).join(", ")}`;
       if (!findSpace(app, id)) return `没有空间 ${id}。可选：${listSpaces(app).map((s) => s.id).join(", ")}`;
+      const allowed = accessibleSpaces(app, inb.userId ?? OWNER);
+      if (allowed && !allowed.includes(id)) return `你不能访问空间 ${id}。`;
       updateThread(app, thread.id, { spaceId: id });
       if (thread.key) setChatSettings(app, thread.channel, chatKey(thread), { spaceId: id });
       resetAgentSession(app, thread.id);
@@ -256,30 +259,40 @@ const commands: Record<string, Command> = {
   remember: {
     usage: "/remember <内容>",
     help: "直接记一条记忆（不经过助理）",
-    run: ({ app, thread, args }) => {
+    run: ({ app, thread, args, inb }) => {
       if (!args.trim()) return "用法：/remember 内容";
-      const m = remember(app, { spaceId: thread.spaceId, kind: "fact", content: args.trim(), createdBy: "user", sourceRefs: [`conv:${thread.id}`] });
+      const m = remember(app, { spaceId: thread.spaceId, kind: "fact", content: args.trim(), createdBy: "user", sourceRefs: [`conv:${thread.id}`], userId: inb.userId && inb.userId !== OWNER ? inb.userId : null });
       return `已记住（${m.id}）。`;
     },
   },
   todo: {
     usage: "/todo <事项>",
     help: "直接记一条待办",
-    run: ({ app, thread, args }) => {
+    run: ({ app, thread, args, inb }) => {
       if (!args.trim()) return "用法：/todo 事项";
-      const i = upsertItem(app, undefined, { spaceId: thread.spaceId, kind: "todo", title: args.trim(), sourceRefs: [`conv:${thread.id}`] }, "user");
+      const i = upsertItem(app, undefined, { spaceId: thread.spaceId, kind: "todo", title: args.trim(), sourceRefs: [`conv:${thread.id}`], userId: inb.userId ?? OWNER }, "user");
       return `已加待办（${i.id}）。`;
     },
   },
   search: {
     usage: "/search <关键词>",
     help: "直接检索知识库（不经过助理）",
-    run: async ({ app, thread, args }) => {
+    run: async ({ app, thread, args, inb }) => {
       if (!args.trim()) return "用法：/search 关键词";
-      const hits = await search(app, args.trim(), { spaces: [thread.spaceId, "personal"], limit: 8 });
+      const own = inb.userId && inb.userId !== OWNER ? `personal-${inb.userId}` : "personal";
+      const hits = await search(app, args.trim(), { spaces: [...new Set([thread.spaceId, own])], limit: 8 });
       return hits.length
         ? hits.map((h, i) => `${i + 1}. ${h.type === "page" ? `页面 ${h.path}` : h.type === "memory" ? `记忆 ${h.id}` : `${h.uri ?? h.title}${h.lineStart ? `:${h.lineStart}` : ""}`}\n   ${truncate(h.snippet.replace(/\s+/g, " "), 120)}`).join("\n")
         : "没有命中。";
+    },
+  },
+  whoami: {
+    usage: "/whoami",
+    help: "我是谁、能访问哪些空间",
+    run: ({ app, inb }) => {
+      const id = inb.userId ?? OWNER;
+      const spaces = accessibleSpaces(app, id);
+      return `${userName(app, id)}（${id}）· 可访问空间：${spaces ? spaces.join(", ") || "无" : "全部"}`;
     },
   },
   runs: {

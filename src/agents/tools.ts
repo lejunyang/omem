@@ -27,6 +27,8 @@ export type ToolContext = {
   spaces: string[] | null;
   tools: Set<string> | null;
   actor: "agent" | "user";
+  /** Whose run this is; defaults to the owner. Items, preferences and cards are per user. */
+  userId?: string;
 };
 
 type Tool = {
@@ -293,7 +295,7 @@ def({
   description: "列出会话（网页、飞书私聊/群/话题、Telegram、QQ 等），带摘要。用来找“上次在哪个群/话题里聊过 X”，再用 read_conversation 读原话。",
   schema: z.object({ query: z.string().optional().describe("按标题或摘要筛选"), channel: z.string().optional(), include_archived: z.boolean().optional(), limit: z.number().int().min(1).max(50).optional() }),
   handler: (ctx, a) => {
-    const list = listThreads(ctx.app, { query: a.query, channel: a.channel, includeArchived: a.include_archived ?? !!a.query, limit: a.limit ?? 20 }).filter((t) => !ctx.spaces || ctx.spaces.includes(t.spaceId));
+    const list = listThreads(ctx.app, { query: a.query, channel: a.channel, includeArchived: a.include_archived ?? !!a.query, limit: a.limit ?? 20, userId: ctx.userId ?? "owner" }).filter((t) => !ctx.spaces || ctx.spaces.includes(t.spaceId));
     return list.length ? list.map(describeThread).join("\n") : "没有找到会话。也可以用 search 搜对话内容（原件类型 conversation）。";
   },
 });
@@ -306,6 +308,7 @@ def({
     const t = findThread(ctx.app, a.conversation.replace(/^conv:/, ""));
     if (!t) throw new HttpError(404, `会话不存在：${a.conversation}`);
     if (ctx.spaces && !ctx.spaces.includes(t.spaceId)) throw new HttpError(403, `本次任务不能访问空间 ${t.spaceId} 的会话`);
+    if (t.userId !== (ctx.userId ?? "owner") && (ctx.userId ?? "owner") !== "owner") throw new HttpError(403, "不能读别人的会话");
     const msgs = threadMessages(ctx.app, t.id, { limit: a.limit ?? 30, before: a.before });
     const head = describeThread(t);
     return `${head}\n\n${msgs.map((m) => `[${m.createdAt.slice(0, 16).replace("T", " ")}] ${m.role === "user" ? "本人" : "助理"}（msg:${m.id}）：${truncate(m.text, 2000)}`).join("\n\n")}`;
@@ -479,7 +482,9 @@ def({
     with_timeline: z.boolean().optional(),
   }),
   handler: (ctx, a) => {
-    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, spaceId: a.space ? space(ctx, a.space) : undefined, limit: 100 });
+    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, spaceId: a.space ? space(ctx, a.space) : undefined, userId: ctx.userId ?? "owner", limit: 100 }).filter(
+      (i) => !ctx.spaces || ctx.spaces.includes(i.spaceId),
+    );
     if (!items.length) return "没有符合条件的事项。";
     return items
       .map((i) => {
@@ -560,7 +565,17 @@ def({
     space: z.string().optional(),
   }),
   handler: (ctx, a) => {
-    const m = remember(ctx.app, { spaceId: space(ctx, a.space), kind: a.kind, subject: a.subject, content: a.content, sourceRefs: a.source_refs, validFrom: a.valid_from, createdBy: ctx.actor });
+    const m = remember(ctx.app, {
+      spaceId: space(ctx, a.space),
+      kind: a.kind,
+      subject: a.subject,
+      content: a.content,
+      sourceRefs: a.source_refs,
+      validFrom: a.valid_from,
+      createdBy: ctx.actor,
+      // Preferences belong to the person who stated them; facts are shared knowledge of the space.
+      userId: a.kind === "preference" ? (ctx.userId ?? "owner") : null,
+    });
     return `已记住 ${m.id}`;
   },
 });
@@ -628,6 +643,7 @@ def({
         watch: a.watch_query ? { ...(existing?.watch ?? {}), query: a.watch_query } : undefined,
         note: a.note,
         sourceRefs: a.source_refs,
+        userId: existing ? undefined : (ctx.userId ?? "owner"),
       },
       ctx.actor,
     );

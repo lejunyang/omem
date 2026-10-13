@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { addNotificationSink } from "../core/notify.ts";
 import { answerFromChannel, chunkMessage } from "./common.ts";
 import { registerThreadSender } from "../agents/inbox.ts";
+import { resolveIdentity } from "../core/users.ts";
 
 /**
  * Telegram bot channel (Bot API long polling — no public URL needed). Only the
@@ -56,7 +57,8 @@ export async function startTelegram(app: App) {
             continue;
           }
           // The owner's user id equals their private chat id; in groups only their messages that address the bot count.
-          if (String(m.from?.id) !== String(cfg.ownerChatId)) continue;
+          const userId = resolveIdentity(app, "telegram", m.from?.id);
+          if (!userId) continue;
           const addressed = !isGroup || (botName && m.text.includes(`@${botName}`)) || m.reply_to_message?.from?.username === botName || m.text.startsWith("/");
           if (!addressed) continue;
           const topic = m.is_topic_message ? m.message_thread_id : undefined;
@@ -67,8 +69,9 @@ export async function startTelegram(app: App) {
             topicId: topic ? String(topic) : undefined,
             isGroup,
             text: botName ? m.text.replace(`@${botName}`, "").trim() : m.text,
-            spaceId: cfg.defaultSpace,
+            spaceId: userId === "owner" || isGroup ? cfg.defaultSpace : undefined,
             externalMessageId: String(m.message_id),
+            userId,
           })
             .then((answer) => (answer === null ? undefined : send(chatId, answer || "（没有回答）", topic)))
             .catch((e) => send(chatId, `处理失败：${(e as Error).message}`, topic));

@@ -42,10 +42,11 @@ export { addMessage, conversationMessages, ensureConversation } from "./threads.
  * Ask the assistant (web, CLI, tests). Goes through the same inbox as chat
  * channels: commands, thread resolution, burst merging, per-thread lanes.
  */
-export async function ask(app: App, input: { text: string; spaceId?: string; conversationId?: string; channel?: string; externalId?: string }) {
+export async function ask(app: App, input: { text: string; spaceId?: string; conversationId?: string; channel?: string; externalId?: string; userId?: string }) {
   const r = await receive(app, {
+    userId: input.userId,
     text: input.text,
-    spaceId: input.spaceId ?? "personal",
+    spaceId: input.spaceId,
     conversationId: input.conversationId ?? (input.externalId ? undefined : newId("c")),
     channel: input.channel ?? "web",
     chatId: input.externalId,
@@ -54,12 +55,12 @@ export async function ask(app: App, input: { text: string; spaceId?: string; con
 }
 
 registerHandler("ask", async (ctx) => {
-  const input = ctx.run.input as { conversationId: string; messageIds?: string[]; messageId?: string };
+  const input = ctx.run.input as { conversationId: string; messageIds?: string[]; messageId?: string; userId?: string };
   const ids = input.messageIds ?? (input.messageId ? [input.messageId] : []);
   const all = threadMessages(ctx.app, input.conversationId, { limit: 400 });
   const msgs = all.filter((m) => ids.includes(m.id));
   if (!msgs.length) return { answer: "", skipped: "消息已不存在" };
-  const r = await threadTurn(ctx, input.conversationId, msgs);
+  const r = await threadTurn(ctx, input.conversationId, msgs, input.userId ?? "owner");
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   const answer = r.text.trim() || "（Agent 没有给出文字回答）";
   const id = addMessage(ctx.app, input.conversationId, "assistant", answer, ctx.run.id, { agent: r.agent, session: r.mode, replyTo: ids });

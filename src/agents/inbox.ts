@@ -1,5 +1,6 @@
 import type { App } from "../core/app.ts";
-import { now, truncate } from "../core/util.ts";
+import { canWrite, OWNER, personalSpaceId } from "../core/users.ts";
+import { HttpError, now, truncate } from "../core/util.ts";
 import { injectionScore } from "../sources/guard.ts";
 import { runCommand } from "./commands.ts";
 import { createRun, queuedInLane, updateQueuedRun } from "./runs.ts";
@@ -25,21 +26,25 @@ export type Inbound = Partial<ThreadAddress> & {
   externalMessageId?: string;
   /** Wait this long for more messages before starting (defaults to sessions.mergeMs for chats, 0 for web). */
   mergeMs?: number;
+  /** Who sent it (resolved from the channel identity); the owner by default. */
+  userId?: string;
 };
 
 export type Received = { thread: Thread; messageId: string | null; runId: string | null; merged: boolean; reply: string | null; started: "new" | "renewed" | null };
 
 export async function receive(app: App, inb: Inbound): Promise<Received> {
+  const userId = inb.userId ?? OWNER;
   let thread: Thread;
   let started: Received["started"] = null;
   if (inb.conversationId) {
-    thread = findThread(app, inb.conversationId) ?? createThread(app, { id: inb.conversationId, spaceId: inb.spaceId ?? "personal", channel: inb.channel ?? "web" });
+    thread = findThread(app, inb.conversationId) ?? createThread(app, { id: inb.conversationId, spaceId: inb.spaceId ?? personalSpaceId(userId), channel: inb.channel ?? "web", userId });
+    if (thread.userId !== userId && !canWrite(app, userId, thread.spaceId)) throw new HttpError(403, "不能在别人的会话里发消息");
   } else if (inb.channel && inb.chatId) {
-    const r = resolveThread(app, inb as ThreadAddress);
+    const r = resolveThread(app, { ...(inb as ThreadAddress), userId, spaceId: inb.spaceId ?? (inb.isGroup ? undefined : personalSpaceId(userId)) });
     thread = r.thread;
     started = r.started;
   } else {
-    thread = createThread(app, { spaceId: inb.spaceId ?? "personal", channel: inb.channel ?? "web" });
+    thread = createThread(app, { spaceId: inb.spaceId ?? personalSpaceId(userId), channel: inb.channel ?? "web", userId });
     started = "new";
   }
   if (inb.externalMessageId) updateThread(app, thread.id, { settings: { ...thread.settings, lastMessageId: inb.externalMessageId } as Thread["settings"] });
@@ -54,7 +59,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     }
   }
 
-  const meta: Record<string, unknown> = {};
+  const meta: Record<string, unknown> = userId === OWNER ? {} : { userId };
   if (inb.context) {
     meta.context = inb.context;
     meta.contextLabel = inb.contextLabel ?? "群里";
@@ -68,7 +73,8 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   const notBefore = new Date(Date.now() + mergeMs).toISOString();
 
   const waiting = queuedInLane(app, thread.id, "ask");
-  if (waiting) {
+  // Bursts merge only within one sender: each turn runs with its sender's permissions.
+  if (waiting && ((waiting.input.userId as string | undefined) ?? OWNER) === userId) {
     const ids = [...((waiting.input.messageIds as string[] | undefined) ?? []), messageId];
     if (updateQueuedRun(app, waiting.id, { input: { ...waiting.input, messageIds: ids }, notBefore: mergeMs ? notBefore : undefined, title: truncate(`${waiting.title} / ${text.replace(/\s+/g, " ")}`, 80) })) {
       app.db.prepare("update messages set run_id = ? where id = ?").run(waiting.id, messageId);
@@ -79,8 +85,9 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     kind: "ask",
     spaceId: thread.spaceId,
     title: truncate(text.replace(/\s+/g, " "), 60),
-    input: { conversationId: thread.id, messageIds: [messageId] },
+    input: { conversationId: thread.id, messageIds: [messageId], ...(userId === OWNER ? {} : { userId }) },
     lane: thread.id,
+    userId,
     notBefore: mergeMs ? notBefore : null,
   });
   app.db.prepare("update messages set run_id = ? where id = ?").run(run.id, messageId);

@@ -256,6 +256,50 @@ const migrations: string[] = [
   alter table runs add column not_before text;
   create index runs_lane on runs(lane, status);
   `,
+  // Room for more than one person: users, their channel identities, space
+  // membership and per-user API tokens. Everything existing belongs to "owner".
+  `
+  create table users (
+    id text primary key,
+    name text not null,
+    role text not null default 'member',      -- owner | member
+    settings text not null default '{}',
+    created_at text not null,
+    disabled_at text
+  );
+  insert into users(id, name, role, created_at) values ('owner', '本人', 'owner', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+  create table identities (
+    channel text not null,                    -- lark | telegram | onebot | web …
+    external_id text not null,                -- open_id, Telegram user id, QQ number…
+    user_id text not null references users(id),
+    created_at text not null,
+    primary key(channel, external_id)
+  );
+  create table space_members (
+    space_id text not null,
+    user_id text not null,
+    role text not null default 'reader',      -- reader | editor | owner
+    primary key(space_id, user_id)
+  );
+  create table api_tokens (
+    token_hash text primary key,
+    user_id text not null,
+    label text not null default '',
+    created_at text not null,
+    last_used_at text
+  );
+  alter table spaces add column owner_id text not null default 'owner';
+  alter table conversations add column user_id text not null default 'owner';
+  alter table items add column user_id text not null default 'owner';
+  alter table memories add column user_id text;
+  alter table cards add column user_id text not null default 'owner';
+  alter table card_reviews add column user_id text not null default 'owner';
+  alter table runs add column user_id text;
+  alter table notifications add column user_id text not null default 'owner';
+  create index items_user on items(user_id, status);
+  create index conversations_user on conversations(user_id, updated_at);
+  create index cards_user on cards(user_id, suspended, due_at);
+  `,
 ];
 
 export type Db = DatabaseSync;

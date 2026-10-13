@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { importFile } from "../sources/import.ts";
 import { appendToSource, findSourceByUri, sourceText } from "../sources/store.ts";
 import { registerThreadSender } from "../agents/inbox.ts";
+import { OWNER, resolveIdentity } from "../core/users.ts";
 
 /**
  * Feishu/Lark bot channel. Private chat with the owner is a command channel to
@@ -128,8 +129,9 @@ export async function startLarkBot(app: App) {
       await send(m.chatId, `还没有绑定本人。请在 omem 配置中设置 \`lark.ownerOpenId\` 为：\`${m.senderId}\`，然后重启服务。`, m.messageId);
       return;
     }
-    if (m.senderId !== cfg.ownerOpenId) return;
-    if (m.chatType === "p2p") kv(app, "lark_owner_chat", m.chatId);
+    const userId = resolveIdentity(app, "lark", m.senderId);
+    if (!userId) return; // not the owner and not a registered user (omem user add … --lark <open_id>)
+    if (m.chatType === "p2p" && userId === OWNER) kv(app, "lark_owner_chat", m.chatId);
     const text = m.text.replace(/@_user_\d+/g, "").trim();
     const context = m.chatType === "group" ? groupContext(m) : "";
     if (!text) return;
@@ -140,10 +142,11 @@ export async function startLarkBot(app: App) {
       topicId: m.topicId,
       isGroup: m.chatType === "group",
       text,
-      spaceId: m.chatType === "group" ? (map[m.chatId] ?? cfg.defaultSpace) : cfg.defaultSpace,
+      spaceId: m.chatType === "group" ? (map[m.chatId] ?? cfg.defaultSpace) : userId === OWNER ? cfg.defaultSpace : undefined,
       context,
       contextLabel: m.topicId ? "话题里" : "群里",
       externalMessageId: m.messageId,
+      userId,
     });
     if (answer !== null) await send(m.chatId, answer, m.messageId, !!m.topicId);
   };
@@ -183,7 +186,7 @@ export async function startLarkBot(app: App) {
         createTime: msg.create_time,
         topicId: msg.thread_id || undefined,
       };
-      if ((msg.message_type === "image" || msg.message_type === "file") && (m.chatType === "group" || m.senderId === cfg.ownerOpenId))
+      if ((msg.message_type === "image" || msg.message_type === "file") && (m.chatType === "group" || resolveIdentity(app, "lark", m.senderId) === OWNER))
         saveResource(msg, m).catch((e) => console.warn("[omem] 飞书附件保存失败", e));
       else handle(m).catch((e) => console.warn("[omem] 飞书消息处理失败", e));
       return {};
