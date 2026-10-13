@@ -47,7 +47,7 @@ const commands: Record<string, Command> = {
         ...["new", "status", "stop", "sessions", "resume", "link", "summary", "compact"].map(line),
         "",
         "**路由**",
-        ...["space", "agent", "as", "agents", "skills", "approve", "mode", "idle"].map(line),
+        ...["space", "agent", "as", "agents", "skills", "approve", "mode", "idle", "watch"].map(line),
         "",
         "**快捷**",
         ...["remember", "todo", "search", "review", "runs", "whoami"].map(line),
@@ -298,6 +298,31 @@ const commands: Record<string, Command> = {
         return `已结束复习，本次复习了 ${done} 张。`;
       }
       return nextCard(app, thread, inb.userId ?? OWNER, arg || undefined, 0);
+    },
+  },
+  watch: {
+    usage: "/watch <档案|off> [all|mention|keyword:<正则>] [none|draft|auto]",
+    help: "（在群里或带 oc_ 群 id）把这个群的消息交给某个 Agent 档案处理",
+    run: async ({ app, thread, args, inb }) => {
+      if ((inb.userId ?? OWNER) !== OWNER) return "只有本人可以设置群监听。";
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      const chatId = parts[0]?.startsWith("oc_") ? parts.shift()! : thread.channel === "lark" ? chatKey(thread) : "";
+      if (!chatId) return "在飞书群里发这个命令，或写上群 id：/watch oc_xxx 档案名 …";
+      const { setWatchRule, watchRule } = await import("../channels/lark-watch.ts");
+      const spec = parts[0];
+      if (!spec) {
+        const r = watchRule(app, chatId);
+        return r ? `${chatId} 交给 ${r.spec} 处理：${r.on}${r.pattern ? ` ${r.pattern}` : ""}，回复 ${r.reply}` : `${chatId} 没有设置监听。`;
+      }
+      if (spec === "off") {
+        setWatchRule(app, chatId, null);
+        return `已取消 ${chatId} 的监听。`;
+      }
+      const onArg = parts.find((p) => /^(all|mention|keyword:)/.test(p)) ?? "all";
+      const reply = (parts.find((p) => /^(none|draft|auto)$/.test(p)) ?? "draft") as "none" | "draft" | "auto";
+      const on = onArg.startsWith("keyword:") ? "keyword" : (onArg as "all" | "mention");
+      setWatchRule(app, chatId, { spec, on, pattern: on === "keyword" ? onArg.slice(8) : undefined, reply });
+      return `已设置：${chatId} 的${on === "all" ? "新消息" : on === "mention" ? " @ 消息" : `匹配 ${onArg.slice(8)} 的消息`}交给 ${spec}，回复方式 ${reply}${reply === "auto" ? "（机器人需要在群里）" : ""}。`;
     },
   },
   whoami: {

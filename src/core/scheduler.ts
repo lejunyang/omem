@@ -10,12 +10,13 @@ const toSchedule = (r: Row): Schedule => ({ id: r.id, kind: r.kind, cron: r.cron
 /** Built-in schedules exist from the start; background ones begin disabled except reminders. */
 const DEFAULTS: { id: string; kind: string; cron: string; enabled: boolean; label: string }[] = [
   { id: "heartbeat", kind: "heartbeat", cron: "*/15 * * * *", enabled: true, label: "巡检：到期提醒、等待回复与关注事项" },
+  { id: "activity", kind: "activity", cron: "*/30 * * * *", enabled: true, label: "记录代码仓库的活动：新提交和未提交的改动（只读本机 Git）" },
   { id: "learn", kind: "learn", cron: "*/15 * * * *", enabled: true, label: "学习：每天按学习目标出新卡，到点提醒复习（没有学习目标时什么都不做）" },
   { id: "brief", kind: "brief", cron: "45 8 * * 1-5", enabled: false, label: "工作日早上的简报：今天要处理的、在等的、发生的变化" },
   { id: "dream", kind: "dream", cron: "30 3 * * *", enabled: false, label: "每晚整理记忆与页面" },
   { id: "repo-sync", kind: "repo-sync", cron: "0 * * * *", enabled: false, label: "每小时同步代码仓库空间并检查受影响页面" },
   { id: "lark-curate", kind: "lark-curate", cron: "15 9 * * 1", enabled: false, label: "每周按设定方向筛选值得关注的飞书群（需要填写方向）" },
-  { id: "lark-poll", kind: "lark-poll", cron: "*/10 * * * *", enabled: false, label: "采集已订阅的飞书会话和 @我 的消息（只读）" },
+  { id: "lark-poll", kind: "lark-poll", cron: "*/10 * * * *", enabled: false, label: "采集飞书消息（全部或已订阅的会话，含附件和文档）、日程和妙记（只读）；被监听的群交给处理 Agent" },
 ];
 export const scheduleLabels = Object.fromEntries(DEFAULTS.map((d) => [d.kind, d.label]));
 

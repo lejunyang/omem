@@ -134,7 +134,10 @@ export type PreparedRun = {
  * Resolve backend, working directory, tool token and the standing context for
  * a role or agent spec. The caller owns the token (revoke it when done).
  */
-export function prepareRun(app: App, input: { actor: Actor; spaceId: string; spaces?: string[] | null; runId: string | null; cwd?: string; profileId?: string; userId?: string }): PreparedRun {
+export function prepareRun(
+  app: App,
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; runId: string | null; cwd?: string; profileId?: string; userId?: string; lark?: { chats: string[] | null; draft?: boolean } },
+): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
   const role = spec ? null : loadRole((input.actor as { role: RoleName }).role);
@@ -155,11 +158,15 @@ export function prepareRun(app: App, input: { actor: Actor; spaceId: string; spa
   // Skills are offered to everyone who can read them.
   tools.add("list_skills");
   tools.add("read_skill");
+  // A thread that may post into specific Feishu chats (watched groups) gets the bot's voice and notify.
+  if (input.lark?.chats?.length) for (const t of ["lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "notify"]) tools.add(t);
   const spaces =
     input.spaces !== undefined ? input.spaces : spec ? (spec.spaces.includes("*") ? null : [...new Set([space.id, ...spec.spaces])]) : roleName === "assistant" ? null : [space.id];
   const scoped = scopeFor(app, userId, spaces);
   if (scoped && !scoped.includes(space.id)) throw new HttpError(403, `${userName(app, userId)} 不能访问空间 ${space.id}`);
-  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: scoped, tools, actor: "agent", userId });
+  // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
+  const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
+  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: scoped, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft });
   const guide = spaceGuide(app, space.id).trim();
   const lessons = learnedContext(app, space.id, userId);
   const skills = skillIndex(app, spec?.skills);

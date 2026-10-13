@@ -1,22 +1,33 @@
 import * as lark from "@larksuiteoapi/node-sdk";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { scheduleIngest } from "../agents/jobs.ts";
-import { answerFromChannel } from "./common.ts";
+import { registerThreadSender } from "../agents/inbox.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { addNotificationSink } from "../core/notify.ts";
 import { findSpace } from "../core/spaces.ts";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { identitiesOf, OWNER, resolveIdentity, userName } from "../core/users.ts";
 import { importFile } from "../sources/import.ts";
 import { appendToSource, findSourceByUri, sourceText } from "../sources/store.ts";
-import { registerThreadSender } from "../agents/inbox.ts";
-import { identitiesOf, OWNER, resolveIdentity } from "../core/users.ts";
+import { answerFromChannel } from "./common.ts";
+import { startProgress } from "./lark-progress.ts";
+import { handleCardAction } from "./lark-actions.ts";
+import { sendLark, setLarkClient } from "./lark-send.ts";
+import { routeWatchedMessages } from "./lark-watch.ts";
 
 /**
- * Feishu/Lark bot channel. Private chat with the owner is a command channel to
- * the assistant; group chats the bot is in are captured as chat sources (per
- * group → space mapping) and handed to the ingest role in batches.
+ * Feishu/Lark bot channel.
+ *
+ * - Private chat with the owner (and registered users) talks to the assistant,
+ *   with a live progress card that turns into the answer.
+ * - In groups the bot is in, every message is captured as a chat source; an
+ *   @mention of the bot by a user starts a turn in that chat's (or topic's)
+ *   thread; watched groups hand messages to their handler spec.
+ * - Card buttons and forms come back through `card.action.trigger`: drafts are
+ *   sent or dropped, other actions continue the conversation that posted them,
+ *   and only the people a card names may act on it.
  */
 type Inbound = {
   chatId: string;
@@ -26,12 +37,13 @@ type Inbound = {
   senderName: string;
   text: string;
   mentionsBot: boolean;
+  mentions: string[];
   createTime: string;
   /** Topic (话题) the message belongs to: thread_id in topic groups and threaded replies. */
   topicId?: string;
 };
 
-function messageText(raw: string | undefined, type: string | undefined): string {
+export function messageText(raw: string | undefined, type: string | undefined): string {
   if (!raw) return "";
   try {
     const c = JSON.parse(raw);
@@ -42,6 +54,7 @@ function messageText(raw: string | undefined, type: string | undefined): string 
     }
     if (type === "image") return "[图片]";
     if (type === "file") return `[文件] ${c.file_name ?? ""}`;
+    if (type === "interactive") return `[卡片] ${c.title ?? c.header?.title?.content ?? ""}`;
     return `[${type}]`;
   } catch {
     return raw;
@@ -59,37 +72,60 @@ export async function startLarkBot(app: App) {
   const appSecret = process.env[cfg.appSecretEnv];
   if (!cfg.appId || !appSecret) throw new Error(`需要配置 lark.appId 和环境变量 ${cfg.appSecretEnv}`);
   const client = new lark.Client({ appId: cfg.appId, appSecret, domain: lark.Domain.Feishu });
+  let botOpenId: string | null = kv(app, "lark_bot_open_id") ?? null;
+  try {
+    const info = (await client.request({ method: "GET", url: "/open-apis/bot/v3/info" })) as { bot?: { open_id?: string; app_name?: string } };
+    if (info.bot?.open_id) botOpenId = kv(app, "lark_bot_open_id", info.bot.open_id) ?? null;
+    if (info.bot?.app_name) kv(app, "lark_bot_name", info.bot.app_name);
+  } catch (e) {
+    console.warn("[omem] 读取飞书机器人信息失败：", (e as Error).message);
+  }
+  setLarkClient(client, botOpenId);
 
-  const send = async (chatId: string, markdown: string, replyTo?: string, inThread = false) => {
-    const card = { config: { wide_screen_mode: true }, elements: [{ tag: "markdown", content: markdown.slice(0, 28000) }] };
-    if (replyTo) await client.im.message.reply({ path: { message_id: replyTo }, data: { msg_type: "interactive", content: JSON.stringify(card), reply_in_thread: inThread } });
-    else await client.im.message.create({ params: { receive_id_type: "chat_id" }, data: { receive_id: chatId, msg_type: "interactive", content: JSON.stringify(card) } });
+  // Names for people in groups (needs contact read permission; falls back to the id).
+  const names = new Map<string, string>();
+  const nameOf = async (openId: string) => {
+    if (!openId) return "?";
+    const known = resolveIdentity(app, "lark", openId);
+    if (known) return userName(app, known);
+    if (names.has(openId)) return names.get(openId)!;
+    try {
+      const r = await client.contact.user.get({ path: { user_id: openId }, params: { user_id_type: "open_id" } });
+      const n = r.data?.user?.name;
+      if (n) names.set(openId, n);
+      return n ?? openId;
+    } catch {
+      names.set(openId, openId.slice(-6));
+      return openId.slice(-6);
+    }
   };
+
+  const reply = (chatId: string, markdown: string, replyTo?: string, inThread = false) => sendLark(replyTo ? { replyTo, inThread } : { chatId }, { markdown });
 
   // Later results for a thread (delegated agents…) go back to the same chat, inside the topic when there is one.
   registerThreadSender("lark", async (thread, markdown) => {
     const [chatId, topic] = (thread.key ?? "").split("#");
     if (!chatId) return;
-    await send(chatId, markdown, thread.settings.lastMessageId, !!topic);
+    await reply(chatId, markdown, thread.settings.lastMessageId, !!topic);
   });
 
   addNotificationSink(async (n) => {
-    const text = `**${n.title}**\n${n.body}`;
+    const markdown = `**${n.title}**\n${n.body}`;
     if (n.userId === OWNER) {
       const chat = kv(app, "lark_owner_chat");
-      if (chat) await send(chat, text);
+      if (chat) await sendLark({ chatId: chat }, { markdown });
+      else if (cfg.ownerOpenId) await sendLark({ userId: cfg.ownerOpenId }, { markdown });
       return;
     }
-    // Other users: a private message to their open_id.
     const id = identitiesOf(app, n.userId).find((i) => i.channel === "lark")?.external_id;
-    const card = { config: { wide_screen_mode: true }, elements: [{ tag: "markdown", content: text }] };
-    if (id) await client.im.message.create({ params: { receive_id_type: "open_id" }, data: { receive_id: id, msg_type: "interactive", content: JSON.stringify(card) } });
+    if (id) await sendLark({ userId: id }, { markdown });
   });
 
-  const pending = new Map<string, { spaceId: string; sourceId: string; timer: NodeJS.Timeout }>();
+  const pending = new Map<string, NodeJS.Timeout>();
+  const lastCapture = new Map<string, string>();
+  const groupSpace = (chatId: string) => ((findSpace(app, "personal")?.settings.larkGroups ?? {}) as Record<string, string>)[chatId] ?? cfg.defaultSpace;
   const captureGroup = (m: Inbound) => {
-    const map = (findSpace(app, "personal")?.settings.larkGroups ?? {}) as Record<string, string>;
-    const spaceId = map[m.chatId] ?? cfg.defaultSpace;
+    const spaceId = groupSpace(m.chatId);
     const uri = `lark:${m.chatId}`;
     const before = findSourceByUri(app, spaceId, uri);
     const at = new Date(Number(m.createTime)).toISOString().slice(0, 16).replace("T", " ");
@@ -98,31 +134,28 @@ export async function startLarkBot(app: App) {
       kind: "chat",
       uri,
       title: (before?.title as string) ?? `飞书群 ${m.chatId.slice(-6)}`,
-      lines: [`[${at}${m.topicId ? ` · 话题 ${m.topicId}` : ""}] ${m.senderName || m.senderId}: ${m.text.replace(/\n/g, " ⏎ ")}`],
+      lines: [`[${at}${m.topicId ? ` · 话题 ${m.topicId}` : ""}] ${m.senderName}: ${m.text.replace(/\n/g, " ⏎ ")} (${m.messageId})`],
       meta: { chatId: m.chatId },
     });
-    lastCapture.set(m.messageId, { spaceId, sourceId: r.id });
+    lastCapture.set(m.messageId, r.id);
     // Debounce: hand a burst of messages to the ingest role once.
     const key = `${spaceId}:${r.id}`;
-    const p = pending.get(key);
-    if (p) clearTimeout(p.timer);
-    pending.set(key, {
-      spaceId,
-      sourceId: r.id,
-      timer: setTimeout(() => {
+    clearTimeout(pending.get(key));
+    pending.set(
+      key,
+      setTimeout(() => {
         pending.delete(key);
         scheduleIngest(app, spaceId, [r.id], "飞书群新消息");
       }, 5 * 60_000),
-    });
+    );
   };
 
-  const lastCapture = new Map<string, { spaceId: string; sourceId: string }>();
   /** What was said just before an @mention, in the same topic when there is one. */
   const groupContext = (m: Inbound) => {
-    const cap = lastCapture.get(m.messageId);
+    const sourceId = lastCapture.get(m.messageId);
     lastCapture.delete(m.messageId);
-    if (!cap) return "";
-    const lines = sourceText(app, cap.sourceId).split("\n").filter(Boolean);
+    if (!sourceId) return "";
+    const lines = sourceText(app, sourceId).split("\n").filter(Boolean);
     lines.pop(); // the mention itself
     const pick = m.topicId ? lines.filter((l) => l.includes(`话题 ${m.topicId}]`)) : lines;
     return pick.slice(-15).join("\n");
@@ -131,10 +164,11 @@ export async function startLarkBot(app: App) {
   const handle = async (m: Inbound) => {
     if (m.chatType === "group") {
       captureGroup(m);
+      await routeWatchedMessages(app, m.chatId, groupName(m.chatId), [{ id: m.messageId, time: m.createTime, sender: m.senderName, senderId: m.senderId, text: m.text, topicId: m.topicId, mentions: m.mentions }], { botOpenId });
       if (!m.mentionsBot) return;
     }
     if (!cfg.ownerOpenId) {
-      await send(m.chatId, `还没有绑定本人。请在 omem 配置中设置 \`lark.ownerOpenId\` 为：\`${m.senderId}\`，然后重启服务。`, m.messageId);
+      await reply(m.chatId, `还没有绑定本人。请在 omem 配置中设置 \`lark.ownerOpenId\` 为：\`${m.senderId}\`，然后重启服务。`, m.messageId);
       return;
     }
     const userId = resolveIdentity(app, "lark", m.senderId);
@@ -143,20 +177,51 @@ export async function startLarkBot(app: App) {
     const text = m.text.replace(/@_user_\d+/g, "").trim();
     const context = m.chatType === "group" ? groupContext(m) : "";
     if (!text) return;
-    const map = (findSpace(app, "personal")?.settings.larkGroups ?? {}) as Record<string, string>;
-    const answer = await answerFromChannel(app, {
-      channel: "lark",
-      chatId: m.chatId,
-      topicId: m.topicId,
-      isGroup: m.chatType === "group",
-      text,
-      spaceId: m.chatType === "group" ? (map[m.chatId] ?? cfg.defaultSpace) : userId === OWNER ? cfg.defaultSpace : undefined,
-      context,
-      contextLabel: m.topicId ? "话题里" : "群里",
-      externalMessageId: m.messageId,
-      userId,
-    });
-    if (answer !== null) await send(m.chatId, answer, m.messageId, !!m.topicId);
+    let progress: Awaited<ReturnType<typeof startProgress>> | null = null;
+    try {
+      const answer = await answerFromChannel(
+        app,
+        {
+          channel: "lark",
+          chatId: m.chatId,
+          topicId: m.topicId,
+          isGroup: m.chatType === "group",
+          text,
+          spaceId: m.chatType === "group" ? groupSpace(m.chatId) : userId === OWNER ? cfg.defaultSpace : undefined,
+          context,
+          contextLabel: m.topicId ? "话题里" : "群里",
+          externalMessageId: m.messageId,
+          userId,
+        },
+        {
+          onStart: async (runId) => {
+            progress = await startProgress(app, { messageId: m.messageId, inThread: !!m.topicId }, runId).catch(() => null);
+          },
+          onMerged: async () => {
+            const { reactLark } = await import("./lark-send.ts");
+            await reactLark(m.messageId, "Get").catch(() => {});
+          },
+        },
+      );
+      if (answer === null) return;
+      const p = progress as Awaited<ReturnType<typeof startProgress>> | null;
+      if (p) await p.finish(answer);
+      else await reply(m.chatId, answer, m.messageId, !!m.topicId);
+    } catch (e) {
+      const p = progress as Awaited<ReturnType<typeof startProgress>> | null;
+      if (p) await p.fail((e as Error).message);
+      else throw e;
+    }
+  };
+
+  const chatNames = new Map<string, string>();
+  const groupName = (chatId: string) => chatNames.get(chatId) ?? chatId;
+  const learnName = async (chatId: string) => {
+    if (chatNames.has(chatId)) return;
+    try {
+      const r = await client.im.chat.get({ path: { chat_id: chatId } });
+      if (r.data?.name) chatNames.set(chatId, r.data.name);
+    } catch {}
   };
 
   /** Images and files sent to the bot (or in its groups) become sources; the ingest role reads them. */
@@ -170,11 +235,10 @@ export async function startLarkBot(app: App) {
       const file = join(dir, name.replace(/[\\/]/g, "_"));
       const res = await client.im.messageResource.get({ path: { message_id: msg.message_id, file_key: key }, params: { type: msg.message_type === "image" ? "image" : "file" } });
       await res.writeFile(file);
-      const map = (findSpace(app, "personal")?.settings.larkGroups ?? {}) as Record<string, string>;
-      const spaceId = m.chatType === "group" ? (map[m.chatId] ?? cfg.defaultSpace) : cfg.defaultSpace;
+      const spaceId = m.chatType === "group" ? groupSpace(m.chatId) : cfg.defaultSpace;
       const r = importFile(app, spaceId, file, `lark:${m.chatId}/${name}`);
       if (r && r.status !== "unchanged") scheduleIngest(app, spaceId, [r.id], `飞书${m.chatType === "group" ? "群" : "私聊"}附件`);
-      if (m.chatType === "p2p") await send(m.chatId, r ? `已保存「${name}」，助理会读取并整理。` : `「${name}」的格式暂不支持。`, m.messageId);
+      if (m.chatType === "p2p") await reply(m.chatId, r ? `已保存「${name}」，助理会读取并整理。` : `「${name}」的格式暂不支持。`, m.messageId);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -183,24 +247,38 @@ export async function startLarkBot(app: App) {
   const dispatcher = new lark.EventDispatcher({ loggerLevel: lark.LoggerLevel.warn }).register({
     "im.message.receive_v1": async (data: any) => {
       const msg = data.message;
+      const senderId = data.sender?.sender_id?.open_id ?? "";
+      const mentions = ((msg.mentions ?? []) as { id?: { open_id?: string } }[]).map((x) => x.id?.open_id ?? "").filter(Boolean);
+      if (msg.chat_type !== "p2p") void learnName(msg.chat_id);
       const m: Inbound = {
         chatId: msg.chat_id,
         chatType: msg.chat_type === "p2p" ? "p2p" : "group",
         messageId: msg.message_id,
-        senderId: data.sender?.sender_id?.open_id ?? "",
-        senderName: data.sender?.sender_id?.open_id ?? "",
+        senderId,
+        senderName: await nameOf(senderId),
         text: messageText(msg.content, msg.message_type),
-        mentionsBot: (msg.mentions ?? []).some((x: { id?: { open_id?: string }; name?: string }) => !x.id?.open_id || x.name === kv(app, "lark_bot_name")),
+        mentions,
+        mentionsBot: !!botOpenId && mentions.includes(botOpenId),
         createTime: msg.create_time,
         topicId: msg.thread_id || undefined,
       };
-      if ((msg.message_type === "image" || msg.message_type === "file") && (m.chatType === "group" || resolveIdentity(app, "lark", m.senderId) === OWNER))
+      if ((msg.message_type === "image" || msg.message_type === "file") && (m.chatType === "group" || resolveIdentity(app, "lark", m.senderId)))
         saveResource(msg, m).catch((e) => console.warn("[omem] 飞书附件保存失败", e));
-      else handle(m).catch((e) => console.warn("[omem] 飞书消息处理失败", e));
+      if (msg.message_type !== "image" && msg.message_type !== "file") handle(m).catch((e) => console.warn("[omem] 飞书消息处理失败", e));
+      else if (m.chatType === "group") captureGroup(m);
       return {};
     },
-  });
+    "card.action.trigger": async (data: any) => {
+      try {
+        return await handleCardAction(app, data, nameOf);
+      } catch (e) {
+        console.warn("[omem] 卡片操作处理失败", e);
+        return { toast: { type: "error", content: "处理失败，请稍后再试" } };
+      }
+    },
+  } as never);
   const ws = new lark.WSClient({ appId: cfg.appId, appSecret, domain: lark.Domain.Feishu, loggerLevel: lark.LoggerLevel.warn });
   await ws.start({ eventDispatcher: dispatcher });
   console.log("[omem] 飞书机器人已连接");
 }
+

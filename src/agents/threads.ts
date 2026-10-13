@@ -24,6 +24,8 @@ export type ThreadSettings = {
   lastMessageId?: string;
   /** An in-chat review session (/review): the card being asked and whether its answer was shown. */
   review?: { cardId: string; stage: "front" | "rate"; goalId?: string; done: number } | null;
+  /** Feishu chats this thread's agent may post into, and whether posts are drafts for the owner. */
+  lark?: { chats: string[] | null; draft?: boolean };
 };
 export type Thread = {
   id: string;
@@ -102,6 +104,20 @@ export type ChatSettings = {
   idleHours?: number;
   /** Agent spec that answers in this chat by default. */
   spec?: string;
+  /** Feishu posting scope for threads of this chat (watched chats). */
+  lark?: { chats: string[] | null; draft?: boolean };
+  /** Watched chats: which spec handles which messages, and how it may reply. */
+  watch?: WatchRule;
+};
+export type WatchRule = {
+  spec: string;
+  /** all: every message; mention: messages that @ the owner or the bot; keyword: messages matching `pattern`. */
+  on: "all" | "mention" | "keyword";
+  pattern?: string;
+  /** none: never post; draft: posts go to the owner for approval; auto: post directly through the bot. */
+  reply: "none" | "draft" | "auto";
+  spaceId?: string;
+  note?: string;
 };
 
 export function chatSettings(app: App, channel: string, chatId: string): ChatSettings {
@@ -157,7 +173,7 @@ export function resolveThread(app: App, addr: ThreadAddress): { thread: Thread; 
   const key = mode === "topic" && addr.topicId ? `${addr.chatId}#${addr.topicId}` : addr.chatId;
   const spaceId = cs.spaceId ?? addr.spaceId ?? "personal";
   const row = one<Row>(app.db, "select * from conversations where channel = ? and external_id = ? and status = 'active' order by updated_at desc limit 1", addr.channel, key);
-  const settings: ThreadSettings = cs.spec ? { spec: cs.spec } : {};
+  const settings: ThreadSettings = { ...(cs.spec ? { spec: cs.spec } : {}), ...(cs.lark ? { lark: cs.lark } : {}) };
   if (!row) {
     // A pinned "/resume" may have re-attached an archived thread to this key; otherwise start fresh.
     const prev = one<Row>(app.db, "select * from conversations where channel = ? and external_id = ? order by updated_at desc limit 1", addr.channel, key);
