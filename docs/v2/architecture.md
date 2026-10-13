@@ -149,6 +149,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 简报、做梦整理、经验与偏好回灌到后续任务 | 已实现 | `roles/brief.md`、`dreamer.md`、`runner.ts` |
 | 交办编码：worktree → 检查 → 独立评审 → 确认后应用 | 已实现，演示仓库实测 | `src/agents/code.ts` |
 | 跨文件调用图：按导入绑定解析调用到具体定义（相对路径、index、`.js`→`.ts`、`@/` 别名、重导出、默认导出、命名空间、`this`/`self` 方法；Python 绝对/相对/包导入） | 已实现，测试覆盖；本仓库 4032 处调用中 1098 处解析到仓库内定义，其余多为标准库与对象方法 | `src/sources/callgraph.ts`、`find_symbol`、原件页“结构”栏 |
+| Go / Rust / Java / Kotlin / Swift：tree-sitter（`web-tree-sitter` + `tree-sitter-wasms`，WebAssembly）切分符号、导入和调用；按包（Go 目录与导入路径、Java/Kotlin 包与静态导入、Rust `use`/`mod`/工作区 crate、Swift 整个模块）解析，隐式 this/self、接收者、扩展、伴生对象 | 已实现，测试覆盖；真实仓库抽查：cobra 31%、ripgrep 18%、gson 22%、moshi 18%、Alamofire 20% 的调用解析到仓库内定义（其余多为对变量调用方法和标准库/测试框架）；Swift 解析较慢（约 70 ms/千行，其余语言快一个数量级） | `src/sources/treesitter.ts`、`callgraph.ts` |
 | 汇总类问题：`scan` 穷举扫描所有命中行（可按时间段），助理先列清单再计数 | 已实现 | `tools.ts`、`roles/assistant.md` |
 | 主动留意：问答时顺带记下本人透露的计划、承诺、等待和长期事实；做梦时复查这段时间本人说过的话补漏；聊天整理时同样关注本人自己的发言 | 已实现，真实模型抽查通过 | `roles/assistant.md`、`dreamer.md`、`ingest.md` |
 | 会话线程：私聊 / 群 / 话题（飞书 thread_id、Telegram 论坛话题）各自一个会话；Agent 会话在线保持 → 恢复（ACP session/resume|load、`claude --resume`、`codex exec resume`）→ 从滚动摘要冷启动；连发合并；每会话串行、会话间并行；对话与后台分开的并发槽；空闲过期后新会话带上一段摘要；斜杠命令 | 已实现；假 ACP Agent 测试覆盖；真实 Claude Code ACP 验证了在线续聊和重启后恢复 | `src/agents/threads.ts`、`sessions.ts`、`inbox.ts`、`commands.ts` |

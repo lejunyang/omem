@@ -85,6 +85,169 @@ describe("call graph", () => {
     expect(text).toMatch(/app\.py:\d+ 在 main 中/);
     expect(text).toMatch(/pkg\/core\.py#?|helper @ pkg\/core\.py/);
   });
+
+  it("resolves Go calls across a package and through imported packages", () => {
+    const app = testApp();
+    const root = repo({
+      "go.mod": "module example.com/app\n",
+      "internal/store/db.go": "package store\n\ntype DB struct{}\n\nfunc Open() *DB { return &DB{} }\n\nfunc (d *DB) Close() error { return nil }\n",
+      "server/server.go": [
+        "package server",
+        "",
+        "import (",
+        '\t"fmt"',
+        '\tst "example.com/app/internal/store"',
+        ")",
+        "",
+        "// Server serves.",
+        "type Server struct{ db *st.DB }",
+        "",
+        "func (s *Server) Run() error {",
+        "\tfmt.Println(\"run\")",
+        "\ts.db = st.Open()",
+        "\ts.helper()",
+        "\treturn newThing()",
+        "}",
+      ].join("\n"),
+      "server/helper.go": "package server\n\nfunc (s *Server) helper() {}\n\nfunc newThing() error { return nil }\n",
+    });
+    createSpace(app, { id: "go", name: "go", kind: "repo", rootPath: root });
+    syncDirectorySpace(app, "go");
+    const e = edges(app, "go");
+    expect(e).toContain("server/server.go#Server.Run -> internal/store/db.go#Open");
+    expect(e).toContain("server/server.go#Server.Run -> server/helper.go#Server.helper");
+    expect(e).toContain("server/server.go#Server.Run -> server/helper.go#newThing");
+    const sym = all<{ qname: string; kind: string }>(app.db, "select qname, kind from symbols where space_id = 'go' order by qname");
+    expect(sym).toContainEqual({ qname: "DB.Close", kind: "method" });
+    expect(sym).toContainEqual({ qname: "Server", kind: "struct" });
+  });
+
+  it("resolves Rust calls through use paths, modules and impl blocks", () => {
+    const app = testApp();
+    const root = repo({
+      "src/lib.rs": "pub mod store;\npub mod server;\n",
+      "src/store/mod.rs": "pub struct Db;\nimpl Db {\n    pub fn connect() -> Db { Db }\n}\npub fn open() -> Db { Db::connect() }\n",
+      "src/server.rs": [
+        "use crate::store::{self, open as op, Db};",
+        "mod inner { pub fn deep() {} }",
+        "pub struct Server;",
+        "impl Server {",
+        "    pub fn run(&self) {",
+        "        op();",
+        "        store::open();",
+        "        Db::connect();",
+        "        inner::deep();",
+        "        self.helper();",
+        "        Self::make();",
+        "    }",
+        "    fn helper(&self) {}",
+        "    fn make() {}",
+        "}",
+      ].join("\n"),
+    });
+    createSpace(app, { id: "rs", name: "rs", kind: "repo", rootPath: root });
+    syncDirectorySpace(app, "rs");
+    const e = edges(app, "rs");
+    expect(e).toContain("src/server.rs#Server.run -> src/store/mod.rs#open");
+    expect(e).toContain("src/server.rs#Server.run -> src/store/mod.rs#Db.connect");
+    expect(e).toContain("src/server.rs#Server.run -> src/server.rs#inner.deep");
+    expect(e).toContain("src/server.rs#Server.run -> src/server.rs#Server.helper");
+    expect(e).toContain("src/server.rs#Server.run -> src/server.rs#Server.make");
+    expect(e).toContain("src/store/mod.rs#open -> src/store/mod.rs#Db.connect");
+    expect(e.filter((x) => x.endsWith("#open"))).toHaveLength(2); // `op()` and `store::open()`
+  });
+
+  it("resolves Java and Kotlin calls across packages, implicit this and static imports", () => {
+    const app = testApp();
+    const root = repo({
+      "src/main/java/com/ex/store/Db.java": "package com.ex.store;\n\npublic class Db {\n  public static Db open() { return new Db(); }\n  public void close() {}\n}\n",
+      "src/main/java/com/ex/util/Strings.java": "package com.ex.util;\n\npublic final class Strings {\n  public static String upper(String s) { return s; }\n}\n",
+      "src/main/java/com/ex/app/Server.java": [
+        "package com.ex.app;",
+        "",
+        "import com.ex.store.Db;",
+        "import static com.ex.util.Strings.upper;",
+        "",
+        "public class Server {",
+        "  public void run() {",
+        "    Db db = Db.open();",
+        "    helper();",
+        "    upper(\"a\");",
+        "    new Worker().start();",
+        "    Util.shared();",
+        "  }",
+        "  private void helper() {}",
+        "}",
+      ].join("\n"),
+      "src/main/java/com/ex/app/Worker.java": "package com.ex.app;\n\nclass Worker { void start() {} }\n",
+      "src/main/java/com/ex/app/Util.kt": "package com.ex.app\n\nobject Util {\n    fun shared() = 1\n}\n",
+      "src/main/kotlin/com/ex/app/Main.kt": [
+        "package com.ex.app",
+        "",
+        "import com.ex.store.Db",
+        "import com.ex.util.Strings.upper as up",
+        "",
+        "class Main {",
+        "    fun go() {",
+        "        Db.open()",
+        "        up(\"x\")",
+        "        helper()",
+        "    }",
+        "    private fun helper() {}",
+        "    companion object { fun create() = Main() }",
+        "}",
+        "fun top() { Main.create().go() }",
+      ].join("\n"),
+    });
+    createSpace(app, { id: "jvm", name: "jvm", kind: "repo", rootPath: root });
+    syncDirectorySpace(app, "jvm");
+    const e = edges(app, "jvm");
+    const J = "src/main/java/com/ex";
+    expect(e).toContain(`${J}/app/Server.java#Server.run -> ${J}/store/Db.java#Db.open`);
+    expect(e).toContain(`${J}/app/Server.java#Server.run -> ${J}/app/Server.java#Server.helper`);
+    expect(e).toContain(`${J}/app/Server.java#Server.run -> ${J}/util/Strings.java#Strings.upper`);
+    expect(e).toContain(`${J}/app/Server.java#Server.run -> ${J}/app/Worker.java#Worker`);
+    expect(e).toContain(`${J}/app/Server.java#Server.run -> ${J}/app/Util.kt#Util.shared`);
+    const K = "src/main/kotlin/com/ex/app/Main.kt";
+    expect(e).toContain(`${K}#Main.go -> ${J}/store/Db.java#Db.open`);
+    expect(e).toContain(`${K}#Main.go -> ${J}/util/Strings.java#Strings.upper`);
+    expect(e).toContain(`${K}#Main.go -> ${K}#Main.helper`);
+    expect(e).toContain(`${K}#top -> ${K}#Main.create`);
+  });
+
+  it("resolves Swift calls across the module, extensions and initializers", () => {
+    const app = testApp();
+    const root = repo({
+      "Sources/App/Server.swift": [
+        "import Foundation",
+        "",
+        "/// Serves requests.",
+        "public final class Server {",
+        "    init() {}",
+        "    public func run() {",
+        "        helper()",
+        "        self.log()",
+        "        Store.shared.save()",
+        "        let w = Worker()",
+        "        Store.make()",
+        "    }",
+        "    private func helper() {}",
+        "}",
+      ].join("\n"),
+      "Sources/App/Server+Log.swift": "extension Server {\n    func log() {}\n}\n",
+      "Sources/App/Store.swift": "struct Store {\n    static let shared = Store()\n    static func make() -> Store { Store() }\n    func save() {}\n}\nstruct Worker {}\n",
+    });
+    createSpace(app, { id: "sw", name: "sw", kind: "repo", rootPath: root });
+    syncDirectorySpace(app, "sw");
+    const e = edges(app, "sw");
+    const S = "Sources/App";
+    expect(e).toContain(`${S}/Server.swift#Server.run -> ${S}/Server.swift#Server.helper`);
+    expect(e).toContain(`${S}/Server.swift#Server.run -> ${S}/Server+Log.swift#Server.log`);
+    expect(e).toContain(`${S}/Server.swift#Server.run -> ${S}/Store.swift#Store.make`);
+    expect(e).toContain(`${S}/Server.swift#Server.run -> ${S}/Store.swift#Worker`);
+    const doc = all<{ line_start: number }>(app.db, "select line_start from symbols where space_id = 'sw' and qname = 'Server'");
+    expect(doc[0].line_start).toBe(4);
+  });
 });
 
 describe("scan", () => {

@@ -32,7 +32,7 @@ pnpm run dev                # 打开 http://localhost:5173
 | 7 | 问答：“一条飞书私聊消息进来后发生了什么？要加一个渠道从哪改？” | 串起完整路径并指出文件和函数 | 云端已验类似问题 |
 | 8 | 改代码后 `omem space sync` 或开启“每小时同步” | 受影响页面被标记，并自动检查修正 | 机制有测试；待你验真实修改 |
 | 9 | Wiki 左栏图标 → 页面关系图；页面底部“链接到本页” | 能从一页走到相关页 | 云端已验 |
-| 9b | 原件 → 打开 `src/sources/store.ts` → 右侧“结构”点 `upsertSource` | 下方列出被谁调用（跨文件、精确到函数）和它调用的仓库内函数，点击可跳转；问答里 `find_symbol` 也区分“已解析”与“仅名称匹配” | 测试与本仓库已验 |
+| 9b | 原件 → 打开 `src/sources/store.ts` → 右侧“结构”点 `upsertSource`（也可以换成一个 Go / Rust / Java / Kotlin / Swift 仓库试） | 下方列出被谁调用（跨文件、精确到函数）和它调用的仓库内函数，点击可跳转；问答里 `find_symbol` 也区分“已解析”与“仅名称匹配” | 测试与本仓库已验 |
 
 ## 三、记忆与纠正
 
@@ -114,7 +114,7 @@ pnpm run dev                # 打开 http://localhost:5173
 ## 已知限制
 
 - 扫描版 PDF 没有 OCR（图片原件由 Agent 看图补文字）。
-- 跨文件调用：TS/JS/Vue/Python 按导入解析；动态派发、依赖注入和其他语言仍是名称级候选。
+- 跨文件调用：TS/JS/Vue/Python 按导入，Go/Rust/Java/Kotlin/Swift 按包与模块解析；对变量调用方法、动态派发、依赖注入和其他语言仍是名称级候选。
 - 多人只到“留口子”：用户、身份、空间成员、令牌；不做多租户隔离。
 - 除 Claude Code、OpenCode 外的 ACP Agent 只验证了握手，登录后的实际表现待你验。
 - LongMemEval 跨会话计数题小样本由 1/3 提升到 5/6（见 evaluation.md），样本很小。

@@ -210,7 +210,7 @@ web/          Vue 3 网页
 
 - 多人只到“留口子”：用户、身份、空间成员和令牌，不做多租户隔离；HTTP 只监听本机，远程访问需配置 `token`。
 - 除 Claude Code、OpenCode 外，其他 ACP Agent 只验证过连接握手；各家登录和模型名以实际“检测模型”结果为准。
-- 代码解析：TS/JS/Vue 用 TypeScript AST，Python 和其他语言用通用声明识别。跨文件调用按导入关系解析到具体定义（TS/JS/Vue/Python）；其他语言、动态派发与第三方包只有名称级候选。
+- 代码解析：TS/JS/JSX/TSX/Vue 用 TypeScript AST；Go、Rust、Java、Kotlin、Swift 用 tree-sitter（WebAssembly，无需编译）；Python 用导入与缩进分析；C/C++/C#/Ruby/PHP 等其他语言只做通用声明识别。跨文件调用解析到具体定义：TS/JS/Python 按导入；Go 按包（同目录与导入路径）；Rust 按 `use` 路径、`mod` 和工作区 crate；Java/Kotlin 按包、导入和静态导入（两者互通）；Swift 按整个模块。对变量调用方法（`db.open()`）需要类型推断，和动态派发、第三方包一样只有名称级候选。
 - 扫描版 PDF 需要 OCR，当前只解析文字 PDF / DOCX（Docling、pdftotext 或 pandoc 任一可用即可）。
 - 微信只能通过 OneBot 兼容桥接入，没有话题概念，每个私聊或群是一个会话。
 
