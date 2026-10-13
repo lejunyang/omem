@@ -123,8 +123,9 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
       );
       for (const s of outline.symbols)
         insSym.run(id, input.spaceId, s.name, s.qname, s.kind, s.lineStart, s.lineEnd, s.signature, s.exported ? 1 : 0);
-      const insRef = app.db.prepare("insert into code_refs(source_id,space_id,from_qname,to_name,kind,line) values(?,?,?,?,?,?)");
-      for (const r of outline.refs) insRef.run(id, input.spaceId, r.fromQname, r.toName, r.kind, r.line);
+      const insRef = app.db.prepare("insert into code_refs(source_id,space_id,from_qname,to_name,kind,line,qualifier,bindings) values(?,?,?,?,?,?,?,?)");
+      for (const r of outline.refs)
+        insRef.run(id, input.spaceId, r.fromQname, r.toName, r.kind, r.line, r.qualifier ?? null, r.bindings ? JSON.stringify(r.bindings) : null);
     }
   });
   app.emit({ type: "changed", entity: "source", id, spaceId: input.spaceId });

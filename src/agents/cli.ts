@@ -5,14 +5,15 @@ import type { AgentEvent, AgentRequest, AgentResult } from "./types.ts";
 const READ_TOOLS = ["Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "TodoWrite", "mcp__omem"];
 
 function claudeArgs(profile: AgentProfile, req: AgentRequest) {
-  const args = [...profile.args, "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence"];
+  const args = [...profile.args, "-p", "--output-format", "stream-json", "--verbose"];
+  if (!req.persistSession && !req.resumeSessionId) args.push("--no-session-persistence");
+  if (req.resumeSessionId) args.push("--resume", req.resumeSessionId);
   if (profile.model) args.push("--model", profile.model);
   if (profile.effort) args.push("--effort", profile.effort);
-  if (req.mcp)
-    args.push(
-      "--mcp-config",
-      JSON.stringify({ mcpServers: { omem: { command: req.mcp.stdio.command, args: req.mcp.stdio.args, env: { OMEM_URL: req.mcp.baseUrl, OMEM_TOKEN: req.mcp.token } } } }),
-    );
+  const servers: Record<string, unknown> = {};
+  if (req.mcp) servers.omem = { command: req.mcp.stdio.command, args: req.mcp.stdio.args, env: { OMEM_URL: req.mcp.baseUrl, OMEM_TOKEN: req.mcp.token } };
+  for (const [name, srv] of Object.entries(req.extraMcp ?? {})) servers[name] = "url" in srv ? { type: "http", url: srv.url, headers: srv.headers } : srv;
+  if (Object.keys(servers).length) args.push("--mcp-config", JSON.stringify({ mcpServers: servers }));
   if (req.allowWrites) args.push("--permission-mode", "acceptEdits", "--allowedTools", [...READ_TOOLS, "Edit", "Write", "MultiEdit", "Bash"].join(","));
   else args.push("--allowedTools", READ_TOOLS.join(","), "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit");
   return args;
@@ -31,6 +32,15 @@ function codexArgs(profile: AgentProfile, req: AgentRequest) {
     args.push("-c", `mcp_servers.omem.args=[${req.mcp.stdio.args.map(tomlString).join(",")}]`);
     args.push("-c", `mcp_servers.omem.env={OMEM_URL=${tomlString(req.mcp.baseUrl)},OMEM_TOKEN=${tomlString(req.mcp.token)}}`);
   }
+  for (const [name, srv] of Object.entries(req.extraMcp ?? {})) {
+    if ("url" in srv) args.push("-c", `mcp_servers.${name}.url=${tomlString(srv.url)}`);
+    else {
+      args.push("-c", `mcp_servers.${name}.command=${tomlString(srv.command)}`);
+      args.push("-c", `mcp_servers.${name}.args=[${srv.args.map(tomlString).join(",")}]`);
+      if (Object.keys(srv.env).length) args.push("-c", `mcp_servers.${name}.env={${Object.entries(srv.env).map(([k, v]) => `${k}=${tomlString(v)}`).join(",")}}`);
+    }
+  }
+  if (req.resumeSessionId) args.push("resume", req.resumeSessionId);
   args.push("-");
   return args;
 }
@@ -45,6 +55,7 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
   let stderr = "";
   let failure = "";
   let buffer = "";
+  let sessionId: string | undefined;
   await new Promise<void>((resolve, reject) => {
     const watchdog = idleWatchdog(profile.idleTimeoutMs, () => {
       stop(child);
@@ -64,6 +75,8 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
         return;
       }
       watchdog.touch();
+      if (typeof item.session_id === "string") sessionId = item.session_id;
+      if (item.type === "thread.started" && typeof item.thread_id === "string") sessionId = item.thread_id;
       if (isClaude) {
         if (item.type === "assistant")
           for (const part of item.message?.content ?? []) {
@@ -108,5 +121,5 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
       else resolve();
     });
   });
-  return { text, stopReason: "end_turn", agent: profile.command };
+  return { text, stopReason: "end_turn", agent: profile.command, sessionId };
 }

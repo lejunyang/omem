@@ -1,6 +1,6 @@
 ---
 description: 按页面计划调查并写一篇 Wiki 页面
-tools: [search, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, write_page]
+tools: [search, scan, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, write_page]
 writes: false
 modes: [read-only, default, plan]
 ---

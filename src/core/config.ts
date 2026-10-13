@@ -31,6 +31,7 @@ export const roleNames = [
   "tutor",
   "brief",
   "curator",
+  "summarizer",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
 
@@ -41,7 +42,24 @@ export const configSchema = z.object({
   token: z.string().optional(),
   timezone: z.string().default(Intl.DateTimeFormat().resolvedOptions().timeZone),
   language: z.string().default("zh-CN"),
+  /** Background runs (ingest, wiki, dream…) at the same time. */
   concurrency: z.number().int().min(1).max(8).default(2),
+  /** Conversation turns at the same time (one per thread; threads run in parallel). */
+  interactiveConcurrency: z.number().int().min(1).max(16).default(4),
+  sessions: z
+    .object({
+      /** Keep a thread's agent process alive this long after a reply (ACP agents). */
+      liveMinutes: z.number().min(0).default(20),
+      /** At most this many live agent processes; the least recently used is released first. */
+      maxLive: z.number().int().min(0).default(3),
+      /** After this many turns in one agent session, start a fresh one from the thread summary. */
+      maxTurns: z.number().int().min(4).default(40),
+      /** Chats (not web, not topics) idle this long start a new thread that remembers the previous one. */
+      idleHours: z.number().min(0).default(12),
+      /** Wait this long for more messages before starting a turn, so bursts become one turn. */
+      mergeMs: z.number().int().min(0).default(1500),
+    })
+    .default({ liveMinutes: 20, maxLive: 3, maxTurns: 40, idleHours: 12, mergeMs: 1500 }),
   agents: z
     .object({
       default: z.string().optional(),
@@ -54,6 +72,8 @@ export const configSchema = z.object({
       provider: z.enum(["none", "local", "openai"]).default("none"),
       /** local: model id or directory for transformers.js. openai: model name. */
       model: z.string().default("Xenova/bge-small-zh-v1.5"),
+      /** bge-zh (query prefix + CLS), bge-m3 / bge (CLS), other (mean pooling). Inferred from the model name when absent. */
+      family: z.enum(["bge-zh", "bge-m3", "bge", "other"]).optional(),
       url: z.string().optional(),
       apiKeyEnv: z.string().default("OPENAI_API_KEY"),
     })
@@ -62,8 +82,25 @@ export const configSchema = z.object({
     .object({
       /** Command that prints Markdown for PDF/DOCX on stdout. {file} is replaced. */
       converter: z.string().optional(),
+      /** Which built-in converters to try, in order. */
+      engines: z.array(z.enum(["docling", "pdftotext", "pandoc"])).default(["docling", "pdftotext", "pandoc"]),
+      /** Docling layout/table models (a directory prepared by `omem setup`); without it Docling reads DOCX only. */
+      doclingArtifacts: z.string().optional(),
     })
-    .default({}),
+    .default({ engines: ["docling", "pdftotext", "pandoc"] }),
+  /** Optional prompt-injection flagging with a local judge (StartLux-Decision server). Flags only, never blocks. */
+  guard: z
+    .object({
+      provider: z.enum(["none", "startlux"]).default("none"),
+      /** StartLux decision server (gguf_server or server), e.g. http://127.0.0.1:8090 */
+      url: z.string().optional(),
+      threshold: z.number().min(0).max(1).default(0.6),
+      /** Source kinds written by other people that get checked. */
+      kinds: z.array(z.string()).default(["chat", "web", "doc"]),
+      maxChars: z.number().int().min(200).default(1200),
+      timeoutMs: z.number().int().default(60_000),
+    })
+    .default({ provider: "none", threshold: 0.6, kinds: ["chat", "web", "doc"], maxChars: 1200, timeoutMs: 60_000 }),
   lark: z
     .object({
       enabled: z.boolean().default(false),

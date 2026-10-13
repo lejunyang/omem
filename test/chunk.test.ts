@@ -27,7 +27,7 @@ describe("parseCode", () => {
     expect(o.symbols.map((s) => s.qname)).toEqual(["foo", "K", "K.run", "handler"]);
     const foo = o.symbols[0];
     expect([foo.docStart, foo.lineStart, foo.lineEnd, foo.exported]).toEqual([2, 3, 5, true]);
-    expect(o.refs).toContainEqual({ fromQname: "", toName: "./x", kind: "import", line: 1 });
+    expect(o.refs).toContainEqual({ fromQname: "", toName: "./x", kind: "import", line: 1, bindings: [{ local: "x", imported: "x" }] });
     expect(o.refs.filter((r) => r.fromQname === "foo").map((r) => r.toName)).toEqual(["bar", "baz"]);
     expect(o.refs.some((r) => r.fromQname === "K.run" && r.toName === "foo")).toBe(true);
   });

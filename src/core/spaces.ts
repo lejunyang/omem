@@ -63,6 +63,7 @@ export function createSpace(
   input: { id?: string; name: string; kind?: SpaceKind; description?: string; rootPath?: string | null },
 ): Space {
   const id = slugify(input.id || input.name);
+  if (id.startsWith("_")) throw new HttpError(400, "空间 id 不能以下划线开头（知识库保留给 Agent 档案和技能）");
   if (findSpace(app, id)) throw new HttpError(409, `空间已存在：${id}`);
   const kind = input.kind ?? (input.rootPath ? "repo" : "topic");
   const rootPath = input.rootPath ? resolve(input.rootPath) : null;

@@ -12,7 +12,8 @@ import { runAcp } from "./acp.ts";
 import { runCli } from "./cli.ts";
 import { commandExists } from "./spawn.ts";
 import { issueToolToken, revokeToolToken } from "./tools.ts";
-import type { AgentEvent, AgentResult } from "./types.ts";
+import type { AgentEvent, AgentResult, McpAccess } from "./types.ts";
+import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, type AgentSpec, type McpServerSpec } from "./specs.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** roles/ sits at the package root both in source (src/agents) and build (dist/src/agents). */
@@ -110,43 +111,91 @@ export type RoleRunInput = {
   profileId?: string;
 };
 
-/** Run a role-defined agent turn with omem tools attached. */
-export async function runRole(app: App, input: RoleRunInput): Promise<AgentResult & { profileId: string }> {
-  const role = loadRole(input.role);
-  const profile = input.profileId ? allProfiles(app.config).find((p) => p.id === input.profileId) : profileFor(app, input.role);
-  if (!profile) throw new HttpError(400, `Agent ${input.profileId} 不存在`);
-  const space = findSpace(app, input.spaceId);
-  if (!space) throw new HttpError(404, `空间不存在：${input.spaceId}`);
+/** Who is acting: a built-in role, or an agent spec the assistant (or the owner) created. */
+export type Actor = { role: RoleName } | { spec: AgentSpec };
+
+export type PreparedRun = {
+  profile: AgentProfile;
+  cwd: string;
+  /** Everything before the task: shared rules, role or spec, environment, learned context. */
+  system: string;
+  token: string;
+  mcp: McpAccess;
+  extraMcp: Record<string, McpServerSpec>;
+  allowWrites: boolean;
+  modes: string[];
+  label: string;
+};
+
+/**
+ * Resolve backend, working directory, tool token and the standing context for
+ * a role or agent spec. The caller owns the token (revoke it when done).
+ */
+export function prepareRun(app: App, input: { actor: Actor; spaceId: string; spaces?: string[] | null; runId: string | null; cwd?: string; profileId?: string }): PreparedRun {
+  const spec = "spec" in input.actor ? input.actor.spec : null;
+  const role = spec ? null : loadRole((input.actor as { role: RoleName }).role);
+  const roleName = role ? (input.actor as { role: RoleName }).role : "assistant";
+  const baseProfile = input.profileId
+    ? allProfiles(app.config).find((p) => p.id === input.profileId)
+    : spec?.agent
+      ? allProfiles(app.config).find((p) => p.id === spec.agent)
+      : profileFor(app, roleName);
+  if (!baseProfile) throw new HttpError(400, `Agent ${input.profileId ?? spec?.agent} 不存在`);
+  const profile: AgentProfile = spec ? { ...baseProfile, model: spec.model ?? baseProfile.model, effort: spec.effort ?? baseProfile.effort } : baseProfile;
+  const spaceId = spec?.space && !input.spaceId ? spec.space : input.spaceId;
+  const space = findSpace(app, spaceId);
+  if (!space) throw new HttpError(404, `空间不存在：${spaceId}`);
   if (!app.baseUrl) throw new Error("omem 服务尚未启动，无法为 Agent 提供工具");
-  const cwd = input.cwd ?? space.rootPath ?? spaceDir(app, space.id);
-  const token = issueToolToken({
-    runId: input.runId,
-    spaceId: space.id,
-    spaces: input.spaces === undefined ? (input.role === "assistant" ? null : [space.id]) : input.spaces,
-    tools: new Set(role.tools),
-    actor: "agent",
-  });
+  const cwd = input.cwd ?? spec?.cwd ?? space.rootPath ?? spaceDir(app, space.id);
+  const tools = new Set(spec ? (spec.tools.length ? spec.tools : DEFAULT_SPEC_TOOLS) : role!.tools);
+  // Skills are offered to everyone who can read them.
+  tools.add("list_skills");
+  tools.add("read_skill");
+  const spaces =
+    input.spaces !== undefined ? input.spaces : spec ? (spec.spaces.includes("*") ? null : [...new Set([space.id, ...spec.spaces])]) : roleName === "assistant" ? null : [space.id];
+  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces, tools, actor: "agent" });
   const guide = spaceGuide(app, space.id).trim();
   const lessons = learnedContext(app, space.id);
-  const prompt = [
+  const skills = skillIndex(app, spec?.skills);
+  const agents = roleName === "assistant" && !spec ? agentIndex(app) : "";
+  const body = spec
+    ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`
+    : `# 角色：${role!.description}\n\n${role!.body}`;
+  const system = [
     commonGuide(),
-    `# 角色：${role.description}\n\n${role.body}`,
-    `# 环境\n\n- 现在：${localTime(app)}\n- 当前空间：${space.id}（${space.name}，${space.kind}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}`,
-    `# 任务\n\n${input.task}`,
+    body,
+    `# 环境\n\n- 现在：${localTime(app)}\n- 当前空间：${space.id}（${space.name}，${space.kind}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}`,
   ].join("\n\n---\n\n");
+  return {
+    profile,
+    cwd,
+    system,
+    token,
+    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge() },
+    extraMcp: spec?.mcp ?? {},
+    allowWrites: spec ? spec.writes : role!.writes,
+    modes: spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
+    label: spec ? spec.name : roleName,
+  };
+}
+
+/** Run a role-defined agent turn with omem tools attached. */
+export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec }): Promise<AgentResult & { profileId: string }> {
+  const prep = prepareRun(app, { actor: input.spec ? { spec: input.spec } : { role: input.role }, spaceId: input.spaceId, spaces: input.spaces, runId: input.runId, cwd: input.cwd, profileId: input.profileId });
   const emit = input.onEvent ?? (() => {});
   try {
     const req = {
-      cwd,
-      prompt,
-      allowWrites: role.writes,
-      modes: role.modes,
+      cwd: prep.cwd,
+      prompt: `${prep.system}\n\n---\n\n# 任务\n\n${input.task}`,
+      allowWrites: prep.allowWrites,
+      modes: prep.modes,
       signal: input.signal,
-      mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge() },
+      mcp: prep.mcp,
+      extraMcp: prep.extraMcp,
     };
-    const result = profile.transport === "acp" ? await runAcp(profile, req, emit) : await runCli(profile, req, emit);
-    return { ...result, profileId: profile.id };
+    const result = prep.profile.transport === "acp" ? await runAcp(prep.profile, req, emit) : await runCli(prep.profile, req, emit);
+    return { ...result, profileId: prep.profile.id };
   } finally {
-    revokeToolToken(token);
+    revokeToolToken(prep.token);
   }
 }

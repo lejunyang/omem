@@ -139,8 +139,15 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 巡检（到期提醒不调模型；关注/等待有新材料时才调用） | 已实现 | `roles/heartbeat.md` |
 | 简报、做梦整理、经验与偏好回灌到后续任务 | 已实现 | `roles/brief.md`、`dreamer.md`、`runner.ts` |
 | 交办编码：worktree → 检查 → 独立评审 → 确认后应用 | 已实现，演示仓库实测 | `src/agents/code.ts` |
+| 跨文件调用图：按导入绑定解析调用到具体定义（相对路径、index、`.js`→`.ts`、`@/` 别名、重导出、默认导出、命名空间、`this`/`self` 方法；Python 绝对/相对/包导入） | 已实现，测试覆盖；本仓库 4032 处调用中 1098 处解析到仓库内定义，其余多为标准库与对象方法 | `src/sources/callgraph.ts`、`find_symbol`、原件页“结构”栏 |
+| 汇总类问题：`scan` 穷举扫描所有命中行（可按时间段），助理先列清单再计数 | 已实现 | `tools.ts`、`roles/assistant.md` |
+| 主动留意：问答时顺带记下本人透露的计划、承诺、等待和长期事实；做梦时复查这段时间本人说过的话补漏；聊天整理时同样关注本人自己的发言 | 已实现，真实模型抽查通过 | `roles/assistant.md`、`dreamer.md`、`ingest.md` |
+| 会话线程：私聊 / 群 / 话题（飞书 thread_id、Telegram 论坛话题）各自一个会话；Agent 会话在线保持 → 恢复（ACP session/resume|load、`claude --resume`、`codex exec resume`）→ 从滚动摘要冷启动；连发合并；每会话串行、会话间并行；对话与后台分开的并发槽；空闲过期后新会话带上一段摘要；斜杠命令 | 已实现；假 ACP Agent 测试覆盖；真实 Claude Code ACP 验证了在线续聊和重启后恢复 | `src/agents/threads.ts`、`sessions.ts`、`inbox.ts`、`commands.ts` |
+| 能力沉淀：Agent 档案（`library/_agents/*.md`：prompt、后端/模型、工具、写权限、技能、MCP、目录、AGENTS.md 式约定）与技能（`library/_skills/*/SKILL.md`）；助理可建、可委派（`run_agent`、`/as`），结果发回原会话；做梦起草草稿，本人 `/approve` | 已实现；真实模型建档案与技能已验 | `src/agents/specs.ts`、网页“Agent”页 |
+| 注入标记（可选）：本地 StartLux-Decision 判官给别人写的群聊/网页/文档打标，提醒 Agent 只当材料；不拦截 | 已实现（需本机开判官服务）；评测见 judge-models.md | `src/sources/guard.ts` |
+| 设置向导 `omem setup`：Agent、向量模型（osdk）、Docling 及其模型（osdk）、渠道、注入标记、会话、定时任务 | 已实现；osdk 路径未在云端实测（云端无 osdk） | `src/setup.ts` |
 | 学习卡片（FSRS） | 已实现 | `src/learn` |
 | 渠道：网页、CLI、MCP、飞书机器人、飞书个人消息（只读）、Telegram、OneBot（QQ/微信桥） | 已实现；OneBot 有模拟服务端测试；飞书与 Telegram 需真实账号验收 | `src/channels` |
 | v1 导入 | 已实现，合成库测试 | `src/migrate-v1.ts` |
 
-尚未做：扫描件 OCR；跨文件精确调用图（目前名称级）；多用户；微信官方接口（只能通过 OneBot 兼容桥）。评测数字见 [evaluation.md](evaluation.md)。
+尚未做：扫描件 OCR；动态派发与依赖注入的调用无法静态解析（这些仍按名称列为候选）；tsconfig 的自定义 paths 只识别 `@/`、`~/`；多用户；微信官方接口（只能通过 OneBot 兼容桥）。评测数字见 [evaluation.md](evaluation.md)。

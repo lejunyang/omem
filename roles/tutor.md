@@ -1,6 +1,6 @@
 ---
 description: 从学习材料生成复习卡片
-tools: [search, read_source, source_outline, list_sources, read_page, recall, create_card]
+tools: [search, scan, read_source, source_outline, list_sources, read_page, recall, create_card]
 writes: false
 modes: [read-only, default, plan]
 ---

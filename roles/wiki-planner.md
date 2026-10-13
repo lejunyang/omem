@@ -1,6 +1,6 @@
 ---
 description: 为一个代码仓库或一组材料规划 Wiki 目录
-tools: [search, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, submit_plan, write_page]
+tools: [search, scan, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, submit_plan, write_page]
 writes: false
 modes: [read-only, default, plan]
 ---

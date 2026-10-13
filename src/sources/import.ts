@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { resolveCodeRefs } from "./callgraph.ts";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +33,11 @@ function tally(report: ImportReport, r: UpsertResult) {
   if (r.status !== "unchanged") report.sourceIds.push(r.id);
 }
 
+export function doclingScript() {
+  const script = resolve(fileURLToPath(new URL("../../scripts/document-parser/convert.py", import.meta.url)));
+  return existsSync(script) ? script : null;
+}
+
 /**
  * Convert PDF/DOCX/HTML to Markdown. Order: configured converter command,
  * bundled Docling script via uv, then pdftotext / pandoc when installed.
@@ -44,11 +50,16 @@ export function convertDocument(app: App, file: string): string {
     const parts = configured.split(" ").map((p) => p.replace("{file}", file));
     attempts.push([parts[0], parts.slice(1)]);
   }
-  const script = resolve(fileURLToPath(new URL("../../scripts/document-parser/convert.py", import.meta.url)));
-  if ((ext === ".pdf" || ext === ".docx") && existsSync(script))
-    attempts.push(["uv", ["run", "--project", resolve(script, ".."), "--quiet", "python", script, file]]);
-  if (ext === ".pdf") attempts.push(["pdftotext", ["-layout", file, "-"]]);
-  attempts.push(["pandoc", [file, "-t", "gfm", "--wrap=none"]]);
+  for (const engine of app.config.documents.engines) {
+    if (engine === "docling") {
+      const script = doclingScript();
+      const artifacts = app.config.documents.doclingArtifacts;
+      // Docling needs its layout models for PDF; DOCX works without them.
+      if (script && (ext === ".docx" || (ext === ".pdf" && artifacts && existsSync(artifacts))))
+        attempts.push(["uv", ["run", "--project", resolve(script, ".."), "--quiet", "python", script, file, artifacts ?? ""]]);
+    } else if (engine === "pdftotext" && ext === ".pdf") attempts.push(["pdftotext", ["-layout", file, "-"]]);
+    else if (engine === "pandoc" && ext !== ".pdf") attempts.push(["pandoc", [file, "-t", "gfm", "--wrap=none"]]);
+  }
   const errors: string[] = [];
   for (const [cmd, args] of attempts) {
     const r = spawnSync(cmd, args, { encoding: "utf8", maxBuffer: 200 * 1024 * 1024, windowsHide: true, timeout: 10 * 60_000 });
@@ -63,7 +74,7 @@ export function convertDocument(app: App, file: string): string {
     }
     errors.push(`${cmd}: ${(r.stderr || String(r.error ?? "")).trim().slice(0, 300)}`);
   }
-  throw new HttpError(422, `无法解析 ${basename(file)}。可安装 pandoc / pdftotext，或在设置中配置文档转换命令。\n${errors.join("\n")}`);
+  throw new HttpError(422, `无法解析 ${basename(file)}。运行 omem setup 选择文档解析方式（Docling / pdftotext / pandoc），或配置转换命令。\n${errors.join("\n")}`);
 }
 
 /** Import one file into a space. Binary documents are converted; originals are kept in files/. */
@@ -131,6 +142,12 @@ export function repoFiles(root: string): string[] {
   });
 }
 
+function globToRegex(pattern: string) {
+  const p = pattern.replace(/^\.\//, "").replace(/\/$/, "/**");
+  const re = p.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, ".*");
+  return new RegExp(`^${re}${p.includes("*") ? "" : "(/.*)?"}$`);
+}
+
 /**
  * Bring a repo/directory space up to date with its working tree. Only changed
  * files are re-chunked; files that disappeared become tombstones.
@@ -139,7 +156,9 @@ export function syncDirectorySpace(app: App, spaceId: string, onProgress?: (done
   const space = getSpace(app, spaceId);
   if (!space.rootPath) throw new HttpError(400, "这个空间没有关联目录");
   const report = emptyReport();
-  const files = repoFiles(space.rootPath);
+  // Space settings may exclude paths (archives, vendored docs): prefixes or simple globs.
+  const exclude = ((space.settings.exclude as string[] | undefined) ?? []).map(globToRegex);
+  const files = repoFiles(space.rootPath).filter((f) => !exclude.some((re) => re.test(f)));
   const seen = new Set<string>();
   files.forEach((rel, i) => {
     const full = join(space.rootPath!, rel);
@@ -162,6 +181,7 @@ export function syncDirectorySpace(app: App, spaceId: string, onProgress?: (done
       report.removed++;
     }
   }
+  if (report.created || report.updated || report.removed || !space.settings.lastSync) resolveCodeRefs(app, spaceId);
   updateSpace(app, spaceId, { settings: { ...space.settings, lastSync: new Date().toISOString(), commit: headCommit(space.rootPath) } });
   return report;
 }
@@ -179,6 +199,7 @@ export function importDirectory(app: App, spaceId: string, dir: string): ImportR
       report.skipped.push(rel);
     }
   }
+  resolveCodeRefs(app, spaceId);
   return report;
 }
 
