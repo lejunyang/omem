@@ -20,7 +20,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && vue-tsc --noEmit -p web/tsconfig.json",
     "test": "vitest run",
     "eval:retrieval": "node scripts/eval-retrieval.ts",
-    "check": "npm run typecheck && npm run test"
+    "check": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.8.0",
