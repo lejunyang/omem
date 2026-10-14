@@ -1,39 +1,126 @@
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import Parser from "web-tree-sitter";
+import { dirname, extname, join } from "node:path";
+import { Language, Parser, type Node } from "web-tree-sitter";
 import type { CodeOutline, CodeRef, CodeSymbol, ImportBinding } from "./code.ts";
 
 /**
- * Go, Rust, Java, Kotlin and Swift outlines from tree-sitter grammars
- * (WebAssembly, no native build). Produces the same symbols / imports / calls
- * as the TypeScript parser so chunking, find_symbol and the call graph work the
- * same way. Grammars load once at import (~60 ms); if they cannot load, callers
- * fall back to the generic outline.
+ * Tree-sitter outlines (WebAssembly grammars from tree-sitter-wasms, no native
+ * build). This file holds the runtime (lazy grammar loading), shared helpers
+ * and the hand-written extractors for Go, Rust, Java, Kotlin and Swift;
+ * treesitter-more.ts covers the other languages from per-language specs.
+ *
+ * Grammars load on demand: import paths call `ensureGrammars(paths)` before
+ * parsing (each grammar is 0.2–4 MB; loading all would cost ~120 MB). Parsing
+ * itself is synchronous. Without a loaded grammar, callers fall back to the
+ * generic outline.
  */
+export type { Node };
 type Lang = "go" | "rust" | "java" | "kotlin" | "swift";
-type Node = Parser.SyntaxNode;
 
-export const TREE_SITTER_EXT: Record<string, Lang> = { ".go": "go", ".rs": "rust", ".java": "java", ".kt": "kotlin", ".kts": "kotlin", ".swift": "swift" };
+/** File extension → tree-sitter-wasms grammar name. */
+export const GRAMMAR_OF_EXT: Record<string, string> = {
+  ".go": "go",
+  ".rs": "rust",
+  ".java": "java",
+  ".kt": "kotlin",
+  ".kts": "kotlin",
+  ".swift": "swift",
+  ".c": "cpp", // the C++ grammar parses C too, and headers are shared
+  ".h": "cpp",
+  ".cc": "cpp",
+  ".cpp": "cpp",
+  ".cxx": "cpp",
+  ".hpp": "cpp",
+  ".hh": "cpp",
+  ".hxx": "cpp",
+  ".m": "objc",
+  ".mm": "objc",
+  ".cs": "c_sharp",
+  ".php": "php",
+  ".rb": "ruby",
+  ".scala": "scala",
+  ".sc": "scala",
+  ".dart": "dart",
+  ".lua": "lua",
+  ".zig": "zig",
+  ".ex": "elixir",
+  ".exs": "elixir",
+  ".ml": "ocaml",
+  ".mli": "ocaml",
+  ".res": "rescript",
+  ".resi": "rescript",
+  ".sol": "solidity",
+  ".sh": "bash",
+  ".bash": "bash",
+  ".el": "elisp",
+};
+const MAIN_LANG: Record<string, Lang> = { go: "go", rust: "rust", java: "java", kotlin: "kotlin", swift: "swift" };
 
-const parsers = new Map<Lang, Parser>();
-try {
-  const require = createRequire(import.meta.url);
-  const dir = join(dirname(require.resolve("tree-sitter-wasms/package.json")), "out");
-  await Parser.init();
-  await Promise.all(
-    (["go", "rust", "java", "kotlin", "swift"] as Lang[]).map(async (l) => {
-      const p = new Parser();
-      p.setLanguage(await Parser.Language.load(join(dir, `tree-sitter-${l}.wasm`)));
-      parsers.set(l, p);
-    }),
-  );
-} catch (e) {
-  process.emitWarning(`tree-sitter 语法加载失败，Go/Rust/Java/Kotlin/Swift 改用通用解析：${(e as Error).message}`);
+let initialized: Promise<void> | null = null;
+const parsers = new Map<string, Parser>();
+const loading = new Map<string, Promise<void>>();
+const failed = new Set<string>();
+
+const require = createRequire(import.meta.url);
+function grammarDir() {
+  return join(dirname(require.resolve("tree-sitter-wasms/package.json")), "out");
 }
 
-export function treeSitterAvailable(ext: string) {
-  const l = TREE_SITTER_EXT[ext];
-  return !!l && parsers.has(l);
+/** Grammars shipped in vendor/ instead of tree-sitter-wasms (see vendor/<name>/README.md). */
+const VENDORED = new Set(["lua"]);
+function grammarFile(grammar: string) {
+  if (VENDORED.has(grammar))
+    for (const root of [join(dirname(require.resolve("tree-sitter-wasms/package.json")), "..", ".."), join(import.meta.dirname, "..", ".."), join(import.meta.dirname, "..", "..", "..")]) {
+      const f = join(root, "vendor", `tree-sitter-${grammar}`, `tree-sitter-${grammar}.wasm`);
+      if (existsSync(f)) return f;
+    }
+  return join(grammarDir(), `tree-sitter-${grammar}.wasm`);
+}
+
+async function loadGrammar(grammar: string) {
+  if (parsers.has(grammar) || failed.has(grammar)) return;
+  if (!loading.has(grammar))
+    loading.set(
+      grammar,
+      (async () => {
+        try {
+          initialized ??= Parser.init();
+          await initialized;
+          const p = new Parser();
+          p.setLanguage(await Language.load(grammarFile(grammar)));
+          parsers.set(grammar, p);
+        } catch (e) {
+          failed.add(grammar);
+          process.emitWarning(`tree-sitter 语法 ${grammar} 加载失败，改用通用解析：${(e as Error).message}`);
+        }
+      })(),
+    );
+  await loading.get(grammar);
+}
+
+/** Load the grammars these files need (by extension). Cheap when already loaded. */
+export async function ensureGrammars(paths: Iterable<string>) {
+  const want = new Set<string>();
+  for (const p of paths) {
+    const g = GRAMMAR_OF_EXT[extname(p).toLowerCase()];
+    if (g && !parsers.has(g) && !failed.has(g)) want.add(g);
+  }
+  await Promise.all([...want].map(loadGrammar));
+}
+
+/** Parse with the grammar for this extension, or null when it is not loaded. */
+export function parseTree<T>(ext: string, text: string, use: (root: Node, grammar: string) => T): T | null {
+  const grammar = GRAMMAR_OF_EXT[ext];
+  const parser = grammar && parsers.get(grammar);
+  if (!parser) return null;
+  const tree = parser.parse(text);
+  if (!tree) return null;
+  try {
+    return use(tree.rootNode, grammar);
+  } finally {
+    tree.delete();
+  }
 }
 
 type Call = { name: string; qualifier?: string };
@@ -45,40 +132,53 @@ type Ctx = {
   refs: CodeRef[];
 };
 
+/** Go, Rust, Java, Kotlin, Swift. */
 export function parseTreeSitter(ext: string, text: string): Omit<CodeOutline, "language"> | null {
-  const lang = TREE_SITTER_EXT[ext];
-  const parser = lang && parsers.get(lang);
-  if (!parser) return null;
-  const tree = parser.parse(text);
-  try {
+  const lang = MAIN_LANG[GRAMMAR_OF_EXT[ext] ?? ""];
+  if (!lang) return null;
+  return parseTree(ext, text, (root) => {
     const ctx: Ctx = { lang, text, lines: text.split("\n"), symbols: [], refs: [] };
-    walkDecls(ctx, tree.rootNode.namedChildren, undefined);
+    walkDecls(ctx, kids(root), undefined);
     return { symbols: ctx.symbols, refs: ctx.refs };
-  } finally {
-    tree.delete();
-  }
+  });
 }
 
 // ---- helpers ------------------------------------------------------------------
 
-const line = (n: Node) => n.startPosition.row + 1;
-const endLine = (n: Node) => n.endPosition.row + 1 - (n.endPosition.column === 0 && n.endPosition.row > n.startPosition.row ? 1 : 0);
-const field = (n: Node, name: string) => n.childForFieldName(name);
-const childOf = (n: Node, ...types: string[]) => n.namedChildren.find((c) => types.includes(c.type)) ?? null;
+export const kids = (n: Node | null | undefined): Node[] => (n ? (n.namedChildren.filter(Boolean) as Node[]) : []);
+/** Descendants of the given types in document order (web-tree-sitter's descendantsOfType mis-maps type ids once several grammars are loaded). */
+export function descendants(n: Node | null | undefined, types: string | string[]): Node[] {
+  const want = new Set(Array.isArray(types) ? types : [types]);
+  const out: Node[] = [];
+  const visit = (x: Node) => {
+    for (const c of kids(x)) {
+      if (want.has(c.type)) out.push(c);
+      visit(c);
+    }
+  };
+  if (n) visit(n);
+  return out;
+}
+export const line = (n: Node) => n.startPosition.row + 1;
+export const endLine = (n: Node) => n.endPosition.row + 1 - (n.endPosition.column === 0 && n.endPosition.row > n.startPosition.row ? 1 : 0);
+export const field = (n: Node, name: string) => n.childForFieldName(name);
+export const childOf = (n: Node, ...types: string[]) => kids(n).find((c) => types.includes(c.type)) ?? null;
 
 /** First line of the comment / attribute block directly above a declaration (comments may sit in a sibling's subtree). */
-function docStart(ctx: Ctx, n: Node): number | undefined {
+/** Comment / attribute / annotation lines in any supported language. */
+const DOC_LINE = /^\s*(\/\/|\/\*|\*|#\[|@(?!end\b|interface\b|implementation\b|protocol\b)[A-Za-z]|#(?!include|import|!)|--|;|\(\*|\{-|%|\/\/\/)/;
+export function docStart(ctx: { lines: string[] }, n: Node): number | undefined {
   const lines = ctx.lines;
   let k = line(n) - 1; // 1-based line above
   let first: number | undefined;
-  while (k >= 1 && /^\s*(\/\/|\/\*|\*|#\[|@[A-Za-z])/.test(lines[k - 1])) {
+  while (k >= 1 && DOC_LINE.test(lines[k - 1])) {
     first = k;
     k--;
   }
   return first;
 }
 
-function signature(n: Node) {
+export function signature(n: Node) {
   const raw = n.text;
   const brace = raw.search(/\{|\s=\s/);
   return (brace > 0 ? raw.slice(0, brace) : raw.split("\n")[0]).replace(/\s+/g, " ").trim().slice(0, 240);
@@ -89,7 +189,7 @@ function exported(ctx: Ctx, n: Node, name: string): boolean {
     case "go":
       return /^[A-Z]/.test(name);
     case "rust":
-      return n.namedChildren.some((c) => c.type === "visibility_modifier");
+      return kids(n).some((c) => c.type === "visibility_modifier");
     case "java":
       return !/\bprivate\b/.test(childOf(n, "modifiers")?.text ?? "");
     case "kotlin":
@@ -107,7 +207,7 @@ function addSymbol(ctx: Ctx, n: Node, rawName: string, kind: string, parent?: st
 }
 
 /** Strip generics / pointers / paths from a type node: `*Server`, `Server<T>`, `crate::a::Server` → `Server`. */
-function typeName(n: Node | null): string | null {
+export function typeName(n: Node | null): string | null {
   if (!n) return null;
   const t = n.text.replace(/<[\s\S]*>/g, "").replace(/[*&\s]|\bmut\b/g, "");
   const parts = t.split(/::|\./);
@@ -143,15 +243,16 @@ function decl(ctx: Ctx, n: Node, parent: string | undefined) {
   switch (n.type) {
     // ---- imports
     case "import_declaration":
-      if (lang === "go") for (const spec of n.descendantsOfType("import_spec")) goImport(ctx, spec);
-      else if (lang === "java") javaImport(ctx, n);
+      if (lang === "go") {
+        for (const spec of descendants(n, "import_spec")) goImport(ctx, spec);
+      } else if (lang === "java") javaImport(ctx, n);
       else if (lang === "swift") {
         const id = childOf(n, "identifier");
         if (id) ctx.refs.push({ fromQname: "", toName: id.text, kind: "import", line: line(n), bindings: [{ local: id.text, imported: "*" }] });
       }
       return;
     case "import_list":
-      return walkDecls(ctx, n.namedChildren, parent);
+      return walkDecls(ctx, kids(n), parent);
     case "import_header":
       return kotlinImport(ctx, n);
     case "use_declaration":
@@ -163,21 +264,21 @@ function decl(ctx: Ctx, n: Node, parent: string | undefined) {
       break; // Kotlin / Swift handled below
     case "method_declaration":
       if (lang === "go") {
-        const recv = field(n, "receiver")?.namedChildren[0];
+        const recv = kids(field(n, "receiver"))[0];
         const recvType = typeName(recv ? field(recv, "type") : null);
         const recvName = recv ? field(recv, "name")?.text : undefined;
         return void addSymbol(ctx, n, field(n, "name")!.text, "method", recvType ?? undefined, field(n, "body"), recvName);
       }
       return void addSymbol(ctx, n, field(n, "name")!.text, "method", parent, field(n, "body")); // Java
     case "type_declaration":
-      for (const spec of n.namedChildren.filter((c) => c.type === "type_spec" || c.type === "type_alias")) {
+      for (const spec of kids(n).filter((c) => c.type === "type_spec" || c.type === "type_alias")) {
         const name = field(spec, "name")?.text;
         if (!name) continue;
         const t = field(spec, "type");
         const kind = t?.type === "struct_type" ? "struct" : t?.type === "interface_type" ? "interface" : "type";
-        const q = addSymbol(ctx, n.namedChildren.length === 1 ? n : spec, name, kind);
+        const q = addSymbol(ctx, kids(n).length === 1 ? n : spec, name, kind);
         if (t?.type === "interface_type")
-          for (const m of t.namedChildren.filter((c) => c.type === "method_spec" || c.type === "method_elem")) {
+          for (const m of kids(t).filter((c) => c.type === "method_spec" || c.type === "method_elem")) {
             const mn = field(m, "name")?.text;
             if (mn) addSymbol(ctx, m, mn, "method", q);
           }
@@ -195,19 +296,19 @@ function decl(ctx: Ctx, n: Node, parent: string | undefined) {
       return void addSymbol(ctx, n, field(n, "name")!.text, n.type.replace("_item", ""), parent);
     case "trait_item": {
       const q = addSymbol(ctx, n, field(n, "name")!.text, "trait", parent);
-      return walkDecls(ctx, field(n, "body")?.namedChildren ?? [], q);
+      return walkDecls(ctx, kids(field(n, "body")), q);
     }
     case "impl_item": {
       const t = typeName(field(n, "type"));
       if (!t) return;
       const q = parent ? `${parent}.${t}` : t;
-      return walkDecls(ctx, field(n, "body")?.namedChildren ?? [], q);
+      return walkDecls(ctx, kids(field(n, "body")), q);
     }
     case "mod_item": {
       const body = field(n, "body");
       if (!body) return; // `mod x;` declares a file module
       const q = addSymbol(ctx, n, field(n, "name")!.text, "module", parent);
-      return walkDecls(ctx, body.namedChildren, q);
+      return walkDecls(ctx, kids(body), q);
     }
     case "macro_definition":
       return void addSymbol(ctx, n, field(n, "name")!.text, "macro", parent);
@@ -228,7 +329,7 @@ function decl(ctx: Ctx, n: Node, parent: string | undefined) {
     case "enum_class_body":
     case "protocol_body":
     case "declaration_list":
-      return walkDecls(ctx, n.namedChildren, parent);
+      return walkDecls(ctx, kids(n), parent);
   }
 
   // ---- Kotlin
@@ -236,12 +337,12 @@ function decl(ctx: Ctx, n: Node, parent: string | undefined) {
     if (n.type === "class_declaration" || n.type === "object_declaration") {
       const name = childOf(n, "type_identifier")?.text;
       if (!name) return;
-      const kw = n.children.find((c) => !c.isNamed && /^(class|interface|object)$/.test(c.type))?.type ?? "class";
+      const kw = n.children.find((c) => !!c && !c.isNamed && /^(class|interface|object)$/.test(c!.type))?.type ?? "class";
       const kind = childOf(n, "enum_class_body") ? "enum" : kw;
       const q = addSymbol(ctx, n, name, kind, parent);
-      return walkDecls(ctx, childOf(n, "class_body", "enum_class_body")?.namedChildren ?? [], q);
+      return walkDecls(ctx, kids(childOf(n, "class_body", "enum_class_body")), q);
     }
-    if (n.type === "companion_object") return walkDecls(ctx, childOf(n, "class_body")?.namedChildren ?? [], parent);
+    if (n.type === "companion_object") return walkDecls(ctx, kids(childOf(n, "class_body")), parent);
     if (n.type === "function_declaration") {
       const name = childOf(n, "simple_identifier")?.text;
       if (name) addSymbol(ctx, n, name, parent ? "method" : "function", parent, childOf(n, "function_body"));
@@ -257,15 +358,15 @@ function decl(ctx: Ctx, n: Node, parent: string | undefined) {
     if (n.type === "class_declaration") {
       const name = typeName(field(n, "name"));
       if (!name) return;
-      const kw = field(n, "declaration_kind")?.text ?? n.children.find((c) => !c.isNamed)?.type ?? "class";
+      const kw = field(n, "declaration_kind")?.text ?? n.children.find((c) => !!c && !c.isNamed)?.type ?? "class";
       const q = parent ? `${parent}.${name}` : name;
       // An extension adds members to a type that may be declared elsewhere: no new symbol.
       if (kw !== "extension") addSymbol(ctx, n, name, kw, parent);
-      return walkDecls(ctx, field(n, "body")?.namedChildren ?? [], q);
+      return walkDecls(ctx, kids(field(n, "body")), q);
     }
     if (n.type === "protocol_declaration") {
       const q = addSymbol(ctx, n, field(n, "name")!.text, "protocol", parent);
-      return walkDecls(ctx, field(n, "body")?.namedChildren ?? [], q);
+      return walkDecls(ctx, kids(field(n, "body")), q);
     }
     if (n.type === "function_declaration" || n.type === "protocol_function_declaration") {
       const name = field(n, "name")?.text;
@@ -281,7 +382,7 @@ function javaType(ctx: Ctx, n: Node, kind: string, parent?: string) {
   const name = field(n, "name")?.text;
   if (!name) return;
   const q = addSymbol(ctx, n, name, kind, parent);
-  walkDecls(ctx, field(n, "body")?.namedChildren ?? [], q);
+  walkDecls(ctx, kids(field(n, "body")), q);
 }
 
 // ---- imports ------------------------------------------------------------------
@@ -308,9 +409,9 @@ function javaImport(ctx: Ctx, n: Node) {
 function kotlinImport(ctx: Ctx, n: Node) {
   const id = childOf(n, "identifier");
   if (!id) return;
-  const full = id.namedChildren.map((c) => c.text).join(".");
+  const full = kids(id).map((c) => c.text).join(".");
   if (/\.\*/.test(n.text)) return void ctx.refs.push({ fromQname: "", toName: full, kind: "import", line: line(n), bindings: [{ local: "*", imported: "*" }] });
-  const alias = childOf(n, "import_alias")?.namedChildren[0]?.text;
+  const alias = kids(childOf(n, "import_alias"))[0]?.text;
   const dot = full.lastIndexOf(".");
   const last = full.slice(dot + 1);
   ctx.refs.push({ fromQname: "", toName: full.slice(0, dot), kind: "import", line: line(n), bindings: [{ local: alias ?? last, imported: last }] });
@@ -348,13 +449,13 @@ function rustUse(ctx: Ctx, n: Node) {
         return;
       }
       case "use_wildcard":
-        add(join2(prefix, node.namedChildren[0]?.text ?? ""), { local: "*", imported: "*" });
+        add(join2(prefix, kids(node)[0]?.text ?? ""), { local: "*", imported: "*" });
         return;
       case "scoped_use_list":
-        for (const c of field(node, "list")?.namedChildren ?? []) visit(c, join2(prefix, field(node, "path")?.text ?? ""));
+        for (const c of kids(field(node, "list"))) visit(c, join2(prefix, field(node, "path")?.text ?? ""));
         return;
       case "use_list":
-        for (const c of node.namedChildren) visit(c, prefix);
+        for (const c of kids(node)) visit(c, prefix);
         return;
     }
   };
@@ -402,13 +503,13 @@ function callOf(ctx: Ctx, n: Node): Call | null {
     case "kotlin":
     case "swift": {
       if (n.type !== "call_expression") return null;
-      const f = n.namedChildren[0];
+      const f = kids(n)[0];
       if (!f) return null;
       if (f.type === "simple_identifier") return { name: f.text.replace(/`/g, "") };
       if (f.type === "navigation_expression") {
-        const suffix = f.namedChildren.find((c) => c.type === "navigation_suffix");
-        const name = suffix?.namedChildren.find((c) => c.type === "simple_identifier")?.text.replace(/`/g, "");
-        return name ? { name, qualifier: receiver(f.namedChildren[0]) } : null;
+        const suffix = kids(f).find((c) => c.type === "navigation_suffix");
+        const name = kids(suffix).find((c) => c.type === "simple_identifier")?.text.replace(/`/g, "");
+        return name ? { name, qualifier: receiver(kids(f)[0]) } : null;
       }
       return null;
     }
@@ -431,7 +532,7 @@ function collectCalls(ctx: Ctx, root: Node, owner: string, receiverName?: string
         ctx.refs.push({ fromQname: owner, toName: c.name, kind: "call", line: line(n), ...(qualifier ? { qualifier } : {}) });
       }
     }
-    for (const ch of n.namedChildren) if (!(NESTED_STOP.has(ch.type) && ch !== root)) visit(ch);
+    for (const ch of kids(n)) if (!(NESTED_STOP.has(ch.type) && ch !== root)) visit(ch);
   };
   visit(root);
 }

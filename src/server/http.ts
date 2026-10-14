@@ -202,7 +202,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
         const file = join(dir, part.filename.replace(/[\\/]/g, "_"));
         await writeFile(file, await part.toBuffer());
         try {
-          const r = importFile(app, space, file, part.filename);
+          const r = await importFile(app, space, file, part.filename);
           results.push(r ? { name: part.filename, id: r.id, status: r.status } : { name: part.filename, error: "不支持的文件类型" });
         } catch (e) {
           results.push({ name: part.filename, error: (e as Error).message });

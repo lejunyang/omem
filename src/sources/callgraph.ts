@@ -19,6 +19,26 @@ const PY = /\.py$/;
 /** Languages whose names resolve by package / module rather than by file imports. Java and Kotlin share one namespace. */
 const PKG_LANG: Record<string, "go" | "rust" | "jvm" | "swift"> = { ".go": "go", ".rs": "rust", ".java": "jvm", ".kt": "jvm", ".kts": "jvm", ".swift": "swift" };
 const pkgLang = (uri: string) => PKG_LANG[posix.extname(uri).toLowerCase()];
+/** Languages resolved by name with imports as hints (see nameResolver). Extensions of one family see each other. */
+const NAME_FAMILY: Record<string, string> = Object.fromEntries(
+  Object.entries({
+    c: [".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx", ".m", ".mm"],
+    cs: [".cs"],
+    php: [".php"],
+    ruby: [".rb"],
+    scala: [".scala", ".sc"],
+    dart: [".dart"],
+    lua: [".lua"],
+    zig: [".zig"],
+    elixir: [".ex", ".exs"],
+    ocaml: [".ml", ".mli"],
+    rescript: [".res", ".resi"],
+    solidity: [".sol"],
+    bash: [".sh", ".bash"],
+    elisp: [".el"],
+  }).flatMap(([fam, exts]) => exts.map((e) => [e, fam])),
+);
+const nameFamily = (uri: string) => NAME_FAMILY[posix.extname(uri).toLowerCase()];
 
 export function resolveCodeRefs(app: App, spaceId: string): { resolved: number; total: number } {
   const files = all<{ id: string; uri: string }>(app.db, "select id, uri from sources where space_id = ? and kind = 'code' and deleted_at is null", spaceId);
@@ -144,6 +164,7 @@ export function resolveCodeRefs(app: App, spaceId: string): { resolved: number; 
   };
 
   const pkg = packageResolver(files, syms, bySource, parse, (id) => sourceText(app, id));
+  const byName = nameResolver(files, syms, bySource, parse);
 
   const updates: [string | null, string | null, number][] = [];
   let resolved = 0;
@@ -151,7 +172,17 @@ export function resolveCodeRefs(app: App, spaceId: string): { resolved: number; 
   for (const r of refs) {
     let t: Target | null = null;
     const lang = pkgLang(uriOf.get(r.source_id)!);
-    if (lang) {
+    const family = lang ? undefined : nameFamily(uriOf.get(r.source_id)!);
+    if (family) {
+      if (r.kind === "call") {
+        total++;
+        t = byName.call(r);
+        if (t) resolved++;
+      } else if (r.kind === "import") {
+        const f = byName.importFiles(r.source_id, r.to_name);
+        t = f.length === 1 ? { sourceId: f[0], module: true } : null;
+      }
+    } else if (lang) {
       if (r.kind === "call") {
         total++;
         t = pkg.call(r);
@@ -400,6 +431,156 @@ function packageResolver(
   };
 
   return { call, importTarget };
+}
+
+/**
+ * C/C++/Objective-C, C#, PHP, Ruby, Scala, Dart, Lua, Zig, Elixir, OCaml,
+ * ReScript, Solidity, Bash, Emacs Lisp: these share one namespace per project
+ * in practice (linker, autoloader, require, module = file), so a call
+ * resolves by name when exactly one definition fits. Imports narrow the
+ * search first: `import x as u` + `u.f()`, `require "a/b"`, `#include "b.h"`
+ * (and its b.c / b.cpp), `open Store` (OCaml/ReScript module = file).
+ * Order: enclosing type (this/self and implicit), same file, imported files,
+ * `Type.member`, then a unique free definition anywhere in the family.
+ */
+function nameResolver(files: { id: string; uri: string }[], syms: Map<string, Map<string, string>>, bySource: Map<string, RefRow[]>, parse: (r: RefRow) => ImportBinding[]) {
+  const uriOf = new Map(files.map((f) => [f.id, f.uri]));
+  const lastSeg = (q: string) => q.slice(q.lastIndexOf(".") + 1);
+  const parentOf = (q: string) => (q.includes(".") ? q.slice(0, q.lastIndexOf(".")) : "");
+  type Hit = { sourceId: string; qname: string };
+  const famFiles = new Map<string, string[]>();
+  const free = new Map<string, Hit[]>(); // `${fam}|${name}`
+  const member = new Map<string, Hit[]>(); // `${fam}|${Type}.${name}`
+  const exact = new Map<string, Hit[]>(); // `${fam}|${qname}`
+  const push = (m: Map<string, Hit[]>, k: string, h: Hit) => (m.get(k) ?? m.set(k, []).get(k)!).push(h);
+  for (const f of files) {
+    const fam = nameFamily(f.uri);
+    if (!fam) continue;
+    (famFiles.get(fam) ?? famFiles.set(fam, []).get(fam)!).push(f.id);
+    const table = syms.get(f.id);
+    if (!table) continue;
+    for (const [qname] of table) {
+      const parent = parentOf(qname);
+      const parentKind = parent ? table.get(parent) : undefined;
+      if (!parent || parentKind === "namespace") push(free, `${fam}|${lastSeg(qname)}`, { sourceId: f.id, qname });
+      if (parent) push(member, `${fam}|${lastSeg(parent)}.${lastSeg(qname)}`, { sourceId: f.id, qname });
+      push(exact, `${fam}|${qname}`, { sourceId: f.id, qname });
+    }
+  }
+  const one = (hits: Hit[] | undefined): Target | null => {
+    if (!hits?.length) return null;
+    const uniq = new Map(hits.map((h) => [`${h.sourceId}|${h.qname}`, h]));
+    return uniq.size === 1 ? [...uniq.values()][0] : null;
+  };
+  /** Any symbol named `name` (or `Type.name`) in these files. */
+  /** Callable without a receiver: top level, or inside a namespace / module (not a class member). */
+  const freeIn = (id: string, qname: string) => {
+    const parent = parentOf(qname);
+    if (!parent) return true;
+    const kind = syms.get(id)?.get(parent);
+    // Lua module tables (`M.f`) have no symbol of their own.
+    return kind === "namespace" || kind === "module" || (kind === undefined && nameFamily(uriOf.get(id)!) === "lua");
+  };
+  /** C++ / C# namespaces need qualification or an enclosing namespace: `fmt::printf` is not `printf`. */
+  const visibleFrom = (fam: string, fromQname: string, hit: Hit) => {
+    if (fam !== "c" && fam !== "cs") return true;
+    const ns = parentOf(hit.qname);
+    return !ns || fromQname === ns || fromQname.startsWith(`${ns}.`);
+  };
+  const inFiles = (ids: string[], name: string, freeFrom?: { fam: string; from: string }): Target | null => {
+    const hits: Hit[] = [];
+    for (const id of ids)
+      for (const [q] of syms.get(id) ?? [])
+        if ((q === name || lastSeg(q) === name) && (!freeFrom || (freeIn(id, q) && visibleFrom(freeFrom.fam, freeFrom.from, { sourceId: id, qname: q })))) hits.push({ sourceId: id, qname: q });
+    return one(hits);
+  };
+
+  const norm = (s: string) => s.toLowerCase().replace(/_/g, "");
+  const stem = (uri: string) => uri.replace(/\.[^./]+$/, "");
+  const fileCache = new Map<string, string[]>();
+  /** Files an import spec names: a relative or suffix path, or a dotted / `::` / `\` module path. */
+  const importFiles = (fromId: string, spec: string): string[] => {
+    const fromUri = uriOf.get(fromId)!;
+    const fam = nameFamily(fromUri)!;
+    const key = `${fromId}|${spec}`;
+    if (fileCache.has(key)) return fileCache.get(key)!;
+    const pool = famFiles.get(fam) ?? [];
+    const s = spec.replace(/^package:[^/]+\//, "").replace(/^\.\//, "");
+    let out: string[] = [];
+    const hasExt = posix.extname(s).toLowerCase() in NAME_FAMILY;
+    if (hasExt || s.includes("/")) {
+      const rel = posix.normalize(posix.join(posix.dirname(fromUri), s));
+      const withExt = (u: string) => (hasExt ? [u] : [u, ...[".rb", ".lua", ".sh", ".el", ".php", ".dart"].map((e) => u + e)]);
+      out = pool.filter((id) => withExt(rel).includes(uriOf.get(id)!));
+      if (!out.length) out = pool.filter((id) => withExt(s).some((c) => uriOf.get(id) === c || uriOf.get(id)!.endsWith(`/${c}`)));
+    } else {
+      const want = norm(s.replace(/::|\\|\./g, "/"));
+      out = pool.filter((id) => {
+        const st = norm(stem(uriOf.get(id)!));
+        return st === want || st.endsWith(`/${want}`);
+      });
+    }
+    // A C/C++ header brings its implementation file along.
+    if (fam === "c")
+      for (const id of [...out]) {
+        const st = stem(uriOf.get(id)!);
+        for (const other of pool) if (other !== id && stem(uriOf.get(other)!) === st) out.push(other);
+      }
+    fileCache.set(key, out);
+    return out;
+  };
+
+  const call = (r: RefRow): Target | null => {
+    const from = r.source_id;
+    const fam = nameFamily(uriOf.get(from)!)!;
+    const n = r.to_name;
+    const q = r.qualifier;
+    const enclosing: string[] = [];
+    for (let parts = r.from_qname.split(".").slice(0, -1); parts.length; parts.pop()) enclosing.push(parts.join("."));
+    const imports = (bySource.get(from) ?? []).filter((x) => x.kind === "import");
+    if (q === "self") {
+      for (const cls of enclosing) {
+        if (syms.get(from)?.has(`${cls}.${n}`)) return { sourceId: from, qname: `${cls}.${n}` };
+        const t = one(exact.get(`${fam}|${cls}.${n}`)) ?? one(member.get(`${fam}|${lastSeg(cls)}.${n}`));
+        if (t) return t;
+      }
+      return null;
+    }
+    if (!q) {
+      for (const cls of enclosing) if (syms.get(from)?.has(`${cls}.${n}`)) return { sourceId: from, qname: `${cls}.${n}` };
+      // Implicit this across files: C++ out-of-line definitions, reopened Ruby classes, partial classes.
+      for (const cls of enclosing) {
+        const t = one(exact.get(`${fam}|${cls}.${n}`)) ?? one(member.get(`${fam}|${lastSeg(cls)}.${n}`));
+        if (t) return t;
+      }
+      const scope = { fam, from: r.from_qname };
+      const local = inFiles([from], n, scope);
+      if (local) return local;
+      for (const imp of imports) {
+        const b = parse(imp).find((x) => x.local === n);
+        if (b) return inFiles(importFiles(from, imp.to_name), b.imported === "*" ? n : b.imported, scope) ?? one(free.get(`${fam}|${b.imported}`));
+      }
+      // Imports that bring names into scope (#include, require, open, import without `as`); aliases do not.
+      const viaImports = imports.flatMap((imp) => (parse(imp).every((b) => b.local === "*") ? importFiles(from, imp.to_name) : []));
+      return (viaImports.length ? inFiles(viaImports, n, scope) : null) ?? one(free.get(`${fam}|${n}`)?.filter((h) => visibleFrom(fam, r.from_qname, h)));
+    }
+    // Qualified: an import alias (`u.fmt`, `db.open`), an imported type, a module file (OCaml), or Type.member.
+    for (const imp of imports) {
+      const b = parse(imp).find((x) => x.local === q);
+      if (!b) continue;
+      if (b.imported === "*") return inFiles(importFiles(from, imp.to_name), n);
+      return one(member.get(`${fam}|${b.imported}.${n}`));
+    }
+    const t = one(member.get(`${fam}|${q}.${n}`));
+    if (t) return t;
+    if (fam === "ocaml" || fam === "rescript") {
+      const mod = (famFiles.get(fam) ?? []).filter((id) => norm(posix.basename(stem(uriOf.get(id)!))) === norm(q));
+      return mod.length ? inFiles(mod, n) : null;
+    }
+    return null;
+  };
+
+  return { call, importFiles };
 }
 
 export type SymbolRelations = {
