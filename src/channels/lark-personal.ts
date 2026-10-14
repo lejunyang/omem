@@ -150,7 +150,7 @@ async function downloadAttachment(app: App, spaceId: string, chatId: string, m: 
     await larkCli(["im", "+messages-resources-download", "--message-id", m.message_id, "--file-key", key, "--type", type, "--output", name, "--as", "user", "--format", "json"], 120_000, dir);
     const file = existsSync(join(dir, name)) ? join(dir, name) : readdirSync(dir).map((f) => join(dir, f)).find((f) => statSync(f).isFile());
     if (!file) return null;
-    const r = importFile(app, spaceId, file, `lark:${chatId}/${name}`);
+    const r = await importFile(app, spaceId, file, `lark:${chatId}/${name}`);
     return r?.id ?? null;
   } catch (e) {
     console.warn(`[omem] 飞书附件下载失败（${m.message_id}）：${(e as Error).message}`);

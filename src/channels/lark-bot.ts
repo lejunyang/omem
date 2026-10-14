@@ -236,7 +236,7 @@ export async function startLarkBot(app: App) {
       const res = await client.im.messageResource.get({ path: { message_id: msg.message_id, file_key: key }, params: { type: msg.message_type === "image" ? "image" : "file" } });
       await res.writeFile(file);
       const spaceId = m.chatType === "group" ? groupSpace(m.chatId) : cfg.defaultSpace;
-      const r = importFile(app, spaceId, file, `lark:${m.chatId}/${name}`);
+      const r = await importFile(app, spaceId, file, `lark:${m.chatId}/${name}`);
       if (r && r.status !== "unchanged") scheduleIngest(app, spaceId, [r.id], `飞书${m.chatType === "group" ? "群" : "私聊"}附件`);
       if (m.chatType === "p2p") await reply(m.chatId, r ? `已保存「${name}」，助理会读取并整理。` : `「${name}」的格式暂不支持。`, m.messageId);
     } finally {
