@@ -142,13 +142,13 @@ space
   .option("--kind <kind>", "personal | project | repo | learning | topic")
   .option("-d, --description <text>", "说明")
   .option("--exclude <patterns...>", "不导入的路径（前缀或 glob，如 docs/archive '**/*.lock'）")
-  .action((name, o) => {
+  .action(async (name, o) => {
     const app = open();
     const s = createSpace(app, { id: o.id, name, kind: o.kind, rootPath: o.path, description: o.description });
     if (o.exclude?.length) updateSpace(app, s.id, { settings: { ...s.settings, exclude: o.exclude } });
     console.log(`已创建空间 ${s.id}`);
     if (s.rootPath) {
-      const r = syncDirectorySpace(app, s.id);
+      const r = await syncDirectorySpace(app, s.id);
       console.log(`已导入 ${r.created} 个文件（跳过 ${r.skipped.length}）`);
     }
   });
@@ -156,10 +156,10 @@ space
   .command("sync <id>")
   .description("同步空间关联目录的最新内容")
   .option("--exclude <patterns...>", "设置不导入的路径（替换原有设置；已导入的会被移除）")
-  .action((id, o) => {
+  .action(async (id, o) => {
     const app = open();
     if (o.exclude) updateSpace(app, id, { settings: { ...getSpace(app, id).settings, exclude: o.exclude } });
-    const r = syncDirectorySpace(app, id);
+    const r = await syncDirectorySpace(app, id);
     console.log(`新增 ${r.created}，更新 ${r.updated}，移除 ${r.removed}，未变 ${r.unchanged}`);
   });
 
@@ -182,11 +182,11 @@ program
       ids = r.status === "unchanged" ? [] : [r.id];
       console.log(`${r.status} ${r.id}`);
     } else if (existsSync(input) && statSync(input).isDirectory()) {
-      const r = importDirectory(app, o.space, input);
+      const r = await importDirectory(app, o.space, input);
       ids = r.sourceIds;
       console.log(`新增 ${r.created}，更新 ${r.updated}，未变 ${r.unchanged}，跳过 ${r.skipped.length}`);
     } else if (existsSync(input)) {
-      const r = importFile(app, o.space, input);
+      const r = await importFile(app, o.space, input);
       if (!r) return console.error("不支持的文件类型");
       ids = r.status === "unchanged" ? [] : [r.id];
       console.log(`${r.status} ${r.id}`);
@@ -449,7 +449,7 @@ program
     const app = open();
     for (const s of listSpaces(app))
       if (s.rootPath) {
-        const r = syncDirectorySpace(app, s.id);
+        const r = await syncDirectorySpace(app, s.id);
         console.log(`${s.id}: 新增 ${r.created}，更新 ${r.updated}，移除 ${r.removed}`);
       }
   });

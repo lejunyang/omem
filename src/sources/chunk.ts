@@ -114,6 +114,7 @@ export function chunkCode(path: string, text: string): { chunks: Chunk[]; outlin
 
 const CODE_EXT = new Set([
   ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".py", ".go", ".rs", ".java", ".kt", ".kts", ".swift", ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".rb", ".php", ".lua", ".scala", ".sh", ".bash", ".ps1", ".sql", ".dart", ".m", ".mm", ".zig", ".ex", ".exs", ".erl", ".hs", ".clj",
+  ".cxx", ".hh", ".hxx", ".sc", ".ml", ".mli", ".res", ".resi", ".sol", ".el", ".elm", ".ocaml", ".fs", ".r", ".jl", ".nim", ".v", ".groovy",
 ]);
 const CONFIG_EXT = new Set([".json", ".toml", ".yaml", ".yml", ".xml", ".ini", ".gradle", ".properties", ".css", ".scss", ".less", ".html"]);
 

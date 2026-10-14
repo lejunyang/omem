@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { resolveCodeRefs } from "./callgraph.ts";
+import { ensureGrammars } from "./treesitter.ts";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -78,8 +79,9 @@ export function convertDocument(app: App, file: string): string {
 }
 
 /** Import one file into a space. Binary documents are converted; originals are kept in files/. */
-export function importFile(app: App, spaceId: string, file: string, uri?: string): UpsertResult | null {
+export async function importFile(app: App, spaceId: string, file: string, uri?: string): Promise<UpsertResult | null> {
   const path = resolve(file);
+  await ensureGrammars([path]);
   const ext = extname(path).toLowerCase();
   const id = uri ?? basename(path);
   if (DOC_EXT.has(ext)) {
@@ -152,13 +154,14 @@ function globToRegex(pattern: string) {
  * Bring a repo/directory space up to date with its working tree. Only changed
  * files are re-chunked; files that disappeared become tombstones.
  */
-export function syncDirectorySpace(app: App, spaceId: string, onProgress?: (done: number, total: number) => void): ImportReport {
+export async function syncDirectorySpace(app: App, spaceId: string, onProgress?: (done: number, total: number) => void): Promise<ImportReport> {
   const space = getSpace(app, spaceId);
   if (!space.rootPath) throw new HttpError(400, "这个空间没有关联目录");
   const report = emptyReport();
   // Space settings may exclude paths (archives, vendored docs): prefixes or simple globs.
   const exclude = ((space.settings.exclude as string[] | undefined) ?? []).map(globToRegex);
   const files = repoFiles(space.rootPath).filter((f) => !exclude.some((re) => re.test(f)));
+  await ensureGrammars(files);
   const seen = new Set<string>();
   files.forEach((rel, i) => {
     const full = join(space.rootPath!, rel);
@@ -187,12 +190,14 @@ export function syncDirectorySpace(app: App, spaceId: string, onProgress?: (done
 }
 
 /** Import an arbitrary directory into a non-repo space (uri = path relative to that directory). */
-export function importDirectory(app: App, spaceId: string, dir: string): ImportReport {
+export async function importDirectory(app: App, spaceId: string, dir: string): Promise<ImportReport> {
   const root = resolve(dir);
   const report = emptyReport();
-  for (const rel of repoFiles(root)) {
+  const files = repoFiles(root);
+  await ensureGrammars(files);
+  for (const rel of files) {
     try {
-      const r = importFile(app, spaceId, join(root, rel), `${basename(root)}/${rel}`);
+      const r = await importFile(app, spaceId, join(root, rel), `${basename(root)}/${rel}`);
       if (r) tally(report, r);
       else report.skipped.push(rel);
     } catch {

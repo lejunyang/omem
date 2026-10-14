@@ -225,7 +225,7 @@ registerHandler("wiki-lint", async (ctx) => {
 
 registerHandler("sync", async (ctx) => {
   const spaceId = ctx.run.spaceId!;
-  const report = syncDirectorySpace(ctx.app, spaceId, (done, total) => ctx.event("status", { text: `同步 ${done}/${total}` }));
+  const report = await syncDirectorySpace(ctx.app, spaceId, (done, total) => ctx.event("status", { text: `同步 ${done}/${total}` }));
   ctx.event("status", { text: `新增 ${report.created}，更新 ${report.updated}，移除 ${report.removed}，未变 ${report.unchanged}` });
   const space = getSpace(ctx.app, spaceId);
   if ((report.updated || report.removed) && listPages(ctx.app, spaceId).length && space.settings.autoLint !== false && stalePages(ctx.app, spaceId).length)
