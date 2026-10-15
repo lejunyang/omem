@@ -8,6 +8,7 @@ import type { App } from "../core/app.ts";
 import { all, run } from "../core/db.ts";
 import { headCommit, listRepoFiles } from "../core/git.ts";
 import { getSpace, updateSpace } from "../core/spaces.ts";
+import { toolCommand } from "../core/tools.ts";
 import { HttpError, newId, sha256 } from "../core/util.ts";
 import { classify } from "./chunk.ts";
 import { deleteSource, upsertSource, type SourceKind, type UpsertResult } from "./store.ts";
@@ -46,6 +47,7 @@ export function doclingScript() {
 export function convertDocument(app: App, file: string): string {
   const ext = extname(file).toLowerCase();
   const attempts: [string, string[]][] = [];
+  const errors: string[] = [];
   const configured = app.config.documents.converter;
   if (configured) {
     const parts = configured.split(" ").map((p) => p.replace("{file}", file));
@@ -56,12 +58,14 @@ export function convertDocument(app: App, file: string): string {
       const script = doclingScript();
       const artifacts = app.config.documents.doclingArtifacts;
       // Docling needs its layout models for PDF; DOCX works without them.
-      if (script && (ext === ".docx" || (ext === ".pdf" && artifacts && existsSync(artifacts))))
-        attempts.push(["uv", ["run", "--project", resolve(script, ".."), "--quiet", "python", script, file, artifacts ?? ""]]);
+      if (script && (ext === ".docx" || (ext === ".pdf" && artifacts && existsSync(artifacts)))) {
+        const uv = toolCommand("uv");
+        if (uv) attempts.push([uv[0], [...uv.slice(1), "run", "--project", resolve(script, ".."), "--quiet", "python", script, file, artifacts ?? ""]]);
+        else errors.push("docling: 没有 uv（运行 omem setup → PDF / DOCX 解析，会经 osdk 安装）");
+      }
     } else if (engine === "pdftotext" && ext === ".pdf") attempts.push(["pdftotext", ["-layout", file, "-"]]);
     else if (engine === "pandoc" && ext !== ".pdf") attempts.push(["pandoc", [file, "-t", "gfm", "--wrap=none"]]);
   }
-  const errors: string[] = [];
   for (const [cmd, args] of attempts) {
     const r = spawnSync(cmd, args, { encoding: "utf8", maxBuffer: 200 * 1024 * 1024, windowsHide: true, timeout: 10 * 60_000 });
     if (r.status === 0 && r.stdout.trim()) {
