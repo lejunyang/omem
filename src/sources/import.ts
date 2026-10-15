@@ -176,14 +176,20 @@ export async function syncDirectorySpace(app: App, spaceId: string, onProgress?:
       if (looksBinary(buf)) return void report.skipped.push(rel);
       seen.add(rel);
       const kind: SourceKind = /\.(md|markdown|mdx|txt|rst|adoc)$/i.test(rel) ? "doc" : "code";
-      tally(report, upsertSource(app, { spaceId, kind, uri: rel, title: rel, text: buf.toString("utf8") }));
+      const result = upsertSource(app, { spaceId, kind, uri: rel, title: rel, text: buf.toString("utf8"), meta: { directoryRoot: space.rootPath } });
+      // Also adopt unchanged files imported before directory ownership was recorded.
+      run(app.db, "update sources set meta=json_set(meta, '$.directoryRoot', ?) where id=?", space.rootPath, result.id);
+      tally(report, result);
     } catch {
       report.skipped.push(rel);
     }
     if (onProgress && i % 50 === 0) onProgress(i, files.length);
   });
-  for (const row of all<{ id: string; uri: string }>(app.db, "select id, uri from sources where space_id = ? and deleted_at is null and kind in ('code','doc')", spaceId)) {
-    if (!seen.has(row.uri)) {
+  for (const row of all<{ id: string; uri: string; meta: string }>(app.db, "select id, uri, meta from sources where space_id = ? and deleted_at is null and kind in ('code','doc')", spaceId)) {
+    // Only prune directory files; other project materials belong to the same space.
+    const meta = JSON.parse(row.meta || "{}");
+    const managed = meta.directoryRoot === space.rootPath;
+    if (managed && !seen.has(row.uri)) {
       deleteSource(app, row.id);
       report.removed++;
     }
