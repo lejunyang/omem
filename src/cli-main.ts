@@ -149,6 +149,39 @@ program
     if ((a === "start" || a === "restart") && !s.healthy) process.exitCode = 1;
   });
 
+program
+  .command("pull <host>")
+  .description("从另一台机器（ssh 主机）拉取 omem 数据：默认合并进本地，--overwrite 整体替换（旧数据留备份）")
+  .option("--remote-home <dir>", "远端数据目录", "~/.omem")
+  .option("--overwrite", "用远端数据替换本地（原件、记忆、事项、会话、知识库），本地配置和密钥保留")
+  .option("--dry-run", "只统计合并结果，不写入")
+  .action(async (host: string, o) => {
+    const { fetchRemote, mergeLibrary, overwriteLocal, cleanupFetched } = await import("./core/pull.ts");
+    const log = (s: string) => console.error(s);
+    const local = open();
+    if (await runningServer(local)) {
+      if (o.overwrite) throw new Error("本地服务正在运行；先 omem service stop（或停掉 omem serve）再覆盖。");
+      log("本地服务正在运行：合并照常进行，完成后建议 omem service restart。");
+    }
+    const fetched = fetchRemote(local, host, o.remoteHome, log);
+    try {
+      if (o.overwrite) {
+        local.db.close();
+        const backup = overwriteLocal(home(), fetched);
+        console.log(`已用 ${host} 的数据替换本地。原数据在 ${backup}；配置与密钥未改动。`);
+        return;
+      }
+      const r = mergeLibrary(local, fetched, { dryRun: o.dryRun, log });
+      const names: Record<string, string> = { spaces: "空间", sources: "原件", memories: "记忆", items: "事项", item_events: "事项时间线", conversations: "会话", messages: "消息", runs: "运行", run_events: "运行事件", cards: "卡片", card_reviews: "复习记录", notifications: "通知", files: "原件文件" };
+      for (const [k, v] of Object.entries(r))
+        if (k !== "wiki" && "added" in v && (v.added || v.updated)) console.log(`${(names[k] ?? k).padEnd(8)} 新增 ${v.added}${v.updated ? `，更新 ${v.updated}` : ""}${v.kept ? `，保留本地 ${v.kept}` : ""}`);
+      if (r.wiki?.conflicts.length) console.log(`知识库冲突 ${r.wiki.conflicts.length} 处：保留本地版本，远端版本存为同名 .remote.md：\n  ${r.wiki.conflicts.join("\n  ")}`);
+      console.log(o.dryRun ? "（预览，未写入）" : "合并完成。新原件的向量会由服务在后台补齐。");
+    } finally {
+      cleanupFetched(fetched);
+    }
+  });
+
 const space = program.command("space").description("管理空间（领域隔离：个人 / 项目 / 代码仓库 / 学习）");
 space
   .command("list")
