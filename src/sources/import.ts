@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { resolveCodeRefs } from "./callgraph.ts";
 import { ensureGrammars } from "./treesitter.ts";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, extname, join, relative, resolve, sep } from "node:path";
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { App } from "../core/app.ts";
 import { all, run } from "../core/db.ts";
@@ -177,18 +177,22 @@ export async function syncDirectorySpace(app: App, spaceId: string, onProgress?:
       seen.add(rel);
       const kind: SourceKind = /\.(md|markdown|mdx|txt|rst|adoc)$/i.test(rel) ? "doc" : "code";
       const result = upsertSource(app, { spaceId, kind, uri: rel, title: rel, text: buf.toString("utf8"), meta: { directoryRoot: space.rootPath } });
-      // Also adopt unchanged files imported before directory ownership was recorded.
-      run(app.db, "update sources set meta=json_set(meta, '$.directoryRoot', ?) where id=?", space.rootPath, result.id);
+      // Unchanged files imported before directory ownership was recorded: adopt them (once, not on every sync).
+      if (result.status === "unchanged")
+        run(app.db, "update sources set meta=json_set(meta, '$.directoryRoot', ?) where id=? and json_extract(meta, '$.directoryRoot') is not ?", space.rootPath, result.id, space.rootPath);
       tally(report, result);
     } catch {
       report.skipped.push(rel);
     }
     if (onProgress && i % 50 === 0) onProgress(i, files.length);
   });
-  for (const row of all<{ id: string; uri: string; meta: string }>(app.db, "select id, uri, meta from sources where space_id = ? and deleted_at is null and kind in ('code','doc')", spaceId)) {
-    // Only prune directory files; other project materials belong to the same space.
-    const meta = JSON.parse(row.meta || "{}");
-    const managed = meta.directoryRoot === space.rootPath;
+  for (const row of all<{ id: string; uri: string; kind: string; meta: string }>(app.db, "select id, uri, kind, meta from sources where space_id = ? and deleted_at is null and kind in ('code','doc')", spaceId)) {
+    // Only prune files that came from the directory; other project materials belong to the same space.
+    // Code files from before ownership was recorded carry no directoryRoot: in a repo space a relative
+    // path is a directory file too, otherwise files deleted from the repo would never go away.
+    const meta = JSON.parse(row.meta || "{}") as { directoryRoot?: string };
+    const legacy = meta.directoryRoot === undefined && space.kind === "repo" && row.kind === "code" && !/^[a-z][a-z\d+.-]*:/i.test(row.uri) && !isAbsolute(row.uri);
+    const managed = meta.directoryRoot === space.rootPath || legacy;
     if (managed && !seen.has(row.uri)) {
       deleteSource(app, row.id);
       report.removed++;
