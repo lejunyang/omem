@@ -24,15 +24,19 @@ const QUESTION = {
 };
 
 export function guardEnabled(app: App) {
-  return app.config.guard.provider !== "none" && !!app.config.guard.url;
+  const g = app.config.guard;
+  return g.provider !== "none" && !!(g.url || g.modelDir);
 }
 
 /** Probability that a piece of text is an actual injection attempt; null when the judge is unavailable. */
 export async function injectionScore(app: App, text: string): Promise<number | null> {
   const cfg = app.config.guard;
   if (!guardEnabled(app)) return null;
+  const { judgeUrl, judgeDone } = await import("./judge.ts");
+  let url = cfg.url ?? "本地判官";
   try {
-    const res = await fetch(`${cfg.url!.replace(/\/$/, "")}/v1/systemone`, {
+    url = await judgeUrl(app);
+    const res = await fetch(`${url.replace(/\/$/, "")}/v1/systemone`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ state: { message: text.slice(0, cfg.maxChars) }, questions: { q: QUESTION } }),
@@ -42,8 +46,10 @@ export async function injectionScore(app: App, text: string): Promise<number | n
     const body = (await res.json()) as { answers: { q: { probabilities: Record<string, number> } } };
     return body.answers.q.probabilities["实际的指令注入尝试"] ?? null;
   } catch (e) {
-    warnOnce(`[omem] 注入检测不可用（${cfg.url}）：${(e as Error).message}`);
+    warnOnce(`[omem] 注入检测不可用（${url}）：${(e as Error).message}`);
     return null;
+  } finally {
+    judgeDone(app);
   }
 }
 

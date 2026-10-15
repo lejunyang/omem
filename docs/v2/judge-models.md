@@ -59,10 +59,11 @@ T2Retrieval 前 20 题，omem 纯全文检索取 top-10（190 次判断），问
 
 ## 复现
 
+日常使用不需要下面这些：`omem setup` → 注入标记会经 osdk 下载模型（`startlux-models/StartLux-Decision-v1-*-Q8_0-GGUF`，固定修订）、装 llama.cpp（`conda:llama.cpp`）和 uv，omem 需要时自己启动这两个进程，空闲 3 分钟后关掉（`src/sources/judge.ts`）。手动跑评测时：
+
 ```bash
-hf download startlux-models/StartLux-Decision-2B-Q8_0-GGUF --local-dir models/sl2
-# llama.cpp 预编译包（ubuntu x64 CPU）：github.com/ggml-org/llama.cpp/releases
+hf download startlux-models/StartLux-Decision-v1-2B-Q8_0-GGUF --local-dir models/sl2
 llama-server -m models/sl2/StartLux-Decision-2B-Q8_0.gguf -c 8192 --parallel 1 --cache-ram 0 -ctxcp 0 --port 8081
-cd models/sl2 && pip install -r requirements.txt && python -m startlux_decision.gguf_server --model-dir . --llama http://127.0.0.1:8081 --port 8090
+cd models/sl2 && uv run --project <omem>/scripts/startlux python -m startlux_decision.gguf_server --model-dir . --llama http://127.0.0.1:8081 --port 8090
 # POST http://127.0.0.1:8090/v1/systemone {"state": {...}, "questions": [{"type": "choice", ...}]}
 ```

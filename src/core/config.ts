@@ -89,19 +89,23 @@ export const configSchema = z.object({
       doclingArtifacts: z.string().optional(),
     })
     .default({ engines: ["docling", "pdftotext", "pandoc"] }),
-  /** Optional prompt-injection flagging with a local judge (StartLux-Decision server). Flags only, never blocks. */
+  /** Optional prompt-injection flagging with a local judge (StartLux-Decision). Flags only, never blocks. */
   guard: z
     .object({
       provider: z.enum(["none", "startlux"]).default("none"),
-      /** StartLux decision server (gguf_server or server), e.g. http://127.0.0.1:8090 */
+      /** Directory with the StartLux-Decision GGUF repo (weights + startlux_decision/); omem starts and stops the judge itself. */
+      modelDir: z.string().optional(),
+      /** Use a judge server you run yourself (…/v1/systemone) instead of the one omem starts. */
       url: z.string().optional(),
+      /** Stop the judge after this long without requests. */
+      idleMs: z.number().int().min(10_000).default(180_000),
       threshold: z.number().min(0).max(1).default(0.6),
       /** Source kinds written by other people that get checked. */
       kinds: z.array(z.string()).default(["chat", "web", "doc"]),
       maxChars: z.number().int().min(200).default(1200),
       timeoutMs: z.number().int().default(60_000),
     })
-    .default({ provider: "none", threshold: 0.6, kinds: ["chat", "web", "doc"], maxChars: 1200, timeoutMs: 60_000 }),
+    .default({ provider: "none", idleMs: 180_000, threshold: 0.6, kinds: ["chat", "web", "doc"], maxChars: 1200, timeoutMs: 60_000 }),
   lark: z
     .object({
       enabled: z.boolean().default(false),
