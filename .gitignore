@@ -30,5 +30,6 @@ docs/archive/2026-10-01-baseline/implementation/screenshots/*.png
 .pnpm-store/
 __pycache__/
 *.py[cod]
+.venv/
 package-lock.json
 .scratch/
