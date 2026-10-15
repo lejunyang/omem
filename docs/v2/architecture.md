@@ -141,6 +141,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
 | 空间、原件、切分、全文 + 符号 + 可选向量检索 | 已实现，测试覆盖 | `src/sources`、`src/search` |
+| 原件列表：普通空间平铺，代码仓库空间按目录展示；网址与会话标识不拆成目录，目录/文件节点明确区分 | 已实现；2026-10-15 修复 URL 与超过 12 条数据导致的白屏 | `web/src/views/Sources.vue` |
 | Agent 运行时（ACP、claude/codex 命令行后备）与 MCP 工具（HTTP 与 stdio 桥）；25 个内置 ACP Agent + 官方注册表添加 | 已实现；假 ACP Agent 端到端测试；真实 Claude Code、OpenCode（含 MCP 工具调用）已跑通，Gemini / Qwen / Copilot / goose 握手通过（需登录） | `src/agents/acp.ts`、`tools.ts` |
 | 问答、记忆更正与版本链、事项与时间线 | 已实现，真实模型抽查通过 | `roles/assistant.md` |
 | 新材料整理（记忆/事项/页面/通知） | 已实现，真实模型抽查通过 | `roles/ingest.md` |
