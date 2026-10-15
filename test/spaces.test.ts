@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { createReadStream, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createReadStream, mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,7 +46,7 @@ it("attaches to a project, reuses canonical roots and preserves other materials"
   const doc = importText(app, "project", { text: "项目约定", kind: "doc", uri: "https://example.com/prd" });
   const localDoc = importText(app, "project", { text: "其他文档", kind: "doc", uri: "design.md" });
   expect((await callTool(ctx, "connect_repository", { repository: repo, space: "project" })).isError).toBe(false);
-  expect(getSpace(app, "project").rootPath).toBe(repo);
+  expect(getSpace(app, "project").rootPath).toBe(realpathSync(repo)); // canonical: tmpdir is a symlink on macOS
   const alias = join(root, "alias");
   symlinkSync(repo, alias);
   mkdirSync(join(repo, "subdir"));
@@ -106,3 +106,22 @@ it("clones HTTP links under omem home, reuses concurrent requests and does not r
     expect(listSpaces(app).length).toBe(count);
   } finally { await new Promise<void>((done) => server.close(() => done())); }
 }, 30000);
+
+it("still prunes files deleted from a repo that were imported before ownership was recorded", async () => {
+  const legacyRepo = join(root, "legacy");
+  mkdirSync(legacyRepo);
+  execFileSync("git", ["init", "-q", "-b", "main", legacyRepo]);
+  writeFileSync(join(legacyRepo, "keep.ts"), "export const keep = 1;\n");
+  writeFileSync(join(legacyRepo, "gone.ts"), "export const gone = 1;\n");
+  execFileSync("git", ["-C", legacyRepo, "add", "."]);
+  execFileSync("git", ["-C", legacyRepo, "-c", "user.name=T", "-c", "user.email=t@e.c", "commit", "-qm", "i"]);
+  expect((await callTool(ctx, "connect_repository", { repository: legacyRepo, id: "legacy" })).isError).toBe(false);
+  // Simulate rows written by older versions: no directoryRoot in meta.
+  app.db.prepare("update sources set meta='{}' where space_id='legacy'").run();
+  rmSync(join(legacyRepo, "gone.ts"));
+  const report = await syncDirectorySpace(app, "legacy");
+  expect(report.removed).toBe(1);
+  const left = listSources(app, { spaceId: "legacy" }).sources;
+  expect(left.map((s) => s.uri)).toEqual(["keep.ts"]);
+  expect(JSON.parse(app.db.prepare("select meta from sources where space_id='legacy' and uri='keep.ts'").get()!.meta as string).directoryRoot).toBe(realpathSync(legacyRepo));
+});
