@@ -322,13 +322,18 @@ function editProfile(p: Profile) {
     </section>
 
     <section v-else-if="tab === 'lark' && config" class="stack">
-      <p class="muted">飞书机器人是日常指挥入口：私聊可以提问、交代事项、交办任务；机器人所在的群聊会被保存为聊天原件并交给助理整理。通知也会发到私聊。应用密钥从环境变量读取，不写入配置文件。</p>
+      <p class="muted">飞书机器人是日常指挥入口：私聊可以提问、交代事项、交办任务；机器人所在的群聊会被保存为聊天原件并交给助理整理。通知也会发到私聊。</p>
       <label class="row"><input type="checkbox" :checked="config.lark.enabled" @change="saveConfig({ lark: { ...config.lark, enabled: ($event.target as HTMLInputElement).checked } })" />启用飞书机器人</label>
-      <label class="field"><span>App ID</span><input class="input mono" :value="config.lark.appId ?? ''" @change="saveConfig({ lark: { ...config.lark, appId: ($event.target as HTMLInputElement).value } })" /></label>
-      <label class="field"><span>App Secret 环境变量名</span><input class="input mono" :value="config.lark.appSecretEnv" @change="saveConfig({ lark: { ...config.lark, appSecretEnv: ($event.target as HTMLInputElement).value } })" /></label>
-      <label class="field"><span>本人 open_id</span><input class="input mono" :value="config.lark.ownerOpenId ?? ''" placeholder="首次私聊机器人时会回复你的 open_id" @change="saveConfig({ lark: { ...config.lark, ownerOpenId: ($event.target as HTMLInputElement).value } })" /></label>
+      <div class="card pad stack">
+        <div class="row">
+          <strong>机器人应用</strong><span class="spacer" />
+          <span v-if="config.lark.appId" class="badge">已绑定 {{ config.lark.appId }} · {{ config.lark.ownerOpenId ? '本人已确认' : '待确认本人' }}</span>
+          <span v-else class="badge">未绑定</span>
+        </div>
+        <p class="muted small">在终端运行 <span class="mono">omem setup</span> → 渠道 → 飞书机器人：扫码创建新机器人，或绑定 lark-cli 里已有的应用；权限、长连接事件和卡片回调一并申请，不用在开放平台手工配置，也不用复制 App Secret。密钥只存在本机 <span class="mono">secrets/lark.json</span>（环境变量 {{ config.lark.appSecretEnv }} 可覆盖）。</p>
+        <label class="field"><span>本人 open_id（setup 扫码通常自动填）</span><input class="input mono" :value="config.lark.ownerOpenId ?? ''" placeholder="不知道可先私聊机器人一句，再运行 omem setup" @change="saveConfig({ lark: { ...config.lark, ownerOpenId: ($event.target as HTMLInputElement).value } })" /></label>
+      </div>
       <label class="field"><span>默认空间</span><select class="select" :value="config.lark.defaultSpace" @change="saveConfig({ lark: { ...config.lark, defaultSpace: ($event.target as HTMLSelectElement).value } })"><option v-for="s in state.spaces" :key="s.id" :value="s.id">{{ s.name }}</option></select></label>
-      <p class="muted small">在飞书开放平台创建企业自建应用，开启机器人能力，事件订阅选择“长连接”，添加 im.message.receive_v1 事件和 im:message 权限。个人文档读取使用官方 lark-cli 的用户登录。</p>
 
       <div class="card pad stack">
         <div class="row"><strong>个人消息采集（只读）</strong><span class="spacer" /><button class="btn sm" @click="loadLarkChats">读取最近会话</button><button class="btn sm" @click="pollNow">立即采集</button></div>
