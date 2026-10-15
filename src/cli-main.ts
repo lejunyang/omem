@@ -127,6 +127,28 @@ program
     await boot(home(), { port: o.port, host: o.host });
   });
 
+program
+  .command("service [action]")
+  .description("后台常驻服务（自带 PM2，崩溃自动重启、日志轮换）：start | stop | restart | status | logs")
+  .option("-n, --lines <n>", "logs：显示最近多少行", (v) => Number(v), 80)
+  .action(async (action: string | undefined, o) => {
+    const { manageService, formatService } = await import("./core/service.ts");
+    const a = action ?? "status";
+    if (a === "logs") {
+      const s = await manageService(home(), "status");
+      for (const f of s.logs) {
+        if (!existsSync(f)) continue;
+        console.log(`\x1b[2m==> ${f}\x1b[0m`);
+        console.log(readFileSync(f, "utf8").split("\n").slice(-o.lines).join("\n"));
+      }
+      return;
+    }
+    if (!["start", "stop", "restart", "status"].includes(a)) throw new Error("用法：omem service start | stop | restart | status | logs");
+    const s = await manageService(home(), a as "start");
+    console.log(formatService(s));
+    if ((a === "start" || a === "restart") && !s.healthy) process.exitCode = 1;
+  });
+
 const space = program.command("space").description("管理空间（领域隔离：个人 / 项目 / 代码仓库 / 学习）");
 space
   .command("list")
