@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { checkLarkApp, knownLarkApps, LARK_BOT_ADDONS, larkAppSecret, larkCliState, registerLarkBot, saveLarkSecret, setRegisterAppForTests } from "../src/channels/lark-setup.ts";
 import { ensureDefaultSchedules, listSchedules } from "../src/core/scheduler.ts";
-import { setToolResolverForTests, toolCommand } from "../src/core/tools.ts";
+import { installSpec, setToolResolverForTests, toolCommand } from "../src/core/tools.ts";
 import { guardEnabled } from "../src/sources/guard.ts";
 import { judgeModelFile, judgeProject } from "../src/sources/judge.ts";
 import { testApp } from "./helpers.ts";
@@ -93,8 +93,9 @@ describe("setup helpers", () => {
   });
 
   it("runs uv and llama-server through osdk when they are not on PATH", () => {
-    setToolResolverForTests((n) => (n === "uv" ? ["osdk", "exec", "--no-deps", "-t", "pypi:uv", "--", "uv"] : null));
-    expect(toolCommand("uv")?.slice(0, 5)).toEqual(["osdk", "exec", "--no-deps", "-t", "pypi:uv"]);
+    expect(installSpec("uv")).toBe("conda:uv"); // standalone binary: no osdk-managed Python needed
+    setToolResolverForTests((n) => (n === "uv" ? ["osdk", "exec", "--no-deps", "-t", "conda:uv", "--", "uv"] : null));
+    expect(toolCommand("uv")?.slice(0, 5)).toEqual(["osdk", "exec", "--no-deps", "-t", "conda:uv"]);
     expect(toolCommand("llama-server")).toBeNull();
   });
 

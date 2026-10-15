@@ -8,7 +8,7 @@ import { commandExists } from "./agents/spawn.ts";
 import type { App } from "./core/app.ts";
 import { builtinProfiles, roleNames, saveConfig, type AgentProfile, type Config } from "./core/config.ts";
 import { run } from "./core/db.ts";
-import { installTool, OSDK_TOOLS, toolCommand } from "./core/tools.ts";
+import { installSpec, installTool, toolCommand } from "./core/tools.ts";
 import { judgeProject } from "./sources/judge.ts";
 import { ensureDefaultSchedules, listSchedules, scheduleLabels } from "./core/scheduler.ts";
 import { larkCliInteractive, larkCliText, larkCliWithInput } from "./channels/lark-cli.ts";
@@ -202,9 +202,9 @@ async function setupDocumentsSection(config: Config, home: string) {
   config.documents.engines = ["docling", "pdftotext", "pandoc"];
   if (!toolCommand("uv")) {
     if (osdkAvailable()) {
-      out("  Docling 用 uv 管理 Python 依赖，正在经 osdk 安装（osdk install pypi:uv）…");
-      if (!installTool("uv", { inherit: true })) out("  uv 安装失败，稍后可运行 osdk install pypi:uv 重试。");
-    } else out("  Docling 需要 uv：安装 osdk 后运行 osdk install pypi:uv，或按 https://docs.astral.sh/uv/ 安装。");
+      out(`  Docling 用 uv 管理 Python 依赖，正在经 osdk 安装（osdk install ${installSpec("uv")}，独立程序，不需要先装 Python）…`);
+      if (!installTool("uv", { inherit: true })) out(`  uv 安装失败，稍后可运行 osdk install ${installSpec("uv")} 重试。`);
+    } else out(`  Docling 需要 uv：安装 osdk 后运行 osdk install ${installSpec("uv")}，或按 https://docs.astral.sh/uv/ 安装。`);
   }
   const uv = toolCommand("uv");
   if (uv && (await confirm({ message: "现在安装 Docling 的 Python 依赖？（含 PyTorch，约 1～2GB；否则第一次导入文档时再装）", default: true }))) {
@@ -267,8 +267,8 @@ async function setupGuardSection(config: Config) {
   if (!dir) throw new Error(`osdk 没有给出 ${m.value} 的本地路径`);
   for (const tool of ["llama-server", "uv"]) {
     if (toolCommand(tool)) continue;
-    out(`  经 osdk 安装 ${tool}（${OSDK_TOOLS[tool]}）…`);
-    if (!installTool(tool, { inherit: true })) throw new Error(`${tool} 安装失败，可运行 osdk install ${OSDK_TOOLS[tool]} 后重试`);
+    out(`  经 osdk 安装 ${tool}（${installSpec(tool)}）…`);
+    if (!installTool(tool, { inherit: true })) throw new Error(`${tool} 安装失败，可运行 osdk install ${installSpec(tool)} 后重试`);
   }
   const uv = toolCommand("uv")!;
   out("  准备判官的 Python 依赖（transformers、torch，约 1GB；已装过会复用）…");
