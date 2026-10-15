@@ -54,7 +54,12 @@ const tree = computed(() => {
   type Node = { name: string; path: string; dirs: Map<string, Node>; files: Source[] };
   const root: Node = { name: "", path: "", dirs: new Map(), files: [] };
   for (const s of list.value) {
-    const parts = s.uri.split("/");
+    // URLs and conversation identifiers are individual sources, not file paths.
+    if (/^[a-z][a-z\d+.-]*:/i.test(s.uri) && !/^[a-z]:[\\/]/i.test(s.uri)) {
+      root.files.push(s);
+      continue;
+    }
+    const parts = s.uri.replace(/\\/g, "/").split("/").filter(Boolean);
     let node = root;
     for (const part of parts.slice(0, -1)) {
       if (!node.dirs.has(part)) node.dirs.set(part, { name: part, path: node.path ? `${node.path}/${part}` : part, dirs: new Map(), files: [] });
@@ -62,19 +67,22 @@ const tree = computed(() => {
     }
     node.files.push(s);
   }
-  const rows: { depth: number; dir?: string; path?: string; source?: Source; count?: number }[] = [];
+  type Row =
+    | { kind: "dir"; depth: number; dir: string; path: string; count: number }
+    | { kind: "file"; depth: number; source: Source };
+  const rows: Row[] = [];
   const count = (n: Node): number => n.files.length + [...n.dirs.values()].reduce((a, d) => a + count(d), 0);
   const walk = (n: Node, depth: number) => {
     for (const d of [...n.dirs.values()].sort((a, b) => a.name.localeCompare(b.name))) {
-      rows.push({ depth, dir: d.name, path: d.path, count: count(d) });
+      rows.push({ kind: "dir", depth, dir: d.name, path: d.path, count: count(d) });
       if (!collapsed.value.has(d.path) || q.value) walk(d, depth + 1);
     }
-    for (const f of n.files.sort((a, b) => a.uri.localeCompare(b.uri))) rows.push({ depth, source: f });
+    for (const f of n.files.sort((a, b) => a.uri.localeCompare(b.uri))) rows.push({ kind: "file", depth, source: f });
   };
   walk(root, 0);
   return rows;
 });
-const isTree = computed(() => list.value.some((s) => s.uri.includes("/")) && list.value.length > 12);
+const isTree = computed(() => space.value?.kind === "repo" && list.value.length > 12 && list.value.some((s) => /[\\/]/.test(s.uri) && (!/^[a-z][a-z\d+.-]*:/i.test(s.uri) || /^[a-z]:[\\/]/i.test(s.uri))));
 function toggle(path: string) {
   const next = new Set(collapsed.value);
   next.has(path) ? next.delete(path) : next.add(path);
@@ -151,11 +159,11 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
       <div class="items">
         <template v-if="isTree">
           <template v-for="(r, i) in tree" :key="i">
-            <button v-if="r.dir" class="row-btn dir" :style="{ paddingLeft: 8 + r.depth * 14 + 'px' }" @click="toggle(r.path!)">
-              <Icon :name="collapsed.has(r.path!) && !q ? 'right' : 'down'" :size="13" /><Icon name="folder" :size="14" /><span class="ellipsis">{{ r.dir }}</span><span class="muted small">{{ r.count }}</span>
+            <button v-if="r.kind === 'dir'" class="row-btn dir" :style="{ paddingLeft: 8 + r.depth * 14 + 'px' }" @click="toggle(r.path)">
+              <Icon :name="collapsed.has(r.path) && !q ? 'right' : 'down'" :size="13" /><Icon name="folder" :size="14" /><span class="ellipsis">{{ r.dir }}</span><span class="muted small">{{ r.count }}</span>
             </button>
-            <router-link v-else :to="`/sources/${r.source!.id}`" class="row-btn" :class="{ on: r.source!.id === id }" :style="{ paddingLeft: 26 + r.depth * 14 + 'px' }">
-              <span class="ellipsis">{{ r.source!.uri.split("/").pop() }}</span>
+            <router-link v-else :to="`/sources/${r.source.id}`" class="row-btn" :class="{ on: r.source.id === id }" :style="{ paddingLeft: 26 + r.depth * 14 + 'px' }">
+              <span class="ellipsis">{{ r.source.uri.split("/").pop() }}</span>
             </router-link>
           </template>
         </template>
