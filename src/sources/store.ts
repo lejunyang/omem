@@ -76,7 +76,6 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
   if (existing && existing.hash === hash && !existing.deleted_at) return { id: existing.id, status: "unchanged" };
   const id = existing?.id ?? newId("s");
   const at = now();
-  const { chunks, outline } = chunkSource(input.kind, input.uri, input.title, text);
   tx(app.db, () => {
     if (existing) {
       clearIndex(app, id);
@@ -109,28 +108,34 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
         at,
       );
     }
-    const insChunk = app.db.prepare(
-      "insert into chunks(source_id,space_id,ord,kind,title,path,line_start,line_end,text) values(?,?,?,?,?,?,?,?,?)",
-    );
-    const insFts = app.db.prepare("insert into chunks_fts(rowid,title,body) values(?,?,?)");
-    chunks.forEach((c, i) => {
-      const r = insChunk.run(id, input.spaceId, i, c.kind, c.title, c.path, c.lineStart, c.lineEnd, c.text);
-      const titleTerms = indexText(`${input.title} ${c.title} ${c.path} ${input.uri}`);
-      insFts.run(r.lastInsertRowid, titleTerms, indexText(c.text));
-    });
-    if (outline) {
-      const insSym = app.db.prepare(
-        "insert into symbols(source_id,space_id,name,qname,kind,line_start,line_end,signature,exported) values(?,?,?,?,?,?,?,?,?)",
-      );
-      for (const s of outline.symbols)
-        insSym.run(id, input.spaceId, s.name, s.qname, s.kind, s.lineStart, s.lineEnd, s.signature, s.exported ? 1 : 0);
-      const insRef = app.db.prepare("insert into code_refs(source_id,space_id,from_qname,to_name,kind,line,qualifier,bindings) values(?,?,?,?,?,?,?,?)");
-      for (const r of outline.refs)
-        insRef.run(id, input.spaceId, r.fromQname, r.toName, r.kind, r.line, r.qualifier ?? null, r.bindings ? JSON.stringify(r.bindings) : null);
-    }
+    writeIndex(app, id, input.spaceId, input.kind, input.uri, input.title, text);
   });
   app.emit({ type: "changed", entity: "source", id, spaceId: input.spaceId });
   return { id, status: existing ? "updated" : "created" };
+}
+
+/** Chunks, full-text rows, symbols and references for one source (caller holds the transaction). */
+function writeIndex(app: App, id: string, spaceId: string, kind: SourceKind, uri: string, title: string, text: string) {
+  const { chunks, outline } = chunkSource(kind, uri, title, text);
+  const insChunk = app.db.prepare("insert into chunks(source_id,space_id,ord,kind,title,path,line_start,line_end,text) values(?,?,?,?,?,?,?,?,?)");
+  const insFts = app.db.prepare("insert into chunks_fts(rowid,title,body) values(?,?,?)");
+  chunks.forEach((c, i) => {
+    const r = insChunk.run(id, spaceId, i, c.kind, c.title, c.path, c.lineStart, c.lineEnd, c.text);
+    insFts.run(r.lastInsertRowid, indexText(`${title} ${c.title} ${c.path} ${uri}`), indexText(c.text));
+  });
+  if (outline) {
+    const insSym = app.db.prepare("insert into symbols(source_id,space_id,name,qname,kind,line_start,line_end,signature,exported) values(?,?,?,?,?,?,?,?,?)");
+    for (const s of outline.symbols) insSym.run(id, spaceId, s.name, s.qname, s.kind, s.lineStart, s.lineEnd, s.signature, s.exported ? 1 : 0);
+    const insRef = app.db.prepare("insert into code_refs(source_id,space_id,from_qname,to_name,kind,line,qualifier,bindings) values(?,?,?,?,?,?,?,?)");
+    for (const r of outline.refs) insRef.run(id, spaceId, r.fromQname, r.toName, r.kind, r.line, r.qualifier ?? null, r.bindings ? JSON.stringify(r.bindings) : null);
+  }
+}
+
+/** Rebuild one stored source's index from its text, inside the caller's transaction (merging libraries). */
+export function reindexSource(app: App, id: string) {
+  const s = one<{ space_id: string; kind: string; uri: string; title: string; text: string; deleted_at: string | null }>(app.db, "select space_id, kind, uri, title, text, deleted_at from sources where id = ?", id);
+  clearIndex(app, id);
+  if (s && !s.deleted_at) writeIndex(app, id, s.space_id, s.kind as SourceKind, s.uri, s.title, s.text);
 }
 
 function clearIndex(app: App, id: string) {

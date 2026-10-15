@@ -60,6 +60,12 @@ function index(app: App, id: string, subject: string, content: string) {
   run(app.db, "insert into memories_fts(rowid, subject, content) values(?,?,?)", rowid, indexText(subject), indexText(content));
 }
 
+/** Rebuild one stored memory's full-text row (merging libraries). */
+export function reindexMemory(app: App, id: string) {
+  const m = one<{ subject: string; content: string }>(app.db, "select subject, content from memories where id = ?", id);
+  if (m) index(app, id, m.subject, m.content);
+}
+
 export function getMemory(app: App, id: string): Memory {
   const r = one<Row>(app.db, "select * from memories where id = ?", id);
   if (!r) throw new HttpError(404, `记忆不存在：${id}`);
