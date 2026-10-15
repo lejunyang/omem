@@ -4,6 +4,10 @@
 node = "24.18.1"
 pnpm = "11"
 
+[models.decision-2b.views]
+
+[models.memory-m3.views]
+
 [tasks]
 dev = "pnpm run dev"
 build = "pnpm run build"
@@ -27,6 +31,20 @@ run = "node scripts/eval-retrieval.ts"
 [models.docling-layout.views]
 
 [models.memory-zh.views]
+
+[models.decision-2b]
+source = "hf:startlux-models/StartLux-Decision-2B-Q8_0-GGUF@main"
+include = []
+exclude = []
+kind = "other"
+family = "startlux-decision"
+
+[models.memory-m3]
+source = "hf:Xenova/bge-m3@main"
+include = ["config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "onnx/model_quantized.onnx"]
+exclude = []
+kind = "embedding"
+family = "bge"
 
 [models.docling-tables]
 source = "hf:docling-project/docling-models@fc0f2d45e2218ea24bce5045f58a389aed16dc23"

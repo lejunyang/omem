@@ -53,6 +53,110 @@ url = "https://registry.npmmirror.com/pnpm/-/pnpm-11.28.5.tgz"
 file_name = "pnpm-11.28.5.tgz"
 checksum = "sha512:484563d30b4c2ad27cb48aa94ff2b302dbcebc8ff6bf28816c2589886e146ce7f76f354f3bc1a438e6f5e9768c302aa0a6f7add8232903cd4cf81426cbc14d9e"
 
+[models.decision-2b]
+provider = "huggingface"
+repository = "startlux-models/StartLux-Decision-2B-Q8_0-GGUF"
+requested_revision = "main"
+revision = "49624135da8b0892f1ab902731439a6793de5fab"
+endpoint = "https://huggingface.co"
+kind = "other"
+family = "startlux-decision"
+
+[[models.decision-2b.files]]
+path = ".gitattributes"
+size = 1637
+sha256 = "372f52c05f7867df60bc6c1a6c8dfacdcb9d2f81bcd93474b2c66f64c15eef57"
+
+[[models.decision-2b.files]]
+path = "LICENSE"
+size = 19347
+sha256 = "41003d4a74749c0220e33dd415042164b5a1093ed401f36277234f772d22d3d0"
+
+[[models.decision-2b.files]]
+path = "NOTICE"
+size = 12330
+sha256 = "ec7d09e98f04667acf3a33358ee4e830f6ee3b41251af388035aec40d4e47fe2"
+
+[[models.decision-2b.files]]
+path = "README.md"
+size = 3945
+sha256 = "899ecdf8ee075a02258712c09c026c4b14f06387981a7e7ee50d9372dc4a304d"
+
+[[models.decision-2b.files]]
+path = "StartLux-Decision-2B-Q8_0.gguf"
+size = 2012012128
+sha256 = "cca6f19b8036eff80b5e5e45607725fca5028b1212fd4087b63b5f5bf007021e"
+
+[[models.decision-2b.files]]
+path = "chat_template.jinja"
+size = 7755
+sha256 = "273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80"
+
+[[models.decision-2b.files]]
+path = "config.json"
+size = 2908
+sha256 = "ed1c1723241f23f7f4e23430759cbd7dcfb4103cbdfe052bfe7626b57c2615b4"
+
+[[models.decision-2b.files]]
+path = "decision_config.json"
+size = 476
+sha256 = "8b555dfe3cb852379d510f2c8379135c36578220e47398a85c024b12f1dbe3d8"
+
+[[models.decision-2b.files]]
+path = "merges.txt"
+size = 3353259
+sha256 = "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d"
+
+[[models.decision-2b.files]]
+path = "requirements.txt"
+size = 19
+sha256 = "97146089b3f8ad1ce62de24f2e38883281e45d1b376c19da92432ba33de5a9f2"
+
+[[models.decision-2b.files]]
+path = "startlux_decision/__init__.py"
+size = 184
+sha256 = "52c7fd27759098245b8fbe8fdb50846eefa06116b5500466621f6ff1139d61b0"
+
+[[models.decision-2b.files]]
+path = "startlux_decision/check.py"
+size = 702
+sha256 = "1e0b0eb0b5f078d6b0b97a8916536831f1d19818f7237c18ed48ab4b059431b7"
+
+[[models.decision-2b.files]]
+path = "startlux_decision/gguf_server.py"
+size = 5441
+sha256 = "c96fe68c65a7d876cf7ee7275f02c2088b8bd419e70c6d6005096c80b1fc1823"
+
+[[models.decision-2b.files]]
+path = "startlux_decision/jevfmt.py"
+size = 7937
+sha256 = "b0bd50b78e6391d91a8428db781949224012ee6b1ba8e6eda2889fda1ca4bfa7"
+
+[[models.decision-2b.files]]
+path = "startlux_decision/model.py"
+size = 15400
+sha256 = "a902607fdd2b34b7007bc26763cd17f9e9157c54a45dc0f3a5ef3b3e4e38db62"
+
+[[models.decision-2b.files]]
+path = "startlux_decision/server.py"
+size = 4702
+sha256 = "327b6488997ac75cab0e532d96950a02d579262eff827008458768f3b3f02b84"
+
+[[models.decision-2b.files]]
+path = "tokenizer.json"
+size = 12807982
+sha256 = "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
+
+[[models.decision-2b.files]]
+path = "tokenizer_config.json"
+size = 16709
+sha256 = "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c"
+
+[[models.decision-2b.files]]
+path = "vocab.json"
+size = 6722759
+sha256 = "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+
 [models.decision-gliclass]
 provider = "huggingface"
 repository = "knowledgator/gliclass-multilang-mini"
@@ -610,6 +714,47 @@ sha256 = "2a7d6c924b3cd12fb99a09280ca9c33a89c5d60b93253617d2e088c1a40374d9"
 path = "model_artifacts/tableformer/accurate/tm_config.json"
 size = 7060
 sha256 = "984e122ceb8ccf84d84c9d2882f6f2302a44b4f1e577babd6289892c36f3cffd"
+
+[models.memory-m3]
+provider = "huggingface"
+repository = "Xenova/bge-m3"
+requested_revision = "main"
+revision = "4de13258303883538bd53b696b452bf8099f0858"
+endpoint = "https://huggingface.co"
+kind = "embedding"
+family = "bge"
+include = [
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "onnx/model_quantized.onnx",
+]
+
+[[models.memory-m3.files]]
+path = "config.json"
+size = 770
+sha256 = "734a79bf12d388c1467a4e3ab625f45de7f6906cffcfb93a1eca1787504bed95"
+
+[[models.memory-m3.files]]
+path = "onnx/model_quantized.onnx"
+size = 569694530
+sha256 = "0826f8c1ab9edf1801db86c61919d4d108e8bfc0b809ec823ad366882ff0b77d"
+
+[[models.memory-m3.files]]
+path = "special_tokens_map.json"
+size = 964
+sha256 = "8c785abebea9ae3257b61681b4e6fd8365ceafde980c21970d001e834cf10835"
+
+[[models.memory-m3.files]]
+path = "tokenizer.json"
+size = 17082821
+sha256 = "6710678b12670bc442b99edc952c4d996ae309a7020c1fa0096dd245c2faf790"
+
+[[models.memory-m3.files]]
+path = "tokenizer_config.json"
+size = 1173
+sha256 = "7e4c1cc848840aeccdd763458c18dd525eb0f795c992e00ebe9c28554e7db2d4"
 
 [models.memory-zh]
 provider = "huggingface"
