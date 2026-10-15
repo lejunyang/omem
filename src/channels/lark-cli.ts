@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 
@@ -10,15 +10,37 @@ export function setLarkCliForTests(fn: ((args: string[], cwd?: string) => Promis
   override = fn;
 }
 
-/** Run the official lark-cli (bundled npm dependency) and parse its JSON output. */
-export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string): Promise<any> {
-  if (override) return override(args, cwd);
-  let script: string;
+function larkCliScript() {
   try {
-    script = createRequire(import.meta.url).resolve("@larksuite/cli/scripts/run.js");
+    return createRequire(import.meta.url).resolve("@larksuite/cli/scripts/run.js");
   } catch {
     throw new Error("未安装 @larksuite/cli；请重新安装 omem 依赖");
   }
+}
+
+/** Run lark-cli in the terminal (device-flow login): its prompts and QR code go straight to the user. */
+export function larkCliInteractive(args: string[]) {
+  if (override) return 0;
+  return spawnSync(process.execPath, [larkCliScript(), ...args], { stdio: "inherit", windowsHide: true }).status ?? 1;
+}
+
+/** lark-cli's plain-text output (e.g. an ASCII QR code), or null on failure. */
+export function larkCliText(args: string[]): string | null {
+  if (override) return null;
+  const r = spawnSync(process.execPath, [larkCliScript(), ...args], { encoding: "utf8", windowsHide: true, timeout: 20_000 });
+  return r.status === 0 ? r.stdout : null;
+}
+
+/** Run lark-cli with a secret on stdin (never on the command line), output to the terminal. */
+export function larkCliWithInput(args: string[], stdin: string) {
+  if (override) return 0;
+  return spawnSync(process.execPath, [larkCliScript(), ...args], { input: stdin, stdio: ["pipe", "inherit", "inherit"], windowsHide: true }).status ?? 1;
+}
+
+/** Run the official lark-cli (bundled npm dependency) and parse its JSON output. */
+export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string): Promise<any> {
+  if (override) return override(args, cwd);
+  const script = larkCliScript();
   try {
     const { stdout } = await exec(process.execPath, [script, ...args], { timeout: timeoutMs, maxBuffer: 50_000_000, windowsHide: true, cwd });
     const value = JSON.parse(stdout);

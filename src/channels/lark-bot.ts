@@ -15,6 +15,7 @@ import { answerFromChannel } from "./common.ts";
 import { startProgress } from "./lark-progress.ts";
 import { handleCardAction } from "./lark-actions.ts";
 import { sendLark, setLarkClient } from "./lark-send.ts";
+import { larkAppSecret } from "./lark-setup.ts";
 import { routeWatchedMessages } from "./lark-watch.ts";
 
 /**
@@ -69,8 +70,8 @@ function kv(app: App, key: string, value?: string) {
 
 export async function startLarkBot(app: App) {
   const cfg = app.config.lark;
-  const appSecret = process.env[cfg.appSecretEnv];
-  if (!cfg.appId || !appSecret) throw new Error(`需要配置 lark.appId 和环境变量 ${cfg.appSecretEnv}`);
+  const appSecret = larkAppSecret(app.home, cfg.appId, cfg.appSecretEnv);
+  if (!cfg.appId || !appSecret) throw new Error("还没有绑定飞书机器人：运行 omem setup → 渠道 → 飞书机器人（扫码创建或授权已有应用）");
   const client = new lark.Client({ appId: cfg.appId, appSecret, domain: lark.Domain.Feishu });
   let botOpenId: string | null = kv(app, "lark_bot_open_id") ?? null;
   try {
