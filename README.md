@@ -58,7 +58,9 @@ pnpm install
 pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 ```
 
-第一次使用先运行 `omem setup`（或 `osdk run cli -- setup`）：交互式选择 Agent 后端与模型、向量模型（经 osdk 下载并锁定）、PDF/DOCX 解析（Docling 及其模型）、飞书 / Telegram / QQ·微信渠道、注入标记、会话与并发、定时任务。每一项都会先显示本机已安装什么、各选项的代价，缺东西时告诉你怎么装。
+第一次使用先运行 `omem setup`（或 `osdk run cli -- setup`）：交互式选择 Agent 后端与模型、向量模型（经 osdk 下载并锁定）、PDF/DOCX 解析（Docling 及其模型）、飞书 / Telegram / QQ·微信渠道、注入标记、会话与并发、定时任务。每一项都会先显示本机已安装什么、各选项的代价；缺的 uv、llama.cpp 和模型经 osdk 装好（不用把 osdk 的 shims 加进 PATH）。最后可以直接启动后台服务。
+
+**后台服务**：`omem service start | stop | restart | status | logs`。用 omem 自带的 PM2 常驻运行（PM2 数据放在 `~/.omem/service/pm2`，不碰你自己的 PM2），崩溃自动重启，日志在 `~/.omem/service/logs` 按天和大小轮换。不装开机自启，电脑重启后再 `omem service start`。前台调试用 `omem serve`。
 
 打开网页后：
 
@@ -109,7 +111,8 @@ pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 ## 命令行
 
 ```bash
-omem serve                                  # 启动服务
+omem serve                                  # 前台启动服务
+omem service start                          # 后台常驻（PM2，崩溃自动重启）；stop / restart / status / logs
 omem space add omem --path E:\Projects\omem  # 代码仓库空间
 omem add notes.md -s personal               # 保存材料（文件/目录/网址/飞书文档，- 读标准输入）
 omem search "预算 约定"                      # 检索原件、页面、记忆
@@ -144,13 +147,17 @@ omem hook claude|codex                      # 记录编码 Agent 会话（配在
 
 ## 飞书
 
-**机器人**（指挥助理、代你回复）：设置 → 渠道或 `omem setup`，填写 App ID，App Secret 放在环境变量 `OMEM_LARK_APP_SECRET`。首次私聊机器人会告诉你自己的 open_id，填入后只有你（和 `omem user add` 登记的人）能指挥它。
+**机器人**（指挥助理、代你回复）：运行 `omem setup` → 渠道 → 飞书机器人。它会先读本机 lark-cli 的应用和登录状态、omem 已保存的应用，然后让你选：
+
+- **继续用 / 绑定已有应用**：已保存凭据的直接校验；没有凭据的扫码授权，omem 拿到凭据并补齐所需权限。
+- **创建新机器人**：扫码后在飞书里一步建好应用，开启机器人能力、长连接事件（`im.message.receive_v1` 等）和卡片回调 `card.action.trigger`，并授予消息、卡片、文档、日历、任务等权限（不含群管理和权限修改）。
+
+扫码走官方 SDK 的应用注册流程，事件走 SDK 长连接，不需要公网地址；扫码人的 open_id 自动设为本人，只有你（和 `omem user add` 登记的人）能指挥它。App Secret 存在 `~/.omem/secrets/lark.json`（仅本人可读），配置文件只记 App ID；环境变量 `OMEM_LARK_APP_SECRET` 仍可覆盖。企业租户里新权限可能要管理员审批后才生效。
 
 - 回答时先在你的消息上加“处理中”表情，再发一张进度卡片，实时显示 Agent 的步骤、思考片段和正在写的答案，完成后原地变成答案。
 - Agent 可以用机器人回复或开话题回复、加表情、发 Markdown、图片和文件、带按钮/下拉/输入框/表单的卡片，并限定只有某些人能操作；别人点了按钮或提交了表单，会作为新消息回到原来的会话继续处理。用法见内置技能 `lark-messaging`。
-- 按钮和表单需要在开放平台“事件与回调 → 回调配置”里选长连接并订阅 `card.action.trigger`。
 
-**读取你自己的飞书**（lark-cli 个人登录，只读，从不以你的身份发消息）：
+**读取你自己的飞书**（lark-cli 个人登录，只读，从不以你的身份发消息）：在 setup 的同一部分选择读取方式；lark-cli 未登录或登录过期时会直接发起扫码登录（lark-cli 还没有应用时可以用机器人应用），并可顺手开启每 10 分钟的采集。
 
 - 消息：可选“所有有新消息的会话”或“只读订阅的会话 + @我”。每个群或私聊存成一份聊天原件，每次只拉上次之后的新消息，包括话题里的回复；消息里的图片、文件会下载入库，飞书文档链接会读成原件。
 - 日程（前一天到未来一周）和妙记（总结、待办、逐字稿）也会读进来。

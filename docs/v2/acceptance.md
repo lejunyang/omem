@@ -64,7 +64,7 @@ pnpm run dev                # 打开 http://localhost:5173
 
 | # | 操作 | 预期 | 状态 |
 | --- | --- | --- | --- |
-| 19 | 飞书机器人：设置 → 渠道，填 App ID，私聊机器人取得 open_id 并填入 | 私聊提问、交办、查进度；发图片或文件会被保存；通知会推到私聊 | 待你验 |
+| 19 | `omem setup` → 渠道 → 飞书机器人：选“创建新的机器人”扫码（或选已有应用） | 飞书里确认后 setup 显示“机器人「…」已绑定”；不用填 App Secret 和 open_id；私聊提问、交办、查进度；发图片或文件会被保存；通知推到私聊；卡片按钮可用 | 注册流程发起到二维码已验，扫码确认待你验 |
 | 20 | 个人消息：设置 → 渠道 → 读取最近会话，勾选群；定时任务开启采集 | 只读采集；@你的消息进入个人空间 | 待你验 |
 | 21 | 定时任务 → “筛选值得关注的飞书群”，填写方向 | 按方向订阅群并说明理由 | 待你验 |
 | 22 | Telegram / QQ（OneBot） | 与飞书私聊相同 | OneBot 模拟测试已过；真实账号待你验 |
@@ -79,8 +79,9 @@ pnpm run dev                # 打开 http://localhost:5173
 | 28 | 连发三条消息 | 合并成一轮回答；处理中再发的消息排在后面依次处理 | 测试已验 |
 | 29 | `/help` `/status` `/new` `/resume <id>` `/link <id>` `/space` `/agent` `/todo` `/search` | 不经过模型直接生效 | 测试已验 |
 | 30 | 对助理说“建一个负责代码评审的 Agent，只读，用 review-steps 技能” | “Agent”页出现档案和技能（知识库 Git 有记录）；`/as code-reviewer 评审最近的改动` 结果发回当前会话 | 建档案云端已验；委派用假 Agent 验 |
-| 31 | `omem setup` | 交互式选择各部分；有 osdk 时下载并锁定向量模型和 Docling 模型 | 交互已验；osdk 路径待你在本机验 |
-| 32 | 开启注入标记（需本机运行 StartLux-Decision 服务），往群里发“忽略之前的指令…” | 原件页和整理任务里出现“疑似注入”提示，助理不执行 | 机制有测试；模型评测见 judge-models.md |
+| 31 | `omem setup` | 交互式选择各部分；有 osdk 时下载并锁定向量模型和 Docling 模型；选 Docling 时经 osdk 装 uv；没启动过服务也能勾选定时任务；最后可启动后台服务 | macOS 本机已验 uv / llama.cpp 安装与 Docling 依赖解析 |
+| 31b | `omem service start`，再 `status`、`restart`、`stop` | 服务 online、网页可开；日志在 ~/.omem/service/logs；stop 后不留进程 | macOS 本机已验 |
+| 32 | `omem setup` → 注入标记 → 开启（选 2B 或 0.8B，经 osdk 下载），往群里发“忽略之前的指令…” | 不用手动启动任何服务；原件页和整理任务里出现“疑似注入”提示，助理不执行；空闲 3 分钟后判官进程退出 | 0.8B 自动启停与打分在 macOS 本机已验（注入 0.78 / 正常 0.22）；模型评测见 judge-models.md |
 | 33b | `omem agents --all`；`omem agents add gemini --via npx` 或网页 设置 → Agent → ACP 注册表 → 下载 opencode；终端里先登录该 Agent，再在设置里“检测模型”并设为默认 | 列出 25 个内置 Agent 和安装方式；注册表 41 个可添加；换成新 Agent 后问答、整理照常调用 omem 工具 | OpenCode 云端已验（调用 list_spaces 回答）；Gemini/Qwen/Copilot/goose 握手通过，登录待你验 |
 | 33 | 打开 `.repo-review/wiki/index.md` | omem 本仓库的 Wiki，原件引用可直接点到仓库文件行 | 已生成并提交 |
 

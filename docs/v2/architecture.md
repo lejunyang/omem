@@ -155,8 +155,10 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 主动留意：问答时顺带记下本人透露的计划、承诺、等待和长期事实；做梦时复查这段时间本人说过的话补漏；聊天整理时同样关注本人自己的发言 | 已实现，真实模型抽查通过 | `roles/assistant.md`、`dreamer.md`、`ingest.md` |
 | 会话线程：私聊 / 群 / 话题（飞书 thread_id、Telegram 论坛话题）各自一个会话；Agent 会话在线保持 → 恢复（ACP session/resume|load、`claude --resume`、`codex exec resume`）→ 从滚动摘要冷启动；连发合并；每会话串行、会话间并行；对话与后台分开的并发槽；空闲过期后新会话带上一段摘要；斜杠命令 | 已实现；假 ACP Agent 测试覆盖；真实 Claude Code ACP 验证了在线续聊和重启后恢复 | `src/agents/threads.ts`、`sessions.ts`、`inbox.ts`、`commands.ts` |
 | 能力沉淀：Agent 档案（`library/_agents/*.md`：prompt、后端/模型、工具、写权限、技能、MCP、目录、AGENTS.md 式约定）与技能（`library/_skills/*/SKILL.md`）；助理可建、可委派（`run_agent`、`/as`），结果发回原会话；做梦起草草稿，本人 `/approve` | 已实现；真实模型建档案与技能已验 | `src/agents/specs.ts`、网页“Agent”页 |
-| 注入标记（可选）：本地 StartLux-Decision 判官给别人写的群聊/网页/文档打标，提醒 Agent 只当材料；不拦截 | 已实现（需本机开判官服务）；评测见 judge-models.md | `src/sources/guard.ts` |
-| 设置向导 `omem setup`：Agent、向量模型（osdk）、Docling 及其模型（osdk）、渠道、注入标记、会话、定时任务 | 已实现；osdk 路径未在云端实测（云端无 osdk） | `src/setup.ts` |
+| 注入标记（可选）：本地 StartLux-Decision 判官给别人写的群聊/网页/文档打标，提醒 Agent 只当材料；不拦截。omem 按需拉起 llama-server（osdk `conda:llama.cpp`）和模型自带的 Python 服务（`scripts/startlux`，uv 锁定），空闲 3 分钟关闭；也可指向自己运行的服务 | 已实现；macOS arm64 上 0.8B 端到端验证（首次启动约 15 秒，之后每段约 60ms）；评测见 judge-models.md | `src/sources/guard.ts`、`judge.ts` |
+| 设置向导 `omem setup`：Agent、向量模型（osdk）、Docling 及其模型（osdk，uv 经 `osdk install pypi:uv`）、渠道、注入标记、会话、定时任务；结束时可启动/重启后台服务 | 已实现；osdk 安装 uv / llama.cpp、uv 解析 Docling 依赖在 macOS 本机验证 | `src/setup.ts`、`src/core/tools.ts` |
+| 飞书机器人接入：读 lark-cli 的应用与登录状态和 omem 已保存的应用；绑定已有应用或扫码新建（官方 SDK `registerApp`，同时申请权限、长连接事件和卡片回调）；校验凭据和机器人能力；扫码人 open_id 设为本人；App Secret 存 `secrets/lark.json`（0600）；lark-cli 未登录时就地扫码登录 | 已实现；SDK 注册流程真实发起到二维码一步，扫码确认待真实账号验收；其余假客户端测试覆盖 | `src/channels/lark-setup.ts` |
+| 后台服务 `omem service`：自带 PM2（独立 PM2_HOME）、崩溃自动重启、pm2-logrotate 日志轮换；不装开机自启 | 已实现；macOS 本机 start / restart / stop / status 验证 | `src/core/service.ts` |
 | 飞书机器人能力：回复/话题回复、表情、Markdown、图片文件、Card 2.0（按钮、下拉、输入、选人、日期、表单）、限定处理人、草稿确认、进度卡片实时更新；卡片回调回到原会话 | 已实现；假客户端测试覆盖，真实飞书待验收 | `src/channels/lark-send.ts`、`lark-actions.ts`、`lark-progress.ts`、技能 `lark-messaging` |
 | 飞书个人采集（lark-cli）：全部或订阅会话增量拉取（每会话游标、话题回复）、附件与文档链接入库、日程、妙记 | 已实现；模拟 lark-cli 测试覆盖，真实账号待验收 | `src/channels/lark-personal.ts` |
 | 监听群：规则（档案、触发、回复方式 none/draft/auto），每条消息只处理一次，群/话题即处理会话 | 已实现 | `src/channels/lark-watch.ts`、`/watch`、`set_chat_watch` |
