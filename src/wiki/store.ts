@@ -180,12 +180,11 @@ export function pageContext(app: App, spaceId: string, slug: string) {
   for (const c of cites)
     if (!sources.has(c.source_id))
       sources.set(c.source_id, { sourceId: c.source_id, uri: c.uri, title: c.title, lineStart: c.line_start, lineEnd: c.line_end, stale: c.hash !== c.cur, deleted: !!c.deleted_at });
-  const outgoing = all<{ to_id: string }>(app.db, "select to_id from page_links where from_id = ?", id).map((r) => r.to_id);
-  const existing = new Set(all<{ id: string }>(app.db, "select id from pages where space_id = ?", spaceId).map((r) => r.id));
+  const missing = all<{ to_id: string }>(app.db, "select l.to_id from page_links l left join pages p on p.id=l.to_id where l.from_id=? and p.id is null", id).map((r) => r.to_id);
   return {
     backlinks: backlinks.map((b) => ({ spaceId: b.space_id, slug: b.slug, title: b.title })),
     sources: [...sources.values()],
-    missingLinks: outgoing.filter((o) => !existing.has(o)),
+    missingLinks: missing,
     history: fileHistory(app.libraryDir, relative(app.libraryDir, pageFile(app, spaceId, slug)).split(sep).join("/"), 30),
   };
 }

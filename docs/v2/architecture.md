@@ -62,6 +62,7 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
     _agents/*.md              Agent 档案
     _skills/<名称>/SKILL.md    技能（内置技能从 skills/library 播种）
   files/                      上传与采集的原始文件（代码仓库只记录路径，不复制）
+  repos/                      对话接入 Git 链接后克隆的仓库（不在知识库 Git 中）
   runs/<run-id>/              交办编码的 worktree 与补丁
   agents/<id>/<版本>/          从 ACP 注册表下载的 Agent 程序
 ```
@@ -140,6 +141,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 主助手对话创建空间、关联本地 Git 仓库或 Git 链接（clone 到数据目录 repos/）；路径去重、冲突检查、仅本人全空间运行可用 | 已实现；2026-10-15 | `src/core/repositories.ts`、`src/agents/tools.ts`、`roles/assistant.md` |
 | 空间、原件、切分、全文 + 符号 + 可选向量检索 | 已实现，测试覆盖 | `src/sources`、`src/search` |
 | 原件列表：普通空间平铺，代码仓库空间按目录展示；网址与会话标识不拆成目录，目录/文件节点明确区分 | 已实现；2026-10-15 修复 URL 与超过 12 条数据导致的白屏 | `web/src/views/Sources.vue` |
 | Agent 运行时（ACP、claude/codex 命令行后备）与 MCP 工具（HTTP 与 stdio 桥）；25 个内置 ACP Agent + 官方注册表添加 | 已实现；假 ACP Agent 端到端测试；真实 Claude Code、OpenCode（含 MCP 工具调用）已跑通，Gemini / Qwen / Copilot / goose 握手通过（需登录） | `src/agents/acp.ts`、`tools.ts` |

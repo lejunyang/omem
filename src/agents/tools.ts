@@ -1,18 +1,20 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
-import { findSpace, listSpaces } from "../core/spaces.ts";
-import { HttpError, truncate } from "../core/util.ts";
+import { createSpace, findSpace, listSpaces, updateSpace } from "../core/spaces.ts";
+import { cloneRepository, repositoryRoot } from "../core/repositories.ts";
+import { findUser, OWNER } from "../core/users.ts";
+import { HttpError, slugify, truncate } from "../core/util.ts";
 import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede } from "../memory/store.ts";
 import { search, type HitType } from "../search/search.ts";
-import { importText, importUrl } from "../sources/import.ts";
+import { importText, importUrl, repoFiles, syncDirectorySpace } from "../sources/import.ts";
 import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
 import { listPages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
 import { createRun, getRun, listRuns, runEvents, setRunOutput } from "./runs.ts";
@@ -96,6 +98,68 @@ const sourceKinds: Record<string, HitType[]> = {
 };
 
 // ---------------------------------------------------------------- read tools
+
+function manageSpaces(ctx: ToolContext) {
+  const user = findUser(ctx.app, ctx.userId ?? OWNER);
+  if (!user || user.disabledAt || user.role !== "owner" || ctx.spaces !== null)
+    throw new HttpError(403, "创建空间或关联服务器仓库仅限本人的主助手（需可访问所有空间）");
+}
+
+def({
+  name: "create_space",
+  description: "本人要求时创建知识空间。先 list_spaces 去重；关联仓库用 connect_repository。相同 id 重试返回已有空间，配置冲突时报错。",
+  schema: z.object({ id: z.string().optional(), name: z.string().trim().min(1), kind: z.enum(["personal", "project", "repo", "learning", "topic"]).optional(), description: z.string().optional() }),
+  write: true,
+  handler: (ctx, a) => {
+    manageSpaces(ctx);
+    const existing = findSpace(ctx.app, slugify(a.id || a.name));
+    if (existing) {
+      if (existing.name !== a.name || (a.kind && existing.kind !== a.kind) || (a.description !== undefined && existing.description !== a.description))
+        throw new HttpError(409, `空间 ${existing.id} 已存在且配置不同；请使用已有空间或换一个 id`);
+      return `空间 ${existing.id} 已存在（${existing.name}，${existing.kind}）。`;
+    }
+    const s = createSpace(ctx.app, a);
+    return `已创建空间 ${s.id}（${s.name}，${s.kind}）。`;
+  },
+});
+
+def({
+  name: "connect_repository",
+  description: "本人要求接入仓库时使用：本地绝对路径关联 Git 根目录；HTTP(S)/SSH Git 链接尝试 clone 到 omem 数据目录 repos/ 后关联。可指定已有空间；否则按仓库路径复用或创建 repo 空间。自动导入代码。不会覆盖已有的不同仓库。",
+  schema: z.object({ repository: z.string().trim().min(1), space: z.string().optional(), id: z.string().optional(), name: z.string().trim().min(1).optional(), description: z.string().optional() }),
+  write: true,
+  handler: async (ctx, a) => {
+    manageSpaces(ctx);
+    if (a.space && a.id) throw new HttpError(400, "关联已有空间用 space；新建空间用 id，不要同时填写");
+    const target = a.space ? findSpace(ctx.app, space(ctx, a.space)) : a.id ? findSpace(ctx.app, slugify(a.id)) : null;
+    const root = isAbsolute(a.repository) ? repositoryRoot(a.repository) : await cloneRepository(ctx.app, a.repository);
+    if (target?.rootPath && repositoryRoot(target.rootPath) !== root)
+      throw new HttpError(409, `空间 ${target.id} 已关联另一仓库；请创建独立空间，未更改原关联`);
+    const same = listSpaces(ctx.app).find((s) => {
+      if (!s.rootPath) return false;
+      try { return repositoryRoot(s.rootPath) === root; } catch { return false; }
+    });
+    if (target && same && target.id !== same.id) throw new HttpError(409, `仓库已关联空间 ${same.id}；请直接使用该空间`);
+    let s = target ?? same;
+    if (!s) {
+      const name = a.name ?? root.split(/[\\/]/).pop()!;
+      const id = slugify(a.id || name);
+      if (findSpace(ctx.app, id)) throw new HttpError(409, `空间 ${id} 已存在；指定 space 关联或用不同 id 新建`);
+      s = createSpace(ctx.app, { id, name, kind: "repo", description: a.description, rootPath: root });
+    } else if (!s.rootPath) {
+      const files = new Set(repoFiles(root));
+      const collision = all<{ uri: string }>(ctx.app.db, "select uri from sources where space_id=? and deleted_at is null", s.id).find((source) => files.has(source.uri));
+      if (collision) throw new HttpError(409, `空间 ${s.id} 已有原件 ${collision.uri} 与仓库文件同名；请使用独立仓库空间，未更改原关联`);
+      s = updateSpace(ctx.app, s.id, { rootPath: root });
+    }
+    try {
+      const report = await syncDirectorySpace(ctx.app, s.id);
+      return `已关联仓库到空间 ${s.id}（${s.name}）。\n目录：${root}\n导入：新增 ${report.created}，更新 ${report.updated}，跳过 ${report.skipped.length}。交办编码请用 repo_space: "${s.id}"。`;
+    } catch {
+      return `空间 ${s.id} 已关联仓库 ${root}，但索引同步失败；关联已保留，重试 connect_repository 可重新同步。`;
+    }
+  },
+});
 
 def({
   name: "list_spaces",
@@ -943,7 +1007,7 @@ def({
   handler: (ctx, a) => {
     const id = space(ctx, a.repo_space);
     const s = findSpace(ctx.app, id)!;
-    if (!s.rootPath) throw new HttpError(400, `空间 ${id} 没有关联代码目录`);
+    if (!s.rootPath) throw new HttpError(400, `空间 ${id} 没有关联代码目录；先用 connect_repository 传本地仓库绝对路径或 Git 链接关联，再交办`);
     const r = createRun(ctx.app, { kind: "code", spaceId: id, title: truncate(a.task.split("\n")[0], 80), input: { task: a.task, checkCommand: a.check_command }, parentId: ctx.runId });
     return `已交办，运行 ${r.id}。完成后会通知。`;
   },
