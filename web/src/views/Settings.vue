@@ -152,6 +152,30 @@ async function setRoleModel(role: string, key: "model" | "effort", value: string
   toast(`已保存：${role} 的${key === "model" ? "模型" : "思考强度"}`, "ok");
   void load();
 }
+const fallbackText = computed({
+  get: () => JSON.stringify(config.value?.agents.fallback ?? [], null, 2),
+  set: (v: string) => (fallbackDraft.value = v),
+});
+const fallbackDraft = ref("");
+const queueMinutes = computed({
+  get: () => String(config.value?.agents.queueTimeoutMinutes ?? 30),
+  set: () => {},
+});
+async function saveFallback() {
+  let parsed: unknown;
+  try {
+    parsed = fallbackDraft.value.trim() ? JSON.parse(fallbackDraft.value) : [];
+  } catch (e) {
+    return toast(`JSON 不合法：${(e as Error).message}`, "error");
+  }
+  await saveConfig({ agents: { ...config.value.agents, fallback: parsed } }, "已保存兜底链");
+  void load();
+}
+async function saveQueueMinutes() {
+  const v = Math.max(1, Math.min(240, Number((document.getElementById("queue-min") as HTMLInputElement)?.value ?? 30) || 30));
+  await saveConfig({ agents: { ...config.value.agents, queueTimeoutMinutes: v } }, `排队最多等待 ${v} 分钟`);
+  void load();
+}
 async function addProfile() {
   try {
     const p = JSON.parse(profileJson.value);
@@ -307,6 +331,15 @@ function editProfile(p: Profile) {
             </div>
           </div>
         </div>
+      </div>
+      <div class="card pad stack">
+        <div class="section-title">排队与兜底</div>
+        <p class="muted small">主后端排队（traex 资源队列）或被限流时，按顺序换下面的后端/模型重试一轮；Agent 档案任务不自动改道。排队时普通空闲计时暂停，最多等设定的分钟数。</p>
+        <label class="field"><span>排队最多等待（分钟，1–240）</span>
+          <input id="queue-min" class="input" type="number" min="1" max="240" :value="queueMinutes" @change="saveQueueMinutes" />
+        </label>
+        <textarea class="textarea mono" rows="7" :value="fallbackText" @input="fallbackDraft = ($event.target as HTMLTextAreaElement).value" placeholder='[{"profile":"traex","model":"Doubao-Seed-2.1-Pro"}]&#10;[{"profile":"codex-sol","effort":"low"}]' />
+        <div class="row"><span class="muted small">每项：后端 id 必填，model/effort 可覆盖。留空数组 [] 表示不兜底。</span><span class="spacer" /><button class="btn primary sm" @click="saveFallback">保存兜底链</button></div>
       </div>
       <div class="card pad stack">
         <div class="section-title">添加或修改 Agent 配置</div>
