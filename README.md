@@ -104,6 +104,7 @@ pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 /status  /stop  /sessions  当前状态 / 停止 / 最近的会话
 /link <id>  /summary  /compact   关联会话 / 查看摘要 / 从摘要重开 Agent 会话
 /space <id>  /agent <后端>  /as <档案> [任务]   切空间 / 换后端 / 让某个 Agent 档案接管或做一件事
+/model [模型] [effort=low|medium|high]   本会话临时换模型/思考强度；`save` 存为该任务默认，`off` 恢复；飞书里直接发 /model 弹配置卡片；模型名不区分大小写和点/连字符（GPT-Sol-6.1 自动匹配 gpt-6.1-sol）
 /agents  /skills  /approve agent|skill <名称>
 /mode chat|topic  /idle <小时>
 /remember <内容>  /todo <事项>  /search <关键词>  /runs
