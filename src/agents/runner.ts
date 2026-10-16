@@ -179,7 +179,7 @@ export function prepareRun(
   if (scoped && !scoped.includes(space.id)) throw new HttpError(403, `${userName(app, userId)} 不能访问空间 ${space.id}`);
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
-  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: scoped, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft });
+  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: scoped, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, agentProfile: profile.id, model: profile.model, effort: profile.effort });
   const guide = spaceGuide(app, space.id).trim();
   const lessons = learnedContext(app, space.id, userId);
   const skills = skillIndex(app, spec?.skills);

@@ -12,6 +12,7 @@ import { configPath, omemHome } from "./core/config.ts";
 import { createSpace, ensurePersonalSpace, getSpace, listSpaces, updateSpace } from "./core/spaces.ts";
 import { listItems, upsertItem } from "./items/store.ts";
 import { listMemories } from "./memory/store.ts";
+import { memoriesCommand } from "./cli-memories.ts";
 import { boot } from "./main.ts";
 import { search } from "./search/search.ts";
 import { importDirectory, importFile, importText, importUrl, syncDirectorySpace } from "./sources/import.ts";
@@ -568,6 +569,8 @@ program
     }
     throw new Error("用法：omem setup（交互式）| omem setup embeddings [--model …] | omem setup documents");
   });
+
+program.addCommand(memoriesCommand);
 
 program
   .command("import-v1 <db>")
