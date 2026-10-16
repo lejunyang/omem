@@ -39,7 +39,25 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
       addMessage(app, inter.conversationId, "assistant", choice === "send" ? "（本人确认，草稿已发出）" : "（本人决定不发这条草稿）", null, { command: true });
     return { toast: { type: "success", content: choice === "send" ? "已发送" : "已放弃" } };
   }
-  if (!inter.conversationId || !findThread(app, inter.conversationId)) return { toast: { type: "warning", content: "找不到对应的会话" } };
+  if (!inter.conversationId || !findThread(app, inter.conversationId)) {
+    // Standalone item notification card: resolve the item button without an agent turn.
+    const itemId = (inter.payload as { itemId?: string }).itemId;
+    const act = (typeof value === "object" && value ? (value as { action?: string }).action : "") ?? "";
+    const m = /^item:(done|cancel|act):([^:]+)(?::([\s\S]*))?$/.exec(act);
+    if (itemId && m) {
+      const [, op, id, extra] = m;
+      const { getItem, upsertItem } = await import("../items/store.ts");
+      if (!getItem(app, id)) return { toast: { type: "warning", content: "事项已不存在" } };
+      if (op === "done") upsertItem(app, id, { status: "done", note: `${opName} 在飞书卡片上标记已处理` }, "user");
+      else if (op === "cancel") upsertItem(app, id, { status: "cancelled", note: `${opName} 在飞书卡片上忽略` }, "user");
+      run(app.db, "update card_interactions set status='done', handled_at=datetime('now'), handled_by=? where id=?", operator, inter.id);
+      return {
+        card: buildCard({ title: op === "done" ? "已处理" : "已忽略", color: op === "done" ? "green" : "grey", blocks: [{ markdown: `事项 ${id} 已${op === "done" ? "标记为已处理" : "忽略"}` }] }),
+        toast: { type: "success", content: op === "done" ? "已处理" : "已忽略" },
+      };
+    }
+    return { toast: { type: "warning", content: "找不到对应的会话" } };
+  }
   // The /model card changes the thread's model settings directly; no agent turn.
   const buttonAction = value as { action?: string } | undefined;
   const formValue = typeof action.form_value === "string" ? safeJson(action.form_value) : action.form_value;

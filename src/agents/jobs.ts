@@ -240,8 +240,14 @@ registerHandler("heartbeat", async (ctx) => {
   // 1. Due reminders need no model: deliver them directly.
   const due = dueReminders(app);
   for (const item of due) {
-    notify(app, { title: `提醒：${item.title}`, body: item.detail, link: `#/items/${item.id}` });
-    addItemEvent(app, item.id, "reminded", "已按时提醒", "agent");
+    notify(app, {
+      title: `提醒：${item.title}`,
+      body: [item.detail, `[在 omem 中打开](#/items/${item.id})`].filter(Boolean).join("\n\n"),
+      link: `#/items/${item.id}`,
+      entity: "item",
+      entityId: item.id,
+    });
+    addItemEvent(app, item.id, "reminded", "已按时提醒（含飞书操作卡片）", "agent");
     upsertItem(app, item.id, { remindAt: null, status: item.status === "snoozed" ? "open" : item.status }, "agent");
   }
   // 2. Watches and waits only need attention when new material arrived.

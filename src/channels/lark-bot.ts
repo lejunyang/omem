@@ -42,6 +42,8 @@ type Inbound = {
   createTime: string;
   /** Topic (话题) the message belongs to: thread_id in topic groups and threaded replies. */
   topicId?: string;
+  /** Quoted / reply-referenced message, resolved to readable text. */
+  quote?: { messageId?: string; sender?: string; text?: string; origin?: string };
 };
 
 export function messageText(raw: string | undefined, type: string | undefined): string {
@@ -111,15 +113,34 @@ export async function startLarkBot(app: App) {
   });
 
   addNotificationSink(async (n) => {
-    const markdown = `**${n.title}**\n${n.body}`;
-    if (n.userId === OWNER) {
-      const chat = kv(app, "lark_owner_chat");
-      if (chat) await sendLark({ chatId: chat }, { markdown });
-      else if (cfg.ownerOpenId) await sendLark({ userId: cfg.ownerOpenId }, { markdown });
+    const target = n.userId === OWNER
+      ? (kv(app, "lark_owner_chat") ? { chatId: kv(app, "lark_owner_chat")! } : cfg.ownerOpenId ? { userId: cfg.ownerOpenId } : null)
+      : { userId: identitiesOf(app, n.userId).find((i) => i.channel === "lark")?.external_id ?? "" };
+    if (!target || (!("userId" in target) && !("chatId" in target)) || ("userId" in target && !target.userId)) return;
+    if (n.entity === "item" && n.entityId) {
+      // Actionable item card: 已处理 / 忽略 resolve directly, 详情 opens the web item.
+      const { buildCard, recordInteraction } = await import("./lark-send.ts");
+      const card = buildCard({
+        title: n.title,
+        color: "blue",
+        blocks: [
+          { markdown: n.body || " " },
+          ...(n.link ? [{ note: `详情：${n.link}` }] : []),
+          {
+            buttons: [
+              { text: "已处理", value: `item:done:${n.entityId}`, style: "primary" },
+              { text: "忽略", value: `item:cancel:${n.entityId}` },
+              ...((n.actions ?? []).map((a) => ({ text: a.label, value: `item:act:${n.entityId}:${a.action}`, ...(a.style ? { style: a.style } : {}) }))),
+            ],
+          },
+        ],
+      });
+      const sent = await sendLark(target, { card });
+      recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: n.entityId, notificationId: n.id } });
       return;
     }
-    const id = identitiesOf(app, n.userId).find((i) => i.channel === "lark")?.external_id;
-    if (id) await sendLark({ userId: id }, { markdown });
+    const markdown = `**${n.title}**\n${n.body}`;
+    await sendLark(target, { markdown });
   });
 
   const pending = new Map<string, NodeJS.Timeout>();
@@ -162,6 +183,31 @@ export async function startLarkBot(app: App) {
     return pick.slice(-15).join("\n");
   };
 
+  /** Fetch the message a user quoted/reply-referenced, so the agent knows what they mean. */
+  const fetchQuote = async (msg: Record<string, unknown>): Promise<Inbound["quote"]> => {
+    const parentId = typeof (msg as { parent_id?: string }).parent_id === "string" ? (msg as { parent_id: string }).parent_id : "";
+    const threadId = typeof (msg as { thread_id?: string }).thread_id === "string" ? (msg as { thread_id: string }).thread_id : "";
+    // thread_id is the topic; parent_id points at the quoted message. Same id = plain topic reply.
+    if (!parentId || parentId === threadId) return undefined;
+    try {
+      const r = await client.request({
+        method: "GET",
+        url: `/open-apis/im/v1/messages/${encodeURIComponent(parentId)}`,
+        params: { user_id_type: "open_id" },
+      });
+      const items = (r as { data?: { items?: Record<string, unknown>[] } }).data?.items ?? [];
+      const orig = items[0] as { body?: { content?: string }; message_type?: string; sender?: { id?: { open_id?: string } } } | undefined;
+      if (!orig) return { messageId: parentId };
+      return {
+        messageId: parentId,
+        sender: orig.sender?.id?.open_id ? await nameOf(orig.sender.id.open_id) : undefined,
+        text: messageText(orig.body?.content, orig.message_type).slice(0, 2000) || undefined,
+      };
+    } catch {
+      return { messageId: parentId };
+    }
+  };
+
   const handle = async (m: Inbound) => {
     if (m.chatType === "group") {
       captureGroup(m);
@@ -192,6 +238,7 @@ export async function startLarkBot(app: App) {
           context,
           contextLabel: m.topicId ? "话题里" : "群里",
           externalMessageId: m.messageId,
+          quote: m.quote,
           userId,
         },
         {
@@ -279,8 +326,10 @@ export async function startLarkBot(app: App) {
       };
       if ((msg.message_type === "image" || msg.message_type === "file") && (m.chatType === "group" || resolveIdentity(app, "lark", m.senderId)))
         saveResource(msg, m).catch((e) => console.warn("[omem] 飞书附件保存失败", e));
-      if (msg.message_type !== "image" && msg.message_type !== "file") handle(m).catch((e) => console.warn("[omem] 飞书消息处理失败", e));
-      else if (m.chatType === "group") captureGroup(m);
+      if (msg.message_type !== "image" && msg.message_type !== "file") {
+        if (resolveIdentity(app, "lark", m.senderId) === OWNER) m.quote = await fetchQuote(msg);
+        handle(m).catch((e) => console.warn("[omem] 飞书消息处理失败", e));
+      } else if (m.chatType === "group") captureGroup(m);
       return {};
     },
     "card.action.trigger": async (data: any) => {
