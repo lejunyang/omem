@@ -215,7 +215,7 @@ export type Interaction = {
   chatId: string | null;
   conversationId: string | null;
   runId: string | null;
-  purpose: "agent" | "draft";
+  purpose: "agent" | "draft" | "model";
   allowed: string[];
   payload: Record<string, unknown>;
   status: "open" | "done" | "expired";

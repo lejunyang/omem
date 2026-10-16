@@ -1,0 +1,44 @@
+import type { AgentProfile } from "../core/config.ts";
+import { commandExists } from "./spawn.ts";
+import { runAcp } from "./acp.ts";
+
+/**
+ * The models and effort levels an ACP backend actually offers. Probes open
+ * and close one short session and are cached in kv (backends change rarely;
+ * probe again with /model refresh or setup "检测模型").
+ */
+export type ProbeInfo = { at: string; agent: string; models: string[]; efforts: string[]; error?: string };
+
+export function cachedProbe(app: { db: { prepare: (sql: string) => { get(...p: unknown[]): unknown } } }, profileId: string): ProbeInfo | null {
+  const row = app.db.prepare("select value from kv where key = ?").get(`probe:${profileId}`) as { value: string } | undefined;
+  if (!row) return null;
+  try {
+    return JSON.parse(row.value) as ProbeInfo;
+  } catch {
+    return null;
+  }
+}
+
+export function saveProbe(app: { db: { prepare: (sql: string) => { run(...p: unknown[]): unknown } } }, profileId: string, probe: ProbeInfo) {
+  app.db.prepare("insert into kv(key,value) values(?,?) on conflict(key) do update set value=excluded.value").run(`probe:${profileId}`, JSON.stringify(probe));
+}
+
+/** Probe a profile now (spawns the CLI briefly). */
+export async function probeProfile(profile: AgentProfile): Promise<ProbeInfo> {
+  if (profile.transport !== "acp" || !commandExists(profile.command))
+    return { at: new Date().toISOString(), agent: profile.command, models: [], efforts: [], error: "命令行 Agent 不支持探测" };
+  try {
+    const r = await runAcp({ ...profile, model: undefined, effort: undefined }, { cwd: process.cwd(), prompt: "", probe: true }, () => {});
+    const opts = r.probe?.options ?? [];
+    const modelOpt = opts.find((o) => o.id === "model" || o.category === "model");
+    const effortOpt = opts.find((o) => o.id !== "model" && (o.category === "thought_level" || /effort|reasoning/i.test(o.id)));
+    return {
+      at: new Date().toISOString(),
+      agent: r.probe?.agent ?? profile.command,
+      models: (modelOpt?.values ?? []).filter((v): v is string => typeof v === "string"),
+      efforts: (effortOpt?.values ?? []).filter((v): v is string => typeof v === "string"),
+    };
+  } catch (e) {
+    return { at: new Date().toISOString(), agent: profile.command, models: [], efforts: [], error: (e as Error).message.slice(0, 300) };
+  }
+}

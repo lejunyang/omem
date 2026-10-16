@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { allProfiles } from "../core/config.ts";
+import { allProfiles, saveConfig, type Config } from "../core/config.ts";
 import { findSpace, listSpaces } from "../core/spaces.ts";
 import { truncate } from "../core/util.ts";
 import { upsertItem } from "../items/store.ts";
@@ -33,7 +33,7 @@ import {
  * Unknown `/words` fall through to the assistant as ordinary text.
  */
 type Ctx = { app: App; thread: Thread; args: string; inb: Inbound };
-type Command = { usage: string; help: string; run: (c: Ctx) => string | Promise<string> };
+type Command = { usage: string; help: string; card?: (c: Ctx) => Record<string, unknown> | Promise<Record<string, unknown>>; run: (c: Ctx) => string | Promise<string> };
 
 const chatKey = (t: Thread) => (t.key ?? "").split("#")[0];
 
@@ -47,7 +47,7 @@ const commands: Record<string, Command> = {
         ...["new", "status", "stop", "sessions", "resume", "link", "summary", "compact"].map(line),
         "",
         "**路由**",
-        ...["space", "agent", "as", "agents", "skills", "approve", "mode", "idle", "watch"].map(line),
+        ...["space", "agent", "model", "as", "agents", "skills", "approve", "mode", "idle", "watch"].map(line),
         "",
         "**快捷**",
         ...["remember", "todo", "search", "review", "runs", "whoami"].map(line),
@@ -58,7 +58,7 @@ const commands: Record<string, Command> = {
   new: {
     usage: "/new [标题]",
     help: "结束当前会话，开始新的（旧会话可用 /resume 找回）",
-    run: ({ app, thread, args }) => {
+    run: async ({ app, thread, args, inb }) => {
       releaseThreadSession(thread.id);
       archiveThread(app, thread.id);
       maybeSummarize(app, thread.id, 2);
@@ -77,7 +77,7 @@ const commands: Record<string, Command> = {
       const [profileId, actor] = (t.agentProfile ?? "").split("|");
       return [
         `会话 ${t.id}「${t.title || "(无标题)"}」 · ${t.channel}${t.key ? ` ${t.key}` : ""}`,
-        `空间：${t.spaceId} · 回答者：${t.settings.spec ? `Agent 档案 ${t.settings.spec}` : "助理"}${t.settings.profile ? ` · 后端 ${t.settings.profile}` : ""}`,
+        `空间：${t.spaceId} · 回答者：${t.settings.spec ? `Agent 档案 ${t.settings.spec}` : "助理"}${t.settings.profile ? ` · 后端 ${t.settings.profile}` : ""}${t.settings.model || t.settings.effort ? ` · 本会话模型 ${t.settings.model ?? "默认"}/${t.settings.effort ?? "默认"}` : ""}`,
         `Agent 会话：${liveInfo ? `在线（${liveInfo.agent}，空闲 ${liveInfo.idleSeconds} 秒）` : t.agentSession ? `可恢复（${profileId ?? ""}${actor ? " / " + actor : ""}）` : "无（下一条消息新建）"} · 已进行 ${t.agentTurns} 轮`,
         lane.length ? `进行中：${lane.map((r) => `${r.id} ${r.status === "running" ? "运行中" : "排队"}「${truncate(r.title, 30)}」`).join("；")}` : "没有进行中的任务",
         t.key ? `群设置：${cs.mode === "topic" ? "每个话题独立会话" : cs.mode === "chat" ? "整个群一个会话" : "默认（有话题时按话题）"}${cs.spaceId ? ` · 空间 ${cs.spaceId}` : ""}` : "",
@@ -169,6 +169,58 @@ const commands: Record<string, Command> = {
       resetAgentSession(app, thread.id);
       releaseThreadSession(thread.id);
       return `本会话改用空间 ${id}。`;
+    },
+  },
+  model: {
+    card: (c) => modelCardCommand(c),
+    usage: "/model [模型名] [effort=low|medium|high] | off | save <模型> [effort=…]",
+    help: "查看/临时更换本会话的模型和思考强度；save 存为该任务的默认；off 恢复默认。模型名不区分大小写、点和连字符（GPT-Sol-6.1 = gpt-6.1-sol）",
+    run: async ({ app, thread, args, inb }) => {
+      const text = args.trim();
+      const profiles = allProfiles(app.config);
+      const profileId = thread.settings.profile ?? app.config.agents.default ?? profiles[0]?.id;
+      const profile = profiles.find((p) => p.id === profileId);
+      const probe = cachedProbeSync(app, profileId);
+      if (!text) {
+        // In Feishu the bare command opens the interactive model card; elsewhere show text.
+        if (inb.channel === "lark") {
+          const card = await commands.model.card?.({ app, thread, args: "", inb });
+          if (card) return JSON.stringify({ __omem_card: card });
+        }
+        const models = probe?.models ?? (profile?.model ? [profile.model] : []);
+        return [
+          `后端：${profileId ?? "未配置"}`,
+          `本会话：${thread.settings.model ?? "默认模型"} / ${thread.settings.effort ?? "默认强度"}${thread.settings.model || thread.settings.effort ? "（仅本会话生效）" : ""}`,
+          models.length ? `可选模型：${models.join(", ")}` : "还没探测过可选模型（网页 Agent 页点“检测模型”，或 /model save 直接填名字）",
+          probe?.efforts?.length ? `可选强度：${probe.efforts.join(", ")}` : "",
+          "用法：/model gpt-6.1-sol effort=high（本会话）｜/model save gpt-6.1-sol effort=low（存为这类任务默认）｜/model off（恢复默认）",
+        ].filter(Boolean).join("\n");
+      }
+      if (text === "off") {
+        updateThread(app, thread.id, { settings: { model: null, effort: null } });
+        releaseThreadSession(thread.id);
+        return "本会话恢复使用默认模型和思考强度。";
+      }
+      const persist = text.startsWith("save ");
+      const { model, effort } = parseModelArgs(persist ? text.slice(5) : text);
+      if (!model && !effort) return "没看出要改成什么。用法：/model 模型名 effort=low|medium|high";
+      if (persist) {
+        // Stored on the role this thread runs (assistant unless an agent spec answers here).
+        const role = thread.settings.spec ? "assistant" : "assistant";
+        const next = structuredClone(app.config) as Config;
+        const roles = new Map(Object.entries(next.agents.roleModels ?? {}));
+        const byProfile = new Map(Object.entries(roles.get(role) ?? {}));
+        const cur = byProfile.get(profileId!) ?? {};
+        byProfile.set(profileId!, { ...cur, ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
+        roles.set(role, Object.fromEntries(byProfile));
+        next.agents.roleModels = Object.fromEntries(roles);
+        saveConfig(next, app.home);
+        Object.assign(app.config, next);
+        return `已把 ${role} 类任务用 ${profileId} 时的默认改为 ${model ?? "模型不变"} / ${effort ?? "强度不变"}（不影响其他任务和其他会话）。`;
+      }
+      updateThread(app, thread.id, { settings: { model: model ?? null, effort: effort ?? null } });
+      releaseThreadSession(thread.id);
+      return `本会话改用 ${model ?? "默认模型"} / ${effort ?? "默认强度"}，下一条消息生效。群里只影响这个群/话题；/model off 恢复。`;
     },
   },
   agent: {
@@ -397,4 +449,27 @@ export const commandNames = Object.keys(commands);
 /** Message history helper for /status-like views elsewhere. */
 export function lastMessages(app: App, threadId: string, n = 5) {
   return threadMessages(app, threadId, { limit: n });
+}
+
+// /model card for Feishu (built from the thread's current model state).
+async function modelCardCommand(c: Ctx) {
+  const { modelCard } = await import("../channels/lark-model-card.ts");
+  return modelCard(c.app, c.thread.id);
+}
+
+// /model helpers: probe cache and loose "name effort=high" parsing.
+function cachedProbeSync(app: App, profileId?: string) {
+  if (!profileId) return null;
+  const row = app.db.prepare("select value from kv where key = ?").get(`probe:${profileId}`) as { value: string } | undefined;
+  if (!row) return null;
+  try {
+    return JSON.parse(row.value) as { models: string[]; efforts: string[] };
+  } catch {
+    return null;
+  }
+}
+export function parseModelArgs(text: string): { model?: string; effort?: string } {
+  const effort = /\beffort\s*[=:]\s*([a-z0-9.-]+)/i.exec(text)?.[1]?.toLowerCase();
+  const model = text.replace(/\beffort\s*[=:]\s*[a-z0-9.-]+/i, "").trim() || undefined;
+  return { model, effort };
 }

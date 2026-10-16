@@ -12,10 +12,12 @@ import type { App } from "../core/app.ts";
 export async function answerFromChannel(
   app: App,
   input: Inbound & { channel: string; chatId: string },
-  hooks: { onStart?: (runId: string) => void | Promise<void>; onMerged?: () => void | Promise<void> } = {},
+  hooks: { onStart?: (runId: string) => void | Promise<void>; onMerged?: () => void | Promise<void>; onCard?: (card: Record<string, unknown>) => void | Promise<void> } = {},
 ): Promise<string | null> {
   const r = await receive(app, input);
-  if (r.reply !== null) return r.reply;
+  if (r.card) await hooks.onCard?.(r.card);
+  if (r.reply !== null && r.reply !== "[card]") return r.reply;
+  if (r.card && r.reply === "[card]") return null;
   if (r.merged || !r.runId) {
     await hooks.onMerged?.();
     return null;

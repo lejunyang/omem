@@ -40,7 +40,24 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
     return { toast: { type: "success", content: choice === "send" ? "已发送" : "已放弃" } };
   }
   if (!inter.conversationId || !findThread(app, inter.conversationId)) return { toast: { type: "warning", content: "找不到对应的会话" } };
+  // The /model card changes the thread's model settings directly; no agent turn.
+  const buttonAction = value as { action?: string } | undefined;
   const formValue = typeof action.form_value === "string" ? safeJson(action.form_value) : action.form_value;
+  const isModelCard = inter.purpose === "model" || buttonAction?.action?.startsWith("model:") || (typeof formValue === "object" && formValue !== null && "modelText" in formValue);
+  if (isModelCard) {
+    const { applyModelCard } = await import("./lark-model-card.ts");
+    const r = applyModelCard(app, inter.conversationId, { value, formValue });
+    if (r.probe) {
+      const { allProfiles } = await import("../core/config.ts");
+      const { probeProfile, saveProbe } = await import("../agents/probe.ts");
+      const t = findThread(app, inter.conversationId)!;
+      const id = t.settings.profile ?? app.config.agents.default ?? allProfiles(app.config)[0]?.id;
+      const p = allProfiles(app.config).find((x) => x.id === id);
+      if (p) void probeProfile(p).then((probe) => { if (!probe.error) saveProbe(app, id, probe); });
+    }
+    run(app.db, "update card_interactions set status = 'done', handled_at = datetime('now'), handled_by = ? where id = ?", operator, inter.id);
+    return { card: r.card, toast: { type: "success", content: r.toast } };
+  }
   const desc = describeAction({ tag: action.tag, name: action.name, value, formValue, option: action.option, options: action.options, input: action.input_value, checked: action.checked });
   const userId = resolveIdentity(app, "lark", operator);
   run(app.db, "update card_interactions set handled_at = datetime('now'), handled_by = ? where id = ?", operator, inter.id);

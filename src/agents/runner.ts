@@ -8,6 +8,7 @@ import { findSpace, spaceDir } from "../core/spaces.ts";
 import { all } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { spaceGuide } from "../wiki/store.ts";
+import { resolveRoleProfile } from "./models.ts";
 import { runAcp } from "./acp.ts";
 import { runCli } from "./cli.ts";
 import { commandExists } from "./spawn.ts";
@@ -140,7 +141,7 @@ export type PreparedRun = {
  */
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; runId: string | null; cwd?: string; profileId?: string; userId?: string; lark?: { chats: string[] | null; draft?: boolean } },
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: { chats: string[] | null; draft?: boolean } },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -152,7 +153,15 @@ export function prepareRun(
       ? allProfiles(app.config).find((p) => p.id === spec.agent)
       : profileFor(app, roleName);
   if (!baseProfile) throw new HttpError(400, `Agent ${input.profileId ?? spec?.agent} 不存在`);
-  const profile: AgentProfile = spec ? { ...baseProfile, model: spec.model ?? baseProfile.model, effort: spec.effort ?? baseProfile.effort } : baseProfile;
+  // Role -> per-profile model/effort overrides apply first; a per-thread override (the
+  // /model command or the Feishu model card) wins. Agent specs still set their own model.
+  const roleProfile = role ? resolveRoleProfile(app, baseProfile, roleName) : baseProfile;
+  const thread = input.model !== undefined || input.effort !== undefined ? { model: input.model, effort: input.effort } : null;
+  const profile: AgentProfile = spec
+    ? { ...roleProfile, model: spec.model ?? roleProfile.model, effort: spec.effort ?? roleProfile.effort }
+    : thread
+      ? { ...roleProfile, model: thread.model ?? roleProfile.model, effort: thread.effort ?? roleProfile.effort }
+      : roleProfile;
   const spaceId = spec?.space && !input.spaceId ? spec.space : input.spaceId;
   const space = findSpace(app, spaceId);
   if (!space) throw new HttpError(404, `空间不存在：${spaceId}`);
