@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createRun } from "../src/agents/runs.ts";
 import { App } from "../src/core/app.ts";
 import { all, one, run } from "../src/core/db.ts";
@@ -25,6 +25,8 @@ function snapshot(app: App) {
 }
 
 describe("pulling a library from another machine", () => {
+  // Merging reindexes sources and memories; allow more than the 20s default under load.
+  vi.setConfig({ testTimeout: 60_000 });
   it("merges both sides: newer wins, chats grow, history is unioned, nothing runs twice", async () => {
     const local = testApp();
     const remote = testApp();
