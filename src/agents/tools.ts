@@ -34,6 +34,10 @@ export type ToolContext = {
   userId?: string;
   /** Feishu chats this run may post into through the bot; null = any, [] or absent = none. */
   larkChats?: string[] | null;
+  /** Provenance of what the model produced. */
+  agentProfile?: string;
+  model?: string | null;
+  effort?: string | null;
   /** Posts become drafts the owner approves before they are sent. */
   larkDraft?: boolean;
 };
@@ -642,6 +646,10 @@ def({
       sourceRefs: a.source_refs,
       validFrom: a.valid_from,
       createdBy: ctx.actor,
+      agentProfile: ctx.agentProfile,
+      model: ctx.model,
+      effort: ctx.effort,
+      runId: ctx.runId,
       // Preferences belong to the person who stated them; facts are shared knowledge of the space.
       userId: a.kind === "preference" ? (ctx.userId ?? "owner") : null,
     });
@@ -656,7 +664,7 @@ def({
   schema: z.object({ memory_id: z.string(), content: z.string(), reason: z.string().optional(), source_refs: refs, valid_from: z.string().optional() }),
   handler: (ctx, a) => {
     inScope(ctx, getMemory(ctx.app, a.memory_id).spaceId, "记忆");
-    const m = supersede(ctx.app, a.memory_id, { content: a.content, sourceRefs: a.source_refs, validFrom: a.valid_from, createdBy: ctx.actor, reason: a.reason });
+    const m = supersede(ctx.app, a.memory_id, { content: a.content, sourceRefs: a.source_refs, validFrom: a.valid_from, createdBy: ctx.actor, reason: a.reason, agentProfile: ctx.agentProfile, model: ctx.model, effort: ctx.effort, runId: ctx.runId });
     return `已更正：${a.memory_id} → ${m.id}`;
   },
 });

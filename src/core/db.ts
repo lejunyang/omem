@@ -360,6 +360,13 @@ const migrations: string[] = [
   alter table runs add column quiet integer not null default 0;
   create index runs_quiet on runs(quiet, created_at);
   `,
+  // Which backend/model/effort produced a memory, for evaluating model quality.
+  `
+  alter table memories add column agent_profile text;
+  alter table memories add column model text;
+  alter table memories add column effort text;
+  alter table memories add column run_id text;
+  `,
 ];
 
 export type Db = DatabaseSync;

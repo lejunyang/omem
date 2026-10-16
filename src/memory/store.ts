@@ -19,6 +19,11 @@ export type Memory = {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  /** Backend/model/effort that produced the memory, and the run (quality tracing). */
+  agentProfile?: string | null;
+  model?: string | null;
+  effort?: string | null;
+  runId?: string | null;
 };
 type Row = {
   id: string;
@@ -35,6 +40,10 @@ type Row = {
   created_by: string;
   created_at: string;
   updated_at: string;
+  agent_profile: string | null;
+  model: string | null;
+  effort: string | null;
+  run_id: string | null;
 };
 const toMemory = (r: Row): Memory => ({
   id: r.id,
@@ -51,6 +60,10 @@ const toMemory = (r: Row): Memory => ({
   createdBy: r.created_by,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
+  agentProfile: r.agent_profile,
+  model: r.model,
+  effort: r.effort,
+  runId: r.run_id,
 });
 
 function index(app: App, id: string, subject: string, content: string) {
@@ -82,6 +95,10 @@ export type RememberInput = {
   createdBy?: "agent" | "user";
   /** Set for memories about or for one person (their preferences); null = shared knowledge of the space. */
   userId?: string | null;
+  agentProfile?: string | null;
+  model?: string | null;
+  effort?: string | null;
+  runId?: string | null;
 };
 
 export function remember(app: App, input: RememberInput): Memory {
@@ -90,7 +107,7 @@ export function remember(app: App, input: RememberInput): Memory {
   tx(app.db, () => {
     run(
       app.db,
-      "insert into memories(id,space_id,kind,subject,content,status,valid_from,source_refs,created_by,created_at,updated_at,user_id) values(?,?,?,?,?,'active',?,?,?,?,?,?)",
+      "insert into memories(id,space_id,kind,subject,content,status,valid_from,source_refs,created_by,created_at,updated_at,user_id,agent_profile,model,effort,run_id) values(?,?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?)",
       id,
       input.spaceId,
       input.kind,
@@ -102,6 +119,10 @@ export function remember(app: App, input: RememberInput): Memory {
       at,
       at,
       input.userId ?? null,
+      input.agentProfile ?? null,
+      input.model ?? null,
+      input.effort ?? null,
+      input.runId ?? null,
     );
     index(app, id, input.subject ?? "", input.content);
   });
@@ -122,7 +143,7 @@ export function supersede(app: App, oldId: string, input: Omit<RememberInput, "s
   tx(app.db, () => {
     run(
       app.db,
-      "insert into memories(id,space_id,kind,subject,content,status,valid_from,supersedes,source_refs,created_by,created_at,updated_at) values(?,?,?,?,?,'active',?,?,?,?,?,?)",
+      "insert into memories(id,space_id,kind,subject,content,status,valid_from,supersedes,source_refs,created_by,created_at,updated_at,agent_profile,model,effort,run_id) values(?,?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?)",
       id,
       old.spaceId,
       input.kind ?? old.kind,
@@ -134,6 +155,10 @@ export function supersede(app: App, oldId: string, input: Omit<RememberInput, "s
       input.createdBy ?? "agent",
       at,
       at,
+      input.agentProfile ?? null,
+      input.model ?? null,
+      input.effort ?? null,
+      input.runId ?? null,
     );
     // A correction keeps whose memory it was.
     run(app.db, "update memories set user_id = (select user_id from memories where id = ?) where id = ?", oldId, id);
