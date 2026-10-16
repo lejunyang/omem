@@ -523,12 +523,40 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   server.post("/api/agents/:id/probe", async (req) => {
     const { allProfiles } = await import("../core/config.ts");
-    const { runAcp } = await import("../agents/acp.ts");
-    const p = allProfiles(app.config).find((x) => x.id === (req.params as { id: string }).id);
+    const { cachedProbe, probeProfile, saveProbe } = await import("../agents/probe.ts");
+    const id = (req.params as { id: string }).id;
+    const p = allProfiles(app.config).find((x) => x.id === id);
     if (!p) throw new HttpError(404, "没有这个 Agent 配置");
-    if (p.transport !== "acp") return { agent: p.command, note: "命令行 Agent 不支持探测，请直接填写 model / effort" };
-    const r = await runAcp({ ...p, model: undefined, effort: undefined, idleTimeoutMs: 60_000 }, { cwd: app.home, prompt: "", probe: true }, () => {});
-    return r.probe;
+    const body = req.body as { refresh?: boolean } | undefined;
+    const cached = cachedProbe(app, id);
+    if (cached && !body?.refresh) return { ...cached, cached: true };
+    const probe = await probeProfile(p);
+    if (!probe.error) saveProbe(app, id, probe);
+    return probe;
+  });
+
+  // Per-role model/effort defaults: agents.roleModels[role][profileId] = { model, effort }.
+  server.put("/api/agent-role-model", async (req) => {
+    const { saveConfig } = await import("../core/config.ts");
+    const b = q(
+      z.object({ role: z.string().min(1), profile: z.string().min(1), model: z.string().optional().nullable(), effort: z.string().optional().nullable() }),
+      req.body,
+    );
+    const next = structuredClone(app.config);
+    const byRole = new Map(Object.entries(next.agents.roleModels ?? {}));
+    const byProfile = new Map(Object.entries(byRole.get(b.role) ?? {}));
+    if (b.model === null && b.effort === null) byProfile.delete(b.profile);
+    else
+      byProfile.set(b.profile, {
+        ...(byProfile.get(b.profile) ?? {}),
+        ...(b.model === undefined ? {} : { model: b.model || undefined }),
+        ...(b.effort === undefined ? {} : { effort: b.effort || undefined }),
+      });
+    byRole.set(b.role, Object.fromEntries(byProfile));
+    next.agents.roleModels = Object.fromEntries(byRole);
+    saveConfig(next, app.home);
+    Object.assign(app.config, next);
+    return { roleModels: next.agents.roleModels };
   });
 
   // Official ACP registry: agents beyond the built-in catalog, runnable via npx / uvx / a downloaded binary.

@@ -65,9 +65,17 @@ export const configSchema = z.object({
     .object({
       default: z.string().optional(),
       roles: z.record(z.string(), z.string()).default({}),
+      /**
+       * Per-role model/effort overrides, resolved after the backend profile:
+       * role -> profile id -> { model, effort }. The backend stays one profile
+       * (its command/session), the model/effort vary per task.
+       */
+      roleModels: z
+        .record(z.string(), z.record(z.string(), z.object({ model: z.string().optional(), effort: z.string().optional() })))
+        .default({}),
       profiles: z.array(agentProfileSchema).default([]),
     })
-    .default({ roles: {}, profiles: [] }),
+    .default({ roles: {}, roleModels: {}, profiles: [] }),
   embeddings: z
     .object({
       provider: z.enum(["none", "local", "openai"]).default("none"),

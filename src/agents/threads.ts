@@ -18,6 +18,9 @@ export type ThreadSettings = {
   spec?: string;
   /** Backend agent profile override (codex, claude…). */
   profile?: string;
+  /** Temporary model/effort override for this thread (set with /model); cleared with /model off. */
+  model?: string | null;
+  effort?: string | null;
   /** Other threads whose summaries are included as background. */
   links?: string[];
   /** Last channel message id seen in this thread (replies go under it, e.g. inside a topic). */

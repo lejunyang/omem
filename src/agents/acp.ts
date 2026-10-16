@@ -1,5 +1,6 @@
 import { ClientSideConnection, ndJsonStream, type McpServer, type SessionConfigOption } from "@agentclientprotocol/sdk";
 import type { AgentProfile } from "../core/config.ts";
+import { resolveModelOption } from "./models.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
 import type { AgentEvent, AgentProbe, AgentRequest, AgentResult } from "./types.ts";
 
@@ -230,8 +231,13 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       const option = options.find((o) => (key === "model" ? isModelOption(o) : o.category === "thought_level" || /effort|reasoning/.test(o.id)));
       if (!option && key === "model" && session.models?.availableModels?.length) {
         const ids = session.models.availableModels.map((m) => m.modelId);
-        if (!ids.includes(value)) throw new Error(`Agent 不支持 model=${value}。可选：${ids.join(", ")}`);
-        if (session.models.currentModelId !== value) await Promise.race([connection.extMethod("session/set_model", { sessionId, modelId: value }), failed]);
+        const chosen = resolveModelOption(value, ids);
+        if (!chosen.matched) {
+          emitSetup({ type: "status", text: `该 Agent 没有 ${value}，可选：${ids.join(", ")}；用它的默认模型` });
+          continue;
+        }
+        if (session.models.currentModelId !== chosen.value) await Promise.race([connection.extMethod("session/set_model", { sessionId, modelId: chosen.value }), failed]);
+        if (chosen.value !== value) emitSetup({ type: "status", text: `模型名按 ${value} 匹配为 ${chosen.value}` });
         continue;
       }
       if (!option) {
@@ -239,9 +245,14 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         continue;
       }
       const values = optionValues(option);
-      if (!values.includes(value)) throw new Error(`Agent 不支持 ${key}=${value}。可选：${values.join(", ")}`);
-      if ((option as { currentValue?: string }).currentValue === value) continue;
-      const reply = await Promise.race([connection.setSessionConfigOption({ sessionId, configId: option.id, value }), failed]);
+      const chosen = key === "model" ? resolveModelOption(value, values) : { value, matched: values.includes(value) };
+      if (!chosen.matched) {
+        // Never kill the conversation over a model name: fall back to the agent default.
+        emitSetup({ type: "status", text: `该 Agent 没有 ${value}，可选：${values.join(", ")}；用它的默认${key === "model" ? "模型" : "思考强度"}` });
+        continue;
+      }
+      if ((option as { currentValue?: string }).currentValue === chosen.value) continue;
+      const reply = await Promise.race([connection.setSessionConfigOption({ sessionId, configId: option.id, value: chosen.value }), failed]);
       options = reply.configOptions ?? options;
     }
     emitSetup({ type: "status", text: `${resumed ? "已恢复" : "已连接"} ${agentName}${profile.model ? ` · ${profile.model}` : ""}` });

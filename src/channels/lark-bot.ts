@@ -202,6 +202,20 @@ export async function startLarkBot(app: App) {
             const { reactLark } = await import("./lark-send.ts");
             await reactLark(m.messageId, "Get").catch(() => {});
           },
+          onCard: async (card) => {
+            const { sendLark } = await import("./lark-send.ts");
+            const { resolveThread } = await import("../agents/threads.ts");
+            const { newId } = await import("../core/util.ts");
+            const sent = await sendLark({ chatId: m.chatId, replyTo: m.messageId, inThread: !!m.topicId }, { card }).catch(() => null);
+            if (sent) {
+              let conversationId: string | null = null;
+              try {
+                conversationId = resolveThread(app, { channel: "lark", chatId: m.chatId, topicId: m.topicId }).thread.id;
+              } catch { conversationId = null; }
+              run(app.db, "insert into card_interactions(id,message_id,chat_id,conversation_id,run_id,purpose,allowed,payload,created_at) values(?,?,?,?,?,?,?,?,?)",
+                newId("ci"), sent.messageId, m.chatId, conversationId, null, "model", "[]", "{}", new Date().toISOString());
+            }
+          },
         },
       );
       if (answer === null) return;

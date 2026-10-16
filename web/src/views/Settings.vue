@@ -140,6 +140,18 @@ function setRole(role: string, id: string) {
   else delete roles[role];
   void saveConfig({ agents: { ...config.value.agents, roles } });
 }
+// Which backend a role actually uses (its own pick, else default, else first installed).
+function roleProfileId(role: string): string {
+  return config.value.agents.roles[role] ?? config.value.agents.default ?? installedProfiles.value[0]?.id ?? "";
+}
+function roleOverride(role: string): { model?: string; effort?: string } {
+  return config.value.agents.roleModels?.[role]?.[roleProfileId(role)] ?? {};
+}
+async function setRoleModel(role: string, key: "model" | "effort", value: string) {
+  await put("/api/agent-role-model", { role, profile: roleProfileId(role), [key]: value.trim() || null });
+  toast(`已保存：${role} 的${key === "model" ? "模型" : "思考强度"}`, "ok");
+  void load();
+}
 async function addProfile() {
   try {
     const p = JSON.parse(profileJson.value);
@@ -283,10 +295,17 @@ function editProfile(p: Profile) {
       </label>
       <div class="card pad">
         <div class="section-title">按角色指定</div>
+        <p class="muted small">每类任务可以用不同 Agent，还能单独覆盖该 Agent 的模型和思考强度（留空跟随 Agent 自身默认）。模型名不区分大小写、点和连字符，例如填 GPT-Sol-6.1 会自动匹配 gpt-6.1-sol。</p>
         <div class="roles">
-          <label v-for="[r, l] in roles" :key="r" class="row role"><span class="grow">{{ l }}</span>
-            <select class="select" :value="config.agents.roles[r] ?? ''" @change="setRole(r, ($event.target as HTMLSelectElement).value)"><option value="">默认</option><option v-for="p in installedProfiles" :key="p.id" :value="p.id">{{ p.name ?? p.id }}</option></select>
-          </label>
+          <div v-for="[r, l] in roles" :key="r" class="role-row">
+            <label class="row role"><span class="grow">{{ l }}</span>
+              <select class="select" :value="config.agents.roles[r] ?? ''" @change="setRole(r, ($event.target as HTMLSelectElement).value)"><option value="">默认</option><option v-for="p in installedProfiles" :key="p.id" :value="p.id">{{ p.name ?? p.id }}</option></select>
+            </label>
+            <div class="row role-model">
+              <input class="input sm" :value="roleOverride(r).model ?? ''" placeholder="模型（跟随默认）" @change="setRoleModel(r, 'model', ($event.target as HTMLInputElement).value)" />
+              <input class="input sm" :value="roleOverride(r).effort ?? ''" placeholder="思考强度" @change="setRoleModel(r, 'effort', ($event.target as HTMLInputElement).value)" />
+            </div>
+          </div>
         </div>
       </div>
       <div class="card pad stack">
@@ -453,8 +472,24 @@ function editProfile(p: Profile) {
   display: grid;
   gap: 6px;
 }
+.role-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 1.4fr);
+  gap: 10px;
+  align-items: center;
+}
+.role-model {
+  display: grid;
+  grid-template-columns: 1fr 110px;
+  gap: 6px;
+}
 .role .select {
   width: 220px;
+}
+@media (max-width: 760px) {
+  .role-row {
+    grid-template-columns: 1fr;
+  }
 }
 .sched {
   display: grid;

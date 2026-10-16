@@ -32,7 +32,7 @@ export type Inbound = Partial<ThreadAddress> & {
   speaker?: string;
 };
 
-export type Received = { thread: Thread; messageId: string | null; runId: string | null; merged: boolean; reply: string | null; started: "new" | "renewed" | null };
+export type Received = { thread: Thread; messageId: string | null; runId: string | null; merged: boolean; reply: string | null; card?: Record<string, unknown>; started: "new" | "renewed" | null };
 
 export async function receive(app: App, inb: Inbound): Promise<Received> {
   const userId = inb.userId ?? OWNER;
@@ -65,8 +65,21 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     const reply = await runCommand(app, thread, text, inb);
     if (reply !== null) {
       addMessage(app, thread.id, "user", text, null, { command: true });
-      addMessage(app, thread.id, "assistant", reply, null, { command: true });
-      return { thread: findThread(app, thread.id)!, messageId: null, runId: null, merged: false, reply, started };
+      let card: Record<string, unknown> | undefined;
+      let plain = reply;
+      if (reply.startsWith("{")) {
+        try {
+          const j = JSON.parse(reply) as { __omem_card?: Record<string, unknown> };
+          if (j.__omem_card) {
+            card = j.__omem_card;
+            plain = "";
+          }
+        } catch {
+          // ordinary text that happens to start with {
+        }
+      }
+      addMessage(app, thread.id, "assistant", plain || "[卡片]", null, { command: true, ...(card ? { card } : {}) });
+      return { thread: findThread(app, thread.id)!, messageId: null, runId: null, merged: false, reply: plain || "[card]", card, started };
     }
   }
 
