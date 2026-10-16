@@ -11,11 +11,15 @@ const route = useRoute();
 const router = useRouter();
 const runs = ref<Run[]>([]);
 const kind = ref("");
+const showQuiet = ref(false);
 const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; patch?: string } | null>(null);
 const id = computed(() => route.params.id as string | undefined);
 
 async function load() {
-  runs.value = await get<Run[]>(`/api/runs?limit=150${kind.value ? `&kind=${kind.value}` : ""}`);
+  const q = new URLSearchParams({ limit: "150" });
+  if (kind.value) q.set("kind", kind.value);
+  if (showQuiet.value) q.set("all", "true");
+  runs.value = await get<Run[]>(`/api/runs?${q.toString()}`);
 }
 async function loadDetail() {
   detail.value = id.value ? await get(`/api/runs/${id.value}`).catch(() => null) : null;
@@ -25,6 +29,7 @@ onMounted(() => {
   void loadDetail();
 });
 watch(kind, load);
+watch(showQuiet, load);
 watch(id, loadDetail);
 const off = onServerEvent((e) => {
   if (e.type === "run") {
@@ -85,6 +90,9 @@ const kinds = ["", "ask", "ingest", "wiki-plan", "wiki-write", "wiki-lint", "cod
         <select v-model="kind" class="select sm-select">
           <option v-for="k in kinds" :key="k" :value="k">{{ k ? runKindLabel[k] : "全部" }}</option>
         </select>
+        <label class="row small muted" title="没有发现变化的静默巡检默认不显示">
+          <input type="checkbox" v-model="showQuiet" /> 静默
+        </label>
       </div>
       <div class="items">
         <router-link v-for="r in runs" :key="r.id" :to="`/runs/${r.id}`" class="run" :class="{ on: r.id === id }">

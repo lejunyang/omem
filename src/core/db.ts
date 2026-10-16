@@ -354,6 +354,12 @@ const migrations: string[] = [
     primary key(channel, message_id)
   );
   `,
+  // Background runs that found nothing (heartbeat/dream/ingest "QUIET") are hidden
+  // from the run list by default; failures and runs that produced output still show.
+  `
+  alter table runs add column quiet integer not null default 0;
+  create index runs_quiet on runs(quiet, created_at);
+  `,
 ];
 
 export type Db = DatabaseSync;
