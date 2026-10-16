@@ -5,6 +5,8 @@ import { HttpError, json, newId, now } from "../core/util.ts";
 export type RunKind = "ask" | "agent" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 export type Run = {
+  /** Background run that found nothing to do; hidden from the default run list. */
+  quiet?: boolean;
   id: string;
   kind: RunKind;
   spaceId: string | null;
@@ -36,6 +38,7 @@ type Row = {
   finished_at: string | null;
   lane: string | null;
   not_before: string | null;
+  quiet: number;
 };
 const toRun = (r: Row): Run => ({
   id: r.id,
@@ -52,7 +55,8 @@ const toRun = (r: Row): Run => ({
   startedAt: r.started_at,
   finishedAt: r.finished_at,
   lane: r.lane ?? null,
-});
+  quiet: !!r.quiet,
+} as Run);
 
 export function createRun(
   app: App,
@@ -121,13 +125,14 @@ export function getRun(app: App, id: string): Run {
   return toRun(r);
 }
 
-export function listRuns(app: App, opts: { kind?: string; spaceId?: string; status?: string; parentId?: string; limit?: number } = {}) {
+export function listRuns(app: App, opts: { kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean; limit?: number } = {}) {
   const where: string[] = [];
   const params: string[] = [];
   if (opts.kind) where.push("kind = ?"), params.push(opts.kind);
   if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);
   if (opts.status) where.push("status = ?"), params.push(opts.status);
   if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);
+  if (!opts.includeQuiet && !opts.parentId) where.push("quiet = 0");
   return all<Row>(app.db, `select * from runs ${where.length ? "where " + where.join(" and ") : ""} order by created_at desc limit ?`, ...params, opts.limit ?? 100).map(toRun);
 }
 
@@ -278,7 +283,9 @@ function kick(app: App) {
         flushText(app, r.id);
         if (out) setRunOutput(app, r.id, out);
         const status = controller.signal.aborted ? "cancelled" : "done";
-        run(app.db, "update runs set status=?, finished_at=? where id=?", status, now(), r.id);
+        // A quiet background inspection (nothing new / QUIET) stays out of the run list.
+        const quiet = status === "done" && !INTERACTIVE.has(r.kind) && out && (out as { quiet?: boolean }).quiet === true ? 1 : 0;
+        run(app.db, "update runs set status=?, quiet=?, finished_at=? where id=?", status, quiet, now(), r.id);
         app.emit({ type: "run", runId: r.id, status });
       })
       .catch((error: Error) => {

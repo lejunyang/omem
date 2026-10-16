@@ -395,8 +395,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // --------------------------------------------------------------------- runs
   server.get("/api/runs", async (req) => {
-    const o = q(z.object({ kind: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), limit: z.coerce.number().optional() }), req.query);
-    return listRuns(app, { kind: o.kind, spaceId: o.space, status: o.status, parentId: o.parent, limit: o.limit });
+    const o = q(z.object({ kind: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), limit: z.coerce.number().optional() }), req.query);
+    return listRuns(app, { kind: o.kind, spaceId: o.space, status: o.status, parentId: o.parent, includeQuiet: o.all, limit: o.limit });
   });
   server.get("/api/runs/:id", async (req) => {
     const id = (req.params as { id: string }).id;
