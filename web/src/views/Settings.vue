@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { get, patch, post, put, type Space } from "../api";
 import Icon from "../components/Icon.vue";
 import { fmtTime, kindLabel, loadSpaces, state, toast } from "../store";
@@ -77,6 +77,13 @@ onMounted(() => {
   void load();
   void loadLark();
 });
+// Opening the Agent tab fills role dropdowns from cached probes (probing once when there is none).
+watch(
+  () => [tab.value, profiles.value.length] as const,
+  ([t]) => {
+    if (t === "agents" && profiles.value.length) void loadProbes();
+  },
+);
 
 async function saveConfig(partial: Record<string, unknown>, note = "已保存") {
   try {
@@ -139,6 +146,8 @@ function setRole(role: string, id: string) {
   if (id) roles[role] = id;
   else delete roles[role];
   void saveConfig({ agents: { ...config.value.agents, roles } });
+  const p = installedProfiles.value.find((x) => x.id === id);
+  if (p && !probes.value[p.id]) void probe(p, false);
 }
 // Which backend a role actually uses (its own pick, else default, else first installed).
 function roleProfileId(role: string): string {
@@ -146,6 +155,20 @@ function roleProfileId(role: string): string {
 }
 function roleOverride(role: string): { model?: string; effort?: string } {
   return config.value.agents.roleModels?.[role]?.[roleProfileId(role)] ?? {};
+}
+/** Offered values for a role's backend; keeps a saved value visible even if the agent stopped listing it. */
+function roleChoices(role: string, key: "model" | "effort"): { list: string[]; state: "ok" | "loading" | "none" } {
+  const id = roleProfileId(role);
+  const pr = probes.value[id];
+  const saved = roleOverride(role)[key];
+  if (pr?.loading && !pr.data) return { list: saved ? [saved] : [], state: "loading" };
+  const offered = (key === "model" ? pr?.data?.models : pr?.data?.efforts) ?? [];
+  const list = saved && !offered.includes(saved) ? [saved, ...offered] : offered;
+  return { list, state: offered.length ? "ok" : "none" };
+}
+function profileDefault(role: string, key: "model" | "effort") {
+  const p = profiles.value.find((x) => x.id === roleProfileId(role));
+  return (key === "model" ? p?.model : p?.effort) ?? "";
 }
 async function setRoleModel(role: string, key: "model" | "effort", value: string) {
   await put("/api/agent-role-model", { role, profile: roleProfileId(role), [key]: value.trim() || null });
@@ -187,14 +210,21 @@ async function addProfile() {
     toast(`配置不是合法 JSON：${(e as Error).message}`, "error");
   }
 }
-const probes = ref<Record<string, { loading?: boolean; error?: string; data?: { agent: string; options: { id: string; category: string | null; values: string[]; current: string | null }[] } }>>({});
-async function probe(p: Profile) {
-  probes.value[p.id] = { loading: true };
+type ProbeData = { agent: string; models: string[]; efforts: string[]; error?: string; at?: string };
+const probes = ref<Record<string, { loading?: boolean; error?: string; data?: ProbeData }>>({});
+async function probe(p: Profile, refresh = true) {
+  if (p.transport !== "acp") return;
+  probes.value[p.id] = { ...(probes.value[p.id] ?? {}), loading: true };
   try {
-    probes.value[p.id] = { data: await post(`/api/agents/${p.id}/probe`) };
+    const data = await post<ProbeData>(`/api/agents/${p.id}/probe`, { refresh });
+    probes.value[p.id] = data.error ? { error: data.error } : { data };
   } catch (e) {
     probes.value[p.id] = { error: (e as Error).message };
   }
+}
+/** Read cached probes (or probe once) for every installed ACP agent so role dropdowns can fill. */
+async function loadProbes() {
+  await Promise.all(installedProfiles.value.filter((p) => p.transport === "acp" && !probes.value[p.id]).map((p) => probe(p, false)));
 }
 async function setProfileOption(p: Profile, key: "model" | "effort", value: string) {
   const { installed, install, ...rest } = p;
@@ -228,9 +258,24 @@ async function addFromRegistry(a: RegistryAgent, via?: string) {
     registryBusy.value = "";
   }
 }
+const editingProfile = ref<string | null>(null);
+const editJson = ref("");
 function editProfile(p: Profile) {
   const { installed, install, ...rest } = p;
-  profileJson.value = JSON.stringify(rest, null, 2);
+  editingProfile.value = editingProfile.value === p.id ? null : p.id;
+  editJson.value = JSON.stringify(rest, null, 2);
+}
+async function saveEdit() {
+  try {
+    const p = JSON.parse(editJson.value);
+    if (!p.id) return toast("配置需要 id", "error");
+    const list = [...config.value.agents.profiles.filter((x: Profile) => x.id !== p.id && x.id !== editingProfile.value), p];
+    await saveConfig({ agents: { ...config.value.agents, profiles: list } }, `已保存 ${p.name ?? p.id}`);
+    editingProfile.value = null;
+    void load();
+  } catch (e) {
+    toast(`配置不是合法 JSON：${(e as Error).message}`, "error");
+  }
 }
 </script>
 
@@ -266,15 +311,21 @@ function editProfile(p: Profile) {
     <section v-else-if="tab === 'agents' && config" class="stack">
       <p class="muted">omem 不内置模型：理解、写作和编码交给你已安装并登录的 Agent（通过 ACP 或命令行）。不同角色可以用不同 Agent，例如问答用快的模型，Wiki 和评审用强的模型。</p>
       <div class="card">
-        <div v-for="p in installedProfiles" :key="p.id" class="prow">
-          <span class="badge ok">已安装</span>
-          <div class="grow">
-            <div><strong>{{ p.name ?? p.id }}</strong> <span class="muted small mono">{{ p.id }}</span></div>
-            <div class="muted small mono">{{ p.transport }} · {{ p.command }} {{ p.args.join(" ") }}<template v-if="p.model"> · {{ p.model }}</template><template v-if="p.effort"> · {{ p.effort }}</template></div>
+        <template v-for="p in installedProfiles" :key="p.id">
+          <div class="prow">
+            <span class="badge ok">已安装</span>
+            <div class="grow">
+              <div><strong>{{ p.name ?? p.id }}</strong> <span class="muted small mono">{{ p.id }}</span></div>
+              <div class="muted small mono">{{ p.transport }} · {{ p.command }} {{ p.args.join(" ") }}<template v-if="p.model"> · {{ p.model }}</template><template v-if="p.effort"> · {{ p.effort }}</template></div>
+            </div>
+            <button v-if="p.transport === 'acp'" class="btn ghost sm" :disabled="probes[p.id]?.loading" @click="probe(p)">{{ probes[p.id]?.loading ? "检测中…" : "检测模型" }}</button>
+            <button class="btn ghost sm" @click="editProfile(p)">{{ editingProfile === p.id ? "收起" : "编辑" }}</button>
           </div>
-          <button v-if="p.transport === 'acp'" class="btn ghost sm" @click="probe(p)">{{ probes[p.id]?.loading ? "连接中…" : "检测模型" }}</button>
-          <button class="btn ghost sm" @click="editProfile(p)">编辑</button>
-        </div>
+          <div v-if="editingProfile === p.id" class="edit-box stack">
+            <textarea v-model="editJson" class="textarea mono" rows="9" />
+            <div class="row"><span class="muted small">model、effort 写 Agent 支持的值；不区分大小写和点/连字符。</span><span class="spacer" /><button class="btn ghost sm" @click="editingProfile = null">取消</button><button class="btn primary sm" @click="saveEdit">保存</button></div>
+          </div>
+        </template>
         <div v-if="!installedProfiles.length" class="prow muted">还没有可用的 Agent，从下面任选一个安装。</div>
         <details v-if="missingProfiles.length" class="more">
           <summary class="small muted">其他支持的 Agent（{{ missingProfiles.length }} 个，未安装）</summary>
@@ -284,18 +335,26 @@ function editProfile(p: Profile) {
               <div><strong>{{ p.name ?? p.id }}</strong> <span class="muted small mono">{{ p.command }} {{ p.args.join(" ") }}</span></div>
               <div v-if="p.install" class="muted small mono">安装：{{ p.install }}</div>
             </div>
-            <button class="btn ghost sm" @click="editProfile(p)">编辑</button>
+            <button class="btn ghost sm" @click="editProfile(p)">{{ editingProfile === p.id ? "收起" : "编辑" }}</button>
           </div>
+          <template v-for="p in missingProfiles" :key="'edit-' + p.id">
+            <div v-if="editingProfile === p.id" class="edit-box stack">
+              <textarea v-model="editJson" class="textarea mono" rows="9" />
+              <div class="row"><span class="spacer" /><button class="btn ghost sm" @click="editingProfile = null">取消</button><button class="btn primary sm" @click="saveEdit">保存</button></div>
+            </div>
+          </template>
         </details>
         <template v-for="p in profiles" :key="'probe-' + p.id">
           <div v-if="probes[p.id]?.data || probes[p.id]?.error" class="probe">
             <div class="small muted">{{ p.name ?? p.id }}：{{ probes[p.id].error ?? probes[p.id].data!.agent }}</div>
-            <template v-for="o in probes[p.id].data?.options.filter((o) => o.category === 'model' || o.category === 'thought_level') ?? []" :key="o.id">
-              <div class="row wrap small">
-                <span class="muted">{{ o.category === "model" ? "模型" : "推理强度" }}：</span>
-                <button v-for="v in o.values" :key="v" class="chip" :class="{ on: (o.category === 'model' ? p.model : p.effort) === v }" @click="setProfileOption(p, o.category === 'model' ? 'model' : 'effort', v)">{{ v }}</button>
-              </div>
-            </template>
+            <div v-if="probes[p.id].data?.models.length" class="row wrap small">
+              <span class="muted">默认模型：</span>
+              <button v-for="v in probes[p.id].data!.models" :key="v" class="chip" :class="{ on: p.model === v }" @click="setProfileOption(p, 'model', v)">{{ v }}</button>
+            </div>
+            <div v-if="probes[p.id].data?.efforts.length" class="row wrap small">
+              <span class="muted">默认思考强度：</span>
+              <button v-for="v in probes[p.id].data!.efforts" :key="v" class="chip" :class="{ on: p.effort === v }" @click="setProfileOption(p, 'effort', v)">{{ v }}</button>
+            </div>
           </div>
         </template>
       </div>
@@ -319,15 +378,20 @@ function editProfile(p: Profile) {
       </label>
       <div class="card pad">
         <div class="section-title">按角色指定</div>
-        <p class="muted small">每类任务可以用不同 Agent，还能单独覆盖该 Agent 的模型和思考强度（留空跟随 Agent 自身默认）。模型名不区分大小写、点和连字符，例如填 GPT-Sol-6.1 会自动匹配 gpt-6.1-sol。</p>
+        <p class="muted small">每类任务可以用不同 Agent，并单独选该 Agent 的模型和思考强度。可选项来自 Agent 自己的检测结果（缓存，在上面点“检测模型”可刷新）；不选则跟随 Agent 默认。</p>
         <div class="roles">
           <div v-for="[r, l] in roles" :key="r" class="role-row">
             <label class="row role"><span class="grow">{{ l }}</span>
               <select class="select" :value="config.agents.roles[r] ?? ''" @change="setRole(r, ($event.target as HTMLSelectElement).value)"><option value="">默认</option><option v-for="p in installedProfiles" :key="p.id" :value="p.id">{{ p.name ?? p.id }}</option></select>
             </label>
             <div class="row role-model">
-              <input class="input sm" :value="roleOverride(r).model ?? ''" placeholder="模型（跟随默认）" @change="setRoleModel(r, 'model', ($event.target as HTMLInputElement).value)" />
-              <input class="input sm" :value="roleOverride(r).effort ?? ''" placeholder="思考强度" @change="setRoleModel(r, 'effort', ($event.target as HTMLInputElement).value)" />
+              <template v-for="k in (['model', 'effort'] as const)" :key="k">
+                <select v-if="roleChoices(r, k).state !== 'none'" class="select sm-select" :value="roleOverride(r)[k] ?? ''" :disabled="roleChoices(r, k).state === 'loading'" @change="setRoleModel(r, k, ($event.target as HTMLSelectElement).value)">
+                  <option value="">{{ roleChoices(r, k).state === "loading" ? "检测中…" : `跟随默认${profileDefault(r, k) ? `（${profileDefault(r, k)}）` : ""}` }}</option>
+                  <option v-for="v in roleChoices(r, k).list" :key="v" :value="v">{{ v }}</option>
+                </select>
+                <input v-else class="input sm" :value="roleOverride(r)[k] ?? ''" :placeholder="k === 'model' ? '模型（Agent 未报出可选项，可手填）' : '思考强度'" @change="setRoleModel(r, k, ($event.target as HTMLInputElement).value)" />
+              </template>
             </div>
           </div>
         </div>
@@ -500,6 +564,11 @@ function editProfile(p: Profile) {
   background: var(--ink);
   color: var(--bg);
   border-color: var(--ink);
+}
+.edit-box {
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--hover);
 }
 .roles {
   display: grid;
