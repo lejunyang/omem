@@ -7,6 +7,8 @@ import { agentRunError, type AgentEvent, type AgentProbe, type AgentRequest, typ
 // Provider queue text shown as a normal message by some CLIs (traex included).
 const QUEUE_TEXT = /(?:排队|队列|queue[d]?|waiting (?:in )?(?:the )?queue)[^\d]{0,20}(\d+)?/i;
 const QUEUE_END_TEXT = /(?:已排到|轮到你|队列已结束|(?:no longer|out of) (?:in )?queue|开始处理你的请求)/i;
+// Housekeeping lines some CLIs print as message text before the model answers.
+const AGENT_NOTICE = /^\s*(?:Skill descriptions were shortened|Disable unused skills or plugins)/i;
 
 function optionValues(option: SessionConfigOption): string[] {  if (option.type !== "select") return [];
   const out: string[] = [];
@@ -72,6 +74,8 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
   let touch = () => {};
   let replaying = false;
   let text = "";
+  // Whether the model produced anything real (text, thought, tool call) in the current turn.
+  let gotOutput = false;
   // Remember unknown session update kinds once per process (for OMEM_DEBUG_ACP).
   const seenUnknown = new Set<string>();
   // The active prompt registers queue handling here so sessionUpdate can switch watchdogs.
@@ -82,7 +86,20 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
   });
   const input = new ReadableStream<Uint8Array>({
     start(controller) {
-      child.stdout.on("data", (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)));
+      // Tap raw lines: the SDK validates session/update against its schema and drops
+      // non-standard kinds (traex queue_begin/queue_end), so queue state is read here.
+      let pending = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        controller.enqueue(new Uint8Array(chunk));
+        pending += chunk.toString("utf8");
+        let nl: number;
+        while ((nl = pending.indexOf("\n")) >= 0) {
+          const line = pending.slice(0, nl);
+          pending = pending.slice(nl + 1);
+          if (line.includes("queue") || line.includes("Queue")) sniffQueue(line);
+        }
+        if (pending.length > 1_000_000) pending = "";
+      });
       child.stdout.once("end", () => {
         try {
           controller.close();
@@ -90,6 +107,27 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       });
     },
   });
+  function sniffQueue(line: string) {
+    let msg: { method?: string; params?: { update?: Record<string, unknown> } };
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      return;
+    }
+    const u = msg.params?.update;
+    if (msg.method !== "session/update" || !u) return;
+    const kind = String(u.sessionUpdate ?? "");
+    const state = String(u.state ?? kind);
+    if (!/queue/i.test(kind) && !/queue/i.test(state)) return;
+    if (/^(agent_message_chunk|agent_thought_chunk|tool_call|tool_call_update|plan)$/.test(kind)) return;
+    touch();
+    const position = typeof u.position === "number" ? u.position : typeof u.queue_position === "number" ? u.queue_position : undefined;
+    const message = typeof u.message === "string" ? u.message : undefined;
+    const queued = !/end|ready|done|finish/i.test(state);
+    emit({ type: "queue", queued, position, message });
+    if (queued) promptQueue?.enter(position, message);
+    else promptQueue?.exit();
+  }
   const connection = new ClientSideConnection(
     () => ({
       async requestPermission(request) {
@@ -106,6 +144,12 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         switch (update.sessionUpdate) {
           case "agent_message_chunk":
             if (update.content.type === "text") {
+              // CLI housekeeping notices (traex: "Skill descriptions were shortened…") are not the answer.
+              if (AGENT_NOTICE.test(update.content.text)) {
+                emit({ type: "status", text: update.content.text.trim().slice(0, 200) });
+                break;
+              }
+              gotOutput = true;
               text += update.content.text;
               emit({ type: "text", text: update.content.text });
               // Some agents show provider queue state as ordinary message text.
@@ -117,9 +161,11 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
             }
             break;
           case "agent_thought_chunk":
+            gotOutput = true;
             if (update.content.type === "text") emit({ type: "thought", text: update.content.text });
             break;
           case "tool_call": {
+            gotOutput = true;
             const t = { title: update.title, kind: update.kind ?? undefined, status: update.status ?? "pending" };
             tools.set(update.toolCallId, t);
             emit({ type: "tool", id: update.toolCallId, ...t, input: update.rawInput });
@@ -136,19 +182,8 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
             emit({ type: "plan", entries: update.entries.map((e) => ({ content: e.content, status: e.status })) });
             break;
           default: {
-            // Trae carries provider queue state (queue_begin/queue_position/queue_end) as
-            // non-standard session updates; other agents add their own too. Recognize the
-            // queue family generically and log the rest once for later support.
-            const u = update as Record<string, unknown>;
-            const state = (u.state as string | undefined) ?? (u.sessionUpdate as string | undefined) ?? "";
-            if (/queue/i.test(state) || (u.queued === true) || (u.in_queue === true)) {
-              const position = typeof u.position === "number" ? u.position : undefined;
-              const message = typeof u.message === "string" ? u.message : undefined;
-              const queued = !/queue_end/.test(state) && u.state !== "ready" && u.state !== "done";
-              emit({ type: "queue", queued, position, message });
-              if (queued) promptQueue?.enter(position, message);
-              else promptQueue?.exit();
-            } else if (!seenUnknown.has(update.sessionUpdate)) {
+            // Non-standard kinds that survive SDK validation; queue state is read from raw lines (sniffQueue).
+            if (!seenUnknown.has(update.sessionUpdate)) {
               seenUnknown.add(update.sessionUpdate);
               if (process.env.OMEM_DEBUG_ACP) console.warn(`[acp] 未识别的 sessionUpdate：${update.sessionUpdate}`, JSON.stringify(update).slice(0, 500));
             }
@@ -303,21 +338,28 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         busy = true;
         emit = turnEmit;
         text = "";
+        gotOutput = false;
         // A fresh failure channel for this turn: an earlier exit error has already been consumed.
         failed = new Promise<never>((_, reject) => (fail = reject));
         failed.catch(() => {});
+        // Silence before the model's first token is the provider not starting the request
+        // (queue/capacity); silence after real output is a stalled turn. Only the former is
+        // worth retrying on a fallback backend/model.
+        const idleError = () =>
+          gotOutput
+            ? agentRunError(`Agent 超过 ${Math.round(profile.idleTimeoutMs / 1000)} 秒没有任何活动，已停止`, "idle")
+            : agentRunError(`模型 ${Math.round(profile.idleTimeoutMs / 1000)} 秒内没有开始回答（可能在服务端排队），已停止`, "queue", true);
         // Two budgets: ordinary idle (any update resets it) and a separate, usually longer
         // cap for time spent in the provider queue. Queue events pause the idle watchdog.
         let idleW = idleWatchdog(profile.idleTimeoutMs, () => {
-          fail(agentRunError(`Agent 超过 ${Math.round(profile.idleTimeoutMs / 1000)} 秒没有任何活动，已停止`, "idle"));
+          fail(idleError());
           close();
         });
         let queueW: ReturnType<typeof idleWatchdog> | null = null;
         const startIdle = () => {
           idleW.close();
           idleW = idleWatchdog(profile.idleTimeoutMs, () => {
-            // Idle after the queue cleared is a genuine stall (long tool chain), not queueing.
-            fail(agentRunError(`Agent 超过 ${Math.round(profile.idleTimeoutMs / 1000)} 秒没有任何活动，已停止`, "idle"));
+            fail(idleError());
             close();
           });
         };

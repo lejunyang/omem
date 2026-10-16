@@ -17,6 +17,11 @@ const threadMode = process.env.FAKE_MODE === "thread";
 const delay = Number(process.env.FAKE_DELAY ?? 0);
 // FAKE_LEGACY=1: models via session.models + session/set_model, gemini-style mode ids.
 const legacy = process.env.FAKE_LEGACY === "1";
+// FAKE_STALL=before: print the traex skills notice, then never answer (provider not starting).
+// FAKE_STALL=after: answer one chunk, then hang (a stalled turn).
+const stall = process.env.FAKE_STALL;
+// FAKE_QUEUE=ms: report provider queue_begin, wait, queue_end, then answer.
+const queueMs = Number(process.env.FAKE_QUEUE ?? 0);
 const state = { model: "m1", mode: "default" };
 new AgentSideConnection(
   (conn) => ({
@@ -57,6 +62,22 @@ new AgentSideConnection(
     async cancel() {},
     async prompt(p) {
       const prompt = p.prompt.map((b) => (b.type === "text" ? b.text : "")).join("");
+      const say = (text: string) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
+      if (stall === "before") {
+        await say("Skill descriptions were shortened to fit the 2% skills context budget. TRAE can still see every skill.");
+        await new Promise(() => {});
+      }
+      if (stall === "after") {
+        await say("我先看一下材料。");
+        await new Promise(() => {});
+      }
+      if (queueMs) {
+        await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "queue_begin", position: 3 } as never });
+        await new Promise((r) => setTimeout(r, queueMs));
+        await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "queue_end" } as never });
+        await say("queued-ok");
+        return { stopReason: "end_turn" };
+      }
       if (threadMode) {
         const n = (turns.get(p.sessionId) ?? 0) + 1;
         turns.set(p.sessionId, n);
