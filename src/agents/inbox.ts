@@ -24,6 +24,8 @@ export type Inbound = Partial<ThreadAddress> & {
   contextLabel?: string;
   /** Channel message id, so later replies can land in the right place (topic). */
   externalMessageId?: string;
+  /** The message this one replies to / quotes (Feishu 引用回复): sender, readable text and optional origin link. */
+  quote?: { messageId?: string; sender?: string; text?: string; origin?: string };
   /** Wait this long for more messages before starting (defaults to sessions.mergeMs for chats, 0 for web). */
   mergeMs?: number;
   /** Who sent it (resolved from the channel identity); the owner by default. */
@@ -92,6 +94,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     if (score !== null && score >= app.config.guard.threshold) meta.contextSuspect = Math.round(score * 100) / 100;
   }
   if (inb.externalMessageId) meta.externalId = inb.externalMessageId;
+  if (inb.quote) meta.quote = inb.quote;
   if (inb.speaker) meta.speaker = inb.speaker;
   const messageId = addMessage(app, thread.id, "user", text, null, meta);
   const mergeMs = inb.mergeMs ?? (inb.conversationId || !inb.channel || inb.channel === "web" || inb.channel === "cli" ? 0 : app.config.sessions.mergeMs);

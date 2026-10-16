@@ -949,9 +949,21 @@ def({
   name: "notify",
   description: "通知本人（站内 + 已绑定的机器人）。只用于需要本人知道或决定的变化，不要发送“无变化”。",
   write: true,
-  schema: z.object({ title: z.string(), body: z.string(), link: z.string().optional() }),
+  schema: z.object({
+    title: z.string(),
+    body: z.string(),
+    link: z.string().optional(),
+    entity: z.enum(["item"]).optional().describe("通知关联的实体类型"),
+    entity_id: z.string().optional().describe("关联事项 id：飞书会收到带 已处理/忽略 按钮的卡片"),
+  }),
   handler: (ctx, a) => {
-    notify(ctx.app, { title: a.title, body: a.body, link: a.link ?? (ctx.runId ? `#/runs/${ctx.runId}` : null) });
+    notify(ctx.app, {
+      title: a.title,
+      body: a.body,
+      link: a.link ?? (ctx.runId ? `#/runs/${ctx.runId}` : null),
+      entity: a.entity,
+      entityId: a.entity_id,
+    });
     return "已通知";
   },
 });
