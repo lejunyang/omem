@@ -1,9 +1,10 @@
 import type { App } from "../core/app.ts";
 import { truncate } from "../core/util.ts";
 import { userName } from "../core/users.ts";
-import { openAcp, type AcpHandle } from "./acp.ts";
+import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import { runCli } from "./cli.ts";
-import { prepareRun, type Actor } from "./runner.ts";
+import { fallbackProfiles, isRetryableAgentError, prepareRun, type Actor } from "./runner.ts";
+import type { AgentProfile } from "../core/config.ts";
 import { createRun, runsInLane, type RunContext } from "./runs.ts";
 import { findAgentSpec } from "./specs.ts";
 import { describeThread, findThread, getThread, threadMessages, updateThread, type Thread, type ThreadMessage } from "./threads.ts";
@@ -201,61 +202,126 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   }
 
   // ACP: reuse the live process when it is the same agent in the same place.
-  let l = live.get(threadId);
-  if (l && (l.key !== sessionKey || !l.handle.alive() || tooLong)) {
-    release(threadId);
-    l = undefined;
-  }
-  let mode: TurnResult["mode"];
-  if (l) {
-    revokeToolToken(prep.token);
-    retargetToolToken(l.token, ctx.run.id);
-    mode = "live";
-    emit({ type: "status", text: `继续会话中的 ${l.handle.agent}` });
-  } else {
-    let handle: AcpHandle;
-    try {
-      handle = await openAcp(
-        prep.profile,
-        { cwd: prep.cwd, mcp: prep.mcp, extraMcp: prep.extraMcp, allowWrites: prep.allowWrites, modes: prep.modes, resumeSessionId: canResume ? t.agentSession! : undefined },
-        emit,
-      );
-    } catch (e) {
-      revokeToolToken(prep.token);
-      throw e;
-    }
-    l = { threadId, key: sessionKey, handle, token: prep.token, lastUsed: Date.now(), busy: false };
-    live.set(threadId, l);
-    mode = handle.resumed ? "resumed" : "fresh";
-  }
-  l.busy = true;
-  try {
-    const prompt = mode === "fresh" ? freshPrompt() : `（现在 ${stamp(new Date().toISOString())}）\n\n${newPart}`;
-    let r;
-    try {
-      r = await l.handle.prompt(prompt, emit, ctx.signal);
-    } catch (e) {
-      if ((e as Error).message === "CANCELLED" || mode === "fresh") throw e;
-      // The kept session broke (process died, context lost): start over once from the summary.
+  // Provider queue/rate-limit failures fall through the configured fallback chain once.
+  const chain = fallbackProfiles(app, actor, prep.profile.id, { model: t.settings.model ?? null, effort: t.settings.effort ?? null });
+  let mode: TurnResult["mode"] = "fresh";
+  let used: AgentProfile = prep.profile;
+  let curPrep = prep;
+  let answer: string | null = null;
+  for (let step = 0; step < chain.length; step++) {
+    if (step > 0) {
+      used = chain[step];
       release(threadId);
-      emit({ type: "status", text: `之前的 Agent 会话不可用（${(e as Error).message.slice(0, 80)}），改为新会话` });
-      const again = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: t.settings.profile, userId, lark, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined });
-      const handle = await openAcp(again.profile, { cwd: again.cwd, mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes }, emit);
-      l = { threadId, key: sessionKey, handle, token: again.token, lastUsed: Date.now(), busy: true };
-      live.set(threadId, l);
-      mode = "fresh";
-      r = await handle.prompt(`${again.system}\n\n---\n\n# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0]?.createdAt ?? new Date().toISOString())}\n\n---\n\n${newPart}`, emit, ctx.signal);
+      revokeToolToken(curPrep.token);
+      curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined });
+      emit({ type: "status", text: `默认后端不可用（排队/限流），改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试` });
     }
-    save(l.handle.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1);
-    return { text: r.text, agent: r.agent, profileId: prep.profile.id, mode };
-  } catch (e) {
-    if ((e as Error).message !== "CANCELLED") release(threadId);
-    throw e;
-  } finally {
-    const cur = live.get(threadId);
-    if (cur) {
-      cur.busy = false;
-      keepAlive(app, cur);
+    try {
+      if (used.transport !== "acp") {
+        const r = await runCli(
+          used,
+          {
+            cwd: curPrep.cwd,
+            prompt: curPrep.system + "\n\n---\n\n" + newPart,
+            allowWrites: curPrep.allowWrites,
+            modes: curPrep.modes,
+            signal: ctx.signal,
+            mcp: curPrep.mcp,
+            extraMcp: curPrep.extraMcp,
+            queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
+          },
+          emit,
+        );
+        answer = r.text;
+        mode = "fresh";
+        break;
+      }
+      const stepKey = `${curPrep.profile.id}|${label}|${curPrep.cwd}|${curPrep.profile.model ?? ""}|${curPrep.profile.effort ?? ""}${userId === "owner" ? "" : `|${userId}`}`;
+      let l = step === 0 ? live.get(threadId) : undefined;
+      if (l && (l.key !== stepKey || !l.handle.alive() || tooLong)) {
+        release(threadId);
+        l = undefined;
+      }
+      if (l) {
+        revokeToolToken(curPrep.token);
+        retargetToolToken(l.token, ctx.run.id);
+        mode = "live";
+        emit({ type: "status", text: `继续会话中的 ${l.handle.agent}` });
+      } else {
+        let handle: AcpHandle;
+        try {
+          handle = await openAcp(
+            used,
+            {
+              cwd: curPrep.cwd,
+              mcp: curPrep.mcp,
+              extraMcp: curPrep.extraMcp,
+              allowWrites: curPrep.allowWrites,
+              modes: curPrep.modes,
+              resumeSessionId: step === 0 && canResume ? t.agentSession! : undefined,
+              queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
+            },
+            emit,
+          );
+        } catch (e) {
+          revokeToolToken(curPrep.token);
+          throw e;
+        }
+        l = { threadId, key: stepKey, handle, token: curPrep.token, lastUsed: Date.now(), busy: false };
+        live.set(threadId, l);
+        mode = handle.resumed ? "resumed" : "fresh";
+      }
+      l.busy = true;
+      let done = false;
+      try {
+        const promptText = mode === "fresh" ? (step === 0 ? freshPrompt() : curPrep.system + "\n\n---\n\n" + newPart) : `（现在 ${stamp(new Date().toISOString())}）\n\n${newPart}`;
+        let r;
+        try {
+          r = await l.handle.prompt(promptText, emit, ctx.signal);
+        } catch (e) {
+          if ((e as Error).message === "CANCELLED") throw e;
+          if (isRetryableAgentError(e)) {
+            // Provider queue/rate limit: drop the live session and let the outer chain try a fallback.
+            release(threadId);
+            throw e;
+          }
+          if (mode === "fresh") throw e;
+          // The kept session broke (process died, context lost): start over once from the summary.
+          release(threadId);
+          emit({ type: "status", text: `之前的 Agent 会话不可用（${(e as Error).message.slice(0, 80)}），改为新会话` });
+          const again = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined });
+          const handle = await openAcp(
+            again.profile,
+            { cwd: again.cwd, mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },
+            emit,
+          );
+          l = { threadId, key: stepKey, handle, token: again.token, lastUsed: Date.now(), busy: true };
+          live.set(threadId, l);
+          mode = "fresh";
+          curPrep = again;
+          r = await handle.prompt(`${again.system}\n\n---\n\n# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0]?.createdAt ?? new Date().toISOString())}\n\n---\n\n${newPart}`, emit, ctx.signal);
+        }
+        save(l.handle.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1);
+        answer = r.text;
+        done = true;
+        break;
+      } catch (e) {
+        if ((e as Error).message !== "CANCELLED" && !isRetryableAgentError(e)) release(threadId);
+        if (isRetryableAgentError(e)) release(threadId);
+        throw e;
+      } finally {
+        const cur = live.get(threadId);
+        if (cur) {
+          cur.busy = false;
+          if (done) keepAlive(app, cur);
+        }
+      }
+    } catch (e) {
+      if ((e as Error).message === "CANCELLED" || ctx.signal?.aborted || !isRetryableAgentError(e) || step === chain.length - 1) throw e;
+      emit({ type: "status", text: (e as Error).message.slice(0, 120) });
     }
   }
+  // The live session keeps curPrep's token (retargeted on reuse); non-live paths revoked theirs.
+  if (!live.get(threadId)) revokeToolToken(curPrep.token);
+  return { text: answer ?? "", agent: used.name ?? used.id, profileId: used.id, mode };
 }

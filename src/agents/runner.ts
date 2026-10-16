@@ -14,7 +14,7 @@ import { runCli } from "./cli.ts";
 import { commandExists } from "./spawn.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
 import { issueToolToken, revokeToolToken } from "./tools.ts";
-import type { AgentEvent, AgentResult, McpAccess } from "./types.ts";
+import { isAgentRunError, type AgentEvent, type AgentResult, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, type AgentSpec, type McpServerSpec } from "./specs.ts";
 
@@ -205,23 +205,75 @@ export function prepareRun(
   };
 }
 
+/** Whether a failure is worth retrying on a fallback backend/model. */
+export function isRetryableAgentError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  if (isAgentRunError(e)) return e.kind === "queue" || e.kind === "rate-limit" || e.queued === true;
+  return /rate.?limit|too many requests|429|capacity|overloaded|busy|try again later|resource.*(exhaust|unavailable)|排队/i.test(e.message);
+}
+
+/** Build the ordered profile list for one role run: primary then configured fallbacks. */
+export function fallbackProfiles(
+  app: App,
+  actor: Actor,
+  baseId: string,
+  thread?: { model?: string | null; effort?: string | null },
+): AgentProfile[] {
+  const specs = allProfiles(app.config);
+  const roleName = "spec" in actor ? null : (actor as { role: RoleName }).role;
+  const make = (id: string, modelOverride?: string, effortOverride?: string): AgentProfile | null => {
+    const p = specs.find((x) => x.id === id);
+    if (!p) return null;
+    // Role defaults first; explicit step overrides win over them.
+    let out = roleName ? resolveRoleProfile(app, p, roleName) : p;
+    out = { ...out, model: modelOverride ?? out.model, effort: effortOverride ?? out.effort };
+    if (thread?.model !== undefined || thread?.effort !== undefined)
+      out = { ...out, model: thread.model ?? out.model, effort: thread.effort ?? out.effort };
+    return out;
+  };
+  const chain: AgentProfile[] = [];
+  const primary = make(baseId);
+  if (primary) chain.push(primary);
+  for (const f of app.config.agents.fallback ?? []) {
+    if (f.profile === baseId && f.model === undefined && f.effort === undefined) continue;
+    const p = make(f.profile, f.model, f.effort);
+    if (p && !chain.some((x) => x.id === p.id && x.model === p.model && x.effort === p.effort)) chain.push(p);
+  }
+  return chain;
+}
+
 /** Run a role-defined agent turn with omem tools attached. */
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string }> {
-  const prep = prepareRun(app, { actor: input.spec ? { spec: input.spec } : { role: input.role }, spaceId: input.spaceId, spaces: input.spaces, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId });
+  const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
+  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId });
+  const chain = input.spec
+    ? [base.profile] // explicit agent specs choose their own backend; no silent rerouting
+    : fallbackProfiles(app, actor, base.profile.id);
   const emit = input.onEvent ?? (() => {});
-  try {
-    const req = {
-      cwd: prep.cwd,
-      prompt: `${prep.system}\n\n---\n\n# 任务\n\n${input.task}`,
-      allowWrites: prep.allowWrites,
-      modes: prep.modes,
-      signal: input.signal,
-      mcp: prep.mcp,
-      extraMcp: prep.extraMcp,
-    };
-    const result = prep.profile.transport === "acp" ? await runAcp(prep.profile, req, emit) : await runCli(prep.profile, req, emit);
-    return { ...result, profileId: prep.profile.id };
-  } finally {
-    revokeToolToken(prep.token);
+  let lastError: unknown;
+  for (let i = 0; i < chain.length; i++) {
+    const profile = chain[i];
+    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId });
+    try {
+      const req = {
+        cwd: prep.cwd,
+        prompt: `${prep.system}\n\n---\n\n# 任务\n\n${input.task}`,
+        allowWrites: prep.allowWrites,
+        modes: prep.modes,
+        signal: input.signal,
+        mcp: prep.mcp,
+        extraMcp: prep.extraMcp,
+        queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
+      };
+      if (i > 0) emit({ type: "status", text: `默认后端不可用（排队/限流），改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""} 重试` });
+      const result = profile.transport === "acp" ? await runAcp(profile, req, emit) : await runCli(profile, req, emit);
+      revokeToolToken(prep.token);
+      return { ...result, profileId: profile.id };
+    } catch (e) {
+      revokeToolToken(prep.token);
+      if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !isRetryableAgentError(e) || i === chain.length - 1) throw e;
+      lastError = e;
+    }
   }
+  throw lastError ?? new Error("没有可用的 Agent");
 }
