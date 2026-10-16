@@ -2,10 +2,13 @@ import { ClientSideConnection, ndJsonStream, type McpServer, type SessionConfigO
 import type { AgentProfile } from "../core/config.ts";
 import { resolveModelOption } from "./models.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
-import type { AgentEvent, AgentProbe, AgentRequest, AgentResult } from "./types.ts";
+import { agentRunError, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult } from "./types.ts";
 
-function optionValues(option: SessionConfigOption): string[] {
-  if (option.type !== "select") return [];
+// Provider queue text shown as a normal message by some CLIs (traex included).
+const QUEUE_TEXT = /(?:排队|队列|queue[d]?|waiting (?:in )?(?:the )?queue)[^\d]{0,20}(\d+)?/i;
+const QUEUE_END_TEXT = /(?:已排到|轮到你|队列已结束|(?:no longer|out of) (?:in )?queue|开始处理你的请求)/i;
+
+function optionValues(option: SessionConfigOption): string[] {  if (option.type !== "select") return [];
   const out: string[] = [];
   for (const o of option.options as unknown[]) {
     const group = o as { options?: { value: string }[]; value?: string };
@@ -25,6 +28,8 @@ export type AcpOpenOptions = {
   /** Continue an earlier agent session (resume, or load when only that is offered). */
   resumeSessionId?: string;
   probe?: boolean;
+  /** Max time to wait in the provider queue before failing with kind="queue". 0 = unlimited. */
+  queueTimeoutMs?: number;
 };
 
 /**
@@ -67,6 +72,10 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
   let touch = () => {};
   let replaying = false;
   let text = "";
+  // Remember unknown session update kinds once per process (for OMEM_DEBUG_ACP).
+  const seenUnknown = new Set<string>();
+  // The active prompt registers queue handling here so sessionUpdate can switch watchdogs.
+  let promptQueue: { enter: (position?: number, message?: string) => void; exit: () => void } | null = null;
   const tools = new Map<string, { title: string; kind?: string; status?: string }>();
   const output = new WritableStream<Uint8Array>({
     write: (chunk) => new Promise((resolve, reject) => child.stdin.write(chunk, (e) => (e ? reject(e) : resolve()))),
@@ -99,6 +108,12 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
             if (update.content.type === "text") {
               text += update.content.text;
               emit({ type: "text", text: update.content.text });
+              // Some agents show provider queue state as ordinary message text.
+              const q = QUEUE_TEXT.exec(update.content.text);
+              if (q) {
+                const position = q[1] ? Number(q[1]) : undefined;
+                promptQueue?.enter(Number.isFinite(position) ? position : undefined);
+              } else if (QUEUE_END_TEXT.test(update.content.text)) promptQueue?.exit();
             }
             break;
           case "agent_thought_chunk":
@@ -120,6 +135,24 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
           case "plan":
             emit({ type: "plan", entries: update.entries.map((e) => ({ content: e.content, status: e.status })) });
             break;
+          default: {
+            // Trae carries provider queue state (queue_begin/queue_position/queue_end) as
+            // non-standard session updates; other agents add their own too. Recognize the
+            // queue family generically and log the rest once for later support.
+            const u = update as Record<string, unknown>;
+            const state = (u.state as string | undefined) ?? (u.sessionUpdate as string | undefined) ?? "";
+            if (/queue/i.test(state) || (u.queued === true) || (u.in_queue === true)) {
+              const position = typeof u.position === "number" ? u.position : undefined;
+              const message = typeof u.message === "string" ? u.message : undefined;
+              const queued = !/queue_end/.test(state) && u.state !== "ready" && u.state !== "done";
+              emit({ type: "queue", queued, position, message });
+              if (queued) promptQueue?.enter(position, message);
+              else promptQueue?.exit();
+            } else if (!seenUnknown.has(update.sessionUpdate)) {
+              seenUnknown.add(update.sessionUpdate);
+              if (process.env.OMEM_DEBUG_ACP) console.warn(`[acp] 未识别的 sessionUpdate：${update.sessionUpdate}`, JSON.stringify(update).slice(0, 500));
+            }
+          }
         }
       },
       async readTextFile() {
@@ -273,11 +306,44 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         // A fresh failure channel for this turn: an earlier exit error has already been consumed.
         failed = new Promise<never>((_, reject) => (fail = reject));
         failed.catch(() => {});
-        const watchdog = idleWatchdog(profile.idleTimeoutMs, () => {
-          fail(new Error(`Agent 超过 ${Math.round(profile.idleTimeoutMs / 1000)} 秒没有任何活动，已停止`));
+        // Two budgets: ordinary idle (any update resets it) and a separate, usually longer
+        // cap for time spent in the provider queue. Queue events pause the idle watchdog.
+        let idleW = idleWatchdog(profile.idleTimeoutMs, () => {
+          fail(agentRunError(`Agent 超过 ${Math.round(profile.idleTimeoutMs / 1000)} 秒没有任何活动，已停止`, "idle"));
           close();
         });
-        touch = () => watchdog.touch();
+        let queueW: ReturnType<typeof idleWatchdog> | null = null;
+        const startIdle = () => {
+          idleW.close();
+          idleW = idleWatchdog(profile.idleTimeoutMs, () => {
+            // Idle after the queue cleared is a genuine stall (long tool chain), not queueing.
+            fail(agentRunError(`Agent 超过 ${Math.round(profile.idleTimeoutMs / 1000)} 秒没有任何活动，已停止`, "idle"));
+            close();
+          });
+        };
+        let entered = false;
+        promptQueue = {
+          enter(position) {
+            idleW.close();
+            if (entered) return;
+            entered = true;
+            if (!queueW && opts.queueTimeoutMs && opts.queueTimeoutMs > 0) {
+              queueW = idleWatchdog(opts.queueTimeoutMs, () => {
+                fail(agentRunError(`排队超过 ${Math.round(opts.queueTimeoutMs! / 60000)} 分钟仍未开始，已停止`, "queue", true));
+                close();
+              });
+            }
+            emitSetup({ type: "status", text: `模型排队中${position ? `，前方约 ${position} 位` : ""}…` });
+          },
+          exit() {
+            entered = false;
+            queueW?.close();
+            queueW = null;
+            startIdle();
+            idleW.touch();
+          },
+        };
+        touch = () => idleW.touch();
         const onAbort = () => {
           void connection.cancel({ sessionId }).catch(() => {});
           fail(new Error("CANCELLED"));
@@ -288,7 +354,9 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
           if (signal?.aborted) throw new Error("CANCELLED");
           return { text, stopReason: result.stopReason, sessionId, agent: agentName };
         } finally {
-          watchdog.close();
+          idleW.close();
+          (queueW as ReturnType<typeof idleWatchdog> | null)?.close();
+          promptQueue = null;
           signal?.removeEventListener("abort", onAbort);
           touch = () => {};
           emit = () => {};
@@ -318,7 +386,7 @@ function explain(error: unknown, profile: AgentProfile) {
 export async function runAcp(profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   const onAbort = () => {};
   req.signal?.addEventListener("abort", onAbort, { once: true });
-  const handle = await openAcp(profile, { cwd: req.cwd, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, env: req.env, probe: req.probe }, emit);
+  const handle = await openAcp(profile, { cwd: req.cwd, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, env: req.env, probe: req.probe, queueTimeoutMs: req.queueTimeoutMs }, emit);
   try {
     if (req.probe) return { text: "", stopReason: "probe", agent: handle.agent, probe: handle.probe };
     if (req.signal?.aborted) throw new Error("CANCELLED");

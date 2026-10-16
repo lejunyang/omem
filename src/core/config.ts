@@ -73,9 +73,20 @@ export const configSchema = z.object({
       roleModels: z
         .record(z.string(), z.record(z.string(), z.object({ model: z.string().optional(), effort: z.string().optional() })))
         .default({}),
+      /**
+       * Ordered fallbacks tried once when the primary backend fails because of a
+       * provider queue / rate limit / queue-timeout. Each step is another profile
+       * id, optionally with a different model/effort: { profile, model, effort }.
+       * Role picks apply per step the same way they do for the primary profile.
+       */
+      fallback: z
+        .array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() }))
+        .default([]),
+      /** Max minutes to wait in the provider queue (traex queue_begin…) before giving up and trying a fallback. */
+      queueTimeoutMinutes: z.number().min(1).max(240).default(30),
       profiles: z.array(agentProfileSchema).default([]),
     })
-    .default({ roles: {}, roleModels: {}, profiles: [] }),
+    .default({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, profiles: [] }),
   embeddings: z
     .object({
       provider: z.enum(["none", "local", "openai"]).default("none"),
