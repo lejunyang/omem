@@ -217,7 +217,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
       used = chain[step];
       release(threadId);
       revokeToolToken(curPrep.token);
-      curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined });
+      curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined });
       emit({ type: "status", text: `默认后端不可用（排队/限流），改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试` });
     }
     try {
@@ -293,7 +293,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
           // The kept session broke (process died, context lost): start over once from the summary.
           release(threadId);
           emit({ type: "status", text: `之前的 Agent 会话不可用（${(e as Error).message.slice(0, 80)}），改为新会话` });
-          const again = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined });
+          const again = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined });
           const handle = await openAcp(
             again.profile,
             { cwd: again.cwd, mcp: again.mcp, extraMcp: again.extraMcp, allowWrites: again.allowWrites, modes: again.modes, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000 },

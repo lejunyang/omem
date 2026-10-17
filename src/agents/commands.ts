@@ -205,8 +205,14 @@ const commands: Record<string, Command> = {
       const { model, effort } = parseModelArgs(persist ? text.slice(5) : text);
       if (!model && !effort) return "没看出要改成什么。用法：/model 模型名 effort=low|medium|high";
       if (persist) {
-        // Stored on the role this thread runs (assistant unless an agent spec answers here).
-        const role = thread.settings.spec ? "assistant" : "assistant";
+        // An agent spec answering here carries its own model/effort: save it on the spec, since
+        // role defaults never apply to spec runs.
+        const answering = thread.settings.spec ? findAgentSpec(app, thread.settings.spec) : null;
+        if (answering) {
+          saveAgentSpec(app, { name: answering.name, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }, "user");
+          return `已把 Agent 档案 ${answering.name} 的默认改为 ${model ?? "模型不变"} / ${effort ?? "强度不变"}。`;
+        }
+        const role = "assistant";
         const next = structuredClone(app.config) as Config;
         const roles = new Map(Object.entries(next.agents.roleModels ?? {}));
         const byProfile = new Map(Object.entries(roles.get(role) ?? {}));
