@@ -24,6 +24,12 @@ export type Memory = {
   model?: string | null;
   effort?: string | null;
   runId?: string | null;
+  /** Agent spec this procedural memory belongs to; null = shared in the space. */
+  agent?: string | null;
+  tags?: string[];
+  reviewedAt?: string | null;
+  reviewVerdict?: string | null;
+  reviewNote?: string | null;
 };
 type Row = {
   id: string;
@@ -44,6 +50,11 @@ type Row = {
   model: string | null;
   effort: string | null;
   run_id: string | null;
+  agent: string | null;
+  tags: string | null;
+  reviewed_at: string | null;
+  review_verdict: string | null;
+  review_note: string | null;
 };
 const toMemory = (r: Row): Memory => ({
   id: r.id,
@@ -64,6 +75,11 @@ const toMemory = (r: Row): Memory => ({
   model: r.model,
   effort: r.effort,
   runId: r.run_id,
+  agent: r.agent,
+  tags: json(r.tags, []),
+  reviewedAt: r.reviewed_at,
+  reviewVerdict: r.review_verdict,
+  reviewNote: r.review_note,
 });
 
 function index(app: App, id: string, subject: string, content: string) {
@@ -99,6 +115,8 @@ export type RememberInput = {
   model?: string | null;
   effort?: string | null;
   runId?: string | null;
+  agent?: string | null;
+  tags?: string[];
 };
 
 export function remember(app: App, input: RememberInput): Memory {
@@ -107,7 +125,7 @@ export function remember(app: App, input: RememberInput): Memory {
   tx(app.db, () => {
     run(
       app.db,
-      "insert into memories(id,space_id,kind,subject,content,status,valid_from,source_refs,created_by,created_at,updated_at,user_id,agent_profile,model,effort,run_id) values(?,?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?)",
+      "insert into memories(id,space_id,kind,subject,content,status,valid_from,source_refs,created_by,created_at,updated_at,user_id,agent_profile,model,effort,run_id,agent,tags,reviewed_at,review_verdict,reviewed_by) values(?,?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       id,
       input.spaceId,
       input.kind,
@@ -123,6 +141,12 @@ export function remember(app: App, input: RememberInput): Memory {
       input.model ?? null,
       input.effort ?? null,
       input.runId ?? null,
+      input.agent ?? null,
+      JSON.stringify(cleanTags(input.tags)),
+      // What the owner writes needs no review.
+      input.createdBy === "user" ? at : null,
+      input.createdBy === "user" ? "keep" : null,
+      input.createdBy === "user" ? "user" : null,
     );
     index(app, id, input.subject ?? "", input.content);
   });
@@ -160,8 +184,9 @@ export function supersede(app: App, oldId: string, input: Omit<RememberInput, "s
       input.effort ?? null,
       input.runId ?? null,
     );
-    // A correction keeps whose memory it was.
-    run(app.db, "update memories set user_id = (select user_id from memories where id = ?) where id = ?", oldId, id);
+    // A correction keeps whose memory it was, its agent scope and tags; the owner's own edits need no review.
+    run(app.db, "update memories set user_id = o.user_id, agent = o.agent, tags = o.tags from (select user_id, agent, tags from memories where id = ?) o where memories.id = ?", oldId, id);
+    if (input.createdBy === "user") run(app.db, "update memories set reviewed_at = ?, review_verdict = 'keep', reviewed_by = 'user' where id = ?", at, id);
     run(app.db, "update memories set status='superseded', valid_to=?, superseded_by=?, updated_at=? where id=?", input.validFrom ?? at, id, at, oldId);
     index(app, id, input.subject ?? old.subject, input.content);
   });
@@ -176,17 +201,37 @@ export function retract(app: App, id: string, reason = "") {
   return getMemory(app, id);
 }
 
-export function updateMemoryText(app: App, id: string, patch: { content?: string; subject?: string; kind?: MemoryKind }) {
+export function cleanTags(tags?: string[]) {
+  return [...new Set((tags ?? []).map((t) => t.trim().replace(/^#/, "")).filter(Boolean))].slice(0, 12);
+}
+
+export function updateMemoryText(app: App, id: string, patch: { content?: string; subject?: string; kind?: MemoryKind; tags?: string[] }) {
   const m = getMemory(app, id);
-  run(app.db, "update memories set content=?, subject=?, kind=?, updated_at=?, created_by='user' where id=?", patch.content ?? m.content, patch.subject ?? m.subject, patch.kind ?? m.kind, now(), id);
+  run(
+    app.db,
+    "update memories set content=?, subject=?, kind=?, tags=?, updated_at=?, created_by='user', reviewed_at=?, review_verdict='keep', reviewed_by='user' where id=?",
+    patch.content ?? m.content,
+    patch.subject ?? m.subject,
+    patch.kind ?? m.kind,
+    JSON.stringify(patch.tags ? cleanTags(patch.tags) : (m.tags ?? [])),
+    now(),
+    now(),
+    id,
+  );
   index(app, id, patch.subject ?? m.subject, patch.content ?? m.content);
   app.emit({ type: "changed", entity: "memory", id, spaceId: m.spaceId });
   return getMemory(app, id);
 }
 
-export function listMemories(app: App, opts: { spaceId?: string; status?: string; kind?: string; subject?: string; limit?: number }) {
+export function listMemories(app: App, opts: { spaceId?: string; status?: string; kind?: string; subject?: string; tag?: string; agent?: string | null; review?: "pending" | "keep" | "rewrite" | "retract"; limit?: number }) {
   const where: string[] = [];
   const params: string[] = [];
+  if (opts.tag) where.push("exists (select 1 from json_each(memories.tags) where value = ?)"), params.push(opts.tag);
+  // agent: a spec name = shared memories plus that spec's own; null = shared only; undefined = everything.
+  if (opts.agent === null) where.push("agent is null");
+  else if (opts.agent) where.push("(agent is null or agent = ?)"), params.push(opts.agent);
+  if (opts.review === "pending") where.push("reviewed_at is null and created_by = 'agent'");
+  else if (opts.review) where.push("review_verdict = ?"), params.push(opts.review);
   if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);
   if (opts.status && opts.status !== "all") where.push("status = ?"), params.push(opts.status);
   if (opts.kind) where.push("kind = ?"), params.push(opts.kind);
@@ -205,6 +250,14 @@ export function memoryHistory(app: App, id: string): Memory[] {
   const chain = [first];
   while (chain[chain.length - 1].supersededBy) chain.push(getMemory(app, chain[chain.length - 1].supersededBy!));
   return chain;
+}
+
+export function memoryTags(app: App, spaceId?: string) {
+  return all<{ tag: string; n: number }>(
+    app.db,
+    `select j.value tag, count(*) n from memories, json_each(memories.tags) j where status = 'active' ${spaceId ? "and space_id = ?" : ""} group by j.value order by n desc limit 100`,
+    ...(spaceId ? [spaceId] : []),
+  );
 }
 
 export function memorySubjects(app: App, spaceId?: string) {

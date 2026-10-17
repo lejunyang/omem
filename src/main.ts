@@ -1,5 +1,5 @@
 import "./agents/jobs.ts";
-import { learningTick, scheduleSpaceSync } from "./agents/jobs.ts";
+import { learningTick, scheduleMemoryReview, scheduleSpaceSync } from "./agents/jobs.ts";
 import { createRun, listRuns, startWorker } from "./agents/runs.ts";
 import { App } from "./core/app.ts";
 import { ensureDefaultSchedules, registerScheduleKind, restartScheduler } from "./core/scheduler.ts";
@@ -17,6 +17,7 @@ registerScheduleKind("repo-sync", (app) => {
   for (const s of listSpaces(app)) if (s.rootPath) scheduleSpaceSync(app, s.id);
 });
 
+registerScheduleKind("memory-review", (app) => scheduleMemoryReview(app));
 registerScheduleKind("learn", (app) => learningTick(app));
 registerScheduleKind("activity", (app) => {
   import("./sources/activity.ts").then((m) => m.recordCodeActivity(app)).catch((e) => console.warn("[omem] 记录代码活动失败：", e.message));

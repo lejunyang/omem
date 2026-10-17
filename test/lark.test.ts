@@ -11,7 +11,8 @@ import { all } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
-import { pollLark } from "../src/channels/lark-personal.ts";
+import { capturedChats, pollLark, setCapturePolicy } from "../src/channels/lark-personal.ts";
+import { run as runSql } from "../src/core/db.ts";
 import { buildCard, setLarkClient } from "../src/channels/lark-send.ts";
 import { routeWatchedMessages, setWatchRule } from "../src/channels/lark-watch.ts";
 import { recordCodeActivity } from "../src/sources/activity.ts";
@@ -166,6 +167,74 @@ describe("feishu capture (lark-cli)", () => {
     const again = await pollLark(app);
     expect(again.messages).toBe(0);
     expect(all<{ text: string }>(app.db, "select text from sources where uri = 'lark:oc_a'")[0].text.match(/om_1/g)).toHaveLength(1);
+  });
+});
+
+describe("feishu capture policies by kind of chat", () => {
+  it("skips omem's own bot and muted chats, keeps bot chats searchable, and ingests groups only when the owner is involved", async () => {
+    const app = testApp();
+    app.config.lark.appId = "cli_omem";
+    app.config.lark.capture = { ...app.config.lark.capture, mode: "all", attachments: false, docs: false, calendar: false, minutes: false, quietStop: 10 };
+    runSql(app.db, "insert into kv(key,value) values('lark_owner_chat','oc_ownbot')");
+    const t0 = Date.now() - 3600_000;
+    const text = (t: string) => JSON.stringify({ text: t });
+    const msgs: Record<string, any[]> = {
+      oc_ownbot: [{ message_id: "om_o1", msg_type: "text", content: text("我的助理回答"), create_time: String(t0), sender: { id: "cli_omem", id_type: "app_id", sender_type: "app" } }],
+      oc_notify: [{ message_id: "om_n1", msg_type: "text", content: text("你的工单已处理"), create_time: String(t0), sender: { id: "cli_x", id_type: "app_id", sender_type: "app", name: "工单助手" } }],
+      oc_passive: [{ message_id: "om_p1", msg_type: "text", content: text("有人知道怎么配吗"), create_time: String(t0), sender: { id: "ou_a", name: "路人" } }],
+      oc_mine: [
+        { message_id: "om_m1", msg_type: "text", content: text("方案定了吗"), create_time: String(t0), sender: { id: "ou_b", name: "同事" }, mentions: [{ id: "ou_me", name: "我" }] },
+        { message_id: "om_m2", msg_type: "text", content: text("这是我的机器人回复"), create_time: String(t0 + 1), sender: { id: "cli_omem", id_type: "app_id", sender_type: "app" } },
+      ],
+      oc_muted: [{ message_id: "om_x1", msg_type: "text", content: text("刷屏"), create_time: String(t0), sender: { id: "ou_c", name: "某人" } }],
+    };
+    const read: string[] = [];
+    setLarkCliForTests(async (args) => {
+      const sub = args.slice(0, 2).join(" ");
+      if (sub === "auth status") return { data: { identities: { user: { openId: "ou_me" } } } };
+      if (sub === "im +chat-list") {
+        const chats = [
+          { chat_id: "oc_ownbot", name: "我的助理", chat_mode: "p2p", p2p_target_type: "bot" },
+          { chat_id: "oc_notify", name: "工单助手", chat_mode: "p2p", p2p_target_type: "user" },
+          { chat_id: "oc_passive", name: "大群", chat_mode: "topic" },
+          { chat_id: "oc_mine", name: "项目群", chat_mode: "group" },
+          { chat_id: "oc_muted", name: "吵闹群", chat_mode: "group" },
+        ];
+        return { data: { chats: args.includes("--exclude-muted") ? chats.filter((c) => c.chat_id !== "oc_muted") : chats } };
+      }
+      if (sub === "im +chat-messages-list") {
+        const chat = args[args.indexOf("--chat-id") + 1];
+        read.push(chat);
+        return { data: { messages: msgs[chat] ?? [] } };
+      }
+      if (sub === "im +messages-search") return { data: { messages: [] } };
+      throw new Error(`unexpected ${args.join(" ")}`);
+    });
+    await pollLark(app);
+    expect(read).not.toContain("oc_ownbot");
+    expect(read).not.toContain("oc_muted");
+    const src = (uri: string) => all<{ id: string; text: string }>(app.db, "select id, text from sources where uri = ?", uri)[0];
+    expect(src("lark:oc_ownbot")).toBeUndefined();
+    expect(src("lark:oc_notify").text).toMatch(/工单助手（机器人）: 你的工单已处理/);
+    expect(src("lark:oc_passive").text).toMatch(/有人知道怎么配吗/);
+    // omem's own replies in a group are its output, not material.
+    expect(src("lark:oc_mine").text).not.toMatch(/这是我的机器人回复/);
+    const ingested = listRuns(app, { kind: "ingest" }).flatMap((r) => (r.input as { sourceIds: string[] }).sourceIds);
+    expect(ingested).toContain(src("lark:oc_mine").id);
+    expect(ingested).not.toContain(src("lark:oc_passive").id);
+    expect(ingested).not.toContain(src("lark:oc_notify").id);
+
+    const seen = Object.fromEntries(capturedChats(app).map((c) => [c.chatId, c]));
+    expect(seen.oc_notify).toMatchObject({ kind: "bot", policy: "store" });
+    expect(seen.oc_passive).toMatchObject({ kind: "topic", policy: "involved", involved: false });
+    expect(seen.oc_mine).toMatchObject({ involved: true });
+
+    // A chat's own setting wins over its kind.
+    setCapturePolicy(app, "oc_passive", "ingest");
+    msgs.oc_passive.push({ message_id: "om_p2", msg_type: "text", content: text("补充一下"), create_time: String(t0 + 5000), sender: { id: "ou_a", name: "路人" } });
+    await pollLark(app);
+    const again = listRuns(app, { kind: "ingest" }).flatMap((r) => (r.input as { sourceIds: string[] }).sourceIds);
+    expect(again).toContain(src("lark:oc_passive").id);
   });
 });
 

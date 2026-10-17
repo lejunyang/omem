@@ -33,7 +33,8 @@ export function loadRole(name: string): Role {
   if (cached && process.env.NODE_ENV === "production") return cached;
   const file = join(rolesDir(), `${name}.md`);
   if (!existsSync(file)) throw new HttpError(400, `未知角色：${name}`);
-  const raw = readFileSync(file, "utf8");
+  // Windows checkouts may have CRLF line endings.
+  const raw = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
   const m = /^---\n([\s\S]*?)\n---\n/.exec(raw);
   const meta = (m ? YAML.parse(m[1]) : {}) as Partial<Role>;
   const role: Role = {
@@ -92,18 +93,22 @@ function localTime(app: App) {
  * Self-improvement loop: preferences the owner stated and lessons distilled by
  * the dreamer (experience memories) are handed to every future run.
  */
-function learnedContext(app: App, spaceId: string, userId: string) {
-  const rows = all<{ kind: string; subject: string; content: string }>(
+function learnedContext(app: App, spaceId: string, userId: string, spec: string | null) {
+  // With review on, only memories the reviewer (or the owner) accepted are handed to every run:
+  // a bad lesson repeated in every prompt costs more than a missing one.
+  const vetted = app.config.memory.review.enabled ? "and (created_by = 'user' or review_verdict = 'keep')" : "";
+  const rows = all<{ kind: string; subject: string; content: string; agent: string | null }>(
     app.db,
-    `select kind, subject, content from memories where status = 'active' and (
+    `select kind, subject, content, agent from memories where status = 'active' ${vetted} and (agent is null or agent = ?) and (
        (kind = 'preference' and space_id in (?, ?) and coalesce(user_id, 'owner') = ?) or (kind = 'experience' and space_id = ?)
-     ) order by kind = 'preference' desc, updated_at desc limit 24`,
+     ) order by kind = 'preference' desc, agent is not null desc, updated_at desc limit 24`,
+    spec ?? "",
     personalSpaceId(userId),
     spaceId,
     userId,
     spaceId,
   );
-  return rows.map((r) => `- ${r.kind === "preference" ? "偏好" : "经验"}${r.subject ? `（${r.subject}）` : ""}：${r.content}`).join("\n");
+  return rows.map((r) => `- ${r.kind === "preference" ? "偏好" : "经验"}${r.agent ? "（本档案）" : ""}${r.subject ? `（${r.subject}）` : ""}：${r.content}`).join("\n");
 }
 
 export type RoleRunInput = {
@@ -117,6 +122,10 @@ export type RoleRunInput = {
   signal?: AbortSignal;
   onEvent?: (e: AgentEvent) => void;
   profileId?: string;
+  model?: string;
+  effort?: string;
+  /** Comparison run: writes are recorded, not applied; no fallback. */
+  shadow?: { parentRunId: string | null };
 };
 
 /** Who is acting: a built-in role, or an agent spec the assistant (or the owner) created. */
@@ -141,7 +150,7 @@ export type PreparedRun = {
  */
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: { chats: string[] | null; draft?: boolean } },
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: { chats: string[] | null; draft?: boolean }; shadow?: { parentRunId: string | null } },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -179,9 +188,9 @@ export function prepareRun(
   if (scoped && !scoped.includes(space.id)) throw new HttpError(403, `${userName(app, userId)} 不能访问空间 ${space.id}`);
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
-  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: scoped, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, agentProfile: profile.id, model: profile.model, effort: profile.effort });
+  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: scoped, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, shadow: input.shadow });
   const guide = spaceGuide(app, space.id).trim();
-  const lessons = learnedContext(app, space.id, userId);
+  const lessons = learnedContext(app, space.id, userId, spec?.name ?? null);
   const skills = skillIndex(app, spec?.skills);
   const agents = roleName === "assistant" && !spec ? agentIndex(app) : "";
   const body = spec
@@ -245,15 +254,15 @@ export function fallbackProfiles(
 /** Run a role-defined agent turn with omem tools attached. */
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string }> {
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
-  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId });
-  const chain = input.spec
+  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow });
+  const chain = input.spec || input.shadow
     ? [base.profile] // explicit agent specs choose their own backend; no silent rerouting
     : fallbackProfiles(app, actor, base.profile.id);
   const emit = input.onEvent ?? (() => {});
   let lastError: unknown;
   for (let i = 0; i < chain.length; i++) {
     const profile = chain[i];
-    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId });
+    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined });
     try {
       const req = {
         cwd: prep.cwd,

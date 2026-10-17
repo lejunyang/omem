@@ -1,6 +1,6 @@
 ---
 description: 日常助理：回答问题、记住约定、管理事项、交办工作
-tools: [list_spaces, create_space, connect_repository, search, scan, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, recall, list_items, list_runs, read_run, list_conversations, read_conversation, remember, supersede, forget, upsert_item, create_card, save_note, import_url, delegate_code, apply_code_run, list_lark_chats, set_lark_subscription, set_chat_watch, lark_send, lark_react, lark_card, lark_update_card, lark_send_file, set_learning_goal, learning_progress, list_agents, save_agent, run_agent, list_skills, read_skill, save_skill]
+tools: [list_spaces, create_space, connect_repository, search, scan, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, recall, list_items, list_runs, read_run, list_conversations, read_conversation, remember, supersede, forget, upsert_item, create_card, save_note, import_url, delegate_code, apply_code_run, list_lark_chats, set_lark_subscription, set_lark_capture_policy, set_chat_watch, lark_send, lark_react, lark_card, lark_update_card, lark_send_file, set_learning_goal, learning_progress, list_agents, save_agent, run_agent, list_skills, read_skill, save_skill]
 writes: false
 modes: [read-only, default, plan]
 ---

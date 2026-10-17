@@ -367,6 +367,51 @@ const migrations: string[] = [
   alter table memories add column effort text;
   alter table memories add column run_id text;
   `,
+  // Memory quality: write-time rejections, review verdicts, shadow (comparison) runs,
+  // and procedural memories scoped to one agent spec.
+  `
+  alter table memories add column reviewed_at text;
+  alter table memories add column review_verdict text;   -- keep | rewrite | retract
+  alter table memories add column review_note text;
+  alter table memories add column reviewed_by text;
+  alter table memories add column agent text;            -- agent spec name: only that spec (and the owner) sees it
+  alter table memories add column tags text not null default '[]';
+  update memories set reviewed_at = updated_at, review_verdict = 'keep', reviewed_by = 'legacy' where created_by = 'user';
+  create index memories_review on memories(reviewed_at, status);
+  create table memory_rejections (
+    id text primary key,
+    space_id text not null,
+    tool text not null,
+    kind text not null,
+    content text not null,
+    codes text not null default '[]',
+    run_id text,
+    agent_profile text,
+    model text,
+    effort text,
+    shadow integer not null default 0,
+    at text not null
+  );
+  create index memory_rejections_at on memory_rejections(at);
+  create table shadow_writes (
+    id text primary key,
+    run_id text not null,
+    parent_run_id text,
+    space_id text,
+    tool text not null,
+    args text not null default '{}',
+    agent_profile text,
+    model text,
+    effort text,
+    verdict text,
+    verdict_note text,
+    at text not null
+  );
+  create index shadow_writes_run on shadow_writes(parent_run_id, run_id);
+  alter table lark_cursors add column kind text not null default '';     -- p2p | bot | own-bot | group | topic | thread
+  alter table lark_cursors add column muted integer not null default 0;
+  alter table lark_cursors add column involved integer not null default 0;  -- the owner spoke or was @-mentioned here
+  `,
 ];
 
 export type Db = DatabaseSync;

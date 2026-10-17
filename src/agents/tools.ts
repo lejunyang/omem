@@ -3,16 +3,17 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { all, one } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { createSpace, findSpace, listSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, repositoryRoot } from "../core/repositories.ts";
 import { findUser, OWNER } from "../core/users.ts";
-import { HttpError, slugify, truncate } from "../core/util.ts";
+import { HttpError, newId, now, slugify, truncate } from "../core/util.ts";
 import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
-import { getMemory, listMemories, memoryHistory, remember, retract, supersede } from "../memory/store.ts";
+import { getMemory, listMemories, memoryHistory, remember, retract, supersede, type MemoryKind } from "../memory/store.ts";
+import { checkMemory, formatProblems, logRejection, markReviewed, type MemoryProblem } from "../memory/quality.ts";
 import { search, type HitType } from "../search/search.ts";
 import { importText, importUrl, repoFiles, syncDirectorySpace } from "../sources/import.ts";
 import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
@@ -40,7 +41,18 @@ export type ToolContext = {
   effort?: string | null;
   /** Posts become drafts the owner approves before they are sent. */
   larkDraft?: boolean;
+  /** Built-in role of the run (ingest, dreamer…); background roles must cite sources for memories. */
+  role?: string;
+  /** Agent spec running, if any: its experience/preference memories are its own. */
+  spec?: string;
+  /** Comparison run: writes are recorded for grading, never applied. */
+  shadow?: { parentRunId: string | null };
 };
+
+/** Roles that write memories from material on their own; they must say where each one comes from. */
+const SOURCED_ROLES = new Set(["ingest", "dreamer", "heartbeat", "curator"]);
+/** Tools with effects a shadow run must not have, beyond those flagged write. */
+const SHADOW_BLOCKED = new Set(["save_agent", "run_agent", "save_skill"]);
 
 type Tool = {
   name: string;
@@ -523,6 +535,7 @@ def({
     query: z.string().optional(),
     subject: z.string().optional(),
     include_history: z.boolean().optional(),
+    tag: z.string().optional(),
     space: z.string().optional(),
   }),
   handler: async (ctx, a) => {
@@ -530,13 +543,16 @@ def({
     const query = a.query?.replace(/[*?%\s]+/g, " ").trim();
     let mems = query
       ? (await search(ctx.app, query, { spaces: sp, types: ["memory"], limit: 20, includeHistory: a.include_history })).map((h) => getMemory(ctx.app, h.id))
-      : listMemories(ctx.app, { spaceId: sp?.length === 1 ? sp[0] : undefined, status: a.include_history ? "all" : "active", subject: a.subject, limit: 50 });
+      : listMemories(ctx.app, { spaceId: sp?.length === 1 ? sp[0] : undefined, status: a.include_history ? "all" : "active", subject: a.subject, tag: a.tag, limit: 50 });
     if (a.subject) mems = mems.filter((m) => m.subject.includes(a.subject!));
+    if (a.tag) mems = mems.filter((m) => m.tags?.includes(a.tag!));
+    // An agent spec's own procedures are for that spec; other specs do not see them.
+    if (ctx.spec) mems = mems.filter((m) => !m.agent || m.agent === ctx.spec);
     if (!mems.length) return "没有相关记忆。";
     return mems
       .map((m) => {
         const chain = a.include_history && (m.supersedes || m.supersededBy) ? memoryHistory(ctx.app, m.id) : [];
-        return `- ${m.id} [${m.kind}${m.status !== "active" ? "，" + m.status : ""}] ${m.subject ? m.subject + "：" : ""}${m.content}\n  有效：${m.validFrom?.slice(0, 10) ?? "?"} → ${m.validTo?.slice(0, 10) ?? "至今"}；来源：${m.sourceRefs.join(", ") || "无"}${
+        return `- ${m.id} [${m.kind}${m.status !== "active" ? "，" + m.status : ""}${m.agent ? `，${m.agent} 专用` : ""}${m.tags?.length ? `，#${m.tags.join(" #")}` : ""}] ${m.subject ? m.subject + "：" : ""}${m.content}\n  有效：${m.validFrom?.slice(0, 10) ?? "?"} → ${m.validTo?.slice(0, 10) ?? "至今"}；来源：${m.sourceRefs.join(", ") || "无"}${
           chain.length > 1 ? "\n  版本链：" + chain.map((c) => `${c.id}(${c.status}) ${truncate(c.content, 60)}`).join(" → ") : ""
         }`;
       })
@@ -627,7 +643,7 @@ def({
 def({
   name: "remember",
   description:
-    "保存一条新记忆（一句话、自足、写清主语和时间）。只记录长期有用的事实/约定/偏好/经验/人物信息/决定，不记录闲聊。已有同主题记忆要更正时用 supersede，不要重复新增。",
+    "保存一条新记忆：一句可复用的结论（事实、约定、偏好、做法、人物信息、决定），写清主语、对象、时间和数字。不记事件经过、材料摘要、你这次做了什么，也不记“无法确认/不能证明”式的不确定内容（那是事项）。写入前会自动检查：太长、免责式、无来源、与已有记忆重复的会被拒绝并说明原因。已有同主题记忆要更正时用 supersede。",
   write: true,
   schema: z.object({
     content: z.string(),
@@ -635,37 +651,109 @@ def({
     subject: z.string().optional().describe("主题/对象，如“项目A 预算”“张三”"),
     source_refs: refs,
     valid_from: z.string().optional().describe("ISO 时间，事实开始生效的时间（不填为现在）"),
+    tags: z.array(z.string()).optional().describe("可选标签，如项目名、主题，便于按标签筛选"),
+    scope: z.enum(["shared", "agent"]).optional().describe("agent：只给当前 Agent 档案自己用的做法/偏好（默认：档案写的 experience/preference 为 agent，其余 shared）"),
     space: z.string().optional(),
   }),
   handler: (ctx, a) => {
+    const spaceId = space(ctx, a.space);
+    const problems = memoryProblems(ctx, { spaceId, kind: a.kind, content: a.content, subject: a.subject, sourceRefs: a.source_refs });
+    if (problems.length) {
+      logRejection(ctx.app, spaceId, { tool: "remember", kind: a.kind, content: a.content }, problems, provenance(ctx));
+      throw new HttpError(422, formatProblems(problems));
+    }
+    const procedural = a.kind === "experience" || a.kind === "preference";
     const m = remember(ctx.app, {
-      spaceId: space(ctx, a.space),
+      spaceId,
       kind: a.kind,
       subject: a.subject,
       content: a.content,
       sourceRefs: a.source_refs,
       validFrom: a.valid_from,
       createdBy: ctx.actor,
-      agentProfile: ctx.agentProfile,
-      model: ctx.model,
-      effort: ctx.effort,
-      runId: ctx.runId,
+      ...provenance(ctx),
+      tags: a.tags,
+      agent: ctx.spec && (a.scope === "agent" || (a.scope === undefined && procedural)) ? ctx.spec : null,
       // Preferences belong to the person who stated them; facts are shared knowledge of the space.
       userId: a.kind === "preference" ? (ctx.userId ?? "owner") : null,
     });
-    return `已记住 ${m.id}`;
+    return `已记住 ${m.id}${m.agent ? `（仅 ${m.agent} 使用）` : ""}`;
   },
 });
 
 def({
   name: "supersede",
-  description: "用新内容更正一条现有记忆：旧记忆保留并标记为已被替代，新记忆生效。适用于纠正、改期、改预算、换负责人等。",
+  description: "用新内容更正一条现有记忆：旧记忆保留并标记为已被替代，新记忆生效。适用于纠正、改期、改预算、换负责人等。新内容同样要通过写入检查。",
   write: true,
   schema: z.object({ memory_id: z.string(), content: z.string(), reason: z.string().optional(), source_refs: refs, valid_from: z.string().optional() }),
   handler: (ctx, a) => {
-    inScope(ctx, getMemory(ctx.app, a.memory_id).spaceId, "记忆");
-    const m = supersede(ctx.app, a.memory_id, { content: a.content, sourceRefs: a.source_refs, validFrom: a.valid_from, createdBy: ctx.actor, reason: a.reason, agentProfile: ctx.agentProfile, model: ctx.model, effort: ctx.effort, runId: ctx.runId });
+    const old = getMemory(ctx.app, a.memory_id);
+    inScope(ctx, old.spaceId, "记忆");
+    const problems = memoryProblems(ctx, { spaceId: old.spaceId, kind: old.kind, content: a.content, subject: old.subject, sourceRefs: a.source_refs, replacing: old.id });
+    if (problems.length) {
+      logRejection(ctx.app, old.spaceId, { tool: "supersede", kind: old.kind, content: a.content }, problems, provenance(ctx));
+      throw new HttpError(422, formatProblems(problems));
+    }
+    const m = supersede(ctx.app, a.memory_id, { content: a.content, sourceRefs: a.source_refs, validFrom: a.valid_from, createdBy: ctx.actor, reason: a.reason, ...provenance(ctx) });
     return `已更正：${a.memory_id} → ${m.id}`;
+  },
+});
+
+def({
+  name: "review_memories",
+  description:
+    "记忆复核：对任务里列出的每条记忆给出结论。keep：可复用、有来源支撑；rewrite：有价值但写法不对，给出改好的一句话（会作为新版本替代旧的）；retract：不是记忆（事件流水、摘要、免责式、无来源推测、重复），撤回。每条都要写简短理由。",
+  write: true,
+  schema: z.object({
+    verdicts: z.array(
+      z.object({
+        memory_id: z.string().describe("记忆 id（m_…）或对比运行提案 id（sw_…）"),
+        verdict: z.enum(["keep", "rewrite", "retract"]),
+        reason: z.string(),
+        content: z.string().optional().describe("rewrite 时的新内容"),
+      }),
+    ),
+  }),
+  handler: (ctx, a) => {
+    const out: string[] = [];
+    const reviewer = provenance(ctx);
+    for (const v of a.verdicts) {
+      try {
+        if (v.memory_id.startsWith("sw")) {
+          run(ctx.app.db, "update shadow_writes set verdict = ?, verdict_note = ? where id = ?", v.verdict, v.reason, v.memory_id);
+          out.push(`${v.memory_id} ${v.verdict}`);
+          continue;
+        }
+        const m = getMemory(ctx.app, v.memory_id);
+        inScope(ctx, m.spaceId, "记忆");
+        if (m.status !== "active") {
+          out.push(`${m.id} 已不是有效状态，跳过`);
+          continue;
+        }
+        if (v.verdict === "rewrite" && v.content?.trim()) {
+          const problems = checkMemory(ctx.app, { spaceId: m.spaceId, kind: m.kind, content: v.content, subject: m.subject, sourceRefs: m.sourceRefs, replacing: m.id });
+          if (problems.length) {
+            out.push(`${m.id} 改写未通过检查：${problems.map((p) => p.code).join(",")}；请换个写法或 retract`);
+            continue;
+          }
+          const n = supersede(ctx.app, m.id, { content: v.content, sourceRefs: m.sourceRefs, createdBy: "agent", reason: `复核改写：${v.reason}`, ...reviewer });
+          markReviewed(ctx.app, m.id, "rewrite", v.reason, reviewer);
+          // The rewrite is the reviewer's own text: it counts as reviewed.
+          markReviewed(ctx.app, n.id, "keep", "复核改写的新版本", reviewer);
+          out.push(`${m.id} → ${n.id} 已改写`);
+        } else if (v.verdict === "retract") {
+          retract(ctx.app, m.id, `复核：${v.reason}`);
+          markReviewed(ctx.app, m.id, "retract", v.reason, reviewer);
+          out.push(`${m.id} 已撤回`);
+        } else {
+          markReviewed(ctx.app, m.id, "keep", v.reason, reviewer);
+          out.push(`${m.id} 保留`);
+        }
+      } catch (e) {
+        out.push(`${v.memory_id} 失败：${(e as Error).message}`);
+      }
+    }
+    return out.join("\n");
   },
 });
 
@@ -1038,10 +1126,30 @@ def({
   description: "列出本人飞书最近活跃的会话，以及哪些已被订阅采集（只读）。用于帮本人挑选要关注的群。",
   schema: z.object({}),
   handler: async (ctx) => {
-    const { listLarkChats, getSubscriptions } = await import("../channels/lark-personal.ts");
+    const { listLarkChats, getSubscriptions, capturePolicyFor, CHAT_KIND_LABELS, POLICY_LABELS } = await import("../channels/lark-personal.ts");
     const subs = new Map(getSubscriptions(ctx.app).map((s) => [s.chatId, s]));
-    const chats = await listLarkChats();
-    return chats.map((c) => `- ${c.chatId} ${c.name}（${c.mode === "p2p" ? "单聊" : "群聊"}）${subs.has(c.chatId) ? ` 已订阅 → 空间 ${subs.get(c.chatId)!.spaceId}` : ""}`).join("\n") || "（没有会话）";
+    const chats = await listLarkChats(ctx.app);
+    return (
+      chats
+        .map(
+          (c) =>
+            `- ${c.chatId} ${c.name}（${CHAT_KIND_LABELS[c.kind]}${c.muted ? "，免打扰" : ""}；采集：${POLICY_LABELS[capturePolicyFor(ctx.app, c)]}）${subs.has(c.chatId) ? ` 已订阅 → 空间 ${subs.get(c.chatId)!.spaceId}` : ""}`,
+        )
+        .join("\n") || "（没有会话）"
+    );
+  },
+});
+
+def({
+  name: "set_lark_capture_policy",
+  description:
+    "设置某个飞书会话的采集方式（只在本人要求时用）：ingest 保存并整理成记忆/事项；involved 保存，只在本人发言、被 @ 或参与的话题有新消息时整理；store 只保存可检索、不整理；skip 不读取。default 恢复按会话类型的默认值。",
+  write: true,
+  schema: z.object({ chat_id: z.string(), policy: z.enum(["ingest", "involved", "store", "skip", "default"]) }),
+  handler: async (ctx, a) => {
+    const { setCapturePolicy, POLICY_LABELS } = await import("../channels/lark-personal.ts");
+    setCapturePolicy(ctx.app, a.chat_id, a.policy === "default" ? null : a.policy);
+    return a.policy === "default" ? `会话 ${a.chat_id} 恢复默认采集方式` : `会话 ${a.chat_id} 的采集方式改为：${POLICY_LABELS[a.policy]}`;
   },
 });
 
@@ -1113,6 +1221,7 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   if (!tool || (ctx.tools && !ctx.tools.has(name))) return { text: `工具 ${name} 不可用`, isError: true };
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
+  if (ctx.shadow && (tool.write || SHADOW_BLOCKED.has(name))) return { text: recordShadow(ctx, name, parsed.data as Record<string, unknown>), isError: false };
   try {
     const text = await tool.handler(ctx, parsed.data);
     if (ctx.runId && tool.write) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "tool-write", data: { name, args: parsed.data }, at: new Date().toISOString() } });
@@ -1120,6 +1229,45 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   } catch (error) {
     return { text: (error as Error).message, isError: true };
   }
+}
+
+/**
+ * A shadow (comparison) run proposes writes instead of making them. Memory proposals still
+ * go through the write-time checks, so models are compared on the same rules; rejected ones
+ * are logged as rejections and the model is told, exactly like a live run.
+ */
+function recordShadow(ctx: ToolContext, name: string, args: Record<string, unknown>) {
+  if (name === "remember" || name === "supersede") {
+    const old = name === "supersede" ? (() => { try { return getMemory(ctx.app, String(args.memory_id)); } catch { return null; } })() : null;
+    const spaceId = old?.spaceId ?? (typeof args.space === "string" ? args.space : ctx.spaceId);
+    const problems = memoryProblems(ctx, { spaceId, kind: (args.kind as MemoryKind) ?? old?.kind ?? "fact", content: String(args.content ?? ""), subject: (args.subject as string) ?? old?.subject, sourceRefs: (args.source_refs as string[]) ?? [], replacing: old?.id });
+    if (problems.length) {
+      logRejection(ctx.app, spaceId, { tool: name, kind: String(args.kind ?? old?.kind ?? ""), content: String(args.content ?? "") }, problems, { ...provenance(ctx), shadow: true });
+      return formatProblems(problems);
+    }
+  }
+  run(
+    ctx.app.db,
+    "insert into shadow_writes(id,run_id,parent_run_id,space_id,tool,args,agent_profile,model,effort,at) values(?,?,?,?,?,?,?,?,?,?)",
+    newId("sw"),
+    ctx.runId ?? "",
+    ctx.shadow?.parentRunId ?? null,
+    typeof args.space === "string" ? args.space : ctx.spaceId,
+    name,
+    JSON.stringify(args),
+    ctx.agentProfile ?? null,
+    ctx.model ?? null,
+    ctx.effort ?? null,
+    now(),
+  );
+  return `（对比运行）已记录 ${name}，未实际写入。按正常流程继续。`;
+}
+
+const provenance = (ctx: ToolContext) => ({ runId: ctx.runId, agentProfile: ctx.agentProfile, model: ctx.model, effort: ctx.effort });
+
+function memoryProblems(ctx: ToolContext, m: { spaceId: string; kind: MemoryKind; content: string; subject?: string; sourceRefs?: string[]; replacing?: string }): MemoryProblem[] {
+  if (ctx.actor === "user") return [];
+  return checkMemory(ctx.app, { ...m, requireSource: !!ctx.role && SOURCED_ROLES.has(ctx.role), ignoreRunId: ctx.shadow?.parentRunId });
 }
 
 // --------------------------------------------------------------- tool tokens

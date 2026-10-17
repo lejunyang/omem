@@ -27,7 +27,8 @@ import { accessibleSpaces, getUser, OWNER, scopeFor, userForToken } from "../cor
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
 import { getItem, itemEvents, listItems, upsertItem } from "../items/store.ts";
-import { getMemory, listMemories, memoryHistory, remember, retract, supersede, updateMemoryText } from "../memory/store.ts";
+import { getMemory, listMemories, memoryHistory, memoryTags, remember, retract, supersede, updateMemoryText } from "../memory/store.ts";
+import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
 import { search } from "../search/search.ts";
 import { importFile, importText, importUrl } from "../sources/import.ts";
 import { deleteSource, getSource, listSources, readSource, sourceOutline } from "../sources/store.ts";
@@ -338,27 +339,64 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // ----------------------------------------------------------------- memories
   server.get("/api/memories", async (req) => {
-    const o = q(z.object({ space: z.string().optional(), status: z.string().optional(), kind: z.string().optional(), q: z.string().optional() }), req.query);
+    const o = q(
+      z.object({ space: z.string().optional(), status: z.string().optional(), kind: z.string().optional(), q: z.string().optional(), tag: z.string().optional(), review: z.enum(["pending", "keep", "rewrite", "retract"]).optional() }),
+      req.query,
+    );
     if (o.q) {
       const hits = await search(app, o.q, { spaces: o.space ? [o.space] : undefined, types: ["memory"], limit: 100, includeHistory: o.status === "all" });
-      return hits.map((h) => getMemory(app, h.id));
+      return hits.map((h) => getMemory(app, h.id)).filter((m) => (!o.tag || m.tags?.includes(o.tag)) && (!o.kind || m.kind === o.kind));
     }
-    return listMemories(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind });
+    return listMemories(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, tag: o.tag, review: o.review });
+  });
+  server.get("/api/memory-tags", async (req) => memoryTags(app, (req.query as { space?: string }).space));
+  // Quality per backend/model, recent write-time rejections, and side-by-side comparison runs.
+  server.get("/api/memory-quality", async (req) => {
+    const days = Number((req.query as { days?: string }).days ?? 30) || 30;
+    const ingests = all<{ id: string; title: string; space_id: string; created_at: string; profile_id: string | null }>(
+      app.db,
+      "select id, title, space_id, created_at, profile_id from runs where kind = 'ingest' and id in (select parent_id from runs where kind = 'ingest-shadow') order by created_at desc limit 20",
+    );
+    const compare = ingests.map((r) => ({
+      run: r,
+      live: all<{ id: string; kind: string; content: string; status: string; review_verdict: string | null; model: string | null; agent_profile: string | null }>(
+        app.db,
+        "select id, kind, content, status, review_verdict, model, agent_profile from memories where run_id = ? order by created_at",
+        r.id,
+      ),
+      shadows: all<{ id: string; title: string; status: string; profile_id: string | null }>(app.db, "select id, title, status, profile_id from runs where parent_id = ? and kind = 'ingest-shadow' order by created_at", r.id).map((s) => ({
+        ...s,
+        writes: all<{ id: string; tool: string; args: string; verdict: string | null; verdict_note: string | null; model: string | null }>(app.db, "select id, tool, args, verdict, verdict_note, model from shadow_writes where run_id = ? order by at", s.id).map((w) => ({
+          ...w,
+          args: JSON.parse(w.args),
+        })),
+        rejected: all<{ content: string; codes: string }>(app.db, "select content, codes from memory_rejections where run_id = ?", s.id).map((x) => ({ content: x.content, codes: JSON.parse(x.codes) })),
+      })),
+      rejected: all<{ content: string; codes: string }>(app.db, "select content, codes from memory_rejections where run_id = ?", r.id).map((x) => ({ content: x.content, codes: JSON.parse(x.codes) })),
+    }));
+    return {
+      stats: memoryQualityStats(app, days),
+      rejections: recentRejections(app, 40),
+      pending: one<{ n: number }>(app.db, "select count(*) n from memories where status = 'active' and created_by = 'agent' and reviewed_at is null")?.n ?? 0,
+      review: app.config.memory.review,
+      compare: app.config.memory.compare,
+      runs: compare,
+    };
   });
   server.get("/api/memories/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     return { memory: getMemory(app, id), history: memoryHistory(app, id) };
   });
   server.post("/api/memories", async (req) => {
-    const b = q(z.object({ space: z.string().default("personal"), kind: z.enum(["fact", "agreement", "preference", "experience", "person", "decision"]), subject: z.string().optional(), content: z.string().min(1) }), req.body);
-    return remember(app, { spaceId: b.space, kind: b.kind, subject: b.subject, content: b.content, createdBy: "user" });
+    const b = q(z.object({ space: z.string().default("personal"), kind: z.enum(["fact", "agreement", "preference", "experience", "person", "decision"]), subject: z.string().optional(), content: z.string().min(1), tags: z.array(z.string()).optional() }), req.body);
+    return remember(app, { spaceId: b.space, kind: b.kind, subject: b.subject, content: b.content, tags: b.tags, createdBy: "user" });
   });
   server.post("/api/memories/:id/supersede", async (req) => {
     const b = q(z.object({ content: z.string().min(1), reason: z.string().optional() }), req.body);
     return supersede(app, (req.params as { id: string }).id, { content: b.content, reason: b.reason, createdBy: "user" });
   });
   server.patch("/api/memories/:id", async (req) => {
-    const b = q(z.object({ content: z.string().optional(), subject: z.string().optional(), kind: z.enum(["fact", "agreement", "preference", "experience", "person", "decision"]).optional() }), req.body);
+    const b = q(z.object({ content: z.string().optional(), subject: z.string().optional(), kind: z.enum(["fact", "agreement", "preference", "experience", "person", "decision"]).optional(), tags: z.array(z.string()).optional() }), req.body);
     return updateMemoryText(app, (req.params as { id: string }).id, b);
   });
   server.delete("/api/memories/:id", async (req) => retract(app, (req.params as { id: string }).id, ((req.query as { reason?: string }).reason ?? "本人撤回").slice(0, 200)));
@@ -504,8 +542,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // ------------------------------------------------------------ lark personal
   server.get("/api/lark/chats", async () => {
-    const { listLarkChats } = await import("../channels/lark-personal.ts");
-    return { chats: await listLarkChats() };
+    const { listLarkChats, capturePolicyFor } = await import("../channels/lark-personal.ts");
+    return { chats: (await listLarkChats(app)).map((c) => ({ ...c, policy: capturePolicyFor(app, c) })) };
+  });
+  // Chats capture has read, with kind, mute state and what is done with them.
+  server.get("/api/lark/captured", async () => {
+    const { capturedChats } = await import("../channels/lark-personal.ts");
+    return { chats: capturedChats(app), policies: app.config.lark.capture.policies };
+  });
+  server.put("/api/lark/chats/:id/policy", async (req) => {
+    const { setCapturePolicy, capturedChats } = await import("../channels/lark-personal.ts");
+    const b = q(z.object({ policy: z.enum(["ingest", "involved", "store", "skip"]).nullable() }), req.body);
+    const id = (req.params as { id: string }).id;
+    setCapturePolicy(app, id, b.policy);
+    return { chat: capturedChats(app).find((c) => c.chatId === id) ?? null };
   });
   server.get("/api/lark/subscriptions", async () => {
     const { getSubscriptions } = await import("../channels/lark-personal.ts");

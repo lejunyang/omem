@@ -33,8 +33,12 @@ export const roleNames = [
   "brief",
   "curator",
   "summarizer",
+  "memory-reviewer",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
+
+export const capturePolicy = z.enum(["ingest", "involved", "store", "skip"]);
+export type CapturePolicy = z.infer<typeof capturePolicy>;
 
 export const configSchema = z.object({
   host: z.string().default("127.0.0.1"),
@@ -87,6 +91,32 @@ export const configSchema = z.object({
       profiles: z.array(agentProfileSchema).default([]),
     })
     .default({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, profiles: [] }),
+  /** Memory quality: write-time checks, cross-model review, side-by-side comparison. */
+  memory: z
+    .object({
+      /** A memory longer than this is rejected at write time (it is a summary, not a memory). */
+      maxChars: z.number().int().min(60).default(180),
+      /** Bigram overlap above which a new memory counts as a duplicate of an existing one. */
+      duplicateThreshold: z.number().min(0.3).max(1).default(0.72),
+      review: z
+        .object({
+          /** Review new agent memories in batches (keep / rewrite / retract against the source). */
+          enabled: z.boolean().default(true),
+          /** Backend for the reviewer; best a different model from the writer. Empty = agents.roles["memory-reviewer"] or the default. */
+          profile: z.string().optional(),
+          model: z.string().optional(),
+          effort: z.string().optional(),
+          /** Memories per review run. */
+          batch: z.number().int().min(1).max(100).default(30),
+        })
+        .default({ enabled: true, batch: 30 }),
+      /**
+       * Shadow runs: each ingest also runs with these backends/models; their writes are
+       * recorded, not applied, and graded by the same checks and reviewer for comparison.
+       */
+      compare: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })).default([]),
+    })
+    .default({ maxChars: 180, duplicateThreshold: 0.72, review: { enabled: true, batch: 30 }, compare: [] }),
   embeddings: z
     .object({
       provider: z.enum(["none", "local", "openai"]).default("none"),
@@ -151,14 +181,56 @@ export const configSchema = z.object({
           docs: z.boolean().default(true),
           calendar: z.boolean().default(true),
           minutes: z.boolean().default(true),
+          /**
+           * What happens to new messages by kind of chat (a chat's own setting wins):
+           * ingest = keep and let the ingest role turn them into memories/items;
+           * involved = keep, and ingest only batches where the owner speaks, is @-mentioned or
+           *   replies in the topic; store = keep searchable, never ingest; skip = do not read.
+           * p2p = one-to-one with a person, bot = one-to-one with a bot/app (notifications),
+           * group = regular group, topic = topic group, muted = any chat set to do-not-disturb.
+           * omem's own bot chat is never captured.
+           */
+          policies: z
+            .object({
+              p2p: capturePolicy.default("ingest"),
+              bot: capturePolicy.default("store"),
+              group: capturePolicy.default("involved"),
+              topic: capturePolicy.default("involved"),
+              muted: capturePolicy.default("skip"),
+            })
+            .default({ p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" }),
         })
-        .default({ mode: "subscribed", exclude: [], space: "personal", lookbackHours: 72, quietStop: 8, maxChats: 300, attachments: true, docs: true, calendar: true, minutes: true }),
+        .default({
+          mode: "subscribed",
+          exclude: [],
+          space: "personal",
+          lookbackHours: 72,
+          quietStop: 8,
+          maxChats: 300,
+          attachments: true,
+          docs: true,
+          calendar: true,
+          minutes: true,
+          policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },
+        }),
     })
     .default({
       enabled: false,
       appSecretEnv: "OMEM_LARK_APP_SECRET",
       defaultSpace: "personal",
-      capture: { mode: "subscribed", exclude: [], space: "personal", lookbackHours: 72, quietStop: 8, maxChats: 300, attachments: true, docs: true, calendar: true, minutes: true },
+      capture: {
+        mode: "subscribed",
+        exclude: [],
+        space: "personal",
+        lookbackHours: 72,
+        quietStop: 8,
+        maxChats: 300,
+        attachments: true,
+        docs: true,
+        calendar: true,
+        minutes: true,
+        policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },
+      },
     }),
   telegram: z
     .object({
