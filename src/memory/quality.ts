@@ -89,7 +89,7 @@ export type CheckInput = {
 };
 
 export function memoryLimits(app: App) {
-  return { maxChars: app.config.memory?.maxChars ?? 180, duplicate: app.config.memory?.duplicateThreshold ?? 0.72 };
+  return { maxChars: app.config.memory?.maxChars ?? 400, longChars: app.config.memory?.longChars ?? 180, duplicate: app.config.memory?.duplicateThreshold ?? 0.72 };
 }
 
 /** Write-time checks; an empty list means the memory may be stored. */
@@ -105,7 +105,10 @@ export function checkMemory(app: App, m: CheckInput): MemoryProblem[] {
         "这条的主体是免责/不确定（“不能证明”“无法确认”“未见回执”之类），不是可复用的结论。确定的部分只写结论；仍需要本人判断或等待结果的，用 upsert_item 建 decision/watch/waiting 事项；什么结论都没有就不记。",
     });
   if (text.length > maxChars)
-    problems.push({ code: "too-long", message: `太长（${text.length} 字，上限 ${maxChars}）。记忆是一句可复用的结论，细节留在原件里用 source_refs 指过去；一份材料里的多个独立结论分成多条，事件经过不要记。` });
+    problems.push({
+      code: "too-long",
+      message: `太长（${text.length} 字，上限 ${maxChars}）。如果里面是几条互相独立的结论，分成几条记忆分别 remember；如果是一整套规则、流程或清单，写成页面（write_page）或技能，记忆里只留一句结论并引用它；事件经过和材料摘要不记。`,
+    });
   if (PROCESS.test(text) || (m.kind === "experience" && /(排查|查看|读取|核对)了.*(然后|之后|再)/.test(text)))
     problems.push({ code: "process-log", message: "这是在叙述你这次做了什么（运行流水），不是以后可直接照做的做法或事实。experience 写成“遇到 X 时，做 Y（因为 Z）”；只是记录过程就不记。" });
   if (RESTATES.test(text))

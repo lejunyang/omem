@@ -475,7 +475,7 @@ async function saveEdit() {
       </div>
       <div v-if="config.memory" class="card pad stack">
         <div class="section-title">记忆质量</div>
-        <p class="muted small">新记忆写入前会先过一遍规则检查（免责式、太长、转述原件、事件复述、无来源、重复），不合格的退回给模型并说明原因。之后每小时由复核模型逐条保留、改写或撤回；复核模型最好和写入的不是同一个，避免一个模型的习惯由它自己评判。结果在“记忆 → 质量”里按模型统计。</p>
+        <p class="muted small">新记忆写入前会先过一遍规则检查（免责式、超长（400 字以上）、转述原件、事件复述、无来源、重复），不合格的退回给模型并说明原因。之后每小时由复核模型逐条保留、改写或撤回；复核模型最好和写入的不是同一个，避免一个模型的习惯由它自己评判。结果在“记忆 → 质量”里按模型统计。</p>
         <UiCheckbox :model-value="config.memory.review.enabled" switch @change="(v) => saveReview({ enabled: v })">复核新记忆（只有复核保留或本人写的经验、偏好才会放进每次运行的提示里）</UiCheckbox>
         <div class="row wrap">
           <span class="small muted">复核用</span>

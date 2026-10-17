@@ -204,7 +204,8 @@ registerHandler("memory-review", async (ctx) => {
   const task = [
     `空间 ${spaceId} 里待复核的 ${entries.length} 条：`,
     ...entries.map(
-      (e) => `- ${e.id} [${e.kind}]${e.subject ? ` ${e.subject}：` : " "}${e.content}\n  来源：${e.refs.join(", ") || "（无）"}${e.replaces ? `；更正自 ${e.replaces}` : ""}`,
+      (e) =>
+        `- ${e.id} [${e.kind}]${e.subject ? ` ${e.subject}：` : " "}${e.content}\n  来源：${e.refs.join(", ") || "（无）"}${e.replaces ? `；更正自 ${e.replaces}` : ""}${e.content.length > app.config.memory.longChars ? `；${e.content.length} 字，较长：看是否是几条独立结论（split）` : ""}`,
     ),
   ].join("\n");
   const r = await runRole(app, {

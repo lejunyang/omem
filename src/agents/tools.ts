@@ -702,15 +702,16 @@ def({
 def({
   name: "review_memories",
   description:
-    "记忆复核：对任务里列出的每条记忆给出结论。keep：可复用、有来源支撑；rewrite：有价值但写法不对，给出改好的一句话（会作为新版本替代旧的）；retract：不是记忆（事件流水、摘要、免责式、无来源推测、重复），撤回。每条都要写简短理由。",
+    "记忆复核：对任务里列出的每条记忆给出结论。keep：可复用、有来源支撑；rewrite：有价值但写法不对，给出改好的一句话（会作为新版本替代旧的）；split：一条里塞了几条互相独立的结论，在 contents 里分别写好（第一条替代原记忆，其余新建，来源沿用）；retract：不是记忆（事件流水、摘要、免责式、无来源推测、重复），撤回。每条都要写简短理由。",
   write: true,
   schema: z.object({
     verdicts: z.array(
       z.object({
         memory_id: z.string().describe("记忆 id（m_…）或对比运行提案 id（sw_…）"),
-        verdict: z.enum(["keep", "rewrite", "retract"]),
+        verdict: z.enum(["keep", "rewrite", "split", "retract"]),
         reason: z.string(),
         content: z.string().optional().describe("rewrite 时的新内容"),
+        contents: z.array(z.string()).optional().describe("split 时拆出的各条，每条一句"),
       }),
     ),
   }),
@@ -720,7 +721,7 @@ def({
     for (const v of a.verdicts) {
       try {
         if (v.memory_id.startsWith("sw")) {
-          run(ctx.app.db, "update shadow_writes set verdict = ?, verdict_note = ? where id = ?", v.verdict, v.reason, v.memory_id);
+          run(ctx.app.db, "update shadow_writes set verdict = ?, verdict_note = ? where id = ?", v.verdict === "split" ? "rewrite" : v.verdict, v.reason, v.memory_id);
           out.push(`${v.memory_id} ${v.verdict}`);
           continue;
         }
@@ -730,7 +731,24 @@ def({
           out.push(`${m.id} 已不是有效状态，跳过`);
           continue;
         }
-        if (v.verdict === "rewrite" && v.content?.trim()) {
+        if (v.verdict === "split" && (v.contents ?? []).filter((c) => c.trim()).length >= 2) {
+          const parts = v.contents!.map((c) => c.trim()).filter(Boolean);
+          const bad = parts.map((c) => checkMemory(ctx.app, { spaceId: m.spaceId, kind: m.kind, content: c, subject: m.subject, sourceRefs: m.sourceRefs, replacing: m.id })).find((p) => p.length);
+          if (bad) {
+            out.push(`${m.id} 拆分后有一条未通过检查：${bad.map((p) => p.code).join(",")}；请换个写法或 retract`);
+            continue;
+          }
+          const first = supersede(ctx.app, m.id, { content: parts[0], sourceRefs: m.sourceRefs, createdBy: "agent", reason: `复核拆分：${v.reason}`, ...reviewer });
+          markReviewed(ctx.app, m.id, "rewrite", `拆成 ${parts.length} 条：${v.reason}`, reviewer);
+          markReviewed(ctx.app, first.id, "keep", "复核拆分出的一条", reviewer);
+          const ids = [first.id];
+          for (const c of parts.slice(1)) {
+            const n = remember(ctx.app, { spaceId: m.spaceId, kind: m.kind, subject: m.subject, content: c, sourceRefs: m.sourceRefs, createdBy: "agent", agent: m.agent, tags: m.tags, userId: m.kind === "preference" ? (ctx.userId ?? "owner") : null, ...reviewer });
+            markReviewed(ctx.app, n.id, "keep", "复核拆分出的一条", reviewer);
+            ids.push(n.id);
+          }
+          out.push(`${m.id} 已拆成 ${ids.join(", ")}`);
+        } else if (v.verdict === "rewrite" && v.content?.trim()) {
           const problems = checkMemory(ctx.app, { spaceId: m.spaceId, kind: m.kind, content: v.content, subject: m.subject, sourceRefs: m.sourceRefs, replacing: m.id });
           if (problems.length) {
             out.push(`${m.id} 改写未通过检查：${problems.map((p) => p.code).join(",")}；请换个写法或 retract`);

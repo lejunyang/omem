@@ -94,8 +94,13 @@ export const configSchema = z.object({
   /** Memory quality: write-time checks, cross-model review, side-by-side comparison. */
   memory: z
     .object({
-      /** A memory longer than this is rejected at write time (it is a summary, not a memory). */
-      maxChars: z.number().int().min(60).default(180),
+      /**
+       * Hard limit: longer than this is a document or summary, not a memory, and is rejected
+       * with advice to split it or write a page. Between longChars and maxChars it is stored
+       * and the reviewer checks whether it should be split.
+       */
+      maxChars: z.number().int().min(100).default(400),
+      longChars: z.number().int().min(60).default(180),
       /** Bigram overlap above which a new memory counts as a duplicate of an existing one. */
       duplicateThreshold: z.number().min(0.3).max(1).default(0.72),
       review: z
@@ -116,7 +121,7 @@ export const configSchema = z.object({
        */
       compare: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })).default([]),
     })
-    .default({ maxChars: 180, duplicateThreshold: 0.72, review: { enabled: true, batch: 30 }, compare: [] }),
+    .default({ maxChars: 400, longChars: 180, duplicateThreshold: 0.72, review: { enabled: true, batch: 30 }, compare: [] }),
   embeddings: z
     .object({
       provider: z.enum(["none", "local", "openai"]).default("none"),

@@ -21,7 +21,8 @@ describe("memory write-time checks", () => {
     expect(codes("2026-10-16小李反馈头像空白，机器人建议切换网络。")).toContain("event-log");
     expect(codes("2026-10-15，助理报告已提交修复。")).toContain("self-report");
     expect(codes("本次排查读取了日志然后发现超时。", { kind: "experience" })).toContain("process-log");
-    expect(codes("一".repeat(200))).toContain("too-long");
+    expect(codes("一".repeat(450))).toContain("too-long");
+    expect(codes(`项目 A 的发布约定：${"每周二下午发布，".repeat(30)}`)).not.toContain("too-long");
     expect(codes("项目 A 没有测试环境", { sourceRefs: [] })).toContain("no-source");
     expect(codes("项目 A 没有测试环境", { sourceRefs: ["src:nope#L1"] })).toContain("bad-source");
     remember(app, { spaceId: "personal", kind: "fact", content: "项目 A 没有独立的测试环境。" });
@@ -89,5 +90,19 @@ describe("shadow runs and review", () => {
     const stats = memoryQualityStats(app);
     expect(stats.find((s) => s.model.includes("other-model"))).toMatchObject({ shadow: 1, kept: 1, rejected: 1 });
     expect(stats.find((s) => s.model.includes("gpt-x"))).toMatchObject({ stored: 1, rewritten: 1 });
+  });
+
+  it("splits a memory that holds several independent conclusions", async () => {
+    const app = testApp();
+    const m = remember(app, { spaceId: "personal", kind: "agreement", subject: "项目 A", content: "项目 A 周四评审，预算 120 元，由小王负责。", createdBy: "agent", tags: ["项目A"] });
+    const reviewer = ctxFor(app, { role: "memory-reviewer", model: "judge" });
+    const out = await callTool(reviewer, "review_memories", {
+      verdicts: [{ memory_id: m.id, verdict: "split", reason: "三件事", contents: ["项目 A 在周四评审。", "项目 A 预算 120 元。", "小王负责项目 A。"] }],
+    });
+    expect(out.text).toMatch(/已拆成/);
+    const now = listMemories(app, { status: "active" });
+    expect(now.map((x) => x.content).sort()).toEqual(["小王负责项目 A。", "项目 A 在周四评审。", "项目 A 预算 120 元。"].sort());
+    expect(now.every((x) => x.reviewVerdict === "keep" && x.tags?.includes("项目A"))).toBe(true);
+    expect(getMemory(app, m.id)).toMatchObject({ status: "superseded", reviewVerdict: "rewrite" });
   });
 });
