@@ -11,7 +11,7 @@ import { findSpace } from "../core/spaces.ts";
 import { identitiesOf, OWNER, resolveIdentity, userName } from "../core/users.ts";
 import { importFile } from "../sources/import.ts";
 import { appendToSource, findSourceByUri, sourceText } from "../sources/store.ts";
-import { answerFromChannel } from "./common.ts";
+import { answerFromChannel, resolveCitations } from "./common.ts";
 import { startProgress } from "./lark-progress.ts";
 import { handleCardAction } from "./lark-actions.ts";
 import { sendLark, setLarkClient } from "./lark-send.ts";
@@ -117,15 +117,25 @@ export async function startLarkBot(app: App) {
       ? (kv(app, "lark_owner_chat") ? { chatId: kv(app, "lark_owner_chat")! } : cfg.ownerOpenId ? { userId: cfg.ownerOpenId } : null)
       : { userId: identitiesOf(app, n.userId).find((i) => i.channel === "lark")?.external_id ?? "" };
     if (!target || (!("userId" in target) && !("chatId" in target)) || ("userId" in target && !target.userId)) return;
+    // Internal citations/routes cannot be opened in Feishu: real originals become links, the rest plain text.
+    const body = resolveCitations(app, n.body ?? "");
     if (n.entity === "item" && n.entityId) {
-      // Actionable item card: 已处理 / 忽略 resolve directly, 详情 opens the web item.
+      // Actionable item card: 已处理 / 忽略 resolve the item directly, no agent turn.
       const { buildCard, recordInteraction } = await import("./lark-send.ts");
+      const { getItem } = await import("../items/store.ts");
+      // Where the item came from, as links Feishu can open (web/Feishu docs, the chat it was said in).
+      let origin = "";
+      try {
+        const refs = getItem(app, n.entityId).sourceRefs.filter((r) => r.startsWith("src:"));
+        const links = [...new Set(refs.map((r, i) => resolveCitations(app, `[原文${refs.length > 1 ? i + 1 : ""}](${r})`)).filter((l) => l.includes("](")))];
+        if (links.length) origin = `来源：${links.join("　")}`;
+      } catch {}
       const card = buildCard({
         title: n.title,
         color: "blue",
         blocks: [
-          { markdown: n.body || " " },
-          ...(n.link ? [{ note: `详情：${n.link}` }] : []),
+          { markdown: body || " " },
+          ...(origin ? [{ markdown: origin }] : []),
           {
             buttons: [
               { text: "已处理", value: `item:done:${n.entityId}`, style: "primary" },
@@ -139,7 +149,7 @@ export async function startLarkBot(app: App) {
       recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: n.entityId, notificationId: n.id } });
       return;
     }
-    const markdown = `**${n.title}**\n${n.body}`;
+    const markdown = `**${n.title}**\n${body}`;
     await sendLark(target, { markdown });
   });
 

@@ -51,9 +51,11 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
       if (op === "done") upsertItem(app, id, { status: "done", note: `${opName} 在飞书卡片上标记已处理` }, "user");
       else if (op === "cancel") upsertItem(app, id, { status: "cancelled", note: `${opName} 在飞书卡片上忽略` }, "user");
       run(app.db, "update card_interactions set status='done', handled_at=datetime('now'), handled_by=? where id=?", operator, inter.id);
+      const title = getItem(app, id).title;
       return {
-        card: buildCard({ title: op === "done" ? "已处理" : "已忽略", color: op === "done" ? "green" : "grey", blocks: [{ markdown: `事项 ${id} 已${op === "done" ? "标记为已处理" : "忽略"}` }] }),
-        toast: { type: "success", content: op === "done" ? "已处理" : "已忽略" },
+        // Feishu callback responses must wrap a replacement card as { type: "raw", data }.
+        card: rawCard(buildCard({ title: op === "done" ? "已处理" : "已忽略", color: op === "done" ? "green" : "grey", blocks: [{ markdown: title }, { note: `${opName} 在飞书卡片上${op === "done" ? "标记已处理" : "忽略"}` }] })),
+        toast: { type: "success", content: op === "done" ? "已标记为已处理" : "已忽略" },
       };
     }
     return { toast: { type: "warning", content: "找不到对应的会话" } };
@@ -74,7 +76,7 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
       if (p) void probeProfile(p).then((probe) => { if (!probe.error) saveProbe(app, id, probe); });
     }
     run(app.db, "update card_interactions set status = 'done', handled_at = datetime('now'), handled_by = ? where id = ?", operator, inter.id);
-    return { card: r.card, toast: { type: "success", content: r.toast } };
+    return { card: rawCard(r.card), toast: { type: "success", content: r.toast } };
   }
   const desc = describeAction({ tag: action.tag, name: action.name, value, formValue, option: action.option, options: action.options, input: action.input_value, checked: action.checked });
   const userId = resolveIdentity(app, "lark", operator);
@@ -87,6 +89,11 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
     externalMessageId: messageId,
   });
   return { toast: { type: "info", content: "已收到，处理中" } };
+}
+
+/** The card in a card.action.trigger response must be { type: "raw", data: <card json> }. */
+export function rawCard(card: Record<string, unknown>) {
+  return { type: "raw", data: card };
 }
 
 function safeJson(s: string) {

@@ -1,6 +1,7 @@
 import { receive, type Inbound } from "../agents/inbox.ts";
 import { getRun, waitForRun } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
+import { one } from "../core/db.ts";
 
 /**
  * Shared path for chat channels (Feishu, Telegram, QQ via OneBot…): the
@@ -26,7 +27,29 @@ export async function answerFromChannel(
   const done = await waitForRun(app, r.runId);
   const answer = done.status === "done" ? String((getRun(app, r.runId).output as { answer?: string }).answer ?? "") : done.status === "cancelled" ? "（已停止）" : `处理失败：${done.error ?? done.status}`;
   const note = r.started === "renewed" ? "（距上次对话较久，已开始新会话并带上之前的摘要；/resume 可回到原会话）\n\n" : "";
-  return note + plainCitations(answer);
+  return note + resolveCitations(app, answer);
+}
+
+/**
+ * Make citations usable outside omem: a source whose original is a web/Feishu
+ * document becomes a real link; a Feishu chat source opens that chat; anything
+ * else (memories, messages, wiki pages, omem-internal #/ routes) becomes plain
+ * text, because other apps cannot open it.
+ */
+export function resolveCitations(app: App, md: string) {
+  const withSources = md.replace(/\[([^\]]*)\]\(src:([A-Za-z0-9_]+)(?:#[^)]*)?\)/g, (_all, label: string, id: string) => {
+    const s = one<{ uri: string }>(app.db, "select uri from sources where id = ?", id);
+    const url = s ? externalUrl(s.uri) : null;
+    return url ? `[${label}](${url})` : label;
+  });
+  return plainCitations(withSources).replace(/\[([^\]]*)\]\(#\/[^)]*\)/g, "$1");
+}
+
+function externalUrl(uri: string): string | null {
+  if (/^https?:\/\//.test(uri)) return uri;
+  const chat = /^lark:(oc_[A-Za-z0-9]+)/.exec(uri);
+  if (chat) return `https://applink.feishu.cn/client/chat/open?openChatId=${chat[1]}`;
+  return null;
 }
 
 export function plainCitations(md: string) {

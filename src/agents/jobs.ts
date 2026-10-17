@@ -242,7 +242,7 @@ registerHandler("heartbeat", async (ctx) => {
   for (const item of due) {
     notify(app, {
       title: `提醒：${item.title}`,
-      body: [item.detail, `[在 omem 中打开](#/items/${item.id})`].filter(Boolean).join("\n\n"),
+      body: item.detail,
       link: `#/items/${item.id}`,
       entity: "item",
       entityId: item.id,
