@@ -223,7 +223,8 @@ export type ModelQuality = {
   avgChars: number;
 };
 
-const label = (profile: string | null, model: string | null, effort: string | null) => [profile ?? "?", model ?? "默认模型", effort ?? ""].filter(Boolean).join(" · ");
+const label = (profile: string | null, model: string | null, effort: string | null) =>
+  !profile && !model ? "未记录模型（旧数据）" : [profile ?? "?", model ?? "默认模型", effort ?? ""].filter(Boolean).join(" · ");
 
 /** Per backend/model numbers since `sinceDays` ago. */
 export function memoryQualityStats(app: App, sinceDays = 30): ModelQuality[] {

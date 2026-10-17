@@ -63,7 +63,45 @@ export function onServerEvent(fn: Listener) {
 // ---- shared types (mirrors server) ----
 export type Space = { id: string; name: string; kind: string; description: string; rootPath: string | null; settings: Record<string, any>; sources?: number; pages?: number };
 export type Hit = { type: "chunk" | "page" | "memory" | "symbol"; id: string; spaceId: string; title: string; path: string; sourceId?: string; uri?: string; sourceKind?: string; lineStart?: number; lineEnd?: number; snippet: string; score: number; via: string[]; status?: string };
-export type Memory = { id: string; spaceId: string; kind: string; subject: string; content: string; status: string; validFrom: string | null; validTo: string | null; supersededBy: string | null; supersedes: string | null; sourceRefs: string[]; createdBy: string; createdAt: string; updatedAt: string };
+export type Memory = {
+  id: string;
+  spaceId: string;
+  kind: string;
+  subject: string;
+  content: string;
+  status: string;
+  validFrom: string | null;
+  validTo: string | null;
+  supersededBy: string | null;
+  supersedes: string | null;
+  sourceRefs: string[];
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  agentProfile?: string | null;
+  model?: string | null;
+  effort?: string | null;
+  runId?: string | null;
+  agent?: string | null;
+  tags?: string[];
+  reviewedAt?: string | null;
+  reviewVerdict?: string | null;
+  reviewNote?: string | null;
+};
+export type ModelQuality = { model: string; stored: number; shadow: number; rejected: number; rejectedBy: Record<string, number>; reviewed: number; kept: number; rewritten: number; retracted: number; avgChars: number };
+export type MemoryQuality = {
+  stats: ModelQuality[];
+  rejections: { id: string; space_id: string; tool: string; kind: string; content: string; codes: string[]; run_id: string | null; agent_profile: string | null; model: string | null; effort: string | null; shadow: boolean; at: string }[];
+  pending: number;
+  review: { enabled: boolean; profile?: string; model?: string; effort?: string; batch: number };
+  compare: { profile: string; model?: string; effort?: string }[];
+  runs: {
+    run: { id: string; title: string; space_id: string; created_at: string; profile_id: string | null };
+    live: { id: string; kind: string; content: string; status: string; review_verdict: string | null; model: string | null; agent_profile: string | null }[];
+    rejected: { content: string; codes: string[] }[];
+    shadows: { id: string; title: string; status: string; profile_id: string | null; writes: { id: string; tool: string; args: any; verdict: string | null; verdict_note: string | null; model: string | null }[]; rejected: { content: string; codes: string[] }[] }[];
+  }[];
+};
 export type Item = { id: string; spaceId: string; kind: string; title: string; detail: string; status: string; priority: number; dueAt: string | null; remindAt: string | null; waitingOn: string | null; watch: any; sourceRefs: string[]; createdAt: string; updatedAt: string; closedAt: string | null };
 export type ItemEvent = { id: number; itemId: string; at: string; kind: string; text: string; sourceRefs: string[]; actor: string };
 export type Run = { id: string; kind: string; spaceId: string | null; status: string; title: string; input: any; output: any; profileId: string | null; parentId: string | null; error: string | null; createdAt: string; startedAt: string | null; finishedAt: string | null; quiet?: boolean };

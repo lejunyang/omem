@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import { del, get, onServerEvent, post } from "../api";
 import Icon from "../components/Icon.vue";
+import { confirmDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
 import RunActivity from "../components/RunActivity.vue";
 import { currentSpace, relTime, state, toast } from "../store";
@@ -84,7 +85,7 @@ async function cancel(runId: string) {
   await post(`/api/runs/${runId}/cancel`);
 }
 async function remove(c: Conversation) {
-  if (!confirm(`删除对话「${c.title || "未命名"}」？已保存的记忆和事项不受影响。`)) return;
+  if (!(await confirmDialog(`删除对话「${c.title || "未命名"}」？`, { message: "已保存的记忆和事项不受影响。", okText: "删除", danger: true }))) return;
   await del(`/api/conversations/${c.id}`);
   if (c.id === id.value) router.push("/ask");
   void loadList();

@@ -2,6 +2,8 @@
 import { computed, onMounted, onBeforeUnmount, ref } from "vue";
 import { get, patch, post, type Card, type Source } from "../api";
 import Icon from "../components/Icon.vue";
+import UiCheckbox from "../components/UiCheckbox.vue";
+import UiSegmented from "../components/UiSegmented.vue";
 import Markdown from "../components/Markdown.vue";
 import { fmtTime, openCitation, state, toast } from "../store";
 
@@ -111,7 +113,7 @@ const ratings = [
         <p>从材料里生成卡片，按遗忘曲线（FSRS）安排复习。今天已复习 {{ stats.reviewedToday }} 张，共 {{ stats.total }} 张。</p>
       </div>
       <span class="spacer" />
-      <select v-model="scope" class="select" style="width: auto" @change="load"><option value="all">所有空间</option><option value="space">当前空间</option></select>
+      <UiSegmented v-model="scope" size="sm" aria-label="范围" :options="[{ value: 'all', label: '所有空间' }, { value: 'space', label: '当前空间' }]" @change="load" />
     </div>
     <div class="tabs">
       <button :class="{ on: tab === 'review' }" @click="tab = 'review'">复习 <span class="badge">{{ due.length }}</span></button>
@@ -198,7 +200,7 @@ const ratings = [
       <p class="muted">选择当前空间里的材料，助理会挑出值得记住的内容做成卡片（语言材料：词汇、短语、句型；知识材料：概念与区分）。</p>
       <label class="field"><span>学习重点（可选）</span><input v-model="focus" class="input" placeholder="例如：商务邮件常用表达；只要 B2 以上词汇" /></label>
       <div class="pick card">
-        <label v-for="s in sources" :key="s.id" class="row pickrow"><input v-model="picked" type="checkbox" :value="s.id" /><span class="ellipsis">{{ s.title }}</span><span class="muted small">{{ s.kind }}</span></label>
+        <UiCheckbox v-for="s in sources" :key="s.id" v-model="picked" :value="s.id" class="pickrow"><span class="row"><span class="ellipsis">{{ s.title }}</span><span class="muted small">{{ s.kind }}</span></span></UiCheckbox>
         <div v-if="!sources.length" class="muted pad">当前空间没有可用材料。</div>
       </div>
       <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!picked.length" @click="generate"><Icon name="sparkles" :size="15" />生成卡片（{{ picked.length }}）</button></div>

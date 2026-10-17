@@ -214,6 +214,15 @@ kbd {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
+input[type="number"].input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+input[type="number"].input::-webkit-inner-spin-button,
+input[type="number"].input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
 .textarea {
   resize: vertical;
   min-height: 80px;
@@ -611,4 +620,9 @@ kbd {
     transition: none !important;
     animation: none !important;
   }
+}
+.input.sm {
+  height: 30px;
+  padding: 4px 9px;
+  font-size: 13px;
 }

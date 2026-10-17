@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { del, get, put } from "../api";
 import Icon from "../components/Icon.vue";
+import { confirmDialog } from "../lib/dialog";
 import { toast } from "../store";
 
 type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; tools: string[]; writes: boolean; skills: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string };
@@ -35,12 +36,12 @@ onMounted(async () => {
 watch([selected, tab], loadRaw);
 
 const list = computed(() => (tab.value === "agents" ? agents.value : skills.value));
-function open(name: string | null) {
-  if (dirty.value && !confirm("有未保存的修改，放弃吗？")) return;
+async function open(name: string | null) {
+  if (dirty.value && !(await confirmDialog("有未保存的修改，放弃吗？", { okText: "放弃修改", danger: true }))) return;
   router.replace({ query: { tab: tab.value, ...(name ? { name } : {}) } });
 }
-function switchTab(t: string) {
-  if (dirty.value && !confirm("有未保存的修改，放弃吗？")) return;
+async function switchTab(t: string) {
+  if (dirty.value && !(await confirmDialog("有未保存的修改，放弃吗？", { okText: "放弃修改", danger: true }))) return;
   router.replace({ query: { tab: t } });
 }
 
@@ -115,7 +116,7 @@ async function approve() {
   await save();
 }
 async function remove() {
-  if (!selected.value || !confirm(`删除 ${selected.value}？`)) return;
+  if (!selected.value || !(await confirmDialog(`删除 ${selected.value}？`, { message: "文件的历史仍保留在 Git 中。", okText: "删除", danger: true }))) return;
   await del(`/api/${tab.value}/${selected.value}`);
   open(null);
   await load();

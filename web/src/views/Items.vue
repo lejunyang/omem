@@ -4,6 +4,10 @@ import { useRoute, useRouter } from "vue-router";
 import { get, onServerEvent, patch, post, type Item, type ItemEvent } from "../api";
 import Icon from "../components/Icon.vue";
 import Markdown from "../components/Markdown.vue";
+import UiCheckbox from "../components/UiCheckbox.vue";
+import UiDateTime from "../components/UiDateTime.vue";
+import UiSegmented from "../components/UiSegmented.vue";
+import UiSelect from "../components/UiSelect.vue";
 import { fmtTime, itemKindLabel, openCitation, relTime, state, toast } from "../store";
 
 const route = useRoute();
@@ -76,14 +80,6 @@ async function addNote() {
   note.value = "";
   void loadDetail();
 }
-function toLocalInput(iso: string | null) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-}
-function fromLocalInput(v: string) {
-  return v ? new Date(v).toISOString() : null;
-}
 function parseRef(r: string) {
   const m = /^src:([^#\s]+)(?:#L(\d+)(?:-L?(\d+))?)?/.exec(r);
   if (m) return () => openCitation({ kind: "source", id: m[1], from: m[2] ? +m[2] : undefined, to: m[3] ? +m[3] : undefined }, true);
@@ -102,18 +98,15 @@ function parseRef(r: string) {
       </div>
       <span class="spacer" />
       <div class="row small">
-        <select v-model="scope" class="select" style="width: auto">
-          <option value="all">所有空间</option>
-          <option value="space">当前空间</option>
-        </select>
-        <label class="row"><input v-model="showDone" type="checkbox" />显示已完成</label>
+        <UiSegmented v-model="scope" size="sm" aria-label="范围" :options="[{ value: 'all', label: '所有空间' }, { value: 'space', label: '当前空间' }]" />
+        <UiCheckbox v-model="showDone" size="sm">显示已完成</UiCheckbox>
       </div>
     </div>
 
     <form class="quick card row" @submit.prevent="addQuick">
       <Icon name="plus" :size="16" />
       <input v-model="quick" placeholder="例如：周五下午提醒我交报销单；等小王回复接口文档；关注项目A的需求变化" />
-      <label class="row small muted" title="交给助理理解时间、对象并关联背景"><input v-model="viaAssistant" type="checkbox" />让助理处理</label>
+      <UiCheckbox v-model="viaAssistant" size="sm" class="small muted" title="交给助理理解时间、对象并关联背景">让助理处理</UiCheckbox>
       <button class="btn primary sm" :disabled="!quick.trim()">添加</button>
     </form>
 
@@ -155,22 +148,29 @@ function parseRef(r: string) {
         <input class="input title" :value="detail.item.title" @change="save({ title: ($event.target as HTMLInputElement).value })" />
         <textarea class="textarea" rows="3" placeholder="详情" :value="detail.item.detail" @change="save({ detail: ($event.target as HTMLTextAreaElement).value })" />
         <div class="grid2">
-          <label class="field"><span>类型</span>
-            <select class="select" :value="detail.item.kind" @change="save({ kind: ($event.target as HTMLSelectElement).value })">
-              <option v-for="(l, k) in itemKindLabel" :key="k" :value="k">{{ l }}</option>
-            </select>
-          </label>
-          <label class="field"><span>状态</span>
-            <select class="select" :value="detail.item.status" @change="save({ status: ($event.target as HTMLSelectElement).value })">
-              <option value="open">进行中</option><option value="waiting">等待中</option><option value="snoozed">稍后</option><option value="done">完成</option><option value="cancelled">取消</option>
-            </select>
-          </label>
-          <label class="field"><span>提醒时间</span><input type="datetime-local" class="input" :value="toLocalInput(detail.item.remindAt)" @change="save({ remindAt: fromLocalInput(($event.target as HTMLInputElement).value) })" /></label>
-          <label class="field"><span>截止时间</span><input type="datetime-local" class="input" :value="toLocalInput(detail.item.dueAt)" @change="save({ dueAt: fromLocalInput(($event.target as HTMLInputElement).value) })" /></label>
+          <div class="field"><span>类型</span>
+            <UiSelect :model-value="detail.item.kind" aria-label="类型" :options="Object.entries(itemKindLabel).map(([value, label]) => ({ value, label }))" @change="(v) => save({ kind: v })" />
+          </div>
+          <div class="field"><span>状态</span>
+            <UiSelect
+              :model-value="detail.item.status"
+              aria-label="状态"
+              :options="[
+                { value: 'open', label: '进行中' },
+                { value: 'waiting', label: '等待中' },
+                { value: 'snoozed', label: '稍后' },
+                { value: 'done', label: '完成' },
+                { value: 'cancelled', label: '取消' },
+              ]"
+              @change="(v) => save({ status: v })"
+            />
+          </div>
+          <div class="field"><span>提醒时间</span><UiDateTime :model-value="detail.item.remindAt" aria-label="提醒时间" @change="(v) => save({ remindAt: v })" /></div>
+          <div class="field"><span>截止时间</span><UiDateTime :model-value="detail.item.dueAt" aria-label="截止时间" @change="(v) => save({ dueAt: v })" /></div>
           <label class="field"><span>等待对象</span><input class="input" :value="detail.item.waitingOn ?? ''" @change="save({ waitingOn: ($event.target as HTMLInputElement).value || null })" /></label>
-          <label class="field"><span>优先级</span>
-            <select class="select" :value="detail.item.priority" @change="save({ priority: Number(($event.target as HTMLSelectElement).value) })"><option :value="1">高</option><option :value="2">中</option><option :value="3">低</option></select>
-          </label>
+          <div class="field"><span>优先级</span>
+            <UiSegmented :model-value="detail.item.priority" aria-label="优先级" :options="[{ value: 1, label: '高' }, { value: 2, label: '中' }, { value: 3, label: '低' }]" @change="(v) => save({ priority: v })" />
+          </div>
         </div>
         <div v-if="detail.item.sourceRefs.length" class="refs">
           <div class="section-title">相关依据</div>

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { del, get, onServerEvent, post, put, type Run } from "../api";
 import Icon from "../components/Icon.vue";
+import { confirmDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
 import { fmtTime, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 
@@ -140,7 +141,7 @@ async function saveEdit() {
   await loadPage();
 }
 async function remove() {
-  if (!page.value || !confirm(`删除页面「${page.value.meta.title}」？历史仍保留在 Git 中。`)) return;
+  if (!page.value || !(await confirmDialog(`删除页面「${page.value.meta.title}」？`, { message: "历史仍保留在 Git 中。", okText: "删除", danger: true }))) return;
   await del(`/api/wiki/${space.value}/page/${page.value.slug}`);
   router.push(`/wiki/${space.value}`);
 }

@@ -3,6 +3,9 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { get, onServerEvent, post, type Run, type RunEvent } from "../api";
 import Icon from "../components/Icon.vue";
+import UiCheckbox from "../components/UiCheckbox.vue";
+import UiSelect from "../components/UiSelect.vue";
+import { confirmDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
 import RunActivity from "../components/RunActivity.vue";
 import { fmtTime, relTime, runKindLabel, state, statusLabel, toast } from "../store";
@@ -55,7 +58,7 @@ const diffFiles = computed(() => {
 });
 async function act(action: "cancel" | "retry" | "apply" | "discard") {
   if (!detail.value) return;
-  if (action === "apply" && !confirm("把这些改动应用到仓库工作区（不提交）？")) return;
+  if (action === "apply" && !(await confirmDialog("把这些改动应用到仓库工作区？", { message: "只会成为工作区里未提交的修改。", okText: "应用" }))) return;
   try {
     await post(`/api/runs/${detail.value.run.id}/${action}`);
     toast({ cancel: "已停止", retry: "已重新排队", apply: "已应用到工作区，请在仓库中检查并提交", discard: "已清理工作区" }[action], "ok");
@@ -77,7 +80,7 @@ async function delegate() {
     toast((e as Error).message, "error");
   }
 }
-const kinds = ["", "ask", "ingest", "wiki-plan", "wiki-write", "wiki-lint", "code", "heartbeat", "dream", "tutor", "brief", "sync"];
+const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan", "wiki-write", "wiki-lint", "code", "heartbeat", "dream", "tutor", "brief", "sync"];
 </script>
 
 <template>
@@ -87,12 +90,8 @@ const kinds = ["", "ask", "ingest", "wiki-plan", "wiki-write", "wiki-lint", "cod
         <strong>运行记录</strong>
         <span class="spacer" />
         <button class="btn sm" title="交办编码任务" @click="delegateOpen = true"><Icon name="code" :size="14" />交办</button>
-        <select v-model="kind" class="select sm-select">
-          <option v-for="k in kinds" :key="k" :value="k">{{ k ? runKindLabel[k] : "全部" }}</option>
-        </select>
-        <label class="row small muted" title="没有发现变化的静默巡检默认不显示">
-          <input type="checkbox" v-model="showQuiet" /> 静默
-        </label>
+        <UiSelect v-model="kind" size="sm" width="110px" aria-label="运行类型" :options="kinds.map((k) => ({ value: k, label: k ? (runKindLabel[k] ?? k) : '全部' }))" />
+        <UiCheckbox v-model="showQuiet" size="sm" class="small muted" title="没有发现变化的静默巡检默认不显示">静默</UiCheckbox>
       </div>
       <div class="items">
         <router-link v-for="r in runs" :key="r.id" :to="`/runs/${r.id}`" class="run" :class="{ on: r.id === id }">
@@ -184,7 +183,7 @@ const kinds = ["", "ask", "ingest", "wiki-plan", "wiki-write", "wiki-lint", "cod
         <p class="muted small">编码 Agent 在独立的 Git worktree 里实现，运行检查命令，再由评审 Agent 审查。确认后才会应用到你的仓库。</p>
         <div v-if="!repos.length" class="muted">还没有关联代码目录的空间，请先在设置里新建代码仓库空间。</div>
         <template v-else>
-          <label class="field"><span>仓库</span><select v-model="task.space" class="select"><option value="">{{ repos[0].name }}</option><option v-for="r in repos.slice(1)" :key="r.id" :value="r.id">{{ r.name }}</option></select></label>
+          <div class="field"><span>仓库</span><UiSelect v-model="task.space" aria-label="仓库" :options="[{ value: '', label: repos[0].name }, ...repos.slice(1).map((r) => ({ value: r.id, label: r.name }))]" /></div>
           <label class="field"><span>任务</span><textarea v-model="task.task" class="textarea" rows="6" placeholder="目标、背景、验收标准、相关讨论" /></label>
           <label class="field"><span>检查命令（可选，默认用空间设置）</span><input v-model="task.check" class="input mono" placeholder="pnpm test" /></label>
           <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!task.task.trim()" @click="delegate">交办</button></div>

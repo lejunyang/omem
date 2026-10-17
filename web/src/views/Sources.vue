@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { del, get, post, type Source } from "../api";
 import CodeView from "../components/CodeView.vue";
 import Icon from "../components/Icon.vue";
+import { confirmDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
 import { currentSpace, fmtTime, relTime, state, toast } from "../store";
 
@@ -123,7 +124,7 @@ async function openSymbol(sourceId: string, qname: string) {
   relations.value = await get<Relations>(`/api/sources/${sourceId}/relations?qname=${encodeURIComponent(qname)}`);
 }
 async function remove() {
-  if (!detail.value || !confirm(`移除原件「${detail.value.source.title}」？引用它的页面会提示原件已移除。`)) return;
+  if (!detail.value || !(await confirmDialog(`移除原件「${detail.value.source.title}」？`, { message: "引用它的页面会提示原件已移除。", okText: "移除", danger: true }))) return;
   await del(`/api/sources/${detail.value.source.id}`);
   router.push("/sources");
   void load();

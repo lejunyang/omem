@@ -4,6 +4,8 @@ import { useRoute } from "vue-router";
 import CaptureDialog from "./components/CaptureDialog.vue";
 import CitationDrawer from "./components/CitationDrawer.vue";
 import CommandPalette from "./components/CommandPalette.vue";
+import DialogHost from "./components/DialogHost.vue";
+import UiSelect from "./components/UiSelect.vue";
 import Icon from "./components/Icon.vue";
 import { kindLabel, loadSpaces, refreshUnread, state } from "./store";
 
@@ -64,12 +66,10 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
         <button class="btn ghost sm icon only-mobile" aria-label="关闭菜单" @click="menu = false"><Icon name="x" /></button>
       </div>
 
-      <label class="space-pick">
+      <div class="space-pick">
         <span class="small muted">空间</span>
-        <select v-model="state.space" class="select" aria-label="当前空间">
-          <option v-for="s in state.spaces" :key="s.id" :value="s.id">{{ s.name }} · {{ kindLabel[s.kind] ?? s.kind }}</option>
-        </select>
-      </label>
+        <UiSelect v-model="state.space" aria-label="当前空间" :options="state.spaces.map((s) => ({ value: s.id, label: s.name, hint: kindLabel[s.kind] ?? s.kind }))" />
+      </div>
 
       <button class="search-btn" @click="state.palette = true"><Icon name="search" :size="16" /><span>搜索或提问</span><kbd>Ctrl K</kbd></button>
 
@@ -102,6 +102,7 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
     <CitationDrawer />
     <CommandPalette />
     <CaptureDialog />
+    <DialogHost />
     <div class="toasts" aria-live="polite">
       <div v-for="t in state.toasts" :key="t.id" class="toast" :class="t.kind">
         <span>{{ t.text }}</span>
@@ -141,7 +142,7 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
   gap: 4px;
   padding: 0 4px;
 }
-.space-pick .select {
+.space-pick :deep(.ui-select) {
   font-weight: 550;
   background: var(--panel);
 }

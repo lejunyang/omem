@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import UiCheckbox from "./UiCheckbox.vue";
+import UiSelect from "./UiSelect.vue";
 import { computed, nextTick, ref, watch } from "vue";
 import { api, post } from "../api";
 import { state, toast } from "../store";
@@ -78,10 +80,8 @@ function onKey(e: KeyboardEvent) {
       </div>
       <div class="row wrap">
         <label class="btn sm"><Icon name="upload" :size="15" />选择文件<input type="file" multiple hidden @change="onPick" /></label>
-        <select v-model="space" class="select sm-select" aria-label="保存到空间">
-          <option v-for="s in state.spaces" :key="s.id" :value="s.id">{{ s.name }}</option>
-        </select>
-        <label class="row small"><input v-model="ingest" type="checkbox" /> 让助理整理（更新记忆与事项）</label>
+        <UiSelect v-model="space" size="sm" width="160px" aria-label="保存到空间" :options="state.spaces.map((s) => ({ value: s.id, label: s.name }))" />
+        <UiCheckbox v-model="ingest" size="sm" class="small">让助理整理（更新记忆与事项）</UiCheckbox>
         <span class="spacer" />
         <button class="btn primary" :disabled="busy || (!text.trim() && !files.length)" @click="save">{{ busy ? "保存中…" : "保存" }} <kbd>Ctrl ↵</kbd></button>
       </div>
@@ -126,11 +126,6 @@ h2 {
   background: none;
   cursor: pointer;
   color: var(--muted);
-}
-.sm-select {
-  width: auto;
-  height: 28px;
-  padding: 0 8px;
 }
 .btn kbd {
   border-color: rgba(255, 255, 255, 0.3);

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiCheckbox from "./UiCheckbox.vue";
 import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { get, post, type Hit } from "../api";
@@ -89,7 +90,7 @@ const typeLabel: Record<string, string> = { page: "页面", memory: "记忆", ch
       <div class="bar">
         <Icon name="search" />
         <input ref="input" v-model="q" placeholder="搜索原件、页面、记忆，或直接提问…" @keydown="onKey" />
-        <label class="scope small"><input v-model="scopeAll" type="checkbox" /> 全部空间</label>
+        <UiCheckbox v-model="scopeAll" size="sm" class="scope small">全部空间</UiCheckbox>
       </div>
       <div class="rows">
         <template v-for="(row, i) in rows" :key="i">
@@ -142,7 +143,7 @@ const typeLabel: Record<string, string> = { page: "页面", memory: "记忆", ch
   border-bottom: 1px solid var(--line);
   color: var(--muted);
 }
-.bar input:not([type="checkbox"]) {
+.bar input {
   flex: 1;
   border: 0;
   outline: 0;
