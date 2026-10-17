@@ -71,3 +71,36 @@ describe("feishu /model card actions", () => {
     expect(updated.settings.effort).toBeNull();
   });
 });
+
+describe("feishu item reminder cards", () => {
+  it("resolves 已处理/忽略 without an agent and answers in the callback shape Feishu accepts", async () => {
+    const { upsertItem, getItem } = await import("../src/items/store.ts");
+    const { recordInteraction } = await import("../src/channels/lark-send.ts");
+    const app = testApp();
+    const item = upsertItem(app, undefined, { title: "核对西溪宾馆入住" });
+    recordInteraction(app, { messageId: "om_item", chatId: "oc_owner", conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: item.id } });
+    const r = (await handleCardAction(app, {
+      operator: { open_id: "ou_owner" },
+      context: { open_message_id: "om_item" },
+      action: { tag: "button", value: { action: `item:cancel:${item.id}` } },
+    })) as { toast: { type: string }; card?: { type: string; data: Record<string, unknown> } };
+    expect(r.toast.type).toBe("success");
+    // A bare card object here is what made Feishu show an error; it must be wrapped.
+    expect(r.card?.type).toBe("raw");
+    expect(JSON.stringify(r.card?.data)).toContain("核对西溪宾馆入住");
+    expect(getItem(app, item.id).status).toBe("cancelled");
+  });
+
+  it("turns citations into links Feishu can open and drops internal ones", async () => {
+    const { upsertSource } = await import("../src/sources/store.ts");
+    const { resolveCitations } = await import("../src/channels/common.ts");
+    const app = testApp();
+    const doc = upsertSource(app, { spaceId: "personal", kind: "doc", uri: "https://bytedance.larkoffice.com/docx/AbC", title: "文档", text: "x" });
+    const chat = upsertSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_123abc", title: "群", text: "y" });
+    const out = resolveCitations(app, `[文档](src:${doc.id}#L1-L2) [群](src:${chat.id}) [记忆](mem:m1) [详情](#/runs/r1)`);
+    expect(out).toContain("[文档](https://bytedance.larkoffice.com/docx/AbC)");
+    expect(out).toContain("openChatId=oc_123abc");
+    expect(out).not.toContain("mem:");
+    expect(out).not.toContain("#/runs");
+  });
+});
