@@ -2,7 +2,7 @@
 title: omem 源码 Wiki
 summary: 面向要读懂并修改 omem v2 的开发者：从一条消息怎么变成回答讲起，再到数据、检索、记忆、Wiki、交办编码、渠道和配置。
 kind: index
-updated: 2026-10-12
+updated: 2026-10-18
 ---
 
 omem 是个人记忆与助理系统：文档、代码、聊天、笔记进同一个 SQLite 知识库，按空间隔离；宿主（Node/TypeScript）只管数据、索引、调度和权限，理解与写作交给通过 ACP 或命令行调用的外部 Agent，Agent 经 MCP 工具读写知识库。这套页面按“一件事在系统里怎么发生”组织，每页末尾给出要改这里从哪下手。建议先读概览，再按“核心流程”顺序往下。
@@ -25,12 +25,13 @@ omem 是个人记忆与助理系统：文档、代码、聊天、笔记进同一
 ## 概念与设计
 
 - [检索：FTS、符号、向量与 RRF 融合](./concepts/retrieval.md) —— search 的排序从哪来，向量怎么开
-- [记忆与事项](./concepts/memory-and-items.md) —— supersede 版本链、事项时间线，巡检、做梦、简报
-- [渠道](./concepts/channels.md) —— 飞书、Telegram、OneBot、个人消息采集与会话 hook
+- [记忆与事项](./concepts/memory-and-items.md) —— supersede 版本链、事项时间线，巡检、做梦、简报，记忆写入检查、复核与按模型比较
+- [渠道](./concepts/channels.md) —— 飞书、Telegram、OneBot、个人消息采集（会话类型、免打扰、采集方式）与会话 hook
 - [Agent 档案与技能](./concepts/agent-specs-and-skills.md) —— 自定义 Agent、技能的渐进披露、草稿与批准
 - [配置、setup 与定时任务](./concepts/config-and-setup.md) —— config.json、角色分配后端、omem setup、cron
 
 ## 修改与参考
 
+- [2026-10-13 之后的变化](./reference/changes-since-2026-10-13.md) —— 本 Wiki 生成后加的功能，其他页面未必都已同步
 - [修改指南](./howto/modify-omem.md) —— 加工具、角色、渠道、定时任务、Run 类型、检索路时各改哪些文件
 - [参考：工具、命令、Run 类型](./reference/tools-commands-runs.md) —— MCP 工具、斜杠命令、CLI 子命令和 Run 类型清单

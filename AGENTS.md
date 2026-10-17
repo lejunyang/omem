@@ -1,11 +1,12 @@
 # omem v2：开发约定
 
-先读 README.md 和 docs/v2/architecture.md（含实现状态表），验收步骤在 docs/v2/acceptance.md。docs/archive 是 v1 的历史资料，其中的“当前”“进度”只对应当时。本仓库的 Wiki 在 `.repo-review/wiki/`（生成于 2026-10-13，之后的改动未必写进去，以代码为准）。
+先读 README.md 和 docs/v2/architecture.md（含实现状态表），验收步骤在 docs/v2/acceptance.md。docs/archive 是 v1 的历史资料，其中的“当前”“进度”只对应当时。本仓库的 Wiki 在 `.repo-review/wiki/`（主体生成于 2026-10-13；之后的改动列在 `reference/changes-since-2026-10-13.md`，记忆、渠道、参考三页已同步到 10-18，其他页面以代码为准）。
 
 ## 产品原则
 
 - 一个来源体系：文档、代码、聊天、笔记、网页、日程、妙记都是原件（sources），按空间（spaces）隔离领域。代码有符号级切分、调用图和导航，但不形成第二个知识产品。
 - 宿主只做数据、索引、调度和权限；理解、调查和写作交给 Agent。不要在宿主里为模型拼几十条规则的长 prompt、强制 JSON 输出或替模型做多轮检索规划——给它工具（src/agents/tools.ts）和清楚的角色说明（roles/*.md，共同部分在 `_common.md`）。
+- 记忆写入前由 `src/memory/quality.ts` 做确定性检查，之后由 memory-reviewer 复核；改记忆写法优先改 `roles/_common.md` 的“怎么写记忆”，检查规则只拦明显不是记忆的形态，不按项目或群名特判。
 - 模型没有直接写库权限：所有写入走工具，工具层校验空间范围、用户可访问空间（`scopeFor` / `accessibleSpaces`）和角色允许的工具清单，并记录在运行（runs）里。新增工具或接口时同样要按用户限定空间。
 - 派生知识（Wiki、记忆、事项）必须能回到原件。Wiki 正文引用格式 `[文字](src:<原件id>#L起-L止)`，页面链接 `[[slug]]`，记忆引用 `mem:<id>`。
 - 记忆更正用 supersede 保留版本链，不覆盖；事项变化写时间线。原件只保留最新版，聊天按追加，删除留墓碑。
@@ -35,6 +36,7 @@
 - Vue 3 + TypeScript，在 web/。公共样式与 token 在 web/src/styles.css（浅色/深色），组件在 web/src/components；设计约定见 `.agents/skills/omem-design`。
 - 阅读优先：正文限宽、标题衬线、引用贴近论断。引用统一走 CitationDrawer（逐层返回，Esc 退一层，关闭归还焦点）。
 - 采集来的内容一律经 DOMPurify；不直接 v-html 原始 HTML。
+- 不用原生 select / checkbox / radio / datetime-local / confirm / prompt：用 `components/UiSelect`、`UiCheckbox`（含 switch）、`UiSegmented`、`UiDateTime` 和 `lib/dialog` 的 `confirmDialog` / `promptDialog`。
 - 改界面后用 `node scripts/screens.ts <url> <dir>` 截 1440 与 390 宽度检查，不能出现横向溢出。
 
 ## 运行与依赖

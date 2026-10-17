@@ -2,7 +2,7 @@
 title: 渠道：飞书、Telegram、OneBot 与采集
 summary: 讲清各渠道怎样接入同一个 inbox，哪些渠道能下指令、哪些只做只读采集，以及新增一个渠道要写哪几块、怎样用模拟服务端测试。
 kind: concept
-updated: 2026-10-13
+updated: 2026-10-18
 ---
 
 本页回答三件事：飞书、Telegram、OneBot 怎样接进同一个 inbox；哪些渠道是“指挥”（本人在里面下指令、收回复），哪些只是“采集”（把别处的对话存成原件）；要新增一个渠道该写什么。消息进来之后如何排队、如何交给 Agent，见 [flows/message-to-reply](../flows/message-to-reply.md)；线程如何保存 Agent 会话，见 [concepts/threads-and-agent-sessions](./threads-and-agent-sessions.md)。
@@ -104,16 +104,18 @@ flowchart LR
 
 这一组都不向外发消息，只把东西变成 `sources`。
 
-**lark-personal：以本人身份读订阅的会话。** 它不用机器人，而是调用随依赖安装的官方 `lark-cli`（用户身份），由 `larkCli` 起子进程并解析 JSON；登录失效时报错提示执行 `lark-cli auth login`（[lark-cli.ts:8-25](../../../src/channels/lark-cli.ts#L8-L25)）。文件头注明“Nothing is ever sent from the owner's account”（[lark-personal.ts:9-14](../../../src/channels/lark-personal.ts#L9-L14)）。
+**lark-personal：以本人身份读会话。** 它不用机器人，而是调用随依赖安装的官方 `lark-cli`（用户身份），由 `larkCli` 起子进程并解析 JSON；登录失效时报错提示执行 `lark-cli auth login`（[lark-cli.ts:8-25](../../../src/channels/lark-cli.ts#L8-L25)）。文件头注明“Nothing is ever sent from the owner's account”（[lark-personal.ts:9-14](../../../src/channels/lark-personal.ts#L9-L14)）。
 
-`pollLark` 的步骤（[lark-personal.ts:69-116](../../../src/channels/lark-personal.ts#L69-L116)）：
+`pollLark` 的步骤（`src/channels/lark-personal.ts` 的 `pollLarkOnce`，2026-10-18 的实现）：
 
-1. 订阅列表存在 `kv` 表的 `lark_subscriptions` 键，每项 `{chatId, name, spaceId, since}`；
-2. 对每个订阅，拉 `since`（缺省为 24 小时前）到现在的消息，追加进 `lark:<chatId>` 聊天原件，然后把 `since` 推进到本次结束时间；
-3. 另外搜索“@ 了本人且不在订阅里”的群消息，写入 `personal` 空间的 `lark:mentions` 原件；
-4. 汇总每个空间动过的原件，各调一次 `scheduleIngest`。
+1. 决定读哪些会话。采集范围 `lark.capture.mode`：`all` 用 `im +chat-list --types p2p,group --sort active_time` 列出最近活跃的会话；`subscribed` 只读订阅（`kv.lark_subscriptions`）。被监听的群和订阅的群无论范围都会读。
+2. 给每个会话定类型和免打扰状态（`listLarkChats`、`chatKind`）：`p2p`（和人的单聊）、`bot`（`p2p_target_type` 不是 user，或读到的对方消息全是应用发的）、`group`、`topic`（话题群）、`own-bot`（omem 自己机器人和本人的私聊，`kv.lark_owner_chat`）。免打扰靠再列一次 `--exclude-muted` 做差集，结果缓存半小时在 `kv.lark_unmuted`。
+3. 定采集方式（`capturePolicyFor`）：会话自己的设置（`chat_settings` 渠道 `lark-capture` 的 `policy`）→ 订阅的算 `ingest` → 免打扰用 `policies.muted` → 按类型用 `lark.capture.policies`。四种方式：`ingest` 保存并整理；`involved` 保存，只有这批消息里本人发言、被 @、或是本人参与过的话题时才整理；`store` 只保存；`skip` 不读。默认 p2p=ingest、bot=store、group/topic=involved、muted=skip；`own-bot` 总是 skip。
+4. 每个会话按游标（`lark_cursors`，并记录 `kind`、`muted`、`involved`）只拉新消息和最近话题里的回复；omem 自己机器人发的消息（发送者是 `lark.appId`）丢掉；发言行标出“（本人）”“（机器人）”；追加进 `lark:<chatId>` 聊天原件，`meta.chatKind` 记类型。只有采集方式允许时才把这个原件和附件交给 ingest。
+5. 搜索 @ 本人、但这次没读到的群消息（免打扰群里的 @ 也在这里），写入 `personal` 空间的 `lark:mentions`；设置为“不读取”的会话除外。
+6. 日程、妙记按小时读；最后每个空间动过的原件各调一次 `scheduleIngest`，ingest 的任务里会写明原件是单聊、机器人单聊、群聊还是话题群。
 
-订阅由 Agent 工具 `list_lark_chats` / `set_lark_subscription` 或 HTTP 接口维护（[tools.ts:717-743](../../../src/agents/tools.ts#L717-L743)，[http.ts:480-494](../../../src/server/http.ts#L480-L494)）。调度项 `lark-poll` 默认每 10 分钟，但**默认关闭**，要在定时任务里手动开启（[scheduler.ts:17](../../../src/core/scheduler.ts#L17)，调度类型注册在 [main.ts:22-24](../../../src/main.ts#L22-L24)）。
+订阅由 Agent 工具 `list_lark_chats` / `set_lark_subscription` 或 HTTP 接口维护；单个会话的采集方式用工具 `set_lark_capture_policy` 或 `PUT /api/lark/chats/:id/policy` 改，网页在 设置 → 渠道。`GET /api/lark/captured` 列出采集过的会话及其类型、免打扰、是否参与过、当前方式。调度项 `lark-poll` 默认每 10 分钟，但**默认关闭**。
 
 `previewUnsubscribed` 是给 curate 用的：列出没订阅、没被排除（kv 键 `lark_curate_excluded`）的非单聊，取最近三天各 12 条预览。`curate` 运行把预览交给 `curator` 角色，由它判断哪些群值得订阅；没有设置“筛选方向”时直接安静退出（[lark-personal.ts:118-135](../../../src/channels/lark-personal.ts#L118-L135)，[jobs.ts:338-350](../../../src/agents/jobs.ts#L338-L350)）。是否真的订阅，仍要走 `set_lark_subscription` 这个写入工具。
 

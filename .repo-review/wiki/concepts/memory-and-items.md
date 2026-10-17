@@ -2,7 +2,7 @@
 title: 记忆与事项：版本链、时间线与主动整理
 summary: 说清用户纠正一句话后记忆表怎么变、事项状态与时间线怎么记，以及巡检、做梦、简报三类后台运行各自读什么、改什么、怎样把经验回灌给后续运行。
 kind: concept
-updated: 2026-10-13
+updated: 2026-10-18
 ---
 
 本页回答三个问题：用户说“不对，预算改成 120”时，记忆怎么变；事项的状态和时间线怎么记；巡检（heartbeat）、做梦（dream）、简报（brief）分别在什么时候做什么。读完你能判断一条纠正会在哪张表留下什么、一次后台运行会不会调用模型，以及要改这套行为时从哪个文件下手。
@@ -142,9 +142,23 @@ ingest 是别人写的内容进入记忆的主要入口，所以处理函数在�
 
 dreamer 的第五步：近期运行里反复出现同类问题或操作时，用 `remember(kind=experience)` 记下可复用的做法；已有经验被证实或推翻要更新或撤回，“不要只增不减”（[roles/dreamer.md:17](../../../roles/dreamer.md#L17)）。偏好来自本人：对工作方式提的长期要求，assistant 记成 kind=preference（[roles/assistant.md:32](../../../roles/assistant.md#L32)）。
 
-回灌发生在组装系统提示时。`learnedContext` 查 active 记忆：preference 取 personal 空间和当前空间的，experience 只取当前空间的，preference 排在前面，再按更新时间倒序，最多 24 条（[runner.ts:85-99](../../../src/agents/runner.ts#L85-L99)）。结果作为“本人的偏好与以往经验”段放进环境部分，说明“与本次要求冲突时以本次为准”（[runner.ts:158-166](../../../src/agents/runner.ts#L158-L166)）。因此所有角色的后续运行（包括 heartbeat、wiki-writer）都会看到它们，这是 AGENTS.md 里“理解与写作交给 Agent、宿主只做数据和调度”的一个具体落点：宿主不改 prompt 规则，只把这段记忆注入进去。
+回灌发生在组装系统提示时。`learnedContext` 查 active 记忆：preference 取 personal 空间和当前空间的，experience 只取当前空间的，preference 排在前面，再按更新时间倒序，最多 24 条（`src/agents/runner.ts` 的 `learnedContext`）。开启记忆复核（默认开）时只取本人写的或复核保留的（`review_verdict = 'keep'`），未复核的新经验要等复核后才进提示；Agent 档案运行时还会带上只属于该档案的经验和偏好（`memories.agent` 等于档案名），其他档案的看不到。结果作为“本人的偏好与以往经验”段放进环境部分，说明“与本次要求冲突时以本次为准”（[runner.ts:158-166](../../../src/agents/runner.ts#L158-L166)）。因此所有角色的后续运行（包括 heartbeat、wiki-writer）都会看到它们，这是 AGENTS.md 里“理解与写作交给 Agent、宿主只做数据和调度”的一个具体落点：宿主不改 prompt 规则，只把这段记忆注入进去。
 
 由于 `learnedContext` 只取 `status = 'active'`，一条经验被 `supersede` 或 `forget` 后，下一次运行就不会再看到它；这是纠正错误经验的方式。
+
+## 记忆质量：写入检查、复核与按模型比较
+
+实际运行的数据显示，模型写的“记忆”大多是三类：转述文档（“截至 X 收录的《某指南》说明……”）、复述某个群里的问答或工单（“2026-10-16 某某反馈 UID…，机器人建议……，不能据此认定……”）、助理自己的汇报。它们都能在原件里检索到，记进记忆只会把提示和检索结果弄脏。2026-10-17 起分三层处理，都在 `src/memory/quality.ts`：
+
+1. **写入检查 `checkMemory`**。`remember` / `supersede` 在写库前调用（本人写的不检查）。规则只认明显不是记忆的形态：主体是免责（“不能证明”“无法确认”“未见回执”等句式过多或作为结论）、超过 `memory.maxChars`（默认 180 字）、以“截至…收录的/入库的”开头的转述、以“日期 + 某人反馈/询问/说明”开头的事件复述、“助理报告/答复”、运行流水（“本次排查…”）、后台角色（ingest、dreamer、heartbeat、curator）没给来源、来源原件不存在、和同空间一条有效记忆的二字组相似度超过 `memory.duplicateThreshold`（默认 0.72）。不通过时工具返回错误，正文告诉模型该怎么做（建事项、supersede、或者不记），同时写一行 `memory_rejections`（带后端、模型、强度、运行）。
+2. **复核 `memory-review` 运行**。定时任务 `memory-review` 每小时（默认开）按空间建运行，每次最多 `memory.review.batch` 条（默认 30）还没复核的 Agent 记忆，再补上对比运行的提案，打乱顺序后交给 `roles/memory-reviewer.md`。复核者看不到写入者是谁，用 `review_memories` 一次提交结论：keep 记 `review_verdict`；rewrite 用 supersede 生成新版本（新版本先过写入检查，算已复核）；retract 撤回并记理由。没给结论的标为 `unclear`，不会反复拿出来。复核用的后端、模型、强度单独配在 `memory.review`，最好和写入的不同；不配就按角色 `memory-reviewer` 的设置。
+3. **对比运行与统计**。`memory.compare` 里每一项（后端 + 可选模型、强度）会在每次 ingest 时建一个 `ingest-shadow` 子运行：同样的任务、同样的工具，但工具令牌带 `shadow`，`callTool` 把所有写入类工具（以及 `save_agent`、`run_agent`、`save_skill`）改成记录到 `shadow_writes`，不改库；记忆类提案照样过写入检查。`memoryQualityStats` 按“后端 · 模型 · 强度”汇总写入数、对比提案、检查拒绝（按原因）、复核保留/改写/撤回和平均字数，网页“记忆 → 质量”和 `omem memories stats` 显示；同一份材料各模型的写法在 `/api/memory-quality` 的 `runs` 里并排给出。对比运行判断重复时会忽略正式运行刚写的记忆，避免因为晚跑而被算作重复。
+
+记忆另有两个字段：`tags`（标签，`remember` 可带、网页可改，`recall` 和列表可按标签筛）和 `agent`（Agent 档案运行写的 experience/preference 默认只属于该档案，`recall` 对其他档案隐藏）。`supersede` 会继承旧版本的 `user_id`、`agent`、`tags`。
+
+旧数据的清理：升级后已有的 Agent 记忆都是“未复核”，复核运行会逐批处理；也可以先 `omem memories check` 看哪些不过写入检查，`omem memories prune [--all] [--dry-run]` 直接撤回（默认只撤回免责式）。
+
+写法本身的要求在 `roles/_common.md` 的“怎么写记忆”：先问是否和本人有关、以后能否直接用、是否确定，三问有一个否就不记；主语开头一句话，时间放 `valid_from`，来源放 `source_refs`；附了从真实数据里挑的反例。
 
 ## 通知
 
@@ -162,6 +176,7 @@ dreamer 的第五步：近期运行里反复出现同类问题或操作时，用
 - **检索是否看到旧版本**：`src/search/search.ts` 记忆分支的 status 条件，以及 `recall` 的 `include_history` 参数。
 - **事项状态与时间线**：`src/items/store.ts` 的 `upsertItem`、`FIELD_LABEL`（加字段要同时加进这里，否则变化不会进时间线）和 closing/reopening 逻辑；工具 schema 在 `src/agents/tools.ts` 的 `upsert_item`。
 - **后台运行行为**：窗口与短路条件在 `src/agents/jobs.ts` 的 `heartbeat`、`dream`、`brief` 处理函数；做什么、怎么判断在 `roles/heartbeat.md`、`roles/dreamer.md`、`roles/brief.md`。按 AGENTS.md，改行为优先改角色说明，其次才改处理函数。改了角色允许的工具要同时改文件头的 `tools:` 清单。默认调度时间在 `src/core/scheduler.ts` 的 `DEFAULTS`。
-- **经验回灌**：`src/agents/runner.ts` 的 `learnedContext`，条数、kind、空间范围都在这条查询里。
+- **经验回灌**：`src/agents/runner.ts` 的 `learnedContext`，条数、kind、空间范围、是否要求复核过都在这条查询里。
+- **记忆写入检查与复核**：规则在 `src/memory/quality.ts` 的 `checkMemory`（加规则时同步 `MemoryProblem` 的 code、网页 `Memory.vue` 的 `codeLabel` 和 `test/memory-quality.test.ts`）；复核调度和任务文本在 `jobs.ts` 的 `scheduleMemoryReview` 与 `memory-review` 处理器，判断标准在 `roles/memory-reviewer.md`；对比运行在 `jobs.ts` 的 `ingest-shadow` 和 `tools.ts` 的 `recordShadow`。
 - **新增通知渠道**：新写一个 channel，启动时 `addNotificationSink`；参考 `src/channels/telegram.ts`。
 - 改动后跑 `pnpm run check`；改了角色说明或工具，按 AGENTS.md 用真实 Agent 跑一两个问题确认行为，见 [howto/run-and-develop](../howto/run-and-develop.md)。

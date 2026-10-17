@@ -28,6 +28,7 @@ flowchart LR
 - 理解和写作由你已安装的 **Agent** 完成（通过 ACP 或命令行），它们用 omem 的 MCP 工具检索、阅读、写入，同时保有自己的文件与搜索能力。omem 负责存储、索引、调度和权限，不自带模型。
 - **Wiki** 是 Markdown 文件，整个知识库目录是一个 Git 仓库，每次修改都有历史和差异。
 - **记忆**被更正时不覆盖：旧版本标记为“已被更正”并链接到新版本，所以“之前怎么约定的”和“现在是什么”都能回答。
+- **记忆质量不靠人工逐条看**：写入前有规则检查（免责式、太长、转述原件、事件复述、无来源、重复的会被退回并告诉模型怎么改），之后每小时由复核模型盲评保留、改写或撤回；可以再挂几个模型做对比运行，在“记忆 → 质量”里按模型比较。
 
 ## 快速开始
 
@@ -125,6 +126,7 @@ omem items / omem todo "交报销单" --remind 2026-10-19T09:00+09:00
 omem delegate omem "给 search 加按时间过滤" --check "pnpm test"
 omem mcp [--read-only]                      # 把个人库作为 MCP 服务给其他 Agent 用
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
+omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入
 omem agents [--all]                         # 查看 Agent 配置与安装状态（--all 含未安装的和安装方式）
 omem agents registry                        # 官方 ACP 注册表里的 Agent
 omem agents add gemini --via npx            # 加入 Agent（npm 全局 / npx / uvx / 下载程序）
@@ -163,7 +165,8 @@ omem hook claude|codex                      # 记录编码 Agent 会话（配在
 
 - 消息：可选“所有有新消息的会话”或“只读订阅的会话 + @我”。每个群或私聊存成一份聊天原件，每次只拉上次之后的新消息，包括话题里的回复；消息里的图片、文件会下载入库，飞书文档链接会读成原件。
 - 日程（前一天到未来一周）和妙记（总结、待办、逐字稿）也会读进来。
-- 新内容交给助理整理成记忆和事项。
+- 会话分成单聊（人）、机器人单聊、普通群、话题群，加上免打扰状态。每类可以设成“保存并整理”“与我有关时整理”（你发言、被 @ 或参与的话题有新消息时才整理）“只保存”“不读取”，默认分别是：单聊整理、机器人单聊只保存、群和话题群与我有关时整理、免打扰不读。单个会话可以在 设置 → 渠道 里单独改，订阅的会话按“保存并整理”。omem 机器人自己的私聊和它在群里发的消息不会被采集。
+- 要整理的新内容交给助理，整理成记忆和事项。
 
 **监听群**（报警群、oncall 群…）：先建一个处理它的 Agent 档案（怎么处理、用哪些技能和工具），再在群里发 `/watch 档案名 [all|mention|keyword:正则] [none|draft|auto]`，或对助理说“报警群的 P0/P1 告警交给 alert-handler，回复前先给我看”。
 
@@ -201,7 +204,7 @@ node scripts/eval-retrieval.ts corpus.jsonl queries.jsonl [--vector]
 src/core      配置、SQLite、空间、用户、Git、调度、通知
 src/sources   导入、切分（Markdown 章节 / 代码符号 / 聊天窗口）、调用图、代码活动、注入标记
 src/search    分词（中文双字 + 标识符拆分）、FTS、向量（按空间 int8 矩阵）、RRF 融合
-src/memory    记忆（有效期、版本链）
+src/memory    记忆（有效期、版本链、写入检查与复核统计）
 src/items     事项（时间线）
 src/wiki      页面文件、链接与引用索引、过期检测
 src/learn     FSRS 卡片、学习目标

@@ -165,7 +165,7 @@ flowchart LR
 
 ## 四、Run 类型
 
-`RunKind` 有 15 个值 [runs.ts:5](../../../src/agents/runs.ts#L5)。`registerHandler(kind, fn)` 把类型和处理器挂上；队列取到没有处理器的 Run 会直接置为 `failed`，错误是“没有处理器：<kind>” [runs.ts:254-258](../../../src/agents/runs.ts#L254-L258)。
+`RunKind` 有 17 个值 [runs.ts:5](../../../src/agents/runs.ts#L5)。`registerHandler(kind, fn)` 把类型和处理器挂上；队列取到没有处理器的 Run 会直接置为 `failed`，错误是“没有处理器：<kind>” [runs.ts:254-258](../../../src/agents/runs.ts#L254-L258)。
 
 | kind | 处理器 | 角色 | 队列类别 | 谁创建 |
 |---|---|---|---|---|
@@ -183,6 +183,8 @@ flowchart LR
 | `curate` | [jobs.ts:338](../../../src/agents/jobs.ts#L338) | `curator` | 后台 | 定时 `lark-curate`，输入带筛选方向 |
 | `tutor` | [jobs.ts:354](../../../src/agents/jobs.ts#L354) | `tutor` | 后台 | 网页接口生成复习卡片 |
 | `code` | `runCodeTask`，[jobs.ts:364](../../../src/agents/jobs.ts#L364) | 先 `coder`，再 `reviewer`（[code.ts:57-103](../../../src/agents/code.ts#L57-L103)）| 后台 | `delegate_code`、`omem delegate`、网页接口 |
+| `ingest-shadow` | `jobs.ts` 的 `ingest-shadow` 处理器 | `ingest`（工具令牌带 `shadow`，写入只记录到 `shadow_writes`）| 后台 | `ingest` 按 `memory.compare` 每项建一个子运行（`parentId` 指向正式运行），结果默认静默 |
+| `memory-review` | `jobs.ts` 的 `memory-review` 处理器 | `memory-reviewer`（后端/模型可由 `memory.review` 单独指定）| 后台 | 定时 `memory-review`（每小时，默认开），每个有未复核记忆或对比提案的空间一个 |
 | `review` | **无** | — | — | 无 |
 
 两点需要说明：
@@ -190,7 +192,7 @@ flowchart LR
 - **`review` 是占位值。** 类型里有，但没有处理器，代码里也没有哪处创建它；评审是 `code` 处理器内部再调一次 `reviewer` 角色完成的（从实现看，是为了让评审和编码共用同一个 worktree 与 Run）。
 - **队列类别只有两种。** `ask`、`agent` 算交互，其余都是后台；两类各有一个并发上限：`interactiveConcurrency`（默认 4）和 `concurrency`（默认 2）[runs.ts:206-208](../../../src/agents/runs.ts#L206-L208)、[config.ts:46-48](../../../src/core/config.ts#L46-L48)。设计意图写在注释里：长后台任务不该拖慢回复。同一个 `lane` 内严格按创建顺序一次只跑一个 [runs.ts:224-246](../../../src/agents/runs.ts#L224-L246)。
 
-定时类 Run 来自 `schedules` 表。内置六项：`heartbeat`（每 15 分钟，默认启用）、`brief`（工作日 08:45）、`dream`（每晚 03:30）、`repo-sync`（每小时）、`lark-curate`（每周一 09:15）、`lark-poll`（每 10 分钟，直接采集，不建 Run），除 `heartbeat` 外默认都关着 [scheduler.ts:13-20](../../../src/core/scheduler.ts#L13-L20)。
+定时类 Run 来自 `schedules` 表。2026-10-17 起另有 `memory-review`（每小时第 20 分，默认开）。原有六项：`heartbeat`（每 15 分钟，默认启用）、`brief`（工作日 08:45）、`dream`（每晚 03:30）、`repo-sync`（每小时）、`lark-curate`（每周一 09:15）、`lark-poll`（每 10 分钟，直接采集，不建 Run），除 `heartbeat` 外默认都关着 [scheduler.ts:13-20](../../../src/core/scheduler.ts#L13-L20)。
 
 Run 的状态是 `queued → running → done | failed | cancelled`。服务启动时把残留的 `running` 全部放回 `queued`，所以所有处理器都要能重复执行 [runs.ts:215-222](../../../src/agents/runs.ts#L215-L222)。网页上的“重试”是按原 `kind`、`input` 另建一个新 Run，而不是复活旧的 [http.ts:389-392](../../../src/server/http.ts#L389-L392)。
 
@@ -206,10 +208,13 @@ Run 的状态是 `queued → running → done | failed | cancelled`。服务启�
 | `symbols`、`code_refs` | 代码符号和引用关系，`find_symbol` 的数据来源 |
 | `pages`（+ `pages_fts`、`page_rowids`）| Wiki 页面 |
 | `page_links`、`page_cites` | 页面间的链接；页面对原件的引用及写作时的 `hash`（过期检查靠它和 `sources.hash` 比较）|
-| `memories`（+ `memories_fts`）| 记忆；`status` 为 active/superseded/retracted，`supersedes`/`superseded_by` 构成版本链 |
+| `memories`（+ `memories_fts`）| 记忆；`status` 为 active/superseded/retracted，`supersedes`/`superseded_by` 构成版本链；`agent_profile`/`model`/`effort`/`run_id` 记写入来源，`reviewed_at`/`review_verdict`/`review_note`/`reviewed_by` 记复核，`agent` 是档案专属，`tags` 标签 |
+| `memory_rejections` | 被写入检查拒绝的记忆（内容、原因 code、后端/模型、是否对比运行）|
+| `shadow_writes` | 对比运行提出但没执行的写入（工具名、参数、复核结论）|
 | `items`、`item_events` | 事项和时间线 |
 | `conversations`、`messages` | 会话（线程）与消息；`messages.run_id` 指向回答它的 Run；`messages.meta` 里有 `context`（群上下文）、`contextSuspect`（注入分）、`command` 等。线程细节见 [concepts/threads-and-agent-sessions](../concepts/threads-and-agent-sessions.md) |
-| `chat_settings` | 按 (渠道, 聊天) 保存的 `/mode`、`/idle`、`/space` 设置 |
+| `chat_settings` | 按 (渠道, 聊天) 保存的 `/mode`、`/idle`、`/space` 设置；渠道 `lark-capture` 存飞书会话的采集方式 `policy` |
+| `lark_cursors` | 飞书采集游标（会话和 `thread:` 话题），另记 `kind`、`muted`、`involved` |
 | `runs`、`run_events` | Run 本身和它的事件流（text/tool/status/change/error）；`runs` 另有 `profile_id`、`parent_id`、`lane`、`not_before` |
 | `schedules` | 定时任务 |
 | `cards`、`card_reviews` | 复习卡片与复习记录 |
