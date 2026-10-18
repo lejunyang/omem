@@ -11,7 +11,9 @@ import { all } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
-import { capturedChats, pollLark, setCapturePolicy } from "../src/channels/lark-personal.ts";
+import { capturedChats, pollLark, requestBackfill, setCapturePolicy } from "../src/channels/lark-personal.ts";
+import { sourceMessages } from "../src/channels/lark-messages.ts";
+import { mkdirSync as mkdirS, writeFileSync as writeF } from "node:fs";
 import { run as runSql } from "../src/core/db.ts";
 import { buildCard, setLarkClient } from "../src/channels/lark-send.ts";
 import { routeWatchedMessages, setWatchRule } from "../src/channels/lark-watch.ts";
@@ -235,6 +237,66 @@ describe("feishu capture policies by kind of chat", () => {
     await pollLark(app);
     const again = listRuns(app, { kind: "ingest" }).flatMap((r) => (r.input as { sourceIds: string[] }).sourceIds);
     expect(again).toContain(src("lark:oc_passive").id);
+  });
+});
+
+describe("feishu messages as a chat", () => {
+  it("keeps quotes, thread replies and images, and backfills history into monthly archives", async () => {
+    const app = testApp();
+    app.config.lark.capture = { ...app.config.lark.capture, mode: "all", attachments: true, docs: false, calendar: false, minutes: false, backfill: { days: 0, policies: [], pagesPerPoll: 4 } };
+    const t0 = Date.now() - 3600_000;
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const live = [
+      { message_id: "om_q", msg_type: "text", content: "明天几点评审？\n顺便带上方案", create_time: String(t0), sender: { id: "ou_a", name: "小王" }, thread_id: "omt_1", thread_replies: [{ message_id: "om_r", msg_type: "text", content: "十点", create_time: String(t0 + 50), sender: { id: "ou_me", name: "我" } }] },
+      { message_id: "om_reply", msg_type: "text", content: "收到", create_time: String(t0 + 100), sender: { id: "ou_b", name: "小李" }, parent_id: "om_old", root_id: "om_old" },
+      { message_id: "om_img", msg_type: "image", content: "![Image](img_k1)", create_time: String(t0 + 200), sender: { id: "ou_a", name: "小王" } },
+    ];
+    const history = [
+      { message_id: "om_h2", msg_type: "text", content: "上个月的结论：用方案 B", create_time: String(Date.parse("2026-09-20T03:00:00Z")), sender: { id: "ou_a", name: "小王" } },
+      { message_id: "om_h1", msg_type: "text", content: "先讨论方案", create_time: String(Date.parse("2026-08-30T03:00:00Z")), sender: { id: "ou_b", name: "小李" } },
+    ];
+    const calls: string[] = [];
+    setLarkCliForTests(async (args, cwd) => {
+      const sub = args.slice(0, 2).join(" ");
+      calls.push(sub);
+      if (sub === "auth status") return { data: { identities: { user: { openId: "ou_me" } } } };
+      if (sub === "im +chat-list") return { data: { chats: [{ chat_id: "oc_g", name: "项目群", chat_mode: "group" }] } };
+      if (sub === "im +chat-messages-list") {
+        const start = Date.parse(args[args.indexOf("--start") + 1]);
+        const end = Date.parse(args[args.indexOf("--end") + 1]);
+        if (args.includes("desc")) return { data: { messages: history.filter((m) => Number(m.create_time) >= start && Number(m.create_time) < end), has_more: false } };
+        const msgs = live.filter((m) => Number(m.create_time) >= start - 1000).map((m) => ({ ...m }));
+        if (args.includes("--download-resources") && cwd) {
+          mkdirS(`${cwd}/lark-im-resources`, { recursive: true });
+          writeF(`${cwd}/lark-im-resources/img_k1`, png);
+          const img = msgs.find((m) => m.message_id === "om_img") as any;
+          if (img) img.resources = [{ message_id: "om_img", key: "img_k1", type: "image", local_path: "lark-im-resources/img_k1", size_bytes: png.length }];
+        }
+        return { data: { messages: msgs } };
+      }
+      if (sub === "im +messages-mget") return { data: { messages: [{ message_id: "om_old", msg_type: "text", content: "接口文档发我一下", create_time: String(t0 - 86400_000), sender: { id: "ou_me", name: "我" } }] } };
+      if (sub === "im +threads-messages-list" || sub === "im +messages-search") return { data: { messages: [] } };
+      throw new Error(`unexpected ${args.join(" ")}`);
+    });
+    await pollLark(app);
+    const src = all<{ id: string; text: string }>(app.db, "select id, text from sources where uri = 'lark:oc_g'")[0];
+    expect(src.text).toMatch(/小李 ↩ 回复 我「接口文档发我一下」: 收到/);
+    expect(src.text).toMatch(/话题 omt_1\] 我（本人）: 十点 \(om_r\)/);
+    expect(src.text).toMatch(/明天几点评审？ ⏎ 顺便带上方案/);
+    const view = sourceMessages(app, src.id);
+    expect(view.messages.map((m) => m.id)).toEqual(["om_q", "om_r", "om_reply", "om_img"]);
+    expect(view.messages[0].content).toBe("明天几点评审？\n顺便带上方案");
+    expect(view.messages[2]).toMatchObject({ parentId: "om_old", line: 3 });
+    expect(view.quoted.om_old).toMatchObject({ sender: "我", content: "接口文档发我一下" });
+    expect(view.messages[3].resources.img_k1.url).toMatch(/^\/api\/files\/[a-f0-9]{16}\.png$/);
+
+    // History on request: a page at a time, into a source per month.
+    requestBackfill(app, "oc_g", 0);
+    await pollLark(app);
+    const months = all<{ uri: string; text: string }>(app.db, "select uri, text from sources where uri like 'lark:oc_g@%' order by uri");
+    expect(months.map((m) => m.uri)).toEqual(["lark:oc_g@2026-08", "lark:oc_g@2026-09"]);
+    expect(months[1].text).toMatch(/用方案 B/);
+    expect(capturedChats(app).find((c) => c.chatId === "oc_g")?.backfilling).toBe(false);
   });
 });
 

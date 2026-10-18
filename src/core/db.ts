@@ -412,6 +412,32 @@ const migrations: string[] = [
   alter table lark_cursors add column muted integer not null default 0;
   alter table lark_cursors add column involved integer not null default 0;  -- the owner spoke or was @-mentioned here
   `,
+  // Feishu messages kept structured next to the chat source text: replies/quotes, images and
+  // reactions render as a chat, and history can be backfilled into monthly archive sources.
+  `
+  create table lark_messages (
+    message_id text primary key,
+    chat_id text not null,
+    thread_id text,
+    parent_id text,
+    sender_id text,
+    sender_name text not null default '',
+    sender_kind text not null default 'user',   -- user | app | owner | system
+    msg_type text not null default 'text',
+    content text not null default '',
+    create_ms integer not null,
+    source_id text,                             -- chat source this message is a line of (null: only fetched as quoted context)
+    line integer,
+    archive text,                               -- YYYY-MM for backfilled history, null for live capture
+    resources text not null default '{}',       -- resource key -> { sourceId?, file?, name?, type }
+    reactions text not null default '[]'
+  );
+  create index lark_messages_chat on lark_messages(chat_id, create_ms);
+  create index lark_messages_source on lark_messages(source_id, line);
+  alter table lark_cursors add column oldest_ms integer;          -- earliest time already captured (live or backfilled)
+  alter table lark_cursors add column backfill_to_ms integer;     -- backfill history down to this time
+  alter table lark_cursors add column backfill_ingest integer not null default 0;
+  `,
 ];
 
 export type Db = DatabaseSync;

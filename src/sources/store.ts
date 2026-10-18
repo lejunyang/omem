@@ -225,5 +225,5 @@ export function appendToSource(app: App, input: Omit<UpsertInput, "text"> & { li
   const prev = existing && !existing.deletedAt ? sourceText(app, existing.id) : "";
   const text = (prev ? prev + "\n" : "") + input.lines.join("\n");
   const appendedFrom = prev ? prev.split("\n").length + 1 : 1;
-  return upsertSource(app, { ...input, text, meta: { ...(existing?.meta ?? {}), ...(input.meta ?? {}), appendedFrom } });
+  return { ...upsertSource(app, { ...input, text, meta: { ...(existing?.meta ?? {}), ...(input.meta ?? {}), appendedFrom } }), appendedFrom };
 }

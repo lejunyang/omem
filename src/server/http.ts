@@ -173,6 +173,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const citedBy = all<{ page_id: string; title: string }>(app.db, "select distinct c.page_id, p.title from page_cites c join pages p on p.id = c.page_id where c.source_id = ?", id);
     return { ...r, outline: sourceOutline(app, id), citedBy };
   });
+  // Chat sources captured from Feishu: messages with quotes, images and reactions for a chat-like view.
+  server.get("/api/sources/:id/messages", async (req) => {
+    const { sourceMessages } = await import("../channels/lark-messages.ts");
+    return sourceMessages(app, (req.params as { id: string }).id);
+  });
   server.get("/api/sources/:id/relations", async (req) => {
     const o = q(z.object({ qname: z.string() }), req.query);
     return symbolRelations(app, (req.params as { id: string }).id, o.qname);
@@ -347,7 +352,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       const hits = await search(app, o.q, { spaces: o.space ? [o.space] : undefined, types: ["memory"], limit: 100, includeHistory: o.status === "all" });
       return hits.map((h) => getMemory(app, h.id)).filter((m) => (!o.tag || m.tags?.includes(o.tag)) && (!o.kind || m.kind === o.kind));
     }
-    return listMemories(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, tag: o.tag, review: o.review });
+    return listMemories(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, tag: o.tag, review: o.review, limit: 5000 });
   });
   server.get("/api/memory-tags", async (req) => memoryTags(app, (req.query as { space?: string }).space));
   // Quality per backend/model, recent write-time rejections, and side-by-side comparison runs.
@@ -549,6 +554,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/lark/captured", async () => {
     const { capturedChats } = await import("../channels/lark-personal.ts");
     return { chats: capturedChats(app), policies: app.config.lark.capture.policies };
+  });
+  // History before the first read, a few pages per poll into monthly archive sources.
+  server.post("/api/lark/chats/:id/backfill", async (req) => {
+    const { requestBackfill } = await import("../channels/lark-personal.ts");
+    const b = q(z.object({ days: z.number().int().min(0).max(3650), ingest: z.boolean().default(false) }), req.body);
+    return requestBackfill(app, (req.params as { id: string }).id, b.days, b.ingest);
   });
   server.put("/api/lark/chats/:id/policy", async (req) => {
     const { setCapturePolicy, capturedChats } = await import("../channels/lark-personal.ts");

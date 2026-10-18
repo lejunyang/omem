@@ -204,6 +204,14 @@ export const configSchema = z.object({
               muted: capturePolicy.default("skip"),
             })
             .default({ p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" }),
+          /**
+           * History before the first read: chats captured for the first time whose policy is in
+           * `policies` get `days` of history (0 = none), a few pages per poll, into monthly archive
+           * sources. Any chat can be backfilled on request (web, set_lark_backfill).
+           */
+          backfill: z
+            .object({ days: z.number().int().min(0).default(30), policies: z.array(capturePolicy).default(["ingest"]), pagesPerPoll: z.number().int().min(1).max(50).default(6) })
+            .default({ days: 30, policies: ["ingest"], pagesPerPoll: 6 }),
         })
         .default({
           mode: "subscribed",
@@ -217,6 +225,7 @@ export const configSchema = z.object({
           calendar: true,
           minutes: true,
           policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },
+          backfill: { days: 30, policies: ["ingest"], pagesPerPoll: 6 },
         }),
     })
     .default({
@@ -235,6 +244,7 @@ export const configSchema = z.object({
         calendar: true,
         minutes: true,
         policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },
+        backfill: { days: 30, policies: ["ingest"], pagesPerPoll: 6 },
       },
     }),
   telegram: z

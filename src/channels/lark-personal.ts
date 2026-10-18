@@ -11,6 +11,7 @@ import { chatSettings, setChatSettings } from "../agents/threads.ts";
 import { importFile, importUrl } from "../sources/import.ts";
 import { appendToSource, findSourceByUri, upsertSource } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
+import { flattenReplies, formatLine, isApp, keepResources, mentionIds, messageText, monthOf, parentOf, quotedMessages, rebuildArchive, storeMessages, timeMs, type LarkMessage, type ResourceRef } from "./lark-messages.ts";
 import { routeWatchedMessages, watchRule, type ChatMessage } from "./lark-watch.ts";
 
 /**
@@ -31,18 +32,6 @@ import { routeWatchedMessages, watchRule, type ChatMessage } from "./lark-watch.
  * items.
  */
 export type Subscription = { chatId: string; name: string; spaceId: string; since?: string };
-type LarkMessage = {
-  message_id: string;
-  chat_id?: string;
-  chat_name?: string;
-  msg_type: string;
-  content: unknown;
-  create_time: string;
-  sender?: { id?: string; id_type?: string; sender_type?: string; name?: string };
-  deleted?: boolean;
-  thread_id?: string;
-  mentions?: { id?: string | { open_id?: string }; name?: string }[];
-};
 
 const KEY = "lark_subscriptions";
 
@@ -123,57 +112,53 @@ export function setCapturePolicy(app: App, chatId: string, policy: CapturePolicy
 
 /** Chats seen by capture, with what is done with them (for the settings page). */
 export function capturedChats(app: App) {
-  return all<{ chat_id: string; name: string; chat_mode: string; kind: string; muted: number; involved: number; last_time: number; updated_at: string | null }>(
+  return all<{ chat_id: string; name: string; chat_mode: string; kind: string; muted: number; involved: number; last_time: number; updated_at: string | null; oldest_ms: number | null; backfill_to_ms: number | null }>(
     app.db,
-    "select chat_id, name, chat_mode, kind, muted, involved, last_time, updated_at from lark_cursors where chat_id not like 'thread:%' order by last_time desc limit 500",
+    "select chat_id, name, chat_mode, kind, muted, involved, last_time, updated_at, oldest_ms, backfill_to_ms from lark_cursors where chat_id not like 'thread:%' order by last_time desc limit 500",
   ).map((r) => {
     const kind = (r.kind || (r.chat_mode === "p2p" ? "p2p" : r.chat_mode === "topic" ? "topic" : "group")) as ChatKind;
     const own = chatSettings(app, "lark-capture", r.chat_id).policy ?? null;
-    return { chatId: r.chat_id, name: r.name, kind, muted: !!r.muted, involved: !!r.involved, lastMessageAt: r.last_time ? new Date(r.last_time).toISOString() : null, policy: capturePolicyFor(app, { chatId: r.chat_id, kind, muted: !!r.muted }), own };
+    return {
+      chatId: r.chat_id,
+      name: r.name,
+      kind,
+      muted: !!r.muted,
+      involved: !!r.involved,
+      lastMessageAt: r.last_time ? new Date(r.last_time).toISOString() : null,
+      policy: capturePolicyFor(app, { chatId: r.chat_id, kind, muted: !!r.muted }),
+      own,
+      /** Capture covers messages from here on (live first read or backfilled history). */
+      from: r.oldest_ms ? new Date(r.oldest_ms).toISOString() : null,
+      backfilling: !!r.backfill_to_ms && !!r.oldest_ms && r.oldest_ms > r.backfill_to_ms,
+    };
   });
 }
 
-export function messageText(m: LarkMessage): string {
-  const c = m.content;
-  if (typeof c === "string") {
-    try {
-      const parsed = JSON.parse(c);
-      if (typeof parsed?.text === "string") return parsed.text;
-      if (parsed?.file_name) return `[文件] ${parsed.file_name}`;
-      if (parsed?.image_key) return "[图片]";
-      if (parsed?.title || parsed?.content) return [parsed.title, ...(Array.isArray(parsed.content) ? parsed.content : []).map((line: { text?: string; href?: string }[]) => (Array.isArray(line) ? line.map((n) => n.text ?? n.href ?? "").join("") : "")).filter(Boolean)].filter(Boolean).join(" ");
-    } catch {
-      return c;
-    }
-    return c;
-  }
-  if (c && typeof c === "object") {
-    const o = c as Record<string, unknown>;
-    if (typeof o.text === "string") return o.text;
-    return JSON.stringify(c);
-  }
-  return `[${m.msg_type}]`;
-}
-
-export const timeMs = (t: string) => (/^\d+$/.test(t) ? Number(t) : Date.parse(t));
+export { messageText, timeMs };
 const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "+00:00");
-const fmt = (t: string) => {
-  const ms = timeMs(t);
-  return Number.isNaN(ms) ? t : new Date(ms).toISOString().slice(0, 16).replace("T", " ");
-};
 
-async function fetchMessages(args: string[], startMs: number, endMs: number, pages = 20, timed = true) {
+/**
+ * Messages in a time window, oldest pages first or newest first. lark-cli expands thread
+ * replies under their host (`thread_replies`); they are flattened into messages of their own.
+ * With `download`, resources are saved under `cwd` and listed on each message.
+ */
+async function fetchMessages(args: string[], startMs: number, endMs: number, opts: { pages?: number; timed?: boolean; cwd?: string; download?: boolean } = {}) {
+  const { pages = 20, timed = true } = opts;
   const out: LarkMessage[] = [];
   let token: string | undefined;
   for (let page = 0; page < pages; page++) {
     const range = timed ? ["--start", iso(startMs), "--end", iso(endMs)] : [];
-    const v = await larkCli(["im", ...args, ...range, "--page-size", "50", "--no-reactions", ...(token ? ["--page-token", token] : []), "--as", "user", "--format", "json"]);
+    const v = await larkCli(
+      ["im", ...args, ...range, "--page-size", "50", "--no-reactions", ...(opts.download ? ["--download-resources"] : []), ...(token ? ["--page-token", token] : []), "--as", "user", "--format", "json"],
+      opts.download ? 300_000 : 90_000,
+      opts.cwd,
+    );
     out.push(...((v.data?.messages ?? []) as LarkMessage[]));
     if (!v.data?.has_more || !v.data.page_token) break;
     token = v.data.page_token;
   }
   // Thread listing has no time filter: apply the window here.
-  return out.filter((m) => !m.deleted && (timed || (timeMs(m.create_time) >= startMs && timeMs(m.create_time) <= endMs)));
+  return flattenReplies(out).filter((m) => !m.deleted && (timed || (timeMs(m.create_time) >= startMs && timeMs(m.create_time) <= endMs)));
 }
 
 // ---- cursors -------------------------------------------------------------------
@@ -183,14 +168,16 @@ function cursor(app: App, key: string): Cursor | null {
   const r = one<{ last_time: number; last_ids: string }>(app.db, "select last_time, last_ids from lark_cursors where chat_id = ?", key);
   return r ? { key, lastTime: r.last_time, lastIds: json(r.last_ids, []) } : null;
 }
-function saveCursor(app: App, key: string, name: string, mode: string, messages: LarkMessage[], prev: Cursor | null, extra: { kind?: string; muted?: boolean; involved?: boolean } = {}) {
+function saveCursor(app: App, key: string, name: string, mode: string, messages: LarkMessage[], prev: Cursor | null, extra: { kind?: string; muted?: boolean; involved?: boolean; oldestMs?: number } = {}) {
   const last = messages.length ? Math.max(...messages.map((m) => timeMs(m.create_time))) : (prev?.lastTime ?? Date.now());
   const ids = messages.filter((m) => timeMs(m.create_time) === last).map((m) => m.message_id);
   run(
     app.db,
-    `insert into lark_cursors(chat_id,name,chat_mode,last_time,last_ids,updated_at,kind,muted,involved) values(?,?,?,?,?,?,?,?,?)
-     on conflict(chat_id) do update set name = excluded.name, chat_mode = excluded.chat_mode, last_time = excluded.last_time, last_ids = excluded.last_ids, updated_at = excluded.updated_at,
-       kind = case when excluded.kind != '' then excluded.kind else lark_cursors.kind end, muted = excluded.muted, involved = max(lark_cursors.involved, excluded.involved)`,
+    `insert into lark_cursors(chat_id,name,chat_mode,last_time,last_ids,updated_at,kind,muted,involved,oldest_ms) values(?,?,?,?,?,?,?,?,?,?)
+     on conflict(chat_id) do update set name = excluded.name, chat_mode = case when excluded.chat_mode != '' then excluded.chat_mode else lark_cursors.chat_mode end,
+       last_time = excluded.last_time, last_ids = excluded.last_ids, updated_at = excluded.updated_at,
+       kind = case when excluded.kind != '' then excluded.kind else lark_cursors.kind end, muted = excluded.muted, involved = max(lark_cursors.involved, excluded.involved),
+       oldest_ms = coalesce(lark_cursors.oldest_ms, excluded.oldest_ms)`,
     key,
     name,
     mode,
@@ -200,7 +187,17 @@ function saveCursor(app: App, key: string, name: string, mode: string, messages:
     extra.kind ?? "",
     extra.muted ? 1 : 0,
     extra.involved ? 1 : 0,
+    extra.oldestMs ?? null,
   );
+}
+
+/** Earliest time live capture covers for a chat (captured before oldest_ms was kept: first capture minus the lookback). */
+function liveOldest(app: App, chatId: string): number {
+  const c = one<{ oldest_ms: number | null; last_time: number }>(app.db, "select oldest_ms, last_time from lark_cursors where chat_id = ?", chatId);
+  if (c?.oldest_ms) return c.oldest_ms;
+  const src = one<{ captured_at: string }>(app.db, "select captured_at from sources where uri = ? order by captured_at limit 1", `lark:${chatId}`);
+  const lookback = app.config.lark.capture.lookbackHours * 3600_000;
+  return src ? Date.parse(src.captured_at) - lookback : (c?.last_time ?? Date.now() - lookback);
 }
 /** Messages after the cursor (the boundary millisecond is shared, so ids seen there are skipped). */
 function newer(messages: LarkMessage[], c: Cursor | null) {
@@ -211,32 +208,6 @@ function newer(messages: LarkMessage[], c: Cursor | null) {
 // ---- per-message extras ----------------------------------------------------------
 
 const DOC_LINK = /https?:\/\/[\w.-]*(?:feishu\.cn|larksuite\.com|larkoffice\.com)\/(?:docx|docs|wiki)\/[A-Za-z0-9]+/g;
-
-async function downloadAttachment(app: App, spaceId: string, chatId: string, m: LarkMessage): Promise<string | null> {
-  let c: Record<string, string> = {};
-  try {
-    c = typeof m.content === "string" ? JSON.parse(m.content) : ((m.content as Record<string, string>) ?? {});
-  } catch {
-    return null;
-  }
-  const key = c.image_key ?? c.file_key;
-  if (!key) return null;
-  const type = m.msg_type === "image" ? "image" : "file";
-  const dir = mkdtempSync(join(tmpdir(), "omem-lark-"));
-  try {
-    const name = (c.file_name ?? `${m.message_id}.png`).replace(/[\\/:*?"<>|]/g, "_");
-    await larkCli(["im", "+messages-resources-download", "--message-id", m.message_id, "--file-key", key, "--type", type, "--output", name, "--as", "user", "--format", "json"], 120_000, dir);
-    const file = existsSync(join(dir, name)) ? join(dir, name) : readdirSync(dir).map((f) => join(dir, f)).find((f) => statSync(f).isFile());
-    if (!file) return null;
-    const r = await importFile(app, spaceId, file, `lark:${chatId}/${name}`);
-    return r?.id ?? null;
-  } catch (e) {
-    console.warn(`[omem] 飞书附件下载失败（${m.message_id}）：${(e as Error).message}`);
-    return null;
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
 
 async function importLinkedDocs(app: App, spaceId: string, text: string): Promise<string[]> {
   const ids: string[] = [];
@@ -268,10 +239,11 @@ function chatSpace(app: App, chatId: string): string {
   return findSpace(app, def) ? def : "personal";
 }
 
-const isApp = (m: LarkMessage) => m.sender?.sender_type === "app" || m.sender?.id_type === "app_id" || /^cli_/.test(m.sender?.id ?? "");
-const mentionIds = (m: LarkMessage) => (m.mentions ?? []).map((x) => (typeof x.id === "string" ? x.id : (x.id?.open_id ?? ""))).filter(Boolean);
 
 type CaptureCtx = { endMs: number; touched: Map<string, Set<string>>; owner?: string };
+
+/** Whether the ingest role should see this batch, given the chat's policy and whether the owner is in it. */
+const wantsIngest = (policy: CapturePolicy, involved: boolean) => policy === "ingest" || (policy === "involved" && involved);
 
 async function captureChat(app: App, chat: LarkChat, c: CaptureCtx) {
   const { endMs, touched, owner } = c;
@@ -280,81 +252,196 @@ async function captureChat(app: App, chat: LarkChat, c: CaptureCtx) {
   if (policy === "skip") return 0;
   const prev = cursor(app, chat.chatId);
   const startMs = prev ? prev.lastTime : endMs - cfg.lookbackHours * 3600_000;
-  const fresh = newer(await fetchMessages(["+chat-messages-list", "--chat-id", chat.chatId, "--order", "asc"], startMs, endMs), prev);
-  // Replies inside topics live in their threads: follow threads seen recently in this chat.
-  const threads = new Set(fresh.filter((m) => m.thread_id).map((m) => m.thread_id!));
-  for (const r of all<{ chat_id: string }>(app.db, "select chat_id from lark_cursors where chat_id like ? and updated_at > ?", `thread:${chat.chatId}:%`, new Date(endMs - 7 * 86400_000).toISOString()))
-    threads.add(r.chat_id.split(":").pop()!);
-  const replies: LarkMessage[] = [];
-  const involvedThreads = new Set<string>();
-  for (const t of [...threads].slice(0, 30)) {
-    const key = `thread:${chat.chatId}:${t}`;
-    const tc = cursor(app, key);
-    try {
-      const got = newer(await fetchMessages(["+threads-messages-list", "--thread", t, "--order", "desc"], tc ? tc.lastTime : startMs, endMs, 5, false), tc).filter((m) => !fresh.some((f) => f.message_id === m.message_id));
-      for (const m of got) m.thread_id = t;
-      replies.push(...got);
-      const ownerHere = !!owner && [...got, ...fresh.filter((m) => m.thread_id === t)].some((m) => m.sender?.id === owner || mentionIds(m).includes(owner));
-      if (ownerHere || one(app.db, "select 1 from lark_cursors where chat_id = ? and involved = 1", key)) involvedThreads.add(t);
-      saveCursor(app, key, chat.name, "thread", got, tc, { kind: "thread", involved: ownerHere });
-    } catch (e) {
-      console.warn(`[omem] 读取话题失败 ${t}：${(e as Error).message}`);
-    }
-  }
-  // omem's own bot speaks in chats too: its replies and cards are omem's output, not material.
-  const ownApp = app.config.lark.appId;
-  const messages = [...fresh, ...replies].filter((m) => !(ownApp && m.sender?.id === ownApp)).sort((a, b) => timeMs(a.create_time) - timeMs(b.create_time));
-  // A p2p chat whose other side only ever speaks as an app is a bot chat (notifications), whatever the listing said.
-  let kind = chat.kind;
-  if (kind === "p2p" && messages.length && messages.filter((m) => m.sender?.id !== owner).every(isApp) && messages.some((m) => m.sender?.id !== owner)) kind = "bot";
-  const involved = !!owner && messages.some((m) => m.sender?.id === owner || mentionIds(m).includes(owner) || (m.thread_id && involvedThreads.has(m.thread_id)));
-  saveCursor(app, chat.chatId, chat.name, chat.mode, fresh, prev, { kind, muted: chat.muted, involved });
-  if (!messages.length) return 0;
-
-  const spaceId = chatSpace(app, chat.chatId);
-  const ids = touched.get(spaceId) ?? new Set<string>();
-  const lines: string[] = [];
-  const newIds: string[] = [];
-  for (const m of messages) {
-    let text = messageText(m).replace(/\n/g, " ⏎ ");
-    if (cfg.attachments && ["image", "file", "media", "audio", "video"].includes(m.msg_type)) {
-      const id = await downloadAttachment(app, spaceId, chat.chatId, m);
-      if (id) {
-        newIds.push(id);
-        text += ` → src:${id}`;
+  const dir = cfg.attachments ? mkdtempSync(join(tmpdir(), "omem-lark-")) : undefined;
+  try {
+    const fresh = newer(await fetchMessages(["+chat-messages-list", "--chat-id", chat.chatId, "--order", "asc"], startMs, endMs, { cwd: dir, download: !!dir }), prev);
+    // Replies in topics whose root is older than this window: follow threads seen recently.
+    const threads = new Set<string>();
+    for (const r of all<{ chat_id: string }>(app.db, "select chat_id from lark_cursors where chat_id like ? and updated_at > ?", `thread:${chat.chatId}:%`, new Date(endMs - 7 * 86400_000).toISOString()))
+      threads.add(r.chat_id.split(":").pop()!);
+    for (const m of fresh) if (m.thread_id) threads.add(m.thread_id);
+    const replies: LarkMessage[] = [];
+    const involvedThreads = new Set<string>();
+    const have = new Set(fresh.map((m) => m.message_id));
+    for (const t of [...threads].slice(0, 30)) {
+      const key = `thread:${chat.chatId}:${t}`;
+      const tc = cursor(app, key);
+      try {
+        const known = fresh.filter((m) => m.thread_id === t);
+        // A host in this batch whose replies all came nested needs no second read.
+        const got = known.some((m) => m.expanded)
+          ? []
+          : newer(await fetchMessages(["+threads-messages-list", "--thread", t, "--order", "desc"], tc ? tc.lastTime : startMs, endMs, { pages: 5, timed: false, cwd: dir, download: !!dir }), tc).filter((m) => !have.has(m.message_id));
+        for (const m of got) m.thread_id = t;
+        replies.push(...got);
+        const inThread = [...got, ...known];
+        const ownerHere = !!owner && inThread.some((m) => m.sender?.id === owner || mentionIds(m).includes(owner));
+        if (ownerHere || one(app.db, "select 1 from lark_cursors where chat_id = ? and involved = 1", key)) involvedThreads.add(t);
+        saveCursor(app, key, chat.name, "thread", inThread, tc, { kind: "thread", involved: ownerHere });
+      } catch (e) {
+        console.warn(`[omem] 读取话题失败 ${t}：${(e as Error).message}`);
       }
     }
-    if (cfg.docs) for (const id of await importLinkedDocs(app, spaceId, text)) newIds.push(id);
-    const who = `${m.sender?.name ?? m.sender?.id ?? "?"}${owner && m.sender?.id === owner ? "（本人）" : isApp(m) ? "（机器人）" : ""}`;
-    lines.push(`[${fmt(m.create_time)}${m.thread_id ? ` · 话题 ${m.thread_id}` : ""}] ${who}: ${text} (${m.message_id})`);
-  }
-  const r = appendToSource(app, {
-    spaceId,
-    kind: "chat",
-    uri: `lark:${chat.chatId}`,
-    title: chat.mode === "p2p" ? `与 ${chat.name} 的私聊` : chat.name,
-    lines,
-    meta: { chatId: chat.chatId, chatMode: chat.mode, chatKind: kind, muted: chat.muted, via: "lark-cli" },
-  });
-  // Only what the policy says is worth understanding goes to the ingest role; the rest stays searchable.
-  const finalPolicy = kind === chat.kind ? policy : capturePolicyFor(app, { ...chat, kind });
-  if (finalPolicy === "ingest" || (finalPolicy === "involved" && involved)) {
-    ids.add(r.id);
-    for (const id of newIds) ids.add(id);
-    touched.set(spaceId, ids);
-  }
+    // omem's own bot speaks in chats too: its replies and cards are omem's output, not material.
+    const ownApp = app.config.lark.appId;
+    const messages = [...fresh, ...replies].filter((m) => !(ownApp && m.sender?.id === ownApp)).sort((a, b) => timeMs(a.create_time) - timeMs(b.create_time));
+    // A p2p chat whose other side only ever speaks as an app is a bot chat (notifications), whatever the listing said.
+    let kind = chat.kind;
+    const others = messages.filter((m) => m.sender?.id !== owner && m.msg_type !== "system");
+    if (kind === "p2p" && others.length && others.every(isApp)) kind = "bot";
+    const involved = !!owner && messages.some((m) => m.sender?.id === owner || mentionIds(m).includes(owner) || (m.thread_id && involvedThreads.has(m.thread_id)));
+    // The chat cursor follows the listing itself; nested replies can be newer than hosts not fetched yet.
+    saveCursor(app, chat.chatId, chat.name, chat.mode, fresh.filter((m) => !m.nested), prev, { kind, muted: chat.muted, involved, oldestMs: startMs });
+    if (!messages.length) return 0;
 
-  const watched: ChatMessage[] = messages.map((m) => ({
-    id: m.message_id,
-    time: m.create_time,
-    sender: m.sender?.name ?? m.sender?.id ?? "?",
-    senderId: m.sender?.id,
-    text: messageText(m),
-    topicId: m.thread_id,
-    mentions: mentionIds(m),
-  }));
-  await routeWatchedMessages(app, chat.chatId, chat.name, watched);
-  return messages.length;
+    const finalPolicy = kind === chat.kind ? policy : capturePolicyFor(app, { ...chat, kind });
+    const ingest = wantsIngest(finalPolicy, involved);
+    const spaceId = chatSpace(app, chat.chatId);
+    const ids = touched.get(spaceId) ?? new Set<string>();
+    const resources = dir ? await keepResources(app, spaceId, chat.chatId, messages, dir, ingest) : new Map<string, Record<string, ResourceRef>>();
+    const quoted = await quotedMessages(app, chat.chatId, messages, owner);
+    const linked: string[] = [];
+    const lines: string[] = [];
+    for (const m of messages) {
+      if (cfg.docs && ingest) linked.push(...(await importLinkedDocs(app, spaceId, messageText(m))));
+      lines.push(formatLine(m, { owner, quoted: quoted.get(parentOf(m)) ?? null, resources: resources.get(m.message_id) }));
+    }
+    const r = appendToSource(app, {
+      spaceId,
+      kind: "chat",
+      uri: `lark:${chat.chatId}`,
+      title: chat.mode === "p2p" ? `与 ${chat.name} 的私聊` : chat.name,
+      lines,
+      meta: { chatId: chat.chatId, chatMode: chat.mode, chatKind: kind, muted: chat.muted, via: "lark-cli" },
+    });
+    storeMessages(app, chat.chatId, messages, { owner, sourceId: r.id, firstLine: r.appendedFrom, resources });
+    // Only what the policy says is worth understanding goes to the ingest role; the rest stays searchable.
+    if (ingest) {
+      ids.add(r.id);
+      for (const refs of resources.values()) for (const ref of Object.values(refs)) if (ref.sourceId) ids.add(ref.sourceId);
+      for (const id of linked) ids.add(id);
+      touched.set(spaceId, ids);
+    }
+    // First time this chat is read: queue its history if its policy asks for that.
+    if (!prev) planBackfill(app, chat.chatId, finalPolicy, startMs);
+
+    const watched: ChatMessage[] = messages.map((m) => ({
+      id: m.message_id,
+      time: m.create_time,
+      sender: m.sender?.name ?? m.sender?.id ?? "?",
+      senderId: m.sender?.id,
+      text: messageText(m),
+      topicId: m.thread_id,
+      mentions: mentionIds(m),
+    }));
+    await routeWatchedMessages(app, chat.chatId, chat.name, watched);
+    return messages.length;
+  } finally {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ---- history backfill ---------------------------------------------------------------
+
+/** Queue history for a chat captured for the first time, per lark.capture.backfill. */
+function planBackfill(app: App, chatId: string, policy: CapturePolicy, oldestMs: number) {
+  const b = app.config.lark.capture.backfill;
+  if (!b.days || !b.policies.includes(policy)) return;
+  run(app.db, "update lark_cursors set backfill_to_ms = ?, oldest_ms = coalesce(oldest_ms, ?) where chat_id = ? and backfill_to_ms is null", oldestMs - b.days * 86400_000, oldestMs, chatId);
+}
+
+/** Ask for a chat's history back to `days` ago (or everything, days = 0). Runs a few pages per poll. */
+export function requestBackfill(app: App, chatId: string, days: number, ingest = false) {
+  const c = one<{ chat_id: string; oldest_ms: number | null; last_time: number }>(app.db, "select chat_id, oldest_ms, last_time from lark_cursors where chat_id = ?", chatId);
+  const target = days > 0 ? Date.now() - days * 86400_000 : Date.parse("2010-01-01");
+  if (!c)
+    run(
+      app.db,
+      "insert into lark_cursors(chat_id,name,chat_mode,last_time,last_ids,updated_at,oldest_ms,backfill_to_ms,backfill_ingest) values(?,?,?,?,?,?,?,?,?)",
+      chatId,
+      chatId,
+      "",
+      Date.now() - app.config.lark.capture.lookbackHours * 3600_000,
+      "[]",
+      now(),
+      Date.now() - app.config.lark.capture.lookbackHours * 3600_000,
+      target,
+      ingest ? 1 : 0,
+    );
+  else run(app.db, "update lark_cursors set backfill_to_ms = ?, backfill_ingest = ?, oldest_ms = ? where chat_id = ?", target, ingest ? 1 : 0, liveOldest(app, chatId), chatId);
+  return backfillStatus(app, chatId);
+}
+
+export function backfillStatus(app: App, chatId: string) {
+  const c = one<{ oldest_ms: number | null; backfill_to_ms: number | null }>(app.db, "select oldest_ms, backfill_to_ms from lark_cursors where chat_id = ?", chatId);
+  const archived = one<{ n: number; first: number | null }>(app.db, "select count(*) n, min(create_ms) first from lark_messages where chat_id = ? and archive is not null", chatId);
+  return {
+    pending: !!c?.backfill_to_ms && !!c.oldest_ms && c.oldest_ms > c.backfill_to_ms,
+    reachedAt: c?.oldest_ms ? new Date(c.oldest_ms).toISOString() : null,
+    target: c?.backfill_to_ms ? new Date(c.backfill_to_ms).toISOString() : null,
+    archived: archived?.n ?? 0,
+    earliest: archived?.first ? new Date(archived.first).toISOString() : null,
+  };
+}
+
+/**
+ * One step of history for each chat that wants it: newest-first pages below what was already
+ * captured, into monthly archive sources. Each poll spends at most `pagesPerPoll` pages in total
+ * so a long history comes in over many polls without starving live capture.
+ */
+async function backfillStep(app: App, owner: string | undefined, touched: Map<string, Set<string>>) {
+  const b = app.config.lark.capture.backfill;
+  let budget = b.pagesPerPoll;
+  const pending = all<{ chat_id: string; name: string; chat_mode: string; kind: string; oldest_ms: number; backfill_to_ms: number; backfill_ingest: number }>(
+    app.db,
+    "select chat_id, name, chat_mode, kind, oldest_ms, backfill_to_ms, backfill_ingest from lark_cursors where chat_id not like 'thread:%' and backfill_to_ms is not null and oldest_ms > backfill_to_ms order by last_time desc limit 5",
+  );
+  for (const c of pending) {
+    if (budget <= 0) break;
+    const dir = app.config.lark.capture.attachments ? mkdtempSync(join(tmpdir(), "omem-lark-")) : undefined;
+    try {
+      let oldest = c.oldest_ms;
+      const months = new Set<string>();
+      while (budget > 0 && oldest > c.backfill_to_ms) {
+        budget--;
+        const page = await fetchMessages(["+chat-messages-list", "--chat-id", c.chat_id, "--order", "desc"], c.backfill_to_ms, oldest, { pages: 1, cwd: dir, download: !!dir });
+        const known = new Set(all<{ message_id: string }>(app.db, `select message_id from lark_messages where message_id in (${page.map(() => "?").join(",") || "''"})`, ...page.map((m) => m.message_id)).map((r) => r.message_id));
+        const fresh = page.filter((m) => !known.has(m.message_id) && !(app.config.lark.appId && m.sender?.id === app.config.lark.appId));
+        const roots = page.filter((m) => !m.thread_id || page.every((x) => x.thread_id !== m.thread_id || timeMs(x.create_time) >= timeMs(m.create_time)));
+        const earliest = roots.length ? Math.min(...roots.map((m) => timeMs(m.create_time))) : c.backfill_to_ms;
+        if (fresh.length) {
+          const spaceId = chatSpace(app, c.chat_id);
+          const resources = dir ? await keepResources(app, spaceId, c.chat_id, fresh, dir, !!c.backfill_ingest) : new Map<string, Record<string, ResourceRef>>();
+          const byMonth = new Map<string, LarkMessage[]>();
+          for (const m of fresh) byMonth.set(monthOf(timeMs(m.create_time)), [...(byMonth.get(monthOf(timeMs(m.create_time))) ?? []), m]);
+          for (const [month, group] of byMonth) {
+            storeMessages(app, c.chat_id, group, { owner, archive: month, resources });
+            months.add(month);
+          }
+          await quotedMessages(app, c.chat_id, fresh, owner);
+        }
+        // Done when a page comes back short of new history.
+        oldest = !fresh.length || earliest >= oldest ? c.backfill_to_ms : earliest;
+        run(app.db, "update lark_cursors set oldest_ms = ? where chat_id = ?", oldest, c.chat_id);
+      }
+      const spaceId = chatSpace(app, c.chat_id);
+      for (const month of months) {
+        const src = rebuildArchive(app, { chatId: c.chat_id, name: c.chat_mode === "p2p" ? `与 ${c.name} 的私聊` : c.name, spaceId, month, chatKind: c.kind || c.chat_mode, owner });
+        if (src && c.backfill_ingest && oldest <= c.backfill_to_ms) touched.set(spaceId, new Set([...(touched.get(spaceId) ?? []), src.id]));
+      }
+      if (c.backfill_ingest && oldest <= c.backfill_to_ms) {
+        // History finished: hand every archived month to ingest once.
+        const ids = all<{ id: string }>(app.db, "select distinct source_id id from lark_messages where chat_id = ? and archive is not null and source_id is not null", c.chat_id).map((r) => r.id);
+        const spaceIdAll = chatSpace(app, c.chat_id);
+        touched.set(spaceIdAll, new Set([...(touched.get(spaceIdAll) ?? []), ...ids]));
+        run(app.db, "update lark_cursors set backfill_ingest = 0 where chat_id = ?", c.chat_id);
+      }
+    } catch (e) {
+      console.warn(`[omem] 回溯飞书历史失败 ${c.name}：${(e as Error).message}`);
+    } finally {
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  }
 }
 
 let polling = false;
@@ -409,6 +496,8 @@ async function pollLarkOnce(app: App) {
     }
   }
 
+  // History the owner asked for (or new chats whose policy wants it), a few pages per poll.
+  await backfillStep(app, owner, touched).catch((e) => console.warn("[omem] 飞书历史回溯失败：", (e as Error).message));
   // Mentions of the owner anywhere — even in muted/do-not-disturb chats not read automatically.
   await captureMentions(app, readChats, endMs, touched, owner).catch((e) => console.warn("[omem] 飞书 @我 消息读取失败：", (e as Error).message));
   if (cfg.calendar) await captureCalendar(app, touched).catch((e) => console.warn("[omem] 飞书日程读取失败：", (e as Error).message));
@@ -441,8 +530,9 @@ async function captureMentions(app: App, readChats: Set<string>, endMs: number, 
         kind: "chat",
         uri: "lark:mentions",
         title: "飞书中 @我 的消息",
-        lines: mentions.map((m) => `[${fmt(m.create_time)}] ${m.chat_name ?? m.chat_id}｜${m.sender?.name ?? "?"}: ${messageText(m).replace(/\n/g, " ⏎ ")} (${m.message_id})`),
+        lines: mentions.map((m) => formatLine({ ...m, sender: { ...m.sender, name: `${m.chat_name ?? m.chat_id}｜${m.sender?.name ?? "?"}` } }, { owner })),
       });
+      storeMessages(app, "mentions", mentions, { owner, sourceId: r.id, firstLine: r.appendedFrom });
       touched.set("personal", new Set([...(touched.get("personal") ?? []), r.id]));
     }
   }
@@ -545,7 +635,7 @@ export async function previewUnsubscribed(app: App, maxChats = 30) {
   const out: { chatId: string; name: string; preview: string[] }[] = [];
   for (const c of chats) {
     try {
-      const msgs = await fetchMessages(["+chat-messages-list", "--chat-id", c.chatId, "--order", "desc"], end - 3 * 86400_000, end, 1);
+      const msgs = await fetchMessages(["+chat-messages-list", "--chat-id", c.chatId, "--order", "desc"], end - 3 * 86400_000, end, { pages: 1 });
       out.push({ chatId: c.chatId, name: c.name, preview: msgs.slice(0, 12).reverse().map((m) => `${m.sender?.name ?? "?"}: ${messageText(m).replace(/\n/g, " ").slice(0, 120)}`) });
     } catch {
       out.push({ chatId: c.chatId, name: c.name, preview: [] });

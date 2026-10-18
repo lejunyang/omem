@@ -1159,6 +1159,18 @@ def({
 });
 
 def({
+  name: "set_lark_backfill",
+  description: "回溯一个飞书会话的历史消息（本人要求查看/整理某个群或私聊更早的记录时用）。days 是往前多少天，0 表示全部；后台每次采集读几页，按月存成历史原件。ingest=true 时回溯完成后交给整理。",
+  write: true,
+  schema: z.object({ chat_id: z.string(), days: z.number().int().min(0).max(3650), ingest: z.boolean().optional() }),
+  handler: async (ctx, a) => {
+    const { requestBackfill } = await import("../channels/lark-personal.ts");
+    const st = requestBackfill(ctx.app, a.chat_id, a.days, !!a.ingest);
+    return `已安排回溯 ${a.chat_id}：${a.days ? `往前 ${a.days} 天` : "全部历史"}${a.ingest ? "，完成后整理" : "（只保存，可检索）"}。目前已覆盖到 ${st.reachedAt?.slice(0, 10) ?? "?"}，飞书采集开启时每 10 分钟推进几页。`;
+  },
+});
+
+def({
   name: "set_lark_capture_policy",
   description:
     "设置某个飞书会话的采集方式（只在本人要求时用）：ingest 保存并整理成记忆/事项；involved 保存，只在本人发言、被 @ 或参与的话题有新消息时整理；store 只保存可检索、不整理；skip 不读取。default 恢复按会话类型的默认值。",
