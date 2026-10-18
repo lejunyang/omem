@@ -45,6 +45,12 @@ export type LarkDocMeta = {
   media?: Record<string, string>;
   /** Linked docs that could not be read, by normalized URL. */
   missing?: Record<string, { title: string; error: string }>;
+  /**
+   * How many levels of links this doc follows: `docLinkDepth` for a doc given to omem (a link in a
+   * message, an import), one less for each level of links below it. Reading it again (refresh, update
+   * check) follows only this many, so links of links do not start a new two levels each time.
+   */
+  depth?: number;
   /** When omem last read it, when its content last changed here, Feishu's last edit, the last update check. */
   fetchedAt?: string;
   changedAt?: string;
@@ -472,17 +478,21 @@ type ImportOpts = {
 
 export async function importLarkDocument(app: App, spaceId: string, input: string, opts: ImportOpts = {}): Promise<LarkDocResult> {
   const cfg = app.config.lark.capture;
-  const depth = opts.depth ?? cfg.docLinkDepth;
+  const given = opts.depth ?? cfg.docLinkDepth;
   const { url, origin, token } = normalizeDocUrl(input);
   const chain = new Set(opts.chain ?? []).add(url);
   const unreadable = opts.unreadable ?? [];
   const existing = findLarkDoc(app, spaceId, url);
   const prev = json<Partial<LarkDocMeta>>(existing?.meta, {});
+  // Reached by several routes (given directly and as someone's link): the deepest reach wins.
+  const depth = Math.max(given, prev.depth ?? -1);
   const doc = await fetchDoc(url);
   const uri = existing ? (one<{ uri: string }>(app.db, "select uri from sources where id = ?", existing.id)?.uri ?? url) : url;
   const fetchedAt = new Date().toISOString();
-  if (existing && !opts.force && prev.revision && prev.revision === doc.revision && prev.media && !Object.keys(prev.missing ?? {}).length) {
-    run(app.db, "update sources set meta = ? where id = ?", JSON.stringify({ ...prev, fetchedAt }), existing.id);
+  // Unchanged in Feishu, already local, nothing missing, and not asked to follow more levels than before: nothing to do.
+  const deeper = given > (prev.depth ?? -1);
+  if (existing && !opts.force && !deeper && prev.revision && prev.revision === doc.revision && prev.media && !Object.keys(prev.missing ?? {}).length) {
+    run(app.db, "update sources set meta = ? where id = ?", JSON.stringify({ ...prev, fetchedAt, depth }), existing.id);
     return { id: existing.id, status: "unchanged", related: [], missing: [] };
   }
 
@@ -523,6 +533,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
     url,
     via: "lark-cli",
     fetchedAt,
+    depth,
     changedAt: prev.revision && prev.revision === doc.revision ? (prev.changedAt ?? fetchedAt) : fetchedAt,
     ...(prev.modifiedAt ? { modifiedAt: prev.modifiedAt } : {}),
     ...(prev.checkedAt ? { checkedAt: prev.checkedAt } : {}),
@@ -683,6 +694,20 @@ function relinkParent(app: App, parentId: string, url: string, id: string, title
 
 // ---- reading all docs again -------------------------------------------------------------
 
+/** Docs captured before omem followed links were all given to it directly. */
+const LINKS_FOLLOWED_SINCE = "2026-10-18T12:00:00Z";
+
+/**
+ * How many levels a doc follows when read again: what it was imported with. Docs from before that was
+ * recorded: given directly if captured before links were followed at all, else reached as a link (0).
+ */
+function storedDepth(app: App, id: string) {
+  const r = one<{ meta: string; captured_at: string }>(app.db, "select meta, captured_at from sources where id = ?", id);
+  const d = json<Partial<LarkDocMeta>>(r?.meta, {}).depth;
+  if (typeof d === "number") return d;
+  return r && r.captured_at < LINKS_FOLLOWED_SINCE ? app.config.lark.capture.docLinkDepth : 0;
+}
+
 const REFRESH_KEY = "lark_docs_refresh";
 
 /** A refresh in progress, kept in the database so a restart picks it up where it stopped. */
@@ -739,7 +764,7 @@ export async function continueRefresh(app: App, opts: { log?: (s: string) => voi
     if (!row || row.deleted_at || (meta.fetchedAt && meta.fetchedAt >= s.startedAt)) s.skipped++;
     else {
       try {
-        const r = await importLarkDocument(app, row.space_id, meta.url ?? row.uri, { force: true, unreadable: s.unreadable });
+        const r = await importLarkDocument(app, row.space_id, meta.url ?? row.uri, { force: true, unreadable: s.unreadable, depth: storedDepth(app, id) });
         const after = json<Partial<LarkDocMeta>>(one<{ meta: string }>(app.db, "select meta from sources where id = ?", r.id)?.meta, {}).revision;
         const ids = new Set(s.changed[row.space_id] ?? []);
         if (r.status !== "unchanged" && meta.revision && meta.revision !== after) ids.add(r.id);
@@ -885,7 +910,7 @@ export async function checkLarkDocs(app: App, opts: { force?: boolean; log?: (s:
   let read = 0;
   for (const d of edited) {
     try {
-      const r = await importLarkDocument(app, d.space_id, d.url, {});
+      const r = await importLarkDocument(app, d.space_id, d.url, { depth: storedDepth(app, d.id) });
       const ids = changed.get(d.space_id) ?? new Set();
       if (r.status !== "unchanged") ids.add(r.id);
       for (const x of r.related) ids.add(x);

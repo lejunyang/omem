@@ -139,7 +139,7 @@ describe("feishu docs as originals", () => {
 
   it("refreshes old copies without handing unchanged content to ingest", async () => {
     const app = testApp();
-    upsertSource(app, { spaceId: "personal", kind: "doc", uri: `${ORIGIN}/wiki/Old`, title: "旧文档", text: `![](${ORIGIN}/file/IMG9)`, meta: { url: `${ORIGIN}/wiki/Old`, via: "lark-cli" } });
+    upsertSource(app, { spaceId: "personal", kind: "doc", uri: `${ORIGIN}/wiki/Old`, title: "旧文档", text: `![](${ORIGIN}/file/IMG9)`, meta: { url: `${ORIGIN}/wiki/Old`, via: "lark-cli", depth: 2 } });
     fakeCli({ Old: { title: "旧文档", content: `![](${ORIGIN}/file/IMG9)\n\n${ORIGIN}/docx/New` }, New: { title: "新链接的文档", content: "新内容" } });
     const r = await refreshLarkDocs(app);
     expect(r).toMatchObject({ total: 1, done: 1, failed: 0 });
@@ -266,7 +266,7 @@ describe("feishu docs as originals", () => {
   it("resumes a refresh where it stopped and skips docs already read in it", async () => {
     const app = testApp();
     for (const t of ["D1", "D2", "D3"])
-      upsertSource(app, { spaceId: "personal", kind: "doc", uri: `${ORIGIN}/docx/${t}`, title: t, text: "旧", meta: { url: `${ORIGIN}/docx/${t}`, via: "lark-cli" } });
+      upsertSource(app, { spaceId: "personal", kind: "doc", uri: `${ORIGIN}/docx/${t}`, title: t, text: "旧", meta: { url: `${ORIGIN}/docx/${t}`, via: "lark-cli", depth: 2 } });
     // Read newest first (D1, D2, D3); D3 was read two days ago, so D1's link to it is followed.
     for (const [t, days] of [["D1", 0], ["D2", 1], ["D3", 2]] as const)
       run(app.db, "update sources set updated_at = ? where uri = ?", new Date(Date.now() - days * 86400_000).toISOString(), `${ORIGIN}/docx/${t}`);
@@ -331,6 +331,31 @@ describe("feishu docs as originals", () => {
     const text = one<{ text: string }>(app.db, "select text from sources where id = ?", r.id)!.text;
     expect(text.match(/omem-file:/g)).toHaveLength(10);
     expect(peak).toBe(4);
+  });
+
+  it("reading docs again follows only the levels each was reached with", async () => {
+    const app = testApp();
+    // A given → B (its link) → C (link of a link) → D (not read).
+    const calls = fakeCli({
+      A: { title: "A", content: `${ORIGIN}/docx/B` },
+      B: { title: "B", content: `${ORIGIN}/docx/C` },
+      C: { title: "C", content: `${ORIGIN}/docx/D` },
+      D: { title: "D", content: "不该读到" },
+    });
+    await importLarkDocument(app, "personal", `${ORIGIN}/docx/A`);
+    const depthOf = (t: string) => JSON.parse(one<{ meta: string }>(app.db, "select meta from sources where uri = ?", `${ORIGIN}/docx/${t}`)!.meta).depth;
+    expect([depthOf("A"), depthOf("B"), depthOf("C")]).toEqual([2, 1, 0]);
+    expect(one(app.db, "select id from sources where uri = ?", `${ORIGIN}/docx/D`)).toBeUndefined();
+    // Read everything again (as if a day later): C still does not reach D, B does not reach past C.
+    run(app.db, "update sources set updated_at = '2000-01-01T00:00:00Z'");
+    calls.length = 0;
+    await refreshLarkDocs(app);
+    expect(one(app.db, "select id from sources where uri = ?", `${ORIGIN}/docx/D`)).toBeUndefined();
+    expect([depthOf("A"), depthOf("B"), depthOf("C")]).toEqual([2, 1, 0]);
+    // C given directly later: it may follow two levels now.
+    await importLarkDocument(app, "personal", `${ORIGIN}/docx/C`);
+    expect(depthOf("C")).toBe(2);
+    expect(one(app.db, "select id from sources where uri = ?", `${ORIGIN}/docx/D`)).toBeTruthy();
   });
 
   it("turns CSV into a Markdown table", () => {
