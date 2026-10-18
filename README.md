@@ -85,6 +85,8 @@ pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 | 采集消息、筛选关注群、生成简报 | `omem setup` 选择读取方式，或设置 → 渠道 勾选会话（只读）；定时任务里开启采集、巡检和“筛选值得关注的飞书群” |
 | 用间隔重复学习（如英语） | 打开材料点“生成卡片”，在“学习”页按 FSRS 复习；或对助理说“我想练英语开会表达，每天 8 张，晚上九点提醒我”建学习目标；聊天里 `/review` 复习；可与 Anki 互相导入导出（制表符文本） |
 | 每天早上知道今天该处理什么 | 定时任务开启“简报”，通过站内和机器人推送 |
+| 看记忆写得好不好、哪个模型写得好 | “记忆 → 质量”：按模型看写入数、被退回的原因、复核结果；`omem memories stats`。旧记忆可用 `omem memories check` 过一遍检查 |
+| 一台机器常驻，在别的电脑上看它、拉它的数据 | 见“多台设备”：`omem peer invite` / `add` 配对，`omem diag`、`omem pull`，`omem link` 在浏览器里打开 |
 | 某类事以后都按固定做法办，或交给专门的 Agent | 说“把这个做法记成技能”“建一个负责代码评审的 Agent”；在“Agent”页查看和编辑；`/as 名称 任务` 交给它，结果发回当前会话 |
 
 ## 会话
@@ -141,6 +143,10 @@ omem link                                   # 从其他设备打开网页的链�
 ```
 
 数据目录默认 `~/.omem`（`--home` 或 `OMEM_HOME` 可改）：`config.json` 配置，`omem.db` 索引与记录，`library/` 是 Wiki 的 Git 仓库，`files/` 存原始文件，`runs/` 存交办编码的工作区和补丁。
+
+## 给其他 Agent 用
+
+在 Claude Code、Codex 等里把 omem 配成 MCP 服务（`omem mcp`，只读用 `--read-only`），它们就能检索你的知识库、读原文、记记忆和事项。`skills/omem/SKILL.md` 是给这些 Agent 的使用说明（工具清单、写记忆的要求、命令行），可以直接放进它们的技能目录。
 
 ## 记录编码 Agent 的会话
 
@@ -205,6 +211,7 @@ omem peer invite --label laptop           # 打印一行配对码（omem1.…）
 omem peer add <配对码>                    # 直接能访问到
 omem peer add <配对码> --via <中间那台>     # 只能经中间那台访问（中间那台先和它配对）
 omem peer list
+omem peer name laptop                     # 改本机在同伴中的名字（默认主机名，存为配置 node.id）
 omem peer url <同伴> http://<新地址>:4317   # 对方换了地址、码里的地址都连不上时（不用重新配对）
 omem diag <同伴>                          # 版本、数量、最近失败、飞书采集状态、Agent
 omem peer commands <同伴>                 # 可远程执行的命令
@@ -214,7 +221,7 @@ omem peer call <同伴> update               # git pull --ff-only、安装依赖
 omem pull <同伴>                          # 经 HTTP 拉一份快照合并进本机
 ```
 
-同伴的名字是对方配置里的 `node.id`，没配就是它的主机名。配对码里是对方的所有可能地址和一个为本人生成的 API 令牌（标签 `peer:<名字>`）；`add` 留下能连上的地址，之后正在用的地址连不上时会自动换码里的其他地址，所以断线、重启、换网后不用重新配对。`omem user revoke owner peer:<名字>` 撤销令牌即解除配对；配对信息存在 `secrets/peers.json`，令牌用 `omem user tokens` 查看。远程命令是固定的一组（诊断、日志、配置、飞书只读查询、手动采集与回溯、记忆统计、运行记录、只读 SQL、git 与更新、重启），没有任意 shell。本机打开网页不需要令牌；从别的机器打开时运行 `omem link`，它打印带新令牌的链接（每个网卡地址一个），打开一次后令牌存在那个浏览器里；也可以在页面提示时粘贴 `omem user token owner` 生成的令牌。
+同伴的名字是对方配置里的 `node.id`（`omem peer name` 查看或设置），没配就是它的主机名；最好在配对之前起好名字，之后改名的话对方那边仍记着旧名字。配对码里是对方的所有可能地址和一个为本人生成的 API 令牌（标签 `peer:<名字>`）；`add` 留下能连上的地址，之后正在用的地址连不上时会自动换码里的其他地址，所以断线、重启、换网后不用重新配对。`omem user revoke owner peer:<名字>` 撤销令牌即解除配对；配对信息存在 `secrets/peers.json`，令牌用 `omem user tokens` 查看。远程命令是固定的一组（诊断、日志、配置、飞书只读查询、手动采集与回溯、记忆统计、运行记录、只读 SQL、git 与更新、重启），没有任意 shell。本机打开网页不需要令牌；从别的机器打开时运行 `omem link`，它打印带新令牌的链接（每个网卡地址一个），打开一次后令牌存在那个浏览器里；也可以在页面提示时粘贴 `omem user token owner` 生成的令牌。
 
 `scripts/relay.mjs` 是一个临时的白名单转发：在只能 ssh 到其他机器的那台上运行，往 `.remote/relay/inbox/` 放请求文件，它经 ssh 执行允许的命令（omem 子命令、git/pnpm 的检查与更新、lark-cli 只读查询、本机 API 的 GET、几个系统信息命令）并把结果写到 `outbox/`。目标机器在 `.remote/relay/config.json` 里配置，详见脚本开头的说明。
 
@@ -230,7 +237,7 @@ node scripts/eval-retrieval.ts corpus.jsonl queries.jsonl [--vector]
 代码结构：
 
 ```
-src/core      配置、SQLite、空间、用户、Git、调度、通知
+src/core      配置、SQLite、空间、用户与令牌、Git、调度、通知、后台服务、多台设备（peers、peer-exec、pull）
 src/sources   导入、切分（Markdown 章节 / 代码符号 / 聊天窗口）、调用图、代码活动、注入标记
 src/search    分词（中文双字 + 标识符拆分）、FTS、向量（按空间 int8 矩阵）、RRF 融合
 src/memory    记忆（有效期、版本链、写入检查与复核统计）
@@ -238,10 +245,13 @@ src/items     事项（时间线）
 src/wiki      页面文件、链接与引用索引、过期检测
 src/learn     FSRS 卡片、学习目标
 src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能、后台任务、交办编码
-src/channels  飞书机器人（发送、卡片、进度、回调、监听群）、飞书个人采集（lark-cli）、Telegram、OneBot
+src/channels  飞书机器人（发送、卡片、进度、回调、监听群）、飞书个人采集（lark-cli，消息结构化与历史回溯）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
-roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查、巡检、简报、做梦、筛群、摘要、编码、评审、出卡）
+roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查、巡检、简报、做梦、筛群、摘要、编码、评审、记忆复核、出卡），共同部分在 _common.md
+skills/omem     给外部 Agent 的 omem 使用说明（配合 omem mcp）
 skills/library  内置技能（如 lark-messaging），首次启动播种到 library/_skills
+.agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
+scripts/      开发脚本：截图、检索与记忆评测、规模测试、临时 ssh 转发（relay.mjs）
 web/          Vue 3 网页
 ```
 
@@ -249,11 +259,12 @@ web/          Vue 3 网页
 
 ## 当前限制
 
-- 多人只到“留口子”：用户、身份、空间成员和令牌，不做多租户隔离；HTTP 只监听本机，远程访问需配置 `token`。
+- 多人只到“留口子”：用户、身份、空间成员和令牌，不做多租户隔离。
+- 默认只监听本机；`host` 改成 `0.0.0.0` 后，其他机器必须带令牌（配对或 `omem link`）。多台设备是“一台常驻写入、其他来看”，还没有双向持续同步。
 - 除 Claude Code、OpenCode 外，其他 ACP Agent 只验证过连接握手；各家登录和模型名以实际“检测模型”结果为准。
 - 代码解析：TS/JS/JSX/TSX/Vue 用 TypeScript AST；Python 用导入与缩进分析；Go、Rust、Java、Kotlin、Swift、C、C++、Objective-C、C#、PHP、Ruby、Scala、Dart、Lua、Zig、Elixir、OCaml、ReScript、Solidity、Bash、Emacs Lisp 用 tree-sitter（WebAssembly，无需编译，按需加载语法）；其他语言（Haskell、Erlang、Clojure、Elm…）只做通用声明识别。
 - 跨文件调用解析到具体定义：TS/JS/Python 按导入；Go 按包（同目录与导入路径）；Rust 按 `use` 路径、`mod` 和工作区 crate；Java/Kotlin 按包、导入和静态导入（两者互通）；Swift 按整个模块；其余 tree-sitter 语言先看本类型、本文件和导入的文件（`#include`、`require`、`import … as`、`open`），再在同一语言里找唯一的同名定义，有多个同名就不连。对变量调用方法（`db.open()`）需要类型推断，和动态派发、第三方包一样只有名称级候选。
 - 扫描版 PDF 需要 OCR，当前只解析文字 PDF / DOCX（Docling、pdftotext 或 pandoc 任一可用即可）。
 - 微信只能通过 OneBot 兼容桥接入，没有话题概念，每个私聊或群是一个会话。
 
-本仓库的 Wiki（由 omem 生成）在 [.repo-review/wiki](.repo-review/wiki/index.md)。它生成于 2026-10-13，之后加的飞书工作流、多 Agent 目录等还没写进去；建仓库空间后 `omem wiki lint omem` 会按改动更新受影响的页面，再 `omem wiki export omem .repo-review/wiki` 导出。
+本仓库的 Wiki（由 omem 生成）在 [.repo-review/wiki](.repo-review/wiki/index.md)。它主体生成于 2026-10-13，之后的改动列在 [changes-since-2026-10-13](.repo-review/wiki/reference/changes-since-2026-10-13.md)；建仓库空间后 `omem wiki lint omem` 会按改动更新受影响的页面，再 `omem wiki export omem .repo-review/wiki` 导出。

@@ -218,6 +218,21 @@ peer
     }
   });
 peer
+  .command("name [id]")
+  .description("查看或设置本机在同伴中的名字（默认是主机名）")
+  .action(async (id?: string) => {
+    const { nodeId } = await import("./core/peers.ts");
+    const { saveConfig } = await import("./core/config.ts");
+    const app = open();
+    if (!id) return console.log(nodeId(app));
+    const clean = id.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!clean) throw new Error("名字只能用字母、数字和连字符");
+    app.config.node = { ...app.config.node, id: clean };
+    saveConfig(app.config, app.home);
+    console.log(`本机名字：${clean}。服务在运行的话 omem service restart 后生效。`);
+    console.log("已经和别的设备配对过的：它们那边还记着旧名字，照常可用；想统一就在本机重新 invite、对方重新 add（--via 的链路两端名字需一致）。");
+  });
+peer
   .command("url <id> <url>")
   .description("同伴换了地址、原来的都连不上时，指定新地址（不用重新配对）")
   .action(async (id: string, url: string) => {

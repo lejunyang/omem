@@ -2,6 +2,14 @@
 
 先读 README.md 和 docs/v2/architecture.md（含实现状态表），验收步骤在 docs/v2/acceptance.md。docs/archive 是 v1 的历史资料，其中的“当前”“进度”只对应当时。本仓库的 Wiki 在 `.repo-review/wiki/`（主体生成于 2026-10-13；之后的改动列在 `reference/changes-since-2026-10-13.md`，记忆、渠道、参考三页已同步到 10-18，其他页面以代码为准）。
 
+## 仓库里的几类说明
+
+- `roles/*.md`：omem 自己调用 Agent 时各角色的工作说明（`_common.md` 是共同部分，含“怎么写记忆”）；`config.ts` 的 `roleNames` 列出全部角色，新增角色两边都要加。
+- `skills/omem/SKILL.md`：给外部 Agent（配 `omem mcp`）的使用说明。MCP 工具的名字、参数或写入规则变了要同步它。
+- `skills/library/*`：内置技能，首次启动播种到数据目录的 `library/_skills`（已播种的不会被覆盖）。
+- `.agents/skills/*`：在本仓库开发时用的技能（`omem-design` 网页约定、`osdk-guide`、`lieflat-less-ai-tone` 中文表达检查）。网页约定变了更新 `omem-design`。
+- `docs/v2/`：架构与实现状态表、验收、评测；`.repo-review/wiki/`：本仓库 Wiki（生成内容，新改动先记在 `reference/changes-since-2026-10-13.md`）。
+
 ## 产品原则
 
 - 一个来源体系：文档、代码、聊天、笔记、网页、日程、妙记都是原件（sources），按空间（spaces）隔离领域。代码有符号级切分、调用图和导航，但不形成第二个知识产品。
@@ -29,7 +37,8 @@
 
 - Wiki 按读者问题组织，不按文件逐个生成。写作要求在 roles/wiki-writer.md；改写作质量优先改角色说明，其次才改代码。
 - 文档和生成内容用中文，直接具体，避免套话。成稿可按 `.agents/skills/lieflat-less-ai-tone/SKILL.md` 检查表达，不改事实和结构。
-- 功能变了要同步 README、docs/v2/architecture.md 的实现状态表和 acceptance.md。
+- 功能变了在同一个提交里同步：README（功能介绍、“日常用途”、命令行清单、代码结构）、docs/v2/architecture.md 的实现状态表、acceptance.md 的验收项、`.repo-review/wiki/reference/changes-since-2026-10-13.md`；动了 MCP 工具还要改 `skills/omem/SKILL.md`，动了网页约定改 `.agents/skills/omem-design`。
+- 这是公开仓库：文档、角色说明、技能、测试和提交信息里不写本人的真实信息（姓名、公司、群名、主机名、真实聊天或记忆内容）。举例用虚构的（项目 A、小王、《差旅报销制度》）；用真实数据校准过的规则只写结论。
 
 ## 界面
 
