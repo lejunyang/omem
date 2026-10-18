@@ -198,6 +198,13 @@ export const peerCommands: Record<string, Command> = {
         } catch (e) {
           out.cli = { error: (e as Error).message };
         }
+        // The contact API itself (user identity) returns more ids than the shortcut.
+        try {
+          const v = await larkCli(["api", "GET", `/open-apis/contact/v3/users/${a.id}`, "--params", JSON.stringify({ user_id_type: a.id_type }), "--as", "user"], 30_000);
+          out.cliApi = pick(v.data?.user);
+        } catch (e) {
+          out.cliApi = { error: (e as Error).message };
+        }
       }
       if (a.as !== "cli") {
         try {
