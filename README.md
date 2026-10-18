@@ -137,6 +137,7 @@ omem space sync omem --exclude docs/archive # 同步仓库空间并排除路径
 omem wiki export omem .repo-review/wiki     # 把 Wiki 导出成仓库里可读的 Markdown
 omem hook claude|codex                      # 记录编码 Agent 会话（配在钩子里）
 omem peer invite|add|list|call / omem diag   # 多台设备：配对、诊断、远程检查，见“多台设备”
+omem link                                   # 从其他设备打开网页的链接（带令牌）
 ```
 
 数据目录默认 `~/.omem`（`--home` 或 `OMEM_HOME` 可改）：`config.json` 配置，`omem.db` 索引与记录，`library/` 是 Wiki 的 Git 仓库，`files/` 存原始文件，`runs/` 存交办编码的工作区和补丁。
@@ -198,12 +199,13 @@ omem space share project-a wang [--edit]           # 再开放一个空间
 
 ```bash
 # 常驻那台：config.json 里 "host": "0.0.0.0"（不在本机访问时，没有令牌的请求一律拒绝）
-omem peer invite --url http://<这台的地址>:4317     # 打印一行配对码（omem1.…）
+omem peer invite --label laptop           # 打印一行配对码（omem1.…），含本机所有网卡地址；服务不必正在运行
 
 # 另一台
 omem peer add <配对码>                    # 直接能访问到
 omem peer add <配对码> --via <中间那台>     # 只能经中间那台访问（中间那台先和它配对）
 omem peer list
+omem peer url <同伴> http://<新地址>:4317   # 对方换了地址、码里的地址都连不上时（不用重新配对）
 omem diag <同伴>                          # 版本、数量、最近失败、飞书采集状态、Agent
 omem peer commands <同伴>                 # 可远程执行的命令
 omem peer call <同伴> lark-raw '{"command":"+chat-messages-list","chat_id":"oc_…"}'
@@ -212,7 +214,7 @@ omem peer call <同伴> update               # git pull --ff-only、安装依赖
 omem pull <同伴>                          # 经 HTTP 拉一份快照合并进本机
 ```
 
-配对码里是对方的地址和一个为本人生成的 API 令牌（标签 `peer:<名字>`），撤销令牌就解除配对；配对信息存在 `secrets/peers.json`。远程命令是固定的一组（诊断、日志、配置、飞书只读查询、手动采集与回溯、记忆统计、运行记录、只读 SQL、git 与更新、重启），没有任意 shell。从别的机器用浏览器打开网页时，在地址后加 `?token=<令牌>`（`omem user token owner` 生成）或按提示填写。
+同伴的名字是对方配置里的 `node.id`，没配就是它的主机名。配对码里是对方的所有可能地址和一个为本人生成的 API 令牌（标签 `peer:<名字>`）；`add` 留下能连上的地址，之后正在用的地址连不上时会自动换码里的其他地址，所以断线、重启、换网后不用重新配对。`omem user revoke owner peer:<名字>` 撤销令牌即解除配对；配对信息存在 `secrets/peers.json`，令牌用 `omem user tokens` 查看。远程命令是固定的一组（诊断、日志、配置、飞书只读查询、手动采集与回溯、记忆统计、运行记录、只读 SQL、git 与更新、重启），没有任意 shell。本机打开网页不需要令牌；从别的机器打开时运行 `omem link`，它打印带新令牌的链接（每个网卡地址一个），打开一次后令牌存在那个浏览器里；也可以在页面提示时粘贴 `omem user token owner` 生成的令牌。
 
 `scripts/relay.mjs` 是一个临时的白名单转发：在只能 ssh 到其他机器的那台上运行，往 `.remote/relay/inbox/` 放请求文件，它经 ssh 执行允许的命令（omem 子命令、git/pnpm 的检查与更新、lark-cli 只读查询、本机 API 的 GET、几个系统信息命令）并把结果写到 `outbox/`。目标机器在 `.remote/relay/config.json` 里配置，详见脚本开头的说明。
 

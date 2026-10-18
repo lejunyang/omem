@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { boot } from "../src/main.ts";
-import { addPeer, invite, peerJson } from "../src/core/peers.ts";
+import { addPeer, decodeInvite, findPeer, invite, localUrls, peerJson, setPeerUrl } from "../src/core/peers.ts";
 import { cleanupFetched, fetchPeer, mergeLibrary } from "../src/core/pull.ts";
 import { remember, listMemories } from "../src/memory/store.ts";
 
@@ -30,9 +30,16 @@ describe("peers", () => {
     remember(server, { spaceId: "personal", kind: "fact", content: "服务器上的一条记忆。", createdBy: "user" });
 
     // relay can reach server; laptop can only reach relay.
-    addPeer(relay, invite(server, { url: server.baseUrl! }).code);
-    addPeer(laptop, invite(relay, { url: relay.baseUrl! }).code);
-    addPeer(laptop, invite(server, { url: "http://unreachable.invalid" }).code, { via: "relay" });
+    await addPeer(relay, invite(server, { url: server.baseUrl! }).code);
+    await addPeer(laptop, invite(relay, { url: relay.baseUrl! }).code);
+    await addPeer(laptop, invite(server, { url: "http://unreachable.invalid" }).code, { via: "relay" });
+
+    // The address in use stops answering: the other known addresses are tried and the
+    // working one is remembered, without pairing again.
+    setPeerUrl(laptop, "relay", "http://127.0.0.1:1");
+    expect(findPeer(laptop, "relay")!.urls).toEqual(["http://127.0.0.1:1", relay.baseUrl]);
+    await peerJson(laptop, "relay", "/api/diag");
+    expect(findPeer(laptop, "relay")!.url).toBe(relay.baseUrl);
 
     const d = await peerJson<{ node: string; counts: { memories: number } }>(laptop, "server", "/api/diag");
     expect(d).toMatchObject({ node: "server", counts: { memories: 1 } });
@@ -64,5 +71,20 @@ describe("api auth without a configured token", () => {
     const s = b.server as unknown as { inject(o: object): Promise<{ statusCode: number }> };
     expect((await s.inject({ method: "GET", url: "/api/me", remoteAddress: "127.0.0.1" })).statusCode).toBe(200);
     expect((await s.inject({ method: "GET", url: "/api/me", remoteAddress: "192.168.1.20" })).statusCode).toBe(401);
+  });
+});
+
+describe("invite addresses", () => {
+  it("lists this machine's addresses when listening on all interfaces, none on loopback", async () => {
+    const home = mkdtempSync(join(tmpdir(), "omem-inv-"));
+    const b = await boot(home, { port: 0, quiet: true, background: false });
+    servers.push(b.server);
+    b.app.config.host = "127.0.0.1";
+    expect(localUrls(b.app)).toEqual([]);
+    b.app.config.host = "0.0.0.0";
+    b.app.config.port = 4999;
+    const urls = decodeInvite(invite(b.app).code).urls;
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.every((u) => u.endsWith(":4999"))).toBe(true);
   });
 });

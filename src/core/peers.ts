@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { hostname } from "node:os";
+import { hostname, networkInterfaces } from "node:os";
 import { join } from "node:path";
 import type { App } from "./app.ts";
 import { createApiToken, OWNER } from "./users.ts";
@@ -14,13 +14,17 @@ import { createApiToken, OWNER } from "./users.ts";
  * peer, which forwards the request (`/api/peers/<id>/…`).
  *
  * Pairing is one line each way:
- *   on the server  `omem peer invite [--url http://host:4317]` → prints a code
+ *   on the server  `omem peer invite` → prints a code
  *   on the client  `omem peer add <code> [--via <peer>]`
- * The code carries the inviting node's id, its URL and an API token created for the
- * owner (label `peer:<id>`), so revoking it is revoking that token. Tokens are
- * per user, which leaves room for other people's devices to pair as members later.
+ * The code carries the inviting node's id, every address it might be reached at
+ * (each network interface, the host name) and an API token created for the owner
+ * (label `peer:<label>`), so revoking it is revoking that token. `add` keeps the
+ * addresses that answer; when the one in use stops answering (a new DHCP lease, a
+ * VPN coming back on another interface) the others are tried again, so a paired
+ * machine that was offline needs no new pairing. Tokens are per user, which leaves
+ * room for other people's devices to pair as members later.
  */
-export type Peer = { id: string; url: string; token: string; via?: string; addedAt: string };
+export type Peer = { id: string; url: string; urls?: string[]; token: string; via?: string; addedAt: string };
 
 const file = (app: App) => join(app.home, "secrets", "peers.json");
 
@@ -48,29 +52,95 @@ export function findPeer(app: App, id: string): Peer | null {
   return listPeers(app).find((p) => p.id === id) ?? null;
 }
 
-/** A pairing code for another machine: this node's id, URL and a new owner token. */
-export function invite(app: App, opts: { url?: string; label?: string } = {}) {
-  const id = nodeId(app);
-  const url = (opts.url ?? app.baseUrl ?? `http://${hostname()}:${app.config.port}`).replace(/\/+$/, "");
-  const token = createApiToken(app, OWNER, `peer:${opts.label ?? "device"}`);
-  const code = "omem1." + Buffer.from(JSON.stringify({ id, url, token })).toString("base64url");
-  return { id, url, code };
+const trim = (u: string) => u.replace(/\/+$/, "");
+const isLoopback = (host: string) => /^(127\.|localhost$|::1$)/.test(host);
+
+/**
+ * Addresses other machines might reach this instance at: each non-loopback IPv4
+ * (private LAN ranges first), then the host name. Empty when the service only
+ * listens on loopback, since nobody else could connect anyway.
+ */
+export function localUrls(app: App): string[] {
+  const port = app.config.port;
+  const host = app.config.host;
+  if (isLoopback(host)) return [];
+  if (host !== "0.0.0.0" && host !== "::") return [`http://${host}:${port}`];
+  const ips = Object.values(networkInterfaces())
+    .flat()
+    .filter((i) => i && i.family === "IPv4" && !i.internal)
+    .map((i) => i!.address);
+  const rank = (ip: string) => (/^192\.168\./.test(ip) ? 0 : /^10\./.test(ip) ? 1 : /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ? 2 : 3);
+  ips.sort((a, b) => rank(a) - rank(b));
+  return [...new Set([...ips.map((ip) => `http://${ip}:${port}`), `http://${hostname()}:${port}`])];
 }
 
-export function decodeInvite(code: string): { id: string; url: string; token: string } {
+/** Whether an omem service is answering on this machine's port. */
+export async function serviceRunning(app: App) {
+  try {
+    const r = await fetch(`http://127.0.0.1:${app.config.port}/api/diag`, { signal: AbortSignal.timeout(2000) });
+    return r.status < 500;
+  } catch {
+    return false;
+  }
+}
+
+/** A pairing code for another machine: this node's id, its addresses and a new owner token. */
+export function invite(app: App, opts: { url?: string; label?: string } = {}) {
+  const id = nodeId(app);
+  const urls = opts.url ? [trim(opts.url)] : localUrls(app);
+  const token = createApiToken(app, OWNER, `peer:${opts.label ?? "device"}`);
+  const code = "omem1." + Buffer.from(JSON.stringify({ id, urls, token })).toString("base64url");
+  return { id, urls, code };
+}
+
+export function decodeInvite(code: string): { id: string; urls: string[]; token: string } {
   const m = /^omem1\.([A-Za-z0-9_-]+)$/.exec(code.trim());
   if (!m) throw new Error("配对码格式不对（应以 omem1. 开头）");
   const v = JSON.parse(Buffer.from(m[1], "base64url").toString("utf8"));
-  if (!v.id || !v.url || !v.token) throw new Error("配对码不完整");
-  return v;
+  const urls: string[] = (v.urls ?? (v.url ? [v.url] : [])).filter(Boolean).map(trim);
+  if (!v.id || !v.token) throw new Error("配对码不完整");
+  return { id: v.id, urls, token: v.token };
 }
 
-export function addPeer(app: App, code: string, opts: { via?: string; url?: string } = {}) {
+async function answers(url: string, token: string) {
+  try {
+    const r = await fetch(url + "/api/diag", { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3000) });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Add (or re-add) a peer from its code. Direct peers keep every address from the
+ * code, the first one that answers in front; `via` peers are reached through the
+ * middle node, which needs them paired with it under the same id.
+ */
+export async function addPeer(app: App, code: string, opts: { via?: string; url?: string } = {}) {
   const v = decodeInvite(code);
   if (opts.via && !findPeer(app, opts.via)) throw new Error(`没有名为 ${opts.via} 的同伴；先添加它`);
-  const peer: Peer = { id: v.id, url: (opts.url ?? v.url).replace(/\/+$/, ""), token: v.token, via: opts.via, addedAt: new Date().toISOString() };
+  let urls = opts.url ? [trim(opts.url)] : v.urls;
+  if (!opts.via) {
+    if (!urls.length) throw new Error("配对码里没有地址（对方服务只监听本机）；对方把 host 改为 0.0.0.0 后重新 invite，或这里用 --url 指定");
+    const ok: string[] = [];
+    for (const u of urls) if (await answers(u, v.token)) ok.push(u);
+    urls = [...ok, ...urls.filter((u) => !ok.includes(u))];
+  }
+  const peer: Peer = { id: v.id, url: urls[0] ?? "", urls, token: v.token, via: opts.via, addedAt: new Date().toISOString() };
   savePeers(app, [...listPeers(app).filter((p) => p.id !== peer.id), peer]);
   return peer;
+}
+
+/** Point a direct peer at a new address (it moved and none of the known ones answer). */
+export function setPeerUrl(app: App, id: string, url: string) {
+  const peers = listPeers(app);
+  const p = peers.find((x) => x.id === id);
+  if (!p) throw new Error(`没有名为 ${id} 的同伴`);
+  p.url = trim(url);
+  p.urls = [p.url, ...(p.urls ?? []).filter((u) => u !== p.url)];
+  delete p.via;
+  savePeers(app, peers);
+  return p;
 }
 
 export function removePeer(app: App, id: string) {
@@ -91,7 +161,24 @@ export async function peerFetch(app: App, id: string, path: string, init: Reques
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${p.token}`);
   headers.set("x-omem-hops", String(hops));
-  return fetch(p.url + path, { ...init, headers, signal: AbortSignal.timeout(init.timeoutMs ?? 120_000) });
+  const go = (url: string) => fetch(url + path, { ...init, headers, signal: AbortSignal.timeout(init.timeoutMs ?? 120_000) });
+  try {
+    return await go(p.url);
+  } catch (e) {
+    // The address in use stopped answering: try the others from the code once, and
+    // remember the one that works.
+    for (const u of (p.urls ?? []).filter((u) => u !== p.url)) {
+      if (!(await answers(u, p.token))) continue;
+      const peers = listPeers(app);
+      const q = peers.find((x) => x.id === p.id);
+      if (q) {
+        q.url = u;
+        savePeers(app, peers);
+      }
+      return go(u);
+    }
+    throw new Error(`连不上同伴 ${p.id}（${p.url}）：${(e as Error).message}`);
+  }
 }
 
 export async function peerJson<T = unknown>(app: App, id: string, path: string, body?: unknown, timeoutMs?: number): Promise<T> {

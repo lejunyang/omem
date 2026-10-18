@@ -138,12 +138,13 @@ pnpm run dev                # 打开 http://localhost:5173
 
 | # | 操作 | 预期 | 状态 |
 | --- | --- | --- | --- |
-| P1 | 常驻那台 `omem peer invite --url http://<地址>:4317`，另一台 `omem peer add <码>` | 提示配对成功并显示对方版本；`omem peer list` 能看到 | 待验 |
+| P1 | 常驻那台 `omem peer invite`，另一台 `omem peer add <码>` | 自动挑出能连上的地址，提示配对成功并显示对方版本；`omem peer list` 能看到 | 待验 |
+| P1b | 配对后让笔记本断网、换网或休眠再回来 | 直接 `omem diag <它>` 可用，不用重新配对 | 待验 |
 | P2 | 只能经中间机器访问的那台：中间机器先配对它，再在自己机器上 `omem peer add <码> --via <中间机器>` | `omem diag <它>` 返回它的状态 | 待验 |
 | P3 | `omem peer call <它> lark-raw '{"command":"+chat-messages-list","chat_id":"oc_…"}'` | 返回 lark-cli 原始 JSON；发送类命令不在清单里 | 待验 |
 | P4 | `omem peer call <它> update` | 拉代码、装依赖、构建后服务自动重启，`omem diag` 显示新版本 | 待验 |
 | P5 | `omem pull <它>` | 合并进本机，图片等原始文件一并拉到 | 待验 |
-| P6 | 常驻那台设 `"host": "0.0.0.0"` 但不配 `token`，从另一台浏览器直接打开 | 页面提示填写令牌；填 `omem user token owner` 的结果后正常使用，图片能显示 | 待验 |
+| P6 | 常驻那台设 `"host": "0.0.0.0"` 但不配 `token`，从另一台浏览器直接打开 | 页面提示填写令牌；用 `omem link` 打印的链接打开后正常使用，图片能显示；本机打开不要令牌 | 待验 |
 
 ## 已知限制
 

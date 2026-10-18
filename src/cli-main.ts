@@ -189,30 +189,58 @@ program
 const peer = program.command("peer").description("同伴：其他运行 omem 的设备（配对、诊断、远程执行检查命令）");
 peer
   .command("invite")
-  .description("在本机生成配对码，交给另一台设备的 omem peer add")
-  .option("--url <url>", "对方访问本机 omem 的地址（默认 http://<主机名>:<端口>）")
+  .description("在本机生成配对码，交给另一台设备的 omem peer add（服务不必正在运行）")
+  .option("--url <url>", "对方访问本机 omem 的地址（默认列出本机所有网卡地址，对方自动挑能连上的）")
   .option("--label <name>", "给这个配对起个名字（令牌标签）", "device")
   .action(async (o) => {
-    const { invite } = await import("./core/peers.ts");
+    const { invite, serviceRunning } = await import("./core/peers.ts");
     const app = open();
     const r = invite(app, { url: o.url, label: o.label });
-    console.log(`本机：${r.id}  地址：${r.url}\n在另一台设备上运行：\n\n  omem peer add ${r.code}\n\n（服务需要监听对方能访问的地址：配置 host 为 0.0.0.0；撤销即删除标签为 peer:${o.label} 的令牌）`);
+    console.log(`本机：${r.id}\n地址：${r.urls.join("  ") || "（无）"}\n\n在另一台设备上运行：\n\n  omem peer add ${r.code}\n`);
+    if (!o.url && !r.urls.length) console.log(`注意：配置里 host 是 ${app.config.host}，只有本机能访问。改成 "0.0.0.0" 后 omem service restart，再重新 invite。`);
+    if (!(await serviceRunning(app))) console.log("注意：本机 omem 服务现在没在运行；配对码照样有效，对方 add 之前先 omem service start。");
+    console.log(`撤销：omem user revoke owner peer:${o.label}`);
   });
 peer
   .command("add <code>")
-  .description("用配对码添加同伴；--via 表示要经另一个同伴转发才能访问")
+  .description("用配对码添加同伴（重复 add 同一个同伴会更新它）；--via 表示要经另一个同伴转发才能访问")
   .option("--via <peer>", "经由哪个同伴转发")
   .option("--url <url>", "覆盖配对码里的地址")
   .action(async (code: string, o) => {
     const { addPeer, peerJson } = await import("./core/peers.ts");
     const app = open();
-    const p = addPeer(app, code, { via: o.via, url: o.url });
+    const p = await addPeer(app, code, { via: o.via, url: o.url });
     try {
       const d = await peerJson<{ node: string; version: string | null }>(app, p.id, "/api/diag", undefined, 20_000);
-      console.log(`已添加同伴 ${p.id}${p.via ? `（经 ${p.via}）` : ""}，连接正常：${d.node} · ${d.version ?? "版本未知"}`);
+      console.log(`已添加同伴 ${p.id}${p.via ? `（经 ${p.via}）` : `（${p.url}）`}，连接正常：${d.node} · ${d.version ?? "版本未知"}`);
     } catch (e) {
-      console.log(`已添加同伴 ${p.id}，但现在连不上：${(e as Error).message}`);
+      console.log(`已添加同伴 ${p.id}，但现在连不上：${(e as Error).message}\n对方上线后直接用即可，不用重新配对；地址变了用 omem peer url ${p.id} <新地址>。`);
     }
+  });
+peer
+  .command("url <id> <url>")
+  .description("同伴换了地址、原来的都连不上时，指定新地址（不用重新配对）")
+  .action(async (id: string, url: string) => {
+    const { setPeerUrl } = await import("./core/peers.ts");
+    console.log(`已更新：${setPeerUrl(open(), id, url).url}`);
+  });
+program
+  .command("link")
+  .description("从其他设备用浏览器打开本机网页的链接（带一个新令牌；本机打开不需要）")
+  .option("--label <name>", "令牌标签", "web")
+  .action(async (o) => {
+    const { localUrls, serviceRunning } = await import("./core/peers.ts");
+    const { createApiToken, OWNER } = await import("./core/users.ts");
+    const app = open();
+    const urls = localUrls(app);
+    if (!urls.length) {
+      console.log(`配置里 host 是 ${app.config.host}，只有本机能访问：直接打开 http://127.0.0.1:${app.config.port}。要从其他设备打开，把 host 改成 "0.0.0.0" 后 omem service restart。`);
+      return;
+    }
+    const t = createApiToken(app, OWNER, o.label);
+    for (const u of urls) console.log(`${u}/?token=${t}`);
+    console.log("\n任选一个对方能访问的地址；打开一次后令牌存在那个浏览器里，之后直接访问地址即可。");
+    if (!(await serviceRunning(app))) console.log("注意：服务现在没在运行（omem service start）。");
   });
 peer
   .command("list")
@@ -221,7 +249,7 @@ peer
     const { listPeers, nodeId } = await import("./core/peers.ts");
     const app = open();
     console.log(`本机：${nodeId(app)}`);
-    for (const p of listPeers(app)) console.log(`- ${p.id}  ${p.via ? `经 ${p.via}` : p.url}  （${p.addedAt.slice(0, 10)} 添加）`);
+    for (const p of listPeers(app)) console.log(`- ${p.id}  ${p.via ? `经 ${p.via}` : p.url}${!p.via && (p.urls?.length ?? 0) > 1 ? `（备用 ${p.urls!.length - 1} 个地址）` : ""}  （${p.addedAt.slice(0, 10)} 添加）`);
   });
 peer
   .command("remove <id>")
@@ -411,6 +439,20 @@ user
   .action(async (userId, label) => {
     const { createApiToken } = await import("./core/users.ts");
     console.log(createApiToken(open(), userId, label ?? ""));
+  });
+user
+  .command("tokens [userId]")
+  .description("列出 API 令牌（标签、创建与最近使用时间）")
+  .action(async (userId?: string) => {
+    const { listApiTokens } = await import("./core/users.ts");
+    for (const t of listApiTokens(open(), userId)) console.log(`${t.user_id}  ${t.label || "（无标签）"}  创建 ${t.created_at.slice(0, 16)}  最近使用 ${t.last_used_at?.slice(0, 16) ?? "-"}`);
+  });
+user
+  .command("revoke <userId> <label>")
+  .description("按标签撤销令牌（配对是 peer:<名字>，网页链接是 web）")
+  .action(async (userId: string, label: string) => {
+    const { revokeApiTokens } = await import("./core/users.ts");
+    console.log(`已撤销 ${revokeApiTokens(open(), userId, label)} 个令牌`);
   });
 space
   .command("share <spaceId> <userId>")

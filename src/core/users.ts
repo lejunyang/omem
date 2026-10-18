@@ -118,6 +118,21 @@ export function createApiToken(app: App, userId: string, label = "") {
   return token;
 }
 
+export function listApiTokens(app: App, userId?: string) {
+  return all<{ user_id: string; label: string; created_at: string; last_used_at: string | null }>(
+    app.db,
+    `select user_id, label, created_at, last_used_at from api_tokens${userId ? " where user_id = ?" : ""} order by created_at`,
+    ...(userId ? [userId] : []),
+  );
+}
+
+/** Revoke a user's tokens by label (a pairing is `peer:<label>`); returns how many. */
+export function revokeApiTokens(app: App, userId: string, label: string) {
+  const n = all(app.db, "select 1 from api_tokens where user_id = ? and label = ?", userId, label).length;
+  run(app.db, "delete from api_tokens where user_id = ? and label = ?", userId, label);
+  return n;
+}
+
 /** The user a bearer token stands for: the configured token is the owner's. */
 export function userForToken(app: App, token: string): string | null {
   if (!token) return null;
