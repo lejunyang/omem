@@ -100,17 +100,20 @@ describe("people across Feishu apps", () => {
   it("keeps lark-cli's ids out of chat lines and shows emails on the page", async () => {
     const app = testApp();
     fakeContacts({ [A]: { name: "小王", email: "wang@example.com" }, [B]: { name: "小李", email: "li@example.com" } });
-    const card = { message_id: "om_c", msg_type: "interactive", content: `<card title="待审批">\n提交人 @小王(${A})\n</card>`, create_time: String(Date.now()), sender: { id: "cli_x", name: "审批", sender_type: "app" } };
+    const card = { message_id: "om_c", msg_type: "interactive", content: `<card title="待审批">\n提交人 @小王(${A}) 抄送 @Deng Zhou (周灯)(${C})\n</card>`, create_time: String(Date.now()), sender: { id: "cli_x", name: "审批", sender_type: "app" } };
     const text = { message_id: "om_t", msg_type: "text", content: "@小李 看下", create_time: String(Date.now()), sender: { id: A, name: "小王" }, mentions: [{ id: B, key: "@_user_1", name: "小李" }] };
     const line = formatLine(card as never, {});
-    expect(line).toContain("提交人 @小王");
+    expect(line).toContain("提交人 @小王 抄送 @Deng Zhou (周灯)");
     expect(line).not.toContain("ou_");
     const src = upsertSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_x", title: "群", text: [line, formatLine(text as never, {})].join("\n") });
     storeMessages(app, "oc_x", [card, text] as never, { sourceId: src.id, firstLine: 1 });
     await learnPeople(app, [card, text] as never);
     const view = sourceMessages(app, src.id);
     expect(view.messages[0].content).not.toContain("ou_");
-    expect(view.messages[0].mentions).toEqual([{ name: "小王", email: "wang@example.com" }]);
+    expect(view.messages[0].mentions).toEqual([
+      { name: "小王", email: "wang@example.com" },
+      { name: "Deng Zhou (周灯)", email: null },
+    ]);
     expect(view.messages[1].mentions).toEqual([{ name: "小李", email: "li@example.com" }]);
     // The stored row keeps the id.
     expect(one<{ content: string }>(app.db, "select content from lark_messages where message_id = 'om_c'")!.content).toContain(A);

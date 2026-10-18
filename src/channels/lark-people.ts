@@ -64,7 +64,7 @@ export function peopleByCliIds(app: App, ids: string[]): Map<string, Person> {
 /** lark-cli open_ids in a captured message: sender, mentions, and `@name(ou_…)` inside rendered cards. */
 export function cliIdsIn(text: string, extra: (string | undefined)[] = []) {
   const ids = new Set(extra.filter((x): x is string => !!x && x.startsWith("ou_")));
-  for (const m of text.matchAll(/@[^@()\s]{1,40}\((ou_[0-9a-f]{32})\)/g)) ids.add(m[1]);
+  for (const m of text.matchAll(/@[^@\n]{1,60}?\((ou_[0-9a-f]{32})\)/g)) ids.add(m[1]);
   return [...ids];
 }
 

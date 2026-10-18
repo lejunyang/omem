@@ -101,7 +101,9 @@ function senderKind(m: LarkMessage, owner?: string) {
 }
 const oneLine = (s: string) => s.replace(/\r?\n/g, " ⏎ ");
 /** `@名字(ou_…)` as lark-cli renders mentions in cards → `@名字`: the id is lark-cli's own, useless elsewhere. */
-export const withoutOpenIds = (s: string) => s.replace(/(@[^@()\s]{1,40})\(ou_[0-9a-f]{32}\)/g, "$1");
+export const withoutOpenIds = (s: string) => s.replace(MENTION_WITH_ID, "@$1");
+/** `@名字(ou_…)`; names may have spaces and brackets ("@Deng Zhou (周灯)(ou_…)"). */
+export const MENTION_WITH_ID = /@([^@\n]{1,60}?)\((ou_[0-9a-f]{32})\)/g;
 const plain = (s: string) =>
   s
     .replace(/<at [^>]*>([^<]*)<\/at>/g, "@$1")
@@ -247,7 +249,7 @@ export async function learnPeople(app: App, messages: LarkMessage[]) {
  * names and emails.
  */
 export async function cleanUpLarkIds(app: App) {
-  if (one(app.db, "select 1 from kv where key = 'lark_open_ids_cleaned'")) return;
+  if (one(app.db, "select 1 from kv where key = 'lark_open_ids_cleaned_v2'")) return;
   for (const s of all<{ id: string; space_id: string; kind: string; uri: string; title: string; text: string; meta: string }>(
     app.db,
     "select id, space_id, kind, uri, title, text, meta from sources where kind = 'chat' and deleted_at is null and text like '%(ou_%'",
@@ -258,7 +260,7 @@ export async function cleanUpLarkIds(app: App) {
   const rows = all<{ content: string; mentions: string; sender_id: string | null; sender_kind: string }>(app.db, "select content, mentions, sender_id, sender_kind from lark_messages");
   const ids = rows.flatMap((r) => cliIdsIn(r.content, [r.sender_kind === "app" ? undefined : (r.sender_id ?? undefined), ...json<{ id: string }[]>(r.mentions, []).map((x) => x.id)]));
   await learnCliPeople(app, ids).catch(() => {});
-  run(app.db, "insert into kv(key,value) values('lark_open_ids_cleaned', ?) on conflict(key) do update set value = excluded.value", new Date().toISOString());
+  run(app.db, "insert into kv(key,value) values('lark_open_ids_cleaned_v2', ?) on conflict(key) do update set value = excluded.value", new Date().toISOString());
 }
 
 /** Quoted (replied-to) messages: from what is stored, else fetched once and stored as context. */
@@ -384,8 +386,9 @@ export function sourceMessages(app: App, sourceId: string) {
   const people = peopleByCliIds(app, [...new Set(rows.flatMap(idsOf))]);
   rows.forEach((r, i) => {
     const seen = new Map<string, { name: string; email: string | null }>();
-    for (const x of json<{ id: string; name: string }[]>(r.mentions, [])) seen.set(x.id, { name: people.get(x.id)?.name || x.name, email: people.get(x.id)?.email ?? null });
-    for (const m of r.content.matchAll(/@([^@()\s]{1,40})\((ou_[0-9a-f]{32})\)/g)) seen.set(m[2], { name: people.get(m[2])?.name || m[1], email: people.get(m[2])?.email ?? null });
+    // The name as written in the message, so the page can find it there.
+    for (const x of json<{ id: string; name: string }[]>(r.mentions, [])) seen.set(x.id, { name: x.name || people.get(x.id)?.name || "", email: people.get(x.id)?.email ?? null });
+    for (const m of r.content.matchAll(MENTION_WITH_ID)) seen.set(m[2], { name: m[1], email: people.get(m[2])?.email ?? null });
     views[i].mentions = [...seen.values()];
     views[i].content = withoutOpenIds(views[i].content);
   });

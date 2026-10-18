@@ -229,7 +229,8 @@ export type LarkCheck = { botName?: string; botOpenId?: string; missingScopes: s
 /** The developer console page that asks for these permissions on this app (the owner opens it and applies). */
 export function larkScopeLink(appId: string, scopes: string[], brand?: string) {
   const host = brand === "lark" ? "open.larksuite.com" : "open.feishu.cn";
-  return `https://${host}/app/${appId}/auth?q=${encodeURIComponent(scopes.join(","))}&op_from=openapi&token_type=tenant`;
+  // Scope names are [a-z:._] only; Feishu's own links write them as they are.
+  return `https://${host}/app/${appId}/auth?q=${scopes.join(",")}&op_from=openapi&token_type=tenant`;
 }
 
 /** Get a tenant token and read the bot's info and granted scopes. Does not send anything. */
