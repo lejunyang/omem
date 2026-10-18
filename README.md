@@ -86,7 +86,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 | 读懂一个陌生项目，定位实现、知道怎么改 | 建代码仓库空间 → 生成 Wiki；或直接在问答里问，助理会读代码并给出修改入口。原件页点函数名可看谁调用它、它调用了谁 |
 | 关注一个项目或讨论，持续整理需求、责任和下一步 | 在问答里说“关注 X”，或订阅飞书会话；巡检只在有需要你知道的变化时通知 |
 | 交办等待、提醒、待办，并在改期或完成后维护同一事项 | 问答里交代，或在“事项”页添加；每个事项都有时间线 |
-| 交办编码、看进度、看实际差异与评审结果 | 问答里说“在 xx 仓库实现…”，或 `omem delegate`；在“运行”页看检查输出、diff、评审，确认后应用 |
+| 交办编码（可以几个仓库一起改）、看进度、看实际差异与评审结果 | 问答里说“在 xx 仓库实现…”“前端和订单服务一起改…”，或 `omem delegate`；每个仓库一个独立 worktree，改过的文件在应用前可检索；在“运行”页看检查输出、按仓库的 diff、评审，确认后所有仓库一起应用 |
 | 采集消息、筛选关注群、生成简报 | `omem setup` 选择读取方式，或设置 → 渠道 勾选会话（只读）；定时任务里开启采集、巡检和“筛选值得关注的飞书群” |
 | 用间隔重复学习（如英语） | 打开材料点“生成卡片”，在“学习”页按 FSRS 复习；或对助理说“我想练英语开会表达，每天 8 张，晚上九点提醒我”建学习目标；聊天里 `/review` 复习；可与 Anki 互相导入导出（制表符文本） |
 | 每天早上知道今天该处理什么 | 定时任务开启“简报”，通过站内和机器人推送 |
@@ -132,6 +132,7 @@ omem wiki plan omem -f "读者是新加入的后端开发"  # 规划并逐页生
 omem wiki lint omem                         # 原件变化后修正受影响的页面
 omem items / omem todo "交报销单" --remind 2026-10-19T09:00+09:00
 omem delegate omem "给 search 加按时间过滤" --check "pnpm test"
+omem delegate shop "订单页显示退款状态" --repos shop-web,shop-api   # 项目里几个仓库一起改
 omem mcp [--read-only] [--space <id>]       # 把个人库作为 MCP 服务给其他 Agent 用（默认空间按当前目录所在的仓库空间）
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
 omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入
@@ -153,7 +154,7 @@ omem lark bot-permissions [--scan]           # 机器人缺哪些权限（@ 人�
 omem link                                   # 从其他设备打开网页的链接（带令牌）
 ```
 
-数据目录默认 `~/.omem`（`--home` 或 `OMEM_HOME` 可改）：`config.json` 配置，`omem.db` 索引与记录，`library/` 是 Wiki 的 Git 仓库，`files/` 存原始文件，`runs/` 存交办编码的工作区和补丁。
+数据目录默认 `~/.omem`（`--home` 或 `OMEM_HOME` 可改）：`config.json` 配置，`omem.db` 索引与记录，`library/` 是 Wiki 的 Git 仓库，`files/` 存原始文件，`runs/` 存交办编码的工作区（每个仓库一个 worktree）和补丁。
 
 ## 给其他 Agent 用
 

@@ -5,9 +5,13 @@ import { all, one, run } from "./db.ts";
 import { commitLibrary } from "./git.ts";
 import { HttpError, json, now, slugify } from "./util.ts";
 
-export type SpaceKind = "personal" | "project" | "repo" | "learning" | "topic";
+/**
+ * `worktree` spaces are temporary: the files a delegated coding run changed, indexed while its
+ * worktree exists (src/agents/worktree-index.ts). They are left out of listings, jobs and sync.
+ */
+export type SpaceKind = "personal" | "project" | "repo" | "learning" | "topic" | "worktree";
 /** How kinds read to people and agents. `topic` is the general-purpose kind. */
-export const SPACE_KIND_LABELS: Record<SpaceKind, string> = { personal: "个人", project: "项目", repo: "代码仓库", learning: "学习", topic: "通用" };
+export const SPACE_KIND_LABELS: Record<SpaceKind, string> = { personal: "个人", project: "项目", repo: "代码仓库", learning: "学习", topic: "通用", worktree: "交办工作区" };
 export const kindLabel = (k: string) => SPACE_KIND_LABELS[k as SpaceKind] ?? k;
 export type Space = {
   id: string;
@@ -36,8 +40,9 @@ export function spaceDir(app: App, id: string) {
   return join(app.libraryDir, id);
 }
 
-export function listSpaces(app: App): Space[] {
-  return all<Row>(app.db, "select * from spaces order by kind = 'personal' desc, updated_at desc").map(toSpace);
+/** Spaces in order; temporary worktree spaces only when asked for. */
+export function listSpaces(app: App, opts: { worktrees?: boolean } = {}): Space[] {
+  return all<Row>(app.db, `select * from spaces ${opts.worktrees ? "" : "where kind != 'worktree'"} order by kind = 'personal' desc, updated_at desc`).map(toSpace);
 }
 
 export function getSpace(app: App, id: string): Space {

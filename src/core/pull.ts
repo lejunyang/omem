@@ -228,7 +228,7 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
   try {
     tx(db, () => {
       // Spaces: add missing ones; keep local settings and paths.
-      for (const s of all<{ id: string; root_path: string | null }>(db, "select id, root_path from r.spaces where id not in (select id from main.spaces)")) {
+      for (const s of all<{ id: string; root_path: string | null }>(db, "select id, root_path from r.spaces where id not in (select id from main.spaces) and kind != 'worktree'")) {
         const cols = columns(db, "spaces").filter((c) => columns(db, "spaces", "r").includes(c));
         run(db, `insert into main.spaces(${cols.join(",")}) select ${cols.join(",")} from r.spaces where id = ?`, s.id);
         if (s.root_path && !existsSync(s.root_path)) unlinkMissingRoot(db, s.id);
@@ -240,7 +240,8 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
         db,
         `select r.id, r.space_id, r.uri, r.kind, r.updated_at, length(r.text) len, r.deleted_at,
                 l.id local_id, l.updated_at local_updated, length(l.text) local_len
-           from r.sources r left join main.sources l on l.space_id = r.space_id and l.uri = r.uri`,
+           from r.sources r left join main.sources l on l.space_id = r.space_id and l.uri = r.uri
+          where r.space_id not in (select id from r.spaces where kind = 'worktree')`,
       );
       const srcCols = columns(db, "sources").filter((c) => columns(db, "sources", "r").includes(c) && c !== "id");
       const idMap = new Map<string, string>();

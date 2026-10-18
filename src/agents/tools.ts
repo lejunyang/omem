@@ -84,6 +84,7 @@ function inScope(ctx: ToolContext, spaceId: string, what: string) {
 /** A space to write into: readable and writable. */
 function writeSpace(ctx: ToolContext, requested?: string | null) {
   const id = space(ctx, requested);
+  if (findSpace(ctx.app, id)!.kind === "worktree") throw new HttpError(403, `空间 ${id} 是交办工作区的临时索引，只能读；写进对应的仓库或项目空间`);
   inScope(ctx, id, "内容");
   return id;
 }
@@ -186,7 +187,7 @@ def({
     }
     try {
       const report = await syncDirectorySpace(ctx.app, s.id);
-      return `已关联仓库到空间 ${s.id}（${s.name}）。\n目录：${root}\n导入：新增 ${report.created}，更新 ${report.updated}，跳过 ${report.skipped.length}。交办编码请用 repo_space: "${s.id}"。`;
+      return `已关联仓库到空间 ${s.id}（${s.name}）。\n目录：${root}\n导入：新增 ${report.created}，更新 ${report.updated}，跳过 ${report.skipped.length}。交办编码请在 repo_spaces 里写 "${s.id}"。`;
     } catch {
       return `空间 ${s.id} 已关联仓库 ${root}，但索引同步失败；关联已保留，重试 connect_repository 可重新同步。`;
     }
@@ -195,10 +196,10 @@ def({
 
 def({
   name: "list_spaces",
-  description: "列出可访问的知识空间（领域隔离：个人、项目、代码仓库、学习、通用），以及空间之间的关联。",
+  description: "列出可访问的知识空间（领域隔离：个人、项目、代码仓库、学习、通用），以及空间之间的关联。交办工作区是进行中的交办改过的文件（临时，只读），工作区删除后消失。",
   schema: z.object({}),
   handler: (ctx) =>
-    listSpaces(ctx.app)
+    listSpaces(ctx.app, { worktrees: true })
       .filter((s) => !ctx.spaces || ctx.spaces.includes(s.id))
       .map((s) => {
         const rel = relatedSpaces(ctx.app, s.id).filter((r) => !ctx.spaces || ctx.spaces.includes(r.space));
@@ -1191,19 +1192,28 @@ def({
 def({
   name: "delegate_code",
   description:
-    "交办编码任务：在指定代码仓库空间的独立 Git worktree 中由编码 Agent 实现，运行检查，再由评审 Agent 审查。返回运行 id，可用 read_run 查看进度。仅在用户明确要求实现/修改代码时使用。",
+    "交办编码任务：每个涉及的代码仓库空间各开一个独立 Git worktree，由同一个编码 Agent 一起实现，分别运行检查，再由评审 Agent 审查；应用时所有仓库一起应用。改过的文件在工作区存在期间可检索（交办工作区空间）。返回运行 id，可用 read_run 查看进度。仅在用户明确要求实现/修改代码时使用。",
   write: true,
   schema: z.object({
-    repo_space: z.string().describe("代码仓库空间 id"),
-    task: z.string().describe("完整的任务描述：目标、背景、验收标准、相关讨论"),
-    check_command: z.string().optional().describe("验证命令，如 npm test"),
+    repo_spaces: z.array(z.string()).min(1).describe("要改的代码仓库空间 id；一个需求要同时改几个仓库（如前端和接口）就都写上"),
+    task: z.string().describe("完整的任务描述：目标、背景、验收标准、相关讨论；多个仓库时写清各自要改什么、接口怎么对上"),
+    check_command: z.string().optional().describe("验证命令，如 npm test；对所有仓库生效，除非 check_commands 单独指定"),
+    check_commands: z.record(z.string(), z.string()).optional().describe("按仓库空间 id 指定的验证命令"),
+    space: z.string().optional().describe("任务所属的空间（如项目空间），默认第一个仓库"),
   }),
-  handler: (ctx, a) => {
-    const id = writeSpace(ctx, a.repo_space);
-    const s = findSpace(ctx.app, id)!;
-    if (!s.rootPath) throw new HttpError(400, `空间 ${id} 没有关联代码目录；先用 connect_repository 传本地仓库绝对路径或 Git 链接关联，再交办`);
-    const r = createRun(ctx.app, { kind: "code", spaceId: id, title: truncate(a.task.split("\n")[0], 80), input: { task: a.task, checkCommand: a.check_command }, parentId: ctx.runId });
-    return `已交办，运行 ${r.id}。完成后会通知。`;
+  handler: async (ctx, a) => {
+    const ids = [...new Set(a.repo_spaces.map((r) => writeSpace(ctx, r)))];
+    const home = a.space ? space(ctx, a.space) : ids[0];
+    const { codeRepos } = await import("./code.ts");
+    codeRepos(ctx.app, home, ids);
+    const r = createRun(ctx.app, {
+      kind: "code",
+      spaceId: home,
+      title: truncate(a.task.split("\n")[0], 80),
+      input: { task: a.task, checkCommand: a.check_command, repos: ids, checks: a.check_commands },
+      parentId: ctx.runId,
+    });
+    return `已交办，运行 ${r.id}（${ids.join("、")}）。完成后会通知。`;
   },
 });
 
@@ -1292,15 +1302,16 @@ def({
 
 def({
   name: "apply_code_run",
-  description: "把已完成并通过评审的交办改动应用到仓库工作区（未提交的修改）。只在本人明确要求应用/合入时使用。",
+  description: "把已完成并通过评审的交办改动应用到仓库工作区（未提交的修改）；涉及多个仓库时一起应用，任一仓库不能干净应用就都不动。应用后删除交办的 worktree。只在本人明确要求应用/合入时使用。",
   write: true,
   schema: z.object({ run_id: z.string() }),
   handler: async (ctx, a) => {
     const r = getRun(ctx.app, a.run_id);
-    if (r.spaceId) inScope(ctx, r.spaceId, "代码");
+    const repos = (r.input as { repos?: string[] }).repos ?? (r.spaceId ? [r.spaceId] : []);
+    for (const id of repos) inScope(ctx, id, "代码");
     const { applyCodeRun } = await import("./code.ts");
-    applyCodeRun(ctx.app, a.run_id);
-    return `已把运行 ${a.run_id} 的改动应用到 ${r.spaceId} 的工作区（未提交），请在仓库里检查后提交。`;
+    const res = applyCodeRun(ctx.app, a.run_id);
+    return `已把运行 ${a.run_id} 的改动应用到 ${res.spaces.join("、")} 的工作区（未提交），请在仓库里检查后提交。交办的 worktree 和它的临时索引已删除。`;
   },
 });
 

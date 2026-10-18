@@ -64,7 +64,7 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
     _skills/<名称>/SKILL.md    技能（内置技能从 skills/library 播种）
   files/                      上传与采集的原始文件（代码仓库只记录路径，不复制）
   repos/                      对话接入 Git 链接后克隆的仓库（不在知识库 Git 中）
-  runs/<run-id>/              交办编码的 worktree 与补丁
+  runs/<run-id>/              交办编码的 worktree（work/<空间>/）与补丁（patches/<空间>.patch）
   agents/<id>/<版本>/          从 ACP 注册表下载的 Agent 程序
   secrets/                    lark.json（App Secret）、peers.json（同伴地址与令牌），均 0600
   service/                    后台服务的 PM2 数据与日志
@@ -117,7 +117,9 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 事项类型：`todo`、`waiting`（等谁回复）、`reminder`、`watch`（关注某项目/群/文档）。心跳任务按配置周期运行：读关注对象的新增材料和到期事项，由 Agent 判断是否有需要本人知道/决定的变化；无变化输出 `QUIET`，不打扰。
 
 ### 5. 交办 Agent
-`coder` 在目标仓库的 Git worktree 中工作；完成后宿主运行项目检查命令，`reviewer`（可配置为不同模型）评审 diff；Run 页面显示计划、实际命令、检查输出、diff、评审结论。应用补丁需本人确认。
+`coder` 在目标仓库的 Git worktree 中工作；一个需求要同时改几个仓库（前端和接口、SDK 和调用方）时，每个仓库各开一个 worktree，放在同一个工作目录下，由同一个 coder 一起改。完成后宿主在每个仓库运行各自的检查命令，`reviewer`（可配置为不同模型）评审全部 diff；Run 页面显示计划、实际命令、按仓库的检查输出和 diff、评审结论。应用补丁需本人确认，所有仓库先逐个检查能否干净应用，都能才一起应用，之后删除 worktree。
+
+改过的文件（新增和修改的，不含删除）在 worktree 存在期间建索引，放在临时空间 `wt-<运行id>-<仓库空间>`（类型 `worktree`）里：评审和之后的问答能用 `search` / `find_symbol` 查到新代码，仓库自己的索引不受影响。临时空间不出现在空间列表、定时任务和 `omem pull` 里，只能读不能写；worktree 删除（应用、丢弃，或手动删掉后的下一次仓库同步）时连同索引一起删除。
 
 ### 6. 学习
 从材料或对话生成卡片（问答/完形/例句），FSRS 调度；每日到期卡片在 Web 与机器人里复习（聊天里 `/review` 逐张出题打分）。学习目标（`src/learn/goals.ts`）记录方向、每日张数和提醒时间：提醒前从该空间新材料出卡，反复忘的卡换角度补卡，统计记住率与连续天数。
@@ -179,6 +181,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 巡检（到期提醒不调模型；关注/等待有新材料时才调用） | 已实现 | `roles/heartbeat.md` |
 | 简报、做梦整理、经验与偏好回灌到后续任务 | 已实现 | `roles/brief.md`、`dreamer.md`、`runner.ts` |
 | 交办编码：worktree → 检查 → 独立评审 → 确认后应用 | 已实现，演示仓库实测 | `src/agents/code.ts` |
+| 交办可同时改多个仓库（每个仓库一个 worktree，一起应用）；改过的文件在 worktree 存在期间可检索，删除时索引一起删 | 已实现，测试覆盖（`test/code-worktrees.test.ts`）；2026-10-19；真实 Agent 跨仓库交办待验 | `src/agents/code.ts`、`src/agents/worktree-index.ts` |
 | 跨文件调用图：按导入绑定解析调用到具体定义（相对路径、index、`.js`→`.ts`、`@/` 别名、重导出、默认导出、命名空间、`this`/`self` 方法；Python 绝对/相对/包导入） | 已实现，测试覆盖；本仓库 4032 处调用中 1098 处解析到仓库内定义，其余多为标准库与对象方法 | `src/sources/callgraph.ts`、`find_symbol`、原件页“结构”栏 |
 | Go / Rust / Java / Kotlin / Swift：tree-sitter（`web-tree-sitter` 0.25 + `tree-sitter-wasms`，WebAssembly，按需加载语法）切分符号、导入和调用；按包（Go 目录与导入路径、Java/Kotlin 包与静态导入、Rust `use`/`mod`/工作区 crate、Swift 整个模块）解析，隐式 this/self、接收者、扩展、伴生对象 | 已实现，测试覆盖；真实仓库抽查：cobra 31%、ripgrep 18%、gson 22%、moshi 18%、Alamofire 20% 的调用解析到仓库内定义（其余多为对变量调用方法和标准库/测试框架）；Swift 解析较慢（约 70 ms/千行，其余语言快一个数量级） | `src/sources/treesitter.ts`、`callgraph.ts` |
 | C / C++ / Objective-C、C#、PHP、Ruby、Scala、Dart、Lua、Zig、Elixir、OCaml、ReScript、Solidity、Bash、Emacs Lisp：tree-sitter，按语言写成小规格（声明、成员、调用、导入节点）由 `treesitter-more.ts` 统一抽取；语法按需加载。调用解析按名称：本类型（含 C++ 类外定义、Ruby 重开类）→ 本文件 → 导入带进来的文件（`#include` 连同同名 .c/.cpp、`require`、`open`、不带别名的 `import`）→ `类型.成员` → 同语言里唯一的同名定义；C++/C# 命名空间里的函数只对同一命名空间内可见 | 已实现，多语言夹具测试覆盖；真实仓库解析率：cJSON 70%、fmt 31%、plug（Elixir）43%、MediatR（C#）16%、Slim（PHP）16%、sinatra 14%、os-lib（Scala）24%、dart-lang/http 24%、inspect.lua 25%。已知误连：用宏包起来的命名空间（如 fmt 的 `FMT_BEGIN_NAMESPACE`）被当成全局，`printf`/`size` 这类常见名会连到项目里同名的定义。Lua 用 vendor/ 里较新的语法（tree-sitter-wasms 里的 Lua 语法第二次解析起就出错）；Elm、QL 的语法与运行时不兼容，未接入 | `src/sources/treesitter-more.ts`、`callgraph.ts` 的 nameResolver |

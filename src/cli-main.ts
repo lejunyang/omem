@@ -693,10 +693,12 @@ program
 
 program
   .command("delegate <space> <task...>")
-  .description("交办编码：独立 worktree 实现 → 检查 → 独立评审")
-  .option("--check <command>", "检查命令")
+  .description("交办编码：每个仓库一个独立 worktree 实现 → 检查 → 独立评审")
+  .option("--check <command>", "检查命令（对所有仓库生效）")
+  .option("--repos <ids>", "一起改的仓库空间，逗号分隔（默认就是 <space>；<space> 可以是项目空间）")
   .action(async (sp, task: string[], o) => {
-    const r = await runJob((app) => createRun(app, { kind: "code", spaceId: sp, title: task.join(" ").slice(0, 80), input: { task: task.join(" "), checkCommand: o.check } }), { stream: false });
+    const repos = o.repos ? String(o.repos).split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+    const r = await runJob((app) => createRun(app, { kind: "code", spaceId: sp, title: task.join(" ").slice(0, 80), input: { task: task.join(" "), checkCommand: o.check, repos } }), { stream: false });
     const out = r.output as { diffStat?: string; review?: string; verdict?: string };
     console.log(`${out.diffStat ?? ""}\n\n${out.review ?? ""}\n\n结论：${out.verdict ?? r.status}\n运行 id：${r.id}`);
   });

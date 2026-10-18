@@ -125,6 +125,8 @@ export type RoleRunInput = {
   spaceId: string;
   /** Spaces this run may touch; defaults to all for the assistant, the space otherwise. */
   spaces?: string[] | null;
+  /** Extra spaces the run may read but never write (a delegation's indexed worktree changes). */
+  alsoRead?: string[];
   task: string;
   runId: string | null;
   cwd?: string;
@@ -159,7 +161,7 @@ export type PreparedRun = {
  */
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: { chats: string[] | null; draft?: boolean }; shadow?: { parentRunId: string | null } },
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: { chats: string[] | null; draft?: boolean }; shadow?: { parentRunId: string | null } },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -199,7 +201,7 @@ export function prepareRun(
   // repo or project sees what the others it depends on already say.
   const allowed = scopeFor(app, userId, null);
   const related = relatedSpaces(app, space.id).filter((r) => !allowed || allowed.includes(r.space));
-  const readable = scoped ? [...new Set([...scoped, ...related.map((r) => r.space)])] : null;
+  const readable = scoped ? [...new Set([...scoped, ...related.map((r) => r.space), ...(input.alsoRead ?? []).filter((id) => !allowed || allowed.includes(id))])] : null;
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
   const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, shadow: input.shadow });
@@ -268,7 +270,7 @@ export function fallbackProfiles(
 /** Run a role-defined agent turn with omem tools attached. */
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string }> {
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
-  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow });
+  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow });
   const chain = input.spec || input.shadow
     ? [base.profile] // explicit agent specs choose their own backend; no silent rerouting
     : fallbackProfiles(app, actor, base.profile.id);
@@ -276,7 +278,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   let lastError: unknown;
   for (let i = 0; i < chain.length; i++) {
     const profile = chain[i];
-    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined });
+    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined });
     try {
       const req = {
         cwd: prep.cwd,

@@ -1,6 +1,7 @@
 import "./agents/jobs.ts";
 import { learningTick, scheduleMemoryReview, scheduleSpaceSync } from "./agents/jobs.ts";
 import { createRun, listRuns, startWorker } from "./agents/runs.ts";
+import { sweepWorktreeSpaces } from "./agents/worktree-index.ts";
 import { App } from "./core/app.ts";
 import { ensureDefaultSchedules, registerScheduleKind, restartScheduler } from "./core/scheduler.ts";
 import { ensurePersonalSpace, listSpaces } from "./core/spaces.ts";
@@ -15,6 +16,8 @@ registerScheduleKind("heartbeat", (app) => {
 registerScheduleKind("dream", (app) => createRun(app, { kind: "dream", spaceId: "personal", title: "整理记忆与页面" }));
 registerScheduleKind("repo-sync", (app) => {
   for (const s of listSpaces(app)) if (s.rootPath) scheduleSpaceSync(app, s.id);
+  // Delegation worktrees removed by hand take their temporary index with them.
+  sweepWorktreeSpaces(app);
 });
 
 registerScheduleKind("memory-review", (app) => scheduleMemoryReview(app));
@@ -44,6 +47,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   ensurePersonalSpace(app);
   ensureDefaultSchedules(app);
   for (const s of listSpaces(app)) syncWiki(app, s.id);
+  sweepWorktreeSpaces(app);
   const { seedBuiltinSkills } = await import("./agents/specs.ts");
   const { packageRoot } = await import("./setup.ts");
   seedBuiltinSkills(app, packageRoot());

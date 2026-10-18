@@ -17,7 +17,7 @@ const router = useRouter();
 const runs = ref<Run[]>([]);
 const kind = ref("");
 const showQuiet = ref(false);
-const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; patch?: string } | null>(null);
+const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; patches?: { space: string; patch: string }[] } | null>(null);
 const id = computed(() => route.params.id as string | undefined);
 
 const listLoading = ref(true);
@@ -57,17 +57,27 @@ onBeforeUnmount(() => off());
 
 const out = computed(() => detail.value?.run.output ?? {});
 const finalText = computed(() => out.value.answer ?? out.value.summary ?? out.value.coderSummary ?? "");
-const diffFiles = computed(() => {
-  const p = detail.value?.patch ?? "";
-  if (!p) return [];
-  return p
-    .split(/^diff --git /m)
-    .filter(Boolean)
-    .map((chunk) => {
-      const name = /^a\/(\S+)/.exec(chunk)?.[1] ?? "?";
-      const lines = chunk.split("\n").slice(1);
-      return { name, lines, add: lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length, rm: lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length };
-    });
+// One entry per repository (a delegation may change several together).
+const diffs = computed(() =>
+  (detail.value?.patches ?? []).map((p) => ({
+    space: p.space,
+    files: p.patch
+      .split(/^diff --git /m)
+      .filter(Boolean)
+      .map((chunk) => {
+        const name = /^a\/(\S+)/.exec(chunk)?.[1] ?? "?";
+        const lines = chunk.split("\n").slice(1);
+        return { name, lines, add: lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length, rm: lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length };
+      }),
+  })),
+);
+const fileCount = computed(() => diffs.value.reduce((n, d) => n + d.files.length, 0));
+const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
+type Check = { command: string; code: number; output: string };
+const checks = computed<{ space: string; check: Check }[]>(() => {
+  const repos = (out.value.repos ?? []) as { space: string; check: Check | null }[];
+  if (repos.length) return repos.filter((r) => r.check).map((r) => ({ space: repos.length > 1 ? r.space : "", check: r.check! }));
+  return out.value.check ? [{ space: "", check: out.value.check }] : [];
 });
 async function act(action: "cancel" | "retry" | "apply" | "discard") {
   if (!detail.value) return;
@@ -81,13 +91,23 @@ async function act(action: "cancel" | "retry" | "apply" | "discard") {
   }
 }
 const delegateOpen = ref(false);
-const task = ref({ space: "", task: "", check: "" });
+const task = ref({ repos: [] as string[], task: "", check: "" });
 const repos = computed(() => state.spaces.filter((s) => s.rootPath));
+const current = computed(() => state.spaces.find((s) => s.id === state.space));
+// Start from the current repository, or the repositories related to the current project.
+watch(delegateOpen, (open) => {
+  if (!open || task.value.repos.length) return;
+  const here = current.value;
+  const ids = repos.value.map((r) => r.id);
+  task.value.repos = here?.rootPath ? [here.id] : (here?.related ?? []).map((r) => r.space).filter((id) => ids.includes(id));
+});
 async function delegate() {
   try {
-    const r = await post<Run>("/api/delegate", { space: task.value.space || repos.value[0]?.id, task: task.value.task, checkCommand: task.value.check || undefined });
+    // A task started from a project belongs to the project; otherwise to its first repository.
+    const space = current.value?.kind === "project" ? current.value.id : task.value.repos[0];
+    const r = await post<Run>("/api/delegate", { space, repos: task.value.repos, task: task.value.task, checkCommand: task.value.check || undefined });
     delegateOpen.value = false;
-    task.value = { space: "", task: "", check: "" };
+    task.value = { repos: [], task: "", check: "" };
     router.push(`/runs/${r.id}`);
   } catch (e) {
     toast((e as Error).message, "error");
@@ -142,7 +162,7 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
           <div class="row">
             <button v-if="['queued', 'running'].includes(detail.run.status)" class="btn sm" @click="act('cancel')"><Icon name="stop" :size="13" />停止</button>
             <button v-if="['failed', 'cancelled'].includes(detail.run.status)" class="btn sm" @click="act('retry')"><Icon name="refresh" :size="13" />重试</button>
-            <template v-if="detail.run.kind === 'code' && detail.run.status === 'done' && detail.patch && !out.appliedAt && !out.discardedAt">
+            <template v-if="detail.run.kind === 'code' && detail.run.status === 'done' && detail.patches?.length && !out.appliedAt && !out.discardedAt">
               <button class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到仓库</button>
               <button class="btn sm danger" @click="act('discard')">丢弃</button>
             </template>
@@ -168,9 +188,9 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
           <div class="card pad"><Markdown :source="String(finalText)" :space="detail.run.spaceId ?? undefined" /></div>
         </section>
 
-        <section v-if="out.check" class="block">
-          <div class="section-title">检查：<span class="mono">{{ out.check.command }}</span> <span class="badge" :class="out.check.code === 0 ? 'ok' : 'danger'">退出码 {{ out.check.code }}</span></div>
-          <pre class="log">{{ out.check.output }}</pre>
+        <section v-for="c in checks" :key="c.space" class="block">
+          <div class="section-title">检查<template v-if="c.space"> · {{ spaceName(c.space) }}</template>：<span class="mono">{{ c.check.command }}</span> <span class="badge" :class="c.check.code === 0 ? 'ok' : 'danger'">退出码 {{ c.check.code }}</span></div>
+          <pre class="log">{{ c.check.output }}</pre>
         </section>
 
         <section v-if="out.review" class="block">
@@ -178,13 +198,17 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
           <div class="card pad"><Markdown :source="out.review" /></div>
         </section>
 
-        <section v-if="diffFiles.length" class="block">
-          <div class="section-title">改动 · {{ diffFiles.length }} 个文件</div>
-          <details v-for="f in diffFiles" :key="f.name" class="file" open>
+        <section v-if="fileCount" class="block">
+          <div class="section-title">改动 · {{ diffs.length > 1 ? `${diffs.length} 个仓库，` : "" }}{{ fileCount }} 个文件</div>
+          <p v-if="out.indexedSpaces?.length && !out.appliedAt && !out.discardedAt" class="muted small">应用或丢弃之前，改过的文件可以检索（空间 {{ out.indexedSpaces.join("、") }}）；之后连同 worktree 一起删除。</p>
+          <template v-for="d in diffs" :key="d.space">
+          <div v-if="diffs.length > 1" class="repo-title">{{ spaceName(d.space) }}</div>
+          <details v-for="f in d.files" :key="f.name" class="file" open>
             <summary class="mono small"><span>{{ f.name }}</span><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span></summary>
             <pre class="diff"><code v-for="(l, i) in f.lines" :key="i" :class="l.startsWith('+') ? 'a' : l.startsWith('-') ? 'r' : l.startsWith('@@') ? 'h' : ''">{{ l }}
 </code></pre>
           </details>
+          </template>
         </section>
 
         <section v-if="detail.children.length" class="block">
@@ -199,13 +223,18 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
     <div v-if="delegateOpen" class="modal-overlay" @mousedown.self="delegateOpen = false">
       <div class="modal stack">
         <div class="row"><strong>交办编码任务</strong><span class="spacer" /><button class="btn ghost sm icon" @click="delegateOpen = false"><Icon name="x" /></button></div>
-        <p class="muted small">编码 Agent 在独立的 Git worktree 里实现，运行检查命令，再由评审 Agent 审查。确认后才会应用到你的仓库。</p>
+        <p class="muted small">每个仓库各开一个独立的 Git worktree，由编码 Agent 一起实现，分别运行检查命令，再由评审 Agent 审查。确认后所有仓库一起应用。</p>
         <div v-if="!repos.length" class="muted">还没有关联代码目录的空间，请先在设置里新建代码仓库空间。</div>
         <template v-else>
-          <div class="field"><span>仓库</span><UiSelect v-model="task.space" aria-label="仓库" :options="[{ value: '', label: repos[0].name }, ...repos.slice(1).map((r) => ({ value: r.id, label: r.name }))]" /></div>
+          <div class="field">
+            <span>仓库（可多选，一起改）</span>
+            <div class="repo-picks">
+              <UiCheckbox v-for="r in repos" :key="r.id" v-model="task.repos" :value="r.id" size="sm">{{ r.name }}</UiCheckbox>
+            </div>
+          </div>
           <label class="field"><span>任务</span><textarea v-model="task.task" class="textarea" rows="6" placeholder="目标、背景、验收标准、相关讨论" /></label>
           <label class="field"><span>检查命令（可选，默认用空间设置）</span><input v-model="task.check" class="input mono" placeholder="pnpm test" /></label>
-          <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!task.task.trim()" @click="delegate">交办</button></div>
+          <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!task.task.trim() || !task.repos.length" @click="delegate">交办</button></div>
         </template>
       </div>
     </div>
@@ -213,6 +242,17 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
 </template>
 
 <style scoped>
+.repo-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  max-height: 160px;
+  overflow: auto;
+}
+.repo-title {
+  margin: 12px 0 6px;
+  font-weight: 600;
+}
 .pad-loading {
   max-width: 760px;
   padding: 8px 0;

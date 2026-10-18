@@ -4,10 +4,11 @@ import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { git, isGitRepo } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
-import { getSpace } from "../core/spaces.ts";
+import { findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { runRole } from "./runner.ts";
 import { getRun, setRunOutput, type RunContext } from "./runs.ts";
+import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 
 function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20 * 60_000): Promise<{ code: number; output: string; ms: number }> {
   const started = Date.now();
@@ -32,111 +33,224 @@ function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20
   });
 }
 
+export type CodeInput = {
+  task: string;
+  /** Applies to every repository unless `checks` names one for it. */
+  checkCommand?: string;
+  /** Repository spaces to change together; defaults to the run's space. */
+  repos?: string[];
+  checks?: Record<string, string>;
+};
+type Check = { command: string; code: number; output: string; ms: number };
+type RepoResult = { space: string; diffStat: string; diffBytes: number; check: Check | null };
+
+/** The run's worktrees, including runs from before multi-repository delegation. */
+export function worktreesOf(app: App, runId: string): WorktreeRef[] {
+  const r = getRun(app, runId);
+  const out = r.output as { worktrees?: WorktreeRef[]; worktree?: string; branch?: string; base?: string };
+  if (out.worktrees) return out.worktrees;
+  return out.worktree && r.spaceId ? [{ space: r.spaceId, path: out.worktree, branch: out.branch ?? "", base: out.base ?? "" }] : [];
+}
+
+/** Repository spaces a delegation changes: each one must be a Git repository. */
+export function codeRepos(app: App, spaceId: string, repos?: string[]): Space[] {
+  const ids = [...new Set(repos?.length ? repos : [spaceId])];
+  return ids.map((id) => {
+    const s = getSpace(app, id);
+    if (!s.rootPath || !isGitRepo(s.rootPath)) throw new HttpError(400, `空间 ${id} 没有关联 Git 仓库，不能交办编码`);
+    return s;
+  });
+}
+
+const patchFile = (app: App, runId: string, space: string) => join(app.runsDir, runId, "patches", `${space}.patch`);
+const fence = (lang: string, body: string) => "```" + lang + "\n" + body + "\n```";
+
 /**
- * Delegated coding: isolated worktree → coding agent → project checks →
- * independent reviewer. Nothing touches the user's checkout until they apply.
+ * Delegated coding: isolated worktrees (one per repository) → coding agent → project checks →
+ * independent reviewer. Nothing touches the user's checkouts until they apply. While the
+ * worktrees exist, the files they changed are indexed in temporary spaces (worktree-index.ts).
  */
 export async function runCodeTask(ctx: RunContext) {
   const { app, run } = ctx;
-  const space = getSpace(app, run.spaceId!);
-  const root = space.rootPath;
-  if (!root || !isGitRepo(root)) throw new Error("交办编码需要空间关联一个 Git 仓库");
-  const { task, checkCommand } = run.input as { task: string; checkCommand?: string };
+  const input = run.input as CodeInput;
+  const repos = codeRepos(app, run.spaceId!, input.repos);
+  const multi = repos.length > 1;
   const dir = join(app.runsDir, run.id);
-  const worktree = join(dir, "worktree");
+  const workDir = join(dir, "work");
   const branch = `omem/${run.id}`;
-  mkdirSync(dir, { recursive: true });
-  if (!existsSync(worktree)) {
-    const base = git(root, ["rev-parse", "HEAD"]).stdout.trim();
-    const r = git(root, ["worktree", "add", "-q", "-b", branch, worktree, base]);
-    if (!r.ok) throw new Error(`创建工作区失败：${r.stderr}`);
-    ctx.output({ worktree, branch, base });
-    ctx.event("status", { text: `已在 ${worktree} 创建独立工作区（基于 ${base.slice(0, 8)}）` });
+  mkdirSync(join(dir, "patches"), { recursive: true });
+  const known = worktreesOf(app, run.id);
+  const worktrees: WorktreeRef[] = [];
+  for (const repo of repos) {
+    const have = known.find((w) => w.space === repo.id && existsSync(w.path));
+    if (have) {
+      worktrees.push(have);
+      continue;
+    }
+    const path = join(workDir, repo.id);
+    const base = git(repo.rootPath!, ["rev-parse", "HEAD"]).stdout.trim();
+    const r = git(repo.rootPath!, ["worktree", "add", "-q", "-b", branch, path, base]);
+    if (!r.ok) throw new Error(`在 ${repo.id} 创建工作区失败：${r.stderr}`);
+    worktrees.push({ space: repo.id, path, branch, base });
+    ctx.event("status", { text: `已在 ${path} 创建 ${repo.id} 的独立工作区（基于 ${base.slice(0, 8)}）` });
   }
+  ctx.output({ worktrees });
 
+  const commandFor = (repo: Space) => input.checks?.[repo.id] ?? input.checkCommand ?? (repo.settings.checkCommand as string | undefined);
+  const where = multi
+    ? `\n\n（这次要一起改 ${repos.length} 个仓库。工作目录 ${workDir} 下每个子目录是一个仓库的独立 worktree：\n${repos
+        .map((r, i) => `- ${r.id}（${r.name}）：${worktrees[i].path}${commandFor(r) ? `；检查命令：${commandFor(r)}` : ""}`)
+        .join("\n")}\n用 omem 工具查这几个仓库时传 space: "*"。）`
+    : `${commandFor(repos[0]) ? `\n\n检查命令：${commandFor(repos[0])}` : ""}\n\n（工作目录是独立 worktree：${worktrees[0].path}）`;
+  const cwd = multi ? workDir : worktrees[0].path;
+  // The run's space may be a project; the agents read it and every repository (and their related spaces).
+  const spaces = [...new Set([run.spaceId!, ...repos.map((r) => r.id)])];
   const coder = await runRole(app, {
     role: "coder",
-    spaceId: space.id,
-    task: `${task}${checkCommand ? `\n\n检查命令：${checkCommand}` : ""}\n\n（工作目录是独立 worktree：${worktree}）`,
+    spaceId: run.spaceId!,
+    spaces,
+    task: `${input.task}${where}`,
     runId: run.id,
-    cwd: worktree,
+    cwd,
     signal: ctx.signal,
     onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
   });
   ctx.output({ coderSummary: coder.text.trim(), coderAgent: coder.profileId });
 
-  const command = checkCommand ?? (space.settings.checkCommand as string | undefined);
-  let check: { command: string; code: number; output: string; ms: number } | null = null;
-  if (command) {
-    ctx.event("status", { text: `运行检查：${command}` });
-    const r = await shell(command, worktree, ctx.signal);
-    check = { command, ...r, output: r.output.slice(-8000) };
-    ctx.event("check", check);
-    ctx.output({ check });
+  const results: RepoResult[] = [];
+  const diffs: string[] = [];
+  for (const [i, repo] of repos.entries()) {
+    const wt = worktrees[i];
+    const command = commandFor(repo);
+    let check: Check | null = null;
+    if (command) {
+      ctx.event("status", { text: `运行检查${multi ? `（${repo.id}）` : ""}：${command}` });
+      const r = await shell(command, wt.path, ctx.signal);
+      check = { command, ...r, output: r.output.slice(-8000) };
+      ctx.event("check", { ...check, space: repo.id });
+    }
+    git(wt.path, ["add", "-A"]);
+    const diff = git(wt.path, ["diff", "--cached", "--no-color", "HEAD"]).stdout;
+    const stat = git(wt.path, ["diff", "--cached", "--stat", "HEAD"]).stdout.trim();
+    writeFileSync(patchFile(app, run.id, repo.id), diff);
+    results.push({ space: repo.id, diffStat: stat, diffBytes: diff.length, check });
+    if (diff.trim()) diffs.push(multi ? `### ${repo.id}\n\n${fence("diff", diff)}` : fence("diff", diff));
   }
-
-  git(worktree, ["add", "-A"]);
-  const diff = git(worktree, ["diff", "--cached", "--no-color", "HEAD"]).stdout;
-  const stat = git(worktree, ["diff", "--cached", "--stat", "HEAD"]).stdout.trim();
-  writeFileSync(join(dir, "changes.patch"), diff);
-  ctx.output({ diffStat: stat, diffBytes: diff.length });
-  if (!diff.trim()) {
+  const statText = results.filter((r) => r.diffStat).map((r) => (multi ? `[${r.space}]\n${r.diffStat}` : r.diffStat)).join("\n\n");
+  ctx.output({ repos: results, diffStat: statText, diffBytes: results.reduce((n, r) => n + r.diffBytes, 0), check: multi ? undefined : results[0].check });
+  if (!diffs.length) {
     notify(app, { title: `交办未产生改动：${run.title}`, body: truncate(coder.text, 400), link: `#/runs/${run.id}` });
     return { verdict: "no-changes" };
   }
 
+  // What changed becomes searchable (spaces wt-…) for the reviewer and afterwards.
+  const indexed: string[] = [];
+  for (const [i, r] of results.entries()) {
+    if (!r.diffBytes) continue;
+    try {
+      indexed.push((await indexWorktree(app, run.id, worktrees[i])).space);
+    } catch (e) {
+      ctx.event("status", { text: `${r.space} 的改动没能建索引：${(e as Error).message}` });
+    }
+  }
+  ctx.output({ indexedSpaces: indexed });
+
   ctx.event("status", { text: "独立评审中" });
+  const head = (r: RepoResult) => (multi ? `### ${r.space}\n\n` : "");
+  const checkText = results.map((r) => (r.check ? `${head(r)}命令：${r.check.command}\n退出码：${r.check.code}\n\n${fence("", r.check.output.slice(-4000))}` : `${head(r)}没有配置检查命令。`)).join("\n\n");
   const review = await runRole(app, {
     role: "reviewer",
-    spaceId: space.id,
+    spaceId: run.spaceId!,
+    spaces,
+    alsoRead: indexed,
     task: [
-      `## 原始需求\n\n${task}`,
+      `## 原始需求\n\n${input.task}`,
+      multi ? `## 涉及的仓库\n\n${repos.map((r, i) => `- ${r.id}：${worktrees[i].path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
       `## 编码 Agent 的说明\n\n${coder.text.trim()}`,
-      check ? `## 检查结果\n\n命令：${check.command}\n退出码：${check.code}\n\n\`\`\`\n${check.output.slice(-4000)}\n\`\`\`` : "## 检查结果\n\n没有配置检查命令。",
-      `## 改动统计\n\n${stat}`,
-      `## 完整 diff\n\n\`\`\`diff\n${truncate(diff, 80000)}\n\`\`\``,
-    ].join("\n\n"),
+      `## 检查结果\n\n${checkText}`,
+      `## 改动统计\n\n${statText}`,
+      `## 完整 diff\n\n${truncate(diffs.join("\n\n"), 80000)}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
     runId: run.id,
-    cwd: worktree,
+    cwd,
     signal: ctx.signal,
     onEvent: (e) => ctx.event(e.type, { ...e, phase: "reviewer" }),
     profileId: app.config.agents.roles.reviewer,
   });
   const approved = /结论[：:]\s*通过/.test(review.text);
   ctx.output({ review: review.text.trim(), reviewAgent: review.profileId, verdict: approved ? "approved" : "changes-requested" });
+  const checked = results.filter((r) => r.check);
   notify(app, {
     title: `${approved ? "交办完成，评审通过" : "交办完成，评审要求修改"}：${run.title}`,
-    body: `${stat.split("\n").pop() ?? ""}${check ? `\n检查：${check.code === 0 ? "通过" : "失败"}` : ""}`,
+    body: `${results.map((r) => (multi ? `${r.space}：` : "") + (r.diffStat.split("\n").pop() ?? "")).join("\n")}${checked.length ? `\n检查：${checked.some((r) => r.check!.code !== 0) ? "失败" : "通过"}` : ""}`,
     link: `#/runs/${run.id}`,
   });
   return { verdict: approved ? "approved" : "changes-requested" };
 }
 
-export function codePatch(app: App, runId: string) {
-  const file = join(app.runsDir, runId, "changes.patch");
-  return existsSync(file) ? readFileSync(file, "utf8") : "";
+/** Each repository's patch file; runs from before multi-repository delegation have one changes.patch. */
+function patchFiles(app: App, runId: string): { space: string; file: string }[] {
+  const r = getRun(app, runId);
+  const legacy = join(app.runsDir, runId, "changes.patch");
+  if (existsSync(legacy)) return r.spaceId ? [{ space: r.spaceId, file: legacy }] : [];
+  const repos = (r.output as { repos?: RepoResult[] }).repos ?? [];
+  return repos.map((x) => ({ space: x.space, file: patchFile(app, runId, x.space) })).filter((x) => existsSync(x.file));
 }
 
-/** Apply a finished run's patch to the user's working tree as uncommitted changes. */
+export function codePatches(app: App, runId: string): { space: string; patch: string }[] {
+  return patchFiles(app, runId)
+    .map((p) => ({ space: p.space, patch: readFileSync(p.file, "utf8") }))
+    .filter((p) => p.patch.trim());
+}
+
+/** Remove the run's worktrees and branches, and the temporary index of what they changed. */
+function removeWorktrees(app: App, runId: string) {
+  for (const wt of worktreesOf(app, runId)) {
+    const root = findSpace(app, wt.space)?.rootPath;
+    if (!root || !existsSync(root)) continue;
+    if (existsSync(wt.path)) git(root, ["worktree", "remove", "--force", wt.path]);
+    else git(root, ["worktree", "prune"]);
+    if (wt.branch) git(root, ["branch", "-D", wt.branch]);
+  }
+  for (const s of worktreeSpacesOf(app, runId)) dropWorktreeSpace(app, s.id);
+}
+
+/**
+ * Apply a finished run's patches to the user's working trees as uncommitted changes, every
+ * repository or none (all are checked first). The worktrees are removed afterwards; the
+ * patches stay with the run.
+ */
 export function applyCodeRun(app: App, runId: string) {
   const r = getRun(app, runId);
   if (r.kind !== "code" || r.status !== "done") throw new HttpError(400, "只能应用已完成的编码运行");
-  const space = getSpace(app, r.spaceId!);
-  const patch = join(app.runsDir, runId, "changes.patch");
-  if (!existsSync(patch)) throw new HttpError(404, "没有可应用的改动");
-  const check = git(space.rootPath!, ["apply", "--check", "--3way", patch]);
-  if (!check.ok) throw new HttpError(409, `无法干净应用：${check.stderr.slice(0, 1000)}`);
-  const res = git(space.rootPath!, ["apply", "--3way", patch]);
-  if (!res.ok) throw new HttpError(409, res.stderr.slice(0, 1000));
+  if ((r.output as { appliedAt?: string }).appliedAt) throw new HttpError(409, "这次交办已经应用过");
+  const targets = patchFiles(app, runId)
+    .filter((p) => readFileSync(p.file, "utf8").trim())
+    .map((p) => {
+      const root = getSpace(app, p.space).rootPath;
+      if (!root) throw new HttpError(400, `空间 ${p.space} 没有关联目录`);
+      return { ...p, root };
+    });
+  if (!targets.length) throw new HttpError(404, "没有可应用的改动");
+  const label = (space: string) => (targets.length > 1 ? `${space}：` : "");
+  for (const t of targets) {
+    const check = git(t.root, ["apply", "--check", "--3way", t.file]);
+    if (!check.ok) throw new HttpError(409, `${label(t.space)}无法干净应用：${check.stderr.slice(0, 1000)}`);
+  }
+  const applied: string[] = [];
+  for (const t of targets) {
+    const res = git(t.root, ["apply", "--3way", t.file]);
+    if (!res.ok) throw new HttpError(409, `${label(t.space)}应用失败${applied.length ? `（${applied.join("、")} 已应用）` : ""}：${res.stderr.slice(0, 1000)}`);
+    applied.push(t.space);
+  }
   setRunOutput(app, runId, { appliedAt: new Date().toISOString() });
-  return { applied: true };
+  removeWorktrees(app, runId);
+  return { applied: true, spaces: applied };
 }
 
 export function discardCodeRun(app: App, runId: string) {
-  const r = getRun(app, runId);
-  const space = getSpace(app, r.spaceId!);
-  const out = r.output as { worktree?: string; branch?: string };
-  if (out.worktree) git(space.rootPath!, ["worktree", "remove", "--force", out.worktree]);
-  if (out.branch) git(space.rootPath!, ["branch", "-D", out.branch]);
+  removeWorktrees(app, runId);
   setRunOutput(app, runId, { discardedAt: new Date().toISOString() });
 }

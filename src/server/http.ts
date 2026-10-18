@@ -10,7 +10,7 @@ import fastifyStatic from "@fastify/static";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
-import { applyCodeRun, codePatch, discardCodeRun } from "../agents/code.ts";
+import { applyCodeRun, codePatches, codeRepos, discardCodeRun } from "../agents/code.ts";
 import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePages, type PageBrief } from "../agents/jobs.ts";
 import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles } from "../agents/runner.ts";
@@ -485,7 +485,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const r = getRun(app, id);
     const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
     if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
-    return { run: r, events: runEvents(app, id, o.after ?? 0), children: listRuns(app, { parentId: id }), patch: r.kind === "code" ? codePatch(app, id) : undefined };
+    return { run: r, events: runEvents(app, id, o.after ?? 0), children: listRuns(app, { parentId: id }), patches: r.kind === "code" ? codePatches(app, id) : undefined };
   });
   server.post("/api/runs/:id/cancel", async (req) => cancelRun(app, (req.params as { id: string }).id));
   server.post("/api/runs/:id/retry", async (req) => {
@@ -498,10 +498,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ok: true };
   });
   server.post("/api/delegate", async (req) => {
-    const b = q(z.object({ space: z.string(), task: z.string().min(1), checkCommand: z.string().optional() }), req.body);
+    // `space` is where the task belongs (a repository or a project); `repos` the repositories it changes.
+    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional() }), req.body);
     const s = getSpace(app, b.space);
-    if (!s.rootPath) throw new HttpError(400, "这个空间没有关联代码目录");
-    return createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand } });
+    const repos = codeRepos(app, s.id, b.repos).map((r) => r.id);
+    return createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos } });
   });
 
   // ------------------------------------------------------------------ learning

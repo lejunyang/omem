@@ -158,6 +158,14 @@ export function deleteSource(app: App, id: string) {
   app.emit({ type: "changed", entity: "source", id, spaceId: s.spaceId });
 }
 
+/** Remove an original and its index without a tombstone (temporary copies nothing cites for long). */
+export function purgeSource(app: App, id: string) {
+  tx(app.db, () => {
+    clearIndex(app, id);
+    run(app.db, "delete from sources where id = ?", id);
+  });
+}
+
 export function getSource(app: App, id: string): Source {
   const r = one<Row>(app.db, "select id,space_id,kind,uri,title,mime,hash,meta,captured_at,updated_at,deleted_at from sources where id = ?", id);
   if (!r) throw new HttpError(404, `原件不存在：${id}`);
