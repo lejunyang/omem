@@ -17,6 +17,7 @@ const DEFAULTS: { id: string; kind: string; cron: string; enabled: boolean; labe
   { id: "dream", kind: "dream", cron: "30 3 * * *", enabled: false, label: "每晚整理记忆与页面" },
   { id: "repo-sync", kind: "repo-sync", cron: "0 * * * *", enabled: false, label: "每小时同步代码仓库空间并检查受影响页面" },
   { id: "lark-curate", kind: "lark-curate", cron: "15 9 * * 1", enabled: false, label: "每周按设定方向筛选值得关注的飞书群（需要填写方向）" },
+  { id: "lark-docs-watch", kind: "lark-docs-watch", cron: "40 4 * * *", enabled: true, label: "检查飞书文档有没有更新：上次修改后 7 天、1 个月、3 个月、半年、一年各查一次，有修改才重新读（没有飞书文档时什么都不做）" },
   { id: "lark-poll", kind: "lark-poll", cron: "*/10 * * * *", enabled: false, label: "采集飞书消息（全部或已订阅的会话，含附件和文档）、日程和妙记（只读）；被监听的群交给处理 Agent" },
 ];
 export const scheduleLabels = Object.fromEntries(DEFAULTS.map((d) => [d.kind, d.label]));

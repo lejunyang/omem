@@ -28,6 +28,17 @@ registerScheduleKind("lark-poll", (app) => {
   import("./channels/lark-personal.ts").then((m) => m.pollLark(app)).catch((e) => console.warn("[omem] 飞书消息采集失败：", e.message));
 });
 
+registerScheduleKind("lark-docs-watch", (app) => {
+  import("./channels/lark-docs.ts")
+    .then(async (m) => {
+      const r = await m.checkLarkDocs(app);
+      if (!r.changed.length) return;
+      const { scheduleIngest } = await import("./agents/jobs.ts");
+      for (const c of r.changed) scheduleIngest(app, c.spaceId, c.ids, "飞书文档有更新");
+    })
+    .catch((e) => console.warn("[omem] 检查飞书文档更新失败：", e.message));
+});
+
 export type BootOptions = { port?: number; host?: string; quiet?: boolean; background?: boolean };
 
 /** Open the library, start the API, the run worker and (optionally) background schedules. */
@@ -45,6 +56,10 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   startWorker(app);
   if (opts.background !== false) {
     restartScheduler(app);
+    // Long jobs interrupted by a restart carry on (runs are re-queued by the worker itself).
+    import("./channels/lark-docs.ts")
+      .then((m) => m.resumeRefresh(app))
+      .catch((e) => console.warn("[omem] 继续重新读取飞书文档失败：", e.message));
     if (app.config.embeddings.provider !== "none") {
       const loop = async () => {
         try {

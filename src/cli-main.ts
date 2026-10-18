@@ -369,16 +369,33 @@ lark
 lark
   .command("docs-missing")
   .description("链接里读不到的飞书文档（多半是没有权限）")
-  .option("--retry", "立即重试")
+  .option("--retry", "立即重试（包括次数用完已放弃的，不包括 --ignore 过的）")
+  .option("--ignore <urls>", "不再重试：逗号分隔的链接，或 all")
+  .option("--all", "连已放弃的也列出")
   .action(async (o) => {
     const app = open();
     const m = await import("./channels/lark-docs.ts");
+    if (o.ignore) console.log(`不再重试 ${m.ignoreMissingDocs(app, o.ignore === "all" ? "all" : String(o.ignore).split(","))} 篇`);
     if (o.retry) {
       const r = await m.retryMissingDocs(app, { force: true });
       console.log(`重试 ${r.tried} 篇，读到 ${r.imported.length} 篇`);
       for (const d of r.imported) await runJob((a) => scheduleIngest(a, d.spaceId, [d.id], "原先读不到的飞书文档") ?? { runId: "" }, { stream: false });
     }
-    for (const d of m.missingDocs(app)) console.log(`${d.title || "（无标题）"}  ${d.url}  ${d.error}`);
+    for (const d of m.missingDocs(app, { all: o.all })) console.log(`${d.gaveUp ? "［已放弃］" : `［${d.tries} 次］`}${d.title || "（无标题）"}  ${d.url}  ${d.error}`);
+  });
+lark
+  .command("docs-check")
+  .description("检查飞书文档有没有更新：按上次修改后的天数（lark.capture.docRecheckDays）到期的才查，有修改的重新读并整理")
+  .option("--force", "全部检查，不管是否到期")
+  .action(async (o) => {
+    const app = open();
+    const { checkLarkDocs } = await import("./channels/lark-docs.ts");
+    const r = await checkLarkDocs(app, { force: !!o.force, log: (s) => console.log(s) });
+    console.log(`检查 ${r.checked} 篇，飞书里有修改 ${r.edited} 篇`);
+    for (const c of r.changed) {
+      const done = await runJob((a) => scheduleIngest(a, c.spaceId, c.ids, "飞书文档有更新") ?? { runId: "" }, { stream: false });
+      console.log((done.output as { summary?: string }).summary ?? "");
+    }
   });
 
 const space = program.command("space").description("管理空间（领域隔离：个人 / 项目 / 代码仓库 / 学习 / 通用）");

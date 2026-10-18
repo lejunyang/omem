@@ -143,9 +143,9 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "lark-doc-raw": {
-    description: "只读调用 lark-cli 的文档读取（fetch：文档内容；media / preview：下载或预览一个素材到临时目录后删除，返回输出和文件名，失败时返回错误；csv：读内嵌表格），返回原始 JSON（用来核对字段）",
+    description: "只读调用 lark-cli 的文档读取（fetch：文档内容；media / preview：下载或预览一个素材到临时目录后删除，返回输出和文件名，失败时返回错误；csv：读内嵌表格；meta：文档的最后修改时间等元数据，doc 为链接），返回原始 JSON（用来核对字段）",
     schema: z.object({
-      action: z.enum(["fetch", "media", "preview", "csv"]),
+      action: z.enum(["fetch", "media", "preview", "csv", "meta"]),
       doc: z.string().url().optional(),
       token: z.string().regex(/^[A-Za-z0-9]+$/).optional(),
       type: z.enum(["media", "whiteboard"]).default("media"),
@@ -158,6 +158,12 @@ export const peerCommands: Record<string, Command> = {
       if (a.action === "fetch") {
         if (!a.doc || !/feishu\.cn|larksuite\.com|larkoffice\.com/.test(a.doc)) throw new Error("需要飞书文档链接 doc");
         return clip(await larkCli(["docs", "+fetch", "--doc", a.doc, "--as", "user", "--doc-format", "markdown"], 60_000));
+      }
+      if (a.action === "meta") {
+        if (!a.doc) throw new Error("需要飞书文档链接 doc");
+        const { normalizeDocUrl } = await import("../channels/lark-docs.ts");
+        const d = normalizeDocUrl(a.doc);
+        return clip(await larkCli(["drive", "metas", "batch_query", "--data", JSON.stringify({ request_docs: [{ doc_token: d.token, doc_type: d.type === "docs" ? "doc" : d.type }] }), "--as", "user"], 60_000));
       }
       if (!a.token) throw new Error("需要 token");
       if (a.action === "csv") {
@@ -206,12 +212,23 @@ export const peerCommands: Record<string, Command> = {
     run: async (app) => (await import("../channels/lark-docs.ts")).larkDocsStatus(app),
   },
   "lark-docs-missing": {
-    description: "链接里读不到的飞书文档（多半是没有权限），可立即重试",
-    schema: z.object({ retry: z.boolean().default(false) }),
+    description: "链接里读不到的飞书文档（多半是没有权限）：retry 立即重试，ignore 不再重试（链接列表或 \"all\"），all 连已放弃的也列出",
+    schema: z.object({ retry: z.boolean().default(false), ignore: z.union([z.literal("all"), z.array(z.string().url()).max(500)]).optional(), all: z.boolean().default(false) }),
     run: async (app, a) => {
       const m = await import("../channels/lark-docs.ts");
+      const ignored = a.ignore ? m.ignoreMissingDocs(app, a.ignore) : 0;
       const retried = a.retry ? await m.retryMissingDocs(app, { force: true }) : null;
-      return { retried, missing: m.missingDocs(app) };
+      return { ignored, retried, missing: m.missingDocs(app, { all: a.all }) };
+    },
+  },
+  "lark-docs-check": {
+    description: "检查飞书文档有没有更新（按上次修改后的天数到期的那些；force 全部检查），有修改的重新读并交给整理",
+    schema: z.object({ force: z.boolean().default(false) }),
+    run: async (app, a) => {
+      const r = await (await import("../channels/lark-docs.ts")).checkLarkDocs(app, { force: a.force });
+      const { scheduleIngest } = await import("../agents/jobs.ts");
+      for (const c of r.changed) scheduleIngest(app, c.spaceId, c.ids, "飞书文档有更新");
+      return r;
     },
   },
   "lark-poll": { description: "立即采集一次飞书", schema: z.object({}), run: async (app) => (await import("../channels/lark-personal.ts")).pollLark(app) },

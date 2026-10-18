@@ -45,6 +45,11 @@ export type LarkDocMeta = {
   media?: Record<string, string>;
   /** Linked docs that could not be read, by normalized URL. */
   missing?: Record<string, { title: string; error: string }>;
+  /** When omem last read it, when its content last changed here, Feishu's last edit, the last update check. */
+  fetchedAt?: string;
+  changedAt?: string;
+  modifiedAt?: string;
+  checkedAt?: string;
 };
 
 export type LarkDocResult = UpsertResult & {
@@ -440,8 +445,11 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   const prev = json<Partial<LarkDocMeta>>(existing?.meta, {});
   const doc = await fetchDoc(url);
   const uri = existing ? (one<{ uri: string }>(app.db, "select uri from sources where id = ?", existing.id)?.uri ?? url) : url;
-  if (existing && !opts.force && prev.revision && prev.revision === doc.revision && prev.media && !Object.keys(prev.missing ?? {}).length)
+  const fetchedAt = new Date().toISOString();
+  if (existing && !opts.force && prev.revision && prev.revision === doc.revision && prev.media && !Object.keys(prev.missing ?? {}).length) {
+    run(app.db, "update sources set meta = ? where id = ?", JSON.stringify({ ...prev, fetchedAt }), existing.id);
     return { id: existing.id, status: "unchanged", related: [], missing: [] };
+  }
 
   const ctx: Ctx = { app, origin, docUrl: url, media: { ...(prev.media ?? {}) }, used: new Set(), maxBytes: cfg.docMediaMaxMB * 1024 * 1024 };
   let text = await localize(ctx, doc.content);
@@ -479,6 +487,10 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   const meta: LarkDocMeta = {
     url,
     via: "lark-cli",
+    fetchedAt,
+    changedAt: prev.revision && prev.revision === doc.revision ? (prev.changedAt ?? fetchedAt) : fetchedAt,
+    ...(prev.modifiedAt ? { modifiedAt: prev.modifiedAt } : {}),
+    ...(prev.checkedAt ? { checkedAt: prev.checkedAt } : {}),
     revision: doc.revision,
     documentId: doc.documentId || undefined,
     token,
@@ -490,14 +502,26 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   if (missing.length) unreadable.push(...recordMissing(app, spaceId, r.id, doc.title, missing));
   // Linked docs that link back were saved before this one existed.
   if (r.status === "created") for (const id of related) relinkParent(app, id, url, r.id, doc.title);
-  if (!opts.unreadable && unreadable.length) tellUnreadable(app, doc.title, r.id, unreadable);
+  if (!opts.unreadable && unreadable.length) tellUnreadable(app, `《${doc.title}》`, r.id, unreadable);
   const every = [...missing, ...nestedMissing].filter((m, i, list) => list.findIndex((x) => x.url === m.url) === i);
   return { ...r, related: [...new Set(related)], missing: every };
 }
 
 // ---- docs that could not be read --------------------------------------------------------
 
-type Missing = { url: string; title: string; error: string; spaceId: string; parents: string[]; parentTitle?: string; since: string; tries: number; lastTry: number };
+type Missing = {
+  url: string;
+  title: string;
+  error: string;
+  spaceId: string;
+  parents: string[];
+  parentTitle?: string;
+  since: string;
+  tries: number;
+  lastTry: number;
+  /** No more retries: too many failures, or the owner said not to bother. */
+  gaveUp?: "tries" | "owner";
+};
 
 function missingList(app: App): Missing[] {
   return json(one<{ value: string }>(app.db, "select value from kv where key = ?", MISSING_KEY)?.value, []);
@@ -506,11 +530,24 @@ function saveMissing(app: App, list: Missing[]) {
   run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", MISSING_KEY, JSON.stringify(list));
 }
 
-export function missingDocs(app: App) {
-  return missingList(app);
+export function missingDocs(app: App, opts: { all?: boolean } = {}) {
+  return missingList(app).filter((m) => opts.all || !m.gaveUp);
 }
 
-/** Remember unreadable linked docs; returns the ones not known before. */
+/** Stop retrying some (or all) unreadable docs; they stay Feishu links and are not reported again. */
+export function ignoreMissingDocs(app: App, urls: string[] | "all") {
+  const list = missingList(app);
+  let n = 0;
+  for (const m of list)
+    if (!m.gaveUp && (urls === "all" || urls.includes(m.url))) {
+      m.gaveUp = "owner";
+      n++;
+    }
+  saveMissing(app, list);
+  return n;
+}
+
+/** Remember unreadable linked docs; returns the ones not known before (only those are reported). */
 function recordMissing(app: App, spaceId: string, parentId: string, parentTitle: string, found: LarkDocResult["missing"]) {
   const list = missingList(app);
   const fresh: Missing[] = [];
@@ -529,39 +566,49 @@ function recordMissing(app: App, spaceId: string, parentId: string, parentTitle:
   return fresh;
 }
 
-function tellUnreadable(app: App, title: string, id: string, docs: Missing[]) {
+function retryNote(app: App) {
+  const { docRetryHours, docRetryMax } = app.config.lark.capture;
+  return docRetryMax > 0
+    ? `多半是没有权限。在飞书里申请到权限后 omem 会重试（每 ${docRetryHours} 小时，最多 ${docRetryMax} 次，之后不再尝试），读到后只整理新读到的文档并更新原文里的链接。不需要的话：omem lark docs-missing --ignore all。`
+    : "多半是没有权限。按设置不会重试（lark.capture.docRetryMax 为 0）；申请到权限后可以用 omem lark docs-missing --retry 读一次。";
+}
+
+function tellUnreadable(app: App, title: string, id: string | null, docs: Missing[]) {
+  const shown = docs.slice(0, 30);
   notify(app, {
-    title: `《${title}》链接的飞书文档中有 ${docs.length} 篇读不到`,
-    body: `${docs.map((f) => `- ${f.title || "（无标题）"}：${f.url}${f.parentTitle && f.parentTitle !== title ? `（在《${f.parentTitle}》里）` : ""}（${f.error}）`).join("\n")}\n\n多半是没有权限。在飞书里申请权限后 omem 会自动重试（每 6 小时），读到后只整理新读到的文档并更新原文里的链接。`,
-    link: `#/sources/${id}`,
+    title: `${title}：链接的飞书文档中有 ${docs.length} 篇读不到`,
+    body: `${shown.map((f) => `- ${f.title || "（无标题）"}：${f.url}${f.parentTitle && !title.includes(f.parentTitle) ? `（在《${f.parentTitle}》里）` : ""}（${f.error}）`).join("\n")}${docs.length > shown.length ? `\n- ……另有 ${docs.length - shown.length} 篇，见 omem lark docs-missing` : ""}\n\n${retryNote(app)}`,
+    link: id ? `#/sources/${id}` : null,
   });
 }
 
 /**
- * Try the linked docs that could not be read before. A doc that can be read now is
- * imported (and returned for understanding); in each parent only the Feishu link is
- * replaced by the local one, without marking the parent for understanding again.
+ * Try the linked docs that could not be read before (every `docRetryHours`, at most `docRetryMax`
+ * times; then they are given up quietly). A doc that can be read now is imported (and returned for
+ * understanding); in each parent only the Feishu link is replaced by the local one, without marking
+ * the parent for understanding again.
  */
 export async function retryMissingDocs(app: App, opts: { force?: boolean } = {}) {
+  const { docRetryHours, docRetryMax, docLinkDepth } = app.config.lark.capture;
   const list = missingList(app);
   const imported: { spaceId: string; id: string }[] = [];
   const still: Missing[] = [];
   let tried = 0;
   for (const m of list) {
-    // At most every 6 hours per doc, unless asked.
-    if (!opts.force && Date.now() - (m.lastTry ?? 0) < 6 * 3600_000) {
+    // Asked explicitly: also the ones given up after too many tries, but never the ones the owner dismissed.
+    if (m.gaveUp === "owner" || (!opts.force && (m.gaveUp || m.tries >= docRetryMax || Date.now() - (m.lastTry ?? 0) < docRetryHours * 3600_000))) {
       still.push(m);
       continue;
     }
     tried++;
     try {
-      const r = await importLarkDocument(app, m.spaceId, m.url, { depth: Math.max(0, app.config.lark.capture.docLinkDepth - 1), force: true });
+      const r = await importLarkDocument(app, m.spaceId, m.url, { depth: Math.max(0, docLinkDepth - 1), force: true, unreadable: [] });
       imported.push({ spaceId: m.spaceId, id: r.id });
       const row = one<{ title: string }>(app.db, "select title from sources where id = ?", r.id);
       for (const parent of m.parents) relinkParent(app, parent, m.url, r.id, row?.title ?? m.title);
     } catch (e) {
-      // Stop after a month of failures.
-      if (++m.tries < 120) still.push({ ...m, error: (e as Error).message.slice(0, 200), lastTry: Date.now() });
+      const tries = m.tries + 1;
+      still.push({ ...m, tries, error: (e as Error).message.slice(0, 200), lastTry: Date.now(), ...(tries >= docRetryMax ? { gaveUp: "tries" as const } : {}) });
     }
   }
   saveMissing(app, still);
@@ -586,91 +633,236 @@ function relinkParent(app: App, parentId: string, url: string, id: string, title
   upsertSource(app, { spaceId: p.space_id, kind: p.kind as "doc", uri: p.uri, title: p.title, text: linked, meta });
 }
 
-/**
- * Read all Feishu docs again (old copies have Feishu image links; this makes them local).
- * Returns what needs understanding: docs whose content changed in Feishu and newly linked docs —
- * not docs that only changed because their media became local.
- */
-export async function refreshLarkDocs(app: App, opts: { space?: string; limit?: number; log?: (s: string) => void; stop?: () => boolean } = {}) {
-  const rows = all<{ id: string; space_id: string; uri: string; meta: string }>(
+// ---- reading all docs again -------------------------------------------------------------
+
+const REFRESH_KEY = "lark_docs_refresh";
+
+/** A refresh in progress, kept in the database so a restart picks it up where it stopped. */
+type RefreshState = {
+  startedAt: string;
+  space?: string;
+  total: number;
+  /** Source ids still to read, in order. */
+  todo: string[];
+  done: number;
+  failed: number;
+  skipped: number;
+  /** Space → ids that need understanding. */
+  changed: Record<string, string[]>;
+  errors: string[];
+  unreadable: Missing[];
+};
+
+function refreshState(app: App): RefreshState | null {
+  return json(one<{ value: string }>(app.db, "select value from kv where key = ?", REFRESH_KEY)?.value, null);
+}
+function saveRefresh(app: App, s: RefreshState | null) {
+  if (!s) run(app.db, "delete from kv where key = ?", REFRESH_KEY);
+  else run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", REFRESH_KEY, JSON.stringify(s));
+}
+
+export function startRefresh(app: App, opts: { space?: string; limit?: number } = {}): RefreshState {
+  const rows = all<{ id: string }>(
     app.db,
-    `select id, space_id, uri, meta from sources where kind = 'doc' and deleted_at is null and json_extract(meta, '$.via') = 'lark-cli'
+    `select id from sources where kind = 'doc' and deleted_at is null and json_extract(meta, '$.via') = 'lark-cli'
        ${opts.space ? "and space_id = ?" : ""} order by updated_at desc limit ?`,
     ...(opts.space ? [opts.space] : []),
-    opts.limit ?? 10_000,
+    opts.limit ?? 100_000,
   );
-  const changed = new Map<string, Set<string>>();
-  const add = (space: string, id: string) => changed.set(space, (changed.get(space) ?? new Set()).add(id));
-  let done = 0;
-  let failed = 0;
-  for (const row of rows) {
-    if (opts.stop?.()) break;
-    const before = json<Partial<LarkDocMeta>>(row.meta, {}).revision;
-    try {
-      const r = await importLarkDocument(app, row.space_id, json<{ url?: string }>(row.meta, {}).url ?? row.uri, { force: true });
-      const after = json<Partial<LarkDocMeta>>(one<{ meta: string }>(app.db, "select meta from sources where id = ?", r.id)?.meta, {}).revision;
-      if (r.status !== "unchanged" && before && before !== after) add(row.space_id, r.id);
-      for (const id of r.related) add(row.space_id, id);
-      done++;
-    } catch (e) {
-      failed++;
-      opts.log?.(`读取失败 ${row.uri}：${(e as Error).message}`);
+  const s: RefreshState = { startedAt: new Date().toISOString(), space: opts.space, total: rows.length, todo: rows.map((r) => r.id), done: 0, failed: 0, skipped: 0, changed: {}, errors: [], unreadable: [] };
+  saveRefresh(app, s);
+  return s;
+}
+
+/**
+ * Read the docs of a refresh one by one (old copies have Feishu image links; this makes them local).
+ * Progress is saved after every doc. A doc already read during this refresh — imported as a link of an
+ * earlier one — is skipped. What needs understanding: docs whose content changed in Feishu and newly
+ * linked docs, not docs that only changed because their media became local.
+ */
+export async function continueRefresh(app: App, opts: { log?: (s: string) => void; stop?: () => boolean } = {}) {
+  const s = refreshState(app);
+  if (!s) return null;
+  while (s.todo.length) {
+    if (opts.stop?.()) return s;
+    const id = s.todo[0];
+    const row = one<{ space_id: string; uri: string; meta: string; deleted_at: string | null }>(app.db, "select space_id, uri, meta, deleted_at from sources where id = ?", id);
+    const meta = json<Partial<LarkDocMeta>>(row?.meta, {});
+    if (!row || row.deleted_at || (meta.fetchedAt && meta.fetchedAt >= s.startedAt)) s.skipped++;
+    else {
+      try {
+        const r = await importLarkDocument(app, row.space_id, meta.url ?? row.uri, { force: true, unreadable: s.unreadable });
+        const after = json<Partial<LarkDocMeta>>(one<{ meta: string }>(app.db, "select meta from sources where id = ?", r.id)?.meta, {}).revision;
+        const ids = new Set(s.changed[row.space_id] ?? []);
+        if (r.status !== "unchanged" && meta.revision && meta.revision !== after) ids.add(r.id);
+        for (const x of r.related) ids.add(x);
+        s.changed[row.space_id] = [...ids];
+        s.done++;
+      } catch (e) {
+        s.failed++;
+        if (s.errors.length < 50) s.errors.push(`${row.uri}：${(e as Error).message}`);
+        opts.log?.(`读取失败 ${row.uri}：${(e as Error).message}`);
+      }
     }
-    opts.log?.(`${done + failed}/${rows.length}`);
+    s.todo.shift();
+    saveRefresh(app, s);
+    opts.log?.(`${s.total - s.todo.length}/${s.total}`);
   }
-  return { total: rows.length, done, failed, changed: [...changed].map(([spaceId, ids]) => ({ spaceId, ids: [...ids] })) };
+  saveRefresh(app, null);
+  return s;
+}
+
+/** Synchronous form for the CLI: start and read everything. */
+export async function refreshLarkDocs(app: App, opts: { space?: string; limit?: number; log?: (s: string) => void } = {}) {
+  startRefresh(app, opts);
+  const s = (await continueRefresh(app, { log: opts.log }))!;
+  if (s.unreadable.length) tellUnreadable(app, "重新读取飞书文档", null, s.unreadable);
+  return { total: s.total, done: s.done, failed: s.failed, skipped: s.skipped, changed: Object.entries(s.changed).filter(([, ids]) => ids.length).map(([spaceId, ids]) => ({ spaceId, ids })) };
 }
 
 let refreshing: Promise<unknown> | null = null;
 let stopRequested = false;
-let progress: { startedAt: string; finishedAt?: string; at: string; errors: string[]; result?: unknown } | null = null;
 
-/** `refreshLarkDocs` without waiting (it can take a while); the owner gets a notification when it is done. */
-export function refreshInBackground(app: App, opts: { space?: string; limit?: number; stop?: boolean } = {}) {
+/**
+ * Run (or resume) a refresh without waiting; the owner gets one notification when it is done,
+ * including the linked docs that could not be read. `stop` cancels it after the current doc.
+ */
+export function refreshInBackground(app: App, opts: { space?: string; limit?: number; stop?: boolean; resume?: boolean } = {}) {
   if (opts.stop) {
     stopRequested = !!refreshing;
-    return { stopping: stopRequested, progress };
+    if (!refreshing) saveRefresh(app, null);
+    return { stopping: stopRequested };
   }
-  if (refreshing) return { started: false, reason: "上一次刷新还没结束", progress };
+  if (refreshing) return { started: false, reason: "上一次刷新还没结束", progress: refreshProgress(app) };
+  if (!opts.resume || !refreshState(app)) startRefresh(app, opts);
   stopRequested = false;
-  const p: NonNullable<typeof progress> = { startedAt: new Date().toISOString(), at: "", errors: [] };
-  progress = p;
-  const log = (s: string) => (s.startsWith("读取失败") ? p.errors.length < 50 && p.errors.push(s) : (p.at = s));
-  refreshing = refreshLarkDocs(app, { ...opts, log, stop: () => stopRequested })
-    .then(async (r) => {
+  refreshing = continueRefresh(app, { stop: () => stopRequested })
+    .then(async (s) => {
+      if (!s) return;
+      if (stopRequested) return saveRefresh(app, null);
       const { scheduleIngest } = await import("../agents/jobs.ts");
-      for (const c of r.changed) scheduleIngest(app, c.spaceId, c.ids, "飞书文档有新内容或新链接的文档");
-      Object.assign(p, { result: r });
-      notify(app, { title: `飞书文档重新读取完成：${r.done}/${r.total}`, body: `${r.failed ? `${r.failed} 篇读取失败。` : ""}有新内容或新导入的 ${r.changed.reduce((n, c) => n + c.ids.length, 0)} 篇已交给整理。` });
+      const changed = Object.entries(s.changed).filter(([, ids]) => ids.length);
+      for (const [spaceId, ids] of changed) scheduleIngest(app, spaceId, ids, "飞书文档有新内容或新链接的文档");
+      lastResult = { ...s, todo: [], finishedAt: new Date().toISOString() };
+      const n = changed.reduce((k, [, ids]) => k + ids.length, 0);
+      notify(app, { title: `飞书文档重新读取完成：${s.done}/${s.total}`, body: `${s.failed ? `${s.failed} 篇读取失败。` : ""}${s.skipped ? `${s.skipped} 篇在本次已作为链接读过，跳过。` : ""}有新内容或新导入的 ${n} 篇已交给整理。` });
+      if (s.unreadable.length) tellUnreadable(app, "重新读取飞书文档", null, s.unreadable);
     })
-    .catch((e) => {
-      p.errors.push((e as Error).message);
-      console.warn("[omem] 刷新飞书文档失败：", (e as Error).message);
-    })
-    .finally(() => {
-      p.finishedAt = new Date().toISOString();
-      refreshing = null;
-    });
-  return { started: true };
+    .catch((e) => console.warn("[omem] 刷新飞书文档失败：", (e as Error).message))
+    .finally(() => (refreshing = null));
+  return { started: true, progress: refreshProgress(app) };
 }
 
-/** Where Feishu docs stand: refresh progress, docs still pointing at Feishu media, local media, unreadable links. */
+let lastResult: (RefreshState & { finishedAt: string }) | null = null;
+
+function refreshProgress(app: App) {
+  const s = refreshState(app);
+  if (s) return { running: !!refreshing, startedAt: s.startedAt, at: `${s.total - s.todo.length}/${s.total}`, done: s.done, failed: s.failed, skipped: s.skipped, errors: s.errors.slice(-10) };
+  return lastResult ? { running: false, startedAt: lastResult.startedAt, finishedAt: lastResult.finishedAt, at: `${lastResult.total}/${lastResult.total}`, done: lastResult.done, failed: lastResult.failed, skipped: lastResult.skipped, errors: lastResult.errors.slice(-10) } : null;
+}
+
+/** At startup: a refresh interrupted by a restart carries on. */
+export function resumeRefresh(app: App) {
+  const s = refreshState(app);
+  if (!s) return false;
+  console.log(`[omem] 继续重新读取飞书文档：${s.total - s.todo.length}/${s.total}`);
+  refreshInBackground(app, { resume: true });
+  return true;
+}
+
+// ---- checking for updates -----------------------------------------------------------------
+
+const DAY = 86400_000;
+
+/** Feishu's own last-edit time for docs, 200 at a time (`drive metas batch_query`). Keyed by token. */
+async function lastEdits(tokens: { token: string; type: string }[]) {
+  const out = new Map<string, number>();
+  for (let i = 0; i < tokens.length; i += 200) {
+    const batch = tokens.slice(i, i + 200);
+    const v = await larkCli(["drive", "metas", "batch_query", "--data", JSON.stringify({ request_docs: batch.map((t) => ({ doc_token: t.token, doc_type: t.type === "docs" ? "doc" : t.type })) }), "--as", "user"], 60_000);
+    for (const m of (v.data?.metas ?? []) as { doc_token?: string; latest_modify_time?: string; request_doc_info?: { doc_token?: string } }[]) {
+      const t = Number(m.latest_modify_time) * 1000;
+      if (!t) continue;
+      for (const k of [m.doc_token, m.request_doc_info?.doc_token]) if (k) out.set(k, t);
+    }
+  }
+  return out;
+}
+
+/**
+ * When a doc is due for a check: at each of `docRecheckDays` after its last change (7 days, a month, …),
+ * once. A doc not changed for longer than the last step is no longer checked. Docs never checked are due.
+ */
+export function docDue(meta: Partial<LarkDocMeta>, now: number, steps: number[]) {
+  const last = Date.parse(meta.modifiedAt ?? meta.changedAt ?? meta.fetchedAt ?? "");
+  if (!meta.checkedAt || !last) return true;
+  const checked = Date.parse(meta.checkedAt);
+  return steps.some((d) => last + d * DAY <= now && checked < last + d * DAY);
+}
+
+/**
+ * Check docs for updates: ask Feishu for the last-edit time of the docs that are due, and read again only
+ * those edited since they were read. Returns what changed, for understanding.
+ */
+export async function checkLarkDocs(app: App, opts: { force?: boolean; log?: (s: string) => void } = {}) {
+  const steps = [...app.config.lark.capture.docRecheckDays].sort((a, b) => a - b);
+  const now = Date.now();
+  const rows = all<{ id: string; space_id: string; uri: string; meta: string; updated_at: string }>(
+    app.db,
+    "select id, space_id, uri, meta, updated_at from sources where kind = 'doc' and deleted_at is null and json_extract(meta, '$.via') = 'lark-cli'",
+  );
+  const due = rows
+    .map((r) => ({ ...r, m: json<Partial<LarkDocMeta>>(r.meta, {}) }))
+    .filter((r) => opts.force || docDue(r.m, now, steps))
+    .map((r) => ({ ...r, ...normalizeDocUrl(r.m.url ?? r.uri) }));
+  if (!due.length) return { checked: 0, edited: 0, changed: [] as { spaceId: string; ids: string[] }[] };
+  const edits = await lastEdits(due.map((d) => ({ token: d.token, type: d.type })));
+  const changed = new Map<string, Set<string>>();
+  let edited = 0;
+  for (const d of due) {
+    const at = edits.get(d.token);
+    const seen = Date.parse(d.m.modifiedAt ?? d.m.fetchedAt ?? d.updated_at);
+    const stamp: Partial<LarkDocMeta> = { checkedAt: new Date().toISOString(), ...(at ? { modifiedAt: new Date(at).toISOString() } : {}) };
+    if (at && at > seen) {
+      edited++;
+      try {
+        const r = await importLarkDocument(app, d.space_id, d.url, {});
+        const ids = changed.get(d.space_id) ?? new Set();
+        if (r.status !== "unchanged") ids.add(r.id);
+        for (const x of r.related) ids.add(x);
+        changed.set(d.space_id, ids);
+        opts.log?.(`有更新：${d.uri}`);
+      } catch (e) {
+        opts.log?.(`读取失败 ${d.uri}：${(e as Error).message}`);
+        continue;
+      }
+    }
+    const cur = json<Partial<LarkDocMeta>>(one<{ meta: string }>(app.db, "select meta from sources where id = ?", d.id)?.meta, {});
+    run(app.db, "update sources set meta = ? where id = ?", JSON.stringify({ ...cur, ...stamp }), d.id);
+  }
+  return { checked: due.length, edited, changed: [...changed].filter(([, ids]) => ids.size).map(([spaceId, ids]) => ({ spaceId, ids: [...ids] })) };
+}
+
+/** Where Feishu docs stand: refresh progress, docs still pointing at Feishu media, local media, unreadable links, checks. */
 export function larkDocsStatus(app: App) {
   const docs = all<{ text: string; meta: string }>(app.db, "select text, meta from sources where kind = 'doc' and deleted_at is null and json_extract(meta, '$.via') = 'lark-cli'");
   const remote = /\]\(https?:\/\/[\w.-]+\/file\/|<img\s(?![^>]*omem-file:)|<(?:whiteboard|source|sheet)\b/;
   const media = new Set<string>();
   let failedMedia = 0;
-  for (const d of docs)
-    for (const f of Object.values(json<Partial<LarkDocMeta>>(d.meta, {}).media ?? {})) f ? media.add(f) : failedMedia++;
+  const metas = docs.map((d) => json<Partial<LarkDocMeta>>(d.meta, {}));
+  for (const m of metas) for (const f of Object.values(m.media ?? {})) f ? media.add(f) : failedMedia++;
+  const steps = app.config.lark.capture.docRecheckDays;
+  const missing = missingList(app);
   return {
     docs: docs.length,
     withoutLocalMedia: docs.filter((d) => remote.test(d.text)).length,
-    neverLocalized: docs.filter((d) => !json<Partial<LarkDocMeta>>(d.meta, {}).media).length,
+    neverLocalized: metas.filter((m) => !m.media).length,
     mediaFiles: media.size,
     missingMediaFiles: [...media].filter((f) => !existsSync(join(app.filesDir, f))).length,
     failedMedia,
-    unreadableLinks: missingList(app).length,
-    refresh: progress ? { running: !!refreshing, ...progress } : null,
+    unreadableLinks: { retrying: missing.filter((m) => !m.gaveUp).length, gaveUp: missing.filter((m) => m.gaveUp).length },
+    updateChecks: { dueNow: metas.filter((m) => docDue(m, Date.now(), steps)).length, neverChecked: metas.filter((m) => !m.checkedAt).length },
+    refresh: refreshProgress(app),
   };
 }
 

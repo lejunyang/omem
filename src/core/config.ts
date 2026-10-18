@@ -196,6 +196,11 @@ export const configSchema = z.object({
           /** Feishu docs: levels of linked docs imported along with a doc (0 = none), at most docMaxLinked per doc. */
           docLinkDepth: z.number().int().min(0).max(5).default(2),
           docMaxLinked: z.number().int().min(0).default(30),
+          /** Linked docs that could not be read: retried every docRetryHours, at most docRetryMax times, then given up quietly. */
+          docRetryHours: z.number().min(1).default(6),
+          docRetryMax: z.number().int().min(0).default(3),
+          /** Update checks: a doc is checked once at each of these many days after its last edit; never after the last one. */
+          docRecheckDays: z.array(z.number().positive()).default([7, 30, 90, 180, 365]),
           calendar: z.boolean().default(true),
           minutes: z.boolean().default(true),
           /**
@@ -237,6 +242,9 @@ export const configSchema = z.object({
           docMediaMaxMB: 100,
           docLinkDepth: 2,
           docMaxLinked: 30,
+          docRetryHours: 6,
+          docRetryMax: 3,
+          docRecheckDays: [7, 30, 90, 180, 365],
           calendar: true,
           minutes: true,
           policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },
@@ -259,6 +267,9 @@ export const configSchema = z.object({
         docMediaMaxMB: 100,
         docLinkDepth: 2,
         docMaxLinked: 30,
+        docRetryHours: 6,
+        docRetryMax: 3,
+        docRecheckDays: [7, 30, 90, 180, 365],
         calendar: true,
         minutes: true,
         policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },

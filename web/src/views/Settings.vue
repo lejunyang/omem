@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { del, get, patch, post, put, type Space, type SpaceRelation } from "../api";
 import Icon from "../components/Icon.vue";
+import CronEditor from "../components/CronEditor.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
@@ -526,16 +527,16 @@ async function saveEdit() {
     </section>
 
     <section v-else-if="tab === 'schedules'" class="stack">
-      <p class="muted">后台任务按 cron 运行（时区：{{ config?.timezone }}）。巡检只在到期提醒或关注对象有新材料时才调用 Agent。</p>
+      <p class="muted">后台任务按设定的时间运行（时区：{{ config?.timezone }}）。巡检只在到期提醒或关注对象有新材料时才调用 Agent。</p>
       <div v-for="s in schedules" :key="s.id" class="card pad sched">
         <div class="row wrap">
           <UiCheckbox :model-value="s.enabled" switch @change="toggleSchedule(s)"><strong>{{ labels[s.kind] ?? s.kind }}</strong></UiCheckbox>
           <span class="spacer" />
-          <input class="input mono cron" :value="s.cron" @change="saveCron(s, ($event.target as HTMLInputElement).value)" />
           <button class="btn sm" @click="runNow(s)"><Icon name="play" :size="13" />立即运行</button>
         </div>
+        <CronEditor :model-value="s.cron" :timezone="config?.timezone" @change="(c) => saveCron(s, c)" />
         <label v-if="s.kind === 'lark-curate'" class="field"><span>筛选方向</span><textarea class="textarea" rows="2" :value="s.config.direction ?? ''" placeholder="例如：和项目A、后端架构、我负责的模块相关的群；需要我回复或决定的讨论" @change="saveScheduleConfig(s, { direction: ($event.target as HTMLTextAreaElement).value })" /></label>
-        <div class="muted small">上次：{{ s.lastRunAt ? fmtTime(s.lastRunAt) : "从未" }}<template v-if="next[s.id]"> · 下次：{{ fmtTime(next[s.id]) }}</template></div>
+        <div class="muted small">上次：{{ s.lastRunAt ? fmtTime(s.lastRunAt) : "从未" }}<template v-if="!s.enabled"> · 已停用</template></div>
       </div>
     </section>
 
@@ -826,9 +827,6 @@ async function saveEdit() {
 .sched {
   display: grid;
   gap: 6px;
-}
-.cron {
-  width: 160px;
 }
 .modal-overlay {
   position: fixed;

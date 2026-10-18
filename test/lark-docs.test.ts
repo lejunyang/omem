@@ -2,8 +2,8 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
-import { csvToTable, importLarkDocument, missingDocs, refreshLarkDocs, retryMissingDocs } from "../src/channels/lark-docs.ts";
-import { all, one } from "../src/core/db.ts";
+import { checkLarkDocs, continueRefresh, csvToTable, docDue, ignoreMissingDocs, importLarkDocument, missingDocs, refreshLarkDocs, retryMissingDocs, startRefresh } from "../src/channels/lark-docs.ts";
+import { all, one, run } from "../src/core/db.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
 
@@ -11,7 +11,7 @@ const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3
 const ORIGIN = "https://example.feishu.cn";
 
 /** A fake lark-cli: docs by token, media downloads written into the cwd it was given. */
-function fakeCli(docs: Record<string, { title: string; content: string; revision?: number } | "denied">) {
+function fakeCli(docs: Record<string, { title: string; content: string; revision?: number; edited?: number } | "denied">) {
   const calls: string[][] = [];
   setLarkCliForTests(async (args, cwd) => {
     calls.push(args);
@@ -29,6 +29,10 @@ function fakeCli(docs: Record<string, { title: string; content: string; revision
       if (flag("--token").startsWith("NONE") || (args[1] === "+media-download" && flag("--token").startsWith("NODL"))) throw new Error("飞书 CLI：api_error 403 forbidden");
       writeFileSync(join(cwd!, flag("--output")), Buffer.concat([PNG, Buffer.from(flag("--token"))]));
       return { ok: true, data: {} };
+    }
+    if (args[0] === "drive" && args[1] === "metas") {
+      const req = JSON.parse(flag("--data")).request_docs as { doc_token: string }[];
+      return { ok: true, data: { metas: req.map((r) => ({ doc_token: r.doc_token, latest_modify_time: String((docs[r.doc_token] as { edited?: number })?.edited ?? 0) })).filter((m) => m.latest_modify_time !== "0") } };
     }
     if (args[0] === "sheets" && args[1] === "+csv-get") return { ok: true, data: { csv: '名称,数量\n苹果,3\n"梨,大",5\n' } };
     throw new Error(`unexpected ${args.join(" ")}`);
@@ -104,7 +108,7 @@ describe("feishu docs as originals", () => {
     expect(linked2.text).toContain(`(src:${deep.id})`);
     expect(r.missing.map((m) => m.url)).toEqual([`${ORIGIN}/docx/Secret`, `${ORIGIN}/docx/Secret2`]);
     expect(missingDocs(app)).toMatchObject([{ url: `${ORIGIN}/docx/Secret2`, parents: [linked2.id] }, { url: `${ORIGIN}/docx/Secret`, parents: [r.id] }]);
-    expect(all(app.db, "select title from notifications").map((n: any) => n.title)).toEqual(["《项目 A 方案》链接的飞书文档中有 2 篇读不到"]);
+    expect(all(app.db, "select title from notifications").map((n: any) => n.title)).toEqual(["《项目 A 方案》：链接的飞书文档中有 2 篇读不到"]);
 
     // Seven media in all (including the synced block's and a linked doc's); Main is read once despite the link back.
     expect(calls.filter((c) => c[1] === "+media-download")).toHaveLength(7);
@@ -199,6 +203,98 @@ describe("feishu docs as originals", () => {
     expect(text).toContain("（2.0 MB，未下载，在飞书中查看）");
     expect(r.related).toEqual([]);
     expect(text).toContain(`${ORIGIN}/docx/Other`);
+  });
+
+  it("gives up on unreadable docs after the configured tries, or when told to", async () => {
+    const app = testApp();
+    app.config.lark.capture = { ...app.config.lark.capture, docRetryMax: 2, docRetryHours: 1 };
+    fakeCli({ Main: { title: "周报", content: `${ORIGIN}/docx/A ${ORIGIN}/docx/B` }, A: "denied", B: "denied" });
+    await importLarkDocument(app, "personal", `${ORIGIN}/docx/Main`);
+    expect(missingDocs(app)).toHaveLength(2);
+    expect(all(app.db, "select body from notifications")[0]).toMatchObject({ body: expect.stringContaining("每 1 小时，最多 2 次") });
+    // Not yet due; then due (an hour later) twice → given up, quietly.
+    expect((await retryMissingDocs(app)).tried).toBe(0);
+    const later = () => run(app.db, "update kv set value = replace(value, '\"lastTry\":', '\"lastTry\":-') where key = 'lark_doc_missing'");
+    later();
+    expect((await retryMissingDocs(app)).tried).toBe(2);
+    later();
+    expect((await retryMissingDocs(app)).tried).toBe(2);
+    expect(missingDocs(app)).toEqual([]);
+    expect(missingDocs(app, { all: true }).map((m) => m.gaveUp)).toEqual(["tries", "tries"]);
+    later();
+    expect((await retryMissingDocs(app)).tried).toBe(0);
+    // Seen again in another doc: no new notification.
+    fakeCli({ Other: { title: "月报", content: `${ORIGIN}/docx/A` }, A: "denied" });
+    await importLarkDocument(app, "personal", `${ORIGIN}/docx/Other`);
+    expect(all(app.db, "select id from notifications")).toHaveLength(1);
+    // Asked explicitly: retried even after giving up, unless dismissed by the owner.
+    const list = missingDocs(app, { all: true });
+    list.find((m) => m.url.endsWith("/B"))!.gaveUp = "owner";
+    run(app.db, "update kv set value = ? where key = 'lark_doc_missing'", JSON.stringify(list));
+    fakeCli({ A: { title: "能读了", content: "x" }, B: { title: "也能读了", content: "y" } });
+    const forced = await retryMissingDocs(app, { force: true });
+    expect(forced).toMatchObject({ tried: 1, imported: [{ spaceId: "personal" }] });
+    expect(missingDocs(app, { all: true }).map((m) => m.url)).toEqual([`${ORIGIN}/docx/B`]);
+  });
+
+  it("dismisses unreadable docs on request", async () => {
+    const app = testApp();
+    fakeCli({ Main: { title: "周报", content: `${ORIGIN}/docx/A ${ORIGIN}/docx/B` }, A: "denied", B: "denied" });
+    await importLarkDocument(app, "personal", `${ORIGIN}/docx/Main`);
+    expect(ignoreMissingDocs(app, [`${ORIGIN}/docx/A`])).toBe(1);
+    expect(missingDocs(app).map((m) => m.url)).toEqual([`${ORIGIN}/docx/B`]);
+    expect(ignoreMissingDocs(app, "all")).toBe(1);
+    expect(missingDocs(app)).toEqual([]);
+    expect((await retryMissingDocs(app, { force: true })).tried).toBe(0);
+  });
+
+  it("resumes a refresh where it stopped and skips docs already read in it", async () => {
+    const app = testApp();
+    for (const t of ["D1", "D2", "D3"])
+      upsertSource(app, { spaceId: "personal", kind: "doc", uri: `${ORIGIN}/docx/${t}`, title: t, text: "旧", meta: { url: `${ORIGIN}/docx/${t}`, via: "lark-cli" } });
+    // Read newest first (D1, D2, D3); D3 was read two days ago, so D1's link to it is followed.
+    for (const [t, days] of [["D1", 0], ["D2", 1], ["D3", 2]] as const)
+      run(app.db, "update sources set updated_at = ? where uri = ?", new Date(Date.now() - days * 86400_000).toISOString(), `${ORIGIN}/docx/${t}`);
+    const calls = fakeCli({ D1: { title: "D1", content: `链到 ${ORIGIN}/docx/D3` }, D2: { title: "D2", content: "二" }, D3: { title: "D3", content: "三" } });
+    startRefresh(app);
+    // Interrupted after the first doc (as if the service restarted).
+    let n = 0;
+    await continueRefresh(app, { stop: () => n++ >= 1 });
+    expect(JSON.parse(one<{ value: string }>(app.db, "select value from kv where key = 'lark_docs_refresh'")!.value).todo).toHaveLength(2);
+    const s = (await continueRefresh(app))!;
+    expect(s).toMatchObject({ total: 3, done: 2, skipped: 1, todo: [] });
+    expect(one(app.db, "select value from kv where key = 'lark_docs_refresh'")).toBeUndefined();
+    // Every doc fetched once: D3 came in as D1's link and was not read again.
+    const fetched = calls.filter((c) => c[1] === "+fetch").map((c) => c[3].split("/").pop());
+    expect(fetched.sort()).toEqual(["D1", "D2", "D3"]);
+  });
+
+  it("checks for updates at growing intervals and reads again only what was edited", async () => {
+    const app = testApp();
+    const day = 86400_000;
+    const now = Date.now();
+    const iso = (t: number) => new Date(t).toISOString();
+    const steps = [7, 30, 90, 180, 365];
+    expect(docDue({}, now, steps)).toBe(true);
+    expect(docDue({ modifiedAt: iso(now - 3 * day), checkedAt: iso(now - day) }, now, steps)).toBe(false);
+    expect(docDue({ modifiedAt: iso(now - 8 * day), checkedAt: iso(now - 5 * day) }, now, steps)).toBe(true);
+    expect(docDue({ modifiedAt: iso(now - 8 * day), checkedAt: iso(now - day) }, now, steps)).toBe(false);
+    expect(docDue({ modifiedAt: iso(now - 40 * day), checkedAt: iso(now - 20 * day) }, now, steps)).toBe(true);
+    expect(docDue({ modifiedAt: iso(now - 400 * day), checkedAt: iso(now - 30 * day) }, now, steps)).toBe(false);
+
+    fakeCli({ Same: { title: "没改", content: "一" }, Edited: { title: "改过", content: "旧" } });
+    const same = await importLarkDocument(app, "personal", `${ORIGIN}/docx/Same`);
+    const edited = await importLarkDocument(app, "personal", `${ORIGIN}/docx/Edited`);
+    const past = Math.floor((now - 10 * day) / 1000);
+    const calls = fakeCli({ Same: { title: "没改", content: "一", edited: past }, Edited: { title: "改过", content: "新内容", revision: 2, edited: Math.floor(now / 1000) + 60 } });
+    const r = await checkLarkDocs(app);
+    expect(r).toMatchObject({ checked: 2, edited: 1, changed: [{ spaceId: "personal", ids: [edited.id] }] });
+    expect(calls.filter((c) => c[1] === "+fetch").map((c) => c[3].split("/").pop())).toEqual(["Edited"]);
+    const meta = JSON.parse(one<{ meta: string }>(app.db, "select meta from sources where id = ?", same.id)!.meta);
+    expect(meta.modifiedAt).toBe(iso(past * 1000));
+    expect(meta.checkedAt).toBeTruthy();
+    // Checked just now: nothing is due.
+    expect((await checkLarkDocs(app)).checked).toBe(0);
   });
 
   it("turns CSV into a Markdown table", () => {
