@@ -58,11 +58,16 @@ osdk run dev          # API :4317 + 网页 :5173，数据在 ./.omem
 # 或直接用 npm/pnpm
 pnpm install
 pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
+npm install -g .                  # 可选：把命令行 omem 链接到这个仓库
 ```
 
 第一次使用先运行 `omem setup`（或 `osdk run cli -- setup`）：交互式选择 Agent 后端与模型、向量模型（经 osdk 下载并锁定）、PDF/DOCX 解析（Docling 及其模型）、飞书 / Telegram / QQ·微信渠道、注入标记、会话与并发、定时任务。每一项都会先显示本机已安装什么、各选项的代价；缺的 uv、llama.cpp 和模型经 osdk 装好（不用把 osdk 的 shims 加进 PATH）。最后可以直接启动后台服务。
 
-**后台服务**：`omem service start | stop | restart | status | logs`。用 omem 自带的 PM2 常驻运行（PM2 数据放在 `~/.omem/service/pm2`，不碰你自己的 PM2），崩溃自动重启，日志在 `~/.omem/service/logs` 按天和大小轮换。不装开机自启，电脑重启后再 `omem service start`。前台调试用 `omem serve`。
+**后台服务**：`omem service start | stop | restart | status | logs`。用 omem 自带的 PM2 常驻运行（PM2 数据放在 `~/.omem/service/pm2`，不碰你自己的 PM2），崩溃自动重启，日志在 `~/.omem/service/logs` 按天和大小轮换。`omem service enable` 设置开机自启（macOS 用 LaunchAgent，Linux 用 systemd 用户服务并开启 linger、没有 systemd 时用 crontab `@reboot`，Windows 在“启动”文件夹放一个隐藏窗口的启动脚本，都不需要管理员权限），`omem service disable` 取消；`omem setup` 结束时也会问。自启用的是设置时终端里的 PATH，之后装了新 Agent 或换了 Node 版本再 `enable` 一次。前台调试用 `omem serve`。
+
+**更新**：在源码仓库里 `osdk run upgrade`（或 `node scripts/upgrade.ts`）：拉最新代码、装依赖、构建、`npm install -g .` 链接全局命令；加 `--restart` 顺便重启后台服务，`--no-global` 跳过全局安装。
+
+**监听地址**：默认监听所有网卡（`0.0.0.0`），方便其他设备配对和打开网页；本机的请求不需要令牌，其他机器的请求必须带令牌（配对码或 `omem link` 给的）。只想本机访问，配置里写 `"host": "localhost"`。Windows 第一次启动时防火墙可能会询问是否允许 Node 访问网络。
 
 打开网页后：
 
@@ -118,6 +123,7 @@ pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 ```bash
 omem serve                                  # 前台启动服务
 omem service start                          # 后台常驻（PM2，崩溃自动重启）；stop / restart / status / logs
+omem service enable                         # 开机自启（disable 取消）
 omem space add omem --path E:\Projects\omem  # 代码仓库空间
 omem add notes.md -s personal               # 保存材料（文件/目录/网址/飞书文档，- 读标准输入）
 omem search "预算 约定"                      # 检索原件、页面、记忆
@@ -204,7 +210,7 @@ omem space share project-a wang [--edit]           # 再开放一个空间
 常见用法是一台机器常驻运行（采集、定时任务），其他机器拉它的数据、看它的状态、让它执行检查。机器之间不必能直接访问：可以经中间那台转发。
 
 ```bash
-# 常驻那台：config.json 里 "host": "0.0.0.0"（不在本机访问时，没有令牌的请求一律拒绝）
+# 常驻那台（默认就监听所有网卡；不是本机的请求没有令牌一律拒绝）
 omem peer invite --label laptop           # 打印一行配对码（omem1.…），含本机所有网卡地址；服务不必正在运行
 
 # 另一台
@@ -223,7 +229,7 @@ omem pull <同伴>                          # 经 HTTP 拉一份快照合并进�
 
 同伴的名字是对方配置里的 `node.id`（`omem peer name` 查看或设置），没配就是它的主机名；最好在配对之前起好名字，之后改名的话对方那边仍记着旧名字。配对码里是对方的所有可能地址和一个为本人生成的 API 令牌（标签 `peer:<名字>`）；`add` 留下能连上的地址，之后正在用的地址连不上时会自动换码里的其他地址，所以断线、重启、换网后不用重新配对。`omem user revoke owner peer:<名字>` 撤销令牌即解除配对；配对信息存在 `secrets/peers.json`，令牌用 `omem user tokens` 查看。远程命令是固定的一组（诊断、日志、配置、飞书只读查询、手动采集与回溯、记忆统计、运行记录、只读 SQL、git 与更新、重启），没有任意 shell。本机打开网页不需要令牌；从别的机器打开时运行 `omem link`，它打印带新令牌的链接（每个网卡地址一个），打开一次后令牌存在那个浏览器里；也可以在页面提示时粘贴 `omem user token owner` 生成的令牌。
 
-`scripts/relay.mjs` 是一个临时的白名单转发：在只能 ssh 到其他机器的那台上运行，往 `.remote/relay/inbox/` 放请求文件，它经 ssh 执行允许的命令（omem 子命令、git/pnpm 的检查与更新、lark-cli 只读查询、本机 API 的 GET、几个系统信息命令）并把结果写到 `outbox/`。目标机器在 `.remote/relay/config.json` 里配置，详见脚本开头的说明。
+`scripts/relay.mjs` 是一个临时的白名单转发：在只能 ssh 到其他机器的那台上运行（不配置时只有本机目标 `local`，经已配对的同伴执行 `omem peer call` / `omem diag`），往 `.remote/relay/inbox/` 放请求文件，它经 ssh 执行允许的命令（omem 子命令、git/pnpm 的检查与更新、lark-cli 只读查询、本机 API 的 GET、几个系统信息命令）并把结果写到 `outbox/`。目标机器在 `.remote/relay/config.json` 里配置，详见脚本开头的说明。
 
 ## 开发
 
@@ -251,7 +257,7 @@ roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/�
 skills/omem     给外部 Agent 的 omem 使用说明（配合 omem mcp）
 skills/library  内置技能（如 lark-messaging），首次启动播种到 library/_skills
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
-scripts/      开发脚本：截图、检索与记忆评测、规模测试、临时 ssh 转发（relay.mjs）
+scripts/      脚本：更新（upgrade.ts）、截图、检索与记忆评测、规模测试、临时转发（relay.mjs）
 web/          Vue 3 网页
 ```
 
@@ -260,7 +266,7 @@ web/          Vue 3 网页
 ## 当前限制
 
 - 多人只到“留口子”：用户、身份、空间成员和令牌，不做多租户隔离。
-- 默认只监听本机；`host` 改成 `0.0.0.0` 后，其他机器必须带令牌（配对或 `omem link`）。多台设备是“一台常驻写入、其他来看”，还没有双向持续同步。
+- 默认监听所有网卡，其他机器必须带令牌（配对或 `omem link`）；在同一台机器上用反向代理对外暴露时，经代理来的请求看起来来自本机，这种情况要配置 `token`。多台设备是“一台常驻写入、其他来看”，还没有双向持续同步。
 - 除 Claude Code、OpenCode 外，其他 ACP Agent 只验证过连接握手；各家登录和模型名以实际“检测模型”结果为准。
 - 代码解析：TS/JS/JSX/TSX/Vue 用 TypeScript AST；Python 用导入与缩进分析；Go、Rust、Java、Kotlin、Swift、C、C++、Objective-C、C#、PHP、Ruby、Scala、Dart、Lua、Zig、Elixir、OCaml、ReScript、Solidity、Bash、Emacs Lisp 用 tree-sitter（WebAssembly，无需编译，按需加载语法）；其他语言（Haskell、Erlang、Clojure、Elm…）只做通用声明识别。
 - 跨文件调用解析到具体定义：TS/JS/Python 按导入；Go 按包（同目录与导入路径）；Rust 按 `use` 路径、`mod` 和工作区 crate；Java/Kotlin 按包、导入和静态导入（两者互通）；Swift 按整个模块；其余 tree-sitter 语言先看本类型、本文件和导入的文件（`#include`、`require`、`import … as`、`open`），再在同一语言里找唯一的同名定义，有多个同名就不连。对变量调用方法（`db.open()`）需要类型推断，和动态派发、第三方包一样只有名称级候选。

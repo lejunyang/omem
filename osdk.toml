@@ -18,6 +18,10 @@ typecheck = "pnpm run typecheck"
 [tasks.check]
 run = ["pnpm run typecheck", "pnpm run test", "pnpm run build"]
 
+[tasks.upgrade]
+description = "Pull the latest source, install deps, build, and link the global omem (npm install -g .); add --restart to restart the background service"
+run = [{ argv = ["node", "scripts/upgrade.ts", "{{args}}"] }]
+
 [tasks.screens]
 description = "Screenshot the running web UI at desktop and phone widths (needs a running dev server)"
 run = "node scripts/screens.ts"

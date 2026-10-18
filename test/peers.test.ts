@@ -88,3 +88,16 @@ describe("invite addresses", () => {
     expect(urls.every((u) => u.endsWith(":4999"))).toBe(true);
   });
 });
+
+describe("listen address", () => {
+  it("treats the old written-out default as unset and keeps an explicit localhost", async () => {
+    const { loadConfig } = await import("../src/core/config.ts");
+    const { writeFileSync } = await import("node:fs");
+    const home = mkdtempSync(join(tmpdir(), "omem-host-"));
+    expect(loadConfig(home).host).toBe("0.0.0.0");
+    writeFileSync(join(home, "config.json"), JSON.stringify({ host: "127.0.0.1" }));
+    expect(loadConfig(home).host).toBe("0.0.0.0");
+    writeFileSync(join(home, "config.json"), JSON.stringify({ host: "localhost" }));
+    expect(loadConfig(home).host).toBe("localhost");
+  });
+});

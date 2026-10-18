@@ -706,7 +706,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     });
   }
 
-  const host = opts.host ?? app.config.host;
+  const configured = opts.host ?? app.config.host;
+  // "localhost" can resolve to ::1 only; listen on 127.0.0.1 so local clients always reach it.
+  const host = configured === "localhost" ? "127.0.0.1" : configured;
   const address = await server.listen({ port: opts.port ?? app.config.port, host });
   const url = new URL(address);
   app.baseUrl = `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${url.port}`;

@@ -144,6 +144,8 @@ pnpm run dev                # 打开 http://localhost:5173
 | P3 | `omem peer call <它> lark-raw '{"command":"+chat-messages-list","chat_id":"oc_…"}'` | 返回 lark-cli 原始 JSON；发送类命令不在清单里 | 待验 |
 | P4 | `omem peer call <它> update` | 拉代码、装依赖、构建后服务自动重启，`omem diag` 显示新版本 | 待验 |
 | P5 | `omem pull <它>` | 合并进本机，图片等原始文件一并拉到 | 待验 |
+| P7 | 在三个系统上分别 `omem service enable`，重启电脑（Linux 服务器直接重启，不登录） | 登录后（Linux 开机后）服务自动在运行，`omem service status` 显示“开机自启：已设置”；`omem service disable` 后不再自启 | 待验 |
+| P8 | 源码仓库里 `osdk run upgrade --restart` | 拉代码、装依赖、构建、链接全局 omem，后台服务重启到新版本 | 待验 |
 | P6 | 常驻那台设 `"host": "0.0.0.0"` 但不配 `token`，从另一台浏览器直接打开 | 页面提示填写令牌；用 `omem link` 打印的链接打开后正常使用，图片能显示；本机打开不要令牌 | 待验 |
 
 ## 已知限制

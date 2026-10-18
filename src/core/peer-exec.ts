@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { App } from "./app.ts";
@@ -68,7 +68,9 @@ function tail(file: string, lines: number) {
 }
 
 function sh(cmd: string, args: string[], cwd: string, timeoutMs = 120_000) {
-  const r = spawnSync(cmd, args, { cwd, encoding: "utf8", timeout: timeoutMs, maxBuffer: 50_000_000, shell: process.platform === "win32" });
+  // .cmd shims (pnpm, npm) need a shell on Windows; an absolute path (node itself) must not
+  // go through one, since it may contain spaces.
+  const r = spawnSync(cmd, args, { cwd, encoding: "utf8", timeout: timeoutMs, maxBuffer: 50_000_000, shell: process.platform === "win32" && !isAbsolute(cmd) });
   return { code: r.status, stdout: (r.stdout ?? "").slice(-200_000), stderr: (r.stderr ?? "").slice(-50_000) };
 }
 
@@ -190,23 +192,17 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   update: {
-    description: "部署：git pull --ff-only、pnpm install、构建，然后重启服务",
-    schema: z.object({ restart: z.boolean().default(true) }),
+    description: "部署：scripts/upgrade.ts（git pull --ff-only、pnpm install、构建），然后重启服务",
+    schema: z.object({ restart: z.boolean().default(true), global: z.boolean().default(false) }),
     run: async (app, a) => {
       const root = await packageRoot();
-      const steps = [
-        ["git", ["-C", root, "pull", "--ff-only"]],
-        ["pnpm", ["install", "--frozen-lockfile"]],
-        ["pnpm", ["run", "build"]],
-      ] as const;
-      const out: { step: string; code: number | null; tail: string }[] = [];
-      for (const [cmd, args] of steps) {
-        const r = sh(cmd, [...args], root, 600_000);
-        out.push({ step: `${cmd} ${args.join(" ")}`, code: r.code, tail: (r.stdout + r.stderr).split("\n").slice(-15).join("\n") });
-        if (r.code !== 0) return { ok: false, steps: out };
-      }
+      const script = join(root, "scripts", "upgrade.ts");
+      if (!existsSync(script)) throw new HttpError(400, "这台机器上的 omem 不是源码仓库（没有 scripts/upgrade.ts），不能远程更新");
+      const r = sh(process.execPath, [script, ...(a.global ? [] : ["--no-global"])], root, 900_000);
+      const tail = (r.stdout + r.stderr).split("\n").slice(-40).join("\n");
+      if (r.code !== 0) return { ok: false, code: r.code, output: tail };
       if (a.restart) restartSoon(app);
-      return { ok: true, steps: out, restarting: a.restart };
+      return { ok: true, output: tail, restarting: a.restart };
     },
   },
   restart: {

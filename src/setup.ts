@@ -673,6 +673,28 @@ export async function setupInteractive(app: App) {
       out(formatService(await manageService(app.home, running ? "restart" : "start")));
     } catch (e) {
       out(`  服务没有启动：${(e as Error).message}`);
+      return;
+    }
+    const auto = await import("./core/autostart.ts");
+    if (!auto.autostartStatus(app.home)) {
+      const boot = await select({
+        message: "开机（登录）后自动启动服务？",
+        choices: [
+          { value: "yes", name: "设置", description: "macOS 用 LaunchAgent，Linux 用 systemd 用户服务，Windows 放进“启动”文件夹；omem service disable 取消" },
+          { value: "no", name: "不用" },
+        ],
+        default: "yes",
+      });
+      if (boot === "yes") {
+        try {
+          const { entry } = await import("./core/service.ts");
+          const r = auto.enableAutostart(app.home, process.execPath, entry());
+          out(`  已设置开机自启：${r.where}`);
+          for (const n of r.notes) out(`  注意：${n}`);
+        } catch (e) {
+          out(`  开机自启没有设置成功：${(e as Error).message}`);
+        }
+      }
     }
   }
 }

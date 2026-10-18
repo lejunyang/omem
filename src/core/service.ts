@@ -16,13 +16,14 @@ const here = dirname(fileURLToPath(import.meta.url));
  * in the background with the PM2 bundled in omem's dependencies. PM2 runs in
  * its own home under the data directory (`<home>/service/pm2`), so it does
  * not touch a PM2 the user may run for other things. Restarts on crash with
- * backoff, rotates logs with pm2-logrotate. No boot autostart is installed.
+ * backoff, rotates logs with pm2-logrotate. Starting at login/boot is opt-in:
+ * `omem service enable` (src/core/autostart.ts).
  */
 export type ServiceAction = "start" | "stop" | "restart" | "status";
 const NAME = "omem";
 
 /** The entry PM2 runs: the built CLI when present, else the TypeScript source (Node strips types). */
-function entry() {
+export function entry() {
   for (const c of [resolve(here, "../cli.js"), resolve(here, "../../dist/src/cli.js"), resolve(here, "../cli.ts")]) if (existsSync(c)) return c;
   throw new Error("找不到 omem 的入口（dist/src/cli.js 或 src/cli.ts）");
 }
@@ -141,6 +142,7 @@ export async function manageService(home: string, action: ServiceAction) {
     url,
     healthy: h.healthy,
     logs: [join(logs, "omem.out.log"), join(logs, "omem.err.log")],
+    autostart: await import("./autostart.ts").then((m) => m.autostartStatus(home)).catch(() => null),
   };
 }
 
@@ -149,6 +151,6 @@ export function formatService(s: Awaited<ReturnType<typeof manageService>>) {
     `服务：${s.state}${s.pid ? ` · PID ${s.pid}` : ""}${s.restarts ? ` · 重启过 ${s.restarts} 次` : ""}${s.since ? ` · 启动于 ${s.since.slice(0, 19).replace("T", " ")}` : ""}`,
     `网页：${s.url}（${s.healthy ? "正常" : "无响应"}）`,
     `日志：${s.logs.join("  ")}`,
-    "后台服务由 omem 自带的 PM2 管理，崩溃会自动重启；没有设置开机自启，电脑重启后运行 omem service start。",
+    s.autostart ? `开机自启：已设置（${s.autostart}）` : "开机自启：未设置（omem service enable）；电脑重启后需要 omem service start。",
   ].join("\n");
 }

@@ -23,12 +23,16 @@
  *
  * `via` runs the command from that target with a second ssh hop (it needs whatever
  * that hop needs — keys or a Kerberos ticket — to work non-interactively there).
+ * `{ "local": true }` runs on this machine without ssh (only omem and git); with
+ * paired peers that is enough: `omem peer call <peer> …`, `omem diag <peer>`.
+ * Without a config file the relay starts with just that local target.
  * `repo` is the omem checkout: `omem …` runs `node <repo>/src/cli.ts …` and git/pnpm
  * run inside it. Without `repo`, `omem` must be on PATH.
  */
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const argDir = process.argv.indexOf("--dir");
 const dir = resolve(argDir > 0 ? process.argv[argDir + 1] : ".remote/relay");
@@ -37,10 +41,10 @@ const outbox = join(dir, "outbox");
 const done = join(dir, "done");
 for (const d of [inbox, outbox, done]) mkdirSync(d, { recursive: true });
 const configFile = join(dir, "config.json");
+const here = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (!existsSync(configFile)) {
-  writeFileSync(configFile, JSON.stringify({ targets: { work: { ssh: "work-host", repo: "/path/to/omem" } } }, null, 2));
-  console.log(`已生成 ${configFile}，填好目标后重新启动。`);
-  process.exit(0);
+  writeFileSync(configFile, JSON.stringify({ targets: { local: { local: true } } }, null, 2));
+  console.log(`已生成 ${configFile}（只有本机目标 local；要经 ssh 访问其他机器就加 { "ssh": "主机", "repo": "omem 路径" }）。`);
 }
 const config = JSON.parse(readFileSync(configFile, "utf8"));
 const log = (s) => {
@@ -55,6 +59,8 @@ const LARK_READ = new Set(["+chat-list", "+chat-messages-list", "+threads-messag
 const OMEM = [
   ["diag"],
   ["peer", "list"],
+  ["peer", "name"],
+  ["link"],
   ["peer", "commands"],
   ["peer", "call"],
   ["peer", "invite"],
@@ -80,11 +86,13 @@ const startsWith = (cmd, prefix) => prefix.every((p, i) => cmd[i] === p);
 function check(cmd, target) {
   if (!Array.isArray(cmd) || !cmd.length || cmd.some((a) => typeof a !== "string" || a.length > 4000 || a.includes("\0"))) throw new Error("cmd 必须是字符串数组");
   const [prog, ...rest] = cmd;
-  const repo = target.repo;
+  const repo = target.repo ?? (target.local ? here : undefined);
+  if (target.local && prog !== "omem" && prog !== "git") throw new Error("本机目标只允许 omem 和 git");
   switch (prog) {
     case "omem": {
       if (!OMEM.some((p) => startsWith(rest, p))) throw new Error(`不允许的 omem 子命令：${rest.slice(0, 2).join(" ")}`);
       if (rest[0] === "memories" && rest[1] === "prune" && !rest.includes("--dry-run")) throw new Error("memories prune 只允许 --dry-run");
+      if (target.local) return { argv: [process.execPath, join(repo, "src", "cli.ts"), ...rest], cwd: repo };
       return { argv: repo ? ["node", `${repo}/src/cli.ts`, ...rest] : ["omem", ...rest], cwd: repo };
     }
     case "git": {
@@ -152,10 +160,12 @@ function sshArgs(name, line, depth = 0) {
   if (!t.via) return [...(t.sshOptions ?? []), "-o", "BatchMode=yes", t.ssh, here];
   return sshArgs(t.via, `ssh -o BatchMode=yes ${q(t.ssh)} ${q(here)}`, depth + 1);
 }
-function exec(args, timeoutMs) {
+function exec(args, timeoutMs, local) {
   return new Promise((res) => {
     const started = Date.now();
-    const p = spawn("ssh", args, { windowsHide: true });
+    // Local: the argv as is, no shell. Remote: ssh with the quoted command line.
+    const p = local ? spawn(local.argv[0], local.argv.slice(1), { cwd: local.cwd, windowsHide: true }) : spawn("ssh", args, { windowsHide: true });
+    p.on("error", (e) => (stderr += String(e.message)));
     let stdout = "";
     let stderr = "";
     p.stdout.on("data", (d) => (stdout = (stdout + d).slice(-1_000_000)));
@@ -189,7 +199,8 @@ async function tick() {
         const plan = check(req.cmd, target);
         const long = req.cmd[0] === "pnpm" || (req.cmd[0] === "omem" && (req.cmd[1] === "pull" || (req.cmd[1] === "peer" && req.cmd[2] === "call")));
         log(`${id} → ${req.target}: ${req.cmd.join(" ")}`);
-        result = { id, ok: true, ...(await exec(sshArgs(req.target, remoteLine(plan)), Math.min(req.timeoutMs ?? (long ? 900_000 : 180_000), 1_800_000))) };
+        const timeout = Math.min(req.timeoutMs ?? (long ? 900_000 : 180_000), 1_800_000);
+        result = { id, ok: true, ...(await (target.local ? exec(null, timeout, plan) : exec(sshArgs(req.target, remoteLine(plan)), timeout))) };
         log(`${id} ← code ${result.code}, ${result.ms} ms`);
       } catch (e) {
         result = { id, ok: false, error: e.message };

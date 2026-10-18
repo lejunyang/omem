@@ -41,9 +41,14 @@ export const capturePolicy = z.enum(["ingest", "involved", "store", "skip"]);
 export type CapturePolicy = z.infer<typeof capturePolicy>;
 
 export const configSchema = z.object({
-  host: z.string().default("127.0.0.1"),
+  /**
+   * Listen address. All interfaces by default, so other devices can pair with this one;
+   * requests from other machines need a token (see http.ts), requests from this machine
+   * do not. "localhost" keeps it to this machine only.
+   */
+  host: z.string().default("0.0.0.0"),
   port: z.number().int().default(4317),
-  /** Optional bearer token for the HTTP API (required when host is not loopback). */
+  /** Optional bearer token for the HTTP API; when set, even this machine needs it. */
   token: z.string().optional(),
   timezone: z.string().default(Intl.DateTimeFormat().resolvedOptions().timeZone),
   language: z.string().default("zh-CN"),
@@ -294,6 +299,10 @@ export function loadConfig(home = omemHome()): Config {
   mkdirSync(home, { recursive: true });
   const path = configPath(home);
   const raw = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
+  // Before 2026-10-18 the default was 127.0.0.1, and saveConfig writes every field, so
+  // that value in a file is the old default rather than a choice; "localhost" is how to
+  // keep it local now.
+  if (raw.host === "127.0.0.1") delete raw.host;
   const config = configSchema.parse(raw);
   if (process.env.OMEM_PORT) config.port = Number(process.env.OMEM_PORT);
   return config;

@@ -130,7 +130,7 @@ program
 
 program
   .command("service [action]")
-  .description("后台常驻服务（自带 PM2，崩溃自动重启、日志轮换）：start | stop | restart | status | logs")
+  .description("后台常驻服务（自带 PM2，崩溃自动重启、日志轮换）：start | stop | restart | status | logs | enable | disable（开机自启）")
   .option("-n, --lines <n>", "logs：显示最近多少行", (v) => Number(v), 80)
   .action(async (action: string | undefined, o) => {
     const { manageService, formatService } = await import("./core/service.ts");
@@ -144,7 +144,22 @@ program
       }
       return;
     }
-    if (!["start", "stop", "restart", "status"].includes(a)) throw new Error("用法：omem service start | stop | restart | status | logs");
+    if (a === "enable" || a === "disable") {
+      const auto = await import("./core/autostart.ts");
+      if (a === "disable") {
+        const r = auto.disableAutostart(home());
+        console.log(r.removed.length ? `已取消开机自启（删除 ${r.removed.join("、")}）。服务本身没有停，需要的话 omem service stop。` : "没有设置过开机自启。");
+        return;
+      }
+      const { entry } = await import("./core/service.ts");
+      const r = auto.enableAutostart(home(), process.execPath, entry());
+      console.log(`已设置开机自启：${r.where}\n登录（Linux 开了 linger 时是开机）后会运行 omem service start；PATH 用的是现在这个终端的，之后装了新的 Agent 或换了 Node 版本，再运行一次 omem service enable。`);
+      for (const n of r.notes) console.log(`注意：${n}`);
+      const s = await manageService(home(), "start");
+      console.log(formatService(s));
+      return;
+    }
+    if (!["start", "stop", "restart", "status"].includes(a)) throw new Error("用法：omem service start | stop | restart | status | logs | enable | disable");
     const s = await manageService(home(), a as "start");
     console.log(formatService(s));
     if ((a === "start" || a === "restart") && !s.healthy) process.exitCode = 1;
@@ -197,7 +212,7 @@ peer
     const app = open();
     const r = invite(app, { url: o.url, label: o.label });
     console.log(`本机：${r.id}\n地址：${r.urls.join("  ") || "（无）"}\n\n在另一台设备上运行：\n\n  omem peer add ${r.code}\n`);
-    if (!o.url && !r.urls.length) console.log(`注意：配置里 host 是 ${app.config.host}，只有本机能访问。改成 "0.0.0.0" 后 omem service restart，再重新 invite。`);
+    if (!o.url && !r.urls.length) console.log(`注意：配置里 host 是 ${app.config.host}，只有本机能访问。删掉这一项（默认监听所有网卡）或改成 "0.0.0.0" 后 omem service restart，再重新 invite。`);
     if (!(await serviceRunning(app))) console.log("注意：本机 omem 服务现在没在运行；配对码照样有效，对方 add 之前先 omem service start。");
     console.log(`撤销：omem user revoke owner peer:${o.label}`);
   });
@@ -249,7 +264,7 @@ program
     const app = open();
     const urls = localUrls(app);
     if (!urls.length) {
-      console.log(`配置里 host 是 ${app.config.host}，只有本机能访问：直接打开 http://127.0.0.1:${app.config.port}。要从其他设备打开，把 host 改成 "0.0.0.0" 后 omem service restart。`);
+      console.log(`配置里 host 是 ${app.config.host}，只有本机能访问：直接打开 http://127.0.0.1:${app.config.port}。要从其他设备打开，删掉配置里的 host（默认监听所有网卡）后 omem service restart。`);
       return;
     }
     const t = createApiToken(app, OWNER, o.label);
