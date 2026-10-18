@@ -234,7 +234,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
       <template v-else>
         <header class="dh">
           <div class="muted small mono ellipsis">{{ detail.source.spaceId }} / {{ detail.source.uri }}</div>
-          <h1>{{ detail.source.title.split("/").pop() }}</h1>
+          <h1>{{ detail.source.kind === "code" ? detail.source.title.split("/").pop() : detail.source.title }}</h1>
           <div class="row wrap meta">
             <span class="badge">{{ detail.source.kind }}</span>
             <span class="muted small">{{ detail.source.lines }} 行 · 更新于 {{ fmtTime(detail.source.updatedAt) }} · 首次保存 {{ fmtTime(detail.source.capturedAt, false) }}</span>

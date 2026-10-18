@@ -301,7 +301,7 @@ async function localize(ctx: Ctx, text: string, synced = true): Promise<string> 
  * so grids, columns and callouts get blank lines around their tags.
  */
 function layout(text: string) {
-  return text
+  return boldAsHtml(text)
     .replace(/<grid\b[^>]*>/g, '\n\n<div class="doc-grid">\n\n')
     .replace(/<\/grid>/g, "\n\n</div>\n\n")
     .replace(/<column\b[^>]*>/g, (tag) => {
@@ -672,4 +672,15 @@ export function larkDocsStatus(app: App) {
     unreadableLinks: missingList(app).length,
     refresh: progress ? { running: !!refreshing, ...progress } : null,
   };
+}
+
+/**
+ * `**AI：**为…` is not bold in CommonMark (the closing `**` follows punctuation and precedes a letter), and
+ * Feishu writes bold that way all the time. Outside code, bold becomes `<b>`.
+ */
+export function boldAsHtml(text: string) {
+  return text
+    .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
+    .map((part, i) => (i % 2 ? part : part.replace(/\*\*(?=\S)([^*\n]+?)(?<=\S)\*\*/g, "<b>$1</b>")))
+    .join("");
 }

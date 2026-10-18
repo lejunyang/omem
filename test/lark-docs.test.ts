@@ -206,3 +206,10 @@ describe("feishu docs as originals", () => {
     expect(csvToTable("h\n1\n2\n3", 2)).toContain("另有 1 行未展开");
   });
 });
+
+describe("bold in Feishu docs", () => {
+  it("writes bold as HTML outside code", async () => {
+    const { boldAsHtml } = await import("../src/channels/lark-docs.ts");
+    expect(boldAsHtml("- **AI：**为开发提供 `a**b**c`\n\n```\nx = **y**\n```\n**右栏**")).toBe("- <b>AI：</b>为开发提供 `a**b**c`\n\n```\nx = **y**\n```\n<b>右栏</b>");
+  });
+});
