@@ -453,6 +453,22 @@ const migrations: string[] = [
     primary key (space_a, space_b)
   );
   `,
+  // People seen in Feishu: open_ids differ per app (lark-cli vs the bot), so a person is matched by email,
+  // and the bot @-mentions by the tenant-wide user_id. Mentions of a message keep lark-cli's ids.
+  `
+  create table lark_people (
+    email text,
+    name text not null default '',
+    cli_open_id text unique,
+    bot_open_id text unique,
+    user_id text,
+    updated_at text not null
+  );
+  create unique index lark_people_email on lark_people(email) where email is not null;
+  create index lark_people_user on lark_people(user_id);
+  create index lark_people_name on lark_people(name);
+  alter table lark_messages add column mentions text not null default '[]';   -- [{ id (lark-cli open_id), name }]
+  `,
 ];
 
 export type Db = DatabaseSync;

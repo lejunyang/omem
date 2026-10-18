@@ -398,6 +398,38 @@ lark
     }
   });
 
+lark
+  .command("bot-permissions")
+  .description("检查飞书机器人缺哪些权限（含 @ 人要用的 user_id、邮箱），给出一键申请的链接；--scan 扫码把权限、事件和卡片回调一起补齐")
+  .option("--scan", "扫码确认，补齐全部权限、事件和卡片回调")
+  .action(async (o) => {
+    const app = open();
+    const { checkLarkApp, larkAppSecret, larkScopeLink, LARK_BOT_ADDONS, registerLarkBot, saveLarkSecret } = await import("./channels/lark-setup.ts");
+    const cfg = app.config.lark;
+    const secret = larkAppSecret(app.home, cfg.appId, cfg.appSecretEnv);
+    if (!cfg.appId || !secret) return console.error("还没有绑定飞书机器人：运行 omem setup → 渠道 → 飞书机器人");
+    const check = await checkLarkApp(cfg.appId, secret);
+    if (check.error) return console.error(check.error);
+    const missing = check.scopesUnknown ? LARK_BOT_ADDONS.scopes.tenant : check.missingScopes;
+    if (!missing.length && !o.scan) return console.log(`机器人「${check.botName ?? cfg.appId}」的权限已齐全`);
+    if (check.scopesUnknown) console.log("读不到这个应用已开通的权限，下面列出全部需要的（已开通的在页面上会显示为已开通）。");
+    else console.log(`缺少 ${missing.length} 项权限：${missing.join("、")}`);
+    console.log(`\n在浏览器打开，申请开通（企业里可能需要管理员审批）：\n${larkScopeLink(cfg.appId, missing)}\n`);
+    if (!o.scan) return console.log("也可以运行 omem lark bot-permissions --scan 扫码一次补齐（同时补事件和卡片回调）。");
+    const { larkCliText } = await import("./channels/lark-cli.ts");
+    const creds = await registerLarkBot({
+      appId: cfg.appId,
+      onQr: (url, expires) => {
+        console.log(`用飞书扫码，或在浏览器打开（${Math.round(expires / 60)} 分钟内有效）：\n${url}`);
+        const qr = larkCliText(["auth", "qrcode", url, "--ascii"]);
+        if (qr) console.log(qr);
+      },
+    });
+    saveLarkSecret(app.home, { ...creds, name: check.botName });
+    const after = await checkLarkApp(creds.appId, creds.appSecret);
+    console.log(after.missingScopes.length ? `仍缺：${after.missingScopes.join("、")}（可能在等管理员审批）` : "已补齐");
+  });
+
 const space = program.command("space").description("管理空间（领域隔离：个人 / 项目 / 代码仓库 / 学习 / 通用）");
 space
   .command("list")

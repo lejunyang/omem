@@ -78,7 +78,11 @@ describe("feishu bot setup", () => {
       return { json: async () => body } as Response;
     }) as typeof fetch;
     const r = await checkLarkApp("cli_a", "s", fake);
-    expect(r).toMatchObject({ botName: "助理", botOpenId: "ou_bot", missingScopes: ["im:message:send_as_bot", "im:resource"] });
+    expect(r).toMatchObject({ botName: "助理", botOpenId: "ou_bot" });
+    // Compared with everything the bot needs, including what @-mentions take.
+    expect(r.missingScopes).toEqual(expect.arrayContaining(["im:message:send_as_bot", "im:resource", "contact:user.id:readonly", "contact:user.employee_id:readonly"]));
+    expect(r.missingScopes).not.toContain("im:message");
+    expect(r.scopesUnknown).toBeUndefined();
     expect(calls.every((u) => !/message\/|messages/.test(u))).toBe(true);
     const bad = await checkLarkApp("cli_a", "s", (async () => ({ json: async () => ({ code: 10014, msg: "app secret invalid" }) }) as Response) as typeof fetch);
     expect(bad.error).toMatch(/App Secret/);

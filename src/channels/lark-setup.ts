@@ -39,6 +39,10 @@ export const LARK_BOT_ADDONS = {
       "im:chat.members:read",
       "contact:user.base:readonly",
       "contact:contact.base:readonly",
+      // To @ people seen in captured messages: user_id (tenant-wide, unlike open_id), email, and email → user_id.
+      "contact:user.employee_id:readonly",
+      "contact:user.email:readonly",
+      "contact:user.id:readonly",
       "application:bot.basic_info:read",
       "cardkit:card:read",
       "cardkit:card:write",
@@ -219,7 +223,14 @@ export async function registerLarkBot(opts: {
 
 // ---- verification --------------------------------------------------------------
 
-export type LarkCheck = { botName?: string; botOpenId?: string; missingScopes: string[]; error?: string };
+/** `scopesUnknown`: the app's granted permissions could not be read, so `missingScopes` may be incomplete. */
+export type LarkCheck = { botName?: string; botOpenId?: string; missingScopes: string[]; scopesUnknown?: boolean; error?: string };
+
+/** The developer console page that asks for these permissions on this app (the owner opens it and applies). */
+export function larkScopeLink(appId: string, scopes: string[], brand?: string) {
+  const host = brand === "lark" ? "open.larksuite.com" : "open.feishu.cn";
+  return `https://${host}/app/${appId}/auth?q=${encodeURIComponent(scopes.join(","))}&op_from=openapi&token_type=tenant`;
+}
 
 /** Get a tenant token and read the bot's info and granted scopes. Does not send anything. */
 export async function checkLarkApp(appId: string, appSecret: string, request: typeof fetch = fetch): Promise<LarkCheck> {
@@ -233,12 +244,16 @@ export async function checkLarkApp(appId: string, appSecret: string, request: ty
     const bot = (await (await request(`${base}/bot/v3/info`, { headers, signal: AbortSignal.timeout(15_000) })).json()) as { code?: number; msg?: string; bot?: { open_id?: string; app_name?: string } };
     if (bot.code !== 0) return { missingScopes: [], error: `应用没有开启机器人能力（${bot.code}：${bot.msg ?? ""}）` };
     let missing: string[] = [];
+    let unknown = true;
     try {
       const app = (await (await request(`${base}/application/v6/applications/${appId}?lang=zh_cn`, { headers, signal: AbortSignal.timeout(15_000) })).json()) as { code?: number; data?: { app?: { scopes?: { scope: string }[] } } };
       const have = new Set((app.data?.app?.scopes ?? []).map((s) => s.scope));
-      if (app.code === 0 && have.size) missing = ["im:message", "im:message:send_as_bot", "im:resource"].filter((s) => !have.has(s));
+      if (app.code === 0 && have.size) {
+        missing = LARK_BOT_ADDONS.scopes.tenant.filter((s) => !have.has(s));
+        unknown = false;
+      }
     } catch {}
-    return { botName: bot.bot?.app_name, botOpenId: bot.bot?.open_id, missingScopes: missing };
+    return { botName: bot.bot?.app_name, botOpenId: bot.bot?.open_id, missingScopes: missing, ...(unknown ? { scopesUnknown: true } : {}) };
   } catch (e) {
     return { missingScopes: [], error: `连不上飞书开放平台：${(e as Error).message}` };
   }

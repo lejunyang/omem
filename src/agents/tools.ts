@@ -942,6 +942,10 @@ const larkTarget = z.object({
   reply_to: z.string().optional().describe("回复某条消息（om_…）"),
   in_thread: z.boolean().optional().describe("回复时开话题 / 在话题里回复"),
   user_id: z.string().optional().describe("私聊某人（open_id，ou_…）"),
+  mentions: z
+    .array(z.string())
+    .optional()
+    .describe("要 @ 的人：名字、邮箱或 all。正文里写了“@名字”的地方会变成真正的 @，没写的放在开头。重名时会报出各人的邮箱，用邮箱指定"),
 });
 type LarkTargetArgs = z.infer<typeof larkTarget>;
 
@@ -969,6 +973,18 @@ function runThread(ctx: ToolContext) {
 
 async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("../channels/lark-send.ts").Content, opts: { allowed?: string[]; waitForAction?: boolean } = {}) {
   const send = await import("../channels/lark-send.ts");
+  if (t.mentions?.length) {
+    // Real @-mentions: the bot's user_id for each person (see lark-people.ts).
+    const { applyMentions, resolveMention } = await import("../channels/lark-people.ts");
+    const people = [];
+    for (const who of t.mentions) people.push(await resolveMention(ctx.app, who));
+    if ("text" in content) content = { text: applyMentions(content.text, people, "text") };
+    else if ("markdown" in content) content = { ...content, markdown: applyMentions(content.markdown, people, "card") };
+    else if ("card" in content) {
+      const body = (content.card.body ?? {}) as { elements?: unknown[] };
+      content = { card: { ...content.card, body: { ...body, elements: [{ tag: "markdown", content: applyMentions("", people, "card").trim() }, ...(body.elements ?? [])] } } };
+    }
+  }
   const chat = await larkGuard(ctx, t);
   const target = { chatId: t.chat_id, userId: t.user_id, replyTo: t.reply_to, inThread: t.in_thread };
   if (ctx.larkDraft) {
@@ -994,7 +1010,7 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
 def({
   name: "lark_send",
   description:
-    "用飞书机器人发消息或回复：文本、Markdown（标题、列表、加粗、链接、<at id=ou_xx></at> @人、<font color='red'>颜色</font>）。reply_to + in_thread=true 可以开话题回复。发之前想清楚是否真的需要发、发给谁。",
+    "用飞书机器人发消息或回复：文本、Markdown（标题、列表、加粗、链接、<font color='red'>颜色</font>）。要 @ 人用 mentions（名字或邮箱），不要自己写 <at> 标签：聊天记录里的 id 是另一个应用的，机器人用不了。reply_to + in_thread=true 可以开话题回复。发之前想清楚是否真的需要发、发给谁。",
   write: true,
   schema: larkTarget.extend({ text: z.string().optional(), markdown: z.string().optional(), title: z.string().optional() }),
   handler: async (ctx, a) => {

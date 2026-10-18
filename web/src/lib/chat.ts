@@ -15,6 +15,8 @@ export type ChatMsg = {
   reactions: { emoji?: string; emoji_type?: string; count?: number }[] | unknown[];
   /** Parsed lines only: the quote the line carries ("↩ 回复 X「…」"). */
   quote?: { sender: string; text: string } | null;
+  /** People @-mentioned, with their email when known (to tell who is who). */
+  mentions?: { name: string; email: string | null }[];
 };
 
 const LINE = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})(?: · 话题 (\S+))?\] (.+?)(?: ↩ 回复 (.+?)「(.*?)」)?: (.*?)((?: → src:[\w-]+)*) \(((?:om_|msg_)?[\w-]+)\)$/;
@@ -56,8 +58,14 @@ const attr = (tag: string, name: string) => new RegExp(`${name}="([^"]*)"`).exec
  * the shared renderer (marked + DOMPurify) understands: mentions, images (downloaded ones
  * point at the stored file), files, audio/video, cards, shared calendars, folders.
  */
-export function larkToMarkdown(content: string, resources: ChatMsg["resources"]): string {
+export function larkToMarkdown(content: string, resources: ChatMsg["resources"], mentions: ChatMsg["mentions"] = []): string {
   let s = content;
+  // @名字 → the name plus the email, so same-named people can be told apart.
+  for (const p of mentions) {
+    if (!p.email || !p.name) continue;
+    const esc = p.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    s = s.replace(new RegExp(`@${esc}(?![\\w(])`, "g"), `<span class="at" title="${escapeHtml(p.email)}">@${escapeHtml(p.name)}<span class="at-email">${escapeHtml(p.email)}</span></span>`);
+  }
   s = s.replace(/<at [^>]*?(?:user_id|id)="([^"]*)"[^>]*>([^<]*)<\/at>/g, (_, id, name) => `<span class="at">@${escapeHtml(name || (id === "all" ? "所有人" : id))}</span>`);
   s = s.replace(/!\[([^\]]*)\]\(((?:img|file)_[\w-]+)\)/g, (_, alt, key) => (resources[key]?.url ? `![${alt || "图片"}](${resources[key].url})` : `<span class="res">[图片]</span>`));
   s = s.replace(/<card title="([^"]*)">\n?([\s\S]*?)(?:<\/card>|$)/g, (_, title, body) => `<div class="lark-card"><div class="lark-card-title">${escapeHtml(title)}</div>\n\n${body.trim()}\n\n</div>\n`);

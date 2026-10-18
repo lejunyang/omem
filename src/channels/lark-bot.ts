@@ -316,12 +316,31 @@ export async function startLarkBot(app: App) {
     }
   };
 
+  /**
+   * The bot's ids for the people in a message (sender and mentions carry open_id, and user_id when the
+   * app may read it), so it can @ them later; the email is looked up once per new person.
+   */
+  const learnPeopleFromEvent = async (data: any) => {
+    const { learnBotPerson, rememberPerson } = await import("./lark-people.ts");
+    const people: { id?: { open_id?: string; user_id?: string }; name?: string }[] = [
+      { id: data.sender?.sender_id },
+      ...((data.message?.mentions ?? []) as { id?: { open_id?: string; user_id?: string }; name?: string }[]),
+    ];
+    for (const p of people) {
+      const openId = p.id?.open_id;
+      if (!openId || openId === botOpenId) continue;
+      rememberPerson(app, { botOpenId: openId, userId: p.id?.user_id || null, name: p.name ?? "" });
+      await learnBotPerson(app, client, openId);
+    }
+  };
+
   const dispatcher = new lark.EventDispatcher({ loggerLevel: lark.LoggerLevel.warn }).register({
     "im.message.receive_v1": async (data: any) => {
       const msg = data.message;
       const senderId = data.sender?.sender_id?.open_id ?? "";
       const mentions = ((msg.mentions ?? []) as { id?: { open_id?: string } }[]).map((x) => x.id?.open_id ?? "").filter(Boolean);
       if (msg.chat_type !== "p2p") void learnName(msg.chat_id);
+      void learnPeopleFromEvent(data).catch(() => {});
       const m: Inbound = {
         chatId: msg.chat_id,
         chatType: msg.chat_type === "p2p" ? "p2p" : "group",

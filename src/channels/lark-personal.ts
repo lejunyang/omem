@@ -11,7 +11,7 @@ import { chatSettings, setChatSettings } from "../agents/threads.ts";
 import { importFile, importUrl } from "../sources/import.ts";
 import { appendToSource, findSourceByUri, upsertSource } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
-import { flattenReplies, formatLine, isApp, keepResources, mentionIds, messageText, monthOf, parentOf, quotedMessages, rebuildArchive, storeMessages, timeMs, type LarkMessage, type ResourceRef } from "./lark-messages.ts";
+import { flattenReplies, formatLine, isApp, keepResources, learnPeople, mentionIds, messageText, monthOf, parentOf, quotedMessages, rebuildArchive, storeMessages, timeMs, type LarkMessage, type ResourceRef } from "./lark-messages.ts";
 import { routeWatchedMessages, watchRule, type ChatMessage } from "./lark-watch.ts";
 
 /**
@@ -315,6 +315,7 @@ async function captureChat(app: App, chat: LarkChat, c: CaptureCtx) {
       meta: { chatId: chat.chatId, chatMode: chat.mode, chatKind: kind, muted: chat.muted, via: "lark-cli" },
     });
     storeMessages(app, chat.chatId, messages, { owner, sourceId: r.id, firstLine: r.appendedFrom, resources });
+    await learnPeople(app, messages);
     // Only what the policy says is worth understanding goes to the ingest role; the rest stays searchable.
     if (ingest) {
       ids.add(r.id);
@@ -416,6 +417,7 @@ async function backfillStep(app: App, owner: string | undefined, touched: Map<st
           for (const m of fresh) byMonth.set(monthOf(timeMs(m.create_time)), [...(byMonth.get(monthOf(timeMs(m.create_time))) ?? []), m]);
           for (const [month, group] of byMonth) {
             storeMessages(app, c.chat_id, group, { owner, archive: month, resources });
+            await learnPeople(app, group);
             months.add(month);
           }
           await quotedMessages(app, c.chat_id, fresh, owner);
@@ -541,6 +543,7 @@ async function captureMentions(app: App, readChats: Set<string>, endMs: number, 
         lines: mentions.map((m) => formatLine({ ...m, sender: { ...m.sender, name: `${m.chat_name ?? m.chat_id}｜${m.sender?.name ?? "?"}` } }, { owner })),
       });
       storeMessages(app, "mentions", mentions, { owner, sourceId: r.id, firstLine: r.appendedFrom });
+      await learnPeople(app, mentions);
       touched.set("personal", new Set([...(touched.get("personal") ?? []), r.id]));
     }
   }

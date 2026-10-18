@@ -6,6 +6,7 @@ import { json } from "../core/util.ts";
 import { importFile, keepOriginal } from "../sources/import.ts";
 import { upsertSource } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
+import { cliIdsIn, learnCliPeople, peopleByCliIds } from "./lark-people.ts";
 
 /**
  * Feishu messages as structured rows (`lark_messages`) next to the chat source text.
@@ -99,6 +100,8 @@ function senderKind(m: LarkMessage, owner?: string) {
   return isApp(m) ? "app" : "user";
 }
 const oneLine = (s: string) => s.replace(/\r?\n/g, " ⏎ ");
+/** `@名字(ou_…)` as lark-cli renders mentions in cards → `@名字`: the id is lark-cli's own, useless elsewhere. */
+export const withoutOpenIds = (s: string) => s.replace(/(@[^@()\s]{1,40})\(ou_[0-9a-f]{32}\)/g, "$1");
 const plain = (s: string) =>
   s
     .replace(/<at [^>]*>([^<]*)<\/at>/g, "@$1")
@@ -113,12 +116,12 @@ type Quoted = { sender: string; text: string };
 /** One line of the chat source: time, topic, sender, quote, text, resources, message id. */
 export function formatLine(m: LarkMessage, opts: { owner?: string; quoted?: Quoted | null; resources?: Record<string, ResourceRef> }) {
   const who = `${m.sender?.name ?? m.sender?.id ?? (m.msg_type === "system" ? "系统" : "?")}${opts.owner && m.sender?.id === opts.owner ? "（本人）" : isApp(m) ? "（机器人）" : ""}`;
-  const quote = opts.quoted ? ` ↩ 回复 ${opts.quoted.sender}「${plain(opts.quoted.text).slice(0, 40)}」` : "";
+  const quote = opts.quoted ? ` ↩ 回复 ${opts.quoted.sender}「${plain(withoutOpenIds(opts.quoted.text)).slice(0, 40)}」` : "";
   const files = Object.values(opts.resources ?? {})
     .filter((r) => r.sourceId)
     .map((r) => ` → src:${r.sourceId}`)
     .join("");
-  return `[${fmtTime(m.create_time)}${m.thread_id ? ` · 话题 ${m.thread_id}` : ""}] ${who}${quote}: ${oneLine(messageText(m))}${files} (${m.message_id})`;
+  return `[${fmtTime(m.create_time)}${m.thread_id ? ` · 话题 ${m.thread_id}` : ""}] ${who}${quote}: ${oneLine(withoutOpenIds(messageText(m)))}${files} (${m.message_id})`;
 }
 
 // ---- resources -------------------------------------------------------------------
@@ -192,6 +195,7 @@ type Row = {
   archive: string | null;
   resources: string;
   reactions: string;
+  mentions: string;
 };
 
 export function storeMessages(
@@ -204,12 +208,12 @@ export function storeMessages(
     messages.forEach((m, i) =>
       run(
         app.db,
-        `insert into lark_messages(message_id,chat_id,thread_id,parent_id,sender_id,sender_name,sender_kind,msg_type,content,create_ms,source_id,line,archive,resources,reactions)
-         values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `insert into lark_messages(message_id,chat_id,thread_id,parent_id,sender_id,sender_name,sender_kind,msg_type,content,create_ms,source_id,line,archive,resources,reactions,mentions)
+         values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          on conflict(message_id) do update set thread_id = coalesce(excluded.thread_id, lark_messages.thread_id), parent_id = coalesce(excluded.parent_id, lark_messages.parent_id),
            content = excluded.content, source_id = coalesce(excluded.source_id, lark_messages.source_id), line = coalesce(excluded.line, lark_messages.line),
            archive = coalesce(excluded.archive, lark_messages.archive), resources = case when excluded.resources != '{}' then excluded.resources else lark_messages.resources end,
-           reactions = excluded.reactions`,
+           reactions = excluded.reactions, mentions = case when excluded.mentions != '[]' then excluded.mentions else lark_messages.mentions end`,
         m.message_id,
         m.chat_id ?? chatId,
         m.thread_id ?? null,
@@ -225,9 +229,36 @@ export function storeMessages(
         opts.archive ?? null,
         JSON.stringify(opts.resources?.get(m.message_id) ?? {}),
         JSON.stringify(Array.isArray(m.reactions) ? m.reactions : ((m.reactions as { counts?: unknown })?.counts ?? [])),
+        JSON.stringify((m.mentions ?? []).map((x) => ({ id: typeof x.id === "string" ? x.id : (x.id?.open_id ?? ""), name: x.name ?? "" })).filter((x) => x.id)),
       ),
     );
   });
+}
+
+/** Names and emails of the people in these messages (senders and @-mentions), for display and for the bot to @ them. */
+export async function learnPeople(app: App, messages: LarkMessage[]) {
+  const ids = messages.flatMap((m) => cliIdsIn(messageText(m), [isApp(m) ? undefined : m.sender?.id, ...mentionIds(m)]));
+  await learnCliPeople(app, ids).catch((e) => console.warn(`[omem] 记录飞书联系人失败：${(e as Error).message}`));
+}
+
+/**
+ * Once: chat sources captured before ids were dropped from chat lines lose their `(ou_…)` after @names
+ * (same lines, so citations keep pointing at the same place), and the people in stored messages get
+ * names and emails.
+ */
+export async function cleanUpLarkIds(app: App) {
+  if (one(app.db, "select 1 from kv where key = 'lark_open_ids_cleaned'")) return;
+  for (const s of all<{ id: string; space_id: string; kind: string; uri: string; title: string; text: string; meta: string }>(
+    app.db,
+    "select id, space_id, kind, uri, title, text, meta from sources where kind = 'chat' and deleted_at is null and text like '%(ou_%'",
+  )) {
+    const text = withoutOpenIds(s.text);
+    if (text !== s.text) upsertSource(app, { spaceId: s.space_id, kind: "chat", uri: s.uri, title: s.title, text, meta: json(s.meta, {}) });
+  }
+  const rows = all<{ content: string; mentions: string; sender_id: string | null; sender_kind: string }>(app.db, "select content, mentions, sender_id, sender_kind from lark_messages");
+  const ids = rows.flatMap((r) => cliIdsIn(r.content, [r.sender_kind === "app" ? undefined : (r.sender_id ?? undefined), ...json<{ id: string }[]>(r.mentions, []).map((x) => x.id)]));
+  await learnCliPeople(app, ids).catch(() => {});
+  run(app.db, "insert into kv(key,value) values('lark_open_ids_cleaned', ?) on conflict(key) do update set value = excluded.value", new Date().toISOString());
 }
 
 /** Quoted (replied-to) messages: from what is stored, else fetched once and stored as context. */
@@ -317,6 +348,8 @@ export type ChatMessageView = {
   content: string;
   resources: Record<string, ResourceRef & { url?: string }>;
   reactions: unknown[];
+  /** People @-mentioned: name and email (ids stay on the server). */
+  mentions: { name: string; email: string | null }[];
 };
 
 const toView = (r: Row): ChatMessageView => ({
@@ -331,6 +364,7 @@ const toView = (r: Row): ChatMessageView => ({
   content: r.content,
   resources: Object.fromEntries(Object.entries(json<Record<string, ResourceRef>>(r.resources, {})).map(([k, v]) => [k, { ...v, url: v.file ? `/api/files/${v.file}` : undefined }])),
   reactions: json(r.reactions, []),
+  mentions: [],
 });
 
 /** Structured messages of a chat source (empty for sources captured before rows were kept) and the messages they quote. */
@@ -344,5 +378,17 @@ export function sourceMessages(app: App, sourceId: string) {
     const r = one<Row>(app.db, "select * from lark_messages where message_id = ?", p);
     if (r) quoted[p] = { ...toView(r), sourceId: r.source_id };
   }
-  return { messages: rows.map(toView), quoted };
+  const views = rows.map(toView);
+  // Mentions: the stored list (text messages) and `@名字(ou_…)` inside cards, resolved to name + email.
+  const idsOf = (r: Row) => cliIdsIn(r.content, json<{ id: string }[]>(r.mentions, []).map((x) => x.id));
+  const people = peopleByCliIds(app, [...new Set(rows.flatMap(idsOf))]);
+  rows.forEach((r, i) => {
+    const seen = new Map<string, { name: string; email: string | null }>();
+    for (const x of json<{ id: string; name: string }[]>(r.mentions, [])) seen.set(x.id, { name: people.get(x.id)?.name || x.name, email: people.get(x.id)?.email ?? null });
+    for (const m of r.content.matchAll(/@([^@()\s]{1,40})\((ou_[0-9a-f]{32})\)/g)) seen.set(m[2], { name: people.get(m[2])?.name || m[1], email: people.get(m[2])?.email ?? null });
+    views[i].mentions = [...seen.values()];
+    views[i].content = withoutOpenIds(views[i].content);
+  });
+  for (const q of Object.values(quoted)) q.content = withoutOpenIds(q.content);
+  return { messages: views, quoted };
 }

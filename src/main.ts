@@ -51,6 +51,9 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   startWorker(app);
   if (opts.background !== false) {
     restartScheduler(app);
+    import("./channels/lark-messages.ts")
+      .then((m) => m.cleanUpLarkIds(app))
+      .catch((e) => console.warn("[omem] 整理飞书聊天里的 id 失败：", e.message));
     // Long jobs interrupted by a restart carry on (runs are re-queued by the worker itself).
     import("./channels/lark-docs.ts")
       .then((m) => m.resumeRefresh(app))

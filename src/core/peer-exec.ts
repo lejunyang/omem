@@ -226,6 +226,33 @@ export const peerCommands: Record<string, Command> = {
       return out;
     },
   },
+  "lark-bot-permissions": {
+    description: "飞书机器人缺哪些权限（含 @ 人要用的 user_id、邮箱），返回一键申请的链接；scan: true 时在后台发起扫码补齐，返回二维码链接（在飞书里打开确认）",
+    schema: z.object({ scan: z.boolean().default(false) }),
+    run: async (app, a) => {
+      const { checkLarkApp, larkAppSecret, larkScopeLink, LARK_BOT_ADDONS, registerLarkBot, saveLarkSecret } = await import("../channels/lark-setup.ts");
+      const cfg = app.config.lark;
+      const secret = larkAppSecret(app.home, cfg.appId, cfg.appSecretEnv);
+      if (!cfg.appId || !secret) throw new Error("还没有绑定飞书机器人");
+      const check = await checkLarkApp(cfg.appId, secret);
+      if (check.error) throw new Error(check.error);
+      const missing = check.scopesUnknown ? LARK_BOT_ADDONS.scopes.tenant : check.missingScopes;
+      const out: Record<string, unknown> = { bot: check.botName, scopesUnknown: !!check.scopesUnknown, missing, link: missing.length ? larkScopeLink(cfg.appId, missing) : null };
+      if (a.scan) {
+        out.scan = await new Promise((resolve) => {
+          registerLarkBot({ appId: cfg.appId, onQr: (url, expires) => resolve({ url, expiresInMinutes: Math.round(expires / 60) }) })
+            .then(async (creds) => {
+              saveLarkSecret(app.home, { ...creds, name: check.botName });
+              const { notify } = await import("./notify.ts");
+              const after = await checkLarkApp(creds.appId, creds.appSecret);
+              notify(app, { title: "飞书机器人权限已更新", body: after.missingScopes.length ? `仍缺：${after.missingScopes.join("、")}（可能在等管理员审批）` : "权限已补齐" });
+            })
+            .catch((e) => resolve({ error: (e as Error).message }));
+        });
+      }
+      return out;
+    },
+  },
   "lark-docs-refresh": {
     description: "重新读取已保存的飞书文档（下载图片、画板等素材，导入链接的文档），在后台运行，完成后发通知；stop: true 在当前这篇读完后停下",
     schema: z.object({ space: z.string().max(64).optional(), limit: z.number().int().min(1).max(10_000).optional(), stop: z.boolean().optional() }),
