@@ -1166,7 +1166,9 @@ def({
   schema: z.object({ url: z.string().url(), space: z.string().optional() }),
   handler: async (ctx, a) => {
     const r = await importUrl(ctx.app, writeSpace(ctx, a.space), a.url);
-    return `已保存原件 ${r.id}（${r.status}）`;
+    const linked = r.related?.length ? `；链接的文档新增或更新 ${r.related.length} 篇：${r.related.join("、")}` : "";
+    const missing = r.missing?.length ? `；读不到 ${r.missing.length} 篇（已提醒本人）：${r.missing.map((m) => m.title || m.url).join("、")}` : "";
+    return `已保存原件 ${r.id}（${r.status}）${linked}${missing}`;
   },
 });
 

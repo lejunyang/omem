@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
@@ -139,6 +140,54 @@ export const peerCommands: Record<string, Command> = {
       if (!a.reactions && a.command !== "+chat-list" && a.command !== "+chat-search") args.push("--no-reactions");
       args.push("--as", "user", "--format", "json");
       return (await import("../channels/lark-cli.ts")).larkCli(args);
+    },
+  },
+  "lark-doc-raw": {
+    description: "只读调用 lark-cli 的文档读取（fetch：文档内容；media：下载一个素材到临时目录后删除，返回输出和文件名；csv：读内嵌表格），返回原始 JSON（用来核对字段）",
+    schema: z.object({
+      action: z.enum(["fetch", "media", "csv"]),
+      doc: z.string().url().optional(),
+      token: z.string().regex(/^[A-Za-z0-9]+$/).optional(),
+      type: z.enum(["media", "whiteboard"]).default("media"),
+      sheet_id: z.string().regex(/^[\w-]+$/).optional(),
+      max_chars: z.number().int().min(100).max(200_000).default(4000),
+    }),
+    run: async (_app, a) => {
+      const { larkCli } = await import("../channels/lark-cli.ts");
+      const clip = (v: unknown) => JSON.stringify(v).slice(0, a.max_chars);
+      if (a.action === "fetch") {
+        if (!a.doc || !/feishu\.cn|larksuite\.com|larkoffice\.com/.test(a.doc)) throw new Error("需要飞书文档链接 doc");
+        return clip(await larkCli(["docs", "+fetch", "--doc", a.doc, "--as", "user", "--doc-format", "markdown"], 60_000));
+      }
+      if (!a.token) throw new Error("需要 token");
+      if (a.action === "csv") {
+        if (!a.sheet_id) throw new Error("需要 sheet_id");
+        return clip(await larkCli(["sheets", "+csv-get", "--spreadsheet-token", a.token, "--sheet-id", a.sheet_id, "--include-row-prefix=false", "--max-chars", "4000", "--as", "user"], 60_000));
+      }
+      const dir = mkdtempSync(join(tmpdir(), "omem-doc-raw-"));
+      try {
+        const out = await larkCli(["docs", "+media-download", "--token", a.token, "--type", a.type, "--output", `./${a.token}`, "--as", "user"], 180_000, dir);
+        return { output: out, files: readdirSync(dir).map((n) => ({ name: n, bytes: statSync(join(dir, n)).size })) };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  },
+  "lark-docs-refresh": {
+    description: "重新读取已保存的飞书文档（下载图片、画板等素材，导入链接的文档），在后台运行，完成后发通知",
+    schema: z.object({ space: z.string().max(64).optional(), limit: z.number().int().min(1).max(10_000).optional() }),
+    run: async (app, a) => {
+      const { refreshInBackground } = await import("../channels/lark-docs.ts");
+      return refreshInBackground(app, a);
+    },
+  },
+  "lark-docs-missing": {
+    description: "链接里读不到的飞书文档（多半是没有权限），可立即重试",
+    schema: z.object({ retry: z.boolean().default(false) }),
+    run: async (app, a) => {
+      const m = await import("../channels/lark-docs.ts");
+      const retried = a.retry ? await m.retryMissingDocs(app, { force: true }) : null;
+      return { retried, missing: m.missingDocs(app) };
     },
   },
   "lark-poll": { description: "立即采集一次飞书", schema: z.object({}), run: async (app) => (await import("../channels/lark-personal.ts")).pollLark(app) },

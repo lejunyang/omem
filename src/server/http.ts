@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { symbolRelations } from "../sources/callgraph.ts";
 import { agentSpecHistory, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -209,7 +209,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/sources/url", async (req) => {
     const b = q(z.object({ space: z.string().default("personal"), url: z.string().url(), ingest: z.boolean().default(true) }), req.body);
     const r = await importUrl(app, b.space, b.url);
-    const ingest = b.ingest && r.status !== "unchanged" ? scheduleIngest(app, b.space, [r.id]) : null;
+    const ids = [...(r.status !== "unchanged" ? [r.id] : []), ...(r.related ?? [])];
+    const ingest = b.ingest && ids.length ? scheduleIngest(app, b.space, ids) : null;
     return { ...r, ingestRun: ingest?.id ?? null };
   });
   server.post("/api/sources/upload", async (req) => {
@@ -241,9 +242,32 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const file = join(app.filesDir, name);
     if (!existsSync(file)) throw new HttpError(404, "not found");
     const ext = name.split(".").pop()!;
-    const types: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", pdf: "application/pdf" };
-    reply.type(types[ext] ?? "application/octet-stream");
-    return readFileSync(file);
+    const types: Record<string, string> = {
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+      webp: "image/webp",
+      pdf: "application/pdf",
+      mp4: "video/mp4",
+      mov: "video/quicktime",
+      webm: "video/webm",
+      mp3: "audio/mpeg",
+      m4a: "audio/mp4",
+    };
+    reply.type(types[ext] ?? "application/octet-stream").header("accept-ranges", "bytes").header("x-content-type-options", "nosniff");
+    // Videos are seeked with Range requests.
+    const size = statSync(file).size;
+    const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ""));
+    if (range && (range[1] || range[2])) {
+      const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+      const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+      if (start >= size || start > end) return reply.code(416).header("content-range", `bytes */${size}`).send();
+      reply.code(206).header("content-range", `bytes ${start}-${end}/${size}`).header("content-length", end - start + 1);
+      return reply.send(createReadStream(file, { start, end }));
+    }
+    reply.header("content-length", size);
+    return reply.send(createReadStream(file));
   });
 
   // ------------------------------------------------------------------- search

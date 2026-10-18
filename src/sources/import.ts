@@ -245,11 +245,14 @@ function htmlToText(html: string) {
   return { title, body };
 }
 
-export async function importUrl(app: App, spaceId: string, url: string): Promise<UpsertResult> {
+/**
+ * A web page or a Feishu doc as an original. For Feishu docs, `related` lists linked docs that were
+ * imported or changed along with it (they need understanding too) and `missing` those that could not be read.
+ */
+export async function importUrl(app: App, spaceId: string, url: string): Promise<UpsertResult & { related?: string[]; missing?: { url: string; title: string; error: string }[] }> {
   if (/feishu\.cn|larksuite\.com|larkoffice\.com/.test(url)) {
-    const { readLarkDocument } = await import("../channels/lark-docs.ts");
-    const doc = await readLarkDocument(url);
-    return upsertSource(app, { spaceId, kind: "doc", uri: url, title: doc.title, text: doc.markdown, meta: { url, via: "lark-cli" } });
+    const { importLarkDocument } = await import("../channels/lark-docs.ts");
+    return importLarkDocument(app, spaceId, url);
   }
   const res = await fetch(url, { headers: { "user-agent": "omem/0.2 (+personal knowledge capture)" }, signal: AbortSignal.timeout(30_000) });
   if (!res.ok) throw new HttpError(502, `抓取失败：HTTP ${res.status}`);

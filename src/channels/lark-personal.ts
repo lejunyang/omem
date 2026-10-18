@@ -217,7 +217,7 @@ async function importLinkedDocs(app: App, spaceId: string, text: string): Promis
     if (existing && Date.now() - Date.parse(existing.updatedAt) < 86400_000) continue;
     try {
       const r = await importUrl(app, spaceId, url);
-      ids.push(r.id);
+      ids.push(r.id, ...(r.related ?? []));
     } catch (e) {
       console.warn(`[omem] 读取飞书文档失败 ${url}：${(e as Error).message}`);
     }
@@ -502,6 +502,14 @@ async function pollLarkOnce(app: App) {
   await captureMentions(app, readChats, endMs, touched, owner).catch((e) => console.warn("[omem] 飞书 @我 消息读取失败：", (e as Error).message));
   if (cfg.calendar) await captureCalendar(app, touched).catch((e) => console.warn("[omem] 飞书日程读取失败：", (e as Error).message));
   if (cfg.minutes) await captureMinutes(app, touched).catch((e) => console.warn("[omem] 飞书妙记读取失败：", (e as Error).message));
+  // Linked docs that had no permission before (at most every 6 hours).
+  if (cfg.docs)
+    await import("./lark-docs.ts")
+      .then((m) => m.retryMissingDocs(app))
+      .then((r) => {
+        for (const d of r.imported) touched.set(d.spaceId, (touched.get(d.spaceId) ?? new Set()).add(d.id));
+      })
+      .catch((e) => console.warn("[omem] 重试飞书文档失败：", (e as Error).message));
 
   for (const [spaceId, ids] of touched) scheduleIngest(app, spaceId, [...ids], "飞书新消息、日程或妙记");
   return { chats: read, messages, spaces: [...touched.keys()] };

@@ -350,6 +350,37 @@ program
     console.log(JSON.stringify(await peerJson(app, peerId, "/api/diag"), null, 2));
   });
 
+const lark = program.command("lark").description("飞书个人采集（只读）：文档");
+lark
+  .command("docs-refresh")
+  .description("重新读取已保存的飞书文档：下载图片、画板、视频等素材，读内嵌表格，导入链接的文档")
+  .option("--space <id>", "只处理这个空间")
+  .option("--limit <n>", "最多处理几篇（最近更新的优先）")
+  .action(async (o) => {
+    const app = open();
+    const { refreshLarkDocs } = await import("./channels/lark-docs.ts");
+    const r = await refreshLarkDocs(app, { space: o.space, limit: o.limit ? Number(o.limit) : undefined, log: (s) => console.log(s) });
+    console.log(`完成 ${r.done}/${r.total}，失败 ${r.failed}；有新内容或新导入 ${r.changed.reduce((n, c) => n + c.ids.length, 0)} 篇`);
+    for (const c of r.changed) {
+      const done = await runJob((a) => scheduleIngest(a, c.spaceId, c.ids, "飞书文档有新内容或新链接的文档") ?? { runId: "" }, { stream: false });
+      console.log((done.output as { summary?: string }).summary ?? "");
+    }
+  });
+lark
+  .command("docs-missing")
+  .description("链接里读不到的飞书文档（多半是没有权限）")
+  .option("--retry", "立即重试")
+  .action(async (o) => {
+    const app = open();
+    const m = await import("./channels/lark-docs.ts");
+    if (o.retry) {
+      const r = await m.retryMissingDocs(app, { force: true });
+      console.log(`重试 ${r.tried} 篇，读到 ${r.imported.length} 篇`);
+      for (const d of r.imported) await runJob((a) => scheduleIngest(a, d.spaceId, [d.id], "原先读不到的飞书文档") ?? { runId: "" }, { stream: false });
+    }
+    for (const d of m.missingDocs(app)) console.log(`${d.title || "（无标题）"}  ${d.url}  ${d.error}`);
+  });
+
 const space = program.command("space").description("管理空间（领域隔离：个人 / 项目 / 代码仓库 / 学习 / 通用）");
 space
   .command("list")
@@ -417,8 +448,10 @@ program
       console.log(`已保存 ${r.id}`);
     } else if (/^https?:\/\//.test(input)) {
       const r = await importUrl(app, o.space, input);
-      ids = r.status === "unchanged" ? [] : [r.id];
+      ids = [...(r.status === "unchanged" ? [] : [r.id]), ...(r.related ?? [])];
       console.log(`${r.status} ${r.id}`);
+      if (r.related?.length) console.log(`链接的文档：新增或更新 ${r.related.length} 篇`);
+      for (const m of r.missing ?? []) console.log(`读不到：${m.title || m.url}（${m.error}）`);
     } else if (existsSync(input) && statSync(input).isDirectory()) {
       const r = await importDirectory(app, o.space, input);
       ids = r.sourceIds;

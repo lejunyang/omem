@@ -55,7 +55,10 @@ marked.use({
     },
     image({ href, title, text }) {
       const src = href.startsWith("omem-file:") ? `/api/files/${encodeURIComponent(href.slice(10))}` : /^https?:/i.test(href) || /^\/api\/files\/[\w.-]+$/.test(href) ? href : "";
-      return src ? `<img src="${escapeHtml(src.startsWith("/api/") ? authUrl(src) : src)}" alt="${escapeHtml(text)}"${title ? ` title="${escapeHtml(title)}"` : ""} loading="lazy" />` : escapeHtml(text);
+      if (!src) return escapeHtml(text);
+      const url = escapeHtml(src.startsWith("/api/") ? authUrl(src) : src);
+      if (/\.(mp4|mov|webm)$/i.test(src)) return `<video src="${url}" controls preload="metadata" title="${escapeHtml(text)}"></video>`;
+      return `<img src="${url}" alt="${escapeHtml(text)}"${title ? ` title="${escapeHtml(title)}"` : ""} loading="lazy" />`;
     },
     link({ href, title, tokens }) {
       const inner = this.parser.parseInline(tokens);
@@ -68,6 +71,7 @@ marked.use({
       if ((m = /^mem:(\S+)$/.exec(href))) return `<a class="cite mem" href="#" data-cite="memory" data-ref="${escapeHtml(m[1])}"${t}>${inner || "记忆"}</a>`;
       if ((m = /^msg:(\S+)$/.exec(href))) return `<a class="cite mem" href="#" data-cite="message" data-ref="${escapeHtml(m[1])}"${t}>${inner || "消息"}</a>`;
       if ((m = /^wiki:(\S+)$/.exec(href))) return `<a class="wikilink" href="#" data-wiki="${escapeHtml(decodeURIComponent(m[1]))}"${t}>${inner}</a>`;
+      if (href.startsWith("omem-file:")) return `<a href="${escapeHtml(authUrl(`/api/files/${encodeURIComponent(href.slice(10))}`))}"${t} target="_blank" rel="noopener noreferrer">${inner}</a>`;
       const safe = /^(https?:|mailto:|#)/i.test(href) ? href : "#";
       return `<a href="${escapeHtml(safe)}"${t} target="_blank" rel="noopener noreferrer">${inner}</a>`;
     },

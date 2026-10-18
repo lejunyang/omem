@@ -146,6 +146,8 @@ omem space relate shop-web shop-api -n "调用订单接口"  # 关联两个空�
 omem wiki export omem .repo-review/wiki     # 把 Wiki 导出成仓库里可读的 Markdown
 omem hook claude|codex                      # 记录编码 Agent 会话（配在钩子里）
 omem peer invite|add|list|call / omem diag   # 多台设备：配对、诊断、远程检查，见“多台设备”
+omem lark docs-refresh [--space <id>]        # 重新读已保存的飞书文档（补下载图片、画板，导入链接的文档）
+omem lark docs-missing [--retry]             # 链接里读不到的飞书文档（多半没权限），可立即重试
 omem link                                   # 从其他设备打开网页的链接（带令牌）
 ```
 
@@ -179,6 +181,7 @@ omem link                                   # 从其他设备打开网页的链�
 **读取你自己的飞书**（lark-cli 个人登录，只读，从不以你的身份发消息）：在 setup 的同一部分选择读取方式；lark-cli 未登录或登录过期时会直接发起扫码登录（lark-cli 还没有应用时可以用机器人应用），并可顺手开启每 10 分钟的采集。
 
 - 消息：可选“所有有新消息的会话”或“只读订阅的会话 + @我”。每个群或私聊存成一份聊天原件，第一次往前读 72 小时，之后每次只拉上次之后的新消息，包括话题里的回复；回复别人的消息会带上被引用的那句；图片、文件会下载保存；飞书文档链接会读成原件。
+- 飞书文档：里面的图片、画板（缩略图）、50 MB 以内的视频和附件都下载到本地，原件页不用登录飞书就能看；内嵌的电子表格读成表格，同步块读出原文，多维表格保留链接。文档里链接的其他飞书文档一并读进同一空间，链接换成本地原件；读不到的（多半是没有权限）会发通知，之后每 6 小时重试，读到后只整理新读到的那篇，原文里只改那条链接。以前存的文档用 `omem lark docs-refresh` 重新读一遍补上图片。
 - 更早的历史：新会话里按“保存并整理”处理的（单聊、订阅的群）默认再往前补 30 天；任何会话都可以在原件页点“回溯历史”或对助理说“把这个群最近三个月的记录也读进来”。历史每次采集读几页，按月存成“群名（2026-09 历史）”原件，只保存可检索，不触发整理（除非要求）。
 - 原件页把聊天显示成聊天：发送人、时间、被引用的消息、话题、换行和 Markdown、图片、文件、卡片；长聊天只渲染屏幕附近的部分。
 - 日程（前一天到未来一周）和妙记（总结、待办、逐字稿）也会读进来。
@@ -225,6 +228,7 @@ omem peer commands <同伴>                 # 可远程执行的命令
 omem peer call <同伴> lark-raw '{"command":"+chat-messages-list","chat_id":"oc_…"}'
 omem peer call <同伴> sql '{"query":"select count(*) from lark_messages"}'   # 只读
 omem peer call <同伴> update               # git pull --ff-only、安装依赖、构建、重启服务
+omem peer call <同伴> lark-docs-refresh '{}'  # 让它在后台重新读飞书文档，完成后发通知
 omem pull <同伴>                          # 经 HTTP 拉一份快照合并进本机（手动，不会自动同步）
 omem peer open <同伴>                     # 在本机浏览器打开它的网页，经中间机器的也行，不用令牌
 ```
@@ -253,7 +257,7 @@ src/items     事项（时间线）
 src/wiki      页面文件、链接与引用索引、过期检测
 src/learn     FSRS 卡片、学习目标
 src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能、后台任务、交办编码
-src/channels  飞书机器人（发送、卡片、进度、回调、监听群）、飞书个人采集（lark-cli，消息结构化与历史回溯）、Telegram、OneBot
+src/channels  飞书机器人（发送、卡片、进度、回调、监听群）、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查、巡检、简报、做梦、筛群、摘要、编码、评审、记忆复核、出卡），共同部分在 _common.md
 skills/omem     给外部 Agent 的 omem 使用说明（配合 omem mcp）
