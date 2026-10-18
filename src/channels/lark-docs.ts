@@ -817,7 +817,7 @@ export function docDue(meta: Partial<LarkDocMeta>, now: number, steps: number[])
  * Check docs for updates: ask Feishu for the last-edit time of the docs that are due, and read again only
  * those edited since they were read. Returns what changed, for understanding.
  */
-export async function checkLarkDocs(app: App, opts: { force?: boolean; log?: (s: string) => void } = {}) {
+export async function checkLarkDocs(app: App, opts: { force?: boolean; log?: (s: string) => void; progress?: (p: { checked: number; edited: number; read: number }) => void } = {}) {
   const steps = [...app.config.lark.capture.docRecheckDays].sort((a, b) => a - b);
   const now = Date.now();
   const rows = all<{ id: string; space_id: string; uri: string; meta: string; updated_at: string }>(
@@ -830,30 +830,65 @@ export async function checkLarkDocs(app: App, opts: { force?: boolean; log?: (s:
     .map((r) => ({ ...r, ...normalizeDocUrl(r.m.url ?? r.uri) }));
   if (!due.length) return { checked: 0, edited: 0, changed: [] as { spaceId: string; ids: string[] }[] };
   const edits = await lastEdits(due.map((d) => ({ token: d.token, type: d.type })));
-  const changed = new Map<string, Set<string>>();
-  let edited = 0;
-  for (const d of due) {
+  const stampOf = (d: (typeof due)[number]) => {
     const at = edits.get(d.token);
-    const seen = Date.parse(d.m.modifiedAt ?? d.m.fetchedAt ?? d.updated_at);
-    const stamp: Partial<LarkDocMeta> = { checkedAt: new Date().toISOString(), ...(at ? { modifiedAt: new Date(at).toISOString() } : {}) };
-    if (at && at > seen) {
-      edited++;
-      try {
-        const r = await importLarkDocument(app, d.space_id, d.url, {});
-        const ids = changed.get(d.space_id) ?? new Set();
-        if (r.status !== "unchanged") ids.add(r.id);
-        for (const x of r.related) ids.add(x);
-        changed.set(d.space_id, ids);
-        opts.log?.(`有更新：${d.uri}`);
-      } catch (e) {
-        opts.log?.(`读取失败 ${d.uri}：${(e as Error).message}`);
-        continue;
-      }
-    }
+    return { checkedAt: new Date().toISOString(), ...(at ? { modifiedAt: new Date(at).toISOString() } : {}) };
+  };
+  const stamp = (d: (typeof due)[number]) => {
     const cur = json<Partial<LarkDocMeta>>(one<{ meta: string }>(app.db, "select meta from sources where id = ?", d.id)?.meta, {});
-    run(app.db, "update sources set meta = ? where id = ?", JSON.stringify({ ...cur, ...stamp }), d.id);
+    run(app.db, "update sources set meta = ? where id = ?", JSON.stringify({ ...cur, ...stampOf(d) }), d.id);
+  };
+  // Not edited since it was read: just note the check. Edited ones are read again below, one by one.
+  const edited = due.filter((d) => {
+    const at = edits.get(d.token);
+    if (at && at > Date.parse(d.m.modifiedAt ?? d.m.fetchedAt ?? d.updated_at)) return true;
+    stamp(d);
+    return false;
+  });
+  opts.progress?.({ checked: due.length, edited: edited.length, read: 0 });
+  const changed = new Map<string, Set<string>>();
+  let read = 0;
+  for (const d of edited) {
+    try {
+      const r = await importLarkDocument(app, d.space_id, d.url, {});
+      const ids = changed.get(d.space_id) ?? new Set();
+      if (r.status !== "unchanged") ids.add(r.id);
+      for (const x of r.related) ids.add(x);
+      changed.set(d.space_id, ids);
+      stamp(d);
+      opts.log?.(`有更新：${d.uri}`);
+    } catch (e) {
+      // Left unstamped: tried again next time.
+      opts.log?.(`读取失败 ${d.uri}：${(e as Error).message}`);
+    }
+    opts.progress?.({ checked: due.length, edited: edited.length, read: ++read });
   }
-  return { checked: due.length, edited, changed: [...changed].filter(([, ids]) => ids.size).map(([spaceId, ids]) => ({ spaceId, ids: [...ids] })) };
+  return { checked: due.length, edited: edited.length, changed: [...changed].filter(([, ids]) => ids.size).map(([spaceId, ids]) => ({ spaceId, ids: [...ids] })) };
+}
+
+let checking: Promise<unknown> | null = null;
+let checkProgress: { startedAt: string; finishedAt?: string; checked?: number; edited?: number; read?: number; error?: string } | null = null;
+
+/** `checkLarkDocs` without waiting; what changed goes to understanding. */
+export function checkInBackground(app: App, opts: { force?: boolean } = {}) {
+  if (checking) return { started: false, reason: "上一次检查还没结束", progress: checkProgress };
+  const p: NonNullable<typeof checkProgress> = { startedAt: new Date().toISOString() };
+  checkProgress = p;
+  checking = checkLarkDocs(app, { ...opts, progress: (x) => Object.assign(p, x) })
+    .then(async (r) => {
+      if (!r.changed.length) return;
+      const { scheduleIngest } = await import("../agents/jobs.ts");
+      for (const c of r.changed) scheduleIngest(app, c.spaceId, c.ids, "飞书文档有更新");
+    })
+    .catch((e) => {
+      p.error = (e as Error).message;
+      console.warn("[omem] 检查飞书文档更新失败：", p.error);
+    })
+    .finally(() => {
+      p.finishedAt = new Date().toISOString();
+      checking = null;
+    });
+  return { started: true };
 }
 
 /** Where Feishu docs stand: refresh progress, docs still pointing at Feishu media, local media, unreadable links, checks. */
@@ -881,6 +916,7 @@ export function larkDocsStatus(app: App) {
     },
     updateChecks: { dueNow: metas.filter((m) => docDue(m, Date.now(), steps)).length, neverChecked: metas.filter((m) => !m.checkedAt).length },
     refresh: refreshProgress(app),
+    check: checkProgress ? { running: !!checking, ...checkProgress } : null,
   };
 }
 

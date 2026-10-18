@@ -30,12 +30,7 @@ registerScheduleKind("lark-poll", (app) => {
 
 registerScheduleKind("lark-docs-watch", (app) => {
   import("./channels/lark-docs.ts")
-    .then(async (m) => {
-      const r = await m.checkLarkDocs(app);
-      if (!r.changed.length) return;
-      const { scheduleIngest } = await import("./agents/jobs.ts");
-      for (const c of r.changed) scheduleIngest(app, c.spaceId, c.ids, "飞书文档有更新");
-    })
+    .then((m) => m.checkInBackground(app))
     .catch((e) => console.warn("[omem] 检查飞书文档更新失败：", e.message));
 });
 

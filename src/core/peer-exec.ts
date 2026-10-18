@@ -222,14 +222,9 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "lark-docs-check": {
-    description: "检查飞书文档有没有更新（按上次修改后的天数到期的那些；force 全部检查），有修改的重新读并交给整理",
+    description: "检查飞书文档有没有更新（按上次修改后的天数到期的那些；force 全部检查），有修改的重新读并交给整理；在后台运行，进度看 lark-docs-status",
     schema: z.object({ force: z.boolean().default(false) }),
-    run: async (app, a) => {
-      const r = await (await import("../channels/lark-docs.ts")).checkLarkDocs(app, { force: a.force });
-      const { scheduleIngest } = await import("../agents/jobs.ts");
-      for (const c of r.changed) scheduleIngest(app, c.spaceId, c.ids, "飞书文档有更新");
-      return r;
-    },
+    run: async (app, a) => (await import("../channels/lark-docs.ts")).checkInBackground(app, { force: a.force }),
   },
   "lark-poll": { description: "立即采集一次飞书", schema: z.object({}), run: async (app) => (await import("../channels/lark-personal.ts")).pollLark(app) },
   backfill: {
