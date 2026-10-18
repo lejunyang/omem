@@ -181,45 +181,46 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "lark-whois": {
-    description: "只读：同一个人在 lark-cli（本人身份）和机器人眼里的各种 id（open_id / union_id / user_id）与名字，用来核对 id 能否互通、权限是否够；id 为 om_ 开头的消息时，返回 lark-cli 按 union_id 读到的发送人和被 @ 的人",
+    description: "只读：一个人在 lark-cli（本人身份，id 为它的 open_id）和机器人（id 为机器人的 open_id / user_id / union_id 或 email）眼里的 id、名字和邮箱，用来核对 id 能否互通、权限是否够；id 为 om_ 开头的消息时，返回 lark-cli 按 union_id 读到的发送人和被 @ 的人",
     schema: z.object({
-      id: z.string().regex(/^[\w@.-]{1,80}$/),
-      id_type: z.enum(["open_id", "union_id", "user_id"]).default("open_id"),
+      id: z.string().regex(/^[\w@.+-]{1,120}$/),
+      id_type: z.enum(["open_id", "union_id", "user_id", "email"]).default("open_id"),
       as: z.enum(["cli", "bot", "both"]).default("both"),
     }),
     run: async (_app, a) => {
       const out: Record<string, unknown> = {};
+      const { larkCli } = await import("../channels/lark-cli.ts");
       if (a.id.startsWith("om_")) {
-        const { larkCli } = await import("../channels/lark-cli.ts");
         const v = await larkCli(["api", "GET", `/open-apis/im/v1/messages/${a.id}`, "--params", JSON.stringify({ user_id_type: "union_id" }), "--as", "user"], 30_000).catch((e) => ({ error: (e as Error).message }));
         const item = (v as any).data?.items?.[0];
         return item ? { sender: item.sender, mentions: item.mentions } : v;
       }
       const pick = (u: any) => (u ? { name: u.name, open_id: u.open_id, union_id: u.union_id, user_id: u.user_id, email: u.email || u.enterprise_email } : null);
-      if (a.as !== "bot") {
-        const { larkCli } = await import("../channels/lark-cli.ts");
+      if (a.as !== "bot" && a.id_type === "open_id") {
         try {
-          const v = await larkCli(["contact", "+get-user", "--user-id", a.id, "--user-id-type", a.id_type, "--as", "user"], 30_000);
-          out.cli = pick(v.data?.user ?? v.data);
+          const v = await larkCli(["contact", "+search-user", "--user-ids", a.id, "--as", "user"], 30_000);
+          out.cli = v.data?.users ?? v.data;
         } catch (e) {
           out.cli = { error: (e as Error).message };
         }
-        // The contact API itself (user identity) returns more ids than the shortcut.
-        try {
-          const v = await larkCli(["api", "GET", `/open-apis/contact/v3/users/${a.id}`, "--params", JSON.stringify({ user_id_type: a.id_type }), "--as", "user"], 30_000);
-          out.cliApi = pick(v.data?.user);
-        } catch (e) {
-          out.cliApi = { error: (e as Error).message };
-        }
       }
       if (a.as !== "cli") {
+        const err = (e: unknown) => {
+          const x = e as { response?: { data?: { code?: number; msg?: string } }; message: string };
+          return { error: x.response?.data ? `${x.response.data.code} ${x.response.data.msg}` : x.message };
+        };
         try {
           const { larkClient } = await import("../channels/lark-send.ts");
-          const r = await larkClient().contact.user.get({ path: { user_id: a.id }, params: { user_id_type: a.id_type } });
-          out.bot = r.code ? { error: `${r.code} ${r.msg}` } : pick(r.data?.user);
+          const c = larkClient();
+          if (a.id_type === "email") {
+            const r = await c.contact.user.batchGetId({ data: { emails: [a.id], include_resigned: false }, params: { user_id_type: "user_id" } });
+            out.botByEmail = r.code ? { error: `${r.code} ${r.msg}` } : r.data?.user_list;
+          } else {
+            const r = await c.contact.user.get({ path: { user_id: a.id }, params: { user_id_type: a.id_type } });
+            out.bot = r.code ? { error: `${r.code} ${r.msg}` } : pick(r.data?.user);
+          }
         } catch (e) {
-          const err = e as { response?: { data?: { code?: number; msg?: string } }; message: string };
-          out.bot = { error: err.response?.data ? `${err.response.data.code} ${err.response.data.msg}` : err.message };
+          out[a.id_type === "email" ? "botByEmail" : "bot"] = err(e);
         }
       }
       return out;
