@@ -23,7 +23,7 @@ function tomlString(s: string) {
   return JSON.stringify(s);
 }
 
-function codexArgs(profile: AgentProfile, req: AgentRequest) {
+export function codexArgs(profile: AgentProfile, req: AgentRequest) {
   const args = [...profile.args, "exec", "--json", "--skip-git-repo-check", "--sandbox", req.allowWrites ? "workspace-write" : "read-only"];
   if (profile.model) args.push("-m", profile.model);
   if (profile.effort) args.push("-c", `model_reasoning_effort=${tomlString(profile.effort)}`);
@@ -31,6 +31,8 @@ function codexArgs(profile: AgentProfile, req: AgentRequest) {
     args.push("-c", `mcp_servers.omem.command=${tomlString(req.mcp.stdio.command)}`);
     args.push("-c", `mcp_servers.omem.args=[${req.mcp.stdio.args.map(tomlString).join(",")}]`);
     args.push("-c", `mcp_servers.omem.env={OMEM_URL=${tomlString(req.mcp.baseUrl)},OMEM_TOKEN=${tomlString(req.mcp.token)}}`);
+    // exec 下没法交互审批，MCP 工具默认要审批就会被直接拒绝；只放行 omem 这一个服务器。
+    args.push("-c", `mcp_servers.omem.default_tools_approval_mode="approve"`);
   }
   for (const [name, srv] of Object.entries(req.extraMcp ?? {})) {
     if ("url" in srv) args.push("-c", `mcp_servers.${name}.url=${tomlString(srv.url)}`);
