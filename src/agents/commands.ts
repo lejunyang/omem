@@ -1,6 +1,6 @@
 import type { App } from "../core/app.ts";
 import { allProfiles, saveConfig, type Config } from "../core/config.ts";
-import { findSpace, listSpaces } from "../core/spaces.ts";
+import { findSpace, listSpaces, relatedIds } from "../core/spaces.ts";
 import { truncate } from "../core/util.ts";
 import { upsertItem } from "../items/store.ts";
 import { dueCards, getCard, reviewCard, studyStats } from "../learn/cards.ts";
@@ -339,9 +339,11 @@ const commands: Record<string, Command> = {
     run: async ({ app, thread, args, inb }) => {
       if (!args.trim()) return "用法：/search 关键词";
       const own = inb.userId && inb.userId !== OWNER ? `personal-${inb.userId}` : "personal";
-      const hits = await search(app, args.trim(), { spaces: [...new Set([thread.spaceId, own])], limit: 8 });
+      const allowed = accessibleSpaces(app, inb.userId ?? OWNER);
+      const related = relatedIds(app, thread.spaceId).filter((id) => !allowed || allowed.includes(id));
+      const hits = await search(app, args.trim(), { spaces: [...new Set([thread.spaceId, ...related, own])], limit: 8 });
       return hits.length
-        ? hits.map((h, i) => `${i + 1}. ${h.type === "page" ? `页面 ${h.path}` : h.type === "memory" ? `记忆 ${h.id}` : `${h.uri ?? h.title}${h.lineStart ? `:${h.lineStart}` : ""}`}\n   ${truncate(h.snippet.replace(/\s+/g, " "), 120)}`).join("\n")
+        ? hits.map((h, i) => `${i + 1}. ${h.spaceId !== thread.spaceId && h.type !== "page" ? `[${h.spaceId}] ` : ""}${h.type === "page" ? `页面 ${h.path}` : h.type === "memory" ? `记忆 ${h.id}` : `${h.uri ?? h.title}${h.lineStart ? `:${h.lineStart}` : ""}`}\n   ${truncate(h.snippet.replace(/\s+/g, " "), 120)}`).join("\n")
         : "没有命中。";
     },
   },

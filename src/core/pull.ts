@@ -207,6 +207,7 @@ const APPEND: Table[] = [
   { name: "users", key: ["id"] },
   { name: "identities", key: ["channel", "external_id"] },
   { name: "space_members", key: ["space_id", "user_id"] },
+  { name: "space_relations", key: ["space_a", "space_b"] },
 ];
 
 function columns(db: DatabaseSync, table: string, schema = "main") {

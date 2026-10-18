@@ -11,7 +11,7 @@ const migrations: string[] = [
   create table spaces (
     id text primary key,
     name text not null,
-    kind text not null default 'topic',      -- personal | project | repo | learning | topic
+    kind text not null default 'topic',      -- personal | project | repo | learning | topic（界面显示“通用”）
     description text not null default '',
     root_path text,                           -- repo spaces: working tree on disk
     settings text not null default '{}',
@@ -437,6 +437,21 @@ const migrations: string[] = [
   alter table lark_cursors add column oldest_ms integer;          -- earliest time already captured (live or backfilled)
   alter table lark_cursors add column backfill_to_ms integer;     -- backfill history down to this time
   alter table lark_cursors add column backfill_ingest integer not null default 0;
+  `,
+  // Spaces that belong together (a repo and the service it calls, a project and its repos):
+  // runs scoped to one space also read the related ones, and searches include them by default.
+  `
+  create table space_relations (
+    space_a text not null,                      -- the smaller id of the pair
+    space_b text not null,
+    note text not null default '',              -- how they relate, in a sentence
+    origin text not null default 'owner',       -- owner | agent
+    status text not null default 'active',      -- active | rejected (the owner removed it; agents do not add it again)
+    evidence text not null default '',          -- what an agent saw (shared citations, dependencies)
+    created_at text not null,
+    updated_at text not null,
+    primary key (space_a, space_b)
+  );
   `,
 ];
 

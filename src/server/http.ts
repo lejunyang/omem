@@ -21,7 +21,7 @@ import { all, one } from "../core/db.ts";
 import { configSchema, saveConfig } from "../core/config.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
-import { createSpace, getSpace, listSpaces, updateSpace } from "../core/spaces.ts";
+import { createSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { accessibleSpaces, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
@@ -129,7 +129,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/spaces", async () => {
     const counts = new Map(all<{ space_id: string; n: number }>(app.db, "select space_id, count(*) n from sources where deleted_at is null group by space_id").map((r) => [r.space_id, r.n]));
     const pages = new Map(all<{ space_id: string; n: number }>(app.db, "select space_id, count(*) n from pages group by space_id").map((r) => [r.space_id, r.n]));
-    return listSpaces(app).map((s) => ({ ...s, sources: counts.get(s.id) ?? 0, pages: pages.get(s.id) ?? 0 }));
+    return listSpaces(app).map((s) => ({ ...s, sources: counts.get(s.id) ?? 0, pages: pages.get(s.id) ?? 0, related: relatedSpaces(app, s.id) }));
+  });
+  // Related spaces: the owner adds or removes; removing one an agent added keeps it from coming back.
+  server.post("/api/spaces/:id/related", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const b = q(z.object({ space: z.string().min(1), note: z.string().optional() }), req.body);
+    relateSpaces(app, id, b.space, { note: b.note, origin: "owner" });
+    return relatedSpaces(app, id);
+  });
+  server.delete("/api/spaces/:id/related/:other", async (req) => {
+    const { id, other } = req.params as { id: string; other: string };
+    unrelateSpaces(app, id, other, "owner");
+    return relatedSpaces(app, id);
   });
   server.post("/api/spaces", async (req) => {
     const b = q(z.object({ id: z.string().optional(), name: z.string().min(1), kind: z.enum(["personal", "project", "repo", "learning", "topic"]).optional(), description: z.string().optional(), rootPath: z.string().optional() }), req.body);

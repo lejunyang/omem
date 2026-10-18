@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
-import { createSpace, findSpace, listSpaces, updateSpace } from "../core/spaces.ts";
+import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, repositoryRoot } from "../core/repositories.ts";
 import { findUser, OWNER } from "../core/users.ts";
 import { HttpError, newId, now, slugify, truncate } from "../core/util.ts";
@@ -13,7 +13,7 @@ import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede, type MemoryKind } from "../memory/store.ts";
-import { checkMemory, formatProblems, logRejection, markReviewed, type MemoryProblem } from "../memory/quality.ts";
+import { checkMemory, formatProblems, logRejection, markReviewed, similarMemories, type MemoryProblem } from "../memory/quality.ts";
 import { search, type HitType } from "../search/search.ts";
 import { importText, importUrl, repoFiles, syncDirectorySpace } from "../sources/import.ts";
 import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
@@ -27,8 +27,10 @@ export type ToolContext = {
   runId: string | null;
   /** Default space for tools that take an optional `space`. */
   spaceId: string;
-  /** Spaces the caller may touch; null = all. */
+  /** Spaces the caller may read; null = all. */
   spaces: string[] | null;
+  /** Spaces the caller may write, when narrower than `spaces` (related spaces are read-only). */
+  writable?: string[];
   tools: Set<string> | null;
   actor: "agent" | "user";
   /** Whose run this is; defaults to the owner. Items, preferences and cards are per user. */
@@ -73,12 +75,26 @@ function space(ctx: ToolContext, requested?: string | null) {
   if (ctx.spaces && !ctx.spaces.includes(id)) throw new HttpError(403, `本次任务不能访问空间 ${id}`);
   return id;
 }
-/** Reject objects that live outside the spaces this caller may touch. */
+/** Reject objects that live outside the spaces this caller may write. */
 function inScope(ctx: ToolContext, spaceId: string, what: string) {
-  if (ctx.spaces && !ctx.spaces.includes(spaceId)) throw new HttpError(403, `本次任务不能修改空间 ${spaceId} 中的${what}`);
+  const w = ctx.writable ?? ctx.spaces;
+  if (w && !w.includes(spaceId))
+    throw new HttpError(403, ctx.spaces && ctx.spaces.includes(spaceId) ? `空间 ${spaceId} 这次只能读，不能修改其中的${what}；写进当前空间 ${ctx.spaceId}` : `本次任务不能修改空间 ${spaceId} 中的${what}`);
 }
+/** A space to write into: readable and writable. */
+function writeSpace(ctx: ToolContext, requested?: string | null) {
+  const id = space(ctx, requested);
+  inScope(ctx, id, "内容");
+  return id;
+}
+/** The current space and the related ones this caller may read. */
+function homeSpaces(ctx: ToolContext) {
+  return [ctx.spaceId, ...relatedIds(ctx.app, ctx.spaceId).filter((id) => !ctx.spaces || ctx.spaces.includes(id))];
+}
+/** Spaces to read: '*' = all readable, a space id = that one, nothing = current + related. */
 function spacesFor(ctx: ToolContext, requested?: string | null, all = false) {
   if (requested === "*" || all) return ctx.spaces ?? undefined;
+  if (!requested && findSpace(ctx.app, ctx.spaceId)) return homeSpaces(ctx);
   return [space(ctx, requested)];
 }
 
@@ -179,13 +195,41 @@ def({
 
 def({
   name: "list_spaces",
-  description: "列出所有知识空间（领域隔离：个人、项目、代码仓库、学习主题）。",
+  description: "列出可访问的知识空间（领域隔离：个人、项目、代码仓库、学习、通用），以及空间之间的关联。",
   schema: z.object({}),
   handler: (ctx) =>
     listSpaces(ctx.app)
       .filter((s) => !ctx.spaces || ctx.spaces.includes(s.id))
-      .map((s) => `- ${s.id}（${s.name}，${s.kind}）${s.description ? "：" + s.description : ""}${s.rootPath ? `\n  目录：${s.rootPath}` : ""}`)
+      .map((s) => {
+        const rel = relatedSpaces(ctx.app, s.id).filter((r) => !ctx.spaces || ctx.spaces.includes(r.space));
+        return `- ${s.id}（${s.name}，${kindLabel(s.kind)}）${s.description ? "：" + s.description : ""}${s.rootPath ? `\n  目录：${s.rootPath}` : ""}${rel.length ? `\n  相关：${rel.map((r) => `${r.space}${r.note ? `（${r.note}）` : ""}`).join("；")}` : ""}`;
+      })
       .join("\n") || "（无）",
+});
+
+def({
+  name: "relate_spaces",
+  description:
+    "记下两个空间之间的关联（仓库调用另一个仓库的接口、共用 SDK 或约定、项目和它的代码仓库）。关联后，限定在其中一个空间的运行也能读另一个，默认检索会带上它。要有实际依据：代码里的依赖或调用、两边原件说的是同一件事、本人说过。remove=true 取消（只能取消 Agent 加的；本人移除过的不会再加回）。",
+  write: true,
+  schema: z.object({
+    a: z.string(),
+    b: z.string(),
+    note: z.string().optional().describe("一句话写清是什么关系，如“调用 b 的订单接口”“a 是 b 的前端”"),
+    evidence: z.string().optional().describe("依据：原件引用 src:<id>#L起-L止、依赖声明等"),
+    remove: z.boolean().optional(),
+  }),
+  handler: (ctx, a) => {
+    for (const id of [a.a, a.b]) inScope(ctx, space(ctx, id), "关联");
+    const by = ctx.actor === "user" ? "owner" : "agent";
+    if (a.remove) {
+      unrelateSpaces(ctx.app, a.a, a.b, by);
+      return `已取消 ${a.a} 与 ${a.b} 的关联${by === "agent" ? "（本人确认过的关联要由本人在设置里移除）" : ""}。`;
+    }
+    if (by === "agent" && !a.note?.trim()) throw new HttpError(400, "写一句 note 说明两者是什么关系");
+    relateSpaces(ctx.app, a.a, a.b, { note: a.note, origin: by, evidence: a.evidence });
+    return `已关联 ${a.a} 与 ${a.b}${a.note ? `：${a.note}` : ""}。`;
+  },
 });
 
 def({
@@ -194,7 +238,7 @@ def({
     "在知识库中检索：原件片段（文档/代码/聊天）、Wiki 页面、记忆。返回线索而非结论；需要细节时用 read_source / read_page 补读。查代码名称时直接用标识符。",
   schema: z.object({
     query: z.string().describe("自然语言问题或关键词，中英文均可"),
-    space: z.string().optional().describe("空间 id；'*' 表示所有可访问空间；默认当前空间"),
+    space: z.string().optional().describe("空间 id；'*' 表示所有可访问空间；默认当前空间加上它的相关空间"),
     scope: z.enum(["all", "sources", "pages", "memories"]).optional(),
     source_kind: z.enum(["doc", "code", "chat", "note", "web"]).optional(),
     limit: z.number().int().min(1).max(40).optional(),
@@ -215,7 +259,8 @@ def({
             : h.type === "memory"
               ? `记忆 ${h.id}（${h.path}${h.status && h.status !== "active" ? "，" + h.status : ""}）${h.title ? "主题：" + h.title : ""}`
               : `原件 ${h.sourceId} ${h.uri} L${h.lineStart}-${h.lineEnd}${h.path && h.path !== h.uri ? " · " + h.path : ""}`;
-        return `${i + 1}. ${where}  [${h.via.join("+")}]\n${truncate(h.snippet, 500).replace(/^/gm, "   ")}`;
+        const elsewhere = h.spaceId !== ctx.spaceId && h.type !== "page" ? `〔空间 ${h.spaceId}〕` : "";
+        return `${i + 1}. ${elsewhere}${where}  [${h.via.join("+")}]\n${truncate(h.snippet, 500).replace(/^/gm, "   ")}`;
       })
       .join("\n\n");
   },
@@ -449,7 +494,7 @@ def({
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const threadId = origin ? (JSON.parse(origin.input) as { conversationId?: string; threadId?: string }).conversationId : undefined;
-    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? space(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, threadId }, parentId: ctx.runId });
+    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, threadId }, parentId: ctx.runId });
     return `已交给 ${spec.name}，运行 ${r.id}${threadId ? "，完成后结果会发回本会话" : ""}。`;
   },
 });
@@ -629,7 +674,7 @@ def({
     reason: z.string().optional().describe("这次修改的原因，写入版本历史"),
   }),
   handler: (ctx, a) => {
-    const id = space(ctx, a.space);
+    const id = writeSpace(ctx, a.space);
     const existed = pageExists(ctx.app, id, a.page);
     const body = a.body.replace(/^#\s+.+\n+/, "");
     const p = writePage(ctx.app, id, a.page, { meta: { title: a.title, summary: a.summary, kind: a.kind ?? "page" }, body }, { actor: ctx.actor, message: `${ctx.actor}: ${existed ? "update" : "create"} ${id}/${a.page}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });
@@ -656,7 +701,7 @@ def({
     space: z.string().optional(),
   }),
   handler: (ctx, a) => {
-    const spaceId = space(ctx, a.space);
+    const spaceId = writeSpace(ctx, a.space);
     const problems = memoryProblems(ctx, { spaceId, kind: a.kind, content: a.content, subject: a.subject, sourceRefs: a.source_refs });
     if (problems.length) {
       logRejection(ctx.app, spaceId, { tool: "remember", kind: a.kind, content: a.content }, problems, provenance(ctx));
@@ -677,7 +722,12 @@ def({
       // Preferences belong to the person who stated them; facts are shared knowledge of the space.
       userId: a.kind === "preference" ? (ctx.userId ?? "owner") : null,
     });
-    return `已记住 ${m.id}${m.agent ? `（仅 ${m.agent} 使用）` : ""}`;
+    const others = relatedIds(ctx.app, spaceId).filter((id) => !ctx.spaces || ctx.spaces.includes(id));
+    const alike = similarMemories(ctx.app, others, a.content, a.subject);
+    const hint = alike.length
+      ? `\n相关空间里有相近的记忆：${alike.map((x) => `${x.id}（${x.space_id}）「${truncate(x.content, 60)}」`).join("；")}。如果说的是同一件事且两边结论不同，以有原件依据的为准，在当前空间更正；两边都需要的约定，可以只留一处并在页面里链接。`
+      : "";
+    return `已记住 ${m.id}${m.agent ? `（仅 ${m.agent} 使用）` : ""}${hint}`;
   },
 });
 
@@ -814,7 +864,7 @@ def({
       ctx.app,
       a.id,
       {
-        spaceId: existing ? undefined : space(ctx, a.space),
+        spaceId: existing ? undefined : writeSpace(ctx, a.space),
         kind: a.kind,
         title: a.title,
         detail: a.detail,
@@ -841,7 +891,7 @@ def({
   schema: z.object({ front: z.string(), back: z.string(), source_refs: refs, space: z.string().optional(), goal: z.string().optional().describe("学习目标 id") }),
   handler: (ctx, a) => {
     const goal = a.goal ? getGoal(ctx.app, a.goal) : null;
-    const r = createCard(ctx.app, { spaceId: goal?.spaceId ?? space(ctx, a.space), front: a.front, back: a.back, sourceRefs: a.source_refs, userId: goal?.userId ?? ctx.userId ?? "owner", goalId: goal?.id ?? null });
+    const r = createCard(ctx.app, { spaceId: goal?.spaceId ?? writeSpace(ctx, a.space), front: a.front, back: a.back, sourceRefs: a.source_refs, userId: goal?.userId ?? ctx.userId ?? "owner", goalId: goal?.id ?? null });
     return r.created ? `已创建卡片 ${r.card.id}` : `已有相同卡片 ${r.card.id}`;
   },
 });
@@ -864,7 +914,7 @@ def({
     const g = upsertGoal(ctx.app, a.id, {
       title: a.title,
       detail: a.detail,
-      spaceId: a.space ? space(ctx, a.space) : a.id ? undefined : ctx.spaceId,
+      spaceId: a.space ? writeSpace(ctx, a.space) : a.id ? undefined : ctx.spaceId,
       dailyNew: a.daily_new,
       remindAt: a.remind_at,
       status: a.status,
@@ -1054,7 +1104,7 @@ def({
       return `已取消 ${a.chat_id} 的监听处理。`;
     }
     if (!a.spec) throw new HttpError(400, "需要 spec（处理它的 Agent 档案）");
-    setWatchRule(ctx.app, a.chat_id, { spec: a.spec, on: a.on ?? "all", pattern: a.pattern, reply: a.reply ?? "draft", spaceId: a.space ? space(ctx, a.space) : undefined, note: a.note });
+    setWatchRule(ctx.app, a.chat_id, { spec: a.spec, on: a.on ?? "all", pattern: a.pattern, reply: a.reply ?? "draft", spaceId: a.space ? writeSpace(ctx, a.space) : undefined, note: a.note });
     return `已设置：${a.chat_id} 的${a.on === "mention" ? " @ 消息" : a.on === "keyword" ? `匹配 ${a.pattern} 的消息` : "新消息"}交给 ${a.spec} 处理，回复方式 ${a.reply ?? "draft"}。`;
   },
 });
@@ -1104,7 +1154,7 @@ def({
   write: true,
   schema: z.object({ title: z.string().optional(), text: z.string(), space: z.string().optional() }),
   handler: (ctx, a) => {
-    const r = importText(ctx.app, space(ctx, a.space), { title: a.title, text: a.text });
+    const r = importText(ctx.app, writeSpace(ctx, a.space), { title: a.title, text: a.text });
     return `已保存为原件 ${r.id}`;
   },
 });
@@ -1115,7 +1165,7 @@ def({
   write: true,
   schema: z.object({ url: z.string().url(), space: z.string().optional() }),
   handler: async (ctx, a) => {
-    const r = await importUrl(ctx.app, space(ctx, a.space), a.url);
+    const r = await importUrl(ctx.app, writeSpace(ctx, a.space), a.url);
     return `已保存原件 ${r.id}（${r.status}）`;
   },
 });
@@ -1131,7 +1181,7 @@ def({
     check_command: z.string().optional().describe("验证命令，如 npm test"),
   }),
   handler: (ctx, a) => {
-    const id = space(ctx, a.repo_space);
+    const id = writeSpace(ctx, a.repo_space);
     const s = findSpace(ctx.app, id)!;
     if (!s.rootPath) throw new HttpError(400, `空间 ${id} 没有关联代码目录；先用 connect_repository 传本地仓库绝对路径或 Git 链接关联，再交办`);
     const r = createRun(ctx.app, { kind: "code", spaceId: id, title: truncate(a.task.split("\n")[0], 80), input: { task: a.task, checkCommand: a.check_command }, parentId: ctx.runId });
@@ -1191,7 +1241,7 @@ def({
   handler: async (ctx, a) => {
     const { getSubscriptions, setSubscriptions } = await import("../channels/lark-personal.ts");
     const rest = getSubscriptions(ctx.app).filter((s) => s.chatId !== a.chat_id);
-    setSubscriptions(ctx.app, a.subscribe ? [...rest, { chatId: a.chat_id, name: a.name, spaceId: space(ctx, a.space) }] : rest);
+    setSubscriptions(ctx.app, a.subscribe ? [...rest, { chatId: a.chat_id, name: a.name, spaceId: writeSpace(ctx, a.space) }] : rest);
     return a.subscribe ? `已订阅「${a.name}」，采集到空间 ${space(ctx, a.space)}（需要在定时任务中开启飞书采集）` : `已取消订阅「${a.name}」`;
   },
 });

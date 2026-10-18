@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { get, patch, post, put, type Space } from "../api";
+import { del, get, patch, post, put, type Space, type SpaceRelation } from "../api";
 import Icon from "../components/Icon.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
@@ -149,7 +149,27 @@ async function createSpace() {
 }
 async function openSpace(s: Space) {
   editing.value = { ...s, settings: { ...s.settings } };
+  related.value = s.related ?? [];
+  newRelated.value = { space: "", note: "" };
   guide.value = (await get<{ guide: string }>(`/api/spaces/${s.id}`)).guide;
+}
+const related = ref<SpaceRelation[]>([]);
+const newRelated = ref({ space: "", note: "" });
+const relatable = computed(() => state.spaces.filter((s) => editing.value && s.id !== editing.value.id && !related.value.some((r) => r.space === s.id)).map((s) => ({ value: s.id, label: s.name })));
+async function addRelated() {
+  if (!editing.value || !newRelated.value.space) return;
+  try {
+    related.value = await post<SpaceRelation[]>(`/api/spaces/${editing.value.id}/related`, newRelated.value);
+    newRelated.value = { space: "", note: "" };
+    await loadSpaces();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+async function removeRelated(r: SpaceRelation) {
+  if (!editing.value) return;
+  related.value = await del<SpaceRelation[]>(`/api/spaces/${editing.value.id}/related/${encodeURIComponent(r.space)}`);
+  await loadSpaces();
 }
 async function saveSpace() {
   if (!editing.value) return;
@@ -350,20 +370,21 @@ async function saveEdit() {
     </div>
 
     <section v-if="tab === 'spaces'" class="stack">
-      <p class="muted">空间把不同领域的知识分开：每个空间有自己的原件、Wiki、记忆和事项。助理默认只在当前空间调查，需要时才跨空间。代码仓库空间关联一个本地目录，可定期同步。</p>
+      <p class="muted">空间把不同领域的知识分开：每个空间有自己的原件、Wiki、记忆和事项。助理默认在当前空间和它的相关空间里调查，需要时才查所有空间；整理、复核这类只管一个空间的任务也能读相关空间，但只写自己的。代码仓库空间关联一个本地目录，可定期同步。</p>
       <div class="spaces">
         <div v-for="s in state.spaces" :key="s.id" class="card pad sp">
           <div class="row"><strong>{{ s.name }}</strong><span class="badge">{{ kindLabel[s.kind] ?? s.kind }}</span><span class="spacer" /><button class="btn ghost sm" @click="openSpace(s)"><Icon name="edit" :size="14" />设置</button></div>
           <div class="muted small">{{ s.description || "（没有说明）" }}</div>
           <div class="muted small mono" v-if="s.rootPath">{{ s.rootPath }}</div>
           <div class="muted small">{{ s.sources ?? 0 }} 份原件 · {{ s.pages ?? 0 }} 个页面</div>
+          <div v-if="s.related?.length" class="muted small">相关：{{ s.related.map((r) => r.name).join("、") }}</div>
         </div>
       </div>
       <form class="card pad stack" @submit.prevent="createSpace">
         <strong>新建空间</strong>
         <div class="grid2">
           <label class="field"><span>名称</span><input v-model="newSpace.name" class="input" required placeholder="例如：项目A、英语学习、omem 仓库" /></label>
-          <div class="field"><span>类型</span><UiSelect v-model="newSpace.kind" aria-label="空间类型" :options="[{ value: 'project', label: '项目' }, { value: 'repo', label: '代码仓库' }, { value: 'learning', label: '学习' }, { value: 'topic', label: '主题' }]" /></div>
+          <div class="field"><span>类型</span><UiSelect v-model="newSpace.kind" aria-label="空间类型" :options="[{ value: 'project', label: '项目' }, { value: 'repo', label: '代码仓库' }, { value: 'learning', label: '学习' }, { value: 'topic', label: '通用' }]" /></div>
         </div>
         <label class="field"><span>关联目录（代码仓库或文档目录，可选）</span><input v-model="newSpace.rootPath" class="input mono" placeholder="E:\Projects\omem 或 /home/me/code/app" /><span class="hint">填写后会导入目录下的文本文件（遵守 .gitignore），之后可同步更新。</span></label>
         <label class="field"><span>说明</span><input v-model="newSpace.description" class="input" placeholder="这个空间收什么、给谁读" /></label>
@@ -636,6 +657,20 @@ async function saveEdit() {
         <div class="row"><strong>空间设置：{{ editing.id }}</strong><span class="spacer" /><button class="btn ghost sm icon" @click="editing = null"><Icon name="x" /></button></div>
         <label class="field"><span>名称</span><input v-model="editing.name" class="input" /></label>
         <label class="field"><span>说明</span><input v-model="editing.description" class="input" /></label>
+        <div class="field">
+          <span>相关空间（互相调用、共用约定或属于同一项目；在其中一个工作时会一起查另一个）</span>
+          <div v-for="r in related" :key="r.space" class="row rel">
+            <strong>{{ r.name }}</strong><span v-if="r.origin === 'agent'" class="badge" :title="r.evidence || undefined">Agent 发现</span>
+            <span class="muted small grow">{{ r.note || "（没有说明）" }}</span>
+            <button class="btn ghost sm icon" :aria-label="`移除与 ${r.name} 的关联`" @click="removeRelated(r)"><Icon name="x" :size="14" /></button>
+          </div>
+          <div v-if="relatable.length" class="row wrap">
+            <UiSelect v-model="newRelated.space" size="sm" width="180px" aria-label="选择空间" placeholder="选择空间" :options="relatable" />
+            <input v-model="newRelated.note" class="input grow" style="min-width: 200px" placeholder="是什么关系，如“调用它的订单接口”" @keydown.enter.prevent="addRelated" />
+            <button class="btn sm" :disabled="!newRelated.space" @click="addRelated">添加</button>
+          </div>
+          <span class="hint">移除 Agent 发现的关联后，它不会再被自动加回。</span>
+        </div>
         <label class="field"><span>空间指南（SPACE.md，Agent 每次工作前都会读）</span><textarea v-model="guide" class="textarea mono" rows="10" /></label>
         <UiCheckbox :model-value="editing.settings.autoIngest !== false && (editing.kind !== 'repo' || editing.settings.autoIngest === true)" @change="(v) => (editing!.settings.autoIngest = v)">新材料保存后让助理整理（更新记忆、事项、相关页面）</UiCheckbox>
         <label v-if="editing.rootPath" class="field"><span>检查命令（交办编码后运行）</span><input v-model="editing.settings.checkCommand" class="input mono" placeholder="npm test" /></label>

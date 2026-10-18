@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import type { RoleName } from "../core/config.ts";
 import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
-import { findSpace, getSpace, updateSpace } from "../core/spaces.ts";
+import { findSpace, getSpace, listSpaces, relatedIds, relatedSpaces, updateSpace } from "../core/spaces.ts";
 import { json, newId, now, truncate } from "../core/util.ts";
 import { addItemEvent, dueReminders, listItems, upsertItem } from "../items/store.ts";
 import { syncDirectorySpace } from "../sources/import.ts";
@@ -18,7 +18,8 @@ import { learningProgress, studyStats } from "../learn/cards.ts";
 import { getGoal, listGoals, localClock, upsertGoal } from "../learn/goals.ts";
 import { addMessage, getThread, threadMessages, updateThread } from "./threads.ts";
 import { createRun, listRuns, registerHandler, type RunContext } from "./runs.ts";
-import { markReviewed, spacesWithUnreviewed, unreviewedMemories } from "../memory/quality.ts";
+import { markReviewed, similarMemories, spacesWithUnreviewed, unreviewedMemories } from "../memory/quality.ts";
+import { relationCandidates } from "../core/space-candidates.ts";
 
 const QUIET = /^\s*QUIET\s*$/i;
 
@@ -201,12 +202,19 @@ registerHandler("memory-review", async (ctx) => {
       return { id: p.id, kind: a.kind ?? "(更正)", subject: a.subject ?? "", content: String(a.content ?? ""), refs: (a.source_refs ?? []) as string[], replaces: a.memory_id ?? null };
     }),
   ].sort(() => Math.random() - 0.5);
+  // Related spaces: the reviewer may read them and sees what they already hold on the same thing.
+  const related = relatedIds(app, spaceId);
+  const alikeIn = (e: { content: string; subject: string }) => {
+    const alike = similarMemories(app, related, e.content, e.subject, 2);
+    return alike.length ? `\n  相关空间里相近的：${alike.map((x) => `${x.id}（${x.space_id}）「${truncate(x.content, 80)}」`).join("；")}` : "";
+  };
   const task = [
     `空间 ${spaceId} 里待复核的 ${entries.length} 条：`,
     ...entries.map(
       (e) =>
-        `- ${e.id} [${e.kind}]${e.subject ? ` ${e.subject}：` : " "}${e.content}\n  来源：${e.refs.join(", ") || "（无）"}${e.replaces ? `；更正自 ${e.replaces}` : ""}${e.content.length > app.config.memory.longChars ? `；${e.content.length} 字，较长：看是否是几条独立结论（split）` : ""}`,
+        `- ${e.id} [${e.kind}]${e.subject ? ` ${e.subject}：` : " "}${e.content}\n  来源：${e.refs.join(", ") || "（无）"}${e.replaces ? `；更正自 ${e.replaces}` : ""}${e.content.length > app.config.memory.longChars ? `；${e.content.length} 字，较长：看是否是几条独立结论（split）` : ""}${alikeIn(e)}`,
     ),
+    ...(related.length ? [`\n相关空间：${related.join("、")}。可以用 recall / search 查它们，但只能处理本空间的这几条。`] : []),
   ].join("\n");
   const r = await runRole(app, {
     role: "memory-reviewer",
@@ -394,13 +402,17 @@ registerHandler("dream", async (ctx) => {
     since,
   ).reverse();
   run(app.db, "insert into kv(key,value) values('dream_at', ?) on conflict(key) do update set value = excluded.value", now());
-  if (!mems.length && !items.length && !said.length) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
+  const candidates = relationCandidates(app);
+  if (!mems.length && !items.length && !said.length && !candidates.length) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
+  const relations = listSpaces(app).flatMap((s) => relatedSpaces(app, s.id).filter((r) => s.id < r.space).map((r) => `- ${s.id} ↔ ${r.space}${r.note ? `：${r.note}` : ""}`));
   const task = [
     `上次整理：${since}`,
     `有变化的记忆（${mems.length}）：\n${mems.map((m) => `- ${m.id} [${m.space_id}/${m.kind}/${m.status}] ${m.subject ? m.subject + "：" : ""}${truncate(m.content, 160)}`).join("\n")}`,
     `有变化或已过期的事项（${items.length}）：\n${items.map((i) => `- ${i.id} [${i.space_id}/${i.kind}/${i.status}] ${i.title}${i.due_at ? " 截止 " + i.due_at : ""}${i.remind_at ? " 提醒 " + i.remind_at : ""}`).join("\n")}`,
     said.length ? `期间本人说过的话（检查有没有漏记的计划、承诺、等待和长期事实；来源写 msg:<id>）：\n${said.map((m) => `- msg:${m.id} ${m.created_at.slice(0, 16)}：${truncate(m.text.replace(/\s+/g, " "), 300)}`).join("\n")}` : "",
     runs.length ? `期间的后台运行（用于提炼经验）：\n${runs.map((r) => `- [${r.kind}/${r.status}] ${r.title}${r.error ? "：" + truncate(r.error, 120) : ""}`).join("\n")}` : "",
+    relations.length ? `已关联的空间：\n${relations.join("\n")}` : "",
+    candidates.length ? `可能相关、还没关联的空间（宿主从引用、链接、依赖声明、标签里看到的迹象）：\n${candidates.map((c) => `- ${c.a} ↔ ${c.b}：${c.signals.join("；")}`).join("\n")}` : "",
     "需要更多上下文时用 recall（可加 include_history）和 list_items 查同主题的其他记录。",
   ]
     .filter(Boolean)

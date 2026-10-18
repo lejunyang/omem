@@ -89,7 +89,7 @@ export const kindLabel: Record<string, string> = {
   project: "项目",
   repo: "代码仓库",
   learning: "学习",
-  topic: "主题",
+  topic: "通用",
 };
 export const runKindLabel: Record<string, string> = {
   ask: "问答",

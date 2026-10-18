@@ -9,7 +9,7 @@ import { createRun, getRun, waitForRun, type Run } from "./agents/runs.ts";
 import { callTool, toolSchemas } from "./agents/tools.ts";
 import { App, type AppEvent } from "./core/app.ts";
 import { configPath, omemHome } from "./core/config.ts";
-import { createSpace, ensurePersonalSpace, getSpace, listSpaces, updateSpace } from "./core/spaces.ts";
+import { createSpace, ensurePersonalSpace, getSpace, kindLabel, listSpaces, relatedIds, relateSpaces, spaceForDir, unrelateSpaces, updateSpace } from "./core/spaces.ts";
 import { listItems, upsertItem } from "./items/store.ts";
 import { listMemories } from "./memory/store.ts";
 import { memoriesCommand } from "./cli-memories.ts";
@@ -350,19 +350,34 @@ program
     console.log(JSON.stringify(await peerJson(app, peerId, "/api/diag"), null, 2));
   });
 
-const space = program.command("space").description("管理空间（领域隔离：个人 / 项目 / 代码仓库 / 学习）");
+const space = program.command("space").description("管理空间（领域隔离：个人 / 项目 / 代码仓库 / 学习 / 通用）");
 space
   .command("list")
   .description("列出空间")
   .action(() => {
-    for (const s of listSpaces(open())) console.log(`${s.id.padEnd(20)} ${s.kind.padEnd(9)} ${s.name}${s.rootPath ? `  ${s.rootPath}` : ""}`);
+    const app = open();
+    for (const s of listSpaces(app)) {
+      const rel = relatedIds(app, s.id);
+      console.log(`${s.id.padEnd(20)} ${kindLabel(s.kind).padEnd(6)} ${s.name}${s.rootPath ? `  ${s.rootPath}` : ""}${rel.length ? `  相关：${rel.join(", ")}` : ""}`);
+    }
+  });
+space
+  .command("relate <a> <b>")
+  .description("关联两个空间：在其中一个里工作时会一起查另一个（--remove 取消）")
+  .option("-n, --note <text>", "是什么关系，如“调用 b 的订单接口”")
+  .option("--remove", "取消关联（之后 Agent 不会再自动加回）")
+  .action((a, b, o) => {
+    const app = open();
+    if (o.remove) unrelateSpaces(app, a, b, "owner");
+    else relateSpaces(app, a, b, { note: o.note, origin: "owner" });
+    console.log(o.remove ? `已取消 ${a} 与 ${b} 的关联` : `已关联 ${a} 与 ${b}`);
   });
 space
   .command("add <name>")
   .description("新建空间；--path 关联代码仓库或目录")
   .option("--id <id>", "空间 id（默认由名称生成）")
   .option("--path <dir>", "关联目录（代码仓库）")
-  .option("--kind <kind>", "personal | project | repo | learning | topic")
+  .option("--kind <kind>", "personal | project | repo | learning | topic（通用）")
   .option("-d, --description <text>", "说明")
   .option("--exclude <patterns...>", "不导入的路径（前缀或 glob，如 docs/archive '**/*.lock'）")
   .action(async (name, o) => {
@@ -669,11 +684,14 @@ program
   .command("mcp")
   .description("以 stdio MCP 服务暴露 omem 工具（供 Claude Code、Codex 等直接使用个人库）")
   .option("--read-only", "只开放读取类工具")
+  .option("--space <id>", "默认空间（不填时按当前目录找关联了它的空间，找不到用 personal）")
   .action(async (o) => {
     const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
     const app = open();
     const readOnly = new Set(["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "list_runs", "read_run"]);
-    const ctx = { app, runId: null, spaceId: "personal", spaces: null, tools: o.readOnly ? readOnly : null, actor: "agent" as const };
+    // An agent working inside a repository gets that repository's space (and its related ones) by default.
+    const spaceId = o.space ? getSpace(app, o.space).id : (spaceForDir(app, process.cwd()) ?? "personal");
+    const ctx = { app, runId: null, spaceId, spaces: null, tools: o.readOnly ? readOnly : null, actor: "agent" as const };
     const tools = new Set(toolSchemas(ctx.tools).map((t) => t.name).filter((n) => n !== "submit_plan" && n !== "delegate_code"));
     const server = createMcpServer({ list: async () => toolSchemas(tools), call: (name, args) => callTool({ ...ctx, tools }, name, args) });
     await server.connect(new StdioServerTransport());

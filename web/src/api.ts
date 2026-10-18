@@ -93,7 +93,8 @@ export function onServerEvent(fn: Listener) {
 }
 
 // ---- shared types (mirrors server) ----
-export type Space = { id: string; name: string; kind: string; description: string; rootPath: string | null; settings: Record<string, any>; sources?: number; pages?: number };
+export type SpaceRelation = { space: string; name: string; kind: string; note: string; origin: "owner" | "agent"; evidence: string; updatedAt: string };
+export type Space = { id: string; name: string; kind: string; description: string; rootPath: string | null; settings: Record<string, any>; sources?: number; pages?: number; related?: SpaceRelation[] };
 export type Hit = { type: "chunk" | "page" | "memory" | "symbol"; id: string; spaceId: string; title: string; path: string; sourceId?: string; uri?: string; sourceKind?: string; lineStart?: number; lineEnd?: number; snippet: string; score: number; via: string[]; status?: string };
 export type Memory = {
   id: string;

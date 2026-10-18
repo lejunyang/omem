@@ -123,7 +123,7 @@ export function checkMemory(app: App, m: CheckInput): MemoryProblem[] {
     .map((r) => /^src:([\w-]+)/.exec(r)?.[1])
     .filter((id): id is string => !!id && !one(app.db, "select 1 from sources where id = ?", id));
   if (missing.length) problems.push({ code: "bad-source", message: `这些原件不存在：${missing.join(", ")}。引用要用 read_source 给出的原件 id。` });
-  const dup = nearDuplicate(app, m.spaceId, text, m.subject, m.replacing, duplicate, m.ignoreRunId ?? null);
+  const dup = nearDuplicate(app, [m.spaceId], text, m.subject, m.replacing, duplicate, m.ignoreRunId ?? null)[0];
   if (dup)
     problems.push({
       code: "duplicate",
@@ -133,24 +133,31 @@ export function checkMemory(app: App, m: CheckInput): MemoryProblem[] {
   return problems;
 }
 
-function nearDuplicate(app: App, spaceId: string, content: string, subject: string | undefined, replacing: string | undefined, threshold: number, ignoreRunId: string | null) {
+/** Active memories in these spaces at least `threshold` alike, most alike first. */
+function nearDuplicate(app: App, spaceIds: string[], content: string, subject: string | undefined, replacing: string | undefined, threshold: number, ignoreRunId: string | null) {
   const match = matchQuery(`${subject ?? ""} ${content}`);
-  if (!match) return null;
-  const rows = all<{ id: string; content: string }>(
+  if (!match || !spaceIds.length) return [];
+  const rows = all<{ id: string; space_id: string; content: string }>(
     app.db,
-    `select m.id, m.content from memories_fts f join memory_rowids r on r.rowid = f.rowid join memories m on m.id = r.memory_id
-     where memories_fts match ? and m.space_id = ? and m.status = 'active' and coalesce(m.run_id, '') != ? order by bm25(memories_fts, 2.0, 1.0) limit 8`,
+    `select m.id, m.space_id, m.content from memories_fts f join memory_rowids r on r.rowid = f.rowid join memories m on m.id = r.memory_id
+     where memories_fts match ? and m.space_id in (${spaceIds.map(() => "?").join(",")}) and m.status = 'active' and coalesce(m.run_id, '') != ? order by bm25(memories_fts, 2.0, 1.0) limit ${8 * spaceIds.length}`,
     match,
-    spaceId,
+    ...spaceIds,
     ignoreRunId ?? "\u0000",
   );
-  let best: { id: string; content: string; score: number } | null = null;
-  for (const r of rows) {
-    if (r.id === replacing) continue;
-    const score = similarity(content, r.content);
-    if (score >= threshold && (!best || score > best.score)) best = { ...r, score };
-  }
-  return best;
+  return rows
+    .filter((r) => r.id !== replacing)
+    .map((r) => ({ ...r, score: similarity(content, r.content) }))
+    .filter((r) => r.score >= threshold)
+    .sort((x, y) => y.score - x.score);
+}
+
+/**
+ * Memories in other (related) spaces that say much the same. Not a reason to refuse a write —
+ * each space may need its own — but worth knowing when writing or reviewing.
+ */
+export function similarMemories(app: App, spaceIds: string[], content: string, subject?: string, limit = 3) {
+  return nearDuplicate(app, spaceIds, content, subject, undefined, memoryLimits(app).duplicate * 0.8, null).slice(0, limit);
 }
 
 export type Provenance = { runId?: string | null; agentProfile?: string | null; model?: string | null; effort?: string | null; shadow?: boolean };

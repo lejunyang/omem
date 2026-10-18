@@ -22,7 +22,7 @@ flowchart LR
   AG --> O[回答 · 页面 · 记忆 · 事项 · 代码改动]
 ```
 
-- **空间**把领域分开，检索默认在当前空间，主助手可显式检索所有可访问空间；Wiki 用 `[[space:slug]]` 跨空间关联。一个空间可同时放项目文档、讨论和代码，但只关联一个仓库；多个仓库分别建空间。本人可在主助手对话中创建空间、关联本地仓库或接入 Git 链接。
+- **空间**把领域分开，类型有个人、项目、代码仓库、学习、通用。检索默认在当前空间和它的**相关空间**，主助手可显式检索所有可访问空间；Wiki 用 `[[space:slug]]` 跨空间关联。互相调用的仓库、同一项目的几个空间可以关联（设置 → 空间，或对助理说“A 调用 B 的接口”）：整理、复核这类只管一个空间的任务也会读相关空间（只读，写入仍在自己的空间），写记忆时会提示相关空间里已有的相近记忆；定期整理会从互相引用、页面互链、依赖声明和共用标签里发现可能相关的空间，确认后关联，你移除的不会再被加回。一个空间可同时放项目文档、讨论和代码，但只关联一个仓库；多个仓库分别建空间。本人可在主助手对话中创建空间、关联本地仓库或接入 Git 链接。
 - **原件**是依据，只保留最新版；聊天按追加保存。**Wiki、记忆、事项**是派生知识，都引用原件。
 - **原件页**：普通空间按列表展示；代码仓库空间在文件较多时按目录展示，网址和会话标识保留为独立原件。
 - 理解和写作由你已安装的 **Agent** 完成（通过 ACP 或命令行），它们用 omem 的 MCP 工具检索、阅读、写入，同时保有自己的文件与搜索能力。omem 负责存储、索引、调度和权限，不自带模型。
@@ -132,7 +132,7 @@ omem wiki plan omem -f "读者是新加入的后端开发"  # 规划并逐页生
 omem wiki lint omem                         # 原件变化后修正受影响的页面
 omem items / omem todo "交报销单" --remind 2026-10-19T09:00+09:00
 omem delegate omem "给 search 加按时间过滤" --check "pnpm test"
-omem mcp [--read-only]                      # 把个人库作为 MCP 服务给其他 Agent 用
+omem mcp [--read-only] [--space <id>]       # 把个人库作为 MCP 服务给其他 Agent 用（默认空间按当前目录所在的仓库空间）
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
 omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入
 omem agents [--all]                         # 查看 Agent 配置与安装状态（--all 含未安装的和安装方式）
@@ -142,6 +142,7 @@ omem user add 小王 --id wang --lark ou_xxx --space team  # 登记同事，见�
 omem setup                                  # 设置向导（Agent、模型、文档解析、渠道、会话…）
 omem setup embeddings --model bge-small-zh  # 只开启向量检索（经 osdk 下载，也可 bge-base-zh / bge-m3）
 omem space sync omem --exclude docs/archive # 同步仓库空间并排除路径
+omem space relate shop-web shop-api -n "调用订单接口"  # 关联两个空间（--remove 取消）
 omem wiki export omem .repo-review/wiki     # 把 Wiki 导出成仓库里可读的 Markdown
 omem hook claude|codex                      # 记录编码 Agent 会话（配在钩子里）
 omem peer invite|add|list|call / omem diag   # 多台设备：配对、诊断、远程检查，见“多台设备”

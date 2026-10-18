@@ -41,7 +41,7 @@ flowchart LR
 
 | 术语 | 是什么 | 在哪 |
 | --- | --- | --- |
-| Space（空间） | 隔离领域的单位：个人、项目、代码仓库、学习主题。检索默认不跨空间；`repo` 类空间带 `root_path` | `spaces` 表，`core/spaces.ts` |
+| Space（空间） | 隔离领域的单位：个人、项目、代码仓库、学习、通用。检索默认在当前空间和相关空间（10-18 起，见变化记录）；`repo` 类空间带 `root_path` | `spaces` 表，`core/spaces.ts` |
 | Source（原件） | 文档、代码、聊天、网页的原文，按 `(space_id, uri)` 只保留最新版，删除记 `deleted_at` | `sources` 表，`sources/store.ts` |
 | Chunk（片段） | 检索单位：Markdown 按标题、代码按符号、聊天按窗口；记录行号范围，所以引用能落到行 | `chunks`、`chunks_fts`，`sources/chunk.ts` |
 | Page（页面） | Agent 维护的 Wiki，真身是 `library/<space>/wiki/*.md`，整个库目录是 Git 仓库；`pages` 表只是搜索投影 | `wiki/store.ts`，`core/git.ts` |
