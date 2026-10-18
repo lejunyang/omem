@@ -81,10 +81,32 @@ export async function readLarkDocument(url: string): Promise<{ title: string; ma
 
 // ---- media ---------------------------------------------------------------------------
 
+const RATE_LIMITED = /rate|limit|frequen|too many|429|99991400/i;
+
+/** lark-cli with a few waits when Feishu says the calls come too fast. */
+async function patient(args: string[], timeoutMs: number, cwd: string) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await larkCli(args, timeoutMs, cwd);
+    } catch (e) {
+      if (attempt >= 3 || !RATE_LIMITED.test((e as Error).message)) throw e;
+      await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
+    }
+  }
+}
+
 async function downloadMedia(app: App, token: string, type: "media" | "whiteboard"): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "omem-doc-"));
   try {
-    await larkCli(["docs", "+media-download", "--token", token, "--type", type, "--output", `./${token}`, "--as", "user"], 600_000, dir);
+    try {
+      await patient(["docs", "+media-download", "--token", token, "--type", type, "--output", `./${token}`, "--as", "user"], 600_000, dir);
+    } catch (e) {
+      // Media the owner may view but not download (e.g. copied from a doc without download permission): the preview still works.
+      if (type !== "media") throw e;
+      await patient(["docs", "+media-preview", "--token", token, "--output", `./${token}`, "--as", "user"], 600_000, dir).catch((p) => {
+        throw new Error(`${(e as Error).message}；预览也失败：${(p as Error).message}`);
+      });
+    }
     const name = readdirSync(dir).find((n) => n.startsWith(token));
     if (!name) throw new Error("没有下载到文件");
     return keepOriginal(app, withExtension(join(dir, name)));
@@ -569,7 +591,7 @@ function relinkParent(app: App, parentId: string, url: string, id: string, title
  * Returns what needs understanding: docs whose content changed in Feishu and newly linked docs —
  * not docs that only changed because their media became local.
  */
-export async function refreshLarkDocs(app: App, opts: { space?: string; limit?: number; log?: (s: string) => void } = {}) {
+export async function refreshLarkDocs(app: App, opts: { space?: string; limit?: number; log?: (s: string) => void; stop?: () => boolean } = {}) {
   const rows = all<{ id: string; space_id: string; uri: string; meta: string }>(
     app.db,
     `select id, space_id, uri, meta from sources where kind = 'doc' and deleted_at is null and json_extract(meta, '$.via') = 'lark-cli'
@@ -582,6 +604,7 @@ export async function refreshLarkDocs(app: App, opts: { space?: string; limit?: 
   let done = 0;
   let failed = 0;
   for (const row of rows) {
+    if (opts.stop?.()) break;
     const before = json<Partial<LarkDocMeta>>(row.meta, {}).revision;
     try {
       const r = await importLarkDocument(app, row.space_id, json<{ url?: string }>(row.meta, {}).url ?? row.uri, { force: true });
@@ -599,15 +622,21 @@ export async function refreshLarkDocs(app: App, opts: { space?: string; limit?: 
 }
 
 let refreshing: Promise<unknown> | null = null;
+let stopRequested = false;
 let progress: { startedAt: string; finishedAt?: string; at: string; errors: string[]; result?: unknown } | null = null;
 
 /** `refreshLarkDocs` without waiting (it can take a while); the owner gets a notification when it is done. */
-export function refreshInBackground(app: App, opts: { space?: string; limit?: number } = {}) {
+export function refreshInBackground(app: App, opts: { space?: string; limit?: number; stop?: boolean } = {}) {
+  if (opts.stop) {
+    stopRequested = !!refreshing;
+    return { stopping: stopRequested, progress };
+  }
   if (refreshing) return { started: false, reason: "上一次刷新还没结束", progress };
+  stopRequested = false;
   const p: NonNullable<typeof progress> = { startedAt: new Date().toISOString(), at: "", errors: [] };
   progress = p;
   const log = (s: string) => (s.startsWith("读取失败") ? p.errors.length < 50 && p.errors.push(s) : (p.at = s));
-  refreshing = refreshLarkDocs(app, { ...opts, log })
+  refreshing = refreshLarkDocs(app, { ...opts, log, stop: () => stopRequested })
     .then(async (r) => {
       const { scheduleIngest } = await import("../agents/jobs.ts");
       for (const c of r.changed) scheduleIngest(app, c.spaceId, c.ids, "飞书文档有新内容或新链接的文档");
@@ -628,7 +657,7 @@ export function refreshInBackground(app: App, opts: { space?: string; limit?: nu
 /** Where Feishu docs stand: refresh progress, docs still pointing at Feishu media, local media, unreadable links. */
 export function larkDocsStatus(app: App) {
   const docs = all<{ text: string; meta: string }>(app.db, "select text, meta from sources where kind = 'doc' and deleted_at is null and json_extract(meta, '$.via') = 'lark-cli'");
-  const remote = /\]\(https?:\/\/[\w.-]+\/file\/|<(?:img|whiteboard|source|sheet)\b/;
+  const remote = /\]\(https?:\/\/[\w.-]+\/file\/|<img\s(?![^>]*omem-file:)|<(?:whiteboard|source|sheet)\b/;
   const media = new Set<string>();
   let failedMedia = 0;
   for (const d of docs)

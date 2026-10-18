@@ -143,9 +143,9 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "lark-doc-raw": {
-    description: "只读调用 lark-cli 的文档读取（fetch：文档内容；media：下载一个素材到临时目录后删除，返回输出和文件名；csv：读内嵌表格），返回原始 JSON（用来核对字段）",
+    description: "只读调用 lark-cli 的文档读取（fetch：文档内容；media / preview：下载或预览一个素材到临时目录后删除，返回输出和文件名，失败时返回错误；csv：读内嵌表格），返回原始 JSON（用来核对字段）",
     schema: z.object({
-      action: z.enum(["fetch", "media", "csv"]),
+      action: z.enum(["fetch", "media", "preview", "csv"]),
       doc: z.string().url().optional(),
       token: z.string().regex(/^[A-Za-z0-9]+$/).optional(),
       type: z.enum(["media", "whiteboard"]).default("media"),
@@ -166,7 +166,8 @@ export const peerCommands: Record<string, Command> = {
       }
       const dir = mkdtempSync(join(tmpdir(), "omem-doc-raw-"));
       try {
-        const out = await larkCli(["docs", "+media-download", "--token", a.token, "--type", a.type, "--output", `./${a.token}`, "--as", "user"], 180_000, dir);
+        const args = a.action === "preview" ? ["docs", "+media-preview", "--token", a.token] : ["docs", "+media-download", "--token", a.token, "--type", a.type];
+        const out = await larkCli([...args, "--output", `./${a.token}`, "--as", "user"], 180_000, dir).catch((e) => ({ error: (e as Error).message }));
         return { output: out, files: readdirSync(dir).map((n) => ({ name: n, bytes: statSync(join(dir, n)).size })) };
       } finally {
         rmSync(dir, { recursive: true, force: true });
@@ -174,8 +175,8 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "lark-docs-refresh": {
-    description: "重新读取已保存的飞书文档（下载图片、画板等素材，导入链接的文档），在后台运行，完成后发通知",
-    schema: z.object({ space: z.string().max(64).optional(), limit: z.number().int().min(1).max(10_000).optional() }),
+    description: "重新读取已保存的飞书文档（下载图片、画板等素材，导入链接的文档），在后台运行，完成后发通知；stop: true 在当前这篇读完后停下",
+    schema: z.object({ space: z.string().max(64).optional(), limit: z.number().int().min(1).max(10_000).optional(), stop: z.boolean().optional() }),
     run: async (app, a) => {
       const { refreshInBackground } = await import("../channels/lark-docs.ts");
       return refreshInBackground(app, a);
@@ -194,7 +195,8 @@ export const peerCommands: Record<string, Command> = {
         const ids = [...(r.status !== "unchanged" ? [r.id] : []), ...r.related];
         if (ids.length) (await import("../agents/jobs.ts")).scheduleIngest(app, a.space, ids, "远程导入的飞书文档");
       }
-      const leftover = /\]\(https?:\/\/[\w.-]+\/file\/[^)]*\)|<(?:img|whiteboard|source|sheet|cite|synced_reference)\s[^>]*>/g;
+      // What still points at Feishu: file links and DocxXML media tags (local images are <img src="omem-file:…">).
+      const leftover = /\]\(https?:\/\/[\w.-]+\/file\/[^)]*\)|<img\s(?![^>]*omem-file:)[^>]*>|<(?:whiteboard|source|sheet|cite|synced_reference)\s[^>]*>/g;
       return { ...r, title: src?.title, media: { downloaded: media.filter(Boolean).length, failed: media.filter((m) => !m).length }, remaining: src?.text.match(leftover)?.slice(0, 20) ?? [] };
     },
   },

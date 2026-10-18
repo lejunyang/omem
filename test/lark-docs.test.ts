@@ -24,7 +24,9 @@ function fakeCli(docs: Record<string, { title: string; content: string; revision
       if (d === "denied") throw new Error("permission denied: no access to this document");
       return { ok: true, data: { document: { document_id: `doc_${token}`, revision_id: d.revision ?? 1, content: `<title>${d.title}</title>\n${d.content}` } } };
     }
-    if (args[0] === "docs" && args[1] === "+media-download") {
+    if (args[0] === "docs" && (args[1] === "+media-download" || args[1] === "+media-preview")) {
+      // Tokens starting with NODL can be previewed but not downloaded; NONE can do neither.
+      if (flag("--token").startsWith("NONE") || (args[1] === "+media-download" && flag("--token").startsWith("NODL"))) throw new Error("飞书 CLI：api_error 403 forbidden");
       writeFileSync(join(cwd!, flag("--output")), Buffer.concat([PNG, Buffer.from(flag("--token"))]));
       return { ok: true, data: {} };
     }
@@ -175,6 +177,17 @@ describe("feishu docs as originals", () => {
     expect(text).toContain("［群：项目群］");
     expect(text).not.toMatch(/<(grid|column|callout|button|bookmark|checkbox|sub-page|chat_card)\b/);
     expect(r.related).toHaveLength(2);
+  });
+
+  it("falls back to the preview when media cannot be downloaded", async () => {
+    const app = testApp();
+    const calls = fakeCli({ Main: { title: "周报", content: `![可预览](${ORIGIN}/file/NODL1)\n\n![都不行](${ORIGIN}/file/NONE1)` } });
+    const r = await importLarkDocument(app, "personal", `${ORIGIN}/docx/Main`);
+    const src = one<{ text: string; meta: string }>(app.db, "select text, meta from sources where id = ?", r.id)!;
+    expect(src.text).toMatch(/!\[可预览\]\(omem-file:/);
+    expect(src.text).toContain(`![都不行](${ORIGIN}/file/NONE1)`);
+    expect(JSON.parse(src.meta).media.NONE1).toBe("");
+    expect(calls.filter((c) => c[1] === "+media-preview").map((c) => c[3])).toEqual(["NODL1", "NONE1"]);
   });
 
   it("takes the media size limit and link depth from the config", async () => {
