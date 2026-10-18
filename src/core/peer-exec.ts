@@ -181,7 +181,7 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "lark-whois": {
-    description: "只读：同一个人在 lark-cli（本人身份）和机器人眼里的各种 id（open_id / union_id / user_id）与名字，用来核对 id 能否互通、权限是否够",
+    description: "只读：同一个人在 lark-cli（本人身份）和机器人眼里的各种 id（open_id / union_id / user_id）与名字，用来核对 id 能否互通、权限是否够；id 为 om_ 开头的消息时，返回 lark-cli 按 union_id 读到的发送人和被 @ 的人",
     schema: z.object({
       id: z.string().regex(/^[\w@.-]{1,80}$/),
       id_type: z.enum(["open_id", "union_id", "user_id"]).default("open_id"),
@@ -189,6 +189,12 @@ export const peerCommands: Record<string, Command> = {
     }),
     run: async (_app, a) => {
       const out: Record<string, unknown> = {};
+      if (a.id.startsWith("om_")) {
+        const { larkCli } = await import("../channels/lark-cli.ts");
+        const v = await larkCli(["api", "GET", `/open-apis/im/v1/messages/${a.id}`, "--params", JSON.stringify({ user_id_type: "union_id" }), "--as", "user"], 30_000).catch((e) => ({ error: (e as Error).message }));
+        const item = (v as any).data?.items?.[0];
+        return item ? { sender: item.sender, mentions: item.mentions } : v;
+      }
       const pick = (u: any) => (u ? { name: u.name, open_id: u.open_id, union_id: u.union_id, user_id: u.user_id, email: u.email || u.enterprise_email } : null);
       if (a.as !== "bot") {
         const { larkCli } = await import("../channels/lark-cli.ts");
