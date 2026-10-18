@@ -14,4 +14,9 @@ it("finds the script behind npm and pnpm .cmd shims", () => {
   expect(npmShimTarget(join(dir, "npm.cmd"))).toBe(join(dir, "node_modules/x/bin/x.js"));
   expect(npmShimTarget(join(dir, "pnpm.cmd"))).toBe(join(dir, "node_modules/x/bin/x.js"));
   expect(npmShimTarget(join(dir, "other.cmd"))).toBeNull();
+  // Newer packages (Claude Code) ship a native binary behind the same kind of shim.
+  mkdirSync(join(dir, "node_modules", "y", "bin"), { recursive: true });
+  writeFileSync(join(dir, "node_modules", "y", "bin", "y.exe"), "");
+  writeFileSync(join(dir, "y.cmd"), '@ECHO off\r\nCALL :find_dp0\r\n"%dp0%\\node_modules\\y\\bin\\y.exe"   %*\r\n');
+  expect(npmShimTarget(join(dir, "y.cmd"))).toBe(join(dir, "node_modules/y/bin/y.exe"));
 });

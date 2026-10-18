@@ -18,8 +18,8 @@ export function resolveCommand(command: string, env: NodeJS.ProcessEnv = process
         if (isWin && /\.(cmd|bat)$/i.test(file)) {
           // npm shims just run `node <script>`: call node directly so arguments
           // (JSON, quotes) are not re-parsed by cmd.exe.
-          const script = npmShimTarget(file);
-          if (script) return { file: process.execPath, prefix: [script] };
+          const target = npmShimTarget(file);
+          if (target) return /\.exe$/i.test(target) ? { file: target, prefix: [] } : { file: process.execPath, prefix: [target] };
           return { file: env.ComSpec ?? "cmd.exe", prefix: ["/d", "/s", "/c", file] };
         }
         return { file, prefix: [] };
@@ -29,11 +29,12 @@ export function resolveCommand(command: string, env: NodeJS.ProcessEnv = process
   return null;
 }
 
-/** Extract the JavaScript entry from an npm-generated .cmd shim, if it is one. */
+/** Extract what an npm-generated .cmd shim runs: a JavaScript entry, or a native .exe (newer packages ship one). */
 export function npmShimTarget(cmdFile: string): string | null {
   try {
     const text = readFileSync(cmdFile, "utf8");
-    const m = /"%(?:~)?dp0%?\\([^"]+?\.(?:c|m)?js)"/i.exec(text);
+    // A script wins over an .exe: pnpm shims name node.exe before the script they run.
+    const m = /"%(?:~)?dp0%?\\([^"]+?\.(?:c|m)?js)"/i.exec(text) ?? /"%(?:~)?dp0%?\\(node_modules\\[^"]+?\.exe)"/i.exec(text);
     if (!m) return null;
     const script = join(dirname(cmdFile), m[1].replace(/\\/g, "/"));
     return existsSync(script) ? script : null;
