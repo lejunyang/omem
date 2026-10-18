@@ -48,16 +48,19 @@ export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string):
     return value;
   } catch (e) {
     const raw = `${(e as { stderr?: string }).stderr ?? ""}${(e as { stdout?: string }).stdout ?? ""}`;
-    if (/keychain|unauthori[sz]ed|not.*logged|auth.*login|token.*expired|credential/i.test(raw))
-      throw new Error("飞书登录不可用：请在运行 omem 的电脑上执行 lark-cli auth login 后重试");
     if (e instanceof Error && !e.message.includes("Command failed")) throw new Error(e.message.slice(0, 300));
     // A failing command still prints its JSON error ({ ok: false, error: { type, message, hint } }); keep what it says.
     const err = /\{[\s\S]*\}/.exec(raw)?.[0];
     let detail = "";
+    let hint = "";
     try {
       const v = err ? JSON.parse(err).error : null;
       if (v) detail = [v.type, v.subtype, v.code, v.message].filter(Boolean).join(" ");
+      if (v?.hint) hint = String(v.hint);
     } catch {}
-    throw new Error(detail ? `飞书 CLI：${detail.slice(0, 300)}` : "飞书 CLI 调用失败，请检查登录和网络");
+    // A missing permission (scope) is not a missing login, even though both say "unauthorized".
+    if (!/scope|permission/i.test(detail) && /keychain|unauthori[sz]ed|not.*logged|auth.*login|token.*expired|credential/i.test(detail || raw))
+      throw new Error("飞书登录不可用：请在运行 omem 的电脑上执行 lark-cli auth login 后重试");
+    throw new Error(detail ? `飞书 CLI：${detail.slice(0, 300)}${hint ? `（${hint.slice(0, 200)}）` : ""}` : "飞书 CLI 调用失败，请检查登录和网络");
   }
 }
