@@ -28,8 +28,10 @@ describe("agent stalls and provider queue", () => {
 
   it("keeps waiting while the provider reports a queue longer than the idle budget", async () => {
     const events: AgentEvent[] = [];
-    const r = await runAcp(fake({ FAKE_QUEUE: "2500" }, 1000), { cwd: process.cwd(), prompt: "hi", queueTimeoutMs: 10_000 }, (e) => events.push(e));
+    // The idle budget also covers starting the agent and the ACP handshake, which can take
+    // well over a second under the full suite's load; the queue only has to outlast it.
+    const r = await runAcp(fake({ FAKE_QUEUE: "6000" }, 3000), { cwd: process.cwd(), prompt: "hi", queueTimeoutMs: 20_000 }, (e) => events.push(e));
     expect(r.text).toBe("queued-ok");
     expect(events.some((e) => e.type === "queue" && e.queued)).toBe(true);
-  }, 20_000);
+  }, 30_000);
 });

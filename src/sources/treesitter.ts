@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, extname, join } from "node:path";
+import { setFlagsFromString } from "node:v8";
 import { Language, Parser, type Node } from "web-tree-sitter";
 import type { CodeOutline, CodeRef, CodeSymbol, ImportBinding } from "./code.ts";
 
@@ -99,6 +100,26 @@ async function loadGrammar(grammar: string) {
   await loading.get(grammar);
 }
 
+/**
+ * Grammars parsed without V8's optimizing tier. On Node 24 (V8 13.6) TurboFan
+ * runs out of zone memory compiling the Swift grammar's lexer (one ~400 KB wasm
+ * function) and aborts the whole process with "Fatal process out of memory:
+ * Zone", whatever the free memory; Node 22 and 26 compile it fine. V8 checks
+ * `--wasm-tier-up-filter` when a hot function asks to tier up, so turning
+ * tier-up off just for the synchronous parse keeps these grammars on Liftoff
+ * (about 2x slower) while the other grammars stay optimized.
+ */
+const NO_TIER_UP = new Set(["swift"]);
+function parseWithoutTierUp(grammar: string, parser: Parser, text: string) {
+  if (!NO_TIER_UP.has(grammar)) return parser.parse(text);
+  setFlagsFromString("--wasm-tier-up-filter=-2");
+  try {
+    return parser.parse(text);
+  } finally {
+    setFlagsFromString("--wasm-tier-up-filter=-1");
+  }
+}
+
 /** Load the grammars these files need (by extension). Cheap when already loaded. */
 export async function ensureGrammars(paths: Iterable<string>) {
   const want = new Set<string>();
@@ -114,7 +135,7 @@ export function parseTree<T>(ext: string, text: string, use: (root: Node, gramma
   const grammar = GRAMMAR_OF_EXT[ext];
   const parser = grammar && parsers.get(grammar);
   if (!parser) return null;
-  const tree = parser.parse(text);
+  const tree = parseWithoutTierUp(grammar, parser, text);
   if (!tree) return null;
   try {
     return use(tree.rootNode, grammar);
