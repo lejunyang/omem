@@ -127,7 +127,12 @@ export async function resolveMention(app: App, who: string): Promise<{ name: str
     const msg = x.response?.data?.msg ?? x.message;
     throw new HttpError(400, /99991672|contact:user\.id/.test(msg) ? "机器人缺少按邮箱查人的权限（contact:user.id:readonly）：运行 omem lark bot-permissions 补齐" : `按邮箱查人失败：${msg}`);
   }
-  if (!userId) throw new HttpError(400, `飞书里找不到邮箱 ${email}`);
+  // Email lookups only see people inside the bot app's availability scope.
+  if (!userId)
+    throw new HttpError(
+      400,
+      `机器人查不到 ${email} 的 user_id：飞书只返回在机器人应用“可用范围”内的人。可以在开发者后台把可用范围扩大到相关同事（可能要管理员审批）；或者等这个人在机器人所在的群里发言，机器人会从消息里记下他的 id。`,
+    );
   rememberPerson(app, { email, userId, name: r?.name ?? "" });
   return { name: r?.name || email.split("@")[0], userId, email };
 }

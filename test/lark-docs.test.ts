@@ -312,6 +312,27 @@ describe("feishu docs as originals", () => {
     expect((await checkLarkDocs(app)).checked).toBe(0);
   });
 
+  it("downloads a doc's media a few at a time", async () => {
+    const app = testApp();
+    let running = 0;
+    let peak = 0;
+    const content = Array.from({ length: 10 }, (_, i) => `![图${i}](${ORIGIN}/file/IMG${i})`).join("\n\n");
+    setLarkCliForTests(async (args, cwd) => {
+      const flag = (n: string) => args[args.indexOf(n) + 1];
+      if (args[1] === "+fetch") return { ok: true, data: { document: { revision_id: 1, content: `<title>图多</title>\n${content}` } } };
+      running++;
+      peak = Math.max(peak, running);
+      await new Promise((r) => setTimeout(r, 20));
+      writeFileSync(join(cwd!, flag("--output")), Buffer.concat([PNG, Buffer.from(flag("--token"))]));
+      running--;
+      return { ok: true, data: {} };
+    });
+    const r = await importLarkDocument(app, "personal", `${ORIGIN}/docx/Main`);
+    const text = one<{ text: string }>(app.db, "select text from sources where id = ?", r.id)!.text;
+    expect(text.match(/omem-file:/g)).toHaveLength(10);
+    expect(peak).toBe(4);
+  });
+
   it("turns CSV into a Markdown table", () => {
     expect(csvToTable('a,b\n1,"x|y"\n2\n')).toBe("| a | b |\n| --- | --- |\n| 1 | x\\|y |\n| 2 |  |");
     expect(csvToTable("h\n1\n2\n3", 2)).toContain("另有 1 行未展开");

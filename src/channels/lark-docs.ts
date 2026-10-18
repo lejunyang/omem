@@ -149,11 +149,45 @@ type Ctx = {
   used: Set<string>;
   /** Videos and attachments larger than this stay in Feishu. */
   maxBytes: number;
+  /** Tokens already attempted in this read (a failure is not retried within it). */
+  tried: Set<string>;
 };
+
+const PARALLEL_DOWNLOADS = 4;
+
+/**
+ * Download a doc's media a few at a time before the text is rewritten (one lark-cli call per item, each
+ * about a second; one at a time made a doc with dozens of images take minutes). Rate limits back off in `patient`.
+ */
+async function prefetchMedia(ctx: Ctx, text: string) {
+  const jobs: [string, "media" | "whiteboard"][] = [];
+  for (const m of text.matchAll(/!\[(?:\\.|[^\]\\])*\]\(https?:\/\/[\w.-]+\/file\/([A-Za-z0-9]+)/g)) jobs.push([m[1], "media"]);
+  for (const m of text.matchAll(/<img\b[^>]*?\/?>/g)) {
+    const a = attrs(m[0]);
+    const token = a.token ?? (a.src && /^[A-Za-z0-9]+$/.test(a.src) ? a.src : "");
+    if (token) jobs.push([token, "media"]);
+  }
+  for (const m of text.matchAll(/<whiteboard\b[^>]*>/g)) if (attrs(m[0]).token) jobs.push([attrs(m[0]).token, "whiteboard"]);
+  for (const m of text.matchAll(/<(?:source|file)\b[^>]*\btoken="[^"]+"[^>]*>/g)) {
+    const a = attrs(m[0]);
+    if (Number(a.size ?? 0) <= ctx.maxBytes) jobs.push([a.token, "media"]);
+  }
+  const todo = [...new Map(jobs.filter(([t]) => !ctx.media[t]).map((j) => [j[0], j])).values()];
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(PARALLEL_DOWNLOADS, todo.length) }, async () => {
+      while (next < todo.length) {
+        const [token, type] = todo[next++];
+        await media(ctx, token, type);
+      }
+    }),
+  );
+}
 
 async function media(ctx: Ctx, token: string, type: "media" | "whiteboard") {
   ctx.used.add(token);
-  if (ctx.media[token] !== undefined && ctx.media[token] !== "") return ctx.media[token];
+  if (ctx.media[token] || ctx.tried.has(token)) return ctx.media[token] ?? "";
+  ctx.tried.add(token);
   try {
     ctx.media[token] = await downloadMedia(ctx.app, token, type);
   } catch (e) {
@@ -230,6 +264,7 @@ function anchor(href: string, text: string) {
  * Links to other docs are left for `rewriteLinks`.
  */
 async function localize(ctx: Ctx, text: string, synced = true): Promise<string> {
+  await prefetchMedia(ctx, text);
   let out = text;
   // Markdown images pointing at Feishu file tokens; the alt text may contain escaped brackets (\[i\]).
   out = await replaceAsync(out, /!\[((?:\\.|[^\]\\])*)\]\(https?:\/\/[\w.-]+\/file\/([A-Za-z0-9]+)[^)]*\)/g, async (m) => {
@@ -451,7 +486,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
     return { id: existing.id, status: "unchanged", related: [], missing: [] };
   }
 
-  const ctx: Ctx = { app, origin, docUrl: url, media: { ...(prev.media ?? {}) }, used: new Set(), maxBytes: cfg.docMediaMaxMB * 1024 * 1024 };
+  const ctx: Ctx = { app, origin, docUrl: url, media: { ...(prev.media ?? {}) }, used: new Set(), maxBytes: cfg.docMediaMaxMB * 1024 * 1024, tried: new Set() };
   let text = await localize(ctx, doc.content);
 
   const related: string[] = [];
