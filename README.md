@@ -224,10 +224,11 @@ omem peer commands <同伴>                 # 可远程执行的命令
 omem peer call <同伴> lark-raw '{"command":"+chat-messages-list","chat_id":"oc_…"}'
 omem peer call <同伴> sql '{"query":"select count(*) from lark_messages"}'   # 只读
 omem peer call <同伴> update               # git pull --ff-only、安装依赖、构建、重启服务
-omem pull <同伴>                          # 经 HTTP 拉一份快照合并进本机
+omem pull <同伴>                          # 经 HTTP 拉一份快照合并进本机（手动，不会自动同步）
+omem peer open <同伴>                     # 在本机浏览器打开它的网页，经中间机器的也行，不用令牌
 ```
 
-同伴的名字是对方配置里的 `node.id`（`omem peer name` 查看或设置），没配就是它的主机名；最好在配对之前起好名字，之后改名的话对方那边仍记着旧名字。配对码里是对方的所有可能地址和一个为本人生成的 API 令牌（标签 `peer:<名字>`）；`add` 留下能连上的地址，之后正在用的地址连不上时会自动换码里的其他地址，所以断线、重启、换网后不用重新配对。`omem user revoke owner peer:<名字>` 撤销令牌即解除配对；配对信息存在 `secrets/peers.json`，令牌用 `omem user tokens` 查看。远程命令是固定的一组（诊断、日志、配置、飞书只读查询、手动采集与回溯、记忆统计、运行记录、只读 SQL、git 与更新、重启），没有任意 shell。本机打开网页不需要令牌；从别的机器打开时运行 `omem link`，它打印带新令牌的链接（每个网卡地址一个），打开一次后令牌存在那个浏览器里；也可以在页面提示时粘贴 `omem user token owner` 生成的令牌。
+同伴的名字是对方配置里的 `node.id`（`omem peer name` 查看或设置），没配就是它的主机名；最好在配对之前起好名字，之后改名的话对方那边仍记着旧名字。配对码里是对方的所有可能地址和一个为本人生成的 API 令牌（标签 `peer:<名字>`）；`add` 留下能连上的地址，之后正在用的地址连不上时会自动换码里的其他地址，所以断线、重启、换网后不用重新配对。`omem user revoke owner peer:<名字>` 撤销令牌即解除配对；配对信息存在 `secrets/peers.json`，令牌用 `omem user tokens` 查看。远程命令是固定的一组（诊断、日志、配置、飞书只读查询、手动采集与回溯、记忆统计、运行记录、只读 SQL、git 与更新、重启），没有任意 shell。本机打开网页不需要令牌；要看已配对的同伴的网页，最省事的是 `omem peer open <同伴>`：本机起一个只给本机用的转发地址，经 `--via` 的同伴也能打开（经中间机器时上传文件不可用）。从别的机器直接打开时运行 `omem link`，它打印带新令牌的链接（每个网卡地址一个），打开一次后令牌存在那个浏览器里；也可以在页面提示时粘贴 `omem user token owner` 生成的令牌。
 
 `scripts/relay.mjs` 是一个临时的白名单转发：在只能 ssh 到其他机器的那台上运行（不配置时只有本机目标 `local`，经已配对的同伴执行 `omem peer call` / `omem diag`），往 `.remote/relay/inbox/` 放请求文件，它经 ssh 执行允许的命令（omem 子命令、git/pnpm 的检查与更新、lark-cli 只读查询、本机 API 的 GET、几个系统信息命令）并把结果写到 `outbox/`。目标机器在 `.remote/relay/config.json` 里配置，详见脚本开头的说明。
 

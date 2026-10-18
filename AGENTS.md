@@ -8,6 +8,7 @@
 - `skills/omem/SKILL.md`：给外部 Agent（配 `omem mcp`）的使用说明。MCP 工具的名字、参数或写入规则变了要同步它。
 - `skills/library/*`：内置技能，首次启动播种到数据目录的 `library/_skills`（已播种的不会被覆盖）。
 - `.agents/skills/*`：在本仓库开发时用的技能（`omem-design` 网页约定、`osdk-guide`、`lieflat-less-ai-tone` 中文表达检查）。网页约定变了更新 `omem-design`。
+- `CLAUDE.md` 只引入本文件；个人的说明（机器、账号、进行中的事）放 `CLAUDE.local.md`，不进仓库。
 - `docs/v2/`：架构与实现状态表、验收、评测；`.repo-review/wiki/`：本仓库 Wiki（生成内容，新改动先记在 `reference/changes-since-2026-10-13.md`）。
 
 ## 产品原则

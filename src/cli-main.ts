@@ -248,6 +248,25 @@ peer
     console.log("已经和别的设备配对过的：它们那边还记着旧名字，照常可用；想统一就在本机重新 invite、对方重新 add（--via 的链路两端名字需一致）。");
   });
 peer
+  .command("open <id>")
+  .description("在本机打开同伴的网页（经本机转发，--via 的同伴也行；浏览器不用令牌）")
+  .option("-p, --port <port>", "本机端口（默认 4318 起找空闲的）", (v) => Number(v))
+  .option("--no-browser", "只打印地址，不打开浏览器")
+  .action(async (id: string, o) => {
+    const { openPeerUi } = await import("./core/peers.ts");
+    const app = open();
+    let ui: Awaited<ReturnType<typeof openPeerUi>> | null = null;
+    for (let p = o.port ?? 4318; !ui && p < (o.port ?? 4318) + 20; p++) ui = await openPeerUi(app, id, p).catch(() => null);
+    if (!ui) throw new Error("找不到空闲端口，用 --port 指定");
+    console.log(`${id} 的网页：${ui.url}\n（按 Ctrl+C 结束；请求经本机转发到 ${id}，只有本机能打开这个地址）`);
+    if (o.browser) {
+      const cmd = process.platform === "win32" ? ["cmd", ["/c", "start", "", ui.url]] : process.platform === "darwin" ? ["open", [ui.url]] : ["xdg-open", [ui.url]];
+      const { spawn } = await import("node:child_process");
+      spawn(cmd[0] as string, cmd[1] as string[], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+    }
+    await new Promise(() => {});
+  });
+peer
   .command("url <id> <url>")
   .description("同伴换了地址、原来的都连不上时，指定新地址（不用重新配对）")
   .action(async (id: string, url: string) => {

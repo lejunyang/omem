@@ -195,3 +195,45 @@ export function codeVersion(root: string) {
   const r = spawnSync("git", ["-C", root, "log", "-1", "--format=%h %cI %s"], { encoding: "utf8" });
   return r.status === 0 ? r.stdout.trim() : null;
 }
+
+/**
+ * A local web server that shows a peer's web UI: every request goes to the peer
+ * (through its `via` chain if any) with the paired token, so the browser needs no
+ * token and the peer need not be reachable from here. Listens on 127.0.0.1 only.
+ * Uploads (multipart) work for direct peers; through a middle node only JSON bodies do.
+ */
+export async function openPeerUi(app: App, id: string, port = 0) {
+  if (!findPeer(app, id)) throw new Error(`没有名为 ${id} 的同伴（omem peer list 查看）`);
+  const { createServer } = await import("node:http");
+  const { Readable } = await import("node:stream");
+  const server = createServer(async (req, res) => {
+    try {
+      const chunks: Buffer[] = [];
+      for await (const c of req) chunks.push(c as Buffer);
+      const headers: Record<string, string> = {};
+      for (const h of ["content-type", "accept", "last-event-id", "range", "if-none-match"]) {
+        const v = req.headers[h];
+        if (typeof v === "string") headers[h] = v;
+      }
+      const body = chunks.length && req.method !== "GET" && req.method !== "HEAD" ? Buffer.concat(chunks) : undefined;
+      const up = await peerFetch(app, id, req.url ?? "/", { method: req.method, headers, body, timeoutMs: 24 * 3600_000 });
+      const out: Record<string, string> = {};
+      // fetch already decoded the body; length and encoding no longer apply.
+      up.headers.forEach((v, k) => {
+        if (!["content-encoding", "content-length", "transfer-encoding", "connection"].includes(k)) out[k] = v;
+      });
+      res.writeHead(up.status, out);
+      if (!up.body) return void res.end();
+      const stream = Readable.fromWeb(up.body as never);
+      req.on("close", () => stream.destroy());
+      stream.on("error", () => res.end());
+      stream.pipe(res);
+    } catch (e) {
+      if (!res.headersSent) res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: (e as Error).message }));
+    }
+  });
+  await new Promise<void>((ok, fail) => server.once("error", fail).listen(port, "127.0.0.1", () => ok()));
+  const addr = server.address() as { port: number };
+  return { url: `http://127.0.0.1:${addr.port}`, close: () => new Promise((r) => server.close(r)) };
+}

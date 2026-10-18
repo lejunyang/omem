@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { boot } from "../src/main.ts";
-import { addPeer, decodeInvite, findPeer, invite, localUrls, peerJson, setPeerUrl } from "../src/core/peers.ts";
+import { addPeer, decodeInvite, findPeer, invite, localUrls, openPeerUi, peerJson, setPeerUrl } from "../src/core/peers.ts";
 import { cleanupFetched, fetchPeer, mergeLibrary } from "../src/core/pull.ts";
 import { remember, listMemories } from "../src/memory/store.ts";
 
@@ -48,6 +48,14 @@ describe("peers", () => {
     expect(q.result[0].n).toBe(1);
     await expect(peerJson(laptop, "server", "/api/peer/exec", { command: "sql", args: { query: "delete from memories" } })).rejects.toThrow(/只允许/);
     await expect(peerJson(laptop, "server", "/api/peer/exec", { command: "rm", args: {} })).rejects.toThrow(/没有命令/);
+
+    // The peer's web UI through the middle node, served locally without a token.
+    const ui = await openPeerUi(laptop, "server");
+    const diag = (await (await fetch(`${ui.url}/api/diag`)).json()) as { node: string };
+    expect(diag.node).toBe("server");
+    const page = await fetch(`${ui.url}/`);
+    expect([200, 404]).toContain(page.status); // 404 only when the web build is missing
+    await ui.close();
 
     // Without the paired token the server refuses.
     const anon = await fetch(`${server.baseUrl}/api/diag`);

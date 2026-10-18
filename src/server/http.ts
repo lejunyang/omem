@@ -679,7 +679,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (hops > 3) throw new HttpError(508, "同伴转发层数过多");
     const { id } = req.params as { id: string };
     const rest = req.url.slice(`/api/peers/${encodeURIComponent(id)}`.length) || "/";
-    if (!rest.startsWith("/api/")) throw new HttpError(400, "只能转发 /api/ 下的请求");
+    // The web UI's own files (GET) are forwarded too, so `omem peer open` can show a peer's
+    // UI through a middle node; anything that changes state must be an API call.
+    if (!rest.startsWith("/api/") && req.method !== "GET" && req.method !== "HEAD") throw new HttpError(400, "只能转发 /api/ 下的请求和网页文件");
     const body = req.method === "GET" || req.method === "HEAD" ? undefined : typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {});
     const res = await peerFetch(app, id, rest, { method: req.method, body, headers: body ? { "content-type": "application/json" } : {}, timeoutMs: 15 * 60_000 }, hops + 1);
     reply.status(res.status);
