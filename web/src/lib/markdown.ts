@@ -78,9 +78,14 @@ marked.use({
   },
 });
 
-/** [[slug]] / [[space:slug|label]] → wiki: links; bare mem:/msg: refs → links. */
+/**
+ * [[slug]] / [[space:slug|label]] → wiki: links; bare mem:/msg: refs → links. Raw HTML in originals
+ * (Feishu docs) uses `src="omem-file:…"` for local files and `href="src:<id>"` for local sources.
+ */
 function preprocess(md: string) {
   return md
+    .replace(/\b(src|href)="omem-file:([\w.-]+)"/g, (_, a: string, name: string) => `${a}="${escapeHtml(authUrl(`/api/files/${encodeURIComponent(name)}`))}"`)
+    .replace(/<a\b([^>]*?)\bhref="src:([\w-]+)"/g, (_, pre: string, id: string) => `<a${pre}href="#" class="cite doc" data-cite="source" data-ref="${id}"`)
     .replace(/\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g, (_, target: string, label?: string) => `[${(label ?? target.split("/").pop() ?? target).replace(/[[\]]/g, "")}](wiki:${encodeURIComponent(target.trim())})`)
     .replace(/(^|[\s（(，,])((?:mem|msg):[a-z0-9]{8,})/g, (_, pre, ref) => `${pre}[${ref.startsWith("mem") ? "记忆" : "消息"}](${ref})`);
 }

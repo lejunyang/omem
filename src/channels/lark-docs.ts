@@ -183,18 +183,31 @@ export function csvToTable(csv: string, maxRows = SHEET_ROWS) {
 async function sheetTable(token: string, sheetId: string) {
   const v = await larkCli(["sheets", "+csv-get", "--spreadsheet-token", token, "--sheet-id", sheetId, "--include-row-prefix=false", "--max-chars", "200000", "--as", "user"], 60_000);
   const d = v.data ?? v;
-  const csv = [d.csv, d.content, d.text, d.data].find((x) => typeof x === "string") ?? Object.values(d).find((x) => typeof x === "string" && x.includes(","));
+  const csv = [d.annotated_csv, d.csv, d.content, d.text].find((x) => typeof x === "string");
   if (typeof csv !== "string") throw new Error("表格内容为空");
   return csvToTable(csv);
 }
 
-/** Media, sheets, synced blocks and mentions → local Markdown. Links to other docs are left for `linkDocs`. */
+function attr(s: string) {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+/** An HTML link: most of these sit inside tables, lists and other HTML, where Markdown is not parsed. */
+function anchor(href: string, text: string) {
+  return `<a href="${attr(href)}">${text.replace(/</g, "&lt;")}</a>`;
+}
+
+/**
+ * Media, sheets, synced blocks, mentions and layout blocks → what the page can show without Feishu.
+ * Images, videos and links are written as HTML because they often sit inside DocxXML tables and lists.
+ * Links to other docs are left for `rewriteLinks`.
+ */
 async function localize(ctx: Ctx, text: string, synced = true): Promise<string> {
   let out = text;
-  // Markdown images pointing at Feishu file tokens.
-  out = await replaceAsync(out, /!\[([^\]]*)\]\(https?:\/\/[\w.-]+\/file\/([A-Za-z0-9]+)[^)]*\)/g, async (m) => {
+  // Markdown images pointing at Feishu file tokens; the alt text may contain escaped brackets (\[i\]).
+  out = await replaceAsync(out, /!\[((?:\\.|[^\]\\])*)\]\(https?:\/\/[\w.-]+\/file\/([A-Za-z0-9]+)[^)]*\)/g, async (m) => {
     const file = await media(ctx, m[2], "media");
-    return file ? `![${label(m[1])}](omem-file:${file})` : m[0];
+    return file ? `![${m[1].replace(/\s+/g, " ").trim()}](omem-file:${file})` : m[0];
   });
   // DocxXML images: <img name alt mime src="<token>"/> (or token="…").
   out = await replaceAsync(out, /<img\b[^>]*?\/?>/g, async (m) => {
@@ -203,13 +216,13 @@ async function localize(ctx: Ctx, text: string, synced = true): Promise<string> 
     if (!token) return m[0];
     const file = await media(ctx, token, "media");
     const alt = label(a.alt || a.name || "图片");
-    return file ? `![${alt}](omem-file:${file})` : `［图片：${alt}］`;
+    return file ? `<img src="omem-file:${file}" alt="${attr(alt)}" />` : `［图片：${alt}］`;
   });
   out = await replaceAsync(out, /<whiteboard\b[^>]*?(?:\/>|>\s*<\/whiteboard>)/g, async (m) => {
     const token = attrs(m[0]).token;
     if (!token) return "";
     const file = await media(ctx, token, "whiteboard");
-    return file ? `![画板](omem-file:${file})` : "［画板，未能下载缩略图］";
+    return file ? `<img src="omem-file:${file}" alt="画板" />` : "［画板，未能下载缩略图］";
   });
   // Videos and attachments: <source …/> (usually inside <figure>) and <file …/>.
   out = await replaceAsync(out, /<(source|file)\b[^>]*\btoken="[^"]+"[^>]*?(?:\/>|>\s*<\/\1>)/g, async (m) => {
@@ -218,10 +231,10 @@ async function localize(ctx: Ctx, text: string, synced = true): Promise<string> 
     const isVideo = (a.mime ?? "").startsWith("video/");
     const name = label(a.name || (isVideo ? "视频" : "附件"));
     const kind = isVideo ? "视频" : "附件";
-    if (size > ctx.maxBytes) return `[${kind}：${name}（${megabytes(size)}，未下载，在飞书中查看）](${ctx.docUrl})`;
+    if (size > ctx.maxBytes) return anchor(ctx.docUrl, `${kind}：${name}（${megabytes(size)}，未下载，在飞书中查看）`);
     const file = await media(ctx, a.token, "media");
     if (!file) return `［${kind}：${name}，未能下载］`;
-    return isVideo ? `![${kind}：${name}](omem-file:${file})` : `[${kind}：${name}](omem-file:${file})`;
+    return isVideo ? `<video src="omem-file:${file}" controls preload="metadata" title="${attr(name)}"></video>` : anchor(`omem-file:${file}`, `${kind}：${name}`);
   });
   out = out.replace(/<\/?figure[^>]*>/g, "");
   out = await replaceAsync(out, /<sheet\b[^>]*?(?:\/>|>\s*<\/sheet>)/g, async (m) => {
@@ -229,15 +242,15 @@ async function localize(ctx: Ctx, text: string, synced = true): Promise<string> 
     const link = `${ctx.origin}/sheets/${a.token}${a["sheet-id"] ? `?sheet=${a["sheet-id"]}` : ""}`;
     try {
       const table = a["sheet-id"] ? await sheetTable(a.token, a["sheet-id"]) : "";
-      if (table) return `\n\n${table}\n\n[在飞书中打开表格](${link})\n\n`;
+      if (table) return `\n\n${table}\n\n${anchor(link, "在飞书中打开表格")}\n\n`;
     } catch (e) {
       console.warn(`[omem] 读取飞书文档内嵌表格失败 ${a.token}：${(e as Error).message}`);
     }
-    return `[电子表格](${link})`;
+    return anchor(link, "电子表格");
   });
   out = out.replace(/<bitable\b[^>]*?(?:\/>|>\s*<\/bitable>)/g, (tag) => {
     const a = attrs(tag);
-    return `[多维表格](${ctx.origin}/base/${a.token}${a["table-id"] ? `?table=${a["table-id"]}` : ""})`;
+    return anchor(`${ctx.origin}/base/${a.token}${a["table-id"] ? `?table=${a["table-id"]}` : ""}`, "多维表格");
   });
   if (synced)
     out = await replaceAsync(out, /<synced_reference\b[^>]*?(?:\/>|>\s*<\/synced_reference>)/g, async (m) => {
@@ -250,7 +263,7 @@ async function localize(ctx: Ctx, text: string, synced = true): Promise<string> 
         return await localize(ctx, d.content.replace(/<\/?fragment[^>]*>/g, ""), false);
       } catch (e) {
         console.warn(`[omem] 读取飞书同步块失败 ${token}#${block}：${(e as Error).message}`);
-        return `[同步块（来自另一篇文档）](${ctx.origin}/docx/${token})`;
+        return anchor(`${ctx.origin}/docx/${token}`, "同步块（来自另一篇文档）");
       }
     });
   out = out.replace(/<synced-source>|<\/synced-source>/g, "");
@@ -258,7 +271,44 @@ async function localize(ctx: Ctx, text: string, synced = true): Promise<string> 
     const name = attrs(tag)["user-name"];
     return name ? `@${name}` : "";
   });
-  return out;
+  return layout(out);
+}
+
+/**
+ * DocxXML layout blocks → HTML. Markdown inside an HTML block is only parsed after a blank line,
+ * so grids, columns and callouts get blank lines around their tags.
+ */
+function layout(text: string) {
+  return text
+    .replace(/<grid\b[^>]*>/g, '\n\n<div class="doc-grid">\n\n')
+    .replace(/<\/grid>/g, "\n\n</div>\n\n")
+    .replace(/<column\b[^>]*>/g, (tag) => {
+      const ratio = Number(attrs(tag)["width-ratio"]);
+      return `\n\n<div class="doc-col"${ratio > 0 ? ` style="flex-grow: ${Math.round(ratio * 100)}"` : ""}>\n\n`;
+    })
+    .replace(/<\/column>/g, "\n\n</div>\n\n")
+    .replace(/<callout\b[^>]*>/g, (tag) => `\n\n<blockquote class="doc-callout">\n\n${attrs(tag).emoji ? `${attrs(tag).emoji} ` : ""}`)
+    .replace(/<\/callout>/g, "\n\n</blockquote>\n\n")
+    .replace(/<button\b[^>]*?\bsrc="([^"]*)"[^>]*>/g, '<a href="$1">')
+    .replace(/<\/button>/g, "</a>")
+    .replace(/<bookmark\b[^>]*?\/?>(?:\s*<\/bookmark>)?/g, (tag) => {
+      const a = attrs(tag);
+      return a.href ? anchor(a.href, a.name || a.href) : "";
+    })
+    .replace(/<readonly-block\b[^>]*>/g, (tag) => (attrs(tag).href ? anchor(attrs(tag).href, "嵌入内容") : ""))
+    .replace(/<\/readonly-block>/g, "")
+    .replace(/<html5-block\b[^>]*>/g, (tag) => `［网页组件：${attrs(tag).alt || "未命名"}］`)
+    .replace(/<\/html5-block>/g, "")
+    .replace(/<chat_card\b[^>]*>/g, (tag) => `［群：${attrs(tag).name || "飞书群"}］`)
+    .replace(/<\/chat_card>/g, "")
+    .replace(/<checkbox\b[^>]*>/g, (tag) => (attrs(tag).done === "true" ? "☑ " : "☐ "))
+    .replace(/<\/checkbox>/g, "")
+    .replace(/<task\b[^>]*>/g, (tag) => (attrs(tag).status === "success" ? "☑ " : "☐ "))
+    .replace(/<\/task>/g, "")
+    // Sub-page lists: each page is a doc link, imported like any other.
+    .replace(/<sub-page\b([^>]*?)\/?>(?:\s*<\/sub-page>)?/g, (_, rest: string) => `\n- <cite${rest}></cite>`)
+    .replace(/<\/?sub-page-list[^>]*>/g, "\n")
+    .replace(/\n{3,}/g, "\n\n");
 }
 
 // ---- linked docs ---------------------------------------------------------------------
@@ -304,15 +354,24 @@ export function findLarkDoc(app: App, spaceId: string, url: string) {
 function rewriteLinks(text: string, origin: string, local: Map<string, { id: string; title: string }>) {
   const linkFor = (url: string, title: string) => {
     const l = local.get(url);
-    return l ? `[${label(title || l.title)}](src:${l.id})` : `[${label(title || "飞书文档")}](${url})`;
+    return l ? anchor(`src:${l.id}`, label(title || l.title)) : anchor(url, label(title || "飞书文档"));
   };
   let out = text.replace(/<cite\b[^>]*?>\s*<\/cite>/g, (tag) => {
     const a = attrs(tag);
     const type = { wiki: "wiki", docx: "docx", doc: "docs" }[a["file-type"] ?? ""];
     if (type && a["doc-id"]) return linkFor(`${origin}/${type}/${a["doc-id"]}`, a.title ?? "");
     const kind = { sheets: "sheets", sheet: "sheets", bitable: "base", mindnote: "mindnotes", file: "file", slides: "slides" }[a["file-type"] ?? ""];
-    if (kind && a["doc-id"]) return `[${label(a.title || "飞书文件")}](${origin}/${kind}/${a["doc-id"]})`;
+    if (kind && a["doc-id"]) return anchor(`${origin}/${kind}/${a["doc-id"]}`, label(a.title || "飞书文件"));
     return a.title ? label(a.title) : "";
+  });
+  // <a href="feishu doc url"> → <a href="src:id">.
+  out = out.replace(/(<a\b[^>]*\bhref=")([^"]+)"/g, (whole, pre: string, href: string) => {
+    try {
+      const l = local.get(normalizeDocUrl(href.replace(/&amp;/g, "&")).url);
+      return l ? `${pre}src:${l.id}"` : whole;
+    } catch {
+      return whole;
+    }
   });
   // [text](feishu doc url) → [text](src:id); bare URLs → [title](src:id).
   out = out.replace(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, (whole, text: string, href: string) => {
@@ -498,10 +557,11 @@ function relinkParent(app: App, parentId: string, url: string, id: string, title
   const text = p.text
     .replace(new RegExp(`\\[([^\\]]*)\\]\\(${esc}[^)\\s]*\\)`, "g"), (_, t: string) => `[${t || label(title)}](src:${id})`)
     .replace(new RegExp(`(?<![(\\[<"])${esc}[^\\s)"'<>\\]]*`, "g"), () => `[${label(title)}](src:${id})`);
-  if (text === p.text) return;
+  const linked = text.replace(new RegExp(`href="${esc}[^"]*"`, "g"), `href="src:${id}"`);
+  if (linked === p.text) return;
   const meta = json<LarkDocMeta>(p.meta, {} as LarkDocMeta);
   if (meta.missing) delete meta.missing[url];
-  upsertSource(app, { spaceId: p.space_id, kind: p.kind as "doc", uri: p.uri, title: p.title, text, meta });
+  upsertSource(app, { spaceId: p.space_id, kind: p.kind as "doc", uri: p.uri, title: p.title, text: linked, meta });
 }
 
 /**

@@ -71,18 +71,19 @@ describe("feishu docs as originals", () => {
     expect(files.length).toBeGreaterThanOrEqual(5);
     for (const f of files) expect(existsSync(join(app.filesDir, f))).toBe(true);
     expect(src.text).toMatch(/!\[架构图\]\(omem-file:[a-f0-9]{16}\.png\)/);
-    expect(src.text).toContain("![截图：报销流程](omem-file:");
-    expect(src.text).toContain("![画板](omem-file:");
-    expect(src.text).toContain("![视频：演示.mp4](omem-file:");
+    // DocxXML images, whiteboards and videos become HTML: they often sit inside tables.
+    expect(src.text).toMatch(/<img src="omem-file:[a-f0-9]{16}\.png" alt="截图：报销流程" \/>/);
+    expect(src.text).toMatch(/<img src="omem-file:[\w.]+" alt="画板" \/>/);
+    expect(src.text).toMatch(/<video src="omem-file:[\w.]+" controls preload="metadata" title="演示.mp4"><\/video>/);
     // 60 MB is under the default 100 MB limit; 110 MB is not.
-    expect(src.text).toContain("![视频：讲解.mp4](omem-file:");
-    expect(src.text).toMatch(/\[视频：长录屏\.mov（110 MB，未下载，在飞书中查看）\]\(https:\/\/example\.feishu\.cn\/docx\/Main\)/);
+    expect(src.text).toContain('title="讲解.mp4"');
+    expect(src.text).toContain(`<a href="${ORIGIN}/docx/Main">视频：长录屏.mov（110 MB，未下载，在飞书中查看）</a>`);
     expect(src.text).toContain("| 梨,大 | 5 |");
-    expect(src.text).toContain(`[多维表格](${ORIGIN}/base/BT1?table=tbl1)`);
+    expect(src.text).toContain(`<a href="${ORIGIN}/base/BT1?table=tbl1">多维表格</a>`);
     expect(src.text).toContain("同步块正文");
     expect(src.text).toContain("@小王");
     expect(src.text).not.toMatch(/feishu\.cn\/file\//);
-    expect(src.text).not.toMatch(/<(img|whiteboard|source|sheet|cite)\b/);
+    expect(src.text).not.toMatch(/<(whiteboard|source|sheet|cite)\b|<img(?! src="omem-file:)/);
 
     // Linked docs: imported, linked locally; the one without permission stays a Feishu link and is recorded.
     // Two levels by default: Main → Linked1, Linked2 → Deep; Deeper is not read.
@@ -92,9 +93,9 @@ describe("feishu docs as originals", () => {
     expect(deep.text).toContain(`${ORIGIN}/wiki/Deeper`);
     const linked1 = one<{ id: string; text: string }>(app.db, "select id, text from sources where uri = ?", `${ORIGIN}/wiki/Linked1`)!;
     const linked2 = one<{ id: string; text: string }>(app.db, "select id, text from sources where uri = ?", `${ORIGIN}/docx/Linked2`)!;
-    expect(src.text).toContain(`[《差旅报销制度》](src:${linked1.id})`);
+    expect(src.text).toContain(`<a href="src:${linked1.id}">《差旅报销制度》</a>`);
     expect(src.text).toContain(`(src:${linked2.id})`);
-    expect(src.text).toContain(`[内部文档](${ORIGIN}/docx/Secret)`);
+    expect(src.text).toContain(`<a href="${ORIGIN}/docx/Secret">内部文档</a>`);
     // A link back to the doc being imported is filled in once it is saved.
     expect(linked1.text).toContain(`(src:${r.id})`);
     expect(linked2.text).toContain("omem-file:");
@@ -125,7 +126,7 @@ describe("feishu docs as originals", () => {
     expect(retried.imported).toHaveLength(1);
     const secret = retried.imported[0].id;
     const parent = one<{ text: string; meta: string }>(app.db, "select text, meta from sources where id = ?", r.id)!;
-    expect(parent.text).toBe(`见 [内部文档](src:${secret})`);
+    expect(parent.text).toBe(`见 <a href="src:${secret}">内部文档</a>`);
     expect(JSON.parse(parent.meta).missing).toEqual({});
     expect(missingDocs(app)).toEqual([]);
   });
@@ -141,6 +142,39 @@ describe("feishu docs as originals", () => {
     const added = one<{ id: string }>(app.db, "select id from sources where uri = ?", `${ORIGIN}/docx/New`)!;
     // Only the newly linked doc is new material; the old one only had its media made local.
     expect(r.changed).toEqual([{ spaceId: "personal", ids: [added.id] }]);
+  });
+
+  it("turns DocxXML layout blocks into HTML whose Markdown still renders", async () => {
+    const app = testApp();
+    fakeCli({
+      Main: {
+        title: "周报",
+        content: [
+          `<grid>\n<column width-ratio="0.500000">\n![图示 uiMaps\\[i\\] 映射](${ORIGIN}/file/IMGA)\n</column>\n<column width-ratio="0.500000">\n**右栏**\n</column>\n</grid>`,
+          `<callout emoji="💡"><p>提示</p></callout>`,
+          `<table><tr><td><img alt="表里的图" src="IMGB"/></td><td><cite doc-id="Sub" file-type="docx" title="子文档" type="doc"></cite></td></tr></table>`,
+          `<button action="OpenLink" src="https://example.com/x">观看回放</button>`,
+          `<bookmark name="工单" href="https://example.com/t?a=1&amp;b=2"></bookmark>`,
+          `<checkbox done="true">已完成</checkbox> <checkbox done="false">未完成</checkbox>`,
+          `<sub-page-list wiki-token="W"><sub-page doc-id="Page1" file-type="docx" title="子页面"/></sub-page-list>`,
+          `<chat_card name="项目群" chat-id="oc_x"></chat_card>`,
+        ].join("\n\n"),
+      },
+      Sub: { title: "子文档", content: "x" },
+      Page1: { title: "子页面", content: "y" },
+    });
+    const r = await importLarkDocument(app, "personal", `${ORIGIN}/docx/Main`);
+    const text = one<{ text: string }>(app.db, "select text from sources where id = ?", r.id)!.text;
+    expect(text).toMatch(/<div class="doc-grid">\n\n+<div class="doc-col" style="flex-grow: 50">\n\n!\[图示 uiMaps\\\[i\\\] 映射\]\(omem-file:/);
+    expect(text).toContain('<blockquote class="doc-callout">\n\n💡 <p>提示</p>');
+    expect(text).toMatch(/<td><img src="omem-file:[\w.]+" alt="表里的图" \/><\/td><td><a href="src:s\w+">子文档<\/a><\/td>/);
+    expect(text).toContain('<a href="https://example.com/x">观看回放</a>');
+    expect(text).toContain('<a href="https://example.com/t?a=1&amp;b=2">工单</a>');
+    expect(text).toContain("☑ 已完成 ☐ 未完成");
+    expect(text).toMatch(/- <a href="src:s\w+">子页面<\/a>/);
+    expect(text).toContain("［群：项目群］");
+    expect(text).not.toMatch(/<(grid|column|callout|button|bookmark|checkbox|sub-page|chat_card)\b/);
+    expect(r.related).toHaveLength(2);
   });
 
   it("takes the media size limit and link depth from the config", async () => {

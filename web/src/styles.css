@@ -513,6 +513,19 @@ input[type="number"].input::-webkit-outer-spin-button {
   text-overflow: ellipsis;
   cursor: pointer;
 }
+/* Links to other originals inside documents read like ordinary links. */
+.prose a.cite.doc {
+  display: inline;
+  font: inherit;
+  padding: 0;
+  margin: 0;
+  background: none;
+  white-space: normal;
+  max-width: none;
+  vertical-align: baseline;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .prose a.cite:hover {
   text-decoration: none;
   filter: brightness(0.96);
