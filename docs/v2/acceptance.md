@@ -134,6 +134,17 @@ pnpm run dev                # 打开 http://localhost:5173
 | L7 | 原件页对某个群点“回溯历史”，填 90 | 之后几次采集出现“群名（YYYY-MM 历史）”原件，按月存放，可检索；实时原件的行号不变 | 待验 |
 | L8 | 打开一个几千行的聊天或代码原件，从引用跳到中间某行 | 打开很快，滚动顺畅，目标消息或行高亮并居中 | 待验 |
 
+## 多台设备（2026-10-18）
+
+| # | 操作 | 预期 | 状态 |
+| --- | --- | --- | --- |
+| P1 | 常驻那台 `omem peer invite --url http://<地址>:4317`，另一台 `omem peer add <码>` | 提示配对成功并显示对方版本；`omem peer list` 能看到 | 待验 |
+| P2 | 只能经中间机器访问的那台：中间机器先配对它，再在自己机器上 `omem peer add <码> --via <中间机器>` | `omem diag <它>` 返回它的状态 | 待验 |
+| P3 | `omem peer call <它> lark-raw '{"command":"+chat-messages-list","chat_id":"oc_…"}'` | 返回 lark-cli 原始 JSON；发送类命令不在清单里 | 待验 |
+| P4 | `omem peer call <它> update` | 拉代码、装依赖、构建后服务自动重启，`omem diag` 显示新版本 | 待验 |
+| P5 | `omem pull <它>` | 合并进本机，图片等原始文件一并拉到 | 待验 |
+| P6 | 常驻那台设 `"host": "0.0.0.0"` 但不配 `token`，从另一台浏览器直接打开 | 页面提示填写令牌；填 `omem user token owner` 的结果后正常使用，图片能显示 | 待验 |
+
 ## 已知限制
 
 - 扫描版 PDF 没有 OCR（图片原件由 Agent 看图补文字）。

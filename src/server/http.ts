@@ -70,7 +70,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/api/") || req.url.startsWith("/api/tools")) return;
     const token = bearer(req);
-    const userId = token ? userForToken(app, token) : app.config.token ? null : OWNER;
+    // Without a token only this machine is trusted, even when listening on all interfaces.
+    const local = /^(127\.|::1$|::ffff:127\.)/.test(req.ip ?? "");
+    const userId = token ? userForToken(app, token) : app.config.token || !local ? null : OWNER;
     if (!userId) return void reply.status(401).send({ error: "需要访问令牌" });
     (req as FastifyRequest & { userId: string }).userId = userId;
     if (userId !== OWNER && !MEMBER_ROUTES.some((re) => re.test(req.url))) reply.status(403).send({ error: "这个接口只对 omem 的主人开放" });
@@ -649,6 +651,43 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ----------------------------------------------------------------- settings
+  // ------------------------------------------------------------------- peers
+  // Diagnostics and a fixed set of commands for other devices (owner only), a consistent
+  // snapshot for `omem pull`, and forwarding to peers this instance can reach.
+  server.get("/api/diag", async () => (await import("../core/peer-exec.ts")).diag(app));
+  server.get("/api/peer/commands", async () => {
+    const { peerCommands } = await import("../core/peer-exec.ts");
+    return Object.fromEntries(Object.entries(peerCommands).map(([k, c]) => [k, c.description]));
+  });
+  server.post("/api/peer/exec", async (req) => {
+    const b = q(z.object({ command: z.string(), args: z.unknown().optional() }), req.body);
+    const { runPeerCommand } = await import("../core/peer-exec.ts");
+    return { node: (await import("../core/peers.ts")).nodeId(app), result: await runPeerCommand(app, b.command, b.args) };
+  });
+  server.get("/api/peer/snapshot", async (_req, reply) => {
+    const { snapshotStream } = await import("../core/pull.ts");
+    reply.type("application/x-tar");
+    return reply.send(snapshotStream(app));
+  });
+  server.get("/api/peers", async () => {
+    const { listPeers, nodeId } = await import("../core/peers.ts");
+    return { node: nodeId(app), peers: listPeers(app).map((p) => ({ id: p.id, url: p.url, via: p.via ?? null, addedAt: p.addedAt })) };
+  });
+  server.all("/api/peers/:id/*", async (req, reply) => {
+    const { peerFetch } = await import("../core/peers.ts");
+    const hops = Number(req.headers["x-omem-hops"] ?? 0);
+    if (hops > 3) throw new HttpError(508, "同伴转发层数过多");
+    const { id } = req.params as { id: string };
+    const rest = req.url.slice(`/api/peers/${encodeURIComponent(id)}`.length) || "/";
+    if (!rest.startsWith("/api/")) throw new HttpError(400, "只能转发 /api/ 下的请求");
+    const body = req.method === "GET" || req.method === "HEAD" ? undefined : typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {});
+    const res = await peerFetch(app, id, rest, { method: req.method, body, headers: body ? { "content-type": "application/json" } : {}, timeoutMs: 15 * 60_000 }, hops + 1);
+    reply.status(res.status);
+    const type = res.headers.get("content-type");
+    if (type) reply.type(type);
+    return reply.send(res.body ? (await import("node:stream")).Readable.fromWeb(res.body as never) : "");
+  });
+
   server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home }));
   server.put("/api/settings", async (req) => {
     const next = configSchema.parse({ ...app.config, ...(req.body as object) });

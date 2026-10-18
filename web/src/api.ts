@@ -6,12 +6,43 @@ export class ApiError extends Error {
   }
 }
 
+import { promptDialog } from "./lib/dialog";
+
+// Opening the page from another machine needs an API token (`omem user token owner`
+// or a pairing token): `http://host:4317/?token=…` saves it, or the page asks on 401.
+try {
+  const u = new URL(location.href);
+  const t = u.searchParams.get("token");
+  if (t) {
+    localStorage.setItem("omem-token", t);
+    u.searchParams.delete("token");
+    history.replaceState(null, "", u.toString());
+  }
+} catch {}
+
 function token() {
   try {
     return localStorage.getItem("omem-token") ?? "";
   } catch {
     return "";
   }
+}
+
+/** A URL the browser loads itself (images, downloads): carries the token as a query. */
+export function authUrl(path: string) {
+  const t = token();
+  return t ? `${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(t)}` : path;
+}
+
+let asking: Promise<string | null> | null = null;
+async function askToken() {
+  asking ??= promptDialog("需要访问令牌", { message: "从其他设备打开 omem 需要令牌：在运行 omem 的机器上执行 omem user token owner。", placeholder: "令牌", okText: "保存" }).finally(() => (asking = null));
+  const t = (await asking)?.trim();
+  if (!t) return false;
+  try {
+    localStorage.setItem("omem-token", t);
+  } catch {}
+  return true;
 }
 
 export async function api<T = any>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
@@ -24,6 +55,7 @@ export async function api<T = any>(path: string, init: RequestInit & { json?: un
     body = JSON.stringify(init.json);
   }
   const res = await fetch(path, { ...init, headers, body });
+  if (res.status === 401 && !(init as { retried?: boolean }).retried && (await askToken())) return api<T>(path, { ...init, retried: true } as typeof init);
   const text = await res.text();
   const data = text ? (() => { try { return JSON.parse(text); } catch { return text; } })() : null;
   if (!res.ok) throw new ApiError(res.status, (data && (data as { error?: string }).error) || res.statusText);

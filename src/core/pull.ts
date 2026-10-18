@@ -1,4 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import type { Readable } from "node:stream";
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -84,6 +85,51 @@ cd "$H"; tar -cf - -C "$T" omem.db -C "$H" $(ls -d library 2>/dev/null); rm -rf 
   }
   log(`已拉取 ${(ssh.stdout.length / 1024 / 1024).toFixed(1)} MB${fetchedFiles.length ? `，另拉 ${fetchedFiles.length} 个本地缺少的原件` : ""}`);
   return { dbDir, libraryDir: join(dbDir, "library"), filesDir, fetchedFiles };
+}
+
+/**
+ * The same consistent snapshot `fetchRemote` takes over ssh, as a tar stream over HTTP
+ * (`GET /api/peer/snapshot`): `VACUUM INTO` a temp file, then omem.db plus library/.
+ */
+export function snapshotStream(app: App): Readable {
+  const dir = mkdtempSync(join(tmpdir(), "omem-snap-"));
+  app.db.prepare("vacuum into ?").run(join(dir, "omem.db"));
+  const args = ["-cf", "-", "-C", dir, "omem.db", ...(existsSync(app.libraryDir) ? ["-C", app.home, relative(app.home, app.libraryDir)] : [])];
+  const tar = spawn("tar", args, { stdio: ["ignore", "pipe", "ignore"] });
+  tar.on("close", () => rmSync(dir, { recursive: true, force: true }));
+  return tar.stdout;
+}
+
+/** Fetch a peer's library over HTTP (directly or via another peer); same result as fetchRemote. */
+export async function fetchPeer(app: App, peerId: string, log: (s: string) => void = () => {}): Promise<Fetched> {
+  const { peerFetch } = await import("./peers.ts");
+  const dbDir = mkdtempSync(join(tmpdir(), "omem-pull-"));
+  const filesDir = mkdtempSync(join(tmpdir(), "omem-pull-files-"));
+  log(`从同伴 ${peerId} 拉取快照…`);
+  const res = await peerFetch(app, peerId, "/api/peer/snapshot", { timeoutMs: 30 * 60_000 });
+  if (!res.ok) throw new Error(`拉取失败：${res.status} ${(await res.text()).slice(0, 200)}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const untar = spawnSync("tar", ["-xf", "-", "-C", dbDir], { input: buf, maxBuffer: 4 * 1024 ** 3 });
+  if (untar.status !== 0) throw new Error(`解包失败：${untar.stderr.toString().slice(-300)}`);
+  if (!existsSync(join(dbDir, "omem.db"))) throw new Error("快照里没有 omem.db");
+  // Originals the snapshot's rows reference but this machine lacks.
+  const snap = openDb(join(dbDir, "omem.db"));
+  const wanted = (snap.prepare("select distinct json_extract(meta, '$.original') f from sources where deleted_at is null and json_extract(meta, '$.original') is not null").all() as { f: string }[])
+    .map((r) => r.f)
+    .filter((f) => /^[a-f0-9]{16}\.[a-z0-9]+$/.test(f) && !existsSync(join(app.filesDir, f)));
+  snap.close();
+  const fetchedFiles: string[] = [];
+  for (const f of wanted) {
+    try {
+      const r = await peerFetch(app, peerId, `/api/files/${f}`);
+      if (r.ok) {
+        writeFileSync(join(filesDir, f), Buffer.from(await r.arrayBuffer()));
+        fetchedFiles.push(f);
+      }
+    } catch {}
+  }
+  log(`已拉取 ${(buf.length / 1024 / 1024).toFixed(1)} MB${fetchedFiles.length ? `，另拉 ${fetchedFiles.length} 个本地缺少的原件` : ""}`);
+  return { dbDir, libraryDir: join(dbDir, relative(app.home, app.libraryDir) || "library"), filesDir, fetchedFiles };
 }
 
 /** Replace the local library with a fetched one; the old one is moved aside. Config and secrets stay. */

@@ -136,6 +136,7 @@ omem setup embeddings --model bge-small-zh  # 只开启向量检索（经 osdk �
 omem space sync omem --exclude docs/archive # 同步仓库空间并排除路径
 omem wiki export omem .repo-review/wiki     # 把 Wiki 导出成仓库里可读的 Markdown
 omem hook claude|codex                      # 记录编码 Agent 会话（配在钩子里）
+omem peer invite|add|list|call / omem diag   # 多台设备：配对、诊断、远程检查，见“多台设备”
 ```
 
 数据目录默认 `~/.omem`（`--home` 或 `OMEM_HOME` 可改）：`config.json` 配置，`omem.db` 索引与记录，`library/` 是 Wiki 的 Git 仓库，`files/` 存原始文件，`runs/` 存交办编码的工作区和补丁。
@@ -190,6 +191,30 @@ omem space share project-a wang [--edit]           # 再开放一个空间
 ```
 
 他私聊机器人时，会话进他自己的个人空间，只能检索自己和被共享的空间；`/whoami` 显示他能访问什么。事项和偏好各归各的。这是“留口子”级别的支持：同一台机器、同一个数据目录，不做多租户隔离。
+
+## 多台设备
+
+常见用法是一台机器常驻运行（采集、定时任务），其他机器拉它的数据、看它的状态、让它执行检查。机器之间不必能直接访问：可以经中间那台转发。
+
+```bash
+# 常驻那台：config.json 里 "host": "0.0.0.0"（不在本机访问时，没有令牌的请求一律拒绝）
+omem peer invite --url http://<这台的地址>:4317     # 打印一行配对码（omem1.…）
+
+# 另一台
+omem peer add <配对码>                    # 直接能访问到
+omem peer add <配对码> --via <中间那台>     # 只能经中间那台访问（中间那台先和它配对）
+omem peer list
+omem diag <同伴>                          # 版本、数量、最近失败、飞书采集状态、Agent
+omem peer commands <同伴>                 # 可远程执行的命令
+omem peer call <同伴> lark-raw '{"command":"+chat-messages-list","chat_id":"oc_…"}'
+omem peer call <同伴> sql '{"query":"select count(*) from lark_messages"}'   # 只读
+omem peer call <同伴> update               # git pull --ff-only、安装依赖、构建、重启服务
+omem pull <同伴>                          # 经 HTTP 拉一份快照合并进本机
+```
+
+配对码里是对方的地址和一个为本人生成的 API 令牌（标签 `peer:<名字>`），撤销令牌就解除配对；配对信息存在 `secrets/peers.json`。远程命令是固定的一组（诊断、日志、配置、飞书只读查询、手动采集与回溯、记忆统计、运行记录、只读 SQL、git 与更新、重启），没有任意 shell。从别的机器用浏览器打开网页时，在地址后加 `?token=<令牌>`（`omem user token owner` 生成）或按提示填写。
+
+`scripts/relay.mjs` 是一个临时的白名单转发：在只能 ssh 到其他机器的那台上运行，往 `.remote/relay/inbox/` 放请求文件，它经 ssh 执行允许的命令（omem 子命令、git/pnpm 的检查与更新、lark-cli 只读查询、本机 API 的 GET、几个系统信息命令）并把结果写到 `outbox/`。目标机器在 `.remote/relay/config.json` 里配置，详见脚本开头的说明。
 
 ## 开发
 

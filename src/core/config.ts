@@ -91,6 +91,8 @@ export const configSchema = z.object({
       profiles: z.array(agentProfileSchema).default([]),
     })
     .default({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, profiles: [] }),
+  /** This instance among its peers (`omem peer`): defaults to the host name. */
+  node: z.object({ id: z.string().optional() }).default({}),
   /** Memory quality: write-time checks, cross-model review, side-by-side comparison. */
   memory: z
     .object({

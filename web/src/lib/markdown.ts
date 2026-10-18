@@ -1,3 +1,4 @@
+import { authUrl } from "../api";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
@@ -54,7 +55,7 @@ marked.use({
     },
     image({ href, title, text }) {
       const src = href.startsWith("omem-file:") ? `/api/files/${encodeURIComponent(href.slice(10))}` : /^https?:/i.test(href) || /^\/api\/files\/[\w.-]+$/.test(href) ? href : "";
-      return src ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(text)}"${title ? ` title="${escapeHtml(title)}"` : ""} loading="lazy" />` : escapeHtml(text);
+      return src ? `<img src="${escapeHtml(src.startsWith("/api/") ? authUrl(src) : src)}" alt="${escapeHtml(text)}"${title ? ` title="${escapeHtml(title)}"` : ""} loading="lazy" />` : escapeHtml(text);
     },
     link({ href, title, tokens }) {
       const inner = this.parser.parseInline(tokens);

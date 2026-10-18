@@ -145,6 +145,20 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 保留：飞书接入（机器人、个人消息采集）、Docling 解析脚本、TS/Vue 解析思路、osdk 配置。其余模块退役。v1 数据库不自动迁移；`omem import-v1 <旧 omem.db>` 一次性导入原件最新版、有效记忆和未完成事项（代码评审材料跳过，改为重新建仓库空间）。
 
+## 多台设备
+
+现在的做法是“一台常驻，其他来看”：常驻那台负责采集和定时任务，是唯一写入方；其他机器经 HTTP 读它的状态、拉快照、让它跑检查。配对码 = 对方地址 + 为本人生成的 API 令牌，所以同伴就是“拿着本人令牌的客户端”，权限与撤销都走已有的令牌表。中间节点转发 `/api/peers/<id>/…` 时换上自己保存的令牌，并用 `x-omem-hops` 限制层数。
+
+远程命令刻意做成固定清单（`peerCommands`，每条有参数校验），而不是任意 shell：要核对的多是飞书原始返回、数据库内容、日志和版本，这些都能用只读命令覆盖；会改东西的只有采集、回溯、触发定时任务、`git pull --ff-only` 和重启。
+
+以后要做持续同步（两台都写）时的方向，现在不实现：
+
+- **变更日志**：记忆、事项、原件元数据各自已有 id 和时间，补一张按节点自增的变更表（节点 id + 序号 + 实体 + 操作），同伴按“我已看到对方的第几号”增量拉取，代替整库快照。
+- **单写者的事归一台**：飞书采集、定时任务、发消息这类有外部副作用的事只在持有租约的节点上跑（租约存在常驻那台，过期可接管），避免两台同时采集或重复提醒。
+- **冲突**：记忆本来就是版本链（新的使旧的失效），并发修改同一条时两条都保留、交给做梦整理合并；事项状态按最后修改时间。
+- **按能力分派**：同伴上报自己有哪些 Agent / 工具（`diag` 里已有），跑不了的任务转给有的那台。
+- **多用户**：配对码里的令牌目前固定是本人的；给同事的设备配对时换成他的用户令牌，同步时只带他能访问的空间。
+
 ## 实现状态（2026-10-18）
 
 | 能力 | 状态 | 入口 |
@@ -171,6 +185,8 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 设置向导 `omem setup`：Agent、向量模型（osdk）、Docling 及其模型（osdk，uv 经 `osdk install conda:uv`（独立程序，不依赖 osdk 的 Python））、渠道、注入标记、会话、定时任务；结束时可启动/重启后台服务 | 已实现；osdk 安装 uv / llama.cpp、uv 解析 Docling 依赖在 macOS arm64 与 Linux x86_64（常驻服务器）验证 | `src/setup.ts`、`src/core/tools.ts` |
 | 飞书机器人接入：读 lark-cli 的应用与登录状态和 omem 已保存的应用；绑定已有应用或扫码新建（官方 SDK `registerApp`，同时申请权限、长连接事件和卡片回调）；校验凭据和机器人能力；扫码人 open_id 设为本人；App Secret 存 `secrets/lark.json`（0600）；lark-cli 未登录时就地扫码登录 | 已实现；SDK 注册流程真实发起到二维码一步，扫码确认待真实账号验收；其余假客户端测试覆盖 | `src/channels/lark-setup.ts` |
 | 后台服务 `omem service`：自带 PM2（独立 PM2_HOME）、崩溃自动重启、pm2-logrotate 日志轮换；不装开机自启 | 已实现；macOS 本机 start / restart / stop / status 验证 | `src/core/service.ts` |
+| 多台设备（同伴）：一行配对码配对（地址 + 本人 API 令牌）；经中间节点转发（`via`，最多 3 跳）；`/api/diag` 诊断；固定的远程命令（诊断、日志、配置、飞书只读查询、采集与回溯、记忆统计、运行记录、只读 SQL、git、更新并重启）；`omem pull <同伴>` 经 HTTP 拉快照；没有配置令牌时只信任本机请求 | 已实现，三节点（服务器、中间、笔记本）测试覆盖；真实设备待验收 | `src/core/peers.ts`、`peer-exec.ts`、`pull.ts` 的 `fetchPeer`、`omem peer` |
+| 临时白名单转发 `scripts/relay.mjs`：文件收件箱 → 经 ssh（可多跳）执行允许的命令 → 结果写回 | 已实现；用假 ssh 验证了两跳下参数原样传递 | `scripts/relay.mjs` |
 | 飞书机器人能力：回复/话题回复、表情、Markdown、图片文件、Card 2.0（按钮、下拉、输入、选人、日期、表单）、限定处理人、草稿确认、进度卡片实时更新；卡片回调回到原会话 | 已实现；假客户端测试覆盖，真实飞书待验收 | `src/channels/lark-send.ts`、`lark-actions.ts`、`lark-progress.ts`、技能 `lark-messaging` |
 | 飞书个人采集（lark-cli）：全部或订阅会话增量拉取（每会话游标、话题回复）、附件与文档链接入库、日程、妙记 | 已实现；模拟 lark-cli 测试覆盖，真实账号待验收 | `src/channels/lark-personal.ts` |
 | 飞书消息结构化与历史：每条消息另存 `lark_messages`（原始内容、回复对象、话题、图片文件、发送人类型、在原件中的行号）；被引用的消息不在库里时用 `+messages-mget` 补读；图片和文件经 `--download-resources` 保存；聊天行带“↩ 回复 X「…」”；历史回溯每次采集读几页，按月写入 `lark:<会话>@YYYY-MM` 原件（不在实时原件里插行，引用行号不变）；网页原件页用聊天视图显示 | 已实现，模拟 lark-cli 测试覆盖；`parent_id` 字段名和资源下载的真实返回待真实账号确认 | `src/channels/lark-messages.ts`、`lark-personal.ts` 的 `backfillStep`、`web/src/components/ChatView.vue` |

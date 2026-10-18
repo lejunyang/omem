@@ -152,7 +152,7 @@ program
 
 program
   .command("pull <host>")
-  .description("从另一台机器（ssh 主机）拉取 omem 数据：默认合并进本地，--overwrite 整体替换（旧数据留备份）")
+  .description("从另一台机器拉取 omem 数据（已配对的同伴走 HTTP，其他按 ssh 主机）：默认合并进本地，--overwrite 整体替换（旧数据留备份）")
   .option("--remote-home <dir>", "远端数据目录", "~/.omem")
   .option("--overwrite", "用远端数据替换本地（原件、记忆、事项、会话、知识库），本地配置和密钥保留")
   .option("--dry-run", "只统计合并结果，不写入")
@@ -164,7 +164,9 @@ program
       if (o.overwrite) throw new Error("本地服务正在运行；先 omem service stop（或停掉 omem serve）再覆盖。");
       log("本地服务正在运行：合并照常进行，完成后建议 omem service restart。");
     }
-    const fetched = fetchRemote(local, host, o.remoteHome, log);
+    const { findPeer } = await import("./core/peers.ts");
+    // A paired peer is fetched over HTTP (also through another peer); anything else is an ssh host.
+    const fetched = findPeer(local, host) ? await (await import("./core/pull.ts")).fetchPeer(local, host, log) : fetchRemote(local, host, o.remoteHome, log);
     try {
       if (o.overwrite) {
         local.db.close();
@@ -181,6 +183,94 @@ program
     } finally {
       cleanupFetched(fetched);
     }
+  });
+
+// ------------------------------------------------------------------- peers
+const peer = program.command("peer").description("同伴：其他运行 omem 的设备（配对、诊断、远程执行检查命令）");
+peer
+  .command("invite")
+  .description("在本机生成配对码，交给另一台设备的 omem peer add")
+  .option("--url <url>", "对方访问本机 omem 的地址（默认 http://<主机名>:<端口>）")
+  .option("--label <name>", "给这个配对起个名字（令牌标签）", "device")
+  .action(async (o) => {
+    const { invite } = await import("./core/peers.ts");
+    const app = open();
+    const r = invite(app, { url: o.url, label: o.label });
+    console.log(`本机：${r.id}  地址：${r.url}\n在另一台设备上运行：\n\n  omem peer add ${r.code}\n\n（服务需要监听对方能访问的地址：配置 host 为 0.0.0.0；撤销即删除标签为 peer:${o.label} 的令牌）`);
+  });
+peer
+  .command("add <code>")
+  .description("用配对码添加同伴；--via 表示要经另一个同伴转发才能访问")
+  .option("--via <peer>", "经由哪个同伴转发")
+  .option("--url <url>", "覆盖配对码里的地址")
+  .action(async (code: string, o) => {
+    const { addPeer, peerJson } = await import("./core/peers.ts");
+    const app = open();
+    const p = addPeer(app, code, { via: o.via, url: o.url });
+    try {
+      const d = await peerJson<{ node: string; version: string | null }>(app, p.id, "/api/diag", undefined, 20_000);
+      console.log(`已添加同伴 ${p.id}${p.via ? `（经 ${p.via}）` : ""}，连接正常：${d.node} · ${d.version ?? "版本未知"}`);
+    } catch (e) {
+      console.log(`已添加同伴 ${p.id}，但现在连不上：${(e as Error).message}`);
+    }
+  });
+peer
+  .command("list")
+  .description("已添加的同伴")
+  .action(async () => {
+    const { listPeers, nodeId } = await import("./core/peers.ts");
+    const app = open();
+    console.log(`本机：${nodeId(app)}`);
+    for (const p of listPeers(app)) console.log(`- ${p.id}  ${p.via ? `经 ${p.via}` : p.url}  （${p.addedAt.slice(0, 10)} 添加）`);
+  });
+peer
+  .command("remove <id>")
+  .action(async (id: string) => {
+    const { removePeer } = await import("./core/peers.ts");
+    console.log(removePeer(open(), id) ? `已移除 ${id}` : `没有 ${id}`);
+  });
+peer
+  .command("commands [id]")
+  .description("同伴（或本机）能执行的检查命令")
+  .action(async (id?: string) => {
+    if (!id) {
+      const { peerCommands } = await import("./core/peer-exec.ts");
+      for (const [k, c] of Object.entries(peerCommands)) console.log(`${k.padEnd(16)} ${c.description}`);
+      return;
+    }
+    const { peerJson } = await import("./core/peers.ts");
+    const r = await peerJson<Record<string, string>>(open(), id, "/api/peer/commands");
+    for (const [k, d] of Object.entries(r)) console.log(`${k.padEnd(16)} ${d}`);
+  });
+peer
+  .command("call <id> <command> [args]")
+  .description("在同伴上执行一条检查命令；args 是 JSON，如 '{\"lines\":100}'。id 写 local 表示本机")
+  .action(async (id: string, command: string, args?: string) => {
+    const parsed = args ? JSON.parse(args) : {};
+    const app = open();
+    if (id === "local") {
+      const { runPeerCommand } = await import("./core/peer-exec.ts");
+      console.log(JSON.stringify(await runPeerCommand(app, command, parsed), null, 2));
+      return;
+    }
+    const { peerJson } = await import("./core/peers.ts");
+    const r = await peerJson<{ result: unknown }>(app, id, "/api/peer/exec", { command, args: parsed }, 15 * 60_000);
+    const out = r.result as { text?: string };
+    console.log(command === "logs" && typeof out?.text === "string" ? out.text : JSON.stringify(r.result, null, 2));
+  });
+
+program
+  .command("diag [peer]")
+  .description("健康状态：本机，或某个同伴")
+  .action(async (peerId?: string) => {
+    const app = open();
+    if (!peerId) {
+      const { diag } = await import("./core/peer-exec.ts");
+      console.log(JSON.stringify(await diag(app), null, 2));
+      return;
+    }
+    const { peerJson } = await import("./core/peers.ts");
+    console.log(JSON.stringify(await peerJson(app, peerId, "/api/diag"), null, 2));
   });
 
 const space = program.command("space").description("管理空间（领域隔离：个人 / 项目 / 代码仓库 / 学习）");
