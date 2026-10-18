@@ -173,6 +173,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 后台服务 `omem service`：自带 PM2（独立 PM2_HOME）、崩溃自动重启、pm2-logrotate 日志轮换；不装开机自启 | 已实现；macOS 本机 start / restart / stop / status 验证 | `src/core/service.ts` |
 | 飞书机器人能力：回复/话题回复、表情、Markdown、图片文件、Card 2.0（按钮、下拉、输入、选人、日期、表单）、限定处理人、草稿确认、进度卡片实时更新；卡片回调回到原会话 | 已实现；假客户端测试覆盖，真实飞书待验收 | `src/channels/lark-send.ts`、`lark-actions.ts`、`lark-progress.ts`、技能 `lark-messaging` |
 | 飞书个人采集（lark-cli）：全部或订阅会话增量拉取（每会话游标、话题回复）、附件与文档链接入库、日程、妙记 | 已实现；模拟 lark-cli 测试覆盖，真实账号待验收 | `src/channels/lark-personal.ts` |
+| 飞书消息结构化与历史：每条消息另存 `lark_messages`（原始内容、回复对象、话题、图片文件、发送人类型、在原件中的行号）；被引用的消息不在库里时用 `+messages-mget` 补读；图片和文件经 `--download-resources` 保存；聊天行带“↩ 回复 X「…」”；历史回溯每次采集读几页，按月写入 `lark:<会话>@YYYY-MM` 原件（不在实时原件里插行，引用行号不变）；网页原件页用聊天视图显示 | 已实现，模拟 lark-cli 测试覆盖；`parent_id` 字段名和资源下载的真实返回待真实账号确认 | `src/channels/lark-messages.ts`、`lark-personal.ts` 的 `backfillStep`、`web/src/components/ChatView.vue` |
 | 飞书会话分类与采集方式：单聊（人）/ 机器人单聊 / 普通群 / 话题群 / omem 自己的机器人，免打扰状态；每类可设“保存并整理 / 与我有关时整理 / 只保存 / 不读取”，单个会话可覆盖；omem 机器人私聊和它在群里的发言不采集 | 已实现，模拟 lark-cli 测试覆盖；`p2p_target_type` 的取值待真实账号确认（另外按消息发送者是否为应用识别机器人单聊） | `lark-personal.ts`、设置 → 渠道、`set_lark_capture_policy` |
 | 监听群：规则（档案、触发、回复方式 none/draft/auto），每条消息只处理一次，群/话题即处理会话 | 已实现 | `src/channels/lark-watch.ts`、`/watch`、`set_chat_watch` |
 | 代码活动：仓库新提交与未提交改动，每仓库每天一份活动原件 | 已实现 | `src/sources/activity.ts` |

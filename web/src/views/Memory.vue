@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { del, get, onServerEvent, patch, post, type Memory, type MemoryQuality } from "../api";
 import Icon from "../components/Icon.vue";
 import UiSegmented from "../components/UiSegmented.vue";
+import VirtualList from "../components/VirtualList.vue";
 import UiSelect from "../components/UiSelect.vue";
 import { promptDialog } from "../lib/dialog";
 import { fmtTime, memoryKindLabel, openCitation, state, statusLabel, toast } from "../store";
@@ -78,6 +79,8 @@ const groups = computed(() => {
   }
   return [...map.entries()].sort((a, b) => b[1].length - a[1].length);
 });
+/** Subjects and their memories as one flat list, so long lists render only what is on screen. */
+const rows = computed(() => groups.value.flatMap(([subject, ms]) => [{ kind: "subject" as const, key: `s:${subject}`, subject }, ...ms.map((m) => ({ kind: "memory" as const, key: m.id, m }))]));
 const splitTags = (s: string) => s.split(/[,，\s]+/).map((t) => t.replace(/^#/, "").trim()).filter(Boolean);
 
 async function add() {
@@ -184,9 +187,10 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
         <p>在问答里告诉助理一件事（“记住：…”），或保存聊天和文档让助理整理，长期有用的结论会出现在这里。</p>
       </div>
 
-      <section v-for="[subject, ms] in groups" :key="subject" class="group">
-        <h2 class="subject">{{ subject }}</h2>
-        <div v-for="m in ms" :key="m.id" class="mem" :class="m.status">
+      <VirtualList :items="rows" :item-key="(r) => r.key" :estimate="96">
+        <template #default="{ item: r }">
+        <h2 v-if="r.kind === 'subject'" class="subject">{{ r.subject }}</h2>
+        <template v-else><div v-for="m in [r.m]" :key="m.id" class="mem" :class="m.status">
           <div class="row head small wrap">
             <span class="badge" :class="{ accent: m.kind === 'agreement' || m.kind === 'decision' }">{{ memoryKindLabel[m.kind] ?? m.kind }}</span>
             <span v-if="m.status !== 'active'" class="badge warn">{{ statusLabel[m.status] }}</span>
@@ -213,8 +217,9 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
           </div>
           <p v-else class="content">{{ m.content }}</p>
           <p v-if="m.reviewNote && m.reviewVerdict && m.reviewVerdict !== 'keep'" class="note small muted">复核：{{ m.reviewNote }}</p>
-        </div>
-      </section>
+        </div></template>
+        </template>
+      </VirtualList>
     </template>
 
     <template v-else>
@@ -345,7 +350,8 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
 .subject {
   font-size: 15px;
   font-weight: 650;
-  margin-bottom: 8px;
+  padding: 18px 0 8px;
+  margin: 0;
 }
 .mem {
   border-top: 1px solid var(--line);

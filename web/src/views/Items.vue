@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { get, onServerEvent, patch, post, type Item, type ItemEvent } from "../api";
 import Icon from "../components/Icon.vue";
+import Skeleton from "../components/Skeleton.vue";
 import Markdown from "../components/Markdown.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiDateTime from "../components/UiDateTime.vue";
@@ -20,8 +21,13 @@ const quick = ref("");
 const viaAssistant = ref(true);
 const note = ref("");
 
+const loading = ref(true);
 async function load() {
-  items.value = await get<Item[]>(`/api/items?status=${showDone.value ? "all" : "active"}${scope.value === "space" ? `&space=${state.space}` : ""}`);
+  try {
+    items.value = await get<Item[]>(`/api/items?status=${showDone.value ? "all" : "active"}${scope.value === "space" ? `&space=${state.space}` : ""}`);
+  } finally {
+    loading.value = false;
+  }
 }
 async function loadDetail() {
   const id = route.params.id as string | undefined;
@@ -126,7 +132,8 @@ function parseRef(r: string) {
               <span v-if="i.spaceId !== 'personal'" class="badge">{{ i.spaceId }}</span>
             </div>
           </router-link>
-          <div v-if="!c.items.length" class="muted small none">无</div>
+          <Skeleton v-if="loading && !items.length" variant="cards" :rows="2" />
+          <div v-else-if="!c.items.length" class="muted small none">无</div>
         </div>
       </section>
     </div>

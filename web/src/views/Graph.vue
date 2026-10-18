@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { get } from "../api";
 import Icon from "../components/Icon.vue";
+import Skeleton from "../components/Skeleton.vue";
 import { state } from "../store";
 
 type Node = { id: string; title: string; space_id: string; kind: string; x: number; y: number; vx: number; vy: number; degree: number };
@@ -19,7 +20,9 @@ const width = 1000;
 const height = 700;
 let frame = 0;
 
+const loading = ref(true);
 async function load() {
+  loading.value = true;
   const r = await get<{ nodes: Omit<Node, "x" | "y" | "vx" | "vy" | "degree">[]; edges: Edge[] }>(`/api/graph?space=${space.value}`);
   const degree = new Map<string, number>();
   for (const e of r.edges) {
@@ -31,6 +34,7 @@ async function load() {
     return { ...n, x: width / 2 + Math.cos(a) * 220, y: height / 2 + Math.sin(a) * 220, vx: 0, vy: 0, degree: degree.get(n.id) ?? 0 };
   });
   edges.value = r.edges;
+  loading.value = false;
   simulate(300);
 }
 
@@ -107,7 +111,8 @@ function open(n: Node) {
       <span class="spacer" />
       <router-link :to="`/wiki/${space}`" class="btn sm"><Icon name="book" :size="14" />回到 Wiki</router-link>
     </div>
-    <div v-if="!nodes.length" class="empty"><Icon name="graph" :size="32" /><h3>还没有页面</h3></div>
+    <Skeleton v-if="loading" variant="cards" :rows="2" />
+    <div v-else-if="!nodes.length" class="empty"><Icon name="graph" :size="32" /><h3>还没有页面</h3></div>
     <div v-else class="card canvas">
       <svg :viewBox="`0 0 ${width} ${height}`" role="img" aria-label="页面关系图">
         <line

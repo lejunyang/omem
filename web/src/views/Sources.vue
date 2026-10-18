@@ -2,9 +2,12 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { del, get, post, type Source } from "../api";
+import ChatView from "../components/ChatView.vue";
 import CodeView from "../components/CodeView.vue";
+import Skeleton from "../components/Skeleton.vue";
+import VirtualList from "../components/VirtualList.vue";
 import Icon from "../components/Icon.vue";
-import { confirmDialog } from "../lib/dialog";
+import { confirmDialog, promptDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
 import { currentSpace, fmtTime, relTime, state, toast } from "../store";
 
@@ -26,28 +29,51 @@ const kind = ref("");
 const detail = ref<Detail | null>(null);
 const raw = ref(false);
 const collapsed = ref(new Set<string>());
+const listLoading = ref(true);
+const detailLoading = ref(false);
 const space = computed(() => currentSpace());
 const id = computed(() => route.params.id as string | undefined);
 const hl = computed(() => (route.query.from ? { from: Number(route.query.from), to: Number(route.query.to ?? route.query.from) } : null));
 
+let loadSeq = 0;
 async function load() {
-  const p = new URLSearchParams({ space: state.space, limit: "3000" });
-  if (q.value) p.set("q", q.value);
-  if (kind.value) p.set("kind", kind.value);
-  const r = await get<{ total: number; sources: Source[] }>(`/api/sources?${p}`);
-  list.value = r.sources;
-  total.value = r.total;
+  const seq = ++loadSeq;
+  listLoading.value = true;
+  try {
+    const p = new URLSearchParams({ space: state.space, limit: "20000" });
+    if (q.value) p.set("q", q.value);
+    if (kind.value) p.set("kind", kind.value);
+    const r = await get<{ total: number; sources: Source[] }>(`/api/sources?${p}`);
+    if (seq !== loadSeq) return;
+    list.value = r.sources;
+    total.value = r.total;
+  } finally {
+    if (seq === loadSeq) listLoading.value = false;
+  }
 }
 async function loadDetail() {
   if (!id.value) return void (detail.value = null);
-  detail.value = await get<Detail>(`/api/sources/${id.value}?from=1&to=100000`);
-  raw.value = !!hl.value || detail.value.source.kind === "code";
+  detailLoading.value = true;
+  try {
+    const d = await get<Detail>(`/api/sources/${id.value}?from=1&to=1000000`);
+    if (d.source.id !== id.value) return;
+    detail.value = d;
+    // Chats open as a chat even from a citation; the highlighted message is scrolled to.
+    raw.value = d.source.kind === "code" || (!!hl.value && d.source.kind !== "chat");
+  } finally {
+    detailLoading.value = false;
+  }
 }
+let qTimer: ReturnType<typeof setTimeout> | undefined;
 onMounted(() => {
   void load();
   void loadDetail();
 });
-watch([q, kind], load);
+watch(kind, load);
+watch(q, () => {
+  clearTimeout(qTimer);
+  qTimer = setTimeout(load, 200);
+});
 watch(id, loadDetail);
 
 /** Directory tree for repo-like spaces; flat list otherwise. */
@@ -88,6 +114,20 @@ function toggle(path: string) {
   const next = new Set(collapsed.value);
   next.has(path) ? next.delete(path) : next.add(path);
   collapsed.value = next;
+}
+const isChat = computed(() => detail.value?.source.kind === "chat");
+const larkChatId = computed(() => (detail.value && /^lark:oc_[\w-]+$/.test(detail.value.source.uri) ? detail.value.source.uri.slice(5) : null));
+async function backfill() {
+  if (!larkChatId.value) return;
+  const days = await promptDialog("回溯这个会话更早的消息", { message: "往前多少天？0 表示全部历史。后台每次采集读几页，按月存成“历史”原件，只保存可检索，不交给整理。", value: "90", okText: "开始回溯" });
+  if (days === null) return;
+  const n = Math.max(0, Math.floor(Number(days) || 0));
+  try {
+    const r = await post<{ reachedAt: string | null }>(`/api/lark/chats/${larkChatId.value}/backfill`, { days: n });
+    toast(`已安排回溯${n ? `最近 ${n} 天` : "全部历史"}；目前覆盖到 ${r.reachedAt ? fmtTime(r.reachedAt, false) : "首次采集时"}，随飞书采集逐步补齐`, "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
 }
 const isMarkdown = computed(() => detail.value && /\.(md|markdown|mdx)$/i.test(detail.value.source.uri) || detail.value?.source.kind === "note" || detail.value?.source.kind === "web" || detail.value?.source.kind === "doc" || detail.value?.source.kind === "image" || detail.value?.source.kind === "conversation");
 const outline = computed(() => {
@@ -147,7 +187,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
       <div class="head">
         <div class="row">
           <strong>原件</strong>
-          <span class="muted small">{{ total }}</span>
+          <span class="muted small">{{ listLoading && !list.length ? "" : total }}</span>
           <span class="spacer" />
           <button v-if="space?.rootPath" class="btn ghost sm icon" title="同步关联目录" @click="sync"><Icon name="refresh" :size="15" /></button>
           <button class="btn ghost sm icon" title="保存材料" @click="state.capture = true"><Icon name="plus" :size="15" /></button>
@@ -158,8 +198,9 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
         </div>
       </div>
       <div class="items">
-        <template v-if="isTree">
-          <template v-for="(r, i) in tree" :key="i">
+        <Skeleton v-if="listLoading && !list.length" :rows="8" />
+        <VirtualList v-else-if="isTree" :items="tree" :item-key="(r) => (r.kind === 'dir' ? `d:${r.path}` : r.source.id)" :estimate="28">
+          <template #default="{ item: r }">
             <button v-if="r.kind === 'dir'" class="row-btn dir" :style="{ paddingLeft: 8 + r.depth * 14 + 'px' }" @click="toggle(r.path)">
               <Icon :name="collapsed.has(r.path) && !q ? 'right' : 'down'" :size="13" /><Icon name="folder" :size="14" /><span class="ellipsis">{{ r.dir }}</span><span class="muted small">{{ r.count }}</span>
             </button>
@@ -167,14 +208,16 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
               <span class="ellipsis">{{ r.source.uri.split("/").pop() }}</span>
             </router-link>
           </template>
-        </template>
-        <template v-else>
-          <router-link v-for="s in list" :key="s.id" :to="`/sources/${s.id}`" class="row-btn flat" :class="{ on: s.id === id }">
-            <Icon :name="kindIcon[s.kind] ?? 'file'" :size="15" />
-            <div class="grow"><div class="ellipsis">{{ s.title }}</div><div class="muted small">{{ relTime(s.updatedAt) }} · {{ s.lines }} 行</div></div>
-          </router-link>
-        </template>
-        <div v-if="!list.length" class="empty small">
+        </VirtualList>
+        <VirtualList v-else :items="list" :item-key="(s) => s.id" :estimate="52">
+          <template #default="{ item: s }">
+            <router-link :to="`/sources/${s.id}`" class="row-btn flat" :class="{ on: s.id === id }">
+              <Icon :name="kindIcon[s.kind] ?? 'file'" :size="15" />
+              <div class="grow"><div class="ellipsis">{{ s.title }}</div><div class="muted small">{{ relTime(s.updatedAt) }} · {{ s.lines }} 行</div></div>
+            </router-link>
+          </template>
+        </VirtualList>
+        <div v-if="!list.length && !listLoading" class="empty small">
           <p>这个空间还没有原件。</p>
           <button class="btn sm" @click="state.capture = true"><Icon name="plus" :size="14" />保存材料</button>
         </div>
@@ -182,7 +225,8 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
     </aside>
 
     <main class="detail">
-      <div v-if="!detail" class="empty">
+      <div v-if="detailLoading && (!detail || detail.source.id !== id)" class="loading-detail"><Skeleton variant="text" :rows="10" /></div>
+      <div v-else-if="!detail" class="empty">
         <Icon name="file" :size="34" />
         <h3>选择一份原件</h3>
         <p>原件是知识库的依据：文档、代码、聊天记录、笔记和网页。Wiki、记忆和回答都引用它们。</p>
@@ -195,7 +239,8 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
             <span class="badge">{{ detail.source.kind }}</span>
             <span class="muted small">{{ detail.source.lines }} 行 · 更新于 {{ fmtTime(detail.source.updatedAt) }} · 首次保存 {{ fmtTime(detail.source.capturedAt, false) }}</span>
             <span class="spacer" />
-            <button v-if="isMarkdown" class="btn ghost sm" @click="raw = !raw">{{ raw ? "排版视图" : "原文行号" }}</button>
+            <button v-if="isMarkdown || isChat" class="btn ghost sm" @click="raw = !raw">{{ raw ? (isChat ? "聊天视图" : "排版视图") : "原文行号" }}</button>
+            <button v-if="larkChatId" class="btn ghost sm" title="把更早的消息也读进来" @click="backfill"><Icon name="history" :size="14" />回溯历史</button>
             <button class="btn ghost sm" @click="makeCards"><Icon name="cap" :size="14" />生成卡片</button>
             <button class="btn ghost sm icon danger" title="移除" @click="remove"><Icon name="trash" :size="14" /></button>
           </div>
@@ -206,7 +251,8 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
         <div v-if="detail.source.deletedAt" class="card pad muted">这份原件已于 {{ fmtTime(detail.source.deletedAt) }} 移除，只保留了身份记录。</div>
         <div v-else class="body">
           <div class="text">
-            <CodeView v-if="raw || !isMarkdown" :text="detail.text" :start="1" :path="detail.source.uri" :from="hl?.from" :to="hl?.to" :wrap="isMarkdown" />
+            <ChatView v-if="isChat && !raw" :source-id="detail.source.id" :text="detail.text" :space="detail.source.spaceId" :from="hl?.from" :to="hl?.to" />
+            <CodeView v-else-if="raw || !isMarkdown" :text="detail.text" :start="1" :path="detail.source.uri" :from="hl?.from" :to="hl?.to" :wrap="isMarkdown || isChat" />
             <div v-else class="card pad doc"><Markdown :source="detail.text" :space="detail.source.spaceId" /></div>
           </div>
           <aside v-if="outline.length" class="outline">
@@ -234,6 +280,10 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
 </template>
 
 <style scoped>
+.loading-detail {
+  max-width: 760px;
+  padding-top: 8px;
+}
 .rel {
   min-width: 0;
   margin-top: 14px;

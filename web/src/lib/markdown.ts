@@ -53,7 +53,7 @@ marked.use({
       return `<pre><code class="hljs${language ? " language-" + escapeHtml(language) : ""}">${highlight(text, language)}</code></pre>`;
     },
     image({ href, title, text }) {
-      const src = href.startsWith("omem-file:") ? `/api/files/${encodeURIComponent(href.slice(10))}` : /^https?:/i.test(href) ? href : "";
+      const src = href.startsWith("omem-file:") ? `/api/files/${encodeURIComponent(href.slice(10))}` : /^https?:/i.test(href) || /^\/api\/files\/[\w.-]+$/.test(href) ? href : "";
       return src ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(text)}"${title ? ` title="${escapeHtml(title)}"` : ""} loading="lazy" />` : escapeHtml(text);
     },
     link({ href, title, tokens }) {
@@ -80,8 +80,8 @@ function preprocess(md: string) {
     .replace(/(^|[\s（(，,])((?:mem|msg):[a-z0-9]{8,})/g, (_, pre, ref) => `${pre}[${ref.startsWith("mem") ? "记忆" : "消息"}](${ref})`);
 }
 
-export function renderMarkdown(md: string): string {
-  const html = marked.parse(preprocess(md ?? ""), { async: false }) as string;
+export function renderMarkdown(md: string, opts: { breaks?: boolean } = {}): string {
+  const html = marked.parse(preprocess(md ?? ""), { async: false, breaks: !!opts.breaks }) as string;
   return DOMPurify.sanitize(html, { ADD_ATTR: ["data-cite", "data-ref", "data-from", "data-to", "data-wiki", "data-mermaid", "target"] });
 }
 

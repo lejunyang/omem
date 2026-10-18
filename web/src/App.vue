@@ -5,6 +5,7 @@ import CaptureDialog from "./components/CaptureDialog.vue";
 import CitationDrawer from "./components/CitationDrawer.vue";
 import CommandPalette from "./components/CommandPalette.vue";
 import DialogHost from "./components/DialogHost.vue";
+import Skeleton from "./components/Skeleton.vue";
 import UiSelect from "./components/UiSelect.vue";
 import Icon from "./components/Icon.vue";
 import { kindLabel, loadSpaces, refreshUnread, state } from "./store";
@@ -68,7 +69,7 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
 
       <div class="space-pick">
         <span class="small muted">空间</span>
-        <UiSelect v-model="state.space" aria-label="当前空间" :options="state.spaces.map((s) => ({ value: s.id, label: s.name, hint: kindLabel[s.kind] ?? s.kind }))" />
+        <UiSelect v-model="state.space" aria-label="当前空间" :placeholder="state.spaces.length ? '请选择' : '加载中…'" :options="state.spaces.map((s) => ({ value: s.id, label: s.name, hint: kindLabel[s.kind] ?? s.kind }))" />
       </div>
 
       <button class="search-btn" @click="state.palette = true"><Icon name="search" :size="16" /><span>搜索或提问</span><kbd>Ctrl K</kbd></button>
@@ -97,6 +98,7 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
       </div>
       <div v-if="loadError" class="page"><div class="card pad err">无法连接 omem 服务：{{ loadError }}</div></div>
       <router-view v-else-if="state.spaces.length" :key="route.path.split('/')[1] + state.space" />
+      <div v-else class="page"><Skeleton variant="text" :rows="8" /></div>
     </main>
 
     <CitationDrawer />

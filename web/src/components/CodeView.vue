@@ -1,19 +1,25 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { highlight, languageOf } from "../lib/markdown";
+import VirtualList from "./VirtualList.vue";
 
+/** Source text with line numbers; long texts render only the lines near the viewport. */
 const props = defineProps<{ text: string; start: number; path: string; from?: number; to?: number; wrap?: boolean }>();
 const root = ref<HTMLElement>();
+const list = ref<{ scrollToIndex: (i: number, align?: "start" | "center") => Promise<void> } | null>(null);
 const lang = computed(() => languageOf(props.path));
-const lines = computed(() =>
-  props.text.split("\n").map((line, i) => ({ n: props.start + i, html: lang.value ? highlight(line, lang.value) : line.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!) })),
-);
+const raw = computed(() => props.text.split("\n"));
+const virtual = computed(() => raw.value.length > 400);
+const lineHtml = (line: string) => (lang.value ? highlight(line, lang.value) : line.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!));
+// Highlighting every line of a long file up front is the slow part: do it per rendered row.
+const lines = computed(() => raw.value.map((line, i) => ({ n: props.start + i, line })));
 const inRange = (n: number) => props.from !== undefined && n >= props.from && n <= (props.to ?? props.from);
 
 async function scroll() {
   await nextTick();
-  const el = root.value?.querySelector<HTMLElement>(".hl");
-  if (el) el.scrollIntoView({ block: "center" });
+  if (props.from === undefined) return;
+  if (virtual.value) return void list.value?.scrollToIndex(props.from - props.start, "center");
+  root.value?.querySelector<HTMLElement>(".hl")?.scrollIntoView({ block: "center" });
 }
 onMounted(scroll);
 watch(() => [props.from, props.text], scroll);
@@ -21,9 +27,16 @@ watch(() => [props.from, props.text], scroll);
 
 <template>
   <div ref="root" class="code" :class="{ wrap }">
-    <div v-for="l in lines" :key="l.n" class="ln" :class="{ hl: inRange(l.n) }" :id="`L${l.n}`">
-      <span class="no">{{ l.n }}</span><code v-html="l.html || ' '" />
-    </div>
+    <VirtualList v-if="virtual" ref="list" :items="lines" :item-key="(l) => l.n" :estimate="20">
+      <template #default="{ item: l }">
+        <div class="ln" :class="{ hl: inRange(l.n) }" :id="`L${l.n}`"><span class="no">{{ l.n }}</span><code v-html="lineHtml(l.line) || ' '" /></div>
+      </template>
+    </VirtualList>
+    <template v-else>
+      <div v-for="l in lines" :key="l.n" class="ln" :class="{ hl: inRange(l.n) }" :id="`L${l.n}`">
+        <span class="no">{{ l.n }}</span><code v-html="lineHtml(l.line) || ' '" />
+      </div>
+    </template>
   </div>
 </template>
 
@@ -35,7 +48,7 @@ watch(() => [props.from, props.text], scroll);
   background: var(--sunken);
   border: 1px solid var(--line);
   border-radius: 8px;
-  overflow: auto;
+  overflow-x: auto;
   padding: 6px 0;
 }
 .ln {

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { get, onServerEvent, post, type Item, type Run } from "../api";
 import Icon from "../components/Icon.vue";
+import Skeleton from "../components/Skeleton.vue";
 import { currentSpace, fmtTime, itemKindLabel, relTime, runKindLabel, state, statusLabel } from "../store";
 
 type HomeData = {
@@ -66,7 +67,8 @@ const suggestions = ["我最近有哪些没完成的事？", "上周关于预算
       <button v-for="s in suggestions" :key="s" class="chip" @click="(question = s), ask()">{{ s }}</button>
     </div>
 
-    <div v-if="data" class="grid">
+    <div v-if="!data" class="grid"><Skeleton variant="cards" :rows="2" /><Skeleton variant="cards" :rows="2" /></div>
+    <div v-else class="grid">
       <section class="col">
         <div v-if="data.decisions.length" class="block">
           <h2 class="section-title">需要你决定</h2>

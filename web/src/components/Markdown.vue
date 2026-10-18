@@ -4,11 +4,11 @@ import { useRouter } from "vue-router";
 import { linkifyPaths, renderMarkdown, renderMermaid } from "../lib/markdown";
 import { openCitation, state } from "../store";
 
-const props = withDefaults(defineProps<{ source: string; space?: string; linkify?: boolean; existingPages?: string[] }>(), { linkify: true });
+const props = withDefaults(defineProps<{ source: string; space?: string; linkify?: boolean; existingPages?: string[]; breaks?: boolean }>(), { linkify: true });
 const root = ref<HTMLElement>();
 const router = useRouter();
 const emit = defineEmits<{ rendered: [el: HTMLElement] }>();
-const html = computed(() => renderMarkdown(props.source));
+const html = computed(() => renderMarkdown(props.source, { breaks: props.breaks }));
 
 async function enhance() {
   await nextTick();

@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import { del, get, onServerEvent, post } from "../api";
 import Icon from "../components/Icon.vue";
+import Skeleton from "../components/Skeleton.vue";
 import { confirmDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
 import RunActivity from "../components/RunActivity.vue";
@@ -22,13 +23,27 @@ const input = ref<HTMLTextAreaElement>();
 const showList = ref(false);
 const id = computed(() => route.params.id as string | undefined);
 
+const listLoading = ref(true);
+const convLoading = ref(false);
 async function loadList() {
-  conversations.value = await get<Conversation[]>("/api/conversations");
+  try {
+    conversations.value = await get<Conversation[]>("/api/conversations");
+  } finally {
+    listLoading.value = false;
+  }
 }
 async function loadConversation() {
   if (!id.value) return void (messages.value = []);
-  const r = await get<{ messages: Message[] }>(`/api/conversations/${id.value}`).catch(() => ({ messages: [] }));
-  messages.value = r.messages;
+  const want = id.value;
+  // Only the first load of a conversation shows a placeholder; refreshes keep what is on screen.
+  if (!messages.value.length) convLoading.value = true;
+  try {
+    const r = await get<{ messages: Message[] }>(`/api/conversations/${want}`).catch(() => ({ messages: [] }));
+    if (want !== id.value) return;
+    messages.value = r.messages;
+  } finally {
+    convLoading.value = false;
+  }
   await scrollDown();
 }
 async function scrollDown() {
@@ -41,6 +56,7 @@ onMounted(() => {
   input.value?.focus();
 });
 watch(id, () => {
+  messages.value = [];
   void loadConversation();
   showList.value = false;
 });
@@ -113,7 +129,8 @@ function autosize(e: Event) {
           </div>
           <button class="btn ghost sm icon del" title="删除" @click.prevent="remove(c)"><Icon name="trash" :size="14" /></button>
         </router-link>
-        <div v-if="!conversations.length" class="muted small pad">还没有对话。</div>
+        <Skeleton v-if="listLoading" :rows="6" />
+        <div v-else-if="!conversations.length" class="muted small pad">还没有对话。</div>
       </div>
     </aside>
 
@@ -124,7 +141,8 @@ function autosize(e: Event) {
       </div>
       <div ref="scroller" class="scroll">
         <div class="thread">
-          <div v-if="!messages.length" class="intro">
+          <Skeleton v-if="convLoading" variant="chat" :rows="4" />
+          <div v-else-if="!messages.length" class="intro">
             <h1>问点什么</h1>
             <p class="muted">助理会在知识库里调查后回答，并给出原文依据。你也可以直接交代事情：记住一个约定、纠正之前的说法、设一个提醒、关注一个项目，或者交办一个编码任务。</p>
           </div>

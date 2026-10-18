@@ -2,6 +2,7 @@
 import { computed, onMounted, onBeforeUnmount, ref } from "vue";
 import { get, patch, post, type Card, type Source } from "../api";
 import Icon from "../components/Icon.vue";
+import Skeleton from "../components/Skeleton.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import Markdown from "../components/Markdown.vue";
@@ -36,12 +37,17 @@ const picked = ref<string[]>([]);
 const focus = ref("");
 const scope = ref<"space" | "all">("all");
 
+const loading = ref(true);
 async function load() {
   const space = scope.value === "space" ? `&space=${state.space}` : "";
-  const r = await get<{ cards: Card[]; stats: typeof stats.value }>(`/api/cards?due=1${space}`);
-  due.value = r.cards;
-  stats.value = r.stats;
-  all.value = (await get<{ cards: Card[] }>(`/api/cards?${space.slice(1)}`)).cards;
+  try {
+    const r = await get<{ cards: Card[]; stats: typeof stats.value }>(`/api/cards?due=1${space}`);
+    due.value = r.cards;
+    stats.value = r.stats;
+    all.value = (await get<{ cards: Card[] }>(`/api/cards?${space.slice(1)}`)).cards;
+  } finally {
+    loading.value = false;
+  }
 }
 onMounted(load);
 onMounted(loadGoals);
@@ -123,7 +129,8 @@ const ratings = [
     </div>
 
     <section v-if="tab === 'review'">
-      <div v-if="current" class="study">
+      <Skeleton v-if="loading" variant="cards" :rows="1" />
+      <div v-else-if="current" class="study">
         <div class="progress muted small">剩余 {{ due.length }} 张 · 本轮已复习 {{ done }} 张</div>
         <div class="flash card" :class="{ flipped }" @click="flipped = !flipped">
           <div class="front"><Markdown :source="current.front" :linkify="false" /></div>

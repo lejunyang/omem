@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { del, get, put } from "../api";
 import Icon from "../components/Icon.vue";
+import Skeleton from "../components/Skeleton.vue";
 import { confirmDialog } from "../lib/dialog";
 import { toast } from "../store";
 
@@ -21,13 +22,24 @@ const dirty = ref(false);
 const creating = ref(false);
 const newName = ref("");
 
+const loading = ref(true);
+const rawLoading = ref(false);
 async function load() {
-  [agents.value, skills.value] = await Promise.all([get<Spec[]>("/api/agents"), get<Skill[]>("/api/skills")]);
+  try {
+    [agents.value, skills.value] = await Promise.all([get<Spec[]>("/api/agents"), get<Skill[]>("/api/skills")]);
+  } finally {
+    loading.value = false;
+  }
 }
 async function loadRaw() {
   dirty.value = false;
   if (!selected.value) return void (raw.value = "");
-  raw.value = (await get<{ raw: string }>(`/api/library-files/${kind.value}/${selected.value}`).catch(() => ({ raw: "" }))).raw;
+  rawLoading.value = true;
+  try {
+    raw.value = (await get<{ raw: string }>(`/api/library-files/${kind.value}/${selected.value}`).catch(() => ({ raw: "" }))).raw;
+  } finally {
+    rawLoading.value = false;
+  }
 }
 onMounted(async () => {
   await load();
@@ -146,14 +158,16 @@ const current = computed(() => list.value.find((x) => x.name === selected.value)
             <div class="muted small clamp">{{ x.description }}</div>
           </div>
         </button>
-        <div v-if="!list.length" class="empty small">
+        <Skeleton v-if="loading" :rows="5" />
+        <div v-else-if="!list.length" class="empty small">
           <p v-if="tab === 'agents'">还没有 Agent 档案。可以对助理说“建一个负责代码评审的 Agent，用 codex，只读”。</p>
           <p v-else>还没有技能。可以对助理说“把刚才整理周报的做法记成技能”，做梦整理时也会起草。</p>
         </div>
       </div>
     </aside>
     <main class="detail">
-      <div v-if="!selected" class="empty">
+      <div v-if="rawLoading && !raw" class="pad"><Skeleton variant="lines" :rows="14" /></div>
+      <div v-else-if="!selected" class="empty">
         <Icon name="layers" :size="34" />
         <h3>{{ tab === "agents" ? "Agent 档案" : "技能" }}</h3>
         <p v-if="tab === 'agents'">专门做某类事的 Agent：system prompt、后端与模型、可用工具、技能、MCP、工作目录。在问答里 <code>/as 名称</code> 让它接管会话，<code>/as 名称 任务</code> 交给它做一件事；助理也会按用途委派。</p>

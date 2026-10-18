@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { del, get, onServerEvent, post, put, type Run } from "../api";
 import Icon from "../components/Icon.vue";
+import Skeleton from "../components/Skeleton.vue";
 import { confirmDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
 import { fmtTime, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
@@ -59,6 +60,8 @@ watch(
   },
 );
 
+const spaceLoading = ref(true);
+const pageLoading = ref(false);
 async function loadSpace() {
   const r = await get<{ nav: NavNode[]; pages: PageSummary[]; stale: number }>(`/api/wiki/${space.value}`);
   nav.value = r.nav;
@@ -72,17 +75,25 @@ async function loadPage() {
   notFound.value = false;
   const target = slug.value || (pages.value.some((p) => p.slug === "index") ? "index" : "");
   if (!target) return void (page.value = null);
+  if (!page.value || page.value.slug !== target) pageLoading.value = true;
   try {
     page.value = await get<PageData>(`/api/wiki/${space.value}/page/${target}`);
   } catch {
     page.value = null;
     notFound.value = true;
+  } finally {
+    pageLoading.value = false;
   }
 }
 watch(
   space,
   async () => {
-    await loadSpace();
+    spaceLoading.value = true;
+    try {
+      await loadSpace();
+    } finally {
+      spaceLoading.value = false;
+    }
     await loadPage();
   },
   { immediate: true },
@@ -212,7 +223,8 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
             <router-link v-for="(g, k) in c.children.filter((x) => x.slug)" :key="`${i}-${j}-${k}`" :to="`/wiki/${space}/${g.slug}`" class="node sub2" :class="{ on: g.slug === currentSlug }">{{ g.title }}</router-link>
           </template>
         </template>
-        <div v-if="!pages.length" class="muted small pad">还没有页面</div>
+        <Skeleton v-if="spaceLoading && !pages.length" :rows="8" variant="lines" />
+        <div v-else-if="!pages.length" class="muted small pad">还没有页面</div>
       </div>
       <div v-if="runs.length" class="running">
         <div class="section-title">进行中</div>
@@ -226,7 +238,8 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         <button class="btn sm" @click="navOpen = !navOpen"><Icon name="menu" :size="15" />目录</button>
       </div>
 
-      <div v-if="!pages.length && !page" class="empty">
+      <div v-if="(spaceLoading && !pages.length) || pageLoading" class="page-loading"><Skeleton variant="text" :rows="12" /></div>
+      <div v-else-if="!pages.length && !page" class="empty">
         <Icon name="book" :size="36" />
         <h3>「{{ spaceName }}」还没有 Wiki</h3>
         <p>助理会先调查这个空间的全部材料（代码仓库会读入口、流程和测试），按读者问题规划一套目录，再逐页写作并引用原文。</p>
@@ -349,6 +362,11 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
 </template>
 
 <style scoped>
+.page-loading {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 36px 32px;
+}
 .wiki {
   display: flex;
   min-height: 100%;

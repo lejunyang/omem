@@ -2,13 +2,19 @@
 import { onMounted, ref } from "vue";
 import { get, post } from "../api";
 import Icon from "../components/Icon.vue";
+import Skeleton from "../components/Skeleton.vue";
 import Markdown from "../components/Markdown.vue";
 import { fmtTime, state } from "../store";
 
 type N = { id: string; at: string; title: string; body: string; link: string | null; readAt: string | null };
 const list = ref<N[]>([]);
+const loading = ref(true);
 async function load() {
-  list.value = (await get<{ notifications: N[] }>("/api/notifications")).notifications;
+  try {
+    list.value = (await get<{ notifications: N[] }>("/api/notifications")).notifications;
+  } finally {
+    loading.value = false;
+  }
 }
 async function readAll() {
   await post("/api/notifications/read", {});
@@ -30,7 +36,8 @@ onMounted(async () => {
       <span class="spacer" />
       <button class="btn sm" @click="readAll">全部标为已读</button>
     </div>
-    <div v-if="!list.length" class="empty"><Icon name="bell" :size="32" /><h3>没有通知</h3></div>
+    <Skeleton v-if="loading" variant="cards" :rows="4" />
+    <div v-else-if="!list.length" class="empty"><Icon name="bell" :size="32" /><h3>没有通知</h3></div>
     <div v-for="n in list" :key="n.id" class="n" :class="{ unread: !n.readAt }">
       <div class="row">
         <strong>{{ n.title }}</strong>

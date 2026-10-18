@@ -36,6 +36,7 @@
 - Vue 3 + TypeScript，在 web/。公共样式与 token 在 web/src/styles.css（浅色/深色），组件在 web/src/components；设计约定见 `.agents/skills/omem-design`。
 - 阅读优先：正文限宽、标题衬线、引用贴近论断。引用统一走 CitationDrawer（逐层返回，Esc 退一层，关闭归还焦点）。
 - 采集来的内容一律经 DOMPurify；不直接 v-html 原始 HTML。
+- 列表和长文本可能很大：超过几百行的用 `components/VirtualList`（动态行高，跟随最近的滚动容器）；加载中用 `components/Skeleton`，不要让“加载中”看起来像“没有数据”。
 - 不用原生 select / checkbox / radio / datetime-local / confirm / prompt：用 `components/UiSelect`、`UiCheckbox`（含 switch）、`UiSegmented`、`UiDateTime` 和 `lib/dialog` 的 `confirmDialog` / `promptDialog`。
 - 改界面后用 `node scripts/screens.ts <url> <dir>` 截 1440 与 390 宽度检查，不能出现横向溢出。
 

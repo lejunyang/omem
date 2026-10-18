@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { get, onServerEvent, post, type Run, type RunEvent } from "../api";
 import Icon from "../components/Icon.vue";
+import Skeleton from "../components/Skeleton.vue";
+import VirtualList from "../components/VirtualList.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSelect from "../components/UiSelect.vue";
 import { confirmDialog } from "../lib/dialog";
@@ -18,14 +20,25 @@ const showQuiet = ref(false);
 const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; patch?: string } | null>(null);
 const id = computed(() => route.params.id as string | undefined);
 
+const listLoading = ref(true);
+const detailLoading = ref(false);
 async function load() {
-  const q = new URLSearchParams({ limit: "150" });
+  const q = new URLSearchParams({ limit: "500" });
   if (kind.value) q.set("kind", kind.value);
   if (showQuiet.value) q.set("all", "true");
-  runs.value = await get<Run[]>(`/api/runs?${q.toString()}`);
+  try {
+    runs.value = await get<Run[]>(`/api/runs?${q.toString()}`);
+  } finally {
+    listLoading.value = false;
+  }
 }
 async function loadDetail() {
-  detail.value = id.value ? await get(`/api/runs/${id.value}`).catch(() => null) : null;
+  if (id.value && detail.value?.run.id !== id.value) detailLoading.value = true;
+  try {
+    detail.value = id.value ? await get(`/api/runs/${id.value}`).catch(() => null) : null;
+  } finally {
+    detailLoading.value = false;
+  }
 }
 onMounted(() => {
   void load();
@@ -94,18 +107,24 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
         <UiCheckbox v-model="showQuiet" size="sm" class="small muted" title="没有发现变化的静默巡检默认不显示">静默</UiCheckbox>
       </div>
       <div class="items">
-        <router-link v-for="r in runs" :key="r.id" :to="`/runs/${r.id}`" class="run" :class="{ on: r.id === id }">
-          <span class="st" :class="r.status" />
-          <div class="grow">
-            <div class="ellipsis">{{ r.title }}</div>
-            <div class="muted small">{{ runKindLabel[r.kind] ?? r.kind }} · {{ statusLabel[r.status] }} · {{ relTime(r.createdAt) }}</div>
-          </div>
-        </router-link>
-        <div v-if="!runs.length" class="muted small pad">还没有运行记录。</div>
+        <Skeleton v-if="listLoading && !runs.length" :rows="8" />
+        <VirtualList v-else :items="runs" :item-key="(r) => r.id" :estimate="54">
+          <template #default="{ item: r }">
+            <router-link :to="`/runs/${r.id}`" class="run" :class="{ on: r.id === id }">
+              <span class="st" :class="r.status" />
+              <div class="grow">
+                <div class="ellipsis">{{ r.title }}</div>
+                <div class="muted small">{{ runKindLabel[r.kind] ?? r.kind }} · {{ statusLabel[r.status] }} · {{ relTime(r.createdAt) }}</div>
+              </div>
+            </router-link>
+          </template>
+        </VirtualList>
+        <div v-if="!runs.length && !listLoading" class="muted small pad">还没有运行记录。</div>
       </div>
     </aside>
     <main class="detail">
-      <div v-if="!detail" class="empty">
+      <div v-if="detailLoading" class="pad-loading"><Skeleton variant="text" :rows="8" /></div>
+      <div v-else-if="!detail" class="empty">
         <Icon name="activity" :size="34" />
         <h3>后台运行</h3>
         <p>问答、整理、Wiki 写作、交办编码和巡检都会在这里留下记录：Agent 做了哪些调查、改了什么、结果如何。</p>
@@ -194,6 +213,10 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
 </template>
 
 <style scoped>
+.pad-loading {
+  max-width: 760px;
+  padding: 8px 0;
+}
 .runs {
   display: flex;
   height: 100%;
