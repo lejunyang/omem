@@ -180,6 +180,38 @@ export const peerCommands: Record<string, Command> = {
       }
     },
   },
+  "lark-whois": {
+    description: "只读：同一个人在 lark-cli（本人身份）和机器人眼里的各种 id（open_id / union_id / user_id）与名字，用来核对 id 能否互通、权限是否够",
+    schema: z.object({
+      id: z.string().regex(/^[\w@.-]{1,80}$/),
+      id_type: z.enum(["open_id", "union_id", "user_id"]).default("open_id"),
+      as: z.enum(["cli", "bot", "both"]).default("both"),
+    }),
+    run: async (_app, a) => {
+      const out: Record<string, unknown> = {};
+      const pick = (u: any) => (u ? { name: u.name, open_id: u.open_id, union_id: u.union_id, user_id: u.user_id, email: u.email || u.enterprise_email } : null);
+      if (a.as !== "bot") {
+        const { larkCli } = await import("../channels/lark-cli.ts");
+        try {
+          const v = await larkCli(["contact", "+get-user", "--user-id", a.id, "--user-id-type", a.id_type, "--as", "user"], 30_000);
+          out.cli = pick(v.data?.user ?? v.data);
+        } catch (e) {
+          out.cli = { error: (e as Error).message };
+        }
+      }
+      if (a.as !== "cli") {
+        try {
+          const { larkClient } = await import("../channels/lark-send.ts");
+          const r = await larkClient().contact.user.get({ path: { user_id: a.id }, params: { user_id_type: a.id_type } });
+          out.bot = r.code ? { error: `${r.code} ${r.msg}` } : pick(r.data?.user);
+        } catch (e) {
+          const err = e as { response?: { data?: { code?: number; msg?: string } }; message: string };
+          out.bot = { error: err.response?.data ? `${err.response.data.code} ${err.response.data.msg}` : err.message };
+        }
+      }
+      return out;
+    },
+  },
   "lark-docs-refresh": {
     description: "重新读取已保存的飞书文档（下载图片、画板等素材，导入链接的文档），在后台运行，完成后发通知；stop: true 在当前这篇读完后停下",
     schema: z.object({ space: z.string().max(64).optional(), limit: z.number().int().min(1).max(10_000).optional(), stop: z.boolean().optional() }),
