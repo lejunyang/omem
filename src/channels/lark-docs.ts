@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
@@ -17,21 +17,19 @@ import { withExtension } from "./lark-messages.ts";
  * blocks Markdown has no form for. Everything that would need a Feishu login to
  * view is made local:
  * - images (`![](https://…/file/<token>)`, `<img src="<token>">`), whiteboards
- *   (thumbnail) and videos/attachments up to MAX_MEDIA_BYTES are downloaded into
+ *   (thumbnail) and videos/attachments up to `lark.capture.docMediaMaxMB` are downloaded into
  *   files/ and referenced as `omem-file:<name>`; downloads are cached per token in
  *   the source's meta, so a re-read only fetches new media;
  * - embedded sheets become Markdown tables; bitables stay links;
  * - synced blocks are read from their source document;
  * - linked docs (`<cite>` and plain links) are imported into the same space and the
- *   link becomes `src:<id>`. Only the doc being imported follows its links (one
- *   level); a linked doc's own links point at local copies when those exist.
+ *   link becomes `src:<id>`, `lark.capture.docLinkDepth` levels deep (at most
+ *   `docMaxLinked` per doc); beyond that, links point at local copies when those exist.
  *   Docs that cannot be read are kept as Feishu links, the owner is told once, and
  *   they are retried later (`retryMissingDocs`); when one becomes readable only the
  *   link in the parent is rewritten, so the parent is not understood again.
  */
 
-const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
-const MAX_LINKED = 30;
 const SHEET_ROWS = 200;
 const MISSING_KEY = "lark_doc_missing";
 const DOC_PATH = /^\/(docx|wiki|docs)\/([A-Za-z0-9]+)/;
@@ -86,7 +84,7 @@ export async function readLarkDocument(url: string): Promise<{ title: string; ma
 async function downloadMedia(app: App, token: string, type: "media" | "whiteboard"): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "omem-doc-"));
   try {
-    await larkCli(["docs", "+media-download", "--token", token, "--type", type, "--output", `./${token}`, "--as", "user"], 180_000, dir);
+    await larkCli(["docs", "+media-download", "--token", token, "--type", type, "--output", `./${token}`, "--as", "user"], 600_000, dir);
     const name = readdirSync(dir).find((n) => n.startsWith(token));
     if (!name) throw new Error("没有下载到文件");
     return keepOriginal(app, withExtension(join(dir, name)));
@@ -122,6 +120,8 @@ type Ctx = {
   media: Record<string, string>;
   /** Tokens seen in this version, so the cache only keeps what the doc still uses. */
   used: Set<string>;
+  /** Videos and attachments larger than this stay in Feishu. */
+  maxBytes: number;
 };
 
 async function media(ctx: Ctx, token: string, type: "media" | "whiteboard") {
@@ -218,7 +218,7 @@ async function localize(ctx: Ctx, text: string, synced = true): Promise<string> 
     const isVideo = (a.mime ?? "").startsWith("video/");
     const name = label(a.name || (isVideo ? "视频" : "附件"));
     const kind = isVideo ? "视频" : "附件";
-    if (size > MAX_MEDIA_BYTES) return `[${kind}：${name}（${megabytes(size)}，未下载，在飞书中查看）](${ctx.docUrl})`;
+    if (size > ctx.maxBytes) return `[${kind}：${name}（${megabytes(size)}，未下载，在飞书中查看）](${ctx.docUrl})`;
     const file = await media(ctx, a.token, "media");
     if (!file) return `［${kind}：${name}，未能下载］`;
     return isVideo ? `![${kind}：${name}](omem-file:${file})` : `[${kind}：${name}](omem-file:${file})`;
@@ -337,8 +337,12 @@ function rewriteLinks(text: string, origin: string, local: Map<string, { id: str
 // ---- import ----------------------------------------------------------------------------
 
 type ImportOpts = {
-  /** Follow linked docs (only the doc being imported does). */
-  follow?: boolean;
+  /** How many levels of linked docs to import (default `lark.capture.docLinkDepth`; 0 = none). */
+  depth?: number;
+  /** Docs being imported further up this chain (a link back to one of them is not followed). */
+  chain?: Set<string>;
+  /** Unreadable docs first seen in this chain; the top of the chain tells the owner once. */
+  unreadable?: Missing[];
   /** A linked doc read within this many ms is not read again. */
   freshMs?: number;
   /** Re-process even when the revision did not change (e.g. to fetch media for old copies). */
@@ -346,8 +350,11 @@ type ImportOpts = {
 };
 
 export async function importLarkDocument(app: App, spaceId: string, input: string, opts: ImportOpts = {}): Promise<LarkDocResult> {
-  const follow = opts.follow ?? true;
+  const cfg = app.config.lark.capture;
+  const depth = opts.depth ?? cfg.docLinkDepth;
   const { url, origin, token } = normalizeDocUrl(input);
+  const chain = new Set(opts.chain ?? []).add(url);
+  const unreadable = opts.unreadable ?? [];
   const existing = findLarkDoc(app, spaceId, url);
   const prev = json<Partial<LarkDocMeta>>(existing?.meta, {});
   const doc = await fetchDoc(url);
@@ -355,27 +362,31 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   if (existing && !opts.force && prev.revision && prev.revision === doc.revision && prev.media && !Object.keys(prev.missing ?? {}).length)
     return { id: existing.id, status: "unchanged", related: [], missing: [] };
 
-  const ctx: Ctx = { app, origin, docUrl: url, media: { ...(prev.media ?? {}) }, used: new Set() };
+  const ctx: Ctx = { app, origin, docUrl: url, media: { ...(prev.media ?? {}) }, used: new Set(), maxBytes: cfg.docMediaMaxMB * 1024 * 1024 };
   let text = await localize(ctx, doc.content);
 
   const related: string[] = [];
   const missing: LarkDocResult["missing"] = [];
+  const nestedMissing: LarkDocResult["missing"] = [];
   const local = new Map<string, { id: string; title: string }>();
   let followed = 0;
   for (const link of docLinks(text, origin, url).values()) {
     const have = findLarkDoc(app, spaceId, link.url);
     const fresh = have && Date.now() - Date.parse(have.updated_at) < (opts.freshMs ?? 86400_000);
-    if (have && (fresh || !follow)) {
+    if (have && (fresh || depth <= 0)) {
       local.set(link.url, { id: have.id, title: have.title });
       continue;
     }
-    if (!follow || followed >= MAX_LINKED) continue;
+    // A link back up the chain is filled in once that doc is saved (see below).
+    if (depth <= 0 || chain.has(link.url) || followed >= cfg.docMaxLinked) continue;
     followed++;
     try {
-      const r = await importLarkDocument(app, spaceId, link.url, { follow: false });
+      const r = await importLarkDocument(app, spaceId, link.url, { depth: depth - 1, chain, unreadable });
       const row = one<{ title: string }>(app.db, "select title from sources where id = ?", r.id);
       local.set(link.url, { id: r.id, title: row?.title ?? link.title });
       if (r.status !== "unchanged") related.push(r.id);
+      related.push(...r.related);
+      nestedMissing.push(...r.missing);
     } catch (e) {
       if (have) local.set(link.url, { id: have.id, title: have.title });
       else missing.push({ url: link.url, title: link.title, error: (e as Error).message.slice(0, 200) });
@@ -395,15 +406,17 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   };
   const r = upsertSource(app, { spaceId, kind: "doc", uri, title: doc.title, text, meta });
   if (r.status === "unchanged") run(app.db, "update sources set meta = ? where id = ?", JSON.stringify(meta), r.id);
-  if (missing.length) recordMissing(app, spaceId, r.id, doc.title, missing);
+  if (missing.length) unreadable.push(...recordMissing(app, spaceId, r.id, doc.title, missing));
   // Linked docs that link back were saved before this one existed.
   if (r.status === "created") for (const id of related) relinkParent(app, id, url, r.id, doc.title);
-  return { ...r, related, missing };
+  if (!opts.unreadable && unreadable.length) tellUnreadable(app, doc.title, r.id, unreadable);
+  const every = [...missing, ...nestedMissing].filter((m, i, list) => list.findIndex((x) => x.url === m.url) === i);
+  return { ...r, related: [...new Set(related)], missing: every };
 }
 
 // ---- docs that could not be read --------------------------------------------------------
 
-type Missing = { url: string; title: string; error: string; spaceId: string; parents: string[]; since: string; tries: number; lastTry: number };
+type Missing = { url: string; title: string; error: string; spaceId: string; parents: string[]; parentTitle?: string; since: string; tries: number; lastTry: number };
 
 function missingList(app: App): Missing[] {
   return json(one<{ value: string }>(app.db, "select value from kv where key = ?", MISSING_KEY)?.value, []);
@@ -416,6 +429,7 @@ export function missingDocs(app: App) {
   return missingList(app);
 }
 
+/** Remember unreadable linked docs; returns the ones not known before. */
 function recordMissing(app: App, spaceId: string, parentId: string, parentTitle: string, found: LarkDocResult["missing"]) {
   const list = missingList(app);
   const fresh: Missing[] = [];
@@ -426,17 +440,20 @@ function recordMissing(app: App, spaceId: string, parentId: string, parentTitle:
       m.error = f.error;
       continue;
     }
-    const added = { ...f, spaceId, parents: [parentId], since: new Date().toISOString(), tries: 0, lastTry: Date.now() };
+    const added = { ...f, spaceId, parents: [parentId], parentTitle, since: new Date().toISOString(), tries: 0, lastTry: Date.now() };
     list.push(added);
     fresh.push(added);
   }
   saveMissing(app, list);
-  if (fresh.length)
-    notify(app, {
-      title: `《${parentTitle}》里有 ${fresh.length} 篇链接的飞书文档读不到`,
-      body: `${fresh.map((f) => `- ${f.title || "（无标题）"}：${f.url}（${f.error}）`).join("\n")}\n\n多半是没有权限。在飞书里申请权限后 omem 会自动重试（每 6 小时），读到后只整理新读到的文档并更新原文里的链接。`,
-      link: `#/sources/${parentId}`,
-    });
+  return fresh;
+}
+
+function tellUnreadable(app: App, title: string, id: string, docs: Missing[]) {
+  notify(app, {
+    title: `《${title}》链接的飞书文档中有 ${docs.length} 篇读不到`,
+    body: `${docs.map((f) => `- ${f.title || "（无标题）"}：${f.url}${f.parentTitle && f.parentTitle !== title ? `（在《${f.parentTitle}》里）` : ""}（${f.error}）`).join("\n")}\n\n多半是没有权限。在飞书里申请权限后 omem 会自动重试（每 6 小时），读到后只整理新读到的文档并更新原文里的链接。`,
+    link: `#/sources/${id}`,
+  });
 }
 
 /**
@@ -457,7 +474,7 @@ export async function retryMissingDocs(app: App, opts: { force?: boolean } = {})
     }
     tried++;
     try {
-      const r = await importLarkDocument(app, m.spaceId, m.url, { follow: false, force: true });
+      const r = await importLarkDocument(app, m.spaceId, m.url, { depth: Math.max(0, app.config.lark.capture.docLinkDepth - 1), force: true });
       imported.push({ spaceId: m.spaceId, id: r.id });
       const row = one<{ title: string }>(app.db, "select title from sources where id = ?", r.id);
       for (const parent of m.parents) relinkParent(app, parent, m.url, r.id, row?.title ?? m.title);
@@ -522,16 +539,48 @@ export async function refreshLarkDocs(app: App, opts: { space?: string; limit?: 
 }
 
 let refreshing: Promise<unknown> | null = null;
+let progress: { startedAt: string; finishedAt?: string; at: string; errors: string[]; result?: unknown } | null = null;
+
 /** `refreshLarkDocs` without waiting (it can take a while); the owner gets a notification when it is done. */
 export function refreshInBackground(app: App, opts: { space?: string; limit?: number } = {}) {
-  if (refreshing) return { started: false, reason: "上一次刷新还没结束" };
-  refreshing = refreshLarkDocs(app, opts)
+  if (refreshing) return { started: false, reason: "上一次刷新还没结束", progress };
+  const p: NonNullable<typeof progress> = { startedAt: new Date().toISOString(), at: "", errors: [] };
+  progress = p;
+  const log = (s: string) => (s.startsWith("读取失败") ? p.errors.length < 50 && p.errors.push(s) : (p.at = s));
+  refreshing = refreshLarkDocs(app, { ...opts, log })
     .then(async (r) => {
       const { scheduleIngest } = await import("../agents/jobs.ts");
       for (const c of r.changed) scheduleIngest(app, c.spaceId, c.ids, "飞书文档有新内容或新链接的文档");
+      Object.assign(p, { result: r });
       notify(app, { title: `飞书文档重新读取完成：${r.done}/${r.total}`, body: `${r.failed ? `${r.failed} 篇读取失败。` : ""}有新内容或新导入的 ${r.changed.reduce((n, c) => n + c.ids.length, 0)} 篇已交给整理。` });
     })
-    .catch((e) => console.warn("[omem] 刷新飞书文档失败：", (e as Error).message))
-    .finally(() => (refreshing = null));
+    .catch((e) => {
+      p.errors.push((e as Error).message);
+      console.warn("[omem] 刷新飞书文档失败：", (e as Error).message);
+    })
+    .finally(() => {
+      p.finishedAt = new Date().toISOString();
+      refreshing = null;
+    });
   return { started: true };
+}
+
+/** Where Feishu docs stand: refresh progress, docs still pointing at Feishu media, local media, unreadable links. */
+export function larkDocsStatus(app: App) {
+  const docs = all<{ text: string; meta: string }>(app.db, "select text, meta from sources where kind = 'doc' and deleted_at is null and json_extract(meta, '$.via') = 'lark-cli'");
+  const remote = /\]\(https?:\/\/[\w.-]+\/file\/|<(?:img|whiteboard|source|sheet)\b/;
+  const media = new Set<string>();
+  let failedMedia = 0;
+  for (const d of docs)
+    for (const f of Object.values(json<Partial<LarkDocMeta>>(d.meta, {}).media ?? {})) f ? media.add(f) : failedMedia++;
+  return {
+    docs: docs.length,
+    withoutLocalMedia: docs.filter((d) => remote.test(d.text)).length,
+    neverLocalized: docs.filter((d) => !json<Partial<LarkDocMeta>>(d.meta, {}).media).length,
+    mediaFiles: media.size,
+    missingMediaFiles: [...media].filter((f) => !existsSync(join(app.filesDir, f))).length,
+    failedMedia,
+    unreadableLinks: missingList(app).length,
+    refresh: progress ? { running: !!refreshing, ...progress } : null,
+  };
 }

@@ -533,6 +533,11 @@ async function setupChannelsSection(app: App) {
     cap.calendar = await confirm({ message: "同时读取日程（前一天到未来一周）？", default: cap.calendar });
     cap.minutes = await confirm({ message: "同时读取妙记（总结、待办、逐字稿）？", default: cap.minutes });
     cap.attachments = await confirm({ message: "下载消息里的图片和文件并入库？", default: cap.attachments });
+    cap.docs = await confirm({ message: "把消息里链接的飞书文档读成原件（图片、画板、视频存到本地）？", default: cap.docs });
+    if (cap.docs) {
+      cap.docMediaMaxMB = (await number({ message: "文档里的视频和附件多大以内下载（MB）", default: cap.docMediaMaxMB, min: 0 })) ?? cap.docMediaMaxMB;
+      cap.docLinkDepth = (await number({ message: "文档里链接的其他文档往下读几层（0 不读）", default: cap.docLinkDepth, min: 0, max: 5 })) ?? cap.docLinkDepth;
+    }
     await ensurePersonalLogin(app, cli);
   }
   if (config.telegram.enabled) {

@@ -191,6 +191,11 @@ export const configSchema = z.object({
           /** Download images/files in messages and import them; import Feishu docs linked in messages. */
           attachments: z.boolean().default(true),
           docs: z.boolean().default(true),
+          /** Feishu docs: videos/attachments up to this size are downloaded (images and whiteboards always). */
+          docMediaMaxMB: z.number().min(0).default(100),
+          /** Feishu docs: levels of linked docs imported along with a doc (0 = none), at most docMaxLinked per doc. */
+          docLinkDepth: z.number().int().min(0).max(5).default(2),
+          docMaxLinked: z.number().int().min(0).default(30),
           calendar: z.boolean().default(true),
           minutes: z.boolean().default(true),
           /**
@@ -229,6 +234,9 @@ export const configSchema = z.object({
           maxChats: 300,
           attachments: true,
           docs: true,
+          docMediaMaxMB: 100,
+          docLinkDepth: 2,
+          docMaxLinked: 30,
           calendar: true,
           minutes: true,
           policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },
@@ -248,6 +256,9 @@ export const configSchema = z.object({
         maxChats: 300,
         attachments: true,
         docs: true,
+        docMediaMaxMB: 100,
+        docLinkDepth: 2,
+        docMaxLinked: 30,
         calendar: true,
         minutes: true,
         policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },

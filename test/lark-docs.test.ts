@@ -47,6 +47,7 @@ describe("feishu docs as originals", () => {
           `<img name="1.jpg" alt="截图：报销流程" mime="image/jpeg" src="IMG2"/>`,
           `<whiteboard token="WB1"></whiteboard>`,
           `<figure><source name="演示.mp4" mime="video/mp4" size="1024" token="VID1"/></figure>`,
+          `<figure><source name="讲解.mp4" mime="video/mp4" size="62914560" token="VID3"/></figure>`,
           `<figure><source name="长录屏.mov" mime="video/quicktime" size="115365413" token="VID2"/></figure>`,
           `<sheet sheet-id="s1" token="SHT1"></sheet>`,
           `<bitable table-id="tbl1" token="BT1"></bitable>`,
@@ -56,7 +57,10 @@ describe("feishu docs as originals", () => {
         ].join("\n\n"),
       },
       Linked1: { title: "差旅报销制度", content: `正文，回到 ${ORIGIN}/docx/Main` },
-      Linked2: { title: "附录", content: `![](${ORIGIN}/file/IMG3)` },
+      Linked2: { title: "附录", content: `![](${ORIGIN}/file/IMG3) 另见 ${ORIGIN}/wiki/Deep 和 ${ORIGIN}/docx/Secret2` },
+      Deep: { title: "第二层", content: `再往下 ${ORIGIN}/wiki/Deeper` },
+      Secret2: "denied",
+      Deeper: { title: "第三层", content: "不读" },
       Secret: "denied",
     });
     const r = await importLarkDocument(app, "personal", `${ORIGIN}/docx/Main?from=chat`);
@@ -70,6 +74,8 @@ describe("feishu docs as originals", () => {
     expect(src.text).toContain("![截图：报销流程](omem-file:");
     expect(src.text).toContain("![画板](omem-file:");
     expect(src.text).toContain("![视频：演示.mp4](omem-file:");
+    // 60 MB is under the default 100 MB limit; 110 MB is not.
+    expect(src.text).toContain("![视频：讲解.mp4](omem-file:");
     expect(src.text).toMatch(/\[视频：长录屏\.mov（110 MB，未下载，在飞书中查看）\]\(https:\/\/example\.feishu\.cn\/docx\/Main\)/);
     expect(src.text).toContain("| 梨,大 | 5 |");
     expect(src.text).toContain(`[多维表格](${ORIGIN}/base/BT1?table=tbl1)`);
@@ -79,21 +85,27 @@ describe("feishu docs as originals", () => {
     expect(src.text).not.toMatch(/<(img|whiteboard|source|sheet|cite)\b/);
 
     // Linked docs: imported, linked locally; the one without permission stays a Feishu link and is recorded.
-    expect(r.related).toHaveLength(2);
+    // Two levels by default: Main → Linked1, Linked2 → Deep; Deeper is not read.
+    expect(r.related).toHaveLength(3);
+    expect(one(app.db, "select id from sources where uri = ?", `${ORIGIN}/wiki/Deeper`)).toBeUndefined();
+    const deep = one<{ id: string; text: string }>(app.db, "select id, text from sources where uri = ?", `${ORIGIN}/wiki/Deep`)!;
+    expect(deep.text).toContain(`${ORIGIN}/wiki/Deeper`);
     const linked1 = one<{ id: string; text: string }>(app.db, "select id, text from sources where uri = ?", `${ORIGIN}/wiki/Linked1`)!;
     const linked2 = one<{ id: string; text: string }>(app.db, "select id, text from sources where uri = ?", `${ORIGIN}/docx/Linked2`)!;
     expect(src.text).toContain(`[《差旅报销制度》](src:${linked1.id})`);
     expect(src.text).toContain(`(src:${linked2.id})`);
     expect(src.text).toContain(`[内部文档](${ORIGIN}/docx/Secret)`);
-    // A linked doc's own links point at local copies but are not followed further.
+    // A link back to the doc being imported is filled in once it is saved.
     expect(linked1.text).toContain(`(src:${r.id})`);
     expect(linked2.text).toContain("omem-file:");
-    expect(r.missing.map((m) => m.title)).toEqual(["内部文档"]);
-    expect(missingDocs(app)).toMatchObject([{ url: `${ORIGIN}/docx/Secret`, parents: [r.id] }]);
-    expect(all(app.db, "select title from notifications").map((n: any) => n.title)).toEqual([expect.stringContaining("1 篇链接的飞书文档读不到")]);
+    expect(linked2.text).toContain(`(src:${deep.id})`);
+    expect(r.missing.map((m) => m.url)).toEqual([`${ORIGIN}/docx/Secret`, `${ORIGIN}/docx/Secret2`]);
+    expect(missingDocs(app)).toMatchObject([{ url: `${ORIGIN}/docx/Secret2`, parents: [linked2.id] }, { url: `${ORIGIN}/docx/Secret`, parents: [r.id] }]);
+    expect(all(app.db, "select title from notifications").map((n: any) => n.title)).toEqual(["《项目 A 方案》链接的飞书文档中有 2 篇读不到"]);
 
-    // Six media in all (including the synced block's and the linked doc's).
-    expect(calls.filter((c) => c[1] === "+media-download")).toHaveLength(6);
+    // Seven media in all (including the synced block's and a linked doc's); Main is read once despite the link back.
+    expect(calls.filter((c) => c[1] === "+media-download")).toHaveLength(7);
+    expect(calls.filter((c) => c[1] === "+fetch" && c[3].endsWith("/Main"))).toHaveLength(1);
     // Read again: cached media are not downloaded again, linked docs read today are not read again.
     const second = fakeCli({ Main: { title: "项目 A 方案", content: `![架构图](${ORIGIN}/file/IMG1) <cite doc-id="Linked1" file-type="wiki" title="制度" type="doc"></cite>`, revision: 2 } });
     const again = await importLarkDocument(app, "personal", `${ORIGIN}/docx/Main`);
@@ -129,6 +141,17 @@ describe("feishu docs as originals", () => {
     const added = one<{ id: string }>(app.db, "select id from sources where uri = ?", `${ORIGIN}/docx/New`)!;
     // Only the newly linked doc is new material; the old one only had its media made local.
     expect(r.changed).toEqual([{ spaceId: "personal", ids: [added.id] }]);
+  });
+
+  it("takes the media size limit and link depth from the config", async () => {
+    const app = testApp();
+    app.config.lark.capture = { ...app.config.lark.capture, docMediaMaxMB: 1, docLinkDepth: 0 };
+    fakeCli({ Main: { title: "周报", content: `<source name="a.mp4" mime="video/mp4" size="2097152" token="V"/> ${ORIGIN}/docx/Other` }, Other: { title: "另一篇", content: "x" } });
+    const r = await importLarkDocument(app, "personal", `${ORIGIN}/docx/Main`);
+    const text = one<{ text: string }>(app.db, "select text from sources where id = ?", r.id)!.text;
+    expect(text).toContain("（2.0 MB，未下载，在飞书中查看）");
+    expect(r.related).toEqual([]);
+    expect(text).toContain(`${ORIGIN}/docx/Other`);
   });
 
   it("turns CSV into a Markdown table", () => {

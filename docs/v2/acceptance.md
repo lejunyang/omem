@@ -139,7 +139,8 @@ pnpm run dev                # 打开 http://localhost:5173
 | # | 操作 | 预期 | 状态 |
 | --- | --- | --- | --- |
 | D1 | 在常驻机器上 `omem peer call <它> lark-doc-raw '{"action":"media","token":"<文档里一张图的 token>"}'` | 返回里 `files` 有一个带扩展名的文件；`action: "csv"` 读一个内嵌表格返回 CSV 文本 | 待验 |
-| D2 | `omem peer call <它> lark-docs-refresh '{}'`，完成通知出来后打开一篇有图的飞书文档原件 | 图片、画板显示正常（不需要登录飞书），视频可播放，超过 50 MB 的视频显示为“在飞书中查看”的链接；内嵌表格显示为表格 | 待验 |
+| D1b | `omem peer call <它> lark-doc-import '{"url":"<一篇有图和画板的文档>"}'` | `media.failed` 为 0，`remaining` 为空；打开该原件图片正常 | 待验 |
+| D2 | `omem peer call <它> lark-docs-refresh '{}'`（`lark-docs-status` 看进度），完成通知出来后打开一篇有图的飞书文档原件 | 图片、画板显示正常（不需要登录飞书），视频可播放，超过 100 MB 的视频显示为“在飞书中查看”的链接；内嵌表格显示为表格 | 待验 |
 | D3 | 打开一篇链接了其他飞书文档的原件，点其中的链接 | 打开的是本地原件；没有权限的保留飞书链接，并收到一条“读不到”的通知 | 待验 |
 | D4 | 在飞书里申请到其中一篇的权限，`omem lark docs-missing --retry`（或等 6 小时内的下一次采集） | 那篇被读进来并整理；父文档里的那条链接换成本地原件，父文档没有被重新整理 | 待验 |
 

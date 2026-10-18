@@ -181,6 +181,28 @@ export const peerCommands: Record<string, Command> = {
       return refreshInBackground(app, a);
     },
   },
+  "lark-doc-import": {
+    description: "立即读取一篇飞书文档成原件（含素材和链接的文档），返回结果；不交给整理，除非 ingest",
+    schema: z.object({ url: z.string().url(), space: z.string().max(64).default("personal"), depth: z.number().int().min(0).max(5).optional(), force: z.boolean().default(true), ingest: z.boolean().default(false) }),
+    run: async (app, a) => {
+      if (!/feishu\.cn|larksuite\.com|larkoffice\.com/.test(a.url)) throw new Error("需要飞书文档链接");
+      const { importLarkDocument } = await import("../channels/lark-docs.ts");
+      const r = await importLarkDocument(app, a.space, a.url, { depth: a.depth, force: a.force });
+      const src = one<{ title: string; text: string; meta: string }>(app.db, "select title, text, meta from sources where id = ?", r.id);
+      const media = Object.values(JSON.parse(src?.meta ?? "{}").media ?? {}) as string[];
+      if (a.ingest) {
+        const ids = [...(r.status !== "unchanged" ? [r.id] : []), ...r.related];
+        if (ids.length) (await import("../agents/jobs.ts")).scheduleIngest(app, a.space, ids, "远程导入的飞书文档");
+      }
+      const leftover = /\]\(https?:\/\/[\w.-]+\/file\/[^)]*\)|<(?:img|whiteboard|source|sheet|cite|synced_reference)\s[^>]*>/g;
+      return { ...r, title: src?.title, media: { downloaded: media.filter(Boolean).length, failed: media.filter((m) => !m).length }, remaining: src?.text.match(leftover)?.slice(0, 20) ?? [] };
+    },
+  },
+  "lark-docs-status": {
+    description: "飞书文档的状态：后台刷新进度、还引用飞书素材的文档数、本地素材数、读不到的链接数",
+    schema: z.object({}),
+    run: async (app) => (await import("../channels/lark-docs.ts")).larkDocsStatus(app),
+  },
   "lark-docs-missing": {
     description: "链接里读不到的飞书文档（多半是没有权限），可立即重试",
     schema: z.object({ retry: z.boolean().default(false) }),
