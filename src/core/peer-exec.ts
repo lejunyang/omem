@@ -114,6 +114,8 @@ export const peerCommands: Record<string, Command> = {
     schema: z.object({
       command: z.enum(LARK_READ),
       chat_id: z.string().regex(/^oc_[\w-]+$/).optional(),
+      /** +chat-list lists only groups unless asked for p2p. */
+      types: z.enum(["p2p", "group", "p2p,group"]).optional(),
       thread: z.string().regex(/^om[t_][\w-]+$/).optional(),
       message_ids: z.array(z.string().regex(/^om_[\w-]+$/)).max(50).optional(),
       query: z.string().max(64).optional(),
@@ -126,6 +128,7 @@ export const peerCommands: Record<string, Command> = {
     run: async (_app, a) => {
       const args = ["im", a.command];
       if (a.chat_id) args.push("--chat-id", a.chat_id);
+      if (a.types && a.command === "+chat-list") args.push("--types", a.types);
       if (a.thread) args.push("--thread", a.thread);
       if (a.message_ids?.length) args.push("--message-ids", a.message_ids.join(","));
       if (a.query) args.push("--query", a.query);

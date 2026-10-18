@@ -28,6 +28,8 @@ export type LarkMessage = {
   sender?: { id?: string; id_type?: string; sender_type?: string; name?: string };
   deleted?: boolean;
   thread_id?: string;
+  /** lark-cli's quoted-reply target (a message id); the raw API calls it `parent_id`. */
+  reply_to?: string;
   parent_id?: string;
   upper_message_id?: string;
   root_id?: string;
@@ -87,7 +89,7 @@ export function flattenReplies(messages: LarkMessage[]): LarkMessage[] {
 export const isApp = (m: LarkMessage) => m.sender?.sender_type === "app" || m.sender?.id_type === "app_id" || /^cli_/.test(m.sender?.id ?? "");
 export const mentionIds = (m: LarkMessage) => (m.mentions ?? []).map((x) => (typeof x.id === "string" ? x.id : (x.id?.open_id ?? ""))).filter(Boolean);
 export const parentOf = (m: LarkMessage) => {
-  const p = m.parent_id || m.upper_message_id || "";
+  const p = m.reply_to || m.parent_id || m.upper_message_id || "";
   // In a topic every reply's parent is the root; that is the thread, not a quote.
   return p && p !== m.root_id ? p : p && !m.thread_id ? p : "";
 };

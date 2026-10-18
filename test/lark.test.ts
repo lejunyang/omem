@@ -248,7 +248,7 @@ describe("feishu messages as a chat", () => {
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
     const live = [
       { message_id: "om_q", msg_type: "text", content: "明天几点评审？\n顺便带上方案", create_time: String(t0), sender: { id: "ou_a", name: "小王" }, thread_id: "omt_1", thread_replies: [{ message_id: "om_r", msg_type: "text", content: "十点", create_time: String(t0 + 50), sender: { id: "ou_me", name: "我" } }] },
-      { message_id: "om_reply", msg_type: "text", content: "收到", create_time: String(t0 + 100), sender: { id: "ou_b", name: "小李" }, parent_id: "om_old", root_id: "om_old" },
+      { message_id: "om_reply", msg_type: "text", content: "收到", create_time: String(t0 + 100), sender: { id: "ou_b", name: "小李" }, reply_to: "om_old" },
       { message_id: "om_img", msg_type: "image", content: "![Image](img_k1)", create_time: String(t0 + 200), sender: { id: "ou_a", name: "小王" } },
     ];
     const history = [

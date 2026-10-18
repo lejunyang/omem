@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join, resolve } from "node:path";
+import { join, posix, resolve, win32 } from "node:path";
 import { omemHome } from "./config.ts";
 
 /**
@@ -22,8 +22,8 @@ export type AutostartPlan = {
   platform: NodeJS.Platform;
   /** Files to write: path → content. */
   files: Record<string, string>;
-  /** Commands to run after writing, in order; failures of `optional` ones are reported, not fatal. */
-  commands: { argv: string[]; optional?: boolean; why?: string }[];
+  /** Commands to run after writing, in order; failures of `optional` ones are reported, not fatal; `quiet` ones (cleanup that may find nothing) not even reported. */
+  commands: { argv: string[]; optional?: boolean; quiet?: boolean; why?: string }[];
   /** Where it is registered, for messages. */
   where: string;
 };
@@ -41,12 +41,14 @@ export function autostartPlan(opts: { home: string; node: string; entry: string;
   const platform = opts.platform ?? process.platform;
   const userHome = opts.userHome ?? homedir();
   const label = autostartLabel(opts.home);
-  const dir = join(opts.home, "service");
-  const log = join(dir, "logs", "autostart.log");
+  // Paths for the target system, not the one planning (tests plan for every platform).
+  const pj = platform === "win32" ? win32.join : posix.join;
+  const dir = pj(opts.home, "service");
+  const log = pj(dir, "logs", "autostart.log");
   if (platform === "win32") {
-    const cmd = join(dir, "autostart.cmd");
-    const startup = join(process.env.APPDATA ?? join(userHome, "AppData", "Roaming"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup");
-    const vbs = join(startup, `${label}.vbs`);
+    const cmd = pj(dir, "autostart.cmd");
+    const startup = pj(process.env.APPDATA ?? pj(userHome, "AppData", "Roaming"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup");
+    const vbs = pj(startup, `${label}.vbs`);
     return {
       platform,
       where: vbs,
@@ -63,7 +65,7 @@ export function autostartPlan(opts: { home: string; node: string; entry: string;
       commands: [],
     };
   }
-  const sh = join(dir, "autostart.sh");
+  const sh = pj(dir, "autostart.sh");
   const script = [
     "#!/bin/sh",
     `export PATH=${shq(opts.path)}`,
@@ -73,7 +75,7 @@ export function autostartPlan(opts: { home: string; node: string; entry: string;
   ].join("\n");
   if (platform === "darwin") {
     const id = `dev.${label}`;
-    const plist = join(userHome, "Library", "LaunchAgents", `${id}.plist`);
+    const plist = pj(userHome, "Library", "LaunchAgents", `${id}.plist`);
     const uid = String(process.getuid?.() ?? "");
     return {
       platform,
@@ -94,13 +96,13 @@ export function autostartPlan(opts: { home: string; node: string; entry: string;
 `,
       },
       commands: [
-        { argv: ["launchctl", "bootout", `gui/${uid}/${id}`], optional: true, why: "卸下旧的" },
+        { argv: ["launchctl", "bootout", `gui/${uid}/${id}`], optional: true, quiet: true, why: "卸下旧的" },
         { argv: ["launchctl", "bootstrap", `gui/${uid}`, plist] },
       ],
     };
   }
   // Linux and other Unix.
-  const unit = join(userHome, ".config", "systemd", "user", `${label}.service`);
+  const unit = pj(userHome, ".config", "systemd", "user", `${label}.service`);
   if (opts.systemd ?? hasUserSystemd()) {
     return {
       platform,
@@ -163,7 +165,7 @@ export function enableAutostart(home: string, node: string, entry: string) {
   for (const c of plan.commands) {
     const r = run(c.argv);
     if (!r.ok && !c.optional) throw new Error(`${c.argv.join(" ")} 失败：${r.out}`);
-    if (!r.ok) notes.push(`${c.why ?? c.argv.join(" ")}没有设置成功（${c.argv.join(" ")}：${r.out.split("\n")[0]}）`);
+    if (!r.ok && !c.quiet) notes.push(`${c.why ?? c.argv.join(" ")}没有设置成功（${c.argv.join(" ")}：${r.out.split("\n")[0]}）`);
   }
   if (plan.where === "crontab @reboot") {
     const sh = Object.keys(plan.files)[0];
