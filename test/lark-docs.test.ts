@@ -237,6 +237,21 @@ describe("feishu docs as originals", () => {
     expect(missingDocs(app, { all: true }).map((m) => m.url)).toEqual([`${ORIGIN}/docx/B`]);
   });
 
+  it("gives up at once on deleted docs and links that are not docs, without telling", async () => {
+    const app = testApp();
+    setLarkCliForTests(async (args) => {
+      const token = args[args.indexOf("--doc") + 1].split("/").pop();
+      if (token === "Main") return { ok: true, data: { document: { revision_id: 1, content: `<title>周报</title>\n${ORIGIN}/docx/Gone ${ORIGIN}/wiki/Sheet ${ORIGIN}/docx/Locked` } } };
+      if (token === "Gone") throw new Error("飞书 CLI：api unknown 3380003 Document page has been deleted.");
+      if (token === "Sheet") throw new Error("飞书 CLI：api unknown 3380002 Unsupported document type 'sheet'. Only docx is supported.");
+      throw new Error("飞书 CLI：api unknown 3380004 No permission to operate on this document");
+    });
+    await importLarkDocument(app, "personal", `${ORIGIN}/docx/Main`);
+    expect(missingDocs(app).map((m) => m.url)).toEqual([`${ORIGIN}/docx/Locked`]);
+    expect(missingDocs(app, { all: true }).filter((m) => m.gaveUp === "gone")).toHaveLength(2);
+    expect(all(app.db, "select title from notifications").map((n: any) => n.title)).toEqual(["《周报》：链接的飞书文档中有 1 篇读不到"]);
+  });
+
   it("dismisses unreadable docs on request", async () => {
     const app = testApp();
     fakeCli({ Main: { title: "周报", content: `${ORIGIN}/docx/A ${ORIGIN}/docx/B` }, A: "denied", B: "denied" });

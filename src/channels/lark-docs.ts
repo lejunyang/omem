@@ -520,8 +520,16 @@ type Missing = {
   tries: number;
   lastTry: number;
   /** No more retries: too many failures, or the owner said not to bother. */
-  gaveUp?: "tries" | "owner";
+  gaveUp?: "tries" | "owner" | "gone";
 };
+
+/**
+ * Failures that retrying cannot fix: the doc was deleted or does not exist, or the link is not a docx
+ * (a sheet or bitable inside the wiki, an old-style /docs/ link lark-cli cannot read). Codes from lark-cli.
+ */
+export function isPermanent(error: string) {
+  return /\b338000[23]\b|deleted|not found|Unsupported document type|unsupported --doc input/i.test(error);
+}
 
 function missingList(app: App): Missing[] {
   return json(one<{ value: string }>(app.db, "select value from kv where key = ?", MISSING_KEY)?.value, []);
@@ -558,9 +566,11 @@ function recordMissing(app: App, spaceId: string, parentId: string, parentTitle:
       m.error = f.error;
       continue;
     }
-    const added = { ...f, spaceId, parents: [parentId], parentTitle, since: new Date().toISOString(), tries: 0, lastTry: Date.now() };
+    const gone = isPermanent(f.error);
+    const added: Missing = { ...f, spaceId, parents: [parentId], parentTitle, since: new Date().toISOString(), tries: 0, lastTry: Date.now(), ...(gone ? { gaveUp: "gone" as const } : {}) };
     list.push(added);
-    fresh.push(added);
+    // Deleted docs and links lark-cli cannot read as docs stay Feishu links without a word: nothing the owner can do.
+    if (!gone) fresh.push(added);
   }
   saveMissing(app, list);
   return fresh;
@@ -595,6 +605,8 @@ export async function retryMissingDocs(app: App, opts: { force?: boolean } = {})
   const still: Missing[] = [];
   let tried = 0;
   for (const m of list) {
+    // Recorded before failures were told apart.
+    if (!m.gaveUp && isPermanent(m.error)) m.gaveUp = "gone";
     // Asked explicitly: also the ones given up after too many tries, but never the ones the owner dismissed.
     if (m.gaveUp === "owner" || (!opts.force && (m.gaveUp || m.tries >= docRetryMax || Date.now() - (m.lastTry ?? 0) < docRetryHours * 3600_000))) {
       still.push(m);
@@ -608,7 +620,8 @@ export async function retryMissingDocs(app: App, opts: { force?: boolean } = {})
       for (const parent of m.parents) relinkParent(app, parent, m.url, r.id, row?.title ?? m.title);
     } catch (e) {
       const tries = m.tries + 1;
-      still.push({ ...m, tries, error: (e as Error).message.slice(0, 200), lastTry: Date.now(), ...(tries >= docRetryMax ? { gaveUp: "tries" as const } : {}) });
+      const error = (e as Error).message.slice(0, 200);
+      still.push({ ...m, tries, error, lastTry: Date.now(), ...(isPermanent(error) ? { gaveUp: "gone" as const } : tries >= docRetryMax ? { gaveUp: "tries" as const } : {}) });
     }
   }
   saveMissing(app, still);
@@ -860,7 +873,12 @@ export function larkDocsStatus(app: App) {
     mediaFiles: media.size,
     missingMediaFiles: [...media].filter((f) => !existsSync(join(app.filesDir, f))).length,
     failedMedia,
-    unreadableLinks: { retrying: missing.filter((m) => !m.gaveUp).length, gaveUp: missing.filter((m) => m.gaveUp).length },
+    unreadableLinks: {
+      retrying: missing.filter((m) => !m.gaveUp).length,
+      gaveUpAfterTries: missing.filter((m) => m.gaveUp === "tries").length,
+      dismissed: missing.filter((m) => m.gaveUp === "owner").length,
+      deletedOrNotDocx: missing.filter((m) => m.gaveUp === "gone").length,
+    },
     updateChecks: { dueNow: metas.filter((m) => docDue(m, Date.now(), steps)).length, neverChecked: metas.filter((m) => !m.checkedAt).length },
     refresh: refreshProgress(app),
   };
