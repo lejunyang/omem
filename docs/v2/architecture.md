@@ -183,6 +183,11 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 回复只取最后一次工具调用之后的文字（中途的“我先…”留在运行事件里，不再拼进回答）；发往聊天的本机文件路径改写成“仓库 · 路径:行号”，生成的文件作为附件发、在话题里时附件也发进话题 | 已实现，测试覆盖；2026-10-20 | `src/agents/types.ts` 的 `replyFromSegments`、`src/channels/common.ts` 的 `localPathLinks`、`tools.ts` 的 `larkPost` |
 | 运行详情：所在会话（飞书话题 / 工作会话 / 普通会话）、同一会话的各轮、多 Agent 工作的各轮、由哪次运行发起；任务全文可展开 | 已实现；2026-10-20 | `src/server/http.ts` 的 `runContext`、`web/src/views/Runs.vue` |
 | 外部只读访问（分享链接、自定义域名） | 设计，未实现 | [external-access.md](external-access.md) |
+| 通知策略：只对未读 / 紧急 / 临期 / 未处理推送（飞书已读状态经 lark-cli 查询），22:00–09:00 静默（本人设定的定时提醒除外）；巡检对能自己查的事先查再报，并可直接开话题推进 | 已实现；2026-10-20 | `src/core/config.ts` 的 notify、`lark-read.ts`、`roles/heartbeat.md` |
+| 飞书思考过程原生气泡（`message_cot` + AG-UI 事件）：可折叠、工具调用列表、最新调用加载中、结束自动完成 | 已实现；2026-10-20（botmux 方案） | `src/channels/lark-cot.ts` |
+| 前端路由 chunk 空闲预加载、菜单 hover 预取 | 已实现；2026-10-20 | `web/src/preload.ts`、`main.ts` |
+| Agent 学习分层：档案=身份（Agent 写入限长）、技能=做法、档案记忆=偏好/经验（scope=agent） | 已实现；2026-10-20 | `src/agents/specs.ts`、`roles/_common.md` |
+| 记忆召回与命中统计（recall 落账，回答/写入引用计为命中），网页“记忆 → 召回”治理 | 已实现；2026-10-20 | `src/memory/recall-stats.ts`、`web/src/views/Memory.vue` |
 | 新材料整理（记忆/事项/页面/通知） | 已实现；事项发现与写权限分离，只读跨空间进展经提案复核 | `roles/ingest.md` |
 | 事项来源与历史关联维护 | 来源 merge / replace / remove、事件通知快照、整张卡片 URL 去重、受限维护审计与原卡片刷新；来源区与网页“相关依据”显示原件标题和所引行的摘要（`refExcerpt`），不再是“原文1/原文2”；假客户端回归覆盖 | `src/items/`、`docs/v2/item-maintenance.md` |
 | 记忆质量：写入检查（免责式、超长、转述原件、事件复述、助理汇报、运行流水、无来源、重复）退回并说明原因；每小时盲评复核（保留/改写/撤回，可用不同模型）；对比运行（其他模型的写入只记录）；按模型统计；记忆标签与档案专属记忆 | 已实现，测试覆盖；规则用一批真实运行产生的 Agent 记忆校准过；复核与对比运行待真实模型验收 | `src/memory/quality.ts`、`roles/memory-reviewer.md`、网页“记忆 → 质量”、`omem memories` |

@@ -11,10 +11,12 @@ import { addNotificationSink } from "../core/notify.ts";
 import { findSpace } from "../core/spaces.ts";
 import { identitiesOf, OWNER, resolveIdentity, userName } from "../core/users.ts";
 import { importFile } from "../sources/import.ts";
+import { inQuietHours } from "../core/notify.ts";
 import { appendToSource, findSourceByUri, sourceText } from "../sources/store.ts";
 import { answerFromChannel, resolveCitations } from "./common.ts";
 import { registerCodeProgress, startCodeProgress } from "./lark-code-progress.ts";
 import { startProgress } from "./lark-progress.ts";
+import { cotAvailable, cotEvent, finishCot, setCotSdk, startCot } from "./lark-cot.ts";
 import { handleCardAction } from "./lark-actions.ts";
 import { sendLark, setLarkClient } from "./lark-send.ts";
 import { larkAppSecret } from "./lark-setup.ts";
@@ -151,6 +153,7 @@ export async function startLarkBot(app: App) {
     console.warn("[omem] 读取飞书机器人信息失败：", (e as Error).message);
   }
   setLarkClient(client, botOpenId);
+  setCotSdk(client);
   registerCodeProgress(app);
 
   // Names for people in groups (needs contact read permission; falls back to the id).
@@ -245,6 +248,20 @@ export async function startLarkBot(app: App) {
       ? (kv(app, "lark_owner_chat") ? { chatId: kv(app, "lark_owner_chat")! } : cfg.ownerOpenId ? { userId: cfg.ownerOpenId } : null)
       : { userId: identitiesOf(app, n.userId).find((i) => i.channel === "lark")?.external_id ?? "" };
     if (!target || (!("userId" in target) && !("chatId" in target)) || ("userId" in target && !target.userId)) return;
+    // Push policy: non-urgent nudges stay in-app at night; and when the triggering message is
+    // already read by the owner, the change has been seen — no ping (urgent always pushes).
+    if (n.urgency !== "urgent" && !n.scheduled && inQuietHours(app)) return;
+    if (app.config.notify.onlyUnread && n.sourceRefs?.length) {
+      const { isUnread } = await import("./lark-read.ts");
+      const checks = await Promise.all(
+        n.sourceRefs
+          .map((r) => /^msg:([A-Za-z0-9_-]+)/.exec(r)?.[1])
+          .filter((x): x is string => !!x)
+          .map((id) => isUnread(app, id).catch(() => false)),
+      );
+      // Suppress only when the read check actually ran and every source is known read.
+      if (checks.length && checks.every((v) => v === false)) return;
+    }
     // Internal citations/routes cannot be opened in Feishu: real originals become links, the rest plain text.
     const body = resolveCitations(app, n.body ?? "");
     if (n.entity === "item" && n.entityId) {
@@ -367,6 +384,18 @@ export async function startLarkBot(app: App) {
         {
           onStart: async (id) => {
             runId = id;
+            // Native collapsible thinking bubble (message_cot) when the tenant allows it;
+            // the ordinary "处理中" card remains the fallback until the bubble proves usable.
+            if (cotAvailable()) {
+              startCot(app, id, { chatId: m.chatId, originMessageId: m.messageId, inThread: !!m.topicId });
+              const listener = (e: { type: string; runId?: string; event?: { type: string; data: unknown } }) => {
+                if (e.runId !== id || !e.event) return;
+                cotEvent(app, id, { type: e.event.type, data: e.event.data });
+              };
+              app.events.on("event", listener);
+              const t = setTimeout(() => app.events.off("event", listener), 30 * 60_000);
+              t.unref();
+            }
             progress = await startProgress(app, { messageId: m.messageId, inThread: !!m.topicId }, id).catch(() => null);
           },
           onMerged: async () => {
@@ -390,11 +419,13 @@ export async function startLarkBot(app: App) {
         },
       );
       if (answer === null) return;
+      if (runId) finishCot(app, runId, true);
       const p = progress as Awaited<ReturnType<typeof startProgress>> | null;
       const sentId = p ? (await p.finish(answer), p.messageId) : (await reply(m.chatId, answer, m.messageId, !!m.topicId)).messageId;
       // A later quote of this reply reads back as an empty card; this maps it to the answer.
       if (runId && sentId) run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?) where run_id = ? and role = 'assistant'", sentId, runId);
     } catch (e) {
+      if (runId) finishCot(app, runId, false);
       const p = progress as Awaited<ReturnType<typeof startProgress>> | null;
       if (p) await p.fail((e as Error).message);
       else throw e;

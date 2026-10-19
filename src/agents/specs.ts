@@ -103,6 +103,15 @@ export function saveAgentSpec(app: App, input: Partial<z.input<typeof agentSpecS
   const merged = agentSpecSchema.parse({ ...(prev ?? {}), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)) });
   const body = (prompt ?? prev?.prompt ?? "").trim();
   if (!body) throw new HttpError(400, "需要写 system prompt（正文）");
+  // The spec is identity only. Agents used to dump a whole investigation into the prompt.
+  // Skills (reusable procedure) and scope=agent memories (preferences/experience) are the
+  // right place; catch the obvious case and redirect rather than silently bloating the spec.
+  if (actor === "agent" && body.length > 4000) {
+    throw new HttpError(
+      422,
+      "档案正文只写稳定的职责和工作原则（建议几百字以内）。可复用的步骤请用 save_skill，偏好、风格和这次的结论用 remember（scope=agent）；确需保留长篇身份说明时，请本人在网页里直接编辑。",
+    );
+  }
   const meta: Record<string, unknown> = { ...merged };
   delete meta.name;
   for (const [k, v] of Object.entries(meta)) if (v === undefined || (Array.isArray(v) && !v.length) || (v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length)) delete meta[k];

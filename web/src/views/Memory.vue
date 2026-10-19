@@ -8,7 +8,7 @@ import UiSelect from "../components/UiSelect.vue";
 import { promptDialog } from "../lib/dialog";
 import { fmtTime, memoryKindLabel, openCitation, state, statusLabel, toast } from "../store";
 
-const tab = ref<"list" | "quality">("list");
+const tab = ref<"list" | "quality" | "recall">("list");
 const memories = ref<Memory[]>([]);
 const loading = ref(false);
 const q = ref("");
@@ -122,6 +122,20 @@ async function loadQuality() {
 watch(tab, (t) => t === "quality" && loadQuality());
 watch(days, loadQuality);
 const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "—");
+
+// ---- recall effectiveness --------------------------------------------------------
+type RecallStats = { total: number; recalled: number; neverRecalled: number; totalRecalls: number; usedRecalls: number; distinctRecalls: number; distinctUsed: number };
+type RecallRow = { id: string; spaceId: string; kind: string; subject: string; content: string; status: string; agent: string | null; updatedAt: string; recalls: number; used: number; lastRecalledAt: string | null };
+const recall = ref<{ stats: RecallStats; memories: RecallRow[] } | null>(null);
+const recallSort = ref<"recalls" | "never" | "unused" | "recent">("recalls");
+async function loadRecall() {
+  const p = new URLSearchParams({ sort: recallSort.value });
+  if (scope.value === "space") p.set("space", state.space);
+  recall.value = await get(`/api/memory-recall-stats?${p}`);
+}
+watch(tab, (t) => t === "recall" && loadRecall());
+watch(recallSort, loadRecall);
+const effectiveness = (m: RecallRow) => (m.recalls ? Math.round((m.used / m.recalls) * 100) : null);
 const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract" ? "danger" : v === "rewrite" ? "warn" : "");
 </script>
 
@@ -133,7 +147,7 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
         <p>助理记住的事实、约定、偏好和经验。更正时旧版本不会消失；新记忆写入前会被检查，之后由复核模型保留、改写或撤回。</p>
       </div>
       <span class="spacer" />
-      <UiSegmented v-model="tab" aria-label="视图" :options="[{ value: 'list', label: '记忆' }, { value: 'quality', label: '质量' }]" />
+      <UiSegmented v-model="tab" aria-label="视图" :options="[{ value: 'list', label: '记忆' }, { value: 'recall', label: '召回' }, { value: 'quality', label: '质量' }]" />
       <button v-if="tab === 'list'" class="btn primary" @click="adding = !adding"><Icon name="plus" :size="15" />添加</button>
     </div>
 
@@ -220,6 +234,41 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
         </div></template>
         </template>
       </VirtualList>
+    </template>
+
+    <template v-else-if="tab === 'recall'">
+      <div v-if="!recall" class="skeleton"><div v-for="i in 4" :key="i" class="sk-line" /></div>
+      <template v-else>
+        <div class="row wrap qhead">
+          <span class="badge ok">记忆 {{ recall.stats.total }} 条</span>
+          <span class="badge">被召回过 {{ recall.stats.recalled }}</span>
+          <span class="badge warn">从未召回 {{ recall.stats.neverRecalled }}</span>
+          <span class="muted small">召回 {{ recall.stats.totalRecalls }} 次；其中真正用上 {{ recall.stats.usedRecalls }} 次（{{ pct(recall.stats.usedRecalls, recall.stats.totalRecalls) }}）</span>
+          <span class="spacer" />
+          <UiSegmented v-model="recallSort" size="sm" aria-label="排序" :options="[
+            { value: 'recalls', label: '召回最多' },
+            { value: 'unused', label: '召回未用' },
+            { value: 'never', label: '从未召回' },
+            { value: 'recent', label: '最近召回' },
+          ]" />
+        </div>
+        <p class="muted small">“用上”指该次运行的回答、消息或写入里引用了这条记忆。从未召回或召回了但从没用上的，是优先清理或改写的对象。</p>
+        <div class="table-wrap card">
+          <table class="rtable">
+            <thead><tr><th class="grow">记忆</th><th>类型</th><th>召回</th><th>用上</th><th>命中率</th><th>最近召回</th></tr></thead>
+            <tbody>
+              <tr v-for="m in recall.memories" :key="m.id">
+                <td class="grow"><router-link :to="`/memory`" class="ellipsis">{{ m.subject ? m.subject + "：" : "" }}{{ m.content }}</router-link><span v-if="m.agent" class="badge">{{ m.agent }} 专用</span></td>
+                <td>{{ memoryKindLabel[m.kind] ?? m.kind }}</td>
+                <td>{{ m.recalls }}</td>
+                <td :class="{ warn: m.recalls && !m.used }">{{ m.used }}</td>
+                <td>{{ effectiveness(m) === null ? "—" : effectiveness(m) + "%" }}</td>
+                <td class="muted small">{{ m.lastRecalledAt ? fmtTime(m.lastRecalledAt) : "从未" }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
     </template>
 
     <template v-else>
@@ -442,6 +491,45 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
 .qtable .model {
   font-family: var(--mono);
   font-size: 12.5px;
+}
+/* Recall list: reuse the quality table look, but wrap the memory text. */
+.rtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  table-layout: fixed;
+}
+.rtable th,
+.rtable td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.rtable th {
+  font-weight: 600;
+  color: var(--ink-2);
+  background: var(--sunken);
+  white-space: nowrap;
+}
+.rtable tr:last-child td {
+  border-bottom: 0;
+}
+.rtable td.grow,
+.rtable th.grow {
+  width: 52%;
+}
+.rtable td.grow .ellipsis {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: inherit;
+}
+.rtable td:not(.grow) {
+  white-space: nowrap;
 }
 .cmp {
   margin-bottom: 12px;

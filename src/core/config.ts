@@ -287,6 +287,24 @@ export const configSchema = z.object({
       defaultSpace: z.string().default("personal"),
     })
     .default({ enabled: false, tokenEnv: "OMEM_TELEGRAM_TOKEN", defaultSpace: "personal" }),
+  /**
+   * When omem may push to chat channels. Defaults:
+   * - quiet hours: nothing outside urgent/overdue 22:00–09:00 local;
+   * - onlyUnread: when the triggering Feishu message is known to be read by the owner, skip it;
+   * - minItemAgeMinutes: an item-based nudge waits a few minutes unless it is urgent/overdue,
+   *   so the owner acting right away is not told about it afterwards;
+   * - proactivelyInvestigate: the heartbeat may answer a question it can answer itself and
+   *   open the discussion as a topic with the findings.
+   */
+  notify: z
+    .object({
+      onlyUnread: z.boolean().default(true),
+      minItemAgeMinutes: z.number().int().min(0).default(5),
+      quietStart: z.number().int().min(0).max(23).default(22),
+      quietEnd: z.number().int().min(0).max(23).default(9),
+      proactivelyInvestigate: z.boolean().default(true),
+    })
+    .default({ onlyUnread: true, minItemAgeMinutes: 5, quietStart: 22, quietEnd: 9, proactivelyInvestigate: true }),
   /** OneBot v11 forward WebSocket: QQ (NapCat / LLOneBot / Lagrange) and compatible WeChat bridges. */
   onebot: z
     .object({

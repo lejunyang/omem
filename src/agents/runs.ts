@@ -294,6 +294,16 @@ function kick(app: App) {
       .then((out) => {
         flushText(app, r.id);
         if (out) setRunOutput(app, r.id, out);
+        // Recall accounting: memories surfaced by recall and actually referenced by this run
+        // (its answer, messages, tool writes) count as used.
+        try {
+          const recalled = all<{ memory_id: string }>(app.db, "select distinct memory_id from memory_recalls where run_id = ? and used = 0", r.id).map((x) => x.memory_id);
+          if (recalled.length) {
+            void import("../memory/recall-stats.ts").then(({ usedMemoryIds, markUsedRuns }) => {
+              markUsedRuns(app, usedMemoryIds(app, r.id, recalled));
+            });
+          }
+        } catch {}
         // Multi-agent work: a specialist round schedules its digester; agent-followup is terminal for the chain.
         if ((r.kind === "agent" || r.kind === "agent-followup") && (r.input as { agentWorkId?: string }).agentWorkId) {
           import("./agent-work.ts")

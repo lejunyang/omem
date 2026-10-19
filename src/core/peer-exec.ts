@@ -84,7 +84,7 @@ function restartSoon(app: App) {
 }
 
 const id = z.string().regex(/^[\w-]{1,80}$/);
-const LARK_READ = ["+chat-list", "+chat-messages-list", "+threads-messages-list", "+messages-mget", "+messages-search", "+chat-search"] as const;
+const LARK_READ = ["+chat-list", "+chat-messages-list", "+threads-messages-list", "+messages-mget", "+messages-search", "+chat-search", "+messages-read-status"] as const;
 
 type Command = { description: string; schema: z.ZodTypeAny; run: (app: App, args: any) => Promise<unknown> | unknown };
 
@@ -136,8 +136,9 @@ export const peerCommands: Record<string, Command> = {
       if (a.start) args.push("--start", a.start);
       if (a.end) args.push("--end", a.end);
       if (a.order) args.push("--order", a.order);
-      if (a.command !== "+messages-mget") args.push("--page-size", String(a.page_size));
-      if (!a.reactions && a.command !== "+chat-list" && a.command !== "+chat-search") args.push("--no-reactions");
+      const rawOnly = a.command === "+messages-read-status";
+      if (a.command !== "+messages-mget" && !rawOnly) args.push("--page-size", String(a.page_size));
+      if (!a.reactions && a.command !== "+chat-list" && a.command !== "+chat-search" && !rawOnly) args.push("--no-reactions");
       args.push("--as", "user", "--format", "json");
       return (await import("../channels/lark-cli.ts")).larkCli(args);
     },

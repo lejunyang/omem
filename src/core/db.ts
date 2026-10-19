@@ -504,6 +504,20 @@ const migrations: string[] = [
   update runs set lane = (select json_extract(c.settings, '$.mergedInto') from conversations c where c.id = runs.lane)
     where lane in (select id from conversations where json_extract(settings, '$.mergedInto') is not null) and status not in ('queued', 'running');
   `,
+  // Recall accounting: every time a memory is returned by recall, and whether the run used it.
+  // Lets the owner see which memories are effective vs never recalled.
+  `
+  create table memory_recalls (
+    id integer primary key autoincrement,
+    memory_id text not null,
+    run_id text,
+    agent_profile text,
+    agent_spec text,
+    used integer not null default 0,
+    at text not null
+  );
+  create index memory_recalls_mem on memory_recalls(memory_id, at);
+  `,
 ];
 
 export type Db = DatabaseSync;

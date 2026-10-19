@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { all, one } from "../src/core/db.ts";
+import { all, one, run } from "../src/core/db.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { checkMemory, memoryQualityStats, unreviewedMemories } from "../src/memory/quality.ts";
 import { getMemory, listMemories, remember } from "../src/memory/store.ts";
 import { upsertSource } from "../src/sources/store.ts";
+import { createRun } from "../src/agents/runs.ts";
 import { testApp } from "./helpers.ts";
 
 const ctxFor = (app: ReturnType<typeof testApp>, extra: Record<string, unknown> = {}) =>
@@ -104,5 +105,31 @@ describe("shadow runs and review", () => {
     expect(now.map((x) => x.content).sort()).toEqual(["小王负责项目 A。", "项目 A 在周四评审。", "项目 A 预算 120 元。"].sort());
     expect(now.every((x) => x.reviewVerdict === "keep" && x.tags?.includes("项目A"))).toBe(true);
     expect(getMemory(app, m.id)).toMatchObject({ status: "superseded", reviewVerdict: "rewrite" });
+  });
+});
+
+import { recordRecalls, recallStats, memoriesWithRecall, usedMemoryIds, markUsedRuns } from "../src/memory/recall-stats.ts";
+
+describe("recall accounting", () => {
+  it("counts recalls and whether a run used the memory", async () => {
+    const app = testApp();
+    const m1 = remember(app, { spaceId: "personal", kind: "fact", content: "事实 A：用于回答的。", sourceRefs: [] });
+    const m2 = remember(app, { spaceId: "personal", kind: "fact", content: "事实 B：召回了但没用。", sourceRefs: [] });
+    const r1 = createRun(app, { kind: "ask", spaceId: "personal", title: "t", input: {} });
+    recordRecalls(app, [m1.id, m2.id], { runId: r1.id, profile: "p", spec: undefined });
+    // run 1 references m1 in its output
+    run(app.db, "update runs set output=? where id=?", JSON.stringify({ answer: `参考 ${m1.id}` }), r1.id);
+    markUsedRuns(app, usedMemoryIds(app, r1.id, [m1.id, m2.id]));
+    const s = recallStats(app);
+    expect(s.total).toBe(2);
+    expect(s.recalled).toBe(2);
+    expect(s.usedRecalls).toBe(1);
+    const rows = memoriesWithRecall(app, { sort: "unused" });
+    const a = rows.find((x) => x.id === m1.id)!;
+    const b = rows.find((x) => x.id === m2.id)!;
+    expect(a.recalls).toBe(1);
+    expect(a.used).toBe(1);
+    expect(b.used).toBe(0);
+    app.db.close();
   });
 });

@@ -394,6 +394,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return listMemories(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, tag: o.tag, review: o.review, limit: 5000 });
   });
   server.get("/api/memory-tags", async (req) => memoryTags(app, (req.query as { space?: string }).space));
+  // Recall/effectiveness accounting for memory governance.
+  server.get("/api/memory-recall-stats", async (req) => {
+    const o = q(z.object({ space: z.string().optional(), includeInactive: z.coerce.boolean().optional(), sort: z.enum(["recalls", "never", "unused", "recent"]).optional() }), req.query);
+    const { recallStats, memoriesWithRecall } = await import("../memory/recall-stats.ts");
+    return { stats: recallStats(app, { spaceId: o.space, includeInactive: o.includeInactive }), memories: memoriesWithRecall(app, { spaceId: o.space, sort: o.sort }) };
+  });
   // Quality per backend/model, recent write-time rejections, and side-by-side comparison runs.
   server.get("/api/memory-quality", async (req) => {
     const days = Number((req.query as { days?: string }).days ?? 30) || 30;

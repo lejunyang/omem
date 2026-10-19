@@ -7,6 +7,37 @@ import { HttpError, json, newId, now } from "./util.ts";
 
 export type NotifyAction = { label: string; action: string; style?: "primary" | "danger" | "default" };
 
+/** normal: respect quiet hours and read state; urgent: pushes even at night; silent: in-app only. */
+export type NotifyUrgency = "normal" | "urgent" | "silent";
+
+/**
+ * Channel delivery policy, registered per channel. Returning false keeps the
+ * notification in the in-app list but skips the push (e.g. the owner already
+ * read the triggering Feishu message, or it is night for a non-urgent nudge).
+ */
+export type ChannelGate = (n: Notification) => Promise<boolean> | boolean;
+const gates = new Map<string, ChannelGate>();
+export function registerNotificationGate(channel: string, gate: ChannelGate) {
+  gates.set(channel, gate);
+}
+export async function channelAllows(channel: string, n: Notification) {
+  const g = gates.get(channel);
+  return g ? g(n) : true;
+}
+
+/** Item nudge policy shared by roles and reminder delivery. */
+export function notifyPolicy(app: App) {
+  return app.config.notify;
+}
+export function isUrgent(n: Notification) {
+  return n.urgency === "urgent";
+}
+export function inQuietHours(app: App, at = new Date()) {
+  const h = at.getHours();
+  const { quietStart, quietEnd } = app.config.notify;
+  return quietStart > quietEnd ? h >= quietStart || h < quietEnd : h >= quietStart && h < quietEnd;
+}
+
 export type Notification = {
   id: string;
   at: string;
@@ -22,6 +53,9 @@ export type Notification = {
   eventId?: number;
   runId?: string | null;
   actions?: NotifyAction[];
+  urgency?: NotifyUrgency;
+  /** An explicitly scheduled reminder (item remind_at): fires at its time even in quiet hours. */
+  scheduled?: boolean;
 };
 
 type Sink = (n: Notification) => Promise<void> | void;
@@ -34,11 +68,11 @@ export function addNotificationSink(sink: Sink) {
 /** Notify a person (the owner by default): stored in-app and pushed to the channels that know them. */
 export function notify(
   app: App,
-  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null },
+  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean },
 ) {
   const userId = input.userId ?? "owner";
   let sourceRefs = input.sourceRefs ?? [];
-  if (input.entityId) {
+if (input.entityId) {
     const item = getItem(app, input.entityId);
     if (item.userId !== userId || !canWrite(app, userId, item.spaceId)) throw new HttpError(403, "不能为此用户通知该事项");
     const event = input.eventId === undefined
@@ -63,9 +97,11 @@ export function notify(
     link: input.link ?? null,
     readAt: null,
     userId: input.userId ?? "owner",
+    urgency: input.urgency ?? "normal",
+    ...(input.scheduled ? { scheduled: true } : {}),
     ...(input.entityId ? { entity: input.entity ?? "item", entityId: input.entityId, actions: input.actions ?? [] } : {}),
   };
-  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId }));
+  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, urgency: n.urgency, scheduled: n.scheduled }));
   app.emit({ type: "notification", id: n.id, title: n.title, body: n.body, link: n.link });
   for (const sink of sinks) Promise.resolve(sink(n)).catch((e) => console.warn("[omem] 通知发送失败", e));
   return n;

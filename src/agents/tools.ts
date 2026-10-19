@@ -505,7 +505,9 @@ def({
 def({
   name: "save_agent",
   description:
-    "新建或修改 Agent 档案：一个专门做某类事的 Agent（system prompt、后端与模型、可用的 omem 工具、额外 MCP 服务、技能、工作目录、AGENTS.md 式约定）。本人明确要求时直接建；你自己觉得有用时用 draft=true 起草，等本人 /approve。",
+    "新建或修改 Agent 档案的**身份**：它做什么、什么时候交给它（description）、后端与模型、可用的 omem 工具、额外 MCP、技能名单、工作目录。档案正文（system prompt）只写稳定的职责和工作原则，保持简短。"
+    + " 不要把单次任务的过程、查到的资料、临时结论写进档案：可复用的步骤用 save_skill（本人可按仓库/场景教它），偏好、风格、经验和“这次怎么做”的结论用 remember（scope=agent 的经验/偏好只有该档案看得到，会随工作积累）。"
+    + " 本人明确要求改身份时直接改；你自己觉得有用时用 draft=true 起草，等本人 /approve。",
   schema: z.object({
     name: z.string().describe("小写字母、数字、连字符"),
     description: z.string().optional().describe("做什么、什么时候该交给它（用于自动挑选）"),
@@ -698,6 +700,12 @@ def({
     // An agent spec's own procedures are for that spec; other specs do not see them.
     if (ctx.spec) mems = mems.filter((m) => !m.agent || m.agent === ctx.spec);
     if (!mems.length) return "没有相关记忆。";
+    // Recall accounting (best effort): which memories surfaced for this run, so their value
+    // can be measured. Marking "used" happens when the run finishes (see runs worker).
+    try {
+      const { recordRecalls } = await import("../memory/recall-stats.ts");
+      recordRecalls(ctx.app, mems.map((m) => m.id), { runId: ctx.runId, profile: ctx.agentProfile, spec: ctx.spec });
+    } catch {}
     return mems
       .map((m) => {
         const chain = a.include_history && (m.supersedes || m.supersededBy) ? memoryHistory(ctx.app, m.id) : [];
@@ -1472,6 +1480,7 @@ def({
     entity_id: z.string().optional().describe("关联事项 id：飞书会收到带 已处理/忽略 按钮的卡片"),
     source_refs: refs.describe("仅本次变化的来源；不传时兼容读取该事项最近事件，绝不读取全部历史来源"),
     event_id: z.number().int().positive().optional(),
+    urgency: z.enum(["normal", "urgent"]).optional().describe("紧急（高优先级、已过期、点名本人且限时）才传 urgent：可在免打扰时段推送。默认 normal"),
   }),
   handler: (ctx, a) => {
     if (a.entity_id) {
@@ -1491,6 +1500,7 @@ def({
       sourceRefs: a.source_refs,
       eventId: a.event_id,
       runId: ctx.runId,
+      ...(a.urgency ? { urgency: a.urgency } : {}),
     });
     return "已通知";
   },

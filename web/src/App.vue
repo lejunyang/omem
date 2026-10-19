@@ -9,6 +9,7 @@ import Skeleton from "./components/Skeleton.vue";
 import UiSelect from "./components/UiSelect.vue";
 import Icon from "./components/Icon.vue";
 import { kindLabel, loadSpaces, refreshUnread, state } from "./store";
+import { preloadRoute } from "./preload";
 
 const route = useRoute();
 const menu = ref(false);
@@ -75,14 +76,14 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
       <button class="search-btn" @click="state.palette = true"><Icon name="search" :size="16" /><span>搜索或提问</span><kbd>Ctrl K</kbd></button>
 
       <nav>
-        <router-link v-for="n in nav" :key="n.to" :to="n.to" class="nav" :class="{ on: isActive(n.to, n.exact) }"><Icon :name="n.icon" :size="17" />{{ n.label }}</router-link>
+        <router-link v-for="n in nav" :key="n.to" :to="n.to" class="nav" :class="{ on: isActive(n.to, n.exact) }" @mouseenter="preloadRoute(n.to)" @focus="preloadRoute(n.to)"><Icon :name="n.icon" :size="17" />{{ n.label }}</router-link>
       </nav>
 
       <div class="spacer" />
       <button class="btn capture" @click="state.capture = true"><Icon name="plus" :size="16" />保存材料<kbd>Ctrl J</kbd></button>
       <div class="foot row">
-        <router-link to="/notifications" class="btn ghost sm icon bell" title="通知"><Icon name="bell" :size="17" /><span v-if="state.unread" class="dot">{{ state.unread > 9 ? "9+" : state.unread }}</span></router-link>
-        <router-link to="/settings" class="btn ghost sm icon" title="设置"><Icon name="settings" :size="17" /></router-link>
+        <router-link to="/notifications" class="btn ghost sm icon bell" title="通知" @mouseenter="preloadRoute('/notifications')"><Icon name="bell" :size="17" /><span v-if="state.unread" class="dot">{{ state.unread > 9 ? "9+" : state.unread }}</span></router-link>
+        <router-link to="/settings" class="btn ghost sm icon" title="设置" @mouseenter="preloadRoute('/settings')"><Icon name="settings" :size="17" /></router-link>
         <button class="btn ghost sm icon" :title="`主题：${state.theme}`" @click="cycleTheme"><Icon :name="state.theme === 'dark' ? 'moon' : 'sun'" :size="17" /></button>
       </div>
     </aside>

@@ -138,3 +138,17 @@ describe("replies", () => {
     }
   });
 });
+
+describe("agent learning separation", () => {
+  it("keeps agent specs short: long procedural prompts are redirected to skills/memories", async () => {
+    const app = testApp();
+    saveAgentSpec(app, { name: "reviewer-z", description: "评审", prompt: "短身份：只做评审。", status: "active" }, "user");
+    const ctx: ToolContext = { app, runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: "owner", spec: "reviewer-z" };
+    const r = await callTool(ctx, "save_agent", { name: "reviewer-z", prompt: "x".repeat(4001) });
+    expect(r.isError).toBe(true);
+    expect(String(r.text)).toMatch(/save_skill/);
+    // The owner editing in the web UI is not limited.
+    expect(() => saveAgentSpec(app, { name: "reviewer-z", prompt: "y".repeat(4001) }, "user")).not.toThrow();
+    app.db.close();
+  });
+});
