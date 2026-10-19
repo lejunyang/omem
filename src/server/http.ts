@@ -495,7 +495,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const r = getRun(app, id);
     const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
     if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
-    return { run: r, events: runEvents(app, id, o.after ?? 0), children: listRuns(app, { parentId: id }), patches: r.kind === "code" ? codePatches(app, id) : undefined };
+    return { run: r, events: runEvents(app, id, o.after ?? 0), children: listRuns(app, { parentId: id }), patches: r.kind === "code" ? codePatches(app, id) : undefined, context: runContext(app, r) };
   });
   server.post("/api/runs/:id/cancel", async (req) => cancelRun(app, (req.params as { id: string }).id));
   server.post("/api/runs/:id/retry", async (req) => {
@@ -763,4 +763,53 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   app.baseUrl = `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${url.port}`;
   if (!opts.quiet) console.log(`omem 已启动：${app.baseUrl}${dist ? "" : "（未找到网页构建产物，仅 API）"}`);
   return server;
+}
+
+/**
+ * Where a run sits: the conversation it answers in (and whether that is a Feishu topic or a work
+ * session of a multi-agent task), the run that started it, and the rounds of the work it is part of.
+ */
+function runContext(app: App, r: ReturnType<typeof getRun>) {
+  const input = r.input as { conversationId?: string; threadId?: string; agentWorkId?: string; sourceRunId?: string };
+  const convId = input.conversationId ?? input.threadId ?? null;
+  const conv = convId
+    ? one<{ id: string; title: string; channel: string; external_id: string | null; parent_id: string | null; status: string }>(app.db, "select id, title, channel, external_id, parent_id, status from conversations where id = ?", convId)
+    : undefined;
+  const brief = (id: string | null | undefined) =>
+    id ? one<{ id: string; kind: string; title: string; status: string; created_at: string }>(app.db, "select id, kind, title, status, created_at from runs where id = ?", id) : undefined;
+  const parent = brief(r.parentId);
+  const workId = input.agentWorkId ?? ((r.output as { agentWork?: { askRunId?: string } }).agentWork?.askRunId === r.id ? r.id : undefined);
+  const work = workId ? (getRun(app, workId).output as { agentWork?: { title: string; workConversationId: string; rootConversationId: string; rounds: { runId: string; agent: string }[] } }).agentWork : undefined;
+  const conversation = conv
+    ? {
+        id: conv.id,
+        title: conv.title,
+        channel: conv.channel,
+        topic: !!conv.external_id?.includes("#"),
+        work: !!work && work.workConversationId === conv.id,
+        parentId: conv.parent_id,
+        parentTitle: conv.parent_id ? one<{ title: string }>(app.db, "select title from conversations where id = ?", conv.parent_id)?.title ?? null : null,
+        // Other turns in the same conversation: one line of work in Feishu is one conversation here.
+        turns: all<{ id: string; title: string; status: string; created_at: string }>(
+          app.db,
+          "select id, title, status, created_at from runs where kind = 'ask' and json_extract(input,'$.conversationId') = ? order by created_at",
+          conv.id,
+        ).map((x) => ({ id: x.id, title: x.title, status: x.status, createdAt: x.created_at })),
+      }
+    : null;
+  return {
+    conversation,
+    parent: parent ? { id: parent.id, kind: parent.kind, title: parent.title, status: parent.status } : null,
+    source: input.sourceRunId ? brief(input.sourceRunId) ?? null : null,
+    work: work
+      ? {
+          id: workId,
+          title: work.title,
+          rounds: work.rounds.map((x) => {
+            const b = brief(x.runId);
+            return { runId: x.runId, agent: x.agent, kind: b?.kind ?? "agent", status: b?.status ?? "queued", title: b?.title ?? "" };
+          }),
+        }
+      : null,
+  };
 }

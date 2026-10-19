@@ -40,7 +40,30 @@ export type AgentRequest = {
 export type AgentProbe = { agent: string; modes: string[]; options: { id: string; category: string | null; current: string | null; values: string[] }[] };
 /** Why a run failed; used to decide whether a fallback backend/model is worth trying. */
 export type AgentFailureKind = "queue" | "idle" | "rate-limit" | "other";
-export type AgentResult = { text: string; stopReason: string; sessionId?: string; agent: string; probe?: AgentProbe };
+export type AgentResult = {
+  /** Everything the agent said this turn, narration between tool calls included. */
+  text: string;
+  /** What it said after its last tool call: the reply to show (falls back to text). */
+  reply?: string;
+  stopReason: string;
+  sessionId?: string;
+  agent: string;
+  probe?: AgentProbe;
+};
+/** The part of an agent's output meant as the answer. */
+export const replyOf = (r: { text: string; reply?: string }) => (r.reply && r.reply.trim() ? r.reply : r.text);
+
+/**
+ * Agents narrate between tool calls ("我先核对…", "已查到…") and then write the answer. The
+ * narration has been shown as live progress; the reply is the text after the last tool call.
+ * A very short closing line after a final tool call ("已记下") keeps the segment before it.
+ */
+export function replyFromSegments(segments: string[]): string | undefined {
+  const parts = segments.map((x) => x.trim()).filter(Boolean);
+  if (parts.length < 2) return undefined;
+  const last = parts[parts.length - 1];
+  return last.length < 80 ? `${parts[parts.length - 2]}\n\n${last}` : last;
+}
 /** Error carrying a retryable classification (provider queue / rate limit / idle-after-queue). */
 export function agentRunError(message: string, kind: AgentFailureKind, queued = false): Error & { kind: AgentFailureKind; queued: boolean } {
   const e = new Error(message) as Error & { kind: AgentFailureKind; queued: boolean; name: string };

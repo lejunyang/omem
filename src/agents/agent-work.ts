@@ -123,6 +123,8 @@ export type AgentRoundInput = {
   /** Run as a built-in role (digester) instead of an agent spec. */
   role?: string;
   kind?: "agent" | "agent-followup";
+  /** For a digest: the specialist round it digests (its full report goes along, folded). */
+  sourceRunId?: string;
 };
 
 /** Queue the next agent (or digester) round inside an existing work conversation. */
@@ -132,13 +134,43 @@ export function queueAgentRound(app: App, work: AgentWork, a: AgentRoundInput): 
     kind: a.kind ?? "agent",
     spaceId: a.spaceId ?? getThread(app, work.workConversationId).spaceId,
     title: truncate(`${a.agent}：${a.task.split("\n")[0]}`, 80),
-    input: { spec: a.agent, role: a.role, task: a.task, threadId: work.workConversationId, agentWorkId: work.askRunId },
+    input: { spec: a.agent, role: a.role, task: a.task, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.sourceRunId ? { sourceRunId: a.sourceRunId } : {}) },
     parentId: work.askRunId,
   });
   const id = r.id;
   const next: AgentWork = { ...work, runs: work.runs + 1, rounds: [...work.rounds, { runId: id, agent: a.agent, status: "queued" }] };
   saveWork(app, next, [id, work.askRunId, ...work.rounds.map((r) => r.runId)]);
   return id;
+}
+
+/**
+ * The work a conversation belongs to: it is that work's own conversation (a Feishu topic or a web
+ * child conversation). With includeRoot, also the latest work started from it.
+ */
+export function workInConversation(app: App, conversationId: string, opts: { includeRoot?: boolean } = {}): AgentWork | null {
+  const own = one<{ output: string }>(
+    app.db,
+    "select output from runs where json_extract(output,'$.agentWork.workConversationId') = ? and json_extract(output,'$.agentWork.askRunId') = id order by created_at desc limit 1",
+    conversationId,
+  );
+  if (own) return (JSON.parse(own.output) as { agentWork?: AgentWork }).agentWork ?? null;
+  if (!opts.includeRoot) return null;
+  const root = one<{ output: string }>(
+    app.db,
+    "select output from runs where json_extract(output,'$.agentWork.rootConversationId') = ? and json_extract(output,'$.agentWork.askRunId') = id order by created_at desc limit 1",
+    conversationId,
+  );
+  return root ? (JSON.parse(root.output) as { agentWork?: AgentWork }).agentWork ?? null : null;
+}
+
+/**
+ * Where a work's replies go: its own Feishu topic once it has one (the owner follows the work
+ * there and replies in it), otherwise the conversation it was asked from (web, private chats
+ * without topics). Never both: the same digest twice is noise.
+ */
+export function workDeliveryTarget(app: App, work: AgentWork): string {
+  const key = one<{ external_id: string | null }>(app.db, "select external_id from conversations where id = ?", work.workConversationId)?.external_id ?? "";
+  return key.includes("#") ? work.workConversationId : work.rootConversationId;
 }
 
 /** Re-read fresh work from the ask run. */
@@ -166,19 +198,21 @@ export function onWorkRunSettled(app: App, run: Run): { work: AgentWork; followu
   if (run.status !== "done" || (run.input as { role?: string }).role) return { work: next };
   // A specialist round finished: digest it for the root conversation; the main assistant continues or asks.
   const answer = (run.output as { answer?: string }).answer ?? "";
-  const rootThread = getThread(app, work.rootConversationId);
+  const spec = (run.input as { spec?: string }).spec ?? "专门 Agent";
+  const roundTask = (run.input as { task?: string }).task ?? "";
   const task = [
     `# 本人的原始诉求`,
     "",
     work.title,
     "",
-    `# ${run.input && (run.input as { spec?: string }).spec ? (run.input as { spec: string }).spec : "专门 Agent"} 的产出`,
+    ...(roundTask && roundTask !== work.title ? ["# 这一轮交给它的任务", "", truncate(roundTask, 4000), ""] : []),
+    `# ${spec} 的产出（第 ${next.rounds.filter((r) => !r.agent.startsWith("digester")).length} 轮，运行 ${run.id}）`,
     "",
     truncate(answer, 40000),
     "",
-    "按你的职责给出结论、需要本人决定的事和下一步建议。",
+    "按你的职责写给本人的回复。",
   ].join("\n");
-  const followupRunId = queueAgentRound(app, next, { agent: "digester", role: "digester", task, kind: "agent-followup" });
+  const followupRunId = queueAgentRound(app, next, { agent: "digester", role: "digester", task, kind: "agent-followup", sourceRunId: run.id });
   return { work: refreshWork(app, workId)!, followupRunId };
 }
 
@@ -191,7 +225,7 @@ export async function openWorkTopic(app: App, work: AgentWork, anchorMessageId: 
   await deliverToThread(
     app,
     work.workConversationId,
-    `**${work.title}**\n\n这项工作在这里推进；完成后把结论带回发起的会话。`,
+    `**${work.title}**\n\n这项工作在这个话题里推进：Agent 的结论和需要你决定的事都在这里，你也可以直接在话题里回复补充要求。`,
     { openTopicFrom: anchorMessageId, agentWorkTopic: work.askRunId },
   );
   return refreshWork(app, work.askRunId) ?? work;

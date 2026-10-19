@@ -1,7 +1,7 @@
 import { receive, type Inbound } from "../agents/inbox.ts";
 import { getRun, waitForRun } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
-import { one } from "../core/db.ts";
+import { all, one } from "../core/db.ts";
 import { refExcerpt } from "../items/evidence.ts";
 
 /**
@@ -43,7 +43,30 @@ export function resolveCitations(app: App, md: string) {
     const url = s ? externalUrl(s.uri) : null;
     return url ? `[${label}](${url})` : label;
   });
-  return plainCitations(withSources).replace(/\[([^\]]*)\]\(#\/[^)]*\)/g, "$1");
+  return localPathLinks(app, plainCitations(withSources).replace(/\[([^\]]*)\]\(#\/[^)]*\)/g, "$1"));
+}
+
+/**
+ * Links to files on this machine (`[下载页取数](/data/…/repo/src/a.ts#L10)`, `file://…`) open
+ * nothing in a chat app. A file inside a repository space becomes `仓库 · 路径:行`, anything else
+ * keeps its label and file name as plain text; real files are meant to go as attachments.
+ */
+export function localPathLinks(app: App, md: string) {
+  const repos = all<{ name: string; root_path: string }>(app.db, "select name, root_path from spaces where root_path is not null and root_path != ''")
+    .map((r) => ({ name: r.name, root: r.root_path.replace(/[\\/]+$/, "") }))
+    .sort((a, b) => b.root.length - a.root.length);
+  return md.replace(/\[([^\]]*)\]\(((?:file:\/\/)?(?:\/|[A-Za-z]:[\\/])[^)\s]*)\)/g, (_all, label: string, target: string) => {
+    const [rawPath, frag] = target.replace(/^file:\/\//, "").split("#");
+    let path = rawPath;
+    try {
+      path = decodeURIComponent(rawPath);
+    } catch {}
+    const lines = /^L(\d+)(?:-L?(\d+))?$/.exec(frag ?? "");
+    const at = lines ? `:${lines[1]}${lines[2] && lines[2] !== lines[1] ? `-${lines[2]}` : ""}` : "";
+    const repo = repos.find((r) => path === r.root || path.startsWith(`${r.root}/`) || path.startsWith(`${r.root}\\`));
+    const where = repo ? `${repo.name} · \`${path.slice(repo.root.length + 1)}${at}\`` : `\`${path.split(/[\\/]/).pop()}${at}\``;
+    return label && !where.includes(label) ? `${label}（${where}）` : where;
+  });
 }
 
 function externalUrl(uri: string): string | null {

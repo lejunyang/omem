@@ -9,7 +9,7 @@ import { createRun, runsInLane, type RunContext } from "./runs.ts";
 import { findAgentSpec } from "./specs.ts";
 import { describeThread, findThread, getThread, threadMessages, updateThread, type Thread, type ThreadMessage } from "./threads.ts";
 import { retargetToolToken, revokeToolToken } from "./tools.ts";
-import type { AgentEvent } from "./types.ts";
+import { replyOf, type AgentEvent } from "./types.ts";
 
 /**
  * Agent sessions behind threads. Three levels of continuity, cheapest first:
@@ -199,7 +199,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
         mode = "fresh";
       }
       save(r.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1);
-      return { text: r.text, agent: r.agent, profileId: prep.profile.id, mode };
+      return { text: replyOf(r), agent: r.agent, profileId: prep.profile.id, mode };
     } finally {
       revokeToolToken(prep.token);
     }
@@ -236,7 +236,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
           },
           emit,
         );
-        answer = r.text;
+        answer = replyOf(r);
         mode = "fresh";
         break;
       }
@@ -306,7 +306,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
           r = await handle.prompt(`${again.system}\n\n---\n\n# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0]?.createdAt ?? new Date().toISOString())}\n\n---\n\n${newPart}`, emit, ctx.signal);
         }
         save(l.handle.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1);
-        answer = r.text;
+        answer = replyOf(r);
         done = true;
         break;
       } catch (e) {

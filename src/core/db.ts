@@ -482,6 +482,21 @@ const migrations: string[] = [
     status text not null default 'pending', created_at text not null, applied_at text, resolution text, resolved_by text, resolved_run_id text
   );
   `,
+  // Feishu topic keys keep the thread id as Feishu sends it (omt_…). Work topics opened by omem
+  // used to drop the prefix, so the owner's replies in the topic became a second conversation:
+  // normalise the keys, then fold each later duplicate into the earliest conversation of the topic.
+  `
+  update conversations set external_id = substr(external_id, 1, instr(external_id, '#')) || 'omt_' || substr(external_id, instr(external_id, '#') + 1)
+    where channel = 'lark' and instr(external_id, '#') > 0 and substr(external_id, instr(external_id, '#') + 1, 4) != 'omt_';
+  create temp table topic_dupes as
+    select c.id as dupe, (select k.id from conversations k where k.channel = 'lark' and k.external_id = c.external_id and k.status = 'active' order by k.created_at limit 1) as keep
+    from conversations c
+    where c.channel = 'lark' and c.status = 'active' and instr(c.external_id, '#') > 0
+      and exists (select 1 from conversations o where o.channel = 'lark' and o.external_id = c.external_id and o.status = 'active' and o.created_at < c.created_at);
+  update messages set conversation_id = (select keep from topic_dupes where dupe = messages.conversation_id) where conversation_id in (select dupe from topic_dupes);
+  update conversations set status = 'archived', settings = json_set(coalesce(settings, '{}'), '$.mergedInto', (select keep from topic_dupes where dupe = conversations.id)) where id in (select dupe from topic_dupes);
+  drop table topic_dupes;
+  `,
 ];
 
 export type Db = DatabaseSync;

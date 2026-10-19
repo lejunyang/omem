@@ -12,6 +12,7 @@ import { listPages, pageExists, syncWiki } from "../wiki/store.ts";
 import { runCodeTask } from "./code.ts";
 import { deliverToThread, receive } from "./inbox.ts";
 import { runRole } from "./runner.ts";
+import { replyOf } from "./types.ts";
 import { maybeSummarize, threadTurn } from "./sessions.ts";
 import { readAgentSpec } from "./specs.ts";
 import { describeFlags, guardSource } from "../sources/guard.ts";
@@ -86,21 +87,19 @@ registerHandler("agent", async (ctx) => {
     onEvent: (e) => ctx.event(e.type, e),
   });
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
-  const answer = r.text.trim() || "（没有输出）";
-  if (threadId) {
-    // In a multi-agent work conversation the raw output stays there as the working record;
-    // the root conversation only ever sees the digested conclusion (agent-followup delivers it).
-    if (agentWorkId && !roleName) await deliverToThread(ctx.app, threadId, `**${spec!.name} 产出（完整记录）**\n\n${answer}`, { runId: ctx.run.id, agent: spec!.name, agentWorkRound: ctx.run.id });
-    else if (!agentWorkId) await deliverToThread(ctx.app, threadId, `**${spec!.name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: spec!.name });
-    else if (roleName) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: roleName, agentWorkRound: ctx.run.id });
-  }
-  return { answer };
+  // The report proper: what the agent wrote after its last tool call (its narration on the way is
+  // in the run's events). Work rounds are not posted as is: the digester turns them into the reply.
+  const answer = replyOf(r).trim() || "（没有输出）";
+  if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${spec!.name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: spec!.name });
+  else if (threadId && roleName) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: roleName, agentWorkRound: ctx.run.id });
+  else if (threadId) addMessage(ctx.app, threadId, "assistant", `**${spec!.name} 产出（完整记录，运行 ${ctx.run.id}）**\n\n${answer}`, ctx.run.id, { agent: spec!.name, agentWorkRound: ctx.run.id, record: true });
+  return { answer, fullText: r.text !== answer ? r.text : undefined };
 });
 
 // Multi-agent work: after a specialist returns into a work conversation, the digester gives the
 // conclusion to the root conversation; the main assistant there decides whether to continue.
 registerHandler("agent-followup", async (ctx) => {
-  const input = ctx.run.input as { threadId?: string; role?: string; task: string; agentWorkId?: string };
+  const input = ctx.run.input as { threadId?: string; role?: string; task: string; agentWorkId?: string; sourceRunId?: string };
   const r = await runRole(ctx.app, {
     role: "digester",
     spaceId: ctx.run.spaceId ?? "personal",
@@ -110,15 +109,23 @@ registerHandler("agent-followup", async (ctx) => {
     onEvent: (e) => ctx.event(e.type, e),
   });
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
-  const answer = r.text.trim() || "（没有输出）";
+  const answer = replyOf(r).trim() || "（没有输出）";
   if (input.agentWorkId) {
-    const { refreshWork, saveWork } = await import("./agent-work.ts");
+    const { refreshWork, workDeliveryTarget } = await import("./agent-work.ts");
     const work = refreshWork(ctx.app, input.agentWorkId);
-    if (work) {
-      saveWork(ctx.app, work, [input.agentWorkId]);
-      await deliverToThread(ctx.app, work.workConversationId, answer, { runId: ctx.run.id, agent: "digester", agentWorkRound: ctx.run.id });
-      await deliverToThread(ctx.app, work.rootConversationId, answer, { runId: ctx.run.id, agent: "digester", agentWorkResult: input.agentWorkId });
-    }
+    // One reply, in one place: the work's topic when it has one (the owner follows it there),
+    // otherwise the conversation the work was asked from.
+    // The agent's own report goes along, folded under the digest, so nothing has to be looked up elsewhere.
+    const source = input.sourceRunId ? one<{ output: string | null; input: string }>(ctx.app.db, "select output, input from runs where id = ?", input.sourceRunId) : undefined;
+    const report = source?.output ? String((JSON.parse(source.output) as { answer?: string }).answer ?? "") : "";
+    const agentName = source ? String((JSON.parse(source.input) as { spec?: string }).spec ?? "Agent") : "Agent";
+    if (work)
+      await deliverToThread(ctx.app, workDeliveryTarget(ctx.app, work), answer, {
+        runId: ctx.run.id,
+        agent: "digester",
+        agentWorkResult: input.agentWorkId,
+        ...(report ? { details: report, detailsTitle: `${agentName} 的完整报告（运行 ${input.sourceRunId}）` } : {}),
+      });
   } else if (input.threadId) await deliverToThread(ctx.app, input.threadId, answer, { runId: ctx.run.id });
   return { answer };
 });

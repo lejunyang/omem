@@ -547,7 +547,14 @@ def({
     const conversationId = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
     if (!conversationId) throw new HttpError(400, "只能在一个会话里交办 Agent");
     if (a.own_topic) {
-      const { startAgentWork } = await import("./agent-work.ts");
+      const { startAgentWork, workInConversation, queueAgentRound } = await import("./agent-work.ts");
+      // Already working on this in its own topic (the owner replied inside it, or the main
+      // assistant chains another agent): continue there instead of opening a second work session.
+      const existing = workInConversation(ctx.app, conversationId);
+      if (existing) {
+        const id = queueAgentRound(ctx.app, existing, { agent: spec.name, task: a.task });
+        return `已在这项工作的话题里安排 ${spec.name} 的下一轮 ${id}；完成后在话题里给出结论。`;
+      }
       const w = startAgentWork(ctx.app, {
         askRunId: ctx.runId!,
         rootConversationId: conversationId,
@@ -585,15 +592,9 @@ def({
     const { refreshWork, queueAgentRound } = await import("./agent-work.ts");
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const conv = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
+    const { workInConversation } = await import("./agent-work.ts");
     let work = a.work_id ? refreshWork(ctx.app, a.work_id) : null;
-    if (!work && conv) {
-      const row = one<{ output: string }>(
-        ctx.app.db,
-        "select r.output from runs r join messages m on json_extract(m.meta,'$.runId') = r.id where m.conversation_id = ? and json_extract(r.output,'$.agentWork') is not null order by r.created_at desc limit 1",
-        conv,
-      );
-      work = row ? (JSON.parse(row.output) as { agentWork?: import("./agent-work.ts").AgentWork }).agentWork ?? null : null;
-    }
+    if (!work && conv) work = workInConversation(ctx.app, conv, { includeRoot: true });
     if (!work) throw new HttpError(404, "找不到进行中的多 Agent 工作；复杂任务先用 run_agent own_topic=true 开始");
     const agent = a.agent ?? work.rounds.at(-1)?.agent;
     if (!agent) throw new HttpError(400, "说不出用哪个 Agent，先用 run_agent 交办");
@@ -1312,7 +1313,15 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
     }
   }
   const chat = await larkGuard(ctx, t);
-  const target = { chatId: t.chat_id, userId: t.user_id, replyTo: t.reply_to, inThread: t.in_thread };
+  // Posting into the chat this run is answering in a topic: stay inside that topic (files,
+  // follow-ups) instead of landing at the top of the chat.
+  let target: import("../channels/lark-send.ts").Target = { chatId: t.chat_id, userId: t.user_id, replyTo: t.reply_to, inThread: t.in_thread };
+  if (!t.reply_to && !t.user_id && chat) {
+    const convId = runThread(ctx);
+    const conv = convId ? one<{ external_id: string | null; last: string | null }>(ctx.app.db, "select external_id, json_extract(settings,'$.lastMessageId') last from conversations where id = ?", convId) : undefined;
+    const [convChat, topic] = (conv?.external_id ?? "").split("#");
+    if (topic && convChat === chat && conv?.last) target = { replyTo: conv.last, inThread: true };
+  }
   if (ctx.larkDraft) {
     // Draft: the owner sees exactly what would be sent and decides.
     const ownerTarget = ctx.app.config.lark.ownerOpenId;

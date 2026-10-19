@@ -20,7 +20,14 @@ const PAGE = 100;
 const loadingMore = ref(false);
 const kind = ref("");
 const showQuiet = ref(false);
-const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; patches?: { space: string; patch: string }[] } | null>(null);
+type Brief = { id: string; kind: string; title: string; status: string };
+type RunContextInfo = {
+  conversation: { id: string; title: string; channel: string; topic: boolean; work: boolean; parentId: string | null; parentTitle: string | null; turns: { id: string; title: string; status: string; createdAt: string }[] } | null;
+  parent: Brief | null;
+  source: Brief | null;
+  work: { id: string; title: string; rounds: { runId: string; agent: string; kind: string; status: string; title: string }[] } | null;
+};
+const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; patches?: { space: string; patch: string }[]; context?: RunContextInfo } | null>(null);
 const id = computed(() => route.params.id as string | undefined);
 
 const listLoading = ref(true);
@@ -81,6 +88,15 @@ function onListScroll(ev: Event) {
 onBeforeUnmount(() => off());
 
 const out = computed(() => detail.value?.run.output ?? {});
+const ctxInfo = computed(() => detail.value?.context ?? null);
+// The full task as given to the agent (delegations, agent rounds, digests); ask turns carry their messages.
+const taskText = computed(() => {
+  const i = (detail.value?.run.input ?? {}) as { task?: string; text?: string };
+  return String(i.task ?? i.text ?? "");
+});
+const taskLong = computed(() => taskText.value.split("\n").length > 14 || taskText.value.length > 1200);
+const taskOpen = ref(false);
+watch(id, () => (taskOpen.value = false));
 const finalText = computed(() => out.value.answer ?? out.value.summary ?? out.value.coderSummary ?? "");
 // One entry per repository (a delegation may change several together).
 const diffs = computed(() =>
@@ -155,11 +171,11 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
         <Skeleton v-if="listLoading && !runs.length" :rows="8" />
         <VirtualList v-else :items="runs" :item-key="(r) => r.id" :estimate="54">
           <template #default="{ item: r }">
-            <router-link :to="`/runs/${r.id}`" class="run" :class="{ on: r.id === id }">
+            <router-link :to="`/runs/${r.id}`" class="run" :class="{ on: r.id === id }" :title="r.title">
               <span class="st" :class="r.status" />
               <div class="grow">
                 <div class="ellipsis">{{ r.title }}</div>
-                <div class="muted small">{{ runKindLabel[r.kind] ?? r.kind }} · {{ statusLabel[r.status] }} · {{ relTime(r.createdAt) }}</div>
+                <div class="muted small">{{ runKindLabel[r.kind] ?? r.kind }} · {{ statusLabel[r.status] }} · {{ relTime(r.createdAt) }}<template v-if="r.parentId"> · 后续</template></div>
               </div>
             </router-link>
           </template>
@@ -185,7 +201,7 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
             <span v-if="detail.run.profileId" class="muted">· {{ detail.run.profileId }}</span>
             <span v-if="detail.run.spaceId" class="muted">· {{ detail.run.spaceId }}</span>
           </div>
-          <h1>{{ detail.run.title }}</h1>
+          <h1 :title="detail.run.title">{{ detail.run.title }}</h1>
           <div class="row">
             <button v-if="['queued', 'running'].includes(detail.run.status)" class="btn sm" @click="act('cancel')"><Icon name="stop" :size="13" />停止</button>
             <button v-if="['failed', 'cancelled'].includes(detail.run.status)" class="btn sm" @click="act('retry')"><Icon name="refresh" :size="13" />重试</button>
@@ -197,9 +213,43 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
           </div>
         </header>
 
-        <section v-if="detail.run.input?.task || detail.run.input?.text" class="card pad block">
-          <div class="section-title">任务</div>
-          <div class="pre">{{ detail.run.input.task ?? detail.run.input.text }}</div>
+        <section v-if="ctxInfo && (ctxInfo.conversation || ctxInfo.parent || ctxInfo.work)" class="card pad block ctx">
+          <div class="section-title">所在会话与关联</div>
+          <div v-if="ctxInfo.conversation" class="ctx-row">
+            <span class="muted small">会话</span>
+            <span class="grow">
+              <router-link :to="`/ask/${ctxInfo.conversation.id}`">{{ ctxInfo.conversation.title || ctxInfo.conversation.id }}</router-link>
+              <span class="badge">{{ ctxInfo.conversation.work ? "多 Agent 工作会话" : ctxInfo.conversation.topic ? "飞书话题" : ctxInfo.conversation.channel === "lark" ? "飞书会话" : ctxInfo.conversation.channel }}</span>
+              <span v-if="ctxInfo.conversation.parentTitle" class="muted small">（从「{{ ctxInfo.conversation.parentTitle }}」开出）</span>
+            </span>
+          </div>
+          <div v-if="ctxInfo.parent" class="ctx-row">
+            <span class="muted small">由</span>
+            <router-link class="grow ellipsis" :to="`/runs/${ctxInfo.parent.id}`" :title="ctxInfo.parent.title">{{ runKindLabel[ctxInfo.parent.kind] ?? ctxInfo.parent.kind }} · {{ ctxInfo.parent.title }}</router-link>
+          </div>
+          <div v-if="ctxInfo.source" class="ctx-row">
+            <span class="muted small">消化</span>
+            <router-link class="grow ellipsis" :to="`/runs/${ctxInfo.source.id}`" :title="ctxInfo.source.title">{{ ctxInfo.source.title }}</router-link>
+          </div>
+          <div v-if="ctxInfo.work" class="ctx-steps">
+            <div class="muted small">这项工作的各轮（{{ ctxInfo.work.rounds.length }}）</div>
+            <router-link v-for="(w, i) in ctxInfo.work.rounds" :key="w.runId" :to="`/runs/${w.runId}`" class="li" :class="{ on: w.runId === detail.run.id }" :title="w.title">
+              <span class="st" :class="w.status" /><span class="muted small">{{ i + 1 }}</span>
+              <span class="grow ellipsis">{{ w.kind === "agent-followup" ? "消化结论" : w.agent }} · {{ w.title }}</span>
+              <span class="muted small">{{ statusLabel[w.status] }}</span>
+            </router-link>
+          </div>
+          <div v-if="ctxInfo.conversation && ctxInfo.conversation.turns.length > 1" class="ctx-steps">
+            <div class="muted small">同一会话里的对话轮次（{{ ctxInfo.conversation.turns.length }}）</div>
+            <router-link v-for="t in ctxInfo.conversation.turns" :key="t.id" :to="`/runs/${t.id}`" class="li" :class="{ on: t.id === detail.run.id }" :title="t.title">
+              <span class="st" :class="t.status" /><span class="grow ellipsis">{{ t.title }}</span><span class="muted small">{{ fmtTime(t.createdAt) }}</span>
+            </router-link>
+          </div>
+        </section>
+
+        <section v-if="taskText" class="card pad block">
+          <div class="section-title row">任务<span class="spacer" /><button v-if="taskLong" class="btn ghost sm" @click="taskOpen = !taskOpen">{{ taskOpen ? "收起" : "展开全部" }}</button></div>
+          <div class="pre task" :class="{ clipped: taskLong && !taskOpen }">{{ taskText }}</div>
         </section>
 
         <section class="block">
@@ -387,6 +437,51 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
 }
 .pre {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pre.task.clipped {
+  max-height: 16.5em;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(#000 75%, transparent);
+  mask-image: linear-gradient(#000 75%, transparent);
+}
+.ctx {
+  display: grid;
+  gap: 8px;
+}
+.ctx-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  min-width: 0;
+}
+.ctx-row > .muted {
+  flex: none;
+  width: 2.5em;
+}
+.ctx-row .badge {
+  margin-left: 6px;
+}
+.ctx-steps {
+  display: grid;
+  gap: 2px;
+  margin-top: 4px;
+}
+.ctx-steps .li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: inherit;
+}
+.ctx-steps .li:hover {
+  background: var(--hover);
+  text-decoration: none;
+}
+.ctx-steps .li.on {
+  background: var(--accent-soft);
 }
 .log {
   background: var(--sunken);

@@ -51,7 +51,9 @@ export type CardBlock =
   | { form: { name?: string; fields: CardField[]; submit?: string; cancel?: string } }
   | { image: string; alt?: string }
   | { note: string }
-  | { hr: true };
+  | { hr: true }
+  /** Folded section (collapsible panel), closed by default: long detail under a short answer. */
+  | { fold: { title: string; markdown: string; open?: boolean } };
 export type CardSpec = {
   title?: string;
   subtitle?: string;
@@ -108,6 +110,14 @@ export function buildCard(spec: CardSpec): Record<string, unknown> {
     if ("markdown" in b) elements.push({ tag: "markdown", content: b.markdown.slice(0, 20000) });
     else if ("note" in b) elements.push({ tag: "markdown", content: `<font color='grey'>${b.note}</font>`, text_size: "notation" });
     else if ("hr" in b) elements.push({ tag: "hr" });
+    else if ("fold" in b)
+      elements.push({
+        tag: "collapsible_panel",
+        expanded: !!b.fold.open,
+        header: { title: { tag: "markdown", content: b.fold.title }, icon: { tag: "standard_icon", token: "down-small-ccm_outlined", size: "16px 16px" }, icon_position: "right", icon_expanded_angle: -180 },
+        border: { color: "grey", corner_radius: "5px" },
+        elements: [{ tag: "markdown", content: b.fold.markdown.slice(0, 20000) }],
+      });
     else if ("image" in b) elements.push({ tag: "img", img_key: b.image, alt: plain(b.alt ?? "") });
     else if ("fields" in b)
       elements.push({

@@ -2,7 +2,7 @@ import { ClientSideConnection, ndJsonStream, type McpServer, type SessionConfigO
 import type { AgentProfile } from "../core/config.ts";
 import { resolveModelOption } from "./models.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
-import { agentRunError, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult } from "./types.ts";
+import { agentRunError, replyFromSegments, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult } from "./types.ts";
 
 // Provider queue text shown as a normal message by some CLIs (traex included).
 const QUEUE_TEXT = /(?:排队|队列|queue[d]?|waiting (?:in )?(?:the )?queue)[^\d]{0,20}(\d+)?/i;
@@ -74,6 +74,8 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
   let touch = () => {};
   let replaying = false;
   let text = "";
+  // Text between tool calls; the last segment is the reply proper (see replyFromSegments).
+  let segments: string[] = [""];
   // Whether the model produced anything real (text, thought, tool call) in the current turn.
   let gotOutput = false;
   // Remember unknown session update kinds once per process (for OMEM_DEBUG_ACP).
@@ -151,6 +153,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
               }
               gotOutput = true;
               text += update.content.text;
+              segments[segments.length - 1] += update.content.text;
               emit({ type: "text", text: update.content.text });
               // Some agents show provider queue state as ordinary message text.
               const q = QUEUE_TEXT.exec(update.content.text);
@@ -166,6 +169,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
             break;
           case "tool_call": {
             gotOutput = true;
+            if (segments[segments.length - 1].trim()) segments.push("");
             const t = { title: update.title, kind: update.kind ?? undefined, status: update.status ?? "pending" };
             tools.set(update.toolCallId, t);
             emit({ type: "tool", id: update.toolCallId, ...t, input: update.rawInput });
@@ -338,6 +342,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         busy = true;
         emit = turnEmit;
         text = "";
+        segments = [""];
         gotOutput = false;
         // A fresh failure channel for this turn: an earlier exit error has already been consumed.
         failed = new Promise<never>((_, reject) => (fail = reject));
@@ -394,7 +399,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         try {
           const result = await Promise.race([connection.prompt({ sessionId, prompt: [{ type: "text", text: promptText }] }), failed]);
           if (signal?.aborted) throw new Error("CANCELLED");
-          return { text, stopReason: result.stopReason, sessionId, agent: agentName };
+          return { text, reply: replyFromSegments(segments), stopReason: result.stopReason, sessionId, agent: agentName };
         } finally {
           idleW.close();
           (queueW as ReturnType<typeof idleWatchdog> | null)?.close();

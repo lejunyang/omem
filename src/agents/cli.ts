@@ -1,6 +1,6 @@
 import type { AgentProfile } from "../core/config.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
-import type { AgentEvent, AgentRequest, AgentResult } from "./types.ts";
+import { replyFromSegments, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 
 const READ_TOOLS = ["Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "TodoWrite", "mcp__omem"];
 
@@ -54,6 +54,9 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
   const child = launch(profile.command, args, { cwd: req.cwd, env: { ...profile.env, ...req.env } });
   child.stdin.end(req.prompt);
   let text = "";
+  // Text between tool calls; the last segment is the reply proper (see replyFromSegments).
+  const segments: string[] = [""];
+  const cut = () => { if (segments[segments.length - 1].trim()) segments.push(""); };
   let stderr = "";
   let failure = "";
   let buffer = "";
@@ -84,8 +87,12 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
           for (const part of item.message?.content ?? []) {
             if (part.type === "text") {
               text += part.text;
+              segments[segments.length - 1] += part.text;
               emit({ type: "text", text: part.text });
-            } else if (part.type === "tool_use") emit({ type: "tool", id: part.id, title: part.name, status: "in_progress", input: part.input });
+            } else if (part.type === "tool_use") {
+              cut();
+              emit({ type: "tool", id: part.id, title: part.name, status: "in_progress", input: part.input });
+            }
             else if (part.type === "thinking") emit({ type: "thought", text: part.thinking ?? "" });
           }
         else if (item.type === "result" && item.is_error) failure = String(item.result ?? "Agent 返回错误");
@@ -93,8 +100,12 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
         const it = item.item ?? item.msg;
         if (item.type === "item.completed" && it?.type === "agent_message") {
           text += (text ? "\n\n" : "") + it.text;
+          segments[segments.length - 1] += (segments[segments.length - 1] ? "\n\n" : "") + it.text;
           emit({ type: "text", text: it.text });
-        } else if (item.type === "item.started" && it?.type) emit({ type: "tool", id: it.id ?? String(Math.random()), title: it.command ?? it.type, status: "in_progress" });
+        } else if (item.type === "item.started" && it?.type) {
+          cut();
+          emit({ type: "tool", id: it.id ?? String(Math.random()), title: it.command ?? it.type, status: "in_progress" });
+        }
         else if (item.type === "error" || item.type === "turn.failed") failure = item.message ?? item.error?.message ?? "Agent 返回错误";
       }
     };
@@ -123,5 +134,5 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
       else resolve();
     });
   });
-  return { text, stopReason: "end_turn", agent: profile.command, sessionId };
+  return { text, reply: replyFromSegments(segments), stopReason: "end_turn", agent: profile.command, sessionId };
 }

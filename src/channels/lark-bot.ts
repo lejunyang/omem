@@ -204,30 +204,37 @@ export async function startLarkBot(app: App) {
     },
   };
 
-const data2thread = (threadId: string | undefined): string | null => {
-  if (!threadId) return null;
-  const m = /^omt_([\w-]+)$/.exec(threadId);
-  return m ? m[1] : null;
-};
 
   // Later results for a thread (delegated agents…) go back to the same chat, inside the topic when there is one.
-  registerThreadSender("lark", async (thread, markdown, meta: Record<string, unknown> = {}) => {
+  registerThreadSender("lark", async (thread, raw, meta: Record<string, unknown> = {}) => {
     const [chatId, topic] = (thread.key ?? "").split("#");
     if (!chatId) return;
+    // Internal citations and paths on this machine mean nothing in Feishu.
+    const markdown = resolveCitations(app, raw);
     // First message of a multi-agent work topic: open the topic from the request message.
     if (!topic && typeof (meta as { openTopicFrom?: unknown }).openTopicFrom === "string") {
       const sent = await sendLark({ replyTo: String(meta.openTopicFrom), inThread: true }, { markdown });
-      const t = data2thread(sent.threadId);
-      if (t) {
-        const { updateThread } = await import("../agents/threads.ts");
+      // Keep Feishu's thread id as is (omt_…): replies inside the topic arrive with the same id,
+      // so they resolve to this work conversation instead of starting a second one.
+      if (sent.threadId) {
         run(
           app.db,
-          "update conversations set external_id = ?, updated_at = ? where id = ?",
-          `${chatId}#${t}`,
+          "update conversations set external_id = ?, settings = json_set(coalesce(settings,'{}'), '$.lastMessageId', ?), updated_at = ? where id = ?",
+          `${chatId}#${sent.threadId}`,
+          sent.messageId,
           new Date().toISOString(),
           thread.id,
         );
       }
+      return;
+    }
+    // A digest carries the agent's full report: one message, the answer on top and the record folded below.
+    const details = typeof meta.details === "string" && meta.details.trim() ? String(meta.details) : "";
+    if (details) {
+      const { buildCard } = await import("./lark-send.ts");
+      const card = buildCard({ wide: true, blocks: [{ markdown }, { fold: { title: String(meta.detailsTitle ?? "完整记录"), markdown: resolveCitations(app, details) } }] });
+      const to = thread.settings.lastMessageId ? { replyTo: thread.settings.lastMessageId, inThread: !!topic } : { chatId };
+      await sendLark(to, { card });
       return;
     }
     await reply(chatId, markdown, thread.settings.lastMessageId, !!topic);
