@@ -24,11 +24,15 @@ const route = useRoute();
 const router = useRouter();
 const list = ref<Source[]>([]);
 const total = ref(0);
+const PAGE = 1000;
+const loadingMore = ref(false);
 const q = ref("");
 const kind = ref("");
 const detail = ref<Detail | null>(null);
 const raw = ref(false);
 const collapsed = ref(new Set<string>());
+/** Folders start collapsed; once the user expands one, keep it expanded across loads. */
+const expandedOnce = ref(new Set<string>());
 const listLoading = ref(true);
 const detailLoading = ref(false);
 const space = computed(() => currentSpace());
@@ -40,16 +44,34 @@ async function load() {
   const seq = ++loadSeq;
   listLoading.value = true;
   try {
-    const p = new URLSearchParams({ space: state.space, limit: "20000" });
-    if (q.value) p.set("q", q.value);
-    if (kind.value) p.set("kind", kind.value);
-    const r = await get<{ total: number; sources: Source[] }>(`/api/sources?${p}`);
+    const r = await loadPage(0);
     if (seq !== loadSeq) return;
     list.value = r.sources;
     total.value = r.total;
   } finally {
     if (seq === loadSeq) listLoading.value = false;
   }
+}
+async function loadPage(offset: number) {
+  const p = new URLSearchParams({ space: state.space, limit: String(PAGE), offset: String(offset) });
+  if (q.value) p.set("q", q.value);
+  if (kind.value) p.set("kind", kind.value);
+  return get<{ total: number; sources: Source[] }>(`/api/sources?${p}`);
+}
+async function loadMore() {
+  if (loadingMore.value || list.value.length >= total.value) return;
+  loadingMore.value = true;
+  try {
+    const r = await loadPage(list.value.length);
+    list.value.push(...r.sources);
+    total.value = r.total;
+  } finally {
+    loadingMore.value = false;
+  }
+}
+function onListScroll(ev: Event) {
+  const el = ev.target as HTMLElement;
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 500) void loadMore();
 }
 async function loadDetail() {
   if (!id.value) return void (detail.value = null);
@@ -99,10 +121,11 @@ const tree = computed(() => {
     | { kind: "file"; depth: number; source: Source };
   const rows: Row[] = [];
   const count = (n: Node): number => n.files.length + [...n.dirs.values()].reduce((a, d) => a + count(d), 0);
+  const expanded = (path: string) => q.value ? true : expandedOnce.value.has(path);
   const walk = (n: Node, depth: number) => {
     for (const d of [...n.dirs.values()].sort((a, b) => a.name.localeCompare(b.name))) {
       rows.push({ kind: "dir", depth, dir: d.name, path: d.path, count: count(d) });
-      if (!collapsed.value.has(d.path) || q.value) walk(d, depth + 1);
+      if (expanded(d.path)) walk(d, depth + 1);
     }
     for (const f of n.files.sort((a, b) => a.uri.localeCompare(b.uri))) rows.push({ kind: "file", depth, source: f });
   };
@@ -111,9 +134,12 @@ const tree = computed(() => {
 });
 const isTree = computed(() => space.value?.kind === "repo" && list.value.length > 12 && list.value.some((s) => /[\\/]/.test(s.uri) && (!/^[a-z][a-z\d+.-]*:/i.test(s.uri) || /^[a-z]:[\\/]/i.test(s.uri))));
 function toggle(path: string) {
-  const next = new Set(collapsed.value);
+  const next = new Set(expandedOnce.value);
   next.has(path) ? next.delete(path) : next.add(path);
-  collapsed.value = next;
+  expandedOnce.value = next;
+}
+function expandedInView(path: string) {
+  return q.value || expandedOnce.value.has(path) ? "down" : "right";
 }
 const isChat = computed(() => detail.value?.source.kind === "chat");
 const larkChatId = computed(() => (detail.value && /^lark:oc_[\w-]+$/.test(detail.value.source.uri) ? detail.value.source.uri.slice(5) : null));
@@ -197,12 +223,12 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <button v-for="k in ['', 'doc', 'code', 'chat', 'note', 'web', 'image', 'conversation']" :key="k" class="kind" :class="{ on: kind === k }" @click="kind = k">{{ { "": "全部", doc: "文档", code: "代码", chat: "聊天", note: "笔记", web: "网页", image: "图片", conversation: "对话" }[k] }}</button>
         </div>
       </div>
-      <div class="items">
+      <div class="items" @scroll.passive="onListScroll">
         <Skeleton v-if="listLoading && !list.length" :rows="8" />
         <VirtualList v-else-if="isTree" :items="tree" :item-key="(r) => (r.kind === 'dir' ? `d:${r.path}` : r.source.id)" :estimate="28">
           <template #default="{ item: r }">
             <button v-if="r.kind === 'dir'" class="row-btn dir" :style="{ paddingLeft: 8 + r.depth * 14 + 'px' }" @click="toggle(r.path)">
-              <Icon :name="collapsed.has(r.path) && !q ? 'right' : 'down'" :size="13" /><Icon name="folder" :size="14" /><span class="ellipsis">{{ r.dir }}</span><span class="muted small">{{ r.count }}</span>
+              <Icon :name="expandedInView(r.path)" :size="13" /><Icon name="folder" :size="14" /><span class="ellipsis">{{ r.dir }}</span><span class="muted small">{{ r.count }}</span>
             </button>
             <router-link v-else :to="`/sources/${r.source.id}`" class="row-btn" :class="{ on: r.source.id === id }" :style="{ paddingLeft: 26 + r.depth * 14 + 'px' }">
               <span class="ellipsis">{{ r.source.uri.split("/").pop() }}</span>
@@ -221,6 +247,8 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <p>这个空间还没有原件。</p>
           <button class="btn sm" @click="state.capture = true"><Icon name="plus" :size="14" />保存材料</button>
         </div>
+        <div v-else-if="loadingMore" class="muted small pad center">加载中…</div>
+        <div v-else-if="list.length < total" class="muted small pad center">还有 {{ total - list.length }} 份，向下滚动加载</div>
       </div>
     </aside>
 

@@ -67,7 +67,7 @@ async function loadSpace() {
   nav.value = r.nav;
   pages.value = r.pages;
   stale.value = r.stale;
-  runs.value = (await get<Run[]>(`/api/runs?space=${space.value}&limit=30`)).filter((x) => x.kind.startsWith("wiki-") && ["queued", "running"].includes(x.status));
+  runs.value = (await get<{ runs: Run[] }>(`/api/runs?space=${space.value}&limit=30`)).runs.filter((x) => x.kind.startsWith("wiki-") && ["queued", "running"].includes(x.status));
 }
 async function loadPage() {
   editing.value = false;

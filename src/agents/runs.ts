@@ -125,7 +125,19 @@ export function getRun(app: App, id: string): Run {
   return toRun(r);
 }
 
-export function listRuns(app: App, opts: { kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean; limit?: number } = {}) {
+export function listRuns(app: App, opts: { kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean; limit?: number; offset?: number } = {}) {
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+  if (opts.kind) where.push("kind = ?"), params.push(opts.kind);
+  if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);
+  if (opts.status) where.push("status = ?"), params.push(opts.status);
+  if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);
+  if (!opts.includeQuiet && !opts.parentId) where.push("quiet = 0");
+  const limit = Math.min(opts.limit ?? 100, 500);
+  return all<Row>(app.db, `select * from runs ${where.length ? "where " + where.join(" and ") : ""} order by created_at desc limit ? offset ?`, ...params, limit, opts.offset ?? 0).map(toRun);
+}
+
+export function countRuns(app: App, opts: { kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean } = {}) {
   const where: string[] = [];
   const params: string[] = [];
   if (opts.kind) where.push("kind = ?"), params.push(opts.kind);
@@ -133,7 +145,7 @@ export function listRuns(app: App, opts: { kind?: string; spaceId?: string; stat
   if (opts.status) where.push("status = ?"), params.push(opts.status);
   if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);
   if (!opts.includeQuiet && !opts.parentId) where.push("quiet = 0");
-  return all<Row>(app.db, `select * from runs ${where.length ? "where " + where.join(" and ") : ""} order by created_at desc limit ?`, ...params, opts.limit ?? 100).map(toRun);
+  return one<{ n: number }>(app.db, `select count(*) n from runs ${where.length ? "where " + where.join(" and ") : ""}`, ...params)?.n ?? 0;
 }
 
 export function setRunOutput(app: App, id: string, output: Record<string, unknown>) {

@@ -688,12 +688,18 @@ async function saveEdit() {
 <style scoped>
 .spaces {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   gap: 12px;
+  min-width: 0;
 }
 .sp {
   display: grid;
   gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sp .mono {
+  overflow-wrap: anywhere;
 }
 .grid2 {
   display: grid;

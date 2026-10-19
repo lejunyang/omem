@@ -208,7 +208,8 @@ export function listSources(app: App, opts: { spaceId?: string; kind?: string; q
   }
   const sql = `select id,space_id,kind,uri,title,mime,hash,meta,captured_at,updated_at,deleted_at, length(text) - length(replace(text, char(10), '')) + 1 as line_count
     from sources ${where.length ? "where " + where.join(" and ") : ""} order by uri limit ? offset ?`;
-  const rows = all<Row & { line_count: number }>(app.db, sql, ...params, opts.limit ?? 500, opts.offset ?? 0);
+  const lim = Math.min(opts.limit ?? 500, 5000);
+  const rows = all<Row & { line_count: number }>(app.db, sql, ...params, lim, opts.offset ?? 0);
   const total = one<{ n: number }>(app.db, `select count(*) n from sources ${where.length ? "where " + where.join(" and ") : ""}`, ...params)?.n ?? 0;
   return { total, sources: rows.map((r) => ({ ...toSource(r), lines: r.line_count })) };
 }

@@ -15,6 +15,9 @@ import { fmtTime, relTime, runKindLabel, state, statusLabel, toast } from "../st
 const route = useRoute();
 const router = useRouter();
 const runs = ref<Run[]>([]);
+const total = ref(0);
+const PAGE = 100;
+const loadingMore = ref(false);
 const kind = ref("");
 const showQuiet = ref(false);
 const detail = ref<{ run: Run; events: RunEvent[]; children: Run[]; patches?: { space: string; patch: string }[] } | null>(null);
@@ -23,13 +26,30 @@ const id = computed(() => route.params.id as string | undefined);
 const listLoading = ref(true);
 const detailLoading = ref(false);
 async function load() {
-  const q = new URLSearchParams({ limit: "500" });
-  if (kind.value) q.set("kind", kind.value);
-  if (showQuiet.value) q.set("all", "true");
+  listLoading.value = true;
   try {
-    runs.value = await get<Run[]>(`/api/runs?${q.toString()}`);
+    const page = await loadPage(0);
+    runs.value = page.runs;
+    total.value = page.total;
   } finally {
     listLoading.value = false;
+  }
+}
+async function loadPage(offset: number) {
+  const q = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
+  if (kind.value) q.set("kind", kind.value);
+  if (showQuiet.value) q.set("all", "true");
+  return get<{ runs: Run[]; total: number }>(`/api/runs?${q.toString()}`);
+}
+async function loadMore() {
+  if (loadingMore.value || runs.value.length >= total.value) return;
+  loadingMore.value = true;
+  try {
+    const page = await loadPage(runs.value.length);
+    runs.value.push(...page.runs);
+    total.value = page.total;
+  } finally {
+    loadingMore.value = false;
   }
 }
 async function loadDetail() {
@@ -49,10 +69,15 @@ watch(showQuiet, load);
 watch(id, loadDetail);
 const off = onServerEvent((e) => {
   if (e.type === "run") {
-    void load();
+    // Keep the list itself stable: only refresh when a new top-level run might appear.
+    if (e.status === "queued") void load();
     if (detail.value && (e.runId === detail.value.run.id || detail.value.children.some((c) => c.id === e.runId))) void loadDetail();
   }
 });
+function onListScroll(ev: Event) {
+  const el = ev.target as HTMLElement;
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) void loadMore();
+}
 onBeforeUnmount(() => off());
 
 const out = computed(() => detail.value?.run.output ?? {});
@@ -113,7 +138,7 @@ async function delegate() {
     toast((e as Error).message, "error");
   }
 }
-const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan", "wiki-write", "wiki-lint", "code", "heartbeat", "dream", "tutor", "brief", "sync"];
+const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan", "wiki-write", "wiki-lint", "code", "heartbeat", "dream", "tutor", "brief", "curate", "sync", "agent-followup"];
 </script>
 
 <template>
@@ -126,7 +151,7 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
         <UiSelect v-model="kind" size="sm" width="110px" aria-label="运行类型" :options="kinds.map((k) => ({ value: k, label: k ? (runKindLabel[k] ?? k) : '全部' }))" />
         <UiCheckbox v-model="showQuiet" size="sm" class="small muted" title="没有发现变化的静默巡检默认不显示">静默</UiCheckbox>
       </div>
-      <div class="items">
+      <div class="items" @scroll.passive="onListScroll">
         <Skeleton v-if="listLoading && !runs.length" :rows="8" />
         <VirtualList v-else :items="runs" :item-key="(r) => r.id" :estimate="54">
           <template #default="{ item: r }">
@@ -140,6 +165,8 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
           </template>
         </VirtualList>
         <div v-if="!runs.length && !listLoading" class="muted small pad">还没有运行记录。</div>
+        <div v-else-if="loadingMore" class="muted small pad center">加载中…</div>
+        <div v-else-if="runs.length >= total" class="muted small pad center">共 {{ total }} 条</div>
       </div>
     </aside>
     <main class="detail">
@@ -271,6 +298,25 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
 .head {
   padding: 14px 12px 10px;
   border-bottom: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "title . delegate"
+    "kind quiet .";
+  row-gap: 8px;
+  align-items: center;
+}
+.head > strong { grid-area: title; }
+.head .btn[title="交办编码任务"] { grid-area: delegate; }
+.head .sm-select { grid-area: kind; justify-self: start; }
+.head .small.muted { grid-area: quiet; justify-self: end; white-space: nowrap; }
+@media (max-width: 480px) {
+  .head {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "title delegate"
+      "kind quiet";
+  }
 }
 .sm-select {
   width: auto;

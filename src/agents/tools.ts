@@ -103,10 +103,43 @@ function spacesFor(ctx: ToolContext, requested?: string | null, all = false) {
   return [space(ctx, requested)];
 }
 
+function renderMessageSource(ctx: ToolContext, id: string): string {
+  const m = one<{ id: string; conversation_id: string; role: string; text: string; created_at: string }>(ctx.app.db, "select id, conversation_id, role, text, created_at from messages where id = ?", id);
+  if (!m) throw new HttpError(404, `找不到消息 ${id}`);
+  return `消息 ${m.id} · ${m.role === "user" ? "本人" : "助理"} · ${m.created_at} · 会话 ${m.conversation_id}\n引用格式：[文字](msg:${m.id})\n\n${m.text}`;
+}
+
+function renderMemorySource(ctx: ToolContext, id: string): string {
+  const r = one<{ id: string; space_id: string; kind: string; subject: string | null; content: string; status: string; source_refs: string | null; created_at: string }>(
+    ctx.app.db,
+    "select id, space_id, kind, subject, content, status, source_refs, created_at from memories where id = ?",
+    id,
+  );
+  if (!r) throw new HttpError(404, `记忆不存在：${id}`);
+  const refs = r.source_refs ? (JSON.parse(r.source_refs) as string[]) : [];
+  return `记忆 ${r.id} · ${r.space_id}:${r.kind}${r.subject ? ` · ${r.subject}` : ""} · ${r.status} · ${r.created_at.slice(0, 10)}\n来源：${refs.join("、") || "（无）"}\n引用格式：[文字](mem:${r.id})\n\n${r.content}`;
+}
+
 function resolveSource(ctx: ToolContext, ref: string, spaceId?: string | null) {
   const clean = ref.replace(/^src:/, "").replace(/#.*$/, "");
-  const byId = one<{ id: string; space_id: string }>(ctx.app.db, "select id, space_id from sources where id = ?", clean);
   const scope = ctx.spaces;
+  // Conversation messages and memories are first-class sources for the agent (refs msg:/mem:).
+  if (/^msg:?/.test(clean)) {
+    const id = clean.replace(/^msg:/, "");
+    const row = one<{ id: string; conversation_id: string; role: string; text: string; created_at: string }>(ctx.app.db, "select * from messages where id = ?", id);
+    if (!row) throw new HttpError(404, `找不到消息 ${id}；它可能还没被采集。用 read_conversation 读它所在的会话，或检查 id 是否写对`);
+    const c = one<{ space_id: string }>(ctx.app.db, "select space_id from conversations where id = ?", row.conversation_id);
+    if (scope && c && !scope.includes(c.space_id)) throw new HttpError(403, `本次运行不能访问该消息所在空间 ${c.space_id}`);
+    return `__msg__:${id}`;
+  }
+  if (/^mem:?/.test(clean)) {
+    const id = clean.replace(/^mem:/, "");
+    const row = one<{ id: string; space_id: string; status: string }>(ctx.app.db, "select id, space_id, status from memories where id = ?", id);
+    if (!row) throw new HttpError(404, `记忆不存在：${id}`);
+    if (scope && !scope.includes(row.space_id)) throw new HttpError(403, `本次运行不能访问空间 ${row.space_id} 的记忆`);
+    return `__mem__:${id}`;
+  }
+  const byId = one<{ id: string; space_id: string }>(ctx.app.db, "select id, space_id from sources where id = ?", clean);
   if (byId && (!scope || scope.includes(byId.space_id))) return byId.id;
   const sid = spaceId ? space(ctx, spaceId) : null;
   const rows = all<{ id: string; space_id: string; uri: string }>(
@@ -278,7 +311,7 @@ def({
 
 def({
   name: "read_source",
-  description: "读取原件的指定行（带行号）。source 可以是原件 id、路径或路径结尾。每次最多 400 行，长文件分段读。",
+  description: "读取一个来源的内容：原件 id/路径（可按 from/to 读指定行），或 msg:<消息id>（本人/助理说过的话）、mem:<记忆id>。引用记忆或对话来源时先读它核对。",
   schema: z.object({
     source: z.string(),
     from: z.number().int().min(1).optional(),
@@ -289,6 +322,8 @@ def({
     const id = resolveSource(ctx, a.source, a.space);
     const from = a.from ?? 1;
     const to = Math.min(a.to ?? from + 399, from + 399);
+    if (id.startsWith("__msg__:")) return renderMessageSource(ctx, id.slice(8));
+    if (id.startsWith("__mem__:")) return renderMemorySource(ctx, id.slice(8));
     const r = readSource(ctx.app, id, from, to);
     const s = r.source;
     if (s.deletedAt) return `原件 ${s.id}（${s.uri}）已在 ${s.deletedAt} 移除，内容不可用。`;

@@ -296,7 +296,7 @@ onBeforeUnmount(() => {
 }
 .ui-select-pop .opt {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
   padding: 6px 10px 6px 6px;
   border-radius: 6px;
@@ -318,7 +318,7 @@ onBeforeUnmount(() => {
   width: 16px;
   flex: none;
   display: inline-flex;
-  padding-top: 2px;
+  align-items: center;
 }
 .ui-select-pop .label {
   display: flex;

@@ -378,6 +378,10 @@ input[type="number"].input::-webkit-outer-spin-button {
   border-bottom: 1px solid var(--line);
   margin-bottom: 16px;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 .tabs button {
   border: 0;

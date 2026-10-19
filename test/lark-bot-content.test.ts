@@ -3,6 +3,9 @@ import { describeLarkContent, firstDelivery, messageText } from "../src/channels
 import { notificationOrigins } from "../src/channels/common.ts";
 import { refExcerpt } from "../src/items/evidence.ts";
 import { upsertSource } from "../src/sources/store.ts";
+import { callTool, type ToolContext } from "../src/agents/tools.ts";
+import { addMessage, createThread } from "../src/agents/threads.ts";
+import { remember } from "../src/memory/store.ts";
 import { testApp } from "./helpers.ts";
 
 const apps: ReturnType<typeof testApp>[] = [];
@@ -73,5 +76,22 @@ describe("reference excerpts", () => {
     expect(md.match(/applink\.feishu\.cn/g)).toHaveLength(1);
     expect(md).toContain("「小王: 你在吗」 「小王: 整理一份《差旅报销制度》的说明 a. 适用范围」");
     expect(md).not.toMatch(/原文\d/);
+  });
+});
+
+describe("read_source for msg: and mem: refs", () => {
+  it("reads conversation messages and memories instead of looking them up as sources", async () => {
+    const app = testApp();
+    apps.push(app);
+    const thread = createThread(app, { spaceId: "personal", channel: "web", userId: "owner" });
+    const id = addMessage(app, thread.id, "user", "用 osdk 下的 lark-cli，不要 .ai-devbox 的", null, {});
+    const mem = remember(app, { spaceId: "personal", kind: "fact", content: "lark-cli 用 osdk 的", sourceRefs: [`msg:${id}`] });
+    const ctx: ToolContext = { app, runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: "owner" };
+    expect((await callTool(ctx, "read_source", { source: `msg:${id}` })).text).toContain("用 osdk 下的 lark-cli");
+    expect((await callTool(ctx, "read_source", { source: id })).text).toContain("用 osdk 下的 lark-cli"); // bare msg id also works
+    const memText = (await callTool(ctx, "read_source", { source: `mem:${mem.id}` })).text;
+    expect(memText).toContain("lark-cli 用 osdk 的");
+    expect(memText).toContain(`msg:${id}`);
+    await expect(callTool(ctx, "read_source", { source: "msg_nope" })).resolves.toMatchObject({ isError: true });
   });
 });

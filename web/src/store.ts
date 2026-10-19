@@ -105,6 +105,11 @@ export const runKindLabel: Record<string, string> = {
   sync: "同步目录",
   brief: "简报",
   curate: "筛选关注群",
+  "ingest-shadow": "对比整理",
+  "memory-review": "复核记忆",
+  "agent-followup": "消化结论",
+  "thread-summary": "会话摘要",
+  "learn-feed": "学习出卡",
 };
 export const statusLabel: Record<string, string> = {
   queued: "排队中",
