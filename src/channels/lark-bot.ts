@@ -13,6 +13,7 @@ import { identitiesOf, OWNER, resolveIdentity, userName } from "../core/users.ts
 import { importFile } from "../sources/import.ts";
 import { appendToSource, findSourceByUri, sourceText } from "../sources/store.ts";
 import { answerFromChannel, resolveCitations } from "./common.ts";
+import { registerCodeProgress, startCodeProgress } from "./lark-code-progress.ts";
 import { startProgress } from "./lark-progress.ts";
 import { handleCardAction } from "./lark-actions.ts";
 import { sendLark, setLarkClient } from "./lark-send.ts";
@@ -150,6 +151,7 @@ export async function startLarkBot(app: App) {
     console.warn("[omem] 读取飞书机器人信息失败：", (e as Error).message);
   }
   setLarkClient(client, botOpenId);
+  registerCodeProgress(app);
 
   // Names for people in groups (needs contact read permission; falls back to the id).
   const names = new Map<string, string>();

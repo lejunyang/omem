@@ -67,12 +67,33 @@ export function fileDiff(dir: string, hash: string, path: string) {
   return git(dir, ["show", "--format=", hash, "--", path]).stdout;
 }
 
-/** Tracked + untracked-not-ignored files of a repository, relative paths. */
-export function listRepoFiles(dir: string): string[] | null {
+/**
+ * Tracked + untracked-not-ignored files of a repository, relative paths. Files of checked-out
+ * submodules are listed under their path (`libs/sub/a.ts`); a submodule that is not checked out
+ * only has its directory entry, which is left out.
+ */
+export function listRepoFiles(dir: string, opts: { submodules?: boolean } = {}): string[] | null {
   if (!isGitRepo(dir)) return null;
-  const r = git(dir, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]);
-  if (!r.ok) return null;
-  return [...new Set(r.stdout.split("\0").filter(Boolean))];
+  // --recurse-submodules only works with --cached, so untracked files are a second call.
+  const tracked = git(dir, ["ls-files", "-z", "--cached", ...(opts.submodules === false ? [] : ["--recurse-submodules"])]);
+  const untracked = git(dir, ["ls-files", "-z", "--others", "--exclude-standard"]);
+  if (!tracked.ok || !untracked.ok) return null;
+  const gitlinks = new Set(submodules(dir).map((s) => s.path));
+  return [...new Set([...tracked.stdout.split("\0"), ...untracked.stdout.split("\0")].filter((p) => p && !gitlinks.has(p)))];
+}
+
+export type Submodule = { path: string; commit: string; state: "ok" | "missing" | "changed" | "conflict" };
+
+/** Submodules at every depth: checked out (ok/changed) or not (missing). */
+export function submodules(dir: string): Submodule[] {
+  if (!existsSync(join(dir, ".gitmodules"))) return [];
+  const r = git(dir, ["submodule", "status", "--recursive"]);
+  if (!r.ok) return [];
+  return r.stdout
+    .split("\n")
+    .map((l) => /^([ +\-U])([0-9a-f]+) (\S+)/.exec(l))
+    .filter((m): m is RegExpExecArray => !!m)
+    .map((m) => ({ path: m[3], commit: m[2], state: m[1] === "-" ? "missing" : m[1] === "+" ? "changed" : m[1] === "U" ? "conflict" : "ok" }));
 }
 
 export function headCommit(dir: string) {

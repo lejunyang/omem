@@ -190,8 +190,13 @@ def({
       s = updateSpace(ctx.app, s.id, { rootPath: root });
     }
     try {
+      const { syncSubmodules } = await import("./jobs.ts");
+      const sub = await syncSubmodules(ctx.app, s.id);
       const report = await syncDirectorySpace(ctx.app, s.id);
-      return `已关联仓库到空间 ${s.id}（${s.name}）。\n目录：${root}\n导入：新增 ${report.created}，更新 ${report.updated}，跳过 ${report.skipped.length}。交办编码请在 repo_spaces 里写 "${s.id}"。`;
+      const subText = !sub
+        ? ""
+        : `\n子模块：共 ${sub.total} 个，已检出并索引 ${sub.ready} 个${sub.failed.length ? `；拉取失败 ${sub.failed.length} 个（${sub.failed.map((f) => `${f.path}：${f.error}`).join("；").slice(0, 600)}）` : ""}${!sub.managed && sub.ready < sub.total ? "；本地仓库由本人管理，未检出的子模块需要本人在仓库里 git submodule update --init --recursive 后再同步" : ""}`;
+      return `已关联仓库到空间 ${s.id}（${s.name}）。\n目录：${root}\n导入：新增 ${report.created}，更新 ${report.updated}，跳过 ${report.skipped.length}。${subText}\n交办编码请在 repo_spaces 里写 "${s.id}"。`;
     } catch {
       return `空间 ${s.id} 已关联仓库 ${root}，但索引同步失败；关联已保留，重试 connect_repository 可重新同步。`;
     }
@@ -1453,7 +1458,37 @@ def({
       input: { task: a.task, checkCommand: a.check_command, repos: ids, checks: a.check_commands },
       parentId: ctx.runId,
     });
-    return `已交办，运行 ${r.id}（${ids.join("、")}）。完成后会通知。`;
+    // Seed the chain so later rounds (and the Feishu progress topic) find the original ask.
+    const { codeChainFor } = await import("./code-chain.ts");
+    const chain = codeChainFor(ctx.app, r);
+    return `已交办，运行 ${r.id}（${ids.join("、")}），共一个会话，评审要求修改会自动续轮。完成后会通知；进度可看 ${chain ? `#/runs/${r.id}` : r.id}。`;
+  },
+});
+
+def({
+  name: "continue_code_run",
+  description:
+    "继续一个交办编码任务的下一轮：评审要求修改或本人看了结果要求调整时用。复用同一次交办的工作区和编码 Agent 会话，不要重新 delegate_code。传入交办的任一 code 运行 id（或最初的 ask 运行 id）和本轮要做的事。",
+  write: true,
+  schema: z.object({
+    run_id: z.string().describe("本次交办的任一运行 id（r…），或最初发起交办的 ask 运行 id"),
+    task: z.string().describe("这一轮要做什么：评审意见或本人的新要求，写具体"),
+  }),
+  handler: async (ctx, a) => {
+    const { codeChainFor, codeChainRounds, queueNextCodeRound, setChainAwaitingUser } = await import("./code-chain.ts");
+    const seed = getRun(ctx.app, a.run_id);
+    let askId = a.run_id;
+    if (seed.kind === "code") askId = seed.parentId ?? a.run_id;
+    const rounds = codeChainRounds(ctx.app, askId).filter((r) => r.kind === "code");
+    const last = rounds.at(-1);
+    if (!last) throw new HttpError(400, "这不是一次交办编码任务");
+    const chain = codeChainFor(ctx.app, last) ?? (last.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? null;
+    if (!chain) throw new HttpError(400, "找不到这次交办的会话链");
+    const resumed = setChainAwaitingUser(ctx.app, chain, false);
+    const sessionId = (last.output as { coderSessionId?: string }).coderSessionId;
+    const next = queueNextCodeRound(ctx.app, resumed, a.task, { resumeSessionId: sessionId });
+    if (!next) throw new HttpError(409, "上一轮还在进行或正在等本人确认，先看 read_run");
+    return `已在原交办会话安排第 ${next.chain.round} 轮 ${next.run.id}：同样的工作区和编码会话，完成后自动检查、评审并通知。`;
   },
 });
 

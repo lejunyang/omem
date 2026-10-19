@@ -331,13 +331,32 @@ registerHandler("wiki-lint", async (ctx) => {
 
 registerHandler("sync", async (ctx) => {
   const spaceId = ctx.run.spaceId!;
+  const sub = await syncSubmodules(ctx.app, spaceId, (text) => ctx.event("status", { text }));
   const report = await syncDirectorySpace(ctx.app, spaceId, (done, total) => ctx.event("status", { text: `同步 ${done}/${total}` }));
   ctx.event("status", { text: `新增 ${report.created}，更新 ${report.updated}，移除 ${report.removed}，未变 ${report.unchanged}` });
   const space = getSpace(ctx.app, spaceId);
   if ((report.updated || report.removed) && listPages(ctx.app, spaceId).length && space.settings.autoLint !== false && stalePages(ctx.app, spaceId).length)
     createRun(ctx.app, { kind: "wiki-lint", spaceId, title: "检查受影响页面", parentId: ctx.run.id });
-  return { created: report.created, updated: report.updated, removed: report.removed, unchanged: report.unchanged, skipped: report.skipped.length };
+  return { created: report.created, updated: report.updated, removed: report.removed, unchanged: report.unchanged, skipped: report.skipped.length, ...(sub ? { submodules: sub } : {}) };
 });
+
+/**
+ * Before indexing a repository space: check out its submodules when omem cloned it, and keep
+ * their state on the space (settings.submodules) so the assistant and the web page can say
+ * which ones are indexed and why others are not.
+ */
+export async function syncSubmodules(app: App, spaceId: string, onProgress?: (text: string) => void) {
+  const s = getSpace(app, spaceId);
+  if (!s.rootPath) return null;
+  const { ensureSubmodules, managedCheckout } = await import("../core/repositories.ts");
+  const r = await ensureSubmodules(app, s.rootPath, onProgress);
+  if (!r.total) return null;
+  const info = { ...r, managed: managedCheckout(app, s.rootPath), checkedAt: now() };
+  updateSpace(app, spaceId, { settings: { ...getSpace(app, spaceId).settings, submodules: info } });
+  if (r.failed.length) onProgress?.(`${r.failed.length} 个子模块拉取失败（多半是没有读取权限）：${r.failed.map((f) => f.path).join("、")}`);
+  else if (!info.managed && r.ready < r.total) onProgress?.(`${r.total - r.ready} 个子模块没有检出；这个仓库由你自己管理，omem 不改动它，需要时在仓库里运行 git submodule update --init --recursive`);
+  return info;
+}
 
 // ---------------------------------------------------------------- heartbeat
 

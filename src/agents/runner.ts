@@ -135,6 +135,8 @@ export type RoleRunInput = {
   profileId?: string;
   model?: string;
   effort?: string;
+  /** Continue this coding Agent's previous session (code delegation rounds reuse one session). */
+  resumeSessionId?: string;
   /** Comparison run: writes are recorded, not applied; no fallback. */
   shadow?: { parentRunId: string | null };
 };
@@ -288,6 +290,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         signal: input.signal,
         mcp: prep.mcp,
         extraMcp: prep.extraMcp,
+        resumeSessionId: input.resumeSessionId,
+        persistSession: !!input.resumeSessionId,
         queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
       };
       if (i > 0) emit({ type: "status", text: `默认后端不可用（排队/限流），改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""} 重试` });

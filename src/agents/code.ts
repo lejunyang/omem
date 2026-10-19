@@ -62,7 +62,10 @@ export function codeRepos(app: App, spaceId: string, repos?: string[]): Space[] 
   });
 }
 
-const patchFile = (app: App, runId: string, space: string) => join(app.runsDir, runId, "patches", `${space}.patch`);
+const patchFile = (app: App, runId: string, space: string) => {
+  const input = getRun(app, runId).input as { continueFrom?: string };
+  return join(app.runsDir, input.continueFrom ?? runId, "patches", `${space}.patch`);
+};
 const fence = (lang: string, body: string) => "```" + lang + "\n" + body + "\n```";
 
 /**
@@ -73,13 +76,17 @@ const fence = (lang: string, body: string) => "```" + lang + "\n" + body + "\n``
 export async function runCodeTask(ctx: RunContext) {
   const { app, run } = ctx;
   const input = run.input as CodeInput;
+  // A later round continues the first run: same worktrees and its coding Agent session.
+  const chain = (await import("./code-chain.ts")).codeChainFor(app, run);
+  const continueFrom = (input as { continueFrom?: string }).continueFrom;
+  const rootRunId = continueFrom ?? run.id;
   const repos = codeRepos(app, run.spaceId!, input.repos);
   const multi = repos.length > 1;
-  const dir = join(app.runsDir, run.id);
+  const dir = join(app.runsDir, rootRunId);
   const workDir = join(dir, "work");
-  const branch = `omem/${run.id}`;
+  const branch = `omem/${rootRunId}`;
   mkdirSync(join(dir, "patches"), { recursive: true });
-  const known = worktreesOf(app, run.id);
+  const known = worktreesOf(app, rootRunId);
   const worktrees: WorktreeRef[] = [];
   for (const repo of repos) {
     const have = known.find((w) => w.space === repo.id && existsSync(w.path));
@@ -94,6 +101,11 @@ export async function runCodeTask(ctx: RunContext) {
     worktrees.push({ space: repo.id, path, branch, base });
     ctx.event("status", { text: `已在 ${path} 创建 ${repo.id} 的独立工作区（基于 ${base.slice(0, 8)}）` });
   }
+  if (chain) {
+    const { saveCodeChain } = await import("./code-chain.ts");
+    if (rootRunId !== run.id) saveCodeChain(app, chain, run.id);
+    (await import("../channels/lark-code-progress.ts")).startCodeProgress(app, chain);
+  }
   ctx.output({ worktrees });
 
   const commandFor = (repo: Space) => input.checks?.[repo.id] ?? input.checkCommand ?? (repo.settings.checkCommand as string | undefined);
@@ -105,17 +117,25 @@ export async function runCodeTask(ctx: RunContext) {
   const cwd = multi ? workDir : worktrees[0].path;
   // The run's space may be a project; the agents read it and every repository (and their related spaces).
   const spaces = [...new Set([run.spaceId!, ...repos.map((r) => r.id)])];
+  const coderTask = continueFrom
+    ? `# 上一轮评审要求修改
+
+${input.task}
+
+继续在原来的工作区里改，不要重做已经通过的部分；改完重新运行检查命令。${where}`
+    : `${input.task}${where}`;
   const coder = await runRole(app, {
     role: "coder",
     spaceId: run.spaceId!,
     spaces,
-    task: `${input.task}${where}`,
+    task: coderTask,
     runId: run.id,
     cwd,
     signal: ctx.signal,
+    resumeSessionId: (input as { resumeSessionId?: string }).resumeSessionId,
     onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
   });
-  ctx.output({ coderSummary: coder.text.trim(), coderAgent: coder.profileId });
+  ctx.output({ coderSummary: coder.text.trim(), coderAgent: coder.profileId, coderSessionId: coder.sessionId });
 
   const results: RepoResult[] = [];
   const diffs: string[] = [];
@@ -182,9 +202,25 @@ export async function runCodeTask(ctx: RunContext) {
   const approved = /结论[：:]\s*通过/.test(review.text);
   ctx.output({ review: review.text.trim(), reviewAgent: review.profileId, verdict: approved ? "approved" : "changes-requested" });
   const checked = results.filter((r) => r.check);
+  const statTextLine = results.map((r) => (multi ? `${r.space}：` : "") + (r.diffStat.split("\n").pop() ?? "")).join("\n");
+  const checksLine = checked.length ? `\n检查：${checked.some((r) => r.check!.code !== 0) ? "失败" : "通过"}` : "";
+  const { queueNextCodeRound, MAX_AUTO_ROUNDS } = await import("./code-chain.ts");
+  const endChain = (run.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? chain;
+  if (!approved) {
+    // Keep the same delegation going: the coder resumes its session and works the reviewer's request.
+    const reviewBody = review.text.trim();
+    const next = endChain
+      ? queueNextCodeRound(app, endChain, `评审要求修改（第 ${endChain.round} 轮评审）：\n\n${reviewBody.slice(0, 12000)}`, { resumeSessionId: coder.sessionId })
+      : null;
+    if (next) {
+      ctx.event("status", { text: `评审要求修改，已在同一会话安排第 ${next.chain.round} 轮（复用同一编码会话和工作区）` });
+      ctx.output({ codeChain: next.chain });
+      return { verdict: "changes-requested", continuedRunId: next.run.id };
+    }
+  }
   notify(app, {
-    title: `${approved ? "交办完成，评审通过" : "交办完成，评审要求修改"}：${run.title}`,
-    body: `${results.map((r) => (multi ? `${r.space}：` : "") + (r.diffStat.split("\n").pop() ?? "")).join("\n")}${checked.length ? `\n检查：${checked.some((r) => r.check!.code !== 0) ? "失败" : "通过"}` : ""}`,
+    title: `${approved ? "交办完成，评审通过" : `交办第 ${endChain?.round ?? 1} 轮评审要求修改（已到自动推进上限 ${MAX_AUTO_ROUNDS} 轮，等本人决定）`}：${run.title}`,
+    body: `${statTextLine}${checksLine}`,
     link: `#/runs/${run.id}`,
   });
   return { verdict: approved ? "approved" : "changes-requested" };

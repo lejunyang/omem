@@ -378,6 +378,9 @@ async function saveEdit() {
           <div class="muted small">{{ s.description || "（没有说明）" }}</div>
           <div class="muted small mono" v-if="s.rootPath">{{ s.rootPath }}</div>
           <div class="muted small">{{ s.sources ?? 0 }} 份原件 · {{ s.pages ?? 0 }} 个页面</div>
+          <div v-if="s.settings?.submodules" class="muted small" :title="(s.settings.submodules.failed ?? []).map((f: { path: string; error: string }) => `${f.path}：${f.error}`).join('\n')">
+            子模块 {{ s.settings.submodules.ready }}/{{ s.settings.submodules.total }} 已检出并索引<template v-if="s.settings.submodules.failed?.length">，{{ s.settings.submodules.failed.length }} 个拉取失败（悬停查看原因）</template><template v-else-if="!s.settings.submodules.managed && s.settings.submodules.ready < s.settings.submodules.total">，其余需在仓库里 git submodule update --init --recursive</template>
+          </div>
           <div v-if="s.related?.length" class="muted small">相关：{{ s.related.map((r) => r.name).join("、") }}</div>
         </div>
       </div>

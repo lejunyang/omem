@@ -477,8 +477,10 @@ space
   .action(async (id, o) => {
     const app = open();
     if (o.exclude) updateSpace(app, id, { settings: { ...getSpace(app, id).settings, exclude: o.exclude } });
+    const { syncSubmodules } = await import("./agents/jobs.ts");
+    const sub = await syncSubmodules(app, id, (t) => console.log(t));
     const r = await syncDirectorySpace(app, id);
-    console.log(`新增 ${r.created}，更新 ${r.updated}，移除 ${r.removed}，未变 ${r.unchanged}`);
+    console.log(`新增 ${r.created}，更新 ${r.updated}，移除 ${r.removed}，未变 ${r.unchanged}${sub ? `；子模块 ${sub.ready}/${sub.total} 已检出` : ""}`);
   });
 
 program
@@ -788,8 +790,10 @@ program
     const app = open();
     for (const s of listSpaces(app))
       if (s.rootPath) {
+        const { syncSubmodules } = await import("./agents/jobs.ts");
+        const sub = await syncSubmodules(app, s.id, (t) => console.log(`${s.id}: ${t}`));
         const r = await syncDirectorySpace(app, s.id);
-        console.log(`${s.id}: 新增 ${r.created}，更新 ${r.updated}，移除 ${r.removed}`);
+        console.log(`${s.id}: 新增 ${r.created}，更新 ${r.updated}，移除 ${r.removed}${sub ? `；子模块 ${sub.ready}/${sub.total} 已检出` : ""}`);
       }
   });
 

@@ -125,3 +125,83 @@ it("still prunes files deleted from a repo that were imported before ownership w
   expect(left.map((s) => s.uri)).toEqual(["keep.ts"]);
   expect(JSON.parse(app.db.prepare("select meta from sources where space_id='legacy' and uri='keep.ts'").get()!.meta as string).directoryRoot).toBe(realpathSync(legacyRepo));
 });
+
+it("checks out submodules of cloned repositories one by one, indexes their files and reports the ones it cannot fetch", async () => {
+  const commit = (dir: string, msg: string) => execFileSync("git", ["-C", dir, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", msg]);
+  const serve = join(root, "served");
+  mkdirSync(serve);
+  const make = (name: string, files: Record<string, string>) => {
+    const dir = join(root, `${name}-src`);
+    mkdirSync(dir);
+    execFileSync("git", ["init", "-q", "-b", "main", dir]);
+    for (const [f, t] of Object.entries(files)) {
+      mkdirSync(join(dir, f, ".."), { recursive: true });
+      writeFileSync(join(dir, f), t);
+    }
+    execFileSync("git", ["-C", dir, "add", "."]);
+    commit(dir, "initial");
+    return dir;
+  };
+  const publish = (name: string, dir: string) => {
+    const bare = join(serve, `${name}.git`);
+    rmSync(bare, { recursive: true, force: true });
+    execFileSync("git", ["clone", "--bare", "-q", dir, bare]);
+    execFileSync("git", ["--git-dir", bare, "update-server-info"]);
+  };
+  const server = createServer((req, res) => {
+    const stream = createReadStream(join(serve, decodeURIComponent(new URL(req.url!, "http://localhost").pathname)));
+    stream.on("error", () => { res.statusCode = 404; res.end(); });
+    stream.pipe(res);
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  try {
+    const inner = make("inner", { "deep.ts": "export const deep = 1;\n" });
+    publish("inner", inner);
+    const lib = make("lib", { "src/lib.ts": "export const lib = 2;\n" });
+    // The HTTP server runs in this process, so synchronous git calls cannot fetch from it:
+    // add submodules from local paths, then point .gitmodules at the served URL.
+    const addSub = (dir: string, name: string, path: string) => {
+      execFileSync("git", ["-C", dir, "-c", "protocol.file.allow=always", "submodule", "add", "-q", join(serve, `${name}.git`), path], { stdio: "ignore" });
+      execFileSync("git", ["-C", dir, "config", "-f", ".gitmodules", `submodule.${path}.url`, `${base}/${name}.git`]);
+      execFileSync("git", ["-C", dir, "add", ".gitmodules"]);
+    };
+    addSub(lib, "inner", "deps/inner");
+    commit(lib, "add inner");
+    publish("lib", lib);
+    const gone = make("gone", { "x.ts": "export const x = 3;\n" });
+    publish("gone", gone);
+    const main = make("main", { "app.ts": "import { lib } from './libs/lib/src/lib';\n" });
+    addSub(main, "lib", "libs/lib");
+    addSub(main, "gone", "libs/gone");
+    commit(main, "add submodules");
+    publish("main", main);
+    rmSync(join(serve, "gone.git"), { recursive: true, force: true }); // no access any more
+
+    const r = await callTool(ctx, "connect_repository", { repository: `${base}/main.git`, id: "with-subs" });
+    expect(r.isError).toBe(false);
+    const text = r.text;
+    expect(text).toMatch(/子模块：共 3 个，已检出并索引 2 个；拉取失败 1 个（libs\/gone/);
+    const uris = listSources(app, { spaceId: "with-subs", limit: 100 }).sources.map((s) => s.uri);
+    expect(uris).toEqual(expect.arrayContaining(["app.ts", "libs/lib/src/lib.ts", "libs/lib/deps/inner/deep.ts"]));
+    // Gitlinks are directories, not files to index.
+    expect(uris).not.toContain("libs/gone");
+    expect(uris).not.toContain("libs/lib");
+    const sub = getSpace(app, "with-subs").settings.submodules as { total: number; ready: number; managed: boolean; failed: { path: string }[] };
+    expect(sub).toMatchObject({ total: 3, ready: 2, managed: true });
+    expect(sub.failed.map((f) => f.path)).toEqual(["libs/gone"]);
+
+    // A repository the user manages is never fetched into; only its checked-out submodules are indexed.
+    const local = join(root, "local-with-sub");
+    execFileSync("git", ["clone", "-q", join(serve, "main.git"), local]);
+    const l = await callTool(ctx, "connect_repository", { repository: local, id: "local-subs" });
+    expect(l.text).toMatch(/已检出并索引 0 个.*本人在仓库里 git submodule update/);
+    expect(listSources(app, { spaceId: "local-subs", limit: 100 }).sources.map((s) => s.uri)).toEqual(expect.arrayContaining(["app.ts"]));
+    execFileSync("git", ["-C", local, "config", "submodule.libs/lib.url", join(serve, "lib.git")]);
+    execFileSync("git", ["-C", local, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--", "libs/lib"], { stdio: "ignore" });
+    await syncDirectorySpace(app, "local-subs");
+    expect(listSources(app, { spaceId: "local-subs", limit: 100 }).sources.map((s) => s.uri)).toContain("libs/lib/src/lib.ts");
+  } finally {
+    await new Promise<void>((done) => server.close(() => done()));
+  }
+}, 60000);

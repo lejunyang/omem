@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { one } from "../core/db.ts";
 import { canWrite, OWNER, personalSpaceId } from "../core/users.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { injectionScore } from "../sources/guard.ts";
@@ -113,7 +114,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     kind: "ask",
     spaceId: thread.spaceId,
     title: truncate(text.replace(/\s+/g, " "), 60),
-    input: { conversationId: thread.id, messageIds: [messageId], ...(userId === OWNER ? {} : { userId }) },
+    input: { conversationId: thread.id, messageIds: [messageId], ...(userId === OWNER ? {} : { userId }), ...((inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId ? { continueCodeAskId: (inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId } : {}) },
     lane: thread.id,
     userId,
     notBefore: mergeMs ? notBefore : null,

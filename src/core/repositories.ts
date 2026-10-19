@@ -3,10 +3,71 @@ import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync } fro
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { App } from "./app.ts";
-import { git } from "./git.ts";
+import { git, submodules } from "./git.ts";
 import { HttpError, sha256, slugify } from "./util.ts";
 
 const exec = promisify(execFile);
+
+/** Network transports only, never helpers or local-file syntax; no prompts. Also used for submodules. */
+const SAFE_GIT = ["-c", "protocol.allow=never", "-c", "protocol.http.allow=always", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always"];
+const GIT_ENV = () => ({ ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -oBatchMode=yes -oStrictHostKeyChecking=yes" });
+
+/** Whether omem cloned this checkout itself (under its repos/ directory): only those are fetched or changed by omem. */
+export function managedCheckout(app: App, root: string) {
+  const parent = join(realpathSync(app.home), "repos");
+  try {
+    return realpathSync(root).startsWith(parent + "/") || realpathSync(root).startsWith(parent + "\\");
+  } catch {
+    return false;
+  }
+}
+
+export type SubmoduleReport = { total: number; ready: number; fetched: string[]; failed: { path: string; error: string }[] };
+
+/**
+ * Check out the submodules of a checkout omem cloned (at every depth), so their files can be
+ * indexed. Each one separately: one without access does not stop the others. A checkout the
+ * user manages is left alone; its submodules are indexed when the user has initialized them.
+ */
+export async function ensureSubmodules(app: App, root: string, onProgress?: (text: string) => void): Promise<SubmoduleReport> {
+  const report: SubmoduleReport = { total: 0, ready: 0, fetched: [], failed: [] };
+  if (!existsSync(join(root, ".gitmodules"))) return report;
+  const managed = managedCheckout(app, root);
+  // Nested submodules appear once their parent is checked out: a few rounds at most.
+  for (let round = 0; round < 4; round++) {
+    const list = submodules(root);
+    report.total = list.length;
+    report.ready = list.filter((s) => s.state !== "missing").length;
+    // In omem's own checkout a submodule at another commit than the superproject records is stale too.
+    const missing = list.filter((s) => (s.state === "missing" || s.state === "changed") && !report.failed.some((f) => f.path === s.path) && !report.fetched.includes(s.path));
+    if (!managed || !missing.length) break;
+    const ready = new Set(list.filter((x) => x.state !== "missing").map((x) => x.path));
+    for (const [i, s] of missing.entries()) {
+      onProgress?.(`拉取子模块 ${report.fetched.length + i + 1}/${missing.length + report.fetched.length}：${s.path}`);
+      // A nested submodule is updated from inside its parent submodule, with a path relative to it.
+      const parent = [...ready].filter((p) => s.path.startsWith(p + "/")).sort((a, b) => b.length - a.length)[0];
+      const cwd = parent ? join(root, parent) : root;
+      const rel = parent ? s.path.slice(parent.length + 1) : s.path;
+      try {
+        await exec("git", [...SAFE_GIT, "-C", cwd, "submodule", "update", "--init", "--depth", "1", "--", rel], { timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024, env: GIT_ENV() });
+        report.fetched.push(s.path);
+      } catch (e) {
+        // Some servers refuse shallow fetches of a pinned commit; a full fetch then.
+        try {
+          await exec("git", [...SAFE_GIT, "-C", cwd, "submodule", "update", "--init", "--", rel], { timeout: 15 * 60_000, maxBuffer: 4 * 1024 * 1024, env: GIT_ENV() });
+          report.fetched.push(s.path);
+        } catch (e2) {
+          const msg = String((e2 as { stderr?: string }).stderr || (e2 as Error).message || e).trim().split("\n").slice(-2).join(" ");
+          report.failed.push({ path: s.path, error: msg.slice(0, 300) });
+        }
+      }
+    }
+  }
+  const final = submodules(root);
+  report.total = final.length;
+  report.ready = final.filter((s) => s.state !== "missing").length;
+  return report;
+}
 
 /** Only network Git transports; never Git's executable/helper or local-file syntax. */
 export function repositoryUrl(value: string): string {
@@ -45,10 +106,8 @@ export async function cloneRepository(app: App, value: string): Promise<string> 
     }
     const temporary = join(parent, `.clone-${sha256(url).slice(0, 12)}-${Date.now()}`);
     try {
-      await exec("git", ["-c", "protocol.allow=never", "-c", "protocol.http.allow=always", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "clone", "--", url, temporary], {
-        timeout: 5 * 60_000, maxBuffer: 1024 * 1024,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -oBatchMode=yes -oStrictHostKeyChecking=yes" },
-      });
+      // Submodules are checked out afterwards one by one (ensureSubmodules), so one without access does not fail the clone.
+      await exec("git", [...SAFE_GIT, "clone", "--", url, temporary], { timeout: 5 * 60_000, maxBuffer: 1024 * 1024, env: GIT_ENV() });
       repositoryRoot(temporary);
       renameSync(temporary, target);
       return target;
