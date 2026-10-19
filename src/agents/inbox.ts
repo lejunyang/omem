@@ -1,5 +1,4 @@
 import type { App } from "../core/app.ts";
-import { one } from "../core/db.ts";
 import { canWrite, OWNER, personalSpaceId } from "../core/users.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { injectionScore } from "../sources/guard.ts";
