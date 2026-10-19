@@ -428,7 +428,7 @@ function explain(error: unknown, profile: AgentProfile) {
 export async function runAcp(profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   const onAbort = () => {};
   req.signal?.addEventListener("abort", onAbort, { once: true });
-  const handle = await openAcp(profile, { cwd: req.cwd, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, env: req.env, probe: req.probe, queueTimeoutMs: req.queueTimeoutMs }, emit);
+  const handle = await openAcp(profile, { cwd: req.cwd, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, env: req.env, resumeSessionId: req.resumeSessionId, probe: req.probe, queueTimeoutMs: req.queueTimeoutMs }, emit);
   try {
     if (req.probe) return { text: "", stopReason: "probe", agent: handle.agent, probe: handle.probe };
     if (req.signal?.aborted) throw new Error("CANCELLED");
