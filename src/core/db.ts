@@ -497,6 +497,13 @@ const migrations: string[] = [
   update conversations set status = 'archived', settings = json_set(coalesce(settings, '{}'), '$.mergedInto', (select keep from topic_dupes where dupe = conversations.id)) where id in (select dupe from topic_dupes);
   drop table topic_dupes;
   `,
+  // Turns asked in a merged duplicate belong to the conversation it was merged into.
+  `
+  update runs set input = json_set(input, '$.conversationId', (select json_extract(c.settings, '$.mergedInto') from conversations c where c.id = json_extract(runs.input, '$.conversationId')))
+    where json_extract(input, '$.conversationId') in (select id from conversations where json_extract(settings, '$.mergedInto') is not null);
+  update runs set lane = (select json_extract(c.settings, '$.mergedInto') from conversations c where c.id = runs.lane)
+    where lane in (select id from conversations where json_extract(settings, '$.mergedInto') is not null) and status not in ('queued', 'running');
+  `,
 ];
 
 export type Db = DatabaseSync;
