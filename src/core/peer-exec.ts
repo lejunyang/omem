@@ -366,6 +366,19 @@ export const peerCommands: Record<string, Command> = {
       return { ok: true, output: tail, restarting: a.restart };
     },
   },
+  // Re-sync a repository/directory space (checks out submodules of omem's own clones first).
+  syncSpace: {
+    description: "立即同步一个关联目录的空间（会先拉取 omem 克隆仓库的子模块，可能很久）",
+    schema: z.object({ space: z.string() }),
+    run: async (app, a) => {
+      const { scheduleSpaceSync } = await import("../agents/jobs.ts");
+      const { getSpace } = await import("./spaces.ts");
+      const s = getSpace(app, a.space);
+      if (!s.rootPath) throw new HttpError(400, "这个空间没有关联目录");
+      const run = scheduleSpaceSync(app, s.id);
+      return { runId: run.id, title: run.title };
+    },
+  },
   restart: {
     description: "重启后台服务（omem service restart）",
     schema: z.object({}),
