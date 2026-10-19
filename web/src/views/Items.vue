@@ -16,7 +16,7 @@ const router = useRouter();
 const items = ref<Item[]>([]);
 const showDone = ref(false);
 const scope = ref<"all" | "space">("all");
-const detail = ref<{ item: Item; events: ItemEvent[] } | null>(null);
+const detail = ref<{ item: Item; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }> } | null>(null);
 const quick = ref("");
 const viaAssistant = ref(true);
 const note = ref("");
@@ -182,7 +182,13 @@ function parseRef(r: string) {
         <div v-if="detail.item.sourceRefs.length" class="refs">
           <div class="section-title">相关依据</div>
           <template v-for="r in detail.item.sourceRefs" :key="r">
-            <a v-if="parseRef(r)" href="#" class="mono small" @click.prevent="parseRef(r)!()">{{ r }}</a>
+            <a v-if="parseRef(r)" href="#" class="ref" @click.prevent="parseRef(r)!()">
+              <template v-if="detail.excerpts?.[r]">
+                <span class="ref-title small muted">{{ detail.excerpts[r].title }}</span>
+                <span class="ref-text small">{{ detail.excerpts[r].text }}</span>
+              </template>
+              <span v-else class="mono small muted">{{ r }}（已删除或无权查看）</span>
+            </a>
           </template>
         </div>
         <div class="timeline">
@@ -330,7 +336,26 @@ function parseRef(r: string) {
 }
 .refs {
   display: grid;
-  gap: 2px;
+  gap: 6px;
+}
+.ref {
+  display: grid;
+  gap: 1px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--line);
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+.ref:hover {
+  border-left-color: var(--accent);
+  background: var(--hover, transparent);
+}
+.ref-title,
+.ref-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .timeline ol {
   list-style: none;

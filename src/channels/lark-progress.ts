@@ -32,7 +32,7 @@ function label(title: string) {
   return TOOL_LABEL[name] ?? title.slice(0, 40);
 }
 
-export type Progress = { finish(answer: string): Promise<void>; fail(message: string): Promise<void> };
+export type Progress = { messageId: string; finish(answer: string): Promise<void>; fail(message: string): Promise<void> };
 
 export async function startProgress(app: App, at: { messageId: string; inThread: boolean }, runId: string): Promise<Progress> {
   const started = Date.now();
@@ -83,6 +83,7 @@ export async function startProgress(app: App, at: { messageId: string; inThread:
     if (reaction) await unreactLark(at.messageId, reaction);
   };
   return {
+    messageId: sent.messageId,
     async finish(answer: string) {
       await close();
       const secs = Math.round((Date.now() - started) / 1000);

@@ -19,3 +19,39 @@ export function validateItemRefs(app: App, refs: string[], userId: string, scope
     if (m[3] && (Number(m[4] ?? m[3]) < Number(m[3]) || Number(m[4] ?? m[3]) > ("lines" in row ? Number(row.lines) : 0))) throw new HttpError(400, `来源行号越界：${ref}`);
   }
 }
+
+/**
+ * A short readable excerpt for a reference, so a reader sees what it says before opening it:
+ * the cited lines of a source (chat lines without their time and message id), a memory, or a
+ * conversation message. Null when the reference no longer resolves.
+ */
+export function refExcerpt(app: App, ref: string, max = 60): { title: string; text: string; spaceId: string } | null {
+  const m = /^(src|mem|msg):([A-Za-z0-9_-]+)(?:#L(\d+)(?:-L?(\d+))?)?/.exec(ref);
+  if (!m) return null;
+  const clip = (s: string) => {
+    const t = s.replace(/\s+/g, " ").trim();
+    return t.length > max ? `${t.slice(0, max)}…` : t;
+  };
+  if (m[1] === "mem") {
+    const r = one<{ text: string; space_id: string }>(app.db, "select text, space_id from memories where id = ?", m[2]);
+    return r ? { title: "记忆", text: clip(r.text), spaceId: r.space_id } : null;
+  }
+  if (m[1] === "msg") {
+    const r = one<{ text: string; role: string; space_id: string }>(app.db, "select m.text, m.role, c.space_id from messages m join conversations c on c.id = m.conversation_id where m.id = ?", m[2]);
+    return r ? { title: r.role === "user" ? "本人说" : "助理说", text: clip(r.text), spaceId: r.space_id } : null;
+  }
+  const s = one<{ title: string; kind: string; text: string; space_id: string }>(app.db, "select title, kind, text, space_id from sources where id = ? and deleted_at is null", m[2]);
+  if (!s) return null;
+  const lines = s.text.split("\n");
+  const from = m[3] ? Math.max(1, Number(m[3])) : 1;
+  const to = Math.min(lines.length, m[4] ? Number(m[4]) : m[3] ? from : Math.min(lines.length, 3));
+  const picked = lines.slice(from - 1, to).map((l) =>
+    s.kind === "chat"
+      ? l
+          .replace(/^\[[^\]]*\]\s*/, "") // [2026-10-19 07:02 · 话题 …]
+          .replace(/\s*\((?:om|omt)_[\w-]+\)\s*$/, "") // trailing (om_…)
+          .replace(/ ⏎ /g, " ")
+      : l,
+  );
+  return { title: s.title, text: clip(picked.join(" ")), spaceId: s.space_id };
+}

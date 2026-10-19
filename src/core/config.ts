@@ -68,8 +68,10 @@ export const configSchema = z.object({
       idleHours: z.number().min(0).default(12),
       /** Wait this long for more messages before starting a turn, so bursts become one turn. */
       mergeMs: z.number().int().min(0).default(1500),
+      /** A message that is only material (shared group, forward, image, file) waits this long for the words that usually follow. */
+      contentWaitMs: z.number().int().min(0).default(15_000),
     })
-    .default({ liveMinutes: 20, maxLive: 3, maxTurns: 40, idleHours: 12, mergeMs: 1500 }),
+    .default({ liveMinutes: 20, maxLive: 3, maxTurns: 40, idleHours: 12, mergeMs: 1500, contentWaitMs: 15_000 }),
   agents: z
     .object({
       default: z.string().optional(),

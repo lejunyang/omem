@@ -26,6 +26,7 @@ import { HttpError } from "../core/util.ts";
 import { accessibleSpaces, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
+import { refExcerpt } from "../items/evidence.ts";
 import { getItem, itemEvents, listItems, upsertItem } from "../items/store.ts";
 import { getMemory, listMemories, memoryHistory, memoryTags, remember, retract, supersede, updateMemoryText } from "../memory/store.ts";
 import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
@@ -463,7 +464,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/items/:id", async (req) => {
     const id = (req.params as { id: string }).id;
-    return { item: getItem(app, id), events: itemEvents(app, id) };
+    const item = getItem(app, id);
+    // A readable excerpt per reference, only from spaces this reader may see.
+    const allowed = accessibleSpaces(app, who(req));
+    const excerpts: Record<string, { title: string; text: string }> = {};
+    for (const ref of item.sourceRefs) {
+      const ex = refExcerpt(app, ref, 120);
+      if (ex && (!allowed || allowed.includes(ex.spaceId))) excerpts[ref] = { title: ex.title, text: ex.text };
+    }
+    return { item, events: itemEvents(app, id), excerpts };
   });
   server.post("/api/items", async (req) => {
     const b = q(itemBody, req.body);

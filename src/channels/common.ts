@@ -2,6 +2,7 @@ import { receive, type Inbound } from "../agents/inbox.ts";
 import { getRun, waitForRun } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
+import { refExcerpt } from "../items/evidence.ts";
 
 /**
  * Shared path for chat channels (Feishu, Telegram, QQ via OneBot…): the
@@ -73,14 +74,32 @@ export function chunkMessage(text: string, max: number) {
   return out;
 }
 
-/** Deduplicate by the resolved URL before giving links labels. */
+/**
+ * Where a notification's evidence came from, as lines a reader can judge without opening them:
+ * one link per final URL (several refs into the same chat share it), labelled with the source
+ * title, followed by short excerpts of the cited lines. Sources without an external URL keep
+ * their excerpt as plain text.
+ */
 export function notificationOrigins(app: App, refs: string[]) {
-  const urls = new Set<string>();
+  const groups = new Map<string, { url: string | null; title: string; excerpts: string[] }>();
   for (const ref of refs) {
-    if (!ref.startsWith("src:")) continue;
-    const resolved = resolveCitations(app, `[原文](${ref})`);
-    const url = /^\[原文\]\((https?:\/\/.*)\)$/.exec(resolved)?.[1];
-    if (url) urls.add(url);
+    if (!/^(src|mem|msg):/.test(ref)) continue;
+    const ex = refExcerpt(app, ref);
+    if (!ex) continue;
+    const resolved = ref.startsWith("src:") ? resolveCitations(app, `[x](${ref})`) : "";
+    const url = /^\[x\]\((https?:\/\/.*)\)$/.exec(resolved)?.[1] ?? null;
+    const key = url ?? ref.replace(/#.*$/, "");
+    const g = groups.get(key) ?? { url, title: ex.title, excerpts: [] };
+    if (ex.text && !g.excerpts.includes(ex.text)) g.excerpts.push(ex.text);
+    groups.set(key, g);
   }
-  return [...urls].map((url, i) => `[原文${urls.size > 1 ? i + 1 : ""}](${url})`).join("　");
+  const safe = (t: string) => t.replace(/[[\]]/g, (c) => (c === "[" ? "【" : "】")).replace(/[*_`<>]/g, "");
+  return [...groups.values()]
+    .slice(0, 5)
+    .map((g) => {
+      const head = g.url ? `[${safe(g.title)}](${g.url})` : safe(g.title);
+      const quotes = g.excerpts.slice(0, 3).map((e) => `「${safe(e)}」`).join(" ");
+      return `- ${head}${quotes ? `：${quotes}` : ""}${g.excerpts.length > 3 ? ` 等 ${g.excerpts.length} 处` : ""}`;
+    })
+    .join("\n");
 }

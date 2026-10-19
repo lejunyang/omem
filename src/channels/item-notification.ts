@@ -15,7 +15,7 @@ export function itemNotificationCard(app: App, n: Notification) {
   });
   const body = uniqueLinks(resolveCitations(app, scopedBody));
   const links = uniqueLinks(notificationOrigins(app, n.sourceRefs ?? []));
-  const origin = links ? `来源：${links}` : "";
+  const origin = links ? `**来源**\n${links}` : "";
   return buildCard({
     title: n.title,
     color: "blue",

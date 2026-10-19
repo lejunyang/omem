@@ -45,6 +45,10 @@ type Inbound = {
   topicId?: string;
   /** Quoted / reply-referenced message, resolved to readable text. */
   quote?: { messageId?: string; sender?: string; text?: string; origin?: string };
+  /** Feishu message type (text, post, share_chat…). */
+  type?: string;
+  /** @_user_N placeholders in the text → who they are. */
+  mentionNames?: Record<string, { name: string; isBot: boolean }>;
 };
 
 export function messageText(raw: string | undefined, type: string | undefined): string {
@@ -58,11 +62,72 @@ export function messageText(raw: string | undefined, type: string | undefined): 
     }
     if (type === "image") return "[图片]";
     if (type === "file") return `[文件] ${c.file_name ?? ""}`;
-    if (type === "interactive") return `[卡片] ${c.title ?? c.header?.title?.content ?? ""}`;
+    if (type === "interactive") {
+      // Visible text of the card; the API answers "请升级至最新版本客户端" for newer card schemas, which says nothing.
+      const texts: string[] = [];
+      const walk = (v: unknown) => {
+        if (Array.isArray(v)) return v.forEach(walk);
+        if (!v || typeof v !== "object") return;
+        const o = v as Record<string, unknown>;
+        if (typeof o.text === "string" && o.text.trim()) texts.push(o.text);
+        else if (typeof o.content === "string" && o.content.trim()) texts.push(o.content);
+        for (const x of Object.values(o)) if (x && typeof x === "object") walk(x);
+      };
+      walk(c.elements ?? c.body ?? []);
+      const title = c.title ?? c.header?.title?.content ?? "";
+      const body = texts.filter((t) => !/请升级至最新版本客户端/.test(t)).join(" ").replace(/\s+/g, " ").slice(0, 1500);
+      return `[卡片]${title ? ` ${title}` : ""}${body ? ` ${body}` : ""}`;
+    }
     return `[${type}]`;
   } catch {
     return raw;
   }
+}
+
+/** Messages that carry material but no instruction; the words usually follow, so the turn waits longer. */
+export const CONTENT_ONLY_TYPES = new Set(["share_chat", "share_user", "merge_forward", "image", "file", "media", "audio", "sticker", "share_calendar_event"]);
+
+type ContentLookups = {
+  /** A group's name, or null when neither the bot nor the owner's lark-cli can read it. */
+  chatName: (chatId: string) => Promise<string | null>;
+  userName: (openId: string) => Promise<string>;
+  /** The messages inside a merged forward (in order). */
+  children: (messageId: string) => Promise<{ sender: string; type: string; content: string }[]>;
+};
+
+/**
+ * Readable text for message kinds whose body is only ids (shared group, contact card, merged
+ * forward). The agent gets the group's name and chat_id, and where its messages already are,
+ * instead of a bare "[share_chat]".
+ */
+export async function describeLarkContent(app: App, msg: { messageId: string; type: string | undefined; content: string | undefined }, look: ContentLookups): Promise<string> {
+  let c: Record<string, unknown> = {};
+  try {
+    c = JSON.parse(msg.content || "{}");
+  } catch {}
+  if (msg.type === "share_chat" && typeof c.chat_id === "string") {
+    const chatId = c.chat_id;
+    const name = await look.chatName(chatId).catch(() => null);
+    const src = one<{ id: string }>(app.db, "select id from sources where uri = ? and deleted_at is null order by updated_at desc limit 1", `lark:${chatId}`);
+    const where = src ? `已采集为原件 [${name ?? chatId}](src:${src.id})` : "还没有采集：要读它的消息，用 set_lark_subscription 订阅、set_lark_backfill 回溯";
+    return `[分享群聊]「${name ?? "读不到群名"}」chat_id=${chatId}，${where}`;
+  }
+  if (msg.type === "share_user" && typeof c.user_id === "string") return `[分享名片] ${await look.userName(c.user_id)}`;
+  if (msg.type === "merge_forward") {
+    const items = await look.children(msg.messageId).catch(() => []);
+    if (!items.length) return "[合并转发]（读不到其中的消息）";
+    const lines = items.slice(0, 60).map((m) => `- ${m.sender}: ${messageText(m.content, m.type).replace(/\n/g, " ⏎ ").slice(0, 500)}`);
+    return [`[合并转发] ${items.length} 条`, ...lines, ...(items.length > 60 ? [`- …另有 ${items.length - 60} 条`] : [])].join("\n");
+  }
+  return messageText(msg.content, msg.type);
+}
+
+/**
+ * Feishu pushes an event again when it did not get the acknowledgement in time (after ~15 s, 5 min,
+ * 1 h…). The first delivery wins, also across restarts; repeats would otherwise become new turns.
+ */
+export function firstDelivery(app: App, messageId: string) {
+  return run(app.db, "insert or ignore into handled_messages(channel,message_id,rule,at) values('lark-bot',?,'',?)", messageId, new Date().toISOString()).changes > 0;
 }
 
 function kv(app: App, key: string, value?: string) {
@@ -105,6 +170,37 @@ export async function startLarkBot(app: App) {
   };
 
   const reply = (chatId: string, markdown: string, replyTo?: string, inThread = false) => sendLark(replyTo ? { replyTo, inThread } : { chatId }, { markdown });
+
+  /**
+   * Group names for shared group cards: the bot can only read groups it is in, so fall back to
+   * what personal capture already knows, then to the owner's lark-cli (read-only).
+   */
+  const sharedChatNames = new Map<string, string | null>();
+  const lookups: ContentLookups = {
+    chatName: async (chatId) => {
+      if (sharedChatNames.has(chatId)) return sharedChatNames.get(chatId)!;
+      let name: string | null = one<{ name: string }>(app.db, "select name from lark_cursors where chat_id = ? and name != ''", chatId)?.name ?? null;
+      if (!name) {
+        const r = await client.im.chat.get({ path: { chat_id: chatId } }).catch(() => null);
+        name = r?.data?.name || null;
+      }
+      if (!name) {
+        const { larkCli } = await import("./lark-cli.ts");
+        const v = await larkCli(["api", "GET", `/open-apis/im/v1/chats/${chatId}`, "--as", "user"], 20_000).catch(() => null);
+        name = (v?.data?.name as string | undefined) || null;
+      }
+      sharedChatNames.set(chatId, name);
+      return name;
+    },
+    userName: (openId) => nameOf(openId),
+    children: async (messageId) => {
+      const r = (await client.request({ method: "GET", url: `/open-apis/im/v1/messages/${encodeURIComponent(messageId)}`, params: { user_id_type: "open_id" } })) as {
+        data?: { items?: { message_id?: string; msg_type?: string; body?: { content?: string }; sender?: { id?: string } }[] };
+      };
+      const items = (r.data?.items ?? []).filter((i) => i.message_id !== messageId);
+      return Promise.all(items.map(async (i) => ({ sender: i.sender?.id ? await nameOf(i.sender.id) : "?", type: i.msg_type ?? "text", content: i.body?.content ?? "" })));
+    },
+  };
 
   // Later results for a thread (delegated agents…) go back to the same chat, inside the topic when there is one.
   registerThreadSender("lark", async (thread, markdown) => {
@@ -185,13 +281,13 @@ export async function startLarkBot(app: App) {
         params: { user_id_type: "open_id" },
       });
       const items = (r as { data?: { items?: Record<string, unknown>[] } }).data?.items ?? [];
-      const orig = items[0] as { body?: { content?: string }; message_type?: string; sender?: { id?: { open_id?: string } } } | undefined;
+      // The message API says msg_type and sender.id (a string); the event says message_type and sender_id.open_id.
+      const orig = items[0] as { body?: { content?: string }; msg_type?: string; message_type?: string; sender?: { id?: string | { open_id?: string } } } | undefined;
       if (!orig) return { messageId: parentId };
-      return {
-        messageId: parentId,
-        sender: orig.sender?.id?.open_id ? await nameOf(orig.sender.id.open_id) : undefined,
-        text: messageText(orig.body?.content, orig.message_type).slice(0, 2000) || undefined,
-      };
+      const senderId = typeof orig.sender?.id === "string" ? orig.sender.id : orig.sender?.id?.open_id;
+      const own = one<{ text: string }>(app.db, "select text from messages where role = 'assistant' and json_extract(meta, '$.larkMessageId') = ? order by created_at desc limit 1", parentId);
+      const text = own ? `（助手之前的回复）${own.text}` : await describeLarkContent(app, { messageId: parentId, type: orig.msg_type ?? orig.message_type, content: orig.body?.content }, lookups);
+      return { messageId: parentId, sender: senderId ? await nameOf(senderId) : undefined, text: text.slice(0, 2000) || undefined };
     } catch {
       return { messageId: parentId };
     }
@@ -210,10 +306,15 @@ export async function startLarkBot(app: App) {
     const userId = resolveIdentity(app, "lark", m.senderId);
     if (!userId) return; // not the owner and not a registered user (omem user add … --lark <open_id>)
     if (m.chatType === "p2p" && userId === OWNER) kv(app, "lark_owner_chat", m.chatId);
-    const text = m.text.replace(/@_user_\d+/g, "").trim();
+    // The bot's own @ goes away; other people keep their name (「结合 @小李 在文档里…」 means something).
+    const text = m.text.replace(/@_user_\d+/g, (key) => {
+      const who = m.mentionNames?.[key];
+      return who && !who.isBot ? `@${who.name}` : "";
+    }).replace(/[ \t]{2,}/g, " ").trim();
     const context = m.chatType === "group" ? groupContext(m) : "";
     if (!text) return;
     let progress: Awaited<ReturnType<typeof startProgress>> | null = null;
+    let runId: string | null = null;
     try {
       const answer = await answerFromChannel(
         app,
@@ -229,10 +330,13 @@ export async function startLarkBot(app: App) {
           externalMessageId: m.messageId,
           quote: m.quote,
           userId,
+          // Material without words: the instruction usually comes right after; the next message shortens the wait again.
+          mergeMs: m.type && CONTENT_ONLY_TYPES.has(m.type) ? Math.max(app.config.sessions.mergeMs, app.config.sessions.contentWaitMs) : undefined,
         },
         {
-          onStart: async (runId) => {
-            progress = await startProgress(app, { messageId: m.messageId, inThread: !!m.topicId }, runId).catch(() => null);
+          onStart: async (id) => {
+            runId = id;
+            progress = await startProgress(app, { messageId: m.messageId, inThread: !!m.topicId }, id).catch(() => null);
           },
           onMerged: async () => {
             const { reactLark } = await import("./lark-send.ts");
@@ -256,8 +360,9 @@ export async function startLarkBot(app: App) {
       );
       if (answer === null) return;
       const p = progress as Awaited<ReturnType<typeof startProgress>> | null;
-      if (p) await p.finish(answer);
-      else await reply(m.chatId, answer, m.messageId, !!m.topicId);
+      const sentId = p ? (await p.finish(answer), p.messageId) : (await reply(m.chatId, answer, m.messageId, !!m.topicId)).messageId;
+      // A later quote of this reply reads back as an empty card; this maps it to the answer.
+      if (runId && sentId) run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?) where run_id = ? and role = 'assistant'", sentId, runId);
     } catch (e) {
       const p = progress as Awaited<ReturnType<typeof startProgress>> | null;
       if (p) await p.fail((e as Error).message);
@@ -313,31 +418,45 @@ export async function startLarkBot(app: App) {
     }
   };
 
+  /** Everything after the acknowledgement: names, quotes and the turn may take seconds. */
+  const processEvent = async (data: any) => {
+    const msg = data.message;
+    const senderId = data.sender?.sender_id?.open_id ?? "";
+    const mentions = ((msg.mentions ?? []) as { id?: { open_id?: string } }[]).map((x) => x.id?.open_id ?? "").filter(Boolean);
+    if (msg.chat_type !== "p2p") void learnName(msg.chat_id);
+    void learnPeopleFromEvent(data).catch(() => {});
+    const m: Inbound = {
+      chatId: msg.chat_id,
+      chatType: msg.chat_type === "p2p" ? "p2p" : "group",
+      messageId: msg.message_id,
+      senderId,
+      senderName: await nameOf(senderId),
+      text: await describeLarkContent(app, { messageId: msg.message_id, type: msg.message_type, content: msg.content }, lookups),
+      mentions,
+      mentionsBot: !!botOpenId && mentions.includes(botOpenId),
+      createTime: msg.create_time,
+      topicId: msg.thread_id || undefined,
+      type: msg.message_type,
+      mentionNames: Object.fromEntries(
+        ((msg.mentions ?? []) as { key?: string; name?: string; id?: { open_id?: string } }[])
+          .filter((x) => x.key)
+          .map((x) => [x.key!, { name: x.name ?? "", isBot: !!botOpenId && x.id?.open_id === botOpenId }]),
+      ),
+    };
+    if ((msg.message_type === "image" || msg.message_type === "file") && (m.chatType === "group" || resolveIdentity(app, "lark", m.senderId)))
+      saveResource(msg, m).catch((e) => console.warn("[omem] 飞书附件保存失败", e));
+    if (msg.message_type !== "image" && msg.message_type !== "file") {
+      if (resolveIdentity(app, "lark", m.senderId) === OWNER) m.quote = await fetchQuote(msg);
+      await handle(m);
+    } else if (m.chatType === "group") captureGroup(m);
+  };
+
   const dispatcher = new lark.EventDispatcher({ loggerLevel: lark.LoggerLevel.warn }).register({
+    // Acknowledge at once: Feishu redelivers an event it has not heard back about within a few
+    // seconds, and a slow handler also holds back the messages sent right after it.
     "im.message.receive_v1": async (data: any) => {
-      const msg = data.message;
-      const senderId = data.sender?.sender_id?.open_id ?? "";
-      const mentions = ((msg.mentions ?? []) as { id?: { open_id?: string } }[]).map((x) => x.id?.open_id ?? "").filter(Boolean);
-      if (msg.chat_type !== "p2p") void learnName(msg.chat_id);
-      void learnPeopleFromEvent(data).catch(() => {});
-      const m: Inbound = {
-        chatId: msg.chat_id,
-        chatType: msg.chat_type === "p2p" ? "p2p" : "group",
-        messageId: msg.message_id,
-        senderId,
-        senderName: await nameOf(senderId),
-        text: messageText(msg.content, msg.message_type),
-        mentions,
-        mentionsBot: !!botOpenId && mentions.includes(botOpenId),
-        createTime: msg.create_time,
-        topicId: msg.thread_id || undefined,
-      };
-      if ((msg.message_type === "image" || msg.message_type === "file") && (m.chatType === "group" || resolveIdentity(app, "lark", m.senderId)))
-        saveResource(msg, m).catch((e) => console.warn("[omem] 飞书附件保存失败", e));
-      if (msg.message_type !== "image" && msg.message_type !== "file") {
-        if (resolveIdentity(app, "lark", m.senderId) === OWNER) m.quote = await fetchQuote(msg);
-        handle(m).catch((e) => console.warn("[omem] 飞书消息处理失败", e));
-      } else if (m.chatType === "group") captureGroup(m);
+      if (!data?.message?.message_id || !firstDelivery(app, data.message.message_id)) return {};
+      processEvent(data).catch((e) => console.warn("[omem] 飞书消息处理失败", e));
       return {};
     },
     "card.action.trigger": async (data: any) => {
