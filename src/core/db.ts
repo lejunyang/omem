@@ -469,6 +469,19 @@ const migrations: string[] = [
   create index lark_people_name on lark_people(name);
   alter table lark_messages add column mentions text not null default '[]';   -- [{ id (lark-cli open_id), name }]
   `,
+  // Notification evidence is a snapshot, independent of the item's accumulated evidence.
+  `
+  alter table notifications add column context text not null default '{}';
+  create table item_repairs (
+    id text primary key, at text not null, user_id text not null, run_id text,
+    reason text not null, snapshot text not null
+  );
+  create table item_update_proposals (
+    id text primary key, item_id text not null references items(id), user_id text not null,
+    from_space text not null, run_id text, note text not null, source_refs text not null,
+    status text not null default 'pending', created_at text not null, applied_at text, resolution text, resolved_by text, resolved_run_id text
+  );
+  `,
 ];
 
 export type Db = DatabaseSync;

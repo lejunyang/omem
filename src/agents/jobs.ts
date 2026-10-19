@@ -4,7 +4,8 @@ import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { findSpace, getSpace, listSpaces, relatedIds, relatedSpaces, updateSpace } from "../core/spaces.ts";
 import { json, newId, now, truncate } from "../core/util.ts";
-import { addItemEvent, dueReminders, listItems, upsertItem } from "../items/store.ts";
+import { deliverDueReminders } from "../items/reminders.ts";
+import { listItems, upsertItem } from "../items/store.ts";
 import { syncDirectorySpace } from "../sources/import.ts";
 import { appendToSource, getSource } from "../sources/store.ts";
 import { listPages, pageExists, syncWiki } from "../wiki/store.ts";
@@ -343,18 +344,7 @@ registerHandler("sync", async (ctx) => {
 registerHandler("heartbeat", async (ctx) => {
   const app = ctx.app;
   // 1. Due reminders need no model: deliver them directly.
-  const due = dueReminders(app);
-  for (const item of due) {
-    notify(app, {
-      title: `提醒：${item.title}`,
-      body: item.detail,
-      link: `#/items/${item.id}`,
-      entity: "item",
-      entityId: item.id,
-    });
-    addItemEvent(app, item.id, "reminded", "已按时提醒（含飞书操作卡片）", "agent");
-    upsertItem(app, item.id, { remindAt: null, status: item.status === "snoozed" ? "open" : item.status }, "agent");
-  }
+  const due = deliverDueReminders(app);
   // 2. Watches and waits only need attention when new material arrived.
   const last = one<{ value: string }>(app.db, "select value from kv where key = 'heartbeat_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
   const started = now();

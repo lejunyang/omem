@@ -1,3 +1,4 @@
+import { itemNotificationCard } from "./item-notification.ts";
 import * as lark from "@larksuiteoapi/node-sdk";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -121,32 +122,10 @@ export async function startLarkBot(app: App) {
     const body = resolveCitations(app, n.body ?? "");
     if (n.entity === "item" && n.entityId) {
       // Actionable item card: 已处理 / 忽略 resolve the item directly, no agent turn.
-      const { buildCard, recordInteraction } = await import("./lark-send.ts");
-      const { getItem } = await import("../items/store.ts");
-      // Where the item came from, as links Feishu can open (web/Feishu docs, the chat it was said in).
-      let origin = "";
-      try {
-        const refs = getItem(app, n.entityId).sourceRefs.filter((r) => r.startsWith("src:"));
-        const links = [...new Set(refs.map((r, i) => resolveCitations(app, `[原文${refs.length > 1 ? i + 1 : ""}](${r})`)).filter((l) => l.includes("](")))];
-        if (links.length) origin = `来源：${links.join("　")}`;
-      } catch {}
-      const card = buildCard({
-        title: n.title,
-        color: "blue",
-        blocks: [
-          { markdown: body || " " },
-          ...(origin ? [{ markdown: origin }] : []),
-          {
-            buttons: [
-              { text: "已处理", value: `item:done:${n.entityId}`, style: "primary" },
-              { text: "忽略", value: `item:cancel:${n.entityId}` },
-              ...((n.actions ?? []).map((a) => ({ text: a.label, value: `item:act:${n.entityId}:${a.action}`, ...(a.style ? { style: a.style } : {}) }))),
-            ],
-          },
-        ],
-      });
+      const { recordInteraction } = await import("./lark-send.ts");
+      const card = itemNotificationCard(app, n);
       const sent = await sendLark(target, { card });
-      recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: n.entityId, notificationId: n.id } });
+      recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: n.entityId, notificationId: n.id, userId: n.userId } });
       return;
     }
     const markdown = `**${n.title}**\n${body}`;

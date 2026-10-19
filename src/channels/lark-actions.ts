@@ -1,8 +1,8 @@
 import { receive } from "../agents/inbox.ts";
 import { addMessage, findThread } from "../agents/threads.ts";
 import type { App } from "../core/app.ts";
-import { run } from "../core/db.ts";
-import { OWNER, resolveIdentity } from "../core/users.ts";
+import { run, tx } from "../core/db.ts";
+import { OWNER, canWrite, resolveIdentity } from "../core/users.ts";
 import { buildCard, closeInteraction, describeAction, interactionForMessage, sendLark, updateLarkCard, type Content, type Target } from "./lark-send.ts";
 
 /**
@@ -45,18 +45,26 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
     const act = (typeof value === "object" && value ? (value as { action?: string }).action : "") ?? "";
     const m = /^item:(done|cancel|act):([^:]+)(?::([\s\S]*))?$/.exec(act);
     if (itemId && m) {
-      const [, op, id, extra] = m;
+      const [, op, id] = m;
       const { getItem, upsertItem } = await import("../items/store.ts");
-      if (!getItem(app, id)) return { toast: { type: "warning", content: "事项已不存在" } };
-      if (op === "done") upsertItem(app, id, { status: "done", note: `${opName} 在飞书卡片上标记已处理` }, "user");
-      else if (op === "cancel") upsertItem(app, id, { status: "cancelled", note: `${opName} 在飞书卡片上忽略` }, "user");
-      run(app.db, "update card_interactions set status='done', handled_at=datetime('now'), handled_by=? where id=?", operator, inter.id);
-      const title = getItem(app, id).title;
-      return {
-        // Feishu callback responses must wrap a replacement card as { type: "raw", data }.
-        card: rawCard(buildCard({ title: op === "done" ? "已处理" : "已忽略", color: op === "done" ? "green" : "grey", blocks: [{ markdown: title }, { note: `${opName} 在飞书卡片上${op === "done" ? "标记已处理" : "忽略"}` }] })),
-        toast: { type: "success", content: op === "done" ? "已标记为已处理" : "已忽略" },
-      };
+      return tx(app.db, () => {
+        const current = interactionForMessage(app, messageId);
+        if (!current || current.id !== inter.id || current.status !== "open" || JSON.stringify(current.payload) !== JSON.stringify(inter.payload) || JSON.stringify(current.allowed) !== JSON.stringify(inter.allowed))
+          return { toast: { type: "warning", content: "卡片已变化或失效，请使用更新后的卡片" } };
+        if (id !== itemId || !["done", "cancel"].includes(op)) return { toast: { type: "error", content: "按钮与事项不匹配" } };
+        const userId = resolveIdentity(app, "lark", operator);
+        const item = getItem(app, id);
+        if (!userId || item.userId !== userId || !canWrite(app, userId, item.spaceId)) return { toast: { type: "error", content: "无权处理该事项" } };
+        if (op === "done") upsertItem(app, id, { status: "done", note: `${opName} 在飞书卡片上标记已处理` }, "user");
+        else if (op === "cancel") upsertItem(app, id, { status: "cancelled", note: `${opName} 在飞书卡片上忽略` }, "user");
+        run(app.db, "update card_interactions set status='done', handled_at=datetime('now'), handled_by=? where id=?", operator, inter.id);
+        const title = getItem(app, id).title;
+        return {
+          // Feishu callback responses must wrap a replacement card as { type: "raw", data }.
+          card: rawCard(buildCard({ title: op === "done" ? "已处理" : "已忽略", color: op === "done" ? "green" : "grey", blocks: [{ markdown: title }, { note: `${opName} 在飞书卡片上${op === "done" ? "标记已处理" : "忽略"}` }] })),
+          toast: { type: "success", content: op === "done" ? "已标记为已处理" : "已忽略" },
+        };
+      });
     }
     return { toast: { type: "warning", content: "找不到对应的会话" } };
   }

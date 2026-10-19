@@ -25,7 +25,11 @@ omem 是本人的个人记忆与助理系统。有两种接入方式。
 - `list_conversations` / `read_conversation`：查以前在某个群、私聊或网页对话里说过什么。飞书聊天原件每行是 `[时间] 发送人: 内容`，回复别人时带 `↩ 回复 X「…」`。
 - `recall`：查记忆，可按 `subject`、`tag` 筛；问“之前/变化”时加 `include_history: true` 看版本链。
 - `remember` / `supersede` / `forget`：记录、更正、撤回记忆。更正时用 supersede，不要重复新增。可带 `tags`（项目名、主题）。
-- `list_items` / `upsert_item`：待办、等待回复、提醒、关注、待决定。时间用带时区的 ISO 格式。
+- `list_items` / `read_item` / `upsert_item`：待办、等待回复、提醒、关注、待决定。时间用带时区的 ISO 格式。`list_items(space: "*")` 在本次可发现空间内查已有事项，查询在分页前限定空间；`read_item(item_id)` 返回完整事项和时间线。后台 ingest 的事项发现可覆盖本人可访问空间，普通原件检索与写权限仍保持原范围。
+- `upsert_item.source_refs` 默认增量合并；纠正用 `source_refs_mode: "replace" | "remove"`，必须指定 `id`、`note`、非空 `source_refs` 和重读得到的完整 `expected_source_refs`。`[]` 不清空；清空必须逐条 remove。replace 校验来源存在、行号与可读空间，remove 只撤回该事项原有来源，允许撤回已删除的来源。所有写入还检查用户身份和空间写权限；纠正前后都保留在事件中。
+- `propose_item_update(item_id, note, source_refs)`：只读发现另一个空间已有同一具体事项时路由进展，目标事项保持不变；相同未决提案复用。主助手 `list_item_proposals` 查看、阅读两边材料，再 `resolve_item_proposal(proposal_id, action: "apply" | "reject", reason)`，需要来源空间和目标空间写权限。不能因为只读就挂到另一个宽泛旧事项。
+- `notify(title, body, entity: "item", entity_id, source_refs?, event_id?)`：本次变化的来源快照，事件必须属于指定事项；旧调用省略来源时用最近事件，绝不取全部历史引用。来源校验权限，通知接收者是本次用户；定时提醒取设定提醒时仍有效可读的来源，失效引用只留历史，不阻断其他提醒。飞书原文在整张卡片（正文与来源区）内按最终 URL 去重，不按条数截断。
+- 维护工具仅向本人主助手开放：`repair_item_association` 默认预览，参数为 `from_item_id`、`to_item_id`、`event_ids`、`source_refs`、`expected_source_refs`、`run_id`、`reason`，可带 `notification_id` / `interaction_id`，多条通知/卡片用 `notification_ids` / `interaction_ids` 一起修复（带通知时必须给修正后的 `title/body`），核对后传 `apply: true`。精确移动事件、保留未迁移事件共用的来源（预览/审计列出 retainedSourceRefs 与 removedSourceRefs）、撤回其余错误引用、修正通知和交互 payload、给原运行加纠正标注；保留审计快照，原卡片停用，不发消息。`inspect_item_notification(notification_id)` 在修复前读取通知及全部交互记录，`read_item_repair(repair_id)` 查看审计。本人要求修复原飞书卡片时 `refresh_item_notification(interaction_id, reason)` 更新原消息；卡片与 payload 使用同一事项，失败保持失效可重试，需要本次飞书会话权限。
 - `list_skills` / `read_skill`：本人沉淀的做法；`list_agents` / `run_agent`：交给本人建好的专门 Agent。
 - `write_page`：写 Wiki 页面（Markdown，`[[slug]]` 链接，`[文字](src:<原件id>#L1-L5)` 引用）。
 

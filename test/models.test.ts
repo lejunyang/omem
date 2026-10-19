@@ -77,7 +77,8 @@ describe("feishu item reminder cards", () => {
     const { upsertItem, getItem } = await import("../src/items/store.ts");
     const { recordInteraction } = await import("../src/channels/lark-send.ts");
     const app = testApp();
-    const item = upsertItem(app, undefined, { title: "核对西溪宾馆入住" });
+    app.config.lark.ownerOpenId = "ou_owner";
+    const item = upsertItem(app, undefined, { title: "核对行程安排" });
     recordInteraction(app, { messageId: "om_item", chatId: "oc_owner", conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: item.id } });
     const r = (await handleCardAction(app, {
       operator: { open_id: "ou_owner" },
@@ -87,7 +88,7 @@ describe("feishu item reminder cards", () => {
     expect(r.toast.type).toBe("success");
     // A bare card object here is what made Feishu show an error; it must be wrapped.
     expect(r.card?.type).toBe("raw");
-    expect(JSON.stringify(r.card?.data)).toContain("核对西溪宾馆入住");
+    expect(JSON.stringify(r.card?.data)).toContain("核对行程安排");
     expect(getItem(app, item.id).status).toBe("cancelled");
   });
 

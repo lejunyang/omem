@@ -80,7 +80,7 @@ export function addItemEvent(app: App, itemId: string, kind: string, text: strin
   run(app.db, "insert into item_events(item_id,at,kind,text,source_refs,actor) values(?,?,?,?,?,?)", itemId, now(), kind, text, JSON.stringify(sourceRefs), actor);
 }
 
-export type ItemInput = Partial<Omit<Item, "id" | "createdAt" | "updatedAt" | "closedAt">> & { note?: string };
+export type ItemInput = Partial<Omit<Item, "id" | "createdAt" | "updatedAt" | "closedAt">> & { note?: string; sourceRefsMode?: "merge" | "replace" | "remove"; expectedSourceRefs?: string[] };
 
 const FIELD_LABEL: Record<string, string> = {
   title: "标题",
@@ -93,15 +93,20 @@ const FIELD_LABEL: Record<string, string> = {
   kind: "类型",
 };
 
+function itemTx<T>(app: App, fn: () => T): T {
+  return app.db.isTransaction ? fn() : tx(app.db, fn);
+}
+
 /** Create or update an item; every change is recorded on its timeline with who made it. */
 export function upsertItem(app: App, id: string | undefined, input: ItemInput, actor: "agent" | "user" = "agent"): Item {
   const at = now();
+  if (input.sourceRefsMode && input.sourceRefsMode !== "merge" && !id) throw new HttpError(400, "来源纠正必须指定已有事项");
   if (!id) {
     if (!input.title) throw new HttpError(400, "事项需要标题");
     const newIdValue = newId("i");
     const kind = input.kind ?? "todo";
     const status = input.status ?? (kind === "waiting" ? "waiting" : "open");
-    tx(app.db, () => {
+    itemTx(app, () => {
       run(
         app.db,
         "insert into items(id,space_id,kind,title,detail,status,priority,due_at,remind_at,waiting_on,watch,source_refs,created_at,updated_at,user_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -127,6 +132,15 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
     return getItem(app, newIdValue);
   }
   const old = getItem(app, id);
+  const mode = input.sourceRefsMode ?? "merge";
+  if (mode !== "merge") {
+    if (!input.note?.trim() || !input.sourceRefs?.length || !input.expectedSourceRefs)
+      throw new HttpError(400, "来源纠正需要原因、非空来源和 expectedSourceRefs；清空请逐条 remove");
+    if (JSON.stringify([...old.sourceRefs].sort()) !== JSON.stringify([...input.expectedSourceRefs].sort()))
+      throw new HttpError(409, "事项来源已变化，请重读后重试");
+    if (mode === "remove" && input.sourceRefs.some((r) => !old.sourceRefs.includes(r))) throw new HttpError(400, "只能移除该事项已有的来源");
+  }
+  const nextRefs = mode === "replace" ? [...new Set(input.sourceRefs)] : mode === "remove" ? old.sourceRefs.filter((r) => !input.sourceRefs!.includes(r)) : [...new Set([...old.sourceRefs, ...(input.sourceRefs ?? [])])];
   const next = { ...old, ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)) } as Item;
   const changes: string[] = [];
   for (const key of Object.keys(FIELD_LABEL) as (keyof Item)[])
@@ -134,7 +148,7 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
       changes.push(`${FIELD_LABEL[key]}：${fmt(old[key])} → ${fmt(next[key])}`);
   const closing = (next.status === "done" || next.status === "cancelled") && !(old.status === "done" || old.status === "cancelled");
   const reopening = !(next.status === "done" || next.status === "cancelled") && (old.status === "done" || old.status === "cancelled");
-  tx(app.db, () => {
+  itemTx(app, () => {
     run(
       app.db,
       "update items set kind=?, title=?, detail=?, status=?, priority=?, due_at=?, remind_at=?, waiting_on=?, watch=?, source_refs=?, updated_at=?, closed_at=? where id=?",
@@ -147,12 +161,14 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
       next.remindAt,
       next.waitingOn,
       next.watch ? JSON.stringify(next.watch) : null,
-      JSON.stringify([...new Set([...old.sourceRefs, ...(input.sourceRefs ?? [])])]),
+      JSON.stringify(nextRefs),
       at,
       closing ? at : reopening ? null : old.closedAt,
       id,
     );
-    if (changes.length || input.note) addItemEvent(app, id, changes.length ? "updated" : "note", [input.note, changes.join("；")].filter(Boolean).join("\n"), actor, input.sourceRefs ?? []);
+    if (input.remindAt && input.remindAt !== old.remindAt) addItemEvent(app, id, "reminder-scheduled", `提醒：${input.remindAt}`, actor, input.sourceRefs ?? []);
+    if (mode !== "merge") addItemEvent(app, id, "sources-corrected", JSON.stringify({ reason: input.note, mode, before: old.sourceRefs, after: nextRefs }), actor, []);
+    if (changes.length || input.note || JSON.stringify(nextRefs) !== JSON.stringify(old.sourceRefs)) addItemEvent(app, id, changes.length ? "updated" : "note", [input.note, changes.join("；")].filter(Boolean).join("\n"), actor, mode === "remove" ? [] : input.sourceRefs ?? []);
   });
   app.emit({ type: "changed", entity: "item", id, spaceId: old.spaceId });
   return getItem(app, id);
@@ -163,10 +179,11 @@ function fmt(v: unknown) {
   return String(v);
 }
 
-export function listItems(app: App, opts: { spaceId?: string; status?: string; kind?: string; q?: string; limit?: number; userId?: string }) {
+export function listItems(app: App, opts: { spaceIds?: string[]; spaceId?: string; status?: string; kind?: string; q?: string; limit?: number; userId?: string }) {
   const where: string[] = [];
   const params: (string | number)[] = [];
   if (opts.userId) where.push("user_id = ?"), params.push(opts.userId);
+  if (opts.spaceIds) { where.push(`space_id in (${opts.spaceIds.map(() => "?").join(",") || "NULL"})`); params.push(...opts.spaceIds); }
   if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);
   if (opts.status === "active") where.push("status in ('open','waiting','snoozed')");
   else if (opts.status && opts.status !== "all") where.push("status = ?"), params.push(opts.status);
@@ -184,4 +201,9 @@ export function listItems(app: App, opts: { spaceId?: string; status?: string; k
 /** Items whose reminder time has passed and are not closed. */
 export function dueReminders(app: App, at = now()) {
   return all<Row>(app.db, "select * from items where status in ('open','waiting','snoozed') and remind_at is not null and remind_at <= ?", at).map(toItem);
+}
+
+/** Reminder evidence belongs to the scheduling event, not the item's later progress. */
+export function reminderSourceRefs(app: App, item: Item) {
+  return [...itemEvents(app, item.id)].reverse().find((e) => e.kind === "reminder-scheduled" || (e.kind === "updated" && e.text.includes("提醒：")) || e.kind === "created")?.sourceRefs.filter((r) => item.sourceRefs.includes(r)) ?? [];
 }

@@ -77,9 +77,9 @@ describe("items", () => {
     upsertItem(app, i.id, { remindAt: "2026-10-20T09:00:00+09:00", note: "本人改期" }, "agent");
     upsertItem(app, i.id, { status: "done" });
     const events = itemEvents(app, i.id);
-    expect(events.map((e) => e.kind)).toEqual(["created", "updated", "updated"]);
-    expect(events[1].text).toContain("本人改期");
-    expect(events[1].text).toContain("提醒");
+    expect(events.map((e) => e.kind)).toEqual(["created", "reminder-scheduled", "updated", "updated"]);
+    expect(events[2].text).toContain("本人改期");
+    expect(events[2].text).toContain("提醒");
     expect(listItems(app, { status: "active" })).toHaveLength(0);
     expect(listItems(app, { status: "all" })[0].closedAt).toBeTruthy();
   });

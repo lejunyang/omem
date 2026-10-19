@@ -72,3 +72,15 @@ export function chunkMessage(text: string, max: number) {
   if (rest) out.push(rest);
   return out;
 }
+
+/** Deduplicate by the resolved URL before giving links labels. */
+export function notificationOrigins(app: App, refs: string[]) {
+  const urls = new Set<string>();
+  for (const ref of refs) {
+    if (!ref.startsWith("src:")) continue;
+    const resolved = resolveCitations(app, `[原文](${ref})`);
+    const url = /^\[原文\]\((https?:\/\/.*)\)$/.exec(resolved)?.[1];
+    if (url) urls.add(url);
+  }
+  return [...urls].map((url, i) => `[原文${urls.size > 1 ? i + 1 : ""}](${url})`).join("　");
+}

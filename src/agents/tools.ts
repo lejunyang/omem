@@ -3,14 +3,15 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { all, one, run } from "../core/db.ts";
+import { all, one, run, tx } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, repositoryRoot } from "../core/repositories.ts";
-import { findUser, OWNER } from "../core/users.ts";
+import { findUser, OWNER, canWrite, scopeFor } from "../core/users.ts";
 import { HttpError, newId, now, slugify, truncate } from "../core/util.ts";
 import { createCard } from "../learn/cards.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
+import { validateItemRefs } from "../items/evidence.ts";
 import { listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede, type MemoryKind } from "../memory/store.ts";
 import { checkMemory, formatProblems, logRejection, markReviewed, similarMemories, type MemoryProblem } from "../memory/quality.ts";
@@ -18,7 +19,7 @@ import { search, type HitType } from "../search/search.ts";
 import { importText, importUrl, repoFiles, syncDirectorySpace } from "../sources/import.ts";
 import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
 import { listPages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
-import { createRun, getRun, listRuns, runEvents, setRunOutput } from "./runs.ts";
+import { addRunEvent, createRun, getRun, listRuns, runEvents, setRunOutput } from "./runs.ts";
 import { findAgentSpec, listAgentSpecs, listSkills, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
 
@@ -31,6 +32,8 @@ export type ToolContext = {
   spaces: string[] | null;
   /** Spaces the caller may write, when narrower than `spaces` (related spaces are read-only). */
   writable?: string[];
+  /** Item discovery only; never grants ordinary read or write tool access. */
+  itemDiscoverySpaces?: string[] | null;
   tools: Set<string> | null;
   actor: "agent" | "user";
   /** Whose run this is; defaults to the owner. Items, preferences and cards are per user. */
@@ -77,6 +80,7 @@ function space(ctx: ToolContext, requested?: string | null) {
 }
 /** Reject objects that live outside the spaces this caller may write. */
 function inScope(ctx: ToolContext, spaceId: string, what: string) {
+  if (!canWrite(ctx.app, ctx.userId ?? OWNER, spaceId)) throw new HttpError(403, `无权修改空间 ${spaceId}`);
   const w = ctx.writable ?? ctx.spaces;
   if (w && !w.includes(spaceId))
     throw new HttpError(403, ctx.spaces && ctx.spaces.includes(spaceId) ? `空间 ${spaceId} 这次只能读，不能修改其中的${what}；写进当前空间 ${ctx.spaceId}` : `本次任务不能修改空间 ${spaceId} 中的${what}`);
@@ -617,15 +621,14 @@ def({
     with_timeline: z.boolean().optional(),
   }),
   handler: (ctx, a) => {
-    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, spaceId: a.space ? space(ctx, a.space) : undefined, userId: ctx.userId ?? "owner", limit: 100 }).filter(
-      (i) => !ctx.spaces || ctx.spaces.includes(i.spaceId),
-    );
+    const discovery = scopeFor(ctx.app, ctx.userId ?? OWNER, (a.space === "*" && ctx.itemDiscoverySpaces !== undefined ? ctx.itemDiscoverySpaces : spacesFor(ctx, a.space)) ?? null);
+    const items = listItems(ctx.app, { status: a.status ?? "active", kind: a.kind, q: a.query, spaceIds: discovery ?? undefined, userId: ctx.userId ?? "owner", limit: 100 });
     if (!items.length) return "没有符合条件的事项。";
     return items
       .map((i) => {
-        const head = `- ${i.id} [${i.kind}/${i.status}] ${i.title}${i.dueAt ? ` 截止 ${i.dueAt}` : ""}${i.remindAt ? ` 提醒 ${i.remindAt}` : ""}${i.waitingOn ? ` 等待 ${i.waitingOn}` : ""}（空间 ${i.spaceId}）${i.detail ? "\n  " + truncate(i.detail, 200) : ""}`;
+        const head = `- ${i.id} [${i.kind}/${i.status}] ${i.title}${i.dueAt ? ` 截止 ${i.dueAt}` : ""}${i.remindAt ? ` 提醒 ${i.remindAt}` : ""}${i.waitingOn ? ` 等待 ${i.waitingOn}` : ""}（空间 ${i.spaceId}；${(!ctx.writable || ctx.writable.includes(i.spaceId)) && canWrite(ctx.app, ctx.userId ?? OWNER, i.spaceId) ? "可写" : "只读：用 propose_item_update 路由，勿挂到其他事项"}）${i.detail ? "\n  " + truncate(i.detail, 200) : ""}`;
         if (!a.with_timeline) return head;
-        return head + "\n" + itemEvents(ctx.app, i.id).slice(-6).map((e) => `    · ${e.at.slice(0, 16)} ${e.actor}: ${truncate(e.text, 160)}`).join("\n");
+        return head + "\n" + itemEvents(ctx.app, i.id).slice(-6).map((e) => `    · ${e.at.slice(0, 16)} ${e.actor}: ${truncate(e.text, 160)} [事件 ${e.id}] ${e.sourceRefs.join(" ")}`).join("\n");
       })
       .join("\n");
   },
@@ -856,11 +859,20 @@ def({
     watch_query: z.string().optional().describe("watch 事项：要关注的内容描述"),
     note: z.string().optional(),
     source_refs: refs,
+    source_refs_mode: z.enum(["merge", "replace", "remove"]).optional().describe("默认增量 merge；纠正必须指定 id、note、非空来源及 expected_source_refs"),
+    expected_source_refs: refs,
     space: z.string().optional(),
   }),
   handler: (ctx, a) => {
     const existing = a.id ? getItem(ctx.app, a.id) : null;
-    if (existing) inScope(ctx, existing.spaceId, "事项");
+    if (existing) {
+      inScope(ctx, existing.spaceId, "事项");
+      if (existing.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能修改他人的事项");
+      if (a.space && a.space !== existing.spaceId) throw new HttpError(400, "事项 id 与空间不匹配");
+    }
+    // Removal may revoke stale/deleted refs, but must match this item's exact old set.
+    if (a.source_refs_mode !== "remove") validateItemRefs(ctx.app, a.source_refs ?? [], ctx.userId ?? OWNER, ctx.spaces);
+
     const item = upsertItem(
       ctx.app,
       a.id,
@@ -877,11 +889,226 @@ def({
         watch: a.watch_query ? { ...(existing?.watch ?? {}), query: a.watch_query } : undefined,
         note: a.note,
         sourceRefs: a.source_refs,
+        sourceRefsMode: a.source_refs_mode,
+        expectedSourceRefs: a.expected_source_refs,
         userId: existing ? undefined : (ctx.userId ?? "owner"),
       },
       ctx.actor,
     );
     return `${existing ? "已更新" : "已创建"}事项 ${item.id}：[${item.kind}/${item.status}] ${item.title}`;
+  },
+});
+
+def({
+  name: "read_item",
+  description: "读取事项完整字段、当前来源及全部时间线，纠正前先读。跨空间发现仍只读。",
+  schema: z.object({ item_id: z.string() }),
+  handler: (ctx, a) => {
+    const item = getItem(ctx.app, a.item_id);
+    const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
+    if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能读取该事项");
+    return JSON.stringify({ item, events: itemEvents(ctx.app, item.id) });
+  },
+});
+def({
+  name: "inspect_item_notification",
+  description: "本人主助手在修复前读取通知持久化上下文及其全部飞书交互记录，核对卡片与 payload 的关联。只读，不刷新卡片。",
+  schema: z.object({ notification_id: z.string() }),
+  handler: (ctx, a) => {
+    manageSpaces(ctx);
+    if (ctx.spec || (ctx.role && ctx.role !== "assistant")) throw new HttpError(403, "维护仅限主助手");
+    const notification = one(ctx.app.db, "select * from notifications where id=? and user_id=?", a.notification_id, ctx.userId ?? OWNER);
+    if (!notification) throw new HttpError(404, "通知不存在");
+    const interactions = all(ctx.app.db, "select * from card_interactions where json_extract(payload,'$.notificationId')=?", a.notification_id);
+    return JSON.stringify({ notification, interactions });
+  },
+});
+def({
+  name: "read_item_repair",
+  description: "本人主助手查看事项维护审计和修复前快照。",
+  schema: z.object({ repair_id: z.string() }),
+  handler: (ctx, a) => {
+    manageSpaces(ctx);
+    if (ctx.spec || (ctx.role && ctx.role !== "assistant")) throw new HttpError(403, "维护仅限主助手");
+    const audit = one(ctx.app.db, "select * from item_repairs where id=? and user_id=?", a.repair_id, ctx.userId ?? OWNER);
+    if (!audit) throw new HttpError(404, "审计不存在");
+    return JSON.stringify(audit);
+  },
+});
+def({
+  name: "refresh_item_notification",
+  description: "本人明确要求修复历史卡片时使用：按已持久化通知重新渲染原飞书卡片，按钮与 payload 指向同一事项。只更新现有卡片，不新发消息；失败保持失效，允许重试。",
+  write: true,
+  schema: z.object({ interaction_id: z.string(), reason: z.string().trim().min(1) }),
+  handler: async (ctx, a) => {
+    manageSpaces(ctx);
+    if (ctx.spec || (ctx.role && ctx.role !== "assistant")) throw new HttpError(403, "维护仅限主助手");
+    const { getInteraction, updateLarkCard } = await import("../channels/lark-send.ts");
+    const { itemNotificationCard } = await import("../channels/item-notification.ts");
+    const inter = getInteraction(ctx.app, a.interaction_id);
+    if (!inter?.messageId || inter.conversationId || inter.status === "done") throw new HttpError(400, "需要未处理的独立事项通知卡片");
+    if (ctx.larkChats !== null && (!inter.chatId || !ctx.larkChats?.includes(inter.chatId))) throw new HttpError(403, "本次任务不能更新此飞书会话的卡片");
+    const n = one<{ id: string; at: string; title: string; body: string; link: string | null; user_id: string; context: string }>(ctx.app.db, "select * from notifications where id=?", String(inter.payload.notificationId ?? ""));
+    if (!n || n.user_id !== (ctx.userId ?? OWNER)) throw new HttpError(403, "通知不属于本人");
+    const context = JSON.parse(n.context);
+    if (!context.entityId || context.entityId !== inter.payload.itemId) throw new HttpError(409, "通知与交互关联不一致，先修复关联");
+    const item = getItem(ctx.app, context.entityId);
+    inScope(ctx, item.spaceId, "事项卡片");
+    if (item.userId !== n.user_id) throw new HttpError(403, "事项用户不匹配");
+    validateItemRefs(ctx.app, context.sourceRefs ?? [], n.user_id, ctx.spaces);
+    const audit = newId("ir");
+    run(ctx.app.db, "insert into item_repairs(id,at,user_id,run_id,reason,snapshot) values(?,?,?,?,?,?)", audit, now(), ctx.userId ?? OWNER, ctx.runId, a.reason, JSON.stringify({ notification: n, interaction: inter, operation: "refresh-card" }));
+    run(ctx.app.db, "update card_interactions set status='expired' where id=?", inter.id);
+    await updateLarkCard(inter.messageId, itemNotificationCard(ctx.app, { ...context, id: n.id, at: n.at, title: n.title, body: n.body, link: n.link, readAt: null, userId: n.user_id }));
+    // A callback or another repair may have changed it while the request was in flight.
+    const current = getInteraction(ctx.app, inter.id);
+    if (current?.status !== "expired" || JSON.stringify(current.payload) !== JSON.stringify(inter.payload)) {
+      run(ctx.app.db, "update card_interactions set status='expired' where id=?", inter.id);
+      throw new HttpError(409, "交互已变化；卡片保持失效，请重试");
+    }
+    run(ctx.app.db, "update card_interactions set status='open' where id=?", inter.id);
+    return `已刷新原卡片 ${inter.messageId}，审计 ${audit}`;
+  },
+});
+
+// Cross-space discoveries are proposals, never authority to mutate the destination.
+def({
+  name: "propose_item_update",
+  description: "发现只读空间已有同一事项时，路由本次进展给主助手复核；不创建重复事项，不修改目标。相同事项/来源/说明重试复用提案。",
+  write: true,
+  schema: z.object({ item_id: z.string(), note: z.string().trim().min(1), source_refs: z.array(z.string()).min(1) }),
+  handler: (ctx, a) => {
+    const item = getItem(ctx.app, a.item_id);
+    const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
+    if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能发现该事项");
+    writeSpace(ctx);
+    validateItemRefs(ctx.app, a.source_refs, ctx.userId ?? OWNER, ctx.spaces);
+    const sourceRefs = JSON.stringify([...new Set(a.source_refs)].sort());
+    const old = one<{ id: string }>(ctx.app.db, "select id from item_update_proposals where item_id=? and user_id=? and note=? and source_refs=? and status='pending'", item.id, ctx.userId ?? OWNER, a.note, sourceRefs);
+    if (old) return `已有待复核提案 ${old.id}，目标 ${item.id}（${item.spaceId}）；未修改事项`;
+    const id = newId("ip");
+    run(ctx.app.db, "insert into item_update_proposals(id,item_id,user_id,from_space,run_id,note,source_refs,created_at) values(?,?,?,?,?,?,?,?)", id, item.id, ctx.userId ?? OWNER, ctx.spaceId, ctx.runId, a.note, sourceRefs, now());
+    return `已路由提案 ${id} 到 ${item.id}（${item.spaceId}），主助手用 list_item_proposals / resolve_item_proposal 复核；未修改事项`;
+  },
+});
+def({
+  name: "list_item_proposals",
+  description: "主助手查看跨空间事项进展提案，读来源后决定应用或驳回。",
+  schema: z.object({}),
+  handler: (ctx) => {
+    const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
+    return JSON.stringify(all<{ item_id: string; from_space: string }>(ctx.app.db, "select * from item_update_proposals where user_id=? and status='pending' order by created_at", ctx.userId ?? OWNER).filter((p) => {
+      const item = getItem(ctx.app, p.item_id);
+      return !readable || (readable.includes(item.spaceId) && readable.includes(p.from_space));
+    }));
+  },
+});
+def({
+  name: "resolve_item_proposal",
+  description: "复核后将提案作为事件附到原事项，或驳回；需要原空间和目标空间的写权限。",
+  write: true,
+  schema: z.object({ proposal_id: z.string(), action: z.enum(["apply", "reject"]), reason: z.string().trim().min(1) }),
+  handler: (ctx, a) => {
+    const p = one<{ id: string; item_id: string; user_id: string; from_space: string; note: string; source_refs: string; status: string }>(ctx.app.db, "select * from item_update_proposals where id=?", a.proposal_id);
+    if (!p || p.user_id !== (ctx.userId ?? OWNER)) throw new HttpError(404, "提案不存在");
+    const item = getItem(ctx.app, p.item_id);
+    inScope(ctx, p.from_space, "提案"); inScope(ctx, item.spaceId, "事项");
+    if (p.status !== "pending") throw new HttpError(409, "提案已处理");
+    if (item.userId !== p.user_id) throw new HttpError(403, "提案目标用户不匹配");
+    const sourceRefs = JSON.parse(p.source_refs) as string[];
+    if (a.action === "apply") validateItemRefs(ctx.app, sourceRefs, p.user_id, ctx.spaces);
+    tx(ctx.app.db, () => {
+      if (a.action === "apply") {
+        run(ctx.app.db, "update items set source_refs=?,updated_at=? where id=?", JSON.stringify([...new Set([...item.sourceRefs, ...sourceRefs])]), now(), item.id);
+        run(ctx.app.db, "insert into item_events(item_id,at,kind,text,source_refs,actor) values(?,?,?,?,?,?)", item.id, now(), "note", `${p.note}\n复核：${a.reason}（提案 ${p.id}）`, JSON.stringify(sourceRefs), ctx.actor);
+      }
+      run(ctx.app.db, "update item_update_proposals set status=?, applied_at=?, resolution=?, resolved_by=?, resolved_run_id=? where id=?", a.action, now(), a.reason, ctx.userId ?? OWNER, ctx.runId, p.id);
+    });
+    if (a.action === "apply") ctx.app.emit({ type: "changed", entity: "item", id: item.id, spaceId: item.spaceId });
+    return `已${a.action === "apply" ? "应用" : "驳回"}提案 ${p.id}：${a.reason}`;
+  },
+});
+
+def({
+  name: "repair_item_association",
+  description: "本人主助手维护入口：预览或修复明确的错误事项事件/通知/交互关联，撤回错误来源并保留审计。默认只预览；不发消息。旧卡片先失效，可另用 refresh_item_notification 刷新。",
+  write: true,
+  schema: z.object({
+    from_item_id: z.string(), to_item_id: z.string(), event_ids: z.array(z.number().int().positive()).min(1),
+    source_refs: z.array(z.string()).min(1), expected_source_refs: z.array(z.string()),
+    notification_id: z.string().optional(), interaction_id: z.string().optional(),
+    notification_ids: z.array(z.string()).optional(), interaction_ids: z.array(z.string()).optional(), run_id: z.string(),
+    title: z.string().optional(), body: z.string().optional(), reason: z.string().trim().min(1), apply: z.boolean().default(false),
+  }),
+  handler: (ctx, a) => {
+    manageSpaces(ctx);
+    if (ctx.spec || (ctx.role && ctx.role !== "assistant")) throw new HttpError(403, "维护仅限主助手");
+    const from = getItem(ctx.app, a.from_item_id), to = getItem(ctx.app, a.to_item_id);
+    if (from.id === to.id || from.userId !== to.userId || from.userId !== (ctx.userId ?? OWNER)) throw new HttpError(400, "需要同一用户的两个不同事项");
+    inScope(ctx, from.spaceId, "事项"); inScope(ctx, to.spaceId, "事项");
+    validateItemRefs(ctx.app, a.source_refs, from.userId, ctx.spaces);
+    if (JSON.stringify([...from.sourceRefs].sort()) !== JSON.stringify([...a.expected_source_refs].sort())) throw new HttpError(409, "事项来源已变化");
+    if (a.source_refs.some((r) => !from.sourceRefs.includes(r))) throw new HttpError(400, "待撤回来源不属于原事项");
+    const history = itemEvents(ctx.app, from.id);
+    const events = history.filter((e) => a.event_ids.includes(e.id));
+    if (events.length !== new Set(a.event_ids).size || events.some((e) => !e.sourceRefs.length || e.sourceRefs.some((r) => !a.source_refs.includes(r))) || a.source_refs.some((r) => !events.some((e) => e.sourceRefs.includes(r)))) throw new HttpError(400, "事件与来源必须精确对应；不能移动包含其他业务来源的事件");
+    const oldCardNotifications = new Set(all<{ notification_id: string }>(ctx.app.db, "select json_extract(payload,'$.notificationId') as notification_id from card_interactions where json_extract(payload,'$.itemId')=?", from.id).map((row) => row.notification_id));
+    const affectedNotifications = all<{ id: string; context: string; link: string | null }>(ctx.app.db, "select id,context,link from notifications where user_id=?", from.userId).filter((row) => {
+      const c = JSON.parse(row.context);
+      const sameEvent = c.eventId !== undefined ? a.event_ids.includes(c.eventId)
+        : c.sourceRefs?.length ? c.sourceRefs.some((r: string) => a.source_refs.includes(r))
+        : row.link === `#/runs/${a.run_id}` || c.runId === a.run_id;
+      return (c.entityId === from.id || oldCardNotifications.has(row.id)) && sameEvent;
+    });
+    const notificationIds = [...new Set([...(a.notification_ids ?? []), ...(a.notification_id ? [a.notification_id] : [])])];
+    const interactionIds = [...new Set([...(a.interaction_ids ?? []), ...(a.interaction_id ? [a.interaction_id] : [])])];
+    if (affectedNotifications.some((row) => !notificationIds.includes(row.id))) throw new HttpError(400, `不能遗漏相关通知/卡片：${affectedNotifications.map((row) => row.id).join(", ")}`);
+    const originRun = getRun(ctx.app, a.run_id);
+    if (originRun.spaceId) inScope(ctx, originRun.spaceId, "运行关联");
+    const notifications = notificationIds.map((id) => {
+      const n = one<{ id: string; context: string; user_id: string; link: string | null }>(ctx.app.db, "select * from notifications where id=?", id);
+      if (!n || n.user_id !== from.userId || !a.title || a.body === undefined) throw new HttpError(400, "通知不存在或缺少修正后的标题/正文");
+      return n;
+    });
+    const interactions = interactionIds.map((id) => {
+      const inter = one<{ id: string; payload: string; status: string; conversation_id: string | null }>(ctx.app.db, "select * from card_interactions where id=?", id);
+      const p = inter ? JSON.parse(inter.payload) : null;
+      if (!inter || inter.conversation_id || p.itemId !== from.id || !notificationIds.includes(p.notificationId)) throw new HttpError(400, "交互不属于原事项通知");
+      return inter;
+    });
+    for (const n of notifications) {
+      const linked = all<{ id: string }>(ctx.app.db, "select id from card_interactions where json_extract(payload,'$.notificationId')=?", n.id);
+      if (linked.some((i) => !interactionIds.includes(i.id))) throw new HttpError(400, "通知还有未指定的关联卡片，必须完整核对后维护，不能遗漏有效按钮");
+      const c = JSON.parse(n.context);
+      if (!affectedNotifications.some((row) => row.id === n.id) || c.sourceRefs?.some((r: string) => !a.source_refs.includes(r))) throw new HttpError(400, "通知不属于选定事件，或含有其他业务来源，不能整体迁移");
+      if ((c.entityId && c.entityId !== from.id) || (!c.entityId && !interactions.some((i) => JSON.parse(i.payload).notificationId === n.id))) throw new HttpError(400, "通知关联不匹配；旧通知须带交互验证");
+      if (c.runId && c.runId !== a.run_id) throw new HttpError(400, "通知与运行不匹配");
+    }
+    const linkedRun = notifications.some((n) => JSON.parse(n.context).runId === a.run_id || n.link === `#/runs/${a.run_id}`) || runEvents(ctx.app, a.run_id).some((e) => {
+      const data = e.data as { name?: string; args?: { id?: string; source_refs?: string[] } };
+      return e.type === "tool-write" && data.name === "upsert_item" && data.args?.id === from.id && a.source_refs.every((r) => data.args?.source_refs?.includes(r));
+    });
+    if (!linkedRun) throw new HttpError(400, "运行没有对应事项/来源的记录，不能关联任意运行");
+    // A source can support both the moved progress and events that stay on the original item.
+    const retainedSourceRefs = a.source_refs.filter((r) => history.some((e) => !a.event_ids.includes(e.id) && e.sourceRefs.includes(r)));
+    const removedSourceRefs = a.source_refs.filter((r) => !retainedSourceRefs.includes(r));
+    const snapshot = { from, to, events, retainedSourceRefs, removedSourceRefs, notifications, interactions, run: originRun, request: a };
+    if (!a.apply) return JSON.stringify({ preview: true, snapshot });
+    const audit = newId("ir");
+    tx(ctx.app.db, () => {
+      run(ctx.app.db, "insert into item_repairs(id,at,user_id,run_id,reason,snapshot) values(?,?,?,?,?,?)", audit, now(), ctx.userId ?? OWNER, ctx.runId, a.reason, JSON.stringify(snapshot));
+      const remaining = from.sourceRefs.filter((r) => !removedSourceRefs.includes(r));
+      run(ctx.app.db, "update items set source_refs=?, updated_at=? where id=?", JSON.stringify(remaining), now(), from.id);
+      run(ctx.app.db, "update items set source_refs=?, updated_at=? where id=?", JSON.stringify([...new Set([...to.sourceRefs, ...a.source_refs])]), now(), to.id);
+      for (const e of events) run(ctx.app.db, "update item_events set item_id=? where id=? and item_id=?", to.id, e.id, from.id);
+      for (const item of [from, to]) run(ctx.app.db, "insert into item_events(item_id,at,kind,text,source_refs,actor) values(?,?,?,?,?,?)", item.id, now(), "association-repaired", `${a.reason}；${from.id} → ${to.id}；审计 ${audit}`, JSON.stringify(item.id === from.id ? [] : a.source_refs), ctx.actor);
+      for (const n of notifications) run(ctx.app.db, "update notifications set title=?,body=?,link=?,context=? where id=?", a.title!, a.body!, `#/items/${to.id}`, JSON.stringify({ ...JSON.parse(n.context), entity: "item", entityId: to.id, sourceRefs: a.source_refs, eventId: events.at(-1)!.id, runId: a.run_id }), n.id);
+      for (const inter of interactions) run(ctx.app.db, "update card_interactions set status='expired',payload=? where id=?", JSON.stringify({ ...JSON.parse(inter.payload), itemId: to.id, repairId: audit }), inter.id);
+      // Preserve the run's original result; attach an explicit correction instead of rewriting history.
+      run(ctx.app.db, "update runs set output=? where id=?", JSON.stringify({ ...originRun.output, itemAssociationCorrection: { fromItemId: from.id, itemId: to.id, repairId: audit } }), originRun.id);
+    });
+    for (const item of [from, to]) ctx.app.emit({ type: "changed", entity: "item", id: item.id, spaceId: item.spaceId });
+    return `已修复关联，审计 ${audit}；旧卡片已失效，未发送或更新飞书消息`;
   },
 });
 
@@ -1136,14 +1363,27 @@ def({
     link: z.string().optional(),
     entity: z.enum(["item"]).optional().describe("通知关联的实体类型"),
     entity_id: z.string().optional().describe("关联事项 id：飞书会收到带 已处理/忽略 按钮的卡片"),
+    source_refs: refs.describe("仅本次变化的来源；不传时兼容读取该事项最近事件，绝不读取全部历史来源"),
+    event_id: z.number().int().positive().optional(),
   }),
   handler: (ctx, a) => {
+    if (a.entity_id) {
+      const item = getItem(ctx.app, a.entity_id);
+      inScope(ctx, item.spaceId, "事项通知");
+      if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能通知他人的事项");
+      const event = a.event_id === undefined ? itemEvents(ctx.app, item.id).at(-1) : itemEvents(ctx.app, item.id).find((e) => e.id === a.event_id);
+      validateItemRefs(ctx.app, a.source_refs ?? event?.sourceRefs ?? [], ctx.userId ?? OWNER, ctx.spaces);
+    } else validateItemRefs(ctx.app, a.source_refs ?? [], ctx.userId ?? OWNER, ctx.spaces);
     notify(ctx.app, {
       title: a.title,
       body: a.body,
       link: a.link ?? (ctx.runId ? `#/runs/${ctx.runId}` : null),
       entity: a.entity,
       entityId: a.entity_id,
+      userId: ctx.userId ?? OWNER,
+      sourceRefs: a.source_refs,
+      eventId: a.event_id,
+      runId: ctx.runId,
     });
     return "已通知";
   },
@@ -1333,7 +1573,7 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   if (ctx.shadow && (tool.write || SHADOW_BLOCKED.has(name))) return { text: recordShadow(ctx, name, parsed.data as Record<string, unknown>), isError: false };
   try {
     const text = await tool.handler(ctx, parsed.data);
-    if (ctx.runId && tool.write) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "tool-write", data: { name, args: parsed.data }, at: new Date().toISOString() } });
+    if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data });
     return { text, isError: false };
   } catch (error) {
     return { text: (error as Error).message, isError: true };
