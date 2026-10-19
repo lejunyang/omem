@@ -28,7 +28,7 @@ export async function unreadMessageIds(app: App, ids: string[]): Promise<Set<str
       const items: any[] = v?.data?.items ?? v?.data?.readable_items ?? v?.items ?? [];
       const readable = new Map<string, boolean>();
       for (const it of items) readable.set(String(it.message_id ?? it.messageId ?? ""), !!(it.read ?? it.is_read));
-      for (const id of batch) cache.set(id, { at: now, unread: !readable.get(id) });
+      for (const id of batch) cache.set(id, { at: now, unread: readable.get(id) === false });
     } catch {
       // No permission / CLI logged out / network: unknown stays out of the unread set
       // (we do not claim the owner read it), and is not cached long.
