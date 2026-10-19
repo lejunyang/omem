@@ -497,15 +497,73 @@ def({
 
 def({
   name: "run_agent",
-  description: "把一件事交给某个 Agent 档案去做（后台运行，完成后结果自动发回当前会话）。返回运行 id。",
-  schema: z.object({ name: z.string(), task: z.string().describe("完整的任务说明：背景、目标、交付物、相关会话或原件 id"), space: z.string().optional() }),
-  handler: (ctx, a) => {
+  description:
+    "把一件事交给某个 Agent 档案去做（后台运行）。多步/长任务（要调查、产出、可能再交办或需要本人定夺）用 own_topic=true：omem 会为这件事单独建一个工作会话（飞书里就是一条新话题），Agent 在里面工作和循环，结论消化后只把重点带回当前会话；当前会话不会被长输出刷屏。简单一次性的事保持 false，结果直接发回本会话。",
+  schema: z.object({
+    name: z.string(),
+    task: z.string().describe("完整的任务说明：背景、目标、交付物、相关会话或原件 id；复杂任务写清怎样算完成、什么情况要请本人介入"),
+    space: z.string().optional(),
+    own_topic: z.boolean().optional().describe("长任务/多 Agent 协同：单独工作会话（飞书新话题），结果消化后只回结论"),
+  }),
+  handler: async (ctx, a) => {
     const spec = readAgentSpec(ctx.app, a.name);
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
-    const threadId = origin ? (JSON.parse(origin.input) as { conversationId?: string; threadId?: string }).conversationId : undefined;
-    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, threadId }, parentId: ctx.runId });
-    return `已交给 ${spec.name}，运行 ${r.id}${threadId ? "，完成后结果会发回本会话" : ""}。`;
+    const conversationId = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
+    if (!conversationId) throw new HttpError(400, "只能在一个会话里交办 Agent");
+    if (a.own_topic) {
+      const { startAgentWork } = await import("./agent-work.ts");
+      const w = startAgentWork(ctx.app, {
+        askRunId: ctx.runId!,
+        rootConversationId: conversationId,
+        spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId),
+        title: truncate(a.task.split("\n")[0], 60),
+        agent: spec.name,
+        task: a.task,
+        startMessage: a.task,
+      });
+      // Open the Feishu topic from the message that triggered this ask (lark only).
+      const larkChat = one<{ external_id: string }>(ctx.app.db, "select external_id from conversations where id = ?", conversationId);
+      const anchor = larkChat?.external_id && !larkChat.external_id.includes("#")
+        ? one<{ id: string }>(ctx.app.db, "select json_extract(meta, '$.externalId') id from messages where run_id = ? and role = 'user' order by created_at desc limit 1", ctx.runId!)?.id
+        : undefined;
+      if (anchor) void import("./agent-work.ts").then(({ openWorkTopic }) => openWorkTopic(ctx.app, w.work, anchor));
+      return `已在独立工作会话（飞书话题）把这件事交给 ${spec.name}，运行 ${w.runId}。进展在那条话题里更新；完成后只把结论和需要你决定的事带回这里。`;
+    }
+    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, threadId: conversationId }, parentId: ctx.runId });
+    return `已交给 ${spec.name}，运行 ${r.id}，完成后结果会发回本会话。`;
+  },
+});
+
+
+def({
+  name: "continue_agent_work",
+  description:
+    "继续一个已经在独立工作会话（飞书话题）里进行的多 Agent 任务：本人在原会话里补充要求，或你看了结论认为还要再推进时用。在原工作会话里排下一轮（复用同一条话题和之前的上下文），完成后同样只把消化后的结论带回本会话。不要用 run_agent 新开一个。",
+  write: true,
+  schema: z.object({
+    work_id: z.string().optional().describe("发起那次工作的 ask 运行 id（r…）；不传时取本会话最近一个仍在进行的工作会话"),
+    agent: z.string().optional().describe("这一轮用哪个 Agent 档案；不传沿用上一轮的 Agent"),
+    task: z.string().describe("这一轮要做什么：本人的新要求或你判断还需要推进的事，写具体"),
+  }),
+  handler: async (ctx, a) => {
+    const { refreshWork, queueAgentRound } = await import("./agent-work.ts");
+    const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
+    const conv = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
+    let work = a.work_id ? refreshWork(ctx.app, a.work_id) : null;
+    if (!work && conv) {
+      const row = one<{ output: string }>(
+        ctx.app.db,
+        "select r.output from runs r join messages m on json_extract(m.meta,'$.runId') = r.id where m.conversation_id = ? and json_extract(r.output,'$.agentWork') is not null order by r.created_at desc limit 1",
+        conv,
+      );
+      work = row ? (JSON.parse(row.output) as { agentWork?: import("./agent-work.ts").AgentWork }).agentWork ?? null : null;
+    }
+    if (!work) throw new HttpError(404, "找不到进行中的多 Agent 工作；复杂任务先用 run_agent own_topic=true 开始");
+    const agent = a.agent ?? work.rounds.at(-1)?.agent;
+    if (!agent) throw new HttpError(400, "说不出用哪个 Agent，先用 run_agent 交办");
+    const id = queueAgentRound(ctx.app, work, { agent, task: a.task });
+    return `已在原工作会话安排 ${agent} 的下一轮 ${id}，完成后把结论带回这里。`;
   },
 });
 

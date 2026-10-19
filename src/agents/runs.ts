@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 
-export type RunKind = "ask" | "agent" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "memory-review";
+export type RunKind = "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "memory-review";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 export type Run = {
   /** Background run that found nothing to do; hidden from the default run list. */
@@ -282,6 +282,12 @@ function kick(app: App) {
       .then((out) => {
         flushText(app, r.id);
         if (out) setRunOutput(app, r.id, out);
+        // Multi-agent work: a specialist round schedules its digester; agent-followup is terminal for the chain.
+        if ((r.kind === "agent" || r.kind === "agent-followup") && (r.input as { agentWorkId?: string }).agentWorkId) {
+          import("./agent-work.ts")
+            .then(({ onWorkRunSettled }) => onWorkRunSettled(app, getRun(app, r.id)))
+            .catch((e) => console.warn(`[omem] 多 Agent 工作推进失败：${(e as Error).message}`));
+        }
         const status = controller.signal.aborted ? "cancelled" : "done";
         // A quiet background inspection (nothing new / QUIET) stays out of the run list.
         const quiet = status === "done" && !INTERACTIVE.has(r.kind) && out && (out as { quiet?: boolean }).quiet === true ? 1 : 0;
@@ -335,3 +341,6 @@ export function waitForRun(app: App, id: string): Promise<Run> {
     check();
   });
 }
+
+/** Test-only: override the handler for a run kind (real ACP agents are not needed in unit tests). */
+export const __testHandlers = handlers;

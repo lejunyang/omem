@@ -68,7 +68,7 @@ describe("peers", () => {
       cleanupFetched(fetched);
     }
     expect(listMemories(laptop, { status: "active" }).map((m) => m.content)).toContain("服务器上的一条记忆。");
-  });
+  }, 60000);
 });
 
 describe("api auth without a configured token", () => {

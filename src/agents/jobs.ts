@@ -74,12 +74,12 @@ registerHandler("ask", async (ctx) => {
 
 // Delegation to an agent spec ("/as name task", run_agent): answer goes back to the thread it came from.
 registerHandler("agent", async (ctx) => {
-  const { spec: name, task, threadId } = ctx.run.input as { spec: string; task: string; threadId?: string };
-  const spec = readAgentSpec(ctx.app, name);
+  const { spec: name, task, threadId, agentWorkId, role: roleName } = ctx.run.input as { spec: string; task: string; threadId?: string; agentWorkId?: string; role?: string };
+  const spec = roleName ? null : readAgentSpec(ctx.app, name);
   const r = await runRole(ctx.app, {
-    role: "assistant",
-    spec,
-    spaceId: ctx.run.spaceId ?? spec.space ?? "personal",
+    role: (roleName as never) ?? "assistant",
+    spec: spec ?? undefined,
+    spaceId: ctx.run.spaceId ?? spec?.space ?? "personal",
     task,
     runId: ctx.run.id,
     signal: ctx.signal,
@@ -87,7 +87,39 @@ registerHandler("agent", async (ctx) => {
   });
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   const answer = r.text.trim() || "（没有输出）";
-  if (threadId) await deliverToThread(ctx.app, threadId, `**${spec.name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: spec.name });
+  if (threadId) {
+    // In a multi-agent work conversation the raw output stays there as the working record;
+    // the root conversation only ever sees the digested conclusion (agent-followup delivers it).
+    if (agentWorkId && !roleName) await deliverToThread(ctx.app, threadId, `**${spec!.name} 产出（完整记录）**\n\n${answer}`, { runId: ctx.run.id, agent: spec!.name, agentWorkRound: ctx.run.id });
+    else if (!agentWorkId) await deliverToThread(ctx.app, threadId, `**${spec!.name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: spec!.name });
+    else if (roleName) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: roleName, agentWorkRound: ctx.run.id });
+  }
+  return { answer };
+});
+
+// Multi-agent work: after a specialist returns into a work conversation, the digester gives the
+// conclusion to the root conversation; the main assistant there decides whether to continue.
+registerHandler("agent-followup", async (ctx) => {
+  const input = ctx.run.input as { threadId?: string; role?: string; task: string; agentWorkId?: string };
+  const r = await runRole(ctx.app, {
+    role: "digester",
+    spaceId: ctx.run.spaceId ?? "personal",
+    task: input.task,
+    runId: ctx.run.id,
+    signal: ctx.signal,
+    onEvent: (e) => ctx.event(e.type, e),
+  });
+  run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
+  const answer = r.text.trim() || "（没有输出）";
+  if (input.agentWorkId) {
+    const { refreshWork, saveWork } = await import("./agent-work.ts");
+    const work = refreshWork(ctx.app, input.agentWorkId);
+    if (work) {
+      saveWork(ctx.app, work, [input.agentWorkId]);
+      await deliverToThread(ctx.app, work.workConversationId, answer, { runId: ctx.run.id, agent: "digester", agentWorkRound: ctx.run.id });
+      await deliverToThread(ctx.app, work.rootConversationId, answer, { runId: ctx.run.id, agent: "digester", agentWorkResult: input.agentWorkId });
+    }
+  } else if (input.threadId) await deliverToThread(ctx.app, input.threadId, answer, { runId: ctx.run.id });
   return { answer };
 });
 

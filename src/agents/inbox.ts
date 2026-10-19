@@ -124,7 +124,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
 
 // ---- delivering to threads -------------------------------------------------
 
-type Sender = (thread: Thread, markdown: string) => Promise<void>;
+type Sender = (thread: Thread, markdown: string, meta?: Record<string, unknown>) => Promise<void>;
 const senders = new Map<string, Sender>();
 
 /** Channels register how to post into one of their threads (chat, topic). */
@@ -144,7 +144,7 @@ export async function deliverToThread(app: App, threadId: string, markdown: stri
   const send = senders.get(t.channel);
   if (!send) return false;
   try {
-    await send(t, markdown);
+    await send(t, markdown, meta);
     return true;
   } catch (e) {
     console.warn(`[omem] 发送到会话 ${t.id} 失败：${(e as Error).message}`);

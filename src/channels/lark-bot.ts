@@ -204,10 +204,32 @@ export async function startLarkBot(app: App) {
     },
   };
 
+const data2thread = (threadId: string | undefined): string | null => {
+  if (!threadId) return null;
+  const m = /^omt_([\w-]+)$/.exec(threadId);
+  return m ? m[1] : null;
+};
+
   // Later results for a thread (delegated agents…) go back to the same chat, inside the topic when there is one.
-  registerThreadSender("lark", async (thread, markdown) => {
+  registerThreadSender("lark", async (thread, markdown, meta: Record<string, unknown> = {}) => {
     const [chatId, topic] = (thread.key ?? "").split("#");
     if (!chatId) return;
+    // First message of a multi-agent work topic: open the topic from the request message.
+    if (!topic && typeof (meta as { openTopicFrom?: unknown }).openTopicFrom === "string") {
+      const sent = await sendLark({ replyTo: String(meta.openTopicFrom), inThread: true }, { markdown });
+      const t = data2thread(sent.threadId);
+      if (t) {
+        const { updateThread } = await import("../agents/threads.ts");
+        run(
+          app.db,
+          "update conversations set external_id = ?, updated_at = ? where id = ?",
+          `${chatId}#${t}`,
+          new Date().toISOString(),
+          thread.id,
+        );
+      }
+      return;
+    }
     await reply(chatId, markdown, thread.settings.lastMessageId, !!topic);
   });
 
