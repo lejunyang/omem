@@ -252,16 +252,17 @@ export async function startLarkBot(app: App) {
     // Push policy: non-urgent nudges stay in-app at night; and when the triggering message is
     // already read by the owner, the change has been seen — no ping (urgent always pushes).
     if (n.urgency !== "urgent" && !n.scheduled && inQuietHours(app)) return;
+    // Lessons from "忽略": a class of nudges the owner dismissed stays in-app.
+    {
+      const { muteMatch, recordMuteHit } = await import("../core/notify-lessons.ts");
+      const r = muteMatch(app, n);
+      if (r) { recordMuteHit(app, r.id); return; }
+    }
+    // Suppress when the owner has clearly seen/handled the triggering chat:
+    // read status, an OK/DONE reaction, or a later reply in the same topic.
     if (app.config.notify.onlyUnread && n.sourceRefs?.length) {
-      const { isUnread } = await import("./lark-read.ts");
-      const checks = await Promise.all(
-        n.sourceRefs
-          .map((r) => /^msg:([A-Za-z0-9_-]+)/.exec(r)?.[1])
-          .filter((x): x is string => !!x)
-          .map((id) => isUnread(app, id).catch(() => false)),
-      );
-      // Suppress only when the read check actually ran and every source is known read.
-      if (checks.length && checks.every((v) => v === false)) return;
+      const { ownerAlreadyHandled } = await import("./notify-gate.ts");
+      if (await ownerAlreadyHandled(app, n).catch(() => false)) return;
     }
     // Internal citations/routes cannot be opened in Feishu: real originals become links, the rest plain text.
     const body = resolveCitations(app, n.body ?? "");

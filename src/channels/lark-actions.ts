@@ -1,7 +1,7 @@
 import { receive } from "../agents/inbox.ts";
 import { addMessage, findThread } from "../agents/threads.ts";
 import type { App } from "../core/app.ts";
-import { run, tx } from "../core/db.ts";
+import { one, run, tx } from "../core/db.ts";
 import { OWNER, canWrite, resolveIdentity } from "../core/users.ts";
 import { buildCard, closeInteraction, describeAction, interactionForMessage, sendLark, updateLarkCard, type Content, type Target } from "./lark-send.ts";
 
@@ -14,7 +14,9 @@ import { buildCard, closeInteraction, describeAction, interactionForMessage, sen
  * - Other cards: the action becomes a new message in the conversation that
  *   posted the card, so the agent that asked continues.
  */
-export async function handleCardAction(app: App, data: any, nameOf: (openId: string) => Promise<string> = async (id) => id) {
+type CardActionResult = { toast: { type: string; content: string }; card?: unknown };
+
+export async function handleCardAction(app: App, data: any, nameOf: (openId: string) => Promise<string> = async (id) => id): Promise<CardActionResult> {
   const operator: string = data.operator?.open_id ?? data.open_id ?? "";
   const messageId: string = data.context?.open_message_id ?? data.open_message_id ?? "";
   const action = data.action ?? {};
@@ -47,7 +49,7 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
     if (itemId && m) {
       const [, op, id] = m;
       const { getItem, upsertItem } = await import("../items/store.ts");
-      return tx(app.db, () => {
+      const result = tx(app.db, (): { toast: { type: string; content: string }; title?: string } => {
         const current = interactionForMessage(app, messageId);
         if (!current || current.id !== inter.id || current.status !== "open" || JSON.stringify(current.payload) !== JSON.stringify(inter.payload) || JSON.stringify(current.allowed) !== JSON.stringify(inter.allowed))
           return { toast: { type: "warning", content: "卡片已变化或失效，请使用更新后的卡片" } };
@@ -58,13 +60,28 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
         if (op === "done") upsertItem(app, id, { status: "done", note: `${opName} 在飞书卡片上标记已处理` }, "user");
         else if (op === "cancel") upsertItem(app, id, { status: "cancelled", note: `${opName} 在飞书卡片上忽略` }, "user");
         run(app.db, "update card_interactions set status='done', handled_at=datetime('now'), handled_by=? where id=?", operator, inter.id);
-        const title = getItem(app, id).title;
-        return {
-          // Feishu callback responses must wrap a replacement card as { type: "raw", data }.
-          card: rawCard(buildCard({ title: op === "done" ? "已处理" : "已忽略", color: op === "done" ? "green" : "grey", blocks: [{ markdown: title }, { note: `${opName} 在飞书卡片上${op === "done" ? "标记已处理" : "忽略"}` }] })),
-          toast: { type: "success", content: op === "done" ? "已标记为已处理" : "已忽略" },
-        };
+        return { title: getItem(app, id).title, toast: { type: "success", content: "" } };
       });
+      if (result.title && op === "cancel") {
+        // "忽略" is a lesson: similar future nudges stay in-app instead of pinging.
+        const noteRow = one<{ title: string; body: string; context: string }>(
+          app.db,
+          "select title, body, context from notifications where json_extract(context,'$.entityId') = ? order by at desc limit 1",
+          id,
+        );
+        if (noteRow) {
+          const ctx = safeJson(noteRow.context) as { sourceRefs?: string[] };
+          const { learnMute } = await import("../core/notify-lessons.ts");
+          learnMute(app, { title: noteRow.title, body: noteRow.body, sourceRefs: Array.isArray(ctx?.sourceRefs) ? ctx.sourceRefs : [] });
+        }
+      }
+      if (!result.title) return { toast: result.toast };
+      const title = result.title;
+      return {
+        // Feishu callback responses must wrap a replacement card as { type: "raw", data }.
+        card: rawCard(buildCard({ title: op === "done" ? "已处理" : "已忽略", color: op === "done" ? "green" : "grey", blocks: [{ markdown: title }, { note: `${opName} 在飞书卡片上${op === "done" ? "标记已处理" : "忽略"}` }] })),
+        toast: { type: "success", content: op === "done" ? "已标记为已处理" : "已忽略，同类提醒以后不再推送" },
+      };
     }
     return { toast: { type: "warning", content: "找不到对应的会话" } };
   }

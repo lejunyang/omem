@@ -20,6 +20,7 @@ import type { App, AppEvent } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { configSchema, saveConfig } from "../core/config.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
+import { deleteMuteRule, listMuteRules } from "../core/notify-lessons.ts";
 import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
 import { createSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
@@ -589,6 +590,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/notifications/read", async (req) => {
     markRead(app, (req.body as { id?: string } | null)?.id);
+    return { ok: true };
+  });
+  server.get("/api/notify-mute-rules", async () => ({ rules: listMuteRules(app) }));
+  server.post("/api/notify-mute-rules/delete", async (req) => {
+    const id = (req.body as { id?: string } | null)?.id;
+    if (id) deleteMuteRule(app, id);
     return { ok: true };
   });
   server.get("/api/home", async () => {
