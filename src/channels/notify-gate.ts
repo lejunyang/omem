@@ -50,24 +50,40 @@ function refChatLines(app: App, ref: string): ChatLine[] {
 }
 
 export async function ownerAlreadyHandled(app: App, n: NotificationLike): Promise<boolean> {
-  const hits = (n.sourceRefs ?? []).flatMap((r) => refChatLines(app, r));
-  if (!hits.length) return false;
+  const refs = n.sourceRefs ?? [];
+  const triggers = refs.length ? refs.flatMap((r) => refChatLines(app, r)) : [];
 
-  // 1) Read status (batch; cached in lark-read).
-  const ids = hits.map((h) => h.messageId).filter((x): x is string => !!x);
+  // The strongest, timing-independent signal: the owner sent a message in the
+  // same chat/topic after the trigger. Works even when the trigger message is
+  // not resolvable (so fall back to "this chat, recent" when refs resolve to none).
+  if (triggers.length) {
+    for (const h of triggers) {
+      if (ownerRepliedAfter(app, h.chatId, h.topicId, h.atMs)) return true;
+    }
+  } else if (refs.length) {
+    for (const ref of refs) {
+      const chat = chatOfRef(app, ref);
+      if (chat && ownerRepliedRecently(app, chat, 30 * 60_000)) return true;
+    }
+  }
+
+  // Read status + reactions require concrete trigger message ids.
+  if (!triggers.length) return false;
+  const ids = triggers.map((h) => h.messageId).filter((x): x is string => !!x);
   const unread = ids.length ? await unreadMessageIds(app, ids) : new Set<string>();
-  if (ids.length && hits.every((h) => h.messageId && !unread.has(h.messageId))) return true;
-
-  // 2) Owner reaction on one of the triggering messages (OK emoji counts as handled).
-  for (const h of hits) {
+  if (ids.length && triggers.every((h) => h.messageId && !unread.has(h.messageId))) return true;
+  for (const h of triggers) {
     if (h.messageId && (await ownerReacted(app, h.messageId))) return true;
   }
-
-  // 3) Owner replied later in the same chat (same topic when the trigger is in one).
-  for (const h of hits) {
-    if (ownerRepliedAfter(app, h.chatId, h.topicId, h.atMs)) return true;
-  }
   return false;
+}
+
+/** The chat id behind a src: chat reference, when it resolves. */
+function chatOfRef(app: App, ref: string): string | null {
+  const m = /^src:([A-Za-z0-9_-]+)/.exec(ref);
+  if (!m) return null;
+  const row = one<{ kind: string; uri: string }>(app.db, "select kind, uri from sources where id=? and deleted_at is null", m[1]);
+  return row && row.kind === "chat" && row.uri.startsWith("lark:oc_") ? row.uri.slice("lark:".length) : null;
 }
 
 async function ownerReacted(app: App, messageId: string): Promise<boolean> {
@@ -96,8 +112,22 @@ function ownerRepliedAfter(app: App, chatId: string, topicId: string | null, aft
   for (const line of row.text.split("\n")) {
     const p = parseChatLine("", chatId, line);
     if (!p || p.atMs <= afterMs || !p.self) continue;
-    if (topicId && p.topicId !== topicId) continue;
+    // Only require topic equality when BOTH sides carry one; many captured group
+    // replies omit the topic tag and would otherwise look like different threads.
+    if (topicId && p.topicId && p.topicId !== topicId) continue;
     return true;
+  }
+  return false;
+}
+
+/** Owner spoke in the chat within `windowMs` before now (fallback when no trigger time). */
+function ownerRepliedRecently(app: App, chatId: string, windowMs: number): boolean {
+  const row = one<{ text: string }>(app.db, "select text from sources where uri = ? and deleted_at is null", `lark:${chatId}`);
+  if (!row) return false;
+  const cutoff = Date.now() - windowMs;
+  for (const line of row.text.split("\n")) {
+    const p = parseChatLine("", chatId, line);
+    if (p && p.self && p.atMs >= cutoff) return true;
   }
   return false;
 }

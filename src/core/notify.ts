@@ -1,5 +1,5 @@
 import type { App } from "./app.ts";
-import { all, run } from "./db.ts";
+import { all, one, run } from "./db.ts";
 import { getItem, itemEvents } from "../items/store.ts";
 import { validateItemRefs } from "../items/evidence.ts";
 import { canWrite } from "./users.ts";
@@ -86,6 +86,22 @@ if (input.entityId) {
     input = { ...input, eventId: event?.id };
   } else if (input.eventId !== undefined) throw new HttpError(400, "eventId 需要事项");
   validateItemRefs(app, sourceRefs, userId);
+  // Grace period for a normal, non-scheduled, non-urgent item's FIRST nudge:
+  // give the owner time to handle it (read / reply / react) before pinging.
+  // Enforced centrally so an over-eager ingest run cannot bypass it.
+  if (
+    input.entityId &&
+    (input.urgency ?? "normal") !== "urgent" &&
+    !input.scheduled &&
+    !one(app.db, "select 1 from notifications where json_extract(context,'$.entityId') = ?", input.entityId)
+  ) {
+    const item = getItem(app, input.entityId);
+    const delayMin = app.config.notify.firstNudgeDelayMinutes;
+    const createdMs = Date.parse(item.createdAt);
+    if (Number.isFinite(createdMs) && Date.now() - createdMs < delayMin * 60_000) {
+      throw new HttpError(425, `首次提醒宽限期：事项建立未满 ${delayMin} 分钟，先不打扰本人`);
+    }
+  }
   const n: Notification = {
     id: newId("n"),
     sourceRefs: [...new Set(sourceRefs)],

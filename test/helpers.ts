@@ -8,5 +8,7 @@ export function testApp() {
   const home = mkdtempSync(join(tmpdir(), "omem-test-"));
   const app = App.open(home);
   ensurePersonalSpace(app);
+  // Tests exercise notify/items directly, not the ingest first-nudge grace window.
+  app.config.notify.firstNudgeDelayMinutes = 0;
   return app;
 }
