@@ -647,10 +647,29 @@ def({
     body: z.string().describe("Markdown 正文：何时用、步骤、示例、注意事项"),
     files: z.record(z.string(), z.string()).optional().describe("附带文件（模板、脚本），文件名 → 内容"),
     draft: z.boolean().optional(),
+    /** Which agent this skill belongs to: main assistant teaching a spec names it; a run inside a spec defaults to itself. */
+    agent: z.string().optional().describe("把技能挂到哪个 Agent 档案（档案必须存在）；在某个档案内运行时不填默认挂到当前档案；不挂任何档案（建共享技能）用 attach=false"),
+    attach: z.boolean().optional().describe("保存后是否挂到目标档案，默认 true；false 表示只建技能、不改任何档案"),
   }),
   handler: (ctx, a) => {
     const sk = saveSkill(ctx.app, { name: a.name, description: a.description, body: a.body, files: a.files, status: a.draft ? "draft" : "active" }, ctx.actor);
-    return `已保存技能 ${sk.name}${sk.status === "draft" ? "（草稿，本人 /approve skill " + sk.name + " 后启用）" : ""}。`;
+    // Skills are reusable global files; "belonging to" an agent means being listed in
+    // that spec's frontmatter. Name the target when teaching as the main assistant;
+    // inside a spec the new skill defaults onto that spec.
+    let attachedTo: string | null = null;
+    if (a.attach !== false) {
+      const target = a.agent ?? ctx.spec ?? null;
+      if (target) {
+        if (!findAgentSpec(ctx.app, target)) throw new HttpError(404, `没有 Agent 档案 ${target}；先 list_agents 确认名字，或让本人先创建`);
+        const spec = findAgentSpec(ctx.app, target)!;
+        if (!spec.skills.includes(sk.name)) {
+          saveAgentSpec(ctx.app, { name: target, skills: [...spec.skills, sk.name] }, ctx.actor);
+        }
+        attachedTo = target;
+      }
+    }
+    const where = attachedTo ? `，并挂到 ${attachedTo}` : "";
+    return `已保存技能 ${sk.name}${sk.status === "draft" ? "（草稿，本人 /approve skill " + sk.name + " 后启用）" : ""}${where}。`;
   },
 });
 

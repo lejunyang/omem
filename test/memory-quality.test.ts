@@ -5,7 +5,7 @@ import { checkMemory, memoryQualityStats, unreviewedMemories } from "../src/memo
 import { getMemory, listMemories, remember } from "../src/memory/store.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { createRun } from "../src/agents/runs.ts";
-import { saveAgentSpec } from "../src/agents/specs.ts";
+import { readAgentSpec, saveAgentSpec } from "../src/agents/specs.ts";
 import { testApp } from "./helpers.ts";
 
 const ctxFor = (app: ReturnType<typeof testApp>, extra: Record<string, unknown> = {}) =>
@@ -79,6 +79,37 @@ describe("memory write-time checks", () => {
     expect(bad.isError).toBe(true);
     expect(bad.text).toMatch(/没有 Agent 档案 ghost/);
   });
+
+  it("attaches a saved skill to a named agent, to the running spec by default, or nowhere with attach=false", async () => {
+    const app = testApp();
+    saveAgentSpec(app, { name: "reviewer", description: "代码评审", prompt: "按项目约定评审。" }, "user");
+    saveAgentSpec(app, { name: "oncall", description: "值班", prompt: "处理报警。" }, "user");
+    const main = ctxFor(app, { role: undefined, spec: null });
+
+    // Main assistant teaches a specific spec.
+    const r1 = await callTool(main, "save_skill", { name: "review-rules", description: "评审规则", body: "# 步骤\n1. 先看阻塞问题。", agent: "reviewer" });
+    expect(r1.text).toMatch(/挂到 reviewer/);
+    expect(readAgentSpec(app, "reviewer").skills).toContain("review-rules");
+    expect(readAgentSpec(app, "oncall").skills).not.toContain("review-rules");
+
+    // Re-saving does not duplicate the frontmatter entry.
+    await callTool(main, "save_skill", { name: "review-rules", description: "评审规则", body: "# 步骤\n1. 更新。", agent: "reviewer" });
+    expect(readAgentSpec(app, "reviewer").skills.filter((x) => x === "review-rules")).toHaveLength(1);
+
+    // A run inside a spec attaches the skill to that spec by default.
+    const oncall = ctxFor(app, { role: undefined, spec: "oncall" });
+    await callTool(oncall, "save_skill", { name: "alarm-checklist", description: "报警检查", body: "# x" });
+    expect(readAgentSpec(app, "oncall").skills).toContain("alarm-checklist");
+
+    // attach=false keeps the skill global and changes no spec.
+    await callTool(main, "save_skill", { name: "general-thing", description: "通用做法", body: "# x", attach: false });
+    expect(readAgentSpec(app, "reviewer").skills).not.toContain("general-thing");
+
+    // Unknown target spec is rejected after the skill file is created (caller learns the name problem).
+    const bad = await callTool(main, "save_skill", { name: "orphan-skill", description: "x", body: "# x", agent: "ghost" });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toMatch(/没有 Agent 档案 ghost/);
+  }, 60_000);
 });
 
 describe("shadow runs and review", () => {

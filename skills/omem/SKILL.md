@@ -25,6 +25,7 @@ omem 是本人的个人记忆与助理系统。有两种接入方式。
 - `list_conversations` / `read_conversation`：查以前在某个群、私聊或网页对话里说过什么。飞书聊天原件每行是 `[时间] 发送人: 内容`，回复别人时带 `↩ 回复 X「…」`。
 - `recall`：查记忆，可按 `subject`、`tag` 筛；问“之前/变化”时加 `include_history: true` 看版本链。
 - `remember` / `supersede` / `forget`：记录、更正、撤回记忆。更正时用 supersede，不要重复新增。可带 `tags`（项目名、主题）。教某个 Agent 档案偏好/风格时用 `agent="档案名"`（如 `remember(kind:"preference", agent:"code-reviewer", …)`）；查看它的专属记忆用 `recall(agent:"档案名")`。
+- `save_skill`：把可复用做法存成技能；`agent="档案名"` 保存后直接挂到该档案（主助手教档案时用），档案内运行不填默认挂当前档案，`attach: false` 只建技能不挂；技能名不存在的档案会报错。
 - `list_items` / `read_item` / `upsert_item`：待办、等待回复、提醒、关注、待决定。时间用带时区的 ISO 格式。`list_items(space: "*")` 在本次可发现空间内查已有事项，查询在分页前限定空间；`read_item(item_id)` 返回完整事项和时间线。后台 ingest 的事项发现可覆盖本人可访问空间，普通原件检索与写权限仍保持原范围。
 - `upsert_item.source_refs` 默认增量合并；纠正用 `source_refs_mode: "replace" | "remove"`，必须指定 `id`、`note`、非空 `source_refs` 和重读得到的完整 `expected_source_refs`。`[]` 不清空；清空必须逐条 remove。replace 校验来源存在、行号与可读空间，remove 只撤回该事项原有来源，允许撤回已删除的来源。所有写入还检查用户身份和空间写权限；纠正前后都保留在事件中。
 - `propose_item_update(item_id, note, source_refs)`：只读发现另一个空间已有同一具体事项时路由进展，目标事项保持不变；相同未决提案复用。主助手 `list_item_proposals` 查看、阅读两边材料，再 `resolve_item_proposal(proposal_id, action: "apply" | "reject", reason)`，需要来源空间和目标空间写权限。不能因为只读就挂到另一个宽泛旧事项。
