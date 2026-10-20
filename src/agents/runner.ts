@@ -153,6 +153,8 @@ export type RoleRunInput = {
   shadow?: { parentRunId: string | null };
   /** omem tools this run must not have (a consulted agent cannot hand work on). */
   denyTools?: string[];
+  /** Feishu chats it may post into (a rule's agent: only the chat that triggered it). */
+  lark?: { chats: string[] | null; draft?: boolean };
 };
 
 /** Who is acting: a built-in role, or an agent spec the assistant (or the owner) created. */
@@ -290,7 +292,7 @@ export function fallbackProfiles(
 /** Run a role-defined agent turn with omem tools attached. */
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string }> {
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
-  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools });
+  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark });
   const chain = input.spec || input.shadow
     ? [base.profile] // explicit agent specs choose their own backend; no silent rerouting
     : fallbackProfiles(app, actor, base.profile.id);
@@ -298,7 +300,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   let lastError: unknown;
   for (let i = 0; i < chain.length; i++) {
     const profile = chain[i];
-    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools });
+    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark });
     try {
       const req = {
         cwd: prep.cwd,

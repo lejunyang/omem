@@ -42,6 +42,7 @@ const paths: Record<string, string> = {
   quote: "M7 7h4v4c0 3-2 5-4 6M15 7h4v4c0 3-2 5-4 6",
   play: "M7 4l13 8-13 8z",
   user: "M20 21a8 8 0 0 0-16 0M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
+  zap: "M13 3 4 14h7l-1 7 9-11h-7z",
   layers: "M12 2 2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
 };
 </script>

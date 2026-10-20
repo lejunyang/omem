@@ -119,7 +119,16 @@ export async function deliverCoordination(ctx: RunContext, coordinate: { workId:
 
 // Delegation to an agent spec ("/as name task", run_agent): answer goes back to the thread it came from.
 registerHandler("agent", async (ctx) => {
-  const { spec: name, task, threadId, agentWorkId, consultOf } = ctx.run.input as { spec: string; task: string; threadId?: string; agentWorkId?: string; consultOf?: string };
+  const { spec: name, task, threadId, agentWorkId, consultOf, rule, lark } = ctx.run.input as {
+    spec: string;
+    task: string;
+    threadId?: string;
+    agentWorkId?: string;
+    consultOf?: string;
+    /** Started by a rule: it may post only where the rule allows, and reports to the owner otherwise. */
+    rule?: { id: string; name: string };
+    lark?: { chats: string[] | null; draft?: boolean };
+  };
   // A consultation runs inside the asking tool call (consult.ts); one picked up here was cut off by a
   // restart, and the asker is gone.
   if (consultOf !== undefined) throw new Error("请教在服务重启时中断，提问的一方已经结束");
@@ -149,6 +158,7 @@ registerHandler("agent", async (ctx) => {
       onEvent: (e) => ctx.event(e.type, e),
       resumeSessionId: resume,
       persistSession: !!agentWorkId,
+      lark,
     });
   let r;
   try {
@@ -162,7 +172,11 @@ registerHandler("agent", async (ctx) => {
   // The report proper: what the agent wrote after its last tool call (its narration on the way is
   // in the run's events). Work rounds go to the main assistant, which writes the reply (agent-work.ts).
   const answer = replyOf(r).trim() || "（没有输出）";
-  if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${spec.name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: spec.name });
+  if (rule) {
+    // A rule's agent answers in the chat only when the rule says so; otherwise the owner gets it.
+    if (threadId) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: spec.name, rule: rule.id });
+    else notify(ctx.app, { title: `${spec.name}（规则「${rule.name}」）`, body: truncate(answer, 3000), link: `#/runs/${ctx.run.id}` });
+  } else if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${spec.name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: spec.name });
   return { answer, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
 });
 

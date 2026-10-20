@@ -76,7 +76,7 @@ function toggle() {
 .ui-check:hover .box {
   border-color: var(--muted);
 }
-.on .box {
+.ui-check.on .box {
   background: var(--accent);
   border-color: var(--accent);
 }
@@ -110,13 +110,13 @@ function toggle() {
   width: 12px;
   height: 12px;
 }
-.on .box.switch {
+.ui-check.on .box.switch {
   background: var(--accent);
 }
-.on .knob {
+.ui-check.on .knob {
   transform: translateX(14px);
 }
-.sm.on .knob {
+.ui-check.sm.on .knob {
   transform: translateX(12px);
 }
 </style>

@@ -1,0 +1,170 @@
+import type { App } from "../core/app.ts";
+import { all, one } from "../core/db.ts";
+import { json, now } from "../core/util.ts";
+import { runActions } from "./actions.ts";
+import { aiJudge, eventSummary } from "./compile.ts";
+import { describe, evaluate, eventReader } from "./conditions.ts";
+import { claimEvent, listRules, recordFiring } from "./store.ts";
+import { ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./types.ts";
+
+/**
+ * Hand one event to every enabled rule that listens for it. Sources call this and forget it:
+ * nothing here throws back at the capture or the bot.
+ */
+export async function dispatchRuleEvent(app: App, e: RuleEvent) {
+  let rules: Rule[];
+  try {
+    rules = listRules(app, { enabledOnly: true }).filter((r) => r.trigger.event === e.kind);
+  } catch {
+    return;
+  }
+  for (const rule of rules) {
+    try {
+      await consider(app, rule, e);
+    } catch (err) {
+      console.warn(`[omem] 规则「${rule.name}」处理失败：${(err as Error).message}`);
+    }
+  }
+}
+
+/** Several events (a capture batch) in order. */
+export async function dispatchRuleEvents(app: App, events: RuleEvent[]) {
+  if (!events.length || !listRules(app, { enabledOnly: true }).length) return;
+  for (const e of events) await dispatchRuleEvent(app, e);
+}
+
+/** A schedule rule's tick (scheduler kind "rule"). */
+export async function fireScheduledRule(app: App, ruleId: string) {
+  const rule = listRules(app, { enabledOnly: true }).find((r) => r.id === ruleId);
+  if (!rule || rule.trigger.event !== "schedule") return;
+  const at = new Date().toISOString();
+  await consider(app, rule, { key: `schedule:${at.slice(0, 16)}`, kind: "schedule", at, via: "schedule" }).catch((err) => console.warn(`[omem] 规则「${rule.name}」处理失败：${(err as Error).message}`));
+}
+
+function keyFor(rule: Rule, e: RuleEvent) {
+  return rule.trigger.once === "chat" && e.chat ? `chat:${e.chat.id}` : e.key;
+}
+
+async function consider(app: App, rule: Rule, e: RuleEvent) {
+  const key = keyFor(rule, e);
+  if (one(app.db, "select 1 from rule_handled where rule_id = ? and key = ?", rule.id, key)) return;
+  const d = await judge(app, rule, e);
+  if (!d.match) return;
+  // Both the bot and the capture may bring the same message: whoever claims it first fires.
+  if (!claimEvent(app, rule.id, key)) return;
+  const results = await runActions(app, rule, e, d.reason);
+  recordFiring(app, { ruleId: rule.id, eventKey: key, summary: eventSummary(e), judgedBy: d.by, reason: d.reason, results });
+}
+
+type Decision = { match: boolean; by: "code" | "ai" | "code+ai" | "limit"; reason: string };
+
+/** Model calls a rule may make in an hour when it judges by the model alone (or after conditions). */
+const AI_PER_HOUR = 60;
+const aiBudget = new Map<string, { hour: number; used: number }>();
+function takeAiBudget(ruleId: string) {
+  const hour = Math.floor(Date.now() / 3600_000);
+  const b = aiBudget.get(ruleId);
+  if (!b || b.hour !== hour) return aiBudget.set(ruleId, { hour, used: 1 }), true;
+  if (b.used >= AI_PER_HOUR) return false;
+  b.used++;
+  return true;
+}
+
+export async function judge(app: App, rule: Pick<Rule, "id" | "description" | "conditions" | "judge">, e: RuleEvent, opts: { ai?: boolean } = {}): Promise<Decision> {
+  // A schedule tick has nothing to look at: it fires (the agent it starts does the looking).
+  if (e.kind === "schedule") return { match: true, by: "code", reason: "定时" };
+  const read = eventReader(e, { chatBots: (id) => chatBots(app, id) });
+  if (rule.judge !== "ai") {
+    if (!rule.conditions || !(await evaluate(rule.conditions, read))) return { match: false, by: "code", reason: "" };
+    if (rule.judge === "code") return { match: true, by: "code", reason: describe(rule.conditions) };
+  }
+  if (opts.ai === false) return { match: true, by: rule.judge, reason: "（试运行没有请模型判断）" };
+  if (!takeAiBudget(rule.id)) return { match: false, by: "limit", reason: `这一小时已请模型判断 ${AI_PER_HOUR} 次` };
+  const v = await aiJudge(app, rule as Rule, e);
+  return v ? { match: v.match, by: rule.judge, reason: v.reason } : { match: false, by: rule.judge, reason: "模型没有给出判断" };
+}
+
+// ---- chat facts read on demand -----------------------------------------------------------
+
+const botsCache = new Map<string, { at: number; names: string[] | null }>();
+/** The bots in a chat (by name), read with the owner's lark-cli once a day per chat. */
+export async function chatBots(app: App, chatId: string): Promise<string[] | null> {
+  const c = botsCache.get(chatId);
+  if (c && Date.now() - c.at < 24 * 3600_000) return c.names;
+  let names: string[] | null = null;
+  try {
+    const { larkCli } = await import("../channels/lark-cli.ts");
+    const v = await larkCli(["im", "+chat-members-list", "--chat-id", chatId, "--member-types", "bot", "--page-all", "--as", "user", "--format", "json"], 60_000);
+    const bots: { name?: string; bot_name?: string }[] = v?.data?.bots ?? v?.bots ?? [];
+    names = bots.map((b) => String(b.name ?? b.bot_name ?? "")).filter(Boolean);
+  } catch {
+    names = null;
+  }
+  botsCache.set(chatId, { at: Date.now(), names });
+  return names;
+}
+
+// ---- trying a rule on what was captured -------------------------------------------------------
+
+type MessageRow = { message_id: string; chat_id: string; thread_id: string | null; sender_id: string | null; sender_name: string; sender_kind: string; msg_type: string; content: string; create_ms: number; mentions: string };
+
+/** An event from a stored message (the capture keeps lark-cli's ids; `owner` is the owner's there). */
+export function eventFromRow(app: App, r: MessageRow, owner?: string | null): RuleEvent {
+  const chat = one<{ name: string; chat_mode: string }>(app.db, "select name, chat_mode from lark_cursors where chat_id = ?", r.chat_id);
+  const email = r.sender_id ? one<{ email: string | null }>(app.db, "select email from lark_people where cli_open_id = ?", r.sender_id)?.email ?? null : null;
+  const mentions = json<{ id: string }[]>(r.mentions, []).map((m) => m.id);
+  return {
+    key: `lark:${r.message_id}`,
+    kind: "message",
+    at: new Date(r.create_ms).toISOString(),
+    chat: { id: r.chat_id, name: chat?.name ?? r.chat_id, kind: chat?.chat_mode === "p2p" ? "p2p" : "group" },
+    sender: { id: r.sender_id ?? undefined, name: r.sender_name, email, kind: r.sender_kind === "owner" ? "owner" : r.sender_kind === "app" ? "bot" : "user" },
+    message: {
+      id: r.message_id,
+      text: r.content,
+      type: r.msg_type,
+      mentionsOwner: !!owner && mentions.includes(owner),
+      mentionsBot: false,
+      topicId: r.thread_id,
+      cardTitle: /<card title="([^"]*)"/.exec(r.content)?.[1] ?? null,
+    },
+    via: "test",
+  };
+}
+
+/**
+ * Run a rule (saved or not) over recent captured messages without firing anything: which would
+ * match and why. Rules that need the model are tried on a few of the condition matches only.
+ */
+export async function testRule(app: App, input: RuleInput, opts: { chatId?: string; days?: number; limit?: number; ai?: boolean } = {}) {
+  const rule = ruleInputSchema.parse({ ...input, enabled: false });
+  if (rule.trigger.event !== "message") return { checked: 0, matches: [], note: "只有“新消息”规则能拿最近的消息试" };
+  const since = Date.now() - (opts.days ?? 3) * 86400_000;
+  const rows = all<MessageRow>(
+    app.db,
+    `select message_id, chat_id, thread_id, sender_id, sender_name, sender_kind, msg_type, content, create_ms, mentions from lark_messages
+     where create_ms > ? and sender_kind != 'system' ${opts.chatId ? "and chat_id = ?" : ""} order by create_ms desc limit ?`,
+    since,
+    ...(opts.chatId ? [opts.chatId] : []),
+    Math.min(opts.limit ?? 500, 2000),
+  );
+  const { ownerOpenId } = await import("../channels/lark-personal.ts");
+  const owner = rows.length ? await ownerOpenId().catch(() => undefined) : undefined;
+  const matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string }[] = [];
+  let aiTried = 0;
+  for (const r of rows) {
+    const e = eventFromRow(app, r, owner);
+    const wantsAi = rule.judge !== "code";
+    const allowAi = !!opts.ai && wantsAi && aiTried < 5;
+    if (rule.judge === "ai" && !allowAi) continue;
+    const d = await judge(app, { ...rule, id: `test:${now()}` }, e, { ai: allowAi });
+    if (allowAi && d.by !== "code") aiTried++;
+    if (d.match) matches.push({ messageId: r.message_id, chat: e.chat!.name, sender: e.sender!.name, text: e.message!.text.slice(0, 200), at: e.at, reason: d.reason, by: d.by });
+    if (matches.length >= 50) break;
+  }
+  return {
+    checked: rows.length,
+    matches,
+    note: rule.judge === "ai" && !opts.ai ? "这条规则只交给模型判断：勾选“请模型判断”抽样试几条" : rule.judge === "code+ai" && !opts.ai ? "列出的是条件命中的消息，还要模型确认" : "",
+  };
+}

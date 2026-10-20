@@ -550,6 +550,37 @@ const migrations: string[] = [
   `
   update runs set status = 'cancelled', finished_at = coalesce(finished_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) where kind = 'agent-followup' and status in ('queued', 'running');
   `,
+  // Rules (docs/v2/rules.md): when an event matches, run the actions; each firing is logged and
+  // each event handled once per rule.
+  `
+  create table rules (
+    id text primary key,
+    name text not null,
+    description text not null,
+    enabled integer not null default 0,
+    trigger text not null,
+    conditions text,
+    judge text not null default 'code',
+    actions text not null,
+    created_by text not null default 'user',
+    created_at text not null,
+    updated_at text not null,
+    hits integer not null default 0,
+    last_fired_at text
+  );
+  create table rule_firings (
+    id integer primary key autoincrement,
+    rule_id text not null,
+    event_key text not null,
+    at text not null,
+    summary text not null default '',
+    judged_by text not null,
+    reason text not null default '',
+    results text not null default '[]'
+  );
+  create index rule_firings_rule on rule_firings(rule_id, at);
+  create table rule_handled (rule_id text not null, key text not null, at text not null, primary key (rule_id, key));
+  `,
 ];
 
 export type Db = DatabaseSync;

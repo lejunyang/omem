@@ -88,3 +88,8 @@ export function triggerSchedule(app: App, id: string) {
 export function nextRuns(app: App) {
   return Object.fromEntries(listSchedules(app).map((s) => [s.id, s.enabled ? (new Cron(s.cron, { paused: true, timezone: app.config.timezone }).nextRun()?.toISOString() ?? null) : null]));
 }
+
+export function deleteSchedule(app: App, id: string) {
+  run(app.db, "delete from schedules where id = ?", id);
+  restartScheduler(app);
+}

@@ -635,6 +635,45 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     markRead(app, (req.body as { id?: string } | null)?.id);
     return { ok: true };
   });
+  // ------------------------------------------------------------------- rules
+  server.get("/api/rules", async () => {
+    const { listRules } = await import("../rules/store.ts");
+    const { describe } = await import("../rules/conditions.ts");
+    return listRules(app).map((r) => ({ ...r, conditionText: describe(r.conditions) }));
+  });
+  server.get("/api/rules/:id", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const { getRule, listFirings } = await import("../rules/store.ts");
+    const { describe } = await import("../rules/conditions.ts");
+    const r = getRule(app, id);
+    return { ...r, conditionText: describe(r.conditions), firings: listFirings(app, id) };
+  });
+  server.post("/api/rules", async (req) => (await import("../rules/store.ts")).saveRule(app, req.body as never, "user"));
+  server.put("/api/rules/:id", async (req) => (await import("../rules/store.ts")).saveRule(app, { ...(req.body as object), id: (req.params as { id: string }).id } as never, "user"));
+  server.delete("/api/rules/:id", async (req) => {
+    (await import("../rules/store.ts")).deleteRule(app, (req.params as { id: string }).id);
+    return { ok: true };
+  });
+  // The model writes a rule from the owner's words (nothing is saved); the page shows it to edit.
+  server.post("/api/rules/draft", async (req) => {
+    const b = q(z.object({ description: z.string().min(1), current: z.record(z.string(), z.unknown()).optional() }), req.body);
+    return (await import("../rules/compile.ts")).draftRule(app, b.description, b.current as never);
+  });
+  // Try a rule on recent captured messages without firing anything.
+  server.post("/api/rules/test", async (req) => {
+    const b = q(z.object({ rule: z.record(z.string(), z.unknown()), chatId: z.string().optional(), days: z.number().optional(), ai: z.boolean().optional() }), req.body);
+    return (await import("../rules/engine.ts")).testRule(app, b.rule as never, { chatId: b.chatId, days: b.days, ai: b.ai });
+  });
+  server.get("/api/rule-options", async () => {
+    const { FIELDS, OPS } = await import("../rules/types.ts");
+    return {
+      fields: FIELDS,
+      ops: OPS,
+      specs: listAgentSpecs(app).map((s) => ({ name: s.name, description: s.description })),
+      chats: all<{ chat_id: string; name: string }>(app.db, "select chat_id, name from lark_cursors where chat_id like 'oc_%' and name != '' order by updated_at desc limit 300"),
+      botReady: !!app.config.lark.appId,
+    };
+  });
   server.get("/api/notify-ignore-rules", async () => ({ rules: listIgnoreRules(app) }));
   server.post("/api/notify-ignore-rules/delete", async (req) => {
     const id = (req.body as { id?: string } | null)?.id;

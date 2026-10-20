@@ -13,6 +13,7 @@ import { appendToSource, findSourceByUri, upsertSource } from "../sources/store.
 import { larkCli } from "./lark-cli.ts";
 import { flattenReplies, formatLine, isApp, keepResources, learnPeople, mentionIds, messageText, monthOf, parentOf, quotedMessages, rebuildArchive, storeMessages, timeMs, type LarkMessage, type ResourceRef } from "./lark-messages.ts";
 import { routeWatchedMessages, watchRule, type ChatMessage } from "./lark-watch.ts";
+import type { RuleEvent } from "../rules/types.ts";
 
 /**
  * Read-only capture of the owner's own Feishu through lark-cli (user identity).
@@ -245,6 +246,43 @@ type CaptureCtx = { endMs: number; touched: Map<string, Set<string>>; owner?: st
 /** Whether the ingest role should see this batch, given the chat's policy and whether the owner is in it. */
 const wantsIngest = (policy: CapturePolicy, involved: boolean) => policy === "ingest" || (policy === "involved" && involved);
 
+/** Rule events for a captured batch: the chat when it is read for the first time, then each message. */
+function ruleEvents(app: App, chat: LarkChat, messages: LarkMessage[], owner: string | undefined, first: boolean): RuleEvent[] {
+  const where = { id: chat.chatId, name: chat.name, kind: chat.mode === "p2p" ? ("p2p" as const) : ("group" as const) };
+  const at = new Date().toISOString();
+  const out: RuleEvent[] = first ? [{ key: `chat-new:${chat.chatId}`, kind: "chat-new", at, chat: where, via: "capture" }] : [];
+  for (const m of messages) {
+    if (m.msg_type === "system") continue;
+    const senderId = m.sender?.id;
+    const email = senderId ? one<{ email: string | null }>(app.db, "select email from lark_people where cli_open_id = ?", senderId)?.email ?? null : null;
+    const text = messageText(m);
+    out.push({
+      key: `lark:${m.message_id}`,
+      kind: "message",
+      at: new Date(timeMs(m.create_time)).toISOString(),
+      chat: where,
+      sender: { id: senderId, name: m.sender?.name ?? senderId ?? "?", email, kind: owner && senderId === owner ? "owner" : isApp(m) ? "bot" : "user" },
+      message: { id: m.message_id, text, type: m.msg_type, mentionsOwner: !!owner && mentionIds(m).includes(owner), mentionsBot: false, topicId: m.thread_id ?? null, cardTitle: /<card title="([^"]*)"/.exec(text)?.[1] ?? null },
+      via: "capture",
+    });
+  }
+  return out;
+}
+
+/**
+ * Read one chat now (a rule's "capture" action): it is marked as involving the owner, so it is
+ * ingested and read on every poll from now on, even when muted.
+ */
+export async function captureChatNow(app: App, chatId: string, name: string) {
+  setCapturePolicy(app, chatId, "ingest");
+  const seen = one<{ kind: string; chat_mode: string; muted: number }>(app.db, "select kind, chat_mode, muted from lark_cursors where chat_id = ?", chatId);
+  const chat: LarkChat = { chatId, name, mode: seen?.chat_mode || "group", kind: (seen?.kind as ChatKind) || "group", muted: !!seen?.muted };
+  const touched = new Map<string, Set<string>>();
+  const n = await captureChat(app, chat, { endMs: Date.now(), touched, owner: await ownerOpenId() });
+  for (const [spaceId, ids] of touched) scheduleIngest(app, spaceId, [...ids], "规则：优先采集的群");
+  return n;
+}
+
 async function captureChat(app: App, chat: LarkChat, c: CaptureCtx) {
   const { endMs, touched, owner } = c;
   const cfg = app.config.lark.capture;
@@ -336,6 +374,8 @@ async function captureChat(app: App, chat: LarkChat, c: CaptureCtx) {
       mentions: mentionIds(m),
     }));
     await routeWatchedMessages(app, chat.chatId, chat.name, watched);
+    // Rules see every captured chat. Judging may ask the model: it does not hold up the capture.
+    void import("../rules/engine.ts").then(({ dispatchRuleEvents }) => dispatchRuleEvents(app, ruleEvents(app, chat, messages, owner, !prev))).catch(() => {});
     return messages.length;
   } finally {
     if (dir) rmSync(dir, { recursive: true, force: true });
@@ -478,6 +518,9 @@ async function pollLarkOnce(app: App) {
   // Watched and subscribed chats are explicit opt-ins: always read, even when muted.
   for (const r of all<{ chat_id: string }>(app.db, "select chat_id from chat_settings where channel = 'lark-watch' and settings like '%\"watch\"%'"))
     if (!chats.some((c) => c.chatId === r.chat_id)) chats.push(known(r.chat_id, r.chat_id));
+  // So are chats a rule or the owner set to be ingested.
+  for (const r of all<{ chat_id: string; name: string | null }>(app.db, "select s.chat_id, c.name from chat_settings s left join lark_cursors c on c.chat_id = s.chat_id where s.channel = 'lark-capture' and json_extract(s.settings, '$.policy') = 'ingest'"))
+    if (!chats.some((c) => c.chatId === r.chat_id) && !exclude.has(r.chat_id)) chats.push(known(r.chat_id, r.name ?? r.chat_id));
   for (const s of subs) if (!chats.some((c) => c.chatId === s.chatId) && !exclude.has(s.chatId)) chats.push(known(s.chatId, s.name));
 
   let quiet = 0;
@@ -517,7 +560,6 @@ async function pollLarkOnce(app: App) {
   return { chats: read, messages, spaces: [...touched.keys()] };
 }
 
-/** The owner's open_id as lark-cli sees it (open_ids are per app, so not the bot's ownerOpenId). */
 /** The owner as lark-cli sees them (its open_id is its own app's, not the bot's). */
 export async function ownerOpenId(): Promise<string | undefined> {
   try {

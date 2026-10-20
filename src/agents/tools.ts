@@ -1579,6 +1579,50 @@ def({
 });
 
 def({
+  name: "list_rules",
+  description: "列出本人设的规则（遇到什么情况自动叫哪个 Agent 做什么）：原话、条件、动作、是否启用、命中次数。",
+  schema: z.object({}),
+  handler: async (ctx) => {
+    const { listRules } = await import("../rules/store.ts");
+    const { describe } = await import("../rules/conditions.ts");
+    const rules = listRules(ctx.app);
+    return rules.length
+      ? rules.map((r) => `- ${r.id} ${r.enabled ? "" : "（未启用）"}「${r.name}」：${r.description}\n  触发 ${r.trigger.event}${r.trigger.once === "chat" ? "（每群一次）" : ""} · 条件 ${describe(r.conditions)} · 判断 ${r.judge} · 动作 ${r.actions.map((a) => a.type + ("spec" in a ? `:${a.spec}` : "")).join("、")} · 命中 ${r.hits} 次`).join("\n")
+      : "还没有规则。";
+  },
+});
+
+def({
+  name: "save_rule",
+  description:
+    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、优先采集、通知本人）。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用，回复里请本人到规则页（#/rules）核对后启用；本人明确说现在就启用时 enabled=true。",
+  write: true,
+  schema: z.object({
+    id: z.string().optional().describe("修改已有规则时填（list_rules）"),
+    description: z.string().describe("本人的原话，写全：什么情况、做什么、回复方式"),
+    name: z.string().optional(),
+    enabled: z.boolean().optional(),
+    rule: z.record(z.string(), z.unknown()).optional().describe("可选：完整结构 {trigger, conditions, judge, actions}，格式见 docs/v2/rules.md；不填由模型生成"),
+  }),
+  handler: async (ctx, a) => {
+    if (ctx.spec || (ctx.role && ctx.role !== "assistant")) throw new HttpError(403, "规则只能由主助手替本人设");
+    const { saveRule, getRule } = await import("../rules/store.ts");
+    const { describe } = await import("../rules/conditions.ts");
+    const current = a.id ? getRule(ctx.app, a.id) : undefined;
+    let input: Record<string, unknown>;
+    if (a.rule) input = { ...(current ?? {}), ...a.rule, description: a.description };
+    else {
+      const { draftRule } = await import("../rules/compile.ts");
+      const d = await draftRule(ctx.app, a.description, current);
+      if (!d.rule) throw new HttpError(422, d.error ?? "没能从原话生成规则");
+      input = d.rule;
+    }
+    const saved = saveRule(ctx.app, { ...(input as object), id: a.id, name: a.name ?? (input.name as string), enabled: a.enabled ?? current?.enabled ?? false } as never, "agent");
+    return `已${current ? "更新" : "建好"}规则 ${saved.id}「${saved.name}」${saved.enabled ? "（已启用）" : "（未启用，请本人到规则页核对后启用）"}：条件 ${describe(saved.conditions)}；判断 ${saved.judge}；动作 ${saved.actions.map((x) => x.type + ("spec" in x ? `:${x.spec}` : "")).join("、")}。链接：#/rules?id=${saved.id}`;
+  },
+});
+
+def({
   name: "ignore_notification_rule",
   description:
     "记录一条本人明确给出的免提醒规则（本人引用/回复某条通知说“这类不用提醒我”时用）。规则由模型在每次推送前语义判断；只静默飞书推送，应用内通知仍保留。不要拿一次性事件当通用规则。",

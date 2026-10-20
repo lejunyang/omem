@@ -54,6 +54,8 @@ type Inbound = {
   type?: string;
   /** @_user_N placeholders in the text → who they are. */
   mentionNames?: Record<string, { name: string; isBot: boolean }>;
+  /** Sent by an app (alert cards, other bots). */
+  fromApp?: boolean;
 };
 
 export function messageText(raw: string | undefined, type: string | undefined): string {
@@ -345,9 +347,29 @@ export async function startLarkBot(app: App) {
     }
   };
 
+  /** Rules see the groups the bot is in as messages arrive (the capture sees them later, deduplicated). */
+  const dispatchToRules = (m: Inbound) => {
+    if (m.senderId === botOpenId) return;
+    const email = one<{ email: string | null }>(app.db, "select email from lark_people where bot_open_id = ?", m.senderId)?.email ?? null;
+    void import("../rules/engine.ts")
+      .then(({ dispatchRuleEvent }) =>
+        dispatchRuleEvent(app, {
+          key: `lark:${m.messageId}`,
+          kind: "message",
+          at: new Date(Number(m.createTime) || Date.now()).toISOString(),
+          chat: { id: m.chatId, name: groupName(m.chatId), kind: "group" },
+          sender: { id: m.senderId, name: m.senderName, email, kind: m.senderId === cfg.ownerOpenId ? "owner" : m.fromApp ? "bot" : "user" },
+          message: { id: m.messageId, text: m.text, type: m.type ?? "text", mentionsOwner: !!cfg.ownerOpenId && m.mentions.includes(cfg.ownerOpenId), mentionsBot: m.mentionsBot, topicId: m.topicId ?? null, cardTitle: /<card title="([^"]*)"/.exec(m.text)?.[1] ?? null },
+          via: "bot",
+        }),
+      )
+      .catch(() => {});
+  };
+
   const handle = async (m: Inbound) => {
     if (m.chatType === "group") {
       captureGroup(m);
+      dispatchToRules(m);
       await routeWatchedMessages(app, m.chatId, groupName(m.chatId), [{ id: m.messageId, time: m.createTime, sender: m.senderName, senderId: m.senderId, text: m.text, topicId: m.topicId, mentions: m.mentions }], { botOpenId });
       if (!m.mentionsBot) return;
     }
@@ -520,6 +542,7 @@ export async function startLarkBot(app: App) {
       createTime: msg.create_time,
       topicId: msg.thread_id || undefined,
       type: msg.message_type,
+      fromApp: data.sender?.sender_type === "app",
       mentionNames: Object.fromEntries(
         ((msg.mentions ?? []) as { key?: string; name?: string; id?: { open_id?: string } }[])
           .filter((x) => x.key)
