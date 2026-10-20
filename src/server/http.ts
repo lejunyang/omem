@@ -1,6 +1,9 @@
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { symbolRelations } from "../sources/callgraph.ts";
-import { agentSpecHistory, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
+import { DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
+import { customizeRole, listRoleStates, mergeRole, resetRole, saveRoleOverride } from "../agents/builtin-roles.ts";
+import { profileDetail } from "../agents/profiles.ts";
+import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -13,9 +16,9 @@ import { z } from "zod";
 import { applyCodeRun, codePatches, codeRepos, discardCodeRun } from "../agents/code.ts";
 import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePages, type PageBrief } from "../agents/jobs.ts";
 import { createMcpServer } from "../agents/mcp-server.ts";
-import { listAgentProfiles } from "../agents/runner.ts";
+import { listAgentProfiles, loadRole } from "../agents/runner.ts";
 import { cancelRun, countRuns, createRun, getRun, listRuns, runEvents } from "../agents/runs.ts";
-import { callTool, toolContextForToken, toolSchemas } from "../agents/tools.ts";
+import { callTool, toolContextForToken, toolList, toolSchemas } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { configSchema, saveConfig } from "../core/config.ts";
@@ -206,7 +209,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { messageResourceFile } = await import("../channels/lark-messages.ts");
     const file = await messageResourceFile(app, mid, key);
     if (!file) throw new HttpError(404, "读不到这个资源（可能已过期或没有权限）");
-    return reply.redirect(`/api/files/${file}`);
+    // Served here, not redirected: a redirect would drop the token the browser sent in the query.
+    return sendStoredFile(req, reply, file);
   });
   server.get("/api/sources/:id/relations", async (req) => {
     const o = q(z.object({ qname: z.string() }), req.query);
@@ -252,8 +256,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const ingest = scheduleIngest(app, space, ids);
     return { results, ingestRun: ingest?.id ?? null };
   });
-  server.get("/api/files/:name", async (req, reply) => {
-    const name = (req.params as { name: string }).name;
+  server.get("/api/files/:name", async (req, reply) => sendStoredFile(req, reply, (req.params as { name: string }).name));
+  /** A stored original (images, PDFs, videos with Range support). */
+  async function sendStoredFile(req: FastifyRequest, reply: FastifyReply, name: string) {
     if (!/^[a-f0-9]{16}\.[a-z0-9]+$/.test(name)) throw new HttpError(400, "bad name");
     const file = join(app.filesDir, name);
     if (!existsSync(file)) throw new HttpError(404, "not found");
@@ -284,7 +289,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     }
     reply.header("content-length", size);
     return reply.send(createReadStream(file));
-  });
+  }
 
   // ------------------------------------------------------------------- search
   server.get("/api/search", async (req) => {
@@ -309,25 +314,47 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // ----------------------------------------------------------- agents & skills
   server.get("/api/agents", async () => listAgentSpecs(app, { includeDrafts: true }));
+  // A spec with what it has learned (attached skills, its own memories, proposals, usage).
   server.get("/api/agents/:name", async (req) => {
     const name = (req.params as { name: string }).name;
-    const spec = readAgentSpec(app, name);
-    // What this agent actually knows beyond its identity prompt: attached skills (with bodies)
-    // and its own procedural memories.
-    const skills = (spec.skills ?? []).map((n) => {
-      try {
-        const s = readSkill(app, n);
-        return { name: s.name, description: s.description, status: s.status, body: s.body, files: s.files };
-      } catch {
-        return { name: n, description: "（技能不存在）", status: "missing" as const, body: "", files: [] };
-      }
-    });
-    const availableSkills = listSkills(app, { includeDrafts: true }).map((s) => ({ name: s.name, description: s.description, status: s.status }));
-    // Only memories that actually belong to this spec; shared memories live on the
-    // memory page and must not be presented as the agent's own.
-    const memories = listMemories(app, { agent: name, agentScope: "own", status: "active", limit: 200 });
-    return { ...spec, history: agentSpecHistory(app, name), skills, availableSkills, memories };
+    return { ...readAgentSpec(app, name), ...profileDetail(app, name) };
   });
+  // Built-in roles as profiles: the source version, the owner's copy, and the same learned view.
+  server.get("/api/roles", async () => listRoleStates(app));
+  // What a profile form offers: backends, omem tools (and which write), the default tool set of a spec.
+  server.get("/api/profile-options", async () => ({
+    backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed })),
+    tools: toolList().map((t) => ({ name: t.name, description: t.description.split(/[。\n]/)[0], write: !!t.write })),
+    defaultTools: DEFAULT_SPEC_TOOLS,
+  }));
+  server.get("/api/roles/:name", async (req) => {
+    const name = (req.params as { name: string }).name;
+    const r = loadRole(name, app);
+    return { name, description: r.description, tools: r.tools, writes: r.writes, modes: r.modes, body: r.body, ...profileDetail(app, name) };
+  });
+  server.put("/api/roles/:name", async (req) => saveRoleOverride(app, (req.params as { name: string }).name, q(z.object({ raw: z.string().min(1) }), req.body).raw, "user"));
+  server.post("/api/roles/:name/customize", async (req) => ({ raw: customizeRole(app, (req.params as { name: string }).name, "user") }));
+  server.post("/api/roles/:name/reset", async (req) => resetRole(app, (req.params as { name: string }).name, "user"));
+  server.post("/api/roles/:name/merge", async (req) => {
+    const name = (req.params as { name: string }).name;
+    const r = mergeRole(app, name);
+    if (!r.conflicts) return { merged: true, state: r.state };
+    const run = createRun(app, { kind: "role-merge", spaceId: "personal", title: `合并内置角色 ${name} 的源码更新`, lane: `role-merge:${name}`, input: { role: name } });
+    return { merged: false, conflicts: r.conflicts, runId: run.id };
+  });
+  server.put("/api/profiles/:name/skills", async (req) => {
+    const b = q(z.object({ add: z.array(z.string()).default([]), remove: z.array(z.string()).default([]) }), req.body);
+    attachSkills(app, (req.params as { name: string }).name, b.add, b.remove, "user");
+    return { ok: true };
+  });
+  server.post("/api/profiles/:name/review", async (req) => {
+    const name = (req.params as { name: string }).name;
+    if (!profileExists(app, name)) throw new HttpError(404, `没有 ${name}`);
+    const { scheduleProfileReview } = await import("../agents/profile-jobs.ts");
+    return scheduleProfileReview(app, name);
+  });
+  server.post("/api/profile-proposals/:id/apply", async (req) => applyProposal(app, (req.params as { id: string }).id));
+  server.post("/api/profile-proposals/:id/reject", async (req) => rejectProposal(app, (req.params as { id: string }).id));
   server.put("/api/agents/:name", async (req) => saveAgentSpec(app, { ...(req.body as object), name: (req.params as { name: string }).name } as never, "user"));
   server.delete("/api/agents/:name", async (req) => {
     deleteAgentSpec(app, (req.params as { name: string }).name, "user");

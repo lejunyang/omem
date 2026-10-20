@@ -21,6 +21,7 @@ registerScheduleKind("repo-sync", (app) => {
 });
 
 registerScheduleKind("memory-review", (app) => scheduleMemoryReview(app));
+registerScheduleKind("profile-review", (app) => void import("./agents/profile-jobs.ts").then((m) => m.nightlyProfileReviews(app)));
 registerScheduleKind("learn", (app) => learningTick(app));
 registerScheduleKind("activity", (app) => {
   import("./sources/activity.ts").then((m) => m.recordCodeActivity(app)).catch((e) => console.warn("[omem] 记录代码活动失败：", e.message));

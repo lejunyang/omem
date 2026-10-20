@@ -92,7 +92,8 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 | 每天早上知道今天该处理什么 | 定时任务开启“简报”，通过站内和机器人推送 |
 | 看记忆写得好不好、哪个模型写得好 | “记忆 → 质量”：按模型看写入数、被退回的原因、复核结果；`omem memories stats`。旧记忆可用 `omem memories check` 过一遍检查 |
 | 一台机器常驻，在别的电脑上看它、拉它的数据 | 见“多台设备”：`omem peer invite` / `add` 配对，`omem diag`、`omem pull`，`omem link` 在浏览器里打开 |
-| 某类事以后都按固定做法办，或交给专门的 Agent | 说“把这个做法记成技能”“建一个负责代码评审的 Agent”；在“Agent”页查看和编辑；`/as 名称 任务` 交给它，结果发回当前会话 |
+| 某类事以后都按固定做法办，或交给专门的 Agent | 说“把这个做法记成技能”“建一个负责代码评审的 Agent”；在“Agent”页查看和编辑（＋ 新建是一张完整的表单）；`/as 名称 任务` 交给它，结果发回当前会话 |
+| 让 Agent 越用越顺，包括内置的独立评审 | 纠正它时说“以后评审先看错误处理”，助理记成它的专属记忆或挂一个技能；内置角色（独立评审、编码、整理…）在“Agent”页也能自定义，omem 更新后可合并或恢复源码版本（`omem roles`）；每晚复盘有纠正或失败的档案，提示词和技能的改动提成建议等你采纳 |
 
 ## 会话
 
@@ -136,6 +137,7 @@ omem delegate shop "订单页显示退款状态" --repos shop-web,shop-api   # �
 omem mcp [--read-only] [--space <id>]       # 把个人库作为 MCP 服务给其他 Agent 用（默认空间按当前目录所在的仓库空间）
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
 omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入
+omem roles [list|customize|reset|merge] <名>  # 内置角色：复制到知识库自定义、恢复源码版本、合并源码更新（冲突交给模型）
 omem agents [--all]                         # 查看 Agent 配置与安装状态（--all 含未安装的和安装方式）
 omem agents registry                        # 官方 ACP 注册表里的 Agent
 omem agents add gemini --via npx            # 加入 Agent（npm 全局 / npx / uvx / 下载程序）

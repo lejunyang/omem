@@ -21,6 +21,7 @@ import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSo
 import { listPages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
 import { addRunEvent, createRun, getRun, listRuns, runEvents, setRunOutput } from "./runs.ts";
 import { findAgentSpec, listAgentSpecs, listSkills, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
+import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
 
 export type ToolContext = {
@@ -53,6 +54,19 @@ export type ToolContext = {
   /** Comparison run: writes are recorded for grading, never applied. */
   shadow?: { parentRunId: string | null };
 };
+
+/**
+ * The profile a run learns as: its agent spec, or its built-in role (the reviewer, the coder…).
+ * The main assistant has none: what it learns is shared, and it teaches profiles by name.
+ */
+function ownProfile(ctx: ToolContext): string | null {
+  return ctx.spec ?? (ctx.role && ctx.role !== "assistant" ? ctx.role : null);
+}
+/** A profile memories and skills can belong to: an agent spec or a built-in role. */
+function checkProfile(ctx: ToolContext, name: string) {
+  if (findAgentSpec(ctx.app, name) || isBuiltinRole(name)) return name;
+  throw new HttpError(404, `没有 Agent 档案或内置角色 ${name}；先 list_agents 确认名字，或让本人先创建`);
+}
 
 /** Roles that write memories from material on their own; they must say where each one comes from. */
 const SOURCED_ROLES = new Set(["ingest", "dreamer", "heartbeat", "curator"]);
@@ -492,13 +506,15 @@ def({
 
 def({
   name: "list_agents",
-  description: "列出 Agent 档案（可交办的专门 Agent：用途、后端、工具、技能）。",
+  description: "列出 Agent 档案（可交办的专门 Agent：用途、后端、工具、技能），以及可以教的内置角色（如独立评审 reviewer、编码 coder）。",
   schema: z.object({ include_drafts: z.boolean().optional() }),
   handler: (ctx, a) => {
     const list = listAgentSpecs(ctx.app, { includeDrafts: a.include_drafts });
-    return list.length
+    const roles = listRoleStates(ctx.app).map((r) => `- ${r.name}：${r.description}${r.customized ? "（本人自定义过）" : ""}`).join("\n");
+    const specs = list.length
       ? list.map((x) => `- ${x.name}${x.status === "draft" ? "（草稿）" : ""}：${x.description}\n  后端 ${x.agent ?? "默认"}${x.model ? `/${x.model}` : ""} · 工具 ${x.tools.length ? x.tools.join(",") : "默认只读"}${x.writes ? " · 可改文件" : ""}${x.skills.length ? ` · 技能 ${x.skills.join(",")}` : ""}${Object.keys(x.mcp).length ? ` · MCP ${Object.keys(x.mcp).join(",")}` : ""}${x.cwd ? ` · 目录 ${x.cwd}` : ""}`).join("\n")
       : "还没有 Agent 档案。";
+    return `${specs}\n\n内置角色（omem 自己调用，不能 run_agent；可以教：remember(agent="角色名")、save_skill(agent="角色名")）：\n${roles}`;
   },
 });
 
@@ -639,6 +655,29 @@ def({
 });
 
 def({
+  name: "propose_profile_change",
+  description:
+    "给某个 Agent 档案或内置角色提一条改进建议，本人在 Agent 页确认后才生效：prompt（完整的新正文，只改需要改的地方）、skill（新技能或改后的技能全文，确认后保存并挂上）、settings（加减工具、挂卸技能）。偏好和经验不要用它，直接 remember(agent=…)。",
+  write: true,
+  schema: z.object({
+    target: z.string().describe("档案名或内置角色名"),
+    kind: z.enum(["prompt", "skill", "settings"]),
+    title: z.string().describe("一句话：改什么"),
+    reason: z.string().describe("依据：本人原话（msg:…）、运行 id、评审意见"),
+    prompt: z.string().optional().describe("kind=prompt：完整的新正文（不含 frontmatter）"),
+    skill: z.object({ name: z.string(), description: z.string(), body: z.string() }).optional().describe("kind=skill"),
+    settings: z.object({ add_tools: z.array(z.string()).optional(), remove_tools: z.array(z.string()).optional(), add_skills: z.array(z.string()).optional(), remove_skills: z.array(z.string()).optional() }).optional().describe("kind=settings"),
+  }),
+  handler: async (ctx, a) => {
+    const { createProposal } = await import("./proposals.ts");
+    const content = a.kind === "prompt" ? { prompt: a.prompt } : a.kind === "skill" ? a.skill : a.settings;
+    if (!content) throw new HttpError(400, `kind=${a.kind} 需要对应的 ${a.kind} 参数`);
+    const id = createProposal(ctx.app, { target: a.target, kind: a.kind, title: a.title, reason: a.reason, content, runId: ctx.runId });
+    return `已提交建议 ${id}，等本人在 Agent 页确认。`;
+  },
+});
+
+def({
   name: "save_skill",
   description:
     "新建或修改技能：把一套做法（步骤、格式、命令、检查清单）写成可复用的 SKILL.md。本人明确要求时直接保存；从经验中提炼、本人没要求时用 draft=true。",
@@ -649,7 +688,7 @@ def({
     files: z.record(z.string(), z.string()).optional().describe("附带文件（模板、脚本），文件名 → 内容"),
     draft: z.boolean().optional(),
     /** Which agent this skill belongs to: main assistant teaching a spec names it; a run inside a spec defaults to itself. */
-    agent: z.string().optional().describe("把技能挂到哪个 Agent 档案（档案必须存在）；在某个档案内运行时不填默认挂到当前档案；不挂任何档案（建共享技能）用 attach=false"),
+    agent: z.string().optional().describe("把技能挂到哪个 Agent 档案或内置角色（如 reviewer，必须存在）；在某个档案或角色内运行时不填默认挂到自己；不挂任何档案（建共享技能）用 attach=false"),
     attach: z.boolean().optional().describe("保存后是否挂到目标档案，默认 true；false 表示只建技能、不改任何档案"),
   }),
   handler: (ctx, a) => {
@@ -659,13 +698,13 @@ def({
     // inside a spec the new skill defaults onto that spec.
     let attachedTo: string | null = null;
     if (a.attach !== false) {
-      const target = a.agent ?? ctx.spec ?? null;
+      const target = a.agent ?? ownProfile(ctx);
       if (target) {
-        if (!findAgentSpec(ctx.app, target)) throw new HttpError(404, `没有 Agent 档案 ${target}；先 list_agents 确认名字，或让本人先创建`);
-        const spec = findAgentSpec(ctx.app, target)!;
-        if (!spec.skills.includes(sk.name)) {
-          saveAgentSpec(ctx.app, { name: target, skills: [...spec.skills, sk.name] }, ctx.actor);
-        }
+        checkProfile(ctx, target);
+        const spec = findAgentSpec(ctx.app, target);
+        if (spec) {
+          if (!spec.skills.includes(sk.name)) saveAgentSpec(ctx.app, { name: target, skills: [...spec.skills, sk.name] }, ctx.actor);
+        } else updateRoleMeta(ctx.app, target, (m) => (m.skills.includes(sk.name) ? m : { ...m, skills: [...m.skills, sk.name] }), ctx.actor);
         attachedTo = target;
       }
     }
@@ -716,7 +755,7 @@ def({
     include_history: z.boolean().optional(),
     tag: z.string().optional(),
     /** Inspect one spec's own memories (shared ones still included); used when teaching/reviewing an agent. */
-    agent: z.string().optional().describe("只看某个 Agent 档案的专属记忆（仍包含共享记忆）"),
+    agent: z.string().optional().describe("只看某个 Agent 档案或内置角色的专属记忆（仍包含共享记忆）"),
     space: z.string().optional(),
   }),
   handler: async (ctx, a) => {
@@ -724,18 +763,18 @@ def({
     const query = a.query?.replace(/[*?%\s]+/g, " ").trim();
     let mems = query
       ? (await search(ctx.app, query, { spaces: sp, types: ["memory"], limit: 20, includeHistory: a.include_history })).map((h) => getMemory(ctx.app, h.id))
-      : listMemories(ctx.app, { spaceId: sp?.length === 1 ? sp[0] : undefined, status: a.include_history ? "all" : "active", subject: a.subject, tag: a.tag, agent: a.agent ?? (ctx.spec ? ctx.spec : undefined), limit: 50 });
+      : listMemories(ctx.app, { spaceId: sp?.length === 1 ? sp[0] : undefined, status: a.include_history ? "all" : "active", subject: a.subject, tag: a.tag, agent: a.agent ?? ownProfile(ctx) ?? undefined, limit: 50 });
     if (a.subject) mems = mems.filter((m) => m.subject.includes(a.subject!));
     if (a.tag) mems = mems.filter((m) => m.tags?.includes(a.tag!));
-    // A running spec only sees shared memories and its own; the main assistant may name a spec to inspect.
-    const scopeSpec = a.agent ?? ctx.spec ?? null;
+    // A running spec or role only sees shared memories and its own; the main assistant may name one to inspect.
+    const scopeSpec = a.agent ?? ownProfile(ctx);
     if (scopeSpec) mems = mems.filter((m) => !m.agent || m.agent === scopeSpec);
     if (!mems.length) return "没有相关记忆。";
     // Recall accounting (best effort): which memories surfaced for this run, so their value
     // can be measured. Marking "used" happens when the run finishes (see runs worker).
     try {
       const { recordRecalls } = await import("../memory/recall-stats.ts");
-      recordRecalls(ctx.app, mems.map((m) => m.id), { runId: ctx.runId, profile: ctx.agentProfile, spec: ctx.spec });
+      recordRecalls(ctx.app, mems.map((m) => m.id), { runId: ctx.runId, profile: ctx.agentProfile, spec: ownProfile(ctx) ?? undefined });
     } catch {}
     return mems
       .map((m) => {
@@ -843,7 +882,7 @@ def({
     tags: z.array(z.string()).optional().describe("可选标签，如项目名、主题，便于按标签筛选"),
     scope: z.enum(["shared", "agent"]).optional().describe("agent：这条经验/偏好只属于当前正在运行的 Agent 档案自己（不能用来指定别的档案；档案内写 experience/preference 默认即 agent）；shared：所有档案共享"),
     /** A specific spec to teach, used by the main assistant which has no spec of its own. */
-    agent: z.string().optional().describe("主助手教某个指定档案时填该档案名（档案必须存在）；正在档案内运行时不要填，scope=agent 即指当前档案"),
+    agent: z.string().optional().describe("主助手教某个指定档案或内置角色（如 reviewer）时填它的名字（必须存在）；正在档案或角色内运行时不要填，scope=agent 即指自己"),
     space: z.string().optional(),
   }),
   handler: (ctx, a) => {
@@ -853,17 +892,15 @@ def({
       logRejection(ctx.app, spaceId, { tool: "remember", kind: a.kind, content: a.content }, problems, provenance(ctx));
       throw new HttpError(422, formatProblems(problems));
     }
-    // Whose procedural memory this is: the running spec, or a named spec the main
-    // assistant is teaching. experience/preference written inside a spec default to it;
+    // Whose procedural memory this is: the running spec or role, or a named profile the main
+    // assistant is teaching. experience/preference written inside a spec default to it (a
+    // built-in role only with scope=agent: ingest records the owner's preferences, shared);
     // everything else is shared unless scope=agent (or agent=…) is given.
     const procedural = a.kind === "experience" || a.kind === "preference";
     let agentForMemory: string | null = null;
     if (a.scope === "agent" || a.agent || (a.scope === undefined && procedural && ctx.spec)) {
-      const wanted = a.agent ?? ctx.spec ?? null;
-      if (wanted) {
-        if (!findAgentSpec(ctx.app, wanted)) throw new HttpError(404, `没有 Agent 档案 ${wanted}；先 list_agents 确认名字，或让本人先创建`);
-        agentForMemory = wanted;
-      }
+      const wanted = a.agent ?? ownProfile(ctx);
+      if (wanted) agentForMemory = checkProfile(ctx, wanted);
     }
     const m = remember(ctx.app, {
       spaceId,

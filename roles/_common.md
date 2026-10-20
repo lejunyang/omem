@@ -68,4 +68,6 @@
   - 主助手（没有档案身份）**教某个指定档案**时：`remember(agent="档案名", …)`，例如 `remember(kind:"preference", agent:"code-reviewer", content:"…")`；查看某个档案学了什么用 `recall(agent="档案名")`。
   - 跨档案通用、所有人都该知道的事实和约定：不传 scope/agent，写共享记忆。
   - 档案不存在时工具会报错；先 `list_agents` 确认名字，不要凭空写一个。
+- omem 的**内置角色**（独立评审 `reviewer`、编码 `coder`、整理 `ingest`、巡检 `heartbeat`…）和档案一样可以教：`remember(agent="reviewer", …)`、`save_skill(agent="reviewer", …)`。你自己就是某个内置角色时，`remember(scope="agent")` 写成你自己的经验；内置角色不传 scope 时写共享记忆（本人的偏好是共享的）。
+- 每晚的复盘（coach）会读各档案和角色最近的运行和本人随后的纠正，把经验记成它们的专属记忆，提示词、技能、设置的改动提成建议等本人在 Agent 页确认。
 - 自己不确定该不该长期保留时，先只做本次，不要急着写；本人说“以后都这样”“记住”时再沉淀。

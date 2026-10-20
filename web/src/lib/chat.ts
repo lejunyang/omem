@@ -1,3 +1,4 @@
+import { authUrl } from "../api";
 import { escapeHtml } from "./markdown";
 
 /** One chat message for display, from structured rows or parsed from a chat source line. */
@@ -84,7 +85,7 @@ export function larkToMarkdown(content: string, resources: ChatMsg["resources"],
     const name = attr(rest, "name") || resources[key]?.name;
     const label = kind === "audio" ? `🎙 语音${attr(rest, "duration") ? " " + attr(rest, "duration") : ""}` : kind === "video" || kind === "media" ? `🎬 ${escapeHtml(name || "视频")}` : `📎 ${escapeHtml(name || "文件")}`;
     const url = key ? resUrl(key) : null;
-    return url ? `<a class="res" href="${url}" target="_blank">${label}</a>` : `<span class="res">${label}</span>`;
+    return url ? `<a class="res" href="${escapeHtml(authUrl(url))}" target="_blank" rel="noopener">${label}</a>` : `<span class="res">${label}</span>`;
   });
   s = s.replace(/<calendar_share [^>]*>/g, '<span class="res">📅 日程分享</span>');
   s = s.replace(/<share_chat [^>]*>/g, '<span class="res">💬 群名片</span>');

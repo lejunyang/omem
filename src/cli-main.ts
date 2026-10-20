@@ -705,6 +705,44 @@ program
     console.log(`${out.diffStat ?? ""}\n\n${out.review ?? ""}\n\n结论：${out.verdict ?? r.status}\n运行 id：${r.id}`);
   });
 
+const roles = program.command("roles").description("内置角色（独立评审、编码、整理…）：自定义、恢复源码版本、合并源码更新");
+roles
+  .command("list", { isDefault: true })
+  .description("列出内置角色和自定义状态")
+  .action(async () => {
+    const { listRoleStates } = await import("./agents/builtin-roles.ts");
+    for (const r of listRoleStates(open())) console.log(`${r.customized ? (r.sourceChanged ? "△" : "✎") : " "} ${r.name.padEnd(16)} ${r.description}`);
+    console.log("\n✎ 已自定义（知识库 _roles/ 下）；△ 自定义之后源码有更新：omem roles merge <名> 或 omem roles reset <名>");
+  });
+roles
+  .command("customize <name>")
+  .description("把源码版本复制到知识库，之后在网页 Agent 页或该文件里改")
+  .action(async (name: string) => {
+    const app = open();
+    const { customizeRole } = await import("./agents/builtin-roles.ts");
+    customizeRole(app, name);
+    console.log(`已复制到 ${app.libraryDir}/_roles/${name}.md`);
+  });
+roles
+  .command("reset <name>")
+  .description("恢复为源码版本（自定义的内容留在知识库 Git 历史里）")
+  .action(async (name: string) => {
+    const { resetRole } = await import("./agents/builtin-roles.ts");
+    resetRole(open(), name);
+    console.log(`${name} 已恢复为源码版本`);
+  });
+roles
+  .command("merge <name>")
+  .description("把源码的更新合并进自定义版本；有冲突时交给模型合并（后台运行）")
+  .action(async (name: string) => {
+    const { mergeRole } = await import("./agents/builtin-roles.ts");
+    const app = open();
+    const r = mergeRole(app, name);
+    if (!r.conflicts) return void console.log(`${name} 已合并，没有冲突`);
+    const run = await runJob((a) => createRun(a, { kind: "role-merge", spaceId: "personal", title: `合并内置角色 ${name} 的源码更新`, lane: `role-merge:${name}`, input: { role: name } }), { stream: false });
+    console.log(`${r.conflicts} 处冲突，模型合并：${run.status}${run.error ? `（${run.error}）` : ""}`);
+  });
+
 const agents = program.command("agents").description("Agent 后端：列出、从 ACP 注册表添加");
 agents
   .command("list", { isDefault: true })

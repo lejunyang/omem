@@ -528,6 +528,24 @@ const migrations: string[] = [
     ) then 1 else 0 end;
   update runs set output = json_remove(output, '$.fullText') where kind = 'agent' and json_type(output, '$.fullText') is not null;
   `,
+  // Changes a profile review proposes for an agent spec or built-in role (prompt, skill,
+  // settings); the owner applies or rejects them. Memories are written directly (checked and reviewed).
+  `
+  create table profile_proposals (
+    id text primary key,
+    target text not null,
+    kind text not null,
+    title text not null,
+    body text not null,
+    reason text not null default '',
+    status text not null default 'pending',
+    run_id text,
+    created_at text not null,
+    resolved_at text,
+    resolved_by text
+  );
+  create index profile_proposals_target on profile_proposals(target, status);
+  `,
 ];
 
 export type Db = DatabaseSync;

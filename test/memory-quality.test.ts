@@ -63,38 +63,38 @@ describe("memory write-time checks", () => {
 
   it("lets the main assistant teach a named spec and read that spec's memories back", async () => {
     const app = testApp();
-    saveAgentSpec(app, { name: "reviewer", description: "代码评审", prompt: "按项目约定评审。" }, "user");
+    saveAgentSpec(app, { name: "code-reviewer", description: "代码评审", prompt: "按项目约定评审。" }, "user");
     // Main assistant has no spec of its own; naming the taught agent writes into its scope.
     const main = ctxFor(app, { role: undefined, spec: null });
-    const r = await callTool(main, "remember", { kind: "preference", subject: "风格", content: "评审时先报阻塞问题，风格建议放最后。", agent: "reviewer" });
-    expect(r.text).toMatch(/仅 reviewer 使用/);
-    expect(listMemories(app, {})[0]).toMatchObject({ agent: "reviewer" });
+    const r = await callTool(main, "remember", { kind: "preference", subject: "风格", content: "评审时先报阻塞问题，风格建议放最后。", agent: "code-reviewer" });
+    expect(r.text).toMatch(/仅 code-reviewer 使用/);
+    expect(listMemories(app, {})[0]).toMatchObject({ agent: "code-reviewer" });
     // The main assistant orchestrates and sees everything; a different spec sees none,
     // and naming the taught spec scopes the recall to it.
-    expect((await callTool(main, "recall", {})).text).toMatch(/reviewer 专用/);
+    expect((await callTool(main, "recall", {})).text).toMatch(/code-reviewer 专用/);
     expect((await callTool(ctxFor(app, { role: undefined, spec: "other-agent" }), "recall", {})).text).toBe("没有相关记忆。");
-    expect((await callTool(main, "recall", { agent: "reviewer" })).text).toMatch(/reviewer 专用/);
+    expect((await callTool(main, "recall", { agent: "code-reviewer" })).text).toMatch(/code-reviewer 专用/);
     // Unknown spec names are rejected rather than silently creating garbage scope.
     const bad = await callTool(main, "remember", { kind: "preference", content: "测试。", agent: "ghost" });
     expect(bad.isError).toBe(true);
-    expect(bad.text).toMatch(/没有 Agent 档案 ghost/);
+    expect(bad.text).toMatch(/没有 Agent 档案或内置角色 ghost/);
   });
 
   it("attaches a saved skill to a named agent, to the running spec by default, or nowhere with attach=false", async () => {
     const app = testApp();
-    saveAgentSpec(app, { name: "reviewer", description: "代码评审", prompt: "按项目约定评审。" }, "user");
+    saveAgentSpec(app, { name: "code-reviewer", description: "代码评审", prompt: "按项目约定评审。" }, "user");
     saveAgentSpec(app, { name: "oncall", description: "值班", prompt: "处理报警。" }, "user");
     const main = ctxFor(app, { role: undefined, spec: null });
 
     // Main assistant teaches a specific spec.
-    const r1 = await callTool(main, "save_skill", { name: "review-rules", description: "评审规则", body: "# 步骤\n1. 先看阻塞问题。", agent: "reviewer" });
-    expect(r1.text).toMatch(/挂到 reviewer/);
-    expect(readAgentSpec(app, "reviewer").skills).toContain("review-rules");
+    const r1 = await callTool(main, "save_skill", { name: "review-rules", description: "评审规则", body: "# 步骤\n1. 先看阻塞问题。", agent: "code-reviewer" });
+    expect(r1.text).toMatch(/挂到 code-reviewer/);
+    expect(readAgentSpec(app, "code-reviewer").skills).toContain("review-rules");
     expect(readAgentSpec(app, "oncall").skills).not.toContain("review-rules");
 
     // Re-saving does not duplicate the frontmatter entry.
-    await callTool(main, "save_skill", { name: "review-rules", description: "评审规则", body: "# 步骤\n1. 更新。", agent: "reviewer" });
-    expect(readAgentSpec(app, "reviewer").skills.filter((x) => x === "review-rules")).toHaveLength(1);
+    await callTool(main, "save_skill", { name: "review-rules", description: "评审规则", body: "# 步骤\n1. 更新。", agent: "code-reviewer" });
+    expect(readAgentSpec(app, "code-reviewer").skills.filter((x) => x === "review-rules")).toHaveLength(1);
 
     // A run inside a spec attaches the skill to that spec by default.
     const oncall = ctxFor(app, { role: undefined, spec: "oncall" });
@@ -103,12 +103,12 @@ describe("memory write-time checks", () => {
 
     // attach=false keeps the skill global and changes no spec.
     await callTool(main, "save_skill", { name: "general-thing", description: "通用做法", body: "# x", attach: false });
-    expect(readAgentSpec(app, "reviewer").skills).not.toContain("general-thing");
+    expect(readAgentSpec(app, "code-reviewer").skills).not.toContain("general-thing");
 
     // Unknown target spec is rejected after the skill file is created (caller learns the name problem).
     const bad = await callTool(main, "save_skill", { name: "orphan-skill", description: "x", body: "# x", agent: "ghost" });
     expect(bad.isError).toBe(true);
-    expect(bad.text).toMatch(/没有 Agent 档案 ghost/);
+    expect(bad.text).toMatch(/没有 Agent 档案或内置角色 ghost/);
   }, 60_000);
 });
 

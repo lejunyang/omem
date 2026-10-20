@@ -17,6 +17,7 @@ import { issueToolToken, revokeToolToken } from "./tools.ts";
 import { isAgentRunError, type AgentEvent, type AgentResult, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, type AgentSpec, type McpServerSpec } from "./specs.ts";
+import { isBuiltinRole, roleOverrideText, rolesDir } from "./builtin-roles.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -28,32 +29,41 @@ function relatedGuide(related: { space: string; name: string; kind: string; note
     `search、scan、find_symbol 不指定 space 时会同时查当前空间和这些空间，结果里标出所在空间；只查当前空间就传 space。问题或材料涉及它们（调用、依赖、共用的约定）时去读它们的原件和页面，不要只凭当前空间下结论。${readOnly ? "这次对这些空间只能读：记忆、事项、页面只写进当前空间，用到它们的材料时照常引用原件。" : ""}`,
   ].join("\n");
 }
-/** roles/ sits at the package root both in source (src/agents) and build (dist/src/agents). */
-function rolesDir() {
-  for (const candidate of [resolve(here, "../../roles"), resolve(here, "../../../roles")]) if (existsSync(join(candidate, "_common.md"))) return candidate;
-  throw new Error("找不到 roles 目录");
-}
+export type Role = { name: string; description: string; tools: string[]; writes: boolean; modes: string[]; skills: string[]; body: string; customized: boolean };
 
-export type Role = { name: string; description: string; tools: string[]; writes: boolean; modes: string[]; body: string };
-
-const roleCache = new Map<string, Role>();
-export function loadRole(name: string): Role {
-  const cached = roleCache.get(name);
-  if (cached && process.env.NODE_ENV === "production") return cached;
-  const file = join(rolesDir(), `${name}.md`);
-  if (!existsSync(file)) throw new HttpError(400, `未知角色：${name}`);
+function parseRole(name: string, raw: string, customized: boolean): Role {
   // Windows checkouts may have CRLF line endings.
-  const raw = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
-  const m = /^---\n([\s\S]*?)\n---\n/.exec(raw);
+  const text = raw.replace(/\r\n/g, "\n");
+  const m = /^---\n([\s\S]*?)\n---\n/.exec(text);
   const meta = (m ? YAML.parse(m[1]) : {}) as Partial<Role>;
-  const role: Role = {
+  return {
     name,
     description: meta.description ?? "",
     tools: meta.tools ?? [],
     writes: !!meta.writes,
     modes: meta.modes ?? [],
-    body: m ? raw.slice(m[0].length) : raw,
+    skills: meta.skills ?? [],
+    body: m ? text.slice(m[0].length) : text,
+    customized,
   };
+}
+
+const roleCache = new Map<string, Role>();
+/** A built-in role: the owner's customized copy in the library when there is one, else the package's. */
+export function loadRole(name: string, app?: App): Role {
+  const own = app && isBuiltinRole(name) ? roleOverrideText(app, name) : null;
+  if (own !== null) {
+    try {
+      return parseRole(name, own, true);
+    } catch (e) {
+      console.warn(`[omem] 自定义角色 ${name} 无法解析，改用源码版本：${(e as Error).message}`);
+    }
+  }
+  const cached = roleCache.get(name);
+  if (cached && process.env.NODE_ENV === "production") return cached;
+  const file = join(rolesDir(), `${name}.md`);
+  if (!existsSync(file)) throw new HttpError(400, `未知角色：${name}`);
+  const role = parseRole(name, readFileSync(file, "utf8"), false);
   roleCache.set(name, role);
   return role;
 }
@@ -167,7 +177,7 @@ export function prepareRun(
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
-  const role = spec ? null : loadRole((input.actor as { role: RoleName }).role);
+  const role = spec ? null : loadRole((input.actor as { role: RoleName }).role, app);
   const roleName = role ? (input.actor as { role: RoleName }).role : "assistant";
   const baseProfile = input.profileId
     ? allProfiles(app.config).find((p) => p.id === input.profileId)
@@ -208,8 +218,9 @@ export function prepareRun(
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
   const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, shadow: input.shadow });
   const guide = spaceGuide(app, space.id).trim();
-  const lessons = learnedContext(app, space.id, userId, spec?.name ?? null);
-  const skills = skillIndex(app, spec?.skills);
+  // A built-in role learns like a spec: its own experience and preferences, its regular skills first.
+  const lessons = learnedContext(app, space.id, userId, spec?.name ?? (roleName === "assistant" ? null : roleName));
+  const skills = spec ? skillIndex(app, spec.skills) : skillIndex(app, undefined, role!.skills);
   const agents = roleName === "assistant" && !spec ? agentIndex(app) : "";
   const body = spec
     ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`

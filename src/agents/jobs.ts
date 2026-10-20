@@ -22,6 +22,7 @@ import { addMessage, getThread, threadMessages, updateThread } from "./threads.t
 import { createRun, listRuns, registerHandler, type RunContext } from "./runs.ts";
 import { markReviewed, similarMemories, spacesWithUnreviewed, unreviewedMemories } from "../memory/quality.ts";
 import { relationCandidates } from "../core/space-candidates.ts";
+import "./profile-jobs.ts";
 
 const QUIET = /^\s*QUIET\s*$/i;
 

@@ -1,54 +1,6 @@
 import type { App } from "./app.ts";
-import { runAcp } from "../agents/acp.ts";
-import { runCli } from "../agents/cli.ts";
-import { profileFor } from "../agents/runner.ts";
-import { allProfiles, type AgentProfile } from "./config.ts";
+import { askModel, jsonIn } from "../agents/oneshot.ts";
 import { addIgnoreRule, IGNORE_GATE_PROMPT, listIgnoreRules, recordIgnoreHit, type IgnoreRule } from "./notify-lessons.ts";
-
-/**
- * One tiny model call with no tools, used for notification decisions.
- * Spawns the assistant profile briefly; failures are non-fatal (the
- * notification is then allowed through).
- */
-async function askJson(app: App, prompt: string, timeoutMs = 45_000): Promise<string | null> {
-  const profiles = allProfiles(app.config);
-  const base = (() => {
-    try {
-      return profileFor(app, "assistant");
-    } catch {
-      return profiles[0];
-    }
-  })();
-  const chain: AgentProfile[] = base ? [base, ...profiles.filter((p: AgentProfile) => p.id !== base.id)] : profiles;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  timer.unref();
-  for (const profile of chain.slice(0, 2)) {
-    try {
-      const run = profile.transport === "acp" ? runAcp : runCli;
-      const r = await run(
-        profile,
-        { cwd: app.home, prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal },
-        () => {},
-      );
-      return (r.text ?? "").trim() || null;
-    } catch {
-      // try the next backend; if none work the caller treats it as "allow".
-    }
-  }
-  return null;
-}
-
-function extractJson(text: string): { mute?: boolean; ruleId?: string | null; reason?: string } | null {
-  if (!text) return null;
-  const m = /\{[\s\S]*\}/.exec(text);
-  if (!m) return null;
-  try {
-    return JSON.parse(m[0]);
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Ask the model whether this notification falls under one of the owner's
@@ -66,8 +18,7 @@ export async function aiIgnoreMatch(
     .replace("{rules}", rules.map((r) => `- id=${r.id}：${r.rule}`).join("\n"))
     .replace("{title}", n.title)
     .replace("{body}", (n.body ?? "").slice(0, 1000));
-  const out = await askJson(app, prompt);
-  const verdict = extractJson(out ?? "");
+  const verdict = jsonIn<{ mute?: boolean; ruleId?: string | null; reason?: string }>(await askModel(app, prompt));
   if (!verdict || verdict.mute !== true || !verdict.ruleId) return null;
   const rule = rules.find((r) => r.id === verdict.ruleId);
   if (!rule) return null;
@@ -84,14 +35,9 @@ const LEARN_PROMPT = `本人点了一条通知的“忽略”。请总结成一�
 只输出 JSON：{"rule": "规则文字，或空字符串"}`;
 
 /** Summarize an ignored notification into a reusable rule (best-effort). */
-export async function learnIgnoreFromNotification(
-  app: App,
-  n: { title: string; body?: string },
-): Promise<IgnoreRule | null> {
+export async function learnIgnoreFromNotification(app: App, n: { title: string; body?: string }): Promise<IgnoreRule | null> {
   const prompt = LEARN_PROMPT.replace("{title}", n.title).replace("{body}", (n.body ?? "").slice(0, 1000));
-  const out = await askJson(app, prompt);
-  const parsed = extractJson(out ?? "") as { rule?: string } | null;
-  const rule = (parsed?.rule ?? "").trim();
+  const rule = (jsonIn<{ rule?: string }>(await askModel(app, prompt))?.rule ?? "").trim();
   if (rule.length < 6) return null;
   return addIgnoreRule(app, rule, n.title);
 }

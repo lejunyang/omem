@@ -4,6 +4,7 @@ import YAML from "yaml";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { commitLibrary, fileHistory } from "../core/git.ts";
+import { roleNames } from "../core/config.ts";
 import { HttpError } from "../core/util.ts";
 
 /**
@@ -66,6 +67,12 @@ function checkName(name: string) {
   if (!NAME.test(name)) throw new HttpError(400, `名称不合法：${name}（小写字母、数字、连字符）`);
   return name;
 }
+/** A new spec may not take a built-in role's name: memories and skills of a profile are keyed by name. */
+function checkSpecName(name: string) {
+  checkName(name);
+  if ((roleNames as readonly string[]).includes(name)) throw new HttpError(400, `${name} 是内置角色的名字，换一个；要调整内置角色，在 Agent 页打开它自定义`);
+  return name;
+}
 
 // ---- agents ---------------------------------------------------------------
 
@@ -97,7 +104,7 @@ export function readAgentSpec(app: App, name: string): AgentSpec {
 }
 
 export function saveAgentSpec(app: App, input: Partial<z.input<typeof agentSpecSchema>> & { name: string; prompt?: string }, actor: "user" | "agent" = "agent") {
-  checkName(input.name);
+  checkSpecName(input.name);
   const prev = findAgentSpec(app, input.name);
   const { prompt, ...rest } = input;
   const merged = agentSpecSchema.parse({ ...(prev ?? {}), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)) });
@@ -114,7 +121,8 @@ export function saveAgentSpec(app: App, input: Partial<z.input<typeof agentSpecS
   }
   const meta: Record<string, unknown> = { ...merged };
   delete meta.name;
-  for (const [k, v] of Object.entries(meta)) if (v === undefined || (Array.isArray(v) && !v.length) || (v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length)) delete meta[k];
+  // An emptied field (the page clears the model, say) is removed rather than kept as "".
+  for (const [k, v] of Object.entries(meta)) if (v === undefined || v === "" || (Array.isArray(v) && !v.length) || (v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length)) delete meta[k];
   if (meta.status === "active") delete meta.status;
   if (meta.writes === false) delete meta.writes;
   mkdirSync(agentsDir(app), { recursive: true });
@@ -203,11 +211,12 @@ export function deleteSkill(app: App, name: string, actor: "user" | "agent" = "u
 }
 
 /** The progressive-disclosure index handed to agents: names and when to use, bodies on demand. */
-export function skillIndex(app: App, names?: string[]) {
+/** `names`: only these (an agent spec's skills); `first`: all, these listed first and marked (a role's regular ones). */
+export function skillIndex(app: App, names?: string[], first: string[] = []) {
   const all = listSkills(app);
-  const picked = names?.length ? all.filter((s) => names.includes(s.name)) : all;
+  const picked = names?.length ? all.filter((s) => names.includes(s.name)) : [...all.filter((s) => first.includes(s.name)), ...all.filter((s) => !first.includes(s.name))];
   if (!picked.length) return "";
-  return picked.map((s) => `- ${s.name}：${s.description}（全文：read_skill，或读取 ${join(s.dir, "SKILL.md")}）`).join("\n");
+  return picked.map((s) => `- ${s.name}${first.includes(s.name) ? "（你常用的）" : ""}：${s.description}（全文：read_skill，或读取 ${join(s.dir, "SKILL.md")}）`).join("\n");
 }
 
 export function agentIndex(app: App) {
@@ -226,7 +235,8 @@ export function readRaw(app: App, kind: "agent" | "skill", name: string) {
 
 /** Save an edited file after checking it parses; invalid content is rejected, not written. */
 export function saveRaw(app: App, kind: "agent" | "skill", name: string, raw: string) {
-  checkName(name);
+  if (kind === "agent") checkSpecName(name);
+  else checkName(name);
   const { meta, body } = splitFrontmatter(raw);
   if (kind === "agent") {
     agentSpecSchema.parse({ ...meta, name });

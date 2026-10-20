@@ -187,6 +187,8 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 飞书思考过程原生气泡（`message_cot` + AG-UI 事件，事件 content 为 JSON 字符串）：可折叠、工具调用列表、最新调用加载中、结束自动完成；建不出/推不上时停用且不残留空气泡 | 已实现；2026-10-20（botmux 方案，协议修正后待真机验） | `src/channels/lark-cot.ts` |
 | 前端路由 chunk 空闲预加载、菜单 hover 预取 | 已实现；2026-10-20 | `web/src/preload.ts`、`main.ts` |
 | Agent 学习分层：档案=身份（Agent 写入限长）、技能=做法、档案记忆=偏好/经验（scope=agent） | 已实现；2026-10-20 | `src/agents/specs.ts`、`roles/_common.md` |
+| 内置角色作为档案：Agent 页可见、可自定义（复制到 `library/_roles/`，记下基于的源码），源码更新后提示，可恢复源码版本或三方合并（`git merge-file`，冲突交给模型 `role-merge` 运行）；`omem roles`；内置角色也有专属记忆和挂载技能（`remember/save_skill(agent="reviewer")`），运行时注入；档案名不能与内置角色重名 | 已实现，测试覆盖；2026-10-21 | `src/agents/builtin-roles.ts`、`profile-jobs.ts`、`web/src/views/Agents.vue` |
+| 档案进化：每晚 `profile-review` 挑最近有纠正或失败的档案/角色交给 coach 复盘（运行产出 + 之后本人在同一会话说的话），经验直接记成专属记忆，提示词/技能/设置的改动存为 `profile_proposals` 等本人采纳；档案页显示使用情况、待采纳建议（提示词给出差异）、历史，可立即复盘 | 已实现，测试覆盖；真实模型复盘待验 | `roles/coach.md`、`src/agents/proposals.ts`、`profiles.ts`、`components/ProfileLearning.vue` |
 | 记忆召回与命中统计（recall 落账，回答/写入引用计为命中），网页“记忆 → 召回”治理 | 已实现；2026-10-20 | `src/memory/recall-stats.ts`、`web/src/views/Memory.vue` |
 | 新材料整理（记忆/事项/页面/通知） | 已实现；事项发现与写权限分离，只读跨空间进展经提案复核 | `roles/ingest.md` |
 | 事项来源与历史关联维护 | 来源 merge / replace / remove、事件通知快照、整张卡片 URL 去重、受限维护审计与原卡片刷新；来源区与网页“相关依据”显示原件标题和所引行的摘要（`refExcerpt`），不再是“原文1/原文2”；假客户端回归覆盖 | `src/items/`、`docs/v2/item-maintenance.md` |
