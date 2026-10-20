@@ -1,8 +1,8 @@
 import type { App } from "../core/app.ts";
-import { one, run } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
 import { now, truncate } from "../core/util.ts";
 import { addMessage, createThread, getThread } from "./threads.ts";
-import { createRun, getRun, type Run } from "./runs.ts";
+import { createRun, getRun, queuedInLane, updateQueuedRun, type Run } from "./runs.ts";
 
 /**
  * Multi-agent work handed off by the main assistant. It is one conversation (a Feishu topic, or
@@ -32,7 +32,7 @@ export type AgentWork = {
   runs: number;
 };
 
-export const MAX_AGENT_WORK_RUNS = 20;
+export const MAX_AGENT_WORK_RUNS = 30;
 
 export function workOfRun(app: App, run: Run): AgentWork | null {
   return (run.output as { agentWork?: AgentWork } | null)?.agentWork ?? null;
@@ -94,7 +94,7 @@ export function startAgentWork(app: App, input: {
   // Record the request in the work conversation.
   addWorkMessage(app, work, { role: "user", text: input.startMessage, meta: { agentWork: true, spec: input.agent } });
 
-  const runId = queueAgentRound(app, work, { agent: input.agent, task: input.task, kind: "agent" });
+  const runId = queueAgentRound(app, work, { agent: input.agent, task: input.task });
   return { work, runId };
 }
 
@@ -120,21 +120,16 @@ export type AgentRoundInput = {
   agent: string;
   task: string;
   spaceId?: string;
-  /** Run as a built-in role (digester) instead of an agent spec. */
-  role?: string;
-  kind?: "agent" | "agent-followup";
-  /** For a digest: the specialist round it digests (its full report goes along, folded). */
-  sourceRunId?: string;
 };
 
-/** Queue the next agent (or digester) round inside an existing work conversation. */
+/** Queue the next agent round inside an existing work conversation. */
 export function queueAgentRound(app: App, work: AgentWork, a: AgentRoundInput): string {
   if (work.runs >= MAX_AGENT_WORK_RUNS) throw new Error(`多 Agent 循环已达上限 ${MAX_AGENT_WORK_RUNS} 轮`);
   const r = createRun(app, {
-    kind: a.kind ?? "agent",
+    kind: "agent",
     spaceId: a.spaceId ?? getThread(app, work.workConversationId).spaceId,
     title: truncate(`${a.agent}：${a.task.split("\n")[0]}`, 80),
-    input: { spec: a.agent, role: a.role, task: a.task, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.sourceRunId ? { sourceRunId: a.sourceRunId } : {}) },
+    input: { spec: a.agent, task: a.task, threadId: work.workConversationId, agentWorkId: work.askRunId },
     parentId: work.askRunId,
   });
   const id = r.id;
@@ -182,38 +177,94 @@ export function refreshWork(app: App, askRunId: string): AgentWork | null {
 
 // ----------------------------------------------------------------- orchestration
 
-import type { App as AppType } from "../core/app.ts";
+/**
+ * After this many coordination turns without the owner saying anything in the work, the main
+ * assistant has to stop and report instead of handing out another round.
+ */
+export const MAX_AUTO_TURNS = 6;
 
-/** Mark a finished work round and, for a specialist, queue its digester (the conclusion to the root conversation). */
-export function onWorkRunSettled(app: App, run: Run): { work: AgentWork; followupRunId?: string } | null {
+/** Coordination turns the main assistant took since the owner last spoke in the work conversation. */
+export function autoTurnsSinceOwner(app: App, work: AgentWork): number {
+  const lastOwner = one<{ at: string }>(
+    app.db,
+    "select max(created_at) at from messages where conversation_id = ? and role = 'user' and json_extract(meta, '$.command') is null",
+    work.workConversationId,
+  )?.at ?? "";
+  return one<{ n: number }>(
+    app.db,
+    "select count(*) n from runs where lane = ? and kind = 'ask' and json_extract(input, '$.coordinate') is not null and created_at > ?",
+    work.workConversationId,
+    lastOwner,
+  )!.n;
+}
+
+/**
+ * A specialist round finished (or failed): its report goes into the work conversation and the
+ * main assistant takes a turn there as the one responsible for the work. It reads the report
+ * against what the owner wants and either hands out the next round, reports a result, or asks
+ * the owner — the loop runs without the owner pushing it, until it is done or stuck.
+ */
+export function onWorkRunSettled(app: App, run: Run): { work: AgentWork; coordinateRunId?: string } | null {
   const workId = (run.input as { agentWorkId?: string }).agentWorkId;
   if (!workId) return null;
   const work = refreshWork(app, workId);
   if (!work) return null;
-  const next: AgentWork = {
-    ...work,
-    rounds: work.rounds.map((r) => (r.runId === run.id ? { ...r, status: run.status === "done" ? "done" : "failed" } : r)),
-  };
+  const status = run.status === "done" ? "done" : "failed";
+  const next: AgentWork = { ...work, rounds: work.rounds.map((r) => (r.runId === run.id ? { ...r, status } : r)) };
   saveWork(app, next, [workId, run.id, ...work.rounds.map((r) => r.runId)]);
-  if (run.status !== "done" || (run.input as { role?: string }).role) return { work: next };
-  // A specialist round finished: digest it for the root conversation; the main assistant continues or asks.
-  const answer = (run.output as { answer?: string }).answer ?? "";
-  const spec = (run.input as { spec?: string }).spec ?? "专门 Agent";
-  const roundTask = (run.input as { task?: string }).task ?? "";
-  const task = [
-    `# 本人的原始诉求`,
-    "",
-    work.title,
-    "",
-    ...(roundTask && roundTask !== work.title ? ["# 这一轮交给它的任务", "", truncate(roundTask, 4000), ""] : []),
-    `# ${spec} 的产出（第 ${next.rounds.filter((r) => !r.agent.startsWith("digester")).length} 轮，运行 ${run.id}）`,
-    "",
-    truncate(answer, 40000),
-    "",
-    "按你的职责写给本人的回复。",
-  ].join("\n");
-  const followupRunId = queueAgentRound(app, next, { agent: "digester", role: "digester", task, kind: "agent-followup", sourceRunId: run.id });
-  return { work: refreshWork(app, workId)!, followupRunId };
+  // Rounds of an older version's digest step are bookkeeping only; cancelled rounds wait for the owner.
+  if ((run.input as { role?: string }).role || run.status === "cancelled") return { work: next };
+  return { work: next, coordinateRunId: queueCoordination(app, next, run) };
+}
+
+function queueCoordination(app: App, work: AgentWork, run: Run): string {
+  const agent = (run.input as { spec?: string }).spec ?? "Agent";
+  const round = work.rounds.filter((r) => r.agent === agent).findIndex((r) => r.runId === run.id) + 1;
+  const report = run.status === "done" ? String((run.output as { answer?: string }).answer ?? "").trim() || "（没有输出）" : `这一轮失败了：${run.error ?? "未知错误"}`;
+  const messageId = addWorkMessage(app, work, {
+    role: "assistant",
+    text: report,
+    runId: run.id,
+    meta: { agentReport: { agent, runId: run.id, status: run.status, round }, record: true },
+  });
+  // The owner may have written in the topic meanwhile: one turn takes both.
+  const waiting = queuedInLane(app, work.workConversationId, "ask");
+  if (waiting) {
+    const ids = [...((waiting.input.messageIds as string[] | undefined) ?? []), messageId];
+    const coordinate = { workId: work.askRunId, sourceRunIds: [...(((waiting.input.coordinate as { sourceRunIds?: string[] } | undefined)?.sourceRunIds) ?? []), run.id] };
+    if (updateQueuedRun(app, waiting.id, { input: { ...waiting.input, messageIds: ids, coordinate } })) return waiting.id;
+  }
+  const r = createRun(app, {
+    kind: "ask",
+    spaceId: getThread(app, work.workConversationId).spaceId,
+    title: truncate(`协调：${agent} 第 ${round} 轮${run.status === "done" ? "完成" : "失败"}`, 60),
+    input: { conversationId: work.workConversationId, messageIds: [messageId], coordinate: { workId: work.askRunId, sourceRunIds: [run.id] } },
+    lane: work.workConversationId,
+    parentId: work.askRunId,
+  });
+  return r.id;
+}
+
+/**
+ * What a specialist is told about the work so far, besides its own task: the owner's words in the
+ * work conversation and the other rounds' results. It may be a fresh session that never saw them.
+ */
+export function workContext(app: App, work: AgentWork, forRunId: string): string {
+  const msgs = all<{ role: string; text: string; meta: string; created_at: string; run_id: string | null }>(
+    app.db,
+    "select role, text, meta, created_at, run_id from messages where conversation_id = ? order by created_at desc limit 30",
+    work.workConversationId,
+  ).reverse();
+  const lines = msgs
+    .filter((m) => m.run_id !== forRunId)
+    .map((m) => {
+      const meta = JSON.parse(m.meta || "{}") as { agentReport?: { agent: string; round: number }; command?: boolean };
+      if (meta.command) return "";
+      const who = m.role === "user" ? "本人" : meta.agentReport ? `${meta.agentReport.agent}（第 ${meta.agentReport.round} 轮报告）` : "主助手";
+      return `- ${who}（${m.created_at.slice(5, 16).replace("T", " ")}）：${truncate(m.text.replace(/\s+/g, " "), meta.agentReport ? 600 : 400)}`;
+    })
+    .filter(Boolean);
+  return lines.length ? `# 这项工作到目前为止（工作会话 ${work.workConversationId}；全文用 read_conversation 读）\n\n目标：${work.title}\n\n${lines.join("\n")}` : "";
 }
 
 /** Open the work topic on Feishu on first use; updates work with the topic id and message id. */

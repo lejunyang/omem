@@ -174,6 +174,9 @@ function writeEvent(app: App, runId: string, type: string, data: unknown) {
   app.emit({ type: "run-event", runId, seq, event: { type, data, at } });
 }
 
+export function flushRunText(app: App, runId: string) {
+  flushText(app, runId);
+}
 function flushText(app: App, runId: string) {
   const b = textBuffers.get(runId);
   if (!b) return;
@@ -335,17 +338,12 @@ function kick(app: App) {
             });
           }
         } catch {}
-        // Multi-agent work: a specialist round schedules its digester; agent-followup is terminal for the chain.
-        if ((r.kind === "agent" || r.kind === "agent-followup") && (r.input as { agentWorkId?: string }).agentWorkId) {
-          import("./agent-work.ts")
-            .then(({ onWorkRunSettled }) => onWorkRunSettled(app, getRun(app, r.id)))
-            .catch((e) => console.warn(`[omem] 多 Agent 工作推进失败：${(e as Error).message}`));
-        }
         const status = controller.signal.aborted ? "cancelled" : "done";
         // A quiet background inspection (nothing new / QUIET) stays out of the run list.
         const quiet = status === "done" && !INTERACTIVE.has(r.kind) && out && (out as { quiet?: boolean }).quiet === true ? 1 : 0;
         run(app.db, "update runs set status=?, quiet=?, finished_at=? where id=?", status, quiet, now(), r.id);
         if (r.kind === "code") trySettleCodeChain(app, r.id);
+        settleWorkRound(app, r);
         app.emit({ type: "run", runId: r.id, status });
       })
       .catch((error: Error) => {
@@ -353,6 +351,7 @@ function kick(app: App) {
         const cancelled = controller.signal.aborted || error.message === "CANCELLED";
         run(app.db, "update runs set status=?, error=?, finished_at=? where id=?", cancelled ? "cancelled" : "failed", cancelled ? null : error.message, now(), r.id);
         if (r.kind === "code") trySettleCodeChain(app, r.id);
+        settleWorkRound(app, r);
         if (!cancelled) addRunEvent(app, r.id, "error", { message: error.message });
         app.emit({ type: "run", runId: r.id, status: cancelled ? "cancelled" : "failed" });
       })
@@ -364,6 +363,14 @@ function kick(app: App) {
         kick(app);
       });
   }
+}
+
+/** Multi-agent work: a finished or failed round hands over to the main assistant (agent-work.ts). */
+function settleWorkRound(app: App, r: Run) {
+  if (r.kind !== "agent" || !(r.input as { agentWorkId?: string }).agentWorkId) return;
+  import("./agent-work.ts")
+    .then(({ onWorkRunSettled }) => onWorkRunSettled(app, getRun(app, r.id)))
+    .catch((e) => console.warn(`[omem] 多 Agent 工作推进失败：${(e as Error).message}`));
 }
 
 export function cancelRun(app: App, id: string) {

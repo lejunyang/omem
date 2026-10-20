@@ -546,6 +546,10 @@ const migrations: string[] = [
   );
   create index profile_proposals_target on profile_proposals(target, status);
   `,
+  // The digest step of multi-agent work is gone (the main assistant coordinates instead).
+  `
+  update runs set status = 'cancelled', finished_at = coalesce(finished_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) where kind = 'agent-followup' and status in ('queued', 'running');
+  `,
 ];
 
 export type Db = DatabaseSync;

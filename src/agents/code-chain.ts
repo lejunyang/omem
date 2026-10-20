@@ -179,9 +179,41 @@ export function settleCodeChain(app: App, runId: string) {
 export function trySettleCodeChain(app: App, runId: string): boolean {
   try {
     settleCodeChain(app, runId);
-    return true;
   } catch (error) {
     console.warn(`[omem] 编码交办收尾失败 ${runId}：${error instanceof Error ? error.name : "Error"}`);
     return false;
   }
+  try {
+    wakeAssistantForCodeResult(app, runId);
+  } catch (error) {
+    console.warn(`[omem] 编码交办结果交给主助手失败 ${runId}：${(error as Error).message}`);
+  }
+  return true;
+}
+
+/** Tools the assistant does not get when it is woken by a coding result: no new rounds behind the owner's back. */
+export const CODE_HANDOFF_DENY = ["delegate_code", "continue_code_run", "apply_code_run"];
+
+/**
+ * When a delegation stops (approved, out of automatic rounds, failed, no changes), the assistant
+ * that started it takes a turn in that conversation: it reads the result, tells the owner what
+ * came out and what is left, and does what it can without coding tools (those would bypass the
+ * automatic round limit). The progress card still shows the details. Once per final round.
+ */
+function wakeAssistantForCodeResult(app: App, runId: string) {
+  const r = getRun(app, runId);
+  const chain = r.output.codeChain as CodeChain | undefined;
+  const messageId = r.output.codeResultMessageId as string | undefined;
+  if (!chain || !messageId || r.output.codeResultHandedOff || chain.lastCodeRunId !== r.id) return;
+  // An automatic next round is already queued: nothing to tell yet.
+  if (r.status === "done" && r.output.verdict === "changes-requested" && chain.round < MAX_AUTO_ROUNDS && !chain.awaitingUser) return;
+  setRunOutput(app, runId, { codeResultHandedOff: true });
+  createRun(app, {
+    kind: "ask",
+    spaceId: getThread(app, chain.conversationId).spaceId,
+    title: `编码交办第 ${chain.round} 轮结束：${r.status}${r.output.verdict ? `（${r.output.verdict}）` : ""}`,
+    input: { conversationId: chain.conversationId, messageIds: [messageId], handoff: { kind: "code", runId }, denyTools: CODE_HANDOFF_DENY },
+    lane: chain.conversationId,
+    parentId: chain.askRunId,
+  });
 }

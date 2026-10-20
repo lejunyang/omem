@@ -31,4 +31,28 @@ describe("agent loop over ACP + MCP bridge", async () => {
     expect(types).toContain("text");
     expect(conversationId).toBeTruthy();
   }, 60000);
+
+  it("lets one agent consult another: a visible child run, answered inline, that cannot hand work on", async () => {
+    const { saveAgentSpec } = await import("../src/agents/specs.ts");
+    const { callTool } = await import("../src/agents/tools.ts");
+    const { createRun, getRun, listRuns } = await import("../src/agents/runs.ts");
+    saveAgentSpec(app, { name: "db-expert", description: "数据库问题", prompt: "回答数据库相关问题。" }, "user");
+    const parent = createRun(app, { kind: "agent", spaceId: "personal", title: "调查", input: { spec: "x", task: "t", inline: true } });
+    // Keep the worker away from the stand-in parent.
+    app.db.prepare("update runs set status = 'done' where id = ?").run(parent.id);
+    const r = await callTool({ app, runId: parent.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: "owner", spec: "investigator" }, "ask_agent", { name: "db-expert", question: "和小王什么时候同步" });
+    expect(r.isError).toBe(false);
+    expect(r.text).toMatch(/^db-expert 的回答（运行 r/);
+    const child = listRuns(app, { parentId: parent.id })[0];
+    expect(child).toMatchObject({ kind: "agent", status: "done" });
+    expect((child.input as { consultOf?: string }).consultOf).toBe(parent.id);
+    expect(String((getRun(app, child.id).output as { answer?: string }).answer)).toMatch(/^tools=/);
+    // Specs (and the main assistant) may consult; a consulted run is denied consulting and handing work on.
+    const { prepareRun } = await import("../src/agents/runner.ts");
+    const { readAgentSpec } = await import("../src/agents/specs.ts");
+    const { toolContextForToken } = await import("../src/agents/tools.ts");
+    const toolsOf = (deny?: string[]) => toolContextForToken(app, prepareRun(app, { actor: { spec: readAgentSpec(app, "db-expert") }, spaceId: "personal", runId: null, denyTools: deny }).token)!.tools!;
+    expect(toolsOf().has("ask_agent")).toBe(true);
+    expect(toolsOf(["ask_agent", "run_agent"]).has("ask_agent")).toBe(false);
+  }, 60000);
 });

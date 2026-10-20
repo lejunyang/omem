@@ -240,11 +240,18 @@ function schedule(app: App, runId: string, st: State, delay = 700) {
 }
 
 /** Begin the bubble for a turn, anchored to the message that started it (so it lands in the topic). */
-export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean }) {
-  if (!sdk || globallyDisabled || states.has(runId)) return;
-  const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, settled: false, prologueSent: false, proven: false, timers: [] };
+/** `title`: a first line saying whose process this is (an agent's round in a work topic). */
+export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean; title?: string }) {
+  if (!sdk || globallyDisabled || states.has(runId)) return false;
+  const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: at.title ? [{ kind: "reasoning", text: `${at.title}\n\n` }] : [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, settled: false, prologueSent: false, proven: false, timers: [] };
   states.set(runId, st);
   schedule(app, runId, st, 300);
+  return true;
+}
+
+/** Whether a bubble was started for this run (events for it are worth routing). */
+export function hasCot(runId: string) {
+  return states.has(runId);
 }
 
 export function cotEvent(app: App, runId: string, e: { type: string; data: any }) {

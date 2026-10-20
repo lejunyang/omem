@@ -74,3 +74,15 @@ it("can retry bookkeeping idempotently after the fault is removed and clears sta
   expect((getRun(app, ask.id).output.codeChain as any).waitReason).toBeUndefined();
   expect(getRun(app, code.id)).toMatchObject({ status: "done", error: null });
 });
+it("wakes the assistant once in the asking conversation when the chain stops, without coding tools", async () => {
+  const { code } = fixture();
+  await waitForRun(app, code.id);
+  trySettleCodeChain(app, code.id);
+  trySettleCodeChain(app, code.id);
+  const wakes = app.db.prepare("select input, lane from runs where kind = 'ask' and json_extract(input, '$.handoff.runId') = ?").all(code.id) as { input: string; lane: string }[];
+  expect(wakes).toHaveLength(1);
+  const input = JSON.parse(wakes[0].input);
+  expect(wakes[0].lane).toBe(input.conversationId);
+  expect(input.messageIds).toEqual([getRun(app, code.id).output.codeResultMessageId]);
+  expect(input.denyTools).toEqual(expect.arrayContaining(["delegate_code", "continue_code_run", "apply_code_run"]));
+});

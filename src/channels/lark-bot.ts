@@ -18,6 +18,7 @@ import { answerFromChannel, resolveCitations } from "./common.ts";
 import { registerCodeProgress } from "./lark-code-progress.ts";
 import { startProgress } from "./lark-progress.ts";
 import { cotAvailable, cotEvent, cotLiveFor, finishCot, setCotSdk, startCot } from "./lark-cot.ts";
+import { watchAgentBubbles } from "./lark-agent-cot.ts";
 import { handleCardAction } from "./lark-actions.ts";
 import { sendLark, setLarkClient } from "./lark-send.ts";
 import { larkAppSecret } from "./lark-setup.ts";
@@ -156,6 +157,7 @@ export async function startLarkBot(app: App) {
   setLarkClient(client, botOpenId);
   setCotSdk(client);
   registerCodeProgress(app);
+  watchAgentBubbles(app);
 
   // Names for people in groups (needs contact read permission; falls back to the id).
   const names = new Map<string, string>();

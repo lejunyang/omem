@@ -67,6 +67,14 @@ function checkProfile(ctx: ToolContext, name: string) {
   if (findAgentSpec(ctx.app, name) || isBuiltinRole(name)) return name;
   throw new HttpError(404, `没有 Agent 档案或内置角色 ${name}；先 list_agents 确认名字，或让本人先创建`);
 }
+/** A coordination turn (agents reported back) may hand out a next round only so many times in a row. */
+async function autoTurnGuard(ctx: ToolContext, work: import("./agent-work.ts").AgentWork) {
+  const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
+  if (!origin || !(JSON.parse(origin.input) as { coordinate?: unknown }).coordinate) return;
+  const { autoTurnsSinceOwner, MAX_AUTO_TURNS } = await import("./agent-work.ts");
+  if (autoTurnsSinceOwner(ctx.app, work) > MAX_AUTO_TURNS)
+    throw new HttpError(429, `本人上次说话以后已经自动推进了 ${MAX_AUTO_TURNS} 次：这一轮不要再交办，向本人汇报进展和下一步建议，等本人回复。`);
+}
 
 /** Roles that write memories from material on their own; they must say where each one comes from. */
 const SOURCED_ROLES = new Set(["ingest", "dreamer", "heartbeat", "curator"]);
@@ -551,12 +559,12 @@ def({
 def({
   name: "run_agent",
   description:
-    "把一件事交给某个 Agent 档案去做（后台运行）。多步/长任务（要调查、产出、可能再交办或需要本人定夺）用 own_topic=true：omem 会为这件事单独建一个工作会话（飞书里就是一条新话题），Agent 在里面工作和循环，结论消化后只把重点带回当前会话；当前会话不会被长输出刷屏。简单一次性的事保持 false，结果直接发回本会话。",
+    "把一件事交给某个 Agent 档案去做（后台运行）。多步/长任务（要调查、产出、可能再交办或需要本人定夺）用 own_topic=true：omem 为这件事单独建一个工作会话（飞书里是一条新话题）。每轮 Agent 交回报告后，你会在那个工作会话里接手：决定继续交办（可以换 Agent）、向本人汇报结论，或请本人决定；你的回复发在话题里，报告折叠在下面。当前会话不会被长输出刷屏。简单一次性的事保持 false，结果直接发回本会话。",
   schema: z.object({
     name: z.string(),
     task: z.string().describe("完整的任务说明：背景、目标、交付物、相关会话或原件 id；复杂任务写清怎样算完成、什么情况要请本人介入"),
     space: z.string().optional(),
-    own_topic: z.boolean().optional().describe("长任务/多 Agent 协同：单独工作会话（飞书新话题），结果消化后只回结论"),
+    own_topic: z.boolean().optional().describe("长任务/多 Agent 协同：单独工作会话（飞书新话题），每轮报告交回给你继续推进"),
   }),
   handler: async (ctx, a) => {
     const spec = readAgentSpec(ctx.app, a.name);
@@ -570,8 +578,9 @@ def({
       // assistant chains another agent): continue there instead of opening a second work session.
       const existing = workInConversation(ctx.app, conversationId);
       if (existing) {
+        await autoTurnGuard(ctx, existing);
         const id = queueAgentRound(ctx.app, existing, { agent: spec.name, task: a.task });
-        return `已在这项工作的话题里安排 ${spec.name} 的下一轮 ${id}；完成后在话题里给出结论。`;
+        return `已在这项工作的话题里安排 ${spec.name} 的下一轮 ${id}；它交回报告后你会在这里接着处理。`;
       }
       const w = startAgentWork(ctx.app, {
         askRunId: ctx.runId!,
@@ -588,7 +597,7 @@ def({
         ? one<{ id: string }>(ctx.app.db, "select json_extract(meta, '$.externalId') id from messages where run_id = ? and role = 'user' order by created_at desc limit 1", ctx.runId!)?.id
         : undefined;
       if (anchor) void import("./agent-work.ts").then(({ openWorkTopic }) => openWorkTopic(ctx.app, w.work, anchor));
-      return `已在独立工作会话（飞书话题）把这件事交给 ${spec.name}，运行 ${w.runId}。进展在那条话题里更新；完成后只把结论和需要你决定的事带回这里。`;
+      return `已在独立工作会话（飞书话题）把这件事交给 ${spec.name}，运行 ${w.runId}。它每轮交回报告后，你会在那个工作会话里接手推进，结论和需要本人决定的事发在那条话题里；这里回一句“已在话题里交给 ${spec.name}”就够了。`;
     }
     const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, threadId: conversationId }, parentId: ctx.runId });
     return `已交给 ${spec.name}，运行 ${r.id}，完成后结果会发回本会话。`;
@@ -599,7 +608,7 @@ def({
 def({
   name: "continue_agent_work",
   description:
-    "继续一个已经在独立工作会话（飞书话题）里进行的多 Agent 任务：本人在原会话里补充要求，或你看了结论认为还要再推进时用。在原工作会话里排下一轮（复用同一条话题和之前的上下文），完成后同样只把消化后的结论带回本会话。不要用 run_agent 新开一个。",
+    "继续一个已经在独立工作会话（飞书话题）里进行的多 Agent 任务：本人补充了要求，或你看了报告认为还要再推进时用。在原工作会话里排下一轮（同一条话题，同一个 Agent 会接着它上一轮的会话，并能看到这项工作到目前为止的经过）；交回报告后你会再次接手。不要用 run_agent 新开一个。",
   write: true,
   schema: z.object({
     work_id: z.string().optional().describe("发起那次工作的 ask 运行 id（r…）；不传时取本会话最近一个仍在进行的工作会话"),
@@ -614,7 +623,8 @@ def({
     let work = a.work_id ? refreshWork(ctx.app, a.work_id) : null;
     if (!work && conv) work = workInConversation(ctx.app, conv, { includeRoot: true });
     if (!work) throw new HttpError(404, "找不到进行中的多 Agent 工作；复杂任务先用 run_agent own_topic=true 开始");
-    // The digester's rounds are bookkeeping, not someone to hand work to.
+    await autoTurnGuard(ctx, work);
+    // Works from before 10-21 list digester rounds: bookkeeping, not someone to hand work to.
     const agent = a.agent ?? work.rounds.filter((r) => r.agent !== "digester").at(-1)?.agent;
     if (!agent) throw new HttpError(400, "说不出用哪个 Agent，先用 run_agent 交办");
     let id: string;
@@ -626,7 +636,24 @@ def({
       // the main assistant takes over the remaining work directly in this conversation.
       return `这项工作在独立工作会话里已循环 ${MAX_AGENT_WORK_RUNS} 轮（防失控上限）。不要再开新的工作会话；请你直接在本会话完成本人这条要求：${a.task}。需要的上下文用 read_conversation 读该工作会话，结论直接回复本人。`;
     }
-    return `已在原工作会话安排 ${agent} 的下一轮 ${id}，完成后把结论带回这里。`;
+    return `已在原工作会话安排 ${agent} 的下一轮 ${id}；它交回报告后你会接着处理。`;
+  },
+});
+
+def({
+  name: "ask_agent",
+  description:
+    "向另一个 Agent 档案请教一个具体问题，并等它回答（同步，通常几分钟）：需要它的专长、它掌握的情况或它的判断时用。它能用自己的工具和技能去查，但不能再请教别人或交办。回答只回到你这里，由你决定怎么用；要它真正接手一件事用 run_agent / continue_agent_work。",
+  schema: z.object({
+    name: z.string().describe("档案名（list_agents）"),
+    question: z.string().describe("问题本身和它需要的背景：你在做什么、卡在哪、希望它回答到什么程度"),
+  }),
+  handler: async (ctx, a) => {
+    const spec = readAgentSpec(ctx.app, a.name);
+    if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
+    if (spec.name === ctx.spec) throw new HttpError(400, "不能请教自己");
+    const { consultAgent } = await import("./consult.ts");
+    return consultAgent(ctx.app, { spec, question: a.question, askedBy: ctx.spec ?? "主助手", parentRunId: ctx.runId, spaceId: spec.space ?? ctx.spaceId, userId: ctx.userId });
   },
 });
 

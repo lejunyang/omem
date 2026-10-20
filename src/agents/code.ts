@@ -9,6 +9,7 @@ import { HttpError, truncate } from "../core/util.ts";
 import { runRole } from "./runner.ts";
 import { getRun, setRunOutput, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
+import { replyOf } from "./types.ts";
 
 function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20 * 60_000): Promise<{ code: number; output: string; ms: number }> {
   const started = Date.now();
@@ -135,7 +136,7 @@ ${input.task}
     resumeSessionId: (input as { resumeSessionId?: string }).resumeSessionId,
     onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
   });
-  ctx.output({ coderSummary: coder.text.trim(), coderAgent: coder.profileId, coderSessionId: coder.sessionId });
+  ctx.output({ coderSummary: replyOf(coder).trim(), coderAgent: coder.profileId, coderSessionId: coder.sessionId });
 
   const results: RepoResult[] = [];
   const diffs: string[] = [];
@@ -159,7 +160,7 @@ ${input.task}
   const statText = results.filter((r) => r.diffStat).map((r) => (multi ? `[${r.space}]\n${r.diffStat}` : r.diffStat)).join("\n\n");
   ctx.output({ repos: results, diffStat: statText, diffBytes: results.reduce((n, r) => n + r.diffBytes, 0), check: multi ? undefined : results[0].check });
   if (!diffs.length) {
-    notify(app, { title: `交办未产生改动：${run.title}`, body: truncate(coder.text, 400), link: `#/runs/${run.id}` });
+    notify(app, { title: `交办未产生改动：${run.title}`, body: truncate(replyOf(coder), 400), link: `#/runs/${run.id}` });
     return { verdict: "no-changes" };
   }
 
@@ -186,7 +187,7 @@ ${input.task}
     task: [
       `## 原始需求\n\n${input.task}`,
       multi ? `## 涉及的仓库\n\n${repos.map((r, i) => `- ${r.id}：${worktrees[i].path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
-      `## 编码 Agent 的说明\n\n${coder.text.trim()}`,
+      `## 编码 Agent 的说明\n\n${replyOf(coder).trim()}`,
       `## 检查结果\n\n${checkText}`,
       `## 改动统计\n\n${statText}`,
       `## 完整 diff\n\n${truncate(diffs.join("\n\n"), 80000)}`,
@@ -199,8 +200,11 @@ ${input.task}
     onEvent: (e) => ctx.event(e.type, { ...e, phase: "reviewer" }),
     profileId: app.config.agents.roles.reviewer,
   });
-  const approved = /结论[：:]\s*通过/.test(review.text);
-  ctx.output({ review: review.text.trim(), reviewAgent: review.profileId, verdict: approved ? "approved" : "changes-requested" });
+  // The verdict and its reasons, without the reviewer's narration on the way (that stays in the run's events).
+  const reviewText = replyOf(review).trim();
+  // A reviewer that ends with a short line keeps its verdict in the reply; look at the whole text if not.
+  const approved = /结论[：:]\s*通过/.test(reviewText) || (!/结论[：:]/.test(reviewText) && /结论[：:]\s*通过/.test(review.text));
+  ctx.output({ review: reviewText, reviewAgent: review.profileId, verdict: approved ? "approved" : "changes-requested" });
   const checked = results.filter((r) => r.check);
   const statTextLine = results.map((r) => (multi ? `${r.space}：` : "") + (r.diffStat.split("\n").pop() ?? "")).join("\n");
   const checksLine = checked.length ? `\n检查：${checked.some((r) => r.check!.code !== 0) ? "失败" : "通过"}` : "";
@@ -208,7 +212,7 @@ ${input.task}
   const endChain = (getRun(app, run.id).output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? chain;
   if (!approved) {
     // Keep the same delegation going: the coder resumes its session and works the reviewer's request.
-    const reviewBody = review.text.trim();
+    const reviewBody = reviewText;
     const next = endChain
       ? queueNextCodeRound(app, endChain, `评审要求修改（第 ${endChain.round} 轮评审）：\n\n${reviewBody.slice(0, 12000)}`, { resumeSessionId: coder.sessionId })
       : null;

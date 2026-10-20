@@ -1,85 +1,123 @@
 import { describe, expect, it } from "vitest";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
-import { __testHandlers as handlers, createRun, getRun, startWorker, waitForRun } from "../src/agents/runs.ts";
+import { __testHandlers as handlers, createRun, getRun, startWorker } from "../src/agents/runs.ts";
 import { addMessage, createThread, threadMessages } from "../src/agents/threads.ts";
 import { saveAgentSpec } from "../src/agents/specs.ts";
-import { workDeliveryTarget, workInConversation, type AgentWork } from "../src/agents/agent-work.ts";
+import { autoTurnsSinceOwner, MAX_AUTO_TURNS, workContext, workDeliveryTarget, workInConversation, type AgentWork } from "../src/agents/agent-work.ts";
+import { deliverCoordination } from "../src/agents/jobs.ts";
 import { replyFromSegments } from "../src/agents/types.ts";
 import { localPathLinks } from "../src/channels/common.ts";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { run } from "../src/core/db.ts";
+import { all, run } from "../src/core/db.ts";
 import type { RunContext } from "../src/agents/runs.ts";
 import { testApp } from "./helpers.ts";
 
-/** Stubs that behave like the real agent/agent-followup handlers: the report is kept, one digest is delivered. */
-function stubHandlers(app: ReturnType<typeof testApp>) {
+/**
+ * Stubs for the run kinds the work loop uses. The specialist answers with a report; the main
+ * assistant's coordination turn (an ask with `coordinate`) is played by `coordinator`, which gets a
+ * tool context of its own run (the real turn's tools see the same) and returns its reply.
+ */
+function stubHandlers(app: ReturnType<typeof testApp>, coordinator: (ctx: ToolContext, run: RunContext["run"]) => Promise<string>) {
   const origAgent = handlers.get("agent");
-  const origFollowup = handlers.get("agent-followup");
-  handlers.set("agent", async (ctx: RunContext) => {
-    const input = ctx.run.input as { task: string; threadId?: string; agentWorkId?: string; spec?: string };
-    const answer = "结论A".repeat(200);
-    if (input.threadId) addMessage(app, input.threadId, "assistant", `**${input.spec} 产出（完整记录）**\n\n${answer}`, ctx.run.id, { agent: input.spec, agentWorkRound: ctx.run.id, record: true });
-    return { answer };
-  });
-  handlers.set("agent-followup", async (ctx: RunContext) => {
-    const input = ctx.run.input as { agentWorkId?: string; threadId?: string; sourceRunId?: string };
-    const answer = `消化后的结论（来源 ${input.sourceRunId}）：做了 1 件事。`;
-    const work = input.agentWorkId ? (getRun(app, input.agentWorkId).output as { agentWork?: AgentWork }).agentWork : null;
-    if (work) addMessage(app, workDeliveryTarget(app, work), "assistant", answer, ctx.run.id, { agent: "digester", agentWorkResult: input.agentWorkId });
+  const origAsk = handlers.get("ask");
+  handlers.set("agent", async (ctx: RunContext) => ({ answer: `报告：${(ctx.run.input as { task: string }).task.slice(0, 20)}，${"结论A".repeat(200)}` }));
+  handlers.set("ask", async (ctx: RunContext) => {
+    const input = ctx.run.input as { conversationId: string; coordinate?: { workId: string; sourceRunIds?: string[] } };
+    if (!input.coordinate) return { answer: "" };
+    const tctx: ToolContext = { app, runId: ctx.run.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: "owner" };
+    const answer = await coordinator(tctx, ctx.run);
+    await deliverCoordination(ctx, input.coordinate, answer);
     return { answer };
   });
   return () => {
     if (origAgent) handlers.set("agent", origAgent);
-    if (origFollowup) handlers.set("agent-followup", origFollowup);
+    if (origAsk) handlers.set("ask", origAsk);
   };
 }
 
-async function waitRounds(app: ReturnType<typeof testApp>, workId: string, n: number) {
+async function settle(app: ReturnType<typeof testApp>, workId: string, ms = 15000) {
   const fresh = () => (getRun(app, workId).output as { agentWork: AgentWork }).agentWork;
-  let w = fresh();
-  for (let i = 0; i < 80 && (w.rounds.length < n || w.rounds.some((r) => r.status === "queued")); i++) await new Promise((r) => setTimeout(r, 100)), (w = fresh());
-  for (const r of w.rounds) await waitForRun(app, r.runId);
+  const busy = () => all(app.db, "select id from runs where (parent_id = ? or lane = ?) and status in ('queued','running')", workId, fresh().workConversationId).length > 0;
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 150));
+    if (!busy()) {
+      await new Promise((r) => setTimeout(r, 300));
+      if (!busy()) break;
+    }
+  }
   return fresh();
 }
 
 describe("multi-agent work", () => {
-  // The run worker is process-wide, starts once and keeps polling: both cases share one app,
+  // The run worker is process-wide, starts once and keeps polling: the cases share one app,
   // whose temporary database stays open until the test process ends.
   const app = testApp();
   startWorker(app);
 
-  it("starts a specialist in a work conversation; the digest of the round is delivered once", async () => {
-    const restore = stubHandlers(app);
+  it("hands each report to the main assistant in the work conversation; its reply goes out once, with the report folded", async () => {
+    const restore = stubHandlers(app, async () => "这一轮查清了 X：结论 A。不需要你决定。");
     try {
       saveAgentSpec(app, { name: "researcher-x", description: "调研", prompt: "只做调研", status: "active" }, "user");
       const root = createThread(app, { spaceId: "personal", channel: "web", userId: "owner" });
       const ask = createRun(app, { kind: "ask", spaceId: "personal", title: "长任务", input: { conversationId: root.id } });
-
       const ctx: ToolContext = { app, runId: ask.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: "owner" };
       const out = await callTool(ctx, "run_agent", { name: "researcher-x", own_topic: true, task: "去调研 X 的现状，给出建议" });
       expect(out.isError).toBe(false);
-      expect(out.text).toMatch(/独立工作会话/);
+      expect(out.text).toMatch(/你会在那个工作会话里接手/);
 
-      const w = await waitRounds(app, ask.id, 2);
-      expect(w.rounds.map((r) => r.agent)).toEqual(["researcher-x", "digester"]);
-      // The digest knows which round it digests (its report goes along, folded, in Feishu).
-      expect((getRun(app, w.rounds[1].runId).input as { sourceRunId?: string }).sourceRunId).toBe(w.rounds[0].runId);
-
-      // Work conversation keeps the full report; with no topic (web) the digest goes to the root, once.
+      const w = await settle(app, ask.id);
+      expect(w.rounds.map((r) => r.agent)).toEqual(["researcher-x"]);
+      // The report sits in the work conversation as the agent's, and a coordination turn read it.
       const workMsgs = threadMessages(app, w.workConversationId, { limit: 50 });
-      expect(workMsgs.some((m) => m.text.includes("结论A结论A"))).toBe(true);
-      const rootMsgs = threadMessages(app, root.id, { limit: 50 });
-      expect(rootMsgs.filter((m) => m.text.includes("消化后的结论")).length).toBe(1);
-      expect(rootMsgs.some((m) => m.text.includes("结论A".repeat(50)))).toBe(false);
+      const report = workMsgs.find((m) => (m.meta.agentReport as { runId?: string } | undefined)?.runId === w.rounds[0].runId);
+      expect(report?.text).toContain("结论A结论A");
+      const coord = all<{ input: string }>(app.db, "select input from runs where lane = ? and kind = 'ask'", w.workConversationId);
+      expect(coord.map((c) => JSON.parse(c.input).coordinate.sourceRunIds)).toEqual([[w.rounds[0].runId]]);
+      // With no topic (web) the reply goes to the conversation the work was asked from, once, report folded.
+      const replies = threadMessages(app, root.id, { limit: 50 }).filter((m) => m.text.includes("这一轮查清了 X"));
+      expect(replies.length).toBe(1);
+      expect(String(replies[0].meta.details)).toContain("结论A结论A");
+      expect(threadMessages(app, root.id, { limit: 50 }).some((m) => m.text.includes("结论A".repeat(50)))).toBe(false);
     } finally {
       restore();
     }
   }, 60000);
 
-  it("in a topic: the digest goes to the topic only, and run_agent inside it continues the same work", async () => {
-    const restore = stubHandlers(app);
+  it("keeps the loop going on its own and stops at the cap until the owner speaks", async () => {
+    const results: string[] = [];
+    const restore = stubHandlers(app, async (tctx) => {
+      const r = await callTool(tctx, "continue_agent_work", { task: "继续往下查" });
+      results.push(r.isError ? `ERR ${r.text}` : "ok");
+      return r.isError ? "已自动推进到上限，汇报进展：……要继续吗？" : "让 researcher-z 继续查下一步。";
+    });
+    try {
+      saveAgentSpec(app, { name: "researcher-z", description: "调研", prompt: "只做调研", status: "active" }, "user");
+      const root = createThread(app, { spaceId: "personal", channel: "web", userId: "owner" });
+      const ask = createRun(app, { kind: "ask", spaceId: "personal", title: "长任务", input: { conversationId: root.id } });
+      const ctx: ToolContext = { app, runId: ask.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: "owner" };
+      await callTool(ctx, "run_agent", { name: "researcher-z", own_topic: true, task: "第一轮" });
+      const w = await settle(app, ask.id, 40000);
+      expect(results.slice(0, MAX_AUTO_TURNS)).toEqual(Array(MAX_AUTO_TURNS).fill("ok"));
+      expect(results[MAX_AUTO_TURNS]).toMatch(/^ERR .*已经自动推进了/);
+      expect(w.rounds.length).toBe(MAX_AUTO_TURNS + 1);
+      // The owner speaking in the work resets the count.
+      expect(autoTurnsSinceOwner(app, w)).toBe(MAX_AUTO_TURNS + 1);
+      addMessage(app, w.workConversationId, "user", "继续，范围扩大到全部", null, {});
+      expect(autoTurnsSinceOwner(app, w)).toBe(0);
+      // A later round is told what happened in the work so far.
+      const context = workContext(app, w, "none");
+      expect(context).toContain("继续，范围扩大到全部");
+      expect(context).toContain("researcher-z（第 1 轮报告）");
+    } finally {
+      restore();
+    }
+  }, 90000);
+
+  it("in a topic: the reply goes to the topic only, and run_agent inside it continues the same work", async () => {
+    const restore = stubHandlers(app, async () => "话题里的协调回复");
     try {
       saveAgentSpec(app, { name: "researcher-y", description: "调研", prompt: "只做调研", status: "active" }, "user");
       const root = createThread(app, { spaceId: "personal", channel: "lark", key: "oc_chat", userId: "owner" });
@@ -91,20 +129,18 @@ describe("multi-agent work", () => {
       run(app.db, "update conversations set external_id = ? where id = ?", "oc_chat#omt_abc", first.workConversationId);
       expect(workInConversation(app, first.workConversationId)?.askRunId).toBe(ask.id);
       expect(workDeliveryTarget(app, first)).toBe(first.workConversationId);
-      const w1 = await waitRounds(app, ask.id, 2);
-      expect(threadMessages(app, w1.workConversationId, { limit: 50 }).filter((m) => m.text.includes("消化后的结论")).length).toBe(1);
-      expect(threadMessages(app, root.id, { limit: 50 }).some((m) => m.text.includes("消化后的结论"))).toBe(false);
+      const w1 = await settle(app, ask.id);
+      expect(threadMessages(app, w1.workConversationId, { limit: 50 }).filter((m) => m.text === "话题里的协调回复").length).toBe(1);
+      expect(threadMessages(app, root.id, { limit: 50 }).some((m) => m.text.includes("话题里的协调回复"))).toBe(false);
 
       // The owner replies in the topic; the main assistant there delegates again → same work, same topic.
       const turn = createRun(app, { kind: "ask", spaceId: "personal", title: "话题里追问", input: { conversationId: w1.workConversationId } });
-      const inTopic: ToolContext = { ...ctx, runId: turn.id };
-      const again = await callTool(inTopic, "run_agent", { name: "researcher-y", own_topic: true, task: "第二轮：补充数据" });
+      const again = await callTool({ ...ctx, runId: turn.id }, "run_agent", { name: "researcher-y", own_topic: true, task: "第二轮：补充数据" });
       expect(again.isError).toBe(false);
       expect(again.text).toMatch(/话题里安排/);
-      const w2 = await waitRounds(app, ask.id, 4);
+      const w2 = await settle(app, ask.id);
       expect(w2.workConversationId).toBe(w1.workConversationId);
       expect(w2.rounds.filter((r) => r.agent === "researcher-y").length).toBe(2);
-      // No second work conversation was opened from the topic.
       expect((getRun(app, turn.id).output as { agentWork?: AgentWork }).agentWork).toBeUndefined();
     } finally {
       restore();

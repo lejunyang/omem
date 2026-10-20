@@ -19,7 +19,7 @@ import { describeFlags, guardSource } from "../sources/guard.ts";
 import { learningProgress, studyStats } from "../learn/cards.ts";
 import { getGoal, listGoals, localClock, upsertGoal } from "../learn/goals.ts";
 import { addMessage, getThread, threadMessages, updateThread } from "./threads.ts";
-import { createRun, listRuns, registerHandler, type RunContext } from "./runs.ts";
+import { createRun, getRun, listRuns, registerHandler, type RunContext } from "./runs.ts";
 import { markReviewed, similarMemories, spacesWithUnreviewed, unreviewedMemories } from "../memory/quality.ts";
 import { relationCandidates } from "../core/space-candidates.ts";
 import "./profile-jobs.ts";
@@ -66,69 +66,104 @@ registerHandler("ask", async (ctx) => {
   const all = threadMessages(ctx.app, input.conversationId, { limit: 400 });
   const msgs = all.filter((m) => ids.includes(m.id));
   if (!msgs.length) return { answer: "", skipped: "消息已不存在" };
-  const r = await threadTurn(ctx, input.conversationId, msgs, input.userId ?? "owner");
+  const coordinate = (ctx.run.input as { coordinate?: { workId: string; sourceRunIds?: string[] } }).coordinate;
+  let r;
+  try {
+    r = await threadTurn(ctx, input.conversationId, msgs, input.userId ?? "owner");
+  } catch (e) {
+    // Nobody waits on a coordination turn: say it stopped, where the owner follows the work.
+    if (coordinate && !ctx.signal.aborted) await deliverCoordination(ctx, coordinate, `协调这一轮时出错，工作停在这里：${(e as Error).message}\n\n回复这条话题可以让我接着做。`).catch(() => {});
+    throw e;
+  }
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   const answer = r.text.trim() || "（Agent 没有给出文字回答）";
+  if (coordinate) {
+    const id = await deliverCoordination(ctx, coordinate, answer, { agent: r.agent, session: r.mode, replyTo: ids });
+    maybeSummarize(ctx.app, input.conversationId);
+    return { answer, messageId: id, session: r.mode };
+  }
+  // Woken by a result (a coding delegation ended): nobody waits on this turn, so it is posted.
+  if ((ctx.run.input as { handoff?: unknown }).handoff) {
+    await deliverToThread(ctx.app, input.conversationId, answer, { runId: ctx.run.id, agent: r.agent, session: r.mode, replyTo: ids });
+    maybeSummarize(ctx.app, input.conversationId);
+    return { answer, session: r.mode };
+  }
   const id = addMessage(ctx.app, input.conversationId, "assistant", answer, ctx.run.id, { agent: r.agent, session: r.mode, replyTo: ids });
   maybeSummarize(ctx.app, input.conversationId);
   return { answer, messageId: id, session: r.mode };
 });
 
+/**
+ * The main assistant's reply after agents reported: posted where the owner follows the work (its
+ * Feishu topic, else the conversation it was asked from), with each agent's full report folded below.
+ */
+export async function deliverCoordination(ctx: RunContext, coordinate: { workId: string; sourceRunIds?: string[] }, answer: string, meta: Record<string, unknown> = {}) {
+  const { refreshWork, workDeliveryTarget } = await import("./agent-work.ts");
+  const work = refreshWork(ctx.app, coordinate.workId);
+  const workConv = (ctx.run.input as { conversationId: string }).conversationId;
+  const reports = (coordinate.sourceRunIds ?? []).map((id) => {
+    const row = one<{ input: string; output: string | null; status: string; error: string | null }>(ctx.app.db, "select input, output, status, error from runs where id = ?", id);
+    if (!row) return "";
+    const agent = String((JSON.parse(row.input) as { spec?: string }).spec ?? "Agent");
+    const body = row.status === "done" ? String((JSON.parse(row.output ?? "{}") as { answer?: string }).answer ?? "") : `失败：${row.error ?? ""}`;
+    return `**${agent}**（运行 ${id}）\n\n${body}`;
+  }).filter(Boolean);
+  const details = reports.length ? { details: reports.join("\n\n---\n\n"), detailsTitle: reports.length > 1 ? `${reports.length} 份完整报告` : `完整报告（${reports[0].slice(2, reports[0].indexOf("**", 2))}）` } : {};
+  const target = work ? workDeliveryTarget(ctx.app, work) : workConv;
+  const full = { ...meta, runId: ctx.run.id, coordinate: coordinate.workId, ...details };
+  // The work conversation keeps the reply either way (the assistant's next turn reads it there).
+  const id = target === workConv ? null : addMessage(ctx.app, workConv, "assistant", answer, ctx.run.id, full);
+  await deliverToThread(ctx.app, target, answer, full);
+  return id;
+}
+
 // Delegation to an agent spec ("/as name task", run_agent): answer goes back to the thread it came from.
 registerHandler("agent", async (ctx) => {
-  const { spec: name, task, threadId, agentWorkId, role: roleName } = ctx.run.input as { spec: string; task: string; threadId?: string; agentWorkId?: string; role?: string };
-  const spec = roleName ? null : readAgentSpec(ctx.app, name);
-  const r = await runRole(ctx.app, {
-    role: (roleName as never) ?? "assistant",
-    spec: spec ?? undefined,
-    spaceId: ctx.run.spaceId ?? spec?.space ?? "personal",
-    task,
-    runId: ctx.run.id,
-    signal: ctx.signal,
-    onEvent: (e) => ctx.event(e.type, e),
-  });
+  const { spec: name, task, threadId, agentWorkId, consultOf } = ctx.run.input as { spec: string; task: string; threadId?: string; agentWorkId?: string; consultOf?: string };
+  // A consultation runs inside the asking tool call (consult.ts); one picked up here was cut off by a
+  // restart, and the asker is gone.
+  if (consultOf !== undefined) throw new Error("请教在服务重启时中断，提问的一方已经结束");
+  const spec = readAgentSpec(ctx.app, name);
+  // A round of multi-agent work: the agent continues its own session from its last round in this
+  // work, and is told what happened in the work since (the owner's words, other agents' reports).
+  let resumeSessionId: string | undefined;
+  let fullTask = task;
+  if (agentWorkId) {
+    const { refreshWork, workContext } = await import("./agent-work.ts");
+    const work = refreshWork(ctx.app, agentWorkId);
+    if (work) {
+      const prev = [...work.rounds].reverse().find((x) => x.agent === spec.name && x.runId !== ctx.run.id && x.status === "done");
+      resumeSessionId = prev ? ((getRun(ctx.app, prev.runId).output as { sessionId?: string }).sessionId ?? undefined) : undefined;
+      const context = workContext(ctx.app, work, ctx.run.id);
+      if (context) fullTask = `${context}\n\n---\n\n# 这一轮的任务\n\n${task}`;
+    }
+  }
+  const go = (resume?: string) =>
+    runRole(ctx.app, {
+      role: "assistant",
+      spec,
+      spaceId: ctx.run.spaceId ?? spec?.space ?? "personal",
+      task: fullTask,
+      runId: ctx.run.id,
+      signal: ctx.signal,
+      onEvent: (e) => ctx.event(e.type, e),
+      resumeSessionId: resume,
+      persistSession: !!agentWorkId,
+    });
+  let r;
+  try {
+    r = await go(resumeSessionId);
+  } catch (e) {
+    if (!resumeSessionId || ctx.signal.aborted || (e as Error).message === "CANCELLED") throw e;
+    ctx.event("status", { text: "无法接上上一轮的 Agent 会话，改用新会话（带这项工作的经过）" });
+    r = await go(undefined);
+  }
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   // The report proper: what the agent wrote after its last tool call (its narration on the way is
-  // in the run's events). Work rounds are not posted as is: the digester turns them into the reply.
+  // in the run's events). Work rounds go to the main assistant, which writes the reply (agent-work.ts).
   const answer = replyOf(r).trim() || "（没有输出）";
-  if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${spec!.name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: spec!.name });
-  else if (threadId && roleName) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: roleName, agentWorkRound: ctx.run.id });
-  else if (threadId) addMessage(ctx.app, threadId, "assistant", `**${spec!.name} 产出（完整记录，运行 ${ctx.run.id}）**\n\n${answer}`, ctx.run.id, { agent: spec!.name, agentWorkRound: ctx.run.id, record: true });
-  return { answer };
-});
-
-// Multi-agent work: after a specialist returns into a work conversation, the digester gives the
-// conclusion to the root conversation; the main assistant there decides whether to continue.
-registerHandler("agent-followup", async (ctx) => {
-  const input = ctx.run.input as { threadId?: string; role?: string; task: string; agentWorkId?: string; sourceRunId?: string };
-  const r = await runRole(ctx.app, {
-    role: "digester",
-    spaceId: ctx.run.spaceId ?? "personal",
-    task: input.task,
-    runId: ctx.run.id,
-    signal: ctx.signal,
-    onEvent: (e) => ctx.event(e.type, e),
-  });
-  run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
-  const answer = replyOf(r).trim() || "（没有输出）";
-  if (input.agentWorkId) {
-    const { refreshWork, workDeliveryTarget } = await import("./agent-work.ts");
-    const work = refreshWork(ctx.app, input.agentWorkId);
-    // One reply, in one place: the work's topic when it has one (the owner follows it there),
-    // otherwise the conversation the work was asked from.
-    // The agent's own report goes along, folded under the digest, so nothing has to be looked up elsewhere.
-    const source = input.sourceRunId ? one<{ output: string | null; input: string }>(ctx.app.db, "select output, input from runs where id = ?", input.sourceRunId) : undefined;
-    const report = source?.output ? String((JSON.parse(source.output) as { answer?: string }).answer ?? "") : "";
-    const agentName = source ? String((JSON.parse(source.input) as { spec?: string }).spec ?? "Agent") : "Agent";
-    if (work)
-      await deliverToThread(ctx.app, workDeliveryTarget(ctx.app, work), answer, {
-        runId: ctx.run.id,
-        agent: "digester",
-        agentWorkResult: input.agentWorkId,
-        ...(report ? { details: report, detailsTitle: `${agentName} 的完整报告（运行 ${input.sourceRunId}）` } : {}),
-      });
-  } else if (input.threadId) await deliverToThread(ctx.app, input.threadId, answer, { runId: ctx.run.id });
-  return { answer };
+  if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${spec.name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: spec.name });
+  return { answer, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
 });
 
 registerHandler("thread-summary", async (ctx) => {

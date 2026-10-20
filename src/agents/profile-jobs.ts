@@ -24,7 +24,6 @@ const ROLE_RUNS: Record<string, string[]> = {
   tutor: ["tutor"],
   brief: ["brief"],
   curator: ["curate"],
-  digester: ["agent-followup"],
 };
 
 type EvidenceRun = { id: string; kind: string; status: string; title: string; error: string | null; created_at: string; finished_at: string | null; input: string; output: string | null };

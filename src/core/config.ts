@@ -33,7 +33,6 @@ export const roleNames = [
   "brief",
   "curator",
   "summarizer",
-  "digester",
   "memory-reviewer",
   "coach",
 ] as const;

@@ -147,8 +147,12 @@ export type RoleRunInput = {
   effort?: string;
   /** Continue this coding Agent's previous session (code delegation rounds reuse one session). */
   resumeSessionId?: string;
+  /** Keep the agent session resumable afterwards (multi-agent work rounds continue it). */
+  persistSession?: boolean;
   /** Comparison run: writes are recorded, not applied; no fallback. */
   shadow?: { parentRunId: string | null };
+  /** omem tools this run must not have (a consulted agent cannot hand work on). */
+  denyTools?: string[];
 };
 
 /** Who is acting: a built-in role, or an agent spec the assistant (or the owner) created. */
@@ -173,7 +177,7 @@ export type PreparedRun = {
  */
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: { chats: string[] | null; draft?: boolean }; shadow?: { parentRunId: string | null } },
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: { chats: string[] | null; draft?: boolean }; shadow?: { parentRunId: string | null }; denyTools?: string[] },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -203,6 +207,9 @@ export function prepareRun(
   // Skills are offered to everyone who can read them.
   tools.add("list_skills");
   tools.add("read_skill");
+  // Agents (and the main assistant) can ask one another a question; background roles cannot.
+  if (spec || roleName === "assistant") tools.add("ask_agent");
+  for (const t of input.denyTools ?? []) tools.delete(t);
   // A thread that may post into specific Feishu chats (watched groups) gets the bot's voice and notify.
   if (input.lark?.chats?.length) for (const t of ["lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "notify"]) tools.add(t);
   const spaces =
@@ -283,7 +290,7 @@ export function fallbackProfiles(
 /** Run a role-defined agent turn with omem tools attached. */
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string }> {
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
-  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow });
+  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools });
   const chain = input.spec || input.shadow
     ? [base.profile] // explicit agent specs choose their own backend; no silent rerouting
     : fallbackProfiles(app, actor, base.profile.id);
@@ -291,7 +298,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   let lastError: unknown;
   for (let i = 0; i < chain.length; i++) {
     const profile = chain[i];
-    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined });
+    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools });
     try {
       const req = {
         cwd: prep.cwd,
@@ -302,7 +309,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         mcp: prep.mcp,
         extraMcp: prep.extraMcp,
         resumeSessionId: input.resumeSessionId,
-        persistSession: !!input.resumeSessionId,
+        persistSession: input.persistSession ?? !!input.resumeSessionId,
         queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
       };
       if (i > 0) emit({ type: "status", text: `默认后端不可用（排队/限流），改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""} 重试` });
