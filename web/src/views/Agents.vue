@@ -85,12 +85,14 @@ async function toggleSkill(name: string, on: boolean) {
   }
 }
 const addSkillValue = ref<string | null>(null);
+const addingSkill = ref(false);
 const addableSkills = computed(() =>
   (detail.value?.availableSkills ?? [])
     .filter((s) => !(detail.value?.skills ?? []).some((x) => x.name === s.name))
     .map((s) => ({ value: s.name, label: s.name, hint: s.description })),
 );
 async function onAddSkill(name: string | null) {
+  addingSkill.value = false;
   if (!name) return;
   await toggleSkill(name, true);
   addSkillValue.value = null;
@@ -254,16 +256,25 @@ const current = computed(() => list.value.find((x) => x.name === selected.value)
                 <span class="x" role="button" tabindex="0" :title="s.status === 'missing' ? '技能不存在，点此移除' : '从该档案移除'" @click.stop="toggleSkill(s.name, false)">×</span>
               </button>
               <UiSelect
-                v-if="addableSkills.length"
+                v-if="addingSkill && addableSkills.length"
                 v-model="addSkillValue"
                 size="sm"
-                width="200px"
-                placeholder="+ 挂载技能…"
+                width="220px"
+                placeholder="选择技能…"
                 :options="addableSkills"
+                :search-at="6"
                 @change="onAddSkill"
               />
+              <button
+                v-else
+                type="button"
+                class="chip add-chip"
+                :disabled="!addableSkills.length"
+                :title="addableSkills.length ? '挂载一个已有技能' : '所有技能都已挂载'"
+                @click="addingSkill = true"
+              >＋</button>
             </div>
-            <p v-if="!(detail.skills?.length)" class="muted small empty-line">还没有挂载技能。在下方“+ 挂载技能”里选一个，或让助理 <code>save_skill(agent="档案名")</code> 保存并自动挂载。</p>
+            <p v-if="!(detail.skills?.length)" class="muted small empty-line">还没有挂载技能。点 ＋ 选一个已有技能，或让助理 <code>save_skill(agent="档案名")</code> 保存并自动挂载。</p>
           </details>
           <details class="learn-block" open>
             <summary>专属记忆（{{ detail.memories?.length ?? 0 }}）<span class="muted small">只有这个档案能看到的偏好与经验；共享记忆在「记忆」页</span></summary>
@@ -404,7 +415,7 @@ const current = computed(() => list.value.find((x) => x.name === selected.value)
   display: grid;
   gap: 8px;
   flex: none;
-  padding: 0 4px 4px;
+  padding: 0 0 4px;
 }
 .learn-block {
   border: 1px solid var(--line);
@@ -463,6 +474,25 @@ const current = computed(() => list.value.find((x) => x.name === selected.value)
 .chip.missing {
   color: var(--danger, #c0392b);
   text-decoration: line-through;
+}
+.add-chip {
+  padding: 2px 10px;
+  font-size: 15px;
+  line-height: 1.3;
+  border: 1px dashed var(--line-strong, var(--line));
+  background: transparent;
+  color: var(--ink-2);
+  min-width: 32px;
+  justify-content: center;
+}
+.add-chip:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft, var(--hover));
+}
+.add-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 .chip .x {
   border: 0;

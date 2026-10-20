@@ -64,23 +64,26 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
       });
       if (result.title && op === "cancel") {
         // "忽略" is a lesson: the model phrases a short "don't ping me for this"
-        // rule; later pushes of the same kind are filtered by the same judgment.
+        // rule. Fire-and-forget — card callbacks must answer Feishu within a few
+        // seconds; the AI summarization can finish in the background.
         const noteRow = one<{ title: string; body: string }>(
           app.db,
           "select title, body from notifications where json_extract(context,'$.entityId') = ? order by at desc limit 1",
           id,
         );
         if (noteRow) {
-          const { learnIgnoreFromNotification } = await import("../core/notify-ai-gate.ts");
-          await learnIgnoreFromNotification(app, noteRow).catch(() => {});
+          void import("../core/notify-ai-gate.ts")
+            .then(({ learnIgnoreFromNotification }) => learnIgnoreFromNotification(app, noteRow))
+            .then((rule) => { if (rule) console.info(`[omem] 已学习免提醒规则：${rule.rule}`); })
+            .catch(() => {});
         }
       }
       if (!result.title) return { toast: result.toast };
       const title = result.title;
       return {
         // Feishu callback responses must wrap a replacement card as { type: "raw", data }.
-        card: rawCard(buildCard({ title: op === "done" ? "已处理" : "已忽略", color: op === "done" ? "green" : "grey", blocks: [{ markdown: title }, { note: `${opName} 在飞书卡片上${op === "done" ? "标记已处理" : "忽略"}` }] })),
-        toast: { type: "success", content: op === "done" ? "已标记为已处理" : "已忽略，同类提醒以后不再推送" },
+        card: rawCard(buildCard({ title: op === "done" ? "已处理" : "已忽略", color: op === "done" ? "green" : "grey", blocks: [{ markdown: title }, { note: op === "done" ? `${opName} 在飞书卡片上标记已处理` : `${opName} 已忽略（同类提醒将不再推送，应用内仍可查看）` }] })),
+        toast: { type: "success", content: op === "done" ? "已标记为已处理" : "已忽略" },
       };
     }
     return { toast: { type: "warning", content: "找不到对应的会话" } };
