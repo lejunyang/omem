@@ -227,6 +227,11 @@ const controllers = new Map<string, AbortController>();
 const INTERACTIVE = new Set<string>(["ask", "agent"]);
 const active = { interactive: 0, background: 0 };
 let started = false;
+/** Last activity (run event / output) per live run; watchdog fails interactive
+ *  runs silent for too long, so a dead agent process cannot wedge a whole
+ *  conversation lane (later messages queue forever and never get answered). */
+const heartbeats = new Map<string, number>();
+const INTERACTIVE_STALL_MS = 30 * 60_000;
 
 export function registerHandler(kind: RunKind, handler: Handler) {
   handlers.set(kind, handler);
@@ -238,6 +243,7 @@ export function startWorker(app: App) {
   // Runs interrupted by a restart go back to the queue; handlers are written to be re-runnable.
   run(app.db, "update runs set status = 'queued', started_at = null where status = 'running'");
   setInterval(() => kick(app), 2000).unref();
+  setInterval(() => watchStalls(app), 60_000).unref();
   kick(app);
 }
 
@@ -265,6 +271,29 @@ function nextRunnable(app: App): Row | undefined {
   return undefined;
 }
 
+/**
+ * Fail interactive runs that have produced no event for a long time. Agent CLIs
+ * can hang on prompts/network without ever settling; without this the lane stays
+ * occupied, queued user messages never start, and every later message goes silent.
+ */
+function watchStalls(app: App) {
+  const cutoff = Date.now() - INTERACTIVE_STALL_MS;
+  for (const [id, last] of heartbeats) {
+    if (last > cutoff) continue;
+    const row = one<{ kind: string; status: string }>(app.db, "select kind, status from runs where id = ?", id);
+    if (!row || row.status !== "running") { heartbeats.delete(id); continue; }
+    if (!INTERACTIVE.has(row.kind)) continue; // long background jobs are allowed
+    controllers.get(id)?.abort();
+    const res = run(app.db, "update runs set status='failed', error=?, finished_at=? where id=? and status='running'",
+      `长时间（${Math.round(INTERACTIVE_STALL_MS / 60000)} 分钟）没有任何进展，已自动中止；请重发消息，新的一轮会接管。`, now(), id);
+    if (res.changes) {
+      console.warn(`[omem] 运行 ${id} 静默超时，已标记失败以释放会话通道`);
+      app.emit({ type: "run", runId: id, status: "failed" });
+    }
+    heartbeats.delete(id);
+  }
+}
+
 function kick(app: App) {
   if (!started) return;
   for (;;) {
@@ -280,6 +309,7 @@ function kick(app: App) {
     if (run(app.db, "update runs set status='running', started_at=? where id=? and status='queued'", now(), next.id).changes !== 1) continue;
     app.emit({ type: "run", runId: next.id, status: "running" });
     active[cls]++;
+    heartbeats.set(next.id, Date.now());
     const controller = new AbortController();
     controllers.set(next.id, controller);
     const r = toRun({ ...next, status: "running" });
@@ -287,7 +317,7 @@ function kick(app: App) {
       app,
       run: r,
       signal: controller.signal,
-      event: (type, data) => addRunEvent(app, r.id, type, data),
+      event: (type, data) => { heartbeats.set(r.id, Date.now()); addRunEvent(app, r.id, type, data); },
       output: (data) => setRunOutput(app, r.id, data),
     };
     handler(ctx)
@@ -326,6 +356,7 @@ function kick(app: App) {
       .finally(() => {
         active[cls]--;
         controllers.delete(r.id);
+        heartbeats.delete(r.id);
         seqs.delete(r.id);
         kick(app);
       });

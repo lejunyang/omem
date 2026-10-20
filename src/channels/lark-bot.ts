@@ -13,10 +13,11 @@ import { identitiesOf, OWNER, resolveIdentity, userName } from "../core/users.ts
 import { importFile } from "../sources/import.ts";
 import { inQuietHours } from "../core/notify.ts";
 import { appendToSource, findSourceByUri, sourceText } from "../sources/store.ts";
+import { getRun } from "../agents/runs.ts";
 import { answerFromChannel, resolveCitations } from "./common.ts";
 import { registerCodeProgress, startCodeProgress } from "./lark-code-progress.ts";
 import { startProgress } from "./lark-progress.ts";
-import { cotAvailable, cotEvent, finishCot, setCotSdk, startCot } from "./lark-cot.ts";
+import { cotAvailable, cotEvent, cotLiveFor, finishCot, setCotSdk, startCot } from "./lark-cot.ts";
 import { handleCardAction } from "./lark-actions.ts";
 import { sendLark, setLarkClient } from "./lark-send.ts";
 import { larkAppSecret } from "./lark-setup.ts";
@@ -384,19 +385,36 @@ export async function startLarkBot(app: App) {
         {
           onStart: async (id) => {
             runId = id;
-            // Native collapsible thinking bubble (message_cot) when the tenant allows it;
-            // the ordinary "处理中" card remains the fallback until the bubble proves usable.
-            if (cotAvailable()) {
-              startCot(app, id, { chatId: m.chatId, originMessageId: m.messageId, inThread: !!m.topicId });
-              const listener = (e: { type: string; runId?: string; event?: { type: string; data: unknown } }) => {
-                if (e.runId !== id || !e.event) return;
-                cotEvent(app, id, { type: e.event.type, data: e.event.data });
+            // A run can be queued behind another turn in this thread; only start the
+            // bubble/progress once it actually runs, otherwise the cards sit frozen while
+            // the user waits on a previous turn.
+            const begin = () => {
+              // Native collapsible thinking bubble (message_cot) when available; the
+              // progress card is its fallback and hides process detail once it proves live.
+              if (cotAvailable()) {
+                startCot(app, id, { chatId: m.chatId, originMessageId: m.messageId, inThread: !!m.topicId });
+                const listener = (e: { type: string; runId?: string; event?: { type: string; data: unknown } }) => {
+                  if (e.runId !== id || !e.event) return;
+                  cotEvent(app, id, { type: e.event.type, data: e.event.data });
+                  if (cotLiveFor(id)) progress?.setMinimal(true);
+                };
+                app.events.on("event", listener);
+                const t = setTimeout(() => app.events.off("event", listener), 30 * 60_000);
+                t.unref();
+              }
+              return startProgress(app, { messageId: m.messageId, inThread: !!m.topicId }, id).then((p) => { progress = p; }).catch(() => {});
+            };
+            const st = getRun(app, id).status;
+            if (st === "running") void begin();
+            else {
+              const onRun = (e: { type: string; runId?: string; status?: string }) => {
+                if (e.type === "run" && e.runId === id) {
+                  if (e.status === "running") { app.events.off("event", onRun); void begin(); }
+                  else if (e.status === "done" || e.status === "failed" || e.status === "cancelled") app.events.off("event", onRun);
+                }
               };
-              app.events.on("event", listener);
-              const t = setTimeout(() => app.events.off("event", listener), 30 * 60_000);
-              t.unref();
+              app.events.on("event", onRun);
             }
-            progress = await startProgress(app, { messageId: m.messageId, inThread: !!m.topicId }, id).catch(() => null);
           },
           onMerged: async () => {
             const { reactLark } = await import("./lark-send.ts");

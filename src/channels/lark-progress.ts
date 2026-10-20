@@ -32,7 +32,7 @@ function label(title: string) {
   return TOOL_LABEL[name] ?? title.slice(0, 40);
 }
 
-export type Progress = { messageId: string; finish(answer: string): Promise<void>; fail(message: string): Promise<void> };
+export type Progress = { messageId: string; setMinimal(v: boolean): void; finish(answer: string): Promise<void>; fail(message: string): Promise<void> };
 
 export async function startProgress(app: App, at: { messageId: string; inThread: boolean }, runId: string): Promise<Progress> {
   const started = Date.now();
@@ -41,14 +41,18 @@ export async function startProgress(app: App, at: { messageId: string; inThread:
     reaction = await reactLark(at.messageId, "OnIt");
   } catch {}
   const steps: { title: string; done: boolean; id: string }[] = [];
-  let thought = "";
   let partial = "";
   let status = "正在理解问题…";
+  // True once the native thinking bubble is rendering the process live: this
+  // card then stays minimal (no duplicated reasoning / answer preview).
+  let minimal = false;
   const render = (): CardBlock[] => {
+    if (minimal) return [{ markdown: "思考过程见上方折叠气泡，完成后这里给出结论。" }];
     const blocks: CardBlock[] = [];
     if (steps.length) blocks.push({ markdown: steps.slice(-6).map((s) => `${s.done ? "✓" : "…"} ${s.title}`).join("\n") });
     else blocks.push({ markdown: status });
-    if (thought) blocks.push({ note: thought.slice(-280).replace(/\s+/g, " ") });
+    // The model's internal reasoning no longer leaks into the card (the native
+    // bubble owns it); only the steps and a short final preview remain as a fallback.
     if (partial) blocks.push({ hr: true }, { markdown: partial.slice(-1800) });
     return blocks;
   };
@@ -63,8 +67,7 @@ export async function startProgress(app: App, at: { messageId: string; inThread:
       const s = steps.find((x) => x.id === data.id);
       if (s) s.done = data.status === "completed" || data.status === "failed";
       else steps.push({ id: data.id, title: label(String(data.title)), done: data.status === "completed" });
-    } else if (type === "thought-delta") thought += data.text ?? "";
-    else if (type === "text-delta") partial += data.text ?? "";
+    } else if (type === "text-delta") partial += data.text ?? "";
     else if (type === "status" && data?.text) status = String(data.text);
     else return;
     dirty = true;
@@ -84,6 +87,10 @@ export async function startProgress(app: App, at: { messageId: string; inThread:
   };
   return {
     messageId: sent.messageId,
+    setMinimal(v: boolean) {
+      minimal = v;
+      dirty = true;
+    },
     async finish(answer: string) {
       await close();
       const secs = Math.round((Date.now() - started) / 1000);

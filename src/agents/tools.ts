@@ -591,7 +591,7 @@ def({
     task: z.string().describe("这一轮要做什么：本人的新要求或你判断还需要推进的事，写具体"),
   }),
   handler: async (ctx, a) => {
-    const { refreshWork, queueAgentRound } = await import("./agent-work.ts");
+    const { refreshWork, queueAgentRound, MAX_AGENT_WORK_RUNS } = await import("./agent-work.ts");
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const conv = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
     const { workInConversation } = await import("./agent-work.ts");
@@ -600,7 +600,15 @@ def({
     if (!work) throw new HttpError(404, "找不到进行中的多 Agent 工作；复杂任务先用 run_agent own_topic=true 开始");
     const agent = a.agent ?? work.rounds.at(-1)?.agent;
     if (!agent) throw new HttpError(400, "说不出用哪个 Agent，先用 run_agent 交办");
-    const id = queueAgentRound(ctx.app, work, { agent, task: a.task });
+    let id: string;
+    try {
+      id = queueAgentRound(ctx.app, work, { agent, task: a.task });
+    } catch (e) {
+      if (!String((e as Error).message).includes("已达上限")) throw e;
+      // A cap is only a guard against loops, not a reason to drop the user's request:
+      // the main assistant takes over the remaining work directly in this conversation.
+      return `这项工作在独立工作会话里已循环 ${MAX_AGENT_WORK_RUNS} 轮（防失控上限）。不要再开新的工作会话；请你直接在本会话完成本人这条要求：${a.task}。需要的上下文用 read_conversation 读该工作会话，结论直接回复本人。`;
+    }
     return `已在原工作会话安排 ${agent} 的下一轮 ${id}，完成后把结论带回这里。`;
   },
 });

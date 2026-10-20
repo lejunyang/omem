@@ -36,6 +36,11 @@ type State = {
   queued: boolean;
   finish?: "done" | "error";
   settled: boolean;
+  /** RUN_STARTED/REASONING_START prologue already pushed. */
+  prologueSent: boolean;
+  /** At least one event batch was accepted: the bubble has proven usable this turn. */
+  proven: boolean;
+  settleTimer?: ReturnType<typeof setTimeout>;
   timers: ReturnType<typeof setTimeout>[];
 };
 
@@ -51,6 +56,22 @@ export function setCotSdk(c: typeof sdk) {
 }
 export function cotAvailable() {
   return !!sdk;
+}
+
+/**
+ * Whether the native bubble is actually able to render this process. It is
+ * created lazily, so before the first push succeeds we treat it as "not yet
+ * proven": callers should keep their own lightweight progress instead of
+ * assuming it works. Once a bubble has pushed at least one event, the bubble
+ * owns the process display.
+ */
+export function cotLiveFor(runId: string) {
+  const st = states.get(runId);
+  return !!st?.proven && !st.disabled && !st.settled;
+}
+export function cotWorkingFor(runId: string) {
+  const st = states.get(runId);
+  return !!st && !st.disabled && !st.settled;
 }
 
 // The AG-UI gateway takes content as a JSON-encoded STRING (an object is rejected
@@ -97,7 +118,7 @@ function reasoningId(turnId: string, i: number) {
 /** AG-UI events for entries from `from` (the prologue is included on the first push). */
 function eventsFor(st: State): any[] {
   const out: any[] = [];
-  if (st.reasoningSent.size === 0 && st.toolStarted.size === 0) {
+  if (!st.prologueSent) {
     out.push(ev("RUN_STARTED", { threadId: st.turnId, runId: st.turnId }));
     out.push(ev("REASONING_START", { messageId: reasoningId(st.turnId, 0) }));
     // A turn that starts straight into a tool needs one reasoning node to hang the tools under.
@@ -148,6 +169,7 @@ function eventsFor(st: State): any[] {
       }
     }
   });
+  if (out.length) st.prologueSent = true;
   return out;
 }
 
@@ -161,33 +183,41 @@ async function pump(app: App, runId: string, st: State) {
   if (st.pumping || st.disabled) return;
   st.pumping = true;
   try {
-    for (;;) {
-      if (!st.cotId) {
-        await createBubble(st);
-        st.sentEntries = 0;
-      }
-      if (st.sentEntries < st.entries.length || (st.finish && !st.settled)) {
-        // eventsFor diffs internally and only emits what is new (new tool START,
-        // or a previously-running tool just settling).
-        const evs = eventsFor(st);
-        if (evs.length) await append(st, evs);
-        st.sentEntries = st.entries.length;
-        if (!st.finish) break;
-        continue;
-      }
-      if (st.finish && !st.settled) {
-        const tail: any[] = [ev("REASONING_END", { messageId: reasoningId(st.turnId, 0) })];
-        if (st.finish === "done") tail.push(ev("RUN_FINISHED", { threadId: st.turnId, runId: st.turnId, status: "done" }));
-        await append(st, tail);
-        if (st.finish === "error") await api("POST", `/open-apis/im/v1/message_cot/complete/${encodeURIComponent(st.cotId!)}`, {}, { message_id: st.messageId!, reason: "error" });
-        st.settled = true;
-      }
-      break;
+    if (!st.cotId) {
+      await createBubble(st);
+      st.sentEntries = 0;
+    }
+    // 1) Send whatever entry events are new (tool STARTs, tool ENDs, reasoning nodes).
+    const evs = eventsFor(st);
+    if (evs.length) {
+      await append(st, evs);
+      st.proven = true;
+    }
+    st.sentEntries = st.entries.length;
+    // 2) Only settle once finish was requested AND every entry has been emitted
+    //    (a last tool result can arrive together with finish).
+    const allSettled = st.entries.every((e) => e.kind === "reasoning" || st.toolSettled.has(e.id));
+    if (st.finish && allSettled) {
+      const tail: any[] = [ev("REASONING_END", { messageId: reasoningId(st.turnId, 0) })];
+      if (st.finish === "done") tail.push(ev("RUN_FINISHED", { threadId: st.turnId, runId: st.turnId, status: "done" }));
+      await append(st, tail);
+      st.proven = true;
+      if (st.finish === "error") await api("POST", `/open-apis/im/v1/message_cot/complete/${encodeURIComponent(st.cotId!)}`, {}, { message_id: st.messageId!, reason: "error" });
+      st.settled = true;
+    }
+    // If finish has been requested but a tool result is still missing, the next
+    // cotEvent (result arrives) schedules another pump. Guard: a 30s fallback
+    // settles anyway so a dropped event cannot leave the bubble spinning forever.
+    if (st.finish && !st.settled && !st.settleTimer) {
+      const t = setTimeout(() => { st.settleTimer = undefined; void pump(app, runId, st); }, 30_000);
+      t.unref();
+      st.settleTimer = t;
+      st.timers.push(t);
     }
   } catch (e) {
     st.disabled = true;
-    // If the bubble was created but events cannot be pushed, the interface keeps
-    // an empty forever-spinner; best-effort close it, then stop trying globally.
+    // Bubble created but events cannot be pushed: best-effort close it, then stop
+    // for this process so we never leave more empty spinners.
     if (st.cotId) {
       try { await api("POST", `/open-apis/im/v1/message_cot/complete/${encodeURIComponent(st.cotId)}`, {}, { message_id: st.messageId!, reason: "error" }); } catch {}
     }
@@ -215,7 +245,7 @@ function schedule(app: App, runId: string, st: State, delay = 700) {
 /** Begin the bubble for a turn, anchored to the message that started it (so it lands in the topic). */
 export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean }) {
   if (!sdk || globallyDisabled || states.has(runId)) return;
-  const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: [], sentEntries: 0, toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Set(), disabled: false, pumping: false, queued: false, settled: false, timers: [] };
+  const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: [], sentEntries: 0, toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Set(), disabled: false, pumping: false, queued: false, settled: false, prologueSent: false, proven: false, timers: [] };
   states.set(runId, st);
   schedule(app, runId, st, 300);
 }

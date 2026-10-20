@@ -32,7 +32,7 @@ export type AgentWork = {
   runs: number;
 };
 
-export const MAX_AGENT_WORK_RUNS = 8;
+export const MAX_AGENT_WORK_RUNS = 20;
 
 export function workOfRun(app: App, run: Run): AgentWork | null {
   return (run.output as { agentWork?: AgentWork } | null)?.agentWork ?? null;
