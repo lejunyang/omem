@@ -15,7 +15,7 @@ import { inQuietHours } from "../core/notify.ts";
 import { appendToSource, findSourceByUri, sourceText } from "../sources/store.ts";
 import { getRun } from "../agents/runs.ts";
 import { answerFromChannel, resolveCitations } from "./common.ts";
-import { registerCodeProgress, startCodeProgress } from "./lark-code-progress.ts";
+import { registerCodeProgress } from "./lark-code-progress.ts";
 import { startProgress } from "./lark-progress.ts";
 import { cotAvailable, cotEvent, cotLiveFor, finishCot, setCotSdk, startCot } from "./lark-cot.ts";
 import { handleCardAction } from "./lark-actions.ts";

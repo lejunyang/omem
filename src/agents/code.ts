@@ -205,7 +205,7 @@ ${input.task}
   const statTextLine = results.map((r) => (multi ? `${r.space}：` : "") + (r.diffStat.split("\n").pop() ?? "")).join("\n");
   const checksLine = checked.length ? `\n检查：${checked.some((r) => r.check!.code !== 0) ? "失败" : "通过"}` : "";
   const { queueNextCodeRound, MAX_AUTO_ROUNDS } = await import("./code-chain.ts");
-  const endChain = (run.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? chain;
+  const endChain = (getRun(app, run.id).output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? chain;
   if (!approved) {
     // Keep the same delegation going: the coder resumes its session and works the reviewer's request.
     const reviewBody = review.text.trim();

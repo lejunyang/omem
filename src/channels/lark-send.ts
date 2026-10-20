@@ -160,7 +160,7 @@ export function buildCard(spec: CardSpec): Record<string, unknown> {
 
 // ---- sending ----------------------------------------------------------------------
 
-export type Target = { chatId?: string; userId?: string; replyTo?: string; inThread?: boolean };
+export type Target = { chatId?: string; userId?: string; replyTo?: string; inThread?: boolean; uuid?: string };
 export type Content =
   | { text: string }
   | { markdown: string; title?: string }
@@ -181,8 +181,8 @@ export async function sendLark(to: Target, content: Content): Promise<{ messageI
   const c = larkClient();
   const p = payload(content);
   let r;
-  if (to.replyTo) r = await c.im.message.reply({ path: { message_id: to.replyTo }, data: { ...p, reply_in_thread: !!to.inThread } });
-  else if (to.chatId) r = await c.im.message.create({ params: { receive_id_type: "chat_id" }, data: { receive_id: to.chatId, ...p } });
+  if (to.replyTo) r = await c.im.message.reply({ path: { message_id: to.replyTo }, data: { ...p, reply_in_thread: !!to.inThread, ...(to.uuid ? { uuid: to.uuid } : {}) } });
+  else if (to.chatId) r = await c.im.message.create({ params: { receive_id_type: "chat_id" }, data: { receive_id: to.chatId, ...p, ...(to.uuid ? { uuid: to.uuid } : {}) } });
   else if (to.userId) r = await c.im.message.create({ params: { receive_id_type: "open_id" }, data: { receive_id: to.userId, ...p } });
   else throw new HttpError(400, "需要 chatId、userId 或 replyTo");
   const d = check(r, "发送飞书消息");

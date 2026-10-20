@@ -195,6 +195,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 巡检（到期提醒不调模型；关注/等待有新材料时才调用） | 已实现 | `roles/heartbeat.md` |
 | 简报、做梦整理、经验与偏好回灌到后续任务 | 已实现 | `roles/brief.md`、`dreamer.md`、`runner.ts` |
 | 交办编码：worktree → 检查 → 独立评审 → 确认后应用；评审不通过自动续轮（最多 3 轮），复用同一 worktree 和编码 Agent 会话；长任务 `run_agent(own_topic=true)` 开独立工作会话（飞书话题），digester 只把结论回主会话 | 已实现，演示仓库实测 | `src/agents/code.ts`、`code-chain.ts`、`agent-work.ts` |
+| 编码进度卡片：已有话题解析真实消息锚点，原卡片跨轮更新；创建/更新失败持久记录脱敏错误、有限重试和重启恢复，显式 `retry_code_progress` 恢复；自动三轮上限后持久等待本人，手动继续可到第 4 轮及以后 | 假客户端和工具回归覆盖；真实飞书待应用后验收 | `src/channels/lark-code-progress.ts`、`src/agents/code-chain.ts`、`tools.ts` |
 | 交办可同时改多个仓库（每个仓库一个 worktree，一起应用）；改过的文件在 worktree 存在期间可检索，删除时索引一起删 | 已实现，测试覆盖（`test/code-worktrees.test.ts`）；2026-10-19；真实 Agent 跨仓库交办待验 | `src/agents/code.ts`、`src/agents/worktree-index.ts` |
 | 跨文件调用图：按导入绑定解析调用到具体定义（相对路径、index、`.js`→`.ts`、`@/` 别名、重导出、默认导出、命名空间、`this`/`self` 方法；Python 绝对/相对/包导入） | 已实现，测试覆盖；本仓库 4032 处调用中 1098 处解析到仓库内定义，其余多为标准库与对象方法 | `src/sources/callgraph.ts`、`find_symbol`、原件页“结构”栏 |
 | Go / Rust / Java / Kotlin / Swift：tree-sitter（`web-tree-sitter` 0.25 + `tree-sitter-wasms`，WebAssembly，按需加载语法）切分符号、导入和调用；按包（Go 目录与导入路径、Java/Kotlin 包与静态导入、Rust `use`/`mod`/工作区 crate、Swift 整个模块）解析，隐式 this/self、接收者、扩展、伴生对象 | 已实现，测试覆盖；真实仓库抽查：cobra 31%、ripgrep 18%、gson 22%、moshi 18%、Alamofire 20% 的调用解析到仓库内定义（其余多为对变量调用方法和标准库/测试框架）；Swift 解析较慢（约 70 ms/千行，其余语言快一个数量级） | `src/sources/treesitter.ts`、`callgraph.ts` |
@@ -226,3 +227,11 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | v1 导入 | 已实现，合成库测试 | `src/migrate-v1.ts` |
 
 尚未做：扫描件 OCR；动态派发与依赖注入的调用无法静态解析（这些仍按名称列为候选）；tsconfig 的自定义 paths 只识别 `@/`、`~/`；多租户（只有多用户的口子）；微信官方接口（只能通过 OneBot 兼容桥）。评测数字见 [evaluation.md](evaluation.md)。
+
+### 编码交办的失败与恢复
+
+发起 ask 的 `output.codeChain` 是轮次与卡片消息 ID 的主记录，同步到各轮；排下一轮前用 SQLite 写事务重新读主记录，旧自动回调不再排新轮次，手动请求遇到 queued/running 报具体运行和状态。每轮 `continueFrom` 指向首轮，`resumeSessionId` 取上一轮编码会话。自动推进最多 3 轮；到上限、无改动、失败或取消时写 `awaitingUser / waitReason`，完成结果以带运行 ID 的内部消息放回发起会话供主助手下次读上下文消化，不自动唤醒有工具权限的主助手，避免绕过轮数限制。
+
+飞书投递状态单独保存在 ask 的 `output.codeProgress`：操作阶段、失败次数、下次重试时间、脱敏错误、投递摘要指纹和租约。运行中的更新最多每 3 秒一次，同一检查点最多尝试 5 次；新轮次和最终结果有新的重试预算。重启恢复缺卡和未完成的最终更新：首次启动为从未创建成功、创建阶段重试耗尽的卡片补一次有限预算，轮询不重复补预算；明确调用 `retry_code_progress` 可重置失败预算，保留原卡片 ID。已有话题按 thread 查询真实消息，私聊按 `chat_mode=p2p` 使用普通回复；不修改原会话的 `lastMessageId`。创建带稳定 UUID；对于创建已被 API 接受但还没保存 ID 的中断，先按卡片中的交办标识查回已有卡片，查询不完整时保留失败而不重复创建。卡片最多展示最近三轮评审摘要，完整结论仍在运行记录中。没有提高通知优先级，也没有绕过通知时间偏好。
+
+编码收尾的记账通过 `trySettleCodeChain` 隔离失败：记账异常只输出运行 ID 和错误类型，保留编码本身的 done/failed/cancelled 终态及原始错误，继续发出终态事件。进度监听器与恢复扫描也隔离异常，每条链独立恢复；最终卡片已送达但内部交接消息还未写成的链仍会补记。仅在运行 done 且评审通过时清除等待状态；取消或失败即使已有通过的评审输出，也仍按实际终态显示并等待处理。显式 `retry_code_progress` 会重新验证原卡片；更新明确返回已撤回或 HTTP 404 时，清除旧卡片 ID，按交办标识对账后在原话题补建，换用下一代 UUID，避免命中已撤回卡片的创建去重。权限、限流和普通网络失败保留原卡片 ID。

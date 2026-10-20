@@ -1,3 +1,4 @@
+import { trySettleCodeChain } from "./code-chain.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
@@ -344,12 +345,14 @@ function kick(app: App) {
         // A quiet background inspection (nothing new / QUIET) stays out of the run list.
         const quiet = status === "done" && !INTERACTIVE.has(r.kind) && out && (out as { quiet?: boolean }).quiet === true ? 1 : 0;
         run(app.db, "update runs set status=?, quiet=?, finished_at=? where id=?", status, quiet, now(), r.id);
+        if (r.kind === "code") trySettleCodeChain(app, r.id);
         app.emit({ type: "run", runId: r.id, status });
       })
       .catch((error: Error) => {
         flushText(app, r.id);
         const cancelled = controller.signal.aborted || error.message === "CANCELLED";
         run(app.db, "update runs set status=?, error=?, finished_at=? where id=?", cancelled ? "cancelled" : "failed", cancelled ? null : error.message, now(), r.id);
+        if (r.kind === "code") trySettleCodeChain(app, r.id);
         if (!cancelled) addRunEvent(app, r.id, "error", { message: error.message });
         app.emit({ type: "run", runId: r.id, status: cancelled ? "cancelled" : "failed" });
       })
@@ -367,6 +370,7 @@ export function cancelRun(app: App, id: string) {
   const r = getRun(app, id);
   if (r.status === "queued") {
     run(app.db, "update runs set status='cancelled', finished_at=? where id=?", now(), id);
+    if (r.kind === "code") trySettleCodeChain(app, id);
     app.emit({ type: "run", runId: id, status: "cancelled" });
   } else controllers.get(id)?.abort();
   return getRun(app, id);

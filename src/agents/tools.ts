@@ -792,7 +792,9 @@ def({
       .filter((e) => e.type === "text")
       .map((e) => (e.data as { text: string }).text)
       .join("");
-    return `运行 ${r.id} [${r.kind}/${r.status}] ${r.title}\n输出：${truncate(JSON.stringify(r.output, null, 1), 3000)}\n${r.error ? "错误：" + r.error + "\n" : ""}最后的说明：\n${truncate(text.slice(-3000), 3000)}`;
+    const delivery = (r.output.codeChain as { askRunId?: string } | undefined)?.askRunId;
+    const progress = delivery ? getRun(ctx.app, delivery).output.codeProgress : undefined;
+    return `${progress ? `飞书进度投递：${JSON.stringify(progress)}\n` : ""}运行 ${r.id} [${r.kind}/${r.status}] ${r.title}\n输出：${truncate(JSON.stringify(r.output, null, 1), 3000)}\n${r.error ? "错误：" + r.error + "\n" : ""}最后的说明：\n${truncate(text.slice(-3000), 3000)}`;
   },
 });
 
@@ -1646,7 +1648,7 @@ def({
     task: z.string().describe("这一轮要做什么：评审意见或本人的新要求，写具体"),
   }),
   handler: async (ctx, a) => {
-    const { codeChainFor, codeChainRounds, queueNextCodeRound, setChainAwaitingUser } = await import("./code-chain.ts");
+    const { codeChainFor, codeChainRounds, queueNextCodeRound } = await import("./code-chain.ts");
     const seed = getRun(ctx.app, a.run_id);
     let askId = a.run_id;
     if (seed.kind === "code") askId = seed.parentId ?? a.run_id;
@@ -1655,11 +1657,30 @@ def({
     if (!last) throw new HttpError(400, "这不是一次交办编码任务");
     const chain = codeChainFor(ctx.app, last) ?? (last.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? null;
     if (!chain) throw new HttpError(400, "找不到这次交办的会话链");
-    const resumed = setChainAwaitingUser(ctx.app, chain, false);
+    for (const id of [last.spaceId!, ...((last.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
+    if (findThread(ctx.app, chain.conversationId)?.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能继续本人发起的编码交办");
     const sessionId = (last.output as { coderSessionId?: string }).coderSessionId;
-    const next = queueNextCodeRound(ctx.app, resumed, a.task, { resumeSessionId: sessionId });
-    if (!next) throw new HttpError(409, "上一轮还在进行或正在等本人确认，先看 read_run");
+    const next = queueNextCodeRound(ctx.app, chain, a.task, { resumeSessionId: sessionId, manual: true });
+    if (!next) throw new HttpError(409, "原交办记录不完整，无法继续；请查看 read_run");
     return `已在原交办会话安排第 ${next.chain.round} 轮 ${next.run.id}：同样的工作区和编码会话，完成后自动检查、评审并通知。`;
+  },
+});
+
+def({
+  name: "retry_code_progress",
+  description: "重试编码交办的飞书进度投递（创建或更新失败、重试耗尽时用）。不启动编码轮次，不换工作话题，不重复创建已存在的卡片。先用 read_run 检查 codeProgress。",
+  write: true,
+  schema: z.object({ run_id: z.string() }),
+  handler: async (ctx, a) => {
+    const r = getRun(ctx.app, a.run_id);
+    const chain = r.output.codeChain as import("./code-chain.ts").CodeChain | undefined;
+    if (!chain?.larkKey) throw new HttpError(400, "该运行没有飞书编码进度链");
+    const latest = getRun(ctx.app, chain.lastCodeRunId!);
+    for (const id of [latest.spaceId!, ...((latest.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
+    const thread = findThread(ctx.app, chain.conversationId);
+    if (thread?.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能恢复本人发起的编码交办");
+    const { retryCodeProgress } = await import("../channels/lark-code-progress.ts");
+    return JSON.stringify(await retryCodeProgress(ctx.app, chain.askRunId));
   },
 });
 

@@ -1,6 +1,6 @@
 ---
 description: 日常助理：回答问题、记住约定、管理事项、交办工作
-tools: [list_spaces, create_space, connect_repository, relate_spaces, search, scan, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, recall, list_items, read_item, list_item_proposals, resolve_item_proposal, repair_item_association, inspect_item_notification, read_item_repair, refresh_item_notification, notify, list_runs, read_run, list_conversations, read_conversation, remember, supersede, forget, upsert_item, create_card, save_note, import_url, delegate_code, apply_code_run, continue_code_run, continue_agent_work, list_lark_chats, set_lark_subscription, set_lark_capture_policy, set_lark_backfill, set_chat_watch, lark_send, lark_react, lark_card, lark_update_card, lark_send_file, set_learning_goal, learning_progress, list_agents, save_agent, run_agent, list_skills, read_skill, save_skill]
+tools: [list_spaces, create_space, connect_repository, relate_spaces, search, scan, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, recall, list_items, read_item, list_item_proposals, resolve_item_proposal, repair_item_association, inspect_item_notification, read_item_repair, refresh_item_notification, notify, list_runs, read_run, list_conversations, read_conversation, remember, supersede, forget, upsert_item, create_card, save_note, import_url, delegate_code, apply_code_run, continue_code_run, retry_code_progress, continue_agent_work, list_lark_chats, set_lark_subscription, set_lark_capture_policy, set_lark_backfill, set_chat_watch, lark_send, lark_react, lark_card, lark_update_card, lark_send_file, set_learning_goal, learning_progress, list_agents, save_agent, run_agent, list_skills, read_skill, save_skill]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -86,3 +86,5 @@ modes: [read-only, default, plan]
 - 处理事项进展或后台整理结果时，先 `list_item_proposals` 看后台发现的跨空间进展。读来源、核实目标确为同一具体事项后，用 `resolve_item_proposal` 应用或驳回；需要两边写权限，不因主题接近就挂到宽泛旧事项。
 - 本人明确要求修复历史错误关联时，用 `repair_item_association` 先预览，核对精确事件、原事项来源快照、通知、交互和运行，再 `apply: true`。它保留快照审计并停用旧卡片；不发消息。本人要求同步纠正原飞书卡片时，再 `refresh_item_notification` 更新原消息，失败可重试；不要另发一张卡片替代修复。
 - 通知传准确事项 id 和本次来源或事件 id，按钮指向的就是要处理的事项。来源纠正不会删除历史事件；用 `read_item_repair` 看关联维护前快照。
+
+- 编码交办飞书进度缺失时，先 `read_run` 看 `codeProgress` 的状态和脱敏错误；明确要求恢复后用 `retry_code_progress` 重试原卡片，不重建交办、不修改会话锚点。到自动三轮上限会等待本人；本人明确继续仍可用 `continue_code_run` 安排第 4 轮及以后。
