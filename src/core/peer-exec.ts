@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -371,6 +371,26 @@ export const peerCommands: Record<string, Command> = {
       if (!st) throw new HttpError(404, `library 里没有 ${a.path}`);
       if (st.isDirectory()) return readdirSync(file).sort();
       return readFileSync(file, "utf8");
+    },
+  },
+  "library-save": {
+    description: "写知识库 Git 里的档案/技能文件（只允许 _agents/<name>.md 和 _skills/<name>/ 下），自动提交。用于本人在网页之外整理 Agent 学到的内容",
+    schema: z.object({
+      path: z.string().max(300),
+      content: z.string().max(2_000_000),
+      message: z.string().max(200).default("update via peer"),
+    }),
+    run: async (app, a) => {
+      if (a.path.includes("..") || isAbsolute(a.path)) throw new HttpError(400, "path 必须是 library 内的相对路径");
+      const allowed = /^_agents\/[a-z0-9][a-z0-9-]{0,63}\.md$|^_skills\/[a-z0-9][a-z0-9-]{0,63}\/[A-Za-z0-9._/-]{1,200}$/;
+      if (!allowed.test(a.path)) throw new HttpError(400, "只允许写 _agents/<名称>.md 或 _skills/<名称>/ 下的文件");
+      const file = join(app.libraryDir, a.path);
+      if (!file.startsWith(app.libraryDir)) throw new HttpError(400, "路径越界");
+      mkdirSync(join(file, ".."), { recursive: true });
+      writeFileSync(file, a.content, "utf8");
+      return sh("git", ["-C", app.libraryDir, "add", a.path], app.libraryDir).code === 0
+        ? sh("git", ["-C", app.libraryDir, "commit", "-m", `owner: ${a.message}`, "--", a.path], app.libraryDir)
+        : { error: "git add failed" };
     },
   },
   update: {
