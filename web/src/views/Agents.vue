@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { del, get, put } from "../api";
+import { del, get, put, type Memory } from "../api";
+import MemoryCard from "../components/MemoryCard.vue";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
+import UiSelect from "../components/UiSelect.vue";
 import { confirmDialog } from "../lib/dialog";
 import { toast } from "../store";
 
 type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; tools: string[]; writes: boolean; skills: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string };
 type Skill = { name: string; description: string; status: "active" | "draft"; files: string[] };
-type AgentMemory = { id: string; kind: string; subject: string; content: string; tags?: string[]; updatedAt: string };
+type AgentMemory = Memory;
 type AttachedSkill = { name: string; description: string; status: string; body?: string };
 type SpecDetail = Omit<Spec, "skills"> & {
   body?: string;
@@ -81,6 +83,17 @@ async function toggleSkill(name: string, on: boolean) {
   } catch (e) {
     toast((e as Error).message, "error");
   }
+}
+const addSkillValue = ref<string | null>(null);
+const addableSkills = computed(() =>
+  (detail.value?.availableSkills ?? [])
+    .filter((s) => !(detail.value?.skills ?? []).some((x) => x.name === s.name))
+    .map((s) => ({ value: s.name, label: s.name, hint: s.description })),
+);
+async function onAddSkill(name: string | null) {
+  if (!name) return;
+  await toggleSkill(name, true);
+  addSkillValue.value = null;
 }
 
 const list = computed(() => (tab.value === "agents" ? agents.value : skills.value));
@@ -229,28 +242,30 @@ const current = computed(() => list.value.find((x) => x.name === selected.value)
                 {{ s.name }}
                 <button class="x" :title="s.status === 'missing' ? '技能不存在，点此移除' : '移除'" @click="toggleSkill(s.name, false)">×</button>
               </span>
-              <select class="add-skill" :value="''" @change="(e: Event) => { const sel = e.target as HTMLSelectElement; void toggleSkill(sel.value, true); sel.value = ''; }">
-                <option value="" disabled>添加技能…</option>
-                <option v-for="s in (detail.availableSkills ?? []).filter((s) => !(detail?.skills ?? []).some((x) => x.name === s.name))" :key="s.name" :value="s.name">{{ s.name }}（{{ s.description }}）</option>
-              </select>
+              <UiSelect
+                v-if="addableSkills.length"
+                v-model="addSkillValue"
+                size="sm"
+                width="220px"
+                placeholder="添加技能…"
+                :options="addableSkills"
+                @change="onAddSkill"
+              />
             </div>
             <p v-if="!(detail.skills?.length)" class="muted small empty-line">还没挂技能。教它“遇到 X 这样做”时，让助理 <code>save_skill</code> 后在这里挂上；或直接选一个已有技能。</p>
           </details>
           <details class="learn-block" open>
             <summary>专属记忆（{{ detail.memories?.length ?? 0 }}）<span class="muted small">只给这个档案用的偏好、风格和经验；共享记忆不在这里</span></summary>
-            <ul v-if="detail.memories?.length" class="mems">
-              <li v-for="m in detail.memories" :key="m.id">
-                <div class="row">
-                  <span class="badge">{{ m.kind }}</span>
-                  <strong v-if="m.subject" class="small">{{ m.subject }}</strong>
-                  <span class="spacer" />
-                  <span class="muted small">{{ new Date(m.updatedAt).toLocaleDateString() }}</span>
-                  <button class="btn ghost sm icon danger" title="撤回" @click="forgetMemory(m)"><Icon name="trash" :size="13" /></button>
-                </div>
-                <div class="small mem-text">{{ m.content }}</div>
-              </li>
-            </ul>
-            <p v-else class="muted small empty-line">还没有专属记忆。你纠正它的偏好或风格后，助理会用 <code>remember(scope="agent", agent="档案名")</code> 记在这里。</p>
+            <div v-if="detail.memories?.length" class="mems">
+              <MemoryCard
+                v-for="m in detail.memories"
+                :key="m.id"
+                :m="m"
+                compact
+                @retract="forgetMemory($event)"
+              />
+            </div>
+            <p v-else class="muted small empty-line">还没有专属记忆。你纠正它的偏好或风格后，助理会用 <code>remember(agent="档案名")</code> 记在这里。</p>
           </details>
         </div>
         <textarea v-model="raw" class="editor mono" spellcheck="false" @input="dirty = true" />
@@ -430,26 +445,8 @@ const current = computed(() => list.value.find((x) => x.name === selected.value)
   color: var(--ink-2);
   padding: 0 2px;
 }
-.add-skill {
-  font-size: 12px;
-  padding: 3px 6px;
-  max-width: 240px;
-}
 .mems {
-  list-style: none;
-  margin: 0;
-  padding: 0 12px 10px;
   display: grid;
-  gap: 8px;
-}
-.mems li {
-  border-left: 2px solid var(--line);
-  padding: 2px 0 2px 10px;
-}
-.mem-text {
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin-top: 2px;
 }
 .empty-line {
   padding: 0 12px 10px;

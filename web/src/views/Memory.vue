@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { del, get, onServerEvent, patch, post, type Memory, type MemoryQuality } from "../api";
+import MemoryCard from "../components/MemoryCard.vue";
 import Icon from "../components/Icon.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import VirtualList from "../components/VirtualList.vue";
@@ -204,34 +205,24 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
       <VirtualList :items="rows" :item-key="(r) => r.key" :estimate="96">
         <template #default="{ item: r }">
         <h2 v-if="r.kind === 'subject'" class="subject">{{ r.subject }}</h2>
-        <template v-else><div v-for="m in [r.m]" :key="m.id" class="mem" :class="m.status">
-          <div class="row head small wrap">
-            <span class="badge" :class="{ accent: m.kind === 'agreement' || m.kind === 'decision' }">{{ memoryKindLabel[m.kind] ?? m.kind }}</span>
-            <span v-if="m.status !== 'active'" class="badge warn">{{ statusLabel[m.status] }}</span>
-            <span v-if="m.createdBy === 'agent' && !m.reviewedAt && m.status === 'active'" class="badge">待复核</span>
-            <span v-else-if="m.reviewVerdict && m.createdBy === 'agent'" class="badge" :class="verdictClass(m.reviewVerdict)" :title="m.reviewNote ?? ''">{{ reviewLabel[m.reviewVerdict] ?? m.reviewVerdict }}</span>
-            <span v-if="m.agent" class="badge accent" title="只给这个 Agent 档案使用的做法或偏好">{{ m.agent }} 专用</span>
-            <span v-if="m.supersedes" class="badge">有更早版本</span>
-            <span v-for="t in m.tags ?? []" :key="t" class="tag" role="button" tabindex="0" @click="tag = t" @keydown.enter="tag = t">#{{ t }}</span>
-            <span class="muted">{{ fmtTime(m.validFrom, false) }}{{ m.validTo ? ` → ${fmtTime(m.validTo, false)}` : " 起" }}</span>
-            <span v-if="m.spaceId !== 'personal'" class="muted">· {{ m.spaceId }}</span>
-            <span v-if="m.model || m.agentProfile" class="muted" title="写入这条记忆的后端与模型">· {{ [m.agentProfile, m.model].filter(Boolean).join(" · ") }}</span>
-            <span class="spacer" />
-            <div class="actions row">
-              <button v-if="m.supersedes || m.supersededBy" class="btn ghost sm" @click="openCitation({ kind: 'memory', id: m.id }, true)"><Icon name="history" :size="14" />演变</button>
-              <button v-if="m.sourceRefs.length" class="btn ghost sm" @click="openCitation({ kind: 'memory', id: m.id }, true)"><Icon name="quote" :size="14" />依据</button>
-              <button v-if="m.status === 'active'" class="btn ghost sm" @click="editTags(m)">标签</button>
-              <button v-if="m.status === 'active'" class="btn ghost sm" @click="startEdit(m)"><Icon name="edit" :size="14" />更正</button>
-              <button v-if="m.status === 'active'" class="btn ghost sm icon" title="撤回" aria-label="撤回" @click="retract(m)"><Icon name="trash" :size="14" /></button>
+        <MemoryCard
+          v-else
+          :key="r.m.id"
+          :m="r.m"
+          @tag="tag = $event"
+          @history="openCitation({ kind: 'memory', id: $event.id }, true)"
+          @sources="openCitation({ kind: 'memory', id: $event.id }, true)"
+          @tags="editTags($event)"
+          @edit="startEdit($event)"
+          @retract="retract($event)"
+        >
+          <template v-if="editing === r.m.id" #editor>
+            <div class="edit">
+              <textarea v-model="editText" class="textarea" rows="2" />
+              <div class="row"><span class="muted small">保存后旧内容标记为“已被更正”。</span><span class="spacer" /><button class="btn sm" @click="editing = null">取消</button><button class="btn primary sm" @click="supersede(r.m)">保存更正</button></div>
             </div>
-          </div>
-          <div v-if="editing === m.id" class="edit">
-            <textarea v-model="editText" class="textarea" rows="2" />
-            <div class="row"><span class="muted small">保存后旧内容标记为“已被更正”。</span><span class="spacer" /><button class="btn sm" @click="editing = null">取消</button><button class="btn primary sm" @click="supersede(m)">保存更正</button></div>
-          </div>
-          <p v-else class="content">{{ m.content }}</p>
-          <p v-if="m.reviewNote && m.reviewVerdict && m.reviewVerdict !== 'keep'" class="note small muted">复核：{{ m.reviewNote }}</p>
-        </div></template>
+          </template>
+        </MemoryCard>
         </template>
       </VirtualList>
     </template>

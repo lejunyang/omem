@@ -353,6 +353,26 @@ export const peerCommands: Record<string, Command> = {
       return sh("git", ["-C", root, ...args], root);
     },
   },
+  "library-file": {
+    description: "只读查看知识库 Git（library）里的档案/技能文件，或列出目录；用来核对 Agent 学到了什么",
+    schema: z.object({
+      /** Relative path inside library, e.g. _agents/issue-investigator.md */
+      path: z.string().max(300),
+      /** Read git history for the file instead of its content. */
+      log: z.boolean().default(false),
+      n: z.number().int().min(1).max(50).default(10),
+    }),
+    run: async (app, a) => {
+      if (a.path.includes("..") || isAbsolute(a.path)) throw new HttpError(400, "path 必须是 library 内的相对路径");
+      const file = join(app.libraryDir, a.path);
+      if (!file.startsWith(app.libraryDir)) throw new HttpError(400, "路径越界");
+      if (a.log) return sh("git", ["-C", app.libraryDir, "log", `-${a.n}`, "--format=%h %an %cI %s", "--", a.path], app.libraryDir);
+      const st = statSync(file, { throwIfNoEntry: false });
+      if (!st) throw new HttpError(404, `library 里没有 ${a.path}`);
+      if (st.isDirectory()) return readdirSync(file).sort();
+      return readFileSync(file, "utf8");
+    },
+  },
   update: {
     description: "部署：scripts/upgrade.ts（git pull --ff-only、pnpm install、构建），然后重启服务",
     schema: z.object({ restart: z.boolean().default(true), global: z.boolean().default(false) }),

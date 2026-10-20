@@ -819,9 +819,9 @@ def({
     source_refs: refs,
     valid_from: z.string().optional().describe("ISO 时间，事实开始生效的时间（不填为现在）"),
     tags: z.array(z.string()).optional().describe("可选标签，如项目名、主题，便于按标签筛选"),
-    scope: z.enum(["shared", "agent"]).optional().describe("agent：只给某个 Agent 档案自己用的做法/偏好（默认：档案写的 experience/preference 为 agent，其余 shared）"),
-    /** Target spec for an agent-scoped memory: the main assistant names the agent it is teaching; a run inside the spec defaults to itself. */
-    agent: z.string().optional().describe("scope=agent 时的目标档案名；主助手教某个档案时填它的名字，档案自己运行时不填即指自己"),
+    scope: z.enum(["shared", "agent"]).optional().describe("agent：这条经验/偏好只属于当前正在运行的 Agent 档案自己（不能用来指定别的档案；档案内写 experience/preference 默认即 agent）；shared：所有档案共享"),
+    /** A specific spec to teach, used by the main assistant which has no spec of its own. */
+    agent: z.string().optional().describe("主助手教某个指定档案时填该档案名（档案必须存在）；正在档案内运行时不要填，scope=agent 即指当前档案"),
     space: z.string().optional(),
   }),
   handler: (ctx, a) => {
