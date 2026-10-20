@@ -58,8 +58,12 @@ const attr = (tag: string, name: string) => new RegExp(`${name}="([^"]*)"`).exec
  * the shared renderer (marked + DOMPurify) understands: mentions, images (downloaded ones
  * point at the stored file), files, audio/video, cards, shared calendars, folders.
  */
-export function larkToMarkdown(content: string, resources: ChatMsg["resources"], mentions: ChatMsg["mentions"] = []): string {
+export function larkToMarkdown(content: string, resources: ChatMsg["resources"], mentions: ChatMsg["mentions"] = [], messageId?: string): string {
   let s = content;
+  // Not downloaded at capture time (older lines, chats read before resources were kept):
+  // the server fetches it on first view.
+  const lazy = (key: string) => (messageId && /^om_/.test(messageId) ? `/api/lark/messages/${messageId}/resources/${key}` : null);
+  const resUrl = (key: string) => resources[key]?.url ?? lazy(key);
   // @名字 → the name plus the email, so same-named people can be told apart.
   for (const p of mentions) {
     if (!p.email || !p.name) continue;
@@ -67,7 +71,11 @@ export function larkToMarkdown(content: string, resources: ChatMsg["resources"],
     s = s.replace(new RegExp(`@${esc}(?![\\w(])`, "g"), `<span class="at" title="${escapeHtml(p.email)}">@${escapeHtml(p.name)}<span class="at-email">${escapeHtml(p.email)}</span></span>`);
   }
   s = s.replace(/<at [^>]*?(?:user_id|id)="([^"]*)"[^>]*>([^<]*)<\/at>/g, (_, id, name) => `<span class="at">@${escapeHtml(name || (id === "all" ? "所有人" : id))}</span>`);
-  s = s.replace(/!\[([^\]]*)\]\(((?:img|file)_[\w-]+)\)/g, (_, alt, key) => (resources[key]?.url ? `![${alt || "图片"}](${resources[key].url})` : `<span class="res">[图片]</span>`));
+  // Images: `![Image](img_…)` inside posts, `[Image: img_…]` for an image message.
+  s = s.replace(/!\[([^\]]*)\]\(((?:img|file)_[\w-]+)\)|\[Image: ((?:img|file)_[\w-]+)\]/g, (_, alt, k1, k2) => {
+    const url = resUrl(k1 ?? k2);
+    return url ? `![${alt && alt !== "Image" ? alt : "图片"}](${url})` : `<span class="res">[图片]</span>`;
+  });
   s = s.replace(/<card title="([^"]*)">\n?([\s\S]*?)(?:<\/card>|$)/g, (_, title, body) => `<div class="lark-card"><div class="lark-card-title">${escapeHtml(title)}</div>\n\n${body.trim()}\n\n</div>\n`);
   s = s.replace(/<card>\n?([\s\S]*?)(?:<\/card>|$)/g, (_, body) => `<div class="lark-card">\n\n${body.trim()}\n\n</div>\n`);
   s = s.replace(/<folder ([^>]*?)\/?>(?:[\s\S]*?<\/folder>)?/g, (tag) => `<span class="res">📁 ${escapeHtml(attr(tag, "name") || "文件夹")}</span>`);
@@ -75,7 +83,7 @@ export function larkToMarkdown(content: string, resources: ChatMsg["resources"],
     const key = attr(rest, "key");
     const name = attr(rest, "name") || resources[key]?.name;
     const label = kind === "audio" ? `🎙 语音${attr(rest, "duration") ? " " + attr(rest, "duration") : ""}` : kind === "video" || kind === "media" ? `🎬 ${escapeHtml(name || "视频")}` : `📎 ${escapeHtml(name || "文件")}`;
-    const url = resources[key]?.url;
+    const url = key ? resUrl(key) : null;
     return url ? `<a class="res" href="${url}" target="_blank">${label}</a>` : `<span class="res">${label}</span>`;
   });
   s = s.replace(/<calendar_share [^>]*>/g, '<span class="res">📅 日程分享</span>');

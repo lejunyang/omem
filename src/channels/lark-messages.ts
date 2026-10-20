@@ -395,3 +395,77 @@ export function sourceMessages(app: App, sourceId: string) {
   for (const q of Object.values(quoted)) q.content = withoutOpenIds(q.content);
   return { messages: views, quoted };
 }
+
+// ---- resources on demand ---------------------------------------------------------------
+
+/**
+ * One image or file of a message, downloaded when the web first shows it. Lines captured before
+ * resources were downloaded (or before rows were kept) carry only the key; the owner's lark-cli
+ * reads it, the bot is the fallback for chats it is in. The stored file is remembered on the
+ * message row, or in kv when there is no row.
+ */
+const pendingResources = new Map<string, Promise<string | null>>();
+/** Keys that could not be read recently: a broken image is not fetched again on every render. */
+const failedResources = new Map<string, number>();
+export function messageResourceFile(app: App, messageId: string, key: string): Promise<string | null> {
+  const cacheKey = `${messageId}/${key}`;
+  const known = knownResourceFile(app, messageId, key);
+  if (known) return Promise.resolve(known);
+  if ((failedResources.get(cacheKey) ?? 0) > Date.now() - 10 * 60_000) return Promise.resolve(null);
+  let p = pendingResources.get(cacheKey);
+  if (!p) {
+    p = downloadResource(app, messageId, key)
+      .then((f) => (f ? f : (failedResources.set(cacheKey, Date.now()), null)))
+      .finally(() => pendingResources.delete(cacheKey));
+    pendingResources.set(cacheKey, p);
+  }
+  return p;
+}
+
+function knownResourceFile(app: App, messageId: string, key: string): string | null {
+  const row = one<{ resources: string }>(app.db, "select resources from lark_messages where message_id = ?", messageId);
+  const fromRow = row ? json<Record<string, ResourceRef>>(row.resources, {})[key]?.file : undefined;
+  if (fromRow && existsSync(join(app.filesDir, fromRow))) return fromRow;
+  const kv = one<{ value: string }>(app.db, "select value from kv where key = ?", `lark_res:${messageId}/${key}`)?.value;
+  return kv && existsSync(join(app.filesDir, kv)) ? kv : null;
+}
+
+async function downloadResource(app: App, messageId: string, key: string): Promise<string | null> {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const dir = await mkdtemp(join(tmpdir(), "omem-res-"));
+  try {
+    let file: string | null = null;
+    try {
+      const v = await larkCli(["im", "+messages-mget", "--message-ids", messageId, "--download-resources", "--as", "user", "--format", "json"], 120_000, dir);
+      const res = ((v.data?.messages ?? v.data?.items ?? []) as LarkMessage[]).flatMap((m) => m.resources ?? []).find((r) => r.key === key && !r.error && r.local_path);
+      if (res?.local_path) {
+        const path = existsSync(res.local_path) ? res.local_path : join(dir, res.local_path);
+        if (existsSync(path)) file = keepOriginal(app, withExtension(path));
+      }
+    } catch {}
+    if (!file) {
+      // The bot reads resources of messages in chats it is a member of.
+      const { larkClient } = await import("./lark-send.ts");
+      try {
+        const res = await larkClient().im.messageResource.get({ path: { message_id: messageId, file_key: key }, params: { type: key.startsWith("img_") ? "image" : "file" } });
+        const target = join(dir, key.replace(/[^\w-]/g, "_"));
+        await res.writeFile(target);
+        file = keepOriginal(app, withExtension(target));
+      } catch {}
+    }
+    if (!file) {
+      console.warn(`[omem] 读取飞书消息资源失败：${messageId}/${key}`);
+      return null;
+    }
+    const row = one<{ resources: string }>(app.db, "select resources from lark_messages where message_id = ?", messageId);
+    if (row) {
+      const refs = json<Record<string, ResourceRef>>(row.resources, {});
+      refs[key] = { ...(refs[key] ?? { type: key.startsWith("img_") ? "image" : "file" }), file };
+      run(app.db, "update lark_messages set resources = ? where message_id = ?", JSON.stringify(refs), messageId);
+    } else run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", `lark_res:${messageId}/${key}`, file);
+    return file;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}

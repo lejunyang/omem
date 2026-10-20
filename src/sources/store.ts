@@ -214,6 +214,23 @@ export function listSources(app: App, opts: { spaceId?: string; kind?: string; q
   return { total, sources: rows.map((r) => ({ ...toSource(r), lines: r.line_count })) };
 }
 
+/**
+ * Every path of a space at once, for the directory tree of a repository: a tree built from one
+ * page is wrong (folder counts, missing folders), and paging a collapsed tree never scrolls.
+ * Only what the tree shows, no line counts (those scan every text).
+ */
+export function listSourcePaths(app: App, opts: { spaceId: string; kind?: string; q?: string }) {
+  const where = ["space_id = ?", "deleted_at is null"];
+  const params: string[] = [opts.spaceId];
+  if (opts.kind) where.push("kind = ?"), params.push(opts.kind);
+  if (opts.q) where.push("(title like ? or uri like ?)"), params.push(`%${opts.q}%`, `%${opts.q}%`);
+  return all<{ id: string; kind: string; uri: string; title: string; updatedAt: string }>(
+    app.db,
+    `select id, kind, uri, title, updated_at as updatedAt from sources where ${where.join(" and ")} order by uri limit 200000`,
+    ...params,
+  );
+}
+
 export function sourceOutline(app: App, id: string) {
   const symbols = all<{ name: string; qname: string; kind: string; line_start: number; line_end: number; signature: string; exported: number }>(
     app.db,

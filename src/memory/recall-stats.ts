@@ -24,10 +24,10 @@ export function recordRecalls(app: App, ids: string[], ctx: { runId: string | nu
 }
 
 /** A run "used" a memory when it cited it or wrote it into an item/page/message/run output. */
-export function markUsedRuns(app: App, memoryIds: string[]) {
+export function markUsed(app: App, runId: string, memoryIds: string[]) {
   if (!memoryIds.length) return;
   const placeholders = memoryIds.map(() => "?").join(",");
-  run(app.db, `update memory_recalls set used = 1 where used = 0 and memory_id in (${placeholders})`, ...memoryIds);
+  run(app.db, `update memory_recalls set used = 1 where run_id = ? and used = 0 and memory_id in (${placeholders})`, runId, ...memoryIds);
 }
 
 export type MemoryRecallStats = {

@@ -1,6 +1,6 @@
 ---
 description: 定期检查关注事项与到期提醒，只在本人真需要时通知；能自己查清楚的先查清楚再说
-tools: [search, scan, read_source, list_sources, read_page, recall, list_items, read_item, read_conversation, list_conversations, upsert_item, notify, run_agent, continue_agent_work]
+tools: [search, scan, read_source, list_sources, read_page, recall, list_items, read_item, read_conversation, list_conversations, upsert_item, notify, ignore_notification_rule, run_agent, continue_agent_work]
 writes: false
 modes: [read-only, default, plan]
 ---

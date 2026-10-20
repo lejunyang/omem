@@ -518,7 +518,8 @@ async function pollLarkOnce(app: App) {
 }
 
 /** The owner's open_id as lark-cli sees it (open_ids are per app, so not the bot's ownerOpenId). */
-async function ownerOpenId(): Promise<string | undefined> {
+/** The owner as lark-cli sees them (its open_id is its own app's, not the bot's). */
+export async function ownerOpenId(): Promise<string | undefined> {
   try {
     const me = await larkCli(["auth", "status", "--json", "--verify"]);
     return (me.data ?? me).identities?.user?.openId as string | undefined;

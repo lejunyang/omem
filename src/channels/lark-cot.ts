@@ -24,13 +24,13 @@ type State = {
   cotId?: string;
   messageId?: string;
   entries: Entry[];
-  sentEntries: number;
   /** toolCallIds whose START (+ARGS) has already been pushed */
   toolStarted: Set<string>;
   /** toolCallIds whose END+RESULT has already been pushed */
   toolSettled: Set<string>;
-  /** reasoning ids already pushed (in case new entries interleave) */
-  reasoningSent: Set<string>;
+  /** Reasoning nodes: how much of each text has been pushed, and which are closed. */
+  reasoningSent: Map<string, number>;
+  reasoningClosed: Set<string>;
   disabled: boolean;
   pumping: boolean;
   queued: boolean;
@@ -68,10 +68,6 @@ export function cotAvailable() {
 export function cotLiveFor(runId: string) {
   const st = states.get(runId);
   return !!st?.proven && !st.disabled && !st.settled;
-}
-export function cotWorkingFor(runId: string) {
-  const st = states.get(runId);
-  return !!st && !st.disabled && !st.settled;
 }
 
 // The AG-UI gateway takes content as a JSON-encoded STRING (an object is rejected
@@ -133,12 +129,17 @@ function eventsFor(st: State): any[] {
   // duplicate events across pumps.
   st.entries.forEach((e, idx) => {
     if (e.kind === "reasoning") {
+      // Text keeps streaming into the last node: push what is new, close it once something
+      // follows it (or the turn ends).
       const mid = reasoningId(st.turnId, idx);
-      if (!st.reasoningSent.has(mid)) {
-        out.push(ev("REASONING_MESSAGE_START", { messageId: mid, role: "reasoning" }));
-        out.push(ev("REASONING_MESSAGE_CONTENT", { messageId: mid, delta: e.text }));
+      if (st.reasoningClosed.has(mid)) return;
+      const sent = st.reasoningSent.get(mid);
+      if (sent === undefined) out.push(ev("REASONING_MESSAGE_START", { messageId: mid, role: "reasoning" }));
+      if (e.text.length > (sent ?? 0)) out.push(ev("REASONING_MESSAGE_CONTENT", { messageId: mid, delta: e.text.slice(sent ?? 0) }));
+      st.reasoningSent.set(mid, e.text.length);
+      if (idx < st.entries.length - 1 || st.finish) {
         out.push(ev("REASONING_MESSAGE_END", { messageId: mid }));
-        st.reasoningSent.add(mid);
+        st.reasoningClosed.add(mid);
       }
     } else {
       const settled = e.status === "done" || e.status === "failed";
@@ -183,17 +184,13 @@ async function pump(app: App, runId: string, st: State) {
   if (st.pumping || st.disabled) return;
   st.pumping = true;
   try {
-    if (!st.cotId) {
-      await createBubble(st);
-      st.sentEntries = 0;
-    }
+    if (!st.cotId) await createBubble(st);
     // 1) Send whatever entry events are new (tool STARTs, tool ENDs, reasoning nodes).
     const evs = eventsFor(st);
     if (evs.length) {
       await append(st, evs);
       st.proven = true;
     }
-    st.sentEntries = st.entries.length;
     // 2) Only settle once finish was requested AND every entry has been emitted
     //    (a last tool result can arrive together with finish).
     const allSettled = st.entries.every((e) => e.kind === "reasoning" || st.toolSettled.has(e.id));
@@ -245,7 +242,7 @@ function schedule(app: App, runId: string, st: State, delay = 700) {
 /** Begin the bubble for a turn, anchored to the message that started it (so it lands in the topic). */
 export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean }) {
   if (!sdk || globallyDisabled || states.has(runId)) return;
-  const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: [], sentEntries: 0, toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Set(), disabled: false, pumping: false, queued: false, settled: false, prologueSent: false, proven: false, timers: [] };
+  const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, settled: false, prologueSent: false, proven: false, timers: [] };
   states.set(runId, st);
   schedule(app, runId, st, 300);
 }

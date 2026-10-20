@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { del, get, post, type Source } from "../api";
 import ChatView from "../components/ChatView.vue";
@@ -40,16 +40,39 @@ const id = computed(() => route.params.id as string | undefined);
 const hl = computed(() => (route.query.from ? { from: Number(route.query.from), to: Number(route.query.to ?? route.query.from) } : null));
 
 let loadSeq = 0;
+const itemsEl = ref<HTMLElement | null>(null);
 async function load() {
   const seq = ++loadSeq;
   listLoading.value = true;
   try {
+    // A repository is shown as a tree: it needs every path at once (a page of a collapsed tree
+    // has wrong folder counts and nothing to scroll). The path list is light, no line counts.
+    if (space.value?.kind === "repo") {
+      const p = new URLSearchParams({ space: state.space });
+      if (q.value) p.set("q", q.value);
+      if (kind.value) p.set("kind", kind.value);
+      const paths = await get<Source[]>(`/api/sources/paths?${p}`);
+      if (seq !== loadSeq) return;
+      list.value = paths;
+      total.value = paths.length;
+      return;
+    }
     const r = await loadPage(0);
     if (seq !== loadSeq) return;
     list.value = r.sources;
     total.value = r.total;
   } finally {
     if (seq === loadSeq) listLoading.value = false;
+  }
+  void fillScreen();
+}
+/** Keep loading while the list does not fill its column: there is nothing to scroll yet. */
+async function fillScreen() {
+  await nextTick();
+  const el = itemsEl.value;
+  if (el && list.value.length < total.value && el.scrollHeight - el.clientHeight < 500) {
+    await loadMore();
+    void fillScreen();
   }
 }
 async function loadPage(offset: number) {
@@ -223,7 +246,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <button v-for="k in ['', 'doc', 'code', 'chat', 'note', 'web', 'image', 'conversation']" :key="k" class="kind" :class="{ on: kind === k }" @click="kind = k">{{ { "": "全部", doc: "文档", code: "代码", chat: "聊天", note: "笔记", web: "网页", image: "图片", conversation: "对话" }[k] }}</button>
         </div>
       </div>
-      <div class="items" @scroll.passive="onListScroll">
+      <div ref="itemsEl" class="items" @scroll.passive="onListScroll">
         <Skeleton v-if="listLoading && !list.length" :rows="8" />
         <VirtualList v-else-if="isTree" :items="tree" :item-key="(r) => (r.kind === 'dir' ? `d:${r.path}` : r.source.id)" :estimate="28">
           <template #default="{ item: r }">
@@ -239,7 +262,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <template #default="{ item: s }">
             <router-link :to="`/sources/${s.id}`" class="row-btn flat" :class="{ on: s.id === id }">
               <Icon :name="kindIcon[s.kind] ?? 'file'" :size="15" />
-              <div class="grow"><div class="ellipsis">{{ s.title }}</div><div class="muted small">{{ relTime(s.updatedAt) }} · {{ s.lines }} 行</div></div>
+              <div class="grow"><div class="ellipsis">{{ s.title }}</div><div class="muted small">{{ relTime(s.updatedAt) }}<template v-if="s.lines !== undefined"> · {{ s.lines }} 行</template></div></div>
             </router-link>
           </template>
         </VirtualList>
@@ -247,8 +270,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <p>这个空间还没有原件。</p>
           <button class="btn sm" @click="state.capture = true"><Icon name="plus" :size="14" />保存材料</button>
         </div>
-        <div v-else-if="loadingMore" class="muted small pad center">加载中…</div>
-        <div v-else-if="list.length < total" class="muted small pad center">还有 {{ total - list.length }} 份，向下滚动加载</div>
+        <div v-else-if="loadingMore" class="list-foot">加载中…</div>
       </div>
     </aside>
 

@@ -25,13 +25,6 @@ export async function channelAllows(channel: string, n: Notification) {
   return g ? g(n) : true;
 }
 
-/** Item nudge policy shared by roles and reminder delivery. */
-export function notifyPolicy(app: App) {
-  return app.config.notify;
-}
-export function isUrgent(n: Notification) {
-  return n.urgency === "urgent";
-}
 export function inQuietHours(app: App, at = new Date()) {
   const h = at.getHours();
   const { quietStart, quietEnd } = app.config.notify;
@@ -72,7 +65,7 @@ export function notify(
 ) {
   const userId = input.userId ?? "owner";
   let sourceRefs = input.sourceRefs ?? [];
-if (input.entityId) {
+  if (input.entityId) {
     const item = getItem(app, input.entityId);
     if (item.userId !== userId || !canWrite(app, userId, item.spaceId)) throw new HttpError(403, "不能为此用户通知该事项");
     const event = input.eventId === undefined

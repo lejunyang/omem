@@ -330,8 +330,8 @@ function kick(app: App) {
         try {
           const recalled = all<{ memory_id: string }>(app.db, "select distinct memory_id from memory_recalls where run_id = ? and used = 0", r.id).map((x) => x.memory_id);
           if (recalled.length) {
-            void import("../memory/recall-stats.ts").then(({ usedMemoryIds, markUsedRuns }) => {
-              markUsedRuns(app, usedMemoryIds(app, r.id, recalled));
+            void import("../memory/recall-stats.ts").then(({ usedMemoryIds, markUsed }) => {
+              markUsed(app, r.id, usedMemoryIds(app, r.id, recalled));
             });
           }
         } catch {}

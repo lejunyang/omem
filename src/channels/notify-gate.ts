@@ -1,6 +1,6 @@
 import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
-import { unreadMessageIds } from "./lark-read.ts";
+import { readMessageIds } from "./lark-read.ts";
 import { larkCli } from "./lark-cli.ts";
 
 /**
@@ -15,7 +15,7 @@ import { larkCli } from "./lark-cli.ts";
  * 2. the owner reacted to one of them (OK/DONE/… — answers without typing);
  * 3. the owner replied in the same chat/topic after the triggering message.
  *
- * Unknown (deleted/uncaptured) messages count as unread and do not suppress.
+ * Unknown read state (deleted/uncaptured messages, lark-cli unavailable) does not suppress.
  */
 export type NotificationLike = {
   sourceRefs?: string[];
@@ -25,13 +25,14 @@ export type NotificationLike = {
 
 type ChatLine = { sourceId: string; chatId: string; topicId: string | null; messageId: string | null; atMs: number; self: boolean };
 
-const LINE_RE = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})(?:[^]]*?话题 (omt_[\w-]+))?\]\s*(.*?):\s*[\s\S]*?\((om|omt)_([\w-]+)\)\s*$/;
+const LINE_RE = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})(?:[^\]]*?话题 (omt_[\w-]+))?\]\s*(.*?):\s*[\s\S]*?\(om_([\w-]+)\)\s*$/;
 
 function parseChatLine(sourceId: string, chatId: string, line: string): ChatLine | null {
   const m = LINE_RE.exec(line.trim());
   if (!m) return null;
-  const [, ymdhm, topic, sender, , , mid] = m;
-  const atMs = Date.parse(ymdhm.replace(" ", "T") + "+08:00");
+  const [, ymdhm, topic, sender, mid] = m;
+  // Chat lines are written in UTC (lark-messages fmtTime).
+  const atMs = Date.parse(ymdhm.replace(" ", "T") + ":00Z");
   if (Number.isNaN(atMs)) return null;
   return { sourceId, chatId, topicId: topic ?? null, self: /（本人）/.test(sender), messageId: mid ? `om_${mid}` : null, atMs };
 }
@@ -70,8 +71,8 @@ export async function ownerAlreadyHandled(app: App, n: NotificationLike): Promis
   // Read status + reactions require concrete trigger message ids.
   if (!triggers.length) return false;
   const ids = triggers.map((h) => h.messageId).filter((x): x is string => !!x);
-  const unread = ids.length ? await unreadMessageIds(app, ids) : new Set<string>();
-  if (ids.length && triggers.every((h) => h.messageId && !unread.has(h.messageId))) return true;
+  const read = ids.length ? await readMessageIds(app, ids) : new Set<string>();
+  if (ids.length && triggers.every((h) => h.messageId && read.has(h.messageId))) return true;
   for (const h of triggers) {
     if (h.messageId && (await ownerReacted(app, h.messageId))) return true;
   }
@@ -86,8 +87,11 @@ function chatOfRef(app: App, ref: string): string | null {
   return row && row.kind === "chat" && row.uri.startsWith("lark:oc_") ? row.uri.slice("lark:".length) : null;
 }
 
+let cliOwner: { at: number; id: string | undefined } | null = null;
 async function ownerReacted(app: App, messageId: string): Promise<boolean> {
-  const owner = (app.config.lark as { ownerOpenId?: string } | undefined)?.ownerOpenId;
+  // Reactions are read with lark-cli, whose ids belong to its own app: compare with the owner as it sees them.
+  if (!cliOwner || Date.now() - cliOwner.at > 3600_000) cliOwner = { at: Date.now(), id: await (await import("./lark-personal.ts")).ownerOpenId() };
+  const owner = cliOwner.id;
   if (!owner) return false;
   try {
     const v = await larkCli(["im", "+messages-mget", "--message-ids", messageId, "--as", "user", "--format", "json"], 30_000);

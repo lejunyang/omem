@@ -292,9 +292,7 @@ export const configSchema = z.object({
    * - quiet hours: nothing outside urgent/overdue 22:00–09:00 local;
    * - onlyUnread: when the triggering Feishu message is known to be read by the owner, skip it;
    * - firstNudgeDelayMinutes: grace period for a normal, non-overdue item's first
-   *   nudge — give the owner time to handle it in their own rhythm; urgent/overdue/scheduled bypass;
-   * - proactivelyInvestigate: the heartbeat may answer a question it can answer itself and
-   *   open the discussion as a topic with the findings.
+   *   nudge — give the owner time to handle it in their own rhythm; urgent/overdue/scheduled bypass.
    */
   notify: z
     .object({
@@ -302,9 +300,8 @@ export const configSchema = z.object({
       firstNudgeDelayMinutes: z.number().int().min(0).default(30),
       quietStart: z.number().int().min(0).max(23).default(22),
       quietEnd: z.number().int().min(0).max(23).default(9),
-      proactivelyInvestigate: z.boolean().default(true),
     })
-    .default({ onlyUnread: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9, proactivelyInvestigate: true }),
+    .default({ onlyUnread: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9 }),
   /** OneBot v11 forward WebSocket: QQ (NapCat / LLOneBot / Lagrange) and compatible WeChat bridges. */
   onebot: z
     .object({

@@ -113,6 +113,19 @@ const diffs = computed(() =>
   })),
 );
 const fileCount = computed(() => diffs.value.reduce((n, d) => n + d.files.length, 0));
+// Diffs start folded (a large change would bury everything below); a file's lines render only once opened.
+const openDiffs = ref(new Set<string>());
+watch(id, () => (openDiffs.value = new Set()));
+function onDiffToggle(key: string, e: Event) {
+  const open = (e.target as HTMLDetailsElement).open;
+  if (open === openDiffs.value.has(key)) return;
+  const next = new Set(openDiffs.value);
+  open ? next.add(key) : next.delete(key);
+  openDiffs.value = next;
+}
+function toggleAllDiffs() {
+  openDiffs.value = openDiffs.value.size ? new Set() : new Set(diffs.value.flatMap((d) => d.files.map((f) => `${d.space}:${f.name}`)));
+}
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 type Check = { command: string; code: number; output: string };
 const checks = computed<{ space: string; check: Check }[]>(() => {
@@ -181,8 +194,8 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
           </template>
         </VirtualList>
         <div v-if="!runs.length && !listLoading" class="muted small pad">还没有运行记录。</div>
-        <div v-else-if="loadingMore" class="muted small pad center">加载中…</div>
-        <div v-else-if="runs.length >= total" class="muted small pad center">共 {{ total }} 条</div>
+        <div v-else-if="loadingMore" class="list-foot">加载中…</div>
+        <div v-else-if="runs.length >= total" class="list-foot">共 {{ total }} 条</div>
       </div>
     </aside>
     <main class="detail">
@@ -276,13 +289,13 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
         </section>
 
         <section v-if="fileCount" class="block">
-          <div class="section-title">改动 · {{ diffs.length > 1 ? `${diffs.length} 个仓库，` : "" }}{{ fileCount }} 个文件</div>
+          <div class="section-title row">改动 · {{ diffs.length > 1 ? `${diffs.length} 个仓库，` : "" }}{{ fileCount }} 个文件<span class="spacer" /><button class="btn ghost sm" @click="toggleAllDiffs">{{ openDiffs.size ? "全部收起" : "全部展开" }}</button></div>
           <p v-if="out.indexedSpaces?.length && !out.appliedAt && !out.discardedAt" class="muted small">应用或丢弃之前，改过的文件可以检索（空间 {{ out.indexedSpaces.join("、") }}）；之后连同 worktree 一起删除。</p>
           <template v-for="d in diffs" :key="d.space">
           <div v-if="diffs.length > 1" class="repo-title">{{ spaceName(d.space) }}</div>
-          <details v-for="f in d.files" :key="f.name" class="file" open>
+          <details v-for="f in d.files" :key="f.name" class="file" :open="openDiffs.has(`${d.space}:${f.name}`)" @toggle="onDiffToggle(`${d.space}:${f.name}`, $event)">
             <summary class="mono small"><span>{{ f.name }}</span><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span></summary>
-            <pre class="diff"><code v-for="(l, i) in f.lines" :key="i" :class="l.startsWith('+') ? 'a' : l.startsWith('-') ? 'r' : l.startsWith('@@') ? 'h' : ''">{{ l }}
+            <pre v-if="openDiffs.has(`${d.space}:${f.name}`)" class="diff"><code v-for="(l, i) in f.lines" :key="i" :class="l.startsWith('+') ? 'a' : l.startsWith('-') ? 'r' : l.startsWith('@@') ? 'h' : ''">{{ l }}
 </code></pre>
           </details>
           </template>

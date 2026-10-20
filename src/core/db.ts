@@ -518,6 +518,16 @@ const migrations: string[] = [
   );
   create index memory_recalls_mem on memory_recalls(memory_id, at);
   `,
+  // Data fixes: a run that used a memory marked every earlier recall of it as used too, so
+  // recompute "used" per run; agent runs stored their whole narration a second time (fullText).
+  `
+  update memory_recalls set used = case when run_id is not null and (
+      exists (select 1 from runs r where r.id = memory_recalls.run_id and instr(coalesce(r.output, ''), memory_recalls.memory_id) > 0)
+      or exists (select 1 from messages m where m.run_id = memory_recalls.run_id and instr(m.text, memory_recalls.memory_id) > 0)
+      or exists (select 1 from run_events e where e.run_id = memory_recalls.run_id and e.type in ('tool-write', 'text') and instr(e.data, memory_recalls.memory_id) > 0)
+    ) then 1 else 0 end;
+  update runs set output = json_remove(output, '$.fullText') where kind = 'agent' and json_type(output, '$.fullText') is not null;
+  `,
 ];
 
 export type Db = DatabaseSync;

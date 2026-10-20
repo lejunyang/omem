@@ -91,7 +91,7 @@ function jumpTo(q: ReturnType<typeof quoteOf>) {
 }
 const initial = (name: string) => (name || "?").replace(/^[^\p{L}\p{N}]+/u, "").slice(0, 1).toUpperCase() || "?";
 const timeOf = (iso: string) => (iso ? new Date(iso).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : "");
-const md = (m: ChatMsg) => larkToMarkdown(m.content, m.resources, m.mentions);
+const md = (m: ChatMsg) => larkToMarkdown(m.content, m.resources, m.mentions, m.id);
 const files = (m: ChatMsg) => Object.values(m.resources).filter((r) => r.sourceId && !r.url);
 const reactionList = (m: ChatMsg) => (m.reactions as { emoji_type?: string; emoji?: string; count?: number }[]).filter((r) => r && (r.emoji_type || r.emoji));
 </script>

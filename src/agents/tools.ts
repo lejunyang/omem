@@ -598,7 +598,8 @@ def({
     let work = a.work_id ? refreshWork(ctx.app, a.work_id) : null;
     if (!work && conv) work = workInConversation(ctx.app, conv, { includeRoot: true });
     if (!work) throw new HttpError(404, "找不到进行中的多 Agent 工作；复杂任务先用 run_agent own_topic=true 开始");
-    const agent = a.agent ?? work.rounds.at(-1)?.agent;
+    // The digester's rounds are bookkeeping, not someone to hand work to.
+    const agent = a.agent ?? work.rounds.filter((r) => r.agent !== "digester").at(-1)?.agent;
     if (!agent) throw new HttpError(400, "说不出用哪个 Agent，先用 run_agent 交办");
     let id: string;
     try {

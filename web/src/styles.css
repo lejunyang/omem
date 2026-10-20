@@ -265,6 +265,13 @@ input[type="number"].input::-webkit-outer-spin-button {
 .mono {
   font-family: var(--mono);
 }
+/* Status line under a scrolling list (loading more, total). */
+.list-foot {
+  padding: 10px 8px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
 .ellipsis {
   overflow: hidden;
   text-overflow: ellipsis;

@@ -93,7 +93,7 @@ registerHandler("agent", async (ctx) => {
   if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${spec!.name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: spec!.name });
   else if (threadId && roleName) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: roleName, agentWorkRound: ctx.run.id });
   else if (threadId) addMessage(ctx.app, threadId, "assistant", `**${spec!.name} 产出（完整记录，运行 ${ctx.run.id}）**\n\n${answer}`, ctx.run.id, { agent: spec!.name, agentWorkRound: ctx.run.id, record: true });
-  return { answer, fullText: r.text !== answer ? r.text : undefined };
+  return { answer };
 });
 
 // Multi-agent work: after a specialist returns into a work conversation, the digester gives the

@@ -33,7 +33,7 @@ import { getMemory, listMemories, memoryHistory, memoryTags, remember, retract, 
 import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
 import { search } from "../search/search.ts";
 import { importFile, importText, importUrl } from "../sources/import.ts";
-import { deleteSource, getSource, listSources, readSource, sourceOutline } from "../sources/store.ts";
+import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
 import { deletePage, listPages, pageContext, pageVersion, readPage, spaceGuide, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -168,6 +168,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const o = q(z.object({ space: z.string().optional(), kind: z.string().optional(), q: z.string().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
     return listSources(app, { spaceId: o.space, kind: o.kind, q: o.q, limit: o.limit, offset: o.offset });
   });
+  server.get("/api/sources/paths", async (req) => {
+    const o = q(z.object({ space: z.string(), kind: z.string().optional(), q: z.string().optional() }), req.query);
+    return listSourcePaths(app, { spaceId: o.space, kind: o.kind, q: o.q });
+  });
   server.get("/api/sources/resolve", async (req) => {
     const o = q(z.object({ uri: z.string().min(1), space: z.string().optional() }), req.query);
     const clean = o.uri.replace(/^\.\//, "");
@@ -193,6 +197,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/sources/:id/messages", async (req) => {
     const { sourceMessages } = await import("../channels/lark-messages.ts");
     return sourceMessages(app, (req.params as { id: string }).id);
+  });
+  // A chat image or file that was not downloaded at capture time: fetched once, then served as a stored file.
+  server.get("/api/lark/messages/:mid/resources/:key", async (req, reply) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人可以读取飞书消息资源");
+    const { mid, key } = req.params as { mid: string; key: string };
+    if (!/^om_[\w-]{4,80}$/.test(mid) || !/^(?:img|file)_[\w-]{4,120}$/.test(key)) throw new HttpError(400, "bad id");
+    const { messageResourceFile } = await import("../channels/lark-messages.ts");
+    const file = await messageResourceFile(app, mid, key);
+    if (!file) throw new HttpError(404, "读不到这个资源（可能已过期或没有权限）");
+    return reply.redirect(`/api/files/${file}`);
   });
   server.get("/api/sources/:id/relations", async (req) => {
     const o = q(z.object({ qname: z.string() }), req.query);

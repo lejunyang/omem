@@ -160,7 +160,7 @@ describe("shadow runs and review", () => {
   });
 });
 
-import { recordRecalls, recallStats, memoriesWithRecall, usedMemoryIds, markUsedRuns } from "../src/memory/recall-stats.ts";
+import { recordRecalls, recallStats, memoriesWithRecall, usedMemoryIds, markUsed } from "../src/memory/recall-stats.ts";
 
 describe("recall accounting", () => {
   it("counts recalls and whether a run used the memory", async () => {
@@ -169,17 +169,21 @@ describe("recall accounting", () => {
     const m2 = remember(app, { spaceId: "personal", kind: "fact", content: "事实 B：召回了但没用。", sourceRefs: [] });
     const r1 = createRun(app, { kind: "ask", spaceId: "personal", title: "t", input: {} });
     recordRecalls(app, [m1.id, m2.id], { runId: r1.id, profile: "p", spec: undefined });
+    // An earlier run recalled m1 without using it: run 1 using it must not count for that run.
+    const r0 = createRun(app, { kind: "ask", spaceId: "personal", title: "t0", input: {} });
+    recordRecalls(app, [m1.id], { runId: r0.id, profile: "p", spec: undefined });
     // run 1 references m1 in its output
     run(app.db, "update runs set output=? where id=?", JSON.stringify({ answer: `参考 ${m1.id}` }), r1.id);
-    markUsedRuns(app, usedMemoryIds(app, r1.id, [m1.id, m2.id]));
+    markUsed(app, r1.id, usedMemoryIds(app, r1.id, [m1.id, m2.id]));
     const s = recallStats(app);
     expect(s.total).toBe(2);
     expect(s.recalled).toBe(2);
+    expect(s.totalRecalls).toBe(3);
     expect(s.usedRecalls).toBe(1);
     const rows = memoriesWithRecall(app, { sort: "unused" });
     const a = rows.find((x) => x.id === m1.id)!;
     const b = rows.find((x) => x.id === m2.id)!;
-    expect(a.recalls).toBe(1);
+    expect(a.recalls).toBe(2);
     expect(a.used).toBe(1);
     expect(b.used).toBe(0);
     app.db.close();
