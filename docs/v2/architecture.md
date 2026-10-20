@@ -111,7 +111,7 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 2. **复核**：每小时 `memory-review` 运行把新写的 Agent 记忆交给 `memory-reviewer` 角色，盲评（看不到是哪个模型写的）后保留、改写（supersede）、拆分或撤回。复核的后端/模型在 `memory.review` 里单独配置，最好和写入的不是同一个。只有复核保留或本人写的经验、偏好会被放进每次运行的提示。
 3. **按模型比较**：记忆记录写入它的后端、模型、强度和运行；`memory.compare` 让每次整理再用别的模型跑一遍（`ingest-shadow`），写入只记录到 `shadow_writes` 不生效，经过同样的检查和复核。网页“记忆 → 质量”和 `omem memories stats` 按模型给出写入、拒绝、复核结果，以及同一份材料各模型的写法对照。
 
-记忆可以带标签（`tags`），Agent 档案写的经验和偏好默认只属于那个档案（`agent` 字段），其他档案看不到，助理能看到全部。
+记忆可以带标签（`tags`），Agent 档案写的经验和偏好默认只属于那个档案（`agent` 字段），其他档案看不到，助理能看到全部。主助手可用 `remember(agent="档案名")` 教任意档案、`recall(agent="…")` 查看该档案的专属记忆；网页档案详情可直接挂/卸技能、查看和撤回专属记忆。
 
 ### 4. 事项与跟进
 事项类型：`todo`、`waiting`（等谁回复）、`reminder`、`watch`（关注某项目/群/文档）。心跳任务按配置周期运行：读关注对象的新增材料和到期事项，由 Agent 判断是否有需要本人知道/决定的变化；无变化输出 `QUIET`，不打扰。
@@ -184,7 +184,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 运行详情：所在会话（飞书话题 / 工作会话 / 普通会话）、同一会话的各轮、多 Agent 工作的各轮、由哪次运行发起；任务全文可展开 | 已实现；2026-10-20 | `src/server/http.ts` 的 `runContext`、`web/src/views/Runs.vue` |
 | 外部只读访问（分享链接、自定义域名） | 设计，未实现 | [external-access.md](external-access.md) |
 | 通知策略：只对未读 / 紧急 / 临期 / 未处理推送（飞书已读状态经 lark-cli 查询），22:00–09:00 静默（本人设定的定时提醒除外）；巡检对能自己查的事先查再报，并可直接开话题推进 | 已实现；2026-10-20 | `src/core/config.ts` 的 notify、`lark-read.ts`、`roles/heartbeat.md` |
-| 飞书思考过程原生气泡（`message_cot` + AG-UI 事件）：可折叠、工具调用列表、最新调用加载中、结束自动完成 | 已实现；2026-10-20（botmux 方案） | `src/channels/lark-cot.ts` |
+| 飞书思考过程原生气泡（`message_cot` + AG-UI 事件，事件 content 为 JSON 字符串）：可折叠、工具调用列表、最新调用加载中、结束自动完成；建不出/推不上时停用且不残留空气泡 | 已实现；2026-10-20（botmux 方案，协议修正后待真机验） | `src/channels/lark-cot.ts` |
 | 前端路由 chunk 空闲预加载、菜单 hover 预取 | 已实现；2026-10-20 | `web/src/preload.ts`、`main.ts` |
 | Agent 学习分层：档案=身份（Agent 写入限长）、技能=做法、档案记忆=偏好/经验（scope=agent） | 已实现；2026-10-20 | `src/agents/specs.ts`、`roles/_common.md` |
 | 记忆召回与命中统计（recall 落账，回答/写入引用计为命中），网页“记忆 → 召回”治理 | 已实现；2026-10-20 | `src/memory/recall-stats.ts`、`web/src/views/Memory.vue` |

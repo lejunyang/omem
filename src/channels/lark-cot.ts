@@ -14,7 +14,7 @@ import type { App } from "../core/app.ts";
 type ToolStatus = "pending" | "running" | "done" | "failed";
 type Entry =
   | { kind: "reasoning"; text: string }
-  | { kind: "tool"; id: string; name: string; title: string; status: ToolStatus; result?: string };
+  | { kind: "tool"; id: string; name: string; title: string; args?: string; status: ToolStatus; result?: string };
 
 type State = {
   chatId: string;
@@ -25,6 +25,12 @@ type State = {
   messageId?: string;
   entries: Entry[];
   sentEntries: number;
+  /** toolCallIds whose START (+ARGS) has already been pushed */
+  toolStarted: Set<string>;
+  /** toolCallIds whose END+RESULT has already been pushed */
+  toolSettled: Set<string>;
+  /** reasoning ids already pushed (in case new entries interleave) */
+  reasoningSent: Set<string>;
   disabled: boolean;
   pumping: boolean;
   queued: boolean;
@@ -35,6 +41,9 @@ type State = {
 
 const states = new Map<string, State>();
 const TIMEOUT = 15_000;
+/** Set after a hard failure (e.g. message_cot not enabled for this app): skip
+ *  creating further empty bubbles for the rest of this process. */
+let globallyDisabled = false;
 
 let sdk: { request: (o: { method: string; url: string; data?: unknown; params?: unknown; timeout?: number }) => Promise<any> } | null = null;
 export function setCotSdk(c: typeof sdk) {
@@ -44,7 +53,9 @@ export function cotAvailable() {
   return !!sdk;
 }
 
-const ev = (event_type: string, content: Record<string, unknown>) => ({ event_type, content, timestamp: Date.now() });
+// The AG-UI gateway takes content as a JSON-encoded STRING (an object is rejected
+// with a misleading 41050). Sending it raw was why bubbles stayed empty.
+const ev = (event_type: string, content: unknown) => ({ event_type, content: JSON.stringify(content), timestamp: Date.now() });
 
 function iconFor(name: string): string {
   const n = name.toLowerCase();
@@ -84,9 +95,9 @@ function reasoningId(turnId: string, i: number) {
 }
 
 /** AG-UI events for entries from `from` (the prologue is included on the first push). */
-function eventsFor(st: State, from: number): any[] {
+function eventsFor(st: State): any[] {
   const out: any[] = [];
-  if (from === 0) {
+  if (st.reasoningSent.size === 0 && st.toolStarted.size === 0) {
     out.push(ev("RUN_STARTED", { threadId: st.turnId, runId: st.turnId }));
     out.push(ev("REASONING_START", { messageId: reasoningId(st.turnId, 0) }));
     // A turn that starts straight into a tool needs one reasoning node to hang the tools under.
@@ -96,23 +107,35 @@ function eventsFor(st: State, from: number): any[] {
       out.push(ev("REASONING_MESSAGE_END", { messageId: reasoningId(st.turnId, 0) }));
     }
   }
-  st.entries.slice(from).forEach((e, k) => {
-    const idx = from + k;
+  // Iterate every entry: new entries need START, existing ones may have just
+  // transitioned to done/failed and need END + RESULT. Bookkeeping sets prevent
+  // duplicate events across pumps.
+  st.entries.forEach((e, idx) => {
     if (e.kind === "reasoning") {
       const mid = reasoningId(st.turnId, idx);
-      out.push(ev("REASONING_MESSAGE_START", { messageId: mid, role: "reasoning" }));
-      out.push(ev("REASONING_MESSAGE_CONTENT", { messageId: mid, delta: e.text }));
-      out.push(ev("REASONING_MESSAGE_END", { messageId: mid }));
+      if (!st.reasoningSent.has(mid)) {
+        out.push(ev("REASONING_MESSAGE_START", { messageId: mid, role: "reasoning" }));
+        out.push(ev("REASONING_MESSAGE_CONTENT", { messageId: mid, delta: e.text }));
+        out.push(ev("REASONING_MESSAGE_END", { messageId: mid }));
+        st.reasoningSent.add(mid);
+      }
     } else {
-      out.push(ev("TOOL_CALL_START", {
-        toolCallId: e.id,
-        icon: iconFor(e.name),
-        title: titleFor(e.title || e.name),
-        toolCallName: e.name,
-        parentMessageId: reasoningId(st.turnId, 0),
-      }));
-      out.push(ev("TOOL_CALL_END", { toolCallId: e.id }));
-      if (e.status === "done" || e.status === "failed") {
+      const settled = e.status === "done" || e.status === "failed";
+      if (!st.toolStarted.has(e.id)) {
+        out.push(ev("TOOL_CALL_START", {
+          toolCallId: e.id,
+          icon: iconFor(e.name),
+          title: titleFor(e.title || e.name),
+          toolCallName: e.name,
+          parentMessageId: reasoningId(st.turnId, 0),
+        }));
+        // While running we stream args and deliberately do NOT send TOOL_CALL_END:
+        // the end event (plus result) is what stops the spinner on the tool row.
+        if (e.args) out.push(ev("TOOL_CALL_ARGS", { toolCallId: e.id, delta: e.args.slice(0, 8000) }));
+        st.toolStarted.add(e.id);
+      }
+      if (settled && !st.toolSettled.has(e.id)) {
+        out.push(ev("TOOL_CALL_END", { toolCallId: e.id }));
         out.push(ev("TOOL_CALL_RESULT", {
           messageId: `tr-${e.id}`,
           toolCallId: e.id,
@@ -121,6 +144,7 @@ function eventsFor(st: State, from: number): any[] {
             ? { type: "code", code: e.result.slice(0, 8000) }
             : { type: "text", text: e.status === "failed" ? "失败" : "完成" }),
         }));
+        st.toolSettled.add(e.id);
       }
     }
   });
@@ -142,10 +166,13 @@ async function pump(app: App, runId: string, st: State) {
         await createBubble(st);
         st.sentEntries = 0;
       }
-      if (st.sentEntries < st.entries.length) {
-        const from = st.sentEntries;
-        await append(st, eventsFor(st, from));
+      if (st.sentEntries < st.entries.length || (st.finish && !st.settled)) {
+        // eventsFor diffs internally and only emits what is new (new tool START,
+        // or a previously-running tool just settling).
+        const evs = eventsFor(st);
+        if (evs.length) await append(st, evs);
         st.sentEntries = st.entries.length;
+        if (!st.finish) break;
         continue;
       }
       if (st.finish && !st.settled) {
@@ -159,7 +186,13 @@ async function pump(app: App, runId: string, st: State) {
     }
   } catch (e) {
     st.disabled = true;
-    console.warn(`[omem] 思考过程气泡本轮不可用（不影响回复）：${(e as Error).message}`);
+    // If the bubble was created but events cannot be pushed, the interface keeps
+    // an empty forever-spinner; best-effort close it, then stop trying globally.
+    if (st.cotId) {
+      try { await api("POST", `/open-apis/im/v1/message_cot/complete/${encodeURIComponent(st.cotId)}`, {}, { message_id: st.messageId!, reason: "error" }); } catch {}
+    }
+    globallyDisabled = true;
+    console.warn(`[omem] 思考过程气泡不可用，已停用（不影响回复）：${(e as Error).message}`);
   } finally {
     st.pumping = false;
     st.queued = false;
@@ -181,8 +214,8 @@ function schedule(app: App, runId: string, st: State, delay = 700) {
 
 /** Begin the bubble for a turn, anchored to the message that started it (so it lands in the topic). */
 export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean }) {
-  if (!sdk || states.has(runId)) return;
-  const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: [], sentEntries: 0, disabled: false, pumping: false, queued: false, settled: false, timers: [] };
+  if (!sdk || globallyDisabled || states.has(runId)) return;
+  const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: [], sentEntries: 0, toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Set(), disabled: false, pumping: false, queued: false, settled: false, timers: [] };
   states.set(runId, st);
   schedule(app, runId, st, 300);
 }
@@ -201,11 +234,19 @@ export function cotEvent(app: App, runId: string, e: { type: string; data: any }
     const id = String(data.id);
     let t = st.entries.find((x): x is Extract<Entry, { kind: "tool" }> => x.kind === "tool" && x.id === id);
     if (!t) {
-      t = { kind: "tool", id, name: String(data.title ?? id), title: String(data.title ?? id), status: "pending" };
+      t = { kind: "tool", id, name: String(data.kind ?? data.name ?? data.title ?? id), title: String(data.title ?? id), status: "pending" };
       st.entries.push(t);
     }
+    t.name = String(data.kind ?? data.name ?? t.name);
     t.title = String(data.title ?? t.title);
-    if (data.status === "completed") t.status = "done";
+    // run events carry tool input as `input` (object/string); show a compact preview.
+    if (data.input !== undefined) {
+      const raw = typeof data.input === "string" ? data.input : JSON.stringify(data.input);
+      t.args = raw.slice(0, 2000);
+    } else if (typeof data.args === "string") {
+      t.args = data.args.slice(0, 2000);
+    }
+    if (data.status === "completed" || data.status === "done") t.status = "done";
     else if (data.status === "failed") t.status = "failed";
     else if (data.status) t.status = "running";
     schedule(app, runId, st);

@@ -5,6 +5,7 @@ import { checkMemory, memoryQualityStats, unreviewedMemories } from "../src/memo
 import { getMemory, listMemories, remember } from "../src/memory/store.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { createRun } from "../src/agents/runs.ts";
+import { saveAgentSpec } from "../src/agents/specs.ts";
 import { testApp } from "./helpers.ts";
 
 const ctxFor = (app: ReturnType<typeof testApp>, extra: Record<string, unknown> = {}) =>
@@ -49,6 +50,7 @@ describe("memory write-time checks", () => {
 
   it("scopes an agent spec's procedures to that spec and supports tags", async () => {
     const app = testApp();
+    saveAgentSpec(app, { name: "oncall", description: "值班", prompt: "处理报警。" }, "user");
     const spec = ctxFor(app, { role: undefined, spec: "oncall" });
     const r = await callTool(spec, "remember", { kind: "experience", content: "遇到报警先看最近一次发布记录。", tags: ["报警"] });
     expect(r.text).toMatch(/仅 oncall 使用/);
@@ -57,6 +59,25 @@ describe("memory write-time checks", () => {
     const other = ctxFor(app, { role: undefined, spec: "writer" });
     expect((await callTool(other, "recall", {})).text).toBe("没有相关记忆。");
     expect((await callTool(spec, "recall", { tag: "报警" })).text).toMatch(/oncall 专用/);
+  });
+
+  it("lets the main assistant teach a named spec and read that spec's memories back", async () => {
+    const app = testApp();
+    saveAgentSpec(app, { name: "reviewer", description: "代码评审", prompt: "按项目约定评审。" }, "user");
+    // Main assistant has no spec of its own; naming the taught agent writes into its scope.
+    const main = ctxFor(app, { role: undefined, spec: null });
+    const r = await callTool(main, "remember", { kind: "preference", subject: "风格", content: "评审时先报阻塞问题，风格建议放最后。", agent: "reviewer" });
+    expect(r.text).toMatch(/仅 reviewer 使用/);
+    expect(listMemories(app, {})[0]).toMatchObject({ agent: "reviewer" });
+    // The main assistant orchestrates and sees everything; a different spec sees none,
+    // and naming the taught spec scopes the recall to it.
+    expect((await callTool(main, "recall", {})).text).toMatch(/reviewer 专用/);
+    expect((await callTool(ctxFor(app, { role: undefined, spec: "other-agent" }), "recall", {})).text).toBe("没有相关记忆。");
+    expect((await callTool(main, "recall", { agent: "reviewer" })).text).toMatch(/reviewer 专用/);
+    // Unknown spec names are rejected rather than silently creating garbage scope.
+    const bad = await callTool(main, "remember", { kind: "preference", content: "测试。", agent: "ghost" });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toMatch(/没有 Agent 档案 ghost/);
   });
 });
 

@@ -296,7 +296,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/agents", async () => listAgentSpecs(app, { includeDrafts: true }));
   server.get("/api/agents/:name", async (req) => {
     const name = (req.params as { name: string }).name;
-    return { ...readAgentSpec(app, name), history: agentSpecHistory(app, name) };
+    const spec = readAgentSpec(app, name);
+    // What this agent actually knows beyond its identity prompt: attached skills (with bodies)
+    // and its own procedural memories.
+    const skills = (spec.skills ?? []).map((n) => {
+      try {
+        const s = readSkill(app, n);
+        return { name: s.name, description: s.description, status: s.status, body: s.body, files: s.files };
+      } catch {
+        return { name: n, description: "（技能不存在）", status: "missing" as const, body: "", files: [] };
+      }
+    });
+    const availableSkills = listSkills(app, { includeDrafts: true }).map((s) => ({ name: s.name, description: s.description, status: s.status }));
+    const memories = listMemories(app, { agent: name, status: "active", limit: 200 });
+    return { ...spec, history: agentSpecHistory(app, name), skills, availableSkills, memories };
   });
   server.put("/api/agents/:name", async (req) => saveAgentSpec(app, { ...(req.body as object), name: (req.params as { name: string }).name } as never, "user"));
   server.delete("/api/agents/:name", async (req) => {

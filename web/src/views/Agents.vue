@@ -9,6 +9,14 @@ import { toast } from "../store";
 
 type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; tools: string[]; writes: boolean; skills: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string };
 type Skill = { name: string; description: string; status: "active" | "draft"; files: string[] };
+type AgentMemory = { id: string; kind: string; subject: string; content: string; tags?: string[]; updatedAt: string };
+type AttachedSkill = { name: string; description: string; status: string; body?: string };
+type SpecDetail = Omit<Spec, "skills"> & {
+  body?: string;
+  skills?: AttachedSkill[];
+  availableSkills?: { name: string; description: string; status: string }[];
+  memories?: AgentMemory[];
+};
 
 const route = useRoute();
 const router = useRouter();
@@ -24,12 +32,18 @@ const newName = ref("");
 
 const loading = ref(true);
 const rawLoading = ref(false);
+const detail = ref<SpecDetail | null>(null);
 async function load() {
   try {
     [agents.value, skills.value] = await Promise.all([get<Spec[]>("/api/agents"), get<Skill[]>("/api/skills")]);
   } finally {
     loading.value = false;
   }
+}
+async function loadDetail() {
+  detail.value = null;
+  if (tab.value !== "agents" || !selected.value) return;
+  detail.value = await get<SpecDetail>(`/api/agents/${encodeURIComponent(selected.value)}`).catch(() => null);
 }
 async function loadRaw() {
   dirty.value = false;
@@ -43,9 +57,31 @@ async function loadRaw() {
 }
 onMounted(async () => {
   await load();
-  await loadRaw();
+  await Promise.all([loadRaw(), loadDetail()]);
 });
-watch([selected, tab], loadRaw);
+watch([selected, tab], () => void Promise.all([loadRaw(), loadDetail()]));
+async function refreshAfterSave() {
+  await Promise.all([load(), loadDetail()]);
+}
+async function forgetMemory(m: AgentMemory) {
+  if (!(await confirmDialog("撤回这条档案专属记忆？", { message: m.content, okText: "撤回", danger: true }))) return;
+  await del(`/api/memories/${m.id}?reason=${encodeURIComponent("网页撤回档案专属记忆")}`);
+  toast("已撤回", "ok");
+  await loadDetail();
+}
+async function toggleSkill(name: string, on: boolean) {
+  if (!detail.value || !selected.value) return;
+  const current = new Set((detail.value.skills ?? []).map((s) => s.name));
+  if (on) current.add(name);
+  else current.delete(name);
+  try {
+    await put(`/api/agents/${encodeURIComponent(selected.value)}`, { skills: [...current] });
+    toast(on ? "已挂技能" : "已移除技能", "ok");
+    await loadDetail();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 
 const list = computed(() => (tab.value === "agents" ? agents.value : skills.value));
 async function open(name: string | null) {
@@ -117,7 +153,7 @@ async function save() {
     await put(`/api/library-files/${kind.value}/${selected.value}`, { raw: raw.value });
     dirty.value = false;
     toast("已保存（知识库 Git 中有历史）", "ok");
-    await load();
+    await refreshAfterSave();
   } catch (e) {
     toast((e as Error).message, "error");
   }
@@ -185,6 +221,38 @@ const current = computed(() => list.value.find((x) => x.name === selected.value)
         <p v-if="tab === 'agents' && current" class="muted small meta">
           后端 {{ current && "agent" in current ? (current as Spec).agent ?? "默认" : "" }} · 工具 {{ (current as Spec).tools?.length ? (current as Spec).tools.join(", ") : "默认只读" }}<span v-if="(current as Spec).writes"> · 可改文件</span>
         </p>
+        <div v-if="tab === 'agents' && detail" class="learn">
+          <details class="learn-block" open>
+            <summary>挂的技能（{{ detail.skills?.length ?? 0 }}）<span class="muted small">可复用的做法，点名下拉框增删；编辑技能正文去“技能”标签</span></summary>
+            <div class="chips">
+              <span v-for="s in detail.skills" :key="s.name" class="chip" :class="{ missing: s.status === 'missing' }">
+                {{ s.name }}
+                <button class="x" :title="s.status === 'missing' ? '技能不存在，点此移除' : '移除'" @click="toggleSkill(s.name, false)">×</button>
+              </span>
+              <select class="add-skill" :value="''" @change="(e: Event) => { const sel = e.target as HTMLSelectElement; void toggleSkill(sel.value, true); sel.value = ''; }">
+                <option value="" disabled>添加技能…</option>
+                <option v-for="s in (detail.availableSkills ?? []).filter((s) => !(detail?.skills ?? []).some((x) => x.name === s.name))" :key="s.name" :value="s.name">{{ s.name }}（{{ s.description }}）</option>
+              </select>
+            </div>
+            <p v-if="!(detail.skills?.length)" class="muted small empty-line">还没挂技能。教它“遇到 X 这样做”时，让助理 <code>save_skill</code> 后在这里挂上；或直接选一个已有技能。</p>
+          </details>
+          <details class="learn-block" open>
+            <summary>专属记忆（{{ detail.memories?.length ?? 0 }}）<span class="muted small">只给这个档案用的偏好、风格和经验；共享记忆不在这里</span></summary>
+            <ul v-if="detail.memories?.length" class="mems">
+              <li v-for="m in detail.memories" :key="m.id">
+                <div class="row">
+                  <span class="badge">{{ m.kind }}</span>
+                  <strong v-if="m.subject" class="small">{{ m.subject }}</strong>
+                  <span class="spacer" />
+                  <span class="muted small">{{ new Date(m.updatedAt).toLocaleDateString() }}</span>
+                  <button class="btn ghost sm icon danger" title="撤回" @click="forgetMemory(m)"><Icon name="trash" :size="13" /></button>
+                </div>
+                <div class="small mem-text">{{ m.content }}</div>
+              </li>
+            </ul>
+            <p v-else class="muted small empty-line">还没有专属记忆。你纠正它的偏好或风格后，助理会用 <code>remember(scope="agent", agent="档案名")</code> 记在这里。</p>
+          </details>
+        </div>
         <textarea v-model="raw" class="editor mono" spellcheck="false" @input="dirty = true" />
       </template>
     </main>
@@ -304,5 +372,87 @@ const current = computed(() => list.value.find((x) => x.name === selected.value)
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
+}
+
+.learn {
+  display: grid;
+  gap: 8px;
+  flex: none;
+  padding: 0 16px 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.learn-block {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel, var(--bg));
+}
+.learn-block summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  list-style: none;
+}
+.learn-block summary::before {
+  content: "▸ ";
+  color: var(--ink-2);
+}
+.learn-block[open] summary::before {
+  content: "▾ ";
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 12px 10px;
+  align-items: center;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--hover);
+  border-radius: 999px;
+  padding: 2px 6px 2px 10px;
+  font-size: 12px;
+}
+.chip.missing {
+  color: var(--danger, #c0392b);
+  text-decoration: line-through;
+}
+.chip .x {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ink-2);
+  padding: 0 2px;
+}
+.add-skill {
+  font-size: 12px;
+  padding: 3px 6px;
+  max-width: 240px;
+}
+.mems {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 10px;
+  display: grid;
+  gap: 8px;
+}
+.mems li {
+  border-left: 2px solid var(--line);
+  padding: 2px 0 2px 10px;
+}
+.mem-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 2px;
+}
+.empty-line {
+  padding: 0 12px 10px;
+  margin: 0;
 }
 </style>

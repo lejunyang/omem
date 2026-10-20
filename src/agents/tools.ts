@@ -687,6 +687,8 @@ def({
     subject: z.string().optional(),
     include_history: z.boolean().optional(),
     tag: z.string().optional(),
+    /** Inspect one spec's own memories (shared ones still included); used when teaching/reviewing an agent. */
+    agent: z.string().optional().describe("只看某个 Agent 档案的专属记忆（仍包含共享记忆）"),
     space: z.string().optional(),
   }),
   handler: async (ctx, a) => {
@@ -694,11 +696,12 @@ def({
     const query = a.query?.replace(/[*?%\s]+/g, " ").trim();
     let mems = query
       ? (await search(ctx.app, query, { spaces: sp, types: ["memory"], limit: 20, includeHistory: a.include_history })).map((h) => getMemory(ctx.app, h.id))
-      : listMemories(ctx.app, { spaceId: sp?.length === 1 ? sp[0] : undefined, status: a.include_history ? "all" : "active", subject: a.subject, tag: a.tag, limit: 50 });
+      : listMemories(ctx.app, { spaceId: sp?.length === 1 ? sp[0] : undefined, status: a.include_history ? "all" : "active", subject: a.subject, tag: a.tag, agent: a.agent ?? (ctx.spec ? ctx.spec : undefined), limit: 50 });
     if (a.subject) mems = mems.filter((m) => m.subject.includes(a.subject!));
     if (a.tag) mems = mems.filter((m) => m.tags?.includes(a.tag!));
-    // An agent spec's own procedures are for that spec; other specs do not see them.
-    if (ctx.spec) mems = mems.filter((m) => !m.agent || m.agent === ctx.spec);
+    // A running spec only sees shared memories and its own; the main assistant may name a spec to inspect.
+    const scopeSpec = a.agent ?? ctx.spec ?? null;
+    if (scopeSpec) mems = mems.filter((m) => !m.agent || m.agent === scopeSpec);
     if (!mems.length) return "没有相关记忆。";
     // Recall accounting (best effort): which memories surfaced for this run, so their value
     // can be measured. Marking "used" happens when the run finishes (see runs worker).
@@ -808,7 +811,9 @@ def({
     source_refs: refs,
     valid_from: z.string().optional().describe("ISO 时间，事实开始生效的时间（不填为现在）"),
     tags: z.array(z.string()).optional().describe("可选标签，如项目名、主题，便于按标签筛选"),
-    scope: z.enum(["shared", "agent"]).optional().describe("agent：只给当前 Agent 档案自己用的做法/偏好（默认：档案写的 experience/preference 为 agent，其余 shared）"),
+    scope: z.enum(["shared", "agent"]).optional().describe("agent：只给某个 Agent 档案自己用的做法/偏好（默认：档案写的 experience/preference 为 agent，其余 shared）"),
+    /** Target spec for an agent-scoped memory: the main assistant names the agent it is teaching; a run inside the spec defaults to itself. */
+    agent: z.string().optional().describe("scope=agent 时的目标档案名；主助手教某个档案时填它的名字，档案自己运行时不填即指自己"),
     space: z.string().optional(),
   }),
   handler: (ctx, a) => {
@@ -818,7 +823,18 @@ def({
       logRejection(ctx.app, spaceId, { tool: "remember", kind: a.kind, content: a.content }, problems, provenance(ctx));
       throw new HttpError(422, formatProblems(problems));
     }
+    // Whose procedural memory this is: the running spec, or a named spec the main
+    // assistant is teaching. experience/preference written inside a spec default to it;
+    // everything else is shared unless scope=agent (or agent=…) is given.
     const procedural = a.kind === "experience" || a.kind === "preference";
+    let agentForMemory: string | null = null;
+    if (a.scope === "agent" || a.agent || (a.scope === undefined && procedural && ctx.spec)) {
+      const wanted = a.agent ?? ctx.spec ?? null;
+      if (wanted) {
+        if (!findAgentSpec(ctx.app, wanted)) throw new HttpError(404, `没有 Agent 档案 ${wanted}；先 list_agents 确认名字，或让本人先创建`);
+        agentForMemory = wanted;
+      }
+    }
     const m = remember(ctx.app, {
       spaceId,
       kind: a.kind,
@@ -829,7 +845,7 @@ def({
       createdBy: ctx.actor,
       ...provenance(ctx),
       tags: a.tags,
-      agent: ctx.spec && (a.scope === "agent" || (a.scope === undefined && procedural)) ? ctx.spec : null,
+      agent: agentForMemory,
       // Preferences belong to the person who stated them; facts are shared knowledge of the space.
       userId: a.kind === "preference" ? (ctx.userId ?? "owner") : null,
     });
