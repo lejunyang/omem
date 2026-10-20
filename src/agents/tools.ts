@@ -1512,6 +1512,22 @@ def({
 });
 
 def({
+  name: "ignore_notification_rule",
+  description:
+    "记录一条本人明确给出的免提醒规则（本人引用/回复某条通知说“这类不用提醒我”时用）。规则由模型在每次推送前语义判断；只静默飞书推送，应用内通知仍保留。不要拿一次性事件当通用规则。",
+  write: true,
+  schema: z.object({
+    rule: z.string().describe("一句中文规则：哪类事情不再主动推送，写清对象、群、场景边界，30–60 字"),
+    example: z.string().optional().describe("触发这条规则的原始通知标题，便于审计"),
+  }),
+  handler: async (ctx, a) => {
+    const { addIgnoreRule } = await import("../core/notify-lessons.ts");
+    const r = addIgnoreRule(ctx.app, a.rule, a.example ?? "");
+    return `已记录免提醒规则：${r.rule}（以后这类只留在应用内通知，不再推送）。`;
+  },
+});
+
+def({
   name: "notify",
   description: "通知本人（站内 + 已绑定的机器人）。只用于需要本人知道或决定的变化，不要发送“无变化”。",
   write: true,

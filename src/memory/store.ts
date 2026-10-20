@@ -223,13 +223,17 @@ export function updateMemoryText(app: App, id: string, patch: { content?: string
   return getMemory(app, id);
 }
 
-export function listMemories(app: App, opts: { spaceId?: string; status?: string; kind?: string; subject?: string; tag?: string; agent?: string | null; review?: "pending" | "keep" | "rewrite" | "retract"; limit?: number }) {
+export function listMemories(app: App, opts: { spaceId?: string; status?: string; kind?: string; subject?: string; tag?: string; agent?: string | null; /** "visible" (default): shared + that spec; "own": that spec only */ agentScope?: "own" | "visible"; review?: "pending" | "keep" | "rewrite" | "retract"; limit?: number }) {
   const where: string[] = [];
   const params: string[] = [];
   if (opts.tag) where.push("exists (select 1 from json_each(memories.tags) where value = ?)"), params.push(opts.tag);
-  // agent: a spec name = shared memories plus that spec's own; null = shared only; undefined = everything.
+  // agent: a spec name; null = shared only; undefined = everything.
+  // agentScope="own" narrows a named agent to its own memories (the spec page).
   if (opts.agent === null) where.push("agent is null");
-  else if (opts.agent) where.push("(agent is null or agent = ?)"), params.push(opts.agent);
+  else if (opts.agent) {
+    if (opts.agentScope === "own") where.push("agent = ?"), params.push(opts.agent);
+    else where.push("(agent is null or agent = ?)"), params.push(opts.agent);
+  }
   if (opts.review === "pending") where.push("reviewed_at is null and created_by = 'agent'");
   else if (opts.review) where.push("review_verdict = ?"), params.push(opts.review);
   if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);

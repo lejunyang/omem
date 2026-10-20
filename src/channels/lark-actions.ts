@@ -63,16 +63,16 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
         return { title: getItem(app, id).title, toast: { type: "success", content: "" } };
       });
       if (result.title && op === "cancel") {
-        // "忽略" is a lesson: similar future nudges stay in-app instead of pinging.
-        const noteRow = one<{ title: string; body: string; context: string }>(
+        // "忽略" is a lesson: the model phrases a short "don't ping me for this"
+        // rule; later pushes of the same kind are filtered by the same judgment.
+        const noteRow = one<{ title: string; body: string }>(
           app.db,
-          "select title, body, context from notifications where json_extract(context,'$.entityId') = ? order by at desc limit 1",
+          "select title, body from notifications where json_extract(context,'$.entityId') = ? order by at desc limit 1",
           id,
         );
         if (noteRow) {
-          const ctx = safeJson(noteRow.context) as { sourceRefs?: string[] };
-          const { learnMute } = await import("../core/notify-lessons.ts");
-          learnMute(app, { title: noteRow.title, body: noteRow.body, sourceRefs: Array.isArray(ctx?.sourceRefs) ? ctx.sourceRefs : [] });
+          const { learnIgnoreFromNotification } = await import("../core/notify-ai-gate.ts");
+          await learnIgnoreFromNotification(app, noteRow).catch(() => {});
         }
       }
       if (!result.title) return { toast: result.toast };

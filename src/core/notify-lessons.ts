@@ -2,98 +2,75 @@ import type { App } from "./app.ts";
 import { one, run } from "./db.ts";
 
 /**
- * Notification lessons: when the owner dismisses ("忽略") a nudge for a class
- * of signals, similar future nudges stop pinging and stay in-app only.
+ * Notification "ignore" lessons — semantic, not keyword matching.
  *
- * A rule is a few coarse keywords extracted from the title/body (Chinese is
- * tokenized by bigrams); a new notification matches when its own keywords
- * overlap the rule strongly enough. Rules are personal preference memories in
- * disguise, kept here so the push gate is synchronous and cheap.
+ * When the owner ignores a notification (or manually cites a message with a
+ * reason), the *model* writes one short rule in the owner's own words: what
+ * class of things should no longer ping. Before pushing, the rules are given
+ * back to the model with the new notification, and it decides whether it is
+ * the same kind of thing. Rules stay in kv, count their hits, and can be seen
+ * and deleted.
  */
-type MuteRule = {
+export type IgnoreRule = {
   id: string;
-  /** Example title the rule was learned from, shown so the owner can audit it. */
+  /** What the owner does not want to be paged for, as a concise rule in their words. */
+  rule: string;
+  /** The notification title the rule was learned from (audit). */
   example: string;
-  keywords: string[];
-  /** chat id if the lesson applies to one chat ("this group's join requests"); absent = everywhere. */
-  chatId?: string;
   createdAt: string;
-  /** How many future notifications this rule has suppressed. */
   hits: number;
 };
 
-const KEY = "notify_mute_rules";
+const KEY = "notify_ignore_rules";
 
-export function listMuteRules(app: App): MuteRule[] {
+export function listIgnoreRules(app: App): IgnoreRule[] {
   const raw = one<{ value: string }>(app.db, "select value from kv where key = ?", KEY)?.value;
   if (!raw) return [];
   try {
     const v = JSON.parse(raw);
-    return Array.isArray(v) ? (v as MuteRule[]) : [];
+    return Array.isArray(v) ? (v as IgnoreRule[]) : [];
   } catch {
     return [];
   }
 }
 
-function saveRules(app: App, rules: MuteRule[]) {
-  run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", KEY, JSON.stringify(rules));
+function saveRules(app: App, rules: IgnoreRule[]) {
+  run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", KEY, JSON.stringify(rules.slice(0, 100)));
 }
 
-const STOP = new Set(["我们", "你们", "他们", "已经", "可以", "需要", "一个", "这个", "那个", "通知", "提醒", "请", "的", "了", "和", "与", "及", "在", "是", "我", "你", "他"]);
-
-/** Coarse, stable keywords: latin words/ids and Chinese bigrams, stopwords dropped. */
-export function keywords(text: string): string[] {
-  const out = new Set<string>();
-  const cleaned = text.replace(/https?\S+|[A-Za-z]*\d{3,}[A-Za-z0-9-]*/g, " ").toLowerCase();
-  for (const m of cleaned.matchAll(/[a-z][a-z-]{2,}/g)) {
-    if (!STOP.has(m[0])) out.add(m[0]);
-  }
-  const cjk = cleaned.replace(/[^\u4e00-\u9fff]+/g, " ");
-  for (const part of cjk.split(/\s+/)) {
-    for (let i = 0; i + 2 <= part.length; i++) {
-      const g = part.slice(i, i + 2);
-      if (!STOP.has(g)) out.add(g);
-    }
-  }
-  return [...out].slice(0, 40);
-}
-
-function score(want: Set<string>, have: Set<string>) {
-  if (!want.size) return 0;
-  let n = 0;
-  for (const k of want) if (have.has(k)) n++;
-  return n / want.size;
-}
-
-export function muteMatch(app: App, n: { title: string; body?: string; sourceRefs?: string[] }, threshold = 0.55): MuteRule | null {
-  const have = new Set(keywords(`${n.title} ${n.body ?? ""}`));
-  for (const r of listMuteRules(app)) {
-    if (r.chatId && !(n.sourceRefs ?? []).some((x) => x.includes(r.chatId!))) continue;
-    if (score(new Set(r.keywords), have) >= threshold) return r;
-  }
-  return null;
-}
-
-/** Learn one dismissal. Existing rules accumulate hits; near-duplicate rules merge. */
-export function learnMute(app: App, n: { title: string; body?: string; sourceRefs?: string[] }, chatId?: string): MuteRule {
-  const rules = listMuteRules(app);
-  const kw = keywords(`${n.title} ${n.body ?? ""}`);
-  const existing = muteMatch(app, n, 0.7);
+/** Persist a rule the model summarized from an ignore action; duplicates (same rule) are skipped. */
+export function addIgnoreRule(app: App, rule: string, example: string): IgnoreRule {
+  const rules = listIgnoreRules(app);
+  const trimmed = rule.trim().slice(0, 300);
+  const existing = rules.find((r) => r.rule === trimmed);
   if (existing) return existing;
-  const rule: MuteRule = { id: `mr_${Date.now().toString(36)}`, example: n.title, keywords: kw, ...(chatId ? { chatId } : {}), createdAt: new Date().toISOString(), hits: 0 };
-  rules.unshift(rule);
-  saveRules(app, rules.slice(0, 100));
-  return rule;
+  const saved: IgnoreRule = { id: `ir_${Date.now().toString(36)}`, rule: trimmed, example, createdAt: new Date().toISOString(), hits: 0 };
+  rules.unshift(saved);
+  saveRules(app, rules);
+  return saved;
 }
 
-export function recordMuteHit(app: App, id: string) {
-  const rules = listMuteRules(app);
+export function recordIgnoreHit(app: App, id: string) {
+  const rules = listIgnoreRules(app);
   const r = rules.find((x) => x.id === id);
   if (!r) return;
   r.hits++;
   saveRules(app, rules);
 }
 
-export function deleteMuteRule(app: App, id: string) {
-  saveRules(app, listMuteRules(app).filter((r) => r.id !== id));
+export function deleteIgnoreRule(app: App, id: string) {
+  saveRules(app, listIgnoreRules(app).filter((r) => r.id !== id));
 }
+
+/** System prompt fragment for the model that decides whether a notification may push. */
+export const IGNORE_GATE_PROMPT = `你在替本人做通知打扰判断。下面是本人明确说过“以后不用提醒我”的规则：
+
+<ignore-rules>
+{rules}
+</ignore-rules>
+
+现在有一条准备推送的通知：
+标题：{title}
+内容：{body}
+
+判断它是否属于上述“不提醒”的同类。注意规则里限定的对象、群和场景；宁可放行不确定的（真紧急的事不能漏），只在确实属于同类时静默。只输出 JSON：{"mute": true/false, "ruleId": "命中的规则 id，未命中为 null", "reason": "一句中文理由"}`;

@@ -20,7 +20,7 @@ import type { App, AppEvent } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { configSchema, saveConfig } from "../core/config.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
-import { deleteMuteRule, listMuteRules } from "../core/notify-lessons.ts";
+import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
 import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
 import { createSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
@@ -309,7 +309,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       }
     });
     const availableSkills = listSkills(app, { includeDrafts: true }).map((s) => ({ name: s.name, description: s.description, status: s.status }));
-    const memories = listMemories(app, { agent: name, status: "active", limit: 200 });
+    // Only memories that actually belong to this spec; shared memories live on the
+    // memory page and must not be presented as the agent's own.
+    const memories = listMemories(app, { agent: name, agentScope: "own", status: "active", limit: 200 });
     return { ...spec, history: agentSpecHistory(app, name), skills, availableSkills, memories };
   });
   server.put("/api/agents/:name", async (req) => saveAgentSpec(app, { ...(req.body as object), name: (req.params as { name: string }).name } as never, "user"));
@@ -592,10 +594,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     markRead(app, (req.body as { id?: string } | null)?.id);
     return { ok: true };
   });
-  server.get("/api/notify-mute-rules", async () => ({ rules: listMuteRules(app) }));
-  server.post("/api/notify-mute-rules/delete", async (req) => {
+  server.get("/api/notify-ignore-rules", async () => ({ rules: listIgnoreRules(app) }));
+  server.post("/api/notify-ignore-rules/delete", async (req) => {
     const id = (req.body as { id?: string } | null)?.id;
-    if (id) deleteMuteRule(app, id);
+    if (id) deleteIgnoreRule(app, id);
     return { ok: true };
   });
   server.get("/api/home", async () => {

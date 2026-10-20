@@ -97,6 +97,9 @@ async function onAddSkill(name: string | null) {
 }
 
 const list = computed(() => (tab.value === "agents" ? agents.value : skills.value));
+async function openSkill(name: string) {
+  router.push({ path: "/agents", query: { tab: "skills", name } });
+}
 async function open(name: string | null) {
   if (dirty.value && !(await confirmDialog("有未保存的修改，放弃吗？", { okText: "放弃修改", danger: true }))) return;
   router.replace({ query: { tab: tab.value, ...(name ? { name } : {}) } });
@@ -236,26 +239,34 @@ const current = computed(() => list.value.find((x) => x.name === selected.value)
         </p>
         <div v-if="tab === 'agents' && detail" class="learn">
           <details class="learn-block" open>
-            <summary>挂的技能（{{ detail.skills?.length ?? 0 }}）<span class="muted small">可复用的做法，点名下拉框增删；编辑技能正文去“技能”标签</span></summary>
+            <summary>挂载技能（{{ detail.skills?.length ?? 0 }}）<span class="muted small">可复用的做法；点击名字去技能页查看与编辑</span></summary>
             <div class="chips">
-              <span v-for="s in detail.skills" :key="s.name" class="chip" :class="{ missing: s.status === 'missing' }">
+              <button
+                v-for="s in detail.skills"
+                :key="s.name"
+                type="button"
+                class="chip"
+                :class="{ missing: s.status === 'missing' }"
+                :title="s.status === 'missing' ? '技能已不存在，点击右侧 × 移除' : s.description"
+                @click="openSkill(s.name)"
+              >
                 {{ s.name }}
-                <button class="x" :title="s.status === 'missing' ? '技能不存在，点此移除' : '移除'" @click="toggleSkill(s.name, false)">×</button>
-              </span>
+                <span class="x" role="button" tabindex="0" :title="s.status === 'missing' ? '技能不存在，点此移除' : '从该档案移除'" @click.stop="toggleSkill(s.name, false)">×</span>
+              </button>
               <UiSelect
                 v-if="addableSkills.length"
                 v-model="addSkillValue"
                 size="sm"
-                width="220px"
-                placeholder="添加技能…"
+                width="200px"
+                placeholder="+ 挂载技能…"
                 :options="addableSkills"
                 @change="onAddSkill"
               />
             </div>
-            <p v-if="!(detail.skills?.length)" class="muted small empty-line">还没挂技能。教它“遇到 X 这样做”时，让助理 <code>save_skill</code> 后在这里挂上；或直接选一个已有技能。</p>
+            <p v-if="!(detail.skills?.length)" class="muted small empty-line">还没有挂载技能。在下方“+ 挂载技能”里选一个，或让助理 <code>save_skill(agent="档案名")</code> 保存并自动挂载。</p>
           </details>
           <details class="learn-block" open>
-            <summary>专属记忆（{{ detail.memories?.length ?? 0 }}）<span class="muted small">只给这个档案用的偏好、风格和经验；共享记忆不在这里</span></summary>
+            <summary>专属记忆（{{ detail.memories?.length ?? 0 }}）<span class="muted small">只有这个档案能看到的偏好与经验；共享记忆在「记忆」页</span></summary>
             <div v-if="detail.memories?.length" class="mems">
               <MemoryCard
                 v-for="m in detail.memories"
@@ -393,21 +404,30 @@ const current = computed(() => list.value.find((x) => x.name === selected.value)
   display: grid;
   gap: 8px;
   flex: none;
-  padding: 0 16px 8px;
-  max-height: 40vh;
-  overflow-y: auto;
+  padding: 0 4px 4px;
 }
 .learn-block {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel, var(--bg));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 .learn-block summary {
   cursor: pointer;
-  padding: 8px 12px;
+  padding: 10px 12px;
   font-size: 13px;
   font-weight: 600;
   list-style: none;
+}
+.learn-block[open] {
+  max-height: 32vh;
+}
+.learn-block > .chips,
+.learn-block > .mems {
+  overflow-y: auto;
+  min-height: 0;
 }
 .learn-block summary::before {
   content: "▸ ";
@@ -420,7 +440,7 @@ const current = computed(() => list.value.find((x) => x.name === selected.value)
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 4px 12px 10px;
+  padding: 2px 12px 10px;
   align-items: center;
 }
 .chip {
@@ -428,9 +448,17 @@ const current = computed(() => list.value.find((x) => x.name === selected.value)
   align-items: center;
   gap: 4px;
   background: var(--hover);
+  border: 1px solid transparent;
   border-radius: 999px;
   padding: 2px 6px 2px 10px;
   font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+}
+.chip:hover {
+  border-color: var(--line-strong, var(--line));
+  background: var(--sunken, var(--hover));
 }
 .chip.missing {
   color: var(--danger, #c0392b);
@@ -445,8 +473,15 @@ const current = computed(() => list.value.find((x) => x.name === selected.value)
   color: var(--ink-2);
   padding: 0 2px;
 }
+.chip .x:hover {
+  color: var(--danger, #c0392b);
+}
 .mems {
   display: grid;
+  padding: 0 12px 8px;
+}
+.mems :deep(.mem) {
+  padding: 8px 0;
 }
 .empty-line {
   padding: 0 12px 10px;

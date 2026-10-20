@@ -254,9 +254,9 @@ export async function startLarkBot(app: App) {
     if (n.urgency !== "urgent" && !n.scheduled && inQuietHours(app)) return;
     // Lessons from "忽略": a class of nudges the owner dismissed stays in-app.
     {
-      const { muteMatch, recordMuteHit } = await import("../core/notify-lessons.ts");
-      const r = muteMatch(app, n);
-      if (r) { recordMuteHit(app, r.id); return; }
+      const { aiIgnoreMatch } = await import("../core/notify-ai-gate.ts");
+      const hit = await aiIgnoreMatch(app, n).catch(() => null);
+      if (hit) { console.info(`[omem] 通知按忽略规则静默：${hit.rule.id}（${hit.reason}）`); return; }
     }
     // Suppress when the owner has clearly seen/handled the triggering chat:
     // read status, an OK/DONE reaction, or a later reply in the same topic.
