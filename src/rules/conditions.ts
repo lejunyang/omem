@@ -3,13 +3,19 @@ import { FIELDS, type Condition, type Field, type Leaf, type RuleEvent } from ".
 /**
  * Evaluate a rule's conditions against an event. Fields the event does not have are "unknown":
  * a leaf on an unknown field is false (a negated one is true), so a rule never fires on a guess.
- * `chat.bots` is looked up only when a condition asks for it.
+ * `chat.bots` / `chat.hasOwnBot` are looked up only when a condition asks for them.
  */
 export type FieldReader = (field: Field) => Promise<unknown> | unknown;
+export type ChatBot = { appId?: string; name: string };
 
-export function eventReader(e: RuleEvent, lookups: { chatBots?: (chatId: string) => Promise<string[] | null> } = {}): FieldReader {
-  let bots: Promise<string[] | null> | null = null;
-  return (field) => {
+export function eventReader(e: RuleEvent, lookups: { chatBots?: (chatId: string) => Promise<ChatBot[] | null>; ownAppId?: string } = {}): FieldReader {
+  let bots: Promise<ChatBot[] | null> | null = null;
+  const readBots = () => {
+    if (!e.chat || !lookups.chatBots) return null;
+    bots ??= lookups.chatBots(e.chat.id).catch(() => null);
+    return bots;
+  };
+  return async (field) => {
     switch (field) {
       case "chat.id":
         return e.chat?.id;
@@ -18,9 +24,14 @@ export function eventReader(e: RuleEvent, lookups: { chatBots?: (chatId: string)
       case "chat.kind":
         return e.chat?.kind;
       case "chat.bots":
-        if (!e.chat || !lookups.chatBots) return undefined;
-        bots ??= lookups.chatBots(e.chat.id).catch(() => null);
-        return bots;
+        return (await readBots())?.map((b) => b.name) ?? undefined;
+      case "chat.hasOwnBot": {
+        // The bot itself delivered this event: it is in the chat.
+        if (e.via === "bot") return true;
+        if (!lookups.ownAppId) return undefined;
+        const list = await readBots();
+        return list ? list.some((b) => b.appId === lookups.ownAppId) : undefined;
+      }
       case "sender.name":
         return e.sender?.name;
       case "sender.email":

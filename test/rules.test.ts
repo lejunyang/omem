@@ -36,8 +36,13 @@ describe("rule conditions", () => {
     expect(await evaluate({ field: "chat.name", op: "contains", value: "" }, eventReader({ key: "s", kind: "schedule", at: "", via: "test" }))).toBe(false);
     // Bots are read only when asked, once.
     let calls = 0;
-    const read = eventReader(msg(), { chatBots: async () => (calls++, ["问答机器人", "报警机器人"]) });
+    const read = eventReader(msg(), { chatBots: async () => (calls++, [{ appId: "cli_qa", name: "问答机器人" }, { appId: "cli_own", name: "小王的助理" }]), ownAppId: "cli_own" });
     expect(await evaluate({ any: [{ field: "chat.bots", op: "contains", value: "问答" }, { field: "chat.bots", op: "contains", value: "报警" }] }, read)).toBe(true);
+    // omem's own bot is recognized by app id, whatever it is named.
+    expect(await evaluate({ field: "chat.hasOwnBot", op: "is", value: true }, read)).toBe(true);
+    expect(await evaluate({ field: "chat.hasOwnBot", op: "is", value: false }, eventReader(msg(), { chatBots: async () => [{ appId: "cli_qa", name: "omem" }], ownAppId: "cli_own" }))).toBe(true);
+    // Unknown (no member list): neither true nor false fires.
+    expect(await evaluate({ field: "chat.hasOwnBot", op: "is", value: false }, eventReader(msg(), { chatBots: async () => null, ownAppId: "cli_own" }))).toBe(false);
     expect(calls).toBe(1);
     expect(describeCond(c)).toBe("群名包含 报警，并且（发送人是其中之一 小王、小李，或者发送人邮箱结尾是 @ops.example.com），并且消息类型（text / post / interactive 卡片 / image / file…）是 interactive，并且不是（消息内容匹配 已恢复|resolved）");
   });

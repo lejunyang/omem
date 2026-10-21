@@ -18,7 +18,7 @@ const props = defineProps<{ modelValue: Condition | null; fields: Record<string,
 const emit = defineEmits<{ "update:modelValue": [value: Condition | null] }>();
 
 const OP_LABEL: Record<string, string> = { equals: "是", contains: "包含", startsWith: "开头是", endsWith: "结尾是", matches: "匹配正则", in: "是其中之一（逗号分隔）", is: "为" };
-const BOOL_FIELDS = new Set(["message.mentionsOwner", "message.mentionsBot", "message.inTopic"]);
+const BOOL_FIELDS = new Set(["message.mentionsOwner", "message.mentionsBot", "message.inTopic", "chat.hasOwnBot"]);
 
 const mode = ref<"all" | "any">("all");
 const rows = ref<Row[]>([]);

@@ -3,7 +3,7 @@ import { all, one } from "../core/db.ts";
 import { json, now } from "../core/util.ts";
 import { runActions } from "./actions.ts";
 import { aiJudge, eventSummary } from "./compile.ts";
-import { describe, evaluate, eventReader } from "./conditions.ts";
+import { describe, evaluate, eventReader, type ChatBot } from "./conditions.ts";
 import { claimEvent, listRules, recordFiring } from "./store.ts";
 import { ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./types.ts";
 
@@ -73,7 +73,7 @@ function takeAiBudget(ruleId: string) {
 export async function judge(app: App, rule: Pick<Rule, "id" | "description" | "conditions" | "judge">, e: RuleEvent, opts: { ai?: boolean } = {}): Promise<Decision> {
   // A schedule tick has nothing to look at: it fires (the agent it starts does the looking).
   if (e.kind === "schedule") return { match: true, by: "code", reason: "定时" };
-  const read = eventReader(e, { chatBots: (id) => chatBots(app, id) });
+  const read = eventReader(e, { chatBots: (id) => chatBots(app, id), ownAppId: app.config.lark.appId || undefined });
   if (rule.judge !== "ai") {
     if (!rule.conditions || !(await evaluate(rule.conditions, read))) return { match: false, by: "code", reason: "" };
     if (rule.judge === "code") return { match: true, by: "code", reason: describe(rule.conditions) };
@@ -86,22 +86,28 @@ export async function judge(app: App, rule: Pick<Rule, "id" | "description" | "c
 
 // ---- chat facts read on demand -----------------------------------------------------------
 
-const botsCache = new Map<string, { at: number; names: string[] | null }>();
-/** The bots in a chat (by name), read with the owner's lark-cli once a day per chat. */
-export async function chatBots(app: App, chatId: string): Promise<string[] | null> {
+const botsCache = new Map<string, { at: number; bots: ChatBot[] | null }>();
+/**
+ * The bots in a chat (app id and name), read with the owner's lark-cli once a day per chat.
+ * Inviting omem's bot forgets the chat's entry so the next check sees it.
+ */
+export async function chatBots(app: App, chatId: string): Promise<ChatBot[] | null> {
   const c = botsCache.get(chatId);
-  if (c && Date.now() - c.at < 24 * 3600_000) return c.names;
-  let names: string[] | null = null;
+  if (c && Date.now() - c.at < 24 * 3600_000) return c.bots;
+  let out: ChatBot[] | null = null;
   try {
     const { larkCli } = await import("../channels/lark-cli.ts");
     const v = await larkCli(["im", "+chat-members-list", "--chat-id", chatId, "--member-types", "bot", "--page-all", "--as", "user", "--format", "json"], 60_000);
-    const bots: { name?: string; bot_name?: string }[] = v?.data?.bots ?? v?.bots ?? [];
-    names = bots.map((b) => String(b.name ?? b.bot_name ?? "")).filter(Boolean);
+    const bots: { app_id?: string; name?: string; bot_name?: string }[] = v?.data?.bots ?? v?.bots ?? [];
+    out = bots.map((b) => ({ appId: b.app_id ? String(b.app_id) : undefined, name: String(b.name ?? b.bot_name ?? "") })).filter((b) => b.name || b.appId);
   } catch {
-    names = null;
+    out = null;
   }
-  botsCache.set(chatId, { at: Date.now(), names });
-  return names;
+  botsCache.set(chatId, { at: Date.now(), bots: out });
+  return out;
+}
+export function forgetChatBots(chatId: string) {
+  botsCache.delete(chatId);
 }
 
 // ---- trying a rule on what was captured -------------------------------------------------------

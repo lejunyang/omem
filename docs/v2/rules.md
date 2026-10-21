@@ -33,7 +33,7 @@
 ] }
 ```
 
-字段：`chat.id`、`chat.name`、`chat.kind`（group / p2p）、`chat.bots`（群里的机器人名字，第一次用到时用本人的 lark-cli 读成员，缓存一天）、`sender.name`、`sender.email`、`sender.kind`（owner / user / bot）、`message.text`、`message.type`（text / post / interactive（卡片）/ image / file…）、`message.mentionsOwner`、`message.mentionsBot`、`message.inTopic`、`message.cardTitle`。运算：`equals`、`contains`、`startsWith`、`endsWith`、`matches`（正则）、`in`（列表）、`is`（布尔）。组合：`all`、`any`、`not`。
+字段：`chat.id`、`chat.name`、`chat.kind`（group / p2p）、`chat.bots`（群里的机器人名字，第一次用到时用本人的 lark-cli 读成员，缓存一天）、`chat.hasOwnBot`（群里有没有 omem 自己的机器人，按 `lark.appId` 比对成员的应用 id，不看名字；机器人收到的消息直接算有；读不到成员时视为未知，is true / is false 都不成立）、`sender.name`、`sender.email`、`sender.kind`（owner / user / bot）、`message.text`、`message.type`（text / post / interactive（卡片）/ image / file…）、`message.mentionsOwner`、`message.mentionsBot`、`message.inTopic`、`message.cardTitle`。运算：`equals`、`contains`、`startsWith`、`endsWith`、`matches`（正则）、`in`（列表）、`is`（布尔）。组合：`all`、`any`、`not`。
 
 “固化成代码”就是这份 JSON：宿主直接求值，不执行模型写的程序。模型从规则原话生成条件，本人在页面上看到的是一句句“群名包含 报警”，可以直接改；生成后先在最近的消息上试一遍，看命中了哪些。
 

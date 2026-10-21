@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { askModel, jsonIn } from "../agents/oneshot.ts";
 import { listAgentSpecs } from "../agents/specs.ts";
+import { one } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
 import { describe } from "./conditions.ts";
 import { FIELDS, OPS, ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./types.ts";
@@ -24,6 +25,7 @@ const ACTIONS = `动作（按顺序执行，至少一个）：
 
 export async function draftRule(app: App, description: string, current?: Partial<RuleInput>): Promise<{ rule?: RuleInput; error?: string; summary?: string }> {
   const specs = listAgentSpecs(app).map((s) => `- ${s.name}：${s.description}`).join("\n") || "（还没有 Agent 档案）";
+  const botName = one<{ value: string }>(app.db, "select value from kv where key = 'lark_bot_name'")?.value;
   const prompt = [
     "把本人的一句话规则写成 omem 能执行的规则。只输出一个 JSON 对象，不要解释、不要代码块围栏。",
     "",
@@ -43,6 +45,7 @@ export async function draftRule(app: App, description: string, current?: Partial
     "- 拉机器人、开始监听这类对一个群做一次就够的，trigger.once 用 chat；每条消息都要处理的用 event。",
     "- 群名用 contains：本人说“报警群”“值班群”通常指名字里带这几个字的群，不是名字恰好等于它；只有本人给了完整群名或群 id 才用 equals。",
     "- 发送人只给了名字就用 sender.name；给了邮箱用 sender.email。群里有某个机器人用 chat.bots contains。“报警卡片”用 message.type equals interactive。",
+    `- 本人说的“助理机器人”“omem 机器人”“我的机器人”指 omem 自己的飞书机器人${botName ? `（名字是「${botName}」）` : ""}：判断它在不在群里用 chat.hasOwnBot（is true / false），不要用 chat.bots 去猜它的名字。`,
     "- 规则里提到的 Agent 不在已有档案里时，用最接近的；都不合适就不要编造，改用 notify 并在 name 里写明“缺档案”。",
   ].join("\n");
   const out = await askModel(app, prompt, { timeoutMs: 120_000 });

@@ -42,6 +42,7 @@ async function runAction(app: App, rule: Rule, a: RuleAction, e: RuleEvent, reas
       // the owner configured this rule. No messages, no other members.
       const { larkCli } = await import("../channels/lark-cli.ts");
       await larkCli(["im", "chat.members", "create", "--chat-id", id, "--member-id-type", "app_id", "--succeed-type", "1", "--data", JSON.stringify({ id_list: [appId] }), "--as", "user"], 60_000);
+      (await import("./engine.ts")).forgetChatBots(id);
       return { action: "invite-bot", ok: true, detail: `已把机器人加进 ${e.chat?.name ?? id}` };
     }
     case "capture": {
