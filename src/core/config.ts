@@ -7,8 +7,8 @@ import { acpCatalog, catalogProfile, upgradeProfileArgs } from "../agents/catalo
 export const agentProfileSchema = z.object({
   id: z.string().min(1),
   name: z.string().optional(),
-  /** acp: Agent Client Protocol over stdio. claude-cli / codex-cli: one-shot fallbacks. */
-  transport: z.enum(["acp", "claude-cli", "codex-cli"]),
+  /** acp: Agent Client Protocol over stdio. claude-cli / codex-cli: one-shot fallbacks. doubao: Doubao OpenAPI (cloud, no omem tools). */
+  transport: z.enum(["acp", "claude-cli", "codex-cli", "doubao"]),
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
   model: z.string().optional(),
@@ -322,9 +322,11 @@ const cliProfiles: AgentProfile[] = [
   { id: "claude-cli", name: "Claude Code (CLI)", transport: "claude-cli", command: "claude", args: [], env: {}, idleTimeoutMs: 600_000 },
   { id: "codex-cli", name: "Codex (CLI)", transport: "codex-cli", command: "codex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000 },
 ];
+/** Doubao through its OpenAPI: no local command (`command` is only a label); available once authorized. */
+const doubaoProfile: AgentProfile = { id: "doubao", name: "豆包 (OpenAPI)", transport: "doubao", command: "doubao-openapi", args: [], env: {}, idleTimeoutMs: 600_000 };
 
 /** ACP agents from the catalog (codex, claude, gemini, copilot, …) plus the one-shot CLI fallbacks. Order = auto-pick priority. */
-export const builtinProfiles: AgentProfile[] = [...acpCatalog.slice(0, 3).map(catalogProfile), ...cliProfiles, ...acpCatalog.slice(3).map(catalogProfile)];
+export const builtinProfiles: AgentProfile[] = [...acpCatalog.slice(0, 3).map(catalogProfile), ...cliProfiles, ...acpCatalog.slice(3).map(catalogProfile), doubaoProfile];
 
 export function omemHome(): string {
   if (process.env.OMEM_HOME) return resolve(process.env.OMEM_HOME);

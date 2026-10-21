@@ -45,6 +45,8 @@ export function saveProbe(app: { db: { prepare: (sql: string) => { run(...p: unk
 
 /** Probe a profile now (spawns the CLI briefly). */
 export async function probeProfile(profile: AgentProfile): Promise<ProbeInfo> {
+  if (profile.transport === "doubao")
+    return { at: new Date().toISOString(), agent: "豆包 OpenAPI", models: [], efforts: [], error: "豆包后端没有可选模型和思考强度；授权状态用 omem doubao status 查看" };
   if (profile.transport !== "acp" || !commandExists(profile.command))
     return { at: new Date().toISOString(), agent: profile.command, models: [], efforts: [], error: "命令行 Agent 不支持探测" };
   try {

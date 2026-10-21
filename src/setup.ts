@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { checkbox, confirm, input, number, password, select } from "@inquirer/prompts";
 import { acpCatalog, catalogProfile, fetchRegistry, installHint, installRegistryBinary, npxProfile, platformKey, registryOptions, type CatalogEntry, type RegistryAgent } from "./agents/catalog.ts";
 import { commandExists } from "./agents/spawn.ts";
+import { doubaoTokenExists } from "./agents/doubao.ts";
 import type { App } from "./core/app.ts";
 import { builtinProfiles, roleNames, saveConfig, type AgentProfile, type Config } from "./core/config.ts";
 import { run } from "./core/db.ts";
@@ -308,7 +309,8 @@ export async function setupAgentsSection(config: Config, home: string) {
     for (const p of config.agents.profiles) m.set(p.id, p);
     return m;
   };
-  const listAll = () => [...profileMap().values()].map((p) => ({ ...p, installed: commandExists(p.command) }));
+  const listAll = () =>
+    [...profileMap().values()].map((p) => ({ ...p, installed: p.transport === "doubao" ? doubaoTokenExists(home) : commandExists(p.command) }));
   let list = listAll();
   out("\nAgent 后端（已安装）：");
   for (const p of list.filter((p) => p.installed)) out(`  ✓ ${p.id.padEnd(11)} ${p.name ?? ""}${p.model ? ` · ${p.model}` : ""}${p.effort ? `/${p.effort}` : ""}`);

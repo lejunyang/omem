@@ -254,6 +254,29 @@ export const peerCommands: Record<string, Command> = {
       return out;
     },
   },
+  "doubao-status": {
+    description: "豆包 OpenAPI：各飞书应用的豆包权限与本机授权状态",
+    schema: z.object({}),
+    run: async (app) => (await import("../agents/doubao.ts")).doubaoStatus(app.home, app.config),
+  },
+  "doubao-login": {
+    description: "豆包 OpenAPI：以本人身份发起授权（返回设备码链接，在飞书里打开确认；授权在后台完成后通知）",
+    schema: z.object({ app: z.string().regex(/^cli_[A-Za-z0-9]+$/).optional() }),
+    run: async (app, a) => {
+      const { authorizeDoubao, doubaoApps } = await import("../agents/doubao.ts");
+      const apps = await doubaoApps(app.home, app.config);
+      const target = a.app ? apps.find((x) => x.appId === a.app) : apps[0];
+      if (!target) throw new HttpError(400, "omem 没有这个飞书应用的 App Secret");
+      return await new Promise((resolve) => {
+        authorizeDoubao(app.home, target, (url, userCode, expiresIn) => resolve({ appId: target.appId, url, userCode, expiresInMinutes: Math.round(expiresIn / 60) }))
+          .then(async () => {
+            const { notify } = await import("./notify.ts");
+            notify(app, { title: "豆包已授权", body: `应用 ${target.name ?? target.appId} 的豆包授权已保存，可以把后端设为 doubao` });
+          })
+          .catch((e) => resolve({ error: (e as Error).message }));
+      });
+    },
+  },
   "lark-docs-refresh": {
     description: "重新读取已保存的飞书文档（下载图片、画板等素材，导入链接的文档），在后台运行，完成后发通知；stop: true 在当前这篇读完后停下",
     schema: z.object({ space: z.string().max(64).optional(), limit: z.number().int().min(1).max(10_000).optional(), stop: z.boolean().optional() }),

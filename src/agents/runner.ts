@@ -9,8 +9,8 @@ import { all } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { spaceGuide } from "../wiki/store.ts";
 import { resolveRoleProfile } from "./models.ts";
-import { runAcp } from "./acp.ts";
-import { runCli } from "./cli.ts";
+import { runBackend } from "./dispatch.ts";
+import { doubaoTokenExists } from "./doubao.ts";
 import { commandExists } from "./spawn.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
 import { issueToolToken, revokeToolToken } from "./tools.ts";
@@ -71,19 +71,25 @@ export function loadRole(name: string, app?: App): Role {
 const commonGuide = () => readFileSync(join(rolesDir(), "_common.md"), "utf8");
 
 const available = new Map<string, boolean>();
+let doubaoHome = "";
 function installed(p: AgentProfile) {
+  // Doubao has no command: it is available once the owner has authorized it (checked each time, it is a file read).
+  if (p.transport === "doubao") return !!doubaoHome && doubaoTokenExists(doubaoHome);
   if (!available.has(p.command)) available.set(p.command, commandExists(p.command));
   return available.get(p.command)!;
 }
 
 export function listAgentProfiles(app: App) {
+  doubaoHome = app.home;
   return allProfiles(app.config).map((p) => {
+    if (p.transport === "doubao") return { ...p, installed: installed(p), install: installed(p) ? undefined : "omem doubao login（设备码授权，omem doubao status 查权限）" };
     const e = catalogEntry(p.id);
     return { ...p, installed: installed(p), install: e && e.command === p.command ? installHint(e) : undefined };
   });
 }
 
 export function profileFor(app: App, role: RoleName | string): AgentProfile {
+  doubaoHome = app.home;
   const profiles = allProfiles(app.config);
   const wanted = app.config.agents.roles[role] ?? app.config.agents.default;
   if (wanted) {
@@ -315,7 +321,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
       };
       if (i > 0) emit({ type: "status", text: `默认后端不可用（排队/限流），改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""} 重试` });
-      const result = profile.transport === "acp" ? await runAcp(profile, req, emit) : await runCli(profile, req, emit);
+      const result = await runBackend(app, profile, req, emit);
       revokeToolToken(prep.token);
       return { ...result, profileId: profile.id };
     } catch (e) {

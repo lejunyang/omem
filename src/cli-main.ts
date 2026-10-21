@@ -350,6 +350,38 @@ program
     console.log(JSON.stringify(await peerJson(app, peerId, "/api/diag"), null, 2));
   });
 
+const doubao = program.command("doubao").description("豆包 OpenAPI 作为模型后端：检查哪个飞书应用有权限、以本人身份授权");
+doubao
+  .command("status")
+  .description("各飞书应用的豆包权限与本机授权状态")
+  .action(async () => {
+    const app = open();
+    const { doubaoStatus } = await import("./agents/doubao.ts");
+    const s = await doubaoStatus(app.home, app.config);
+    for (const a of s.apps) {
+      const state = a.authorized ? "已授权，可用" : a.missing.length ? `缺权限：${a.missing.join("、")}` : "有权限，未授权（omem doubao login）";
+      console.log(`${a.authorized ? "✓" : "·"} ${a.name ?? a.appId}（${a.appId}）${state}${a.error ? `  ${a.error}` : ""}`);
+    }
+    if (s.larkCliApp) console.log(`· lark-cli 的应用（${s.larkCliApp.appId}）：${s.larkCliApp.note}`);
+    if (!s.apps.length) console.log("omem 还没有绑定带 App Secret 的飞书应用：omem setup → 渠道 → 飞书机器人");
+  });
+doubao
+  .command("login")
+  .description("以本人身份授权豆包（设备码：在飞书里打开链接确认）")
+  .option("--app <appId>", "用哪个应用授权（默认 omem 的机器人）")
+  .action(async (o) => {
+    const app = open();
+    const { authorizeDoubao, checkDoubaoApp, doubaoApps } = await import("./agents/doubao.ts");
+    const apps = await doubaoApps(app.home, app.config);
+    const target = o.app ? apps.find((a) => a.appId === o.app) : apps[0];
+    if (!target) return console.log(o.app ? `omem 没有应用 ${o.app} 的 App Secret` : "omem 还没有绑定带 App Secret 的飞书应用：omem setup → 渠道 → 飞书机器人");
+    const before = await checkDoubaoApp(app.home, target);
+    if (before.missing.length) console.log(`提醒：应用 ${target.name ?? target.appId} 在开发者后台还没开通 ${before.missing.join("、")}，授权后也可能用不了`);
+    await authorizeDoubao(app.home, target, (url, code) => console.log(`在飞书里打开并确认（授权码 ${code}）：\n${url}`));
+    const after = await checkDoubaoApp(app.home, target);
+    console.log(after.authorized ? `✓ 已授权，豆包可用（后端 id：doubao）` : `授权已保存，但豆包接口还不能用：${after.error ?? "未知原因"}`);
+  });
+
 const lark = program.command("lark").description("飞书个人采集（只读）：文档");
 lark
   .command("docs-refresh")
@@ -792,9 +824,11 @@ agents
     const app = open();
     const { catalogEntry, installHint } = await import("./agents/catalog.ts");
     const all = listAgentProfiles(app);
-    for (const p of all.filter((p) => p.installed)) console.log(`✓ ${p.id.padEnd(12)} ${p.transport.padEnd(10)} ${p.command} ${p.args.join(" ")}${p.model ? `  model=${p.model}` : ""}${p.effort ? ` effort=${p.effort}` : ""}`);
+    for (const p of all.filter((p) => p.installed))
+      console.log(p.transport === "doubao" ? `✓ ${p.id.padEnd(12)} ${p.transport.padEnd(10)} 豆包 OpenAPI（omem doubao status）` : `✓ ${p.id.padEnd(12)} ${p.transport.padEnd(10)} ${p.command} ${p.args.join(" ")}${p.model ? `  model=${p.model}` : ""}${p.effort ? ` effort=${p.effort}` : ""}`);
     const missing = all.filter((p) => !p.installed);
     if (o.all) for (const p of missing) {
+      if (p.transport === "doubao") { console.log(`· ${p.id.padEnd(12)} 豆包 OpenAPI：omem doubao login 授权后可用`); continue; }
       const e = catalogEntry(p.id);
       console.log(`· ${p.id.padEnd(12)} ${p.command} ${p.args.join(" ")}${e ? `  安装：${installHint(e) || "见官网"}` : ""}`);
     }

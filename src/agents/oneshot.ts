@@ -1,7 +1,6 @@
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
-import { runAcp } from "./acp.ts";
-import { runCli } from "./cli.ts";
+import { runBackend } from "./dispatch.ts";
 import { profileFor } from "./runner.ts";
 import { replyOf } from "./types.ts";
 
@@ -27,8 +26,7 @@ export async function askModel(app: App, prompt: string, opts: { timeoutMs?: num
     for (const profile of chain.slice(0, 2)) {
       if (ctrl.signal.aborted) break;
       try {
-        const run = profile.transport === "acp" ? runAcp : runCli;
-        const r = await run(profile, { cwd: app.home, prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal }, () => {});
+        const r = await runBackend(app, profile, { cwd: app.home, prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal }, () => {});
         const text = replyOf(r).trim();
         if (text) return text;
       } catch {

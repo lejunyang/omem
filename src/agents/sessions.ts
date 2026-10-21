@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { truncate } from "../core/util.ts";
 import { userName } from "../core/users.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
-import { runCli } from "./cli.ts";
+import { runBackend } from "./dispatch.ts";
 import { fallbackProfiles, isRetryableAgentError, prepareRun, type Actor } from "./runner.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { createRun, runsInLane, type RunContext } from "./runs.ts";
@@ -213,10 +213,11 @@ ${renderMessages(messages, app)}
     updateThread(app, threadId, { agentProfile: sessionKey, agentSession: sessionId ?? null, agentCwd: prep.cwd, agentTurns: turns });
 
   if (prep.profile.transport !== "acp") {
-    // CLI agents: no live process, but their own session files can be resumed.
+    // CLI agents and Doubao: no live process, but their own sessions (files / the Doubao session) can be resumed.
     try {
       const run = async (resume: boolean) =>
-        runCli(
+        runBackend(
+          app,
           prep.profile,
           {
             cwd: prep.cwd,
@@ -265,7 +266,8 @@ ${renderMessages(messages, app)}
     }
     try {
       if (used.transport !== "acp") {
-        const r = await runCli(
+        const r = await runBackend(
+          app,
           used,
           {
             cwd: curPrep.cwd,

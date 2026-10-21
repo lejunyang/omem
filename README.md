@@ -47,6 +47,7 @@ flowchart LR
 | Kimi CLI / Mistral Vibe | `uv tool install kimi-cli` / `mistral-vibe` | `kimi` / `vibe` |
 | goose、Kilo、Auggie、Cline、Factory Droid、Grok、MiniMax、Amp、Junie、Devin、pi、DeepAgents、TraeX | 见 `omem agents --all` | 同名 |
 | Claude / Codex 命令行（非 ACP 兜底） | `claude` 或 `codex` 在 PATH 中 | `claude-cli` / `codex-cli` |
+| 豆包 OpenAPI（云端 Managed Agent，无需本地程序） | 飞书应用开了豆包用户权限并授权：`omem doubao status` / `omem doubao login` | `doubao` |
 
 `omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → Agent → ACP 注册表”做同样的事。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。
 
@@ -141,6 +142,8 @@ omem roles [list|customize|reset|merge] <名>  # 内置角色：复制到知识�
 omem agents [--all]                         # 查看 Agent 配置与安装状态（--all 含未安装的和安装方式）
 omem agents registry                        # 官方 ACP 注册表里的 Agent
 omem agents add gemini --via npx            # 加入 Agent（npm 全局 / npx / uvx / 下载程序）
+omem doubao status                           # 哪个飞书应用有豆包权限、本机是否已授权
+omem doubao login [--app <appId>]            # 设备码授权豆包（在飞书里打开链接确认）
 omem user add 小王 --id wang --lark ou_xxx --space team  # 登记同事，见“多人使用”
 omem setup                                  # 设置向导（Agent、模型、文档解析、渠道、会话…）
 omem setup embeddings --model bge-small-zh  # 只开启向量检索（经 osdk 下载，也可 bge-base-zh / bge-m3）
@@ -267,7 +270,7 @@ src/memory    记忆（有效期、版本链、写入检查与复核统计）
 src/items     事项（时间线）
 src/wiki      页面文件、链接与引用索引、过期检测
 src/learn     FSRS 卡片、学习目标
-src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能、后台任务、交办编码
+src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能、后台任务、交办编码；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts
 src/channels  飞书机器人（发送、卡片、进度、回调、监听群）、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查、巡检、简报、做梦、筛群、摘要、编码、评审、记忆复核、出卡），共同部分在 _common.md
