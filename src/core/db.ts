@@ -581,6 +581,8 @@ const migrations: string[] = [
   create index rule_firings_rule on rule_firings(rule_id, at);
   create table rule_handled (rule_id text not null, key text not null, at text not null, primary key (rule_id, key));
   `,
+  `alter table lark_messages add column raw_content text;
+   create index lark_messages_chat_cursor on lark_messages(chat_id,create_ms,message_id);`,
 ];
 
 export type Db = DatabaseSync;

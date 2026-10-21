@@ -94,9 +94,10 @@ export const LARK_BOT_ADDONS = {
     items: {
       tenant: [
         "im.message.receive_v1",
-        "im.message.updated_v1",
         "im.chat.member.bot.added_v1",
         "im.chat.member.bot.deleted_v1",
+        "im.chat.member.user.deleted_v1",
+        "im.chat.disbanded_v1",
         "im.message.reaction.created_v1",
         "im.message.reaction.deleted_v1",
       ],

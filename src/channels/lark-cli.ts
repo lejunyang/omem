@@ -39,28 +39,46 @@ export function larkCliWithInput(args: string[], stdin: string) {
 
 /** Run the official lark-cli (bundled npm dependency) and parse its JSON output. */
 export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string): Promise<any> {
-  if (override) return override(args, cwd);
+  if (override) { const result = await override(args, cwd); assertLarkResult(result); return result; }
   const script = larkCliScript();
   try {
     const { stdout } = await exec(process.execPath, [script, ...args], { timeout: timeoutMs, maxBuffer: 50_000_000, windowsHide: true, cwd });
     const value = JSON.parse(stdout);
-    if (value.ok === false) throw new Error(value.error?.message || "飞书读取失败");
+    assertLarkResult(value);
     return value;
   } catch (e) {
     const raw = `${(e as { stderr?: string }).stderr ?? ""}${(e as { stdout?: string }).stdout ?? ""}`;
     if (e instanceof Error && !e.message.includes("Command failed")) throw new Error(e.message.slice(0, 300));
     // A failing command still prints its JSON error ({ ok: false, error: { type, message, hint } }); keep what it says.
-    const err = /\{[\s\S]*\}/.exec(raw)?.[0];
     let detail = "";
     let hint = "";
-    try {
-      const v = err ? JSON.parse(err).error : null;
-      if (v) detail = [v.type, v.subtype, v.code, v.message].filter(Boolean).join(" ");
-      if (v?.hint) hint = String(v.hint);
-    } catch {}
+    for (const output of [(e as { stderr?: string }).stderr, (e as { stdout?: string }).stdout]) {
+      try {
+        const match = /\{[\s\S]*\}/.exec(output ?? "")?.[0];
+        if (!match) continue;
+        const value = JSON.parse(match);
+        const v = value.error ?? value;
+        detail = [v.type, v.subtype, v.code ?? value.code, v.message ?? v.msg ?? value.msg, v.log_id ?? value.log_id].filter(Boolean).join(" ");
+        hint = v.hint ? String(v.hint) : "";
+        if (detail) break;
+      } catch {}
+    }
     // A missing permission (scope) is not a missing login, even though both say "unauthorized".
     if (!/scope|permission/i.test(detail) && /keychain|unauthori[sz]ed|not.*logged|auth.*login|token.*expired|credential/i.test(detail || raw))
       throw new Error("飞书登录不可用：请在运行 omem 的电脑上执行 lark-cli auth login 后重试");
-    throw new Error(detail ? `飞书 CLI：${detail.slice(0, 300)}${hint ? `（${hint.slice(0, 200)}）` : ""}` : "飞书 CLI 调用失败，请检查登录和网络");
+    throw new Error(detail ? `飞书 CLI：${redactLarkError(detail).slice(0, 300)}${hint ? `（${redactLarkError(hint).slice(0, 200)}）` : ""}` : "飞书 CLI 调用失败，请检查登录和网络");
   }
+}
+
+/** Do not treat a bare API error (exit 0) as successful membership/capture. */
+export function assertLarkResult(value: any) {
+  if (value?.ok === false || (typeof value?.code === "number" && value.code !== 0)) {
+    const error = value.error ?? value;
+    const message = redactLarkError(String(error.message ?? error.msg ?? value.msg ?? "飞书请求失败"));
+    throw new Error([error.code ?? value.code, message.slice(0, 200), error.log_id ?? error.logId].filter(Boolean).join(" "));
+  }
+}
+
+function redactLarkError(message: string) {
+  return message.replace(/(Bearer\s+|(?:[\w-]*(?:token|secret|cookie))["']?\s*[=:]\s*["']?)[^\s,;"'}]+/gi, "$1[已隐藏]");
 }

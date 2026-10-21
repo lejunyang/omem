@@ -4,7 +4,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { json } from "../core/util.ts";
 import { importFile, keepOriginal } from "../sources/import.ts";
-import { findSourceByUri, sourceText, upsertSource } from "../sources/store.ts";
+import { findSourceByUri, sourceText, upsertSource, type UpsertResult } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
 import { cliIdsIn, learnCliPeople, peopleByCliIds } from "./lark-people.ts";
 
@@ -25,6 +25,7 @@ export type LarkMessage = {
   chat_name?: string;
   msg_type: string;
   content: unknown;
+  raw_content?: string;
   create_time: string;
   sender?: { id?: string; id_type?: string; sender_type?: string; name?: string };
   deleted?: boolean;
@@ -152,13 +153,13 @@ export function withExtension(path: string) {
  * When the batch will be understood by the ingest role they also become sources, so the agent
  * can look at them; otherwise they are only files the chat view shows.
  */
-export async function keepResources(app: App, spaceId: string, chatId: string, messages: LarkMessage[], cwd: string, asSources: boolean) {
+export async function keepResources(app: App, spaceId: string, chatId: string, messages: LarkMessage[], cwd: string, asSources: boolean, strict = false) {
   const byMessage = new Map<string, Record<string, ResourceRef>>();
   for (const m of messages) {
     for (const r of m.resources ?? []) {
-      if (r.error || !r.local_path || !r.key) continue;
+      if (r.error || !r.local_path || !r.key) { if (strict) throw new Error(`附件下载未完成（${m.message_id}）`); continue; }
       const path = existsSync(r.local_path) ? r.local_path : join(cwd, r.local_path);
-      if (!existsSync(path)) continue;
+      if (!existsSync(path)) { if (strict) throw new Error(`附件文件缺失（${m.message_id}）`); continue; }
       const refs = byMessage.get(m.message_id) ?? {};
       try {
         const file = withExtension(path);
@@ -171,6 +172,7 @@ export async function keepResources(app: App, spaceId: string, chatId: string, m
         ref.file = keepOriginal(app, file);
         refs[r.key] = ref;
       } catch (e) {
+        if (strict) throw e;
         console.warn(`[omem] 保存飞书附件失败（${m.message_id}/${r.key}）：${(e as Error).message}`);
       }
       byMessage.set(m.message_id, refs);
@@ -228,12 +230,14 @@ export function storeMessages(
     messages.forEach((m, i) =>
       run(
         app.db,
-        `insert into lark_messages(message_id,chat_id,thread_id,parent_id,sender_id,sender_name,sender_kind,msg_type,content,create_ms,source_id,line,archive,resources,reactions,mentions)
-         values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `insert into lark_messages(message_id,chat_id,thread_id,parent_id,sender_id,sender_name,sender_kind,msg_type,content,create_ms,source_id,line,archive,resources,reactions,mentions,raw_content)
+         values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          on conflict(message_id) do update set thread_id = coalesce(excluded.thread_id, lark_messages.thread_id), parent_id = coalesce(excluded.parent_id, lark_messages.parent_id),
-           content = excluded.content, source_id = coalesce(excluded.source_id, lark_messages.source_id), line = coalesce(excluded.line, lark_messages.line),
-           archive = coalesce(excluded.archive, lark_messages.archive), resources = case when excluded.resources != '{}' then excluded.resources else lark_messages.resources end,
-           reactions = excluded.reactions, mentions = case when excluded.mentions != '[]' then excluded.mentions else lark_messages.mentions end`,
+           content = excluded.content,
+           sender_name = case when excluded.sender_name != '' then excluded.sender_name else lark_messages.sender_name end,
+           source_id = coalesce(excluded.source_id, lark_messages.source_id), line = coalesce(excluded.line, lark_messages.line),
+           archive = coalesce(excluded.archive, lark_messages.archive), resources = json_patch(lark_messages.resources, excluded.resources),
+           reactions = excluded.reactions, mentions = case when excluded.mentions != '[]' then excluded.mentions else lark_messages.mentions end, raw_content = coalesce(excluded.raw_content, lark_messages.raw_content)`,
         m.message_id,
         m.chat_id ?? chatId,
         m.thread_id ?? null,
@@ -250,6 +254,7 @@ export function storeMessages(
         JSON.stringify(opts.resources?.get(m.message_id) ?? {}),
         JSON.stringify(Array.isArray(m.reactions) ? m.reactions : ((m.reactions as { counts?: unknown })?.counts ?? [])),
         JSON.stringify((m.mentions ?? []).map((x) => ({ id: typeof x.id === "string" ? x.id : (x.id?.open_id ?? ""), name: x.name ?? "" })).filter((x) => x.id)),
+        m.raw_content ?? (typeof m.content === "object" ? JSON.stringify(m.content) : typeof m.content === "string" && /^\s*[{[]/.test(m.content) ? m.content : null),
       ),
     );
   });
@@ -315,45 +320,6 @@ export async function quotedMessages(app: App, chatId: string, messages: LarkMes
 
 export const monthOf = (ms: number) => new Date(ms).toISOString().slice(0, 7);
 
-/**
- * A backfilled month is its own chat source (`lark:<chat>@YYYY-MM`), rebuilt in time order
- * from the stored rows, so the live source never has lines inserted above existing ones and
- * its citations keep pointing at the same lines.
- */
-export function rebuildArchive(app: App, input: { chatId: string; name: string; spaceId: string; month: string; chatKind: string; owner?: string }) {
-  const rows = all<Row>(app.db, "select * from lark_messages where chat_id = ? and archive = ? order by create_ms, message_id", input.chatId, input.month);
-  if (!rows.length) return null;
-  const quoted = new Map<string, Quoted>();
-  for (const r of rows)
-    if (r.parent_id && !quoted.has(r.parent_id)) {
-      const p = one<{ sender_name: string; content: string }>(app.db, "select sender_name, content from lark_messages where message_id = ?", r.parent_id);
-      if (p) quoted.set(r.parent_id, { sender: p.sender_name || "?", text: p.content });
-    }
-  const lines = rows.map((r) =>
-    formatLine(
-      {
-        message_id: r.message_id,
-        msg_type: r.msg_type,
-        content: r.content,
-        create_time: String(r.create_ms),
-        thread_id: r.thread_id ?? undefined,
-        sender: { id: r.sender_id ?? undefined, name: r.sender_name, sender_type: r.sender_kind === "app" ? "app" : "user" },
-      },
-      { owner: r.sender_kind === "owner" ? (r.sender_id ?? undefined) : undefined, quoted: r.parent_id ? quoted.get(r.parent_id) : null, resources: json(r.resources, {}) },
-    ),
-  );
-  const src = upsertSource(app, {
-    spaceId: input.spaceId,
-    kind: "chat",
-    uri: `lark:${input.chatId}@${input.month}`,
-    title: `${input.name}（${input.month} 历史）`,
-    text: lines.join("\n"),
-    meta: { chatId: input.chatId, chatKind: input.chatKind, history: true, month: input.month, via: "lark-cli" },
-  });
-  tx(app.db, () => rows.forEach((r, i) => run(app.db, "update lark_messages set source_id = ?, line = ? where message_id = ?", src.id, i + 1, r.message_id)));
-  return src;
-}
-
 // ---- reading back (web) --------------------------------------------------------------
 
 export type ChatMessageView = {
@@ -389,7 +355,7 @@ const toView = (r: Row): ChatMessageView => ({
 
 /** Structured messages of a chat source (empty for sources captured before rows were kept) and the messages they quote. */
 export function sourceMessages(app: App, sourceId: string) {
-  const rows = all<Row>(app.db, "select * from lark_messages where source_id = ? order by line", sourceId);
+  const rows = all<Row>(app.db, "select * from lark_messages where source_id = ? order by create_ms, line", sourceId);
   const parents = new Set(rows.map((r) => r.parent_id).filter((p): p is string => !!p));
   const have = new Set(rows.map((r) => r.message_id));
   const quoted: Record<string, ChatMessageView & { sourceId: string | null }> = {};
@@ -562,4 +528,50 @@ export function fillResourcesInBackground(app: App, chatIds?: string[], notifyCo
 
 export function fillResourcesStatus() {
   return filling ? { running: true, ...filling } : lastFill ? { running: false, ...lastFill } : null;
+}
+
+/** Both identities use the same chat/message location. Replayed messages update that line. */
+export function persistChatMessages(app: App, input: { chatId: string; spaceId: string; name: string; messages: LarkMessage[]; owner?: string; resources?: Map<string, Record<string, ResourceRef>>; archive?: string }) {
+  type SourceRow = { id: string; space_id: string; uri: string; title: string; text: string; meta: string };
+  const existing = one<SourceRow>(app.db, "select * from sources where uri=? and deleted_at is null order by captured_at limit 1", `lark:${input.chatId}`);
+  const spaceId = existing?.space_id ?? input.spaceId;
+  const targets = new Map<string, { source?: SourceRow; lines: string[]; positions: Map<string, number>; writes: { message: LarkMessage; line: number; resources: Record<string, ResourceRef> }[] }>();
+  const validSources = new Map<string, SourceRow | undefined>();
+  let sourceId: string | undefined;
+  let status: UpsertResult["status"] = "unchanged";
+  const inBatch = new Map(input.messages.map(m => [m.message_id, m]));
+  for (const m of input.messages) {
+    const row = one<{ source_id: string | null; line: number | null; resources: string }>(app.db, "select source_id,line,resources from lark_messages where chat_id=? and message_id=?", input.chatId, m.message_id);
+    const resources = { ...json<Record<string, ResourceRef>>(row?.resources, {}), ...input.resources?.get(m.message_id) };
+    if (row?.source_id && !validSources.has(row.source_id)) validSources.set(row.source_id, one<SourceRow>(app.db, "select * from sources where id=? and deleted_at is null", row.source_id));
+    const legacy = !row?.source_id ? one<SourceRow>(app.db, "select * from sources where deleted_at is null and (uri=? or uri glob ?) and instr(text,?)>0 limit 1", `lark:${input.chatId}`, `lark:${input.chatId}@*`, `(${m.message_id})`) : undefined;
+    const archive = input.archive ? one<SourceRow>(app.db, "select * from sources where deleted_at is null and uri=? limit 1", `lark:${input.chatId}@${input.archive}`) : undefined;
+    const source = (row?.source_id ? validSources.get(row.source_id) : undefined) ?? legacy ?? (input.archive ? archive : existing);
+    const targetKey = source?.id ?? `new:${input.archive ?? "live"}`;
+    let target = targets.get(targetKey);
+    if (!target) {
+      const lines = source?.text ? source.text.split("\n") : [];
+      const positions = new Map<string, number>();
+      lines.forEach((line, i) => { const id = /\(([^()]+)\)$/.exec(line)?.[1]; if (id && !positions.has(id)) positions.set(id, i); });
+      target = { source, lines, positions, writes: [] };
+      targets.set(targetKey, target);
+    }
+    // Text-only legacy messages (or a previous failed structured write) reuse their old line.
+    const index = target.positions.get(m.message_id) ?? target.lines.length;
+    const parent = parentOf(m);
+    const batchParent = inBatch.get(parent);
+    const quote = batchParent ? { sender_name: batchParent.sender?.name ?? "?", content: messageText(batchParent) } : parent ? one<{ sender_name: string; content: string }>(app.db, "select sender_name,content from lark_messages where message_id=? and chat_id=?", parent, input.chatId) : undefined;
+    target.lines[index] = formatLine(m, { owner: input.owner, resources, quoted: quote ? { sender: quote.sender_name, text: quote.content } : null });
+    target.positions.set(m.message_id, index);
+    target.writes.push({ message: m, line: index + 1, resources });
+  }
+  for (const target of targets.values()) {
+    const source = target.source;
+    const r = upsertSource(app, { spaceId: source?.space_id ?? spaceId, uri: source?.uri ?? `lark:${input.chatId}${input.archive ? `@${input.archive}` : ""}`, title: source?.title ?? (input.archive ? `${input.name}（${input.archive} 历史）` : input.name), kind: "chat", text: target.lines.join("\n"), meta: source ? json(source.meta, {}) : { chatId: input.chatId, ...(input.archive ? { history: true, month: input.archive, via: "lark-cli" } : {}) } });
+    sourceId = r.id;
+    if (r.status !== "unchanged") status = status === "created" ? status : r.status;
+    // The source is written first: on failure the next call recovers each message id from its text.
+    for (const w of target.writes) storeMessages(app, input.chatId, [w.message], { owner: input.owner, sourceId, firstLine: w.line, archive: source?.uri.includes("@") ? source.uri.split("@").pop() : source ? undefined : input.archive, resources: new Map([[w.message.message_id, w.resources]]) });
+  }
+  return { id: sourceId, spaceId, status };
 }

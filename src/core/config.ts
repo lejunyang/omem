@@ -184,6 +184,20 @@ export const configSchema = z.object({
           /** all: every chat with new messages (minus excluded); subscribed: only chosen chats; off. */
           mode: z.enum(["all", "subscribed", "off"]).default("subscribed"),
           exclude: z.array(z.string()).default([]),
+          /** Explicit consent, bound to the CLI identity; only verified ticket/chat mappings qualify. */
+          mentionRetention: z.object({
+            enabled: z.boolean().default(false),
+            cliOwnerOpenId: z.string().optional(),
+            /** Optional official ByteCloud Oncall adapter; explicit executable, no shell. */
+            oncallCli: z.string().optional(),
+            relatedTypeIds: z.array(z.string()).optional(),
+            tenantIds: z.array(z.string()).default([]),
+            chats: z.array(z.object({
+              chatId: z.string().startsWith("oc_"), tenantId: z.string().min(1),
+              flowId: z.string().min(1), evidence: z.string().min(1),
+              related: z.boolean().default(false),
+            })).default([]),
+          }).default({ enabled: false, tenantIds: [], chats: [] }),
           /** Space for captured chats without their own mapping. */
           space: z.string().default("personal"),
           /** First read of a chat goes back this far. */
@@ -236,6 +250,7 @@ export const configSchema = z.object({
         .default({
           mode: "subscribed",
           exclude: [],
+          mentionRetention: { enabled: false, tenantIds: [], chats: [] },
           space: "personal",
           lookbackHours: 72,
           quietStop: 8,
@@ -261,6 +276,7 @@ export const configSchema = z.object({
       capture: {
         mode: "subscribed",
         exclude: [],
+        mentionRetention: { enabled: false, tenantIds: [], chats: [] },
         space: "personal",
         lookbackHours: 72,
         quietStop: 8,
