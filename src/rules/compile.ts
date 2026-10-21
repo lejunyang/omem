@@ -41,6 +41,7 @@ export async function draftRule(app: App, description: string, current?: Partial
     "要求：",
     "- 能用条件说清楚的都写成条件（群名、发送人、关键词、@ 本人、消息类型），judge 用 code；条件说不清的部分（“报警需要关注”“问题是我们负责的”）用 code+ai：条件先缩小范围，模型再确认；完全没有可写的条件才用 ai。",
     "- 拉机器人、开始监听这类对一个群做一次就够的，trigger.once 用 chat；每条消息都要处理的用 event。",
+    "- 群名用 contains：本人说“报警群”“值班群”通常指名字里带这几个字的群，不是名字恰好等于它；只有本人给了完整群名或群 id 才用 equals。",
     "- 发送人只给了名字就用 sender.name；给了邮箱用 sender.email。群里有某个机器人用 chat.bots contains。“报警卡片”用 message.type equals interactive。",
     "- 规则里提到的 Agent 不在已有档案里时，用最接近的；都不合适就不要编造，改用 notify 并在 name 里写明“缺档案”。",
   ].join("\n");
