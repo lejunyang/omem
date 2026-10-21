@@ -482,6 +482,8 @@ async function pollLarkOnce(app: App) {
   const owner = await ownerOpenId();
   // Mentions of the owner anywhere first, even in muted chats that are not read automatically.
   await captureMentions(app, endMs, touched, owner).catch((e) => console.warn("[omem] 飞书 @我 消息读取失败：", (e as Error).message));
+  // Docs the owner opened lately: what they read matters, linked in a chat or not.
+  if (cfg.docs && cfg.recentDocs) await captureRecentDocs(app, touched).catch((e) => console.warn("[omem] 读取最近打开的飞书文档失败：", (e as Error).message));
 
   let chats: LarkChat[] = [];
   const listed = cfg.mode === "all" ? await listLarkChats(app, Math.max(1, Math.ceil(cfg.maxChats / 100))) : [];
@@ -559,6 +561,44 @@ async function captureMentions(app: App, endMs: number, touched: Map<string, Set
   await learnPeople(app, found);
   run(app.db, "insert into kv(key,value) values('lark_mentions_since_ms', ?) on conflict(key) do update set value = excluded.value", String(endMs));
   return found;
+}
+
+/** New docs read per poll; the rest come in the next polls. */
+const RECENT_DOCS_PER_POLL = 10;
+
+/**
+ * Docs the owner opened in the last `recentDocsDays` (lark-cli `drive +search --opened-since`,
+ * newest first): each one not saved yet is read into the capture space. Once saved, the daily
+ * docs check keeps it current; opening it again does not read it again.
+ */
+export async function captureRecentDocs(app: App, touched: Map<string, Set<string>>) {
+  const cfg = app.config.lark.capture;
+  const spaceId = findSpace(app, cfg.space) ? cfg.space : "personal";
+  let token: string | undefined;
+  let read = 0;
+  for (let page = 0; page < 3 && read < RECENT_DOCS_PER_POLL; page++) {
+    const v = await larkCli(["drive", "+search", "--as", "user", "--query", "", "--opened-since", `${cfg.recentDocsDays}d`, "--sort", "open_time", "--doc-types", "docx,doc,wiki", "--page-size", "20", ...(token ? ["--page-token", token] : []), "--format", "json"]);
+    const d = v.data ?? v;
+    for (const r of (d.results ?? []) as Record<string, any>[]) {
+      if (read >= RECENT_DOCS_PER_POLL) break;
+      const url = String(r.result_meta?.url ?? r.url ?? "");
+      if (!/^https?:\/\//.test(url)) continue;
+      const seenKey = `lark_recent_doc:${url}`;
+      if (one(app.db, "select 1 from kv where key = ?", seenKey) || one(app.db, "select 1 from sources where uri = ?", url)) continue;
+      try {
+        const s = await importUrl(app, spaceId, url);
+        touched.set(spaceId, new Set([...(touched.get(spaceId) ?? []), s.id, ...(s.related ?? [])]));
+      } catch (e) {
+        console.warn(`[omem] 读取最近打开的飞书文档失败 ${url}：${(e as Error).message}`);
+      }
+      // Tried once either way: a doc without permission is left to the missing-docs retry.
+      run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", seenKey, now());
+      read++;
+    }
+    if (!d.has_more || !d.page_token) break;
+    token = d.page_token;
+  }
+  return read;
 }
 
 function hourlyDue(app: App, key: string, minutes = 60) {

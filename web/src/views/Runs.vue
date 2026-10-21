@@ -6,7 +6,7 @@ import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import VirtualList from "../components/VirtualList.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
-import UiSelect from "../components/UiSelect.vue";
+import ChipPicker from "../components/ChipPicker.vue";
 import { confirmDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
 import RunActivity from "../components/RunActivity.vue";
@@ -18,7 +18,9 @@ const runs = ref<Run[]>([]);
 const total = ref(0);
 const PAGE = 100;
 const loadingMore = ref(false);
-const kind = ref("");
+/** Run kinds to show (any of them); `agent:<name>` is one agent spec's runs. Empty: all. */
+const kindFilter = ref<string[]>([]);
+const specNames = ref<string[]>([]);
 const showQuiet = ref(false);
 type Brief = { id: string; kind: string; title: string; status: string };
 type RunContextInfo = {
@@ -44,7 +46,7 @@ async function load() {
 }
 async function loadPage(offset: number) {
   const q = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
-  if (kind.value) q.set("kind", kind.value);
+  if (kindFilter.value.length) q.set("kind", kindFilter.value.join(","));
   if (showQuiet.value) q.set("all", "true");
   return get<{ runs: Run[]; total: number }>(`/api/runs?${q.toString()}`);
 }
@@ -68,10 +70,11 @@ async function loadDetail() {
   }
 }
 onMounted(() => {
+  void get<{ name: string }[]>("/api/agents").then((s) => (specNames.value = s.map((x) => x.name))).catch(() => {});
   void load();
   void loadDetail();
 });
-watch(kind, load);
+watch(kindFilter, load);
 watch(showQuiet, load);
 watch(id, loadDetail);
 const off = onServerEvent((e) => {
@@ -167,7 +170,11 @@ async function delegate() {
     toast((e as Error).message, "error");
   }
 }
-const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan", "wiki-write", "wiki-lint", "code", "heartbeat", "dream", "tutor", "brief", "curate", "sync", "agent-followup"];
+const kinds = ["ask", "agent", "code", "ingest", "ingest-shadow", "memory-review", "wiki-plan", "wiki-write", "wiki-lint", "heartbeat", "dream", "tutor", "brief", "curate", "sync", "guest", "lark-command", "rule-fire", "profile-review", "thread-summary", "agent-followup"];
+const kindOptions = computed(() => [
+  ...kinds.map((k) => ({ value: k, label: runKindLabel[k] ?? k })),
+  ...specNames.value.map((n) => ({ value: `agent:${n}`, label: `Agent · ${n}`, hint: "这个 Agent 档案的运行" })),
+]);
 </script>
 
 <template>
@@ -177,8 +184,8 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
         <strong>运行记录</strong>
         <span class="spacer" />
         <button class="btn sm" title="交办编码任务" @click="delegateOpen = true"><Icon name="code" :size="14" />交办</button>
-        <UiSelect v-model="kind" size="sm" width="110px" aria-label="运行类型" :options="kinds.map((k) => ({ value: k, label: k ? (runKindLabel[k] ?? k) : '全部' }))" />
-        <UiCheckbox v-model="showQuiet" size="sm" class="small muted" title="没有发现变化的静默巡检默认不显示">静默</UiCheckbox>
+        <ChipPicker v-model="kindFilter" class="kind-filter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
+        <UiCheckbox v-model="showQuiet" size="sm" class="small muted" title="后台任务（巡检、检查页面、筛选群、复盘…）没发现要处理的事时以 QUIET 结束，这些运行默认不显示；勾选后一起显示">含无事可报</UiCheckbox>
       </div>
       <div class="items" @scroll.passive="onListScroll">
         <Skeleton v-if="listLoading && !runs.length" :rows="8" />
@@ -365,13 +372,13 @@ const kinds = ["", "ask", "ingest", "ingest-shadow", "memory-review", "wiki-plan
   grid-template-columns: auto 1fr auto;
   grid-template-areas:
     "title . delegate"
-    "kind quiet .";
+    "kind kind quiet";
   row-gap: 8px;
   align-items: center;
 }
 .head > strong { grid-area: title; }
 .head .btn[title="交办编码任务"] { grid-area: delegate; }
-.head .sm-select { grid-area: kind; justify-self: start; }
+.head .kind-filter { grid-area: kind; justify-self: start; }
 .head .small.muted { grid-area: quiet; justify-self: end; white-space: nowrap; }
 @media (max-width: 480px) {
   .head {

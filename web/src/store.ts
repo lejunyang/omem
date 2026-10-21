@@ -110,6 +110,12 @@ export const runKindLabel: Record<string, string> = {
   "agent-followup": "消化结论",
   "thread-summary": "会话摘要",
   "learn-feed": "学习出卡",
+  agent: "Agent 档案",
+  guest: "访客提问",
+  "lark-command": "私聊指令",
+  "rule-fire": "规则（等待后）",
+  "profile-review": "复盘",
+  "role-merge": "合并角色",
 };
 export const statusLabel: Record<string, string> = {
   queued: "排队中",

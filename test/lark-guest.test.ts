@@ -78,6 +78,13 @@ describe("guests, rules stepping aside and the owner's private-chat commands", a
     expect(askAsGuest(app, { ...q, senderId: "ou_other", messageId: "om_g4", groupSpace: "personal" })!.spaceId).toBe("guest");
   }, 60000);
 
+  it("in a group the owner is in (gated), the gatekeeper only judges and leaves the answer to the assistant", async () => {
+    app.config.agents.roles = { gatekeeper: "gate-yes" };
+    const v = await waitGuest(app, askAsGuest(app, { chatId: "oc_team", chatType: "group", messageId: "om_g5", senderId: "ou_third", senderName: "小赵", fromApp: false, text: "这周发布吗", groupSpace: "team", gateOnly: true })!.id);
+    expect(v).toMatchObject({ verdict: "answer" });
+    expect(v?.answer).toBeUndefined();
+  }, 60000);
+
   it("rules step aside for a message someone sent to the bot", async () => {
     const rule = saveRule(app, { name: "讨论群", description: "讨论群里的消息通知我", enabled: true, conditions: { field: "chat.name", op: "contains", value: "讨论" }, judge: "code", actions: [{ type: "notify", urgent: false }] });
     const e = (id: string): RuleEvent => ({ key: `lark:${id}`, kind: "message", at: new Date().toISOString(), chat: { id: "oc_team", name: "项目 A 讨论群", kind: "group" }, sender: { name: "小李", kind: "user" }, message: { id, text: "@omem 部署文档在哪", type: "text", mentionsOwner: false, mentionsBot: true, topicId: null, cardTitle: null }, via: "capture" });

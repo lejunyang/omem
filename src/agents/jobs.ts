@@ -24,7 +24,11 @@ import { markReviewed, similarMemories, spacesWithUnreviewed, unreviewedMemories
 import { relationCandidates } from "../core/space-candidates.ts";
 import "./profile-jobs.ts";
 
-const QUIET = /^\s*QUIET\s*$/i;
+/**
+ * A background role with nothing to report ends with QUIET: alone, on a line of its own, or after
+ * a sentence ("没有新的变化。QUIET"). Such runs stay out of the run list.
+ */
+export const isQuiet = (text: string) => /(^|\n)\s*[*`_]*QUIET[*`_]*\s*[。.!！]?\s*(\n|$)/i.test(text) || /\bQUIET[*`_。.!！\s]*$/i.test(text.trim());
 
 async function agent(ctx: RunContext, role: RoleName, spaceId: string, task: string, spaces?: string[] | null) {
   const r = await runRole(ctx.app, {
@@ -248,7 +252,7 @@ registerHandler("ingest", async (ctx) => {
       parentId: ctx.run.id,
     });
   const r = await agent(ctx, "ingest", ctx.run.spaceId!, task);
-  return { quiet: QUIET.test(r.text), summary: r.text.trim() };
+  return { quiet: isQuiet(r.text), summary: r.text.trim() };
 });
 
 registerHandler("ingest-shadow", async (ctx) => {
@@ -425,7 +429,7 @@ registerHandler("wiki-lint", async (ctx) => {
   if (!stale.length) return { quiet: true, summary: "没有受影响的页面" };
   const task = `受影响的页面与变化的原件：\n${stale.map((s) => `- ${s.page_id.split("/").slice(1).join("/")}：${s.uris}`).join("\n")}`;
   const r = await agent(ctx, "wiki-linter", spaceId, task);
-  return { quiet: QUIET.test(r.text), summary: r.text.trim(), pages: stale.length };
+  return { quiet: isQuiet(r.text), summary: r.text.trim(), pages: stale.length };
 });
 
 // --------------------------------------------------------------------- sync
@@ -485,7 +489,7 @@ registerHandler("heartbeat", async (ctx) => {
     .filter(Boolean)
     .join("\n\n");
   const r = await agent(ctx, "heartbeat", "personal", task, null);
-  return { quiet: QUIET.test(r.text), reminders: due.length, summary: r.text.trim() };
+  return { quiet: isQuiet(r.text), reminders: due.length, summary: r.text.trim() };
 });
 
 // -------------------------------------------------------------------- dream
@@ -573,7 +577,7 @@ registerHandler("curate", async (ctx) => {
     `还没订阅的群（最近三天的消息预览）：\n${chats.map((c) => `### ${c.name}（${c.chatId}）\n${c.preview.map((p) => `- ${p}`).join("\n") || "（最近没有消息）"}`).join("\n\n")}`,
   ].join("\n\n");
   const r = await agent(ctx, "curator", ctx.run.spaceId ?? "personal", task, null);
-  return { quiet: QUIET.test(r.text), summary: r.text.trim() };
+  return { quiet: isQuiet(r.text), summary: r.text.trim() };
 });
 
 // -------------------------------------------------------------------- tutor

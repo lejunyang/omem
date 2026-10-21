@@ -27,8 +27,38 @@ export type GuestAsk = {
   context?: string;
   /** The space the group's messages go to. */
   groupSpace?: string;
+  /** Only the gatekeeper's verdict: the assistant answers (ownerPresent = gated). */
+  gateOnly?: boolean;
 };
 export type GuestVerdict = { verdict: "answer" | "refuse" | "ignore"; reason: string; reply?: string; answer?: string };
+
+const members = new Map<string, { at: number; owner: boolean }>();
+/** Whether the owner is in this group (the bot's member list, kept half an hour); unknown counts as no. */
+export async function ownerInChat(app: App, chatId: string): Promise<boolean> {
+  const owner = app.config.lark.ownerOpenId;
+  if (!owner) return false;
+  const c = members.get(chatId);
+  if (c && Date.now() - c.at < 30 * 60_000) return c.owner;
+  let found = false;
+  try {
+    const { larkClient } = await import("./lark-send.ts");
+    let token: string | undefined;
+    for (let page = 0; page < 20 && !found; page++) {
+      const r = (await larkClient().im.chatMembers.get({ path: { chat_id: chatId }, params: { member_id_type: "open_id", page_size: 100, ...(token ? { page_token: token } : {}) } })) as { code?: number; data?: { items?: { member_id?: string }[]; has_more?: boolean; page_token?: string } };
+      if (r.code) throw new Error(String(r.code));
+      found = (r.data?.items ?? []).some((m) => m.member_id === owner);
+      if (!r.data?.has_more || !r.data.page_token) break;
+      token = r.data.page_token;
+    }
+  } catch {
+    return false; // not cached: try again next time
+  }
+  members.set(chatId, { at: Date.now(), owner: found });
+  return found;
+}
+export function setOwnerInChatForTests(chatId: string, owner: boolean) {
+  members.set(chatId, { at: Date.now(), owner });
+}
 
 export function guestsAllowed(app: App, chatType: "p2p" | "group") {
   const g = app.config.lark.guests;
@@ -95,7 +125,7 @@ export async function guestRun(ctx: RunContext): Promise<GuestVerdict> {
   const reason = String(v?.reason ?? (v ? "" : "门卫没有给出判断"));
   ctx.event("status", { text: `门卫：${verdict}${reason ? `（${reason}）` : ""}` });
   if (verdict === "refuse") return { verdict, reason, reply: String(v?.reply || "这个我不能帮忙。") };
-  if (verdict === "ignore") return { verdict, reason };
+  if (verdict === "ignore" || q.gateOnly) return { verdict, reason };
   const task = [
     about,
     "",

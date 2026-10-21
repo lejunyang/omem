@@ -16,6 +16,8 @@ const props = withDefaults(
     missing?: string[];
     /** Chips are buttons that emit `open`. */
     openable?: boolean;
+    /** Chips show the option's label instead of the value. */
+    labels?: boolean;
   }>(),
   { addLabel: "＋ 添加", missing: () => [] },
 );
@@ -24,6 +26,7 @@ const emit = defineEmits<{ "update:modelValue": [value: string[]]; open: [name: 
 const pick = ref<string | null>(null);
 const addable = computed(() => props.options.filter((o) => !props.modelValue.includes(o.value)).map((o) => ({ value: o.value as string | null, label: o.label ?? o.value, hint: o.hint })));
 const hintOf = (name: string) => props.options.find((o) => o.value === name)?.hint ?? "";
+const shownName = (name: string) => (props.labels ? (props.options.find((o) => o.value === name)?.label ?? name) : name);
 function add(v: string | null) {
   pick.value = null;
   if (v && !props.modelValue.includes(v)) emit("update:modelValue", [...props.modelValue, v]);
@@ -37,8 +40,8 @@ function remove(name: string) {
   <div class="chip-picker">
     <span v-for="name in modelValue" :key="name" class="chip" :class="{ missing: missing.includes(name) }" :title="missing.includes(name) ? '已不存在' : hintOf(name)">
       <button v-if="openable" type="button" class="chip-name" @click="emit('open', name)">{{ name }}</button>
-      <span v-else class="chip-name">{{ name }}</span>
-      <button v-if="!disabled" type="button" class="chip-x" :aria-label="`移除 ${name}`" @click="remove(name)">×</button>
+      <span v-else class="chip-name">{{ shownName(name) }}</span>
+      <button v-if="!disabled" type="button" class="chip-x" :aria-label="`移除 ${shownName(name)}`" @click="remove(name)">×</button>
     </span>
     <UiSelect v-if="!disabled && addable.length" v-model="pick" size="sm" width="132px" :placeholder="addLabel" :options="addable" :search-at="8" :aria-label="addLabel" @change="add" />
     <span v-if="!modelValue.length && (disabled || !addable.length)" class="muted small">无</span>

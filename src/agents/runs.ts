@@ -126,27 +126,40 @@ export function getRun(app: App, id: string): Run {
   return toRun(r);
 }
 
-export function listRuns(app: App, opts: { kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean; limit?: number; offset?: number } = {}) {
+type RunFilter = { kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean };
+
+/**
+ * `kind` may list several, comma-separated; `agent:<name>` is one agent spec's runs. Any of them
+ * matches.
+ */
+function runWhere(opts: RunFilter) {
   const where: string[] = [];
   const params: (string | number)[] = [];
-  if (opts.kind) where.push("kind = ?"), params.push(opts.kind);
+  const kinds = (opts.kind ?? "").split(",").map((k) => k.trim()).filter(Boolean);
+  if (kinds.length) {
+    const any: string[] = [];
+    for (const k of kinds) {
+      if (k.startsWith("agent:")) any.push("(kind = 'agent' and json_extract(input, '$.spec') = ?)"), params.push(k.slice(6));
+      else any.push("kind = ?"), params.push(k);
+    }
+    where.push(`(${any.join(" or ")})`);
+  }
   if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);
   if (opts.status) where.push("status = ?"), params.push(opts.status);
   if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);
   if (!opts.includeQuiet && !opts.parentId) where.push("quiet = 0");
-  const limit = Math.min(opts.limit ?? 100, 500);
-  return all<Row>(app.db, `select * from runs ${where.length ? "where " + where.join(" and ") : ""} order by created_at desc limit ? offset ?`, ...params, limit, opts.offset ?? 0).map(toRun);
+  return { sql: where.length ? `where ${where.join(" and ")}` : "", params };
 }
 
-export function countRuns(app: App, opts: { kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean } = {}) {
-  const where: string[] = [];
-  const params: string[] = [];
-  if (opts.kind) where.push("kind = ?"), params.push(opts.kind);
-  if (opts.spaceId) where.push("space_id = ?"), params.push(opts.spaceId);
-  if (opts.status) where.push("status = ?"), params.push(opts.status);
-  if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);
-  if (!opts.includeQuiet && !opts.parentId) where.push("quiet = 0");
-  return one<{ n: number }>(app.db, `select count(*) n from runs ${where.length ? "where " + where.join(" and ") : ""}`, ...params)?.n ?? 0;
+export function listRuns(app: App, opts: RunFilter & { limit?: number; offset?: number } = {}) {
+  const w = runWhere(opts);
+  const limit = Math.min(opts.limit ?? 100, 500);
+  return all<Row>(app.db, `select * from runs ${w.sql} order by created_at desc limit ? offset ?`, ...w.params, limit, opts.offset ?? 0).map(toRun);
+}
+
+export function countRuns(app: App, opts: RunFilter = {}) {
+  const w = runWhere(opts);
+  return one<{ n: number }>(app.db, `select count(*) n from runs ${w.sql}`, ...w.params)?.n ?? 0;
 }
 
 export function setRunOutput(app: App, id: string, output: Record<string, unknown>) {

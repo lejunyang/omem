@@ -110,7 +110,7 @@ const roles = [
 
 const guestSpacesText = computed(() => (config.value?.lark.guests?.spaces ?? []).join(", "));
 function saveGuests(patch: Record<string, unknown>, note = "已保存访客设置") {
-  const cur = config.value.lark.guests ?? { enabled: false, p2p: false, spaces: [], perHour: 20 };
+  const cur = config.value.lark.guests ?? { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest" };
   void saveConfig({ lark: { ...config.value.lark, guests: { ...cur, ...patch } } }, note);
 }
 function saveCommands(patch: Record<string, unknown>, note = "已保存私聊指令") {
@@ -610,6 +610,20 @@ async function saveEdit() {
         <p class="muted small">没有登记为 omem 用户的同事在群里 @ 机器人，或别的机器人 @ 它时：先由“访客提问把关”角色判断该回答、拒绝还是不理（要它执行命令、查私人信息、问无关或敏感的事一律拒绝），再由“回答访客”角色只读这个群的空间（不读任何个人空间）和下面列出的空间作答。两个角色的后端和模型在“Agent”页设置；把关建议用快的小模型，回答访客建议用不带本机命令行的后端。</p>
         <UiCheckbox :model-value="!!config.lark.guests?.enabled" switch @change="(v) => saveGuests({ enabled: v }, v ? '已开启访客提问' : '已关闭访客提问')">回答未登记的人和别的机器人</UiCheckbox>
         <UiCheckbox :model-value="!!config.lark.guests?.p2p" :disabled="!config.lark.guests?.enabled" @change="(v) => saveGuests({ p2p: v })">也回答他们和机器人的私聊（只读下面列出的空间）</UiCheckbox>
+        <div class="field"><span>你也在群里时</span>
+          <UiSelect
+            :model-value="config.lark.guests?.ownerPresent ?? 'guest'"
+            width="100%"
+            aria-label="你也在群里时怎么回答访客"
+            :disabled="!config.lark.guests?.enabled"
+            :options="[
+              { value: 'guest', label: '和别处一样：把关后由“回答访客”受限回答' },
+              { value: 'gated', label: '把关后由助理回答（像你自己问的一样，能用全部资料和工具）' },
+              { value: 'free', label: '不把关，直接由助理回答' },
+            ]"
+            @change="(v) => saveGuests({ ownerPresent: v })"
+          />
+        </div>
         <label class="field"><span>另外开放给访客的空间 id（逗号分隔，可留空）</span>
           <input class="input mono" :value="guestSpacesText" placeholder="例如 project-a, handbook" @change="saveGuests({ spaces: ($event.target as HTMLInputElement).value.split(/[,，\s]+/).filter(Boolean) })" />
         </label>

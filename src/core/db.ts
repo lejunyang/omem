@@ -583,6 +583,10 @@ const migrations: string[] = [
   `,
   `alter table lark_messages add column raw_content text;
    create index lark_messages_chat_cursor on lark_messages(chat_id,create_ms,message_id);`,
+  // Background runs that said a sentence before QUIET were not recognized as quiet (jobs.ts isQuiet).
+  `update runs set quiet = 1
+    where quiet = 0 and status = 'done' and kind in ('heartbeat','wiki-lint','curate','memory-review','dream','profile-review')
+      and upper(rtrim(trim(coalesce(case when json_valid(output) then json_extract(output, '$.summary') end, '')), '。.!！*\`_ ' || char(10) || char(13))) like '%QUIET';`,
 ];
 
 export type Db = DatabaseSync;

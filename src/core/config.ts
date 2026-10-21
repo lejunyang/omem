@@ -202,6 +202,9 @@ export const configSchema = z.object({
           /** Download images/files in messages and import them; import Feishu docs linked in messages. */
           attachments: z.boolean().default(true),
           docs: z.boolean().default(true),
+          /** Docs (docx, old docs, wiki) the owner opened in the last `recentDocsDays`, read before the chats; each once, updates by the docs check. */
+          recentDocs: z.boolean().default(true),
+          recentDocsDays: z.number().int().min(1).max(90).default(7),
           /** Feishu docs: videos/attachments up to this size are downloaded (images and whiteboards always). */
           docMediaMaxMB: z.number().min(0).default(100),
           /** Feishu docs: levels of linked docs imported along with a doc (0 = none), at most docMaxLinked per doc. */
@@ -250,6 +253,8 @@ export const configSchema = z.object({
           maxChats: 300,
           attachments: true,
           docs: true,
+          recentDocs: true,
+          recentDocsDays: 7,
           docMediaMaxMB: 100,
           docLinkDepth: 2,
           docMaxLinked: 30,
@@ -273,8 +278,14 @@ export const configSchema = z.object({
           p2p: z.boolean().default(false),
           spaces: z.array(z.string()).default([]),
           perHour: z.number().int().min(1).max(200).default(20),
+          /**
+           * In a group the owner is in: guest = as anywhere else (gatekeeper, then the guest role);
+           * gated = the gatekeeper checks, then the assistant answers as in the owner's own chats;
+           * free = the assistant answers right away.
+           */
+          ownerPresent: z.enum(["guest", "gated", "free"]).default("guest"),
         })
-        .default({ enabled: false, p2p: false, spaces: [], perHour: 20 }),
+        .default({ enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest" }),
       /**
        * Commands the owner types in a one-to-one chat with someone (read with lark-cli once a
        * minute): `ai` has the assistant handle it and answer there as the owner, signed; `group`
@@ -303,6 +314,8 @@ export const configSchema = z.object({
         maxChats: 300,
         attachments: true,
         docs: true,
+        recentDocs: true,
+        recentDocsDays: 7,
         docMediaMaxMB: 100,
         docLinkDepth: 2,
         docMaxLinked: 30,
@@ -314,7 +327,7 @@ export const configSchema = z.object({
         policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },
         backfill: { days: 30, policies: ["ingest"], pagesPerPoll: 6 },
       },
-      guests: { enabled: false, p2p: false, spaces: [], perHour: 20 },
+      guests: { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest" },
       commands: { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 },
     }),
   telegram: z

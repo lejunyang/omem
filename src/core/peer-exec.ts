@@ -110,6 +110,12 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "lark-captured": { description: "采集过的会话及状态", schema: z.object({}), run: async (app) => (await import("../channels/lark-personal.ts")).capturedChats(app) },
+  "lark-recent-docs": {
+    description: "本人最近打开的飞书文档（drive +search 的原始返回，只读，用来核对字段）",
+    schema: z.object({ days: z.number().int().min(1).max(90).default(3), page_size: z.number().int().min(1).max(20).default(5) }),
+    run: async (_app, a) =>
+      (await import("../channels/lark-cli.ts")).larkCli(["drive", "+search", "--as", "user", "--query", "", "--opened-since", `${a.days}d`, "--sort", "open_time", "--page-size", String(a.page_size), "--format", "json"]),
+  },
   "lark-raw": {
     description: "只读调用 lark-cli 的消息/会话查询，返回原始 JSON（用来核对字段）",
     schema: z.object({

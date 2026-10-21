@@ -24,7 +24,7 @@ import { handleCardAction } from "./lark-actions.ts";
 import { reactLark, sendLark, setLarkClient, unreactLark } from "./lark-send.ts";
 import { larkAppSecret } from "./lark-setup.ts";
 import { routeWatchedMessages } from "./lark-watch.ts";
-import { askAsGuest, guestsAllowed, waitGuest } from "./lark-guest.ts";
+import { askAsGuest, guestsAllowed, ownerInChat, waitGuest } from "./lark-guest.ts";
 import { claimedByRule, markAddressed } from "../rules/store.ts";
 
 /**
@@ -393,25 +393,32 @@ export async function startLarkBot(app: App) {
    * role answers in restricted mode (lark-guest.ts). Another bot's message goes to the rules
    * first; only when no rule took it does the gatekeeper look at it.
    */
-  const answerGuest = async (m: Inbound, ruled: Promise<void> | null) => {
+  /** Returns true when the assistant itself should answer (a group the owner is in, `ownerPresent` gated or free). */
+  const answerGuest = async (m: Inbound, ruled: Promise<void> | null): Promise<boolean> => {
     if (m.fromApp) {
-      if (m.chatType !== "group" || !app.config.lark.guests.enabled) return;
+      if (m.chatType !== "group" || !app.config.lark.guests.enabled) return false;
       await ruled;
-      if (claimedByRule(app, `lark:${m.messageId}`)) return;
-    } else if (!guestsAllowed(app, m.chatType)) return;
+      if (claimedByRule(app, `lark:${m.messageId}`)) return false;
+    } else if (!guestsAllowed(app, m.chatType)) return false;
     const text = spoken(m);
-    if (!text) return;
+    if (!text) return false;
+    const mode = app.config.lark.guests.ownerPresent;
+    const withOwner = !m.fromApp && m.chatType === "group" && mode !== "guest" && (await ownerInChat(app, m.chatId));
+    if (withOwner && mode === "free") return true;
     const r = askAsGuest(app, {
       chatId: m.chatId, chatType: m.chatType, chatName: m.chatType === "group" ? groupName(m.chatId) : undefined, messageId: m.messageId,
       senderId: m.senderId, senderName: m.senderName, fromApp: !!m.fromApp, text,
       context: m.chatType === "group" ? groupContext(m) : "", groupSpace: m.chatType === "group" ? groupSpace(m.chatId) : undefined,
+      gateOnly: withOwner,
     });
-    if (!r) return; // over the hourly limit: quietly
+    if (!r) return false; // over the hourly limit: quietly
     const working = await reactLark(m.messageId, "OnIt").catch(() => undefined);
     const v = await waitGuest(app, r.id).catch(() => null);
     if (working) await unreactLark(m.messageId, working);
+    if (withOwner && v?.verdict === "answer") return true;
     const say = v?.verdict === "refuse" ? v.reply : v?.verdict === "answer" ? v.answer : "";
     if (say) await reply(m.chatId, resolveCitations(app, say), m.messageId, !!m.topicId).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
+    return false;
   };
 
   const handle = async (m: Inbound) => {
@@ -429,9 +436,15 @@ export async function startLarkBot(app: App) {
       await reply(m.chatId, `还没有绑定本人。请在 omem 配置中设置 \`lark.ownerOpenId\` 为：\`${m.senderId}\`，然后重启服务。`, m.messageId);
       return;
     }
-    const userId = m.fromApp ? null : resolveIdentity(app, "lark", m.senderId);
+    let userId = m.fromApp ? null : resolveIdentity(app, "lark", m.senderId);
     // Not the owner and not a registered user (omem user add … --lark <open_id>): guest mode, when on.
-    if (!userId) return answerGuest(m, ruled);
+    // In a group the owner is in, the owner may let colleagues talk to the assistant itself.
+    let asker: string | undefined;
+    if (!userId) {
+      if (!(await answerGuest(m, ruled))) return;
+      userId = OWNER;
+      asker = m.senderName;
+    }
     if (m.chatType === "p2p" && userId === OWNER) kv(app, "lark_owner_chat", m.chatId);
     const text = spoken(m);
     const context = m.chatType === "group" ? groupContext(m) : "";
@@ -449,6 +462,7 @@ export async function startLarkBot(app: App) {
           topicId: m.topicId,
           isGroup: m.chatType === "group",
           text,
+          asker,
           spaceId: m.chatType === "group" ? groupSpace(m.chatId) : userId === OWNER ? cfg.defaultSpace : undefined,
           context,
           contextLabel: m.topicId ? "话题里" : "群里",
