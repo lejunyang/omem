@@ -39,7 +39,9 @@
 - Wiki 按读者问题组织，不按文件逐个生成。写作要求在 roles/wiki-writer.md；改写作质量优先改角色说明，其次才改代码。
 - 文档和生成内容用中文，直接具体，避免套话。成稿可按 `.agents/skills/lieflat-less-ai-tone/SKILL.md` 检查表达，不改事实和结构。
 - 功能变了在同一个提交里同步：README（功能介绍、“日常用途”、命令行清单、代码结构）、docs/v2/architecture.md 的实现状态表、acceptance.md 的验收项、`.repo-review/wiki/reference/changes-since-2026-10-13.md`；动了 MCP 工具还要改 `skills/omem/SKILL.md`，动了网页约定改 `.agents/skills/omem-design`。
-- 这是公开仓库：文档、角色说明、技能、测试和提交信息里不写本人的真实信息（姓名、公司、群名、主机名、真实聊天或记忆内容）。举例用虚构的（项目 A、小王、《差旅报销制度》）；用真实数据校准过的规则只写结论。
+- 这是公开仓库：文档、角色说明、技能、测试、代码注释和提交信息里不写本人和他人的真实信息（姓名、同事名、公司、群名、主机名、真实聊天或记忆内容、Agent 档案名）。举例用虚构的（项目 A、小王、《差旅报销制度》）；用真实数据校准过的规则只写结论。
+  - 也不要带进：本机绝对路径（`/Users/<名>/…`、`C:\Users\<名>\…`，写相对路径或 `~`）、公司内网地址（内部 npm 源、内部文档和 Wiki 链接，锁文件里的 `resolved` 也算；示例链接用 `tenant.larkoffice.com`）、公司工具自动加的 `Co-authored-by`、运行记录或 Agent 日志的原样导出。
+  - 提交作者用个人邮箱（在公司电脑上先 `git config user.email` 核对）。提交前用 `git diff --cached` 检查一遍上面这些。
 
 ## 界面
 

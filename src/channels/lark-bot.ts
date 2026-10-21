@@ -13,6 +13,7 @@ import { identitiesOf, OWNER, resolveIdentity, userName } from "../core/users.ts
 import { importFile } from "../sources/import.ts";
 import { inQuietHours } from "../core/notify.ts";
 import { appendToSource, findSourceByUri, sourceText } from "../sources/store.ts";
+import { linesWritten } from "./lark-messages.ts";
 import { getRun } from "../agents/runs.ts";
 import { answerFromChannel, resolveCitations } from "./common.ts";
 import { registerCodeProgress } from "./lark-code-progress.ts";
@@ -289,6 +290,11 @@ export async function startLarkBot(app: App) {
     const spaceId = groupSpace(m.chatId);
     const uri = `lark:${m.chatId}`;
     const before = findSourceByUri(app, spaceId, uri);
+    // The owner's capture got here first (a redelivered or late event): the chat already has this line.
+    if (before && linesWritten(app, spaceId, uri, [m.messageId]).size) {
+      lastCapture.set(m.messageId, before.id);
+      return;
+    }
     const at = new Date(Number(m.createTime)).toISOString().slice(0, 16).replace("T", " ");
     const r = appendToSource(app, {
       spaceId,

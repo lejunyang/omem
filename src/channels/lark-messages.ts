@@ -4,7 +4,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { json } from "../core/util.ts";
 import { importFile, keepOriginal } from "../sources/import.ts";
-import { upsertSource } from "../sources/store.ts";
+import { findSourceByUri, sourceText, upsertSource } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
 import { cliIdsIn, learnCliPeople, peopleByCliIds } from "./lark-people.ts";
 
@@ -181,6 +181,24 @@ export async function keepResources(app: App, spaceId: string, chatId: string, m
 
 // ---- storage ------------------------------------------------------------------------
 
+/**
+ * Lines a chat source already has for these messages: id → line number. The bot appends group
+ * messages as they arrive and the owner's capture reads the same chat later, so each side skips what
+ * the other wrote. Both write at the end, so only the tail is searched.
+ */
+export function linesWritten(app: App, spaceId: string, uri: string, ids: string[]) {
+  const out = new Map<string, number>();
+  const src = ids.length ? findSourceByUri(app, spaceId, uri) : undefined;
+  if (!src || src.deletedAt) return out;
+  const text = sourceText(app, src.id);
+  const from = Math.max(0, text.length - 200_000);
+  for (const id of ids) {
+    const at = text.indexOf(`(${id})`, from);
+    if (at >= 0) out.set(id, text.slice(0, at).split("\n").length);
+  }
+  return out;
+}
+
 type Row = {
   message_id: string;
   chat_id: string;
@@ -204,7 +222,7 @@ export function storeMessages(
   app: App,
   chatId: string,
   messages: LarkMessage[],
-  opts: { owner?: string; sourceId?: string | null; firstLine?: number; archive?: string | null; resources?: Map<string, Record<string, ResourceRef>> },
+  opts: { owner?: string; sourceId?: string | null; firstLine?: number; lines?: Map<string, number>; archive?: string | null; resources?: Map<string, Record<string, ResourceRef>> },
 ) {
   tx(app.db, () => {
     messages.forEach((m, i) =>
@@ -227,7 +245,7 @@ export function storeMessages(
         messageText(m),
         timeMs(m.create_time),
         opts.sourceId ?? null,
-        opts.firstLine !== undefined ? opts.firstLine + i : null,
+        opts.lines?.get(m.message_id) ?? (opts.firstLine !== undefined ? opts.firstLine + i : null),
         opts.archive ?? null,
         JSON.stringify(opts.resources?.get(m.message_id) ?? {}),
         JSON.stringify(Array.isArray(m.reactions) ? m.reactions : ((m.reactions as { counts?: unknown })?.counts ?? [])),
@@ -468,4 +486,80 @@ async function downloadResource(app: App, messageId: string, key: string): Promi
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+// ---- filling in what was never downloaded ------------------------------------------------
+
+/** Image and file keys a message refers to: `![Image](img_…)`, `[Image: img_…]`, `<file key="file_…">`, `<video key=…>`. */
+const RESOURCE_KEY = /(?:\]\(|\[Image: |key=")((?:img|file)_[\w-]+)/g;
+const keysIn = (text: string) => [...new Set([...text.matchAll(RESOURCE_KEY)].map((m) => m[1]))];
+
+/**
+ * Images and files of captured messages that have no local copy: rows whose download failed or was
+ * off, and lines of chat sources captured before rows were kept. `chatIds` limits it to those chats.
+ */
+export function missingResources(app: App, chatIds?: string[]) {
+  const out: { messageId: string; key: string }[] = [];
+  const inChats = chatIds?.length ? ` and chat_id in (${chatIds.map(() => "?").join(",")})` : "";
+  const rows = all<{ message_id: string; content: string; resources: string }>(
+    app.db,
+    `select message_id, content, resources from lark_messages where (content like '%img_%' or content like '%file_%')${inChats}`,
+    ...(chatIds ?? []),
+  );
+  for (const r of rows) {
+    const refs = json<Record<string, ResourceRef>>(r.resources, {});
+    for (const key of keysIn(r.content)) if (!refs[key]?.file && !knownResourceFile(app, r.message_id, key)) out.push({ messageId: r.message_id, key });
+  }
+  const uris = chatIds?.length ? ` and (${chatIds.map(() => "(uri = ? or uri like ?)").join(" or ")})` : " and uri like 'lark:oc_%'";
+  const sources = all<{ text: string }>(app.db, `select text from sources where kind = 'chat' and deleted_at is null${uris}`, ...(chatIds ?? []).flatMap((c) => [`lark:${c}`, `lark:${c}@%`]));
+  for (const s of sources)
+    for (const line of s.text.split("\n")) {
+      const id = /\((om_[\w-]+)\)\s*$/.exec(line)?.[1];
+      if (!id || !/(?:img|file)_/.test(line) || one(app.db, "select 1 from lark_messages where message_id = ?", id)) continue;
+      for (const key of keysIn(line)) if (!knownResourceFile(app, id, key)) out.push({ messageId: id, key });
+    }
+  return out;
+}
+
+type FillProgress = { chats: string[] | null; total: number; done: number; fetched: number; failed: number; startedAt: string; finishedAt?: string };
+let filling: FillProgress | null = null;
+let lastFill: FillProgress | null = null;
+
+/** Download every missing image and file (see missingResources) one at a time. The owner's lark-cli reads them; the bot is the fallback for its own chats. */
+export async function fillResources(app: App, chatIds?: string[], onProgress?: (p: FillProgress) => void) {
+  const todo = missingResources(app, chatIds);
+  const p: FillProgress = { chats: chatIds?.length ? chatIds : null, total: todo.length, done: 0, fetched: 0, failed: 0, startedAt: new Date().toISOString() };
+  filling = p;
+  try {
+    for (const t of todo) {
+      const file = await messageResourceFile(app, t.messageId, t.key).catch(() => null);
+      if (file) p.fetched++;
+      else p.failed++;
+      p.done++;
+      onProgress?.(p);
+    }
+  } finally {
+    p.finishedAt = new Date().toISOString();
+    lastFill = p;
+    filling = null;
+  }
+  return p;
+}
+
+/** fillResources without waiting; the owner gets a notification when it is done. */
+export function fillResourcesInBackground(app: App, chatIds?: string[]) {
+  if (filling) return { started: false, reason: "上一次补拉还没结束", progress: filling };
+  const total = missingResources(app, chatIds).length;
+  if (!total) return { started: false, reason: "没有缺图片或附件的消息" };
+  void fillResources(app, chatIds)
+    .then(async (p) => {
+      const { notify } = await import("../core/notify.ts");
+      notify(app, { title: `飞书图片和附件补拉完成：${p.fetched}/${p.total}`, body: p.failed ? `${p.failed} 个读不到（多半是已过期、被撤回或没有权限）。` : "全部补齐。" });
+    })
+    .catch((e) => console.warn("[omem] 补拉飞书图片和附件失败：", (e as Error).message));
+  return { started: true, total };
+}
+
+export function fillResourcesStatus() {
+  return filling ? { running: true, ...filling } : lastFill ? { running: false, ...lastFill } : null;
 }

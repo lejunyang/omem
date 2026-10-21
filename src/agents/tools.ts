@@ -1814,13 +1814,29 @@ def({
 
 def({
   name: "set_lark_backfill",
-  description: "回溯一个飞书会话的历史消息（本人要求查看/整理某个群或私聊更早的记录时用）。days 是往前多少天，0 表示全部；后台每次采集读几页，按月存成历史原件。ingest=true 时回溯完成后交给整理。",
+  description:
+    "回溯飞书会话的历史消息（本人要求查看/整理某些群或私聊更早的记录时用）。chat_ids 是要回溯的会话（先用 list_lark_chats 按本人说的范围挑）；days 往前多少天，0 表示全部，不给就不回溯；后台每次采集读几页，按月存成历史原件，图片和附件随消息下载。ingest=true 时回溯完成后交给整理。files=true 补拉这些会话里已保存但缺图片或附件的消息（后台下载，完成后通知本人）。",
   write: true,
-  schema: z.object({ chat_id: z.string(), days: z.number().int().min(0).max(3650), ingest: z.boolean().optional() }),
+  schema: z.object({
+    chat_ids: z.array(z.string()).min(1).max(200),
+    days: z.number().int().min(0).max(3650).optional(),
+    ingest: z.boolean().optional(),
+    files: z.boolean().optional(),
+  }),
   handler: async (ctx, a) => {
-    const { requestBackfill } = await import("../channels/lark-personal.ts");
-    const st = requestBackfill(ctx.app, a.chat_id, a.days, !!a.ingest);
-    return `已安排回溯 ${a.chat_id}：${a.days ? `往前 ${a.days} 天` : "全部历史"}${a.ingest ? "，完成后整理" : "（只保存，可检索）"}。目前已覆盖到 ${st.reachedAt?.slice(0, 10) ?? "?"}，飞书采集开启时每 10 分钟推进几页。`;
+    if (a.days === undefined && !a.files) return "要回溯历史给 days，要补拉图片和附件给 files=true。";
+    const out: string[] = [];
+    if (a.days !== undefined) {
+      const { requestBackfill } = await import("../channels/lark-personal.ts");
+      for (const id of a.chat_ids) requestBackfill(ctx.app, id, a.days, !!a.ingest);
+      out.push(`已安排 ${a.chat_ids.length} 个会话回溯${a.days ? `往前 ${a.days} 天` : "全部历史"}${a.ingest ? "，完成后整理" : "（只保存，可检索）"}，飞书采集开启时每 10 分钟推进几页。`);
+    }
+    if (a.files) {
+      const { fillResourcesInBackground } = await import("../channels/lark-messages.ts");
+      const r = fillResourcesInBackground(ctx.app, a.chat_ids);
+      out.push(r.started ? `开始补拉 ${r.total} 个缺的图片和附件，完成后通知本人。` : `没有补拉：${r.reason}。`);
+    }
+    return out.join("\n");
   },
 });
 

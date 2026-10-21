@@ -306,6 +306,14 @@ export const peerCommands: Record<string, Command> = {
     schema: z.object({ chat_id: z.string().regex(/^oc_[\w-]+$/), days: z.number().int().min(0).max(3650), ingest: z.boolean().default(false) }),
     run: async (app, a) => (await import("../channels/lark-personal.ts")).requestBackfill(app, a.chat_id, a.days, a.ingest),
   },
+  "lark-fill-files": {
+    description: "补拉已保存的飞书消息里缺的图片和附件（chat_ids 限定会话，不给则全部），在后台运行，完成后发通知；status: true 只看进度",
+    schema: z.object({ chat_ids: z.array(z.string().regex(/^oc_[\w-]+$/)).max(500).optional(), status: z.boolean().default(false) }),
+    run: async (app, a) => {
+      const m = await import("../channels/lark-messages.ts");
+      return a.status ? m.fillResourcesStatus() : m.fillResourcesInBackground(app, a.chat_ids);
+    },
+  },
   "memories-stats": {
     description: "按模型的记忆质量统计",
     schema: z.object({ days: z.number().int().min(1).max(365).default(30) }),

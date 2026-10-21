@@ -718,6 +718,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ days: z.number().int().min(0).max(3650), ingest: z.boolean().default(false) }), req.body);
     return requestBackfill(app, (req.params as { id: string }).id, b.days, b.ingest);
   });
+  // Images and files of saved messages that were never downloaded.
+  server.post("/api/lark/fill-files", async (req) => {
+    const { fillResourcesInBackground } = await import("../channels/lark-messages.ts");
+    const b = q(z.object({ chatIds: z.array(z.string()).max(500).optional() }), req.body ?? {});
+    return fillResourcesInBackground(app, b.chatIds);
+  });
+  server.get("/api/lark/fill-files", async () => (await import("../channels/lark-messages.ts")).fillResourcesStatus());
   server.put("/api/lark/chats/:id/policy", async (req) => {
     const { setCapturePolicy, capturedChats } = await import("../channels/lark-personal.ts");
     const b = q(z.object({ policy: z.enum(["ingest", "involved", "store", "skip"]).nullable() }), req.body);

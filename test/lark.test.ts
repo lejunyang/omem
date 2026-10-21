@@ -12,12 +12,13 @@ import { createSpace } from "../src/core/spaces.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { capturedChats, pollLark, requestBackfill, setCapturePolicy } from "../src/channels/lark-personal.ts";
-import { sourceMessages } from "../src/channels/lark-messages.ts";
+import { fillResources, missingResources, sourceMessages, storeMessages } from "../src/channels/lark-messages.ts";
 import { mkdirSync as mkdirS, writeFileSync as writeF } from "node:fs";
 import { run as runSql } from "../src/core/db.ts";
 import { buildCard, setLarkClient } from "../src/channels/lark-send.ts";
 import { routeWatchedMessages, setWatchRule } from "../src/channels/lark-watch.ts";
 import { recordCodeActivity } from "../src/sources/activity.ts";
+import { appendToSource } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
 
 /** A stand-in for the Feishu SDK client that records what the bot would do. */
@@ -297,6 +298,50 @@ describe("feishu messages as a chat", () => {
     expect(months.map((m) => m.uri)).toEqual(["lark:oc_g@2026-08", "lark:oc_g@2026-09"]);
     expect(months[1].text).toMatch(/用方案 B/);
     expect(capturedChats(app).find((c) => c.chatId === "oc_g")?.backfilling).toBe(false);
+  });
+
+  it("does not repeat messages the bot already wrote into the chat", async () => {
+    const app = testApp();
+    app.config.lark.capture = { ...app.config.lark.capture, mode: "all", attachments: false, docs: false, calendar: false, minutes: false };
+    const t0 = Date.now() - 3600_000;
+    // The bot is in the group and wrote the first message as it arrived.
+    appendToSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_g", title: "项目群", lines: ["[2026-10-20 10:00] 小王: 发布好了吗 (om_1)"] });
+    const msgs = [
+      { message_id: "om_1", msg_type: "text", content: "发布好了吗", create_time: String(t0), sender: { id: "ou_a", name: "小王" } },
+      { message_id: "om_2", msg_type: "text", content: "好了", create_time: String(t0 + 100), sender: { id: "ou_b", name: "小李" } },
+    ];
+    setLarkCliForTests(async (args) => {
+      const sub = args.slice(0, 2).join(" ");
+      if (sub === "auth status") return { data: { identities: { user: { openId: "ou_me" } } } };
+      if (sub === "im +chat-list") return { data: { chats: [{ chat_id: "oc_g", name: "项目群", chat_mode: "group" }] } };
+      if (sub === "im +chat-messages-list") return { data: { messages: msgs } };
+      return { data: { messages: [] } };
+    });
+    await pollLark(app);
+    const src = all<{ id: string; text: string }>(app.db, "select id, text from sources where uri = 'lark:oc_g'")[0];
+    expect(src.text.match(/\(om_1\)/g)).toHaveLength(1);
+    expect(src.text.split("\n")).toHaveLength(2);
+    expect(sourceMessages(app, src.id).messages.map((m) => [m.id, m.line])).toEqual([["om_1", 1], ["om_2", 2]]);
+  });
+
+  it("fills in images and files saved messages never downloaded", async () => {
+    const app = testApp();
+    // A row whose image was not downloaded, and an older line with only the key (no row).
+    storeMessages(app, "oc_g", [{ message_id: "om_a", msg_type: "image", content: "[Image: img_a]", create_time: String(Date.now()), sender: { id: "ou_a", name: "小王" } }] as never, {});
+    appendToSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_g", title: "项目群", lines: ['[2026-10-01 10:00] 小李: <file key="file_b" name="方案.pdf"/> (om_b)', "[2026-10-01 10:01] 小李: 看看 (om_c)"] });
+    appendToSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_other", title: "别的群", lines: ["[2026-10-01 10:00] 小张: [Image: img_z] (om_z)"] });
+    expect(missingResources(app, ["oc_g"]).map((x) => `${x.messageId}/${x.key}`).sort()).toEqual(["om_a/img_a", "om_b/file_b"]);
+    setLarkCliForTests(async (args, cwd) => {
+      const id = args[args.indexOf("--message-ids") + 1];
+      if (id === "om_b") return { data: { messages: [] } }; // withdrawn: neither lark-cli nor the bot can read it
+      mkdirS(`${cwd}/lark-im-resources`, { recursive: true });
+      writeF(`${cwd}/lark-im-resources/img_a`, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      return { data: { messages: [{ message_id: id, resources: [{ key: "img_a", type: "image", local_path: "lark-im-resources/img_a" }] }] } };
+    });
+    const p = await fillResources(app, ["oc_g"]);
+    expect(p).toMatchObject({ total: 2, fetched: 1, failed: 1 });
+    expect(missingResources(app, ["oc_g"]).map((x) => x.key)).toEqual(["file_b"]);
+    expect(sourceMessages(app, all<{ id: string }>(app.db, "select id from sources where uri = 'lark:oc_g'")[0].id).messages).toHaveLength(0);
   });
 });
 

@@ -11,7 +11,7 @@ import { chatSettings, setChatSettings } from "../agents/threads.ts";
 import { importFile, importUrl } from "../sources/import.ts";
 import { appendToSource, findSourceByUri, upsertSource } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
-import { flattenReplies, formatLine, isApp, keepResources, learnPeople, mentionIds, messageText, monthOf, parentOf, quotedMessages, rebuildArchive, storeMessages, timeMs, type LarkMessage, type ResourceRef } from "./lark-messages.ts";
+import { flattenReplies, formatLine, isApp, keepResources, learnPeople, linesWritten, mentionIds, messageText, monthOf, parentOf, quotedMessages, rebuildArchive, storeMessages, timeMs, type LarkMessage, type ResourceRef } from "./lark-messages.ts";
 import { routeWatchedMessages, watchRule, type ChatMessage } from "./lark-watch.ts";
 import type { RuleEvent } from "../rules/types.ts";
 
@@ -339,20 +339,20 @@ async function captureChat(app: App, chat: LarkChat, c: CaptureCtx) {
     const resources = dir ? await keepResources(app, spaceId, chat.chatId, messages, dir, ingest) : new Map<string, Record<string, ResourceRef>>();
     const quoted = await quotedMessages(app, chat.chatId, messages, owner);
     const linked: string[] = [];
+    const uri = `lark:${chat.chatId}`;
+    // The bot may have written some of these already (groups it is in): keep its lines, add the rest.
+    const lineOf = linesWritten(app, spaceId, uri, messages.map((m) => m.message_id));
+    const added = messages.filter((m) => !lineOf.has(m.message_id));
     const lines: string[] = [];
     for (const m of messages) {
       if (cfg.docs && ingest) linked.push(...(await importLinkedDocs(app, spaceId, messageText(m))));
-      lines.push(formatLine(m, { owner, quoted: quoted.get(parentOf(m)) ?? null, resources: resources.get(m.message_id) }));
+      if (!lineOf.has(m.message_id)) lines.push(formatLine(m, { owner, quoted: quoted.get(parentOf(m)) ?? null, resources: resources.get(m.message_id) }));
     }
-    const r = appendToSource(app, {
-      spaceId,
-      kind: "chat",
-      uri: `lark:${chat.chatId}`,
-      title: chat.mode === "p2p" ? `与 ${chat.name} 的私聊` : chat.name,
-      lines,
-      meta: { chatId: chat.chatId, chatMode: chat.mode, chatKind: kind, muted: chat.muted, via: "lark-cli" },
-    });
-    storeMessages(app, chat.chatId, messages, { owner, sourceId: r.id, firstLine: r.appendedFrom, resources });
+    const title = chat.mode === "p2p" ? `与 ${chat.name} 的私聊` : chat.name;
+    const meta = { chatId: chat.chatId, chatMode: chat.mode, chatKind: kind, muted: chat.muted, via: "lark-cli" };
+    const r = lines.length ? appendToSource(app, { spaceId, kind: "chat", uri, title, lines, meta }) : { id: findSourceByUri(app, spaceId, uri)!.id, appendedFrom: 0 };
+    added.forEach((m, i) => lineOf.set(m.message_id, r.appendedFrom + i));
+    storeMessages(app, chat.chatId, messages, { owner, sourceId: r.id, lines: lineOf, resources });
     await learnPeople(app, messages);
     // Only what the policy says is worth understanding goes to the ingest role; the rest stays searchable.
     if (ingest) {

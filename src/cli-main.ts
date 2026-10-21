@@ -397,6 +397,46 @@ lark
       console.log((done.output as { summary?: string }).summary ?? "");
     }
   });
+/** Captured chats picked by id, or by name / kind with --all. */
+async function pickChats(app: App, ids: string[], o: { all?: boolean; name?: string; kind?: string }) {
+  const { capturedChats } = await import("./channels/lark-personal.ts");
+  if (ids.length) return ids;
+  if (!o.all && !o.name && !o.kind) throw new Error("给出会话 id，或用 --name / --kind / --all 选会话");
+  return capturedChats(app)
+    .filter((c) => c.policy !== "skip" && (!o.name || c.name.includes(o.name)) && (!o.kind || c.kind === o.kind))
+    .map((c) => c.chatId);
+}
+lark
+  .command("backfill [chatIds...]")
+  .description("回溯飞书会话的历史消息：服务每次采集推进几页，按月存成历史原件（图片和附件随消息下载）")
+  .option("--name <text>", "名字包含这段文字的会话")
+  .option("--kind <kind>", "这类会话：group / p2p / topic / bot")
+  .option("--all", "所有采集中的会话")
+  .option("--days <n>", "往前多少天，0 表示全部", "0")
+  .option("--ingest", "回溯完成后交给整理")
+  .action(async (ids: string[], o) => {
+    const app = open();
+    const { requestBackfill } = await import("./channels/lark-personal.ts");
+    const chats = await pickChats(app, ids, o);
+    for (const id of chats) requestBackfill(app, id, Number(o.days), !!o.ingest);
+    console.log(`已安排 ${chats.length} 个会话回溯${Number(o.days) ? `往前 ${o.days} 天` : "全部历史"}；服务在每次飞书采集时推进，进度看 omem peer call <机器> lark-captured 或网页原件页`);
+  });
+lark
+  .command("fill-files [chatIds...]")
+  .description("补拉已保存的飞书消息里缺的图片和附件（采集时没下载、下载失败或早期只记了 key 的）")
+  .option("--name <text>", "名字包含这段文字的会话")
+  .option("--kind <kind>", "这类会话：group / p2p / topic / bot")
+  .option("--all", "所有会话")
+  .action(async (ids: string[], o) => {
+    const app = open();
+    const { fillResources } = await import("./channels/lark-messages.ts");
+    const chats = o.all && !o.name && !o.kind && !ids.length ? undefined : await pickChats(app, ids, o);
+    let last = 0;
+    const p = await fillResources(app, chats, (x) => {
+      if (Date.now() - last > 5000) (last = Date.now()), console.log(`${x.done}/${x.total}，读到 ${x.fetched}，失败 ${x.failed}`);
+    });
+    console.log(`完成 ${p.done}/${p.total}：读到 ${p.fetched}，读不到 ${p.failed}`);
+  });
 
 lark
   .command("bot-permissions")
