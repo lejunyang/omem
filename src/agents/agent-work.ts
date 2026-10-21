@@ -30,6 +30,8 @@ export type AgentWork = {
   awaitingUser: boolean;
   /** How many agent runs the main assistant has chained; a hard guard against loops. */
   runs: number;
+  /** A newer work continues this one in another conversation (its askRunId points here). */
+  supersededBy?: string;
 };
 
 export const MAX_AGENT_WORK_RUNS = 30;
@@ -280,4 +282,42 @@ export async function openWorkTopic(app: App, work: AgentWork, anchorMessageId: 
     { openTopicFrom: anchorMessageId, agentWorkTopic: work.askRunId },
   );
   return refreshWork(app, work.askRunId) ?? work;
+}
+
+/**
+ * Start a continuation of an existing work in a different conversation (the owner opened a new
+ * Feishu topic with new requirements instead of replying inside the old one). The rounds and the
+ * Agent's own sessions stay on the old work's run chain; a new AgentWork with the same ask chain
+ * makes every later report and coordination reply land in the new conversation. The old work is
+ * left in place (its history stays readable) and marked so it is not picked up twice.
+ */
+export function forkAgentWorkTo(app: App, opts: { askRunId: string; rootConversationId: string; spaceId: string; title: string; agent: string; task: string }): { work: AgentWork; runId: string } {
+  const prev = refreshWork(app, opts.askRunId);
+  if (!prev) throw new Error("找不到要继续的工作");
+  const workThread = createWorkThread(app, { rootId: opts.rootConversationId, spaceId: opts.spaceId, title: opts.title });
+  const work: AgentWork = {
+    ...prev,
+    askRunId: opts.askRunId,
+    rootConversationId: opts.rootConversationId,
+    workConversationId: workThread.id,
+    larkKey: workThread.key,
+    larkMessageId: null,
+    title: opts.title,
+    rounds: [],
+    awaitingUser: false,
+    runs: 0,
+  };
+  const retired: AgentWork = { ...prev, awaitingUser: true, supersededBy: opts.askRunId };
+  saveWork(app, retired, [prev.askRunId, ...prev.rounds.map((r) => r.runId)]);
+  // Queued rounds in the old lane would still coordinate into the old topic: drop them.
+  for (const r of all<{ id: string; status: string }>(app.db, "select id,status from runs where lane = ? and status = 'queued'", prev.workConversationId)) {
+    run(app.db, "update runs set status='cancelled', finished_at=?, error=? where id=?", now(), `本人在新话题继续这项工作（${opts.title.slice(0, 40)}）`, r.id);
+  }
+  // The ask run the owner just sent lives in the new conversation and carries the fork; every
+  // work lookup (reports, coordination, code-chain handoffs) follows it into the new conversation.
+  saveWork(app, work, [opts.askRunId]);
+  // Old ask runs keep the previous work so earlier rounds' reports still resolve where they ran.
+  addWorkMessage(app, work, { role: "user", text: opts.task, meta: { agentWork: true, spec: opts.agent, movedFrom: prev.workConversationId } });
+  const runId = queueAgentRound(app, work, { agent: opts.agent, task: opts.task });
+  return { work, runId };
 }

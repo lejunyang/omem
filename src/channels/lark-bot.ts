@@ -250,9 +250,21 @@ export async function startLarkBot(app: App) {
   });
 
   addNotificationSink(async (n) => {
-    const target = n.userId === OWNER
-      ? (kv(app, "lark_owner_chat") ? { chatId: kv(app, "lark_owner_chat")! } : cfg.ownerOpenId ? { userId: cfg.ownerOpenId } : null)
-      : { userId: identitiesOf(app, n.userId).find((i) => i.channel === "lark")?.external_id ?? "" };
+    // Background work tied to a conversation goes there (its Feishu topic), never as a private DM.
+    const inThread = (() => {
+      const cid = (n as { larkConversationId?: string }).larkConversationId;
+      if (!cid) return null;
+      const t = one<{ key: string | null }>(app.db, "select key from conversations where id = ?", cid);
+      if (!t?.key) return null;
+      const [chatId, topic] = t.key.split("#");
+      const last = one<{ value: string }>(app.db, "select json_extract(settings, '$.lastMessageId') value from conversations where id = ?", cid)?.value;
+      return { chatId, inThread: !!topic, replyTo: last };
+    })();
+    const target = inThread
+      ? (inThread.replyTo ? { replyTo: inThread.replyTo, inThread: inThread.inThread } : { chatId: inThread.chatId })
+      : n.userId === OWNER
+        ? (kv(app, "lark_owner_chat") ? { chatId: kv(app, "lark_owner_chat")! } : cfg.ownerOpenId ? { userId: cfg.ownerOpenId } : null)
+        : { userId: identitiesOf(app, n.userId).find((i) => i.channel === "lark")?.external_id ?? "" };
     if (!target || (!("userId" in target) && !("chatId" in target)) || ("userId" in target && !target.userId)) return;
     // Push policy: non-urgent nudges stay in-app at night; and when the triggering message is
     // already read by the owner, the change has been seen — no ping (urgent always pushes).

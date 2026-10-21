@@ -547,14 +547,14 @@ export async function fillResources(app: App, chatIds?: string[], onProgress?: (
 }
 
 /** fillResources without waiting; the owner gets a notification when it is done. */
-export function fillResourcesInBackground(app: App, chatIds?: string[]) {
+export function fillResourcesInBackground(app: App, chatIds?: string[], notifyConversationId?: string) {
   if (filling) return { started: false, reason: "上一次补拉还没结束", progress: filling };
   const total = missingResources(app, chatIds).length;
   if (!total) return { started: false, reason: "没有缺图片或附件的消息" };
   void fillResources(app, chatIds)
     .then(async (p) => {
       const { notify } = await import("../core/notify.ts");
-      notify(app, { title: `飞书图片和附件补拉完成：${p.fetched}/${p.total}`, body: p.failed ? `${p.failed} 个读不到（多半是已过期、被撤回或没有权限）。` : "全部补齐。" });
+      notify(app, { title: `飞书图片和附件补拉完成：${p.fetched}/${p.total}`, body: p.failed ? `${p.failed} 个读不到（多半是已过期、被撤回或没有权限）。` : "全部补齐。", ...(notifyConversationId ? { larkConversationId: notifyConversationId } : {}) });
     })
     .catch((e) => console.warn("[omem] 补拉飞书图片和附件失败：", (e as Error).message));
   return { started: true, total };

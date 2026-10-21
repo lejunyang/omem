@@ -49,6 +49,8 @@ export type Notification = {
   urgency?: NotifyUrgency;
   /** An explicitly scheduled reminder (item remind_at): fires at its time even in quiet hours. */
   scheduled?: boolean;
+  /** Deliver into this Feishu conversation id instead of the owner's private chat (a work topic). */
+  larkConversationId?: string;
 };
 
 type Sink = (n: Notification) => Promise<void> | void;

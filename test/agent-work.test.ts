@@ -146,6 +146,41 @@ describe("multi-agent work", () => {
       restore();
     }
   }, 60000);
+
+  it("continues an old work from a new topic there: rounds fork into the new conversation, queued old-lane rounds are cancelled", async () => {
+    // The owner first starts a work in the old topic and lets its auto loop settle.
+    let ask0: string;
+    let stale: AgentWork;
+    const quiet0 = stubHandlers(app, async () => "旧话题协调回复");
+    try {
+      saveAgentSpec(app, { name: "researcher-fork", description: "调研", prompt: "只做调研", status: "active" }, "user");
+      const oldRoot = createThread(app, { spaceId: "personal", channel: "lark", key: "oc_c#omt_old2", userId: "owner" });
+      const a0 = createRun(app, { kind: "ask", spaceId: "personal", title: "旧任务", input: { conversationId: oldRoot.id } });
+      ask0 = a0.id;
+      await callTool({ app, runId: a0.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: "owner" }, "run_agent", { name: "researcher-fork", own_topic: true, task: "第一轮" });
+      stale = await settle(app, a0.id, 40000);
+    } finally {
+      quiet0();
+    }
+    // Now the owner opens a new topic; its assistant turn continues the old work by ask id.
+    const quiet1 = stubHandlers(app, async () => "不应由协调回合触发");
+    try {
+      const newRoot = createThread(app, { spaceId: "personal", channel: "lark", key: "oc_c#omt_new2", userId: "owner" });
+      const ask1 = createRun(app, { kind: "ask", spaceId: "personal", title: "新话题", input: { conversationId: newRoot.id } });
+      const out = await callTool({ app, runId: ask1.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: "owner" }, "continue_agent_work", { work_id: ask0, task: "新话题里的新要求" });
+      expect(String(out.text)).toContain("转到当前话题");
+      const w = (getRun(app, ask0).output as { agentWork: AgentWork }).agentWork;
+      expect(w.workConversationId).not.toBe(stale.workConversationId);
+      expect(w.rootConversationId).toBe(newRoot.id);
+      await settle(app, ask0, 30000);
+      const newMsgs = threadMessages(app, w.workConversationId, { limit: 50 });
+      expect(newMsgs.some((m) => m.text.includes("结论A"))).toBe(true);
+      const oldAfter = threadMessages(app, stale.workConversationId, { limit: 50 }).filter((m) => m.createdAt > ask1.createdAt);
+      expect(oldAfter.some((m) => m.text === "已转到新话题")).toBe(false);
+    } finally {
+      quiet1();
+    }
+  }, 90000);
 });
 
 describe("replies", () => {

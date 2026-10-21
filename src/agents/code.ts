@@ -222,11 +222,17 @@ ${input.task}
       return { verdict: "changes-requested", continuedRunId: next.run.id };
     }
   }
-  notify(app, {
-    title: `${approved ? "交办完成，评审通过" : `交办第 ${endChain?.round ?? 1} 轮评审要求修改（已到自动推进上限 ${MAX_AUTO_ROUNDS} 轮，等本人决定）`}：${run.title}`,
-    body: `${statTextLine}${checksLine}`,
-    link: `#/runs/${run.id}`,
-  });
+  {
+    const { workForChild } = await import("./agent-work.ts");
+    const work = workForChild(app, run);
+    notify(app, {
+      title: `${approved ? "交办完成，评审通过" : `交办第 ${endChain?.round ?? 1} 轮评审要求修改（已到自动推进上限 ${MAX_AUTO_ROUNDS} 轮，等本人决定）`}：${run.title}`,
+      body: `${statTextLine}${checksLine}`,
+      link: `#/runs/${run.id}`,
+      // Inside a multi-agent work the nudge belongs to the work's current topic, not a private DM.
+      ...(work ? { larkConversationId: work.workConversationId } : {}),
+    });
+  }
   return { verdict: approved ? "approved" : "changes-requested" };
 }
 

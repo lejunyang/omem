@@ -205,15 +205,32 @@ function wakeAssistantForCodeResult(app: App, runId: string) {
   const chain = r.output.codeChain as CodeChain | undefined;
   const messageId = r.output.codeResultMessageId as string | undefined;
   if (!chain || !messageId || r.output.codeResultHandedOff || chain.lastCodeRunId !== r.id) return;
+  // The owner moved this work to another conversation (new Feishu topic): the handoff goes there.
+  let conversationId = chain.conversationId;
+  let movedMessageId = messageId;
+  {
+    const { refreshWork, workForChild } = require("./agent-work.ts") as { refreshWork: (a: App, id: string) => import("./agent-work.ts").AgentWork | null; workForChild: (a: App, r: Run) => import("./agent-work.ts").AgentWork | null };
+    const work = workForChild(app, r) ?? (chain.askRunId ? refreshWork(app, chain.askRunId) : null);
+    if (work?.workConversationId && work.workConversationId !== chain.conversationId) {
+      conversationId = work.workConversationId;
+      const handoffText = one<{ text?: string }>(app.db, "select text from messages where id = ?", messageId)?.text;
+      if (handoffText) {
+        const { newId: nid, now: nowf } = require("../core/util.ts") as { newId: () => string; now: () => string };
+        movedMessageId = nid();
+        run(app.db, "insert into messages(id,conversation_id,role,text,run_id,meta,created_at) values(?,?,?,?,?,?,?)",
+          movedMessageId, conversationId, "assistant", handoffText, r.id, JSON.stringify({ codeResult: r.id, record: true, movedFrom: chain.conversationId }), nowf());
+      }
+    }
+  }
   // An automatic next round is already queued: nothing to tell yet.
   if (r.status === "done" && r.output.verdict === "changes-requested" && chain.round < MAX_AUTO_ROUNDS && !chain.awaitingUser) return;
   setRunOutput(app, runId, { codeResultHandedOff: true });
   createRun(app, {
     kind: "ask",
-    spaceId: getThread(app, chain.conversationId).spaceId,
+    spaceId: getThread(app, conversationId).spaceId,
     title: `编码交办第 ${chain.round} 轮结束：${r.status}${r.output.verdict ? `（${r.output.verdict}）` : ""}`,
-    input: { conversationId: chain.conversationId, messageIds: [messageId], handoff: { kind: "code", runId }, denyTools: CODE_HANDOFF_DENY },
-    lane: chain.conversationId,
+    input: { conversationId, messageIds: [movedMessageId], handoff: { kind: "code", runId }, denyTools: CODE_HANDOFF_DENY },
+    lane: conversationId,
     parentId: chain.askRunId,
   });
 }

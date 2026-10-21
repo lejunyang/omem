@@ -57,9 +57,11 @@ function ownerAfter(app: App, r: EvidenceRun) {
   }
   if (!conv || !r.finished_at) return [];
   const until = new Date(Date.parse(r.finished_at) + 6 * 3600_000).toISOString();
+  // A correction made in the same millisecond the run was marked done still counts (timestamps are
+  // millisecond ISO strings; under load they can be equal even though the message came after).
   return all<{ id: string; text: string; created_at: string }>(
     app.db,
-    "select id, text, created_at from messages where conversation_id = ? and role = 'user' and created_at > ? and created_at < ? and json_extract(meta, '$.command') is null order by created_at limit 4",
+    "select id, text, created_at from messages where conversation_id = ? and role = 'user' and created_at >= ? and created_at < ? and json_extract(meta, '$.command') is null order by created_at limit 4",
     conv,
     r.finished_at,
     until,

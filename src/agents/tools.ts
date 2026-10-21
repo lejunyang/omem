@@ -574,8 +574,9 @@ def({
     if (!conversationId) throw new HttpError(400, "只能在一个会话里交办 Agent");
     if (a.own_topic) {
       const { startAgentWork, workInConversation, queueAgentRound } = await import("./agent-work.ts");
-      // Already working on this in its own topic (the owner replied inside it, or the main
-      // assistant chains another agent): continue there instead of opening a second work session.
+      // The owner may continue an existing work from a different conversation (a new Feishu topic):
+      // only the work of THIS conversation continues here; a work from another topic is forked
+      // into this conversation so reports stop going back to the old topic.
       const existing = workInConversation(ctx.app, conversationId);
       if (existing) {
         await autoTurnGuard(ctx, existing);
@@ -616,17 +617,26 @@ def({
     task: z.string().describe("这一轮要做什么：本人的新要求或你判断还需要推进的事，写具体"),
   }),
   handler: async (ctx, a) => {
-    const { refreshWork, queueAgentRound, MAX_AGENT_WORK_RUNS } = await import("./agent-work.ts");
+    const { refreshWork, queueAgentRound, MAX_AGENT_WORK_RUNS, workInConversation, forkAgentWorkTo } = await import("./agent-work.ts");
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const conv = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
-    const { workInConversation } = await import("./agent-work.ts");
     let work = a.work_id ? refreshWork(ctx.app, a.work_id) : null;
     if (!work && conv) work = workInConversation(ctx.app, conv, { includeRoot: true });
     if (!work) throw new HttpError(404, "找不到进行中的多 Agent 工作；复杂任务先用 run_agent own_topic=true 开始");
-    await autoTurnGuard(ctx, work);
-    // Works from before 10-21 list digester rounds: bookkeeping, not someone to hand work to.
     const agent = a.agent ?? work.rounds.filter((r) => r.agent !== "digester").at(-1)?.agent;
     if (!agent) throw new HttpError(400, "说不出用哪个 Agent，先用 run_agent 交办");
+    // The owner continues the work from another conversation (a new Feishu topic): fork it into
+    // this conversation so the specialist's report and every later coordination reply land here.
+    if (conv && work.workConversationId !== conv) {
+      const { getThread } = await import("./threads.ts");
+      const here = getThread(ctx.app, conv);
+      const otherTopic = !!String(here?.key ?? "").includes("#") && here?.key !== work.larkKey;
+      if (otherTopic || work.rootConversationId !== conv) {
+        const f = forkAgentWorkTo(ctx.app, { askRunId: work.askRunId, rootConversationId: conv, spaceId: here.spaceId, title: truncate(a.task.split("\n")[0], 60), agent, task: a.task });
+        return `已把这项工作转到当前话题继续（运行 ${f.runId}）；后续 ${agent} 的报告和协调回复都在这里，不再回到旧话题。旧话题里的经过可以用 read_conversation 读工作会话 ${work.workConversationId}。`;
+      }
+    }
+    await autoTurnGuard(ctx, work);
     let id: string;
     try {
       id = queueAgentRound(ctx.app, work, { agent, task: a.task });
@@ -1833,7 +1843,7 @@ def({
     }
     if (a.files) {
       const { fillResourcesInBackground } = await import("../channels/lark-messages.ts");
-      const r = fillResourcesInBackground(ctx.app, a.chat_ids);
+      const r = fillResourcesInBackground(ctx.app, a.chat_ids, ctx.runId ? (one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId)?.input ? (JSON.parse(one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId)!.input) as { conversationId?: string }).conversationId : undefined) : undefined);
       out.push(r.started ? `开始补拉 ${r.total} 个缺的图片和附件，完成后通知本人。` : `没有补拉：${r.reason}。`);
     }
     return out.join("\n");

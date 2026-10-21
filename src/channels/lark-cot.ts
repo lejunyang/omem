@@ -49,6 +49,8 @@ type State = {
 
 const states = new Map<string, State>();
 const TIMEOUT = 15_000;
+/** Max bytes/chars of one REASONING_MESSAGE_CONTENT event (Feishu rejects longer events). */
+const COT_CONTENT_MAX = 4000;
 /** Set after a hard failure (e.g. message_cot not enabled for this app): skip
  *  creating further empty bubbles for the rest of this process. */
 let globallyDisabled = false;
@@ -138,7 +140,12 @@ function eventsFor(st: State): any[] {
       if (st.reasoningClosed.has(mid)) return;
       const sent = st.reasoningSent.get(mid);
       if (sent === undefined) out.push(ev("REASONING_MESSAGE_START", { messageId: mid, role: "reasoning" }));
-      if (e.text.length > (sent ?? 0)) out.push(ev("REASONING_MESSAGE_CONTENT", { messageId: mid, delta: e.text.slice(sent ?? 0) }));
+      if (e.text.length > (sent ?? 0)) {
+        // Feishu rejects a single COT event whose content is too long ("event[n] content too long"):
+        // split into capped deltas (it rendered an empty "thinking hidden" bubble when we did not).
+        for (let from = sent ?? 0; from < e.text.length; from += COT_CONTENT_MAX)
+          out.push(ev("REASONING_MESSAGE_CONTENT", { messageId: mid, delta: e.text.slice(from, from + COT_CONTENT_MAX) }));
+      }
       st.reasoningSent.set(mid, e.text.length);
       if (idx < st.entries.length - 1 || st.finish) {
         out.push(ev("REASONING_MESSAGE_END", { messageId: mid }));
@@ -221,8 +228,14 @@ async function pump(app: App, runId: string, st: State) {
     if (st.cotId) {
       try { await api("POST", `/open-apis/im/v1/message_cot/complete/${encodeURIComponent(st.cotId)}`, {}, { message_id: st.messageId!, reason: "error" }); } catch {}
     }
-    globallyDisabled = true;
-    console.warn(`[omem] 思考过程气泡不可用，已停用（不影响回复）：${(e as Error).message}`);
+    // Oversized reasoning content is a per-bubble mistake: stop this bubble, but let later turns
+    // try again (they send capped deltas). A gateway/capability failure disables bubbles globally.
+    const msg = (e as Error).message ?? "";
+    if (/content too long/i.test(msg)) console.warn(`[omem] 本轮思考气泡内容过长，已结束这个气泡（不影响回复，后续轮次照常）：${msg}`);
+    else {
+      globallyDisabled = true;
+      console.warn(`[omem] 思考过程气泡不可用，已停用（不影响回复）：${msg}`);
+    }
   } finally {
     st.pumping = false;
     st.queued = false;
