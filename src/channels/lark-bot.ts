@@ -1,7 +1,5 @@
-import { queueCaptureEvent, drainCaptureEvents, queueRetentionRefresh } from "./lark-event-queue.ts";
 import { persistChatMessages, type LarkMessage } from "./lark-messages.ts";
 import { chatSpace } from "./lark-personal.ts";
-import { detectRetention, retentionRule, retentionState, retentionLifecycle, saveRetention } from "./lark-retention.ts";
 import { itemNotificationCard } from "./item-notification.ts";
 import * as lark from "@larksuiteoapi/node-sdk";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -10,7 +8,6 @@ import { join } from "node:path";
 import { scheduleIngest } from "../agents/jobs.ts";
 import { registerThreadSender } from "../agents/inbox.ts";
 import type { App } from "../core/app.ts";
-import { sha256 } from "../core/util.ts";
 import { one, run } from "../core/db.ts";
 import { addNotificationSink } from "../core/notify.ts";
 import { identitiesOf, OWNER, resolveIdentity, userName } from "../core/users.ts";
@@ -56,7 +53,6 @@ type Inbound = {
   quote?: { messageId?: string; sender?: string; text?: string; origin?: string };
   /** Feishu message type (text, post, share_chat…). */
   type?: string;
-  captureChanged?: boolean;
   raw?: string;
   parentId?: string;
   rootId?: string;
@@ -141,21 +137,6 @@ export async function describeLarkContent(app: App, msg: { messageId: string; ty
  * Feishu pushes an event again when it did not get the acknowledgement in time (after ~15 s, 5 min,
  * 1 h…). The first delivery wins, also across restarts; repeats would otherwise become new turns.
  */
-/** Resource keys embedded in posts/cards are message resources too, when Feishu permits reading them. */
-export function embeddedLarkResources(raw: string): { key: string; type: "image" | "file"; name?: string }[] {
-  const found = new Map<string, { key: string; type: "image" | "file"; name?: string }>();
-  const walk = (value: unknown) => {
-    if (!value || typeof value !== "object") return;
-    const obj = value as Record<string, unknown>;
-    const image = obj.image_key ?? obj.img_key;
-    if (typeof image === "string") found.set(image, { key: image, type: "image" });
-    if (typeof obj.file_key === "string") found.set(obj.file_key, { key: obj.file_key, type: "file", name: typeof obj.file_name === "string" ? obj.file_name : undefined });
-    for (const child of Object.values(obj)) walk(child);
-  };
-  try { walk(JSON.parse(raw)); } catch { /* readable text has no raw resource keys */ }
-  return [...found.values()];
-}
-
 export function firstDelivery(app: App, messageId: string) {
   return run(app.db, "insert or ignore into handled_messages(channel,message_id,rule,at) values('lark-bot',?,'',?)", messageId, new Date().toISOString()).changes > 0;
 }
@@ -328,10 +309,8 @@ export async function startLarkBot(app: App) {
       sender: { id: m.senderId, name: m.senderName }, mentions: m.mentions.map(id => ({ id })) };
     const r = persistChatMessages(app, { chatId: m.chatId, spaceId, name: before?.title ?? groupName(m.chatId), messages: [message], owner: cfg.ownerOpenId });
     if (!r.id) return;
-    const state = retentionState(app, m.chatId);
-    if (state) saveRetention(app, { ...state, botEventAt: Date.now() });
     lastCapture.set(m.messageId, r.id);
-    if (r.status === "unchanged" && !m.captureChanged) return;
+    if (r.status === "unchanged") return;
     // Debounce: hand a burst of messages to the ingest role once.
     const sourceId = r.id;
     const key = `${spaceId}:${sourceId}`;
@@ -403,7 +382,6 @@ export async function startLarkBot(app: App) {
   const handle = async (m: Inbound) => {
     if (m.chatType === "group") {
       captureGroup(m);
-      if (retentionRule(app, m.chatId)) return; // retention is capture-only, even if the bot was also mentioned
       dispatchToRules(m);
       await routeWatchedMessages(app, m.chatId, groupName(m.chatId), [{ id: m.messageId, time: m.createTime, sender: m.senderName, senderId: m.senderId, text: m.text, topicId: m.topicId, mentions: m.mentions }], { botOpenId });
       if (!m.mentionsBot) return;
@@ -572,24 +550,9 @@ export async function startLarkBot(app: App) {
   };
 
   /** Everything after the acknowledgement: names, quotes and the turn may take seconds. */
-  const processEvent = async (data: any, updateOnly = false, resourceKey?: string) => {
+  const processEvent = async (data: any) => {
     const msg = data.message;
     const senderId = data.sender?.sender_id?.open_id ?? "";
-    const retained = msg.chat_type !== "p2p" && !!retentionRule(app, msg.chat_id);
-    const snapshotKey = `lark_bot_snapshot:${msg.message_id}`;
-    const snapshot = sha256(JSON.stringify([msg.content, msg.message_type, msg.thread_id, msg.parent_id, msg.root_id, msg.mentions, senderId]));
-    // Only completed processing records a snapshot: resource/enrichment failures must retry.
-    if (updateOnly && !resourceKey && retained && kv(app, snapshotKey) === snapshot) return;
-    let captureChanged = false;
-    if (retained && (!updateOnly || !one(app.db, "select 1 from lark_messages where chat_id=? and message_id=?", msg.chat_id, msg.message_id))) {
-      const raw: LarkMessage = { message_id: msg.message_id, chat_id: msg.chat_id, msg_type: msg.message_type,
-        content: messageText(msg.content, msg.message_type), raw_content: msg.content, create_time: msg.create_time,
-        thread_id: msg.thread_id, parent_id: msg.parent_id, root_id: msg.root_id,
-        sender: { id: senderId }, mentions: msg.mentions };
-      detectRetention(app, raw, cfg.ownerOpenId, "bot");
-      captureChanged = persistChatMessages(app, { chatId: msg.chat_id, spaceId: groupSpace(msg.chat_id), name: groupName(msg.chat_id), messages: [raw], owner: cfg.ownerOpenId }).status !== "unchanged";
-    }
-
     const mentions = ((msg.mentions ?? []) as { id?: { open_id?: string } }[]).map((x) => x.id?.open_id ?? "").filter(Boolean);
     if (msg.chat_type !== "p2p") void learnName(msg.chat_id);
     void learnPeopleFromEvent(data).catch(() => {});
@@ -606,85 +569,27 @@ export async function startLarkBot(app: App) {
       topicId: msg.thread_id || undefined,
       type: msg.message_type,
       fromApp: data.sender?.sender_type === "app",
-      captureChanged, raw: msg.content, parentId: msg.parent_id, rootId: msg.root_id,
+      raw: msg.content, parentId: msg.parent_id, rootId: msg.root_id,
       mentionNames: Object.fromEntries(
         ((msg.mentions ?? []) as { key?: string; name?: string; id?: { open_id?: string } }[])
           .filter((x) => x.key)
           .map((x) => [x.key!, { name: x.name ?? "", isBot: !!botOpenId && x.id?.open_id === botOpenId }]),
       ),
     };
-    if (m.chatType === "group") detectRetention(app, { message_id: m.messageId, chat_id: m.chatId, msg_type: m.type ?? "text", content: msg.content, create_time: m.createTime, mentions: m.mentions.map(id => ({ id })) }, cfg.ownerOpenId, "bot");
-    // Existing refreshes render before saving, avoiding a raw/rendered rewrite of unchanged lines.
-    // Save the rendered body before resource work so a failed attachment cannot lose an edit.
-    if (updateOnly && m.chatType === "group") captureGroup(m);
-    if ((msg.message_type === "image" || msg.message_type === "file") && (m.chatType === "group" || resolveIdentity(app, "lark", m.senderId))) {
-      if (m.chatType === "group" && retentionRule(app, m.chatId)) await saveResource(msg, m);
-      else saveResource(msg, m).catch((e) => console.warn("[omem] 飞书附件保存失败", e));
-    }
-    if (m.chatType === "group" && retentionRule(app, m.chatId) && ["post", "interactive"].includes(msg.message_type)) {
-      for (const ref of embeddedLarkResources(msg.content)) {
-        if (resourceKey && resourceKey!==ref.key) continue;
-        try { await saveResource({ message_id:m.messageId,message_type:ref.type,content:JSON.stringify(ref.type==="image" ? {image_key:ref.key} : {file_key:ref.key,file_name:ref.name}) },m); }
-        catch (e) {
-          if (resourceKey) throw e;
-          // A permanently inaccessible card asset must not suppress later body/card updates.
-          queueCaptureEvent(app,`resource:${m.messageId}:${ref.key}`,{updateId:m.messageId,resourceKey:ref.key});
-        }
-      }
-    }
+    if ((msg.message_type === "image" || msg.message_type === "file") && (m.chatType === "group" || resolveIdentity(app, "lark", m.senderId)))
+      saveResource(msg, m).catch((e) => console.warn("[omem] 飞书附件保存失败", e));
     if (msg.message_type !== "image" && msg.message_type !== "file") {
       if (resolveIdentity(app, "lark", m.senderId) === OWNER) m.quote = await fetchQuote(msg);
-      if (updateOnly) { if (m.chatType === "group") captureGroup(m); }
-      else await handle(m);
+      await handle(m);
     } else if (m.chatType === "group") captureGroup(m);
-    if (retained && !resourceKey) kv(app, snapshotKey, snapshot);
   };
-
-  const processQueuedEvent = async (data: any) => {
-    if (!data.updateId) {
-      if (!retentionRule(app, data.message?.chat_id)) throw new Error("保留规则已停用，暂停事件处理");
-      return processEvent(data);
-    }
-    const r = await client.im.message.get({ path: { message_id: data.updateId } });
-    if (r.code || !r.data?.items?.length) throw new Error("读取更新消息失败");
-    for (const msg of r.data.items) {
-      if (!retentionRule(app, msg.chat_id!)) throw new Error("保留规则已停用，暂停消息回读");
-      await processEvent({ sender: { sender_id: { open_id: msg.sender?.id } }, message: { ...msg, chat_type: "group", message_type: msg.msg_type, content: msg.body?.content } }, true, data.resourceKey);
-    }
-  };
-
-  // Also drain events acknowledged by the previous process. No user-token read is required.
-  const retryCapture = () => {
-    queueRetentionRefresh(app);
-    void drainCaptureEvents(app, processQueuedEvent);
-  };
-  retryCapture();
-  const captureRetry = setInterval(retryCapture, 60_000);
-  captureRetry.unref();
 
   const dispatcher = new lark.EventDispatcher({ loggerLevel: lark.LoggerLevel.warn }).register({
     // Acknowledge at once: Feishu redelivers an event it has not heard back about within a few
     // seconds, and a slow handler also holds back the messages sent right after it.
     "im.message.receive_v1": async (data: any) => {
-      if (!data?.message?.message_id) return {};
-      if (data.message.chat_type !== "p2p" && retentionRule(app, data.message.chat_id)) {
-        queueCaptureEvent(app, data.message.message_id, data);
-        void drainCaptureEvents(app, processQueuedEvent);
-        return {};
-      }
-      if (!firstDelivery(app, data.message.message_id)) return {};
+      if (!data?.message?.message_id || !firstDelivery(app, data.message.message_id)) return {};
       processEvent(data).catch((e) => console.warn("[omem] 飞书消息处理失败", e));
-      return {};
-    },
-    "im.chat.member.bot.added_v1": async (data: any) => {
-      const state = data.chat_id && retentionState(app, data.chat_id);
-      if (state && retentionRule(app, data.chat_id)) saveRetention(app, { ...state, invite: "joined", lifecycle: state.lifecycle === "bot-removed" ? undefined : state.lifecycle });
-      return {};
-    },
-    "im.chat.disbanded_v1": async (data: any) => { if (data.chat_id) retentionLifecycle(app, data.chat_id, "disbanded"); return {}; },
-    "im.chat.member.bot.deleted_v1": async (data: any) => { if (data.chat_id) retentionLifecycle(app, data.chat_id, "bot-removed"); return {}; },
-    "im.chat.member.user.deleted_v1": async (data: any) => {
-      if (data.chat_id && cfg.ownerOpenId && data.users?.some((u: any) => u.user_id?.open_id === cfg.ownerOpenId)) retentionLifecycle(app, data.chat_id, "owner-removed");
       return {};
     },
     "card.action.trigger": async (data: any) => {

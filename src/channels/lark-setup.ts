@@ -96,8 +96,6 @@ export const LARK_BOT_ADDONS = {
         "im.message.receive_v1",
         "im.chat.member.bot.added_v1",
         "im.chat.member.bot.deleted_v1",
-        "im.chat.member.user.deleted_v1",
-        "im.chat.disbanded_v1",
         "im.message.reaction.created_v1",
         "im.message.reaction.deleted_v1",
       ],

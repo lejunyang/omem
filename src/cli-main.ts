@@ -383,18 +383,6 @@ doubao
   });
 
 const lark = program.command("lark").description("飞书个人采集（只读）：文档");
-lark.command("retention-status").description("查看本人被 @ 保留规则、已命中群、邀请重试与采集状态（只读）").action(async () => {
-  const app = open();
-  const { all, one } = await import("./core/db.ts");
-  const { retentionChats } = await import("./channels/lark-retention.ts");
-  console.log(JSON.stringify({ rule: app.config.lark.capture.mentionRetention, chats: retentionChats(app),
-    discovery: one(app.db, "select value from kv where key='lark_oncall_discovery'"),
-    mappingFailures: all(app.db, "select key,json_extract(value,'$.error') error,json_extract(value,'$.attempts') attempts from kv where key like 'lark_oncall_failure:%'"),
-    unresolvedMentions: all(app.db, "select key from kv where key like 'lark_retention_candidate:%'"),
-    priorityScans: all(app.db, "select key,value from kv where key like 'lark_priority_scan:%'"),
-    abandonedBotEvents: all(app.db, "select key,json_extract(value,'$.error') error,json_extract(value,'$.attempts') attempts from kv where key like 'lark_capture_event:%' and json_type(value,'$.abandonedAt') is not null"),
-    pendingBotEvents: all(app.db, "select key,json_extract(value,'$.error') error,json_extract(value,'$.attempts') attempts from kv where key like 'lark_capture_event:%' and json_type(value,'$.data') is not null and json_type(value,'$.abandonedAt') is null") }, null, 2));
-});
 lark
   .command("docs-refresh")
   .description("重新读取已保存的飞书文档：下载图片、画板、视频等素材，读内嵌表格，导入链接的文档")

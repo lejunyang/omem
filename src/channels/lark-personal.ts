@@ -11,7 +11,6 @@ import type { CapturePolicy } from "../core/config.ts";
 import { chatSettings, setChatSettings } from "../agents/threads.ts";
 import { importFile, importUrl } from "../sources/import.ts";
 import { findSourceByUri, upsertSource } from "../sources/store.ts";
-import { discoverRetentionChats, detectRetention, inviteRetentionBot, retentionChats, retentionRule, retentionState, saveRetention } from "./lark-retention.ts";
 import { larkCli } from "./lark-cli.ts";
 import { flattenReplies, persistChatMessages, isApp, keepResources, learnPeople, mentionIds, messageText, quotedMessages, timeMs, type LarkMessage, type ResourceRef } from "./lark-messages.ts";
 import { routeWatchedMessages, watchRule, type ChatMessage } from "./lark-watch.ts";
@@ -246,7 +245,7 @@ export function chatSpace(app: App, chatId: string): string {
 }
 
 
-type CaptureCtx = { endMs: number; touched: Map<string, Set<string>>; owner?: string; priority?: boolean; budget?: { remaining: number } };
+type CaptureCtx = { endMs: number; touched: Map<string, Set<string>>; owner?: string };
 
 /** Whether the ingest role should see this batch, given the chat's policy and whether the owner is in it. */
 const wantsIngest = (policy: CapturePolicy, involved: boolean) => policy === "ingest" || (policy === "involved" && involved);
@@ -288,85 +287,7 @@ export async function captureChatNow(app: App, chatId: string, name: string) {
   return n;
 }
 
-/** A bounded scan keeps its time window, page token and topic position across polls. */
-async function capturePriorityChat(app: App, chat: LarkChat, c: CaptureCtx) {
-  type Scan = { start: number; end: number; phase: "main" | "threads"; token?: string; threads: string[]; index: number; latest: number; ids: string[] };
-  const key = `lark_priority_scan:${chat.chatId}`;
-  const cfg = app.config.lark.capture;
-  const prev = cursor(app, chat.chatId);
-  const retained = retentionState(app, chat.chatId)!;
-  let scan = json<Scan | undefined>(one<{ value: string }>(app.db, "select value from kv where key=?", key)?.value, undefined);
-  if (!scan) {
-    scan = { start: retained.captureAt ? (prev?.lastTime ?? c.endMs) - 600_000 : Math.min(prev?.lastTime ?? c.endMs, retained.since - cfg.lookbackHours * 3600_000),
-      end: c.endMs, phase: "main", threads: all<{ chat_id: string }>(app.db, "select chat_id from lark_cursors where chat_id like ? and updated_at>?", `thread:${chat.chatId}:%`, new Date(c.endMs - 7 * 86400_000).toISOString()).map(r => r.chat_id.split(":").pop()!), index: 0, latest: prev?.lastTime ?? 0, ids: prev?.lastIds ?? [] };
-  }
-  const commit = () => run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value=excluded.value", key, JSON.stringify(scan));
-  commit();
-  const budget = c.budget ?? { remaining: 20 };
-  const spaceId = chatSpace(app, chat.chatId);
-  const dir = cfg.attachments ? mkdtempSync(join(tmpdir(), "omem-lark-")) : undefined;
-  let count = 0;
-  let pages = 0;
-  let topics = 0;
-  try {
-    while (budget.remaining > 0) {
-      if (scan.phase === "threads" && scan.index >= scan.threads.length) {
-        run(app.db, "delete from kv where key=?", key);
-        return count;
-      }
-      // Main listing: five pages per chat per poll; topics: ten, five pages each.
-      if (pages >= 5 || topics >= 10) break;
-      const thread = scan.phase === "threads" ? scan.threads[scan.index] : undefined;
-      const args = thread ? ["+threads-messages-list", "--thread", thread, "--order", "desc"] : ["+chat-messages-list", "--chat-id", chat.chatId, "--order", "asc", "--start", iso(scan.start), "--end", iso(scan.end)];
-      budget.remaining--;
-      pages++;
-      const v = await larkCli(["im", ...args, "--page-size", "50", "--no-reactions", ...(dir ? ["--download-resources"] : []), ...(scan.token ? ["--page-token", scan.token] : []), "--as", "user", "--format", "json"], dir ? 300_000 : 90_000, dir);
-      if (!Array.isArray(v.data?.messages)) throw new Error("飞书消息分页缺少 messages，未推进游标");
-      const raw = flattenReplies(v.data.messages) as LarkMessage[];
-      const messages = raw.filter(m => !m.deleted && timeMs(m.create_time) >= scan.start && timeMs(m.create_time) <= scan.end && m.sender?.id !== app.config.lark.appId);
-      if (thread) for (const m of messages) m.thread_id = thread;
-      // Body first, then resources, then checkpoint. A failed page is retried from its old token.
-      const input = { chatId: chat.chatId, spaceId, name: chat.name, messages, owner: c.owner };
-      persistChatMessages(app, input);
-      const resources = dir ? await keepResources(app, spaceId, chat.chatId, messages, dir, false, true) : undefined;
-      if (resources) persistChatMessages(app, { ...input, resources });
-      count += messages.length;
-      if (v.data.has_more && (!v.data.page_token || v.data.page_token === scan.token)) throw new Error("飞书消息分页令牌缺失或重复，未推进游标");
-      if (!thread) {
-        for (const m of messages) {
-          if (m.thread_id && !scan.threads.includes(m.thread_id)) scan.threads.push(m.thread_id);
-          if (m.nested) continue;
-          const time = timeMs(m.create_time);
-          if (time > scan.latest) { scan.latest = time; scan.ids = []; }
-          if (time === scan.latest && !scan.ids.includes(m.message_id)) scan.ids.push(m.message_id);
-        }
-      }
-      const finished = !v.data.has_more || (thread && raw.some(m => timeMs(m.create_time) < scan!.start));
-      if (!finished) scan.token = v.data.page_token;
-      else {
-        scan.token = undefined;
-        pages = 0;
-        if (thread) {
-          // Only completed topic windows advance the topic cursor.
-          saveCursor(app, `thread:${chat.chatId}:${thread}`, chat.name, "thread", [], { key: thread, lastTime: scan.end, lastIds: [] }, { kind: "thread" });
-          scan.index++;
-          topics++;
-        } else {
-          saveCursor(app, chat.chatId, chat.name, chat.mode, scan.ids.map(id => ({ message_id: id, create_time: String(scan!.latest), msg_type: "text", content: "" })), prev, { kind: "group", oldestMs: scan.start });
-          scan.phase = "threads";
-        }
-      }
-      commit();
-    }
-    if (scan.phase === "threads" && scan.index >= scan.threads.length) run(app.db, "delete from kv where key=?", key);
-    return count;
-  } finally {
-    if (dir) rmSync(dir, { recursive: true, force: true });
-  }
-}
-
 async function captureChat(app: App, chat: LarkChat, c: CaptureCtx) {
-  if (c.priority) return capturePriorityChat(app, chat, c);
   const { endMs, touched, owner } = c;
   const cfg = app.config.lark.capture;
   const policy = capturePolicyFor(app, chat);
@@ -452,11 +373,9 @@ async function captureChat(app: App, chat: LarkChat, c: CaptureCtx) {
       topicId: m.thread_id,
       mentions: mentionIds(m),
     }));
-    if (!retentionRule(app, chat.chatId)) {
     await routeWatchedMessages(app, chat.chatId, chat.name, watched);
     // Rules see every captured chat. Judging may ask the model: it does not hold up the capture.
     void import("../rules/engine.ts").then(({ dispatchRuleEvents }) => dispatchRuleEvents(app, ruleEvents(app, chat, messages, owner, !prev))).catch(() => {});
-    }
     return messages.length;
   } finally {
     if (dir) rmSync(dir, { recursive: true, force: true });
@@ -561,46 +480,8 @@ async function pollLarkOnce(app: App) {
   const subs = getSubscriptions(app);
   const exclude = new Set(cfg.exclude);
   const owner = await ownerOpenId();
-  // Discover mentions before any ordinary budget, mute policy or historical work.
-  const mentioned = await captureMentions(app, endMs, touched, owner).catch(e => { console.warn("[omem] 飞书 @我 发现失败：", (e as Error).message); return []; });
-  let priority = retentionChats(app).filter(s => retentionRule(app, s.chatId) && s.lifecycle !== "disbanded")
-    .sort((a, b) => Number(retentionRule(app, b.chatId)?.related) - Number(retentionRule(app, a.chatId)?.related));
-  const priorityBudget = { remaining: 20 };
-  const priorityHandled = new Set<string>();
-  let priorityMessages = 0;
-  let priorityRead = 0;
-  const capturePriority = async (states: typeof priority) => {
-    for (const state of states) {
-      if (!owner || owner !== cfg.mentionRetention.cliOwnerOpenId) {
-        saveRetention(app, { ...retentionState(app, state.chatId)!, captureError: "CLI 身份未核实或与保留规则不符，本轮仅按常规订阅采集" });
-        continue;
-      }
-      priorityHandled.add(state.chatId);
-      if (!priorityBudget.remaining) continue;
-      const invitation = inviteRetentionBot(app, state.chatId, owner);
-      try {
-        priorityMessages += await captureChat(app, { chatId: state.chatId, name: state.chatId, kind: "group", mode: "group", muted: false }, { endMs, touched, owner, priority: true, budget: priorityBudget });
-        priorityRead++;
-        const unfinished = one(app.db, "select 1 from kv where key=?", `lark_priority_scan:${state.chatId}`);
-        saveRetention(app, { ...retentionState(app, state.chatId)!, ...(unfinished ? {} : { captureAt: Date.now() }), captureError: undefined });
-      } catch (e) {
-        saveRetention(app, { ...retentionState(app, state.chatId)!, captureError: (e as Error).message.slice(0, 300) });
-      }
-      // Invitation never gates user-identity capture.
-      await invitation;
-    }
-  };
-  await capturePriority(priority);
-  // Unknown mappings have a separate bounded, durable scan, after already confirmed priorities.
-  try { await discoverRetentionChats(app, mentioned.map(m => m.chat_id!)); }
-  catch (e) { console.warn("[omem] Oncall 关联发现失败：", (e as Error).message); }
-  for (const m of mentioned) if (detectRetention(app, m, owner)) {
-    persistChatMessages(app, { chatId: m.chat_id!, spaceId: chatSpace(app, m.chat_id!), name: m.chat_name ?? m.chat_id!, messages: [m], owner });
-    run(app.db, "delete from kv where key=?", `lark_retention_candidate:${m.message_id}`);
-  }
-  const added = retentionChats(app).filter(s => retentionRule(app, s.chatId) && s.lifecycle !== "disbanded" && !priority.some(p => p.chatId === s.chatId));
-  await capturePriority(added);
-  priority = [...priority, ...added];
+  // Mentions of the owner anywhere first, even in muted chats that are not read automatically.
+  await captureMentions(app, endMs, touched, owner).catch((e) => console.warn("[omem] 飞书 @我 消息读取失败：", (e as Error).message));
 
   let chats: LarkChat[] = [];
   const listed = cfg.mode === "all" ? await listLarkChats(app, Math.max(1, Math.ceil(cfg.maxChats / 100))) : [];
@@ -621,10 +502,9 @@ async function pollLarkOnce(app: App) {
   for (const s of subs) if (!chats.some((c) => c.chatId === s.chatId) && !exclude.has(s.chatId)) chats.push(known(s.chatId, s.name));
 
   let quiet = 0;
-  let read = priorityRead;
-  let messages = priorityMessages;
+  let read = 0;
+  let messages = 0;
   for (const chat of chats) {
-    if (priorityHandled.has(chat.chatId)) continue;
     try {
       const n = await captureChat(app, chat, { endMs, touched, owner });
       read++;
@@ -668,32 +548,17 @@ async function captureMentions(app: App, endMs: number, touched: Map<string, Set
   const since = Number(one<{ value: string }>(app.db, "select value from kv where key = 'lark_mentions_since_ms'")?.value ?? endMs - 24 * 3600_000);
   if (!owner) return []; // identity/auth failure must not advance discovery
   const own = ownBotChat(app);
-  const cfg = app.config.lark.capture.mentionRetention;
-  const found = (await fetchMessages(["+messages-search", "--at-chatter-ids", owner, "--chat-type", "group"], since - 1, endMs, { complete: true, onPage: messages => {
-    if (!cfg.enabled || owner !== cfg.cliOwnerOpenId) return;
-    for (const m of messages) {
-      if (!m.chat_id || m.chat_id === own || !mentionIds(m).includes(owner)) continue;
-      // Persist each delivered page before asking for another: the owner may leave meanwhile.
-      const retained = detectRetention(app, m, owner);
-      if (cfg.oncallCli && !retained) run(app.db, "insert or ignore into kv(key,value) values(?,?)", `lark_retention_candidate:${m.message_id}`, JSON.stringify(m));
-      if (retained || cfg.oncallCli) persistChatMessages(app, { chatId: m.chat_id, spaceId: chatSpace(app, m.chat_id), name: m.chat_name ?? m.chat_id, messages: [m], owner });
-    }
-  } })).filter(m => m.chat_id && m.chat_id !== own && mentionIds(m).includes(owner));
-  const candidates = cfg.enabled && cfg.oncallCli && owner === cfg.cliOwnerOpenId ? all<{ key: string; value: string }>(app.db, "select key,value from kv where key like 'lark_retention_candidate:%'") : [];
-  const mentions = [...new Map([...candidates.map(r => json<LarkMessage>(r.value, {} as LarkMessage)).filter(m => timeMs(m.create_time) >= endMs - 3 * 86400_000), ...found].map(m => [m.message_id, m])).values()];
-  for (const m of found) if (cfg.enabled && cfg.oncallCli && owner === cfg.cliOwnerOpenId) run(app.db, "insert or ignore into kv(key,value) values(?,?)", `lark_retention_candidate:${m.message_id}`, JSON.stringify(m));
-  for (const m of mentions) {
-    const retained = detectRetention(app, m, owner);
-    if (!retained && chatSettings(app, "lark-capture", m.chat_id!).policy === "skip") continue;
-    // Save the trigger independently: inaccessible context or failed invitation cannot lose it.
+  const found = (await fetchMessages(["+messages-search", "--at-chatter-ids", owner, "--chat-type", "group"], since - 1, endMs, { complete: true })).filter(
+    (m) => m.chat_id && m.chat_id !== own && mentionIds(m).includes(owner),
+  );
+  for (const m of found) {
+    if (chatSettings(app, "lark-capture", m.chat_id!).policy === "skip") continue;
     const r = persistChatMessages(app, { chatId: m.chat_id!, spaceId: chatSpace(app, m.chat_id!), name: m.chat_name ?? m.chat_id!, messages: [m], owner });
-    if (retained) run(app.db, "delete from kv where key=?", `lark_retention_candidate:${m.message_id}`);
-    if (r.id && !retained) touched.set(r.spaceId, (touched.get(r.spaceId) ?? new Set()).add(r.id));
+    if (r.id) touched.set(r.spaceId, (touched.get(r.spaceId) ?? new Set()).add(r.id));
   }
-
-  await learnPeople(app, mentions);
+  await learnPeople(app, found);
   run(app.db, "insert into kv(key,value) values('lark_mentions_since_ms', ?) on conflict(key) do update set value = excluded.value", String(endMs));
-  return mentions;
+  return found;
 }
 
 function hourlyDue(app: App, key: string, minutes = 60) {
