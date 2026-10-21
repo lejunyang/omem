@@ -35,6 +35,8 @@ export const roleNames = [
   "summarizer",
   "memory-reviewer",
   "coach",
+  "gatekeeper",
+  "guest",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
 
@@ -259,6 +261,34 @@ export const configSchema = z.object({
           policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },
           backfill: { days: 30, policies: ["ingest"], pagesPerPoll: 6 },
         }),
+      /**
+       * People who are not users @-ing the bot in a group (or writing to it one-to-one when `p2p`),
+       * and other bots @-ing it: the gatekeeper role decides whether to answer, refuse or ignore,
+       * and the guest role answers with read tools only, in the group's space (never a personal
+       * one) and `spaces`. Off: they get nothing, as before.
+       */
+      guests: z
+        .object({
+          enabled: z.boolean().default(false),
+          p2p: z.boolean().default(false),
+          spaces: z.array(z.string()).default([]),
+          perHour: z.number().int().min(1).max(200).default(20),
+        })
+        .default({ enabled: false, p2p: false, spaces: [], perHour: 20 }),
+      /**
+       * Commands the owner types in a one-to-one chat with someone (read with lark-cli once a
+       * minute): `ai` has the assistant handle it and answer there as the owner, signed; `group`
+       * makes a group of the owner, that person and the bot, where the bot carries on.
+       */
+      commands: z
+        .object({
+          enabled: z.boolean().default(false),
+          ai: z.string().min(1).default("/ai"),
+          group: z.string().min(1).default("/ai拉群"),
+          signature: z.string().default("（此消息由 AI 代发）"),
+          context: z.number().int().min(1).max(100).default(30),
+        })
+        .default({ enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 }),
     })
     .default({
       enabled: false,
@@ -284,6 +314,8 @@ export const configSchema = z.object({
         policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },
         backfill: { days: 30, policies: ["ingest"], pagesPerPoll: 6 },
       },
+      guests: { enabled: false, p2p: false, spaces: [], perHour: 20 },
+      commands: { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 },
     }),
   telegram: z
     .object({

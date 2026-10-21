@@ -658,3 +658,7 @@ registerHandler("rule-fire", async (ctx) => {
   const { fireAfterWait } = await import("../rules/engine.ts");
   return fireAfterWait(ctx.app, ruleId, key, event);
 });
+
+registerHandler("guest", async (ctx) => (await import("../channels/lark-guest.ts")).guestRun(ctx));
+
+registerHandler("lark-command", async (ctx) => (await import("../channels/lark-commands.ts")).commandRun(ctx));

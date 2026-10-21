@@ -212,9 +212,17 @@ export function prepareRun(
   if (!app.baseUrl) throw new Error("omem 服务尚未启动，无法为 Agent 提供工具");
   const cwd = input.cwd ?? spec?.cwd ?? space.rootPath ?? spaceDir(app, space.id);
   const tools = new Set(spec ? (spec.tools.length ? spec.tools : DEFAULT_SPEC_TOOLS) : role!.tools);
+  /**
+   * Answering someone who is not a user (guest role): only the role's own tools and the spaces it
+   * was given — no skills (they may describe internal systems), no related spaces, none of the
+   * owner's preferences or experience.
+   */
+  const guest = !spec && roleName === "guest";
   // Skills are offered to everyone who can read them.
-  tools.add("list_skills");
-  tools.add("read_skill");
+  if (!guest) {
+    tools.add("list_skills");
+    tools.add("read_skill");
+  }
   // Agents (and the main assistant) can ask one another a question; background roles cannot.
   if (spec || roleName === "assistant") tools.add("ask_agent");
   for (const t of input.denyTools ?? []) tools.delete(t);
@@ -227,15 +235,15 @@ export function prepareRun(
   // Related spaces: a run limited to its space also reads them (never writes), so work in one
   // repo or project sees what the others it depends on already say.
   const allowed = scopeFor(app, userId, null);
-  const related = relatedSpaces(app, space.id).filter((r) => !allowed || allowed.includes(r.space));
+  const related = guest ? [] : relatedSpaces(app, space.id).filter((r) => !allowed || allowed.includes(r.space));
   const readable = scoped ? [...new Set([...scoped, ...related.map((r) => r.space), ...(input.alsoRead ?? []).filter((id) => !allowed || allowed.includes(id))])] : null;
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
   const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, shadow: input.shadow });
   const guide = spaceGuide(app, space.id).trim();
   // A built-in role learns like a spec: its own experience and preferences, its regular skills first.
-  const lessons = learnedContext(app, space.id, userId, spec?.name ?? (roleName === "assistant" ? null : roleName));
-  const skills = spec ? skillIndex(app, spec.skills) : skillIndex(app, undefined, role!.skills);
+  const lessons = guest ? "" : learnedContext(app, space.id, userId, spec?.name ?? (roleName === "assistant" ? null : roleName));
+  const skills = guest ? "" : spec ? skillIndex(app, spec.skills) : skillIndex(app, undefined, role!.skills);
   const agents = roleName === "assistant" && !spec ? agentIndex(app) : "";
   const body = spec
     ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`

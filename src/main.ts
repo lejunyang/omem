@@ -57,6 +57,11 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   startWorker(app);
   if (opts.background !== false) {
     restartScheduler(app);
+    // The owner's commands in one-to-one chats (lark.commands; nothing happens while it is off).
+    setInterval(() => {
+      if (app.config.lark.commands.enabled)
+        import("./channels/lark-commands.ts").then((m) => m.pollOwnerCommands(app)).catch((e) => console.warn("[omem] 读取私聊指令失败：", e.message));
+    }, 60_000).unref();
     import("./channels/lark-messages.ts")
       .then((m) => m.cleanUpLarkIds(app))
       .catch((e) => console.warn("[omem] 整理飞书聊天里的 id 失败：", e.message));

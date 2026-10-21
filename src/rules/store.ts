@@ -92,6 +92,21 @@ export function deleteRule(app: App, id: string) {
 export function claimEvent(app: App, ruleId: string, key: string) {
   return run(app.db, "insert or ignore into rule_handled(rule_id, key, at) values(?,?,?)", ruleId, key, now()).changes === 1;
 }
+/**
+ * A message someone sent to the bot itself (@-mentioned it): the bot answers it directly, so
+ * rules step aside — whichever path (bot or capture) brings the message to them later.
+ */
+const ADDRESSED = "@bot";
+export function markAddressed(app: App, key: string) {
+  claimEvent(app, ADDRESSED, key);
+}
+export function addressed(app: App, key: string) {
+  return !!one(app.db, "select 1 from rule_handled where rule_id = ? and key = ?", ADDRESSED, key);
+}
+/** Whether any rule took this event (claimed it, to act now or after a wait). */
+export function claimedByRule(app: App, key: string) {
+  return !!one(app.db, "select 1 from rule_handled where key = ? and rule_id != ?", key, ADDRESSED);
+}
 export function releaseEvent(app: App, ruleId: string, key: string) {
   run(app.db, "delete from rule_handled where rule_id = ? and key = ?", ruleId, key);
 }

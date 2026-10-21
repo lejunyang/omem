@@ -61,7 +61,7 @@ async function rawChats(pages: number, excludeMuted: boolean) {
 }
 
 /** omem's own bot chat with the owner: its messages are conversations with omem, never material. */
-function ownBotChat(app: App) {
+export function ownBotChat(app: App) {
   return one<{ value: string }>(app.db, "select value from kv where key = 'lark_owner_chat'")?.value ?? null;
 }
 
@@ -144,7 +144,7 @@ const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "+00
  * replies under their host (`thread_replies`); they are flattened into messages of their own.
  * With `download`, resources are saved under `cwd` and listed on each message.
  */
-async function fetchMessages(args: string[], startMs: number, endMs: number, opts: { pages?: number; timed?: boolean; cwd?: string; download?: boolean; complete?: boolean; onPage?: (messages: LarkMessage[]) => void } = {}) {
+export async function fetchMessages(args: string[], startMs: number, endMs: number, opts: { pages?: number; timed?: boolean; cwd?: string; download?: boolean; complete?: boolean; onPage?: (messages: LarkMessage[]) => void } = {}) {
   const { pages = 20, timed = true } = opts;
   const out: LarkMessage[] = [];
   let token: string | undefined;

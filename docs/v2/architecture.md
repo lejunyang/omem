@@ -38,7 +38,7 @@ Conversation（会话）   网页对话、私聊、群、话题；绑定一个 A
 Run（运行）            一次 Agent 执行：问答、整理、交办编码、评审、做梦
 Agent 档案 / 技能       library/_agents、library/_skills：可复用的专门 Agent 和做法
 User（用户）           默认只有主人；登记的同事有自己的个人空间和可访问空间
-Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消息（只读）、Telegram、OneBot（QQ/微信）
+Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消息（只读；本人亲手发的私聊指令例外）、Telegram、OneBot（QQ/微信）
 ```
 
 - **空间**隔离不同领域，检索默认在当前空间和它的相关空间，其他空间要显式指定。“个人”是默认空间；一个代码仓库、一个项目、“英语学习”各自一个空间。类型（个人 / 项目 / 代码仓库 / 学习 / 通用）只影响默认行为（代码仓库默认不自动整理）和给 Agent 的说明。
@@ -225,6 +225,8 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 学习卡片（FSRS）、学习目标与主动提醒、聊天里复习 | 已实现，测试覆盖 | `src/learn` |
 | 相关空间：`space_relations` 表（本人或 Agent 添加、本人移除后不再自动加回）；限定在一个空间的运行对相关空间只读（令牌分 `spaces` 与 `writable`）；运行环境列出相关空间与关系说明；`search`/`scan`/`find_symbol` 默认带上相关空间并标出命中所在空间；`remember` 返回相关空间里的相近记忆，记忆复核任务列出它们；定期整理从互相引用原件、页面互链、依赖清单（package.json、go.mod、pyproject、Cargo、pom）和共用标签找候选，交给 dreamer 用 `relate_spaces` 判断；`omem mcp` 按工作目录选默认空间；设置页和 `omem space relate` 管理 | 已实现，测试覆盖；真实 Agent 下的效果见验收 R1–R5 | `src/core/spaces.ts`、`src/core/space-candidates.ts`、`src/agents/runner.ts`、`tools.ts` 的 `relate_spaces`、`roles/dreamer.md` |
 | 多用户口子：用户、渠道身份、空间成员、API 令牌；工具与接口按用户限定空间 | 已实现，测试覆盖；不做多租户隔离 | `src/core/users.ts`、`omem user` |
+| 飞书访客：未登记的人 @ 机器人（或私聊它，可选）、别的机器人 @ 它（规则没接手时）→ `guest` 运行：`gatekeeper` 角色判断回答 / 拒绝 / 不理，`guest` 角色只读群所在空间（个人空间不开放）与 `lark.guests.spaces`，不给技能、相关空间、本人偏好和发消息工具；每人每小时上限；有人 @ 机器人时规则让开（`rule_handled` 里记 `@bot`） | 已实现，假 ACP Agent 测试覆盖；真实飞书待验 | `src/channels/lark-guest.ts`、`lark-bot.ts`、`roles/gatekeeper.md`、`roles/guest.md`、`rules/store.ts` 的 `markAddressed` |
+| 私聊指令：每分钟用 lark-cli 搜本人在单聊里发的消息，`/ai` → `lark-command` 运行：主助手读最近的私聊处理，以本人身份 `+messages-send --as user` 回在原私聊（署名，Markdown；本人身份发不了气泡和卡片），按私聊续 Agent 会话；`/ai拉群` → 以本人身份 `+chat-create`（对方 + omem 机器人），机器人在新群里用之前的私聊作上下文回答 | 已实现，模拟 lark-cli 测试覆盖；真实账号待验（建群需要 lark-cli 有建群权限） | `src/channels/lark-commands.ts`、`main.ts` |
 | 向量规模：按空间 int8 矩阵 | 已实现；17 万片段 nDCG 86.76 → 86.62，常驻 1.5GB → 0.42GB | `src/search/vectors.ts`、`scripts/bench-scale.ts` |
 | 渠道：网页、CLI、MCP、飞书机器人、飞书个人消息（只读）、Telegram、OneBot（QQ/微信桥） | 已实现；OneBot 有模拟服务端测试；飞书与 Telegram 需真实账号验收 | `src/channels` |
 | v1 导入 | 已实现，合成库测试 | `src/migrate-v1.ts` |

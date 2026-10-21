@@ -104,7 +104,19 @@ const roles = [
   ["curator", "筛选飞书群"],
   ["summarizer", "会话摘要"],
   ["memory-reviewer", "复核记忆"],
+  ["gatekeeper", "访客提问把关（选快的小模型）"],
+  ["guest", "回答访客（受限）"],
 ];
+
+const guestSpacesText = computed(() => (config.value?.lark.guests?.spaces ?? []).join(", "));
+function saveGuests(patch: Record<string, unknown>, note = "已保存访客设置") {
+  const cur = config.value.lark.guests ?? { enabled: false, p2p: false, spaces: [], perHour: 20 };
+  void saveConfig({ lark: { ...config.value.lark, guests: { ...cur, ...patch } } }, note);
+}
+function saveCommands(patch: Record<string, unknown>, note = "已保存私聊指令") {
+  const cur = config.value.lark.commands ?? { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 };
+  void saveConfig({ lark: { ...config.value.lark, commands: { ...cur, ...patch } } }, note);
+}
 
 async function load() {
   const s = await get<{ config: any; agents: Profile[]; home: string }>("/api/settings");
@@ -594,8 +606,39 @@ async function saveEdit() {
       <div class="field"><span>默认空间</span><UiSelect :model-value="config.lark.defaultSpace" width="240px" aria-label="默认空间" :options="state.spaces.map((s) => ({ value: s.id, label: s.name }))" @change="(v) => saveConfig({ lark: { ...config.lark, defaultSpace: v } })" /></div>
 
       <div class="card pad stack">
+        <strong>访客提问</strong>
+        <p class="muted small">没有登记为 omem 用户的同事在群里 @ 机器人，或别的机器人 @ 它时：先由“访客提问把关”角色判断该回答、拒绝还是不理（要它执行命令、查私人信息、问无关或敏感的事一律拒绝），再由“回答访客”角色只读这个群的空间（不读任何个人空间）和下面列出的空间作答。两个角色的后端和模型在“Agent”页设置；把关建议用快的小模型，回答访客建议用不带本机命令行的后端。</p>
+        <UiCheckbox :model-value="!!config.lark.guests?.enabled" switch @change="(v) => saveGuests({ enabled: v }, v ? '已开启访客提问' : '已关闭访客提问')">回答未登记的人和别的机器人</UiCheckbox>
+        <UiCheckbox :model-value="!!config.lark.guests?.p2p" :disabled="!config.lark.guests?.enabled" @change="(v) => saveGuests({ p2p: v })">也回答他们和机器人的私聊（只读下面列出的空间）</UiCheckbox>
+        <label class="field"><span>另外开放给访客的空间 id（逗号分隔，可留空）</span>
+          <input class="input mono" :value="guestSpacesText" placeholder="例如 project-a, handbook" @change="saveGuests({ spaces: ($event.target as HTMLInputElement).value.split(/[,，\s]+/).filter(Boolean) })" />
+        </label>
+        <label class="field"><span>每人每小时最多提问（1–200）</span>
+          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="200" :value="config.lark.guests?.perHour ?? 20" @change="saveGuests({ perHour: Math.max(1, Math.min(200, Math.round(Number(($event.target as HTMLInputElement).value) || 20))) })" />
+        </label>
+      </div>
+
+      <div class="card pad stack">
+        <strong>私聊指令</strong>
+        <p class="muted small">在你和别人的私聊里输入指令（每分钟用 lark-cli 读一次你发的私聊消息）。只有你亲手发出指令时，omem 才会以你的身份在那个私聊里发一条消息，结尾带上署名。</p>
+        <UiCheckbox :model-value="!!config.lark.commands?.enabled" switch @change="(v) => saveCommands({ enabled: v }, v ? '已开启私聊指令' : '已关闭私聊指令')">开启私聊指令</UiCheckbox>
+        <label class="field"><span>代回：读最近的私聊（和指令后面的说明）处理，并以你的身份回复对方</span>
+          <input class="input mono" style="width: 200px" :value="config.lark.commands?.ai ?? '/ai'" @change="saveCommands({ ai: ($event.target as HTMLInputElement).value.trim() || '/ai' })" />
+        </label>
+        <label class="field"><span>拉群：建一个你、对方和机器人的群，机器人在群里接着处理</span>
+          <input class="input mono" style="width: 200px" :value="config.lark.commands?.group ?? '/ai拉群'" @change="saveCommands({ group: ($event.target as HTMLInputElement).value.trim() || '/ai拉群' })" />
+        </label>
+        <label class="field"><span>代回消息结尾的署名</span>
+          <input class="input" :value="config.lark.commands?.signature ?? '（此消息由 AI 代发）'" @change="saveCommands({ signature: ($event.target as HTMLInputElement).value.trim() || '（此消息由 AI 代发）' })" />
+        </label>
+        <label class="field"><span>读最近多少条私聊（1–100）</span>
+          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="100" :value="config.lark.commands?.context ?? 30" @change="saveCommands({ context: Math.max(1, Math.min(100, Math.round(Number(($event.target as HTMLInputElement).value) || 30))) })" />
+        </label>
+      </div>
+
+      <div class="card pad stack">
         <div class="row wrap"><strong>个人消息采集（只读）</strong><span class="spacer" /><button class="btn sm" @click="loadLarkChats">读取最近会话</button><button class="btn sm" @click="pollNow">立即采集</button></div>
-        <p class="muted small">使用本机 lark-cli 的个人登录读取会话，从不以你的身份发消息；定时采集在“定时任务”中开启。omem 机器人自己的私聊和它在群里发的消息不会被采集。</p>
+        <p class="muted small">使用本机 lark-cli 的个人登录读取会话；除了你亲手发出的私聊指令（见下）和规则里的“拉机器人进群”，从不以你的身份发消息或操作；定时采集在“定时任务”中开启。omem 机器人自己的私聊和它在群里发的消息不会被采集。</p>
         <div class="field">
           <span>采集范围</span>
           <UiSegmented

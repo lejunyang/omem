@@ -25,6 +25,8 @@ const queueMs = Number(process.env.FAKE_QUEUE ?? 0);
 // FAKE_TRAE=1: traex-style queue status (session_info_update._meta.trae.queueStatus) and a
 // reasoning_effort option that only exists while a model that has it is selected.
 const trae = process.env.FAKE_TRAE === "1";
+/** A fixed answer for every prompt (a judge that always says the same thing). */
+const fixed = process.env.FAKE_SAY;
 const TRAE_EFFORTS: Record<string, string[]> = { m1: [], m2: ["low", "medium", "high"], m3: ["low", "xhigh"] };
 const traeOptions = (model: string) => [
   { id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: Object.keys(TRAE_EFFORTS).map((v) => ({ value: v, name: v })) },
@@ -76,6 +78,10 @@ new AgentSideConnection(
     async prompt(p) {
       const prompt = p.prompt.map((b) => (b.type === "text" ? b.text : "")).join("");
       const say = (text: string) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
+      if (fixed !== undefined) {
+        await say(fixed);
+        return { stopReason: "end_turn" };
+      }
       if (stall === "before") {
         await say("Skill descriptions were shortened to fit the 2% skills context budget. TRAE can still see every skill.");
         await new Promise(() => {});

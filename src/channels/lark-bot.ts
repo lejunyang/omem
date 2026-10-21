@@ -24,6 +24,8 @@ import { handleCardAction } from "./lark-actions.ts";
 import { reactLark, sendLark, setLarkClient, unreactLark } from "./lark-send.ts";
 import { larkAppSecret } from "./lark-setup.ts";
 import { routeWatchedMessages } from "./lark-watch.ts";
+import { askAsGuest, guestsAllowed, waitGuest } from "./lark-guest.ts";
+import { claimedByRule, markAddressed } from "../rules/store.ts";
 
 /**
  * Feishu/Lark bot channel.
@@ -361,10 +363,10 @@ export async function startLarkBot(app: App) {
   };
 
   /** Rules see the groups the bot is in as messages arrive (the capture sees them later, deduplicated). */
-  const dispatchToRules = (m: Inbound) => {
+  const dispatchToRules = async (m: Inbound) => {
     if (m.senderId === botOpenId) return;
     const email = one<{ email: string | null }>(app.db, "select email from lark_people where bot_open_id = ?", m.senderId)?.email ?? null;
-    void import("../rules/engine.ts")
+    await import("../rules/engine.ts")
       .then(({ dispatchRuleEvent }) =>
         dispatchRuleEvent(app, {
           key: `lark:${m.messageId}`,
@@ -379,10 +381,47 @@ export async function startLarkBot(app: App) {
       .catch(() => {});
   };
 
+  /** The bot's own @ goes away; other people keep their name (「结合 @小李 在文档里…」 means something). */
+  const spoken = (m: Inbound) =>
+    m.text.replace(/@_user_\d+/g, (key) => {
+      const who = m.mentionNames?.[key];
+      return who && !who.isBot ? `@${who.name}` : "";
+    }).replace(/[ \t]{2,}/g, " ").trim();
+
+  /**
+   * Someone who is not a user (or another bot) asked the bot: the gatekeeper decides, the guest
+   * role answers in restricted mode (lark-guest.ts). Another bot's message goes to the rules
+   * first; only when no rule took it does the gatekeeper look at it.
+   */
+  const answerGuest = async (m: Inbound, ruled: Promise<void> | null) => {
+    if (m.fromApp) {
+      if (m.chatType !== "group" || !app.config.lark.guests.enabled) return;
+      await ruled;
+      if (claimedByRule(app, `lark:${m.messageId}`)) return;
+    } else if (!guestsAllowed(app, m.chatType)) return;
+    const text = spoken(m);
+    if (!text) return;
+    const r = askAsGuest(app, {
+      chatId: m.chatId, chatType: m.chatType, chatName: m.chatType === "group" ? groupName(m.chatId) : undefined, messageId: m.messageId,
+      senderId: m.senderId, senderName: m.senderName, fromApp: !!m.fromApp, text,
+      context: m.chatType === "group" ? groupContext(m) : "", groupSpace: m.chatType === "group" ? groupSpace(m.chatId) : undefined,
+    });
+    if (!r) return; // over the hourly limit: quietly
+    const working = await reactLark(m.messageId, "OnIt").catch(() => undefined);
+    const v = await waitGuest(app, r.id).catch(() => null);
+    if (working) await unreactLark(m.messageId, working);
+    const say = v?.verdict === "refuse" ? v.reply : v?.verdict === "answer" ? v.answer : "";
+    if (say) await reply(m.chatId, resolveCitations(app, say), m.messageId, !!m.topicId).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
+  };
+
   const handle = async (m: Inbound) => {
+    let ruled: Promise<void> | null = null;
     if (m.chatType === "group") {
       captureGroup(m);
-      dispatchToRules(m);
+      // A person @-ing the bot asks it directly, and it answers (a user, or a guest when allowed):
+      // the rules (waits, silent checks) are for what nobody asked and step aside.
+      if (m.mentionsBot && !m.fromApp && (resolveIdentity(app, "lark", m.senderId) || guestsAllowed(app, "group"))) markAddressed(app, `lark:${m.messageId}`);
+      else ruled = dispatchToRules(m).catch(() => {});
       await routeWatchedMessages(app, m.chatId, groupName(m.chatId), [{ id: m.messageId, time: m.createTime, sender: m.senderName, senderId: m.senderId, text: m.text, topicId: m.topicId, mentions: m.mentions }], { botOpenId });
       if (!m.mentionsBot) return;
     }
@@ -390,14 +429,11 @@ export async function startLarkBot(app: App) {
       await reply(m.chatId, `还没有绑定本人。请在 omem 配置中设置 \`lark.ownerOpenId\` 为：\`${m.senderId}\`，然后重启服务。`, m.messageId);
       return;
     }
-    const userId = resolveIdentity(app, "lark", m.senderId);
-    if (!userId) return; // not the owner and not a registered user (omem user add … --lark <open_id>)
+    const userId = m.fromApp ? null : resolveIdentity(app, "lark", m.senderId);
+    // Not the owner and not a registered user (omem user add … --lark <open_id>): guest mode, when on.
+    if (!userId) return answerGuest(m, ruled);
     if (m.chatType === "p2p" && userId === OWNER) kv(app, "lark_owner_chat", m.chatId);
-    // The bot's own @ goes away; other people keep their name (「结合 @小李 在文档里…」 means something).
-    const text = m.text.replace(/@_user_\d+/g, (key) => {
-      const who = m.mentionNames?.[key];
-      return who && !who.isBot ? `@${who.name}` : "";
-    }).replace(/[ \t]{2,}/g, " ").trim();
+    const text = spoken(m);
     const context = m.chatType === "group" ? groupContext(m) : "";
     if (!text) return;
     let progress: Awaited<ReturnType<typeof startProgress>> | null = null;
