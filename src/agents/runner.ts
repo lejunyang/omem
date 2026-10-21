@@ -177,6 +177,8 @@ export type PreparedRun = {
   allowWrites: boolean;
   modes: string[];
   label: string;
+  /** What passive recall may draw on: readable spaces (null = all) and whose own memories count. */
+  recall: { spaces: string[] | null; agent: string | null; userId: string } | null;
 };
 
 /**
@@ -263,6 +265,8 @@ export function prepareRun(
     allowWrites: spec ? spec.writes : role!.writes,
     modes: spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
     label: spec ? spec.name : roleName,
+    // Guests never see the owner's memories unasked.
+    recall: guest ? null : { spaces: readable, agent: spec?.name ?? (roleName === "assistant" ? null : roleName), userId },
   };
 }
 

@@ -138,8 +138,19 @@ export const configSchema = z.object({
        * recorded, not applied, and graded by the same checks and reviewer for comparison.
        */
       compare: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })).default([]),
+      /**
+       * Passive recall: memories whose cosine to the owner's new chat message reaches the
+       * threshold are added to that turn (needs embeddings). Calibrated in docs/v2/evaluation.md.
+       */
+      passive: z
+        .object({
+          enabled: z.boolean().default(true),
+          threshold: z.number().min(0).max(1).default(0.6),
+          limit: z.number().int().min(1).max(20).default(5),
+        })
+        .default({ enabled: true, threshold: 0.6, limit: 5 }),
     })
-    .default({ maxChars: 400, longChars: 180, duplicateThreshold: 0.72, review: { enabled: true, batch: 30 }, compare: [] }),
+    .default({ maxChars: 400, longChars: 180, duplicateThreshold: 0.72, review: { enabled: true, batch: 30 }, compare: [], passive: { enabled: true, threshold: 0.6, limit: 5 } }),
   embeddings: z
     .object({
       provider: z.enum(["none", "local", "openai"]).default("none"),

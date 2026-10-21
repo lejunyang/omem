@@ -331,6 +331,10 @@ function saveReview(patch: Record<string, unknown>) {
   const memory = config.value.memory;
   void saveConfig({ memory: { ...memory, review: { ...memory.review, ...patch } } }, "已保存记忆复核设置");
 }
+function savePassive(patch: Record<string, unknown>) {
+  const memory = config.value.memory;
+  void saveConfig({ memory: { ...memory, passive: { ...memory.passive, ...patch } } }, "已保存相关记忆设置");
+}
 const compareDraft = ref({ profile: "", model: "", effort: "" });
 function addCompare() {
   if (!compareDraft.value.profile) return;
@@ -589,6 +593,14 @@ async function saveEdit() {
       </div>
       <label class="field"><span>模型</span><input class="input mono" :value="config.embeddings.model" @change="saveConfig({ embeddings: { ...config.embeddings, model: ($event.target as HTMLInputElement).value } })" /><span class="hint">本地默认 Xenova/bge-small-zh-v1.5（首次使用会下载约 100MB，也可以填本地目录）。</span></label>
       <label v-if="config.embeddings.provider === 'openai'" class="field"><span>接口地址</span><input class="input mono" :value="config.embeddings.url ?? ''" placeholder="https://api.openai.com/v1" @change="saveConfig({ embeddings: { ...config.embeddings, url: ($event.target as HTMLInputElement).value } })" /></label>
+      <div v-if="config.memory?.passive" class="card pad stack">
+        <div class="section-title">对话前带上相关记忆</div>
+        <p class="muted small">你发消息时，先按这条消息找相似的记忆（事实、约定、人物、决定），相似度过了门槛的最多 {{ config.memory.passive.limit }} 条附在消息后面，助理不用先想起来去查。没过门槛就什么都不加。需要开启向量检索。门槛越高带得越少、越准：0.6 时，有相关记忆的问题约八成能带上，带上的约 96% 相关；无关的问题约一成会带上一两条（bge-small-zh，见 docs/v2/evaluation.md）。</p>
+        <UiCheckbox :model-value="config.memory.passive.enabled" switch @change="(v) => savePassive({ enabled: v })">开启</UiCheckbox>
+        <label class="field"><span>相似度门槛（0.4–0.9）</span>
+          <input class="input" style="width: 120px" type="number" inputmode="decimal" min="0.4" max="0.9" step="0.025" :value="config.memory.passive.threshold" @change="savePassive({ threshold: Math.max(0.4, Math.min(0.9, Number(($event.target as HTMLInputElement).value) || 0.6)) })" />
+        </label>
+      </div>
     </section>
 
     <section v-else-if="tab === 'lark' && config" class="stack">

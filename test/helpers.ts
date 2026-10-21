@@ -12,3 +12,20 @@ export function testApp() {
   app.config.notify.firstNudgeDelayMinutes = 0;
   return app;
 }
+
+/** Character-count vectors for setEmbedderForTests: texts sharing many characters are close. */
+export function fakeEmbedder(id = "test:chars") {
+  return {
+    id,
+    async embed(texts: string[]) {
+      return texts.map((t) => {
+        const v = new Float32Array(256);
+        for (const ch of t) v[ch.codePointAt(0)! % 256] += 1;
+        let n = 0;
+        for (const x of v) n += x * x;
+        n = Math.sqrt(n) || 1;
+        return v.map((x) => x / n);
+      });
+    },
+  };
+}

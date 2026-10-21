@@ -652,12 +652,13 @@ export async function setupInteractive(app: App) {
   }
   if (JSON.stringify(config.embeddings) !== before && config.embeddings.provider !== "none") {
     if (await confirm({ message: "现在为已有材料生成向量？（否则服务会在后台慢慢补）", default: true })) {
-      const { embedPending } = await import("./search/embeddings.ts");
+      const { embedPending, embedPendingMemories } = await import("./search/embeddings.ts");
       let n = 0;
       for (let k = await embedPending(app, 64); k; k = await embedPending(app, 64)) {
         n += k;
         process.stderr.write(`\r已生成 ${n} 个片段的向量…`);
       }
+      while (await embedPendingMemories(app, 64)) {}
       out("");
     }
   }

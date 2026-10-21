@@ -944,7 +944,7 @@ program
       return;
     }
     if (component === "embeddings") {
-      const { embedPending } = await import("./search/embeddings.ts");
+      const { embedPending, embedPendingMemories } = await import("./search/embeddings.ts");
       const named = setup.EMBEDDINGS.find((e) => e.id === (o.model ?? "bge-small-zh"));
       let model = o.model ?? named!.repo;
       if (named) model = o.osdk !== false && setup.osdkAvailable() ? setup.osdkEmbedding(named) : named.repo;
@@ -954,6 +954,7 @@ program
         n += k;
         process.stderr.write(`\r已生成 ${n} 个片段的向量…`);
       }
+      while (await embedPendingMemories(app, 64)) {}
       saveConfig(app.config, app.home);
       console.log(`\n向量检索已开启（${model}）。之后新增的材料由服务在后台补齐向量。`);
       return;

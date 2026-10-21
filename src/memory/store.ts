@@ -209,7 +209,7 @@ export function updateMemoryText(app: App, id: string, patch: { content?: string
   const m = getMemory(app, id);
   run(
     app.db,
-    "update memories set content=?, subject=?, kind=?, tags=?, updated_at=?, created_by='user', reviewed_at=?, review_verdict='keep', reviewed_by='user' where id=?",
+    "update memories set content=?, subject=?, kind=?, tags=?, updated_at=?, created_by='user', reviewed_at=?, review_verdict='keep', reviewed_by='user', embedding=null where id=?",
     patch.content ?? m.content,
     patch.subject ?? m.subject,
     patch.kind ?? m.kind,

@@ -91,6 +91,7 @@ export async function embedPending(app: App, batch = 32): Promise<number> {
   const current = one<{ value: string }>(app.db, "select value from kv where key = 'embedding_model'")?.value;
   if (current !== e.id) {
     run(app.db, "update chunks set embedding = null");
+    run(app.db, "update memories set embedding = null");
     run(app.db, "insert into kv(key,value) values('embedding_model', ?) on conflict(key) do update set value = excluded.value", e.id);
     vectorIndex().clear();
   }
@@ -108,6 +109,28 @@ export async function embedPending(app: App, batch = 32): Promise<number> {
   rows.forEach((r, i) => upd.run(new Uint8Array(vecs[i].buffer, vecs[i].byteOffset, vecs[i].byteLength), r.id));
   vectorIndex().add(app, rows.map((r, i) => ({ id: r.id, spaceId: r.space_id, vec: vecs[i] })));
   return rows.length;
+}
+
+/** Embed active memories that have no vector yet (passive recall). Run after embedPending, which resets them on a model change. */
+export async function embedPendingMemories(app: App, batch = 32): Promise<number> {
+  const e = await getEmbedder(app);
+  if (!e) return 0;
+  if (one<{ value: string }>(app.db, "select value from kv where key = 'embedding_model'")?.value !== e.id) return 0;
+  const rows = all<{ id: string; subject: string; content: string }>(app.db, "select id, subject, content from memories where status = 'active' and embedding is null limit ?", batch);
+  if (!rows.length) return 0;
+  const vecs = await e.embed(rows.map((r) => (r.subject ? `${r.subject}：${r.content}` : r.content).slice(0, 2000)), "passage");
+  const upd = app.db.prepare("update memories set embedding = ? where id = ?");
+  rows.forEach((r, i) => upd.run(new Uint8Array(vecs[i].buffer, vecs[i].byteOffset, vecs[i].byteLength), r.id));
+  return rows.length;
+}
+
+/** One query vector, or null when vectors are off or the model is unavailable. */
+export async function embedQuery(app: App, text: string): Promise<Float32Array | null> {
+  if (app.config.embeddings.provider === "none") return null;
+  const e = await getEmbedder(app);
+  if (!e) return null;
+  const [q] = await e.embed([text.slice(0, 2000)], "query");
+  return q;
 }
 
 export async function vectorSearch(app: App, query: string, spaces: string[] | undefined, limit: number) {

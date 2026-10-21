@@ -7,10 +7,13 @@ import { getRun, waitForRun } from "../src/agents/runs.ts";
 import { releaseAll, releaseThreadSession } from "../src/agents/sessions.ts";
 import { saveAgentSpec, saveSkill, skillIndex } from "../src/agents/specs.ts";
 import { getThread, threadMessages, updateThread } from "../src/agents/threads.ts";
-import { run } from "../src/core/db.ts";
+import { one, run } from "../src/core/db.ts";
+import { remember } from "../src/memory/store.ts";
+import { embedPending, embedPendingMemories, setEmbedderForTests } from "../src/search/embeddings.ts";
 import { boot } from "../src/main.ts";
+import { fakeEmbedder } from "./helpers.ts";
 
-type Echo = { session: string; turn: number; resumed: boolean; cold: boolean; msgs: string[]; role: string; summary: string | null; context: boolean };
+type Echo = { session: string; turn: number; resumed: boolean; cold: boolean; msgs: string[]; role: string; summary: string | null; context: boolean; memories: string[] };
 
 describe("threads: continuity, merging, lanes, commands", async () => {
   const home = mkdtempSync(join(tmpdir(), "omem-threads-"));
@@ -99,6 +102,25 @@ describe("threads: continuity, merging, lanes, commands", async () => {
     expect(later.thread.parentId).toBe(t4.thread.id);
     expect(getThread(app, t4.thread.id).status).toBe("archived");
     await answer(later.runId);
+  }, 60000);
+
+  it("puts memories close to the owner's new message in front of the agent, once per session", async () => {
+    app.config.embeddings.provider = "local";
+    setEmbedderForTests(fakeEmbedder());
+    app.config.memory.passive.threshold = 0.5;
+    try {
+      const m = remember(app, { spaceId: "personal", kind: "fact", content: "项目 A 每周二下午发布，发布前要先跑回归测试。" });
+      await embedPending(app);
+      while (await embedPendingMemories(app)) {}
+      const first = await answer((await receive(app, { channel: "lark", chatId: "oc_mem", text: "项目 A 周二发布前要做什么？" })).runId);
+      expect(first.memories).toEqual([m.id]);
+      // Already in this agent session: not repeated; unrelated messages get nothing.
+      expect((await answer((await receive(app, { channel: "lark", chatId: "oc_mem", text: "项目 A 周二发布前还要做什么？" })).runId)).memories).toEqual([]);
+      expect((await answer((await receive(app, { channel: "lark", chatId: "oc_mem2", text: "今天天气怎么样" })).runId)).memories).toEqual([]);
+      expect(one<{ n: number }>(app.db, "select count(*) n from memory_recalls where via = 'passive' and memory_id = ?", m.id)?.n).toBe(1);
+    } finally {
+      app.config.embeddings.provider = "none";
+    }
   }, 60000);
 
   it("handles commands without a model", async () => {

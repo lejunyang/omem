@@ -191,6 +191,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 内置角色作为档案：Agent 页可见、可自定义（复制到 `library/_roles/`，记下基于的源码），源码更新后提示，可恢复源码版本或三方合并（`git merge-file`，冲突交给模型 `role-merge` 运行）；`omem roles`；内置角色也有专属记忆和挂载技能（`remember/save_skill(agent="reviewer")`），运行时注入；档案名不能与内置角色重名 | 已实现，测试覆盖；2026-10-21 | `src/agents/builtin-roles.ts`、`profile-jobs.ts`、`web/src/views/Agents.vue` |
 | 档案进化：每晚 `profile-review` 挑最近有纠正或失败的档案/角色交给 coach 复盘（运行产出 + 之后本人在同一会话说的话），经验直接记成专属记忆，提示词/技能/设置的改动存为 `profile_proposals` 等本人采纳；档案页显示使用情况、待采纳建议（提示词给出差异）、历史，可立即复盘 | 已实现，测试覆盖；真实模型复盘待验 | `roles/coach.md`、`src/agents/proposals.ts`、`profiles.ts`、`components/ProfileLearning.vue` |
 | 记忆召回与命中统计（recall 落账，回答/写入引用计为命中），网页“记忆 → 召回”治理 | 已实现；2026-10-20 | `src/memory/recall-stats.ts`、`web/src/views/Memory.vue` |
+| 对话前带上相关记忆：本人新消息与记忆向量余弦过门槛（默认 0.6，最多 5 条）的事实、约定、人物、决定附在这一轮后面，同一 Agent 会话不重复；偏好与经验仍走每次运行的固定提示；访客不带；召回统计按 `via=passive` 单列 | 已实现；2026-10-22，门槛在 T2 正反例上校准，codex 真实抽查 | `src/memory/passive.ts`、`sessions.ts` 的 `passiveForTurn`、`scripts/eval-recall-gate.ts` |
 | 新材料整理（记忆/事项/页面/通知） | 已实现；事项发现与写权限分离，只读跨空间进展经提案复核 | `roles/ingest.md` |
 | 事项来源与历史关联维护 | 来源 merge / replace / remove、事件通知快照、整张卡片 URL 去重、受限维护审计与原卡片刷新；来源区与网页“相关依据”显示原件标题和所引行的摘要（`refExcerpt`），不再是“原文1/原文2”；假客户端回归覆盖 | `src/items/`、`docs/v2/item-maintenance.md` |
 | 记忆质量：写入检查（免责式、超长、转述原件、事件复述、助理汇报、运行流水、无来源、重复）退回并说明原因；每小时盲评复核（保留/改写/撤回，可用不同模型）；对比运行（其他模型的写入只记录）；按模型统计；记忆标签与档案专属记忆 | 已实现，测试覆盖；规则用一批真实运行产生的 Agent 记忆校准过；复核与对比运行待真实模型验收 | `src/memory/quality.ts`、`roles/memory-reviewer.md`、网页“记忆 → 质量”、`omem memories` |

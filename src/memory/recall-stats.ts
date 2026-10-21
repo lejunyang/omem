@@ -8,17 +8,18 @@ import { now } from "../core/util.ts";
  * (referenced in writes or its answer). The UI and CLI use it to find dead
  * memories (never recalled) and ineffective ones (recalled but never used).
  */
-export function recordRecalls(app: App, ids: string[], ctx: { runId: string | null; profile?: string | null; spec?: string }) {
+export function recordRecalls(app: App, ids: string[], ctx: { runId: string | null; profile?: string | null; spec?: string; via?: "recall" | "passive" }) {
   if (!ids.length) return;
   for (const id of ids) {
     run(
       app.db,
-      "insert into memory_recalls(memory_id, run_id, agent_profile, agent_spec, used, at) values(?,?,?,?,0,?)",
+      "insert into memory_recalls(memory_id, run_id, agent_profile, agent_spec, used, at, via) values(?,?,?,?,0,?,?)",
       id,
       ctx.runId,
       ctx.profile ?? null,
       ctx.spec ?? null,
       now(),
+      ctx.via ?? "recall",
     );
   }
 }
@@ -38,6 +39,9 @@ export type MemoryRecallStats = {
   usedRecalls: number;
   distinctRecalls: number;
   distinctUsed: number;
+  /** Of totalRecalls / usedRecalls: added before a chat turn by passive recall (memory/passive.ts). */
+  passiveRecalls: number;
+  passiveUsed: number;
 };
 
 export function recallStats(app: App, opts: { spaceId?: string; includeInactive?: boolean } = {}): MemoryRecallStats {
@@ -46,9 +50,9 @@ export function recallStats(app: App, opts: { spaceId?: string; includeInactive?
     "select id, space_id, status from memories",
   ).filter((m) => (!opts.spaceId || m.space_id === opts.spaceId) && (opts.includeInactive || m.status === "active"));
   const ids = new Set(memRows.map((m) => m.id));
-  const ev = all<{ memory_id: string; run_id: string | null; used: number }>(
+  const ev = all<{ memory_id: string; run_id: string | null; used: number; via: string }>(
     app.db,
-    "select memory_id, run_id, used from memory_recalls",
+    "select memory_id, run_id, used, via from memory_recalls",
   ).filter((x) => ids.has(x.memory_id));
   const recalledIds = new Set(ev.map((x) => x.memory_id));
   const distinct = new Set(ev.map((x) => `${x.memory_id}|${x.run_id ?? ""}`));
@@ -61,6 +65,8 @@ export function recallStats(app: App, opts: { spaceId?: string; includeInactive?
     usedRecalls: ev.filter((x) => x.used).length,
     distinctRecalls: distinct.size,
     distinctUsed: distinctUsed.size,
+    passiveRecalls: ev.filter((x) => x.via === "passive").length,
+    passiveUsed: ev.filter((x) => x.via === "passive" && x.used).length,
   };
 }
 

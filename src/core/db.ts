@@ -587,6 +587,9 @@ const migrations: string[] = [
   `update runs set quiet = 1
     where quiet = 0 and status = 'done' and kind in ('heartbeat','wiki-lint','curate','memory-review','dream','profile-review')
       and upper(rtrim(trim(coalesce(case when json_valid(output) then json_extract(output, '$.summary') end, '')), '。.!！*\`_ ' || char(10) || char(13))) like '%QUIET';`,
+  // Memory vectors for passive recall (the same model as chunks; cleared when it changes).
+  `alter table memories add column embedding blob;
+   alter table memory_recalls add column via text not null default 'recall';`,
 ];
 
 export type Db = DatabaseSync;

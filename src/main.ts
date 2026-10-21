@@ -5,7 +5,7 @@ import { sweepWorktreeSpaces } from "./agents/worktree-index.ts";
 import { App } from "./core/app.ts";
 import { ensureDefaultSchedules, registerScheduleKind, restartScheduler } from "./core/scheduler.ts";
 import { ensurePersonalSpace, listSpaces } from "./core/spaces.ts";
-import { embedPending } from "./search/embeddings.ts";
+import { embedPending, embedPendingMemories } from "./search/embeddings.ts";
 import { startServer } from "./server/http.ts";
 import { syncWiki } from "./wiki/store.ts";
 
@@ -73,6 +73,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
       const loop = async () => {
         try {
           while ((await embedPending(app, 32)) > 0) await new Promise((r) => setTimeout(r, 10));
+          while ((await embedPendingMemories(app, 32)) > 0) await new Promise((r) => setTimeout(r, 10));
         } catch (e) {
           console.warn("[omem] 向量化失败：", (e as Error).message);
         }

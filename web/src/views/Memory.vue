@@ -125,7 +125,7 @@ watch(days, loadQuality);
 const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "—");
 
 // ---- recall effectiveness --------------------------------------------------------
-type RecallStats = { total: number; recalled: number; neverRecalled: number; totalRecalls: number; usedRecalls: number; distinctRecalls: number; distinctUsed: number };
+type RecallStats = { total: number; recalled: number; neverRecalled: number; totalRecalls: number; usedRecalls: number; distinctRecalls: number; distinctUsed: number; passiveRecalls: number; passiveUsed: number };
 type RecallRow = { id: string; spaceId: string; kind: string; subject: string; content: string; status: string; agent: string | null; updatedAt: string; recalls: number; used: number; lastRecalledAt: string | null };
 const recall = ref<{ stats: RecallStats; memories: RecallRow[] } | null>(null);
 const recallSort = ref<"recalls" | "never" | "unused" | "recent">("recalls");
@@ -234,7 +234,7 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
           <span class="badge ok">记忆 {{ recall.stats.total }} 条</span>
           <span class="badge">被召回过 {{ recall.stats.recalled }}</span>
           <span class="badge warn">从未召回 {{ recall.stats.neverRecalled }}</span>
-          <span class="muted small">召回 {{ recall.stats.totalRecalls }} 次；其中真正用上 {{ recall.stats.usedRecalls }} 次（{{ pct(recall.stats.usedRecalls, recall.stats.totalRecalls) }}）</span>
+          <span class="muted small">召回 {{ recall.stats.totalRecalls }} 次；其中真正用上 {{ recall.stats.usedRecalls }} 次（{{ pct(recall.stats.usedRecalls, recall.stats.totalRecalls) }}）<template v-if="recall.stats.passiveRecalls">；对话前自动带上 {{ recall.stats.passiveRecalls }} 次，用上 {{ recall.stats.passiveUsed }} 次（{{ pct(recall.stats.passiveUsed, recall.stats.passiveRecalls) }}）</template></span>
           <span class="spacer" />
           <UiSegmented v-model="recallSort" size="sm" aria-label="排序" :options="[
             { value: 'recalls', label: '召回最多' },
