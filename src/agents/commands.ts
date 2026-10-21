@@ -1,3 +1,4 @@
+import { effortsFor, type ProbeInfo } from "./probe.ts";
 import type { App } from "../core/app.ts";
 import { allProfiles, saveConfig, type Config } from "../core/config.ts";
 import { findSpace, listSpaces, relatedIds } from "../core/spaces.ts";
@@ -192,7 +193,11 @@ const commands: Record<string, Command> = {
           `后端：${profileId ?? "未配置"}`,
           `本会话：${thread.settings.model ?? "默认模型"} / ${thread.settings.effort ?? "默认强度"}${thread.settings.model || thread.settings.effort ? "（仅本会话生效）" : ""}`,
           models.length ? `可选模型：${models.join(", ")}` : "还没探测过可选模型（网页 Agent 页点“检测模型”，或 /model save 直接填名字）",
-          probe?.efforts?.length ? `可选强度：${probe.efforts.join(", ")}` : "",
+          ((m) => {
+            const list = effortsFor(probe, m);
+            if (probe?.effortsByModel && m && !list.length) return `${m} 没有思考强度设置`;
+            return list.length ? `可选强度${m && probe?.effortsByModel ? `（${m}）` : ""}：${list.join(", ")}` : "";
+          })(thread.settings.model ?? profile?.model),
           "用法：/model gpt-6.1-sol effort=high（本会话）｜/model save gpt-6.1-sol effort=low（存为这类任务默认）｜/model off（恢复默认）",
         ].filter(Boolean).join("\n");
       }
@@ -471,7 +476,7 @@ function cachedProbeSync(app: App, profileId?: string) {
   const row = app.db.prepare("select value from kv where key = ?").get(`probe:${profileId}`) as { value: string } | undefined;
   if (!row) return null;
   try {
-    return JSON.parse(row.value) as { models: string[]; efforts: string[] };
+    return JSON.parse(row.value) as ProbeInfo;
   } catch {
     return null;
   }

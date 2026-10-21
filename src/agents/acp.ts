@@ -98,7 +98,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         while ((nl = pending.indexOf("\n")) >= 0) {
           const line = pending.slice(0, nl);
           pending = pending.slice(nl + 1);
-          if (line.includes("queue") || line.includes("Queue")) sniffQueue(line);
+          if (/queue/i.test(line)) sniffQueue(line);
         }
         if (pending.length > 1_000_000) pending = "";
       });
@@ -118,16 +118,11 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     }
     const u = msg.params?.update;
     if (msg.method !== "session/update" || !u) return;
-    const kind = String(u.sessionUpdate ?? "");
-    const state = String(u.state ?? kind);
-    if (!/queue/i.test(kind) && !/queue/i.test(state)) return;
-    if (/^(agent_message_chunk|agent_thought_chunk|tool_call|tool_call_update|plan)$/.test(kind)) return;
+    const q = queueStatusOf(u);
+    if (!q) return;
     touch();
-    const position = typeof u.position === "number" ? u.position : typeof u.queue_position === "number" ? u.queue_position : undefined;
-    const message = typeof u.message === "string" ? u.message : undefined;
-    const queued = !/end|ready|done|finish/i.test(state);
-    emit({ type: "queue", queued, position, message });
-    if (queued) promptQueue?.enter(position, message);
+    emit({ type: "queue", ...q });
+    if (q.queued) promptQueue?.enter(q.position, q.message);
     else promptQueue?.exit();
   }
   const connection = new ClientSideConnection(
@@ -282,6 +277,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     let options = session.configOptions ?? [];
     const agentName = init.agentInfo?.name ?? profile.command;
     if (opts.probe) {
+      const effortsByModel = await probeEfforts(connection, sessionId, options, failed);
       const probe = {
         agent: `${init.agentInfo?.name ?? profile.command} ${init.agentInfo?.version ?? ""}`.trim(),
         modes: modes.map((m) => m.id),
@@ -291,6 +287,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
             ? [{ id: "model", category: "model", current: session.models.currentModelId ?? null, values: session.models.availableModels.map((m) => m.modelId) }]
             : []),
         ],
+        ...(effortsByModel ? { effortsByModel } : {}),
       };
       close();
       return { sessionId, agent: agentName, resumed, alive: () => false, prompt: async () => ({ text: "", stopReason: "probe", agent: agentName }), close, probe };
@@ -369,28 +366,42 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
           });
         };
         let entered = false;
+        let queuedAt = 0;
+        let lastPosition: number | undefined;
         promptQueue = {
           enter(position) {
+            // Time in the provider queue is not idleness: only the queue budget (if any) applies.
             idleW.close();
-            if (entered) return;
+            if (entered && position === lastPosition) return;
+            const first = !entered;
             entered = true;
-            if (!queueW && opts.queueTimeoutMs && opts.queueTimeoutMs > 0) {
-              queueW = idleWatchdog(opts.queueTimeoutMs, () => {
-                fail(agentRunError(`排队超过 ${Math.round(opts.queueTimeoutMs! / 60000)} 分钟仍未开始，已停止`, "queue", true));
-                close();
-              });
+            lastPosition = position;
+            if (first) {
+              queuedAt = Date.now();
+              if (!queueW && opts.queueTimeoutMs && opts.queueTimeoutMs > 0) {
+                queueW = idleWatchdog(opts.queueTimeoutMs, () => {
+                  fail(agentRunError(`排队超过 ${Math.round(opts.queueTimeoutMs! / 60000)} 分钟仍未开始，已停止`, "queue", true));
+                  close();
+                });
+              }
             }
-            emitSetup({ type: "status", text: `模型排队中${position ? `，前方约 ${position} 位` : ""}…` });
+            emit({ type: "status", text: `模型排队中${position ? `，前方约 ${position} 位` : ""}…` });
           },
           exit() {
+            if (entered) emit({ type: "status", text: `排队结束（约 ${Math.max(1, Math.round((Date.now() - queuedAt) / 1000))} 秒），开始处理` });
             entered = false;
+            lastPosition = undefined;
             queueW?.close();
             queueW = null;
             startIdle();
             idleW.touch();
           },
         };
-        touch = () => idleW.touch();
+        // While queued, updates (traex sends the queue status as a standard session_info_update the
+        // SDK also delivers) must not re-arm the idle timer: only the queue budget applies.
+        touch = () => {
+          if (!entered) idleW.touch();
+        };
         const onAbort = () => {
           void connection.cancel({ sessionId }).catch(() => {});
           fail(new Error("CANCELLED"));
@@ -459,4 +470,56 @@ const MODE_ALIASES: Record<string, string[]> = {
 export function pickMode(wanted: string[], available: string[]) {
   for (const w of wanted) for (const alias of MODE_ALIASES[w] ?? [w]) if (available.includes(alias)) return alias;
   return undefined;
+}
+
+/**
+ * Queue state from a session/update, when the agent reports it: traex sends
+ * `session_info_update._meta.trae.queueStatus` ({ state: queued|waiting|ready, position, message })
+ * with its headless_queue_status feature on; older builds used ad-hoc queue_* update kinds.
+ */
+export function queueStatusOf(u: Record<string, unknown>): { queued: boolean; position?: number; message?: string } | null {
+  const kind = String(u.sessionUpdate ?? "");
+  const meta = (u._meta as { trae?: { queueStatus?: Record<string, unknown> } } | undefined)?.trae?.queueStatus;
+  let src: Record<string, unknown> | undefined;
+  let state = "";
+  if (meta && typeof meta === "object") {
+    src = meta;
+    state = String(meta.state ?? meta.status ?? "");
+  } else if (/queue/i.test(kind) || /queue/i.test(String(u.state ?? ""))) {
+    if (/^(agent_message_chunk|agent_thought_chunk|tool_call|tool_call_update|plan)$/.test(kind)) return null;
+    src = u;
+    state = String(u.state ?? kind);
+  }
+  if (!src) return null;
+  const pos = src.position ?? src.queue_position ?? src.queuePosition;
+  const position = typeof pos === "number" && Number.isFinite(pos) ? pos : undefined;
+  const message = typeof src.message === "string" && src.message.trim() ? src.message.trim() : undefined;
+  const queued = /queued|waiting|wait|pending|begin|position/i.test(state) && !/end|ready|done|finish|start(ed)?$|running|dequeued/i.test(state);
+  return { queued, position, message };
+}
+
+/**
+ * Some agents (traex) offer a reasoning-effort option only after a model that has one is selected,
+ * so the default model's session says nothing about effort. Switch through the offered models in
+ * the probe session and record each one's levels. Returns undefined when there is no model option.
+ */
+async function probeEfforts(connection: ClientSideConnection, sessionId: string, options: SessionConfigOption[], failed: Promise<never>): Promise<Record<string, string[]> | undefined> {
+  const modelOpt = options.find(isModelOption);
+  if (!modelOpt) return undefined;
+  const isEffort = (o: SessionConfigOption) => !isModelOption(o) && ((o as { category?: string }).category === "thought_level" || /effort|reasoning/i.test(o.id));
+  const out: Record<string, string[]> = {};
+  const current = (modelOpt as { currentValue?: string }).currentValue;
+  const initialEffort = options.find(isEffort);
+  if (current) out[current] = initialEffort ? optionValues(initialEffort) : [];
+  for (const model of optionValues(modelOpt).slice(0, 60)) {
+    if (model in out) continue;
+    try {
+      const reply = await Promise.race([connection.setSessionConfigOption({ sessionId, configId: modelOpt.id, value: model }), failed, new Promise<never>((_, r) => setTimeout(() => r(new Error("timeout")), 10_000))]);
+      const effort = (reply.configOptions ?? []).find(isEffort);
+      out[model] = effort ? optionValues(effort) : [];
+    } catch {
+      // A model that cannot be selected just has no recorded levels.
+    }
+  }
+  return out;
 }

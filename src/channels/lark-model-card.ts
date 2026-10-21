@@ -4,13 +4,14 @@ import { findThread, updateThread } from "../agents/threads.ts";
 import { releaseThreadSession } from "../agents/sessions.ts";
 import { resolveModelOption } from "../agents/models.ts";
 import { buildCard, type CardSpec } from "./lark-send.ts";
+import { effortsFor, type ProbeInfo } from "../agents/probe.ts";
 
 /**
  * The /model card: pick backend, model and effort for this Feishu chat/topic
  * without typing command syntax. Changes are stored on the thread, exactly
  * like /model, so they never leak to other chats.
  */
-type Probe = { models: string[]; efforts: string[]; error?: string };
+type Probe = ProbeInfo;
 
 function probeOf(app: App, profileId: string): Probe | null {
   const row = app.db.prepare("select value from kv where key = ?").get(`probe:${profileId}`) as { value: string } | undefined;
@@ -34,8 +35,9 @@ export function modelCard(app: App, threadId: string): Record<string, unknown> {
   const profile = profiles.find((p) => p.id === profileId);
   const probe = probeOf(app, profileId);
   const offeredModels = probe?.models ?? (profile?.model ? [profile.model] : []);
-  const offeredEfforts = probe?.efforts.length ? probe.efforts : ["low", "medium", "high"];
   const model = t.settings.model ?? profile?.model ?? "";
+  const known = effortsFor(probe, model);
+  const offeredEfforts = known.length ? known : probe?.effortsByModel && model ? [] : ["low", "medium", "high"];
   const effort = t.settings.effort ?? profile?.effort ?? "";
   const blocks: CardSpec["blocks"] = [
     {

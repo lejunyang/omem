@@ -41,6 +41,9 @@ type State = {
   /** At least one event batch was accepted: the bubble has proven usable this turn. */
   proven: boolean;
   settleTimer?: ReturnType<typeof setTimeout>;
+  /** When the provider queue started (shown as one line, then how long it took). */
+  queuedAt?: number;
+  queuePos?: number;
   timers: ReturnType<typeof setTimeout>[];
 };
 
@@ -263,6 +266,30 @@ export function cotEvent(app: App, runId: string, e: { type: string; data: any }
     const last = st.entries.at(-1);
     if (last && last.kind === kind) last.text += String(data?.text ?? "");
     else st.entries.push({ kind, text: String(data?.text ?? "") });
+    schedule(app, runId, st);
+  } else if (type === "queue") {
+    // Provider queue: text already pushed cannot be rewritten, so the bubble gets one line when
+    // the wait starts, the position as it moves, and how long it took when the model starts.
+    const add = (text: string) => {
+      const last = st.entries.at(-1);
+      if (last && last.kind === "reasoning") last.text += text;
+      else st.entries.push({ kind: "reasoning", text });
+    };
+    const pos = typeof data?.position === "number" ? data.position : undefined;
+    if (data?.queued) {
+      if (st.queuedAt === undefined) {
+        st.queuedAt = Date.now();
+        st.queuePos = pos;
+        add(`模型排队中${pos ? `，前方约 ${pos} 位` : ""}…`);
+      } else if (pos !== undefined && pos !== st.queuePos) {
+        st.queuePos = pos;
+        add(` ${pos} 位…`);
+      } else return;
+    } else if (st.queuedAt !== undefined) {
+      add(`\n排队结束（约 ${Math.max(1, Math.round((Date.now() - st.queuedAt) / 1000))} 秒），开始处理。\n\n`);
+      st.queuedAt = undefined;
+      st.queuePos = undefined;
+    } else return;
     schedule(app, runId, st);
   } else if (type === "tool" && data?.id) {
     const id = String(data.id);

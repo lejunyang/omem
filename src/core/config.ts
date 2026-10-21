@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
-import { acpCatalog, catalogProfile } from "../agents/catalog.ts";
+import { acpCatalog, catalogProfile, upgradeProfileArgs } from "../agents/catalog.ts";
 
 export const agentProfileSchema = z.object({
   id: z.string().min(1),
@@ -355,6 +355,6 @@ export function saveConfig(config: Config, home = omemHome()) {
 
 export function allProfiles(config: Config): AgentProfile[] {
   const byId = new Map(builtinProfiles.map((p) => [p.id, p]));
-  for (const p of config.agents.profiles) byId.set(p.id, p);
+  for (const p of config.agents.profiles) byId.set(p.id, upgradeProfileArgs(p));
   return [...byId.values()];
 }

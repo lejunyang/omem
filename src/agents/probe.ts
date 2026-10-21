@@ -7,7 +7,27 @@ import { runAcp } from "./acp.ts";
  * and close one short session and are cached in kv (backends change rarely;
  * probe again with /model refresh or setup "检测模型").
  */
-export type ProbeInfo = { at: string; agent: string; models: string[]; efforts: string[]; error?: string };
+export type ProbeInfo = {
+  at: string;
+  agent: string;
+  models: string[];
+  /** Every effort level any model offers (the union of effortsByModel when the agent reports per model). */
+  efforts: string[];
+  /** Levels per model; a model with [] has no effort setting. Absent when the agent does not tell. */
+  effortsByModel?: Record<string, string[]>;
+  error?: string;
+};
+
+/** Effort levels for one model: its own when the probe knows them, else every known level. */
+export function effortsFor(probe: ProbeInfo | null | undefined, model?: string | null): string[] {
+  if (!probe) return [];
+  const by = probe.effortsByModel;
+  if (by && model) {
+    const key = Object.keys(by).find((k) => k === model) ?? Object.keys(by).find((k) => k.toLowerCase() === model.toLowerCase());
+    if (key) return by[key];
+  }
+  return probe.efforts;
+}
 
 export function cachedProbe(app: { db: { prepare: (sql: string) => { get(...p: unknown[]): unknown } } }, profileId: string): ProbeInfo | null {
   const row = app.db.prepare("select value from kv where key = ?").get(`probe:${profileId}`) as { value: string } | undefined;
@@ -32,11 +52,15 @@ export async function probeProfile(profile: AgentProfile): Promise<ProbeInfo> {
     const opts = r.probe?.options ?? [];
     const modelOpt = opts.find((o) => o.id === "model" || o.category === "model");
     const effortOpt = opts.find((o) => o.id !== "model" && (o.category === "thought_level" || /effort|reasoning/i.test(o.id)));
+    const by = r.probe?.effortsByModel;
+    const union = by ? [...new Set(Object.values(by).flat())] : [];
+    const efforts = union.length ? union : (effortOpt?.values ?? []).filter((v): v is string => typeof v === "string");
     return {
       at: new Date().toISOString(),
       agent: r.probe?.agent ?? profile.command,
       models: (modelOpt?.values ?? []).filter((v): v is string => typeof v === "string"),
-      efforts: (effortOpt?.values ?? []).filter((v): v is string => typeof v === "string"),
+      efforts,
+      ...(by && union.length ? { effortsByModel: by } : {}),
     };
   } catch (e) {
     return { at: new Date().toISOString(), agent: profile.command, models: [], efforts: [], error: (e as Error).message.slice(0, 300) };

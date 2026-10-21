@@ -226,7 +226,8 @@ function roleChoices(role: string, key: "model" | "effort"): { list: string[]; s
   const pr = probes.value[id];
   const saved = roleOverride(role)[key];
   if (pr?.loading && !pr.data) return { list: saved ? [saved] : [], state: "loading" };
-  const offered = (key === "model" ? pr?.data?.models : pr?.data?.efforts) ?? [];
+  const model = roleOverride(role).model ?? profileDefault(role, "model");
+  const offered = (key === "model" ? pr?.data?.models : effortsOf(id, model)) ?? [];
   const list = saved && !offered.includes(saved) ? [saved, ...offered] : offered;
   return { list, state: offered.length ? "ok" : "none" };
 }
@@ -274,7 +275,14 @@ async function addProfile() {
     toast(`配置不是合法 JSON：${(e as Error).message}`, "error");
   }
 }
-type ProbeData = { agent: string; models: string[]; efforts: string[]; error?: string; at?: string };
+type ProbeData = { agent: string; models: string[]; efforts: string[]; effortsByModel?: Record<string, string[]>; error?: string; at?: string };
+/** Effort levels for a model on a backend: per model when the probe knows them, else all levels. */
+function effortsOf(profileId: string | undefined, model?: string | null): string[] {
+  const d = probes.value[profileId ?? ""]?.data;
+  if (!d) return [];
+  if (d.effortsByModel && model && model in d.effortsByModel) return d.effortsByModel[model];
+  return d.efforts;
+}
 const probes = ref<Record<string, { loading?: boolean; error?: string; data?: ProbeData }>>({});
 async function probe(p: Profile, refresh = true) {
   if (p.transport !== "acp") return;
@@ -313,8 +321,8 @@ function addCompare() {
 function removeCompare(i: number) {
   void saveConfig({ memory: { ...config.value.memory, compare: config.value.memory.compare.filter((_: unknown, j: number) => j !== i) } }, "已移除对比模型");
 }
-function modelOptionsFor(profileId: string | undefined, key: "model" | "effort", current?: string) {
-  const offered = (key === "model" ? probes.value[profileId ?? ""]?.data?.models : probes.value[profileId ?? ""]?.data?.efforts) ?? [];
+function modelOptionsFor(profileId: string | undefined, key: "model" | "effort", current?: string, model?: string) {
+  const offered = (key === "model" ? probes.value[profileId ?? ""]?.data?.models : effortsOf(profileId, model ?? profiles.value.find((x) => x.id === profileId)?.model)) ?? [];
   const list = current && !offered.includes(current) ? [current, ...offered] : offered;
   return [{ value: "", label: "跟随默认" }, ...list.map((v) => ({ value: v, label: v }))];
 }
@@ -439,10 +447,11 @@ async function saveEdit() {
               <span class="muted">默认模型：</span>
               <button v-for="v in probes[p.id].data!.models" :key="v" class="chip" :class="{ on: p.model === v }" @click="setProfileOption(p, 'model', v)">{{ v }}</button>
             </div>
-            <div v-if="probes[p.id].data?.efforts.length" class="row wrap small">
-              <span class="muted">默认思考强度：</span>
-              <button v-for="v in probes[p.id].data!.efforts" :key="v" class="chip" :class="{ on: p.effort === v }" @click="setProfileOption(p, 'effort', v)">{{ v }}</button>
+            <div v-if="effortsOf(p.id, p.model).length" class="row wrap small">
+              <span class="muted">默认思考强度{{ probes[p.id].data?.effortsByModel && p.model ? `（${p.model}）` : "" }}：</span>
+              <button v-for="v in effortsOf(p.id, p.model)" :key="v" class="chip" :class="{ on: p.effort === v }" @click="setProfileOption(p, 'effort', v)">{{ v }}</button>
             </div>
+            <div v-else-if="probes[p.id].data?.effortsByModel && p.model" class="small muted">{{ p.model }} 没有思考强度设置</div>
           </div>
         </template>
       </div>
@@ -506,7 +515,7 @@ async function saveEdit() {
           <span class="small muted">复核用</span>
           <UiSelect :model-value="config.memory.review.profile ?? ''" size="sm" width="200px" aria-label="复核后端" :options="[{ value: '', label: '按角色“复核记忆”的设置' }, ...profileOptions]" @change="(v) => saveReview({ profile: v || undefined })" />
           <UiSelect :model-value="config.memory.review.model ?? ''" size="sm" width="180px" aria-label="复核模型" :options="modelOptionsFor(config.memory.review.profile, 'model', config.memory.review.model)" @change="(v) => saveReview({ model: v || undefined })" />
-          <UiSelect :model-value="config.memory.review.effort ?? ''" size="sm" width="120px" aria-label="复核强度" :options="modelOptionsFor(config.memory.review.profile, 'effort', config.memory.review.effort)" @change="(v) => saveReview({ effort: v || undefined })" />
+          <UiSelect :model-value="config.memory.review.effort ?? ''" size="sm" width="120px" aria-label="复核强度" :options="modelOptionsFor(config.memory.review.profile, 'effort', config.memory.review.effort, config.memory.review.model)" @change="(v) => saveReview({ effort: v || undefined })" />
         </div>
         <div class="section-title" style="margin-top: 8px">对比运行</div>
         <p class="muted small">每次整理新材料时，再用下面的模型各跑一遍：它们的写入只记录不生效，经过同样的检查和复核，用来横向比较哪个模型记得更好。每多一个模型，整理的花费多一份。</p>

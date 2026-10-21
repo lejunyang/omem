@@ -34,4 +34,33 @@ describe("agent stalls and provider queue", () => {
     expect(r.text).toBe("queued-ok");
     expect(events.some((e) => e.type === "queue" && e.queued)).toBe(true);
   }, 30_000);
+
+  it("reads traex's queueStatus meta: idle time is not counted while queued, and the wait is reported", async () => {
+    const events: AgentEvent[] = [];
+    const profile = { ...fake({ FAKE_TRAE: "1", FAKE_QUEUE: "6000" }, 3000), model: "m2", effort: "high" };
+    const r = await runAcp(profile, { cwd: process.cwd(), prompt: "hi", queueTimeoutMs: 20_000 }, (e) => events.push(e));
+    expect(r.text).toBe("queued-ok m2");
+    const q = events.filter((e): e is Extract<AgentEvent, { type: "queue" }> => e.type === "queue");
+    expect(q.map((e) => [e.queued, e.position])).toEqual([[true, 3], [true, 1], [false, undefined]]);
+    expect(q[0].message).toBe("排在第 3 位");
+    const status = events.filter((e) => e.type === "status").map((e) => (e as { text: string }).text);
+    expect(status).toContain("模型排队中，前方约 3 位…");
+    expect(status).toContain("模型排队中，前方约 1 位…");
+    expect(status.some((t) => /^排队结束/.test(t))).toBe(true);
+    // effort is set once the model offers it (it did not exist on the default model).
+    expect(status.some((t) => /不支持设置 effort/.test(t))).toBe(false);
+  }, 30_000);
+
+  it("probes effort levels per model when they appear only after a model is selected", async () => {
+    const r = await runAcp(fake({ FAKE_TRAE: "1" }, 5000), { cwd: process.cwd(), prompt: "", probe: true }, () => {});
+    expect(r.probe?.effortsByModel).toEqual({ m1: [], m2: ["low", "medium", "high"], m3: ["low", "xhigh"] });
+  }, 20_000);
+
+  it("moves a saved profile still on an earlier default command line to the current one", async () => {
+    const { upgradeProfileArgs } = await import("../src/agents/catalog.ts");
+    const old = agentProfileSchema.parse({ id: "traex", transport: "acp", command: "traex", args: ["acp", "serve"] });
+    expect(upgradeProfileArgs(old).args).toEqual(["acp", "serve", "-c", "features.headless_queue_status=true"]);
+    const own = { ...old, args: ["acp", "serve", "-p", "work"] };
+    expect(upgradeProfileArgs(own).args).toEqual(own.args);
+  });
 });

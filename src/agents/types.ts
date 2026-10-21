@@ -4,7 +4,7 @@ export type AgentEvent =
   | { type: "tool"; id: string; title: string; kind?: string; status?: string; input?: unknown }
   | { type: "plan"; entries: { content: string; status: string }[] }
   | { type: "status"; text: string }
-  // Provider-side queue (trae queue_begin/queue_position/queue_end).
+  // Provider-side queue (traex session_info_update._meta.trae.queueStatus, or queue text).
   | { type: "queue"; queued: boolean; position?: number; message?: string };
 
 export type McpAccess = {
@@ -37,7 +37,13 @@ export type AgentRequest = {
   queueTimeoutMs?: number;
 };
 
-export type AgentProbe = { agent: string; modes: string[]; options: { id: string; category: string | null; current: string | null; values: string[] }[] };
+export type AgentProbe = {
+  agent: string;
+  modes: string[];
+  options: { id: string; category: string | null; current: string | null; values: string[] }[];
+  /** Effort levels per model: agents (traex) offer reasoning effort only once a model that has it is selected. */
+  effortsByModel?: Record<string, string[]>;
+};
 /** Why a run failed; used to decide whether a fallback backend/model is worth trying. */
 export type AgentFailureKind = "queue" | "idle" | "rate-limit" | "other";
 export type AgentResult = {

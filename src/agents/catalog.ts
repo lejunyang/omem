@@ -23,11 +23,14 @@ export type CatalogEntry = {
   install?: string;
   model?: string;
   effort?: string;
+  /** Earlier default args: a saved profile still using one of them gets the current `args`. */
+  previousArgs?: string[][];
 };
 
 export const acpCatalog: CatalogEntry[] = [
   { id: "codex", name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low" },
-  { id: "traex", name: "TraeX", command: "traex", args: ["acp", "serve"], model: "gpt-6.1-sol", effort: "low", install: "安装 TraeX CLI" },
+  // headless_queue_status: traex reports the provider queue as session_info_update._meta.trae.queueStatus.
+  { id: "traex", name: "TraeX", command: "traex", args: ["acp", "serve", "-c", "features.headless_queue_status=true"], previousArgs: [["acp", "serve"]], model: "gpt-6.1-sol", effort: "low", install: "安装 TraeX CLI" },
   { id: "claude", name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp" },
   { id: "gemini", name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli" },
   { id: "copilot", name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot" },
@@ -72,6 +75,12 @@ export function catalogProfile(e: CatalogEntry): AgentProfile {
     env: e.env ?? {},
     idleTimeoutMs: 600_000,
   };
+}
+
+/** A saved profile with the catalog's current default args when it still has an earlier default. */
+export function upgradeProfileArgs(p: AgentProfile): AgentProfile {
+  const e = acpCatalog.find((x) => x.command === p.command && x.previousArgs?.some((a) => a.length === p.args.length && a.every((v, i) => v === p.args[i])));
+  return e ? { ...p, args: e.args ?? [] } : p;
 }
 
 export function catalogEntry(id: string) {

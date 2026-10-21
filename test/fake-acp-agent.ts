@@ -22,6 +22,14 @@ const legacy = process.env.FAKE_LEGACY === "1";
 const stall = process.env.FAKE_STALL;
 // FAKE_QUEUE=ms: report provider queue_begin, wait, queue_end, then answer.
 const queueMs = Number(process.env.FAKE_QUEUE ?? 0);
+// FAKE_TRAE=1: traex-style queue status (session_info_update._meta.trae.queueStatus) and a
+// reasoning_effort option that only exists while a model that has it is selected.
+const trae = process.env.FAKE_TRAE === "1";
+const TRAE_EFFORTS: Record<string, string[]> = { m1: [], m2: ["low", "medium", "high"], m3: ["low", "xhigh"] };
+const traeOptions = (model: string) => [
+  { id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: Object.keys(TRAE_EFFORTS).map((v) => ({ value: v, name: v })) },
+  ...(TRAE_EFFORTS[model].length ? [{ id: "reasoning_effort", name: "Effort", category: "thought_level", type: "select", currentValue: TRAE_EFFORTS[model][0], options: TRAE_EFFORTS[model].map((v) => ({ value: v, name: v })) }] : []),
+];
 const state = { model: "m1", mode: "default" };
 new AgentSideConnection(
   (conn) => ({
@@ -41,7 +49,12 @@ new AgentSideConnection(
           modes: { currentModeId: "default", availableModes: ["default", "autoEdit", "yolo"].map((m) => ({ id: m, name: m })) },
           models: { currentModelId: "m1", availableModels: [{ modelId: "m1", name: "M1" }, { modelId: "m2", name: "M2" }] },
         } as never;
+      if (trae) return { sessionId: id, modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }] }, configOptions: traeOptions("m1") } as never;
       return { sessionId: id, modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }, { id: "read-only", name: "ro" }] } };
+    },
+    async setSessionConfigOption(p: { configId: string; value: unknown }) {
+      if (p.configId === "model") state.model = String(p.value);
+      return { configOptions: traeOptions(state.model) } as never;
     },
     async resumeSession(p: { sessionId: string; mcpServers?: McpServer[] }) {
       sessions.set(p.sessionId, p.mcpServers ?? []);
@@ -70,6 +83,16 @@ new AgentSideConnection(
       if (stall === "after") {
         await say("我先看一下材料。");
         await new Promise(() => {});
+      }
+      if (queueMs && trae) {
+        const status = (state: string, position?: number) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "session_info_update", _meta: { trae: { queueStatus: { state, position, message: state === "ready" ? undefined : `排在第 ${position} 位` } } } } as never });
+        await status("queued", 3);
+        await new Promise((r) => setTimeout(r, queueMs / 2));
+        await status("waiting", 1);
+        await new Promise((r) => setTimeout(r, queueMs / 2));
+        await status("ready");
+        await say(`queued-ok ${state.model}`);
+        return { stopReason: "end_turn" };
       }
       if (queueMs) {
         await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "queue_begin", position: 3 } as never });
