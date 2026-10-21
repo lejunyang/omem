@@ -41,8 +41,15 @@ export const conditionSchema: z.ZodType<Condition> = z.lazy(() =>
 );
 
 const reply = z.enum(["none", "draft", "auto"]);
+/**
+ * How a rule's agent may speak. none: its conclusion goes to the owner only. draft: what it says in
+ * the chat is a draft the owner confirms. auto: it answers in the chat (its topic), process visible.
+ * silent: it reads the discussion and investigates without showing anything; it posts only when it
+ * decides to (a conclusion, a question for missing information) and then follows that topic.
+ */
+export const agentReply = z.enum(["none", "draft", "auto", "silent"]);
 export const actionSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("agent"), spec: z.string(), task: z.string().default(""), ownTopic: z.boolean().default(false), reply: reply.default("none") }),
+  z.object({ type: z.literal("agent"), spec: z.string(), task: z.string().default(""), ownTopic: z.boolean().default(false), reply: agentReply.default("none") }),
   z.object({ type: z.literal("watch"), spec: z.string(), on: z.enum(["all", "mention", "keyword"]).default("mention"), pattern: z.string().optional(), reply: reply.default("draft") }),
   z.object({ type: z.literal("invite-bot") }),
   z.object({ type: z.literal("capture") }),
@@ -58,7 +65,14 @@ export const ruleInputSchema = z.object({
     event: z.enum(["message", "chat-new", "schedule"]).default("message"),
     once: z.enum(["event", "chat"]).default("event"),
     cron: z.string().optional(),
-  }).default({ event: "message", once: "event" }),
+    /** Wait this long after a match before acting (no one responded in time → act). */
+    waitMinutes: z.number().int().min(0).max(1440).default(0),
+    /**
+     * Checked when it is time to act: owner-engaged — the owner is already in this discussion (spoke
+     * in the topic, or in the chat around it); answered — someone already replied. Either skips.
+     */
+    unless: z.array(z.enum(["owner-engaged", "answered"])).default([]),
+  }).default({ event: "message", once: "event", waitMinutes: 0, unless: [] }),
   conditions: conditionSchema.nullable().default(null),
   judge: z.enum(["code", "ai", "code+ai"]).default("code"),
   actions: z.array(actionSchema).min(1).max(8),

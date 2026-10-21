@@ -96,9 +96,15 @@ export const configSchema = z.object({
         .default([]),
       /** Max minutes to wait in the provider queue (traex queue_begin…) before giving up and trying a fallback. */
       queueTimeoutMinutes: z.number().min(1).max(240).default(30),
+      /**
+       * How far work goes on without the owner: `turns` is how many times the main assistant may hand
+       * a multi-agent work on after the owner last spoke; `codeRounds` how many rounds a coding
+       * delegation runs before the reviewer's requests wait for the owner.
+       */
+      autoAdvance: z.object({ turns: z.number().int().min(0).max(50).default(6), codeRounds: z.number().int().min(1).max(20).default(3) }).default({ turns: 6, codeRounds: 3 }),
       profiles: z.array(agentProfileSchema).default([]),
     })
-    .default({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, profiles: [] }),
+    .default({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3 }, profiles: [] }),
   /** This instance among its peers (`omem peer`): defaults to the host name. */
   node: z.object({ id: z.string().optional() }).default({}),
   /** Memory quality: write-time checks, cross-model review, side-by-side comparison. */

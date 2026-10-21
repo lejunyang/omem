@@ -119,7 +119,7 @@ export async function deliverCoordination(ctx: RunContext, coordinate: { workId:
 
 // Delegation to an agent spec ("/as name task", run_agent): answer goes back to the thread it came from.
 registerHandler("agent", async (ctx) => {
-  const { spec: name, task, threadId, agentWorkId, consultOf, rule, lark } = ctx.run.input as {
+  const { spec: name, task, threadId, agentWorkId, consultOf, rule, lark, silent, replyAt, resumeSessionId: resumeRule } = ctx.run.input as {
     spec: string;
     task: string;
     threadId?: string;
@@ -128,6 +128,12 @@ registerHandler("agent", async (ctx) => {
     /** Started by a rule: it may post only where the rule allows, and reports to the owner otherwise. */
     rule?: { id: string; name: string };
     lark?: { chats: string[] | null; draft?: boolean };
+    /** A rule's silent investigation: nothing is delivered; the agent posts itself when it decides to. */
+    silent?: { chatId: string; messageId: string; topicId: string | null };
+    /** A rule's agent answering in a topic under this message (its bubble or answer opens the topic). */
+    replyAt?: { chatId: string; messageId: string };
+    /** A silent agent picking up a topic it follows continues its earlier session. */
+    resumeSessionId?: string;
   };
   // A consultation runs inside the asking tool call (consult.ts); one picked up here was cut off by a
   // restart, and the asker is gone.
@@ -135,7 +141,7 @@ registerHandler("agent", async (ctx) => {
   const spec = readAgentSpec(ctx.app, name);
   // A round of multi-agent work: the agent continues its own session from its last round in this
   // work, and is told what happened in the work since (the owner's words, other agents' reports).
-  let resumeSessionId: string | undefined;
+  let resumeSessionId: string | undefined = resumeRule;
   let fullTask = task;
   if (agentWorkId) {
     const { refreshWork, workContext } = await import("./agent-work.ts");
@@ -157,7 +163,7 @@ registerHandler("agent", async (ctx) => {
       signal: ctx.signal,
       onEvent: (e) => ctx.event(e.type, e),
       resumeSessionId: resume,
-      persistSession: !!agentWorkId,
+      persistSession: !!agentWorkId || !!silent,
       lark,
     });
   let r;
@@ -172,9 +178,15 @@ registerHandler("agent", async (ctx) => {
   // The report proper: what the agent wrote after its last tool call (its narration on the way is
   // in the run's events). Work rounds go to the main assistant, which writes the reply (agent-work.ts).
   const answer = replyOf(r).trim() || "（没有输出）";
-  if (rule) {
+  if (silent) {
+    // Whatever it had to say it already posted (or told the owner); the text stays in the run.
+  } else if (rule) {
     // A rule's agent answers in the chat only when the rule says so; otherwise the owner gets it.
     if (threadId) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: spec.name, rule: rule.id });
+    else if (replyAt) {
+      const { sendLark } = await import("../channels/lark-send.ts");
+      await sendLark({ replyTo: replyAt.messageId, inThread: true }, { markdown: answer });
+    }
     else notify(ctx.app, { title: `${spec.name}（规则「${rule.name}」）`, body: truncate(answer, 3000), link: `#/runs/${ctx.run.id}` });
   } else if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${spec.name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: spec.name });
   return { answer, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
@@ -639,3 +651,10 @@ export function scheduleSpaceSync(app: App, spaceId: string) {
   updateSpace(app, spaceId, { settings: { ...s.settings, syncRequestedAt: now() } });
   return createRun(app, { kind: "sync", spaceId, title: `同步 ${s.name}` });
 }
+
+// A rule that waits to see whether anyone responds: its time is up (rules/engine.ts).
+registerHandler("rule-fire", async (ctx) => {
+  const { ruleId, key, event } = ctx.run.input as { ruleId: string; key: string; event: import("../rules/types.ts").RuleEvent };
+  const { fireAfterWait } = await import("../rules/engine.ts");
+  return fireAfterWait(ctx.app, ruleId, key, event);
+});

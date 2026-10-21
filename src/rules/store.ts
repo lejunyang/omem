@@ -25,7 +25,7 @@ const toRule = (r: Row): Rule => ({
   name: r.name,
   description: r.description,
   enabled: !!r.enabled,
-  trigger: json(r.trigger, { event: "message", once: "event" }),
+  trigger: { waitMinutes: 0, unless: [], ...json(r.trigger, { event: "message" as const, once: "event" as const }) },
   conditions: r.conditions ? json(r.conditions, null) : null,
   judge: r.judge as Rule["judge"],
   actions: json(r.actions, []),
@@ -53,6 +53,8 @@ export function saveRule(app: App, input: RuleInput & { id?: string }, by: "user
   if (r.trigger.event === "schedule" && !r.trigger.cron) throw new HttpError(400, "定时规则需要 cron，例如 0 9 * * 1-5");
   if (r.trigger.event === "schedule" && r.actions.some((a) => a.type === "invite-bot" || a.type === "capture" || a.type === "watch" || (a.type === "agent" && a.ownTopic)))
     throw new HttpError(400, "定时规则没有具体的群或消息：只能交给 Agent（不开话题）或通知本人");
+  if (r.trigger.event === "schedule" && (r.trigger.waitMinutes || r.trigger.unless.length || r.actions.some((a) => a.type === "agent" && a.reply === "silent")))
+    throw new HttpError(400, "定时规则没有具体的讨论：不能等待回应、不能按“本人已在处理/已有人回复”跳过，也不能静默排查");
   const at = now();
   const id = input.id ?? newId("rule");
   const prev = input.id ? one<Row>(app.db, "select * from rules where id = ?", input.id) : undefined;
@@ -96,10 +98,11 @@ export function releaseEvent(app: App, ruleId: string, key: string) {
 
 export type Firing = { id: number; ruleId: string; eventKey: string; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
 
-export function recordFiring(app: App, f: Omit<Firing, "id" | "at">) {
+/** Log a firing; a skipped one (the owner was already on it, someone answered) is logged but not counted. */
+export function recordFiring(app: App, f: Omit<Firing, "id" | "at">, opts: { skipped?: boolean } = {}) {
   const at = now();
   run(app.db, "insert into rule_firings(rule_id, event_key, at, summary, judged_by, reason, results) values(?,?,?,?,?,?,?)", f.ruleId, f.eventKey, at, f.summary, f.judgedBy, f.reason, JSON.stringify(f.results));
-  run(app.db, "update rules set hits = hits + 1, last_fired_at = ? where id = ?", at, f.ruleId);
+  if (!opts.skipped) run(app.db, "update rules set hits = hits + 1, last_fired_at = ? where id = ?", at, f.ruleId);
 }
 
 export function listFirings(app: App, ruleId: string, limit = 50): Firing[] {

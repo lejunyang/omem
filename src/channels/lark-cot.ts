@@ -49,11 +49,14 @@ type State = {
 
 const states = new Map<string, State>();
 const TIMEOUT = 15_000;
-/** Max bytes/chars of one REASONING_MESSAGE_CONTENT event (Feishu rejects longer events). */
-const COT_CONTENT_MAX = 4000;
-/** Set after a hard failure (e.g. message_cot not enabled for this app): skip
- *  creating further empty bubbles for the rest of this process. */
-let globallyDisabled = false;
+/**
+ * Max characters of one REASONING_MESSAGE_CONTENT event. Feishu rejects a long event ("content too
+ * long") without saying the limit; 1000 Chinese characters stay well under 4 KB of UTF-8.
+ */
+const COT_CONTENT_MAX = 1000;
+/** After a hard failure (e.g. message_cot not enabled for this app) no bubbles are tried for a while. */
+let disabledUntil = 0;
+const DISABLE_MS = 30 * 60_000;
 
 let sdk: { request: (o: { method: string; url: string; data?: unknown; params?: unknown; timeout?: number }) => Promise<any> } | null = null;
 export function setCotSdk(c: typeof sdk) {
@@ -163,7 +166,7 @@ function eventsFor(st: State): any[] {
         }));
         // While running we stream args and deliberately do NOT send TOOL_CALL_END:
         // the end event (plus result) is what stops the spinner on the tool row.
-        if (e.args) out.push(ev("TOOL_CALL_ARGS", { toolCallId: e.id, delta: e.args.slice(0, 8000) }));
+        if (e.args) out.push(ev("TOOL_CALL_ARGS", { toolCallId: e.id, delta: e.args.slice(0, COT_CONTENT_MAX) }));
         st.toolStarted.add(e.id);
       }
       if (settled && !st.toolSettled.has(e.id)) {
@@ -173,7 +176,7 @@ function eventsFor(st: State): any[] {
           toolCallId: e.id,
           role: "tool",
           content: JSON.stringify(e.result
-            ? { type: "code", code: e.result.slice(0, 8000) }
+            ? { type: "code", code: e.result.slice(0, COT_CONTENT_MAX) }
             : { type: "text", text: e.status === "failed" ? "失败" : "完成" }),
         }));
         st.toolSettled.add(e.id);
@@ -223,18 +226,18 @@ async function pump(app: App, runId: string, st: State) {
     }
   } catch (e) {
     st.disabled = true;
-    // Bubble created but events cannot be pushed: best-effort close it, then stop
-    // for this process so we never leave more empty spinners.
+    // Bubble created but events cannot be pushed: best-effort close it, and do not open more
+    // for a while so we never leave a trail of empty spinners.
     if (st.cotId) {
       try { await api("POST", `/open-apis/im/v1/message_cot/complete/${encodeURIComponent(st.cotId)}`, {}, { message_id: st.messageId!, reason: "error" }); } catch {}
     }
     // Oversized reasoning content is a per-bubble mistake: stop this bubble, but let later turns
-    // try again (they send capped deltas). A gateway/capability failure disables bubbles globally.
+    // try again (they send capped deltas). A gateway/capability failure pauses all bubbles for 30 minutes.
     const msg = (e as Error).message ?? "";
     if (/content too long/i.test(msg)) console.warn(`[omem] 本轮思考气泡内容过长，已结束这个气泡（不影响回复，后续轮次照常）：${msg}`);
     else {
-      globallyDisabled = true;
-      console.warn(`[omem] 思考过程气泡不可用，已停用（不影响回复）：${msg}`);
+      disabledUntil = Date.now() + DISABLE_MS;
+      console.warn(`[omem] 思考过程气泡不可用，30 分钟内不再尝试（不影响回复）：${msg}`);
     }
   } finally {
     st.pumping = false;
@@ -258,7 +261,7 @@ function schedule(app: App, runId: string, st: State, delay = 700) {
 /** Begin the bubble for a turn, anchored to the message that started it (so it lands in the topic). */
 /** `title`: a first line saying whose process this is (an agent's round in a work topic). */
 export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean; title?: string }) {
-  if (!sdk || globallyDisabled || states.has(runId)) return false;
+  if (!sdk || Date.now() < disabledUntil || states.has(runId)) return false;
   const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: at.title ? [{ kind: "reasoning", text: `${at.title}\n\n` }] : [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, settled: false, prologueSent: false, proven: false, timers: [] };
   states.set(runId, st);
   schedule(app, runId, st, 300);

@@ -71,9 +71,9 @@ function checkProfile(ctx: ToolContext, name: string) {
 async function autoTurnGuard(ctx: ToolContext, work: import("./agent-work.ts").AgentWork) {
   const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
   if (!origin || !(JSON.parse(origin.input) as { coordinate?: unknown }).coordinate) return;
-  const { autoTurnsSinceOwner, MAX_AUTO_TURNS } = await import("./agent-work.ts");
-  if (autoTurnsSinceOwner(ctx.app, work) > MAX_AUTO_TURNS)
-    throw new HttpError(429, `本人上次说话以后已经自动推进了 ${MAX_AUTO_TURNS} 次：这一轮不要再交办，向本人汇报进展和下一步建议，等本人回复。`);
+  const { autoTurnsSinceOwner, maxAutoTurns } = await import("./agent-work.ts");
+  if (autoTurnsSinceOwner(ctx.app, work) > maxAutoTurns(ctx.app))
+    throw new HttpError(429, `本人上次说话以后已经自动推进了 ${maxAutoTurns(ctx.app)} 次：这一轮不要再交办，向本人汇报进展和下一步建议，等本人回复。`);
 }
 
 /** Roles that write memories from material on their own; they must say where each one comes from. */
@@ -1465,6 +1465,14 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
     return `已作为草稿发给本人确认（还没有发出）。`;
   }
   const sent = await send.sendLark(target, content);
+  // A rule's silent agent that spoke in a topic follows it: replies there come back to it.
+  if (ctx.runId && chat && sent.threadId) {
+    const input = (getRun(ctx.app, ctx.runId).input ?? {}) as { silent?: unknown; rule?: { id: string }; spec?: string };
+    if (input.silent && input.rule && input.spec) {
+      const { followTopic } = await import("../rules/context.ts");
+      followTopic(ctx.app, { ruleId: input.rule.id, runId: ctx.runId, spec: input.spec, chatId: chat, topicId: sent.threadId });
+    }
+  }
   if (opts.waitForAction)
     send.recordInteraction(ctx.app, { messageId: sent.messageId, chatId: chat, conversationId: runThread(ctx), runId: ctx.runId, purpose: "agent", allowed: opts.allowed ?? [], payload: {} });
   return `已发送 ${sent.messageId}${sent.threadId ? `（话题 ${sent.threadId}）` : ""}`;

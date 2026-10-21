@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { App } from "../core/app.ts";
 import { all, run } from "../core/db.ts";
-import { type CodeChain, saveCodeChain, trySettleCodeChain, MAX_AUTO_ROUNDS } from "../agents/code-chain.ts";
+import { type CodeChain, saveCodeChain, trySettleCodeChain, maxCodeRounds } from "../agents/code-chain.ts";
 import { getThread } from "../agents/threads.ts";
 import { getRun } from "../agents/runs.ts";
 import { buildCard, sendLark, updateLarkCard, larkClient, type CardBlock } from "./lark-send.ts";
@@ -58,7 +58,7 @@ function snapshot(app: App, chain: CodeChain) {
     ? approved ? "完成，评审通过"
       : latest.status !== "done" ? `运行${latest.status}，等本人处理`
       : latest.output.verdict === "no-changes" ? "未产生改动，等本人处理"
-      : `评审要求修改${chain.round >= MAX_AUTO_ROUNDS ? "，已到自动推进上限" : ""}，等本人处理`
+      : `评审要求修改${chain.round >= maxCodeRounds(app) ? "，已到自动推进上限" : ""}，等本人处理`
     : latest.status === "queued" ? "已安排下一轮（复用原工作区和编码会话）" : "进行中";
   const events = all<{ type: string; data: string }>(app.db, "select type,data from run_events where run_id=? and type in ('status','text','tool') order by seq desc limit 12", latest.id).reverse();
   const lines = events.map((e) => {

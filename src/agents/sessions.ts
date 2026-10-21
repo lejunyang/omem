@@ -10,7 +10,7 @@ import { findAgentSpec } from "./specs.ts";
 import { describeThread, findThread, getThread, threadMessages, updateThread, type Thread, type ThreadMessage } from "./threads.ts";
 import { retargetToolToken, revokeToolToken } from "./tools.ts";
 import { replyOf, type AgentEvent } from "./types.ts";
-import { autoTurnsSinceOwner, MAX_AUTO_TURNS, refreshWork } from "./agent-work.ts";
+import { autoTurnsSinceOwner, maxAutoTurns, refreshWork } from "./agent-work.ts";
 
 /**
  * Agent sessions behind threads. Three levels of continuity, cheapest first:
@@ -168,9 +168,9 @@ function coordinationNote(app: App, workId: string, messages: ThreadMessage[]) {
     "3. 卡住了（缺权限、缺信息、需要本人选择或授权）：说清卡在哪、要本人做什么、有哪些选项和你的建议。",
     "4. Agent 失败了：能换个做法或换个 Agent 就重试，不能就说明原因。",
     "",
-    done >= MAX_AUTO_TURNS
-      ? `本人上次说话以后你已经自动推进了 ${done} 次（上限 ${MAX_AUTO_TURNS}）：这一轮不要再交办，汇报进展和下一步建议，问本人是否继续。`
-      : `本人上次说话以后这是你第 ${done + 1} 次自动推进（上限 ${MAX_AUTO_TURNS}）。`,
+    done >= maxAutoTurns(app)
+      ? `本人上次说话以后你已经自动推进了 ${done} 次（上限 ${maxAutoTurns(app)}，本人可在设置里改）：这一轮不要再交办，汇报进展和下一步建议，问本人是否继续。本人回复“继续”后计数重新开始。`
+      : `本人上次说话以后这是你第 ${done + 1} 次自动推进（上限 ${maxAutoTurns(app)}）。`,
   ].join("\n");
 }
 

@@ -3,7 +3,7 @@ import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { __testHandlers as handlers, createRun, getRun, startWorker } from "../src/agents/runs.ts";
 import { addMessage, createThread, threadMessages } from "../src/agents/threads.ts";
 import { saveAgentSpec } from "../src/agents/specs.ts";
-import { autoTurnsSinceOwner, MAX_AUTO_TURNS, workContext, workDeliveryTarget, workInConversation, type AgentWork } from "../src/agents/agent-work.ts";
+import { autoTurnsSinceOwner, maxAutoTurns, workContext, workDeliveryTarget, workInConversation, type AgentWork } from "../src/agents/agent-work.ts";
 import { deliverCoordination } from "../src/agents/jobs.ts";
 import { replyFromSegments } from "../src/agents/types.ts";
 import { localPathLinks } from "../src/channels/common.ts";
@@ -87,6 +87,8 @@ describe("multi-agent work", () => {
   }, 60000);
 
   it("keeps the loop going on its own and stops at the cap until the owner speaks", async () => {
+    // The cap is a setting (agents.autoAdvance.turns).
+    app.config.agents.autoAdvance = { ...app.config.agents.autoAdvance, turns: 3 };
     const results: string[] = [];
     const restore = stubHandlers(app, async (tctx) => {
       const r = await callTool(tctx, "continue_agent_work", { task: "继续往下查" });
@@ -100,6 +102,7 @@ describe("multi-agent work", () => {
       const ctx: ToolContext = { app, runId: ask.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", userId: "owner" };
       await callTool(ctx, "run_agent", { name: "researcher-z", own_topic: true, task: "第一轮" });
       const w = await settle(app, ask.id, 40000);
+      const MAX_AUTO_TURNS = maxAutoTurns(app);
       expect(results.slice(0, MAX_AUTO_TURNS)).toEqual(Array(MAX_AUTO_TURNS).fill("ok"));
       expect(results[MAX_AUTO_TURNS]).toMatch(/^ERR .*已经自动推进了/);
       expect(w.rounds.length).toBe(MAX_AUTO_TURNS + 1);

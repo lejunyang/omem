@@ -183,7 +183,8 @@ export function refreshWork(app: App, askRunId: string): AgentWork | null {
  * After this many coordination turns without the owner saying anything in the work, the main
  * assistant has to stop and report instead of handing out another round.
  */
-export const MAX_AUTO_TURNS = 6;
+/** How many times the main assistant may hand the work on by itself after the owner last spoke (config agents.autoAdvance.turns). */
+export const maxAutoTurns = (app: App) => app.config.agents.autoAdvance.turns;
 
 /** Coordination turns the main assistant took since the owner last spoke in the work conversation. */
 export function autoTurnsSinceOwner(app: App, work: AgentWork): number {

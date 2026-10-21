@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { codeChainFor, codeChainRounds, queueNextCodeRound, MAX_AUTO_ROUNDS } from "../src/agents/code-chain.ts";
+import { codeChainFor, codeChainRounds, queueNextCodeRound, maxCodeRounds } from "../src/agents/code-chain.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { run } from "../src/core/db.ts";
@@ -46,10 +46,13 @@ describe("delegated coding chains", () => {
 
   it("stops queuing automatic rounds after the limit, and never while waiting for the owner", () => {
     const { app, code } = fixture();
+    // The limit is a setting (agents.autoAdvance.codeRounds).
+    app.config.agents.autoAdvance = { ...app.config.agents.autoAdvance, codeRounds: 4 };
+    const MAX_AUTO_ROUNDS = maxCodeRounds(app);
     let chain = codeChainFor(app, getRun(app, code.id))!;
     setRunOutput(app, code.id, { coderSessionId: "s" });
     let prev = code.id;
-    // Round 1 exists; rounds 2..MAX_AUTO_ROUNDS are queued automatically, the next attempt stops.
+    // Round 1 exists; rounds up to the limit are queued automatically, the next attempt stops.
     for (let i = 2; i <= MAX_AUTO_ROUNDS + 1; i++) {
       const next = queueNextCodeRound(app, chain, `第 ${i} 轮意见`, { resumeSessionId: "s" });
       if (i <= MAX_AUTO_ROUNDS) expect(next).not.toBeNull();

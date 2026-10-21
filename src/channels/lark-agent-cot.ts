@@ -31,7 +31,7 @@ export function watchAgentBubbles(app: App) {
 
 /** The conversation a background run works for, and how to title its bubble. */
 function placeOf(app: App, r: Run): { conversationId: string; title: string } | null {
-  const input = r.input as { spec?: string; task?: string; threadId?: string; conversationId?: string; coordinate?: unknown; consultOf?: string | null; askedBy?: string };
+  const input = r.input as { spec?: string; task?: string; threadId?: string; conversationId?: string; coordinate?: unknown; consultOf?: string | null; askedBy?: string; replyAt?: { chatId: string; messageId: string } };
   const task = truncate((input.task ?? "").split("\n").find((l) => l.trim() && !l.startsWith("#")) ?? "", 60);
   if (r.kind === "agent" && input.threadId) return { conversationId: input.threadId, title: `**${input.spec}** 开始：${task}` };
   if (r.kind === "agent" && input.consultOf) {
@@ -47,6 +47,9 @@ function placeOf(app: App, r: Run): { conversationId: string; title: string } | 
 }
 
 function start(app: App, r: Run) {
+  // A rule's agent answering under the triggering message: its bubble opens the topic there.
+  const at = (r.input as { replyAt?: { chatId: string; messageId: string }; spec?: string }).replyAt;
+  if (r.kind === "agent" && at) return startCot(app, r.id, { chatId: at.chatId, originMessageId: at.messageId, inThread: true, title: `**${(r.input as { spec?: string }).spec}** 处理这条消息` });
   const place = placeOf(app, r);
   if (!place) return false;
   const t = findThread(app, place.conversationId);

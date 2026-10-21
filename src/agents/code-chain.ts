@@ -4,6 +4,7 @@ import { HttpError, newId, now } from "../core/util.ts";
 import { getThread } from "./threads.ts";
 import type { Run } from "./runs.ts";
 import { createRun, getRun, setRunOutput } from "./runs.ts";
+import { refreshWork, workForChild } from "./agent-work.ts";
 
 /**
  * A delegated coding run reports back to the conversation that requested it, and keeps going
@@ -65,7 +66,8 @@ export function saveCodeChain(app: App, chain: CodeChain, ...runIds: string[]) {
   }
 }
 
-export const MAX_AUTO_ROUNDS = 3;
+/** Rounds a coding delegation runs before the reviewer's requests wait for the owner (config agents.autoAdvance.codeRounds). */
+export const maxCodeRounds = (app: App) => app.config.agents.autoAdvance.codeRounds;
 
 /**
  * Queue another coding round in the same chain: same repositories and check commands, the same
@@ -78,7 +80,7 @@ export function queueNextCodeRound(
   task: string,
   opts: { resumeSessionId?: string; manual?: boolean } = {},
 ): { run: Run; chain: CodeChain } | null {
-  // Round 1 + at most MAX_AUTO_ROUNDS-1 automatic continuations; further rounds need continue_code_run.
+  // Round 1 + automatic continuations up to maxCodeRounds; further rounds need continue_code_run.
   // Reload under a write lock: stale callers and separate MCP processes cannot queue duplicates.
   const expectedLastRunId = chain.lastCodeRunId;
   app.db.exec("BEGIN IMMEDIATE");
@@ -89,7 +91,7 @@ export function queueNextCodeRound(
       throw new HttpError(409, "原交办已应用或丢弃，工作区已释放，不能续轮");
     if (opts.manual && ["queued", "running"].includes(current.status))
       throw new HttpError(409, `第 ${chain.round} 轮 ${current.id} 仍为 ${current.status}，不能重复启动`);
-    if (!opts.manual && (chain.awaitingUser || chain.round >= MAX_AUTO_ROUNDS)) return null;
+    if (!opts.manual && (chain.awaitingUser || chain.round >= maxCodeRounds(app))) return null;
     if (!opts.manual && current.id !== expectedLastRunId) return null;
     if (!opts.manual && current.status !== "running" && current.status !== "done") return null;
     const last = one<{ space_id: string | null; input: string }>(app.db, "select space_id, input from runs where id = ?", chain.lastCodeRunId!);
@@ -157,7 +159,7 @@ export function settleCodeChain(app: App, runId: string) {
       saveCodeChain(app, next, next.askRunId, ...next.rounds);
     } else {
       const next = setChainAwaitingUser(app, chain, true);
-      next.waitReason = r.status !== "done" ? "failed" : r.output.verdict === "no-changes" ? "no-changes" : chain.round >= MAX_AUTO_ROUNDS ? "auto-limit" : "review";
+      next.waitReason = r.status !== "done" ? "failed" : r.output.verdict === "no-changes" ? "no-changes" : chain.round >= maxCodeRounds(app) ? "auto-limit" : "review";
       saveCodeChain(app, next, next.askRunId, ...next.rounds);
     }
     // The originating assistant can consume the result on its next turn. Do not wake a
@@ -205,26 +207,22 @@ function wakeAssistantForCodeResult(app: App, runId: string) {
   const chain = r.output.codeChain as CodeChain | undefined;
   const messageId = r.output.codeResultMessageId as string | undefined;
   if (!chain || !messageId || r.output.codeResultHandedOff || chain.lastCodeRunId !== r.id) return;
+  // An automatic next round is already queued: nothing to tell yet.
+  if (r.status === "done" && r.output.verdict === "changes-requested" && chain.round < maxCodeRounds(app) && !chain.awaitingUser) return;
+  setRunOutput(app, runId, { codeResultHandedOff: true });
   // The owner moved this work to another conversation (new Feishu topic): the handoff goes there.
   let conversationId = chain.conversationId;
   let movedMessageId = messageId;
-  {
-    const { refreshWork, workForChild } = require("./agent-work.ts") as { refreshWork: (a: App, id: string) => import("./agent-work.ts").AgentWork | null; workForChild: (a: App, r: Run) => import("./agent-work.ts").AgentWork | null };
-    const work = workForChild(app, r) ?? (chain.askRunId ? refreshWork(app, chain.askRunId) : null);
-    if (work?.workConversationId && work.workConversationId !== chain.conversationId) {
-      conversationId = work.workConversationId;
-      const handoffText = one<{ text?: string }>(app.db, "select text from messages where id = ?", messageId)?.text;
-      if (handoffText) {
-        const { newId: nid, now: nowf } = require("../core/util.ts") as { newId: () => string; now: () => string };
-        movedMessageId = nid();
-        run(app.db, "insert into messages(id,conversation_id,role,text,run_id,meta,created_at) values(?,?,?,?,?,?,?)",
-          movedMessageId, conversationId, "assistant", handoffText, r.id, JSON.stringify({ codeResult: r.id, record: true, movedFrom: chain.conversationId }), nowf());
-      }
+  const work = workForChild(app, r) ?? (chain.askRunId ? refreshWork(app, chain.askRunId) : null);
+  if (work?.workConversationId && work.workConversationId !== chain.conversationId) {
+    conversationId = work.workConversationId;
+    const handoffText = one<{ text?: string }>(app.db, "select text from messages where id = ?", messageId)?.text;
+    if (handoffText) {
+      movedMessageId = newId();
+      run(app.db, "insert into messages(id,conversation_id,role,text,run_id,meta,created_at) values(?,?,?,?,?,?,?)",
+        movedMessageId, conversationId, "assistant", handoffText, r.id, JSON.stringify({ codeResult: r.id, record: true, movedFrom: chain.conversationId }), now());
     }
   }
-  // An automatic next round is already queued: nothing to tell yet.
-  if (r.status === "done" && r.output.verdict === "changes-requested" && chain.round < MAX_AUTO_ROUNDS && !chain.awaitingUser) return;
-  setRunOutput(app, runId, { codeResultHandedOff: true });
   createRun(app, {
     kind: "ask",
     spaceId: getThread(app, conversationId).spaceId,

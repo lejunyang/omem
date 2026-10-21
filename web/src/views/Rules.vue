@@ -16,8 +16,9 @@ import { fmtTime, relTime, toast } from "../store";
  * conditions are what the host evaluates, the model writes them and judges what they cannot say.
  */
 type Reply = "none" | "draft" | "auto";
+type Unless = "owner-engaged" | "answered";
 type Action =
-  | { type: "agent"; spec: string; task: string; ownTopic: boolean; reply: Reply }
+  | { type: "agent"; spec: string; task: string; ownTopic: boolean; reply: Reply | "silent" }
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
   | { type: "invite-bot" }
   | { type: "capture" }
@@ -27,7 +28,7 @@ type Rule = {
   name: string;
   description: string;
   enabled: boolean;
-  trigger: { event: "message" | "chat-new" | "schedule"; once: "event" | "chat"; cron?: string };
+  trigger: { event: "message" | "chat-new" | "schedule"; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[] };
   conditions: Condition | null;
   judge: "code" | "ai" | "code+ai";
   actions: Action[];
@@ -53,7 +54,7 @@ const dirty = ref(false);
 const saving = ref(false);
 const drafting = ref(false);
 
-const blank = (): Rule => ({ name: "", description: "", enabled: false, trigger: { event: "message", once: "event" }, conditions: null, judge: "code", actions: [{ type: "notify", urgent: false }] });
+const blank = (): Rule => ({ name: "", description: "", enabled: false, trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] }, conditions: null, judge: "code", actions: [{ type: "notify", urgent: false }] });
 
 async function loadList() {
   try {
@@ -152,6 +153,13 @@ const replyOptions = [
   { value: "draft", label: "先给我看" },
   { value: "auto", label: "直接回复" },
 ];
+const agentReplyOptions = [...replyOptions, { value: "silent", label: "静默排查" }];
+const REPLY_HINT: Record<string, string> = {
+  none: "结论只发给你，群里不出现任何东西。",
+  draft: "它要在群里说的话先变成给你确认的草稿。",
+  auto: "直接在群里（或它的话题里）回复，思考气泡可见。",
+  silent: "群里看不到过程；它读完讨论自己判断要不要发、要不要追问缺的信息，有结论才在话题里发，之后跟进这个话题，你一插话它就停。",
+};
 const specOptions = computed(() => options.value.specs.map((s) => ({ value: s.name, label: s.name, hint: s.description })));
 const addPick = ref<string | null>(null);
 function addAction(type: string | null) {
@@ -270,7 +278,14 @@ function startFrom(text: string) {
             <UiSegmented v-if="form.trigger.event === 'message'" v-model="form.trigger.once" size="sm" :options="[{ value: 'event', label: '每条消息' }, { value: 'chat', label: '每个群只一次' }]" aria-label="触发次数" @change="touch" />
             <input v-if="form.trigger.event === 'schedule'" v-model="form.trigger.cron" class="input sm mono cron" placeholder="0 9 * * 1-5" aria-label="cron" @input="touch" />
           </div>
-          <small class="muted">“每个群只一次”适合拉机器人、开始监听这类对一个群做一次就够的事。新消息来自机器人所在群的实时消息和你自己的飞书采集（同一条只处理一次）。</small>
+          <div v-if="form.trigger.event === 'message'" class="row wrap">
+            <label class="row inline small">命中后等
+              <input v-model.number="form.trigger.waitMinutes" class="input sm num" type="number" inputmode="numeric" min="0" max="1440" aria-label="等待分钟" @input="touch" />
+              分钟再处理</label>
+            <UiCheckbox v-model="form.trigger.unless" value="owner-engaged" size="sm" @change="touch">我已在这段讨论里就跳过</UiCheckbox>
+            <UiCheckbox v-model="form.trigger.unless" value="answered" size="sm" @change="touch">已有人回复就跳过</UiCheckbox>
+          </div>
+          <small class="muted">“每个群只一次”适合拉机器人、开始监听这类对一个群做一次就够的事。新消息来自机器人所在群的实时消息和你自己的飞书采集（同一条只处理一次）。等几分钟再处理、跳过的两项在要动手时看一眼这段讨论（话题，或群里前后半小时）：你在话题里说过话或半小时内在群里说过话算“已在讨论里”。</small>
         </section>
 
         <section v-if="form.trigger.event !== 'schedule'" class="block">
@@ -292,9 +307,10 @@ function startFrom(text: string) {
             <template v-if="a.type === 'agent'">
               <div class="row wrap">
                 <UiSelect v-model="a.spec" size="sm" width="200px" :options="specOptions" placeholder="选择 Agent 档案" aria-label="Agent" @change="touch" />
-                <UiSegmented v-model="a.reply" size="sm" :options="replyOptions" aria-label="回复方式" @change="touch" />
-                <UiCheckbox v-if="!scheduleOnly" v-model="a.ownTopic" size="sm" :disabled="a.reply === 'none'" @change="touch">在消息下开话题</UiCheckbox>
+                <UiSegmented v-model="a.reply" size="sm" :options="scheduleOnly ? replyOptions : agentReplyOptions" aria-label="回复方式" @change="touch" />
+                <UiCheckbox v-if="!scheduleOnly && a.reply !== 'silent'" v-model="a.ownTopic" size="sm" :disabled="a.reply === 'none'" @change="touch">在消息下开话题</UiCheckbox>
               </div>
+              <small class="muted">{{ REPLY_HINT[a.reply] }}</small>
               <textarea v-model="a.task" class="input" rows="2" placeholder="交给它的要求（触发的消息会自动附上），例如：分析报警，需要关注就 @ 值班人" @input="touch" />
             </template>
             <template v-else-if="a.type === 'watch'">
@@ -450,6 +466,12 @@ function startFrom(text: string) {
 .wrap {
   flex-wrap: wrap;
   gap: 8px;
+}
+.num {
+  width: 72px;
+}
+.inline {
+  gap: 6px;
 }
 .cron {
   width: 160px;

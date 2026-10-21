@@ -4,6 +4,8 @@ import { json, now } from "../core/util.ts";
 import { runActions } from "./actions.ts";
 import { aiJudge, eventSummary } from "./compile.ts";
 import { describe, evaluate, eventReader, type ChatBot } from "./conditions.ts";
+import { createRun } from "../agents/runs.ts";
+import { discussion, discussionText, engagement, followedTopic, unfollowTopic, type Followed } from "./context.ts";
 import { claimEvent, listRules, recordFiring } from "./store.ts";
 import { ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./types.ts";
 
@@ -46,14 +48,93 @@ function keyFor(rule: Rule, e: RuleEvent) {
 }
 
 async function consider(app: App, rule: Rule, e: RuleEvent) {
+  // A topic this rule's silent agent spoke in: new messages there go back to it.
+  const followed = e.kind === "message" && e.chat ? followedTopic(app, e.chat.id, e.message?.topicId) : null;
+  if (followed?.ruleId === rule.id) return continueFollowed(app, rule, followed, e);
   const key = keyFor(rule, e);
   if (one(app.db, "select 1 from rule_handled where rule_id = ? and key = ?", rule.id, key)) return;
-  const d = await judge(app, rule, e);
+  const waits = rule.trigger.waitMinutes > 0 || rule.trigger.unless.length > 0;
+  // Without a wait or an engagement check the model judges right away, as before; with them the
+  // conditions narrow it down now and the model looks at the discussion when it is time to act.
+  const d = await judge(app, rule, e, { ai: waits ? false : undefined });
   if (!d.match) return;
   // Both the bot and the capture may bring the same message: whoever claims it first fires.
   if (!claimEvent(app, rule.id, key)) return;
+  if (rule.trigger.waitMinutes > 0) {
+    createRun(app, {
+      kind: "rule-fire",
+      title: `规则「${rule.name}」：${rule.trigger.waitMinutes} 分钟后看有没有人回应`,
+      input: { ruleId: rule.id, key, event: e },
+      notBefore: new Date(Date.now() + rule.trigger.waitMinutes * 60_000).toISOString(),
+    });
+    return;
+  }
+  if (waits) {
+    await act(app, rule, e, key);
+    return;
+  }
   const results = await runActions(app, rule, e, d.reason);
   recordFiring(app, { ruleId: rule.id, eventKey: key, summary: eventSummary(e), judgedBy: d.by, reason: d.reason, results });
+}
+
+/** A waiting rule's time is up (run kind rule-fire). */
+export async function fireAfterWait(app: App, ruleId: string, key: string, e: RuleEvent) {
+  const rule = listRules(app, { enabledOnly: true }).find((r) => r.id === ruleId);
+  if (!rule) return { summary: "规则已停用或删除，没有执行" };
+  return { summary: await act(app, rule, e, key) };
+}
+
+/**
+ * Time to act on a matched event: skip when the owner is already in the discussion or someone
+ * answered (as the rule asks), let the model judge with the discussion in view, then run the actions
+ * with the discussion attached. Returns what happened, for the run log.
+ */
+async function act(app: App, rule: Rule, e: RuleEvent, key: string) {
+  const said = e.message ? await discussion(app, e) : [];
+  const talk = discussionText(e, said);
+  const skip = (why: string) => {
+    recordFiring(app, { ruleId: rule.id, eventKey: key, summary: eventSummary(e), judgedBy: "code", reason: why, results: [{ action: "skip", ok: true, detail: why }] }, { skipped: true });
+    return `跳过：${why}`;
+  };
+  const g = engagement(e, said);
+  if (rule.trigger.unless.includes("owner-engaged") && g.ownerEngaged) return skip("本人已经在这段讨论里");
+  if (rule.trigger.unless.includes("answered") && g.answered) return skip("已经有人回复");
+  let by: Decision["by"] = "code";
+  let reason = rule.conditions ? describe(rule.conditions) : "";
+  if (rule.judge !== "code") {
+    if (!takeAiBudget(rule.id)) return skip(`这一小时已请模型判断 ${AI_PER_HOUR} 次`);
+    const v = await aiJudge(app, rule, e, talk);
+    // Not a match is the usual answer for a model-judged rule: not logged, like before.
+    if (!v?.match) return `模型判断不处理：${v?.reason ?? "没有给出判断"}`;
+    by = rule.judge;
+    reason = v.reason;
+  }
+  const results = await runActions(app, rule, e, reason, { discussion: talk });
+  recordFiring(app, { ruleId: rule.id, eventKey: key, summary: eventSummary(e), judgedBy: by, reason, results });
+  return results.map((r) => `${r.action}：${r.detail}`).join("；");
+}
+
+/**
+ * A new message in a topic this rule's silent agent spoke in (a question it asked, an answer it
+ * gave): the agent picks the topic up again, in its own session, a minute later so a burst of
+ * replies arrives together. Once the owner speaks there it is the owner's, and the agent lets go.
+ */
+async function continueFollowed(app: App, rule: Rule, f: Followed, e: RuleEvent) {
+  const key = `follow:${e.key}`;
+  if (!claimEvent(app, rule.id, key)) return;
+  if (e.sender?.kind === "owner") {
+    unfollowTopic(app, f.chatId, f.topicId);
+    const why = "本人接手了这个话题，Agent 不再跟进";
+    recordFiring(app, { ruleId: rule.id, eventKey: key, summary: eventSummary(e), judgedBy: "code", reason: why, results: [{ action: "skip", ok: true, detail: why }] }, { skipped: true });
+    return;
+  }
+  const lane = `follow:${f.chatId}#${f.topicId}`;
+  // One pickup at a time: a queued one reads this message too.
+  if (one(app.db, "select 1 from runs where lane = ? and status = 'queued'", lane)) return;
+  const said = await discussion(app, e);
+  const { followUp } = await import("./actions.ts");
+  const r = await followUp(app, rule, f, e, discussionText(e, said), lane);
+  recordFiring(app, { ruleId: rule.id, eventKey: key, summary: eventSummary(e), judgedBy: "code", reason: "Agent 跟进的话题有新消息", results: [r] });
 }
 
 type Decision = { match: boolean; by: "code" | "ai" | "code+ai" | "limit"; reason: string };

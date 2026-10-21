@@ -208,7 +208,7 @@ ${input.task}
   const checked = results.filter((r) => r.check);
   const statTextLine = results.map((r) => (multi ? `${r.space}：` : "") + (r.diffStat.split("\n").pop() ?? "")).join("\n");
   const checksLine = checked.length ? `\n检查：${checked.some((r) => r.check!.code !== 0) ? "失败" : "通过"}` : "";
-  const { queueNextCodeRound, MAX_AUTO_ROUNDS } = await import("./code-chain.ts");
+  const { queueNextCodeRound, maxCodeRounds } = await import("./code-chain.ts");
   const endChain = (getRun(app, run.id).output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? chain;
   if (!approved) {
     // Keep the same delegation going: the coder resumes its session and works the reviewer's request.
@@ -226,7 +226,7 @@ ${input.task}
     const { workForChild } = await import("./agent-work.ts");
     const work = workForChild(app, run);
     notify(app, {
-      title: `${approved ? "交办完成，评审通过" : `交办第 ${endChain?.round ?? 1} 轮评审要求修改（已到自动推进上限 ${MAX_AUTO_ROUNDS} 轮，等本人决定）`}：${run.title}`,
+      title: `${approved ? "交办完成，评审通过" : `交办第 ${endChain?.round ?? 1} 轮评审要求修改（已到自动推进上限 ${maxCodeRounds(app)} 轮，等本人决定）`}：${run.title}`,
       body: `${statTextLine}${checksLine}`,
       link: `#/runs/${run.id}`,
       // Inside a multi-agent work the nudge belongs to the work's current topic, not a private DM.

@@ -24,7 +24,7 @@ import { startProgress } from "./lark-progress.ts";
 import { cotAvailable, cotEvent, cotLiveFor, finishCot, setCotSdk, startCot } from "./lark-cot.ts";
 import { watchAgentBubbles } from "./lark-agent-cot.ts";
 import { handleCardAction } from "./lark-actions.ts";
-import { sendLark, setLarkClient } from "./lark-send.ts";
+import { reactLark, sendLark, setLarkClient, unreactLark } from "./lark-send.ts";
 import { larkAppSecret } from "./lark-setup.ts";
 import { routeWatchedMessages } from "./lark-watch.ts";
 
@@ -276,18 +276,17 @@ export async function startLarkBot(app: App) {
     const inThread = (() => {
       const cid = (n as { larkConversationId?: string }).larkConversationId;
       if (!cid) return null;
-      const t = one<{ key: string | null }>(app.db, "select key from conversations where id = ?", cid);
-      if (!t?.key) return null;
-      const [chatId, topic] = t.key.split("#");
-      const last = one<{ value: string }>(app.db, "select json_extract(settings, '$.lastMessageId') value from conversations where id = ?", cid)?.value;
-      return { chatId, inThread: !!topic, replyTo: last };
+      const t = one<{ external_id: string | null; last: string | null }>(app.db, "select external_id, json_extract(settings, '$.lastMessageId') last from conversations where id = ? and channel = 'lark'", cid);
+      if (!t?.external_id) return null;
+      const [chatId, topic] = t.external_id.split("#");
+      return { chatId, inThread: !!topic, replyTo: t.last ?? undefined };
     })();
     const target = inThread
       ? (inThread.replyTo ? { replyTo: inThread.replyTo, inThread: inThread.inThread } : { chatId: inThread.chatId })
       : n.userId === OWNER
         ? (kv(app, "lark_owner_chat") ? { chatId: kv(app, "lark_owner_chat")! } : cfg.ownerOpenId ? { userId: cfg.ownerOpenId } : null)
         : { userId: identitiesOf(app, n.userId).find((i) => i.channel === "lark")?.external_id ?? "" };
-    if (!target || (!("userId" in target) && !("chatId" in target)) || ("userId" in target && !target.userId)) return;
+    if (!target || (!("userId" in target) && !("chatId" in target) && !("replyTo" in target)) || ("userId" in target && !target.userId)) return;
     // Push policy: non-urgent nudges stay in-app at night; and when the triggering message is
     // already read by the owner, the change has been seen — no ping (urgent always pushes).
     if (n.urgency !== "urgent" && !n.scheduled && inQuietHours(app)) return;
@@ -425,6 +424,8 @@ export async function startLarkBot(app: App) {
     if (!text) return;
     let progress: Awaited<ReturnType<typeof startProgress>> | null = null;
     let runId: string | null = null;
+    /** The "处理中" reaction when the bubble shows the process and no progress card was sent. */
+    let working: string | undefined;
     try {
       const answer = await answerFromChannel(
         app,
@@ -449,21 +450,24 @@ export async function startLarkBot(app: App) {
             // A run can be queued behind another turn in this thread; only start the
             // bubble/progress once it actually runs, otherwise the cards sit frozen while
             // the user waits on a previous turn.
-            const begin = () => {
-              // Native collapsible thinking bubble (message_cot) when available; the
-              // progress card is its fallback and hides process detail once it proves live.
-              if (cotAvailable()) {
-                startCot(app, id, { chatId: m.chatId, originMessageId: m.messageId, inThread: !!m.topicId });
-                const listener = (e: { type: string; runId?: string; event?: { type: string; data: unknown } }) => {
-                  if (e.runId !== id || !e.event) return;
-                  cotEvent(app, id, { type: e.event.type, data: e.event.data });
-                  if (cotLiveFor(id)) progress?.setMinimal(true);
-                };
-                app.events.on("event", listener);
-                const t = setTimeout(() => app.events.off("event", listener), 30 * 60_000);
-                t.unref();
-              }
-              return startProgress(app, { messageId: m.messageId, inThread: !!m.topicId }, id).then((p) => { progress = p; }).catch(() => {});
+            const card = () => startProgress(app, { messageId: m.messageId, inThread: !!m.topicId }, id).then((p) => { progress = p; }).catch(() => {});
+            const begin = async () => {
+              // Native collapsible thinking bubble (message_cot) when available: it shows the
+              // process, and the answer comes as its own message when it is ready. The progress
+              // card is only the fallback, for when the bubble has not shown anything after a while.
+              if (!cotAvailable() || !startCot(app, id, { chatId: m.chatId, originMessageId: m.messageId, inThread: !!m.topicId })) return card();
+              const listener = (e: { type: string; runId?: string; event?: { type: string; data: unknown } }) => {
+                if (e.runId !== id || !e.event) return;
+                cotEvent(app, id, { type: e.event.type, data: e.event.data });
+                if (cotLiveFor(id)) progress?.setMinimal(true);
+              };
+              app.events.on("event", listener);
+              const t = setTimeout(() => app.events.off("event", listener), 30 * 60_000);
+              t.unref();
+              working = await reactLark(m.messageId, "OnIt").catch(() => undefined);
+              setTimeout(() => {
+                if (!cotLiveFor(id) && getRun(app, id).status === "running") void card();
+              }, 15_000).unref();
             };
             const st = getRun(app, id).status;
             if (st === "running") void begin();
@@ -501,6 +505,10 @@ export async function startLarkBot(app: App) {
       if (runId) finishCot(app, runId, true);
       const p = progress as Awaited<ReturnType<typeof startProgress>> | null;
       const sentId = p ? (await p.finish(answer), p.messageId) : (await reply(m.chatId, answer, m.messageId, !!m.topicId)).messageId;
+      if (working) {
+        await unreactLark(m.messageId, working).catch(() => {});
+        await reactLark(m.messageId, "DONE").catch(() => {});
+      }
       // A later quote of this reply reads back as an empty card; this maps it to the answer.
       if (runId && sentId) run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?) where run_id = ? and role = 'assistant'", sentId, runId);
     } catch (e) {

@@ -4,7 +4,10 @@ import { callTool } from "../src/agents/tools.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { listNotifications } from "../src/core/notify.ts";
 import { describe as describeCond, evaluate, eventReader } from "../src/rules/conditions.ts";
-import { dispatchRuleEvent, testRule } from "../src/rules/engine.ts";
+import { setLarkClient } from "../src/channels/lark-send.ts";
+import { issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
+import { followedTopic, setDiscussionForTests, type Said } from "../src/rules/context.ts";
+import { dispatchRuleEvent, fireAfterWait, testRule } from "../src/rules/engine.ts";
 import { deleteRule, getRule, listFirings, saveRule } from "../src/rules/store.ts";
 import type { Condition, RuleEvent } from "../src/rules/types.ts";
 import { testApp } from "./helpers.ts";
@@ -137,6 +140,118 @@ describe("rules", () => {
     expect((await callTool(main, "list_rules", {})).text).toMatch(/合同到期.*消息内容包含 合同到期/s);
     const spec = await callTool({ ...main, spec: "helper" }, "save_rule", { description: "x", rule: { conditions: null, judge: "ai", actions: [{ type: "notify" }] } });
     expect(spec.isError).toBe(true);
+    app.db.close();
+  });
+});
+
+describe("rules that read the discussion", () => {
+  const said = (over: Partial<Said>): Said => ({ id: "om_x", at: Date.now(), who: "小张", kind: "user", text: "", parentId: null, topicId: "omt_t", ...over });
+  const valueChat = { id: "oc_q", name: "项目 A 值班群", kind: "group" as const };
+  const inTopic = (id: string, over: Partial<RuleEvent["message"]> = {}, sender: RuleEvent["sender"] = { name: "小王", kind: "user" }) =>
+    msg({ id, topicId: "omt_t", type: "text", text: "@本人 这个接口 500 了", mentionsOwner: true, ...over }, valueChat, sender);
+  const agentRuns = (app: ReturnType<typeof testApp>) =>
+    all<{ id: string; input: string; lane: string | null; not_before: string | null }>(app.db, "select id, input, lane, not_before from runs where kind = 'agent' order by created_at, rowid");
+
+  it("waits, then skips when the owner is already in the discussion or someone answered", async () => {
+    const app = testApp();
+    saveAgentSpec(app, { name: "oncall-helper", description: "值班答疑", prompt: "答疑。" }, "user");
+    const r = saveRule(app, {
+      name: "值班没人理",
+      description: "值班群里有人 @ 我，10 分钟没人回、我也没在跟，就交给 oncall-helper 静默排查",
+      enabled: true,
+      trigger: { event: "message", once: "event", waitMinutes: 10, unless: ["owner-engaged", "answered"] },
+      conditions: { field: "message.mentionsOwner", op: "is", value: true },
+      judge: "code",
+      actions: [{ type: "agent", spec: "oncall-helper", task: "先查文档和历史", ownTopic: false, reply: "silent" }],
+    });
+    await dispatchRuleEvent(app, inTopic("om_1"));
+    // Nothing yet: a check is queued for ten minutes later.
+    const waiting = one<{ input: string; not_before: string }>(app.db, "select input, not_before from runs where kind = 'rule-fire'")!;
+    expect(Date.parse(waiting.not_before) - Date.now()).toBeGreaterThan(9 * 60_000);
+    expect(agentRuns(app)).toHaveLength(0);
+    const { event, key } = JSON.parse(waiting.input);
+
+    // Someone answered in the topic meanwhile: skipped, logged, not counted.
+    setDiscussionForTests(async () => [said({ id: "om_1", who: "小王", text: "@本人 这个接口 500 了", at: Date.now() - 60_000 }), said({ id: "om_2", who: "小李", text: "我看下，是发布导致的", at: Date.now() })]);
+    expect((await fireAfterWait(app, r.id, key, event)).summary).toMatch(/已经有人回复/);
+    expect(listFirings(app, r.id)[0].results[0]).toMatchObject({ action: "skip" });
+    expect(getRule(app, r.id).hits).toBe(0);
+
+    // The owner is talking in the topic: skipped too.
+    setDiscussionForTests(async () => [said({ id: "om_0", who: "我", kind: "owner", text: "我先看", at: Date.now() - 120_000 }), said({ id: "om_1", who: "小王", at: Date.now() - 60_000 })]);
+    expect((await fireAfterWait(app, r.id, key, event)).summary).toMatch(/本人已经在这段讨论里/);
+
+    // Nobody responded: the agent investigates silently, with the discussion in its task.
+    setDiscussionForTests(async () => [said({ id: "om_1", who: "小王", text: "@本人 这个接口 500 了", at: Date.now() - 60_000 })]);
+    await fireAfterWait(app, r.id, key, event);
+    const [a] = agentRuns(app);
+    const input = JSON.parse(a.input);
+    expect(input).toMatchObject({ spec: "oncall-helper", silent: { chatId: "oc_q", messageId: "om_1", topicId: "omt_t" }, lark: { chats: ["oc_q"], draft: false } });
+    expect(input.threadId).toBeUndefined();
+    expect(input.replyAt).toBeUndefined();
+    expect(input.task).toContain("→ [");
+    expect(input.task).toContain("这个接口 500 了");
+    expect(input.task).toContain("先查文档和历史");
+    expect(getRule(app, r.id).hits).toBe(1);
+    setDiscussionForTests(null);
+    app.db.close();
+  });
+
+  it("follows a topic its silent agent spoke in until the owner steps in", async () => {
+    const app = testApp();
+    saveAgentSpec(app, { name: "oncall-helper", description: "值班答疑", prompt: "答疑。" }, "user");
+    const r = saveRule(app, {
+      name: "值班",
+      description: "值班群 @ 我时静默排查",
+      enabled: true,
+      trigger: { event: "message", once: "event", waitMinutes: 0, unless: ["owner-engaged"] },
+      conditions: { field: "message.mentionsOwner", op: "is", value: true },
+      judge: "code",
+      actions: [{ type: "agent", spec: "oncall-helper", task: "", ownTopic: false, reply: "silent" }],
+    });
+    setDiscussionForTests(async () => []);
+    await dispatchRuleEvent(app, inTopic("om_1"));
+    const first = agentRuns(app)[0];
+    // The agent asks in the topic for what it is missing: posting there makes it follow the topic.
+    const calls: any[] = [];
+    setLarkClient({ im: { message: { get: async () => ({ code: 0, data: { items: [{ chat_id: "oc_q" }] } }), reply: async (args: any) => (calls.push(args), { code: 0, data: { message_id: "om_bot", thread_id: "omt_t" } }) } } });
+    const ctx = toolContextForToken(app, issueToolToken({ runId: first.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: ["oc_q"] }))!;
+    const sent = await callTool(ctx, "lark_send", { reply_to: "om_1", in_thread: true, text: "请贴一下报错的 trace id" });
+    expect(sent.isError).toBe(false);
+    expect(calls[0].data.reply_in_thread).toBe(true);
+    expect(followedTopic(app, "oc_q", "omt_t")).toMatchObject({ ruleId: r.id, runId: first.id, spec: "oncall-helper" });
+    run(app.db, "update runs set status = 'done', output = ? where id = ?", JSON.stringify({ sessionId: "sess-1" }), first.id);
+
+    // The reply (no @: the conditions would not match) goes back to the agent, in its session.
+    await dispatchRuleEvent(app, inTopic("om_3", { text: "trace id 是 abc", mentionsOwner: false }));
+    // A second reply right after does not start another pickup.
+    await dispatchRuleEvent(app, inTopic("om_4", { text: "还有截图", mentionsOwner: false }));
+    const runs = agentRuns(app);
+    expect(runs).toHaveLength(2);
+    expect(runs[1].lane).toBe("follow:oc_q#omt_t");
+    expect(Date.parse(runs[1].not_before!)).toBeGreaterThan(Date.now());
+    expect(JSON.parse(runs[1].input)).toMatchObject({ resumeSessionId: "sess-1", silent: { chatId: "oc_q" } });
+
+    // The owner speaks in the topic: it is theirs now.
+    await dispatchRuleEvent(app, inTopic("om_5", { text: "我来处理", mentionsOwner: false }, { name: "我", kind: "owner" }));
+    expect(followedTopic(app, "oc_q", "omt_t")).toBeNull();
+    expect(agentRuns(app)).toHaveLength(2);
+    setLarkClient(null);
+    setDiscussionForTests(null);
+    app.db.close();
+  });
+
+  it("opens the agent's topic without an announcement card", async () => {
+    const app = testApp();
+    saveAgentSpec(app, { name: "alert-analyst", description: "分析报警", prompt: "分析报警。" }, "user");
+    const r = saveRule(app, { name: "报警", description: "报警卡片开话题分析，直接回复", enabled: true, conditions: { field: "message.type", op: "equals", value: "interactive" }, judge: "code", actions: [{ type: "agent", spec: "alert-analyst", task: "", ownTopic: true, reply: "auto" }] });
+    const calls: any[] = [];
+    setLarkClient({ im: { message: { reply: async (args: any) => (calls.push(args), { code: 0, data: { message_id: "om_r", thread_id: "omt_new" } }) } } });
+    await dispatchRuleEvent(app, msg({ id: "om_card" }));
+    expect(calls).toHaveLength(0);
+    const input = JSON.parse(one<{ input: string }>(app.db, "select input from runs where id = ?", listFirings(app, r.id)[0].results[0].runId!)!.input);
+    expect(input.replyAt).toEqual({ chatId: "oc_alerts", messageId: "om_card" });
+    setLarkClient(null);
     app.db.close();
   });
 });

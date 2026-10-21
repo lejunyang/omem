@@ -264,6 +264,14 @@ async function saveQueueMinutes() {
   await saveConfig({ agents: { ...config.value.agents, queueTimeoutMinutes: v } }, `排队最多等待 ${v} 分钟`);
   void load();
 }
+async function saveAutoAdvance(key: "turns" | "codeRounds", raw: string) {
+  const [min, max, fallback] = key === "turns" ? [0, 50, 6] : [1, 20, 3];
+  const n = Number(raw);
+  const v = Number.isFinite(n) && raw.trim() !== "" ? Math.max(min, Math.min(max, Math.round(n))) : fallback;
+  const cur = config.value.agents.autoAdvance ?? { turns: 6, codeRounds: 3 };
+  await saveConfig({ agents: { ...config.value.agents, autoAdvance: { ...cur, [key]: v } } }, key === "turns" ? `多 Agent 自动推进最多 ${v} 次` : `编码交办自动推进到第 ${v} 轮`);
+  void load();
+}
 async function addProfile() {
   try {
     const p = JSON.parse(profileJson.value);
@@ -506,6 +514,16 @@ async function saveEdit() {
         </label>
         <textarea class="textarea mono" rows="7" :value="fallbackText" @input="fallbackDraft = ($event.target as HTMLTextAreaElement).value" placeholder='[{"profile":"traex","model":"Doubao-Seed-2.1-Pro"}]&#10;[{"profile":"codex-sol","effort":"low"}]' />
         <div class="row"><span class="muted small">每项：后端 id 必填，model/effort 可覆盖。留空数组 [] 表示不兜底。</span><span class="spacer" /><button class="btn primary sm" @click="saveFallback">保存兜底链</button></div>
+      </div>
+      <div class="card pad stack">
+        <div class="section-title">自动推进</div>
+        <p class="muted small">没等你回复时，助理最多替你往下推几步。到上限后它会汇报进展、问你是否继续；你回一句“继续”，计数重新开始。</p>
+        <label class="field"><span>多 Agent 工作：你上次说话后最多自动交办几次（0–50，0 表示每轮都先问你）</span>
+          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" max="50" :value="config.agents.autoAdvance?.turns ?? 6" @change="saveAutoAdvance('turns', ($event.target as HTMLInputElement).value)" />
+        </label>
+        <label class="field"><span>编码交办：评审要求修改时自动改到第几轮（1–20）</span>
+          <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="20" :value="config.agents.autoAdvance?.codeRounds ?? 3" @change="saveAutoAdvance('codeRounds', ($event.target as HTMLInputElement).value)" />
+        </label>
       </div>
       <div v-if="config.memory" class="card pad stack">
         <div class="section-title">记忆质量</div>
