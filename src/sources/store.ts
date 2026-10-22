@@ -5,7 +5,7 @@ import { indexText } from "../search/tokenize.ts";
 import { vectorIndex } from "../search/vectors.ts";
 import { chunkSource } from "./chunk.ts";
 
-export type SourceKind = "doc" | "code" | "chat" | "note" | "web" | "image" | "conversation" | "event" | "meeting" | "activity";
+export type SourceKind = "doc" | "code" | "chat" | "note" | "web" | "image" | "conversation" | "event" | "meeting" | "activity" | "work";
 export type Source = {
   id: string;
   spaceId: string;

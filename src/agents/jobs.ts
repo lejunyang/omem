@@ -23,6 +23,8 @@ import { createRun, getRun, listRuns, registerHandler, type RunContext } from ".
 import { markReviewed, similarMemories, spacesWithUnreviewed, unreviewedMemories } from "../memory/quality.ts";
 import { relationCandidates } from "../core/space-candidates.ts";
 import { nearMemories, sameTopicPairs } from "../memory/passive.ts";
+import { expireWorkFiles } from "../sources/work.ts";
+import { hasShortcomings, shortcomings, shortcomingsText } from "../memory/gaps.ts";
 import "./profile-jobs.ts";
 
 registerHandler("lark-resource-parse", async ctx => (await import("../channels/lark-resource-parse.ts")).parseLarkResource(ctx));
@@ -499,8 +501,9 @@ export async function syncSubmodules(app: App, spaceId: string, onProgress?: (te
 
 registerHandler("heartbeat", async (ctx) => {
   const app = ctx.app;
-  // 1. Due reminders need no model: deliver them directly.
+  // 1. Due reminders need no model: deliver them directly. Expired working files go too.
   const due = deliverDueReminders(app);
+  expireWorkFiles(app);
   // 2. Watches and waits only need attention when new material arrived.
   const last = one<{ value: string }>(app.db, "select value from kv where key = 'heartbeat_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
   const started = now();
@@ -549,7 +552,8 @@ registerHandler("dream", async (ctx) => {
   ).reverse();
   run(app.db, "insert into kv(key,value) values('dream_at', ?) on conflict(key) do update set value = excluded.value", now());
   const candidates = relationCandidates(app);
-  if (!mems.length && !items.length && !said.length && !candidates.length) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
+  const gaps = shortcomings(app, { since: since > "2000" ? since : undefined });
+  if (!mems.length && !items.length && !said.length && !candidates.length && !hasShortcomings(gaps)) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
   const relations = listSpaces(app).flatMap((s) => relatedSpaces(app, s.id).filter((r) => s.id < r.space).map((r) => `- ${s.id} ↔ ${r.space}${r.note ? `：${r.note}` : ""}`));
   const task = [
     `上次整理：${since}`,
@@ -564,6 +568,13 @@ registerHandler("dream", async (ctx) => {
         ? `可能说的是同一件事的记忆（向量相近，宿主只负责找，是否重复、冲突由你读后判断；不同的事就不动）：\n${pairs.map((p) => `- ${p.a.id}「${truncate(p.a.content, 80)}」 ↔ ${p.b.id}「${truncate(p.b.content, 80)}」`).join("\n")}`
         : "";
     })(),
+    hasShortcomings(gaps)
+      ? `日常运行里的不足信号（宿主按规则挑出来的，只是线索：先读原文判断是不是真的不足）：
+
+${shortcomingsText(gaps)}
+
+能补的就补：缺的事实或约定从原件里找到后记下来；同一类错误反复出现就写一条 experience 记忆，过程复杂的写成案例页（cases/）；需要本人提供的知识建一个 todo 事项问本人。补不了或本来就答得对的不用管。`
+      : "",
     candidates.length ? `可能相关、还没关联的空间（宿主从引用、链接、依赖声明、标签里看到的迹象）：\n${candidates.map((c) => `- ${c.a} ↔ ${c.b}：${c.signals.join("；")}`).join("\n")}` : "",
     "需要更多上下文时用 recall（可加 include_history）和 list_items 查同主题的其他记录。",
   ]

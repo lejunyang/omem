@@ -16,7 +16,8 @@ const router = useRouter();
 const items = ref<Item[]>([]);
 const showDone = ref(false);
 const scope = ref<"all" | "space">("all");
-const detail = ref<{ item: Item; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }> } | null>(null);
+type WorkFile = { id: string; uri: string; title: string; updatedAt: string; expiresAt: string | null; lines: number };
+const detail = ref<{ item: Item; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[] } | null>(null);
 const quick = ref("");
 const viaAssistant = ref(true);
 const note = ref("");
@@ -178,6 +179,13 @@ function parseRef(r: string) {
           <div class="field"><span>优先级</span>
             <UiSegmented :model-value="detail.item.priority" aria-label="优先级" :options="[{ value: 1, label: '高' }, { value: 2, label: '中' }, { value: 3, label: '低' }]" @change="(v) => save({ priority: v })" />
           </div>
+        </div>
+        <div v-if="detail.files?.length" class="refs">
+          <div class="section-title">工作文件</div>
+          <a v-for="f in detail.files" :key="f.id" href="#" class="ref" @click.prevent="openCitation({ kind: 'source', id: f.id }, true)">
+            <span class="ref-title small">{{ f.title }}</span>
+            <span class="ref-text small muted">{{ f.lines }} 行 · {{ relTime(f.updatedAt) }}更新{{ f.expiresAt ? ` · ${fmtTime(f.expiresAt)} 过期` : "" }}</span>
+          </a>
         </div>
         <div v-if="detail.item.sourceRefs.length" class="refs">
           <div class="section-title">相关依据</div>

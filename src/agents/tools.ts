@@ -890,7 +890,7 @@ def({
     page: z.string().describe("页面路径，如 overview、retrieval/how-search-works；index 是空间目录页"),
     title: z.string(),
     summary: z.string().describe("一两句话：读者读完能得到什么"),
-    kind: z.enum(["index", "guide", "concept", "howto", "reference", "topic", "person", "project", "log"]).optional(),
+    kind: z.enum(["index", "guide", "concept", "howto", "reference", "topic", "person", "project", "log", "case"]).optional().describe("case：一个解决过的问题（现象、判断、原因、解法、适用条件），放在 cases/ 下"),
     body: z.string().describe("正文 Markdown，不要再写一级标题"),
     space: z.string().optional(),
     reason: z.string().optional().describe("这次修改的原因，写入版本历史"),
@@ -1143,7 +1143,9 @@ def({
       },
       ctx.actor,
     );
-    return `${existing ? "已更新" : "已创建"}事项 ${item.id}：[${item.kind}/${item.status}] ${item.title}`;
+    // A problem worked through over several steps is worth keeping as a case (see roles/_common.md).
+    const closedWithHistory = existing && item.status === "done" && existing.status !== "done" && itemEvents(ctx.app, item.id).length >= 4;
+    return `${existing ? "已更新" : "已创建"}事项 ${item.id}：[${item.kind}/${item.status}] ${item.title}${closedWithHistory ? "\n这件事经过了几轮进展才结束。如果是排查或解决了一个问题，并且以后可能再遇到，写成案例：write_page（kind=case，page=cases/<主题>，写现象、怎么判断的、原因、解法、适用条件，引用原件），再 remember 一条 experience 记忆指向这页；只是普通待办就不用。" : ""}`;
   },
 });
 
@@ -1151,11 +1153,13 @@ def({
   name: "read_item",
   description: "读取事项完整字段、当前来源及全部时间线，纠正前先读。跨空间发现仍只读。",
   schema: z.object({ item_id: z.string() }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     const item = getItem(ctx.app, a.item_id);
     const readable = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces);
     if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能读取该事项");
-    return JSON.stringify({ item, events: itemEvents(ctx.app, item.id) });
+    const { listWorkFiles } = await import("../sources/work.ts");
+    const files = listWorkFiles(ctx.app, { item: item.id }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
+    return JSON.stringify({ item, events: itemEvents(ctx.app, item.id), ...(files.length ? { files } : {}) });
   },
 });
 def({
@@ -1802,6 +1806,40 @@ def({
   handler: (ctx, a) => {
     const r = importText(ctx.app, writeSpace(ctx, a.space), { title: a.title, text: a.text });
     return `已保存为原件 ${r.id}`;
+  },
+});
+
+def({
+  name: "write_file",
+  description:
+    "写工作文件（原件，可检索、可用 src:<id> 引用）：长任务的当前成果（扫过哪些、找到什么、下一步从哪接着做），或定时任务逐天累积的周报/季报素材。mode=append 在末尾追加，replace 整体替换。expires 设过期（30d、12h、2w、日期，never=永久；不传时新文件永久、旧文件不变），过期后删除只留墓碑。item / rule 把文件挂到事项或规则上：事项详情里能看到，规则下次触发时会把它列给处理的 Agent（规则触发的运行里默认挂到那条规则）。",
+  write: true,
+  schema: z.object({
+    path: z.string().describe("文件路径，如 oncall/一年内的群、weekly/2026-W43、reports/2026-Q4"),
+    content: z.string().describe("Markdown"),
+    mode: z.enum(["replace", "append"]).optional().describe("默认 replace"),
+    title: z.string().optional(),
+    expires: z.string().optional(),
+    item: z.string().optional().describe("挂到这个事项"),
+    rule: z.string().optional().describe("挂到这条规则"),
+    space: z.string().optional(),
+  }),
+  handler: async (ctx, a) => {
+    const { writeWorkFile } = await import("../sources/work.ts");
+    let spaceId = writeSpace(ctx, a.space);
+    if (a.item) {
+      const item = getItem(ctx.app, a.item);
+      inScope(ctx, item.spaceId, "事项");
+      if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能给他人的事项挂文件");
+      if (!a.space) spaceId = item.spaceId;
+    }
+    const runRule = ctx.runId ? (getRun(ctx.app, ctx.runId).input as { rule?: { id: string } }).rule?.id : undefined;
+    const rule = a.rule ?? runRule;
+    if (a.rule) (await import("../rules/store.ts")).getRule(ctx.app, a.rule);
+    const r = writeWorkFile(ctx.app, { spaceId, path: a.path, title: a.title, text: a.content, mode: a.mode, expires: a.expires === undefined ? undefined : a.expires, links: { item: a.item, rule }, runId: ctx.runId });
+    if (a.item && r.created) (await import("../items/store.ts")).addItemEvent(ctx.app, a.item, "note", `工作文件 ${r.uri}`, ctx.actor, [`src:${r.id}`]);
+    if (ctx.runId) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "change", data: { entity: "source", id: r.id }, at: now() } });
+    return `${r.created ? "已新建" : r.status === "unchanged" ? "内容没变" : a.mode === "append" ? "已追加到" : "已更新"}工作文件 src:${r.id}（${r.uri}，${r.lines} 行${r.expiresAt ? `，${r.expiresAt.slice(0, 10)} 过期` : "，永久"}${a.item ? `，挂在事项 ${a.item}` : ""}${rule ? `，挂在规则 ${rule}` : ""}）`;
   },
 });
 

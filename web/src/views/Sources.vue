@@ -178,7 +178,7 @@ async function backfill() {
     toast((e as Error).message, "error");
   }
 }
-const isMarkdown = computed(() => detail.value && /\.(md|markdown|mdx)$/i.test(detail.value.source.uri) || detail.value?.source.kind === "note" || detail.value?.source.kind === "web" || detail.value?.source.kind === "doc" || detail.value?.source.kind === "image" || detail.value?.source.kind === "conversation");
+const isMarkdown = computed(() => detail.value && /\.(md|markdown|mdx)$/i.test(detail.value.source.uri) || detail.value?.source.kind === "note" || detail.value?.source.kind === "web" || detail.value?.source.kind === "doc" || detail.value?.source.kind === "image" || detail.value?.source.kind === "conversation" || detail.value?.source.kind === "work");
 const outline = computed(() => {
   if (!detail.value) return [];
   const o = detail.value.outline;
@@ -227,7 +227,7 @@ async function sync() {
   await post(`/api/spaces/${state.space}/sync`);
   toast("开始同步目录", "ok");
 }
-const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "chat", note: "edit", web: "link", image: "eye", conversation: "chat" };
+const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "chat", note: "edit", web: "link", image: "eye", conversation: "chat", work: "layers" };
 </script>
 
 <template>
@@ -243,7 +243,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
         </div>
         <input v-model="q" class="input" placeholder="按标题或路径筛选" />
         <div class="kinds row wrap">
-          <button v-for="k in ['', 'doc', 'code', 'chat', 'note', 'web', 'image', 'conversation']" :key="k" class="kind" :class="{ on: kind === k }" @click="kind = k">{{ { "": "全部", doc: "文档", code: "代码", chat: "聊天", note: "笔记", web: "网页", image: "图片", conversation: "对话" }[k] }}</button>
+          <button v-for="k in ['', 'doc', 'code', 'chat', 'note', 'web', 'image', 'conversation', 'work']" :key="k" class="kind" :class="{ on: kind === k }" @click="kind = k">{{ { "": "全部", doc: "文档", code: "代码", chat: "聊天", note: "笔记", web: "网页", image: "图片", conversation: "对话", work: "工作文件" }[k] }}</button>
         </div>
       </div>
       <div ref="itemsEl" class="items" @scroll.passive="onListScroll">
@@ -288,6 +288,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <div class="row wrap meta">
             <span class="badge">{{ detail.source.kind }}</span>
             <span class="muted small">{{ detail.source.lines }} 行 · 更新于 {{ fmtTime(detail.source.updatedAt) }} · 首次保存 {{ fmtTime(detail.source.capturedAt, false) }}</span>
+            <span v-if="detail.source.kind === 'work'" class="muted small">{{ detail.source.meta?.expiresAt ? `${fmtTime(String(detail.source.meta.expiresAt))} 过期` : "永久保留" }}</span>
             <span class="spacer" />
             <button v-if="isMarkdown || isChat" class="btn ghost sm" @click="raw = !raw">{{ raw ? (isChat ? "聊天视图" : "排版视图") : "原文行号" }}</button>
             <button v-if="larkChatId" class="btn ghost sm" title="把更早的消息也读进来" @click="backfill"><Icon name="history" :size="14" />回溯历史</button>

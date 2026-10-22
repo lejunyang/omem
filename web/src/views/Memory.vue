@@ -7,9 +7,9 @@ import UiSegmented from "../components/UiSegmented.vue";
 import VirtualList from "../components/VirtualList.vue";
 import UiSelect from "../components/UiSelect.vue";
 import { promptDialog } from "../lib/dialog";
-import { fmtTime, memoryKindLabel, openCitation, state, statusLabel, toast } from "../store";
+import { fmtTime, memoryKindLabel, openCitation, runKindLabel, state, statusLabel, toast } from "../store";
 
-const tab = ref<"list" | "quality" | "recall">("list");
+const tab = ref<"list" | "quality" | "recall" | "gaps">("list");
 const memories = ref<Memory[]>([]);
 const loading = ref(false);
 const q = ref("");
@@ -137,6 +137,23 @@ async function loadRecall() {
 watch(tab, (t) => t === "recall" && loadRecall());
 watch(recallSort, loadRecall);
 const effectiveness = (m: RecallRow) => (m.recalls ? Math.round((m.used / m.recalls) * 100) : null);
+// ---- shortcomings seen in daily use ----------------------------------------------------
+type Gaps = {
+  failedRuns: { kind: string; n: number; lastError: string; lastRunId: string }[];
+  notFound: { messageId: string; question: string; answer: string; at: string }[];
+  corrections: { messageId: string; said: string; answer: string; at: string }[];
+  rejectedWrites: { n: number; codes: Record<string, number> };
+  retracted: { id: string; content: string; note: string }[];
+  passive: { shown: number; used: number };
+};
+const gaps = ref<Gaps | null>(null);
+const gapDays = ref(7);
+async function loadGaps() {
+  gaps.value = await get<Gaps>(`/api/shortcomings?days=${gapDays.value}`);
+}
+watch(tab, (t) => t === "gaps" && loadGaps());
+watch(gapDays, loadGaps);
+const gapsEmpty = computed(() => !!gaps.value && !gaps.value.notFound.length && !gaps.value.corrections.length && !gaps.value.failedRuns.length && !gaps.value.retracted.length && !gaps.value.rejectedWrites.n);
 const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract" ? "danger" : v === "rewrite" ? "warn" : "");
 </script>
 
@@ -148,7 +165,7 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
         <p>助理记住的事实、约定、偏好和经验。更正时旧版本不会消失；新记忆写入前会被检查，之后由复核模型保留、改写或撤回。</p>
       </div>
       <span class="spacer" />
-      <UiSegmented v-model="tab" aria-label="视图" :options="[{ value: 'list', label: '记忆' }, { value: 'recall', label: '召回' }, { value: 'quality', label: '质量' }]" />
+      <UiSegmented v-model="tab" aria-label="视图" :options="[{ value: 'list', label: '记忆' }, { value: 'recall', label: '召回' }, { value: 'quality', label: '质量' }, { value: 'gaps', label: '不足' }]" />
       <button v-if="tab === 'list'" class="btn primary" @click="adding = !adding"><Icon name="plus" :size="15" />添加</button>
     </div>
 
@@ -259,6 +276,50 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
             </tbody>
           </table>
         </div>
+      </template>
+    </template>
+
+    <template v-else-if="tab === 'gaps'">
+      <div v-if="!gaps" class="skeleton"><div v-for="i in 3" :key="i" class="sk-line" /></div>
+      <template v-else>
+        <div class="row wrap qhead">
+          <span class="muted small">从日常运行里按规则挑出的线索：回答说没找到、本人纠正了回答、失败的运行、被撤回或拦下的记忆。每晚整理时会逐条看能不能补（记下缺的事实、写经验或案例、建事项问你）。</span>
+          <span class="spacer" />
+          <UiSegmented v-model="gapDays" size="sm" aria-label="统计范围" :options="[{ value: 7, label: '7 天' }, { value: 30, label: '30 天' }]" />
+        </div>
+        <div v-if="gapsEmpty" class="empty small">这段时间没有发现不足。</div>
+        <template v-if="gaps.notFound.length">
+          <h2 class="section-title">回答说没找到</h2>
+          <a v-for="g in gaps.notFound" :key="g.messageId" href="#" class="rej gap" @click.prevent="openCitation({ kind: 'message', id: g.messageId }, true)">
+            <div class="small muted">{{ fmtTime(g.at) }}</div>
+            <p class="content">问：{{ g.question }}</p>
+            <p class="content muted-ink">答：{{ g.answer }}</p>
+          </a>
+        </template>
+        <template v-if="gaps.corrections.length">
+          <h2 class="section-title">你纠正了回答</h2>
+          <a v-for="g in gaps.corrections" :key="g.messageId" href="#" class="rej gap" @click.prevent="openCitation({ kind: 'message', id: g.messageId }, true)">
+            <div class="small muted">{{ fmtTime(g.at) }}</div>
+            <p class="content">你说：{{ g.said }}</p>
+            <p class="content muted-ink">之前答：{{ g.answer }}</p>
+          </a>
+        </template>
+        <template v-if="gaps.failedRuns.length">
+          <h2 class="section-title">失败的运行</h2>
+          <router-link v-for="g in gaps.failedRuns" :key="g.kind" :to="`/runs/${g.lastRunId}`" class="rej gap">
+            <div class="row small wrap"><span class="badge danger">{{ runKindLabel[g.kind] ?? g.kind }} {{ g.n }} 次</span></div>
+            <p class="content muted-ink">最近一次：{{ g.lastError || "没有错误信息" }}</p>
+          </router-link>
+        </template>
+        <template v-if="gaps.retracted.length">
+          <h2 class="section-title">复核撤回的记忆</h2>
+          <div v-for="g in gaps.retracted" :key="g.id" class="rej">
+            <p class="content">{{ g.content }}</p>
+            <p v-if="g.note" class="content muted-ink">{{ g.note }}</p>
+          </div>
+        </template>
+        <p v-if="gaps.rejectedWrites.n" class="muted small">写入检查拦下 {{ gaps.rejectedWrites.n }} 条记忆（{{ Object.entries(gaps.rejectedWrites.codes).map(([k, v]) => `${codeLabel[k] ?? k} ${v}`).join("、") }}），详见“质量”。</p>
+        <p v-if="gaps.passive.shown" class="muted small">对话前自动带上的记忆 {{ gaps.passive.shown }} 次，回答用上 {{ gaps.passive.used }} 次（{{ pct(gaps.passive.used, gaps.passive.shown) }}）。</p>
       </template>
     </template>
 
@@ -559,6 +620,18 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
 .rej {
   border-top: 1px solid var(--line);
   padding: 8px 0;
+}
+.gap {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+.gap:hover .content {
+  color: var(--accent);
+}
+.gap .content {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
 }
 .muted-ink {
   color: var(--ink-2);

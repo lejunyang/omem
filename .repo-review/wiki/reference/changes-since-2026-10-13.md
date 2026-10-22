@@ -314,6 +314,13 @@ updated: 2026-10-18
 
 - `src/channels/lark-sender.ts`：名字没查到（本人不在的群里机器人发的消息 lark-cli 读不到、通讯录权限缺失）也缓存 2 分钟，之后再试；原先每条消息都会在处理前再起一次 lark-cli 或调一次通讯录接口。
 
+## 2026-10-23：工作文件、案例页、日常不足信号
+
+- 工作文件（`src/sources/work.ts`）：原件 `kind=work`，uri `work/<路径>`，meta 记 `expiresAt`、`links`（`item` / `rule`）、写入它的运行和写入次数。`write_file` 工具（主助手和 Agent 档案）：`replace` / `append`，`expires` 接受 `30d`、`12h`、`2w`、日期或 `never`；挂事项时新建会在事项时间线记一笔，规则触发的运行里写的默认挂到那条规则。巡检先 `expireWorkFiles`，过期的变墓碑（`deleteSource`），同一路径再写是新文件。不排进 ingest。
+- 事项：`read_item` 和 `GET /api/items/:id` 带 `files`，网页事项详情显示“工作文件”。规则：`agentAction` / `silentAgent` 的任务里加“这条规则的工作文件”（`ruleFiles`）。原件页可按“工作文件”筛，详情显示过期时间。
+- 案例：`write_page` 的 kind 加 `case`；`upsert_item` 把有 4 条以上时间线的事项标成 done 时，返回里提示写 `cases/<主题>` 案例页并记一条指向它的 experience。`roles/_common.md` 加“工作文件与案例”。
+- 不足信号（`src/memory/gaps.ts`）：失败运行按类型计数、回答开头说没找到（`NOT_FOUND`）配上前一句提问、本人以“不对 / 错了 / 你搞错…”开头的消息配上前一条回答、复核撤回、写入检查拦下（按原因计数）、被动召回带上 / 用上。做梦整理任务新增一段（有信号时即使没有别的变化也会跑），`roles/dreamer.md` 第 5a 条说明怎么处理；`GET /api/shortcomings?days=`，网页“记忆 → 不足”。
+
 ## 2026-10-23：问本人、下一步按钮、工具审批
 
 - 新表 `asks`（`src/agents/asks.ts`）：`question` / `suggestion` / `approval` 三种，带选项（`label`，可选 `message`：点了替本人说的话）、是否允许文字回答、状态、回答、是否已被 Agent 拿到（`consumed`）、何时展示（`shown_at`）。

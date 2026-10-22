@@ -457,6 +457,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { recallStats, memoriesWithRecall } = await import("../memory/recall-stats.ts");
     return { stats: recallStats(app, { spaceId: o.space, includeInactive: o.includeInactive }), memories: memoriesWithRecall(app, { spaceId: o.space, sort: o.sort }) };
   });
+  // Shortcomings seen in daily use (answers that found nothing, corrections, failures…); owner only.
+  server.get("/api/shortcomings", async (req) => {
+    const days = Number((req.query as { days?: string }).days ?? 7) || 7;
+    const { shortcomings } = await import("../memory/gaps.ts");
+    return shortcomings(app, { since: new Date(Date.now() - days * 86400_000).toISOString(), limit: 20 });
+  });
   // Quality per backend/model, recent write-time rejections, and side-by-side comparison runs.
   server.get("/api/memory-quality", async (req) => {
     const days = Number((req.query as { days?: string }).days ?? 30) || 30;
@@ -535,7 +541,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       const ex = refExcerpt(app, ref, 120);
       if (ex && (!allowed || allowed.includes(ex.spaceId))) excerpts[ref] = { title: ex.title, text: ex.text };
     }
-    return { item, events: itemEvents(app, id), excerpts };
+    const { listWorkFiles } = await import("../sources/work.ts");
+    const files = listWorkFiles(app, { item: id, spaces: allowed });
+    return { item, events: itemEvents(app, id), excerpts, files };
   });
   server.post("/api/items", async (req) => {
     const b = q(itemBody, req.body);
