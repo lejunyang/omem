@@ -9,7 +9,8 @@ export type AppEvent =
   | { type: "run"; runId: string; status: string }
   | { type: "run-event"; runId: string; seq: number; event: { type: string; data: unknown; at: string } }
   | { type: "notification"; id: string; title: string; body: string; link?: string | null }
-  | { type: "changed"; entity: "source" | "page" | "memory" | "item" | "card" | "space"; id: string; spaceId?: string };
+  | { type: "changed"; entity: "source" | "page" | "memory" | "item" | "card" | "space"; id: string; spaceId?: string }
+  | { type: "ask"; id: string; status: string; conversationId: string | null };
 
 /** Shared process context. Services take it instead of importing globals. */
 export class App {

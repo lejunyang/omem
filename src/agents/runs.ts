@@ -374,6 +374,10 @@ function kick(app: App) {
         heartbeats.delete(r.id);
         seqs.delete(r.id);
         kick(app);
+        // Answers that came in while it worked go to its conversation; its suggested next steps are shown.
+        import("./asks.ts")
+          .then(({ settleAsks }) => settleAsks(app, r.id))
+          .catch((e) => console.warn(`[omem] 运行 ${r.id} 的提问收尾失败：${(e as Error).message}`));
       });
   }
 }

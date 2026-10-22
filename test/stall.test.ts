@@ -11,7 +11,7 @@ const fake = (env: Record<string, string>, idleTimeoutMs = 1500) =>
 describe("agent stalls and provider queue", () => {
   it("treats silence before the first real token as a retryable provider wait, hiding CLI notices", async () => {
     const events: AgentEvent[] = [];
-    const err = await runAcp(fake({ FAKE_STALL: "before" }), { cwd: process.cwd(), prompt: "hi" }, (e) => events.push(e)).catch((e) => e);
+    const err = await runAcp(fake({ FAKE_STALL: "before" }, 4000), { cwd: process.cwd(), prompt: "hi" }, (e) => events.push(e)).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(String(err.message)).toMatch(/没有开始回答/);
     expect(isRetryableAgentError(err)).toBe(true);
@@ -21,7 +21,7 @@ describe("agent stalls and provider queue", () => {
   }, 20_000);
 
   it("does not retry a turn that stalled after real output", async () => {
-    const err = await runAcp(fake({ FAKE_STALL: "after" }), { cwd: process.cwd(), prompt: "hi" }, () => {}).catch((e) => e);
+    const err = await runAcp(fake({ FAKE_STALL: "after" }, 4000), { cwd: process.cwd(), prompt: "hi" }, () => {}).catch((e) => e);
     expect(String(err.message)).toMatch(/没有任何活动/);
     expect(isRetryableAgentError(err)).toBe(false);
   }, 20_000);

@@ -23,6 +23,7 @@ import { addRunEvent, createRun, getRun, listRuns, runEvents, setRunOutput } fro
 import { findAgentSpec, listAgentSpecs, listSkills, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
+import { setApprovalExecutor } from "./asks.ts";
 
 export type ToolContext = {
   app: App;
@@ -1680,6 +1681,65 @@ def({
   },
 });
 
+const askOption = z.union([
+  z.string(),
+  z.object({
+    label: z.string().describe("按钮上的字，几个字"),
+    message: z.string().optional().describe("点了以后替本人说的话（写成本人的口吻，具体到能直接照做）；不填就用 label"),
+  }),
+]);
+const toOptions = (list: z.infer<typeof askOption>[] | undefined) => (list ?? []).map((o) => (typeof o === "string" ? { label: o } : o));
+/** Long enough to catch a quick answer, short enough for every client's tool-call timeout. */
+const ASK_WAIT_MAX = 50;
+
+def({
+  name: "ask_owner",
+  description:
+    "问本人一个问题：缺了它就没法往下做、你自己查不到、也不该替本人决定的事（选哪个方案、给不给权限、某个事实只有本人知道）。本人在飞书卡片、网页上点选项或直接在对话里回复都算回答。会先等 wait_seconds 秒；没等到就返回提问 id，可以先做不依赖答案的部分，再用 wait_answer 接着等（每次最多 50 秒，可以多次）；结束这一轮也没关系，回答会作为新消息回到这个会话。能自己查实或按常理决定的不要问；一次只问一件事，给出选项时把你推荐的放第一个。",
+  schema: z.object({
+    question: z.string().describe("问题本身，带上本人做决定需要的背景（一两句）"),
+    options: z.array(askOption).max(6).optional().describe("可选的回答（按钮），推荐的放第一个"),
+    allow_text: z.boolean().optional().describe("是否允许本人另写回答（默认允许）"),
+    wait_seconds: z.number().int().min(0).max(ASK_WAIT_MAX).optional().describe(`先等多久（默认 40，最多 ${ASK_WAIT_MAX}）`),
+  }),
+  handler: async (ctx, a) => {
+    if (ctx.shadow) return "（对比运行）不向本人提问，按你认为最合理的选择继续。";
+    const { createAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
+    const ask = createAsk(ctx.app, { runId: ctx.runId, userId: ctx.userId ?? OWNER, kind: "question", question: a.question, options: toOptions(a.options), allowText: a.allow_text ?? true });
+    const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? 40) * 1000);
+    return got.status === "pending"
+      ? `已问本人（${ask.id}），还没回答。可以先做不依赖答案的部分，再 wait_answer(ask_id="${ask.id}") 接着等；这一轮结束时还没答，回答会作为新消息回到这个会话。`
+      : describeAnswer(got);
+  },
+});
+
+def({
+  name: "wait_answer",
+  description: `接着等本人对 ask_owner 提问（或待批准操作）的回答，每次最多 ${ASK_WAIT_MAX} 秒，没等到可以再调用。`,
+  schema: z.object({ ask_id: z.string(), wait_seconds: z.number().int().min(1).max(ASK_WAIT_MAX).optional() }),
+  handler: async (ctx, a) => {
+    const { getAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
+    const ask = getAsk(ctx.app, a.ask_id);
+    if (ask.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不是这次运行提的问题");
+    const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? ASK_WAIT_MAX) * 1000);
+    return got.status === "pending" ? `本人还没回答（${ask.id}）。` : describeAnswer(got);
+  },
+});
+
+def({
+  name: "suggest_next",
+  description:
+    "给这次回答附上本人可以一键推进的下一步（按钮）：你的回答以一个建议、待本人拍板的选择或可以接着做的事结尾时用，本人点一下就等于说了那句话，不用再复述。1–3 个，推荐的放第一个；message 写成本人的口吻、具体到你能直接照做（“按方案 A 改，改完跑测试”）。没有值得推进的下一步就不用。",
+  schema: z.object({ options: z.array(askOption).min(1).max(3), question: z.string().optional().describe("一句话说明要本人选什么（可省）") }),
+  handler: async (ctx, a) => {
+    if (ctx.shadow) return "（对比运行）不附建议按钮。";
+    const { createAsk, conversationOfRun } = await import("./asks.ts");
+    if (!conversationOfRun(ctx.app, ctx.runId)) return "这次运行不在对话里，没有地方放按钮；把建议写在回答里即可。";
+    const ask = createAsk(ctx.app, { runId: ctx.runId, userId: ctx.userId ?? OWNER, kind: "suggestion", question: a.question ?? "", options: toOptions(a.options) });
+    return `已附上 ${ask.options.length} 个下一步按钮，会显示在你这次回答下面。回答正文里不必再列这些选项。`;
+  },
+});
+
 def({
   name: "notify",
   description: "通知本人（站内 + 已绑定的机器人）。只用于需要本人知道或决定的变化，不要发送“无变化”。",
@@ -1965,6 +2025,12 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
   if (ctx.shadow && (tool.write || SHADOW_BLOCKED.has(name))) return { text: recordShadow(ctx, name, parsed.data as Record<string, unknown>), isError: false };
+  if (ctx.actor === "agent" && ctx.app.config.approvals.tools.includes(name)) return held(ctx, name, parsed.data as Record<string, unknown>);
+  return runTool(ctx, tool, name, parsed.data);
+}
+
+async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown): Promise<{ text: string; isError: boolean }> {
+  const parsed = { data };
   try {
     const text = await tool.handler(ctx, parsed.data);
     if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data });
@@ -1973,6 +2039,35 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
     return { text: (error as Error).message, isError: true };
   }
 }
+
+/**
+ * A tool listed in `approvals.tools`: the call waits for the owner's OK. Approved, it runs with
+ * the context it was made in (also after this run has ended); refused, the reason goes back.
+ */
+async function held(ctx: ToolContext, name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
+  const { createAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
+  const { app, tools: allowed, ...rest } = ctx;
+  const ask = createAsk(app, {
+    runId: ctx.runId,
+    userId: ctx.userId ?? OWNER,
+    kind: "approval",
+    question: `${ctx.spec ?? ctx.role ?? "助理"} 要调用 ${name}：\n${truncate(JSON.stringify(args, null, 1), 1500)}`,
+    tool: name,
+    args,
+    context: { ...rest, tools: allowed ? [...allowed] : null },
+  });
+  const got = await waitForAnswer(app, ask.id, app.config.approvals.waitSeconds * 1000);
+  if (got.status === "pending")
+    return { text: `${name} 需要本人批准（${ask.id}），还在等。可以先做别的，再 wait_answer(ask_id="${ask.id}") 看结果；批准后宿主会执行并把结果告诉你，不要自己重复调用。`, isError: false };
+  return { text: describeAnswer(got), isError: !got.approved };
+}
+
+setApprovalExecutor(async (app, ask, snapshot) => {
+  const tool = tools.find((t) => t.name === ask.tool);
+  if (!tool) return { text: `工具 ${ask.tool} 已不存在`, isError: true };
+  const s = snapshot as Omit<ToolContext, "app" | "tools"> & { tools: string[] | null };
+  return runTool({ ...s, app, tools: s.tools ? new Set(s.tools) : null }, tool, ask.tool!, ask.args ?? {});
+});
 
 /**
  * A shadow (comparison) run proposes writes instead of making them. Memory proposals still

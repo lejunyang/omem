@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { get, onServerEvent, post, type Item, type Run } from "../api";
+import { get, onServerEvent, post, type Ask, type Item, type Run } from "../api";
+import AskCard from "../components/AskCard.vue";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { currentSpace, fmtTime, itemKindLabel, relTime, runKindLabel, state, statusLabel } from "../store";
@@ -20,12 +21,19 @@ const data = ref<HomeData | null>(null);
 const question = ref("");
 const asking = ref(false);
 
+const asks = ref<Ask[]>([]);
 async function load() {
   data.value = await get<HomeData>("/api/home");
 }
+/** Questions and approvals agents are waiting on (suggestions stay with their reply). */
+async function loadAsks() {
+  asks.value = (await get<Ask[]>("/api/asks?status=pending").catch(() => [])).filter((a) => a.kind !== "suggestion");
+}
+onMounted(loadAsks);
 onMounted(load);
 const off = onServerEvent((e) => {
   if (e.type === "changed" || e.type === "run" || e.type === "notification") void load();
+  if (e.type === "ask") void loadAsks();
 });
 onBeforeUnmount(() => off());
 
@@ -44,7 +52,7 @@ const greeting = computed(() => {
   return h < 6 ? "夜深了" : h < 11 ? "早上好" : h < 14 ? "中午好" : h < 18 ? "下午好" : "晚上好";
 });
 const today = new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
-const empty = computed(() => data.value && !data.value.decisions.length && !data.value.dueSoon.length && !data.value.waiting.length);
+const empty = computed(() => data.value && !asks.value.length && !data.value.decisions.length && !data.value.dueSoon.length && !data.value.waiting.length);
 const suggestions = ["我最近有哪些没完成的事？", "上周关于预算的约定是什么？", "这个仓库的整体架构是什么？"];
 </script>
 
@@ -70,6 +78,15 @@ const suggestions = ["我最近有哪些没完成的事？", "上周关于预算
     <div v-if="!data" class="grid"><Skeleton variant="cards" :rows="2" /><Skeleton variant="cards" :rows="2" /></div>
     <div v-else class="grid">
       <section class="col">
+        <div v-if="asks.length" class="block">
+          <h2 class="section-title">等你回答</h2>
+          <div class="stack">
+            <div v-for="a in asks" :key="a.id" class="stack tight">
+              <AskCard :ask="a" @answered="loadAsks" />
+              <router-link v-if="a.conversationId" :to="`/ask/${a.conversationId}`" class="muted small">打开对话</router-link>
+            </div>
+          </div>
+        </div>
         <div v-if="data.decisions.length" class="block">
           <h2 class="section-title">需要你决定</h2>
           <div class="list">
@@ -131,6 +148,9 @@ const suggestions = ["我最近有哪些没完成的事？", "上周关于预算
 </template>
 
 <style scoped>
+.tight {
+  gap: 4px;
+}
 .home {
   max-width: 1040px;
 }

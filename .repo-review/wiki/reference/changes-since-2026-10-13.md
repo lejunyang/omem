@@ -313,3 +313,13 @@ updated: 2026-10-18
 ## 2026-10-23：发送者名字查不到时短暂不再查
 
 - `src/channels/lark-sender.ts`：名字没查到（本人不在的群里机器人发的消息 lark-cli 读不到、通讯录权限缺失）也缓存 2 分钟，之后再试；原先每条消息都会在处理前再起一次 lark-cli 或调一次通讯录接口。
+
+## 2026-10-23：问本人、下一步按钮、工具审批
+
+- 新表 `asks`（`src/agents/asks.ts`）：`question` / `suggestion` / `approval` 三种，带选项（`label`，可选 `message`：点了替本人说的话）、是否允许文字回答、状态、回答、是否已被 Agent 拿到（`consumed`）、何时展示（`shown_at`）。
+- 工具：`ask_owner`（先等 `wait_seconds`，默认 40）、`wait_answer`（每次 ≤ 50 秒，codex 等 MCP 客户端默认 60 秒超时）、`suggest_next`（只在有会话的运行里）。`prepareRun` 给主助手和 Agent 档案前两个，非访客都给 `wait_answer`。
+- 回答去哪：有 Agent 在等就直接给它；提问的运行还在跑就先留着，运行结束时 `settleAsks`（`runs.ts` 收尾调用）作为 `[回答] …` 消息送回会话；没有会话的通知本人。建议按钮在运行结束后展示（飞书机器人回完话立刻 `showSuggestions`，其他情况 4 秒后），点了用 `receive(fromAsk)` 替本人说出 `message`。
+- 对话里回复即回答：`receive` 先调 `answerFromMessage`——回编号选最近带选项的提问或建议；有提问就以这句话作答（Agent 在等时这条消息不再开新一轮）；审批要“批准 / 拒绝 + 理由”；其余情况让旧建议失效。`fromAsk`、群里别人说的话、访客不参与。
+- 审批：`config.approvals.tools`（默认空）、`waitSeconds`；`callTool` 对列出的工具先 `held`：建审批、等一会；批准后 `setApprovalExecutor` 用当时的工具上下文执行，结果写进 `result`；拒绝理由经 `describeAnswer` 回给 Agent。
+- 展示：飞书 `src/channels/lark-asks.ts`（卡片：选项按钮 + 文字框表单；审批是批准 / 拒绝；答完卡片改成记录；交互 `purpose: "ask"`，`lark-actions.ts` 转给 `handleAskAction`）；网页 `AskCard.vue`（对话页输入框上方、回答下方，“今天”页“等你回答”），接口 `GET /api/asks`、`POST /api/asks/:id/answer`，事件 `type: "ask"`；Telegram / OneBot 等发编号列表。
+- `roles/_common.md` 加“问本人、给本人选项”，`skills/omem/SKILL.md` 列了新工具。

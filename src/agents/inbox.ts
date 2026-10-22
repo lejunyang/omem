@@ -34,6 +34,8 @@ export type Inbound = Partial<ThreadAddress> & {
   speaker?: string;
   /** A colleague (not a user) asking the assistant in a group the owner is in (lark.guests.ownerPresent). */
   asker?: string;
+  /** Said for the owner by an ask (a clicked suggestion, a delivered answer): not itself an answer. */
+  fromAsk?: boolean;
 };
 
 export type Received = { thread: Thread; messageId: string | null; runId: string | null; merged: boolean; reply: string | null; card?: Record<string, unknown>; started: "new" | "renewed" | null };
@@ -87,7 +89,18 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     }
   }
 
+  // A reply to an open question (or a number picking a suggested step). When an agent is waiting
+  // for it inside its turn, it is the answer there and starts no turn of its own.
+  if (!inb.fromAsk && !inb.speaker && !inb.asker) {
+    const { answerFromMessage } = await import("./asks.ts");
+    if (await answerFromMessage(app, thread.id, text, userId)) {
+      const messageId = addMessage(app, thread.id, "user", text, null, { answer: true, ...(inb.externalMessageId ? { externalId: inb.externalMessageId } : {}) });
+      return { thread: findThread(app, thread.id)!, messageId, runId: null, merged: false, reply: null, started };
+    }
+  }
+
   const meta: Record<string, unknown> = userId === OWNER ? {} : { userId };
+  if (inb.fromAsk) meta.fromAsk = true;
   if (inb.context) {
     meta.context = inb.context;
     meta.contextLabel = inb.contextLabel ?? "群里";

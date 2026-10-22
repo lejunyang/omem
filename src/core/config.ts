@@ -107,6 +107,11 @@ export const configSchema = z.object({
       profiles: z.array(agentProfileSchema).default([]),
     })
     .default({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3 }, profiles: [] }),
+  /**
+   * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
+   * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.
+   */
+  approvals: z.object({ tools: z.array(z.string()).default([]), waitSeconds: z.number().int().min(0).max(50).default(40) }).default({ tools: [], waitSeconds: 40 }),
   /** This instance among its peers (`omem peer`): defaults to the host name. */
   node: z.object({ id: z.string().optional() }).default({}),
   /** Memory quality: write-time checks, cross-model review, side-by-side comparison. */

@@ -72,7 +72,26 @@ export type ServerEvent =
   | { type: "run"; runId: string; status: string }
   | { type: "run-event"; runId: string; seq: number; event: { type: string; data: any; at: string } }
   | { type: "notification"; id: string; title: string; body: string; link?: string | null }
-  | { type: "changed"; entity: string; id: string; spaceId?: string };
+  | { type: "changed"; entity: string; id: string; spaceId?: string }
+  | { type: "ask"; id: string; status: string; conversationId: string | null };
+
+/** A question, suggested next steps or an approval from an agent (server: agents/asks.ts). */
+export type Ask = {
+  id: string;
+  runId: string | null;
+  conversationId: string | null;
+  kind: "question" | "suggestion" | "approval";
+  question: string;
+  options: { label: string; message?: string }[];
+  allowText: boolean;
+  tool: string | null;
+  status: "pending" | "answered" | "cancelled";
+  answer: string | null;
+  approved: boolean | null;
+  result: string | null;
+  shownAt: string | null;
+  createdAt: string;
+};
 
 type Listener = (e: ServerEvent) => void;
 const listeners = new Set<Listener>();

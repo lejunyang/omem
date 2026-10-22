@@ -29,6 +29,18 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
   if (inter.status !== "open") return { toast: { type: "info", content: "已经处理过了" } };
   const opName = await nameOf(operator);
   const value = typeof action.value === "string" ? safeJson(action.value) : action.value;
+  if (inter.purpose === "ask") {
+    // A question, suggested step or approval (agents/asks.ts): answered here, no agent turn of its own.
+    const { handleAskAction } = await import("./lark-asks.ts");
+    const formValue = typeof action.form_value === "string" ? safeJson(action.form_value) : action.form_value;
+    const by = resolveIdentity(app, "lark", operator) ?? operator;
+    try {
+      const r = await handleAskAction(app, inter.id, String((inter.payload as { askId?: string }).askId ?? ""), { name: action.name, value, formValue }, by);
+      return { toast: { type: "success", content: r.toast }, ...(r.card ? { card: rawCard(r.card) } : {}) };
+    } catch (e) {
+      return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };
+    }
+  }
   if (inter.purpose === "draft") {
     const choice = (value as { action?: string } | undefined)?.action;
     closeInteraction(app, inter.id, operator);

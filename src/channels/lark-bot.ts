@@ -16,6 +16,8 @@ import { inQuietHours } from "../core/notify.ts";
 import { findSourceByUri, sourceText } from "../sources/store.ts";
 import { answerFromChannel, resolveCitations } from "./common.ts";
 import { registerCodeProgress } from "./lark-code-progress.ts";
+import { registerLarkAsks } from "./lark-asks.ts";
+import { showSuggestions } from "../agents/asks.ts";
 import { startReplyProgress } from "./lark-progress.ts";
 import { finishCot, setCotSdk } from "./lark-cot.ts";
 import { watchAgentBubbles } from "./lark-agent-cot.ts";
@@ -165,6 +167,7 @@ export async function startLarkBot(app: App) {
   setLarkClient(client, botOpenId);
   setCotSdk(client);
   registerCodeProgress(app);
+  registerLarkAsks(app, () => cfg.ownerOpenId);
   watchAgentBubbles(app);
 
   const nameOf = larkSenderNames(app, client);
@@ -488,6 +491,8 @@ export async function startLarkBot(app: App) {
       if (runId && !p) await reactLark(m.messageId, "DONE").catch(() => {});
       // A later quote of this reply reads back as an empty card; this maps it to the answer.
       if (runId && sentId) run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?) where run_id = ? and role = 'assistant'", sentId, runId);
+      // Next steps the agent offered go right under its reply.
+      if (runId) await showSuggestions(app, runId).catch((e) => console.warn("[omem] 下一步按钮发送失败：", (e as Error).message));
     } catch (e) {
       if (runId && !answered) finishCot(app, runId, false);
       const p = await presentation?.close();

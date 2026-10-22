@@ -626,6 +626,21 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return createRun(app, { kind: "tutor", spaceId: b.space, title: "生成复习卡片", input: { sourceIds: b.sourceIds, focus: b.focus } });
   });
 
+  // -------------------------------------------------------------------- asks
+  // Questions, suggested next steps and approvals from agents (agents/asks.ts).
+  server.get("/api/asks", async (req) => {
+    const { listAsks } = await import("../agents/asks.ts");
+    const qs = req.query as { conversation?: string; status?: "pending" | "answered" | "cancelled" };
+    return listAsks(app, { conversationId: qs.conversation, status: qs.status, userId: who(req), limit: 100 });
+  });
+  server.post("/api/asks/:id/answer", async (req) => {
+    const { answerAsk, getAsk } = await import("../agents/asks.ts");
+    const id = (req.params as { id: string }).id;
+    if (getAsk(app, id).userId !== who(req)) throw new HttpError(404, "没有这个提问");
+    const b = q(z.object({ choice: z.number().int().min(0).nullable().optional(), text: z.string().optional(), approved: z.boolean().optional() }), req.body);
+    return answerAsk(app, id, { ...b, by: who(req) });
+  });
+
   // ----------------------------------------------------- notifications/status
   server.get("/api/notifications", async () => {
     const list = listNotifications(app, 50);

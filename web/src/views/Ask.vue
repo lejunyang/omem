@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { del, get, onServerEvent, post } from "../api";
+import { del, get, onServerEvent, post, type Ask as AskItem } from "../api";
+import AskCard from "../components/AskCard.vue";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import { confirmDialog } from "../lib/dialog";
@@ -16,6 +17,13 @@ const route = useRoute();
 const router = useRouter();
 const conversations = ref<Conversation[]>([]);
 const messages = ref<Message[]>([]);
+const asks = ref<AskItem[]>([]);
+async function loadAsks() {
+  asks.value = id.value ? await get<AskItem[]>(`/api/asks?conversation=${encodeURIComponent(id.value)}&status=pending`).catch(() => []) : [];
+}
+/** Questions and approvals wait above the composer; suggested next steps sit under their reply. */
+const waiting = computed(() => asks.value.filter((a) => a.kind !== "suggestion"));
+const suggestionsFor = (runId: string | null) => (runId ? asks.value.filter((a) => a.kind === "suggestion" && a.runId === runId) : []);
 const text = ref("");
 const sending = ref(false);
 const scroller = ref<HTMLElement>();
@@ -53,16 +61,20 @@ async function scrollDown() {
 onMounted(() => {
   void loadList();
   void loadConversation();
+  void loadAsks();
   input.value?.focus();
 });
 watch(id, () => {
   messages.value = [];
   void loadConversation();
+  void loadAsks();
   showList.value = false;
 });
 const off = onServerEvent((e) => {
+  if (e.type === "ask" && e.conversationId === id.value) void loadAsks();
   if (e.type === "run" && (e.status === "done" || e.status === "failed") && messages.value.some((m) => m.runId === e.runId)) {
     void loadConversation();
+    void loadAsks();
     void loadList();
   }
 });
@@ -153,6 +165,7 @@ function autosize(e: Event) {
             <div v-else class="msg bot">
               <RunActivity v-if="m.runId" :run-id="m.runId" :show-text="false" />
               <Markdown :source="m.text" />
+              <AskCard v-for="a in suggestionsFor(m.runId)" :key="a.id" :ask="a" compact @answered="loadAsks" />
             </div>
           </template>
           <div v-for="r in pending" :key="r" class="msg bot">
@@ -164,6 +177,9 @@ function autosize(e: Event) {
             </RunActivity>
           </div>
         </div>
+      </div>
+      <div v-if="waiting.length" class="asks">
+        <AskCard v-for="a in waiting" :key="a.id" :ask="a" @answered="loadAsks" />
       </div>
       <form class="composer" @submit.prevent="send">
         <textarea ref="input" v-model="text" rows="1" placeholder="提问或交代事情；/help 查看命令（Shift+Enter 换行）" @input="autosize" @keydown.enter.exact.prevent="send" />
@@ -177,6 +193,14 @@ function autosize(e: Event) {
 .ask {
   display: flex;
   height: 100%;
+}
+.asks {
+  padding: 8px 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
 }
 .convs {
   width: 260px;

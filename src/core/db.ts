@@ -590,6 +590,33 @@ const migrations: string[] = [
   // Memory vectors for passive recall (the same model as chunks; cleared when it changes).
   `alter table memories add column embedding blob;
    alter table memory_recalls add column via text not null default 'recall';`,
+  // Questions, suggested next steps and approvals put to the owner (agents/asks.ts).
+  `create table asks (
+    id text primary key,
+    run_id text,
+    conversation_id text,
+    user_id text not null default 'owner',
+    kind text not null,
+    question text not null default '',
+    options text not null default '[]',
+    allow_text integer not null default 1,
+    tool text,
+    args text,
+    context text,
+    status text not null default 'pending',
+    answer text,
+    choice integer,
+    approved integer,
+    result text,
+    consumed integer not null default 0,
+    shown_at text,
+    created_at text not null,
+    answered_at text,
+    answered_by text
+  );
+  create index asks_conversation on asks(conversation_id, status);
+  create index asks_run on asks(run_id);
+  create index asks_pending on asks(status, created_at);`,
 ];
 
 export type Db = DatabaseSync;

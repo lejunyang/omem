@@ -227,6 +227,10 @@ export function prepareRun(
   }
   // Agents (and the main assistant) can ask one another a question; background roles cannot.
   if (spec || roleName === "assistant") tools.add("ask_agent");
+  // …and the owner: a question, or next steps as buttons under the reply. Waiting is for anyone
+  // whose tool call is held for approval.
+  if (spec || roleName === "assistant") for (const t of ["ask_owner", "suggest_next"]) tools.add(t);
+  if (!guest) tools.add("wait_answer");
   for (const t of input.denyTools ?? []) tools.delete(t);
   // A thread that may post into specific Feishu chats (watched groups) gets the bot's voice and notify.
   if (input.lark?.chats?.length) for (const t of ["lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "notify"]) tools.add(t);
