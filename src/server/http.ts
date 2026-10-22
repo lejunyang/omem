@@ -775,6 +775,27 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { pollLark } = await import("../channels/lark-personal.ts");
     return pollLark(app);
   });
+  // What the owner's lark-cli login lacks for reading knowledge bases and writing docs; POST starts a login for it.
+  server.get("/api/lark/user-permissions", async () => {
+    const { missingUserScopes, cliUser } = await import("../channels/lark-auth.ts");
+    return { user: await cliUser(), ...(await missingUserScopes(["wiki-read", "doc-write"])) };
+  });
+  server.post("/api/lark/user-permissions", async (req) => {
+    const { missingUserScopes, requestUserScopes } = await import("../channels/lark-auth.ts");
+    const b = q(z.object({ scopes: z.array(z.string().regex(/^[a-z:._]+$/)).max(30).optional() }), req.body ?? {});
+    const scopes = b.scopes ?? (await missingUserScopes(["wiki-read", "doc-write"])).missing.map((m) => m.anyOf[0]);
+    if (!scopes.length) return { url: null };
+    return requestUserScopes(app, scopes, "在设置页补齐授权：");
+  });
+  // Knowledge-base crawls (lark-wiki.ts): progress, continue, stop.
+  server.get("/api/lark/wiki-crawls", async () => ({ crawls: (await import("../channels/lark-wiki.ts")).listCrawls(app) }));
+  server.post("/api/lark/wiki-crawls/:id/:op", async (req) => {
+    const w = await import("../channels/lark-wiki.ts");
+    const { id, op } = req.params as { id: string; op: string };
+    if (op === "stop") return w.stopCrawl(app, id);
+    if (op === "continue") return w.continueCrawl(app, id);
+    throw new HttpError(400, "未知操作");
+  });
 
   server.post("/api/agents/:id/probe", async (req) => {
     const { allProfiles } = await import("../core/config.ts");

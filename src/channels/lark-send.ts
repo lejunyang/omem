@@ -189,6 +189,53 @@ export async function sendLark(to: Target, content: Content): Promise<{ messageI
   return { messageId: d?.message_id, threadId: d?.thread_id };
 }
 
+/** A bot-side id from `resolveMention`: open_id (ou_…) or user_id. */
+const idField = (id: string) => (id.startsWith("ou_") ? "open_id" : "user_id");
+
+/**
+ * A card in a group that only one member sees (Feishu's ephemeral card: cards only, one person per
+ * call, both the bot and that person in the group; it cannot be a reply or open a topic).
+ */
+export async function sendEphemeral(chatId: string, person: string, card: Record<string, unknown>): Promise<{ messageId: string }> {
+  const r = await larkClient().request({ method: "POST", url: "/open-apis/ephemeral/v1/send", data: { chat_id: chatId, [idField(person)]: person, msg_type: "interactive", card } });
+  const d = check(r, "发送仅部分人可见的卡片");
+  return { messageId: d?.message_id };
+}
+
+/** Buzz people about a message the bot sent (in-app urgent; they must be in its chat). */
+export async function urgentLark(messageId: string, people: string[]) {
+  const groups = new Map<string, string[]>();
+  for (const p of people) groups.set(idField(p), [...(groups.get(idField(p)) ?? []), p]);
+  for (const [type, ids] of groups)
+    check(await larkClient().im.message.urgentApp({ path: { message_id: messageId }, params: { user_id_type: type as "open_id" | "user_id" }, data: { user_id_list: ids } }), "加急");
+}
+
+/** Who sees a message beyond posting it: members only (`onlyTo`), and who is buzzed (`urgent`). */
+export type Delivery = { onlyTo?: { name: string; id: string }[]; urgent?: { name: string; id: string }[] };
+
+/** Card form of any text content (members-only messages must be cards). */
+export function asCard(content: Content): Record<string, unknown> {
+  if ("card" in content) return content.card;
+  if ("markdown" in content) return buildCard({ title: content.title, blocks: [{ markdown: content.markdown }] });
+  if ("text" in content) return buildCard({ blocks: [{ markdown: content.text }] });
+  throw new HttpError(400, "图片和文件不能只给部分人看");
+}
+
+/** Send with what `Delivery` asks for; returns the ids of what was posted. */
+export async function deliverLark(to: Target, content: Content, d: Delivery = {}): Promise<{ messageId: string; threadId?: string; ephemeral?: string[] }> {
+  if (d.onlyTo?.length) {
+    const chatId = to.chatId;
+    if (!chatId) throw new HttpError(400, "只给部分人看的消息要发在群里（chat_id）");
+    const card = asCard(content);
+    const ids: string[] = [];
+    for (const p of d.onlyTo) ids.push((await sendEphemeral(chatId, p.id, card)).messageId);
+    return { messageId: ids[0], ephemeral: ids };
+  }
+  const sent = await sendLark(to, content);
+  if (d.urgent?.length) await urgentLark(sent.messageId, d.urgent.map((p) => p.id));
+  return sent;
+}
+
 export async function updateLarkCard(messageId: string, card: Record<string, unknown>) {
   check(await larkClient().im.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } }), "更新卡片");
 }

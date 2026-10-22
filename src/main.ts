@@ -69,6 +69,9 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     import("./channels/lark-docs.ts")
       .then((m) => m.resumeRefresh(app))
       .catch((e) => console.warn("[omem] 继续重新读取飞书文档失败：", e.message));
+    import("./channels/lark-wiki.ts")
+      .then((m) => m.resumeCrawls(app))
+      .catch((e) => console.warn("[omem] 继续爬取飞书知识库失败：", e.message));
     if (app.config.embeddings.provider !== "none") {
       const loop = async () => {
         try {

@@ -145,7 +145,7 @@ registerHandler("agent", async (ctx) => {
     consultOf?: string;
     /** Started by a rule: it may post only where the rule allows, and reports to the owner otherwise. */
     rule?: { id: string; name: string };
-    lark?: { chats: string[] | null; draft?: boolean };
+    lark?: { chats: string[] | null; draft?: boolean; urgent?: boolean; private?: boolean };
     /** A rule's silent investigation: nothing is delivered; the agent posts itself when it decides to. */
     silent?: { chatId: string; messageId: string; topicId: string | null };
     /** A rule's agent answering in a topic under this message (its bubble or answer opens the topic). */

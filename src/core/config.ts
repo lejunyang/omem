@@ -226,6 +226,15 @@ export const configSchema = z.object({
           /** Feishu docs: levels of linked docs imported along with a doc (0 = none), at most docMaxLinked per doc. */
           docLinkDepth: z.number().int().min(0).max(5).default(2),
           docMaxLinked: z.number().int().min(0).default(30),
+          /**
+           * Wiki pages: their child nodes in the knowledge base count as links of the same level (at most
+           * docWikiChildren per page). One import reads at most docMaxPerImport docs in all (links, children,
+           * their links); bigger trees go through a wiki crawl (lark-wiki-crawl.ts), batch by batch.
+           */
+          docWikiChildren: z.number().int().min(0).default(50),
+          docMaxPerImport: z.number().int().min(1).default(100),
+          /** A wiki crawl reads at most this many docs unless told otherwise. */
+          wikiCrawlMaxDocs: z.number().int().min(1).default(2000),
           /** Linked docs that could not be read: retried every docRetryHours, at most docRetryMax times, then given up quietly. */
           docRetryHours: z.number().min(1).default(6),
           docRetryMax: z.number().int().min(0).default(3),
@@ -274,6 +283,9 @@ export const configSchema = z.object({
           docMediaMaxMB: 100,
           docLinkDepth: 2,
           docMaxLinked: 30,
+          docWikiChildren: 50,
+          docMaxPerImport: 100,
+          wikiCrawlMaxDocs: 2000,
           docRetryHours: 6,
           docRetryMax: 3,
           docRecheckDays: [7, 30, 90, 180, 365],
@@ -335,6 +347,9 @@ export const configSchema = z.object({
         docMediaMaxMB: 100,
         docLinkDepth: 2,
         docMaxLinked: 30,
+        docWikiChildren: 50,
+        docMaxPerImport: 100,
+        wikiCrawlMaxDocs: 2000,
         docRetryHours: 6,
         docRetryMax: 3,
         docRecheckDays: [7, 30, 90, 180, 365],

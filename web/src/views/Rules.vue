@@ -18,7 +18,7 @@ import { fmtTime, relTime, toast } from "../store";
 type Reply = "none" | "draft" | "auto";
 type Unless = "owner-engaged" | "answered";
 type Action =
-  | { type: "agent"; spec: string; task: string; ownTopic: boolean; reply: Reply | "silent" }
+  | { type: "agent"; spec: string; task: string; ownTopic: boolean; reply: Reply | "silent"; allowUrgent?: boolean; allowPrivate?: boolean }
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
   | { type: "invite-bot" }
   | { type: "capture" }
@@ -332,6 +332,11 @@ function startFrom(text: string) {
                 <UiCheckbox v-if="!scheduleOnly && a.reply !== 'silent'" v-model="a.ownTopic" size="sm" :disabled="a.reply === 'none'" @change="touch">在消息下开话题</UiCheckbox>
               </div>
               <small class="muted">{{ REPLY_HINT[a.reply] }}</small>
+              <div v-if="!scheduleOnly && a.reply !== 'none'" class="row wrap">
+                <UiCheckbox :model-value="!!a.allowUrgent" size="sm" @change="(v) => ((a.allowUrgent = v), touch())">允许加急</UiCheckbox>
+                <UiCheckbox :model-value="!!a.allowPrivate" size="sm" @change="(v) => ((a.allowPrivate = v), touch())">允许只给部分人看</UiCheckbox>
+                <small class="muted">什么情况用、对谁用，写在上面的规则说明或下面的要求里；没写到它就不用</small>
+              </div>
               <textarea v-model="a.task" class="input" rows="2" placeholder="交给它的要求（触发的消息会自动附上），例如：分析报警，需要关注就 @ 值班人" @input="touch" />
             </template>
             <template v-else-if="a.type === 'watch'">

@@ -3,7 +3,7 @@ import { addMessage, findThread } from "../agents/threads.ts";
 import type { App } from "../core/app.ts";
 import { one, run, tx } from "../core/db.ts";
 import { OWNER, canWrite, resolveIdentity } from "../core/users.ts";
-import { buildCard, closeInteraction, describeAction, interactionForMessage, sendLark, updateLarkCard, type Content, type Target } from "./lark-send.ts";
+import { buildCard, closeInteraction, deliverLark, describeAction, interactionForMessage, sendLark, updateLarkCard, type Content, type Delivery, type Target } from "./lark-send.ts";
 
 /**
  * A button press, select or form submit on one of the bot's cards
@@ -44,9 +44,9 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
   if (inter.purpose === "draft") {
     const choice = (value as { action?: string } | undefined)?.action;
     closeInteraction(app, inter.id, operator);
-    const p = inter.payload as { target: Target; content: Content };
+    const p = inter.payload as { target: Target; content: Content; delivery?: Delivery };
     if (choice === "send") {
-      await sendLark(p.target, p.content);
+      await deliverLark(p.target, p.content, p.delivery);
       await updateLarkCard(messageId, buildCard({ title: "已发送", color: "green", blocks: [{ markdown: previewOf(p.content) }, { note: `${opName} 确认发送` }] })).catch(() => {});
     } else await updateLarkCard(messageId, buildCard({ title: "没有发送", color: "grey", blocks: [{ markdown: previewOf(p.content) }] })).catch(() => {});
     if (inter.conversationId && findThread(app, inter.conversationId))

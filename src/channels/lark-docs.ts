@@ -402,6 +402,20 @@ function docLinks(text: string, origin: string, self: string) {
   return links;
 }
 
+/** A wiki page's child pages that are docs (other kinds stay where they are); errors leave the page without them. */
+async function childPages(app: App, url: string, origin: string, max: number): Promise<Link[]> {
+  try {
+    const { wikiNode, wikiChildren, nodeUrl, isReadableNode } = await import("./lark-wiki.ts");
+    const node = await wikiNode(app, url);
+    if (!node?.hasChild || node.nodeType === "shortcut") return [];
+    const { nodes } = await wikiChildren(app, node, max);
+    return nodes.filter(isReadableNode).map((n) => ({ url: nodeUrl(origin, n), title: n.title }));
+  } catch (e) {
+    console.warn(`[omem] 读取飞书知识库子页面失败 ${url}：${(e as Error).message}`);
+    return [];
+  }
+}
+
 /** A doc already in the space, found by its link, its token or its document id. */
 export function findLarkDoc(app: App, spaceId: string, url: string) {
   const { token, type } = normalizeDocUrl(url);
@@ -474,14 +488,19 @@ type ImportOpts = {
   freshMs?: number;
   /** Re-process even when the revision did not change (e.g. to fetch media for old copies). */
   force?: boolean;
+  /** A wiki page's child nodes count as its links (default); a crawl queues them itself. */
+  wikiChildren?: boolean;
+  /** Docs this whole import may still read (`docMaxPerImport`), shared down the chain. */
+  budget?: { left: number };
 };
 
 export async function importLarkDocument(app: App, spaceId: string, input: string, opts: ImportOpts = {}): Promise<LarkDocResult> {
   const cfg = app.config.lark.capture;
   const given = opts.depth ?? cfg.docLinkDepth;
-  const { url, origin, token } = normalizeDocUrl(input);
+  const { url, origin, token, type } = normalizeDocUrl(input);
   const chain = new Set(opts.chain ?? []).add(url);
   const unreadable = opts.unreadable ?? [];
+  const budget = opts.budget ?? { left: cfg.docMaxPerImport };
   const existing = findLarkDoc(app, spaceId, url);
   const prev = json<Partial<LarkDocMeta>>(existing?.meta, {});
   // Reached by several routes (given directly and as someone's link): the deepest reach wins.
@@ -503,8 +522,15 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   const missing: LarkDocResult["missing"] = [];
   const nestedMissing: LarkDocResult["missing"] = [];
   const local = new Map<string, { id: string; title: string }>();
+  const links = docLinks(text, origin, url);
+  // Child pages of a wiki page, as links of the same level; those the text does not link get a list at the end.
+  const children = type === "wiki" && depth > 0 && opts.wikiChildren !== false && cfg.docWikiChildren > 0 ? await childPages(app, url, origin, cfg.docWikiChildren) : [];
+  const listed = children.filter((c) => !links.has(c.url));
+  if (listed.length) text += `\n\n---\n\n**知识库子页面**\n\n${listed.map((c) => `- [${label(c.title) || "子页面"}](${c.url})`).join("\n")}\n`;
+  for (const c of listed) links.set(c.url, c);
   let followed = 0;
-  for (const link of docLinks(text, origin, url).values()) {
+  const childUrls = new Set(children.map((c) => c.url));
+  for (const link of links.values()) {
     const have = findLarkDoc(app, spaceId, link.url);
     const fresh = have && Date.now() - Date.parse(have.updated_at) < (opts.freshMs ?? 86400_000);
     if (have && (fresh || depth <= 0)) {
@@ -512,10 +538,12 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
       continue;
     }
     // A link back up the chain is filled in once that doc is saved (see below).
-    if (depth <= 0 || chain.has(link.url) || followed >= cfg.docMaxLinked) continue;
-    followed++;
+    if (depth <= 0 || chain.has(link.url) || budget.left <= 0) continue;
+    // Children have their own cap (docWikiChildren, applied when listing them); links share docMaxLinked.
+    if (!childUrls.has(link.url) && followed++ >= cfg.docMaxLinked) continue;
+    budget.left--;
     try {
-      const r = await importLarkDocument(app, spaceId, link.url, { depth: depth - 1, chain, unreadable });
+      const r = await importLarkDocument(app, spaceId, link.url, { depth: depth - 1, chain, unreadable, budget });
       const row = one<{ title: string }>(app.db, "select title from sources where id = ?", r.id);
       local.set(link.url, { id: r.id, title: row?.title ?? link.title });
       if (r.status !== "unchanged") related.push(r.id);
@@ -674,7 +702,7 @@ export async function retryMissingDocs(app: App, opts: { force?: boolean } = {})
   return { tried, imported };
 }
 
-function relinkParent(app: App, parentId: string, url: string, id: string, title: string) {
+export function relinkParent(app: App, parentId: string, url: string, id: string, title: string) {
   const p = one<{ space_id: string; uri: string; title: string; kind: string; text: string; meta: string; deleted_at: string | null }>(
     app.db,
     "select space_id, uri, title, kind, text, meta, deleted_at from sources where id = ?",

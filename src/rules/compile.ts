@@ -17,7 +17,7 @@ const LANGUAGE = `条件是 JSON：叶子 {"field": 字段, "op": 运算, "value
 运算：${OPS.join(" / ")}（in 的 value 是字符串数组；is 的 value 是 true/false；matches 是正则，大小写不敏感；其余是字符串，大小写不敏感）。`;
 
 const ACTIONS = `动作（按顺序执行，至少一个）：
-- {"type":"agent","spec":"档案名","task":"交给它的任务说明（触发的消息和正在进行的讨论会自动附上）","ownTopic":是否从触发消息开话题处理,"reply":"none|draft|auto|silent"}：none 只把结论发给本人；draft 它要在群里说的话先给本人确认；auto 可以直接在这个群/话题里回复和 @ 人，过程（思考气泡）可见；silent 静默排查：群里看不到过程，它自己判断要不要发、要不要追问缺的信息，有结论才在话题里发，之后跟进这个话题
+- {"type":"agent","spec":"档案名","task":"交给它的任务说明（触发的消息和正在进行的讨论会自动附上）","ownTopic":是否从触发消息开话题处理,"reply":"none|draft|auto|silent","allowUrgent":false,"allowPrivate":false}：allowUrgent 允许它在群里发消息时加急指定的人，allowPrivate 允许它发只给群里某些人看的消息（reply 不是 none 时才有用）；reply 的 none 只把结论发给本人；draft 它要在群里说的话先给本人确认；auto 可以直接在这个群/话题里回复和 @ 人，过程（思考气泡）可见；silent 静默排查：群里看不到过程，它自己判断要不要发、要不要追问缺的信息，有结论才在话题里发，之后跟进这个话题
 - {"type":"watch","spec":"档案名","on":"all|mention|keyword","pattern":"关键词正则（keyword 时）","reply":"none|draft|auto"}：开始监听这个群，之后的消息交给它
 - {"type":"invite-bot"}：以本人身份把 omem 的机器人拉进这个群
 - {"type":"capture"}：把这个群设为与本人有关，立刻采集一次
@@ -45,6 +45,7 @@ export async function draftRule(app: App, description: string, current?: Partial
     "- 拉机器人、开始监听这类对一个群做一次就够的，trigger.once 用 chat；每条消息都要处理的用 event。",
     "- 本人说“没人回应/超时没人理再处理”：waitMinutes 写等待的分钟数，unless 加 answered。说“我已经在跟进/在讨论时不要插手”：unless 加 owner-engaged（本人在这个话题里说过话，或半小时内在群里说过话就跳过）。",
     "- 本人说“静默排查”“别在群里输出过程”“有结论再发”：agent 动作的 reply 用 silent。",
+    "- 本人说某种情况要“加急”“加急提醒某人”：agent 动作的 allowUrgent 写 true，task 里写清什么情况加急、加急谁；说“只发给某人看”“别让群里其他人看到”“私下提醒”：allowPrivate 写 true，task 里写清给谁看。本人没说就都不写（默认不加急、所有人可见）。",
     "- 群名用 contains：本人说“报警群”“值班群”通常指名字里带这几个字的群，不是名字恰好等于它；只有本人给了完整群名或群 id 才用 equals。",
     "- 发送人只给了名字就用 sender.name；给了邮箱用 sender.email。群里有某个机器人用 chat.bots contains。“报警卡片”用 message.type equals interactive。",
     `- 本人说的“助理机器人”“omem 机器人”“我的机器人”指 omem 自己的飞书机器人${botName ? `（名字是「${botName}」）` : ""}：判断它在不在群里用 chat.hasOwnBot（is true / false），不要用 chat.bots 去猜它的名字。`,

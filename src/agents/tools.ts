@@ -48,6 +48,10 @@ export type ToolContext = {
   effort?: string | null;
   /** Posts become drafts the owner approves before they are sent. */
   larkDraft?: boolean;
+  /** Feishu messages may buzz people (urgent) / go to some members only (private): rules that allow it, the owner's own runs. */
+  larkPowers?: { urgent: boolean; private: boolean };
+  /** This call was approved by the owner (a held call running after the OK): do not hold it again. */
+  approved?: boolean;
   /** Built-in role of the run (ingest, dreamer…); background roles must cite sources for memories. */
   role?: string;
   /** Agent spec running, if any: its experience/preference memories are its own. */
@@ -1426,6 +1430,16 @@ const larkTarget = z.object({
     .array(z.string())
     .optional()
     .describe("要 @ 的人或机器人：名字、邮箱、已核实的机器人应用侧 open_id/user_id 或 all。姓名无法唯一匹配时核对目标群成员；重名拒绝。机器人需已在本应用收到的 @ 消息里出现，不能用 app_id 或采集应用的 open_id。正文的 @名字 会替换成真正的 @，没写则放开头"),
+  urgent: z
+    .array(z.string())
+    .max(10)
+    .optional()
+    .describe("加急：发出后对这些人做应用内加急（名字或邮箱，同 mentions，须在目标会话里）。默认不加急；只在本人明确要求、或规则写明这种情况要加急时用，且只加急写到的人"),
+  only_to: z
+    .array(z.string())
+    .max(20)
+    .optional()
+    .describe("只给群里这些人看（名字或邮箱，须是群成员），其他人看不到；会以卡片发出、不能回复在话题里。只在本人明确要求、或规则写明时用"),
 });
 type LarkTargetArgs = z.infer<typeof larkTarget>;
 
@@ -1455,9 +1469,34 @@ function runThread(ctx: ToolContext) {
   return input.conversationId ?? input.threadId ?? null;
 }
 
+/** Who an urgent / members-only message reaches, checked against what this run may do. */
+async function larkDelivery(ctx: ToolContext, t: LarkTargetArgs, chat: string | null): Promise<import("../channels/lark-send.ts").Delivery> {
+  if (!t.urgent?.length && !t.only_to?.length) return {};
+  const allowed = ctx.larkPowers;
+  if (t.urgent?.length && !allowed?.urgent) throw new HttpError(403, "这次任务不能加急：只有本人明确要求或规则允许加急时才可以。去掉 urgent 再发");
+  if (t.only_to?.length && !allowed?.private) throw new HttpError(403, "这次任务不能发只给部分人看的消息：只有本人明确要求或规则允许时才可以。去掉 only_to 再发");
+  if (t.urgent?.length && t.only_to?.length) throw new HttpError(400, "只给部分人看的消息不能加急：二选一");
+  if (t.only_to?.length && !chat) throw new HttpError(400, "只给部分人看的消息要发在群里（chat_id 或群里的 reply_to）");
+  const { resolveMention } = await import("../channels/lark-people.ts");
+  const people = async (list: string[]) => {
+    const out = [];
+    for (const who of list) {
+      const p = await resolveMention(ctx.app, who, chat);
+      if ("all" in p) throw new HttpError(400, "加急和只给部分人看都要写具体的人，不能用 all");
+      out.push({ name: p.name, id: p.userId });
+    }
+    return out;
+  };
+  return t.urgent?.length ? { urgent: await people(t.urgent) } : { onlyTo: await people(t.only_to!) };
+}
+
+const deliveryNote = (d: import("../channels/lark-send.ts").Delivery) =>
+  d.onlyTo?.length ? `（只给 ${d.onlyTo.map((p) => p.name).join("、")} 看）` : d.urgent?.length ? `（加急 ${d.urgent.map((p) => p.name).join("、")}）` : "";
+
 async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("../channels/lark-send.ts").Content, opts: { allowed?: string[]; waitForAction?: boolean } = {}) {
   const send = await import("../channels/lark-send.ts");
   const chat = await larkGuard(ctx, t);
+  const delivery = await larkDelivery(ctx, t, chat);
   if (t.mentions?.length) {
     // Real @-mentions using IDs verified for the sending bot (see lark-people.ts).
     const { applyMentions, resolveMention } = await import("../channels/lark-people.ts");
@@ -1472,8 +1511,8 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
   }
   // Posting into the chat this run is answering in a topic: stay inside that topic (files,
   // follow-ups) instead of landing at the top of the chat.
-  let target: import("../channels/lark-send.ts").Target = { chatId: t.chat_id, userId: t.user_id, replyTo: t.reply_to, inThread: t.in_thread };
-  if (!t.reply_to && !t.user_id && chat) {
+  let target: import("../channels/lark-send.ts").Target = delivery.onlyTo ? { chatId: chat! } : { chatId: t.chat_id, userId: t.user_id, replyTo: t.reply_to, inThread: t.in_thread };
+  if (!t.reply_to && !t.user_id && chat && !delivery.onlyTo) {
     const convId = runThread(ctx);
     const conv = convId ? one<{ external_id: string | null; last: string | null }>(ctx.app.db, "select external_id, json_extract(settings,'$.lastMessageId') last from conversations where id = ?", convId) : undefined;
     const [convChat, topic] = (conv?.external_id ?? "").split("#");
@@ -1487,13 +1526,13 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
     const card = send.buildCard({
       title: "待确认的回复",
       color: "orange",
-      blocks: [{ markdown: `将发到 ${chat ?? t.user_id}${t.reply_to ? `，回复 ${t.reply_to}${t.in_thread ? "（话题内）" : ""}` : ""}：` }, { markdown: preview.slice(0, 6000) }, { buttons: [{ text: "发送", value: "send", style: "primary" }, { text: "不发", value: "drop" }] }],
+      blocks: [{ markdown: `将发到 ${chat ?? t.user_id}${t.reply_to && !delivery.onlyTo ? `，回复 ${t.reply_to}${t.in_thread ? "（话题内）" : ""}` : ""}${deliveryNote(delivery)}：` }, { markdown: preview.slice(0, 6000) }, { buttons: [{ text: "发送", value: "send", style: "primary" }, { text: "不发", value: "drop" }] }],
     });
     const sent = await send.sendLark({ userId: ownerTarget }, { card });
-    send.recordInteraction(ctx.app, { messageId: sent.messageId, chatId: null, conversationId: runThread(ctx), runId: ctx.runId, purpose: "draft", allowed: [ownerTarget], payload: { target, content } });
+    send.recordInteraction(ctx.app, { messageId: sent.messageId, chatId: null, conversationId: runThread(ctx), runId: ctx.runId, purpose: "draft", allowed: [ownerTarget], payload: { target, content, delivery } });
     return `已作为草稿发给本人确认（还没有发出）。`;
   }
-  const sent = await send.sendLark(target, content);
+  const sent = await send.deliverLark(target, content, delivery);
   // A rule's silent agent that spoke in a topic follows it: replies there come back to it.
   if (ctx.runId && chat && sent.threadId) {
     const input = (getRun(ctx.app, ctx.runId).input ?? {}) as { silent?: unknown; rule?: { id: string }; spec?: string };
@@ -1503,8 +1542,9 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
     }
   }
   if (opts.waitForAction)
-    send.recordInteraction(ctx.app, { messageId: sent.messageId, chatId: chat, conversationId: runThread(ctx), runId: ctx.runId, purpose: "agent", allowed: opts.allowed ?? [], payload: {} });
-  return `已发送 ${sent.messageId}${sent.threadId ? `（话题 ${sent.threadId}）` : ""}`;
+    for (const id of sent.ephemeral ?? [sent.messageId])
+      send.recordInteraction(ctx.app, { messageId: id, chatId: chat, conversationId: runThread(ctx), runId: ctx.runId, purpose: "agent", allowed: opts.allowed ?? [], payload: {} });
+  return `已发送 ${sent.messageId}${sent.threadId ? `（话题 ${sent.threadId}）` : ""}${deliveryNote(delivery)}`;
 }
 
 def({
@@ -1592,6 +1632,7 @@ def({
   handler: async (ctx, a) => {
     const { uploadLark } = await import("../channels/lark-send.ts");
     await larkGuard(ctx, a);
+    if (a.only_to?.length) throw new HttpError(400, "图片和文件不能只给部分人看：先发一张只给他们看的卡片说明，再把文件发给需要的人");
     if (ctx.larkDraft) return larkPost(ctx, a, { text: `（文件 ${a.path}）` });
     return larkPost(ctx, a, await uploadLark(a.path));
   },
@@ -1951,14 +1992,127 @@ def({
 
 def({
   name: "import_url",
-  description: "抓取网页或飞书文档并保存为原件。",
+  description:
+    "抓取网页或飞书文档并保存为原件。飞书文档会跟着导入它链接的文档和知识库子页面：depth 是从这篇算起的层数（默认按设置，通常 2；0 = 只要这篇），一次最多导入的篇数由设置限定。要整个知识库或很大的目录用 lark_wiki_crawl。",
   write: true,
-  schema: z.object({ url: z.string().url(), space: z.string().optional() }),
+  schema: z.object({ url: z.string().url(), space: z.string().optional(), depth: z.number().int().min(0).max(5).optional() }),
   handler: async (ctx, a) => {
-    const r = await importUrl(ctx.app, writeSpace(ctx, a.space), a.url);
+    const r = await importUrl(ctx.app, writeSpace(ctx, a.space), a.url, { depth: a.depth });
     const linked = r.related?.length ? `；链接的文档新增或更新 ${r.related.length} 篇：${r.related.join("、")}` : "";
     const missing = r.missing?.length ? `；读不到 ${r.missing.length} 篇（已提醒本人）：${r.missing.map((m) => m.title || m.url).join("、")}` : "";
     return `已保存原件 ${r.id}（${r.status}）${linked}${missing}`;
+  },
+});
+
+def({
+  name: "lark_wiki_crawl",
+  description:
+    "按目录树读取飞书知识库：从一个知识库页面开始，读它和往下 depth 层的子页面（只读文档，表格等留链接），存为原件并交给整理。读的进度存在库里，重启后继续。action=start 开始（max_docs 总量上限，batch 每批篇数：给了 batch 就每读完一批暂停，等下次 continue，适合定时规则或 wake_later 一点点读完庞大的知识库；不给就在后台一直读完）；continue 继续暂停的爬取；stop 停止；status 列出全部爬取和进度。只在本人要读整个知识库或大目录时用；单篇文档和少量链接用 import_url。",
+  write: true,
+  schema: z.object({
+    action: z.enum(["start", "continue", "stop", "status"]),
+    url: z.string().optional().describe("start：知识库页面链接（/wiki/…）"),
+    id: z.string().optional().describe("continue / stop：爬取 id（wc_…）"),
+    space: z.string().optional(),
+    depth: z.number().int().min(0).max(50).optional().describe("往下读几层子页面，默认按设置（通常 2）"),
+    max_docs: z.number().int().min(1).max(100_000).optional(),
+    batch: z.number().int().min(1).max(1000).optional(),
+  }),
+  handler: async (ctx, a) => {
+    const w = await import("../channels/lark-wiki.ts");
+    const show = (c: ReturnType<typeof w.crawlSummary>) =>
+      `${c.id}《${c.rootTitle ?? c.root}》${{ running: "进行中", paused: "已暂停", done: "已完成", stopped: "已停止" }[c.status]}：读了 ${c.read} 篇，待读 ${c.queued}，失败 ${c.failed}，没读 ${c.skipped}（层数 ${c.depth}，上限 ${c.maxDocs}${c.batch ? `，每批 ${c.batch}` : ""}，空间 ${c.spaceId}）${c.errors.length ? `\n  最近的错误：${c.errors.join("；")}` : ""}`;
+    if (a.action === "status") {
+      const list = w.listCrawls(ctx.app).filter((c) => !ctx.spaces || ctx.spaces.includes(c.spaceId));
+      return list.length ? list.map(show).join("\n") : "还没有知识库爬取";
+    }
+    if (a.action === "start") {
+      if (!a.url) throw new HttpError(400, "start 需要 url");
+      return `已开始：${show(await w.startCrawl(ctx.app, { spaceId: writeSpace(ctx, a.space), url: a.url, depth: a.depth, maxDocs: a.max_docs, batch: a.batch ?? null, by: ctx.spec ?? ctx.role }))}`;
+    }
+    if (!a.id) throw new HttpError(400, `${a.action} 需要 id`);
+    inScope(ctx, w.getCrawl(ctx.app, a.id).spaceId, "知识库爬取");
+    if (a.action === "stop") return `已停止：${show(w.stopCrawl(ctx.app, a.id))}`;
+    return `已继续：${show(w.continueCrawl(ctx.app, a.id, { batch: a.batch, maxDocs: a.max_docs }))}`;
+  },
+});
+
+// ---- Feishu docs written as the owner -------------------------------------------------
+
+/**
+ * Writes outside the owner's own place (a knowledge base others read, someone else's folder or doc)
+ * wait for the owner's OK, with the place spelled out; the approved call runs again with `approved`.
+ */
+async function ownerDocGate(ctx: ToolContext, name: string, args: Record<string, unknown>, what: string, personal: boolean) {
+  if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有 omem 的主人能以本人身份写飞书文档");
+  // Like the bot's lark_* tools: omem's own runs only (an outside agent over `omem mcp` has no Feishu scope).
+  if (ctx.actor === "agent" && ctx.larkChats === undefined) throw new HttpError(403, "以本人身份写飞书文档只在 omem 自己的运行里可用");
+  if (personal || ctx.actor === "user" || ctx.approved) return null;
+  const r = await held(ctx, name, args, `${ctx.spec ?? ctx.role ?? "助理"} 要以你的身份${what}\n\n不在你的个人文档库或你自己的云空间里，确认位置无误再批准。`);
+  if (r.isError) throw new HttpError(403, r.text);
+  return r.text;
+}
+
+const preview = (s: string) => truncate(s.replace(/\s+/g, " ").trim(), 300);
+
+def({
+  name: "lark_doc_create",
+  description:
+    "以本人身份新建飞书文档（lark-cli，文档归本人所有），用于本人让你整理成文档的内容。默认放在本人的个人文档库根目录；parent 可给个人文档库里的页面、知识库页面或云空间文件夹的链接。放在个人文档库或本人自己的文件夹里直接建；放进别人也在用的知识库或别人的文件夹，要本人批准（会把具体位置给本人确认）。content 默认按 Markdown。缺权限时会把授权链接发给本人。",
+  write: true,
+  schema: z.object({
+    title: z.string().min(1).max(200),
+    content: z.string().min(1),
+    parent: z.string().optional().describe("放在哪里：知识库页面链接（建为它的子页面）、云空间文件夹链接；不填 = 个人文档库根目录"),
+    format: z.enum(["markdown", "xml"]).optional(),
+  }),
+  handler: async (ctx, a) => {
+    const w = await import("../channels/lark-doc-write.ts");
+    const place = await w.placeFor(ctx.app, a.parent);
+    const wait = await ownerDocGate(ctx, "lark_doc_create", a, `在 ${place.label} 新建文档《${a.title}》。\n内容开头：${preview(a.content)}`, place.personal);
+    if (wait) return wait;
+    const r = await w.createDoc(ctx.app, { title: a.title, content: a.content, format: a.format, place });
+    return `已在 ${place.label} 新建《${a.title}》：${r.url || r.documentId}${r.warnings.length ? `\n飞书的提示：${truncate(JSON.stringify(r.warnings), 500)}` : ""}`;
+  },
+});
+
+def({
+  name: "lark_doc_update",
+  description:
+    "以本人身份编辑飞书文档：append 追加到末尾，str_replace 把 pattern（一小段原文）换成 content，overwrite 整篇覆盖（会丢掉原有的富文本，只在本人要求重写时用）。本人个人文档库或本人自己的文档直接改；知识库里别人也在用的文档、别人的文档，要本人批准。",
+  write: true,
+  schema: z.object({
+    doc: z.string().describe("文档链接（/docx/… 或 /wiki/…）"),
+    command: z.enum(["append", "str_replace", "overwrite"]),
+    content: z.string(),
+    pattern: z.string().optional(),
+    format: z.enum(["markdown", "xml"]).optional(),
+  }),
+  handler: async (ctx, a) => {
+    const w = await import("../channels/lark-doc-write.ts");
+    const place = await w.docPlace(ctx.app, a.doc);
+    const verb = { append: "在末尾追加", str_replace: `把“${truncate(a.pattern ?? "", 80)}”改成`, overwrite: "整篇覆盖为" }[a.command];
+    const wait = await ownerDocGate(ctx, "lark_doc_update", a, `编辑 ${place.label}：${verb}\n${preview(a.content)}`, place.personal);
+    if (wait) return wait;
+    await w.updateDoc(ctx.app, a);
+    return `已编辑（${a.command}）：${a.doc}（${place.label}）`;
+  },
+});
+
+def({
+  name: "lark_doc_move",
+  description:
+    "以本人身份移动飞书文档：移到知识库页面下（target 给页面链接）、知识库根目录（target=my_library 表示个人文档库根目录），或把知识库页面移到云空间文件夹（target 给文件夹链接）。来源和目标都在本人自己的地方时直接移；涉及别人也在用的知识库或别人的文件夹，要本人批准。",
+  write: true,
+  schema: z.object({ doc: z.string().describe("要移动的文档或知识库页面链接"), target: z.string().describe("目标：知识库页面链接、云空间文件夹链接或 my_library") }),
+  handler: async (ctx, a) => {
+    const w = await import("../channels/lark-doc-write.ts");
+    const from = await w.docPlace(ctx.app, a.doc);
+    const to = await w.placeFor(ctx.app, a.target);
+    const wait = await ownerDocGate(ctx, "lark_doc_move", a, `把 ${from.label} 移到 ${to.label}`, from.personal && to.personal);
+    if (wait) return wait;
+    const r = await w.moveDoc(ctx.app, from, to);
+    return `已把 ${from.label} 移到 ${to.label}${r ? `：${truncate(JSON.stringify(r), 300)}` : ""}`;
   },
 });
 
@@ -2169,7 +2323,7 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
   if (ctx.shadow && (tool.write || SHADOW_BLOCKED.has(name))) return { text: recordShadow(ctx, name, parsed.data as Record<string, unknown>), isError: false };
-  if (ctx.actor === "agent" && ctx.app.config.approvals.tools.includes(name)) return held(ctx, name, parsed.data as Record<string, unknown>);
+  if (ctx.actor === "agent" && !ctx.approved && ctx.app.config.approvals.tools.includes(name)) return held(ctx, name, parsed.data as Record<string, unknown>);
   return runTool(ctx, tool, name, parsed.data);
 }
 
@@ -2188,14 +2342,14 @@ async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown
  * A tool listed in `approvals.tools`: the call waits for the owner's OK. Approved, it runs with
  * the context it was made in (also after this run has ended); refused, the reason goes back.
  */
-async function held(ctx: ToolContext, name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
+async function held(ctx: ToolContext, name: string, args: Record<string, unknown>, question?: string): Promise<{ text: string; isError: boolean }> {
   const { createAsk, describeAnswer, waitForAnswer } = await import("./asks.ts");
   const { app, tools: allowed, ...rest } = ctx;
   const ask = createAsk(app, {
     runId: ctx.runId,
     userId: ctx.userId ?? OWNER,
     kind: "approval",
-    question: `${ctx.spec ?? ctx.role ?? "助理"} 要调用 ${name}：\n${truncate(JSON.stringify(args, null, 1), 1500)}`,
+    question: question ?? `${ctx.spec ?? ctx.role ?? "助理"} 要调用 ${name}：\n${truncate(JSON.stringify(args, null, 1), 1500)}`,
     tool: name,
     args,
     context: { ...rest, tools: allowed ? [...allowed] : null },
@@ -2210,7 +2364,7 @@ setApprovalExecutor(async (app, ask, snapshot) => {
   const tool = tools.find((t) => t.name === ask.tool);
   if (!tool) return { text: `工具 ${ask.tool} 已不存在`, isError: true };
   const s = snapshot as Omit<ToolContext, "app" | "tools"> & { tools: string[] | null };
-  return runTool({ ...s, app, tools: s.tools ? new Set(s.tools) : null }, tool, ask.tool!, ask.args ?? {});
+  return runTool({ ...s, app, tools: s.tools ? new Set(s.tools) : null, approved: true }, tool, ask.tool!, ask.args ?? {});
 });
 
 /**

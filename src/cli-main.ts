@@ -502,6 +502,52 @@ lark
     console.log(after.missingScopes.length ? `仍缺：${after.missingScopes.join("、")}（可能在等管理员审批）` : "已补齐");
   });
 
+lark
+  .command("user-permissions")
+  .description("检查 lark-cli 的本人登录缺哪些权限（读知识库、以本人身份写文档）；--grant 发起授权并打印链接")
+  .option("--grant", "发起授权（链接也会发到飞书私聊），确认后自动完成登录")
+  .action(async (o) => {
+    const app = open();
+    const { cliUser, missingUserScopes, requestUserScopes } = await import("./channels/lark-auth.ts");
+    const user = await cliUser();
+    const r = await missingUserScopes(["wiki-read", "doc-write"]);
+    if (r.unknown) return console.error("读不到 lark-cli 的登录信息：先运行 lark-cli auth login");
+    console.log(`lark-cli 登录：${user?.name ?? user?.openId ?? "未知"}`);
+    if (!r.missing.length) return console.log("读知识库和写文档的权限都有");
+    for (const m of r.missing) console.log(`缺：${m.label}（${m.anyOf.join(" 或 ")}）`);
+    if (!o.grant) return console.log("\n运行 omem lark user-permissions --grant 发起授权。");
+    const g = await requestUserScopes(app, r.missing.map((m) => m.anyOf[0]), "命令行：");
+    console.log(`\n在飞书里打开链接确认：\n${g.url}\n（omem 服务在运行时会自动完成登录；这条命令退出后，也可以再运行一次检查）`);
+  });
+
+lark
+  .command("wiki-crawl")
+  .description("按目录树读取飞书知识库：不带参数列出进度；给链接开始；--continue / --stop 加爬取 id")
+  .argument("[url]", "知识库页面链接（/wiki/…）")
+  .option("--space <id>", "存进哪个空间", undefined)
+  .option("--depth <n>", "往下读几层子页面")
+  .option("--max <n>", "最多读多少篇")
+  .option("--batch <n>", "每批读多少篇，读完一批暂停")
+  .option("--continue <id>", "继续暂停的爬取")
+  .option("--stop <id>", "停止爬取")
+  .action(async (url, o) => {
+    const app = open();
+    const w = await import("./channels/lark-wiki.ts");
+    const n = (v?: string) => (v ? Number(v) : undefined);
+    const show = (c: ReturnType<typeof w.crawlSummary>) => console.log(`${c.id}  ${c.status.padEnd(7)} 读了 ${c.read}，待读 ${c.queued}，失败 ${c.failed}，没读 ${c.skipped}  《${c.rootTitle ?? c.root}》`);
+    if (o.stop) return show(w.stopCrawl(app, o.stop));
+    let id: string | undefined;
+    if (o.continue) id = w.continueCrawl(app, o.continue, { batch: n(o.batch), background: false }).id;
+    else if (url) id = (await w.startCrawl(app, { spaceId: o.space ?? app.config.lark.capture.space, url, depth: n(o.depth), maxDocs: n(o.max), batch: n(o.batch) ?? null, by: "cli" }, { background: false })).id;
+    if (!id) {
+      const list = w.listCrawls(app);
+      return list.length ? list.forEach(show) : console.log("还没有知识库爬取");
+    }
+    // In the foreground: read this crawl (its batch, or all of it) and report.
+    const c = await w.crawlLoop(app, id);
+    show(w.crawlSummary(c));
+  });
+
 const space = program.command("space").description("管理空间（领域隔离：个人 / 项目 / 代码仓库 / 学习 / 通用）");
 space
   .command("list")

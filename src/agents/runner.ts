@@ -159,9 +159,20 @@ export type RoleRunInput = {
   shadow?: { parentRunId: string | null };
   /** omem tools this run must not have (a consulted agent cannot hand work on). */
   denyTools?: string[];
-  /** Feishu chats it may post into (a rule's agent: only the chat that triggered it). */
-  lark?: { chats: string[] | null; draft?: boolean };
+  /** Feishu chats it may post into (a rule's agent: only the chat that triggered it), and whether it may buzz people or post to some members only. */
+  lark?: LarkAccess;
 };
+
+/**
+ * Urgent and members-only Feishu messages: a rule's agent when the rule allows them; the owner's own
+ * runs that may post anywhere (the owner asks in words; the tool says to use them only then).
+ */
+function larkPowers(lark: LarkAccess, userId: string) {
+  if (lark.chats === null && userId === OWNER) return { urgent: true, private: true };
+  return lark.urgent || lark.private ? { urgent: !!lark.urgent, private: !!lark.private } : undefined;
+}
+
+export type LarkAccess = { chats: string[] | null; draft?: boolean; urgent?: boolean; private?: boolean };
 
 /** Who is acting: a built-in role, or an agent spec the assistant (or the owner) created. */
 export type Actor = { role: RoleName } | { spec: AgentSpec };
@@ -187,7 +198,7 @@ export type PreparedRun = {
  */
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: { chats: string[] | null; draft?: boolean }; shadow?: { parentRunId: string | null }; denyTools?: string[] },
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[] },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -249,7 +260,7 @@ export function prepareRun(
   const readable = scoped ? [...new Set([...scoped, ...related.map((r) => r.space), ...(input.alsoRead ?? []).filter((id) => !allowed || allowed.includes(id))])] : null;
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
-  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, shadow: input.shadow });
+  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, shadow: input.shadow });
   const guide = spaceGuide(app, space.id).trim();
   // A built-in role learns like a spec: its own experience and preferences, its regular skills first.
   const lessons = guest ? "" : learnedContext(app, space.id, userId, spec?.name ?? (roleName === "assistant" ? null : roleName));

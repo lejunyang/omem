@@ -118,6 +118,47 @@ function saveCommands(patch: Record<string, unknown>, note = "已保存私聊指
   void saveConfig({ lark: { ...config.value.lark, commands: { ...cur, ...patch } } }, note);
 }
 
+function saveCapture(patch: Record<string, unknown>, note = "已保存") {
+  void saveConfig({ lark: { ...config.value.lark, capture: { ...config.value.lark.capture, ...patch } } }, note);
+}
+const intIn = (e: Event, min: number, max: number, dflt: number) => Math.max(min, Math.min(max, Math.round(Number((e.target as HTMLInputElement).value) || dflt)));
+
+type Crawl = { id: string; rootTitle?: string; root: string; status: "running" | "paused" | "done" | "stopped"; read: number; queued: number; failed: number; skipped: number; depth: number; maxDocs: number; batch: number | null; updatedAt: string; errors: string[] };
+const crawls = ref<Crawl[]>([]);
+const crawlLabel: Record<Crawl["status"], string> = { running: "进行中", paused: "已暂停", done: "已完成", stopped: "已停止" };
+async function loadCrawls() {
+  crawls.value = (await get<{ crawls: Crawl[] }>("/api/lark/wiki-crawls").catch(() => ({ crawls: [] }))).crawls.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+async function crawlOp(c: Crawl, op: "continue" | "stop") {
+  await post(`/api/lark/wiki-crawls/${c.id}/${op}`, {});
+  toast(op === "stop" ? "已停止" : "已继续", "ok");
+  await loadCrawls();
+}
+
+type Need = { label: string; anyOf: string[] };
+const perms = ref<{ user: { name: string | null } | null; unknown: boolean; missing: Need[] } | null>(null);
+const permsLoading = ref(false);
+const grantUrl = ref("");
+async function checkPerms() {
+  permsLoading.value = true;
+  try {
+    perms.value = await get("/api/lark/user-permissions");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    permsLoading.value = false;
+  }
+}
+async function grantPerms() {
+  try {
+    const r = await post<{ url: string | null }>("/api/lark/user-permissions", {});
+    grantUrl.value = r.url ?? "";
+    toast(r.url ? "授权链接也发到了飞书私聊" : "没有缺的权限", "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+
 async function load() {
   const s = await get<{ config: any; agents: Profile[]; home: string }>("/api/settings");
   config.value = s.config;
@@ -132,6 +173,7 @@ onMounted(() => {
   void load();
   void loadLark();
   void loadCaptured();
+  void loadCrawls();
 });
 // Opening the Agent tab fills role dropdowns from cached probes (probing once when there is none).
 watch(
@@ -663,8 +705,52 @@ async function saveEdit() {
       </div>
 
       <div class="card pad stack">
+        <strong>飞书文档</strong>
+        <p class="muted small">读飞书文档时，它链接的文档和它在知识库里的子页面一起导入，层数从最先给的那篇算起（不是每篇子文档各算一遍）。整个知识库或很大的目录交给助理用“知识库爬取”分批读，进度存在库里，可以配合定时规则每天读一批。</p>
+        <div class="grid2">
+          <label class="field"><span>跟随层数（0–5，0 = 只读这一篇）</span>
+            <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" max="5" :value="config.lark.capture.docLinkDepth ?? 2" @change="saveCapture({ docLinkDepth: intIn($event, 0, 5, 2) })" />
+          </label>
+          <label class="field"><span>一次导入最多读多少篇</span>
+            <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" :value="config.lark.capture.docMaxPerImport ?? 100" @change="saveCapture({ docMaxPerImport: intIn($event, 1, 100000, 100) })" />
+          </label>
+          <label class="field"><span>每篇最多跟随的链接</span>
+            <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" :value="config.lark.capture.docMaxLinked ?? 30" @change="saveCapture({ docMaxLinked: intIn($event, 0, 10000, 30) })" />
+          </label>
+          <label class="field"><span>每个知识库页面最多读的子页面</span>
+            <input class="input" style="width: 120px" type="number" inputmode="numeric" min="0" :value="config.lark.capture.docWikiChildren ?? 50" @change="saveCapture({ docWikiChildren: intIn($event, 0, 10000, 50) })" />
+          </label>
+          <label class="field"><span>知识库爬取默认最多读多少篇</span>
+            <input class="input" style="width: 120px" type="number" inputmode="numeric" min="1" :value="config.lark.capture.wikiCrawlMaxDocs ?? 2000" @change="saveCapture({ wikiCrawlMaxDocs: intIn($event, 1, 100000, 2000) })" />
+          </label>
+        </div>
+        <template v-if="crawls.length">
+          <div class="row"><div class="section-title grow">知识库爬取</div><button class="btn sm" @click="loadCrawls">刷新</button></div>
+          <div v-for="c in crawls" :key="c.id" class="row sub wrap">
+            <span class="grow ellipsis">{{ c.rootTitle || c.root }}</span>
+            <span class="badge" :class="{ accent: c.status === 'running', warn: c.status === 'paused' }">{{ crawlLabel[c.status] }}</span>
+            <span class="muted small nowrap">读了 {{ c.read }} · 待读 {{ c.queued }}{{ c.failed ? ` · 失败 ${c.failed}` : "" }} · {{ c.depth }} 层{{ c.batch ? ` · 每批 ${c.batch}` : "" }}</span>
+            <button v-if="c.status === 'paused'" class="btn sm" @click="crawlOp(c, 'continue')">继续</button>
+            <button v-if="c.status === 'running' || c.status === 'paused'" class="btn sm" @click="crawlOp(c, 'stop')">停止</button>
+          </div>
+        </template>
+        <div class="section-title">以你的身份写文档</div>
+        <p class="muted small">你让助理整理成文档时，它用 lark-cli 以你的身份新建、编辑和移动飞书文档。放在你的个人文档库或你自己的云空间文件夹里直接做；放进别人也在用的知识库、别人的文件夹或文档时，每次新建、编辑、覆盖和移动都会先把具体位置发给你批准。lark-cli 缺权限时会把授权链接发到你的飞书私聊。</p>
+        <div class="row wrap">
+          <button class="btn sm" :disabled="permsLoading" @click="checkPerms">{{ permsLoading ? "检查中…" : "检查 lark-cli 授权" }}</button>
+          <span v-if="perms?.user?.name" class="muted small">已登录：{{ perms.user.name }}</span>
+          <span v-if="perms && !perms.unknown && !perms.missing.length" class="badge accent">权限齐全</span>
+        </div>
+        <p v-if="perms && perms.unknown" class="small warn-text">读不到 lark-cli 的登录信息：先在运行 omem 的电脑上运行 lark-cli auth login。</p>
+        <template v-if="perms && perms.missing.length">
+          <div v-for="m in perms.missing" :key="m.label" class="muted small">缺：{{ m.label }}（{{ m.anyOf.join(" 或 ") }}）</div>
+          <div class="row wrap"><button class="btn sm primary" @click="grantPerms">去授权</button><a v-if="grantUrl" class="small" :href="grantUrl" target="_blank" rel="noopener">在飞书里打开授权链接</a></div>
+        </template>
+      </div>
+
+      <div class="card pad stack">
         <div class="row wrap"><strong>个人消息采集（只读）</strong><span class="spacer" /><button class="btn sm" @click="loadLarkChats">读取最近会话</button><button class="btn sm" @click="pollNow">立即采集</button></div>
-        <p class="muted small">使用本机 lark-cli 的个人登录读取会话；除了你亲手发出的私聊指令（见下）和规则里的“拉机器人进群”，从不以你的身份发消息或操作；定时采集在“定时任务”中开启。omem 机器人自己的私聊和它在群里发的消息不会被采集。</p>
+        <p class="muted small">使用本机 lark-cli 的个人登录读取会话；除了你亲手发出的私聊指令（见下）和规则里的“拉机器人进群”，从不以你的身份发消息或操作（写文档见上面“飞书文档”）；定时采集在“定时任务”中开启。omem 机器人自己的私聊和它在群里发的消息不会被采集。</p>
         <div class="field">
           <span>采集范围</span>
           <UiSegmented
@@ -866,6 +952,10 @@ async function saveEdit() {
   display: grid;
   grid-template-columns: 1fr 110px;
   gap: 6px;
+}
+.warn-text {
+  color: var(--warn);
+  margin: 0;
 }
 .policies {
   display: grid;

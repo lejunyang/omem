@@ -342,3 +342,12 @@ updated: 2026-10-18
 - 审批：`config.approvals.tools`（默认空）、`waitSeconds`；`callTool` 对列出的工具先 `held`：建审批、等一会；批准后 `setApprovalExecutor` 用当时的工具上下文执行，结果写进 `result`；拒绝理由经 `describeAnswer` 回给 Agent。
 - 展示：飞书 `src/channels/lark-asks.ts`（卡片：选项按钮 + 文字框表单；审批是批准 / 拒绝；答完卡片改成记录；交互 `purpose: "ask"`，`lark-actions.ts` 转给 `handleAskAction`）；网页 `AskCard.vue`（对话页输入框上方、回答下方，“今天”页“等你回答”），接口 `GET /api/asks`、`POST /api/asks/:id/answer`，事件 `type: "ask"`；Telegram / OneBot 等发编号列表。
 - `roles/_common.md` 加“问本人、给本人选项”，`skills/omem/SKILL.md` 列了新工具。
+
+## 2026-10-23：飞书知识库、加急与只给部分人看、以本人身份写文档
+
+- 知识库（`src/channels/lark-wiki.ts`）：`wikiNode`（`wiki +node-get`，131014 = 不在知识库）、`wikiChildren`（`+node-list` 分页）、`personalLibrary`（`wiki spaces get my_library`）。`importLarkDocument` 对 `/wiki/` 页面在 depth > 0 时把文档类子节点当同一层的链接（`docWikiChildren`，正文没链到的追加到末尾“知识库子页面”），整条导入共享预算 `docMaxPerImport`（`opts.budget`）。
+- 知识库爬取：kv `lark_wiki_crawls` 存队列、已见节点、读到的原件 id；`crawlLoop` 每篇 `importLarkDocument(depth 0, wikiChildren false)`，新建的页面用 `relinkParent` 改掉此前页面里的链接；`batch` 读完一批 `paused`，`continueCrawl` 继续；缺权限时暂停不计失败；`resumeCrawls` 启动时继续；读到的交给整理（kv `lark_wiki_crawls:<id>` 记已交出的数量）。工具 `lark_wiki_crawl`，`omem lark wiki-crawl`，`GET /api/lark/wiki-crawls`、`POST /api/lark/wiki-crawls/:id/(continue|stop)`。`import_url` 加 `depth`。
+- 授权（`src/channels/lark-auth.ts`）：lark-cli 错误带 `missing_scopes` 时抛 `LarkScopeError`；`asOwner` 把它变成一次 `auth login --scope … --no-wait --json`，链接经 `notify` 发给本人，后台 `--device-code` 等确认；同一组权限有效期内只发一次链接。`USER_FEATURES` 列读知识库和写文档要的权限，`omem lark user-permissions [--grant]`、`GET/POST /api/lark/user-permissions`、设置页“检查 lark-cli 授权”。
+- 写文档（`src/channels/lark-doc-write.ts`）：`placeFor`（不填 / `my_library` = 个人文档库根目录；知识库页面；云空间文件夹）和 `docPlace` 判断位置是不是本人自己的（个人文档库，或 `drive metas` 的 owner 是 lark-cli 登录的本人）。工具 `lark_doc_create` / `lark_doc_update` / `lark_doc_move`：不是本人自己的位置时经 `held` 审批，问题写明知识库名和父页面，执行器带 `approved: true` 重跑不再拦；外部 Agent（工具上下文没有 `larkChats`）不能用；只有主人能用。
+- 加急与只给部分人看：`larkTarget` 加 `urgent`（≤ 10 人）和 `only_to`（≤ 20 人），`larkDelivery` 按 `ctx.larkPowers` 放行并用 `resolveMention` 对人；`lark-send.ts` 的 `deliverLark`（`urgentLark` = `im.message.urgentApp`，`sendEphemeral` = `/ephemeral/v1/send`，按 `ou_` 前缀选 open_id / user_id）；草稿确认带上 `delivery`。规则 agent 动作加 `allowUrgent` / `allowPrivate`（`runner.ts` 的 `LarkAccess`，本人自己的运行两样都有），任务里写一句什么时候可以用；规则草稿生成会按原话勾上；规则页两个开关。
+- `skills/library/lark-messaging/SKILL.md` 加加急和只给部分人看；`roles/assistant.md` 加知识库爬取和写文档的工具与做法。

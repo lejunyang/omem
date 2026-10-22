@@ -99,6 +99,14 @@ describe("rules", () => {
     expect(autoInput.lark).toEqual({ chats: ["oc_alerts"], draft: false });
     expect(one<{ external_id: string }>(app.db, "select external_id from conversations where id = ?", autoInput.threadId)?.external_id).toBe("oc_alerts");
 
+    // Urgent / members-only messages only when the rule allows them, and the agent is told when to use them.
+    const urgent = saveRule(app, { name: "严重报警加急", description: "P0 报警加急值班的小王", enabled: true, conditions: { field: "message.text", op: "contains", value: "CPU" }, judge: "code", actions: [{ type: "agent", spec: "alert-analyst", task: "P0 时加急小王", ownTopic: false, reply: "auto", allowUrgent: true }] });
+    await dispatchRuleEvent(app, msg({ id: "om_13" }));
+    const urgentInput = JSON.parse(one<{ input: string }>(app.db, "select input from runs where id = ?", listFirings(app, urgent.id)[0].results[0].runId!)!.input);
+    expect(urgentInput.lark).toEqual({ chats: ["oc_alerts"], draft: false, urgent: true });
+    expect(urgentInput.task).toMatch(/这条规则允许加急/);
+    expect(urgentInput.task).not.toMatch(/only_to/);
+
     // A missing spec fails that action only; the firing is still logged.
     const broken = saveRule(app, { name: "缺档案", description: "x", enabled: true, conditions: { field: "chat.name", op: "contains", value: "报警" }, judge: "code", actions: [{ type: "agent", spec: "ghost", task: "", ownTopic: false, reply: "none" }, { type: "notify", urgent: false }] });
     await dispatchRuleEvent(app, msg({ id: "om_12" }));

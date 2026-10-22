@@ -49,7 +49,20 @@ const reply = z.enum(["none", "draft", "auto"]);
  */
 export const agentReply = z.enum(["none", "draft", "auto", "silent"]);
 export const actionSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("agent"), spec: z.string(), task: z.string().default(""), ownTopic: z.boolean().default(false), reply: agentReply.default("none") }),
+  /**
+   * allowUrgent / allowPrivate: what its messages in the chat may do beyond posting — buzz people
+   * (urgent, in-app) and messages only some members see. Off unless the rule says so; when to use
+   * them is the rule's own words (description, task).
+   */
+  z.object({
+    type: z.literal("agent"),
+    spec: z.string(),
+    task: z.string().default(""),
+    ownTopic: z.boolean().default(false),
+    reply: agentReply.default("none"),
+    allowUrgent: z.boolean().optional(),
+    allowPrivate: z.boolean().optional(),
+  }),
   z.object({ type: z.literal("watch"), spec: z.string(), on: z.enum(["all", "mention", "keyword"]).default("mention"), pattern: z.string().optional(), reply: reply.default("draft") }),
   z.object({ type: z.literal("invite-bot") }),
   z.object({ type: z.literal("capture") }),
