@@ -249,6 +249,8 @@ omem peer name laptop                     # 改本机在同伴中的名字（默
 omem peer url <同伴> http://<新地址>:4317   # 对方换了地址、码里的地址都连不上时（不用重新配对）
 omem diag <同伴>                          # 版本、数量、最近失败、飞书采集状态、Agent
 omem peer commands <同伴>                 # 可远程执行的命令
+omem peer call <同伴> logs '{"stream":"out","lines":5000}'  # 气泡请求与成功记录
+omem peer call <同伴> logs '{"stream":"err","lines":5000}'  # 气泡失败与超时记录
 omem peer call <同伴> lark-raw '{"command":"+chat-messages-list","chat_id":"oc_…"}'
 omem peer call <同伴> sql '{"query":"select count(*) from lark_messages"}'   # 只读
 omem peer call <同伴> update               # git pull --ff-only、安装依赖、构建、重启服务

@@ -185,7 +185,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 外部只读访问（分享链接、自定义域名） | 设计，未实现 | [external-access.md](external-access.md) |
 | 通知策略：只对未读 / 紧急 / 临期 / 未处理推送（飞书已读状态经 lark-cli 查询），22:00–09:00 静默（本人设定的定时提醒除外）；巡检对能自己查的事先查再报，并可直接开话题推进 | 已实现；2026-10-20 | `src/core/config.ts` 的 notify、`lark-read.ts`、`roles/heartbeat.md` |
 | 规则：新消息（机器人实时 + 本人采集，按规则去重）/ 第一次看到的群 / 定时触发；条件是宿主求值的 JSON（群名、机器人、发送人、邮箱、正文、类型、@ 本人、卡片标题，all/any/not），判断方式 条件 / 条件 + 模型确认 / 模型（每规则每小时 60 次）；动作：交给 Agent（可在消息下处理，话题由它的气泡或回答开出，不发“规则触发”卡片；只能在这个群回复，回复方式 只告诉我/先给我看/直接回复/静默排查——静默时群里不出过程，它自己决定发不发、追问什么，发过言的话题跟进 24 小时，本人插话即停）；等几分钟再处理、本人已在讨论里/已有人回复就跳过（动手时读话题或前后半小时的讨论，`src/rules/context.ts`），模型判断带上讨论、持续监听、拉机器人进群（本人身份唯一的写操作）、优先采集、通知；模型从原话生成规则、试运行、触发记录；助理 `save_rule` 建的默认不启用 | 已实现，测试覆盖；2026-10-21，真机待验 | [rules.md](rules.md)、`src/rules/`、`web/src/views/Rules.vue` |
-| 飞书思考过程原生气泡（`message_cot` + AG-UI 事件，事件 content 为 JSON 字符串）：可折叠、工具调用列表、最新调用加载中、结束自动完成；建不出/推不上时停用且不残留空气泡 | 已实现；2026-10-20（botmux 方案，协议修正后待真机验） | `src/channels/lark-cot.ts` |
+| 飞书思考过程原生气泡（`message_cot` + AG-UI，content 为 JSON 字符串）：发送期间的新事件持续补推，推理节点和工具结果齐备后收尾；缺失工具完成事件 30 秒后标记缺失并结束；请求和失败日志按运行、气泡、请求序号关联，不记正文 | 已实现；2026-10-22 收尾竞态、超时与诊断日志有假客户端回归，真实气泡展示待验 | `src/channels/lark-cot.ts`、`test/lark-cot.test.ts` |
 | 前端路由 chunk 空闲预加载、菜单 hover 预取 | 已实现；2026-10-20 | `web/src/preload.ts`、`main.ts` |
 | Agent 学习分层：档案=身份（Agent 写入限长）、技能=做法、档案记忆=偏好/经验（scope=agent） | 已实现；2026-10-20 | `src/agents/specs.ts`、`roles/_common.md` |
 | 内置角色作为档案：Agent 页可见、可自定义（复制到 `library/_roles/`，记下基于的源码），源码更新后提示，可恢复源码版本或三方合并（`git merge-file`，冲突交给模型 `role-merge` 运行）；`omem roles`；内置角色也有专属记忆和挂载技能（`remember/save_skill(agent="reviewer")`），运行时注入；档案名不能与内置角色重名 | 已实现，测试覆盖；2026-10-21 | `src/agents/builtin-roles.ts`、`profile-jobs.ts`、`web/src/views/Agents.vue` |

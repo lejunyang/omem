@@ -34,6 +34,10 @@ type State = {
   disabled: boolean;
   pumping: boolean;
   queued: boolean;
+  dirty: boolean;
+  /** No more input is accepted once the terminal request starts. */
+  closing: boolean;
+  requestSeq: number;
   finish?: "done" | "error";
   settled: boolean;
   /** RUN_STARTED/REASONING_START prologue already pushed. */
@@ -41,6 +45,7 @@ type State = {
   /** At least one event batch was accepted: the bubble has proven usable this turn. */
   proven: boolean;
   settleTimer?: ReturnType<typeof setTimeout>;
+  settleExpired?: boolean;
   /** When the provider queue started (shown as one line, then how long it took). */
   queuedAt?: number;
   queuePos?: number;
@@ -98,21 +103,61 @@ function titleFor(raw: string): string {
   return t.length > 80 ? t.slice(0, 80) : t;
 }
 
-async function api(method: "POST" | "PUT", url: string, data: unknown, params?: unknown) {
-  if (!sdk) throw new Error("message_cot 不可用");
-  const r = await sdk.request({ method, url, data, params, timeout: TIMEOUT });
-  if (r && typeof r.code === "number" && r.code !== 0) throw new Error(`${r.code} ${r.msg}`);
-  return r?.data ?? r;
+function cotLog(st: Pick<State, "turnId" | "cotId" | "messageId">, action: string, details: Record<string, unknown> = {}, warning = false) {
+  // Never log request/response bodies: they may contain reasoning, tool input or credentials.
+  const line = `[omem] lark-cot ${JSON.stringify({ at: new Date().toISOString(), runId: st.turnId, cotId: st.cotId, messageId: st.messageId, action, ...details })}`;
+  if (warning) console.warn(line);
+  else console.info(line);
+}
+
+function errorInfo(error: unknown) {
+  const e = error as { message?: unknown; code?: unknown; response?: { status?: unknown; data?: { code?: unknown; msg?: unknown; log_id?: unknown } } } | null;
+  const data = e?.response?.data;
+  const msg = String(data?.msg ?? e?.message ?? "");
+  const code = data?.code ?? e?.code;
+  return {
+    code: typeof code === "number" || (typeof code === "string" && /^[A-Z_0-9]{1,40}$/.test(code)) ? code : undefined,
+    httpStatus: typeof e?.response?.status === "number" ? e.response.status : undefined,
+    logId: typeof data?.log_id === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(data.log_id) ? data.log_id : undefined,
+    // Classify the message instead of copying text that may echo a rejected payload.
+    reason: /content too long/i.test(msg) ? "content-too-long" : /timeout|timed out/i.test(msg) ? "timeout" : /no user authority/i.test(msg) ? "no-user-authority" : /invalid|illegal/i.test(msg) ? "invalid-data" : "request-failed",
+    eventIndex: /event\[(\d+)\]/i.exec(msg)?.[1],
+  };
+}
+
+async function api(st: State, phase: "create" | "append" | "finish" | "complete" | "cleanup", method: "POST" | "PUT", url: string, data: unknown, params?: unknown, events: ReturnType<typeof ev>[] = []) {
+  const started = Date.now();
+  const requestSeq = ++st.requestSeq;
+  const details = {
+    phase, method, requestSeq,
+    endpoint: url.replace(/\/complete\/.+$/, "/complete/:cotId"),
+    eventTypes: events.map((e) => e.event_type),
+    contentBytes: events.map((e) => Buffer.byteLength(e.content, "utf8")),
+  };
+  cotLog(st, "request", details);
+  try {
+    if (!sdk) throw new Error("message_cot 不可用");
+    const r = await sdk.request({ method, url, data, params, timeout: TIMEOUT });
+    if (r && typeof r.code === "number" && r.code !== 0) throw Object.assign(new Error("message_cot API error"), { response: { data: r } });
+    const result = r?.data ?? r;
+    if (phase === "create") {
+      if (typeof result?.cot_id !== "string" || typeof result?.message_id !== "string") throw Object.assign(new Error("message_cot 未返回 id"), { code: "MISSING_IDS" });
+      st.cotId = result.cot_id;
+      st.messageId = result.message_id;
+    }
+    cotLog(st, "accepted", { ...details, elapsedMs: Date.now() - started });
+    return result;
+  } catch (error) {
+    cotLog(st, "rejected", { ...details, elapsedMs: Date.now() - started, ...errorInfo(error) }, true);
+    throw error;
+  }
 }
 
 async function createBubble(st: State) {
   const data: Record<string, unknown> = { receive_id: st.chatId };
   if (st.originMessageId) data.origin_message_id = st.originMessageId;
   data.reply_in_thread = st.inThread;
-  const d = await api("POST", "/open-apis/im/v1/message_cot", data, { receive_id_type: "chat_id" });
-  if (typeof d?.cot_id !== "string" || typeof d?.message_id !== "string") throw new Error("message_cot 未返回 id");
-  st.cotId = d.cot_id;
-  st.messageId = d.message_id;
+  await api(st, "create", "POST", "/open-apis/im/v1/message_cot", data, { receive_id_type: "chat_id" });
 }
 
 function reasoningId(turnId: string, i: number) {
@@ -187,73 +232,81 @@ function eventsFor(st: State): any[] {
   return out;
 }
 
-async function append(st: State, events: any[]) {
+async function append(st: State, events: ReturnType<typeof ev>[], phase: "append" | "finish" = "append") {
   for (let i = 0; i < events.length; i += 50) {
-    await api("PUT", "/open-apis/im/v1/message_cot", { cot_id: st.cotId, message_id: st.messageId, events: events.slice(i, i + 50) });
+    const batch = events.slice(i, i + 50);
+    await api(st, phase, "PUT", "/open-apis/im/v1/message_cot", { cot_id: st.cotId, message_id: st.messageId, events: batch }, undefined, batch);
   }
 }
 
+function expirePendingTools(st: State) {
+  let missingTools = 0;
+  for (const entry of st.entries) {
+    if (entry.kind === "tool" && entry.status !== "done" && entry.status !== "failed") {
+      entry.status = "failed";
+      entry.result = "未收到工具完成事件";
+      missingTools++;
+    }
+  }
+  return missingTools;
+}
+
 async function pump(app: App, runId: string, st: State) {
-  if (st.pumping || st.disabled) return;
+  if (st.pumping || st.disabled || st.settled) return;
   st.pumping = true;
   try {
     if (!st.cotId) await createBubble(st);
-    // 1) Send whatever entry events are new (tool STARTs, tool ENDs, reasoning nodes).
-    const evs = eventsFor(st);
-    if (evs.length) {
-      await append(st, evs);
-      st.proven = true;
-    }
-    // 2) Only settle once finish was requested AND every entry has been emitted
-    //    (a last tool result can arrive together with finish).
-    const allSettled = st.entries.every((e) => e.kind === "reasoning" || st.toolSettled.has(e.id));
+    // Input can change during any awaited batch. Drain it before deciding whether to finish.
+    do {
+      st.dirty = false;
+      if (st.settleExpired) {
+        const missingTools = expirePendingTools(st);
+        if (missingTools) cotLog(st, "settle-timeout", { missingTools }, true);
+      }
+      const evs = eventsFor(st);
+      if (evs.length) {
+        await append(st, evs);
+        st.proven = true;
+      }
+    } while (st.dirty && st.finish);
+    const allSettled = st.entries.every((e, i) => e.kind === "reasoning" ? st.reasoningClosed.has(reasoningId(st.turnId, i)) : st.toolSettled.has(e.id));
     if (st.finish && allSettled) {
-      const tail: any[] = [ev("REASONING_END", { messageId: reasoningId(st.turnId, 0) })];
+      st.closing = true;
+      const tail = [ev("REASONING_END", { messageId: reasoningId(st.turnId, 0) })];
       if (st.finish === "done") tail.push(ev("RUN_FINISHED", { threadId: st.turnId, runId: st.turnId, status: "done" }));
-      await append(st, tail);
+      await append(st, tail, "finish");
       st.proven = true;
-      if (st.finish === "error") await api("POST", `/open-apis/im/v1/message_cot/complete/${encodeURIComponent(st.cotId!)}`, {}, { message_id: st.messageId!, reason: "error" });
+      if (st.finish === "error") await api(st, "complete", "POST", `/open-apis/im/v1/message_cot/complete/${encodeURIComponent(st.cotId!)}`, {}, { message_id: st.messageId!, reason: "error" });
       st.settled = true;
-    }
-    // If finish has been requested but a tool result is still missing, the next
-    // cotEvent (result arrives) schedules another pump. Guard: a 30s fallback
-    // settles anyway so a dropped event cannot leave the bubble spinning forever.
-    if (st.finish && !st.settled && !st.settleTimer) {
-      const t = setTimeout(() => { st.settleTimer = undefined; void pump(app, runId, st); }, 30_000);
-      t.unref();
-      st.settleTimer = t;
-      st.timers.push(t);
+      cotLog(st, "settled", { outcome: st.finish });
     }
   } catch (e) {
     st.disabled = true;
-    // Bubble created but events cannot be pushed: best-effort close it, and do not open more
-    // for a while so we never leave a trail of empty spinners.
     if (st.cotId) {
-      try { await api("POST", `/open-apis/im/v1/message_cot/complete/${encodeURIComponent(st.cotId)}`, {}, { message_id: st.messageId!, reason: "error" }); } catch {}
+      try { await api(st, "cleanup", "POST", `/open-apis/im/v1/message_cot/complete/${encodeURIComponent(st.cotId)}`, {}, { message_id: st.messageId!, reason: "error" }); } catch {}
     }
-    // Oversized reasoning content is a per-bubble mistake: stop this bubble, but let later turns
-    // try again (they send capped deltas). A gateway/capability failure pauses all bubbles for 30 minutes.
-    const msg = (e as Error).message ?? "";
-    if (/content too long/i.test(msg)) console.warn(`[omem] 本轮思考气泡内容过长，已结束这个气泡（不影响回复，后续轮次照常）：${msg}`);
-    else {
-      disabledUntil = Date.now() + DISABLE_MS;
-      console.warn(`[omem] 思考过程气泡不可用，30 分钟内不再尝试（不影响回复）：${msg}`);
-    }
+    // Oversized content only disables this bubble; other failures pause new bubbles for 30 minutes.
+    const error = errorInfo(e);
+    if (error.reason !== "content-too-long") disabledUntil = Date.now() + DISABLE_MS;
+    cotLog(st, "disabled", { ...error, cooldownMs: error.reason === "content-too-long" ? 0 : DISABLE_MS }, true);
   } finally {
     st.pumping = false;
-    st.queued = false;
-    if (st.settled) {
+    if (st.settled || st.disabled) {
+      for (const timer of st.timers) clearTimeout(timer);
+      st.timers = [];
       const t = setTimeout(() => states.delete(runId), 60_000);
       t.unref();
       st.timers.push(t);
-    }
+    } else if (st.dirty) schedule(app, runId, st);
   }
 }
 
 function schedule(app: App, runId: string, st: State, delay = 700) {
-  if (st.disabled || st.queued) return;
+  if (st.disabled || st.settled || st.closing) return;
+  st.dirty = true;
+  if (st.pumping || st.queued) return;
   st.queued = true;
-  const t = setTimeout(() => void pump(app, runId, st), delay);
+  const t = setTimeout(() => { st.queued = false; void pump(app, runId, st); }, delay);
   t.unref();
   st.timers.push(t);
 }
@@ -261,8 +314,12 @@ function schedule(app: App, runId: string, st: State, delay = 700) {
 /** Begin the bubble for a turn, anchored to the message that started it (so it lands in the topic). */
 /** `title`: a first line saying whose process this is (an agent's round in a work topic). */
 export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean; title?: string }) {
-  if (!sdk || Date.now() < disabledUntil || states.has(runId)) return false;
-  const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: at.title ? [{ kind: "reasoning", text: `${at.title}\n\n` }] : [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, settled: false, prologueSent: false, proven: false, timers: [] };
+  if (!sdk || states.has(runId)) return false;
+  if (Date.now() < disabledUntil) {
+    cotLog({ turnId: runId }, "skipped", { reason: "cooldown", remainingMs: disabledUntil - Date.now() });
+    return false;
+  }
+  const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: at.title ? [{ kind: "reasoning", text: `${at.title}\n\n` }] : [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, dirty: false, closing: false, requestSeq: 0, settled: false, prologueSent: false, proven: false, timers: [] };
   states.set(runId, st);
   schedule(app, runId, st, 300);
   return true;
@@ -275,12 +332,12 @@ export function hasCot(runId: string) {
 
 export function cotEvent(app: App, runId: string, e: { type: string; data: any }) {
   const st = states.get(runId);
-  if (!st || st.disabled || st.settled) return;
+  if (!st || st.disabled || st.settled || st.closing) return;
   const { type, data } = e;
   if (type === "thought-delta" || type === "text-delta") {
     const kind = "reasoning" as const;
     const last = st.entries.at(-1);
-    if (last && last.kind === kind) last.text += String(data?.text ?? "");
+    if (last && last.kind === kind && !st.reasoningClosed.has(reasoningId(st.turnId, st.entries.length - 1))) last.text += String(data?.text ?? "");
     else st.entries.push({ kind, text: String(data?.text ?? "") });
     schedule(app, runId, st);
   } else if (type === "queue") {
@@ -288,7 +345,7 @@ export function cotEvent(app: App, runId: string, e: { type: string; data: any }
     // the wait starts, the position as it moves, and how long it took when the model starts.
     const add = (text: string) => {
       const last = st.entries.at(-1);
-      if (last && last.kind === "reasoning") last.text += text;
+      if (last && last.kind === "reasoning" && !st.reasoningClosed.has(reasoningId(st.turnId, st.entries.length - 1))) last.text += text;
       else st.entries.push({ kind: "reasoning", text });
     };
     const pos = typeof data?.position === "number" ? data.position : undefined;
@@ -332,7 +389,21 @@ export function cotEvent(app: App, runId: string, e: { type: string; data: any }
 
 export function finishCot(app: App, runId: string, ok: boolean) {
   const st = states.get(runId);
-  if (!st || st.disabled || st.settled) return;
-  st.finish = ok ? "done" : "error";
+  if (!st || st.disabled || st.settled || st.closing) return;
+  // A repeated finish must neither extend the deadline nor turn an error into success.
+  st.finish = st.finish === "error" || !ok ? "error" : "done";
+  if (!st.settleTimer) {
+    cotLog(st, "finish-requested", { outcome: st.finish });
+    const t = setTimeout(() => {
+      if (st.disabled || st.settled || st.closing) return;
+      st.settleExpired = true;
+      const missingTools = expirePendingTools(st);
+      cotLog(st, "settle-timeout", { missingTools }, true);
+      schedule(app, runId, st, 0);
+    }, 30_000);
+    t.unref();
+    st.settleTimer = t;
+    st.timers.push(t);
+  }
   schedule(app, runId, st, 200);
 }
