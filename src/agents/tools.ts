@@ -871,7 +871,8 @@ def({
       .join("");
     const delivery = (r.output.codeChain as { askRunId?: string } | undefined)?.askRunId;
     const progress = delivery ? getRun(ctx.app, delivery).output.codeProgress : undefined;
-    return `${progress ? `飞书进度投递：${JSON.stringify(progress)}\n` : ""}运行 ${r.id} [${r.kind}/${r.status}] ${r.title}\n输出：${truncate(JSON.stringify(r.output, null, 1), 3000)}\n${r.error ? "错误：" + r.error + "\n" : ""}最后的说明：\n${truncate(text.slice(-3000), 3000)}`;
+    const thinking = r.output.thinkingDelivery;
+    return `${progress ? `飞书进度投递：${JSON.stringify(progress)}\n` : ""}${thinking ? `思考气泡投递（独立于任务状态）：${JSON.stringify(thinking)}\n` : ""}运行 ${r.id} [${r.kind}/${r.status}] ${r.title}\n输出：${truncate(JSON.stringify(r.output, null, 1), 3000)}\n${r.error ? "错误：" + r.error + "\n" : ""}最后的说明：\n${truncate(text.slice(-3000), 3000)}`;
   },
 });
 
@@ -1419,7 +1420,7 @@ const larkTarget = z.object({
   mentions: z
     .array(z.string())
     .optional()
-    .describe("要 @ 的人：名字、邮箱或 all。正文里写了“@名字”的地方会变成真正的 @，没写的放在开头。重名时会报出各人的邮箱，用邮箱指定"),
+    .describe("要 @ 的人或机器人：名字、邮箱、已核实的机器人应用侧 open_id/user_id 或 all。姓名无法唯一匹配时核对目标群成员；重名拒绝。机器人需已在本应用收到的 @ 消息里出现，不能用 app_id 或采集应用的 open_id。正文的 @名字 会替换成真正的 @，没写则放开头"),
 });
 type LarkTargetArgs = z.infer<typeof larkTarget>;
 
@@ -1428,11 +1429,15 @@ async function larkGuard(ctx: ToolContext, t: LarkTargetArgs) {
   const { larkClient } = await import("../channels/lark-send.ts");
   larkClient();
   let chat = t.chat_id;
-  if (!chat && t.reply_to) {
+  if (t.reply_to) {
     const r = await larkClient().im.message.get({ path: { message_id: t.reply_to } }).catch(() => null);
-    chat = r?.data?.items?.[0]?.chat_id;
+    const actual = r?.data?.items?.[0]?.chat_id;
+    if (!actual) throw new HttpError(400, "无法确认被回复消息所在的飞书会话");
+    if (chat && chat !== actual) throw new HttpError(400, "chat_id 与被回复消息所在的飞书会话不一致");
+    chat = actual;
   }
-  if (ctx.larkChats === undefined || (ctx.larkChats && !(chat && ctx.larkChats.includes(chat)) && !(t.user_id && ctx.larkChats.includes(t.user_id))))
+  const destination = chat ?? t.user_id;
+  if (ctx.larkChats === undefined || (ctx.larkChats && !(destination && ctx.larkChats.includes(destination))))
     throw new HttpError(403, `本次任务不能往这个飞书会话发消息${chat ? `（${chat}）` : ""}`);
   return chat ?? null;
 }
@@ -1447,11 +1452,12 @@ function runThread(ctx: ToolContext) {
 
 async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("../channels/lark-send.ts").Content, opts: { allowed?: string[]; waitForAction?: boolean } = {}) {
   const send = await import("../channels/lark-send.ts");
+  const chat = await larkGuard(ctx, t);
   if (t.mentions?.length) {
-    // Real @-mentions: the bot's user_id for each person (see lark-people.ts).
+    // Real @-mentions using IDs verified for the sending bot (see lark-people.ts).
     const { applyMentions, resolveMention } = await import("../channels/lark-people.ts");
     const people = [];
-    for (const who of t.mentions) people.push(await resolveMention(ctx.app, who));
+    for (const who of t.mentions) people.push(await resolveMention(ctx.app, who, chat));
     if ("text" in content) content = { text: applyMentions(content.text, people, "text") };
     else if ("markdown" in content) content = { ...content, markdown: applyMentions(content.markdown, people, "card") };
     else if ("card" in content) {
@@ -1459,7 +1465,6 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
       content = { card: { ...content.card, body: { ...body, elements: [{ tag: "markdown", content: applyMentions("", people, "card").trim() }, ...(body.elements ?? [])] } } };
     }
   }
-  const chat = await larkGuard(ctx, t);
   // Posting into the chat this run is answering in a topic: stay inside that topic (files,
   // follow-ups) instead of landing at the top of the chat.
   let target: import("../channels/lark-send.ts").Target = { chatId: t.chat_id, userId: t.user_id, replyTo: t.reply_to, inThread: t.in_thread };
@@ -1500,7 +1505,7 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
 def({
   name: "lark_send",
   description:
-    "用飞书机器人发消息或回复：文本、Markdown（标题、列表、加粗、链接、<font color='red'>颜色</font>）。要 @ 人用 mentions（名字或邮箱），不要自己写 <at> 标签：聊天记录里的 id 是另一个应用的，机器人用不了。reply_to + in_thread=true 可以开话题回复。发之前想清楚是否真的需要发、发给谁。",
+    "用飞书机器人发消息或回复：文本、Markdown（标题、列表、加粗、链接、<font color='red'>颜色</font>）。@ 人或已知机器人用 mentions，不要自己拼 <at>。邮箱查不到时可用明确的群成员姓名，工具会核对目标群，不按姓名合并跨应用身份。reply_to + in_thread=true 可以开话题回复。发之前想清楚是否真的需要发、发给谁。",
   write: true,
   schema: larkTarget.extend({ text: z.string().optional(), markdown: z.string().optional(), title: z.string().optional() }),
   handler: async (ctx, a) => {

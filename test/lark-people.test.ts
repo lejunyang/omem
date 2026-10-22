@@ -40,7 +40,7 @@ function fakeBot(userIds: Record<string, string>, opts: { noPermission?: boolean
         },
       },
     },
-    im: { message: { create: async (args: any) => (sent.push(args), { code: 0, data: { message_id: "om_sent" } }) } },
+    im: { chatMembers: { get: async () => ({ code: 0, data: { items: [], has_more: false } }) }, message: { create: async (args: any) => (sent.push(args), { code: 0, data: { message_id: "om_sent" } }) } },
   });
   return sent;
 }
@@ -95,6 +95,62 @@ describe("people across Feishu apps", () => {
     expect(JSON.parse(sent[0].data.content).text).toBe('<at user_id="u_wang">小王</at> 发布清单好了吗');
     await callTool(ctx, "lark_send", { chat_id: "oc_g", markdown: "**提醒**", mentions: ["wang@example.com"] });
     expect(JSON.parse(sent[1].data.content).body.elements[0].content).toBe("<at id=u_wang></at> **提醒**");
+  });
+
+  it("uses known bot-side open_ids for people and bots, never capture ids or app ids", async () => {
+    const app = testApp();
+    rememberPerson(app, { botOpenId: B, name: "协作机器人" });
+    rememberPerson(app, { cliOpenId: A, name: "小王" });
+    fakeBot({});
+    expect(await resolveMention(app, "协作机器人")).toMatchObject({ userId: B });
+    expect(await resolveMention(app, B)).toMatchObject({ userId: B });
+    await expect(resolveMention(app, A)).rejects.toThrow(/给出邮箱/);
+    await expect(resolveMention(app, "cli_test")).rejects.toThrow(/app_id 不能/);
+  });
+
+  it("resolves split name records from the target group without joining identities by name", async () => {
+    const app = testApp();
+    rememberPerson(app, { cliOpenId: A, name: "小王", email: "wang@example.com" });
+    rememberPerson(app, { botOpenId: B, name: "小王" });
+    const pages: any[] = [];
+    setLarkClient({ im: { chatMembers: { get: async (args: any) => {
+      pages.push(args);
+      return { code: 0, data: args.params.page_token
+        ? { items: [{ member_id: B, name: "小王" }], has_more: false }
+        : { items: [{ member_id: C, name: "小李" }], has_more: true, page_token: "next" } };
+    } } } });
+    expect(await resolveMention(app, "小王", "oc_g")).toEqual({ name: "小王", userId: B, email: null });
+    expect(pages).toHaveLength(2);
+    expect(pages[1]).toMatchObject({ path: { chat_id: "oc_g" }, params: { member_id_type: "open_id", page_token: "next" } });
+    expect(peopleByCliIds(app, [A]).get(A)?.botOpenId).toBeNull();
+  });
+
+  it("rejects namesakes on a later page and incomplete member lists", async () => {
+    const app = testApp();
+    let mode = "duplicate";
+    setLarkClient({ im: { chatMembers: { get: async ({ params }: any) => ({ code: 0, data: params.page_token
+      ? { items: [{ member_id: C, name: "小王" }], has_more: mode !== "duplicate", page_token: "next" }
+      : { items: [{ member_id: B, name: "小王" }], has_more: true, page_token: "next" } }) } } });
+    await expect(resolveMention(app, "小王", "oc_g")).rejects.toThrow(/目标群有 2 位/);
+    mode = "incomplete";
+    await expect(resolveMention(app, "小王", "oc_g")).rejects.toThrow(/分页未完成/);
+  });
+
+  it("checks sending scope before looking up a target group's people", async () => {
+    const app = testApp();
+    let reads = 0;
+    setLarkClient({ im: { message: { get: async () => ({ data: { items: [{ chat_id: "oc_other" }] } }) }, chatMembers: { get: async () => { reads++; throw new Error("should not read"); } } } });
+    const ctx = toolContextForToken(app, issueToolToken({ runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: ["oc_allowed"] }))!;
+    expect(await callTool(ctx, "lark_send", { chat_id: "oc_other", text: "请确认", mentions: ["小王"] })).toMatchObject({ isError: true });
+    expect(await callTool(ctx, "lark_send", { chat_id: "oc_allowed", reply_to: "om_other", text: "请确认", mentions: ["小王"] })).toMatchObject({ isError: true });
+    expect(await callTool(ctx, "lark_send", { user_id: "oc_allowed", reply_to: "om_other", text: "请确认", mentions: ["小王"] })).toMatchObject({ isError: true });
+    expect(reads).toBe(0);
+  });
+
+  it("reports a nonzero directory response as a permission error, not an unknown person", async () => {
+    const app = testApp();
+    setLarkClient({ contact: { user: { batchGetId: async () => ({ code: 99991672, msg: "Access denied" }) } } });
+    await expect(resolveMention(app, "wang@example.com")).rejects.toThrow(/bot-permissions/);
   });
 
   it("keeps lark-cli's ids out of chat lines and shows emails on the page", async () => {

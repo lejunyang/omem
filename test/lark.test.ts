@@ -370,7 +370,7 @@ describe("code activity", () => {
 });
 
 describe("progress card", () => {
-  it("shows steps while the agent works and ends with the answer", async () => {
+  it("keeps the fallback minimal and ends with the answer", async () => {
     const { startProgress } = await import("../src/channels/lark-progress.ts");
     const app = testApp();
     const client = fakeClient();
@@ -379,10 +379,10 @@ describe("progress card", () => {
     expect(client.calls.map((c) => c.op)).toEqual(["react", "reply"]);
     app.emit({ type: "run-event", runId: "r_x", seq: 1, event: { type: "tool", data: { id: "t1", title: "mcp__omem__search", status: "in_progress" }, at: "" } } as never);
     app.emit({ type: "run-event", runId: "r_x", seq: -1, event: { type: "text-delta", data: { text: "部分答案" }, at: "" } } as never);
-    await new Promise((r) => setTimeout(r, 2300));
-    const live = client.calls.filter((c) => c.op === "patch").pop()!;
-    expect(live.args.data.content).toContain("… 检索");
-    expect(live.args.data.content).toContain("部分答案");
+    expect(client.calls.filter((c) => c.op === "patch")).toHaveLength(0);
+    const live = client.calls.find((c) => c.op === "reply")!;
+    expect(live.args.data.content).toContain("思考气泡暂不可用");
+    expect(live.args.data.content).not.toMatch(/部分答案|检索/);
     await p.finish("最终答案");
     const final = JSON.parse(client.calls.filter((c) => c.op === "patch").pop()!.args.data.content);
     expect(final.body.elements[0].content).toBe("最终答案");

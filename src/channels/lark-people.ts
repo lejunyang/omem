@@ -100,41 +100,79 @@ export async function learnBotPerson(app: App, client: any, openId: string) {
 }
 
 /**
- * Who the bot should @: a name, an email, a user_id or "all". Names must be unambiguous among the
- * people seen; an email is enough even for someone never seen (the bot looks the user_id up).
+ * Who the bot should @: a name, email, known bot-side id or "all". Capture-side open_ids
+ * must never be passed through. Group membership can resolve a name without directory access.
  */
-export async function resolveMention(app: App, who: string): Promise<{ name: string; userId: string; email: string | null } | { all: true }> {
+export async function resolveMention(app: App, who: string, chatId?: string | null): Promise<{ name: string; userId: string; email: string | null } | { all: true }> {
   const w = who.trim().replace(/^@/, "");
   if (w === "all" || w === "所有人") return { all: true };
+  if (w.startsWith("cli_")) throw new HttpError(400, "app_id 不能用于 @ 机器人；请用机器人在本应用收到的 @ 消息里的名字或 open_id。");
   let rows: Row[];
   if (w.includes("@")) rows = all<Row>(app.db, "select * from lark_people where lower(email) = lower(?)", w);
-  else rows = all<Row>(app.db, "select * from lark_people where user_id = ? or name = ?", w, w);
+  else rows = all<Row>(app.db, "select * from lark_people where user_id = ? or bot_open_id = ? or name = ?", w, w, w);
   const byEmail = new Map<string, Row>();
-  for (const r of rows) byEmail.set(r.email ?? r.user_id ?? r.cli_open_id ?? r.name, r);
+  for (const r of rows) byEmail.set(r.email ?? r.user_id ?? r.bot_open_id ?? r.cli_open_id ?? r.name, r);
   const list = [...byEmail.values()];
+  // Names can have two unlinked records (capture email and bot id), or genuine namesakes.
+  // Resolve only against a complete, bot-side list of this chat. Never join identities by name.
+  if (chatId && !w.includes("@") && (list.length !== 1 || (!list[0].user_id && !list[0].bot_open_id))) {
+    const member = await mentionInChat(app, chatId, w);
+    if (member) return member;
+  }
   if (list.length > 1) throw new HttpError(400, `“${w}”有 ${list.length} 个人：${list.map((r) => `${r.name}（${r.email ?? "无邮箱"}）`).join("、")}。用邮箱指定是哪一位。`);
   const r = list[0];
   if (r?.user_id) return { name: r.name, userId: r.user_id, email: r.email };
+  if (r?.bot_open_id?.startsWith("ou_")) return { name: r.name, userId: r.bot_open_id, email: r.email };
   const email = r?.email ?? (w.includes("@") ? w : null);
   if (!email) throw new HttpError(400, `不认识“${w}”：没有在飞书消息里见过这个人，给出邮箱才能 @ 他`);
   const { larkClient } = await import("./lark-send.ts");
   let userId: string | undefined;
   try {
     const res = await larkClient().contact.user.batchGetId({ data: { emails: [email], include_resigned: false }, params: { user_id_type: "user_id" } });
+    if (res.code) throw Object.assign(new Error(res.msg ?? "查询失败"), { response: { data: res } });
     userId = res.data?.user_list?.[0]?.user_id;
   } catch (e) {
     const x = e as { response?: { data?: { code?: number; msg?: string } }; message: string };
-    const msg = x.response?.data?.msg ?? x.message;
+    const msg = `${x.response?.data?.code ?? ""} ${x.response?.data?.msg ?? x.message}`;
     throw new HttpError(400, /99991672|contact:user\.id/.test(msg) ? "机器人缺少按邮箱查人的权限（contact:user.id:readonly）：运行 omem lark bot-permissions 补齐" : `按邮箱查人失败：${msg}`);
   }
   // Email lookups only see people inside the bot app's availability scope.
   if (!userId)
     throw new HttpError(
       400,
-      `机器人查不到 ${email} 的 user_id：飞书只返回在机器人应用“可用范围”内的人。可以在开发者后台把可用范围扩大到相关同事（可能要管理员审批）；或者等这个人在机器人所在的群里发言，机器人会从消息里记下他的 id。`,
+      `机器人按邮箱查不到 ${email} 的 user_id。若对方在目标群，可改用明确的群成员姓名（工具会核对群成员，重名时拒绝）；邮箱查询需要机器人通讯录权限及应用可用范围。不要拿采集应用的 open_id 代替。`,
     );
   rememberPerson(app, { email, userId, name: r?.name ?? "" });
   return { name: r?.name || email.split("@")[0], userId, email };
+}
+
+async function mentionInChat(app: App, chatId: string, who: string) {
+  const { larkClient } = await import("./lark-send.ts");
+  const client = larkClient();
+  const matches = new Map<string, string>();
+  const seen = new Set<string>();
+  let token: string | undefined;
+  for (let page = 0; page < 100; page++) {
+    const r = await client.im.chatMembers.get({ path: { chat_id: chatId }, params: { member_id_type: "open_id", page_size: 100, ...(token ? { page_token: token } : {}) } });
+    if (r.code) throw new HttpError(400, `读取目标群成员失败（${r.code}）：需要机器人有查看群成员权限并在群内。`);
+    if (!r.data || r.data.trigger_security_conf_limit) throw new HttpError(400, "目标群成员列表不完整，无法确认 @ 对象。请用已核实的邮箱或机器人侧 ID。");
+    for (const m of r.data.items ?? []) {
+      if (typeof m.member_id !== "string" || !m.member_id.startsWith("ou_")) continue;
+      if (m.name === who || m.member_id === who) matches.set(m.member_id, m.name ?? who);
+    }
+    if (r.data.has_more === false) {
+      if (matches.size > 1) throw new HttpError(400, `目标群有 ${matches.size} 位“${who}”，请用邮箱或已核实的机器人侧 ID 指定，不能按名字猜。`);
+      const match = [...matches][0];
+      if (!match) return null;
+      const [id, name] = match;
+      rememberPerson(app, { botOpenId: id, name });
+      return { name, userId: id, email: null };
+    }
+    if (!r.data.has_more || !r.data.page_token || seen.has(r.data.page_token)) break;
+    token = r.data.page_token;
+    seen.add(token!);
+  }
+  throw new HttpError(400, "目标群成员分页未完成，无法确认 @ 对象。请稍后重试或用已核实的邮箱或机器人侧 ID。");
 }
 
 type Resolved = Awaited<ReturnType<typeof resolveMention>>;

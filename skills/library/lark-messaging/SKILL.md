@@ -19,7 +19,7 @@ description: 用飞书机器人发消息和交互：回复/开话题、表情回
 | 回复一条消息 | `lark_send`，reply_to=om_… | 群里默认 in_thread=true 开话题，避免刷屏；话题里的消息直接 reply_to 即在话题内 |
 | 发新消息 | `lark_send`，chat_id=oc_… 或 user_id=ou_… | 私聊某人用 user_id（机器人需对其可见） |
 | 富文本 | `lark_send` 的 markdown | 支持 **粗体**、*斜体*、~~删除线~~、[链接](url)、列表、代码块、表格、`<font color='red'>红字</font>`（red/green/grey/orange/blue…） |
-| @人 | `lark_send` / `lark_card` 的 `mentions` | 填名字、邮箱或 `all`；正文里写“@名字”的位置会变成真正的 @，没写的放在开头。不要自己写 `<at>` 标签：聊天记录里看到的 id 属于另一个飞书应用，机器人用了 @ 不到人。重名时工具会列出各人的邮箱，改用邮箱。 |
+| @人或已知机器人 | `lark_send` / `lark_card` 的 `mentions` | 填名字、邮箱、已核实的机器人应用侧 ID 或 `all`；正文里写“@名字”的位置会变成真正的 @，没写的放在开头。不要自己写 `<at>` 标签：聊天记录里看到的 id 属于另一个飞书应用，机器人用了 @ 不到人。姓名记录不明确时，工具核对目标群的完整成员列表；仍重名就拒绝。邮箱查不到时，可改用明确的群成员姓名。机器人不在群成员列表里，需用本应用已收到的 @ 中的名字或 open_id，不能用 app_id。 |
 | 发图片或文件 | `lark_send_file`，path=本机路径 | 图片按图片发，其余按文件发，≤30MB |
 | 卡片 | `lark_card` | 见下文 |
 | 改一张已发的卡片 | `lark_update_card`，message_id | 传完整的新内容；常用于把按钮换成“已处理 by xx” |

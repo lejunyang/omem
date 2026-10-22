@@ -1,100 +1,30 @@
 import type { App } from "../core/app.ts";
-import { buildCard, reactLark, sendLark, unreactLark, updateLarkCard, type CardBlock } from "./lark-send.ts";
+import { buildCard, reactLark, sendLark, unreactLark, updateLarkCard } from "./lark-send.ts";
 
-/**
- * Live progress for a bot reply: a "处理中" reaction on the question, then
- * one card that shows the steps the agent takes, a glimpse of its reasoning
- * and the answer as it is written — updated in place every couple of seconds
- * and finally replaced by the answer itself.
- */
-const TOOL_LABEL: Record<string, string> = {
-  search: "检索",
-  scan: "逐行扫描",
-  read_source: "读原件",
-  source_outline: "看结构",
-  find_symbol: "找符号",
-  recall: "查记忆",
-  read_page: "读页面",
-  list_pages: "列页面",
-  list_items: "查事项",
-  list_sources: "列原件",
-  remember: "记下",
-  supersede: "更正记忆",
-  upsert_item: "更新事项",
-  read_conversation: "读会话",
-  list_conversations: "找会话",
-  delegate_code: "交办编码",
-  run_agent: "交给 Agent",
-  read_skill: "读技能",
-};
-function label(title: string) {
-  const name = title.replace(/^mcp__omem__/, "").replace(/^omem[.:_]/, "");
-  return TOOL_LABEL[name] ?? title.slice(0, 40);
-}
+import { getRun } from "../agents/runs.ts";
+import { cotEvent, cotLiveFor, startCot } from "./lark-cot.ts";
 
-export type Progress = { messageId: string; setMinimal(v: boolean): void; finish(answer: string): Promise<void>; fail(message: string): Promise<void> };
+/** A fallback status card; reasoning and partial answers belong only in the native bubble. */
+export type Progress = { messageId: string; finish(answer: string): Promise<void>; fail(message: string): Promise<void> };
 
-export async function startProgress(app: App, at: { messageId: string; inThread: boolean }, runId: string): Promise<Progress> {
+export async function startProgress(_app: App, at: { messageId: string; inThread: boolean }, _runId: string, react = true): Promise<Progress> {
   const started = Date.now();
   let reaction: string | undefined;
   try {
-    reaction = await reactLark(at.messageId, "OnIt");
+    if (react) reaction = await reactLark(at.messageId, "OnIt");
   } catch {}
-  const steps: { title: string; done: boolean; id: string }[] = [];
-  let partial = "";
-  let status = "正在理解问题…";
-  // True once the native thinking bubble is rendering the process live: this
-  // card then stays minimal (no duplicated reasoning / answer preview).
-  let minimal = false;
-  const render = (): CardBlock[] => {
-    if (minimal) return [{ markdown: "思考过程见上方折叠气泡，完成后这里给出结论。" }];
-    const blocks: CardBlock[] = [];
-    if (steps.length) blocks.push({ markdown: steps.slice(-6).map((s) => `${s.done ? "✓" : "…"} ${s.title}`).join("\n") });
-    else blocks.push({ markdown: status });
-    // The model's internal reasoning no longer leaks into the card (the native
-    // bubble owns it); only the steps and a short final preview remain as a fallback.
-    if (partial) blocks.push({ hr: true }, { markdown: partial.slice(-1800) });
-    return blocks;
-  };
-  const card = () => buildCard({ title: `处理中 · ${Math.round((Date.now() - started) / 1000)} 秒`, color: "wathet", blocks: render() });
-  const sent = await sendLark({ replyTo: at.messageId, inThread: at.inThread }, { card: card() });
-  let dirty = false;
-  let closed = false;
-  const listener = (e: { type: string; runId?: string; event?: { type: string; data: any } }) => {
-    if (e.type !== "run-event" || e.runId !== runId || !e.event) return;
-    const { type, data } = e.event;
-    if (type === "tool" && data?.title) {
-      const s = steps.find((x) => x.id === data.id);
-      if (s) s.done = data.status === "completed" || data.status === "failed";
-      else steps.push({ id: data.id, title: label(String(data.title)), done: data.status === "completed" });
-    } else if (type === "text-delta") partial += data.text ?? "";
-    else if (type === "status" && data?.text) status = String(data.text);
-    else return;
-    dirty = true;
-  };
-  app.events.on("event", listener);
-  // Feishu allows a few updates per second per message; every 2 s is plenty and safe.
-  const timer = setInterval(() => {
-    if (!dirty || closed) return;
-    dirty = false;
-    updateLarkCard(sent.messageId, card()).catch(() => {});
-  }, 2000);
+  const sent = await sendLark({ replyTo: at.messageId, inThread: at.inThread }, { card: buildCard({
+    title: "处理中", color: "wathet", blocks: [{ markdown: "思考气泡暂不可用，任务仍在处理。完成后这里显示结果。" }],
+  }) });
   const close = async () => {
-    closed = true;
-    clearInterval(timer);
-    app.events.off("event", listener);
-    if (reaction) await unreactLark(at.messageId, reaction);
+    if (reaction) await unreactLark(at.messageId, reaction).catch(() => {});
   };
   return {
     messageId: sent.messageId,
-    setMinimal(v: boolean) {
-      minimal = v;
-      dirty = true;
-    },
     async finish(answer: string) {
       await close();
       const secs = Math.round((Date.now() - started) / 1000);
-      const note = `${steps.length ? `${steps.length} 步 · ` : ""}${secs} 秒`;
+      const note = `${secs} 秒`;
       // Very long answers do not fit one card: the card keeps the start, the rest follows as messages.
       const head = answer.length > 18000 ? answer.slice(0, 18000) : answer;
       await updateLarkCard(sent.messageId, buildCard({ blocks: [{ markdown: head || "（没有回答）" }, { note }] })).catch(async () => {
@@ -106,6 +36,56 @@ export async function startProgress(app: App, at: { messageId: string; inThread:
     async fail(message: string) {
       await close();
       await updateLarkCard(sent.messageId, buildCard({ title: "没有完成", color: "red", blocks: [{ markdown: message.slice(0, 4000) }] })).catch(() => {});
+    },
+  };
+}
+
+/** Own all asynchronous presentation work so a late card/reaction is settled with the answer. */
+export function startReplyProgress(app: App, at: { chatId: string; messageId: string; inThread: boolean }, runId: string) {
+  let closed = false;
+  let started = false;
+  let working: string | undefined;
+  let beginning: Promise<void> | undefined;
+  let pending: Promise<Progress | null> | undefined;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const fallback = () => {
+    if (closed || pending) return;
+    pending = startProgress(app, at, runId, false).catch(() => null);
+  };
+  const begin = () => {
+    if (closed || started) return;
+    started = true;
+    const native = startCot(app, runId, { chatId: at.chatId, originMessageId: at.messageId, inThread: at.inThread });
+    beginning = reactLark(at.messageId, "OnIt").then((id) => { working = id; }).catch(() => {});
+    if (!native) fallback();
+    else {
+      timer = setInterval(() => {
+        if (!closed && !cotLiveFor(runId) && getRun(app, runId).status === "running") fallback();
+      }, 15_000);
+      timer.unref();
+    }
+  };
+  const listener = (e: { type: string; runId?: string; status?: string; event?: { type: string; data: unknown } }) => {
+    if (closed || e.runId !== runId) return;
+    if (e.type === "run" && e.status === "running") begin();
+    if (e.type === "run-event" && e.event) cotEvent(app, runId, e.event);
+  };
+  app.events.on("event", listener);
+  if (getRun(app, runId).status === "running") begin();
+  let closing: Promise<Progress | null> | undefined;
+  return {
+    close(): Promise<Progress | null> {
+      if (closing) return closing;
+      closed = true;
+      if (timer) clearInterval(timer);
+      app.events.off("event", listener);
+      closing = (async () => {
+        await beginning;
+        const progress = await pending ?? null;
+        if (working) await unreactLark(at.messageId, working).catch(() => {});
+        return progress;
+      })();
+      return closing;
     },
   };
 }

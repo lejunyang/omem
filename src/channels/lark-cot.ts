@@ -1,4 +1,5 @@
 import type { App } from "../core/app.ts";
+import { setRunOutput } from "../agents/runs.ts";
 
 /**
  * Native "thinking process" bubble for a turn in Feishu, via the `message_cot`
@@ -59,8 +60,8 @@ const TIMEOUT = 15_000;
  * long") without saying the limit; 1000 Chinese characters stay well under 4 KB of UTF-8.
  */
 const COT_CONTENT_MAX = 1000;
-/** After a hard failure (e.g. message_cot not enabled for this app) no bubbles are tried for a while. */
-let disabledUntil = 0;
+/** Permission failures pause bubbles only in the affected chat. */
+const disabledChats = new Map<string, number>();
 const DISABLE_MS = 30 * 60_000;
 
 let sdk: { request: (o: { method: string; url: string; data?: unknown; params?: unknown; timeout?: number }) => Promise<any> } | null = null;
@@ -125,7 +126,7 @@ function errorInfo(error: unknown) {
   };
 }
 
-async function api(st: State, phase: "create" | "append" | "finish" | "complete" | "cleanup", method: "POST" | "PUT", url: string, data: unknown, params?: unknown, events: ReturnType<typeof ev>[] = []) {
+async function api(st: State, phase: "create" | "append" | "finish" | "complete" | "cleanup", method: "POST" | "PUT" | "DELETE", url: string, data: unknown, params?: unknown, events: ReturnType<typeof ev>[] = []) {
   const started = Date.now();
   const requestSeq = ++st.requestSeq;
   const details = {
@@ -282,13 +283,20 @@ async function pump(app: App, runId: string, st: State) {
     }
   } catch (e) {
     st.disabled = true;
-    if (st.cotId) {
-      try { await api(st, "cleanup", "POST", `/open-apis/im/v1/message_cot/complete/${encodeURIComponent(st.cotId)}`, {}, { message_id: st.messageId!, reason: "error" }); } catch {}
-    }
-    // Oversized content only disables this bubble; other failures pause new bubbles for 30 minutes.
     const error = errorInfo(e);
-    if (error.reason !== "content-too-long") disabledUntil = Date.now() + DISABLE_MS;
-    cotLog(st, "disabled", { ...error, cooldownMs: error.reason === "content-too-long" ? 0 : DISABLE_MS }, true);
+    // Delivery failure is not task failure. Recall the broken presentation instead of marking
+    // a still-running task as "failed" in Feishu. Never retry ambiguous event uploads.
+    try {
+      setRunOutput(app, runId, { thinkingDelivery: { status: "failed", ...error, at: new Date().toISOString() } });
+    } catch { /* Recording a presentation failure must not interrupt the run. */ }
+    if (st.messageId) {
+      try { await api(st, "cleanup", "DELETE", `/open-apis/im/v1/messages/${encodeURIComponent(st.messageId)}`, undefined); } catch {}
+    }
+    // Permissions can differ between chats. A timeout or malformed event says nothing about
+    // whether the next turn can create a bubble, and must not disable unrelated turns.
+    const cooldownMs = error.reason === "no-user-authority" || error.code === 99991672 ? DISABLE_MS : 0;
+    if (cooldownMs) disabledChats.set(st.chatId, Date.now() + cooldownMs);
+    cotLog(st, "disabled", { ...error, cooldownMs }, true);
   } finally {
     st.pumping = false;
     if (st.settled || st.disabled) {
@@ -315,10 +323,12 @@ function schedule(app: App, runId: string, st: State, delay = 700) {
 /** `title`: a first line saying whose process this is (an agent's round in a work topic). */
 export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean; title?: string }) {
   if (!sdk || states.has(runId)) return false;
+  const disabledUntil = disabledChats.get(at.chatId) ?? 0;
   if (Date.now() < disabledUntil) {
     cotLog({ turnId: runId }, "skipped", { reason: "cooldown", remainingMs: disabledUntil - Date.now() });
     return false;
   }
+  disabledChats.delete(at.chatId);
   const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: at.title ? [{ kind: "reasoning", text: `${at.title}\n\n` }] : [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, dirty: false, closing: false, requestSeq: 0, settled: false, prologueSent: false, proven: false, timers: [] };
   states.set(runId, st);
   schedule(app, runId, st, 300);

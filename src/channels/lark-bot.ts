@@ -14,11 +14,10 @@ import { identitiesOf, OWNER, resolveIdentity, userName } from "../core/users.ts
 import { importFile, keepOriginal } from "../sources/import.ts";
 import { inQuietHours } from "../core/notify.ts";
 import { findSourceByUri, sourceText } from "../sources/store.ts";
-import { getRun } from "../agents/runs.ts";
 import { answerFromChannel, resolveCitations } from "./common.ts";
 import { registerCodeProgress } from "./lark-code-progress.ts";
-import { startProgress } from "./lark-progress.ts";
-import { cotAvailable, cotEvent, cotLiveFor, finishCot, setCotSdk, startCot } from "./lark-cot.ts";
+import { startReplyProgress } from "./lark-progress.ts";
+import { finishCot, setCotSdk } from "./lark-cot.ts";
 import { watchAgentBubbles } from "./lark-agent-cot.ts";
 import { handleCardAction } from "./lark-actions.ts";
 import { reactLark, sendLark, setLarkClient, unreactLark } from "./lark-send.ts";
@@ -449,10 +448,9 @@ export async function startLarkBot(app: App) {
     const text = spoken(m);
     const context = m.chatType === "group" ? groupContext(m) : "";
     if (!text) return;
-    let progress: Awaited<ReturnType<typeof startProgress>> | null = null;
+    let presentation: ReturnType<typeof startReplyProgress> | undefined;
     let runId: string | null = null;
-    /** The "处理中" reaction when the bubble shows the process and no progress card was sent. */
-    let working: string | undefined;
+    let answered = false;
     try {
       const answer = await answerFromChannel(
         app,
@@ -475,39 +473,7 @@ export async function startLarkBot(app: App) {
         {
           onStart: async (id) => {
             runId = id;
-            // A run can be queued behind another turn in this thread; only start the
-            // bubble/progress once it actually runs, otherwise the cards sit frozen while
-            // the user waits on a previous turn.
-            const card = () => startProgress(app, { messageId: m.messageId, inThread: !!m.topicId }, id).then((p) => { progress = p; }).catch(() => {});
-            const begin = async () => {
-              // Native collapsible thinking bubble (message_cot) when available: it shows the
-              // process, and the answer comes as its own message when it is ready. The progress
-              // card is only the fallback, for when the bubble has not shown anything after a while.
-              if (!cotAvailable() || !startCot(app, id, { chatId: m.chatId, originMessageId: m.messageId, inThread: !!m.topicId })) return card();
-              const listener = (e: { type: string; runId?: string; event?: { type: string; data: unknown } }) => {
-                if (e.runId !== id || !e.event) return;
-                cotEvent(app, id, { type: e.event.type, data: e.event.data });
-                if (cotLiveFor(id)) progress?.setMinimal(true);
-              };
-              app.events.on("event", listener);
-              const t = setTimeout(() => app.events.off("event", listener), 30 * 60_000);
-              t.unref();
-              working = await reactLark(m.messageId, "OnIt").catch(() => undefined);
-              setTimeout(() => {
-                if (!cotLiveFor(id) && getRun(app, id).status === "running") void card();
-              }, 15_000).unref();
-            };
-            const st = getRun(app, id).status;
-            if (st === "running") void begin();
-            else {
-              const onRun = (e: { type: string; runId?: string; status?: string }) => {
-                if (e.type === "run" && e.runId === id) {
-                  if (e.status === "running") { app.events.off("event", onRun); void begin(); }
-                  else if (e.status === "done" || e.status === "failed" || e.status === "cancelled") app.events.off("event", onRun);
-                }
-              };
-              app.events.on("event", onRun);
-            }
+            presentation = startReplyProgress(app, { chatId: m.chatId, messageId: m.messageId, inThread: !!m.topicId }, id);
           },
           onMerged: async () => {
             const { reactLark } = await import("./lark-send.ts");
@@ -530,20 +496,20 @@ export async function startLarkBot(app: App) {
         },
       );
       if (answer === null) return;
+      answered = true;
       if (runId) finishCot(app, runId, true);
-      const p = progress as Awaited<ReturnType<typeof startProgress>> | null;
+      const p = await presentation?.close();
       const sentId = p ? (await p.finish(answer), p.messageId) : (await reply(m.chatId, answer, m.messageId, !!m.topicId)).messageId;
-      if (working) {
-        await unreactLark(m.messageId, working).catch(() => {});
-        await reactLark(m.messageId, "DONE").catch(() => {});
-      }
+      if (runId && !p) await reactLark(m.messageId, "DONE").catch(() => {});
       // A later quote of this reply reads back as an empty card; this maps it to the answer.
       if (runId && sentId) run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?) where run_id = ? and role = 'assistant'", sentId, runId);
     } catch (e) {
-      if (runId) finishCot(app, runId, false);
-      const p = progress as Awaited<ReturnType<typeof startProgress>> | null;
+      if (runId && !answered) finishCot(app, runId, false);
+      const p = await presentation?.close();
       if (p) await p.fail((e as Error).message);
       else throw e;
+    } finally {
+      await presentation?.close();
     }
   };
 
@@ -593,7 +559,7 @@ export async function startLarkBot(app: App) {
     ];
     for (const p of people) {
       const openId = p.id?.open_id;
-      if (!openId || openId === botOpenId) continue;
+      if (!openId?.startsWith("ou_") || openId === botOpenId) continue;
       rememberPerson(app, { botOpenId: openId, userId: p.id?.user_id || null, name: p.name ?? "" });
       await learnBotPerson(app, client, openId);
     }

@@ -30,6 +30,8 @@ updated: 2026-10-18
 
 ## 飞书
 
+- **气泡失败与任务状态分开、群内 @ 补齐**（10-22）：气泡上传失败尝试撤回原消息，不再用“任务失败”收尾；`output.thinkingDelivery` 单独记录投递原因，`read_run` 区分它和运行状态。普通超时不禁用后续气泡，权限拒绝只冷却当前群。兜底卡片只保留状态及最终结果；收尾等待慢请求并清理表情、监听器和计时器。`mentions` 支持已知机器人侧 open_id；姓名记录不明确时核对授权目标群的完整成员列表，不按姓名合并跨应用身份，重名和不完整分页拒绝。邮箱 API 的非零业务码保留权限原因。机器人不在群成员列表里，须用本应用已收到的 @ 身份，app_id 和采集侧 open_id 不直传。见 `lark-cot.ts`、`lark-progress.ts`、`lark-people.ts` 及对应测试。
+
 - **消息结构化、引用、图片与历史回溯**（10-18）：`src/channels/lark-messages.ts`、`lark_messages` 表、`lark_cursors.oldest_ms / backfill_to_ms`、按月的历史原件；网页聊天视图 `ChatView.vue`。
 - **会话类型与采集方式**（10-18）：单聊、机器人单聊、普通群、话题群、omem 自己的机器人；免打扰；`lark.capture.policies` 与单会话覆盖。见 [渠道](../concepts/channels.md)。
 - **免打扰不自动采集**（10-17），10-18 修正了“@我”补采只排除订阅群、不排除已读群导致重复的问题。

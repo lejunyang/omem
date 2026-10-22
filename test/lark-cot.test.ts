@@ -189,7 +189,7 @@ it.each(["create", "append", "finish", "complete"])("records %s failures with co
   expect(records).toContainEqual(expect.objectContaining({ action: "rejected", phase, runId: "run_test", requestSeq: expect.any(Number), httpStatus: 400, code: 41050, logId: "TEST_TRACE", reason: "invalid-data", eventIndex: "2" }));
   if (phase !== "create") expect(records).toContainEqual(expect.objectContaining({ action: "rejected", cotId: "cot_test", messageId: "om_test" }));
   expect(JSON.stringify(records)).not.toMatch(/PRIVATE_|oc_test/);
-  expect(cot.startCot(app, "run_next", { chatId: "oc_test" })).toBe(false);
+  expect(cot.startCot(app, "run_next", { chatId: "oc_test" })).toBe(true);
   await vi.advanceTimersByTimeAsync(60_000);
   expect(cot.hasCot("run_test")).toBe(false);
 });
@@ -197,7 +197,7 @@ it.each(["create", "append", "finish", "complete"])("records %s failures with co
 it("recognizes business-response content limits and logs cleanup failures separately", async () => {
   respond = async (r) => {
     if (r.method === "PUT") return { code: 41050, msg: "event[3] content too long PRIVATE_BODY", log_id: "TEST_LIMIT" };
-    if (r.url.includes("/complete/")) throw Object.assign(new Error("timeout PRIVATE_BODY"), { code: "ETIMEDOUT" });
+    if (r.method === "DELETE") throw Object.assign(new Error("timeout PRIVATE_BODY"), { code: "ETIMEDOUT" });
     return accepted(r);
   };
   start();
@@ -207,4 +207,33 @@ it("recognizes business-response content limits and logs cleanup failures separa
   expect(logs()).toContainEqual(expect.objectContaining({ action: "disabled", reason: "content-too-long", cooldownMs: 0 }));
   expect(JSON.stringify(logs())).not.toContain("PRIVATE_");
   expect(cot.startCot(app, "run_next", { chatId: "oc_test" })).toBe(true);
+});
+
+it("recalls a broken bubble without reporting task failure or cooling down the next turn", async () => {
+  const { testApp } = await import("./helpers.ts");
+  const { createRun, getRun } = await import("../src/agents/runs.ts");
+  const real = testApp();
+  const r = createRun(real, { kind: "agent", title: "处理消息", input: {} });
+  real.db.prepare("update runs set status='running' where id=?").run(r.id);
+  respond = async (req) => {
+    if (req.method === "PUT") throw Object.assign(new Error("timeout"), { code: "ECONNABORTED" });
+    return accepted(req);
+  };
+  cot.startCot(real, r.id, { chatId: "oc_test", title: "处理消息" });
+  await vi.advanceTimersByTimeAsync(300);
+  expect(requests.some((req) => req.method === "DELETE" && req.url.endsWith("/messages/om_test"))).toBe(true);
+  expect(requests.some((req) => req.url.includes("/complete/"))).toBe(false);
+  expect(getRun(real, r.id)).toMatchObject({ status: "running", error: null, output: { thinkingDelivery: { status: "failed", reason: "timeout" } } });
+  expect(cot.startCot(real, "next", { chatId: "oc_test" })).toBe(true);
+  real.db.close();
+});
+
+it("limits an authority cooldown to the affected chat", async () => {
+  respond = async () => ({ code: 41050, msg: "no user authority error" });
+  start();
+  await vi.advanceTimersByTimeAsync(300);
+  expect(cot.startCot(app, "same", { chatId: "oc_test" })).toBe(false);
+  expect(cot.startCot(app, "other", { chatId: "oc_other" })).toBe(true);
+  await vi.advanceTimersByTimeAsync(30 * 60_000);
+  expect(cot.startCot(app, "after", { chatId: "oc_test" })).toBe(true);
 });
