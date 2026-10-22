@@ -39,12 +39,19 @@ it("retries failed lookups, rejects unrelated messages and refreshes successful 
   let response: unknown = { data: { messages: [{ ...captured, chat_id: "oc_other" }] } };
   setLarkCliForTests(async () => { if (response instanceof Error) throw response; return response; });
   const nameOf = larkSenderNames(app, client(contact));
+  vi.useFakeTimers();
+  const later = (minutes: number) => vi.setSystemTime(Date.now() + minutes * 60_000);
   expect(await nameOf("ou_bot", eventMessage)).toBe("ou_bot");
+  // A miss is not looked up again on the very next message, only after a short pause.
+  response = { data: { messages: [captured] } };
+  expect(await nameOf("ou_bot", eventMessage)).toBe("ou_bot");
+  later(3);
   response = new Error("temporary timeout");
   expect(await nameOf("ou_bot", eventMessage)).toBe("ou_bot");
+  later(3);
   response = { data: { messages: [captured] } };
   expect(await nameOf("ou_bot", eventMessage)).toBe("监控机器人");
-  vi.useFakeTimers(); vi.setSystemTime(Date.now() + 11 * 60_000);
+  later(11);
   response = { data: { messages: [{ ...captured, sender: { ...captured.sender, name: "新监控机器人" } }] } };
   expect(await nameOf("ou_bot", eventMessage)).toBe("新监控机器人");
   expect(contact).not.toHaveBeenCalled();
@@ -53,7 +60,9 @@ it("retries failed lookups, rejects unrelated messages and refreshes successful 
 it("does not poison later user names after a contact error", async () => {
   const contact = vi.fn().mockRejectedValueOnce(new Error("timeout")).mockResolvedValue({ code: 0, data: { user: { name: "小王" } } });
   const nameOf = larkSenderNames(fresh(), client(contact));
+  vi.useFakeTimers();
   expect(await nameOf("ou_user")).toBe("ou_user");
+  vi.setSystemTime(Date.now() + 3 * 60_000);
   expect(await nameOf("ou_user")).toBe("小王");
 });
 

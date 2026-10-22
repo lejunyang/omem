@@ -6,6 +6,8 @@ import { larkCli } from "./lark-cli.ts";
 import { isApp, type LarkMessage } from "./lark-messages.ts";
 import { rememberPerson } from "./lark-people.ts";
 
+const MISS_RETRY_MS = 2 * 60_000;
+
 /** Event open_ids belong to the bot. A read-only CLI lookup supplies a name, never an open_id. */
 export function larkSenderNames(app: App, client: lark.Client) {
   const names = new Map<string, { name: string; until: number }>();
@@ -33,6 +35,9 @@ export function larkSenderNames(app: App, client: lark.Client) {
       return name;
     }
     const saved = one<{ name: string }>(app.db, "select name from lark_people where bot_open_id = ? and name != ''", openId)?.name;
+    // A miss is retried, but not on every message: in a group the owner is not in, each bot message
+    // would otherwise wait on another lark-cli process that cannot succeed before it is handled.
+    names.set(openId, { name: saved || openId, until: Date.now() + MISS_RETRY_MS });
     return saved || openId;
   };
 }
