@@ -170,7 +170,7 @@ async function delegate() {
     toast((e as Error).message, "error");
   }
 }
-const kinds = ["ask", "agent", "code", "ingest", "ingest-shadow", "memory-review", "wiki-plan", "wiki-write", "wiki-lint", "heartbeat", "dream", "tutor", "brief", "curate", "sync", "guest", "lark-command", "rule-fire", "profile-review", "thread-summary", "agent-followup"];
+const kinds = ["ask", "agent", "code", "ingest", "ingest-shadow", "memory-review", "wiki-plan", "wiki-write", "wiki-lint", "heartbeat", "dream", "tutor", "brief", "curate", "sync", "guest", "lark-command", "lark-resource-parse", "rule-fire", "profile-review", "thread-summary", "agent-followup"];
 const kindOptions = computed(() => [
   ...kinds.map((k) => ({ value: k, label: runKindLabel[k] ?? k })),
   ...specNames.value.map((n) => ({ value: `agent:${n}`, label: `Agent · ${n}`, hint: "这个 Agent 档案的运行" })),

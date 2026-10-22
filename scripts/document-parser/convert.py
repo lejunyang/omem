@@ -2,13 +2,15 @@
 import os
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
-import sys, json, pathlib, importlib.metadata
+import sys, json, pathlib, importlib.metadata, shutil
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.base_models import InputFormat, ConversionStatus
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling_core.types.doc import ImageRefMode, PictureItem, TableItem
 
 source = pathlib.Path(sys.argv[1])
+if source.suffix.lower() in {".doc", ".ppt", ".xls"} and not (shutil.which("libreoffice") or shutil.which("soffice")):
+    raise ValueError("旧版 DOC/PPT/XLS 解析需要 LibreOffice；原文件可直接保存，也可提供 DOCX/PPTX/XLSX。")
 options = PdfPipelineOptions()
 options.do_ocr = False  # This first path reads text PDFs; scans must not silently succeed.
 options.generate_picture_images = True
@@ -17,14 +19,14 @@ if len(sys.argv) > 2 and sys.argv[2]:
     options.artifacts_path = pathlib.Path(sys.argv[2])
 elif source.suffix.lower() == ".pdf":
     raise ValueError("PDF 解析模型未准备；请运行 omem setup document-models。DOCX 无需这些模型。")
-converter = DocumentConverter(allowed_formats=[InputFormat.PDF, InputFormat.DOCX], format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)})
+converter = DocumentConverter(allowed_formats=[InputFormat.PDF, InputFormat.DOCX, InputFormat.DOC, InputFormat.XLSX, InputFormat.XLS, InputFormat.PPTX, InputFormat.PPT, InputFormat.CSV, InputFormat.HTML], format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)})
 result = converter.convert(source, max_file_size=20_000_000, max_num_pages=200)
 if result.status != ConversionStatus.SUCCESS:
     raise ValueError("文档解析不完整，请检查原件后重试：" + str(result.status))
 doc = result.document
 markdown = doc.export_to_markdown(image_mode=ImageRefMode.PLACEHOLDER)
 if not markdown.strip():
-    raise ValueError("没有识别到可读正文；扫描件需要 OCR，当前入口只支持文字 PDF 和 DOCX。")
+    raise ValueError("没有识别到可读正文；扫描件需要 OCR，当前未启用 OCR。")
 blocks = []
 for item, level in doc.iterate_items():
     text = getattr(item, "text", "")

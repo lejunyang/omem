@@ -25,6 +25,8 @@ import { relationCandidates } from "../core/space-candidates.ts";
 import { nearMemories, sameTopicPairs } from "../memory/passive.ts";
 import "./profile-jobs.ts";
 
+registerHandler("lark-resource-parse", async ctx => (await import("../channels/lark-resource-parse.ts")).parseLarkResource(ctx));
+
 /**
  * A background role with nothing to report ends with QUIET: alone, on a line of its own, or after
  * a sentence ("没有新的变化。QUIET"). Such runs stay out of the run list.

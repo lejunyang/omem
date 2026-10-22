@@ -563,7 +563,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/runs/:id/cancel", async (req) => cancelRun(app, (req.params as { id: string }).id));
   server.post("/api/runs/:id/retry", async (req) => {
     const r = getRun(app, (req.params as { id: string }).id);
-    return createRun(app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input: r.input, parentId: r.parentId });
+    return createRun(app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input: r.input, parentId: r.parentId, lane: r.lane });
   });
   server.post("/api/runs/:id/apply", async (req) => applyCodeRun(app, (req.params as { id: string }).id));
   server.post("/api/runs/:id/discard", async (req) => {

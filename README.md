@@ -79,6 +79,8 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 4. **今日 / 问答**：直接提问或交代事情——“记住：周四下午三点和小王同步项目A”“不对，预算改成 120 了”“下周一提醒我交报销单”“帮我盯着项目A的需求变化”。
 5. 按 <kbd>Ctrl K</kbd> 搜索或提问，<kbd>Ctrl J</kbd> 保存材料（文本、网址、飞书文档、拖入文件）。
 
+文档解析支持 PDF、DOCX、XLSX、PPTX、CSV 和 HTML；Docling 在源码和安装后的构建中使用同一份解析脚本。结构化 Office / CSV 无需 PDF 模型，旧版 DOC / XLS / PPT 需额外安装 LibreOffice。飞书文档附件先保存原文件，再单独解析；解析失败在“运行 → 解析附件”中重试，不阻塞消息回溯。视频封面可选，正文中的图片副本外链保留为引用，不计入原附件缺失。
+
 ## 日常用途
 
 | 想做的事 | 怎么做 |
@@ -295,7 +297,7 @@ scripts/      脚本：更新（upgrade.ts）、截图、检索与记忆评测�
 web/          Vue 3 网页
 ```
 
-`lark-personal.ts` 做本人身份的轮询，`lark-bot.ts` 接收机器人事件，`lark-sender.ts` 分开解析人与机器人的发送者名称，`lark-messages.ts` 统一两路消息、资源与原件行。
+`lark-personal.ts` 做本人身份的轮询，`lark-bot.ts` 接收机器人事件，`lark-sender.ts` 分开解析人与机器人的发送者名称，`lark-resource-parse.ts` 独立处理已保存附件的解析，`lark-messages.ts` 统一两路消息、资源与原件行。
 
 角色说明在 `roles/*.md`，改它们就能调整 Agent 的工作方式，不需要改代码。
 

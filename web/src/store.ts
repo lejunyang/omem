@@ -113,6 +113,7 @@ export const runKindLabel: Record<string, string> = {
   agent: "Agent 档案",
   guest: "访客提问",
   "lark-command": "私聊指令",
+  "lark-resource-parse": "解析附件",
   "rule-fire": "规则（等待后）",
   "profile-review": "复盘",
   "role-merge": "合并角色",

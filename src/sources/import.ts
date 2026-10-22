@@ -1,4 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { resolveCodeRefs } from "./callgraph.ts";
 import { ensureGrammars } from "./treesitter.ts";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -15,12 +16,14 @@ import { deleteSource, upsertSource, type SourceKind, type UpsertResult } from "
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "out", "target", ".next", ".nuxt", ".venv", "venv", "__pycache__", ".idea", ".vscode", "coverage", ".cache", ".turbo", ".gradle", "vendor", ".omem"]);
 const BINARY_EXT = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg", ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".zip", ".gz", ".tgz", ".7z", ".rar", ".jar", ".war", ".class", ".so", ".dll", ".dylib", ".exe", ".bin", ".wasm", ".woff", ".woff2", ".ttf", ".otf", ".eot", ".mp3", ".mp4", ".mov", ".avi", ".webm", ".wav", ".flac", ".db", ".sqlite", ".lock", ".onnx", ".safetensors", ".gguf", ".pt", ".npy", ".parquet",
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg", ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".zip", ".gz", ".tgz", ".7z", ".rar", ".jar", ".war", ".class", ".so", ".dll", ".dylib", ".exe", ".bin", ".wasm", ".woff", ".woff2", ".ttf", ".otf", ".eot", ".mp3", ".mp4", ".mov", ".avi", ".webm", ".wav", ".flac", ".db", ".sqlite", ".lock", ".onnx", ".safetensors", ".gguf", ".pt", ".npy", ".parquet",
 ]);
 const LOCKFILES = /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|Cargo\.lock|poetry\.lock|uv\.lock|go\.sum|composer\.lock|Gemfile\.lock|osdk\.lock)$/;
 const MAX_TEXT_BYTES = 1_000_000;
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
-const DOC_EXT = new Set([".pdf", ".docx", ".doc", ".pptx", ".xlsx", ".html", ".htm", ".epub"]);
+const DOC_EXT = new Set([".pdf", ".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls", ".csv", ".html", ".htm", ".epub"]);
+export const needsDocumentConversion = (file: string) => DOC_EXT.has(extname(file).toLowerCase());
+const exec = promisify(execFile);
 
 function looksBinary(buf: Buffer) {
   const n = Math.min(buf.length, 8000);
@@ -35,18 +38,22 @@ function tally(report: ImportReport, r: UpsertResult) {
   if (r.status !== "unchanged") report.sourceIds.push(r.id);
 }
 
-export function doclingScript() {
-  const script = resolve(fileURLToPath(new URL("../../scripts/document-parser/convert.py", import.meta.url)));
-  return existsSync(script) ? script : null;
+export function doclingScript(moduleUrl = import.meta.url) {
+  // Source lives under src/, installed builds under dist/src/. The parser is packaged at the root.
+  for (const prefix of ["../../", "../../../"]) {
+    const script = fileURLToPath(new URL(`${prefix}scripts/document-parser/convert.py`, moduleUrl));
+    if (existsSync(script)) return script;
+  }
+  return null;
 }
 
 /**
- * Convert PDF/DOCX/HTML to Markdown. Order: configured converter command,
+ * Convert supported documents to Markdown. Order: configured converter command,
  * bundled Docling script via uv, then pdftotext / pandoc when installed.
  */
-export function convertDocument(app: App, file: string): string {
+export async function convertDocument(app: App, file: string, signal?: AbortSignal): Promise<string> {
   const ext = extname(file).toLowerCase();
-  const attempts: [string, string[]][] = [];
+  const attempts: [string, string[], "json"?][] = [];
   const errors: string[] = [];
   const configured = app.config.documents.converter;
   if (configured) {
@@ -57,40 +64,45 @@ export function convertDocument(app: App, file: string): string {
     if (engine === "docling") {
       const script = doclingScript();
       const artifacts = app.config.documents.doclingArtifacts;
-      // Docling needs its layout models for PDF; DOCX works without them.
-      if (script && (ext === ".docx" || (ext === ".pdf" && artifacts && existsSync(artifacts)))) {
+      // Structured Office/HTML formats do not require the PDF layout models.
+      if (script && ([".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".csv", ".html", ".htm"].includes(ext) || (ext === ".pdf" && artifacts && existsSync(artifacts)))) {
         const uv = toolCommand("uv");
-        if (uv) attempts.push([uv[0], [...uv.slice(1), "run", "--project", resolve(script, ".."), "--quiet", "python", script, file, artifacts ?? ""]]);
-        else errors.push("docling: 没有 uv（运行 omem setup → PDF / DOCX 解析，会经 osdk 安装）");
+        if (uv) attempts.push([uv[0], [...uv.slice(1), "run", "--project", resolve(script, ".."), "--quiet", "python", script, file, artifacts ?? ""], "json"]);
+        else errors.push("docling: 没有 uv（运行 omem setup 选择文档解析，会经 osdk 安装）");
       }
     } else if (engine === "pdftotext" && ext === ".pdf") attempts.push(["pdftotext", ["-layout", file, "-"]]);
-    else if (engine === "pandoc" && ext !== ".pdf") attempts.push(["pandoc", [file, "-t", "gfm", "--wrap=none"]]);
+    else if (engine === "pandoc" && ![".pdf", ".doc", ".ppt", ".xls"].includes(ext)) attempts.push(["pandoc", [file, "-t", "gfm", "--wrap=none"]]);
   }
-  for (const [cmd, args] of attempts) {
-    const r = spawnSync(cmd, args, { encoding: "utf8", maxBuffer: 200 * 1024 * 1024, windowsHide: true, timeout: 10 * 60_000 });
-    if (r.status === 0 && r.stdout.trim()) {
-      const out = r.stdout.trim();
-      if (out.startsWith("{")) {
-        try {
-          return JSON.parse(out).markdown as string;
-        } catch {}
+  for (const [cmd, args, format] of attempts) {
+    signal?.throwIfAborted();
+    try {
+      const r = await exec(cmd, args, { encoding: "utf8", maxBuffer: 200 * 1024 * 1024, windowsHide: true, timeout: 10 * 60_000, signal });
+      // Toolchain launchers may print setup status. The bundled parser emits one final JSON line.
+      const out = format === "json" ? r.stdout.trim().split("\n").at(-1)!.trim() : r.stdout.trim();
+      if (!out) throw new Error("没有可读正文");
+      if (format === "json" || out.startsWith("{")) {
+        const parsed = JSON.parse(out) as { markdown?: unknown };
+        if (typeof parsed.markdown !== "string" || !parsed.markdown.trim()) throw new Error("解析器未返回 Markdown 正文");
+        return parsed.markdown;
       }
       return out;
+    } catch (e) {
+      signal?.throwIfAborted();
+      errors.push(`${cmd}: ${String((e as { stderr?: string }).stderr || (e as Error).message).trim().slice(0, 300)}`);
     }
-    errors.push(`${cmd}: ${(r.stderr || String(r.error ?? "")).trim().slice(0, 300)}`);
   }
   throw new HttpError(422, `无法解析 ${basename(file)}。运行 omem setup 选择文档解析方式（Docling / pdftotext / pandoc），或配置转换命令。\n${errors.join("\n")}`);
 }
 
 /** Import one file into a space. Binary documents are converted; originals are kept in files/. */
-export async function importFile(app: App, spaceId: string, file: string, uri?: string): Promise<UpsertResult | null> {
+export async function importFile(app: App, spaceId: string, file: string, uri?: string, signal?: AbortSignal): Promise<UpsertResult | null> {
   const path = resolve(file);
   await ensureGrammars([path]);
   const ext = extname(path).toLowerCase();
   const id = uri ?? basename(path);
   if (DOC_EXT.has(ext)) {
-    const text = convertDocument(app, path);
     const stored = keepOriginal(app, path);
+    const text = await convertDocument(app, path, signal);
     return upsertSource(app, { spaceId, kind: "doc", uri: id, title: basename(path, ext), text, mime: ext.slice(1), meta: { original: stored } });
   }
   if (IMAGE_EXT.has(ext)) {

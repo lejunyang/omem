@@ -11,7 +11,7 @@ import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { addNotificationSink } from "../core/notify.ts";
 import { identitiesOf, OWNER, resolveIdentity } from "../core/users.ts";
-import { importFile, keepOriginal } from "../sources/import.ts";
+import { importFile, keepOriginal, needsDocumentConversion } from "../sources/import.ts";
 import { inQuietHours } from "../core/notify.ts";
 import { findSourceByUri, sourceText } from "../sources/store.ts";
 import { answerFromChannel, resolveCitations } from "./common.ts";
@@ -511,19 +511,21 @@ export async function startLarkBot(app: App) {
   /** Images and files sent to the bot (or in its groups) become sources; the ingest role reads them. */
   const saveResource = async (msg: { message_id: string; message_type: string; content: string }, m: Inbound) => {
     const c = JSON.parse(msg.content || "{}") as { image_key?: string; file_key?: string; file_name?: string };
-    const key = c.image_key ?? c.file_key;
+    const key = c.file_key ?? c.image_key;
     if (!key) return;
     if (m.chatType === "group" && one(app.db, "select 1 from lark_messages m,json_each(m.resources) r where m.chat_id=? and m.message_id=? and r.key=?", m.chatId, m.messageId, key)) return;
     const dir = await mkdtemp(join(tmpdir(), "omem-lark-"));
     try {
-      const name = c.file_name ?? `${msg.message_id}.png`;
+      const name = c.file_name ?? `${msg.message_id}.${msg.message_type === "media" ? "mp4" : msg.message_type === "audio" ? "ogg" : msg.message_type === "image" ? "png" : "bin"}`;
       const file = join(dir, name.replace(/[\\/]/g, "_"));
       const res = await client.im.messageResource.get({ path: { message_id: msg.message_id, file_key: key }, params: { type: msg.message_type === "image" ? "image" : "file" } });
       await res.writeFile(file);
       const spaceId = m.chatType === "group" ? groupSpace(m.chatId) : cfg.defaultSpace;
-      const r = await importFile(app, spaceId, file, `lark:${m.chatId}/${name}`);
+      const stored = keepOriginal(app, file);
+      const deferred = m.chatType === "group" && needsDocumentConversion(file);
+      const r = deferred ? null : await importFile(app, spaceId, file, `lark:${m.chatId}/${name}`);
       if (m.chatType === "group") {
-        persistChatMessages(app, { chatId: m.chatId, spaceId, name: groupName(m.chatId), messages: [{ message_id: m.messageId, chat_id: m.chatId, msg_type: m.type ?? "file", content: m.text, raw_content: m.raw, create_time: m.createTime, thread_id: m.topicId, parent_id: m.parentId, root_id: m.rootId, sender: { id: m.senderId, name: m.senderName, sender_type: m.fromApp ? "app" : "user" } }], resources: new Map([[m.messageId, { [key]: { type: msg.message_type, sourceId: r?.id, file: keepOriginal(app, file), name } }]]) });
+        persistChatMessages(app, { chatId: m.chatId, spaceId, name: groupName(m.chatId), messages: [{ message_id: m.messageId, chat_id: m.chatId, msg_type: m.type ?? "file", content: m.text, raw_content: m.raw, create_time: m.createTime, thread_id: m.topicId, parent_id: m.parentId, root_id: m.rootId, sender: { id: m.senderId, name: m.senderName, sender_type: m.fromApp ? "app" : "user" } }], resources: new Map([[m.messageId, { [key]: { type: msg.message_type, sourceId: r?.id, file: stored, name, ...(deferred ? { parse: { status: "pending" as const } } : {}) } }]]) });
       }
       if (r && r.status !== "unchanged") scheduleIngest(app, spaceId, [r.id], `飞书${m.chatType === "group" ? "群" : "私聊"}附件`);
       if (m.chatType === "p2p") await reply(m.chatId, r ? `已保存「${name}」，助理会读取并整理。` : `「${name}」的格式暂不支持。`, m.messageId);
@@ -578,7 +580,7 @@ export async function startLarkBot(app: App) {
           .map((x) => [x.key!, { name: x.name ?? "", isBot: !!botOpenId && x.id?.open_id === botOpenId }]),
       ),
     };
-    if ((msg.message_type === "image" || msg.message_type === "file") && (m.chatType === "group" || resolveIdentity(app, "lark", m.senderId)))
+    if ((["image", "file"].includes(msg.message_type) || (m.chatType === "group" && ["media", "audio"].includes(msg.message_type))) && (m.chatType === "group" || resolveIdentity(app, "lark", m.senderId)))
       saveResource(msg, m).catch((e) => console.warn("[omem] 飞书附件保存失败", e));
     if (msg.message_type !== "image" && msg.message_type !== "file") {
       if (resolveIdentity(app, "lark", m.senderId) === OWNER) m.quote = await fetchQuote(msg);

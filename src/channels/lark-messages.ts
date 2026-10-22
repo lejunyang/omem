@@ -3,7 +3,9 @@ import { basename, extname, join } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { json } from "../core/util.ts";
-import { importFile, keepOriginal } from "../sources/import.ts";
+import { importFile, keepOriginal, needsDocumentConversion } from "../sources/import.ts";
+import { resourceKeys } from "./lark-resource-keys.ts";
+import { queueResourceParsing } from "./lark-resource-parse.ts";
 import { findSourceByUri, sourceText, upsertSource, type UpsertResult } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
 import { cliIdsIn, learnCliPeople, peopleByCliIds } from "./lark-people.ts";
@@ -130,7 +132,8 @@ export function formatLine(m: LarkMessage, opts: { owner?: string; quoted?: Quot
 
 // ---- resources -------------------------------------------------------------------
 
-export type ResourceRef = { type: string; sourceId?: string; file?: string; name?: string };
+export type ResourceRef = { type: string; sourceId?: string; file?: string; name?: string; optional?: boolean;
+  parse?: { status: "pending" | "done" | "failed"; runId?: string; error?: string } };
 
 const MAGIC: [string, number[]][] = [
   [".png", [0x89, 0x50, 0x4e, 0x47]],
@@ -157,27 +160,41 @@ export function withExtension(path: string) {
 export async function keepResources(app: App, spaceId: string, chatId: string, messages: LarkMessage[], cwd: string, asSources: boolean, strict = false) {
   const byMessage = new Map<string, Record<string, ResourceRef>>();
   for (const m of messages) {
+    const keys = resourceKeys(messageText(m), m.raw_content, m.msg_type);
+    const saved = one<{ resources: string }>(app.db, "select resources from lark_messages where message_id=?", m.message_id);
+    const refs = json<Record<string, ResourceRef>>(saved?.resources, {});
+    byMessage.set(m.message_id, refs);
     for (const r of m.resources ?? []) {
+      const optional = keys.optional.has(r.key);
+      if (optional) refs[r.key] = { ...refs[r.key], type: r.type ?? "image", optional: true };
+      if (r.error && refs[r.key]?.file && existsSync(join(app.filesDir, refs[r.key].file!))) continue;
+      if (optional && (r.error || !r.local_path)) continue;
       if (r.error || !r.local_path || !r.key) { if (strict) throw new Error(`附件下载未完成（${m.message_id}）`); continue; }
       const path = existsSync(r.local_path) ? r.local_path : join(cwd, r.local_path);
-      if (!existsSync(path)) { if (strict) throw new Error(`附件文件缺失（${m.message_id}）`); continue; }
-      const refs = byMessage.get(m.message_id) ?? {};
+      if (!existsSync(path)) { if (strict && !optional) throw new Error(`附件文件缺失（${m.message_id}）`); continue; }
       try {
         const file = withExtension(path);
         const name = new RegExp(`<(?:file|video|audio) key="${r.key.replace(/[^\w-]/g, "")}"[^>]*?name="([^"]*)"`).exec(messageText(m))?.[1];
-        const ref: ResourceRef = { type: r.type ?? "file", name };
-        if (asSources) {
+        const stored = keepOriginal(app, file);
+        const ref: ResourceRef = { ...(refs[r.key]?.file === stored ? refs[r.key] : {}), type: r.type ?? "file", name, file: stored, optional };
+        refs[r.key] = ref;
+        if (asSources && !optional && !ref.sourceId && needsDocumentConversion(file)) {
+          ref.parse ??= { status: "pending" };
+        } else if (asSources && !optional && !ref.sourceId) {
           const imported = await importFile(app, spaceId, file, `lark:${chatId}/${name ?? basename(file)}`);
           if (imported) ref.sourceId = imported.id;
         }
-        ref.file = keepOriginal(app, file);
-        refs[r.key] = ref;
       } catch (e) {
-        if (strict) throw e;
+        if (strict && !optional) throw e;
         console.warn(`[omem] 保存飞书附件失败（${m.message_id}/${r.key}）：${(e as Error).message}`);
       }
-      byMessage.set(m.message_id, refs);
     }
+    if (asSources) for (const [key, ref] of Object.entries(refs)) {
+      if (!ref.optional && !keys.optional.has(key) && ref.file && !ref.sourceId && needsDocumentConversion(ref.file) && existsSync(join(app.filesDir, ref.file)))
+        ref.parse ??= { status: "pending" };
+    }
+    if (strict) for (const key of keys.required) if (!refs[key]?.file || !existsSync(join(app.filesDir, refs[key].file!)))
+      throw new Error(`附件下载未完成（${m.message_id}/${key}）`);
   }
   return byMessage;
 }
@@ -459,8 +476,7 @@ async function downloadResource(app: App, messageId: string, key: string): Promi
 // ---- filling in what was never downloaded ------------------------------------------------
 
 /** Image and file keys a message refers to: `![Image](img_…)`, `[Image: img_…]`, `<file key="file_…">`, `<video key=…>`. */
-const RESOURCE_KEY = /(?:\]\(|\[Image: |key=")((?:img|file)_[\w-]+)/g;
-const keysIn = (text: string) => [...new Set([...text.matchAll(RESOURCE_KEY)].map((m) => m[1]))];
+const keysIn = (text: string) => [...resourceKeys(text).required];
 
 /**
  * Images and files of captured messages that have no local copy: rows whose download failed or was
@@ -469,14 +485,16 @@ const keysIn = (text: string) => [...new Set([...text.matchAll(RESOURCE_KEY)].ma
 export function missingResources(app: App, chatIds?: string[]) {
   const out: { messageId: string; key: string }[] = [];
   const inChats = chatIds?.length ? ` and chat_id in (${chatIds.map(() => "?").join(",")})` : "";
-  const rows = all<{ message_id: string; content: string; resources: string }>(
+  const rows = all<{ message_id: string; content: string; raw_content: string | null; msg_type: string; resources: string }>(
     app.db,
-    `select message_id, content, resources from lark_messages where (content like '%img_%' or content like '%file_%')${inChats}`,
+    `select message_id, content, raw_content, msg_type, resources from lark_messages where (content like '%img_%' or content like '%file_%' or raw_content like '%key%' or resources != '{}')${inChats}`,
     ...(chatIds ?? []),
   );
   for (const r of rows) {
     const refs = json<Record<string, ResourceRef>>(r.resources, {});
-    for (const key of keysIn(r.content)) if (!refs[key]?.file && !knownResourceFile(app, r.message_id, key)) out.push({ messageId: r.message_id, key });
+    const keys = resourceKeys(r.content, r.raw_content, r.msg_type);
+    for (const [key, ref] of Object.entries(refs)) if (!ref.optional && !keys.optional.has(key)) keys.required.add(key);
+    for (const key of keys.required) if (!knownResourceFile(app, r.message_id, key)) out.push({ messageId: r.message_id, key });
   }
   const uris = chatIds?.length ? ` and (${chatIds.map(() => "(uri = ? or uri like ?)").join(" or ")})` : " and uri like 'lark:oc_%'";
   const sources = all<{ text: string }>(app.db, `select text from sources where kind = 'chat' and deleted_at is null${uris}`, ...(chatIds ?? []).flatMap((c) => [`lark:${c}`, `lark:${c}@%`]));
@@ -573,7 +591,10 @@ export function persistChatMessages(app: App, input: { chatId: string; spaceId: 
     sourceId = r.id;
     if (r.status !== "unchanged") status = status === "created" ? status : r.status;
     // The source is written first: on failure the next call recovers each message id from its text.
-    for (const w of target.writes) storeMessages(app, input.chatId, [w.message], { owner: input.owner, sourceId, firstLine: w.line, archive: source?.uri.includes("@") ? source.uri.split("@").pop() : source ? undefined : input.archive, resources: new Map([[w.message.message_id, w.resources]]) });
+    for (const w of target.writes) {
+      storeMessages(app, input.chatId, [w.message], { owner: input.owner, sourceId, firstLine: w.line, archive: source?.uri.includes("@") ? source.uri.split("@").pop() : source ? undefined : input.archive, resources: new Map([[w.message.message_id, w.resources]]) });
+      queueResourceParsing(app, source?.space_id ?? spaceId, w.message.message_id);
+    }
   }
   return { id: sourceId, spaceId, status };
 }

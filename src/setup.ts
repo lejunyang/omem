@@ -177,12 +177,13 @@ export function prepareDoclingModels(home: string) {
 async function setupDocumentsSection(config: Config, home: string) {
   const has = { uv: !!toolCommand("uv"), pdftotext: commandExists("pdftotext"), pandoc: commandExists("pandoc"), docling: !!doclingScript() };
   const models = config.documents.doclingArtifacts && existsSync(config.documents.doclingArtifacts);
-  out(`\n文档解析（PDF / DOCX）：本机 ${ok(has.uv)} uv（Docling 用）  ${ok(!!models)} Docling PDF 模型  ${ok(has.pdftotext)} pdftotext  ${ok(has.pandoc)} pandoc`);
+  out(`\n文档解析（PDF / Office / CSV）：本机 ${ok(has.uv)} uv（Docling 用）  ${ok(!!models)} Docling PDF 模型  ${ok(has.pdftotext)} pdftotext  ${ok(has.pandoc)} pandoc`);
+  out("DOCX / XLSX / PPTX / CSV 不需要 PDF 模型；旧版 DOC / XLS / PPT 另外需要 LibreOffice。附件先保存，解析失败可单独重试。");
   out(`当前顺序：${config.documents.engines.join(" → ")}${config.documents.converter ? `；自定义命令优先：${config.documents.converter}` : ""}`);
   const choice = await select({
-    message: "PDF / DOCX 用什么解析",
+    message: "文档用什么解析",
     choices: [
-      { value: "docling", name: "Docling（推荐）", description: "保留标题层级、表格和图片位置；首次会装 Python 依赖（含 PyTorch，约 1～2GB），PDF 还需布局模型约 300MB" },
+      { value: "docling", name: "Docling（推荐）", description: "保留标题层级、表格和图片位置；首次会装 Python 依赖（含 PyTorch，体积随平台变化），PDF 还需布局模型约 300MB" },
       { value: "light", name: "pdftotext + pandoc", description: "轻量，PDF 只取纯文字（表格会乱），DOCX 效果不错" },
       { value: "custom", name: "自定义命令", description: "任何把文件转成 Markdown 输出到 stdout 的命令，{file} 会被替换" },
       { value: "keep", name: "保持不变" },
