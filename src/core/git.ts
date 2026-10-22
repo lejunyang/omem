@@ -4,6 +4,20 @@ import { join } from "node:path";
 
 export type GitResult = { ok: boolean; stdout: string; stderr: string };
 
+/**
+ * No fsmonitor daemon for any git omem (or an agent it starts) runs. With core.fsmonitor on in the
+ * user's config, git starts a detached daemon per repository it touches and the daemon stays after
+ * the folder is gone — every temporary library, worktree and test repo leaked one (thousands, each
+ * holding memory). Set through GIT_CONFIG_COUNT so it reaches every child process; idempotent.
+ */
+export function disableGitFsmonitor(env: NodeJS.ProcessEnv = process.env) {
+  const n = Number(env.GIT_CONFIG_COUNT ?? 0) || 0;
+  for (let i = 0; i < n; i++) if (env[`GIT_CONFIG_KEY_${i}`] === "core.fsmonitor") return;
+  env[`GIT_CONFIG_KEY_${n}`] = "core.fsmonitor";
+  env[`GIT_CONFIG_VALUE_${n}`] = "false";
+  env.GIT_CONFIG_COUNT = String(n + 1);
+}
+
 export function git(cwd: string, args: string[], input?: string): GitResult {
   const r = spawnSync("git", args, {
     cwd,

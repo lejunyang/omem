@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, omemHome, type Config } from "./config.ts";
 import { openDb, type Db } from "./db.ts";
-import { ensureLibraryRepo } from "./git.ts";
+import { disableGitFsmonitor, ensureLibraryRepo } from "./git.ts";
 
 export type AppEvent =
   | { type: "run"; runId: string; status: string }
@@ -43,6 +43,7 @@ export class App {
   }
 
   static open(home = omemHome()) {
+    disableGitFsmonitor();
     mkdirSync(home, { recursive: true });
     const config = loadConfig(home);
     const db = openDb(join(home, "omem.db"));
