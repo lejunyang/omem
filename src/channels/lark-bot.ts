@@ -1,4 +1,4 @@
-import { persistChatMessages, type LarkMessage } from "./lark-messages.ts";
+import { isApp, persistChatMessages, type LarkMessage } from "./lark-messages.ts";
 import { chatSpace } from "./lark-personal.ts";
 import { itemNotificationCard } from "./item-notification.ts";
 import * as lark from "@larksuiteoapi/node-sdk";
@@ -10,7 +10,7 @@ import { registerThreadSender } from "../agents/inbox.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { addNotificationSink } from "../core/notify.ts";
-import { identitiesOf, OWNER, resolveIdentity, userName } from "../core/users.ts";
+import { identitiesOf, OWNER, resolveIdentity } from "../core/users.ts";
 import { importFile, keepOriginal } from "../sources/import.ts";
 import { inQuietHours } from "../core/notify.ts";
 import { findSourceByUri, sourceText } from "../sources/store.ts";
@@ -25,6 +25,7 @@ import { larkAppSecret } from "./lark-setup.ts";
 import { routeWatchedMessages } from "./lark-watch.ts";
 import { askAsGuest, guestsAllowed, ownerInChat, waitGuest } from "./lark-guest.ts";
 import { claimedByRule, markAddressed } from "../rules/store.ts";
+import { larkSenderNames } from "./lark-sender.ts";
 
 /**
  * Feishu/Lark bot channel.
@@ -166,23 +167,7 @@ export async function startLarkBot(app: App) {
   registerCodeProgress(app);
   watchAgentBubbles(app);
 
-  // Names for people in groups (needs contact read permission; falls back to the id).
-  const names = new Map<string, string>();
-  const nameOf = async (openId: string) => {
-    if (!openId) return "?";
-    const known = resolveIdentity(app, "lark", openId);
-    if (known) return userName(app, known);
-    if (names.has(openId)) return names.get(openId)!;
-    try {
-      const r = await client.contact.user.get({ path: { user_id: openId }, params: { user_id_type: "open_id" } });
-      const n = r.data?.user?.name;
-      if (n) names.set(openId, n);
-      return n ?? openId;
-    } catch {
-      names.set(openId, openId.slice(-6));
-      return openId.slice(-6);
-    }
-  };
+  const nameOf = larkSenderNames(app, client);
 
   const reply = (chatId: string, markdown: string, replyTo?: string, inThread = false) => sendLark(replyTo ? { replyTo, inThread } : { chatId }, { markdown });
 
@@ -307,7 +292,7 @@ export async function startLarkBot(app: App) {
     const before = findSourceByUri(app, spaceId, uri);
     const message: LarkMessage = { message_id: m.messageId, chat_id: m.chatId, msg_type: m.type ?? "text",
       content: m.text, raw_content: m.raw, create_time: m.createTime, thread_id: m.topicId, parent_id: m.parentId, root_id: m.rootId,
-      sender: { id: m.senderId, name: m.senderName }, mentions: m.mentions.map(id => ({ id })) };
+      sender: { id: m.senderId, name: m.senderName, sender_type: m.fromApp ? "app" : "user" }, mentions: m.mentions.map(id => ({ id })) };
     const r = persistChatMessages(app, { chatId: m.chatId, spaceId, name: before?.title ?? groupName(m.chatId), messages: [message], owner: cfg.ownerOpenId });
     if (!r.id) return;
     lastCapture.set(m.messageId, r.id);
@@ -538,7 +523,7 @@ export async function startLarkBot(app: App) {
       const spaceId = m.chatType === "group" ? groupSpace(m.chatId) : cfg.defaultSpace;
       const r = await importFile(app, spaceId, file, `lark:${m.chatId}/${name}`);
       if (m.chatType === "group") {
-        persistChatMessages(app, { chatId: m.chatId, spaceId, name: groupName(m.chatId), messages: [{ message_id: m.messageId, chat_id: m.chatId, msg_type: m.type ?? "file", content: m.text, raw_content: m.raw, create_time: m.createTime, thread_id: m.topicId, parent_id: m.parentId, root_id: m.rootId, sender: { id: m.senderId, name: m.senderName } }], resources: new Map([[m.messageId, { [key]: { type: msg.message_type, sourceId: r?.id, file: keepOriginal(app, file), name } }]]) });
+        persistChatMessages(app, { chatId: m.chatId, spaceId, name: groupName(m.chatId), messages: [{ message_id: m.messageId, chat_id: m.chatId, msg_type: m.type ?? "file", content: m.text, raw_content: m.raw, create_time: m.createTime, thread_id: m.topicId, parent_id: m.parentId, root_id: m.rootId, sender: { id: m.senderId, name: m.senderName, sender_type: m.fromApp ? "app" : "user" } }], resources: new Map([[m.messageId, { [key]: { type: msg.message_type, sourceId: r?.id, file: keepOriginal(app, file), name } }]]) });
       }
       if (r && r.status !== "unchanged") scheduleIngest(app, spaceId, [r.id], `飞书${m.chatType === "group" ? "群" : "私聊"}附件`);
       if (m.chatType === "p2p") await reply(m.chatId, r ? `已保存「${name}」，助理会读取并整理。` : `「${name}」的格式暂不支持。`, m.messageId);
@@ -554,7 +539,7 @@ export async function startLarkBot(app: App) {
   const learnPeopleFromEvent = async (data: any) => {
     const { learnBotPerson, rememberPerson } = await import("./lark-people.ts");
     const people: { id?: { open_id?: string; user_id?: string }; name?: string }[] = [
-      { id: data.sender?.sender_id },
+      ...(isApp({ sender: data.sender }) ? [] : [{ id: data.sender?.sender_id }]),
       ...((data.message?.mentions ?? []) as { id?: { open_id?: string; user_id?: string }; name?: string }[]),
     ];
     for (const p of people) {
@@ -569,22 +554,23 @@ export async function startLarkBot(app: App) {
   const processEvent = async (data: any) => {
     const msg = data.message;
     const senderId = data.sender?.sender_id?.open_id ?? "";
+    const fromApp = isApp({ sender: data.sender });
     const mentions = ((msg.mentions ?? []) as { id?: { open_id?: string } }[]).map((x) => x.id?.open_id ?? "").filter(Boolean);
-    if (msg.chat_type !== "p2p") void learnName(msg.chat_id);
+    if (msg.chat_type !== "p2p") await learnName(msg.chat_id);
     void learnPeopleFromEvent(data).catch(() => {});
     const m: Inbound = {
       chatId: msg.chat_id,
       chatType: msg.chat_type === "p2p" ? "p2p" : "group",
       messageId: msg.message_id,
       senderId,
-      senderName: await nameOf(senderId),
+      senderName: await nameOf(senderId, { id: msg.message_id, chatId: msg.chat_id, fromApp }),
       text: await describeLarkContent(app, { messageId: msg.message_id, type: msg.message_type, content: msg.content }, lookups),
       mentions,
       mentionsBot: !!botOpenId && mentions.includes(botOpenId),
       createTime: msg.create_time,
       topicId: msg.thread_id || undefined,
       type: msg.message_type,
-      fromApp: data.sender?.sender_type === "app",
+      fromApp,
       raw: msg.content, parentId: msg.parent_id, rootId: msg.root_id,
       mentionNames: Object.fromEntries(
         ((msg.mentions ?? []) as { key?: string; name?: string; id?: { open_id?: string } }[])

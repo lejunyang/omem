@@ -88,7 +88,8 @@ export function flattenReplies(messages: LarkMessage[]): LarkMessage[] {
   return [...out.values()];
 }
 
-export const isApp = (m: LarkMessage) => m.sender?.sender_type === "app" || m.sender?.id_type === "app_id" || /^cli_/.test(m.sender?.id ?? "");
+// Receive events say "bot"; message-read APIs say "app".
+export const isApp = (m: Pick<LarkMessage, "sender">) => m.sender?.sender_type === "app" || m.sender?.sender_type === "bot" || m.sender?.id_type === "app_id" || /^cli_/.test(m.sender?.id ?? "");
 export const mentionIds = (m: LarkMessage) => (m.mentions ?? []).map((x) => (typeof x.id === "string" ? x.id : (x.id?.open_id ?? ""))).filter(Boolean);
 export const parentOf = (m: LarkMessage) => {
   const p = m.reply_to || m.parent_id || m.upper_message_id || "";
@@ -235,6 +236,7 @@ export function storeMessages(
          on conflict(message_id) do update set thread_id = coalesce(excluded.thread_id, lark_messages.thread_id), parent_id = coalesce(excluded.parent_id, lark_messages.parent_id),
            content = excluded.content,
            sender_name = case when excluded.sender_name != '' then excluded.sender_name else lark_messages.sender_name end,
+           sender_kind = case when excluded.sender_kind != 'user' then excluded.sender_kind else lark_messages.sender_kind end,
            source_id = coalesce(excluded.source_id, lark_messages.source_id), line = coalesce(excluded.line, lark_messages.line),
            archive = coalesce(excluded.archive, lark_messages.archive), resources = json_patch(lark_messages.resources, excluded.resources),
            reactions = excluded.reactions, mentions = case when excluded.mentions != '[]' then excluded.mentions else lark_messages.mentions end, raw_content = coalesce(excluded.raw_content, lark_messages.raw_content)`,
