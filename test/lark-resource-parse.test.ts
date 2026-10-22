@@ -22,7 +22,7 @@ it("advances history after saving a spreadsheet, persists parse errors and retri
   const app = fresh(); app.config.lark.capture.attachments = true;
   const converter = join(app.home, "converter.cjs");
   writeFileSync(converter, 'console.error("parser unavailable"); process.exit(2)');
-  app.config.documents = { engines: [], converter: `${process.execPath} ${converter} {file}` };
+  app.config.documents = { engines: [], converter: `"${process.execPath}" "${converter}" {file}` };
   setLarkCliForTests(async (_args, cwd) => {
     writeFileSync(join(cwd!, "sheet.xlsx"), "fixture");
     return { data: { messages: [{ ...message("om_sheet"), resources: [{ key: "file_sheet", type: "file", local_path: "sheet.xlsx" }] }], has_more: false } };
@@ -79,7 +79,7 @@ it("treats covers as optional, still requires original videos, and ignores exter
 it("finds the packaged parser from source and built module locations", () => {
   const root = new URL("../", import.meta.url);
   expect(doclingScript(new URL("src/sources/import.ts", root).href)).toBe(doclingScript(new URL("dist/src/sources/import.js", root).href));
-  expect(doclingScript()).toMatch(/document-parser\/convert.py$/);
+  expect(doclingScript()?.replace(/\\/g, "/")).toMatch(/document-parser\/convert.py$/);
 });
 
 it.each(["csv", "doc", "docx", "xls", "xlsx", "ppt", "pptx"])("routes %s through Docling without requiring PDF models or blocking the event loop", async ext => {
@@ -98,7 +98,7 @@ it("cancels conversion without deleting the saved attachment or blocking the nex
   const script = join(app.home, "converter.cjs"), file = join(app.home, "data.csv");
   writeFileSync(script, 'setTimeout(()=>console.log("parsed"),30000)');
   writeFileSync(file, "name,count\nA,2");
-  app.config.documents = { engines: [], converter: `${process.execPath} ${script} {file}` };
+  app.config.documents = { engines: [], converter: `"${process.execPath}" "${script}" {file}` };
   const m = { ...message("om_cancel"), content: '<file key="file_sheet" name="data.csv"/>', resources: [{ key: "file_sheet", local_path: file }] };
   const resources = await keepResources(app, "personal", "oc_history", [m], app.home, true, true);
   persistChatMessages(app, { chatId: "oc_history", spaceId: "personal", name: "项目 A", messages: [m], resources });

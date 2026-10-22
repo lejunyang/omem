@@ -57,7 +57,8 @@ export async function convertDocument(app: App, file: string, signal?: AbortSign
   const errors: string[] = [];
   const configured = app.config.documents.converter;
   if (configured) {
-    const parts = configured.split(" ").map((p) => p.replace("{file}", file));
+    // Quotes keep a path with spaces (C:\Program Files\…) in one piece.
+    const parts = [...configured.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map((m) => (m[1] ?? m[2] ?? m[3]).replace("{file}", file));
     attempts.push([parts[0], parts.slice(1)]);
   }
   for (const engine of app.config.documents.engines) {
