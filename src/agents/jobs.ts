@@ -7,7 +7,7 @@ import { json, newId, now, truncate } from "../core/util.ts";
 import { deliverDueReminders } from "../items/reminders.ts";
 import { listItems, upsertItem } from "../items/store.ts";
 import { syncDirectorySpace } from "../sources/import.ts";
-import { appendToSource, getSource } from "../sources/store.ts";
+import { appendToSource, getSource, sourceText } from "../sources/store.ts";
 import { listPages, pageExists, syncWiki } from "../wiki/store.ts";
 import { runCodeTask } from "./code.ts";
 import { deliverToThread, receive } from "./inbox.ts";
@@ -22,6 +22,7 @@ import { addMessage, getThread, threadMessages, updateThread } from "./threads.t
 import { createRun, getRun, listRuns, registerHandler, type RunContext } from "./runs.ts";
 import { markReviewed, similarMemories, spacesWithUnreviewed, unreviewedMemories } from "../memory/quality.ts";
 import { relationCandidates } from "../core/space-candidates.ts";
+import { nearMemories, sameTopicPairs } from "../memory/passive.ts";
 import "./profile-jobs.ts";
 
 /**
@@ -241,7 +242,8 @@ registerHandler("ingest", async (ctx) => {
       return `- 原件 ${id}（已不存在）`;
     }
   });
-  const task = `新进入的材料：\n${lines.join("\n")}${note ? `\n\n补充说明：${note}` : ""}`;
+  const known = await knownNearMaterial(ctx.app, ctx.run.spaceId!, sourceIds);
+  const task = `新进入的材料：\n${lines.join("\n")}${note ? `\n\n补充说明：${note}` : ""}${known}`;
   // Comparison: the same material through other backends/models; their writes are only recorded.
   for (const c of ctx.app.config.memory.compare)
     createRun(ctx.app, {
@@ -254,6 +256,34 @@ registerHandler("ingest", async (ctx) => {
   const r = await agent(ctx, "ingest", ctx.run.spaceId!, task);
   return { quiet: isQuiet(r.text), summary: r.text.trim() };
 });
+
+/**
+ * Existing memories close to the new material, so ingest sees what is already known before it
+ * writes (and corrects instead of repeating). Needs memory vectors; empty without.
+ */
+async function knownNearMaterial(app: App, spaceId: string, sourceIds: string[]): Promise<string> {
+  const windows: string[] = [];
+  for (const id of sourceIds) {
+    try {
+      const from = (getSource(app, id).meta as { appendedFrom?: number }).appendedFrom ?? 1;
+      const text = sourceText(app, id).split("\n").slice(from - 1).join("\n");
+      for (let i = 0; i < text.length && windows.length < 8; i += 1500) windows.push(text.slice(i, i + 1500));
+    } catch {}
+  }
+  const best = new Map<string, { line: string; score: number }>();
+  const spaces = [spaceId, ...relatedIds(app, spaceId)];
+  try {
+    for (const w of windows)
+      for (const h of await nearMemories(app, { text: w, spaces, threshold: 0.6, limit: 6, kind: "passage" })) {
+        const m = h.memory;
+        if ((best.get(m.id)?.score ?? 0) < h.score) best.set(m.id, { score: h.score, line: `- ${m.id} [${m.spaceId}/${m.kind}] ${m.subject ? m.subject + "：" : ""}${truncate(m.content, 160)}（${m.validFrom?.slice(0, 10) ?? "?"} 起）` });
+      }
+  } catch (e) {
+    console.warn("[omem] 查找相近记忆失败：", (e as Error).message);
+  }
+  const list = [...best.values()].sort((a, b) => b.score - a.score).slice(0, 12);
+  return list.length ? `\n\n和这些材料相近的已有记忆（写之前先对照：同一件事有变化用 supersede，已经记过就不写，沿用已有的主题和叫法）：\n${list.map((x) => x.line).join("\n")}` : "";
+}
 
 registerHandler("ingest-shadow", async (ctx) => {
   const { task, profile, model, effort } = ctx.run.input as { task: string; profile: string; model?: string; effort?: string };
@@ -526,6 +556,12 @@ registerHandler("dream", async (ctx) => {
     said.length ? `期间本人说过的话（检查有没有漏记的计划、承诺、等待和长期事实；来源写 msg:<id>）：\n${said.map((m) => `- msg:${m.id} ${m.created_at.slice(0, 16)}：${truncate(m.text.replace(/\s+/g, " "), 300)}`).join("\n")}` : "",
     runs.length ? `期间的后台运行（用于提炼经验）：\n${runs.map((r) => `- [${r.kind}/${r.status}] ${r.title}${r.error ? "：" + truncate(r.error, 120) : ""}`).join("\n")}` : "",
     relations.length ? `已关联的空间：\n${relations.join("\n")}` : "",
+    (() => {
+      const pairs = sameTopicPairs(app, mems.filter((m) => m.status === "active").map((m) => m.id));
+      return pairs.length
+        ? `可能说的是同一件事的记忆（向量相近，宿主只负责找，是否重复、冲突由你读后判断；不同的事就不动）：\n${pairs.map((p) => `- ${p.a.id}「${truncate(p.a.content, 80)}」 ↔ ${p.b.id}「${truncate(p.b.content, 80)}」`).join("\n")}`
+        : "";
+    })(),
     candidates.length ? `可能相关、还没关联的空间（宿主从引用、链接、依赖声明、标签里看到的迹象）：\n${candidates.map((c) => `- ${c.a} ↔ ${c.b}：${c.signals.join("；")}`).join("\n")}` : "",
     "需要更多上下文时用 recall（可加 include_history）和 list_items 查同主题的其他记录。",
   ]

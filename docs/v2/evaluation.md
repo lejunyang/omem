@@ -82,6 +82,15 @@ node scripts/eval-retrieval.ts … --vector-only | --fts-weight 0.3
 node scripts/eval-recall-gate.ts corpus.jsonl queries.jsonl neg_queries.jsonl --chars 120
 ```
 
+### 写记忆前的近邻门槛（2026-10-22）
+
+`remember` 写入前按记忆与记忆的向量余弦（passage 对 passage）找同一空间里相近的记忆，≥ 0.75 就先列出来让 Agent 决定（更正 / 不写 / 另一件事）。用 bge-small-zh 在 14 对手写的记忆上看分布：
+
+- 同一件事有变化（改期、换负责人、改标准、新增环境、同一类故障的做法）：0.73、0.78、0.80、0.88、0.89、0.93。
+- 不同的事：多在 0.43–0.67；同一个项目的两件事 0.62，同一个人的两件事 0.54；措辞几乎相同的两件事偏高（“小王负责支付 / 小李负责前端”0.77，“项目 A 周二发布 / 项目 B 周二开周会”0.89）。
+
+取 0.75：同一件事 6 对拦下 5 对，不同的事 8 对误拦 2 对。误拦的代价是 Agent 多调用一次、填上 `distinct_from`。两字切分的相似度分不开这些对（同一件事 0.14–0.35，不同的事 0.05–0.44），所以没有向量时只按主题名相同（忽略空格和标点）或两字相似度 ≥ 0.3 判断。
+
 ### 对照：VCPToolBox 的日记检索（RiverMemo）
 
 同一份 5,089 篇语料、200 个正例，所有方案用同一个向量模型（bge-small-zh-v1.5，经一个兼容 OpenAI 的本地接口提供给 VCP）。VCP 取 2026-10-21 的 main（2717df5），每篇写成日记本 `T2` 里的一个文件，末尾 `Tag:` 行用 jieba TF-IDF 取 5 个关键词代替 AI 写的标签；用它自己的 RAGDiaryPlugin + KnowledgeBaseManager 跑 `[[T2日记本:4]]`，按注入结果的顺序取前 10。

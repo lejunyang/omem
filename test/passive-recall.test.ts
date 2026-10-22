@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { one } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
-import { passiveBlock, passiveRecall } from "../src/memory/passive.ts";
+import { passiveBlock, passiveRecall, sameTopicPairs } from "../src/memory/passive.ts";
+import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { recallStats, recordRecalls } from "../src/memory/recall-stats.ts";
 import { remember, updateMemoryText } from "../src/memory/store.ts";
 import { embedPending, embedPendingMemories, setEmbedderForTests } from "../src/search/embeddings.ts";
@@ -67,5 +68,47 @@ describe("passive recall", () => {
     const s = recallStats(app);
     expect(s.totalRecalls).toBe(2);
     expect(s.passiveRecalls).toBe(1);
+  });
+});
+
+describe("looking at existing memories before writing", () => {
+  const agentCtx = (app: ReturnType<typeof testApp>) => toolContextForToken(app, issueToolToken({ runId: "r_w", spaceId: "personal", spaces: null, tools: null, actor: "agent" }))!;
+
+  it("stops a write that is close to an existing memory until the agent says it is a different thing", async () => {
+    const { app, ids } = await setup();
+    const ctx = agentCtx(app);
+    const write = (extra: Record<string, unknown> = {}) => callTool(ctx, "remember", { kind: "fact", content: "项目 A 改到每周四下午发布，发布前要先跑回归测试。", ...extra });
+    const first = await write();
+    expect(first.isError).toBe(true);
+    expect(first.text).toContain(ids.deploy);
+    expect(first.text).toMatch(/supersede/);
+    expect(first.text).not.toContain(ids.other);
+    // Other spaces and other profiles' memories are not in the way.
+    expect(first.text).not.toContain(ids.elsewhere);
+    expect(first.text).not.toContain(ids.spec);
+    const ok = await write({ distinct_from: [ids.deploy] });
+    expect(ok.isError).toBeFalsy();
+    // Unrelated memories go straight in; the owner is never stopped.
+    expect((await callTool(ctx, "remember", { kind: "fact", content: "小李的工位在三楼东侧。" })).isError).toBeFalsy();
+    const owner = toolContextForToken(app, issueToolToken({ runId: null, spaceId: "personal", spaces: null, tools: null, actor: "user" }))!;
+    expect((await callTool(owner, "remember", { kind: "fact", content: "项目 A 改到每周四下午发布，发布前跑回归测试和冒烟测试。" })).isError).toBeFalsy();
+  });
+
+  it("without vectors, the same subject still counts as close", async () => {
+    const app = testApp();
+    const old = remember(app, { spaceId: "personal", kind: "person", subject: "小王", content: "小王负责项目 A 的支付模块。" });
+    const r = await callTool(agentCtx(app), "remember", { kind: "person", subject: "小 王", content: "小王下个月调去项目 B。" });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain(old.id);
+    expect(r.text).toMatch(/沿用已有的叫法（主题：小王/);
+  });
+
+  it("lists same-topic pairs among changed memories for the tidy-up", async () => {
+    const { app, ids } = await setup();
+    const pairs = sameTopicPairs(app, [ids.deploy]);
+    expect(pairs.map((p) => [p.a.id, p.b.id])).not.toContainEqual([ids.deploy, ids.elsewhere]);
+    const dup = remember(app, { spaceId: "personal", kind: "fact", content: "项目 A 每周二下午发布，发布前先跑回归测试。" });
+    while (await embedPendingMemories(app)) {}
+    expect(sameTopicPairs(app, [dup.id]).some((p) => p.b.id === ids.deploy || p.a.id === ids.deploy)).toBe(true);
   });
 });

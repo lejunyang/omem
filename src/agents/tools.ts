@@ -921,8 +921,9 @@ def({
     /** A specific spec to teach, used by the main assistant which has no spec of its own. */
     agent: z.string().optional().describe("主助手教某个指定档案或内置角色（如 reviewer）时填它的名字（必须存在）；正在档案或角色内运行时不要填，scope=agent 即指自己"),
     space: z.string().optional(),
+    distinct_from: z.array(z.string()).optional().describe("上一次调用列出的相近记忆里，你核对后确认说的是另一件事的那些 id（全部列出才会写入）"),
   }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     const spaceId = writeSpace(ctx, a.space);
     const problems = memoryProblems(ctx, { spaceId, kind: a.kind, content: a.content, subject: a.subject, sourceRefs: a.source_refs });
     if (problems.length) {
@@ -938,6 +939,24 @@ def({
     if (a.scope === "agent" || a.agent || (a.scope === undefined && procedural && ctx.spec)) {
       const wanted = a.agent ?? ownProfile(ctx);
       if (wanted) agentForMemory = checkProfile(ctx, wanted);
+    }
+    // Near neighbours first: the writer decides whether this restates, corrects or differs from
+    // what is already there. Only agents are stopped; the owner writes as they like.
+    if (ctx.actor === "agent") {
+      const { memoriesNearWrite } = await import("../memory/passive.ts");
+      const near = (await memoriesNearWrite(ctx.app, { spaceId, content: a.content, subject: a.subject, agent: agentForMemory })).filter((x) => !a.distinct_from?.includes(x.id));
+      if (near.length) {
+        const subjects = [...new Set(near.map((x) => x.subject).filter(Boolean))];
+        const tags = [...new Set(near.flatMap((x) => x.tags ?? []))];
+        throw new HttpError(
+          409,
+          `还没写入：同一空间里有相近的记忆，先逐条核对——\n${near.map((x) => `- ${x.id} [${x.kind}] ${x.subject ? x.subject + "：" : ""}${x.content}（${x.validFrom?.slice(0, 10) ?? "?"} 起）`).join("\n")}\n\n` +
+            "- 说的是同一件事、但有变化（改期、换人、改数字）：supersede(memory_id=…) 更正那一条，不要另写。\n" +
+            "- 已有的已经说清楚了：不用写。\n" +
+            `- 确实是另一件事：再调用 remember，distinct_from 填 ${JSON.stringify(near.map((x) => x.id))}。` +
+            (subjects.length || tags.length ? `\n写的时候沿用已有的叫法${subjects.length ? `（主题：${subjects.join("、")}` : "（"}${tags.length ? `${subjects.length ? "；" : ""}标签：${tags.join("、")}` : ""}），同一个人、项目不要换名字。` : ""),
+        );
+      }
     }
     const m = remember(ctx.app, {
       spaceId,

@@ -124,12 +124,12 @@ export async function embedPendingMemories(app: App, batch = 32): Promise<number
   return rows.length;
 }
 
-/** One query vector, or null when vectors are off or the model is unavailable. */
-export async function embedQuery(app: App, text: string): Promise<Float32Array | null> {
+/** One vector (a question by default; "passage" to compare memory with memory), or null when vectors are off or the model is unavailable. */
+export async function embedQuery(app: App, text: string, kind: "query" | "passage" = "query"): Promise<Float32Array | null> {
   if (app.config.embeddings.provider === "none") return null;
   const e = await getEmbedder(app);
   if (!e) return null;
-  const [q] = await e.embed([text.slice(0, 2000)], "query");
+  const [q] = await e.embed([text.slice(0, 2000)], kind);
   return q;
 }
 
