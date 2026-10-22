@@ -617,6 +617,8 @@ const migrations: string[] = [
   create index asks_conversation on asks(conversation_id, status);
   create index asks_run on asks(run_id);
   create index asks_pending on asks(status, created_at);`,
+  // Temporary rules an agent sets to be woken by an event (agents/wakes.ts): expiry, who set it.
+  `alter table rules add column temporary text;`,
 ];
 
 export type Db = DatabaseSync;

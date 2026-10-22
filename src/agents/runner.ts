@@ -232,6 +232,8 @@ export function prepareRun(
   if (spec || roleName === "assistant") for (const t of ["ask_owner", "suggest_next"]) tools.add(t);
   // Working files: where a long task keeps its current results and a scheduled rule its report.
   if (spec || roleName === "assistant") tools.add("write_file");
+  // Wake-ups for its own follow-up work (after a while, or on a message in a chat).
+  if (spec || roleName === "assistant") for (const t of ["wake_later", "wake_on_message", "cancel_wake"]) tools.add(t);
   if (!guest) tools.add("wait_answer");
   for (const t of input.denyTools ?? []) tools.delete(t);
   // A thread that may post into specific Feishu chats (watched groups) gets the bot's voice and notify.

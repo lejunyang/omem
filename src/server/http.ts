@@ -662,7 +662,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/rules", async () => {
     const { listRules } = await import("../rules/store.ts");
     const { describe } = await import("../rules/conditions.ts");
-    return listRules(app).map((r) => ({ ...r, conditionText: describe(r.conditions) }));
+    // Temporary wake-up rules are listed with the timed wakes (/api/wakes).
+    return listRules(app).filter((r) => !r.temporary).map((r) => ({ ...r, conditionText: describe(r.conditions) }));
+  });
+  // Wake-ups agents set for themselves: timed (queued runs) and on a message (temporary rules).
+  server.get("/api/wakes", async () => (await import("../agents/wakes.ts")).pendingWakes(app));
+  server.delete("/api/wakes/:id", async (req) => {
+    (await import("../agents/wakes.ts")).cancelWake(app, (req.params as { id: string }).id);
+    return { ok: true };
   });
   server.get("/api/rules/:id", async (req) => {
     const id = (req.params as { id: string }).id;

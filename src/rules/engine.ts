@@ -6,7 +6,7 @@ import { aiJudge, eventSummary } from "./compile.ts";
 import { describe, evaluate, eventReader, type ChatBot } from "./conditions.ts";
 import { createRun } from "../agents/runs.ts";
 import { discussion, discussionText, engagement, followedTopic, unfollowTopic, type Followed } from "./context.ts";
-import { addressed, claimEvent, listRules, recordFiring } from "./store.ts";
+import { addressed, claimEvent, deleteRule, listRules, recordFiring } from "./store.ts";
 import { ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./types.ts";
 
 /**
@@ -48,6 +48,7 @@ function keyFor(rule: Rule, e: RuleEvent) {
 }
 
 async function consider(app: App, rule: Rule, e: RuleEvent) {
+  if (rule.temporary && rule.temporary.expiresAt < e.at) return;
   // Someone asked the bot directly: it answers, the rules stay out of it.
   if (e.kind === "message" && addressed(app, e.key)) return;
   // A topic this rule's silent agent spoke in: new messages there go back to it.
@@ -77,6 +78,8 @@ async function consider(app: App, rule: Rule, e: RuleEvent) {
   }
   const results = await runActions(app, rule, e, d.reason);
   recordFiring(app, { ruleId: rule.id, eventKey: key, summary: eventSummary(e), judgedBy: d.by, reason: d.reason, results });
+  // A one-shot wake-up is done once it has woken someone.
+  if (rule.temporary?.once) deleteRule(app, rule.id);
 }
 
 /** A waiting rule's time is up (run kind rule-fire). */

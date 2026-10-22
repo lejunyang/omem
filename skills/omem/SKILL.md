@@ -28,6 +28,7 @@ omem 是本人的个人记忆与助理系统。有两种接入方式。
 - `save_skill`：把可复用做法存成技能；`agent="档案名"` 保存后直接挂到该档案或内置角色（主助手教档案时用；内置角色会先复制成本人的自定义版本），档案内运行不填默认挂当前档案，`attach: false` 只建技能不挂；名字不存在会报错。`list_agents` 同时列出可以教的内置角色。
 - `ask_owner(question, options?)` / `wait_answer(ask_id)`：问本人一个非问不可的问题，本人在飞书卡片、网页首页点选或回复；每次最多等 50 秒，没答可以接着 `wait_answer`。`suggest_next` 只在 omem 自己的对话里有效（按钮挂在回答下面）。
 - `write_file(path, content, mode?, expires?, item?, rule?)`：写工作文件（原件 `work/<path>`）——长任务的当前成果、定时任务逐天累积的周报素材。`mode: "append"` 追加；`expires` 设过期（`30d`、日期，`never` 永久）；`item` / `rule` 挂到事项或规则上。解决过的问题写成案例页：`write_page(kind: "case", page: "cases/<主题>")`。
+- `wake_later(after, note, agent?)` / `wake_on_message(chat_id, note, contains?, from?, mentions_owner?)` / `cancel_wake(id?)`：过一段时间、或某个飞书群出现符合条件的消息时唤醒（omem 里的会话由它的 Agent 接着做；在外部 Agent 里调用要用 `agent` 指定唤醒哪个档案）。最远 7 天，每处最多 5 个待触发。
 - `propose_profile_change(target, kind, title, reason, …)`：给档案或内置角色提改进建议（`prompt` 新正文、`skill` 新技能全文、`settings` 加减工具和技能），本人在 Agent 页采纳后才生效；偏好和经验直接 `remember(agent=…)`。
 - `list_items` / `read_item` / `upsert_item`：待办、等待回复、提醒、关注、待决定。时间用带时区的 ISO 格式。`list_items(space: "*")` 在本次可发现空间内查已有事项，查询在分页前限定空间；`read_item(item_id)` 返回完整事项和时间线。后台 ingest 的事项发现可覆盖本人可访问空间，普通原件检索与写权限仍保持原范围。
 - `upsert_item.source_refs` 默认增量合并；纠正用 `source_refs_mode: "replace" | "remove"`，必须指定 `id`、`note`、非空 `source_refs` 和重读得到的完整 `expected_source_refs`。`[]` 不清空；清空必须逐条 remove。replace 校验来源存在、行号与可读空间，remove 只撤回该事项原有来源，允许撤回已删除的来源。所有写入还检查用户身份和空间写权限；纠正前后都保留在事件中。

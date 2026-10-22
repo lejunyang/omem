@@ -60,6 +60,12 @@ async function runAction(app: App, rule: Rule, a: RuleAction, e: RuleEvent, reas
       setWatchRule(app, id, { spec: a.spec, on: a.on, pattern: a.pattern, reply: a.reply, note: `规则「${rule.name}」` });
       return { action: "watch", ok: true, detail: `之后的${a.on === "all" ? "消息" : a.on === "mention" ? " @ 消息" : "关键词消息"}交给 ${a.spec}（回复：${a.reply}）` };
     }
+    case "wake": {
+      const { fireWake } = await import("../agents/wakes.ts");
+      const t = rule.temporary;
+      const r = fireWake(app, { note: a.note, target: a.target, setBy: t?.setBy ?? { runId: null, agent: "规则" }, setAt: t?.setAt ?? rule.createdAt }, eventSummary(e));
+      return { action: "wake", ok: !r.skipped, detail: r.skipped ?? `已唤醒 ${a.target.spec ?? "会话里的助理"}`, runId: r.runId };
+    }
     case "agent":
       return a.reply === "silent" ? silentAgent(app, rule, a, e, reason, extra.discussion ?? "") : agentAction(app, rule, a, e, reason);
   }

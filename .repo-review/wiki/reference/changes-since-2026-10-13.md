@@ -314,6 +314,18 @@ updated: 2026-10-18
 
 - `src/channels/lark-sender.ts`：名字没查到（本人不在的群里机器人发的消息 lark-cli 读不到、通讯录权限缺失）也缓存 2 分钟，之后再试；原先每条消息都会在处理前再起一次 lark-cli 或调一次通讯录接口。
 
+## 2026-10-23：git 不再为临时仓库留下 fsmonitor 进程
+
+- 用户配置里开了 `core.fsmonitor` 时，git 对每个碰到的仓库起一个脱离的 `fsmonitor--daemon`，仓库目录删掉后进程还在。测试里每个应用都有一个临时知识库仓库，交办编码也开临时 worktree，累积了几千个常驻进程，占满提交内存后测试进程分配失败。
+- `src/core/git.ts` 的 `disableGitFsmonitor` 用 `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` 把 `core.fsmonitor=false` 放进进程环境（`App.open` 调用，测试在 `test/setup.ts`），omem 和它启动的 Agent 跑的 git 都继承；已在环境里设过就不重复。
+
+## 2026-10-23：定时 / 消息唤醒
+
+- `src/agents/wakes.ts`：`wake_later` → `scheduleWake` 建 `kind=wake` 的排队运行（`not_before` 为唤醒时间，`wakeTime` 限 1 分钟到 7 天）；到点 `fireWake`。`wake_on_message` → `saveRule` 带 `temporary`（`expiresAt`、`once`、`setBy`、`watch`），条件是群 id 加参数给的条件（默认排除机器人），动作 `wake`；`runAction` 的 `wake` 调 `fireWake`，`once` 时触发后 `deleteRule`；`consider` 跳过过期的，巡检 `expireTemporaryRules` 删除。普通规则不能带 `wake`（`saveRule` 拒绝）。迁移：`rules.temporary`。
+- `fireWake`：目标是会话时加一条 `meta.wake` 的助理侧记录，有排队的 ask 就并进去，否则开 `input.wake` 的 ask 运行；`sessions.ts` 在这一轮只有唤醒记录时用 `# 唤醒` + `WAKE_NOTE` 框起来（不做被动召回），`jobs.ts` 的 ask 处理器把回答 `deliverToThread`，QUIET 不发。目标是档案时开 `kind=agent` 运行（`threadId` 指回原会话，唤醒自己时带上次的 `resumeSessionId`）。`skipIfOwnerSpoke` 时本人之后说过话就跳过。
+- 每个会话或档案最多 5 个待触发（`checkPending`），`cancel_wake` 列出 / 取消；主助手和 Agent 档案都有这三个工具。`GET /api/wakes`、`DELETE /api/wakes/:id`；`GET /api/rules` 不再返回临时规则，规则页列表底部单列“临时唤醒”。
+- `roles/_common.md` 加“等一会再接着做”，`docs/v2/rules.md` 加“临时规则”，`skills/omem/SKILL.md` 列了新工具。
+
 ## 2026-10-23：工作文件、案例页、日常不足信号
 
 - 工作文件（`src/sources/work.ts`）：原件 `kind=work`，uri `work/<路径>`，meta 记 `expiresAt`、`links`（`item` / `rule`）、写入它的运行和写入次数。`write_file` 工具（主助手和 Agent 档案）：`replace` / `append`，`expires` 接受 `30d`、`12h`、`2w`、日期或 `never`；挂事项时新建会在事项时间线记一笔，规则触发的运行里写的默认挂到那条规则。巡检先 `expireWorkFiles`，过期的变墓碑（`deleteSource`），同一路径再写是新文件。不排进 ingest。

@@ -54,6 +54,8 @@ export const actionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("invite-bot") }),
   z.object({ type: z.literal("capture") }),
   z.object({ type: z.literal("notify"), urgent: z.boolean().default(false) }),
+  /** Only in temporary rules an agent sets (agents/wakes.ts): wake a conversation's agent or a profile. */
+  z.object({ type: z.literal("wake"), note: z.string(), target: z.object({ conversationId: z.string().optional(), spec: z.string().optional(), resumeRunId: z.string().optional() }) }),
 ]);
 export type RuleAction = z.infer<typeof actionSchema>;
 
@@ -78,7 +80,9 @@ export const ruleInputSchema = z.object({
   actions: z.array(actionSchema).min(1).max(8),
 });
 export type RuleInput = z.input<typeof ruleInputSchema>;
-export type Rule = z.infer<typeof ruleInputSchema> & { id: string; createdAt: string; updatedAt: string; createdBy: string; hits: number; lastFiredAt: string | null };
+/** A rule an agent set to be woken by an event: gone after it fires once (when `once`) or expires. */
+export type Temporary = { expiresAt: string; once: boolean; setBy: { runId: string | null; agent: string }; setAt: string; watch: string };
+export type Rule = z.infer<typeof ruleInputSchema> & { id: string; createdAt: string; updatedAt: string; createdBy: string; hits: number; lastFiredAt: string | null; temporary: Temporary | null };
 
 /** What a rule sees of one event. Only filled what the source knows; `chat.bots` is read on demand. */
 export type RuleEvent = {

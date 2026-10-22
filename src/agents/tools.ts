@@ -1744,6 +1744,112 @@ def({
   },
 });
 
+/** Where a wake-up set from this run goes back to, and who set it. */
+async function wakeOrigin(ctx: ToolContext, agent?: string): Promise<{ target: import("./wakes.ts").WakeTarget; setBy: { runId: string | null; agent: string } }> {
+  const input = (ctx.runId ? getRun(ctx.app, ctx.runId).input : {}) as { conversationId?: string; threadId?: string; spec?: string };
+  const conversationId = input.conversationId ?? input.threadId;
+  const setBy = { runId: ctx.runId, agent: input.spec ?? "助理" };
+  if (agent) {
+    const spec = readAgentSpec(ctx.app, agent);
+    if (spec.status !== "active") throw new HttpError(400, `档案 ${agent} 是草稿`);
+    // Waking itself outside a conversation continues its own session.
+    return { target: { spec: spec.name, ...(conversationId ? { conversationId } : {}), ...(spec.name === input.spec && !conversationId && ctx.runId ? { resumeRunId: ctx.runId } : {}) }, setBy };
+  }
+  if (conversationId) return { target: { conversationId }, setBy };
+  if (input.spec && ctx.runId) return { target: { spec: input.spec, resumeRunId: ctx.runId }, setBy };
+  throw new HttpError(400, "这次运行不在会话里：用 agent 指定唤醒哪个 Agent 档案");
+}
+
+def({
+  name: "wake_later",
+  description:
+    "过一段时间再唤醒自己（或另一个 Agent 档案）接着做：等 CI 跑完再看、半小时后看看对方回了没有、明早再查一次。时间到了，你所在的会话会开新一轮（接着你的会话），备注作为这一轮的任务；没东西要说时回 QUIET，本人不会收到消息。agent 填档案名时改为唤醒那个 Agent，备注就是交给它的任务，结果发回本会话。只用于你自己的后续工作；提醒本人的事用事项的 remind_at。每个会话最多 5 个待触发的唤醒，最远 7 天。",
+  write: true,
+  schema: z.object({
+    after: z.string().describe("多久以后：20m、2h、1d，或带时区的 ISO 时间"),
+    note: z.string().describe("醒来后要做什么：查看什么、依据什么判断、接下来怎么办；写清楚，醒来时你可能已经不记得细节"),
+    agent: z.string().optional().describe("唤醒另一个 Agent 档案（默认唤醒自己）"),
+    skip_if_owner_replies: z.boolean().optional().describe("这期间本人在会话里说过话就不唤醒（如“半小时没回就跟进”）"),
+  }),
+  handler: async (ctx, a) => {
+    const { scheduleWake, wakeTime } = await import("./wakes.ts");
+    const at = wakeTime(a.after);
+    const { target, setBy } = await wakeOrigin(ctx, a.agent);
+    const r = scheduleWake(ctx.app, { at, note: a.note, target, setBy, skipIfOwnerSpoke: a.skip_if_owner_replies });
+    return `已设唤醒 ${r.id}：${at}${target.spec && !target.resumeRunId ? `唤醒 ${target.spec}` : "唤醒你"}。不需要了用 cancel_wake 取消。`;
+  },
+});
+
+def({
+  name: "wake_on_message",
+  description:
+    "某个飞书群或会话里出现符合条件的新消息时唤醒自己（或另一个 Agent 档案）：等某人回复、等报警恢复、等对方发来文件。会建一条临时规则（规则页“临时”里可见），默认触发一次就删除，到期（默认 24 小时，最长 7 天）也删除。条件至少给一个：contains 消息包含的文字、from 发送人名字包含、mentions_owner @了本人；默认不算机器人发的消息。只在本人交代的事需要等外部消息时用。",
+  write: true,
+  schema: z.object({
+    chat_id: z.string().describe("群或会话的 chat_id（oc_…）"),
+    note: z.string().describe("醒来后要做什么"),
+    contains: z.string().optional(),
+    from: z.string().optional(),
+    mentions_owner: z.boolean().optional(),
+    include_bots: z.boolean().optional(),
+    expires: z.string().optional().describe("多久后失效：12h、3d，默认 24h"),
+    once: z.boolean().optional().describe("默认 true：触发一次就删除"),
+    agent: z.string().optional().describe("唤醒另一个 Agent 档案（默认唤醒自己）"),
+  }),
+  handler: async (ctx, a) => {
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人的助理和 Agent 能设消息唤醒");
+    if (!a.contains && !a.from && !a.mentions_owner) throw new HttpError(400, "至少给一个条件：contains、from 或 mentions_owner");
+    const { checkPending, wakeTime } = await import("./wakes.ts");
+    const { saveRule } = await import("../rules/store.ts");
+    const { describe: describeCondition } = await import("../rules/conditions.ts");
+    const expiresAt = wakeTime(a.expires ?? "24h");
+    const { target, setBy } = await wakeOrigin(ctx, a.agent);
+    checkPending(ctx.app, target, setBy);
+    type Cond = import("../rules/types.ts").Condition;
+    const conds: Cond[] = [{ field: "chat.id", op: "equals", value: a.chat_id }];
+    if (a.contains) conds.push({ field: "message.text", op: "contains", value: a.contains });
+    if (a.from) conds.push({ field: "sender.name", op: "contains", value: a.from });
+    if (a.mentions_owner) conds.push({ field: "message.mentionsOwner", op: "is", value: true });
+    if (!a.include_bots) conds.push({ not: { field: "sender.kind", op: "equals", value: "bot" } });
+    const conditions: Cond = { all: conds };
+    const chatName = one<{ name: string }>(ctx.app.db, "select name from lark_cursors where chat_id = ?", a.chat_id)?.name;
+    const watch = `${chatName ? `「${chatName}」` : a.chat_id}：${describeCondition({ all: conds.slice(1) })}`;
+    const rule = saveRule(
+      ctx.app,
+      {
+        name: truncate(`临时：${a.note.replace(/\s+/g, " ")}`, 60),
+        description: a.note,
+        enabled: true,
+        trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] },
+        conditions,
+        judge: "code",
+        actions: [{ type: "wake", note: a.note, target }],
+        temporary: { expiresAt, once: a.once ?? true, setBy, setAt: now(), watch },
+      },
+      "agent",
+    );
+    return `已设消息唤醒 ${rule.id}（${watch}），${expiresAt} 前有效${a.once === false ? "，每条符合的消息都会唤醒" : "，触发一次后删除"}。不需要了用 cancel_wake 取消。`;
+  },
+});
+
+def({
+  name: "cancel_wake",
+  description: "取消一个还没触发的唤醒（wake_later 或 wake_on_message 设的）。不传 id 时列出当前会话（或你这个档案）待触发的唤醒。",
+  write: true,
+  schema: z.object({ id: z.string().optional() }),
+  handler: async (ctx, a) => {
+    const { cancelWake, pendingWakes } = await import("./wakes.ts");
+    if (a.id) {
+      cancelWake(ctx.app, a.id);
+      return `已取消 ${a.id}`;
+    }
+    const input = (ctx.runId ? getRun(ctx.app, ctx.runId).input : {}) as { conversationId?: string; threadId?: string; spec?: string };
+    const conversationId = input.conversationId ?? input.threadId;
+    const list = pendingWakes(ctx.app, conversationId ? { conversationId } : input.spec ? { spec: input.spec } : {});
+    return list.length ? list.map((w) => `- ${w.id} [${w.kind === "timed" ? "定时" : "消息"}] ${w.detail}${w.expiresAt ? `（${w.expiresAt.slice(0, 16)} 失效）` : ""}：${truncate(w.note, 120)}`).join("\n") : "没有待触发的唤醒";
+  },
+});
+
 def({
   name: "notify",
   description: "通知本人（站内 + 已绑定的机器人）。只用于需要本人知道或决定的变化，不要发送“无变化”。",

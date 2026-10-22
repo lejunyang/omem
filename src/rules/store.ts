@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { deleteSchedule, upsertSchedule } from "../core/scheduler.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
-import { ruleInputSchema, type Rule, type RuleInput } from "./types.ts";
+import { ruleInputSchema, type Rule, type RuleInput, type Temporary } from "./types.ts";
 
 type Row = {
   id: string;
@@ -18,6 +18,7 @@ type Row = {
   updated_at: string;
   hits: number;
   last_fired_at: string | null;
+  temporary: string | null;
 };
 
 const toRule = (r: Row): Rule => ({
@@ -34,6 +35,7 @@ const toRule = (r: Row): Rule => ({
   updatedAt: r.updated_at,
   hits: r.hits,
   lastFiredAt: r.last_fired_at,
+  temporary: r.temporary ? json(r.temporary, null) : null,
 });
 
 export function listRules(app: App, opts: { enabledOnly?: boolean } = {}): Rule[] {
@@ -47,8 +49,10 @@ export function getRule(app: App, id: string): Rule {
 }
 
 /** Create or replace a rule; checks it can work (conditions for code judging, a cron for schedules). */
-export function saveRule(app: App, input: RuleInput & { id?: string }, by: "user" | "agent" = "user"): Rule {
+export function saveRule(app: App, input: RuleInput & { id?: string; temporary?: Temporary }, by: "user" | "agent" = "user"): Rule {
   const r = ruleInputSchema.parse(input);
+  const prevTemp = input.id ? one<{ temporary: string | null }>(app.db, "select temporary from rules where id = ?", input.id)?.temporary : null;
+  if (r.actions.some((a) => a.type === "wake") && !input.temporary && !prevTemp) throw new HttpError(400, "“唤醒”只用于 Agent 设的临时规则（wake_on_message）");
   if (r.judge !== "ai" && !r.conditions && r.trigger.event !== "schedule") throw new HttpError(400, "按条件判断需要条件；没有条件就选“交给 AI 判断”，或先从规则原话生成条件");
   if (r.trigger.event === "schedule" && !r.trigger.cron) throw new HttpError(400, "定时规则需要 cron，例如 0 9 * * 1-5");
   if (r.trigger.event === "schedule" && r.actions.some((a) => a.type === "invite-bot" || a.type === "capture" || a.type === "watch" || (a.type === "agent" && a.ownTopic)))
@@ -60,9 +64,9 @@ export function saveRule(app: App, input: RuleInput & { id?: string }, by: "user
   const prev = input.id ? one<Row>(app.db, "select * from rules where id = ?", input.id) : undefined;
   run(
     app.db,
-    `insert into rules(id, name, description, enabled, trigger, conditions, judge, actions, created_by, created_at, updated_at) values(?,?,?,?,?,?,?,?,?,?,?)
+    `insert into rules(id, name, description, enabled, trigger, conditions, judge, actions, created_by, created_at, updated_at, temporary) values(?,?,?,?,?,?,?,?,?,?,?,?)
      on conflict(id) do update set name = excluded.name, description = excluded.description, enabled = excluded.enabled, trigger = excluded.trigger,
-       conditions = excluded.conditions, judge = excluded.judge, actions = excluded.actions, updated_at = excluded.updated_at`,
+       conditions = excluded.conditions, judge = excluded.judge, actions = excluded.actions, updated_at = excluded.updated_at, temporary = coalesce(excluded.temporary, rules.temporary)`,
     id,
     r.name,
     r.description,
@@ -74,6 +78,7 @@ export function saveRule(app: App, input: RuleInput & { id?: string }, by: "user
     prev?.created_by ?? by,
     prev?.created_at ?? at,
     at,
+    input.temporary ? JSON.stringify(input.temporary) : null,
   );
   // A schedule rule runs from the scheduler like the built-in tasks (schedule id rule:<id>).
   if (r.trigger.event === "schedule") upsertSchedule(app, { id: `rule:${id}`, kind: "rule", cron: r.trigger.cron!, config: { ruleId: id }, enabled: r.enabled });

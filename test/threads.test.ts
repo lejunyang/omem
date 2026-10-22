@@ -13,7 +13,7 @@ import { embedPending, embedPendingMemories, setEmbedderForTests } from "../src/
 import { boot } from "../src/main.ts";
 import { fakeEmbedder } from "./helpers.ts";
 
-type Echo = { session: string; turn: number; resumed: boolean; cold: boolean; msgs: string[]; role: string; summary: string | null; context: boolean; memories: string[] };
+type Echo = { session: string; turn: number; resumed: boolean; cold: boolean; msgs: string[]; role: string; summary: string | null; context: boolean; memories: string[]; woken: boolean };
 
 describe("threads: continuity, merging, lanes, commands", async () => {
   const home = mkdtempSync(join(tmpdir(), "omem-threads-"));
@@ -121,6 +121,18 @@ describe("threads: continuity, merging, lanes, commands", async () => {
     } finally {
       app.config.embeddings.provider = "none";
     }
+  }, 60000);
+
+  it("a wake-up it set gives the same agent session a turn, posted to the chat", async () => {
+    const { fireWake } = await import("../src/agents/wakes.ts");
+    const sent: string[] = [];
+    registerThreadSender("wake-test", async (_t, md) => void sent.push(md));
+    const a = await receive(app, { channel: "wake-test", chatId: "room-w", text: "盯一下 CI" });
+    const first = await answer(a.runId);
+    const fired = fireWake(app, { note: "看 CI 结果", target: { conversationId: a.thread.id }, setBy: { runId: a.runId, agent: "助理" }, setAt: new Date().toISOString() });
+    const woke = await answer(fired.runId!);
+    expect(woke).toMatchObject({ session: first.session, woken: true, msgs: [] });
+    expect(sent.at(-1)).toContain(first.session);
   }, 60000);
 
   it("handles commands without a model", async () => {

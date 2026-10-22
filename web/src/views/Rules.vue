@@ -58,10 +58,20 @@ const blank = (): Rule => ({ name: "", description: "", enabled: false, trigger:
 
 async function loadList() {
   try {
-    rules.value = await get<Rule[]>("/api/rules");
+    [rules.value, wakes.value] = await Promise.all([get<Rule[]>("/api/rules"), get<Wake[]>("/api/wakes").catch(() => [])]);
   } finally {
     loading.value = false;
   }
+}
+// Wake-ups agents set for their own follow-up work: after a while, or on a message in a chat.
+type Wake = { id: string; kind: "timed" | "event"; note: string; at: string | null; expiresAt: string | null; setBy: { agent: string }; detail: string };
+const wakes = ref<Wake[]>([]);
+async function cancelWake(w: Wake) {
+  if (!(await confirmDialog(`取消这个唤醒？
+
+${w.note}`, { okText: "取消唤醒", danger: true }))) return;
+  await del(`/api/wakes/${w.id}`);
+  wakes.value = wakes.value.filter((x) => x.id !== w.id);
 }
 async function loadCurrent() {
   test.value = null;
@@ -243,6 +253,17 @@ function startFrom(text: string) {
           <UiCheckbox :model-value="r.enabled" switch size="sm" :aria-label="`启用 ${r.name}`" @change="toggle(r)" />
         </div>
         <p v-if="!loading && !rules.length" class="muted small hint">还没有规则。点 ＋ 新建，或对助理说“以后值班群里我被 @ 就把机器人拉进去”。</p>
+        <template v-if="wakes.length">
+          <div class="group muted small">临时唤醒 · Agent 为自己的后续工作设的，触发或到期后自动删除</div>
+          <div v-for="w in wakes" :key="w.id" class="li wake">
+            <div class="grow">
+              <div class="row"><span class="badge">{{ w.kind === "timed" ? "定时" : "消息" }}</span><span class="muted small ellipsis">{{ w.setBy.agent }}</span></div>
+              <div class="small clamp">{{ w.note }}</div>
+              <div class="muted small clamp">{{ w.kind === "timed" ? `${fmtTime(w.at!)} 唤醒` : `${w.detail} · ${fmtTime(w.expiresAt!)} 失效` }}</div>
+            </div>
+            <button class="btn ghost sm icon" :title="`取消唤醒：${w.note}`" @click="cancelWake(w)"><Icon name="x" :size="14" /></button>
+          </div>
+        </template>
       </div>
     </aside>
 
@@ -400,6 +421,14 @@ function startFrom(text: string) {
 }
 .li:hover {
   background: var(--hover);
+}
+.group {
+  padding: 14px 10px 4px;
+  border-top: 1px solid var(--line);
+  margin-top: 8px;
+}
+.wake .row {
+  gap: 6px;
 }
 .li.on {
   background: var(--accent-soft);

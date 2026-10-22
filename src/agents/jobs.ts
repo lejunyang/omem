@@ -24,8 +24,10 @@ import { markReviewed, similarMemories, spacesWithUnreviewed, unreviewedMemories
 import { relationCandidates } from "../core/space-candidates.ts";
 import { nearMemories, sameTopicPairs } from "../memory/passive.ts";
 import { expireWorkFiles } from "../sources/work.ts";
+import { expireTemporaryRules } from "./wakes.ts";
 import { hasShortcomings, shortcomings, shortcomingsText } from "../memory/gaps.ts";
 import "./profile-jobs.ts";
+import "./wakes.ts";
 
 registerHandler("lark-resource-parse", async ctx => (await import("../channels/lark-resource-parse.ts")).parseLarkResource(ctx));
 
@@ -90,6 +92,13 @@ registerHandler("ask", async (ctx) => {
     const id = await deliverCoordination(ctx, coordinate, answer, { agent: r.agent, session: r.mode, replyTo: ids });
     maybeSummarize(ctx.app, input.conversationId);
     return { answer, messageId: id, session: r.mode };
+  }
+  // Woken by a wake-up it set: nobody waits on it either; nothing to say (QUIET) posts nothing.
+  if ((ctx.run.input as { wake?: unknown }).wake && msgs.every((m) => !!m.meta.wake)) {
+    if (isQuiet(answer)) return { answer, quiet: true, session: r.mode };
+    await deliverToThread(ctx.app, input.conversationId, answer, { runId: ctx.run.id, agent: r.agent, session: r.mode, replyTo: ids });
+    maybeSummarize(ctx.app, input.conversationId);
+    return { answer, session: r.mode };
   }
   // Woken by a result (a coding delegation ended): nobody waits on this turn, so it is posted.
   if ((ctx.run.input as { handoff?: unknown }).handoff) {
@@ -504,6 +513,7 @@ registerHandler("heartbeat", async (ctx) => {
   // 1. Due reminders need no model: deliver them directly. Expired working files go too.
   const due = deliverDueReminders(app);
   expireWorkFiles(app);
+  await expireTemporaryRules(app);
   // 2. Watches and waits only need attention when new material arrived.
   const last = one<{ value: string }>(app.db, "select value from kv where key = 'heartbeat_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
   const started = now();
