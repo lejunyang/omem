@@ -203,7 +203,8 @@ registerHandler("agent", async (ctx) => {
     if (threadId) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: spec.name, rule: rule.id });
     else if (replyAt) {
       const { sendLark } = await import("../channels/lark-send.ts");
-      await sendLark({ replyTo: replyAt.messageId, inThread: true }, { markdown: answer });
+      const { resolveCitations } = await import("../channels/common.ts");
+      await sendLark({ replyTo: replyAt.messageId, inThread: true }, { markdown: resolveCitations(ctx.app, answer) });
     }
     else notify(ctx.app, { title: `${spec.name}（规则「${rule.name}」）`, body: truncate(answer, 3000), link: `#/runs/${ctx.run.id}` });
   } else if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${spec.name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: spec.name });

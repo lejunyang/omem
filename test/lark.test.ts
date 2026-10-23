@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRun, listRuns } from "../src/agents/runs.ts";
 import { saveAgentSpec } from "../src/agents/specs.ts";
@@ -18,7 +18,7 @@ import { run as runSql } from "../src/core/db.ts";
 import { buildCard, setLarkClient } from "../src/channels/lark-send.ts";
 import { routeWatchedMessages, setWatchRule } from "../src/channels/lark-watch.ts";
 import { recordCodeActivity } from "../src/sources/activity.ts";
-import { appendToSource } from "../src/sources/store.ts";
+import { appendToSource, upsertSource } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
 
 /** A stand-in for the Feishu SDK client that records what the bot would do. */
@@ -46,6 +46,58 @@ afterEach(() => {
 });
 
 describe("feishu bot messaging", () => {
+  it("converts citations in sends, nested cards, updates and drafts while preserving callback data", async () => {
+    const app = testApp();
+    const client = fakeClient();
+    setLarkClient(client);
+    const uri = "https://tenant.larkoffice.com/docx/Guide";
+    const doc = upsertSource(app, { spaceId: "personal", kind: "doc", uri, title: "操作说明", text: "申请后需确认" });
+    const md = `[流程说明](src:${doc.id}#L1-L1) [记忆](mem:m1) [缺失](src:missing)`;
+    const expected = `[流程说明](${uri}) 记忆 缺失`;
+    const ctx = toolContextForToken(app, issueToolToken({ runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: ["oc_g"] }))!;
+    for (const content of [{ text: md }, { markdown: md }]) {
+      expect((await callTool(ctx, "lark_send", { chat_id: "oc_g", ...content })).isError).toBe(false);
+      expect(client.calls.at(-1)!.args.data.content).toContain(expected);
+    }
+    expect((await callTool(ctx, "lark_card", { chat_id: "oc_g", blocks: [{ markdown: md }, { fields: [{ label: "来源", value: md }] }] })).isError).toBe(false);
+    expect(client.calls.at(-1)!.args.data.content).toContain(expected);
+    expect(client.calls.at(-1)!.args.data.content).not.toContain("src:");
+    const callback = { tag: "markdown", content: md };
+    const raw = { schema: "2.0", body: { elements: [{ tag: "div", text: { tag: "lark_md", content: md } }, { tag: "button", behaviors: [{ type: "callback", value: callback }] }] } };
+    expect((await callTool(ctx, "lark_update_card", { message_id: "om_g1", raw_card: raw })).isError).toBe(false);
+    const updated = JSON.parse(client.calls.at(-1)!.args.data.content);
+    expect(updated.body.elements[0].text.content).toBe(expected);
+    expect(updated.body.elements[1].behaviors[0].value).toEqual(callback);
+    expect(raw.body.elements[0].text?.content).toBe(md);
+    app.config.lark.ownerOpenId = "ou_owner";
+    expect((await callTool({ ...ctx, larkDraft: true }, "lark_send", { chat_id: "oc_g", markdown: md })).text).toContain("草稿");
+    expect(client.calls.at(-1)!.args.data.content).toContain(expected);
+    const pending = all<{ payload: string }>(app.db, "select payload from card_interactions where purpose='draft'");
+    expect(JSON.parse(pending[0].payload).content.markdown).toBe(expected);
+  });
+
+  it("converts a rule agent's first topic reply while retaining internal citations in its run", async () => {
+    const { __testHandlers: handlers } = await import("../src/agents/runs.ts");
+    await import("../src/agents/jobs.ts");
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1"; // The fixed ACP reply does not call tools.
+    const client = fakeClient();
+    setLarkClient(client);
+    const uri = "https://tenant.larkoffice.com/docx/Guide";
+    const doc = upsertSource(app, { spaceId: "personal", kind: "doc", uri, title: "操作说明", text: "申请后需确认\n完成后可删除" });
+    const answer = `[流程说明](src:${doc.id}#L1-L1) [删除规则](src:${doc.id}#L1-L2)`;
+    app.config.agents.profiles.push({ id: "citation-test", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_SAY: answer }, idleTimeoutMs: 30000 });
+    saveAgentSpec(app, { name: "topic-helper", description: "话题回复", agent: "citation-test", prompt: "按原件回答" }, "user");
+    const run = createRun(app, { kind: "agent", spaceId: "personal", title: "话题回复", input: { spec: "topic-helper", task: "回复流程", rule: { id: "rule_fixture", name: "回复" }, replyAt: { chatId: "oc_g", messageId: "om_g1" }, lark: { chats: ["oc_g"] } } });
+    const result = await handlers.get("agent")!({ app, run, signal: AbortSignal.timeout(30000), event: () => {}, output: () => {} }) as { answer: string };
+    expect(result.answer).toBe(answer);
+    const sent = client.calls.filter(c => c.op === "reply");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].args.data.reply_in_thread).toBe(true);
+    const body = JSON.parse(sent[0].args.data.content).body.elements[0].content;
+    expect(body).toBe(`[流程说明](${uri}) [删除规则](${uri})`);
+  }, 40000);
+
   it("builds Card 2.0 with buttons and forms", () => {
     const card = buildCard({
       title: "告警",

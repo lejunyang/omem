@@ -46,6 +46,21 @@ export function resolveCitations(app: App, md: string) {
   return localPathLinks(app, plainCitations(withSources).replace(/\[([^\]]*)\]\(#\/[^)]*\)/g, "$1"));
 }
 
+/** Convert only rendered Markdown in cards; callback values and other protocol data stay intact. */
+export function resolveCardCitations(app: App, card: Record<string, unknown>): Record<string, unknown> {
+  function visit(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(visit);
+    if (!value || typeof value !== "object") return value;
+    const node = value as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(node).map(([key, child]) => [key,
+      key === "content" && typeof child === "string" && (node.tag === "markdown" || node.tag === "lark_md")
+        ? resolveCitations(app, child)
+        : key === "value" ? child : visit(child),
+    ]));
+  }
+  return visit(card) as Record<string, unknown>;
+}
+
 /**
  * Links to files on this machine (`[下载页取数](/data/…/repo/src/a.ts#L10)`, `file://…`) open
  * nothing in a chat app. A file inside a repository space becomes `仓库 · 路径:行`, anything else

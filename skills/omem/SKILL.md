@@ -54,6 +54,8 @@ omem 是本人的个人记忆与助理系统。有两种接入方式。
 
 `lark_send` / `lark_card` 的 `mentions` 可填姓名、邮箱、已核实的机器人应用侧 open_id/user_id 或 all。普通姓名按授权目标群的完整成员列表核对，群内重名拒绝；确认不在群内的普通 mentions 自动跳过，正文和其他人的提醒继续发送，回执说明跳过对象，不需重发或在群内解释。权限或分页错误不算缺席，urgent / only_to 不静默降级；邮箱查不到时，可改用明确的群成员姓名，不把邮箱记录按姓名强行合并。@ 机器人需用本应用已收到的 @ 中的身份，不能用 app_id 或采集应用的 open_id。`read_run` 单列思考气泡的 `thinkingDelivery` 错误，它是投递状态，任务成败看运行 status。
 
+`lark_send` / `lark_card` / `lark_update_card` 会在发送前把 Markdown 中的原件引用转换成原文链接；内部记忆、消息等没有外部地址的引用保留文字。可以沿用 omem 引用格式，不用自行拼应用跳转地址。
+
 发飞书消息的 `lark_*` 工具和以本人身份写飞书文档的 `lark_doc_*` 只在 omem 自己的运行里可用（外部调用会被拒绝）；`import_url` 读飞书文档时可给 `depth`（链接和知识库子页面往下几层），整个知识库用 `lark_wiki_crawl`（start / continue / stop / status，可分批）；`set_lark_*` 会改本人的飞书采集设置，只在本人明确要求时用。
 
 ## 2. 命令行
