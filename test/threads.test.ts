@@ -195,7 +195,7 @@ describe("threads: continuity, merging, lanes, commands", async () => {
       return { code: 0, data: { message_id: "om_topic_anchor", thread_id: "omt_command" } };
     } } } });
     try {
-      const topic = await receive(app, { channel: "lark", chatId, text: "/topic 分析项目 A 的方案", externalMessageId: "om_request", context: "原群历史", openTopic: () => openLarkTopic("om_request") });
+      const topic = await receive(app, { channel: "lark", chatId, isGroup: true, text: "/topic 分析项目 A 的方案", externalMessageId: "om_request", context: "原群历史", openTopic: () => openLarkTopic("om_request") });
       expect(replies).toHaveLength(1);
       expect(replies[0]).toMatchObject({ path: { message_id: "om_request" }, data: { reply_in_thread: true } });
       expect(topic.thread).toMatchObject({ key: `${chatId}#omt_command`, parentId: null, settings: { isolatedTopic: true, lastMessageId: "om_topic_anchor" } });
@@ -217,24 +217,38 @@ describe("threads: continuity, merging, lanes, commands", async () => {
       expect(reset.thread.parentId).toBeNull();
       expect(await answer(reset.runId)).toMatchObject({ msgs: ["/status 是什么意思？"], cold: true });
       expect(resolveThread(app, { channel: "lark", chatId, topicId: "omt_command" }).thread.id).toBe(reset.thread.id);
-      const reopened = await receive(app, { channel: "lark", chatId, topicId: "omt_command", text: "/topic 换一个任务", openTopic: () => openLarkTopic("om_inside_topic") });
-      expect(reopened.thread.id).not.toBe(reset.thread.id);
-      expect(getThread(app, reset.thread.id).status).toBe("archived");
+      const rejected = await receive(app, { channel: "lark", chatId, isGroup: true, topicId: "omt_command", text: "/topic 换一个任务", openTopic: () => openLarkTopic("om_inside_topic") });
+      expect(rejected.reply).toContain("已经在话题中");
+      expect(rejected.runId).toBeNull();
+      expect(rejected.thread.id).toBe(reset.thread.id);
+      expect(getThread(app, reset.thread.id).status).toBe("active");
       expect(getThread(app, old.thread.id).status).toBe("active");
-      expect(await answer(reopened.runId)).toMatchObject({ msgs: ["换一个任务"], cold: true });
+      expect(replies).toHaveLength(1);
+      const afterRejection = await receive(app, { channel: "lark", chatId, topicId: "omt_command", text: "继续刚才的任务" });
+      expect(afterRejection.thread.id).toBe(reset.thread.id);
+      expect((await answer(afterRejection.runId)).turn).toBe(2);
     } finally {
       setLarkClient(null);
     }
   }, 60000);
 
   it("does not start a task or replace the conversation when /topic cannot open a real topic", async () => {
-    const base = { channel: "lark", chatId: "oc_topic_error" };
+    const base = { channel: "lark", chatId: "oc_topic_error", isGroup: true };
     const old = await receive(app, { ...base, text: "/status" });
     const empty = await receive(app, { ...base, text: "/topic", openTopic: async () => { throw new Error("不应调用"); } });
     expect(empty.reply).toContain("用法");
     const web = await receive(app, { channel: "web", text: "/topic 测试" });
     expect(web.reply).toContain("飞书");
     expect(web.runId).toBeNull();
+    const privateChat = await receive(app, { ...base, isGroup: false, text: "/topic 测试", openTopic: async () => { throw new Error("不应调用"); } });
+    expect(privateChat.reply).toContain("群聊主界面");
+    expect(privateChat.runId).toBeNull();
+    // Even an ordinary topic merged into the main conversation by /mode chat must reject /topic.
+    setChatSettings(app, "lark", base.chatId, { mode: "chat" });
+    const existingTopic = await receive(app, { ...base, topicId: "omt_existing", text: "/topic", openTopic: async () => { throw new Error("不应调用"); } });
+    expect(existingTopic.reply).toContain("已经在话题中");
+    expect(existingTopic.runId).toBeNull();
+    expect(existingTopic.thread.id).toBe(old.thread.id);
     setLarkClient({ im: { message: { reply: async () => ({ code: 0, data: { message_id: "om_no_topic" } }) } } });
     try {
       const failed = await receive(app, { ...base, text: "/topic 新任务", openTopic: () => openLarkTopic("om_request") });

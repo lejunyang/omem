@@ -71,18 +71,16 @@ const commands: Record<string, Command> = {
   },
   topic: {
     usage: "/topic <任务>",
-    help: "在飞书话题中执行任务，使用独立上下文；已在话题内则在该话题重新开始",
+    help: "把普通飞书群聊中的本条消息作为话题根消息，在独立上下文中执行任务；话题内不接受此指令",
     run: async ({ app, thread, args, inb }) => {
+      if (inb.topicId) return "已经在话题中，不能使用 /topic。请直接发送任务，或回到群聊主界面发起新话题。";
+      if (inb.channel !== "lark" || !inb.isGroup || !inb.chatId || !inb.openTopic) return "请在飞书群聊主界面 @ 机器人发送 /topic 任务描述；私聊和其他渠道可用 /new 任务描述。";
       if (!args) return "用法：/topic 任务描述";
-      if (inb.channel !== "lark" || !inb.chatId || !inb.openTopic) return "请在飞书机器人聊天中发送 /topic 任务描述；其他渠道可用 /new 任务描述。";
       const topic = await inb.openTopic();
       const key = `${inb.chatId}#${topic.topicId}`;
-      // An existing topic is reused by Feishu; replace only its context, never the whole chat.
-      const t = createThread(app, { spaceId: thread.spaceId, channel: "lark", title: truncate(args.replace(/\s+/g, " "), 60), userId: inb.userId ?? OWNER,
+      const t = createThread(app, { spaceId: thread.spaceId, channel: "lark", key, title: truncate(args.replace(/\s+/g, " "), 60), userId: inb.userId ?? OWNER,
         settings: { ...freshSettings(thread), isolatedTopic: true, lastMessageId: topic.messageId } });
-      reattachThread(app, t.id, "lark", key);
-      if (thread.key === key) releaseThreadSession(thread.id);
-      return { thread: findThread(app, t.id)!, task: args };
+      return { thread: t, task: args };
     },
   },
   status: {
