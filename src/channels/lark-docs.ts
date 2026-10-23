@@ -6,7 +6,7 @@ import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { json } from "../core/util.ts";
 import { keepOriginal } from "../sources/import.ts";
-import { upsertSource, type UpsertResult } from "../sources/store.ts";
+import { sourceText, upsertSource, type UpsertResult } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
 import { withExtension } from "./lark-messages.ts";
 
@@ -36,6 +36,9 @@ const DOC_PATH = /^\/(docx|wiki|docs)\/([A-Za-z0-9]+)/;
 const DOC_URL = /https?:\/\/[\w.-]*(?:feishu\.cn|larksuite\.com|larkoffice\.com)\/(?:docx|docs|wiki)\/[A-Za-z0-9]+[^\s)"'<>\]]*/g;
 
 export type LarkDocMeta = {
+  wikiSpaceId?: string;
+  wikiNodeToken?: string;
+  wikiParentNodeToken?: string;
   parentUrl?: string;
   url: string;
   via: "lark-cli";
@@ -404,10 +407,9 @@ function docLinks(text: string, origin: string, self: string) {
 }
 
 /** A wiki page's child pages that are docs (other kinds stay where they are); errors leave the page without them. */
-async function childPages(app: App, url: string, origin: string, max: number): Promise<Link[]> {
+async function childPages(app: App, url: string, origin: string, max: number, node: import("./lark-wiki.ts").WikiNode | null): Promise<Link[]> {
   try {
-    const { wikiNode, wikiChildren, nodeUrl, isReadableNode } = await import("./lark-wiki.ts");
-    const node = await wikiNode(app, url);
+    const { wikiChildren, nodeUrl, isReadableNode } = await import("./lark-wiki.ts");
     if (!node?.hasChild || node.nodeType === "shortcut") return [];
     const { nodes } = await wikiChildren(app, node, max);
     return nodes.filter(isReadableNode).map((n) => ({ url: nodeUrl(origin, n), title: n.title }));
@@ -510,12 +512,25 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   // Reached by several routes (given directly and as someone's link): the deepest reach wins.
   const depth = Math.max(given, prev.depth ?? -1);
   const doc = await fetchDoc(url);
+  let wiki: import("./lark-wiki.ts").WikiNode | null = null;
+  let wikiResolved = false;
+  try {
+    wiki = await (await import("./lark-wiki.ts")).wikiNode(app, url);
+    wikiResolved = true;
+  } catch (e) {
+    console.warn(`[omem] 读取飞书知识库节点失败 ${url}：${(e as Error).message}`);
+  }
+  const wikiMeta = wikiResolved
+    ? { wikiSpaceId: wiki?.spaceId || undefined, wikiNodeToken: wiki?.nodeToken || undefined, wikiParentNodeToken: wiki?.parentNodeToken || undefined }
+    : { wikiSpaceId: prev.wikiSpaceId, wikiNodeToken: prev.wikiNodeToken, wikiParentNodeToken: prev.wikiParentNodeToken };
   const uri = existing ? (one<{ uri: string }>(app.db, "select uri from sources where id = ?", existing.id)?.uri ?? url) : url;
   const fetchedAt = new Date().toISOString();
-  // Unchanged in Feishu, already local, nothing missing, and not asked to follow more levels than before: nothing to do.
+  // Refresh routing metadata even when the document body has not changed.
   const deeper = given > (prev.depth ?? -1);
   if (existing && !opts.force && !deeper && prev.revision && prev.revision === doc.revision && prev.media && !Object.keys(prev.missing ?? {}).length) {
-    run(app.db, "update sources set meta = ? where id = ?", JSON.stringify({ ...prev, fetchedAt, depth }), existing.id);
+    const meta = { ...prev, ...wikiMeta, fetchedAt, depth };
+    if (opts.archive) upsertSource(app, { archive: true, spaceId, kind: "doc", uri, title: existing.title, text: sourceText(app, existing.id), meta });
+    run(app.db, "update sources set meta = ? where id = ?", JSON.stringify(meta), existing.id);
     return { id: existing.id, status: "unchanged", related: [], missing: [] };
   }
 
@@ -528,7 +543,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   const local = new Map<string, { id: string; title: string }>();
   const links = docLinks(text, origin, url);
   // Child pages of a wiki page, as links of the same level; those the text does not link get a list at the end.
-  const children = type === "wiki" && depth > 0 && opts.wikiChildren !== false && cfg.docWikiChildren > 0 ? await childPages(app, url, origin, cfg.docWikiChildren) : [];
+  const children = type === "wiki" && depth > 0 && opts.wikiChildren !== false && cfg.docWikiChildren > 0 ? await childPages(app, url, origin, cfg.docWikiChildren, wiki) : [];
   const listed = children.filter((c) => !links.has(c.url));
   if (listed.length) text += `\n\n---\n\n**知识库子页面**\n\n${listed.map((c) => `- [${label(c.title) || "子页面"}](${c.url})`).join("\n")}\n`;
   for (const c of listed) links.set(c.url, c);
@@ -562,6 +577,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
 
   const keptMedia = Object.fromEntries(Object.entries(ctx.media).filter(([t]) => ctx.used.has(t)));
   const meta: LarkDocMeta = {
+    ...wikiMeta,
     url,
     ...(prev.parentUrl || opts.chain?.size ? { parentUrl: prev.parentUrl ?? [...opts.chain!].at(-1) } : {}),
     via: "lark-cli",

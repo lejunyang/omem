@@ -149,6 +149,11 @@ export const peerCommands: Record<string, Command> = {
       return (await import("../channels/lark-cli.ts")).larkCli(args);
     },
   },
+  "lark-wiki-node": {
+    description: "只读查询飞书文档所属的知识库、节点和父节点",
+    schema: z.object({ token: z.string().min(1).max(1000) }),
+    run: async (app, a) => (await import("../channels/lark-wiki.ts")).wikiNode(app, a.token),
+  },
   "lark-doc-raw": {
     description: "只读调用 lark-cli 的文档读取（fetch：文档内容；media / preview：下载或预览一个素材到临时目录后删除，返回输出和文件名，失败时返回错误；csv：读内嵌表格；meta：文档的最后修改时间等元数据，doc 为链接），返回原始 JSON（用来核对字段）",
     schema: z.object({

@@ -8,26 +8,29 @@ import { rememberPerson } from "../src/channels/lark-people.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { continueCrawl, crawlLoop, getCrawl, startCrawl } from "../src/channels/lark-wiki.ts";
 import { all, one } from "../src/core/db.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import { matchesArchive, saveArchiveRule } from "../src/sources/archive.ts";
+import { getSource, sourceText } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
 
 const ORIGIN = "https://tenant.larkoffice.com";
 const PERSONAL = "7000000000000000001";
 const TEAM = "7000000000000000002";
 
-type Node = { title: string; children?: string[]; space?: string; type?: string };
+type Node = { title: string; children?: string[]; space?: string; type?: string; parent?: string };
 
 /**
  * A fake lark-cli with a knowledge base: wiki nodes by token (their children listed by node-list),
  * docs fetched by the same token, the personal library, and doc writes recorded.
  */
-function fakeWiki(nodes: Record<string, Node>, opts: { denyList?: boolean } = {}) {
+function fakeWiki(nodes: Record<string, Node>, opts: { denyList?: boolean; nodeError?: string } = {}) {
   const calls: string[][] = [];
   setLarkCliForTests(async (args) => {
     calls.push(args);
     const flag = (name: string) => args[args.indexOf(name) + 1];
     const node = (token: string) => {
       const n = nodes[token];
-      return { space_id: n.space ?? TEAM, node_token: token, obj_token: `obj_${token}`, obj_type: n.type ?? "docx", node_type: "origin", title: n.title, has_child: !!n.children?.length };
+      return { space_id: n.space ?? TEAM, node_token: token, parent_node_token: n.parent, obj_token: `obj_${token}`, obj_type: n.type ?? "docx", node_type: "origin", title: n.title, has_child: !!n.children?.length };
     };
     if (args[0] === "docs" && args[1] === "+fetch") {
       const token = flag("--doc").split("/").pop()!;
@@ -35,6 +38,7 @@ function fakeWiki(nodes: Record<string, Node>, opts: { denyList?: boolean } = {}
       return { ok: true, data: { document: { document_id: `obj_${token}`, revision_id: 1, content: `<title>${nodes[token].title}</title>\n${nodes[token].title} 的正文` } } };
     }
     if (args[0] === "wiki" && args[1] === "+node-get") {
+      if (opts.nodeError) throw new Error(opts.nodeError);
       const token = flag("--node-token").split("/").pop()!;
       if (!nodes[token]) return { ok: false, error: { code: 131014, message: "131014 not mounted in wiki" } };
       return { ok: true, data: node(token) };
@@ -76,6 +80,51 @@ const TREE: Record<string, Node> = {
 const titles = (app: ReturnType<typeof testApp>) => all<{ title: string }>(app.db, "select title from sources where kind = 'doc' order by title").map((r) => r.title);
 
 describe("feishu knowledge bases", () => {
+  it("captures wiki metadata at zero depth for wiki and docx links, with title and body matching", async () => {
+    const app = testApp();
+    createSpace(app, { id: "project-a", name: "项目 A", kind: "project" });
+    const calls = fakeWiki({ A: { title: "项目 A 手册", parent: "Root" }, B: { title: "项目 A 日程", parent: "Root" } });
+    const conditions = { all: [
+      { field: "kind", op: "equals", value: "doc" },
+      { field: "title", op: "contains", value: "项目 A" },
+      { field: "text", op: "contains", value: "的正文" },
+      { field: "meta.wikiSpaceId", op: "equals", value: TEAM },
+      { field: "meta.wikiParentNodeToken", op: "equals", value: "Root" },
+    ] } as const;
+    const rule = saveArchiveRule(app, { name: "项目 A 文档", target: "project-a", enabled: true, conditions });
+    for (const path of ["wiki/A", "docx/B"]) {
+      const r = await importLarkDocument(app, "personal", `${ORIGIN}/${path}`, { depth: 0, archive: true });
+      const s = getSource(app, r.id);
+      expect(s.spaceId).toBe("project-a");
+      expect(s.meta).toMatchObject({ wikiSpaceId: TEAM, wikiNodeToken: path.split("/")[1], wikiParentNodeToken: "Root" });
+      expect(matchesArchive(rule.conditions, { ...s, text: sourceText(app, s.id) })).toBe(true);
+      expect(matchesArchive(rule.conditions, { ...s, title: "项目 B", text: sourceText(app, s.id) })).toBe(false);
+      expect(matchesArchive(rule.conditions, { ...s, text: "不含关键字" })).toBe(false);
+    }
+    expect(calls.filter(c => c[1] === "+node-list")).toHaveLength(0);
+  });
+
+  it("refreshes unchanged documents' node metadata and routing, retaining verified metadata on failure", async () => {
+    const app = testApp();
+    createSpace(app, { id: "project-a", name: "项目 A", kind: "project" });
+    const url = `${ORIGIN}/docx/A`;
+    fakeWiki({ A: { title: "手册" } }, { nodeError: "131014 not mounted in wiki" });
+    const first = await importLarkDocument(app, "personal", url, { depth: 0, archive: true });
+    const hash = getSource(app, first.id).hash;
+    expect(getSource(app, first.id).meta.wikiNodeToken).toBeUndefined();
+    saveArchiveRule(app, { name: "项目 A 知识库", target: "project-a", enabled: true, conditions: { field: "meta.wikiNodeToken", op: "equals", value: "A" } });
+    fakeWiki({ A: { title: "手册", parent: "Root" } });
+    const second = await importLarkDocument(app, "personal", url, { depth: 0, archive: true });
+    expect(second).toMatchObject({ id: first.id, status: "unchanged" });
+    expect(getSource(app, first.id)).toMatchObject({ spaceId: "project-a", hash, meta: { wikiSpaceId: TEAM, wikiParentNodeToken: "Root" } });
+    fakeWiki({ A: { title: "手册" } }, { nodeError: "temporary node lookup failure" });
+    await importLarkDocument(app, "personal", url, { depth: 0, archive: true });
+    expect(getSource(app, first.id)).toMatchObject({ hash, meta: { wikiSpaceId: TEAM, wikiParentNodeToken: "Root" } });
+    fakeWiki({ A: { title: "手册" } }, { nodeError: "131014 not mounted in wiki" });
+    await importLarkDocument(app, "personal", url, { depth: 0, archive: true });
+    expect(getSource(app, first.id).meta.wikiNodeToken).toBeUndefined();
+  });
+
   it("reads a wiki page's child pages as links, levels counted from the page first given", async () => {
     const app = testApp();
     fakeWiki(TREE);

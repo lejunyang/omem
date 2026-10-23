@@ -10,7 +10,7 @@ import { OPS } from "../rules/types.ts";
 import { getSource, sourceText, type UpsertInput } from "./store.ts";
 import { vectorIndex } from "../search/vectors.ts";
 
-export const ARCHIVE_FIELDS = { kind: "材料类型", title: "标题 / 群名", uri: "网址 / 路径", text: "正文", "meta.chatId": "来源会话 ID", "meta.via": "采集渠道", "meta.author": "作者", "meta.wikiSpaceId": "知识库 ID", "meta.parentUrl": "父页面地址" } as const;
+export const ARCHIVE_FIELDS = { kind: "材料类型", title: "标题 / 群名", uri: "网址 / 路径", text: "正文", "meta.chatId": "来源会话 ID", "meta.via": "采集渠道", "meta.author": "作者", "meta.wikiSpaceId": "知识库 ID", "meta.wikiNodeToken": "知识库节点", "meta.wikiParentNodeToken": "知识库父节点", "meta.parentUrl": "父页面地址" } as const;
 export const ARCHIVE_KINDS = { doc: "文档", chat: "聊天", note: "笔记", web: "网页", image: "图片", event: "日程", meeting: "妙记 / 会议" } as const;
 type Field = keyof typeof ARCHIVE_FIELDS;
 export type ArchiveCondition = { field: Field; op: (typeof OPS)[number]; value: string | boolean | string[] } | { all: ArchiveCondition[] } | { any: ArchiveCondition[] } | { not: ArchiveCondition };
@@ -23,10 +23,10 @@ export const archiveCondition: z.ZodType<ArchiveCondition> = z.lazy(() => z.unio
   }),
   z.object({ all: z.array(archiveCondition).min(1).max(30) }), z.object({ any: z.array(archiveCondition).min(1).max(30) }), z.object({ not: archiveCondition }),
 ]));
-export const archiveRuleSchema = z.object({ name: z.string().trim().min(1).max(60), description: z.string().max(2000).default(""), enabled: z.boolean().default(false), priority: z.number().int().min(0).max(10000).default(100), target: z.string().min(1), conditions: archiveCondition });
+export const archiveRuleSchema = z.object({ name: z.string().trim().min(1).max(60), description: z.string().max(2000).default(""), enabled: z.boolean().default(false), target: z.string().min(1), conditions: archiveCondition });
 export type ArchiveRule = z.infer<typeof archiveRuleSchema> & { id: string };
 export function listArchiveRules(app: App): ArchiveRule[] {
-  return all<{ id: string; body: string }>(app.db, "select id, body from archive_rules order by priority, id").map(r => ({ ...json<z.infer<typeof archiveRuleSchema>>(r.body, {} as never), id: r.id }));
+  return all<{ id: string; body: string }>(app.db, "select id, body from archive_rules order by rowid").map(r => ({ ...archiveRuleSchema.parse(json(r.body, {})), id: r.id }));
 }
 export function saveArchiveRule(app: App, input: unknown, id = newId("ar")) {
   const body = archiveRuleSchema.parse(input);
@@ -39,7 +39,7 @@ export function saveArchiveRule(app: App, input: unknown, id = newId("ar")) {
     else if (c.op === "matches") throw new HttpError(400, "归档条件请使用包含、前缀或后缀，避免对长正文执行正则");
   };
   validate(body.conditions);
-  run(app.db, "insert into archive_rules(id,body,priority) values(?,?,?) on conflict(id) do update set body=excluded.body,priority=excluded.priority", id, JSON.stringify(body), body.priority);
+  run(app.db, "insert into archive_rules(id,body) values(?,?) on conflict(id) do update set body=excluded.body", id, JSON.stringify(body));
   return { ...body, id };
 }
 export function matchesArchive(c: ArchiveCondition, input: UpsertInput): boolean {

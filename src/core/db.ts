@@ -626,6 +626,8 @@ const migrations: string[] = [
      mode text not null, reason text not null, rule_id text, decision_hash text, pending integer not null default 0, ingest integer not null default 0);
    create table source_locations(origin_space text not null, uri text not null, source_id text not null references sources(id) on delete cascade, primary key(origin_space,uri));
    create table source_moves(id integer primary key autoincrement, source_id text not null, from_space text not null, to_space text not null, reason text not null, at text not null);`,
+  `alter table archive_rules drop column priority;
+   update archive_rules set body = json_remove(body, '$.priority');`,
 ];
 
 export type Db = DatabaseSync;

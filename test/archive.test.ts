@@ -79,8 +79,10 @@ describe("source archiving", () => {
   });
   it("routes by first enabled rule without an AI run and respects explicit imports and bindings", () => {
     const app = setup();
-    saveArchiveRule(app, { ...rule, priority: 20 });
-    saveArchiveRule(app, { ...rule, target: "project-b", priority: 10, enabled: false });
+    const first = saveArchiveRule(app, rule);
+    const second = saveArchiveRule(app, { ...rule, target: "project-b", enabled: false });
+    saveArchiveRule(app, { ...second, enabled: true }, second.id);
+    saveArchiveRule(app, { ...first, description: "修改不改变创建顺序" }, first.id);
     const s = upsertSource(app, material);
     expect(getSource(app, s.id).spaceId).toBe("project-a");
     expect(sourceRoute(app, s.id)?.mode).toBe("rule");

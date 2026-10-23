@@ -177,7 +177,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
 | 空间上下文：问答、原件和运行按当前空间显示；任务规则保存所属空间与结果会话，主助手为默认执行者，执行空间按动作 → 档案 → 规则 → 触发空间解析；群会话与采集共用绑定解析，旧的无空间任务规则保持全局 | 已实现；专项测试、浏览器空间切换与真实 Agent 抽查通过 | `src/core/capture-space.ts`、`rules/`、`Ask.vue`、`Runs.vue` |
-| 原件归档：手动指定 / 来源绑定 → 按优先级首条匹配的归档规则 → archivist 内容判断 → 不确定留个人；AI 通过 propose_archive_rule 写草稿，核对后保存；自动归档先于记忆整理，按最终空间分组 | 已实现；2026-10-23 专项测试与真实 Agent 归档、规则草稿匹配抽查通过 | `sources/archive.ts`、`roles/archivist.md`、`roles/archive-rule-writer.md`、`ArchiveRules.vue` |
+| 原件归档：手动指定 / 来源绑定 → 按创建顺序首条匹配的归档规则 → archivist 内容判断 → 不确定留个人；AI 通过 propose_archive_rule 写草稿，核对后保存；自动归档先于记忆整理，按最终空间分组 | 已实现；2026-10-23 专项测试与真实 Agent 归档、规则草稿匹配抽查通过 | `sources/archive.ts`、`roles/archivist.md`、`roles/archive-rule-writer.md`、`ArchiveRules.vue` |
 | 原件迁移：保留原件、切片、消息位置与引用 ID，同步空间字段并失效向量缓存；原始入口别名防止重新采集另建副本；历史预览 / 应用校验 hash 和当前规则，冲突不合并覆盖；原件详情可指定归属及查看记录 | 已实现，专项测试覆盖；不自动移动已有记忆、事项和 Wiki | `source_routes`、`source_locations`、`source_moves`、`Sources.vue` |
 | 主助手对话创建空间、关联本地 Git 仓库或 Git 链接（clone 到数据目录 repos/）；路径去重、冲突检查、仅本人全空间运行可用 | 已实现；2026-10-15 | `src/core/repositories.ts`、`src/agents/tools.ts`、`roles/assistant.md` |
 | 空间、原件、切分、全文 + 符号 + 可选向量检索；`read_source` 可读普通原件，也可读 `msg:<id>` 聊天消息和 `mem:<id>` 记忆（复核记忆时消息来源不再报“找不到原件”） | 已实现，测试覆盖 | `src/sources`、`src/search`、`src/agents/tools.ts` |
@@ -270,7 +270,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 ### 原件归档的数据路径
 
-自动采集在 `upsertSource(archive=true)` 进入归档路径；手动导入尊重指定空间。`archive_rules` 按 `priority,id` 排序，首条命中即停止；未知元数据不匹配叶子条件。作者、知识库 ID 等字段只有采集端提供时才可匹配；链接导入的子文档记录父页面地址。
+自动采集在 `upsertSource(archive=true)` 进入归档路径；手动导入尊重指定空间。`archive_rules` 按创建顺序排列，编辑不会改变顺序，首条命中即停止；未知元数据不匹配叶子条件。作者等字段只有采集端提供时才可匹配；飞书文档采集会查询并保存知识库 ID、节点及父节点，正文不变时也更新节点信息，查询失败保留上次已验证的值。标题和正文均可匹配；链接导入的子文档记录父页面地址。归档规则页与任务规则页共用左列表、右编辑的布局，加号左侧的整理按钮在右侧打开历史材料预览。
 
 未命中且有可选空间时，原件先存在个人空间，按来源空间合并成至多 40 份材料的归档运行。`archivist` 读空间说明和原件，通过 `classify_source` 写入判断。工具校验角色、本次原件清单、内容 hash、用户与运行空间权限，再检查设置和规则。拿不准时留个人，并记录已判断的内容版本；失败保留材料，在运行中可重试。需要记忆整理的材料按最终空间分组处理。
 

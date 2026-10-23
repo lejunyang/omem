@@ -16,6 +16,7 @@ function fakeCli(docs: Record<string, { title: string; content: string; revision
   setLarkCliForTests(async (args, cwd) => {
     calls.push(args);
     const flag = (name: string) => args[args.indexOf(name) + 1];
+    if (args[0] === "wiki" && args[1] === "+node-get") throw new Error("131014 not mounted in wiki");
     if (args[0] === "docs" && args[1] === "+fetch") {
       const token = flag("--doc").split("/").pop()!;
       if (args.includes("--scope")) return { ok: true, data: { document: { content: `<fragment>同步块正文 ![](${ORIGIN}/file/IMGSYNC)</fragment>`, revision_id: 1 } } };
@@ -117,7 +118,7 @@ describe("feishu docs as originals", () => {
     const second = fakeCli({ Main: { title: "项目 A 方案", content: `![架构图](${ORIGIN}/file/IMG1) <cite doc-id="Linked1" file-type="wiki" title="制度" type="doc"></cite>`, revision: 2 } });
     const again = await importLarkDocument(app, "personal", `${ORIGIN}/docx/Main`);
     expect(again).toMatchObject({ id: r.id, status: "updated", related: [] });
-    expect(second.map((c) => c[1])).toEqual(["+fetch"]);
+    expect(second.map((c) => c[1])).toEqual(["+fetch", "+node-get"]);
   });
 
   it("retries docs without permission and only rewrites the link in the parent", async () => {
@@ -320,6 +321,7 @@ describe("feishu docs as originals", () => {
     setLarkCliForTests(async (args, cwd) => {
       const flag = (n: string) => args[args.indexOf(n) + 1];
       if (args[1] === "+fetch") return { ok: true, data: { document: { revision_id: 1, content: `<title>图多</title>\n${content}` } } };
+      if (args[0] === "wiki" && args[1] === "+node-get") throw new Error("131014 not mounted in wiki");
       running++;
       peak = Math.max(peak, running);
       await new Promise((r) => setTimeout(r, 20));
