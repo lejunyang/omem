@@ -41,10 +41,12 @@ function onKey(e: KeyboardEvent) {
 <template>
   <Teleport to="body">
     <div v-if="d" class="dlg-scrim" @mousedown.self="cancel" @keydown="onKey">
-      <div ref="box" class="dlg" role="alertdialog" aria-modal="true" :aria-labelledby="`dlg-${d.id}`">
-        <h3 :id="`dlg-${d.id}`">{{ d.title }}</h3>
-        <p v-if="d.message" class="msg">{{ d.message }}</p>
-        <input v-if="d.kind === 'prompt'" v-model="d.text" class="input" :placeholder="d.placeholder" />
+      <div ref="box" class="dlg" role="alertdialog" aria-modal="true" :aria-labelledby="`dlg-${d.id}`" :aria-describedby="d.message ? `dlg-msg-${d.id}` : undefined">
+        <div class="content">
+          <h3 :id="`dlg-${d.id}`">{{ d.title }}</h3>
+          <p v-if="d.message" :id="`dlg-msg-${d.id}`" class="msg">{{ d.message }}</p>
+          <input v-if="d.kind === 'prompt'" v-model="d.text" class="input" :placeholder="d.placeholder" />
+        </div>
         <div class="row actions">
           <span class="spacer" />
           <button class="btn" @click="cancel">取消</button>
@@ -69,11 +71,22 @@ function onKey(e: KeyboardEvent) {
 }
 .dlg {
   width: min(440px, 100%);
+  min-width: 0;
+  max-height: 100%;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 14px;
   box-shadow: var(--shadow-lg);
   padding: 18px 20px 16px;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+.content {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
   display: grid;
   gap: 12px;
 }

@@ -67,9 +67,7 @@ async function loadList() {
 type Wake = { id: string; kind: "timed" | "event"; note: string; at: string | null; expiresAt: string | null; setBy: { agent: string }; detail: string };
 const wakes = ref<Wake[]>([]);
 async function cancelWake(w: Wake) {
-  if (!(await confirmDialog(`取消这个唤醒？
-
-${w.note}`, { okText: "取消唤醒", danger: true }))) return;
+  if (!(await confirmDialog("取消这个唤醒？", { message: w.note, okText: "取消唤醒", danger: true }))) return;
   await del(`/api/wakes/${w.id}`);
   wakes.value = wakes.value.filter((x) => x.id !== w.id);
 }
