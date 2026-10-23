@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { del, get, patch, post, put, type Space, type SpaceRelation } from "../api";
+import AiRouting from "../components/AiRouting.vue";
 import Icon from "../components/Icon.vue";
 import CronEditor from "../components/CronEditor.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
@@ -88,25 +89,6 @@ async function pollNow() {
     toast((e as Error).message, "error");
   }
 }
-
-const roles = [
-  ["assistant", "日常助理（问答、记忆、事项）"],
-  ["ingest", "整理新材料"],
-  ["wiki-planner", "规划 Wiki"],
-  ["wiki-writer", "写 Wiki 页面"],
-  ["wiki-linter", "检查受影响页面"],
-  ["heartbeat", "巡检"],
-  ["dreamer", "整理记忆"],
-  ["coder", "编码"],
-  ["reviewer", "评审"],
-  ["tutor", "生成卡片"],
-  ["brief", "简报"],
-  ["curator", "筛选飞书群"],
-  ["summarizer", "会话摘要"],
-  ["memory-reviewer", "复核记忆"],
-  ["gatekeeper", "访客提问把关（选快的小模型）"],
-  ["guest", "回答访客（受限）"],
-];
 
 const guestSpacesText = computed(() => (config.value?.lark.guests?.spaces ?? []).join(", "));
 function saveGuests(patch: Record<string, unknown>, note = "已保存访客设置") {
@@ -259,41 +241,6 @@ const defaultProfile = computed({
   get: () => config.value?.agents.default ?? "",
   set: (v: string) => saveConfig({ agents: { ...config.value.agents, default: v || undefined } }),
 });
-function setRole(role: string, id: string) {
-  const roles = { ...config.value.agents.roles };
-  if (id) roles[role] = id;
-  else delete roles[role];
-  void saveConfig({ agents: { ...config.value.agents, roles } });
-  const p = installedProfiles.value.find((x) => x.id === id);
-  if (p && !probes.value[p.id]) void probe(p, false);
-}
-// Which backend a role actually uses (its own pick, else default, else first installed).
-function roleProfileId(role: string): string {
-  return config.value.agents.roles[role] ?? config.value.agents.default ?? installedProfiles.value[0]?.id ?? "";
-}
-function roleOverride(role: string): { model?: string; effort?: string } {
-  return config.value.agents.roleModels?.[role]?.[roleProfileId(role)] ?? {};
-}
-/** Offered values for a role's backend; keeps a saved value visible even if the agent stopped listing it. */
-function roleChoices(role: string, key: "model" | "effort"): { list: string[]; state: "ok" | "loading" | "none" } {
-  const id = roleProfileId(role);
-  const pr = probes.value[id];
-  const saved = roleOverride(role)[key];
-  if (pr?.loading && !pr.data) return { list: saved ? [saved] : [], state: "loading" };
-  const model = roleOverride(role).model ?? profileDefault(role, "model");
-  const offered = (key === "model" ? pr?.data?.models : effortsOf(id, model)) ?? [];
-  const list = saved && !offered.includes(saved) ? [saved, ...offered] : offered;
-  return { list, state: offered.length ? "ok" : "none" };
-}
-function profileDefault(role: string, key: "model" | "effort") {
-  const p = profiles.value.find((x) => x.id === roleProfileId(role));
-  return (key === "model" ? p?.model : p?.effort) ?? "";
-}
-async function setRoleModel(role: string, key: "model" | "effort", value: string) {
-  await put("/api/agent-role-model", { role, profile: roleProfileId(role), [key]: value.trim() || null });
-  toast(`已保存：${role} 的${key === "model" ? "模型" : "思考强度"}`, "ok");
-  void load();
-}
 const fallbackText = computed({
   get: () => JSON.stringify(config.value?.agents.fallback ?? [], null, 2),
   set: (v: string) => (fallbackDraft.value = v),
@@ -539,31 +486,8 @@ async function saveEdit() {
       <div class="field"><span>默认 Agent</span>
         <UiSelect v-model="defaultProfile" width="320px" aria-label="默认 Agent" :options="[{ value: '', label: '自动（第一个已安装的）' }, ...profileOptions]" />
       </div>
-      <div class="card pad">
-        <div class="section-title">按角色指定</div>
-        <p class="muted small">每类任务可以用不同 Agent，并单独选该 Agent 的模型和思考强度。可选项来自 Agent 自己的检测结果（缓存，在上面点“检测模型”可刷新）；不选则跟随 Agent 默认。</p>
-        <div class="roles">
-          <div v-for="[r, l] in roles" :key="r" class="role-row">
-            <div class="row role"><span class="grow">{{ l }}</span>
-              <UiSelect :model-value="config.agents.roles[r] ?? ''" size="sm" width="200px" :aria-label="`${l} 的 Agent`" :options="[{ value: '', label: '默认' }, ...profileOptions]" @change="(v) => setRole(r, v)" />
-            </div>
-            <div class="row role-model">
-              <template v-for="k in (['model', 'effort'] as const)" :key="k">
-                <UiSelect
-                  v-if="roleChoices(r, k).state !== 'none'"
-                  :model-value="roleOverride(r)[k] ?? ''"
-                  size="sm"
-                  :aria-label="k === 'model' ? '模型' : '思考强度'"
-                  :disabled="roleChoices(r, k).state === 'loading'"
-                  :options="[{ value: '', label: roleChoices(r, k).state === 'loading' ? '检测中…' : `跟随默认${profileDefault(r, k) ? `（${profileDefault(r, k)}）` : ''}` }, ...roleChoices(r, k).list.map((v) => ({ value: v, label: v }))]"
-                  @change="(v) => setRoleModel(r, k, v)"
-                />
-                <input v-else class="input sm" :value="roleOverride(r)[k] ?? ''" :placeholder="k === 'model' ? '模型（Agent 未报出可选项，可手填）' : '思考强度'" @change="setRoleModel(r, k, ($event.target as HTMLInputElement).value)" />
-              </template>
-            </div>
-          </div>
-        </div>
-      </div>
+      <p class="muted small">内置角色和自定义档案的默认 AI 统一在 <RouterLink to="/agents">Agent 档案</RouterLink> 中设置。</p>
+      <AiRouting :value="config.agents.routing" :backends="profiles" @save="(routing) => saveConfig({ agents: { ...config.agents, routing } }, '已保存任务选型')" />
       <div class="card pad stack">
         <div class="section-title">排队与兜底</div>
         <p class="muted small">主后端排队（traex 资源队列）或被限流时，按顺序换下面的后端/模型重试一轮；Agent 档案任务不自动改道。排队时普通空闲计时暂停，最多等设定的分钟数。</p>

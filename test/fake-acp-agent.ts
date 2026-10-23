@@ -61,7 +61,7 @@ new AgentSideConnection(
     async resumeSession(p: { sessionId: string; mcpServers?: McpServer[] }) {
       sessions.set(p.sessionId, p.mcpServers ?? []);
       resumed.add(p.sessionId);
-      return { modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }] } };
+      return { modes: { currentModeId: "default", availableModes: [{ id: "default", name: "default" }] }, ...(trae ? { configOptions: traeOptions(state.model) } : {}) } as never;
     },
     async setSessionMode(p: { modeId: string }) {
       state.mode = p.modeId;

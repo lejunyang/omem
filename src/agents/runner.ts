@@ -8,10 +8,10 @@ import { findSpace, kindLabel, relatedSpaces, spaceDir } from "../core/spaces.ts
 import { all } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { spaceGuide } from "../wiki/store.ts";
+import { executionArgs, validateExecution, type Execution } from "./execution.ts";
 import { resolveRoleProfile } from "./models.ts";
 import { runBackend } from "./dispatch.ts";
-import { doubaoTokenExists } from "./doubao.ts";
-import { commandExists } from "./spawn.ts";
+import { backendAvailable } from "./availability.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
 import { issueToolToken, revokeToolToken } from "./tools.ts";
 import { isAgentRunError, type AgentEvent, type AgentResult, type McpAccess } from "./types.ts";
@@ -70,26 +70,15 @@ export function loadRole(name: string, app?: App): Role {
 
 const commonGuide = () => readFileSync(join(rolesDir(), "_common.md"), "utf8");
 
-const available = new Map<string, boolean>();
-let doubaoHome = "";
-function installed(p: AgentProfile) {
-  // Doubao has no command: it is available once the owner has authorized it (checked each time, it is a file read).
-  if (p.transport === "doubao") return !!doubaoHome && doubaoTokenExists(doubaoHome);
-  if (!available.has(p.command)) available.set(p.command, commandExists(p.command));
-  return available.get(p.command)!;
-}
-
 export function listAgentProfiles(app: App) {
-  doubaoHome = app.home;
   return allProfiles(app.config).map((p) => {
-    if (p.transport === "doubao") return { ...p, installed: installed(p), install: installed(p) ? undefined : "omem doubao login（设备码授权，omem doubao status 查权限）" };
+    if (p.transport === "doubao") return { ...p, installed: backendAvailable(p, app.home), install: backendAvailable(p, app.home) ? undefined : "omem doubao login（设备码授权，omem doubao status 查权限）" };
     const e = catalogEntry(p.id);
-    return { ...p, installed: installed(p), install: e && e.command === p.command ? installHint(e) : undefined };
+    return { ...p, installed: backendAvailable(p, app.home), install: e && e.command === p.command ? installHint(e) : undefined };
   });
 }
 
 export function profileFor(app: App, role: RoleName | string): AgentProfile {
-  doubaoHome = app.home;
   const profiles = allProfiles(app.config);
   const wanted = app.config.agents.roles[role] ?? app.config.agents.default;
   if (wanted) {
@@ -97,7 +86,7 @@ export function profileFor(app: App, role: RoleName | string): AgentProfile {
     if (!p) throw new HttpError(400, `配置的 Agent ${wanted} 不存在`);
     return p;
   }
-  const p = profiles.find(installed);
+  const p = profiles.find((p) => backendAvailable(p, app.home));
   if (!p) throw new HttpError(503, "没有可用的 Agent。请安装任一支持 ACP 的 Agent（codex-acp、claude-agent-acp、gemini、copilot、qwen、opencode、cursor-agent…），运行 omem agents --all 查看安装方式。");
   return p;
 }
@@ -137,6 +126,7 @@ function learnedContext(app: App, spaceId: string, userId: string, spec: string 
 }
 
 export type RoleRunInput = {
+  execution?: Execution;
   role: RoleName;
   spaceId: string;
   /** Spaces this run may touch; defaults to all for the assistant, the space otherwise. */
@@ -192,6 +182,31 @@ export type PreparedRun = {
   recall: { spaces: string[] | null; agent: string | null; userId: string } | null;
 };
 
+/** Resolve defaults and one-run overrides without creating a tool token or session. */
+export function resolveRunProfile(app: App, input: { actor: Actor; profileId?: string; model?: string; effort?: string }): AgentProfile {
+  const spec = "spec" in input.actor ? input.actor.spec : null;
+  const roleName = spec ? "assistant" : (input.actor as { role: RoleName }).role;
+  const role = !spec;
+  const baseProfile = input.profileId
+    ? allProfiles(app.config).find((p) => p.id === input.profileId)
+    : spec?.agent
+      ? allProfiles(app.config).find((p) => p.id === spec.agent)
+      : profileFor(app, roleName);
+  if (!baseProfile) throw new HttpError(400, `Agent ${input.profileId ?? spec?.agent} 不存在`);
+  // Role -> per-profile model/effort overrides apply first; a per-thread override (the
+  // /model command or the Feishu model card) wins. Agent specs still set their own model.
+  const roleProfile = role ? resolveRoleProfile(app, baseProfile, roleName) : baseProfile;
+  // A different backend must not inherit a model belonging to the spec's backend.
+  const specBackend = spec ? (spec.agent || profileFor(app, "assistant").id) : undefined;
+  const defaults = spec && (!input.profileId || input.profileId === specBackend)
+    ? { ...roleProfile, model: spec.model ?? roleProfile.model, effort: spec.effort ?? (spec.model && spec.model !== roleProfile.model ? undefined : roleProfile.effort) }
+    : roleProfile;
+  const profile: AgentProfile = { ...defaults, model: input.model ?? defaults.model, effort: input.effort ?? defaults.effort };
+  // Changing only the model does not carry a model-specific default effort across models.
+  if (input.model && input.model !== defaults.model && input.effort === undefined) profile.effort = undefined;
+  return profile;
+}
+
 /**
  * Resolve backend, working directory, tool token and the standing context for
  * a role or agent spec. The caller owns the token (revoke it when done).
@@ -204,21 +219,7 @@ export function prepareRun(
   const spec = "spec" in input.actor ? input.actor.spec : null;
   const role = spec ? null : loadRole((input.actor as { role: RoleName }).role, app);
   const roleName = role ? (input.actor as { role: RoleName }).role : "assistant";
-  const baseProfile = input.profileId
-    ? allProfiles(app.config).find((p) => p.id === input.profileId)
-    : spec?.agent
-      ? allProfiles(app.config).find((p) => p.id === spec.agent)
-      : profileFor(app, roleName);
-  if (!baseProfile) throw new HttpError(400, `Agent ${input.profileId ?? spec?.agent} 不存在`);
-  // Role -> per-profile model/effort overrides apply first; a per-thread override (the
-  // /model command or the Feishu model card) wins. Agent specs still set their own model.
-  const roleProfile = role ? resolveRoleProfile(app, baseProfile, roleName) : baseProfile;
-  const thread = input.model !== undefined || input.effort !== undefined ? { model: input.model, effort: input.effort } : null;
-  const profile: AgentProfile = spec
-    ? { ...roleProfile, model: spec.model ?? roleProfile.model, effort: spec.effort ?? roleProfile.effort }
-    : thread
-      ? { ...roleProfile, model: thread.model ?? roleProfile.model, effort: thread.effort ?? roleProfile.effort }
-      : roleProfile;
+  const profile = resolveRunProfile(app, input);
   const spaceId = spec?.space && !input.spaceId ? spec.space : input.spaceId;
   const space = findSpace(app, spaceId);
   if (!space) throw new HttpError(404, `空间不存在：${spaceId}`);
@@ -237,7 +238,7 @@ export function prepareRun(
     tools.add("read_skill");
   }
   // Agents (and the main assistant) can ask one another a question; background roles cannot.
-  if (spec || roleName === "assistant") tools.add("ask_agent");
+  if (spec || roleName === "assistant") { tools.add("ask_agent"); tools.add("list_ai_backends"); }
   // …and the owner: a question, or next steps as buttons under the reply. Waiting is for anyone
   // whose tool call is held for approval.
   if (spec || roleName === "assistant") for (const t of ["ask_owner", "suggest_next"]) tools.add(t);
@@ -246,9 +247,9 @@ export function prepareRun(
   // Wake-ups for its own follow-up work (after a while, or on a message in a chat).
   if (spec || roleName === "assistant") for (const t of ["wake_later", "wake_on_message", "cancel_wake"]) tools.add(t);
   if (!guest) tools.add("wait_answer");
-  for (const t of input.denyTools ?? []) tools.delete(t);
   // A thread that may post into specific Feishu chats (watched groups) gets the bot's voice and notify.
   if (input.lark?.chats?.length) for (const t of ["lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "notify"]) tools.add(t);
+  for (const t of input.denyTools ?? []) tools.delete(t);
   const spaces =
     input.spaces !== undefined ? input.spaces : spec ? (spec.spaces.includes("*") ? null : [...new Set([space.id, ...spec.spaces])]) : roleName === "assistant" ? null : [space.id];
   const scoped = scopeFor(app, userId, spaces);
@@ -327,12 +328,18 @@ export function fallbackProfiles(
 }
 
 /** Run a role-defined agent turn with omem tools attached. */
-export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string }> {
+export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string; ai: { profile: string; model?: string; effort?: string } }> {
+  const execution = validateExecution(app, input.execution);
+  input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
   const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark });
-  const chain = input.spec || input.shadow
+  if (execution) {
+    try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }); }
+    catch (e) { revokeToolToken(base.token); throw e; }
+  }
+  const chain = input.spec || input.shadow || execution
     ? [base.profile] // explicit agent specs choose their own backend; no silent rerouting
-    : fallbackProfiles(app, actor, base.profile.id);
+    : [base.profile, ...fallbackProfiles(app, actor, base.profile.id).slice(1)];
   const emit = input.onEvent ?? (() => {});
   let lastError: unknown;
   for (let i = 0; i < chain.length; i++) {
@@ -340,6 +347,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark });
     try {
       const req = {
+        strictSelection: execution ? { model: !!execution.model, effort: !!execution.effort } : undefined,
         cwd: prep.cwd,
         prompt: `${prep.system}\n\n---\n\n# 任务\n\n${input.task}`,
         allowWrites: prep.allowWrites,
@@ -347,14 +355,15 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         signal: input.signal,
         mcp: prep.mcp,
         extraMcp: prep.extraMcp,
-        resumeSessionId: input.resumeSessionId,
+        resumeSessionId: i === 0 ? input.resumeSessionId : undefined,
         persistSession: input.persistSession ?? !!input.resumeSessionId,
         queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
       };
       if (i > 0) emit({ type: "status", text: `默认后端不可用（排队/限流），改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""} 重试` });
-      const result = await runBackend(app, profile, req, emit);
+      emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
+      const result = await runBackend(app, prep.profile, req, emit);
       revokeToolToken(prep.token);
-      return { ...result, profileId: profile.id };
+      return { ...result, profileId: prep.profile.id, ai: { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort } };
     } catch (e) {
       revokeToolToken(prep.token);
       if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !isRetryableAgentError(e) || i === chain.length - 1) throw e;

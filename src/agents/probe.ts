@@ -62,7 +62,7 @@ export async function probeProfile(profile: AgentProfile): Promise<ProbeInfo> {
       agent: r.probe?.agent ?? profile.command,
       models: (modelOpt?.values ?? []).filter((v): v is string => typeof v === "string"),
       efforts,
-      ...(by && union.length ? { effortsByModel: by } : {}),
+      ...(by ? { effortsByModel: by } : {}),
     };
   } catch (e) {
     return { at: new Date().toISOString(), agent: profile.command, models: [], efforts: [], error: (e as Error).message.slice(0, 300) };

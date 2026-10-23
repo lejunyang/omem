@@ -1,7 +1,7 @@
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { symbolRelations } from "../sources/callgraph.ts";
-import { DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
-import { customizeRole, listRoleStates, mergeRole, resetRole, saveRoleOverride } from "../agents/builtin-roles.ts";
+import { deleteSkillFile, listSkillFiles, readSkillFile, saveSkillFile, DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
+import { customizeRole, isBuiltinRole, listRoleStates, mergeRole, resetRole, saveRoleOverride } from "../agents/builtin-roles.ts";
 import { profileDetail } from "../agents/profiles.ts";
 import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -16,7 +16,7 @@ import { z } from "zod";
 import { applyCodeRun, codePatches, codeRepos, discardCodeRun } from "../agents/code.ts";
 import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePages, type PageBrief } from "../agents/jobs.ts";
 import { createMcpServer } from "../agents/mcp-server.ts";
-import { listAgentProfiles, loadRole } from "../agents/runner.ts";
+import { listAgentProfiles, loadRole, profileFor } from "../agents/runner.ts";
 import { cancelRun, countRuns, createRun, getRun, listRuns, runEvents } from "../agents/runs.ts";
 import { callTool, toolContextForToken, toolList, toolSchemas } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
@@ -323,14 +323,28 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/roles", async () => listRoleStates(app));
   // What a profile form offers: backends, omem tools (and which write), the default tool set of a spec.
   server.get("/api/profile-options", async () => ({
-    backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed })),
+    backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort })),
+    globalDefaultBackend: app.config.agents.default || listAgentProfiles(app).find((p) => p.installed)?.id || "",
+    defaultBackend: (() => { try { return profileFor(app, "assistant").id; } catch { return ""; } })(),
     tools: toolList().map((t) => ({ name: t.name, description: t.description.split(/[。\n]/)[0], write: !!t.write })),
     defaultTools: DEFAULT_SPEC_TOOLS,
   }));
   server.get("/api/roles/:name", async (req) => {
     const name = (req.params as { name: string }).name;
     const r = loadRole(name, app);
-    return { name, description: r.description, tools: r.tools, writes: r.writes, modes: r.modes, body: r.body, ...profileDetail(app, name) };
+    return { name, description: r.description, tools: r.tools, writes: r.writes, modes: r.modes, body: r.body, defaults: { agent: app.config.agents.roles[name] ?? "", byBackend: app.config.agents.roleModels[name] ?? {} }, ...profileDetail(app, name) };
+  });
+  server.put("/api/roles/:name/defaults", async (req) => {
+    const name = (req.params as { name: string }).name;
+    if (!isBuiltinRole(name)) throw new HttpError(400, "未知内置角色");
+    const b = q(z.object({ agent: z.string(), profile: z.string().min(1), model: z.string(), effort: z.string() }), req.body);
+    const profiles = listAgentProfiles(app);
+    if (!profiles.some((p) => p.id === b.profile) || (b.agent && !profiles.some((p) => p.id === b.agent))) throw new HttpError(400, "后端不存在");
+    const next = structuredClone(app.config);
+    if (b.agent) next.agents.roles[name] = b.agent; else delete next.agents.roles[name];
+    next.agents.roleModels[name] = { ...next.agents.roleModels[name], [b.profile]: { model: b.model.trim() || undefined, effort: b.effort.trim() || undefined } };
+    saveConfig(next, app.home); Object.assign(app.config, next);
+    return { ok: true };
   });
   server.put("/api/roles/:name", async (req) => saveRoleOverride(app, (req.params as { name: string }).name, q(z.object({ raw: z.string().min(1) }), req.body).raw, "user"));
   server.post("/api/roles/:name/customize", async (req) => ({ raw: customizeRole(app, (req.params as { name: string }).name, "user") }));
@@ -368,6 +382,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { kind, name } = req.params as { kind: "agent" | "skill"; name: string };
     const b = q(z.object({ raw: z.string().min(1) }), req.body);
     return saveRaw(app, kind === "agent" ? "agent" : "skill", name, b.raw);
+  });
+  server.get("/api/skills/:name/files", async (req) => listSkillFiles(app, (req.params as { name: string }).name));
+  server.get("/api/skills/:name/file", async (req) => ({ raw: readSkillFile(app, (req.params as { name: string }).name, q(z.object({ path: z.string() }), req.query).path) }));
+  server.put("/api/skills/:name/file", async (req) => {
+    const b = q(z.object({ path: z.string(), raw: z.string(), create: z.boolean().optional() }), req.body);
+    saveSkillFile(app, (req.params as { name: string }).name, b.path, b.raw, b.create);
+    return { ok: true };
+  });
+  server.delete("/api/skills/:name/file", async (req) => {
+    deleteSkillFile(app, (req.params as { name: string }).name, q(z.object({ path: z.string() }), req.query).path);
+    return { ok: true };
   });
   server.get("/api/skills", async () => listSkills(app, { includeDrafts: true }));
   server.get("/api/skills/:name", async (req) => readSkill(app, (req.params as { name: string }).name));

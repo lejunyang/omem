@@ -53,5 +53,5 @@ export function resolveModelOption(typed: string, offered: string[]): { value: s
 export function resolveRoleProfile(app: { config: { agents: { roleModels?: Record<string, Record<string, { model?: string; effort?: string }>> } } }, profile: AgentProfile, role: string): AgentProfile {
   const override = app.config.agents.roleModels?.[role]?.[profile.id];
   if (!override) return profile;
-  return { ...profile, model: override.model ?? profile.model, effort: override.effort ?? profile.effort };
+  return { ...profile, model: override.model ?? profile.model, effort: override.effort ?? (override.model && override.model !== profile.model ? undefined : profile.effort) };
 }

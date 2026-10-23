@@ -1,3 +1,4 @@
+import { executionSchema, validateExecution } from "./execution.ts";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -20,7 +21,7 @@ import { importText, importUrl, repoFiles, syncDirectorySpace } from "../sources
 import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
 import { listPages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
 import { addRunEvent, createRun, getRun, listRuns, runEvents, setRunOutput } from "./runs.ts";
-import { findAgentSpec, listAgentSpecs, listSkills, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
+import { findAgentSpec, listAgentSpecs, listSkills, readSkillFile, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
 import { setApprovalExecutor } from "./asks.ts";
@@ -527,7 +528,7 @@ def({
     const specs = list.length
       ? list.map((x) => `- ${x.name}${x.status === "draft" ? "（草稿）" : ""}：${x.description}\n  后端 ${x.agent ?? "默认"}${x.model ? `/${x.model}` : ""} · 工具 ${x.tools.length ? x.tools.join(",") : "默认只读"}${x.writes ? " · 可改文件" : ""}${x.skills.length ? ` · 技能 ${x.skills.join(",")}` : ""}${Object.keys(x.mcp).length ? ` · MCP ${Object.keys(x.mcp).join(",")}` : ""}${x.cwd ? ` · 目录 ${x.cwd}` : ""}`).join("\n")
       : "还没有 Agent 档案。";
-    return `${specs}\n\n内置角色（omem 自己调用，不能 run_agent；可以教：remember(agent="角色名")、save_skill(agent="角色名")）：\n${roles}`;
+    return `${specs}\n\n内置角色（assistant 可用 run_agent 临时交办，其他由 omem 调用；可以教：remember(agent="角色名")、save_skill(agent="角色名")）：\n${roles}`;
   },
 });
 
@@ -562,17 +563,47 @@ def({
 });
 
 def({
+  name: "list_ai_backends",
+  description: "列出可用 AI 后端、默认模型、检测到的模型/强度及本人的任务选型偏好。profile 可指定一个后端并检测或刷新。用它核对临时 execution，不改档案默认值。",
+  schema: z.object({ profile: z.string().optional(), refresh: z.boolean().optional() }),
+  handler: async (ctx, a) => {
+    const { listAgentProfiles } = await import("./runner.ts");
+    const { cachedProbe, probeProfile, saveProbe } = await import("./probe.ts");
+    const backends = listAgentProfiles(ctx.app);
+    if (a.profile) {
+      const p = backends.find((p) => p.id === a.profile);
+      if (!p?.installed) throw new HttpError(400, "后端不可用");
+      if (a.refresh || !cachedProbe(ctx.app, p.id)) { const probe = await probeProfile(p); if (!probe.error) saveProbe(ctx.app, p.id, probe); else return JSON.stringify({ profile: p.id, error: probe.error, routing: ctx.app.config.agents.routing }); }
+    }
+    return JSON.stringify({ routing: ctx.app.config.agents.routing, backends: backends.filter((p) => p.installed && (!a.profile || p.id === a.profile)).map((p) => ({ id: p.id, name: p.name, transport: p.transport, model: p.model, effort: p.effort, probe: cachedProbe(ctx.app, p.id) })) });
+  },
+});
+
+/** A temporary assistant task stays inside the caller's permissions and cannot hand on again. */
+function assistantTaskScope(ctx: ToolContext) {
+  return {
+    spaces: ctx.writable ?? ctx.spaces,
+    denyTools: [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "continue_agent_work", "ask_agent", "delegate_code", "continue_code_run"])],
+    userId: ctx.userId,
+    lark: { chats: ctx.larkChats === undefined ? [] : ctx.larkChats, draft: ctx.larkDraft, urgent: ctx.larkPowers?.urgent, private: ctx.larkPowers?.private },
+  };
+}
+
+def({
   name: "run_agent",
   description:
-    "把一件事交给某个 Agent 档案去做（后台运行）。多步/长任务（要调查、产出、可能再交办或需要本人定夺）用 own_topic=true：omem 为这件事单独建一个工作会话（飞书里是一条新话题）。每轮 Agent 交回报告后，你会在那个工作会话里接手：决定继续交办（可以换 Agent）、向本人汇报结论，或请本人决定；你的回复发在话题里，报告折叠在下面。当前会话不会被长输出刷屏。简单一次性的事保持 false，结果直接发回本会话。",
+    "把一件事交给某个 Agent 档案去做（后台运行）。没有专门档案时 name=assistant 使用主助手角色完成这次任务，不新建档案。多步/长任务（要调查、产出、可能再交办或需要本人定夺）用 own_topic=true：omem 为这件事单独建一个工作会话（飞书里是一条新话题）。每轮 Agent 交回报告后，你会在那个工作会话里接手：决定继续交办（可以换 Agent）、向本人汇报结论，或请本人决定；你的回复发在话题里，报告折叠在下面。当前会话不会被长输出刷屏。简单一次性的事保持 false，结果直接发回本会话。",
   schema: z.object({
+    execution: executionSchema.optional(),
     name: z.string(),
     task: z.string().describe("完整的任务说明：背景、目标、交付物、相关会话或原件 id；复杂任务写清怎样算完成、什么情况要请本人介入"),
     space: z.string().optional(),
     own_topic: z.boolean().optional().describe("长任务/多 Agent 协同：单独工作会话（飞书新话题），每轮报告交回给你继续推进"),
   }),
   handler: async (ctx, a) => {
-    const spec = readAgentSpec(ctx.app, a.name);
+    const execution = validateExecution(ctx.app, a.execution);
+    const spec = a.name === "assistant" ? { name: "assistant", status: "active", space: undefined } : readAgentSpec(ctx.app, a.name);
+    const assistantScope = a.name === "assistant" ? assistantTaskScope(ctx) : undefined;
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const conversationId = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
@@ -585,7 +616,7 @@ def({
       const existing = workInConversation(ctx.app, conversationId);
       if (existing) {
         await autoTurnGuard(ctx, existing);
-        const id = queueAgentRound(ctx.app, existing, { agent: spec.name, task: a.task });
+        const id = queueAgentRound(ctx.app, existing, { agent: spec.name, task: a.task, execution, assistantScope });
         return `已在这项工作的话题里安排 ${spec.name} 的下一轮 ${id}；它交回报告后你会在这里接着处理。`;
       }
       const w = startAgentWork(ctx.app, {
@@ -596,6 +627,7 @@ def({
         agent: spec.name,
         task: a.task,
         startMessage: a.task,
+        execution, assistantScope,
       });
       // Open the Feishu topic from the message that triggered this ask (lark only).
       const larkChat = one<{ external_id: string }>(ctx.app.db, "select external_id from conversations where id = ?", conversationId);
@@ -605,7 +637,7 @@ def({
       if (anchor) void import("./agent-work.ts").then(({ openWorkTopic }) => openWorkTopic(ctx.app, w.work, anchor));
       return `已在独立工作会话（飞书话题）把这件事交给 ${spec.name}，运行 ${w.runId}。它每轮交回报告后，你会在那个工作会话里接手推进，结论和需要本人决定的事发在那条话题里；这里回一句“已在话题里交给 ${spec.name}”就够了。`;
     }
-    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, threadId: conversationId }, parentId: ctx.runId });
+    const r = createRun(ctx.app, { kind: "agent", spaceId: a.space ? writeSpace(ctx, a.space) : (spec.space ?? ctx.spaceId), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, execution, assistantScope, threadId: conversationId }, parentId: ctx.runId });
     return `已交给 ${spec.name}，运行 ${r.id}，完成后结果会发回本会话。`;
   },
 });
@@ -617,11 +649,13 @@ def({
     "继续一个已经在独立工作会话（飞书话题）里进行的多 Agent 任务：本人补充了要求，或你看了报告认为还要再推进时用。在原工作会话里排下一轮（同一条话题，同一个 Agent 会接着它上一轮的会话，并能看到这项工作到目前为止的经过）；交回报告后你会再次接手。不要用 run_agent 新开一个。",
   write: true,
   schema: z.object({
+    execution: executionSchema.optional(),
     work_id: z.string().optional().describe("发起那次工作的 ask 运行 id（r…）；不传时取本会话最近一个仍在进行的工作会话"),
     agent: z.string().optional().describe("这一轮用哪个 Agent 档案；不传沿用上一轮的 Agent"),
     task: z.string().describe("这一轮要做什么：本人的新要求或你判断还需要推进的事，写具体"),
   }),
   handler: async (ctx, a) => {
+    const execution = validateExecution(ctx.app, a.execution);
     const { refreshWork, queueAgentRound, MAX_AGENT_WORK_RUNS, workInConversation, forkAgentWorkTo } = await import("./agent-work.ts");
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const conv = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
@@ -630,6 +664,7 @@ def({
     if (!work) throw new HttpError(404, "找不到进行中的多 Agent 工作；复杂任务先用 run_agent own_topic=true 开始");
     const agent = a.agent ?? work.rounds.filter((r) => r.agent !== "digester").at(-1)?.agent;
     if (!agent) throw new HttpError(400, "说不出用哪个 Agent，先用 run_agent 交办");
+    const assistantScope = agent === "assistant" ? assistantTaskScope(ctx) : undefined;
     // The owner continues the work from another conversation (a new Feishu topic): fork it into
     // this conversation so the specialist's report and every later coordination reply land here.
     if (conv && work.workConversationId !== conv) {
@@ -637,14 +672,14 @@ def({
       const here = getThread(ctx.app, conv);
       const otherTopic = !!String(here?.key ?? "").includes("#") && here?.key !== work.larkKey;
       if (otherTopic || work.rootConversationId !== conv) {
-        const f = forkAgentWorkTo(ctx.app, { askRunId: work.askRunId, rootConversationId: conv, spaceId: here.spaceId, title: truncate(a.task.split("\n")[0], 60), agent, task: a.task });
+        const f = forkAgentWorkTo(ctx.app, { askRunId: work.askRunId, rootConversationId: conv, spaceId: here.spaceId, title: truncate(a.task.split("\n")[0], 60), agent, task: a.task, execution, assistantScope });
         return `已把这项工作转到当前话题继续（运行 ${f.runId}）；后续 ${agent} 的报告和协调回复都在这里，不再回到旧话题。旧话题里的经过可以用 read_conversation 读工作会话 ${work.workConversationId}。`;
       }
     }
     await autoTurnGuard(ctx, work);
     let id: string;
     try {
-      id = queueAgentRound(ctx.app, work, { agent, task: a.task });
+      id = queueAgentRound(ctx.app, work, { agent, task: a.task, execution, assistantScope });
     } catch (e) {
       if (!String((e as Error).message).includes("已达上限")) throw e;
       // A cap is only a guard against loops, not a reason to drop the user's request:
@@ -660,15 +695,17 @@ def({
   description:
     "向另一个 Agent 档案请教一个具体问题，并等它回答（同步，通常几分钟）：需要它的专长、它掌握的情况或它的判断时用。它能用自己的工具和技能去查，但不能再请教别人或交办。回答只回到你这里，由你决定怎么用；要它真正接手一件事用 run_agent / continue_agent_work。",
   schema: z.object({
+    execution: executionSchema.optional(),
     name: z.string().describe("档案名（list_agents）"),
     question: z.string().describe("问题本身和它需要的背景：你在做什么、卡在哪、希望它回答到什么程度"),
   }),
   handler: async (ctx, a) => {
+    const execution = validateExecution(ctx.app, a.execution);
     const spec = readAgentSpec(ctx.app, a.name);
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
     if (spec.name === ctx.spec) throw new HttpError(400, "不能请教自己");
     const { consultAgent } = await import("./consult.ts");
-    return consultAgent(ctx.app, { spec, question: a.question, askedBy: ctx.spec ?? "主助手", parentRunId: ctx.runId, spaceId: spec.space ?? ctx.spaceId, userId: ctx.userId });
+    return consultAgent(ctx.app, { spec, execution, question: a.question, askedBy: ctx.spec ?? "主助手", parentRunId: ctx.runId, spaceId: spec.space ?? ctx.spaceId, userId: ctx.userId });
   },
 });
 
@@ -689,8 +726,7 @@ def({
   handler: (ctx, a) => {
     const sk = readSkill(ctx.app, a.name);
     if (a.file) {
-      if (a.file.includes("..")) throw new HttpError(400, "文件名不合法");
-      return readFileSync(join(sk.dir, a.file), "utf8");
+      return readSkillFile(ctx.app, a.name, a.file);
     }
     return `# ${sk.name}${sk.status === "draft" ? "（草稿）" : ""}\n${sk.description}\n\n${sk.body}${sk.files.length ? `\n\n附带文件：${sk.files.join(", ")}` : ""}`;
   },
@@ -2139,6 +2175,8 @@ def({
     "交办编码任务：每个涉及的代码仓库空间各开一个独立 Git worktree，由同一个编码 Agent 一起实现，分别运行检查，再由评审 Agent 审查；应用时所有仓库一起应用。改过的文件在工作区存在期间可检索（交办工作区空间）。返回运行 id，可用 read_run 查看进度。仅在用户明确要求实现/修改代码时使用。",
   write: true,
   schema: z.object({
+    execution: executionSchema.optional().describe("编码 AI 的临时选择"),
+    review_execution: executionSchema.optional().describe("独立评审 AI 的临时选择"),
     repo_spaces: z.array(z.string()).min(1).describe("要改的代码仓库空间 id；一个需求要同时改几个仓库（如前端和接口）就都写上"),
     task: z.string().describe("完整的任务描述：目标、背景、验收标准、相关讨论；多个仓库时写清各自要改什么、接口怎么对上"),
     check_command: z.string().optional().describe("验证命令，如 npm test；对所有仓库生效，除非 check_commands 单独指定"),
@@ -2146,6 +2184,8 @@ def({
     space: z.string().optional().describe("任务所属的空间（如项目空间），默认第一个仓库"),
   }),
   handler: async (ctx, a) => {
+    const execution = validateExecution(ctx.app, a.execution);
+    const reviewExecution = validateExecution(ctx.app, a.review_execution);
     const ids = [...new Set(a.repo_spaces.map((r) => writeSpace(ctx, r)))];
     const home = a.space ? space(ctx, a.space) : ids[0];
     const { codeRepos } = await import("./code.ts");
@@ -2154,7 +2194,7 @@ def({
       kind: "code",
       spaceId: home,
       title: truncate(a.task.split("\n")[0], 80),
-      input: { task: a.task, checkCommand: a.check_command, repos: ids, checks: a.check_commands },
+      input: { task: a.task, execution, reviewExecution, checkCommand: a.check_command, repos: ids, checks: a.check_commands },
       parentId: ctx.runId,
     });
     // Seed the chain so later rounds (and the Feishu progress topic) find the original ask.
@@ -2170,10 +2210,14 @@ def({
     "继续一个交办编码任务的下一轮：评审要求修改或本人看了结果要求调整时用。复用同一次交办的工作区和编码 Agent 会话，不要重新 delegate_code。传入交办的任一 code 运行 id（或最初的 ask 运行 id）和本轮要做的事。",
   write: true,
   schema: z.object({
+    execution: executionSchema.optional().describe("编码 AI 的临时选择"),
+    review_execution: executionSchema.optional().describe("独立评审 AI 的临时选择"),
     run_id: z.string().describe("本次交办的任一运行 id（r…），或最初发起交办的 ask 运行 id"),
     task: z.string().describe("这一轮要做什么：评审意见或本人的新要求，写具体"),
   }),
   handler: async (ctx, a) => {
+    const execution = validateExecution(ctx.app, a.execution);
+    const reviewExecution = validateExecution(ctx.app, a.review_execution);
     const { codeChainFor, codeChainRounds, queueNextCodeRound } = await import("./code-chain.ts");
     const seed = getRun(ctx.app, a.run_id);
     let askId = a.run_id;
@@ -2186,7 +2230,7 @@ def({
     for (const id of [last.spaceId!, ...((last.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
     if (findThread(ctx.app, chain.conversationId)?.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能继续本人发起的编码交办");
     const sessionId = (last.output as { coderSessionId?: string }).coderSessionId;
-    const next = queueNextCodeRound(ctx.app, chain, a.task, { resumeSessionId: sessionId, manual: true });
+    const next = queueNextCodeRound(ctx.app, chain, a.task, { resumeSessionId: execution ? undefined : sessionId, manual: true, execution, reviewExecution });
     if (!next) throw new HttpError(409, "原交办记录不完整，无法继续；请查看 read_run");
     return `已在原交办会话安排第 ${next.chain.round} 轮 ${next.run.id}：同样的工作区和编码会话，完成后自动检查、评审并通知。`;
   },

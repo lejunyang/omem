@@ -1,3 +1,4 @@
+import type { Execution } from "./execution.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, newId, now } from "../core/util.ts";
@@ -78,7 +79,7 @@ export function queueNextCodeRound(
   app: App,
   chain: CodeChain,
   task: string,
-  opts: { resumeSessionId?: string; manual?: boolean } = {},
+  opts: { resumeSessionId?: string; manual?: boolean; execution?: Execution; reviewExecution?: Execution } = {},
 ): { run: Run; chain: CodeChain } | null {
   // Round 1 + automatic continuations up to maxCodeRounds; further rounds need continue_code_run.
   // Reload under a write lock: stale callers and separate MCP processes cannot queue duplicates.
@@ -96,7 +97,7 @@ export function queueNextCodeRound(
     if (!opts.manual && current.status !== "running" && current.status !== "done") return null;
     const last = one<{ space_id: string | null; input: string }>(app.db, "select space_id, input from runs where id = ?", chain.lastCodeRunId!);
     if (!last) return null;
-    const input = JSON.parse(last.input) as { task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string> };
+    const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string> };
     const next: CodeChain = { ...chain, round: chain.round + 1, awaitingUser: false, waitReason: undefined, rounds: [...chain.rounds] };
     const r = createRun(app, {
       kind: "code",
@@ -104,11 +105,13 @@ export function queueNextCodeRound(
       title: `交办第 ${next.round} 轮：${task.split("\n")[0].slice(0, 60)}`,
       input: {
         task,
+        execution: opts.execution ?? input.execution,
+        reviewExecution: opts.reviewExecution ?? input.reviewExecution,
         checkCommand: input.checkCommand,
         repos: input.repos,
         checks: input.checks,
         continueFrom: chain.rounds[0],
-        resumeSessionId: opts.resumeSessionId,
+        resumeSessionId: opts.execution && ["profile", "model", "effort"].some((key) => opts.execution?.[key as keyof Execution] !== input.execution?.[key as keyof Execution]) ? undefined : opts.resumeSessionId,
         round: next.round,
       },
       parentId: chain.askRunId,

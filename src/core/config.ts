@@ -104,9 +104,14 @@ export const configSchema = z.object({
        * delegation runs before the reviewer's requests wait for the owner.
        */
       autoAdvance: z.object({ turns: z.number().int().min(0).max(50).default(6), codeRounds: z.number().int().min(1).max(20).default(3) }).default({ turns: 6, codeRounds: 3 }),
+      routing: z.object({
+        automatic: z.boolean().default(true),
+        guidance: z.string().max(8000).default(""),
+        candidates: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional(), when: z.string().min(1).max(2000) })).max(50).default([]),
+      }).default(() => ({ automatic: true, guidance: "", candidates: [] })),
       profiles: z.array(agentProfileSchema).default([]),
     })
-    .default({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3 }, profiles: [] }),
+    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3 }, routing: { automatic: true, guidance: "", candidates: [] }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.

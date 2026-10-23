@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import YAML from "yaml";
 import { z } from "zod";
@@ -166,7 +166,7 @@ export function findSkill(app: App, name: string) {
 
 export function readSkill(app: App, name: string): Skill {
   const dir = join(skillsDir(app), checkName(name));
-  const file = join(dir, "SKILL.md");
+  const file = skillPath(app, name, "SKILL.md");
   if (!existsSync(file)) throw new HttpError(404, `没有名为 ${name} 的技能`);
   const { meta, body } = splitFrontmatter(readFileSync(file, "utf8"));
   return {
@@ -175,8 +175,74 @@ export function readSkill(app: App, name: string): Skill {
     status: meta.status === "draft" ? "draft" : "active",
     body,
     dir,
-    files: readdirSync(dir).filter((f) => f !== "SKILL.md"),
+    files: listSkillFiles(app, name).filter((f) => f.type === "file" && f.path !== "SKILL.md").map((f) => f.path),
   };
+}
+
+/** Paths are relative to one skill; never follow links out of the library. */
+function skillPath(app: App, name: string, path: string) {
+  checkName(name);
+  if (!path || path.length > 1000 || /[\\:\x00-\x1f]/.test(path) || path.split("/").some((p) => !p || p === "." || p === ".." || p === ".git"))
+    throw new HttpError(400, "文件路径必须是技能内的相对路径");
+  let file = app.libraryDir;
+  for (const part of ["_skills", name, ...path.split("/")]) {
+    file = join(file, part);
+    try { if (lstatSync(file).isSymbolicLink()) throw new HttpError(400, "不支持编辑符号链接"); }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
+  }
+  return file;
+}
+
+export function listSkillFiles(app: App, name: string): { path: string; type: "file" | "directory" }[] {
+  const root = skillPath(app, name, "SKILL.md");
+  if (!existsSync(root)) throw new HttpError(404, "技能不存在");
+  const result: { path: string; type: "file" | "directory" }[] = [];
+  function walk(rel: string) {
+    const dir = join(skillsDir(app), name, rel);
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => Number(b.name === "SKILL.md") - Number(a.name === "SKILL.md") || Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))) {
+      if (entry.isSymbolicLink() || entry.name === ".git") continue;
+      const path = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) { result.push({ path, type: "directory" }); walk(path); }
+      else if (entry.isFile()) result.push({ path, type: "file" });
+    }
+  }
+  walk("");
+  return result;
+}
+
+const MAX_SKILL_FILE = 2 * 1024 * 1024;
+export function readSkillFile(app: App, name: string, path: string) {
+  const file = skillPath(app, name, path);
+  if (!existsSync(file)) throw new HttpError(404, "文件不存在");
+  const st = statSync(file);
+  if (!st.isFile() || st.size > MAX_SKILL_FILE) throw new HttpError(400, "只支持编辑不超过 2 MB 的文本文件");
+  const data = readFileSync(file);
+  let raw: string;
+  try { raw = new TextDecoder("utf-8", { fatal: true }).decode(data); }
+  catch { throw new HttpError(400, "只支持 UTF-8 文本文件"); }
+  if (raw.includes("\0")) throw new HttpError(400, "二进制文件不能在文本编辑器中打开");
+  return raw;
+}
+
+export function saveSkillFile(app: App, name: string, path: string, raw: string, create = false) {
+  const file = skillPath(app, name, path);
+  if (Buffer.byteLength(raw) > MAX_SKILL_FILE || raw.includes("\0")) throw new HttpError(400, "只支持不超过 2 MB 的文本");
+  if (create && existsSync(file)) throw new HttpError(409, "文件已存在");
+  if (!create && !existsSync(file)) throw new HttpError(404, "文件不存在");
+  if (existsSync(file)) readSkillFile(app, name, path);
+  if (path === "SKILL.md") return saveRaw(app, "skill", name, raw);
+  readSkill(app, name);
+  mkdirSync(join(file, ".."), { recursive: true });
+  writeFileSync(file, raw);
+  commitLibrary(app.libraryDir, `user: edit skill ${name}/${path}`);
+}
+
+export function deleteSkillFile(app: App, name: string, path: string) {
+  const file = skillPath(app, name, path);
+  if (path === "SKILL.md") throw new HttpError(400, "SKILL.md 是技能入口，不能单独删除");
+  readSkillFile(app, name, path);
+  rmSync(file);
+  commitLibrary(app.libraryDir, `user: delete skill ${name}/${path}`);
 }
 
 export function saveSkill(app: App, input: { name: string; description: string; body: string; status?: "active" | "draft"; files?: Record<string, string> }, actor: "user" | "agent" = "agent") {
@@ -185,6 +251,8 @@ export function saveSkill(app: App, input: { name: string; description: string; 
   if (!input.body.trim()) throw new HttpError(400, "技能正文不能为空");
   const prev = findSkill(app, input.name);
   const dir = join(skillsDir(app), input.name);
+  skillPath(app, input.name, "SKILL.md");
+  for (const rel of Object.keys(input.files ?? {})) { skillPath(app, input.name, rel); if (rel === "SKILL.md") throw new HttpError(400, "附属文件不能覆盖 SKILL.md"); }
   mkdirSync(dir, { recursive: true });
   const meta: Record<string, unknown> = { name: input.name, description: input.description.trim() };
   if (input.status === "draft") meta.status = "draft";
@@ -205,6 +273,7 @@ export function setSkillStatus(app: App, name: string, status: "active" | "draft
 
 export function deleteSkill(app: App, name: string, actor: "user" | "agent" = "user") {
   const dir = join(skillsDir(app), checkName(name));
+  skillPath(app, name, "SKILL.md");
   if (!existsSync(dir)) throw new HttpError(404, `没有名为 ${name} 的技能`);
   rmSync(dir, { recursive: true, force: true });
   commitLibrary(app.libraryDir, `${actor}: delete skill ${name}`);
@@ -228,7 +297,7 @@ export function agentIndex(app: App) {
 // ---- raw files (web editor) ---------------------------------------------------
 
 export function readRaw(app: App, kind: "agent" | "skill", name: string) {
-  const file = kind === "agent" ? join(agentsDir(app), `${checkName(name)}.md`) : join(skillsDir(app), checkName(name), "SKILL.md");
+  const file = kind === "agent" ? join(agentsDir(app), `${checkName(name)}.md`) : skillPath(app, name, "SKILL.md");
   if (!existsSync(file)) throw new HttpError(404, `不存在：${name}`);
   return readFileSync(file, "utf8");
 }
@@ -236,7 +305,7 @@ export function readRaw(app: App, kind: "agent" | "skill", name: string) {
 /** Save an edited file after checking it parses; invalid content is rejected, not written. */
 export function saveRaw(app: App, kind: "agent" | "skill", name: string, raw: string) {
   if (kind === "agent") checkSpecName(name);
-  else checkName(name);
+  else skillPath(app, name, "SKILL.md");
   const { meta, body } = splitFrontmatter(raw);
   if (kind === "agent") {
     agentSpecSchema.parse({ ...meta, name });

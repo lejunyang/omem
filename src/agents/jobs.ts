@@ -1,3 +1,4 @@
+import { executionArgs, type Execution } from "./execution.ts";
 import type { App } from "../core/app.ts";
 import type { RoleName } from "../core/config.ts";
 import { all, one, run } from "../core/db.ts";
@@ -11,7 +12,7 @@ import { appendToSource, getSource, sourceText } from "../sources/store.ts";
 import { listPages, pageExists, syncWiki } from "../wiki/store.ts";
 import { runCodeTask } from "./code.ts";
 import { deliverToThread, receive } from "./inbox.ts";
-import { runRole } from "./runner.ts";
+import { resolveRunProfile, runRole } from "./runner.ts";
 import { replyOf } from "./types.ts";
 import { maybeSummarize, threadTurn } from "./sessions.ts";
 import { readAgentSpec } from "./specs.ts";
@@ -137,7 +138,9 @@ export async function deliverCoordination(ctx: RunContext, coordinate: { workId:
 
 // Delegation to an agent spec ("/as name task", run_agent): answer goes back to the thread it came from.
 registerHandler("agent", async (ctx) => {
-  const { spec: name, task, threadId, agentWorkId, consultOf, rule, lark, silent, replyAt, resumeSessionId: resumeRule } = ctx.run.input as {
+  const { spec: name, task, threadId, agentWorkId, consultOf, rule, lark, silent, replyAt, resumeSessionId: resumeRule, execution, assistantScope } = ctx.run.input as {
+    execution?: Execution;
+    assistantScope?: import("./agent-work.ts").AssistantScope;
     spec: string;
     task: string;
     threadId?: string;
@@ -156,7 +159,8 @@ registerHandler("agent", async (ctx) => {
   // A consultation runs inside the asking tool call (consult.ts); one picked up here was cut off by a
   // restart, and the asker is gone.
   if (consultOf !== undefined) throw new Error("请教在服务重启时中断，提问的一方已经结束");
-  const spec = readAgentSpec(ctx.app, name);
+  const spec = name === "assistant" ? undefined : readAgentSpec(ctx.app, name);
+  if (!spec && !assistantScope) throw new Error("临时助手任务缺少调用者权限范围");
   // A round of multi-agent work: the agent continues its own session from its last round in this
   // work, and is told what happened in the work since (the owner's words, other agents' reports).
   let resumeSessionId: string | undefined = resumeRule;
@@ -165,8 +169,12 @@ registerHandler("agent", async (ctx) => {
     const { refreshWork, workContext } = await import("./agent-work.ts");
     const work = refreshWork(ctx.app, agentWorkId);
     if (work) {
-      const prev = [...work.rounds].reverse().find((x) => x.agent === spec.name && x.runId !== ctx.run.id && x.status === "done");
-      resumeSessionId = prev ? ((getRun(ctx.app, prev.runId).output as { sessionId?: string }).sessionId ?? undefined) : undefined;
+      const prev = [...work.rounds].reverse().find((x) => x.agent === name && x.runId !== ctx.run.id && x.status === "done");
+      const previous = prev ? getRun(ctx.app, prev.runId) : undefined;
+      const expected = resolveRunProfile(ctx.app, { actor: spec ? { spec } : { role: "assistant" }, ...executionArgs(execution) });
+      const ai = { profile: expected.id, model: expected.model, effort: expected.effort };
+      const compatible = previous?.output.ai ? JSON.stringify(previous.output.ai) === JSON.stringify(ai) : previous?.profileId === expected.id && !previous.input.execution && !execution;
+      resumeSessionId = compatible && JSON.stringify(previous?.input.assistantScope) === JSON.stringify(assistantScope) ? previous?.output.sessionId as string | undefined : undefined;
       const context = workContext(ctx.app, work, ctx.run.id);
       if (context) fullTask = `${context}\n\n---\n\n# 这一轮的任务\n\n${task}`;
     }
@@ -175,6 +183,10 @@ registerHandler("agent", async (ctx) => {
     runRole(ctx.app, {
       role: "assistant",
       spec,
+      execution,
+      spaces: assistantScope?.spaces,
+      denyTools: assistantScope?.denyTools,
+      userId: assistantScope?.userId ?? one<{ user_id: string | null }>(ctx.app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? undefined,
       spaceId: ctx.run.spaceId ?? spec?.space ?? "personal",
       task: fullTask,
       runId: ctx.run.id,
@@ -182,7 +194,7 @@ registerHandler("agent", async (ctx) => {
       onEvent: (e) => ctx.event(e.type, e),
       resumeSessionId: resume,
       persistSession: !!agentWorkId || !!silent,
-      lark,
+      lark: assistantScope?.lark ?? lark,
     });
   let r;
   try {
@@ -196,20 +208,20 @@ registerHandler("agent", async (ctx) => {
   // The report proper: what the agent wrote after its last tool call (its narration on the way is
   // in the run's events). Work rounds go to the main assistant, which writes the reply (agent-work.ts).
   const answer = replyOf(r).trim() || "（没有输出）";
-  if ((ctx.run.input as { wake?: boolean }).wake && isQuiet(answer)) return { answer, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
+  if ((ctx.run.input as { wake?: boolean }).wake && isQuiet(answer)) return { answer, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
   if (silent) {
     // Whatever it had to say it already posted (or told the owner); the text stays in the run.
   } else if (rule) {
     // A rule's agent answers in the chat only when the rule says so; otherwise the owner gets it.
-    if (threadId) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: spec.name, rule: rule.id });
+    if (threadId) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: name, rule: rule.id });
     else if (replyAt) {
       const { sendLark } = await import("../channels/lark-send.ts");
       const { resolveCitations } = await import("../channels/common.ts");
       await sendLark({ replyTo: replyAt.messageId, inThread: true }, { markdown: resolveCitations(ctx.app, answer) });
     }
-    else notify(ctx.app, { title: `${spec.name}（规则「${rule.name}」）`, body: truncate(answer, 3000), link: `#/runs/${ctx.run.id}` });
-  } else if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${spec.name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: spec.name });
-  return { answer, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
+    else notify(ctx.app, { title: `${name}（规则「${rule.name}」）`, body: truncate(answer, 3000), link: `#/runs/${ctx.run.id}` });
+  } else if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: name });
+  return { answer, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
 });
 
 registerHandler("thread-summary", async (ctx) => {

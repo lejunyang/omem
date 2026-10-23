@@ -2,6 +2,8 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { del, get, post, put } from "../api";
+import AiDefaults from "../components/AiDefaults.vue";
+import VirtualList from "../components/VirtualList.vue";
 import ChipPicker from "../components/ChipPicker.vue";
 import Icon from "../components/Icon.vue";
 import Markdown from "../components/Markdown.vue";
@@ -10,7 +12,7 @@ import Skeleton from "../components/Skeleton.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSelect from "../components/UiSelect.vue";
 import { compactDiff, diffLines } from "../lib/diff";
-import { confirmDialog } from "../lib/dialog";
+import { confirmDialog, promptDialog } from "../lib/dialog";
 import { state, toast } from "../store";
 
 /**
@@ -21,9 +23,9 @@ import { state, toast } from "../store";
 type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; skills: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string };
 type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean };
 type Skill = { name: string; description: string; status: "active" | "draft"; files: string[] };
-type Options = { backends: { id: string; name: string; installed: boolean }[]; tools: { name: string; description: string; write: boolean }[]; defaultTools: string[] };
+type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean }[]; defaultTools: string[] };
 type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
-type RoleDetail = { name: string; description: string; tools: string[]; writes: boolean; body: string } & ProfileDetail & { role: RoleState & { source: string; own: string | null } };
+type RoleDetail = { defaults: { agent: string; byBackend: Record<string, { model?: string; effort?: string }> }; name: string; description: string; tools: string[]; writes: boolean; body: string } & ProfileDetail & { role: RoleState & { source: string; own: string | null } };
 
 const route = useRoute();
 const router = useRouter();
@@ -36,7 +38,7 @@ const creating = computed(() => route.query.new === "1");
 const specs = ref<Spec[]>([]);
 const roles = ref<RoleState[]>([]);
 const skills = ref<Skill[]>([]);
-const options = ref<Options>({ backends: [], tools: [], defaultTools: [] });
+const options = ref<Options>({ backends: [], defaultBackend: "", globalDefaultBackend: "", tools: [], defaultTools: [] });
 const loading = ref(true);
 async function loadLists() {
   try {
@@ -133,8 +135,6 @@ function toggleRaw() {
   rawMode.value = !rawMode.value;
 }
 
-const backendOptions = computed(() => [{ value: "", label: "默认（跟随助理）" }, ...options.value.backends.map((b) => ({ value: b.id, label: b.name, hint: b.installed ? "" : "未安装" }))]);
-const effortOptions = [{ value: "", label: "默认" }, { value: "low", label: "low" }, { value: "medium", label: "medium" }, { value: "high", label: "high" }];
 const spaceOptions = computed(() => [{ value: "", label: "交办时所在的空间" }, ...state.spaces.map((s) => ({ value: s.id, label: s.name, hint: s.id }))]);
 const readableOptions = computed(() => [{ value: "*", label: "全部空间" }, ...state.spaces.map((s) => ({ value: s.id, label: s.name, hint: s.id }))]);
 const toolOptions = computed(() => options.value.tools.map((t) => ({ value: t.name, hint: `${t.write ? "（写）" : ""}${t.description}` })));
@@ -147,6 +147,26 @@ const mcpNames = computed(() => Object.keys(form.value.mcp ?? {}));
 // ---- built-in role ----------------------------------------------------------------
 const roleDetail = ref<RoleDetail | null>(null);
 const roleText = ref("");
+const roleAi = ref({ agent: "", model: "", effort: "" });
+const roleAiDirty = ref(false);
+function updateRoleAi(v: { agent?: string; model?: string; effort?: string }) {
+  if (v.agent !== roleAi.value.agent) {
+    const saved = roleDetail.value?.defaults.byBackend[v.agent || options.value.globalDefaultBackend];
+    roleAi.value = { agent: v.agent ?? "", model: saved?.model ?? "", effort: saved?.effort ?? "" };
+  } else roleAi.value = { agent: v.agent ?? "", model: v.model ?? "", effort: v.effort ?? "" };
+  roleAiDirty.value = true; dirty.value = true;
+}
+async function saveRoleAi() {
+  saving.value = true;
+  try {
+    await put(`/api/roles/${encodeURIComponent(roleName.value!)}/defaults`, { ...roleAi.value, profile: roleAi.value.agent || options.value.globalDefaultBackend });
+    roleAiDirty.value = false;
+    dirty.value = roleText.value !== (roleDetail.value?.role.own ?? roleDetail.value?.role.source);
+    if (roleDetail.value) roleDetail.value.defaults = { agent: roleAi.value.agent, byBackend: { ...roleDetail.value.defaults.byBackend, [roleAi.value.agent || options.value.globalDefaultBackend]: { model: roleAi.value.model, effort: roleAi.value.effort } } };
+    toast("默认 AI 已保存", "ok");
+  } catch (e) { toast((e as Error).message, "error"); }
+  finally { saving.value = false; }
+}
 const showSource = ref(false);
 async function loadRole(quiet = false) {
   if (!quiet) roleDetail.value = null;
@@ -154,6 +174,10 @@ async function loadRole(quiet = false) {
   detailLoading.value = !quiet;
   try {
     roleDetail.value = await get<RoleDetail>(`/api/roles/${encodeURIComponent(roleName.value)}`);
+    const ai = roleDetail.value.defaults;
+    const saved = ai.byBackend[ai.agent || options.value.globalDefaultBackend];
+    roleAi.value = { agent: ai.agent, model: saved?.model ?? "", effort: saved?.effort ?? "" };
+    roleAiDirty.value = false;
     roleText.value = roleDetail.value.role.own ?? roleDetail.value.role.source;
     dirty.value = false;
     showSource.value = false;
@@ -178,6 +202,7 @@ async function roleAction(action: "customize" | "reset" | "merge") {
 async function saveRole() {
   saving.value = true;
   try {
+    if (roleAiDirty.value) { await saveRoleAi(); if (roleAiDirty.value) return; }
     await put(`/api/roles/${encodeURIComponent(roleName.value!)}`, { raw: roleText.value });
     toast("已保存（之后的运行使用这个版本）", "ok");
     await Promise.all([loadLists(), loadRole()]);
@@ -192,13 +217,53 @@ const roleCustomized = computed(() => !!roleDetail.value?.role.customized);
 
 // ---- skills ---------------------------------------------------------------------
 const skillRaw = ref("");
+const skillPath = ref("SKILL.md");
+const skillFiles = ref<{ path: string; type: "file" | "directory" }[]>([]);
+const collapsed = ref(new Set<string>());
+const fileError = ref("");
+const fileLoading = ref(false);
+let fileRequest = 0;
+const visibleFiles = computed(() => skillFiles.value.filter((f) => ![...collapsed.value].some((p) => f.path.startsWith(p + "/"))));
+async function openSkillFile(path: string) {
+  if (dirty.value && !(await confirmDialog("有未保存的修改，放弃吗？", { okText: "放弃修改", danger: true }))) return;
+  const request = ++fileRequest;
+  skillPath.value = path; skillRaw.value = ""; dirty.value = false; fileError.value = ""; fileLoading.value = true;
+  try {
+    const result = await get<{ raw: string }>(`/api/skills/${encodeURIComponent(skillName.value!)}/file?path=${encodeURIComponent(path)}`);
+    if (request === fileRequest) skillRaw.value = result.raw;
+  } catch (e) { if (request === fileRequest) fileError.value = (e as Error).message; }
+  finally { if (request === fileRequest) fileLoading.value = false; }
+}
+function pickSkillFile(f: { path: string; type: string }) {
+  if (f.type === "directory") { if (collapsed.value.has(f.path)) collapsed.value.delete(f.path); else collapsed.value.add(f.path); }
+  else void openSkillFile(f.path);
+}
+async function newSkillFile() {
+  const path = await promptDialog("新建技能文件", { message: "填写相对路径，如 references/checklist.md；目录会自动创建。", placeholder: "references/checklist.md" });
+  if (!path) return;
+  if (dirty.value && !(await confirmDialog("有未保存的修改，放弃吗？", { okText: "放弃修改", danger: true }))) return;
+  try {
+    await put(`/api/skills/${encodeURIComponent(skillName.value!)}/file`, { path, raw: "", create: true });
+    skillFiles.value = await get(`/api/skills/${encodeURIComponent(skillName.value!)}/files`);
+    dirty.value = false; await openSkillFile(path); await loadLists();
+  } catch (e) { toast((e as Error).message, "error"); }
+}
+async function removeSkillFile() {
+  if (!(await confirmDialog("删除这个文件？", { message: skillPath.value, danger: true, okText: "删除" }))) return;
+  try {
+    await del(`/api/skills/${encodeURIComponent(skillName.value!)}/file?path=${encodeURIComponent(skillPath.value)}`);
+    dirty.value = false; await loadSkill(); await loadLists();
+  } catch (e) { toast((e as Error).message, "error"); }
+}
 const newSkill = ref({ name: "", description: "", body: "## 什么时候用\n\n……\n\n## 步骤\n\n1. ……\n\n## 检查\n\n- ……" });
 async function loadSkill() {
   skillRaw.value = "";
   if (!skillName.value) return;
   detailLoading.value = true;
   try {
-    skillRaw.value = (await get<{ raw: string }>(`/api/library-files/skill/${encodeURIComponent(skillName.value)}`)).raw;
+    skillFiles.value = await get(`/api/skills/${encodeURIComponent(skillName.value)}/files`);
+    dirty.value = false; collapsed.value.clear();
+    await openSkillFile("SKILL.md");
     dirty.value = false;
   } finally {
     detailLoading.value = false;
@@ -217,7 +282,7 @@ async function saveSkill() {
       await loadLists();
       await router.replace({ query: { tab: "skills", name: s.name } });
     } else {
-      await put(`/api/library-files/skill/${encodeURIComponent(skillName.value!)}`, { raw: skillRaw.value });
+      await put(`/api/skills/${encodeURIComponent(skillName.value!)}/file`, { path: skillPath.value, raw: skillRaw.value });
       dirty.value = false;
       await loadLists();
     }
@@ -230,6 +295,7 @@ async function saveSkill() {
 }
 const currentSkill = computed(() => skills.value.find((s) => s.name === skillName.value));
 async function approveSkill() {
+  if (skillPath.value !== "SKILL.md") { await openSkillFile("SKILL.md"); if (skillPath.value !== "SKILL.md") return; }
   skillRaw.value = skillRaw.value.replace(/^status:\s*draft\s*\n/m, "");
   await saveSkill();
 }
@@ -344,19 +410,8 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
             <span>用途</span>
             <textarea v-model="form.description" class="input" rows="2" placeholder="做什么、什么时候交给它（助理按这句挑人）" @input="dirty = true" />
           </label>
+          <AiDefaults :model-value="form" :backends="options.backends" :default-backend="options.defaultBackend" @update:model-value="(v) => Object.assign(form, v)" @change="dirty = true" />
           <div class="grid">
-            <div class="field">
-              <span>后端</span>
-              <UiSelect :model-value="form.agent ?? ''" :options="backendOptions" aria-label="后端" @change="(v) => ((form.agent = v || undefined), (dirty = true))" />
-            </div>
-            <label class="field">
-              <span>模型</span>
-              <input v-model="form.model" class="input mono" placeholder="默认" @input="dirty = true" />
-            </label>
-            <div class="field">
-              <span>思考强度</span>
-              <UiSelect :model-value="form.effort ?? ''" :options="effortOptions" aria-label="思考强度" @change="(v) => ((form.effort = v || undefined), (dirty = true))" />
-            </div>
             <div class="field">
               <span>空间</span>
               <UiSelect :model-value="form.space ?? ''" :options="spaceOptions" aria-label="空间" @change="(v) => ((form.space = v || undefined), (dirty = true))" />
@@ -415,6 +470,11 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
             <button class="btn sm primary" :disabled="saving || !dirty" @click="saveRole">保存</button>
           </template>
         </header>
+        <div class="card pad role-ai">
+          <div class="row wrap"><strong>默认 AI</strong><span class="spacer" /><button class="btn sm primary" :disabled="saving || !roleAiDirty" @click="saveRoleAi">保存默认 AI</button></div>
+          <p class="muted small">用于这个角色之后的运行；任务中的临时选择优先，不修改这里。</p>
+          <AiDefaults :model-value="roleAi" :backends="options.backends" :default-backend="options.globalDefaultBackend" @update:model-value="updateRoleAi" />
+        </div>
         <p class="muted small meta">{{ roleDetail.description }} · 工具 {{ roleDetail.tools.length ? roleDetail.tools.join(", ") : "无" }}<span v-if="roleDetail.writes"> · 可改文件</span></p>
         <p v-if="!roleCustomized" class="muted small">这是 omem 源码里的版本。自定义会把它复制到知识库（<code>_roles/{{ roleName }}.md</code>），之后的运行用你的版本；omem 更新了这个角色时这里会提示，可以合并或恢复。</p>
         <div v-if="!roleCustomized" class="card pad doc"><Markdown :source="roleDetail.body" /></div>
@@ -448,13 +508,38 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           <button class="btn sm primary" :disabled="saving || !dirty" @click="saveSkill">保存</button>
           <button v-if="currentSkill" class="btn ghost sm icon danger" title="删除" @click="removeSkill"><Icon name="trash" :size="14" /></button>
         </header>
-        <textarea v-model="skillRaw" class="editor mono raw" spellcheck="false" aria-label="技能原文" @input="dirty = true" />
+        <div class="skill-workspace">
+          <nav class="file-tree" aria-label="技能文件目录">
+            <button class="btn ghost sm" @click="newSkillFile"><Icon name="plus" :size="14" />新建文件</button>
+            <VirtualList :items="visibleFiles" :item-key="(f) => f.path" :estimate="34">
+              <template #default="{ item: f }"><button class="file-row" :class="{ selected: f.path === skillPath }" :style="{ paddingLeft: `${8 + Math.min(f.path.split('/').length - 1, 6) * 12}px` }" :aria-expanded="f.type === 'directory' ? !collapsed.has(f.path) : undefined" :title="f.path" @click="pickSkillFile(f)"><span>{{ f.type === 'directory' ? (collapsed.has(f.path) ? '▸' : '▾') : '·' }}</span><span class="file-name">{{ f.path.split('/').at(-1) }}</span></button></template>
+            </VirtualList>
+          </nav>
+          <div class="file-editor">
+            <div class="row wrap small"><code class="file-name">{{ skillPath }}</code><span class="spacer" /><button v-if="skillPath !== 'SKILL.md' && !fileError && !fileLoading" class="btn ghost sm danger" @click="removeSkillFile">删除文件</button></div>
+            <Skeleton v-if="fileLoading" variant="lines" :rows="10" />
+            <p v-else-if="fileError" class="muted">{{ fileError }}</p>
+            <textarea v-else v-model="skillRaw" class="editor mono raw" spellcheck="false" :aria-label="`技能文件 ${skillPath}`" @input="dirty = true" />
+          </div>
+        </div>
       </div>
     </main>
   </div>
 </template>
 
 <style scoped>
+.role-ai { margin-bottom: 20px; }
+.skill-workspace { display: grid; grid-template-columns: minmax(140px, 210px) minmax(0, 1fr); gap: 16px; }
+.file-tree { max-height: 560px; overflow: auto; border-right: 1px solid var(--line); padding-right: 8px; }
+.file-row { display: flex; gap: 6px; width: 100%; text-align: left; padding: 7px 8px; border: 0; background: transparent; color: var(--ink-2); border-radius: 4px; }
+.file-row.selected { background: var(--accent-soft); color: var(--accent); }
+.file-name { overflow-wrap: anywhere; min-width: 0; }
+.file-editor { min-width: 0; }
+.file-editor > .row { margin-bottom: 10px; }
+.dh { flex-wrap: wrap; }
+.dh h2 { overflow-wrap: anywhere; min-width: 0; }
+@media (max-width: 760px) { .skill-workspace { grid-template-columns: 1fr; } .file-tree { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 10px; } }
+
 .agents {
   display: flex;
   height: 100%;

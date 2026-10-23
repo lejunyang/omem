@@ -1,3 +1,4 @@
+import { executionArgs, type Execution } from "./execution.ts";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import { git, isGitRepo } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
 import { findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError, truncate } from "../core/util.ts";
-import { runRole } from "./runner.ts";
+import { resolveRunProfile, runRole } from "./runner.ts";
 import { getRun, setRunOutput, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 import { replyOf } from "./types.ts";
@@ -35,6 +36,8 @@ function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20
 }
 
 export type CodeInput = {
+  execution?: Execution;
+  reviewExecution?: Execution;
   task: string;
   /** Applies to every repository unless `checks` names one for it. */
   checkCommand?: string;
@@ -125,18 +128,27 @@ ${input.task}
 
 继续在原来的工作区里改，不要重做已经通过的部分；改完重新运行检查命令。${where}`
     : `${input.task}${where}`;
+  let resumeCoder = (input as { resumeSessionId?: string }).resumeSessionId;
+  const previousId = chain?.rounds.filter((id) => id !== run.id).at(-1);
+  if (resumeCoder && previousId) {
+    const previous = getRun(app, previousId);
+    const profile = resolveRunProfile(app, { actor: { role: "coder" }, ...executionArgs(input.execution) });
+    const expected = { profile: profile.id, model: profile.model, effort: profile.effort };
+    if (previous.output.coderAI && JSON.stringify(previous.output.coderAI) !== JSON.stringify(expected)) resumeCoder = undefined;
+  }
   const coder = await runRole(app, {
     role: "coder",
+    execution: input.execution,
     spaceId: run.spaceId!,
     spaces,
     task: coderTask,
     runId: run.id,
     cwd,
     signal: ctx.signal,
-    resumeSessionId: (input as { resumeSessionId?: string }).resumeSessionId,
+    resumeSessionId: resumeCoder,
     onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
   });
-  ctx.output({ coderSummary: replyOf(coder).trim(), coderAgent: coder.profileId, coderSessionId: coder.sessionId });
+  ctx.output({ coderSummary: replyOf(coder).trim(), coderAI: coder.ai, coderAgent: coder.profileId, coderSessionId: coder.sessionId });
 
   const results: RepoResult[] = [];
   const diffs: string[] = [];
@@ -181,6 +193,7 @@ ${input.task}
   const checkText = results.map((r) => (r.check ? `${head(r)}命令：${r.check.command}\n退出码：${r.check.code}\n\n${fence("", r.check.output.slice(-4000))}` : `${head(r)}没有配置检查命令。`)).join("\n\n");
   const review = await runRole(app, {
     role: "reviewer",
+    execution: input.reviewExecution,
     spaceId: run.spaceId!,
     spaces,
     alsoRead: indexed,
@@ -204,7 +217,7 @@ ${input.task}
   const reviewText = replyOf(review).trim();
   // A reviewer that ends with a short line keeps its verdict in the reply; look at the whole text if not.
   const approved = /结论[：:]\s*通过/.test(reviewText) || (!/结论[：:]/.test(reviewText) && /结论[：:]\s*通过/.test(review.text));
-  ctx.output({ review: reviewText, reviewAgent: review.profileId, verdict: approved ? "approved" : "changes-requested" });
+  ctx.output({ review: reviewText, reviewAI: review.ai, reviewAgent: review.profileId, verdict: approved ? "approved" : "changes-requested" });
   const checked = results.filter((r) => r.check);
   const statTextLine = results.map((r) => (multi ? `${r.space}：` : "") + (r.diffStat.split("\n").pop() ?? "")).join("\n");
   const checksLine = checked.length ? `\n检查：${checked.some((r) => r.check!.code !== 0) ? "失败" : "通过"}` : "";

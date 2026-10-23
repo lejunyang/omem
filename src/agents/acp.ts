@@ -30,6 +30,7 @@ export type AcpOpenOptions = {
   /** Continue an earlier agent session (resume, or load when only that is offered). */
   resumeSessionId?: string;
   probe?: boolean;
+  strictSelection?: { model?: boolean; effort?: boolean };
   /** Max time to wait in the provider queue before failing with kind="queue". 0 = unlimited. */
   queueTimeoutMs?: number;
 };
@@ -302,6 +303,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         const ids = session.models.availableModels.map((m) => m.modelId);
         const chosen = resolveModelOption(value, ids);
         if (!chosen.matched) {
+          if (opts.strictSelection?.model) throw new Error(`指定模型 ${value} 不可用，可选：${ids.join(", ")}`);
           emitSetup({ type: "status", text: `该 Agent 没有 ${value}，可选：${ids.join(", ")}；用它的默认模型` });
           continue;
         }
@@ -310,12 +312,14 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         continue;
       }
       if (!option) {
+        if (opts.strictSelection?.[key]) throw new Error(`该 Agent 不支持设置 ${key}，无法使用指定值 ${value}`);
         emitSetup({ type: "status", text: `该 Agent 不支持设置 ${key}，使用其默认值` });
         continue;
       }
       const values = optionValues(option);
       const chosen = key === "model" ? resolveModelOption(value, values) : { value, matched: values.includes(value) };
       if (!chosen.matched) {
+        if (opts.strictSelection?.[key]) throw new Error(`指定 ${key}=${value} 不可用，可选：${values.join(", ")}`);
         // Never kill the conversation over a model name: fall back to the agent default.
         emitSetup({ type: "status", text: `该 Agent 没有 ${value}，可选：${values.join(", ")}；用它的默认${key === "model" ? "模型" : "思考强度"}` });
         continue;
@@ -444,7 +448,7 @@ function explain(error: unknown, profile: AgentProfile) {
 export async function runAcp(profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   const onAbort = () => {};
   req.signal?.addEventListener("abort", onAbort, { once: true });
-  const handle = await openAcp(profile, { cwd: req.cwd, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, env: req.env, resumeSessionId: req.resumeSessionId, probe: req.probe, queueTimeoutMs: req.queueTimeoutMs }, emit);
+  const handle = await openAcp(profile, { cwd: req.cwd, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, env: req.env, resumeSessionId: req.resumeSessionId, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
   try {
     if (req.probe) return { text: "", stopReason: "probe", agent: handle.agent, probe: handle.probe };
     if (req.signal?.aborted) throw new Error("CANCELLED");

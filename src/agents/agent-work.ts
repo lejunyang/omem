@@ -1,3 +1,4 @@
+import type { Execution } from "./execution.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { now, truncate } from "../core/util.ts";
@@ -73,6 +74,8 @@ export function startAgentWork(app: App, input: {
   agent: string;
   task: string;
   startMessage: string;
+  assistantScope?: AssistantScope;
+  execution?: Execution;
   /** Open a new Feishu topic from this message (the ask), instead of another plain reply. */
   anchorLarkMessageId?: string;
 }): { work: AgentWork; runId: string; larkThreadMessageId?: string } {
@@ -96,7 +99,7 @@ export function startAgentWork(app: App, input: {
   // Record the request in the work conversation.
   addWorkMessage(app, work, { role: "user", text: input.startMessage, meta: { agentWork: true, spec: input.agent } });
 
-  const runId = queueAgentRound(app, work, { agent: input.agent, task: input.task });
+  const runId = queueAgentRound(app, work, { agent: input.agent, task: input.task, execution: input.execution, assistantScope: input.assistantScope });
   return { work, runId };
 }
 
@@ -118,7 +121,11 @@ export function addWorkMessage(app: App, work: AgentWork, m: { role: "user" | "a
   return addMessage(app, work.workConversationId, m.role, m.text, m.runId ?? null, m.meta ?? {});
 }
 
+export type AssistantScope = { spaces: string[] | null; denyTools: string[]; userId?: string; lark: { chats: string[] | null; draft?: boolean; urgent?: boolean; private?: boolean } };
+
 export type AgentRoundInput = {
+  assistantScope?: AssistantScope;
+  execution?: Execution;
   agent: string;
   task: string;
   spaceId?: string;
@@ -131,7 +138,7 @@ export function queueAgentRound(app: App, work: AgentWork, a: AgentRoundInput): 
     kind: "agent",
     spaceId: a.spaceId ?? getThread(app, work.workConversationId).spaceId,
     title: truncate(`${a.agent}：${a.task.split("\n")[0]}`, 80),
-    input: { spec: a.agent, task: a.task, threadId: work.workConversationId, agentWorkId: work.askRunId },
+    input: { spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId },
     parentId: work.askRunId,
   });
   const id = r.id;
@@ -292,7 +299,7 @@ export async function openWorkTopic(app: App, work: AgentWork, anchorMessageId: 
  * makes every later report and coordination reply land in the new conversation. The old work is
  * left in place (its history stays readable) and marked so it is not picked up twice.
  */
-export function forkAgentWorkTo(app: App, opts: { askRunId: string; rootConversationId: string; spaceId: string; title: string; agent: string; task: string }): { work: AgentWork; runId: string } {
+export function forkAgentWorkTo(app: App, opts: { askRunId: string; rootConversationId: string; spaceId: string; title: string; agent: string; task: string; execution?: Execution; assistantScope?: AssistantScope }): { work: AgentWork; runId: string } {
   const prev = refreshWork(app, opts.askRunId);
   if (!prev) throw new Error("找不到要继续的工作");
   const workThread = createWorkThread(app, { rootId: opts.rootConversationId, spaceId: opts.spaceId, title: opts.title });
@@ -319,6 +326,6 @@ export function forkAgentWorkTo(app: App, opts: { askRunId: string; rootConversa
   saveWork(app, work, [opts.askRunId]);
   // Old ask runs keep the previous work so earlier rounds' reports still resolve where they ran.
   addWorkMessage(app, work, { role: "user", text: opts.task, meta: { agentWork: true, spec: opts.agent, movedFrom: prev.workConversationId } });
-  const runId = queueAgentRound(app, work, { agent: opts.agent, task: opts.task });
+  const runId = queueAgentRound(app, work, { agent: opts.agent, task: opts.task, execution: opts.execution, assistantScope: opts.assistantScope });
   return { work, runId };
 }
