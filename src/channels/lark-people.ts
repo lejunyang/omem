@@ -99,6 +99,15 @@ export async function learnBotPerson(app: App, client: any, openId: string) {
   }
 }
 
+/** A complete group member list has no match; ordinary mentions may omit this recipient. */
+export class ChatMemberAbsentError extends HttpError {
+  readonly who: string;
+  constructor(who: string) {
+    super(400, `目标群成员列表已完整读取，没有“${who}”；普通 @ 可跳过此人并继续发送。`);
+    this.who = who;
+  }
+}
+
 /**
  * Who the bot should @: a name, email, known bot-side id or "all". Capture-side open_ids
  * must never be passed through. Group membership can resolve a name without directory access.
@@ -113,14 +122,18 @@ export async function resolveMention(app: App, who: string, chatId?: string | nu
   const byEmail = new Map<string, Row>();
   for (const r of rows) byEmail.set(r.email ?? r.user_id ?? r.bot_open_id ?? r.cli_open_id ?? r.name, r);
   const list = [...byEmail.values()];
-  // Names can have two unlinked records (capture email and bot id), or genuine namesakes.
-  // Resolve only against a complete, bot-side list of this chat. Never join identities by name.
-  if (chatId && !w.includes("@") && (list.length !== 1 || (!list[0].user_id && !list[0].bot_open_id))) {
+  // A bot-side open_id alone can belong to another bot, which the human member list omits.
+  // Preserve known explicit IDs and these open-id-only identities; all other names are local to the chat.
+  const r = list[0];
+  const knownId = list.length === 1 && (r.user_id === w || r.bot_open_id === w);
+  const openIdOnly = list.length === 1 && r.bot_open_id && !r.user_id && !r.email;
+  if (chatId && !w.includes("@") && !knownId && !openIdOnly) {
     const member = await mentionInChat(app, chatId, w);
     if (member) return member;
+    if (w.startsWith("ou_")) throw new HttpError(400, "无法在目标群核实这个 open_id；不能用采集应用的 open_id 代替机器人应用的身份。");
+    throw new ChatMemberAbsentError(w);
   }
-  if (list.length > 1) throw new HttpError(400, `“${w}”有 ${list.length} 个人：${list.map((r) => `${r.name}（${r.email ?? "无邮箱"}）`).join("、")}。用邮箱指定是哪一位。`);
-  const r = list[0];
+  if (list.length > 1) throw new HttpError(400, `“${w}”有 ${list.length} 条同名联系人记录，尚未核实是否同一人：${list.map((r) => `${r.name}（${r.email ?? "无邮箱"}）`).join("、")}。用邮箱指定是哪一位。`);
   if (r?.user_id) return { name: r.name, userId: r.user_id, email: r.email };
   if (r?.bot_open_id?.startsWith("ou_")) return { name: r.name, userId: r.bot_open_id, email: r.email };
   const email = r?.email ?? (w.includes("@") ? w : null);

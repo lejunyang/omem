@@ -29,7 +29,7 @@ function fakeContacts(users: Record<string, { name: string; email: string }>) {
 }
 
 /** The bot: email → user_id, and messages it sends. */
-function fakeBot(userIds: Record<string, string>, opts: { noPermission?: boolean } = {}) {
+function fakeBot(userIds: Record<string, string>, opts: { noPermission?: boolean; members?: { member_id: string; name: string }[] } = {}) {
   const sent: any[] = [];
   setLarkClient({
     contact: {
@@ -40,7 +40,7 @@ function fakeBot(userIds: Record<string, string>, opts: { noPermission?: boolean
         },
       },
     },
-    im: { chatMembers: { get: async () => ({ code: 0, data: { items: [], has_more: false } }) }, message: { create: async (args: any) => (sent.push(args), { code: 0, data: { message_id: "om_sent" } }) } },
+    im: { chatMembers: { get: async () => ({ code: 0, data: { items: opts.members ?? [], has_more: false } }) }, message: { create: async (args: any) => (sent.push(args), { code: 0, data: { message_id: "om_sent" } }) } },
   });
   return sent;
 }
@@ -69,7 +69,7 @@ describe("people across Feishu apps", () => {
     expect(await resolveMention(app, "小王")).toEqual({ name: "小王", userId: "u_wang", email: "wang@example.com" });
     // Remembered: no second lookup needed.
     expect(one(app.db, "select user_id from lark_people where email = 'wang@example.com'")).toEqual({ user_id: "u_wang" });
-    await expect(resolveMention(app, "小李")).rejects.toThrow(/“小李”有 2 个人：小李（li1@example.com）、小李（li2@example.com）/);
+    await expect(resolveMention(app, "小李")).rejects.toThrow(/“小李”有 2 条同名联系人记录，尚未核实是否同一人：小李（li1@example.com）、小李（li2@example.com）/);
     expect(await resolveMention(app, "li2@example.com")).toMatchObject({ userId: "u_li2" });
     expect(await resolveMention(app, "new@example.com")).toMatchObject({ userId: "u_new" });
     await expect(resolveMention(app, "陌生人")).rejects.toThrow(/给出邮箱/);
@@ -88,11 +88,11 @@ describe("people across Feishu apps", () => {
   it("@s people through lark_send", async () => {
     const app = testApp();
     rememberPerson(app, { cliOpenId: A, name: "小王", email: "wang@example.com" });
-    const sent = fakeBot({ "wang@example.com": "u_wang" });
+    const sent = fakeBot({ "wang@example.com": "u_wang" }, { members: [{ member_id: B, name: "小王" }] });
     createThread(app, { spaceId: "personal", channel: "lark-watch", key: "oc_g" });
     const ctx = toolContextForToken(app, issueToolToken({ runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: ["oc_g"] }))!;
     expect((await callTool(ctx, "lark_send", { chat_id: "oc_g", text: "@小王 发布清单好了吗", mentions: ["小王"] })).text).toMatch(/已发送/);
-    expect(JSON.parse(sent[0].data.content).text).toBe('<at user_id="u_wang">小王</at> 发布清单好了吗');
+    expect(JSON.parse(sent[0].data.content).text).toBe(`<at user_id="${B}">小王</at> 发布清单好了吗`);
     await callTool(ctx, "lark_send", { chat_id: "oc_g", markdown: "**提醒**", mentions: ["wang@example.com"] });
     expect(JSON.parse(sent[1].data.content).body.elements[0].content).toBe("<at id=u_wang></at> **提醒**");
   });
@@ -104,7 +104,9 @@ describe("people across Feishu apps", () => {
     fakeBot({});
     expect(await resolveMention(app, "协作机器人")).toMatchObject({ userId: B });
     expect(await resolveMention(app, B)).toMatchObject({ userId: B });
+    expect(await resolveMention(app, "协作机器人", "oc_g")).toMatchObject({ userId: B });
     await expect(resolveMention(app, A)).rejects.toThrow(/给出邮箱/);
+    await expect(resolveMention(app, A, "oc_g")).rejects.toThrow(/不能用采集应用/);
     await expect(resolveMention(app, "cli_test")).rejects.toThrow(/app_id 不能/);
   });
 
@@ -151,6 +153,55 @@ describe("people across Feishu apps", () => {
     const app = testApp();
     setLarkClient({ contact: { user: { batchGetId: async () => ({ code: 99991672, msg: "Access denied" }) } } });
     await expect(resolveMention(app, "wang@example.com")).rejects.toThrow(/bot-permissions/);
+  });
+
+  it("skips absent names instead of falling back to global namesakes or email and sends the other mentions", async () => {
+    const app = testApp();
+    rememberPerson(app, { cliOpenId: A, name: "小李", email: "li@example.com" });
+    rememberPerson(app, { botOpenId: B, name: "小李", userId: "u_li" });
+    const sent: any[] = []; let directoryCalls = 0, pages = 0;
+    setLarkClient({ contact: { user: { batchGetId: async () => { directoryCalls++; throw new Error("must not look up absent people"); } } },
+      im: { chatMembers: { get: async ({ params }: any) => {
+        pages++;
+        return { code: 0, data: params.page_token ? { items: [{ member_id: C, name: "小王" }], has_more: false }
+          : { items: [], has_more: true, page_token: "next" } };
+      } }, message: { create: async (args: any) => { sent.push(args); return { code: 0, data: { message_id: "om_sent" } }; } } } });
+    const ctx = toolContextForToken(app, issueToolToken({ runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: ["oc_g"] }))!;
+    const result = await callTool(ctx, "lark_send", { chat_id: "oc_g", text: "@小王 @小李 请核查", mentions: ["小王", "小李"] });
+    expect(result.isError).toBe(false);
+    expect(result.text).toMatch(/已发送.*已跳过不在目标群的 @ 对象：小李/);
+    expect(result.text).not.toMatch(/重名|邮箱/);
+    expect(directoryCalls).toBe(0); expect(pages).toBe(4); expect(sent).toHaveLength(1);
+    const text = JSON.parse(sent[0].data.content).text;
+    expect(text).toBe(`<at user_id="${C}">小王</at> 小李 请核查`);
+    expect(text).not.toContain(B);
+  });
+
+  it("also checks a uniquely cached person's name and still posts when every ordinary mention is absent", async () => {
+    const app = testApp();
+    rememberPerson(app, { botOpenId: B, name: "小李", userId: "u_li" });
+    const sent = fakeBot({});
+    const ctx = toolContextForToken(app, issueToolToken({ runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: ["oc_g"] }))!;
+    const result = await callTool(ctx, "lark_send", { chat_id: "oc_g", markdown: "核查已完成", mentions: ["小李"] });
+    expect(result.isError).toBe(false); expect(result.text).toContain("已跳过不在目标群");
+    expect(JSON.stringify(sent[0].data)).not.toContain("<at");
+    // Confidential / urgent delivery must not silently turn into ordinary group delivery.
+    const privileged = { ...ctx, larkPowers: { urgent: true, private: true } };
+    for (const delivery of [{ only_to: ["小李"] }, { urgent: ["小李"] }]) {
+      expect((await callTool(privileged, "lark_send", { chat_id: "oc_g", text: "请处理", ...delivery })).isError).toBe(true);
+    }
+    expect(sent).toHaveLength(1);
+  });
+
+  it.each(["permission", "incomplete", "duplicate"])("does not turn %s member lookup errors into an absent-person skip", async mode => {
+    const app = testApp(); let sends = 0;
+    setLarkClient({ im: { chatMembers: { get: async () => mode === "permission" ? { code: 99991672 } : { code: 0, data: {
+      items: mode === "duplicate" ? [{ member_id: B, name: "小李" }, { member_id: C, name: "小李" }] : [],
+      has_more: mode === "incomplete", page_token: mode === "incomplete" ? "repeat" : undefined,
+    } } }, message: { create: async () => { sends++; return { code: 0 }; } } } });
+    const ctx = toolContextForToken(app, issueToolToken({ runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: ["oc_g"] }))!;
+    const result = await callTool(ctx, "lark_send", { chat_id: "oc_g", text: "核查结果", mentions: ["小李"] });
+    expect(result.isError).toBe(true); expect(result.text).not.toContain("已跳过"); expect(sends).toBe(0);
   });
 
   it("keeps lark-cli's ids out of chat lines and shows emails on the page", async () => {

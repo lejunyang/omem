@@ -1429,7 +1429,7 @@ const larkTarget = z.object({
   mentions: z
     .array(z.string())
     .optional()
-    .describe("要 @ 的人或机器人：名字、邮箱、已核实的机器人应用侧 open_id/user_id 或 all。姓名无法唯一匹配时核对目标群成员；重名拒绝。机器人需已在本应用收到的 @ 消息里出现，不能用 app_id 或采集应用的 open_id。正文的 @名字 会替换成真正的 @，没写则放开头"),
+    .describe("要 @ 的人或机器人：名字、邮箱、已核实的机器人应用侧 open_id/user_id 或 all。姓名按目标群成员核对；完整列表没有此人则自动跳过并继续发送，在工具回执注明，不用再查邮箱或在群内说明。群内重名、权限或分页错误仍报错。已知机器人侧 ID 不用普通成员列表判缺席。正文的 @名字 会替换成真正的 @，没写则放开头"),
   urgent: z
     .array(z.string())
     .max(10)
@@ -1497,18 +1497,30 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
   const send = await import("../channels/lark-send.ts");
   const chat = await larkGuard(ctx, t);
   const delivery = await larkDelivery(ctx, t, chat);
+  const skipped: string[] = [];
   if (t.mentions?.length) {
     // Real @-mentions using IDs verified for the sending bot (see lark-people.ts).
-    const { applyMentions, resolveMention } = await import("../channels/lark-people.ts");
+    const { applyMentions, resolveMention, ChatMemberAbsentError } = await import("../channels/lark-people.ts");
     const people = [];
-    for (const who of t.mentions) people.push(await resolveMention(ctx.app, who, chat));
+    for (const who of t.mentions) {
+      try { people.push(await resolveMention(ctx.app, who, chat)); }
+      catch (e) {
+        if (!(e instanceof ChatMemberAbsentError)) throw e;
+        skipped.push(e.who);
+      }
+    }
+    // An omitted mention must not look like a successful notification in the posted text.
+    const plain = (text: string) => skipped.reduce((out, name) => out.replaceAll(`@${name}`, name), text);
+    if ("text" in content) content = { text: plain(content.text) };
+    else if ("markdown" in content) content = { ...content, markdown: plain(content.markdown) };
     if ("text" in content) content = { text: applyMentions(content.text, people, "text") };
     else if ("markdown" in content) content = { ...content, markdown: applyMentions(content.markdown, people, "card") };
-    else if ("card" in content) {
+    else if ("card" in content && people.length) {
       const body = (content.card.body ?? {}) as { elements?: unknown[] };
       content = { card: { ...content.card, body: { ...body, elements: [{ tag: "markdown", content: applyMentions("", people, "card").trim() }, ...(body.elements ?? [])] } } };
     }
   }
+  const skippedNote = skipped.length ? `；已跳过不在目标群的 @ 对象：${[...new Set(skipped)].join("、")}。无需重试或在群内说明。` : "";
   // Posting into the chat this run is answering in a topic: stay inside that topic (files,
   // follow-ups) instead of landing at the top of the chat.
   let target: import("../channels/lark-send.ts").Target = delivery.onlyTo ? { chatId: chat! } : { chatId: t.chat_id, userId: t.user_id, replyTo: t.reply_to, inThread: t.in_thread };
@@ -1530,7 +1542,7 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
     });
     const sent = await send.sendLark({ userId: ownerTarget }, { card });
     send.recordInteraction(ctx.app, { messageId: sent.messageId, chatId: null, conversationId: runThread(ctx), runId: ctx.runId, purpose: "draft", allowed: [ownerTarget], payload: { target, content, delivery } });
-    return `已作为草稿发给本人确认（还没有发出）。`;
+    return `已作为草稿发给本人确认（还没有发出）。${skippedNote}`;
   }
   const sent = await send.deliverLark(target, content, delivery);
   // A rule's silent agent that spoke in a topic follows it: replies there come back to it.
@@ -1544,7 +1556,7 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
   if (opts.waitForAction)
     for (const id of sent.ephemeral ?? [sent.messageId])
       send.recordInteraction(ctx.app, { messageId: id, chatId: chat, conversationId: runThread(ctx), runId: ctx.runId, purpose: "agent", allowed: opts.allowed ?? [], payload: {} });
-  return `已发送 ${sent.messageId}${sent.threadId ? `（话题 ${sent.threadId}）` : ""}${deliveryNote(delivery)}`;
+  return `已发送 ${sent.messageId}${sent.threadId ? `（话题 ${sent.threadId}）` : ""}${deliveryNote(delivery)}${skippedNote}`;
 }
 
 def({
