@@ -355,3 +355,7 @@ updated: 2026-10-18
 - 写文档（`src/channels/lark-doc-write.ts`）：`placeFor`（不填 / `my_library` = 个人文档库根目录；知识库页面；云空间文件夹）和 `docPlace` 判断位置是不是本人自己的（个人文档库，或 `drive metas` 的 owner 是 lark-cli 登录的本人）。工具 `lark_doc_create` / `lark_doc_update` / `lark_doc_move`：不是本人自己的位置时经 `held` 审批，问题写明知识库名和父页面，执行器带 `approved: true` 重跑不再拦；外部 Agent（工具上下文没有 `larkChats`）不能用；只有主人能用。
 - 加急与只给部分人看：`larkTarget` 加 `urgent`（≤ 10 人）和 `only_to`（≤ 20 人），`larkDelivery` 按 `ctx.larkPowers` 放行并用 `resolveMention` 对人；`lark-send.ts` 的 `deliverLark`（`urgentLark` = `im.message.urgentApp`，`sendEphemeral` = `/ephemeral/v1/send`，按 `ou_` 前缀选 open_id / user_id）；草稿确认带上 `delivery`。规则 agent 动作加 `allowUrgent` / `allowPrivate`（`runner.ts` 的 `LarkAccess`，本人自己的运行两样都有），任务里写一句什么时候可以用；规则草稿生成会按原话勾上；规则页两个开关。
 - `skills/library/lark-messaging/SKILL.md` 加加急和只给部分人看；`roles/assistant.md` 加知识库爬取和写文档的工具与做法。
+
+### 2026-10-23：规则档案的临时复查
+
+规则触发的档案给自己设唤醒时，延续原空间、用户身份、群聊投递范围与草稿/静默设置，复查可回到原话题。指定其他档案不会继承原运行的渠道权限或会话。档案唤醒返回 QUIET 时不投递，避免无变化也发消息。入口：`src/agents/wakes.ts`、`jobs.ts`；回归：`test/wakes.test.ts`、`test/lark.test.ts`。

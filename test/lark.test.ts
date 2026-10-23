@@ -96,6 +96,10 @@ describe("feishu bot messaging", () => {
     expect(sent[0].args.data.reply_in_thread).toBe(true);
     const body = JSON.parse(sent[0].args.data.content).body.elements[0].content;
     expect(body).toBe(`[流程说明](${uri}) [删除规则](${uri})`);
+    app.config.agents.profiles.find(p => p.id === "citation-test")!.env.FAKE_SAY = "QUIET";
+    const followup = { ...run, input: { ...run.input as Record<string, unknown>, wake: true } };
+    await handlers.get("agent")!({ app, run: followup, signal: AbortSignal.timeout(30000), event: () => {}, output: () => {} });
+    expect(client.calls.filter(c => c.op === "reply")).toHaveLength(1);
   }, 40000);
 
   it("builds Card 2.0 with buttons and forms", () => {

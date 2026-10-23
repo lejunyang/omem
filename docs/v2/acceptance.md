@@ -361,3 +361,8 @@ pnpm run dev                # 打开 http://localhost:5173
 - 真实群只读核对历史卡片。真实 Agent 在隔离环境调用发送工具，检查外发内容没有内部引用地址。
 
 验证：`pnpm run check` 通过（311 项测试、类型检查与构建），覆盖见 `test/lark.test.ts` 和 `test/models.test.ts`。Codex 隔离验收发送一次，两处引用均为原文 HTTPS 链接。
+
+### 规则运行的临时复查
+
+- 规则交给档案处理后，由档案设 5 分钟唤醒：复查继承原空间、用户与群聊话题，保持草稿/静默范围；换档案不继承这些权限或会话。`test/wakes.test.ts` 覆盖。
+- 复查只回 QUIET：不往原话题发消息；有新结论时沿用原话题回复。`test/lark.test.ts` 使用假客户端验证。

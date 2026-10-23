@@ -4,6 +4,7 @@ import { callTool, issueToolToken, toolContextForToken } from "../src/agents/too
 import { addMessage, createThread, threadMessages } from "../src/agents/threads.ts";
 import { expireTemporaryRules, fireWake, pendingWakes, wakeTime, type WakeInput } from "../src/agents/wakes.ts";
 import { all, one, run } from "../src/core/db.ts";
+import { createSpace } from "../src/core/spaces.ts";
 import { dispatchRuleEvent } from "../src/rules/engine.ts";
 import { listRules, saveRule } from "../src/rules/store.ts";
 import type { RuleEvent } from "../src/rules/types.ts";
@@ -30,6 +31,23 @@ const message = (text: string, sender: RuleEvent["sender"] = { name: "小王", k
 const inputOf = (app: ReturnType<typeof testApp>, id: string) => JSON.parse(one<{ input: string }>(app.db, "select input from runs where id = ?", id)!.input);
 
 describe("wake-ups", () => {
+  it("keeps a profile's own follow-up in its original space and authorized topic", async () => {
+    const { app, ctx, runId } = working();
+    createSpace(app, { id: "project-a", name: "项目 A" });
+    saveAgentSpec(app, { name: "alert-checker", description: "复查", prompt: "复查指标" }, "user");
+    const origin = { spec: "alert-checker", replyAt: { chatId: "oc_alert", messageId: "om_alert" }, rule: { id: "rule_alert", name: "报警" }, lark: { chats: ["oc_alert"], draft: true, urgent: false } };
+    run(app.db, "update runs set input=?,output=?,user_id=?,space_id=? where id=?", JSON.stringify(origin), JSON.stringify({ sessionId: "session_alert" }), "owner", "project-a", runId);
+    const r = await callTool(ctx, "wake_later", { after: "5m", note: "按原规则过滤条件复查" });
+    const id = /已设唤醒 (\S+)：/.exec(r.text)![1];
+    const fired = fireWake(app, inputOf(app, id));
+    expect(inputOf(app, fired.runId!)).toMatchObject({ ...origin, wake: true, resumeSessionId: "session_alert" });
+    expect(one(app.db, "select space_id,user_id from runs where id=?", fired.runId!)).toEqual({ space_id: "project-a", user_id: "owner" });
+    // A different profile cannot borrow a resume id to acquire the sender's permissions/session.
+    const other = fireWake(app, { ...inputOf(app, id), target: { spec: "other-checker", resumeRunId: runId } });
+    const otherInput = inputOf(app, other.runId!);
+    for (const key of ["lark", "replyAt", "rule", "resumeSessionId"]) expect(otherInput[key]).toBeUndefined();
+  });
+
   it("wakes the conversation's agent later with its note, at most five pending, cancellable", async () => {
     const { app, thread, ctx } = working();
     const r = await callTool(ctx, "wake_later", { after: "20m", note: "看 CI 有没有跑完，跑完了告诉本人结果" });

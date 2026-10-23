@@ -103,18 +103,28 @@ export function fireWake(app: App, w: WakeInput, trigger?: string): { runId?: st
     exec(app.db, "update messages set run_id = ? where id = ?", r.id, messageId);
     return { runId: r.id };
   }
-  const prev = target.resumeRunId ? (getRun(app, target.resumeRunId).output as { sessionId?: string }).sessionId : undefined;
+  const origin = target.resumeRunId ? getRun(app, target.resumeRunId) : null;
+  const originInput = (origin?.input ?? {}) as { spec?: string; lark?: unknown; replyAt?: unknown; silent?: unknown; rule?: unknown };
+  // Only a profile continuing its own run inherits that run's delivery scope.
+  // Delegating a wake to another profile does not grant it the caller's channel permissions.
+  const ownRun = originInput.spec === target.spec;
+  const userId = ownRun && origin ? one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", origin.id)?.user_id : null;
+  const prev = ownRun ? (origin?.output as { sessionId?: string } | undefined)?.sessionId : undefined;
+  const delivery = ownRun ? Object.fromEntries(["lark", "replyAt", "silent", "rule"].filter(k => k in originInput).map(k => [k, originInput[k as keyof typeof originInput]])) : {};
   const r = createRun(app, {
     kind: "agent",
-    spaceId: "personal",
+    spaceId: ownRun ? origin?.spaceId ?? "personal" : "personal",
     title: truncate(`${target.spec}（唤醒）：${w.note.replace(/\s+/g, " ")}`, 80),
     input: {
       spec: target.spec,
-      task: `# 唤醒\n\n${body}\n\n${target.resumeRunId ? "这是你自己之前设的，接着当时的工作做。" : `这是 ${w.setBy.agent} 交给你的。`}没有需要告诉本人的就只回 QUIET。`,
+      wake: true,
+      ...delivery,
+      task: `# 唤醒\n\n${body}\n\n${ownRun ? "这是你自己之前设的，接着当时的工作做。" : `这是 ${w.setBy.agent} 交给你的。`}没有需要告诉本人的就只回 QUIET。`,
       ...(target.conversationId ? { threadId: target.conversationId } : {}),
       ...(prev ? { resumeSessionId: prev } : {}),
     },
     parentId: w.setBy.runId,
+    ...(userId ? { userId } : {}),
   });
   return { runId: r.id };
 }
