@@ -2,7 +2,7 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，按模块列出入口文件；读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-10-18
+updated: 2026-10-24
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
@@ -404,3 +404,11 @@ updated: 2026-10-18
 ## Wiki 生成入口（10-24）
 
 聊天新增 `generate_wiki`，与网页、CLI 共用 `src/wiki/generate.ts` 的规划与逐页写作流程。`focus` 完整传给每个写作子运行，保留发起用户和材料只读范围，页面只写入目标空间。助手不再自己先写工作文件或尝试用普通交办调用内置 Wiki 角色；规划、写作、检查说明补充代码优先、过时文档辨别和草稿核实。自定义角色需合并源码更新才能取得新工具与说明。
+
+## 2026-10-24：分档、多角度评审方案（设计，未实现）
+
+- 现状是交办编码链单个 `reviewer` 评审、自动最多 3 轮（`src/agents/code-chain.ts`）。新设计在中大型改动上扩展：`docs/v2/review.md`。
+- **工作集（workset）**：一个需求的跨空间上下文容器，只引用不复制，成员含文档、聊天、会话、文件、仓库空间与目标分支/基线，带版本快照与 stale 提示；新增 worksets / workset_members 表与 `create_workset` 等工具，可挂事项。
+- **业务理解简报**：新角色 `business-analyst` 编码前从工作集提取带引用的业务规则和编号变更点（CP），本人确认或 lead 采信；业务规则仍沉淀到记忆/Wiki，不建第二份知识。
+- **分档与评审委员会**：新角色 `review-lead` 编码前后两次 triage（light/standard/full，确定性预筛 + 理由可调）；功能（现有 reviewer）、风格规范、架构、业务理解、历史问题回扫五个只读赛道各跑独立会话、可分别配模型；新增 reviews / review_findings 表与 `submit_review`，lead 去重裁决、增量复审，轮数不收敛/僵持/方案分歧时停下来升级本人，防死循环。light 档保持现有链路不变。
+- **变更解读视图**：以需求维度组织的三栏界面（业务 CP ↔ 代码行双向定位、气泡图例引导、流程图、分轮 diff、就地提问），引用统一走 CitationDrawer；可点击原型 `docs/v2/design/change-review-prototype.html`（1440/390 宽度截图在同目录 screens/，代码行横向滚动属预期）。分四阶段落地，未实现。
