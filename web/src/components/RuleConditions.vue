@@ -14,7 +14,7 @@ type Leaf = { field: string; op: string; value: string | boolean | string[] };
 export type Condition = Leaf | { all: Condition[] } | { any: Condition[] } | { not: Condition };
 type Row = { kind: "leaf"; negate: boolean; field: string; op: string; value: string } | { kind: "group"; mode: "all" | "any"; rows: Row[] };
 
-const props = defineProps<{ modelValue: Condition | null; fields: Record<string, string>; ops: readonly string[] }>();
+const props = defineProps<{ modelValue: Condition | null; fields: Record<string, string>; ops: readonly string[]; descriptions?: Record<string, string>; valueOptions?: Record<string, { value: string; label: string }[]> }>();
 const emit = defineEmits<{ "update:modelValue": [value: Condition | null] }>();
 
 const OP_LABEL: Record<string, string> = { equals: "是", contains: "包含", startsWith: "开头是", endsWith: "结尾是", matches: "匹配正则", in: "是其中之一（逗号分隔）", is: "为" };
@@ -28,7 +28,7 @@ const rawError = ref("");
 
 function leafRow(c: Condition, negate = false): Row | null {
   if ("not" in c) return "field" in c.not ? leafRow(c.not, !negate) : null;
-  if ("field" in c) return { kind: "leaf", negate, field: c.field, op: c.op, value: Array.isArray(c.value) ? c.value.join("，") : String(c.value) };
+  if ("field" in c) return { kind: "leaf", negate, field: c.field, op: c.op, value: Array.isArray(c.value) ? c.value.map(v => props.valueOptions?.[c.field]?.find(o => o.value === v)?.label ?? v).join("，") : String(c.value) };
   return null;
 }
 function fromCondition(c: Condition | null): { mode: "all" | "any"; rows: Row[] } | null {
@@ -48,7 +48,8 @@ function fromCondition(c: Condition | null): { mode: "all" | "any"; rows: Row[] 
   return { mode: top.mode, rows: out };
 }
 function toLeaf(r: Extract<Row, { kind: "leaf" }>): Condition {
-  const value = r.op === "is" ? r.value !== "false" : r.op === "in" ? r.value.split(/[,，、]/).map((s) => s.trim()).filter(Boolean) : r.value;
+  const key = (s: string) => props.valueOptions?.[r.field]?.find(o => o.label === s)?.value ?? s;
+  const value = r.op === "is" ? r.value !== "false" : r.op === "in" ? r.value.split(/[,，、]/).map((s) => s.trim()).filter(Boolean).map(key) : key(r.value);
   const leaf: Leaf = { field: r.field, op: r.op, value };
   return r.negate ? { not: leaf } : leaf;
 }
@@ -95,8 +96,8 @@ function applyRaw() {
 }
 
 const fieldOptions = computed(() => Object.entries(props.fields).map(([value, label]) => ({ value, label })));
-const opOptions = (field: string) => (BOOL_FIELDS.has(field) ? [{ value: "is", label: "为" }] : props.ops.filter((o) => o !== "is").map((o) => ({ value: o, label: OP_LABEL[o] ?? o })));
-const newLeaf = (): Row => ({ kind: "leaf", negate: false, field: Object.keys(props.fields)[0] ?? "chat.name", op: "contains", value: "" });
+const opOptions = (field: string) => (BOOL_FIELDS.has(field) ? [{ value: "is", label: "为" }] : props.ops.filter((o) => o !== "is" && (!props.valueOptions?.[field] || ["equals", "in"].includes(o))).map((o) => ({ value: o, label: OP_LABEL[o] ?? o })));
+const newLeaf = (): Row => ({ kind: "leaf", negate: false, field: Object.keys(props.fields)[0] ?? "chat.name", op: props.valueOptions?.[Object.keys(props.fields)[0]] ? "equals" : "contains", value: "" });
 function addRow(target: Row[] = rows.value) {
   target.push(newLeaf());
   push();
@@ -109,9 +110,15 @@ function remove(list: Row[], i: number) {
   list.splice(i, 1);
   push();
 }
+function onOp(r: Extract<Row, { kind: "leaf" }>) {
+  const options = props.valueOptions?.[r.field];
+  if (options) r.value = r.op === "in" ? (options.find(o => o.value === r.value)?.label ?? r.value) : (options.find(o => o.value === r.value || o.label === r.value)?.value ?? "");
+  push();
+}
 function onField(r: Extract<Row, { kind: "leaf" }>, f: string) {
   r.field = f;
   if (BOOL_FIELDS.has(f)) (r.op = "is"), (r.value = "true");
+  else if (props.valueOptions?.[f]) (r.op = "equals"), (r.value = "");
   else if (r.op === "is") (r.op = "contains"), (r.value = "");
   push();
 }
@@ -133,10 +140,12 @@ function onField(r: Extract<Row, { kind: "leaf" }>, f: string) {
         <div v-if="r.kind === 'leaf'" class="cond">
           <UiCheckbox v-model="r.negate" size="sm" aria-label="取反" @change="push">不</UiCheckbox>
           <UiSelect :model-value="r.field" size="sm" width="150px" :options="fieldOptions" aria-label="字段" @change="(v) => onField(r, v as string)" />
-          <UiSelect v-model="r.op" size="sm" width="132px" :options="opOptions(r.field)" aria-label="运算" @change="push" />
+          <UiSelect v-model="r.op" size="sm" width="132px" :options="opOptions(r.field)" aria-label="运算" @change="onOp(r)" />
           <UiSelect v-if="r.op === 'is'" v-model="r.value" size="sm" width="90px" :options="[{ value: 'true', label: '是' }, { value: 'false', label: '否' }]" aria-label="值" @change="push" />
+          <div v-else-if="valueOptions?.[r.field] && r.op === 'equals'" class="grow"><UiSelect v-model="r.value" size="sm" :options="valueOptions[r.field]" aria-label="值" @change="push" /></div>
           <input v-else v-model="r.value" class="input sm grow" :placeholder="r.op === 'in' ? '小王，小李' : '值'" @change="push" />
           <button class="btn ghost sm icon" type="button" title="删除这一条" @click="remove(rows, i)"><Icon name="x" :size="13" /></button>
+          <small v-if="descriptions?.[r.field]" class="muted field-help">{{ descriptions[r.field] }}</small>
         </div>
         <div v-else class="group">
           <div class="row">
@@ -149,10 +158,12 @@ function onField(r: Extract<Row, { kind: "leaf" }>, f: string) {
             <template v-if="x.kind === 'leaf'">
               <UiCheckbox v-model="x.negate" size="sm" aria-label="取反" @change="push">不</UiCheckbox>
               <UiSelect :model-value="x.field" size="sm" width="150px" :options="fieldOptions" aria-label="字段" @change="(v) => onField(x, v as string)" />
-              <UiSelect v-model="x.op" size="sm" width="132px" :options="opOptions(x.field)" aria-label="运算" @change="push" />
+              <UiSelect v-model="x.op" size="sm" width="132px" :options="opOptions(x.field)" aria-label="运算" @change="onOp(x)" />
               <UiSelect v-if="x.op === 'is'" v-model="x.value" size="sm" width="90px" :options="[{ value: 'true', label: '是' }, { value: 'false', label: '否' }]" aria-label="值" @change="push" />
+              <div v-else-if="valueOptions?.[x.field] && x.op === 'equals'" class="grow"><UiSelect v-model="x.value" size="sm" :options="valueOptions[x.field]" aria-label="值" @change="push" /></div>
               <input v-else v-model="x.value" class="input sm grow" :placeholder="x.op === 'in' ? '小王，小李' : '值'" @change="push" />
               <button class="btn ghost sm icon" type="button" title="删除这一条" @click="remove(r.rows, j)"><Icon name="x" :size="13" /></button>
+              <small v-if="descriptions?.[x.field]" class="muted field-help">{{ descriptions[x.field] }}</small>
             </template>
           </div>
         </div>
@@ -198,6 +209,7 @@ function onField(r: Extract<Row, { kind: "leaf" }>, f: string) {
   flex: 1;
   min-width: 120px;
 }
+.field-help { flex-basis: 100%; line-height: 1.6; }
 .json {
   font-size: 12px;
 }

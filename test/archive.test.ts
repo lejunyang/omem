@@ -6,7 +6,7 @@ import { importFile } from "../src/sources/import.ts";
 import { testApp } from "./helpers.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { all, one, run } from "../src/core/db.ts";
-import { applyArchivePreview, archiveHistory, moveSource, previewArchive, saveArchiveRule, sourceRoute } from "../src/sources/archive.ts";
+import { listArchiveRules, matchesArchive, applyArchivePreview, archiveHistory, moveSource, previewArchive, saveArchiveRule, sourceRoute } from "../src/sources/archive.ts";
 import { getSource, sourceText, upsertSource } from "../src/sources/store.ts";
 import { vectorIndex } from "../src/search/vectors.ts";
 import { createRun, getRun, listRuns, __testHandlers } from "../src/agents/runs.ts";
@@ -77,6 +77,21 @@ describe("source archiving", () => {
     expect(getSource(app, manual!.id).spaceId).toBe("personal");
     expect(sourceRoute(app, manual!.id)?.mode).toBe("manual");
   });
+  it("rejects removed opaque fields, disables legacy rules as a whole, and matches readable channel choices", () => {
+    const app = setup();
+    for (const field of ["meta.chatId", "meta.wikiSpaceId", "meta.wikiNodeToken", "meta.wikiParentNodeToken", "meta.parentUrl", "meta.via", "meta.author"]) {
+      expect(() => saveArchiveRule(app, { ...rule, conditions: { field, op: "equals", value: "opaque" } })).toThrow();
+    }
+    run(app.db, "insert into archive_rules(id,body) values(?,?)", "legacy", JSON.stringify({ ...rule, conditions: { any: [{ field: "title", op: "contains", value: "项目 A" }, { field: "meta.chatId", op: "equals", value: "opaque" }] } }));
+    expect(listArchiveRules(app)[0]).toMatchObject({ enabled: false, conditions: null, migrationNote: expect.any(String) });
+    expect(getSource(app, upsertSource(app, material).id).spaceId).toBe("personal");
+    const condition = { field: "channel", op: "equals", value: "lark" } as const;
+    expect(matchesArchive(condition, { ...material, uri: "lark:chat" })).toBe(true);
+    expect(matchesArchive(condition, { ...material, uri: "https://tenant.larkoffice.com/wiki/Example" })).toBe(true);
+    expect(matchesArchive(condition, { ...material, uri: "https://larkoffice.com.example.com/doc" })).toBe(false);
+    expect(() => saveArchiveRule(app, { ...rule, conditions: { field: "channel", op: "equals", value: "lark-cli" } })).toThrow();
+  });
+
   it("routes by first enabled rule without an AI run and respects explicit imports and bindings", () => {
     const app = setup();
     const first = saveArchiveRule(app, rule);

@@ -150,9 +150,12 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "lark-wiki-node": {
-    description: "只读查询飞书文档所属的知识库、节点和父节点",
-    schema: z.object({ token: z.string().min(1).max(1000) }),
-    run: async (app, a) => (await import("../channels/lark-wiki.ts")).wikiNode(app, a.token),
+    description: "只读查询飞书文档所属的知识库、节点和父节点；names 返回中文知识库名称和完整目录路径",
+    schema: z.object({ token: z.string().min(1).max(1000), names: z.boolean().default(false) }),
+    run: async (app, a) => {
+      const wiki = await import("../channels/lark-wiki.ts");
+      return a.names ? wiki.wikiLocation(app, a.token) : wiki.wikiNode(app, a.token);
+    },
   },
   "lark-doc-raw": {
     description: "只读调用 lark-cli 的文档读取（fetch：文档内容；media / preview：下载或预览一个素材到临时目录后删除，返回输出和文件名，失败时返回错误；csv：读内嵌表格；meta：文档的最后修改时间等元数据，doc 为链接），返回原始 JSON（用来核对字段）",
@@ -289,8 +292,8 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "lark-docs-refresh": {
-    description: "重新读取已保存的飞书文档（下载图片、画板等素材，导入链接的文档），在后台运行，完成后发通知；stop: true 在当前这篇读完后停下",
-    schema: z.object({ space: z.string().max(64).optional(), limit: z.number().int().min(1).max(10_000).optional(), stop: z.boolean().optional() }),
+    description: "重新读取已保存的飞书文档（下载图片、画板等素材，导入链接的文档），在后台运行，完成后发通知；metadataOnly 只更新中文知识库和目录，ids 可限于指定原件；stop: true 在当前这篇读完后停下",
+    schema: z.object({ space: z.string().max(64).optional(), limit: z.number().int().min(1).max(10_000).optional(), metadataOnly: z.boolean().default(false), ids: z.array(id).min(1).max(100).optional(), stop: z.boolean().optional() }),
     run: async (app, a) => {
       const { refreshInBackground } = await import("../channels/lark-docs.ts");
       return refreshInBackground(app, a);

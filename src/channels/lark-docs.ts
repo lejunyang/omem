@@ -8,6 +8,7 @@ import { json } from "../core/util.ts";
 import { keepOriginal } from "../sources/import.ts";
 import { sourceText, upsertSource, type UpsertResult } from "../sources/store.ts";
 import { larkCli } from "./lark-cli.ts";
+import { clearWikiLocationCache } from "./lark-wiki.ts";
 import { withExtension } from "./lark-messages.ts";
 
 /**
@@ -36,6 +37,11 @@ const DOC_PATH = /^\/(docx|wiki|docs)\/([A-Za-z0-9]+)/;
 const DOC_URL = /https?:\/\/[\w.-]*(?:feishu\.cn|larksuite\.com|larkoffice\.com)\/(?:docx|docs|wiki)\/[A-Za-z0-9]+[^\s)"'<>\]]*/g;
 
 export type LarkDocMeta = {
+  wikiSpaceName?: string;
+  wikiParentTitle?: string;
+  wikiPath?: string;
+  wikiMetadataCheckedAt?: string;
+  wikiMetadataError?: string;
   wikiSpaceId?: string;
   wikiNodeToken?: string;
   wikiParentNodeToken?: string;
@@ -500,6 +506,34 @@ type ImportOpts = {
   budget?: { left: number };
 };
 
+async function readWikiMetadata(app: App, url: string, previous: Partial<LarkDocMeta> = {}) {
+  const empty = { wikiSpaceName: undefined, wikiParentTitle: undefined, wikiPath: undefined, wikiMetadataCheckedAt: new Date().toISOString(), wikiMetadataError: undefined };
+  try {
+    const location = await (await import("./lark-wiki.ts")).wikiLocation(app, url);
+    const node = location.node;
+    return { node, meta: { ...empty, wikiSpaceId: node?.spaceId || undefined, wikiNodeToken: node?.nodeToken || undefined, wikiParentNodeToken: node?.parentNodeToken || undefined,
+      wikiSpaceName: location.spaceName, wikiParentTitle: location.parentTitle, wikiPath: location.path, wikiMetadataError: location.errors.join("；") || undefined } };
+  } catch (e) {
+    const error = (e as Error).message;
+    console.warn(`[omem] 读取飞书知识库目录失败 ${url}：${error}`);
+    return { node: null, meta: { ...empty, wikiSpaceId: previous.wikiSpaceId, wikiNodeToken: previous.wikiNodeToken, wikiParentNodeToken: previous.wikiParentNodeToken, wikiMetadataError: error } };
+  }
+}
+
+/** Refresh directory names only: never download media, follow linked documents or rewrite evidence. */
+export async function refreshLarkWikiLocation(app: App, id: string) {
+  const row = one<{ uri: string; meta: string }>(app.db, "select uri,meta from sources where id=? and kind='doc' and deleted_at is null", id);
+  if (!row) throw new Error("文档不存在");
+  const previous = json<Partial<LarkDocMeta>>(row.meta, {});
+  const { url } = normalizeDocUrl(previous.url ?? row.uri);
+  const { meta } = await readWikiMetadata(app, url, previous);
+  const current = one<{ meta: string }>(app.db, "select meta from sources where id=? and uri=? and deleted_at is null", id, row.uri);
+  if (!current) throw new Error("文档已变化，请重新读取目录");
+  run(app.db, "update sources set meta=? where id=?", JSON.stringify({ ...json(current.meta, {}), ...meta }), id);
+  if (meta.wikiMetadataError) throw new Error(meta.wikiMetadataError);
+  return meta;
+}
+
 export async function importLarkDocument(app: App, spaceId: string, input: string, opts: ImportOpts = {}): Promise<LarkDocResult> {
   const cfg = app.config.lark.capture;
   const given = opts.depth ?? cfg.docLinkDepth;
@@ -512,17 +546,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   // Reached by several routes (given directly and as someone's link): the deepest reach wins.
   const depth = Math.max(given, prev.depth ?? -1);
   const doc = await fetchDoc(url);
-  let wiki: import("./lark-wiki.ts").WikiNode | null = null;
-  let wikiResolved = false;
-  try {
-    wiki = await (await import("./lark-wiki.ts")).wikiNode(app, url);
-    wikiResolved = true;
-  } catch (e) {
-    console.warn(`[omem] 读取飞书知识库节点失败 ${url}：${(e as Error).message}`);
-  }
-  const wikiMeta = wikiResolved
-    ? { wikiSpaceId: wiki?.spaceId || undefined, wikiNodeToken: wiki?.nodeToken || undefined, wikiParentNodeToken: wiki?.parentNodeToken || undefined }
-    : { wikiSpaceId: prev.wikiSpaceId, wikiNodeToken: prev.wikiNodeToken, wikiParentNodeToken: prev.wikiParentNodeToken };
+  const { node: wiki, meta: wikiMeta } = await readWikiMetadata(app, url, prev);
   const uri = existing ? (one<{ uri: string }>(app.db, "select uri from sources where id = ?", existing.id)?.uri ?? url) : url;
   const fetchedAt = new Date().toISOString();
   // Refresh routing metadata even when the document body has not changed.
@@ -761,6 +785,7 @@ const REFRESH_KEY = "lark_docs_refresh";
 
 /** A refresh in progress, kept in the database so a restart picks it up where it stopped. */
 type RefreshState = {
+  metadataOnly?: boolean;
   startedAt: string;
   space?: string;
   total: number;
@@ -783,15 +808,17 @@ function saveRefresh(app: App, s: RefreshState | null) {
   else run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", REFRESH_KEY, JSON.stringify(s));
 }
 
-export function startRefresh(app: App, opts: { space?: string; limit?: number } = {}): RefreshState {
+export function startRefresh(app: App, opts: { space?: string; limit?: number; metadataOnly?: boolean; ids?: string[] } = {}): RefreshState {
   const rows = all<{ id: string }>(
     app.db,
     `select id from sources where kind = 'doc' and deleted_at is null and json_extract(meta, '$.via') = 'lark-cli'
-       ${opts.space ? "and space_id = ?" : ""} order by updated_at desc limit ?`,
+       ${opts.space ? "and space_id = ?" : ""} ${opts.ids?.length ? `and id in (${opts.ids.map(() => "?").join(",")})` : ""} order by updated_at desc limit ?`,
     ...(opts.space ? [opts.space] : []),
+    ...(opts.ids?.length ? opts.ids : []),
     opts.limit ?? 100_000,
   );
-  const s: RefreshState = { startedAt: new Date().toISOString(), space: opts.space, total: rows.length, todo: rows.map((r) => r.id), done: 0, failed: 0, skipped: 0, changed: {}, errors: [], unreadable: [] };
+  if (opts.metadataOnly) clearWikiLocationCache(app);
+  const s: RefreshState = { metadataOnly: opts.metadataOnly, startedAt: new Date().toISOString(), space: opts.space, total: rows.length, todo: rows.map((r) => r.id), done: 0, failed: 0, skipped: 0, changed: {}, errors: [], unreadable: [] };
   saveRefresh(app, s);
   return s;
 }
@@ -810,15 +837,18 @@ export async function continueRefresh(app: App, opts: { log?: (s: string) => voi
     const id = s.todo[0];
     const row = one<{ space_id: string; uri: string; meta: string; deleted_at: string | null }>(app.db, "select space_id, uri, meta, deleted_at from sources where id = ?", id);
     const meta = json<Partial<LarkDocMeta>>(row?.meta, {});
-    if (!row || row.deleted_at || (meta.fetchedAt && meta.fetchedAt >= s.startedAt)) s.skipped++;
+    if (!row || row.deleted_at || ((s.metadataOnly ? meta.wikiMetadataCheckedAt : meta.fetchedAt) ?? "") >= s.startedAt) s.skipped++;
     else {
       try {
-        const r = await importLarkDocument(app, row.space_id, meta.url ?? row.uri, { force: true, unreadable: s.unreadable, depth: storedDepth(app, id) });
-        const after = json<Partial<LarkDocMeta>>(one<{ meta: string }>(app.db, "select meta from sources where id = ?", r.id)?.meta, {}).revision;
-        const ids = new Set(s.changed[row.space_id] ?? []);
-        if (r.status !== "unchanged" && meta.revision && meta.revision !== after) ids.add(r.id);
-        for (const x of r.related) ids.add(x);
-        s.changed[row.space_id] = [...ids];
+        if (s.metadataOnly) await refreshLarkWikiLocation(app, id);
+        else {
+          const r = await importLarkDocument(app, row.space_id, meta.url ?? row.uri, { force: true, unreadable: s.unreadable, depth: storedDepth(app, id) });
+          const after = json<Partial<LarkDocMeta>>(one<{ meta: string }>(app.db, "select meta from sources where id = ?", r.id)?.meta, {}).revision;
+          const ids = new Set(s.changed[row.space_id] ?? []);
+          if (r.status !== "unchanged" && meta.revision && meta.revision !== after) ids.add(r.id);
+          for (const x of r.related) ids.add(x);
+          s.changed[row.space_id] = [...ids];
+        }
         s.done++;
       } catch (e) {
         s.failed++;
@@ -849,7 +879,7 @@ let stopRequested = false;
  * Run (or resume) a refresh without waiting; the owner gets one notification when it is done,
  * including the linked docs that could not be read. `stop` cancels it after the current doc.
  */
-export function refreshInBackground(app: App, opts: { space?: string; limit?: number; stop?: boolean; resume?: boolean } = {}) {
+export function refreshInBackground(app: App, opts: { space?: string; limit?: number; stop?: boolean; resume?: boolean; metadataOnly?: boolean; ids?: string[] } = {}) {
   if (opts.stop) {
     stopRequested = !!refreshing;
     if (!refreshing) saveRefresh(app, null);
@@ -867,7 +897,7 @@ export function refreshInBackground(app: App, opts: { space?: string; limit?: nu
       for (const [spaceId, ids] of changed) scheduleIngest(app, spaceId, ids, "飞书文档有新内容或新链接的文档");
       lastResult = { ...s, todo: [], finishedAt: new Date().toISOString() };
       const n = changed.reduce((k, [, ids]) => k + ids.length, 0);
-      notify(app, { title: `飞书文档重新读取完成：${s.done}/${s.total}`, body: `${s.failed ? `${s.failed} 篇读取失败。` : ""}${s.skipped ? `${s.skipped} 篇在本次已作为链接读过，跳过。` : ""}有新内容或新导入的 ${n} 篇已交给整理。` });
+      notify(app, { title: `${s.metadataOnly ? "飞书目录更新" : "飞书文档重新读取"}完成：${s.done}/${s.total}`, body: s.metadataOnly ? `已更新 ${s.done} 篇目录，${s.failed} 篇未能完整读取。正文和附件保持不变，可重新预览归档。` : `${s.failed ? `${s.failed} 篇读取失败。` : ""}${s.skipped ? `${s.skipped} 篇在本次已作为链接读过，跳过。` : ""}有新内容或新导入的 ${n} 篇已交给整理。` });
       if (s.unreadable.length) tellUnreadable(app, "重新读取飞书文档", null, s.unreadable);
     })
     .catch((e) => console.warn("[omem] 刷新飞书文档失败：", (e as Error).message))
@@ -877,10 +907,10 @@ export function refreshInBackground(app: App, opts: { space?: string; limit?: nu
 
 let lastResult: (RefreshState & { finishedAt: string }) | null = null;
 
-function refreshProgress(app: App) {
+export function refreshProgress(app: App) {
   const s = refreshState(app);
-  if (s) return { running: !!refreshing, startedAt: s.startedAt, at: `${s.total - s.todo.length}/${s.total}`, done: s.done, failed: s.failed, skipped: s.skipped, errors: s.errors.slice(-10) };
-  return lastResult ? { running: false, startedAt: lastResult.startedAt, finishedAt: lastResult.finishedAt, at: `${lastResult.total}/${lastResult.total}`, done: lastResult.done, failed: lastResult.failed, skipped: lastResult.skipped, errors: lastResult.errors.slice(-10) } : null;
+  if (s) return { metadataOnly: s.metadataOnly, space: s.space, running: !!refreshing, startedAt: s.startedAt, at: `${s.total - s.todo.length}/${s.total}`, done: s.done, failed: s.failed, skipped: s.skipped, errors: s.errors.slice(-10) };
+  return lastResult ? { metadataOnly: lastResult.metadataOnly, space: lastResult.space, running: false, startedAt: lastResult.startedAt, finishedAt: lastResult.finishedAt, at: `${lastResult.total}/${lastResult.total}`, done: lastResult.done, failed: lastResult.failed, skipped: lastResult.skipped, errors: lastResult.errors.slice(-10) } : null;
 }
 
 /** At startup: a refresh interrupted by a restart carries on. */

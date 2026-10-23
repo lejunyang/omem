@@ -3,10 +3,10 @@ import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { resetLarkAuthForTests } from "../src/channels/lark-auth.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
-import { importLarkDocument } from "../src/channels/lark-docs.ts";
+import { importLarkDocument, startRefresh, continueRefresh } from "../src/channels/lark-docs.ts";
 import { rememberPerson } from "../src/channels/lark-people.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
-import { continueCrawl, crawlLoop, getCrawl, startCrawl } from "../src/channels/lark-wiki.ts";
+import { continueCrawl, crawlLoop, getCrawl, startCrawl, wikiLocation, clearWikiLocationCache } from "../src/channels/lark-wiki.ts";
 import { all, one } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { matchesArchive, saveArchiveRule } from "../src/sources/archive.ts";
@@ -83,20 +83,20 @@ describe("feishu knowledge bases", () => {
   it("captures wiki metadata at zero depth for wiki and docx links, with title and body matching", async () => {
     const app = testApp();
     createSpace(app, { id: "project-a", name: "项目 A", kind: "project" });
-    const calls = fakeWiki({ A: { title: "项目 A 手册", parent: "Root" }, B: { title: "项目 A 日程", parent: "Root" } });
+    const calls = fakeWiki({ Root: { title: "项目 A" }, A: { title: "项目 A 手册", parent: "Root" }, B: { title: "项目 A 日程", parent: "Root" } });
     const conditions = { all: [
       { field: "kind", op: "equals", value: "doc" },
       { field: "title", op: "contains", value: "项目 A" },
       { field: "text", op: "contains", value: "的正文" },
-      { field: "meta.wikiSpaceId", op: "equals", value: TEAM },
-      { field: "meta.wikiParentNodeToken", op: "equals", value: "Root" },
+      { field: "meta.wikiSpaceName", op: "equals", value: "项目 A 知识库" },
+      { field: "meta.wikiPath", op: "contains", value: "项目 A" },
     ] } as const;
     const rule = saveArchiveRule(app, { name: "项目 A 文档", target: "project-a", enabled: true, conditions });
     for (const path of ["wiki/A", "docx/B"]) {
       const r = await importLarkDocument(app, "personal", `${ORIGIN}/${path}`, { depth: 0, archive: true });
       const s = getSource(app, r.id);
       expect(s.spaceId).toBe("project-a");
-      expect(s.meta).toMatchObject({ wikiSpaceId: TEAM, wikiNodeToken: path.split("/")[1], wikiParentNodeToken: "Root" });
+      expect(s.meta).toMatchObject({ wikiSpaceId: TEAM, wikiNodeToken: path.split("/")[1], wikiParentNodeToken: "Root", wikiPath: "项目 A", wikiParentTitle: "项目 A" });
       expect(matchesArchive(rule.conditions, { ...s, text: sourceText(app, s.id) })).toBe(true);
       expect(matchesArchive(rule.conditions, { ...s, title: "项目 B", text: sourceText(app, s.id) })).toBe(false);
       expect(matchesArchive(rule.conditions, { ...s, text: "不含关键字" })).toBe(false);
@@ -112,17 +112,51 @@ describe("feishu knowledge bases", () => {
     const first = await importLarkDocument(app, "personal", url, { depth: 0, archive: true });
     const hash = getSource(app, first.id).hash;
     expect(getSource(app, first.id).meta.wikiNodeToken).toBeUndefined();
-    saveArchiveRule(app, { name: "项目 A 知识库", target: "project-a", enabled: true, conditions: { field: "meta.wikiNodeToken", op: "equals", value: "A" } });
-    fakeWiki({ A: { title: "手册", parent: "Root" } });
+    saveArchiveRule(app, { name: "项目 A 知识库", target: "project-a", enabled: true, conditions: { field: "meta.wikiPath", op: "contains", value: "项目 A" } });
+    fakeWiki({ Root: { title: "项目 A" }, A: { title: "手册", parent: "Root" } });
     const second = await importLarkDocument(app, "personal", url, { depth: 0, archive: true });
     expect(second).toMatchObject({ id: first.id, status: "unchanged" });
     expect(getSource(app, first.id)).toMatchObject({ spaceId: "project-a", hash, meta: { wikiSpaceId: TEAM, wikiParentNodeToken: "Root" } });
     fakeWiki({ A: { title: "手册" } }, { nodeError: "temporary node lookup failure" });
     await importLarkDocument(app, "personal", url, { depth: 0, archive: true });
     expect(getSource(app, first.id)).toMatchObject({ hash, meta: { wikiSpaceId: TEAM, wikiParentNodeToken: "Root" } });
+    expect(getSource(app, first.id).meta.wikiPath).toBeUndefined();
     fakeWiki({ A: { title: "手册" } }, { nodeError: "131014 not mounted in wiki" });
     await importLarkDocument(app, "personal", url, { depth: 0, archive: true });
     expect(getSource(app, first.id).meta.wikiNodeToken).toBeUndefined();
+  });
+
+  it("resolves ancestor names and refreshes only metadata after a parent rename, without touching evidence", async () => {
+    const app = testApp();
+    const nodes = { Top: { title: "业务方向" }, Root: { title: "项目 A", parent: "Top" }, A: { title: "周会记录", parent: "Root" } };
+    fakeWiki(nodes);
+    const r = await importLarkDocument(app, "personal", `${ORIGIN}/wiki/A`, { depth: 0 });
+    const before = getSource(app, r.id);
+    const chunks = all(app.db, "select id,line_start,line_end,text from chunks where source_id=?", r.id);
+    expect(before.meta).toMatchObject({ wikiPath: "业务方向 / 项目 A", wikiParentTitle: "项目 A", wikiSpaceName: "项目 A 知识库" });
+    expect(matchesArchive({ field: "meta.wikiPath", op: "contains", value: "项目 A" }, { ...before, text: sourceText(app, r.id) })).toBe(true);
+    const calls = fakeWiki({ ...nodes, Root: { title: "项目 B", parent: "Top" } });
+    startRefresh(app, { space: "personal", metadataOnly: true });
+    const state = await continueRefresh(app);
+    expect(state).toMatchObject({ done: 1, failed: 0, changed: {} });
+    expect(getSource(app, r.id)).toMatchObject({ id: r.id, hash: before.hash, updatedAt: before.updatedAt, meta: { wikiPath: "业务方向 / 项目 B", wikiParentTitle: "项目 B" } });
+    expect(all(app.db, "select id,line_start,line_end,text from chunks where source_id=?", r.id)).toEqual(chunks);
+    expect(calls.some(c => c[0] === "docs")).toBe(false);
+  });
+
+  it("does not match missing, cyclic or unreadable ancestor paths, including exclusions", async () => {
+    const app = testApp();
+    fakeWiki({ A: { title: "手册", parent: "Root" }, Root: { title: "项目 A", parent: "A" } });
+    const cycle = await wikiLocation(app, "A");
+    expect(cycle.path).toBeUndefined();
+    expect(cycle.errors).not.toHaveLength(0);
+    clearWikiLocationCache(app);
+    fakeWiki({ A: { title: "手册", parent: "Missing" } });
+    const missing = await wikiLocation(app, "A");
+    expect(missing.path).toBeUndefined();
+    const input = { spaceId: "personal", kind: "doc" as const, uri: "example", title: "周会", text: "正文", meta: {} };
+    expect(matchesArchive({ not: { field: "meta.wikiPath", op: "contains", value: "项目 A" } }, input)).toBe(false);
+    expect(matchesArchive({ any: [{ field: "title", op: "equals", value: "周会" }, { field: "meta.wikiPath", op: "contains", value: "项目 A" }] }, input)).toBe(true);
   });
 
   it("reads a wiki page's child pages as links, levels counted from the page first given", async () => {

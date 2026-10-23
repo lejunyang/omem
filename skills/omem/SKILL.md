@@ -87,3 +87,5 @@ omem diag [同伴]                          # 本机或另一台 omem 的运行�
 - `propose_archive_rule(name, description, target, enabled, conditions)` 只开放给 `archive-rule-writer`，结果为本次运行中的草稿，不保存或启用。外部 MCP 客户端和主助手不能冒充内部角色调用。条件组合用 all / any / not，不执行模型生成的程序。
 
 归档条件的 kind 使用 doc（文档）、chat、note、web、image、event、meeting；equals / in 不接受未知类型，文档不能写成 document。草稿提交和规则保存使用相同校验。
+
+归档条件使用类型、标题、正文、网址 / 路径、采集渠道及中文知识库 / 目录名称。`meta.wikiSpaceName` 是知识库名，`meta.wikiParentTitle` 是直接父目录名，`meta.wikiPath` 是不含当前文档标题的祖先目录路径。目录下任意层级用路径包含目录名；不再支持会话 ID、知识库 ID、节点 token、作者或父页面地址。缺失字段的排除条件也不会命中。

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import { del, get, post, put, type Run } from "../api";
 import RuleConditions, { type Condition } from "../components/RuleConditions.vue";
@@ -10,8 +10,26 @@ import UiSelect from "../components/UiSelect.vue";
 import { confirmDialog } from "../lib/dialog";
 import { state, toast } from "../store";
 
-type Rule = { id?: string; name: string; description: string; target: string; enabled: boolean; conditions: Condition | null };
+type Rule = { id?: string; name: string; description: string; target: string; enabled: boolean; conditions: Condition | null; migrationNote?: string };
 type Preview = { id: string; title: string; hash: string; from: string; target: string; ruleId?: string; ruleVersion?: string; reason: string; conflict: boolean };
+const folderProgress = ref<{ metadataOnly?: boolean; space?: string; running: boolean; at: string; done: number; failed: number } | null>(null);
+let folderTimer: ReturnType<typeof setTimeout> | undefined;
+onUnmounted(() => clearTimeout(folderTimer));
+let disposed = false;
+onUnmounted(() => { disposed = true; });
+async function pollFolders() {
+  clearTimeout(folderTimer);
+  try { folderProgress.value = await get("/api/archive/folders"); }
+  catch (e) { toast((e as Error).message, "error"); return; }
+  if (!disposed && folderProgress.value?.running) folderTimer = setTimeout(pollFolders, 2000);
+}
+async function refreshFolders() {
+  try {
+    const r = await post<{ started: boolean; reason?: string }>("/api/archive/folders", { space: state.space });
+    toast(r.started ? "正在更新飞书目录，完成后请重新预览" : r.reason ?? "已有更新正在进行", "ok");
+    await pollFolders();
+  } catch (e) { toast((e as Error).message, "error"); }
+}
 const rules = ref<Rule[]>([]);
 const form = ref<Rule | null>(null);
 const loading = ref(true);
@@ -19,7 +37,7 @@ const busy = ref(false);
 const drafting = ref(false);
 const dirty = ref(false);
 const organizing = ref(false);
-const options = ref<{ fields: Record<string, string>; ops: string[] }>({ fields: {}, ops: [] });
+const options = ref<{ fields: Record<string, string>; descriptions?: Record<string, string>; valueOptions?: Record<string, { value: string; label: string }[]>; ops: string[] }>({ fields: {}, ops: [] });
 const preview = ref<Preview[] | null>(null);
 const selected = ref<string[]>([]);
 const offset = ref(0);
@@ -44,6 +62,7 @@ async function edit(rule?: Rule) {
 async function organize() {
   if (!(await leave())) return;
   form.value = null; dirty.value = false; organizing.value = true;
+  await pollFolders();
   if (!preview.value) await previewBatch(0);
 }
 async function toggle(r: Rule) {
@@ -140,15 +159,17 @@ async function classify() {
           <button class="grow pick" :disabled="drafting" @click="edit(r)">
             <strong class="ellipsis">{{ r.name }}</strong><div class="muted small clamp">{{ r.description }}</div><div class="muted small">归到 {{ name(r.target) }}</div>
           </button>
-          <UiCheckbox :model-value="r.enabled" switch size="sm" :aria-label="`启用 ${r.name}`" @change="toggle(r)" />
+          <UiCheckbox :model-value="r.enabled" switch size="sm" :aria-label="`启用 ${r.name}`" :disabled="!r.conditions" @change="toggle(r)" />
         </div>
         <p v-if="!loading && !rules.length" class="muted small hint">还没有归档规则。点 ＋ 新建，按标题、正文或来源信息指定材料归属。</p>
       </div>
     </aside>
     <main class="detail">
     <section v-if="organizing" class="page history">
-      <div class="row wrap"><h2>整理已有材料</h2><span class="spacer" /><button class="btn" :disabled="busy" @click="previewBatch(0)">预览当前空间</button></div>
+      <div class="row wrap"><h2>整理已有材料</h2><span class="spacer" /><button class="btn" :disabled="busy || folderProgress?.running" @click="refreshFolders">更新飞书目录</button><button class="btn" :disabled="busy" @click="previewBatch(0)">预览当前空间</button></div>
       <p class="muted small">查看「{{ name(state.space) }}」中已有材料的归档依据。每批最多 100 份；同地址冲突会跳过。</p>
+      <p class="muted small">旧飞书文档可先更新目录，再预览归档。只读取知识库和目录名称，正文和附件保持不变。</p>
+      <p v-if="folderProgress?.metadataOnly && folderProgress.space === state.space" class="small" role="status">{{ folderProgress.running ? '正在更新目录' : '目录更新结束' }}：{{ folderProgress.at }}，成功 {{ folderProgress.done }}，失败 {{ folderProgress.failed }}。</p>
       <Skeleton v-if="busy && !preview" :rows="6" />
       <template v-else-if="preview">
         <p v-if="!preview.length" class="muted">这一批没有可归档材料。</p>
@@ -179,7 +200,9 @@ async function classify() {
         </section>
         <section class="block">
           <div class="block-head"><h3>满足什么条件</h3></div>
-          <RuleConditions v-model="form.conditions" :fields="options.fields" :ops="options.ops" @update:model-value="touch" />
+          <p v-if="form.migrationNote" class="err small">{{ form.migrationNote }}</p>
+          <p class="muted small">按名称和文字匹配，不会猜测同义词或主题。知识库目录使用中文名称；无法读取的字段不匹配。</p>
+          <RuleConditions v-model="form.conditions" :fields="options.fields" :ops="options.ops" :descriptions="options.descriptions" :value-options="options.valueOptions" @update:model-value="touch" />
         </section>
         <section class="block">
           <div class="block-head"><h3>归到哪个空间</h3></div>

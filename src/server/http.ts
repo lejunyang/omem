@@ -690,8 +690,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Archive settings are owner-only, like task rules; members cannot reach these routes.
   server.get("/api/archive-rules", async () => (await import("../sources/archive.ts")).listArchiveRules(app));
   server.get("/api/archive-options", async () => {
-    const { ARCHIVE_FIELDS } = await import("../sources/archive.ts");
-    return { fields: ARCHIVE_FIELDS, ops: ["equals", "contains", "startsWith", "endsWith", "in", "is"] };
+    const { ARCHIVE_FIELDS, ARCHIVE_FIELD_HELP, ARCHIVE_KINDS, ARCHIVE_CHANNELS } = await import("../sources/archive.ts");
+    return { fields: ARCHIVE_FIELDS, descriptions: ARCHIVE_FIELD_HELP, valueOptions: Object.fromEntries(Object.entries({ kind: ARCHIVE_KINDS, channel: ARCHIVE_CHANNELS }).map(([field, values]) => [field, Object.entries(values).map(([value, label]) => ({ value, label }))])), ops: ["equals", "contains", "startsWith", "endsWith", "in"] };
   });
   server.post("/api/archive-rules", async req => (await import("../sources/archive.ts")).saveArchiveRule(app, req.body));
   server.put("/api/archive-rules/:id", async req => (await import("../sources/archive.ts")).saveArchiveRule(app, req.body, (req.params as { id: string }).id));
@@ -703,6 +703,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ space: z.string(), description: z.string().min(1).max(2000), current: z.record(z.string(), z.unknown()).optional() }), req.body);
     getSpace(app, b.space);
     return createRun(app, { kind: "archive-rule-draft", spaceId: b.space, title: "编写归档规则", input: b, userId: who(req) });
+  });
+  server.get("/api/archive/folders", async () => (await import("../channels/lark-docs.ts")).refreshProgress(app));
+  server.post("/api/archive/folders", async req => {
+    const b = q(z.object({ space: z.string() }), req.body);
+    getSpace(app, b.space);
+    return (await import("../channels/lark-docs.ts")).refreshInBackground(app, { space: b.space, metadataOnly: true });
   });
   server.post("/api/archive/preview", async req => {
     const b = q(z.object({ space: z.string(), limit: z.number().int().min(1).max(200).default(100), offset: z.number().int().min(0).default(0) }), req.body);

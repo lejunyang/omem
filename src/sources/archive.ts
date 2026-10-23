@@ -10,23 +10,41 @@ import { OPS } from "../rules/types.ts";
 import { getSource, sourceText, type UpsertInput } from "./store.ts";
 import { vectorIndex } from "../search/vectors.ts";
 
-export const ARCHIVE_FIELDS = { kind: "材料类型", title: "标题 / 群名", uri: "网址 / 路径", text: "正文", "meta.chatId": "来源会话 ID", "meta.via": "采集渠道", "meta.author": "作者", "meta.wikiSpaceId": "知识库 ID", "meta.wikiNodeToken": "知识库节点", "meta.wikiParentNodeToken": "知识库父节点", "meta.parentUrl": "父页面地址" } as const;
+export const ARCHIVE_FIELDS = { kind: "材料类型", title: "标题 / 群名", uri: "网址 / 路径", text: "正文", channel: "采集渠道", "meta.wikiSpaceName": "知识库名称", "meta.wikiParentTitle": "所在目录", "meta.wikiPath": "上级目录路径" } as const;
+export const ARCHIVE_FIELD_HELP: Record<keyof typeof ARCHIVE_FIELDS, string> = {
+  kind: "材料本身的类型，例如文档、聊天、网页；从中文选项中选择。",
+  title: "原件标题；聊天材料使用会话名，历史聊天可能带月份。不会读取正文。",
+  uri: "原件的网址或文件路径，可按网站域名、目录名、文件名匹配。",
+  text: "已经采集并转成可读文本的完整正文；聊天材料是已保存的聊天记录，不包含尚未采集的内容。",
+  channel: "材料来自哪里，例如飞书、网页或本地文件；不需要填写程序名。",
+  "meta.wikiSpaceName": "飞书知识库的名称，不是 omem 的目标空间名。",
+  "meta.wikiParentTitle": "飞书文档直接所属目录的名称，例如“周会”。",
+  "meta.wikiPath": "从顶层到直接父目录的完整中文路径，例如“项目 A / 周会 / Q3”，不含当前文档标题；用“包含 项目 A”可匹配该目录下各层文档。",
+};
+export const ARCHIVE_CHANNELS = { lark: "飞书", onebot: "QQ / 微信", web: "网页", file: "本地文件", note: "手动笔记" } as const;
 export const ARCHIVE_KINDS = { doc: "文档", chat: "聊天", note: "笔记", web: "网页", image: "图片", event: "日程", meeting: "妙记 / 会议" } as const;
 type Field = keyof typeof ARCHIVE_FIELDS;
 export type ArchiveCondition = { field: Field; op: (typeof OPS)[number]; value: string | boolean | string[] } | { all: ArchiveCondition[] } | { any: ArchiveCondition[] } | { not: ArchiveCondition };
 export const archiveCondition: z.ZodType<ArchiveCondition> = z.lazy(() => z.union([
-  z.object({ field: z.enum(Object.keys(ARCHIVE_FIELDS) as [Field, ...Field[]]), op: z.enum(["equals", "contains", "startsWith", "endsWith", "in", "is"]), value: z.union([z.string().max(2000), z.boolean(), z.array(z.string().max(2000)).max(100)]).describe(`kind 的取值：${JSON.stringify(ARCHIVE_KINDS)}，使用键名匹配。`) }).superRefine((c, ctx) => {
-    if (c.field !== "kind" || !["equals", "in"].includes(c.op)) return;
+  z.object({ field: z.enum(Object.keys(ARCHIVE_FIELDS) as [Field, ...Field[]]), op: z.enum(["equals", "contains", "startsWith", "endsWith", "in", "is"]), value: z.union([z.string().max(2000), z.boolean(), z.array(z.string().max(2000)).max(100)]).describe(`kind 的取值：${JSON.stringify(ARCHIVE_KINDS)}，采集渠道：${JSON.stringify(ARCHIVE_CHANNELS)}。使用键名匹配。`) }).superRefine((c, ctx) => {
+    if (!["kind", "channel"].includes(c.field)) return;
+    if (!["equals", "in"].includes(c.op)) { ctx.addIssue({ code: "custom", message: "材料类型和采集渠道请使用“是”或“是其中之一”" }); return; }
+    const choices = c.field === "kind" ? ARCHIVE_KINDS : ARCHIVE_CHANNELS;
     const values = Array.isArray(c.value) ? c.value : [c.value];
-    if (values.some(v => typeof v !== "string" || !Object.hasOwn(ARCHIVE_KINDS, v)))
-      ctx.addIssue({ code: "custom", path: ["value"], message: `材料类型须使用 ${Object.keys(ARCHIVE_KINDS).join("、")}；文档是 doc。` });
+    if (values.some(v => typeof v !== "string" || !Object.hasOwn(choices, v)))
+      ctx.addIssue({ code: "custom", path: ["value"], message: `请使用有效选项 ${Object.keys(choices).join("、")}；文档是 doc。` });
   }),
   z.object({ all: z.array(archiveCondition).min(1).max(30) }), z.object({ any: z.array(archiveCondition).min(1).max(30) }), z.object({ not: archiveCondition }),
 ]));
 export const archiveRuleSchema = z.object({ name: z.string().trim().min(1).max(60), description: z.string().max(2000).default(""), enabled: z.boolean().default(false), target: z.string().min(1), conditions: archiveCondition });
-export type ArchiveRule = z.infer<typeof archiveRuleSchema> & { id: string };
+export type ArchiveRule = Omit<z.infer<typeof archiveRuleSchema>, "conditions"> & { id: string; conditions: ArchiveCondition | null; migrationNote?: string };
 export function listArchiveRules(app: App): ArchiveRule[] {
-  return all<{ id: string; body: string }>(app.db, "select id, body from archive_rules order by rowid").map(r => ({ ...archiveRuleSchema.parse(json(r.body, {})), id: r.id }));
+  return all<{ id: string; body: string }>(app.db, "select id, body from archive_rules order by rowid").map(r => {
+    const body = json<Record<string, unknown>>(r.body, {});
+    const parsed = archiveRuleSchema.safeParse(body);
+    if (parsed.success) return { ...parsed.data, id: r.id };
+    return { ...archiveRuleSchema.omit({ conditions: true }).parse(body), id: r.id, enabled: false, conditions: null, migrationNote: "旧条件包含已移除的字段，已停用。请用名称和目录重新设置条件后保存。" };
+  });
 }
 export function saveArchiveRule(app: App, input: unknown, id = newId("ar")) {
   const body = archiveRuleSchema.parse(input);
@@ -42,12 +60,28 @@ export function saveArchiveRule(app: App, input: unknown, id = newId("ar")) {
   run(app.db, "insert into archive_rules(id,body) values(?,?) on conflict(id) do update set body=excluded.body", id, JSON.stringify(body));
   return { ...body, id };
 }
-export function matchesArchive(c: ArchiveCondition, input: UpsertInput): boolean {
-  if ("all" in c) return c.all.every(x => matchesArchive(x, input));
-  if ("any" in c) return c.any.some(x => matchesArchive(x, input));
-  if ("not" in c) return !matchesArchive(c.not, input);
-  const value = c.field.startsWith("meta.") ? input.meta?.[c.field.slice(5)] : input[c.field as "kind" | "title" | "uri" | "text"];
-  return leafMatches(c, value);
+export function archiveChannel(input: UpsertInput): string | undefined {
+  if (input.uri.startsWith("lark:") || input.meta?.via === "lark-cli") return "lark";
+  if (input.uri.startsWith("onebot:")) return "onebot";
+  try { if (/(^|\.)(feishu\.cn|larkoffice\.com|larksuite\.com)$/.test(new URL(input.uri).hostname)) return "lark"; } catch {}
+  if (input.kind === "web") return "web";
+  if (input.uri.startsWith("note/")) return "note";
+  if (input.meta?.original || input.meta?.directoryRoot || /^(file:|\/|[A-Za-z]:[\\/])/.test(input.uri)) return "file";
+  return undefined;
+}
+export function matchesArchive(c: ArchiveCondition | null, input: UpsertInput): boolean {
+  const evaluate = (c: ArchiveCondition): boolean | undefined => {
+    if ("all" in c || "any" in c) {
+      const values = ("all" in c ? c.all : c.any).map(evaluate);
+      if ("all" in c) return values.includes(false) ? false : values.includes(undefined) ? undefined : true;
+      return values.includes(true) ? true : values.includes(undefined) ? undefined : false;
+    }
+    if ("not" in c) { const value = evaluate(c.not); return value === undefined ? undefined : !value; }
+    if (!Object.hasOwn(ARCHIVE_FIELDS, c.field)) return undefined;
+    const value = c.field === "channel" ? archiveChannel(input) : c.field.startsWith("meta.") ? input.meta?.[c.field.slice(5)] : input[c.field as "kind" | "title" | "uri" | "text"];
+    return value === undefined || value === null ? undefined : leafMatches(c, value);
+  };
+  return c !== null && evaluate(c) === true;
 }
 export type Route = { source_id: string; origin_space: string; mode: "manual" | "binding" | "rule" | "ai" | "fallback"; reason: string; rule_id: string | null; decision_hash: string | null; pending: number; ingest: number };
 export function sourceRoute(app: App, id: string) { return one<Route>(app.db, "select * from source_routes where source_id=?", id); }

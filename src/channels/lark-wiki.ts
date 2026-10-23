@@ -55,6 +55,53 @@ export async function wikiNode(app: App, token: string): Promise<WikiNode | null
   }
 }
 
+export type WikiLocation = { node: WikiNode | null; spaceName?: string; parentTitle?: string; path?: string; errors: string[] };
+const locationCaches = new WeakMap<App, Map<string, { until: number; value: Promise<unknown> }>>();
+export function clearWikiLocationCache(app: App) { locationCaches.delete(app); }
+function cachedLocation<T>(app: App, key: string, read: () => Promise<T>): Promise<T> {
+  let cache = locationCaches.get(app);
+  if (!cache) locationCaches.set(app, cache = new Map());
+  const prior = cache.get(key);
+  if (prior && prior.until > Date.now()) return prior.value as Promise<T>;
+  if (cache.size > 2000) cache.clear();
+  const value = read().catch(error => { cache!.delete(key); throw error; });
+  cache.set(key, { until: Date.now() + 5 * 60_000, value });
+  return value;
+}
+
+/** Resolve human-readable names; incomplete ancestor chains must never masquerade as full paths. */
+export async function wikiLocation(app: App, token: string, known?: WikiNode | null): Promise<WikiLocation> {
+  const node = known === undefined ? await wikiNode(app, token) : known;
+  const result: WikiLocation = { node, errors: [] };
+  if (!node) return result;
+  try {
+    result.spaceName = await cachedLocation(app, `space:${node.spaceId}`, async () => {
+      const v = await asOwner(app, "读取飞书知识库名称", () => larkCli(["wiki", "spaces", "get", "--params", JSON.stringify({ space_id: node.spaceId }), "--as", "user", "--format", "json"]));
+      const d = v?.data ?? v;
+      const name = d?.space?.name ?? d?.name;
+      if (typeof name !== "string" || !name.trim()) throw new Error("知识库没有返回名称");
+      return name;
+    });
+  } catch (e) { result.errors.push((e as Error).message); }
+  const ancestors: WikiNode[] = [];
+  const seen = new Set([node.nodeToken]);
+  let parent = node.parentNodeToken;
+  try {
+    while (parent) {
+      if (seen.has(parent) || ancestors.length >= 64) throw new Error("无法确认完整目录层级");
+      seen.add(parent);
+      const token = parent;
+      const n = await cachedLocation(app, `node:${token}`, () => wikiNode(app, token));
+      if (!n || n.spaceId !== node.spaceId || !n.title.trim()) throw new Error("无法读取上级目录名称");
+      ancestors.push(n);
+      parent = n.parentNodeToken;
+    }
+    result.parentTitle = ancestors[0]?.title;
+    result.path = ancestors.map(n => n.title).reverse().join(" / ");
+  } catch (e) { result.errors.push((e as Error).message); }
+  return result;
+}
+
 /** Child nodes of a node, up to `max` (pages of 50). */
 export async function wikiChildren(app: App, node: Pick<WikiNode, "spaceId" | "nodeToken">, max: number): Promise<{ nodes: WikiNode[]; more: boolean }> {
   const nodes: WikiNode[] = [];
