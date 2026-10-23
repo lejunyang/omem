@@ -2,7 +2,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { openAcp, pickMode } from "../src/agents/acp.ts";
 import { acpCatalog, npxProfile, platformKey, registryOptions, type RegistryAgent } from "../src/agents/catalog.ts";
-import { agentProfileSchema, builtinProfiles } from "../src/core/config.ts";
+import { agentProfileSchema, builtinProfiles, allProfiles, configSchema } from "../src/core/config.ts";
+import { codexArgs } from "../src/agents/cli.ts";
 
 describe("ACP agent catalog", () => {
   it("builtin profiles are valid and unique", () => {
@@ -33,6 +34,17 @@ describe("ACP agent catalog", () => {
     expect(registryOptions(agent, "plan9-x").map((o) => o.kind)).toEqual(["npx"]);
     expect(platformKey("win32", "x64")).toBe("windows-x86_64");
     expect(platformKey("darwin", "arm64")).toBe("darwin-aarch64");
+  });
+
+  it("keeps saved ACP launch arguments while supplying catalog cleanup, and offers ephemeral exec", () => {
+    const config = configSchema.parse({ agents: { profiles: [{ id: "traex", command: "traex", transport: "acp", args: ["acp", "serve", "-c", "model=custom"] }] } });
+    expect(allProfiles(config).find(p => p.id === "traex")).toMatchObject({ args: ["acp", "serve", "-c", "model=custom"], archiveArgs: ["archive"] });
+    config.agents.profiles[0].archiveArgs = [];
+    expect(allProfiles(config).find(p => p.id === "traex")?.archiveArgs).toEqual([]);
+    const cli = builtinProfiles.find(p => p.id === "traex-cli")!;
+    expect(cli.command).toBe("traex");
+    expect(codexArgs(cli, { cwd: ".", prompt: "" })).toContain("--ephemeral");
+    expect(codexArgs(cli, { cwd: ".", prompt: "", persistSession: true })).not.toContain("--ephemeral");
   });
 
   it("maps role modes onto agent-specific mode ids", () => {

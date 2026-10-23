@@ -18,7 +18,7 @@ updated: 2026-10-18
 
 ## Agent 与模型
 
-- **后台会话复用与清理**（10-23）：`background-sessions.ts` 为巡检、整理、简报、出卡和 Wiki 写作/检查保留在线 ACP 会话，按完整权限、指令和模型隔离，只在第一轮发角色说明。使用本轮真实上下文占用，超过 60% 或用量未知则释放；默认 60 分钟空闲、3 个后台进程。MCP 令牌逐轮指向当前运行，取消/正常停服时清理。CLI 单次任务启用临时参数；ACP 按能力调用 `session/delete`，Codex 实际归档而非完全不落盘。现有聊天、编码续轮和历史记录不批量更改。配置在 `sessions.background`，验证在 `test/background-sessions.test.ts`。
+- **后台会话复用与清理**（10-23）：`background-sessions.ts` 为巡检、整理、简报、出卡和 Wiki 写作/检查保留在线 ACP 会话，按完整权限、指令和模型隔离，只在第一轮发角色说明。使用本轮真实上下文占用，超过 60% 或用量未知则释放；默认 60 分钟空闲、3 个后台进程。MCP 令牌逐轮指向当前运行，取消/正常停服时清理。CLI 单次任务启用临时参数；ACP 按能力调用 `session/delete`，Codex 实际归档而非完全不落盘。现有聊天、编码续轮和历史记录不批量更改。配置在 `sessions.background`，验证在 `test/background-sessions.test.ts`。同日补齐 TraeX：ACP 释放时用目录声明的 `archiveArgs` 调用归档命令，CLI 后备 `traex-cli` 使用 `--ephemeral`；其他 ACP 优先走 `session/delete`，无协议和命令能力时明确提示保留历史。
 
 - **交办同时改多个仓库，worktree 改动可检索**（10-19）：`delegate_code` 的 `repo_spaces`（数组）、`check_commands`、`space`；`/api/delegate` 加 `repos`；`omem delegate --repos`。每个仓库一个 worktree（`runs/<id>/work/<空间>`），补丁按仓库存 `patches/<空间>.patch`，运行输出 `worktrees`、`repos`（旧运行的 `worktree`/`changes.patch` 仍认）；应用时全部先检查再一起应用，之后删 worktree。改过的文件建索引到临时空间 `wt-<运行id>-<仓库>`（类型 `worktree`，`src/agents/worktree-index.ts`），评审可读；`listSpaces` 默认不含它，`writeSpace` 拒绝写入，`omem pull` 不合并；应用、丢弃或 `repo-sync` 发现 worktree 不在时连同索引删除（`sweepWorktreeSpaces`）。运行页交办可多选仓库，详情按仓库显示检查和 diff。
 

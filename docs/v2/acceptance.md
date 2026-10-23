@@ -397,3 +397,11 @@ pnpm run dev                # 打开 http://localhost:5173
 5. `pnpm exec vitest run test/background-sessions.test.ts test/threads.test.ts test/agent.test.ts`；真实 Codex 使用低强度运行两个只读小任务，确认同一 ACP 会话、第二轮不重复完整角色说明、真实用量与移出普通会话列表；完成后更新运行中的服务。
 
 2026-10-23 验证：Codex `gpt-6.1-sol` / low 连续两个隔离只读任务使用同一 ACP 会话，第二轮正确保留首轮检查词；上下文分别为 37,492 / 475,000 与 37,747 / 475,000，释放后后端记录 `archived=1`。`pnpm run check` 通过 55 个测试文件、328 项测试及构建。
+
+TraeX 与其他 ACP 的清理补验：
+
+- `traex exec --help` 列出 `--ephemeral`；当前 `traex acp serve --ephemeral --help` 明确拒绝该参数，不能给 ACP 启动命令直接添加它。选择 `traex-cli` 后单次任务使用原生临时模式。
+- TraeX ACP 未声明 `session/delete`，通过 catalog 的 `archiveArgs: ["archive"]` 归档。已保存的后端配置保留自定义启动参数，同时获得目录中的归档能力；显式 `archiveArgs: []` 可关闭命令后备。
+- 假后端验证协议清理优先、无协议时调用归档命令、清理失败/无能力时有明确运行状态，显式持久会话不归档。归档命令使用参数数组，不经 shell；会话 ID 不能作为命令行选项。
+
+2026-10-23 补验：真实 TraeX ACP 与 CLI 各完成一个只读验证，ACP 归档命令成功、CLI 临时模式成功；随后按验证工作目录查询 ACP 会话列表，剩余可见会话为 0。全量检查通过 55 个测试文件、331 项测试及构建。

@@ -1,5 +1,6 @@
 import { ClientSideConnection, ndJsonStream, type McpServer, type SessionConfigOption } from "@agentclientprotocol/sdk";
 import type { AgentProfile } from "../core/config.ts";
+import { archiveSession } from "./session-archive.ts";
 import { resolveModelOption } from "./models.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
 import { agentRunError, replyFromSegments, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult } from "./types.ts";
@@ -282,21 +283,28 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     }
     touch();
     // Permission mode: prefer the role's choice when the agent offers it.
-    const discard = async () => {
+    let disposal: Promise<void> | undefined;
+    const discard = () => disposal ??= (async () => {
       let timer: NodeJS.Timeout | undefined;
       try {
-        if (!dead && caps?.sessionCapabilities?.delete && !resumed)
+        if (!resumed && !caps?.sessionCapabilities?.delete && profile.archiveArgs?.length) {
+          close();
+          await archiveSession(profile, sessionId, opts.cwd, opts.env);
+        } else if (!dead && caps?.sessionCapabilities?.delete && !resumed) {
           // A cancelled/failed prompt has already rejected `failed`; cleanup has its own budget.
           await Promise.race([connection.deleteSession({ sessionId }), new Promise<never>((_, reject) => {
             timer = setTimeout(() => reject(new Error("会话清理超时")), 5000);
           })]);
+        } else if (!resumed && !caps?.sessionCapabilities?.delete && !opts.probe) {
+          emitSetup({ type: "status", text: "该后端不支持自动清理会话，历史可能仍显示在后端列表中" });
+        }
       } catch (e) {
         emitSetup({ type: "status", text: `后端会话清理失败：${(e as Error).message.slice(0, 120)}` });
       } finally {
         clearTimeout(timer);
         close();
       }
-    };
+    })();
     const modes = session.modes?.availableModes ?? [];
     const wanted = pickMode(opts.modes ?? [], modes.map((m) => m.id));
     if (wanted && session.modes?.currentModeId !== wanted) await Promise.race([connection.setSessionMode({ sessionId, modeId: wanted }), failed]);

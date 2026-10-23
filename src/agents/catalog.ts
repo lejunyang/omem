@@ -16,6 +16,8 @@ export type CatalogEntry = {
   name: string;
   command: string;
   args?: string[];
+  /** Archive via the same executable when the ACP agent does not advertise session/delete. */
+  archiveArgs?: string[];
   env?: Record<string, string>;
   /** npm package that provides `command` (enables `npm i -g` / npx in setup). */
   npm?: string;
@@ -30,7 +32,7 @@ export type CatalogEntry = {
 export const acpCatalog: CatalogEntry[] = [
   { id: "codex", name: "Codex", command: "codex-acp", npm: "@agentclientprotocol/codex-acp", model: "gpt-6.1-sol", effort: "low" },
   // headless_queue_status: traex reports the provider queue as session_info_update._meta.trae.queueStatus.
-  { id: "traex", name: "TraeX", command: "traex", args: ["acp", "serve", "-c", "features.headless_queue_status=true"], previousArgs: [["acp", "serve"]], model: "gpt-6.1-sol", effort: "low", install: "安装 TraeX CLI" },
+  { id: "traex", name: "TraeX", command: "traex", args: ["acp", "serve", "-c", "features.headless_queue_status=true"], archiveArgs: ["archive"], previousArgs: [["acp", "serve"]], model: "gpt-6.1-sol", effort: "low", install: "安装 TraeX CLI" },
   { id: "claude", name: "Claude Code", command: "claude-agent-acp", npm: "@agentclientprotocol/claude-agent-acp" },
   { id: "gemini", name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli" },
   { id: "copilot", name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot" },
@@ -70,6 +72,7 @@ export function catalogProfile(e: CatalogEntry): AgentProfile {
     transport: "acp",
     command: e.command,
     args: e.args ?? [],
+    archiveArgs: e.archiveArgs,
     model: e.model,
     effort: e.effort,
     env: e.env ?? {},
@@ -79,8 +82,9 @@ export function catalogProfile(e: CatalogEntry): AgentProfile {
 
 /** A saved profile with the catalog's current default args when it still has an earlier default. */
 export function upgradeProfileArgs(p: AgentProfile): AgentProfile {
-  const e = acpCatalog.find((x) => x.command === p.command && x.previousArgs?.some((a) => a.length === p.args.length && a.every((v, i) => v === p.args[i])));
-  return e ? { ...p, args: e.args ?? [] } : p;
+  const e = p.transport === "acp" ? acpCatalog.find((x) => x.command === p.command) : undefined;
+  const previous = e?.previousArgs?.some((a) => a.length === p.args.length && a.every((v, i) => v === p.args[i]));
+  return e ? { ...p, args: previous ? e.args ?? [] : p.args, archiveArgs: p.archiveArgs ?? e.archiveArgs } : p;
 }
 
 export function catalogEntry(id: string) {

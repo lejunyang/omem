@@ -48,7 +48,7 @@ flowchart LR
 | CodeBuddy Code / Qoder / iFlow | `npm i -g @tencent-ai/codebuddy-code` / `@qoder-ai/qodercli` / `@iflow-ai/iflow-cli` | `codebuddy` / `qoder` / `iflow` |
 | Kimi CLI / Mistral Vibe | `uv tool install kimi-cli` / `mistral-vibe` | `kimi` / `vibe` |
 | goose、Kilo、Auggie、Cline、Factory Droid、Grok、MiniMax、Amp、Junie、Devin、pi、DeepAgents、TraeX | 见 `omem agents --all` | 同名 |
-| Claude / Codex 命令行（非 ACP 兜底） | `claude` 或 `codex` 在 PATH 中 | `claude-cli` / `codex-cli` |
+| Claude / Codex / TraeX 命令行（非 ACP 兜底） | `claude`、`codex` 或 `traex` 在 PATH 中 | `claude-cli` / `codex-cli` / `traex-cli` |
 | 豆包 OpenAPI（云端 Managed Agent，无需本地程序） | 飞书应用开了豆包用户权限并授权：`omem doubao status` / `omem doubao login` | `doubao` |
 
 `omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → Agent → ACP 注册表”做同样的事。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。
@@ -119,7 +119,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 
 巡检、材料整理、每日整理、简报、群筛选、学习出卡和 Wiki 写作/检查会复用各自的后台 ACP 会话。角色说明只在新会话发送；角色、空间、权限、工作目录、模型或说明变化时另开。按后端 `usage_update` 的真实上下文占用计算，超过 60% 就释放，下次任务新开；后端不报告本轮用量时不复用。后台池默认空闲 60 分钟释放、最多保留 3 个进程，与聊天会话独立，可在 `config.json` 的 `sessions.background` 设置 `enabled`、`liveMinutes`、`maxLive` 和 `maxContextRatio`（默认 `0.6`）。
 
-一次性 Codex CLI 任务使用 `--ephemeral`，Claude CLI 使用 `--no-session-persistence`。ACP 没有通用的不落盘开关：后端声明支持 `session/delete` 时，omem 在临时会话释放时请求移出后端列表；当前 Codex ACP 实际执行归档，磁盘上仍可能保留历史。会话闲置、超过占用阈值、取消或正常停服时都清理；强制杀进程、后端崩溃或清理失败仍可能留下记录。普通聊天和需要续轮的编码/交办会话保留恢复能力，既有历史不批量处理。每次任务在 omem 内仍有独立运行记录和工具调用归属。
+一次性 Codex CLI / TraeX CLI 任务使用 `--ephemeral`，Claude CLI 使用 `--no-session-persistence`。TraeX 的该参数适用于 `exec`，不适用于 `acp serve`；选 `traex-cli` 使用原生临时模式。ACP 没有通用的不落盘开关：后端声明支持 `session/delete` 时，omem 在临时会话释放时请求移出后端列表；当前 Codex ACP 实际执行归档，磁盘上仍可能保留历史。TraeX ACP 未声明 `session/delete`，释放时改用目录中声明的 `traex archive <会话 ID>`。其他后端可在后端配置中声明 `archiveArgs`，通过同一个可执行程序归档；既无协议清理也无归档命令时，会在运行中提示历史可能仍保留，不能保证所有 ACP 都能归档。会话闲置、超过占用阈值、取消或正常停服时都清理；强制杀进程、后端崩溃或清理失败仍可能留下记录。普通聊天和需要续轮的编码/交办会话保留恢复能力，既有历史不批量处理。每次任务在 omem 内仍有独立运行记录和工具调用归属。
 
 每个网页对话、飞书私聊、群、群里的话题（Telegram 论坛话题同理）各是一个会话，接着上下文继续聊：
 

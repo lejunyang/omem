@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { releaseBackgroundSessions } from "../src/agents/background-sessions.ts";
+import { archiveSession } from "../src/agents/session-archive.ts";
+import { runAcp } from "../src/agents/acp.ts";
 import { codexArgs, claudeArgs } from "../src/agents/cli.ts";
 import { runRole, type RoleRunInput } from "../src/agents/runner.ts";
 import { createRun } from "../src/agents/runs.ts";
@@ -125,5 +127,35 @@ describe("background sessions", () => {
     await expect(next).rejects.toThrow("CANCELLED");
     expect(deleted()).toContain(first.session);
     expect((await invoke()).session).not.toBe(first.session);
+  }, 60000);
+
+  it("archives through the configured command when ACP has no deletion capability", async () => {
+    const { app, invoke, profile, deleted } = await setup("");
+    delete profile.env.FAKE_DELETE_LOG;
+    profile.archiveArgs = [resolve("test/fake-session-archive.ts"), join(app.home, "deleted.txt")];
+    const first = await invoke();
+    expect(deleted()).toEqual([first.session]);
+    const persisted = await invoke({ persistSession: true });
+    expect(deleted()).not.toContain(persisted.session);
+    await expect(archiveSession(profile, "--all", app.home)).rejects.toThrow("无效的会话标识");
+    await runAcp(profile, { cwd: app.home, prompt: "", probe: true }, () => {});
+    expect(deleted()).toHaveLength(2); // openAcp and runAcp both release a probe; archive only once.
+  }, 60000);
+
+  it("prefers advertised protocol cleanup and surfaces unsupported or failed cleanup", async () => {
+    const { app, invoke, profile, deleted } = await setup("");
+    profile.archiveArgs = [resolve("test/fake-session-archive.ts"), join(app.home, "fallback.txt")];
+    const first = await invoke();
+    expect(deleted()).toEqual([first.session]);
+    expect(existsSync(join(app.home, "fallback.txt"))).toBe(false);
+    const statuses: string[] = [];
+    const onEvent = (e: import("../src/agents/types.ts").AgentEvent) => { if (e.type === "status") statuses.push(e.text); };
+    delete profile.env.FAKE_DELETE_LOG;
+    profile.env.FAKE_ARCHIVE_FAIL = "1";
+    await invoke({ onEvent });
+    expect(statuses.some(s => s.includes("会话清理失败"))).toBe(true);
+    profile.archiveArgs = [];
+    await invoke({ onEvent });
+    expect(statuses.some(s => s.includes("不支持自动清理"))).toBe(true);
   }, 60000);
 });

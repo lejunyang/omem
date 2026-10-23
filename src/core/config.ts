@@ -11,6 +11,8 @@ export const agentProfileSchema = z.object({
   transport: z.enum(["acp", "claude-cli", "codex-cli", "doubao"]),
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
+  /** Same executable, followed by these arguments and the session id; fallback when ACP has no session/delete. */
+  archiveArgs: z.array(z.string()).optional(),
   model: z.string().optional(),
   effort: z.string().optional(),
   env: z.record(z.string(), z.string()).default({}),
@@ -413,6 +415,7 @@ export type Config = z.infer<typeof configSchema>;
 
 /** Built-in profiles; users override or extend them in config.json. */
 const cliProfiles: AgentProfile[] = [
+  { id: "traex-cli", name: "TraeX (CLI)", transport: "codex-cli", command: "traex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000 },
   { id: "claude-cli", name: "Claude Code (CLI)", transport: "claude-cli", command: "claude", args: [], env: {}, idleTimeoutMs: 600_000 },
   { id: "codex-cli", name: "Codex (CLI)", transport: "codex-cli", command: "codex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000 },
 ];
