@@ -1,6 +1,6 @@
 import { isApp, persistChatMessages, type LarkMessage } from "./lark-messages.ts";
 import { chatSpace } from "./lark-personal.ts";
-import { itemNotificationCard } from "./item-notification.ts";
+import { notificationCard } from "./item-notification.ts";
 import * as lark from "@larksuiteoapi/node-sdk";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -272,18 +272,16 @@ export async function startLarkBot(app: App) {
       const { ownerAlreadyHandled } = await import("./notify-gate.ts");
       if (await ownerAlreadyHandled(app, n).catch(() => false)) return;
     }
-    // Internal citations/routes cannot be opened in Feishu: real originals become links, the rest plain text.
-    const body = resolveCitations(app, n.body ?? "");
+    // Cards keep external notification links; internal routes stay in the web app.
+    const card = notificationCard(app, n);
     if (n.entity === "item" && n.entityId) {
       // Actionable item card: 已处理 / 忽略 resolve the item directly, no agent turn.
       const { recordInteraction } = await import("./lark-send.ts");
-      const card = itemNotificationCard(app, n);
       const sent = await sendLark(target, { card });
       recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: n.entityId, notificationId: n.id, userId: n.userId } });
       return;
     }
-    const markdown = `**${n.title}**\n${body}`;
-    await sendLark(target, { markdown });
+    await sendLark(target, { card });
   });
 
   const pending = new Map<string, NodeJS.Timeout>();
