@@ -89,6 +89,23 @@ new AgentSideConnection(
         if (Number.isFinite(used)) await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "usage_update", used, size: 1000 } });
         if (process.env.FAKE_OTHER_USAGE) await conn.sessionUpdate({ sessionId: "unrelated-session", update: { sessionUpdate: "usage_update", used: 950, size: 1000 } });
       }
+      if (process.env.FAKE_MODE === "wiki") {
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "fake-wiki", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map(e => [e.name, e.value])) } as Record<string, string> }));
+        try {
+          const names = (await client.listTools()).tools.map(t => t.name);
+          const call = (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args });
+          const read = await call("list_sources", { space: "materials" });
+          const blockedRead = await call("list_sources", { space: "excluded" });
+          const blockedWrite = await call("write_page", { space: "materials", page: "forbidden", title: "禁止", summary: "禁止", body: "禁止" });
+          const planner = names.includes("submit_plan");
+          if (planner) await call("submit_plan", { pages: [{ slug: "overview", title: "概览", kind: "guide", question: "如何开始？", outline: "以示例说明", entry_points: ["materials:README.md"] }] });
+          const written = await call("write_page", { page: planner ? "index" : "overview", title: planner ? "目录" : "概览", kind: planner ? "index" : "guide", summary: "示例说明", body: planner ? "- [[overview|概览]]" : "示例正文" });
+          await say(JSON.stringify({ prompt, read, blockedRead, blockedWrite, written }));
+        } finally { await client.close(); }
+        return { stopReason: "end_turn" as const };
+      }
       if (process.env.FAKE_MODE === "background") {
         const n = (turns.get(p.sessionId) ?? 0) + 1;
         turns.set(p.sessionId, n);

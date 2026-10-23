@@ -99,6 +99,8 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 问答由 `assistant` 角色带工具调查后作答，答案带脚注引用。对话本身作为聊天原件保存，供后续“之前说过什么”。
 
 ### 2. 代码仓库 Wiki
+
+聊天工具 `generate_wiki`、网页和 CLI 共用 `wiki/generate.ts` 入口。目标空间须可写，材料空间须可读，生成运行保存发起用户和只读范围；规划后每个写作子运行继承用户、材料范围和完整要求，不能扩大到新关联的空间。助手只负责发起与核验，正文由 Wiki 角色提交。当前实现以代码为准，文档补充背景和设计意图，冲突处标明过时说法。
 1. `wiki-planner`：Agent 在仓库只读副本中自由浏览（原生工具），产出目录：每页的读者问题、类型（入门/机制/操作/参考）、入口文件。目录写入 `wiki/index.md`，人可在界面里改。
 2. `wiki-writer`：逐页调查并写作，要求：先给一个真实例子走完整条路径，再讲概念和取舍，最后给“要改 X 去哪里”。引用落到文件行号。
 3. `lint`：检查断链、引用失效、页面与代码不符（按 Git diff 找受影响页面），只重写受影响的页。
@@ -250,6 +252,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 飞书访客：未登记的人 @ 机器人（或私聊它，可选）、别的机器人 @ 它（规则没接手时）→ `guest` 运行：`gatekeeper` 角色判断回答 / 拒绝 / 不理，`guest` 角色只读群所在空间（个人空间不开放）与 `lark.guests.spaces`，不给技能、相关空间、本人偏好和发消息工具；每人每小时上限；有人 @ 机器人时规则让开（`rule_handled` 里记 `@bot`） | 已实现，假 ACP Agent 测试覆盖；真实飞书待验 | `src/channels/lark-guest.ts`、`lark-bot.ts`、`roles/gatekeeper.md`、`roles/guest.md`、`rules/store.ts` 的 `markAddressed` |
 | 访客在本人也在的群：`lark.guests.ownerPresent`——`guest` 照常；`gated` 把关（`gateOnly` 的 guest 运行）后交给主助手，按本人身份运行、消息带 `asker`（会话里显示“某某（群里的同事，不是本人）”）；`free` 不把关直接交给主助手。本人在不在群用机器人的群成员接口判断，缓存半小时 | 已实现，把关部分测试覆盖；群成员判断待真机验 | `lark-guest.ts` 的 `ownerInChat`、`lark-bot.ts`、`inbox.ts`、`sessions.ts` |
 | 最近打开的飞书文档：每次采集先用 `drive +search --opened-since <recentDocsDays>d --sort open_time --doc-types docx,doc,wiki` 列出本人最近打开的文档，没存过的读进采集空间（每次最多 10 篇，kv `lark_recent_doc:<url>` 记已试过），之后交给文档更新检查；远程 `lark-recent-docs` 看原始返回 | 已实现，模拟 lark-cli 测试覆盖；返回字段待在常驻机器上核对 | `lark-personal.ts` 的 `captureRecentDocs`、`peer-exec.ts` |
+| 聊天、网页、CLI 共用 Wiki 生成流程，逐页传递完整要求、用户和材料只读范围；代码优先、草稿回查原件 | 已实现，专项验证见 acceptance | `src/wiki/generate.ts`、`tools.ts` 的 `generate_wiki`、`jobs.ts`、`roles/wiki-*.md` |
 | 后台 ACP 会话复用：完整权限与指令隔离，角色提示只发一次，真实上下文占用超过 60% 轮换，未知用量不复用；Codex/TraeX/Claude CLI 临时模式、ACP 按协议能力或目录中的归档命令清理，不支持时明确提示 | 已实现；假 ACP + MCP 覆盖阈值、权限、并发、归属、取消与释放；真实 Codex 两轮复用及归档已验证 | `src/agents/background-sessions.ts`、`acp.ts`、`cli.ts`、`test/background-sessions.test.ts` |
 | 运行记录筛选：类型可多选，`agent:<档案名>` 单看某个 Agent 档案的运行；后台任务以 QUIET 结尾（前面带一句话也算，`isQuiet`）记为无事可报，默认不显示（迁移把以前漏判的补上） | 已实现，测试覆盖 | `runs.ts` 的 `runWhere`、`jobs.ts` 的 `isQuiet`、`web/src/views/Runs.vue` |
 | 私聊指令：每分钟用 lark-cli 搜本人在单聊里发的消息，`/ai` → `lark-command` 运行：主助手读最近的私聊处理，以本人身份 `+messages-send --as user` 回在原私聊（署名，Markdown；本人身份发不了气泡和卡片），按私聊续 Agent 会话；`/ai拉群` → 以本人身份 `+chat-create`（对方 + omem 机器人），机器人在新群里用之前的私聊作上下文回答 | 已实现，模拟 lark-cli 测试覆盖；真实账号待验（建群需要 lark-cli 有建群权限） | `src/channels/lark-commands.ts`、`main.ts` |

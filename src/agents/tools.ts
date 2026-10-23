@@ -1,3 +1,4 @@
+import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { executionSchema, validateExecution } from "./execution.ts";
 import { randomBytes } from "node:crypto";
@@ -529,7 +530,7 @@ def({
     const specs = list.length
       ? list.map((x) => `- ${x.name}${x.status === "draft" ? "（草稿）" : ""}：${x.description}\n  后端 ${x.agent ?? "默认"}${x.model ? `/${x.model}` : ""} · 工具 ${x.tools.length ? x.tools.join(",") : "默认只读"}${x.writes ? " · 可改文件" : ""}${x.skills.length ? ` · 技能 ${x.skills.join(",")}` : ""}${Object.keys(x.mcp).length ? ` · MCP ${Object.keys(x.mcp).join(",")}` : ""}${x.cwd ? ` · 目录 ${x.cwd}` : ""}`).join("\n")
       : "还没有 Agent 档案。";
-    return `${specs}\n\n内置角色（assistant 可用 run_agent 临时交办，其他由 omem 调用；可以教：remember(agent="角色名")、save_skill(agent="角色名")）：\n${roles}`;
+    return `${specs}\n\n内置角色（assistant 可用 run_agent 临时交办，Wiki 生成用 generate_wiki，其他由 omem 调用；可以教：remember(agent="角色名")、save_skill(agent="角色名")）：\n${roles}`;
   },
 });
 
@@ -902,10 +903,15 @@ def({
 
 def({
   name: "read_run",
-  description: "读取一次运行的结果：总结、检查输出、评审结论、diff 摘要。",
+  description: "读取一次运行的结果：总结、检查输出、评审结论、diff 摘要和子运行状态（Wiki 规划完成后还须查看各页写作状态）。",
   schema: z.object({ run_id: z.string() }),
   handler: (ctx, a) => {
     const r = getRun(ctx.app, a.run_id);
+    if (r.spaceId) space(ctx, r.spaceId);
+    const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
+    if (r.spaceId && allowed && !allowed.includes(r.spaceId)) throw new HttpError(403, "不能访问该运行的空间");
+    const children = listRuns(ctx.app, { parentId: r.id, limit: 200 }).filter(child => !child.spaceId || !allowed || allowed.includes(child.spaceId));
+    const childText = children.length ? `\n子运行：\n${children.map(child => `- ${child.id} [${child.kind}/${child.status}] ${child.title}${child.error ? ` · ${truncate(child.error, 200)}` : ""}`).join("\n")}\n` : "";
     const events = runEvents(ctx.app, r.id).filter((e) => e.type !== "thought");
     const text = events
       .filter((e) => e.type === "text")
@@ -914,7 +920,7 @@ def({
     const delivery = (r.output.codeChain as { askRunId?: string } | undefined)?.askRunId;
     const progress = delivery ? getRun(ctx.app, delivery).output.codeProgress : undefined;
     const thinking = r.output.thinkingDelivery;
-    return `${progress ? `飞书进度投递：${JSON.stringify(progress)}\n` : ""}${thinking ? `思考气泡投递（独立于任务状态）：${JSON.stringify(thinking)}\n` : ""}运行 ${r.id} [${r.kind}/${r.status}] ${r.title}\n输出：${truncate(JSON.stringify(r.output, null, 1), 3000)}\n${r.error ? "错误：" + r.error + "\n" : ""}最后的说明：\n${truncate(text.slice(-3000), 3000)}`;
+    return `${progress ? `飞书进度投递：${JSON.stringify(progress)}\n` : ""}${thinking ? `思考气泡投递（独立于任务状态）：${JSON.stringify(thinking)}\n` : ""}运行 ${r.id} [${r.kind}/${r.status}] ${r.title}\n输出：${truncate(JSON.stringify(r.output, null, 1), 3000)}\n${r.error ? "错误：" + r.error + "\n" : ""}${childText}最后的说明：\n${truncate(text.slice(-3000), 3000)}`;
   },
 });
 
@@ -2366,6 +2372,25 @@ def({
     const rest = getSubscriptions(ctx.app).filter((s) => s.chatId !== a.chat_id);
     setSubscriptions(ctx.app, a.subscribe ? [...rest, { chatId: a.chat_id, name: a.name, spaceId: writeSpace(ctx, a.space) }] : rest);
     return a.subscribe ? `已订阅「${a.name}」，采集到空间 ${space(ctx, a.space)}（需要在定时任务中开启飞书采集）` : `已取消订阅「${a.name}」`;
+  },
+});
+
+def({
+  name: "generate_wiki",
+  description: "生成或重新规划空间 Wiki：与网页和 CLI 相同，先由 wiki-planner 调查并规划目录，再由 wiki-writer 逐页写作。不要自己写正文或用 run_agent 调用这些内置角色。返回规划运行 ID；规划完成不代表所有页面已写完，用 read_run 查看子运行。",
+  write: true,
+  schema: z.object({
+    space: z.string().optional().describe("Wiki 写入空间；不填为当前空间"),
+    focus: z.string().optional().describe("完整要求：读者、范围、资料优先级、图文要求、已有草稿和原件线索；会传给规划和每页写作"),
+    source_spaces: z.array(z.string()).optional().describe("额外只读材料空间，如前端、后端和文档空间；不填使用目标的相关空间"),
+    auto_write: z.boolean().optional().describe("默认 true；本人只要目录规划时设 false"),
+  }),
+  handler: (ctx, a) => {
+    const r = generateWiki(ctx.app, {
+      spaceId: writeSpace(ctx, a.space), focus: a.focus, autoWrite: a.auto_write, sourceSpaces: a.source_spaces,
+      userId: ctx.userId, parentId: ctx.runId, readable: ctx.spaces, writable: ctx.writable ?? ctx.spaces,
+    });
+    return `已安排 Wiki ${a.auto_write === false ? "目录规划" : "规划与逐页写作"}，运行 ${r.id}，状态 ${r.status}，写入空间 ${r.spaceId}。用 read_run 查看计划和写作子运行；目前尚未生成完成。`;
   },
 });
 

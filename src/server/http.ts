@@ -1,3 +1,4 @@
+import { generateWiki } from "../wiki/generate.ts";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { symbolRelations } from "../sources/callgraph.ts";
 import { deleteSkillFile, listSkillFiles, readSkillFile, saveSkillFile, DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
@@ -447,7 +448,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/wiki/:space/plan", async (req) => {
     const space = (req.params as { space: string }).space;
     const b = q(z.object({ focus: z.string().optional(), autoWrite: z.boolean().default(true) }), req.body);
-    return createRun(app, { kind: "wiki-plan", spaceId: space, title: "规划 Wiki 目录", input: b });
+    return generateWiki(app, { spaceId: space, ...b, userId: who(req) });
   });
   server.post("/api/wiki/:space/write", async (req) => {
     const space = (req.params as { space: string }).space;

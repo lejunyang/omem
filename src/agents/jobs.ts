@@ -1,3 +1,4 @@
+import { canWrite, OWNER, scopeFor } from "../core/users.ts";
 import { sourceRoute, moveSource, prepareArchive } from "../sources/archive.ts";
 import { executionArgs, type Execution } from "./execution.ts";
 import type { App } from "../core/app.ts";
@@ -39,11 +40,13 @@ registerHandler("lark-resource-parse", async ctx => (await import("../channels/l
  */
 export const isQuiet = (text: string) => /(^|\n)\s*[*`_]*QUIET[*`_]*\s*[。.!！]?\s*(\n|$)/i.test(text) || /\bQUIET[*`_。.!！\s]*$/i.test(text.trim());
 
-async function agent(ctx: RunContext, role: RoleName, spaceId: string, task: string, spaces?: string[] | null) {
+async function agent(ctx: RunContext, role: RoleName, spaceId: string, task: string, spaces?: string[] | null, readSpaces?: string[]) {
   const r = await runRole(ctx.app, {
     role,
     spaceId,
     spaces,
+    alsoRead: readSpaces,
+    readScope: readSpaces,
     task,
     runId: ctx.run.id,
     signal: ctx.signal,
@@ -493,7 +496,11 @@ function sourceMap(app: App, spaceId: string, maxLines = 120) {
 
 registerHandler("wiki-plan", async (ctx) => {
   const spaceId = ctx.run.spaceId!;
-  const { focus, autoWrite = true } = ctx.run.input as { focus?: string; autoWrite?: boolean };
+  const { focus, autoWrite = true, readSpaces } = ctx.run.input as { focus?: string; autoWrite?: boolean; readSpaces?: string[] };
+  const userId = one<{ user_id: string | null }>(ctx.app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? OWNER;
+  if (!canWrite(ctx.app, userId, spaceId)) throw new Error("无权写入目标空间的 Wiki");
+  const allowed = scopeFor(ctx.app, userId, null);
+  const sources = (readSpaces ?? [spaceId]).filter(id => !allowed || allowed.includes(id));
   const existing = listPages(ctx.app, spaceId);
   const r = await agent(
     ctx,
@@ -502,14 +509,16 @@ registerHandler("wiki-plan", async (ctx) => {
     [
       focus ? `本人的要求：${focus}` : "为这个空间规划完整的 Wiki。",
       existing.length ? `已有页面：\n${existing.map((p) => `- ${p.slug}「${p.title}」`).join("\n")}` : "目前还没有页面。",
-      sourceMap(ctx.app, spaceId),
+      ...sources.map(id => `材料空间 ${id}：\n${sourceMap(ctx.app, id)}`),
     ].join("\n\n"),
+    [spaceId],
+    readSpaces,
   );
   const plan = (one<{ output: string }>(ctx.app.db, "select output from runs where id = ?", ctx.run.id)?.output ?? "{}");
   const pages = (json<{ plan?: PageBrief[] }>(plan, {}).plan ?? []) as PageBrief[];
   if (!pages.length) throw new Error("规划没有提交页面计划（submit_plan）");
   if (autoWrite)
-    for (const page of pages) createRun(ctx.app, { kind: "wiki-write", spaceId, title: `写作：${page.title}`, input: { brief: page }, parentId: ctx.run.id });
+    for (const page of pages) createRun(ctx.app, { kind: "wiki-write", spaceId, title: `写作：${page.title}`, input: { brief: page, instructions: focus, readSpaces }, parentId: ctx.run.id, userId });
   return { summary: r.text.trim(), pages: pages.length };
 });
 
@@ -517,7 +526,7 @@ export type PageBrief = { slug: string; title: string; kind: string; question: s
 
 registerHandler("wiki-write", async (ctx) => {
   const spaceId = ctx.run.spaceId!;
-  const { brief, instructions } = ctx.run.input as { brief: PageBrief; instructions?: string };
+  const { brief, instructions, readSpaces } = ctx.run.input as { brief: PageBrief; instructions?: string; readSpaces?: string[] };
   const exists = pageExists(ctx.app, spaceId, brief.slug);
   const task = [
     `页面：${brief.slug}「${brief.title}」（类型：${brief.kind}）`,
@@ -530,7 +539,7 @@ registerHandler("wiki-write", async (ctx) => {
   ]
     .filter(Boolean)
     .join("\n\n");
-  const r = await agent(ctx, "wiki-writer", spaceId, task);
+  const r = await agent(ctx, "wiki-writer", spaceId, task, [spaceId], readSpaces);
   if (!pageExists(ctx.app, spaceId, brief.slug)) throw new Error(`写作结束但没有提交页面 ${brief.slug}`);
   return { summary: r.text.trim(), page: `${spaceId}/${brief.slug}` };
 });

@@ -1,3 +1,4 @@
+import { generateWiki } from "./wiki/generate.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command } from "commander";
@@ -750,7 +751,7 @@ wiki
   .option("-f, --focus <text>", "重点或读者")
   .option("--no-write", "只规划不写")
   .action(async (sp, o) => {
-    const r = await runJob((app) => createRun(app, { kind: "wiki-plan", spaceId: sp, title: "规划 Wiki 目录", input: { focus: o.focus, autoWrite: o.write } }), { stream: false, children: true });
+    const r = await runJob((app) => generateWiki(app, { spaceId: sp, focus: o.focus, autoWrite: o.write }), { stream: false, children: true });
     console.log((r.output as { summary?: string }).summary ?? "");
   });
 wiki

@@ -134,6 +134,8 @@ export type RoleRunInput = {
   spaces?: string[] | null;
   /** Extra spaces the run may read but never write (a delegation's indexed worktree changes). */
   alsoRead?: string[];
+  /** Upper bound inherited from the initiating task, including related spaces. */
+  readScope?: string[];
   task: string;
   runId: string | null;
   cwd?: string;
@@ -218,7 +220,7 @@ export function resolveRunProfile(app: App, input: { actor: Actor; profileId?: s
  */
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[] },
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[] },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -257,11 +259,11 @@ export function prepareRun(
   for (const t of input.denyTools ?? []) tools.delete(t);
   const spaces =
     input.spaces !== undefined ? input.spaces : spec ? (spec.spaces.includes("*") ? null : [...new Set([space.id, ...spec.spaces])]) : roleName === "assistant" ? null : [space.id];
-  const scoped = scopeFor(app, userId, spaces);
+  const scoped = scopeFor(app, userId, spaces)?.filter(id => !input.readScope || input.readScope.includes(id)) ?? (input.readScope ?? null);
   if (scoped && !scoped.includes(space.id)) throw new HttpError(403, `${userName(app, userId)} 不能访问空间 ${space.id}`);
   // Related spaces: a run limited to its space also reads them (never writes), so work in one
   // repo or project sees what the others it depends on already say.
-  const allowed = scopeFor(app, userId, null);
+  const allowed = scopeFor(app, userId, input.readScope ?? null);
   const related = guest ? [] : relatedSpaces(app, space.id).filter((r) => !allowed || allowed.includes(r.space));
   const readable = scoped ? [...new Set([...scoped, ...related.map((r) => r.space), ...(input.alsoRead ?? []).filter((id) => !allowed || allowed.includes(id))])] : null;
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
@@ -339,7 +341,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const execution = validateExecution(app, input.execution);
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
-  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark });
+  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark });
   if (execution) {
     try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }); }
     catch (e) { revokeToolToken(base.token); throw e; }
@@ -351,7 +353,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   let lastError: unknown;
   for (let i = 0; i < chain.length; i++) {
     const profile = chain[i];
-    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark });
+    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark });
     try {
       const req = {
         strictSelection: execution ? { model: !!execution.model, effort: !!execution.effort } : undefined,
