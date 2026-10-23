@@ -71,10 +71,10 @@ const commands: Record<string, Command> = {
   },
   topic: {
     usage: "/topic <任务>",
-    help: "把普通飞书群聊中的本条消息作为话题根消息，在独立上下文中执行任务；话题内不接受此指令",
+    help: "把飞书群聊或机器人私聊中的本条消息作为话题根消息，在独立上下文中执行任务；话题内不接受此指令",
     run: async ({ app, thread, args, inb }) => {
-      if (inb.topicId) return "已经在话题中，不能使用 /topic。请直接发送任务，或回到群聊主界面发起新话题。";
-      if (inb.channel !== "lark" || !inb.isGroup || !inb.chatId || !inb.openTopic) return "请在飞书群聊主界面 @ 机器人发送 /topic 任务描述；私聊和其他渠道可用 /new 任务描述。";
+      if (inb.topicId) return "已经在话题中，不能使用 /topic。请直接发送任务，或回到聊天主界面发起新话题。";
+      if (inb.channel !== "lark" || !inb.chatId || !inb.openTopic) return "请在飞书群聊或机器人私聊的主界面发送 /topic 任务描述（群里需 @ 机器人）；其他渠道可用 /new 任务描述。";
       if (!args) return "用法：/topic 任务描述";
       const topic = await inb.openTopic();
       const key = `${inb.chatId}#${topic.topicId}`;
