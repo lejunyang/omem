@@ -104,6 +104,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 | 让群里的同事也能 @ 机器人问项目的事 | 设置 → 渠道 开启访客提问；只读这个群的空间，危险或无关的提问直接拒绝 |
 | 采集消息、筛选关注群、生成简报 | `omem setup` 选择读取方式，或设置 → 渠道 勾选会话（只读）；定时任务里开启采集、巡检和“筛选值得关注的飞书群” |
 | 用间隔重复学习（如英语） | 打开材料点“生成卡片”，在“学习”页按 FSRS 复习；或对助理说“我想练英语开会表达，每天 8 张，晚上九点提醒我”建学习目标；聊天里 `/review` 复习；可与 Anki 互相导入导出（制表符文本） |
+| 减少巡检、材料整理在后端的重复会话 | 默认按权限与角色复用后台 ACP 会话，超过 60% 上下文换新；不支持用量报告的后端保持单次任务 |
 | 每天早上知道今天该处理什么 | 定时任务开启“简报”，通过站内和机器人推送 |
 | 看记忆写得好不好、哪个模型写得好 | “记忆 → 质量”：按模型看写入数、被退回的原因、复核结果；`omem memories stats`。旧记忆可用 `omem memories check` 过一遍检查 |
 | 一台机器常驻，在别的电脑上看它、拉它的数据 | 见“多台设备”：`omem peer invite` / `add` 配对，`omem diag`、`omem pull`，`omem link` 在浏览器里打开 |
@@ -115,6 +116,10 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 档案里的 AI 是默认值。助手可用 `list_ai_backends` 核对实际可用的后端与模型，在交办、请教或续轮时通过 `execution` 临时选择；编码和独立评审可分别选择。没有专门档案的一次性任务可交给 `assistant`，不创建新档案。选择及理由保存在运行中，不改变档案工具和权限。内置后台任务仍按角色默认运行；已开始的当前对话不会在一轮中途更换后端。
 
 ## 会话
+
+巡检、材料整理、每日整理、简报、群筛选、学习出卡和 Wiki 写作/检查会复用各自的后台 ACP 会话。角色说明只在新会话发送；角色、空间、权限、工作目录、模型或说明变化时另开。按后端 `usage_update` 的真实上下文占用计算，超过 60% 就释放，下次任务新开；后端不报告本轮用量时不复用。后台池默认空闲 60 分钟释放、最多保留 3 个进程，与聊天会话独立，可在 `config.json` 的 `sessions.background` 设置 `enabled`、`liveMinutes`、`maxLive` 和 `maxContextRatio`（默认 `0.6`）。
+
+一次性 Codex CLI 任务使用 `--ephemeral`，Claude CLI 使用 `--no-session-persistence`。ACP 没有通用的不落盘开关：后端声明支持 `session/delete` 时，omem 在临时会话释放时请求移出后端列表；当前 Codex ACP 实际执行归档，磁盘上仍可能保留历史。会话闲置、超过占用阈值、取消或正常停服时都清理；强制杀进程、后端崩溃或清理失败仍可能留下记录。普通聊天和需要续轮的编码/交办会话保留恢复能力，既有历史不批量处理。每次任务在 omem 内仍有独立运行记录和工具调用归属。
 
 每个网页对话、飞书私聊、群、群里的话题（Telegram 论坛话题同理）各是一个会话，接着上下文继续聊：
 
@@ -142,7 +147,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 ## 命令行
 
 ```bash
-omem serve                                  # 前台启动服务
+omem serve                                  # 前台启动服务；正常停止时释放后台 Agent 会话
 omem service start                          # 后台常驻（PM2，崩溃自动重启）；stop / restart / status / logs
 omem service enable                         # 开机自启（disable 取消）
 omem space add omem --path E:\Projects\omem  # 代码仓库空间
@@ -307,7 +312,7 @@ src/memory    记忆（有效期、版本链、写入检查与复核统计、对
 src/items     事项（时间线）
 src/wiki      页面文件、链接与引用索引、过期检测
 src/learn     FSRS 卡片、学习目标
-src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台任务、交办编码；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts
+src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts
 src/channels  飞书机器人（发送、卡片、进度、回调、监听群、访客提问）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查、巡检、简报、做梦、筛群、摘要、编码、评审、记忆复核、出卡），共同部分在 _common.md

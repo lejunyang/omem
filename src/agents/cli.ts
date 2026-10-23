@@ -4,7 +4,7 @@ import { replyFromSegments, type AgentEvent, type AgentRequest, type AgentResult
 
 const READ_TOOLS = ["Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "TodoWrite", "mcp__omem"];
 
-function claudeArgs(profile: AgentProfile, req: AgentRequest) {
+export function claudeArgs(profile: AgentProfile, req: AgentRequest) {
   const args = [...profile.args, "-p", "--output-format", "stream-json", "--verbose"];
   if (!req.persistSession && !req.resumeSessionId) args.push("--no-session-persistence");
   if (req.resumeSessionId) args.push("--resume", req.resumeSessionId);
@@ -25,6 +25,7 @@ function tomlString(s: string) {
 
 export function codexArgs(profile: AgentProfile, req: AgentRequest) {
   const args = [...profile.args, "exec", "--json", "--skip-git-repo-check", "--sandbox", req.allowWrites ? "workspace-write" : "read-only"];
+  if (!req.persistSession && !req.resumeSessionId) args.push("--ephemeral");
   if (profile.model) args.push("-m", profile.model);
   if (profile.effort) args.push("-c", `model_reasoning_effort=${tomlString(profile.effort)}`);
   if (req.mcp) {

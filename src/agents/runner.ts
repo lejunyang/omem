@@ -11,6 +11,7 @@ import { spaceGuide } from "../wiki/store.ts";
 import { executionArgs, validateExecution, type Execution } from "./execution.ts";
 import { resolveRoleProfile } from "./models.ts";
 import { runBackend } from "./dispatch.ts";
+import { backgroundTurn } from "./background-sessions.ts";
 import { backendAvailable } from "./availability.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
 import { issueToolToken, revokeToolToken } from "./tools.ts";
@@ -145,6 +146,8 @@ export type RoleRunInput = {
   resumeSessionId?: string;
   /** Keep the agent session resumable afterwards (multi-agent work rounds continue it). */
   persistSession?: boolean;
+  /** Reuse a measured, live ACP session for recurring background work. */
+  reuseSession?: boolean;
   /** Comparison run: writes are recorded, not applied; no fallback. */
   shadow?: { parentRunId: string | null };
   /** omem tools this run must not have (a consulted agent cannot hand work on). */
@@ -172,6 +175,8 @@ export type PreparedRun = {
   cwd: string;
   /** Everything before the task: shared rules, role or spec, environment, learned context. */
   system: string;
+  /** Standing instructions without the changing clock, for safe session reuse. */
+  stableSystem: string;
   token: string;
   mcp: McpAccess;
   extraMcp: Record<string, McpServerSpec>;
@@ -270,15 +275,17 @@ export function prepareRun(
   const body = spec
     ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`
     : `# 角色：${role!.description}\n\n${role!.body}`;
+  const currentTime = localTime(app);
   const system = [
     commonGuide(),
     body,
-    `# 环境\n\n- 现在：${localTime(app)}${userId !== OWNER ? `\n- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}` : ""}\n- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}`,
+    `# 环境\n\n- 现在：${currentTime}${userId !== OWNER ? `\n- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}` : ""}\n- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}`,
   ].join("\n\n---\n\n");
   return {
     profile,
     cwd,
     system,
+    stableSystem: system.replace(currentTime, "<current-time>"),
     token,
     mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge() },
     extraMcp: spec?.mcp ?? {},
@@ -361,7 +368,9 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       };
       if (i > 0) emit({ type: "status", text: `默认后端不可用（排队/限流），改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""} 重试` });
       emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
-      const result = await runBackend(app, prep.profile, req, emit);
+      const result = input.reuseSession && !input.shadow && !input.persistSession && !input.resumeSessionId && prep.profile.transport === "acp"
+        ? await backgroundTurn(app, prep, req, input.task, input.runId, emit)
+        : await runBackend(app, prep.profile, req, emit);
       revokeToolToken(prep.token);
       return { ...result, profileId: prep.profile.id, ai: { profile: prep.profile.id, model: prep.profile.model, effort: prep.profile.effort } };
     } catch (e) {

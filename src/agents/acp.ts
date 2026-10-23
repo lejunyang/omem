@@ -48,6 +48,8 @@ export type AcpHandle = {
   alive(): boolean;
   prompt(text: string, emit: (e: AgentEvent) => void, signal?: AbortSignal): Promise<AgentResult>;
   close(): void;
+  /** Remove an omem-owned temporary session from the backend list, when advertised. */
+  discard(): Promise<void>;
   probe?: AgentProbe;
 };
 
@@ -75,6 +77,8 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
   let touch = () => {};
   let replaying = false;
   let text = "";
+  let contextUsage: AgentResult["contextUsage"];
+  let sessionId = "";
   // Text between tool calls; the last segment is the reply proper (see replyFromSegments).
   let segments: string[] = [""];
   // Whether the model produced anything real (text, thought, tool call) in the current turn.
@@ -136,10 +140,17 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         emit({ type: "status", text: `${allowed ? "允许" : "拒绝"}操作：${request.toolCall.title ?? kind}` });
         return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } };
       },
-      async sessionUpdate({ update }) {
+      async sessionUpdate({ sessionId: updatedSession, update }) {
+        if (sessionId && updatedSession !== sessionId) return;
         touch();
         if (replaying) return; // history replayed by session/load is not new output
         switch (update.sessionUpdate) {
+          case "usage_update":
+            if (Number.isFinite(update.used) && update.used >= 0 && Number.isFinite(update.size) && update.size > 0) {
+              contextUsage = { used: update.used, size: update.size };
+              emit({ type: "usage", ...contextUsage });
+            }
+            break;
           case "agent_message_chunk":
             if (update.content.type === "text") {
               // CLI housekeeping notices (traex: "Skill descriptions were shortened…") are not the answer.
@@ -219,7 +230,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       failed,
     ]);
     touch();
-    const caps = init.agentCapabilities as { mcpCapabilities?: { http?: boolean }; loadSession?: boolean; sessionCapabilities?: { resume?: unknown } } | undefined;
+    const caps = init.agentCapabilities as { mcpCapabilities?: { http?: boolean }; loadSession?: boolean; sessionCapabilities?: { resume?: unknown; delete?: unknown } } | undefined;
     const httpMcp = !!caps?.mcpCapabilities?.http;
     const mcpServers: McpServer[] = opts.mcp
       ? httpMcp
@@ -247,7 +258,6 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       models?: { availableModels?: { modelId: string; name?: string }[]; currentModelId?: string } | null;
     };
     let session: SessionInfo | null = null;
-    let sessionId = "";
     let resumed = false;
     if (opts.resumeSessionId && (caps?.sessionCapabilities?.resume || caps?.loadSession)) {
       try {
@@ -272,6 +282,21 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     }
     touch();
     // Permission mode: prefer the role's choice when the agent offers it.
+    const discard = async () => {
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        if (!dead && caps?.sessionCapabilities?.delete && !resumed)
+          // A cancelled/failed prompt has already rejected `failed`; cleanup has its own budget.
+          await Promise.race([connection.deleteSession({ sessionId }), new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("会话清理超时")), 5000);
+          })]);
+      } catch (e) {
+        emitSetup({ type: "status", text: `后端会话清理失败：${(e as Error).message.slice(0, 120)}` });
+      } finally {
+        clearTimeout(timer);
+        close();
+      }
+    };
     const modes = session.modes?.availableModes ?? [];
     const wanted = pickMode(opts.modes ?? [], modes.map((m) => m.id));
     if (wanted && session.modes?.currentModeId !== wanted) await Promise.race([connection.setSessionMode({ sessionId, modeId: wanted }), failed]);
@@ -290,8 +315,8 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         ],
         ...(effortsByModel ? { effortsByModel } : {}),
       };
-      close();
-      return { sessionId, agent: agentName, resumed, alive: () => false, prompt: async () => ({ text: "", stopReason: "probe", agent: agentName }), close, probe };
+      await discard();
+      return { sessionId, agent: agentName, resumed, alive: () => false, prompt: async () => ({ text: "", stopReason: "probe", agent: agentName }), close, discard, probe };
     }
     for (const [key, value] of [
       ["model", profile.model],
@@ -337,12 +362,14 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       resumed,
       alive: () => !dead,
       close,
+      discard,
       async prompt(promptText, turnEmit, signal) {
         if (dead) throw new Error("Agent 进程已结束");
         if (busy) throw new Error("这个 Agent 会话正在处理上一条消息");
         busy = true;
         emit = turnEmit;
         text = "";
+        contextUsage = undefined;
         segments = [""];
         gotOutput = false;
         // A fresh failure channel for this turn: an earlier exit error has already been consumed.
@@ -414,7 +441,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         try {
           const result = await Promise.race([connection.prompt({ sessionId, prompt: [{ type: "text", text: promptText }] }), failed]);
           if (signal?.aborted) throw new Error("CANCELLED");
-          return { text, reply: replyFromSegments(segments), stopReason: result.stopReason, sessionId, agent: agentName };
+          return { text, reply: replyFromSegments(segments), stopReason: result.stopReason, sessionId, agent: agentName, contextUsage };
         } finally {
           idleW.close();
           (queueW as ReturnType<typeof idleWatchdog> | null)?.close();
@@ -455,7 +482,8 @@ export async function runAcp(profile: AgentProfile, req: AgentRequest, emit: (e:
     return await handle.prompt(req.prompt, emit, req.signal);
   } finally {
     req.signal?.removeEventListener("abort", onAbort);
-    handle.close();
+    if (!req.persistSession && !req.resumeSessionId) await handle.discard();
+    else handle.close();
   }
 }
 

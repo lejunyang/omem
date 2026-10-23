@@ -59,6 +59,10 @@ function bearer(req: FastifyRequest) {
 
 export async function startServer(app: App, opts: { port?: number; host?: string; quiet?: boolean } = {}) {
   const server = Fastify({ logger: false, bodyLimit: 50 * 1024 * 1024 });
+  server.addHook("onClose", async () => {
+    const { releaseBackgroundSessions } = await import("../agents/background-sessions.ts");
+    await releaseBackgroundSessions(app);
+  });
   await server.register(fastifyMultipart, { limits: { fileSize: 200 * 1024 * 1024 } });
 
   server.setErrorHandler((error: Error & { statusCode?: number; status?: number }, _req, reply) => {

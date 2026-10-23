@@ -1,4 +1,5 @@
 export type AgentEvent =
+  | { type: "usage"; used: number; size: number }
   | { type: "text"; text: string }
   | { type: "thought"; text: string }
   | { type: "tool"; id: string; title: string; kind?: string; status?: string; input?: unknown }
@@ -48,6 +49,8 @@ export type AgentProbe = {
 /** Why a run failed; used to decide whether a fallback backend/model is worth trying. */
 export type AgentFailureKind = "queue" | "idle" | "rate-limit" | "other";
 export type AgentResult = {
+  /** Latest measured context occupancy, not cumulative billed tokens. */
+  contextUsage?: { used: number; size: number };
   /** Everything the agent said this turn, narration between tool calls included. */
   text: string;
   /** What it said after its last tool call: the reply to show (falls back to text). */

@@ -47,6 +47,8 @@ async function agent(ctx: RunContext, role: RoleName, spaceId: string, task: str
     runId: ctx.run.id,
     signal: ctx.signal,
     onEvent: (e) => ctx.event(e.type, e),
+    userId: one<{ user_id: string | null }>(ctx.app.db, "select user_id from runs where id = ?", ctx.run.id)?.user_id ?? undefined,
+    reuseSession: ["heartbeat", "ingest", "dreamer", "brief", "curator", "tutor", "wiki-writer", "wiki-linter"].includes(role),
   });
   run(ctx.app.db, "update runs set profile_id = ? where id = ?", r.profileId, ctx.run.id);
   return r;

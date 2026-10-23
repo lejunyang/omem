@@ -5,6 +5,7 @@
  * tokens, run events) without a model.
  */
 import { Readable, Writable } from "node:stream";
+import { appendFileSync } from "node:fs";
 import { AgentSideConnection, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -38,7 +39,7 @@ new AgentSideConnection(
     async initialize() {
       return {
         protocolVersion: 1,
-        agentCapabilities: { mcpCapabilities: { http: false }, sessionCapabilities: threadMode ? { resume: {} } : undefined },
+        agentCapabilities: { mcpCapabilities: { http: false }, sessionCapabilities: { ...(threadMode ? { resume: {} } : {}), ...(process.env.FAKE_DELETE_LOG ? { delete: {} } : {}) } },
         agentInfo: { name: "fake-agent", version: "1" },
       } as never;
     },
@@ -74,10 +75,35 @@ new AgentSideConnection(
     async authenticate() {
       return {};
     },
+    async deleteSession(p: { sessionId: string }) {
+      if (process.env.FAKE_DELETE_LOG) appendFileSync(process.env.FAKE_DELETE_LOG, p.sessionId + "\n");
+      return {};
+    },
     async cancel() {},
     async prompt(p) {
       const prompt = p.prompt.map((b) => (b.type === "text" ? b.text : "")).join("");
       const say = (text: string) => conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } });
+      if (process.env.FAKE_USAGE) {
+        const values = process.env.FAKE_USAGE.split(",").map(Number);
+        const used = values[Math.min(turns.get(p.sessionId) ?? 0, values.length - 1)];
+        if (Number.isFinite(used)) await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "usage_update", used, size: 1000 } });
+        if (process.env.FAKE_OTHER_USAGE) await conn.sessionUpdate({ sessionId: "unrelated-session", update: { sessionUpdate: "usage_update", used: 950, size: 1000 } });
+      }
+      if (process.env.FAKE_MODE === "background") {
+        const n = (turns.get(p.sessionId) ?? 0) + 1;
+        turns.set(p.sessionId, n);
+        if (delay) await new Promise((r) => setTimeout(r, delay));
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "fake", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+        const result = await client.callTool({ name: "search", arguments: { query: "虚构测试材料" } });
+        // An ingest fact without evidence is rejected and records the owning run.
+        await client.callTool({ name: "remember", arguments: { kind: "fact", content: "项目 A 每周二执行检查。" } });
+        await client.close();
+        if (result.isError) throw new Error("MCP search failed");
+        await say(JSON.stringify({ session: p.sessionId, turn: n, prompt }));
+        return { stopReason: "end_turn" };
+      }
       if (fixed !== undefined) {
         await say(fixed);
         return { stopReason: "end_turn" };

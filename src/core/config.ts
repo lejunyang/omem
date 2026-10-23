@@ -67,6 +67,13 @@ export const configSchema = z.object({
       maxLive: z.number().int().min(0).default(3),
       /** After this many turns in one agent session, start a fresh one from the thread summary. */
       maxTurns: z.number().int().min(4).default(40),
+      /** Background role sessions are separate from interactive conversations. */
+      background: z.object({
+        enabled: z.boolean().default(true),
+        liveMinutes: z.number().min(0).default(60),
+        maxLive: z.number().int().min(0).max(8).default(3),
+        maxContextRatio: z.number().positive().max(1).default(0.6),
+      }).default({ enabled: true, liveMinutes: 60, maxLive: 3, maxContextRatio: 0.6 }),
       /** Chats (not web, not topics) idle this long start a new thread that remembers the previous one. */
       idleHours: z.number().min(0).default(12),
       /** Wait this long for more messages before starting a turn, so bursts become one turn. */
@@ -74,7 +81,7 @@ export const configSchema = z.object({
       /** A message that is only material (shared group, forward, image, file) waits this long for the words that usually follow. */
       contentWaitMs: z.number().int().min(0).default(15_000),
     })
-    .default({ liveMinutes: 20, maxLive: 3, maxTurns: 40, idleHours: 12, mergeMs: 1500, contentWaitMs: 15_000 }),
+    .default(() => ({ liveMinutes: 20, maxLive: 3, maxTurns: 40, background: { enabled: true, liveMinutes: 60, maxLive: 3, maxContextRatio: 0.6 }, idleHours: 12, mergeMs: 1500, contentWaitMs: 15_000 })),
   agents: z
     .object({
       default: z.string().optional(),

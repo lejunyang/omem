@@ -126,6 +126,16 @@ program
   .option("--host <host>", "监听地址")
   .action(async (o) => {
     await boot(home(), { port: o.port, host: o.host });
+    let stopping = false;
+    const shutdown = async () => {
+      if (stopping) return;
+      stopping = true;
+      const { releaseBackgroundSessions } = await import("./agents/background-sessions.ts");
+      await releaseBackgroundSessions();
+      process.exit(0);
+    };
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
   });
 
 program
