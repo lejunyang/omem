@@ -49,12 +49,12 @@ export async function draftRule(app: App, description: string, current?: Partial
     "- 群名用 contains：本人说“报警群”“值班群”通常指名字里带这几个字的群，不是名字恰好等于它；只有本人给了完整群名或群 id 才用 equals。",
     "- 发送人只给了名字就用 sender.name；给了邮箱用 sender.email。群里有某个机器人用 chat.bots contains。“报警卡片”用 message.type equals interactive。",
     `- 本人说的“助理机器人”“omem 机器人”“我的机器人”指 omem 自己的飞书机器人${botName ? `（名字是「${botName}」）` : ""}：判断它在不在群里用 chat.hasOwnBot（is true / false），不要用 chat.bots 去猜它的名字。`,
-    "- 规则里提到的 Agent 不在已有档案里时，用最接近的；都不合适就不要编造，改用 notify 并在 name 里写明“缺档案”。",
+    "- 未指定专用档案的任务交给 assistant（主助手），不选择第一个或最接近的档案。本人点名的档案不存在时不要替换，改用 notify 提示缺档案。定时任务允许 reply=auto 发回创建时的会话。",
   ].join("\n");
   const out = await askModel(app, prompt, { timeoutMs: 120_000 });
   const raw = jsonIn<Record<string, unknown>>(out);
   if (!raw) return { error: "模型没有给出可用的规则，请换个说法或手动填写" };
-  const parsed = ruleInputSchema.safeParse({ ...raw, description, enabled: current?.enabled ?? false });
+  const parsed = ruleInputSchema.safeParse({ ...raw, spaceId: current?.spaceId, conversationId: current?.conversationId, description, enabled: current?.enabled ?? false });
   if (!parsed.success) return { error: `模型给出的规则不完整：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("；")}` };
   const rule = parsed.data;
   return { rule, summary: `条件：${describe(rule.conditions)}；判断：${rule.judge}；动作：${rule.actions.map((a) => a.type).join("、")}` };

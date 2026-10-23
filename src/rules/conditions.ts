@@ -56,7 +56,7 @@ export function eventReader(e: RuleEvent, lookups: { chatBots?: (chatId: string)
 
 const norm = (s: string) => s.toLowerCase();
 
-function leafMatches(leaf: Leaf, raw: unknown): boolean {
+export function leafMatches(leaf: Pick<Leaf, "op" | "value">, raw: unknown): boolean {
   if (raw === undefined || raw === null) return false;
   if (leaf.op === "is") return Boolean(raw) === (leaf.value === true || leaf.value === "true");
   const values = Array.isArray(raw) ? raw.map(String) : [String(raw)];

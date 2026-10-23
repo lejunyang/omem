@@ -9,7 +9,7 @@ import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
 import { confirmDialog } from "../lib/dialog";
-import { fmtTime, relTime, toast } from "../store";
+import { fmtTime, relTime, state, toast } from "../store";
 
 /**
  * Rules: "when this happens, have this done" (docs/v2/rules.md). The owner's words are the rule;
@@ -18,13 +18,15 @@ import { fmtTime, relTime, toast } from "../store";
 type Reply = "none" | "draft" | "auto";
 type Unless = "owner-engaged" | "answered";
 type Action =
-  | { type: "agent"; spec: string; task: string; ownTopic: boolean; reply: Reply | "silent"; allowUrgent?: boolean; allowPrivate?: boolean }
+  | { type: "agent"; spec: string; space?: string; task: string; ownTopic: boolean; reply: Reply | "silent"; allowUrgent?: boolean; allowPrivate?: boolean }
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
   | { type: "invite-bot" }
   | { type: "capture" }
   | { type: "notify"; urgent: boolean };
 type Rule = {
   id?: string;
+  spaceId?: string;
+  conversationId?: string;
   name: string;
   description: string;
   enabled: boolean;
@@ -38,14 +40,14 @@ type Rule = {
   createdBy?: string;
 };
 type Firing = { id: number; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
-type Options = { fields: Record<string, string>; ops: string[]; specs: { name: string; description: string }[]; chats: { chat_id: string; name: string }[]; botReady: boolean };
+type Options = { fields: Record<string, string>; ops: string[]; specs: { name: string; description: string }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; conversations: { id: string; title: string; channel: string; space_id: string }[] };
 type TestResult = { checked: number; matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string }[]; note: string };
 
 const route = useRoute();
 const router = useRouter();
 const rules = ref<Rule[]>([]);
 const loading = ref(true);
-const options = ref<Options>({ fields: {}, ops: [], specs: [], chats: [], botReady: false });
+const options = ref<Options>({ fields: {}, ops: [], specs: [], chats: [], botReady: false, conversations: [] });
 const selectedId = computed(() => (typeof route.query.id === "string" ? route.query.id : null));
 const creating = computed(() => route.query.new === "1");
 const form = ref<Rule | null>(null);
@@ -54,11 +56,11 @@ const dirty = ref(false);
 const saving = ref(false);
 const drafting = ref(false);
 
-const blank = (): Rule => ({ name: "", description: "", enabled: false, trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] }, conditions: null, judge: "code", actions: [{ type: "notify", urgent: false }] });
+const blank = (): Rule => ({ spaceId: state.space, name: "", description: "", enabled: false, trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] }, conditions: null, judge: "code", actions: [{ type: "agent", spec: "assistant", task: "", ownTopic: false, reply: "none" }] });
 
 async function loadList() {
   try {
-    [rules.value, wakes.value] = await Promise.all([get<Rule[]>("/api/rules"), get<Wake[]>("/api/wakes").catch(() => [])]);
+    [rules.value, wakes.value] = await Promise.all([get<Rule[]>(`/api/rules?space=${encodeURIComponent(state.space)}`), get<Wake[]>("/api/wakes").catch(() => [])]);
   } finally {
     loading.value = false;
   }
@@ -106,7 +108,7 @@ async function draft() {
   if (!form.value?.description.trim()) return toast("先写规则原话", "error");
   drafting.value = true;
   try {
-    const current = form.value.id ? { ...form.value } : undefined;
+    const current = { ...form.value };
     const r = await post<{ rule?: Rule; error?: string; summary?: string }>("/api/rules/draft", { description: form.value.description, current });
     if (!r.rule) return toast(r.error ?? "没能生成", "error");
     form.value = { ...form.value, ...r.rule, id: form.value.id, enabled: form.value.enabled, name: form.value.name || r.rule.name };
@@ -124,7 +126,7 @@ async function save() {
   if (!f.name.trim()) f.name = f.description.slice(0, 12);
   saving.value = true;
   try {
-    const body = { name: f.name, description: f.description, enabled: f.enabled, trigger: f.trigger, conditions: f.conditions, judge: f.judge, actions: f.actions };
+    const body = { spaceId: f.spaceId, conversationId: f.conversationId, name: f.name, description: f.description, enabled: f.enabled, trigger: f.trigger, conditions: f.conditions, judge: f.judge, actions: f.actions };
     const saved = f.id ? await put<Rule>(`/api/rules/${f.id}`, body) : await post<Rule>("/api/rules", body);
     dirty.value = false;
     toast("已保存", "ok");
@@ -139,7 +141,7 @@ async function save() {
 }
 async function toggle(r: Rule) {
   try {
-    await put(`/api/rules/${r.id}`, { name: r.name, description: r.description, enabled: !r.enabled, trigger: r.trigger, conditions: r.conditions, judge: r.judge, actions: r.actions });
+    await put(`/api/rules/${r.id}`, { spaceId: r.spaceId, conversationId: r.conversationId, name: r.name, description: r.description, enabled: !r.enabled, trigger: r.trigger, conditions: r.conditions, judge: r.judge, actions: r.actions });
     await loadList();
     if (form.value?.id === r.id && !dirty.value) await loadCurrent();
   } catch (e) {
@@ -168,12 +170,12 @@ const REPLY_HINT: Record<string, string> = {
   auto: "直接在群里（或它的话题里）回复，思考气泡可见。",
   silent: "群里看不到过程；它读完讨论自己判断要不要发、要不要追问缺的信息，有结论才在话题里发，之后跟进这个话题，你一插话它就停。",
 };
-const specOptions = computed(() => options.value.specs.map((s) => ({ value: s.name, label: s.name, hint: s.description })));
+const specOptions = computed(() => options.value.specs.map((s) => ({ value: s.name, label: s.name === "assistant" ? "主助手" : s.name, hint: s.description })));
 const addPick = ref<string | null>(null);
 function addAction(type: string | null) {
   addPick.value = null;
   if (!form.value || !type) return;
-  const spec = options.value.specs[0]?.name ?? "";
+  const spec = type === "agent" ? "assistant" : options.value.specs.find(s => s.name !== "assistant")?.name ?? "";
   const a: Action =
     type === "agent" ? { type, spec, task: "", ownTopic: false, reply: "none" }
     : type === "watch" ? { type, spec, on: "mention", reply: "draft" }
@@ -285,11 +287,18 @@ function startFrom(text: string) {
         </header>
 
         <section class="block">
-          <div class="block-head"><h3>规则原话</h3><span class="muted small">规则的依据；条件和动作可以从它重新生成</span></div>
+          <div class="block-head"><h3>任务规则原话</h3><span class="muted small">规则的依据；条件和动作可以从它重新生成</span></div>
           <textarea v-model="form.description" class="input" rows="3" placeholder="例如：报警群里小王发报警卡片时，在卡片下开话题交给 alert-analyst 分析，需要关注就 @ 值班人" @input="touch" />
           <div class="row"><button class="btn sm" :disabled="drafting" @click="draft"><Icon name="sparkles" :size="13" />{{ drafting ? "生成中…" : form.id ? "按原话重新生成" : "从原话生成条件和动作" }}</button></div>
         </section>
 
+        <section class="block">
+          <div class="row wrap">
+            <label>所属空间<UiSelect :model-value="form.spaceId ?? ''" @update:model-value="form.spaceId = String($event || '')" :options="[{ value: '', label: '全局（沿用触发空间）' }, ...state.spaces.map(s => ({ value: s.id, label: s.name }))]" aria-label="规则所属空间" @change="touch" /></label>
+            <label>结果发到<UiSelect :model-value="form.conversationId ?? ''" @update:model-value="form.conversationId = String($event || '')" :options="[{ value: '', label: '通知本人' }, ...options.conversations.map(c => ({ value: c.id, label: c.title || '未命名会话', hint: `${c.channel} · ${state.spaces.find(s => s.id === c.space_id)?.name ?? c.space_id}` }))]" aria-label="结果会话" @change="touch" /></label>
+          </div>
+          <small class="muted">Agent 优先使用动作指定空间，其次档案固定空间，再用规则所属空间或触发会话空间。定时任务的回复位置在创建时保存。</small>
+        </section>
         <section class="block">
           <div class="block-head"><h3>什么时候看</h3></div>
           <div class="row wrap">
@@ -325,7 +334,8 @@ function startFrom(text: string) {
             </div>
             <template v-if="a.type === 'agent'">
               <div class="row wrap">
-                <UiSelect v-model="a.spec" size="sm" width="200px" :options="specOptions" placeholder="选择 Agent 档案" aria-label="Agent" @change="touch" />
+                <UiSelect v-model="a.spec" size="sm" width="200px" :options="specOptions" placeholder="选择执行者" aria-label="Agent" @change="touch" />
+                <UiSelect :model-value="a.space ?? ''" @update:model-value="a.space = String($event || '')" size="sm" :options="[{ value: '', label: '执行空间：跟随档案 / 规则' }, ...state.spaces.map(s => ({ value: s.id, label: s.name }))]" aria-label="执行空间" @change="touch" />
                 <UiSegmented v-model="a.reply" size="sm" :options="scheduleOnly ? replyOptions : agentReplyOptions" aria-label="回复方式" @change="touch" />
                 <UiCheckbox v-if="!scheduleOnly && a.reply !== 'silent'" v-model="a.ownTopic" size="sm" :disabled="a.reply === 'none'" @change="touch">在消息下开话题</UiCheckbox>
               </div>
@@ -339,7 +349,7 @@ function startFrom(text: string) {
             </template>
             <template v-else-if="a.type === 'watch'">
               <div class="row wrap">
-                <UiSelect v-model="a.spec" size="sm" width="200px" :options="specOptions" placeholder="选择 Agent 档案" aria-label="Agent" @change="touch" />
+                <UiSelect v-model="a.spec" size="sm" width="200px" :options="specOptions.filter(s => s.value !== 'assistant')" placeholder="选择 Agent 档案" aria-label="Agent" @change="touch" />
                 <UiSegmented v-model="a.on" size="sm" :options="[{ value: 'mention', label: '@ 时' }, { value: 'all', label: '每条' }, { value: 'keyword', label: '关键词' }]" aria-label="监听哪些" @change="touch" />
                 <input v-if="a.on === 'keyword'" v-model="a.pattern" class="input sm" placeholder="正则" @input="touch" />
                 <UiSegmented v-model="a.reply" size="sm" :options="replyOptions" aria-label="回复方式" @change="touch" />

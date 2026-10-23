@@ -1,3 +1,4 @@
+import { captureSpace } from "../core/capture-space.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { json, now } from "../core/util.ts";
@@ -16,7 +17,7 @@ import { ruleInputSchema, type Rule, type RuleEvent, type RuleInput } from "./ty
 export async function dispatchRuleEvent(app: App, e: RuleEvent) {
   let rules: Rule[];
   try {
-    rules = listRules(app, { enabledOnly: true }).filter((r) => r.trigger.event === e.kind);
+    rules = listRules(app, { enabledOnly: true }).filter((r) => r.trigger.event === e.kind && (!r.spaceId || !e.chat || r.spaceId === captureSpace(app, e.chat.id)));
   } catch {
     return;
   }
@@ -66,6 +67,7 @@ async function consider(app: App, rule: Rule, e: RuleEvent) {
   if (rule.trigger.waitMinutes > 0) {
     createRun(app, {
       kind: "rule-fire",
+      spaceId: rule.spaceId ?? (e.chat ? captureSpace(app, e.chat.id) : "personal"),
       title: `规则「${rule.name}」：${rule.trigger.waitMinutes} 分钟后看有没有人回应`,
       input: { ruleId: rule.id, key, event: e },
       notBefore: new Date(Date.now() + rule.trigger.waitMinutes * 60_000).toISOString(),

@@ -17,6 +17,7 @@ const route = useRoute();
 const router = useRouter();
 const conversations = ref<Conversation[]>([]);
 const messages = ref<Message[]>([]);
+const conversationSpace = ref<string | null>(null);
 const asks = ref<AskItem[]>([]);
 async function loadAsks() {
   asks.value = id.value ? await get<AskItem[]>(`/api/asks?conversation=${encodeURIComponent(id.value)}&status=pending`).catch(() => []) : [];
@@ -35,20 +36,21 @@ const listLoading = ref(true);
 const convLoading = ref(false);
 async function loadList() {
   try {
-    conversations.value = await get<Conversation[]>("/api/conversations");
+    conversations.value = await get<Conversation[]>(`/api/conversations?space=${encodeURIComponent(state.space)}`);
   } finally {
     listLoading.value = false;
   }
 }
 async function loadConversation() {
-  if (!id.value) return void (messages.value = []);
+  if (!id.value) { conversationSpace.value = null; messages.value = []; return; }
   const want = id.value;
   // Only the first load of a conversation shows a placeholder; refreshes keep what is on screen.
   if (!messages.value.length) convLoading.value = true;
   try {
-    const r = await get<{ messages: Message[] }>(`/api/conversations/${want}`).catch(() => ({ messages: [] }));
+    const r = await get<{ messages: Message[]; conversation?: Conversation }>(`/api/conversations/${want}`).catch(() => ({ messages: [] }));
     if (want !== id.value) return;
     messages.value = r.messages;
+    conversationSpace.value = "conversation" in r ? r.conversation?.space_id ?? null : null;
   } finally {
     convLoading.value = false;
   }
@@ -65,6 +67,7 @@ onMounted(() => {
   input.value?.focus();
 });
 watch(id, () => {
+  conversationSpace.value = null;
   messages.value = [];
   void loadConversation();
   void loadAsks();
@@ -149,7 +152,7 @@ function autosize(e: Event) {
     <section class="chat">
       <div class="chat-head row">
         <button class="btn ghost sm icon only-narrow" aria-label="对话列表" @click="showList = !showList"><Icon name="menu" /></button>
-        <span class="muted small">空间：{{ currentSpace()?.name }}（助理可按需查阅其他空间）</span>
+        <span class="muted small">空间：{{ (state.spaces.find(s => s.id === conversationSpace)?.name ?? currentSpace()?.name) }}（助理可按需查阅其他空间）</span>
       </div>
       <div ref="scroller" class="scroll">
         <div class="thread">

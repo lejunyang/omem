@@ -94,6 +94,8 @@ export const kindLabel: Record<string, string> = {
 export const runKindLabel: Record<string, string> = {
   ask: "问答",
   ingest: "整理新材料",
+  archive: "原件归档",
+  "archive-rule-draft": "编写归档规则",
   "wiki-plan": "规划目录",
   "wiki-write": "写作页面",
   "wiki-lint": "检查页面",

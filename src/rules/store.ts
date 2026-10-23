@@ -1,10 +1,14 @@
 import type { App } from "../core/app.ts";
+import { getSpace } from "../core/spaces.ts";
+import { getThread } from "../agents/threads.ts";
 import { all, one, run } from "../core/db.ts";
 import { deleteSchedule, upsertSchedule } from "../core/scheduler.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 import { ruleInputSchema, type Rule, type RuleInput, type Temporary } from "./types.ts";
 
 type Row = {
+  space_id: string | null;
+  conversation_id: string | null;
   id: string;
   name: string;
   description: string;
@@ -23,6 +27,8 @@ type Row = {
 
 const toRule = (r: Row): Rule => ({
   id: r.id,
+  spaceId: r.space_id ?? undefined,
+  conversationId: r.conversation_id ?? undefined,
   name: r.name,
   description: r.description,
   enabled: !!r.enabled,
@@ -51,6 +57,13 @@ export function getRule(app: App, id: string): Rule {
 /** Create or replace a rule; checks it can work (conditions for code judging, a cron for schedules). */
 export function saveRule(app: App, input: RuleInput & { id?: string; temporary?: Temporary }, by: "user" | "agent" = "user"): Rule {
   const r = ruleInputSchema.parse(input);
+  if (r.spaceId) getSpace(app, r.spaceId);
+  if (r.conversationId && getThread(app, r.conversationId).userId !== "owner") throw new HttpError(403, "只能投递到本人的会话");
+  for (const a of r.actions) {
+    if (a.type === "agent" || a.type === "watch") {
+      if (a.type === "agent" && a.space) getSpace(app, a.space);
+    }
+  }
   const prevTemp = input.id ? one<{ temporary: string | null }>(app.db, "select temporary from rules where id = ?", input.id)?.temporary : null;
   if (r.actions.some((a) => a.type === "wake") && !input.temporary && !prevTemp) throw new HttpError(400, "“唤醒”只用于 Agent 设的临时规则（wake_on_message）");
   if (r.judge !== "ai" && !r.conditions && r.trigger.event !== "schedule") throw new HttpError(400, "按条件判断需要条件；没有条件就选“交给 AI 判断”，或先从规则原话生成条件");
@@ -59,14 +72,15 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
     throw new HttpError(400, "定时规则没有具体的群或消息：只能交给 Agent（不开话题）或通知本人");
   if (r.trigger.event === "schedule" && (r.trigger.waitMinutes || r.trigger.unless.length || r.actions.some((a) => a.type === "agent" && a.reply === "silent")))
     throw new HttpError(400, "定时规则没有具体的讨论：不能等待回应、不能按“本人已在处理/已有人回复”跳过，也不能静默排查");
+  if (r.trigger.event === "schedule" && !r.conversationId && r.actions.some(a => a.type === "agent" && ["auto", "draft"].includes(a.reply))) throw new HttpError(400, "定时任务回复到会话时需要指定结果会话；否则请选择只告诉我");
   const at = now();
   const id = input.id ?? newId("rule");
   const prev = input.id ? one<Row>(app.db, "select * from rules where id = ?", input.id) : undefined;
   run(
     app.db,
-    `insert into rules(id, name, description, enabled, trigger, conditions, judge, actions, created_by, created_at, updated_at, temporary) values(?,?,?,?,?,?,?,?,?,?,?,?)
+    `insert into rules(id, name, description, enabled, trigger, conditions, judge, actions, created_by, created_at, updated_at, temporary, space_id, conversation_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      on conflict(id) do update set name = excluded.name, description = excluded.description, enabled = excluded.enabled, trigger = excluded.trigger,
-       conditions = excluded.conditions, judge = excluded.judge, actions = excluded.actions, updated_at = excluded.updated_at, temporary = coalesce(excluded.temporary, rules.temporary)`,
+       conditions = excluded.conditions, judge = excluded.judge, actions = excluded.actions, updated_at = excluded.updated_at, temporary = coalesce(excluded.temporary, rules.temporary), space_id = excluded.space_id, conversation_id = excluded.conversation_id`,
     id,
     r.name,
     r.description,
@@ -79,6 +93,8 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
     prev?.created_at ?? at,
     at,
     input.temporary ? JSON.stringify(input.temporary) : null,
+    r.spaceId ?? null,
+    r.conversationId ?? null,
   );
   // A schedule rule runs from the scheduler like the built-in tasks (schedule id rule:<id>).
   if (r.trigger.event === "schedule") upsertSchedule(app, { id: `rule:${id}`, kind: "rule", cron: r.trigger.cron!, config: { ruleId: id }, enabled: r.enabled });

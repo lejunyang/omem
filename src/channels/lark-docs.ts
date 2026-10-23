@@ -36,6 +36,7 @@ const DOC_PATH = /^\/(docx|wiki|docs)\/([A-Za-z0-9]+)/;
 const DOC_URL = /https?:\/\/[\w.-]*(?:feishu\.cn|larksuite\.com|larkoffice\.com)\/(?:docx|docs|wiki)\/[A-Za-z0-9]+[^\s)"'<>\]]*/g;
 
 export type LarkDocMeta = {
+  parentUrl?: string;
   url: string;
   via: "lark-cli";
   revision?: string;
@@ -417,13 +418,14 @@ async function childPages(app: App, url: string, origin: string, max: number): P
 }
 
 /** A doc already in the space, found by its link, its token or its document id. */
-export function findLarkDoc(app: App, spaceId: string, url: string) {
+export function findLarkDoc(app: App, spaceId: string, url: string, includeMoved = false) {
   const { token, type } = normalizeDocUrl(url);
   return one<{ id: string; title: string; updated_at: string; meta: string }>(
     app.db,
-    `select id, title, updated_at, meta from sources where space_id = ? and deleted_at is null and kind = 'doc'
+    `select id, title, updated_at, meta from sources where (space_id = ? or id in (select source_id from source_locations where origin_space = ?)) and deleted_at is null and kind = 'doc'
        and (uri like ? or uri like ? or uri like ? or json_extract(meta, '$.token') = ? or json_extract(meta, '$.documentId') = ?) order by updated_at desc limit 1`,
     spaceId,
+    includeMoved ? spaceId : "",
     `%/${type}/${token}`,
     `%/${type}/${token}?%`,
     `%/${type}/${token}#%`,
@@ -486,6 +488,8 @@ type ImportOpts = {
   unreadable?: Missing[];
   /** A linked doc read within this many ms is not read again. */
   freshMs?: number;
+  /** Automatic collection may follow a previously moved original. */
+  archive?: boolean;
   /** Re-process even when the revision did not change (e.g. to fetch media for old copies). */
   force?: boolean;
   /** A wiki page's child nodes count as its links (default); a crawl queues them itself. */
@@ -501,7 +505,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   const chain = new Set(opts.chain ?? []).add(url);
   const unreadable = opts.unreadable ?? [];
   const budget = opts.budget ?? { left: cfg.docMaxPerImport };
-  const existing = findLarkDoc(app, spaceId, url);
+  const existing = findLarkDoc(app, spaceId, url, !!opts.archive);
   const prev = json<Partial<LarkDocMeta>>(existing?.meta, {});
   // Reached by several routes (given directly and as someone's link): the deepest reach wins.
   const depth = Math.max(given, prev.depth ?? -1);
@@ -531,7 +535,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   let followed = 0;
   const childUrls = new Set(children.map((c) => c.url));
   for (const link of links.values()) {
-    const have = findLarkDoc(app, spaceId, link.url);
+    const have = findLarkDoc(app, spaceId, link.url, !!opts.archive);
     const fresh = have && Date.now() - Date.parse(have.updated_at) < (opts.freshMs ?? 86400_000);
     if (have && (fresh || depth <= 0)) {
       local.set(link.url, { id: have.id, title: have.title });
@@ -543,7 +547,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
     if (!childUrls.has(link.url) && followed++ >= cfg.docMaxLinked) continue;
     budget.left--;
     try {
-      const r = await importLarkDocument(app, spaceId, link.url, { depth: depth - 1, chain, unreadable, budget });
+      const r = await importLarkDocument(app, spaceId, link.url, { depth: depth - 1, chain, unreadable, budget, archive: opts.archive });
       const row = one<{ title: string }>(app.db, "select title from sources where id = ?", r.id);
       local.set(link.url, { id: r.id, title: row?.title ?? link.title });
       if (r.status !== "unchanged") related.push(r.id);
@@ -559,6 +563,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   const keptMedia = Object.fromEntries(Object.entries(ctx.media).filter(([t]) => ctx.used.has(t)));
   const meta: LarkDocMeta = {
     url,
+    ...(prev.parentUrl || opts.chain?.size ? { parentUrl: prev.parentUrl ?? [...opts.chain!].at(-1) } : {}),
     via: "lark-cli",
     fetchedAt,
     depth,
@@ -571,7 +576,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
     media: keptMedia,
     ...(missing.length ? { missing: Object.fromEntries(missing.map((m) => [m.url, { title: m.title, error: m.error }])) } : {}),
   };
-  const r = upsertSource(app, { spaceId, kind: "doc", uri, title: doc.title, text, meta });
+  const r = upsertSource(app, { archive: opts.archive, spaceId, kind: "doc", uri, title: doc.title, text, meta });
   if (r.status === "unchanged") run(app.db, "update sources set meta = ? where id = ?", JSON.stringify(meta), r.id);
   if (missing.length) unreadable.push(...recordMissing(app, spaceId, r.id, doc.title, missing));
   // Linked docs that link back were saved before this one existed.

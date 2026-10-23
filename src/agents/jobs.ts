@@ -1,3 +1,4 @@
+import { sourceRoute, moveSource, prepareArchive } from "../sources/archive.ts";
 import { executionArgs, type Execution } from "./execution.ts";
 import type { App } from "../core/app.ts";
 import type { RoleName } from "../core/config.ts";
@@ -242,11 +243,74 @@ registerHandler("thread-summary", async (ctx) => {
 // ------------------------------------------------------------------- ingest
 
 export function scheduleIngest(app: App, spaceId: string, sourceIds: string[], note = "") {
-  if (!sourceIds.length) return null;
-  const space = findSpace(app, spaceId);
-  if (!space || space.settings.autoIngest === false || (space.kind === "repo" && space.settings.autoIngest !== true)) return null;
-  return createRun(app, { kind: "ingest", spaceId, title: `整理新材料（${sourceIds.length}）`, input: { sourceIds, note } });
+  const groups = new Map<string, string[]>();
+  for (const id of new Set(sourceIds)) {
+    const s = getSource(app, id);
+    if (s.deletedAt) continue;
+    if (sourceRoute(app, id)?.pending && one(app.db, "select 1 from runs where kind='archive' and status in ('queued','running') and exists(select 1 from json_each(runs.input,'$.sourceIds') where value=?)", id)) {
+      run(app.db, "update source_routes set ingest=1 where source_id=?", id);
+      continue;
+    }
+    const space = findSpace(app, s.spaceId);
+    if (!space || space.settings.autoIngest === false || (space.kind === "repo" && space.settings.autoIngest !== true)) continue;
+    groups.set(s.spaceId, [...(groups.get(s.spaceId) ?? []), id]);
+  }
+  let first: ReturnType<typeof createRun> | null = null;
+  for (const [space, ids] of groups) {
+    const r = createRun(app, { kind: "ingest", spaceId: space, title: `整理新材料（${ids.length}）`, input: { sourceIds: ids, note } });
+    first ??= r;
+  }
+  return first;
 }
+
+registerHandler("archive", async ctx => {
+  const ids = (ctx.run.input.sourceIds ?? []) as string[];
+  const candidates: { id: string; hash: string; title: string }[] = [];
+  let completed = false;
+  try {
+    for (const id of ids) {
+      try {
+        const s = getSource(ctx.app, id);
+        const route = sourceRoute(ctx.app, id);
+        if (s.deletedAt || !route) continue;
+        // A failed run can be retried after releasing ingestion in the original space.
+        if (!route.pending && route.mode === "fallback" && route.decision_hash !== s.hash)
+          run(ctx.app.db, "update source_routes set pending=1 where source_id=?", id);
+        else if (!route.pending) continue;
+        // Settings may have changed since collection. Deterministic rules still win.
+        const p = prepareArchive(ctx.app, { ...s, text: sourceText(ctx.app, id), archive: true });
+        if (p && p.mode !== "fallback") {
+          moveSource(ctx.app, id, p.input.spaceId, p.reason, p.mode, p.ruleId);
+          continue;
+        }
+        candidates.push({ id, hash: s.hash, title: s.title });
+      } catch (error) {
+        run(ctx.app.db, "update source_routes set pending=0 where source_id=?", id);
+        ctx.event("status", { text: `原件 ${id} 暂未归档：${(error as Error).message}` });
+      }
+    }
+    if (!candidates.length) return { quiet: true };
+    const r = await agent(ctx, "archivist", ctx.run.spaceId!, `判断这些原件的空间归属：${JSON.stringify(candidates)}`, null);
+    completed = true;
+    return { summary: r.text.trim() };
+  } finally {
+    for (const { id, hash } of candidates) {
+      if (sourceRoute(ctx.app, id)?.pending) run(ctx.app.db, "update source_routes set pending=0,decision_hash=? where source_id=? and exists(select 1 from sources where id=? and hash=?)", completed ? hash : null, id, id, hash);
+    }
+    const ready: string[] = [];
+    for (const id of ids) {
+      if (sourceRoute(ctx.app, id)?.ingest) {
+        run(ctx.app.db, "update source_routes set ingest=0 where source_id=?", id);
+        ready.push(id);
+      }
+    }
+    scheduleIngest(ctx.app, ctx.run.spaceId!, ready);
+  }
+});
+registerHandler("archive-rule-draft", async ctx => {
+  const r = await agent(ctx, "archive-rule-writer", ctx.run.spaceId!, `本人的要求：${String(ctx.run.input.description)}\n当前草稿：${JSON.stringify(ctx.run.input.current ?? {})}`, null);
+  return { ...getRun(ctx.app, ctx.run.id).output, summary: r.text.trim() };
+});
 
 registerHandler("ingest", async (ctx) => {
   const { sourceIds, note } = ctx.run.input as { sourceIds: string[]; note?: string };

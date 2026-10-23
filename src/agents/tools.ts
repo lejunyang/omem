@@ -1,3 +1,4 @@
+import { archiveRuleSchema, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { executionSchema, validateExecution } from "./execution.ts";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -1720,13 +1721,48 @@ def({
 });
 
 def({
+  name: "classify_source",
+  description: "给待归档原件确定空间，保留 ID、引用和迁移记录。只处理本次归档任务的原件；不确定用 personal。",
+  write: true,
+  schema: z.object({ source_id: z.string(), hash: z.string(), space: z.string(), reason: z.string().trim().min(1).max(500) }),
+  handler: (ctx, a) => {
+    if (ctx.role !== "archivist" || !ctx.runId) throw new HttpError(403, "仅归档角色可使用");
+    const ids = getRun(ctx.app, ctx.runId).input.sourceIds as string[];
+    if (!ids?.includes(a.source_id)) throw new HttpError(403, "原件不在本次归档任务中");
+    const s = getSource(ctx.app, a.source_id);
+    writeSpace(ctx, s.spaceId);
+    const target = writeSpace(ctx, a.space);
+    if (s.hash !== a.hash) throw new HttpError(409, "原件已更新，请重新读取并使用新的 hash");
+    if (!sourceRoute(ctx.app, s.id)?.pending) throw new HttpError(409, "归属已由设置或其他任务确定");
+    const p = prepareArchive(ctx.app, { ...s, text: sourceText(ctx.app, s.id), archive: true });
+    if (p && p.mode !== "fallback") throw new HttpError(409, "已有设置或规则确定归属，不能覆盖");
+    moveSource(ctx.app, s.id, target, a.reason, target === "personal" ? "fallback" : "ai", undefined, a.hash);
+    return `已归档到 ${target}；原件 ID ${s.id} 保持不变。`;
+  },
+});
+
+def({
+  name: "propose_archive_rule",
+  description: `提交归档规则草稿供本人核对，不保存或启用。条件字段：${JSON.stringify(ARCHIVE_FIELDS)}。`,
+  write: true,
+  schema: archiveRuleSchema,
+  handler: (ctx, a) => {
+    if (ctx.role !== "archive-rule-writer" || !ctx.runId) throw new HttpError(403, "仅归档规则编写角色可使用");
+    writeSpace(ctx, a.target);
+    setRunOutput(ctx.app, ctx.runId, { ...getRun(ctx.app, ctx.runId).output, rule: { ...a, enabled: false } });
+    return "草稿已生成，等待本人在归档规则页面核对保存。";
+  },
+});
+
+def({
   name: "list_rules",
-  description: "列出本人设的规则（遇到什么情况自动叫哪个 Agent 做什么）：原话、条件、动作、是否启用、命中次数。",
+  description: "列出当前空间和全局的任务规则：原话、条件、动作、是否启用、命中次数。",
   schema: z.object({}),
   handler: async (ctx) => {
     const { listRules } = await import("../rules/store.ts");
     const { describe } = await import("../rules/conditions.ts");
-    const rules = listRules(ctx.app);
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人可以查看任务规则");
+    const rules = listRules(ctx.app).filter(r => !r.spaceId || r.spaceId === ctx.spaceId);
     return rules.length
       ? rules.map((r) => `- ${r.id} ${r.enabled ? "" : "（未启用）"}「${r.name}」：${r.description}\n  触发 ${r.trigger.event}${r.trigger.once === "chat" ? "（每群一次）" : ""} · 条件 ${describe(r.conditions)} · 判断 ${r.judge} · 动作 ${r.actions.map((a) => a.type + ("spec" in a ? `:${a.spec}` : "")).join("、")} · 命中 ${r.hits} 次`).join("\n")
       : "还没有规则。";
@@ -1749,7 +1785,9 @@ def({
     if (ctx.spec || (ctx.role && ctx.role !== "assistant")) throw new HttpError(403, "规则只能由主助手替本人设");
     const { saveRule, getRule } = await import("../rules/store.ts");
     const { describe } = await import("../rules/conditions.ts");
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人可以设置规则");
     const current = a.id ? getRule(ctx.app, a.id) : undefined;
+    if (current?.spaceId) writeSpace(ctx, current.spaceId);
     let input: Record<string, unknown>;
     if (a.rule) input = { ...(current ?? {}), ...a.rule, description: a.description };
     else {
@@ -1758,6 +1796,10 @@ def({
       if (!d.rule) throw new HttpError(422, d.error ?? "没能从原话生成规则");
       input = d.rule;
     }
+    const origin = ctx.runId ? getRun(ctx.app, ctx.runId).input.conversationId as string | undefined : undefined;
+    input.spaceId = writeSpace(ctx, (input.spaceId as string | undefined) ?? current?.spaceId ?? ctx.spaceId);
+    input.conversationId = current?.conversationId ?? origin;
+    for (const action of (input.actions ?? []) as { space?: string }[]) if (action.space) writeSpace(ctx, action.space);
     const saved = saveRule(ctx.app, { ...(input as object), id: a.id, name: a.name ?? (input.name as string), enabled: a.enabled ?? current?.enabled ?? false } as never, "agent");
     return `已${current ? "更新" : "建好"}规则 ${saved.id}「${saved.name}」${saved.enabled ? "（已启用）" : "（未启用，请本人到规则页核对后启用）"}：条件 ${describe(saved.conditions)}；判断 ${saved.judge}；动作 ${saved.actions.map((x) => x.type + ("spec" in x ? `:${x.spec}` : "")).join("、")}。链接：#/rules?id=${saved.id}`;
   },

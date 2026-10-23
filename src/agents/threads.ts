@@ -1,3 +1,4 @@
+import { captureSpace } from "../core/capture-space.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now, truncate } from "../core/util.ts";
@@ -176,7 +177,7 @@ export function resolveThread(app: App, addr: ThreadAddress): { thread: Thread; 
   const cs = chatSettings(app, addr.channel, addr.chatId);
   const mode = cs.mode ?? (addr.topicId ? "topic" : "chat");
   const key = mode === "topic" && addr.topicId ? `${addr.chatId}#${addr.topicId}` : addr.chatId;
-  const spaceId = cs.spaceId ?? addr.spaceId ?? "personal";
+  const spaceId = cs.spaceId ?? addr.spaceId ?? (["lark", "lark-watch"].includes(addr.channel) ? captureSpace(app, addr.chatId) : "personal");
   const row = one<Row>(app.db, "select * from conversations where channel = ? and external_id = ? and status = 'active' order by updated_at desc limit 1", addr.channel, key);
   const settings: ThreadSettings = { ...(cs.spec ? { spec: cs.spec } : {}), ...(cs.lark ? { lark: cs.lark } : {}) };
   if (!row) {

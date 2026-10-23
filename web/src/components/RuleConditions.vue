@@ -96,7 +96,7 @@ function applyRaw() {
 
 const fieldOptions = computed(() => Object.entries(props.fields).map(([value, label]) => ({ value, label })));
 const opOptions = (field: string) => (BOOL_FIELDS.has(field) ? [{ value: "is", label: "为" }] : props.ops.filter((o) => o !== "is").map((o) => ({ value: o, label: OP_LABEL[o] ?? o })));
-const newLeaf = (): Row => ({ kind: "leaf", negate: false, field: "chat.name", op: "contains", value: "" });
+const newLeaf = (): Row => ({ kind: "leaf", negate: false, field: Object.keys(props.fields)[0] ?? "chat.name", op: "contains", value: "" });
 function addRow(target: Row[] = rows.value) {
   target.push(newLeaf());
   push();

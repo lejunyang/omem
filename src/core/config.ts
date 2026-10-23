@@ -24,6 +24,8 @@ export type AgentProfile = z.infer<typeof agentProfileSchema>;
 export const roleNames = [
   "assistant",
   "ingest",
+  "archivist",
+  "archive-rule-writer",
   "wiki-planner",
   "wiki-writer",
   "wiki-linter",

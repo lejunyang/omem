@@ -1,3 +1,4 @@
+import { prepareArchive, finishArchive, moveSource } from "./archive.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, json, newId, now, sha256, sliceLines } from "../core/util.ts";
@@ -50,6 +51,8 @@ const toSource = (r: Row): Source => ({
 });
 
 export type UpsertInput = {
+  /** Automatic collection; explicit imports leave this unset. */
+  archive?: boolean;
   spaceId: string;
   kind: SourceKind;
   uri: string;
@@ -65,6 +68,12 @@ export type UpsertResult = { id: string; status: "created" | "updated" | "unchan
  * documents keep only the newest original; conversation sources append.
  */
 export function upsertSource(app: App, input: UpsertInput): UpsertResult {
+  const prepared = prepareArchive(app, input);
+  if (prepared) {
+    if (prepared.sourceId && getSource(app, prepared.sourceId).spaceId !== prepared.input.spaceId)
+      moveSource(app, prepared.sourceId, prepared.input.spaceId, prepared.reason, prepared.mode, prepared.ruleId);
+    input = prepared.input;
+  }
   const text = input.text.replace(/\r\n?/g, "\n");
   const hash = sha256(text);
   const existing = one<{ id: string; hash: string; deleted_at: string | null }>(
@@ -73,7 +82,10 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
     input.spaceId,
     input.uri,
   );
-  if (existing && existing.hash === hash && !existing.deleted_at) return { id: existing.id, status: "unchanged" };
+  if (existing && existing.hash === hash && !existing.deleted_at) {
+    if (prepared) finishArchive(app, existing.id, prepared);
+    return { id: existing.id, status: "unchanged" };
+  }
   const id = existing?.id ?? newId("s");
   const at = now();
   tx(app.db, () => {
@@ -110,6 +122,10 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
     }
     writeIndex(app, id, input.spaceId, input.kind, input.uri, input.title, text);
   });
+  if (prepared) finishArchive(app, id, prepared);
+  else if (!existing && !["code", "conversation", "activity", "work", "chat"].includes(input.kind)) {
+    run(app.db, "insert or ignore into source_routes(source_id,origin_space,mode,reason,decision_hash) values(?,?,'manual','导入时指定空间',?)", id, input.spaceId, hash);
+  }
   app.emit({ type: "changed", entity: "source", id, spaceId: input.spaceId });
   return { id, status: existing ? "updated" : "created" };
 }

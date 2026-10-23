@@ -20,7 +20,7 @@ import { listAgentProfiles, loadRole, profileFor } from "../agents/runner.ts";
 import { cancelRun, countRuns, createRun, getRun, listRuns, runEvents } from "../agents/runs.ts";
 import { callTool, toolContextForToken, toolList, toolSchemas } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
-import { all, one } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
 import { configSchema, saveConfig } from "../core/config.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
@@ -687,12 +687,64 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     markRead(app, (req.body as { id?: string } | null)?.id);
     return { ok: true };
   });
+  // Archive settings are owner-only, like task rules; members cannot reach these routes.
+  server.get("/api/archive-rules", async () => (await import("../sources/archive.ts")).listArchiveRules(app));
+  server.get("/api/archive-options", async () => {
+    const { ARCHIVE_FIELDS } = await import("../sources/archive.ts");
+    return { fields: ARCHIVE_FIELDS, ops: ["equals", "contains", "startsWith", "endsWith", "in", "is"] };
+  });
+  server.post("/api/archive-rules", async req => (await import("../sources/archive.ts")).saveArchiveRule(app, req.body));
+  server.put("/api/archive-rules/:id", async req => (await import("../sources/archive.ts")).saveArchiveRule(app, req.body, (req.params as { id: string }).id));
+  server.delete("/api/archive-rules/:id", async req => {
+    run(app.db, "delete from archive_rules where id=?", (req.params as { id: string }).id);
+    return { ok: true };
+  });
+  server.post("/api/archive-rules/draft", async req => {
+    const b = q(z.object({ space: z.string(), description: z.string().min(1).max(2000), current: z.record(z.string(), z.unknown()).optional() }), req.body);
+    getSpace(app, b.space);
+    return createRun(app, { kind: "archive-rule-draft", spaceId: b.space, title: "编写归档规则", input: b, userId: who(req) });
+  });
+  server.post("/api/archive/preview", async req => {
+    const b = q(z.object({ space: z.string(), limit: z.number().int().min(1).max(200).default(100), offset: z.number().int().min(0).default(0) }), req.body);
+    return (await import("../sources/archive.ts")).previewArchive(app, b.space, b.limit, b.offset);
+  });
+  server.post("/api/archive/apply", async req => {
+    const b = q(z.object({ space: z.string(), entries: z.array(z.object({ id: z.string(), hash: z.string(), ruleId: z.string(), ruleVersion: z.string(), target: z.string() })).max(200) }), req.body);
+    return (await import("../sources/archive.ts")).applyArchivePreview(app, b.space, b.entries);
+  });
+  server.post("/api/archive/classify", async req => {
+    const b = q(z.object({ space: z.string(), ids: z.array(z.string()).min(1).max(100) }), req.body);
+    const { sourceRoute, queueArchive } = await import("../sources/archive.ts");
+    // Explicit historical review: scope and validate the whole batch before queueing it.
+    for (const id of b.ids) {
+      const s = getSource(app, id);
+      if (s.spaceId !== b.space || s.deletedAt || ["code", "conversation", "activity", "work"].includes(s.kind)) throw new HttpError(400, "请选择当前空间的可归档原件");
+      if (["manual", "binding"].includes(sourceRoute(app, id)?.mode ?? "")) throw new HttpError(409, "已指定归属的材料不能由 AI 改动");
+    }
+    for (const id of b.ids) {
+      run(app.db, "insert into source_routes(source_id,origin_space,mode,reason,pending) values(?,?,'fallback','本人请求重新判断',1) on conflict(source_id) do update set pending=1,decision_hash=null,mode='fallback'", id, b.space);
+      queueArchive(app, id);
+    }
+    return { queued: b.ids.length };
+  });
+  server.get("/api/sources/:id/archive", async req => {
+    const id = (req.params as { id: string }).id;
+    getSource(app, id);
+    const { sourceRoute, archiveHistory } = await import("../sources/archive.ts");
+    return { route: sourceRoute(app, id), history: archiveHistory(app, id) };
+  });
+  server.post("/api/sources/:id/move", async req => {
+    const b = q(z.object({ space: z.string(), hash: z.string(), reason: z.string().min(1).max(500) }), req.body);
+    return (await import("../sources/archive.ts")).moveSource(app, (req.params as { id: string }).id, b.space, b.reason, "manual", undefined, b.hash);
+  });
+
   // ------------------------------------------------------------------- rules
-  server.get("/api/rules", async () => {
+  server.get("/api/rules", async (req) => {
+    const o = q(z.object({ space: z.string().optional() }), req.query);
     const { listRules } = await import("../rules/store.ts");
     const { describe } = await import("../rules/conditions.ts");
     // Temporary wake-up rules are listed with the timed wakes (/api/wakes).
-    return listRules(app).filter((r) => !r.temporary).map((r) => ({ ...r, conditionText: describe(r.conditions) }));
+    return listRules(app).filter((r) => !r.temporary && (!o.space || !r.spaceId || r.spaceId === o.space)).map((r) => ({ ...r, conditionText: describe(r.conditions) }));
   });
   // Wake-ups agents set for themselves: timed (queued runs) and on a message (temporary rules).
   server.get("/api/wakes", async () => (await import("../agents/wakes.ts")).pendingWakes(app));
@@ -728,8 +780,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return {
       fields: FIELDS,
       ops: OPS,
-      specs: listAgentSpecs(app).map((s) => ({ name: s.name, description: s.description })),
+      specs: [{ name: "assistant", description: "主助手：未指定专用档案的日常任务" }, ...listAgentSpecs(app).map((s) => ({ name: s.name, description: s.description }))],
       chats: all<{ chat_id: string; name: string }>(app.db, "select chat_id, name from lark_cursors where chat_id like 'oc_%' and name != '' order by updated_at desc limit 300"),
+      conversations: all(app.db, "select id,title,channel,space_id from conversations where user_id = ? order by updated_at desc limit 300", OWNER),
       botReady: !!app.config.lark.appId,
     };
   });

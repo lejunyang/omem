@@ -45,7 +45,7 @@ async function load() {
   }
 }
 async function loadPage(offset: number) {
-  const q = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
+  const q = new URLSearchParams({ space: state.space, limit: String(PAGE), offset: String(offset) });
   if (kindFilter.value.length) q.set("kind", kindFilter.value.join(","));
   if (showQuiet.value) q.set("all", "true");
   return get<{ runs: Run[]; total: number }>(`/api/runs?${q.toString()}`);

@@ -56,7 +56,8 @@ export const actionSchema = z.discriminatedUnion("type", [
    */
   z.object({
     type: z.literal("agent"),
-    spec: z.string(),
+    spec: z.string().default("assistant"),
+    space: z.string().transform(v => v || undefined).optional(),
     task: z.string().default(""),
     ownTopic: z.boolean().default(false),
     reply: agentReply.default("none"),
@@ -73,6 +74,8 @@ export const actionSchema = z.discriminatedUnion("type", [
 export type RuleAction = z.infer<typeof actionSchema>;
 
 export const ruleInputSchema = z.object({
+  spaceId: z.string().transform(v => v || undefined).optional(),
+  conversationId: z.string().transform(v => v || undefined).optional(),
   name: z.string().trim().min(1).max(60),
   description: z.string().trim().min(1).max(2000),
   enabled: z.boolean().default(false),

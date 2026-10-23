@@ -48,7 +48,7 @@ export async function parseLarkResource(ctx: RunContext) {
   };
   if (!current()) return { skipped: "附件已变化", quiet: true };
   try {
-    const imported = await importFile(app, spaceId, join(app.filesDir, file), `lark:${chatId}/${messageId}/${key}/${name ?? file}`, ctx.signal);
+    const imported = await importFile(app, spaceId, join(app.filesDir, file), `lark:${chatId}/${messageId}/${key}/${name ?? file}`, ctx.signal, true);
     ctx.signal.throwIfAborted();
     if (!imported) throw new Error("附件暂不支持内容解析，原文件已保存");
     const { scheduleIngest } = await import("../agents/jobs.ts");

@@ -6,13 +6,14 @@ import ChatView from "../components/ChatView.vue";
 import CodeView from "../components/CodeView.vue";
 import Skeleton from "../components/Skeleton.vue";
 import VirtualList from "../components/VirtualList.vue";
+import UiSelect from "../components/UiSelect.vue";
 import Icon from "../components/Icon.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
 import { currentSpace, fmtTime, relTime, state, toast } from "../store";
 
 type Detail = {
-  source: Source & { lines: number };
+  source: Source & { lines: number; hash: string };
   lineStart: number;
   lineEnd: number;
   text: string;
@@ -30,6 +31,22 @@ const q = ref("");
 const kind = ref("");
 const detail = ref<Detail | null>(null);
 const raw = ref(false);
+const archive = ref<{ route?: { reason: string } | null; history: { from_space: string; to_space: string; reason: string; at: string }[] } | null>(null);
+const moveTarget = ref("");
+const moveReason = ref("");
+const moving = ref(false);
+async function moveOriginal() {
+  const s = detail.value?.source;
+  if (!s || !moveTarget.value || !moveReason.value.trim()) return toast("选择目标空间并写明依据", "error");
+  if (!(await confirmDialog("确认这份材料的空间归属？", { message: "保留原件 ID 和引用，后续自动归档不会覆盖本次手动指定。", okText: "确认归属" }))) return;
+  moving.value = true;
+  try {
+    await post(`/api/sources/${s.id}/move`, { space: moveTarget.value, hash: s.hash, reason: moveReason.value });
+    await Promise.all([load(), loadDetail()]);
+    toast("已更新原件归属", "ok");
+  } catch (e) { toast((e as Error).message, "error"); }
+  finally { moving.value = false; }
+}
 const collapsed = ref(new Set<string>());
 /** Folders start collapsed; once the user expands one, keep it expanded across loads. */
 const expandedOnce = ref(new Set<string>());
@@ -103,6 +120,9 @@ async function loadDetail() {
     const d = await get<Detail>(`/api/sources/${id.value}?from=1&to=1000000`);
     if (d.source.id !== id.value) return;
     detail.value = d;
+    moveTarget.value = d.source.spaceId;
+    archive.value = await get(`/api/sources/${d.source.id}/archive`);
+    moveReason.value = "";
     // Chats open as a chat even from a citation; the highlighted message is scrolled to.
     raw.value = d.source.kind === "code" || (!!hl.value && d.source.kind !== "chat");
   } finally {
@@ -298,6 +318,15 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <div v-if="detail.citedBy.length" class="cited small">
             被引用：<router-link v-for="p in detail.citedBy" :key="p.page_id" :to="`/wiki/${p.page_id.split('/')[0]}/${p.page_id.split('/').slice(1).join('/')}`" class="badge accent">{{ p.title }}</router-link>
           </div>
+          <details v-if="!detail.source.deletedAt && !['code','conversation','activity','work'].includes(detail.source.kind)" class="archive-info">
+            <summary>空间归属 · {{ archive?.route?.reason ?? '采集或导入时指定' }}</summary>
+            <div class="row wrap" style="margin-top: 12px">
+              <UiSelect v-model="moveTarget" :options="state.spaces.map(s => ({ value: s.id, label: s.name }))" aria-label="原件目标空间" />
+              <input v-model="moveReason" class="input" style="flex: 1; min-width: 140px" placeholder="归属依据" aria-label="归属依据" />
+              <button class="btn sm" :disabled="moving || !moveReason.trim()" @click="moveOriginal">确认归属</button>
+            </div>
+            <p v-for="(h, i) in archive?.history" :key="i" class="muted small">{{ fmtTime(h.at) }} · {{ h.from_space }} → {{ h.to_space }} · {{ h.reason }}</p>
+          </details>
         </header>
         <div v-if="detail.source.deletedAt" class="card pad muted">这份原件已于 {{ fmtTime(detail.source.deletedAt) }} 移除，只保留了身份记录。</div>
         <div v-else class="body">
@@ -331,6 +360,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
 </template>
 
 <style scoped>
+.archive-info { margin-top: 12px; overflow-wrap: anywhere; }
 .loading-detail {
   max-width: 760px;
   padding-top: 8px;

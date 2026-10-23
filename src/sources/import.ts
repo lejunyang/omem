@@ -96,7 +96,7 @@ export async function convertDocument(app: App, file: string, signal?: AbortSign
 }
 
 /** Import one file into a space. Binary documents are converted; originals are kept in files/. */
-export async function importFile(app: App, spaceId: string, file: string, uri?: string, signal?: AbortSignal): Promise<UpsertResult | null> {
+export async function importFile(app: App, spaceId: string, file: string, uri?: string, signal?: AbortSignal, archive = false): Promise<UpsertResult | null> {
   const path = resolve(file);
   await ensureGrammars([path]);
   const ext = extname(path).toLowerCase();
@@ -104,12 +104,12 @@ export async function importFile(app: App, spaceId: string, file: string, uri?: 
   if (DOC_EXT.has(ext)) {
     const stored = keepOriginal(app, path);
     const text = await convertDocument(app, path, signal);
-    return upsertSource(app, { spaceId, kind: "doc", uri: id, title: basename(path, ext), text, mime: ext.slice(1), meta: { original: stored } });
+    return upsertSource(app, { archive, spaceId, kind: "doc", uri: id, title: basename(path, ext), text, mime: ext.slice(1), meta: { original: stored } });
   }
   if (IMAGE_EXT.has(ext)) {
     const stored = keepOriginal(app, path);
     return upsertSource(app, {
-      spaceId,
+      archive, spaceId,
       kind: "image",
       uri: id,
       title: basename(path),
@@ -121,7 +121,7 @@ export async function importFile(app: App, spaceId: string, file: string, uri?: 
   const buf = readFileSync(path);
   if (buf.length > MAX_TEXT_BYTES || looksBinary(buf)) return null;
   const kind: SourceKind = classify(path) === "doc" ? "doc" : "code";
-  return upsertSource(app, { spaceId, kind, uri: id, title: basename(path), text: buf.toString("utf8") });
+  return upsertSource(app, { archive, spaceId, kind, uri: id, title: basename(path), text: buf.toString("utf8") });
 }
 
 export function keepOriginal(app: App, path: string) {
@@ -262,17 +262,17 @@ function htmlToText(html: string) {
  * A web page or a Feishu doc as an original. For Feishu docs, `related` lists linked docs that were
  * imported or changed along with it (they need understanding too) and `missing` those that could not be read.
  */
-export async function importUrl(app: App, spaceId: string, url: string, opts: { depth?: number } = {}): Promise<UpsertResult & { related?: string[]; missing?: { url: string; title: string; error: string }[] }> {
+export async function importUrl(app: App, spaceId: string, url: string, opts: { depth?: number; archive?: boolean } = {}): Promise<UpsertResult & { related?: string[]; missing?: { url: string; title: string; error: string }[] }> {
   if (/feishu\.cn|larksuite\.com|larkoffice\.com/.test(url)) {
     const { importLarkDocument } = await import("../channels/lark-docs.ts");
-    return importLarkDocument(app, spaceId, url, { depth: opts.depth });
+    return importLarkDocument(app, spaceId, url, { depth: opts.depth, archive: opts.archive });
   }
   const res = await fetch(url, { headers: { "user-agent": "omem/0.2 (+personal knowledge capture)" }, signal: AbortSignal.timeout(30_000) });
   if (!res.ok) throw new HttpError(502, `抓取失败：HTTP ${res.status}`);
   const type = res.headers.get("content-type") ?? "";
   const raw = await res.text();
   const { title, body } = type.includes("html") ? htmlToText(raw) : { title: url, body: raw };
-  return upsertSource(app, { spaceId, kind: "web", uri: url, title: title || url, text: body, meta: { url } });
+  return upsertSource(app, { archive: opts.archive, spaceId, kind: "web", uri: url, title: title || url, text: body, meta: { url } });
 }
 
 export function recordImport(app: App, spaceId: string, label: string, report: ImportReport) {

@@ -1,10 +1,11 @@
 import type { App } from "../core/app.ts";
 import { notify } from "../core/notify.ts";
+import { captureSpace as chatSpace } from "../core/capture-space.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { createRun, getRun } from "../agents/runs.ts";
 import { readAgentSpec } from "../agents/specs.ts";
-import { resolveThread, updateThread } from "../agents/threads.ts";
+import { getThread, resolveThread, updateThread } from "../agents/threads.ts";
 import { listWorkFiles, workFileLines } from "../sources/work.ts";
 import { eventSummary } from "./compile.ts";
 import type { Followed } from "./context.ts";
@@ -96,19 +97,20 @@ function ruleFiles(app: App, rule: Rule) {
  * It can post only into this chat, as drafts unless the rule says auto.
  */
 async function agentAction(app: App, rule: Rule, a: Extract<RuleAction, { type: "agent" }>, e: RuleEvent, reason: string): Promise<ActionResult> {
-  const spec = readAgentSpec(app, a.spec);
+  const spec = a.spec === "assistant" ? { name: "assistant", status: "active", space: undefined } : readAgentSpec(app, a.spec);
   if (spec.status !== "active") throw new HttpError(400, `档案 ${a.spec} 是草稿`);
-  const chatId = e.chat?.id;
-  let threadId: string | undefined;
+  const origin = e.kind === "schedule" && rule.conversationId ? getThread(app, rule.conversationId) : undefined;
+  const chatId = e.chat?.id ?? (origin && ["lark", "lark-watch"].includes(origin.channel) ? origin.key?.split("#")[0] : undefined);
+  let threadId: string | undefined = origin && a.reply === "auto" ? origin.id : undefined;
   /** A topic of its own under the triggering message (the alert card), opened by its first post. */
   let replyAt: { chatId: string; messageId: string } | undefined;
-  if (chatId && (a.ownTopic || a.reply !== "none")) {
+  if (!origin && chatId && (a.ownTopic || a.reply !== "none")) {
     const topicId = e.message?.topicId ?? null;
     // No announcement: the agent's thinking bubble (or its answer) replying in a thread under the
     // message is what opens the topic, so the work stays out of the group.
     if (a.ownTopic && a.reply !== "none" && e.message && !topicId) replyAt = { chatId, messageId: e.message.id };
     else if (a.reply !== "none") {
-      const t = resolveThread(app, { channel: "lark", chatId, topicId, isGroup: e.chat?.kind === "group", title: e.chat?.name, userId: OWNER }).thread;
+      const t = resolveThread(app, { channel: "lark", chatId, topicId, isGroup: e.chat?.kind === "group", title: e.chat?.name, spaceId: rule.spaceId ?? chatSpace(app, chatId), userId: OWNER }).thread;
       if (e.message) updateThread(app, t.id, { settings: { ...t.settings, lastMessageId: e.message.id } });
       threadId = t.id;
     }
@@ -135,10 +137,11 @@ async function agentAction(app: App, rule: Rule, a: Extract<RuleAction, { type: 
   ].filter((x) => x !== "").join("\n");
   const r = createRun(app, {
     kind: "agent",
-    spaceId: spec.space ?? "personal",
+    spaceId: a.space ?? spec.space ?? rule.spaceId ?? (e.chat ? chatSpace(app, e.chat.id) : "personal"),
     title: truncate(`${spec.name}（规则「${rule.name}」）：${e.message?.text.replace(/\s+/g, " ") ?? e.chat?.name ?? "定时"}`, 80),
     input: {
       spec: spec.name,
+      ...(spec.name === "assistant" ? { assistantScope: { spaces: [a.space ?? rule.spaceId ?? (e.chat ? chatSpace(app, e.chat.id) : "personal")], userId: OWNER, denyTools: ["run_agent", "delegate_code", "continue_agent_work", "continue_code_run", "apply_code_run", "save_rule", "set_chat_watch"], lark: { chats: chatId && a.reply !== "none" ? [chatId] : [], draft: a.reply === "draft", ...powers(a) } } } : {}),
       task,
       ...(threadId && a.reply === "auto" ? { threadId } : {}),
       ...(replyAt && a.reply === "auto" ? { replyAt } : {}),
@@ -158,7 +161,7 @@ async function agentAction(app: App, rule: Rule, a: Extract<RuleAction, { type: 
  * Its final text stays in the run; it tells the owner with notify only when the owner must act.
  */
 async function silentAgent(app: App, rule: Rule, a: Extract<RuleAction, { type: "agent" }>, e: RuleEvent, reason: string, talk: string, follow?: { lane: string; resumeRunId: string; notBefore: string }): Promise<ActionResult> {
-  const spec = readAgentSpec(app, a.spec);
+  const spec = a.spec === "assistant" ? { name: "assistant", status: "active", space: undefined } : readAgentSpec(app, a.spec);
   if (spec.status !== "active") throw new HttpError(400, `档案 ${a.spec} 是草稿`);
   const chatId = e.chat?.id;
   if (!chatId || !e.message) throw new HttpError(400, "静默排查需要具体的群消息");
@@ -186,10 +189,11 @@ async function silentAgent(app: App, rule: Rule, a: Extract<RuleAction, { type: 
   const prevSession = follow ? (getRun(app, follow.resumeRunId).output as { sessionId?: string }).sessionId : undefined;
   const r = createRun(app, {
     kind: "agent",
-    spaceId: spec.space ?? "personal",
+    spaceId: a.space ?? spec.space ?? rule.spaceId ?? (e.chat ? chatSpace(app, e.chat.id) : "personal"),
     title: truncate(`${spec.name}（规则「${rule.name}」${follow ? "，跟进" : "，静默"}）：${e.message.text.replace(/\s+/g, " ")}`, 80),
     input: {
       spec: spec.name,
+      ...(spec.name === "assistant" ? { assistantScope: { spaces: [a.space ?? rule.spaceId ?? (e.chat ? chatSpace(app, e.chat.id) : "personal")], userId: OWNER, denyTools: ["run_agent", "delegate_code", "continue_agent_work", "continue_code_run", "apply_code_run", "save_rule", "set_chat_watch"], lark: { chats: chatId && a.reply !== "none" ? [chatId] : [], draft: a.reply === "draft", ...powers(a) } } } : {}),
       task,
       rule: { id: rule.id, name: rule.name },
       silent: { chatId, messageId: e.message.id, topicId: e.message.topicId ?? null },

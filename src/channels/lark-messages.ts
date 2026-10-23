@@ -181,7 +181,7 @@ export async function keepResources(app: App, spaceId: string, chatId: string, m
         if (asSources && !optional && !ref.sourceId && needsDocumentConversion(file)) {
           ref.parse ??= { status: "pending" };
         } else if (asSources && !optional && !ref.sourceId) {
-          const imported = await importFile(app, spaceId, file, `lark:${chatId}/${name ?? basename(file)}`);
+          const imported = await importFile(app, spaceId, file, `lark:${chatId}/${name ?? basename(file)}`, undefined, true);
           if (imported) ref.sourceId = imported.id;
         }
       } catch (e) {
@@ -587,7 +587,7 @@ export function persistChatMessages(app: App, input: { chatId: string; spaceId: 
   }
   for (const target of targets.values()) {
     const source = target.source;
-    const r = upsertSource(app, { spaceId: source?.space_id ?? spaceId, uri: source?.uri ?? `lark:${input.chatId}${input.archive ? `@${input.archive}` : ""}`, title: source?.title ?? (input.archive ? `${input.name}（${input.archive} 历史）` : input.name), kind: "chat", text: target.lines.join("\n"), meta: source ? json(source.meta, {}) : { chatId: input.chatId, ...(input.archive ? { history: true, month: input.archive, via: "lark-cli" } : {}) } });
+    const r = upsertSource(app, { archive: true, spaceId: source?.space_id ?? spaceId, uri: source?.uri ?? `lark:${input.chatId}${input.archive ? `@${input.archive}` : ""}`, title: source?.title ?? (input.archive ? `${input.name}（${input.archive} 历史）` : input.name), kind: "chat", text: target.lines.join("\n"), meta: source ? json(source.meta, {}) : { chatId: input.chatId, ...(input.archive ? { history: true, month: input.archive, via: "lark-cli" } : {}) } });
     sourceId = r.id;
     if (r.status !== "unchanged") status = status === "created" ? status : r.status;
     // The source is written first: on failure the next call recovers each message id from its text.

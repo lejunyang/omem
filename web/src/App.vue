@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import CaptureDialog from "./components/CaptureDialog.vue";
 import CitationDrawer from "./components/CitationDrawer.vue";
 import CommandPalette from "./components/CommandPalette.vue";
@@ -12,6 +12,11 @@ import { kindLabel, loadSpaces, refreshUnread, state } from "./store";
 import { preloadRoute } from "./preload";
 
 const route = useRoute();
+const router = useRouter();
+watch(() => state.space, () => {
+  const section = route.path.split("/")[1];
+  if (["ask", "sources", "runs"].includes(section)) void router.replace(`/${section}`);
+});
 const menu = ref(false);
 const loadError = ref("");
 const nav = [
@@ -77,7 +82,13 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
       <button class="search-btn" @click="state.palette = true"><Icon name="search" :size="16" /><span>搜索或提问</span><kbd>Ctrl K</kbd></button>
 
       <nav>
-        <router-link v-for="n in nav" :key="n.to" :to="n.to" class="nav" :class="{ on: isActive(n.to, n.exact) }" @mouseenter="preloadRoute(n.to)" @focus="preloadRoute(n.to)"><Icon :name="n.icon" :size="17" />{{ n.label }}</router-link>
+        <template v-for="n in nav" :key="n.to">
+          <router-link :to="n.to" class="nav" :class="{ on: isActive(n.to, n.exact) }" @mouseenter="preloadRoute(n.to)" @focus="preloadRoute(n.to)"><Icon :name="n.icon" :size="17" />{{ n.label }}</router-link>
+          <div v-if="n.to === '/rules' && isActive('/rules')" class="rule-subnav">
+            <router-link to="/rules/tasks" class="nav" :class="{ on: route.path !== '/rules/archive' }">任务规则</router-link>
+            <router-link to="/rules/archive" class="nav" :class="{ on: route.path === '/rules/archive' }">归档规则</router-link>
+          </div>
+        </template>
       </nav>
 
       <div class="spacer" />
@@ -117,6 +128,7 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
 </template>
 
 <style scoped>
+.rule-subnav { padding-left: 22px; font-size: 13px; }
 .shell {
   display: flex;
   height: 100%;

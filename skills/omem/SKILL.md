@@ -78,3 +78,12 @@ omem diag [同伴]                          # 本机或另一台 omem 的运行�
 飞书历史回溯按固定窗口和远端页令牌续读，整页消息 ID 已知不代表完成。使用既有 `set_lark_backfill` 只重排本人授权的具体群和天数，不清除其他队列、不直接写库修复游标；旧队列会按原目标重新核验。状态 `pending=false` 以主列表及话题耗尽证据为准，实际最早消息时间不是完整覆盖证明。
 
 飞书附件保存与解析分别验收：`set_lark_backfill` 的 `ingest=true` 会把已保存的文档附件交给独立 `lark-resource-parse` 运行，解析失败不阻塞消息翻页；通过 `list_runs` / `read_run` 核对解析状态，原文件已保存不能说成下载失败。重试解析使用原文件，不重置消息回溯。视频本体是必需资源，封面可选；正文中的外链图片副本不计入原群附件缺失。消息覆盖、原文件保存、解析和知识整理分别报告；已经提交的批次由后台继续，不为等待分页反复交办。
+
+## 任务规则与原件归档
+
+- `list_rules` 列出当前空间和全局任务规则，仅本人可用。`save_rule` 保存创建空间与结果会话；`rule` 可含 `spaceId`、`trigger`、`conditions`、`judge`、`actions`。`agent` 动作的 `spec` 默认 `assistant`，可选 `space` 指定执行空间；省略时按档案、规则、触发空间解析。没有专用档案的日常任务用主助手，不挑最接近的档案代替。定时任务 `reply=auto` 发回结果会话，`none` 通知本人，`draft` 的群消息先给本人确认。
+- 原件归档优先设置与规则，不确定仍在个人空间；不创建“待归档”空间。规则与历史预览在 `#/rules/archive` 管理，归属修正在原件详情。迁移保留 ID 和引用，目标重复时拒绝覆盖。
+- `classify_source(source_id, hash, space, reason)` 只开放给内置 `archivist` 运行，只处理本次清单内、仍待判断且版本一致的原件，同时校验源和目标空间权限，不能覆盖手动指定或当前规则。
+- `propose_archive_rule(name, description, target, priority, enabled, conditions)` 只开放给 `archive-rule-writer`，结果为本次运行中的草稿，不保存或启用。外部 MCP 客户端和主助手不能冒充内部角色调用。条件组合用 all / any / not，不执行模型生成的程序。
+
+归档条件的 kind 使用 doc（文档）、chat、note、web、image、event、meeting；equals / in 不接受未知类型，文档不能写成 document。草稿提交和规则保存使用相同校验。

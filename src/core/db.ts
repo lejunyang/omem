@@ -619,6 +619,13 @@ const migrations: string[] = [
   create index asks_pending on asks(status, created_at);`,
   // Temporary rules an agent sets to be woken by an event (agents/wakes.ts): expiry, who set it.
   `alter table rules add column temporary text;`,
+  `alter table rules add column space_id text references spaces(id);
+   alter table rules add column conversation_id text references conversations(id) on delete set null;`,
+  `create table archive_rules(id text primary key, body text not null, priority integer not null);
+   create table source_routes(source_id text primary key references sources(id) on delete cascade, origin_space text not null,
+     mode text not null, reason text not null, rule_id text, decision_hash text, pending integer not null default 0, ingest integer not null default 0);
+   create table source_locations(origin_space text not null, uri text not null, source_id text not null references sources(id) on delete cascade, primary key(origin_space,uri));
+   create table source_moves(id integer primary key autoincrement, source_id text not null, from_space text not null, to_space text not null, reason text not null, at text not null);`,
 ];
 
 export type Db = DatabaseSync;

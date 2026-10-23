@@ -1,3 +1,4 @@
+import { captureSpace as chatSpace } from "../core/capture-space.ts";
 import { historyScan, resetHistoryScan, historyPage } from "./lark-history.ts";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -221,7 +222,7 @@ async function importLinkedDocs(app: App, spaceId: string, text: string): Promis
     // A doc linked again within a day is not re-read.
     if (existing && Date.now() - Date.parse(existing.updatedAt) < 86400_000) continue;
     try {
-      const r = await importUrl(app, spaceId, url);
+      const r = await importUrl(app, spaceId, url, { archive: true });
       ids.push(r.id, ...(r.related ?? []));
     } catch (e) {
       console.warn(`[omem] 读取飞书文档失败 ${url}：${(e as Error).message}`);
@@ -233,16 +234,7 @@ async function importLinkedDocs(app: App, spaceId: string, text: string): Promis
 // ---- polling ----------------------------------------------------------------------
 
 /** Which space a chat's messages go to: watch rule, subscription, group mapping, then the capture default. */
-export function chatSpace(app: App, chatId: string): string {
-  const rule = watchRule(app, chatId);
-  if (rule?.spaceId && findSpace(app, rule.spaceId)) return rule.spaceId;
-  const sub = getSubscriptions(app).find((s) => s.chatId === chatId);
-  if (sub && findSpace(app, sub.spaceId)) return sub.spaceId;
-  const mapped = ((findSpace(app, "personal")?.settings.larkGroups ?? {}) as Record<string, string>)[chatId];
-  if (mapped && findSpace(app, mapped)) return mapped;
-  const def = app.config.lark.capture.space;
-  return findSpace(app, def) ? def : "personal";
-}
+export { captureSpace as chatSpace } from "../core/capture-space.ts";
 
 
 type CaptureCtx = { endMs: number; touched: Map<string, Set<string>>; owner?: string };
@@ -586,7 +578,7 @@ export async function captureRecentDocs(app: App, touched: Map<string, Set<strin
       const seenKey = `lark_recent_doc:${url}`;
       if (one(app.db, "select 1 from kv where key = ?", seenKey) || one(app.db, "select 1 from sources where uri = ?", url)) continue;
       try {
-        const s = await importUrl(app, spaceId, url);
+        const s = await importUrl(app, spaceId, url, { archive: true });
         touched.set(spaceId, new Set([...(touched.get(spaceId) ?? []), s.id, ...(s.related ?? [])]));
       } catch (e) {
         console.warn(`[omem] 读取最近打开的飞书文档失败 ${url}：${(e as Error).message}`);
@@ -637,7 +629,7 @@ export async function captureCalendar(app: App, touched: Map<string, Set<string>
     ]
       .filter((l) => l !== "")
       .join("\n");
-    const r = upsertSource(app, { spaceId, kind: "event", uri: `lark:calendar:${id}`, title: `日程：${e.summary ?? e.title ?? id}`, text, meta: { via: "lark-cli", start: when(e.start_time) } });
+    const r = upsertSource(app, { archive: true, spaceId, kind: "event", uri: `lark:calendar:${id}`, title: `日程：${e.summary ?? e.title ?? id}`, text, meta: { via: "lark-cli", start: when(e.start_time) } });
     if (r.status !== "unchanged") {
       touched.set(spaceId, new Set([...(touched.get(spaceId) ?? []), r.id]));
       n++;
@@ -673,7 +665,7 @@ export async function captureMinutes(app: App, touched: Map<string, Set<string>>
       const todos = (a.todos ?? []).map((t: any) => `- ${t.content ?? t.text ?? JSON.stringify(t)}`).join("\n");
       const chapters = (a.chapters ?? []).map((c: any) => `- ${c.title ?? ""}${c.summary ? `：${c.summary}` : ""}`).join("\n");
       const text = [`# ${m.title ?? title}`, a.summary ? `## 总结\n\n${a.summary}` : "", todos ? `## 待办\n\n${todos}` : "", chapters ? `## 章节\n\n${chapters}` : "", transcript ? `## 逐字稿\n\n${transcript}` : ""].filter(Boolean).join("\n\n");
-      const r = upsertSource(app, { spaceId, kind: "meeting", uri: `lark:minutes:${token}`, title: `妙记：${m.title ?? title}`, text, meta: { via: "lark-cli", minuteToken: token } });
+      const r = upsertSource(app, { archive: true, spaceId, kind: "meeting", uri: `lark:minutes:${token}`, title: `妙记：${m.title ?? title}`, text, meta: { via: "lark-cli", minuteToken: token } });
       touched.set(spaceId, new Set([...(touched.get(spaceId) ?? []), r.id]));
       seen.add(token);
       n++;
