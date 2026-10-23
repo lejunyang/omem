@@ -36,6 +36,8 @@ export type Inbound = Partial<ThreadAddress> & {
   asker?: string;
   /** Said for the owner by an ask (a clicked suggestion, a delivered answer): not itself an answer. */
   fromAsk?: boolean;
+  /** Channel adapter opens a topic and returns its actual external identifiers before the task starts. */
+  openTopic?: () => Promise<{ topicId: string; messageId: string }>;
 };
 
 export type Received = { thread: Thread; messageId: string | null; runId: string | null; merged: boolean; reply: string | null; card?: Record<string, unknown>; started: "new" | "renewed" | null };
@@ -57,7 +59,8 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   }
   if (inb.externalMessageId) updateThread(app, thread.id, { settings: { ...thread.settings, lastMessageId: inb.externalMessageId } as Thread["settings"] });
 
-  const text = inb.text.trim();
+  let text = inb.text.trim();
+  let freshTask = false;
   // An in-chat review takes plain replies until it ends.
   if (!text.startsWith("/") && thread.settings.review) {
     const reply = reviewReply(app, thread, text, userId);
@@ -68,7 +71,25 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     }
   }
   if (text.startsWith("/")) {
-    const reply = await runCommand(app, thread, text, inb);
+    let reply = await runCommand(app, thread, text, inb);
+    if (reply !== null && typeof reply !== "string") {
+      addMessage(app, thread.id, "user", text, null, { command: true });
+      thread = reply.thread;
+      started = "new";
+      text = reply.task;
+      // Explicit fresh starts do not inherit surrounding group history or answer an old ask.
+      inb = { ...inb, context: undefined };
+      freshTask = true;
+      if (inb.externalMessageId && !thread.settings.lastMessageId) {
+        thread = updateThread(app, thread.id, { settings: { lastMessageId: inb.externalMessageId } });
+      }
+      if (!text) {
+        const confirmation = reply.reply ?? "已开始新会话。";
+        addMessage(app, thread.id, "assistant", confirmation, null, { command: true });
+        return { thread, messageId: null, runId: null, merged: false, reply: confirmation, started };
+      }
+      reply = null;
+    }
     if (reply !== null) {
       addMessage(app, thread.id, "user", text, null, { command: true });
       let card: Record<string, unknown> | undefined;
@@ -91,7 +112,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
 
   // A reply to an open question (or a number picking a suggested step). When an agent is waiting
   // for it inside its turn, it is the answer there and starts no turn of its own.
-  if (!inb.fromAsk && !inb.speaker && !inb.asker) {
+  if (!freshTask && !inb.fromAsk && !inb.speaker && !inb.asker) {
     const { answerFromMessage } = await import("./asks.ts");
     if (await answerFromMessage(app, thread.id, text, userId)) {
       const messageId = addMessage(app, thread.id, "user", text, null, { answer: true, ...(inb.externalMessageId ? { externalId: inb.externalMessageId } : {}) });

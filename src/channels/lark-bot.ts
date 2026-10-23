@@ -22,7 +22,7 @@ import { startReplyProgress } from "./lark-progress.ts";
 import { finishCot, setCotSdk } from "./lark-cot.ts";
 import { watchAgentBubbles } from "./lark-agent-cot.ts";
 import { handleCardAction } from "./lark-actions.ts";
-import { reactLark, sendLark, setLarkClient, unreactLark } from "./lark-send.ts";
+import { openLarkTopic, reactLark, sendLark, setLarkClient, unreactLark } from "./lark-send.ts";
 import { larkAppSecret } from "./lark-setup.ts";
 import { routeWatchedMessages } from "./lark-watch.ts";
 import { askAsGuest, guestsAllowed, ownerInChat, waitGuest } from "./lark-guest.ts";
@@ -437,6 +437,8 @@ export async function startLarkBot(app: App) {
     let presentation: ReturnType<typeof startReplyProgress> | undefined;
     let runId: string | null = null;
     let answered = false;
+    let replyMessageId = m.messageId;
+    let replyInThread = !!m.topicId;
     try {
       const answer = await answerFromChannel(
         app,
@@ -451,6 +453,12 @@ export async function startLarkBot(app: App) {
           context,
           contextLabel: m.topicId ? "话题里" : "群里",
           externalMessageId: m.messageId,
+          openTopic: async () => {
+            const topic = await openLarkTopic(m.messageId);
+            replyMessageId = topic.messageId;
+            replyInThread = true;
+            return topic;
+          },
           quote: m.quote,
           userId,
           // Material without words: the instruction usually comes right after; the next message shortens the wait again.
@@ -459,7 +467,7 @@ export async function startLarkBot(app: App) {
         {
           onStart: async (id) => {
             runId = id;
-            presentation = startReplyProgress(app, { chatId: m.chatId, messageId: m.messageId, inThread: !!m.topicId }, id);
+            presentation = startReplyProgress(app, { chatId: m.chatId, messageId: replyMessageId, inThread: replyInThread }, id);
           },
           onMerged: async () => {
             const { reactLark } = await import("./lark-send.ts");
@@ -485,7 +493,7 @@ export async function startLarkBot(app: App) {
       answered = true;
       if (runId) finishCot(app, runId, true);
       const p = await presentation?.close();
-      const sentId = p ? (await p.finish(answer), p.messageId) : (await reply(m.chatId, answer, m.messageId, !!m.topicId)).messageId;
+      const sentId = p ? (await p.finish(answer), p.messageId) : (await reply(m.chatId, answer, replyMessageId, replyInThread)).messageId;
       if (runId && !p) await reactLark(m.messageId, "DONE").catch(() => {});
       // A later quote of this reply reads back as an empty card; this maps it to the answer.
       if (runId && sentId) run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?) where run_id = ? and role = 'assistant'", sentId, runId);

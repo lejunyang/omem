@@ -189,6 +189,13 @@ export async function sendLark(to: Target, content: Content): Promise<{ messageI
   return { messageId: d?.message_id, threadId: d?.thread_id };
 }
 
+/** Bind /topic to the real Feishu topic before allowing its AI task to start. */
+export async function openLarkTopic(messageId: string): Promise<{ topicId: string; messageId: string }> {
+  const sent = await sendLark({ replyTo: messageId, inThread: true, uuid: `topic-${messageId}` }, { text: "这项任务在本话题中开始，使用独立上下文。" });
+  if (!sent.threadId || !sent.messageId) throw new Error("飞书未返回话题 ID，任务尚未启动。请在支持话题回复的聊天中重试。");
+  return { topicId: sent.threadId, messageId: sent.messageId };
+}
+
 /** A bot-side id from `resolveMention`: open_id (ou_…) or user_id. */
 const idField = (id: string) => (id.startsWith("ou_") ? "open_id" : "user_id");
 

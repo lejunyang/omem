@@ -26,6 +26,8 @@ export type ThreadSettings = {
   links?: string[];
   /** Last channel message id seen in this thread (replies go under it, e.g. inside a topic). */
   lastMessageId?: string;
+  /** /topic explicitly keeps this topic independent, even when the chat uses mode=chat. */
+  isolatedTopic?: boolean;
   /** An in-chat review session (/review): the card being asked and whether its answer was shown. */
   review?: { cardId: string; stage: "front" | "rate"; goalId?: string; done: number } | null;
   /** Feishu chats this thread's agent may post into, and whether posts are drafts for the owner. */
@@ -175,6 +177,10 @@ export type ThreadAddress = {
  */
 export function resolveThread(app: App, addr: ThreadAddress): { thread: Thread; started: "new" | "renewed" | null } {
   const cs = chatSettings(app, addr.channel, addr.chatId);
+  if (addr.topicId) {
+    const isolated = one<Row>(app.db, "select * from conversations where channel = ? and external_id = ? and status = 'active' and json_extract(settings, '$.isolatedTopic') = 1 order by updated_at desc limit 1", addr.channel, `${addr.chatId}#${addr.topicId}`);
+    if (isolated) return { thread: toThread(isolated), started: null };
+  }
   const mode = cs.mode ?? (addr.topicId ? "topic" : "chat");
   const key = mode === "topic" && addr.topicId ? `${addr.chatId}#${addr.topicId}` : addr.chatId;
   const spaceId = cs.spaceId ?? addr.spaceId ?? (["lark", "lark-watch"].includes(addr.channel) ? captureSpace(app, addr.chatId) : "personal");

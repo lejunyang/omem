@@ -31,10 +31,12 @@ import {
  * Slash commands talk to omem itself, without a model: thread control
  * (/new /resume /link /stop /status), routing (/space /agent /as /mode),
  * quick capture (/remember /todo) and lookups (/search /sessions /runs).
+ * /new and /topic can return a fresh conversation with a task for the model.
  * Unknown `/words` fall through to the assistant as ordinary text.
  */
 type Ctx = { app: App; thread: Thread; args: string; inb: Inbound };
-type Command = { usage: string; help: string; card?: (c: Ctx) => Record<string, unknown> | Promise<Record<string, unknown>>; run: (c: Ctx) => string | Promise<string> };
+type CommandResult = string | { thread: Thread; task: string; reply?: string };
+type Command = { usage: string; help: string; card?: (c: Ctx) => Record<string, unknown> | Promise<Record<string, unknown>>; run: (c: Ctx) => CommandResult | Promise<CommandResult> };
 
 const chatKey = (t: Thread) => (t.key ?? "").split("#")[0];
 
@@ -45,7 +47,7 @@ const commands: Record<string, Command> = {
     run: () =>
       [
         "**会话**",
-        ...["new", "status", "stop", "sessions", "resume", "link", "summary", "compact"].map(line),
+        ...["new", "topic", "status", "stop", "sessions", "resume", "link", "summary", "compact"].map(line),
         "",
         "**路由**",
         ...["space", "agent", "model", "as", "agents", "skills", "approve", "mode", "idle", "watch"].map(line),
@@ -57,14 +59,30 @@ const commands: Record<string, Command> = {
       ].join("\n"),
   },
   new: {
-    usage: "/new [标题]",
-    help: "结束当前会话，开始新的（旧会话可用 /resume 找回）",
+    usage: "/new [任务]",
+    help: "开始新会话并立即执行后面的任务；不带任务只开空白会话（旧会话可用 /resume 找回）",
     run: async ({ app, thread, args, inb }) => {
       releaseThreadSession(thread.id);
       archiveThread(app, thread.id);
       maybeSummarize(app, thread.id, 2);
-      const t = createThread(app, { spaceId: thread.spaceId, channel: thread.channel, key: thread.key, title: args, parentId: null, settings: { spec: thread.settings.spec, profile: thread.settings.profile } });
-      return `已开始新会话 ${t.id}${args ? `「${args}」` : ""}。上一个会话 ${thread.id} 已归档，需要时 /resume ${thread.id}。`;
+      const t = createThread(app, { spaceId: thread.spaceId, channel: thread.channel, key: thread.key, title: truncate(args.replace(/\s+/g, " "), 60), parentId: null, userId: inb.userId ?? OWNER, settings: freshSettings(thread) });
+      return { thread: t, task: args, reply: `已开始新会话 ${t.id}。上一个会话 ${thread.id} 已归档，需要时 /resume ${thread.id}。` };
+    },
+  },
+  topic: {
+    usage: "/topic <任务>",
+    help: "在飞书话题中执行任务，使用独立上下文；已在话题内则在该话题重新开始",
+    run: async ({ app, thread, args, inb }) => {
+      if (!args) return "用法：/topic 任务描述";
+      if (inb.channel !== "lark" || !inb.chatId || !inb.openTopic) return "请在飞书机器人聊天中发送 /topic 任务描述；其他渠道可用 /new 任务描述。";
+      const topic = await inb.openTopic();
+      const key = `${inb.chatId}#${topic.topicId}`;
+      // An existing topic is reused by Feishu; replace only its context, never the whole chat.
+      const t = createThread(app, { spaceId: thread.spaceId, channel: "lark", title: truncate(args.replace(/\s+/g, " "), 60), userId: inb.userId ?? OWNER,
+        settings: { ...freshSettings(thread), isolatedTopic: true, lastMessageId: topic.messageId } });
+      reattachThread(app, t.id, "lark", key);
+      if (thread.key === key) releaseThreadSession(thread.id);
+      return { thread: findThread(app, t.id)!, task: args };
     },
   },
   status: {
@@ -445,7 +463,7 @@ function line(name: string) {
 }
 
 /** Run a slash command; null when the text is not a known command. */
-export async function runCommand(app: App, thread: Thread, text: string, inb: Inbound): Promise<string | null> {
+export async function runCommand(app: App, thread: Thread, text: string, inb: Inbound): Promise<CommandResult | null> {
   const m = /^\/([a-z]+)(?:@\S+)?(?:\s+([\s\S]*))?$/i.exec(text.trim());
   if (!m) return null;
   const cmd = commands[m[1].toLowerCase()];
@@ -458,6 +476,12 @@ export async function runCommand(app: App, thread: Thread, text: string, inb: In
 }
 
 export const commandNames = Object.keys(commands);
+
+/** Keep routing and posting permissions, but leave history and temporary model/review state behind. */
+function freshSettings(thread: Thread): Thread["settings"] {
+  const { spec, profile, lark, isolatedTopic } = thread.settings;
+  return { spec, profile, lark, isolatedTopic };
+}
 
 /** Message history helper for /status-like views elsewhere. */
 export function lastMessages(app: App, threadId: string, n = 5) {
