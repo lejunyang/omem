@@ -154,7 +154,7 @@ export function planReview(app: App, metrics: ReviewMetrics, opts: { tier?: stri
   if (opts.tier) {
     const named = tiers.findIndex((t) => t.id === opts.tier || t.name === opts.tier);
     if (named < 0) throw new HttpError(400, `没有评审档位 ${opts.tier}`);
-    if (named !== index) reasons.push(`任务指定用「${tiers[named].name}」档`);
+    reasons.push(named === index ? `任务指定用「${tiers[named].name}」档，改动指标也落在这一档` : `任务指定用「${tiers[named].name}」档`);
     index = named;
   }
   const before = opts.previous ? tiers.findIndex((t) => t.id === opts.previous!.tier) : -1;

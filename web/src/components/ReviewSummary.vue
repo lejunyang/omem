@@ -113,7 +113,8 @@ async function answer(choice: number | null) {
       </div>
     </div>
 
-    <div class="card pad stack">
+    <!-- While the plan waits for the owner, the question above already lists the tier, checks and reasons. -->
+    <div v-if="!(pendingAsk && current?.verdict === 'awaiting-plan')" class="card pad stack">
       <div class="row wrap">
         <span v-if="verdictOf" class="badge" :class="verdictOf.cls">{{ verdictOf.text }}</span>
         <strong v-if="current?.plan">「{{ current.plan.tierName }}」档 · {{ current.plan.checks.length }} 项评审{{ current.plan.lead ? " · 负责人协调" : "" }}</strong>
@@ -135,8 +136,8 @@ async function answer(choice: number | null) {
         </div>
       </div>
       <div v-if="current?.lead" class="lead">
-        <div class="row small"><strong>{{ current.lead.by === "lead" ? "评审负责人" : "汇总" }}</strong><span class="muted">{{ current.lead.summary }}</span></div>
-        <p v-if="current.lead.escalation" class="small esc">{{ current.lead.escalation.summary }}</p>
+        <div class="row small lead-head"><strong>{{ current.lead.by === "lead" ? "评审负责人" : "汇总" }}</strong><span class="muted">{{ current.lead.summary }}</span></div>
+        <p v-if="current.lead.escalation && !pendingAsk" class="small esc">{{ current.lead.escalation.summary }}</p>
         <p v-if="current.lead.verdict === 'revise' && current.lead.rerun.length && current.lead.by === 'lead'" class="muted small">下一轮复审：{{ current.lead.rerun.map(label).join("、") }}</p>
       </div>
       <div v-if="rawOpen && reviewText" class="raw"><Markdown :source="reviewText" /></div>
@@ -183,6 +184,8 @@ async function answer(choice: number | null) {
 .st.failed { background: var(--danger); }
 .lead { border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 4px; }
 .lead p { margin: 0; }
+.lead-head { align-items: baseline; }
+.lead-head strong { flex: none; white-space: nowrap; }
 .esc { white-space: pre-wrap; }
 .raw { border-top: 1px solid var(--line); padding-top: 10px; }
 .finding { border-top: 1px solid var(--line); padding: 9px 0; display: grid; gap: 4px; }

@@ -153,18 +153,37 @@ ${input.task}
     const expected = { profile: profile.id, model: profile.model, effort: profile.effort };
     if (previous.output.coderAI && JSON.stringify(previous.output.coderAI) !== JSON.stringify(expected)) resumeCoder = undefined;
   }
-  const coder = await runRole(app, {
+  // Later rounds resume this session, so it is kept even on backends that would discard it.
+  const runCoder = (task: string, resumeSessionId?: string) => runRole(app, {
     role: "coder",
     execution: input.execution,
     spaceId: run.spaceId!,
     spaces,
-    task: coderTask,
+    task,
     runId: run.id,
     cwd,
     signal: ctx.signal,
-    resumeSessionId: resumeCoder,
+    resumeSessionId,
+    persistSession: true,
     onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
   });
+  // A new session on a later round has not seen the original task: give it along with this round's.
+  const first = continueFrom && chain?.rounds[0] && chain.rounds[0] !== run.id ? String(getRun(app, chain.rounds[0]).input.task ?? "") : "";
+  const freshTask = first ? `# 原始任务
+
+${first}
+
+${coderTask}` : coderTask;
+  let coder: Awaited<ReturnType<typeof runCoder>>;
+  try {
+    coder = await runCoder(resumeCoder ? coderTask : freshTask, resumeCoder);
+  } catch (e) {
+    if (!resumeCoder || ctx.signal.aborted) throw e;
+    // The previous session is gone (cleaned up, or the backend cannot resume it): the worktree
+    // still has the changes, so a new session carries on from there.
+    ctx.event("status", { phase: "coder", text: `没能接上上一轮的编码会话（${truncate((e as Error).message, 200)}），换新会话继续` });
+    coder = await runCoder(freshTask);
+  }
   ctx.output({ coderSummary: replyOf(coder).trim(), coderAI: coder.ai, coderAgent: coder.profileId, coderSessionId: coder.sessionId });
 
   const results: RepoResult[] = [];

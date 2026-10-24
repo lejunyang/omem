@@ -2284,7 +2284,8 @@ def({
     if (!chain) throw new HttpError(400, "找不到这次交办的会话链");
     for (const id of [last.spaceId!, ...((last.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
     if (findThread(ctx.app, chain.conversationId)?.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能继续本人发起的编码交办");
-    const sessionId = (last.output as { coderSessionId?: string }).coderSessionId;
+    // A failed round may have no session of its own: resume the latest one that has.
+    const sessionId = rounds.map((r) => (r.output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
     const next = queueNextCodeRound(ctx.app, chain, a.task, { resumeSessionId: execution ? undefined : sessionId, manual: true, execution, reviewExecution });
     if (!next) throw new HttpError(409, "原交办记录不完整，无法继续；请查看 read_run");
     return `已在原交办会话安排第 ${next.chain.round} 轮 ${next.run.id}：同样的工作区和编码会话，完成后自动检查、评审并通知。`;
@@ -2483,7 +2484,7 @@ def({
       note: z.string().max(1000).optional().describe("理由；驳回必须写"),
     })).max(300),
     verdict: z.enum(["approve", "revise", "escalate"]),
-    summary: z.string().min(1).max(2000).describe("一两句话：这一轮的结论"),
+    summary: z.string().min(1).max(2000).describe("一两句话：这一轮的结论（给本人看，不写问题编号）"),
     change_request: z.string().max(12000).optional().describe("revise 时交给编码 Agent 的修改单：只列接受的问题，写清位置、问题、怎么改"),
     rerun: z.array(z.string()).optional().describe("revise 时下一轮需要重新评审的评审项名"),
     escalation: z.object({ summary: z.string().min(1).max(4000), options: z.array(z.string().min(1).max(40)).min(1).max(4) }).optional().describe("escalate 时：分歧点、各方依据、建议，以及给本人选的做法"),
