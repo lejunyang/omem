@@ -211,7 +211,7 @@ export async function openPeerUi(app: App, id: string, port = 0) {
       const chunks: Buffer[] = [];
       for await (const c of req) chunks.push(c as Buffer);
       const headers: Record<string, string> = {};
-      for (const h of ["content-type", "accept", "last-event-id", "range", "if-none-match"]) {
+      for (const h of ["content-type", "accept", "last-event-id", "range", "if-none-match", "if-modified-since"]) {
         const v = req.headers[h];
         if (typeof v === "string") headers[h] = v;
       }

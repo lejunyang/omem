@@ -5,8 +5,8 @@ import { preloadWhenIdle, preloadable } from "./preload";
 import "./styles.css";
 
 // `pattern` is the router pattern; `key` is the nav base used for hover/idle preloading.
-const view = (pattern: string, loader: () => Promise<unknown>, key = pattern.replace(/\/.*/, "")): RouteRecordRaw =>
-  ({ path: pattern, component: preloadable(key || "/", loader) } as unknown as RouteRecordRaw);
+const view = (pattern: string, loader: () => Promise<unknown>, key = pattern.replace(/^(\/[^/:]*).*$/, "$1")): RouteRecordRaw =>
+  ({ path: pattern, component: preloadable(key, loader) } as unknown as RouteRecordRaw);
 
 const routes: RouteRecordRaw[] = [
   view("/", () => import("./views/Home.vue")),
@@ -33,6 +33,6 @@ const router = createRouter({
 });
 
 // After the first view has settled, pull every other chunk at idle.
-router.isReady().then(() => preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/memory", "/sources", "/learn", "/runs", "/agents", "/rules", "/notifications", "/settings"]));
+router.isReady().then(() => preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/memory", "/sources", "/learn", "/runs", "/agents", "/rules", "/rules/archive", "/notifications", "/settings"]));
 
 createApp(App).use(router).mount("#app");

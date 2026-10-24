@@ -1099,10 +1099,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // UI through a middle node; anything that changes state must be an API call.
     if (!rest.startsWith("/api/") && req.method !== "GET" && req.method !== "HEAD") throw new HttpError(400, "只能转发 /api/ 下的请求和网页文件");
     const body = req.method === "GET" || req.method === "HEAD" ? undefined : typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {});
-    const res = await peerFetch(app, id, rest, { method: req.method, body, headers: body ? { "content-type": "application/json" } : {}, timeoutMs: 15 * 60_000 }, hops + 1);
+    const headers: Record<string, string> = body ? { "content-type": "application/json" } : {};
+    for (const h of ["accept", "if-none-match", "if-modified-since"]) {
+      const v = req.headers[h];
+      if (typeof v === "string") headers[h] = v;
+    }
+    const res = await peerFetch(app, id, rest, { method: req.method, body, headers, timeoutMs: 15 * 60_000 }, hops + 1);
     reply.status(res.status);
     const type = res.headers.get("content-type");
     if (type) reply.type(type);
+    // Keep the peer's caching headers so the browser behind `omem peer open` can cache its UI.
+    for (const h of ["cache-control", "etag", "last-modified"]) {
+      const v = res.headers.get(h);
+      if (v) reply.header(h, v);
+    }
     return reply.send(res.body ? (await import("node:stream")).Readable.fromWeb(res.body as never) : "");
   });
 
@@ -1126,7 +1136,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // -------------------------------------------------------------------- web
   const dist = webDist();
   if (dist) {
-    await server.register(fastifyStatic, { root: dist, prefix: "/" });
+    // Built assets carry a content hash in their name and never change; index.html must be
+    // revalidated so a new build is picked up. Matters most through `omem peer open`, where
+    // every revalidation crosses the network.
+    await server.register(fastifyStatic, {
+      root: dist,
+      prefix: "/",
+      cacheControl: false,
+      setHeaders: (res, path) => res.setHeader("cache-control", /[\\/]assets[\\/]/.test(path) ? "public, max-age=31536000, immutable" : "no-cache"),
+    });
     server.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith("/api/")) return reply.status(404).send({ error: "not found" });
       return reply.sendFile("index.html");

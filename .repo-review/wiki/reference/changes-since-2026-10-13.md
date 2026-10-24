@@ -460,3 +460,9 @@ updated: 2026-10-25
 - 飞书历史回溯从 10 分钟一次的采集里拆出来，在独立后台循环按 `lark.capture.backfill.pagesPerMinute`（默认 20）和 `concurrency`（默认 2）推进，限流时退避（30 秒起翻倍，最长 10 分钟）；配置每轮读取，改了立即生效。去掉 `pagesPerPoll`。`set_lark_backfill` 新增 `pages_per_minute`、`concurrency`，返回总体进度；远程命令新增 `backfill-status`。
 - `generate_wiki` 新增 `execution`，规划和各页写作都用它（`input.ai`）；新工具 `switch_run_ai` 给排队 / 进行中 / 失败的运行及子运行换 AI。`runRole` 在调用方没给选择时用运行自己的 `input.ai`（编码和评审运行除外）。
 - 运行记录新增 `ai` 列（后端、模型、强度），在准备运行时记下主角色的选择，回退到别的后端时更新；运行列表和详情显示。排队中的运行返回 `waiting`（等空位、等同一会话前面的运行、定时）：这是 omem 自己的排队，开始时才选定模型；后端自己的排队在运行开始后的过程里显示。
+
+## 网页缓存与预加载（10-25）
+
+- 构建产物 `assets/*`（文件名带哈希）返回 `cache-control: public, max-age=31536000, immutable`，`index.html` 和前端路由回退返回 `no-cache`；之前全部是 `max-age=0`，每次都要回源验证。
+- 经中间节点转发（`/api/peers/:id/*`）时保留对方的 `cache-control`、`etag`、`last-modified`，并转发 `if-none-match`、`if-modified-since`；之前这些都被丢掉，`omem peer open` 打开经中转的同伴时浏览器完全不缓存。
+- 修正路由预加载：没写明 key 的路由（记忆、学习、Agent、规则、通知、设置）都被算成 `/` 互相覆盖，空闲预加载和悬停预加载对它们不生效；规则归档页也加入空闲预加载。
