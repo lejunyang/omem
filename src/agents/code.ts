@@ -8,6 +8,10 @@ import { notify } from "../core/notify.ts";
 import { findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
+import { readAgentSpec } from "./specs.ts";
+import type { ReviewMetrics, Severity } from "./review.ts";
+import type { RoleName } from "../core/config.ts";
+import { all } from "../core/db.ts";
 import { getRun, setRunOutput, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 import { replyOf } from "./types.ts";
@@ -37,6 +41,9 @@ function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20
 
 export type CodeInput = {
   execution?: Execution;
+  /** Review tier the owner named, and checks to add (docs/v2/review.md). */
+  reviewTier?: string;
+  reviewChecks?: string[];
   reviewExecution?: Execution;
   task: string;
   /** Applies to every repository unless `checks` names one for it. */
@@ -188,44 +195,91 @@ ${input.task}
   }
   ctx.output({ indexedSpaces: indexed });
 
-  ctx.event("status", { text: "独立评审中" });
+  const { planReview, reviewChecks, reviewFor, recordReview, checkBrief, blocksAt, SEVERITY_LABEL } = await import("./review.ts");
+  const round = (input as { round?: number }).round ?? 1;
+  const previousPlan = chain?.rounds.filter((id) => id !== run.id).map((id) => getRun(app, id).output.reviewPlan as import("./review.ts").ReviewPlan | undefined).filter(Boolean).at(-1);
+  let plan = planReview(app, reviewMetrics(worktrees, results, input.task), { tier: input.reviewTier, extraChecks: input.reviewChecks, previous: previousPlan });
+  // Words the owner wrote on when a tier or check fits are weighed once, on the first round.
+  if (!previousPlan) {
+    const { refineReviewPlan } = await import("./review.ts");
+    const { askModel } = await import("./oneshot.ts");
+    plan = await refineReviewPlan(app, plan, { task: input.task, diff: diffs.join("\n\n"), tierNamed: !!input.reviewTier }, (p) => askModel(app, p, { timeoutMs: 90_000, signal: ctx.signal }));
+  }
+  const infos = new Map(reviewChecks(app).map((c) => [c.name, c]));
+  ctx.output({ reviewPlan: plan });
+  ctx.event("status", { text: `独立评审中：「${plan.tierName}」档，${plan.checks.map((c) => infos.get(c)!.label).join("、")}（${plan.reasons.join("；")}）` });
   const head = (r: RepoResult) => (multi ? `### ${r.space}\n\n` : "");
   const checkText = results.map((r) => (r.check ? `${head(r)}命令：${r.check.command}\n退出码：${r.check.code}\n\n${fence("", r.check.output.slice(-4000))}` : `${head(r)}没有配置检查命令。`)).join("\n\n");
-  const review = await runRole(app, {
-    role: "reviewer",
-    execution: input.reviewExecution,
-    spaceId: run.spaceId!,
-    spaces,
-    alsoRead: indexed,
-    task: [
-      `## 原始需求\n\n${input.task}`,
-      multi ? `## 涉及的仓库\n\n${repos.map((r, i) => `- ${r.id}：${worktrees[i].path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
-      `## 编码 Agent 的说明\n\n${replyOf(coder).trim()}`,
-      `## 检查结果\n\n${checkText}`,
-      `## 改动统计\n\n${statText}`,
-      `## 完整 diff\n\n${truncate(diffs.join("\n\n"), 80000)}`,
-    ]
-      .filter(Boolean)
-      .join("\n\n"),
-    runId: run.id,
-    cwd,
-    signal: ctx.signal,
-    onEvent: (e) => ctx.event(e.type, { ...e, phase: "reviewer" }),
-    profileId: app.config.agents.roles.reviewer,
+  const reviewTask = [
+    `## 原始需求\n\n${input.task}`,
+    multi ? `## 涉及的仓库\n\n${repos.map((r, i) => `- ${r.id}：${worktrees[i].path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
+    `## 编码 Agent 的说明\n\n${replyOf(coder).trim()}`,
+    `## 检查结果\n\n${checkText}`,
+    `## 改动统计\n\n${statText}`,
+    `## 完整 diff\n\n${truncate(diffs.join("\n\n"), 80000)}`,
+  ].filter(Boolean).join("\n\n");
+  // Each check is its own session with read-only tools; one failing does not stop the others.
+  const outcomes = await Promise.allSettled(plan.checks.map(async (name) => {
+    const info = infos.get(name)!;
+    const res = await runRole(app, {
+      role: (info.builtin ? name : "reviewer") as RoleName,
+      ...(info.builtin ? {} : { spec: readAgentSpec(app, name) }),
+      reviewCheck: true,
+      execution: name === "reviewer" ? input.reviewExecution : undefined,
+      spaceId: run.spaceId!,
+      spaces,
+      alsoRead: indexed,
+      task: `${reviewTask}\n\n${checkBrief(info, plan)}`,
+      runId: run.id,
+      cwd,
+      signal: ctx.signal,
+      onEvent: (e) => ctx.event(e.type, { ...e, phase: "reviewer", check: name }),
+      profileId: info.builtin ? app.config.agents.roles[name] : undefined,
+    });
+    const text = replyOf(res).trim();
+    // A check that only wrote text (an older customized prompt) still counts, by its verdict line.
+    if (!reviewFor(app, run.id, round, name)) {
+      const ok = /结论[：:]\s*通过/.test(text) || (!/结论[：:]/.test(text) && /结论[：:]\s*通过/.test(res.text));
+      recordReview(app, { codeRunId: run.id, round, check: name, tier: plan.tier, verdict: ok ? "approved" : "changes_requested", summary: truncate(text, 4000), findings: [], ai: res.ai });
+    }
+    return { name, text, ai: res.ai, profileId: res.profileId };
+  }));
+  const failed = outcomes.flatMap((o, i) => (o.status === "rejected" ? [{ name: plan.checks[i], error: (o.reason as Error).message }] : []));
+  if (failed.length === outcomes.length) throw new Error(`评审没有完成：${failed.map((f) => `${infos.get(f.name)!.label}：${f.error}`).join("；")}`);
+  for (const f of failed) recordReview(app, { codeRunId: run.id, round, check: f.name, tier: plan.tier, verdict: "failed", summary: f.error, findings: [] });
+  const done = outcomes.flatMap((o) => (o.status === "fulfilled" ? [o.value] : []));
+  const verdicts = done.map((d) => {
+    const info = infos.get(d.name)!;
+    const row = reviewFor(app, run.id, round, d.name)!;
+    const findings = all<{ severity: Severity; file_path: string | null; line: number | null; title: string; suggestion: string }>(app.db, "select severity, file_path, line, title, suggestion from review_findings where review_id = ?", row.id);
+    const blocking = findings.filter((f) => blocksAt(f.severity, info.blocks));
+    // Findings below the check's blocking level do not hold the change, whatever the verdict said.
+    const ok = !blocking.length && (row.verdict === "approved" || findings.length > 0);
+    return { ...d, info, ok, blocking };
   });
-  // The verdict and its reasons, without the reviewer's narration on the way (that stays in the run's events).
-  const reviewText = replyOf(review).trim();
-  // A reviewer that ends with a short line keeps its verdict in the reply; look at the whole text if not.
-  const approved = /结论[：:]\s*通过/.test(reviewText) || (!/结论[：:]/.test(reviewText) && /结论[：:]\s*通过/.test(review.text));
-  ctx.output({ review: reviewText, reviewAI: review.ai, reviewAgent: review.profileId, verdict: approved ? "approved" : "changes-requested" });
+  const approved = verdicts.every((v) => v.ok);
+  const single = plan.checks.length === 1 && done.length === 1;
+  const reviewText = single
+    ? done[0].text
+    : [...verdicts.map((v) => `### ${v.info.label}（${v.ok ? "通过" : "需要修改"}）\n\n${v.text}`), ...failed.map((f) => `### ${infos.get(f.name)!.label}（没有完成）\n\n${f.error}`)].join("\n\n");
+  ctx.output({ review: reviewText, reviewAI: done[0]?.ai, reviewAgent: done[0]?.profileId, verdict: approved ? "approved" : "changes-requested" });
+  const changeRequest = verdicts.filter((v) => !v.ok).map((v) => [
+    single ? "" : `### ${v.info.label}`,
+    v.blocking.map((f, i) => `${i + 1}. [${SEVERITY_LABEL[f.severity]}] ${f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""} ` : ""}${f.title}${f.suggestion ? `：${f.suggestion}` : ""}`).join("\n"),
+    v.text,
+  ].filter(Boolean).join("\n\n")).join("\n\n");
   const checked = results.filter((r) => r.check);
   const statTextLine = results.map((r) => (multi ? `${r.space}：` : "") + (r.diffStat.split("\n").pop() ?? "")).join("\n");
   const checksLine = checked.length ? `\n检查：${checked.some((r) => r.check!.code !== 0) ? "失败" : "通过"}` : "";
-  const { queueNextCodeRound, maxCodeRounds } = await import("./code-chain.ts");
-  const endChain = (getRun(app, run.id).output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? chain;
+  const { queueNextCodeRound, maxCodeRounds, saveCodeChain } = await import("./code-chain.ts");
+  let endChain = (getRun(app, run.id).output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? chain;
+  if (endChain && endChain.maxRounds !== plan.maxRounds) {
+    endChain = { ...((getRun(app, endChain.askRunId).output.codeChain as import("./code-chain.ts").CodeChain | undefined) ?? endChain), maxRounds: plan.maxRounds };
+    saveCodeChain(app, endChain, endChain.askRunId, ...endChain.rounds);
+  }
   if (!approved) {
-    // Keep the same delegation going: the coder resumes its session and works the reviewer's request.
-    const reviewBody = reviewText;
+    // Keep the same delegation going: the coder resumes its session and works the reviewers' requests.
+    const reviewBody = changeRequest;
     const next = endChain
       ? queueNextCodeRound(app, endChain, `评审要求修改（第 ${endChain.round} 轮评审）：\n\n${reviewBody.slice(0, 12000)}`, { resumeSessionId: coder.sessionId })
       : null;
@@ -239,7 +293,7 @@ ${input.task}
     const { workForChild } = await import("./agent-work.ts");
     const work = workForChild(app, run);
     notify(app, {
-      title: `${approved ? "交办完成，评审通过" : `交办第 ${endChain?.round ?? 1} 轮评审要求修改（已到自动推进上限 ${maxCodeRounds(app)} 轮，等本人决定）`}：${run.title}`,
+      title: `${approved ? "交办完成，评审通过" : `交办第 ${endChain?.round ?? 1} 轮评审要求修改（已到自动推进上限 ${maxCodeRounds(app, endChain)} 轮，等本人决定）`}：${run.title}`,
       body: `${statTextLine}${checksLine}`,
       link: `#/runs/${run.id}`,
       // Inside a multi-agent work the nudge belongs to the work's current topic, not a private DM.
@@ -247,6 +301,29 @@ ${input.task}
     });
   }
   return { verdict: approved ? "approved" : "changes-requested" };
+}
+
+/** What review tiers are chosen by: the size and place of the change, whether checks passed. */
+function reviewMetrics(worktrees: WorktreeRef[], results: RepoResult[], task: string): ReviewMetrics {
+  let lines = 0;
+  const paths: string[] = [];
+  for (const [i, r] of results.entries()) {
+    if (!r.diffBytes) continue;
+    for (const row of git(worktrees[i].path, ["diff", "--cached", "--numstat", "HEAD"]).stdout.split("\n")) {
+      const [add, del, file] = row.split("\t");
+      if (!file) continue;
+      lines += (Number(add) || 0) + (Number(del) || 0);
+      paths.push(results.length > 1 ? `${r.space}/${file}` : file);
+    }
+  }
+  return {
+    "change.lines": lines,
+    "change.files": paths.length,
+    "change.repos": results.filter((r) => r.diffBytes).length,
+    "change.paths": paths,
+    "change.checksPassed": results.every((r) => !r.check || r.check.code === 0),
+    "task.text": task,
+  };
 }
 
 /** Each repository's patch file; runs from before multi-repository delegation have one changes.patch. */

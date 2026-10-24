@@ -7,7 +7,7 @@ import { profileDetail } from "../agents/profiles.ts";
 import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyMultipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
@@ -17,7 +17,8 @@ import { z } from "zod";
 import { applyCodeRun, codePatches, codeRepos, discardCodeRun } from "../agents/code.ts";
 import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePages, type PageBrief } from "../agents/jobs.ts";
 import { createMcpServer } from "../agents/mcp-server.ts";
-import { listAgentProfiles, loadRole, profileFor } from "../agents/runner.ts";
+import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
+import type { RoleName } from "../core/config.ts";
 import { cancelRun, countRuns, createRun, getRun, listRuns, runEvents } from "../agents/runs.ts";
 import { callTool, toolContextForToken, toolList, toolSchemas } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
@@ -610,10 +611,66 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/delegate", async (req) => {
     // `space` is where the task belongs (a repository or a project); `repos` the repositories it changes.
-    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional() }), req.body);
+    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional(), reviewTier: z.string().optional() }), req.body);
     const s = getSpace(app, b.space);
     const repos = codeRepos(app, s.id, b.repos).map((r) => r.id);
-    return createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos } });
+    return createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined } });
+  });
+
+  // ------------------------------------------------------------------- code review (docs/v2/review.md)
+  server.get("/api/review-settings", async () => {
+    const { reviewChecks, reviewTiers } = await import("../agents/review.ts");
+    const checks = reviewChecks(app).map((c) => {
+      let ai: { profile: string; model?: string; effort?: string } | null = null;
+      try {
+        const spec = c.builtin ? null : readAgentSpec(app, c.name);
+        const p = resolveRunProfile(app, { actor: spec ? { spec } : { role: c.name as RoleName }, profileId: c.builtin ? app.config.agents.roles[c.name] : undefined });
+        ai = { profile: p.id, model: p.model, effort: p.effort };
+      } catch { /* missing profile or backend: shown as such */ }
+      return { ...c, ai };
+    });
+    // How recent delegations fell into the tiers, to judge the thresholds.
+    const recent = all<{ tier: string | null; n: number }>(app.db, "select json_extract(output, '$.reviewPlan.tier') tier, count(*) n from (select output from runs where kind = 'code' and json_extract(input, '$.round') is null order by created_at desc limit 30) group by tier");
+    const specs = listAgentSpecs(app).filter((s) => !checks.some((c) => c.name === s.name)).map((s) => ({ name: s.name, description: s.description }));
+    return { tiers: reviewTiers(app), checks, specs, recent: Object.fromEntries(recent.filter((r) => r.tier).map((r) => [r.tier, r.n])) };
+  });
+  server.put("/api/review-settings", async (req) => {
+    const { validateReviewSettings } = await import("../agents/review.ts");
+    const settings = validateReviewSettings(app, req.body);
+    const next = structuredClone(app.config);
+    next.review = settings;
+    saveConfig(next, app.home);
+    Object.assign(app.config, next);
+    return { ok: true };
+  });
+  server.get("/api/review-options", async () => {
+    const { REVIEW_FIELDS, REVIEW_FIELD_HELP, REVIEW_OPS } = await import("../agents/review.ts");
+    return { fields: REVIEW_FIELDS, descriptions: REVIEW_FIELD_HELP, ops: REVIEW_OPS };
+  });
+  // Every round of the delegation a coding run belongs to, with each check's findings.
+  server.get("/api/runs/:id/reviews", async (req) => {
+    const r = getRun(app, (req.params as { id: string }).id);
+    if (r.kind !== "code") throw new HttpError(400, "只有编码交办有评审");
+    const { reviewChecks, reviewsOf } = await import("../agents/review.ts");
+    const chain = (r.output as { codeChain?: { rounds: string[] } }).codeChain;
+    const rounds = (chain?.rounds ?? [r.id]).map((id) => getRun(app, id));
+    const labels = Object.fromEntries(reviewChecks(app).map((c) => [c.name, c.label]));
+    return { rounds: rounds.map((x) => ({ runId: x.id, round: (x.input as { round?: number }).round ?? 1, status: x.status, plan: x.output.reviewPlan ?? null, verdict: x.output.verdict ?? null })), reviews: reviewsOf(app, rounds.map((x) => x.id)), labels };
+  });
+  // A file of a delegation as it is now: the worktree while it exists, else the repository (after apply).
+  server.get("/api/runs/:id/file", async (req) => {
+    const o = q(z.object({ space: z.string(), path: z.string().min(1).max(1000) }), req.query);
+    const r = getRun(app, (req.params as { id: string }).id);
+    if (r.kind !== "code") throw new HttpError(400, "只有编码交办有文件");
+    const { worktreesOf } = await import("../agents/code.ts");
+    const root = (r.output as { continueFrom?: string }).continueFrom ?? (r.input as { continueFrom?: string }).continueFrom ?? r.id;
+    const wt = worktreesOf(app, root).find((w) => w.space === o.space);
+    const base = wt && existsSync(wt.path) ? wt.path : getSpace(app, o.space).rootPath;
+    if (!base) throw new HttpError(404, "找不到这个仓库的目录");
+    const full = resolvePath(base, o.path);
+    if (!full.startsWith(resolvePath(base) + sep) || !existsSync(full) || statSync(full).isDirectory()) throw new HttpError(404, "文件不存在");
+    if (statSync(full).size > 2 * 1024 * 1024) throw new HttpError(413, "文件太大");
+    return { lines: readFileSync(full, "utf8").split(/\r?\n/), from: wt && existsSync(wt.path) ? "worktree" : "repo" };
   });
 
   // ------------------------------------------------------------------ learning

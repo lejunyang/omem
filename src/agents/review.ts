@@ -1,0 +1,281 @@
+import { z } from "zod";
+import type { App } from "../core/app.ts";
+import { defaultReviewTiers } from "../core/config.ts";
+import { all, one, run, tx } from "../core/db.ts";
+import { HttpError, newId, now } from "../core/util.ts";
+import { leafMatches } from "../rules/conditions.ts";
+import { isBuiltinRole } from "./builtin-roles.ts";
+import { findAgentSpec } from "./specs.ts";
+
+/**
+ * Code review after a delegation (docs/v2/review.md, phase 1): ordered tiers pick which review
+ * checks run for a change; each check is a built-in review role or an agent spec, runs in its own
+ * session with read-only tools, and reports structured findings with submit_review.
+ */
+
+/** What a check may use, whatever its profile allows elsewhere: reading, plus submit_review. */
+export const REVIEW_TOOLS = ["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "read_item", "list_conversations", "read_conversation", "list_skills", "read_skill"];
+
+/** Built-in checks: label and one line on what each looks at. */
+export const BUILTIN_CHECKS: Record<string, { label: string; about: string }> = {
+  reviewer: { label: "功能", about: "需求是否实现、边界与错误处理、测试覆盖、多余改动" },
+  "review-business": { label: "业务", about: "对照需求逐条核对业务规则是否实现一致" },
+  "review-arch": { label: "架构", about: "模块边界、依赖方向、抽象取舍、跨仓库接口" },
+  "review-style": { label: "规范", about: "只报违反项目明确约定的地方" },
+  "review-history": { label: "历史", about: "以前类似改动踩过的坑" },
+};
+
+export const SEVERITIES = ["blocker", "major", "minor", "nit"] as const;
+export type Severity = (typeof SEVERITIES)[number];
+export const SEVERITY_LABEL: Record<Severity, string> = { blocker: "阻断", major: "严重", minor: "一般", nit: "提示" };
+
+// ---- conditions ---------------------------------------------------------------------------
+
+export const REVIEW_FIELDS = {
+  "change.lines": "改动行数",
+  "change.files": "改动文件数",
+  "change.repos": "改动仓库数",
+  "change.paths": "改动路径",
+  "change.checksPassed": "检查全部通过",
+  "task.text": "任务原文",
+} as const;
+export const REVIEW_FIELD_HELP: Record<keyof typeof REVIEW_FIELDS, string> = {
+  "change.lines": "所有仓库新增加删除的行数之和。",
+  "change.files": "改动的文件数，几个仓库合计。",
+  "change.repos": "有改动的仓库数。",
+  "change.paths": "改动文件在仓库里的路径；“包含 auth”表示任一路径带 auth。",
+  "change.checksPassed": "配置了检查命令的仓库是否全部通过；没有检查命令算通过。",
+  "task.text": "交办时的任务原文，可按关键词判断。",
+};
+const NUMERIC = new Set(["change.lines", "change.files", "change.repos"]);
+export const REVIEW_OPS = ["gte", "lte", "equals", "contains", "startsWith", "endsWith", "in", "is"] as const;
+type Field = keyof typeof REVIEW_FIELDS;
+export type ReviewCondition = { field: Field; op: (typeof REVIEW_OPS)[number]; value: string | number | boolean | string[] } | { all: ReviewCondition[] } | { any: ReviewCondition[] } | { not: ReviewCondition };
+export const reviewCondition: z.ZodType<ReviewCondition> = z.lazy(() => z.union([
+  z.object({ field: z.enum(Object.keys(REVIEW_FIELDS) as [Field, ...Field[]]), op: z.enum(REVIEW_OPS), value: z.union([z.string().max(500), z.number(), z.boolean(), z.array(z.string().max(500)).max(50)]) }).superRefine((c, ctx) => {
+    const numeric = NUMERIC.has(c.field);
+    if (numeric && !["gte", "lte", "equals"].includes(c.op)) ctx.addIssue({ code: "custom", message: `${REVIEW_FIELDS[c.field]}只能比较大小` });
+    if (numeric && !Number.isFinite(Number(c.value))) ctx.addIssue({ code: "custom", path: ["value"], message: `${REVIEW_FIELDS[c.field]}要填数字` });
+    if (!numeric && ["gte", "lte"].includes(c.op)) ctx.addIssue({ code: "custom", message: `${REVIEW_FIELDS[c.field]}不能比较大小` });
+  }),
+  z.object({ all: z.array(reviewCondition).min(1).max(30) }),
+  z.object({ any: z.array(reviewCondition).min(1).max(30) }),
+  z.object({ not: reviewCondition }),
+]));
+
+export type ReviewMetrics = { "change.lines": number; "change.files": number; "change.repos": number; "change.paths": string[]; "change.checksPassed": boolean; "task.text": string };
+
+export function matchesReview(c: ReviewCondition | null | undefined, m: ReviewMetrics): boolean {
+  if (!c) return true;
+  if ("all" in c) return c.all.every((x) => matchesReview(x, m));
+  if ("any" in c) return c.any.some((x) => matchesReview(x, m));
+  if ("not" in c) return !matchesReview(c.not, m);
+  const raw = m[c.field];
+  if (c.op === "gte") return Number(raw) >= Number(c.value);
+  if (c.op === "lte") return Number(raw) <= Number(c.value);
+  if (NUMERIC.has(c.field) && c.op === "equals") return Number(raw) === Number(c.value);
+  return leafMatches({ op: c.op, value: typeof c.value === "number" ? String(c.value) : c.value }, raw);
+}
+
+// ---- settings ----------------------------------------------------------------------------------
+
+export type Tier = { id: string; name: string; when: ReviewCondition | null; guide?: string; checks: string[]; maxRounds: number };
+export type CheckSetting = { label: string; blocks: "blocker" | "major" | "minor"; when: ReviewCondition | null; guide?: string };
+export type CheckInfo = CheckSetting & { name: string; builtin: boolean; about: string; missing: boolean };
+
+export function reviewTiers(app: App): Tier[] {
+  return app.config.review.tiers as Tier[];
+}
+
+/** Built-in checks always exist; an agent spec is a check once it has review settings. */
+export function reviewChecks(app: App): CheckInfo[] {
+  const own = app.config.review.checks as Record<string, CheckSetting>;
+  const builtin = Object.entries(BUILTIN_CHECKS).map(([name, b]): CheckInfo => ({ name, builtin: true, about: b.about, missing: false, ...({ label: b.label, blocks: "major", when: null } as CheckSetting), ...own[name] }));
+  const custom = Object.entries(own).filter(([name]) => !BUILTIN_CHECKS[name]).map(([name, s]) => {
+    const spec = findAgentSpec(app, name);
+    return { name, builtin: false, about: spec?.description ?? "", missing: !spec || spec.status !== "active", ...s };
+  });
+  return [...builtin, ...custom];
+}
+
+export const tierSchema = z.object({
+  id: z.string().regex(/^[a-z0-9-]{1,32}$/, "档位 id 只能用小写字母、数字和连字符"),
+  name: z.string().trim().min(1).max(20),
+  when: reviewCondition.nullable(),
+  guide: z.string().trim().max(2000).default(""),
+  checks: z.array(z.string()).min(1, "每个档位至少要有一项评审").max(12),
+  maxRounds: z.number().int().min(1).max(10),
+});
+export const checkSettingSchema = z.object({ label: z.string().trim().min(1).max(12), blocks: z.enum(["blocker", "major", "minor"]), when: reviewCondition.nullable(), guide: z.string().trim().max(2000).default("") });
+export const reviewSettingsSchema = z.object({ tiers: z.array(tierSchema).min(1).max(12), checks: z.record(z.string(), checkSettingSchema) });
+
+/** Check names must exist; the last tier is the catch-all (no condition), so every change has one. */
+export function validateReviewSettings(app: App, input: unknown) {
+  const s = reviewSettingsSchema.parse(input);
+  for (const name of Object.keys(s.checks)) {
+    if (BUILTIN_CHECKS[name]) continue;
+    if (isBuiltinRole(name)) throw new HttpError(400, `${name} 是内置角色，不能用作评审项`);
+    if (!findAgentSpec(app, name)) throw new HttpError(400, `没有 Agent 档案 ${name}`);
+  }
+  const known = new Set([...Object.keys(BUILTIN_CHECKS), ...Object.keys(s.checks)]);
+  const ids = new Set<string>();
+  for (const t of s.tiers) {
+    if (ids.has(t.id)) throw new HttpError(400, `档位 id 重复：${t.id}`);
+    ids.add(t.id);
+    const unknown = t.checks.filter((c) => !known.has(c));
+    if (unknown.length) throw new HttpError(400, `档位「${t.name}」引用了不存在的评审项：${unknown.join("、")}`);
+  }
+  if (s.tiers.at(-1)!.when || s.tiers.at(-1)!.guide) throw new HttpError(400, "最后一个档位是兜底档，不能设条件或说明");
+  return s;
+}
+
+export function defaultReviewSettings() {
+  return { tiers: defaultReviewTiers(), checks: {} };
+}
+
+// ---- planning ----------------------------------------------------------------------------------
+
+export type ReviewPlan = { tier: string; tierName: string; checks: string[]; maxRounds: number; reasons: string[]; metrics: ReviewMetrics };
+
+/**
+ * First tier whose condition matches, unless the task named one; checks whose own condition
+ * matches are added. A later round never goes to a lighter tier than an earlier one chose.
+ */
+export function planReview(app: App, metrics: ReviewMetrics, opts: { tier?: string; extraChecks?: string[]; previous?: ReviewPlan } = {}): ReviewPlan {
+  const tiers = reviewTiers(app);
+  const reasons: string[] = [];
+  let index = tiers.findIndex((t) => matchesReview(t.when, metrics));
+  if (index < 0) index = tiers.length - 1;
+  reasons.push(`按改动指标落在「${tiers[index].name}」档（${metrics["change.lines"]} 行、${metrics["change.files"]} 个文件、${metrics["change.repos"]} 个仓库）`);
+  if (opts.tier) {
+    const named = tiers.findIndex((t) => t.id === opts.tier || t.name === opts.tier);
+    if (named < 0) throw new HttpError(400, `没有评审档位 ${opts.tier}`);
+    if (named !== index) reasons.push(`任务指定用「${tiers[named].name}」档`);
+    index = named;
+  }
+  const before = opts.previous ? tiers.findIndex((t) => t.id === opts.previous!.tier) : -1;
+  if (before >= 0 && before < index) {
+    reasons.push(`上一轮已是「${tiers[before].name}」档，不降档`);
+    index = before;
+  }
+  const tier = tiers[index];
+  const checks = [...tier.checks];
+  const usable = new Map(reviewChecks(app).map((c) => [c.name, c]));
+  for (const c of usable.values()) {
+    if (c.when && !checks.includes(c.name) && matchesReview(c.when, metrics)) {
+      checks.push(c.name);
+      reasons.push(`改动满足「${c.label}」评审的加入条件`);
+    }
+  }
+  for (const name of opts.extraChecks ?? []) {
+    if (!usable.has(name)) throw new HttpError(400, `没有评审项 ${name}`);
+    if (!checks.includes(name)) { checks.push(name); reasons.push(`任务要求加上「${usable.get(name)!.label}」评审`); }
+  }
+  for (const name of opts.previous?.checks ?? []) if (!checks.includes(name) && usable.has(name)) checks.push(name);
+  const runnable = checks.filter((n) => usable.has(n) && !usable.get(n)!.missing);
+  const dropped = checks.filter((n) => !runnable.includes(n));
+  if (dropped.length) reasons.push(`缺少评审项：${dropped.join("、")}（档案不存在或是草稿），已跳过`);
+  if (!runnable.length) runnable.push("reviewer");
+  return { tier: tier.id, tierName: tier.name, checks: runnable, maxRounds: tier.maxRounds, reasons, metrics };
+}
+
+/**
+ * What conditions cannot say: tiers above the matched one and checks not yet in the plan whose
+ * owner wrote "when to use" in words. One model call weighs them against the change; it may only
+ * move to a heavier tier and add checks, never drop what the conditions chose. Without an answer
+ * the plan stays as it is.
+ */
+export async function refineReviewPlan(app: App, plan: ReviewPlan, change: { task: string; diff: string; tierNamed?: boolean }, ask: (prompt: string) => Promise<string | null>): Promise<ReviewPlan> {
+  const tiers = reviewTiers(app);
+  const at = tiers.findIndex((t) => t.id === plan.tier);
+  const tierCandidates = change.tierNamed ? [] : tiers.slice(0, Math.max(0, at)).filter((t) => t.guide?.trim());
+  const checkCandidates = reviewChecks(app).filter((c) => c.guide?.trim() && !c.missing && !plan.checks.includes(c.name));
+  if (!tierCandidates.length && !checkCandidates.length) return plan;
+  const m = plan.metrics;
+  const prompt = [
+    "你在给一次代码改动挑评审方式。只按本人写的说明判断，拿不准就不选。只输出一个 JSON：{\"tier\": 档位 id 或 null, \"checks\": [评审项名], \"reason\": \"一句话理由\"}",
+    `## 改动\n\n任务：${change.task.slice(0, 3000)}\n\n${m["change.lines"]} 行、${m["change.files"]} 个文件、${m["change.repos"]} 个仓库；检查${m["change.checksPassed"] ? "通过" : "没通过"}。\n文件：${m["change.paths"].slice(0, 80).join("、")}\n\n${change.diff.slice(0, 12000)}`,
+    `## 现在的选择\n\n按条件落在「${plan.tierName}」档，评审项：${plan.checks.join("、")}。`,
+    tierCandidates.length ? `## 可以换成的更重档位（符合说明才选，否则 tier 填 null）\n\n${tierCandidates.map((t) => `- ${t.id}（${t.name}）：${t.guide}`).join("\n")}` : "",
+    checkCandidates.length ? `## 可以额外加上的评审项（符合说明才加）\n\n${checkCandidates.map((c) => `- ${c.name}（${c.label}）：${c.guide}`).join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
+  let answer: { tier?: string | null; checks?: string[]; reason?: string } | null = null;
+  try {
+    const { jsonIn } = await import("./oneshot.ts");
+    answer = jsonIn(await ask(prompt));
+  } catch {
+    answer = null;
+  }
+  if (!answer) return { ...plan, reasons: [...plan.reasons, "没能请模型按说明判断，只按条件选择"] };
+  const next = { ...plan, checks: [...plan.checks], reasons: [...plan.reasons] };
+  const tier = tierCandidates.find((t) => t.id === answer!.tier);
+  if (tier) {
+    next.tier = tier.id;
+    next.tierName = tier.name;
+    next.maxRounds = tier.maxRounds;
+    for (const c of tier.checks) if (!next.checks.includes(c) && reviewChecks(app).some((x) => x.name === c && !x.missing)) next.checks.push(c);
+    next.reasons.push(`按「${tier.name}」档的说明改用这一档${answer.reason ? `：${answer.reason}` : ""}`);
+  }
+  const added = checkCandidates.filter((c) => answer!.checks?.includes(c.name));
+  for (const c of added) next.checks.push(c.name);
+  if (added.length) next.reasons.push(`按说明加上${added.map((c) => `「${c.label}」`).join("")}评审${!tier && answer.reason ? `：${answer.reason}` : ""}`);
+  return next;
+}
+
+/** Written into each check's task: how to report, what blocks. */
+export function checkBrief(check: CheckInfo, plan: ReviewPlan) {
+  const others = plan.checks.filter((c) => c !== check.name);
+  return [
+    `## 你负责的评审项：${check.label}`,
+    others.length ? `这次是「${plan.tierName}」档，另有 ${others.length} 个评审项各自独立评审，你只看自己负责的角度，不必重复别的角度。` : "",
+    `${SEVERITY_LABEL[check.blocks]}及以上的问题会要求编码 Agent 再改一轮；低于这一级的只列出来。`,
+    "评审完先调用一次 `submit_review` 提交结论和问题清单（每条写清文件和行、问题、建议），再用文字写结论：第一行 `结论：通过` 或 `结论：需要修改`。没有问题时 findings 传空数组，并在 summary 里说明你查了什么。",
+  ].filter(Boolean).join("\n\n");
+}
+
+// ---- results -----------------------------------------------------------------------------------
+
+export const findingSchema = z.object({
+  severity: z.enum(SEVERITIES),
+  file: z.string().max(500).optional(),
+  line: z.number().int().min(1).optional(),
+  title: z.string().min(1).max(200),
+  detail: z.string().max(4000).default(""),
+  suggestion: z.string().max(4000).default(""),
+  evidence: z.array(z.string().max(300)).max(20).default([]),
+  confidence: z.enum(["high", "medium", "low"]).default("medium"),
+});
+export type Finding = z.infer<typeof findingSchema>;
+export type ReviewRow = { id: string; code_run_id: string; round: number; check_name: string; tier: string | null; profile_id: string | null; model: string | null; effort: string | null; verdict: string; summary: string; status: string; created_at: string };
+export type FindingRow = { id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string };
+
+const RANK: Record<Severity, number> = { blocker: 0, major: 1, minor: 2, nit: 3 };
+export const blocksAt = (severity: Severity, level: CheckSetting["blocks"]) => RANK[severity] <= RANK[level];
+
+/** One check's result for one round; a resubmission in the same round replaces the earlier one. */
+export function recordReview(app: App, r: { codeRunId: string; round: number; check: string; tier?: string; verdict: "approved" | "changes_requested" | "failed"; summary: string; findings: Finding[]; ai?: { profile?: string; model?: string; effort?: string } }) {
+  const id = newId("rv");
+  tx(app.db, () => {
+    run(app.db, "delete from reviews where code_run_id = ? and round = ? and check_name = ?", r.codeRunId, r.round, r.check);
+    run(app.db, "insert into reviews(id, code_run_id, round, check_name, tier, profile_id, model, effort, verdict, summary, created_at) values(?,?,?,?,?,?,?,?,?,?,?)",
+      id, r.codeRunId, r.round, r.check, r.tier ?? null, r.ai?.profile ?? null, r.ai?.model ?? null, r.ai?.effort ?? null, r.verdict, r.summary, now());
+    for (const f of r.findings) {
+      run(app.db, "insert into review_findings(review_id, severity, file_path, line, title, detail, suggestion, evidence, confidence) values(?,?,?,?,?,?,?,?,?)",
+        id, f.severity, f.file ?? null, f.line ?? null, f.title, f.detail, f.suggestion, JSON.stringify(f.evidence), f.confidence);
+    }
+  });
+  return id;
+}
+
+export function reviewFor(app: App, codeRunId: string, round: number, check: string) {
+  return one<ReviewRow>(app.db, "select * from reviews where code_run_id = ? and round = ? and check_name = ?", codeRunId, round, check);
+}
+
+/** Every round of a delegation (its runs share the first round's id as continueFrom). */
+export function reviewsOf(app: App, codeRunIds: string[]) {
+  if (!codeRunIds.length) return [];
+  const marks = codeRunIds.map(() => "?").join(",");
+  const reviews = all<ReviewRow>(app.db, `select * from reviews where code_run_id in (${marks}) order by round, created_at`, ...codeRunIds);
+  const findings = reviews.length ? all<FindingRow>(app.db, `select * from review_findings where review_id in (${reviews.map(() => "?").join(",")}) order by id`, ...reviews.map((r) => r.id)) : [];
+  return reviews.map((r) => ({ ...r, findings: findings.filter((f) => f.review_id === r.id).map((f) => ({ ...f, evidence: JSON.parse(f.evidence) as string[] })) }));
+}

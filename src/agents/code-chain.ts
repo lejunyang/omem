@@ -30,6 +30,8 @@ export type CodeChain = {
   lastCodeRunId: string | null;
   /** Set when the owner is asked what to do; no further automatic rounds while pending. */
   awaitingUser: boolean;
+  /** Automatic round limit of the review tier the change fell into; the config default otherwise. */
+  maxRounds?: number;
 };
 
 /** Load the chain a coding run belongs to, building the first round from its parent ask. */
@@ -68,7 +70,7 @@ export function saveCodeChain(app: App, chain: CodeChain, ...runIds: string[]) {
 }
 
 /** Rounds a coding delegation runs before the reviewer's requests wait for the owner (config agents.autoAdvance.codeRounds). */
-export const maxCodeRounds = (app: App) => app.config.agents.autoAdvance.codeRounds;
+export const maxCodeRounds = (app: App, chain?: CodeChain | null) => chain?.maxRounds ?? app.config.agents.autoAdvance.codeRounds;
 
 /**
  * Queue another coding round in the same chain: same repositories and check commands, the same
@@ -92,12 +94,12 @@ export function queueNextCodeRound(
       throw new HttpError(409, "原交办已应用或丢弃，工作区已释放，不能续轮");
     if (opts.manual && ["queued", "running"].includes(current.status))
       throw new HttpError(409, `第 ${chain.round} 轮 ${current.id} 仍为 ${current.status}，不能重复启动`);
-    if (!opts.manual && (chain.awaitingUser || chain.round >= maxCodeRounds(app))) return null;
+    if (!opts.manual && (chain.awaitingUser || chain.round >= maxCodeRounds(app, chain))) return null;
     if (!opts.manual && current.id !== expectedLastRunId) return null;
     if (!opts.manual && current.status !== "running" && current.status !== "done") return null;
     const last = one<{ space_id: string | null; input: string }>(app.db, "select space_id, input from runs where id = ?", chain.lastCodeRunId!);
     if (!last) return null;
-    const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string> };
+    const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[] };
     const next: CodeChain = { ...chain, round: chain.round + 1, awaitingUser: false, waitReason: undefined, rounds: [...chain.rounds] };
     const r = createRun(app, {
       kind: "code",
@@ -110,6 +112,8 @@ export function queueNextCodeRound(
         checkCommand: input.checkCommand,
         repos: input.repos,
         checks: input.checks,
+        reviewTier: input.reviewTier,
+        reviewChecks: input.reviewChecks,
         continueFrom: chain.rounds[0],
         resumeSessionId: opts.execution && ["profile", "model", "effort"].some((key) => opts.execution?.[key as keyof Execution] !== input.execution?.[key as keyof Execution]) ? undefined : opts.resumeSessionId,
         round: next.round,
@@ -162,7 +166,7 @@ export function settleCodeChain(app: App, runId: string) {
       saveCodeChain(app, next, next.askRunId, ...next.rounds);
     } else {
       const next = setChainAwaitingUser(app, chain, true);
-      next.waitReason = r.status !== "done" ? "failed" : r.output.verdict === "no-changes" ? "no-changes" : chain.round >= maxCodeRounds(app) ? "auto-limit" : "review";
+      next.waitReason = r.status !== "done" ? "failed" : r.output.verdict === "no-changes" ? "no-changes" : chain.round >= maxCodeRounds(app, chain) ? "auto-limit" : "review";
       saveCodeChain(app, next, next.askRunId, ...next.rounds);
     }
     // The originating assistant can consume the result on its next turn. Do not wake a
@@ -211,7 +215,7 @@ function wakeAssistantForCodeResult(app: App, runId: string) {
   const messageId = r.output.codeResultMessageId as string | undefined;
   if (!chain || !messageId || r.output.codeResultHandedOff || chain.lastCodeRunId !== r.id) return;
   // An automatic next round is already queued: nothing to tell yet.
-  if (r.status === "done" && r.output.verdict === "changes-requested" && chain.round < maxCodeRounds(app) && !chain.awaitingUser) return;
+  if (r.status === "done" && r.output.verdict === "changes-requested" && chain.round < maxCodeRounds(app, chain) && !chain.awaitingUser) return;
   setRunOutput(app, runId, { codeResultHandedOff: true });
   // The owner moved this work to another conversation (new Feishu topic): the handoff goes there.
   let conversationId = chain.conversationId;

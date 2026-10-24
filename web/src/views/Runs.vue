@@ -9,6 +9,9 @@ import UiCheckbox from "../components/UiCheckbox.vue";
 import ChipPicker from "../components/ChipPicker.vue";
 import { confirmDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
+import AskAboutRun, { type AskContext } from "../components/AskAboutRun.vue";
+import DiffFile from "../components/DiffFile.vue";
+import ReviewSummary from "../components/ReviewSummary.vue";
 import RunActivity from "../components/RunActivity.vue";
 import { fmtTime, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 
@@ -130,6 +133,44 @@ function toggleAllDiffs() {
   openDiffs.value = openDiffs.value.size ? new Set() : new Set(diffs.value.flatMap((d) => d.files.map((f) => `${d.space}:${f.name}`)));
 }
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
+
+// ---- asking about a selection (diff lines, the task, a review) -------------------------------
+const asking = ref<AskContext | null>(null);
+const selection = ref<{ top: number; left: number; context: AskContext } | null>(null);
+watch(id, () => { asking.value = null; selection.value = null; });
+// The button is placed against the viewport: any scroll moves the text away from it.
+const dropSelection = () => (selection.value = null);
+onMounted(() => window.addEventListener("scroll", dropSelection, { capture: true, passive: true }));
+onBeforeUnmount(() => window.removeEventListener("scroll", dropSelection, { capture: true }));
+function lineOf(node: Node | null) {
+  const el = node instanceof Element ? node : node?.parentElement;
+  return Number(el?.closest("tr[data-line]")?.getAttribute("data-line")) || null;
+}
+function onSelect() {
+  // Wait for the browser to settle the selection after the click.
+  setTimeout(() => {
+    const sel = window.getSelection();
+    const text = sel?.toString().trim() ?? "";
+    if (!sel || !text || sel.rangeCount === 0 || detail.value?.run.kind !== "code") return void (selection.value = null);
+    const range = sel.getRangeAt(0);
+    const host = (range.commonAncestorContainer instanceof Element ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement)!;
+    const file = host.closest<HTMLElement>(".dfile");
+    let label = host.closest<HTMLElement>("[data-ask-label]")?.dataset.askLabel ?? "运行详情里的一段";
+    if (file) {
+      const lines = [lineOf(range.startContainer), lineOf(range.endContainer)].filter((n): n is number => !!n);
+      const at = lines.length ? `:${Math.min(...lines)}${Math.max(...lines) !== Math.min(...lines) ? `-${Math.max(...lines)}` : ""}` : "";
+      label = `${spaceName(file.dataset.space ?? "")} · ${file.dataset.path}${at}`;
+    }
+    const rect = range.getBoundingClientRect();
+    selection.value = { top: Math.max(8, rect.top - 40), left: Math.min(window.innerWidth - 180, Math.max(8, rect.left)), context: { quote: text.slice(0, 4000), label } };
+  }, 0);
+}
+function askSelection() {
+  if (!selection.value) return;
+  asking.value = selection.value.context;
+  selection.value = null;
+  window.getSelection()?.removeAllRanges();
+}
 type Check = { command: string; code: number; output: string };
 const checks = computed<{ space: string; check: Check }[]>(() => {
   const repos = (out.value.repos ?? []) as { space: string; check: Check | null }[];
@@ -205,7 +246,7 @@ const kindOptions = computed(() => [
         <div v-else-if="runs.length >= total" class="list-foot">共 {{ total }} 条</div>
       </div>
     </aside>
-    <main class="detail">
+    <main class="detail" @mouseup="onSelect" @keyup.shift="onSelect">
       <div v-if="detailLoading" class="pad-loading"><Skeleton variant="text" :rows="8" /></div>
       <div v-else-if="!detail" class="empty">
         <Icon name="activity" :size="34" />
@@ -230,6 +271,7 @@ const kindOptions = computed(() => [
               <button class="btn sm danger" @click="act('discard')">丢弃</button>
             </template>
             <span v-if="out.appliedAt" class="badge ok">已应用 {{ fmtTime(out.appliedAt) }}</span>
+            <button v-if="detail.run.kind === 'code'" class="btn ghost sm" @click="asking = { quote: '', label: '' }"><Icon name="chat" :size="14" />提问</button>
           </div>
         </header>
 
@@ -267,7 +309,7 @@ const kindOptions = computed(() => [
           </div>
         </section>
 
-        <section v-if="taskText" class="card pad block">
+        <section v-if="taskText" class="card pad block" data-ask-label="任务原文">
           <div class="section-title row">任务<span class="spacer" /><button v-if="taskLong" class="btn ghost sm" @click="taskOpen = !taskOpen">{{ taskOpen ? "收起" : "展开全部" }}</button></div>
           <div class="pre task" :class="{ clipped: taskLong && !taskOpen }">{{ taskText }}</div>
         </section>
@@ -290,20 +332,16 @@ const kindOptions = computed(() => [
           <pre class="log">{{ c.check.output }}</pre>
         </section>
 
-        <section v-if="out.review" class="block">
-          <div class="section-title">独立评审 <span class="badge" :class="out.verdict === 'approved' ? 'ok' : 'warn'">{{ out.verdict === "approved" ? "通过" : "需要修改" }}</span></div>
-          <div class="card pad"><Markdown :source="out.review" /></div>
-        </section>
+        <ReviewSummary v-if="detail.run.kind === 'code'" :run-id="detail.run.id" :review-text="out.review" :refresh-key="detail.run.status" data-ask-label="评审" @ask="(c) => (asking = c)" />
 
         <section v-if="fileCount" class="block">
-          <div class="section-title row">改动 · {{ diffs.length > 1 ? `${diffs.length} 个仓库，` : "" }}{{ fileCount }} 个文件<span class="spacer" /><button class="btn ghost sm" @click="toggleAllDiffs">{{ openDiffs.size ? "全部收起" : "全部展开" }}</button></div>
+          <div class="section-title row">改动 · {{ diffs.length > 1 ? `${diffs.length} 个仓库，` : "" }}{{ fileCount }} 个文件<span class="spacer" /><span class="muted small hint-sel">选中代码可以就它提问</span><button class="btn ghost sm" @click="toggleAllDiffs">{{ openDiffs.size ? "全部收起" : "全部展开" }}</button></div>
           <p v-if="out.indexedSpaces?.length && !out.appliedAt && !out.discardedAt" class="muted small">应用或丢弃之前，改过的文件可以检索（空间 {{ out.indexedSpaces.join("、") }}）；之后连同 worktree 一起删除。</p>
           <template v-for="d in diffs" :key="d.space">
           <div v-if="diffs.length > 1" class="repo-title">{{ spaceName(d.space) }}</div>
           <details v-for="f in d.files" :key="f.name" class="file" :open="openDiffs.has(`${d.space}:${f.name}`)" @toggle="onDiffToggle(`${d.space}:${f.name}`, $event)">
             <summary class="mono small"><span>{{ f.name }}</span><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span></summary>
-            <pre v-if="openDiffs.has(`${d.space}:${f.name}`)" class="diff"><code v-for="(l, i) in f.lines" :key="i" :class="l.startsWith('+') ? 'a' : l.startsWith('-') ? 'r' : l.startsWith('@@') ? 'h' : ''">{{ l }}
-</code></pre>
+            <DiffFile v-if="openDiffs.has(`${d.space}:${f.name}`)" :run-id="detail.run.id" :space="d.space" :lines="f.lines" />
           </details>
           </template>
         </section>
@@ -316,6 +354,9 @@ const kindOptions = computed(() => [
         </section>
       </template>
     </main>
+
+    <button v-if="selection" class="sel-ask btn sm primary" :style="{ top: `${selection.top}px`, left: `${selection.left}px` }" @mousedown.prevent @click="askSelection"><Icon name="chat" :size="13" />就选中内容提问</button>
+    <AskAboutRun v-if="asking && detail" :key="detail.run.id" :run-id="detail.run.id" :run-title="detail.run.title" :space-id="detail.run.spaceId" :context="asking.quote ? asking : null" @close="asking = null" />
 
     <div v-if="delegateOpen" class="modal-overlay" @mousedown.self="delegateOpen = false">
       <div class="modal stack">
@@ -533,26 +574,14 @@ const kindOptions = computed(() => [
 .file .rm {
   color: var(--danger);
 }
-.diff {
-  margin: 0;
-  font-size: 12px;
-  overflow-x: auto;
-  padding: 6px 0;
+.sel-ask {
+  position: fixed;
+  z-index: 38;
+  box-shadow: var(--shadow-lg);
 }
-.diff code {
-  display: block;
-  white-space: pre;
-  padding: 0 12px;
-  font-family: var(--mono);
-}
-.diff .a {
-  background: var(--ok-soft);
-}
-.diff .r {
-  background: var(--danger-soft);
-}
-.diff .h {
-  color: var(--muted);
+.hint-sel {
+  font-weight: 400;
+  letter-spacing: 0;
 }
 .modal-overlay {
   position: fixed;

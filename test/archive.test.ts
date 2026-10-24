@@ -246,7 +246,7 @@ describe("task rule context", () => {
     const app = setup();
     const lark = createThread(app, { channel: "lark", key: "oc_daily#omt_topic", spaceId: "project-a", userId: "owner" });
     const web = createThread(app, { channel: "web", spaceId: "project-a", userId: "owner" });
-    const tick = { key: "tick", kind: "schedule" as const, at: new Date().toISOString(), via: "schedule" };
+    const tick = { key: "tick", kind: "schedule" as const, at: new Date().toISOString(), via: "schedule" as const };
     const draft = (conversationId: string) => saveRule(app, { name: "每日摘要", description: "每天总结", spaceId: "project-a", conversationId, trigger: { event: "schedule", cron: "0 18 * * *" }, actions: [{ type: "agent", reply: "draft" }] });
     const toLark = getRun(app, (await runActions(app, draft(lark.id), tick, "定时"))[0].runId!).input;
     expect(toLark).toMatchObject({ conversationId: lark.id, lark: { chats: ["oc_daily"], draft: true } });

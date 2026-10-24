@@ -6,11 +6,13 @@
  */
 import { Readable, Writable } from "node:stream";
 import { appendFileSync } from "node:fs";
+import { join } from "node:path";
 import { AgentSideConnection, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const sessions = new Map<string, McpServer[]>();
+const cwds = new Map<string, string>();
 const turns = new Map<string, number>();
 const resumed = new Set<string>();
 // FAKE_MODE=thread: no tools, answer with what the host sent (for session/thread tests).
@@ -46,6 +48,7 @@ new AgentSideConnection(
     async newSession(p) {
       const id = `s${process.pid}-${sessions.size + 1}`;
       sessions.set(id, p.mcpServers);
+      cwds.set(id, p.cwd);
       if (legacy)
         return {
           sessionId: id,
@@ -103,6 +106,28 @@ new AgentSideConnection(
           if (planner) await call("submit_plan", { pages: [{ slug: "overview", title: "概览", kind: "guide", question: "如何开始？", outline: "以示例说明", entry_points: ["materials:README.md"] }] });
           const written = await call("write_page", { page: planner ? "index" : "overview", title: planner ? "目录" : "概览", kind: planner ? "index" : "guide", summary: "示例说明", body: planner ? "- [[overview|概览]]" : "示例正文" });
           await say(JSON.stringify({ prompt, read, blockedRead, blockedWrite, written }));
+        } finally { await client.close(); }
+        return { stopReason: "end_turn" as const };
+      }
+      // FAKE_MODE=review: the coder edits a file in its worktree; a review check reports with
+      // submit_review — the "业务" check asks for a change, the others approve.
+      if (process.env.FAKE_MODE === "review") {
+        const check = /你负责的评审项：(\S+)/.exec(prompt)?.[1];
+        if (!check) {
+          appendFileSync(join(cwds.get(p.sessionId)!, "refund.ts"), `export const round = ${prompt.includes("上一轮评审要求修改") ? 2 : 1};
+`);
+          await say("已实现退款金额计算。");
+          return { stopReason: "end_turn" as const };
+        }
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "fake-review", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+        try {
+          const tools = (await client.listTools()).tools.map((t) => t.name);
+          const asks = check === "业务";
+          await client.callTool({ name: "submit_review", arguments: { verdict: asks ? "changes_requested" : "approved", summary: `${check}评审`, findings: asks ? [{ severity: "major", file: "refund.ts", line: 1, title: "已发货行不能退", suggestion: "过滤已发货行" }, { severity: "nit", title: "命名可以更具体" }] : [{ severity: "minor", title: "可以补一条测试" }] } });
+          await say(`结论：${asks ? "需要修改" : "通过"}
+${JSON.stringify({ check, tools })}`);
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }

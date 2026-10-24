@@ -6,6 +6,7 @@ import AiDefaults from "../components/AiDefaults.vue";
 import VirtualList from "../components/VirtualList.vue";
 import ChipPicker from "../components/ChipPicker.vue";
 import Icon from "../components/Icon.vue";
+import ReviewSettings from "../components/ReviewSettings.vue";
 import Markdown from "../components/Markdown.vue";
 import ProfileLearning, { type ProfileDetail } from "../components/ProfileLearning.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -29,7 +30,7 @@ type RoleDetail = { defaults: { agent: string; byBackend: Record<string, { model
 
 const route = useRoute();
 const router = useRouter();
-const tab = computed(() => (route.query.tab === "skills" ? "skills" : "agents"));
+const tab = computed(() => (route.query.tab === "skills" ? "skills" : route.query.tab === "review" ? "review" : "agents"));
 const specName = computed(() => (tab.value === "agents" && typeof route.query.name === "string" ? route.query.name : null));
 const roleName = computed(() => (tab.value === "agents" && typeof route.query.role === "string" ? route.query.role : null));
 const skillName = computed(() => (tab.value === "skills" && typeof route.query.name === "string" ? route.query.name : null));
@@ -332,11 +333,21 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
 </script>
 
 <template>
-  <div class="agents">
+  <ReviewSettings v-if="tab === 'review'">
+    <template #tabs>
+      <div class="head row">
+        <button class="tab" @click="go({ tab: 'agents' })">Agent 档案</button>
+        <button class="tab" @click="go({ tab: 'skills' })">技能</button>
+        <button class="tab on">评审</button>
+      </div>
+    </template>
+  </ReviewSettings>
+  <div v-else class="agents">
     <aside class="list-col">
       <div class="head row">
         <button class="tab" :class="{ on: tab === 'agents' }" @click="go({ tab: 'agents' })">Agent 档案</button>
         <button class="tab" :class="{ on: tab === 'skills' }" @click="go({ tab: 'skills' })">技能</button>
+        <button class="tab" @click="go({ tab: 'review' })">评审</button>
         <span class="spacer" />
         <button class="btn ghost sm icon" :title="tab === 'agents' ? '新建 Agent 档案' : '新建技能'" @click="go({ tab, new: '1' })"><Icon name="plus" :size="15" /></button>
       </div>

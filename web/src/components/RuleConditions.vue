@@ -14,11 +14,12 @@ type Leaf = { field: string; op: string; value: string | boolean | string[] };
 export type Condition = Leaf | { all: Condition[] } | { any: Condition[] } | { not: Condition };
 type Row = { kind: "leaf"; negate: boolean; field: string; op: string; value: string } | { kind: "group"; mode: "all" | "any"; rows: Row[] };
 
-const props = defineProps<{ modelValue: Condition | null; fields: Record<string, string>; ops: readonly string[]; descriptions?: Record<string, string>; valueOptions?: Record<string, { value: string; label: string }[]> }>();
+const props = defineProps<{ modelValue: Condition | null; fields: Record<string, string>; ops: readonly string[]; descriptions?: Record<string, string>; valueOptions?: Record<string, { value: string; label: string }[]>; boolFields?: string[]; fieldOps?: Record<string, string[]> }>();
 const emit = defineEmits<{ "update:modelValue": [value: Condition | null] }>();
 
-const OP_LABEL: Record<string, string> = { equals: "是", contains: "包含", startsWith: "开头是", endsWith: "结尾是", matches: "匹配正则", in: "是其中之一（逗号分隔）", is: "为" };
+const OP_LABEL: Record<string, string> = { gte: "≥", lte: "≤", equals: "是", contains: "包含", startsWith: "开头是", endsWith: "结尾是", matches: "匹配正则", in: "是其中之一（逗号分隔）", is: "为" };
 const BOOL_FIELDS = new Set(["message.mentionsOwner", "message.mentionsBot", "message.inTopic", "chat.hasOwnBot"]);
+const isBool = (f: string) => BOOL_FIELDS.has(f) || !!props.boolFields?.includes(f);
 
 const mode = ref<"all" | "any">("all");
 const rows = ref<Row[]>([]);
@@ -96,8 +97,12 @@ function applyRaw() {
 }
 
 const fieldOptions = computed(() => Object.entries(props.fields).map(([value, label]) => ({ value, label })));
-const opOptions = (field: string) => (BOOL_FIELDS.has(field) ? [{ value: "is", label: "为" }] : props.ops.filter((o) => o !== "is" && (!props.valueOptions?.[field] || ["equals", "in"].includes(o))).map((o) => ({ value: o, label: OP_LABEL[o] ?? o })));
-const newLeaf = (): Row => ({ kind: "leaf", negate: false, field: Object.keys(props.fields)[0] ?? "chat.name", op: props.valueOptions?.[Object.keys(props.fields)[0]] ? "equals" : "contains", value: "" });
+const opOptions = (field: string) => (isBool(field) ? [{ value: "is", label: "为" }] : props.ops.filter((o) => o !== "is" && (props.fieldOps?.[field] ? props.fieldOps[field].includes(o) : (!props.valueOptions?.[field] || ["equals", "in"].includes(o)) && !["gte", "lte"].includes(o))).map((o) => ({ value: o, label: OP_LABEL[o] ?? o })));
+function newLeaf(): Row {
+  const field = Object.keys(props.fields)[0] ?? "chat.name";
+  const op = props.valueOptions?.[field] ? "equals" : opOptions(field).some((o) => o.value === "contains") ? "contains" : opOptions(field)[0]?.value ?? "contains";
+  return { kind: "leaf", negate: false, field, op, value: op === "is" ? "true" : "" };
+}
 function addRow(target: Row[] = rows.value) {
   target.push(newLeaf());
   push();
@@ -117,9 +122,10 @@ function onOp(r: Extract<Row, { kind: "leaf" }>) {
 }
 function onField(r: Extract<Row, { kind: "leaf" }>, f: string) {
   r.field = f;
-  if (BOOL_FIELDS.has(f)) (r.op = "is"), (r.value = "true");
+  const allowed = opOptions(f).map((o) => o.value);
+  if (isBool(f)) (r.op = "is"), (r.value = "true");
   else if (props.valueOptions?.[f]) (r.op = "equals"), (r.value = "");
-  else if (r.op === "is") (r.op = "contains"), (r.value = "");
+  else if (!allowed.includes(r.op)) (r.op = allowed[0]), (r.value = "");
   push();
 }
 </script>

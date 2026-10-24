@@ -41,8 +41,23 @@ export const roleNames = [
   "coach",
   "gatekeeper",
   "guest",
+  "review-business",
+  "review-arch",
+  "review-style",
+  "review-history",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
+
+/** Light = today's single reviewer; heavier tiers add independent checks for larger changes. */
+export function defaultReviewTiers() {
+  return [
+    { id: "full", name: "完整", guide: "", checks: ["reviewer", "review-business", "review-arch", "review-history", "review-style"], maxRounds: 3,
+      when: { any: [{ field: "change.repos", op: "gte", value: 2 }, { field: "change.lines", op: "gte", value: 600 }, { field: "change.paths", op: "contains", value: "migration" }] } },
+    { id: "standard", name: "标准", guide: "", checks: ["reviewer", "review-business", "review-style"], maxRounds: 3,
+      when: { any: [{ field: "change.lines", op: "gte", value: 80 }, { field: "change.files", op: "gte", value: 3 }] } },
+    { id: "light", name: "轻", guide: "", checks: ["reviewer"], maxRounds: 3, when: null },
+  ];
+}
 
 export const capturePolicy = z.enum(["ingest", "involved", "store", "skip"]);
 export type CapturePolicy = z.infer<typeof capturePolicy>;
@@ -127,6 +142,30 @@ export const configSchema = z.object({
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.
    */
+  /**
+   * Code review after a delegation (docs/v2/review.md): ordered tiers, the first whose condition
+   * matches the change decides which review checks run; checks are built-in review roles or agent
+   * specs. Conditions use the rule condition shape and are validated in src/agents/review.ts.
+   */
+  review: z
+    .object({
+      tiers: z.array(z.object({
+        id: z.string().regex(/^[a-z0-9-]{1,32}$/),
+        name: z.string().trim().min(1).max(20),
+        when: z.any().nullable().default(null),
+        /** The owner's words on when this tier fits; a model weighs them against the change. */
+        guide: z.string().max(2000).default(""),
+        checks: z.array(z.string()).min(1).max(12),
+        maxRounds: z.number().int().min(1).max(10).default(3),
+      })).min(1).max(12).default(() => defaultReviewTiers()),
+      checks: z.record(z.string(), z.object({
+        label: z.string().trim().min(1).max(12),
+        blocks: z.enum(["blocker", "major", "minor"]).default("major"),
+        when: z.any().nullable().default(null),
+        guide: z.string().max(2000).default(""),
+      })).default({}),
+    })
+    .default(() => ({ tiers: defaultReviewTiers(), checks: {} })),
   approvals: z.object({ tools: z.array(z.string()).default([]), waitSeconds: z.number().int().min(0).max(50).default(40) }).default({ tools: [], waitSeconds: 40 }),
   /** This instance among its peers (`omem peer`): defaults to the host name. */
   node: z.object({ id: z.string().optional() }).default({}),

@@ -426,3 +426,12 @@ updated: 2026-10-24
 - 工作集并入事项：事项加材料清单（`item_materials`），简报和变更视图挂在事项上。
 - 评审结果放在运行详情的“概览 / 变更 / 评审 / 活动”标签里，讲解与就地提问用右侧抽屉；去掉独立三栏页面、首次引导和行内气泡。新原型 `docs/v2/design/review-prototype.html` 直接引用 `web/src/styles.css`。
 - 落地顺序改为：可配置多评审项 → review-lead 协调 → 事项材料与简报 → 变更视图。
+
+## 分档评审第一阶段（10-24）
+
+- `config.review`：有序档位（默认轻 / 标准 / 完整，`when` 条件、`guide` 一句话说明、`checks`、`maxRounds`）和评审项设置（`label`、`blocks` 阻塞级别、`when`、`guide`）。条件字段为宿主算的改动指标（行数、文件数、仓库数、路径、检查是否通过、任务原文），比较新增 `gte / lte`。第一轮先按条件选档，再请模型对照说明判断能否升档、加评审项。
+- 新内置角色 `review-business` / `review-arch` / `review-style` / `review-history`；Agent 档案挂成评审项后也可参加。评审项运行时只给只读工具和 `submit_review`，不带额外 MCP，不能写。
+- `submit_review` 写 `reviews` / `review_findings`；没调用的按文字结论兜底。达到该项阻塞级别的问题合成修改单交给编码续轮；轮数上限随档位（`CodeChain.maxRounds`）。
+- `delegate_code` 新增 `review_tier`、`review_checks`；`/api/delegate` 接受 `reviewTier`。接口：`/api/review-settings`、`/api/review-options`、`/api/runs/:id/reviews`、`/api/runs/:id/file`。
+- 界面：Agent 页“评审”标签；运行详情“本次评审”、按行号的 diff 与上下展开、选中内容就地提问（每个运行一个问答会话）。
+- 同期修正：定时规则“先给我看”发到飞书会话时草稿落到原话题，网页会话按直接回复；归档迁移只让两个相关空间的向量重新加载。

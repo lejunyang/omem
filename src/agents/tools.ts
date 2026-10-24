@@ -2220,7 +2220,7 @@ def({
 def({
   name: "delegate_code",
   description:
-    "交办编码任务：每个涉及的代码仓库空间各开一个独立 Git worktree，由同一个编码 Agent 一起实现，分别运行检查，再由评审 Agent 审查；应用时所有仓库一起应用。改过的文件在工作区存在期间可检索（交办工作区空间）。返回运行 id，可用 read_run 查看进度。仅在用户明确要求实现/修改代码时使用。",
+    "交办编码任务：每个涉及的代码仓库空间各开一个独立 Git worktree，由同一个编码 Agent 一起实现，分别运行检查，再按评审档位由一个或几个评审项（功能、业务、架构、规范、历史，或本人建的专项）各自独立审查；应用时所有仓库一起应用。改过的文件在工作区存在期间可检索（交办工作区空间）。返回运行 id，可用 read_run 查看进度。仅在用户明确要求实现/修改代码时使用。",
   write: true,
   schema: z.object({
     execution: executionSchema.optional().describe("编码 AI 的临时选择"),
@@ -2230,9 +2230,15 @@ def({
     check_command: z.string().optional().describe("验证命令，如 npm test；对所有仓库生效，除非 check_commands 单独指定"),
     check_commands: z.record(z.string(), z.string()).optional().describe("按仓库空间 id 指定的验证命令"),
     space: z.string().optional().describe("任务所属的空间（如项目空间），默认第一个仓库"),
+    review_tier: z.string().optional().describe("本人点名的评审档位（id 或名字，如“完整”）；不传按改动大小自动选"),
+    review_checks: z.array(z.string()).optional().describe("本人要求额外加上的评审项（档案名，如 security-review）"),
   }),
   handler: async (ctx, a) => {
     const execution = validateExecution(ctx.app, a.execution);
+    const { reviewTiers, reviewChecks } = await import("./review.ts");
+    if (a.review_tier && !reviewTiers(ctx.app).some((t) => t.id === a.review_tier || t.name === a.review_tier)) throw new HttpError(400, `没有评审档位 ${a.review_tier}；可选：${reviewTiers(ctx.app).map((t) => t.name).join("、")}`);
+    const unknownChecks = (a.review_checks ?? []).filter((c) => !reviewChecks(ctx.app).some((x) => x.name === c));
+    if (unknownChecks.length) throw new HttpError(400, `没有评审项 ${unknownChecks.join("、")}；可选：${reviewChecks(ctx.app).map((x) => `${x.name}（${x.label}）`).join("、")}`);
     const reviewExecution = validateExecution(ctx.app, a.review_execution);
     const ids = [...new Set(a.repo_spaces.map((r) => writeSpace(ctx, r)))];
     const home = a.space ? space(ctx, a.space) : ids[0];
@@ -2242,7 +2248,7 @@ def({
       kind: "code",
       spaceId: home,
       title: truncate(a.task.split("\n")[0], 80),
-      input: { task: a.task, execution, reviewExecution, checkCommand: a.check_command, repos: ids, checks: a.check_commands },
+      input: { task: a.task, execution, reviewExecution, checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks },
       parentId: ctx.runId,
     });
     // Seed the chain so later rounds (and the Feishu progress topic) find the original ask.
@@ -2432,6 +2438,35 @@ def({
     const { applyCodeRun } = await import("./code.ts");
     const res = applyCodeRun(ctx.app, a.run_id);
     return `已把运行 ${a.run_id} 的改动应用到 ${res.spaces.join("、")} 的工作区（未提交），请在仓库里检查后提交。交办的 worktree 和它的临时索引已删除。`;
+  },
+});
+
+def({
+  name: "submit_review",
+  description: "评审项提交这一轮的结论和问题清单（只在交办编码的评审里可用）。每条问题写清严重级别、文件和行、问题、建议和依据；没有问题时 findings 传空数组。提交后再用文字写结论。",
+  schema: z.object({
+    verdict: z.enum(["approved", "changes_requested"]).describe("approved = 通过；changes_requested = 需要修改"),
+    summary: z.string().min(1).max(4000).describe("一两句话的结论，没有问题时写清查了什么"),
+    findings: z.array(z.object({
+      severity: z.enum(["blocker", "major", "minor", "nit"]).describe("blocker 阻断 / major 严重 / minor 一般 / nit 提示"),
+      file: z.string().max(500).optional().describe("仓库内路径；几个仓库时写成 仓库空间id/路径"),
+      line: z.number().int().min(1).optional(),
+      title: z.string().min(1).max(200),
+      detail: z.string().max(4000).optional(),
+      suggestion: z.string().max(4000).optional(),
+      evidence: z.array(z.string().max(300)).max(20).optional().describe("依据：src:<原件id>#L起-L止、mem:<id>，或 文件:行"),
+      confidence: z.enum(["high", "medium", "low"]).optional(),
+    })).max(100),
+  }),
+  handler: async (ctx, a) => {
+    const check = ctx.spec ?? ctx.role;
+    const r = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+    const plan = (r?.output as { reviewPlan?: import("./review.ts").ReviewPlan } | undefined)?.reviewPlan;
+    if (!r || r.kind !== "code" || !check || !plan?.checks.includes(check)) throw new HttpError(400, "submit_review 只能在交办编码的评审项里使用");
+    const { findingSchema, recordReview } = await import("./review.ts");
+    const findings = a.findings.map((f) => findingSchema.parse(f));
+    recordReview(ctx.app, { codeRunId: r.id, round: (r.input as { round?: number }).round ?? 1, check, tier: plan.tier, verdict: a.verdict, summary: a.summary, findings, ai: { profile: ctx.agentProfile, model: ctx.model ?? undefined, effort: ctx.effort ?? undefined } });
+    return `已记录评审结论（${a.verdict === "approved" ? "通过" : "需要修改"}，${findings.length} 条问题）。接着用文字写结论。`;
   },
 });
 

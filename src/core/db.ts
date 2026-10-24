@@ -628,6 +628,15 @@ const migrations: string[] = [
    create table source_moves(id integer primary key autoincrement, source_id text not null, from_space text not null, to_space text not null, reason text not null, at text not null);`,
   `alter table archive_rules drop column priority;
    update archive_rules set body = json_remove(body, '$.priority');`,
+  // Structured code review (docs/v2/review.md): one row per check per round, findings under it.
+  `create table reviews(id text primary key, code_run_id text not null references runs(id) on delete cascade, round integer not null default 1,
+     check_name text not null, tier text, profile_id text, model text, effort text, verdict text not null, summary text not null default '',
+     status text not null default 'done', created_at text not null);
+   create index reviews_run on reviews(code_run_id, round);
+   create table review_findings(id integer primary key autoincrement, review_id text not null references reviews(id) on delete cascade,
+     severity text not null, file_path text, line integer, title text not null, detail text not null default '', suggestion text not null default '',
+     evidence text not null default '[]', confidence text not null default 'medium', state text not null default 'open');
+   create index review_findings_review on review_findings(review_id);`,
 ];
 
 export type Db = DatabaseSync;
