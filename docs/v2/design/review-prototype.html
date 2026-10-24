@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>评审方案原型</title>
+<!-- 直接用网页的样式 token 和公共类；下面只补 App.vue、Agents.vue、Runs.vue 和 Ui* 组件里的 scoped 样式。 -->
+<link rel="stylesheet" href="../../../web/src/styles.css" />
+<style>
+  /* ---- 外壳（App.vue） ---- */
+  .shell { display: flex; height: 100%; }
+  .side { width: var(--sidebar); flex: none; border-right: 1px solid var(--line); background: var(--sunken); display: flex; flex-direction: column; gap: 12px; padding: 14px 12px; overflow-y: auto; }
+  .brand { padding: 2px 6px; font-size: 16px; gap: 10px; }
+  .space-pick { display: grid; gap: 4px; padding: 0 4px; }
+  .search-btn { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line-strong); background: var(--panel); border-radius: 8px; padding: 7px 10px; color: var(--muted); text-align: left; }
+  .search-btn span { flex: 1; }
+  nav.main-nav { display: grid; gap: 1px; }
+  .nav { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; color: var(--ink-2); font-weight: 500; }
+  .nav:hover { background: var(--hover); text-decoration: none; }
+  .nav.on { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+  .main { flex: 1; min-width: 0; overflow-y: auto; position: relative; }
+  .topbar { display: none; }
+  .proto-note { font-size: 11.5px; color: var(--muted); padding: 0 6px; }
+
+  /* ---- Ui 组件的静态外观 ---- */
+  .ui-select { display: inline-flex; align-items: center; gap: 6px; width: 100%; min-width: 0; height: 36px; padding: 0 10px 0 11px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); color: var(--ink); text-align: left; }
+  .ui-select.sm { height: 30px; font-size: 13px; padding: 0 8px 0 9px; }
+  .ui-select .value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ui-select svg { color: var(--muted); }
+  .ui-seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 9px; background: var(--sunken); border: 1px solid var(--line); max-width: 100%; overflow-x: auto; }
+  .ui-seg button { border: 0; background: none; color: var(--ink-2); height: 30px; padding: 0 12px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+  .ui-seg.sm button { height: 24px; padding: 0 9px; font-size: 12.5px; }
+  .ui-seg button.on { background: var(--panel); color: var(--ink); font-weight: 550; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  .ui-check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; min-width: 0; }
+  .ui-check .box { flex: none; width: 17px; height: 17px; border-radius: 5px; border: 1.5px solid var(--line-strong); background: var(--panel); display: inline-flex; align-items: center; justify-content: center; color: var(--accent-ink); }
+  .ui-check.on .box { background: var(--accent); border-color: var(--accent); }
+  .ui-check .box.switch { width: 32px; height: 18px; border-radius: 999px; justify-content: flex-start; padding: 0 2px; background: var(--line-strong); border-color: transparent; }
+  .ui-check .knob { width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s; }
+  .ui-check.on .box.switch { background: var(--accent); }
+  .ui-check.on .knob { transform: translateX(14px); }
+
+  /* ---- 左列表 + 右详情（Agents.vue / Runs.vue） ---- */
+  .split { display: flex; height: 100%; }
+  .list-col { width: 300px; flex: none; border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .list-col.runs { width: 320px; }
+  .head { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  .tab { border: 0; background: none; padding: 4px 8px; border-radius: 6px; cursor: pointer; color: var(--ink-2); font-size: 13px; }
+  .tab.on { background: var(--hover); color: var(--ink); font-weight: 600; }
+  .items { overflow-y: auto; padding: 6px; flex: 1; }
+  .group { font-size: 11px; color: var(--muted); padding: 10px 10px 4px; letter-spacing: .04em; display: flex; align-items: center; }
+  .li { display: flex; width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 8px; cursor: pointer; color: var(--ink); min-width: 0; gap: 8px; align-items: flex-start; font: inherit; }
+  .li:hover { background: var(--hover); }
+  .li.on { background: var(--accent-soft); }
+  .li .grow { flex: 1; min-width: 0; }
+  .li strong { font-weight: 600; }
+  .add-li { color: var(--ink-2); font-size: 13px; align-items: center; }
+  .detail { flex: 1; min-width: 0; overflow-y: auto; }
+  .pg { max-width: 880px; padding: 16px 24px 48px; display: grid; gap: 14px; }
+  .dh { gap: 10px; flex-wrap: wrap; }
+  .dh h2 { font-size: 18px; font-weight: 650; }
+  .block { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 10px; min-width: 0; background: var(--panel); }
+  .block-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .block-head h3 { margin: 0; font-size: 14px; }
+  .num { width: 64px; }
+
+  /* 条件编辑器（RuleConditions.vue） */
+  .cond { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .cond .input { height: 30px; padding: 0 9px; font-size: 13px; }
+
+  /* 档位里的评审项选择 */
+  .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+  .check-card { border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; display: grid; gap: 2px; cursor: pointer; background: var(--panel); text-align: left; font: inherit; color: var(--ink); }
+  .check-card:hover { border-color: var(--line-strong); }
+  .check-card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .check-card .top { display: flex; align-items: center; gap: 8px; }
+  .check-card .top strong { flex: 1; }
+  .opts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 18px; }
+  .opt { display: flex; align-items: center; gap: 10px; justify-content: space-between; min-width: 0; }
+  .opt > span { min-width: 0; }
+
+  /* ---- 运行详情 ---- */
+  .run-li { display: flex; gap: 10px; padding: 9px 10px; border-radius: 8px; cursor: pointer; }
+  .run-li:hover { background: var(--hover); }
+  .run-li.on { background: var(--accent-soft); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; margin-top: 8px; }
+  .dot.warn { background: var(--warn); }
+  .dot.run { background: var(--accent); }
+  .run-head { padding: 16px 24px 0; display: grid; gap: 8px; }
+  .run-head h1 { font-size: 19px; font-weight: 650; }
+  .run-tabs { padding: 0 24px; margin: 6px 0 0; }
+  .panel { padding: 16px 24px 48px; }
+  .panel.narrow { max-width: 920px; }
+  .verdict { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .verdict strong { font-size: 15px; }
+  .rv-row { display: grid; grid-template-columns: 14px 64px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
+  .rv-row:first-of-type { border-top: 0; }
+  .rv-row .dot { margin-top: 0; }
+  .sev { display: inline-flex; gap: 4px; }
+  .finding { border-top: 1px solid var(--line); padding: 10px 0; display: grid; gap: 4px; }
+  .finding .row { align-items: baseline; }
+  .finding .loc { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .finding .more { padding: 8px 10px; background: var(--sunken); border-radius: 8px; font-size: 13px; color: var(--ink-2); }
+  .delta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-2); }
+
+  /* 变更标签 */
+  .change { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; padding: 14px 24px 48px; align-items: start; }
+  .cps { position: sticky; top: 0; display: grid; gap: 4px; }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); padding: 0 4px 6px; }
+  .cp { display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; text-align: left; background: none; font: inherit; color: var(--ink); }
+  .cp:hover { background: var(--hover); }
+  .cp.on { background: var(--panel); border-color: var(--line); box-shadow: var(--shadow); }
+  .cp i { width: 8px; height: 8px; border-radius: 50%; margin-top: 7px; }
+  .cp .t { font-weight: 550; }
+  .c1 { --c: #2f5bd3; } .c2 { --c: #7a4fd0; } .c3 { --c: #0e8a7d; } .c4 { --c: #b8651b; }
+  .cp i, .tag { background: var(--c); }
+  .file { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; margin-bottom: 12px; }
+  .file-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--sunken); font-size: 13px; }
+  .file-head code { font-weight: 600; }
+  .add { color: var(--ok); } .del { color: var(--danger); }
+  .code { overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.7; }
+  .ln { display: grid; grid-template-columns: 44px 22px minmax(max-content, 1fr); min-width: 100%; }
+  .ln .no { color: var(--muted); text-align: right; padding-right: 10px; user-select: none; }
+  .ln .mk { display: flex; align-items: center; justify-content: center; }
+  .ln pre { margin: 0; padding-right: 16px; white-space: pre; font: inherit; }
+  .ln.a { background: var(--ok-soft); } .ln.d { background: var(--danger-soft); }
+  .ln.hunk { color: var(--muted); background: var(--sunken); }
+  .ln.hl { box-shadow: inset 3px 0 0 var(--c); }
+  .ln.dim { opacity: .45; }
+  .tag { width: 16px; height: 16px; border-radius: 4px; color: #fff; font: 600 9.5px/16px var(--sans); text-align: center; cursor: pointer; border: 0; padding: 0; }
+
+  /* 讲解抽屉（与 CitationDrawer 同一交互） */
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.18); z-index: 60; display: none; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--panel); border-left: 1px solid var(--line); box-shadow: var(--shadow-lg); z-index: 61; display: none; flex-direction: column; }
+  .drawer.open, .scrim.open { display: flex; }
+  .drawer header { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .drawer .body { padding: 14px 16px; overflow-y: auto; flex: 1; display: grid; gap: 14px; align-content: start; }
+  .drawer h3 { font-family: var(--serif); font-size: 16px; }
+  .drawer .ask { border-top: 1px solid var(--line); padding: 12px 16px; display: grid; gap: 8px; }
+  .cite { display: inline-flex; font-size: 11px; padding: 0 6px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); font-family: var(--mono); }
+
+  .screen { display: none; height: 100%; }
+  .screen.on { display: flex; }
+  .pane { display: none; }
+  .pane.on { display: block; }
+  .only-narrow { display: none !important; }
+
+  @media (max-width: 860px) {
+    .side { display: none; }
+    .topbar { display: flex; position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); padding: 8px 12px; }
+    .main { display: flex; flex-direction: column; }
+    .screen.on { flex: 1; min-height: 0; }
+  }
+  @media (max-width: 760px) {
+    .split { flex-direction: column; height: auto; }
+    .list-col, .list-col.runs { width: 100%; max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    .screen.on { display: block; overflow-y: auto; }
+    .pg, .panel { padding: 12px 16px 32px; }
+    .run-head { padding: 12px 16px 0; }
+    .run-tabs { padding: 0 16px; }
+    .opts { grid-template-columns: 1fr; }
+    .rv-row { grid-template-columns: 14px minmax(0, 1fr) auto; }
+    .rv-row .model, .rv-row .time { display: none; }
+    .change { grid-template-columns: 1fr; padding: 12px 16px 32px; }
+    .change.show-code .cps, .change:not(.show-code) .files { display: none; }
+    .cps { position: static; }
+    .only-narrow { display: inline-flex !important; }
+    .hide-narrow { display: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="side">
+    <div class="brand row"><svg viewBox="0 0 32 32" width="22" height="22"><rect width="32" height="32" rx="8" fill="currentColor" /><circle cx="16" cy="16" r="7" fill="none" stroke="var(--bg)" stroke-width="3" /></svg><strong>omem</strong></div>
+    <div class="space-pick"><span class="small muted">空间</span><span class="ui-select" style="font-weight:550"><span class="value">项目 A</span><i data-i="down"></i></span></div>
+    <div class="search-btn"><i data-i="search" data-s="16"></i><span>搜索或提问</span><kbd>Ctrl K</kbd></div>
+    <nav class="main-nav">
+      <a class="nav" href="#"><i data-i="home"></i>今日</a>
+      <a class="nav" href="#"><i data-i="chat"></i>问答</a>
+      <a class="nav" href="#"><i data-i="book"></i>Wiki</a>
+      <a class="nav" href="#"><i data-i="checkbox"></i>事项</a>
+      <a class="nav" href="#"><i data-i="brain"></i>记忆</a>
+      <a class="nav" href="#"><i data-i="file"></i>原件</a>
+      <a class="nav" href="#"><i data-i="cap"></i>学习</a>
+      <a class="nav" href="#settings/tier/standard" data-nav="settings"><i data-i="layers"></i>Agent</a>
+      <a class="nav" href="#"><i data-i="zap"></i>规则</a>
+      <a class="nav" href="#run/overview" data-nav="run"><i data-i="activity"></i>运行</a>
+    </nav>
+    <div class="spacer"></div>
+    <p class="proto-note">原型：只有“Agent → 评审”和“运行”可点；右侧只做了“标准”档和“安全”专项两个样例，数据为虚构。</p>
+  </aside>
+
+  <main class="main">
+    <div class="topbar row"><i data-i="menu"></i><strong>omem</strong><span class="spacer"></span>
+      <a class="btn ghost sm" href="#settings/tier/standard">评审设置</a><a class="btn ghost sm" href="#run/overview">运行</a></div>
+
+    <!-- ============ Agent 页 → 评审 ============ -->
+    <section class="screen" data-screen="settings">
+      <div class="split" style="flex:1">
+        <aside class="list-col">
+          <div class="head row">
+            <button class="tab">Agent 档案</button><button class="tab">技能</button><button class="tab on">评审</button>
+            <span class="spacer"></span>
+          </div>
+          <div class="items">
+            <div class="group">档位<span class="spacer"></span><span title="从上往下，第一个条件满足的档位生效">按顺序匹配</span></div>
+            <a class="li" href="#settings/tier/full" data-sel="tier/full"><span class="grow"><strong>完整</strong><div class="muted small">5 项评审 · 负责人协调 · 最多 3 轮</div></span></a>
+            <a class="li" href="#settings/tier/standard" data-sel="tier/standard"><span class="grow"><strong>标准</strong><div class="muted small">3 项评审 · 负责人协调 · 最多 2 轮</div></span></a>
+            <a class="li" href="#settings/tier/light" data-sel="tier/light"><span class="grow"><strong>轻</strong><div class="muted small">只做功能评审 · 其他情况都用它</div></span></a>
+            <button class="li add-li"><i data-i="plus" data-s="14"></i>新建档位</button>
+
+            <div class="group">评审项</div>
+            <a class="li" href="#settings/check/reviewer" data-sel="check/reviewer"><span class="grow"><strong>功能</strong> <span class="badge">内置</span><div class="muted small mono">reviewer · codex · high</div></span></a>
+            <a class="li" href="#settings/check/business" data-sel="check/business"><span class="grow"><strong>业务</strong> <span class="badge">内置</span><div class="muted small mono">review-business · 跟随默认</div></span></a>
+            <a class="li" href="#settings/check/arch" data-sel="check/arch"><span class="grow"><strong>架构</strong> <span class="badge">内置</span><div class="muted small mono">review-arch · claude · high</div></span></a>
+            <a class="li" href="#settings/check/style" data-sel="check/style"><span class="grow"><strong>规范</strong> <span class="badge">内置 · 已自定义</span><div class="muted small mono">review-style · codex · low</div></span></a>
+            <a class="li" href="#settings/check/history" data-sel="check/history"><span class="grow"><strong>历史</strong> <span class="badge">内置</span><div class="muted small mono">review-history · codex · low</div></span></a>
+            <a class="li" href="#settings/check/security" data-sel="check/security"><span class="grow"><strong>安全</strong> <span class="badge accent">专项</span><div class="muted small mono">security-review · claude · medium</div></span></a>
+            <button class="li add-li"><i data-i="plus" data-s="14"></i>新建专项评审</button>
+          </div>
+        </aside>
+
+        <div class="detail">
+          <!-- 档位：标准 -->
+          <div class="pane" data-pane="tier">
+            <div class="pg">
+              <header class="row dh">
+                <input class="input" style="flex:1;min-width:140px;font-size:16px;font-weight:600" value="标准" aria-label="档位名称" />
+                <button class="btn sm" title="先于“完整”匹配">↑ 上移</button>
+                <button class="btn sm primary">保存</button>
+                <button class="btn ghost sm icon danger" title="删除档位"><i data-i="trash" data-s="14"></i></button>
+              </header>
+
+              <section class="block">
+                <div class="block-head"><h3>什么时候用</h3><span class="muted small">改动指标由 omem 算好；负责人只能在此基础上升降一档</span></div>
+                <div class="row"><div class="ui-seg sm"><button class="on">满足任一</button><button>全部满足</button></div></div>
+                <div class="cond"><span class="ui-select sm" style="width:150px"><span class="value">改动行数</span><i data-i="down" data-s="14"></i></span><span class="ui-select sm" style="width:110px"><span class="value">≥</span><i data-i="down" data-s="14"></i></span><input class="input" style="width:90px" value="80" /><button class="btn ghost sm icon"><i data-i="x" data-s="13"></i></button></div>
+                <div class="cond"><span class="ui-select sm" style="width:150px"><span class="value">改动文件数</span><i data-i="down" data-s="14"></i></span><span class="ui-select sm" style="width:110px"><span class="value">≥</span><i data-i="down" data-s="14"></i></span><input class="input" style="width:90px" value="3" /><button class="btn ghost sm icon"><i data-i="x" data-s="13"></i></button></div>
+                <div class="cond"><span class="ui-select sm" style="width:150px"><span class="value">改动路径</span><i data-i="down" data-s="14"></i></span><span class="ui-select sm" style="width:110px"><span class="value">包含</span><i data-i="down" data-s="14"></i></span><input class="input" style="flex:1;min-width:120px" value="api/" /><button class="btn ghost sm icon"><i data-i="x" data-s="13"></i></button></div>
+                <div class="row"><button class="btn ghost sm"><i data-i="plus" data-s="13"></i>条件</button><span class="spacer"></span><span class="muted small">最近 30 次编码交办有 9 次落在这一档</span></div>
+              </section>
+
+              <section class="block">
+                <div class="block-head"><h3>做哪些评审</h3><span class="muted small">每项独立运行，可以用不同的模型</span></div>
+                <div class="checks">
+                  <button class="check-card on"><span class="top"><strong>功能</strong><span class="ui-check on"><span class="box"><i data-i="check" data-s="11"></i></span></span></span><span class="small muted">需求是否实现、边界与错误处理、测试</span></button>
+                  <button class="check-card on"><span class="top"><strong>业务</strong><span class="ui-check on"><span class="box"><i data-i="check" data-s="11"></i></span></span></span><span class="small muted">对照业务简报逐条核对变更点</span></button>
+                  <button class="check-card on"><span class="top"><strong>规范</strong><span class="ui-check on"><span class="box"><i data-i="check" data-s="11"></i></span></span></span><span class="small muted">只报违反项目明确约定的地方</span></button>
+                  <button class="check-card"><span class="top"><strong>架构</strong><span class="ui-check"><span class="box"></span></span></span><span class="small muted">模块边界、依赖方向、跨仓库接口</span></button>
+                  <button class="check-card"><span class="top"><strong>历史</strong><span class="ui-check"><span class="box"></span></span></span><span class="small muted">以前类似改动踩过的坑</span></button>
+                  <button class="check-card"><span class="top"><strong>安全</strong> <span class="badge accent">专项</span><span class="ui-check"><span class="box"></span></span></span><span class="small muted">改到 auth / permission 时自动加上</span></button>
+                </div>
+              </section>
+
+              <section class="block">
+                <div class="block-head"><h3>怎么推进</h3></div>
+                <div class="opts">
+                  <label class="opt"><span>由评审负责人协调<div class="muted small">去重、裁决、只复审受影响的项</div></span><span class="ui-check on"><span class="box switch"><span class="knob"></span></span></span></label>
+                  <label class="opt"><span>最多自动修改几轮</span><input class="input num" value="2" /></label>
+                  <label class="opt"><span>开始前给我看评审计划</span><span class="ui-check"><span class="box switch"><span class="knob"></span></span></span></label>
+                  <label class="opt"><span>业务简报</span><span class="ui-seg sm"><button>不写</button><button class="on">写，不等我</button><button>等我确认</button></span></label>
+                </div>
+                <p class="muted small" style="margin:0">每轮大约 3 个评审运行 + 1 个协调运行。</p>
+              </section>
+            </div>
+          </div>
+
+          <!-- 评审项：安全（专项） -->
+          <div class="pane" data-pane="check">
+            <div class="pg">
+              <header class="row dh">
+                <h2>安全</h2><span class="badge accent">专项</span><span class="muted small mono">security-review</span>
+                <span class="spacer"></span>
+                <a class="btn sm" href="#">编辑提示词、默认 AI 和技能 <i data-i="right" data-s="13"></i></a>
+                <button class="btn sm primary">保存</button>
+              </header>
+              <p class="muted" style="margin:0">只看鉴权、注入、密钥和越权；没有具体代码行做依据的不报。</p>
+
+              <section class="block">
+                <div class="block-head"><h3>用在哪些档位</h3></div>
+                <div class="row wrap">
+                  <span class="ui-check on"><span class="box"><i data-i="check" data-s="13"></i></span>完整</span>
+                  <span class="ui-check"><span class="box"></span>标准</span>
+                  <span class="ui-check"><span class="box"></span>轻</span>
+                </div>
+              </section>
+
+              <section class="block">
+                <div class="block-head"><h3>额外在什么时候加上</h3><span class="muted small">不管哪个档位，满足就加进本次评审</span></div>
+                <div class="row"><div class="ui-seg sm"><button class="on">满足任一</button><button>全部满足</button></div></div>
+                <div class="cond"><span class="ui-select sm" style="width:150px"><span class="value">改动路径</span><i data-i="down" data-s="14"></i></span><span class="ui-select sm" style="width:110px"><span class="value">包含</span><i data-i="down" data-s="14"></i></span><input class="input" style="flex:1;min-width:120px" value="auth" /><button class="btn ghost sm icon"><i data-i="x" data-s="13"></i></button></div>
+                <div class="cond"><span class="ui-select sm" style="width:150px"><span class="value">改动路径</span><i data-i="down" data-s="14"></i></span><span class="ui-select sm" style="width:110px"><span class="value">包含</span><i data-i="down" data-s="14"></i></span><input class="input" style="flex:1;min-width:120px" value="permission" /><button class="btn ghost sm icon"><i data-i="x" data-s="13"></i></button></div>
+                <div><button class="btn ghost sm"><i data-i="plus" data-s="13"></i>条件</button></div>
+              </section>
+
+              <section class="block">
+                <div class="block-head"><h3>什么级别的问题挡住应用</h3></div>
+                <div class="ui-seg sm" style="justify-self:start"><button>阻断</button><button class="on">严重及以上</button><button>一般及以上</button></div>
+                <p class="muted small" style="margin:0">低于这一级的问题列在结论里，不要求编码 Agent 再改一轮。</p>
+              </section>
+
+              <section class="block">
+                <div class="block-head"><h3>默认 AI</h3><span class="muted small">在档案页修改</span></div>
+                <div class="row wrap small"><span class="badge">claude</span><span class="badge">claude-sonnet</span><span class="badge">medium</span><span class="muted">评审项只能用只读工具，不能写文件、发消息或交办</span></div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 运行详情 ============ -->
+    <section class="screen" data-screen="run">
+      <div class="split" style="flex:1">
+        <aside class="list-col runs hide-narrow">
+          <div class="head row"><strong>运行记录</strong><span class="spacer"></span><button class="btn sm"><i data-i="code" data-s="14"></i>交办</button></div>
+          <div class="items">
+            <div class="run-li on"><span class="dot warn"></span><span class="grow"><div class="ellipsis">编码：订单部分退款</div><div class="muted small">编码 · 等你应用 · 12 分钟前</div></span></div>
+            <div class="run-li"><span class="dot"></span><span class="grow"><div class="ellipsis">评审负责人：第 2 轮汇总</div><div class="muted small">评审 · 完成 · 13 分钟前</div></span></div>
+            <div class="run-li"><span class="dot"></span><span class="grow"><div class="ellipsis">业务评审：第 2 轮</div><div class="muted small">评审 · 完成 · 14 分钟前</div></span></div>
+            <div class="run-li"><span class="dot"></span><span class="grow"><div class="ellipsis">整理新材料：退款需求讨论</div><div class="muted small">整理 · 完成 · 1 小时前</div></span></div>
+          </div>
+        </aside>
+
+        <div class="detail">
+          <div class="run-head">
+            <div class="row wrap"><span class="badge">编码交办</span><span class="badge accent">标准档</span><a class="small" href="#">事项：订单部分退款</a></div>
+            <div class="row wrap">
+              <h1>订单部分退款</h1><span class="spacer"></span>
+              <button class="btn sm">丢弃</button><button class="btn sm primary">应用到仓库</button>
+            </div>
+            <div class="row wrap small muted"><span>2 个仓库 · 4 个文件 · +126 −18</span><span>·</span><span>检查通过</span><span class="spacer"></span>
+              <span class="ui-seg sm"><button>第 1 轮</button><button class="on">第 2 轮</button></span></div>
+          </div>
+          <div class="tabs run-tabs">
+            <button data-tab="overview">概览</button><button data-tab="change">变更</button><button data-tab="reviews">评审</button><button data-tab="activity">活动</button>
+          </div>
+
+          <!-- 概览：本次评审 -->
+          <div class="pane" data-pane="overview">
+            <div class="panel narrow stack">
+              <div class="card pad stack">
+                <div class="verdict"><span class="badge ok">评审通过</span><strong>可以应用</strong><span class="muted small">第 2 轮 · 负责人汇总于 13 分钟前</span><span class="spacer"></span><a class="small" href="#run/reviews">每项的完整过程 →</a></div>
+                <div class="delta"><span>相对第 1 轮：</span><span>已修复 <b>2</b></span><span>仍存在 <b>0</b></span><span>新出现 <b>1</b>（一般）</span></div>
+                <div>
+                  <div class="rv-row"><span class="dot"></span><strong>功能</strong><span class="muted small ellipsis">实现完整，并发重复提交已有幂等保护</span><span class="sev"><span class="badge">一般 1</span></span><span class="muted small model mono">codex · high</span></div>
+                  <div class="rv-row"><span class="dot"></span><strong>业务</strong><span class="muted small ellipsis">4 个变更点都已实现；C4 是需求外行为，已记入简报</span><span class="sev"><span class="badge">无问题</span></span><span class="muted small model mono">跟随默认</span></div>
+                  <div class="rv-row"><span class="dot"></span><strong>规范</strong><span class="muted small ellipsis">符合仓库约定</span><span class="sev"><span class="badge">提示 2</span></span><span class="muted small model mono">codex · low</span></div>
+                </div>
+              </div>
+
+              <div class="card pad">
+                <div class="row"><div class="section-title" style="margin:0">待处理问题</div><span class="spacer"></span><span class="ui-seg sm"><button class="on">未解决 1</button><button>全部 5</button></span></div>
+                <div class="finding">
+                  <div class="row wrap"><span class="badge">一般</span><strong>退款失败时没有回写订单备注</strong><span class="spacer"></span><span class="muted small">功能</span></div>
+                  <div class="row wrap small"><a class="loc" href="#">shop-api · src/refund.ts:104</a><span class="muted">负责人：接受，不阻塞应用</span></div>
+                  <div class="more">建议在 catch 里调用 <code>appendOrderNote</code>，和下单失败的处理保持一致。依据 <span class="cite">src:订单状态说明#L40-L52</span></div>
+                </div>
+                <div class="finding">
+                  <div class="row wrap"><span class="badge ok">已修复</span><span class="muted">库存回补可能超过可退数量</span><span class="spacer"></span><span class="muted small">功能 · 架构</span></div>
+                </div>
+                <div class="finding">
+                  <div class="row wrap"><span class="badge ok">已修复</span><span class="muted">两笔并发退款可能重复回补</span><span class="spacer"></span><span class="muted small">功能</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 变更 -->
+          <div class="pane" data-pane="change">
+            <div class="change" id="change">
+              <div class="row only-narrow" style="margin-bottom:8px"><span class="ui-seg sm"><button class="on" data-narrow="cps">变更点</button><button data-narrow="code">代码</button></span></div>
+              <div class="cps">
+                <div class="legend"><span>来自业务简报</span><span>·</span><span>点一条只看它的代码</span></div>
+                <button class="cp c1 on" data-cp="c1"><i></i><span><div class="t">C1 按已发货行计算可退金额</div><div class="muted small">已实现 · refund.ts</div></span></button>
+                <button class="cp c2" data-cp="c2"><i></i><span><div class="t">C2 同一订单退款幂等</div><div class="muted small">已实现 · refund.ts</div></span></button>
+                <button class="cp c3" data-cp="c3"><i></i><span><div class="t">C3 只回补未发货行库存</div><div class="muted small">第 2 轮修复</div></span></button>
+                <button class="cp c4" data-cp="c4"><i></i><span><div class="t">C4 发出财务对账事件</div><div class="muted small"><span class="badge warn">需求外</span> ledger.ts</div></span></button>
+              </div>
+              <div class="files">
+                <div class="file">
+                  <div class="file-head"><span class="muted">shop-api</span><code>src/refund.ts</code><span class="spacer"></span><span class="add">+94</span><span class="del">−12</span><span class="ui-seg sm"><button class="on">改动</button><button>完整文件</button></span></div>
+                  <div class="code">
+                    <div class="ln hunk"><span class="no"></span><span class="mk"></span><pre>@@ -70,6 +70,24 @@</pre></div>
+                    <div class="ln a c1 hl" data-of="c1"><span class="no">72</span><span class="mk"><button class="tag c1" data-open="c1">1</button></span><pre>export function refundableLines(order: Order): Line[] {</pre></div>
+                    <div class="ln a c1 hl" data-of="c1"><span class="no">73</span><span class="mk"></span><pre>  return order.lines.filter((l) =&gt; l.shippedAt == null &amp;&amp; !l.refunded);</pre></div>
+                    <div class="ln a c1 hl" data-of="c1"><span class="no">74</span><span class="mk"></span><pre>}</pre></div>
+                    <div class="ln a c1 hl" data-of="c1"><span class="no">76</span><span class="mk"></span><pre>export function refundAmount(order: Order, lines: Line[]): number {</pre></div>
+                    <div class="ln a c1 hl" data-of="c1"><span class="no">77</span><span class="mk"></span><pre>  const couponShare = order.coupon / order.lines.length;</pre></div>
+                    <div class="ln a c1 hl" data-of="c1"><span class="no">78</span><span class="mk"></span><pre>  return sum(lines.map((l) =&gt; l.paid - couponShare));</pre></div>
+                    <div class="ln a c1 hl" data-of="c1"><span class="no">79</span><span class="mk"></span><pre>}</pre></div>
+                    <div class="ln hunk"><span class="no"></span><span class="mk"></span><pre>@@ -84,7 +102,12 @@</pre></div>
+                    <div class="ln d c3" data-of="c3"><span class="no">86</span><span class="mk"></span><pre>  await restock(lines);</pre></div>
+                    <div class="ln a c3" data-of="c3"><span class="no">88</span><span class="mk"><button class="tag c3" data-open="c3">3</button></span><pre>  await db.tx(async () =&gt; {</pre></div>
+                    <div class="ln a c2" data-of="c2"><span class="no">89</span><span class="mk"><button class="tag c2" data-open="c2">2</button></span><pre>    const idem = await lockOrderRefund(order.id, lineSet(lines));</pre></div>
+                    <div class="ln a c2" data-of="c2"><span class="no">90</span><span class="mk"></span><pre>    if (!idem) throw new RefundExistsError();</pre></div>
+                    <div class="ln a c3" data-of="c3"><span class="no">91</span><span class="mk"></span><pre>    await insertRefund(order.id, lines, refundAmount(order, lines));</pre></div>
+                    <div class="ln a c3" data-of="c3"><span class="no">92</span><span class="mk"></span><pre>    await restock(lines);</pre></div>
+                    <div class="ln a c3" data-of="c3"><span class="no">93</span><span class="mk"></span><pre>  });</pre></div>
+                  </div>
+                </div>
+                <div class="file">
+                  <div class="file-head"><span class="muted">shop-api</span><code>src/ledger.ts</code><span class="spacer"></span><span class="add">+32</span><span class="ui-seg sm"><button class="on">改动</button><button>完整文件</button></span></div>
+                  <div class="code">
+                    <div class="ln a c4" data-of="c4"><span class="no">12</span><span class="mk"><button class="tag c4" data-open="c4">4</button></span><pre>export function emitRefundLedger(refund: Refund) {</pre></div>
+                    <div class="ln a c4" data-of="c4"><span class="no">13</span><span class="mk"></span><pre>  bus.publish("ledger.refund", { id: refund.id, amount: refund.amount });</pre></div>
+                    <div class="ln a c4" data-of="c4"><span class="no">14</span><span class="mk"></span><pre>}</pre></div>
+                  </div>
+                </div>
+                <p class="muted small">另有 2 个文件：shop-web · RefundPanel.vue（C1 展示），shop-api · refunds 表迁移（C2）。</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 评审：按轮 × 评审项 -->
+          <div class="pane" data-pane="reviews">
+            <div class="panel narrow stack">
+              <div class="card pad">
+                <div class="section-title">第 2 轮</div>
+                <div class="rv-row"><span class="dot"></span><strong>负责人</strong><span class="muted small">汇总：接受 1、驳回 0；通过</span><span class="muted small time">1 分 10 秒</span><a class="small" href="#">过程</a></div>
+                <div class="rv-row"><span class="dot"></span><strong>功能</strong><span class="muted small">通过 · 一般 1</span><span class="muted small time">3 分 02 秒</span><a class="small" href="#">过程</a></div>
+                <div class="rv-row"><span class="dot"></span><strong>业务</strong><span class="muted small">通过</span><span class="muted small time">2 分 41 秒</span><a class="small" href="#">过程</a></div>
+                <div class="rv-row"><span class="dot"></span><strong>规范</strong><span class="muted small">只复审改动的 1 个文件 · 通过</span><span class="muted small time">48 秒</span><a class="small" href="#">过程</a></div>
+              </div>
+              <div class="card pad">
+                <div class="section-title">第 1 轮</div>
+                <div class="rv-row"><span class="dot warn"></span><strong>负责人</strong><span class="muted small">汇总：接受 2（严重）、驳回 1；要改</span><span class="muted small time">1 分 31 秒</span><a class="small" href="#">过程</a></div>
+                <div class="rv-row"><span class="dot warn"></span><strong>功能</strong><span class="muted small">要改 · 严重 2</span><span class="muted small time">3 分 40 秒</span><a class="small" href="#">过程</a></div>
+                <div class="rv-row"><span class="dot"></span><strong>业务</strong><span class="muted small">通过 · 提示 C4 是需求外行为</span><span class="muted small time">2 分 55 秒</span><a class="small" href="#">过程</a></div>
+                <div class="rv-row"><span class="dot"></span><strong>规范</strong><span class="muted small">通过 · 提示 2</span><span class="muted small time">1 分 05 秒</span><a class="small" href="#">过程</a></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="pane" data-pane="activity"><div class="panel narrow"><p class="muted">现有的运行事件流，不变。</p></div></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- 讲解抽屉 -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="讲解">
+  <header class="row"><span class="badge" id="d-badge">C3</span><strong id="d-title">只回补未发货行库存</strong><span class="spacer"></span><button class="btn ghost sm icon" id="d-close" aria-label="关闭"><i data-i="x" data-s="15"></i></button></header>
+  <div class="body">
+    <div class="stack" style="gap:6px"><div class="section-title" style="margin:0">需求怎么说</div><p style="margin:0">退款只回补还没发货的行；已发货的行退货入库走仓储流程，不在这里回补。<span class="cite">src:退款需求#L31-L38</span></p></div>
+    <div class="stack" style="gap:6px"><div class="section-title" style="margin:0">代码怎么做</div><p style="margin:0">回补挪进退款事务里，和插入退款记录一起提交；回补数量来自 <code>refundableLines</code>，不会超过可退数量。<a href="#">refund.ts:88-93</a></p></div>
+    <div class="stack" style="gap:6px"><div class="section-title" style="margin:0">为什么改了两轮</div><p style="margin:0">第 1 轮回补在事务外执行，功能评审指出两笔并发退款会重复回补（严重）；负责人接受，第 2 轮修复后复审通过。</p></div>
+  </div>
+  <div class="ask">
+    <textarea class="input" rows="2" placeholder="就这一条提问，例如：行锁能挡住两笔并发退款吗？"></textarea>
+    <div class="row"><span class="muted small">只读这个事项的材料、简报和改动</span><span class="spacer"></span><button class="btn sm primary"><i data-i="send" data-s="13"></i>问一下</button></div>
+  </div>
+</aside>
+
+<script>
+  const paths = {
+    home: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z",
+    chat: "M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z",
+    book: "M4 19.5V5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zm0 0A2 2 0 0 0 6 22h13M8 7h7M8 11h5",
+    file: "M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8zM14 3v5h5M9 13h6M9 17h6",
+    brain: "M9 4a3 3 0 0 0-3 3v.2A3 3 0 0 0 4 10a3 3 0 0 0 1 2.2A3 3 0 0 0 6 17a3 3 0 0 0 3 3 3 3 0 0 0 3-3V7a3 3 0 0 0-3-3zm6 0a3 3 0 0 1 3 3v.2a3 3 0 0 1 2 2.8 3 3 0 0 1-1 2.2 3 3 0 0 1-1 4.8 3 3 0 0 1-3 3 3 3 0 0 1-3-3",
+    check: "M4 12.5 9 17.5 20 6.5",
+    checkbox: "M9 11l3 3 8-8M20 12v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h11",
+    activity: "M3 12h4l3-8 4 16 3-8h4",
+    cap: "M2 9l10-5 10 5-10 5zM6 11v5c3 2.5 9 2.5 12 0v-5M22 9v6",
+    search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4",
+    plus: "M12 5v14M5 12h14",
+    x: "M6 6l12 12M18 6 6 18",
+    right: "M9 18l6-6-6-6",
+    down: "M6 9l6 6 6-6",
+    trash: "M4 7h16M10 11v6M14 11v6M5 7l1 13a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-13M9 7V4h6v3",
+    send: "M4 12 20 4l-6 16-3-7z",
+    code: "M8 8l-5 4 5 4M16 8l5 4-5 4M14 4l-4 16",
+    menu: "M4 6h16M4 12h16M4 18h16",
+    zap: "M13 3 4 14h7l-1 7 9-11h-7z",
+    layers: "M12 2 2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
+  };
+  for (const el of document.querySelectorAll("i[data-i]")) {
+    const s = el.dataset.s || 17;
+    el.outerHTML = `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none"><path d="${paths[el.dataset.i]}"/></svg>`;
+  }
+
+  const CP = {
+    c1: ["C1", "按已发货行计算可退金额", "可退金额 = 未发货行的实付分摊；优惠券按行均摊后扣减。", "refund.ts:72-79"],
+    c2: ["C2", "同一订单退款幂等", "同一订单重复提交只生成一笔退款；订单号 + 行项目集合作为幂等键。", "refund.ts:89-90"],
+    c3: ["C3", "只回补未发货行库存", "退款只回补还没发货的行；已发货的行退货入库走仓储流程。", "refund.ts:88-93"],
+    c4: ["C4", "发出财务对账事件", "需求没有提到；业务评审标为需求外行为，负责人建议保留并补进简报。", "ledger.ts:12-14"],
+  };
+  const drawer = document.getElementById("drawer"), scrim = document.getElementById("scrim");
+  function openDrawer(id) {
+    const [no, title] = CP[id];
+    document.getElementById("d-badge").textContent = no;
+    document.getElementById("d-title").textContent = title;
+    drawer.classList.add("open"); scrim.classList.add("open");
+  }
+  function closeDrawer() { drawer.classList.remove("open"); scrim.classList.remove("open"); }
+  scrim.onclick = closeDrawer;
+  document.getElementById("d-close").onclick = closeDrawer;
+  addEventListener("keydown", (e) => e.key === "Escape" && closeDrawer());
+
+  function pickCp(id) {
+    for (const b of document.querySelectorAll(".cp")) b.classList.toggle("on", b.dataset.cp === id);
+    for (const l of document.querySelectorAll(".ln[data-of]")) { l.classList.toggle("hl", l.dataset.of === id); l.classList.toggle("dim", l.dataset.of !== id); }
+  }
+  for (const b of document.querySelectorAll(".cp")) b.onclick = () => { pickCp(b.dataset.cp); if (matchMedia("(max-width: 760px)").matches) setNarrow("code"); };
+  for (const t of document.querySelectorAll(".tag")) t.onclick = () => { pickCp(t.dataset.open); openDrawer(t.dataset.open); };
+  function setNarrow(which) {
+    document.getElementById("change").classList.toggle("show-code", which === "code");
+    for (const b of document.querySelectorAll("[data-narrow]")) b.classList.toggle("on", b.dataset.narrow === which);
+  }
+  for (const b of document.querySelectorAll("[data-narrow]")) b.onclick = () => setNarrow(b.dataset.narrow);
+  for (const b of document.querySelectorAll("[data-tab]")) b.onclick = () => (location.hash = `run/${b.dataset.tab}`);
+
+  // #settings/tier/standard · #settings/check/security · #run/overview · #run/change · #run/change/c3（打开抽屉）
+  function route() {
+    const [screen = "settings", a = "tier", b = "standard"] = location.hash.slice(1).split("/").filter(Boolean);
+    for (const s of document.querySelectorAll(".screen")) s.classList.toggle("on", s.dataset.screen === screen);
+    for (const n of document.querySelectorAll("[data-nav]")) n.classList.toggle("on", n.dataset.nav === screen);
+    closeDrawer();
+    if (screen === "settings") {
+      for (const p of document.querySelectorAll("[data-screen=settings] .pane")) p.classList.toggle("on", p.dataset.pane === a);
+      for (const l of document.querySelectorAll("[data-sel]")) l.classList.toggle("on", l.dataset.sel === `${a}/${b}`);
+    } else {
+      for (const p of document.querySelectorAll("[data-screen=run] .pane")) p.classList.toggle("on", p.dataset.pane === a);
+      for (const t of document.querySelectorAll("[data-tab]")) t.classList.toggle("on", t.dataset.tab === a);
+      if (a === "change") { pickCp(b && CP[b] ? b : "c1"); if (b && CP[b]) openDrawer(b); }
+    }
+  }
+  addEventListener("hashchange", route);
+  route();
+</script>
+</body>
+</html>
