@@ -21,6 +21,7 @@ const detail = ref<{ item: Item; events: ItemEvent[]; excerpts?: Record<string, 
 const quick = ref("");
 const viaAssistant = ref(true);
 const note = ref("");
+const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 
 const loading = ref(true);
 async function load() {
@@ -124,13 +125,13 @@ function parseRef(r: string) {
           <router-link v-for="i in c.items" :key="i.id" :to="`/items/${i.id}`" class="card item" :class="{ on: detail?.item.id === i.id, p1: i.priority === 1 }">
             <div class="row top">
               <button class="check" :title="'标记完成'" @click.prevent="setStatus(i, 'done')"><Icon name="check" :size="12" /></button>
-              <span class="ttl">{{ i.title }}</span>
+              <span class="ttl" :title="i.title">{{ i.title }}</span>
             </div>
             <div class="sub muted small row wrap">
               <span v-if="i.remindAt" :class="{ due: new Date(i.remindAt) < new Date() }"><Icon name="bell" :size="12" /> {{ fmtTime(i.remindAt) }}</span>
               <span v-if="i.dueAt"><Icon name="clock" :size="12" /> 截止 {{ fmtTime(i.dueAt) }}</span>
-              <span v-if="i.waitingOn"><Icon name="user" :size="12" /> {{ i.waitingOn }}</span>
-              <span v-if="i.spaceId !== 'personal'" class="badge">{{ i.spaceId }}</span>
+              <span v-if="i.waitingOn" class="wait"><Icon name="user" :size="12" /><span>{{ i.waitingOn }}</span></span>
+              <span v-if="i.spaceId !== 'personal'" class="badge space" :title="spaceName(i.spaceId)">{{ spaceName(i.spaceId) }}</span>
             </div>
           </router-link>
           <Skeleton v-if="loading && !items.length" variant="cards" :rows="2" />
@@ -246,6 +247,10 @@ function parseRef(r: string) {
   margin-left: auto;
   font-weight: 500;
 }
+.col,
+.cards {
+  min-width: 0;
+}
 .cards {
   display: grid;
   gap: 8px;
@@ -253,6 +258,7 @@ function parseRef(r: string) {
 .item {
   display: grid;
   gap: 6px;
+  min-width: 0;
   padding: 10px 12px;
   color: inherit;
   transition: border-color 0.12s;
@@ -271,7 +277,14 @@ function parseRef(r: string) {
   align-items: flex-start;
 }
 .ttl {
+  min-width: 0;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
 }
 .check {
   flex: none;
@@ -295,10 +308,32 @@ function parseRef(r: string) {
   gap: 10px;
   padding-left: 26px;
 }
-.sub span {
+.sub > span {
   display: inline-flex;
   gap: 3px;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+.sub > .wait {
+  align-items: flex-start;
+  overflow-wrap: anywhere;
+}
+.sub > .wait > svg {
+  flex: none;
+  margin-top: 3px;
+}
+.sub > .wait > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.sub > .space {
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .due {
   color: var(--danger);

@@ -192,6 +192,16 @@ async function openSpace(s: Space) {
 }
 const related = ref<SpaceRelation[]>([]);
 const newRelated = ref({ space: "", note: "" });
+/** Last folder of a repo path, without the hash suffix added to cloned repos. */
+const dirName = (p: string) => (p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? p).replace(/-[0-9a-f]{12}$/, "");
+function submoduleTip(s: { settings?: Record<string, any> }) {
+  const sm = s.settings?.submodules;
+  if (!sm) return "";
+  const failed = (sm.failed ?? []).map((f: { path: string; error: string }) => `${f.path}：${f.error}`);
+  if (failed.length) return `拉取失败：\n${failed.join("\n")}`;
+  if (!sm.managed && sm.ready < sm.total) return "其余子模块需要在仓库里运行 git submodule update --init --recursive";
+  return "子模块都已检出并索引";
+}
 const relatable = computed(() => state.spaces.filter((s) => editing.value && s.id !== editing.value.id && !related.value.some((r) => r.space === s.id)).map((s) => ({ value: s.id, label: s.name })));
 async function addRelated() {
   if (!editing.value || !newRelated.value.space) return;
@@ -241,28 +251,36 @@ const defaultProfile = computed({
   get: () => config.value?.agents.default ?? "",
   set: (v: string) => saveConfig({ agents: { ...config.value.agents, default: v || undefined } }),
 });
-const fallbackText = computed({
-  get: () => JSON.stringify(config.value?.agents.fallback ?? [], null, 2),
-  set: (v: string) => (fallbackDraft.value = v),
-});
-const fallbackDraft = ref("");
-const queueMinutes = computed({
-  get: () => String(config.value?.agents.queueTimeoutMinutes ?? 30),
-  set: () => {},
-});
-async function saveFallback() {
-  let parsed: unknown;
-  try {
-    parsed = fallbackDraft.value.trim() ? JSON.parse(fallbackDraft.value) : [];
-  } catch (e) {
-    return toast(`JSON 不合法：${(e as Error).message}`, "error");
-  }
-  await saveConfig({ agents: { ...config.value.agents, fallback: parsed } }, "已保存兜底链");
+type Fallback = { profile: string; model?: string; effort?: string };
+const fallbacks = computed<Fallback[]>(() => config.value?.agents.fallback ?? []);
+async function saveFallbacks(list: Fallback[], message = "已保存兜底顺序") {
+  await saveConfig({ agents: { ...config.value.agents, fallback: list } }, message);
   void load();
 }
-async function saveQueueMinutes() {
-  const v = Math.max(1, Math.min(240, Number((document.getElementById("queue-min") as HTMLInputElement)?.value ?? 30) || 30));
-  await saveConfig({ agents: { ...config.value.agents, queueTimeoutMinutes: v } }, `排队最多等待 ${v} 分钟`);
+function setFallback(i: number, patch: Partial<Fallback>) {
+  const list = fallbacks.value.map((f, j) => {
+    if (j !== i) return f;
+    const next = { ...f, ...patch };
+    return Object.fromEntries(Object.entries(next).filter(([, v]) => v)) as Fallback;
+  });
+  void saveFallbacks(list);
+}
+function moveFallback(i: number) {
+  const list = [...fallbacks.value];
+  [list[i - 1], list[i]] = [list[i], list[i - 1]];
+  void saveFallbacks(list);
+}
+function addFallback() {
+  const used = new Set(fallbacks.value.map((f) => f.profile));
+  const next = installedProfiles.value.find((p) => !used.has(p.id) && p.id !== config.value.agents.default) ?? installedProfiles.value[0];
+  if (next) void saveFallbacks([...fallbacks.value, { profile: next.id }], "已添加兜底");
+}
+const queueMinuteOptions = computed(() => {
+  const cur = config.value?.agents.queueTimeoutMinutes ?? 30;
+  return [...new Set([5, 10, 15, 30, 60, 120, 240, cur])].sort((a, b) => a - b).map((v) => ({ value: String(v), label: v < 60 ? `${v} 分钟` : `${v / 60} 小时` }));
+});
+async function saveQueueMinutes(v: string) {
+  await saveConfig({ agents: { ...config.value.agents, queueTimeoutMinutes: Number(v) } }, `排队最多等待 ${v} 分钟`);
   void load();
 }
 async function saveAutoAdvance(key: "turns" | "codeRounds", raw: string) {
@@ -395,14 +413,18 @@ async function saveEdit() {
       <p class="muted">空间把不同领域的知识分开：每个空间有自己的原件、Wiki、记忆和事项。助理默认在当前空间和它的相关空间里调查，需要时才查所有空间；整理、复核这类只管一个空间的任务也能读相关空间，但只写自己的。代码仓库空间关联一个本地目录，可定期同步。</p>
       <div class="spaces">
         <div v-for="s in state.spaces" :key="s.id" class="card pad sp">
-          <div class="row"><strong>{{ s.name }}</strong><span class="badge">{{ kindLabel[s.kind] ?? s.kind }}</span><span class="spacer" /><button class="btn ghost sm" @click="openSpace(s)"><Icon name="edit" :size="14" />设置</button></div>
-          <div class="muted small">{{ s.description || "（没有说明）" }}</div>
-          <div class="muted small mono" v-if="s.rootPath">{{ s.rootPath }}</div>
-          <div class="muted small">{{ s.sources ?? 0 }} 份原件 · {{ s.pages ?? 0 }} 个页面</div>
-          <div v-if="s.settings?.submodules" class="muted small" :title="(s.settings.submodules.failed ?? []).map((f: { path: string; error: string }) => `${f.path}：${f.error}`).join('\n')">
-            子模块 {{ s.settings.submodules.ready }}/{{ s.settings.submodules.total }} 已检出并索引<template v-if="s.settings.submodules.failed?.length">，{{ s.settings.submodules.failed.length }} 个拉取失败（悬停查看原因）</template><template v-else-if="!s.settings.submodules.managed && s.settings.submodules.ready < s.settings.submodules.total">，其余需在仓库里 git submodule update --init --recursive</template>
+          <div class="row sp-head">
+            <strong class="ellipsis" :title="s.name">{{ s.name }}</strong><span class="badge">{{ kindLabel[s.kind] ?? s.kind }}</span>
+            <span class="spacer" />
+            <button class="btn ghost sm icon" :aria-label="`设置 ${s.name}`" title="设置" @click="openSpace(s)"><Icon name="settings" :size="15" /></button>
           </div>
-          <div v-if="s.related?.length" class="muted small">相关：{{ s.related.map((r) => r.name).join("、") }}</div>
+          <p class="sp-desc small" :class="{ muted: !s.description }" :title="s.description">{{ s.description || "没有说明" }}</p>
+          <div v-if="s.rootPath" class="sp-line small muted" :title="s.rootPath"><Icon name="folder" :size="13" /><span class="mono ellipsis">{{ dirName(s.rootPath) }}</span></div>
+          <div v-if="s.related?.length" class="sp-line small muted" :title="s.related.map((r) => r.name).join('、')"><Icon name="link" :size="13" /><span class="ellipsis">{{ s.related.map((r) => r.name).join("、") }}</span></div>
+          <div class="sp-meta small muted">
+            <span>{{ s.sources ?? 0 }} 份原件</span><span>{{ s.pages ?? 0 }} 个页面</span>
+            <span v-if="s.settings?.submodules" :class="{ warn: s.settings.submodules.failed?.length }" :title="submoduleTip(s)">子模块 {{ s.settings.submodules.ready }}/{{ s.settings.submodules.total }}<template v-if="s.settings.submodules.failed?.length"> · {{ s.settings.submodules.failed.length }} 个失败</template></span>
+          </div>
         </div>
       </div>
       <form class="card pad stack" @submit.prevent="createSpace">
@@ -490,12 +512,22 @@ async function saveEdit() {
       <AiRouting :value="config.agents.routing" :backends="profiles" @save="(routing) => saveConfig({ agents: { ...config.agents, routing } }, '已保存任务选型')" />
       <div class="card pad stack">
         <div class="section-title">排队与兜底</div>
-        <p class="muted small">主后端排队（traex 资源队列）或被限流时，按顺序换下面的后端/模型重试一轮；Agent 档案任务不自动改道。排队时普通空闲计时暂停，最多等设定的分钟数。</p>
-        <label class="field"><span>排队最多等待（分钟，1–240）</span>
-          <input id="queue-min" class="input" style="width: 120px" type="number" inputmode="numeric" min="1" max="240" :value="queueMinutes" @change="saveQueueMinutes" />
-        </label>
-        <textarea class="textarea mono" rows="7" :value="fallbackText" @input="fallbackDraft = ($event.target as HTMLTextAreaElement).value" placeholder='[{"profile":"traex","model":"Doubao-Seed-2.1-Pro"}]&#10;[{"profile":"codex-sol","effort":"low"}]' />
-        <div class="row"><span class="muted small">每项：后端 id 必填，model/effort 可覆盖。留空数组 [] 表示不兜底。</span><span class="spacer" /><button class="btn primary sm" @click="saveFallback">保存兜底链</button></div>
+        <p class="muted small">后端在排队或被限流时，按下面的顺序换一个后端重试一次。Agent 档案任务不会自动换后端。</p>
+        <div class="row wrap">
+          <span class="small">排队最多等</span>
+          <UiSelect :model-value="String(config.agents.queueTimeoutMinutes ?? 30)" size="sm" width="120px" aria-label="排队最多等待" :options="queueMinuteOptions" @change="saveQueueMinutes" />
+          <span class="muted small">排队期间不算空闲超时</span>
+        </div>
+        <div v-for="(f, i) in fallbacks" :key="i" class="row wrap fb-row">
+          <span class="fb-n small muted">{{ i + 1 }}</span>
+          <UiSelect :model-value="f.profile" size="sm" width="200px" aria-label="兜底后端" :options="profileOptions" @change="(v) => setFallback(i, { profile: v, model: undefined, effort: undefined })" />
+          <UiSelect :model-value="f.model ?? ''" size="sm" width="180px" aria-label="兜底模型" :options="modelOptionsFor(f.profile, 'model', f.model)" @change="(v) => setFallback(i, { model: v || undefined, effort: undefined })" />
+          <UiSelect :model-value="f.effort ?? ''" size="sm" width="120px" aria-label="兜底强度" :options="modelOptionsFor(f.profile, 'effort', f.effort, f.model)" @change="(v) => setFallback(i, { effort: v || undefined })" />
+          <span class="spacer" />
+          <button class="btn ghost sm" :disabled="i === 0" @click="moveFallback(i)">上移</button>
+          <button class="btn ghost sm icon" aria-label="移除" @click="saveFallbacks(fallbacks.filter((_, j) => j !== i), '已移除兜底')"><Icon name="x" :size="14" /></button>
+        </div>
+        <div class="row"><button class="btn sm" :disabled="!installedProfiles.length" @click="addFallback"><Icon name="plus" :size="13" />添加兜底</button><span v-if="!fallbacks.length" class="muted small">还没有兜底：后端失败时直接报错。</span></div>
       </div>
       <div class="card pad stack">
         <div class="section-title">自动推进</div>
@@ -527,7 +559,8 @@ async function saveEdit() {
           <UiSelect v-model="compareDraft.profile" size="sm" width="200px" aria-label="对比后端" placeholder="选择后端" :options="profileOptions" />
           <UiSelect v-if="(probes[compareDraft.profile]?.data?.models.length ?? 0) > 0" v-model="compareDraft.model" size="sm" width="180px" aria-label="对比模型" :options="modelOptionsFor(compareDraft.profile, 'model')" />
           <input v-else v-model="compareDraft.model" class="input sm-input" placeholder="模型（可选）" />
-          <input v-model="compareDraft.effort" class="input sm-input" style="width: 110px" placeholder="强度（可选）" />
+          <UiSelect v-if="effortsOf(compareDraft.profile, compareDraft.model || undefined).length" v-model="compareDraft.effort" size="sm" width="120px" aria-label="对比强度" :options="modelOptionsFor(compareDraft.profile, 'effort', undefined, compareDraft.model || undefined)" />
+          <input v-else v-model="compareDraft.effort" class="input sm-input" style="width: 110px" placeholder="强度（可选）" />
           <button class="btn sm" :disabled="!compareDraft.profile" @click="addCompare">添加</button>
         </div>
       </div>
@@ -798,14 +831,65 @@ async function saveEdit() {
   gap: 12px;
   min-width: 0;
 }
+.fb-row {
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+.fb-n {
+  width: 16px;
+}
 .sp {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
+}
+.sp-head {
+  min-width: 0;
+}
+.sp-head strong {
+  min-width: 0;
+  font-size: 15px;
+}
+.sp-head .btn {
+  margin: -4px -6px -4px 0;
+}
+.sp-desc {
+  margin: 0;
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
   overflow-wrap: anywhere;
 }
-.sp .mono {
-  overflow-wrap: anywhere;
+.sp-desc.muted {
+  color: var(--muted);
+}
+.sp-desc + .sp-line,
+.sp-desc + .sp-meta {
+  margin-top: 2px;
+}
+.sp-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.sp-meta .warn {
+  color: var(--warn);
+}
+.sp-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.sp-line svg {
+  flex: none;
 }
 .grid2 {
   display: grid;

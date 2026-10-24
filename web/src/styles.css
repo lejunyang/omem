@@ -108,6 +108,20 @@ select {
   font: inherit;
   color: inherit;
 }
+/* Dragging a textarea wider would push its container out of shape: only height is resizable. */
+textarea {
+  resize: vertical;
+  max-width: 100%;
+}
+/* Paragraphs inside stacked layouts take spacing from the stack's gap, not browser margins. */
+.stack > p,
+.field > p,
+.card > p {
+  margin: 0;
+}
+.stack > .section-title {
+  margin-bottom: 0;
+}
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

@@ -2226,6 +2226,7 @@ def({
     execution: executionSchema.optional().describe("编码 AI 的临时选择"),
     review_execution: executionSchema.optional().describe("独立评审 AI 的临时选择"),
     repo_spaces: z.array(z.string()).min(1).describe("要改的代码仓库空间 id；一个需求要同时改几个仓库（如前端和接口）就都写上"),
+    title: z.string().max(80).optional().describe("一句话说清要改什么（如“退款只按已发货行计算”），显示在运行列表和进度卡片上；不传取任务第一行"),
     task: z.string().describe("完整的任务描述：目标、背景、验收标准、相关讨论；多个仓库时写清各自要改什么、接口怎么对上"),
     check_command: z.string().optional().describe("验证命令，如 npm test；对所有仓库生效，除非 check_commands 单独指定"),
     check_commands: z.record(z.string(), z.string()).optional().describe("按仓库空间 id 指定的验证命令"),
@@ -2247,7 +2248,7 @@ def({
     const r = createRun(ctx.app, {
       kind: "code",
       spaceId: home,
-      title: truncate(a.task.split("\n")[0], 80),
+      title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
       input: { task: a.task, execution, reviewExecution, checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks },
       parentId: ctx.runId,
     });
