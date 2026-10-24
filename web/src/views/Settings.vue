@@ -167,9 +167,10 @@ watch(
 
 async function saveConfig(partial: Record<string, unknown>, note = "已保存") {
   try {
-    const r = await put<{ config: any }>("/api/settings", partial);
+    const r = await put<{ config: any; restart?: string[] }>("/api/settings", partial);
     config.value = r.config;
-    toast(`${note}（部分设置需重启服务生效）`, "ok");
+    if (r.restart?.length) toast(`${note}。${r.restart.join("、")}要重启服务后才生效（omem service restart）`, "info");
+    else toast(note, "ok");
   } catch (e) {
     toast((e as Error).message, "error");
   }

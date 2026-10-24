@@ -24,3 +24,5 @@ Agent 档案和任务选型的后端、模型、强度使用 `AiDefaults`：可�
 代码改动统一用 `components/DiffFile`（新旧行号、未改动代码可上下展开，行带 `data-line`）。运行详情里选中文字后的“就选中内容提问”走 `AskAboutRun` 抽屉：引用带上文件和行号，回答只读，同一运行沿用一个问答会话。条件写不出来的设置（评审档位、评审项）在条件编辑器下面放一句话说明，由 AI 判断。
 
 配置项不让人手写 JSON：有序清单（如排队兜底）一行一项，用 UiSelect 选后端 / 模型 / 强度，带上移和移除；数值有常用档位的用 UiSelect 列出档位。`styles.css` 已把 `.stack` / `.card` / `.field` 里直接的 `<p>` 外边距清零，间距由 gap 决定；textarea 全局只能纵向拖动。卡片里的长标题、长路径、长 id 要能换行或省略（网格子项加 `min-width: 0`），路径只显示最后一级、悬停看全路径。
+
+保存设置后的提示只说实际发生的事：`PUT /api/settings` 返回的 `restart` 不为空才提示重启，并写出是哪几项。新增只在启动时读取的设置要加进 `src/server/http.ts` 的 `atStartup` 清单。选中文字的颜色在 `styles.css` 的 `::selection` 统一设定（浅底深字），不要在组件里另设。

@@ -1065,9 +1065,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/settings", async () => ({ config: app.config, agents: listAgentProfiles(app), home: app.home }));
   server.put("/api/settings", async (req) => {
     const next = configSchema.parse({ ...app.config, ...(req.body as object) });
+    // Everything else is read on use; these are only read when the service starts.
+    const atStartup: [string, (c: typeof next) => unknown][] = [
+      ["监听地址和端口", (c) => [c.host, c.port]],
+      ["向量检索", (c) => c.embeddings],
+      ["飞书机器人的开关和应用", (c) => [c.lark.enabled, c.lark.appId, c.lark.appSecretEnv]],
+      ["Telegram", (c) => c.telegram],
+      ["QQ / 微信（OneBot）", (c) => c.onebot],
+    ];
+    const restart = atStartup.filter(([, pick]) => JSON.stringify(pick(app.config)) !== JSON.stringify(pick(next))).map(([label]) => label);
     saveConfig(next, app.home);
     Object.assign(app.config, next);
-    return { config: app.config, restartNeeded: true };
+    return { config: app.config, restart };
   });
 
   // -------------------------------------------------------------------- web

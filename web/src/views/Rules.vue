@@ -67,12 +67,20 @@ async function loadList() {
   }
 }
 // Wake-ups agents set for their own follow-up work: after a while, or on a message in a chat.
-type Wake = { id: string; kind: "timed" | "event"; note: string; at: string | null; expiresAt: string | null; setBy: { agent: string }; detail: string };
+type Wake = { id: string; kind: "timed" | "event"; note: string; at: string | null; expiresAt: string | null; setBy: { agent: string; runId: string | null }; target: { conversationId?: string; spec?: string }; detail: string };
 const wakes = ref<Wake[]>([]);
+const selectedWake = computed(() => (typeof route.query.wake === "string" ? wakes.value.find((w) => w.id === route.query.wake) ?? null : null));
+// A wake on a message is a temporary rule: its conditions and firings come from the rule.
+const wakeRule = ref<(Rule & { firings: Firing[] }) | null>(null);
+watch(selectedWake, async (w) => {
+  wakeRule.value = null;
+  if (w?.kind === "event") wakeRule.value = await get<Rule & { firings: Firing[] }>(`/api/rules/${w.id}`).catch(() => null);
+});
 async function cancelWake(w: Wake) {
   if (!(await confirmDialog("取消这个唤醒？", { message: w.note, okText: "取消唤醒", danger: true }))) return;
   await del(`/api/wakes/${w.id}`);
   wakes.value = wakes.value.filter((x) => x.id !== w.id);
+  if (route.query.wake === w.id) void router.replace({ query: {} });
 }
 async function loadCurrent() {
   test.value = null;
@@ -266,12 +274,12 @@ function startFrom(text: string) {
         <p v-if="!loading && !rules.length" class="muted small hint">还没有任务规则。点 ＋ 新建，或对助理说“以后值班群里我被 @ 就把机器人拉进去”。</p>
         <template v-if="wakes.length">
           <div class="group muted small" title="Agent 为自己的后续工作设的，触发或到期后自动删除">临时唤醒</div>
-          <div v-for="w in wakes" :key="w.id" class="li wake">
-            <div class="grow">
+          <div v-for="w in wakes" :key="w.id" class="li wake" :class="{ on: w.id === selectedWake?.id }">
+            <button class="grow pick" type="button" @click="go({ wake: w.id })">
               <div class="row"><span class="badge">{{ w.kind === "timed" ? "定时" : "消息" }}</span><span class="muted small ellipsis">{{ w.setBy.agent }}</span></div>
               <div class="small clamp">{{ w.note }}</div>
               <div class="muted small clamp">{{ w.kind === "timed" ? `${fmtTime(w.at!)} 唤醒` : `${w.detail} · ${fmtTime(w.expiresAt!)} 失效` }}</div>
-            </div>
+            </button>
             <button class="btn ghost sm icon" :title="`取消唤醒：${w.note}`" @click="cancelWake(w)"><Icon name="x" :size="14" /></button>
           </div>
         </template>
@@ -279,7 +287,44 @@ function startFrom(text: string) {
     </aside>
 
     <main class="detail">
-      <div v-if="!form" class="empty">
+      <div v-if="selectedWake" class="page">
+        <header class="dh row">
+          <span class="badge accent">{{ selectedWake.kind === "timed" ? "定时唤醒" : "消息唤醒" }}</span>
+          <strong class="grow">临时唤醒</strong>
+          <button class="btn sm danger" @click="cancelWake(selectedWake)"><Icon name="x" :size="14" />取消唤醒</button>
+        </header>
+        <p class="muted small">Agent 为自己后续的工作设的：{{ selectedWake.kind === "timed" ? "到时间" : "等到符合条件的消息" }}就在原来的会话里接着做，触发一次或到期后自动删除。这里只能查看和取消。</p>
+        <section class="block">
+          <div class="block-head"><h3>要做什么</h3></div>
+          <div class="note">{{ selectedWake.note }}</div>
+        </section>
+        <section class="block">
+          <div class="block-head"><h3>什么时候</h3></div>
+          <div v-if="selectedWake.kind === 'timed'" class="small">{{ fmtTime(selectedWake.at!) }}（{{ relTime(selectedWake.at!) }}）</div>
+          <template v-else>
+            <div class="small">{{ wakeRule?.conditionText || selectedWake.detail }}</div>
+            <div class="muted small">{{ fmtTime(selectedWake.expiresAt!) }} 前没等到就失效（{{ relTime(selectedWake.expiresAt!) }}）</div>
+          </template>
+        </section>
+        <section class="block">
+          <div class="block-head"><h3>谁设的、唤醒谁</h3></div>
+          <div class="small">{{ selectedWake.setBy.agent }} 设的<template v-if="selectedWake.setBy.runId"> · <router-link :to="`/runs/${selectedWake.setBy.runId}`">设它的运行</router-link></template></div>
+          <div class="small">
+            <template v-if="selectedWake.target.spec">唤醒 Agent 档案 {{ selectedWake.target.spec }}，结果发回原会话</template>
+            <template v-else>在原会话里接着做</template>
+            <template v-if="selectedWake.target.conversationId"> · <router-link :to="`/ask/${selectedWake.target.conversationId}`">打开会话</router-link></template>
+          </div>
+        </section>
+        <section v-if="wakeRule?.firings.length" class="block">
+          <div class="block-head"><h3>触发记录</h3></div>
+          <div v-for="f in wakeRule.firings" :key="f.id" class="firing small">
+            <div class="muted">{{ fmtTime(f.at) }}</div>
+            <div>{{ f.summary }}</div>
+          </div>
+        </section>
+      </div>
+
+      <div v-else-if="!form" class="empty">
         <Icon name="zap" :size="34" />
         <h3>任务规则</h3>
         <p>用一句话说“遇到什么情况就做什么”：来了新消息、看到新群或到了某个时间，满足条件就交给 Agent 处理、拉机器人进群、优先采集或通知你。能写成条件的直接判断，写不成的请模型按原话判断。</p>
@@ -512,6 +557,10 @@ function startFrom(text: string) {
   align-items: baseline;
   gap: 10px;
   flex-wrap: wrap;
+}
+.note {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .block-head h3 {
   margin: 0;

@@ -126,8 +126,10 @@ textarea {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+/* Text color too: on dark buttons and toasts the light background would hide light text. */
 ::selection {
   background: var(--accent-soft);
+  color: var(--ink);
 }
 h1,
 h2,
