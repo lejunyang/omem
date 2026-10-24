@@ -84,7 +84,8 @@ describe("review tiers and checks", () => {
     // A spec that may write and use other tools elsewhere still only reads when it reviews.
     saveAgentSpec(app, { name: "security-review", description: "只看鉴权和越权", prompt: "评审", tools: ["search", "remember"], writes: true, agent: "fake" }, "user");
     app.config.review = {
-      tiers: [{ id: "standard", name: "标准", guide: "", when: { field: "change.lines", op: "gte", value: 1 }, checks: ["reviewer", "review-business"], maxRounds: 2 }, { id: "light", name: "轻", guide: "", when: null, checks: ["reviewer"], maxRounds: 3 }],
+      tiers: [{ id: "standard", name: "标准", guide: "", when: { field: "change.lines", op: "gte", value: 1 }, checks: ["reviewer", "review-business"], maxRounds: 2, lead: false, confirmPlan: false }, { id: "light", name: "轻", guide: "", when: null, checks: ["reviewer"], maxRounds: 3, lead: false, confirmPlan: false }],
+      rereviewAllEvery: 2,
       checks: { "security-review": { label: "安全", blocks: "major", guide: "", when: { field: "change.paths", op: "contains", value: "refund" } } },
     };
     const server = await startServer(app, { port: 0, quiet: true });

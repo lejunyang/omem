@@ -435,3 +435,10 @@ updated: 2026-10-24
 - `delegate_code` 新增 `review_tier`、`review_checks`；`/api/delegate` 接受 `reviewTier`。接口：`/api/review-settings`、`/api/review-options`、`/api/runs/:id/reviews`、`/api/runs/:id/file`。
 - 界面：Agent 页“评审”标签；运行详情“本次评审”、按行号的 diff 与上下展开、选中内容就地提问（每个运行一个问答会话）。
 - 同期修正：定时规则“先给我看”发到飞书会话时草稿落到原话题，网页会话按直接回复；归档迁移只让两个相关空间的向量重新加载。
+
+## 分档评审第二阶段：评审负责人（10-24）
+
+- 新内置角色 `review-lead` 和工具 `rule_review`（只在负责人运行里可用）；评审一轮的逻辑移到 `src/agents/review-chain.ts`，可在编码运行末尾执行，也可在本人确认计划后作为 `review` 运行执行。
+- 档位新增 `lead`（默认标准、完整开）、`confirmPlan`（默认完整开）；`config.review.rereviewAllEvery` 默认 2。编码前预估档位，编码后判档可参考预估、开负责人的档可降一档。
+- 四种停止条件（轮数上限、不收敛、僵持、方案分歧）写 `reviewStop`，链的 `waitReason` 同名；提问卡片的答复通过 `registerAskHandler` 处理（确认计划、继续 / 接受 / 停下）。
+- `review_findings` 增加 `merged_into`、`triage_note`；`/api/runs/:id/reviews` 返回预估、各轮负责人结论、停止原因和待答的决定。飞书进度卡片加评审项行与负责人结论。

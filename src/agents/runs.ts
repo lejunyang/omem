@@ -356,6 +356,7 @@ function kick(app: App) {
         const quiet = status === "done" && !INTERACTIVE.has(r.kind) && out && (out as { quiet?: boolean }).quiet === true ? 1 : 0;
         run(app.db, "update runs set status=?, quiet=?, finished_at=? where id=?", status, quiet, now(), r.id);
         if (r.kind === "code") trySettleCodeChain(app, r.id);
+        if (r.kind === "review" && typeof r.input.codeRunId === "string") trySettleCodeChain(app, r.input.codeRunId);
         settleWorkRound(app, r);
         app.emit({ type: "run", runId: r.id, status });
       })
@@ -364,6 +365,7 @@ function kick(app: App) {
         const cancelled = controller.signal.aborted || error.message === "CANCELLED";
         run(app.db, "update runs set status=?, error=?, finished_at=? where id=?", cancelled ? "cancelled" : "failed", cancelled ? null : error.message, now(), r.id);
         if (r.kind === "code") trySettleCodeChain(app, r.id);
+        if (r.kind === "review" && typeof r.input.codeRunId === "string") trySettleCodeChain(app, r.input.codeRunId);
         settleWorkRound(app, r);
         if (!cancelled) addRunEvent(app, r.id, "error", { message: error.message });
         app.emit({ type: "run", runId: r.id, status: cancelled ? "cancelled" : "failed" });
@@ -395,6 +397,8 @@ export function cancelRun(app: App, id: string) {
   if (r.status === "queued") {
     run(app.db, "update runs set status='cancelled', finished_at=? where id=?", now(), id);
     if (r.kind === "code") trySettleCodeChain(app, id);
+    // A confirmed review plan ran on its own: the coding run it reviewed now has its result.
+    if (r.kind === "review" && typeof r.input.codeRunId === "string") trySettleCodeChain(app, r.input.codeRunId);
     app.emit({ type: "run", runId: id, status: "cancelled" });
   } else controllers.get(id)?.abort();
   return getRun(app, id);

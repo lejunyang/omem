@@ -2460,13 +2460,49 @@ def({
   }),
   handler: async (ctx, a) => {
     const check = ctx.spec ?? ctx.role;
-    const r = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
+    const { codeRunOf } = await import("./review-chain.ts");
+    const r = codeRunOf(ctx.app, ctx.runId);
     const plan = (r?.output as { reviewPlan?: import("./review.ts").ReviewPlan } | undefined)?.reviewPlan;
-    if (!r || r.kind !== "code" || !check || !plan?.checks.includes(check)) throw new HttpError(400, "submit_review 只能在交办编码的评审项里使用");
+    if (!r || !check || !plan?.checks.includes(check)) throw new HttpError(400, "submit_review 只能在交办编码的评审项里使用");
     const { findingSchema, recordReview } = await import("./review.ts");
     const findings = a.findings.map((f) => findingSchema.parse(f));
     recordReview(ctx.app, { codeRunId: r.id, round: (r.input as { round?: number }).round ?? 1, check, tier: plan.tier, verdict: a.verdict, summary: a.summary, findings, ai: { profile: ctx.agentProfile, model: ctx.model ?? undefined, effort: ctx.effort ?? undefined } });
     return `已记录评审结论（${a.verdict === "approved" ? "通过" : "需要修改"}，${findings.length} 条问题）。接着用文字写结论。`;
+  },
+});
+
+def({
+  name: "rule_review",
+  description: "评审负责人提交这一轮的裁决：每条问题接受 / 驳回 / 合并，结论（approve 通过 / revise 再改一轮 / escalate 交给本人），修改单和下一轮要重新评审的评审项。只在交办编码的评审负责人运行里可用。",
+  schema: z.object({
+    rulings: z.array(z.object({
+      id: z.number().int().describe("问题编号（任务里列出的 #编号）"),
+      decision: z.enum(["accept", "reject", "merge"]),
+      into: z.number().int().optional().describe("merge 时合并到的那条问题编号"),
+      note: z.string().max(1000).optional().describe("理由；驳回必须写"),
+    })).max(300),
+    verdict: z.enum(["approve", "revise", "escalate"]),
+    summary: z.string().min(1).max(2000).describe("一两句话：这一轮的结论"),
+    change_request: z.string().max(12000).optional().describe("revise 时交给编码 Agent 的修改单：只列接受的问题，写清位置、问题、怎么改"),
+    rerun: z.array(z.string()).optional().describe("revise 时下一轮需要重新评审的评审项名"),
+    escalation: z.object({ summary: z.string().min(1).max(4000), options: z.array(z.string().min(1).max(40)).min(1).max(4) }).optional().describe("escalate 时：分歧点、各方依据、建议，以及给本人选的做法"),
+  }),
+  handler: async (ctx, a) => {
+    const { codeRunOf } = await import("./review-chain.ts");
+    const r = codeRunOf(ctx.app, ctx.runId);
+    const plan = (r?.output as { reviewPlan?: import("./review.ts").ReviewPlan } | undefined)?.reviewPlan;
+    if (!r || ctx.role !== "review-lead" || !plan) throw new HttpError(400, "rule_review 只能在交办编码的评审负责人运行里使用");
+    const round = (r.input as { round?: number }).round ?? 1;
+    const { applyRulings, reviewChecks } = await import("./review.ts");
+    for (const x of a.rulings) if (x.decision === "reject" && !x.note?.trim()) throw new HttpError(400, `驳回问题 ${x.id} 要写理由`);
+    if (a.verdict === "revise" && !a.change_request?.trim()) throw new HttpError(400, "revise 需要写修改单 change_request");
+    if (a.verdict === "escalate" && !a.escalation) throw new HttpError(400, "escalate 需要写 escalation");
+    const known = new Set(reviewChecks(ctx.app).map((c) => c.name));
+    const unknown = (a.rerun ?? []).filter((c) => !known.has(c));
+    if (unknown.length) throw new HttpError(400, `没有评审项 ${unknown.join("、")}`);
+    applyRulings(ctx.app, r.id, round, a.rulings);
+    setRunOutput(ctx.app, r.id, { reviewLeadDraft: { round, verdict: a.verdict, summary: a.summary, changeRequest: a.change_request ?? "", rerun: a.rerun ?? [], escalation: a.escalation } });
+    return `已记录第 ${round} 轮裁决（${a.verdict}，${a.rulings.length} 条）。`;
   },
 });
 

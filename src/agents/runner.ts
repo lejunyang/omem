@@ -159,6 +159,8 @@ export type RoleRunInput = {
   lark?: LarkAccess;
   /** Running as a review check of a delegation: read-only tools plus submit_review, no writes or extra MCP. */
   reviewCheck?: boolean;
+  /** Running as review-lead of a delegation round: read-only tools plus rule_review. */
+  reviewLead?: boolean;
 };
 
 /**
@@ -223,7 +225,7 @@ export function resolveRunProfile(app: App, input: { actor: Actor; profileId?: s
  */
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean },
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; reviewLead?: boolean },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -261,9 +263,9 @@ export function prepareRun(
   if (input.lark?.chats?.length) for (const t of ["lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "notify"]) tools.add(t);
   for (const t of input.denyTools ?? []) tools.delete(t);
   // A review check only reads and reports, whatever its profile may do elsewhere.
-  if (input.reviewCheck) {
+  if (input.reviewCheck || input.reviewLead) {
     for (const t of [...tools]) if (!REVIEW_TOOLS.includes(t) && t !== "wait_answer") tools.delete(t);
-    tools.add("submit_review");
+    tools.add(input.reviewLead ? "rule_review" : "submit_review");
   }
   const spaces =
     input.spaces !== undefined ? input.spaces : spec ? (spec.spaces.includes("*") ? null : [...new Set([space.id, ...spec.spaces])]) : roleName === "assistant" ? null : [space.id];
@@ -298,9 +300,9 @@ export function prepareRun(
     stableSystem: system.replace(currentTime, "<current-time>"),
     token,
     mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge() },
-    extraMcp: input.reviewCheck ? {} : spec?.mcp ?? {},
-    allowWrites: input.reviewCheck ? false : spec ? spec.writes : role!.writes,
-    modes: input.reviewCheck ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
+    extraMcp: input.reviewCheck || input.reviewLead ? {} : spec?.mcp ?? {},
+    allowWrites: input.reviewCheck || input.reviewLead ? false : spec ? spec.writes : role!.writes,
+    modes: input.reviewCheck || input.reviewLead ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,
     label: spec ? spec.name : roleName,
     // Guests never see the owner's memories unasked.
     recall: guest ? null : { spaces: readable, agent: spec?.name ?? (roleName === "assistant" ? null : roleName), userId },
@@ -349,7 +351,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const execution = validateExecution(app, input.execution);
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
-  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck });
+  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead });
   if (execution) {
     try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }); }
     catch (e) { revokeToolToken(base.token); throw e; }
@@ -361,7 +363,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   let lastError: unknown;
   for (let i = 0; i < chain.length; i++) {
     const profile = chain[i];
-    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck });
+    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead });
     try {
       const req = {
         strictSelection: execution ? { model: !!execution.model, effort: !!execution.effort } : undefined,

@@ -233,6 +233,16 @@ export function isAwaited(id: string) {
 type Executor = (app: App, ask: Ask, context: Record<string, unknown>) => Promise<{ text: string; isError: boolean }>;
 let executor: Executor | null = null;
 /** tools.ts registers how an approved call runs (kept apart to avoid an import cycle). */
+/**
+ * Asks the host itself put to the owner (a review plan to confirm, a stopped review to decide):
+ * the answer runs a registered handler instead of going back to an agent as a message.
+ */
+type AskHandler = (app: App, ask: Ask, context: Record<string, unknown>) => Promise<void>;
+const askHandlers = new Map<string, AskHandler>();
+export function registerAskHandler(name: string, h: AskHandler) {
+  askHandlers.set(name, h);
+}
+
 export function setApprovalExecutor(e: Executor) {
   executor = e;
 }
@@ -271,6 +281,13 @@ export async function answerAsk(app: App, id: string, input: { choice?: number |
   }
   const ask = getAsk(app, id);
   closed(app, ask);
+  const context = JSON.parse(one<{ context: string | null }>(app.db, "select context from asks where id = ?", id)?.context ?? "{}") as Record<string, unknown>;
+  const handler = typeof context.handler === "string" ? askHandlers.get(context.handler) : undefined;
+  if (handler) {
+    run(app.db, "update asks set consumed = 1 where id = ?", id);
+    await handler(app, ask, context);
+    return getAsk(app, id);
+  }
   if (ask.kind === "suggestion") {
     if (ask.conversationId && !input.viaMessage) {
       const { receive } = await import("./inbox.ts");

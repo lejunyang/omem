@@ -632,7 +632,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // How recent delegations fell into the tiers, to judge the thresholds.
     const recent = all<{ tier: string | null; n: number }>(app.db, "select json_extract(output, '$.reviewPlan.tier') tier, count(*) n from (select output from runs where kind = 'code' and json_extract(input, '$.round') is null order by created_at desc limit 30) group by tier");
     const specs = listAgentSpecs(app).filter((s) => !checks.some((c) => c.name === s.name)).map((s) => ({ name: s.name, description: s.description }));
-    return { tiers: reviewTiers(app), checks, specs, recent: Object.fromEntries(recent.filter((r) => r.tier).map((r) => [r.tier, r.n])) };
+    return { tiers: reviewTiers(app), rereviewAllEvery: app.config.review.rereviewAllEvery, checks, specs, recent: Object.fromEntries(recent.filter((r) => r.tier).map((r) => [r.tier, r.n])) };
   });
   server.put("/api/review-settings", async (req) => {
     const { validateReviewSettings } = await import("../agents/review.ts");
@@ -655,7 +655,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const chain = (r.output as { codeChain?: { rounds: string[] } }).codeChain;
     const rounds = (chain?.rounds ?? [r.id]).map((id) => getRun(app, id));
     const labels = Object.fromEntries(reviewChecks(app).map((c) => [c.name, c.label]));
-    return { rounds: rounds.map((x) => ({ runId: x.id, round: (x.input as { round?: number }).round ?? 1, status: x.status, plan: x.output.reviewPlan ?? null, verdict: x.output.verdict ?? null })), reviews: reviewsOf(app, rounds.map((x) => x.id)), labels };
+    const { getAsk } = await import("../agents/asks.ts");
+    // The owner's open decision on a round (plan to confirm, stopped review), answered from the run page.
+    const askOf = (id: unknown) => { try { const a = typeof id === "string" ? getAsk(app, id) : null; return a ? { id: a.id, status: a.status, question: a.question, options: a.options, answer: a.answer } : null; } catch { return null; } };
+    return {
+      estimate: rounds[0]?.output.reviewEstimate ?? null,
+      rounds: rounds.map((x) => ({
+        runId: x.id, round: (x.input as { round?: number }).round ?? 1, status: x.status,
+        plan: x.output.reviewPlan ?? null, verdict: x.output.verdict ?? null, stage: x.output.reviewStage ?? null,
+        lead: x.output.reviewLead ?? null, stop: x.output.reviewStop ?? null, ask: askOf(x.output.reviewAskId), acceptedByOwner: !!x.output.acceptedByOwner,
+      })),
+      reviews: reviewsOf(app, rounds.map((x) => x.id)),
+      labels,
+    };
   });
   // A file of a delegation as it is now: the worktree while it exists, else the repository (after apply).
   server.get("/api/runs/:id/file", async (req) => {

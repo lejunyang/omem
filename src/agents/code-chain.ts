@@ -23,7 +23,7 @@ export type CodeChain = {
   larkKey: string | null;
   /** The one progress card message for the whole chain, updated as rounds run. */
   larkMessageId: string | null;
-  waitReason?: "auto-limit" | "review" | "no-changes" | "failed";
+  waitReason?: "auto-limit" | "review" | "no-changes" | "failed" | "plan" | "not-converging" | "stalemate" | "escalated";
   round: number;
   rounds: string[];
   /** The last coding run id; its Agent session is resumed on the next round. */
@@ -81,7 +81,7 @@ export function queueNextCodeRound(
   app: App,
   chain: CodeChain,
   task: string,
-  opts: { resumeSessionId?: string; manual?: boolean; execution?: Execution; reviewExecution?: Execution } = {},
+  opts: { resumeSessionId?: string; manual?: boolean; execution?: Execution; reviewExecution?: Execution; reviewOnly?: string[] } = {},
 ): { run: Run; chain: CodeChain } | null {
   // Round 1 + automatic continuations up to maxCodeRounds; further rounds need continue_code_run.
   // Reload under a write lock: stale callers and separate MCP processes cannot queue duplicates.
@@ -114,6 +114,8 @@ export function queueNextCodeRound(
         checks: input.checks,
         reviewTier: input.reviewTier,
         reviewChecks: input.reviewChecks,
+        // review-lead named the checks the fixes touch; the others are not re-run this round.
+        ...(opts.reviewOnly?.length ? { reviewOnly: opts.reviewOnly } : {}),
         continueFrom: chain.rounds[0],
         resumeSessionId: opts.execution && ["profile", "model", "effort"].some((key) => opts.execution?.[key as keyof Execution] !== input.execution?.[key as keyof Execution]) ? undefined : opts.resumeSessionId,
         round: next.round,
@@ -161,12 +163,19 @@ export function settleCodeChain(app: App, runId: string) {
     const chain = (r.output.codeChain as CodeChain | undefined);
     if (!chain || chain.lastCodeRunId !== r.id || !["done", "failed", "cancelled"].includes(r.status)) return;
     const approved = r.status === "done" && r.output.verdict === "approved";
+    // Coding is done and the review plan waits for the owner: no handoff yet, the plan ask is it.
+    if (r.status === "done" && r.output.verdict === "awaiting-plan") {
+      const next = setChainAwaitingUser(app, chain, true);
+      next.waitReason = "plan";
+      saveCodeChain(app, next, next.askRunId, ...next.rounds);
+      return;
+    }
     if (approved) {
       const next = { ...chain, awaitingUser: false, waitReason: undefined };
       saveCodeChain(app, next, next.askRunId, ...next.rounds);
     } else {
       const next = setChainAwaitingUser(app, chain, true);
-      next.waitReason = r.status !== "done" ? "failed" : r.output.verdict === "no-changes" ? "no-changes" : chain.round >= maxCodeRounds(app, chain) ? "auto-limit" : "review";
+      next.waitReason = r.status !== "done" ? "failed" : r.output.verdict === "no-changes" ? "no-changes" : (r.output.reviewStop as CodeChain["waitReason"]) ?? (chain.round >= maxCodeRounds(app, chain) ? "auto-limit" : "review");
       saveCodeChain(app, next, next.askRunId, ...next.rounds);
     }
     // The originating assistant can consume the result on its next turn. Do not wake a
@@ -213,7 +222,7 @@ function wakeAssistantForCodeResult(app: App, runId: string) {
   const r = getRun(app, runId);
   const chain = r.output.codeChain as CodeChain | undefined;
   const messageId = r.output.codeResultMessageId as string | undefined;
-  if (!chain || !messageId || r.output.codeResultHandedOff || chain.lastCodeRunId !== r.id) return;
+  if (!chain || !messageId || r.output.codeResultHandedOff || chain.lastCodeRunId !== r.id || r.output.verdict === "awaiting-plan") return;
   // An automatic next round is already queued: nothing to tell yet.
   if (r.status === "done" && r.output.verdict === "changes-requested" && chain.round < maxCodeRounds(app, chain) && !chain.awaitingUser) return;
   setRunOutput(app, runId, { codeResultHandedOff: true });

@@ -637,6 +637,9 @@ const migrations: string[] = [
      severity text not null, file_path text, line integer, title text not null, detail text not null default '', suggestion text not null default '',
      evidence text not null default '[]', confidence text not null default 'medium', state text not null default 'open');
    create index review_findings_review on review_findings(review_id);`,
+  // review-lead's rulings on findings (accepted / rejected / merged into another).
+  `alter table review_findings add column merged_into integer;
+   alter table review_findings add column triage_note text not null default '';`,
 ];
 
 export type Db = DatabaseSync;

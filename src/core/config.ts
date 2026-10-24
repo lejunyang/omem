@@ -45,17 +45,18 @@ export const roleNames = [
   "review-arch",
   "review-style",
   "review-history",
+  "review-lead",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
 
 /** Light = today's single reviewer; heavier tiers add independent checks for larger changes. */
 export function defaultReviewTiers() {
   return [
-    { id: "full", name: "完整", guide: "", checks: ["reviewer", "review-business", "review-arch", "review-history", "review-style"], maxRounds: 3,
+    { id: "full", name: "完整", guide: "", checks: ["reviewer", "review-business", "review-arch", "review-history", "review-style"], maxRounds: 3, lead: true, confirmPlan: true,
       when: { any: [{ field: "change.repos", op: "gte", value: 2 }, { field: "change.lines", op: "gte", value: 600 }, { field: "change.paths", op: "contains", value: "migration" }] } },
-    { id: "standard", name: "标准", guide: "", checks: ["reviewer", "review-business", "review-style"], maxRounds: 3,
+    { id: "standard", name: "标准", guide: "", checks: ["reviewer", "review-business", "review-style"], maxRounds: 3, lead: true, confirmPlan: false,
       when: { any: [{ field: "change.lines", op: "gte", value: 80 }, { field: "change.files", op: "gte", value: 3 }] } },
-    { id: "light", name: "轻", guide: "", checks: ["reviewer"], maxRounds: 3, when: null },
+    { id: "light", name: "轻", guide: "", checks: ["reviewer"], maxRounds: 3, lead: false, confirmPlan: false, when: null },
   ];
 }
 
@@ -157,6 +158,10 @@ export const configSchema = z.object({
         guide: z.string().max(2000).default(""),
         checks: z.array(z.string()).min(1).max(12),
         maxRounds: z.number().int().min(1).max(10).default(3),
+        /** review-lead rules on the findings each round (merge, accept / reject, what to re-review, when to stop). */
+        lead: z.boolean().default(false),
+        /** The plan (tier, checks, reasons) waits for the owner's OK before reviews start. */
+        confirmPlan: z.boolean().default(false),
       })).min(1).max(12).default(() => defaultReviewTiers()),
       checks: z.record(z.string(), z.object({
         label: z.string().trim().min(1).max(12),
@@ -164,8 +169,10 @@ export const configSchema = z.object({
         when: z.any().nullable().default(null),
         guide: z.string().max(2000).default(""),
       })).default({}),
+      /** With a lead, rounds re-review only the checks the fixes touch; every this many rounds all run again. */
+      rereviewAllEvery: z.number().int().min(1).max(10).default(2),
     })
-    .default(() => ({ tiers: defaultReviewTiers(), checks: {} })),
+    .default(() => ({ tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2 })),
   approvals: z.object({ tools: z.array(z.string()).default([]), waitSeconds: z.number().int().min(0).max(50).default(40) }).default({ tools: [], waitSeconds: 40 }),
   /** This instance among its peers (`omem peer`): defaults to the host name. */
   node: z.object({ id: z.string().optional() }).default({}),

@@ -4,6 +4,7 @@ import { all, run } from "../core/db.ts";
 import { type CodeChain, saveCodeChain, trySettleCodeChain, maxCodeRounds } from "../agents/code-chain.ts";
 import { getThread } from "../agents/threads.ts";
 import { getRun } from "../agents/runs.ts";
+import { reviewChecks, reviewsOf, STOP_LABEL, SEVERITY_LABEL, type LeadResult, type ReviewPlan, type StopReason } from "../agents/review.ts";
 import { buildCard, sendLark, updateLarkCard, larkClient, type CardBlock } from "./lark-send.ts";
 
 /** Durable outbox on the initiating ask. Never repurpose the conversation's reply anchor. */
@@ -44,7 +45,26 @@ function safeError(e: unknown): string {
   return code ? `飞书 API 错误 ${code}` : e instanceof Error && e.message.startsWith("进度锚点") ? "进度锚点不可用" : "飞书请求失败（详情未保存，避免泄露消息或凭据）";
 }
 
-function snapshot(app: App, chain: CodeChain) {
+/** One line per review check of the latest round, then review-lead's ruling. */
+function reviewLines(app: App, runId: string): string {
+  const r = getRun(app, runId);
+  const plan = r.output.reviewPlan as ReviewPlan | undefined;
+  if (!plan) return "";
+  const round = (r.input.round as number | undefined) ?? 1;
+  const labels = new Map(reviewChecks(app).map((c) => [c.name, c.label]));
+  const rows = reviewsOf(app, [r.id]).filter((x) => x.round === round);
+  const lines = plan.checks.map((name) => {
+    const row = rows.find((x) => x.check_name === name);
+    if (!row) return `- ${labels.get(name) ?? name}：${r.output.reviewStage === "checks" ? "评审中" : "未开始"}`;
+    const counts = (["blocker", "major", "minor", "nit"] as const).map((s) => [s, row.findings.filter((f) => f.severity === s && f.state !== "rejected" && f.state !== "merged").length] as const).filter(([, n]) => n);
+    const verdict = row.verdict === "approved" ? "通过" : row.verdict === "failed" ? "没有完成" : "要求修改";
+    return `- ${labels.get(name) ?? name}：${verdict}${counts.length ? `（${counts.map(([s, n]) => `${SEVERITY_LABEL[s]} ${n}`).join("、")}）` : ""}`;
+  });
+  const lead = r.output.reviewLead as LeadResult | undefined;
+  return [`**评审 · 「${plan.tierName}」档**`, ...lines, lead?.by === "lead" ? `负责人：${lead.summary}` : ""].filter(Boolean).join("\n");
+}
+
+export function snapshot(app: App, chain: CodeChain) {
   const latest = getRun(app, chain.lastCodeRunId!);
   const blocks: CardBlock[] = [{ note: `交办标识：${chain.askRunId}` }];
   if (chain.rounds.length > 3) blocks.push({ note: `更早 ${chain.rounds.length - 3} 轮评审保存在运行记录中。` });
@@ -52,10 +72,16 @@ function snapshot(app: App, chain: CodeChain) {
     const r = getRun(app, id);
     if (r.output.review) blocks.push({ fold: { title: `第 ${r.input.round ?? 1} 轮独立评审 · ${r.output.verdict ?? ""}`, markdown: String(r.output.review).slice(0, 2000) } });
   }
-  const terminal = ["done", "failed", "cancelled"].includes(latest.status);
+  // A confirmed plan reviews after the coding run ended: the review is still going on.
+  const reviewing = latest.status === "done" && ["queued", "checks", "lead"].includes(String(latest.output.reviewStage ?? ""));
+  const terminal = ["done", "failed", "cancelled"].includes(latest.status) && !reviewing;
   const approved = latest.status === "done" && latest.output.verdict === "approved";
-  const status = terminal
-    ? approved ? "完成，评审通过"
+  const stop = latest.output.reviewStop as StopReason | null | undefined;
+  const status = reviewing ? "评审中"
+    : latest.output.verdict === "awaiting-plan" ? "编码完成，评审计划等你确认"
+    : terminal && stop && !approved ? `停下来等你决定：${STOP_LABEL[stop]}`
+    : terminal
+    ? approved ? latest.output.acceptedByOwner ? "完成，你已接受现在的改动" : "完成，评审通过"
       : latest.status !== "done" ? `运行${latest.status}，等本人处理`
       : latest.output.verdict === "no-changes" ? "未产生改动，等本人处理"
       : `评审要求修改${chain.round >= maxCodeRounds(app, chain) ? "，已到自动推进上限" : ""}，等本人处理`
@@ -66,6 +92,10 @@ function snapshot(app: App, chain: CodeChain) {
     return String(d.text ?? d.title ?? "").slice(-500);
   }).filter(Boolean).join("\n").slice(-2500);
   blocks.unshift({ markdown: `第 ${chain.round} 轮 · ${status}\n运行：${latest.id}` });
+  const estimate = getRun(app, chain.rounds[0]).output.reviewEstimate as { tierName: string; reason: string } | undefined;
+  const review = reviewLines(app, latest.id);
+  if (review) blocks.splice(1, 0, { markdown: review });
+  else if (estimate && !terminal) blocks.splice(1, 0, { markdown: `评审负责人预估：「${estimate.tierName}」档（${estimate.reason}）` });
   if (lines && !terminal) blocks.push({ markdown: lines });
   if (terminal && latest.output.coderSummary) blocks.push({ fold: { title: "编码说明", markdown: String(latest.output.coderSummary).slice(0, 2000) } });
   if (terminal) blocks.push({ markdown: `检查：${JSON.stringify(latest.output.check ?? latest.output.repos ?? "未配置").slice(0, 1500)}` });
@@ -86,13 +116,19 @@ async function resolveAnchor(app: App, chain: CodeChain): Promise<string> {
   return t.settings.lastMessageId ?? "";
 }
 
+/** A review after the coding run (confirmed plan) keeps the card live until it has a verdict. */
+function checkpointOf(latest: ReturnType<typeof getRun>) {
+  const reviewing = ["queued", "checks", "lead"].includes(String(latest.output.reviewStage ?? ""));
+  return `${latest.id}:${["done", "failed", "cancelled"].includes(latest.status) && !reviewing ? `${latest.status}:${latest.output.verdict ?? ""}` : "active"}`;
+}
+
 async function deliver(app: App, askId: string) {
   let chain = chainAt(app, askId);
   if (!chain?.larkKey) return;
   const larkKey = chain.larkKey;
   let d = deliveryAt(app, askId);
   const latest = getRun(app, chain.lastCodeRunId!);
-  const checkpoint = `${latest.id}:${["done", "failed", "cancelled"].includes(latest.status) ? latest.status : "active"}`;
+  const checkpoint = checkpointOf(latest);
   if (d.checkpoint !== checkpoint) d = { ...d, checkpoint, attempts: 0, nextAttemptAt: undefined };
   if (checkpoint.endsWith(":active") && d.sentAt && Date.now() - d.sentAt < 3000) return;
   const card = snapshot(app, chain);
@@ -209,7 +245,7 @@ export function registerCodeProgress(app: App) {
           // Give a never-created card one finite budget on startup, not on every poll.
           if (initial && !chain.larkMessageId && d.operation === "create" && d.attempts >= MAX_ATTEMPTS)
             saveDelivery(app, row.id, { ...d, attempts: 0, nextAttemptAt: undefined });
-          const deliveredFinal = d.status === "sent" && d.checkpoint === `${latest.id}:${latest.status}` && ["done", "failed", "cancelled"].includes(latest.status);
+          const deliveredFinal = d.status === "sent" && d.checkpoint === checkpointOf(latest) && !d.checkpoint.endsWith(":active");
           // Retry failed handoff bookkeeping even if the final card was delivered.
           if (deliveredFinal && latest.output.codeResultMessageId) continue;
           trySettleCodeChain(app, chain.lastCodeRunId!);
@@ -226,9 +262,13 @@ export function registerCodeProgress(app: App) {
   const listener = (e: any) => {
     if (!["run", "run-event"].includes(e.type) || !e.runId) return;
     try {
-      const r = getRun(app, e.runId);
-      if (r.kind !== "code") return;
-      if (["done", "failed", "cancelled"].includes(r.status)) trySettleCodeChain(app, r.id);
+      let r = getRun(app, e.runId);
+      // A review run works on a coding run: the card belongs to that one.
+      if (r.kind === "review" && typeof r.input.codeRunId === "string") {
+        if (["done", "failed", "cancelled"].includes(r.status)) trySettleCodeChain(app, r.input.codeRunId);
+        r = getRun(app, r.input.codeRunId);
+      } else if (r.kind !== "code") return;
+      else if (["done", "failed", "cancelled"].includes(r.status)) trySettleCodeChain(app, r.id);
       const chain = r.output.codeChain as CodeChain | undefined;
       if (chain) startCodeProgress(app, chain);
     } catch (error) {

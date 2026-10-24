@@ -113,6 +113,27 @@ new AgentSideConnection(
       // submit_review — the "业务" check asks for a change, the others approve.
       if (process.env.FAKE_MODE === "review") {
         const check = /你负责的评审项：(\S+)/.exec(prompt)?.[1];
+        // Host one-shot judgements (tier estimate, triage): keep the conditions' choice.
+        if (prompt.includes("只输出一个 JSON")) {
+          await say("{}");
+          return { stopReason: "end_turn" as const };
+        }
+        // review-lead: accept the business finding, reject the rest, ask for one more round of business only.
+        const leadRound = /你在裁决第 (\d+) 轮/.exec(prompt)?.[1];
+        if (leadRound) {
+          const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+          const client = new Client({ name: "fake-lead", version: "1" });
+          await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+          try {
+            const tools = (await client.listTools()).tools.map((t) => t.name);
+            const ids = [...prompt.matchAll(/- #(\d+) \[([^\]]+)\]/g)].map((m) => ({ id: Number(m[1]), tag: m[2] }));
+            const rulings = ids.map((x) => (x.tag.startsWith("业务") && x.tag.includes("严重") ? { id: x.id, decision: "accept" } : { id: x.id, decision: "reject", note: "不影响这次需求" }));
+            const res = await client.callTool({ name: "rule_review", arguments: { rulings, verdict: rulings.some((r) => r.decision === "accept") ? "revise" : "approve", summary: `第 ${leadRound} 轮：业务问题要改`, change_request: "1. refund.ts:1 已发货行不能退：过滤已发货行", rerun: ["review-business"] } });
+            await say(`负责人结论
+${JSON.stringify({ tools, error: res.isError ? res.content : null })}`);
+          } finally { await client.close(); }
+          return { stopReason: "end_turn" as const };
+        }
         if (!check) {
           appendFileSync(join(cwds.get(p.sessionId)!, "refund.ts"), `export const round = ${prompt.includes("上一轮评审要求修改") ? 2 : 1};
 `);

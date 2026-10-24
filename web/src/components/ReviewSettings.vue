@@ -17,9 +17,9 @@ import { toast } from "../store";
  * Everything is saved together (config.review).
  */
 type Blocks = "blocker" | "major" | "minor";
-type Tier = { id: string; name: string; when: Condition | null; guide: string; checks: string[]; maxRounds: number };
+type Tier = { id: string; name: string; when: Condition | null; guide: string; checks: string[]; maxRounds: number; lead: boolean; confirmPlan: boolean };
 type Check = { name: string; label: string; blocks: Blocks; when: Condition | null; guide: string; builtin: boolean; about: string; missing: boolean; ai: { profile: string; model?: string; effort?: string } | null };
-type Settings = { tiers: Tier[]; checks: Check[]; specs: { name: string; description: string }[]; recent: Record<string, number> };
+type Settings = { tiers: Tier[]; rereviewAllEvery: number; checks: Check[]; specs: { name: string; description: string }[]; recent: Record<string, number> };
 
 const route = useRoute();
 const router = useRouter();
@@ -29,6 +29,7 @@ const dirty = ref(false);
 const saved = ref<Settings | null>(null);
 const tiers = ref<Tier[]>([]);
 const checks = ref<Check[]>([]);
+const rereviewAllEvery = ref(2);
 const options = ref<{ fields: Record<string, string>; descriptions: Record<string, string>; ops: string[] }>({ fields: {}, descriptions: {}, ops: [] });
 const NUMERIC = ["change.lines", "change.files", "change.repos"];
 const fieldOps = Object.fromEntries(NUMERIC.map((f) => [f, ["gte", "lte", "equals"]]));
@@ -46,6 +47,7 @@ function reset(s: Settings) {
   saved.value = s;
   tiers.value = JSON.parse(JSON.stringify(s.tiers));
   checks.value = JSON.parse(JSON.stringify(s.checks));
+  rereviewAllEvery.value = s.rereviewAllEvery ?? 2;
   dirty.value = false;
 }
 async function load() {
@@ -73,6 +75,7 @@ async function save() {
   try {
     const body = {
       tiers: tiers.value,
+      rereviewAllEvery: rereviewAllEvery.value,
       checks: Object.fromEntries(checks.value.map((c) => [c.name, { label: c.label, blocks: c.blocks, when: c.when, guide: c.guide ?? "" }])),
     };
     await put("/api/review-settings", body);
@@ -90,7 +93,7 @@ async function save() {
 function newTier() {
   let n = tiers.value.length + 1;
   while (tiers.value.some((t) => t.id === `tier-${n}`)) n++;
-  const t: Tier = { id: `tier-${n}`, name: "新档位", when: { field: "change.lines", op: "gte", value: "200" } as Condition, guide: "", checks: ["reviewer"], maxRounds: 3 };
+  const t: Tier = { id: `tier-${n}`, name: "新档位", when: { field: "change.lines", op: "gte", value: "200" } as Condition, guide: "", checks: ["reviewer"], maxRounds: 3, lead: true, confirmPlan: false };
   // New tiers go above the catch-all, which must stay last.
   tiers.value.splice(Math.max(0, tiers.value.length - 1), 0, t);
   touch();
@@ -118,7 +121,7 @@ function toggleCheck(t: Tier, name: string) {
   touch();
 }
 const isLast = computed(() => tierIndex.value === tiers.value.length - 1);
-const roundsPerTier = (t: Tier) => `${t.checks.length > 1 ? `${t.checks.length} 项评审` : `只做${labelOf(t.checks[0] ?? "reviewer")}评审`} · 最多 ${t.maxRounds} 轮`;
+const roundsPerTier = (t: Tier) => [t.checks.length > 1 ? `${t.checks.length} 项评审` : `只做${labelOf(t.checks[0] ?? "reviewer")}评审`, t.lead ? "负责人协调" : "", `最多 ${t.maxRounds} 轮`, t.confirmPlan ? "先给你看计划" : ""].filter(Boolean).join(" · ");
 
 // ---- checks ----------------------------------------------------------------------------
 const pick = ref<string | null>(null);
@@ -219,9 +222,15 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
 
         <section class="block">
           <div class="block-head"><h3>怎么推进</h3></div>
+          <div class="row opt"><span class="grow">由评审负责人协调<span class="muted small sub">合并重复的问题、逐条接受或驳回、写修改单，下一轮只复审受影响的评审项；修改不收敛、同一问题僵持或需求有分歧时停下来问你</span></span>
+            <UiCheckbox v-model="tier.lead" switch aria-label="由评审负责人协调" @change="touch" /></div>
+          <div class="row opt"><span class="grow">开始评审前先给我看计划<span class="muted small sub">编码完成后把档位、评审项和理由发给你，确认或换档后再评审</span></span>
+            <UiCheckbox v-model="tier.confirmPlan" switch aria-label="开始评审前先给我看计划" @change="touch" /></div>
           <label class="row opt"><span class="grow">评审要求修改时，最多自动再改几轮<span class="muted small sub">到上限后停下来等你决定</span></span>
             <input v-model.number="tier.maxRounds" class="input num" type="number" min="1" max="10" inputmode="numeric" aria-label="最多轮数" @input="touch" /></label>
-          <small class="muted">每轮 {{ tier.checks.length }} 个评审运行。</small>
+          <label v-if="tier.lead" class="row opt"><span class="grow">每隔几轮全部评审项重审一次<span class="muted small sub">防止只复审一部分时漏掉新问题；所有档位共用</span></span>
+            <input v-model.number="rereviewAllEvery" class="input num" type="number" min="1" max="10" inputmode="numeric" aria-label="全部重审的间隔" @input="touch" /></label>
+          <small class="muted">每轮 {{ tier.checks.length }} 个评审运行{{ tier.lead ? " + 1 个负责人运行" : "" }}。</small>
         </section>
       </div>
 

@@ -79,7 +79,7 @@ export function matchesReview(c: ReviewCondition | null | undefined, m: ReviewMe
 
 // ---- settings ----------------------------------------------------------------------------------
 
-export type Tier = { id: string; name: string; when: ReviewCondition | null; guide?: string; checks: string[]; maxRounds: number };
+export type Tier = { id: string; name: string; when: ReviewCondition | null; guide?: string; checks: string[]; maxRounds: number; lead?: boolean; confirmPlan?: boolean };
 export type CheckSetting = { label: string; blocks: "blocker" | "major" | "minor"; when: ReviewCondition | null; guide?: string };
 export type CheckInfo = CheckSetting & { name: string; builtin: boolean; about: string; missing: boolean };
 
@@ -105,9 +105,11 @@ export const tierSchema = z.object({
   guide: z.string().trim().max(2000).default(""),
   checks: z.array(z.string()).min(1, "每个档位至少要有一项评审").max(12),
   maxRounds: z.number().int().min(1).max(10),
+  lead: z.boolean().default(false),
+  confirmPlan: z.boolean().default(false),
 });
 export const checkSettingSchema = z.object({ label: z.string().trim().min(1).max(12), blocks: z.enum(["blocker", "major", "minor"]), when: reviewCondition.nullable(), guide: z.string().trim().max(2000).default("") });
-export const reviewSettingsSchema = z.object({ tiers: z.array(tierSchema).min(1).max(12), checks: z.record(z.string(), checkSettingSchema) });
+export const reviewSettingsSchema = z.object({ tiers: z.array(tierSchema).min(1).max(12), checks: z.record(z.string(), checkSettingSchema), rereviewAllEvery: z.number().int().min(1).max(10).default(2) });
 
 /** Check names must exist; the last tier is the catch-all (no condition), so every change has one. */
 export function validateReviewSettings(app: App, input: unknown) {
@@ -130,12 +132,14 @@ export function validateReviewSettings(app: App, input: unknown) {
 }
 
 export function defaultReviewSettings() {
-  return { tiers: defaultReviewTiers(), checks: {} };
+  return { tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2 };
 }
 
 // ---- planning ----------------------------------------------------------------------------------
 
-export type ReviewPlan = { tier: string; tierName: string; checks: string[]; maxRounds: number; reasons: string[]; metrics: ReviewMetrics };
+export type ReviewPlan = { tier: string; tierName: string; checks: string[]; maxRounds: number; reasons: string[]; metrics: ReviewMetrics; lead?: boolean; confirmPlan?: boolean };
+/** review-lead's guess before any code is written: which tier the task will likely need. */
+export type ReviewEstimate = { tier: string; tierName: string; reason: string };
 
 /**
  * First tier whose condition matches, unless the task named one; checks whose own condition
@@ -176,7 +180,7 @@ export function planReview(app: App, metrics: ReviewMetrics, opts: { tier?: stri
   const dropped = checks.filter((n) => !runnable.includes(n));
   if (dropped.length) reasons.push(`缺少评审项：${dropped.join("、")}（档案不存在或是草稿），已跳过`);
   if (!runnable.length) runnable.push("reviewer");
-  return { tier: tier.id, tierName: tier.name, checks: runnable, maxRounds: tier.maxRounds, reasons, metrics };
+  return { tier: tier.id, tierName: tier.name, checks: runnable, maxRounds: tier.maxRounds, reasons, metrics, lead: !!tier.lead, confirmPlan: !!tier.confirmPlan };
 }
 
 /**
@@ -185,18 +189,22 @@ export function planReview(app: App, metrics: ReviewMetrics, opts: { tier?: stri
  * move to a heavier tier and add checks, never drop what the conditions chose. Without an answer
  * the plan stays as it is.
  */
-export async function refineReviewPlan(app: App, plan: ReviewPlan, change: { task: string; diff: string; tierNamed?: boolean }, ask: (prompt: string) => Promise<string | null>): Promise<ReviewPlan> {
+export async function refineReviewPlan(app: App, plan: ReviewPlan, change: { task: string; diff: string; tierNamed?: boolean; estimate?: ReviewEstimate }, ask: (prompt: string) => Promise<string | null>): Promise<ReviewPlan> {
   const tiers = reviewTiers(app);
   const at = tiers.findIndex((t) => t.id === plan.tier);
-  const tierCandidates = change.tierNamed ? [] : tiers.slice(0, Math.max(0, at)).filter((t) => t.guide?.trim());
+  // Heavier: tiers with words that may fit, and what review-lead guessed before coding.
+  const tierCandidates = change.tierNamed ? [] : tiers.slice(0, Math.max(0, at)).filter((t) => t.guide?.trim() || t.id === change.estimate?.tier);
+  // A tier with a lead may also be judged one step too heavy for what was actually written.
+  const lighter = !change.tierNamed && tiers[at]?.lead && at < tiers.length - 1 ? tiers[at + 1] : null;
   const checkCandidates = reviewChecks(app).filter((c) => c.guide?.trim() && !c.missing && !plan.checks.includes(c.name));
-  if (!tierCandidates.length && !checkCandidates.length) return plan;
+  if (!tierCandidates.length && !checkCandidates.length && !lighter) return plan;
   const m = plan.metrics;
   const prompt = [
-    "你在给一次代码改动挑评审方式。只按本人写的说明判断，拿不准就不选。只输出一个 JSON：{\"tier\": 档位 id 或 null, \"checks\": [评审项名], \"reason\": \"一句话理由\"}",
+    `你是评审负责人，给一次已经写好的代码改动定评审方式。按改动本身和本人写的说明判断，拿不准就维持现在的选择。只输出一个 JSON：{"tier": 档位 id 或 null（维持）, "checks": [额外加上的评审项名], "reason": "一句话理由"}`,
     `## 改动\n\n任务：${change.task.slice(0, 3000)}\n\n${m["change.lines"]} 行、${m["change.files"]} 个文件、${m["change.repos"]} 个仓库；检查${m["change.checksPassed"] ? "通过" : "没通过"}。\n文件：${m["change.paths"].slice(0, 80).join("、")}\n\n${change.diff.slice(0, 12000)}`,
-    `## 现在的选择\n\n按条件落在「${plan.tierName}」档，评审项：${plan.checks.join("、")}。`,
-    tierCandidates.length ? `## 可以换成的更重档位（符合说明才选，否则 tier 填 null）\n\n${tierCandidates.map((t) => `- ${t.id}（${t.name}）：${t.guide}`).join("\n")}` : "",
+    `## 现在的选择\n\n按条件落在「${plan.tierName}」档，评审项：${plan.checks.join("、")}。${change.estimate ? `编码前预估是「${change.estimate.tierName}」档：${change.estimate.reason}` : ""}`,
+    tierCandidates.length ? `## 可以换成的更重档位（符合说明或预估确实成立才选）\n\n${tierCandidates.map((t) => `- ${t.id}（${t.name}）：${t.guide || "编码前预估的档位"}`).join("\n")}` : "",
+    lighter ? `## 可以降一档\n\n- ${lighter.id}（${lighter.name}）：只有改动明显比条件估计的小而简单（例如大多是生成文件、重命名、测试数据）时才选，并写清理由。` : "",
     checkCandidates.length ? `## 可以额外加上的评审项（符合说明才加）\n\n${checkCandidates.map((c) => `- ${c.name}（${c.label}）：${c.guide}`).join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
   let answer: { tier?: string | null; checks?: string[]; reason?: string } | null = null;
@@ -209,17 +217,43 @@ export async function refineReviewPlan(app: App, plan: ReviewPlan, change: { tas
   if (!answer) return { ...plan, reasons: [...plan.reasons, "没能请模型按说明判断，只按条件选择"] };
   const next = { ...plan, checks: [...plan.checks], reasons: [...plan.reasons] };
   const tier = tierCandidates.find((t) => t.id === answer!.tier);
+  const usable = (c: string) => reviewChecks(app).some((x) => x.name === c && !x.missing);
   if (tier) {
-    next.tier = tier.id;
-    next.tierName = tier.name;
-    next.maxRounds = tier.maxRounds;
-    for (const c of tier.checks) if (!next.checks.includes(c) && reviewChecks(app).some((x) => x.name === c && !x.missing)) next.checks.push(c);
-    next.reasons.push(`按「${tier.name}」档的说明改用这一档${answer.reason ? `：${answer.reason}` : ""}`);
+    Object.assign(next, { tier: tier.id, tierName: tier.name, maxRounds: tier.maxRounds, lead: !!tier.lead, confirmPlan: !!tier.confirmPlan });
+    for (const c of tier.checks) if (!next.checks.includes(c) && usable(c)) next.checks.push(c);
+    next.reasons.push(`评审负责人改用「${tier.name}」档${answer.reason ? `：${answer.reason}` : ""}`);
+  } else if (lighter && answer.tier === lighter.id) {
+    // Keep what conditions or the owner added on top of the tier.
+    const extra = next.checks.filter((c) => !tiers[at].checks.includes(c));
+    Object.assign(next, { tier: lighter.id, tierName: lighter.name, maxRounds: lighter.maxRounds, lead: !!lighter.lead, confirmPlan: !!lighter.confirmPlan, checks: [...lighter.checks.filter(usable), ...extra.filter((c) => !lighter.checks.includes(c))] });
+    next.reasons.push(`评审负责人降到「${lighter.name}」档${answer.reason ? `：${answer.reason}` : ""}`);
   }
   const added = checkCandidates.filter((c) => answer!.checks?.includes(c.name));
   for (const c of added) next.checks.push(c.name);
   if (added.length) next.reasons.push(`按说明加上${added.map((c) => `「${c.label}」`).join("")}评审${!tier && answer.reason ? `：${answer.reason}` : ""}`);
   return next;
+}
+
+/**
+ * Before any code is written, review-lead guesses the tier from the task alone (shown with the
+ * progress, and offered to the post-coding triage as a heavier option). Null without an answer.
+ */
+export async function estimateReview(app: App, task: string, ask: (prompt: string) => Promise<string | null>): Promise<ReviewEstimate | null> {
+  const tiers = reviewTiers(app);
+  if (tiers.length < 2) return null;
+  const prompt = [
+    `你是评审负责人。下面的编码任务还没开始写，先按任务本身估计它大概需要哪一档评审（改动会有多大、碰不碰关键逻辑）。只输出一个 JSON：{"tier": 档位 id, "reason": "一句话理由"}`,
+    `## 任务\n\n${task.slice(0, 6000)}`,
+    `## 档位（从重到轻）\n\n${tiers.map((t) => `- ${t.id}（${t.name}）：${t.checks.length} 项评审${t.guide ? `；本人说明：${t.guide}` : ""}${t.when ? "；有按改动大小的条件" : "；兜底档"}`).join("\n")}`,
+  ].join("\n\n");
+  try {
+    const { jsonIn } = await import("./oneshot.ts");
+    const a = jsonIn<{ tier?: string; reason?: string }>(await ask(prompt));
+    const t = tiers.find((x) => x.id === a?.tier);
+    return t ? { tier: t.id, tierName: t.name, reason: (a?.reason ?? "").slice(0, 300) } : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Written into each check's task: how to report, what blocks. */
@@ -247,7 +281,7 @@ export const findingSchema = z.object({
 });
 export type Finding = z.infer<typeof findingSchema>;
 export type ReviewRow = { id: string; code_run_id: string; round: number; check_name: string; tier: string | null; profile_id: string | null; model: string | null; effort: string | null; verdict: string; summary: string; status: string; created_at: string };
-export type FindingRow = { id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string };
+export type FindingRow = { id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string; merged_into: number | null; triage_note: string };
 
 const RANK: Record<Severity, number> = { blocker: 0, major: 1, minor: 2, nit: 3 };
 export const blocksAt = (severity: Severity, level: CheckSetting["blocks"]) => RANK[severity] <= RANK[level];
@@ -278,4 +312,83 @@ export function reviewsOf(app: App, codeRunIds: string[]) {
   const reviews = all<ReviewRow>(app.db, `select * from reviews where code_run_id in (${marks}) order by round, created_at`, ...codeRunIds);
   const findings = reviews.length ? all<FindingRow>(app.db, `select * from review_findings where review_id in (${reviews.map(() => "?").join(",")}) order by id`, ...reviews.map((r) => r.id)) : [];
   return reviews.map((r) => ({ ...r, findings: findings.filter((f) => f.review_id === r.id).map((f) => ({ ...f, evidence: JSON.parse(f.evidence) as string[] })) }));
+}
+
+// ---- review-lead: rulings and when to stop -------------------------------------------------------
+
+export type Ruling = { id: number; decision: "accept" | "reject" | "merge"; into?: number; note?: string };
+export type LeadResult = {
+  round: number;
+  verdict: "approve" | "revise" | "escalate";
+  summary: string;
+  changeRequest: string;
+  rerun: string[];
+  escalation?: { summary: string; options: string[] };
+  stop?: StopReason;
+  by: "lead" | "host";
+};
+export type StopReason = "auto-limit" | "not-converging" | "stalemate" | "escalated";
+export const STOP_LABEL: Record<StopReason, string> = {
+  "auto-limit": "到了这一档的自动修改轮数上限",
+  "not-converging": "这一轮要改的问题不比上一轮少，修改没有收敛",
+  stalemate: "同一个问题连续两轮修改后仍被报出，编码和评审僵持",
+  escalated: "评审负责人判断是需求或方案上的分歧，需要你决定",
+};
+
+/** Findings of one round of a delegation, with the check that reported them. */
+export function roundFindings(app: App, codeRunId: string, round: number) {
+  return all<FindingRow & { check_name: string }>(app.db, "select f.*, r.check_name from review_findings f join reviews r on r.id = f.review_id where r.code_run_id = ? and r.round = ? order by f.id", codeRunId, round);
+}
+
+/** review-lead's decisions, checked against this round's findings; unknown ids are refused. */
+export function applyRulings(app: App, codeRunId: string, round: number, rulings: Ruling[]) {
+  const mine = new Set(roundFindings(app, codeRunId, round).map((f) => f.id));
+  for (const r of rulings) {
+    if (!mine.has(r.id)) throw new HttpError(400, `问题 ${r.id} 不是这一轮的`);
+    if (r.decision === "merge" && (!r.into || !mine.has(r.into) || r.into === r.id)) throw new HttpError(400, `问题 ${r.id} 合并到的 ${r.into ?? "（空）"} 不是这一轮的另一条问题`);
+  }
+  tx(app.db, () => {
+    for (const r of rulings) {
+      const state = r.decision === "accept" ? "accepted" : r.decision === "reject" ? "rejected" : "merged";
+      run(app.db, "update review_findings set state = ?, merged_into = ?, triage_note = ? where id = ?", state, r.decision === "merge" ? r.into! : null, (r.note ?? "").slice(0, 1000), r.id);
+    }
+  });
+}
+
+/** The same problem across rounds: same check, same file, same words once punctuation and case are gone. */
+export const findingKey = (f: { check_name: string; file_path: string | null; title: string }) =>
+  `${f.check_name}|${(f.file_path ?? "").replace(/:\d+$/, "")}|${f.title.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, "")}`;
+
+/**
+ * Accepted findings at or above the check's blocking level. Without a lead every blocking
+ * finding counts as accepted (open).
+ */
+export function blockingAccepted(app: App, codeRunId: string, round: number) {
+  const level = new Map(reviewChecks(app).map((c) => [c.name, c.blocks]));
+  return roundFindings(app, codeRunId, round).filter((f) => ["accepted", "open"].includes(f.state) && blocksAt(f.severity, level.get(f.check_name) ?? "major"));
+}
+
+/**
+ * Whether automatic rounds must stop here even though changes are asked for. `rounds` is the code
+ * run of every round so far, in order, the current one last.
+ */
+export function stopReason(app: App, rounds: { runId: string; round: number }[], maxRounds: number, leadVerdict: LeadResult["verdict"]): StopReason | null {
+  if (leadVerdict === "escalate") return "escalated";
+  const cur = rounds.at(-1)!;
+  if (cur.round >= maxRounds) return "auto-limit";
+  const now = blockingAccepted(app, cur.runId, cur.round);
+  const prev = rounds.at(-2);
+  if (prev) {
+    const before = blockingAccepted(app, prev.runId, prev.round);
+    // The more specific reason first: one problem that two fixes did not remove.
+    const older = rounds.at(-3);
+    if (older) {
+      const keys = (list: { check_name: string; file_path: string | null; title: string }[]) => new Set(list.map(findingKey));
+      const a = keys(blockingAccepted(app, older.runId, older.round));
+      const b = keys(before);
+      if (now.some((f) => a.has(findingKey(f)) && b.has(findingKey(f)))) return "stalemate";
+    }
+    if (before.length && now.length >= before.length) return "not-converging";
+  }
+  return null;
 }
