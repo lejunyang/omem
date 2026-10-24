@@ -16,6 +16,8 @@ export type Run = {
   input: Record<string, unknown>;
   output: Record<string, unknown>;
   profileId: string | null;
+  /** Backend, model and effort the run used (its first successful Agent call). */
+  ai: { profile: string; model?: string; effort?: string } | null;
   parentId: string | null;
   error: string | null;
   createdAt: string;
@@ -32,6 +34,7 @@ type Row = {
   input: string;
   output: string;
   profile_id: string | null;
+  ai: string | null;
   parent_id: string | null;
   error: string | null;
   created_at: string;
@@ -50,6 +53,7 @@ const toRun = (r: Row): Run => ({
   input: json(r.input, {}),
   output: json(r.output, {}),
   profileId: r.profile_id,
+  ai: r.ai ? json(r.ai, null) : null,
   parentId: r.parent_id,
   error: r.error,
   createdAt: r.created_at,
@@ -262,6 +266,29 @@ export function startWorker(app: App) {
   setInterval(() => kick(app), 2000).unref();
   setInterval(() => watchStalls(app), 60_000).unref();
   kick(app);
+}
+
+/**
+ * Why a queued run has not started. This is omem's own queue: the backend and model are chosen
+ * only when the run starts. A backend's own queue (a provider queue) shows inside a running run.
+ */
+export function queueReason(app: App, r: Run): string | null {
+  if (r.status !== "queued") return null;
+  const row = one<Row>(app.db, "select * from runs where id = ?", r.id);
+  if (!row) return null;
+  if (row.not_before && row.not_before > now()) return `定时，${row.not_before.slice(0, 16).replace("T", " ")} 开始`;
+  if (row.lane) {
+    const busy = one<{ id: string }>(app.db, "select id from runs where lane = ? and status = 'running'", row.lane);
+    const older = one<{ n: number }>(app.db, "select count(*) n from runs where lane = ? and status = 'queued' and created_at < ?", row.lane, row.created_at)!.n;
+    if (busy || older) return `等同一会话里前面的运行${busy ? `（${busy.id} 进行中）` : ""}${older ? `，前面还有 ${older} 个` : ""}`;
+  }
+  const interactive = INTERACTIVE.has(row.kind);
+  const limit = interactive ? app.config.interactiveConcurrency : app.config.concurrency;
+  const kinds = [...INTERACTIVE].map((k) => `'${k}'`).join(",");
+  const same = interactive ? `kind in (${kinds})` : `kind not in (${kinds})`;
+  const running = one<{ n: number }>(app.db, `select count(*) n from runs where status = 'running' and ${same}`)!.n;
+  const ahead = one<{ n: number }>(app.db, `select count(*) n from runs where status = 'queued' and ${same} and created_at < ? and (not_before is null or not_before <= ?)`, row.created_at, now())!.n;
+  return `等${interactive ? "对话" : "后台任务"}空位：同时最多 ${limit} 个，正在运行 ${running} 个${ahead ? `，前面还排着 ${ahead} 个` : ""}`;
 }
 
 function nextRunnable(app: App): Row | undefined {

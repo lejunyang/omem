@@ -3,7 +3,7 @@ import { truncate } from "../core/util.ts";
 import { userName } from "../core/users.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import { runBackend } from "./dispatch.ts";
-import { fallbackProfiles, isRetryableAgentError, prepareRun, type Actor } from "./runner.ts";
+import { fallbackProfiles, isRetryableAgentError, prepareRun, recordRunAI, type Actor } from "./runner.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { createRun, runsInLane, type RunContext } from "./runs.ts";
 import { findAgentSpec } from "./specs.ts";
@@ -294,6 +294,7 @@ ${WAKE_NOTE}`
       release(threadId);
       revokeToolToken(curPrep.token);
       curPrep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined });
+      recordRunAI(app, ctx.run.id, curPrep.profile, true);
       emit({ type: "status", text: `默认后端不可用（排队/限流），改用 ${used.name ?? used.id}${used.model ? ` · ${used.model}` : ""} 重试` });
     }
     try {

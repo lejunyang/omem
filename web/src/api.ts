@@ -156,7 +156,9 @@ export type MemoryQuality = {
 };
 export type Item = { id: string; spaceId: string; kind: string; title: string; detail: string; status: string; priority: number; dueAt: string | null; remindAt: string | null; waitingOn: string | null; watch: any; sourceRefs: string[]; createdAt: string; updatedAt: string; closedAt: string | null };
 export type ItemEvent = { id: number; itemId: string; at: string; kind: string; text: string; sourceRefs: string[]; actor: string };
-export type Run = { id: string; kind: string; spaceId: string | null; status: string; title: string; input: any; output: any; profileId: string | null; parentId: string | null; error: string | null; createdAt: string; startedAt: string | null; finishedAt: string | null; quiet?: boolean };
+export type Run = { id: string; kind: string; spaceId: string | null; status: string; title: string; input: any; output: any; profileId: string | null; ai?: { profile: string; model?: string; effort?: string } | null; waiting?: string | null; parentId: string | null; error: string | null; createdAt: string; startedAt: string | null; finishedAt: string | null; quiet?: boolean };
+/** "codex · gpt-6.1-sol · low": what a run ran on, or its backend alone for runs recorded before models were. */
+export const aiLabel = (r: Pick<Run, "ai" | "profileId">) => (r.ai ? [r.ai.profile, r.ai.model, r.ai.effort].filter(Boolean).join(" · ") : r.profileId ?? "");
 export type RunEvent = { seq: number; at: string; type: string; data: any };
 export type Source = { id: string; spaceId: string; kind: string; uri: string; title: string; mime: string | null; meta: any; capturedAt: string; updatedAt: string; deletedAt: string | null; lines?: number };
 export type Card = { id: string; spaceId: string; front: string; back: string; sourceRefs: string[]; dueAt: string; reps: number; lapses: number; state: number; suspended: boolean };

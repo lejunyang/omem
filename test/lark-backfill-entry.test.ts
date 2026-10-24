@@ -4,7 +4,7 @@ import { testApp } from "./helpers.ts";
 import { callTool } from "../src/agents/tools.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
-import { backfillStatus, pollLark, requestBackfill } from "../src/channels/lark-personal.ts";
+import { backfillStatus, backfillTick, requestBackfill } from "../src/channels/lark-personal.ts";
 import { historyScan } from "../src/channels/lark-history.ts";
 import { fillResourcesStatus, missingResources, storeMessages } from "../src/channels/lark-messages.ts";
 
@@ -17,7 +17,7 @@ describe("main official set_lark_backfill entry", () => {
   it.each(["main", "threads"] as const)("restores files and ingest intent from %s phase without losing checkpoint or other 39 queued chats", async (phase) => {
     const app = testApp();
     Object.assign(app.config.lark.capture, { mode: "subscribed", attachments: false, docs: false, calendar: false, minutes: false });
-    app.config.lark.capture.backfill = { days: 0, policies: [], pagesPerPoll: 1 };
+    app.config.lark.capture.backfill = { days: 0, policies: [], pagesPerMinute: 60, concurrency: 1 };
     const chats = [selected, ...Array.from({ length: 39 }, (_, i) => `oc_resume_other_${i}`)];
     for (const chat of chats) requestBackfill(app, chat, 0);
     run(app.db, "update lark_cursors set oldest_ms=backfill_to_ms"); // Simulate the old false-completion defect.
@@ -50,8 +50,8 @@ describe("main official set_lark_backfill entry", () => {
       }
       return { data: {} };
     });
-    await pollLark(app); // Automatic revalidation starts before the user restores intent.
-    if (phase === "threads") for (let i = 0; i < 41 && historyScan(app, selected)?.token !== "resume-selected"; i++) await pollLark(app);
+    await backfillTick(app); // Automatic revalidation starts before the user restores intent.
+    if (phase === "threads") for (let i = 0; i < 41 && historyScan(app, selected)?.token !== "resume-selected"; i++) await backfillTick(app);
     const checkpoint = historyScan(app, selected)!;
     expect(checkpoint).toMatchObject({ phase, token: "resume-selected" });
     expect(backfillStatus(app, selected).pending).toBe(true);
@@ -68,7 +68,7 @@ describe("main official set_lark_backfill entry", () => {
     expect(missingResources(app, [selected])).toEqual([]);
     expect(missingResources(app, [chats[1]])).toEqual([{ messageId: "om_fill_unrelated", key: "img_unrelated" }]);
     expect(all(app.db, "select id from runs where kind='ingest'")).toEqual([]);
-    for (let i = 0; i < 41 && backfillStatus(app, selected).pending; i++) await pollLark(app);
+    for (let i = 0; i < 41 && backfillStatus(app, selected).pending; i++) await backfillTick(app);
     expect(backfillStatus(app, selected)).toMatchObject({ pending: false, evidence: "remote-exhausted" });
     const ingests = all<{ input: string }>(app.db, "select input from runs where kind='ingest'");
     expect(ingests).toHaveLength(1);

@@ -518,7 +518,8 @@ registerHandler("wiki-plan", async (ctx) => {
   const pages = (json<{ plan?: PageBrief[] }>(plan, {}).plan ?? []) as PageBrief[];
   if (!pages.length) throw new Error("规划没有提交页面计划（submit_plan）");
   if (autoWrite)
-    for (const page of pages) createRun(ctx.app, { kind: "wiki-write", spaceId, title: `写作：${page.title}`, input: { brief: page, instructions: focus, readSpaces }, parentId: ctx.run.id, userId });
+    // Pages are written with the AI the plan was given, if any.
+    for (const page of pages) createRun(ctx.app, { kind: "wiki-write", spaceId, title: `写作：${page.title}`, input: { brief: page, instructions: focus, readSpaces, ai: ctx.run.input.ai }, parentId: ctx.run.id, userId });
   return { summary: r.text.trim(), pages: pages.length };
 });
 

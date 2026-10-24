@@ -4,7 +4,7 @@ import { testApp } from "./helpers.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { historyPage, historyScan } from "../src/channels/lark-history.ts";
-import { backfillStatus, pollLark, requestBackfill, setSubscriptions } from "../src/channels/lark-personal.ts";
+import { backfillTick, backfillStatus, pollLark, requestBackfill, setSubscriptions } from "../src/channels/lark-personal.ts";
 import { persistChatMessages, storeMessages, type LarkMessage } from "../src/channels/lark-messages.ts";
 import { upsertSource } from "../src/sources/store.ts";
 
@@ -13,7 +13,7 @@ const msg = (id:string, time=at):LarkMessage => ({message_id:id,chat_id:"oc_hist
 const setup = () => {
   const app = testApp();
   Object.assign(app.config.lark.capture,{mode:"subscribed",attachments:false,docs:false,calendar:false,minutes:false});
-  app.config.lark.capture.backfill = {days:0,policies:[],pagesPerPoll:1};
+  app.config.lark.capture.backfill = {days:0,policies:[],pagesPerMinute:60,concurrency:1};
   requestBackfill(app,"oc_history",0);
   const input = {chatId:"oc_history",name:"历史群",spaceId:"personal",target:Date.parse("2010-01-01"),ingest:false};
   return {app,input};
@@ -122,7 +122,7 @@ describe("remote-evidence history traversal",()=>{
     expect(all(app.db,"select 1 from sources where uri like 'lark:oc_history%'")).toHaveLength(1);
   });
 
-  it("spends the configured page budget after live capture and resumes fairly across queued chats",async()=>{
+  it("pulls history apart from the live poll, fairly and with the configured concurrency, and notices rate limits",async()=>{
     const {app}=setup();
     requestBackfill(app,"oc_second",0);
     setSubscriptions(app,[{chatId:"oc_live",name:"活跃群",spaceId:"personal"}]);
@@ -136,9 +136,29 @@ describe("remote-evidence history traversal",()=>{
       }
       return {data:{}};
     });
-    await pollLark(app);await pollLark(app);
-    expect(reads).toEqual(["oc_live","oc_history","oc_live","oc_second"]);
+    await pollLark(app);
+    expect(reads).toEqual(["oc_live"]); // the poll no longer spends time on history
+    expect(await backfillTick(app)).toMatchObject({pages:1,rateLimited:false,left:2});
+    expect(await backfillTick(app)).toMatchObject({pages:1,left:2});
+    expect(reads).toEqual(["oc_live","oc_history","oc_second"]);
+    app.config.lark.capture.backfill.concurrency=2;
+    await backfillTick(app);
+    expect(reads.slice(3).sort()).toEqual(["oc_history","oc_second"]);
     expect(backfillStatus(app,"oc_history").pending).toBe(true);
+    const token=historyScan(app,"oc_history")!.token;
+    setLarkCliForTests(async()=>{throw new Error("HTTP 429 Too Many Requests");});
+    expect(await backfillTick(app)).toMatchObject({pages:2,rateLimited:true,left:2});
+    expect(historyScan(app,"oc_history")!.token).toBe(token); // a failed page keeps its place
+  });
+
+  it("lets the assistant set the pace and reports overall progress",async()=>{
+    const {app}=setup();
+    const { callTool } = await import("../src/agents/tools.ts");
+    const r=await callTool({app,runId:null,spaceId:"personal",spaces:null,tools:null,actor:"user"},"set_lark_backfill",{pages_per_minute:120,concurrency:4});
+    expect(r.isError).toBe(false);
+    expect(app.config.lark.capture.backfill).toMatchObject({pagesPerMinute:120,concurrency:4});
+    expect(r.text).toContain("要回溯 1 个会话");
+    expect(r.text).toContain("未开始 1");
   });
   it("repairs an orphan known ID before advancing next, with exactly one database row and source line on replay",async()=>{
     const {app,input}=setup();
@@ -185,7 +205,7 @@ describe("remote-evidence history traversal",()=>{
       }
       return {data:{}};
     });
-    await pollLark(app); // automatic revalidation of the old ended request
+    await backfillTick(app); // automatic revalidation of the old ended request
     const fixed=historyScan(app,"oc_history")!;
     expect(fixed).toMatchObject({phase:"main",token:"next",target:input.target});
     expect(one(app.db,"select backfill_ingest from lark_cursors where chat_id='oc_history'")).toEqual({backfill_ingest:0});
@@ -206,7 +226,7 @@ describe("remote-evidence history traversal",()=>{
       return {data:{}};
     });
     // Normal fair scheduling visits the other 39 requests, then resumes the fixed active window.
-    for(let round=0;round<40 && backfillStatus(app,"oc_history").pending;round++) await pollLark(app);
+    for(let round=0;round<40 && backfillStatus(app,"oc_history").pending;round++) await backfillTick(app);
     expect(backfillStatus(app,"oc_history").pending).toBe(false);
     const runs=all<{input:string}>(app.db,"select input from runs where kind='ingest'");
     expect(runs).toHaveLength(1);

@@ -640,6 +640,8 @@ const migrations: string[] = [
   // review-lead's rulings on findings (accepted / rejected / merged into another).
   `alter table review_findings add column merged_into integer;
    alter table review_findings add column triage_note text not null default '';`,
+  // The AI a run actually used (backend, model, effort), recorded when its first Agent call succeeds.
+  `alter table runs add column ai text;`,
 ];
 
 export type Db = DatabaseSync;

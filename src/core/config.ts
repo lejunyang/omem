@@ -328,8 +328,15 @@ export const configSchema = z.object({
            * sources. Any chat can be backfilled on request (web, set_lark_backfill).
            */
           backfill: z
-            .object({ days: z.number().int().min(0).default(30), policies: z.array(capturePolicy).default(["ingest"]), pagesPerPoll: z.number().int().min(1).max(50).default(6) })
-            .default({ days: 30, policies: ["ingest"], pagesPerPoll: 6 }),
+            .object({
+              days: z.number().int().min(0).default(30),
+              policies: z.array(capturePolicy).default(["ingest"]),
+              /** History pages fetched per minute, all chats together (one page is 50 messages). */
+              pagesPerMinute: z.number().int().min(1).max(300).default(20),
+              /** Chats read at the same time. */
+              concurrency: z.number().int().min(1).max(8).default(2),
+            })
+            .default({ days: 30, policies: ["ingest"], pagesPerMinute: 20, concurrency: 2 }),
         })
         .default({
           mode: "subscribed",
@@ -354,7 +361,7 @@ export const configSchema = z.object({
           calendar: true,
           minutes: true,
           policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },
-          backfill: { days: 30, policies: ["ingest"], pagesPerPoll: 6 },
+          backfill: { days: 30, policies: ["ingest"], pagesPerMinute: 20, concurrency: 2 },
         }),
       /**
        * People who are not users @-ing the bot in a group (or writing to it one-to-one when `p2p`),
@@ -418,7 +425,7 @@ export const configSchema = z.object({
         calendar: true,
         minutes: true,
         policies: { p2p: "ingest", bot: "store", group: "involved", topic: "involved", muted: "skip" },
-        backfill: { days: 30, policies: ["ingest"], pagesPerPoll: 6 },
+        backfill: { days: 30, policies: ["ingest"], pagesPerMinute: 20, concurrency: 2 },
       },
       guests: { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest" },
       commands: { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 },

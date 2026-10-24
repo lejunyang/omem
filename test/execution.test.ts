@@ -67,6 +67,35 @@ describe("temporary AI choices", () => {
     expect(listRuns(app, { parentId: r.id }).some((r) => (r.input.execution as Execution)?.model === "m2")).toBe(true);
   });
 
+  it("gives generate_wiki a model and switches the AI of queued, running and failed runs with their children", async () => {
+    const app = fixture(); app.baseUrl = "http://127.0.0.1:1";
+    const ctx = { app, runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent" as const };
+    expect((await callTool(ctx, "generate_wiki", { space: "personal", execution: choice })).isError).toBe(false);
+    const plan = listRuns(app, { kind: "wiki-plan" })[0];
+    expect(plan.input.ai).toEqual(choice);
+    // A run's own choice is what runRole uses when the handler passes none.
+    const write = createRun(app, { kind: "wiki-write", spaceId: "personal", title: "写作", input: { ai: choice }, parentId: plan.id });
+    const r = await runRole(app, { role: "wiki-writer", spaceId: "personal", task: "写", runId: write.id });
+    expect(r.ai).toMatchObject({ profile: "second", model: "m3", effort: "xhigh" });
+    expect(getRun(app, write.id).ai).toEqual({ profile: "second", model: "m3", effort: "xhigh" }); // shown with the run
+    const { queueReason } = await import("../src/agents/runs.ts");
+    expect(queueReason(app, getRun(app, plan.id))).toMatch(/等后台任务空位：同时最多 [0-9]+ 个/);
+    const later = createRun(app, { kind: "wiki-lint", spaceId: "personal", title: "稍后", notBefore: new Date(Date.now() + 3600_000).toISOString() });
+    expect(queueReason(app, later)).toMatch(/^定时/);
+
+    const failed = createRun(app, { kind: "wiki-write", spaceId: "personal", title: "写作 2", input: {}, parentId: plan.id });
+    app.db.prepare("update runs set status = 'failed' where id = ?").run(failed.id);
+    const other = { ...choice, model: "m2", effort: "low" };
+    const res = await callTool(ctx, "switch_run_ai", { run_id: plan.id, execution: other });
+    expect(res.isError).toBe(false);
+    expect(getRun(app, plan.id).input.ai).toEqual(other);
+    expect(getRun(app, write.id).input.ai).toEqual(other);
+    const retried = listRuns(app, { parentId: plan.id }).find((x) => x.title === "写作 2" && x.status === "queued")!;
+    expect(retried.input.ai).toEqual(other);
+    const code = createRun(app, { kind: "code", spaceId: "personal", title: "改", input: { task: "改" } });
+    expect((await callTool(ctx, "switch_run_ai", { run_id: code.id, execution: other })).text).toContain("continue_code_run");
+  });
+
   it("uses the assistant role without creating a profile and retains the caller's limits", async () => {
     const app = fixture(); const server = await startServer(app, { port: 0, quiet: true });
     try {

@@ -2332,27 +2332,48 @@ def({
 def({
   name: "set_lark_backfill",
   description:
-    "回溯飞书会话的历史消息（本人要求查看/整理某些群或私聊更早的记录时用）。chat_ids 是要回溯的会话（先用 list_lark_chats 按本人说的范围挑）；days 往前多少天，0 表示全部，不给就不回溯；后台按远端页令牌推进，按月存成历史原件，图片和附件随消息下载。ingest=true 时消息回溯完成后整理；文档附件先保存，再以 lark-resource-parse 运行独立解析、整理，解析失败不阻塞翻页。files=true 补拉这些会话缺少的原图和原附件；视频封面可选，正文里的外链副本不作为原附件缺失。已提交的批次由后台继续，不必反复交办或重置游标。",
+    "回溯飞书会话的历史消息（本人要求查看/整理某些群或私聊更早的记录时用）。chat_ids 是要回溯的会话（先用 list_lark_chats 按本人说的范围挑）；days 往前多少天，0 表示全部，不给就不回溯；后台按远端页令牌推进，按月存成历史原件，图片和附件随消息下载。ingest=true 时消息回溯完成后整理；文档附件先保存，再以 lark-resource-parse 运行独立解析、整理，解析失败不阻塞翻页。files=true 补拉这些会话缺少的原图和原附件；视频封面可选，正文里的外链副本不作为原附件缺失。已提交的批次由后台继续，不必反复交办或重置游标。回溯在独立的后台循环里按 pages_per_minute（所有会话合计每分钟几页，每页 50 条）和 concurrency（同时读几个会话）推进，被限流时自动退避；会话多、本人嫌慢时调大这两个值（设置会保存，对之后的回溯都生效），只调速度时可以不给 chat_ids。返回总体进度。不要自己写脚本用 lark-cli 抓历史：那样绕开去重、游标和空间归属。",
   write: true,
   schema: z.object({
-    chat_ids: z.array(z.string()).min(1).max(200),
+    chat_ids: z.array(z.string()).min(1).max(500).optional(),
     days: z.number().int().min(0).max(3650).optional(),
     ingest: z.boolean().optional(),
     files: z.boolean().optional(),
+    pages_per_minute: z.number().int().min(1).max(300).optional().describe("所有会话合计每分钟取几页历史（默认 20）；被限流会自动退避"),
+    concurrency: z.number().int().min(1).max(8).optional().describe("同时读几个会话（默认 2）"),
   }),
   handler: async (ctx, a) => {
-    if (a.days === undefined && !a.files) return "要回溯历史给 days，要补拉图片和附件给 files=true。";
+    const pace = a.pages_per_minute !== undefined || a.concurrency !== undefined;
+    if (a.days === undefined && !a.files && !pace) return "要回溯历史给 days，要补拉图片和附件给 files=true，要调速度给 pages_per_minute / concurrency。";
+    if ((a.days !== undefined || a.files) && !a.chat_ids?.length) return "回溯或补拉要给 chat_ids。";
+    const m = await import("../channels/lark-personal.ts");
     const out: string[] = [];
+    if (pace) {
+      const { saveConfig } = await import("../core/config.ts");
+      const b = ctx.app.config.lark.capture.backfill;
+      if (a.pages_per_minute !== undefined) b.pagesPerMinute = a.pages_per_minute;
+      if (a.concurrency !== undefined) b.concurrency = a.concurrency;
+      saveConfig(ctx.app.config, ctx.app.home);
+      out.push(`回溯速度改为每分钟 ${b.pagesPerMinute} 页、同时 ${b.concurrency} 个会话（已保存，立即生效）。`);
+    }
     if (a.days !== undefined) {
-      const { requestBackfill } = await import("../channels/lark-personal.ts");
-      for (const id of a.chat_ids) requestBackfill(ctx.app, id, a.days, !!a.ingest);
-      out.push(`已安排 ${a.chat_ids.length} 个会话回溯${a.days ? `往前 ${a.days} 天` : "全部历史"}${a.ingest ? "，完成后整理" : "（只保存，可检索）"}，飞书采集开启时每 10 分钟推进几页。`);
+      for (const id of a.chat_ids!) m.requestBackfill(ctx.app, id, a.days, !!a.ingest);
+      out.push(`已安排 ${a.chat_ids!.length} 个会话回溯${a.days ? `往前 ${a.days} 天` : "全部历史"}${a.ingest ? "，完成后整理" : "（只保存，可检索）"}。`);
     }
     if (a.files) {
       const { fillResourcesInBackground } = await import("../channels/lark-messages.ts");
-      const r = fillResourcesInBackground(ctx.app, a.chat_ids, ctx.runId ? (one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId)?.input ? (JSON.parse(one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId)!.input) as { conversationId?: string }).conversationId : undefined) : undefined);
+      const input = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId)?.input : undefined;
+      const r = fillResourcesInBackground(ctx.app, a.chat_ids!, input ? (JSON.parse(input) as { conversationId?: string }).conversationId : undefined);
       out.push(r.started ? `开始补拉 ${r.total} 个缺的图片和附件，完成后通知本人。` : `没有补拉：${r.reason}。`);
     }
+    m.startBackfill(ctx.app);
+    const o = m.backfillOverview(ctx.app);
+    const perHour = o.pagesPerMinute * 60;
+    out.push(
+      `总体进度：要回溯 ${o.requested} 个会话，完成 ${o.done}，进行中 ${o.inProgress}，未开始 ${o.notStarted}，出错待重试 ${o.failing}。` +
+        `速度每分钟 ${o.pagesPerMinute} 页、同时 ${o.concurrency} 个会话（约 ${perHour} 页/小时）` +
+        `${o.backoffSeconds ? `；正在因限流退避 ${o.backoffSeconds} 秒` : ""}${o.running ? "" : "；飞书采集没开时不会推进"}。`,
+    );
     return out.join("\n");
   },
 });
@@ -2392,13 +2413,51 @@ def({
     focus: z.string().optional().describe("完整要求：读者、范围、资料优先级、图文要求、已有草稿和原件线索；会传给规划和每页写作"),
     source_spaces: z.array(z.string()).optional().describe("额外只读材料空间，如前端、后端和文档空间；不填使用目标的相关空间"),
     auto_write: z.boolean().optional().describe("默认 true；本人只要目录规划时设 false"),
+    execution: executionSchema.optional().describe("规划和每页写作用的 AI 的临时选择；已经在跑的 Wiki 要换 AI 用 switch_run_ai"),
   }),
   handler: (ctx, a) => {
     const r = generateWiki(ctx.app, {
-      spaceId: writeSpace(ctx, a.space), focus: a.focus, autoWrite: a.auto_write, sourceSpaces: a.source_spaces,
+      spaceId: writeSpace(ctx, a.space), focus: a.focus, autoWrite: a.auto_write, sourceSpaces: a.source_spaces, ai: validateExecution(ctx.app, a.execution),
       userId: ctx.userId, parentId: ctx.runId, readable: ctx.spaces, writable: ctx.writable ?? ctx.spaces,
     });
     return `已安排 Wiki ${a.auto_write === false ? "目录规划" : "规划与逐页写作"}，运行 ${r.id}，状态 ${r.status}，写入空间 ${r.spaceId}。用 read_run 查看计划和写作子运行；目前尚未生成完成。`;
+  },
+});
+
+def({
+  name: "switch_run_ai",
+  description:
+    "给已经安排的运行换 AI（后端、模型、强度）：比如某个后端一直排队或失败、本人要求中途换模型。传运行 id；with_children=true 时连同它的子运行（如 Wiki 规划下的各页写作）一起换。排队中的直接改；进行中的停下后用新 AI 重新排队；失败的用新 AI 重试；已完成和已取消的不动。编码交办不用这个，用 continue_code_run 的 execution / review_execution。",
+  write: true,
+  schema: z.object({
+    run_id: z.string(),
+    execution: executionSchema,
+    with_children: z.boolean().optional().describe("默认 true"),
+  }),
+  handler: async (ctx, a) => {
+    const execution = validateExecution(ctx.app, a.execution)!;
+    const root = getRun(ctx.app, a.run_id);
+    const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
+    const visible = (r: { spaceId: string | null }) => !r.spaceId || !allowed || allowed.includes(r.spaceId);
+    if (!visible(root)) throw new HttpError(403, "不能访问该运行的空间");
+    if (root.kind === "code" || root.kind === "review") throw new HttpError(400, "编码交办换 AI 用 continue_code_run 的 execution / review_execution");
+    const targets = [root, ...(a.with_children === false ? [] : listRuns(ctx.app, { parentId: root.id, limit: 500 }).filter((r) => visible(r) && r.kind !== "code" && r.kind !== "review"))];
+    const { cancelRun } = await import("./runs.ts");
+    const done: string[] = [];
+    for (const r of targets) {
+      // Agent rounds keep their choice in execution (it decides whether a session can be resumed); others in ai.
+      const input = r.kind === "agent" ? { ...r.input, execution } : { ...r.input, ai: execution };
+      if (r.status === "queued") {
+        run(ctx.app.db, "update runs set input = ? where id = ? and status = 'queued'", JSON.stringify(input), r.id);
+        done.push(`${r.id} 改为新 AI 排队`);
+      } else if (r.status === "running" || r.status === "failed") {
+        if (r.status === "running") cancelRun(ctx.app, r.id);
+        const next = createRun(ctx.app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input, parentId: r.parentId, lane: r.lane });
+        done.push(`${r.id} ${r.status === "running" ? "已停下" : "失败"}，用新 AI 重新排队为 ${next.id}`);
+      }
+    }
+    const ai = [execution.profile, execution.model, execution.effort].filter(Boolean).join(" · ");
+    return done.length ? `换成 ${ai}：\n${done.join("\n")}` : "没有需要换的运行（都已完成或已取消）。";
   },
 });
 

@@ -19,7 +19,7 @@ import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePage
 import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
 import type { RoleName } from "../core/config.ts";
-import { cancelRun, countRuns, createRun, getRun, listRuns, runEvents } from "../agents/runs.ts";
+import { cancelRun, countRuns, createRun, getRun, listRuns, queueReason, runEvents } from "../agents/runs.ts";
 import { callTool, toolContextForToken, toolList, toolSchemas } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -589,7 +589,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/runs", async (req) => {
     const o = q(z.object({ kind: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
     const opts = { kind: o.kind, spaceId: o.space, status: o.status, parentId: o.parent, includeQuiet: o.all };
-    return { runs: listRuns(app, { ...opts, limit: o.limit, offset: o.offset }), total: countRuns(app, opts) };
+    const runs = listRuns(app, { ...opts, limit: o.limit, offset: o.offset }).map((r) => (r.status === "queued" ? { ...r, waiting: queueReason(app, r) } : r));
+    return { runs, total: countRuns(app, opts) };
   });
   server.get("/api/runs/:id", async (req) => {
     const id = (req.params as { id: string }).id;
@@ -597,7 +598,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const r = getRun(app, id);
     const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
     if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
-    return { run: r, events: runEvents(app, id, o.after ?? 0), children: listRuns(app, { parentId: id }), patches: r.kind === "code" ? codePatches(app, id) : undefined, context: runContext(app, r) };
+    return { run: { ...r, waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children: listRuns(app, { parentId: id }), patches: r.kind === "code" ? codePatches(app, id) : undefined, context: runContext(app, r) };
   });
   server.post("/api/runs/:id/cancel", async (req) => cancelRun(app, (req.params as { id: string }).id));
   server.post("/api/runs/:id/retry", async (req) => {

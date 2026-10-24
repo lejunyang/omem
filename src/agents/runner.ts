@@ -6,7 +6,7 @@ import YAML from "yaml";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile, type RoleName } from "../core/config.ts";
 import { findSpace, kindLabel, relatedSpaces, spaceDir } from "../core/spaces.ts";
-import { all } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { spaceGuide } from "../wiki/store.ts";
 import { executionArgs, validateExecution, type Execution } from "./execution.ts";
@@ -223,6 +223,16 @@ export function resolveRunProfile(app: App, input: { actor: Actor; profileId?: s
  * Resolve backend, working directory, tool token and the standing context for
  * a role or agent spec. The caller owns the token (revoke it when done).
  */
+/**
+ * What a run runs on (backend, model, effort), shown with the run. The first preparation is its
+ * main actor (a coder before its reviewers); falling back to another backend replaces it.
+ */
+export function recordRunAI(app: App, runId: string | null, profile: AgentProfile, replace: boolean) {
+  if (!runId) return;
+  const ai = JSON.stringify({ profile: profile.id, model: profile.model ?? undefined, effort: profile.effort ?? undefined });
+  run(app.db, replace ? "update runs set ai = ?, profile_id = ? where id = ?" : "update runs set ai = coalesce(ai, ?), profile_id = coalesce(profile_id, ?) where id = ?", ai, profile.id, runId);
+}
+
 export function prepareRun(
   app: App,
   input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; reviewLead?: boolean },
@@ -232,6 +242,7 @@ export function prepareRun(
   const role = spec ? null : loadRole((input.actor as { role: RoleName }).role, app);
   const roleName = role ? (input.actor as { role: RoleName }).role : "assistant";
   const profile = resolveRunProfile(app, input);
+  if (!input.shadow) recordRunAI(app, input.runId, profile, false);
   const spaceId = spec?.space && !input.spaceId ? spec.space : input.spaceId;
   const space = findSpace(app, spaceId);
   if (!space) throw new HttpError(404, `空间不存在：${spaceId}`);
@@ -347,8 +358,19 @@ export function fallbackProfiles(
 }
 
 /** Run a role-defined agent turn with omem tools attached. */
+/**
+ * A model swapped in for one run (generate_wiki's execution, switch_run_ai), kept as the run's
+ * input.ai. Coding and review runs choose per role (coder / reviewer) instead.
+ */
+function runAI(app: App, runId: string | null): Execution | undefined {
+  if (!runId) return undefined;
+  const r = one<{ kind: string; input: string }>(app.db, "select kind, input from runs where id = ?", runId);
+  if (!r || r.kind === "code" || r.kind === "review") return undefined;
+  return (JSON.parse(r.input || "{}") as { ai?: Execution }).ai;
+}
+
 export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec; userId?: string }): Promise<AgentResult & { profileId: string; ai: { profile: string; model?: string; effort?: string } }> {
-  const execution = validateExecution(app, input.execution);
+  const execution = validateExecution(app, input.execution ?? runAI(app, input.runId));
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
   const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead });
@@ -364,6 +386,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   for (let i = 0; i < chain.length; i++) {
     const profile = chain[i];
     const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead });
+    if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, true);
     try {
       const req = {
         strictSelection: execution ? { model: !!execution.model, effort: !!execution.effort } : undefined,

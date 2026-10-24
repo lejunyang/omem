@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { get, onServerEvent, post, type Run, type RunEvent } from "../api";
+import { aiLabel, get, onServerEvent, post, type Run, type RunEvent } from "../api";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
 import VirtualList from "../components/VirtualList.vue";
@@ -236,7 +236,8 @@ const kindOptions = computed(() => [
               <span class="st" :class="r.status" />
               <div class="grow">
                 <div class="ellipsis">{{ r.title }}</div>
-                <div class="muted small">{{ runKindLabel[r.kind] ?? r.kind }} · {{ statusLabel[r.status] }} · {{ relTime(r.createdAt) }}<template v-if="r.parentId"> · 后续</template></div>
+                <div class="muted small ellipsis">{{ runKindLabel[r.kind] ?? r.kind }} · {{ statusLabel[r.status] }} · {{ relTime(r.createdAt) }}<template v-if="r.parentId"> · 后续</template><template v-if="aiLabel(r)"> · <span class="mono">{{ aiLabel(r) }}</span></template></div>
+                <div v-if="r.waiting" class="muted small ellipsis" :title="r.waiting">{{ r.waiting }}</div>
               </div>
             </router-link>
           </template>
@@ -259,10 +260,11 @@ const kindOptions = computed(() => [
             <span class="badge accent">{{ runKindLabel[detail.run.kind] ?? detail.run.kind }}</span>
             <span class="badge" :class="{ ok: detail.run.status === 'done', danger: detail.run.status === 'failed', warn: detail.run.status === 'running' }">{{ statusLabel[detail.run.status] }}</span>
             <span class="muted">{{ fmtTime(detail.run.createdAt) }}<template v-if="detail.run.finishedAt"> → {{ fmtTime(detail.run.finishedAt) }}</template></span>
-            <span v-if="detail.run.profileId" class="muted">· {{ detail.run.profileId }}</span>
+            <span v-if="aiLabel(detail.run)" class="muted" title="这次运行用的后端、模型和思考强度">· <span class="mono">{{ aiLabel(detail.run) }}</span></span>
             <span v-if="detail.run.spaceId" class="muted">· {{ detail.run.spaceId }}</span>
           </div>
           <h1 :title="detail.run.title">{{ detail.run.title }}</h1>
+          <p v-if="detail.run.waiting" class="muted small waiting" title="omem 自己的排队：开始运行时才选定后端和模型">排队中：{{ detail.run.waiting }}。开始运行时才选定后端和模型；后端自己的排队会在开始后的过程里显示。</p>
           <div class="row">
             <button v-if="['queued', 'running'].includes(detail.run.status)" class="btn sm" @click="act('cancel')"><Icon name="stop" :size="13" />停止</button>
             <button v-if="['failed', 'cancelled'].includes(detail.run.status)" class="btn sm" @click="act('retry')"><Icon name="refresh" :size="13" />重试</button>
@@ -492,6 +494,9 @@ const kindOptions = computed(() => [
 }
 .dh h1 {
   font-size: 21px;
+}
+.dh .waiting {
+  margin: 0;
 }
 .block {
   margin-bottom: 20px;

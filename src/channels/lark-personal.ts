@@ -383,7 +383,7 @@ function planBackfill(app: App, chatId: string, policy: CapturePolicy, oldestMs:
   run(app.db, "update lark_cursors set backfill_to_ms = ?, oldest_ms = coalesce(oldest_ms, ?) where chat_id = ? and backfill_to_ms is null", oldestMs - b.days * 86400_000, oldestMs, chatId);
 }
 
-/** Ask for a chat's history back to `days` ago (or everything, days = 0). Runs a few pages per poll. */
+/** Ask for a chat's history back to `days` ago (or everything, days = 0). The backfill loop pulls it. */
 export function requestBackfill(app: App, chatId: string, days: number, ingest = false) {
   const c = one<{ chat_id: string; oldest_ms: number | null; last_time: number }>(app.db, "select chat_id, oldest_ms, last_time from lark_cursors where chat_id = ?", chatId);
   const target = days > 0 ? Date.now() - days * 86400_000 : Date.parse("2010-01-01");
@@ -428,29 +428,88 @@ export function backfillStatus(app: App, chatId: string) {
   };
 }
 
-/**
- * One step of history for each chat that wants it: newest-first pages below what was already
- * captured, into monthly archive sources. Each poll spends at most `pagesPerPoll` pages in total
- * so a long history comes in over many polls without starving live capture.
- */
-async function backfillStep(app: App, owner: string | undefined, touched: Map<string, Set<string>>) {
-  const pending = all<{chat_id: string; name: string; backfill_to_ms: number; backfill_ingest: number}>(app.db,
+/** Chats whose requested history is not yet exhausted, least recently attempted first (failures included, so one bad chat cannot starve the rest). */
+function pendingBackfill(app: App) {
+  const rows = all<{ chat_id: string; name: string; backfill_to_ms: number; backfill_ingest: number }>(app.db,
     "select chat_id,name,backfill_to_ms,backfill_ingest from lark_cursors where chat_id not like 'thread:%' and backfill_to_ms is not null");
-  let budget = app.config.lark.capture.backfill.pagesPerPoll;
-  // Least recently attempted first, including failures: one bad group cannot starve the queue.
-  pending.sort((a,b) => (historyScan(app,a.chat_id)?.attemptedAt ?? 0) - (historyScan(app,b.chat_id)?.attemptedAt ?? 0));
-  for (const c of pending) {
-    const old = historyScan(app,c.chat_id);
-    if (old?.phase === "done" && old.evidence === "remote-exhausted" && old.target === c.backfill_to_ms) continue;
-    if (budget-- <= 0) break;
+  return rows
+    .map((c) => ({ ...c, scan: historyScan(app, c.chat_id) }))
+    .filter((c) => !(c.scan?.phase === "done" && c.scan.evidence === "remote-exhausted" && c.scan.target === c.backfill_to_ms))
+    .sort((a, b) => (a.scan?.attemptedAt ?? 0) - (b.scan?.attemptedAt ?? 0));
+}
+
+const RATE_LIMITED = /(^|\D)429(\D|$)|rate.?limit|too many requests|frequency|频率|限流|99991400/i;
+
+/**
+ * One round of history: the next page of up to `concurrency` chats, in parallel, into monthly
+ * archive sources. Chats whose history just finished with ingest asked for are queued for ingest.
+ */
+export async function backfillTick(app: App, owner?: string) {
+  const b = app.config.lark.capture.backfill;
+  const batch = pendingBackfill(app).slice(0, b.concurrency);
+  let rateLimited = false;
+  const touched = new Map<string, Set<string>>();
+  await Promise.all(batch.map(async (c) => {
     try {
-      const scan = await historyPage(app, { chatId: c.chat_id, name: c.name, target: c.backfill_to_ms, spaceId: chatSpace(app,c.chat_id), owner, ingest: !!c.backfill_ingest });
+      const scan = await historyPage(app, { chatId: c.chat_id, name: c.name, target: c.backfill_to_ms, spaceId: chatSpace(app, c.chat_id), owner, ingest: !!c.backfill_ingest });
       if (scan.phase === "done" && c.backfill_ingest) {
-        touched.set(chatSpace(app,c.chat_id), new Set([...(touched.get(chatSpace(app,c.chat_id)) ?? []), ...scan.touched]));
-        run(app.db,"update lark_cursors set backfill_ingest=0 where chat_id=?",c.chat_id);
+        const space = chatSpace(app, c.chat_id);
+        touched.set(space, new Set([...(touched.get(space) ?? []), ...scan.touched]));
+        run(app.db, "update lark_cursors set backfill_ingest=0 where chat_id=?", c.chat_id);
       }
-    } catch (e) { console.warn(`[omem] 回溯飞书历史失败 ${c.name}：${(e as Error).message}`); }
-  }
+    } catch (e) {
+      if (RATE_LIMITED.test((e as Error).message)) rateLimited = true;
+      console.warn(`[omem] 回溯飞书历史失败 ${c.name}：${(e as Error).message}`);
+    }
+  }));
+  for (const [spaceId, ids] of touched) scheduleIngest(app, spaceId, [...ids], "飞书历史回溯完成");
+  return { pages: batch.length, rateLimited, left: pendingBackfill(app).length };
+}
+
+let backfilling: Promise<void> | null = null;
+let backfillBackoff = 0;
+const captureOn = (app: App) => !!one<{ enabled: number }>(app.db, "select enabled from schedules where id = 'lark-poll'")?.enabled;
+
+/**
+ * History runs apart from the 10-minute poll, at `pagesPerMinute` with `concurrency` chats at a
+ * time, until nothing is pending; settings are read every round, so a change applies at once.
+ * Rate limiting backs off (30 s doubling to 10 min). The poll and set_lark_backfill start it.
+ */
+export function startBackfill(app: App) {
+  if (backfilling || !captureOn(app)) return;
+  backfilling = (async () => {
+    const owner = await ownerOpenId();
+    while (captureOn(app)) {
+      const started = Date.now();
+      const r = await backfillTick(app, owner);
+      if (!r.left) return;
+      backfillBackoff = r.rateLimited ? Math.min(Math.max(backfillBackoff * 2, 30_000), 600_000) : 0;
+      const pace = (r.pages * 60_000) / app.config.lark.capture.backfill.pagesPerMinute - (Date.now() - started);
+      await new Promise((ok) => setTimeout(ok, Math.max(backfillBackoff, pace, 200)));
+    }
+  })()
+    .catch((e) => console.warn("[omem] 飞书历史回溯停止：", (e as Error).message))
+    .finally(() => (backfilling = null));
+}
+
+/** All requested history at a glance, for the owner and the assistant. */
+export function backfillOverview(app: App) {
+  const b = app.config.lark.capture.backfill;
+  const requested = one<{ n: number }>(app.db, "select count(*) n from lark_cursors where chat_id not like 'thread:%' and backfill_to_ms is not null")!.n;
+  const pending = pendingBackfill(app);
+  const failing = pending.filter((c) => c.scan?.error).length;
+  const started = pending.filter((c) => c.scan?.attemptedAt).length;
+  return {
+    requested,
+    done: requested - pending.length,
+    inProgress: started - failing,
+    notStarted: pending.length - started,
+    failing,
+    pagesPerMinute: b.pagesPerMinute,
+    concurrency: b.concurrency,
+    running: !!backfilling,
+    backoffSeconds: Math.round(backfillBackoff / 1000),
+  };
 }
 
 let polling = false;
@@ -511,8 +570,8 @@ async function pollLarkOnce(app: App) {
     }
   }
 
-  // History the owner asked for (or new chats whose policy wants it), a few pages per poll.
-  await backfillStep(app, owner, touched).catch((e) => console.warn("[omem] 飞书历史回溯失败：", (e as Error).message));
+  // History the owner asked for (or new chats whose policy wants it) goes on in its own loop.
+  startBackfill(app);
   if (cfg.calendar) await captureCalendar(app, touched).catch((e) => console.warn("[omem] 飞书日程读取失败：", (e as Error).message));
   if (cfg.minutes) await captureMinutes(app, touched).catch((e) => console.warn("[omem] 飞书妙记读取失败：", (e as Error).message));
   // Linked docs that had no permission before (at most every 6 hours).

@@ -3,6 +3,7 @@ import { findSpace, relatedIds } from "../core/spaces.ts";
 import { canWrite, OWNER, scopeFor } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { createRun } from "../agents/runs.ts";
+import type { Execution } from "../agents/execution.ts";
 
 /** Chat, HTTP and CLI enter the same planning/writing pipeline. */
 export function generateWiki(app: App, input: {
@@ -14,6 +15,8 @@ export function generateWiki(app: App, input: {
   parentId?: string | null;
   readable?: string[] | null;
   writable?: string[] | null;
+  /** AI for the plan and every page (validated by the caller). */
+  ai?: Execution;
 }) {
   const userId = input.userId ?? OWNER;
   const allowed = scopeFor(app, userId, input.readable ?? null);
@@ -29,6 +32,6 @@ export function generateWiki(app: App, input: {
   const readSpaces = [...new Set([spaceId, ...sources.map(checkRead)])];
   return createRun(app, {
     kind: "wiki-plan", spaceId, title: "规划 Wiki 目录", userId, parentId: input.parentId,
-    input: { focus: input.focus, autoWrite: input.autoWrite ?? true, readSpaces },
+    input: { focus: input.focus, autoWrite: input.autoWrite ?? true, readSpaces, ai: input.ai },
   });
 }

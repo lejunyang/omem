@@ -11,7 +11,7 @@ import { all } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
-import { capturedChats, pollLark, requestBackfill, setCapturePolicy } from "../src/channels/lark-personal.ts";
+import { backfillTick, capturedChats, pollLark, requestBackfill, setCapturePolicy } from "../src/channels/lark-personal.ts";
 import { fillResources, missingResources, sourceMessages, storeMessages } from "../src/channels/lark-messages.ts";
 import { mkdirSync as mkdirS, writeFileSync as writeF } from "node:fs";
 import { run as runSql } from "../src/core/db.ts";
@@ -300,7 +300,7 @@ describe("feishu capture policies by kind of chat", () => {
 describe("feishu messages as a chat", () => {
   it("keeps quotes, thread replies and images, and backfills history into monthly archives", async () => {
     const app = testApp();
-    app.config.lark.capture = { ...app.config.lark.capture, mode: "all", attachments: true, docs: false, calendar: false, minutes: false, backfill: { days: 0, policies: [], pagesPerPoll: 4 } };
+    app.config.lark.capture = { ...app.config.lark.capture, mode: "all", attachments: true, docs: false, calendar: false, minutes: false, backfill: { days: 0, policies: [], pagesPerMinute: 60, concurrency: 4 } };
     const t0 = Date.now() - 3600_000;
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
     const live = [
@@ -349,7 +349,7 @@ describe("feishu messages as a chat", () => {
 
     // History on request: a page at a time, into a source per month.
     requestBackfill(app, "oc_g", 0);
-    await pollLark(app);
+    for (let i = 0; i < 4 && (await backfillTick(app, "ou_me")).left; i++);
     const months = all<{ uri: string; text: string }>(app.db, "select uri, text from sources where uri like 'lark:oc_g@%' order by uri");
     expect(months.map((m) => m.uri)).toEqual(["lark:oc_g@2026-08", "lark:oc_g@2026-09"]);
     expect(months[1].text).toMatch(/用方案 B/);

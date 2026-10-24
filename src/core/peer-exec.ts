@@ -341,8 +341,14 @@ export const peerCommands: Record<string, Command> = {
   backfill: {
     description: "回溯一个飞书会话的历史",
     schema: z.object({ chat_id: z.string().regex(/^oc_[\w-]+$/), days: z.number().int().min(0).max(3650), ingest: z.boolean().default(false) }),
-    run: async (app, a) => (await import("../channels/lark-personal.ts")).requestBackfill(app, a.chat_id, a.days, a.ingest),
+    run: async (app, a) => {
+      const m = await import("../channels/lark-personal.ts");
+      const r = m.requestBackfill(app, a.chat_id, a.days, a.ingest);
+      m.startBackfill(app);
+      return r;
+    },
   },
+  "backfill-status": { description: "飞书历史回溯的总体进度（已完成、进行中、未开始、失败、速度）", schema: z.object({}), run: async (app) => (await import("../channels/lark-personal.ts")).backfillOverview(app) },
   "lark-fill-files": {
     description: "补拉已保存的飞书消息里缺的图片和附件（chat_ids 限定会话，不给则全部），在后台运行，完成后发通知；status: true 只看进度",
     schema: z.object({ chat_ids: z.array(z.string().regex(/^oc_[\w-]+$/)).max(500).optional(), status: z.boolean().default(false) }),
