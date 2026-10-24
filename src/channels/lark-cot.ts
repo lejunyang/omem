@@ -10,6 +10,10 @@ import { setRunOutput } from "../agents/runs.ts";
  * Lifecycle: create once per turn → append entries (debounced, one PUT in
  * flight) → finish with RUN_FINISHED. Any failure only disables the bubble;
  * the ordinary answer card is unaffected.
+ *
+ * A turn nobody waits on (a wake-up re-check) is deferred: entries are kept and nothing is sent
+ * until it ends. If it ends with nothing to say (QUIET), no bubble is ever created; a live bubble
+ * whose turn ends quiet is recalled.
  */
 
 type ToolStatus = "pending" | "running" | "done" | "failed";
@@ -45,6 +49,12 @@ type State = {
   prologueSent: boolean;
   /** At least one event batch was accepted: the bubble has proven usable this turn. */
   proven: boolean;
+  /** Collect only; the bubble is created when the turn ends with something to show. */
+  deferred: boolean;
+  /** The turn ended quiet: drop what was collected and recall a bubble already sent. */
+  discard: boolean;
+  /** endCot callers waiting for the bubble to be settled, recalled or given up. */
+  waiters: (() => void)[];
   settleTimer?: ReturnType<typeof setTimeout>;
   settleExpired?: boolean;
   /** When the provider queue started (shown as one line, then how long it took). */
@@ -126,7 +136,7 @@ function errorInfo(error: unknown) {
   };
 }
 
-async function api(st: State, phase: "create" | "append" | "finish" | "complete" | "cleanup", method: "POST" | "PUT" | "DELETE", url: string, data: unknown, params?: unknown, events: ReturnType<typeof ev>[] = []) {
+async function api(st: State, phase: "create" | "append" | "finish" | "complete" | "cleanup" | "recall", method: "POST" | "PUT" | "DELETE", url: string, data: unknown, params?: unknown, events: ReturnType<typeof ev>[] = []) {
   const started = Date.now();
   const requestSeq = ++st.requestSeq;
   const details = {
@@ -256,6 +266,12 @@ async function pump(app: App, runId: string, st: State) {
   if (st.pumping || st.disabled || st.settled) return;
   st.pumping = true;
   try {
+    if (st.discard) {
+      if (st.messageId) await api(st, "recall", "DELETE", `/open-apis/im/v1/messages/${encodeURIComponent(st.messageId)}`, undefined);
+      st.settled = true;
+      cotLog(st, "discarded", { sent: !!st.messageId });
+      return;
+    }
     if (!st.cotId) await createBubble(st);
     // Input can change during any awaited batch. Drain it before deciding whether to finish.
     do {
@@ -269,9 +285,9 @@ async function pump(app: App, runId: string, st: State) {
         await append(st, evs);
         st.proven = true;
       }
-    } while (st.dirty && st.finish);
+    } while (st.dirty && st.finish && !st.discard);
     const allSettled = st.entries.every((e, i) => e.kind === "reasoning" ? st.reasoningClosed.has(reasoningId(st.turnId, i)) : st.toolSettled.has(e.id));
-    if (st.finish && allSettled) {
+    if (st.finish && allSettled && !st.discard) {
       st.closing = true;
       const tail = [ev("REASONING_END", { messageId: reasoningId(st.turnId, 0) })];
       if (st.finish === "done") tail.push(ev("RUN_FINISHED", { threadId: st.turnId, runId: st.turnId, status: "done" }));
@@ -299,20 +315,24 @@ async function pump(app: App, runId: string, st: State) {
     cotLog(st, "disabled", { ...error, cooldownMs }, true);
   } finally {
     st.pumping = false;
-    if (st.settled || st.disabled) {
-      for (const timer of st.timers) clearTimeout(timer);
-      st.timers = [];
-      const t = setTimeout(() => states.delete(runId), 60_000);
-      t.unref();
-      st.timers.push(t);
-    } else if (st.dirty) schedule(app, runId, st);
+    if (st.settled || st.disabled) release(runId, st);
+    else if (st.dirty) schedule(app, runId, st);
   }
+}
+
+function release(runId: string, st: State) {
+  for (const timer of st.timers) clearTimeout(timer);
+  st.timers = [];
+  for (const w of st.waiters.splice(0)) w();
+  const t = setTimeout(() => states.delete(runId), 60_000);
+  t.unref();
+  st.timers.push(t);
 }
 
 function schedule(app: App, runId: string, st: State, delay = 700) {
   if (st.disabled || st.settled || st.closing) return;
   st.dirty = true;
-  if (st.pumping || st.queued) return;
+  if (st.pumping || st.queued || (st.deferred && !st.finish && !st.discard)) return;
   st.queued = true;
   const t = setTimeout(() => { st.queued = false; void pump(app, runId, st); }, delay);
   t.unref();
@@ -321,7 +341,8 @@ function schedule(app: App, runId: string, st: State, delay = 700) {
 
 /** Begin the bubble for a turn, anchored to the message that started it (so it lands in the topic). */
 /** `title`: a first line saying whose process this is (an agent's round in a work topic). */
-export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean; title?: string }) {
+/** `defer`: nobody waits on this turn; show its process only if it ends with something to say. */
+export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean; title?: string; defer?: boolean }) {
   if (!sdk || states.has(runId)) return false;
   const disabledUntil = disabledChats.get(at.chatId) ?? 0;
   if (Date.now() < disabledUntil) {
@@ -329,7 +350,7 @@ export function startCot(app: App, runId: string, at: { chatId: string; originMe
     return false;
   }
   disabledChats.delete(at.chatId);
-  const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: at.title ? [{ kind: "reasoning", text: `${at.title}\n\n` }] : [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, dirty: false, closing: false, requestSeq: 0, settled: false, prologueSent: false, proven: false, timers: [] };
+  const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: at.title ? [{ kind: "reasoning", text: `${at.title}\n\n` }] : [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, dirty: false, closing: false, requestSeq: 0, settled: false, prologueSent: false, proven: false, deferred: !!at.defer, discard: false, waiters: [], timers: [] };
   states.set(runId, st);
   schedule(app, runId, st, 300);
   return true;
@@ -397,9 +418,19 @@ export function cotEvent(app: App, runId: string, e: { type: string; data: any }
   }
 }
 
-export function finishCot(app: App, runId: string, ok: boolean) {
+/** `quiet`: the turn had nothing to say (QUIET): its bubble is never shown, or is recalled. */
+export function finishCot(app: App, runId: string, ok: boolean, quiet = false) {
   const st = states.get(runId);
-  if (!st || st.disabled || st.settled || st.closing) return;
+  if (!st || st.disabled || st.settled || st.closing || st.discard) return;
+  if (quiet && ok) {
+    st.discard = true;
+    if (!st.cotId && !st.pumping) {
+      st.settled = true;
+      cotLog(st, "discarded", { sent: false });
+      release(runId, st);
+    } else schedule(app, runId, st, 0);
+    return;
+  }
   // A repeated finish must neither extend the deadline nor turn an error into success.
   st.finish = st.finish === "error" || !ok ? "error" : "done";
   if (!st.settleTimer) {
@@ -416,4 +447,21 @@ export function finishCot(app: App, runId: string, ok: boolean) {
     st.timers.push(t);
   }
   schedule(app, runId, st, 200);
+}
+
+/**
+ * End a turn's bubble and wait (bounded) until it is settled or recalled, so a reply delivered
+ * next lands after the process it came from. A no-op without a bubble.
+ */
+export async function endCot(app: App, runId: string, opts: { ok: boolean; quiet?: boolean }, waitMs = 20_000) {
+  const st = states.get(runId);
+  if (!st) return;
+  const done = new Promise<void>((resolve) => {
+    if (st.settled || st.disabled) return resolve();
+    st.waiters.push(resolve);
+    const t = setTimeout(resolve, waitMs);
+    t.unref();
+  });
+  finishCot(app, runId, opts.ok, opts.quiet);
+  await done;
 }

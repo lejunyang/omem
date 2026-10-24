@@ -653,6 +653,12 @@ const migrations: string[] = [
   // Items already past their deadline when this arrives wait for the owner to review the backlog.
   `create table item_checks(item_id text primary key references items(id) on delete cascade, checked_at text not null, evidence_ms integer not null default 0, reactions_at text);
    insert or replace into kv(key, value) values('item_expiry_since', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));`,
+  // Turns a wake-up started that ended QUIET, and the wake-up runs themselves (the turn they start
+  // is listed on its own), were kept in the run list.
+  `update runs set quiet = 1
+    where quiet = 0 and status = 'done' and json_valid(input) and json_extract(input, '$.wake') = 1 and kind in ('ask','agent')
+      and upper(rtrim(trim(coalesce(case when json_valid(output) then json_extract(output, '$.answer') end, '')), '。.!！*\`_ ' || char(10) || char(13))) like '%QUIET';
+   update runs set quiet = 1 where quiet = 0 and status = 'done' and kind = 'wake';`,
 ];
 
 export type Db = DatabaseSync;

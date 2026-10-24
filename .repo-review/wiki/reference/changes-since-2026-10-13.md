@@ -472,3 +472,8 @@ updated: 2026-10-25
 - 构建产物 `assets/*`（文件名带哈希）返回 `cache-control: public, max-age=31536000, immutable`，`index.html` 和前端路由回退返回 `no-cache`；之前全部是 `max-age=0`，每次都要回源验证。
 - 经中间节点转发（`/api/peers/:id/*`）时保留对方的 `cache-control`、`etag`、`last-modified`，并转发 `if-none-match`、`if-modified-since`；之前这些都被丢掉，`omem peer open` 打开经中转的同伴时浏览器完全不缓存。
 - 修正路由预加载：没写明 key 的路由（记忆、学习、Agent、规则、通知、设置）都被算成 `/` 互相覆盖，空闲预加载和悬停预加载对它们不生效；规则归档页也加入空闲预加载。
+
+## 唤醒复查不留空气泡（10-25）
+
+- 唤醒开的档案运行（`input.wake`）的思考气泡改为先收着不发（`startCot` 的 `defer`）；运行结束时 `endCot` 判断：回 QUIET 就丢掉，从不创建；有话要说就整段发出并收尾，再投递回复，顺序不变。实时发出的气泡如果运行最后是 QUIET，会被撤回（`finishCot` 的 `quiet`）。
+- 唤醒开的 ask / agent 运行回 QUIET 时记 `quiet = 1`（之前对话类运行一律不记），`wake` 运行本身也记为无事可报；迁移把以前的补标。

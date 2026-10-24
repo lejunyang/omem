@@ -214,7 +214,13 @@ registerHandler("agent", async (ctx) => {
   // The report proper: what the agent wrote after its last tool call (its narration on the way is
   // in the run's events). Work rounds go to the main assistant, which writes the reply (agent-work.ts).
   const answer = replyOf(r).trim() || "（没有输出）";
-  if ((ctx.run.input as { wake?: boolean }).wake && isQuiet(answer)) return { answer, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
+  if ((ctx.run.input as { wake?: boolean }).wake) {
+    // A wake-up's process bubble is held until now: drop it when there is nothing to say, else
+    // show it before the reply below.
+    const quiet = isQuiet(answer);
+    await (await import("../channels/lark-cot.ts")).endCot(ctx.app, ctx.run.id, { ok: true, quiet });
+    if (quiet) return { answer, quiet: true, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
+  }
   if (silent) {
     // Whatever it had to say it already posted (or told the owner); the text stays in the run.
   } else if (rule) {

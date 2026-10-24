@@ -132,7 +132,8 @@ export function fireWake(app: App, w: WakeInput, trigger?: string): { runId?: st
 registerHandler("wake", async (ctx) => {
   const w = ctx.run.input as WakeInput;
   const r = fireWake(ctx.app, w);
-  return { quiet: false, summary: r.skipped ? `没有唤醒：${r.skipped}` : `已唤醒，运行 ${r.runId}`, runId: r.runId };
+  // Bookkeeping: the turn it starts is listed on its own.
+  return { quiet: true, summary: r.skipped ? `没有唤醒：${r.skipped}` : `已唤醒，运行 ${r.runId}`, runId: r.runId };
 });
 
 /** The turn's framing when a conversation's agent is woken (sessions.ts). */

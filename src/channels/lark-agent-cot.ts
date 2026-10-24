@@ -21,7 +21,12 @@ export function watchAgentBubbles(app: App) {
         if (start(app, getRun(app, e.runId))) ours.add(e.runId);
       } catch {}
     } else if (e.type === "run" && ours.has(e.runId) && (e.status === "done" || e.status === "failed" || e.status === "cancelled")) {
-      finishCot(app, e.runId, e.status === "done");
+      let quiet = false;
+      try {
+        const r = getRun(app, e.runId);
+        quiet = r.quiet || r.output.quiet === true;
+      } catch {}
+      finishCot(app, e.runId, e.status === "done", quiet);
       ours.delete(e.runId);
     } else if (e.type === "run-event" && e.event && ours.has(e.runId) && hasCot(e.runId)) {
       cotEvent(app, e.runId, { type: e.event.type, data: e.event.data });
@@ -48,8 +53,12 @@ function placeOf(app: App, r: Run): { conversationId: string; title: string } | 
 
 function start(app: App, r: Run) {
   // A rule's agent answering under the triggering message: its bubble opens the topic there.
-  const at = (r.input as { replyAt?: { chatId: string; messageId: string }; spec?: string }).replyAt;
-  if (r.kind === "agent" && at) return startCot(app, r.id, { chatId: at.chatId, originMessageId: at.messageId, inThread: true, title: `**${(r.input as { spec?: string }).spec}** 处理这条消息` });
+  const input = r.input as { replyAt?: { chatId: string; messageId: string }; spec?: string; wake?: boolean };
+  // A wake-up re-check: nobody waits on it, and most end with nothing new (QUIET). Its process is
+  // shown only when it has something to say.
+  const defer = !!input.wake;
+  const at = input.replyAt;
+  if (r.kind === "agent" && at) return startCot(app, r.id, { chatId: at.chatId, originMessageId: at.messageId, inThread: true, title: `**${input.spec}** ${defer ? "复查" : "处理这条消息"}`, defer });
   const place = placeOf(app, r);
   if (!place) return false;
   const t = findThread(app, place.conversationId);
@@ -60,5 +69,5 @@ function start(app: App, r: Run) {
   // A work conversation shows its process in its own topic; before the topic exists, nowhere
   // (not in the group the work was started from).
   if (!topic && workInConversation(app, t.id)) return false;
-  return startCot(app, r.id, { chatId, originMessageId: anchor, inThread: !!topic, title: place.title });
+  return startCot(app, r.id, { chatId, originMessageId: anchor, inThread: !!topic, title: place.title, defer });
 }

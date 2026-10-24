@@ -237,3 +237,39 @@ it("limits an authority cooldown to the affected chat", async () => {
   await vi.advanceTimersByTimeAsync(30 * 60_000);
   expect(cot.startCot(app, "after", { chatId: "oc_test" })).toBe(true);
 });
+
+it("a deferred bubble that ends quiet is never created", async () => {
+  expect(cot.startCot(app, "run_test", { chatId: "oc_test", title: "复查", defer: true })).toBe(true);
+  delta("看了最新窗口，没有变化");
+  tool("completed");
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(requests).toHaveLength(0);
+  await cot.endCot(app, "run_test", { ok: true, quiet: true });
+  expect(requests).toHaveLength(0);
+  expect(logs().map((l) => l.action)).toContain("discarded");
+});
+
+it("a deferred bubble with something to say is sent whole and settled before endCot returns", async () => {
+  expect(cot.startCot(app, "run_test", { chatId: "oc_test", title: "复查", defer: true })).toBe(true);
+  delta("错误率回升");
+  tool("completed");
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(requests).toHaveLength(0);
+  const ended = cot.endCot(app, "run_test", { ok: true });
+  await vi.advanceTimersByTimeAsync(1000);
+  await ended;
+  expect(requests[0].method).toBe("POST");
+  expect(text()).toContain("错误率回升");
+  expectClosed();
+});
+
+it("a live bubble whose turn ends quiet is recalled", async () => {
+  start();
+  delta("查看中");
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(types()).toContain("RUN_STARTED");
+  cot.finishCot(app, "run_test", true, true);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(requests.at(-1)).toMatchObject({ method: "DELETE", url: "/open-apis/im/v1/messages/om_test" });
+  expect(types()).not.toContain("RUN_FINISHED");
+});
