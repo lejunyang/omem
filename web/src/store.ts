@@ -109,6 +109,7 @@ export const runKindLabel: Record<string, string> = {
   curate: "筛选关注群",
   "ingest-shadow": "对比整理",
   "memory-review": "复核记忆",
+  "memory-organize": "整理记忆目录",
   "agent-followup": "消化结论",
   "thread-summary": "会话摘要",
   "learn-feed": "学习出卡",

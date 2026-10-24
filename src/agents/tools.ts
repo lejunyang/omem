@@ -17,6 +17,7 @@ import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { validateItemRefs } from "../items/evidence.ts";
 import { listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede, type MemoryKind } from "../memory/store.ts";
+import { ensureFolder, folderProblems, folderTreeText, moveMemories, normalizeFolder, relocateFolder, removeFolder } from "../memory/folders.ts";
 import { checkMemory, formatProblems, logRejection, markReviewed, similarMemories, type MemoryProblem } from "../memory/quality.ts";
 import { search, type HitType } from "../search/search.ts";
 import { importText, importUrl, repoFiles, syncDirectorySpace } from "../sources/import.ts";
@@ -834,6 +835,7 @@ def({
     subject: z.string().optional(),
     include_history: z.boolean().optional(),
     tag: z.string().optional(),
+    folder: z.string().optional().describe("只看某个记忆目录（含子目录）；填“未归档”看还没放进目录的"),
     /** Inspect one spec's own memories (shared ones still included); used when teaching/reviewing an agent. */
     agent: z.string().optional().describe("只看某个 Agent 档案或内置角色的专属记忆（仍包含共享记忆）"),
     space: z.string().optional(),
@@ -841,11 +843,15 @@ def({
   handler: async (ctx, a) => {
     const sp = spacesFor(ctx, a.space ?? "*");
     const query = a.query?.replace(/[*?%\s]+/g, " ").trim();
+    const folder = a.folder === undefined ? undefined : a.folder.trim() === "未归档" ? null : normalizeFolder(a.folder) || undefined;
     let mems = query
       ? (await search(ctx.app, query, { spaces: sp, types: ["memory"], limit: 20, includeHistory: a.include_history })).map((h) => getMemory(ctx.app, h.id))
-      : listMemories(ctx.app, { spaceId: sp?.length === 1 ? sp[0] : undefined, status: a.include_history ? "all" : "active", subject: a.subject, tag: a.tag, agent: a.agent ?? ownProfile(ctx) ?? undefined, limit: 50 });
+      : listMemories(ctx.app, { spaceId: sp?.length === 1 ? sp[0] : undefined, status: a.include_history ? "all" : "active", subject: a.subject, tag: a.tag, folder, agent: a.agent ?? ownProfile(ctx) ?? undefined, limit: folder !== undefined ? 200 : 50 });
+    if (sp && !query) mems = mems.filter((m) => sp.includes(m.spaceId));
     if (a.subject) mems = mems.filter((m) => m.subject.includes(a.subject!));
     if (a.tag) mems = mems.filter((m) => m.tags?.includes(a.tag!));
+    if (folder === null) mems = mems.filter((m) => !m.folder);
+    else if (folder) mems = mems.filter((m) => m.folder === folder || m.folder.startsWith(folder + "/"));
     // A running spec or role only sees shared memories and its own; the main assistant may name one to inspect.
     const scopeSpec = a.agent ?? ownProfile(ctx);
     if (scopeSpec) mems = mems.filter((m) => !m.agent || m.agent === scopeSpec);
@@ -859,7 +865,7 @@ def({
     return mems
       .map((m) => {
         const chain = a.include_history && (m.supersedes || m.supersededBy) ? memoryHistory(ctx.app, m.id) : [];
-        return `- ${m.id} [${m.kind}${m.status !== "active" ? "，" + m.status : ""}${m.agent ? `，${m.agent} 专用` : ""}${m.tags?.length ? `，#${m.tags.join(" #")}` : ""}] ${m.subject ? m.subject + "：" : ""}${m.content}\n  有效：${m.validFrom?.slice(0, 10) ?? "?"} → ${m.validTo?.slice(0, 10) ?? "至今"}；来源：${m.sourceRefs.join(", ") || "无"}${
+        return `- ${m.id} [${m.kind}${m.status !== "active" ? "，" + m.status : ""}${m.folder ? `，目录 ${m.folder}` : ""}${m.agent ? `，${m.agent} 专用` : ""}${m.tags?.length ? `，#${m.tags.join(" #")}` : ""}] ${m.subject ? m.subject + "：" : ""}${m.content}\n  有效：${m.validFrom?.slice(0, 10) ?? "?"} → ${m.validTo?.slice(0, 10) ?? "至今"}；来源：${m.sourceRefs.join(", ") || "无"}${
           chain.length > 1 ? "\n  版本链：" + chain.map((c) => `${c.id}(${c.status}) ${truncate(c.content, 60)}`).join(" → ") : ""
         }`;
       })
@@ -965,7 +971,9 @@ def({
     subject: z.string().optional().describe("主题/对象，如“项目A 预算”“张三”"),
     source_refs: refs,
     valid_from: z.string().optional().describe("ISO 时间，事实开始生效的时间（不填为现在）"),
-    tags: z.array(z.string()).optional().describe("可选标签，如项目名、主题，便于按标签筛选"),
+    tags: z.array(z.string()).optional().describe("可选标签：只给跨目录的人、项目、时期用；领域归属用 folder"),
+    folder: z.string().optional().describe("放进哪个记忆目录，如“工作/项目A/发布”：这条属于哪个领域。先 list_memory_folders 看已有目录，选最具体的那个；拿不准就不填，之后整理时归档"),
+    folder_description: z.string().optional().describe("folder 是新目录时必填：一句话说明这里放哪一类记忆"),
     scope: z.enum(["shared", "agent"]).optional().describe("agent：这条经验/偏好只属于当前正在运行的 Agent 档案自己（不能用来指定别的档案；档案内写 experience/preference 默认即 agent）；shared：所有档案共享"),
     /** A specific spec to teach, used by the main assistant which has no spec of its own. */
     agent: z.string().optional().describe("主助手教某个指定档案或内置角色（如 reviewer）时填它的名字（必须存在）；正在档案或角色内运行时不要填，scope=agent 即指自己"),
@@ -979,6 +987,9 @@ def({
       logRejection(ctx.app, spaceId, { tool: "remember", kind: a.kind, content: a.content }, problems, provenance(ctx));
       throw new HttpError(422, formatProblems(problems));
     }
+    const folder = normalizeFolder(a.folder);
+    const misfiled = ctx.actor === "agent" ? folderProblems(ctx.app, spaceId, folder, a.folder_description) : [];
+    if (misfiled.length) throw new HttpError(422, `还没写入：目录有问题——\n${misfiled.map((p) => `- ${p}`).join("\n")}\n不确定放哪就不填 folder。`);
     // Whose procedural memory this is: the running spec or role, or a named profile the main
     // assistant is teaching. experience/preference written inside a spec default to it (a
     // built-in role only with scope=agent: ingest records the owner's preferences, shared);
@@ -999,7 +1010,7 @@ def({
         const tags = [...new Set(near.flatMap((x) => x.tags ?? []))];
         throw new HttpError(
           409,
-          `还没写入：同一空间里有相近的记忆，先逐条核对——\n${near.map((x) => `- ${x.id} [${x.kind}] ${x.subject ? x.subject + "：" : ""}${x.content}（${x.validFrom?.slice(0, 10) ?? "?"} 起）`).join("\n")}\n\n` +
+          `还没写入：同一空间里有相近的记忆，先逐条核对——\n${near.map((x) => `- ${x.id} [${x.kind}${x.folder ? `，目录 ${x.folder}` : ""}] ${x.subject ? x.subject + "：" : ""}${x.content}（${x.validFrom?.slice(0, 10) ?? "?"} 起）`).join("\n")}\n\n` +
             "- 说的是同一件事、但有变化（改期、换人、改数字）：supersede(memory_id=…) 更正那一条，不要另写。\n" +
             "- 已有的已经说清楚了：不用写。\n" +
             `- 确实是另一件事：再调用 remember，distinct_from 填 ${JSON.stringify(near.map((x) => x.id))}。` +
@@ -1017,16 +1028,18 @@ def({
       createdBy: ctx.actor,
       ...provenance(ctx),
       tags: a.tags,
+      folder,
       agent: agentForMemory,
       // Preferences belong to the person who stated them; facts are shared knowledge of the space.
       userId: a.kind === "preference" ? (ctx.userId ?? "owner") : null,
     });
+    if (folder) ensureFolder(ctx.app, spaceId, folder, a.folder_description ?? "", ctx.actor === "user" ? "user" : "agent");
     const others = relatedIds(ctx.app, spaceId).filter((id) => !ctx.spaces || ctx.spaces.includes(id));
     const alike = similarMemories(ctx.app, others, a.content, a.subject);
     const hint = alike.length
       ? `\n相关空间里有相近的记忆：${alike.map((x) => `${x.id}（${x.space_id}）「${truncate(x.content, 60)}」`).join("；")}。如果说的是同一件事且两边结论不同，以有原件依据的为准，在当前空间更正；两边都需要的约定，可以只留一处并在页面里链接。`
       : "";
-    return `已记住 ${m.id}${m.agent ? `（仅 ${m.agent} 使用）` : ""}${hint}`;
+    return `已记住 ${m.id}${m.agent ? `（仅 ${m.agent} 使用）` : ""}${folder ? `，放在「${folder}」` : "（未放目录，整理时归档）"}${hint}`;
   },
 });
 
@@ -1034,16 +1047,27 @@ def({
   name: "supersede",
   description: "用新内容更正一条现有记忆：旧记忆保留并标记为已被替代，新记忆生效。适用于纠正、改期、改预算、换负责人等。新内容同样要通过写入检查。",
   write: true,
-  schema: z.object({ memory_id: z.string(), content: z.string(), reason: z.string().optional(), source_refs: refs, valid_from: z.string().optional() }),
+  schema: z.object({
+    memory_id: z.string(),
+    content: z.string(),
+    reason: z.string().optional(),
+    source_refs: refs,
+    valid_from: z.string().optional(),
+    folder: z.string().optional().describe("不填沿用旧记忆的目录；要换目录时填已有目录"),
+  }),
   handler: (ctx, a) => {
     const old = getMemory(ctx.app, a.memory_id);
     inScope(ctx, old.spaceId, "记忆");
+    const folder = a.folder === undefined ? undefined : normalizeFolder(a.folder);
+    const misfiled = folder !== undefined && ctx.actor === "agent" ? folderProblems(ctx.app, old.spaceId, folder) : [];
+    if (misfiled.length) throw new HttpError(422, `还没更正：目录有问题——\n${misfiled.map((p) => `- ${p}`).join("\n")}\n新目录先用 organize_memories 建好并写说明，或不填 folder 沿用原目录。`);
     const problems = memoryProblems(ctx, { spaceId: old.spaceId, kind: old.kind, content: a.content, subject: old.subject, sourceRefs: a.source_refs, replacing: old.id });
     if (problems.length) {
       logRejection(ctx.app, old.spaceId, { tool: "supersede", kind: old.kind, content: a.content }, problems, provenance(ctx));
       throw new HttpError(422, formatProblems(problems));
     }
     const m = supersede(ctx.app, a.memory_id, { content: a.content, sourceRefs: a.source_refs, validFrom: a.valid_from, createdBy: ctx.actor, reason: a.reason, ...provenance(ctx) });
+    if (folder !== undefined && folder !== m.folder) moveMemories(ctx.app, m.spaceId, [m.id], folder, ctx.actor === "user" ? "user" : "agent");
     return `已更正：${a.memory_id} → ${m.id}`;
   },
 });
@@ -1092,7 +1116,7 @@ def({
           markReviewed(ctx.app, first.id, "keep", "复核拆分出的一条", reviewer);
           const ids = [first.id];
           for (const c of parts.slice(1)) {
-            const n = remember(ctx.app, { spaceId: m.spaceId, kind: m.kind, subject: m.subject, content: c, sourceRefs: m.sourceRefs, createdBy: "agent", agent: m.agent, tags: m.tags, userId: m.kind === "preference" ? (ctx.userId ?? "owner") : null, ...reviewer });
+            const n = remember(ctx.app, { spaceId: m.spaceId, kind: m.kind, subject: m.subject, content: c, sourceRefs: m.sourceRefs, createdBy: "agent", agent: m.agent, tags: m.tags, folder: m.folder, userId: m.kind === "preference" ? (ctx.userId ?? "owner") : null, ...reviewer });
             markReviewed(ctx.app, n.id, "keep", "复核拆分出的一条", reviewer);
             ids.push(n.id);
           }
@@ -1133,6 +1157,75 @@ def({
     inScope(ctx, getMemory(ctx.app, a.memory_id).spaceId, "记忆");
     retract(ctx.app, a.memory_id, a.reason);
     return `已撤回 ${a.memory_id}`;
+  },
+});
+
+def({
+  name: "list_memory_folders",
+  description: "查看一个空间的记忆目录：每个目录的路径、说明和条数，以及还没归档的条数。写记忆前用它选目录；某个目录里有哪些记忆用 recall(folder=…)。",
+  schema: z.object({ space: z.string().optional() }),
+  handler: (ctx, a) => folderTreeText(ctx.app, space(ctx, a.space)),
+});
+
+const folderOp = z.object({
+  op: z.enum(["create", "describe", "move", "rename", "remove"]).describe("create 新建目录 / describe 改说明 / move 把记忆放进目录 / rename 目录改名或移到别处（目标已存在则合并）/ remove 删除目录（其中的记忆和子目录上移一层）"),
+  folder: z.string().optional().describe("create/describe/remove 的目录；move 的目标目录（空字符串 = 移出目录、回到未归档）；rename 的原目录"),
+  to: z.string().optional().describe("rename 的新路径"),
+  description: z.string().optional().describe("create/describe：一句话说明这里放哪一类记忆"),
+  memory_ids: z.array(z.string()).optional().describe("move：要移动的记忆 id"),
+});
+
+def({
+  name: "organize_memories",
+  description:
+    "整理一个空间的记忆目录：新建目录、改说明、把记忆放进目录、目录改名或合并、删除目录。只改记忆放在哪，不改内容（内容更正用 supersede）。一次可以提交多步，按顺序执行，每步单独报告结果。",
+  write: true,
+  schema: z.object({ space: z.string().optional(), actions: z.array(folderOp).min(1) }),
+  handler: (ctx, a) => {
+    const spaceId = writeSpace(ctx, a.space);
+    const by = ctx.actor === "user" ? "user" : "agent";
+    const check = (path: string, description?: string) => {
+      const p = ctx.actor === "agent" ? folderProblems(ctx.app, spaceId, path, description) : [];
+      if (p.length) throw new HttpError(422, p.join(" "));
+    };
+    const out: string[] = [];
+    for (const [i, x] of a.actions.entries()) {
+      const folder = normalizeFolder(x.folder);
+      try {
+        if (x.op === "create") {
+          if (!folder) throw new HttpError(400, "要给出目录路径");
+          check(folder, x.description);
+          ensureFolder(ctx.app, spaceId, folder, x.description ?? "", by, true);
+          out.push(`${i + 1}. 已建「${folder}」`);
+        } else if (x.op === "describe") {
+          if (!folder || !x.description?.trim()) throw new HttpError(400, "要给出目录和说明");
+          if (!one(ctx.app.db, "select 1 from memory_folders where space_id = ? and path = ?", spaceId, folder) && !one(ctx.app.db, "select 1 from memories where space_id = ? and folder = ?", spaceId, folder)) throw new HttpError(404, `目录不存在：${folder}`);
+          ensureFolder(ctx.app, spaceId, folder, x.description, by, true);
+          out.push(`${i + 1}. 已更新「${folder}」的说明`);
+        } else if (x.op === "move") {
+          if (!x.memory_ids?.length) throw new HttpError(400, "move 要给出 memory_ids");
+          if (folder) check(folder, x.description);
+          for (const id of x.memory_ids) inScope(ctx, getMemory(ctx.app, id).spaceId, "记忆");
+          const n = moveMemories(ctx.app, spaceId, x.memory_ids, folder, by);
+          if (folder && x.description) ensureFolder(ctx.app, spaceId, folder, x.description, by);
+          out.push(`${i + 1}. ${n} 条放进「${folder || "未归档"}」${n < x.memory_ids.length ? `（另 ${x.memory_ids.length - n} 条本来就在那里）` : ""}`);
+        } else if (x.op === "rename") {
+          const to = normalizeFolder(x.to);
+          if (!folder || !to) throw new HttpError(400, "rename 要给出 folder 和 to");
+          const merging = !!one(ctx.app.db, "select 1 from memory_folders where space_id = ? and path = ?", spaceId, to);
+          if (!merging) check(to, x.description ?? (one<{ description: string }>(ctx.app.db, "select description from memory_folders where space_id = ? and path = ?", spaceId, folder)?.description || undefined));
+          const n = relocateFolder(ctx.app, spaceId, folder, to, by);
+          out.push(`${i + 1}. 「${folder}」${merging ? "并入" : "改为"}「${to}」，涉及 ${n} 条记忆`);
+        } else {
+          if (!folder) throw new HttpError(400, "remove 要给出目录");
+          const n = removeFolder(ctx.app, spaceId, folder, by);
+          out.push(`${i + 1}. 已删除「${folder}」，${n} 条记忆上移一层`);
+        }
+      } catch (e) {
+        out.push(`${i + 1}. 失败：${(e as Error).message}`);
+      }
+    }
+    return out.join("\n");
   },
 });
 

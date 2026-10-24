@@ -7,6 +7,8 @@ defineProps<{
   m: Memory;
   /** Hide space/model provenance lines (e.g. inside one agent's own list). */
   compact?: boolean;
+  /** Show the “move to folder” action (the memory page). */
+  movable?: boolean;
 }>();
 const emit = defineEmits<{
   (e: "retract", m: Memory): void;
@@ -15,6 +17,7 @@ const emit = defineEmits<{
   (e: "sources", m: Memory): void;
   (e: "tags", m: Memory): void;
   (e: "edit", m: Memory): void;
+  (e: "move", m: Memory): void;
 }>();
 
 const reviewLabel: Record<string, string> = { keep: "复核保留", rewrite: "复核改写", retract: "复核撤回", unclear: "复核未定" };
@@ -40,6 +43,7 @@ function verdictClass(v?: string | null) {
       <div v-if="m.status === 'active'" class="actions row">
         <button v-if="m.supersedes || m.supersededBy" class="btn ghost sm" @click="emit('history', m)"><Icon name="history" :size="14" />演变</button>
         <button v-if="m.sourceRefs.length" class="btn ghost sm" @click="emit('sources', m)"><Icon name="quote" :size="14" />依据</button>
+        <button v-if="movable" class="btn ghost sm" :title="m.folder ? `目录：${m.folder}` : '还没放进目录'" @click="emit('move', m)"><Icon name="folder" :size="14" />移动</button>
         <button class="btn ghost sm" @click="emit('tags', m)">标签</button>
         <button class="btn ghost sm" @click="emit('edit', m)"><Icon name="edit" :size="14" />更正</button>
         <button class="btn ghost sm icon" title="撤回" aria-label="撤回" @click="emit('retract', m)"><Icon name="trash" :size="14" /></button>

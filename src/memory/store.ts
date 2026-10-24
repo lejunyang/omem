@@ -27,6 +27,8 @@ export type Memory = {
   /** Agent spec this procedural memory belongs to; null = shared in the space. */
   agent?: string | null;
   tags?: string[];
+  /** Folder path inside the space ("工作/项目A"); "" = not filed yet. */
+  folder: string;
   reviewedAt?: string | null;
   reviewVerdict?: string | null;
   reviewNote?: string | null;
@@ -52,6 +54,7 @@ type Row = {
   run_id: string | null;
   agent: string | null;
   tags: string | null;
+  folder: string | null;
   reviewed_at: string | null;
   review_verdict: string | null;
   review_note: string | null;
@@ -77,6 +80,7 @@ const toMemory = (r: Row): Memory => ({
   runId: r.run_id,
   agent: r.agent,
   tags: json(r.tags, []),
+  folder: r.folder ?? "",
   reviewedAt: r.reviewed_at,
   reviewVerdict: r.review_verdict,
   reviewNote: r.review_note,
@@ -117,6 +121,7 @@ export type RememberInput = {
   runId?: string | null;
   agent?: string | null;
   tags?: string[];
+  folder?: string;
 };
 
 export function remember(app: App, input: RememberInput): Memory {
@@ -125,7 +130,7 @@ export function remember(app: App, input: RememberInput): Memory {
   tx(app.db, () => {
     run(
       app.db,
-      "insert into memories(id,space_id,kind,subject,content,status,valid_from,source_refs,created_by,created_at,updated_at,user_id,agent_profile,model,effort,run_id,agent,tags,reviewed_at,review_verdict,reviewed_by) values(?,?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "insert into memories(id,space_id,kind,subject,content,status,valid_from,source_refs,created_by,created_at,updated_at,user_id,agent_profile,model,effort,run_id,agent,tags,folder,reviewed_at,review_verdict,reviewed_by) values(?,?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       id,
       input.spaceId,
       input.kind,
@@ -143,6 +148,7 @@ export function remember(app: App, input: RememberInput): Memory {
       input.runId ?? null,
       input.agent ?? null,
       JSON.stringify(cleanTags(input.tags)),
+      input.folder ?? "",
       // What the owner writes needs no review.
       input.createdBy === "user" ? at : null,
       input.createdBy === "user" ? "keep" : null,
@@ -184,8 +190,8 @@ export function supersede(app: App, oldId: string, input: Omit<RememberInput, "s
       input.effort ?? null,
       input.runId ?? null,
     );
-    // A correction keeps whose memory it was, its agent scope and tags; the owner's own edits need no review.
-    run(app.db, "update memories set user_id = o.user_id, agent = o.agent, tags = o.tags from (select user_id, agent, tags from memories where id = ?) o where memories.id = ?", oldId, id);
+    // A correction keeps whose memory it was, its agent scope, tags and folder; the owner's own edits need no review.
+    run(app.db, "update memories set user_id = o.user_id, agent = o.agent, tags = o.tags, folder = o.folder from (select user_id, agent, tags, folder from memories where id = ?) o where memories.id = ?", oldId, id);
     if (input.createdBy === "user") run(app.db, "update memories set reviewed_at = ?, review_verdict = 'keep', reviewed_by = 'user' where id = ?", at, id);
     run(app.db, "update memories set status='superseded', valid_to=?, superseded_by=?, updated_at=? where id=?", input.validFrom ?? at, id, at, oldId);
     index(app, id, input.subject ?? old.subject, input.content);
@@ -223,9 +229,11 @@ export function updateMemoryText(app: App, id: string, patch: { content?: string
   return getMemory(app, id);
 }
 
-export function listMemories(app: App, opts: { spaceId?: string; status?: string; kind?: string; subject?: string; tag?: string; agent?: string | null; /** "visible" (default): shared + that spec; "own": that spec only */ agentScope?: "own" | "visible"; review?: "pending" | "keep" | "rewrite" | "retract"; limit?: number }) {
+export function listMemories(app: App, opts: { spaceId?: string; status?: string; kind?: string; subject?: string; tag?: string; /** that folder and everything under it; null = not filed */ folder?: string | null; agent?: string | null; /** "visible" (default): shared + that spec; "own": that spec only */ agentScope?: "own" | "visible"; review?: "pending" | "keep" | "rewrite" | "retract"; limit?: number }) {
   const where: string[] = [];
   const params: string[] = [];
+  if (opts.folder === null) where.push("folder = ''");
+  else if (opts.folder) where.push("(folder = ? or folder like ? escape '\\')"), params.push(opts.folder, opts.folder.replace(/[\\%_]/g, "\\$&") + "/%");
   if (opts.tag) where.push("exists (select 1 from json_each(memories.tags) where value = ?)"), params.push(opts.tag);
   // agent: a spec name; null = shared only; undefined = everything.
   // agentScope="own" narrows a named agent to its own memories (the spec page).

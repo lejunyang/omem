@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { del, get, onServerEvent, patch, post, type Memory, type MemoryQuality } from "../api";
+import { del, get, onServerEvent, patch, post, type Memory, type MemoryFolder, type MemoryQuality } from "../api";
 import MemoryCard from "../components/MemoryCard.vue";
+import MemoryFolderTree, { type FolderSelection } from "../components/MemoryFolderTree.vue";
 import Icon from "../components/Icon.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import VirtualList from "../components/VirtualList.vue";
 import UiSelect from "../components/UiSelect.vue";
-import { promptDialog } from "../lib/dialog";
+import { confirmDialog, promptDialog } from "../lib/dialog";
 import { fmtTime, memoryKindLabel, openCitation, runKindLabel, state, statusLabel, toast } from "../store";
 
 const tab = ref<"list" | "quality" | "recall" | "gaps">("list");
@@ -20,7 +21,7 @@ const review = ref("");
 const tag = ref("");
 const tags = ref<{ tag: string; n: number }[]>([]);
 const adding = ref(false);
-const form = ref({ kind: "fact", subject: "", content: "", tags: "" });
+const form = ref({ kind: "fact", subject: "", content: "", tags: "", folder: "" });
 const editing = ref<string | null>(null);
 const editText = ref("");
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -40,13 +41,113 @@ const codeLabel: Record<string, string> = {
   empty: "空",
 };
 
+// ---- folders ----------------------------------------------------------------------
+const folders = ref<MemoryFolder[]>([]);
+const unfiled = ref<Record<string, number>>({});
+const sel = ref<FolderSelection>({ space: null, folder: undefined });
+const treeOpen = ref(false);
+const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
+const treeSpaces = computed(() => (scope.value === "space" ? [{ id: state.space, name: spaceName(state.space) }] : state.spaces.map((s) => ({ id: s.id, name: s.name }))));
+const treeTotal = computed(() => folders.value.filter((f) => !f.path.includes("/")).reduce((a, f) => a + f.total, 0) + Object.values(unfiled.value).reduce((a, n) => a + n, 0));
+async function loadFolders() {
+  const r = await get<{ folders: MemoryFolder[]; unfiled: Record<string, number> }>(`/api/memory-folders${scope.value === "space" ? `?space=${state.space}` : ""}`).catch(() => null);
+  if (r) (folders.value = r.folders), (unfiled.value = r.unfiled);
+}
+/** The space new folders and memories go to: the selected one, else the current space. */
+const targetSpace = computed(() => sel.value.space ?? state.space);
+const currentFolder = computed(() => (sel.value.space && typeof sel.value.folder === "string" ? folders.value.find((f) => f.spaceId === sel.value.space && f.path === sel.value.folder) ?? null : null));
+const selLabel = computed(() => {
+  const { space, folder } = sel.value;
+  if (!space) return "全部记忆";
+  if (folder === null) return "未归档";
+  return folder ? folder.split("/").pop()! : spaceName(space);
+});
+function select(s: FolderSelection) {
+  sel.value = s;
+  treeOpen.value = false;
+}
+async function newFolder() {
+  const parent = sel.value.space === targetSpace.value && typeof sel.value.folder === "string" ? sel.value.folder : "";
+  const name = await promptDialog("新建目录", { message: parent ? `建在「${parent}」下面。用 / 分隔可以一次建几层。` : `建在「${spaceName(targetSpace.value)}」的顶层。用 / 分隔可以一次建几层。`, placeholder: "如：项目A、生活/出行", okText: "下一步" });
+  if (!name?.trim()) return;
+  const description = await promptDialog("这个目录放什么？", { message: "一句话说明，助理归档时按它判断；可以留空。", placeholder: "如：项目 A 的发布、环境与值班约定", okText: "建好" });
+  if (description === null) return;
+  const r = await post<{ path: string }>("/api/memory-folders", { space: targetSpace.value, path: parent ? `${parent}/${name}` : name, description });
+  await loadFolders();
+  select({ space: targetSpace.value, folder: r.path });
+}
+async function describeFolder() {
+  const f = currentFolder.value;
+  if (!f) return;
+  const v = await promptDialog("目录说明", { message: `「${f.path}」放哪一类记忆。助理归档时按它判断。`, value: f.description, okText: "保存" });
+  if (v === null) return;
+  await patch("/api/memory-folders", { space: f.spaceId, path: f.path, description: v });
+  void loadFolders();
+}
+async function renameFolder() {
+  const f = currentFolder.value;
+  if (!f) return;
+  const v = await promptDialog("改名或移动目录", { message: "写完整路径。改成已有的目录会把两个合并。", value: f.path, okText: "保存" });
+  if (!v?.trim() || v.trim() === f.path) return;
+  const r = await patch<{ path: string }>("/api/memory-folders", { space: f.spaceId, path: f.path, to: v });
+  await loadFolders();
+  select({ space: f.spaceId, folder: r.path });
+}
+async function removeFolder() {
+  const f = currentFolder.value;
+  if (!f) return;
+  const parent = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "";
+  if (!(await confirmDialog(`删除目录「${f.path}」？`, { message: `其中的 ${f.total} 条记忆和子目录移到${parent ? `「${parent}」` : "顶层（记忆变为未归档）"}，记忆本身不会删除。`, okText: "删除", danger: true }))) return;
+  await del(`/api/memory-folders?space=${encodeURIComponent(f.spaceId)}&path=${encodeURIComponent(f.path)}`);
+  await loadFolders();
+  select({ space: f.spaceId, folder: parent || undefined });
+}
+async function organize() {
+  const r = await post<{ id: string }>("/api/memory-folders/organize", { space: targetSpace.value });
+  toast(`已开始整理「${spaceName(targetSpace.value)}」的记忆目录，完成后这里会更新`, "ok", `#/runs/${r.id}`);
+}
+
+// Moving: a picker per memory, or drag cards onto the tree.
+const moving = ref<Memory | null>(null);
+const moveTo = ref("");
+const moveNew = ref("");
+const moveOptions = computed(() => [{ value: "", label: "未归档" }, ...folders.value.filter((f) => f.spaceId === moving.value?.spaceId).map((f) => ({ value: f.path, label: f.path, hint: `${f.total} 条` }))]);
+function startMove(m: Memory) {
+  moving.value = m;
+  moveTo.value = m.folder;
+  moveNew.value = "";
+}
+async function moveMemories(space: string, ids: string[], folder: string) {
+  const r = await post<{ moved: number }>("/api/memory-folders/move", { space, ids, folder });
+  if (r.moved) toast(`已移到「${folder || "未归档"}」`, "ok");
+  void loadFolders();
+}
+async function confirmMove() {
+  const m = moving.value;
+  if (!m) return;
+  moving.value = null;
+  await moveMemories(m.spaceId, [m.id], moveNew.value.trim() || moveTo.value);
+}
+function drag(e: DragEvent, m: Memory) {
+  e.dataTransfer?.setData("application/x-omem-memories", m.id);
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+}
+function onTreeDrop(d: { space: string; folder: string; ids: string[] }) {
+  const ids = d.ids.filter((id) => memories.value.find((m) => m.id === id)?.spaceId === d.space);
+  if (!ids.length) return toast("只能在同一个空间里移动", "error");
+  void moveMemories(d.space, ids, d.folder);
+}
+
 async function load() {
   loading.value = true;
   try {
     const p = new URLSearchParams({ status: status.value });
     if (q.value.trim()) p.set("q", q.value.trim());
     if (kind.value) p.set("kind", kind.value);
-    if (scope.value === "space") p.set("space", state.space);
+    if (sel.value.space) p.set("space", sel.value.space);
+    else if (scope.value === "space") p.set("space", state.space);
+    if (sel.value.folder === null) p.set("unfiled", "1");
+    else if (sel.value.folder) p.set("folder", sel.value.folder);
     if (review.value) p.set("review", review.value);
     if (tag.value) p.set("tag", tag.value);
     memories.value = await get<Memory[]>(`/api/memories?${p}`);
@@ -57,9 +158,16 @@ async function load() {
 async function loadTags() {
   tags.value = await get<{ tag: string; n: number }[]>(`/api/memory-tags${scope.value === "space" ? `?space=${state.space}` : ""}`).catch(() => []);
 }
-onMounted(() => (load(), loadTags()));
-watch([kind, status, scope, review, tag], load);
-watch(scope, loadTags);
+onMounted(() => (load(), loadTags(), loadFolders()));
+watch([kind, status, review, tag], load);
+watch(sel, load, { deep: true });
+watch(scope, () => {
+  // The tree changes with the scope; start again from everything in it.
+  if (sel.value.space || sel.value.folder !== undefined) sel.value = { space: null, folder: undefined };
+  else void load();
+  void loadTags();
+  void loadFolders();
+});
 watch(q, () => {
   clearTimeout(timer);
   timer = setTimeout(load, 250);
@@ -67,30 +175,44 @@ watch(q, () => {
 const off = onServerEvent((e) => {
   if (e.type === "changed" && e.entity === "memory") {
     void load();
+    void loadFolders();
     if (tab.value === "quality") void loadQuality();
   }
 });
 onBeforeUnmount(() => off());
 
+/** Memories grouped by the folder they sit in, named relative to the selected folder; its own come first, not filed last. */
 const groups = computed(() => {
-  const map = new Map<string, Memory[]>();
+  const base = typeof sel.value.folder === "string" ? sel.value.folder : "";
+  const spaces = new Set(memories.value.map((m) => m.spaceId));
+  const spaceRank = (id: string) => state.spaces.findIndex((s) => s.id === id);
+  const map = new Map<string, { key: string; label: string; rank: [number, number, string]; ms: Memory[] }>();
   for (const m of memories.value) {
-    const key = m.subject || "（未分类）";
-    map.set(key, [...(map.get(key) ?? []), m]);
+    const rel = !m.folder ? "" : base && m.folder.startsWith(base + "/") ? m.folder.slice(base.length + 1) : m.folder === base ? "" : m.folder;
+    const own = !!m.folder && m.folder === base;
+    const label = (spaces.size > 1 ? `${spaceName(m.spaceId)} · ` : "") + (!m.folder ? "未归档" : own ? selLabel.value : rel);
+    const key = JSON.stringify([m.spaceId, m.folder]);
+    const g = map.get(key) ?? { key, label, rank: [spaceRank(m.spaceId), !m.folder ? 2 : own ? 0 : 1, rel] as [number, number, string], ms: [] };
+    g.ms.push(m);
+    map.set(key, g);
   }
-  return [...map.entries()].sort((a, b) => b[1].length - a[1].length);
+  return [...map.values()].sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.rank[2].localeCompare(b.rank[2], "zh-Hans-CN"));
 });
-/** Subjects and their memories as one flat list, so long lists render only what is on screen. */
-const rows = computed(() => groups.value.flatMap(([subject, ms]) => [{ kind: "subject" as const, key: `s:${subject}`, subject }, ...ms.map((m) => ({ kind: "memory" as const, key: m.id, m }))]));
+/** Folders and their memories as one flat list, so long lists render only what is on screen. */
+const rows = computed(() => groups.value.flatMap((g) => [{ kind: "group" as const, key: `g:${g.key}`, label: g.label }, ...g.ms.map((m) => ({ kind: "memory" as const, key: m.id, m }))]));
 const splitTags = (s: string) => s.split(/[,，\s]+/).map((t) => t.replace(/^#/, "").trim()).filter(Boolean);
 
+watch(adding, (open) => {
+  if (open) form.value.folder = sel.value.space === targetSpace.value && typeof sel.value.folder === "string" ? sel.value.folder : "";
+});
 async function add() {
   if (!form.value.content.trim()) return;
-  await post("/api/memories", { kind: form.value.kind, subject: form.value.subject, content: form.value.content, tags: splitTags(form.value.tags), space: state.space });
-  form.value = { kind: "fact", subject: "", content: "", tags: "" };
+  await post("/api/memories", { kind: form.value.kind, subject: form.value.subject, content: form.value.content, tags: splitTags(form.value.tags), folder: form.value.folder, space: targetSpace.value });
+  form.value = { kind: "fact", subject: "", content: "", tags: "", folder: "" };
   adding.value = false;
   toast("已记住", "ok");
   void loadTags();
+  void loadFolders();
 }
 function startEdit(m: Memory) {
   editing.value = m.id;
@@ -169,80 +291,133 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
       <button v-if="tab === 'list'" class="btn primary" @click="adding = !adding"><Icon name="plus" :size="15" />添加</button>
     </div>
 
-    <template v-if="tab === 'list'">
-      <form v-if="adding" class="card pad add" @submit.prevent="add">
-        <div class="row wrap">
-          <UiSelect v-model="form.kind" width="120px" aria-label="类型" :options="kindOptions" />
-          <input v-model="form.subject" class="input" style="flex: 1; min-width: 160px" placeholder="主题，如“项目A 预算”“张三”" />
-          <input v-model="form.tags" class="input" style="flex: 1; min-width: 140px" placeholder="标签（可选，空格分隔）" />
+    <div v-if="tab === 'list'" class="layout">
+      <aside class="side" :class="{ open: treeOpen }">
+        <div class="side-head row">
+          <strong>目录</strong>
+          <span class="spacer" />
+          <button class="btn ghost sm icon" :title="`在「${spaceName(targetSpace)}」新建目录`" :aria-label="`在「${spaceName(targetSpace)}」新建目录`" @click="newFolder"><Icon name="plus" :size="15" /></button>
+          <button class="btn ghost sm icon" :title="`整理「${spaceName(targetSpace)}」的记忆目录`" :aria-label="`整理「${spaceName(targetSpace)}」的记忆目录`" @click="organize"><Icon name="sparkles" :size="15" /></button>
         </div>
-        <textarea v-model="form.content" class="textarea" rows="2" placeholder="一句话：主语开头，写清对象、时间和数字" />
-        <div class="row"><span class="muted small">保存到「{{ state.spaces.find((s) => s.id === state.space)?.name }}」</span><span class="spacer" /><button class="btn" type="button" @click="adding = false">取消</button><button class="btn primary">保存</button></div>
-      </form>
+        <MemoryFolderTree :folders="folders" :unfiled="unfiled" :spaces="treeSpaces" :selection="sel" :total="treeTotal" @select="select" @drop="onTreeDrop" />
+        <p v-if="!folders.length" class="muted small side-note">还没有目录。新记忆会由助理按领域归档；已有的记忆可以点上面的 <Icon name="sparkles" :size="12" /> 让助理整理一遍。</p>
+      </aside>
 
-      <div class="filters row wrap">
-        <div class="search row"><Icon name="search" :size="15" /><input v-model="q" placeholder="搜索记忆" /></div>
-        <UiSelect v-model="kind" width="120px" aria-label="类型" :options="[{ value: '', label: '全部类型' }, ...kindOptions]" />
-        <UiSelect
-          v-model="status"
-          width="120px"
-          aria-label="状态"
-          :options="[
-            { value: 'active', label: '当前有效' },
-            { value: 'all', label: '包括历史' },
-            { value: 'superseded', label: '已被更正' },
-            { value: 'retracted', label: '已撤回' },
-          ]"
-        />
-        <UiSelect
-          v-model="review"
-          width="140px"
-          aria-label="复核"
-          :options="[
-            { value: '', label: '全部复核状态' },
-            { value: 'pending', label: '待复核' },
-            { value: 'keep', label: '复核保留' },
-            { value: 'rewrite', label: '复核改写' },
-            { value: 'retract', label: '复核撤回' },
-          ]"
-        />
-        <UiSelect v-if="tags.length" v-model="tag" width="130px" aria-label="标签" :options="[{ value: '', label: '全部标签' }, ...tags.map((t) => ({ value: t.tag, label: `#${t.tag}`, hint: `${t.n} 条` }))]" />
-        <UiSegmented v-model="scope" size="sm" aria-label="范围" :options="[{ value: 'all', label: '所有空间' }, { value: 'space', label: '当前空间' }]" />
-      </div>
+      <main class="main">
+        <button class="btn sm tree-toggle" :aria-expanded="treeOpen" @click="treeOpen = !treeOpen"><Icon name="folder" :size="15" /><span class="ellipsis">目录：{{ selLabel }}</span></button>
 
-      <div v-if="loading && !memories.length" class="skeleton">
-        <div v-for="i in 4" :key="i" class="sk-line" />
-      </div>
-      <div v-else-if="!memories.length" class="empty">
-        <Icon name="brain" :size="34" />
-        <h3>没有符合条件的记忆</h3>
-        <p>在问答里告诉助理一件事（“记住：…”），或保存聊天和文档让助理整理，长期有用的结论会出现在这里。</p>
-      </div>
+        <div v-if="sel.space && sel.folder !== undefined" class="folder-head">
+          <div class="crumbs small muted">
+            <a href="#" @click.prevent="select({ space: sel.space, folder: undefined })">{{ spaceName(sel.space) }}</a>
+            <template v-for="(part, i) in (sel.folder ?? '未归档').split('/')" :key="i">
+              <span>/</span>
+              <a v-if="sel.folder && i < sel.folder.split('/').length - 1" href="#" @click.prevent="select({ space: sel.space, folder: sel.folder.split('/').slice(0, i + 1).join('/') })">{{ part }}</a>
+              <span v-else class="ink">{{ part }}</span>
+            </template>
+          </div>
+          <div class="row wrap">
+            <p class="desc">{{ sel.folder === null ? "还没放进目录的记忆。拖到左边的目录上，或点“移动”。" : currentFolder?.description || "还没有说明。写一句这里放哪一类记忆，助理归档时会按它判断。" }}</p>
+            <span class="spacer" />
+            <template v-if="currentFolder">
+              <button class="btn ghost sm" @click="describeFolder"><Icon name="edit" :size="14" />说明</button>
+              <button class="btn ghost sm" @click="renameFolder">改名</button>
+              <button class="btn ghost sm icon" title="删除目录" aria-label="删除目录" @click="removeFolder"><Icon name="trash" :size="14" /></button>
+            </template>
+            <button v-else-if="sel.folder === null" class="btn sm" @click="organize"><Icon name="sparkles" :size="14" />让助理归档</button>
+          </div>
+        </div>
 
-      <VirtualList :items="rows" :item-key="(r) => r.key" :estimate="96">
-        <template #default="{ item: r }">
-        <h2 v-if="r.kind === 'subject'" class="subject">{{ r.subject }}</h2>
-        <MemoryCard
-          v-else
-          :key="r.m.id"
-          :m="r.m"
-          @tag="tag = $event"
-          @history="openCitation({ kind: 'memory', id: $event.id }, true)"
-          @sources="openCitation({ kind: 'memory', id: $event.id }, true)"
-          @tags="editTags($event)"
-          @edit="startEdit($event)"
-          @retract="retract($event)"
-        >
-          <template v-if="editing === r.m.id" #editor>
-            <div class="edit">
-              <textarea v-model="editText" class="textarea" rows="2" />
-              <div class="row"><span class="muted small">保存后旧内容标记为“已被更正”。</span><span class="spacer" /><button class="btn sm" @click="editing = null">取消</button><button class="btn primary sm" @click="supersede(r.m)">保存更正</button></div>
+        <form v-if="adding" class="card pad add" @submit.prevent="add">
+          <div class="row wrap">
+            <UiSelect v-model="form.kind" width="120px" aria-label="类型" :options="kindOptions" />
+            <input v-model="form.subject" class="input" style="flex: 1; min-width: 160px" placeholder="主题，如“项目A 预算”“张三”" />
+            <input v-model="form.folder" class="input" style="flex: 1; min-width: 140px" placeholder="目录（可选），如 工作/项目A" />
+            <input v-model="form.tags" class="input" style="flex: 1; min-width: 140px" placeholder="标签（可选，空格分隔）" />
+          </div>
+          <textarea v-model="form.content" class="textarea" rows="2" placeholder="一句话：主语开头，写清对象、时间和数字" />
+          <div class="row"><span class="muted small">保存到「{{ spaceName(targetSpace) }}」</span><span class="spacer" /><button class="btn" type="button" @click="adding = false">取消</button><button class="btn primary">保存</button></div>
+        </form>
+
+        <div class="filters row wrap">
+          <div class="search row"><Icon name="search" :size="15" /><input v-model="q" placeholder="搜索记忆" /></div>
+          <UiSelect v-model="kind" width="120px" aria-label="类型" :options="[{ value: '', label: '全部类型' }, ...kindOptions]" />
+          <UiSelect
+            v-model="status"
+            width="120px"
+            aria-label="状态"
+            :options="[
+              { value: 'active', label: '当前有效' },
+              { value: 'all', label: '包括历史' },
+              { value: 'superseded', label: '已被更正' },
+              { value: 'retracted', label: '已撤回' },
+            ]"
+          />
+          <UiSelect
+            v-model="review"
+            width="140px"
+            aria-label="复核"
+            :options="[
+              { value: '', label: '全部复核状态' },
+              { value: 'pending', label: '待复核' },
+              { value: 'keep', label: '复核保留' },
+              { value: 'rewrite', label: '复核改写' },
+              { value: 'retract', label: '复核撤回' },
+            ]"
+          />
+          <UiSelect v-if="tags.length" v-model="tag" width="130px" aria-label="标签" :options="[{ value: '', label: '全部标签' }, ...tags.map((t) => ({ value: t.tag, label: `#${t.tag}`, hint: `${t.n} 条` }))]" />
+          <UiSegmented v-model="scope" size="sm" aria-label="范围" :options="[{ value: 'all', label: '所有空间' }, { value: 'space', label: '当前空间' }]" />
+        </div>
+
+        <div v-if="loading && !memories.length" class="skeleton">
+          <div v-for="i in 4" :key="i" class="sk-line" />
+        </div>
+        <div v-else-if="!memories.length" class="empty">
+          <Icon name="brain" :size="34" />
+          <h3>{{ sel.folder !== undefined ? "这里还没有记忆" : "没有符合条件的记忆" }}</h3>
+          <p v-if="sel.folder !== undefined">把记忆拖到左边的目录上，或在记忆上点“移动”。</p>
+          <p v-else>在问答里告诉助理一件事（“记住：…”），或保存聊天和文档让助理整理，长期有用的结论会出现在这里。</p>
+        </div>
+
+        <VirtualList :items="rows" :item-key="(r) => r.key" :estimate="96">
+          <template #default="{ item: r }">
+            <h2 v-if="r.kind === 'group'" class="subject"><Icon name="folder" :size="14" />{{ r.label }}</h2>
+            <div v-else draggable="true" @dragstart="drag($event, r.m)">
+              <MemoryCard
+                :key="r.m.id"
+                :m="r.m"
+                movable
+                @tag="tag = $event"
+                @history="openCitation({ kind: 'memory', id: $event.id }, true)"
+                @sources="openCitation({ kind: 'memory', id: $event.id }, true)"
+                @tags="editTags($event)"
+                @move="startMove($event)"
+                @edit="startEdit($event)"
+                @retract="retract($event)"
+              >
+                <template v-if="editing === r.m.id" #editor>
+                  <div class="edit">
+                    <textarea v-model="editText" class="textarea" rows="2" />
+                    <div class="row"><span class="muted small">保存后旧内容标记为“已被更正”。</span><span class="spacer" /><button class="btn sm" @click="editing = null">取消</button><button class="btn primary sm" @click="supersede(r.m)">保存更正</button></div>
+                  </div>
+                </template>
+              </MemoryCard>
             </div>
           </template>
-        </MemoryCard>
-        </template>
-      </VirtualList>
-    </template>
+        </VirtualList>
+      </main>
+
+      <Teleport to="body">
+        <div v-if="moving" class="modal-overlay" @mousedown.self="moving = null" @keydown.esc="moving = null">
+          <form class="modal" @submit.prevent="confirmMove">
+            <header class="row"><strong>移动到目录</strong><span class="spacer" /><button type="button" class="btn ghost sm icon" aria-label="关闭" @click="moving = null"><Icon name="x" /></button></header>
+            <p class="muted small clamp">{{ moving.subject ? moving.subject + "：" : "" }}{{ moving.content }}</p>
+            <label class="field"><span>已有目录</span><UiSelect v-model="moveTo" aria-label="已有目录" :options="moveOptions" /></label>
+            <label class="field"><span>或新目录（完整路径）</span><input v-model="moveNew" class="input" placeholder="如：工作/项目A/发布" /></label>
+            <div class="row"><span class="spacer" /><button type="button" class="btn" @click="moving = null">取消</button><button class="btn primary">移动</button></div>
+          </form>
+        </div>
+      </Teleport>
+    </div>
 
     <template v-else-if="tab === 'recall'">
       <div v-if="!recall" class="skeleton"><div v-for="i in 4" :key="i" class="sk-line" /></div>
@@ -413,6 +588,114 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
 </template>
 
 <style scoped>
+.layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+.side {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  margin-left: -8px;
+}
+.side-head {
+  padding: 0 0 4px 8px;
+  gap: 2px;
+}
+.side-note {
+  padding: 4px 8px;
+  margin: 0;
+}
+.main {
+  min-width: 0;
+}
+.tree-toggle {
+  display: none;
+  margin-bottom: 12px;
+  max-width: 100%;
+}
+.folder-head {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.crumbs .ink {
+  color: var(--ink);
+  font-weight: 600;
+}
+.desc {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 14px;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+@media (max-width: 860px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .side {
+    display: none;
+    position: static;
+    max-height: 50vh;
+    margin: 0 0 14px;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+  }
+  .side.open {
+    display: grid;
+  }
+  .tree-toggle {
+    display: inline-flex;
+  }
+}
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 12, 16, 0.35);
+  z-index: 55;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 10vh;
+}
+.modal {
+  width: min(520px, calc(100vw - 24px));
+  max-height: 80vh;
+  overflow: auto;
+  background: var(--panel);
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-lg);
+  padding: 16px 18px;
+  display: grid;
+  gap: 12px;
+}
+.clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0;
+}
 .add {
   display: grid;
   gap: 10px;
@@ -449,10 +732,18 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
   margin-bottom: 26px;
 }
 .subject {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 15px;
   font-weight: 650;
   padding: 18px 0 8px;
   margin: 0;
+  overflow-wrap: anywhere;
+}
+.subject :deep(svg) {
+  color: var(--muted);
+  flex: none;
 }
 .mem {
   border-top: 1px solid var(--line);

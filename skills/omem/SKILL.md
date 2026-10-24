@@ -23,8 +23,8 @@ omem 是本人的个人记忆与助理系统。有两种接入方式。
 - `source_outline` / `find_symbol`：看文档章节或代码符号，找定义与调用方。
 - `scan`：汇总类问题（“这个月提到过几次…”）先穷举所有命中行再计数，可按时间段。
 - `list_conversations` / `read_conversation`：查以前在某个群、私聊或网页对话里说过什么。飞书聊天原件每行是 `[时间] 发送人: 内容`，回复别人时带 `↩ 回复 X「…」`。
-- `recall`：查记忆，可按 `subject`、`tag` 筛；问“之前/变化”时加 `include_history: true` 看版本链。
-- `remember` / `supersede` / `forget`：记录、更正、撤回记忆。更正时用 supersede，不要重复新增。可带 `tags`（项目名、主题）。教某个 Agent 档案或内置角色（如独立评审 `reviewer`）偏好/风格时用 `agent="名字"`（如 `remember(kind:"preference", agent:"reviewer", …)`）；查看它的专属记忆用 `recall(agent:"名字")`。
+- `recall`：查记忆，可按 `subject`、`tag`、`folder`（含子目录，`"未归档"` 看没放目录的）筛；问“之前/变化”时加 `include_history: true` 看版本链。
+- `remember` / `supersede` / `forget`：记录、更正、撤回记忆。更正时用 supersede，不要重复新增。可带 `folder`（记忆目录，如 `工作/项目A`：先 `list_memory_folders` 看已有目录和说明，选最具体的；新目录要同时给 `folder_description` 一句说明，最多三层；拿不准就不填，omem 会定期归档）和 `tags`（只用于跨目录的人、项目、时期）。`organize_memories` 调整目录：新建、改说明、移动记忆、改名或合并、删除。教某个 Agent 档案或内置角色（如独立评审 `reviewer`）偏好/风格时用 `agent="名字"`（如 `remember(kind:"preference", agent:"reviewer", …)`）；查看它的专属记忆用 `recall(agent:"名字")`。
 - `save_skill`：把可复用做法存成技能；`agent="档案名"` 保存后直接挂到该档案或内置角色（主助手教档案时用；内置角色会先复制成本人的自定义版本），档案内运行不填默认挂当前档案，`attach: false` 只建技能不挂；名字不存在会报错。`list_agents` 同时列出可以教的内置角色。
 - `ask_owner(question, options?)` / `wait_answer(ask_id)`：问本人一个非问不可的问题，本人在飞书卡片、网页首页点选或回复；每次最多等 50 秒，没答可以接着 `wait_answer`。`suggest_next` 只在 omem 自己的对话里有效（按钮挂在回答下面）。
 - `write_file(path, content, mode?, expires?, item?, rule?)`：写工作文件（原件 `work/<path>`）——长任务的当前成果、定时任务逐天累积的周报素材。`mode: "append"` 追加；`expires` 设过期（`30d`、日期，`never` 永久）；`item` / `rule` 挂到事项或规则上。解决过的问题写成案例页：`write_page(kind: "case", page: "cases/<主题>")`。

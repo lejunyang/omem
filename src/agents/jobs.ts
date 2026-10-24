@@ -472,6 +472,67 @@ registerHandler("memory-review", async (ctx) => {
   return { reviewed: entries.length, skipped, summary: r.text.trim() };
 });
 
+// ------------------------------------------------------------ memory folders
+
+const ORGANIZE_BATCH = 60;
+const CROWDED_FOLDER = 30;
+const RESHAPE_DAYS = 7;
+
+function lastOrganized(app: App, spaceId: string) {
+  return one<{ at: string }>(app.db, "select max(coalesce(started_at, created_at)) at from runs where kind = 'memory-organize' and space_id = ? and status = 'done'", spaceId)?.at ?? null;
+}
+
+/**
+ * Queue folder upkeep for spaces that have memories filed nowhere since the last pass, or whose
+ * folders have not been looked over for a week (then the organizer may split, merge or rename).
+ */
+export function scheduleMemoryOrganize(app: App) {
+  if (listRuns(app, { kind: "memory-organize", status: "queued" }).length || listRuns(app, { kind: "memory-organize", status: "running" }).length) return [];
+  const weekAgo = new Date(Date.now() - RESHAPE_DAYS * 86_400_000).toISOString();
+  const out = [];
+  for (const s of all<{ space_id: string; n: number }>(app.db, "select space_id, count(*) n from memories where status = 'active' group by space_id")) {
+    const last = lastOrganized(app, s.space_id);
+    const fresh = one<{ n: number }>(app.db, "select count(*) n from memories where status = 'active' and folder = '' and space_id = ? and created_at > ?", s.space_id, last ?? "")!.n;
+    const reshape = s.n >= 10 && (!last || last < weekAgo);
+    if (fresh || reshape) out.push(createRun(app, { kind: "memory-organize", spaceId: s.space_id, title: fresh ? `整理记忆目录（${fresh} 条未归档）` : "调整记忆目录" }));
+  }
+  return out;
+}
+
+registerHandler("memory-organize", async (ctx) => {
+  const app = ctx.app;
+  const spaceId = ctx.run.spaceId!;
+  const input = ctx.run.input as { after?: string; round?: number };
+  const unfiled = all<{ id: string; kind: string; subject: string; content: string; tags: string; agent: string | null; created_at: string }>(
+    app.db,
+    "select id, kind, subject, content, tags, agent, created_at from memories where status = 'active' and folder = '' and space_id = ? and created_at > ? order by created_at limit ?",
+    spaceId,
+    input.after ?? "",
+    ORGANIZE_BATCH,
+  );
+  const { listFolders, folderTreeText } = await import("../memory/folders.ts");
+  const crowded = listFolders(app, spaceId).filter((f) => f.count > CROWDED_FOLDER);
+  const last = lastOrganized(app, spaceId);
+  const reshape = !last || last < new Date(Date.now() - RESHAPE_DAYS * 86_400_000).toISOString();
+  if (!unfiled.length && !reshape) return { quiet: true, summary: "没有未归档的记忆" };
+  const task = [
+    folderTreeText(app, spaceId),
+    unfiled.length
+      ? `这一批未归档的记忆（${unfiled.length} 条）：\n${unfiled.map((m) => `- ${m.id} [${m.kind}${m.agent ? `，${m.agent} 专用` : ""}${json<string[]>(m.tags, []).length ? `，#${json<string[]>(m.tags, []).join(" #")}` : ""}] ${m.subject ? m.subject + "：" : ""}${truncate(m.content, 160)}`).join("\n")}`
+      : "",
+    crowded.length ? `直接放了很多条的目录（看是否该拆）：${crowded.map((f) => `${f.path}（${f.count}）`).join("、")}。用 recall(folder=…) 读其中的记忆。` : "",
+    reshape ? "这次也看一遍整体结构：只有一两条且长期不会再增加的目录并到上一层或相近目录；名字含糊、彼此重叠的改名或合并；缺说明的补上。" : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const r = await agent(ctx, "memory-organizer", spaceId, task, [spaceId]);
+  // A long backlog (the first pass over old memories) continues in the next run.
+  const more = unfiled.length === ORGANIZE_BATCH && (input.round ?? 1) < 20;
+  if (more) createRun(app, { kind: "memory-organize", spaceId, title: "整理记忆目录（续）", input: { after: unfiled[unfiled.length - 1].created_at, round: (input.round ?? 1) + 1 } });
+  const left = unfiled.filter((m) => one(app.db, "select 1 from memories where id = ? and folder = ''", m.id)).length;
+  return { quiet: isQuiet(r.text), filed: unfiled.length - left, left, summary: r.text.trim() };
+});
+
 // --------------------------------------------------------------------- wiki
 
 /** Compact directory map of a space (files per folder, a few names) to orient planners. */

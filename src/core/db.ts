@@ -642,6 +642,12 @@ const migrations: string[] = [
    alter table review_findings add column triage_note text not null default '';`,
   // The AI a run actually used (backend, model, effort), recorded when its first Agent call succeeds.
   `alter table runs add column ai text;`,
+  // Memory folders: one home per memory inside its space ('' = not filed yet). The table keeps
+  // a folder's description (what belongs there) and folders that are empty for now.
+  `alter table memories add column folder text not null default '';
+   create index memories_folder on memories(space_id, folder);
+   create table memory_folders(space_id text not null, path text not null, description text not null default '',
+     created_by text not null default 'agent', created_at text not null, updated_at text not null, primary key(space_id, path));`,
 ];
 
 export type Db = DatabaseSync;

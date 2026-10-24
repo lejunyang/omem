@@ -139,7 +139,10 @@ export type Memory = {
   reviewedAt?: string | null;
   reviewVerdict?: string | null;
   reviewNote?: string | null;
+  /** Folder path inside the space; "" = not filed. */
+  folder: string;
 };
+export type MemoryFolder = { spaceId: string; path: string; description: string; count: number; total: number };
 export type ModelQuality = { model: string; stored: number; shadow: number; rejected: number; rejectedBy: Record<string, number>; reviewed: number; kept: number; rewritten: number; retracted: number; avgChars: number };
 export type MemoryQuality = {
   stats: ModelQuality[];

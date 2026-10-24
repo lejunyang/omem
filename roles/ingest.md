@@ -1,6 +1,6 @@
 ---
 description: 新材料进入后，更新记忆、事项与相关页面
-tools: [describe_source, search, scan, read_source, source_outline, list_sources, list_pages, read_page, recall, list_items, read_item, propose_item_update, remember, supersede, forget, upsert_item, write_page, notify]
+tools: [describe_source, search, scan, read_source, source_outline, list_sources, list_pages, read_page, recall, list_memory_folders, list_items, read_item, propose_item_update, remember, supersede, forget, upsert_item, write_page, notify]
 writes: false
 modes: [read-only, default, plan]
 ---

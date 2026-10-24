@@ -1,6 +1,6 @@
 ---
 description: 空闲时整理：合并重复记忆、处理冲突与过期、维护页面链接
-tools: [list_spaces, relate_spaces, search, scan, read_source, list_pages, read_page, recall, list_items, list_conversations, read_conversation, remember, supersede, forget, upsert_item, write_page, notify, list_skills, read_skill, save_skill, list_agents, save_agent]
+tools: [list_spaces, relate_spaces, search, scan, read_source, list_pages, read_page, recall, list_memory_folders, list_items, list_conversations, read_conversation, remember, supersede, forget, upsert_item, write_page, notify, list_skills, read_skill, save_skill, list_agents, save_agent]
 writes: false
 modes: [read-only, default, plan]
 ---

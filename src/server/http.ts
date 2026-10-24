@@ -36,6 +36,7 @@ import { refExcerpt } from "../items/evidence.ts";
 import { getItem, itemEvents, listItems, upsertItem } from "../items/store.ts";
 import { getMemory, listMemories, memoryHistory, memoryTags, remember, retract, supersede, updateMemoryText } from "../memory/store.ts";
 import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
+import { ensureFolder, listFolders, moveMemories, normalizeFolder, relocateFolder, removeFolder, unfiledCount } from "../memory/folders.ts";
 import { search } from "../search/search.ts";
 import { importFile, importText, importUrl } from "../sources/import.ts";
 import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
@@ -472,14 +473,53 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // ----------------------------------------------------------------- memories
   server.get("/api/memories", async (req) => {
     const o = q(
-      z.object({ space: z.string().optional(), status: z.string().optional(), kind: z.string().optional(), q: z.string().optional(), tag: z.string().optional(), review: z.enum(["pending", "keep", "rewrite", "retract"]).optional() }),
+      z.object({ space: z.string().optional(), status: z.string().optional(), kind: z.string().optional(), q: z.string().optional(), tag: z.string().optional(), folder: z.string().optional(), unfiled: z.string().optional(), review: z.enum(["pending", "keep", "rewrite", "retract"]).optional() }),
       req.query,
     );
+    const folder = o.unfiled ? null : normalizeFolder(o.folder) || undefined;
+    const inFolder = (m: { folder: string }) => (folder === undefined ? true : folder === null ? !m.folder : m.folder === folder || m.folder.startsWith(folder + "/"));
     if (o.q) {
       const hits = await search(app, o.q, { spaces: o.space ? [o.space] : undefined, types: ["memory"], limit: 100, includeHistory: o.status === "all" });
-      return hits.map((h) => getMemory(app, h.id)).filter((m) => (!o.tag || m.tags?.includes(o.tag)) && (!o.kind || m.kind === o.kind));
+      return hits.map((h) => getMemory(app, h.id)).filter((m) => (!o.tag || m.tags?.includes(o.tag)) && (!o.kind || m.kind === o.kind) && inFolder(m));
     }
-    return listMemories(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, tag: o.tag, review: o.review, limit: 5000 });
+    return listMemories(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, tag: o.tag, folder, review: o.review, limit: 5000 });
+  });
+  // Folders: the tree on the memory page, its upkeep by hand, and an on-demand organizing pass.
+  server.get("/api/memory-folders", async (req) => {
+    const space = (req.query as { space?: string }).space;
+    const spaces = space ? [space] : listSpaces(app).map((s) => s.id);
+    return { folders: listFolders(app, spaces), unfiled: Object.fromEntries(spaces.map((s) => [s, unfiledCount(app, s)]).filter(([, n]) => n)) };
+  });
+  const folderBody = z.object({ space: z.string(), path: z.string().min(1), description: z.string().optional() });
+  server.post("/api/memory-folders", async (req) => {
+    const b = q(folderBody, req.body);
+    const path = normalizeFolder(b.path);
+    if (!path) throw new HttpError(400, "目录名不能为空");
+    ensureFolder(app, b.space, path, b.description ?? "", "user", true);
+    app.emit({ type: "changed", entity: "memory", id: path, spaceId: b.space });
+    return { path };
+  });
+  server.patch("/api/memory-folders", async (req) => {
+    const b = q(folderBody.extend({ to: z.string().optional() }), req.body);
+    const path = normalizeFolder(b.path);
+    if (b.description !== undefined) ensureFolder(app, b.space, path, b.description, "user", true);
+    const to = b.to === undefined ? path : normalizeFolder(b.to);
+    if (to !== path) relocateFolder(app, b.space, path, to, "user");
+    app.emit({ type: "changed", entity: "memory", id: to, spaceId: b.space });
+    return { path: to };
+  });
+  server.delete("/api/memory-folders", async (req) => {
+    const o = q(z.object({ space: z.string(), path: z.string().min(1) }), req.query);
+    return { moved: removeFolder(app, o.space, normalizeFolder(o.path), "user") };
+  });
+  server.post("/api/memory-folders/move", async (req) => {
+    const b = q(z.object({ space: z.string(), ids: z.array(z.string()).min(1), folder: z.string() }), req.body);
+    return { moved: moveMemories(app, b.space, b.ids, normalizeFolder(b.folder), "user") };
+  });
+  server.post("/api/memory-folders/organize", async (req) => {
+    const b = q(z.object({ space: z.string() }), req.body);
+    if (listRuns(app, { kind: "memory-organize", status: "queued" }).length || listRuns(app, { kind: "memory-organize", status: "running" }).length) throw new HttpError(409, "已有整理目录的运行在进行");
+    return createRun(app, { kind: "memory-organize", spaceId: b.space, title: "整理记忆目录" });
   });
   server.get("/api/memory-tags", async (req) => memoryTags(app, (req.query as { space?: string }).space));
   // Recall/effectiveness accounting for memory governance.
@@ -532,8 +572,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { memory: getMemory(app, id), history: memoryHistory(app, id) };
   });
   server.post("/api/memories", async (req) => {
-    const b = q(z.object({ space: z.string().default("personal"), kind: z.enum(["fact", "agreement", "preference", "experience", "person", "decision"]), subject: z.string().optional(), content: z.string().min(1), tags: z.array(z.string()).optional() }), req.body);
-    return remember(app, { spaceId: b.space, kind: b.kind, subject: b.subject, content: b.content, tags: b.tags, createdBy: "user" });
+    const b = q(z.object({ space: z.string().default("personal"), kind: z.enum(["fact", "agreement", "preference", "experience", "person", "decision"]), subject: z.string().optional(), content: z.string().min(1), tags: z.array(z.string()).optional(), folder: z.string().optional() }), req.body);
+    const folder = normalizeFolder(b.folder);
+    const m = remember(app, { spaceId: b.space, kind: b.kind, subject: b.subject, content: b.content, tags: b.tags, folder, createdBy: "user" });
+    if (folder) ensureFolder(app, b.space, folder, "", "user");
+    return m;
   });
   server.post("/api/memories/:id/supersede", async (req) => {
     const b = q(z.object({ content: z.string().min(1), reason: z.string().optional() }), req.body);

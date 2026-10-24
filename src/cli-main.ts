@@ -201,7 +201,7 @@ program
         return;
       }
       const r = mergeLibrary(local, fetched, { dryRun: o.dryRun, log });
-      const names: Record<string, string> = { spaces: "空间", sources: "原件", memories: "记忆", items: "事项", item_events: "事项时间线", conversations: "会话", messages: "消息", runs: "运行", run_events: "运行事件", cards: "卡片", card_reviews: "复习记录", notifications: "通知", files: "原件文件" };
+      const names: Record<string, string> = { spaces: "空间", sources: "原件", memories: "记忆", memory_folders: "记忆目录", items: "事项", item_events: "事项时间线", conversations: "会话", messages: "消息", runs: "运行", run_events: "运行事件", cards: "卡片", card_reviews: "复习记录", notifications: "通知", files: "原件文件" };
       for (const [k, v] of Object.entries(r))
         if (k !== "wiki" && "added" in v && (v.added || v.updated)) console.log(`${(names[k] ?? k).padEnd(8)} 新增 ${v.added}${v.updated ? `，更新 ${v.updated}` : ""}${v.kept ? `，保留本地 ${v.kept}` : ""}`);
       if (r.wiki?.conflicts.length) console.log(`知识库冲突 ${r.wiki.conflicts.length} 处：保留本地版本，远端版本存为同名 .remote.md：\n  ${r.wiki.conflicts.join("\n  ")}`);

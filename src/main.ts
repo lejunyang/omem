@@ -1,5 +1,5 @@
 import "./agents/jobs.ts";
-import { learningTick, scheduleMemoryReview, scheduleSpaceSync } from "./agents/jobs.ts";
+import { learningTick, scheduleMemoryOrganize, scheduleMemoryReview, scheduleSpaceSync } from "./agents/jobs.ts";
 import { createRun, listRuns, startWorker } from "./agents/runs.ts";
 import { sweepWorktreeSpaces } from "./agents/worktree-index.ts";
 import { App } from "./core/app.ts";
@@ -21,6 +21,7 @@ registerScheduleKind("repo-sync", (app) => {
 });
 
 registerScheduleKind("memory-review", (app) => scheduleMemoryReview(app));
+registerScheduleKind("memory-organize", (app) => scheduleMemoryOrganize(app));
 registerScheduleKind("profile-review", (app) => void import("./agents/profile-jobs.ts").then((m) => m.nightlyProfileReviews(app)));
 registerScheduleKind("rule", (app, s) => void import("./rules/engine.ts").then((m) => m.fireScheduledRule(app, String((s.config as { ruleId?: string }).ruleId))));
 registerScheduleKind("learn", (app) => learningTick(app));
