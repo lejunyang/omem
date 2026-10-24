@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { del, get, post, put } from "../api";
 import Icon from "../components/Icon.vue";
+import RuleTabs from "../components/RuleTabs.vue";
 import RuleConditions, { type Condition } from "../components/RuleConditions.vue";
 import Skeleton from "../components/Skeleton.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
@@ -56,7 +57,7 @@ const dirty = ref(false);
 const saving = ref(false);
 const drafting = ref(false);
 
-const blank = (): Rule => ({ spaceId: state.space, name: "", description: "", enabled: false, trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] }, conditions: null, judge: "code", actions: [{ type: "agent", spec: "assistant", task: "", ownTopic: false, reply: "none" }] });
+const blank = (): Rule => ({ name: "", description: "", enabled: false, trigger: { event: "message", once: "event", waitMinutes: 0, unless: [] }, conditions: null, judge: "code", actions: [{ type: "agent", spec: "assistant", task: "", ownTopic: false, reply: "none" }] });
 
 async function loadList() {
   try {
@@ -170,6 +171,11 @@ const REPLY_HINT: Record<string, string> = {
   auto: "直接在群里（或它的话题里）回复，思考气泡可见。",
   silent: "群里看不到过程；它读完讨论自己判断要不要发、要不要追问缺的信息，有结论才在话题里发，之后跟进这个话题，你一插话它就停。",
 };
+const spaceOptions = (none: string) => [{ value: "", label: none }, ...state.spaces.map((s) => ({ value: s.id, label: s.name }))];
+const conversationOptions = computed(() => [
+  { value: "", label: "选择会话" },
+  ...options.value.conversations.map((c) => ({ value: c.id, label: c.title || "未命名会话", hint: `${c.channel === "web" ? "网页" : c.channel.startsWith("lark") ? "飞书" : c.channel} · ${state.spaces.find((x) => x.id === c.space_id)?.name ?? c.space_id}` })),
+]);
 const specOptions = computed(() => options.value.specs.map((s) => ({ value: s.name, label: s.name === "assistant" ? "主助手" : s.name, hint: s.description })));
 const addPick = ref<string | null>(null);
 function addAction(type: string | null) {
@@ -237,10 +243,9 @@ function startFrom(text: string) {
   <div class="rules">
     <aside class="list-col">
       <div class="head row">
-        <strong>规则</strong>
-        <span class="muted small">{{ rules.length || "" }}</span>
+        <RuleTabs />
         <span class="spacer" />
-        <button class="btn ghost sm icon" title="新建规则" @click="go({ new: '1' })"><Icon name="plus" :size="15" /></button>
+        <button class="btn ghost sm icon" title="新建任务规则" aria-label="新建任务规则" @click="go({ new: '1' })"><Icon name="plus" :size="15" /></button>
       </div>
       <div class="items">
         <Skeleton v-if="loading" :rows="5" />
@@ -252,9 +257,9 @@ function startFrom(text: string) {
           </button>
           <UiCheckbox :model-value="r.enabled" switch size="sm" :aria-label="`启用 ${r.name}`" @change="toggle(r)" />
         </div>
-        <p v-if="!loading && !rules.length" class="muted small hint">还没有规则。点 ＋ 新建，或对助理说“以后值班群里我被 @ 就把机器人拉进去”。</p>
+        <p v-if="!loading && !rules.length" class="muted small hint">还没有任务规则。点 ＋ 新建，或对助理说“以后值班群里我被 @ 就把机器人拉进去”。</p>
         <template v-if="wakes.length">
-          <div class="group muted small">临时唤醒 · Agent 为自己的后续工作设的，触发或到期后自动删除</div>
+          <div class="group muted small" title="Agent 为自己的后续工作设的，触发或到期后自动删除">临时唤醒</div>
           <div v-for="w in wakes" :key="w.id" class="li wake">
             <div class="grow">
               <div class="row"><span class="badge">{{ w.kind === "timed" ? "定时" : "消息" }}</span><span class="muted small ellipsis">{{ w.setBy.agent }}</span></div>
@@ -270,8 +275,8 @@ function startFrom(text: string) {
     <main class="detail">
       <div v-if="!form" class="empty">
         <Icon name="zap" :size="34" />
-        <h3>规则</h3>
-        <p>用一句话说“遇到什么情况就做什么”：新消息、第一次看到的群、或定时，满足条件就交给某个 Agent、在消息下开话题处理、拉机器人进群、优先采集、通知你。能写成条件的由 omem 直接判断，写不成条件的请模型按原话判断。</p>
+        <h3>任务规则</h3>
+        <p>用一句话说“遇到什么情况就做什么”：来了新消息、看到新群或到了某个时间，满足条件就交给 Agent 处理、拉机器人进群、优先采集或通知你。能写成条件的直接判断，写不成的请模型按原话判断。</p>
         <div class="examples">
           <button v-for="x in EXAMPLES" :key="x" class="example" type="button" @click="startFrom(x)">{{ x }}</button>
         </div>
@@ -287,24 +292,18 @@ function startFrom(text: string) {
         </header>
 
         <section class="block">
-          <div class="block-head"><h3>任务规则原话</h3><span class="muted small">规则的依据；条件和动作可以从它重新生成</span></div>
+          <div class="block-head"><h3>规则原话</h3><span class="muted small">条件和动作都可以从这句话重新生成</span></div>
           <textarea v-model="form.description" class="input" rows="3" placeholder="例如：报警群里小王发报警卡片时，在卡片下开话题交给 alert-analyst 分析，需要关注就 @ 值班人" @input="touch" />
           <div class="row"><button class="btn sm" :disabled="drafting" @click="draft"><Icon name="sparkles" :size="13" />{{ drafting ? "生成中…" : form.id ? "按原话重新生成" : "从原话生成条件和动作" }}</button></div>
         </section>
 
-        <section class="block">
-          <div class="row wrap">
-            <label>所属空间<UiSelect :model-value="form.spaceId ?? ''" @update:model-value="form.spaceId = String($event || '')" :options="[{ value: '', label: '全局（沿用触发空间）' }, ...state.spaces.map(s => ({ value: s.id, label: s.name }))]" aria-label="规则所属空间" @change="touch" /></label>
-            <label>结果发到<UiSelect :model-value="form.conversationId ?? ''" @update:model-value="form.conversationId = String($event || '')" :options="[{ value: '', label: '通知本人' }, ...options.conversations.map(c => ({ value: c.id, label: c.title || '未命名会话', hint: `${c.channel} · ${state.spaces.find(s => s.id === c.space_id)?.name ?? c.space_id}` }))]" aria-label="结果会话" @change="touch" /></label>
-          </div>
-          <small class="muted">Agent 优先使用动作指定空间，其次档案固定空间，再用规则所属空间或触发会话空间。定时任务的回复位置在创建时保存。</small>
-        </section>
         <section class="block">
           <div class="block-head"><h3>什么时候看</h3></div>
           <div class="row wrap">
             <UiSegmented v-model="form.trigger.event" size="sm" :options="[{ value: 'message', label: '新消息' }, { value: 'chat-new', label: '第一次看到的群' }, { value: 'schedule', label: '定时' }]" aria-label="触发" @change="touch" />
             <UiSegmented v-if="form.trigger.event === 'message'" v-model="form.trigger.once" size="sm" :options="[{ value: 'event', label: '每条消息' }, { value: 'chat', label: '每个群只一次' }]" aria-label="触发次数" @change="touch" />
             <input v-if="form.trigger.event === 'schedule'" v-model="form.trigger.cron" class="input sm mono cron" placeholder="0 9 * * 1-5" aria-label="cron" @input="touch" />
+            <UiSelect v-if="form.trigger.event !== 'schedule'" :model-value="form.spaceId ?? ''" size="sm" width="200px" :options="spaceOptions('所有空间的群')" aria-label="只看哪个空间的群" @update:model-value="(v) => ((form!.spaceId = String(v || '')), touch())" />
           </div>
           <div v-if="form.trigger.event === 'message'" class="row wrap">
             <label class="row inline small">命中后等
@@ -313,13 +312,16 @@ function startFrom(text: string) {
             <UiCheckbox v-model="form.trigger.unless" value="owner-engaged" size="sm" @change="touch">我已在这段讨论里就跳过</UiCheckbox>
             <UiCheckbox v-model="form.trigger.unless" value="answered" size="sm" @change="touch">已有人回复就跳过</UiCheckbox>
           </div>
-          <small class="muted">“每个群只一次”适合拉机器人、开始监听这类对一个群做一次就够的事。新消息来自机器人所在群的实时消息和你自己的飞书采集（同一条只处理一次）。等几分钟再处理、跳过的两项在要动手时看一眼这段讨论（话题，或群里前后半小时）：你在话题里说过话或半小时内在群里说过话算“已在讨论里”。</small>
+          <small v-if="form.trigger.event === 'message'" class="muted">“每个群只一次”适合拉机器人、开始监听这类一次就够的事。等待和跳过在动手前看一眼这段讨论：你在话题里或半小时内在群里说过话，算“已在讨论里”。</small>
+          <small v-else-if="form.trigger.event === 'schedule'" class="muted">cron 写法：分 时 日 月 周，例如 0 9 * * 1-5 是工作日早上 9 点。</small>
         </section>
 
         <section v-if="form.trigger.event !== 'schedule'" class="block">
           <div class="block-head"><h3>满足什么</h3></div>
-          <UiSegmented v-model="form.judge" size="sm" :options="[{ value: 'code', label: '按条件' }, { value: 'code+ai', label: '条件 + AI 确认' }, { value: 'ai', label: '交给 AI 判断' }]" aria-label="判断方式" @change="touch" />
-          <small class="muted">{{ judgeHint }}</small>
+          <div class="row wrap">
+            <UiSegmented v-model="form.judge" size="sm" :options="[{ value: 'code', label: '按条件' }, { value: 'code+ai', label: '条件 + AI 确认' }, { value: 'ai', label: '交给 AI 判断' }]" aria-label="判断方式" @change="touch" />
+            <small class="muted">{{ judgeHint }}</small>
+          </div>
           <RuleConditions v-model="form.conditions" :fields="options.fields" :ops="options.ops" @update:model-value="touch" />
         </section>
 
@@ -334,16 +336,20 @@ function startFrom(text: string) {
             </div>
             <template v-if="a.type === 'agent'">
               <div class="row wrap">
-                <UiSelect v-model="a.spec" size="sm" width="200px" :options="specOptions" placeholder="选择执行者" aria-label="Agent" @change="touch" />
-                <UiSelect :model-value="a.space ?? ''" @update:model-value="a.space = String($event || '')" size="sm" :options="[{ value: '', label: '执行空间：跟随档案 / 规则' }, ...state.spaces.map(s => ({ value: s.id, label: s.name }))]" aria-label="执行空间" @change="touch" />
+                <UiSelect v-model="a.spec" size="sm" width="180px" :options="specOptions" placeholder="交给谁" aria-label="Agent" @change="touch" />
+                <UiSelect :model-value="a.space ?? ''" size="sm" width="170px" :options="spaceOptions('默认空间')" aria-label="在哪个空间里查资料" title="Agent 在哪个空间里查资料。默认：档案固定的空间，其次是上面选的空间，再次是消息所在群的空间" @update:model-value="(v) => ((a.space = String(v || '')), touch())" />
                 <UiSegmented v-model="a.reply" size="sm" :options="scheduleOnly ? replyOptions : agentReplyOptions" aria-label="回复方式" @change="touch" />
                 <UiCheckbox v-if="!scheduleOnly && a.reply !== 'silent'" v-model="a.ownTopic" size="sm" :disabled="a.reply === 'none'" @change="touch">在消息下开话题</UiCheckbox>
               </div>
-              <small class="muted">{{ REPLY_HINT[a.reply] }}</small>
+              <div v-if="scheduleOnly && a.reply !== 'none'" class="row wrap">
+                <span class="small">发到</span>
+                <UiSelect :model-value="form.conversationId ?? ''" size="sm" width="260px" :search-at="8" :options="conversationOptions" aria-label="结果发到哪个会话" @update:model-value="(v) => ((form!.conversationId = String(v || '')), touch())" />
+              </div>
+              <small class="muted">{{ scheduleOnly && a.reply !== 'none' ? (a.reply === 'auto' ? "结论直接发到选定的会话。" : "要发的话先变成给你确认的草稿，确认后发到选定的会话。") : REPLY_HINT[a.reply] }}</small>
               <div v-if="!scheduleOnly && a.reply !== 'none'" class="row wrap">
                 <UiCheckbox :model-value="!!a.allowUrgent" size="sm" @change="(v) => ((a.allowUrgent = v), touch())">允许加急</UiCheckbox>
                 <UiCheckbox :model-value="!!a.allowPrivate" size="sm" @change="(v) => ((a.allowPrivate = v), touch())">允许只给部分人看</UiCheckbox>
-                <small class="muted">什么情况用、对谁用，写在上面的规则说明或下面的要求里；没写到它就不用</small>
+                <small class="muted">什么时候用、对谁用写在要求里，没写就不用</small>
               </div>
               <textarea v-model="a.task" class="input" rows="2" placeholder="交给它的要求（触发的消息会自动附上），例如：分析报警，需要关注就 @ 值班人" @input="touch" />
             </template>

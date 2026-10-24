@@ -60,6 +60,16 @@ export function saveArchiveRule(app: App, input: unknown, id = newId("ar")) {
   run(app.db, "insert into archive_rules(id,body) values(?,?) on conflict(id) do update set body=excluded.body", id, JSON.stringify(body));
   return { ...body, id };
 }
+/** Rules match top-down; the order is the table's row order, so reordering rewrites the rows. */
+export function orderArchiveRules(app: App, ids: string[]) {
+  const rows = all<{ id: string; body: string }>(app.db, "select id, body from archive_rules order by rowid");
+  if (ids.length !== rows.length || rows.some((r) => !ids.includes(r.id))) throw new HttpError(409, "归档规则已变化，请刷新后再排序");
+  tx(app.db, () => {
+    run(app.db, "delete from archive_rules");
+    for (const id of ids) run(app.db, "insert into archive_rules(id, body) values(?, ?)", id, rows.find((r) => r.id === id)!.body);
+  });
+  return listArchiveRules(app);
+}
 export function archiveChannel(input: UpsertInput): string | undefined {
   if (input.uri.startsWith("lark:") || input.meta?.via === "lark-cli") return "lark";
   if (input.uri.startsWith("onebot:")) return "onebot";

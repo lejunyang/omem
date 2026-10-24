@@ -35,15 +35,18 @@ const archive = ref<{ route?: { reason: string } | null; history: { from_space: 
 const moveTarget = ref("");
 const moveReason = ref("");
 const moving = ref(false);
+const showMove = ref(false);
+const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 async function moveOriginal() {
   const s = detail.value?.source;
   if (!s || !moveTarget.value || !moveReason.value.trim()) return toast("选择目标空间并写明依据", "error");
-  if (!(await confirmDialog("确认这份材料的空间归属？", { message: "保留原件 ID 和引用，后续自动归档不会覆盖本次手动指定。", okText: "确认归属" }))) return;
+  if (!(await confirmDialog("把这份材料移到其他空间？", { message: "原件 ID 和已有引用不变；之后自动归档不会再改动它。", okText: "移过去" }))) return;
   moving.value = true;
   try {
     await post(`/api/sources/${s.id}/move`, { space: moveTarget.value, hash: s.hash, reason: moveReason.value });
     await Promise.all([load(), loadDetail()]);
-    toast("已更新原件归属", "ok");
+    showMove.value = false;
+    toast("已移到新空间", "ok");
   } catch (e) { toast((e as Error).message, "error"); }
   finally { moving.value = false; }
 }
@@ -318,15 +321,18 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <div v-if="detail.citedBy.length" class="cited small">
             被引用：<router-link v-for="p in detail.citedBy" :key="p.page_id" :to="`/wiki/${p.page_id.split('/')[0]}/${p.page_id.split('/').slice(1).join('/')}`" class="badge accent">{{ p.title }}</router-link>
           </div>
-          <details v-if="!detail.source.deletedAt && !['code','conversation','activity','work'].includes(detail.source.kind)" class="archive-info">
-            <summary>空间归属 · {{ archive?.route?.reason ?? '采集或导入时指定' }}</summary>
-            <div class="row wrap" style="margin-top: 12px">
-              <UiSelect v-model="moveTarget" :options="state.spaces.map(s => ({ value: s.id, label: s.name }))" aria-label="原件目标空间" />
-              <input v-model="moveReason" class="input" style="flex: 1; min-width: 140px" placeholder="归属依据" aria-label="归属依据" />
-              <button class="btn sm" :disabled="moving || !moveReason.trim()" @click="moveOriginal">确认归属</button>
+          <div v-if="!detail.source.deletedAt && !['code','conversation','activity','work'].includes(detail.source.kind)" class="archive-info small">
+            <div class="row wrap">
+              <span class="muted">空间：{{ spaceName(detail.source.spaceId) }}<template v-if="archive?.route?.reason"> · {{ archive.route.reason }}</template></span>
+              <button class="btn ghost sm" type="button" :aria-expanded="showMove" @click="showMove = !showMove">{{ showMove ? "收起" : "换空间" }}</button>
             </div>
-            <p v-for="(h, i) in archive?.history" :key="i" class="muted small">{{ fmtTime(h.at) }} · {{ h.from_space }} → {{ h.to_space }} · {{ h.reason }}</p>
-          </details>
+            <div v-if="showMove" class="row wrap move">
+              <UiSelect v-model="moveTarget" size="sm" width="160px" :options="state.spaces.map(s => ({ value: s.id, label: s.name }))" aria-label="移到哪个空间" />
+              <input v-model="moveReason" class="input sm grow" placeholder="为什么放这里（记入归档记录）" aria-label="归属依据" />
+              <button class="btn sm primary" :disabled="moving || !moveReason.trim() || moveTarget === detail.source.spaceId" @click="moveOriginal">移过去</button>
+            </div>
+            <p v-for="(h, i) in archive?.history" :key="i" class="muted">{{ fmtTime(h.at) }} · {{ spaceName(h.from_space) }} → {{ spaceName(h.to_space) }} · {{ h.reason }}</p>
+          </div>
         </header>
         <div v-if="detail.source.deletedAt" class="card pad muted">这份原件已于 {{ fmtTime(detail.source.deletedAt) }} 移除，只保留了身份记录。</div>
         <div v-else class="body">
@@ -360,7 +366,10 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
 </template>
 
 <style scoped>
-.archive-info { margin-top: 12px; overflow-wrap: anywhere; }
+.archive-info { margin-top: 10px; overflow-wrap: anywhere; display: grid; gap: 6px; }
+.archive-info p { margin: 0; }
+.archive-info .move { gap: 8px; }
+.archive-info .grow { flex: 1; min-width: 160px; }
 .loading-detail {
   max-width: 760px;
   padding-top: 8px;

@@ -4,6 +4,7 @@ import { onBeforeRouteLeave } from "vue-router";
 import { del, get, post, put, type Run } from "../api";
 import RuleConditions, { type Condition } from "../components/RuleConditions.vue";
 import Icon from "../components/Icon.vue";
+import RuleTabs from "../components/RuleTabs.vue";
 import Skeleton from "../components/Skeleton.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSelect from "../components/UiSelect.vue";
@@ -71,6 +72,12 @@ async function toggle(r: Rule) {
     await load(); preview.value = null;
     if (form.value?.id === r.id && !dirty.value) form.value = { ...r, enabled: !r.enabled };
   } catch (e) { toast((e as Error).message, "error"); }
+}
+async function moveUp(i: number) {
+  const ids = rules.value.map((r) => r.id!);
+  [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
+  try { rules.value = await put<Rule[]>("/api/archive-rules/order", { ids }); preview.value = null; }
+  catch (e) { toast((e as Error).message, "error"); await load(); }
 }
 async function save() {
   if (!form.value) return;
@@ -149,42 +156,48 @@ async function classify() {
   <div class="rules">
     <aside class="list-col">
       <div class="head row">
-        <strong>归档规则</strong><span class="muted small">{{ rules.length || '' }}</span><span class="spacer" />
-        <button class="btn ghost sm icon" title="整理已有材料" aria-label="整理已有材料" :class="{ active: organizing }" :disabled="drafting" @click="organize"><Icon name="folder" :size="15" /></button>
+        <RuleTabs /><span class="spacer" />
         <button class="btn ghost sm icon" title="新建归档规则" aria-label="新建归档规则" :disabled="drafting" @click="edit()"><Icon name="plus" :size="15" /></button>
       </div>
       <div class="items">
         <Skeleton v-if="loading" :rows="5" />
-        <div v-for="r in rules" v-else :key="r.id" class="li" :class="{ on: form?.id === r.id }">
+        <div v-for="(r, i) in rules" v-else :key="r.id" class="li" :class="{ on: form?.id === r.id }">
           <button class="grow pick" :disabled="drafting" @click="edit(r)">
-            <strong class="ellipsis">{{ r.name }}</strong><div class="muted small clamp">{{ r.description }}</div><div class="muted small">归到 {{ name(r.target) }}</div>
+            <strong class="ellipsis">{{ r.name }}</strong><div class="muted small clamp">{{ r.description }}</div><div class="muted small">→ {{ name(r.target) }}</div>
           </button>
+          <button v-if="form?.id === r.id && i > 0" class="btn ghost sm icon" type="button" title="上移：先于上一条匹配" aria-label="上移" :disabled="drafting" @click="moveUp(i)">↑</button>
           <UiCheckbox :model-value="r.enabled" switch size="sm" :aria-label="`启用 ${r.name}`" :disabled="!r.conditions" @change="toggle(r)" />
         </div>
-        <p v-if="!loading && !rules.length" class="muted small hint">还没有归档规则。点 ＋ 新建，按标题、正文或来源信息指定材料归属。</p>
+        <p v-if="!loading && !rules.length" class="muted small hint">还没有归档规则。点 ＋ 新建，按标题、目录或来源把材料归到某个空间。</p>
+        <button v-if="!loading" class="li organize" :class="{ on: organizing }" type="button" :disabled="drafting" @click="organize">
+          <Icon name="folder" :size="15" /><span class="grow"><strong>整理已有材料</strong><span class="muted small sub">预览当前空间里的材料该归到哪</span></span>
+        </button>
       </div>
     </aside>
     <main class="detail">
     <section v-if="organizing" class="page history">
-      <div class="row wrap"><h2>整理已有材料</h2><span class="spacer" /><button class="btn" :disabled="busy || folderProgress?.running" @click="refreshFolders">更新飞书目录</button><button class="btn" :disabled="busy" @click="previewBatch(0)">预览当前空间</button></div>
-      <p class="muted small">查看「{{ name(state.space) }}」中已有材料的归档依据。每批最多 100 份；同地址冲突会跳过。</p>
-      <p class="muted small">旧飞书文档可先更新目录，再预览归档。只读取知识库和目录名称，正文和附件保持不变。</p>
-      <p v-if="folderProgress?.metadataOnly && folderProgress.space === state.space" class="small" role="status">{{ folderProgress.running ? '正在更新目录' : '目录更新结束' }}：{{ folderProgress.at }}，成功 {{ folderProgress.done }}，失败 {{ folderProgress.failed }}。</p>
+      <header class="row wrap">
+        <h2>整理已有材料</h2><span class="spacer" />
+        <button class="btn sm" :disabled="busy || folderProgress?.running" title="较早采集的飞书文档可能没有记下所在目录；只读目录名，不重新下载正文" @click="refreshFolders">更新飞书目录</button>
+        <button class="btn sm" :disabled="busy" @click="previewBatch(0)">重新预览</button>
+      </header>
+      <p class="muted small">按已启用的归档规则，看「{{ name(state.space) }}」里的材料该归到哪。勾选后应用，原件 ID 和引用不变；每批 100 份。</p>
+      <p v-if="folderProgress?.metadataOnly && folderProgress.space === state.space" class="small" role="status">{{ folderProgress.running ? '正在更新飞书目录' : '飞书目录已更新' }}：成功 {{ folderProgress.done }}，失败 {{ folderProgress.failed }}。</p>
       <Skeleton v-if="busy && !preview" :rows="6" />
       <template v-else-if="preview">
         <p v-if="!preview.length" class="muted">这一批没有可归档材料。</p>
         <div v-for="p in preview" :key="p.id" class="preview-row">
           <UiCheckbox v-model="selected" :value="p.id" :disabled="!p.ruleId || p.conflict || p.from === p.target" :aria-label="`选择${p.title}`" />
-          <div><router-link :to="`/sources/${p.id}`">{{ p.title }}</router-link><p class="small muted">{{ p.reason }}<span v-if="p.conflict" class="err"> · 目标空间已有同地址原件</span></p></div>
+          <div><router-link :to="`/sources/${p.id}`">{{ p.title }}</router-link><p class="small muted">{{ p.reason }}<span v-if="p.conflict" class="err"> · 目标空间已有同一份材料，跳过</span></p></div>
           <span class="small">{{ name(p.from) }} → {{ name(p.target) }}</span>
         </div>
-        <div class="row wrap actions"><button class="btn primary" :disabled="busy || !selected.length" @click="apply">应用选中项（{{ selected.length }}）</button><button class="btn" :disabled="busy" @click="classify">未命中的让 AI 判断</button><span class="spacer" /><button class="btn" :disabled="busy || offset === 0" @click="previewBatch(Math.max(0, offset - batchSize))">上一批</button><button class="btn" :disabled="busy || preview.length < batchSize" @click="previewBatch(offset + batchSize)">下一批</button></div>
+        <div class="row wrap actions"><button class="btn primary" :disabled="busy || !selected.length" @click="apply">应用选中项（{{ selected.length }}）</button><button class="btn" :disabled="busy" title="明确属于某个空间的才移动，拿不准的留在原处" @click="classify">没命中的交给 AI 判断</button><span class="spacer" /><button class="btn" :disabled="busy || offset === 0" @click="previewBatch(Math.max(0, offset - batchSize))">上一批</button><button class="btn" :disabled="busy || preview.length < batchSize" @click="previewBatch(offset + batchSize)">下一批</button></div>
       </template>
     </section>
       <div v-else-if="!form" class="empty">
         <Icon name="folder" :size="34" /><h3>归档规则</h3>
-        <p>让同类材料进入同一个空间。先看手动指定和来源绑定，再按列表顺序匹配启用的规则；未命中的交给 AI 判断，不确定的留在个人空间。</p>
-        <button class="btn" @click="edit()"><Icon name="plus" :size="14" />新建归档规则</button>
+        <p>新采集的材料按这里的规则归到对应空间。手动指定过归属的不动；规则从上到下匹配，都没命中时由 AI 判断，拿不准就留在个人空间。</p>
+        <div class="row wrap center"><button class="btn" @click="edit()"><Icon name="plus" :size="14" />新建归档规则</button><button class="btn ghost" @click="organize">整理已有材料</button></div>
       </div>
       <form v-else class="page" @submit.prevent="save">
         <header class="dh row">
@@ -194,20 +207,20 @@ async function classify() {
           <button v-if="form.id" type="button" class="btn ghost sm icon danger" title="删除" aria-label="删除规则" :disabled="busy || drafting" @click="remove"><Icon name="trash" :size="14" /></button>
         </header>
         <section class="block">
-          <div class="block-head"><h3>归档规则原话</h3><span class="muted small">说清楚什么材料归到哪个空间</span></div>
+          <div class="block-head"><h3>规则原话</h3><span class="muted small">什么材料归到哪个空间</span></div>
           <textarea v-model="form.description" class="input" aria-label="归属要求" rows="3" placeholder="例如：标题包含项目 A 的文档归到项目 A 空间" @input="touch" />
-          <div class="row"><button class="btn sm" type="button" :disabled="drafting" @click="draft"><Icon name="sparkles" :size="13" />{{ drafting ? '正在编写草稿…' : '让 AI 编写条件' }}</button></div>
+          <div class="row"><button class="btn sm" type="button" :disabled="drafting" @click="draft"><Icon name="sparkles" :size="13" />{{ drafting ? '生成中…' : '从原话生成条件' }}</button></div>
         </section>
         <section class="block">
           <div class="block-head"><h3>满足什么条件</h3></div>
           <p v-if="form.migrationNote" class="err small">{{ form.migrationNote }}</p>
-          <p class="muted small">按名称和文字匹配，不会猜测同义词或主题。知识库目录使用中文名称；无法读取的字段不匹配。</p>
+          <p class="muted small">按文字匹配，不推测同义词；知识库和目录写显示的名称。</p>
           <RuleConditions v-model="form.conditions" :fields="options.fields" :ops="options.ops" :descriptions="options.descriptions" :value-options="options.valueOptions" @update:model-value="touch" />
         </section>
         <section class="block">
           <div class="block-head"><h3>归到哪个空间</h3></div>
           <UiSelect v-model="form.target" :options="spaceOptions" aria-label="目标空间" @change="touch" />
-          <small class="muted">启用后对新采集的材料生效。历史材料从左侧顶部的“整理已有材料”进入，预览后应用。</small>
+          <small class="muted">启用后对新采集的材料生效；已有材料在左侧“整理已有材料”里预览后应用。</small>
         </section>
       </form>
     </main>
@@ -345,7 +358,9 @@ async function classify() {
 }
 
 .history h2 { margin: 0; }
-.active { color: var(--accent); background: var(--accent-soft); }
+.organize { width: 100%; border: 0; background: none; text-align: left; font: inherit; color: var(--ink); cursor: pointer; margin-top: 6px; border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; gap: 10px; }
+.organize .sub { display: block; }
+.center { justify-content: center; }
 .preview-row { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(100px, 180px); gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
 .preview-row > * { min-width: 0; }
 .preview-row p { margin: 5px 0 0; }

@@ -6,7 +6,7 @@ import { importFile } from "../src/sources/import.ts";
 import { testApp } from "./helpers.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { all, one, run } from "../src/core/db.ts";
-import { listArchiveRules, matchesArchive, applyArchivePreview, archiveHistory, moveSource, previewArchive, saveArchiveRule, sourceRoute } from "../src/sources/archive.ts";
+import { listArchiveRules, orderArchiveRules, matchesArchive, applyArchivePreview, archiveHistory, moveSource, previewArchive, saveArchiveRule, sourceRoute } from "../src/sources/archive.ts";
 import { getSource, sourceText, upsertSource } from "../src/sources/store.ts";
 import { vectorIndex } from "../src/search/vectors.ts";
 import { createRun, getRun, listRuns, __testHandlers } from "../src/agents/runs.ts";
@@ -108,6 +108,14 @@ describe("source archiving", () => {
     expect(captureSpace(app, "oc_example")).toBe("project-b");
     setChatSettings(app, "lark", "oc_example", { spaceId: "personal" });
     expect(getSource(app, upsertSource(app, { ...material, uri: "lark:oc_example", kind: "chat", meta: { chatId: "oc_example" } }).id).spaceId).toBe("personal");
+  });
+  it("matches rules in the order the owner sets and refuses a stale order", () => {
+    const app = setup();
+    const first = saveArchiveRule(app, rule);
+    const second = saveArchiveRule(app, { ...rule, target: "project-b" });
+    expect(() => orderArchiveRules(app, [second.id])).toThrow("刷新");
+    expect(orderArchiveRules(app, [second.id, first.id]).map((r) => r.id)).toEqual([second.id, first.id]);
+    expect(getSource(app, upsertSource(app, material).id).spaceId).toBe("project-b");
   });
 
   it("keeps IDs, citation rows, chunk positions and vectors when moving; reimports update the same original", () => {

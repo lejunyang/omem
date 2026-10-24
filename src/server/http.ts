@@ -695,6 +695,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { fields: ARCHIVE_FIELDS, descriptions: ARCHIVE_FIELD_HELP, valueOptions: Object.fromEntries(Object.entries({ kind: ARCHIVE_KINDS, channel: ARCHIVE_CHANNELS }).map(([field, values]) => [field, Object.entries(values).map(([value, label]) => ({ value, label }))])), ops: ["equals", "contains", "startsWith", "endsWith", "in"] };
   });
   server.post("/api/archive-rules", async req => (await import("../sources/archive.ts")).saveArchiveRule(app, req.body));
+  server.put("/api/archive-rules/order", async req => (await import("../sources/archive.ts")).orderArchiveRules(app, q(z.object({ ids: z.array(z.string()).max(500) }), req.body).ids));
   server.put("/api/archive-rules/:id", async req => (await import("../sources/archive.ts")).saveArchiveRule(app, req.body, (req.params as { id: string }).id));
   server.delete("/api/archive-rules/:id", async req => {
     run(app.db, "delete from archive_rules where id=?", (req.params as { id: string }).id);

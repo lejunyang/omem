@@ -13,7 +13,7 @@ for (const width of widths) {
   for (const r of routes) {
     await page.goto(`${base}/#${r}`);
     await page.waitForTimeout(Number(process.env.WAIT ?? 1200));
-    const name = `${out}/${width}-${r.replace(/[/]/g, "_") || "home"}.png`;
+    const name = `${out}/${width}-${r.replace(/[^\w-]/g, "_") || "home"}.png`;
     await page.screenshot({ path: name, fullPage: false });
     console.log(name);
   }
