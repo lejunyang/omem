@@ -7,6 +7,11 @@ updated: 2026-10-25
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
 
+## 调度与 Web 服务
+
+- **整理合并与队列隔离**（10-25）：`src/agents/jobs.ts` 将同空间、同要求的待整理材料去重合并，等待 30 秒、每批最多 40 份，同空间串行，保留聊天最早待整理行号。`src/agents/runs.ts` 先筛选有空位的任务类别，避免前 100 条后台积压挡住后续对话。空间自动整理开关不启动回溯；显式请求的历史回溯完成后，旧聊天也会作为新入库材料参与整理。
+- **gzip**（10-25）：`src/server/http.ts` 按客户端支持压缩网页静态资源和超过 1 KB 的 JSON 等文本响应，实时事件保持流式发送。
+
 ## 记忆
 
 - **写入检查、复核、对比运行**（10-18）：`src/memory/quality.ts`、`roles/memory-reviewer.md`、`jobs.ts` 的 `memory-review` / `ingest-shadow`，网页“记忆 → 质量”，`omem memories stats|check|prune|rejections`。详见 [记忆与事项](../concepts/memory-and-items.md) 的“记忆质量”一节。

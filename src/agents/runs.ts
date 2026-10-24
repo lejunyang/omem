@@ -292,10 +292,17 @@ export function queueReason(app: App, r: Run): string | null {
 }
 
 function nextRunnable(app: App): Row | undefined {
+  const interactive = active.interactive < app.config.interactiveConcurrency;
+  const background = active.background < app.config.concurrency;
+  if (!interactive && !background) return;
+  const kinds = [...INTERACTIVE].map(k => `'${k}'`).join(",");
   const candidates = all<Row>(
     app.db,
     `select * from runs q where q.status = 'queued' and (q.not_before is null or q.not_before <= ?)
+       and (${interactive ? `q.kind in (${kinds})` : "0"} or ${background ? `q.kind not in (${kinds})` : "0"})
        and (q.lane is null or not exists (select 1 from runs r where r.lane = q.lane and r.status = 'running'))
+       and (q.lane is null or not exists (select 1 from runs r where r.lane = q.lane and r.status = 'queued'
+         and (r.created_at < q.created_at or (r.created_at = q.created_at and r.rowid < q.rowid))))
      order by q.created_at limit 100`,
     now(),
   );

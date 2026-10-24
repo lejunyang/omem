@@ -11,6 +11,7 @@ import { dirname, join, resolve, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyMultipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
+import fastifyCompress from "@fastify/compress";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -62,6 +63,7 @@ function bearer(req: FastifyRequest) {
 
 export async function startServer(app: App, opts: { port?: number; host?: string; quiet?: boolean } = {}) {
   const server = Fastify({ logger: false, bodyLimit: 50 * 1024 * 1024 });
+  await server.register(fastifyCompress, { encodings: ["gzip"], threshold: 1024, globalDecompression: false });
   server.addHook("onClose", async () => {
     const { releaseBackgroundSessions } = await import("../agents/background-sessions.ts");
     await releaseBackgroundSessions(app);
