@@ -17,7 +17,7 @@ const items = ref<Item[]>([]);
 const showDone = ref(false);
 const scope = ref<"all" | "space">("all");
 type WorkFile = { id: string; uri: string; title: string; updatedAt: string; expiresAt: string | null; lines: number };
-const detail = ref<{ item: Item; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[] } | null>(null);
+const detail = ref<{ item: Item; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null } | null>(null);
 const quick = ref("");
 const viaAssistant = ref(true);
 const note = ref("");
@@ -38,19 +38,21 @@ async function loadDetail() {
 onMounted(() => {
   void load();
   void loadDetail();
+  void loadExpiry();
 });
 watch([showDone, scope], load);
 watch(() => route.params.id, loadDetail);
 const off = onServerEvent((e) => {
   if (e.type === "changed" && e.entity === "item") {
     void load();
+    void loadExpiry();
     if (detail.value && e.id === detail.value.item.id) void loadDetail();
   }
 });
 onBeforeUnmount(() => off());
 
 const columns = computed(() => {
-  const open = items.value.filter((i) => !["done", "cancelled"].includes(i.status));
+  const open = items.value.filter((i) => !closedStatuses.includes(i.status));
   return [
     { key: "decision", title: "需要你决定", icon: "alert", items: open.filter((i) => i.kind === "decision") },
     { key: "todo", title: "待办与提醒", icon: "checkbox", items: open.filter((i) => i.kind === "todo" || i.kind === "reminder") },
@@ -58,7 +60,43 @@ const columns = computed(() => {
     { key: "watch", title: "持续关注", icon: "eye", items: open.filter((i) => i.kind === "watch") },
   ].filter((c) => c.items.length || c.key !== "decision");
 });
-const closed = computed(() => items.value.filter((i) => ["done", "cancelled"].includes(i.status)));
+const closedStatuses = ["done", "cancelled", "expired"];
+const closed = computed(() => items.value.filter((i) => closedStatuses.includes(i.status)));
+const closedLabel: Record<string, string> = { done: "完成", cancelled: "取消", expired: "过期" };
+
+// ---- closing by themselves --------------------------------------------------------
+type ExpiryRow = { id: string; title: string; kind: string; spaceId: string; lastActivity: string; expiresAt: string; expiryText: string };
+const expiry = ref<{ backlogApplied: boolean; backlog: ExpiryRow[]; soon: ExpiryRow[] } | null>(null);
+const backlogOpen = ref(false);
+const keepIds = ref<string[]>([]);
+async function loadExpiry() {
+  expiry.value = await get<{ backlogApplied: boolean; backlog: ExpiryRow[]; soon: ExpiryRow[] }>("/api/items-expiry").catch(() => null);
+}
+/** "3 天后自动过期" for open items that close within three days. */
+function closesSoon(i: Item) {
+  if (!i.expiresAt) return "";
+  const days = (Date.parse(i.expiresAt) - Date.now()) / 86_400_000;
+  if (days > 3) return "";
+  return days <= 0 ? "已到期" : days <= 1 ? "一天内自动过期" : `${Math.ceil(days)} 天后自动过期`;
+}
+async function keep(i: Item) {
+  await post(`/api/items/${i.id}/keep`, {});
+  toast(closedStatuses.includes(i.status) ? "已恢复" : "已保留，期限从现在重新计算", "ok");
+  void load();
+  void loadExpiry();
+  if (detail.value?.item.id === i.id) void loadDetail();
+}
+function toggleKeep(id: string, on: boolean) {
+  keepIds.value = on ? [...keepIds.value, id] : keepIds.value.filter((x) => x !== id);
+}
+async function applyBacklog() {
+  const r = await post<{ expired: string[] }>("/api/items-expiry/backlog", { keep: keepIds.value });
+  backlogOpen.value = false;
+  keepIds.value = [];
+  toast(`已收尾 ${r.expired.length} 件${r.expired.length ? "，之后有新进展会重新打开" : ""}`, "ok");
+  void load();
+  void loadExpiry();
+}
 
 async function addQuick() {
   const t = quick.value.trim();
@@ -118,6 +156,12 @@ function parseRef(r: string) {
       <button class="btn primary sm" :disabled="!quick.trim()">添加</button>
     </form>
 
+    <div v-if="expiry && !expiry.backlogApplied && expiry.backlog.length" class="card pad backlog row wrap">
+      <Icon name="clock" :size="16" />
+      <p>有 {{ expiry.backlog.length }} 件事项很久没有新进展，按自动收尾的期限早就该过期了。先看一眼，要留下的勾上，其余一次收掉。</p>
+      <span class="spacer" />
+      <button class="btn sm primary" @click="backlogOpen = true">查看并收尾</button>
+    </div>
     <div class="board">
       <section v-for="c in columns" :key="c.key" class="col">
         <h2 class="section-title row"><Icon :name="c.icon" :size="14" />{{ c.title }} <span class="count">{{ c.items.length }}</span></h2>
@@ -131,6 +175,7 @@ function parseRef(r: string) {
               <span v-if="i.remindAt" :class="{ due: new Date(i.remindAt) < new Date() }"><Icon name="bell" :size="12" /> {{ fmtTime(i.remindAt) }}</span>
               <span v-if="i.dueAt"><Icon name="clock" :size="12" /> 截止 {{ fmtTime(i.dueAt) }}</span>
               <span v-if="i.waitingOn" class="wait"><Icon name="user" :size="12" /><span>{{ i.waitingOn }}</span></span>
+              <span v-if="closesSoon(i)" class="expiring" :title="i.expiryText">{{ closesSoon(i) }}</span>
               <span v-if="i.spaceId !== 'personal'" class="badge space" :title="spaceName(i.spaceId)">{{ spaceName(i.spaceId) }}</span>
             </div>
           </router-link>
@@ -141,9 +186,9 @@ function parseRef(r: string) {
     </div>
 
     <section v-if="showDone && closed.length" class="done-list">
-      <h2 class="section-title">已完成 / 已取消</h2>
+      <h2 class="section-title">已完成 / 已取消 / 已过期</h2>
       <div class="list">
-        <router-link v-for="i in closed" :key="i.id" :to="`/items/${i.id}`" class="li muted"><Icon name="check" :size="15" /><span class="strike">{{ i.title }}</span><span class="spacer" /><span class="small">{{ relTime(i.closedAt) }}</span></router-link>
+        <router-link v-for="i in closed" :key="i.id" :to="`/items/${i.id}`" class="li muted"><Icon :name="i.status === 'expired' ? 'clock' : 'check'" :size="15" /><span class="strike">{{ i.title }}</span><span class="spacer" /><span class="badge">{{ closedLabel[i.status] }}</span><span class="small">{{ relTime(i.closedAt) }}</span></router-link>
       </div>
     </section>
 
@@ -170,6 +215,7 @@ function parseRef(r: string) {
                 { value: 'snoozed', label: '稍后' },
                 { value: 'done', label: '完成' },
                 { value: 'cancelled', label: '取消' },
+                { value: 'expired', label: '过期' },
               ]"
               @change="(v) => save({ status: v })"
             />
@@ -180,6 +226,14 @@ function parseRef(r: string) {
           <div class="field"><span>优先级</span>
             <UiSegmented :model-value="detail.item.priority" aria-label="优先级" :options="[{ value: 1, label: '高' }, { value: 2, label: '中' }, { value: 3, label: '低' }]" @change="(v) => save({ priority: v })" />
           </div>
+        </div>
+        <div v-if="detail.expiry || closedStatuses.includes(detail.item.status)" class="expiry row wrap small">
+          <Icon name="clock" :size="14" />
+          <span v-if="detail.expiry">{{ fmtTime(detail.expiry.at) }} 自动过期：{{ detail.expiry.text }}。有新进展或你改动它会顺延。</span>
+          <span v-else-if="detail.item.status === 'expired'">很久没有进展，已自动过期。有新进展会重新打开。</span>
+          <span v-else>已{{ closedLabel[detail.item.status] }}。</span>
+          <span class="spacer" />
+          <button class="btn sm" @click="keep(detail.item)">{{ closedStatuses.includes(detail.item.status) ? "恢复" : "保留" }}</button>
         </div>
         <div v-if="detail.files?.length" class="refs">
           <div class="section-title">工作文件</div>
@@ -215,10 +269,85 @@ function parseRef(r: string) {
         </div>
       </aside>
     </div>
+    <div v-if="backlogOpen && expiry" class="panel-overlay center" @mousedown.self="backlogOpen = false" @keydown.esc="backlogOpen = false">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="backlog-title">
+        <header class="row"><strong id="backlog-title">收尾积压的事项</strong><span class="spacer" /><button class="btn ghost sm icon" aria-label="关闭" @click="backlogOpen = false"><Icon name="x" /></button></header>
+        <p class="muted small">这些事项最后一次有进展是在很久以前，按期限已经过了（待办 14 天、待决定和关注 7 天、等待回复 14 天、提醒过后 1 天）。收尾后标为“过期”，不算完成；之后有新进展会自动重新打开，也可以在“显示已完成”里恢复。要留下的勾上。</p>
+        <div class="backlog-list">
+          <div v-for="b in expiry.backlog" :key="b.id" class="bl row">
+            <UiCheckbox :model-value="keepIds.includes(b.id)" size="sm" :aria-label="`保留 ${b.title}`" @change="(v) => toggleKeep(b.id, v)" />
+            <div class="bl-main">
+              <div class="ttl">{{ b.title }}</div>
+              <div class="small muted">{{ itemKindLabel[b.kind] ?? b.kind }} · 最后进展 {{ relTime(b.lastActivity) }}{{ b.spaceId !== "personal" ? ` · ${spaceName(b.spaceId)}` : "" }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="row"><span class="muted small">保留 {{ keepIds.length }} 件</span><span class="spacer" /><button class="btn" @click="backlogOpen = false">取消</button><button class="btn primary" @click="applyBacklog">收尾其余 {{ expiry.backlog.length - keepIds.length }} 件</button></div>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
+.backlog {
+  gap: 10px;
+  margin-bottom: 18px;
+  color: var(--ink-2);
+}
+.backlog p {
+  flex: 1 1 320px;
+  min-width: 0;
+  font-size: 14px;
+}
+.expiring {
+  color: var(--warn);
+}
+.expiry {
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--sunken);
+  color: var(--ink-2);
+}
+.expiry span:not(.spacer) {
+  min-width: 0;
+  flex: 1 1 200px;
+}
+.panel-overlay.center {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 8vh;
+}
+.modal {
+  width: min(620px, calc(100vw - 24px));
+  max-height: 80vh;
+  overflow: auto;
+  background: var(--panel);
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-lg);
+  padding: 16px 18px;
+  display: grid;
+  gap: 12px;
+}
+.backlog-list {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+.bl {
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.bl-main {
+  min-width: 0;
+  flex: 1;
+}
+.bl .ttl {
+  font-size: 14px;
+}
 .quick {
   padding: 6px 8px 6px 14px;
   margin-bottom: 22px;

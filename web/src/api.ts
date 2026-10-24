@@ -157,7 +157,7 @@ export type MemoryQuality = {
     shadows: { id: string; title: string; status: string; profile_id: string | null; writes: { id: string; tool: string; args: any; verdict: string | null; verdict_note: string | null; model: string | null }[]; rejected: { content: string; codes: string[] }[] }[];
   }[];
 };
-export type Item = { id: string; spaceId: string; kind: string; title: string; detail: string; status: string; priority: number; dueAt: string | null; remindAt: string | null; waitingOn: string | null; watch: any; sourceRefs: string[]; createdAt: string; updatedAt: string; closedAt: string | null };
+export type Item = { id: string; spaceId: string; kind: string; title: string; detail: string; status: string; priority: number; dueAt: string | null; remindAt: string | null; waitingOn: string | null; watch: any; sourceRefs: string[]; createdAt: string; updatedAt: string; closedAt: string | null; /** When it closes by itself, and why then (open items). */ expiresAt?: string; expiryText?: string };
 export type ItemEvent = { id: number; itemId: string; at: string; kind: string; text: string; sourceRefs: string[]; actor: string };
 export type Run = { id: string; kind: string; spaceId: string | null; status: string; title: string; input: any; output: any; profileId: string | null; ai?: { profile: string; model?: string; effort?: string } | null; waiting?: string | null; parentId: string | null; error: string | null; createdAt: string; startedAt: string | null; finishedAt: string | null; quiet?: boolean };
 /** "codex · gpt-6.1-sol · low": what a run ran on, or its backend alone for runs recorded before models were. */

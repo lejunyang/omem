@@ -244,6 +244,15 @@ async function saveScheduleConfig(s: Schedule, config: Record<string, unknown>) 
   toast("已保存", "ok");
   void load();
 }
+const itemKinds = [["todo", "待办"], ["decision", "待决定"], ["watch", "关注"], ["waiting", "等待回复"], ["reminder", "提醒过后"]] as const;
+async function saveItems(patch: Record<string, unknown>) {
+  await saveConfig({ items: { ...config.value.items, ...patch } }, "已保存事项收尾设置");
+}
+async function saveItemDays(kind: string, raw: string) {
+  const n = Math.round(Number(raw));
+  if (!Number.isFinite(n) || n < 1 || n > 365) return toast("天数要在 1 到 365 之间", "error");
+  await saveItems({ days: { ...config.value.items.days, [kind]: n } });
+}
 async function runNow(s: Schedule) {
   await post(`/api/schedules/${s.id}/run`);
   toast("已触发", "ok", "#/runs");
@@ -574,6 +583,17 @@ async function saveEdit() {
 
     <section v-else-if="tab === 'schedules'" class="stack">
       <p class="muted">后台任务按设定的时间运行（时区：{{ config?.timezone }}）。巡检只在到期提醒或关注对象有新材料时才调用 Agent。</p>
+      <div v-if="config?.items" class="card pad stack">
+        <div class="section-title">事项自动收尾</div>
+        <p class="muted small">做完的事不用回来点完成。一件事项在下面的天数里没有新进展（你改动它、或有新的材料记进来），就标为“过期”；截止或提醒时间还没到的不会过期，提醒在时间过后一天过期。过期不算完成，有新进展会自动重新打开。由“事项收尾”任务每小时执行，每天的“事项清点”卡片里可以逐条保留或恢复。</p>
+        <UiCheckbox :model-value="config.items.expiry" switch @change="(v) => saveItems({ expiry: v })">没有进展的事项按期限自动过期</UiCheckbox>
+        <div v-if="config.items.expiry" class="row wrap days">
+          <label v-for="[k, l] in itemKinds" :key="k" class="field"><span>{{ l }}（天）</span>
+            <input class="input" type="number" inputmode="numeric" min="1" max="365" :value="config.items.days[k]" @change="saveItemDays(k, ($event.target as HTMLInputElement).value)" />
+          </label>
+        </div>
+        <UiCheckbox :model-value="config.items.infer" switch @change="(v) => saveItems({ infer: v })">你在来源会话里回过话、回了表情的事项，交给助理判断是否已经办了并关掉（DONE 表情直接关）</UiCheckbox>
+      </div>
       <div v-for="s in schedules" :key="s.id" class="card pad sched">
         <div class="row wrap">
           <UiCheckbox :model-value="s.enabled" switch @change="toggleSchedule(s)"><strong>{{ labels[s.kind] ?? s.kind }}</strong></UiCheckbox>
@@ -1027,6 +1047,12 @@ async function saveEdit() {
   .role-row {
     grid-template-columns: 1fr;
   }
+}
+.days {
+  gap: 10px;
+}
+.days .field {
+  width: 110px;
 }
 .sched {
   display: grid;

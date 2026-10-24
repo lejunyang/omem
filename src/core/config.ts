@@ -39,6 +39,7 @@ export const roleNames = [
   "summarizer",
   "memory-reviewer",
   "memory-organizer",
+  "item-keeper",
   "coach",
   "gatekeeper",
   "guest",
@@ -454,6 +455,28 @@ export const configSchema = z.object({
       quietEnd: z.number().int().min(0).max(23).default(9),
     })
     .default({ onlyUnread: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9 }),
+  /**
+   * Items close themselves: one with no new progress for `days[kind]` (counted from its
+   * last activity: the owner touching it or new evidence) becomes "expired"; a reminder
+   * expires `days.reminder` after its time. A due or reminder time still ahead holds it open.
+   * `infer`: an item whose source chat shows the owner acting on it afterwards is checked by
+   * the item-keeper role and closed as done with its reason. Both are undone from the item.
+   */
+  items: z
+    .object({
+      expiry: z.boolean().default(true),
+      days: z
+        .object({
+          todo: z.number().int().min(1).max(365).default(14),
+          decision: z.number().int().min(1).max(365).default(7),
+          watch: z.number().int().min(1).max(365).default(7),
+          waiting: z.number().int().min(1).max(365).default(14),
+          reminder: z.number().int().min(1).max(365).default(1),
+        })
+        .default({ todo: 14, decision: 7, watch: 7, waiting: 14, reminder: 1 }),
+      infer: z.boolean().default(true),
+    })
+    .default({ expiry: true, days: { todo: 14, decision: 7, watch: 7, waiting: 14, reminder: 1 }, infer: true }),
   /** OneBot v11 forward WebSocket: QQ (NapCat / LLOneBot / Lagrange) and compatible WeChat bridges. */
   onebot: z
     .object({

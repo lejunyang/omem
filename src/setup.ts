@@ -301,7 +301,7 @@ async function setupGuardSection(config: Config) {
 
 // ---- agents ---------------------------------------------------------------
 
-const QUICK_ROLES = ["assistant", "ingest", "heartbeat", "summarizer", "brief", "curator", "memory-organizer"];
+const QUICK_ROLES = ["assistant", "ingest", "heartbeat", "summarizer", "brief", "curator", "memory-organizer", "item-keeper"];
 const DEEP_ROLES = roleNames.filter((r) => !QUICK_ROLES.includes(r));
 
 export async function setupAgentsSection(config: Config, home: string) {

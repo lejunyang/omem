@@ -875,9 +875,9 @@ def({
 
 def({
   name: "list_items",
-  description: "查看事项（待办、等待回复、提醒、关注、待决定）及其最近进展。",
+  description: "查看事项（待办、等待回复、提醒、关注、待决定）及其最近进展。active 不含 expired（一段时间没有进展、自动过期的）；新材料和一件已过期的事项有关时，用 status=expired 找到它再 upsert_item 记进展，它会重新打开，不要另建。",
   schema: z.object({
-    status: z.enum(["active", "open", "waiting", "snoozed", "done", "cancelled", "all"]).optional(),
+    status: z.enum(["active", "open", "waiting", "snoozed", "done", "cancelled", "expired", "all"]).optional(),
     kind: z.enum(["todo", "waiting", "reminder", "watch", "decision"]).optional(),
     query: z.string().optional(),
     space: z.string().optional(),
@@ -1239,7 +1239,7 @@ def({
     kind: z.enum(["todo", "waiting", "reminder", "watch", "decision"]).optional(),
     title: z.string().optional(),
     detail: z.string().optional(),
-    status: z.enum(["open", "waiting", "snoozed", "done", "cancelled"]).optional(),
+    status: z.enum(["open", "waiting", "snoozed", "done", "cancelled", "expired"]).optional(),
     priority: z.number().int().min(1).max(3).optional().describe("1 高 2 中 3 低"),
     due_at: z.string().nullable().optional(),
     remind_at: z.string().nullable().optional(),
@@ -1251,7 +1251,7 @@ def({
     expected_source_refs: refs,
     space: z.string().optional(),
   }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     const existing = a.id ? getItem(ctx.app, a.id) : null;
     if (existing) {
       inScope(ctx, existing.spaceId, "事项");
@@ -1285,7 +1285,51 @@ def({
     );
     // A problem worked through over several steps is worth keeping as a case (see roles/_common.md).
     const closedWithHistory = existing && item.status === "done" && existing.status !== "done" && itemEvents(ctx.app, item.id).length >= 4;
-    return `${existing ? "已更新" : "已创建"}事项 ${item.id}：[${item.kind}/${item.status}] ${item.title}${closedWithHistory ? "\n这件事经过了几轮进展才结束。如果是排查或解决了一个问题，并且以后可能再遇到，写成案例：write_page（kind=case，page=cases/<主题>，写现象、怎么判断的、原因、解法、适用条件，引用原件），再 remember 一条 experience 记忆指向这页；只是普通待办就不用。" : ""}`;
+    const { itemExpiry } = await import("../items/expiry.ts");
+    const expiry = existing ? null : itemExpiry(ctx.app, item);
+    return `${existing ? "已更新" : "已创建"}事项 ${item.id}：[${item.kind}/${item.status}] ${item.title}${expiry ? `（期限：${expiry.text}，之后自动过期）` : ""}${closedWithHistory ? "\n这件事经过了几轮进展才结束。如果是排查或解决了一个问题，并且以后可能再遇到，写成案例：write_page（kind=case，page=cases/<主题>，写现象、怎么判断的、原因、解法、适用条件，引用原件），再 remember 一条 experience 记忆指向这页；只是普通待办就不用。" : ""}`;
+  },
+});
+
+def({
+  name: "settle_items",
+  description:
+    "事项收尾：对任务里列出的每个事项给出结论。done：本人或别人已经把这件事办了（回复了、给了结论、发了结果）；cancelled：本人说了不做、不用管了，或这件事已经不成立；keep：还没办完、看不出来、或只是表示收到。每条写一句理由，并在 evidence 里给出依据的那几行（src:…#L…）。",
+  write: true,
+  schema: z.object({
+    verdicts: z.array(
+      z.object({
+        item_id: z.string(),
+        verdict: z.enum(["done", "cancelled", "keep"]),
+        reason: z.string().describe("一句话：本人做了什么、说了什么，所以判断为…"),
+        evidence: refs,
+      }),
+    ),
+  }),
+  handler: (ctx, a) => {
+    const out: string[] = [];
+    for (const v of a.verdicts) {
+      try {
+        const item = getItem(ctx.app, v.item_id);
+        inScope(ctx, item.spaceId, "事项");
+        if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能修改他人的事项");
+        if (v.verdict === "keep") {
+          out.push(`${item.id} 保持打开`);
+          continue;
+        }
+        if (["done", "cancelled", "expired"].includes(item.status)) {
+          out.push(`${item.id} 已经是 ${item.status}，跳过`);
+          continue;
+        }
+        const evidence = (v.evidence ?? []).filter((r) => r.startsWith("src:") || r.startsWith("msg:"));
+        validateItemRefs(ctx.app, evidence, ctx.userId ?? OWNER, ctx.spaces);
+        upsertItem(ctx.app, item.id, { status: v.verdict, note: `${v.verdict === "done" ? "推断已处理" : "推断不再需要"}：${v.reason.trim().replace(/[。.!！\s]+$/, "")}。不对的话在事项页恢复。`, sourceRefs: evidence }, ctx.actor);
+        out.push(`${item.id} → ${v.verdict}`);
+      } catch (e) {
+        out.push(`${v.item_id} 失败：${(e as Error).message}`);
+      }
+    }
+    return out.join("\n");
   },
 });
 

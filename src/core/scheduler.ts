@@ -14,6 +14,8 @@ const DEFAULTS: { id: string; kind: string; cron: string; enabled: boolean; labe
   { id: "learn", kind: "learn", cron: "*/15 * * * *", enabled: true, label: "学习：每天按学习目标出新卡，到点提醒复习（没有学习目标时什么都不做）" },
   { id: "brief", kind: "brief", cron: "45 8 * * 1-5", enabled: false, label: "工作日早上的简报：今天要处理的、在等的、发生的变化" },
   { id: "memory-review", kind: "memory-review", cron: "20 * * * *", enabled: true, label: "复核新写入的记忆：保留、改写或撤回（可配置成与写入不同的模型；没有新记忆时什么都不做）" },
+  { id: "item-sweep", kind: "item-sweep", cron: "7 * * * *", enabled: true, label: "事项收尾：没有新进展的按期限自动过期；本人在来源会话里回过、回了表情的，交给助理判断是否已办并关掉（都能在事项页恢复）" },
+  { id: "item-digest", kind: "item-digest", cron: "30 9 * * *", enabled: true, label: "事项清点：每天一张卡片，列出自动收尾的和明天过期的，可逐条保留或恢复（没有变化时不发）" },
   { id: "memory-organize", kind: "memory-organize", cron: "50 */2 * * *", enabled: true, label: "整理记忆目录：把还没归档的记忆放进目录，每周看一遍目录结构（拆、并、改名、补说明；没有新记忆时什么都不做）" },
   { id: "dream", kind: "dream", cron: "30 3 * * *", enabled: false, label: "每晚整理记忆与页面" },
   { id: "profile-review", kind: "profile-review", cron: "10 4 * * *", enabled: true, label: "复盘 Agent 档案和内置角色：最近的运行和本人随后的纠正沉淀成它们的记忆，提示词、技能和设置的改动提为待确认的建议（最近没有足够运行或没有纠正时什么都不做）" },

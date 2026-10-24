@@ -89,21 +89,66 @@ function chatOfRef(app: App, ref: string): string | null {
 
 let cliOwner: { at: number; id: string | undefined } | null = null;
 async function ownerReacted(app: App, messageId: string): Promise<boolean> {
+  return ((await ownerReactions(app, messageId)) ?? []).length > 0;
+}
+
+/** The emoji types the owner put on a message (e.g. DONE, OK); null when it cannot be read. */
+export async function ownerReactions(app: App, messageId: string): Promise<string[] | null> {
   // Reactions are read with lark-cli, whose ids belong to its own app: compare with the owner as it sees them.
   if (!cliOwner || Date.now() - cliOwner.at > 3600_000) cliOwner = { at: Date.now(), id: await (await import("./lark-personal.ts")).ownerOpenId() };
   const owner = cliOwner.id;
-  if (!owner) return false;
+  if (!owner) return null;
   try {
     const v = await larkCli(["im", "+messages-mget", "--message-ids", messageId, "--as", "user", "--format", "json"], 30_000);
     const items: any[] = v?.data?.items ?? v?.items ?? [];
     const reactions: any[] = items[0]?.reactions ?? items[0]?.body?.reactions ?? [];
-    return reactions.some((r) => {
-      const operators: any[] = r.operators ?? r.users ?? r.operator_ids ?? [];
-      return operators.some((o) => o.open_id === owner || o.user_id === owner);
-    });
+    return reactions
+      .filter((r) => {
+        const operators: any[] = r.operators ?? r.users ?? r.operator_ids ?? [];
+        return operators.some((o) => o.open_id === owner || o.user_id === owner);
+      })
+      .map((r) => String(r.reaction_type?.emoji_type ?? r.emoji_type ?? r.type ?? "?"));
   } catch {
-    return false;
+    return null;
   }
+}
+
+export type OwnerFollowUp = {
+  /** The cited chat messages that started the item. */
+  triggers: { messageId: string | null; atMs: number; sourceId: string }[];
+  /** What the owner said afterwards in the same chat (and topic), oldest first, with a citation. */
+  lines: { atMs: number; text: string; ref: string }[];
+  /** The newest owner line, including any cut off by the limit. */
+  latestMs: number;
+};
+
+/**
+ * What the owner did after the chat messages an item cites: their later lines in the same
+ * chat/topic. Used to tell whether an item has been dealt with (src/items/expiry.ts).
+ */
+export function ownerFollowUp(app: App, refs: string[], limit = 6): OwnerFollowUp {
+  // A cited range can include the owner's own reply; that is the follow-up, not the trigger.
+  const cited = refs.flatMap((r) => refChatLines(app, r));
+  const triggers = cited.some((t) => !t.self) ? cited.filter((t) => !t.self) : cited;
+  const out: OwnerFollowUp = { triggers: triggers.map((t) => ({ messageId: t.messageId, atMs: t.atMs, sourceId: t.sourceId })), lines: [], latestMs: 0 };
+  const seen = new Set<string>();
+  for (const t of triggers) {
+    if (seen.has(`${t.chatId}#${t.topicId ?? ""}`)) continue;
+    seen.add(`${t.chatId}#${t.topicId ?? ""}`);
+    const after = Math.max(...triggers.filter((x) => x.chatId === t.chatId).map((x) => x.atMs));
+    const row = one<{ id: string; text: string }>(app.db, "select id, text from sources where uri = ? and deleted_at is null", `lark:${t.chatId}`);
+    if (!row) continue;
+    row.text.split("\n").forEach((line, i) => {
+      const p = parseChatLine(row.id, t.chatId, line);
+      if (!p || !p.self || p.atMs <= after) return;
+      if (t.topicId && p.topicId && p.topicId !== t.topicId) return;
+      out.lines.push({ atMs: p.atMs, text: line.trim().slice(0, 300), ref: `src:${row.id}#L${i + 1}` });
+    });
+  }
+  out.lines.sort((a, b) => a.atMs - b.atMs);
+  out.latestMs = out.lines.at(-1)?.atMs ?? 0;
+  out.lines = out.lines.slice(0, limit);
+  return out;
 }
 
 /**

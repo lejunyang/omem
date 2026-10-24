@@ -51,6 +51,8 @@ export type Notification = {
   scheduled?: boolean;
   /** Deliver into this Feishu conversation id instead of the owner's private chat (a work topic). */
   larkConversationId?: string;
+  /** The daily item digest: items that closed by themselves (can be reopened) and that close soon (can be kept). */
+  digest?: { closed: string[]; soon: string[] };
 };
 
 type Sink = (n: Notification) => Promise<void> | void;
@@ -63,7 +65,7 @@ export function addNotificationSink(sink: Sink) {
 /** Notify a person (the owner by default): stored in-app and pushed to the channels that know them. */
 export function notify(
   app: App,
-  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean },
+  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[] } },
 ) {
   const userId = input.userId ?? "owner";
   let sourceRefs = input.sourceRefs ?? [];
@@ -110,9 +112,10 @@ export function notify(
     userId: input.userId ?? "owner",
     urgency: input.urgency ?? "normal",
     ...(input.scheduled ? { scheduled: true } : {}),
+    ...(input.digest ? { digest: input.digest } : {}),
     ...(input.entityId ? { entity: input.entity ?? "item", entityId: input.entityId, actions: input.actions ?? [] } : {}),
   };
-  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, urgency: n.urgency, scheduled: n.scheduled }));
+  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, urgency: n.urgency, scheduled: n.scheduled, digest: n.digest }));
   app.emit({ type: "notification", id: n.id, title: n.title, body: n.body, link: n.link });
   for (const sink of sinks) Promise.resolve(sink(n)).catch((e) => console.warn("[omem] 通知发送失败", e));
   return n;

@@ -3,7 +3,10 @@ import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 
 export type ItemKind = "todo" | "waiting" | "reminder" | "watch" | "decision";
-export type ItemStatus = "open" | "waiting" | "snoozed" | "done" | "cancelled";
+/** expired: closed by itself after its period passed with no progress (src/items/expiry.ts), not done. */
+export type ItemStatus = "open" | "waiting" | "snoozed" | "done" | "cancelled" | "expired";
+export const CLOSED_STATUSES: readonly ItemStatus[] = ["done", "cancelled", "expired"];
+export const isClosed = (s: string) => (CLOSED_STATUSES as readonly string[]).includes(s);
 export type Item = {
   id: string;
   spaceId: string;
@@ -142,12 +145,16 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
   }
   const nextRefs = mode === "replace" ? [...new Set(input.sourceRefs)] : mode === "remove" ? old.sourceRefs.filter((r) => !input.sourceRefs!.includes(r)) : [...new Set([...old.sourceRefs, ...(input.sourceRefs ?? [])])];
   const next = { ...old, ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)) } as Item;
+  // An item that expired for lack of progress opens again when progress arrives: new evidence or a note.
+  const revived = old.status === "expired" && input.status === undefined && (!!input.note?.trim() || (input.sourceRefs ?? []).some((r) => !old.sourceRefs.includes(r)));
+  if (revived) next.status = next.kind === "waiting" ? "waiting" : "open";
   const changes: string[] = [];
   for (const key of Object.keys(FIELD_LABEL) as (keyof Item)[])
     if (input[key as keyof ItemInput] !== undefined && JSON.stringify(old[key]) !== JSON.stringify(next[key]))
       changes.push(`${FIELD_LABEL[key]}：${fmt(old[key])} → ${fmt(next[key])}`);
-  const closing = (next.status === "done" || next.status === "cancelled") && !(old.status === "done" || old.status === "cancelled");
-  const reopening = !(next.status === "done" || next.status === "cancelled") && (old.status === "done" || old.status === "cancelled");
+  if (revived) changes.push(`状态：expired → ${next.status}（有新进展，重新打开）`);
+  const closing = isClosed(next.status) && !isClosed(old.status);
+  const reopening = !isClosed(next.status) && isClosed(old.status);
   itemTx(app, () => {
     run(
       app.db,

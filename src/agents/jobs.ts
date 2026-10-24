@@ -561,6 +561,68 @@ registerHandler("memory-organize", async (ctx) => {
   return { quiet: isQuiet(r.text), filed: unfiled.length - left, left, summary: r.text.trim() };
 });
 
+// --------------------------------------------------------------- item upkeep
+
+const SETTLE_BATCH = 20;
+
+/**
+ * Hourly: expire items whose period passed, then hand the item-keeper the ones whose source
+ * chat shows the owner acting on them since they were last looked at (src/items/expiry.ts).
+ */
+export async function sweepItems(app: App) {
+  const { expireDue, handledCandidates, candidatesTask } = await import("../items/expiry.ts");
+  const expired = expireDue(app);
+  if (listRuns(app, { kind: "item-settle", status: "queued" }).length || listRuns(app, { kind: "item-settle", status: "running" }).length) return { expired, settle: null };
+  const cs = (await handledCandidates(app, { userId: OWNER })).slice(0, SETTLE_BATCH);
+  if (!cs.length) return { expired, settle: null };
+  const settle = createRun(app, {
+    kind: "item-settle",
+    spaceId: "personal",
+    title: `看看哪些事项已经办了（${cs.length}）`,
+    input: { task: candidatesTask(app, cs), checks: cs.map((c) => ({ id: c.item.id, latestMs: c.latestMs })) },
+  });
+  return { expired, settle: settle.id };
+}
+
+registerHandler("item-settle", async (ctx) => {
+  const { task, checks } = ctx.run.input as { task: string; checks: { id: string; latestMs: number }[] };
+  const r = await agent(ctx, "item-keeper", "personal", `这些事项还开着，本人之后在来源会话里有动静：\n\n${task}`, null);
+  // Judged once: the same lines do not come back; a later reply of the owner's does.
+  const { markChecked } = await import("../items/expiry.ts");
+  const { getItem } = await import("../items/store.ts");
+  for (const c of checks) {
+    try {
+      markChecked(ctx.app, { item: getItem(ctx.app, c.id), lines: [], latestMs: c.latestMs, reactions: [] });
+    } catch {}
+  }
+  const closed = checks.filter((c) => one(ctx.app.db, "select 1 from items where id = ? and status in ('done','cancelled')", c.id)).length;
+  return { quiet: isQuiet(r.text) || !closed, closed, checked: checks.length, summary: r.text.trim() };
+});
+
+/** Daily: what closed by itself and what closes tomorrow, one card per person with keep/reopen buttons. */
+export async function sendItemDigests(app: App) {
+  const { digestFor, digestBody, markDigestSent } = await import("../items/expiry.ts");
+  const sent = [];
+  for (const { user_id } of all<{ user_id: string }>(app.db, "select distinct user_id from items")) {
+    const d = digestFor(app, user_id);
+    markDigestSent(app, user_id);
+    if (!d) continue;
+    const handled = d.closed.filter((c) => c.status !== "expired").length;
+    const expired = d.closed.length - handled;
+    const parts = [handled ? `${handled} 件看起来已办` : "", expired ? `${expired} 件已过期` : "", d.soon.length ? `${d.soon.length} 件明天过期` : ""].filter(Boolean);
+    sent.push(
+      notify(app, {
+        title: `事项清点：${parts.join("，")}`,
+        body: digestBody(app, d),
+        link: "#/items",
+        userId: user_id,
+        digest: { closed: d.closed.map((c) => c.id), soon: d.soon.map((s) => s.item.id) },
+      }),
+    );
+  }
+  return sent;
+}
+
 // --------------------------------------------------------------------- wiki
 
 /** Compact directory map of a space (files per folder, a few names) to orient planners. */

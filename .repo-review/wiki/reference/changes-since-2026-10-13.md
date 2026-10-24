@@ -17,6 +17,7 @@ updated: 2026-10-25
 - **写入检查、复核、对比运行**（10-18）：`src/memory/quality.ts`、`roles/memory-reviewer.md`、`jobs.ts` 的 `memory-review` / `ingest-shadow`，网页“记忆 → 质量”，`omem memories stats|check|prune|rejections`。详见 [记忆与事项](../concepts/memory-and-items.md) 的“记忆质量”一节。
 - **记忆记录写入来源**（10-17）：`memories.agent_profile / model / effort / run_id`，由工具令牌带入。10-18 修正了兜底重试时令牌记录的仍是主模型的问题（`runner.ts` 的 `runRole`、`sessions.ts` 的兜底分支）。
 - **档案专属记忆与标签**（10-18）：`memories.agent`、`memories.tags`；`recall` 可按 `tag` 筛，档案只看到共享的和自己的。
+- **事项自动收尾**（10-25）：状态 `expired`（`src/items/store.ts` 的 `CLOSED_STATUSES`，有新依据或备注时重新打开）；`src/items/expiry.ts`（按类型期限、积压、保留、推断候选、清点）；`config.items`；`notify-gate.ts` 新增 `ownerFollowUp` / `ownerReactions`；新工具 `settle_items` 与角色 `roles/item-keeper.md`（运行 `item-settle`）；定时任务 `item-sweep`（每小时）、`item-digest`（每天 09:30，飞书卡片按钮 `item:keep|reopen:<id>`，`lark-actions.ts`）；表 `item_checks`；接口 `/api/items-expiry*`、`/api/items/:id/keep`；事项页积压预览与期限显示，设置 → 定时任务 的期限设置。
 - **记忆目录**（10-25）：`memories.folder` 与 `memory_folders`（目录说明），`src/memory/folders.ts`（规范化、检查、移动、改名合并、删除上移、给 Agent 的目录树文本）；`remember` / `supersede` 的 `folder`、`recall(folder=…)`、新工具 `list_memory_folders`、`organize_memories`；`jobs.ts` 的 `memory-organize` 与新角色 `roles/memory-organizer.md`（定时任务“整理记忆目录”）；`/api/memory-folders*`；网页 `MemoryFolderTree.vue`。`omem pull` 合并 `memory_folders`。
 - **写法要求**：`roles/_common.md` 的“怎么写记忆”重写，ingest 先按“和本人有关、以后能直接用、确定”三问筛。
 

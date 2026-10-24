@@ -10,7 +10,7 @@ import { deliverDueReminders } from "../src/items/reminders.ts";
 import { getItem, itemEvents, upsertItem, reminderSourceRefs } from "../src/items/store.ts";
 import { upsertSource, deleteSource } from "../src/sources/store.ts";
 import { notificationOrigins } from "../src/channels/common.ts";
-import { itemNotificationCard } from "../src/channels/item-notification.ts";
+import { itemDigestCard, itemNotificationCard } from "../src/channels/item-notification.ts";
 import { getInteraction, recordInteraction, setLarkClient } from "../src/channels/lark-send.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { testApp } from "./helpers.ts";
@@ -164,6 +164,24 @@ describe("item evidence and notification scope", () => {
     expect(getItem(app, b.id).status).toBe("open");
     expect((await press(a.id)).toast.type).toBe("success");
     expect(getItem(app, a.id).status).toBe("done");
+  });
+
+  it("digest card: reopens or keeps only the items it lists, and stays usable for the rest", async () => {
+    const { app } = fixture();
+    const gone = upsertItem(app, undefined, { title: "已过期的事项" });
+    upsertItem(app, gone.id, { status: "expired", note: "自动过期" }, "agent");
+    const soon = upsertItem(app, undefined, { title: "明天过期的事项" });
+    const other = upsertItem(app, undefined, { title: "不在卡片里" });
+    const card = JSON.stringify(itemDigestCard(app, { id: "n1", at: "", title: "事项清点", body: "…", link: null, readAt: null, userId: "owner", digest: { closed: [gone.id], soon: [soon.id] } }));
+    expect(card).toContain(`item:reopen:${gone.id}`);
+    expect(card).toContain(`item:keep:${soon.id}`);
+    recordInteraction(app, { messageId: "om_digest", chatId: "oc_owner", conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { digest: true, itemIds: [gone.id, soon.id], userId: "owner" } });
+    const press = (action: string) => handleCardAction(app, { operator: { open_id: "ou_owner" }, context: { open_message_id: "om_digest" }, action: { value: { action } } });
+    expect((await press(`item:keep:${other.id}`)).toast.type).toBe("error");
+    expect((await press(`item:reopen:${gone.id}`)).toast.content).toMatch(/已恢复/);
+    expect(getItem(app, gone.id).status).toBe("open");
+    expect((await press(`item:keep:${soon.id}`)).toast.content).toMatch(/已保留/);
+    expect(itemEvents(app, soon.id).at(-1)!.actor).toBe("user");
   });
 
   it("rejects a stale callback that was waiting while maintenance expired the card", async () => {

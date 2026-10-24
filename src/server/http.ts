@@ -596,7 +596,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     kind: z.enum(["todo", "waiting", "reminder", "watch", "decision"]).optional(),
     title: z.string().optional(),
     detail: z.string().optional(),
-    status: z.enum(["open", "waiting", "snoozed", "done", "cancelled"]).optional(),
+    status: z.enum(["open", "waiting", "snoozed", "done", "cancelled", "expired"]).optional(),
     priority: z.number().int().min(1).max(3).optional(),
     dueAt: z.string().nullable().optional(),
     remindAt: z.string().nullable().optional(),
@@ -605,7 +605,43 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/items", async (req) => {
     const o = q(z.object({ space: z.string().optional(), status: z.string().optional(), kind: z.string().optional(), q: z.string().optional() }), req.query);
-    return listItems(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, q: o.q, userId: who(req) === OWNER ? undefined : who(req) });
+    const { itemExpiry } = await import("../items/expiry.ts");
+    return listItems(app, { spaceId: o.space, status: o.status ?? "active", kind: o.kind, q: o.q, userId: who(req) === OWNER ? undefined : who(req) }).map((i) => {
+      const e = itemExpiry(app, i);
+      return e ? { ...i, expiresAt: e.at, expiryText: e.text } : i;
+    });
+  });
+  // Items close themselves (src/items/expiry.ts): the rules, the backlog waiting for review, and "keep".
+  server.get("/api/items-expiry", async (req) => {
+    const { backlogApplied, dueItems, expirySince } = await import("../items/expiry.ts");
+    const userId = who(req) === OWNER ? undefined : who(req);
+    const row = (d: Awaited<ReturnType<typeof dueItems>>[number]) => ({ id: d.item.id, title: d.item.title, kind: d.item.kind, spaceId: d.item.spaceId, lastActivity: d.lastActivity, expiresAt: d.expiry.at, expiryText: d.expiry.text });
+    const due = dueItems(app, { userId, withinDays: 3 });
+    return {
+      settings: app.config.items,
+      since: expirySince(app),
+      backlogApplied: backlogApplied(app),
+      backlog: due.filter((d) => d.backlog).map(row),
+      soon: due.filter((d) => !d.backlog).map(row),
+    };
+  });
+  server.post("/api/items-expiry/backlog", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能处理积压");
+    const b = q(z.object({ keep: z.array(z.string()).default([]) }), req.body);
+    const { applyBacklog } = await import("../items/expiry.ts");
+    return { expired: applyBacklog(app, b.keep) };
+  });
+  server.post("/api/items-expiry/sweep", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能立即收尾");
+    const { sweepItems } = await import("../agents/jobs.ts");
+    return sweepItems(app);
+  });
+  server.post("/api/items/:id/keep", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const item = getItem(app, id);
+    if (item.userId !== who(req) && who(req) !== OWNER) throw new HttpError(403, "不能修改他人的事项");
+    const { keepItem } = await import("../items/expiry.ts");
+    return keepItem(app, id, "user");
   });
   server.get("/api/items/:id", async (req) => {
     const id = (req.params as { id: string }).id;
@@ -619,7 +655,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     }
     const { listWorkFiles } = await import("../sources/work.ts");
     const files = listWorkFiles(app, { item: id, spaces: allowed });
-    return { item, events: itemEvents(app, id), excerpts, files };
+    const { itemExpiry } = await import("../items/expiry.ts");
+    return { item, events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item) };
   });
   server.post("/api/items", async (req) => {
     const b = q(itemBody, req.body);

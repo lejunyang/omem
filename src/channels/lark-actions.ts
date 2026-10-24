@@ -57,6 +57,21 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
     // Standalone item notification card: resolve the item button without an agent turn.
     const itemId = (inter.payload as { itemId?: string }).itemId;
     const act = (typeof value === "object" && value ? (value as { action?: string }).action : "") ?? "";
+    // Item digest: keep one item open, or reopen one that closed by itself. The card stays open for the rest.
+    const digest = /^item:(keep|reopen):([^:]+)$/.exec(act);
+    if ((inter.payload as { digest?: boolean }).digest && digest) {
+      const [, op, id] = digest;
+      if (!((inter.payload as { itemIds?: string[] }).itemIds ?? []).includes(id)) return { toast: { type: "error", content: "按钮与事项不匹配" } };
+      const { getItem } = await import("../items/store.ts");
+      const { keepItem } = await import("../items/expiry.ts");
+      const userId = resolveIdentity(app, "lark", operator);
+      const item = getItem(app, id);
+      if (!userId || item.userId !== userId || !canWrite(app, userId, item.spaceId)) return { toast: { type: "error", content: "无权处理该事项" } };
+      const closed = ["done", "cancelled", "expired"].includes(item.status);
+      if (op === "reopen" && !closed) return { toast: { type: "info", content: `「${item.title}」已经是打开的` } };
+      keepItem(app, id, "user");
+      return { toast: { type: "success", content: op === "reopen" ? `已恢复「${item.title}」` : `已保留「${item.title}」，期限重新计算` } };
+    }
     const m = /^item:(done|cancel|act):([^:]+)(?::([\s\S]*))?$/.exec(act);
     if (itemId && m) {
       const [, op, id] = m;

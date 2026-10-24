@@ -648,6 +648,11 @@ const migrations: string[] = [
    create index memories_folder on memories(space_id, folder);
    create table memory_folders(space_id text not null, path text not null, description text not null default '',
      created_by text not null default 'agent', created_at text not null, updated_at text not null, primary key(space_id, path));`,
+  // Items close themselves (src/items/expiry.ts). item_checks remembers how far the owner's later
+  // activity in an item's source chat has been looked at, so the same evidence is judged once.
+  // Items already past their deadline when this arrives wait for the owner to review the backlog.
+  `create table item_checks(item_id text primary key references items(id) on delete cascade, checked_at text not null, evidence_ms integer not null default 0, reactions_at text);
+   insert or replace into kv(key, value) values('item_expiry_since', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));`,
 ];
 
 export type Db = DatabaseSync;

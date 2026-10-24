@@ -274,6 +274,13 @@ export async function startLarkBot(app: App) {
     }
     // Cards keep external notification links; internal routes stay in the web app.
     const card = notificationCard(app, n);
+    if (n.digest) {
+      // Item digest: each button keeps or reopens one item; the card stays usable for the others.
+      const { recordInteraction } = await import("./lark-send.ts");
+      const sent = await sendLark(target, { card });
+      recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { digest: true, itemIds: [...n.digest.closed, ...n.digest.soon], notificationId: n.id, userId: n.userId } });
+      return;
+    }
     if (n.entity === "item" && n.entityId) {
       // Actionable item card: 已处理 / 忽略 resolve the item directly, no agent turn.
       const { recordInteraction } = await import("./lark-send.ts");

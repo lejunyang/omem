@@ -84,7 +84,7 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 
 - **传输**：ACP 为主，`claude -p` / `codex exec` 作为无 ACP 时的后备；另有云端后端 `doubao`（豆包 OpenAPI 的 Managed Agent：设备码拿到用户 access_token 存 `secrets/doubao.json`，自动刷新；按 sessions / events / MessageStream 发消息读流式回复，会话保存在豆包，线程用 `resumeSessionId` 续聊；它在云端运行，用不了 omem 的 MCP 工具，适合问答写作）。飞书应用按 app 区分权限：`omem doubao status` 检查 omem 绑定的应用和 lark-cli 自己的应用各有哪些 `doubao:*` 用户权限，`omem doubao login` 以本人身份对指定应用做设备码授权。内置目录（`src/agents/catalog.ts`）列了 25 个 ACP Agent 的启动命令（Codex、Claude Code、Gemini、Copilot、Qwen、Cursor、OpenCode、goose、Kimi、Kilo、CodeBuddy、Qoder、iFlow、Droid…），PATH 里有就自动识别；其余从官方 ACP 注册表添加（npx / uvx，或下载对应平台的程序并校验 sha256 到 `~/.omem/agents/`）。模型与 effort 来自配置，启动时从 ACP 会话动态读取可选项：优先 session config options（model / thought_level），没有时用旧式 `session.models` + `session/set_model`。有的 Agent（TraeX）只在选中支持思考强度的模型后才给出 reasoning_effort，探测时逐个切换模型记下每个模型的强度（`effortsByModel`），选择界面按当前模型列出。服务端排队：TraeX 开 `headless_queue_status` 后用 `session_info_update._meta.trae.queueStatus` 报告排队（位置、提示），排队期间不计空闲超时（只受 `agents.queueTimeoutMinutes` 约束），思考气泡和进度卡片显示排队位置与等了多久。角色要求的权限模式按别名映射到各家的模式名（如 acceptEdits ↔ autoEdit、read-only ↔ ask）。Agent 返回的 JSON-RPC 错误把 `data`（如“未登录”“缺少 provider 配置”）带给用户并提示先在终端登录。
 - **工具**：omem 自身以 MCP 服务暴露工具（`search`、`read_source`、`read_page`、`write_page`、`remember`、`forget`、`list_items`、`upsert_item`、`list_spaces` ……），通过 ACP `newSession.mcpServers` 注入。Agent 同时保有原生的文件读取与 shell（代码仓库只读）。
-- **角色**由短技能文件定义（`roles/*.md`）：`assistant`（问答与交办）、`ingest`（新材料进来时更新记忆/页面/事项）、`memory-reviewer`（复核新记忆）、`memory-organizer`（整理记忆目录）、`wiki-planner` / `wiki-writer` / `wiki-linter`、`heartbeat`（巡检）、`brief`（简报）、`dreamer`（整理）、`curator`（筛选关注群）、`summarizer`（会话滚动摘要）、`coder`、`reviewer`、`tutor`（出卡）。共同约定在 `_common.md`。每个文件写目的、工具用法和质量标准，不写几十条禁令。可以按角色指定不同的 Agent 后端（`config.agents.roles`）。
+- **角色**由短技能文件定义（`roles/*.md`）：`assistant`（问答与交办）、`ingest`（新材料进来时更新记忆/页面/事项）、`memory-reviewer`（复核新记忆）、`memory-organizer`（整理记忆目录）、`item-keeper`（判断事项是否已办）、`wiki-planner` / `wiki-writer` / `wiki-linter`、`heartbeat`（巡检）、`brief`（简报）、`dreamer`（整理）、`curator`（筛选关注群）、`summarizer`（会话滚动摘要）、`coder`、`reviewer`、`tutor`（出卡）。共同约定在 `_common.md`。每个文件写目的、工具用法和质量标准，不写几十条禁令。可以按角色指定不同的 Agent 后端（`config.agents.roles`）。
 - **Agent 档案与技能**：本人或助理建的专门 Agent（`library/_agents`，可指定后端、工具、写权限、技能、额外 MCP、工作目录）用 `run_agent` 或 `/as` 调用；技能（`library/_skills`）按名称列在提示里，Agent 需要时用 `read_skill` 读取。
 - **会话**：`src/agents/threads.ts`、`sessions.ts`、`inbox.ts`。每个会话一次一轮，连发合并；Agent 会话在线保留 → 恢复 → 从摘要冷启动。只有材料没有话的消息（分享群、合并转发、图片、文件）多等 `contentWaitMs`。飞书机器人收到事件先应答、再处理，按消息 id 去重（`handled_messages`，channel `lark-bot`），飞书超时重推不会变成新的一轮。斜杠命令在 `commands.ts`，直接解析；`/new 任务`、`/topic 任务` 再把任务交给模型。`/topic` 接受飞书群聊或机器人私聊主界面中的消息，以该消息为根创建话题并取得真实 ID，再绑定独立会话；已有 `topicId` 的消息直接拒绝；`isolatedTopic` 保证后续消息不受整群 `mode=chat` 合并，进度与答案使用话题内消息作为回复锚点。
 - **后台会话池**：`background-sessions.ts` 按角色说明（去除当前时间）、用户、可读写空间、工具/发消息权限、模型/强度、工作目录和额外 MCP 配置建立身份；同一实例只接一个任务，忙时另开。工具令牌逐轮指向当前运行。仅复用有本轮有效 `usage_update.used/size` 且占用不超过 `sessions.background.maxContextRatio`（默认 0.6）的在线 ACP 会话，缺用量、异常或取消即释放；空闲默认 60 分钟、最多 3 个进程，独立于聊天池。首次发送完整指令，后续只发时间和独立任务，说明变化另开。CLI 单次任务启用原生临时参数；ACP 临时会话释放时按声明能力调用 `session/delete`（Codex 实际归档，不能保证不落盘），普通聊天与显式续轮不调用。正常停服清理后台池，崩溃/强杀不保证清理。TraeX ACP 不支持 `--ephemeral`，也未声明 `session/delete`，由 catalog 的 `archiveArgs` 能力通过同一程序执行归档；其他后端可配置相同能力，无清理能力时明确提示。`traex-cli` 复用 exec 传输，单次任务带 `--ephemeral`。
@@ -121,6 +121,8 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 ### 4. 事项与跟进
 事项类型：`todo`、`waiting`（等谁回复）、`reminder`、`watch`（关注某项目/群/文档）。心跳任务按配置周期运行：读关注对象的新增材料和到期事项，由 Agent 判断是否有需要本人知道/决定的变化；无变化输出 `QUIET`，不打扰。
 
+事项自己收尾（`src/items/expiry.ts`），本人不用回来点完成。一件打开的事项在按类型的期限里（`config.items.days`：待办 14 天、待决定 7、关注 7、等待回复 14）没有进展就变成 `expired`：进展指本人改动它、或时间线记进了带来源的新事件，Agent 不带依据的备注不算；截止或提醒时间还没到的不过期，提醒在时间过后 `days.reminder` 天过期。`expired` 不算完成，有新依据或备注时自动重新打开，本人“保留”会让期限重新计算。另一条路是推断已办：事项引用的聊天原件里，本人在触发消息之后的同一会话/话题里说过话或回了表情（复用通知闸门的行解析，`notify-gate.ts` 的 `ownerFollowUp` / `ownerReactions`），DONE 表情直接关；其余交给 `item-keeper` 角色用 `settle_items` 判 done / cancelled / keep 并写理由，`item_checks` 记下看到哪一行，同一段证据只判一次。`item-sweep` 每小时执行两步，`item-digest` 每天发一张清点卡片（自动收尾的可“恢复”、明天过期的可“保留”）。功能上线时已经过期的事项是积压：小时任务不碰，事项页给出预览，本人勾掉要留下的再一次收尾（`POST /api/items-expiry/backlog`），之后才全部交给定时任务。
+
 通知的 `context` 保存事项、事件、运行和本次 `sourceRefs`，发送后不随事项引用增长而变化；定时提醒读取设定提醒时的来源。事项来源纠正必须有旧来源快照和原因，来源历史留在事件。跨空间发现单独使用 `itemDiscoverySpaces`，不扩展普通检索或 `writable`；`item_update_proposals` 保存待复核进展，主助手检查两边写权限后应用。历史关联维护保存 `item_repairs` 快照，在一个事务中移动明确事件、保留未迁移事件共用的来源、修正通知/交互及运行标注，旧交互先失效；原飞书卡片刷新成功且交互未变化才重新开放。详见 [维护步骤](item-maintenance.md)。
 
 ### 5. 交办 Agent
@@ -146,7 +148,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 - 记忆：左侧目录树（拖放移动、目录维护、一键整理），列表按目录分组，标签筛选、复核状态，“质量”页按模型统计。
 - 问答：对话 + 右侧引用面板（点击脚注即在右侧显示原文高亮）。
 - Wiki：左目录、中正文（行宽受限，Mermaid 渲染）、右侧“本页引用 + 反向链接 + 相关页面”；页面可看 Git 历史与 diff。
-- 事项：按“需要我决定 / 等待中 / 待办 / 已完成”分栏，时间线展示每次变化及来源。
+- 事项：按“需要我决定 / 等待中 / 待办 / 已完成”分栏，时间线展示每次变化及来源；三天内会自动过期的标出来，详情里显示期限和“保留 / 恢复”，积压的旧事项在顶部提示并可预览后收尾。
 - 运行：每次 Agent 执行的步骤、工具调用、diff、评审。
 
 视觉沿用黑白灰阅读风格，但减少说明性文字和嵌套面板，信息靠排版层级而非边框。
@@ -188,6 +190,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 原件列表：普通空间平铺，代码仓库空间按目录展示；网址与会话标识不拆成目录，目录/文件节点明确区分；文件夹默认折叠（展开后跨分页保留、搜索时全展开），虚拟滚动，每页 1000 份滚动分页加载 | 已实现；2026-10-15 修复 URL 与超过 12 条数据导致的白屏；2026-10-19 分页折叠 | `web/src/views/Sources.vue`、`src/sources/store.ts` |
 | Agent 运行时（ACP、claude/codex 命令行后备、豆包 OpenAPI 云端后端）与 MCP 工具（HTTP 与 stdio 桥）；25 个内置 ACP Agent + 官方注册表添加 | 已实现；假 ACP Agent 端到端测试；真实 Claude Code、OpenCode（含 MCP 工具调用）已跑通，Gemini / Qwen / Copilot / goose 握手通过（需登录） | `src/agents/acp.ts`、`tools.ts` |
 | 问答、记忆更正与版本链、事项与时间线 | 已实现，真实模型抽查通过 | `roles/assistant.md` |
+| 事项自动收尾：按类型期限自动过期（`expired`，有新依据重新打开）、来源会话推断已办（DONE 表情直接关，其余由 `item-keeper` 判断，同一证据只判一次）、每日清点卡片逐条保留/恢复、积压预览后一次收尾、设置页期限 | 已实现，测试覆盖；2026-10-25 | `src/items/expiry.ts`、`roles/item-keeper.md`、`web/src/views/Items.vue` |
 | 记忆目录：每条记忆一个目录（最多三层）与目录说明；写入时选目录、新目录要说明、相近名字和过深拒绝；`list_memory_folders` / `organize_memories`；`memory-organize` 定期归档未归档记忆、每周调整结构；记忆页左侧目录树、拖放移动、改名合并、删除上移 | 已实现，测试覆盖；2026-10-25 | `src/memory/folders.ts`、`roles/memory-organizer.md`、`web/src/components/MemoryFolderTree.vue` |
 | 回复只取最后一次工具调用之后的文字（中途的“我先…”留在运行事件里，不再拼进回答）；发往聊天的本机文件路径改写成“仓库 · 路径:行号”，生成的文件作为附件发、在话题里时附件也发进话题 | 已实现，测试覆盖；2026-10-20 | `src/agents/types.ts` 的 `replyFromSegments`、`src/channels/common.ts` 的 `localPathLinks`、`tools.ts` 的 `larkPost` |
 | 运行详情：所在会话（飞书话题 / 工作会话 / 普通会话）、同一会话的各轮、多 Agent 工作的各轮、由哪次运行发起；任务全文可展开 | 已实现；2026-10-20 | `src/server/http.ts` 的 `runContext`、`web/src/views/Runs.vue` |
