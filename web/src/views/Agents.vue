@@ -472,7 +472,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         </header>
         <div class="card pad role-ai">
           <div class="row wrap"><strong>默认 AI</strong><span class="spacer" /><button class="btn sm primary" :disabled="saving || !roleAiDirty" @click="saveRoleAi">保存默认 AI</button></div>
-          <p class="muted small">用于这个角色之后的运行；任务中的临时选择优先，不修改这里。</p>
+          <p class="muted small">这个角色平时用的 AI。助手为某个任务临时换用时不改这里。</p>
           <AiDefaults :model-value="roleAi" :backends="options.backends" :default-backend="options.globalDefaultBackend" @update:model-value="updateRoleAi" />
         </div>
         <p class="muted small meta">{{ roleDetail.description }} · 工具 {{ roleDetail.tools.length ? roleDetail.tools.join(", ") : "无" }}<span v-if="roleDetail.writes"> · 可改文件</span></p>

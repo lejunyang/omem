@@ -48,7 +48,7 @@ export async function probeProfile(profile: AgentProfile): Promise<ProbeInfo> {
   if (profile.transport === "doubao")
     return { at: new Date().toISOString(), agent: "豆包 OpenAPI", models: [], efforts: [], error: "豆包后端没有可选模型和思考强度；授权状态用 omem doubao status 查看" };
   if (profile.transport !== "acp" || !commandExists(profile.command))
-    return { at: new Date().toISOString(), agent: profile.command, models: [], efforts: [], error: "命令行 Agent 不支持探测" };
+    return { at: new Date().toISOString(), agent: profile.command, models: [], efforts: [], error: "命令行后端报不出可选的模型，可以手填" };
   try {
     const r = await runAcp({ ...profile, model: undefined, effort: undefined }, { cwd: process.cwd(), prompt: "", probe: true }, () => {});
     const opts = r.probe?.options ?? [];

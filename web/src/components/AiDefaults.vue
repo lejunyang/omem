@@ -55,7 +55,7 @@ watch(() => backend.value?.id, () => void detect(), { immediate: true });
         <input v-else class="input mono" :value="modelValue.effort" :placeholder="inherited('effort') || '未检测到可选项，可手填'" aria-label="思考强度" @input="update('effort', ($event.target as HTMLInputElement).value)" />
       </div>
     </div>
-    <div class="row wrap small muted"><span>{{ loading ? '正在检测模型与思考强度…' : probe?.error || '可选项来自后端检测；留空使用默认值。' }}</span><button type="button" class="btn ghost sm" :disabled="loading || !backend" @click="detect(true)">重新检测</button></div>
+    <div class="row wrap small muted"><span>{{ loading ? '正在检测模型与思考强度…' : probe?.error || '留空就跟随默认。' }}</span><button type="button" class="btn ghost sm" :disabled="loading || !backend" @click="detect(true)">重新检测</button></div>
   </div>
 </template>
 

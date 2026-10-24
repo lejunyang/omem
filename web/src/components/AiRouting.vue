@@ -18,10 +18,10 @@ function save() {
 <template>
   <div class="card pad stack">
     <div class="section-title">任务选型</div>
-    <p class="muted small">档案里的 AI 是默认值。你在任务中指定后端、模型或强度时，助手可临时使用；复杂任务也可以让助手根据下面的偏好选择。每次选择及理由会记入运行。</p>
+    <p class="muted small">平时用档案里设的 AI。你在对话里点名要某个模型时，助手临时换用；打开下面的开关，助手也能按偏好自己挑。每次换用和理由都记在运行里。</p>
     <UiCheckbox v-model="draft.automatic" switch>允许助手按任务自主选择 AI</UiCheckbox>
     <label class="field"><span>总体偏好</span><textarea v-model="draft.guidance" class="input" rows="4" maxlength="8000" placeholder="例如：简单整理优先快模型；涉及多个模块的改动用较强的推理模型；评审尽量用不同于编码的模型。" /></label>
-    <p class="muted small">候选用明确的后端和模型配上适用说明，避免只写模型简称产生歧义。这是选型参考，助手仍会核对可用性；关闭自主选择后，只有你明确指定时才临时更换。</p>
+    <p class="muted small">候选：列出可以换用的后端和模型，各写一句适合什么任务。</p>
     <div v-for="(c, i) in draft.candidates" :key="i" class="candidate stack">
       <div class="row"><strong class="small">候选 {{ i + 1 }}</strong><span class="spacer" /><button class="btn ghost sm danger" @click="draft.candidates.splice(i, 1)">移除</button></div>
       <AiDefaults :model-value="{ agent: c.profile, model: c.model, effort: c.effort }" :backends="backends.map((b) => ({ ...b, name: b.name || b.id }))" default-backend="" @update:model-value="(v) => Object.assign(c, { profile: v.agent ?? '', model: v.model, effort: v.effort })" />
