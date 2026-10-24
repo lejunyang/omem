@@ -159,7 +159,7 @@ export function moveSource(app: App, id: string, target: string, reason: string,
       on conflict(source_id) do update set mode=excluded.mode,reason=excluded.reason,rule_id=excluded.rule_id,decision_hash=excluded.decision_hash,pending=0`, id, s.spaceId, mode, reason, ruleId ?? null, s.hash);
     run(app.db, "insert into source_moves(source_id,from_space,to_space,reason,at) values(?,?,?,?,?)", id, s.spaceId, target, reason, now());
   });
-  vectorIndex().clear();
+  vectorIndex().evict([s.spaceId, target]);
   app.emit({ type: "changed", entity: "source", id, spaceId: target });
   return getSource(app, id);
 }

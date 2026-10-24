@@ -176,6 +176,12 @@ const conversationOptions = computed(() => [
   { value: "", label: "选择会话" },
   ...options.value.conversations.map((c) => ({ value: c.id, label: c.title || "未命名会话", hint: `${c.channel === "web" ? "网页" : c.channel.startsWith("lark") ? "飞书" : c.channel} · ${state.spaces.find((x) => x.id === c.space_id)?.name ?? c.space_id}` })),
 ]);
+/** A draft needs a Feishu chat to go to after confirmation; a web conversation only the owner reads. */
+const larkDestination = computed(() => {
+  const c = options.value.conversations.find((x) => x.id === form.value?.conversationId);
+  return !c || c.channel.startsWith("lark");
+});
+const scheduleReplyOptions = computed(() => replyOptions.filter((o) => o.value !== "draft" || larkDestination.value));
 const specOptions = computed(() => options.value.specs.map((s) => ({ value: s.name, label: s.name === "assistant" ? "主助手" : s.name, hint: s.description })));
 const addPick = ref<string | null>(null);
 function addAction(type: string | null) {
@@ -338,14 +344,14 @@ function startFrom(text: string) {
               <div class="row wrap">
                 <UiSelect v-model="a.spec" size="sm" width="180px" :options="specOptions" placeholder="交给谁" aria-label="Agent" @change="touch" />
                 <UiSelect :model-value="a.space ?? ''" size="sm" width="170px" :options="spaceOptions('默认空间')" aria-label="在哪个空间里查资料" title="Agent 在哪个空间里查资料。默认：档案固定的空间，其次是上面选的空间，再次是消息所在群的空间" @update:model-value="(v) => ((a.space = String(v || '')), touch())" />
-                <UiSegmented v-model="a.reply" size="sm" :options="scheduleOnly ? replyOptions : agentReplyOptions" aria-label="回复方式" @change="touch" />
+                <UiSegmented v-model="a.reply" size="sm" :options="scheduleOnly ? scheduleReplyOptions : agentReplyOptions" aria-label="回复方式" @change="touch" />
                 <UiCheckbox v-if="!scheduleOnly && a.reply !== 'silent'" v-model="a.ownTopic" size="sm" :disabled="a.reply === 'none'" @change="touch">在消息下开话题</UiCheckbox>
               </div>
               <div v-if="scheduleOnly && a.reply !== 'none'" class="row wrap">
                 <span class="small">发到</span>
                 <UiSelect :model-value="form.conversationId ?? ''" size="sm" width="260px" :search-at="8" :options="conversationOptions" aria-label="结果发到哪个会话" @update:model-value="(v) => ((form!.conversationId = String(v || '')), touch())" />
               </div>
-              <small class="muted">{{ scheduleOnly && a.reply !== 'none' ? (a.reply === 'auto' ? "结论直接发到选定的会话。" : "要发的话先变成给你确认的草稿，确认后发到选定的会话。") : REPLY_HINT[a.reply] }}</small>
+              <small class="muted">{{ scheduleOnly && a.reply !== 'none' ? (a.reply === 'auto' ? "结论直接发到选定的会话。" : "它要在群里说的话先变成给你确认的草稿，你点发送才发到这个群（话题）；结论另外发给你。") : REPLY_HINT[a.reply] }}</small>
               <div v-if="!scheduleOnly && a.reply !== 'none'" class="row wrap">
                 <UiCheckbox :model-value="!!a.allowUrgent" size="sm" @change="(v) => ((a.allowUrgent = v), touch())">允许加急</UiCheckbox>
                 <UiCheckbox :model-value="!!a.allowPrivate" size="sm" @change="(v) => ((a.allowPrivate = v), touch())">允许只给部分人看</UiCheckbox>

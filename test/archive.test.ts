@@ -242,4 +242,16 @@ describe("task rule context", () => {
     expect(listRuns(app, { spaceId: "personal" })).toHaveLength(0);
     expect(listRuns(app, { spaceId: "project-a" })).toHaveLength(1);
   });
+  it("sends a scheduled draft to the chosen Feishu topic and answers a web conversation directly", async () => {
+    const app = setup();
+    const lark = createThread(app, { channel: "lark", key: "oc_daily#omt_topic", spaceId: "project-a", userId: "owner" });
+    const web = createThread(app, { channel: "web", spaceId: "project-a", userId: "owner" });
+    const tick = { key: "tick", kind: "schedule" as const, at: new Date().toISOString(), via: "schedule" };
+    const draft = (conversationId: string) => saveRule(app, { name: "每日摘要", description: "每天总结", spaceId: "project-a", conversationId, trigger: { event: "schedule", cron: "0 18 * * *" }, actions: [{ type: "agent", reply: "draft" }] });
+    const toLark = getRun(app, (await runActions(app, draft(lark.id), tick, "定时"))[0].runId!).input;
+    expect(toLark).toMatchObject({ conversationId: lark.id, lark: { chats: ["oc_daily"], draft: true } });
+    expect(toLark).not.toHaveProperty("threadId");
+    const toWeb = getRun(app, (await runActions(app, draft(web.id), tick, "定时"))[0].runId!).input;
+    expect(toWeb).toMatchObject({ threadId: web.id, lark: { chats: [], draft: false } });
+  });
 });

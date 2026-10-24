@@ -19,6 +19,8 @@ export interface VectorIndex {
   forget(ids: number[]): void;
   search(app: App, q: Float32Array, spaces: string[] | undefined, limit: number): { chunkId: number; score: number }[];
   clear(): void;
+  /** Spaces whose chunks changed hands: only these reload on next use. */
+  evict(spaceIds: string[]): void;
   stats(): { spaces: number; vectors: number; bytes: number };
 }
 
@@ -123,6 +125,10 @@ class MemoryIndex implements VectorIndex {
   clear() {
     this.spaces.clear();
     this.removed.clear();
+  }
+
+  evict(spaceIds: string[]) {
+    for (const id of spaceIds) this.spaces.delete(id);
   }
 
   stats() {
