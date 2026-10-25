@@ -115,14 +115,17 @@ function learnedContext(app: App, spaceId: string, userId: string, spec: string 
   const vetted = app.config.memory.review.enabled ? "and (created_by = 'user' or review_verdict = 'keep')" : "";
   const rows = all<{ kind: string; subject: string; content: string; agent: string | null }>(
     app.db,
+    // A profile's own experience goes with it whatever space it runs in (an investigator learns from
+    // the on-call groups of one project space and is called from the personal space).
     `select kind, subject, content, agent from memories where status = 'active' ${vetted} and (agent is null or agent = ?) and (
-       (kind = 'preference' and space_id in (?, ?) and coalesce(user_id, 'owner') = ?) or (kind = 'experience' and space_id = ?)
+       (kind = 'preference' and space_id in (?, ?) and coalesce(user_id, 'owner') = ?) or (kind = 'experience' and (space_id = ? or agent = ?))
      ) order by kind = 'preference' desc, agent is not null desc, updated_at desc limit 24`,
     spec ?? "",
     personalSpaceId(userId),
     spaceId,
     userId,
     spaceId,
+    spec ?? "",
   );
   return rows.map((r) => `- ${r.kind === "preference" ? "偏好" : "经验"}${r.agent ? "（本档案）" : ""}${r.subject ? `（${r.subject}）` : ""}：${r.content}`).join("\n");
 }
