@@ -134,6 +134,19 @@ ${JSON.stringify({ tools, error: res.isError ? res.content : null })}`);
           } finally { await client.close(); }
           return { stopReason: "end_turn" as const };
         }
+        // The requirement split: one change point, with one made-up source id corrected after the tool refuses it.
+        if (prompt.includes("你这次只做需求拆分")) {
+          const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+          const client = new Client({ name: "fake-split", version: "1" });
+          await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+          try {
+            const point = { id: "C1", title: "只退未发货的行", status: "done", locations: [{ file: "refund.ts", start: 1, end: 3 }] };
+            const bad = await client.callTool({ name: "submit_change_points", arguments: { change_points: [{ ...point, refs: ["src:s0nothere00000000"] }] } });
+            await client.callTool({ name: "submit_change_points", arguments: { change_points: [point] } });
+            await say(`拆分完成 ${JSON.stringify(bad.isError ?? false)}`);
+          } finally { await client.close(); }
+          return { stopReason: "end_turn" as const };
+        }
         if (!check) {
           appendFileSync(join(cwds.get(p.sessionId)!, "refund.ts"), `export const round = ${prompt.includes("上一轮评审要求修改") ? 2 : 1};
 `);

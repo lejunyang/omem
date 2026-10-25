@@ -283,6 +283,7 @@ export function prepareRun(
   if (input.reviewCheck || input.reviewLead) {
     for (const t of [...tools]) if (!REVIEW_TOOLS.includes(t) && t !== "wait_answer") tools.delete(t);
     tools.add(input.reviewLead ? "rule_review" : "submit_review");
+    if (input.reviewCheck) tools.add("submit_change_points");
   }
   const spaces =
     input.spaces !== undefined ? input.spaces : spec ? (spec.spaces.includes("*") ? null : [...new Set([space.id, ...spec.spaces])]) : roleName === "assistant" ? null : [space.id];

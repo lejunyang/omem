@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import "../src/agents/jobs.ts";
 import { applyCodeRun, codePatches, createBranchReview, discardCodeRun, worktreesOf } from "../src/agents/code.ts";
 import { codeChainFor } from "../src/agents/code-chain.ts";
-import { __testHandlers, addRunEvent, cancelRun, createRun, getRun, setRunOutput, type Run } from "../src/agents/runs.ts";
+import { __testHandlers, addRunEvent, cancelRun, createRun, getRun, runEvents, setRunOutput, type Run } from "../src/agents/runs.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { branchIndexes, indexBranch, sweepWorktreeSpaces } from "../src/agents/worktree-index.ts";
@@ -242,6 +242,33 @@ describe("reviewing an existing branch", () => {
       expect(read.text).toContain(`#${major.id} [严重`);
       expect(read.text).toMatch(/本人：要改/);
       cancelRun(app, fixRun.id);
+      discardCodeRun(app, r.id);
+    } finally {
+      await server.close();
+    }
+  }, 120000);
+
+  it("splits the requirement into change points next to the checks, or on request for an earlier review", async () => {
+    fake();
+    // A tier without the business check: the split runs on its own.
+    app.config.review.tiers[0].checks = ["reviewer"];
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const r = createBranchReview(app, { repos: ["shop-api"], branch: "feature/refund", task: "评审退款分支", fetch: false });
+      await exec(r);
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      const reviews = async () => (await (await fetch(`${app.baseUrl}/api/runs/${r.id}/reviews`)).json()) as { rounds: { changePoints: { id: string }[] | null }[] };
+      expect((await reviews()).rounds[0].changePoints?.map((p) => p.id)).toEqual(["C1"]);
+      // The made-up source id was refused, the corrected submission kept.
+      expect(runEvents(app, r.id).some((e) => JSON.stringify(e.data).includes("拆分完成 true"))).toBe(true);
+
+      setRunOutput(app, r.id, { changePoints: null });
+      const res = await fetch(`${app.baseUrl}/api/runs/${r.id}/change-points`, { method: "POST" });
+      const splitRun = (await res.json()) as { id: string; kind: string };
+      expect(splitRun.kind).toBe("review");
+      run(app.db, "update runs set status = 'running' where id = ?", splitRun.id);
+      await __testHandlers.get("review")!({ app, run: getRun(app, splitRun.id), signal: new AbortController().signal, event: (type, data) => addRunEvent(app, splitRun.id, type, data), output: (data) => setRunOutput(app, splitRun.id, data) });
+      expect((await reviews()).rounds[0].changePoints?.map((p) => p.id)).toEqual(["C1"]);
       discardCodeRun(app, r.id);
     } finally {
       await server.close();

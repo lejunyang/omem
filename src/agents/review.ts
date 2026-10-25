@@ -297,6 +297,20 @@ export const changePointSchema = z.object({
   locations: z.array(z.object({ file: z.string().min(1).max(500), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).max(30).default([]),
 });
 export type ChangePoint = z.infer<typeof changePointSchema>;
+
+/**
+ * References in a review that point at nothing: a source or memory id the model got wrong (one
+ * character off is common). The check is told to look them up again rather than store a dead link.
+ */
+export function deadRefs(app: App, refs: string[]) {
+  return [...new Set(refs)].filter((ref) => {
+    const m = /^(src|mem):([A-Za-z0-9_-]+)/.exec(ref.trim());
+    if (!m) return false;
+    return m[1] === "src"
+      ? !one(app.db, "select 1 from sources where id = ? and deleted_at is null", m[2])
+      : !one(app.db, "select 1 from memories where id = ?", m[2]);
+  });
+}
 export type ReviewRow = { id: string; code_run_id: string; round: number; check_name: string; tier: string | null; profile_id: string | null; model: string | null; effort: string | null; verdict: string; summary: string; status: string; created_at: string; change_points: string | null };
 export type FindingRow = { id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string; merged_into: number | null; triage_note: string; decision?: "fix" | "later" | "wontfix" | null; decision_note?: string };
 

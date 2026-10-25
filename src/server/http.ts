@@ -893,7 +893,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       rounds: rounds.map((x) => ({
         runId: x.id, round: (x.input as { round?: number }).round ?? 1, status: x.status,
         plan: x.output.reviewPlan ?? null, verdict: x.output.verdict ?? null, stage: x.output.reviewStage ?? null,
-        lead: x.output.reviewLead ?? null, stop: x.output.reviewStop ?? null, ask: askOf(x.output.reviewAskId), acceptedByOwner: !!x.output.acceptedByOwner,
+        lead: x.output.reviewLead ?? null, stop: x.output.reviewStop ?? null, changePoints: (x.output.changePoints as { points?: unknown[] } | undefined)?.points ?? null, ask: askOf(x.output.reviewAskId), acceptedByOwner: !!x.output.acceptedByOwner,
       })),
       reviews: reviewsOf(app, rounds.map((x) => x.id)),
       labels,
@@ -911,6 +911,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ decision: z.enum(["fix", "later", "wontfix"]).nullable(), note: z.string().max(2000).optional() }), req.body);
     const { setFindingDecision } = await import("../agents/review-fix.ts");
     return setFindingDecision(app, p.id, Number(p.fid), b.decision, b.note);
+  });
+  // Split the requirement into change points for a review that has none (an earlier review).
+  server.post("/api/runs/:id/change-points", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const { workRuns } = await import("../agents/review-fix.ts");
+    const last = getRun(app, workRuns(app, id).at(-1)!);
+    if (last.kind !== "code" || !last.output.reviewPlan) throw new HttpError(400, "只有评审过的交办或分支评审能拆分需求");
+    return createRun(app, { kind: "review", spaceId: last.spaceId, title: `需求拆分：${last.title.slice(0, 60)}`, input: { codeRunId: last.id, splitOnly: true }, parentId: last.id, userId: who(req) });
   });
   server.post("/api/runs/:id/fix", async (req) => {
     const id = (req.params as { id: string }).id;

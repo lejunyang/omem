@@ -2985,8 +2985,38 @@ def({
     const { changePointSchema, findingSchema, recordReview } = await import("./review.ts");
     const findings = a.findings.map((f) => findingSchema.parse(f));
     const changePoints = (a.change_points ?? []).map((c) => changePointSchema.parse(c));
+    const { deadRefs } = await import("./review.ts");
+    const dead = deadRefs(ctx.app, [...findings.flatMap((f) => f.evidence), ...changePoints.flatMap((c) => c.refs)]);
+    if (dead.length) throw new HttpError(400, `这些引用找不到对应的原件或记忆：${dead.join("、")}。id 多半抄错了，用 search / read_source 核对后改正再提交（找不到就去掉这条依据）。`);
     recordReview(ctx.app, { codeRunId: r.id, round: (r.input as { round?: number }).round ?? 1, check, tier: plan.tier, verdict: a.verdict, summary: a.summary, findings, changePoints, ai: { profile: ctx.agentProfile, model: ctx.model ?? undefined, effort: ctx.effort ?? undefined } });
     return `已记录评审结论（${a.verdict === "approved" ? "通过" : "需要修改"}，${findings.length} 条问题${changePoints.length ? `，${changePoints.length} 个变更点` : ""}）。接着用文字写结论。`;
+  },
+});
+
+def({
+  name: "submit_change_points",
+  description: "提交需求拆分（只在交办编码 / 分支评审的评审会话里可用）：需求拆成的变更点和各自的实现位置，网页“变更”视图按它把需求和代码对上。再次提交覆盖这一轮之前的。",
+  schema: z.object({
+    change_points: z.array(z.object({
+      id: z.string().max(12).describe("编号：C1、C2…"),
+      title: z.string().max(200),
+      status: z.enum(["done", "partial", "missing", "extra"]),
+      requirement: z.string().max(2000).optional().describe("需求怎么说（带 src: 引用）"),
+      implementation: z.string().max(2000).optional().describe("代码怎么做、为什么这么写"),
+      refs: z.array(z.string().max(300)).max(20).optional(),
+      locations: z.array(z.object({ file: z.string().max(500), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).max(30).optional(),
+    })).min(1).max(60),
+  }),
+  handler: async (ctx, a) => {
+    const { codeRunOf } = await import("./review-chain.ts");
+    const r = codeRunOf(ctx.app, ctx.runId);
+    if (!r) throw new HttpError(400, "submit_change_points 只能在交办编码或分支评审的评审里使用");
+    const { changePointSchema, deadRefs } = await import("./review.ts");
+    const points = a.change_points.map((c) => changePointSchema.parse(c));
+    const dead = deadRefs(ctx.app, points.flatMap((c) => c.refs));
+    if (dead.length) throw new HttpError(400, `这些引用找不到对应的原件或记忆：${dead.join("、")}。id 多半抄错了，用 search / read_source 核对后改正再提交（找不到就去掉）。`);
+    setRunOutput(ctx.app, r.id, { changePoints: { round: (r.input as { round?: number }).round ?? 1, points, at: new Date().toISOString() } });
+    return `已记录 ${points.length} 个变更点。`;
   },
 });
 

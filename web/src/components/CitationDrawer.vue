@@ -32,6 +32,14 @@ const docParts = computed(() => {
   const b = at((t.to ?? t.from) + 1);
   return { before: lines.slice(0, a).join("\n"), cited: lines.slice(a, b).join("\n"), after: lines.slice(b).join("\n") };
 });
+// Documents (wide tables, screenshots) get a wider drawer; the owner can switch, and it is remembered.
+const WIDE_KEY = "omem.drawerWide";
+const wideChoice = ref<boolean | null>((() => { try { const v = localStorage.getItem(WIDE_KEY); return v === null ? null : v === "1"; } catch { return null; } })());
+const wide = computed(() => wideChoice.value ?? asDocument.value);
+function toggleWide() {
+  wideChoice.value = !wide.value;
+  try { localStorage.setItem(WIDE_KEY, wideChoice.value ? "1" : "0"); } catch { /* private mode */ }
+}
 const citedEl = ref<HTMLElement>();
 watch(citedEl, (el) => el?.scrollIntoView({ block: "center" }));
 let opener: Element | null = null;
@@ -118,11 +126,12 @@ const title = computed(() => {
 
 <template>
   <Transition name="drawer">
-    <aside v-if="top" ref="panel" class="drawer" tabindex="-1" role="dialog" aria-modal="false" :aria-label="title">
+    <aside v-if="top" ref="panel" class="drawer" :class="{ wide }" tabindex="-1" role="dialog" aria-modal="false" :aria-label="title">
       <header>
         <button v-if="state.trail.length > 1" class="btn ghost sm icon" title="返回上一层（Esc）" @click="back"><Icon name="left" /></button>
         <div class="t ellipsis" :title="title">{{ title }}</div>
         <span v-if="state.trail.length > 1" class="muted small">{{ state.trail.length }} 层</span>
+        <button class="btn ghost sm wide-btn" :title="wide ? '收窄抽屉' : '加宽抽屉，宽表格和截图更好看'" @click="toggleWide">{{ wide ? "收窄" : "加宽" }}</button>
         <button class="btn ghost sm icon" title="关闭" @click="close"><Icon name="x" /></button>
       </header>
       <div class="body">
@@ -216,6 +225,7 @@ const title = computed(() => {
   right: 0;
   bottom: 0;
   width: min(560px, 100vw);
+  transition: width 0.15s ease;
   background: var(--panel);
   border-left: 1px solid var(--line);
   box-shadow: var(--shadow-lg);
@@ -223,6 +233,17 @@ const title = computed(() => {
   display: flex;
   flex-direction: column;
   outline: none;
+}
+.drawer.wide {
+  width: min(1040px, 94vw);
+}
+@media (max-width: 760px) {
+  .drawer.wide {
+    width: 100vw;
+  }
+  .wide-btn {
+    display: none;
+  }
 }
 header {
   display: flex;
@@ -253,7 +274,25 @@ header {
 }
 .doc {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+}
+/* Feishu tables keep their columns and scroll sideways instead of squeezing every cell. */
+.doc :deep(table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.doc :deep(th),
+.doc :deep(td) {
+  min-width: 140px;
+  vertical-align: top;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.doc :deep(img) {
+  max-width: 100%;
+  height: auto;
 }
 .cited-lines {
   background: var(--warn-soft);

@@ -522,6 +522,12 @@ updated: 2026-10-25
 - 分支评审的可读范围：`CodeInput.readSpaces`（`review_branch` 的 `read_spaces`、`POST /api/review-branch` 的 `readSpaces`、`omem review-branch --read`），加进编码与评审运行的空间范围；需求文档在个人空间、迁移要对照源仓库时用。接口按发起人可访问的空间校验。
 - 评审档位条件新增 `change.codeLines`（有效代码改动行数）：`reviewMetrics` 按 `isSourceFile`（`src/sources/chunk.ts`，源代码扩展名，排除 `.min.js`）只累计源代码文件的增删行；档位理由和负责人估计里同时写出总行数和有效代码行数。默认档位不变，可在 Agent 页 → 评审 改用它。
 
+## 需求拆分独立成一步、拒收抄错的引用、引用抽屉加宽（10-26）
+
+- `review-chain.ts`：`reviewContext` 拼评审任务（原 `reviewRound` 开头）；`splitChangePoints` 用 `review-business` 角色只做需求拆分，提交工具 `submit_change_points`（评审会话都有，写进交办运行的 `output.changePoints`，按轮次）。档位里没有业务评审时和各评审项并行跑；`POST /api/runs/:id/change-points` 给已有的评审补一次（`review` 运行，`splitOnly`）。`/api/runs/:id/reviews` 每轮带 `changePoints`，网页优先用它，其次用业务评审的。
+- `deadRefs`：`submit_review` 和 `submit_change_points` 里 `src:` / `mem:` 指向不存在的原件或记忆时拒收，让评审者核对后重交（模型常把 id 抄错一两个字符）。
+- 引用抽屉：文档类原件默认加宽（`omem.drawerWide` 记住本人的选择），表格保持列宽、横向滚动，图片不超出。
+
 ## 按评审修改、本人对问题的决定、引用打开代码和文档（10-26）
 
 - `src/agents/review-fix.ts`：`review_findings` 加 `decision`（fix / later / wontfix）和 `decision_note`。`setFindingDecision`：不改必须写理由，并在所属事项记一条 `decision` 事件（`materialsBrief` 列出“本人的业务决定”）。`decisionsBrief`：同一次工作各轮和 `fromReview` 指向的分支评审里暂不改、不改的问题，进评审任务，评审者不再提。`startFix`：选中的问题和本人补充的要求写成任务；交办编码续在原工作区（`queueNextCodeRound`），分支评审基于分支交办（`fromBranches`、`itemId`、`readSpaces`、`fromReview`，挂在发起评审的会话下）。

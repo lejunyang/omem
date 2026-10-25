@@ -12,7 +12,7 @@ export type ChangePoint = { id: string; title: string; status: "done" | "partial
 export type Review = { id: string; round: number; check_name: string; verdict: "approved" | "changes_requested" | "failed"; summary: string; profile_id: string | null; model: string | null; effort: string | null; created_at: string; findings: Finding[]; change_points: ChangePoint[] };
 export type Lead = { verdict: "approve" | "revise" | "escalate"; summary: string; changeRequest: string; rerun: string[]; by: "lead" | "host"; stop?: string; escalation?: { summary: string } };
 export type AskInfo = { id: string; status: string; question: string; options: { label: string }[]; answer: string | null };
-export type Round = { runId: string; round: number; status: string; plan: { tier: string; tierName: string; checks: string[]; reasons: string[]; lead?: boolean } | null; verdict: string | null; stage: string | null; lead: Lead | null; stop: string | null; ask: AskInfo | null; acceptedByOwner: boolean };
+export type Round = { runId: string; round: number; status: string; plan: { tier: string; tierName: string; checks: string[]; reasons: string[]; lead?: boolean } | null; verdict: string | null; stage: string | null; lead: Lead | null; stop: string | null; ask: AskInfo | null; acceptedByOwner: boolean; changePoints: ChangePoint[] | null };
 type Data = { estimate: { tierName: string; reason: string } | null; rounds: Round[]; reviews: Review[]; labels: Record<string, string> };
 
 export const SEV: Record<Severity, { text: string; cls: string }> = { blocker: { text: "阻断", cls: "danger" }, major: { text: "严重", cls: "danger" }, minor: { text: "一般", cls: "warn" }, nit: { text: "提示", cls: "" } };
@@ -55,8 +55,9 @@ export function useReviews(runId: Ref<string>, refreshKey: Ref<string | undefine
       .flatMap((r) => r.findings.map((f) => ({ ...f, check: r.check_name })))
       .sort((a, b) => Number(settled(a)) - Number(settled(b)) || RANK[a.severity] - RANK[b.severity]),
   );
-  /** The change points of this round: the business check's, else any check's that gave them. */
+  /** The change points of this round: the requirement split of its own if one ran, else the business check's. */
   const changePoints = computed(() => {
+    if (current.value?.changePoints?.length) return current.value.changePoints;
     const withPoints = reviews.value.filter((r) => r.change_points.length);
     return (withPoints.find((r) => r.check_name === "review-business") ?? withPoints[0])?.change_points ?? [];
   });

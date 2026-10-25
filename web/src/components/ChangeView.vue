@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { get, post } from "../api";
 import DiffFile, { type DiffPoint } from "./DiffFile.vue";
 import UiSegmented from "./UiSegmented.vue";
-import { state } from "../store";
+import { state, toast } from "../store";
 import { POINT_STATUS, type ChangePoint, type Reviews } from "../lib/reviews";
 
 /**
@@ -61,6 +62,30 @@ function fromMark(id: string) {
   if (p) emit("explain", p);
 }
 watch(() => props.runId, () => { active.value = null; open.value = new Set(); });
+// An earlier review has no split: one can be run now; the page follows it until the points arrive.
+const splitRun = ref<string | null>(null);
+let splitTimer: ReturnType<typeof setTimeout> | undefined;
+async function follow() {
+  clearTimeout(splitTimer);
+  if (!splitRun.value) return;
+  const r = await get<{ run: { status: string; error: string | null } }>(`/api/runs/${splitRun.value}`).catch(() => null);
+  await props.rv.load(true);
+  if (r && ["done", "failed", "cancelled"].includes(r.run.status)) {
+    if (r.run.status !== "done") toast(`需求拆分没有完成：${r.run.error ?? r.run.status}`, "error");
+    splitRun.value = null;
+    return;
+  }
+  splitTimer = setTimeout(follow, 5000);
+}
+async function split() {
+  try {
+    splitRun.value = (await post<{ id: string }>(`/api/runs/${props.runId}/change-points`)).id;
+    void follow();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+onBeforeUnmount(() => clearTimeout(splitTimer));
 // On a phone the list and the code take turns.
 const view = ref<"points" | "code">("points");
 const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: "code" as const, label: "代码" }];
@@ -72,7 +97,11 @@ const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: 
     <div class="cols">
       <aside class="points" :class="{ hide: view !== 'points' }">
         <p v-if="points.length" class="legend muted small">来自业务评审 · 点一条只看它的代码 · 行号旁的标记回到变更点</p>
-        <p v-else class="muted small">这一轮的评审没有给出变更点：业务评审提交结论时会把需求拆成变更点并标出实现位置。右侧是全部改动。</p>
+        <div v-else class="split">
+          <p class="muted small">这一轮还没有需求拆分：把需求拆成变更点、标出各自的实现位置，就能在这里从需求走到代码。之后的评审会自动拆分。</p>
+          <button v-if="!splitRun" class="btn sm primary" @click="split">拆分需求</button>
+          <p v-else class="muted small">拆分中，读完需求材料和改动大约要几分钟。<router-link :to="`/runs/${splitRun}`">看过程</router-link></p>
+        </div>
         <div v-for="p in points" :key="p.id" class="point" :class="{ on: active === p.id }">
           <button class="pick" :aria-pressed="active === p.id" @click="choose(p)">
             <span class="dot" :style="{ background: colorOf(p.id) }" />
@@ -116,6 +145,8 @@ const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: 
 .cols { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 18px; align-items: start; }
 .points { display: grid; gap: 6px; position: sticky; top: 0; max-height: calc(100vh - 140px); overflow: auto; padding-right: 2px; }
 .legend { margin: 0 0 4px; }
+.split { display: grid; gap: 8px; justify-items: start; }
+.split p { margin: 0; }
 .point { border-radius: 10px; padding: 8px 10px; border: 1px solid transparent; }
 .point:hover { background: var(--hover); }
 .point.on { background: var(--panel); border-color: var(--line); box-shadow: var(--shadow, none); }
