@@ -21,6 +21,7 @@ omem 是本人的个人记忆与助理系统。有两种接入方式。
 - `relate_spaces`：记下两个空间之间的关联（一个仓库调用另一个的接口、共用 SDK、同一项目），note 写清关系。本人移除过的关联不能再加。
 - `search`：检索原件片段、Wiki 页面、记忆。结果是线索，需要细节就用 `read_source`（带行号）或 `read_page`。
 - `source_outline` / `find_symbol`：看文档章节或代码符号，找定义与调用方。
+- 查代码仓库某个分支上的代码：`search` / `find_symbol` 传 `branch`（`space` 填仓库空间），分支改过、删过的文件按分支上的版本，其余按仓库；`list_branches(space)` 列分支和已建索引的分支。评审已有分支（`review_branch`）和交办编码一样不对外部 MCP 开放，在 omem 的问答里说或用 `omem review-branch`。
 - `scan`：汇总类问题（“这个月提到过几次…”）先穷举所有命中行再计数，可按时间段。
 - `list_conversations` / `read_conversation`：查以前在某个群、私聊或网页对话里说过什么。飞书聊天原件每行是 `[时间] 发送人: 内容`，回复别人时带 `↩ 回复 X「…」`。
 - `recall`：查记忆，可按 `subject`、`tag`、`folder`（含子目录，`"未归档"` 看没放目录的）筛；问“之前/变化”时加 `include_history: true` 看版本链。
@@ -66,7 +67,7 @@ omem 是本人的个人记忆与助理系统。有两种接入方式。
 ## 2. 命令行
 
 ```bash
-omem search "关键词" [-s 空间]
+omem search "关键词" [-s 空间] [--branch 分支]
 omem ask "问题或要交代的事" [-s 空间]     # 让 omem 自己的助理调查并处理
 omem add <文件|目录|网址|-> [-s 空间]      # 保存材料
 omem todo "标题" --remind 2026-10-19T09:00+09:00

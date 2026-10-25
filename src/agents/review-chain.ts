@@ -5,7 +5,7 @@ import { notify } from "../core/notify.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { createAsk, registerAskHandler, type Ask } from "./asks.ts";
 import { type CodeChain, queueNextCodeRound, maxCodeRounds, saveCodeChain, setChainAwaitingUser } from "./code-chain.ts";
-import { codePatches, worktreesOf } from "./code.ts";
+import { codePatches, isBranchReview, worktreesOf } from "./code.ts";
 import {
   blocksAt, checkBrief, recordReview, reviewChecks, reviewFor, reviewTiers, roundFindings, stopReason,
   SEVERITY_LABEL, STOP_LABEL, type LeadResult, type ReviewPlan, type Severity, type StopReason,
@@ -59,6 +59,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   const plan = out.reviewPlan;
   if (!plan) throw new HttpError(409, "这次交办还没有评审计划");
   const round = roundOf(run);
+  const branchReview = isBranchReview(run);
   const root = (run.input as { continueFrom?: string }).continueFrom ?? run.id;
   const worktrees = worktreesOf(app, root);
   const results = out.repos ?? [];
@@ -77,10 +78,10 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   const head = (r: { space: string }) => (multi ? `### ${r.space}\n\n` : "");
   const checkText = results.map((r) => (r.check ? `${head(r)}命令：${r.check.command}\n退出码：${r.check.code}\n\n${fence("", r.check.output.slice(-4000))}` : `${head(r)}没有配置检查命令。`)).join("\n\n");
   const reviewTask = [
-    `## 原始需求\n\n${input.task}`,
+    `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${input.task}`,
     opts.note ? `## 本人确认评审计划时补充\n\n${opts.note}` : "",
     multi ? `## 涉及的仓库\n\n${worktrees.map((w) => `- ${w.space}：${w.path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
-    `## 编码 Agent 的说明\n\n${out.coderSummary ?? ""}`,
+    `## ${branchReview ? "要评审的分支" : "编码 Agent 的说明"}\n\n${out.coderSummary ?? ""}`,
     `## 检查结果\n\n${checkText}`,
     `## 改动统计\n\n${statText}`,
     `## 完整 diff\n\n${truncate(diffs.join("\n\n"), 80000)}`,
@@ -163,7 +164,8 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   lead = { ...lead, round, ...(stop ? { stop } : {}) };
   setRunOutput(app, run.id, { reviewLead: lead, reviewStage: "done", reviewStop: stop, verdict: approved ? "approved" : "changes-requested" });
 
-  if (!approved && !stop && chain) {
+  // Reviewing an existing branch ends with the review: nobody here codes on it.
+  if (!approved && !stop && chain && !branchReview) {
     // Keep the same delegation going: the coder resumes its session and works the change request.
     const every = app.config.review.rereviewAllEvery;
     const reviewOnly = plan.lead && (round + 1) % every !== 0 && lead.rerun.length ? lead.rerun : undefined;
@@ -176,7 +178,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
     stop = "auto-limit";
     setRunOutput(app, run.id, { reviewStop: stop, reviewLead: { ...lead, stop } });
   }
-  if (stop && plan.lead && chain) {
+  if (stop && plan.lead && chain && !branchReview) {
     const ask = escalate(app, run, chain, { ...lead, stop });
     setRunOutput(app, run.id, { reviewAskId: ask.id });
   }
@@ -186,7 +188,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   const { workForChild } = await import("./agent-work.ts");
   const work = workForChild(app, run);
   notify(app, {
-    title: `${approved ? "交办完成，评审通过" : stop ? `交办第 ${round} 轮评审停下来等你决定：${STOP_LABEL[stop]}` : "交办评审要求修改"}：${run.title}`,
+    title: branchReview ? `分支评审${approved ? "通过" : "要求修改"}：${run.title}` : `${approved ? "交办完成，评审通过" : stop ?`交办第 ${round} 轮评审停下来等你决定：${STOP_LABEL[stop]}` : "交办评审要求修改"}：${run.title}`,
     body: `${statLine}${checksLine}${lead.summary ? `\n${truncate(lead.summary, 300)}` : ""}`,
     link: `#/runs/${run.id}`,
     // Inside a multi-agent work the nudge belongs to the work's current topic, not a private DM.
@@ -266,7 +268,7 @@ export function askPlan(app: App, run: Run, chain: CodeChain | null, plan: Revie
   return createAsk(app, {
     runId: run.id,
     conversationId: chain?.conversationId ?? null,
-    question: `「${truncate(run.title, 40)}」第 1 轮编码完成。评审计划：「${plan.tierName}」档，${plan.checks.map((c) => labels.get(c) ?? c).join("、")}，最多 ${plan.maxRounds} 轮。\n理由：${plan.reasons.join("；")}\n开始评审吗？也可以直接回一句补充要求。`,
+    question: `「${truncate(run.title, 40)}」${isBranchReview(run) ? "分支已检出" : "第 1 轮编码完成"}。评审计划：「${plan.tierName}」档，${plan.checks.map((c) => labels.get(c) ?? c).join("、")}，最多 ${plan.maxRounds} 轮。\n理由：${plan.reasons.join("；")}\n开始评审吗？也可以直接回一句补充要求。`,
     options,
     context: { handler: "review-plan", codeRunId: run.id, tiers: [plan.tier, ...tiers.slice(0, 4).map((t) => t.id)] },
   });

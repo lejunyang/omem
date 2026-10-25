@@ -184,7 +184,8 @@ export function settleCodeChain(app: App, runId: string) {
       const messageId = newId("msg");
       // Internal handoff is a conversation record backed by this run; it is not a
       // new user source and does not invoke source indexing inside this transaction.
-      const text = `编码交办第 ${chain.round} 轮 ${r.id} 已结束：${r.status}${r.output.verdict ? `（评审：${r.output.verdict}）` : ""}。${approved ? "" : "等待本人处理；明确继续时用 continue_code_run 复用原任务。"}\n\n${String(r.output.review ?? r.output.coderSummary ?? "").slice(0, 12000)}`;
+      const branchReview = !!(r.input as { branches?: unknown }).branches;
+      const text = `${branchReview ? `分支评审 ${r.id}` : `编码交办第 ${chain.round} 轮 ${r.id}`} 已结束：${r.status}${r.output.verdict ? `（评审：${r.output.verdict}）` : ""}。${approved ? "" : branchReview ? "只有评审意见，没有改动；本人要按意见修改时用 delegate_code 传 from_branch 基于该分支交办。" : "等待本人处理；明确继续时用 continue_code_run 复用原任务。"}\n\n${String(r.output.review ?? r.output.coderSummary ?? "").slice(0, 12000)}`;
       run(app.db, "insert into messages(id,conversation_id,role,text,run_id,meta,created_at) values(?,?,?,?,?,?,?)",
         messageId, chain.conversationId, "assistant", text, r.id, JSON.stringify({ codeResult: r.id, record: true }), now());
       run(app.db, "update conversations set updated_at=? where id=?", now(), chain.conversationId);
@@ -210,7 +211,7 @@ export function trySettleCodeChain(app: App, runId: string): boolean {
 }
 
 /** Tools the assistant does not get when it is woken by a coding result: no new rounds behind the owner's back. */
-export const CODE_HANDOFF_DENY = ["delegate_code", "continue_code_run", "apply_code_run"];
+export const CODE_HANDOFF_DENY = ["delegate_code", "review_branch", "continue_code_run", "apply_code_run"];
 
 /**
  * When a delegation stops (approved, out of automatic rounds, failed, no changes), the assistant

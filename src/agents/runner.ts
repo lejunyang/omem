@@ -323,7 +323,7 @@ export function prepareRun(
 }
 
 /** Tools that hand work to another run and accept an `execution` choice. */
-const DELEGATING = ["run_agent", "continue_agent_work", "ask_agent", "delegate_code", "continue_code_run", "generate_wiki"];
+const DELEGATING = ["run_agent", "continue_agent_work", "ask_agent", "delegate_code", "review_branch", "continue_code_run", "generate_wiki"];
 /**
  * The owner's routing candidates, for a run that delegates. Without them in view the assistant
  * never looked them up (list_ai_backends) and every delegation used the profile default.

@@ -3,13 +3,13 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
-import { git, isGitRepo } from "../core/git.ts";
+import { defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
 import { findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
 import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
-import { getRun, setRunOutput, type RunContext } from "./runs.ts";
+import { createRun, getRun, setRunOutput, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 import { replyOf } from "./types.ts";
 
@@ -50,7 +50,54 @@ export type CodeInput = {
   /** Repository spaces to change together; defaults to the run's space. */
   repos?: string[];
   checks?: Record<string, string>;
+  /**
+   * Review existing branches instead of coding (by repository space): each is checked out
+   * detached, its changes since it left `base` (default: origin's default branch) are what the
+   * review sees, and nothing is applied. `fetch` updates them from origin first.
+   */
+  branches?: Record<string, { branch: string; base?: string }>;
+  fetch?: boolean;
+  /** Code on top of an existing branch (by repository space) instead of the checked-out HEAD. */
+  fromBranches?: Record<string, string>;
 };
+
+/** Whether a coding run reviews existing branches (no coding round, nothing to apply). */
+export const isBranchReview = (r: { input: unknown }) => !!(r.input as CodeInput).branches;
+
+export type BranchReviewRequest = {
+  space?: string;
+  repos: string[];
+  branch: string;
+  /** Per repository, when the branch is named differently there. */
+  branches?: Record<string, string>;
+  base?: string;
+  task?: string;
+  title?: string;
+  fetch?: boolean;
+} & Pick<CodeInput, "reviewTier" | "reviewChecks" | "reviewExecution">;
+
+/** Queue a review of existing branches: a `code` run without the coding round (runCodeTask). */
+export function createBranchReview(app: App, req: BranchReviewRequest, parentId?: string | null) {
+  const ids = [...new Set(req.repos)];
+  const home = req.space ?? ids[0];
+  codeRepos(app, home, ids);
+  const branches = Object.fromEntries(ids.map((id) => [id, { branch: req.branches?.[id] ?? req.branch, ...(req.base ? { base: req.base } : {}) }]));
+  return createRun(app, {
+    kind: "code",
+    spaceId: home,
+    title: truncate(req.title?.trim() || `评审分支 ${req.branch}`, 80),
+    input: {
+      task: req.task?.trim() || `评审分支 ${req.branch} 相对基线的全部改动。`,
+      reviewExecution: req.reviewExecution,
+      repos: ids,
+      branches,
+      fetch: req.fetch !== false,
+      reviewTier: req.reviewTier || undefined,
+      reviewChecks: req.reviewChecks,
+    } satisfies CodeInput,
+    parentId: parentId ?? undefined,
+  });
+}
 type Check = { command: string; code: number; output: string; ms: number };
 type RepoResult = { space: string; diffStat: string; diffBytes: number; check: Check | null };
 
@@ -105,11 +152,20 @@ export async function runCodeTask(ctx: RunContext) {
       continue;
     }
     const path = join(workDir, repo.id);
-    const base = git(repo.rootPath!, ["rev-parse", "HEAD"]).stdout.trim();
+    if (input.branches) {
+      const wt = checkoutBranch(repo, input.branches[repo.id], path, input.fetch !== false);
+      worktrees.push(wt);
+      ctx.event("status", { text: `已在 ${path} 检出 ${repo.id} 的分支 ${wt.ref}（${wt.tip!.slice(0, 8)}），评审它相对 ${wt.baseRef} 的改动（分叉点 ${wt.base.slice(0, 8)}）` });
+      continue;
+    }
+    const from = input.fromBranches?.[repo.id];
+    const start = from ? resolveRef(repo.rootPath!, from) : null;
+    if (from && !start) throw new HttpError(404, `${repo.id} 里没有分支 ${from}`);
+    const base = start?.commit ?? git(repo.rootPath!, ["rev-parse", "HEAD"]).stdout.trim();
     const r = git(repo.rootPath!, ["worktree", "add", "-q", "-b", branch, path, base]);
     if (!r.ok) throw new Error(`在 ${repo.id} 创建工作区失败：${r.stderr}`);
-    worktrees.push({ space: repo.id, path, branch, base });
-    ctx.event("status", { text: `已在 ${path} 创建 ${repo.id} 的独立工作区（基于 ${base.slice(0, 8)}）` });
+    worktrees.push({ space: repo.id, path, branch, base, ...(from ? { baseRef: from } : {}) });
+    ctx.event("status", { text: `已在 ${path} 创建 ${repo.id} 的独立工作区（基于 ${from ? `分支 ${from} 的 ` : ""}${base.slice(0, 8)}）` });
   }
   if (chain) {
     const { saveCodeChain } = await import("./code-chain.ts");
@@ -145,46 +201,51 @@ ${input.task}
 
 继续在原来的工作区里改，不要重做已经通过的部分；改完重新运行检查命令。${where}`
     : `${input.task}${where}`;
-  let resumeCoder = (input as { resumeSessionId?: string }).resumeSessionId;
-  const previousId = chain?.rounds.filter((id) => id !== run.id).at(-1);
-  if (resumeCoder && previousId) {
-    const previous = getRun(app, previousId);
-    const profile = resolveRunProfile(app, { actor: { role: "coder" }, ...executionArgs(input.execution) });
-    const expected = { profile: profile.id, model: profile.model, effort: profile.effort };
-    if (previous.output.coderAI && JSON.stringify(previous.output.coderAI) !== JSON.stringify(expected)) resumeCoder = undefined;
-  }
-  // Later rounds resume this session, so it is kept even on backends that would discard it.
-  const runCoder = (task: string, resumeSessionId?: string) => runRole(app, {
-    role: "coder",
-    execution: input.execution,
-    spaceId: run.spaceId!,
-    spaces,
-    task,
-    runId: run.id,
-    cwd,
-    signal: ctx.signal,
-    resumeSessionId,
-    persistSession: true,
-    onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
-  });
-  // A new session on a later round has not seen the original task: give it along with this round's.
-  const first = continueFrom && chain?.rounds[0] && chain.rounds[0] !== run.id ? String(getRun(app, chain.rounds[0]).input.task ?? "") : "";
-  const freshTask = first ? `# 原始任务
+  const coderReply = input.branches ? branchSummary(worktrees) : await code();
+  if (input.branches) ctx.output({ coderSummary: coderReply });
+  async function code() {
+    let resumeCoder = (input as { resumeSessionId?: string }).resumeSessionId;
+    const previousId = chain?.rounds.filter((id) => id !== run.id).at(-1);
+    if (resumeCoder && previousId) {
+      const previous = getRun(app, previousId);
+      const profile = resolveRunProfile(app, { actor: { role: "coder" }, ...executionArgs(input.execution) });
+      const expected = { profile: profile.id, model: profile.model, effort: profile.effort };
+      if (previous.output.coderAI && JSON.stringify(previous.output.coderAI) !== JSON.stringify(expected)) resumeCoder = undefined;
+    }
+    // Later rounds resume this session, so it is kept even on backends that would discard it.
+    const runCoder = (task: string, resumeSessionId?: string) => runRole(app, {
+      role: "coder",
+      execution: input.execution,
+      spaceId: run.spaceId!,
+      spaces,
+      task,
+      runId: run.id,
+      cwd,
+      signal: ctx.signal,
+      resumeSessionId,
+      persistSession: true,
+      onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
+    });
+    // A new session on a later round has not seen the original task: give it along with this round's.
+    const first = continueFrom && chain?.rounds[0] && chain.rounds[0] !== run.id ? String(getRun(app, chain.rounds[0]).input.task ?? "") : "";
+    const freshTask = first ? `# 原始任务
 
 ${first}
 
 ${coderTask}` : coderTask;
-  let coder: Awaited<ReturnType<typeof runCoder>>;
-  try {
-    coder = await runCoder(resumeCoder ? coderTask : freshTask, resumeCoder);
-  } catch (e) {
-    if (!resumeCoder || ctx.signal.aborted) throw e;
-    // The previous session is gone (cleaned up, or the backend cannot resume it): the worktree
-    // still has the changes, so a new session carries on from there.
-    ctx.event("status", { phase: "coder", text: `没能接上上一轮的编码会话（${truncate((e as Error).message, 200)}），换新会话继续` });
-    coder = await runCoder(freshTask);
+    let coder: Awaited<ReturnType<typeof runCoder>>;
+    try {
+      coder = await runCoder(resumeCoder ? coderTask : freshTask, resumeCoder);
+    } catch (e) {
+      if (!resumeCoder || ctx.signal.aborted) throw e;
+      // The previous session is gone (cleaned up, or the backend cannot resume it): the worktree
+      // still has the changes, so a new session carries on from there.
+      ctx.event("status", { phase: "coder", text: `没能接上上一轮的编码会话（${truncate((e as Error).message, 200)}），换新会话继续` });
+      coder = await runCoder(freshTask);
+    }
+    ctx.output({ coderSummary: replyOf(coder).trim(), coderAI: coder.ai, coderAgent: coder.profileId, coderSessionId: coder.sessionId });
+    return replyOf(coder);
   }
-  ctx.output({ coderSummary: replyOf(coder).trim(), coderAI: coder.ai, coderAgent: coder.profileId, coderSessionId: coder.sessionId });
 
   const results: RepoResult[] = [];
   const diffs: string[] = [];
@@ -208,7 +269,7 @@ ${coderTask}` : coderTask;
   const statText = results.filter((r) => r.diffStat).map((r) => (multi ? `[${r.space}]\n${r.diffStat}` : r.diffStat)).join("\n\n");
   ctx.output({ repos: results, diffStat: statText, diffBytes: results.reduce((n, r) => n + r.diffBytes, 0), check: multi ? undefined : results[0].check });
   if (!diffs.length) {
-    notify(app, { title: `交办未产生改动：${run.title}`, body: truncate(replyOf(coder), 400), link: `#/runs/${run.id}` });
+    notify(app, { title: `${input.branches ? "分支相对基线没有改动" : "交办未产生改动"}：${run.title}`, body: truncate(coderReply, 400), link: `#/runs/${run.id}` });
     return { verdict: "no-changes" };
   }
 
@@ -246,6 +307,39 @@ ${coderTask}` : coderTask;
     return { verdict: "awaiting-plan" };
   }
   return reviewRound(app, run.id, { runId: run.id, signal: ctx.signal, event: ctx.event });
+}
+
+/**
+ * Check out an existing branch for review: a detached worktree at the branch tip whose HEAD is
+ * moved back to where it left the base (`reset --soft`), so its changes are staged against HEAD
+ * like a delegation's and the diff, metrics, index and file views work unchanged.
+ */
+function checkoutBranch(repo: Space, target: { branch: string; base?: string } | undefined, path: string, fetch: boolean): WorktreeRef {
+  if (!target?.branch) throw new HttpError(400, `没有指定 ${repo.id} 要评审的分支`);
+  const root = repo.rootPath!;
+  const baseRef = target.base || defaultBaseRef(root);
+  if (!baseRef) throw new HttpError(400, `${repo.id} 找不到默认分支（main / master），请指定基线分支`);
+  if (fetch) for (const name of new Set([target.branch, baseRef])) fetchBranch(root, name);
+  const tip = resolveRef(root, target.branch);
+  if (!tip) throw new HttpError(404, `${repo.id} 里没有分支 ${target.branch}`);
+  const baseTip = resolveRef(root, baseRef);
+  if (!baseTip) throw new HttpError(404, `${repo.id} 里没有基线 ${baseRef}`);
+  const mb = git(root, ["merge-base", baseTip.commit, tip.commit]);
+  if (!mb.ok) throw new HttpError(400, `${target.branch} 和 ${baseRef} 没有共同的提交`);
+  const base = mb.stdout.trim();
+  const add = git(root, ["worktree", "add", "-q", "--detach", path, tip.commit]);
+  if (!add.ok) throw new Error(`在 ${repo.id} 检出 ${target.branch} 失败：${add.stderr}`);
+  const reset = git(path, ["reset", "-q", "--soft", base]);
+  if (!reset.ok) throw new Error(`在 ${repo.id} 准备评审工作区失败：${reset.stderr}`);
+  return { space: repo.id, path, branch: "", base, ref: target.branch, tip: tip.commit, baseRef };
+}
+
+/** What the reviewers read in place of a coding Agent's summary: the branch and its commits. */
+function branchSummary(worktrees: WorktreeRef[]) {
+  return worktrees.map((wt) => {
+    const log = git(wt.path, ["log", "--no-color", "--format=- %h %an %ad %s", "--date=short", "-n", "60", `${wt.base}..${wt.tip}`]).stdout.trim();
+    return `${worktrees.length > 1 ? `### ${wt.space}\n\n` : ""}这是对已有分支的评审，没有编码这一步：${wt.space} 的分支 ${wt.ref}（${wt.tip!.slice(0, 8)}）相对 ${wt.baseRef}，从分叉点 ${wt.base.slice(0, 8)} 起的改动。工作区就是该分支的代码。\n\n提交：\n${log || "（没有提交）"}`;
+  }).join("\n\n");
 }
 
 /** What review tiers are chosen by: the size and place of the change, whether checks passed. */
@@ -306,6 +400,7 @@ function removeWorktrees(app: App, runId: string) {
 export function applyCodeRun(app: App, runId: string) {
   const r = getRun(app, runId);
   if (r.kind !== "code" || r.status !== "done") throw new HttpError(400, "只能应用已完成的编码运行");
+  if (isBranchReview(r)) throw new HttpError(400, "分支评审只给评审意见，没有可应用的改动；要改，基于该分支交办编码（from_branch）");
   if ((r.output as { appliedAt?: string }).appliedAt) throw new HttpError(409, "这次交办已经应用过");
   const targets = patchFiles(app, runId)
     .filter((p) => readFileSync(p.file, "utf8").trim())

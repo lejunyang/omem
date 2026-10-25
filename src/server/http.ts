@@ -16,7 +16,9 @@ import fastifyCompress from "@fastify/compress";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
-import { applyCodeRun, codePatches, codeRepos, discardCodeRun } from "../agents/code.ts";
+import { applyCodeRun, codePatches, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
+import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
+import { defaultBaseRef, fetchBranch, git, isGitRepo, listBranches } from "../core/git.ts";
 import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePages, type PageBrief } from "../agents/jobs.ts";
 import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
@@ -303,10 +305,54 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // ------------------------------------------------------------------- search
   server.get("/api/search", async (req) => {
-    const o = q(z.object({ q: z.string().min(1), space: z.string().optional(), types: z.string().optional(), limit: z.coerce.number().optional() }), req.query);
+    const o = q(z.object({ q: z.string().min(1), space: z.string().optional(), types: z.string().optional(), limit: z.coerce.number().optional(), branch: z.string().optional() }), req.query);
     const requested = o.space && o.space !== "*" ? o.space.split(",") : null;
-    const spaces = scopeFor(app, who(req), requested) ?? undefined;
-    return { hits: await search(app, o.q, { spaces, types: o.types ? (o.types.split(",") as never) : undefined, limit: o.limit ?? 30, perSource: 2 }) };
+    let spaces = scopeFor(app, who(req), requested) ?? undefined;
+    // A repository space on one branch: its index of the branch stands in for the files it changed.
+    let branch: Awaited<ReturnType<typeof indexBranch>> | undefined;
+    if (o.branch) {
+      if (requested?.length !== 1 || !spaces?.length) throw new HttpError(400, "按分支检索时 space 填一个代码仓库空间");
+      branch = await indexBranch(app, spaces[0], o.branch);
+      spaces = [spaces[0], branch.space];
+    }
+    return { hits: await search(app, o.q, { spaces, types: o.types ? (o.types.split(",") as never) : undefined, limit: o.limit ?? 30, perSource: 2 }), branch };
+  });
+
+  // ------------------------------------------------------------------- branches of a repository space
+  const repoFor = (req: { params: unknown }, userId: string) => {
+    const s = getSpace(app, (req.params as { id: string }).id);
+    if (!(scopeFor(app, userId, [s.id]) ?? [s.id]).includes(s.id)) throw new HttpError(403, `不能访问空间 ${s.id}`);
+    if (!s.rootPath || !isGitRepo(s.rootPath)) throw new HttpError(400, `空间 ${s.id} 没有关联 Git 仓库`);
+    return s as typeof s & { rootPath: string };
+  };
+  server.get("/api/spaces/:id/branches", async (req) => {
+    const s = repoFor(req, who(req));
+    const o = q(z.object({ fetch: z.coerce.boolean().optional() }), req.query);
+    if (o.fetch) fetchBranch(s.rootPath, "*");
+    return {
+      current: git(s.rootPath, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim(),
+      base: defaultBaseRef(s.rootPath),
+      branches: listBranches(s.rootPath),
+      indexed: branchIndexes(app, s.id).map((x) => ({ space: x.id, branch: x.settings.branch, baseRef: x.settings.baseRef, commit: x.settings.commit, updatedAt: x.updatedAt })),
+    };
+  });
+  server.post("/api/spaces/:id/branches/index", async (req) => {
+    const s = repoFor(req, who(req));
+    const b = q(z.object({ branch: z.string().min(1), base: z.string().optional(), fetch: z.boolean().optional() }), req.body);
+    return indexBranch(app, s.id, b.branch, { base: b.base, fetch: b.fetch });
+  });
+  server.delete("/api/spaces/:id/branches/index", async (req) => {
+    const s = repoFor(req, who(req));
+    const o = q(z.object({ branch: z.string().min(1) }), req.query);
+    dropWorktreeSpace(app, branchIndexes(app, s.id).find((x) => x.settings.branch === o.branch)?.id ?? "");
+    return { ok: true };
+  });
+  server.post("/api/review-branch", async (req) => {
+    const b = q(z.object({ space: z.string().optional(), repos: z.array(z.string()).min(1), branch: z.string().min(1), branches: z.record(z.string(), z.string()).optional(), base: z.string().optional(), task: z.string().optional(), title: z.string().optional(), fetch: z.boolean().optional(), reviewTier: z.string().optional() }), req.body);
+    const userId = who(req);
+    const allowed = scopeFor(app, userId, [...b.repos, ...(b.space ? [b.space] : [])]) ?? b.repos;
+    for (const id of [...b.repos, ...(b.space ? [b.space] : [])]) if (!allowed.includes(id)) throw new HttpError(403, `不能访问空间 ${id}`);
+    return createBranchReview(app, b);
   });
 
   // --------------------------------------------------------------------- chat
@@ -696,10 +742,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/delegate", async (req) => {
     // `space` is where the task belongs (a repository or a project); `repos` the repositories it changes.
-    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional(), reviewTier: z.string().optional() }), req.body);
+    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional(), reviewTier: z.string().optional(), fromBranch: z.string().optional() }), req.body);
     const s = getSpace(app, b.space);
     const repos = codeRepos(app, s.id, b.repos).map((r) => r.id);
-    return createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined } });
+    const fromBranches = b.fromBranch ? Object.fromEntries(repos.map((id) => [id, b.fromBranch!])) : undefined;
+    return createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches } });
   });
 
   // ------------------------------------------------------------------- code review (docs/v2/review.md)

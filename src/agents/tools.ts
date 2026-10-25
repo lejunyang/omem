@@ -20,7 +20,9 @@ import { listItems, upsertItem, getItem, itemEvents } from "../items/store.ts";
 import { getMemory, listMemories, memoryHistory, remember, retract, supersede, type MemoryKind } from "../memory/store.ts";
 import { ensureFolder, folderProblems, folderTreeText, moveMemories, normalizeFolder, relocateFolder, removeFolder } from "../memory/folders.ts";
 import { checkMemory, formatProblems, logRejection, markReviewed, similarMemories, type MemoryProblem } from "../memory/quality.ts";
-import { search, type HitType } from "../search/search.ts";
+import { defaultBaseRef, fetchBranch, git, listBranches, resolveRef } from "../core/git.ts";
+import { search, shadowedFiles, type HitType } from "../search/search.ts";
+import { branchIndexes, indexBranch, overlayRepo } from "./worktree-index.ts";
 import { importText, importUrl, repoFiles, syncDirectorySpace } from "../sources/import.ts";
 import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
 import { listPages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
@@ -109,8 +111,20 @@ const def = <S extends z.ZodObject>(t: { name: string; description: string; sche
 function space(ctx: ToolContext, requested?: string | null) {
   const id = requested || ctx.spaceId;
   if (!findSpace(ctx.app, id)) throw new HttpError(400, `没有空间 ${id}；用 list_spaces 查看`);
-  if (ctx.spaces && !ctx.spaces.includes(id)) throw new HttpError(403, `本次任务不能访问空间 ${id}`);
+  if (!canRead(ctx, id)) throw new HttpError(403, `本次任务不能访问空间 ${id}`);
   return id;
+}
+/** In this run's read scope; a branch or delegation index goes with the repository it is over. */
+function canRead(ctx: ToolContext, id: string) {
+  if (!ctx.spaces || ctx.spaces.includes(id)) return true;
+  const repo = overlayRepo(ctx.app, id);
+  return !!repo && ctx.spaces.includes(repo);
+}
+/** A repository space and its index of `branch` (created or refreshed), to search the code as it is on that branch. */
+async function branchSpaces(ctx: ToolContext, requested: string | null | undefined, branch: string) {
+  const repo = space(ctx, requested);
+  const idx = await indexBranch(ctx.app, repo, branch);
+  return { spaces: [repo, idx.space], idx };
 }
 /** Reject objects that live outside the spaces this caller may write. */
 function inScope(ctx: ToolContext, spaceId: string, what: string) {
@@ -174,7 +188,7 @@ function resolveSource(ctx: ToolContext, ref: string, spaceId?: string | null) {
     return `__mem__:${id}`;
   }
   const byId = one<{ id: string; space_id: string }>(ctx.app.db, "select id, space_id from sources where id = ?", clean);
-  if (byId && (!scope || scope.includes(byId.space_id))) return byId.id;
+  if (byId && canRead(ctx, byId.space_id)) return byId.id;
   const sid = spaceId ? space(ctx, spaceId) : null;
   const rows = all<{ id: string; space_id: string; uri: string }>(
     ctx.app.db,
@@ -319,16 +333,19 @@ def({
     scope: z.enum(["all", "sources", "pages", "memories"]).optional(),
     source_kind: z.enum(["doc", "code", "chat", "note", "web"]).optional(),
     limit: z.number().int().min(1).max(40).optional(),
+    branch: z.string().optional().describe("查代码仓库某个分支上的代码（space 填仓库空间）：分支改过的文件按分支上的版本，其余按仓库；第一次查时建索引"),
   }),
   handler: async (ctx, a) => {
+    const onBranch = a.branch ? await branchSpaces(ctx, a.space, a.branch) : null;
     const hits = await search(ctx.app, a.query, {
-      spaces: spacesFor(ctx, a.space),
+      spaces: onBranch?.spaces ?? spacesFor(ctx, a.space),
       types: sourceKinds[a.scope ?? "all"],
       limit: a.limit ?? 12,
       sourceKinds: a.source_kind ? [a.source_kind] : undefined,
     });
-    if (!hits.length) return "没有命中。换个说法、换关键词、去掉限定或搜索其他空间。";
-    return hits
+    const head = onBranch ? `分支 ${onBranch.idx.branch}（${onBranch.idx.commit.slice(0, 8)}）相对 ${onBranch.idx.baseRef} 改了 ${onBranch.idx.files} 个文件、删了 ${onBranch.idx.deleted} 个，这些按分支上的版本（空间 ${onBranch.idx.space}），其余按 ${onBranch.idx.repo}。\n\n` : "";
+    if (!hits.length) return `${head}没有命中。换个说法、换关键词、去掉限定或搜索其他空间。`;
+    return head + hits
       .map((h, i) => {
         const where =
           h.type === "page"
@@ -460,17 +477,18 @@ def({
   name: "find_symbol",
   description:
     "代码导航：按名称（或 Class.method）找定义，以及谁调用它、它调用了谁。已按导入关系解析到具体定义的列在“已解析”，只能按名称匹配的（可能同名误报）单独列出。",
-  schema: z.object({ name: z.string(), space: z.string().optional() }),
-  handler: (ctx, a) => {
-    const sp = spacesFor(ctx, a.space);
+  schema: z.object({ name: z.string(), space: z.string().optional(), branch: z.string().optional().describe("看某个分支上的定义（space 填仓库空间）") }),
+  handler: async (ctx, a) => {
+    const sp = a.branch ? (await branchSpaces(ctx, a.space, a.branch)).spaces : spacesFor(ctx, a.space);
     const filter = sp ? `and y.space_id in (${sp.map(() => "?").join(",")})` : "";
-    const defs = all<{ source_id: string; uri: string; qname: string; kind: string; line_start: number; line_end: number; signature: string }>(
+    const shadow = shadowedFiles(ctx.app, sp);
+    const defs = all<{ source_id: string; space_id: string; uri: string; qname: string; kind: string; line_start: number; line_end: number; signature: string }>(
       ctx.app.db,
-      `select y.source_id, s.uri, y.qname, y.kind, y.line_start, y.line_end, y.signature from symbols y join sources s on s.id = y.source_id where (y.name = ? or y.qname = ?) ${filter} and s.deleted_at is null limit 20`,
+      `select y.source_id, y.space_id, s.uri, y.qname, y.kind, y.line_start, y.line_end, y.signature from symbols y join sources s on s.id = y.source_id where (y.name = ? or y.qname = ?) ${filter} and s.deleted_at is null limit 20`,
       a.name,
       a.name,
       ...(sp ?? []),
-    );
+    ).filter((d) => !shadow.get(d.space_id)?.has(d.uri));
     type R = { source_id: string; uri: string; from_qname: string; line: number; kind: string; qualifier: string | null; to_qname: string | null; to_uri: string | null; to_name: string };
     const sel = `select r.source_id, s.uri, r.from_qname, r.line, r.kind, r.qualifier, r.to_qname, r.to_name, t.uri as to_uri from code_refs r join sources s on s.id = r.source_id left join sources t on t.id = r.to_source_id`;
     const at = (r: R) => `${r.uri}:${r.line} 在 ${r.from_qname || "(模块顶层)"} 中`;
@@ -589,7 +607,7 @@ def({
 function assistantTaskScope(ctx: ToolContext) {
   return {
     spaces: ctx.writable ?? ctx.spaces,
-    denyTools: [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "continue_agent_work", "ask_agent", "delegate_code", "continue_code_run"])],
+    denyTools: [...new Set([...toolList().filter((t) => ctx.tools && !ctx.tools.has(t.name)).map((t) => t.name), "run_agent", "continue_agent_work", "ask_agent", "delegate_code", "review_branch", "continue_code_run"])],
     userId: ctx.userId,
     lark: { chats: ctx.larkChats === undefined ? [] : ctx.larkChats, draft: ctx.larkDraft, urgent: ctx.larkPowers?.urgent, private: ctx.larkPowers?.private },
   };
@@ -2373,29 +2391,88 @@ def({
     space: z.string().optional().describe("任务所属的空间（如项目空间），默认第一个仓库"),
     review_tier: z.string().optional().describe("本人点名的评审档位（id 或名字，如“完整”）；不传按改动大小自动选"),
     review_checks: z.array(z.string()).optional().describe("本人要求额外加上的评审项（档案名，如 security-review）"),
+    from_branch: z.string().optional().describe("在已有分支上继续开发（如按分支评审的意见修改）：worktree 从这个分支的最新提交开始，而不是仓库当前检出的 HEAD；应用时要求本人的工作区也在这个分支上才能干净应用"),
   }),
   handler: async (ctx, a) => {
     const execution = validateExecution(ctx.app, a.execution);
-    const { reviewTiers, reviewChecks } = await import("./review.ts");
-    if (a.review_tier && !reviewTiers(ctx.app).some((t) => t.id === a.review_tier || t.name === a.review_tier)) throw new HttpError(400, `没有评审档位 ${a.review_tier}；可选：${reviewTiers(ctx.app).map((t) => t.name).join("、")}`);
-    const unknownChecks = (a.review_checks ?? []).filter((c) => !reviewChecks(ctx.app).some((x) => x.name === c));
-    if (unknownChecks.length) throw new HttpError(400, `没有评审项 ${unknownChecks.join("、")}；可选：${reviewChecks(ctx.app).map((x) => `${x.name}（${x.label}）`).join("、")}`);
+    await validateReviewChoice(ctx, a.review_tier, a.review_checks);
     const reviewExecution = validateExecution(ctx.app, a.review_execution);
     const ids = [...new Set(a.repo_spaces.map((r) => writeSpace(ctx, r)))];
     const home = a.space ? space(ctx, a.space) : ids[0];
     const { codeRepos } = await import("./code.ts");
-    codeRepos(ctx.app, home, ids);
+    const repos = codeRepos(ctx.app, home, ids);
+    if (a.from_branch) for (const repo of repos) if (!resolveRef(repo.rootPath!, a.from_branch)) throw new HttpError(404, `${repo.id} 里没有分支 ${a.from_branch}；用 list_branches 查看`);
     const r = createRun(ctx.app, {
       kind: "code",
       spaceId: home,
       title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
-      input: { task: a.task, execution, reviewExecution, checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks },
+      input: { task: a.task, execution, reviewExecution, checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}) },
       parentId: ctx.runId,
     });
     // Seed the chain so later rounds (and the Feishu progress topic) find the original ask.
     const { codeChainFor } = await import("./code-chain.ts");
     const chain = codeChainFor(ctx.app, r);
     return `已交办，运行 ${r.id}（${ids.join("、")}），共一个会话，评审要求修改会自动续轮。完成后会通知；进度可看 ${chain ? `#/runs/${r.id}` : r.id}。`;
+  },
+});
+
+async function validateReviewChoice(ctx: ToolContext, tier?: string, checks?: string[]) {
+  const { reviewTiers, reviewChecks } = await import("./review.ts");
+  if (tier && !reviewTiers(ctx.app).some((t) => t.id === tier || t.name === tier)) throw new HttpError(400, `没有评审档位 ${tier}；可选：${reviewTiers(ctx.app).map((t) => t.name).join("、")}`);
+  const unknown = (checks ?? []).filter((c) => !reviewChecks(ctx.app).some((x) => x.name === c));
+  if (unknown.length) throw new HttpError(400, `没有评审项 ${unknown.join("、")}；可选：${reviewChecks(ctx.app).map((x) => `${x.name}（${x.label}）`).join("、")}`);
+}
+
+def({
+  name: "review_branch",
+  description:
+    "评审已有的分支（本人或同事写的需求分支，不是 omem 交办产生的）：每个仓库把分支检出到独立工作区，取它从基线分叉以来的全部改动，按评审档位交给各评审项独立审查（功能、业务、架构、规范、历史等），有评审负责人的档位由负责人汇总。只出评审意见，不改代码、不能应用；要按意见修改再用 delegate_code 传 from_branch。分支改过的文件在工作区存在期间可检索。返回运行 id，用 read_run 看进度和结论。",
+  write: true,
+  schema: z.object({
+    repo_spaces: z.array(z.string()).min(1).describe("分支所在的代码仓库空间 id；一个需求的分支分布在几个仓库时都写上"),
+    branch: z.string().describe("要评审的分支名（本地或 origin 上的，如 feature/refund）"),
+    branches: z.record(z.string(), z.string()).optional().describe("几个仓库的分支名不同时，按仓库空间 id 分别写"),
+    base: z.string().optional().describe("对照的基线分支，默认 origin 的默认分支（main / master）"),
+    task: z.string().optional().describe("需求说明和评审要求：需求要解决什么、验收标准、相关文档或讨论（带 src: 引用），本人特别关心的点；写得越具体，业务评审越有依据"),
+    title: z.string().max(80).optional(),
+    space: z.string().optional().describe("评审所属的空间（如项目空间），默认第一个仓库"),
+    fetch: z.boolean().optional().describe("先从 origin 拉取分支和基线（默认是）"),
+    review_tier: z.string().optional().describe("本人点名的评审档位（id 或名字，如“完整”）；不传按改动大小自动选"),
+    review_checks: z.array(z.string()).optional().describe("本人要求额外加上的评审项（档案名）"),
+    review_execution: executionSchema.optional().describe("功能评审 AI 的临时选择"),
+  }),
+  handler: async (ctx, a) => {
+    await validateReviewChoice(ctx, a.review_tier, a.review_checks);
+    const reviewExecution = validateExecution(ctx.app, a.review_execution);
+    const ids = [...new Set(a.repo_spaces.map((r) => space(ctx, r)))];
+    const { createBranchReview } = await import("./code.ts");
+    const r = createBranchReview(ctx.app, {
+      space: a.space ? space(ctx, a.space) : undefined, repos: ids, branch: a.branch, branches: a.branches, base: a.base, task: a.task, title: a.title, fetch: a.fetch,
+      reviewTier: a.review_tier, reviewChecks: a.review_checks, reviewExecution,
+    }, ctx.runId);
+    // The chain carries the result back to this conversation (and the Feishu progress card).
+    const { codeChainFor } = await import("./code-chain.ts");
+    codeChainFor(ctx.app, r);
+    return `已开始评审，运行 ${r.id}（${ids.map((id) => `${id}:${a.branches?.[id] ?? a.branch}`).join("、")}）。评审完成后会通知；进度用 read_run 查看。`;
+  },
+});
+
+def({
+  name: "list_branches",
+  description: "列出代码仓库空间的分支（本地和 origin 上的，按最近提交排序），以及已经建了检索索引的分支。查某个分支上的代码用 search / find_symbol 的 branch 参数。",
+  schema: z.object({ space: z.string(), query: z.string().optional().describe("按名字筛选"), fetch: z.boolean().optional().describe("先从 origin 拉取全部分支（git fetch origin）") }),
+  handler: (ctx, a) => {
+    const id = space(ctx, a.space);
+    const root = findSpace(ctx.app, id)!.rootPath;
+    if (!root) throw new HttpError(400, `空间 ${id} 没有关联 Git 仓库`);
+    if (a.fetch) fetchBranch(root, "*");
+    const list = listBranches(root).filter((b) => !a.query || b.name.toLowerCase().includes(a.query.toLowerCase())).slice(0, 60);
+    const indexed = branchIndexes(ctx.app, id);
+    return [
+      `${id} 当前检出：${git(root, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim()}；默认基线：${defaultBaseRef(root) ?? "（无）"}`,
+      ...list.map((b) => `- ${b.name}  ${b.commit.slice(0, 8)}  ${b.at.slice(0, 10)}  ${truncate(b.subject, 80)}`),
+      indexed.length ? `\n已建索引的分支：\n${indexed.map((s) => `- ${s.settings.branch}（空间 ${s.id}，${String(s.settings.commit ?? "").slice(0, 8)}，相对 ${s.settings.baseRef}）`).join("\n")}` : "",
+    ].filter(Boolean).join("\n") || "（没有分支）";
   },
 });
 
@@ -2420,6 +2497,7 @@ def({
     const rounds = codeChainRounds(ctx.app, askId).filter((r) => r.kind === "code");
     const last = rounds.at(-1);
     if (!last) throw new HttpError(400, "这不是一次交办编码任务");
+    if ((last.input as { branches?: unknown }).branches) throw new HttpError(400, "这是对已有分支的评审，不能续轮编码；要按评审意见修改，用 delegate_code 并传 from_branch 基于该分支交办");
     const chain = codeChainFor(ctx.app, last) ?? (last.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? null;
     if (!chain) throw new HttpError(400, "找不到这次交办的会话链");
     for (const id of [last.spaceId!, ...((last.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);

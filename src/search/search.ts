@@ -63,6 +63,27 @@ export function snippet(text: string, query: string, size = 360): string {
   return (best > 1 ? "…" : "") + out.slice(0, size).trim() + (out.length > size ? "…" : "");
 }
 
+/**
+ * Repository files a branch or delegation index stands in for, by repository space: when both are
+ * searched, the index has the file as it is on the branch (or says it was deleted there), so the
+ * repository's copy is left out. Only for indexes named in `spaces` (searching everything mixes
+ * every branch and must not hide the checked-out code).
+ */
+export function shadowedFiles(app: App, spaces?: string[]): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  if (!spaces?.length) return out;
+  const rows = all<{ id: string; settings: string }>(app.db, `select id, settings from spaces where kind = 'worktree' and id in (${spaces.map(() => "?").join(",")})`, ...spaces);
+  for (const r of rows) {
+    const st = JSON.parse(r.settings || "{}") as { repo?: string; deleted?: string[] };
+    if (!st.repo || !spaces.includes(st.repo)) continue;
+    const set = out.get(st.repo) ?? new Set<string>();
+    for (const f of all<{ uri: string }>(app.db, "select uri from sources where space_id = ? and deleted_at is null", r.id)) set.add(f.uri);
+    for (const f of st.deleted ?? []) set.add(f);
+    out.set(st.repo, set);
+  }
+  return out;
+}
+
 type Ranked = { key: string; hit: Omit<Hit, "score" | "via">; rank: number; via: string; weight?: number };
 
 export async function search(app: App, query: string, opts: SearchOptions = {}): Promise<Hit[]> {
@@ -241,7 +262,8 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
       } else fused.set(item.key, { ...item.hit, score: add, via: [item.via] });
     }
   // A symbol hit and a chunk covering the same lines are the same evidence.
-  const hits = [...fused.values()].sort((a, b) => b.score - a.score);
+  const shadow = shadowedFiles(app, opts.spaces);
+  const hits = [...fused.values()].filter((h) => !(h.uri && shadow.get(h.spaceId)?.has(h.uri))).sort((a, b) => b.score - a.score);
   const out: Hit[] = [];
   const perSource = new Map<string, number>();
   const cap = opts.perSource ?? 3;

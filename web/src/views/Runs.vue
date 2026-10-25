@@ -8,6 +8,7 @@ import VirtualList from "../components/VirtualList.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import ChipPicker from "../components/ChipPicker.vue";
 import UiSegmented from "../components/UiSegmented.vue";
+import UiSelect from "../components/UiSelect.vue";
 import { confirmDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
 import AskAboutRun, { type AskContext } from "../components/AskAboutRun.vue";
@@ -107,6 +108,8 @@ function onListScroll(ev: Event) {
 onBeforeUnmount(() => { off(); clearTimeout(reloadTimer); });
 
 const out = computed(() => detail.value?.run.output ?? {});
+// A review of an existing branch: no coding round, nothing to apply.
+const branchReview = computed(() => !!(detail.value?.run.input as { branches?: unknown } | undefined)?.branches);
 const ctxInfo = computed(() => detail.value?.context ?? null);
 // The full task as given to the agent (delegations, agent rounds, digests); ask turns carry their messages.
 const taskText = computed(() => {
@@ -202,7 +205,37 @@ async function act(action: "cancel" | "retry" | "apply" | "discard") {
   }
 }
 const delegateOpen = ref(false);
-const task = ref({ repos: [] as string[], task: "", check: "" });
+type DelegateMode = "code" | "review";
+const mode = ref<DelegateMode>("code");
+const modeOptions = [
+  { value: "code" as const, label: "实现" },
+  { value: "review" as const, label: "评审分支" },
+];
+const emptyTask = () => ({ repos: [] as string[], task: "", check: "", branch: "", base: "", fromBranch: "" });
+const task = ref(emptyTask());
+type BranchList = { current: string; base: string | null; branches: { name: string; commit: string; at: string; subject: string; remote: boolean }[] };
+const branchList = ref<BranchList | null>(null);
+const branchLoading = ref(false);
+// Branches of the first chosen repository (repositories of one requirement usually share the branch name).
+async function loadBranches(fetch = false) {
+  const repo = task.value.repos[0];
+  if (!repo) return void (branchList.value = null);
+  branchLoading.value = true;
+  try {
+    branchList.value = await get<BranchList>(`/api/spaces/${encodeURIComponent(repo)}/branches${fetch ? "?fetch=1" : ""}`);
+  } catch (e) {
+    branchList.value = null;
+    toast((e as Error).message, "error");
+  } finally {
+    branchLoading.value = false;
+  }
+}
+const branchOptions = computed(() => (branchList.value?.branches ?? []).map((b) => ({ value: b.name, label: b.name, hint: `${b.at.slice(0, 10)} · ${b.subject}` })));
+const baseOptions = computed(() => [{ value: "", label: `默认（${branchList.value?.base ?? "main"}）` }, ...branchOptions.value]);
+const fromOptions = computed(() => [{ value: "", label: `当前检出（${branchList.value?.current ?? "HEAD"}）` }, ...branchOptions.value]);
+watch([delegateOpen, () => task.value.repos[0]], ([open]) => {
+  if (open) void loadBranches();
+});
 const repos = computed(() => state.spaces.filter((s) => s.rootPath));
 const current = computed(() => state.spaces.find((s) => s.id === state.space));
 // Start from the current repository, or the repositories related to the current project.
@@ -216,9 +249,12 @@ async function delegate() {
   try {
     // A task started from a project belongs to the project; otherwise to its first repository.
     const space = current.value?.kind === "project" ? current.value.id : task.value.repos[0];
-    const r = await post<Run>("/api/delegate", { space, repos: task.value.repos, task: task.value.task, checkCommand: task.value.check || undefined });
+    const t = task.value;
+    const r = mode.value === "review"
+      ? await post<Run>("/api/review-branch", { space, repos: t.repos, branch: t.branch, base: t.base || undefined, task: t.task.trim() || undefined })
+      : await post<Run>("/api/delegate", { space, repos: t.repos, task: t.task, checkCommand: t.check || undefined, fromBranch: t.fromBranch || undefined });
     delegateOpen.value = false;
-    task.value = { repos: [], task: "", check: "" };
+    task.value = emptyTask();
     router.push(`/runs/${r.id}`);
   } catch (e) {
     toast((e as Error).message, "error");
@@ -283,8 +319,8 @@ const kindOptions = computed(() => [
             <button v-if="['queued', 'running'].includes(detail.run.status)" class="btn sm" @click="act('cancel')"><Icon name="stop" :size="13" />停止</button>
             <button v-if="['failed', 'cancelled'].includes(detail.run.status)" class="btn sm" @click="act('retry')"><Icon name="refresh" :size="13" />重试</button>
             <template v-if="detail.run.kind === 'code' && detail.run.status === 'done' && detail.patches?.length && !out.appliedAt && !out.discardedAt">
-              <button class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到仓库</button>
-              <button class="btn sm danger" @click="act('discard')">丢弃</button>
+              <button v-if="!branchReview" class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到仓库</button>
+              <button class="btn sm danger" :title="branchReview ? '删除评审用的工作区和它的索引' : undefined" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
             </template>
             <span v-if="out.appliedAt" class="badge ok">已应用 {{ fmtTime(out.appliedAt) }}</span>
             <button v-if="detail.run.kind === 'code'" class="btn ghost sm" @click="asking = { quote: '', label: '' }"><Icon name="chat" :size="14" />提问</button>
@@ -339,7 +375,7 @@ const kindOptions = computed(() => [
         </section>
 
         <section v-if="finalText" class="block">
-          <div class="section-title">{{ detail.run.kind === "code" ? "编码 Agent 的说明" : "结果" }}</div>
+          <div class="section-title">{{ detail.run.kind === "code" ? (branchReview ? "要评审的分支" : "编码 Agent 的说明") : "结果" }}</div>
           <div class="card pad"><Markdown :source="String(finalText)" :space="detail.run.spaceId ?? undefined" /></div>
         </section>
 
@@ -352,7 +388,7 @@ const kindOptions = computed(() => [
 
         <section v-if="fileCount" class="block">
           <div class="section-title row">改动 · {{ diffs.length > 1 ? `${diffs.length} 个仓库，` : "" }}{{ fileCount }} 个文件<span class="spacer" /><span class="muted small hint-sel">选中代码可以就它提问</span><button class="btn ghost sm" @click="toggleAllDiffs">{{ openDiffs.size ? "全部收起" : "全部展开" }}</button></div>
-          <p v-if="out.indexedSpaces?.length && !out.appliedAt && !out.discardedAt" class="muted small">应用或丢弃之前，改过的文件可以检索（空间 {{ out.indexedSpaces.join("、") }}）；之后连同 worktree 一起删除。</p>
+          <p v-if="out.indexedSpaces?.length && !out.appliedAt && !out.discardedAt" class="muted small">{{ branchReview ? "清理工作区之前" : "应用或丢弃之前" }}，改过的文件可以检索（空间 {{ out.indexedSpaces.join("、") }}）；之后连同 worktree 一起删除。</p>
           <template v-for="d in diffs" :key="d.space">
           <div v-if="diffs.length > 1" class="repo-title">{{ spaceName(d.space) }}</div>
           <details v-for="f in d.files" :key="f.name" class="file" :open="openDiffs.has(`${d.space}:${f.name}`)" @toggle="onDiffToggle(`${d.space}:${f.name}`, $event)">
@@ -376,19 +412,28 @@ const kindOptions = computed(() => [
 
     <div v-if="delegateOpen" class="modal-overlay" @mousedown.self="delegateOpen = false">
       <div class="modal stack">
-        <div class="row"><strong>交办编码任务</strong><span class="spacer" /><button class="btn ghost sm icon" @click="delegateOpen = false"><Icon name="x" /></button></div>
-        <p class="muted small">每个仓库各开一个独立的 Git worktree，由编码 Agent 一起实现，分别运行检查命令，再由评审 Agent 审查。确认后所有仓库一起应用。</p>
+        <div class="row"><strong>交办编码任务</strong><span class="spacer" /><UiSegmented v-model="mode" size="sm" aria-label="交办方式" :options="modeOptions" /><button class="btn ghost sm icon" @click="delegateOpen = false"><Icon name="x" /></button></div>
+        <p v-if="mode === 'code'" class="muted small">每个仓库各开一个独立的 Git worktree，由编码 Agent 一起实现，分别运行检查命令，再由评审 Agent 审查。确认后所有仓库一起应用。</p>
+        <p v-else class="muted small">把已有的分支检出到独立工作区，取它从基线分叉以来的全部改动，按评审档位交给各评审项审查。只出评审意见，不改代码。</p>
         <div v-if="!repos.length" class="muted">还没有关联代码目录的空间，请先在设置里新建代码仓库空间。</div>
         <template v-else>
           <div class="field">
-            <span>仓库（可多选，一起改）</span>
+            <span>{{ mode === "review" ? "分支所在的仓库（可多选，分支名相同）" : "仓库（可多选，一起改）" }}</span>
             <div class="repo-picks">
               <UiCheckbox v-for="r in repos" :key="r.id" v-model="task.repos" :value="r.id" size="sm">{{ r.name }}</UiCheckbox>
             </div>
           </div>
-          <label class="field"><span>任务</span><textarea v-model="task.task" class="textarea" rows="6" placeholder="目标、背景、验收标准、相关讨论" /></label>
-          <label class="field"><span>检查命令（可选，默认用空间设置）</span><input v-model="task.check" class="input mono" placeholder="pnpm test" /></label>
-          <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!task.task.trim() || !task.repos.length" @click="delegate">交办</button></div>
+          <div v-if="task.repos.length" class="branch-row">
+            <template v-if="mode === 'review'">
+              <div class="field grow"><span>要评审的分支</span><UiSelect v-model="task.branch" :options="branchOptions" :placeholder="branchLoading ? '读取分支…' : '选择分支'" :search-at="1" aria-label="要评审的分支" /></div>
+              <div class="field grow"><span>对照的基线</span><UiSelect v-model="task.base" :options="baseOptions" :search-at="1" aria-label="基线分支" /></div>
+            </template>
+            <div v-else class="field grow"><span>从哪里开始改</span><UiSelect v-model="task.fromBranch" :options="fromOptions" :search-at="1" aria-label="起点分支" /></div>
+            <button class="btn ghost sm" :disabled="branchLoading" title="从 origin 拉取全部分支" @click="loadBranches(true)"><Icon name="refresh" :size="13" />拉取</button>
+          </div>
+          <label class="field"><span>{{ mode === "review" ? "需求说明和评审要求（可选）" : "任务" }}</span><textarea v-model="task.task" class="textarea" rows="6" :placeholder="mode === 'review' ? '需求要解决什么、验收标准、相关文档或讨论、特别关心的点' : '目标、背景、验收标准、相关讨论'" /></label>
+          <label v-if="mode === 'code'" class="field"><span>检查命令（可选，默认用空间设置）</span><input v-model="task.check" class="input mono" placeholder="pnpm test" /></label>
+          <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!task.repos.length || (mode === 'review' ? !task.branch : !task.task.trim())" @click="delegate">{{ mode === "review" ? "开始评审" : "交办" }}</button></div>
         </template>
       </div>
     </div>
@@ -396,6 +441,16 @@ const kindOptions = computed(() => [
 </template>
 
 <style scoped>
+.branch-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.branch-row .grow {
+  flex: 1 1 200px;
+  min-width: 0;
+}
 .repo-picks {
   display: flex;
   flex-wrap: wrap;

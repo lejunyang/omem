@@ -492,3 +492,13 @@ updated: 2026-10-25
 - 新增 `core/bot-context.ts`：AsyncLocalStorage 记“以哪个机器人说话”。`larkClient()` 跟随它；运行开始时重置为主机器人，`runTool` 按 `ctx.larkBot` 切换；`lark-cot` 不再用 `setCotSdk` 设的全局客户端（只留给测试），每个气泡记 `bot`；进度卡片、提问卡片、编码进度、Agent 气泡、通知按所属会话选机器人；`card_interactions` 加 `bot` 列（迁移）。
 - id 按应用区分：额外机器人不把自己看到的 open_id 写进 `lark_people.bot_open_id`，@ 人和读群成员用 `user_id`；卡片可操作人、本人在群判断（`ownerInChat`）用各自应用的 id；去掉“只有主机器人能加急 / 只给部分人看”的限制。
 - 群的采集、规则、监听只做一次：`keepsRecords` 判断主机器人是否在群里。规则事件带 `bot`，规则交给的 Agent 通过这个机器人回复。
+
+## 分支：评审已有分支、按分支检索（10-25）
+
+- `code` 运行新增输入 `branches`（按仓库空间：`branch`、`base`）和 `fetch`：`checkoutBranch` 把分支 `--detach` 检出成 worktree 再 `reset --soft` 到分叉点，跳过编码，`coderSummary` 是提交列表；`reviewRound` 对它不续轮、不发升级提问，通知标题“分支评审…”；`applyCodeRun` 拒绝，`continue_code_run` 拒绝并提示 `from_branch`。`createBranchReview` 是工具、接口和命令行共用的入口。
+- `delegate_code` 新增 `from_branch`（输入 `fromBranches`）：worktree 从该分支开始。`/api/delegate` 接受 `fromBranch`，`omem delegate --from-branch`。
+- 新工具 `review_branch`、`list_branches`；`search`、`find_symbol` 新增 `branch`。`review_branch` 和 `delegate_code` 一样不给外部 MCP、不给唤醒接手的回合和请教。
+- `worktree-index.ts`：`indexBranch`（`git show` 读分支改过的文件，不检出；空间 `br-<仓库>-<分支>-<hash>`，类型仍是 `worktree`，设置里有 `branch`、`baseRef`、`commit`、`deleted`），`branchIndexes`、`refreshBranchIndexes`（`repo-sync` 时更新），`overlayRepo`；交办工作区也记下删除的文件。`sweepWorktreeSpaces` 删掉分支已不存在的分支索引。
+- `search.ts` 的 `shadowedFiles`：检索空间里同时有仓库和它的工作区 / 分支索引时，仓库里被改过或删掉的同名文件不出现。工具层 `canRead`：能读仓库就能读它的工作区和分支索引。
+- `core/git.ts`：`resolveRef`、`fetchBranch`、`defaultBaseRef`、`listBranches`（不列 `omem/<运行>` 交办分支）。
+- 接口：`GET /api/spaces/:id/branches`、`POST|DELETE /api/spaces/:id/branches/index`、`POST /api/review-branch`、`/api/search?branch=`。命令行：`omem review-branch`、`omem branches`、`omem search --branch`。网页：运行页“交办”弹窗分“实现 / 评审分支”，可选起点分支、要评审的分支和基线。

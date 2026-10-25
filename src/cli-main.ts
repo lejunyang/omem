@@ -657,8 +657,18 @@ program
   .description("检索原件、页面与记忆")
   .option("-s, --space <id>", "空间（默认全部）")
   .option("-n, --limit <n>", "数量", (v) => Number(v), 10)
+  .option("-b, --branch <name>", "查代码仓库空间（--space）某个分支上的代码")
   .action(async (query: string[], o) => {
-    const hits = await search(open(), query.join(" "), { spaces: o.space ? [o.space] : undefined, limit: o.limit });
+    const app = open();
+    let spaces: string[] | undefined = o.space ? [o.space] : undefined;
+    if (o.branch) {
+      if (!o.space) throw new Error("--branch 要和 --space（代码仓库空间）一起用");
+      const { indexBranch } = await import("./agents/worktree-index.ts");
+      const idx = await indexBranch(app, o.space, o.branch);
+      console.log(`\x1b[2m分支 ${idx.branch}（${idx.commit.slice(0, 8)}）相对 ${idx.baseRef} 改了 ${idx.files} 个文件、删了 ${idx.deleted} 个\x1b[0m\n`);
+      spaces = [o.space, idx.space];
+    }
+    const hits = await search(app, query.join(" "), { spaces, limit: o.limit });
     for (const h of hits) {
       const where = h.type === "page" ? `[页面] ${h.spaceId}/${h.path}` : h.type === "memory" ? `[记忆] ${h.id}` : `[${h.sourceKind}] ${h.spaceId}:${h.uri}:${h.lineStart}`;
       console.log(`\x1b[1m${where}\x1b[0m ${h.path && h.type !== "page" ? h.path : ""} \x1b[2m${h.via.join("+")}\x1b[0m\n  ${h.snippet.replace(/\n/g, "\n  ").slice(0, 300)}\n`);
@@ -827,11 +837,59 @@ program
   .description("交办编码：每个仓库一个独立 worktree 实现 → 检查 → 独立评审")
   .option("--check <command>", "检查命令（对所有仓库生效）")
   .option("--repos <ids>", "一起改的仓库空间，逗号分隔（默认就是 <space>；<space> 可以是项目空间）")
+  .option("--from-branch <name>", "在已有分支上继续开发（worktree 从该分支开始，而不是当前 HEAD）")
   .action(async (sp, task: string[], o) => {
     const repos = o.repos ? String(o.repos).split(",").map((s) => s.trim()).filter(Boolean) : undefined;
-    const r = await runJob((app) => createRun(app, { kind: "code", spaceId: sp, title: task.join(" ").slice(0, 80), input: { task: task.join(" "), checkCommand: o.check, repos } }), { stream: false });
+    const fromBranches = o.fromBranch ? Object.fromEntries((repos ?? [sp]).map((id) => [id, String(o.fromBranch)])) : undefined;
+    const r = await runJob((app) => createRun(app, { kind: "code", spaceId: sp, title: task.join(" ").slice(0, 80), input: { task: task.join(" "), checkCommand: o.check, repos, fromBranches } }), { stream: false });
     const out = r.output as { diffStat?: string; review?: string; verdict?: string };
     console.log(`${out.diffStat ?? ""}\n\n${out.review ?? ""}\n\n结论：${out.verdict ?? r.status}\n运行 id：${r.id}`);
+  });
+
+program
+  .command("review-branch <space> <branch>")
+  .description("评审已有分支：检出到独立工作区，取它从基线分叉以来的改动，按评审档位交给各评审项（只出意见，不改代码）")
+  .option("--base <name>", "对照的基线分支（默认 origin 的默认分支）")
+  .option("--repos <ids>", "分支所在的几个仓库空间，逗号分隔（默认就是 <space>；<space> 可以是项目空间）")
+  .option("--task <text>", "需求说明和评审要求")
+  .option("--tier <name>", "评审档位（id 或名字）")
+  .option("--no-fetch", "不先从 origin 拉取")
+  .action(async (sp: string, branch: string, o) => {
+    const repos = o.repos ? String(o.repos).split(",").map((s) => s.trim()).filter(Boolean) : [sp];
+    const { createBranchReview } = await import("./agents/code.ts");
+    const r = await runJob((app) => createBranchReview(app, { space: sp, repos, branch, base: o.base, task: o.task, reviewTier: o.tier, fetch: o.fetch }), { stream: false });
+    const out = r.output as { diffStat?: string; review?: string; verdict?: string; reviewLead?: { summary?: string } };
+    console.log(`${out.diffStat ?? ""}\n\n${out.review ?? ""}\n\n${out.reviewLead?.summary ? `负责人：${out.reviewLead.summary}\n` : ""}结论：${out.verdict ?? r.status}\n运行 id：${r.id}`);
+  });
+
+program
+  .command("branches <space>")
+  .description("代码仓库空间的分支，以及按分支检索用的索引")
+  .option("--fetch", "先从 origin 拉取全部分支")
+  .option("--index <name>", "给一个分支建（或更新）检索索引")
+  .option("--base <name>", "建索引时对照的基线分支")
+  .option("--drop <name>", "删掉一个分支的检索索引")
+  .action(async (sp: string, o) => {
+    const app = open();
+    const { branchIndexes, dropWorktreeSpace, indexBranch } = await import("./agents/worktree-index.ts");
+    const { defaultBaseRef, fetchBranch, listBranches } = await import("./core/git.ts");
+    const root = getSpace(app, sp).rootPath;
+    if (!root) throw new Error(`空间 ${sp} 没有关联 Git 仓库`);
+    if (o.fetch) fetchBranch(root, "*");
+    if (o.index) {
+      const r = await indexBranch(app, sp, o.index, { base: o.base });
+      return void console.log(`分支 ${r.branch} 的索引${r.refreshed ? "已更新" : "已是最新"}（空间 ${r.space}，${r.commit.slice(0, 8)}，相对 ${r.baseRef}）：${r.files} 个文件，删除 ${r.deleted} 个`);
+    }
+    if (o.drop) {
+      const s = branchIndexes(app, sp).find((x) => x.settings.branch === o.drop);
+      if (!s) throw new Error(`没有分支 ${o.drop} 的索引`);
+      dropWorktreeSpace(app, s.id);
+      return void console.log(`已删除分支 ${o.drop} 的索引`);
+    }
+    const indexed = new Set(branchIndexes(app, sp).map((s) => s.settings.branch));
+    console.log(`默认基线：${defaultBaseRef(root) ?? "（无）"}`);
+    for (const b of listBranches(root, 80)) console.log(`${indexed.has(b.name) ? "●" : " "} ${b.name.padEnd(40)} ${b.commit.slice(0, 8)}  ${b.at.slice(0, 10)}  ${b.subject.slice(0, 60)}`);
+    if (indexed.size) console.log(`\n● 已建检索索引：omem search --space ${sp} --branch <分支> <问题>`);
   });
 
 const roles = program.command("roles").description("内置角色（独立评审、编码、整理…）：自定义、恢复源码版本、合并源码更新");
@@ -947,7 +1005,7 @@ program
     // An agent working inside a repository gets that repository's space (and its related ones) by default.
     const spaceId = o.space ? getSpace(app, o.space).id : (spaceForDir(app, process.cwd()) ?? "personal");
     const ctx = { app, runId: null, spaceId, spaces: null, tools: o.readOnly ? readOnly : null, actor: "agent" as const };
-    const tools = new Set(toolSchemas(ctx.tools).map((t) => t.name).filter((n) => n !== "submit_plan" && n !== "delegate_code"));
+    const tools = new Set(toolSchemas(ctx.tools).map((t) => t.name).filter((n) => n !== "submit_plan" && n !== "delegate_code" && n !== "review_branch"));
     const server = createMcpServer({ list: async () => toolSchemas(tools), call: (name, args) => callTool({ ...ctx, tools }, name, args) });
     await server.connect(new StdioServerTransport());
   });

@@ -114,3 +114,50 @@ export function headCommit(dir: string) {
   const r = git(dir, ["rev-parse", "HEAD"]);
   return r.ok ? r.stdout.trim() : null;
 }
+
+/** A branch, tag or commit: the local branch first, then the one on `origin`. */
+export function resolveRef(dir: string, name: string): { ref: string; commit: string } | null {
+  const short = name.replace(/^refs\/heads\//, "");
+  for (const ref of [`refs/heads/${short}`, `refs/remotes/origin/${short.replace(/^origin\//, "")}`, `refs/remotes/${short}`, `refs/tags/${short}`, short]) {
+    const r = git(dir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+    if (r.ok && r.stdout.trim()) return { ref, commit: r.stdout.trim() };
+  }
+  return null;
+}
+
+/** Bring one branch of `origin` up to date (its remote-tracking ref only; local branches stay as they are). */
+export function fetchBranch(dir: string, name: string, timeoutMs = 120_000): GitResult {
+  if (!git(dir, ["remote", "get-url", "origin"]).ok) return { ok: false, stdout: "", stderr: "没有名为 origin 的远端" };
+  const short = name.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+  const r = spawnSync("git", ["fetch", "-q", "--no-tags", "origin", `+refs/heads/${short}:refs/remotes/origin/${short}`], {
+    cwd: dir,
+    encoding: "utf8",
+    timeout: timeoutMs,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C.UTF-8" },
+    windowsHide: true,
+  });
+  return { ok: r.status === 0, stdout: r.stdout ?? "", stderr: r.stderr || (r.error ? String(r.error) : "") };
+}
+
+/** What a branch is usually compared with: origin's default branch, else main / master. */
+export function defaultBaseRef(dir: string): string | null {
+  const head = git(dir, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+  if (head.ok && head.stdout.trim()) return head.stdout.trim();
+  for (const name of ["main", "master", "origin/main", "origin/master"]) if (resolveRef(dir, name)) return name;
+  return null;
+}
+
+export type Branch = { name: string; commit: string; at: string; subject: string; remote: boolean };
+
+/** Local and `origin` branches, most recently committed first; not the `omem/<run>` branches of delegation worktrees. */
+export function listBranches(dir: string, limit = 200): Branch[] {
+  const r = git(dir, ["for-each-ref", "--sort=-committerdate", "--format=%(refname)%1f%(objectname)%1f%(committerdate:iso-strict)%1f%(subject)", "refs/heads", "refs/remotes/origin"]);
+  if (!r.ok) return [];
+  return r.stdout
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => l.split("\x1f"))
+    .filter(([ref]) => ref !== "refs/remotes/origin/HEAD" && !/^refs\/heads\/omem\/r[0-9a-z]+$/.test(ref))
+    .map(([ref, commit, at, subject]) => ({ name: ref.replace(/^refs\/heads\//, "").replace(/^refs\/remotes\//, ""), commit, at, subject: subject ?? "", remote: ref.startsWith("refs/remotes/") }))
+    .slice(0, limit);
+}
