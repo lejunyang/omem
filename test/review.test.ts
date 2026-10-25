@@ -12,9 +12,10 @@ import { codeChainFor, type CodeChain } from "../src/agents/code-chain.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { run } from "../src/core/db.ts";
 import { startServer } from "../src/server/http.ts";
+import { isSourceFile } from "../src/sources/chunk.ts";
 import { testApp } from "./helpers.ts";
 
-const metrics = (m: Partial<ReviewMetrics> = {}): ReviewMetrics => ({ "change.lines": 10, "change.files": 1, "change.repos": 1, "change.paths": ["src/a.ts"], "change.checksPassed": true, "task.text": "改一下", ...m });
+const metrics = (m: Partial<ReviewMetrics> = {}): ReviewMetrics => ({ "change.lines": 10, "change.codeLines": 10, "change.files": 1, "change.repos": 1, "change.paths": ["src/a.ts"], "change.checksPassed": true, "task.text": "改一下", ...m });
 
 describe("review tiers and checks", () => {
   it("picks the first matching tier, honours a named tier, never goes lighter, and adds checks by their own condition", () => {
@@ -61,6 +62,12 @@ describe("review tiers and checks", () => {
     const app = testApp();
     expect(matchesReview({ all: [{ field: "change.lines", op: "gte", value: 10 }, { not: { field: "change.checksPassed", op: "is", value: false } }] }, metrics())).toBe(true);
     expect(matchesReview({ field: "change.lines", op: "lte", value: 5 }, metrics())).toBe(false);
+    // A change that is mostly lock file and fixtures is large by lines, small by code.
+    const lockHeavy = metrics({ "change.lines": 5000, "change.codeLines": 40 });
+    expect(matchesReview({ field: "change.codeLines", op: "gte", value: 600 }, lockHeavy)).toBe(false);
+    expect(matchesReview({ field: "change.lines", op: "gte", value: 600 }, lockHeavy)).toBe(true);
+    for (const f of ["src/a.ts", "web/App.vue", "svc/main.go", "app/x.py"]) expect(isSourceFile(f)).toBe(true);
+    for (const f of ["pnpm-lock.yaml", "package.json", "README.md", "mock/list.normal.json", "a.scss", "dist/app.min.js"]) expect(isSourceFile(f)).toBe(false);
     const tiers = [{ id: "big", name: "大", when: { field: "change.lines", op: "gte", value: 100 }, checks: ["reviewer"], maxRounds: 2 }, { id: "rest", name: "其余", when: null, checks: ["reviewer"], maxRounds: 3 }];
     expect(validateReviewSettings(app, { tiers, checks: {} }).tiers).toHaveLength(2);
     expect(() => validateReviewSettings(app, { tiers: [tiers[0]], checks: {} })).toThrow(/兜底/);

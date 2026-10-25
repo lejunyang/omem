@@ -520,3 +520,4 @@ updated: 2026-10-25
 - 接口 `GET /api/agents/load`；网页 设置 → Agent → 并行（`AiCapacity.vue`），整理弹窗可设同时几批、每批几份并调整进行中的任务。
 - 评审角色：`review-style` 从“只报明确约定”扩展到通用代码质量（重复造轮子、为封装而封装、模块划分、命名、注释里的中间指令）；`reviewer`、`review-business`、`review-arch`、`review-history` 加常见漏项和迁移类改动的对照要求。
 - 分支评审的可读范围：`CodeInput.readSpaces`（`review_branch` 的 `read_spaces`、`POST /api/review-branch` 的 `readSpaces`、`omem review-branch --read`），加进编码与评审运行的空间范围；需求文档在个人空间、迁移要对照源仓库时用。接口按发起人可访问的空间校验。
+- 评审档位条件新增 `change.codeLines`（有效代码改动行数）：`reviewMetrics` 按 `isSourceFile`（`src/sources/chunk.ts`，源代码扩展名，排除 `.min.js`）只累计源代码文件的增删行；档位理由和负责人估计里同时写出总行数和有效代码行数。默认档位不变，可在 Agent 页 → 评审 改用它。

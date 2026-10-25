@@ -33,6 +33,7 @@ export const SEVERITY_LABEL: Record<Severity, string> = { blocker: "阻断", maj
 
 export const REVIEW_FIELDS = {
   "change.lines": "改动行数",
+  "change.codeLines": "有效代码改动行数",
   "change.files": "改动文件数",
   "change.repos": "改动仓库数",
   "change.paths": "改动路径",
@@ -41,13 +42,14 @@ export const REVIEW_FIELDS = {
 } as const;
 export const REVIEW_FIELD_HELP: Record<keyof typeof REVIEW_FIELDS, string> = {
   "change.lines": "所有仓库新增加删除的行数之和。",
+  "change.codeLines": "只算源代码文件（按扩展名：ts、vue、go、java、py…）的增删行数，不算文档、锁文件、JSON/YAML 配置、样式和压缩文件。",
   "change.files": "改动的文件数，几个仓库合计。",
   "change.repos": "有改动的仓库数。",
   "change.paths": "改动文件在仓库里的路径；“包含 auth”表示任一路径带 auth。",
   "change.checksPassed": "配置了检查命令的仓库是否全部通过；没有检查命令算通过。",
   "task.text": "交办时的任务原文，可按关键词判断。",
 };
-const NUMERIC = new Set(["change.lines", "change.files", "change.repos"]);
+const NUMERIC = new Set(["change.lines", "change.codeLines", "change.files", "change.repos"]);
 export const REVIEW_OPS = ["gte", "lte", "equals", "contains", "startsWith", "endsWith", "in", "is"] as const;
 type Field = keyof typeof REVIEW_FIELDS;
 export type ReviewCondition = { field: Field; op: (typeof REVIEW_OPS)[number]; value: string | number | boolean | string[] } | { all: ReviewCondition[] } | { any: ReviewCondition[] } | { not: ReviewCondition };
@@ -63,7 +65,7 @@ export const reviewCondition: z.ZodType<ReviewCondition> = z.lazy(() => z.union(
   z.object({ not: reviewCondition }),
 ]));
 
-export type ReviewMetrics = { "change.lines": number; "change.files": number; "change.repos": number; "change.paths": string[]; "change.checksPassed": boolean; "task.text": string };
+export type ReviewMetrics = { "change.lines": number; "change.codeLines": number; "change.files": number; "change.repos": number; "change.paths": string[]; "change.checksPassed": boolean; "task.text": string };
 
 export function matchesReview(c: ReviewCondition | null | undefined, m: ReviewMetrics): boolean {
   if (!c) return true;
@@ -150,7 +152,7 @@ export function planReview(app: App, metrics: ReviewMetrics, opts: { tier?: stri
   const reasons: string[] = [];
   let index = tiers.findIndex((t) => matchesReview(t.when, metrics));
   if (index < 0) index = tiers.length - 1;
-  reasons.push(`按改动指标落在「${tiers[index].name}」档（${metrics["change.lines"]} 行、${metrics["change.files"]} 个文件、${metrics["change.repos"]} 个仓库）`);
+  reasons.push(`按改动指标落在「${tiers[index].name}」档（${metrics["change.lines"]} 行（有效代码 ${metrics["change.codeLines"]} 行）、${metrics["change.files"]} 个文件、${metrics["change.repos"]} 个仓库）`);
   if (opts.tier) {
     const named = tiers.findIndex((t) => t.id === opts.tier || t.name === opts.tier);
     if (named < 0) throw new HttpError(400, `没有评审档位 ${opts.tier}`);
@@ -201,7 +203,7 @@ export async function refineReviewPlan(app: App, plan: ReviewPlan, change: { tas
   const m = plan.metrics;
   const prompt = [
     `你是评审负责人，给一次已经写好的代码改动定评审方式。按改动本身和本人写的说明判断，拿不准就维持现在的选择。只输出一个 JSON：{"tier": 档位 id 或 null（维持）, "checks": [额外加上的评审项名], "reason": "一句话理由"}`,
-    `## 改动\n\n任务：${change.task.slice(0, 3000)}\n\n${m["change.lines"]} 行、${m["change.files"]} 个文件、${m["change.repos"]} 个仓库；检查${m["change.checksPassed"] ? "通过" : "没通过"}。\n文件：${m["change.paths"].slice(0, 80).join("、")}\n\n${change.diff.slice(0, 12000)}`,
+    `## 改动\n\n任务：${change.task.slice(0, 3000)}\n\n${m["change.lines"]} 行（有效代码 ${m["change.codeLines"]} 行）、${m["change.files"]} 个文件、${m["change.repos"]} 个仓库；检查${m["change.checksPassed"] ? "通过" : "没通过"}。\n文件：${m["change.paths"].slice(0, 80).join("、")}\n\n${change.diff.slice(0, 12000)}`,
     `## 现在的选择\n\n按条件落在「${plan.tierName}」档，评审项：${plan.checks.join("、")}。${change.estimate ? `编码前预估是「${change.estimate.tierName}」档：${change.estimate.reason}` : ""}`,
     tierCandidates.length ? `## 可以换成的更重档位（符合说明或预估确实成立才选）\n\n${tierCandidates.map((t) => `- ${t.id}（${t.name}）：${t.guide || "编码前预估的档位"}`).join("\n")}` : "",
     lighter ? `## 可以降一档\n\n- ${lighter.id}（${lighter.name}）：只有改动明显比条件估计的小而简单（例如大多是生成文件、重命名、测试数据）时才选，并写清理由。` : "",

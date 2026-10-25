@@ -143,6 +143,7 @@ review:
 | 字段 | 说明 |
 | --- | --- |
 | `change.lines` / `change.files` / `change.repos` | 增删行数、文件数、仓库数（`git diff --stat`，已有） |
+| `change.codeLines` | 有效代码改动行数：只算源代码文件（`chunk.ts` 的 `isSourceFile`，按扩展名，不含文档、锁文件、JSON/YAML、样式和压缩文件）。迁移、带大量 mock 或锁文件变动的分支用它比 `change.lines` 准 |
 | `change.paths` | 改动文件路径（数组，`contains` 任一命中） |
 | `change.checksPassed` | 检查命令是否全部通过 |
 | `item.tags` / `item.priority` | 关联事项的标签、优先级 |

@@ -125,6 +125,11 @@ export function classify(path: string): "code" | "doc" | "config" {
   return "doc";
 }
 
+/** A source-code file a change is measured by: not docs, configs, lock files, styles or minified bundles. */
+export function isSourceFile(path: string) {
+  return classify(path) === "code" && !/.min.[cm]?js$/i.test(path);
+}
+
 export function chunkSource(kind: string, uri: string, title: string, text: string): { chunks: Chunk[]; outline?: CodeOutline } {
   if (kind === "code") {
     const kindOf = classify(uri);

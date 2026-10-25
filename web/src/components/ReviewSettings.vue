@@ -31,7 +31,7 @@ const tiers = ref<Tier[]>([]);
 const checks = ref<Check[]>([]);
 const rereviewAllEvery = ref(2);
 const options = ref<{ fields: Record<string, string>; descriptions: Record<string, string>; ops: string[] }>({ fields: {}, descriptions: {}, ops: [] });
-const NUMERIC = ["change.lines", "change.files", "change.repos"];
+const NUMERIC = ["change.lines", "change.codeLines", "change.files", "change.repos"];
 const fieldOps = Object.fromEntries(NUMERIC.map((f) => [f, ["gte", "lte", "equals"]]));
 
 const tierId = computed(() => (typeof route.query.tier === "string" ? route.query.tier : null));

@@ -12,6 +12,7 @@ import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
 import { createRun, getRun, setRunOutput, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 import { replyOf } from "./types.ts";
+import { isSourceFile } from "../sources/chunk.ts";
 
 function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20 * 60_000): Promise<{ code: number; output: string; ms: number }> {
   const started = Date.now();
@@ -350,18 +351,22 @@ function branchSummary(worktrees: WorktreeRef[]) {
 /** What review tiers are chosen by: the size and place of the change, whether checks passed. */
 function reviewMetrics(worktrees: WorktreeRef[], results: RepoResult[], task: string): ReviewMetrics {
   let lines = 0;
+  let codeLines = 0;
   const paths: string[] = [];
   for (const [i, r] of results.entries()) {
     if (!r.diffBytes) continue;
     for (const row of git(worktrees[i].path, ["diff", "--cached", "--numstat", "HEAD"]).stdout.split("\n")) {
       const [add, del, file] = row.split("\t");
       if (!file) continue;
-      lines += (Number(add) || 0) + (Number(del) || 0);
+      const n = (Number(add) || 0) + (Number(del) || 0);
+      lines += n;
+      if (isSourceFile(file)) codeLines += n;
       paths.push(results.length > 1 ? `${r.space}/${file}` : file);
     }
   }
   return {
     "change.lines": lines,
+    "change.codeLines": codeLines,
     "change.files": paths.length,
     "change.repos": results.filter((r) => r.diffBytes).length,
     "change.paths": paths,
