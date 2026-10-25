@@ -78,7 +78,9 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 2. 向量（可选）：本地 bge 中文模型（bge-small-zh / bge-base-zh / bge-m3，transformers.js，经 osdk 下载）或 OpenAI 兼容接口；SQLite 存原始向量，内存里按空间存 int8 量化矩阵做暴力余弦（17 万片段常驻约 0.4GB，见 evaluation.md）。
 3. 符号名精确匹配（代码）。
 
-结果携带父结构（章节标题路径/所在函数），并可按 `read_source(id, lines)` 补读。**检索只负责给 Agent 线索**，回答前由 Agent 自己决定继续搜、读全文还是看 Wiki——不再由宿主替它做多轮规划。
+结果携带父结构（章节标题路径/所在函数），并可按 `read_source(id, lines)` 补读。
+
+**关注程度与标注**（`src/sources/attention.ts`）。原件分四档：重点关注（检索权重 ×1.6，整理时先读）、一般（默认）、仅检索（×0.55，不交给整理）、忽略（不进检索、不整理，按 id 仍能读）。谁定的有先后：本人 > Agent > 规则，低的不覆盖高的。关注程度规则（条件和归档规则同一套写法）给新材料定级，也能用到已入库的材料。一份文档部分过时时，在行上加标注（已过时 / 有误 / 关键 / 备注，可写“以哪份为准”）：检索命中过时或有误的段落时分数分别 ×0.5、×0.35，关键段落 ×1.3，标注随命中和 `read_source` 一起给出。没有定级和标注时排序不变。**检索只负责给 Agent 线索**，回答前由 Agent 自己决定继续搜、读全文还是看 Wiki——不再由宿主替它做多轮规划。
 
 ## Agent 运行时
 
@@ -142,6 +144,9 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 ### 6. 学习
 从材料或对话生成卡片（问答/完形/例句），FSRS 调度；每日到期卡片在 Web 与机器人里复习（聊天里 `/review` 逐张出题打分）。学习目标（`src/learn/goals.ts`）记录方向、每日张数和提醒时间：提醒前从该空间新材料出卡，反复忘的卡换角度补卡，统计记住率与连续天数。
 
+### 6b. 存量材料的整理
+新材料由 `ingest` 随到随整理；整批回溯的群、一次导入的知识库是存量，由本人开的整理任务（`digest_jobs`，`src/agents/digest.ts`）一批一批地做：`triage` 交给 `triager` 按标题、目录和开头定级（每批 60 份），`digest` 交给 `distiller` 精读重点和一般的材料（每批约 6 万字、最多 8 份，重点在前），写主题页、案例页、原件标注和必要的记忆；任务可指定一个 Agent 档案，排查经验写成它的专属记忆。每个任务同时只有一批在跑，批次结束和定时任务 `digest`（每 10 分钟）排下一批；做过的原件按 hash 记下，内容变了会重做；连续 3 批失败自动暂停并通知。入口：`digest_sources` 工具、原件页“整理”、`omem digest`、远程 `digest-status`。`ingest` 同样会写主题页和标注、跳过仅检索和忽略的材料。
+
 ### 7. 做梦（整理）
 每晚：合并重复记忆、标记冲突（两条同时有效又互相矛盾）、过期提醒、Wiki 断链与孤立页、从运行记录提炼可复用技能建议。结果写进“整理报告”，变更走工具并可回滚（Git）。
 
@@ -193,6 +198,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 原件迁移：保留原件、切片、消息位置与引用 ID，同步空间字段并失效向量缓存；原始入口别名防止重新采集另建副本；历史预览 / 应用校验 hash 和当前规则，冲突不合并覆盖；原件详情可指定归属及查看记录 | 已实现，专项测试覆盖；不自动移动已有记忆、事项和 Wiki | `source_routes`、`source_locations`、`source_moves`、`Sources.vue` |
 | 主助手对话创建空间、关联本地 Git 仓库或 Git 链接（clone 到数据目录 repos/）；路径去重、冲突检查、仅本人全空间运行可用 | 已实现；2026-10-15 | `src/core/repositories.ts`、`src/agents/tools.ts`、`roles/assistant.md` |
 | 空间、原件、切分、全文 + 符号 + 可选向量检索；`read_source` 可读普通原件，也可读 `msg:<id>` 聊天消息和 `mem:<id>` 记忆（复核记忆时消息来源不再报“找不到原件”） | 已实现，测试覆盖 | `src/sources`、`src/search`、`src/agents/tools.ts` |
+| 原件关注程度与标注：四档（重点 / 一般 / 仅检索 / 忽略）影响检索排序和是否整理；本人 > Agent > 规则；关注程度规则；行标注（过时 / 有误 / 关键）随检索命中和读原件出现并调整排序；存量整理任务（分级 `triager`、精读 `distiller`，可把经验写给指定档案）；原件页筛选、定级、标注和“整理”弹窗 | 已实现，测试覆盖（`test/attention.test.ts`，假 ACP 跑一批分级）；2026-10-25；常驻服务器上的真实整理待验 | `src/sources/attention.ts`、`src/agents/digest.ts`、`roles/triager.md`、`roles/distiller.md`、`web/src/components/SourceAttention.vue`、`DigestJobs.vue` |
 | 原件列表：普通空间平铺，代码仓库空间按目录展示；网址与会话标识不拆成目录，目录/文件节点明确区分；文件夹默认折叠（展开后跨分页保留、搜索时全展开），虚拟滚动，每页 1000 份滚动分页加载 | 已实现；2026-10-15 修复 URL 与超过 12 条数据导致的白屏；2026-10-19 分页折叠 | `web/src/views/Sources.vue`、`src/sources/store.ts` |
 | Agent 运行时（ACP、claude/codex 命令行后备、豆包 OpenAPI 云端后端）与 MCP 工具（HTTP 与 stdio 桥）；25 个内置 ACP Agent + 官方注册表添加 | 已实现；假 ACP Agent 端到端测试；真实 Claude Code、OpenCode（含 MCP 工具调用）已跑通，Gemini / Qwen / Copilot / goose 握手通过（需登录） | `src/agents/acp.ts`、`tools.ts` |
 | 问答、记忆更正与版本链、事项与时间线 | 已实现，真实模型抽查通过 | `roles/assistant.md` |

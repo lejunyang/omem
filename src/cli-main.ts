@@ -863,6 +863,33 @@ program
   });
 
 program
+  .command("digest [space]")
+  .description("整理已入库的存量材料：--mode triage 按标题和开头分级，--mode digest 精读重点和一般的材料成知识页、标注和记忆；不带参数看进度")
+  .option("--mode <mode>", "triage 或 digest")
+  .option("--title <text>", "这批是什么")
+  .option("--goal <text>", "想从这批材料里得到什么")
+  .option("--agent <name>", "经验写给哪个 Agent 档案")
+  .option("--chat <id>", "只整理这个会话")
+  .option("--title-contains <text>", "标题包含")
+  .option("--wiki-path <text>", "飞书知识库名或目录路径包含")
+  .option("--kind <kind>", "doc / chat / …")
+  .option("--pause <job>", "暂停任务")
+  .option("--resume <job>", "继续任务")
+  .option("--stop <job>", "停止任务")
+  .action(async (sp: string | undefined, o) => {
+    const app = open();
+    const d = await import("./agents/digest.ts");
+    const control = o.pause ? ["paused", o.pause] : o.resume ? ["active", o.resume] : o.stop ? ["stopped", o.stop] : null;
+    if (control) d.setDigestStatus(app, control[1], control[0] as "active");
+    else if (sp) {
+      if (!o.mode) throw new Error("要整理时给出 --mode triage 或 --mode digest");
+      d.createDigestJob(app, { mode: o.mode, space: sp, title: o.title, goal: o.goal ?? "", agent: o.agent, filter: { chat_id: o.chat, title_contains: o.titleContains, wiki_path_contains: o.wikiPath, kind: o.kind } });
+    }
+    console.log(d.digestStatusText(app));
+    if (sp && !control) console.log("\n任务在后台服务里一批一批地跑（定时任务 digest，每 10 分钟补排）。");
+  });
+
+program
   .command("branches <space>")
   .description("代码仓库空间的分支，以及按分支检索用的索引")
   .option("--fetch", "先从 origin 拉取全部分支")

@@ -502,3 +502,11 @@ updated: 2026-10-25
 - `search.ts` 的 `shadowedFiles`：检索空间里同时有仓库和它的工作区 / 分支索引时，仓库里被改过或删掉的同名文件不出现。工具层 `canRead`：能读仓库就能读它的工作区和分支索引。
 - `core/git.ts`：`resolveRef`、`fetchBranch`、`defaultBaseRef`、`listBranches`（不列 `omem/<运行>` 交办分支）。
 - 接口：`GET /api/spaces/:id/branches`、`POST|DELETE /api/spaces/:id/branches/index`、`POST /api/review-branch`、`/api/search?branch=`。命令行：`omem review-branch`、`omem branches`、`omem search --branch`。网页：运行页“交办”弹窗分“实现 / 评审分支”，可选起点分支、要评审的分支和基线。
+
+## 原件关注程度、标注与存量整理（10-25）
+
+- `sources` 加 `attention`（focus / reference / ignore，null 为一般）和 `attention_by`（owner / agent / rule，低的不覆盖高的）；新表 `source_notes`（行范围、outdated / wrong / key / note、以哪份为准）、`attention_rules`、`digest_jobs`、`digest_done`。`src/sources/attention.ts`。
+- 检索：忽略的不进全文和向量召回（`includeIgnored` 例外），融合后按档和标注调整分数，命中带 `attention`、`notes`。`read_source` 开头列出本段的标注和档位。
+- `upsertSource` 对没人定过档的新材料套用关注程度规则；`scheduleIngest` 跳过仅检索和忽略的；`ingest` 角色可写主题页、`annotate_source`、`set_source_attention`。
+- 存量整理 `src/agents/digest.ts`：运行类型 `triage`（角色 `triager`）、`digest`（角色 `distiller`），定时任务 `digest` 每 10 分钟补排；连续 3 批失败暂停。
+- 工具：`set_source_attention`、`annotate_source`、`attention_rules`、`digest_sources`；`list_sources` 加 `level`。接口：`/api/sources?level=`、`/api/sources/levels`、`PUT /api/sources/:id/attention`、`POST /api/sources/attention`（含 dryRun）、`/api/sources/:id/notes`、`DELETE /api/source-notes/:id`、`/api/attention-rules`、`/api/digest-jobs`。远程命令 `digest-status`、`source-levels`；命令行 `omem digest`。网页：原件页档位筛选、详情里的档位和标注、“整理”弹窗。

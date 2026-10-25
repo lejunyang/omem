@@ -10,6 +10,8 @@ import UiSelect from "../components/UiSelect.vue";
 import Icon from "../components/Icon.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
+import SourceAttention, { type SourceNote } from "../components/SourceAttention.vue";
+import DigestJobs from "../components/DigestJobs.vue";
 import { currentSpace, fmtTime, relTime, state, toast } from "../store";
 
 type Detail = {
@@ -19,6 +21,7 @@ type Detail = {
   text: string;
   outline: { symbols: { name: string; qname: string; kind: string; line_start: number; line_end: number; exported: number }[]; sections: { title: string; path: string; line_start: number; line_end: number; kind: string }[] };
   citedBy: { page_id: string; title: string }[];
+  notes: SourceNote[];
 };
 
 const route = useRoute();
@@ -29,6 +32,22 @@ const PAGE = 1000;
 const loadingMore = ref(false);
 const q = ref("");
 const kind = ref("");
+// How much the owner cares: focus / normal / reference / ignore (sources/attention.ts).
+const level = ref("");
+const levelCounts = ref<Record<string, number> | null>(null);
+const LEVEL_SHORT: Record<string, string> = { focus: "重点", reference: "仅检索", ignore: "忽略" };
+const levelOptions = computed(() => [
+  { value: "", label: "全部" },
+  ...(["focus", "normal", "reference", "ignore"] as const).map((v) => ({ value: v, label: `${{ focus: "重点", normal: "一般", reference: "仅检索", ignore: "忽略" }[v]}${levelCounts.value?.[v] ? ` ${levelCounts.value[v]}` : ""}` })),
+]);
+const digestOpen = ref(false);
+async function loadLevels() {
+  try {
+    levelCounts.value = (await get<{ counts: Record<string, number> }>(`/api/sources/levels?space=${encodeURIComponent(state.space)}`)).counts;
+  } catch {
+    levelCounts.value = null;
+  }
+}
 const detail = ref<Detail | null>(null);
 const raw = ref(false);
 const archive = ref<{ route?: { reason: string } | null; history: { from_space: string; to_space: string; reason: string; at: string }[] } | null>(null);
@@ -99,6 +118,7 @@ async function loadPage(offset: number) {
   const p = new URLSearchParams({ space: state.space, limit: String(PAGE), offset: String(offset) });
   if (q.value) p.set("q", q.value);
   if (kind.value) p.set("kind", kind.value);
+  if (level.value) p.set("level", level.value);
   return get<{ total: number; sources: Source[] }>(`/api/sources?${p}`);
 }
 async function loadMore() {
@@ -136,8 +156,17 @@ let qTimer: ReturnType<typeof setTimeout> | undefined;
 onMounted(() => {
   void load();
   void loadDetail();
+  void loadLevels();
 });
 watch(kind, load);
+watch(level, load);
+/** After a level or a note changed: the detail, the counts and the list's badges. */
+async function attentionChanged() {
+  await Promise.all([loadDetail(), loadLevels()]);
+  const s = detail.value?.source;
+  const row = s && list.value.find((x) => x.id === s.id);
+  if (row && s) Object.assign(row, { attention: s.attention, attentionBy: s.attentionBy });
+}
 watch(q, () => {
   clearTimeout(qTimer);
   qTimer = setTimeout(load, 200);
@@ -261,10 +290,14 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <strong>原件</strong>
           <span class="muted small">{{ listLoading && !list.length ? "" : total }}</span>
           <span class="spacer" />
+          <button v-if="space?.kind !== 'repo'" class="btn ghost sm" title="分级、整理已入库的材料" @click="digestOpen = true"><Icon name="layers" :size="14" />整理</button>
           <button v-if="space?.rootPath" class="btn ghost sm icon" title="同步关联目录" @click="sync"><Icon name="refresh" :size="15" /></button>
           <button class="btn ghost sm icon" title="保存材料" @click="state.capture = true"><Icon name="plus" :size="15" /></button>
         </div>
         <input v-model="q" class="input" placeholder="按标题或路径筛选" />
+        <div v-if="space?.kind !== 'repo'" class="kinds row wrap" role="group" aria-label="关注程度">
+          <button v-for="o in levelOptions" :key="o.value" class="kind" :class="{ on: level === o.value }" :aria-pressed="level === o.value" @click="level = o.value">{{ o.label }}</button>
+        </div>
         <div class="kinds row wrap">
           <button v-for="k in ['', 'doc', 'code', 'chat', 'note', 'web', 'image', 'conversation', 'work']" :key="k" class="kind" :class="{ on: kind === k }" @click="kind = k">{{ { "": "全部", doc: "文档", code: "代码", chat: "聊天", note: "笔记", web: "网页", image: "图片", conversation: "对话", work: "工作文件" }[k] }}</button>
         </div>
@@ -285,7 +318,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <template #default="{ item: s }">
             <router-link :to="`/sources/${s.id}`" class="row-btn flat" :class="{ on: s.id === id }">
               <Icon :name="kindIcon[s.kind] ?? 'file'" :size="15" />
-              <div class="grow"><div class="ellipsis">{{ s.title }}</div><div class="muted small">{{ relTime(s.updatedAt) }}<template v-if="s.lines !== undefined"> · {{ s.lines }} 行</template></div></div>
+              <div class="grow"><div class="ellipsis">{{ s.title }}</div><div class="muted small">{{ relTime(s.updatedAt) }}<template v-if="s.lines !== undefined"> · {{ s.lines }} 行</template><template v-if="s.attention"> · <span :class="['lvl', s.attention]">{{ LEVEL_SHORT[s.attention] }}</span></template></div></div>
             </router-link>
           </template>
         </VirtualList>
@@ -318,6 +351,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
             <button class="btn ghost sm" @click="makeCards"><Icon name="cap" :size="14" />生成卡片</button>
             <button class="btn ghost sm icon danger" title="移除" @click="remove"><Icon name="trash" :size="14" /></button>
           </div>
+          <SourceAttention v-if="!detail.source.deletedAt && !['code','conversation','activity','work'].includes(detail.source.kind)" :source="detail.source" :notes="detail.notes ?? []" @changed="attentionChanged" @go-line="(a, b) => goLine(a, b)" />
           <div v-if="detail.citedBy.length" class="cited small">
             被引用：<router-link v-for="p in detail.citedBy" :key="p.page_id" :to="`/wiki/${p.page_id.split('/')[0]}/${p.page_id.split('/').slice(1).join('/')}`" class="badge accent">{{ p.title }}</router-link>
           </div>
@@ -362,10 +396,17 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
         </div>
       </template>
     </main>
+    <DigestJobs v-if="digestOpen" :space="state.space" @close="digestOpen = false; loadLevels()" />
   </div>
 </template>
 
 <style scoped>
+.lvl.focus {
+  color: var(--accent);
+}
+.lvl.ignore {
+  text-decoration: line-through;
+}
 .archive-info { margin-top: 10px; overflow-wrap: anywhere; display: grid; gap: 6px; }
 .archive-info p { margin: 0; }
 .archive-info .move { gap: 8px; }

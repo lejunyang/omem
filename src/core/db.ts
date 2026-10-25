@@ -663,6 +663,19 @@ const migrations: string[] = [
   `create index sources_chat on sources(json_extract(meta, '$.chatId')) where json_extract(meta, '$.chatId') is not null;`,
   // Several Feishu bots: a card is updated through the bot that posted it (null = the main bot).
   `alter table card_interactions add column bot text;`,
+  // How much an original matters to the owner (src/sources/attention.ts): focus / normal / reference /
+  // ignore, and who set it (owner, agent, rule). Notes mark line ranges as outdated, key or wrong.
+  // Attention rules give new material a level; digest jobs work through stored material in batches.
+  `alter table sources add column attention text;
+   alter table sources add column attention_by text;
+   create index sources_attention on sources(space_id, attention) where attention is not null;
+   create table source_notes(id integer primary key, source_id text not null references sources(id) on delete cascade, line_start integer, line_end integer,
+     kind text not null, note text not null default '', ref text, by text not null default 'agent', run_id text, created_at text not null);
+   create index source_notes_source on source_notes(source_id);
+   create table attention_rules(id text primary key, body text not null);
+   create table digest_jobs(id text primary key, space_id text not null references spaces(id), mode text not null, body text not null,
+     status text not null default 'active', total integer not null default 0, done integer not null default 0, run_id text, created_at text not null, updated_at text not null);
+   create table digest_done(job_id text not null references digest_jobs(id) on delete cascade, source_id text not null, hash text not null, at text not null, primary key(job_id, source_id));`,
 ];
 
 export type Db = DatabaseSync;

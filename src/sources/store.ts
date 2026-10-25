@@ -1,4 +1,5 @@
 import { prepareArchive, finishArchive, moveSource } from "./archive.ts";
+import { applyAttentionRules } from "./attention.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, json, newId, now, sha256, sliceLines } from "../core/util.ts";
@@ -20,8 +21,13 @@ export type Source = {
   updatedAt: string;
   deletedAt: string | null;
   lines?: number;
+  /** focus / reference / ignore (null = normal), and who set it (sources/attention.ts). */
+  attention?: string | null;
+  attentionBy?: string | null;
 };
 type Row = {
+  attention?: string | null;
+  attention_by?: string | null;
   id: string;
   space_id: string;
   kind: string;
@@ -48,7 +54,10 @@ const toSource = (r: Row): Source => ({
   updatedAt: r.updated_at,
   deletedAt: r.deleted_at,
   lines: r.text === undefined ? undefined : r.text.split("\n").length,
+  attention: r.attention ?? null,
+  attentionBy: r.attention_by ?? null,
 });
+const COLS = "id,space_id,kind,uri,title,mime,hash,meta,captured_at,updated_at,deleted_at,attention,attention_by";
 
 export type UpsertInput = {
   /** Automatic collection; explicit imports leave this unset. */
@@ -122,8 +131,9 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
     }
     writeIndex(app, id, input.spaceId, input.kind, input.uri, input.title, text);
   });
+  if (!["code", "conversation", "activity", "work"].includes(input.kind)) applyAttentionRules(app, id, { ...input, text });
   if (prepared) finishArchive(app, id, prepared);
-  else if (!existing && !["code", "conversation", "activity", "work", "chat"].includes(input.kind)) {
+  else if (!existing &&!["code", "conversation", "activity", "work", "chat"].includes(input.kind)) {
     run(app.db, "insert or ignore into source_routes(source_id,origin_space,mode,reason,decision_hash) values(?,?,'manual','导入时指定空间',?)", id, input.spaceId, hash);
   }
   app.emit({ type: "changed", entity: "source", id, spaceId: input.spaceId });
@@ -183,13 +193,13 @@ export function purgeSource(app: App, id: string) {
 }
 
 export function getSource(app: App, id: string): Source {
-  const r = one<Row>(app.db, "select id,space_id,kind,uri,title,mime,hash,meta,captured_at,updated_at,deleted_at from sources where id = ?", id);
+  const r = one<Row>(app.db, `select ${COLS} from sources where id = ?`, id);
   if (!r) throw new HttpError(404, `原件不存在：${id}`);
   return toSource(r);
 }
 
 export function findSourceByUri(app: App, spaceId: string, uri: string): Source | null {
-  const r = one<Row>(app.db, "select id,space_id,kind,uri,title,mime,hash,meta,captured_at,updated_at,deleted_at from sources where space_id = ? and uri = ?", spaceId, uri);
+  const r = one<Row>(app.db, `select ${COLS} from sources where space_id = ? and uri = ?`, spaceId, uri);
   return r ? toSource(r) : null;
 }
 
@@ -206,12 +216,16 @@ export function readSource(app: App, id: string, from?: number, to?: number) {
   return { source: { ...source, lines: total }, lineStart: start, lineEnd: end, text: total ? sliceLines(text, start, end) : "" };
 }
 
-export function listSources(app: App, opts: { spaceId?: string; kind?: string; q?: string; limit?: number; offset?: number; includeDeleted?: boolean }) {
+export function listSources(app: App, opts: { spaceId?: string; kind?: string; q?: string; limit?: number; offset?: number; includeDeleted?: boolean; level?: string }) {
   const where: string[] = [];
   const params: (string | number)[] = [];
   if (opts.spaceId) {
     where.push("space_id = ?");
     params.push(opts.spaceId);
+  }
+  if (opts.level) {
+    where.push(opts.level === "normal" ? "attention is null" : "attention = ?");
+    if (opts.level !== "normal") params.push(opts.level);
   }
   if (opts.kind) {
     where.push("kind = ?");
@@ -222,7 +236,7 @@ export function listSources(app: App, opts: { spaceId?: string; kind?: string; q
     where.push("(title like ? or uri like ?)");
     params.push(`%${opts.q}%`, `%${opts.q}%`);
   }
-  const sql = `select id,space_id,kind,uri,title,mime,hash,meta,captured_at,updated_at,deleted_at, length(text) - length(replace(text, char(10), '')) + 1 as line_count
+  const sql = `select ${COLS}, length(text) - length(replace(text, char(10), '')) + 1 as line_count
     from sources ${where.length ? "where " + where.join(" and ") : ""} order by uri limit ? offset ?`;
   const lim = Math.min(opts.limit ?? 500, 5000);
   const rows = all<Row & { line_count: number }>(app.db, sql, ...params, lim, opts.offset ?? 0);

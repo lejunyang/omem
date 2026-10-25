@@ -22,6 +22,7 @@ registerScheduleKind("repo-sync", (app) => {
 });
 
 registerScheduleKind("memory-review", (app) => scheduleMemoryReview(app));
+registerScheduleKind("digest", (app) => void import("./agents/digest.ts").then((m) => m.tickDigestJobs(app)));
 registerScheduleKind("memory-organize", (app) => scheduleMemoryOrganize(app));
 registerScheduleKind("item-sweep", (app) => void sweepItems(app).catch((e) => console.warn("[omem] 事项收尾失败：", e.message)));
 registerScheduleKind("item-digest", (app) => void sendItemDigests(app).catch((e) => console.warn("[omem] 事项清点失败：", e.message)));

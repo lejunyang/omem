@@ -163,5 +163,5 @@ export type Run = { id: string; kind: string; spaceId: string | null; status: st
 /** "codex · gpt-6.1-sol · low": what a run ran on, or its backend alone for runs recorded before models were. */
 export const aiLabel = (r: Pick<Run, "ai" | "profileId">) => (r.ai ? [r.ai.profile, r.ai.model, r.ai.effort].filter(Boolean).join(" · ") : r.profileId ?? "");
 export type RunEvent = { seq: number; at: string; type: string; data: any };
-export type Source = { id: string; spaceId: string; kind: string; uri: string; title: string; mime: string | null; meta: any; capturedAt: string; updatedAt: string; deletedAt: string | null; lines?: number };
+export type Source = { id: string; spaceId: string; kind: string; uri: string; title: string; mime: string | null; meta: any; capturedAt: string; updatedAt: string; deletedAt: string | null; lines?: number; attention?: "focus" | "reference" | "ignore" | null; attentionBy?: "owner" | "agent" | "rule" | null };
 export type Card = { id: string; spaceId: string; front: string; back: string; sourceRefs: string[]; dueAt: string; reps: number; lapses: number; state: number; suspended: boolean };

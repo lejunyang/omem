@@ -18,6 +18,10 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import { applyCodeRun, codePatches, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
+import {
+  addSourceNote, applyAttentionRulesToExisting, deleteAttentionRule, LEVEL_LABELS, LEVELS, levelCounts, levelOf, listAttentionRules, NOTE_KINDS, removeSourceNote,
+  saveAttentionRule, selectSources, setAttention, sourceFilter, sourceNotes,
+} from "../sources/attention.ts";
 import { defaultBaseRef, fetchBranch, git, isGitRepo, listBranches } from "../core/git.ts";
 import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePages, type PageBrief } from "../agents/jobs.ts";
 import { createMcpServer } from "../agents/mcp-server.ts";
@@ -180,8 +184,73 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // ------------------------------------------------------------------ sources
   server.get("/api/sources", async (req) => {
-    const o = q(z.object({ space: z.string().optional(), kind: z.string().optional(), q: z.string().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
-    return listSources(app, { spaceId: o.space, kind: o.kind, q: o.q, limit: o.limit, offset: o.offset });
+    const o = q(z.object({ space: z.string().optional(), kind: z.string().optional(), q: z.string().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional(), level: z.enum(LEVELS).optional() }), req.query);
+    return listSources(app, { spaceId: o.space, kind: o.kind, q: o.q, limit: o.limit, offset: o.offset, level: o.level });
+  });
+
+  // ------------------------------------------------- how much a source matters (sources/attention.ts)
+  const ownerOnly = (req: { headers: Record<string, unknown> }) => {
+    if (who(req as never) !== OWNER) throw new HttpError(403, "只有本人能改关注程度和整理任务");
+  };
+  server.get("/api/sources/levels", async (req) => {
+    const o = q(z.object({ space: z.string().optional() }), req.query);
+    return { counts: levelCounts(app, scopeFor(app, who(req), null), o.space), labels: LEVEL_LABELS };
+  });
+  server.put("/api/sources/:id/attention", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ level: z.enum(LEVELS).nullable() }), req.body);
+    setAttention(app, [(req.params as { id: string }).id], b.level, "owner");
+    return levelOf(app, (req.params as { id: string }).id);
+  });
+  server.post("/api/sources/attention", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ filter: sourceFilter, level: z.enum(LEVELS).nullable(), dryRun: z.boolean().optional() }), req.body);
+    const rows = selectSources(app, b.filter, null);
+    if (b.dryRun) return { matched: rows.length, sample: rows.slice(0, 20) };
+    return { matched: rows.length, ...setAttention(app, rows.map((r) => r.id), b.level, "owner") };
+  });
+  server.get("/api/sources/:id/notes", async (req) => sourceNotes(app, (req.params as { id: string }).id));
+  server.post("/api/sources/:id/notes", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ kind: z.enum(NOTE_KINDS), lineStart: z.number().int().nullable().optional(), lineEnd: z.number().int().nullable().optional(), note: z.string().max(500), ref: z.string().nullable().optional() }), req.body);
+    return addSourceNote(app, { sourceId: (req.params as { id: string }).id, ...b, by: "owner" });
+  });
+  server.delete("/api/source-notes/:id", async (req) => {
+    ownerOnly(req);
+    removeSourceNote(app, Number((req.params as { id: string }).id), "owner");
+    return { ok: true };
+  });
+  server.get("/api/attention-rules", async () => listAttentionRules(app));
+  server.put("/api/attention-rules/:id", async (req) => {
+    ownerOnly(req);
+    const id = (req.params as { id: string }).id;
+    return saveAttentionRule(app, req.body, id === "new" ? undefined : id);
+  });
+  server.delete("/api/attention-rules/:id", async (req) => {
+    ownerOnly(req);
+    deleteAttentionRule(app, (req.params as { id: string }).id);
+    return { ok: true };
+  });
+  server.post("/api/attention-rules/apply", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ space: z.string().optional() }), req.body ?? {});
+    return applyAttentionRulesToExisting(app, b.space);
+  });
+  server.get("/api/digest-jobs", async (req) => {
+    const o = q(z.object({ all: z.coerce.boolean().optional() }), req.query);
+    const d = await import("../agents/digest.ts");
+    return d.listDigestJobs(app, { all: o.all }).map((j) => ({ ...j, ...d.countDigest(app, j), label: j.body.title ?? d.describeJob(j) }));
+  });
+  server.post("/api/digest-jobs", async (req) => {
+    ownerOnly(req);
+    return (await import("../agents/digest.ts")).createDigestJob(app, req.body);
+  });
+  server.post("/api/digest-jobs/:id/:action", async (req) => {
+    ownerOnly(req);
+    const p = req.params as { id: string; action: string };
+    const status = ({ pause: "paused", resume: "active", stop: "stopped" } as const)[p.action as "pause"];
+    if (!status) throw new HttpError(404, "未知操作");
+    return (await import("../agents/digest.ts")).setDigestStatus(app, p.id, status);
   });
   server.get("/api/sources/paths", async (req) => {
     const o = q(z.object({ space: z.string(), kind: z.string().optional(), q: z.string().optional() }), req.query);
@@ -206,7 +275,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const o = q(z.object({ from: z.coerce.number().optional(), to: z.coerce.number().optional() }), req.query);
     const r = readSource(app, id, o.from, o.to);
     const citedBy = all<{ page_id: string; title: string }>(app.db, "select distinct c.page_id, p.title from page_cites c join pages p on p.id = c.page_id where c.source_id = ?", id);
-    return { ...r, outline: sourceOutline(app, id), citedBy };
+    return { ...r, outline: sourceOutline(app, id), citedBy, notes: sourceNotes(app, id) };
   });
   // Chat sources captured from Feishu: messages with quotes, images and reactions for a chat-like view.
   server.get("/api/sources/:id/messages", async (req) => {

@@ -357,6 +357,19 @@ export const peerCommands: Record<string, Command> = {
       return a.status ? m.fillResourcesStatus() : m.fillResourcesInBackground(app, a.chat_ids);
     },
   },
+  "digest-status": {
+    description: "存量整理任务的进度（分级 / 精读，每个任务做了多少、当前批次）",
+    schema: z.object({ all: z.boolean().default(false) }),
+    run: async (app, a) => {
+      const d = await import("../agents/digest.ts");
+      return d.digestStatusText(app, d.listDigestJobs(app, { all: a.all }));
+    },
+  },
+  "source-levels": {
+    description: "原件按关注程度（重点 / 一般 / 仅检索 / 忽略）的数量，space 可限定空间",
+    schema: z.object({ space: z.string().max(200).optional() }),
+    run: async (app, a) => (await import("../sources/attention.ts")).levelCounts(app, null, a.space),
+  },
   "memories-stats": {
     description: "按模型的记忆质量统计",
     schema: z.object({ days: z.number().int().min(1).max(365).default(30) }),

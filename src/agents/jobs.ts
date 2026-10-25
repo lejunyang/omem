@@ -31,6 +31,7 @@ import { expireTemporaryRules } from "./wakes.ts";
 import { hasShortcomings, shortcomings, shortcomingsText } from "../memory/gaps.ts";
 import "./profile-jobs.ts";
 import "./wakes.ts";
+import "./digest.ts";
 
 registerHandler("lark-resource-parse", async ctx => (await import("../channels/lark-resource-parse.ts")).parseLarkResource(ctx));
 
@@ -255,7 +256,8 @@ export function scheduleIngest(app: App, spaceId: string, sourceIds: string[], n
   const groups = new Map<string, string[]>();
   for (const id of new Set(sourceIds)) {
     const s = getSource(app, id);
-    if (s.deletedAt) continue;
+    // Material marked “only searchable” or “ignore” is not digested.
+    if (s.deletedAt || s.attention === "reference" || s.attention === "ignore") continue;
     if (sourceRoute(app, id)?.pending && one(app.db, "select 1 from runs where kind='archive' and status in ('queued','running') and exists(select 1 from json_each(runs.input,'$.sourceIds') where value=?)", id)) {
       run(app.db, "update source_routes set ingest=1 where source_id=?", id);
       continue;

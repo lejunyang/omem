@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
 import { matchQuery, terms } from "./tokenize.ts";
 import { vectorSearch } from "./embeddings.ts";
+import { LEVEL_WEIGHT, NOTE_WEIGHT, notesOf, notesOn, noteText, type Level } from "../sources/attention.ts";
 
 export type HitType = "chunk" | "page" | "memory" | "symbol";
 export type Hit = {
@@ -21,6 +22,10 @@ export type Hit = {
   score: number;
   via: string[];
   status?: string;
+  /** The source's level when it is not normal (focus / reference). */
+  attention?: string;
+  /** Notes on the hit's lines: outdated, wrong, key (sources/attention.ts). */
+  notes?: string[];
 };
 
 export type SearchOptions = {
@@ -31,6 +36,8 @@ export type SearchOptions = {
   perSource?: number;
   includeHistory?: boolean;
   sourceKinds?: string[];
+  /** Also return sources marked “ignore” (looking for one on purpose). */
+  includeIgnored?: boolean;
   /** Disable individual recall routes (evaluation and debugging). */
   routes?: { fts?: boolean; vector?: boolean; symbol?: boolean };
   /** RRF weight of the full-text route when dense vectors are also used. */
@@ -84,6 +91,23 @@ export function shadowedFiles(app: App, spaces?: string[]): Map<string, Set<stri
   return out;
 }
 
+/**
+ * How much the owner cares about the source (focus up, reference down) and what is marked on the
+ * hit's lines (outdated / wrong down, key up). The notes travel with the hit so the reader sees
+ * “this part is outdated, read X instead” next to the snippet.
+ */
+function weigh(app: App, hits: Hit[]): Hit[] {
+  const notes = notesOf(app, hits.flatMap((h) => (h.sourceId && h.type !== "symbol" ? [h.sourceId] : [])));
+  for (const h of hits) {
+    if (h.attention) h.score *= LEVEL_WEIGHT[h.attention as Level] ?? 1;
+    const on = notesOn(notes.get(h.sourceId ?? ""), h.lineStart, h.lineEnd).filter((n) => n.kind !== "note" || n.lineStart !== null);
+    if (!on.length) continue;
+    for (const n of on) if (n.kind !== "note") h.score *= NOTE_WEIGHT[n.kind];
+    h.notes = on.map(noteText);
+  }
+  return hits;
+}
+
 type Ranked = { key: string; hit: Omit<Hit, "score" | "via">; rank: number; via: string; weight?: number };
 
 export async function search(app: App, query: string, opts: SearchOptions = {}): Promise<Hit[]> {
@@ -97,11 +121,11 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
   if (match && types.has("chunk") && route.fts) {
     const sf = spaceFilter("c.space_id", opts.spaces);
     const kinds = opts.sourceKinds?.length ? ` and s.kind in (${opts.sourceKinds.map(() => "?").join(",")})` : "";
-    const rows = all<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; line_start: number; line_end: number; text: string; stitle: string }>(
+    const rows = all<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; line_start: number; line_end: number; text: string; stitle: string; attention: string | null }>(
       app.db,
-      `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text
+      `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, s.attention
        from chunks_fts f join chunks c on c.id = f.rowid join sources s on s.id = c.source_id
-       where chunks_fts match ? ${sf.sql} ${kinds} and s.deleted_at is null
+       where chunks_fts match ? ${sf.sql} ${kinds} and s.deleted_at is null ${opts.includeIgnored ? "" : "and (s.attention is null or s.attention != 'ignore')"}
        order by bm25(chunks_fts, 4.0, 1.0) limit ?`,
       match,
       ...sf.params,
@@ -125,6 +149,7 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
           lineStart: r.line_start,
           lineEnd: r.line_end,
           snippet: snippet(r.text, query),
+          ...(r.attention ? { attention: r.attention } : {}),
         },
       })),
     );
@@ -211,9 +236,9 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
     const vec = await vectorSearch(app, query, opts.spaces, pool).catch(() => []);
     if (vec.length) {
       const ids = vec.map((v) => v.chunkId);
-      const rows = all<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; stitle: string; line_start: number; line_end: number; text: string; deleted_at: string | null }>(
+      const rows = all<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; stitle: string; line_start: number; line_end: number; text: string; deleted_at: string | null; attention: string | null }>(
         app.db,
-        `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, s.deleted_at
+        `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, s.deleted_at, s.attention
          from chunks c join sources s on s.id = c.source_id where c.id in (${ids.map(() => "?").join(",")})`,
         ...ids,
       );
@@ -222,7 +247,7 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
       lists.push(
         vec
           .map((v) => byId.get(v.chunkId))
-          .filter((r): r is NonNullable<typeof r> => !!r && !r.deleted_at && (!kinds || kinds.has(r.kind)))
+          .filter((r): r is NonNullable<typeof r> => !!r && !r.deleted_at && (!kinds || kinds.has(r.kind)) && (opts.includeIgnored || r.attention !== "ignore"))
           .map((r, i) => ({
             key: `chunk:${r.id}`,
             rank: i,
@@ -239,6 +264,7 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
               lineStart: r.line_start,
               lineEnd: r.line_end,
               snippet: snippet(r.text, query),
+              ...(r.attention ? { attention: r.attention } : {}),
             },
           })),
       );
@@ -261,9 +287,9 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
         if (!prev.via.includes(item.via)) prev.via.push(item.via);
       } else fused.set(item.key, { ...item.hit, score: add, via: [item.via] });
     }
-  // A symbol hit and a chunk covering the same lines are the same evidence.
   const shadow = shadowedFiles(app, opts.spaces);
-  const hits = [...fused.values()].filter((h) => !(h.uri && shadow.get(h.spaceId)?.has(h.uri))).sort((a, b) => b.score - a.score);
+  const hits = weigh(app, [...fused.values()].filter((h) => !(h.uri && shadow.get(h.spaceId)?.has(h.uri)))).sort((a, b) => b.score - a.score);
+  // A symbol hit and a chunk covering the same lines are the same evidence.
   const out: Hit[] = [];
   const perSource = new Map<string, number>();
   const cap = opts.perSource ?? 3;

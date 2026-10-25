@@ -36,6 +36,8 @@ export const roleNames = [
   "tutor",
   "brief",
   "curator",
+  "triager",
+  "distiller",
   "summarizer",
   "memory-reviewer",
   "memory-organizer",
