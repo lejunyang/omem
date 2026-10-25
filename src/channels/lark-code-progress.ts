@@ -1,6 +1,7 @@
+import { botOfChannel, withBot } from "../core/bot-context.ts";
 import { createHash } from "node:crypto";
 import type { App } from "../core/app.ts";
-import { all, run } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
 import { type CodeChain, saveCodeChain, trySettleCodeChain, maxCodeRounds } from "../agents/code-chain.ts";
 import { getThread } from "../agents/threads.ts";
 import { getRun } from "../agents/runs.ts";
@@ -122,7 +123,14 @@ function checkpointOf(latest: ReturnType<typeof getRun>) {
   return `${latest.id}:${["done", "failed", "cancelled"].includes(latest.status) && !reviewing ? `${latest.status}:${latest.output.verdict ?? ""}` : "active"}`;
 }
 
-async function deliver(app: App, askId: string) {
+/** The card goes through the bot of the conversation the coding was asked in (lark.bots). */
+function deliver(app: App, askId: string) {
+  const conv = chainAt(app, askId)?.conversationId;
+  const channel = conv ? one<{ channel: string }>(app.db, "select channel from conversations where id = ?", conv)?.channel : undefined;
+  return withBot(botOfChannel(channel), () => deliverAs(app, askId));
+}
+
+async function deliverAs(app: App, askId: string) {
   let chain = chainAt(app, askId);
   if (!chain?.larkKey) return;
   const larkKey = chain.larkKey;

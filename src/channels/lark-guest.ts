@@ -35,9 +35,12 @@ export type GuestVerdict = { verdict: "answer" | "refuse" | "ignore"; reason: st
 const members = new Map<string, { at: number; owner: boolean }>();
 /** Whether the owner is in this group (the bot's member list, kept half an hour); unknown counts as no. */
 export async function ownerInChat(app: App, chatId: string): Promise<boolean> {
-  const owner = app.config.lark.ownerOpenId;
+  const { larkOwnerOpenId } = await import("./lark-send.ts");
+  // The owner's id in the bot that is asking (ids are per app).
+  const owner = larkOwnerOpenId(app);
   if (!owner) return false;
-  const c = members.get(chatId);
+  const key = `${owner}:${chatId}`;
+  const c = members.get(key);
   if (c && Date.now() - c.at < 30 * 60_000) return c.owner;
   let found = false;
   try {
@@ -53,11 +56,11 @@ export async function ownerInChat(app: App, chatId: string): Promise<boolean> {
   } catch {
     return false; // not cached: try again next time
   }
-  members.set(chatId, { at: Date.now(), owner: found });
+  members.set(key, { at: Date.now(), owner: found });
   return found;
 }
-export function setOwnerInChatForTests(chatId: string, owner: boolean) {
-  members.set(chatId, { at: Date.now(), owner });
+export function setOwnerInChatForTests(chatId: string, owner: boolean, ownerOpenId = "ou_owner") {
+  members.set(`${ownerOpenId}:${chatId}`, { at: Date.now(), owner });
 }
 
 export function guestsAllowed(app: App, chatType: "p2p" | "group") {

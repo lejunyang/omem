@@ -80,7 +80,7 @@ export function startAgentWork(app: App, input: {
   anchorLarkMessageId?: string;
 }): { work: AgentWork; runId: string; larkThreadMessageId?: string } {
   const root = getThread(app, input.rootConversationId);
-  const lark = root?.channel === "lark";
+  const lark = root?.channel === "lark" || !!root?.channel.startsWith("lark:");
   const workThread = createWorkThread(app, { rootId: input.rootConversationId, spaceId: input.spaceId, title: input.title });
   const work: AgentWork = {
     askRunId: input.askRunId,
@@ -281,7 +281,7 @@ export function workContext(app: App, work: AgentWork, forRunId: string): string
 export async function openWorkTopic(app: App, work: AgentWork, anchorMessageId: string) {
   if (work.larkKey?.includes("#")) return work;
   const root = getThread(app, work.rootConversationId);
-  if (root.channel !== "lark" || !root.key) return work;
+  if (!(root.channel === "lark" || root.channel.startsWith("lark:")) || !root.key) return work;
   const { deliverToThread } = await import("./inbox.ts");
   await deliverToThread(
     app,

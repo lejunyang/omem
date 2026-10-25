@@ -111,4 +111,6 @@ export type RuleEvent = {
   message?: { id: string; text: string; type: string; mentionsOwner: boolean; mentionsBot: boolean; topicId?: string | null; cardTitle?: string | null };
   /** Where it came from: the bot sees groups it is in in real time; the owner's capture sees every chat. */
   via: "bot" | "capture" | "schedule" | "test";
+  /** The Feishu bot that saw it (via bot): "main" or one of lark.bots; its agent answers through it. */
+  bot?: string;
 };

@@ -485,3 +485,10 @@ updated: 2026-10-25
 - 任务选型：之前候选只在 `list_ai_backends` 里，真实运行里一次自主选型都没有。现在打开自主选型且有候选时，能交办的运行的环境说明里有“任务选型”一节；`_common.md` 改为每次交办对照候选选择。
 - 模型检测：`/api/profile-options` 的后端带上缓存的检测结果；前端 `lib/probes.ts` 各页面共用，同一标签页只问一次；显示检测时间。
 - 运行记录页加状态筛选（全部 / 排队中 / 进行中 / 失败），筛选时列表随运行状态变化刷新（合并 0.4 秒内的事件）。
+
+## 机器人能力一致（10-25）
+
+- 主机器人和 `lark.bots` 跑同一套代码：`startLarkBot(app, ref)` 建连接，`setupLarkBot(app, ref, client)` 装处理逻辑（测试传假客户端）。原先额外机器人的简化处理（`onBotMessage` / `botTurn`）删掉，`registerMainRelay` 换成按机器人的 `registerRelay`。
+- 新增 `core/bot-context.ts`：AsyncLocalStorage 记“以哪个机器人说话”。`larkClient()` 跟随它；运行开始时重置为主机器人，`runTool` 按 `ctx.larkBot` 切换；`lark-cot` 不再用 `setCotSdk` 设的全局客户端（只留给测试），每个气泡记 `bot`；进度卡片、提问卡片、编码进度、Agent 气泡、通知按所属会话选机器人；`card_interactions` 加 `bot` 列（迁移）。
+- id 按应用区分：额外机器人不把自己看到的 open_id 写进 `lark_people.bot_open_id`，@ 人和读群成员用 `user_id`；卡片可操作人、本人在群判断（`ownerInChat`）用各自应用的 id；去掉“只有主机器人能加急 / 只给部分人看”的限制。
+- 群的采集、规则、监听只做一次：`keepsRecords` 判断主机器人是否在群里。规则事件带 `bot`，规则交给的 Agent 通过这个机器人回复。

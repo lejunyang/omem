@@ -1,3 +1,4 @@
+import { botOfChannel } from "../core/bot-context.ts";
 import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
@@ -53,21 +54,21 @@ function placeOf(app: App, r: Run): { conversationId: string; title: string } | 
 
 function start(app: App, r: Run) {
   // A rule's agent answering under the triggering message: its bubble opens the topic there.
-  const input = r.input as { replyAt?: { chatId: string; messageId: string }; spec?: string; wake?: boolean };
+  const input = r.input as { replyAt?: { chatId: string; messageId: string }; spec?: string; wake?: boolean; lark?: { bot?: string } };
   // A wake-up re-check: nobody waits on it, and most end with nothing new (QUIET). Its process is
   // shown only when it has something to say.
   const defer = !!input.wake;
   const at = input.replyAt;
-  if (r.kind === "agent" && at) return startCot(app, r.id, { chatId: at.chatId, originMessageId: at.messageId, inThread: true, title: `**${input.spec}** ${defer ? "复查" : "处理这条消息"}`, defer });
+  if (r.kind === "agent" && at) return startCot(app, r.id, { chatId: at.chatId, originMessageId: at.messageId, inThread: true, title: `**${input.spec}** ${defer ? "复查" : "处理这条消息"}`, defer, bot: input.lark?.bot ?? "main" });
   const place = placeOf(app, r);
   if (!place) return false;
   const t = findThread(app, place.conversationId);
-  if (!t || t.channel !== "lark" || !t.key) return false;
+  if (!t || !(t.channel === "lark" || t.channel.startsWith("lark:")) || !t.key) return false;
   const [chatId, topic] = t.key.split("#");
   const anchor = t.settings.lastMessageId;
   if (!chatId || !anchor) return false;
   // A work conversation shows its process in its own topic; before the topic exists, nowhere
   // (not in the group the work was started from).
   if (!topic && workInConversation(app, t.id)) return false;
-  return startCot(app, r.id, { chatId, originMessageId: anchor, inThread: !!topic, title: place.title, defer });
+  return startCot(app, r.id, { chatId, originMessageId: anchor, inThread: !!topic, title: place.title, defer, bot: botOfChannel(t.channel) });
 }

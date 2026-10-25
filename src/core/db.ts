@@ -661,6 +661,8 @@ const migrations: string[] = [
    update runs set quiet = 1 where quiet = 0 and status = 'done' and kind = 'wake';`,
   // Archiving follows the judgement already made on another source of the same conversation.
   `create index sources_chat on sources(json_extract(meta, '$.chatId')) where json_extract(meta, '$.chatId') is not null;`,
+  // Several Feishu bots: a card is updated through the bot that posted it (null = the main bot).
+  `alter table card_interactions add column bot text;`,
 ];
 
 export type Db = DatabaseSync;

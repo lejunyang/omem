@@ -1,3 +1,4 @@
+import { withBot } from "../core/bot-context.ts";
 import { trySettleCodeChain } from "./code-chain.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -371,7 +372,9 @@ function kick(app: App) {
       event: (type, data) => { heartbeats.set(r.id, Date.now()); addRunEvent(app, r.id, type, data); },
       output: (data) => setRunOutput(app, r.id, data),
     };
-    handler(ctx)
+    // A run is nobody's message handling: it speaks as the bot its conversation belongs to (tools
+    // and channels decide), not as whichever bot's event happened to queue it.
+    withBot("main", () => handler(ctx))
       .then((out) => {
         flushText(app, r.id);
         if (out) setRunOutput(app, r.id, out);

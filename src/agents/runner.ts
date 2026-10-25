@@ -168,8 +168,6 @@ export type RoleRunInput = {
  * runs that may post anywhere (the owner asks in words; the tool says to use them only then).
  */
 function larkPowers(lark: LarkAccess, userId: string) {
-  // People's ids are the main bot's: another bot cannot buzz or whisper to them.
-  if (lark.bot) return undefined;
   if (lark.chats === null && userId === OWNER) return { urgent: true, private: true };
   return lark.urgent || lark.private ? { urgent: !!lark.urgent, private: !!lark.private } : undefined;
 }

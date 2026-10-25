@@ -663,7 +663,7 @@ async function saveEdit() {
 
       <div class="card pad stack">
         <strong>其他机器人</strong>
-        <p class="muted small">再绑定几个飞书机器人，每个由一个 Agent 档案回答，有自己的会话。你在群里 @ 它或私聊它时它回答；同一个群里可以同时 @ 几个，它们知道彼此是谁、各管什么，回复里 @ 另一个就交给它接着做。采集、通知、卡片和规则仍由上面的主机器人负责。添加：在终端运行 <span class="mono">omem setup</span> → 渠道 → 飞书 → 添加机器人（扫码）。改回答者不用重启；增删或启停要重启服务。</p>
+        <p class="muted small">再绑定几个飞书机器人，每个由一个 Agent 档案回答，有自己的会话；能做的事和主机器人一样（进度与思考气泡、卡片和按钮、@ 人、加急、访客提问，上面的访客和私聊设置对所有机器人生效）。同一个群里可以同时 @ 几个，它们知道彼此是谁、各管什么，回复里 @ 另一个就交给它接着做。群消息的采集和规则只做一次：主机器人在群里就由它做，不在才由这个机器人做；不属于某个会话的通知仍从主机器人发。添加：在终端运行 <span class="mono">omem setup</span> → 渠道 → 飞书 → 添加机器人（扫码）。改回答者不用重启；增删或启停要重启服务。</p>
         <div v-for="(b, i) in config.lark.bots ?? []" :key="b.id" class="bot-row">
           <div class="row wrap">
             <strong class="mono">{{ b.id }}</strong><span class="muted small mono">{{ b.appId }}</span><span class="spacer" />

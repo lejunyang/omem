@@ -4,7 +4,8 @@ import { one, run } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
 import { identitiesOf, OWNER } from "../core/users.ts";
 import { resolveCitations } from "./common.ts";
-import { buildCard, closeInteraction, recordInteraction, sendLark, updateLarkCard, type Target } from "./lark-send.ts";
+import { buildCard, closeInteraction, getInteraction, larkOwnerOpenId, recordInteraction, sendLark, updateLarkCard, type Target } from "./lark-send.ts";
+import { botOfChannel } from "../core/bot-context.ts";
 
 /**
  * Asks in Feishu: a card in the conversation's chat or topic (or the person's private chat with
@@ -52,19 +53,27 @@ export function askCard(app: App, ask: Ask): Record<string, unknown> {
 }
 
 /** Where an ask goes in Feishu, or null when this channel is not the one to show it. */
-function targetFor(app: App, ask: Ask, ownerOpenId: string | undefined): { target: Target; chatId: string | null } | null {
+function targetFor(app: App, ask: Ask, ownerOpenId: string | undefined): { target: Target; chatId: string | null; bot: string } | null {
   if (ask.conversationId) {
     const t = one<{ channel: string; external_id: string | null; last: string | null }>(app.db, "select channel, external_id, json_extract(settings, '$.lastMessageId') last from conversations where id = ?", ask.conversationId);
-    if (t && t.channel !== "lark") return null;
+    if (t && t.channel !== "lark" && !t.channel.startsWith("lark:")) return null;
     if (t?.external_id) {
+      // The card goes through the bot of the conversation (lark.bots), whose ids it then uses.
+      const bot = botOfChannel(t.channel);
       const [chatId, topic] = t.external_id.split("#");
-      return { target: topic && t.last ? { replyTo: t.last, inThread: true } : { chatId }, chatId };
+      return { target: topic && t.last ? { replyTo: t.last, inThread: true, bot } : { chatId, bot }, chatId, bot };
     }
   }
   // No Feishu conversation: the person's private chat with the bot (suggestions only live under a reply).
   if (ask.kind === "suggestion") return null;
   const openId = ask.userId === OWNER ? ownerOpenId : identitiesOf(app, ask.userId).find((i) => i.channel === "lark")?.external_id;
-  return openId ? { target: { userId: openId }, chatId: null } : null;
+  return openId ? { target: { userId: openId, bot: "main" }, chatId: null, bot: "main" } : null;
+}
+
+/** A user's tenant-wide user_id (known from the main bot's id for them), for cards of the other bots. */
+function larkUserIdOf(app: App, userId: string) {
+  const openId = identitiesOf(app, userId).find((i) => i.channel === "lark")?.external_id;
+  return openId ? one<{ user_id: string | null }>(app.db, "select user_id from lark_people where bot_open_id = ?", openId)?.user_id ?? undefined : undefined;
 }
 
 export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined) {
@@ -73,15 +82,16 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
       const to = targetFor(app, ask, ownerOpenId());
       if (!to) return false;
       const sent = await sendLark(to.target, { card: askCard(app, ask) });
-      const who = ask.userId === OWNER ? ownerOpenId() : identitiesOf(app, ask.userId).find((i) => i.channel === "lark")?.external_id;
-      recordInteraction(app, { messageId: sent.messageId, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id } });
+      // Who may answer, in the posting bot's ids (the owner's open_id there; others by their main-bot id or user_id).
+      const who = ask.userId === OWNER ? larkOwnerOpenId(app, to.bot) : to.bot === "main" ? identitiesOf(app, ask.userId).find((i) => i.channel === "lark")?.external_id : larkUserIdOf(app, ask.userId);
+      recordInteraction(app, { messageId: sent.messageId, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id }, bot: to.bot });
       return true;
     },
     async closed(app, ask) {
       const row = one<{ id: string; message_id: string | null }>(app.db, "select id, message_id from card_interactions where purpose = 'ask' and json_extract(payload, '$.askId') = ? and status = 'open'", ask.id);
       if (!row?.message_id) return;
       closeInteraction(app, row.id, ask.answeredBy ?? "");
-      await updateLarkCard(row.message_id, askCard(app, ask)).catch(() => {});
+      await updateLarkCard(row.message_id, askCard(app, ask), getInteraction(app, row.id)?.bot).catch(() => {});
     },
   });
 }

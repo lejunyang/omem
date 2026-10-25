@@ -1,3 +1,4 @@
+import { withBot } from "../core/bot-context.ts";
 import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { executionSchema, validateExecution } from "./execution.ts";
@@ -2729,7 +2730,8 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
 async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown): Promise<{ text: string; isError: boolean }> {
   const parsed = { data };
   try {
-    const text = await tool.handler(ctx, parsed.data);
+    // Feishu calls speak as the bot of this run's conversation (lark.bots), the main bot otherwise.
+    const text = await withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data));
     if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data });
     return { text, isError: false };
   } catch (error) {

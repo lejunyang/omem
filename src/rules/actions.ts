@@ -120,7 +120,7 @@ async function agentAction(app: App, rule: Rule, a: Extract<RuleAction, { type: 
     // message is what opens the topic, so the work stays out of the group.
     if (a.ownTopic && reply !== "none" && e.message && !topicId) replyAt = { chatId, messageId: e.message.id };
     else if (reply !== "none") {
-      const t = resolveThread(app, { channel: "lark", chatId, topicId, isGroup: e.chat?.kind === "group", title: e.chat?.name, spaceId: rule.spaceId ?? chatSpace(app, chatId), userId: OWNER }).thread;
+      const t = resolveThread(app, { channel: e.bot && e.bot !== "main" ? `lark:${e.bot}` : "lark", chatId, topicId, isGroup: e.chat?.kind === "group", title: e.chat?.name, spaceId: rule.spaceId ?? chatSpace(app, chatId), userId: OWNER }).thread;
       if (e.message) updateThread(app, t.id, { settings: { ...t.settings, lastMessageId: e.message.id } });
       threadId = t.id;
     }
@@ -146,7 +146,8 @@ async function agentAction(app: App, rule: Rule, a: Extract<RuleAction, { type: 
         : "不要在群里发消息；最后的回答发给本人。",
   ].filter((x) => x !== "").join("\n");
   const space = a.space ?? spec.space ?? rule.spaceId ?? (e.chat ? chatSpace(app, e.chat.id) : "personal");
-  const lark = { chats: chatId && reply !== "none" ? [chatId] : [], draft: reply === "draft", ...powers(a) };
+  // It speaks through the bot that is in the chat (the one that saw the message).
+  const lark = { chats: chatId && reply !== "none" ? [chatId] : [], draft: reply === "draft", ...powers(a), ...(e.bot && e.bot !== "main" ? { bot: e.bot } : {}) };
   const r = createRun(app, {
     kind: "agent",
     spaceId: space,
@@ -202,7 +203,7 @@ async function silentAgent(app: App, rule: Rule, a: Extract<RuleAction, { type: 
   ].filter((x) => x !== "").join("\n");
   const prevSession = follow ? (getRun(app, follow.resumeRunId).output as { sessionId?: string }).sessionId : undefined;
   const space = a.space ?? spec.space ?? rule.spaceId ?? chatSpace(app, chatId);
-  const lark = { chats: [chatId], draft: false, ...powers(a) };
+  const lark = { chats: [chatId], draft: false, ...powers(a), ...(e.bot && e.bot !== "main" ? { bot: e.bot } : {}) };
   const r = createRun(app, {
     kind: "agent",
     spaceId: space,

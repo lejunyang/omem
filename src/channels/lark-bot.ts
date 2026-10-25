@@ -10,7 +10,8 @@ import { registerThreadSender } from "../agents/inbox.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { addNotificationSink } from "../core/notify.ts";
-import { identitiesOf, OWNER, resolveIdentity } from "../core/users.ts";
+import { identitiesOf, OWNER } from "../core/users.ts";
+import { botOfChannel, withBot } from "../core/bot-context.ts";
 import { importFile, keepOriginal, needsDocumentConversion } from "../sources/import.ts";
 import { inQuietHours } from "../core/notify.ts";
 import { findSourceByUri, sourceText } from "../sources/store.ts";
@@ -19,11 +20,11 @@ import { registerCodeProgress } from "./lark-code-progress.ts";
 import { registerLarkAsks } from "./lark-asks.ts";
 import { showSuggestions } from "../agents/asks.ts";
 import { startReplyProgress } from "./lark-progress.ts";
-import { finishCot, setCotSdk } from "./lark-cot.ts";
+import { finishCot } from "./lark-cot.ts";
 import { watchAgentBubbles } from "./lark-agent-cot.ts";
 import { handleCardAction } from "./lark-actions.ts";
-import { openLarkTopic, postedByOmem, reactLark, sendLark, setLarkClient, unreactLark } from "./lark-send.ts";
-import { botRoster, learnPeerIds, personSpoke, registerMainRelay, relayMentions, renderBotMentions, rosterNote } from "./lark-bots.ts";
+import { larkBotInfo, larkOwnerOpenId, openLarkTopic, postedByOmem, reactLark, sendLark, setLarkBotClient, unreactLark } from "./lark-send.ts";
+import { bindAnswerer, botChannel, botRoster, chatContext, keepsRecords, larkUser, learnPeerIds, personSpoke, registerRelay, relayMentions, renderBotMentions, rosterNote, type BotRef } from "./lark-bots.ts";
 import { larkAppSecret } from "./lark-setup.ts";
 import { routeWatchedMessages } from "./lark-watch.ts";
 import { askAsGuest, guestsAllowed, ownerInChat, waitGuest } from "./lark-guest.ts";
@@ -47,6 +48,8 @@ type Inbound = {
   chatType: "p2p" | "group";
   messageId: string;
   senderId: string;
+  /** Tenant-wide user_id, when the app may read it (the same in every app, unlike open_id). */
+  senderUserId?: string;
   senderName: string;
   text: string;
   mentionsBot: boolean;
@@ -142,8 +145,8 @@ export async function describeLarkContent(app: App, msg: { messageId: string; ty
  * Feishu pushes an event again when it did not get the acknowledgement in time (after ~15 s, 5 min,
  * 1 h…). The first delivery wins, also across restarts; repeats would otherwise become new turns.
  */
-export function firstDelivery(app: App, messageId: string) {
-  return run(app.db, "insert or ignore into handled_messages(channel,message_id,rule,at) values('lark-bot',?,'',?)", messageId, new Date().toISOString()).changes > 0;
+export function firstDelivery(app: App, messageId: string, channel = "lark-bot") {
+  return run(app.db, "insert or ignore into handled_messages(channel,message_id,rule,at) values(?,?,'',?)", channel, messageId, new Date().toISOString()).changes > 0;
 }
 
 function kv(app: App, key: string, value?: string) {
@@ -152,24 +155,56 @@ function kv(app: App, key: string, value?: string) {
   return value;
 }
 
-export async function startLarkBot(app: App) {
+/**
+ * Connect one bot: the main one (lark.appId) or one of lark.bots (lark-bots.ts). Every bot runs
+ * this same code; its event handling runs as that bot (core/bot-context.ts), so replies, cards,
+ * reactions and lookups go through its own app.
+ */
+export async function startLarkBot(app: App, ref: BotRef = "main") {
   const cfg = app.config.lark;
-  const appSecret = larkAppSecret(app.home, cfg.appId, cfg.appSecretEnv);
-  if (!cfg.appId || !appSecret) throw new Error("还没有绑定飞书机器人：运行 omem setup → 渠道 → 飞书机器人（扫码创建或授权已有应用）");
-  const client = new lark.Client({ appId: cfg.appId, appSecret, domain: lark.Domain.Feishu });
-  let botOpenId: string | null = kv(app, "lark_bot_open_id") ?? null;
+  const extra = ref === "main" ? null : (cfg.bots.find((b) => b.id === ref && b.enabled) ?? null);
+  if (ref !== "main" && !extra) throw new Error(`没有启用的飞书机器人 ${ref}`);
+  const appId = extra ? extra.appId : cfg.appId;
+  const appSecret = larkAppSecret(app.home, appId, extra ? `OMEM_LARK_APP_SECRET_${ref.toUpperCase().replace(/-/g, "_")}` : cfg.appSecretEnv);
+  if (!appId || !appSecret)
+    throw new Error(extra ? `没有 ${appId} 的 App Secret：运行 omem setup → 渠道 → 飞书 → 添加机器人` : "还没有绑定飞书机器人：运行 omem setup → 渠道 → 飞书机器人（扫码创建或授权已有应用）");
+  const client = new lark.Client({ appId, appSecret, domain: lark.Domain.Feishu });
+  const handlers = await setupLarkBot(app, ref, client);
+  const dispatcher = new lark.EventDispatcher({ loggerLevel: lark.LoggerLevel.warn }).register({
+    "im.message.receive_v1": handlers.message,
+    "card.action.trigger": handlers.cardAction,
+  } as never);
+  const ws = new lark.WSClient({ appId, appSecret, domain: lark.Domain.Feishu, loggerLevel: lark.LoggerLevel.warn });
+  await ws.start({ eventDispatcher: dispatcher });
+  console.log(extra ? `[omem] 飞书机器人 ${ref}（${larkBotInfo(ref)?.name ?? appId}）已连接，回答者：${extra.agent}` : "[omem] 飞书机器人已连接");
+}
+
+/** Everything a bot does with what it receives, given its client (tests pass a fake one). */
+export async function setupLarkBot(app: App, ref: BotRef, client: any) {
+  const cfg = app.config.lark;
+  const extra = ref === "main" ? null : (cfg.bots.find((b) => b.id === ref) ?? null);
+  // Per bot: its conversations, its kv entries, its record of Feishu's redeliveries, the owner's id in its app.
+  const channel = botChannel(ref);
+  const key = (k: string) => (extra ? `${k}:${ref}` : k);
+  const delivered = extra ? `lark-bot:${ref}` : "lark-bot";
+  const ownerOpenId = () => larkOwnerOpenId(app, ref);
+  const who = (m: { senderId: string; senderUserId?: string }) => larkUser(app, { open_id: m.senderId, user_id: m.senderUserId }, ref);
+  let botOpenId: string | null = kv(app, key("lark_bot_open_id")) ?? null;
   try {
     const info = (await client.request({ method: "GET", url: "/open-apis/bot/v3/info" })) as { bot?: { open_id?: string; app_name?: string } };
-    if (info.bot?.open_id) botOpenId = kv(app, "lark_bot_open_id", info.bot.open_id) ?? null;
-    if (info.bot?.app_name) kv(app, "lark_bot_name", info.bot.app_name);
+    if (info.bot?.open_id) botOpenId = kv(app, key("lark_bot_open_id"), info.bot.open_id) ?? null;
+    if (info.bot?.app_name) kv(app, key("lark_bot_name"), info.bot.app_name);
   } catch (e) {
-    console.warn("[omem] 读取飞书机器人信息失败：", (e as Error).message);
+    console.warn(`[omem] 读取飞书机器人 ${ref} 的信息失败：`, (e as Error).message);
   }
-  setLarkClient(client, botOpenId);
-  setCotSdk(client);
-  registerCodeProgress(app);
-  registerLarkAsks(app, () => cfg.ownerOpenId);
-  watchAgentBubbles(app);
+  const botName = kv(app, key("lark_bot_name")) ?? ref;
+  setLarkBotClient(ref, client, botOpenId, botName);
+  // Shared by all bots; each follows the conversation or card it belongs to.
+  if (!extra) {
+    registerCodeProgress(app);
+    registerLarkAsks(app, () => cfg.ownerOpenId);
+    watchAgentBubbles(app);
+  }
 
   const nameOf = larkSenderNames(app, client);
 
@@ -208,7 +243,7 @@ export async function startLarkBot(app: App) {
 
 
   // Later results for a thread (delegated agents…) go back to the same chat, inside the topic when there is one.
-  registerThreadSender("lark", async (thread, raw, meta: Record<string, unknown> = {}) => {
+  registerThreadSender(channel, (thread, raw, meta: Record<string, unknown> = {}) => withBot(ref, async () => {
     const [chatId, topic] = (thread.key ?? "").split("#");
     if (!chatId) return;
     // Internal citations and paths on this machine mean nothing in Feishu.
@@ -240,18 +275,20 @@ export async function startLarkBot(app: App) {
       return;
     }
     await reply(chatId, markdown, thread.settings.lastMessageId, !!topic);
-  });
+  }));
 
-  addNotificationSink(async (n) => {
-    // Background work tied to a conversation goes there (its Feishu topic), never as a private DM.
-    const inThread = (() => {
-      const cid = (n as { larkConversationId?: string }).larkConversationId;
-      if (!cid) return null;
-      const t = one<{ external_id: string | null; last: string | null }>(app.db, "select external_id, json_extract(settings, '$.lastMessageId') last from conversations where id = ? and channel = 'lark'", cid);
-      if (!t?.external_id) return null;
-      const [chatId, topic] = t.external_id.split("#");
-      return { chatId, inThread: !!topic, replyTo: t.last ?? undefined };
-    })();
+  // Background work tied to a conversation goes there (its Feishu topic, through its bot), never as
+  // a private DM; the rest reaches the owner through the main bot.
+  const notifyConversation = (n: Parameters<Parameters<typeof addNotificationSink>[0]>[0]) => {
+    const cid = (n as { larkConversationId?: string }).larkConversationId;
+    if (!cid) return null;
+    const t = one<{ channel: string; external_id: string | null; last: string | null }>(app.db, "select channel, external_id, json_extract(settings, '$.lastMessageId') last from conversations where id = ? and (channel = 'lark' or channel like 'lark:%')", cid);
+    if (!t?.external_id) return null;
+    const [chatId, topic] = t.external_id.split("#");
+    return { chatId, inThread: !!topic, replyTo: t.last ?? undefined, bot: botOfChannel(t.channel) };
+  };
+  if (!extra) addNotificationSink((n) => withBot(notifyConversation(n)?.bot, async () => {
+    const inThread = notifyConversation(n);
     const target = inThread
       ? (inThread.replyTo ? { replyTo: inThread.replyTo, inThread: inThread.inThread } : { chatId: inThread.chatId })
       : n.userId === OWNER
@@ -290,7 +327,7 @@ export async function startLarkBot(app: App) {
       return;
     }
     await sendLark(target, { card });
-  });
+  }));
 
   const pending = new Map<string, NodeJS.Timeout>();
   const lastCapture = new Map<string, string>();
@@ -302,7 +339,7 @@ export async function startLarkBot(app: App) {
     const message: LarkMessage = { message_id: m.messageId, chat_id: m.chatId, msg_type: m.type ?? "text",
       content: m.text, raw_content: m.raw, create_time: m.createTime, thread_id: m.topicId, parent_id: m.parentId, root_id: m.rootId,
       sender: { id: m.senderId, name: m.senderName, sender_type: m.fromApp ? "app" : "user" }, mentions: m.mentions.map(id => ({ id })) };
-    const r = persistChatMessages(app, { chatId: m.chatId, spaceId, name: before?.title ?? groupName(m.chatId), messages: [message], owner: cfg.ownerOpenId });
+    const r = persistChatMessages(app, { chatId: m.chatId, spaceId, name: before?.title ?? groupName(m.chatId), messages: [message], owner: ownerOpenId() });
     if (!r.id) return;
     lastCapture.set(m.messageId, r.id);
     if (r.status === "unchanged") return;
@@ -323,7 +360,8 @@ export async function startLarkBot(app: App) {
   const groupContext = (m: Inbound) => {
     const sourceId = lastCapture.get(m.messageId);
     lastCapture.delete(m.messageId);
-    if (!sourceId) return "";
+    // Captured by the main bot (or the owner's lark-cli), not by this one.
+    if (!sourceId) return chatContext(app, m.chatId, m.topicId);
     const lines = sourceText(app, sourceId).split("\n").filter(Boolean);
     lines.pop(); // the mention itself
     const pick = m.topicId ? lines.filter((l) => l.includes(`话题 ${m.topicId}]`)) : lines;
@@ -358,7 +396,11 @@ export async function startLarkBot(app: App) {
   /** Rules see the groups the bot is in as messages arrive (the capture sees them later, deduplicated). */
   const dispatchToRules = async (m: Inbound) => {
     if (m.senderId === botOpenId) return;
-    const email = one<{ email: string | null }>(app.db, "select email from lark_people where bot_open_id = ?", m.senderId)?.email ?? null;
+    // open_ids are the main bot's in lark_people; the other bots know people by user_id.
+    const email = (extra
+      ? m.senderUserId ? one<{ email: string | null }>(app.db, "select email from lark_people where user_id = ?", m.senderUserId) : undefined
+      : one<{ email: string | null }>(app.db, "select email from lark_people where bot_open_id = ?", m.senderId))?.email ?? null;
+    const owner = ownerOpenId();
     await import("../rules/engine.ts")
       .then(({ dispatchRuleEvent }) =>
         dispatchRuleEvent(app, {
@@ -366,9 +408,10 @@ export async function startLarkBot(app: App) {
           kind: "message",
           at: new Date(Number(m.createTime) || Date.now()).toISOString(),
           chat: { id: m.chatId, name: groupName(m.chatId), kind: "group" },
-          sender: { id: m.senderId, name: m.senderName, email, kind: m.senderId === cfg.ownerOpenId ? "owner" : m.fromApp ? "bot" : "user" },
-          message: { id: m.messageId, text: m.text, type: m.type ?? "text", mentionsOwner: !!cfg.ownerOpenId && m.mentions.includes(cfg.ownerOpenId), mentionsBot: m.mentionsBot, topicId: m.topicId ?? null, cardTitle: /<card title="([^"]*)"/.exec(m.text)?.[1] ?? null },
+          sender: { id: m.senderId, name: m.senderName, email, kind: m.senderId === owner ? "owner" : m.fromApp ? "bot" : "user" },
+          message: { id: m.messageId, text: m.text, type: m.type ?? "text", mentionsOwner: !!owner && m.mentions.includes(owner), mentionsBot: m.mentionsBot, topicId: m.topicId ?? null, cardTitle: /<card title="([^"]*)"/.exec(m.text)?.[1] ?? null },
           via: "bot",
+          bot: ref,
         }),
       )
       .catch(() => {});
@@ -417,22 +460,27 @@ export async function startLarkBot(app: App) {
   const handle = async (m: Inbound) => {
     let ruled: Promise<void> | null = null;
     if (m.chatType === "group") {
-      captureGroup(m);
+      // The chat's records (capture, rules, watched chats) are kept once: by the main bot when it is
+      // in the chat, otherwise by this one (lark-bots.ts).
+      const keeps = await keepsRecords(ref, m.chatId);
+      if (keeps) captureGroup(m);
       // Another omem bot's post is material here; a hand-off to this bot comes through relayMentions.
       if (postedByOmem(m.messageId)) return;
       if (!m.fromApp) personSpoke(m.chatId, m.topicId);
       // A person @-ing the bot asks it directly, and it answers (a user, or a guest when allowed):
       // the rules (waits, silent checks) are for what nobody asked and step aside.
-      if (m.mentionsBot && !m.fromApp && (resolveIdentity(app, "lark", m.senderId) || guestsAllowed(app, "group"))) markAddressed(app, `lark:${m.messageId}`);
-      else ruled = dispatchToRules(m).catch(() => {});
-      await routeWatchedMessages(app, m.chatId, groupName(m.chatId), [{ id: m.messageId, time: m.createTime, sender: m.senderName, senderId: m.senderId, text: m.text, topicId: m.topicId, mentions: m.mentions }], { botOpenId });
+      if (m.mentionsBot && !m.fromApp && (who(m) || guestsAllowed(app, "group"))) markAddressed(app, `lark:${m.messageId}`);
+      else if (keeps) ruled = dispatchToRules(m).catch(() => {});
+      if (keeps) await routeWatchedMessages(app, m.chatId, groupName(m.chatId), [{ id: m.messageId, time: m.createTime, sender: m.senderName, senderId: m.senderId, text: m.text, topicId: m.topicId, mentions: m.mentions }], { botOpenId });
       if (!m.mentionsBot) return;
     }
-    if (!cfg.ownerOpenId) {
-      await reply(m.chatId, `还没有绑定本人。请在 omem 配置中设置 \`lark.ownerOpenId\` 为：\`${m.senderId}\`，然后重启服务。`, m.messageId);
+    if (!ownerOpenId()) {
+      await reply(m.chatId, extra
+        ? `还没有确认本人：在 omem 设置 → 渠道 → 其他机器人里，把 ${ref} 的本人 open_id 填为 \`${m.senderId}\`。`
+        : `还没有绑定本人。请在 omem 配置中设置 \`lark.ownerOpenId\` 为：\`${m.senderId}\`，然后重启服务。`, m.messageId);
       return;
     }
-    let userId = m.fromApp ? null : resolveIdentity(app, "lark", m.senderId);
+    let userId = m.fromApp ? null : who(m);
     // Not the owner and not a registered user (omem user add … --lark <open_id>): guest mode, when on.
     // In a group the owner is in, the owner may let colleagues talk to the assistant itself.
     let asker: string | undefined;
@@ -441,10 +489,12 @@ export async function startLarkBot(app: App) {
       userId = OWNER;
       asker = m.senderName;
     }
-    if (m.chatType === "p2p" && userId === OWNER) kv(app, "lark_owner_chat", m.chatId);
+    if (m.chatType === "p2p" && userId === OWNER) kv(app, key("lark_owner_chat"), m.chatId);
     const text = spoken(m);
-    const context = m.chatType === "group" ? [rosterNote(app, "main"), groupContext(m)].filter(Boolean).join("\n\n") : "";
+    const context = m.chatType === "group" ? [rosterNote(app, ref), groupContext(m)].filter(Boolean).join("\n\n") : "";
     if (!text) return;
+    const spaceId = m.chatType === "group" ? groupSpace(m.chatId) : userId === OWNER ? cfg.defaultSpace : undefined;
+    bindAnswerer(app, ref, { channel, chatId: m.chatId, topicId: m.topicId, isGroup: m.chatType === "group", spaceId, userId });
     let presentation: ReturnType<typeof startReplyProgress> | undefined;
     let runId: string | null = null;
     let answered = false;
@@ -454,13 +504,13 @@ export async function startLarkBot(app: App) {
       const answer = await answerFromChannel(
         app,
         {
-          channel: "lark",
+          channel,
           chatId: m.chatId,
           topicId: m.topicId,
           isGroup: m.chatType === "group",
           text,
           asker,
-          spaceId: m.chatType === "group" ? groupSpace(m.chatId) : userId === OWNER ? cfg.defaultSpace : undefined,
+          spaceId,
           context,
           contextLabel: m.topicId ? "话题里" : "群里",
           externalMessageId: m.messageId,
@@ -492,10 +542,10 @@ export async function startLarkBot(app: App) {
             if (sent) {
               let conversationId: string | null = null;
               try {
-                conversationId = resolveThread(app, { channel: "lark", chatId: m.chatId, topicId: m.topicId }).thread.id;
+                conversationId = resolveThread(app, { channel, chatId: m.chatId, topicId: m.topicId }).thread.id;
               } catch { conversationId = null; }
-              run(app.db, "insert into card_interactions(id,message_id,chat_id,conversation_id,run_id,purpose,allowed,payload,created_at) values(?,?,?,?,?,?,?,?,?)",
-                newId("ci"), sent.messageId, m.chatId, conversationId, null, "model", "[]", "{}", new Date().toISOString());
+              run(app.db, "insert into card_interactions(id,message_id,chat_id,conversation_id,run_id,purpose,allowed,payload,created_at,bot) values(?,?,?,?,?,?,?,?,?,?)",
+                newId("ci"), sent.messageId, m.chatId, conversationId, null, "model", "[]", "{}", new Date().toISOString(), ref);
             }
           },
         },
@@ -504,10 +554,10 @@ export async function startLarkBot(app: App) {
       answered = true;
       if (runId) finishCot(app, runId, true);
       const p = await presentation?.close();
-      const shown = renderBotMentions(app, "main", answer);
+      const shown = renderBotMentions(app, ref, answer);
       const sentId = p ? (await p.finish(shown), p.messageId) : (await reply(m.chatId, shown, replyMessageId, replyInThread)).messageId;
       // It @-ed another omem bot: that one takes it from here.
-      if (m.chatType === "group" && sentId) relayMentions(app, "main", { chatId: m.chatId, topicId: m.topicId, messageId: sentId, text: answer });
+      if (m.chatType === "group" && sentId) relayMentions(app, ref, { chatId: m.chatId, topicId: m.topicId, messageId: sentId, text: answer });
       if (runId && !p) await reactLark(m.messageId, "DONE").catch(() => {});
       // A later quote of this reply reads back as an empty card; this maps it to the answer.
       if (runId && sentId) run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?) where run_id = ? and role = 'assistant'", sentId, runId);
@@ -572,6 +622,11 @@ export async function startLarkBot(app: App) {
     for (const p of people) {
       const openId = p.id?.open_id;
       if (!openId?.startsWith("ou_") || openId === botOpenId) continue;
+      // lark_people keeps the main bot's open_ids; the other bots add what is the same in every app.
+      if (extra) {
+        if (p.id?.user_id) rememberPerson(app, { userId: p.id.user_id, name: p.name ?? "" });
+        continue;
+      }
       rememberPerson(app, { botOpenId: openId, userId: p.id?.user_id || null, name: p.name ?? "" });
       await learnBotPerson(app, client, openId);
     }
@@ -585,12 +640,13 @@ export async function startLarkBot(app: App) {
     const mentions = ((msg.mentions ?? []) as { id?: { open_id?: string } }[]).map((x) => x.id?.open_id ?? "").filter(Boolean);
     if (msg.chat_type !== "p2p") await learnName(msg.chat_id);
     void learnPeopleFromEvent(data).catch(() => {});
-    learnPeerIds(app, "main", msg.mentions ?? []);
+    learnPeerIds(app, ref, msg.mentions ?? []);
     const m: Inbound = {
       chatId: msg.chat_id,
       chatType: msg.chat_type === "p2p" ? "p2p" : "group",
       messageId: msg.message_id,
       senderId,
+      senderUserId: data.sender?.sender_id?.user_id || undefined,
       senderName: await nameOf(senderId, { id: msg.message_id, chatId: msg.chat_id, fromApp }),
       text: await describeLarkContent(app, { messageId: msg.message_id, type: msg.message_type, content: msg.content }, lookups),
       mentions,
@@ -606,43 +662,52 @@ export async function startLarkBot(app: App) {
           .map((x) => [x.key!, { name: x.name ?? "", isBot: !!botOpenId && x.id?.open_id === botOpenId }]),
       ),
     };
-    if ((["image", "file"].includes(msg.message_type) || (m.chatType === "group" && ["media", "audio"].includes(msg.message_type))) && (m.chatType === "group" || resolveIdentity(app, "lark", m.senderId)))
+    const keeps = m.chatType === "p2p" || (await keepsRecords(ref, m.chatId));
+    if ((["image", "file"].includes(msg.message_type) || (m.chatType === "group" && ["media", "audio"].includes(msg.message_type))) && (m.chatType === "group" ? keeps : who(m)))
       saveResource(msg, m).catch((e) => console.warn("[omem] 飞书附件保存失败", e));
     if (msg.message_type !== "image" && msg.message_type !== "file") {
-      if (resolveIdentity(app, "lark", m.senderId) === OWNER) m.quote = await fetchQuote(msg);
+      if (who(m) === OWNER) m.quote = await fetchQuote(msg);
       await handle(m);
-    } else if (m.chatType === "group") captureGroup(m);
+    } else if (m.chatType === "group" && keeps) captureGroup(m);
   };
 
-  const dispatcher = new lark.EventDispatcher({ loggerLevel: lark.LoggerLevel.warn }).register({
+  // Another omem bot @-ed this one (lark-bots.ts): it answers in its own conversation there.
+  registerRelay(ref, (t) => withBot(ref, async () => {
+    const from = botRoster(app).find((r) => r.ref === t.from)?.name ?? t.from;
+    const spaceId = groupSpace(t.chatId);
+    bindAnswerer(app, ref, { channel, chatId: t.chatId, topicId: t.topicId, isGroup: true, spaceId, userId: OWNER });
+    const working = await reactLark(t.replyTo, "OnIt").catch(() => undefined);
+    try {
+      const answer = await answerFromChannel(app, {
+        channel, chatId: t.chatId, topicId: t.topicId, isGroup: true, text: t.text, asker: `机器人「${from}」`, spaceId,
+        context: [rosterNote(app, ref), chatContext(app, t.chatId, t.topicId)].filter(Boolean).join("\n\n"), contextLabel: t.topicId ? "话题里" : "群里", externalMessageId: t.replyTo, userId: OWNER,
+      });
+      if (answer === null) return;
+      const sent = await reply(t.chatId, renderBotMentions(app, ref, answer), t.replyTo, !!t.topicId);
+      if (sent.messageId) relayMentions(app, ref, { chatId: t.chatId, topicId: t.topicId, messageId: sent.messageId, text: answer });
+    } finally {
+      if (working) await unreactLark(t.replyTo, working);
+    }
+  }));
+  // Everything this bot receives is handled as this bot.
+  let processing: Promise<void> = Promise.resolve();
+  return {
     // Acknowledge at once: Feishu redelivers an event it has not heard back about within a few
     // seconds, and a slow handler also holds back the messages sent right after it.
-    "im.message.receive_v1": async (data: any) => {
-      if (!data?.message?.message_id || !firstDelivery(app, data.message.message_id)) return {};
-      processEvent(data).catch((e) => console.warn("[omem] 飞书消息处理失败", e));
+    message: async (data: any) => {
+      if (!data?.message?.message_id || !firstDelivery(app, data.message.message_id, delivered)) return {};
+      processing = withBot(ref, () => processEvent(data)).catch((e) => console.warn(`[omem] 飞书机器人 ${ref} 处理消息失败`, e));
       return {};
     },
-    "card.action.trigger": async (data: any) => {
+    cardAction: async (data: any) => {
       try {
-        return await handleCardAction(app, data, nameOf);
+        return await withBot(ref, () => handleCardAction(app, data, nameOf));
       } catch (e) {
         console.warn("[omem] 卡片操作处理失败", e);
         return { toast: { type: "error", content: "处理失败，请稍后再试" } };
       }
     },
-  } as never);
-  // Another omem bot @-ed the main one (lark-bots.ts): it answers in its own conversation there.
-  registerMainRelay(async (t) => {
-    const from = botRoster(app).find((r) => r.ref === t.from)?.name ?? t.from;
-    const answer = await answerFromChannel(app, {
-      channel: "lark", chatId: t.chatId, topicId: t.topicId, isGroup: true, text: t.text, asker: `机器人「${from}」`, spaceId: groupSpace(t.chatId),
-      context: rosterNote(app, "main"), contextLabel: t.topicId ? "话题里" : "群里", externalMessageId: t.replyTo, userId: OWNER,
-    });
-    if (answer === null) return;
-    const sent = await reply(t.chatId, renderBotMentions(app, "main", answer), t.replyTo, !!t.topicId);
-    if (sent.messageId) relayMentions(app, "main", { chatId: t.chatId, topicId: t.topicId, messageId: sent.messageId, text: answer });
-  });
-  const ws = new lark.WSClient({ appId: cfg.appId, appSecret, domain: lark.Domain.Feishu, loggerLevel: lark.LoggerLevel.warn });
-  await ws.start({ eventDispatcher: dispatcher });
-  console.log("[omem] 飞书机器人已连接");
+    /** The handling of the last message (tests wait for it). */
+    settled: () => processing,
+  };
 }

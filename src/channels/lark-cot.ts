@@ -1,3 +1,5 @@
+import { currentBot } from "../core/bot-context.ts";
+import { larkClientFor } from "./lark-send.ts";
 import type { App } from "../core/app.ts";
 import { setRunOutput } from "../agents/runs.ts";
 
@@ -39,6 +41,8 @@ type State = {
   disabled: boolean;
   pumping: boolean;
   queued: boolean;
+  /** The bot whose app posts this bubble. */
+  bot: string;
   dirty: boolean;
   /** No more input is accepted once the terminal request starts. */
   closing: boolean;
@@ -74,12 +78,23 @@ const COT_CONTENT_MAX = 1000;
 const disabledChats = new Map<string, number>();
 const DISABLE_MS = 30 * 60_000;
 
-let sdk: { request: (o: { method: string; url: string; data?: unknown; params?: unknown; timeout?: number }) => Promise<any> } | null = null;
-export function setCotSdk(c: typeof sdk) {
-  sdk = c;
+type Sdk = { request: (o: { method: string; url: string; data?: unknown; params?: unknown; timeout?: number }) => Promise<any> };
+/** Tests replace the client (null: bubbles unavailable); otherwise each bubble uses its bot's client. */
+let sdkOverride: Sdk | null | undefined;
+export function setCotSdk(c: Sdk | null) {
+  sdkOverride = c;
 }
-export function cotAvailable() {
-  return !!sdk;
+function sdkFor(bot: string): Sdk | null {
+  if (sdkOverride !== undefined) return sdkOverride;
+  try {
+    const c = larkClientFor(bot);
+    return typeof c?.request === "function" ? c : null;
+  } catch {
+    return null;
+  }
+}
+export function cotAvailable(bot = currentBot()) {
+  return !!sdkFor(bot);
 }
 
 /**
@@ -147,6 +162,7 @@ async function api(st: State, phase: "create" | "append" | "finish" | "complete"
   };
   cotLog(st, "request", details);
   try {
+    const sdk = sdkFor(st.bot);
     if (!sdk) throw new Error("message_cot 不可用");
     const r = await sdk.request({ method, url, data, params, timeout: TIMEOUT });
     if (r && typeof r.code === "number" && r.code !== 0) throw Object.assign(new Error("message_cot API error"), { response: { data: r } });
@@ -342,15 +358,17 @@ function schedule(app: App, runId: string, st: State, delay = 700) {
 /** Begin the bubble for a turn, anchored to the message that started it (so it lands in the topic). */
 /** `title`: a first line saying whose process this is (an agent's round in a work topic). */
 /** `defer`: nobody waits on this turn; show its process only if it ends with something to say. */
-export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean; title?: string; defer?: boolean }) {
-  if (!sdk || states.has(runId)) return false;
+export function startCot(app: App, runId: string, at: { chatId: string; originMessageId?: string; inThread?: boolean; title?: string; defer?: boolean; bot?: string }) {
+  // The bubble belongs to the bot of the conversation it shows (lark.bots), the current one by default.
+  const bot = at.bot ?? currentBot();
+  if (!sdkFor(bot) || states.has(runId)) return false;
   const disabledUntil = disabledChats.get(at.chatId) ?? 0;
   if (Date.now() < disabledUntil) {
     cotLog({ turnId: runId }, "skipped", { reason: "cooldown", remainingMs: disabledUntil - Date.now() });
     return false;
   }
   disabledChats.delete(at.chatId);
-  const st: State = { chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: at.title ? [{ kind: "reasoning", text: `${at.title}\n\n` }] : [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, dirty: false, closing: false, requestSeq: 0, settled: false, prologueSent: false, proven: false, deferred: !!at.defer, discard: false, waiters: [], timers: [] };
+  const st: State = { bot, chatId: at.chatId, originMessageId: at.originMessageId, inThread: !!at.inThread, turnId: runId, entries: at.title ? [{ kind: "reasoning", text: `${at.title}\n\n` }] : [], toolStarted: new Set(), toolSettled: new Set(), reasoningSent: new Map(), reasoningClosed: new Set(), disabled: false, pumping: false, queued: false, dirty: false, closing: false, requestSeq: 0, settled: false, prologueSent: false, proven: false, deferred: !!at.defer, discard: false, waiters: [], timers: [] };
   states.set(runId, st);
   schedule(app, runId, st, 300);
   return true;

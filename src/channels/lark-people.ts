@@ -1,3 +1,4 @@
+import { currentBot } from "../core/bot-context.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, now } from "../core/util.ts";
@@ -125,8 +126,10 @@ export async function resolveMention(app: App, who: string, chatId?: string | nu
   // A bot-side open_id alone can belong to another bot, which the human member list omits.
   // Preserve known explicit IDs and these open-id-only identities; all other names are local to the chat.
   const r = list[0];
-  const knownId = list.length === 1 && (r.user_id === w || r.bot_open_id === w);
-  const openIdOnly = list.length === 1 && r.bot_open_id && !r.user_id && !r.email;
+  // bot_open_id is the main bot's id for a person; the other bots (lark.bots) can only use user_id.
+  const main = currentBot() === "main";
+  const knownId = list.length === 1 && (r.user_id === w || (main && r.bot_open_id === w));
+  const openIdOnly = main && list.length === 1 && r.bot_open_id && !r.user_id && !r.email;
   if (chatId && !w.includes("@") && !knownId && !openIdOnly) {
     const member = await mentionInChat(app, chatId, w);
     if (member) return member;
@@ -135,7 +138,7 @@ export async function resolveMention(app: App, who: string, chatId?: string | nu
   }
   if (list.length > 1) throw new HttpError(400, `“${w}”有 ${list.length} 条同名联系人记录，尚未核实是否同一人：${list.map((r) => `${r.name}（${r.email ?? "无邮箱"}）`).join("、")}。用邮箱指定是哪一位。`);
   if (r?.user_id) return { name: r.name, userId: r.user_id, email: r.email };
-  if (r?.bot_open_id?.startsWith("ou_")) return { name: r.name, userId: r.bot_open_id, email: r.email };
+  if (main && r?.bot_open_id?.startsWith("ou_")) return { name: r.name, userId: r.bot_open_id, email: r.email };
   const email = r?.email ?? (w.includes("@") ? w : null);
   if (!email) throw new HttpError(400, `不认识“${w}”：没有在飞书消息里见过这个人，给出邮箱才能 @ 他`);
   const { larkClient } = await import("./lark-send.ts");
@@ -162,15 +165,17 @@ export async function resolveMention(app: App, who: string, chatId?: string | nu
 async function mentionInChat(app: App, chatId: string, who: string) {
   const { larkClient } = await import("./lark-send.ts");
   const client = larkClient();
+  // open_ids are per app: the other bots list members by the tenant-wide user_id.
+  const main = currentBot() === "main";
   const matches = new Map<string, string>();
   const seen = new Set<string>();
   let token: string | undefined;
   for (let page = 0; page < 100; page++) {
-    const r = await client.im.chatMembers.get({ path: { chat_id: chatId }, params: { member_id_type: "open_id", page_size: 100, ...(token ? { page_token: token } : {}) } });
+    const r = await client.im.chatMembers.get({ path: { chat_id: chatId }, params: { member_id_type: main ? "open_id" : "user_id", page_size: 100, ...(token ? { page_token: token } : {}) } });
     if (r.code) throw new HttpError(400, `读取目标群成员失败（${r.code}）：需要机器人有查看群成员权限并在群内。`);
     if (!r.data || r.data.trigger_security_conf_limit) throw new HttpError(400, "目标群成员列表不完整，无法确认 @ 对象。请用已核实的邮箱或机器人侧 ID。");
     for (const m of r.data.items ?? []) {
-      if (typeof m.member_id !== "string" || !m.member_id.startsWith("ou_")) continue;
+      if (typeof m.member_id !== "string" || (main && !m.member_id.startsWith("ou_"))) continue;
       if (m.name === who || m.member_id === who) matches.set(m.member_id, m.name ?? who);
     }
     if (r.data.has_more === false) {
@@ -178,7 +183,7 @@ async function mentionInChat(app: App, chatId: string, who: string) {
       const match = [...matches][0];
       if (!match) return null;
       const [id, name] = match;
-      rememberPerson(app, { botOpenId: id, name });
+      rememberPerson(app, main ? { botOpenId: id, name } : { userId: id, name });
       return { name, userId: id, email: null };
     }
     if (!r.data.has_more || !r.data.page_token || seen.has(r.data.page_token)) break;

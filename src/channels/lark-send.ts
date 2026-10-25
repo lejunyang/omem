@@ -3,6 +3,7 @@ import { basename, extname } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
+import { currentBot } from "../core/bot-context.ts";
 
 /**
  * Everything the Feishu bot can say: plain or Markdown text, replies (in a
@@ -15,35 +16,38 @@ import { HttpError, json, newId, now } from "../core/util.ts";
  */
 // The SDK client is untyped here on purpose: only a handful of calls are used.
 type LarkClient = any;
-let client: LarkClient | null = null;
-let botOpenId: string | null = null;
-export function setLarkClient(c: LarkClient | null, openId?: string | null) {
-  client = c;
-  botOpenId = openId ?? null;
-}
-export function larkClient(): LarkClient {
-  if (!client) throw new HttpError(503, "飞书机器人未连接：在 omem setup → 渠道 里配置飞书机器人并重启服务");
-  return client;
-}
-export function larkBotOpenId() {
-  return botOpenId;
-}
-
-/** The other bots (lark.bots), by id: each speaks with its own app identity. */
-const extraBots = new Map<string, { client: LarkClient; openId: string | null; name: string }>();
+/**
+ * Connected bots by id: "main" (lark.appId) and each of lark.bots, every one with its own app
+ * identity. Calls go through the bot of the current work (core/bot-context.ts) unless told.
+ */
+const bots = new Map<string, { client: LarkClient; openId: string | null; name: string }>();
 export function setLarkBotClient(id: string, c: LarkClient | null, openId?: string | null, name = id) {
-  if (c) extraBots.set(id, { client: c, openId: openId ?? null, name });
-  else extraBots.delete(id);
+  if (c) bots.set(id, { client: c, openId: openId ?? null, name });
+  else bots.delete(id);
+}
+export function setLarkClient(c: LarkClient | null, openId?: string | null, name?: string) {
+  setLarkBotClient("main", c, openId, name ?? bots.get("main")?.name ?? "main");
 }
 export function larkBotInfo(id: string) {
-  return extraBots.get(id) ?? null;
+  return bots.get(id) ?? null;
 }
-/** `bot` names one of lark.bots; without it, the main bot. */
+/** `bot`: "main" or one of lark.bots; without it, the bot of the current work. */
 export function larkClientFor(bot?: string | null): LarkClient {
-  if (!bot) return larkClient();
-  const b = extraBots.get(bot);
-  if (!b) throw new HttpError(503, `飞书机器人 ${bot} 未连接`);
+  const id = bot || currentBot();
+  const b = bots.get(id);
+  if (!b) throw new HttpError(503, id === "main" ? "飞书机器人未连接：在 omem setup → 渠道 里配置飞书机器人并重启服务" : `飞书机器人 ${id} 未连接`);
   return b.client;
+}
+export function larkClient(): LarkClient {
+  return larkClientFor();
+}
+/** The current bot's own open_id (ids are per app). */
+export function larkBotOpenId() {
+  return bots.get(currentBot())?.openId ?? null;
+}
+/** The owner's open_id in the current bot's app. */
+export function larkOwnerOpenId(app: App, bot = currentBot()) {
+  return bot === "main" ? app.config.lark.ownerOpenId : app.config.lark.bots.find((b) => b.id === bot)?.ownerOpenId;
 }
 
 /**
@@ -235,18 +239,18 @@ const idField = (id: string) => (id.startsWith("ou_") ? "open_id" : "user_id");
  * A card in a group that only one member sees (Feishu's ephemeral card: cards only, one person per
  * call, both the bot and that person in the group; it cannot be a reply or open a topic).
  */
-export async function sendEphemeral(chatId: string, person: string, card: Record<string, unknown>): Promise<{ messageId: string }> {
-  const r = await larkClient().request({ method: "POST", url: "/open-apis/ephemeral/v1/send", data: { chat_id: chatId, [idField(person)]: person, msg_type: "interactive", card } });
+export async function sendEphemeral(chatId: string, person: string, card: Record<string, unknown>, bot?: string | null): Promise<{ messageId: string }> {
+  const r = await larkClientFor(bot).request({ method: "POST", url: "/open-apis/ephemeral/v1/send", data: { chat_id: chatId, [idField(person)]: person, msg_type: "interactive", card } });
   const d = check(r, "发送仅部分人可见的卡片");
   return { messageId: d?.message_id };
 }
 
 /** Buzz people about a message the bot sent (in-app urgent; they must be in its chat). */
-export async function urgentLark(messageId: string, people: string[]) {
+export async function urgentLark(messageId: string, people: string[], bot?: string | null) {
   const groups = new Map<string, string[]>();
   for (const p of people) groups.set(idField(p), [...(groups.get(idField(p)) ?? []), p]);
   for (const [type, ids] of groups)
-    check(await larkClient().im.message.urgentApp({ path: { message_id: messageId }, params: { user_id_type: type as "open_id" | "user_id" }, data: { user_id_list: ids } }), "加急");
+    check(await larkClientFor(bot).im.message.urgentApp({ path: { message_id: messageId }, params: { user_id_type: type as "open_id" | "user_id" }, data: { user_id_list: ids } }), "加急");
 }
 
 /** Who sees a message beyond posting it: members only (`onlyTo`), and who is buzzed (`urgent`). */
@@ -262,18 +266,16 @@ export function asCard(content: Content): Record<string, unknown> {
 
 /** Send with what `Delivery` asks for; returns the ids of what was posted. */
 export async function deliverLark(to: Target, content: Content, d: Delivery = {}): Promise<{ messageId: string; threadId?: string; ephemeral?: string[] }> {
-  // People's ids are the main bot's (open_ids differ per app).
-  if (to.bot && (d.onlyTo?.length || d.urgent?.length)) throw new HttpError(400, "只给部分人看和加急只能由主机器人发");
   if (d.onlyTo?.length) {
     const chatId = to.chatId;
     if (!chatId) throw new HttpError(400, "只给部分人看的消息要发在群里（chat_id）");
     const card = asCard(content);
     const ids: string[] = [];
-    for (const p of d.onlyTo) ids.push((await sendEphemeral(chatId, p.id, card)).messageId);
+    for (const p of d.onlyTo) ids.push((await sendEphemeral(chatId, p.id, card, to.bot)).messageId);
     return { messageId: ids[0], ephemeral: ids };
   }
   const sent = await sendLark(to, content);
-  if (d.urgent?.length) await urgentLark(sent.messageId, d.urgent.map((p) => p.id));
+  if (d.urgent?.length) await urgentLark(sent.messageId, d.urgent.map((p) => p.id), to.bot);
   return sent;
 }
 
@@ -318,8 +320,10 @@ export type Interaction = {
   allowed: string[];
   payload: Record<string, unknown>;
   status: "open" | "done" | "expired";
+  /** The bot that posted the card (its updates must go through the same app). */
+  bot: string;
 };
-type IRow = { id: string; message_id: string | null; chat_id: string | null; conversation_id: string | null; run_id: string | null; purpose: string; allowed: string; payload: string; status: string };
+type IRow = { id: string; message_id: string | null; chat_id: string | null; conversation_id: string | null; run_id: string | null; purpose: string; allowed: string; payload: string; status: string; bot: string | null };
 const toI = (r: IRow): Interaction => ({
   id: r.id,
   messageId: r.message_id,
@@ -330,13 +334,14 @@ const toI = (r: IRow): Interaction => ({
   allowed: json(r.allowed, []),
   payload: json(r.payload, {}),
   status: r.status as Interaction["status"],
+  bot: r.bot ?? "main",
 });
 
-export function recordInteraction(app: App, i: Omit<Interaction, "id" | "status">) {
+export function recordInteraction(app: App, i: Omit<Interaction, "id" | "status" | "bot"> & { bot?: string }) {
   const id = newId("ci");
   run(
     app.db,
-    "insert into card_interactions(id,message_id,chat_id,conversation_id,run_id,purpose,allowed,payload,created_at) values(?,?,?,?,?,?,?,?,?)",
+    "insert into card_interactions(id,message_id,chat_id,conversation_id,run_id,purpose,allowed,payload,created_at,bot) values(?,?,?,?,?,?,?,?,?,?)",
     id,
     i.messageId,
     i.chatId,
@@ -346,6 +351,7 @@ export function recordInteraction(app: App, i: Omit<Interaction, "id" | "status"
     JSON.stringify(i.allowed),
     JSON.stringify(i.payload),
     now(),
+    i.bot ?? currentBot(),
   );
   return id;
 }

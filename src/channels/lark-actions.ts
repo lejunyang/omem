@@ -2,7 +2,8 @@ import { receive } from "../agents/inbox.ts";
 import { addMessage, findThread } from "../agents/threads.ts";
 import type { App } from "../core/app.ts";
 import { one, run, tx } from "../core/db.ts";
-import { OWNER, canWrite, resolveIdentity } from "../core/users.ts";
+import { OWNER, canWrite } from "../core/users.ts";
+import { larkUser } from "./lark-bots.ts";
 import { buildCard, closeInteraction, deliverLark, describeAction, interactionForMessage, sendLark, updateLarkCard, type Content, type Delivery, type Target } from "./lark-send.ts";
 
 /**
@@ -18,11 +19,13 @@ type CardActionResult = { toast: { type: string; content: string }; card?: unkno
 
 export async function handleCardAction(app: App, data: any, nameOf: (openId: string) => Promise<string> = async (id) => id): Promise<CardActionResult> {
   const operator: string = data.operator?.open_id ?? data.open_id ?? "";
+  // Who clicked, as this bot sees them (open_ids are per app; the other bots also know user_id).
+  const operatorUser = () => larkUser(app, { open_id: operator, user_id: data.operator?.user_id });
   const messageId: string = data.context?.open_message_id ?? data.open_message_id ?? "";
   const action = data.action ?? {};
   const inter = messageId ? interactionForMessage(app, messageId) : null;
   if (!inter) return { toast: { type: "warning", content: "这张卡片已经失效" } };
-  if (inter.allowed.length && !inter.allowed.includes(operator)) {
+  if (inter.allowed.length && !inter.allowed.includes(operator) && !(data.operator?.user_id && inter.allowed.includes(data.operator.user_id))) {
     const who = (await Promise.all(inter.allowed.slice(0, 3).map(nameOf))).join("、");
     return { toast: { type: "error", content: `只有 ${who} 可以处理` } };
   }
@@ -33,7 +36,7 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
     // A question, suggested step or approval (agents/asks.ts): answered here, no agent turn of its own.
     const { handleAskAction } = await import("./lark-asks.ts");
     const formValue = typeof action.form_value === "string" ? safeJson(action.form_value) : action.form_value;
-    const by = resolveIdentity(app, "lark", operator) ?? operator;
+    const by = operatorUser() ?? operator;
     try {
       const r = await handleAskAction(app, inter.id, String((inter.payload as { askId?: string }).askId ?? ""), { name: action.name, value, formValue }, by);
       return { toast: { type: "success", content: r.toast }, ...(r.card ? { card: rawCard(r.card) } : {}) };
@@ -64,7 +67,7 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
       if (!((inter.payload as { itemIds?: string[] }).itemIds ?? []).includes(id)) return { toast: { type: "error", content: "按钮与事项不匹配" } };
       const { getItem } = await import("../items/store.ts");
       const { keepItem } = await import("../items/expiry.ts");
-      const userId = resolveIdentity(app, "lark", operator);
+      const userId = operatorUser();
       const item = getItem(app, id);
       if (!userId || item.userId !== userId || !canWrite(app, userId, item.spaceId)) return { toast: { type: "error", content: "无权处理该事项" } };
       const closed = ["done", "cancelled", "expired"].includes(item.status);
@@ -81,7 +84,7 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
         if (!current || current.id !== inter.id || current.status !== "open" || JSON.stringify(current.payload) !== JSON.stringify(inter.payload) || JSON.stringify(current.allowed) !== JSON.stringify(inter.allowed))
           return { toast: { type: "warning", content: "卡片已变化或失效，请使用更新后的卡片" } };
         if (id !== itemId || !["done", "cancel"].includes(op)) return { toast: { type: "error", content: "按钮与事项不匹配" } };
-        const userId = resolveIdentity(app, "lark", operator);
+        const userId = operatorUser();
         const item = getItem(app, id);
         if (!userId || item.userId !== userId || !canWrite(app, userId, item.spaceId)) return { toast: { type: "error", content: "无权处理该事项" } };
         if (op === "done") upsertItem(app, id, { status: "done", note: `${opName} 在飞书卡片上标记已处理` }, "user");
@@ -134,7 +137,7 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
     return { card: rawCard(r.card), toast: { type: "success", content: r.toast } };
   }
   const desc = describeAction({ tag: action.tag, name: action.name, value, formValue, option: action.option, options: action.options, input: action.input_value, checked: action.checked });
-  const userId = resolveIdentity(app, "lark", operator);
+  const userId = operatorUser();
   run(app.db, "update card_interactions set handled_at = datetime('now'), handled_by = ? where id = ?", operator, inter.id);
   await receive(app, {
     conversationId: inter.conversationId,
