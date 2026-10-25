@@ -522,6 +522,12 @@ updated: 2026-10-25
 - 分支评审的可读范围：`CodeInput.readSpaces`（`review_branch` 的 `read_spaces`、`POST /api/review-branch` 的 `readSpaces`、`omem review-branch --read`），加进编码与评审运行的空间范围；需求文档在个人空间、迁移要对照源仓库时用。接口按发起人可访问的空间校验。
 - 评审档位条件新增 `change.codeLines`（有效代码改动行数）：`reviewMetrics` 按 `isSourceFile`（`src/sources/chunk.ts`，源代码扩展名，排除 `.min.js`）只累计源代码文件的增删行；档位理由和负责人估计里同时写出总行数和有效代码行数。默认档位不变，可在 Agent 页 → 评审 改用它。
 
+## 评审的过程按评审项分开看（10-26）
+
+- `runs.ts` 的 `addRunEvent`：流式文字按标签（`phase` / `check`）分开合并，同一运行里并行的评审项各写各的文字行，存下的 `text` / `thought` 事件带上标签（之前只存 `{ text }`，并行时会混在一起）。
+- `/api/runs/:id/reviews` 每轮带 `reviewRuns`（这一轮的交办下单独起的 `review` 运行：确认计划后的评审、重新评审、补拆分）。
+- 网页 `ReviewProcess.vue`：有评审的交办，“活动”标签按编码 Agent、各评审项、需求拆分、评审负责人分节显示工具步骤、文字和思考，顶上是宿主的进度；“评审”标签每个评审项和负责人旁有“看过程”，跳到对应一节。升级前记录的文字没有标签，归在“没有分开记录的输出”。
+
 ## 需求拆分独立成一步、拒收抄错的引用、引用抽屉加宽（10-26）
 
 - `review-chain.ts`：`reviewContext` 拼评审任务（原 `reviewRound` 开头）；`splitChangePoints` 用 `review-business` 角色只做需求拆分，提交工具 `submit_change_points`（评审会话都有，写进交办运行的 `output.changePoints`，按轮次）。档位里没有业务评审时和各评审项并行跑；`POST /api/runs/:id/change-points` 给已有的评审补一次（`review` 运行，`splitOnly`）。`/api/runs/:id/reviews` 每轮带 `changePoints`，网页优先用它，其次用业务评审的。

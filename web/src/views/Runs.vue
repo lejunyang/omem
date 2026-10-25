@@ -17,6 +17,7 @@ import ReviewSummary from "../components/ReviewSummary.vue";
 import ReviewChecks from "../components/ReviewChecks.vue";
 import ChangeView from "../components/ChangeView.vue";
 import RunActivity from "../components/RunActivity.vue";
+import ReviewProcess from "../components/ReviewProcess.vue";
 import { fmtTime, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 import { refAction } from "../lib/refs";
 import { findingWhere, POINT_STATUS, SEV, useReviews, type ChangePoint } from "../lib/reviews";
@@ -165,6 +166,9 @@ const tabs = computed(() => [
   { id: "activity" as const, label: "活动" },
 ]);
 watch(id, () => (tab.value = "overview"));
+// The check whose process “看过程” asked for; leaving the tab forgets it.
+const processFocus = ref<string | null>(null);
+watch(tab, (t) => { if (t !== "activity") processFocus.value = null; });
 const checkPassed = computed(() => (checks.value.length ? checks.value.every((c) => c.check.code === 0) : null));
 // A change point's explanation, with the problems reported on its files, in the ask drawer.
 const explaining = ref<ChangePoint | null>(null);
@@ -390,7 +394,7 @@ const kindOptions = computed(() => [
         </nav>
         <ReviewSummary v-if="hasReview && tab === 'overview'" :rv="rv" :run-id="detail.run.id" :review-text="out.review" :branch-review="branchReview" :can-fix="detail.run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" data-ask-label="评审" @ask="(c) => { explaining = null; asking = c; }" @go="(t) => (tab = t)" />
         <ChangeView v-if="hasReview && tab === 'change'" :rv="rv" :run-id="detail.run.id" :diffs="diffs" @explain="explain" />
-        <ReviewChecks v-if="hasReview && tab === 'review'" :rv="rv" :run-id="detail.run.id" data-ask-label="评审" />
+        <ReviewChecks v-if="hasReview && tab === 'review'" :rv="rv" :run-id="detail.run.id" data-ask-label="评审" @process="(c) => { processFocus = c; tab = 'activity'; }" />
 
         <template v-if="!hasReview || tab === 'activity'">
         <section v-if="ctxInfo && (ctxInfo.conversation || ctxInfo.parent || ctxInfo.work)" class="card pad block ctx">
@@ -432,7 +436,8 @@ const kindOptions = computed(() => [
           <div class="pre task" :class="{ clipped: taskLong && !taskOpen }">{{ taskText }}</div>
         </section>
 
-        <section class="block">
+        <ReviewProcess v-if="hasReview" :rv="rv" :focus="processFocus" />
+        <section v-else class="block">
           <RunActivity :run-id="detail.run.id" :open="['queued', 'running'].includes(detail.run.status)">
             <template #default="{ text, running }">
               <Markdown v-if="running && text" :source="text" />

@@ -190,7 +190,9 @@ export function setRunOutput(app: App, id: string, output: Record<string, unknow
 // ---- events -------------------------------------------------------------
 
 const seqs = new Map<string, number>();
-const textBuffers = new Map<string, { type: string; text: string; timer: NodeJS.Timeout }>();
+type TextBuffer = { type: string; text: string; tags: Record<string, unknown>; timer: NodeJS.Timeout };
+/** Per run, one buffer per stream: sessions running side by side in one run (a review's checks) tag their text and keep apart. */
+const textBuffers = new Map<string, Map<string, TextBuffer>>();
 
 function nextSeq(app: App, runId: string) {
   let s = seqs.get(runId);
@@ -210,28 +212,37 @@ function writeEvent(app: App, runId: string, type: string, data: unknown) {
 export function flushRunText(app: App, runId: string) {
   flushText(app, runId);
 }
-function flushText(app: App, runId: string) {
-  const b = textBuffers.get(runId);
-  if (!b) return;
-  clearTimeout(b.timer);
-  textBuffers.delete(runId);
-  if (b.text) writeEvent(app, runId, b.type, { text: b.text });
+function flushText(app: App, runId: string, stream?: string) {
+  const bufs = textBuffers.get(runId);
+  if (!bufs) return;
+  for (const [key, b] of [...bufs]) {
+    if (stream !== undefined && key !== stream) continue;
+    clearTimeout(b.timer);
+    bufs.delete(key);
+    if (b.text) writeEvent(app, runId, b.type, { ...b.tags, text: b.text });
+  }
+  if (!bufs.size) textBuffers.delete(runId);
 }
 
 /** Streaming text is coalesced so a long answer is a handful of rows, not thousands. */
 export function addRunEvent(app: App, runId: string, type: string, data: unknown) {
   if (type === "text" || type === "thought") {
-    const text = (data as { text: string }).text;
-    const b = textBuffers.get(runId);
+    const { text, ...tags } = data as { text: string } & Record<string, unknown>;
+    delete tags.type;
+    const stream = JSON.stringify(tags);
+    // Live listeners still get each delta immediately.
+    const delta = () => app.emit({ type: "run-event", runId, seq: -1, event: { type: `${type}-delta`, data: { ...tags, text }, at: now() } });
+    const b = textBuffers.get(runId)?.get(stream);
     if (b && b.type === type) {
       b.text += text;
-      // Live listeners still get each delta immediately.
-      app.emit({ type: "run-event", runId, seq: -1, event: { type: `${type}-delta`, data: { text }, at: now() } });
+      delta();
       return;
     }
-    flushText(app, runId);
-    textBuffers.set(runId, { type, text, timer: setTimeout(() => flushText(app, runId), 1500) });
-    app.emit({ type: "run-event", runId, seq: -1, event: { type: `${type}-delta`, data: { text }, at: now() } });
+    flushText(app, runId, stream);
+    let bufs = textBuffers.get(runId);
+    if (!bufs) textBuffers.set(runId, (bufs = new Map()));
+    bufs.set(stream, { type, text, tags, timer: setTimeout(() => flushText(app, runId, stream), 1500) });
+    delta();
     return;
   }
   flushText(app, runId);

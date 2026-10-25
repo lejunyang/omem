@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { get, onServerEvent, type Run, type RunEvent } from "../api";
 import Icon from "./Icon.vue";
+import { prettyTool } from "../lib/tools";
 
 const props = withDefaults(defineProps<{ runId: string; showText?: boolean; open?: boolean }>(), { showText: true, open: false });
 const emit = defineEmits<{ done: [run: Run]; text: [text: string] }>();
@@ -49,12 +50,6 @@ const steps = computed(() => {
 const statusLines = computed(() => events.value.filter((e) => e.type === "status" || e.type === "check").slice(-3));
 const text = computed(() => events.value.filter((e) => e.type === "text").map((e) => e.data.text).join("") + live.value);
 const running = computed(() => run.value && ["queued", "running"].includes(run.value.status));
-function prettyTool(t: string) {
-  return t
-    .replace(/^mcp__omem__/, "")
-    .replace(/^omem[._]/, "")
-    .replace(/^(search|read_source|source_outline|find_symbol|recall|read_page|list_pages|list_items|list_sources)\b/, (m) => ({ search: "检索", read_source: "读原件", source_outline: "看结构", find_symbol: "找符号", recall: "查记忆", read_page: "读页面", list_pages: "列页面", list_items: "查事项", list_sources: "列原件" })[m] ?? m);
-}
 defineExpose({ text });
 </script>
 

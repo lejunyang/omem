@@ -261,6 +261,10 @@ describe("reviewing an existing branch", () => {
       expect((await reviews()).rounds[0].changePoints?.map((p) => p.id)).toEqual(["C1"]);
       // The made-up source id was refused, the corrected submission kept.
       expect(runEvents(app, r.id).some((e) => JSON.stringify(e.data).includes("拆分完成 true"))).toBe(true);
+      // The split and the check ran side by side; their text stays apart, each tagged with its check.
+      const texts = runEvents(app, r.id).filter((e) => e.type === "text") as unknown as { data: { check?: string; text: string } }[];
+      expect(new Set(texts.map((e) => e.data.check))).toEqual(new Set(["split", "reviewer"]));
+      expect(texts.filter((e) => e.data.check === "reviewer").some((e) => e.data.text.includes("拆分完成"))).toBe(false);
 
       setRunOutput(app, r.id, { changePoints: null });
       const res = await fetch(`${app.baseUrl}/api/runs/${r.id}/change-points`, { method: "POST" });
@@ -269,6 +273,8 @@ describe("reviewing an existing branch", () => {
       run(app.db, "update runs set status = 'running' where id = ?", splitRun.id);
       await __testHandlers.get("review")!({ app, run: getRun(app, splitRun.id), signal: new AbortController().signal, event: (type, data) => addRunEvent(app, splitRun.id, type, data), output: (data) => setRunOutput(app, splitRun.id, data) });
       expect((await reviews()).rounds[0].changePoints?.map((p) => p.id)).toEqual(["C1"]);
+      // The run page finds the split's process through the round.
+      expect(((await reviews()).rounds[0] as unknown as { reviewRuns: { id: string }[] }).reviewRuns.map((x) => x.id)).toEqual([splitRun.id]);
       discardCodeRun(app, r.id);
     } finally {
       await server.close();

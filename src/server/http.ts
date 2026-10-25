@@ -888,12 +888,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { getAsk } = await import("../agents/asks.ts");
     // The owner's open decision on a round (plan to confirm, stopped review), answered from the run page.
     const askOf = (id: unknown) => { try { const a = typeof id === "string" ? getAsk(app, id) : null; return a ? { id: a.id, status: a.status, question: a.question, options: a.options, answer: a.answer } : null; } catch { return null; } };
+    // A review that waited for the owner (a confirmed plan, a retry, a later split) ran in runs of its own.
+    const reviewRuns = (id: string) => all<{ id: string; status: string; title: string }>(app.db, "select id, status, title from runs where parent_id = ? and kind = 'review' order by created_at", id);
     return {
       estimate: rounds[0]?.output.reviewEstimate ?? null,
       rounds: rounds.map((x) => ({
         runId: x.id, round: (x.input as { round?: number }).round ?? 1, status: x.status,
         plan: x.output.reviewPlan ?? null, verdict: x.output.verdict ?? null, stage: x.output.reviewStage ?? null,
         lead: x.output.reviewLead ?? null, stop: x.output.reviewStop ?? null, changePoints: (x.output.changePoints as { points?: unknown[] } | undefined)?.points ?? null, ask: askOf(x.output.reviewAskId), acceptedByOwner: !!x.output.acceptedByOwner,
+        reviewRuns: reviewRuns(x.id),
       })),
       reviews: reviewsOf(app, rounds.map((x) => x.id)),
       labels,

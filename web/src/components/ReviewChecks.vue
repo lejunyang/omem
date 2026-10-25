@@ -10,6 +10,7 @@ import { findingWhere, reviewAi, settled, severityCounts, SEV, type Reviews } fr
  * every problem it reported, including those review-lead set aside), then review-lead's ruling.
  */
 const props = defineProps<{ rv: Reviews; runId: string }>();
+const emit = defineEmits<{ process: [check: string] }>();
 const rv = props.rv;
 const current = rv.current;
 const VERDICT: Record<string, string> = { approved: "通过", changes_requested: "需要修改", failed: "没有完成" };
@@ -33,6 +34,7 @@ const toggle = (id: string) => { const n = new Set(open.value); n.has(id) ? n.de
         <span class="muted small nowrap">{{ fmtTime(r.created_at) }}</span>
       </button>
       <div v-if="open.has(r.id)" class="check-body">
+        <div class="row"><span class="spacer" /><button class="btn ghost sm" @click="emit('process', r.check_name)">看过程</button></div>
         <Markdown :source="r.summary" />
         <div v-if="r.findings.length" class="flist">
           <div v-for="f in r.findings" :key="f.id" class="f small" :class="{ dim: settled(f) }">
@@ -48,7 +50,7 @@ const toggle = (id: string) => { const n = new Set(open.value); n.has(id) ? n.de
       </div>
     </div>
     <div v-if="current?.lead" class="card pad lead">
-      <div class="row wrap"><strong>{{ current.lead.by === "lead" ? "评审负责人" : "汇总" }}</strong><span class="badge">{{ LEAD[current.lead.verdict] ?? current.lead.verdict }}</span></div>
+      <div class="row wrap"><strong>{{ current.lead.by === "lead" ? "评审负责人" : "汇总" }}</strong><span class="badge">{{ LEAD[current.lead.verdict] ?? current.lead.verdict }}</span><span class="spacer" /><button v-if="current.lead.by === 'lead'" class="btn ghost sm" @click="emit('process', 'lead')">看过程</button></div>
       <p>{{ current.lead.summary }}</p>
       <details v-if="current.lead.changeRequest">
         <summary class="small">修改单</summary>
