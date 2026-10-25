@@ -4,6 +4,7 @@ import { symbolRelations } from "../sources/callgraph.ts";
 import { deleteSkillFile, listSkillFiles, readSkillFile, saveSkillFile, DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
 import { customizeRole, isBuiltinRole, listRoleStates, mergeRole, resetRole, saveRoleOverride } from "../agents/builtin-roles.ts";
 import { profileDetail } from "../agents/profiles.ts";
+import { cachedProbe } from "../agents/probe.ts";
 import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -332,7 +333,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/roles", async () => listRoleStates(app));
   // What a profile form offers: backends, omem tools (and which write), the default tool set of a spec.
   server.get("/api/profile-options", async () => ({
-    backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort })),
+    // The cached probe rides along so the form need not ask again (probe once, or "重新检测").
+    backends: listAgentProfiles(app).map((p) => ({ id: p.id, name: p.name ?? p.id, installed: p.installed, transport: p.transport, model: p.model, effort: p.effort, probe: cachedProbe(app, p.id) })),
     globalDefaultBackend: app.config.agents.default || listAgentProfiles(app).find((p) => p.installed)?.id || "",
     defaultBackend: (() => { try { return profileFor(app, "assistant").id; } catch { return ""; } })(),
     tools: toolList().map((t) => ({ name: t.name, description: t.description.split(/[。\n]/)[0], write: !!t.write })),
@@ -874,7 +876,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/archive/classify", async req => {
     const b = q(z.object({ space: z.string(), ids: z.array(z.string()).min(1).max(100) }), req.body);
-    const { sourceRoute, queueArchive } = await import("../sources/archive.ts");
+    const { sourceRoute, queueArchive, RECHECK } = await import("../sources/archive.ts");
     // Explicit historical review: scope and validate the whole batch before queueing it.
     for (const id of b.ids) {
       const s = getSource(app, id);
@@ -882,7 +884,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (["manual", "binding"].includes(sourceRoute(app, id)?.mode ?? "")) throw new HttpError(409, "已指定归属的材料不能由 AI 改动");
     }
     for (const id of b.ids) {
-      run(app.db, "insert into source_routes(source_id,origin_space,mode,reason,pending) values(?,?,'fallback','本人请求重新判断',1) on conflict(source_id) do update set pending=1,decision_hash=null,mode='fallback'", id, b.space);
+      run(app.db, "insert into source_routes(source_id,origin_space,mode,reason,pending) values(?,?,'fallback',?,1) on conflict(source_id) do update set pending=1,decision_hash=null,mode='fallback',reason=excluded.reason", id, b.space, RECHECK);
       queueArchive(app, id);
     }
     return { queued: b.ids.length };
@@ -1041,7 +1043,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   server.post("/api/agents/:id/probe", async (req) => {
     const { allProfiles } = await import("../core/config.ts");
-    const { cachedProbe, probeProfile, saveProbe } = await import("../agents/probe.ts");
+    const { probeProfile, saveProbe } = await import("../agents/probe.ts");
     const id = (req.params as { id: string }).id;
     const p = allProfiles(app.config).find((x) => x.id === id);
     if (!p) throw new HttpError(404, "没有这个 Agent 配置");
@@ -1162,7 +1164,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const atStartup: [string, (c: typeof next) => unknown][] = [
       ["监听地址和端口", (c) => [c.host, c.port]],
       ["向量检索", (c) => c.embeddings],
-      ["飞书机器人的开关和应用", (c) => [c.lark.enabled, c.lark.appId, c.lark.appSecretEnv]],
+      ["飞书机器人的开关和应用", (c) => [c.lark.enabled, c.lark.appId, c.lark.appSecretEnv, c.lark.bots.map((b) => [b.id, b.appId, b.enabled])]],
       ["Telegram", (c) => c.telegram],
       ["QQ / 微信（OneBot）", (c) => c.onebot],
     ];

@@ -52,6 +52,8 @@ export type ToolContext = {
   effort?: string | null;
   /** Posts become drafts the owner approves before they are sent. */
   larkDraft?: boolean;
+  /** Posts go out as this one of lark.bots (its conversations); the main bot otherwise. */
+  larkBot?: string;
   /** Feishu messages may buzz people (urgent) / go to some members only (private): rules that allow it, the owner's own runs. */
   larkPowers?: { urgent: boolean; private: boolean };
   /** This call was approved by the owner (a held call running after the OK): do not hold it again. */
@@ -1625,11 +1627,11 @@ type LarkTargetArgs = z.infer<typeof larkTarget>;
 
 /** Which chat a target lands in, and whether this run may post there. */
 async function larkGuard(ctx: ToolContext, t: LarkTargetArgs) {
-  const { larkClient } = await import("../channels/lark-send.ts");
-  larkClient();
+  const { larkClientFor } = await import("../channels/lark-send.ts");
+  const client = larkClientFor(ctx.larkBot);
   let chat = t.chat_id;
   if (t.reply_to) {
-    const r = await larkClient().im.message.get({ path: { message_id: t.reply_to } }).catch(() => null);
+    const r = await client.im.message.get({ path: { message_id: t.reply_to } }).catch(() => null);
     const actual = r?.data?.items?.[0]?.chat_id;
     if (!actual) throw new HttpError(400, "无法确认被回复消息所在的飞书会话");
     if (chat && chat !== actual) throw new HttpError(400, "chat_id 与被回复消息所在的飞书会话不一致");
@@ -1707,12 +1709,12 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
   const skippedNote = skipped.length ? `；已跳过不在目标群的 @ 对象：${[...new Set(skipped)].join("、")}。无需重试或在群内说明。` : "";
   // Posting into the chat this run is answering in a topic: stay inside that topic (files,
   // follow-ups) instead of landing at the top of the chat.
-  let target: import("../channels/lark-send.ts").Target = delivery.onlyTo ? { chatId: chat! } : { chatId: t.chat_id, userId: t.user_id, replyTo: t.reply_to, inThread: t.in_thread };
+  let target: import("../channels/lark-send.ts").Target = delivery.onlyTo ? { chatId: chat! } : { chatId: t.chat_id, userId: t.user_id, replyTo: t.reply_to, inThread: t.in_thread, bot: ctx.larkBot };
   if (!t.reply_to && !t.user_id && chat && !delivery.onlyTo) {
     const convId = runThread(ctx);
     const conv = convId ? one<{ external_id: string | null; last: string | null }>(ctx.app.db, "select external_id, json_extract(settings,'$.lastMessageId') last from conversations where id = ?", convId) : undefined;
     const [convChat, topic] = (conv?.external_id ?? "").split("#");
-    if (topic && convChat === chat && conv?.last) target = { replyTo: conv.last, inThread: true };
+    if (topic && convChat === chat && conv?.last) target = { replyTo: conv.last, inThread: true, bot: ctx.larkBot };
   }
   if (ctx.larkDraft) {
     // Draft: the owner sees exactly what would be sent and decides.
@@ -1764,7 +1766,7 @@ def({
     await larkGuard(ctx, { reply_to: a.message_id });
     if (ctx.larkDraft) return "草稿模式下不加表情。";
     const { reactLark } = await import("../channels/lark-send.ts");
-    await reactLark(a.message_id, a.emoji ?? "OnIt");
+    await reactLark(a.message_id, a.emoji ?? "OnIt", ctx.larkBot);
     return "已加表情";
   },
 });
@@ -1816,7 +1818,7 @@ def({
     await larkGuard(ctx, { reply_to: a.message_id });
     const { buildCard, updateLarkCard } = await import("../channels/lark-send.ts");
     const { resolveCardCitations } = await import("../channels/common.ts");
-    await updateLarkCard(a.message_id, resolveCardCitations(ctx.app, a.raw_card ?? buildCard({ title: a.title, color: a.color, blocks: (a.blocks ?? []) as never })));
+    await updateLarkCard(a.message_id, resolveCardCitations(ctx.app, a.raw_card ?? buildCard({ title: a.title, color: a.color, blocks: (a.blocks ?? []) as never })), ctx.larkBot);
     return "已更新卡片";
   },
 });
@@ -1831,7 +1833,7 @@ def({
     await larkGuard(ctx, a);
     if (a.only_to?.length) throw new HttpError(400, "图片和文件不能只给部分人看：先发一张只给他们看的卡片说明，再把文件发给需要的人");
     if (ctx.larkDraft) return larkPost(ctx, a, { text: `（文件 ${a.path}）` });
-    return larkPost(ctx, a, await uploadLark(a.path));
+    return larkPost(ctx, a, await uploadLark(a.path, ctx.larkBot));
   },
 });
 

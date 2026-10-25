@@ -107,12 +107,14 @@ export function maybeSummarize(app: App, threadId: string, minNew = 10) {
 }
 
 /** Where this thread's agent may post through the Feishu bot. */
-function larkScope(t: Thread, userId: string): { chats: string[] | null; draft?: boolean } {
-  if (t.settings.lark) return t.settings.lark;
-  if (userId === "owner") return { chats: null };
+function larkScope(t: Thread, userId: string): { chats: string[] | null; draft?: boolean; bot?: string } {
+  // A conversation with one of lark.bots posts as that bot (channel lark:<id>).
+  const bot = t.channel.startsWith("lark:") ? { bot: t.channel.slice(5) } : {};
+  if (t.settings.lark) return { ...t.settings.lark, ...bot };
+  if (userId === "owner") return { chats: null, ...bot };
   // Members: only the chat they are talking in.
   const chat = (t.key ?? "").split("#")[0];
-  return { chats: t.channel === "lark" && chat ? [chat] : [] };
+  return { chats: (t.channel === "lark" || "bot" in bot) && chat ? [chat] : [], ...bot };
 }
 
 function actorFor(app: App, t: Thread): { actor: Actor; label: string } {

@@ -57,6 +57,11 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   const { packageRoot } = await import("./setup.ts");
   seedBuiltinSkills(app, packageRoot());
   const server = await startServer(app, opts);
+  {
+    const { compactArchiveQueue } = await import("./sources/archive.ts");
+    const n = compactArchiveQueue(app);
+    if (n) console.log(`[omem] 合并了排队中的归属判断，取消 ${n} 个重复或已无事可做的任务`);
+  }
   startWorker(app);
   if (opts.background !== false) {
     restartScheduler(app);
@@ -105,6 +110,10 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     if (app.config.lark.enabled) {
       const { startLarkBot } = await import("./channels/lark-bot.ts");
       startLarkBot(app).catch((e) => console.warn("[omem] 飞书机器人启动失败：", e.message));
+      if (app.config.lark.bots.some((b) => b.enabled)) {
+        const { startLarkBots } = await import("./channels/lark-bots.ts");
+        void startLarkBots(app);
+      }
     }
   }
   return { app, server };

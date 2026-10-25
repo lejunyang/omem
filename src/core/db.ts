@@ -659,6 +659,8 @@ const migrations: string[] = [
     where quiet = 0 and status = 'done' and json_valid(input) and json_extract(input, '$.wake') = 1 and kind in ('ask','agent')
       and upper(rtrim(trim(coalesce(case when json_valid(output) then json_extract(output, '$.answer') end, '')), '。.!！*\`_ ' || char(10) || char(13))) like '%QUIET';
    update runs set quiet = 1 where quiet = 0 and status = 'done' and kind = 'wake';`,
+  // Archiving follows the judgement already made on another source of the same conversation.
+  `create index sources_chat on sources(json_extract(meta, '$.chatId')) where json_extract(meta, '$.chatId') is not null;`,
 ];
 
 export type Db = DatabaseSync;

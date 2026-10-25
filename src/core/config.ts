@@ -266,6 +266,27 @@ export const configSchema = z.object({
       /** open_id of the owner; only the owner may command the bot. */
       ownerOpenId: z.string().optional(),
       defaultSpace: z.string().default("personal"),
+      /**
+       * More bots beside the main one (src/channels/lark-bots.ts), each answering as its own Agent
+       * profile (`agent`; "assistant" = the main assistant role) in conversations of its own. They
+       * answer the owner and users who @ them or talk to them one-to-one; captures, notifications,
+       * cards and rules stay with the main bot. `ownerOpenId` is the owner in this app's id space
+       * (open_ids differ per app). The secret lives in secrets/lark.json under its App ID.
+       */
+      bots: z
+        .array(
+          z.object({
+            id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/, "id 用小写字母、数字和连字符"),
+            appId: z.string().regex(/^cli_[A-Za-z0-9]+$/),
+            agent: z.string().min(1).default("assistant"),
+            enabled: z.boolean().default(true),
+            ownerOpenId: z.string().optional(),
+          }),
+        )
+        .default([])
+        .refine((bots) => new Set(bots.map((b) => b.id)).size === bots.length, "机器人 id 不能重复"),
+      /** Bots @-ing one another in a chat: at most this many hand-offs in a row before a person speaks again. */
+      botRelay: z.number().int().min(0).max(20).default(4),
       /** Reading the owner's own Feishu (lark-cli, user identity, read-only). */
       capture: z
         .object({
@@ -404,6 +425,8 @@ export const configSchema = z.object({
       enabled: false,
       appSecretEnv: "OMEM_LARK_APP_SECRET",
       defaultSpace: "personal",
+      bots: [],
+      botRelay: 4,
       capture: {
         mode: "subscribed",
         exclude: [],

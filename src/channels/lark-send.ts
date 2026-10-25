@@ -29,6 +29,37 @@ export function larkBotOpenId() {
   return botOpenId;
 }
 
+/** The other bots (lark.bots), by id: each speaks with its own app identity. */
+const extraBots = new Map<string, { client: LarkClient; openId: string | null; name: string }>();
+export function setLarkBotClient(id: string, c: LarkClient | null, openId?: string | null, name = id) {
+  if (c) extraBots.set(id, { client: c, openId: openId ?? null, name });
+  else extraBots.delete(id);
+}
+export function larkBotInfo(id: string) {
+  return extraBots.get(id) ?? null;
+}
+/** `bot` names one of lark.bots; without it, the main bot. */
+export function larkClientFor(bot?: string | null): LarkClient {
+  if (!bot) return larkClient();
+  const b = extraBots.get(bot);
+  if (!b) throw new HttpError(503, `飞书机器人 ${bot} 未连接`);
+  return b.client;
+}
+
+/**
+ * Messages omem's bots posted (recent ones). Another omem bot that receives one as an event leaves
+ * it alone: a hand-off between bots goes through omem itself (lark-bots.ts), not through Feishu.
+ */
+const posted = new Set<string>();
+export function postedByOmem(messageId: string) {
+  return posted.has(messageId);
+}
+function remember(messageId: string | undefined) {
+  if (!messageId) return;
+  posted.add(messageId);
+  if (posted.size > 2000) posted.delete(posted.values().next().value!);
+}
+
 const check = (r: { code?: number; msg?: string; data?: any } | undefined, what: string) => {
   if (r && typeof r.code === "number" && r.code !== 0) throw new Error(`${what}失败（${r.code}）：${r.msg}`);
   return r?.data ?? r;
@@ -160,7 +191,7 @@ export function buildCard(spec: CardSpec): Record<string, unknown> {
 
 // ---- sending ----------------------------------------------------------------------
 
-export type Target = { chatId?: string; userId?: string; replyTo?: string; inThread?: boolean; uuid?: string };
+export type Target = { chatId?: string; userId?: string; replyTo?: string; inThread?: boolean; uuid?: string; /** One of lark.bots; the main bot when absent. */ bot?: string | null };
 export type Content =
   | { text: string }
   | { markdown: string; title?: string }
@@ -178,7 +209,7 @@ function payload(c: Content): { msg_type: string; content: string } {
 }
 
 export async function sendLark(to: Target, content: Content): Promise<{ messageId: string; threadId?: string }> {
-  const c = larkClient();
+  const c = larkClientFor(to.bot);
   const p = payload(content);
   let r;
   if (to.replyTo) r = await c.im.message.reply({ path: { message_id: to.replyTo }, data: { ...p, reply_in_thread: !!to.inThread, ...(to.uuid ? { uuid: to.uuid } : {}) } });
@@ -186,6 +217,7 @@ export async function sendLark(to: Target, content: Content): Promise<{ messageI
   else if (to.userId) r = await c.im.message.create({ params: { receive_id_type: "open_id" }, data: { receive_id: to.userId, ...p } });
   else throw new HttpError(400, "需要 chatId、userId 或 replyTo");
   const d = check(r, "发送飞书消息");
+  remember(d?.message_id);
   return { messageId: d?.message_id, threadId: d?.thread_id };
 }
 
@@ -230,6 +262,8 @@ export function asCard(content: Content): Record<string, unknown> {
 
 /** Send with what `Delivery` asks for; returns the ids of what was posted. */
 export async function deliverLark(to: Target, content: Content, d: Delivery = {}): Promise<{ messageId: string; threadId?: string; ephemeral?: string[] }> {
+  // People's ids are the main bot's (open_ids differ per app).
+  if (to.bot && (d.onlyTo?.length || d.urgent?.length)) throw new HttpError(400, "只给部分人看和加急只能由主机器人发");
   if (d.onlyTo?.length) {
     const chatId = to.chatId;
     if (!chatId) throw new HttpError(400, "只给部分人看的消息要发在群里（chat_id）");
@@ -243,23 +277,24 @@ export async function deliverLark(to: Target, content: Content, d: Delivery = {}
   return sent;
 }
 
-export async function updateLarkCard(messageId: string, card: Record<string, unknown>) {
-  check(await larkClient().im.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } }), "更新卡片");
+export async function updateLarkCard(messageId: string, card: Record<string, unknown>, bot?: string | null) {
+  check(await larkClientFor(bot).im.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } }), "更新卡片");
 }
 
 /** emoji_type: OnIt, DONE, THUMBSUP, OK, Get, CheckMark, CrossMark, Typing, SMILE … */
-export async function reactLark(messageId: string, emoji = "OnIt") {
-  const d = check(await larkClient().im.messageReaction.create({ path: { message_id: messageId }, data: { reaction_type: { emoji_type: emoji } } }), "添加表情");
+export async function reactLark(messageId: string, emoji = "OnIt", bot?: string | null) {
+  const d = check(await larkClientFor(bot).im.messageReaction.create({ path: { message_id: messageId }, data: { reaction_type: { emoji_type: emoji } } }), "添加表情");
   return d?.reaction_id as string | undefined;
 }
-export async function unreactLark(messageId: string, reactionId: string) {
-  await larkClient().im.messageReaction.delete({ path: { message_id: messageId, reaction_id: reactionId } }).catch(() => {});
+export async function unreactLark(messageId: string, reactionId: string, bot?: string | null) {
+  await larkClientFor(bot).im.messageReaction.delete({ path: { message_id: messageId, reaction_id: reactionId } }).catch(() => {});
 }
 
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".tiff"]);
 /** Upload a local file; images become image messages, everything else a file message. */
-export async function uploadLark(path: string): Promise<Content> {
-  const c = larkClient();
+/** Keys are per app: upload with the bot that will send it. */
+export async function uploadLark(path: string, bot?: string | null): Promise<Content> {
+  const c = larkClientFor(bot);
   if (statSync(path).size > 30 * 1024 * 1024) throw new HttpError(400, "文件超过 30MB，飞书机器人无法直接发送");
   if (IMAGE_EXT.has(extname(path).toLowerCase())) {
     const d = check(await c.im.image.create({ data: { image_type: "message", image: createReadStream(path) } }), "上传图片");

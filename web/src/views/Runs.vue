@@ -7,6 +7,7 @@ import Skeleton from "../components/Skeleton.vue";
 import VirtualList from "../components/VirtualList.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import ChipPicker from "../components/ChipPicker.vue";
+import UiSegmented from "../components/UiSegmented.vue";
 import { confirmDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
 import AskAboutRun, { type AskContext } from "../components/AskAboutRun.vue";
@@ -25,6 +26,9 @@ const loadingMore = ref(false);
 const kindFilter = ref<string[]>([]);
 const specNames = ref<string[]>([]);
 const showQuiet = ref(false);
+/** One status to show; empty: all. */
+const statusFilter = ref<"" | "queued" | "running" | "failed">("");
+const statusOptions = [{ value: "" as const, label: "全部" }, { value: "queued" as const, label: "排队中" }, { value: "running" as const, label: "进行中" }, { value: "failed" as const, label: "失败" }];
 type Brief = { id: string; kind: string; title: string; status: string };
 type RunContextInfo = {
   conversation: { id: string; title: string; channel: string; topic: boolean; work: boolean; parentId: string | null; parentTitle: string | null; turns: { id: string; title: string; status: string; createdAt: string }[] } | null;
@@ -51,6 +55,7 @@ async function loadPage(offset: number) {
   const q = new URLSearchParams({ space: state.space, limit: String(PAGE), offset: String(offset) });
   if (kindFilter.value.length) q.set("kind", kindFilter.value.join(","));
   if (showQuiet.value) q.set("all", "true");
+  if (statusFilter.value) q.set("status", statusFilter.value);
   return get<{ runs: Run[]; total: number }>(`/api/runs?${q.toString()}`);
 }
 async function loadMore() {
@@ -79,19 +84,27 @@ onMounted(() => {
 });
 watch(kindFilter, load);
 watch(showQuiet, load);
+watch(statusFilter, load);
 watch(id, loadDetail);
 const off = onServerEvent((e) => {
   if (e.type === "run") {
-    // Keep the list itself stable: only refresh when a new top-level run might appear.
-    if (e.status === "queued") void load();
+    // Keep the list itself stable: only refresh when a new top-level run might appear
+    // (or, filtered by status, when a run enters or leaves that status).
+    if (e.status === "queued" || statusFilter.value) reloadSoon();
     if (detail.value && (e.runId === detail.value.run.id || detail.value.children.some((c) => c.id === e.runId))) void loadDetail();
   }
 });
+let reloadTimer: ReturnType<typeof setTimeout> | undefined;
+/** A burst of run events (a long queue draining) reloads the list once. */
+function reloadSoon() {
+  clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(() => void load(), 400);
+}
 function onListScroll(ev: Event) {
   const el = ev.target as HTMLElement;
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) void loadMore();
 }
-onBeforeUnmount(() => off());
+onBeforeUnmount(() => { off(); clearTimeout(reloadTimer); });
 
 const out = computed(() => detail.value?.run.output ?? {});
 const ctxInfo = computed(() => detail.value?.context ?? null);
@@ -226,6 +239,7 @@ const kindOptions = computed(() => [
         <span class="spacer" />
         <button class="btn sm" title="交办编码任务" @click="delegateOpen = true"><Icon name="code" :size="14" />交办</button>
         <ChipPicker v-model="kindFilter" class="kind-filter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
+        <UiSegmented v-model="statusFilter" class="status-filter" size="sm" aria-label="状态" :options="statusOptions" />
         <UiCheckbox v-model="showQuiet" size="sm" class="small muted" title="后台任务（巡检、检查页面、筛选群、复盘…）没发现要处理的事时以 QUIET 结束，这些运行默认不显示；勾选后一起显示">含无事可报</UiCheckbox>
       </div>
       <div class="items" @scroll.passive="onListScroll">
@@ -242,7 +256,7 @@ const kindOptions = computed(() => [
             </router-link>
           </template>
         </VirtualList>
-        <div v-if="!runs.length && !listLoading" class="muted small pad">还没有运行记录。</div>
+        <div v-if="!runs.length && !listLoading" class="muted small pad">{{ statusFilter ? `没有${statusOptions.find((o) => o.value === statusFilter)?.label}的运行。` : "还没有运行记录。" }}</div>
         <div v-else-if="loadingMore" class="list-foot">加载中…</div>
         <div v-else-if="runs.length >= total" class="list-foot">共 {{ total }} 条</div>
       </div>
@@ -415,6 +429,7 @@ const kindOptions = computed(() => [
   grid-template-columns: auto 1fr auto;
   grid-template-areas:
     "title . delegate"
+    "status status status"
     "kind kind quiet";
   row-gap: 8px;
   align-items: center;
@@ -422,12 +437,14 @@ const kindOptions = computed(() => [
 .head > strong { grid-area: title; }
 .head .btn[title="交办编码任务"] { grid-area: delegate; }
 .head .kind-filter { grid-area: kind; justify-self: start; }
+.head .status-filter { grid-area: status; justify-self: start; }
 .head .small.muted { grid-area: quiet; justify-self: end; white-space: nowrap; }
 @media (max-width: 480px) {
   .head {
     grid-template-columns: 1fr auto;
     grid-template-areas:
       "title delegate"
+      "status status"
       "kind quiet";
   }
 }

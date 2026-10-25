@@ -22,7 +22,8 @@ import { startReplyProgress } from "./lark-progress.ts";
 import { finishCot, setCotSdk } from "./lark-cot.ts";
 import { watchAgentBubbles } from "./lark-agent-cot.ts";
 import { handleCardAction } from "./lark-actions.ts";
-import { openLarkTopic, reactLark, sendLark, setLarkClient, unreactLark } from "./lark-send.ts";
+import { openLarkTopic, postedByOmem, reactLark, sendLark, setLarkClient, unreactLark } from "./lark-send.ts";
+import { botRoster, learnPeerIds, personSpoke, registerMainRelay, relayMentions, renderBotMentions, rosterNote } from "./lark-bots.ts";
 import { larkAppSecret } from "./lark-setup.ts";
 import { routeWatchedMessages } from "./lark-watch.ts";
 import { askAsGuest, guestsAllowed, ownerInChat, waitGuest } from "./lark-guest.ts";
@@ -417,6 +418,9 @@ export async function startLarkBot(app: App) {
     let ruled: Promise<void> | null = null;
     if (m.chatType === "group") {
       captureGroup(m);
+      // Another omem bot's post is material here; a hand-off to this bot comes through relayMentions.
+      if (postedByOmem(m.messageId)) return;
+      if (!m.fromApp) personSpoke(m.chatId, m.topicId);
       // A person @-ing the bot asks it directly, and it answers (a user, or a guest when allowed):
       // the rules (waits, silent checks) are for what nobody asked and step aside.
       if (m.mentionsBot && !m.fromApp && (resolveIdentity(app, "lark", m.senderId) || guestsAllowed(app, "group"))) markAddressed(app, `lark:${m.messageId}`);
@@ -439,7 +443,7 @@ export async function startLarkBot(app: App) {
     }
     if (m.chatType === "p2p" && userId === OWNER) kv(app, "lark_owner_chat", m.chatId);
     const text = spoken(m);
-    const context = m.chatType === "group" ? groupContext(m) : "";
+    const context = m.chatType === "group" ? [rosterNote(app, "main"), groupContext(m)].filter(Boolean).join("\n\n") : "";
     if (!text) return;
     let presentation: ReturnType<typeof startReplyProgress> | undefined;
     let runId: string | null = null;
@@ -500,7 +504,10 @@ export async function startLarkBot(app: App) {
       answered = true;
       if (runId) finishCot(app, runId, true);
       const p = await presentation?.close();
-      const sentId = p ? (await p.finish(answer), p.messageId) : (await reply(m.chatId, answer, replyMessageId, replyInThread)).messageId;
+      const shown = renderBotMentions(app, "main", answer);
+      const sentId = p ? (await p.finish(shown), p.messageId) : (await reply(m.chatId, shown, replyMessageId, replyInThread)).messageId;
+      // It @-ed another omem bot: that one takes it from here.
+      if (m.chatType === "group" && sentId) relayMentions(app, "main", { chatId: m.chatId, topicId: m.topicId, messageId: sentId, text: answer });
       if (runId && !p) await reactLark(m.messageId, "DONE").catch(() => {});
       // A later quote of this reply reads back as an empty card; this maps it to the answer.
       if (runId && sentId) run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?) where run_id = ? and role = 'assistant'", sentId, runId);
@@ -578,6 +585,7 @@ export async function startLarkBot(app: App) {
     const mentions = ((msg.mentions ?? []) as { id?: { open_id?: string } }[]).map((x) => x.id?.open_id ?? "").filter(Boolean);
     if (msg.chat_type !== "p2p") await learnName(msg.chat_id);
     void learnPeopleFromEvent(data).catch(() => {});
+    learnPeerIds(app, "main", msg.mentions ?? []);
     const m: Inbound = {
       chatId: msg.chat_id,
       chatType: msg.chat_type === "p2p" ? "p2p" : "group",
@@ -623,6 +631,17 @@ export async function startLarkBot(app: App) {
       }
     },
   } as never);
+  // Another omem bot @-ed the main one (lark-bots.ts): it answers in its own conversation there.
+  registerMainRelay(async (t) => {
+    const from = botRoster(app).find((r) => r.ref === t.from)?.name ?? t.from;
+    const answer = await answerFromChannel(app, {
+      channel: "lark", chatId: t.chatId, topicId: t.topicId, isGroup: true, text: t.text, asker: `机器人「${from}」`, spaceId: groupSpace(t.chatId),
+      context: rosterNote(app, "main"), contextLabel: t.topicId ? "话题里" : "群里", externalMessageId: t.replyTo, userId: OWNER,
+    });
+    if (answer === null) return;
+    const sent = await reply(t.chatId, renderBotMentions(app, "main", answer), t.replyTo, !!t.topicId);
+    if (sent.messageId) relayMentions(app, "main", { chatId: t.chatId, topicId: t.topicId, messageId: sent.messageId, text: answer });
+  });
   const ws = new lark.WSClient({ appId: cfg.appId, appSecret, domain: lark.Domain.Feishu, loggerLevel: lark.LoggerLevel.warn });
   await ws.start({ eventDispatcher: dispatcher });
   console.log("[omem] 飞书机器人已连接");

@@ -22,6 +22,23 @@ function changeBase(app: ReturnType<typeof testApp>, name: string, edit: (s: str
   writeFileSync(base, edit(readFileSync(base, "utf8")));
 }
 
+describe("task routing in view", () => {
+  it("shows the owner's candidates to runs that delegate, only while automatic choice is on", () => {
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    app.config.agents.routing = { automatic: true, guidance: "评审用不同于编码的模型", candidates: [{ profile: "codex", model: "fast-1", when: "简单判断" }] };
+    const main = prepareRun(app, { actor: { role: "assistant" }, spaceId: "personal", runId: null });
+    expect(main.system).toContain("## 任务选型");
+    expect(main.system).toContain("- codex / fast-1：简单判断");
+    expect(main.system).toContain("评审用不同于编码的模型");
+    // A background role hands nothing on.
+    expect(prepareRun(app, { actor: { role: "ingest" }, spaceId: "personal", runId: null }).system).not.toContain("## 任务选型");
+    app.config.agents.routing.automatic = false;
+    expect(prepareRun(app, { actor: { role: "assistant" }, spaceId: "personal", runId: null }).system).not.toContain("## 任务选型");
+    app.db.close();
+  });
+});
+
 describe("built-in roles as profiles", () => {
   it("customizes into the library, runs use the copy, reset goes back to the source", () => {
     const app = testApp();

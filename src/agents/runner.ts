@@ -168,11 +168,14 @@ export type RoleRunInput = {
  * runs that may post anywhere (the owner asks in words; the tool says to use them only then).
  */
 function larkPowers(lark: LarkAccess, userId: string) {
+  // People's ids are the main bot's: another bot cannot buzz or whisper to them.
+  if (lark.bot) return undefined;
   if (lark.chats === null && userId === OWNER) return { urgent: true, private: true };
   return lark.urgent || lark.private ? { urgent: !!lark.urgent, private: !!lark.private } : undefined;
 }
 
-export type LarkAccess = { chats: string[] | null; draft?: boolean; urgent?: boolean; private?: boolean };
+/** `bot`: posts go out as that one of lark.bots (a conversation with it), not the main bot. */
+export type LarkAccess = { chats: string[] | null; draft?: boolean; urgent?: boolean; private?: boolean; bot?: string };
 
 /** Who is acting: a built-in role, or an agent spec the assistant (or the owner) created. */
 export type Actor = { role: RoleName } | { spec: AgentSpec };
@@ -289,12 +292,13 @@ export function prepareRun(
   const readable = scoped ? [...new Set([...scoped, ...related.map((r) => r.space), ...(input.alsoRead ?? []).filter((id) => !allowed || allowed.includes(id))])] : null;
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
   const lark = input.lark ?? { chats: userId === OWNER ? null : [] };
-  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, shadow: input.shadow });
+  const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, shadow: input.shadow });
   const guide = spaceGuide(app, space.id).trim();
   // A built-in role learns like a spec: its own experience and preferences, its regular skills first.
   const lessons = guest ? "" : learnedContext(app, space.id, userId, spec?.name ?? (roleName === "assistant" ? null : roleName));
   const skills = guest ? "" : spec ? skillIndex(app, spec.skills) : skillIndex(app, undefined, role!.skills);
   const agents = roleName === "assistant" && !spec ? agentIndex(app) : "";
+  const routing = !guest && DELEGATING.some((t) => tools.has(t)) ? routingGuide(app, profile) : "";
   const body = spec
     ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`
     : `# 角色：${role!.description}\n\n${role!.body}`;
@@ -302,7 +306,7 @@ export function prepareRun(
   const system = [
     commonGuide(),
     body,
-    `# 环境\n\n- 现在：${currentTime}${userId !== OWNER ? `\n- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}` : ""}\n- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}`,
+    `# 环境\n\n- 现在：${currentTime}${userId !== OWNER ? `\n- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}` : ""}\n- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`,
   ].join("\n\n---\n\n");
   return {
     profile,
@@ -318,6 +322,24 @@ export function prepareRun(
     // Guests never see the owner's memories unasked.
     recall: guest ? null : { spaces: readable, agent: spec?.name ?? (roleName === "assistant" ? null : roleName), userId },
   };
+}
+
+/** Tools that hand work to another run and accept an `execution` choice. */
+const DELEGATING = ["run_agent", "continue_agent_work", "ask_agent", "delegate_code", "continue_code_run", "generate_wiki"];
+/**
+ * The owner's routing candidates, for a run that delegates. Without them in view the assistant
+ * never looked them up (list_ai_backends) and every delegation used the profile default.
+ */
+function routingGuide(app: App, profile: AgentProfile) {
+  const r = app.config.agents.routing;
+  if (!r.automatic || !r.candidates.length) return "";
+  const ai = (c: { profile: string; model?: string; effort?: string }) => [c.profile, c.model, c.effort].filter(Boolean).join(" / ");
+  return [
+    `你这次用的是 ${ai({ profile: profile.id, model: profile.model, effort: profile.effort })}；交办出去的运行不带 execution 时用对方档案的设置。`,
+    ...(r.guidance.trim() ? [`本人的总体偏好：${r.guidance.trim()}`] : []),
+    "本人列出的候选：",
+    ...r.candidates.map((c) => `- ${ai(c)}：${c.when}`),
+  ].join("\n");
 }
 
 /** Whether a failure is worth retrying on a fallback backend/model. */

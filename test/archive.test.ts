@@ -6,7 +6,7 @@ import { importFile } from "../src/sources/import.ts";
 import { testApp } from "./helpers.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { all, one, run } from "../src/core/db.ts";
-import { listArchiveRules, orderArchiveRules, matchesArchive, applyArchivePreview, archiveHistory, moveSource, previewArchive, saveArchiveRule, sourceRoute } from "../src/sources/archive.ts";
+import { compactArchiveQueue, queueArchive, listArchiveRules, orderArchiveRules, matchesArchive, applyArchivePreview, archiveHistory, moveSource, previewArchive, saveArchiveRule, sourceRoute } from "../src/sources/archive.ts";
 import { getSource, sourceText, upsertSource } from "../src/sources/store.ts";
 import { vectorIndex } from "../src/search/vectors.ts";
 import { createRun, getRun, listRuns, __testHandlers } from "../src/agents/runs.ts";
@@ -253,5 +253,34 @@ describe("task rule context", () => {
     expect(toLark).not.toHaveProperty("threadId");
     const toWeb = getRun(app, (await runActions(app, draft(web.id), tick, "定时"))[0].runId!).input;
     expect(toWeb).toMatchObject({ threadId: web.id, lark: { chats: [], draft: false } });
+  });
+  it("judges a conversation once: appended messages and history pages follow the decision", () => {
+    const app = setup();
+    const chat = { spaceId: "personal", kind: "chat" as const, uri: "lark:oc_a", title: "群", text: "第一条", archive: true, meta: { chatId: "oc_a" } };
+    const live = upsertSource(app, chat);
+    expect(sourceRoute(app, live.id)?.pending).toBe(1);
+    // The archivist kept it in personal.
+    run(app.db, "update source_routes set pending=0, decision_hash=(select hash from sources where id=?) where source_id=?", live.id, live.id);
+    run(app.db, "delete from runs");
+    upsertSource(app, { ...chat, text: "第一条\n第二条" });
+    const page = upsertSource(app, { ...chat, uri: "lark:oc_a@2026-07", title: "群（历史）", text: "旧消息", meta: { chatId: "oc_a", history: true } });
+    expect(sourceRoute(app, live.id)?.pending).toBe(0);
+    expect(sourceRoute(app, page.id)).toMatchObject({ pending: 0, mode: "fallback" });
+    expect(listRuns(app, { kind: "archive" })).toHaveLength(0);
+    // Moved to a project by the AI: later pages of that chat land there directly.
+    moveSource(app, live.id, "project-a", "项目 A 的群", "ai");
+    const later = upsertSource(app, { ...chat, uri: "lark:oc_a@2026-08", title: "群（历史）", text: "更旧", meta: { chatId: "oc_a", history: true } });
+    expect(getSource(app, later.id).spaceId).toBe("project-a");
+  });
+  it("merges archive judgements into any waiting run and repacks an old queue", () => {
+    const app = setup();
+    const ids = Array.from({ length: 45 }, (_, i) => upsertSource(app, { ...material, uri: `doc-${i}`, title: `材料 ${i}` }).id);
+    for (const id of ids) queueArchive(app, id);
+    const sizes = () => listRuns(app, { kind: "archive", status: "queued" }).map(r => (r.input.sourceIds as string[]).length).sort((a, b) => a - b);
+    expect(sizes()).toEqual([5, 40]);
+    // An older version created one run per write, with repeats.
+    for (const id of [ids[0], ids[0], ids[1]]) createRun(app, { kind: "archive", spaceId: "personal", title: "判断材料归属", input: { sourceIds: [id] }, lane: "archive:personal" });
+    expect(compactArchiveQueue(app)).toBe(3);
+    expect(sizes()).toEqual([5, 40]);
   });
 });

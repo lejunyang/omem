@@ -320,6 +320,11 @@ registerHandler("archive", async ctx => {
           moveSource(ctx.app, id, p.input.spaceId, p.reason, p.mode, p.ruleId);
           continue;
         }
+        // The same conversation was already judged to stay here.
+        if (p?.decided) {
+          run(ctx.app.db, "update source_routes set pending=0,decision_hash=? where source_id=?", s.hash, id);
+          continue;
+        }
         candidates.push({ id, hash: s.hash, title: s.title });
       } catch (error) {
         run(ctx.app.db, "update source_routes set pending=0 where source_id=?", id);

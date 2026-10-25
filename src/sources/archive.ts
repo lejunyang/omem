@@ -93,6 +93,8 @@ export function matchesArchive(c: ArchiveCondition | null, input: UpsertInput): 
   };
   return c !== null && evaluate(c) === true;
 }
+/** Route reason when the owner asks for material to be judged again (the archivist decides, not a sibling). */
+export const RECHECK = "本人请求重新判断";
 export type Route = { source_id: string; origin_space: string; mode: "manual" | "binding" | "rule" | "ai" | "fallback"; reason: string; rule_id: string | null; decision_hash: string | null; pending: number; ingest: number };
 export function sourceRoute(app: App, id: string) { return one<Route>(app.db, "select * from source_routes where source_id=?", id); }
 export function routedSource(app: App, origin: string, uri: string) {
@@ -103,7 +105,7 @@ function matchedRule(app: App, input: UpsertInput) {
 }
 
 /** Called before storing captured material. Explicit imports never opt into automatic routing. */
-export function prepareArchive(app: App, input: UpsertInput): { input: UpsertInput; mode: Route["mode"]; reason: string; ruleId?: string; origin: string; sourceId?: string } | null {
+export function prepareArchive(app: App, input: UpsertInput): { input: UpsertInput; mode: Route["mode"]; reason: string; ruleId?: string; origin: string; sourceId?: string; decided?: boolean } | null {
   if (!input.archive || ["code", "conversation", "activity", "work"].includes(input.kind)) return null;
   const found = routedSource(app, input.spaceId, input.uri) ?? one<{ id: string; space_id: string }>(app.db, "select id,space_id from sources where space_id=? and uri=?", input.spaceId, input.uri);
   const prev = found ? sourceRoute(app, found.id) : undefined;
@@ -123,24 +125,69 @@ export function prepareArchive(app: App, input: UpsertInput): { input: UpsertInp
     return { sourceId: found?.id, input: { ...input, spaceId: rule.target }, mode: "rule", reason: `归档规则：${rule.name}`, ruleId: rule.id, origin };
   }
   if (prev?.mode === "ai") return { sourceId: found?.id, input: { ...input, spaceId: found!.space_id }, mode: "ai", reason: prev.reason, origin };
+  // A conversation is judged as a whole: new messages appended to a chat the archivist already
+  // kept in personal, and history pages of a chat already judged, follow that judgement instead of
+  // asking the AI again for every page (a history backfill otherwise queues one judgement per write).
+  if (chatId) {
+    if (prev?.mode === "fallback" && prev.decision_hash) return { sourceId: found?.id, input: { ...input, spaceId: found!.space_id }, mode: "fallback", reason: prev.reason, origin, decided: true };
+    // Not when the owner asked for this one to be judged again.
+    const sibling = !prev || (prev.mode === "fallback" && !prev.decision_hash && prev.reason !== RECHECK) ? chatJudgement(app, chatId, found?.id) : undefined;
+    if (sibling?.mode === "fallback") return { sourceId: found?.id, input: { ...input, spaceId: sibling.space_id }, mode: "fallback", reason: sibling.reason, origin, decided: true };
+    if (sibling) return { sourceId: found?.id, input: { ...input, spaceId: sibling.space_id }, mode: "ai", reason: `同一会话的归属：${sibling.reason}`, origin };
+  }
   return { sourceId: found?.id, input: { ...input, spaceId: found?.space_id ?? "personal" }, mode: "fallback", reason: "未命中归档规则，暂存个人空间", origin };
+}
+/** The AI's (or the owner's) decision on another source of the same conversation, if any. */
+function chatJudgement(app: App, chatId: string, except?: string) {
+  return one<{ mode: Route["mode"]; reason: string; space_id: string }>(app.db,
+    `select r.mode, r.reason, s.space_id from sources s join source_routes r on r.source_id = s.id
+      where json_extract(s.meta, '$.chatId') = ? and s.id != ? and s.deleted_at is null and r.pending = 0
+        and (r.mode in ('ai','manual') or (r.mode = 'fallback' and r.decision_hash is not null))
+      order by r.mode = 'fallback', s.updated_at desc limit 1`, chatId, except ?? "");
 }
 export function finishArchive(app: App, id: string, prepared: NonNullable<ReturnType<typeof prepareArchive>>) {
   const s = getSource(app, id);
   const old = sourceRoute(app, id);
-  const pending = prepared.mode === "fallback" && old?.decision_hash !== s.hash ? 1 : 0;
-  run(app.db, `insert into source_routes(source_id,origin_space,mode,reason,rule_id,pending) values(?,?,?,?,?,?)
-    on conflict(source_id) do update set mode=excluded.mode,reason=excluded.reason,rule_id=excluded.rule_id,pending=excluded.pending`, id, prepared.origin, prepared.mode, prepared.reason, prepared.ruleId ?? null, pending);
+  const pending = prepared.mode === "fallback" && !prepared.decided && old?.decision_hash !== s.hash ? 1 : 0;
+  // A followed judgement counts as decided for this content.
+  const decision = prepared.decided ? s.hash : old?.decision_hash ?? null;
+  run(app.db, `insert into source_routes(source_id,origin_space,mode,reason,rule_id,decision_hash,pending) values(?,?,?,?,?,?,?)
+    on conflict(source_id) do update set mode=excluded.mode,reason=excluded.reason,rule_id=excluded.rule_id,decision_hash=excluded.decision_hash,pending=excluded.pending`, id, prepared.origin, prepared.mode, prepared.reason, prepared.ruleId ?? null, decision, pending);
   run(app.db, "insert or ignore into source_locations(origin_space,uri,source_id) values(?,?,?)", prepared.origin, s.uri, id);
   if (pending && listSpaces(app).some(s => s.id !== "personal" && s.kind !== "personal")) queueArchive(app, id);
 }
+const ARCHIVE_BATCH = 40;
+/** Waiting archive runs of a space, oldest first. Running inputs are immutable. */
+function queuedArchives(app: App, spaceId: string) {
+  return all<{ id: string; input: string }>(app.db, "select id,input from runs where kind='archive' and status='queued' and space_id=? order by created_at,rowid", spaceId)
+    .map(r => ({ id: r.id, ids: json<{ sourceIds: string[] }>(r.input, { sourceIds: [] }).sourceIds }));
+}
 export function queueArchive(app: App, id: string) {
   const s = getSource(app, id);
-  const queued = one<{ id: string; input: string }>(app.db, "select id,input from runs where kind='archive' and status='queued' and space_id=? order by created_at limit 1", s.spaceId);
-  const ids = queued ? json<{ sourceIds: string[] }>(queued.input, { sourceIds: [] }).sourceIds : [];
-  if (queued && ids.length < 40) {
-    if (!ids.includes(id)) run(app.db, "update runs set input=? where id=?", JSON.stringify({ sourceIds: [...ids, id] }), queued.id);
-  } else createRun(app, { kind: "archive", spaceId: s.spaceId, title: "判断材料归属", input: { sourceIds: [id] }, lane: `archive:${s.spaceId}`, userId: "owner" });
+  const queued = queuedArchives(app, s.spaceId);
+  if (queued.some(r => r.ids.includes(id))) return;
+  const open = queued.find(r => r.ids.length < ARCHIVE_BATCH);
+  if (open) run(app.db, "update runs set input=? where id=?", JSON.stringify({ sourceIds: [...open.ids, id] }), open.id);
+  else createRun(app, { kind: "archive", spaceId: s.spaceId, title: "判断材料归属", input: { sourceIds: [id] }, lane: `archive:${s.spaceId}`, userId: "owner" });
+}
+/**
+ * Repack waiting archive runs: one source once, at most ARCHIVE_BATCH per run, sources no longer
+ * pending dropped. Emptied runs are cancelled. Run at startup (an older queue merged badly).
+ */
+export function compactArchiveQueue(app: App) {
+  let cancelled = 0;
+  tx(app.db, () => {
+    for (const { space_id } of all<{ space_id: string }>(app.db, "select distinct space_id from runs where kind='archive' and status='queued' and space_id is not null")) {
+      const queued = queuedArchives(app, space_id);
+      const ids = [...new Set(queued.flatMap(r => r.ids))].filter(id => sourceRoute(app, id)?.pending);
+      queued.forEach((r, i) => {
+        const batch = ids.slice(i * ARCHIVE_BATCH, (i + 1) * ARCHIVE_BATCH);
+        if (batch.length) run(app.db, "update runs set input=? where id=?", JSON.stringify({ sourceIds: batch }), r.id);
+        else cancelled += run(app.db, "update runs set status='cancelled', finished_at=?, quiet=1 where id=? and status='queued'", now(), r.id).changes as number;
+      });
+    }
+  });
+  return cancelled;
 }
 
 /** Keep IDs, chunk IDs, embeddings, message positions and citations stable. */

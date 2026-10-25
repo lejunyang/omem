@@ -1,18 +1,16 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { post } from "../api";
+import { computed, watch } from "vue";
+import { detectProbe, probes, seedProbe, type Probe } from "../lib/probes";
 import UiSelect from "./UiSelect.vue";
+import { relTime } from "../store";
 
-type Backend = { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string };
+type Backend = { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; probe?: Probe | null };
 type Choice = { agent?: string; model?: string; effort?: string };
-type Probe = { models: string[]; efforts: string[]; effortsByModel?: Record<string, string[]>; error?: string };
 const props = defineProps<{ modelValue: Choice; backends: Backend[]; defaultBackend: string }>();
 const emit = defineEmits<{ 'update:modelValue': [value: Choice]; change: [] }>();
-const probes = ref<Record<string, Probe>>({});
-const pending = ref(new Set<string>());
 const backend = computed(() => props.backends.find((b) => b.id === (props.modelValue.agent || props.defaultBackend)));
-const probe = computed(() => probes.value[backend.value?.id ?? ""]);
-const loading = computed(() => pending.value.has(backend.value?.id ?? ""));
+const probe = computed(() => probes.data[backend.value?.id ?? ""]);
+const loading = computed(() => !!probes.pending[backend.value?.id ?? ""]);
 const backendOptions = computed(() => [{ value: "", label: `跟随默认${props.defaultBackend ? `（${props.defaultBackend}）` : ""}` }, ...[...props.backends].sort((a, b) => Number(b.installed) - Number(a.installed) || Number(b.transport === "acp") - Number(a.transport === "acp") || a.name.localeCompare(b.name)).map((b) => ({ value: b.id, label: b.name, hint: `${b.transport ?? ""}${b.installed ? " · 可用" : " · 未安装或未授权"}` }))]);
 const model = computed(() => props.modelValue.model || backend.value?.model || "");
 const efforts = computed(() => probe.value?.effortsByModel?.[model.value] ?? probe.value?.efforts ?? []);
@@ -31,15 +29,14 @@ function update(key: keyof Choice, value: string) {
   if (key === "model") next.effort = "";
   emit('update:modelValue', next); emit('change');
 }
-async function detect(refresh = false) {
+// Cached results come with the backend list; only a backend never detected is asked on its own.
+function detect(refresh = false) {
   const b = backend.value;
-  if (!b || pending.value.has(b.id) || (!refresh && probes.value[b.id])) return;
-  pending.value.add(b.id);
-  try { probes.value[b.id] = await post<Probe>(`/api/agents/${encodeURIComponent(b.id)}/probe`, { refresh }); }
-  catch (e) { probes.value[b.id] = { models: [], efforts: [], error: (e as Error).message }; }
-  finally { pending.value.delete(b.id); }
+  if (!b) return;
+  seedProbe(b.id, b.probe);
+  void detectProbe(b.id, refresh);
 }
-watch(() => backend.value?.id, () => void detect(), { immediate: true });
+watch(() => backend.value?.id, () => detect(), { immediate: true });
 </script>
 
 <template>
@@ -55,7 +52,7 @@ watch(() => backend.value?.id, () => void detect(), { immediate: true });
         <input v-else class="input mono" :value="modelValue.effort" :placeholder="inherited('effort') || '未检测到可选项，可手填'" aria-label="思考强度" @input="update('effort', ($event.target as HTMLInputElement).value)" />
       </div>
     </div>
-    <div class="row wrap small muted"><span>{{ loading ? '正在检测模型与思考强度…' : probe?.error || '留空就跟随默认。' }}</span><button type="button" class="btn ghost sm" :disabled="loading || !backend" @click="detect(true)">重新检测</button></div>
+    <div class="row wrap small muted"><span>{{ loading ? '正在检测模型与思考强度…' : probe?.error || `留空就跟随默认。${probe?.at ? `可选项检测于${relTime(probe.at)}。` : ''}` }}</span><button type="button" class="btn ghost sm" :disabled="loading || !backend" @click="detect(true)">重新检测</button></div>
   </div>
 </template>
 

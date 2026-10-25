@@ -477,3 +477,11 @@ updated: 2026-10-25
 
 - 唤醒开的档案运行（`input.wake`）的思考气泡改为先收着不发（`startCot` 的 `defer`）；运行结束时 `endCot` 判断：回 QUIET 就丢掉，从不创建；有话要说就整段发出并收尾，再投递回复，顺序不变。实时发出的气泡如果运行最后是 QUIET，会被撤回（`finishCot` 的 `quiet`）。
 - 唤醒开的 ask / agent 运行回 QUIET 时记 `quiet = 1`（之前对话类运行一律不记），`wake` 运行本身也记为无事可报；迁移把以前的补标。
+
+## 多个飞书机器人、归属判断积压、任务选型、检测缓存（10-25）
+
+- 新配置 `lark.bots`（`id`、`appId`、`agent`、`enabled`、`ownerOpenId`）和 `lark.botRelay`。每个额外机器人一条长连接，被 @ 或私聊时以绑定的 Agent 档案回答，会话 channel 为 `lark:<id>`；后续投递、`lark_*` 工具（`ToolContext.larkBot`）都经这个机器人发。群里每轮带 omem 机器人名单；回复里 `@名字` 由 `relayMentions` 在进程内交给对应机器人，连续转交有上限，有人发话清零。`lark-send.ts` 新增 `setLarkBotClient`、`larkClientFor`、`postedByOmem`，`Target.bot`；`reactLark` / `unreactLark` / `updateLarkCard` / `uploadLark` 多一个 `bot` 参数。`omem setup` 加“添加机器人”，设置 → 渠道加“其他机器人”。
+- 常驻机器上积压了上千个“判断材料归属”：历史回溯按月写的 `lark:<会话>@<月份>` 原件每写一页都重排一次；`queueArchive` 只看最早的排队任务，它满 40 份后每次都新建单份任务且不去重。改为合并进任何未满的排队任务、全队列去重；同一会话已判断过的（留在个人空间的聊天、已判断会话的历史月份）沿用判断；启动时 `compactArchiveQueue` 重新打包旧队列。迁移加了 `json_extract(meta,'$.chatId')` 的部分索引。
+- 任务选型：之前候选只在 `list_ai_backends` 里，真实运行里一次自主选型都没有。现在打开自主选型且有候选时，能交办的运行的环境说明里有“任务选型”一节；`_common.md` 改为每次交办对照候选选择。
+- 模型检测：`/api/profile-options` 的后端带上缓存的检测结果；前端 `lib/probes.ts` 各页面共用，同一标签页只问一次；显示检测时间。
+- 运行记录页加状态筛选（全部 / 排队中 / 进行中 / 失败），筛选时列表随运行状态变化刷新（合并 0.4 秒内的事件）。

@@ -495,6 +495,35 @@ async function setupLarkBot(config: Config, home: string, cli: LarkCliState) {
   out("  事件走 SDK 长连接，不需要公网地址；企业租户里新权限可能要管理员审批后才生效。");
 }
 
+/** More bots beside the main one, each answered by one Agent profile (lark.bots, lark-bots.ts). */
+async function setupMoreLarkBots(app: App) {
+  const cfg = app.config.lark;
+  if (cfg.bots.length) out(`  其他机器人：${cfg.bots.map((b) => `${b.id}（${b.agent}${b.enabled ? "" : "，已停用"}）`).join("、")}；回答者在网页设置 → 渠道里改`);
+  while (await confirm({ message: "添加机器人：再绑定一个飞书机器人，由某个 Agent 档案回答？", default: false })) {
+    const { listAgentSpecs } = await import("./agents/specs.ts");
+    const agent = await select({
+      message: "由谁回答",
+      choices: [{ value: "assistant", name: "主助手角色（独立的会话）" }, ...listAgentSpecs(app).map((s) => ({ value: s.name, name: s.name, description: s.description }))],
+    });
+    const id = (await input({
+      message: "机器人 id（配置里用，小写字母、数字、连字符）",
+      default: agent === "assistant" ? "assistant-2" : agent.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "bot",
+      validate: (v) => (/^[a-z0-9][a-z0-9-]{0,31}$/.test(v.trim()) && !cfg.bots.some((b) => b.id === v.trim())) || "小写字母、数字和连字符，不能和已有的重复",
+    })).trim();
+    const name = await input({ message: "机器人名称（群里 @ 它用的名字）", default: agent === "assistant" ? "omem 助理 2" : agent });
+    const creds = await registerLarkBot({ name, onQr: showQr });
+    const check = await checkLarkApp(creds.appId, creds.appSecret);
+    if (check.error) {
+      out(`  没有添加：${check.error}`);
+      continue;
+    }
+    saveLarkSecret(app.home, { ...creds, name: check.botName });
+    cfg.bots.push({ id, appId: creds.appId, agent, enabled: true, ...(creds.ownerOpenId ? { ownerOpenId: creds.ownerOpenId } : {}) });
+    out(`  ✓ 机器人「${check.botName ?? creds.appId}」已添加，由 ${agent} 回答。把它拉进群后 @ 它，或私聊它；重启服务后生效。`);
+    if (!creds.ownerOpenId) out("  扫码没有带回你的 open_id：服务启动后私聊它一句，它会告诉你填什么。");
+  }
+}
+
 async function setupChannelsSection(app: App) {
   const config = app.config;
   const home = app.home;
@@ -518,6 +547,12 @@ async function setupChannelsSection(app: App) {
     } catch (e) {
       if ((e as Error).name === "ExitPromptError") throw e;
       out(`  飞书机器人没有绑定成功：${(e as Error).message}`);
+    }
+    try {
+      await setupMoreLarkBots(app);
+    } catch (e) {
+      if ((e as Error).name === "ExitPromptError") throw e;
+      out(`  机器人没有添加成功：${(e as Error).message}`);
     }
   }
   // Reading the owner's own Feishu through lark-cli (separate from the bot, read-only).

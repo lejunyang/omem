@@ -2,12 +2,14 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { del, get, patch, post, put, type Space, type SpaceRelation } from "../api";
 import AiRouting from "../components/AiRouting.vue";
+import { detectProbe, probes as shared } from "../lib/probes";
 import Icon from "../components/Icon.vue";
 import CronEditor from "../components/CronEditor.vue";
 import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
 import { fmtTime, kindLabel, loadSpaces, state, toast } from "../store";
+import { confirmDialog } from "../lib/dialog";
 
 type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string };
 type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
@@ -320,16 +322,18 @@ function effortsOf(profileId: string | undefined, model?: string | null): string
   if (d.effortsByModel && model && model in d.effortsByModel) return d.effortsByModel[model];
   return d.efforts;
 }
-const probes = ref<Record<string, { loading?: boolean; error?: string; data?: ProbeData }>>({});
+// Shared with the profile forms (lib/probes.ts): a backend is asked once per tab unless refreshed.
+const probes = computed(() => {
+  const out: Record<string, { loading?: boolean; error?: string; data?: ProbeData }> = {};
+  for (const id of new Set([...Object.keys(shared.data), ...Object.keys(shared.pending)])) {
+    const d = shared.data[id] as ProbeData | undefined;
+    out[id] = { loading: !!shared.pending[id], ...(d?.error ? { error: d.error } : d ? { data: d } : {}) };
+  }
+  return out;
+});
 async function probe(p: Profile, refresh = true) {
   if (p.transport !== "acp") return;
-  probes.value[p.id] = { ...(probes.value[p.id] ?? {}), loading: true };
-  try {
-    const data = await post<ProbeData>(`/api/agents/${p.id}/probe`, { refresh });
-    probes.value[p.id] = data.error ? { error: data.error } : { data };
-  } catch (e) {
-    probes.value[p.id] = { error: (e as Error).message };
-  }
+  await detectProbe(p.id, refresh);
 }
 /** Read cached probes (or probe once) for every installed ACP agent so role dropdowns can fill. */
 async function loadProbes() {
@@ -341,6 +345,26 @@ async function setProfileOption(p: Profile, key: "model" | "effort", value: stri
   const list = [...config.value.agents.profiles.filter((x: Profile) => x.id !== p.id), next];
   await saveConfig({ agents: { ...config.value.agents, profiles: list } }, `${p.name ?? p.id}：${key} = ${value}`);
   void load();
+}
+// Other Feishu bots (lark.bots): who answers for each.
+type LarkBot = { id: string; appId: string; agent: string; enabled: boolean; ownerOpenId?: string };
+const specs = ref<{ name: string; description: string }[]>([]);
+watch(tab, (t) => {
+  if (t === "lark" && !specs.value.length) void get<{ name: string; description: string }[]>("/api/agents").then((s) => (specs.value = s)).catch(() => {});
+}, { immediate: true });
+function botAgentOptions(current: string) {
+  const list = [{ value: "assistant", label: "主助手角色（独立会话）" }, ...specs.value.map((s) => ({ value: s.name, label: s.name, hint: s.description }))];
+  return list.some((o) => o.value === current) ? list : [...list, { value: current, label: current, hint: "档案不存在" }];
+}
+function saveBot(i: number, patch: Partial<LarkBot>) {
+  const bots = [...(config.value.lark.bots as LarkBot[])];
+  bots[i] = { ...bots[i], ...patch };
+  void saveConfig({ lark: { ...config.value.lark, bots } }, `已保存机器人 ${bots[i].id}`);
+}
+async function removeBot(i: number) {
+  const b = config.value.lark.bots[i] as LarkBot;
+  if (!(await confirmDialog(`移除机器人 ${b.id}？`, { message: "它的会话记录保留；凭据仍在 secrets/lark.json，重启服务后不再连接。", okText: "移除", danger: true }))) return;
+  void saveConfig({ lark: { ...config.value.lark, bots: (config.value.lark.bots as LarkBot[]).filter((_, j) => j !== i) } }, `已移除机器人 ${b.id}`);
 }
 const installedProfiles = computed(() => profiles.value.filter((p) => p.installed));
 const profileOptions = computed(() => installedProfiles.value.map((p) => ({ value: p.id, label: p.name ?? p.id, hint: p.id })));
@@ -636,6 +660,22 @@ async function saveEdit() {
         <label class="field"><span>本人 open_id（setup 扫码通常自动填）</span><input class="input mono" :value="config.lark.ownerOpenId ?? ''" placeholder="不知道可先私聊机器人一句，再运行 omem setup" @change="saveConfig({ lark: { ...config.lark, ownerOpenId: ($event.target as HTMLInputElement).value } })" /></label>
       </div>
       <div class="field"><span>默认空间</span><UiSelect :model-value="config.lark.defaultSpace" width="240px" aria-label="默认空间" :options="state.spaces.map((s) => ({ value: s.id, label: s.name }))" @change="(v) => saveConfig({ lark: { ...config.lark, defaultSpace: v } })" /></div>
+
+      <div class="card pad stack">
+        <strong>其他机器人</strong>
+        <p class="muted small">再绑定几个飞书机器人，每个由一个 Agent 档案回答，有自己的会话。你在群里 @ 它或私聊它时它回答；同一个群里可以同时 @ 几个，它们知道彼此是谁、各管什么，回复里 @ 另一个就交给它接着做。采集、通知、卡片和规则仍由上面的主机器人负责。添加：在终端运行 <span class="mono">omem setup</span> → 渠道 → 飞书 → 添加机器人（扫码）。改回答者不用重启；增删或启停要重启服务。</p>
+        <div v-for="(b, i) in config.lark.bots ?? []" :key="b.id" class="bot-row">
+          <div class="row wrap">
+            <strong class="mono">{{ b.id }}</strong><span class="muted small mono">{{ b.appId }}</span><span class="spacer" />
+            <UiCheckbox :model-value="b.enabled" switch size="sm" @change="(v) => saveBot(i, { enabled: v })">启用</UiCheckbox>
+            <button class="btn ghost sm danger" @click="removeBot(i)">移除</button>
+          </div>
+          <div class="field"><span>回答者</span><UiSelect :model-value="b.agent" width="100%" aria-label="回答者" :options="botAgentOptions(b.agent)" @change="(v) => saveBot(i, { agent: v })" /></div>
+          <label class="field"><span>本人在这个应用里的 open_id（每个应用不同，扫码时自动填）</span><input class="input mono" :value="b.ownerOpenId ?? ''" placeholder="不知道可先私聊这个机器人一句，它会告诉你" @change="saveBot(i, { ownerOpenId: ($event.target as HTMLInputElement).value.trim() || undefined })" /></label>
+        </div>
+        <p v-if="!(config.lark.bots ?? []).length" class="muted small">还没有其他机器人。</p>
+        <div class="row small"><span>机器人之间连续转交最多</span><UiSelect :model-value="String(config.lark.botRelay ?? 4)" size="sm" width="90px" aria-label="机器人之间连续转交上限" :options="['0', '1', '2', '4', '6', '10'].map((v) => ({ value: v, label: `${v} 次` }))" @change="(v) => saveConfig({ lark: { ...config.lark, botRelay: Number(v) } }, `机器人之间连续转交最多 ${v} 次`)" /><span class="muted">，之后等有人发话</span></div>
+      </div>
 
       <div class="card pad stack">
         <strong>访客提问</strong>
@@ -941,6 +981,12 @@ async function saveEdit() {
 .more summary {
   cursor: pointer;
   padding: 8px 12px;
+}
+.bot-row {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
 }
 .probe {
   padding: 10px 16px;
