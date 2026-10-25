@@ -1415,7 +1415,7 @@ def({
 def({
   name: "upsert_item",
   description:
-    "创建或更新事项。不传 id 为新建。kind：todo 待办 / waiting 等待某人回复 / reminder 定时提醒 / watch 持续关注某项目或讨论 / decision 需要本人决定。时间用带时区的 ISO 格式。note 写这次变化的原因，会进入事项时间线。",
+    "创建或更新事项。不传 id 为新建。kind：todo 待办 / waiting 等待某人回复 / reminder 定时提醒 / watch 持续关注某项目或讨论 / decision 需要本人决定。时间用带时区的 ISO 格式。note 写这次变化的原因，会进入事项时间线。一个需求、一次评审这类要反复回来看的事，用 materials_add 把相关材料挂上：需求和技术文档、群聊（原件）、会话、仓库和分支、要对照的空间；之后 review_branch / delegate_code 传 item_id，评审者和编码 Agent 会读到这些材料。",
   write: true,
   schema: z.object({
     id: z.string().optional(),
@@ -1433,6 +1433,14 @@ def({
     source_refs_mode: z.enum(["merge", "replace", "remove"]).optional().describe("默认增量 merge；纠正必须指定 id、note、非空来源及 expected_source_refs"),
     expected_source_refs: refs,
     space: z.string().optional(),
+    materials_add: z.array(z.object({
+      kind: z.enum(["source", "conversation", "repo", "space", "run"]).describe("source 原件（文档、群聊、网页…）/ conversation 和 omem 的会话 / repo 代码仓库空间加分支 / space 整个空间（如迁移要对照的源仓库）/ run 为它做过的交办或评审"),
+      ref: z.string().describe("source：原件 id（src:… 也可以）；repo / space：空间 id；conversation：会话 id；run：运行 id"),
+      branch: z.string().optional().describe("repo：分支名"),
+      base: z.string().optional().describe("repo：对照的基线分支"),
+      note: z.string().max(300).optional().describe("这份材料是什么、怎么用（如“只作参考，实际接口在前端 BFF”）"),
+    })).optional(),
+    materials_remove: z.array(z.string()).optional().describe("要移除的材料：材料编号，或 kind:ref"),
   }),
   handler: async (ctx, a) => {
     const existing = a.id ? getItem(ctx.app, a.id) : null;
@@ -1444,7 +1452,10 @@ def({
     // Removal may revoke stale/deleted refs, but must match this item's exact old set.
     if (a.source_refs_mode !== "remove") validateItemRefs(ctx.app, a.source_refs ?? [], ctx.userId ?? OWNER, ctx.spaces);
 
-    const item = upsertItem(
+    // Only adding or removing materials leaves the item's fields (and its timeline) as they are.
+    const { materials_add: materialsAdd, materials_remove: materialsRemove, ...fields } = a;
+    const onlyMaterials = existing && Object.entries(fields).every(([k, v]) => k === "id" || k === "space" || v === undefined);
+    const item = onlyMaterials ? existing : upsertItem(
       ctx.app,
       a.id,
       {
@@ -1466,11 +1477,15 @@ def({
       },
       ctx.actor,
     );
+    const { addMaterials, removeMaterials } = await import("../items/materials.ts");
+    const added = materialsAdd?.length ? addMaterials(ctx.app, item.id, materialsAdd, ctx.userId ?? OWNER, ctx.actor) : [];
+    const removed = materialsRemove?.length ? removeMaterials(ctx.app, item.id, materialsRemove, ctx.userId ?? OWNER, ctx.actor) : 0;
+    const materialsLine = added.length || removed ? `\n材料：${added.length ? `加入 ${added.map((m) => `#${m.id} ${m.label}`).join("、")}` : ""}${added.length && removed ? "；" : ""}${removed ? `移除 ${removed} 项` : ""}` : "";
     // A problem worked through over several steps is worth keeping as a case (see roles/_common.md).
     const closedWithHistory = existing && item.status === "done" && existing.status !== "done" && itemEvents(ctx.app, item.id).length >= 4;
     const { itemExpiry } = await import("../items/expiry.ts");
     const expiry = existing ? null : itemExpiry(ctx.app, item);
-    return `${existing ? "已更新" : "已创建"}事项 ${item.id}：[${item.kind}/${item.status}] ${item.title}${expiry ? `（期限：${expiry.text}，之后自动过期）` : ""}${closedWithHistory ? "\n这件事经过了几轮进展才结束。如果是排查或解决了一个问题，并且以后可能再遇到，写成案例：write_page（kind=case，page=cases/<主题>，写现象、怎么判断的、原因、解法、适用条件，引用原件），再 remember 一条 experience 记忆指向这页；只是普通待办就不用。" : ""}`;
+    return `${existing ? "已更新" : "已创建"}事项 ${item.id}：[${item.kind}/${item.status}] ${item.title}${expiry ? `（期限：${expiry.text}，之后自动过期）` : ""}${materialsLine}${closedWithHistory ? "\n这件事经过了几轮进展才结束。如果是排查或解决了一个问题，并且以后可能再遇到，写成案例：write_page（kind=case，page=cases/<主题>，写现象、怎么判断的、原因、解法、适用条件，引用原件），再 remember 一条 experience 记忆指向这页；只是普通待办就不用。" : ""}`;
   },
 });
 
@@ -1526,7 +1541,9 @@ def({
     if ((readable && !readable.includes(item.spaceId)) || item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能读取该事项");
     const { listWorkFiles } = await import("../sources/work.ts");
     const files = listWorkFiles(ctx.app, { item: item.id }).map((f) => ({ id: `src:${f.id}`, path: f.uri, title: f.title, updatedAt: f.updatedAt, expiresAt: f.expiresAt, lines: f.lines }));
-    return JSON.stringify({ item, events: itemEvents(ctx.app, item.id), ...(files.length ? { files } : {}) });
+    const { materialViews } = await import("../items/materials.ts");
+    const materials = materialViews(ctx.app, item.id, ctx.userId ?? OWNER).map((m) => ({ id: m.id, kind: m.kind, ref: m.kind === "source" ? `src:${m.ref}` : m.ref, title: m.title, ...m.meta, hash: undefined, readable: m.readable, ...(m.changed ? { changedSinceAdded: true } : {}), ...(m.missing ? { missing: true } : {}) }));
+    return JSON.stringify({ item, events: itemEvents(ctx.app, item.id), ...(materials.length ? { materials } : {}), ...(files.length ? { files } : {}) });
   },
 });
 def({
@@ -2554,6 +2571,7 @@ def({
     review_tier: z.string().optional().describe("本人点名的评审档位（id 或名字，如“完整”）；不传按改动大小自动选"),
     review_checks: z.array(z.string()).optional().describe("本人要求额外加上的评审项（档案名，如 security-review）"),
     from_branch: z.string().optional().describe("在已有分支上继续开发（如按分支评审的意见修改）：worktree 从这个分支的最新提交开始，而不是仓库当前检出的 HEAD；应用时要求本人的工作区也在这个分支上才能干净应用"),
+    item_id: z.string().optional().describe("这次交办所属的事项：编码 Agent 和评审者会读到它的材料（文档、群聊、要对照的仓库），交办本身也记到事项上"),
   }),
   handler: async (ctx, a) => {
     const execution = validateExecution(ctx.app, a.execution);
@@ -2564,19 +2582,30 @@ def({
     const { codeRepos } = await import("./code.ts");
     const repos = codeRepos(ctx.app, home, ids);
     if (a.from_branch) for (const repo of repos) if (!resolveRef(repo.rootPath!, a.from_branch)) throw new HttpError(404, `${repo.id} 里没有分支 ${a.from_branch}；用 list_branches 查看`);
+    const itemId = a.item_id ? itemFor(ctx, a.item_id) : undefined;
     const r = createRun(ctx.app, {
       kind: "code",
       spaceId: home,
       title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
-      input: { task: a.task, execution, reviewExecution, checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}) },
+      input: { task: a.task, execution, reviewExecution, checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}) },
       parentId: ctx.runId,
+      userId: ctx.userId ?? OWNER,
     });
+    if (itemId) (await import("../items/materials.ts")).linkRunToItem(ctx.app, r, itemId, ctx.userId ?? OWNER);
     // Seed the chain so later rounds (and the Feishu progress topic) find the original ask.
     const { codeChainFor } = await import("./code-chain.ts");
     const chain = codeChainFor(ctx.app, r);
     return `已交办，运行 ${r.id}（${ids.join("、")}），共一个会话，评审要求修改会自动续轮。完成后会通知；进度可看 ${chain ? `#/runs/${r.id}` : r.id}。`;
   },
 });
+
+/** An item the caller owns and may see, for linking a delegation or review to it. */
+function itemFor(ctx: ToolContext, id: string) {
+  const item = getItem(ctx.app, id);
+  inScope(ctx, item.spaceId, "事项");
+  if (item.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不能使用他人的事项");
+  return item.id;
+}
 
 async function validateReviewChoice(ctx: ToolContext, tier?: string, checks?: string[]) {
   const { reviewTiers, reviewChecks } = await import("./review.ts");
@@ -2603,6 +2632,7 @@ def({
     review_checks: z.array(z.string()).optional().describe("本人要求额外加上的评审项（档案名）"),
     review_execution: executionSchema.optional().describe("功能评审 AI 的临时选择"),
     read_spaces: z.array(z.string()).optional().describe("评审者还要读的空间：需求文档所在的空间、迁移需求的源仓库、相关案例所在的项目空间"),
+    item_id: z.string().optional().describe("这次评审所属的事项（需求）：评审者会读到事项的材料，评审和分支记到事项上，结论写进事项时间线。大型需求先用 upsert_item 建事项、挂好材料再评审"),
   }),
   handler: async (ctx, a) => {
     await validateReviewChoice(ctx, a.review_tier, a.review_checks);
@@ -2612,8 +2642,8 @@ def({
     const { createBranchReview } = await import("./code.ts");
     const r = createBranchReview(ctx.app, {
       space: a.space ? space(ctx, a.space) : undefined, repos: ids, branch: a.branch, branches: a.branches, base: a.base, task: a.task, title: a.title, fetch: a.fetch,
-      reviewTier: a.review_tier, reviewChecks: a.review_checks, reviewExecution, readSpaces,
-    }, ctx.runId);
+      reviewTier: a.review_tier, reviewChecks: a.review_checks, reviewExecution, readSpaces, itemId: a.item_id ? itemFor(ctx, a.item_id) : undefined,
+    }, ctx.runId, ctx.userId ?? OWNER);
     // The chain carries the result back to this conversation (and the Feishu progress card).
     const { codeChainFor } = await import("./code-chain.ts");
     codeChainFor(ctx.app, r);
@@ -2902,6 +2932,15 @@ def({
       evidence: z.array(z.string().max(300)).max(20).optional().describe("依据：src:<原件id>#L起-L止、mem:<id>，或 文件:行"),
       confidence: z.enum(["high", "medium", "low"]).optional(),
     })).max(100),
+    change_points: z.array(z.object({
+      id: z.string().max(12).describe("编号：C1、C2…"),
+      title: z.string().max(200).describe("一句话：这个变更点要做成什么"),
+      status: z.enum(["done", "partial", "missing", "extra"]).describe("done 已实现 / partial 部分实现 / missing 没实现 / extra 需求外的改动"),
+      requirement: z.string().max(2000).optional().describe("需求怎么说（带 src: 引用）"),
+      implementation: z.string().max(2000).optional().describe("代码怎么做、为什么这么写"),
+      refs: z.array(z.string().max(300)).max(20).optional().describe("依据：src:<原件id>#L起-L止、mem:<id>"),
+      locations: z.array(z.object({ file: z.string().max(500).describe("仓库内路径；几个仓库时写成 仓库空间id/路径"), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).max(30).optional().describe("实现它的代码位置（改动后的行号）；找不到精确行就只写文件"),
+    })).max(60).optional().describe("业务评审填写：需求拆成的变更点和各自的实现位置，网页的“变更”视图按它把需求和代码对上。其他评审项不用填"),
   }),
   handler: async (ctx, a) => {
     const check = ctx.spec ?? ctx.role;
@@ -2909,10 +2948,11 @@ def({
     const r = codeRunOf(ctx.app, ctx.runId);
     const plan = (r?.output as { reviewPlan?: import("./review.ts").ReviewPlan } | undefined)?.reviewPlan;
     if (!r || !check || !plan?.checks.includes(check)) throw new HttpError(400, "submit_review 只能在交办编码的评审项里使用");
-    const { findingSchema, recordReview } = await import("./review.ts");
+    const { changePointSchema, findingSchema, recordReview } = await import("./review.ts");
     const findings = a.findings.map((f) => findingSchema.parse(f));
-    recordReview(ctx.app, { codeRunId: r.id, round: (r.input as { round?: number }).round ?? 1, check, tier: plan.tier, verdict: a.verdict, summary: a.summary, findings, ai: { profile: ctx.agentProfile, model: ctx.model ?? undefined, effort: ctx.effort ?? undefined } });
-    return `已记录评审结论（${a.verdict === "approved" ? "通过" : "需要修改"}，${findings.length} 条问题）。接着用文字写结论。`;
+    const changePoints = (a.change_points ?? []).map((c) => changePointSchema.parse(c));
+    recordReview(ctx.app, { codeRunId: r.id, round: (r.input as { round?: number }).round ?? 1, check, tier: plan.tier, verdict: a.verdict, summary: a.summary, findings, changePoints, ai: { profile: ctx.agentProfile, model: ctx.model ?? undefined, effort: ctx.effort ?? undefined } });
+    return `已记录评审结论（${a.verdict === "approved" ? "通过" : "需要修改"}，${findings.length} 条问题${changePoints.length ? `，${changePoints.length} 个变更点` : ""}）。接着用文字写结论。`;
   },
 });
 

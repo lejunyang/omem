@@ -522,6 +522,16 @@ updated: 2026-10-25
 - 分支评审的可读范围：`CodeInput.readSpaces`（`review_branch` 的 `read_spaces`、`POST /api/review-branch` 的 `readSpaces`、`omem review-branch --read`），加进编码与评审运行的空间范围；需求文档在个人空间、迁移要对照源仓库时用。接口按发起人可访问的空间校验。
 - 评审档位条件新增 `change.codeLines`（有效代码改动行数）：`reviewMetrics` 按 `isSourceFile`（`src/sources/chunk.ts`，源代码扩展名，排除 `.min.js`）只累计源代码文件的增删行；档位理由和负责人估计里同时写出总行数和有效代码行数。默认档位不变，可在 Agent 页 → 评审 改用它。
 
+## 事项材料、运行页评审标签、运行记录查找（10-25）
+
+- `src/items/materials.ts`：表 `item_materials`（kind：source / conversation / repo / space / run，`ref`、`label`、`meta` 里有分支、基线、说明和加入时原件的 hash）。`addMaterials` 校验本人能看到、只能加自己的会话和运行；`materialViews` 给出可读、已删除、加入后有更新；`materialSpaces` 和 `materialsBrief` 给编码和评审用。
+- `CodeInput.itemId`：`review_branch` / `delegate_code` 的 `item_id`，`POST /api/review-branch`、`/api/delegate` 的 `itemId`。编码和评审的可读空间加上材料所在空间，任务里附“所属事项”和材料清单；运行和分支自动成为材料（`linkRunToItem`），评审结束在事项时间线记一条；续轮带上 `itemId` 和 `readSpaces`。
+- 工具：`upsert_item` 加 `materials_add / materials_remove`（只改材料时不动事项字段），`read_item` 返回 `materials`；`submit_review` 加 `change_points`（`reviews.change_points`），`roles/review-business.md` 要求提交变更点。
+- 接口：`GET /api/items/:id` 带 `materials`（运行附最新一轮的结论），`POST /api/items/:id/materials`、`DELETE /api/items/:id/materials/:mid`；`GET /api/runs/:id` 的 `context.items`。
+- 运行记录：`runs.roles`（`|coder|reviewer|`，`prepareRun` 记下内置角色，迁移按类型和评审记录补旧的），`/api/runs` 的 `kind=role:<名>`、`q`（标题、id、任务原文）、`brief`（不带输入输出）；网页每页 40 条。原件：`/api/sources/:id?window=`（聊天取最后几行）、`/api/sources/:id/messages?from=&to=`，列表每页 200 条。
+- 网页：`lib/reviews.ts`（`useReviews`）、`ReviewSummary.vue`（概览）、`ReviewChecks.vue`（评审）、`ChangeView.vue`（变更，`DiffFile` 的 `points` / `active` 画标记和高亮）、`AskAboutRun` 的 `heading` 和插槽（讲解抽屉）、`ItemMaterials.vue`、`lib/refs.ts`（`refAction`）。
+- 分支评审的说明写明 HEAD 在分叉点、改动在暂存区是正常的检出状态，评审者不要求“确认分支”。
+
 ## 内存观察、本地向量分批、回溯失败退避（10-25）
 
 - `src/core/memory-watch.ts`：每 10 分钟记一次进程内存（RSS、V8 堆、external、ArrayBuffer），保留两天；`diag` 的 `memory` 给出当前细分、向量缓存大小和抽样历史，以及前后四分之一时段 V8 堆的最低值（持续上升才是泄漏；本地向量模型的内存池和向量矩阵是涨到峰值后持平）。

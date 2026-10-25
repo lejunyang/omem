@@ -7,9 +7,12 @@ import { toast } from "../store";
  * One file of a delegation's diff with old/new line numbers. The unchanged code between hunks
  * (and above the first, below the last) can be unfolded 20 lines at a time or all at once; it is
  * read from the worktree while it exists, from the repository after the change was applied.
- * Rows carry data-line so a selection can say which lines it covers.
+ * Rows carry data-line so a selection can say which lines it covers. Change points (the business
+ * review's mapping of the requirement to the code) mark their lines; the active one is highlighted.
  */
-const props = defineProps<{ runId: string; space: string; lines: string[] }>();
+export type DiffPoint = { id: string; mark: string; color: string; start: number; end: number };
+const props = withDefaults(defineProps<{ runId: string; space: string; lines: string[]; points?: DiffPoint[]; active?: string | null }>(), { points: () => [], active: null });
+const emit = defineEmits<{ point: [id: string] }>();
 
 type Row = { kind: "add" | "del" | "ctx" | "meta"; old: number | null; new: number | null; text: string };
 type Hunk = { oldStart: number; newStart: number; header: string; rows: Row[]; oldEnd: number; newEnd: number };
@@ -100,6 +103,17 @@ function gapRows(g: Gap, part: "head" | "tail"): Row[] {
   for (let n = start; n < start + count && n <= file.value.length; n++) rows.push({ kind: "ctx", old: n + g.delta, new: n, text: file.value[n - 1] ?? "" });
   return rows;
 }
+const pointsAt = (n: number | null) => (n === null ? [] : props.points.filter((p) => n >= p.start && n <= p.end));
+/** A point's mark goes on its first line in each hunk. */
+const marksAt = (h: Hunk, j: number) => {
+  const r = h.rows[j];
+  // Deleted lines have no new line number: look past them.
+  let k = j - 1;
+  while (k >= 0 && h.rows[k].new === null) k--;
+  const prev = k >= 0 ? h.rows[k].new : null;
+  return pointsAt(r.new).filter((p) => prev === null || prev < p.start || prev > p.end);
+};
+const rowClass = (r: Row) => [r.kind, { cp: pointsAt(r.new).length > 0, "cp-on": !!props.active && pointsAt(r.new).some((p) => p.id === props.active) }];
 const canExpand = (g: Gap) => !deleted.value && (g.to === null ? !file.value || hidden(g) > 0 : hidden(g) > 0);
 const gapLabel = (g: Gap) => (g.to === null && !file.value ? "下方的代码" : `${hidden(g)} 行未改动`);
 </script>
@@ -122,7 +136,7 @@ const gapLabel = (g: Gap) => (g.to === null && !file.value ? "下方的代码" :
             <tr v-for="r in gapRows(gaps[i], 'tail')" :key="`t${i}-${r.new}`" class="ctx" :data-line="r.new"><td class="no">{{ r.old }}</td><td class="no">{{ r.new }}</td><td class="code"><span class="sign"> </span>{{ r.text }}</td></tr>
           </template>
           <tr class="hunk"><td colspan="3">@@ -{{ h.oldStart }} +{{ h.newStart }} @@ {{ h.header }}</td></tr>
-          <tr v-for="(r, j) in h.rows" :key="`${i}-${j}`" :class="r.kind" :data-line="r.new ?? r.old"><td class="no">{{ r.old ?? "" }}</td><td class="no">{{ r.new ?? "" }}</td><td class="code"><span class="sign">{{ r.kind === "add" ? "+" : r.kind === "del" ? "-" : " " }}</span>{{ r.text }}</td></tr>
+          <tr v-for="(r, j) in h.rows" :key="`${i}-${j}`" :class="rowClass(r)" :data-line="r.new ?? r.old"><td class="no">{{ r.old ?? "" }}</td><td class="no"><button v-for="p in marksAt(h, j)" :key="p.id" class="cpm" :style="{ background: p.color }" :title="`变更点 ${p.id}`" @click="emit('point', p.id)">{{ p.mark }}</button>{{ r.new ?? "" }}</td><td class="code"><span class="sign">{{ r.kind === "add" ? "+" : r.kind === "del" ? "-" : " " }}</span>{{ r.text }}</td></tr>
         </template>
         <template v-if="hunks.length">
           <tr v-for="r in gapRows(gaps[hunks.length], 'head')" :key="`end-${r.new}`" class="ctx" :data-line="r.new"><td class="no">{{ r.old }}</td><td class="no">{{ r.new }}</td><td class="code"><span class="sign"> </span>{{ r.text }}</td></tr>
@@ -157,4 +171,8 @@ const gapLabel = (g: Gap) => (g.to === null && !file.value ? "下方的代码" :
 .lnk { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0 6px; }
 .lnk:hover { text-decoration: underline; }
 .lnk:disabled { opacity: 0.5; cursor: default; }
+.cp > td:first-child { box-shadow: inset 3px 0 0 var(--line-strong); }
+.cp-on > td { background-image: linear-gradient(var(--accent-soft), var(--accent-soft)); }
+.cp-on > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.cpm { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; margin-right: 4px; padding: 0 3px; border: 0; border-radius: 4px; color: #fff; font: 600 10.5px/1 var(--sans); cursor: pointer; vertical-align: 1px; }
 </style>

@@ -1,48 +1,20 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { get, post } from "../api";
+import { computed, ref } from "vue";
+import { post } from "../api";
 import Markdown from "./Markdown.vue";
 import UiSegmented from "./UiSegmented.vue";
-import { toast } from "../store";
+import { relTime, toast } from "../store";
+import { refAction } from "../lib/refs";
+import { findingWhere, reviewAi, settled, severityCounts, SEV, type Finding, type Reviews } from "../lib/reviews";
 
 /**
- * “本次评审” of a coding delegation: which tier and why, each check's verdict, review-lead's
- * ruling on the problems they found, and — when the review waits for the owner (a plan to confirm,
- * or a stop) — the decision itself, answerable here. Raw review text stays one click away.
+ * The run page's “概览” for a coding delegation or branch review: the verdict and review-lead's
+ * summary, one line per check, the change request, and the problems to deal with. When the review
+ * waits for the owner (a plan to confirm, or a stop) the decision is answered here.
  */
-type Finding = { id: number; severity: "blocker" | "major" | "minor" | "nit"; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string[]; confidence: string; state: string; merged_into: number | null; triage_note: string };
-type Review = { id: string; round: number; check_name: string; verdict: "approved" | "changes_requested" | "failed"; summary: string; profile_id: string | null; model: string | null; effort: string | null; findings: Finding[] };
-type Lead = { verdict: "approve" | "revise" | "escalate"; summary: string; changeRequest: string; rerun: string[]; by: "lead" | "host"; stop?: string; escalation?: { summary: string } };
-type AskInfo = { id: string; status: string; question: string; options: { label: string }[]; answer: string | null };
-type Round = { runId: string; round: number; status: string; plan: { tier: string; tierName: string; checks: string[]; reasons: string[]; lead?: boolean } | null; verdict: string | null; stage: string | null; lead: Lead | null; stop: string | null; ask: AskInfo | null; acceptedByOwner: boolean };
-const props = defineProps<{ runId: string; reviewText?: string; refreshKey?: string }>();
-const emit = defineEmits<{ ask: [context: { quote: string; label: string }] }>();
+const props = defineProps<{ rv: Reviews; reviewText?: string; branchReview?: boolean }>();
+const emit = defineEmits<{ ask: [context: { quote: string; label: string }]; go: [tab: "review" | "change"] }>();
 
-const data = ref<{ estimate: { tierName: string; reason: string } | null; rounds: Round[]; reviews: Review[]; labels: Record<string, string> } | null>(null);
-const round = ref(1);
-let timer: ReturnType<typeof setTimeout> | undefined;
-async function load(keepRound = false) {
-  clearTimeout(timer);
-  try {
-    data.value = await get(`/api/runs/${props.runId}/reviews`);
-    if (!keepRound) round.value = data.value!.rounds.find((r) => r.runId === props.runId)?.round ?? data.value!.rounds.at(-1)?.round ?? 1;
-    // A review running after the coding run ended (confirmed plan) has no run of this page to follow.
-    if (["queued", "checks", "lead"].includes(current.value?.stage ?? "")) timer = setTimeout(() => void load(true), 3000);
-  } catch {
-    data.value = null;
-  }
-}
-watch(() => [props.runId, props.refreshKey], () => void load(), { immediate: true });
-onBeforeUnmount(() => clearTimeout(timer));
-
-const current = computed(() => data.value?.rounds.find((r) => r.round === round.value) ?? null);
-const reviews = computed(() => {
-  const list = (data.value?.reviews ?? []).filter((r) => r.round === round.value);
-  const order = current.value?.plan?.checks ?? [];
-  return [...list].sort((a, b) => order.indexOf(a.check_name) - order.indexOf(b.check_name));
-});
-const label = (name: string) => data.value?.labels[name] ?? name;
-const SEV: Record<Finding["severity"], { text: string; cls: string }> = { blocker: { text: "阻断", cls: "danger" }, major: { text: "严重", cls: "danger" }, minor: { text: "一般", cls: "warn" }, nit: { text: "提示", cls: "" } };
 const STATE: Record<string, string> = { accepted: "要改", rejected: "已驳回", merged: "已合并" };
 const STOP: Record<string, string> = {
   "auto-limit": "到了这一档的自动修改轮数上限",
@@ -50,30 +22,31 @@ const STOP: Record<string, string> = {
   stalemate: "同一个问题连续两轮修改后仍被报出",
   escalated: "评审负责人判断是需求或方案上的分歧",
 };
-const RANK = { blocker: 0, major: 1, minor: 2, nit: 3 };
-const findings = computed(() => reviews.value.flatMap((r) => r.findings.map((f) => ({ ...f, check: r.check_name }))).sort((a, b) => Number(["rejected", "merged"].includes(a.state)) - Number(["rejected", "merged"].includes(b.state)) || RANK[a.severity] - RANK[b.severity]));
-const showAll = ref(false);
-const quiet = (f: Finding) => f.severity === "nit" || ["rejected", "merged"].includes(f.state);
-const shown = computed(() => (showAll.value ? findings.value : findings.value.filter((f) => !quiet(f))));
+const rv = props.rv;
+const current = rv.current;
+const headline = computed(() => {
+  const c = current.value;
+  if (!c || !rv.verdict.value) return "";
+  if (c.verdict === "approved") return props.branchReview ? "可以合并" : "可以应用";
+  if (c.verdict === "changes-requested") return c.stop ? "停下来等你决定" : "需要修改";
+  return "";
+});
+const lastAt = computed(() => rv.reviews.value.reduce((t, r) => (r.created_at > t ? r.created_at : t), ""));
+
+// Problems: open ones first; the rest (hints, rejected, merged) behind “全部”.
+const quiet = (f: Finding) => f.severity === "nit" || settled(f);
+const filter = ref<"open" | "all">("open");
+const openCount = computed(() => rv.findings.value.filter((f) => !quiet(f)).length);
+const filterOptions = computed(() => [{ value: "open" as const, label: `未解决 ${openCount.value}` }, { value: "all" as const, label: `全部 ${rv.findings.value.length}` }]);
+const shown = computed(() => (filter.value === "all" ? rv.findings.value : rv.findings.value.filter((f) => !quiet(f))));
 const open = ref(new Set<number>());
 const toggle = (id: number) => { const n = new Set(open.value); n.has(id) ? n.delete(id) : n.add(id); open.value = n; };
-const counts = (r: Review) => (["blocker", "major", "minor", "nit"] as const).map((s) => ({ s, n: r.findings.filter((f) => f.severity === s && !["rejected", "merged"].includes(f.state)).length })).filter((x) => x.n);
-const ai = (r: Review) => [r.profile_id, r.model, r.effort].filter(Boolean).join(" · ");
-const where = (f: Finding) => (f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""}` : "");
 const rawOpen = ref(false);
-const roundOptions = computed(() => (data.value?.rounds ?? []).map((r) => ({ value: r.round, label: `第 ${r.round} 轮` })));
-const verdictOf = computed(() => {
-  const c = current.value;
-  if (!c) return null;
-  if (["queued", "checks", "lead"].includes(c.stage ?? "")) return { text: c.stage === "lead" ? "负责人汇总中" : "评审中", cls: "accent" };
-  if (c.verdict === "awaiting-plan") return { text: "计划等你确认", cls: "accent" };
-  if (c.verdict === "approved") return { text: c.acceptedByOwner ? "你已接受" : "评审通过", cls: "ok" };
-  if (c.stop) return { text: "等你决定", cls: "warn" };
-  if (c.verdict === "changes-requested") return { text: "需要修改", cls: "warn" };
-  return null;
-});
+const reasonsOpen = ref(false);
+const changeOpen = ref(false);
+
 function askAbout(f: Finding & { check: string }) {
-  emit("ask", { quote: [`[${SEV[f.severity].text}] ${f.title}`, where(f), f.detail, f.suggestion ? `建议：${f.suggestion}` : ""].filter(Boolean).join("\n"), label: `${label(f.check)}评审的问题` });
+  emit("ask", { quote: [`[${SEV[f.severity].text}] ${f.title}`, findingWhere(f), f.detail, f.suggestion ? `建议：${f.suggestion}` : ""].filter(Boolean).join("\n"), label: `${rv.label(f.check)}评审的问题` });
 }
 
 // ---- the owner's decision -------------------------------------------------------------------
@@ -88,7 +61,7 @@ async function answer(choice: number | null) {
     await post(`/api/asks/${a.id}/answer`, choice === null ? { text: reply.value.trim() } : { choice });
     reply.value = "";
     toast("已记下你的决定", "ok");
-    await load(true);
+    await rv.load(true);
   } catch (e) {
     toast((e as Error).message, "error");
   } finally {
@@ -98,9 +71,7 @@ async function answer(choice: number | null) {
 </script>
 
 <template>
-  <section v-if="data && (reviews.length || current?.plan || data.estimate)" class="block">
-    <div class="section-title row">本次评审<span class="spacer" /><UiSegmented v-if="roundOptions.length > 1" v-model="round" size="sm" :options="roundOptions" aria-label="轮次" /></div>
-
+  <section v-if="rv.data.value && (rv.reviews.value.length || current?.plan || rv.data.value.estimate)" class="block review">
     <div v-if="pendingAsk" class="card pad decide stack">
       <div class="row"><span class="badge accent">{{ current?.verdict === "awaiting-plan" ? "确认评审计划" : "停下来等你决定" }}</span></div>
       <p class="q">{{ pendingAsk.question }}</p>
@@ -114,51 +85,63 @@ async function answer(choice: number | null) {
     </div>
 
     <!-- While the plan waits for the owner, the question above already lists the tier, checks and reasons. -->
-    <div v-if="!(pendingAsk && current?.verdict === 'awaiting-plan')" class="card pad stack">
-      <div class="row wrap">
-        <span v-if="verdictOf" class="badge" :class="verdictOf.cls">{{ verdictOf.text }}</span>
-        <strong v-if="current?.plan">「{{ current.plan.tierName }}」档 · {{ current.plan.checks.length }} 项评审{{ current.plan.lead ? " · 负责人协调" : "" }}</strong>
+    <div v-if="!(pendingAsk && current?.verdict === 'awaiting-plan')" class="card pad summary">
+      <div class="head row wrap">
+        <span v-if="rv.verdict.value" class="badge" :class="rv.verdict.value.cls">{{ rv.verdict.value.text }}</span>
+        <strong v-if="headline" class="headline">{{ headline }}</strong>
+        <span v-if="current?.plan" class="muted small">「{{ current.plan.tierName }}」档 · 第 {{ current.round }} 轮 · {{ current.plan.checks.length }} 项评审<template v-if="current.lead?.by === 'lead' && lastAt"> · 负责人汇总于 {{ relTime(lastAt) }}</template></span>
         <span class="spacer" />
-        <button v-if="reviewText" class="btn ghost sm" @click="rawOpen = !rawOpen">{{ rawOpen ? "收起评审原文" : "评审原文" }}</button>
+        <button v-if="rv.reviews.value.length" class="lnk small" @click="emit('go', 'review')">每项的完整过程 →</button>
       </div>
-      <ul v-if="current?.plan?.reasons.length || data.estimate" class="reasons muted small">
-        <li v-if="data.estimate && round === data.rounds[0]?.round">编码前预估「{{ data.estimate.tierName }}」档：{{ data.estimate.reason }}</li>
-        <li v-for="(r, i) in current?.plan?.reasons ?? []" :key="i">{{ r }}</li>
-      </ul>
-      <div v-if="current?.stop" class="stop small">停下来的原因：{{ STOP[current.stop] ?? current.stop }}</div>
-      <div v-if="reviews.length" class="checks">
-        <div v-for="r in reviews" :key="r.id" class="check-row">
+      <p v-if="current?.lead?.summary" class="lead-summary">{{ current.lead.summary }}</p>
+      <p v-if="current?.stop" class="stop small">停下来的原因：{{ STOP[current.stop] ?? current.stop }}</p>
+      <p v-if="current?.lead?.escalation && !pendingAsk" class="small esc">{{ current.lead.escalation.summary }}</p>
+
+      <div v-if="rv.reviews.value.length" class="checks">
+        <div v-for="r in rv.reviews.value" :key="r.id" class="check-row">
           <span class="st" :class="r.verdict" :title="r.verdict" />
-          <strong>{{ label(r.check_name) }}</strong>
-          <span class="muted small ellipsis grow" :title="r.summary">{{ r.verdict === "failed" ? `没有完成：${r.summary}` : r.summary.split("\n")[0] }}</span>
-          <span class="row sev"><span v-for="c in counts(r)" :key="c.s" class="badge" :class="SEV[c.s].cls">{{ SEV[c.s].text }} {{ c.n }}</span><span v-if="!counts(r).length && r.verdict === 'approved'" class="badge ok">通过</span></span>
-          <span class="muted small mono ai">{{ ai(r) }}</span>
+          <strong>{{ rv.label(r.check_name) }}</strong>
+          <span class="muted small ellipsis" :title="r.summary">{{ r.verdict === "failed" ? `没有完成：${r.summary}` : r.summary.split("\n")[0] }}</span>
+          <span class="row sev"><span v-for="c in severityCounts(r)" :key="c.s" class="badge" :class="SEV[c.s].cls">{{ SEV[c.s].text }} {{ c.n }}</span><span v-if="!severityCounts(r).length && r.verdict === 'approved'" class="badge">无问题</span></span>
+          <span class="muted small mono ai">{{ reviewAi(r) }}</span>
         </div>
       </div>
-      <div v-if="current?.lead" class="lead">
-        <div class="row small lead-head"><strong>{{ current.lead.by === "lead" ? "评审负责人" : "汇总" }}</strong><span class="muted">{{ current.lead.summary }}</span></div>
-        <p v-if="current.lead.escalation && !pendingAsk" class="small esc">{{ current.lead.escalation.summary }}</p>
-        <p v-if="current.lead.verdict === 'revise' && current.lead.rerun.length && current.lead.by === 'lead'" class="muted small">下一轮复审：{{ current.lead.rerun.map(label).join("、") }}</p>
+
+      <div class="foot row wrap small">
+        <button v-if="current?.plan?.reasons.length || rv.data.value.estimate" class="lnk" :aria-expanded="reasonsOpen" @click="reasonsOpen = !reasonsOpen">为什么是这一档</button>
+        <button v-if="current?.lead?.changeRequest" class="lnk" :aria-expanded="changeOpen" @click="changeOpen = !changeOpen">修改单</button>
+        <button v-if="rv.changePoints.value.length" class="lnk" @click="emit('go', 'change')">{{ rv.changePoints.value.length }} 个变更点 →</button>
+        <span v-if="current?.lead?.verdict === 'revise' && current.lead.rerun.length && current.lead.by === 'lead'" class="muted">下一轮复审：{{ current.lead.rerun.map(rv.label).join("、") }}</span>
+        <span class="spacer" />
+        <button v-if="reviewText" class="lnk" @click="rawOpen = !rawOpen">{{ rawOpen ? "收起评审原文" : "评审原文" }}</button>
       </div>
-      <div v-if="rawOpen && reviewText" class="raw"><Markdown :source="reviewText" /></div>
+      <ul v-if="reasonsOpen" class="reasons muted small">
+        <li v-if="rv.data.value.estimate && rv.round.value === rv.data.value.rounds[0]?.round">编码前预估「{{ rv.data.value.estimate.tierName }}」档：{{ rv.data.value.estimate.reason }}</li>
+        <li v-for="(r, i) in current?.plan?.reasons ?? []" :key="i">{{ r }}</li>
+      </ul>
+      <div v-if="changeOpen && current?.lead?.changeRequest" class="sub" data-ask-label="修改单"><Markdown :source="current.lead.changeRequest" /></div>
+      <div v-if="rawOpen && reviewText" class="sub"><Markdown :source="reviewText" /></div>
     </div>
 
-    <div v-if="findings.length" class="card pad">
-      <div class="row"><div class="section-title flat">问题</div><span class="spacer" /><button v-if="findings.some(quiet)" class="btn ghost sm" @click="showAll = !showAll">{{ showAll ? "只看要处理的" : `全部（${findings.length}）` }}</button></div>
+    <div v-if="rv.findings.value.length" class="card pad findings">
+      <div class="row"><div class="section-title flat">待处理问题</div><span class="spacer" /><UiSegmented v-model="filter" size="sm" :options="filterOptions" aria-label="显示哪些问题" /></div>
+      <p v-if="!shown.length" class="muted small">没有要处理的问题。</p>
       <div v-for="f in shown" :key="f.id" class="finding" :class="{ dim: quiet(f) }">
-        <div class="row wrap">
+        <div class="row line1">
           <span class="badge" :class="SEV[f.severity].cls">{{ SEV[f.severity].text }}</span>
           <button class="title" :aria-expanded="open.has(f.id)" @click="toggle(f.id)">{{ f.title }}</button>
           <span v-if="STATE[f.state]" class="badge" :class="{ warn: f.state === 'accepted' }">{{ STATE[f.state] }}</span>
           <span class="spacer" />
-          <span class="muted small">{{ label(f.check) }} · #{{ f.id }}</span>
+          <span class="muted small nowrap">{{ rv.label(f.check) }} · #{{ f.id }}</span>
         </div>
-        <div v-if="where(f)" class="loc mono small">{{ where(f) }}</div>
-        <div v-if="f.triage_note || f.merged_into" class="muted small">负责人：{{ f.merged_into ? `合并到 #${f.merged_into}` : "" }}{{ f.merged_into && f.triage_note ? "；" : "" }}{{ f.triage_note }}</div>
+        <div v-if="findingWhere(f) || f.triage_note || f.merged_into" class="line2 small">
+          <span v-if="findingWhere(f)" class="loc mono">{{ findingWhere(f) }}</span>
+          <span v-if="f.triage_note || f.merged_into" class="muted">负责人：{{ f.merged_into ? `合并到 #${f.merged_into}` : "" }}{{ f.merged_into && f.triage_note ? "；" : "" }}{{ f.triage_note }}</span>
+        </div>
         <div v-if="open.has(f.id)" class="more small">
           <p v-if="f.detail">{{ f.detail }}</p>
           <p v-if="f.suggestion"><strong>建议：</strong>{{ f.suggestion }}</p>
-          <p v-if="f.evidence.length" class="muted">依据：{{ f.evidence.join("、") }}</p>
+          <p v-if="f.evidence.length" class="muted">依据：<template v-for="(e, i) in f.evidence" :key="i"><a v-if="refAction(e)" href="#" class="mono" @click.prevent="refAction(e)!()">{{ e }}</a><span v-else class="mono">{{ e }}</span>{{ i < f.evidence.length - 1 ? "、" : "" }}</template></p>
           <button class="btn ghost sm" @click="askAbout(f)">就这条提问</button>
         </div>
       </div>
@@ -167,38 +150,45 @@ async function answer(choice: number | null) {
 </template>
 
 <style scoped>
+.review { display: grid; gap: 12px; }
 .flat { margin: 0; }
-.reasons { margin: 0; padding-left: 18px; }
 .decide { border-color: var(--accent); }
 .decide .q { margin: 0; white-space: pre-wrap; }
-.stop { color: var(--warn); }
+.summary { display: grid; gap: 10px; }
+.head { gap: 10px; }
+.headline { font-size: 16px; }
+.lead-summary { margin: 0; line-height: 1.65; }
+.stop { margin: 0; color: var(--warn); }
+.esc { margin: 0; white-space: pre-wrap; }
 .checks { display: grid; }
-.check-row { display: grid; grid-template-columns: 10px 56px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
-.check-row:first-child { border-top: 0; }
-.grow { min-width: 0; flex: 1; }
+.check-row { display: grid; grid-template-columns: 10px 64px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
 .sev { gap: 4px; }
 .ai { white-space: nowrap; }
 .st { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .st.approved { background: var(--ok); }
 .st.changes_requested { background: var(--warn); }
 .st.failed { background: var(--danger); }
-.lead { border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 4px; }
-.lead p { margin: 0; }
-.lead-head { align-items: baseline; }
-.lead-head strong { flex: none; white-space: nowrap; }
-.esc { white-space: pre-wrap; }
-.raw { border-top: 1px solid var(--line); padding-top: 10px; }
-.finding { border-top: 1px solid var(--line); padding: 9px 0; display: grid; gap: 4px; }
-.finding:first-of-type { border-top: 0; }
+.foot { gap: 14px; border-top: 1px solid var(--line); padding-top: 8px; }
+.reasons { margin: 0; padding-left: 18px; }
+.sub { border-top: 1px solid var(--line); padding-top: 10px; }
+.lnk { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
+.lnk:hover { text-decoration: underline; }
+.findings { display: grid; gap: 0; }
+.finding { border-top: 1px solid var(--line); padding: 10px 0; display: grid; gap: 4px; }
+.findings > .row + .finding, .findings > .row + p + .finding { border-top-color: var(--line); }
+.line1 { gap: 8px; min-width: 0; }
+.line2 { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.nowrap { white-space: nowrap; }
 .finding.dim .title { color: var(--ink-2); font-weight: 450; }
-.title { border: 0; background: none; padding: 0; font: inherit; font-weight: 550; color: var(--ink); cursor: pointer; text-align: left; }
+.title { border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--ink); cursor: pointer; text-align: left; min-width: 0; }
 .title:hover { color: var(--accent); }
 .loc { color: var(--accent); overflow-wrap: anywhere; }
 .more { background: var(--sunken); border-radius: 8px; padding: 8px 10px; display: grid; gap: 6px; }
-.more p { margin: 0; white-space: pre-wrap; }
+.more p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .more .btn { justify-self: start; }
 @media (max-width: 760px) {
-  .check-row { grid-template-columns: 10px 48px minmax(0, 1fr) auto; }
+  .check-row { grid-template-columns: 10px 52px minmax(0, 1fr) auto; }
   .ai { display: none; }
+  .line1 { flex-wrap: wrap; }
 }
 </style>

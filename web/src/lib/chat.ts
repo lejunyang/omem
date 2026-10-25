@@ -27,8 +27,10 @@ const LINE = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})(?: · 话题 (\S+))?\] (.+?)(?:
  * "[time · 话题 t] sender（本人）↩ 回复 X「…」: text ⏎ more (om_id)". Lines that do not
  * match (other channels, notes) become system rows so nothing is hidden.
  */
-export function parseChatLines(text: string): ChatMsg[] {
-  return text.split("\n").map((raw, i) => {
+/** `start`: the line number of the text's first line (a window of a longer chat). */
+export function parseChatLines(text: string, start = 1): ChatMsg[] {
+  return text.split("\n").map((raw, j) => {
+    const i = j + start - 1;
     const m = LINE.exec(raw);
     if (!m) return { id: `line-${i + 1}`, line: i + 1, time: "", threadId: null, parentId: null, sender: "", senderKind: "system", msgType: "system", content: raw, resources: {}, reactions: [] };
     const [, time, thread, who, qSender, qText, body, files, id] = m;

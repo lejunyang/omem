@@ -282,19 +282,34 @@ export const findingSchema = z.object({
   confidence: z.enum(["high", "medium", "low"]).default("medium"),
 });
 export type Finding = z.infer<typeof findingSchema>;
-export type ReviewRow = { id: string; code_run_id: string; round: number; check_name: string; tier: string | null; profile_id: string | null; model: string | null; effort: string | null; verdict: string; summary: string; status: string; created_at: string };
+/**
+ * A requirement's change point and where the change implements it (docs/v2/review.md §6, “变更”):
+ * what the requirement says, what the code does, and the line ranges, so the run page can go from
+ * a change point to its code and back.
+ */
+export const changePointSchema = z.object({
+  id: z.string().min(1).max(12),
+  title: z.string().min(1).max(200),
+  status: z.enum(["done", "partial", "missing", "extra"]),
+  requirement: z.string().max(2000).default(""),
+  implementation: z.string().max(2000).default(""),
+  refs: z.array(z.string().max(300)).max(20).default([]),
+  locations: z.array(z.object({ file: z.string().min(1).max(500), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).max(30).default([]),
+});
+export type ChangePoint = z.infer<typeof changePointSchema>;
+export type ReviewRow = { id: string; code_run_id: string; round: number; check_name: string; tier: string | null; profile_id: string | null; model: string | null; effort: string | null; verdict: string; summary: string; status: string; created_at: string; change_points: string | null };
 export type FindingRow = { id: number; review_id: string; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string; confidence: string; state: string; merged_into: number | null; triage_note: string };
 
 const RANK: Record<Severity, number> = { blocker: 0, major: 1, minor: 2, nit: 3 };
 export const blocksAt = (severity: Severity, level: CheckSetting["blocks"]) => RANK[severity] <= RANK[level];
 
 /** One check's result for one round; a resubmission in the same round replaces the earlier one. */
-export function recordReview(app: App, r: { codeRunId: string; round: number; check: string; tier?: string; verdict: "approved" | "changes_requested" | "failed"; summary: string; findings: Finding[]; ai?: { profile?: string; model?: string; effort?: string } }) {
+export function recordReview(app: App, r: { codeRunId: string; round: number; check: string; tier?: string; verdict: "approved" | "changes_requested" | "failed"; summary: string; findings: Finding[]; changePoints?: ChangePoint[]; ai?: { profile?: string; model?: string; effort?: string } }) {
   const id = newId("rv");
   tx(app.db, () => {
     run(app.db, "delete from reviews where code_run_id = ? and round = ? and check_name = ?", r.codeRunId, r.round, r.check);
-    run(app.db, "insert into reviews(id, code_run_id, round, check_name, tier, profile_id, model, effort, verdict, summary, created_at) values(?,?,?,?,?,?,?,?,?,?,?)",
-      id, r.codeRunId, r.round, r.check, r.tier ?? null, r.ai?.profile ?? null, r.ai?.model ?? null, r.ai?.effort ?? null, r.verdict, r.summary, now());
+    run(app.db, "insert into reviews(id, code_run_id, round, check_name, tier, profile_id, model, effort, verdict, summary, change_points, created_at) values(?,?,?,?,?,?,?,?,?,?,?,?)",
+      id, r.codeRunId, r.round, r.check, r.tier ?? null, r.ai?.profile ?? null, r.ai?.model ?? null, r.ai?.effort ?? null, r.verdict, r.summary, r.changePoints?.length ? JSON.stringify(r.changePoints) : null, now());
     for (const f of r.findings) {
       run(app.db, "insert into review_findings(review_id, severity, file_path, line, title, detail, suggestion, evidence, confidence) values(?,?,?,?,?,?,?,?,?)",
         id, f.severity, f.file ?? null, f.line ?? null, f.title, f.detail, f.suggestion, JSON.stringify(f.evidence), f.confidence);
@@ -313,7 +328,7 @@ export function reviewsOf(app: App, codeRunIds: string[]) {
   const marks = codeRunIds.map(() => "?").join(",");
   const reviews = all<ReviewRow>(app.db, `select * from reviews where code_run_id in (${marks}) order by round, created_at`, ...codeRunIds);
   const findings = reviews.length ? all<FindingRow>(app.db, `select * from review_findings where review_id in (${reviews.map(() => "?").join(",")}) order by id`, ...reviews.map((r) => r.id)) : [];
-  return reviews.map((r) => ({ ...r, findings: findings.filter((f) => f.review_id === r.id).map((f) => ({ ...f, evidence: JSON.parse(f.evidence) as string[] })) }));
+  return reviews.map((r) => ({ ...r, change_points: r.change_points ? (JSON.parse(r.change_points) as ChangePoint[]) : [], findings: findings.filter((f) => f.review_id === r.id).map((f) => ({ ...f, evidence: JSON.parse(f.evidence) as string[] })) }));
 }
 
 // ---- review-lead: rulings and when to stop -------------------------------------------------------

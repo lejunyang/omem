@@ -9,7 +9,9 @@ import UiCheckbox from "../components/UiCheckbox.vue";
 import UiDateTime from "../components/UiDateTime.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
+import ItemMaterials, { type Material } from "../components/ItemMaterials.vue";
 import { fmtTime, itemKindLabel, openCitation, relTime, state, toast } from "../store";
+import { refAction } from "../lib/refs";
 
 const route = useRoute();
 const router = useRouter();
@@ -17,7 +19,7 @@ const items = ref<Item[]>([]);
 const showDone = ref(false);
 const scope = ref<"all" | "space">("all");
 type WorkFile = { id: string; uri: string; title: string; updatedAt: string; expiresAt: string | null; lines: number };
-const detail = ref<{ item: Item; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null } | null>(null);
+const detail = ref<{ item: Item; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null; materials?: Material[] } | null>(null);
 const quick = ref("");
 const viaAssistant = ref(true);
 const note = ref("");
@@ -126,13 +128,6 @@ async function addNote() {
   note.value = "";
   void loadDetail();
 }
-function parseRef(r: string) {
-  const m = /^src:([^#\s]+)(?:#L(\d+)(?:-L?(\d+))?)?/.exec(r);
-  if (m) return () => openCitation({ kind: "source", id: m[1], from: m[2] ? +m[2] : undefined, to: m[3] ? +m[3] : undefined }, true);
-  const mm = /^(mem|msg):(\S+)/.exec(r);
-  if (mm) return () => openCitation({ kind: mm[1] === "mem" ? "memory" : "message", id: mm[2] }, true);
-  return null;
-}
 </script>
 
 <template>
@@ -235,6 +230,7 @@ function parseRef(r: string) {
           <span class="spacer" />
           <button class="btn sm" @click="keep(detail.item)">{{ closedStatuses.includes(detail.item.status) ? "恢复" : "保留" }}</button>
         </div>
+        <ItemMaterials :item-id="detail.item.id" :materials="detail.materials ?? []" @changed="loadDetail" />
         <div v-if="detail.files?.length" class="refs">
           <div class="section-title">工作文件</div>
           <a v-for="f in detail.files" :key="f.id" href="#" class="ref" @click.prevent="openCitation({ kind: 'source', id: f.id }, true)">
@@ -245,7 +241,7 @@ function parseRef(r: string) {
         <div v-if="detail.item.sourceRefs.length" class="refs">
           <div class="section-title">相关依据</div>
           <template v-for="r in detail.item.sourceRefs" :key="r">
-            <a v-if="parseRef(r)" href="#" class="ref" @click.prevent="parseRef(r)!()">
+            <a v-if="refAction(r)" href="#" class="ref" @click.prevent="refAction(r)!()">
               <template v-if="detail.excerpts?.[r]">
                 <span class="ref-title small muted">{{ detail.excerpts[r].title }}</span>
                 <span class="ref-text small">{{ detail.excerpts[r].text }}</span>

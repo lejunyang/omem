@@ -141,6 +141,7 @@ describe("reviewing an existing branch", () => {
       expect(out.continuedRunId).toBeUndefined();
       expect(done.coderSummary).toContain("feature/refund");
       expect(done.coderSummary).toContain("只退未发货的行");
+      expect(done.coderSummary).toContain("HEAD 特意放在分叉点");
       const [wt] = worktreesOf(app, r.id);
       expect(wt).toMatchObject({ ref: "feature/refund", branch: "", baseRef: "main" });
       // The coder never ran (it would have appended to refund.ts).
@@ -164,6 +165,38 @@ describe("reviewing an existing branch", () => {
       expect(git("worktree", "list", "--porcelain")).not.toContain(`/runs/${r.id}/`);
       expect(resolveRef(dir, "feature/refund")).not.toBeNull();
       expect(git("rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("main");
+    } finally {
+      await server.close();
+    }
+  }, 120000);
+
+  it("a review for an item reads its materials, joins it, and records the outcome on its timeline", async () => {
+    fake();
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const { upsertItem, itemEvents } = await import("../src/items/store.ts");
+      const { addMaterials, itemMaterials } = await import("../src/items/materials.ts");
+      const { upsertSource } = await import("../src/sources/store.ts");
+      const doc = upsertSource(app, { spaceId: "personal", kind: "doc", uri: "prd-refund.md", title: "退款需求", text: "# 退款\n\n只退未发货的行。\n" });
+      const item = upsertItem(app, undefined, { spaceId: "personal", title: "退款需求", kind: "todo" }, "user");
+      addMaterials(app, item.id, [{ kind: "source", ref: `src:${doc.id}#L1-L3`, note: "需求原文" }], "owner", "user");
+      const r = createBranchReview(app, { repos: ["shop-api"], branch: "feature/refund", task: "评审退款分支", fetch: false, itemId: item.id });
+      expect(itemMaterials(app, item.id).map((m) => `${m.kind}:${m.ref}`).sort()).toEqual([`repo:shop-api#feature/refund`, `run:${r.id}`, `source:${doc.id}`].sort());
+      await exec(r);
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+
+      const { reviewsOf } = await import("../src/agents/review.ts");
+      const reviews = reviewsOf(app, [r.id]);
+      expect(reviews.every((x) => x.summary.includes("读了事项材料"))).toBe(true);
+      // The business check mapped the requirement to the code.
+      expect(reviews.find((x) => x.check_name === "review-business")!.change_points).toEqual([expect.objectContaining({ id: "C1", status: "partial", locations: [{ file: "refund.ts", start: 1, end: 3 }] })]);
+      expect(itemEvents(app, item.id).map((e) => e.text).join("\n")).toMatch(/分支评审要求修改/);
+      // The run page links back to the item.
+      const ctx = await (await fetch(`${app.baseUrl}/api/runs/${r.id}`)).json() as { context: { items: { id: string }[] } };
+      expect(ctx.context.items.map((i) => i.id)).toEqual([item.id]);
+      const page = await (await fetch(`${app.baseUrl}/api/items/${item.id}`)).json() as { materials: { kind: string; run?: { verdict: string; branchReview: boolean } }[] };
+      expect(page.materials.find((m) => m.kind === "run")!.run).toMatchObject({ verdict: "changes-requested", branchReview: true });
+      discardCodeRun(app, r.id);
     } finally {
       await server.close();
     }

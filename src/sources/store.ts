@@ -207,11 +207,12 @@ export function sourceText(app: App, id: string): string {
   return one<{ text: string }>(app.db, "select text from sources where id = ?", id)?.text ?? "";
 }
 
-export function readSource(app: App, id: string, from?: number, to?: number) {
+/** Lines `from`–`to` (default: all); `last` takes the last that many lines instead (a chat's latest). */
+export function readSource(app: App, id: string, from?: number, to?: number, last?: number) {
   const source = getSource(app, id);
   const text = sourceText(app, id);
   const total = text ? text.split("\n").length : 0;
-  const start = Math.max(1, from ?? 1);
+  const start = Math.max(1, last ? total - last + 1 : (from ?? 1));
   const end = Math.min(total, to ?? total);
   return { source: { ...source, lines: total }, lineStart: start, lineEnd: end, text: total ? sliceLines(text, start, end) : "" };
 }

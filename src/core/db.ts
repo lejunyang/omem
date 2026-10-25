@@ -676,6 +676,27 @@ const migrations: string[] = [
    create table digest_jobs(id text primary key, space_id text not null references spaces(id), mode text not null, body text not null,
      status text not null default 'active', total integer not null default 0, done integer not null default 0, run_id text, created_at text not null, updated_at text not null);
    create table digest_done(job_id text not null references digest_jobs(id) on delete cascade, source_id text not null, hash text not null, at text not null, primary key(job_id, source_id));`,
+  // Built-in roles a run used ('|coder|reviewer|'), for filtering runs by role; older runs get the
+  // role their kind runs. Items gain materials (documents, chats, repositories with a branch, runs)
+  // that delegations and reviews of the item read; review checks may map requirement change points
+  // to the code.
+  `alter table runs add column roles text;
+   update runs set roles = '|' || case kind
+     when 'ask' then 'assistant' when 'ingest' then 'ingest' when 'archive' then 'archivist' when 'archive-rule-draft' then 'archive-rule-writer'
+     when 'wiki-plan' then 'wiki-planner' when 'wiki-write' then 'wiki-writer' when 'wiki-lint' then 'wiki-linter' when 'heartbeat' then 'heartbeat'
+     when 'dream' then 'dreamer' when 'code' then 'coder' when 'tutor' then 'tutor' when 'learn-feed' then 'tutor' when 'brief' then 'brief'
+     when 'curate' then 'curator' when 'triage' then 'triager' when 'digest' then 'distiller' when 'thread-summary' then 'summarizer'
+     when 'memory-review' then 'memory-reviewer' when 'memory-organize' then 'memory-organizer' when 'item-settle' then 'item-keeper'
+     when 'profile-review' then 'coach' when 'guest' then 'guest' when 'agent-followup' then 'assistant' end || '|'
+   where kind in ('ask','ingest','archive','archive-rule-draft','wiki-plan','wiki-write','wiki-lint','heartbeat','dream','code','tutor','learn-feed','brief','curate','triage','digest','thread-summary','memory-review','memory-organize','item-settle','profile-review','guest','agent-followup');
+   update runs set roles = coalesce(roles, '|') || (select group_concat(check_name, '|') from (select distinct check_name from reviews where code_run_id = runs.id)) || '|'
+   where exists (select 1 from reviews where code_run_id = runs.id);
+   update runs set roles = coalesce(roles, '|') || 'review-lead|' where json_extract(output, '$.reviewLead.by') = 'lead';
+   create table item_materials(id integer primary key, item_id text not null references items(id) on delete cascade, kind text not null,
+     ref text not null, label text not null default '', meta text not null default '{}', added_by text not null default 'agent', created_at text not null,
+     unique(item_id, kind, ref));
+   create index item_materials_ref on item_materials(kind, ref);
+   alter table reviews add column change_points text;`,
 ];
 
 export type Db = DatabaseSync;

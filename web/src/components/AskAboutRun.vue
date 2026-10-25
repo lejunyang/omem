@@ -8,11 +8,12 @@ import { toast } from "../store";
 /**
  * Asking about a run without leaving it: a quoted selection (diff lines, the task, a review
  * finding) and a question go to the assistant in one conversation per run, answered here.
- * The conversation is an ordinary one, also listed under 问答.
+ * The conversation is an ordinary one, also listed under 问答. The default slot shows what is asked
+ * about above the conversation (a change point's explanation), titled by `heading`.
  */
 type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string };
 export type AskContext = { quote: string; label: string };
-const props = defineProps<{ runId: string; runTitle: string; spaceId: string | null; context: AskContext | null }>();
+const props = defineProps<{ runId: string; runTitle: string; spaceId: string | null; context: AskContext | null; heading?: string }>();
 const emit = defineEmits<{ close: [] }>();
 
 const KEY = "omem.runAsk";
@@ -94,14 +95,15 @@ function onKey(e: KeyboardEvent) {
 
 <template>
   <div class="scrim" @click="emit('close')" />
-  <aside class="drawer" role="dialog" aria-label="就这次交办提问" tabindex="-1" @keydown="onKey">
+  <aside class="drawer" role="dialog" :aria-label="heading ?? '就这次交办提问'" tabindex="-1" @keydown="onKey">
     <header>
-      <span class="t">就这次交办提问</span>
+      <span class="t">{{ heading ?? "就这次交办提问" }}</span>
       <router-link v-if="conversationId" class="btn ghost sm" :to="`/ask/${conversationId}`" title="在问答里打开">在问答里打开</router-link>
       <button class="btn ghost sm icon" aria-label="关闭" @click="emit('close')"><Icon name="x" :size="16" /></button>
     </header>
     <div ref="scroller" class="body">
-      <p v-if="!messages.length" class="muted small">选中改动、任务或评审里的一段文字，再点“就选中内容提问”，问题会带上这段内容。回答只读这次交办的材料，不会改代码。</p>
+      <slot />
+      <p v-if="!messages.length && !$slots.default" class="muted small">选中改动、任务或评审里的一段文字，再点“就选中内容提问”，问题会带上这段内容。回答只读这次交办的材料，不会改代码。</p>
       <div v-for="m in messages" :key="m.id" class="msg" :class="m.role">
         <Markdown :source="shownText(m)" :space="spaceId ?? undefined" />
       </div>

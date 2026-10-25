@@ -42,6 +42,7 @@ import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
 import { refExcerpt } from "../items/evidence.ts";
 import { getItem, itemEvents, listItems, upsertItem } from "../items/store.ts";
+import { addMaterials, itemsOfRun, linkRunToItem, materialViews, removeMaterials, type MaterialView } from "../items/materials.ts";
 import { getMemory, listMemories, memoryHistory, memoryTags, remember, retract, supersede, updateMemoryText } from "../memory/store.ts";
 import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
 import { ensureFolder, listFolders, moveMemories, normalizeFolder, relocateFolder, removeFolder, unfiledCount } from "../memory/folders.ts";
@@ -282,15 +283,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/sources/:id", async (req) => {
     const id = (req.params as { id: string }).id;
-    const o = q(z.object({ from: z.coerce.number().optional(), to: z.coerce.number().optional() }), req.query);
-    const r = readSource(app, id, o.from, o.to);
+    // `window`: that many lines to start with, a chat's latest and anything else's first.
+    const o = q(z.object({ from: z.coerce.number().optional(), to: z.coerce.number().optional(), window: z.coerce.number().optional() }), req.query);
+    const chat = o.window && getSource(app, id).kind === "chat";
+    const r = o.window ? readSource(app, id, 1, chat ? undefined : o.window, chat ? o.window : undefined) : readSource(app, id, o.from, o.to);
     const citedBy = all<{ page_id: string; title: string }>(app.db, "select distinct c.page_id, p.title from page_cites c join pages p on p.id = c.page_id where c.source_id = ?", id);
     return { ...r, outline: sourceOutline(app, id), citedBy, notes: sourceNotes(app, id) };
   });
   // Chat sources captured from Feishu: messages with quotes, images and reactions for a chat-like view.
   server.get("/api/sources/:id/messages", async (req) => {
+    const o = q(z.object({ from: z.coerce.number().optional(), to: z.coerce.number().optional() }), req.query);
     const { sourceMessages } = await import("../channels/lark-messages.ts");
-    return sourceMessages(app, (req.params as { id: string }).id);
+    return sourceMessages(app, (req.params as { id: string }).id, o.from, o.to);
   });
   // A chat image or file that was not downloaded at capture time: fetched once, then served as a stored file.
   server.get("/api/lark/messages/:mid/resources/:key", async (req, reply) => {
@@ -427,12 +431,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ok: true };
   });
   server.post("/api/review-branch", async (req) => {
-    const b = q(z.object({ space: z.string().optional(), repos: z.array(z.string()).min(1), branch: z.string().min(1), branches: z.record(z.string(), z.string()).optional(), base: z.string().optional(), task: z.string().optional(), title: z.string().optional(), fetch: z.boolean().optional(), reviewTier: z.string().optional(), readSpaces: z.array(z.string()).optional() }), req.body);
+    const b = q(z.object({ space: z.string().optional(), repos: z.array(z.string()).min(1), branch: z.string().min(1), branches: z.record(z.string(), z.string()).optional(), base: z.string().optional(), task: z.string().optional(), title: z.string().optional(), fetch: z.boolean().optional(), reviewTier: z.string().optional(), readSpaces: z.array(z.string()).optional(), itemId: z.string().optional() }), req.body);
     const userId = who(req);
     const wanted = [...b.repos, ...(b.space ? [b.space] : []), ...(b.readSpaces ?? [])];
     const allowed = scopeFor(app, userId, wanted) ?? wanted;
     for (const id of wanted) if (!allowed.includes(id)) throw new HttpError(403, `不能访问空间 ${id}`);
-    return createBranchReview(app, b);
+    if (b.itemId && getItem(app, b.itemId).userId !== userId) throw new HttpError(403, "不能使用他人的事项");
+    return createBranchReview(app, b, null, userId);
   });
 
   // --------------------------------------------------------------------- chat
@@ -784,7 +789,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { listWorkFiles } = await import("../sources/work.ts");
     const files = listWorkFiles(app, { item: id, spaces: allowed });
     const { itemExpiry } = await import("../items/expiry.ts");
-    return { item, events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item) };
+    return { item, events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: materialViews(app, id, who(req)).map(materialForPage(app)) };
+  });
+  const materialBody = z.object({ kind: z.enum(["source", "conversation", "repo", "space", "run"]), ref: z.string().min(1), branch: z.string().optional(), base: z.string().optional(), label: z.string().optional(), note: z.string().optional() });
+  server.post("/api/items/:id/materials", async (req) => {
+    const b = q(z.object({ materials: z.array(materialBody).min(1) }), req.body);
+    return addMaterials(app, (req.params as { id: string }).id, b.materials, who(req), "user");
+  });
+  server.delete("/api/items/:id/materials/:mid", async (req) => {
+    const p = req.params as { id: string; mid: string };
+    return { removed: removeMaterials(app, p.id, [Number(p.mid)], who(req), "user") };
   });
   server.post("/api/items", async (req) => {
     const b = q(itemBody, req.body);
@@ -797,9 +811,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
 
   // --------------------------------------------------------------------- runs
   server.get("/api/runs", async (req) => {
-    const o = q(z.object({ kind: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
-    const opts = { kind: o.kind, spaceId: o.space, status: o.status, parentId: o.parent, includeQuiet: o.all };
-    const runs = listRuns(app, { ...opts, limit: o.limit, offset: o.offset }).map((r) => (r.status === "queued" ? { ...r, waiting: queueReason(app, r) } : r));
+    const o = q(z.object({ kind: z.string().optional(), space: z.string().optional(), status: z.string().optional(), parent: z.string().optional(), all: z.coerce.boolean().optional(), q: z.string().optional(), brief: z.coerce.boolean().optional(), limit: z.coerce.number().optional(), offset: z.coerce.number().optional() }), req.query);
+    const opts = { kind: o.kind, spaceId: o.space, status: o.status, parentId: o.parent, includeQuiet: o.all, q: o.q };
+    const runs = listRuns(app, { ...opts, limit: o.limit, offset: o.offset, brief: o.brief }).map((r) => (r.status === "queued" ? { ...r, waiting: queueReason(app, r) } : r));
     return { runs, total: countRuns(app, opts) };
   });
   server.get("/api/runs/:id", async (req) => {
@@ -822,11 +836,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/delegate", async (req) => {
     // `space` is where the task belongs (a repository or a project); `repos` the repositories it changes.
-    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional(), reviewTier: z.string().optional(), fromBranch: z.string().optional() }), req.body);
+    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional(), reviewTier: z.string().optional(), fromBranch: z.string().optional(), itemId: z.string().optional() }), req.body);
+    const userId = who(req);
     const s = getSpace(app, b.space);
     const repos = codeRepos(app, s.id, b.repos).map((r) => r.id);
     const fromBranches = b.fromBranch ? Object.fromEntries(repos.map((id) => [id, b.fromBranch!])) : undefined;
-    return createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches } });
+    if (b.itemId && getItem(app, b.itemId).userId !== userId) throw new HttpError(403, "不能使用他人的事项");
+    const r = createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, itemId: b.itemId }, userId });
+    if (b.itemId) linkRunToItem(app, r, b.itemId, userId);
+    return r;
   });
 
   // ------------------------------------------------------------------- code review (docs/v2/review.md)
@@ -1329,6 +1347,21 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   return server;
 }
 
+/** A material as the item page lists it; runs carry their kind, status and review verdict. */
+function materialForPage(app: App) {
+  return (m: MaterialView) => {
+    if (m.kind !== "run" || !m.readable || m.missing) return m;
+    const r = one<{ kind: string; status: string; output: string; input: string; created_at: string }>(app.db, "select kind, status, output, input, created_at from runs where id = ?", m.ref);
+    if (!r) return m;
+    // A delegation that went several rounds reads as its latest round.
+    const first = JSON.parse(r.output) as { codeChain?: { rounds: string[] } };
+    const lastId = first.codeChain?.rounds.at(-1);
+    const last = lastId && lastId !== m.ref ? one<{ status: string; output: string }>(app.db, "select status, output from runs where id = ?", lastId) : null;
+    const out = (last ? JSON.parse(last.output) : first) as { verdict?: string; reviewLead?: { verdict: string; summary: string } };
+    return { ...m, run: { kind: r.kind, status: last?.status ?? r.status, verdict: out.verdict ?? null, summary: out.reviewLead?.summary ?? null, branchReview: !!(JSON.parse(r.input) as { branches?: unknown }).branches, createdAt: r.created_at } };
+  };
+}
+
 /**
  * Where a run sits: the conversation it answers in (and whether that is a Feishu topic or a work
  * session of a multi-agent task), the run that started it, and the rounds of the work it is part of.
@@ -1361,8 +1394,13 @@ function runContext(app: App, r: ReturnType<typeof getRun>) {
         ).map((x) => ({ id: x.id, title: x.title, status: x.status, createdAt: x.created_at })),
       }
     : null;
+  // The items this work was done for: later rounds and re-reviews belong to the first round's items.
+  const root = (r.input as { continueFrom?: string; codeRunId?: string }).continueFrom ?? (r.input as { codeRunId?: string }).codeRunId ?? r.id;
+  const own = (r.input as { itemId?: string }).itemId;
+  const itemIds = [...new Set([...(own ? [own] : []), ...itemsOfRun(app, root).map((i) => i.id), ...itemsOfRun(app, r.id).map((i) => i.id)])];
   return {
     conversation,
+    items: itemIds.flatMap((id) => one<{ id: string; title: string; status: string }>(app.db, "select id, title, status from items where id = ?", id) ?? []),
     parent: parent ? { id: parent.id, kind: parent.kind, title: parent.title, status: parent.status } : null,
     source: input.sourceRunId ? brief(input.sourceRunId) ?? null : null,
     work: work

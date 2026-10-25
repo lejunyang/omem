@@ -9,10 +9,12 @@ import { findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
 import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
-import { createRun, getRun, setRunOutput, type RunContext } from "./runs.ts";
+import { createRun, getRun, runUser, setRunOutput, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 import { replyOf } from "./types.ts";
 import { isSourceFile } from "../sources/chunk.ts";
+import { OWNER } from "../core/users.ts";
+import { linkRunToItem, materialSpaces, materialsBrief } from "../items/materials.ts";
 
 function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20 * 60_000): Promise<{ code: number; output: string; ms: number }> {
   const started = Date.now();
@@ -62,6 +64,8 @@ export type CodeInput = {
   fromBranches?: Record<string, string>;
   /** More spaces the coder and reviewers may read: requirement docs, the source of a migration, past cases. */
   readSpaces?: string[];
+  /** The item this work is for: the coder and reviewers read its materials (src/items/materials.ts). */
+  itemId?: string;
 };
 
 /** Whether a coding run reviews existing branches (no coding round, nothing to apply). */
@@ -79,15 +83,15 @@ export type BranchReviewRequest = {
   fetch?: boolean;
   /** Spaces the reviewers may read besides the repositories (already checked against the caller's access). */
   readSpaces?: string[];
-} & Pick<CodeInput, "reviewTier" | "reviewChecks" | "reviewExecution">;
+} & Pick<CodeInput, "reviewTier" | "reviewChecks" | "reviewExecution" | "itemId">;
 
 /** Queue a review of existing branches: a `code` run without the coding round (runCodeTask). */
-export function createBranchReview(app: App, req: BranchReviewRequest, parentId?: string | null) {
+export function createBranchReview(app: App, req: BranchReviewRequest, parentId?: string | null, userId = OWNER) {
   const ids = [...new Set(req.repos)];
   const home = req.space ?? ids[0];
   codeRepos(app, home, ids);
   const branches = Object.fromEntries(ids.map((id) => [id, { branch: req.branches?.[id] ?? req.branch, ...(req.base ? { base: req.base } : {}) }]));
-  return createRun(app, {
+  const r = createRun(app, {
     kind: "code",
     spaceId: home,
     title: truncate(req.title?.trim() || `评审分支 ${req.branch}`, 80),
@@ -100,9 +104,13 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
       reviewTier: req.reviewTier || undefined,
       reviewChecks: req.reviewChecks,
       readSpaces: req.readSpaces?.length ? [...new Set(req.readSpaces)] : undefined,
+      itemId: req.itemId,
     } satisfies CodeInput,
     parentId: parentId ?? undefined,
+    userId,
   });
+  if (req.itemId) linkRunToItem(app, r, req.itemId, userId);
+  return r;
 }
 type Check = { command: string; code: number; output: string; ms: number };
 type RepoResult = { space: string; diffStat: string; diffBytes: number; check: Check | null };
@@ -199,14 +207,16 @@ export async function runCodeTask(ctx: RunContext) {
     : `${commandFor(repos[0]) ? `\n\n检查命令：${commandFor(repos[0])}` : ""}\n\n（工作目录是独立 worktree：${worktrees[0].path}）`;
   const cwd = multi ? workDir : worktrees[0].path;
   // The run's space may be a project; the agents read it and every repository (and their related spaces).
-  const spaces = [...new Set([run.spaceId!, ...repos.map((r) => r.id), ...(input.readSpaces ?? [])])];
+  const owner = runUser(app, run.id);
+  const spaces = [...new Set([run.spaceId!, ...repos.map((r) => r.id), ...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, owner) : [])])];
+  const itemBrief = input.itemId ? `\n\n${materialsBrief(app, input.itemId, owner)}` : "";
   const coderTask = continueFrom
     ? `# 上一轮评审要求修改
 
 ${input.task}
 
 继续在原来的工作区里改，不要重做已经通过的部分；改完重新运行检查命令。${where}`
-    : `${input.task}${where}`;
+    : `${input.task}${itemBrief}${where}`;
   const coderReply = input.branches ? branchSummary(worktrees) : await code();
   if (input.branches) ctx.output({ coderSummary: coderReply });
   async function code() {
@@ -344,7 +354,7 @@ function checkoutBranch(repo: Space, target: { branch: string; base?: string } |
 function branchSummary(worktrees: WorktreeRef[]) {
   return worktrees.map((wt) => {
     const log = git(wt.path, ["log", "--no-color", "--format=- %h %an %ad %s", "--date=short", "-n", "60", `${wt.base}..${wt.tip}`]).stdout.trim();
-    return `${worktrees.length > 1 ? `### ${wt.space}\n\n` : ""}这是对已有分支的评审，没有编码这一步：${wt.space} 的分支 ${wt.ref}（${wt.tip!.slice(0, 8)}）相对 ${wt.baseRef}，从分叉点 ${wt.base.slice(0, 8)} 起的改动。工作区就是该分支的代码。\n\n提交：\n${log || "（没有提交）"}`;
+    return `${worktrees.length > 1 ? `### ${wt.space}\n\n` : ""}这是对已有分支的评审，没有编码这一步：${wt.space} 的分支 ${wt.ref}（${wt.tip!.slice(0, 8)}）相对 ${wt.baseRef}，从分叉点 ${wt.base.slice(0, 8)} 起的改动。工作区的文件就是分支最新的代码；为了让改动显示成 diff，HEAD 特意放在分叉点、分支的改动暂存着（\`git diff --cached\` 能看到），这是正常的检出状态，不要在结论或修改单里要求“确认分支”或“切到正确的提交”。\n\n提交：\n${log || "（没有提交）"}`;
   }).join("\n\n");
 }
 

@@ -28,7 +28,9 @@ const route = useRoute();
 const router = useRouter();
 const list = ref<Source[]>([]);
 const total = ref(0);
-const PAGE = 1000;
+const PAGE = 200;
+/** Lines of a source loaded at first; a long chat or document loads the rest on request. */
+const WINDOW = 3000;
 const loadingMore = ref(false);
 const q = ref("");
 const kind = ref("");
@@ -136,11 +138,16 @@ function onListScroll(ev: Event) {
   const el = ev.target as HTMLElement;
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 500) void loadMore();
 }
-async function loadDetail() {
+/** The owner asked for the whole text of this source. */
+const wantAll = ref(false);
+async function loadDetail(full = wantAll.value) {
   if (!id.value) return void (detail.value = null);
   detailLoading.value = true;
   try {
-    const d = await get<Detail>(`/api/sources/${id.value}?from=1&to=1000000`);
+    // A chat opens at its latest messages, anything else at the top; a cited range is always included.
+    const h = hl.value;
+    const range = full ? "from=1&to=100000000" : h ? `from=${Math.max(1, h.from - WINDOW / 2)}&to=${h.to + WINDOW / 2}` : `window=${WINDOW}`;
+    const d = await get<Detail>(`/api/sources/${id.value}?${range}`);
     if (d.source.id !== id.value) return;
     detail.value = d;
     moveTarget.value = d.source.spaceId;
@@ -171,7 +178,19 @@ watch(q, () => {
   clearTimeout(qTimer);
   qTimer = setTimeout(load, 200);
 });
-watch(id, loadDetail);
+watch(id, () => {
+  wantAll.value = false;
+  void loadDetail();
+});
+function loadAll() {
+  wantAll.value = true;
+  void loadDetail();
+}
+// Jumping to lines outside what is loaded (the outline, a citation) loads around them.
+watch(hl, (h) => {
+  const d = detail.value;
+  if (h && d && d.source.id === id.value && (h.from < d.lineStart || h.to > d.lineEnd)) void loadDetail();
+});
 
 /** Directory tree for repo-like spaces; flat list otherwise. */
 const tree = computed(() => {
@@ -371,8 +390,12 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
         <div v-if="detail.source.deletedAt" class="card pad muted">这份原件已于 {{ fmtTime(detail.source.deletedAt) }} 移除，只保留了身份记录。</div>
         <div v-else class="body">
           <div class="text">
-            <ChatView v-if="isChat && !raw" :source-id="detail.source.id" :text="detail.text" :space="detail.source.spaceId" :from="hl?.from" :to="hl?.to" />
-            <CodeView v-else-if="raw || !isMarkdown" :text="detail.text" :start="1" :path="detail.source.uri" :from="hl?.from" :to="hl?.to" :wrap="isMarkdown || isChat" />
+            <div v-if="detail.lineStart > 1 || detail.lineEnd < (detail.source.lines ?? 0)" class="partial muted small">
+              显示第 {{ detail.lineStart }}–{{ detail.lineEnd }} 行，共 {{ detail.source.lines }} 行
+              <button class="btn ghost sm" :disabled="detailLoading" @click="loadAll">加载全部</button>
+            </div>
+            <ChatView v-if="isChat && !raw" :source-id="detail.source.id" :text="detail.text" :start="detail.lineStart" :space="detail.source.spaceId" :from="hl?.from" :to="hl?.to" />
+            <CodeView v-else-if="raw || !isMarkdown" :text="detail.text" :start="detail.lineStart" :path="detail.source.uri" :from="hl?.from" :to="hl?.to" :wrap="isMarkdown || isChat" />
             <div v-else class="card pad doc"><Markdown :source="detail.text" :space="detail.source.spaceId" /></div>
           </div>
           <aside v-if="outline.length" class="outline">
@@ -401,6 +424,12 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
 </template>
 
 <style scoped>
+.partial {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
 .lvl.focus {
   color: var(--accent);
 }

@@ -14,24 +14,33 @@ import Markdown from "../components/Markdown.vue";
 import AskAboutRun, { type AskContext } from "../components/AskAboutRun.vue";
 import DiffFile from "../components/DiffFile.vue";
 import ReviewSummary from "../components/ReviewSummary.vue";
+import ReviewChecks from "../components/ReviewChecks.vue";
+import ChangeView from "../components/ChangeView.vue";
 import RunActivity from "../components/RunActivity.vue";
 import { fmtTime, relTime, runKindLabel, state, statusLabel, toast } from "../store";
+import { refAction } from "../lib/refs";
+import { findingWhere, POINT_STATUS, SEV, useReviews, type ChangePoint } from "../lib/reviews";
 
 const route = useRoute();
 const router = useRouter();
 const runs = ref<Run[]>([]);
 const total = ref(0);
-const PAGE = 100;
+// About two screens of rows; scrolling loads more.
+const PAGE = 40;
 const loadingMore = ref(false);
-/** Run kinds to show (any of them); `agent:<name>` is one agent spec's runs. Empty: all. */
+/** Run kinds to show (any of them); `agent:<name>` is one agent spec's runs, `role:<name>` a built-in role's. Empty: all. */
 const kindFilter = ref<string[]>([]);
-const specNames = ref<string[]>([]);
+const specs = ref<{ name: string; description?: string }[]>([]);
+const roles = ref<{ name: string; description?: string }[]>([]);
+/** Title, id or task text. */
+const keyword = ref("");
 const showQuiet = ref(false);
 /** One status to show; empty: all. */
 const statusFilter = ref<"" | "queued" | "running" | "failed">("");
 const statusOptions = [{ value: "" as const, label: "全部" }, { value: "queued" as const, label: "排队中" }, { value: "running" as const, label: "进行中" }, { value: "failed" as const, label: "失败" }];
 type Brief = { id: string; kind: string; title: string; status: string };
 type RunContextInfo = {
+  items: { id: string; title: string; status: string }[];
   conversation: { id: string; title: string; channel: string; topic: boolean; work: boolean; parentId: string | null; parentTitle: string | null; turns: { id: string; title: string; status: string; createdAt: string }[] } | null;
   parent: Brief | null;
   source: Brief | null;
@@ -53,7 +62,8 @@ async function load() {
   }
 }
 async function loadPage(offset: number) {
-  const q = new URLSearchParams({ space: state.space, limit: String(PAGE), offset: String(offset) });
+  const q = new URLSearchParams({ space: state.space, limit: String(PAGE), offset: String(offset), brief: "1" });
+  if (keyword.value.trim()) q.set("q", keyword.value.trim());
   if (kindFilter.value.length) q.set("kind", kindFilter.value.join(","));
   if (showQuiet.value) q.set("all", "true");
   if (statusFilter.value) q.set("status", statusFilter.value);
@@ -79,13 +89,19 @@ async function loadDetail() {
   }
 }
 onMounted(() => {
-  void get<{ name: string }[]>("/api/agents").then((s) => (specNames.value = s.map((x) => x.name))).catch(() => {});
+  void get<{ name: string; description?: string }[]>("/api/agents").then((s) => (specs.value = s)).catch(() => {});
+  void get<{ name: string; description?: string }[]>("/api/roles").then((r) => (roles.value = r)).catch(() => {});
   void load();
   void loadDetail();
 });
 watch(kindFilter, load);
 watch(showQuiet, load);
 watch(statusFilter, load);
+let keywordTimer: ReturnType<typeof setTimeout> | undefined;
+watch(keyword, () => {
+  clearTimeout(keywordTimer);
+  keywordTimer = setTimeout(() => void load(), 250);
+});
 watch(id, loadDetail);
 const off = onServerEvent((e) => {
   if (e.type === "run") {
@@ -105,7 +121,7 @@ function onListScroll(ev: Event) {
   const el = ev.target as HTMLElement;
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) void loadMore();
 }
-onBeforeUnmount(() => { off(); clearTimeout(reloadTimer); });
+onBeforeUnmount(() => { off(); clearTimeout(reloadTimer); clearTimeout(keywordTimer); });
 
 const out = computed(() => detail.value?.run.output ?? {});
 // A review of an existing branch: no coding round, nothing to apply.
@@ -135,6 +151,38 @@ const diffs = computed(() =>
   })),
 );
 const fileCount = computed(() => diffs.value.reduce((n, d) => n + d.files.length, 0));
+const lineCount = computed(() => diffs.value.flatMap((d) => d.files).reduce((n, f) => ({ add: n.add + f.add, rm: n.rm + f.rm }), { add: 0, rm: 0 }));
+
+// ---- a coding run with reviews: 概览 / 变更 / 评审 / 活动 ------------------------------------
+const rv = useReviews(computed(() => (detail.value?.run.kind === "code" ? detail.value.run.id : "")), computed(() => detail.value?.run.status));
+const hasReview = computed(() => !!rv.data.value && (rv.reviews.value.length > 0 || !!rv.current.value?.plan));
+type Tab = "overview" | "change" | "review" | "activity";
+const tab = ref<Tab>("overview");
+const tabs = computed(() => [
+  { id: "overview" as const, label: "概览" },
+  { id: "change" as const, label: rv.changePoints.value.length ? `变更 ${rv.changePoints.value.length}` : "变更" },
+  { id: "review" as const, label: "评审" },
+  { id: "activity" as const, label: "活动" },
+]);
+watch(id, () => (tab.value = "overview"));
+const checkPassed = computed(() => (checks.value.length ? checks.value.every((c) => c.check.code === 0) : null));
+// A change point's explanation, with the problems reported on its files, in the ask drawer.
+const explaining = ref<ChangePoint | null>(null);
+watch(id, () => (explaining.value = null));
+const pointFindings = computed(() => {
+  const p = explaining.value;
+  if (!p) return [];
+  const files = p.locations.map((l) => l.file);
+  return rv.findings.value.filter((f) => f.file_path && files.some((x) => x === f.file_path || x.endsWith(`/${f.file_path}`) || f.file_path!.endsWith(`/${x}`)));
+});
+function explain(p: ChangePoint) {
+  asking.value = null;
+  explaining.value = p;
+}
+const explainContext = computed(() => {
+  const p = explaining.value;
+  return p ? { quote: [`${p.id} ${p.title}（${POINT_STATUS[p.status].text}）`, p.requirement && `需求：${p.requirement}`, p.implementation && `实现：${p.implementation}`, p.locations.map((l) => `${l.file}${l.start ? `:${l.start}${l.end && l.end !== l.start ? `-${l.end}` : ""}` : ""}`).join("、")].filter(Boolean).join("\n"), label: `变更点 ${p.id}` } : null;
+});
 // Diffs start folded (a large change would bury everything below); a file's lines render only once opened.
 const openDiffs = ref(new Set<string>());
 watch(id, () => (openDiffs.value = new Set()));
@@ -183,6 +231,7 @@ function onSelect() {
 }
 function askSelection() {
   if (!selection.value) return;
+  explaining.value = null;
   asking.value = selection.value.context;
   selection.value = null;
   window.getSelection()?.removeAllRanges();
@@ -260,10 +309,11 @@ async function delegate() {
     toast((e as Error).message, "error");
   }
 }
-const kinds = ["ask", "agent", "code", "ingest", "ingest-shadow", "memory-review", "memory-organize", "wiki-plan", "wiki-write", "wiki-lint", "heartbeat", "dream", "tutor", "brief", "curate", "sync", "guest", "lark-command", "lark-resource-parse", "rule-fire", "profile-review", "thread-summary", "agent-followup"];
+// The hint carries the other language, so the filter box finds a kind or role by either name.
 const kindOptions = computed(() => [
-  ...kinds.map((k) => ({ value: k, label: runKindLabel[k] ?? k })),
-  ...specNames.value.map((n) => ({ value: `agent:${n}`, label: `Agent · ${n}`, hint: "这个 Agent 档案的运行" })),
+  ...Object.entries(runKindLabel).map(([k, label]) => ({ value: k, label, hint: k })),
+  ...roles.value.map((r) => ({ value: `role:${r.name}`, label: `内置 · ${r.name}`, hint: r.description ?? "" })),
+  ...specs.value.map((s) => ({ value: `agent:${s.name}`, label: `Agent · ${s.name}`, hint: s.description ?? "这个 Agent 档案的运行" })),
 ]);
 </script>
 
@@ -272,6 +322,7 @@ const kindOptions = computed(() => [
     <aside class="list-col">
       <div class="head row">
         <strong>运行记录</strong>
+        <label class="search"><Icon name="search" :size="14" /><input v-model="keyword" placeholder="标题、id 或任务里的字" aria-label="搜索运行记录" /></label>
         <span class="spacer" />
         <button class="btn sm" title="交办编码任务" @click="delegateOpen = true"><Icon name="code" :size="14" />交办</button>
         <ChipPicker v-model="kindFilter" class="kind-filter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
@@ -292,7 +343,7 @@ const kindOptions = computed(() => [
             </router-link>
           </template>
         </VirtualList>
-        <div v-if="!runs.length && !listLoading" class="muted small pad">{{ statusFilter ? `没有${statusOptions.find((o) => o.value === statusFilter)?.label}的运行。` : "还没有运行记录。" }}</div>
+        <div v-if="!runs.length && !listLoading" class="muted small pad">{{ keyword.trim() || kindFilter.length ? "没有符合条件的运行。" : statusFilter ? `没有${statusOptions.find((o) => o.value === statusFilter)?.label}的运行。` : "还没有运行记录。" }}</div>
         <div v-else-if="loadingMore" class="list-foot">加载中…</div>
         <div v-else-if="runs.length >= total" class="list-foot">共 {{ total }} 条</div>
       </div>
@@ -312,8 +363,15 @@ const kindOptions = computed(() => [
             <span class="muted">{{ fmtTime(detail.run.createdAt) }}<template v-if="detail.run.finishedAt"> → {{ fmtTime(detail.run.finishedAt) }}</template></span>
             <span v-if="aiLabel(detail.run)" class="muted" title="这次运行用的后端、模型和思考强度">· <span class="mono">{{ aiLabel(detail.run) }}</span></span>
             <span v-if="detail.run.spaceId" class="muted">· {{ detail.run.spaceId }}</span>
+            <span v-if="rv.current.value?.plan" class="badge">「{{ rv.current.value.plan.tierName }}」档</span>
+            <router-link v-for="it in ctxInfo?.items ?? []" :key="it.id" :to="`/items/${it.id}`" class="item-link" :title="it.title">事项：{{ it.title }}</router-link>
           </div>
           <h1 :title="detail.run.title">{{ detail.run.title }}</h1>
+          <div v-if="detail.run.kind === 'code' && fileCount" class="row wrap small muted sub">
+            <span>{{ diffs.length > 1 ? `${diffs.length} 个仓库 · ` : "" }}{{ fileCount }} 个文件 · <span class="add">+{{ lineCount.add }}</span> <span class="rm">−{{ lineCount.rm }}</span><template v-if="checkPassed !== null"> · 检查{{ checkPassed ? "通过" : "没通过" }}</template></span>
+            <span class="spacer" />
+            <UiSegmented v-if="rv.roundOptions.value.length > 1" v-model="rv.round.value" size="sm" :options="rv.roundOptions.value" aria-label="轮次" />
+          </div>
           <p v-if="detail.run.waiting" class="muted small waiting" title="omem 自己的排队：开始运行时才选定后端和模型">排队中：{{ detail.run.waiting }}。开始运行时才选定后端和模型；后端自己的排队会在开始后的过程里显示。</p>
           <div class="row">
             <button v-if="['queued', 'running'].includes(detail.run.status)" class="btn sm" @click="act('cancel')"><Icon name="stop" :size="13" />停止</button>
@@ -323,10 +381,18 @@ const kindOptions = computed(() => [
               <button class="btn sm danger" :title="branchReview ? '删除评审用的工作区和它的索引' : undefined" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
             </template>
             <span v-if="out.appliedAt" class="badge ok">已应用 {{ fmtTime(out.appliedAt) }}</span>
-            <button v-if="detail.run.kind === 'code'" class="btn ghost sm" @click="asking = { quote: '', label: '' }"><Icon name="chat" :size="14" />提问</button>
+            <button v-if="detail.run.kind === 'code'" class="btn ghost sm" @click="explaining = null; asking = { quote: '', label: '' }"><Icon name="chat" :size="14" />提问</button>
           </div>
         </header>
 
+        <nav v-if="hasReview" class="tabs" role="tablist" aria-label="运行详情">
+          <button v-for="t in tabs" :key="t.id" role="tab" class="tab" :class="{ on: tab === t.id }" :aria-selected="tab === t.id" @click="tab = t.id">{{ t.label }}</button>
+        </nav>
+        <ReviewSummary v-if="hasReview && tab === 'overview'" :rv="rv" :review-text="out.review" :branch-review="branchReview" data-ask-label="评审" @ask="(c) => { explaining = null; asking = c; }" @go="(t) => (tab = t)" />
+        <ChangeView v-if="hasReview && tab === 'change'" :rv="rv" :run-id="detail.run.id" :diffs="diffs" @explain="explain" />
+        <ReviewChecks v-if="hasReview && tab === 'review'" :rv="rv" data-ask-label="评审" />
+
+        <template v-if="!hasReview || tab === 'activity'">
         <section v-if="ctxInfo && (ctxInfo.conversation || ctxInfo.parent || ctxInfo.work)" class="card pad block ctx">
           <div class="section-title">所在会话与关联</div>
           <div v-if="ctxInfo.conversation" class="ctx-row">
@@ -384,8 +450,6 @@ const kindOptions = computed(() => [
           <pre class="log">{{ c.check.output }}</pre>
         </section>
 
-        <ReviewSummary v-if="detail.run.kind === 'code'" :run-id="detail.run.id" :review-text="out.review" :refresh-key="detail.run.status" data-ask-label="评审" @ask="(c) => (asking = c)" />
-
         <section v-if="fileCount" class="block">
           <div class="section-title row">改动 · {{ diffs.length > 1 ? `${diffs.length} 个仓库，` : "" }}{{ fileCount }} 个文件<span class="spacer" /><span class="muted small hint-sel">选中代码可以就它提问</span><button class="btn ghost sm" @click="toggleAllDiffs">{{ openDiffs.size ? "全部收起" : "全部展开" }}</button></div>
           <p v-if="out.indexedSpaces?.length && !out.appliedAt && !out.discardedAt" class="muted small">{{ branchReview ? "清理工作区之前" : "应用或丢弃之前" }}，改过的文件可以检索（空间 {{ out.indexedSpaces.join("、") }}）；之后连同 worktree 一起删除。</p>
@@ -404,11 +468,22 @@ const kindOptions = computed(() => [
             <router-link v-for="c in detail.children" :key="c.id" :to="`/runs/${c.id}`" class="li"><span class="st" :class="c.status" /><span class="grow ellipsis">{{ c.title }}</span><span class="muted small">{{ statusLabel[c.status] }}</span></router-link>
           </div>
         </section>
+        </template>
       </template>
     </main>
 
     <button v-if="selection" class="sel-ask btn sm primary" :style="{ top: `${selection.top}px`, left: `${selection.left}px` }" @mousedown.prevent @click="askSelection"><Icon name="chat" :size="13" />就选中内容提问</button>
     <AskAboutRun v-if="asking && detail" :key="detail.run.id" :run-id="detail.run.id" :run-title="detail.run.title" :space-id="detail.run.spaceId" :context="asking.quote ? asking : null" @close="asking = null" />
+    <AskAboutRun v-else-if="explaining && detail" :key="`${detail.run.id}:${explaining.id}`" :run-id="detail.run.id" :run-title="detail.run.title" :space-id="detail.run.spaceId" :context="explainContext" :heading="`${explaining.id} ${explaining.title}`" @close="explaining = null">
+      <div class="explain">
+        <div class="row"><span class="badge" :class="POINT_STATUS[explaining.status].cls">{{ POINT_STATUS[explaining.status].text }}</span></div>
+        <template v-if="explaining.requirement"><div class="ex-h">需求怎么说</div><Markdown :source="explaining.requirement" :space="detail.run.spaceId ?? undefined" /></template>
+        <template v-if="explaining.implementation"><div class="ex-h">代码怎么做</div><Markdown :source="explaining.implementation" :space="detail.run.spaceId ?? undefined" /></template>
+        <template v-if="explaining.locations.length"><div class="ex-h">位置</div><div class="mono small locs"><span v-for="(l, i) in explaining.locations" :key="i">{{ l.file }}{{ l.start ? `:${l.start}${l.end && l.end !== l.start ? `-${l.end}` : ""}` : "" }}</span></div></template>
+        <template v-if="explaining.refs.length"><div class="ex-h">依据</div><div class="small"><template v-for="(r, i) in explaining.refs" :key="i"><a v-if="refAction(r)" href="#" class="mono" @click.prevent="refAction(r)!()">{{ r }}</a><span v-else class="mono">{{ r }}</span>{{ i < explaining.refs.length - 1 ? "、" : "" }}</template></div></template>
+        <template v-if="pointFindings.length"><div class="ex-h">这些文件上的问题</div><div v-for="f in pointFindings" :key="f.id" class="small ex-f"><span class="badge" :class="SEV[f.severity].cls">{{ SEV[f.severity].text }}</span> {{ f.title }} <span class="mono muted">{{ findingWhere(f) }}</span></div></template>
+      </div>
+    </AskAboutRun>
 
     <div v-if="delegateOpen" class="modal-overlay" @mousedown.self="delegateOpen = false">
       <div class="modal stack">
@@ -484,12 +559,16 @@ const kindOptions = computed(() => [
   grid-template-columns: auto 1fr auto;
   grid-template-areas:
     "title . delegate"
+    "search search search"
     "status status status"
     "kind kind quiet";
   row-gap: 8px;
   align-items: center;
 }
 .head > strong { grid-area: title; }
+.head .search { grid-area: search; display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted); }
+.head .search:focus-within { border-color: var(--accent); }
+.head .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: 13px; color: var(--ink); }
 .head .btn[title="交办编码任务"] { grid-area: delegate; }
 .head .kind-filter { grid-area: kind; justify-self: start; }
 .head .status-filter { grid-area: status; justify-self: start; }
@@ -499,6 +578,7 @@ const kindOptions = computed(() => [
     grid-template-columns: 1fr auto;
     grid-template-areas:
       "title delegate"
+      "search search"
       "status status"
       "kind quiet";
   }
@@ -569,6 +649,69 @@ const kindOptions = computed(() => [
 }
 .dh .waiting {
   margin: 0;
+}
+.dh .sub {
+  gap: 8px;
+}
+.dh .add {
+  color: var(--ok);
+}
+.dh .rm {
+  color: var(--danger);
+}
+.item-link {
+  color: var(--accent);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  margin: -6px 0 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.tab {
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--ink-2);
+  padding: 8px 12px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab:hover {
+  color: var(--ink);
+}
+.tab.on {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--ink);
+}
+.explain {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.ex-h {
+  margin-top: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.locs {
+  display: grid;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+.ex-f {
+  overflow-wrap: anywhere;
 }
 .block {
   margin-bottom: 20px;

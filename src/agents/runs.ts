@@ -126,17 +126,23 @@ export function runsInLane(app: App, lane: string) {
   return all<Row>(app.db, "select * from runs where lane = ? and status in ('queued','running') order by created_at", lane).map(toRun);
 }
 
+/** Who a run was started for (the owner when nobody else was recorded). */
+export function runUser(app: App, id: string) {
+  return one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id ?? "owner";
+}
+
 export function getRun(app: App, id: string): Run {
   const r = one<Row>(app.db, "select * from runs where id = ?", id);
   if (!r) throw new HttpError(404, `运行记录不存在：${id}`);
   return toRun(r);
 }
 
-type RunFilter = { kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean };
+type RunFilter = { kind?: string; spaceId?: string; status?: string; parentId?: string; includeQuiet?: boolean; q?: string };
 
 /**
- * `kind` may list several, comma-separated; `agent:<name>` is one agent spec's runs. Any of them
- * matches.
+ * `kind` may list several, comma-separated; `agent:<name>` is one agent spec's runs, `role:<name>`
+ * the runs a built-in role took part in. Any of them matches. `q` matches the title, the id or the
+ * task.
  */
 function runWhere(opts: RunFilter) {
   const where: string[] = [];
@@ -146,6 +152,7 @@ function runWhere(opts: RunFilter) {
     const any: string[] = [];
     for (const k of kinds) {
       if (k.startsWith("agent:")) any.push("(kind = 'agent' and json_extract(input, '$.spec') = ?)"), params.push(k.slice(6));
+      else if (k.startsWith("role:")) any.push("instr(coalesce(roles, ''), ?) > 0"), params.push(`|${k.slice(5)}|`);
       else any.push("kind = ?"), params.push(k);
     }
     where.push(`(${any.join(" or ")})`);
@@ -154,13 +161,20 @@ function runWhere(opts: RunFilter) {
   if (opts.status) where.push("status = ?"), params.push(opts.status);
   if (opts.parentId) where.push("parent_id = ?"), params.push(opts.parentId);
   if (!opts.includeQuiet && !opts.parentId) where.push("quiet = 0");
+  const q = opts.q?.trim();
+  if (q) {
+    const like = `%${q.replace(/[!%_]/g, (c) => `!${c}`)}%`;
+    where.push("(id = ? or title like ? escape '!' or json_extract(input, '$.task') like ? escape '!')"), params.push(q, like, like);
+  }
   return { sql: where.length ? `where ${where.join(" and ")}` : "", params };
 }
 
-export function listRuns(app: App, opts: RunFilter & { limit?: number; offset?: number } = {}) {
+/** `brief` leaves input and output empty: a list shows titles, and outputs can hold whole diffs. */
+export function listRuns(app: App, opts: RunFilter & { limit?: number; offset?: number; brief?: boolean } = {}) {
   const w = runWhere(opts);
   const limit = Math.min(opts.limit ?? 100, 500);
-  return all<Row>(app.db, `select * from runs ${w.sql} order by created_at desc limit ? offset ?`, ...w.params, limit, opts.offset ?? 0).map(toRun);
+  const cols = opts.brief ? "*, '{}' as input, '{}' as output" : "*";
+  return all<Row>(app.db, `select ${cols} from runs ${w.sql} order by created_at desc limit ? offset ?`, ...w.params, limit, opts.offset ?? 0).map(toRun);
 }
 
 export function countRuns(app: App, opts: RunFilter = {}) {

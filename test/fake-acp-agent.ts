@@ -146,7 +146,9 @@ ${JSON.stringify({ tools, error: res.isError ? res.content : null })}`);
         try {
           const tools = (await client.listTools()).tools.map((t) => t.name);
           const asks = check === "业务";
-          await client.callTool({ name: "submit_review", arguments: { verdict: asks ? "changes_requested" : "approved", summary: `${check}评审`, findings: asks ? [{ severity: "major", file: "refund.ts", line: 1, title: "已发货行不能退", suggestion: "过滤已发货行" }, { severity: "nit", title: "命名可以更具体" }] : [{ severity: "minor", title: "可以补一条测试" }] } });
+          // The business check also maps the requirement to the code; a review of an item says it read the materials.
+          const changePoints = asks ? [{ id: "C1", title: "只退未发货的行", status: "partial", requirement: "退款只按未发货的行计算", locations: [{ file: "refund.ts", start: 1, end: 3 }] }] : undefined;
+          await client.callTool({ name: "submit_review", arguments: { verdict: asks ? "changes_requested" : "approved", summary: `${check}评审${prompt.includes("## 所属事项") ? "（读了事项材料）" : ""}`, findings: asks ? [{ severity: "major", file: "refund.ts", line: 1, title: "已发货行不能退", suggestion: "过滤已发货行" }, { severity: "nit", title: "命名可以更具体" }] : [{ severity: "minor", title: "可以补一条测试" }], change_points: changePoints } });
           await say(`结论：${asks ? "需要修改" : "通过"}
 ${JSON.stringify({ check, tools })}`);
         } finally { await client.close(); }

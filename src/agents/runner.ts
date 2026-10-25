@@ -248,6 +248,7 @@ export function prepareRun(
   const roleName = role ? (input.actor as { role: RoleName }).role : "assistant";
   const profile = resolveRunProfile(app, input);
   if (!input.shadow) recordRunAI(app, input.runId, profile, false);
+  if (role && input.runId && !input.shadow) run(app.db, "update runs set roles = coalesce(roles, '|') || ? || '|' where id = ? and instr(coalesce(roles, ''), ?) = 0", roleName, input.runId, `|${roleName}|`);
   const spaceId = spec?.space && !input.spaceId ? spec.space : input.spaceId;
   const space = findSpace(app, spaceId);
   if (!space) throw new HttpError(404, `空间不存在：${spaceId}`);

@@ -373,8 +373,9 @@ const toView = (r: Row): ChatMessageView => ({
 });
 
 /** Structured messages of a chat source (empty for sources captured before rows were kept) and the messages they quote. */
-export function sourceMessages(app: App, sourceId: string) {
-  const rows = all<Row>(app.db, "select * from lark_messages where source_id = ? order by create_ms, line", sourceId);
+/** The messages kept for a chat source; `from` / `to` limit them to the lines on screen. */
+export function sourceMessages(app: App, sourceId: string, from = 1, to = Number.MAX_SAFE_INTEGER) {
+  const rows = all<Row>(app.db, "select * from lark_messages where source_id = ? and (line is null or line between ? and ?) order by create_ms, line", sourceId, from, to);
   const parents = new Set(rows.map((r) => r.parent_id).filter((p): p is string => !!p));
   const have = new Set(rows.map((r) => r.message_id));
   const quoted: Record<string, ChatMessageView & { sourceId: string | null }> = {};

@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import type { RoleName } from "../core/config.ts";
 import { notify } from "../core/notify.ts";
+import { one } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { createAsk, registerAskHandler, type Ask } from "./asks.ts";
 import { type CodeChain, queueNextCodeRound, maxCodeRounds, saveCodeChain, setChainAwaitingUser } from "./code-chain.ts";
@@ -11,7 +12,7 @@ import {
   SEVERITY_LABEL, STOP_LABEL, type LeadResult, type ReviewPlan, type Severity, type StopReason,
 } from "./review.ts";
 import { runRole } from "./runner.ts";
-import { createRun, getRun, registerHandler, setRunOutput, type Run } from "./runs.ts";
+import { createRun, getRun, registerHandler, runUser, setRunOutput, type Run } from "./runs.ts";
 import { readAgentSpec } from "./specs.ts";
 import { replyOf } from "./types.ts";
 
@@ -54,7 +55,7 @@ const roundOf = (r: Run) => (r.input as { round?: number }).round ?? 1;
 
 export async function reviewRound(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string } = {}): Promise<{ verdict: string; continuedRunId?: string }> {
   const run = getRun(app, codeRunId);
-  const input = run.input as { task: string; reviewExecution?: import("./execution.ts").Execution; repos?: string[]; readSpaces?: string[] };
+  const input = run.input as { task: string; reviewExecution?: import("./execution.ts").Execution; repos?: string[]; readSpaces?: string[]; itemId?: string };
   const out = run.output as Out;
   const plan = out.reviewPlan;
   if (!plan) throw new HttpError(409, "这次交办还没有评审计划");
@@ -65,7 +66,9 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   const results = out.repos ?? [];
   const multi = results.length > 1;
   const cwd = multi ? join(app.runsDir, root, "work") : worktrees[0]?.path;
-  const spaces = [...new Set([run.spaceId!, ...results.map((r) => r.space), ...(input.readSpaces ?? [])])];
+  const { materialSpaces, materialsBrief } = await import("../items/materials.ts");
+  const owner = runUser(app, run.id);
+  const spaces = [...new Set([run.spaceId!, ...results.map((r) => r.space), ...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, owner) : [])])];
   const indexed = out.indexedSpaces ?? [];
   const patches = codePatches(app, run.id);
   const diffs = patches.map((p) => (multi ? `### ${p.space}\n\n${fence("diff", p.patch)}` : fence("diff", p.patch)));
@@ -79,6 +82,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   const checkText = results.map((r) => (r.check ? `${head(r)}命令：${r.check.command}\n退出码：${r.check.code}\n\n${fence("", r.check.output.slice(-4000))}` : `${head(r)}没有配置检查命令。`)).join("\n\n");
   const reviewTask = [
     `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${input.task}`,
+    input.itemId ? materialsBrief(app, input.itemId, owner) : "",
     opts.note ? `## 本人确认评审计划时补充\n\n${opts.note}` : "",
     multi ? `## 涉及的仓库\n\n${worktrees.map((w) => `- ${w.space}：${w.path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
     `## ${branchReview ? "要评审的分支" : "编码 Agent 的说明"}\n\n${out.coderSummary ?? ""}`,
@@ -209,6 +213,11 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
     // Inside a multi-agent work the nudge belongs to the work's current topic, not a private DM.
     ...(work ? { larkConversationId: work.workConversationId } : {}),
   });
+  // The item's timeline records the outcome (an item deleted since then has none).
+  if (input.itemId && one(app.db, "select 1 from items where id = ?", input.itemId)) {
+    const { addItemEvent } = await import("../items/store.ts");
+    addItemEvent(app, input.itemId, "note", `${branchReview ? "分支评审" : `交办第 ${round} 轮评审`}${approved ? "通过" : "要求修改"}（${run.id}）${lead.summary ? `：${truncate(lead.summary, 400)}` : ""}`);
+  }
   return { verdict: approved ? "approved" : "changes-requested" };
 }
 

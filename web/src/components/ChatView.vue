@@ -14,7 +14,8 @@ import VirtualList from "./VirtualList.vue";
  * captures and other channels are parsed from their lines. Long chats render only what is
  * on screen. `from`/`to` (source lines from a citation) highlight and scroll to the message.
  */
-const props = defineProps<{ sourceId: string; text: string; space?: string; from?: number; to?: number }>();
+/** `start`: the line number of `text`'s first line when only part of a long chat is loaded. */
+const props = withDefaults(defineProps<{ sourceId: string; text: string; start?: number; space?: string; from?: number; to?: number }>(), { start: 1 });
 
 type Row = { kind: "day"; key: string; label: string } | { kind: "msg"; key: string; m: ChatMsg; grouped: boolean };
 
@@ -27,9 +28,9 @@ const list = ref<{ scrollToIndex: (i: number, align?: "start" | "center") => Pro
 async function load() {
   loading.value = true;
   try {
-    const r = await get<{ messages: ChatMsg[]; quoted: Record<string, ChatMsg & { sourceId: string | null }> }>(`/api/sources/${props.sourceId}/messages`).catch(() => ({ messages: [], quoted: {} }));
+    const r = await get<{ messages: ChatMsg[]; quoted: Record<string, ChatMsg & { sourceId: string | null }> }>(`/api/sources/${props.sourceId}/messages?from=${props.start}&to=${props.start + props.text.split("\n").length - 1}`).catch(() => ({ messages: [], quoted: {} }));
     // Rows exist only for messages captured since they were kept: older lines are parsed.
-    const parsed = parseChatLines(props.text);
+    const parsed = parseChatLines(props.text, props.start);
     const byLine = new Map(r.messages.filter((m) => m.line).map((m) => [m.line!, m]));
     messages.value = parsed.map((p) => byLine.get(p.line!) ?? p).filter((m) => m.content.trim() || Object.keys(m.resources).length);
     quoted.value = r.quoted;
