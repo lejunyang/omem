@@ -18,6 +18,11 @@ export const agentProfileSchema = z.object({
   env: z.record(z.string(), z.string()).default({}),
   /** Abort when the agent produces no event for this long. */
   idleTimeoutMs: z.number().int().positive().default(600_000),
+  /**
+   * The account behind it: profiles with the same source (an ACP agent and its CLI fallback) share
+   * one quota, so they share capacity and are never offered as two separate choices.
+   */
+  source: z.string().optional(),
 });
 export type AgentProfile = z.infer<typeof agentProfileSchema>;
 
@@ -79,8 +84,8 @@ export const configSchema = z.object({
   token: z.string().optional(),
   timezone: z.string().default(Intl.DateTimeFormat().resolvedOptions().timeZone),
   language: z.string().default("zh-CN"),
-  /** Background runs (ingest, wiki, dream…) at the same time. */
-  concurrency: z.number().int().min(1).max(8).default(2),
+  /** Background runs (ingest, wiki, dream…) at the same time; each model's own limit is agents.capacity. */
+  concurrency: z.number().int().min(1).max(32).default(2),
   /** Conversation turns at the same time (one per thread; threads run in parallel). */
   interactiveConcurrency: z.number().int().min(1).max(16).default(4),
   sessions: z
@@ -135,6 +140,15 @@ export const configSchema = z.object({
        * delegation runs before the reviewer's requests wait for the owner.
        */
       autoAdvance: z.object({ turns: z.number().int().min(0).max(50).default(6), codeRounds: z.number().int().min(1).max(20).default(3) }).default({ turns: 6, codeRounds: 3 }),
+      /**
+       * How many runs one model of one source takes at a time (`perModel`, or a `limits` entry for a
+       * source / model; 0 = do not use it). A role run whose model is full takes the first free one of
+       * its other configured backends (roleModels) and the fallbacks, else waits.
+       */
+      capacity: z.object({
+        perModel: z.number().int().min(1).max(32).default(3),
+        limits: z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), max: z.number().int().min(0).max(32) })).max(100).default([]),
+      }).default(() => ({ perModel: 3, limits: [] })),
       routing: z.object({
         automatic: z.boolean().default(true),
         guidance: z.string().max(8000).default(""),
@@ -142,7 +156,7 @@ export const configSchema = z.object({
       }).default(() => ({ automatic: true, guidance: "", candidates: [] })),
       profiles: z.array(agentProfileSchema).default([]),
     })
-    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3 }, routing: { automatic: true, guidance: "", candidates: [] }, profiles: [] })),
+    .default(() => ({ roles: {}, roleModels: {}, fallback: [], queueTimeoutMinutes: 30, autoAdvance: { turns: 6, codeRounds: 3 }, capacity: { perModel: 3, limits: [] }, routing: { automatic: true, guidance: "", candidates: [] }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.
@@ -519,9 +533,9 @@ export type Config = z.infer<typeof configSchema>;
 
 /** Built-in profiles; users override or extend them in config.json. */
 const cliProfiles: AgentProfile[] = [
-  { id: "traex-cli", name: "TraeX (CLI)", transport: "codex-cli", command: "traex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000 },
-  { id: "claude-cli", name: "Claude Code (CLI)", transport: "claude-cli", command: "claude", args: [], env: {}, idleTimeoutMs: 600_000 },
-  { id: "codex-cli", name: "Codex (CLI)", transport: "codex-cli", command: "codex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000 },
+  { id: "traex-cli", name: "TraeX (CLI)", transport: "codex-cli", command: "traex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000, source: "traex" },
+  { id: "claude-cli", name: "Claude Code (CLI)", transport: "claude-cli", command: "claude", args: [], env: {}, idleTimeoutMs: 600_000, source: "claude" },
+  { id: "codex-cli", name: "Codex (CLI)", transport: "codex-cli", command: "codex", args: [], model: "gpt-6.1-sol", effort: "low", env: {}, idleTimeoutMs: 600_000, source: "codex" },
 ];
 /** Doubao through its OpenAPI: no local command (`command` is only a label); available once authorized. */
 const doubaoProfile: AgentProfile = { id: "doubao", name: "豆包 (OpenAPI)", transport: "doubao", command: "doubao-openapi", args: [], env: {}, idleTimeoutMs: 600_000 };

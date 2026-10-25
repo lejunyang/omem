@@ -573,10 +573,10 @@ def({
 def({
   name: "digest_sources",
   description:
-    "整理已经入库的存量材料（回溯的群、整批导入的知识库）：开一个后台整理任务，一批一批地做，不占这一轮。mode=triage：按标题和开头给原件分级（快，适合先过一遍几百上千份）；mode=digest：精读重点和一般材料，提炼成知识页、案例页，标出过时和关键段落，写必要的记忆（agent 填档案名时经验写成该档案的专属记忆，如值班排查的经验写给值班 Agent）。goal 写本人想得到什么。action=status 看进度，pause / resume / stop 控制。只在本人要求整理一批材料时开。",
+    "整理已经入库的存量材料（回溯的群、整批导入的知识库）：开一个后台整理任务，一批一批地做，不占这一轮。mode=triage：按标题和开头给原件分级（快，适合先过一遍几百上千份）；mode=digest：精读重点和一般材料，提炼成知识页、案例页，标出过时和关键段落，写必要的记忆（agent 填档案名时经验写成该档案的专属记忆，如值班排查的经验写给值班 Agent）。goal 写本人想得到什么。action=status 看进度，pause / resume / stop 控制，pace 改速度（parallel 同时几批、batch 每批几份、chars 每批附多少字正文）。材料多、本人嫌慢时调大 parallel：各批会分到这个角色配置过的不同模型上，满了的模型自动排队。只在本人要求整理一批材料时开。",
   write: true,
   schema: z.object({
-    action: z.enum(["start", "status", "pause", "resume", "stop"]).default("start"),
+    action: z.enum(["start", "status", "pause", "resume", "stop", "pace"]).default("start"),
     job_id: z.string().optional(),
     mode: z.enum(["triage", "digest"]).optional(),
     space: z.string().optional(),
@@ -588,7 +588,10 @@ def({
     wiki_path_contains: z.string().optional(),
     kind: z.string().optional().describe("doc / chat / …"),
     level: z.enum(LEVELS).optional(),
-    execution: executionSchema.optional().describe("这批整理用哪个 AI（本人指定，或按任务选型）"),
+    execution: executionSchema.optional().describe("这批整理用哪个 AI（本人指定，或按任务选型）；不给时按角色设置，满了自动换到角色的其他模型"),
+    parallel: z.number().int().min(1).max(16).optional().describe("同时跑几批（默认 1）"),
+    batch: z.number().int().min(1).max(300).optional().describe("每批最多几份（分级默认 150，整理默认 40）"),
+    chars: z.number().int().min(10_000).max(600_000).optional().describe("整理时每批附上的正文字数（默认 15 万）"),
   }),
   handler: async (ctx, a) => {
     const d = await import("./digest.ts");
@@ -596,6 +599,7 @@ def({
     if (a.action !== "start") {
       if (!a.job_id) throw new HttpError(400, "缺 job_id");
       inScope(ctx, d.getDigestJob(ctx.app, a.job_id).spaceId, "整理任务");
+      if (a.action === "pace") return d.digestStatusText(ctx.app, [d.updateDigestJob(ctx.app, a.job_id, { parallel: a.parallel, batch: a.batch, chars: a.chars })]);
       const j = d.setDigestStatus(ctx.app, a.job_id, a.action === "resume" ? "active" : a.action === "pause" ? "paused" : "stopped");
       return d.digestStatusText(ctx.app, [j]);
     }
@@ -603,10 +607,10 @@ def({
     const sp = writeSpace(ctx, a.space);
     if (a.agent) checkProfile(ctx, a.agent);
     const job = d.createDigestJob(ctx.app, {
-      mode: a.mode, space: sp, title: a.title, goal: a.goal ?? "", agent: a.agent, execution: validateExecution(ctx.app, a.execution),
+      mode: a.mode, space: sp, title: a.title, goal: a.goal ?? "", agent: a.agent, execution: validateExecution(ctx.app, a.execution), parallel: a.parallel, batch: a.batch, chars: a.chars,
       filter: { chat_id: a.chat_id, title_contains: a.title_contains, wiki_path_contains: a.wiki_path_contains, kind: a.kind, level: a.level },
     });
-    return `已开整理任务 ${job.id}：${job.total} 份材料，已做过 ${job.done} 份。${job.status === "done" ? "没有要做的。" : "第一批已排队，进度用 action=status 看。"}`;
+    return `已开整理任务 ${job.id}：${job.total} 份材料，已做过 ${job.done} 份。${job.status === "done" ? "没有要做的。" : `已排队 ${job.body.parallel ?? 1} 批，进度用 action=status 看。`}`;
   },
 });
 
@@ -736,7 +740,27 @@ def({
       if (!p?.installed) throw new HttpError(400, "后端不可用");
       if (a.refresh || !cachedProbe(ctx.app, p.id)) { const probe = await probeProfile(p); if (!probe.error) saveProbe(ctx.app, p.id, probe); else return JSON.stringify({ profile: p.id, error: probe.error, routing: ctx.app.config.agents.routing }); }
     }
-    return JSON.stringify({ routing: ctx.app.config.agents.routing, backends: backends.filter((p) => p.installed && (!a.profile || p.id === a.profile)).map((p) => ({ id: p.id, name: p.name, transport: p.transport, model: p.model, effort: p.effort, probe: cachedProbe(ctx.app, p.id) })) });
+    const { backendLimitOf, choosableProfiles, limitOf, recentStats, usedOf } = await import("./capacity.ts");
+    const choosable = new Set(choosableProfiles(ctx.app).map((p) => p.id));
+    const stats = recentStats(ctx.app);
+    // Load per probed model: in use / limit (0 = the owner excluded it), and the last 7 days.
+    const models = (p: (typeof backends)[number]) => {
+      const probe = cachedProbe(ctx.app, p.id);
+      const names = [...new Set([p.model, ...(probe?.models ?? [])].filter((m): m is string => !!m))];
+      return names.map((model) => {
+        const q = { ...p, model };
+        const st = stats.find((s) => s.profile === p.id && s.model === model);
+        return { model, used: usedOf(ctx.app, q), limit: limitOf(ctx.app, q), ...(st ? { recent7d: { done: st.done, failed: st.failed, medianMinutes: st.medianMinutes } } : {}) };
+      });
+    };
+    return JSON.stringify({
+      routing: ctx.app.config.agents.routing,
+      note: "limit 为 0 的模型本人不想自动使用，不要选。doubao 没有 omem 工具，只用于把材料原文写进任务的纯调研和写作。",
+      backends: backends.filter((p) => p.installed && choosable.has(p.id) && (!a.profile || p.id === a.profile)).map((p) => {
+        const probe = cachedProbe(ctx.app, p.id);
+        return { id: p.id, name: p.name, transport: p.transport, tools: p.transport !== "doubao", model: p.model, effort: p.effort, backendLimit: backendLimitOf(ctx.app, p), models: models(p), efforts: probe?.effortsByModel ?? probe?.efforts };
+      }),
+    });
   },
 });
 

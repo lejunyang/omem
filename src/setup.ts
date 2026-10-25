@@ -634,7 +634,7 @@ async function setupSessionsSection(config: Config) {
   s.idleHours = (await number({ message: "聊天空闲多少小时后开始新会话（带上一段摘要；0 = 不自动）", default: s.idleHours, min: 0 })) ?? s.idleHours;
   s.mergeMs = (await number({ message: "连发消息合并等待（毫秒）", default: s.mergeMs, min: 0 })) ?? s.mergeMs;
   config.interactiveConcurrency = (await number({ message: "同时处理几个会话", default: config.interactiveConcurrency, min: 1, max: 16 })) ?? config.interactiveConcurrency;
-  config.concurrency = (await number({ message: "同时运行几个后台任务（整理、Wiki、做梦…）", default: config.concurrency, min: 1, max: 8 })) ?? config.concurrency;
+  config.concurrency = (await number({ message: "同时运行几个后台任务（整理、Wiki、做梦…）", default: config.concurrency, min: 1, max: 32 })) ?? config.concurrency;
   return true;
 }
 

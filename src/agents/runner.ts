@@ -14,6 +14,7 @@ import { resolveRoleProfile } from "./models.ts";
 import { runBackend } from "./dispatch.ts";
 import { backgroundTurn } from "./background-sessions.ts";
 import { backendAvailable } from "./availability.ts";
+import { acquire, choosableProfiles, excluded, loadLines } from "./capacity.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
 import { issueToolToken, revokeToolToken } from "./tools.ts";
 import { isAgentRunError, type AgentEvent, type AgentResult, type McpAccess } from "./types.ts";
@@ -333,14 +334,36 @@ const DELEGATING = ["run_agent", "continue_agent_work", "ask_agent", "delegate_c
  */
 function routingGuide(app: App, profile: AgentProfile) {
   const r = app.config.agents.routing;
-  if (!r.automatic || !r.candidates.length) return "";
+  if (!r.automatic) return "";
   const ai = (c: { profile: string; model?: string; effort?: string }) => [c.profile, c.model, c.effort].filter(Boolean).join(" / ");
+  const choosable = choosableProfiles(app);
+  // The models worth a look: the owner's candidates, each backend's default and the models roles use.
+  const models: { profile: AgentProfile; model?: string }[] = [];
+  const add = (id: string, model?: string) => { const p = choosable.find((x) => x.id === id); if (p) models.push({ profile: p, model }); };
+  for (const c of r.candidates) add(c.profile, c.model);
+  for (const p of choosable) if (p.transport !== "doubao") add(p.id, p.model);
+  for (const byProfile of Object.values(app.config.agents.roleModels)) for (const [id, m] of Object.entries(byProfile)) add(id, m.model);
+  const load = loadLines(app, models).slice(0, 16);
+  const doubao = choosable.some((p) => p.transport === "doubao");
   return [
     `你这次用的是 ${ai({ profile: profile.id, model: profile.model, effort: profile.effort })}；交办出去的运行不带 execution 时用对方档案的设置。`,
     ...(r.guidance.trim() ? [`本人的总体偏好：${r.guidance.trim()}`] : []),
-    "本人列出的候选：",
-    ...r.candidates.map((c) => `- ${ai(c)}：${c.when}`),
+    ...(r.candidates.length ? ["本人列出的候选：", ...r.candidates.map((c) => `- ${ai(c)}：${c.when}`)] : []),
+    ...(load.length ? ["各模型现在的占用（正在用/上限）和近况；同样合适时选空闲、失败少的，满了的会排队：", ...load] : []),
+    ...(doubao ? ["doubao（豆包 OpenAPI）在云端运行，用不了 omem 的工具：只适合纯调研、写作。交给它时先自己把要用的材料取出来，原文一次性写进任务。"] : []),
   ].join("\n");
+}
+
+/**
+ * The role's other backends the owner configured a model for (roleModels), for when its default
+ * model is full. CLI fallbacks of an installed ACP agent are left out (same account).
+ */
+function roleAlternatives(app: App, role: RoleName, base: AgentProfile): AgentProfile[] {
+  const own = app.config.agents.roleModels[role] ?? {};
+  return choosableProfiles(app).filter((p) => p.id !== base.id && own[p.id]).map((p) => resolveRoleProfile(app, p, role));
+}
+function distinctProfiles(list: AgentProfile[]) {
+  return list.filter((p, i) => list.findIndex((q) => q.id === p.id && q.model === p.model && q.effort === p.effort) === i);
 }
 
 /** Whether a failure is worth retrying on a fallback backend/model. */
@@ -375,7 +398,7 @@ export function fallbackProfiles(
   for (const f of app.config.agents.fallback ?? []) {
     if (f.profile === baseId && f.model === undefined && f.effort === undefined) continue;
     const p = make(f.profile, f.model, f.effort);
-    if (p && !chain.some((x) => x.id === p.id && x.model === p.model && x.effort === p.effort)) chain.push(p);
+    if (p && !excluded(app, p) && !chain.some((x) => x.id === p.id && x.model === p.model && x.effort === p.effort)) chain.push(p);
   }
   return chain;
 }
@@ -401,12 +424,25 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }); }
     catch (e) { revokeToolToken(base.token); throw e; }
   }
+  // Explicit agent specs choose their own backend; no silent rerouting. A role run may move to its
+  // other configured backends when its model is full, and to the fallbacks on a queue / rate limit.
   const chain = input.spec || input.shadow || execution
-    ? [base.profile] // explicit agent specs choose their own backend; no silent rerouting
-    : [base.profile, ...fallbackProfiles(app, actor, base.profile.id).slice(1)];
+    ? [base.profile]
+    : distinctProfiles([base.profile, ...roleAlternatives(app, input.role, base.profile), ...fallbackProfiles(app, actor, base.profile.id).slice(1)]);
   const emit = input.onEvent ?? (() => {});
   let lastError: unknown;
+  let failed = false;
   for (let i = 0; i < chain.length; i++) {
+    let slot;
+    try {
+      slot = await acquire(app, chain.slice(i), { runId: input.runId, signal: input.signal, onWait: (text) => emit({ type: "status", text }) });
+    } catch (e) {
+      if (i === 0) revokeToolToken(base.token);
+      throw e;
+    }
+    if (i === 0 && slot.index > 0) revokeToolToken(base.token);
+    const moved = slot.index > 0;
+    i += slot.index;
     const profile = chain[i];
     const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead });
     if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, true);
@@ -424,7 +460,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         persistSession: input.persistSession ?? !!input.resumeSessionId,
         queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
       };
-      if (i > 0) emit({ type: "status", text: `默认后端不可用（排队/限流），改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""} 重试` });
+      if (i > 0) emit({ type: "status", text: `${failed && !moved ? "默认后端不可用（排队/限流）" : failed ? "重试时原来的模型已满" : "默认模型已满"}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}` });
       emit({ type: "status", text: `使用 AI：${profile.id} · ${profile.model ?? "默认模型"} · ${profile.effort ?? "默认强度"}${execution ? `（${execution.source === "user" ? "本人指定" : "任务选型"}：${execution.reason}）` : ""}` });
       const result = input.reuseSession && !input.shadow && !input.persistSession && !input.resumeSessionId && prep.profile.transport === "acp"
         ? await backgroundTurn(app, prep, req, input.task, input.runId, emit)
@@ -435,6 +471,9 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       revokeToolToken(prep.token);
       if ((e as Error).message === "CANCELLED" || input.signal?.aborted || !isRetryableAgentError(e) || i === chain.length - 1) throw e;
       lastError = e;
+      failed = true;
+    } finally {
+      slot.release();
     }
   }
   throw lastError ?? new Error("没有可用的 Agent");

@@ -21,8 +21,10 @@ import { readAgentSpec } from "./specs.ts";
  *   knowledge: topic and case pages, notes on outdated / key parts of the source, memories (for one
  *   Agent profile when the job names it, e.g. an on-call investigator's experience).
  *
- * One batch runs at a time per job; the `digest` schedule (every 10 minutes) and each finished batch
- * queue the next. Sources done are remembered with their hash, so a changed source is read again.
+ * A job runs `parallel` batches at a time (each on whichever of the role's models has room, see
+ * capacity.ts); the `digest` schedule (every 10 minutes) and each finished batch queue the next.
+ * A digest batch carries the sources' text in the task, so the Agent reads a large batch in one go.
+ * Sources done are remembered with their hash, so a changed source is read again.
  */
 
 export const digestInput = z.object({
@@ -34,8 +36,12 @@ export const digestInput = z.object({
   /** Agent profile (or built-in role) whose experience the digest writes. */
   agent: z.string().optional(),
   execution: executionSchema.optional(),
-  /** Most sources per batch (a digest batch also stops at about 60k characters). */
-  batch: z.number().int().min(1).max(200).optional(),
+  /** Most sources per batch. */
+  batch: z.number().int().min(1).max(300).optional(),
+  /** Characters of source text per digest batch (the text goes into the task). */
+  chars: z.number().int().min(10_000).max(600_000).optional(),
+  /** Batches at a time. */
+  parallel: z.number().int().min(1).max(16).optional(),
   title: z.string().max(80).optional(),
 });
 export type DigestInput = z.infer<typeof digestInput>;
@@ -44,9 +50,9 @@ export type DigestJob = Omit<JobRow, "body" | "space_id" | "run_id" | "created_a
 
 const toJob = (r: JobRow): DigestJob => ({ id: r.id, spaceId: r.space_id, mode: r.mode, status: r.status, total: r.total, done: r.done, runId: r.run_id, createdAt: r.created_at, updatedAt: r.updated_at, body: json(r.body, {} as DigestInput) });
 
-const TRIAGE_BATCH = 60;
-const DIGEST_CHARS = 60_000;
-const DIGEST_MAX = 8;
+const TRIAGE_BATCH = 150;
+const DIGEST_CHARS = 150_000;
+const DIGEST_MAX = 40;
 const MAX_FAILURES = 3;
 
 /** Which sources a job covers: its filter in its space; a digest skips reference and ignore. */
@@ -86,6 +92,11 @@ export function getDigestJob(app: App, id: string) {
   return toJob(r);
 }
 
+/** Batches queued or running now, for the web list. */
+export function inflightCount(app: App, jobId: string) {
+  return inflight(app, jobId).length;
+}
+
 export function listDigestJobs(app: App, opts: { space?: string; all?: boolean } = {}) {
   return all<JobRow>(app.db, `select * from digest_jobs where 1=1 ${opts.space ? "and space_id = ?" : ""} ${opts.all ? "" : "and status in ('active','paused')"} order by created_at desc limit 100`, ...(opts.space ? [opts.space] : [])).map(toJob);
 }
@@ -98,50 +109,76 @@ export function setDigestStatus(app: App, id: string, status: "active" | "paused
   return getDigestJob(app, id);
 }
 
-/** The next sources of a job: focus first, then the most recently updated. */
-function nextBatch(app: App, job: DigestJob) {
+/** Batches of a job that are queued or running, with the sources each one took. */
+function inflight(app: App, jobId: string) {
+  return all<{ id: string; input: string }>(app.db, "select id, input from runs where kind in ('triage', 'digest') and status in ('queued', 'running') and json_extract(input, '$.jobId') = ?", jobId)
+    .map((r) => ({ id: r.id, sourceIds: json<{ sourceIds?: string[] }>(r.input, {}).sourceIds ?? [] }));
+}
+
+/** The next sources of a job, leaving out those other batches took: focus first, then the most recently updated. */
+function nextBatch(app: App, job: DigestJob, taken: Set<string>) {
   const q = pendingSql(job);
   const rows = all<{ id: string; size: number }>(
     app.db,
-    `select s.id, length(s.text) size ${q.from} and (d.source_id is null or d.hash != s.hash) order by s.attention = 'focus' desc, s.updated_at desc limit 200`,
+    `select s.id, length(s.text) size ${q.from} and (d.source_id is null or d.hash != s.hash) order by s.attention = 'focus' desc, s.updated_at desc limit ?`,
     ...q.params,
-  );
+    400 + taken.size,
+  ).filter((r) => !taken.has(r.id));
   if (job.mode === "triage") return rows.slice(0, job.body.batch ?? TRIAGE_BATCH).map((r) => r.id);
   const max = job.body.batch ?? DIGEST_MAX;
+  const budget = job.body.chars ?? DIGEST_CHARS;
   const out: string[] = [];
   let chars = 0;
   for (const r of rows) {
-    if (out.length && (chars + r.size > DIGEST_CHARS || out.length >= max)) break;
+    if (out.length && (chars + r.size > budget || out.length >= max)) break;
     out.push(r.id);
     chars += r.size;
   }
   return out;
 }
 
-/** Queue the job's next batch unless one is waiting or running, or nothing is left. */
-export function queueNextBatch(app: App, id: string) {
+/**
+ * Queue batches until the job has `parallel` in flight, or nothing is left. Returns the new runs.
+ * `finishing` is the batch calling this as it ends (still marked running).
+ */
+export function queueNextBatch(app: App, id: string, finishing?: string) {
   const job = getDigestJob(app, id);
-  if (job.status !== "active") return null;
-  if (job.runId) {
-    const r = one<{ status: string }>(app.db, "select status from runs where id = ?", job.runId);
-    if (r && ["queued", "running"].includes(r.status)) return null;
-  }
-  const ids = nextBatch(app, job);
+  if (job.status !== "active") return [];
+  const running = inflight(app, id).filter((r) => r.id !== finishing);
+  const taken = new Set(running.flatMap((r) => r.sourceIds));
   const c = countDigest(app, job);
-  if (!ids.length) {
+  const queued = [];
+  let done = c.total - c.left;
+  while (running.length + queued.length < (job.body.parallel ?? 1)) {
+    const ids = nextBatch(app, job, taken);
+    if (!ids.length) break;
+    for (const s of ids) taken.add(s);
+    const r = createRun(app, {
+      kind: job.mode === "triage" ? "triage" : "digest",
+      spaceId: job.spaceId,
+      title: `${job.mode === "triage" ? "分级" : "整理存量"}：${truncate(job.body.title ?? describeJob(job), 50)}（${done + 1}–${done + ids.length} / ${c.total}）`,
+      input: { jobId: id, sourceIds: ids },
+    });
+    done += ids.length;
+    queued.push(r);
+  }
+  if (!running.length && !queued.length) {
     run(app.db, "update digest_jobs set status = 'done', run_id = null, total = ?, done = ?, updated_at = ? where id = ?", c.total, c.total, now(), id);
     notify(app, { title: `整理任务完成：${job.body.title ?? describeJob(job)}`, body: `共 ${c.total} 份材料`, link: "#/sources" });
-    return null;
+    return [];
   }
-  const r = createRun(app, {
-    kind: job.mode === "triage" ? "triage" : "digest",
-    spaceId: job.spaceId,
-    title: `${job.mode === "triage" ? "分级" : "整理存量"}：${truncate(job.body.title ?? describeJob(job), 50)}（${c.total - c.left + 1}–${c.total - c.left + ids.length} / ${c.total}）`,
-    input: { jobId: id, sourceIds: ids },
-    lane: `digest:${id}`,
-  });
-  run(app.db, "update digest_jobs set run_id = ?, total = ?, done = ?, updated_at = ? where id = ?", r.id, c.total, c.total - c.left, now(), id);
-  return r;
+  const latest = queued.at(-1)?.id ?? running.at(-1)?.id ?? null;
+  run(app.db, "update digest_jobs set run_id = ?, total = ?, done = ?, updated_at = ? where id = ?", latest, c.total, c.total - c.left, now(), id);
+  return queued;
+}
+
+/** Change a running job's pace: batches at a time, sources and characters per batch. */
+export function updateDigestJob(app: App, id: string, patch: unknown) {
+  const p = Object.fromEntries(Object.entries(digestInput.pick({ parallel: true, batch: true, chars: true }).partial().parse(patch)).filter(([, v]) => v !== undefined));
+  const job = getDigestJob(app, id);
+  run(app.db, "update digest_jobs set body = ?, updated_at = ? where id = ?", JSON.stringify({ ...job.body, ...p }), now(), id);
+  queueNextBatch(app, id);
+  return getDigestJob(app, id);
 }
 
 /** Every active job gets its next batch (the schedule; restarts and failed batches resume here). */
@@ -172,6 +209,27 @@ function sourceLines(app: App, ids: string[], head: number) {
   }).filter(Boolean).join("\n");
 }
 
+/**
+ * The sources' text for the task, numbered by line, within the budget; what does not fit says how
+ * many lines are left to read with read_source.
+ */
+function sourceBodies(app: App, ids: string[], budget: number) {
+  let left = budget;
+  return ids.map((id) => {
+    const s = one<{ id: string; title: string; text: string }>(app.db, "select id, title, text from sources where id = ?", id);
+    if (!s) return "";
+    const lines = s.text.split("\n");
+    const out: string[] = [];
+    for (let i = 0; i < lines.length && left > 0; i++) {
+      out.push(`${i + 1}│${lines[i]}`);
+      left -= lines[i].length + 1;
+    }
+    const rest = lines.length - out.length;
+    const more = rest ? `\n…（还有 ${rest} 行没附上，需要时 read_source(${s.id}) 从第 ${out.length + 1} 行读）` : "";
+    return `### ${s.id} ${s.title}\n\n${out.join("\n")}${more}`;
+  }).filter(Boolean).join("\n\n");
+}
+
 async function runBatch(ctx: Parameters<Parameters<typeof registerHandler>[1]>[0], mode: "triage" | "digest") {
   const { jobId, sourceIds } = ctx.run.input as { jobId: string; sourceIds: string[] };
   const job = getDigestJob(ctx.app, jobId);
@@ -180,7 +238,7 @@ async function runBatch(ctx: Parameters<Parameters<typeof registerHandler>[1]>[0
   const forAgent = b.agent ? `\n\n## 经验写给谁\n\n这批材料的经验（遇到 X 先看 Y、某类问题的判断方法）写成 \`${b.agent}\` 的专属记忆：\`remember(kind="experience", agent="${b.agent}", …)\`；案例写成页面（\`cases/<主题>\`），记忆里链接到它。` : "";
   const task = mode === "triage"
     ? `给下面 ${sourceIds.length} 份材料分级（空间 ${job.spaceId}）。${goal}\n\n## 材料\n\n${sourceLines(ctx.app, sourceIds, 300)}`
-    : `整理下面 ${sourceIds.length} 份已经入库的材料（空间 ${job.spaceId}）。${goal}${forAgent}\n\n## 材料（重点关注的在前）\n\n${sourceLines(ctx.app, sourceIds, 0)}`;
+    : `整理下面 ${sourceIds.length} 份已经入库的材料（空间 ${job.spaceId}）。${goal}${forAgent}\n\n## 材料（重点关注的在前）\n\n${sourceLines(ctx.app, sourceIds, 0)}\n\n## 正文（带行号，标注时用这些行号）\n\n${sourceBodies(ctx.app, sourceIds, b.chars ?? DIGEST_CHARS)}`;
   let ok = false;
   try {
     const r = await runRole(ctx.app, {
@@ -208,9 +266,9 @@ async function runBatch(ctx: Parameters<Parameters<typeof registerHandler>[1]>[0
     const latest = getDigestJob(ctx.app, jobId);
     const failures = ok ? 0 : (latest.body.failures ?? 0) + 1;
     const paused = failures >= MAX_FAILURES && latest.status === "active";
-    run(ctx.app.db, "update digest_jobs set body = ?, status = ?, run_id = null, updated_at = ? where id = ?", JSON.stringify({ ...latest.body, failures }), paused ? "paused" : latest.status, at, jobId);
+    run(ctx.app.db, "update digest_jobs set body = ?, status = ?, run_id = case when run_id = ? then null else run_id end, updated_at = ? where id = ?", JSON.stringify({ ...latest.body, failures }), paused ? "paused" : latest.status, ctx.run.id, at, jobId);
     if (paused) notify(ctx.app, { title: `整理任务暂停：连续 ${failures} 批失败`, body: `${latest.body.title ?? describeJob(latest)}。看运行记录里的错误，处理后在原件页继续。`, link: `#/runs/${ctx.run.id}` });
-    if (!ctx.signal.aborted) queueNextBatch(ctx.app, jobId);
+    if (!ctx.signal.aborted) queueNextBatch(ctx.app, jobId, ctx.run.id);
   }
 }
 
@@ -222,7 +280,8 @@ export function digestStatusText(app: App, jobs = listDigestJobs(app)) {
   if (!jobs.length) return "没有进行中的整理任务。";
   return jobs.map((j) => {
     const c = countDigest(app, j);
-    const r = j.runId ? getRun(app, j.runId) : null;
-    return `- ${j.id} ${j.mode === "triage" ? "分级" : "整理"} · ${j.body.title ?? describeJob(j)} · ${j.status} · ${c.total - c.left}/${c.total}${r ? ` · 当前批次 ${r.id}（${r.status}）` : ""}${j.body.agent ? ` · 经验写给 ${j.body.agent}` : ""}`;
+    const batches = inflight(app, j.id).map((b) => `${b.id}（${getRun(app, b.id).status}）`);
+    const pace = `同时 ${j.body.parallel ?? 1} 批${j.body.batch ? `、每批最多 ${j.body.batch} 份` : ""}${j.body.chars ? `、每批 ${j.body.chars} 字` : ""}`;
+    return `- ${j.id} ${j.mode === "triage" ? "分级" : "整理"} · ${j.body.title ?? describeJob(j)} · ${j.status} · ${c.total - c.left}/${c.total} · ${pace}${batches.length ? ` · 进行中 ${batches.join("、")}` : ""}${j.body.agent ? ` · 经验写给 ${j.body.agent}` : ""}`;
   }).join("\n");
 }

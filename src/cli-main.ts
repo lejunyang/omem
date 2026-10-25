@@ -873,6 +873,10 @@ program
   .option("--title-contains <text>", "标题包含")
   .option("--wiki-path <text>", "飞书知识库名或目录路径包含")
   .option("--kind <kind>", "doc / chat / …")
+  .option("--parallel <n>", "同时跑几批", Number)
+  .option("--batch <n>", "每批最多几份", Number)
+  .option("--chars <n>", "整理时每批附上的正文字数", Number)
+  .option("--pace <job>", "按 --parallel / --batch / --chars 调整已有任务的速度")
   .option("--pause <job>", "暂停任务")
   .option("--resume <job>", "继续任务")
   .option("--stop <job>", "停止任务")
@@ -880,13 +884,15 @@ program
     const app = open();
     const d = await import("./agents/digest.ts");
     const control = o.pause ? ["paused", o.pause] : o.resume ? ["active", o.resume] : o.stop ? ["stopped", o.stop] : null;
-    if (control) d.setDigestStatus(app, control[1], control[0] as "active");
+    const pace = { parallel: o.parallel, batch: o.batch, chars: o.chars };
+    if (o.pace) d.updateDigestJob(app, o.pace, pace);
+    else if (control) d.setDigestStatus(app, control[1], control[0] as "active");
     else if (sp) {
       if (!o.mode) throw new Error("要整理时给出 --mode triage 或 --mode digest");
-      d.createDigestJob(app, { mode: o.mode, space: sp, title: o.title, goal: o.goal ?? "", agent: o.agent, filter: { chat_id: o.chat, title_contains: o.titleContains, wiki_path_contains: o.wikiPath, kind: o.kind } });
+      d.createDigestJob(app, { mode: o.mode, space: sp, title: o.title, goal: o.goal ?? "", agent: o.agent, ...pace, filter: { chat_id: o.chat, title_contains: o.titleContains, wiki_path_contains: o.wikiPath, kind: o.kind } });
     }
     console.log(d.digestStatusText(app));
-    if (sp && !control) console.log("\n任务在后台服务里一批一批地跑（定时任务 digest，每 10 分钟补排）。");
+    if (sp && !control && !o.pace) console.log("\n任务在后台服务里一批一批地跑（定时任务 digest，每 10 分钟补排）。");
   });
 
 program

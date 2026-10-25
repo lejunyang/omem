@@ -1,3 +1,4 @@
+import { releaseRun } from "./capacity.ts";
 import { withBot } from "../core/bot-context.ts";
 import { trySettleCodeChain } from "./code-chain.ts";
 import type { App } from "../core/app.ts";
@@ -410,6 +411,7 @@ function kick(app: App) {
       })
       .finally(() => {
         active[cls]--;
+        releaseRun(r.id);
         controllers.delete(r.id);
         heartbeats.delete(r.id);
         seqs.delete(r.id);

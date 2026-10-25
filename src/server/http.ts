@@ -239,7 +239,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/digest-jobs", async (req) => {
     const o = q(z.object({ all: z.coerce.boolean().optional() }), req.query);
     const d = await import("../agents/digest.ts");
-    return d.listDigestJobs(app, { all: o.all }).map((j) => ({ ...j, ...d.countDigest(app, j), label: j.body.title ?? d.describeJob(j) }));
+    return d.listDigestJobs(app, { all: o.all }).map((j) => ({ ...j, ...d.countDigest(app, j), inflight: d.inflightCount(app, j.id), label: j.body.title ?? d.describeJob(j) }));
   });
   server.post("/api/digest-jobs", async (req) => {
     ownerOnly(req);
@@ -251,6 +251,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const status = ({ pause: "paused", resume: "active", stop: "stopped" } as const)[p.action as "pause"];
     if (!status) throw new HttpError(404, "未知操作");
     return (await import("../agents/digest.ts")).setDigestStatus(app, p.id, status);
+  });
+  // Pace of a job: batches at a time, sources and characters per batch.
+  server.put("/api/digest-jobs/:id", async (req) => {
+    ownerOnly(req);
+    return (await import("../agents/digest.ts")).updateDigestJob(app, (req.params as { id: string }).id, req.body);
+  });
+  // Models in use now against their limits, and how each did in the last 7 days.
+  server.get("/api/agents/load", async () => {
+    const c = await import("../agents/capacity.ts");
+    return { now: c.loadReport(app), recent: c.recentStats(app) };
   });
   server.get("/api/sources/paths", async (req) => {
     const o = q(z.object({ space: z.string(), kind: z.string().optional(), q: z.string().optional() }), req.query);

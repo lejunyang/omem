@@ -5,6 +5,7 @@ import { cachedProbe, effortsFor } from "./probe.ts";
 import { allProfiles } from "../core/config.ts";
 import { backendAvailable } from "./availability.ts";
 import { resolveModelOption } from "./models.ts";
+import { excluded } from "./capacity.ts";
 
 /** A temporary choice, recorded with the task, never written back to a profile. */
 export const executionSchema = z.object({
@@ -28,6 +29,7 @@ export function validateExecution(app: App, choice?: Execution): Execution | und
     if (!resolved.matched) throw new HttpError(400, `模型 ${e.model} 不在 ${e.profile} 的检测结果中`);
     e.model = resolved.value;
   }
+  if (e.source === "auto" && excluded(app, { ...backend, model: e.model ?? backend.model })) throw new HttpError(400, `${e.profile}${e.model ? ` · ${e.model}` : ""} 的并行上限设成了 0：本人不想自动用它，换一个`);
   const levels = e.model ? effortsFor(probe, e.model) : [];
   const knownEmpty = e.model && probe?.effortsByModel && Object.hasOwn(probe.effortsByModel, e.model ?? backend.model ?? "") && !levels.length;
   if (e.effort && (knownEmpty || (levels.length && !levels.includes(e.effort)))) throw new HttpError(400, `思考强度 ${e.effort} 不适用于该模型`);

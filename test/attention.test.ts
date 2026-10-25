@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import "../src/agents/jobs.ts";
-import { countDigest, createDigestJob, getDigestJob, listDigestJobs, queueNextBatch, setDigestStatus } from "../src/agents/digest.ts";
+import { countDigest, createDigestJob, getDigestJob, listDigestJobs, queueNextBatch, setDigestStatus, updateDigestJob } from "../src/agents/digest.ts";
 import { __testHandlers, addRunEvent, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
-import { run } from "../src/core/db.ts";
+import { all, run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { search } from "../src/search/search.ts";
 import {
@@ -92,9 +92,20 @@ describe("digesting stored material in batches", () => {
     expect(first.kind).toBe("digest");
     expect(first.input.sourceIds).toEqual([current]);
     // Nothing new is queued while a batch waits.
-    expect(queueNextBatch(app, job.id)).toBeNull();
+    expect(queueNextBatch(app, job.id)).toEqual([]);
     setDigestStatus(app, job.id, "stopped");
     expect(listDigestJobs(app).map((j) => j.id)).not.toContain(job.id);
+  });
+
+  it("keeps `parallel` batches in flight, each with its own sources", () => {
+    const job = createDigestJob(app, { mode: "triage", space: "proj", filter: { title_contains: "值班群" }, batch: 1, parallel: 3 });
+    const batches = () => all<{ input: string }>(app.db, "select input from runs where kind = 'triage' and status = 'queued' and json_extract(input, '$.jobId') = ?", job.id).map((r) => JSON.parse(r.input).sourceIds[0]);
+    expect(batches()).toHaveLength(3);
+    expect(new Set(batches()).size).toBe(3);
+    updateDigestJob(app, job.id, { parallel: 4 });
+    expect(new Set(batches()).size).toBe(4);
+    expect(getDigestJob(app, job.id).body.batch).toBe(1);
+    setDigestStatus(app, job.id, "stopped");
   });
 
   it("runs a triage batch with an Agent, records what was done and queues the next", async () => {

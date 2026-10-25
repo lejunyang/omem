@@ -510,3 +510,12 @@ updated: 2026-10-25
 - `upsertSource` 对没人定过档的新材料套用关注程度规则；`scheduleIngest` 跳过仅检索和忽略的；`ingest` 角色可写主题页、`annotate_source`、`set_source_attention`。
 - 存量整理 `src/agents/digest.ts`：运行类型 `triage`（角色 `triager`）、`digest`（角色 `distiller`），定时任务 `digest` 每 10 分钟补排；连续 3 批失败暂停。
 - 工具：`set_source_attention`、`annotate_source`、`attention_rules`、`digest_sources`；`list_sources` 加 `level`。接口：`/api/sources?level=`、`/api/sources/levels`、`PUT /api/sources/:id/attention`、`POST /api/sources/attention`（含 dryRun）、`/api/sources/:id/notes`、`DELETE /api/source-notes/:id`、`/api/attention-rules`、`/api/digest-jobs`。远程命令 `digest-status`、`source-levels`；命令行 `omem digest`。网页：原件页档位筛选、详情里的档位和标注、“整理”弹窗。
+
+## 并行与模型容量、存量整理加速（10-25）
+
+- `src/agents/capacity.ts`：按“来源 + 模型”计数的空位（来源是账号：`traex-cli` / `codex-cli` / `claude-cli` 的 `source` 指向对应 ACP 后端）。`config.agents.capacity`：`perModel`（默认 3），`limits` 带模型是该模型上限、不带模型是整个后端合计（可不设），0 表示不自动使用。`config.concurrency` 上限改为 32。
+- `runRole`：开始前 `acquire`；默认模型满了按顺序换到角色在其他后端配置的模型（`roleModels`，`roleAlternatives`）和兜底，都满了等（状态“等模型空位”），重试也重新取空位；显式 execution 和档案任务不换。对话回合 `holdForRun` 计入占用但不等，运行结束 `releaseRun`。
+- 选型：`routingGuide` 不再要求有候选，列出各模型占用和近 7 天完成、失败、中位时长（`loadLines`），豆包标明没有工具；`list_ai_backends` 返回每个模型的 used / limit / recent7d 与 `tools`；`validateExecution` 拒绝助手自选上限为 0 的模型。`choosableProfiles` 去掉已有 ACP 的同源命令行后端。
+- 存量整理：任务加 `parallel`、`batch`、`chars`；`queueNextBatch` 补足到 `parallel` 批，各批材料不重叠（查在途批次的 `sourceIds`），不再用 lane；精读批次在任务里附带行号的正文（默认 15 万字、最多 40 份），分级默认每批 150 份。`updateDigestJob` / `PUT /api/digest-jobs/:id` / `digest_sources action=pace` / `omem digest --pace` 调速度。
+- 接口 `GET /api/agents/load`；网页 设置 → Agent → 并行（`AiCapacity.vue`），整理弹窗可设同时几批、每批几份并调整进行中的任务。
+- 评审角色：`review-style` 从“只报明确约定”扩展到通用代码质量（重复造轮子、为封装而封装、模块划分、命名、注释里的中间指令）；`reviewer`、`review-business`、`review-arch`、`review-history` 加常见漏项和迁移类改动的对照要求。

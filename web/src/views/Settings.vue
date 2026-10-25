@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { del, get, patch, post, put, type Space, type SpaceRelation } from "../api";
 import AiRouting from "../components/AiRouting.vue";
+import AiCapacity from "../components/AiCapacity.vue";
 import { detectProbe, probes as shared } from "../lib/probes";
 import Icon from "../components/Icon.vue";
 import CronEditor from "../components/CronEditor.vue";
@@ -391,6 +392,10 @@ function modelOptionsFor(profileId: string | undefined, key: "model" | "effort",
   const list = current && !offered.includes(current) ? [current, ...offered] : offered;
   return [{ value: "", label: "跟随默认" }, ...list.map((v) => ({ value: v, label: v }))];
 }
+const probedModels = computed(() => Object.fromEntries(installedProfiles.value.map((p) => [p.id, probes.value[p.id]?.data?.models ?? []])));
+function saveCapacity(v: { concurrency: number; interactiveConcurrency: number; perModel: number; limits: { profile: string; model?: string; max: number }[] }) {
+  void saveConfig({ concurrency: v.concurrency, interactiveConcurrency: v.interactiveConcurrency, agents: { ...config.value.agents, capacity: { perModel: v.perModel, limits: v.limits } } }, "已保存并行设置");
+}
 const missingProfiles = computed(() => profiles.value.filter((p) => !p.installed));
 type RegistryAgent = { id: string; name: string; version: string; description?: string; website?: string; added: boolean; ways: string[] };
 const registry = ref<RegistryAgent[] | null>(null);
@@ -544,9 +549,10 @@ async function saveEdit() {
       </div>
       <p class="muted small">内置角色和自定义档案的默认 AI 统一在 <RouterLink to="/agents">Agent 档案</RouterLink> 中设置。</p>
       <AiRouting :value="config.agents.routing" :backends="profiles" @save="(routing) => saveConfig({ agents: { ...config.agents, routing } }, '已保存任务选型')" />
+      <AiCapacity :value="{ concurrency: config.concurrency, interactiveConcurrency: config.interactiveConcurrency, perModel: config.agents.capacity?.perModel ?? 3, limits: config.agents.capacity?.limits ?? [] }" :backends="installedProfiles" :models="probedModels" @save="saveCapacity" />
       <div class="card pad stack">
         <div class="section-title">排队与兜底</div>
-        <p class="muted small">后端在排队或被限流时，按下面的顺序换一个后端重试一次。Agent 档案任务不会自动换后端。</p>
+        <p class="muted small">后端在排队或被限流时，按下面的顺序换一个后端重试一次；模型满了时也按这个顺序找有空位的。Agent 档案任务不会自动换后端。</p>
         <div class="row wrap">
           <span class="small">排队最多等</span>
           <UiSelect :model-value="String(config.agents.queueTimeoutMinutes ?? 30)" size="sm" width="120px" aria-label="排队最多等待" :options="queueMinuteOptions" @change="saveQueueMinutes" />

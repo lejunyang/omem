@@ -1,3 +1,4 @@
+import { holdForRun } from "./capacity.ts";
 import type { App } from "../core/app.ts";
 import { truncate } from "../core/util.ts";
 import { userName } from "../core/users.ts";
@@ -212,6 +213,8 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const denyTools = (ctx.run.input as { denyTools?: string[] }).denyTools;
   const prep = prepareRun(app, { actor, spaceId: t.spaceId, runId: ctx.run.id, profileId: t.settings.profile, userId, lark, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined, denyTools });
   const emit = (e: AgentEvent) => ctx.event(e.type, e);
+  // A reply never waits for a model slot, but it counts against the model's load (released with the run).
+  holdForRun(app, prep.profile, ctx.run.id);
   // Tool tokens are scoped to the sender, so each person gets their own agent session.
   const sessionKey = `${prep.profile.id}|${label}|${prep.cwd}|${prep.profile.model ?? ""}|${prep.profile.effort ?? ""}${userId === "owner" ? "" : `|${userId}`}`;
   const watched = messages.some((m) => typeof m.meta.speaker === "string");
