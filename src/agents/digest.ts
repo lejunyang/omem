@@ -42,6 +42,8 @@ export const digestInput = z.object({
   chars: z.number().int().min(10_000).max(600_000).optional(),
   /** Batches at a time. */
   parallel: z.number().int().min(1).max(16).optional(),
+  /** Start only once this job is no longer active or paused (e.g. digest after the triage of the same material). */
+  after: z.string().optional(),
   title: z.string().max(80).optional(),
 });
 export type DigestInput = z.infer<typeof digestInput>;
@@ -56,19 +58,21 @@ const DIGEST_MAX = 40;
 const MAX_FAILURES = 3;
 
 /** Which sources a job covers: its filter in its space; a digest skips reference and ignore. */
-function pendingSql(job: DigestJob) {
+function pendingSql(job: DigestJob, keepDone = false) {
   const f: SourceFilter = { ...job.body.filter, space: job.spaceId };
   const w = filterSql(f);
-  const skip = job.mode === "digest" ? "and (s.attention is null or s.attention in ('focus'))" : "and (s.attention_by is null or s.attention_by != 'owner')";
+  const skip = job.mode === "digest" ? "(s.attention is null or s.attention in ('focus'))" : "(s.attention_by is null or s.attention_by != 'owner')";
   return {
-    from: `from sources s left join digest_done d on d.job_id = ? and d.source_id = s.id where ${w.sql} ${skip}`,
+    from: `from sources s left join digest_done d on d.job_id = ? and d.source_id = s.id where ${w.sql} and (${skip}${keepDone ? " or d.source_id is not null" : ""})`,
     params: [job.id, ...w.params],
+    skip,
   };
 }
 
+/** Progress: sources this job already did count even when the batch then lowered their level. */
 export function countDigest(app: App, job: DigestJob) {
-  const q = pendingSql(job);
-  const r = one<{ total: number; pending: number | null }>(app.db, `select count(*) total, sum(d.source_id is null or d.hash != s.hash) pending ${q.from}`, ...q.params)!;
+  const q = pendingSql(job, true);
+  const r = one<{ total: number; pending: number | null }>(app.db, `select count(*) total, sum((d.source_id is null or d.hash != s.hash) and ${q.skip}) pending ${q.from}`, ...q.params)!;
   return { total: r.total, left: r.pending ?? 0 };
 }
 
@@ -144,6 +148,10 @@ function nextBatch(app: App, job: DigestJob, taken: Set<string>) {
 export function queueNextBatch(app: App, id: string, finishing?: string) {
   const job = getDigestJob(app, id);
   if (job.status !== "active") return [];
+  if (job.body.after) {
+    const before = one<{ status: string }>(app.db, "select status from digest_jobs where id = ?", job.body.after);
+    if (before && ["active", "paused"].includes(before.status)) return [];
+  }
   const running = inflight(app, id).filter((r) => r.id !== finishing);
   const taken = new Set(running.flatMap((r) => r.sourceIds));
   const c = countDigest(app, job);
@@ -165,6 +173,8 @@ export function queueNextBatch(app: App, id: string, finishing?: string) {
   if (!running.length && !queued.length) {
     run(app.db, "update digest_jobs set status = 'done', run_id = null, total = ?, done = ?, updated_at = ? where id = ?", c.total, c.total, now(), id);
     notify(app, { title: `整理任务完成：${job.body.title ?? describeJob(job)}`, body: `共 ${c.total} 份材料`, link: "#/sources" });
+    // Jobs waiting for this one start now rather than at the next schedule tick.
+    for (const j of listDigestJobs(app)) if (j.body.after === id) queueNextBatch(app, j.id);
     return [];
   }
   const latest = queued.at(-1)?.id ?? running.at(-1)?.id ?? null;
@@ -174,7 +184,7 @@ export function queueNextBatch(app: App, id: string, finishing?: string) {
 
 /** Change a running job's pace: batches at a time, sources and characters per batch. */
 export function updateDigestJob(app: App, id: string, patch: unknown) {
-  const p = Object.fromEntries(Object.entries(digestInput.pick({ parallel: true, batch: true, chars: true }).partial().parse(patch)).filter(([, v]) => v !== undefined));
+  const p = Object.fromEntries(Object.entries(digestInput.pick({ parallel: true, batch: true, chars: true, after: true }).partial().parse(patch)).filter(([, v]) => v !== undefined));
   const job = getDigestJob(app, id);
   run(app.db, "update digest_jobs set body = ?, updated_at = ? where id = ?", JSON.stringify({ ...job.body, ...p }), now(), id);
   queueNextBatch(app, id);
@@ -281,7 +291,7 @@ export function digestStatusText(app: App, jobs = listDigestJobs(app)) {
   return jobs.map((j) => {
     const c = countDigest(app, j);
     const batches = inflight(app, j.id).map((b) => `${b.id}（${getRun(app, b.id).status}）`);
-    const pace = `同时 ${j.body.parallel ?? 1} 批${j.body.batch ? `、每批最多 ${j.body.batch} 份` : ""}${j.body.chars ? `、每批 ${j.body.chars} 字` : ""}`;
+    const pace = `${j.body.after ? `等 ${j.body.after} 做完后开始，` : ""}同时 ${j.body.parallel ?? 1} 批${j.body.batch ? `、每批最多 ${j.body.batch} 份` : ""}${j.body.chars ? `、每批 ${j.body.chars} 字` : ""}`;
     return `- ${j.id} ${j.mode === "triage" ? "分级" : "整理"} · ${j.body.title ?? describeJob(j)} · ${j.status} · ${c.total - c.left}/${c.total} · ${pace}${batches.length ? ` · 进行中 ${batches.join("、")}` : ""}${j.body.agent ? ` · 经验写给 ${j.body.agent}` : ""}`;
   }).join("\n");
 }

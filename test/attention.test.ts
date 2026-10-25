@@ -108,6 +108,15 @@ describe("digesting stored material in batches", () => {
     setDigestStatus(app, job.id, "stopped");
   });
 
+  it("waits for the job it comes after", () => {
+    const first = createDigestJob(app, { mode: "triage", space: "proj", filter: { title_contains: "值班群" }, batch: 1 });
+    const then = createDigestJob(app, { mode: "digest", space: "proj", filter: { title_contains: "值班群" }, after: first.id });
+    expect(getDigestJob(app, then.id).runId).toBeNull();
+    setDigestStatus(app, first.id, "stopped");
+    expect(queueNextBatch(app, then.id)).toHaveLength(1);
+    setDigestStatus(app, then.id, "stopped");
+  });
+
   it("runs a triage batch with an Agent, records what was done and queues the next", async () => {
     app.config.agents.profiles.push({ id: "fake", name: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_SAY: "分好了：都是一般。" }, idleTimeoutMs: 60000 });
     app.config.agents.default = "fake";

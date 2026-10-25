@@ -876,7 +876,8 @@ program
   .option("--parallel <n>", "同时跑几批", Number)
   .option("--batch <n>", "每批最多几份", Number)
   .option("--chars <n>", "整理时每批附上的正文字数", Number)
-  .option("--pace <job>", "按 --parallel / --batch / --chars 调整已有任务的速度")
+  .option("--after <job>", "等这个任务做完再开始")
+  .option("--pace <job>", "按 --parallel / --batch / --chars / --after 调整已有任务")
   .option("--pause <job>", "暂停任务")
   .option("--resume <job>", "继续任务")
   .option("--stop <job>", "停止任务")
@@ -884,7 +885,7 @@ program
     const app = open();
     const d = await import("./agents/digest.ts");
     const control = o.pause ? ["paused", o.pause] : o.resume ? ["active", o.resume] : o.stop ? ["stopped", o.stop] : null;
-    const pace = { parallel: o.parallel, batch: o.batch, chars: o.chars };
+    const pace = { parallel: o.parallel, batch: o.batch, chars: o.chars, after: o.after };
     if (o.pace) d.updateDigestJob(app, o.pace, pace);
     else if (control) d.setDigestStatus(app, control[1], control[0] as "active");
     else if (sp) {

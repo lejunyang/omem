@@ -516,6 +516,6 @@ updated: 2026-10-25
 - `src/agents/capacity.ts`：按“来源 + 模型”计数的空位（来源是账号：`traex-cli` / `codex-cli` / `claude-cli` 的 `source` 指向对应 ACP 后端）。`config.agents.capacity`：`perModel`（默认 3），`limits` 带模型是该模型上限、不带模型是整个后端合计（可不设），0 表示不自动使用。`config.concurrency` 上限改为 32。
 - `runRole`：开始前 `acquire`；默认模型满了按顺序换到角色在其他后端配置的模型（`roleModels`，`roleAlternatives`）和兜底，都满了等（状态“等模型空位”），重试也重新取空位；显式 execution 和档案任务不换。对话回合 `holdForRun` 计入占用但不等，运行结束 `releaseRun`。
 - 选型：`routingGuide` 不再要求有候选，列出各模型占用和近 7 天完成、失败、中位时长（`loadLines`），豆包标明没有工具；`list_ai_backends` 返回每个模型的 used / limit / recent7d 与 `tools`；`validateExecution` 拒绝助手自选上限为 0 的模型。`choosableProfiles` 去掉已有 ACP 的同源命令行后端。
-- 存量整理：任务加 `parallel`、`batch`、`chars`；`queueNextBatch` 补足到 `parallel` 批，各批材料不重叠（查在途批次的 `sourceIds`），不再用 lane；精读批次在任务里附带行号的正文（默认 15 万字、最多 40 份），分级默认每批 150 份。`updateDigestJob` / `PUT /api/digest-jobs/:id` / `digest_sources action=pace` / `omem digest --pace` 调速度。
+- 存量整理：任务加 `parallel`、`batch`、`chars`；`queueNextBatch` 补足到 `parallel` 批，各批材料不重叠（查在途批次的 `sourceIds`），不再用 lane；精读批次在任务里附带行号的正文（默认 15 万字、最多 40 份），分级默认每批 150 份。`updateDigestJob` / `PUT /api/digest-jobs/:id` / `digest_sources action=pace` / `omem digest --pace` 调速度；`after` 等另一个任务做完再开始（那个任务完成时立即补排）；`countDigest` 把做过后被降档的材料算进已完成（以前精读降档后从总数和进度里消失）。
 - 接口 `GET /api/agents/load`；网页 设置 → Agent → 并行（`AiCapacity.vue`），整理弹窗可设同时几批、每批几份并调整进行中的任务。
 - 评审角色：`review-style` 从“只报明确约定”扩展到通用代码质量（重复造轮子、为封装而封装、模块划分、命名、注释里的中间指令）；`reviewer`、`review-business`、`review-arch`、`review-history` 加常见漏项和迁移类改动的对照要求。

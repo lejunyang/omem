@@ -592,6 +592,7 @@ def({
     parallel: z.number().int().min(1).max(16).optional().describe("同时跑几批（默认 1）"),
     batch: z.number().int().min(1).max(300).optional().describe("每批最多几份（分级默认 150，整理默认 40）"),
     chars: z.number().int().min(10_000).max(600_000).optional().describe("整理时每批附上的正文字数（默认 15 万）"),
+    after: z.string().optional().describe("等这个整理任务做完再开始（如先分级、再精读同一批材料）"),
   }),
   handler: async (ctx, a) => {
     const d = await import("./digest.ts");
@@ -599,7 +600,7 @@ def({
     if (a.action !== "start") {
       if (!a.job_id) throw new HttpError(400, "缺 job_id");
       inScope(ctx, d.getDigestJob(ctx.app, a.job_id).spaceId, "整理任务");
-      if (a.action === "pace") return d.digestStatusText(ctx.app, [d.updateDigestJob(ctx.app, a.job_id, { parallel: a.parallel, batch: a.batch, chars: a.chars })]);
+      if (a.action === "pace") return d.digestStatusText(ctx.app, [d.updateDigestJob(ctx.app, a.job_id, { parallel: a.parallel, batch: a.batch, chars: a.chars, after: a.after })]);
       const j = d.setDigestStatus(ctx.app, a.job_id, a.action === "resume" ? "active" : a.action === "pause" ? "paused" : "stopped");
       return d.digestStatusText(ctx.app, [j]);
     }
@@ -607,7 +608,7 @@ def({
     const sp = writeSpace(ctx, a.space);
     if (a.agent) checkProfile(ctx, a.agent);
     const job = d.createDigestJob(ctx.app, {
-      mode: a.mode, space: sp, title: a.title, goal: a.goal ?? "", agent: a.agent, execution: validateExecution(ctx.app, a.execution), parallel: a.parallel, batch: a.batch, chars: a.chars,
+      mode: a.mode, space: sp, title: a.title, goal: a.goal ?? "", agent: a.agent, execution: validateExecution(ctx.app, a.execution), parallel: a.parallel, batch: a.batch, chars: a.chars, after: a.after,
       filter: { chat_id: a.chat_id, title_contains: a.title_contains, wiki_path_contains: a.wiki_path_contains, kind: a.kind, level: a.level },
     });
     return `已开整理任务 ${job.id}：${job.total} 份材料，已做过 ${job.done} 份。${job.status === "done" ? "没有要做的。" : `已排队 ${job.body.parallel ?? 1} 批，进度用 action=status 看。`}`;
