@@ -9,6 +9,8 @@ import { all, one } from "./db.ts";
 import { codeVersion, listPeers, nodeId } from "./peers.ts";
 import { listSchedules, nextRuns, triggerSchedule } from "./scheduler.ts";
 import { HttpError } from "./util.ts";
+import { memoryHistory, memoryNow } from "./memory-watch.ts";
+import { vectorIndex } from "../search/vectors.ts";
 
 /**
  * What another device may ask this instance to do (`POST /api/peer/exec`, owner only):
@@ -30,6 +32,8 @@ export async function diag(app: App) {
     node: nodeId(app),
     version: codeVersion(root),
     runtime: { node: process.version, platform: `${process.platform}-${process.arch}`, pid: process.pid, uptimeSec: Math.round(process.uptime()), rssMb: Math.round(process.memoryUsage().rss / 1024 / 1024) },
+    // RSS minus V8 heap and buffers is native memory (the local embedding model's arena, SQLite).
+    memory: { now: memoryNow(), vectorIndex: vectorIndex().stats(), history: memoryHistory() },
     now: new Date().toISOString(),
     home: app.home,
     baseUrl: app.baseUrl,

@@ -6,6 +6,7 @@ import { App } from "./core/app.ts";
 import { ensureDefaultSchedules, registerScheduleKind, restartScheduler } from "./core/scheduler.ts";
 import { ensurePersonalSpace, listSpaces } from "./core/spaces.ts";
 import { embedPending, embedPendingMemories } from "./search/embeddings.ts";
+import { startMemoryWatch } from "./core/memory-watch.ts";
 import { startServer } from "./server/http.ts";
 import { syncWiki } from "./wiki/store.ts";
 
@@ -66,6 +67,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   }
   startWorker(app);
   if (opts.background !== false) {
+    startMemoryWatch();
     restartScheduler(app);
     // The owner's commands in one-to-one chats (lark.commands; nothing happens while it is off).
     setInterval(() => {

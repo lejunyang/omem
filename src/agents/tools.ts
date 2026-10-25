@@ -2756,6 +2756,8 @@ def({
         `速度每分钟 ${o.pagesPerMinute} 页、同时 ${o.concurrency} 个会话（约 ${perHour} 页/小时）` +
         `${o.backoffSeconds ? `；正在因限流退避 ${o.backoffSeconds} 秒` : ""}${o.running ? "" : "；飞书采集没开时不会推进"}。`,
     );
+    if (o.waitingRetry) out.push(`${o.waitingRetry} 个会话出错后在等待重试（间隔从 30 秒翻倍，最长 1 小时）。`);
+    if (o.gaveUp.length) out.push(`读不了、不再重试的会话（本人不在群里或没有权限；要重试就重新回溯这些会话）：${o.gaveUp.map((c) => `${c.name}（${c.reason.slice(0, 60)}）`).join("；")}`);
     return out.join("\n");
   },
 });

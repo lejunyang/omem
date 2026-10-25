@@ -45,7 +45,9 @@ async function getEmbedder(app: App): Promise<Embedder | null> {
       mod.env.allowRemoteModels = false;
       modelId = basename(resolve(cfg.model));
     }
-    const extractor = await mod.pipeline("feature-extraction", modelId, { dtype: "q8" });
+    // onnxruntime keeps its CPU arena at the largest batch it has seen; turning it off gives memory
+    // back after each batch at some speed cost (embeddings.memArena).
+    const extractor = await mod.pipeline("feature-extraction", modelId, { dtype: "q8", ...(cfg.memArena === false ? { session_options: { enableCpuMemArena: false } } : {}) });
     // osdk paths do not name the model, so setup records its family.
     const family = cfg.family ?? (/bge-m3/i.test(cfg.model) ? "bge-m3" : /bge.*zh/i.test(cfg.model) ? "bge-zh" : /bge/i.test(cfg.model) ? "bge" : "other");
     const isBge = family.startsWith("bge");
@@ -53,10 +55,14 @@ async function getEmbedder(app: App): Promise<Embedder | null> {
       id: `local:${cfg.model}`,
       async embed(texts, kind) {
         const input = family === "bge-zh" && kind === "query" ? texts.map((t) => "为这个句子生成表示以用于检索相关文章：" + t) : texts;
-        const out = await extractor(input, { pooling: isBge ? "cls" : "mean", normalize: true });
-        const [n, dim] = out.dims as number[];
-        const data = out.data as Float32Array;
-        return Array.from({ length: n }, (_, i) => data.slice(i * dim, (i + 1) * dim));
+        const result: Float32Array[] = new Array(input.length);
+        for (const group of paddedGroups(input)) {
+          const out = await extractor(group.map((i) => input[i]), { pooling: isBge ? "cls" : "mean", normalize: true });
+          const dim = (out.dims as number[])[1];
+          const data = out.data as Float32Array;
+          group.forEach((at, i) => { result[at] = data.slice(i * dim, (i + 1) * dim); });
+        }
+        return result;
       },
     };
   } catch (error) {
@@ -64,6 +70,23 @@ async function getEmbedder(app: App): Promise<Embedder | null> {
     embedder = null;
   }
   return embedder;
+}
+
+/**
+ * A batch is padded to its longest text, and attention memory grows with the square of that
+ * length: run texts of similar length together, and fewer of them when they are long.
+ */
+const PADDED_CHARS = 16_000;
+export function paddedGroups(texts: string[]): number[][] {
+  const order = texts.map((t, i) => ({ i, n: t.length })).sort((a, b) => a.n - b.n);
+  const groups: number[][] = [];
+  let cur: number[] = [];
+  for (const { i, n } of order) {
+    if (cur.length && (cur.length + 1) * Math.max(n, 1) > PADDED_CHARS) { groups.push(cur); cur = []; }
+    cur.push(i);
+  }
+  if (cur.length) groups.push(cur);
+  return groups;
 }
 
 function normalize(v: Float32Array) {

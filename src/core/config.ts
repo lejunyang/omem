@@ -245,6 +245,8 @@ export const configSchema = z.object({
       family: z.enum(["bge-zh", "bge-m3", "bge", "other"]).optional(),
       url: z.string().optional(),
       apiKeyEnv: z.string().default("OPENAI_API_KEY"),
+      /** local: keep onnxruntime's CPU memory arena (faster; holds the peak of the largest batch). false gives it back after each batch. */
+      memArena: z.boolean().optional(),
     })
     .default({ provider: "none", model: "Xenova/bge-small-zh-v1.5", apiKeyEnv: "OPENAI_API_KEY" }),
   documents: z

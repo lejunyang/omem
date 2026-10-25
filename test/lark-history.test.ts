@@ -151,6 +151,33 @@ describe("remote-evidence history traversal",()=>{
     expect(historyScan(app,"oc_history")!.token).toBe(token); // a failed page keeps its place
   });
 
+  it("gives up on chats it may not read, backs off on other failures, and tries again when asked",async()=>{
+    const {app,input}=setup();
+    requestBackfill(app,"oc_left",0);
+    setLarkCliForTests(async args=>{
+      const id=args[args.indexOf("--chat-id")+1];
+      if(id==="oc_left") throw new Error("飞书 CLI：api unknown 230002 Bot/User can NOT be out of the chat.");
+      throw new Error("Unexpected end of JSON input");
+    });
+    expect(await backfillTick(app)).toMatchObject({pages:1});
+    expect(await backfillTick(app)).toMatchObject({pages:1,left:0}); // both tried once; nothing is due now
+    expect(historyScan(app,"oc_left")).toMatchObject({failures:1,gaveUp:expect.stringContaining("230002")});
+    const waiting=historyScan(app,"oc_history")!;
+    expect(waiting.failures).toBe(1);
+    expect(waiting.retryAt!-waiting.attemptedAt).toBeGreaterThanOrEqual(30_000);
+    expect(await backfillTick(app)).toMatchObject({pages:0,left:0});
+    const { backfillOverview } = await import("../src/channels/lark-personal.ts");
+    expect(backfillOverview(app)).toMatchObject({waitingRetry:1,gaveUp:[{chatId:"oc_left"}]});
+    // Rate limits are the loop's backoff, not the chat's.
+    requestBackfill(app,"oc_history",0);
+    setLarkCliForTests(async()=>{throw new Error("HTTP 429 Too Many Requests");});
+    await expect(historyPage(app,input)).rejects.toThrow("429");
+    expect(historyScan(app,"oc_history")!.retryAt).toBeUndefined();
+    // Asking again clears the give-up.
+    requestBackfill(app,"oc_left",0);
+    expect(historyScan(app,"oc_left")?.gaveUp).toBeUndefined();
+  });
+
   it("lets the assistant set the pace and reports overall progress",async()=>{
     const {app}=setup();
     const { callTool } = await import("../src/agents/tools.ts");

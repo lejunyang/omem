@@ -1,5 +1,5 @@
 import { captureSpace as chatSpace } from "../core/capture-space.ts";
-import { historyScan, resetHistoryScan, historyPage } from "./lark-history.ts";
+import { historyDue, historyScan, resetHistoryScan, historyPage, RATE_LIMITED, retryHistoryNow } from "./lark-history.ts";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -402,6 +402,7 @@ export function requestBackfill(app: App, chatId: string, days: number, ingest =
       ingest ? 1 : 0,
     );
   else {
+    retryHistoryNow(app, chatId);
     const active = historyScan(app, chatId);
     if (active && active.phase !== "done" && active.target <= target) {
       if (ingest) run(app.db, "update lark_cursors set backfill_ingest=1 where chat_id=?", chatId);
@@ -428,17 +429,21 @@ export function backfillStatus(app: App, chatId: string) {
   };
 }
 
-/** Chats whose requested history is not yet exhausted, least recently attempted first (failures included, so one bad chat cannot starve the rest). */
-function pendingBackfill(app: App) {
+/**
+ * Chats whose requested history is not yet exhausted, least recently attempted first (failures
+ * included, so one bad chat cannot starve the rest). `due` leaves out chats waiting out a backoff
+ * and those given up on (no longer a member, no permission).
+ */
+function pendingBackfill(app: App, due = false) {
   const rows = all<{ chat_id: string; name: string; backfill_to_ms: number; backfill_ingest: number }>(app.db,
     "select chat_id,name,backfill_to_ms,backfill_ingest from lark_cursors where chat_id not like 'thread:%' and backfill_to_ms is not null");
   return rows
     .map((c) => ({ ...c, scan: historyScan(app, c.chat_id) }))
     .filter((c) => !(c.scan?.phase === "done" && c.scan.evidence === "remote-exhausted" && c.scan.target === c.backfill_to_ms))
+    .filter((c) => !due || historyDue(c.scan?.target === c.backfill_to_ms ? c.scan : undefined))
     .sort((a, b) => (a.scan?.attemptedAt ?? 0) - (b.scan?.attemptedAt ?? 0));
 }
 
-const RATE_LIMITED = /(^|\D)429(\D|$)|rate.?limit|too many requests|frequency|频率|限流|99991400/i;
 
 /**
  * One round of history: the next page of up to `concurrency` chats, in parallel, into monthly
@@ -446,7 +451,7 @@ const RATE_LIMITED = /(^|\D)429(\D|$)|rate.?limit|too many requests|frequency|�
  */
 export async function backfillTick(app: App, owner?: string) {
   const b = app.config.lark.capture.backfill;
-  const batch = pendingBackfill(app).slice(0, b.concurrency);
+  const batch = pendingBackfill(app, true).slice(0, b.concurrency);
   let rateLimited = false;
   const touched = new Map<string, Set<string>>();
   await Promise.all(batch.map(async (c) => {
@@ -463,7 +468,8 @@ export async function backfillTick(app: App, owner?: string) {
     }
   }));
   for (const [spaceId, ids] of touched) scheduleIngest(app, spaceId, [...ids], "飞书历史回溯完成");
-  return { pages: batch.length, rateLimited, left: pendingBackfill(app).length };
+  // Only chats that may be tried now keep the loop going; the 10-minute poll restarts it for the rest.
+  return { pages: batch.length, rateLimited, left: pendingBackfill(app, true).length };
 }
 
 let backfilling: Promise<void> | null = null;
@@ -497,14 +503,17 @@ export function backfillOverview(app: App) {
   const b = app.config.lark.capture.backfill;
   const requested = one<{ n: number }>(app.db, "select count(*) n from lark_cursors where chat_id not like 'thread:%' and backfill_to_ms is not null")!.n;
   const pending = pendingBackfill(app);
-  const failing = pending.filter((c) => c.scan?.error).length;
+  const gaveUp = pending.filter((c) => c.scan?.gaveUp);
+  const failing = pending.filter((c) => c.scan?.error && !c.scan.gaveUp).length;
   const started = pending.filter((c) => c.scan?.attemptedAt).length;
   return {
     requested,
     done: requested - pending.length,
-    inProgress: started - failing,
+    inProgress: started - failing - gaveUp.length,
     notStarted: pending.length - started,
     failing,
+    waitingRetry: pending.filter((c) => c.scan && !c.scan.gaveUp && !historyDue(c.scan)).length,
+    gaveUp: gaveUp.map((c) => ({ chatId: c.chat_id, name: c.name, reason: c.scan!.gaveUp! })),
     pagesPerMinute: b.pagesPerMinute,
     concurrency: b.concurrency,
     running: !!backfilling,

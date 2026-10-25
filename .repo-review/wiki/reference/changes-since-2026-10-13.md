@@ -521,3 +521,9 @@ updated: 2026-10-25
 - 评审角色：`review-style` 从“只报明确约定”扩展到通用代码质量（重复造轮子、为封装而封装、模块划分、命名、注释里的中间指令）；`reviewer`、`review-business`、`review-arch`、`review-history` 加常见漏项和迁移类改动的对照要求。
 - 分支评审的可读范围：`CodeInput.readSpaces`（`review_branch` 的 `read_spaces`、`POST /api/review-branch` 的 `readSpaces`、`omem review-branch --read`），加进编码与评审运行的空间范围；需求文档在个人空间、迁移要对照源仓库时用。接口按发起人可访问的空间校验。
 - 评审档位条件新增 `change.codeLines`（有效代码改动行数）：`reviewMetrics` 按 `isSourceFile`（`src/sources/chunk.ts`，源代码扩展名，排除 `.min.js`）只累计源代码文件的增删行；档位理由和负责人估计里同时写出总行数和有效代码行数。默认档位不变，可在 Agent 页 → 评审 改用它。
+
+## 内存观察、本地向量分批、回溯失败退避（10-25）
+
+- `src/core/memory-watch.ts`：每 10 分钟记一次进程内存（RSS、V8 堆、external、ArrayBuffer），保留两天；`diag` 的 `memory` 给出当前细分、向量缓存大小和抽样历史，以及前后四分之一时段 V8 堆的最低值（持续上升才是泄漏；本地向量模型的内存池和向量矩阵是涨到峰值后持平）。
+- 本地向量模型：一批里的文本按长度排序、按“条数 × 最长文本 ≤ 1.6 万字”分组再送入模型（整批按最长的补齐，注意力内存随长度平方增长），结果顺序不变；`embeddings.memArena: false` 关闭 onnxruntime 的 CPU 内存池（默认保持，速度优先）。
+- 飞书历史回溯：每个会话记连续失败次数，失败后按 30 秒翻倍、最长 1 小时等待再试（`retryAt`）；本人不在群里、没有权限（230002 等）记为 `gaveUp`，不再重试；同一页失败 3 次后不再要求附件下载齐全，先保存消息继续翻页（缺的附件之后用 `lark fill-files` 补）。限流仍由整个回溯循环退避，不算会话的失败。本人重新回溯某个会话时清掉放弃和等待。`backfillOverview` 加 `waitingRetry`、`gaveUp`，`set_lark_backfill` 的进度里列出。以前只剩失败的会话时，回溯循环每十几秒重试一次、永不停止。

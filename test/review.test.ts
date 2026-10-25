@@ -66,7 +66,7 @@ describe("review tiers and checks", () => {
     const lockHeavy = metrics({ "change.lines": 5000, "change.codeLines": 40 });
     expect(matchesReview({ field: "change.codeLines", op: "gte", value: 600 }, lockHeavy)).toBe(false);
     expect(matchesReview({ field: "change.lines", op: "gte", value: 600 }, lockHeavy)).toBe(true);
-    for (const f of ["src/a.ts", "web/App.vue", "svc/main.go", "app/x.py"]) expect(isSourceFile(f)).toBe(true);
+    for (const f of ["src/a.ts", "web/App.vue", "svc/main.go", "app/x.py", "src/admin.js"]) expect(isSourceFile(f)).toBe(true);
     for (const f of ["pnpm-lock.yaml", "package.json", "README.md", "mock/list.normal.json", "a.scss", "dist/app.min.js"]) expect(isSourceFile(f)).toBe(false);
     const tiers = [{ id: "big", name: "大", when: { field: "change.lines", op: "gte", value: 100 }, checks: ["reviewer"], maxRounds: 2 }, { id: "rest", name: "其余", when: null, checks: ["reviewer"], maxRounds: 3 }];
     expect(validateReviewSettings(app, { tiers, checks: {} }).tiers).toHaveLength(2);
