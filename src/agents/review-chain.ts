@@ -88,7 +88,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   ].filter(Boolean).join("\n\n");
 
   // Each check is its own session with read-only tools; one failing does not stop the others.
-  const outcomes = await Promise.allSettled(plan.checks.map(async (name) => {
+  const runCheck = async (name: string) => {
     const info = infos.get(name)!;
     const res = await runRole(app, {
       role: (info.builtin ? name : "reviewer") as RoleName,
@@ -112,9 +112,24 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
       recordReview(app, { codeRunId: run.id, round, check: name, tier: plan.tier, verdict: ok ? "approved" : "changes_requested", summary: truncate(text, 4000), findings: [], ai: res.ai });
     }
     return { name, text, ai: res.ai, profileId: res.profileId };
-  }));
+  };
+  const outcomes = await Promise.allSettled(plan.checks.map(runCheck));
+  // A review is worth a second try (a stalled backend, a dropped connection); what fails again goes
+  // to the owner, who decides whether to try once more.
+  const retry = plan.checks.flatMap((name, i) => (outcomes[i].status === "rejected" ? [i] : []));
+  if (retry.length && !rc.signal.aborted) {
+    rc.event("status", { text: `${retry.map((i) => label(plan.checks[i])).join("、")}没有完成，${REVIEW_RETRY_DELAY_MS / 1000} 秒后自动重试一次` });
+    await new Promise((ok) => { const t = setTimeout(ok, REVIEW_RETRY_DELAY_MS); rc.signal.addEventListener("abort", () => { clearTimeout(t); ok(null); }, { once: true }); });
+    if (rc.signal.aborted) throw new Error("CANCELLED");
+    const again = await Promise.allSettled(retry.map((i) => runCheck(plan.checks[i])));
+    retry.forEach((i, k) => { outcomes[i] = again[k]; });
+  }
   const failed = outcomes.flatMap((o, i) => (o.status === "rejected" ? [{ name: plan.checks[i], error: (o.reason as Error).message }] : []));
-  if (failed.length === outcomes.length) throw new Error(`评审没有完成：${failed.map((f) => `${label(f.name)}：${f.error}`).join("；")}`);
+  if (failed.length && !rc.signal.aborted) {
+    const ask = askRetry(app, run, chainOf(app, run), failed.map((f) => ({ check: label(f.name), error: f.error })), failed.length === outcomes.length);
+    setRunOutput(app, run.id, { reviewAskId: ask.id });
+  }
+  if (failed.length === outcomes.length) throw new Error(`评审没有完成（已自动重试一次，是否再试已发给本人）：${failed.map((f) => `${label(f.name)}：${f.error}`).join("；")}`);
   for (const f of failed) recordReview(app, { codeRunId: run.id, round, check: f.name, tier: plan.tier, verdict: "failed", summary: f.error, findings: [] });
   const done = outcomes.flatMap((o) => (o.status === "fulfilled" ? [o.value] : []));
   const single = plan.checks.length === 1 && done.length === 1;
@@ -274,6 +289,34 @@ export function askPlan(app: App, run: Run, chain: CodeChain | null, plan: Revie
   });
 }
 
+/** How long a failed review check waits before its automatic second try. */
+export let REVIEW_RETRY_DELAY_MS = 30_000;
+export function setReviewRetryDelayForTests(ms: number) {
+  REVIEW_RETRY_DELAY_MS = ms;
+}
+
+/** Checks that failed twice: the owner decides whether to run the review again. */
+function askRetry(app: App, run: Run, chain: CodeChain | null, failed: { check: string; error: string }[], all: boolean) {
+  return createAsk(app, {
+    runId: run.id,
+    conversationId: chain?.conversationId ?? null,
+    question: [
+      `「${truncate(run.title, 40)}」的评审${all ? "没有完成" : `有 ${failed.length} 项没有完成，其余已出结论`}，自动重试一次后仍然失败：`,
+      failed.map((f) => `- ${f.check}：${truncate(f.error, 160)}`).join("\n"),
+      "要再评审一次吗？（会重新跑这一轮的全部评审项）",
+    ].join("\n"),
+    options: [{ label: "重试评审" }, { label: "不用了" }],
+    context: { handler: "review-retry", codeRunId: run.id },
+  });
+}
+
+async function onRetryAnswer(app: App, ask: Ask, ctx: { codeRunId: string }) {
+  if (ask.choice !== 0 && !(ask.choice === null && ask.answer)) return;
+  const run = getRun(app, ctx.codeRunId);
+  setRunOutput(app, run.id, { verdict: null, reviewStage: "queued" });
+  createRun(app, { kind: "review", spaceId: run.spaceId, title: `重新评审：${truncate(run.title, 60)}`, input: { codeRunId: run.id, note: ask.choice === null ? ask.answer ?? undefined : undefined }, parentId: run.id });
+}
+
 function escalate(app: App, run: Run, chain: CodeChain, lead: LeadResult) {
   const options = [
     ...(lead.changeRequest ? [{ label: "按修改单再改一轮" }] : []),
@@ -329,6 +372,7 @@ async function onEscalationAnswer(app: App, ask: Ask, ctx: { codeRunId: string; 
 }
 
 registerAskHandler("review-plan", (app, ask, ctx) => onPlanAnswer(app, ask, ctx as { codeRunId: string; tiers: string[] }));
+registerAskHandler("review-retry", (app, ask, ctx) => onRetryAnswer(app, ask, ctx as { codeRunId: string }));
 registerAskHandler("review-escalation", (app, ask, ctx) => onEscalationAnswer(app, ask, ctx as { codeRunId: string; labels: string[] }));
 
 // A confirmed plan reviews in a run of its own; the coding run it reviews keeps the results.

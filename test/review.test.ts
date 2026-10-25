@@ -9,8 +9,10 @@ import { __testHandlers, addRunEvent, createRun, getRun, setRunOutput } from "..
 import { saveAgentSpec } from "../src/agents/specs.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { codeChainFor, type CodeChain } from "../src/agents/code-chain.ts";
+import { setReviewRetryDelayForTests } from "../src/agents/review-chain.ts";
+import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { createSpace } from "../src/core/spaces.ts";
-import { run } from "../src/core/db.ts";
+import { all, run } from "../src/core/db.ts";
 import { startServer } from "../src/server/http.ts";
 import { isSourceFile } from "../src/sources/chunk.ts";
 import { testApp } from "./helpers.ts";
@@ -125,6 +127,51 @@ describe("review tiers and checks", () => {
       expect(next.input.task).not.toContain("命名可以更具体");
       expect((getRun(app, ask.id).output.codeChain as CodeChain).maxRounds).toBe(2);
     } finally {
+      await server.close();
+      app.db.close();
+    }
+  }, 120000);
+
+  it("retries a failed check once, then asks the owner whether to review again", async () => {
+    setReviewRetryDelayForTests(0);
+    const app = testApp();
+    app.config.agents.profiles.push({ id: "fake", name: "fake", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_MODE: "review" }, idleTimeoutMs: 60000 });
+    app.config.agents.profiles.push({ id: "broken", name: "broken", transport: "acp", command: "omem-no-such-agent", args: [], env: {}, idleTimeoutMs: 60000 });
+    app.config.agents.default = "fake";
+    const dir = mkdtempSync(join(tmpdir(), "omem-review-retry-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" } });
+    git("init", "-q");
+    writeFileSync(join(dir, "refund.ts"), "export const refund = 0;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "init");
+    createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
+    saveAgentSpec(app, { name: "flaky-review", description: "总是连不上", prompt: "评审", tools: ["search"], writes: false, agent: "broken" }, "user");
+    app.config.review = {
+      tiers: [{ id: "light", name: "轻", guide: "", when: null, checks: ["reviewer", "flaky-review"], maxRounds: 1, lead: false, confirmPlan: false }],
+      rereviewAllEvery: 2,
+      checks: { "flaky-review": { label: "不稳定", blocks: "major", guide: "", when: null } },
+    };
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const r = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款金额", input: { task: "按已发货行计算退款金额", repos: ["shop-api"] } });
+      run(app.db, "update runs set status = 'running' where id = ?", r.id);
+      const statuses: string[] = [];
+      await __testHandlers.get("code")!({
+        app, run: getRun(app, r.id), signal: new AbortController().signal,
+        event: (type, data) => { addRunEvent(app, r.id, type, data); if (type === "status") statuses.push((data as { text: string }).text); },
+        output: (data) => setRunOutput(app, r.id, data),
+      });
+      expect(statuses.some((t) => t.includes("不稳定没有完成") && t.includes("自动重试一次"))).toBe(true);
+      // The other check still reported; the failed one is recorded and the owner is asked.
+      expect(reviewsOf(app, [r.id]).map((x) => [x.check_name, x.verdict]).sort()).toEqual([["flaky-review", "failed"], ["reviewer", "approved"]]);
+      const asked = listAsks(app, { status: "pending", userId: "owner", limit: 10 }).find((a) => a.runId === r.id)!;
+      expect(asked.question).toContain("自动重试一次后仍然失败");
+      expect(getRun(app, r.id).output.reviewAskId).toBe(asked.id);
+      await answerAsk(app, asked.id, { choice: 0, by: "owner" });
+      const again = all<{ id: string; kind: string }>(app.db, "select id, kind from runs where parent_id = ? and kind = 'review'", r.id);
+      expect(again).toHaveLength(1);
+    } finally {
+      setReviewRetryDelayForTests(30_000);
       await server.close();
       app.db.close();
     }

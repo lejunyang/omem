@@ -161,5 +161,6 @@ export async function vectorSearch(app: App, query: string, spaces: string[] | u
   const e = await getEmbedder(app);
   if (!e) return [];
   const [q] = await e.embed([query], "query");
+  await vectorIndex().prepare(app, spaces);
   return vectorIndex().search(app, q, spaces, limit);
 }

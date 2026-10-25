@@ -97,10 +97,7 @@ export async function boot(home?: string, opts: BootOptions = {}) {
       setTimeout(loop, 3000).unref();
       // Load the vector matrices before the first question needs them.
       setTimeout(() => {
-        try {
-          const { vectorIndex } = require_vectors;
-          vectorIndex().search(app, new Float32Array(0), undefined, 1);
-        } catch {}
+        require_vectors.vectorIndex().prepare(app).catch(() => {});
       }, 1000).unref();
     }
     if (app.config.telegram.enabled) {

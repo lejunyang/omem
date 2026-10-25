@@ -118,19 +118,20 @@ describe("source archiving", () => {
     expect(getSource(app, upsertSource(app, material).id).spaceId).toBe("project-b");
   });
 
-  it("keeps IDs, citation rows, chunk positions and vectors when moving; reimports update the same original", () => {
+  it("keeps IDs, citation rows, chunk positions and vectors when moving; reimports update the same original", async () => {
     const app = setup();
     const s = upsertSource(app, material);
     const before = all<{ id: number; line_start: number; line_end: number }>(app.db, "select id,line_start,line_end from chunks where source_id=?", s.id);
     const vec = new Float32Array([1, 0]);
     run(app.db, "update chunks set embedding=? where source_id=?", Buffer.from(vec.buffer), s.id);
     run(app.db, "insert into page_cites(page_id,source_id,line_start,line_end,hash) values(?,?,?,?,?)", "personal/notes", s.id, 1, 1, getSource(app, s.id).hash);
+    await vectorIndex().prepare(app, ["personal", "project-a"]);
     expect(vectorIndex().search(app, vec, ["personal"], 5)).toHaveLength(before.length);
-    vectorIndex().search(app, vec, ["project-a"], 5);
     moveSource(app, s.id, "project-a", "本人确认归属");
     expect(sourceText(app, s.id)).toBe(material.text);
     expect(all(app.db, "select id,line_start,line_end from chunks where source_id=?", s.id)).toEqual(before);
     expect(one(app.db, "select source_id from page_cites where page_id='personal/notes'")).toMatchObject({ source_id: s.id });
+    await vectorIndex().prepare(app, ["personal", "project-a"]);
     expect(vectorIndex().search(app, vec, ["personal"], 5)).toHaveLength(0);
     expect(vectorIndex().search(app, vec, ["project-a"], 5)).toHaveLength(before.length);
     const updated = upsertSource(app, { ...material, text: "接口设计已更新" });
