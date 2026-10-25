@@ -2,13 +2,14 @@
 import { ref } from "vue";
 import Markdown from "./Markdown.vue";
 import { fmtTime } from "../store";
+import { refAction } from "../lib/refs";
 import { findingWhere, reviewAi, settled, severityCounts, SEV, type Reviews } from "../lib/reviews";
 
 /**
  * The run page's “评审” tab: each check of the chosen round in full (its conclusion as written, and
  * every problem it reported, including those review-lead set aside), then review-lead's ruling.
  */
-const props = defineProps<{ rv: Reviews }>();
+const props = defineProps<{ rv: Reviews; runId: string }>();
 const rv = props.rv;
 const current = rv.current;
 const VERDICT: Record<string, string> = { approved: "通过", changes_requested: "需要修改", failed: "没有完成" };
@@ -38,7 +39,7 @@ const toggle = (id: string) => { const n = new Set(open.value); n.has(id) ? n.de
             <span class="badge" :class="SEV[f.severity].cls">{{ SEV[f.severity].text }}</span>
             <span class="grow">
               <span class="ft">{{ f.title }}</span>
-              <span v-if="findingWhere(f)" class="mono loc"> {{ findingWhere(f) }}</span>
+              <a v-if="findingWhere(f)" href="#" class="mono loc" @click.prevent="refAction(findingWhere(f), runId)?.()"> {{ findingWhere(f) }}</a>
               <span v-if="STATE[f.state]" class="muted"> · 负责人{{ STATE[f.state] }}{{ f.triage_note ? `：${f.triage_note}` : "" }}</span>
             </span>
             <span class="muted">#{{ f.id }}</span>

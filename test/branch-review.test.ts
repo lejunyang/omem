@@ -202,6 +202,52 @@ describe("reviewing an existing branch", () => {
     }
   }, 120000);
 
+  it("the owner picks what to fix, sets some aside with a reason, and the fix codes on the branch", async () => {
+    fake();
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const { upsertItem, itemEvents } = await import("../src/items/store.ts");
+      const { materialsBrief } = await import("../src/items/materials.ts");
+      const { decisionsBrief, setFindingDecision, workRuns } = await import("../src/agents/review-fix.ts");
+      const { reviewsOf } = await import("../src/agents/review.ts");
+      const item = upsertItem(app, undefined, { spaceId: "personal", title: "退款需求（修改）", kind: "todo" }, "user");
+      const r = createBranchReview(app, { repos: ["shop-api"], branch: "feature/refund", task: "评审退款分支", fetch: false, itemId: item.id });
+      await exec(r);
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      const findings = reviewsOf(app, [r.id]).flatMap((x) => x.findings);
+      const major = findings.find((f) => f.severity === "major")!;
+      const nit = findings.find((f) => f.severity === "nit")!;
+      const minor = findings.find((f) => f.severity === "minor")!;
+
+      expect(() => setFindingDecision(app, r.id, nit.id, "wontfix")).toThrow(/理由/);
+      setFindingDecision(app, r.id, nit.id, "wontfix", "命名沿用源仓库，运营已确认");
+      // The reason is a business decision on the item, which later work reads.
+      expect(itemEvents(app, item.id).some((e) => e.kind === "decision" && e.text.includes("运营已确认"))).toBe(true);
+      expect(materialsBrief(app, item.id, "owner")).toContain("命名沿用源仓库");
+
+      const ctx: ToolContext = { app, runId: null, spaceId: "shop-api", spaces: null, tools: null, actor: "agent" };
+      const res = await callTool(ctx, "fix_review", { run_id: r.id, fix: [major.id], later: [minor.id], text: "另外：部分退款要记操作日志" });
+      expect(res.isError).toBeFalsy();
+      const fixRun = getRun(app, /运行 (r\w+)/.exec(res.text)![1]);
+      const input = fixRun.input as { task: string; fromBranches: Record<string, string>; itemId: string; fromReview: string };
+      expect(input).toMatchObject({ fromBranches: { "shop-api": "feature/refund" }, itemId: item.id, fromReview: r.id });
+      expect(input.task).toContain(major.title);
+      expect(input.task).toContain("部分退款要记操作日志");
+      const setAside = input.task.slice(input.task.indexOf("## 这次不改"));
+      expect(setAside).toContain("[不改] 命名可以更具体");
+      expect(setAside).toContain("[暂不改] 可以补一条测试");
+      // The fix's own reviews are told what was decided on the branch review.
+      expect(decisionsBrief(app, [...workRuns(app, fixRun.id), ...workRuns(app, input.fromReview)])).toMatch(/不改\] 命名可以更具体.*运营已确认/);
+      const read = await callTool(ctx, "read_run", { run_id: r.id });
+      expect(read.text).toContain(`#${major.id} [严重`);
+      expect(read.text).toMatch(/本人：要改/);
+      cancelRun(app, fixRun.id);
+      discardCodeRun(app, r.id);
+    } finally {
+      await server.close();
+    }
+  }, 120000);
+
   it("codes on top of a branch when asked (from_branch)", async () => {
     const tip = resolveRef(dir, "feature/refund")!.commit;
     const r = createRun(app, { kind: "code", spaceId: "shop-api", title: "按评审意见修改", input: { task: "按评审意见修改", repos: ["shop-api"], fromBranches: { "shop-api": "feature/refund" } } });

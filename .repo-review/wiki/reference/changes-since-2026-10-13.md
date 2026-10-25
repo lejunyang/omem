@@ -522,6 +522,13 @@ updated: 2026-10-25
 - 分支评审的可读范围：`CodeInput.readSpaces`（`review_branch` 的 `read_spaces`、`POST /api/review-branch` 的 `readSpaces`、`omem review-branch --read`），加进编码与评审运行的空间范围；需求文档在个人空间、迁移要对照源仓库时用。接口按发起人可访问的空间校验。
 - 评审档位条件新增 `change.codeLines`（有效代码改动行数）：`reviewMetrics` 按 `isSourceFile`（`src/sources/chunk.ts`，源代码扩展名，排除 `.min.js`）只累计源代码文件的增删行；档位理由和负责人估计里同时写出总行数和有效代码行数。默认档位不变，可在 Agent 页 → 评审 改用它。
 
+## 按评审修改、本人对问题的决定、引用打开代码和文档（10-26）
+
+- `src/agents/review-fix.ts`：`review_findings` 加 `decision`（fix / later / wontfix）和 `decision_note`。`setFindingDecision`：不改必须写理由，并在所属事项记一条 `decision` 事件（`materialsBrief` 列出“本人的业务决定”）。`decisionsBrief`：同一次工作各轮和 `fromReview` 指向的分支评审里暂不改、不改的问题，进评审任务，评审者不再提。`startFix`：选中的问题和本人补充的要求写成任务；交办编码续在原工作区（`queueNextCodeRound`），分支评审基于分支交办（`fromBranches`、`itemId`、`readSpaces`、`fromReview`，挂在发起评审的会话下）。
+- 工具 `fix_review`（`fix` / `later` / `wontfix` 带理由 / `text`）；`read_run` 列出最新一轮评审问题的编号、负责人裁决和本人决定。接口 `PUT /api/runs/:id/findings/:fid`、`POST /api/runs/:id/fix`。
+- 网页：概览的每个问题右侧“改 / 暂不改 / 不改”（默认负责人接受的和严重以上的要改），下面“按评审修改 / 再改一轮”框可写补充要求，开始后跳到新运行。
+- 引用：`/api/runs/:id/file` 不必指定空间（路径可带仓库空间前缀），分支评审清理工作区后读分支提交上的文件，找不到时到评审可读空间的已索引原件里找；引用抽屉新增 `file` 类型，`refAction(ref, runId)` 把 `路径:行` 变成链接（问题位置、依据、变更点位置）。文档类原件（飞书文档、Markdown）在引用抽屉里按排版显示、被引的行单独标出，可切回原文行号（`lib/sources.ts` 的 `readsAsDocument`）。
+
 ## 事项材料、运行页评审标签、运行记录查找（10-25）
 
 - `src/items/materials.ts`：表 `item_materials`（kind：source / conversation / repo / space / run，`ref`、`label`、`meta` 里有分支、基线、说明和加入时原件的 hash）。`addMaterials` 校验本人能看到、只能加自己的会话和运行；`materialViews` 给出可读、已删除、加入后有更新；`materialSpaces` 和 `materialsBrief` 给编码和评审用。

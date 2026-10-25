@@ -1094,7 +1094,7 @@ def({
   name: "read_run",
   description: "读取一次运行的结果：总结、检查输出、评审结论、diff 摘要和子运行状态（Wiki 规划完成后还须查看各页写作状态）。",
   schema: z.object({ run_id: z.string() }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     const r = getRun(ctx.app, a.run_id);
     if (r.spaceId) space(ctx, r.spaceId);
     const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
@@ -1109,7 +1109,17 @@ def({
     const delivery = (r.output.codeChain as { askRunId?: string } | undefined)?.askRunId;
     const progress = delivery ? getRun(ctx.app, delivery).output.codeProgress : undefined;
     const thinking = r.output.thinkingDelivery;
-    return `${progress ? `飞书进度投递：${JSON.stringify(progress)}\n` : ""}${thinking ? `思考气泡投递（独立于任务状态）：${JSON.stringify(thinking)}\n` : ""}运行 ${r.id} [${r.kind}/${r.status}] ${r.title}\n输出：${truncate(JSON.stringify(r.output, null, 1), 3000)}\n${r.error ? "错误：" + r.error + "\n" : ""}${childText}最后的说明：\n${truncate(text.slice(-3000), 3000)}`;
+    // A coding run's review findings by number, with review-lead's ruling and the owner's decision (for fix_review).
+    let findingText = "";
+    if (r.kind === "code") {
+      const { workRuns, DECISION_LABEL } = await import("./review-fix.ts");
+      const { reviewsOf, SEVERITY_LABEL } = await import("./review.ts");
+      const reviews = reviewsOf(ctx.app, workRuns(ctx.app, r.id));
+      const round = Math.max(0, ...reviews.map((x) => x.round));
+      const rows = reviews.filter((x) => x.round === round).flatMap((x) => x.findings.map((f) => `- #${f.id} [${SEVERITY_LABEL[f.severity]} · ${x.check_name}] ${f.title}${f.file_path ? ` — ${f.file_path}${f.line ? `:${f.line}` : ""}` : ""}${f.state !== "open" ? ` · 负责人：${f.state}` : ""}${f.decision ? ` · 本人：${DECISION_LABEL[f.decision]}${f.decision_note ? `（${f.decision_note}）` : ""}` : ""}`));
+      if (rows.length) findingText = `第 ${round} 轮评审的问题（fix_review 用这些编号）：\n${rows.join("\n")}\n`;
+    }
+    return `${progress ? `飞书进度投递：${JSON.stringify(progress)}\n` : ""}${thinking ? `思考气泡投递（独立于任务状态）：${JSON.stringify(thinking)}\n` : ""}运行 ${r.id} [${r.kind}/${r.status}] ${r.title}\n输出：${truncate(JSON.stringify(r.output, null, 1), 3000)}\n${r.error ? "错误：" + r.error + "\n" : ""}${findingText}${childText}最后的说明：\n${truncate(text.slice(-3000), 3000)}`;
   },
 });
 
@@ -2701,6 +2711,30 @@ def({
     const next = queueNextCodeRound(ctx.app, chain, a.task, { resumeSessionId: execution ? undefined : sessionId, manual: true, execution, reviewExecution });
     if (!next) throw new HttpError(409, "原交办记录不完整，无法继续；请查看 read_run");
     return `已在原交办会话安排第 ${next.chain.round} 轮 ${next.run.id}：同样的工作区和编码会话，完成后自动检查、评审并通知。`;
+  },
+});
+
+def({
+  name: "fix_review",
+  description:
+    "按评审结论开始修改（交办编码或分支评审都可以）：本人指定要改的问题编号（#编号，见 read_run 的评审问题），可同时把某些问题标成暂不改或不改（不改要写业务上的理由，之后的评审不再提），再加上本人补充的要求（需求变更、评审没发现的问题）。交办编码续在原工作区的下一轮；分支评审基于该分支交办编码，同属一个事项。只在本人明确要改时用。",
+  write: true,
+  schema: z.object({
+    run_id: z.string().describe("交办编码或分支评审的运行 id（任一轮）"),
+    fix: z.array(z.number().int()).optional().describe("要改的问题编号"),
+    later: z.array(z.number().int()).optional().describe("这次暂不改的问题编号"),
+    wontfix: z.array(z.object({ id: z.number().int(), reason: z.string().min(1).max(1000) })).optional().describe("不改的问题和本人给的理由"),
+    text: z.string().max(20000).optional().describe("本人补充的修改要求，原话为主"),
+  }),
+  handler: async (ctx, a) => {
+    const r = getRun(ctx.app, a.run_id);
+    for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
+    const { setFindingDecision, startFix } = await import("./review-fix.ts");
+    for (const id of a.later ?? []) setFindingDecision(ctx.app, r.id, id, "later");
+    for (const w of a.wontfix ?? []) setFindingDecision(ctx.app, r.id, w.id, "wontfix", w.reason);
+    if (!a.fix?.length && !a.text?.trim()) return `已记下：${(a.later ?? []).length} 个暂不改，${(a.wontfix ?? []).length} 个不改。没有要改的，没有开始修改。`;
+    const next = await startFix(ctx.app, r.id, { findingIds: a.fix ?? [], text: a.text }, ctx.userId ?? OWNER);
+    return `已开始修改，运行 ${next.id}（${next.title}）：改 ${(a.fix ?? []).length} 个问题${a.text?.trim() ? "和补充的要求" : ""}，暂不改 ${(a.later ?? []).length} 个，不改 ${(a.wontfix ?? []).length} 个。完成后会检查、评审并通知。`;
   },
 });
 

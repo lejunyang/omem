@@ -5,7 +5,9 @@ export type CitationTarget =
   | { kind: "source"; id?: string; uri?: string; space?: string; from?: number; to?: number; label?: string }
   | { kind: "memory"; id: string }
   | { kind: "message"; id: string }
-  | { kind: "page"; space: string; slug: string };
+  | { kind: "page"; space: string; slug: string }
+  /** A file a delegation or review names, read through the run (its worktree or branch). */
+  | { kind: "file"; runId: string; path: string; space?: string; from?: number; to?: number };
 
 function stored(key: string, fallback: string) {
   try {

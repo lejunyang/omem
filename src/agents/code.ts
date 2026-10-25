@@ -66,6 +66,8 @@ export type CodeInput = {
   readSpaces?: string[];
   /** The item this work is for: the coder and reviewers read its materials (src/items/materials.ts). */
   itemId?: string;
+  /** The branch review this fixes: its reviewers also respect what the owner decided there. */
+  fromReview?: string;
 };
 
 /** Whether a coding run reviews existing branches (no coding round, nothing to apply). */

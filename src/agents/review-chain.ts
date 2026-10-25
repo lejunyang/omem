@@ -55,7 +55,8 @@ const roundOf = (r: Run) => (r.input as { round?: number }).round ?? 1;
 
 export async function reviewRound(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string } = {}): Promise<{ verdict: string; continuedRunId?: string }> {
   const run = getRun(app, codeRunId);
-  const input = run.input as { task: string; reviewExecution?: import("./execution.ts").Execution; repos?: string[]; readSpaces?: string[]; itemId?: string };
+  const input = run.input as { task: string; reviewExecution?: import("./execution.ts").Execution; repos?: string[]; readSpaces?: string[]; itemId?: string; fromReview?: string };
+  const { decisionsBrief, workRuns } = await import("./review-fix.ts");
   const out = run.output as Out;
   const plan = out.reviewPlan;
   if (!plan) throw new HttpError(409, "这次交办还没有评审计划");
@@ -83,6 +84,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   const reviewTask = [
     `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${input.task}`,
     input.itemId ? materialsBrief(app, input.itemId, owner) : "",
+    decisionsBrief(app, [...workRuns(app, run.id), ...(input.fromReview ? workRuns(app, input.fromReview) : [])]),
     opts.note ? `## 本人确认评审计划时补充\n\n${opts.note}` : "",
     multi ? `## 涉及的仓库\n\n${worktrees.map((w) => `- ${w.space}：${w.path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
     `## ${branchReview ? "要评审的分支" : "编码 Agent 的说明"}\n\n${out.coderSummary ?? ""}`,

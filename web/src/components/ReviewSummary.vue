@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { post } from "../api";
+import { useRouter } from "vue-router";
+import { post, put } from "../api";
+import { promptDialog } from "../lib/dialog";
 import Markdown from "./Markdown.vue";
 import UiSegmented from "./UiSegmented.vue";
 import { relTime, toast } from "../store";
 import { refAction } from "../lib/refs";
-import { findingWhere, reviewAi, settled, severityCounts, SEV, type Finding, type Reviews } from "../lib/reviews";
+import { decisionOf, findingWhere, reviewAi, settled, severityCounts, SEV, type Decision, type Finding, type Reviews } from "../lib/reviews";
 
 /**
  * The run page's “概览” for a coding delegation or branch review: the verdict and review-lead's
  * summary, one line per check, the change request, and the problems to deal with. When the review
  * waits for the owner (a plan to confirm, or a stop) the decision is answered here.
  */
-const props = defineProps<{ rv: Reviews; reviewText?: string; branchReview?: boolean }>();
+const props = defineProps<{ rv: Reviews; runId: string; reviewText?: string; branchReview?: boolean; canFix?: boolean }>();
 const emit = defineEmits<{ ask: [context: { quote: string; label: string }]; go: [tab: "review" | "change"] }>();
 
 const STATE: Record<string, string> = { accepted: "要改", rejected: "已驳回", merged: "已合并" };
@@ -47,6 +49,48 @@ const changeOpen = ref(false);
 
 function askAbout(f: Finding & { check: string }) {
   emit("ask", { quote: [`[${SEV[f.severity].text}] ${f.title}`, findingWhere(f), f.detail, f.suggestion ? `建议：${f.suggestion}` : ""].filter(Boolean).join("\n"), label: `${rv.label(f.check)}评审的问题` });
+}
+
+// ---- what to fix: each finding's call, then the fix with the owner's own additions ------------
+const DECISIONS = [{ value: "fix" as const, label: "改" }, { value: "later" as const, label: "暂不改" }, { value: "wontfix" as const, label: "不改" }];
+const latestRound = computed(() => rv.round.value === (rv.data.value?.rounds.at(-1)?.round ?? rv.round.value));
+const deciding = computed(() => !!props.canFix && latestRound.value);
+async function decide(f: Finding, d: Decision) {
+  let note = "";
+  if (d === "wontfix") {
+    const why = await promptDialog("为什么不改？", { message: "写业务上的决定（如“运营确认存量工具不需要重新裁剪”）。会记到事项上，之后的评审不再提这个问题。", value: f.decision_note, placeholder: "理由", okText: "不改" });
+    if (!why?.trim()) return;
+    note = why.trim();
+  }
+  try {
+    await put(`/api/runs/${props.runId}/findings/${f.id}`, { decision: d, note });
+    for (const r of rv.reviews.value) for (const x of r.findings) if (x.id === f.id) Object.assign(x, { decision: d, decision_note: note });
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+const tally = computed(() => {
+  const t = { fix: 0, later: 0, wontfix: 0 };
+  for (const f of rv.findings.value) t[decisionOf(f)]++;
+  return t;
+});
+const extra = ref("");
+const starting = ref(false);
+const router = useRouter();
+async function startFix() {
+  const ids = rv.findings.value.filter((f) => decisionOf(f) === "fix").map((f) => f.id);
+  if (starting.value || (!ids.length && !extra.value.trim())) return;
+  starting.value = true;
+  try {
+    const r = await post<{ id: string }>(`/api/runs/${props.runId}/fix`, { findingIds: ids, text: extra.value.trim() || undefined });
+    extra.value = "";
+    toast(props.branchReview ? "已基于这个分支交办修改" : "已安排下一轮修改", "ok");
+    router.push(`/runs/${r.id}`);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    starting.value = false;
+  }
 }
 
 // ---- the owner's decision -------------------------------------------------------------------
@@ -133,18 +177,31 @@ async function answer(choice: number | null) {
           <span v-if="STATE[f.state]" class="badge" :class="{ warn: f.state === 'accepted' }">{{ STATE[f.state] }}</span>
           <span class="spacer" />
           <span class="muted small nowrap">{{ rv.label(f.check) }} · #{{ f.id }}</span>
+          <UiSegmented v-if="deciding" :model-value="decisionOf(f)" class="decide-f" size="sm" :options="DECISIONS" :aria-label="`#${f.id} 怎么处理`" @change="(d) => decide(f, d)" />
         </div>
+        <div v-if="f.decision === 'wontfix' && f.decision_note" class="small wontfix">不改：{{ f.decision_note }}</div>
         <div v-if="findingWhere(f) || f.triage_note || f.merged_into" class="line2 small">
-          <span v-if="findingWhere(f)" class="loc mono">{{ findingWhere(f) }}</span>
+          <a v-if="findingWhere(f)" href="#" class="loc mono" title="打开这段代码" @click.prevent="refAction(findingWhere(f), runId)?.()">{{ findingWhere(f) }}</a>
           <span v-if="f.triage_note || f.merged_into" class="muted">负责人：{{ f.merged_into ? `合并到 #${f.merged_into}` : "" }}{{ f.merged_into && f.triage_note ? "；" : "" }}{{ f.triage_note }}</span>
         </div>
         <div v-if="open.has(f.id)" class="more small">
           <p v-if="f.detail">{{ f.detail }}</p>
           <p v-if="f.suggestion"><strong>建议：</strong>{{ f.suggestion }}</p>
-          <p v-if="f.evidence.length" class="muted">依据：<template v-for="(e, i) in f.evidence" :key="i"><a v-if="refAction(e)" href="#" class="mono" @click.prevent="refAction(e)!()">{{ e }}</a><span v-else class="mono">{{ e }}</span>{{ i < f.evidence.length - 1 ? "、" : "" }}</template></p>
+          <p v-if="f.evidence.length" class="muted">依据：<template v-for="(e, i) in f.evidence" :key="i"><a v-if="refAction(e, runId)" href="#" class="mono" @click.prevent="refAction(e, runId)!()">{{ e }}</a><span v-else class="mono">{{ e }}</span>{{ i < f.evidence.length - 1 ? "、" : "" }}</template></p>
           <button class="btn ghost sm" @click="askAbout(f)">就这条提问</button>
         </div>
       </div>
+    </div>
+
+    <div v-if="deciding" class="card pad fix">
+      <div class="row wrap">
+        <div class="section-title flat">{{ branchReview ? "按评审修改这个分支" : "再改一轮" }}</div>
+        <span class="spacer" />
+        <span class="muted small">要改 {{ tally.fix }} · 暂不改 {{ tally.later }} · 不改 {{ tally.wontfix }}</span>
+      </div>
+      <p class="muted small">在上面每个问题右侧选“改 / 暂不改 / 不改”（不改要写理由，之后的评审不再提）。需求有变化、评审没发现的问题写在下面，一起交给编码 Agent。{{ branchReview ? "会基于这个分支的最新提交交办，改完照常检查和评审。" : "续在原来的工作区和编码会话里。" }}</p>
+      <textarea v-model="extra" class="textarea" rows="4" placeholder="补充要求（可选）：需求变化、要一起改的其他问题、实现上的约束" aria-label="补充要求" />
+      <div class="row"><span class="spacer" /><button class="btn primary sm" :disabled="starting || (!tally.fix && !extra.trim())" @click="startFix">开始修改{{ tally.fix ? `（${tally.fix} 个问题${extra.trim() ? " + 补充" : ""}）` : "" }}</button></div>
     </div>
   </section>
 </template>
@@ -186,6 +243,10 @@ async function answer(choice: number | null) {
 .more { background: var(--sunken); border-radius: 8px; padding: 8px 10px; display: grid; gap: 6px; }
 .more p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .more .btn { justify-self: start; }
+.decide-f { flex: none; }
+.wontfix { color: var(--ink-2); background: var(--sunken); border-radius: 6px; padding: 3px 8px; justify-self: start; }
+.fix { display: grid; gap: 8px; }
+.fix p { margin: 0; }
 @media (max-width: 760px) {
   .check-row { grid-template-columns: 10px 52px minmax(0, 1fr) auto; }
   .ai { display: none; }

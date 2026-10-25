@@ -99,7 +99,7 @@ export function queueNextCodeRound(
     if (!opts.manual && current.status !== "running" && current.status !== "done") return null;
     const last = one<{ space_id: string | null; input: string }>(app.db, "select space_id, input from runs where id = ?", chain.lastCodeRunId!);
     if (!last) return null;
-    const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; readSpaces?: string[]; itemId?: string };
+    const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; readSpaces?: string[]; itemId?: string; fromReview?: string };
     const next: CodeChain = { ...chain, round: chain.round + 1, awaitingUser: false, waitReason: undefined, rounds: [...chain.rounds] };
     const r = createRun(app, {
       kind: "code",
@@ -116,6 +116,7 @@ export function queueNextCodeRound(
         reviewChecks: input.reviewChecks,
         readSpaces: input.readSpaces,
         itemId: input.itemId,
+        fromReview: input.fromReview,
         // review-lead named the checks the fixes touch; the others are not re-run this round.
         ...(opts.reviewOnly?.length ? { reviewOnly: opts.reviewOnly } : {}),
         continueFrom: chain.rounds[0],

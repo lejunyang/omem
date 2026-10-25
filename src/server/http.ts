@@ -35,7 +35,7 @@ import { configSchema, saveConfig } from "../core/config.ts";
 import { listNotifications, markRead } from "../core/notify.ts";
 import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
 import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
-import { createSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
+import { createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { accessibleSpaces, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
@@ -900,19 +900,62 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     };
   });
   // A file of a delegation as it is now: the worktree while it exists, else the repository (after apply).
+  // The owner's call on a finding, and starting the fix (src/agents/review-fix.ts).
+  const ownRun = (req: FastifyRequest, id: string) => {
+    const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
+    if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
+  };
+  server.put("/api/runs/:id/findings/:fid", async (req) => {
+    const p = req.params as { id: string; fid: string };
+    ownRun(req, p.id);
+    const b = q(z.object({ decision: z.enum(["fix", "later", "wontfix"]).nullable(), note: z.string().max(2000).optional() }), req.body);
+    const { setFindingDecision } = await import("../agents/review-fix.ts");
+    return setFindingDecision(app, p.id, Number(p.fid), b.decision, b.note);
+  });
+  server.post("/api/runs/:id/fix", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const b = q(z.object({ findingIds: z.array(z.number().int()).max(200), text: z.string().max(20000).optional() }), req.body);
+    const { startFix } = await import("../agents/review-fix.ts");
+    return startFix(app, id, b, who(req));
+  });
+
+  // A file a delegation or review names (`space` optional; a path may start with the repository's
+  // space id): the worktree while it exists, a reviewed branch's tip after it is gone, else the
+  // repository; a path in another space the review read (a migration's source) comes from the index.
   server.get("/api/runs/:id/file", async (req) => {
-    const o = q(z.object({ space: z.string(), path: z.string().min(1).max(1000) }), req.query);
+    const o = q(z.object({ space: z.string().optional(), path: z.string().min(1).max(1000) }), req.query);
     const r = getRun(app, (req.params as { id: string }).id);
     if (r.kind !== "code") throw new HttpError(400, "只有编码交办有文件");
     const { worktreesOf } = await import("../agents/code.ts");
     const root = (r.output as { continueFrom?: string }).continueFrom ?? (r.input as { continueFrom?: string }).continueFrom ?? r.id;
-    const wt = worktreesOf(app, root).find((w) => w.space === o.space);
-    const base = wt && existsSync(wt.path) ? wt.path : getSpace(app, o.space).rootPath;
-    if (!base) throw new HttpError(404, "找不到这个仓库的目录");
-    const full = resolvePath(base, o.path);
-    if (!full.startsWith(resolvePath(base) + sep) || !existsSync(full) || statSync(full).isDirectory()) throw new HttpError(404, "文件不存在");
-    if (statSync(full).size > 2 * 1024 * 1024) throw new HttpError(413, "文件太大");
-    return { lines: readFileSync(full, "utf8").split(/\r?\n/), from: wt && existsSync(wt.path) ? "worktree" : "repo" };
+    const worktrees = worktreesOf(app, root);
+    const input = getRun(app, root).input as { repos?: string[]; readSpaces?: string[]; itemId?: string };
+    const repos = o.space ? [o.space] : [...new Set([...worktrees.map((w) => w.space), ...(input.repos ?? [])])];
+    const allowed = accessibleSpaces(app, who(req));
+    for (const space of repos) {
+      if (allowed && !allowed.includes(space)) continue;
+      const path = o.path.startsWith(`${space}/`) && !o.space ? o.path.slice(space.length + 1) : o.path;
+      const wt = worktrees.find((w) => w.space === space);
+      const base = wt && existsSync(wt.path) ? wt.path : findSpace(app, space)?.rootPath;
+      if (wt && !existsSync(wt.path) && wt.tip && base) {
+        const shown = git(base, ["show", `${wt.tip}:${path}`]);
+        if (shown.ok) return { lines: shown.stdout.split(/\r?\n/), from: "branch", space, path };
+      }
+      if (!base) continue;
+      const full = resolvePath(base, path);
+      if (!full.startsWith(resolvePath(base) + sep) || !existsSync(full) || statSync(full).isDirectory()) continue;
+      if (statSync(full).size > 2 * 1024 * 1024) throw new HttpError(413, "文件太大");
+      return { lines: readFileSync(full, "utf8").split(/\r?\n/), from: wt && existsSync(wt.path) ? "worktree" : "repo", space, path };
+    }
+    const { materialSpaces } = await import("../items/materials.ts");
+    const readable = [...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, who(req)) : [])].filter((s) => !allowed || allowed.includes(s));
+    for (const space of readable) {
+      const path = o.path.startsWith(`${space}/`) ? o.path.slice(space.length + 1) : o.path;
+      const s = one<{ id: string }>(app.db, "select id from sources where space_id = ? and uri = ? and deleted_at is null", space, path);
+      if (s) return { lines: readSource(app, s.id).text.split(/\r?\n/), from: "source", space, path, sourceId: s.id };
+    }
+    throw new HttpError(404, `找不到文件 ${o.path}`);
   });
 
   // ------------------------------------------------------------------ learning

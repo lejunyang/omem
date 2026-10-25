@@ -6,6 +6,7 @@ import ChatView from "../components/ChatView.vue";
 import CodeView from "../components/CodeView.vue";
 import Skeleton from "../components/Skeleton.vue";
 import VirtualList from "../components/VirtualList.vue";
+import { readsAsDocument } from "../lib/sources";
 import UiSelect from "../components/UiSelect.vue";
 import Icon from "../components/Icon.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
@@ -249,7 +250,7 @@ async function backfill() {
     toast((e as Error).message, "error");
   }
 }
-const isMarkdown = computed(() => detail.value && /\.(md|markdown|mdx)$/i.test(detail.value.source.uri) || detail.value?.source.kind === "note" || detail.value?.source.kind === "web" || detail.value?.source.kind === "doc" || detail.value?.source.kind === "image" || detail.value?.source.kind === "conversation" || detail.value?.source.kind === "work");
+const isMarkdown = computed(() => !!detail.value && readsAsDocument(detail.value.source));
 const outline = computed(() => {
   if (!detail.value) return [];
   const o = detail.value.outline;

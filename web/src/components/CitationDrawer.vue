@@ -6,6 +6,7 @@ import { fmtTime, memoryKindLabel, openCitation, state, statusLabel, type Citati
 import CodeView from "./CodeView.vue";
 import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
+import { readsAsDocument } from "../lib/sources";
 
 const router = useRouter();
 const top = computed<CitationTarget | undefined>(() => state.trail[state.trail.length - 1]);
@@ -15,13 +16,31 @@ const source = ref<any>(null);
 const memory = ref<{ memory: Memory; history: Memory[] } | null>(null);
 const message = ref<any>(null);
 const page = ref<any>(null);
+const file = ref<{ lines: string[]; from: string; space: string; path: string; sourceId?: string } | null>(null);
 const panel = ref<HTMLElement>();
+// A document (a Feishu doc, Markdown) reads laid out, the cited lines set off; code keeps line numbers.
+const raw = ref(false);
+const asDocument = computed(() => !!source.value && !raw.value && readsAsDocument(source.value.source));
+const docParts = computed(() => {
+  const s = source.value;
+  const t = top.value as { from?: number; to?: number } | undefined;
+  if (!s) return null;
+  const lines = String(s.text).split("\n");
+  const at = (n: number) => Math.min(lines.length, Math.max(0, n - s.lineStart));
+  if (!t?.from) return { before: s.text as string, cited: "", after: "" };
+  const a = at(t.from);
+  const b = at((t.to ?? t.from) + 1);
+  return { before: lines.slice(0, a).join("\n"), cited: lines.slice(a, b).join("\n"), after: lines.slice(b).join("\n") };
+});
+const citedEl = ref<HTMLElement>();
+watch(citedEl, (el) => el?.scrollIntoView({ block: "center" }));
 let opener: Element | null = null;
 
 async function load() {
   const t = top.value;
   error.value = "";
-  source.value = memory.value = message.value = page.value = null;
+  source.value = memory.value = message.value = page.value = file.value = null;
+  raw.value = false;
   if (!t) return;
   loading.value = true;
   try {
@@ -33,6 +52,7 @@ async function load() {
     } else if (t.kind === "memory") memory.value = await get(`/api/memories/${t.id}`);
     else if (t.kind === "message") message.value = await get(`/api/messages/${t.id}`);
     else if (t.kind === "page") page.value = await get(`/api/wiki/${t.space}/page/${t.slug}`);
+    else if (t.kind === "file") file.value = await get(`/api/runs/${t.runId}/file?path=${encodeURIComponent(t.path)}${t.space ? `&space=${encodeURIComponent(t.space)}` : ""}`);
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -91,6 +111,7 @@ const title = computed(() => {
   if (t.kind === "source") return source.value?.source.uri ?? t.uri ?? "原件";
   if (t.kind === "memory") return "记忆";
   if (t.kind === "message") return "对话消息";
+  if (t.kind === "file") return t.path;
   return page.value?.meta.title ?? t.slug;
 });
 </script>
@@ -113,11 +134,18 @@ const title = computed(() => {
             <span class="badge">{{ source.source.kind }}</span>
             <span class="badge">{{ source.source.spaceId }}</span>
             <span class="muted small">更新于 {{ fmtTime(source.source.updatedAt) }} · 共 {{ source.source.lines }} 行</span>
+            <span class="spacer" />
+            <button v-if="readsAsDocument(source.source)" class="btn ghost sm" @click="raw = !raw">{{ raw ? "排版视图" : "原文行号" }}</button>
           </div>
           <div v-if="source.source.deletedAt" class="err">这份原件已在 {{ fmtTime(source.source.deletedAt) }} 移除，引用的内容不再可用。</div>
           <template v-else>
             <button v-if="source.lineStart > 1" class="btn ghost sm more" @click="more('up')">向上展开</button>
-            <CodeView :text="source.text" :start="source.lineStart" :path="source.source.uri" :from="(top as any).from" :to="(top as any).to" wrap />
+            <div v-if="asDocument && docParts" class="doc">
+              <Markdown v-if="docParts.before.trim()" :source="docParts.before" :space="source.source.spaceId" />
+              <div v-if="docParts.cited.trim()" ref="citedEl" class="cited-lines"><Markdown :source="docParts.cited" :space="source.source.spaceId" /></div>
+              <Markdown v-if="docParts.after.trim()" :source="docParts.after" :space="source.source.spaceId" />
+            </div>
+            <CodeView v-else :text="source.text" :start="source.lineStart" :path="source.source.uri" :from="(top as any).from" :to="(top as any).to" wrap />
             <button v-if="source.lineEnd < source.source.lines" class="btn ghost sm more" @click="more('down')">向下展开</button>
             <div class="row actions">
               <button class="btn sm" @click="openFull"><Icon name="external" :size="15" />打开完整原件</button>
@@ -127,6 +155,14 @@ const title = computed(() => {
               <a v-for="p in source.citedBy" :key="p.page_id" href="#" class="li" @click.prevent="openCitation({ kind: 'page', space: p.page_id.split('/')[0], slug: p.page_id.split('/').slice(1).join('/') })">{{ p.title }}</a>
             </div>
           </template>
+        </template>
+
+        <template v-else-if="file">
+          <div class="meta row wrap">
+            <span class="badge">{{ file.space }}</span>
+            <span class="muted small">{{ { worktree: "评审 / 交办的工作区", branch: "分支上的版本", repo: "仓库当前检出", source: "已索引的原件" }[file.from] ?? file.from }} · 共 {{ file.lines.length }} 行</span>
+          </div>
+          <CodeView :text="file.lines.join('\n')" :start="1" :path="file.path" :from="(top as any).from" :to="(top as any).to ?? (top as any).from" />
         </template>
 
         <template v-else-if="memory">
@@ -214,6 +250,17 @@ header {
 }
 .more {
   justify-self: center;
+}
+.doc {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cited-lines {
+  background: var(--warn-soft);
+  border-left: 3px solid var(--warn);
+  border-radius: 0 8px 8px 0;
+  padding: 2px 12px;
+  margin: 6px 0;
 }
 .actions {
   margin-top: 4px;

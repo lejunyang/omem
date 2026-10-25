@@ -697,6 +697,9 @@ const migrations: string[] = [
      unique(item_id, kind, ref));
    create index item_materials_ref on item_materials(kind, ref);
    alter table reviews add column change_points text;`,
+  // The owner's call on each finding (src/agents/review-fix.ts): fix / later / wontfix and why.
+  `alter table review_findings add column decision text;
+   alter table review_findings add column decision_note text not null default '';`,
 ];
 
 export type Db = DatabaseSync;

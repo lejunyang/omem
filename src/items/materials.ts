@@ -141,9 +141,12 @@ export function materialsBrief(app: App, itemId: string, userId: string) {
     const ref = m.kind === "source" ? `src:${m.ref}` : m.kind === "repo" ? `仓库空间 ${m.meta.space}，分支 ${m.meta.branch ?? "当前检出"}${m.meta.base ? `，基线 ${m.meta.base}` : ""}` : m.kind === "space" ? `空间 ${m.ref}` : m.kind === "conversation" ? `会话 ${m.ref}` : `运行 ${m.ref}（${m.status ?? ""}）`;
     return `- [${KIND_LABEL[m.kind]}] ${m.title} — ${ref}${m.changed ? "（加入后有更新）" : ""}${m.meta.note ? `：${m.meta.note}` : ""}`;
   };
+  // The owner's business decisions on the item (a review finding not to change, and why).
+  const decisions = all<{ text: string; at: string }>(app.db, "select text, at from item_events where item_id = ? and kind = 'decision' order by id", itemId);
   return [
     `## 所属事项：${item.title}（${item.id}）`,
     item.detail ? item.detail : "",
+    decisions.length ? `本人的业务决定（以这些为准）：\n${decisions.map((d) => `- ${d.at.slice(0, 10)} ${d.text}`).join("\n")}` : "",
     list.length ? `材料（用 read_source 读原件，search 限定到这些空间检索；“运行”是之前为这个事项做过的交办或评审，可用 read_run 看结论）：\n${list.map(line).join("\n")}` : "这个事项还没有材料。",
   ].filter(Boolean).join("\n\n");
 }

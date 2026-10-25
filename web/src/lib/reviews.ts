@@ -3,7 +3,11 @@ import { get } from "../api";
 
 /** The reviews of a coding delegation or branch review (GET /api/runs/:id/reviews), shared by the run page's tabs. */
 export type Severity = "blocker" | "major" | "minor" | "nit";
-export type Finding = { id: number; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string[]; confidence: string; state: string; merged_into: number | null; triage_note: string };
+export type Finding = { id: number; severity: Severity; file_path: string | null; line: number | null; title: string; detail: string; suggestion: string; evidence: string[]; confidence: string; state: string; merged_into: number | null; triage_note: string; decision: Decision | null; decision_note: string };
+/** The owner's call on a finding (src/agents/review-fix.ts). */
+export type Decision = "fix" | "later" | "wontfix";
+/** Without a call of the owner's: what review-lead accepted and the serious ones get fixed, the rest wait. */
+export const decisionOf = (f: Finding): Decision => f.decision ?? (f.state === "accepted" || (f.state === "open" && (f.severity === "blocker" || f.severity === "major")) ? "fix" : "later");
 export type ChangePoint = { id: string; title: string; status: "done" | "partial" | "missing" | "extra"; requirement: string; implementation: string; refs: string[]; locations: { file: string; start?: number; end?: number }[] };
 export type Review = { id: string; round: number; check_name: string; verdict: "approved" | "changes_requested" | "failed"; summary: string; profile_id: string | null; model: string | null; effort: string | null; created_at: string; findings: Finding[]; change_points: ChangePoint[] };
 export type Lead = { verdict: "approve" | "revise" | "escalate"; summary: string; changeRequest: string; rerun: string[]; by: "lead" | "host"; stop?: string; escalation?: { summary: string } };

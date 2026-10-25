@@ -17,7 +17,7 @@ import ReviewSummary from "../components/ReviewSummary.vue";
 import ReviewChecks from "../components/ReviewChecks.vue";
 import ChangeView from "../components/ChangeView.vue";
 import RunActivity from "../components/RunActivity.vue";
-import { fmtTime, relTime, runKindLabel, state, statusLabel, toast } from "../store";
+import { fmtTime, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 import { refAction } from "../lib/refs";
 import { findingWhere, POINT_STATUS, SEV, useReviews, type ChangePoint } from "../lib/reviews";
 
@@ -388,9 +388,9 @@ const kindOptions = computed(() => [
         <nav v-if="hasReview" class="tabs" role="tablist" aria-label="运行详情">
           <button v-for="t in tabs" :key="t.id" role="tab" class="tab" :class="{ on: tab === t.id }" :aria-selected="tab === t.id" @click="tab = t.id">{{ t.label }}</button>
         </nav>
-        <ReviewSummary v-if="hasReview && tab === 'overview'" :rv="rv" :review-text="out.review" :branch-review="branchReview" data-ask-label="评审" @ask="(c) => { explaining = null; asking = c; }" @go="(t) => (tab = t)" />
+        <ReviewSummary v-if="hasReview && tab === 'overview'" :rv="rv" :run-id="detail.run.id" :review-text="out.review" :branch-review="branchReview" :can-fix="detail.run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" data-ask-label="评审" @ask="(c) => { explaining = null; asking = c; }" @go="(t) => (tab = t)" />
         <ChangeView v-if="hasReview && tab === 'change'" :rv="rv" :run-id="detail.run.id" :diffs="diffs" @explain="explain" />
-        <ReviewChecks v-if="hasReview && tab === 'review'" :rv="rv" data-ask-label="评审" />
+        <ReviewChecks v-if="hasReview && tab === 'review'" :rv="rv" :run-id="detail.run.id" data-ask-label="评审" />
 
         <template v-if="!hasReview || tab === 'activity'">
         <section v-if="ctxInfo && (ctxInfo.conversation || ctxInfo.parent || ctxInfo.work)" class="card pad block ctx">
@@ -479,8 +479,8 @@ const kindOptions = computed(() => [
         <div class="row"><span class="badge" :class="POINT_STATUS[explaining.status].cls">{{ POINT_STATUS[explaining.status].text }}</span></div>
         <template v-if="explaining.requirement"><div class="ex-h">需求怎么说</div><Markdown :source="explaining.requirement" :space="detail.run.spaceId ?? undefined" /></template>
         <template v-if="explaining.implementation"><div class="ex-h">代码怎么做</div><Markdown :source="explaining.implementation" :space="detail.run.spaceId ?? undefined" /></template>
-        <template v-if="explaining.locations.length"><div class="ex-h">位置</div><div class="mono small locs"><span v-for="(l, i) in explaining.locations" :key="i">{{ l.file }}{{ l.start ? `:${l.start}${l.end && l.end !== l.start ? `-${l.end}` : ""}` : "" }}</span></div></template>
-        <template v-if="explaining.refs.length"><div class="ex-h">依据</div><div class="small"><template v-for="(r, i) in explaining.refs" :key="i"><a v-if="refAction(r)" href="#" class="mono" @click.prevent="refAction(r)!()">{{ r }}</a><span v-else class="mono">{{ r }}</span>{{ i < explaining.refs.length - 1 ? "、" : "" }}</template></div></template>
+        <template v-if="explaining.locations.length"><div class="ex-h">位置</div><div class="mono small locs"><a v-for="(l, i) in explaining.locations" :key="i" href="#" @click.prevent="openCitation({ kind: 'file', runId: detail.run.id, path: l.file, from: l.start, to: l.end ?? l.start }, true)">{{ l.file }}{{ l.start ? `:${l.start}${l.end && l.end !== l.start ? `-${l.end}` : ""}` : "" }}</a></div></template>
+        <template v-if="explaining.refs.length"><div class="ex-h">依据</div><div class="small"><template v-for="(r, i) in explaining.refs" :key="i"><a v-if="refAction(r, detail.run.id)" href="#" class="mono" @click.prevent="refAction(r, detail.run.id)!()">{{ r }}</a><span v-else class="mono">{{ r }}</span>{{ i < explaining.refs.length - 1 ? "、" : "" }}</template></div></template>
         <template v-if="pointFindings.length"><div class="ex-h">这些文件上的问题</div><div v-for="f in pointFindings" :key="f.id" class="small ex-f"><span class="badge" :class="SEV[f.severity].cls">{{ SEV[f.severity].text }}</span> {{ f.title }} <span class="mono muted">{{ findingWhere(f) }}</span></div></template>
       </div>
     </AskAboutRun>
