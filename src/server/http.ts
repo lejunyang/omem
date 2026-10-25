@@ -427,10 +427,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ok: true };
   });
   server.post("/api/review-branch", async (req) => {
-    const b = q(z.object({ space: z.string().optional(), repos: z.array(z.string()).min(1), branch: z.string().min(1), branches: z.record(z.string(), z.string()).optional(), base: z.string().optional(), task: z.string().optional(), title: z.string().optional(), fetch: z.boolean().optional(), reviewTier: z.string().optional() }), req.body);
+    const b = q(z.object({ space: z.string().optional(), repos: z.array(z.string()).min(1), branch: z.string().min(1), branches: z.record(z.string(), z.string()).optional(), base: z.string().optional(), task: z.string().optional(), title: z.string().optional(), fetch: z.boolean().optional(), reviewTier: z.string().optional(), readSpaces: z.array(z.string()).optional() }), req.body);
     const userId = who(req);
-    const allowed = scopeFor(app, userId, [...b.repos, ...(b.space ? [b.space] : [])]) ?? b.repos;
-    for (const id of [...b.repos, ...(b.space ? [b.space] : [])]) if (!allowed.includes(id)) throw new HttpError(403, `不能访问空间 ${id}`);
+    const wanted = [...b.repos, ...(b.space ? [b.space] : []), ...(b.readSpaces ?? [])];
+    const allowed = scopeFor(app, userId, wanted) ?? wanted;
+    for (const id of wanted) if (!allowed.includes(id)) throw new HttpError(403, `不能访问空间 ${id}`);
     return createBranchReview(app, b);
   });
 

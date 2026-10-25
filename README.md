@@ -180,7 +180,7 @@ omem wiki lint omem                         # 原件变化后修正受影响的�
 omem items / omem todo "交报销单" --remind 2026-10-19T09:00+09:00
 omem delegate omem "给 search 加按时间过滤" --check "pnpm test"
 omem delegate shop "订单页显示退款状态" --repos shop-web,shop-api   # 项目里几个仓库一起改
-omem review-branch shop-api feature/refund --task "只退未发货的行"   # 评审已有分支（--base、--repos、--tier、--no-fetch）
+omem review-branch shop-api feature/refund --task "只退未发货的行"   # 评审已有分支（--base、--repos、--tier、--read 评审者还要读的空间、--no-fetch）
 omem branches shop-api [--fetch] [--index <分支>] [--drop <分支>]   # 分支列表与按分支检索的索引
 omem digest proj --mode triage --title-contains 值班 --goal "…"     # 整理存量材料：分级 / 精读（--mode digest --agent <档案>）；--parallel 同时几批，--pace <任务> 调速度；不带参数看进度
 omem search --space shop-api --branch feature/refund "退款金额"     # 查分支上的代码

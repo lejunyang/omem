@@ -134,7 +134,7 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 
 **分支。** 仓库空间的索引只对应当前检出的工作区；其他分支用同样的临时空间叠在仓库上：
 
-- **评审已有分支**（`review_branch`、`POST /api/review-branch`、`omem review-branch`）：仍是一条 `code` 运行，输入带 `branches`（每个仓库的分支和基线，基线默认 origin 的默认分支）。每个仓库把分支 `--detach` 检出成 worktree，再 `reset --soft` 到它和基线的分叉点，于是分支自己的改动就是“暂存的改动”，diff、规模指标、改动索引、文件视图和评审链都不用改；没有编码这一步，评审项读到的“要评审的分支”是提交列表。评审只出意见：不续轮、不升级到本人决定、不能应用，清理工作区不动原分支。要按意见改，`delegate_code` 传 `from_branch`（`fromBranches`），worktree 从该分支最新提交开始，补丁相对该分支。
+- **评审已有分支**（`review_branch`、`POST /api/review-branch`、`omem review-branch`）：仍是一条 `code` 运行，输入带 `branches`（每个仓库的分支和基线，基线默认 origin 的默认分支）。每个仓库把分支 `--detach` 检出成 worktree，再 `reset --soft` 到它和基线的分叉点，于是分支自己的改动就是“暂存的改动”，diff、规模指标、改动索引、文件视图和评审链都不用改；没有编码这一步，评审项读到的“要评审的分支”是提交列表。评审只出意见：不续轮、不升级到本人决定、不能应用，清理工作区不动原分支。评审者默认只能读运行所在空间和这几个仓库；需求文档在别的空间、迁移需求要对照源仓库时，用 `read_spaces`（`readSpaces`，按发起人可访问的空间校验）把它们加进可读范围，编码交办同样认这个字段。要按意见改，`delegate_code` 传 `from_branch`（`fromBranches`），worktree 从该分支最新提交开始，补丁相对该分支。
 - **按分支检索**（`search` / `find_symbol` 的 `branch`、`/api/search?branch=`、`omem search --branch`）：`indexBranch` 用 `git show` 读分支相对基线新增和修改的文件（不检出），记下删除的文件，建分支索引空间 `br-<仓库>-<分支>`；分支或基线没动就不重读，仓库同步时更新，分支删了随清理删除。
 - **叠加规则**：检索的空间里同时有仓库和它的工作区 / 分支索引时，仓库里被改过或删掉的同名文件不出现（`shadowedFiles`），读到的就是分支上的样子；只在明确列出这些空间时生效，`space: "*"` 不隐藏。工作区和分支索引跟着仓库的读权限走：能读仓库就能读它们。
 

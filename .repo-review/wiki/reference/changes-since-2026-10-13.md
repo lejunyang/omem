@@ -519,3 +519,4 @@ updated: 2026-10-25
 - 存量整理：任务加 `parallel`、`batch`、`chars`；`queueNextBatch` 补足到 `parallel` 批，各批材料不重叠（查在途批次的 `sourceIds`），不再用 lane；精读批次在任务里附带行号的正文（默认 15 万字、最多 40 份），分级默认每批 150 份。`updateDigestJob` / `PUT /api/digest-jobs/:id` / `digest_sources action=pace` / `omem digest --pace` 调速度；`after` 等另一个任务做完再开始（那个任务完成时立即补排）；`countDigest` 把做过后被降档的材料算进已完成（以前精读降档后从总数和进度里消失）。
 - 接口 `GET /api/agents/load`；网页 设置 → Agent → 并行（`AiCapacity.vue`），整理弹窗可设同时几批、每批几份并调整进行中的任务。
 - 评审角色：`review-style` 从“只报明确约定”扩展到通用代码质量（重复造轮子、为封装而封装、模块划分、命名、注释里的中间指令）；`reviewer`、`review-business`、`review-arch`、`review-history` 加常见漏项和迁移类改动的对照要求。
+- 分支评审的可读范围：`CodeInput.readSpaces`（`review_branch` 的 `read_spaces`、`POST /api/review-branch` 的 `readSpaces`、`omem review-branch --read`），加进编码与评审运行的空间范围；需求文档在个人空间、迁移要对照源仓库时用。接口按发起人可访问的空间校验。

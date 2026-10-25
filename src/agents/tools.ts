@@ -2602,15 +2602,17 @@ def({
     review_tier: z.string().optional().describe("本人点名的评审档位（id 或名字，如“完整”）；不传按改动大小自动选"),
     review_checks: z.array(z.string()).optional().describe("本人要求额外加上的评审项（档案名）"),
     review_execution: executionSchema.optional().describe("功能评审 AI 的临时选择"),
+    read_spaces: z.array(z.string()).optional().describe("评审者还要读的空间：需求文档所在的空间、迁移需求的源仓库、相关案例所在的项目空间"),
   }),
   handler: async (ctx, a) => {
     await validateReviewChoice(ctx, a.review_tier, a.review_checks);
+    const readSpaces = (a.read_spaces ?? []).map((r) => space(ctx, r));
     const reviewExecution = validateExecution(ctx.app, a.review_execution);
     const ids = [...new Set(a.repo_spaces.map((r) => space(ctx, r)))];
     const { createBranchReview } = await import("./code.ts");
     const r = createBranchReview(ctx.app, {
       space: a.space ? space(ctx, a.space) : undefined, repos: ids, branch: a.branch, branches: a.branches, base: a.base, task: a.task, title: a.title, fetch: a.fetch,
-      reviewTier: a.review_tier, reviewChecks: a.review_checks, reviewExecution,
+      reviewTier: a.review_tier, reviewChecks: a.review_checks, reviewExecution, readSpaces,
     }, ctx.runId);
     // The chain carries the result back to this conversation (and the Feishu progress card).
     const { codeChainFor } = await import("./code-chain.ts");

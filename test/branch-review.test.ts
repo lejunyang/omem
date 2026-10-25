@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import "../src/agents/jobs.ts";
 import { applyCodeRun, codePatches, createBranchReview, discardCodeRun, worktreesOf } from "../src/agents/code.ts";
 import { codeChainFor } from "../src/agents/code-chain.ts";
-import { __testHandlers, addRunEvent, createRun, getRun, setRunOutput, type Run } from "../src/agents/runs.ts";
+import { __testHandlers, addRunEvent, cancelRun, createRun, getRun, setRunOutput, type Run } from "../src/agents/runs.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { branchIndexes, indexBranch, sweepWorktreeSpaces } from "../src/agents/worktree-index.ts";
@@ -82,6 +82,12 @@ describe("branches of a repository space", () => {
     const listed = await callTool(ctx, "list_branches", { space: "shop-api" });
     expect(listed.text).toContain("feature/refund");
     expect(listed.text).toContain("已建索引的分支");
+    // Spaces the reviewers also read (requirement docs, the source of a migration) are the caller's to give.
+    const queued = await callTool({ ...ctx, spaces: ["shop-api", "personal"] }, "review_branch", { repo_spaces: ["shop-api"], branch: "feature/refund", read_spaces: ["personal"], fetch: false });
+    const runId = queued.text.match(/运行 (\S+)（/)![1];
+    expect(getRun(app, runId).input.readSpaces).toEqual(["personal"]);
+    cancelRun(app, runId);
+    expect((await callTool(ctx, "review_branch", { repo_spaces: ["shop-api"], branch: "feature/refund", read_spaces: ["personal"], fetch: false })).isError).toBe(true);
   });
 
   it("follows the branch when it moves, and goes when the branch is deleted", async () => {

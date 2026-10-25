@@ -853,11 +853,12 @@ program
   .option("--repos <ids>", "分支所在的几个仓库空间，逗号分隔（默认就是 <space>；<space> 可以是项目空间）")
   .option("--task <text>", "需求说明和评审要求")
   .option("--tier <name>", "评审档位（id 或名字）")
+  .option("--read <ids>", "评审者还要读的空间，逗号分隔（需求文档、迁移的源仓库、案例所在的空间）")
   .option("--no-fetch", "不先从 origin 拉取")
   .action(async (sp: string, branch: string, o) => {
     const repos = o.repos ? String(o.repos).split(",").map((s) => s.trim()).filter(Boolean) : [sp];
     const { createBranchReview } = await import("./agents/code.ts");
-    const r = await runJob((app) => createBranchReview(app, { space: sp, repos, branch, base: o.base, task: o.task, reviewTier: o.tier, fetch: o.fetch }), { stream: false });
+    const r = await runJob((app) => createBranchReview(app, { space: sp, repos, branch, base: o.base, task: o.task, reviewTier: o.tier, fetch: o.fetch, readSpaces: o.read ? String(o.read).split(",").map((s) => s.trim()).filter(Boolean) : undefined }), { stream: false });
     const out = r.output as { diffStat?: string; review?: string; verdict?: string; reviewLead?: { summary?: string } };
     console.log(`${out.diffStat ?? ""}\n\n${out.review ?? ""}\n\n${out.reviewLead?.summary ? `负责人：${out.reviewLead.summary}\n` : ""}结论：${out.verdict ?? r.status}\n运行 id：${r.id}`);
   });

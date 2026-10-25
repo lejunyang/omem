@@ -54,7 +54,7 @@ const roundOf = (r: Run) => (r.input as { round?: number }).round ?? 1;
 
 export async function reviewRound(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string } = {}): Promise<{ verdict: string; continuedRunId?: string }> {
   const run = getRun(app, codeRunId);
-  const input = run.input as { task: string; reviewExecution?: import("./execution.ts").Execution; repos?: string[] };
+  const input = run.input as { task: string; reviewExecution?: import("./execution.ts").Execution; repos?: string[]; readSpaces?: string[] };
   const out = run.output as Out;
   const plan = out.reviewPlan;
   if (!plan) throw new HttpError(409, "这次交办还没有评审计划");
@@ -65,7 +65,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   const results = out.repos ?? [];
   const multi = results.length > 1;
   const cwd = multi ? join(app.runsDir, root, "work") : worktrees[0]?.path;
-  const spaces = [...new Set([run.spaceId!, ...results.map((r) => r.space)])];
+  const spaces = [...new Set([run.spaceId!, ...results.map((r) => r.space), ...(input.readSpaces ?? [])])];
   const indexed = out.indexedSpaces ?? [];
   const patches = codePatches(app, run.id);
   const diffs = patches.map((p) => (multi ? `### ${p.space}\n\n${fence("diff", p.patch)}` : fence("diff", p.patch)));

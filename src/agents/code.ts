@@ -59,6 +59,8 @@ export type CodeInput = {
   fetch?: boolean;
   /** Code on top of an existing branch (by repository space) instead of the checked-out HEAD. */
   fromBranches?: Record<string, string>;
+  /** More spaces the coder and reviewers may read: requirement docs, the source of a migration, past cases. */
+  readSpaces?: string[];
 };
 
 /** Whether a coding run reviews existing branches (no coding round, nothing to apply). */
@@ -74,6 +76,8 @@ export type BranchReviewRequest = {
   task?: string;
   title?: string;
   fetch?: boolean;
+  /** Spaces the reviewers may read besides the repositories (already checked against the caller's access). */
+  readSpaces?: string[];
 } & Pick<CodeInput, "reviewTier" | "reviewChecks" | "reviewExecution">;
 
 /** Queue a review of existing branches: a `code` run without the coding round (runCodeTask). */
@@ -94,6 +98,7 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
       fetch: req.fetch !== false,
       reviewTier: req.reviewTier || undefined,
       reviewChecks: req.reviewChecks,
+      readSpaces: req.readSpaces?.length ? [...new Set(req.readSpaces)] : undefined,
     } satisfies CodeInput,
     parentId: parentId ?? undefined,
   });
@@ -193,7 +198,7 @@ export async function runCodeTask(ctx: RunContext) {
     : `${commandFor(repos[0]) ? `\n\n检查命令：${commandFor(repos[0])}` : ""}\n\n（工作目录是独立 worktree：${worktrees[0].path}）`;
   const cwd = multi ? workDir : worktrees[0].path;
   // The run's space may be a project; the agents read it and every repository (and their related spaces).
-  const spaces = [...new Set([run.spaceId!, ...repos.map((r) => r.id)])];
+  const spaces = [...new Set([run.spaceId!, ...repos.map((r) => r.id), ...(input.readSpaces ?? [])])];
   const coderTask = continueFrom
     ? `# 上一轮评审要求修改
 
