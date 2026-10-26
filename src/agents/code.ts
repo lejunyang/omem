@@ -1,7 +1,7 @@
 import { executionArgs, type Execution } from "./execution.ts";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
@@ -437,7 +437,9 @@ function applyTargets(app: App, runId: string): ApplyTarget[] {
     const listed = git(root, ["worktree", "list", "--porcelain", "-z"]);
     if (!listed.ok) throw new HttpError(409, `读取 ${p.space} 的分支工作区失败：${listed.stderr}`);
     const checkedOut = listed.stdout.split("\0\0").map(block => block.split("\0")).find(fields => fields.includes(`branch refs/heads/${target}`));
-    const path = checkedOut?.find(f => f.startsWith("worktree "))?.slice(9);
+    // Git lists paths with forward slashes on Windows; the native form is what the owner copies and compares.
+    const listedPath = checkedOut?.find(f => f.startsWith("worktree "))?.slice(9);
+    const path = listedPath ? resolve(listedPath) : undefined;
     if (path) {
       if (!existsSync(path)) throw new HttpError(409, `目标分支「${target}」的工作区不存在：${path}`);
       return { ...p, root, path, branch: target, create: false };

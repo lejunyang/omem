@@ -2,14 +2,17 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { get, post } from "../api";
 import DiffFile, { type DiffPoint } from "./DiffFile.vue";
+import DiffTree from "./DiffTree.vue";
 import UiSegmented from "./UiSegmented.vue";
+import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import { state, toast } from "../store";
 import { POINT_STATUS, type ChangePoint, type Reviews } from "../lib/reviews";
 
 /**
  * The run page's “变更” tab: the requirement's change points (from the business review) on the left,
- * the diff on the right. Choosing a point highlights its lines and scrolls to the first; the marks
- * next to line numbers lead back to the point. A point's explanation opens in the ask drawer.
+ * or the changed files as a tree, and the diff on the right. Choosing a point highlights its lines and
+ * scrolls its first mark into view; the marks next to line numbers lead back to the point. A point's
+ * explanation opens in the ask drawer.
  */
 type DiffRepo = { space: string; files: { name: string; lines: string[]; add: number; rm: number }[] };
 const props = defineProps<{ rv: Reviews; runId: string; diffs: DiffRepo[] }>();
@@ -55,13 +58,44 @@ async function choose(p: ChangePoint) {
   open.value = n;
   view.value = "code";
   await nextTick();
-  codeEl.value?.querySelector(".cp-on, .file.hit")?.scrollIntoView({ block: "center", behavior: "smooth" });
+  // The point's first marked line, a third of the way down (its number badge in sight); a point
+  // known only by file goes to that file's header.
+  const line = codeEl.value?.querySelector<HTMLElement>(".cp-on");
+  if (line) scrollToEl(line, 0.33);
+  else { const f = codeEl.value?.querySelector<HTMLElement>(".file.hit"); if (f) scrollToEl(f, 0); }
+}
+/** Scroll the nearest scrolling ancestor (or the window) so `el` sits at `frac` of the visible height. */
+function scrollToEl(el: HTMLElement, frac: number) {
+  let box: HTMLElement | null = el.parentElement;
+  // (A box scrolling sideways computes overflow-y auto too; only one that scrolls down counts.)
+  while (box && !(/(auto|scroll)/.test(getComputedStyle(box).overflowY) && box.scrollHeight > box.clientHeight)) box = box.parentElement;
+  const r = el.getBoundingClientRect();
+  if (box) {
+    const b = box.getBoundingClientRect();
+    box.scrollTo({ top: box.scrollTop + r.top - b.top - b.height * frac + 8, behavior: "smooth" });
+  } else window.scrollTo({ top: window.scrollY + r.top - window.innerHeight * frac + 8, behavior: "smooth" });
+}
+// ---- the file tree: every changed file, opened and scrolled to on a pick -----------------------
+const aside = ref<"points" | "files">("points");
+const asideOptions = [{ value: "points" as const, label: "变更点" }, { value: "files" as const, label: "文件" }];
+const treeFiles = computed(() => props.diffs.flatMap((d) => d.files.map((f) => ({ key: key(d.space, f.name), path: multi.value ? `${spaceName(d.space)}/${f.name}` : f.name, add: f.add, rm: f.rm }))));
+const pointFiles = computed(() => new Set(props.diffs.flatMap((d) => d.files.filter((f) => points.value.some((p) => touches(p, d.space, f.name))).map((f) => key(d.space, f.name)))));
+const activeFile = ref<string | null>(null);
+async function pickFile(k: string) {
+  activeFile.value = k;
+  open.value = new Set([...open.value, k]);
+  // A file without a change point sits under “另有 … 个文件”.
+  if (!pointFiles.value.has(k)) othersOpen.value = true;
+  view.value = "code";
+  await nextTick();
+  const el = codeEl.value?.querySelector<HTMLElement>(`[data-key="${CSS.escape(k)}"]`);
+  if (el) scrollToEl(el, 0);
 }
 function fromMark(id: string) {
   const p = points.value.find((x) => x.id === id);
   if (p) emit("explain", p);
 }
-watch(() => props.runId, () => { active.value = null; open.value = new Set(); });
+watch(() => props.runId, () => { active.value = null; activeFile.value = null; open.value = new Set(); });
 // An earlier review has no split: one can be run now; the page follows it until the points arrive.
 const splitRun = ref<string | null>(null);
 let splitTimer: ReturnType<typeof setTimeout> | undefined;
@@ -96,13 +130,16 @@ const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: 
     <UiSegmented v-model="view" class="phone-only" size="sm" :options="viewOptions" aria-label="看变更点还是代码" />
     <div class="cols">
       <aside class="points" :class="{ hide: view !== 'points' }">
+        <UiSegmented v-model="aside" size="sm" :options="asideOptions" aria-label="按变更点还是按文件看" />
+        <DiffTree v-if="aside === 'files'" :files="treeFiles" :active="activeFile" :marked="pointFiles" @pick="pickFile" />
+        <template v-else>
         <p v-if="points.length" class="legend muted small">来自业务评审 · 点一条只看它的代码 · 行号旁的标记回到变更点</p>
         <div v-else class="split">
           <p class="muted small">这一轮还没有需求拆分：把需求拆成变更点、标出各自的实现位置，就能在这里从需求走到代码。之后的评审会自动拆分。</p>
           <button v-if="!splitRun" class="btn sm primary" @click="split">拆分需求</button>
           <p v-else class="muted small">拆分中，读完需求材料和改动大约要几分钟。<router-link :to="`/runs/${splitRun}`">看过程</router-link></p>
         </div>
-        <div v-for="p in points" :key="p.id" class="point" :class="{ on: active === p.id }">
+        <div v-for="p in points" :key="p.id" class="point" :class="{ on: active === p.id }" :data-ask-label="`变更点 ${p.id} ${p.title}`">
           <button class="pick" :aria-pressed="active === p.id" @click="choose(p)">
             <span class="dot" :style="{ background: colorOf(p.id) }" />
             <span class="pt"><strong>{{ p.id }}</strong> {{ p.title }}</span>
@@ -114,11 +151,13 @@ const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: 
             <button class="lnk" @click="emit('explain', p)">讲解</button>
           </div>
         </div>
+        </template>
       </aside>
       <div ref="codeEl" class="code" :class="{ hide: view !== 'code' }">
+        <div class="code-bar row"><span class="muted small">选中代码可以加入提问或修改点</span><span class="spacer" /><UiSegmented v-model="diffLayout" size="sm" :options="diffLayoutOptions" aria-label="差异的排列" /></div>
         <template v-for="d in points.length ? mapped : diffs" :key="d.space">
           <div v-if="multi" class="repo">{{ spaceName(d.space) }}</div>
-          <div v-for="f in d.files" :key="f.name" class="file" :class="{ hit: !!active && points.some((p) => p.id === active && touches(p, d.space, f.name)) }">
+          <div v-for="f in d.files" :key="f.name" class="file" :data-key="key(d.space, f.name)" :class="{ hit: !!active && points.some((p) => p.id === active && touches(p, d.space, f.name)), picked: activeFile === key(d.space, f.name) }">
             <button class="fhead mono small" :aria-expanded="open.has(key(d.space, f.name))" @click="toggleFile(key(d.space, f.name))">
               <span class="ellipsis">{{ f.name }}</span><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span>
             </button>
@@ -128,7 +167,7 @@ const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: 
         <template v-if="points.length && others.length">
           <button class="lnk others small" :aria-expanded="othersOpen" @click="othersOpen = !othersOpen">{{ othersOpen ? "收起" : "另有" }} {{ others.length }} 个文件没有对应的变更点</button>
           <template v-if="othersOpen">
-            <div v-for="f in others" :key="key(f.space, f.name)" class="file">
+            <div v-for="f in others" :key="key(f.space, f.name)" class="file" :data-key="key(f.space, f.name)" :class="{ picked: activeFile === key(f.space, f.name) }">
               <button class="fhead mono small" :aria-expanded="open.has(key(f.space, f.name))" @click="toggleFile(key(f.space, f.name))">
                 <span class="ellipsis">{{ multi ? `${spaceName(f.space)} · ` : "" }}{{ f.name }}</span><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span>
               </button>
@@ -159,7 +198,8 @@ const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: 
 .code { min-width: 0; }
 .repo { margin: 4px 0 6px; font-weight: 600; }
 .file { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
-.file.hit { border-color: var(--accent); }
+.file.hit, .file.picked { border-color: var(--accent); }
+.code-bar { margin-bottom: 8px; }
 .fhead { display: flex; gap: 10px; width: 100%; padding: 7px 12px; background: var(--sunken); border: 0; color: var(--ink); cursor: pointer; text-align: left; min-width: 0; }
 .fhead .ellipsis { flex: 1; min-width: 0; }
 .add { color: var(--ok); }

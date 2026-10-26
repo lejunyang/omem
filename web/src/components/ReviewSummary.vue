@@ -7,6 +7,7 @@ import Markdown from "./Markdown.vue";
 import UiSegmented from "./UiSegmented.vue";
 import { relTime, toast } from "../store";
 import { refAction } from "../lib/refs";
+import { clearQuotes, quotesOf, quotesText } from "../lib/quotes";
 import { decisionOf, findingWhere, reviewAi, settled, severityCounts, SEV, type Decision, type Finding, type Reviews } from "../lib/reviews";
 
 /**
@@ -77,13 +78,17 @@ const tally = computed(() => {
 const extra = ref("");
 const starting = ref(false);
 const router = useRouter();
+// Passages the owner selected on the page (“加入修改点”) go along with the findings and the extra text.
+const picked = computed(() => quotesOf(props.runId, "fix"));
 async function startFix() {
   const ids = rv.findings.value.filter((f) => decisionOf(f) === "fix").map((f) => f.id);
-  if (starting.value || (!ids.length && !extra.value.trim())) return;
+  const text = [quotesText(picked.value, "本人在页面上选中、要求修改的地方（按 [1]、[2] 编号）："), extra.value.trim()].filter(Boolean).join("\n\n");
+  if (starting.value || (!ids.length && !text)) return;
   starting.value = true;
   try {
-    const r = await post<{ id: string }>(`/api/runs/${props.runId}/fix`, { findingIds: ids, text: extra.value.trim() || undefined });
+    const r = await post<{ id: string }>(`/api/runs/${props.runId}/fix`, { findingIds: ids, text: text || undefined });
     extra.value = "";
+    clearQuotes(props.runId, "fix");
     toast(props.branchReview ? "已基于这个分支交办修改" : "已安排下一轮修改", "ok");
     router.push(`/runs/${r.id}`);
   } catch (e) {
@@ -202,7 +207,8 @@ async function answer(choice: number | null) {
       </div>
       <p class="muted small">在上面每个问题右侧选“改 / 暂不改 / 不改”（不改要写理由，之后的评审不再提）。需求有变化、评审没发现的问题写在下面，一起交给编码 Agent。{{ branchReview ? "会基于这个分支的最新提交交办，改完照常检查和评审。" : "续在原来的工作区和编码会话里。" }}</p>
       <textarea v-model="extra" class="textarea" rows="4" placeholder="补充要求（可选）：需求变化、要一起改的其他问题、实现上的约束" aria-label="补充要求" />
-      <div class="row"><span class="spacer" /><button class="btn primary sm" :disabled="starting || (!tally.fix && !extra.trim())" @click="startFix">开始修改{{ tally.fix ? `（${tally.fix} 个问题${extra.trim() ? " + 补充" : ""}）` : "" }}</button></div>
+      <p v-if="picked.length" class="muted small">另有 {{ picked.length }} 处选中加入的修改点（右下角“修改点”里查看），会一起交给编码 Agent。</p>
+      <div class="row"><span class="spacer" /><button class="btn primary sm" :disabled="starting || (!tally.fix && !extra.trim() && !picked.length)" @click="startFix">开始修改{{ tally.fix || picked.length ? `（${[tally.fix ? `${tally.fix} 个问题` : "", picked.length ? `${picked.length} 处修改点` : "", extra.trim() ? "补充" : ""].filter(Boolean).join(" + ")}）` : "" }}</button></div>
     </div>
   </section>
 </template>

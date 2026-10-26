@@ -41,7 +41,7 @@ type Rule = {
   createdBy?: string;
 };
 type Firing = { id: number; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
-type Options = { fields: Record<string, string>; ops: string[]; specs: { name: string; description: string }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string }[] };
+type Options = { fields: Record<string, string>; ops: string[]; specs: { name: string; description: string }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
 type TestResult = { checked: number; matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string }[]; note: string };
 
 const route = useRoute();
@@ -185,13 +185,22 @@ const REPLY_HINT: Record<string, string> = {
   silent: "群里看不到过程；它读完讨论自己判断要不要发、要不要追问缺的信息，有结论才在话题里发，之后跟进这个话题，你一插话它就停。",
 };
 const spaceOptions = (none: string) => [{ value: "", label: none }, ...state.spaces.map((s) => ({ value: s.id, label: s.name }))];
+// A whole group's conversation is shown as the group itself (its title is often just the first message there).
+const groupIds = computed(() => new Set((options.value.groups ?? []).map((g) => g.chat_id)));
+const groupConversation = (c: Options["conversations"][number]) => c.channel.startsWith("lark") && !!c.external_id && groupIds.value.has(c.external_id);
+const destinationValue = computed(() => {
+  const id = form.value?.conversationId ?? "";
+  const c = options.value.conversations.find((x) => x.id === id);
+  return c && groupConversation(c) ? `group:${c.external_id}` : id;
+});
 const conversationOptions = computed(() => [
   { value: "", label: "选择会话或群聊" },
   ...(options.value.groups ?? []).map((c) => ({ value: `group:${c.chat_id}`, label: c.name || c.chat_id, hint: "飞书群聊 · 新群消息" })),
-  ...options.value.conversations.map((c) => ({ value: c.id, label: c.title || "未命名会话", hint: `${c.channel === "web" ? "网页" : c.channel.startsWith("lark") ? "飞书" : c.channel} · ${state.spaces.find((x) => x.id === c.space_id)?.name ?? c.space_id}` })),
+  ...options.value.conversations.filter((c) => !groupConversation(c)).map((c) => ({ value: c.id, label: c.title || "未命名会话", hint: `${c.channel === "web" ? "网页" : c.channel.startsWith("lark") ? "飞书" : c.channel} · ${state.spaces.find((x) => x.id === c.space_id)?.name ?? c.space_id}` })),
 ]);
 /** A draft needs a Feishu chat to go to after confirmation; a web conversation only the owner reads. */
 const larkDestination = computed(() => {
+  if (form.value?.conversationId?.startsWith("group:")) return true;
   const c = options.value.conversations.find((x) => x.id === form.value?.conversationId);
   return !c || c.channel.startsWith("lark");
 });
@@ -400,7 +409,7 @@ function startFrom(text: string) {
               </div>
               <div v-if="scheduleOnly && a.reply !== 'none'" class="row wrap">
                 <span class="small">发到</span>
-                <UiSelect :model-value="form.conversationId ?? ''" size="sm" width="260px" :search-at="8" :options="conversationOptions" aria-label="结果发到哪个会话" @update:model-value="(v) => ((form!.conversationId = String(v || '')), touch())" />
+                <UiSelect :model-value="destinationValue" size="sm" width="260px" :search-at="8" :options="conversationOptions" aria-label="结果发到哪个会话" @update:model-value="(v) => ((form!.conversationId = String(v || '')), touch())" />
               </div>
               <small v-if="scheduleOnly && a.reply !== 'none' && !form.conversationId" class="muted">尚未指定投递目标。请选择会话或已采集的群聊；向群里发送需要机器人已在群中。</small>
               <small class="muted">{{ scheduleOnly && a.reply !== 'none' ? (a.reply === 'auto' ? "结论直接发到选定的会话。" : "它要在群里说的话先变成给你确认的草稿，你点发送才发到这个群（话题）；结论另外发给你。") : REPLY_HINT[a.reply] }}</small>

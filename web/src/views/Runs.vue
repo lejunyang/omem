@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { aiLabel, get, onServerEvent, post, type Run, type RunEvent } from "../api";
 import Icon from "../components/Icon.vue";
@@ -11,8 +11,12 @@ import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
 import { confirmDialog } from "../lib/dialog";
 import Markdown from "../components/Markdown.vue";
-import AskAboutRun, { type AskContext } from "../components/AskAboutRun.vue";
+import AskAboutRun from "../components/AskAboutRun.vue";
+import FixBasket from "../components/FixBasket.vue";
+import QuoteDock from "../components/QuoteDock.vue";
 import DiffFile from "../components/DiffFile.vue";
+import DiffTree from "../components/DiffTree.vue";
+import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import ReviewSummary from "../components/ReviewSummary.vue";
 import ReviewChecks from "../components/ReviewChecks.vue";
 import ChangeView from "../components/ChangeView.vue";
@@ -21,6 +25,7 @@ import CodeGitPanel from "../components/CodeGitPanel.vue";
 import ReviewProcess from "../components/ReviewProcess.vue";
 import { fmtTime, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 import { refAction } from "../lib/refs";
+import { addQuote, quotesOf, type QuoteKind } from "../lib/quotes";
 import { findingWhere, POINT_STATUS, SEV, useReviews, type ChangePoint } from "../lib/reviews";
 
 const route = useRoute();
@@ -182,7 +187,7 @@ const pointFindings = computed(() => {
   return rv.findings.value.filter((f) => f.file_path && files.some((x) => x === f.file_path || x.endsWith(`/${f.file_path}`) || f.file_path!.endsWith(`/${x}`)));
 });
 function explain(p: ChangePoint) {
-  asking.value = null;
+  if (asking.value === "open") asking.value = "min";
   explaining.value = p;
 }
 const explainContext = computed(() => {
@@ -199,23 +204,48 @@ function onDiffToggle(key: string, e: Event) {
   open ? next.add(key) : next.delete(key);
   openDiffs.value = next;
 }
+const treeFiles = computed(() => diffs.value.flatMap((d) => d.files.map((f) => ({ key: `${d.space}:${f.name}`, path: diffs.value.length > 1 ? `${spaceName(d.space)}/${f.name}` : f.name, add: f.add, rm: f.rm }))));
+const pickedDiff = ref<string | null>(null);
+async function pickDiff(key: string) {
+  pickedDiff.value = key;
+  openDiffs.value = new Set([...openDiffs.value, key]);
+  await nextTick();
+  document.querySelector(`.diff-list [data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+}
 function toggleAllDiffs() {
   openDiffs.value = openDiffs.value.size ? new Set() : new Set(diffs.value.flatMap((d) => d.files.map((f) => `${d.space}:${f.name}`)));
 }
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 
-// ---- asking about a selection (diff lines, the task, a review) -------------------------------
-const asking = ref<AskContext | null>(null);
-const selection = ref<{ top: number; left: number; context: AskContext } | null>(null);
-watch(id, () => { asking.value = null; selection.value = null; });
+// ---- quoting a selection (diff lines, the task, a review, an open citation) -------------------
+// Into a question (the ask drawer, which can shrink to the dock while more is quoted) or into the
+// next round of changes (the fix basket). Both keep numbered quotes per run (lib/quotes).
+const asking = ref<"open" | "min" | null>(null);
+const fixOpen = ref(false);
+const selection = ref<{ top: number; left: number; quote: string; label: string } | null>(null);
+watch(id, () => { asking.value = null; fixOpen.value = false; selection.value = null; });
+const runId = computed(() => detail.value?.run.id ?? "");
+const askQuotes = computed(() => quotesOf(runId.value, "ask"));
+const fixQuotes = computed(() => quotesOf(runId.value, "fix"));
+const canFix = computed(() => !!detail.value && detail.value.run.kind === "code" && detail.value.run.status === "done" && !out.value.appliedAt && (branchReview.value || !out.value.discardedAt));
 // The button is placed against the viewport: any scroll moves the text away from it.
 const dropSelection = () => (selection.value = null);
-onMounted(() => window.addEventListener("scroll", dropSelection, { capture: true, passive: true }));
-onBeforeUnmount(() => window.removeEventListener("scroll", dropSelection, { capture: true }));
+onMounted(() => {
+  window.addEventListener("scroll", dropSelection, { capture: true, passive: true });
+  document.addEventListener("mouseup", onSelect);
+  document.addEventListener("keyup", onSelectKey);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("scroll", dropSelection, { capture: true });
+  document.removeEventListener("mouseup", onSelect);
+  document.removeEventListener("keyup", onSelectKey);
+});
 function lineOf(node: Node | null) {
   const el = node instanceof Element ? node : node?.parentElement;
-  return Number(el?.closest("tr[data-line]")?.getAttribute("data-line")) || null;
+  return Number(el?.closest("[data-line]")?.getAttribute("data-line")) || null;
 }
+const onSelectKey = (e: KeyboardEvent) => { if (e.shiftKey) onSelect(); };
+/** What can be quoted: the run page, and the citation drawer opened from it (both carry data-quotable). */
 function onSelect() {
   // Wait for the browser to settle the selection after the click.
   setTimeout(() => {
@@ -224,23 +254,27 @@ function onSelect() {
     if (!sel || !text || sel.rangeCount === 0 || detail.value?.run.kind !== "code") return void (selection.value = null);
     const range = sel.getRangeAt(0);
     const host = (range.commonAncestorContainer instanceof Element ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement)!;
+    if (!host.closest("[data-quotable]") || host.closest("input, textarea")) return void (selection.value = null);
     const file = host.closest<HTMLElement>(".dfile");
     let label = host.closest<HTMLElement>("[data-ask-label]")?.dataset.askLabel ?? "运行详情里的一段";
-    if (file) {
-      const lines = [lineOf(range.startContainer), lineOf(range.endContainer)].filter((n): n is number => !!n);
-      const at = lines.length ? `:${Math.min(...lines)}${Math.max(...lines) !== Math.min(...lines) ? `-${Math.max(...lines)}` : ""}` : "";
-      label = `${spaceName(file.dataset.space ?? "")} · ${file.dataset.path}${at}`;
-    }
+    const lines = [lineOf(range.startContainer), lineOf(range.endContainer)].filter((n): n is number => !!n);
+    const at = lines.length ? `:${Math.min(...lines)}${Math.max(...lines) !== Math.min(...lines) ? `-${Math.max(...lines)}` : ""}` : "";
+    if (file) label = `${spaceName(file.dataset.space ?? "")} · ${file.dataset.path}${at}`;
+    else if (host.closest("[data-lines]")) label += at;
     const rect = range.getBoundingClientRect();
-    selection.value = { top: Math.max(8, rect.top - 40), left: Math.min(window.innerWidth - 180, Math.max(8, rect.left)), context: { quote: text.slice(0, 4000), label } };
+    selection.value = { top: Math.max(8, rect.top - 40), left: Math.min(window.innerWidth - 260, Math.max(8, rect.left)), quote: text.slice(0, 4000), label };
   }, 0);
 }
-function askSelection() {
-  if (!selection.value) return;
-  explaining.value = null;
-  asking.value = selection.value.context;
+function quote(kind: QuoteKind, q?: { quote: string; label: string }) {
+  const from = q ?? selection.value;
+  if (!from || !runId.value) return;
+  const n = addQuote(runId.value, kind, { quote: from.quote, label: from.label });
   selection.value = null;
   window.getSelection()?.removeAllRanges();
+  if (kind === "fix") return toast(`已加入修改点 [${n}]，在右下角的图标里查看和开始修改`, "ok");
+  explaining.value = null;
+  if (asking.value === "min") toast(`已加入提问 [${n}]`, "ok");
+  else asking.value = "open";
 }
 type Check = { command: string; code: number; output: string };
 const checks = computed<{ space: string; check: Check }[]>(() => {
@@ -363,7 +397,7 @@ const kindOptions = computed(() => [
         <div v-else-if="runs.length >= total" class="list-foot">共 {{ total }} 条</div>
       </div>
     </aside>
-    <main class="detail" @mouseup="onSelect" @keyup.shift="onSelect">
+    <main class="detail" data-quotable>
       <div v-if="detailLoading" class="pad-loading"><Skeleton variant="text" :rows="8" /></div>
       <div v-else-if="!detail" class="empty">
         <Icon name="activity" :size="34" />
@@ -396,23 +430,27 @@ const kindOptions = computed(() => [
               <button class="btn sm danger" :title="branchReview ? '删除评审用的工作区和它的索引' : undefined" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
             </template>
             <span v-if="out.appliedAt" class="badge ok">已应用 {{ fmtTime(out.appliedAt) }}</span>
-            <button v-if="detail.run.kind === 'code'" class="btn ghost sm" @click="explaining = null; asking = { quote: '', label: '' }"><Icon name="chat" :size="14" />提问</button>
-          </div>
-          <div v-if="out.appliedTo?.length" class="stack small apply-targets">
-            <strong>接收位置</strong>
-            <div v-for="t in (out.appliedTo as ApplyTarget[])" :key="t.space" class="stack">
-              <span>{{ t.space }} · {{ t.branch ?? "指定版本" }}</span>
-              <code>{{ t.path }}</code>
-              <button class="btn ghost sm" @click="copyApplyPath(t.path)">复制目录</button>
-              <CodeGitPanel :key="`${detail.run.id}:${t.space}`" :run-id="detail.run.id" :space="t.space" />
-            </div>
+            <button v-if="detail.run.kind === 'code'" class="btn ghost sm" @click="explaining = null; asking = 'open'"><Icon name="chat" :size="14" />提问</button>
           </div>
         </header>
+        <!-- After apply: where the change landed, and committing / pushing it there. -->
+        <section v-if="out.appliedTo?.length" class="card pad block apply-targets">
+          <div class="section-title">接收位置与提交</div>
+          <div v-for="t in (out.appliedTo as ApplyTarget[])" :key="t.space" class="target">
+            <div class="row wrap small">
+              <strong>{{ spaceName(t.space) }}</strong>
+              <span class="badge">{{ t.branch ?? "指定版本" }}</span>
+              <code class="grow">{{ t.path }}</code>
+              <button class="btn ghost sm" @click="copyApplyPath(t.path)">复制目录</button>
+            </div>
+            <CodeGitPanel :key="`${detail.run.id}:${t.space}`" :run-id="detail.run.id" :space="t.space" />
+          </div>
+        </section>
 
         <nav v-if="hasReview" class="tabs" role="tablist" aria-label="运行详情">
           <button v-for="t in tabs" :key="t.id" role="tab" class="tab" :class="{ on: tab === t.id }" :aria-selected="tab === t.id" @click="tab = t.id">{{ t.label }}</button>
         </nav>
-        <ReviewSummary v-if="hasReview && tab === 'overview'" :rv="rv" :run-id="detail.run.id" :review-text="out.review" :branch-review="branchReview" :can-fix="detail.run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" data-ask-label="评审" @ask="(c) => { explaining = null; asking = c; }" @go="(t) => (tab = t)" />
+        <ReviewSummary v-if="hasReview && tab === 'overview'" :rv="rv" :run-id="detail.run.id" :review-text="out.review" :branch-review="branchReview" :can-fix="detail.run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" data-ask-label="评审" @ask="(c) => quote('ask', c)" @go="(t) => (tab = t)" />
         <ChangeView v-if="hasReview && tab === 'change'" :rv="rv" :run-id="detail.run.id" :diffs="diffs" @explain="explain" />
         <ReviewChecks v-if="hasReview && tab === 'review'" :rv="rv" :run-id="detail.run.id" data-ask-label="评审" @process="(c) => { processFocus = c; tab = 'activity'; }" />
 
@@ -476,15 +514,20 @@ const kindOptions = computed(() => [
         </section>
 
         <section v-if="fileCount" class="block">
-          <div class="section-title row">改动 · {{ diffs.length > 1 ? `${diffs.length} 个仓库，` : "" }}{{ fileCount }} 个文件<span class="spacer" /><span class="muted small hint-sel">选中代码可以就它提问</span><button class="btn ghost sm" @click="toggleAllDiffs">{{ openDiffs.size ? "全部收起" : "全部展开" }}</button></div>
+          <div class="section-title row">改动 · {{ diffs.length > 1 ? `${diffs.length} 个仓库，` : "" }}{{ fileCount }} 个文件<span class="spacer" /><span class="muted small hint-sel">选中代码可以加入提问或修改点</span><UiSegmented v-model="diffLayout" size="sm" :options="diffLayoutOptions" aria-label="差异的排列" /><button class="btn ghost sm" @click="toggleAllDiffs">{{ openDiffs.size ? "全部收起" : "全部展开" }}</button></div>
           <p v-if="out.indexedSpaces?.length && !out.appliedAt && !out.discardedAt" class="muted small">{{ branchReview ? "清理工作区之前" : "应用或丢弃之前" }}，改过的文件可以检索（空间 {{ out.indexedSpaces.join("、") }}）；之后连同 worktree 一起删除。</p>
+          <div class="diff-cols">
+          <DiffTree v-if="fileCount > 1" class="diff-tree" :files="treeFiles" :active="pickedDiff" @pick="pickDiff" />
+          <div class="diff-list">
           <template v-for="d in diffs" :key="d.space">
           <div v-if="diffs.length > 1" class="repo-title">{{ spaceName(d.space) }}</div>
-          <details v-for="f in d.files" :key="f.name" class="file" :open="openDiffs.has(`${d.space}:${f.name}`)" @toggle="onDiffToggle(`${d.space}:${f.name}`, $event)">
+          <details v-for="f in d.files" :key="f.name" class="file" :class="{ picked: pickedDiff === `${d.space}:${f.name}` }" :data-key="`${d.space}:${f.name}`" :open="openDiffs.has(`${d.space}:${f.name}`)" @toggle="onDiffToggle(`${d.space}:${f.name}`, $event)">
             <summary class="mono small"><span>{{ f.name }}</span><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span></summary>
             <DiffFile v-if="openDiffs.has(`${d.space}:${f.name}`)" :run-id="detail.run.id" :space="d.space" :lines="f.lines" />
           </details>
           </template>
+          </div>
+          </div>
         </section>
 
         <section v-if="detail.children.length" class="block">
@@ -497,9 +540,14 @@ const kindOptions = computed(() => [
       </template>
     </main>
 
-    <button v-if="selection" class="sel-ask btn sm primary" :style="{ top: `${selection.top}px`, left: `${selection.left}px` }" @mousedown.prevent @click="askSelection"><Icon name="chat" :size="13" />就选中内容提问</button>
-    <AskAboutRun v-if="asking && detail" :key="detail.run.id" :run-id="detail.run.id" :run-title="detail.run.title" :space-id="detail.run.spaceId" :context="asking.quote ? asking : null" @close="asking = null" />
-    <AskAboutRun v-else-if="explaining && detail" :key="`${detail.run.id}:${explaining.id}`" :run-id="detail.run.id" :run-title="detail.run.title" :space-id="detail.run.spaceId" :context="explainContext" :heading="`${explaining.id} ${explaining.title}`" @close="explaining = null">
+    <div v-if="selection" class="sel-ask" :style="{ top: `${selection.top}px`, left: `${selection.left}px` }" @mousedown.prevent>
+      <button class="btn sm primary" @click="quote('ask')"><Icon name="chat" :size="13" />加入提问{{ askQuotes.length ? `（${askQuotes.length + 1}）` : "" }}</button>
+      <button v-if="canFix" class="btn sm" title="作为下一轮修改的要求，攒够了一起开始修改" @click="quote('fix')"><Icon name="edit" :size="13" />加入修改点{{ fixQuotes.length ? `（${fixQuotes.length + 1}）` : "" }}</button>
+    </div>
+    <AskAboutRun v-if="asking && detail" :key="detail.run.id" basket :minimized="asking === 'min'" :run-id="detail.run.id" :run-title="detail.run.title" :space-id="detail.run.spaceId" @close="asking = null" @minimize="asking = 'min'" />
+    <FixBasket v-if="fixOpen && detail" :key="`fix:${detail.run.id}`" :run-id="detail.run.id" :rv="rv" :can-fix="canFix" :branch-review="branchReview" @close="fixOpen = false" />
+    <QuoteDock v-if="detail && !explaining && !fixOpen && (asking === 'min' || (!asking && askQuotes.length) || fixQuotes.length)" :ask="askQuotes.length" :fix="fixQuotes.length" :asking="!!asking" @ask="asking = 'open'" @fix="fixOpen = true" />
+    <AskAboutRun v-if="explaining && detail" :key="`${detail.run.id}:${explaining.id}`" :run-id="detail.run.id" :run-title="detail.run.title" :space-id="detail.run.spaceId" :context="explainContext" :heading="`${explaining.id} ${explaining.title}`" @close="explaining = null">
       <div class="explain">
         <div class="row"><span class="badge" :class="POINT_STATUS[explaining.status].cls">{{ POINT_STATUS[explaining.status].text }}</span></div>
         <template v-if="explaining.requirement"><div class="ex-h">需求怎么说</div><Markdown :source="explaining.requirement" :space="detail.run.spaceId ?? undefined" /></template>
@@ -541,8 +589,11 @@ const kindOptions = computed(() => [
 </template>
 
 <style scoped>
-.apply-targets code { overflow-wrap: anywhere; white-space: normal; }
-.apply-targets button { align-self: flex-start; justify-self: start; }
+.apply-targets { display: grid; gap: 12px; }
+.apply-targets .section-title { margin: 0; }
+.apply-targets .target { display: grid; gap: 10px; min-width: 0; }
+.apply-targets code { overflow-wrap: anywhere; white-space: normal; min-width: 0; }
+.apply-targets .grow { flex: 1; }
 .branch-row {
   display: flex;
   gap: 12px;
@@ -821,10 +872,24 @@ const kindOptions = computed(() => [
 .file .rm {
   color: var(--danger);
 }
+/* Above the citation drawer, whose text can be quoted too. */
 .sel-ask {
   position: fixed;
-  z-index: 38;
+  z-index: 45;
+  display: flex;
+  gap: 6px;
+}
+.sel-ask .btn {
   box-shadow: var(--shadow-lg);
+}
+.diff-cols { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.diff-cols:not(:has(.diff-tree)) { grid-template-columns: minmax(0, 1fr); }
+.diff-tree { position: sticky; top: 0; max-height: calc(100vh - 120px); overflow: auto; }
+.diff-list { min-width: 0; }
+.file.picked { border-color: var(--accent); }
+@media (max-width: 760px) {
+  .diff-cols { grid-template-columns: minmax(0, 1fr); }
+  .diff-tree { position: static; max-height: 240px; }
 }
 .hint-sel {
   font-weight: 400;

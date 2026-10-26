@@ -134,7 +134,8 @@ const title = computed(() => {
         <button class="btn ghost sm wide-btn" :title="wide ? '收窄抽屉' : '加宽抽屉，宽表格和截图更好看'" @click="toggleWide">{{ wide ? "收窄" : "加宽" }}</button>
         <button class="btn ghost sm icon" title="关闭" @click="close"><Icon name="x" /></button>
       </header>
-      <div class="body">
+      <!-- Text here can be quoted into a run page's question or next fix (Runs.vue). -->
+      <div class="body" data-quotable data-lines :data-ask-label="title">
         <div v-if="loading" class="muted">读取中…</div>
         <div v-else-if="error" class="err"><Icon name="alert" /> {{ error }}</div>
 

@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import { get } from "../api";
 import { toast } from "../store";
+import { diffLayout } from "../lib/diffLayout";
 
 /**
  * One file of a delegation's diff with old/new line numbers. The unchanged code between hunks
@@ -9,6 +10,8 @@ import { toast } from "../store";
  * read from the worktree while it exists, from the repository after the change was applied.
  * Rows carry data-line so a selection can say which lines it covers. Change points (the business
  * review's mapping of the requirement to the code) mark their lines; the active one is highlighted.
+ * Read in one column, or old and new side by side (lib/diffLayout), removed lines paired with the
+ * lines that replaced them.
  */
 export type DiffPoint = { id: string; mark: string; color: string; start: number; end: number };
 const props = withDefaults(defineProps<{ runId: string; space: string; lines: string[]; points?: DiffPoint[]; active?: string | null; expandable?: boolean }>(), { points: () => [], active: null, expandable: true });
@@ -114,35 +117,76 @@ const marksAt = (h: Hunk, j: number) => {
   return pointsAt(r.new).filter((p) => prev === null || prev < p.start || prev > p.end);
 };
 const rowClass = (r: Row) => [r.kind, { cp: pointsAt(r.new).length > 0, "cp-on": !!props.active && pointsAt(r.new).some((p) => p.id === props.active) }];
+
+// ---- side by side: removed lines on the left next to the lines that replaced them on the right ----
+type Pair = { l: Row | null; r: Row | null; marks: DiffPoint[] };
+const split = computed(() => diffLayout.value === "split");
+const pairs = computed(() => hunks.value.map((h) => {
+  const out: Pair[] = [];
+  let prevNew: number | null = null;
+  const marks = (r: Row | null) => {
+    if (!r || r.new === null) return [];
+    const m = pointsAt(r.new).filter((p) => prevNew === null || prevNew < p.start || prevNew > p.end);
+    prevNew = r.new;
+    return m;
+  };
+  for (let i = 0; i < h.rows.length;) {
+    const row = h.rows[i];
+    if (row.kind !== "del" && row.kind !== "add") {
+      out.push({ l: row.kind === "meta" ? null : row, r: row, marks: marks(row) });
+      i++;
+      continue;
+    }
+    const dels: Row[] = [];
+    const adds: Row[] = [];
+    while (h.rows[i]?.kind === "del") dels.push(h.rows[i++]);
+    while (h.rows[i]?.kind === "add") adds.push(h.rows[i++]);
+    for (let k = 0; k < Math.max(dels.length, adds.length); k++) out.push({ l: dels[k] ?? null, r: adds[k] ?? null, marks: marks(adds[k] ?? null) });
+  }
+  return out;
+}));
+const pairClass = (p: Pair) => ({ cp: !!p.r && pointsAt(p.r.new).length > 0, "cp-on": !!p.r && !!props.active && pointsAt(p.r.new).some((x) => x.id === props.active) });
+const cols = computed(() => (split.value ? 4 : 3));
 // An index preview must not expand context from the working copy, which may have later edits.
 const canExpand = (g: Gap) => props.expandable && !deleted.value && (g.to === null ? !file.value || hidden(g) > 0 : hidden(g) > 0);
 const gapLabel = (g: Gap) => (g.to === null && !file.value ? "下方的代码" : `${hidden(g)} 行未改动`);
 </script>
 
 <template>
-  <div class="dfile" :data-space="space" :data-path="path">
+  <div class="dfile" :class="{ split }" :data-space="space" :data-path="path">
     <table class="dtable">
+      <colgroup v-if="split"><col class="cno" /><col /><col class="cno" /><col /></colgroup>
       <tbody>
         <template v-for="(h, i) in hunks" :key="i">
           <template v-if="canExpand(gaps[i]) || gaps[i].head || gaps[i].tail">
-            <tr v-for="r in gapRows(gaps[i], 'head')" :key="`h${i}-${r.new}`" class="ctx" :data-line="r.new"><td class="no">{{ r.old }}</td><td class="no">{{ r.new }}</td><td class="code"><span class="sign"> </span>{{ r.text }}</td></tr>
+            <tr v-for="r in gapRows(gaps[i], 'head')" :key="`h${i}-${r.new}`" class="ctx" :data-line="r.new"><template v-if="split"><td class="no">{{ r.old }}</td><td class="code">{{ r.text }}</td><td class="no">{{ r.new }}</td><td class="code">{{ r.text }}</td></template><template v-else><td class="no">{{ r.old }}</td><td class="no">{{ r.new }}</td><td class="code"><span class="sign"> </span>{{ r.text }}</td></template></tr>
             <tr v-if="canExpand(gaps[i])" class="gap">
-              <td colspan="3">
+              <td :colspan="cols">
                 <span class="muted">{{ gapLabel(gaps[i]) }}</span>
                 <button v-if="i > 0" class="lnk" type="button" :disabled="loading" @click="expand(gaps[i], 'down')">↓ 展开 20 行</button>
                 <button class="lnk" type="button" :disabled="loading" @click="expand(gaps[i], 'up')">↑ 展开 20 行</button>
                 <button v-if="hidden(gaps[i]) <= 200" class="lnk" type="button" :disabled="loading" @click="expand(gaps[i], 'all')">全部展开</button>
               </td>
             </tr>
-            <tr v-for="r in gapRows(gaps[i], 'tail')" :key="`t${i}-${r.new}`" class="ctx" :data-line="r.new"><td class="no">{{ r.old }}</td><td class="no">{{ r.new }}</td><td class="code"><span class="sign"> </span>{{ r.text }}</td></tr>
+            <tr v-for="r in gapRows(gaps[i], 'tail')" :key="`t${i}-${r.new}`" class="ctx" :data-line="r.new"><template v-if="split"><td class="no">{{ r.old }}</td><td class="code">{{ r.text }}</td><td class="no">{{ r.new }}</td><td class="code">{{ r.text }}</td></template><template v-else><td class="no">{{ r.old }}</td><td class="no">{{ r.new }}</td><td class="code"><span class="sign"> </span>{{ r.text }}</td></template></tr>
           </template>
-          <tr class="hunk"><td colspan="3">@@ -{{ h.oldStart }} +{{ h.newStart }} @@ {{ h.header }}</td></tr>
-          <tr v-for="(r, j) in h.rows" :key="`${i}-${j}`" :class="rowClass(r)" :data-line="r.new ?? r.old"><td class="no">{{ r.old ?? "" }}</td><td class="no"><button v-for="p in marksAt(h, j)" :key="p.id" class="cpm" :style="{ background: p.color }" :title="`变更点 ${p.id}`" @click="emit('point', p.id)">{{ p.mark }}</button>{{ r.new ?? "" }}</td><td class="code"><span class="sign">{{ r.kind === "add" ? "+" : r.kind === "del" ? "-" : " " }}</span>{{ r.text }}</td></tr>
+          <tr class="hunk"><td :colspan="cols">@@ -{{ h.oldStart }} +{{ h.newStart }} @@ {{ h.header }}</td></tr>
+          <template v-if="split">
+            <tr v-for="(p, j) in pairs[i]" :key="`${i}-${j}`" :class="pairClass(p)" :data-line="p.r?.new ?? p.l?.old">
+              <td class="no" :class="p.l?.kind === 'del' ? 'del' : p.l ? '' : 'none'">{{ p.l?.old ?? "" }}</td>
+              <td class="code" :class="p.l?.kind === 'del' ? 'del' : p.l ? '' : 'none'">{{ p.l?.text ?? "" }}</td>
+              <td class="no" :class="p.r?.kind === 'add' ? 'add' : p.r ? '' : 'none'"><button v-for="m in p.marks" :key="m.id" class="cpm" :style="{ background: m.color }" :title="`变更点 ${m.id}`" @click="emit('point', m.id)">{{ m.mark }}</button>{{ p.r?.kind === "meta" ? "" : p.r?.new ?? "" }}</td>
+              <td class="code" :class="p.r?.kind === 'add' ? 'add' : p.r?.kind === 'meta' ? 'metaline' : p.r ? '' : 'none'">{{ p.r?.text ?? "" }}</td>
+            </tr>
+          </template>
+          <template v-else>
+            <tr v-for="(r, j) in h.rows" :key="`${i}-${j}`" :class="rowClass(r)" :data-line="r.new ?? r.old"><td class="no">{{ r.old ?? "" }}</td><td class="no"><button v-for="p in marksAt(h, j)" :key="p.id" class="cpm" :style="{ background: p.color }" :title="`变更点 ${p.id}`" @click="emit('point', p.id)">{{ p.mark }}</button>{{ r.new ?? "" }}</td><td class="code"><span class="sign">{{ r.kind === "add" ? "+" : r.kind === "del" ? "-" : " " }}</span>{{ r.text }}</td></tr>
+          </template>
         </template>
         <template v-if="hunks.length">
-          <tr v-for="r in gapRows(gaps[hunks.length], 'head')" :key="`end-${r.new}`" class="ctx" :data-line="r.new"><td class="no">{{ r.old }}</td><td class="no">{{ r.new }}</td><td class="code"><span class="sign"> </span>{{ r.text }}</td></tr>
+          <tr v-for="r in gapRows(gaps[hunks.length], 'head')" :key="`end-${r.new}`" class="ctx" :data-line="r.new"><template v-if="split"><td class="no">{{ r.old }}</td><td class="code">{{ r.text }}</td><td class="no">{{ r.new }}</td><td class="code">{{ r.text }}</td></template><template v-else><td class="no">{{ r.old }}</td><td class="no">{{ r.new }}</td><td class="code"><span class="sign"> </span>{{ r.text }}</td></template></tr>
           <tr v-if="canExpand(gaps[hunks.length])" class="gap">
-            <td colspan="3">
+            <td :colspan="cols">
               <span class="muted">{{ gapLabel(gaps[hunks.length]) }}</span>
               <button class="lnk" type="button" :disabled="loading" @click="expand(gaps[hunks.length], 'down')">↓ 展开 20 行</button>
               <button v-if="file && hidden(gaps[hunks.length]) <= 200" class="lnk" type="button" :disabled="loading" @click="expand(gaps[hunks.length], 'all')">全部展开</button>
@@ -175,5 +219,12 @@ const gapLabel = (g: Gap) => (g.to === null && !file.value ? "下方的代码" :
 .cp > td:first-child { box-shadow: inset 3px 0 0 var(--line-strong); }
 .cp-on > td { background-image: linear-gradient(var(--accent-soft), var(--accent-soft)); }
 .cp-on > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+/* Side by side: fixed columns, long lines wrap instead of scrolling the half sideways. */
+.split .dtable { table-layout: fixed; }
+.split .cno { width: 52px; }
+.split .code { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 8px !important; padding-right: 8px !important; }
+.split td.code:nth-child(2) { border-right: 1px solid var(--line); }
+.split .none { background: var(--sunken); }
+.split .metaline { color: var(--muted); }
 .cpm { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; margin-right: 4px; padding: 0 3px; border: 0; border-radius: 4px; color: #fff; font: 600 10.5px/1 var(--sans); cursor: pointer; vertical-align: 1px; }
 </style>

@@ -87,6 +87,11 @@ updated: 2026-10-25
 
 ## 网页
 
+- 运行页的引用与修改点（10-26）：选中文字后有“加入提问 / 加入修改点”两个按钮，范围是运行详情和从它打开的引用抽屉（带 `data-quotable` 的区域；`CodeView` 行带 `data-line`，引用带上行号）。引用按运行存在本机（`web/src/lib/quotes.ts`），按 [1]、[2] 编号；提问抽屉（`AskAboutRun` 的 `basket`）可缩小成可拖动的图标（`QuoteDock.vue`，位置记在本机），继续选别处再加入；修改点在 `FixBasket.vue` 里逐条写要求，和评审里定为“改”的问题一起开始修改，“概览”的修改框也会带上它们。
+- 差异的上下 / 左右两种排列（`lib/diffLayout.ts`，本机记住），左右时删掉的行和替换它们的行并排；改动文件树（`DiffTree.vue`，文件夹可折叠，单层目录合并显示），在“变更”标签和“活动”的改动里都有。点变更点时把它第一处标记滚到屏幕约三分之一处（以前滚的是整个文件，标记常在屏幕外）。
+- 规则“发到”选群聊后保存，下拉框仍显示群名（以前显示那个群对应会话的标题，常是群里的第一条消息）。
+- 应用后的“接收位置与提交”移到页头下面的卡片里；Windows 上接收目录路径统一成本机格式（`git worktree list` 给的是正斜杠）。
+
 - 定时任务改成表单（`web/src/components/CronEditor.vue`）：每隔几分钟/几小时、每天、工作日、每周几天、自定义 cron，显示含义和接下来三次时间（10-19）。
 - 加载态（`Skeleton.vue`）与虚拟滚动（`VirtualList.vue`，动态行高）：原件列表、长原件、聊天、运行列表、记忆列表（10-18）。
 - 原生 select / checkbox / datetime-local / confirm / prompt 全部换成自己的组件（10-18）：`web/src/components/UiSelect.vue`、`UiCheckbox.vue`（含 switch）、`UiSegmented.vue`、`UiDateTime.vue`、`DialogHost.vue` 与 `web/src/lib/dialog.ts`。约定写进了 AGENTS.md 和 `.agents/skills/omem-design`。

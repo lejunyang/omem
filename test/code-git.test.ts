@@ -38,10 +38,11 @@ beforeEach(() => {
   sql(app.db, "update runs set status='done' where id=?", id);
   setRunOutput(app, id, { appliedAt: new Date().toISOString(), appliedTo: [{ space: "shop", path, branch: "feature/refund" }] });
   writeFileSync(join(path, "app.txt"), "after\n"); sh(path, "add", "app.txt");
-});
+}, 60000);
 afterEach(() => { app.db.close(); rmSync(app.home, { recursive: true, force: true }); });
 
-describe("Git operations on applied code", () => {
+// Every test spawns dozens of git processes (slow on Windows under a full run).
+describe("Git operations on applied code", { timeout: 60000 }, () => {
   it("commits only the inspected index, keeps later edits, and records the commit without pushing", async () => {
     writeFileSync(join(path, "app.txt"), "later personal edit\n");
     writeFileSync(join(path, "notes.txt"), "not staged\n");

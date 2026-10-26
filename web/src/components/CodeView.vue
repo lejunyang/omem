@@ -29,11 +29,11 @@ watch(() => [props.from, props.text], scroll);
   <div ref="root" class="code" :class="{ wrap }">
     <VirtualList v-if="virtual" ref="list" :items="lines" :item-key="(l) => l.n" :estimate="20">
       <template #default="{ item: l }">
-        <div class="ln" :class="{ hl: inRange(l.n) }" :id="`L${l.n}`"><span class="no">{{ l.n }}</span><code v-html="lineHtml(l.line) || ' '" /></div>
+        <div class="ln" :class="{ hl: inRange(l.n) }" :id="`L${l.n}`" :data-line="l.n"><span class="no">{{ l.n }}</span><code v-html="lineHtml(l.line) || ' '" /></div>
       </template>
     </VirtualList>
     <template v-else>
-      <div v-for="l in lines" :key="l.n" class="ln" :class="{ hl: inRange(l.n) }" :id="`L${l.n}`">
+      <div v-for="l in lines" :key="l.n" class="ln" :class="{ hl: inRange(l.n) }" :id="`L${l.n}`" :data-line="l.n">
         <span class="no">{{ l.n }}</span><code v-html="lineHtml(l.line) || ' '" />
       </div>
     </template>

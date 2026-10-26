@@ -1158,7 +1158,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       ops: OPS,
       specs: [{ name: "assistant", description: "主助手：未指定专用档案的日常任务" }, ...listAgentSpecs(app).map((s) => ({ name: s.name, description: s.description }))],
       chats: all<{ chat_id: string; name: string }>(app.db, "select chat_id, name from lark_cursors where chat_id like 'oc_%' and name != '' order by updated_at desc limit 300"),
-      conversations: all(app.db, "select id,title,channel,space_id from conversations where user_id = ? order by updated_at desc limit 300", OWNER),
+      conversations: all(app.db, "select id,title,channel,space_id,external_id from conversations where user_id = ? order by updated_at desc limit 300", OWNER),
       botReady: !!app.config.lark.appId,
       groups: ruleGroups(app),
     };
