@@ -142,6 +142,13 @@ ${JSON.stringify({ tools, error: res.isError ? res.content : null })}`);
           await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
           try {
             const point = { id: "C1", title: "只退未发货的行", status: "done", locations: [{ file: "refund.ts", start: 1, end: 3 }] };
+            // Reworking an earlier split by the owner's note: the point goes under a page; a parent that is not there is refused.
+            if (prompt.includes("## 之前的拆分")) {
+              const badTree = await client.callTool({ name: "submit_change_points", arguments: { change_points: [{ ...point, parent: "M9" }] } });
+              await client.callTool({ name: "submit_change_points", arguments: { change_points: [{ id: "M1", title: "退款申请页", status: "done" }, { ...point, parent: "M1" }] } });
+              await say(`重新整理 ${JSON.stringify(badTree.isError ?? false)} ${prompt.includes("## 本人这次的要求\n\n按页面分组")}`);
+              return { stopReason: "end_turn" as const };
+            }
             const bad = await client.callTool({ name: "submit_change_points", arguments: { change_points: [{ ...point, refs: ["src:s0nothere00000000"] }] } });
             await client.callTool({ name: "submit_change_points", arguments: { change_points: [point] } });
             await say(`拆分完成 ${JSON.stringify(bad.isError ?? false)}`);

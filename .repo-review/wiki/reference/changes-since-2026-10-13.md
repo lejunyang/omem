@@ -600,3 +600,10 @@ updated: 2026-10-25
 - **重试**（`src/agents/retry.ts`）：编码交办点“重试”不再按原输入从头建工作区，而是在同一链里作为新一轮，接着原工作区和编码 Agent 会话做；ACP 会话一打开就记一条 `session` 事件，写到一半失败的也能接上；上一次已写完代码、在检查或评审时失败的，只重跑检查和评审。已应用或丢弃的按原输入重来。Agent 运行重试时任务前面带上一次的错误和已做的写入（`attemptNote`），发过的消息不再发；工作会话和静默排查接着原会话。重试保留发起人，网页跳到新运行。
 - **运行中追加消息**（`src/agents/steer.ts`）：会话的一轮进行时，同一发送人的新消息先照常排进下一轮；正在进行的这一轮下次调用工具时，把它们附在工具结果后面交给 Agent，并从下一轮移走，下一轮空了就取消（`steeredInto`），飞书里不再单独回复；没赶上的照常成一轮。
 - **盯群**（`src/channels/lark-watch.ts`、`set_chat_watch`）：主助手可以自己盯（`spec=assistant`，默认），也可以交给档案；规则带本人的目的（`note`）、到期时间（`expiresAt`，默认 3 天，巡检或下一条消息时结束并通知本人）和批次（`batchMinutes`，默认 10 分钟，处理者可以自己调；后来的消息不推迟这一批，@ 本人或机器人的 30 秒内）。整个群（含话题）一个会话，处理者自己判断哪些话题要单独交给 Agent。本人在自己的消息里要求时，`invite_bot` 用本人身份把 omem 的机器人拉进群（`inviteOwnBot`，与规则动作共用）。没事的批次回 QUIET，记为无事可报。规则页列出“正在盯的群”（`/api/watches`），可取消。
+
+## 2026-10-27：需求点成树、重新整理拆分
+
+- **树形变更点**：`change_points` 多了可选的 `parent`。需求涉及几个页面或模块时，拆分者先建页面 / 模块节点，再把变更点挂在下面（最多 4 层）；怎么分组由它按需求材料自己的组织决定，小需求仍平铺。`pointTreeProblem` 拒收编号重复、父节点不存在、成环或太深的提交。“变更”标签按文件夹折叠展开（超过 20 个时只展开第一层），点一组高亮组下全部代码；标签和概览的数字只数变更点。
+- **重新整理**：`requestSplit` 起一个只做拆分的 `review` 运行，`revise` 时把当前的变更点（`currentPoints`：本轮单独的拆分，或业务评审交的）和本人的要求一起交给拆分者，在原来的上面调整、编号尽量不变，整份替换；同一轮还有评审或拆分在跑时拒绝。入口：“变更”里的“重新整理”（`POST /api/runs/:id/change-points` 带 `revise` / `note`），主助手的 `resplit_change_points`。
+- 实现：`src/agents/review.ts`、`review-chain.ts`、`tools.ts`、`web/src/components/ChangeView.vue`、`DiffFile.vue`；回归：`test/branch-review.test.ts`。
+- 文档站首页：问答、记忆、原件排在前面，评审放后面；首屏图换成三张截图叠放的 `HeroCollage.vue`（浅色 / 深色各一套，`doc-screens` 生成 `*-dark`）。

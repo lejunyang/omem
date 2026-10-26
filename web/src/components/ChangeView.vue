@@ -3,7 +3,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { get, post } from "../api";
 import DiffFile, { type DiffPoint } from "./DiffFile.vue";
 import DiffTree from "./DiffTree.vue";
+import Icon from "./Icon.vue";
 import UiSegmented from "./UiSegmented.vue";
+import { promptDialog } from "../lib/dialog";
 import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import { state, toast } from "../store";
 import { POINT_STATUS, type ChangePoint, type Reviews } from "../lib/reviews";
@@ -13,7 +15,8 @@ import { POINT_STATUS, type ChangePoint, type Reviews } from "../lib/reviews";
  * or the changed files as a tree, and the diff on the right. Choosing a point highlights its lines and
  * scrolls to its first place in the code; its places are listed under it and stepped through with
  * 上一处 / 下一处 (or n / N). The marks next to line numbers lead back to the point. A point's
- * explanation opens in the ask drawer.
+ * explanation opens in the ask drawer. Points may form a tree (pages or modules, the points under
+ * them) that folds like folders; choosing a group takes in everything under it.
  */
 type DiffRepo = { space: string; files: { name: string; lines: string[]; add: number; rm: number }[] };
 const props = defineProps<{ rv: Reviews; runId: string; diffs: DiffRepo[] }>();
@@ -33,9 +36,62 @@ const pointsOf = (space: string, name: string): DiffPoint[] =>
       .filter((l) => l.start && sameFile(space, name, l.file))
       .map((l) => ({ id: p.id, mark: p.id.replace(/^C/i, ""), color: colorOf(p.id), start: l.start!, end: l.end ?? l.start! })),
   );
-const touches = (p: ChangePoint, space: string, name: string) => p.locations.some((l) => sameFile(space, name, l.file));
-const filesOf = (p: ChangePoint) => [...new Set(p.locations.map((l) => l.file.split("/").pop()!))];
-const fileLevel = (p: ChangePoint) => p.locations.length > 0 && p.locations.every((l) => !l.start);
+
+// ---- the tree: a point's parent nests it; one naming a parent that is not there sits at the top --
+const ids = computed(() => new Set(points.value.map((p) => p.id)));
+const parentOf = (p: ChangePoint) => (p.parent && p.parent !== p.id && ids.value.has(p.parent) ? p.parent : null);
+const kids = computed(() => {
+  const m = new Map<string | null, ChangePoint[]>();
+  for (const p of points.value) m.set(parentOf(p), [...(m.get(parentOf(p)) ?? []), p]);
+  return m;
+});
+const isTree = computed(() => points.value.some((p) => parentOf(p)));
+/** A point and everything under it (a loop the reviewer slipped into stops at the first repeat). */
+const scopeOf = (p: ChangePoint): ChangePoint[] => {
+  const out: ChangePoint[] = [];
+  const seen = new Set<string>();
+  const walk = (x: ChangePoint) => {
+    if (seen.has(x.id)) return;
+    seen.add(x.id);
+    out.push(x);
+    for (const c of kids.value.get(x.id) ?? []) walk(c);
+  };
+  walk(p);
+  return out;
+};
+const locsOf = (p: ChangePoint) => scopeOf(p).flatMap((x) => x.locations);
+const collapsed = ref(new Set<string>());
+// A long tree opens at its first level; a short one opens fully.
+watch(points, (list) => { collapsed.value = new Set(list.length > 20 ? list.filter((p) => parentOf(p) && kids.value.get(p.id)?.length).map((p) => p.id) : []); }, { immediate: true });
+function toggleNode(id: string) {
+  const n = new Set(collapsed.value);
+  n.has(id) ? n.delete(id) : n.add(id);
+  collapsed.value = n;
+}
+const rows = computed(() => {
+  const out: { p: ChangePoint; depth: number; n: number }[] = [];
+  const seen = new Set<string>();
+  const walk = (list: ChangePoint[], depth: number) => {
+    for (const p of list) {
+      if (seen.has(p.id)) continue;
+      seen.add(p.id);
+      const n = (kids.value.get(p.id) ?? []).length;
+      out.push({ p, depth, n });
+      if (n && !collapsed.value.has(p.id)) walk(kids.value.get(p.id)!, depth + 1);
+    }
+  };
+  walk(kids.value.get(null) ?? [], 0);
+  return out;
+});
+/** What a group's points come to: how many of the leaves under it are done. */
+const leavesDone = (p: ChangePoint) => {
+  const leaves = scopeOf(p).filter((x) => !(kids.value.get(x.id) ?? []).length);
+  return `${leaves.filter((x) => x.status === "done").length}/${leaves.length} 已实现`;
+};
+
+const touches = (p: ChangePoint, space: string, name: string) => locsOf(p).some((l) => sameFile(space, name, l.file));
+const filesOf = (p: ChangePoint) => [...new Set(locsOf(p).map((l) => l.file.split("/").pop()!))];
+const fileLevel = (p: ChangePoint) => locsOf(p).length > 0 && locsOf(p).every((l) => !l.start);
 
 // Files the points touch come first; the others are one click away.
 const mapped = computed(() => props.diffs.map((d) => ({ space: d.space, files: d.files.filter((f) => points.value.some((p) => touches(p, d.space, f.name))) })).filter((d) => d.files.length));
@@ -69,7 +125,7 @@ const pageFiles = computed(() => (points.value.length ? mapped.value : props.dif
 const stopsOf = (p: ChangePoint): Stop[] => {
   const out: Stop[] = [];
   for (const f of pageFiles.value) {
-    const locs = p.locations.filter((l) => sameFile(f.space, f.name, l.file)).sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+    const locs = locsOf(p).filter((l) => sameFile(f.space, f.name, l.file)).sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
     const seen = new Set<string>();
     for (const l of locs) {
       const s = `${l.start ?? ""}`;
@@ -82,8 +138,10 @@ const stopsOf = (p: ChangePoint): Stop[] => {
 };
 const activePoint = computed(() => points.value.find((p) => p.id === active.value) ?? null);
 const stops = computed(() => (activePoint.value ? stopsOf(activePoint.value) : []));
+/** The points the code highlights: the chosen one, or a group and everything under it. */
+const activeIds = computed(() => (activePoint.value ? scopeOf(activePoint.value).map((p) => p.id) : null));
 /** Locations naming a file the diff does not have (a reviewer's slip, or a file outside the change). */
-const strays = computed(() => activePoint.value?.locations.filter((l) => !pageFiles.value.some((f) => sameFile(f.space, f.name, l.file))) ?? []);
+const strays = computed(() => (activePoint.value ? locsOf(activePoint.value) : []).filter((l) => !pageFiles.value.some((f) => sameFile(f.space, f.name, l.file))) ?? []);
 const stop = ref(0);
 const stopLabel = (s: Stop) => (s.start ? `${s.name}:${s.start}${s.end && s.end !== s.start ? `–${s.end}` : ""}` : `${s.name}（文件级）`);
 let flashed: HTMLElement | null = null;
@@ -171,9 +229,15 @@ async function follow() {
   }
   splitTimer = setTimeout(follow, 5000);
 }
-async function split() {
+async function split(revise = false) {
+  let note: string | undefined;
+  if (revise) {
+    const t = await promptDialog("重新整理需求拆分", { message: "在现有的变更点上按你的要求调整，没提到的保持原样；不重跑评审。留空就按需求材料重新整理一遍。", placeholder: "如：按前端页面分组，每页下面再列变更点；C3 拆细一点", okText: "开始整理" });
+    if (t === null) return;
+    note = t;
+  }
   try {
-    splitRun.value = (await post<{ id: string }>(`/api/runs/${props.runId}/change-points`)).id;
+    splitRun.value = (await post<{ id: string }>(`/api/runs/${props.runId}/change-points`, { revise, note })).id;
     void follow();
   } catch (e) {
     toast((e as Error).message, "error");
@@ -193,24 +257,33 @@ const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: 
         <UiSegmented v-model="aside" size="sm" :options="asideOptions" aria-label="按变更点还是按文件看" />
         <DiffTree v-if="aside === 'files'" :files="treeFiles" :active="activeFile" :marked="pointFiles" :hot="activeFiles" :hot-color="active ? colorOf(active) : undefined" @pick="pickFile" />
         <template v-else>
-        <p v-if="points.length" class="legend muted small">来自业务评审 · 点一条只看它的代码 · 行号旁的标记回到变更点</p>
+        <div v-if="points.length" class="legend muted small">
+          <span>{{ isTree ? "点一组看它下面全部的代码" : "点一条只看它的代码" }} · 行号旁的标记回到变更点</span>
+          <button v-if="!splitRun" class="lnk" title="按你的要求调整这份拆分，不重跑评审" @click="split(true)">重新整理</button>
+          <span v-else>整理中…<router-link :to="`/runs/${splitRun}`">看过程</router-link></span>
+        </div>
         <div v-else class="split">
           <p class="muted small">这一轮还没有需求拆分：把需求拆成变更点、标出各自的实现位置，就能在这里从需求走到代码。之后的评审会自动拆分。</p>
-          <button v-if="!splitRun" class="btn sm primary" @click="split">拆分需求</button>
+          <button v-if="!splitRun" class="btn sm primary" @click="split()">拆分需求</button>
           <p v-else class="muted small">拆分中，读完需求材料和改动大约要几分钟。<router-link :to="`/runs/${splitRun}`">看过程</router-link></p>
         </div>
-        <div v-for="p in points" :key="p.id" class="point" :class="{ on: active === p.id }" :data-ask-label="`变更点 ${p.id} ${p.title}`">
-          <button class="pick" :aria-pressed="active === p.id" @click="choose(p)">
-            <span class="dot" :style="{ background: colorOf(p.id) }" />
-            <span class="pt"><strong>{{ p.id }}</strong> {{ p.title }}</span>
-          </button>
-          <div class="meta small">
+        <div v-for="{ p, depth, n } in rows" :key="p.id" class="point" :class="{ on: active === p.id, group: n > 0 }" :style="{ marginLeft: `${depth * 14}px` }" :data-ask-label="`变更点 ${p.id} ${p.title}`">
+          <div class="head">
+            <button v-if="n" class="fold" :aria-expanded="!collapsed.has(p.id)" :aria-label="collapsed.has(p.id) ? `展开 ${p.id}` : `收起 ${p.id}`" @click="toggleNode(p.id)"><Icon :name="collapsed.has(p.id) ? 'right' : 'down'" :size="12" /></button>
+            <span v-else-if="isTree" class="fold-gap" />
+            <button class="pick" :aria-pressed="active === p.id" @click="choose(p)">
+              <span class="dot" :style="{ background: colorOf(p.id) }" />
+              <span class="pt"><strong>{{ p.id }}</strong> {{ p.title }}</span>
+            </button>
+          </div>
+          <div class="meta small" :class="{ indent: isTree }">
             <span class="badge" :class="POINT_STATUS[p.status].cls">{{ POINT_STATUS[p.status].text }}</span>
-            <span class="muted ellipsis">{{ filesOf(p).join("、") || "没有对应的代码" }}{{ fileLevel(p) ? "（文件级）" : "" }}</span>
+            <span v-if="n" class="muted nowrap">{{ n }} 项 · {{ leavesDone(p) }}</span>
+            <span v-if="!n || active === p.id" class="muted ellipsis">{{ filesOf(p).join("、") || "没有对应的代码" }}{{ fileLevel(p) ? "（文件级）" : "" }}</span>
             <span class="spacer" />
             <button class="lnk" @click="emit('explain', p)">讲解</button>
           </div>
-          <ol v-if="active === p.id && stops.length + strays.length > 1" class="stops small" aria-label="这个变更点在代码里的位置">
+          <ol v-if="active === p.id && stops.length + strays.length > 1" class="stops small" :class="{ indent: isTree }" aria-label="这个变更点在代码里的位置">
             <li v-for="(s, i) in stops" :key="`${s.key}:${s.start ?? ''}`">
               <button class="stop mono" :class="{ on: stop === i }" :aria-current="stop === i ? 'location' : undefined" :title="s.key.slice(s.key.indexOf(':') + 1)" @click="go(i)">{{ stopLabel(s) }}</button>
             </li>
@@ -230,11 +303,11 @@ const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: 
           <span v-else class="muted small">选中代码可以加入提问或修改点</span><span class="spacer" /><UiSegmented v-model="diffLayout" size="sm" :options="diffLayoutOptions" aria-label="差异的排列" /></div>
         <template v-for="d in points.length ? mapped : diffs" :key="d.space">
           <div v-if="multi" class="repo">{{ spaceName(d.space) }}</div>
-          <div v-for="f in d.files" :key="f.name" class="file" :data-key="key(d.space, f.name)" :class="{ hit: !!active && points.some((p) => p.id === active && touches(p, d.space, f.name)), picked: activeFile === key(d.space, f.name) }">
+          <div v-for="f in d.files" :key="f.name" class="file" :data-key="key(d.space, f.name)" :class="{ hit: !!activePoint && touches(activePoint, d.space, f.name), picked: activeFile === key(d.space, f.name) }">
             <button class="fhead mono small" :aria-expanded="open.has(key(d.space, f.name))" @click="toggleFile(key(d.space, f.name))">
               <span class="ellipsis">{{ f.name }}</span><span class="add">+{{ f.add }}</span><span class="rm">-{{ f.rm }}</span>
             </button>
-            <DiffFile v-if="open.has(key(d.space, f.name))" :run-id="runId" :space="d.space" :lines="f.lines" :points="pointsOf(d.space, f.name)" :active="active" @point="fromMark" />
+            <DiffFile v-if="open.has(key(d.space, f.name))" :run-id="runId" :space="d.space" :lines="f.lines" :points="pointsOf(d.space, f.name)" :active="activeIds" @point="fromMark" />
           </div>
         </template>
         <template v-if="points.length && others.length">
@@ -256,7 +329,14 @@ const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: 
 <style scoped>
 .cols { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 18px; align-items: start; }
 .points { display: grid; gap: 6px; position: sticky; top: 0; max-height: calc(100vh - 140px); overflow: auto; padding-right: 2px; }
-.legend { margin: 0 0 4px; }
+.legend { margin: 0 0 4px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.head { display: flex; align-items: baseline; gap: 2px; min-width: 0; }
+.fold { flex: none; width: 18px; height: 18px; display: inline-grid; place-items: center; border: 0; background: none; padding: 0; color: var(--muted); cursor: pointer; border-radius: 4px; transform: translateY(2px); }
+.fold:hover { background: var(--hover); color: var(--ink); }
+.fold-gap { flex: none; width: 18px; }
+.point.group > .head .pt { font-weight: 600; }
+.nowrap { white-space: nowrap; }
+.meta.indent, .stops.indent { margin-left: 36px; }
 .split { display: grid; gap: 8px; justify-items: start; }
 .split p { margin: 0; }
 .point { border-radius: 10px; padding: 8px 10px; border: 1px solid transparent; }

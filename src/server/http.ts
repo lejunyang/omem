@@ -938,14 +938,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { setFindingDecision } = await import("../agents/review-fix.ts");
     return setFindingDecision(app, p.id, Number(p.fid), b.decision, b.note);
   });
-  // Split the requirement into change points for a review that has none (an earlier review).
+  // Split the requirement into change points for a review that has none (an earlier review), or
+  // rework the split it has by the owner's note.
   server.post("/api/runs/:id/change-points", async (req) => {
     const id = (req.params as { id: string }).id;
     ownRun(req, id);
-    const { workRuns } = await import("../agents/review-fix.ts");
-    const last = getRun(app, workRuns(app, id).at(-1)!);
-    if (last.kind !== "code" || !last.output.reviewPlan) throw new HttpError(400, "只有评审过的交办或分支评审能拆分需求");
-    return createRun(app, { kind: "review", spaceId: last.spaceId, title: `需求拆分：${last.title.slice(0, 60)}`, input: { codeRunId: last.id, splitOnly: true }, parentId: last.id, userId: who(req) });
+    const b = q(z.object({ note: z.string().max(20000).optional(), revise: z.boolean().optional() }), req.body ?? {});
+    const { requestSplit } = await import("../agents/review-chain.ts");
+    return requestSplit(app, id, { ...b, userId: who(req) });
   });
   server.post("/api/runs/:id/fix", async (req) => {
     const id = (req.params as { id: string }).id;

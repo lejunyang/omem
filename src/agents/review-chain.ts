@@ -9,7 +9,7 @@ import { type CodeChain, queueNextCodeRound, maxCodeRounds, saveCodeChain, setCh
 import { codePatches, isBranchReview, worktreesOf } from "./code.ts";
 import {
   blocksAt, checkBrief, recordReview, reviewChecks, reviewFor, reviewTiers, roundFindings, stopReason,
-  SEVERITY_LABEL, STOP_LABEL, type LeadResult, type ReviewPlan, type Severity, type StopReason,
+  SEVERITY_LABEL, STOP_LABEL, type ChangePoint, type LeadResult, type ReviewPlan, type Severity, type StopReason,
 } from "./review.ts";
 import { runRole } from "./runner.ts";
 import { createRun, getRun, registerHandler, runUser, setRunOutput, type Run } from "./runs.ts";
@@ -100,7 +100,8 @@ async function reviewContext(app: App, codeRunId: string, note?: string) {
 const SPLIT_BRIEF = [
   "## 你这次只做需求拆分",
   "不评问题，只把需求拆成可以对着代码审阅的变更点，给本人在网页上从需求走到代码：",
-  "- 按业务划分（不按文件），一般 4–15 个，编号 C1、C2…，标题一句话说清要做成什么；",
+  "- 按业务划分（不按文件），编号 C1、C2…，标题一句话说清要做成什么；",
+  "- 需求小（十来个点以内、集中在一处）就平铺；涉及几个页面或模块时建成树：先按页面或模块建分组节点（如 M1 退款申请页），再用 `parent` 把变更点挂在下面，必要时再往下分一层，最多 4 层。怎么分组跟着需求材料自己的组织走（需求文档的章节、原型的页面、技术方案的模块）；分组节点也写需求怎么说，状态按下面各项汇总；",
   "- 每个写需求怎么说（带 `src:` 引用，需求文档、群聊、技术方案里的原文）、代码怎么做；",
   "- 状态：done 已实现 / partial 部分实现 / missing 没实现 / extra 需求外的改动；",
   "- 实现位置：文件和改动后的行段（几个仓库时路径前加仓库空间 id），找不准行号就只写文件，不要编；引用的原件 id 要从 search / read_source 的结果里原样抄。",
@@ -112,16 +113,22 @@ const SPLIT_BRIEF = [
  * next to the checks when the tier has no business check, or on request for an earlier review.
  * The business reviewer's role does it, reading what the checks read.
  */
-export async function splitChangePoints(app: App, codeRunId: string, rc: RoundContext) {
+export async function splitChangePoints(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string; revise?: boolean } = {}) {
   const { run, input, cwd, spaces, indexed, reviewTask } = await reviewContext(app, codeRunId);
-  rc.event("status", { text: "拆分需求、对上代码" });
+  // Reworking an earlier split: the points as they stand and what the owner wants changed.
+  const before = opts.revise ? currentPoints(app, run) : [];
+  const revise = [
+    before.length ? `## 之前的拆分\n\n在它的基础上按本人的要求调整：本人没提到的地方保持原样，编号尽量不变（挪进新的分组也保留原编号）；要求本身就是重拆的，才整个重拆。提交时交完整的一份（整份替换）。\n\n${fence("json", JSON.stringify(before, null, 1))}` : "",
+    opts.note?.trim() ? `## 本人这次的要求\n\n${opts.note.trim()}` : "",
+  ].filter(Boolean).join("\n\n");
+  rc.event("status", { text: before.length ? "按要求重新整理需求拆分" : "拆分需求、对上代码" });
   await runRole(app, {
     role: "review-business",
     reviewCheck: true,
     spaceId: run.spaceId!,
     spaces,
     alsoRead: indexed,
-    task: `${reviewTask}\n\n${SPLIT_BRIEF}`,
+    task: [reviewTask, SPLIT_BRIEF, revise].filter(Boolean).join("\n\n"),
     runId: rc.runId,
     cwd,
     signal: rc.signal,
@@ -132,6 +139,32 @@ export async function splitChangePoints(app: App, codeRunId: string, rc: RoundCo
   });
   const saved = (getRun(app, run.id).output as { changePoints?: { round: number } }).changePoints;
   if (saved?.round !== roundOf(run)) throw new Error("没有提交变更点");
+}
+
+/**
+ * A split of its own for a delegation's or branch review's latest round, as a `review` run: for an
+ * earlier review that has none, or (`revise`) reworking the points it has by the owner's note.
+ */
+export async function requestSplit(app: App, runId: string, opts: { note?: string; revise?: boolean; userId: string }) {
+  const { workRuns } = await import("./review-fix.ts");
+  const last = getRun(app, workRuns(app, runId).at(-1)!);
+  if (last.kind !== "code" || !last.output.reviewPlan) throw new HttpError(400, "只有评审过的交办或分支评审能拆分需求");
+  const revise = !!opts.revise && currentPoints(app, last).length > 0;
+  if (one(app.db, "select 1 from runs where parent_id = ? and kind = 'review' and status in ('queued', 'running')", last.id)) {
+    throw new HttpError(409, "这次评审还在进行，等它结束再拆分");
+  }
+  return createRun(app, {
+    kind: "review", spaceId: last.spaceId, title: `${revise ? "重新整理需求拆分" : "需求拆分"}：${last.title.slice(0, 60)}`,
+    input: { codeRunId: last.id, splitOnly: true, revise, note: opts.note?.trim() || undefined }, parentId: last.id, userId: opts.userId,
+  });
+}
+
+/** The change points a round shows now: the split of its own if one ran, else the business check's. */
+export function currentPoints(app: App, run: Run): ChangePoint[] {
+  const own = (run.output as { changePoints?: { round: number; points: ChangePoint[] } | null }).changePoints;
+  if (own?.round === roundOf(run) && own.points.length) return own.points;
+  const row = reviewFor(app, run.id, roundOf(run), "review-business");
+  return row?.change_points ? (JSON.parse(row.change_points) as ChangePoint[]) : [];
 }
 
 export async function reviewRound(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string } = {}): Promise<{ verdict: string; continuedRunId?: string }> {
@@ -525,9 +558,9 @@ registerAskHandler("review-escalation",(app, ask, ctx) => onEscalationAnswer(app
 
 // A confirmed plan reviews in a run of its own; the coding run it reviews keeps the results.
 registerHandler("review", async (ctx) => {
-  const { codeRunId, note, splitOnly } = ctx.run.input as { codeRunId: string; note?: string; splitOnly?: boolean };
+  const { codeRunId, note, splitOnly, revise } = ctx.run.input as { codeRunId: string; note?: string; splitOnly?: boolean; revise?: boolean };
   if (splitOnly) {
-    await splitChangePoints(ctx.app, codeRunId, { runId: ctx.run.id, signal: ctx.signal, event: ctx.event });
+    await splitChangePoints(ctx.app, codeRunId, { runId: ctx.run.id, signal: ctx.signal, event: ctx.event }, { note, revise });
     return { changePoints: true };
   }
   return reviewRound(ctx.app, codeRunId, { runId: ctx.run.id, signal: ctx.signal, event: ctx.event }, { note });

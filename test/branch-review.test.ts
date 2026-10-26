@@ -305,6 +305,20 @@ describe("reviewing an existing branch", () => {
       expect((await reviews()).rounds[0].changePoints?.map((p) => p.id)).toEqual(["C1"]);
       // The run page finds the split's process through the round.
       expect(((await reviews()).rounds[0] as unknown as { reviewRuns: { id: string }[] }).reviewRuns.map((x) => x.id)).toEqual([splitRun.id]);
+
+      // Reworking the split by the owner's note: refused while a split is still running, then the
+      // points as they stand and the note reach the splitter, which nests the point under a page.
+      const again = () => fetch(`${app.baseUrl}/api/runs/${r.id}/change-points`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ revise: true, note: "按页面分组" }) });
+      expect((await again()).status).toBe(409);
+      run(app.db, "update runs set status = 'done' where id = ?", splitRun.id);
+      const resplit = (await (await again()).json()) as { id: string; title: string };
+      expect(resplit.title).toMatch(/^重新整理需求拆分/);
+      run(app.db, "update runs set status = 'running' where id = ?", resplit.id);
+      await __testHandlers.get("review")!({ app, run: getRun(app, resplit.id), signal: new AbortController().signal, event: (type, data) => addRunEvent(app, resplit.id, type, data), output: (data) => setRunOutput(app, resplit.id, data) });
+      const tree = (await reviews()).rounds[0].changePoints as { id: string; parent?: string }[];
+      expect(tree.map((p) => [p.id, p.parent])).toEqual([["M1", undefined], ["C1", "M1"]]);
+      expect(runEvents(app, resplit.id).some((e) => JSON.stringify(e.data).includes("重新整理 true true"))).toBe(true);
+      run(app.db, "update runs set status = 'done' where id = ?", resplit.id);
       discardCodeRun(app, r.id);
     } finally {
       await server.close();

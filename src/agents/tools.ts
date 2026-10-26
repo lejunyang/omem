@@ -2802,6 +2802,24 @@ def({
 });
 
 def({
+  name: "resplit_change_points",
+  description:
+    "重新整理已有评审的需求拆分（网页“变更”里的变更点），不重跑整个评审：本人说“按页面重新分组”“C3 拆细一点”“把需求点重新整理一遍”时用。在原来的变更点上按要求调整，没提到的保持；评审没有拆分时就新拆一份。交办编码或分支评审都可以，传任一轮的运行 id。返回拆分运行 id，完成后在运行页“变更”里看。",
+  write: true,
+  schema: z.object({
+    run_id: z.string().describe("交办编码或分支评审的运行 id（任一轮）"),
+    request: z.string().max(20000).optional().describe("本人要怎么改，原话为主（如“按前端页面分组，每页下面再列变更点”）；不传就按需求材料重新整理一遍"),
+  }),
+  handler: async (ctx, a) => {
+    const r = getRun(ctx.app, a.run_id);
+    for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) writeSpace(ctx, id);
+    const { requestSplit } = await import("./review-chain.ts");
+    const split = await requestSplit(ctx.app, r.id, { note: a.request, revise: true, userId: ctx.userId ?? OWNER });
+    return `已安排${(split.input as { revise?: boolean }).revise ? "重新整理需求拆分" : "需求拆分"}，运行 ${split.id}；完成后在运行页的“变更”里看，进度用 read_run 查看。`;
+  },
+});
+
+def({
   name: "retry_code_progress",
   description: "重试编码交办的飞书进度投递（创建或更新失败、重试耗尽时用）。不启动编码轮次，不换工作话题，不重复创建已存在的卡片。先用 read_run 检查 codeProgress。",
   write: true,
@@ -3054,13 +3072,14 @@ def({
     })).max(100),
     change_points: z.array(z.object({
       id: z.string().max(12).describe("编号：C1、C2…"),
+      parent: z.string().max(12).optional().describe("上一级变更点的编号：需求大时先按页面或模块分组，再在下面拆；平铺就不填"),
       title: z.string().max(200).describe("一句话：这个变更点要做成什么"),
       status: z.enum(["done", "partial", "missing", "extra"]).describe("done 已实现 / partial 部分实现 / missing 没实现 / extra 需求外的改动"),
       requirement: z.string().max(2000).optional().describe("需求怎么说（带 src: 引用）"),
       implementation: z.string().max(2000).optional().describe("代码怎么做、为什么这么写"),
       refs: z.array(z.string().max(300)).max(20).optional().describe("依据：src:<原件id>#L起-L止、mem:<id>"),
       locations: z.array(z.object({ file: z.string().max(500).describe("仓库内路径；几个仓库时写成 仓库空间id/路径"), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).max(30).optional().describe("实现它的代码位置（改动后的行号）；找不到精确行就只写文件"),
-    })).max(60).optional().describe("业务评审填写：需求拆成的变更点和各自的实现位置，网页的“变更”视图按它把需求和代码对上。其他评审项不用填"),
+    })).max(100).optional().describe("业务评审填写：需求拆成的变更点和各自的实现位置，网页的“变更”视图按它把需求和代码对上。其他评审项不用填"),
   }),
   handler: async (ctx, a) => {
     const check = ctx.spec ?? ctx.role;
@@ -3071,7 +3090,9 @@ def({
     const { changePointSchema, findingSchema, recordReview } = await import("./review.ts");
     const findings = a.findings.map((f) => findingSchema.parse(f));
     const changePoints = (a.change_points ?? []).map((c) => changePointSchema.parse(c));
-    const { deadRefs } = await import("./review.ts");
+    const { deadRefs, pointTreeProblem } = await import("./review.ts");
+    const badTree = pointTreeProblem(changePoints);
+    if (badTree) throw new HttpError(400, `变更点的层级不对：${badTree}。改正后再提交。`);
     const dead = deadRefs(ctx.app, [...findings.flatMap((f) => f.evidence), ...changePoints.flatMap((c) => c.refs)]);
     if (dead.length) throw new HttpError(400, `这些引用找不到对应的原件或记忆：${dead.join("、")}。id 多半抄错了，用 search / read_source 核对后改正再提交（找不到就去掉这条依据）。`);
     recordReview(ctx.app, { codeRunId: r.id, round: (r.input as { round?: number }).round ?? 1, check, tier: plan.tier, verdict: a.verdict, summary: a.summary, findings, changePoints, ai: { profile: ctx.agentProfile, model: ctx.model ?? undefined, effort: ctx.effort ?? undefined } });
@@ -3084,21 +3105,24 @@ def({
   description: "提交需求拆分（只在交办编码 / 分支评审的评审会话里可用）：需求拆成的变更点和各自的实现位置，网页“变更”视图按它把需求和代码对上。再次提交覆盖这一轮之前的。",
   schema: z.object({
     change_points: z.array(z.object({
-      id: z.string().max(12).describe("编号：C1、C2…"),
+      id: z.string().max(12).describe("编号：C1、C2…；分组节点也可以用 M1、P1"),
+      parent: z.string().max(12).optional().describe("上一级变更点的编号：需求涉及几个页面或模块时，先建页面 / 模块节点，再把变更点挂在下面，最多 4 层；平铺就不填"),
       title: z.string().max(200),
-      status: z.enum(["done", "partial", "missing", "extra"]),
+      status: z.enum(["done", "partial", "missing", "extra"]).describe("分组节点按下面各项汇总：全部已实现写 done，有没做完的写 partial"),
       requirement: z.string().max(2000).optional().describe("需求怎么说（带 src: 引用）"),
       implementation: z.string().max(2000).optional().describe("代码怎么做、为什么这么写"),
       refs: z.array(z.string().max(300)).max(20).optional(),
       locations: z.array(z.object({ file: z.string().max(500), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).max(30).optional(),
-    })).min(1).max(60),
+    })).min(1).max(100),
   }),
   handler: async (ctx, a) => {
     const { codeRunOf } = await import("./review-chain.ts");
     const r = codeRunOf(ctx.app, ctx.runId);
     if (!r) throw new HttpError(400, "submit_change_points 只能在交办编码或分支评审的评审里使用");
-    const { changePointSchema, deadRefs } = await import("./review.ts");
+    const { changePointSchema, deadRefs, pointTreeProblem } = await import("./review.ts");
     const points = a.change_points.map((c) => changePointSchema.parse(c));
+    const bad = pointTreeProblem(points);
+    if (bad) throw new HttpError(400, `变更点的层级不对：${bad}。改正后再提交。`);
     const dead = deadRefs(ctx.app, points.flatMap((c) => c.refs));
     if (dead.length) throw new HttpError(400, `这些引用找不到对应的原件或记忆：${dead.join("、")}。id 多半抄错了，用 search / read_source 核对后改正再提交（找不到就去掉）。`);
     setRunOutput(ctx.app, r.id, { changePoints: { round: (r.input as { round?: number }).round ?? 1, points, at: new Date().toISOString() } });

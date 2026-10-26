@@ -8,7 +8,8 @@ export type Finding = { id: number; severity: Severity; file_path: string | null
 export type Decision = "fix" | "later" | "wontfix";
 /** Without a call of the owner's: what review-lead accepted and the serious ones get fixed, the rest wait. */
 export const decisionOf = (f: Finding): Decision => f.decision ?? (f.state === "accepted" || (f.state === "open" && (f.severity === "blocker" || f.severity === "major")) ? "fix" : "later");
-export type ChangePoint = { id: string; title: string; status: "done" | "partial" | "missing" | "extra"; requirement: string; implementation: string; refs: string[]; locations: { file: string; start?: number; end?: number }[] };
+/** `parent` nests a point under a page or module (a tree); without it the list is flat. */
+export type ChangePoint = { id: string; parent?: string; title: string; status: "done" | "partial" | "missing" | "extra"; requirement: string; implementation: string; refs: string[]; locations: { file: string; start?: number; end?: number }[] };
 export type Review = { id: string; round: number; check_name: string; verdict: "approved" | "changes_requested" | "failed"; summary: string; profile_id: string | null; model: string | null; effort: string | null; created_at: string; findings: Finding[]; change_points: ChangePoint[] };
 export type Lead = { verdict: "approve" | "revise" | "escalate"; summary: string; changeRequest: string; rerun: string[]; by: "lead" | "host"; stop?: string; escalation?: { summary: string } };
 export type AskInfo = { id: string; status: string; question: string; options: { label: string }[]; answer: string | null; handler?: string | null };
@@ -18,6 +19,8 @@ type Data = { estimate: { tierName: string; reason: string } | null; rounds: Rou
 export const SEV: Record<Severity, { text: string; cls: string }> = { blocker: { text: "阻断", cls: "danger" }, major: { text: "严重", cls: "danger" }, minor: { text: "一般", cls: "warn" }, nit: { text: "提示", cls: "" } };
 const RANK: Record<Severity, number> = { blocker: 0, major: 1, minor: 2, nit: 3 };
 export const POINT_STATUS: Record<ChangePoint["status"], { text: string; cls: string }> = { done: { text: "已实现", cls: "ok" }, partial: { text: "部分实现", cls: "warn" }, missing: { text: "没实现", cls: "danger" }, extra: { text: "需求外", cls: "warn" } };
+/** How many change points there are, not counting the groups (pages, modules) that hold others. */
+export const pointCount = (points: ChangePoint[]) => points.filter((p) => !points.some((x) => x.parent === p.id && x.id !== p.id)).length;
 /** Findings review-lead set aside: shown dimmed, not counted. */
 export const settled = (f: Finding) => ["rejected", "merged"].includes(f.state);
 export const findingWhere = (f: Finding) => (f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""}` : "");

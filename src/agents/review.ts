@@ -285,10 +285,12 @@ export type Finding = z.infer<typeof findingSchema>;
 /**
  * A requirement's change point and where the change implements it (docs/v2/review.md §6, “变更”):
  * what the requirement says, what the code does, and the line ranges, so the run page can go from
- * a change point to its code and back.
+ * a change point to its code and back. `parent` nests points into a tree (a page or module and the
+ * points under it), which a large requirement reads better as; a flat list leaves it out.
  */
 export const changePointSchema = z.object({
   id: z.string().min(1).max(12),
+  parent: z.string().max(12).optional(),
   title: z.string().min(1).max(200),
   status: z.enum(["done", "partial", "missing", "extra"]),
   requirement: z.string().max(2000).default(""),
@@ -297,6 +299,21 @@ export const changePointSchema = z.object({
   locations: z.array(z.object({ file: z.string().min(1).max(500), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).max(30).default([]),
 });
 export type ChangePoint = z.infer<typeof changePointSchema>;
+
+/** Why a submitted tree of change points does not hold (ids repeat, a parent missing, a loop, too deep), or null. */
+export function pointTreeProblem(points: ChangePoint[]): string | null {
+  const ids = new Map(points.map((p) => [p.id, p]));
+  if (ids.size !== points.length) return "变更点编号有重复";
+  for (const p of points) {
+    if (p.parent === undefined) continue;
+    if (!ids.has(p.parent)) return `${p.id} 的 parent ${p.parent} 不在这次提交的变更点里`;
+    let depth = 1;
+    for (let at = ids.get(p.parent); at; at = at.parent === undefined ? undefined : ids.get(at.parent)) {
+      if (at.id === p.id || ++depth > 4) return depth > 4 ? `${p.id} 嵌套超过 4 层` : `${p.id} 的 parent 绕成了环`;
+    }
+  }
+  return null;
+}
 
 /**
  * References in a review that point at nothing: a source or memory id the model got wrong (one

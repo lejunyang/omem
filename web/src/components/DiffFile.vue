@@ -14,7 +14,9 @@ import { diffLayout } from "../lib/diffLayout";
  * lines that replaced them.
  */
 export type DiffPoint = { id: string; mark: string; color: string; start: number; end: number };
-const props = withDefaults(defineProps<{ runId: string; space: string; lines: string[]; points?: DiffPoint[]; active?: string | null; expandable?: boolean }>(), { points: () => [], active: null, expandable: true });
+// `active` is one change point, or a group's points (a page or module and what is under it).
+const props = withDefaults(defineProps<{ runId: string; space: string; lines: string[]; points?: DiffPoint[]; active?: string | string[] | null; expandable?: boolean }>(), { points: () => [], active: null, expandable: true });
+const isActive = (id: string) => (Array.isArray(props.active) ? props.active.includes(id) : props.active === id);
 const emit = defineEmits<{ point: [id: string] }>();
 
 type Row = { kind: "add" | "del" | "ctx" | "meta"; old: number | null; new: number | null; text: string };
@@ -116,7 +118,7 @@ const marksAt = (h: Hunk, j: number) => {
   const prev = k >= 0 ? h.rows[k].new : null;
   return pointsAt(r.new).filter((p) => prev === null || prev < p.start || prev > p.end);
 };
-const rowClass = (r: Row) => [r.kind, { cp: pointsAt(r.new).length > 0, "cp-on": !!props.active && pointsAt(r.new).some((p) => p.id === props.active) }];
+const rowClass = (r: Row) => [r.kind, { cp: pointsAt(r.new).length > 0, "cp-on": pointsAt(r.new).some((p) => isActive(p.id)) }];
 
 // ---- side by side: removed lines on the left next to the lines that replaced them on the right ----
 type Pair = { l: Row | null; r: Row | null; marks: DiffPoint[] };
@@ -145,7 +147,7 @@ const pairs = computed(() => hunks.value.map((h) => {
   }
   return out;
 }));
-const pairClass = (p: Pair) => ({ cp: !!p.r && pointsAt(p.r.new).length > 0, "cp-on": !!p.r && !!props.active && pointsAt(p.r.new).some((x) => x.id === props.active) });
+const pairClass = (p: Pair) => ({ cp: !!p.r && pointsAt(p.r.new).length > 0, "cp-on": !!p.r && pointsAt(p.r.new).some((x) => isActive(x.id)) });
 const cols = computed(() => (split.value ? 4 : 3));
 // An index preview must not expand context from the working copy, which may have later edits.
 const canExpand = (g: Gap) => props.expandable && !deleted.value && (g.to === null ? !file.value || hidden(g) > 0 : hidden(g) > 0);

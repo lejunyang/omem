@@ -8,7 +8,7 @@ import UiSegmented from "./UiSegmented.vue";
 import { relTime, toast } from "../store";
 import { refAction } from "../lib/refs";
 import { clearQuotes, quotesOf, quotesText } from "../lib/quotes";
-import { decisionOf, findingWhere, reviewAi, settled, severityCounts, SEV, type Decision, type Finding, type Reviews } from "../lib/reviews";
+import { decisionOf, findingWhere, pointCount, reviewAi, settled, severityCounts, SEV, type Decision, type Finding, type Reviews } from "../lib/reviews";
 
 /**
  * The run page's “概览” for a coding delegation or branch review: the verdict and review-lead's
@@ -160,7 +160,7 @@ async function answer(choice: number | null) {
       <div class="foot row wrap small">
         <button v-if="current?.plan?.reasons.length || rv.data.value.estimate" class="lnk" :aria-expanded="reasonsOpen" @click="reasonsOpen = !reasonsOpen">为什么是这一档</button>
         <button v-if="current?.lead?.changeRequest" class="lnk" :aria-expanded="changeOpen" @click="changeOpen = !changeOpen">修改单</button>
-        <button v-if="rv.changePoints.value.length" class="lnk" @click="emit('go', 'change')">{{ rv.changePoints.value.length }} 个变更点 →</button>
+        <button v-if="rv.changePoints.value.length" class="lnk" @click="emit('go', 'change')">{{ pointCount(rv.changePoints.value) }} 个变更点 →</button>
         <span v-if="current?.lead?.verdict === 'revise' && current.lead.rerun.length && current.lead.by === 'lead'" class="muted">下一轮复审：{{ current.lead.rerun.map(rv.label).join("、") }}</span>
         <span class="spacer" />
         <button v-if="reviewText" class="lnk" @click="rawOpen = !rawOpen">{{ rawOpen ? "收起评审原文" : "评审原文" }}</button>
