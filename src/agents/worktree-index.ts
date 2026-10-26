@@ -23,7 +23,7 @@ import { ensureGrammars } from "../sources/treesitter.ts";
  */
 
 /** `ref` / `tip`: the existing branch a branch review checked out (detached; `branch` is then empty). */
-export type WorktreeRef = { space: string; path: string; branch: string; base: string; ref?: string; tip?: string; baseRef?: string };
+export type WorktreeRef = { space: string; path: string; branch: string; base: string; ref?: string; tip?: string; baseRef?: string; targetBranch?: string | null };
 /** A delegation's worktree (`runId`, `path`) or a branch index (`branch`, `commit`), both over repository `repo`. */
 type WorktreeSettings = { runId?: string; repo: string; path?: string; base: string; branch?: string; baseRef?: string; commit?: string; deleted?: string[] };
 

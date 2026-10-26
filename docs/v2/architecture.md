@@ -193,6 +193,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 编码改动应用前核对各仓库的目标分支，续轮沿用首轮记录；旧分支任务从原请求恢复目标，分支不符时不应用、不切换 | 已实现；真实 Git 专项回归覆盖 | `src/agents/code.ts`、`test/code-worktrees.test.ts` |
 | 无问答会话的网页 / CLI 编码交办手动续轮，复用工作区和编码会话，阻止重复提交与已释放工作区续轮 | 已实现；专项回归覆盖 | `src/agents/review-fix.ts` |
 | 空间上下文：问答、原件和运行按当前空间显示；任务规则保存所属空间与结果会话，可选择已采集的飞书群，缺少投递目标时明确失败；主助手为默认执行者，执行空间按动作 → 档案 → 规则 → 触发空间解析；群会话与采集共用绑定解析，旧的无空间任务规则保持全局 | 已实现；专项测试、浏览器空间切换与真实 Agent 抽查通过 | `src/core/capture-space.ts`、`rules/`、`Ask.vue`、`Runs.vue` |
 | 原件归档：手动指定 / 来源绑定 → 按创建顺序首条匹配的归档规则 → archivist 内容判断 → 不确定留个人；条件使用中文选项与目录名称；AI 通过 propose_archive_rule 写草稿，核对后保存；自动归档先于记忆整理，按最终空间分组 | 已实现；2026-10-23 专项测试与真实 Agent 归档、规则草稿匹配抽查通过 | `sources/archive.ts`、`roles/archivist.md`、`roles/archive-rule-writer.md`、`ArchiveRules.vue` |

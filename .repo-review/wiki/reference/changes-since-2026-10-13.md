@@ -574,3 +574,7 @@ updated: 2026-10-25
 ## 2026-10-26：网页独立评审修改可继续下一轮
 
 修复从网页分支评审进入修改后，第二轮误要求问答会话链的问题。无会话链任务通过 `continueFrom`、`resumeSessionId` 复用工作区与编码会话，保留执行配置和来源评审；写事务内拒绝重复提交、工作区缺失或已释放的续轮。失败请求不关闭确认入口、不修改问题决定。实现与回归：`src/agents/review-fix.ts`、`test/review-fix.test.ts`。
+
+## 2026-10-26：应用修改前检查接收分支
+
+编码交办保存目标分支，应用时先核对所有接收目录，再检查和应用补丁。续轮沿用首轮目标；旧分支任务可从首轮 `fromBranches` 或 `baseRef` 恢复。分支不符时返回明确提示，不再向错误分支尝试应用，也不自动切换分支；工作区和补丁保留。实现：`src/agents/code.ts`、`src/agents/worktree-index.ts`；回归：`test/code-worktrees.test.ts`、`test/branch-review.test.ts`。

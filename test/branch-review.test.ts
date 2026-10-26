@@ -319,6 +319,7 @@ describe("reviewing an existing branch", () => {
       await exec(r);
       const [wt] = worktreesOf(app, r.id);
       expect(wt.base).toBe(tip);
+      expect(wt.targetBranch).toBe("feature/refund");
       // The change is relative to the branch: only the coder's line, not the branch's own commits.
       const patch = codePatches(app, r.id)[0].patch;
       expect(patch).toContain("export const round");

@@ -181,7 +181,8 @@ export async function runCodeTask(ctx: RunContext) {
     const base = start?.commit ?? git(repo.rootPath!, ["rev-parse", "HEAD"]).stdout.trim();
     const r = git(repo.rootPath!, ["worktree", "add", "-q", "-b", branch, path, base]);
     if (!r.ok) throw new Error(`在 ${repo.id} 创建工作区失败：${r.stderr}`);
-    worktrees.push({ space: repo.id, path, branch, base, ...(from ? { baseRef: from } : {}) });
+    const targetBranch = from ? branchFromRef(start!.ref) : git(repo.rootPath!, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() || null;
+    worktrees.push({ space: repo.id, path, branch, base, targetBranch, ...(from ? { baseRef: from } : {}) });
     ctx.event("status", { text: `已在 ${path} 创建 ${repo.id} 的独立工作区（基于 ${from ? `分支 ${from} 的 ` : ""}${base.slice(0, 8)}）` });
   }
   if (chain) {
@@ -403,6 +404,28 @@ export function codePatches(app: App, runId: string): { space: string; patch: st
     .filter((p) => p.patch.trim());
 }
 
+function branchFromRef(ref: string): string | null {
+  if (ref.startsWith("refs/heads/")) return ref.slice("refs/heads/".length);
+  if (ref.startsWith("refs/remotes/")) return ref.slice("refs/remotes/".length).split("/").slice(1).join("/");
+  return null;
+}
+
+/** Apply goes to the user's checkout, whose branch may have changed since coding began. */
+function checkApplyBranch(app: App, runId: string, space: string, root: string) {
+  const r = getRun(app, runId);
+  const first = getRun(app, String(r.input.continueFrom ?? r.id));
+  const wt = worktreesOf(app, first.id).find(w => w.space === space);
+  const from = (first.input as CodeInput).fromBranches?.[space] ?? wt?.baseRef;
+  // Older branch-based runs did not store targetBranch; recover it from the original request.
+  const target = wt?.targetBranch !== undefined ? wt.targetBranch : from ? branchFromRef(resolveRef(root, from)?.ref ?? `refs/heads/${from.replace(/^refs\/heads\//, "").replace(/^origin\//, "")}`) : undefined;
+  if (target === undefined) return; // Legacy HEAD-based runs have no recorded branch.
+  const current = git(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim();
+  if (target && current !== target)
+    throw new HttpError(409, `空间 ${space} 的应用目标分支不符：本次交办基于「${target}」，接收目录当前为「${current || "分离 HEAD"}」。请先将接收目录 ${root} 切换到「${target}」后重试；未应用任何改动，也未自动切换分支。`);
+  if (target === null && wt?.base && git(root, ["rev-parse", "HEAD"]).stdout.trim() !== wt.base)
+    throw new HttpError(409, `空间 ${space} 的交办基于指定提交 ${wt.base.slice(0, 12)}，接收目录 HEAD 已变化；请核对接收版本后重试，未应用任何改动。`);
+}
+
 /** Remove the run's worktrees and branches, and the temporary index of what they changed. */
 function removeWorktrees(app: App, runId: string) {
   for (const wt of worktreesOf(app, runId)) {
@@ -434,6 +457,8 @@ export function applyCodeRun(app: App, runId: string) {
     });
   if (!targets.length) throw new HttpError(404, "没有可应用的改动");
   const label = (space: string) => (targets.length > 1 ? `${space}：` : "");
+  // Check every destination before any patch check or application, including later rounds.
+  for (const t of targets) checkApplyBranch(app, runId, t.space, t.root);
   for (const t of targets) {
     const check = git(t.root, ["apply", "--check", "--3way", t.file]);
     if (!check.ok) throw new HttpError(409, `${label(t.space)}无法干净应用：${check.stderr.slice(0, 1000)}`);

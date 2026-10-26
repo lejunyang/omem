@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { applyCodeRun, codePatches, codeRepos, discardCodeRun } from "../src/agents/code.ts";
-import { createRun, setRunOutput } from "../src/agents/runs.ts";
+import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { indexWorktree, sweepWorktreeSpaces, worktreeSpaceId, worktreeSpacesOf, type WorktreeRef } from "../src/agents/worktree-index.ts";
 import { run as sql } from "../src/core/db.ts";
@@ -103,6 +103,46 @@ describe("delegated coding across repositories", () => {
     expect(() => applyCodeRun(app, id)).toThrow(/shop-api：无法干净应用/);
     expect(readFileSync(join(web, "app.ts"), "utf8")).toContain("return 1");
     sh(api, "reset", "-q", "--hard");
+    discardCodeRun(app, id);
+  });
+
+  it("rejects a clean but wrong branch across all repos, including a legacy second round, then applies after the owner switches", () => {
+    const original = sh(api, "branch", "--show-current").trim();
+    sh(api, "branch", "feature/refund");
+    // A remote-only branch is enough to recover the intended local branch name.
+    sh(api, "update-ref", "refs/remotes/origin/feature/refund", "HEAD");
+    sh(api, "branch", "-D", "feature/refund");
+    const { id, worktrees } = finishedRun({
+      "shop-web": { "app.ts": "export function showOrder() { return 9; }\n" },
+      "shop-api": { "orders.ts": "export function listOrders() { return [9]; }\n" },
+    });
+    sql(app.db, "update runs set input=json_set(input,'$.fromBranches',json(?)) where id=?", JSON.stringify({ "shop-api": "origin/feature/refund" }), id);
+    const first = getRun(app, id);
+    const next = createRun(app, { kind: "code", spaceId: "shop", title: "第二轮", input: { continueFrom: id } });
+    setRunOutput(app, next.id, first.output);
+    sql(app.db, "update runs set status='done' where id=?", next.id);
+    const before = [sh(web, "status", "--porcelain"), sh(api, "status", "--porcelain")];
+    expect(() => applyCodeRun(app, next.id)).toThrow(/应用目标分支不符.*feature\/refund/);
+    expect([sh(web, "status", "--porcelain"), sh(api, "status", "--porcelain")]).toEqual(before);
+    expect(worktrees.every(w => existsSync(w.path))).toBe(true);
+    expect(getRun(app, next.id).output.appliedAt).toBeUndefined();
+    sh(api, "switch", "-c", "feature/refund", "refs/remotes/origin/feature/refund");
+    expect(applyCodeRun(app, next.id).spaces).toEqual(["shop-web", "shop-api"]);
+    expect(readFileSync(join(api, "orders.ts"), "utf8")).toContain("[9]");
+    sh(web, "reset", "--hard", "HEAD");
+    sh(api, "reset", "--hard", "HEAD");
+    sh(api, "switch", original);
+    sh(api, "branch", "-D", "feature/refund");
+  });
+
+  it("uses the recorded branch for HEAD-based coding and rejects detached HEAD even at the same commit", () => {
+    const original = sh(web, "branch", "--show-current").trim();
+    const { id, worktrees } = finishedRun({ "shop-web": { "app.ts": "export const changed = true;\n" } });
+    setRunOutput(app, id, { worktrees: worktrees.map(w => ({ ...w, targetBranch: original })) });
+    sh(web, "switch", "--detach", "HEAD");
+    expect(() => applyCodeRun(app, id)).toThrow(/分离 HEAD/);
+    expect(sh(web, "status", "--porcelain")).toBe("");
+    sh(web, "switch", original);
     discardCodeRun(app, id);
   });
 
