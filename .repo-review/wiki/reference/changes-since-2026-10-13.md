@@ -575,6 +575,6 @@ updated: 2026-10-25
 
 修复从网页分支评审进入修改后，第二轮误要求问答会话链的问题。无会话链任务通过 `continueFrom`、`resumeSessionId` 复用工作区与编码会话，保留执行配置和来源评审；写事务内拒绝重复提交、工作区缺失或已释放的续轮。失败请求不关闭确认入口、不修改问题决定。实现与回归：`src/agents/review-fix.ts`、`test/review-fix.test.ts`。
 
-## 2026-10-26：应用修改前检查接收分支
+## 2026-10-26：应用修改回原目标分支
 
-编码交办保存目标分支，应用时先核对所有接收目录，再检查和应用补丁。续轮沿用首轮目标；旧分支任务可从首轮 `fromBranches` 或 `baseRef` 恢复。分支不符时返回明确提示，不再向错误分支尝试应用，也不自动切换分支；工作区和补丁保留。实现：`src/agents/code.ts`、`src/agents/worktree-index.ts`；回归：`test/code-worktrees.test.ts`、`test/branch-review.test.ts`。
+编码修改按首轮目标分支选择接收工作区：已有工作区就复用，否则自动检出本地分支；只有远端记录时建立对应本地分支。仓库主目录保持原分支，不要求用户手动切换。确认框和结果显示目标分支及接收目录，结果可复制目录；应用后查看文件读取接收位置。多仓库先全部预检，失败清理本次新建的未改动接收工作区与分支；成功保留接收工作区，不自动提交或推送。旧分支任务从 `fromBranches` 或 `baseRef` 恢复目标。实现：`src/agents/code.ts`、`src/server/http.ts`、`web/src/views/Runs.vue`；回归：`test/code-worktrees.test.ts`、`test/branch-review.test.ts`。

@@ -16,7 +16,7 @@ import fastifyCompress from "@fastify/compress";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
-import { applyCodeRun, codePatches, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
+import { applyCodeRun, codeApplyTargets, codePatches, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
   addSourceNote, applyAttentionRulesToExisting, deleteAttentionRule, LEVEL_LABELS, LEVELS, levelCounts, levelOf, listAttentionRules, NOTE_KINDS, removeSourceNote,
@@ -829,6 +829,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const r = getRun(app, (req.params as { id: string }).id);
     return createRun(app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input: r.input, parentId: r.parentId, lane: r.lane });
   });
+  server.get("/api/runs/:id/apply-targets", async (req) => codeApplyTargets(app, (req.params as { id: string }).id));
   server.post("/api/runs/:id/apply", async (req) => applyCodeRun(app, (req.params as { id: string }).id));
   server.post("/api/runs/:id/discard", async (req) => {
     discardCodeRun(app, (req.params as { id: string }).id);
@@ -949,7 +950,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (allowed && !allowed.includes(space)) continue;
       const path = o.path.startsWith(`${space}/`) && !o.space ? o.path.slice(space.length + 1) : o.path;
       const wt = worktrees.find((w) => w.space === space);
-      const base = wt && existsSync(wt.path) ? wt.path : findSpace(app, space)?.rootPath;
+      const appliedTo = (r.output.appliedTo ?? getRun(app, root).output.appliedTo) as { space: string; path: string }[] | undefined;
+      const base = wt && existsSync(wt.path) ? wt.path : appliedTo?.find(t => t.space === space)?.path ?? findSpace(app, space)?.rootPath;
       if (wt && !existsSync(wt.path) && wt.tip && base) {
         const shown = git(base, ["show", `${wt.tip}:${path}`]);
         if (shown.ok) return { lines: shown.stdout.split(/\r?\n/), from: "branch", space, path };

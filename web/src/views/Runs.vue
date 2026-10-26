@@ -39,6 +39,7 @@ const showQuiet = ref(false);
 /** One status to show; empty: all. */
 const statusFilter = ref<"" | "queued" | "running" | "failed">("");
 const statusOptions = [{ value: "" as const, label: "全部" }, { value: "queued" as const, label: "排队中" }, { value: "running" as const, label: "进行中" }, { value: "failed" as const, label: "失败" }];
+type ApplyTarget = { space: string; path: string; branch: string | null };
 type Brief = { id: string; kind: string; title: string; status: string };
 type RunContextInfo = {
   items: { id: string; title: string; status: string }[];
@@ -248,14 +249,23 @@ const checks = computed<{ space: string; check: Check }[]>(() => {
 });
 async function act(action: "cancel" | "retry" | "apply" | "discard") {
   if (!detail.value) return;
-  if (action === "apply" && !(await confirmDialog("把这些改动应用到仓库工作区？", { message: "只会成为工作区里未提交的修改。", okText: "应用" }))) return;
+  const runId = detail.value.run.id;
   try {
-    await post(`/api/runs/${detail.value.run.id}/${action}`);
-    toast({ cancel: "已停止", retry: "已重新排队", apply: "已应用到工作区，请在仓库中检查并提交", discard: "已清理工作区" }[action], "ok");
+    if (action === "apply") {
+      const targets = await get<ApplyTarget[]>(`/api/runs/${runId}/apply-targets`);
+      const message = targets.map(t => `${t.space} · ${t.branch ?? "指定版本"}\n${t.path}`).join("\n\n");
+      if (!(await confirmDialog("应用到原目标分支？", { message: `${message}\n\n将写入未提交的修改；需要时自动建立目标分支工作区，仓库主目录保持原分支。`, okText: "应用" }))) return;
+    }
+    await post(`/api/runs/${runId}/${action}`);
+    toast({ cancel: "已停止", retry: "已重新排队", apply: "已应用到目标分支，请在下方接收目录检查并提交", discard: "已清理工作区" }[action], "ok");
     void loadDetail();
   } catch (e) {
     toast((e as Error).message, "error");
   }
+}
+async function copyApplyPath(path: string) {
+  try { await navigator.clipboard.writeText(path); toast("已复制接收目录", "ok"); }
+  catch { toast("复制失败，请选中目录文字复制", "error"); }
 }
 const delegateOpen = ref(false);
 type DelegateMode = "code" | "review";
@@ -381,11 +391,19 @@ const kindOptions = computed(() => [
             <button v-if="['queued', 'running'].includes(detail.run.status)" class="btn sm" @click="act('cancel')"><Icon name="stop" :size="13" />停止</button>
             <button v-if="['failed', 'cancelled'].includes(detail.run.status)" class="btn sm" @click="act('retry')"><Icon name="refresh" :size="13" />重试</button>
             <template v-if="detail.run.kind === 'code' && detail.run.status === 'done' && detail.patches?.length && !out.appliedAt && !out.discardedAt">
-              <button v-if="!branchReview" class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到仓库</button>
+              <button v-if="!branchReview" class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到原分支</button>
               <button class="btn sm danger" :title="branchReview ? '删除评审用的工作区和它的索引' : undefined" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
             </template>
             <span v-if="out.appliedAt" class="badge ok">已应用 {{ fmtTime(out.appliedAt) }}</span>
             <button v-if="detail.run.kind === 'code'" class="btn ghost sm" @click="explaining = null; asking = { quote: '', label: '' }"><Icon name="chat" :size="14" />提问</button>
+          </div>
+          <div v-if="out.appliedTo?.length" class="stack small apply-targets">
+            <strong>接收位置 · 未自动提交</strong>
+            <div v-for="t in (out.appliedTo as ApplyTarget[])" :key="t.space" class="stack">
+              <span>{{ t.space }} · {{ t.branch ?? "指定版本" }}</span>
+              <code>{{ t.path }}</code>
+              <button class="btn ghost sm" @click="copyApplyPath(t.path)">复制目录</button>
+            </div>
           </div>
         </header>
 
@@ -521,6 +539,8 @@ const kindOptions = computed(() => [
 </template>
 
 <style scoped>
+.apply-targets code { overflow-wrap: anywhere; white-space: normal; }
+.apply-targets button { align-self: flex-start; }
 .branch-row {
   display: flex;
   gap: 12px;

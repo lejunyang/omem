@@ -2937,7 +2937,7 @@ def({
 
 def({
   name: "apply_code_run",
-  description: "把已完成并通过评审的交办改动应用到仓库工作区（未提交的修改）；涉及多个仓库时一起应用，任一仓库不能干净应用就都不动。应用后删除交办的 worktree。只在本人明确要求应用/合入时使用。",
+  description: "把已完成并通过评审的交办改动应用到原目标分支的工作区（未提交的修改）；目标分支没有工作区时自动建立，不切换仓库主目录，返回实际接收路径；涉及多个仓库时一起应用，任一仓库不能干净应用就都不动。应用后删除交办的 worktree。只在本人明确要求应用/合入时使用。",
   write: true,
   schema: z.object({ run_id: z.string() }),
   handler: async (ctx, a) => {
@@ -2946,7 +2946,7 @@ def({
     for (const id of repos) inScope(ctx, id, "代码");
     const { applyCodeRun } = await import("./code.ts");
     const res = applyCodeRun(ctx.app, a.run_id);
-    return `已把运行 ${a.run_id} 的改动应用到 ${res.spaces.join("、")} 的工作区（未提交），请在仓库里检查后提交。交办的 worktree 和它的临时索引已删除。`;
+    return `已把运行 ${a.run_id} 的改动应用到原目标分支（未提交）：\n${res.targets.map(t => `- ${t.space} · ${t.branch ?? "指定版本"}：${t.path}`).join("\n")}\n请在以上接收目录检查后提交。编码用的 worktree 已删除，接收工作区保留。`;
   },
 });
 

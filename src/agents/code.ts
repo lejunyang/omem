@@ -1,7 +1,7 @@
 import { executionArgs, type Execution } from "./execution.ts";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { App } from "../core/app.ts";
 import { defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
@@ -410,20 +410,48 @@ function branchFromRef(ref: string): string | null {
   return null;
 }
 
-/** Apply goes to the user's checkout, whose branch may have changed since coding began. */
-function checkApplyBranch(app: App, runId: string, space: string, root: string) {
+export type AppliedTarget = { space: string; path: string; branch: string | null };
+type ApplyTarget = AppliedTarget & { root: string; file: string; create: boolean; newBranch?: boolean; start?: string };
+
+/** Resolve the original branch without switching the user's checkout or writing anything. */
+function applyTargets(app: App, runId: string): ApplyTarget[] {
   const r = getRun(app, runId);
   const first = getRun(app, String(r.input.continueFrom ?? r.id));
-  const wt = worktreesOf(app, first.id).find(w => w.space === space);
-  const from = (first.input as CodeInput).fromBranches?.[space] ?? wt?.baseRef;
-  // Older branch-based runs did not store targetBranch; recover it from the original request.
-  const target = wt?.targetBranch !== undefined ? wt.targetBranch : from ? branchFromRef(resolveRef(root, from)?.ref ?? `refs/heads/${from.replace(/^refs\/heads\//, "").replace(/^origin\//, "")}`) : undefined;
-  if (target === undefined) return; // Legacy HEAD-based runs have no recorded branch.
-  const current = git(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim();
-  if (target && current !== target)
-    throw new HttpError(409, `空间 ${space} 的应用目标分支不符：本次交办基于「${target}」，接收目录当前为「${current || "分离 HEAD"}」。请先将接收目录 ${root} 切换到「${target}」后重试；未应用任何改动，也未自动切换分支。`);
-  if (target === null && wt?.base && git(root, ["rev-parse", "HEAD"]).stdout.trim() !== wt.base)
-    throw new HttpError(409, `空间 ${space} 的交办基于指定提交 ${wt.base.slice(0, 12)}，接收目录 HEAD 已变化；请核对接收版本后重试，未应用任何改动。`);
+  if (r.kind !== "code" || r.status !== "done") throw new HttpError(400, "只能应用已完成的编码运行");
+  if (isBranchReview(r)) throw new HttpError(400, "分支评审只给评审意见，没有可应用的改动；要改，基于该分支交办编码（from_branch）");
+  if (r.output.appliedAt || first.output.appliedAt) throw new HttpError(409, "这次交办已经应用过");
+  if (r.output.discardedAt || first.output.discardedAt) throw new HttpError(409, "这次交办已经丢弃");
+  return patchFiles(app, runId).filter(p => readFileSync(p.file, "utf8").trim()).map(p => {
+    const root = getSpace(app, p.space).rootPath;
+    if (!root) throw new HttpError(400, `空间 ${p.space} 没有关联目录`);
+    const wt = worktreesOf(app, first.id).find(w => w.space === p.space);
+    const from = (first.input as CodeInput).fromBranches?.[p.space] ?? wt?.baseRef;
+    const target = wt?.targetBranch !== undefined ? wt.targetBranch : from ? branchFromRef(resolveRef(root, from)?.ref ?? `refs/heads/${from.replace(/^refs\/heads\//, "").replace(/^origin\//, "")}`) : undefined;
+    const current = git(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() || null;
+    if (!target) {
+      if (target === null && wt?.base && git(root, ["rev-parse", "HEAD"]).stdout.trim() !== wt.base)
+        throw new HttpError(409, `空间 ${p.space} 基于指定提交 ${wt.base.slice(0, 12)}，请核对接收版本后重试`);
+      return { ...p, root, path: root, branch: current, create: false };
+    }
+    if (!git(root, ["check-ref-format", `refs/heads/${target}`]).ok) throw new HttpError(400, "目标分支名称无效");
+    const listed = git(root, ["worktree", "list", "--porcelain", "-z"]);
+    if (!listed.ok) throw new HttpError(409, `读取 ${p.space} 的分支工作区失败：${listed.stderr}`);
+    const checkedOut = listed.stdout.split("\0\0").map(block => block.split("\0")).find(fields => fields.includes(`branch refs/heads/${target}`));
+    const path = checkedOut?.find(f => f.startsWith("worktree "))?.slice(9);
+    if (path) {
+      if (!existsSync(path)) throw new HttpError(409, `目标分支「${target}」的工作区不存在：${path}`);
+      return { ...p, root, path, branch: target, create: false };
+    }
+    const local = git(root, ["show-ref", "--verify", "--quiet", `refs/heads/${target}`]).ok;
+    const start = local ? `refs/heads/${target}` : resolveRef(root, from ?? target)?.ref;
+    if (!start) throw new HttpError(409, `目标分支「${target}」不存在，不能应用`);
+    return { ...p, root, path: join(app.runsDir, first.id, "applied", p.space), branch: target, create: true, newBranch: !local, start };
+  });
+}
+
+/** Preview for the confirmation dialog; creating branch worktrees happens only on apply. */
+export function codeApplyTargets(app: App, runId: string): AppliedTarget[] {
+  return applyTargets(app, runId).map(({ space, path, branch }) => ({ space, path, branch }));
 }
 
 /** Remove the run's worktrees and branches, and the temporary index of what they changed. */
@@ -445,34 +473,47 @@ function removeWorktrees(app: App, runId: string) {
  */
 export function applyCodeRun(app: App, runId: string) {
   const r = getRun(app, runId);
-  if (r.kind !== "code" || r.status !== "done") throw new HttpError(400, "只能应用已完成的编码运行");
-  if (isBranchReview(r)) throw new HttpError(400, "分支评审只给评审意见，没有可应用的改动；要改，基于该分支交办编码（from_branch）");
-  if ((r.output as { appliedAt?: string }).appliedAt) throw new HttpError(409, "这次交办已经应用过");
-  const targets = patchFiles(app, runId)
-    .filter((p) => readFileSync(p.file, "utf8").trim())
-    .map((p) => {
-      const root = getSpace(app, p.space).rootPath;
-      if (!root) throw new HttpError(400, `空间 ${p.space} 没有关联目录`);
-      return { ...p, root };
-    });
+  const targets = applyTargets(app, runId);
   if (!targets.length) throw new HttpError(404, "没有可应用的改动");
-  const label = (space: string) => (targets.length > 1 ? `${space}：` : "");
-  // Check every destination before any patch check or application, including later rounds.
-  for (const t of targets) checkApplyBranch(app, runId, t.space, t.root);
-  for (const t of targets) {
-    const check = git(t.root, ["apply", "--check", "--3way", t.file]);
-    if (!check.ok) throw new HttpError(409, `${label(t.space)}无法干净应用：${check.stderr.slice(0, 1000)}`);
-  }
+  const created: (ApplyTarget & { createdHead: string })[] = [];
   const applied: string[] = [];
-  for (const t of targets) {
-    const res = git(t.root, ["apply", "--3way", t.file]);
-    if (!res.ok) throw new HttpError(409, `${label(t.space)}应用失败${applied.length ? `（${applied.join("、")} 已应用）` : ""}：${res.stderr.slice(0, 1000)}`);
-    applied.push(t.space);
+  let applying = false;
+  try {
+    for (const t of targets.filter(t => t.create)) {
+      mkdirSync(dirname(t.path), { recursive: true });
+      const made = git(t.root, ["worktree", "add", ...(t.newBranch ? ["-b", t.branch!] : []), t.path, t.newBranch ? t.start! : t.branch!]);
+      if (!made.ok) throw new HttpError(409, `为目标分支「${t.branch}」建立工作区失败：${made.stderr}`);
+      created.push({ ...t, createdHead: git(t.path, ["rev-parse", "HEAD"]).stdout.trim() });
+    }
+    for (const t of targets) {
+      if (t.branch && git(t.path, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() !== t.branch)
+        throw new HttpError(409, `接收目录 ${t.path} 的分支已变化，请重新应用`);
+      const check = git(t.path, ["apply", "--check", "--3way", t.file]);
+      if (!check.ok) throw new HttpError(409, `${targets.length > 1 ? `${t.space}：` : ""}无法干净应用到 ${t.branch ?? "指定版本"}（${t.path}）：${check.stderr.slice(0, 1000)}`);
+    }
+    applying = true;
+    for (const t of targets) {
+      const res = git(t.path, ["apply", "--3way", t.file]);
+      if (!res.ok) throw new HttpError(409, `应用到 ${t.path} 失败${applied.length ? `（${applied.join("、")} 已应用）` : ""}：${res.stderr.slice(0, 1000)}`);
+      applied.push(t.space);
+    }
+  } catch (error) {
+    // Preflight failed: remove only the clean worktrees/branches this attempt created.
+    // After application starts, retain every destination for recovery, even on failure.
+    if (!applying) for (const t of created.reverse()) {
+      const removed = git(t.root, ["worktree", "remove", t.path]);
+      if (removed.ok && t.newBranch && git(t.root, ["rev-parse", `refs/heads/${t.branch}`]).stdout.trim() === t.createdHead)
+        git(t.root, ["branch", "-D", t.branch!]);
+    }
+    throw error;
   }
-  setRunOutput(app, runId, { appliedAt: new Date().toISOString() });
+  const appliedTo = targets.map(({ space, path, branch }) => ({ space, path, branch }));
+  const appliedAt = new Date().toISOString();
+  const firstId = String(r.input.continueFrom ?? r.id);
+  for (const id of new Set([firstId, runId])) setRunOutput(app, id, { appliedAt, appliedTo });
   removeWorktrees(app, runId);
   cancelHostAsks(app, runId, "review-done");
-  return { applied: true, spaces: applied };
+  return { applied: true, spaces: applied, targets: appliedTo };
 }
 
 export function discardCodeRun(app: App, runId: string) {
