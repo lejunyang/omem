@@ -193,7 +193,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
-| 空间上下文：问答、原件和运行按当前空间显示；任务规则保存所属空间与结果会话，主助手为默认执行者，执行空间按动作 → 档案 → 规则 → 触发空间解析；群会话与采集共用绑定解析，旧的无空间任务规则保持全局 | 已实现；专项测试、浏览器空间切换与真实 Agent 抽查通过 | `src/core/capture-space.ts`、`rules/`、`Ask.vue`、`Runs.vue` |
+| 空间上下文：问答、原件和运行按当前空间显示；任务规则保存所属空间与结果会话，可选择已采集的飞书群，缺少投递目标时明确失败；主助手为默认执行者，执行空间按动作 → 档案 → 规则 → 触发空间解析；群会话与采集共用绑定解析，旧的无空间任务规则保持全局 | 已实现；专项测试、浏览器空间切换与真实 Agent 抽查通过 | `src/core/capture-space.ts`、`rules/`、`Ask.vue`、`Runs.vue` |
 | 原件归档：手动指定 / 来源绑定 → 按创建顺序首条匹配的归档规则 → archivist 内容判断 → 不确定留个人；条件使用中文选项与目录名称；AI 通过 propose_archive_rule 写草稿，核对后保存；自动归档先于记忆整理，按最终空间分组 | 已实现；2026-10-23 专项测试与真实 Agent 归档、规则草稿匹配抽查通过 | `sources/archive.ts`、`roles/archivist.md`、`roles/archive-rule-writer.md`、`ArchiveRules.vue` |
 | 原件迁移：保留原件、切片、消息位置与引用 ID，同步空间字段并失效向量缓存；原始入口别名防止重新采集另建副本；历史预览 / 应用校验 hash 和当前规则，冲突不合并覆盖；原件详情可指定归属及查看记录 | 已实现，专项测试覆盖；不自动移动已有记忆、事项和 Wiki | `source_routes`、`source_locations`、`source_moves`、`Sources.vue` |
 | 主助手对话创建空间、关联本地 Git 仓库或 Git 链接（clone 到数据目录 repos/）；路径去重、冲突检查、仅本人全空间运行可用 | 已实现；2026-10-15 | `src/core/repositories.ts`、`src/agents/tools.ts`、`roles/assistant.md` |
@@ -295,6 +295,8 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 向量规模：按空间 int8 矩阵 | 已实现；17 万片段 nDCG 86.76 → 86.62，常驻 1.5GB → 0.42GB | `src/search/vectors.ts`、`scripts/bench-scale.ts` |
 | 渠道：网页、CLI、MCP、飞书机器人、飞书个人消息（只读）、Telegram、OneBot（QQ/微信桥） | 已实现；OneBot 有模拟服务端测试；飞书与 Telegram 需真实账号验收 | `src/channels` |
 | v1 导入 | 已实现，合成库测试 | `src/migrate-v1.ts` |
+
+定时规则的投递目标可选择已有助理会话或已采集的飞书群。选择群后保存时建立本人所属的群会话，不发送消息、不复用访客会话；执行沿用所选会话的机器人。缺少目标的旧规则在动作阶段失败并记录原因，不再转为私发。实现：`src/rules/destinations.ts`、`actions.ts`、`web/src/views/Rules.vue`；专项测试覆盖。
 
 尚未做：扫描件 OCR；动态派发与依赖注入的调用无法静态解析（这些仍按名称列为候选）；tsconfig 的自定义 paths 只识别 `@/`、`~/`；多租户（只有多用户的口子）；微信官方接口（只能通过 OneBot 兼容桥）。评测数字见 [evaluation.md](evaluation.md)。
 

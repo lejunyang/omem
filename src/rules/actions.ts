@@ -106,7 +106,9 @@ async function agentAction(app: App, rule: Rule, a: Extract<RuleAction, { type: 
   const spec = a.spec === "assistant" ? { name: "assistant", status: "active", space: undefined } : readAgentSpec(app, a.spec);
   if (spec.status !== "active") throw new HttpError(400, `档案 ${a.spec} 是草稿`);
   const origin = e.kind === "schedule" && rule.conversationId ? getThread(app, rule.conversationId) : undefined;
-  const larkOrigin = !!origin && ["lark", "lark-watch"].includes(origin.channel);
+  if (e.kind === "schedule" && a.reply !== "none" && !origin) throw new HttpError(400, "定时规则缺少投递会话，请在规则的“发到”中选择目标后保存；本次未执行");
+  if (origin && origin.userId !== OWNER) throw new HttpError(403, "只能投递到本人的会话");
+  const larkOrigin = !!origin && (["lark", "lark-watch"].includes(origin.channel) || origin.channel.startsWith("lark:"));
   const chatId = e.chat?.id ?? (larkOrigin ? origin!.key?.split("#")[0] : undefined);
   // Only a Feishu chat can hold a draft for confirmation; a web conversation is read by the owner alone,
   // so "show me first" there means posting the answer into it.
@@ -147,7 +149,8 @@ async function agentAction(app: App, rule: Rule, a: Extract<RuleAction, { type: 
   ].filter((x) => x !== "").join("\n");
   const space = a.space ?? spec.space ?? rule.spaceId ?? (e.chat ? chatSpace(app, e.chat.id) : "personal");
   // It speaks through the bot that is in the chat (the one that saw the message).
-  const lark = { chats: chatId && reply !== "none" ? [chatId] : [], draft: reply === "draft", ...powers(a), ...(e.bot && e.bot !== "main" ? { bot: e.bot } : {}) };
+  const bot = larkOrigin && origin!.channel.startsWith("lark:") ? origin!.channel.slice(5) : e.bot;
+  const lark = { chats: chatId && reply !== "none" ? [chatId] : [], draft: reply === "draft", ...powers(a), ...(bot && bot !== "main" ? { bot } : {}) };
   const r = createRun(app, {
     kind: "agent",
     spaceId: space,

@@ -41,14 +41,14 @@ type Rule = {
   createdBy?: string;
 };
 type Firing = { id: number; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
-type Options = { fields: Record<string, string>; ops: string[]; specs: { name: string; description: string }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; conversations: { id: string; title: string; channel: string; space_id: string }[] };
+type Options = { fields: Record<string, string>; ops: string[]; specs: { name: string; description: string }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string }[] };
 type TestResult = { checked: number; matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string }[]; note: string };
 
 const route = useRoute();
 const router = useRouter();
 const rules = ref<Rule[]>([]);
 const loading = ref(true);
-const options = ref<Options>({ fields: {}, ops: [], specs: [], chats: [], botReady: false, conversations: [] });
+const options = ref<Options>({ fields: {}, ops: [], specs: [], chats: [], botReady: false, groups: [], conversations: [] });
 const selectedId = computed(() => (typeof route.query.id === "string" ? route.query.id : null));
 const creating = computed(() => route.query.new === "1");
 const form = ref<Rule | null>(null);
@@ -135,6 +135,11 @@ async function save() {
   if (!f.name.trim()) f.name = f.description.slice(0, 12);
   saving.value = true;
   try {
+    if (f.conversationId?.startsWith("group:")) {
+      const t = await post<{ id: string }>("/api/rule-conversations", { chatId: f.conversationId.slice(6) });
+      f.conversationId = t.id;
+      options.value = await get<Options>("/api/rule-options");
+    }
     const body = { spaceId: f.spaceId, conversationId: f.conversationId, name: f.name, description: f.description, enabled: f.enabled, trigger: f.trigger, conditions: f.conditions, judge: f.judge, actions: f.actions };
     const saved = f.id ? await put<Rule>(`/api/rules/${f.id}`, body) : await post<Rule>("/api/rules", body);
     dirty.value = false;
@@ -181,7 +186,8 @@ const REPLY_HINT: Record<string, string> = {
 };
 const spaceOptions = (none: string) => [{ value: "", label: none }, ...state.spaces.map((s) => ({ value: s.id, label: s.name }))];
 const conversationOptions = computed(() => [
-  { value: "", label: "选择会话" },
+  { value: "", label: "选择会话或群聊" },
+  ...(options.value.groups ?? []).map((c) => ({ value: `group:${c.chat_id}`, label: c.name || c.chat_id, hint: "飞书群聊 · 新群消息" })),
   ...options.value.conversations.map((c) => ({ value: c.id, label: c.title || "未命名会话", hint: `${c.channel === "web" ? "网页" : c.channel.startsWith("lark") ? "飞书" : c.channel} · ${state.spaces.find((x) => x.id === c.space_id)?.name ?? c.space_id}` })),
 ]);
 /** A draft needs a Feishu chat to go to after confirmation; a web conversation only the owner reads. */
@@ -396,6 +402,7 @@ function startFrom(text: string) {
                 <span class="small">发到</span>
                 <UiSelect :model-value="form.conversationId ?? ''" size="sm" width="260px" :search-at="8" :options="conversationOptions" aria-label="结果发到哪个会话" @update:model-value="(v) => ((form!.conversationId = String(v || '')), touch())" />
               </div>
+              <small v-if="scheduleOnly && a.reply !== 'none' && !form.conversationId" class="muted">尚未指定投递目标。请选择会话或已采集的群聊；向群里发送需要机器人已在群中。</small>
               <small class="muted">{{ scheduleOnly && a.reply !== 'none' ? (a.reply === 'auto' ? "结论直接发到选定的会话。" : "它要在群里说的话先变成给你确认的草稿，你点发送才发到这个群（话题）；结论另外发给你。") : REPLY_HINT[a.reply] }}</small>
               <div v-if="!scheduleOnly && a.reply !== 'none'" class="row wrap">
                 <UiCheckbox :model-value="!!a.allowUrgent" size="sm" @change="(v) => ((a.allowUrgent = v), touch())">允许加急</UiCheckbox>

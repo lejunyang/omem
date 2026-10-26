@@ -1139,6 +1139,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/rule-options", async () => {
     const { FIELDS, OPS } = await import("../rules/types.ts");
+    const { ruleGroups } = await import("../rules/destinations.ts");
     return {
       fields: FIELDS,
       ops: OPS,
@@ -1146,7 +1147,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       chats: all<{ chat_id: string; name: string }>(app.db, "select chat_id, name from lark_cursors where chat_id like 'oc_%' and name != '' order by updated_at desc limit 300"),
       conversations: all(app.db, "select id,title,channel,space_id from conversations where user_id = ? order by updated_at desc limit 300", OWNER),
       botReady: !!app.config.lark.appId,
+      groups: ruleGroups(app),
     };
+  });
+  server.post("/api/rule-conversations", async (req) => {
+    const { chatId } = q(z.object({ chatId: z.string().min(1) }), req.body);
+    return (await import("../rules/destinations.ts")).ruleGroupConversation(app, chatId);
   });
   server.get("/api/notify-ignore-rules", async () => ({ rules: listIgnoreRules(app) }));
   server.post("/api/notify-ignore-rules/delete", async (req) => {
