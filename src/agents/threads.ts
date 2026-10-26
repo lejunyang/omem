@@ -118,6 +118,7 @@ export type ChatSettings = {
   policy?: "ingest" | "involved" | "store" | "skip";
 };
 export type WatchRule = {
+  /** The agent spec handling it, or "assistant" (the main assistant). */
   spec: string;
   /** all: every message; mention: messages that @ the owner or the bot; keyword: messages matching `pattern`. */
   on: "all" | "mention" | "keyword";
@@ -125,7 +126,12 @@ export type WatchRule = {
   /** none: never post; draft: posts go to the owner for approval; auto: post directly through the bot. */
   reply: "none" | "draft" | "auto";
   spaceId?: string;
+  /** What the owner wants from it, in their words. */
   note?: string;
+  /** Minutes new messages are collected before the handler looks (it adjusts this); unset: 5 seconds. */
+  batchMinutes?: number;
+  /** The watch ends then (ISO); unset: until removed. */
+  expiresAt?: string;
 };
 
 export function chatSettings(app: App, channel: string, chatId: string): ChatSettings {

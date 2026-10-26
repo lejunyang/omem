@@ -26,6 +26,11 @@ export async function answerFromChannel(
   }
   await hooks.onStart?.(r.runId);
   const done = await waitForRun(app, r.runId);
+  // The turn that was running when it came took the message (steer.ts) and answers it.
+  if (done.status === "cancelled" && getRun(app, r.runId).output.steeredInto) {
+    await hooks.onMerged?.();
+    return null;
+  }
   const answer = done.status === "done" ? String((getRun(app, r.runId).output as { answer?: string }).answer ?? "") : done.status === "cancelled" ? "（已停止）" : `处理失败：${done.error ?? done.status}`;
   const note = r.started === "renewed" ? "（距上次对话较久，已开始新会话并带上之前的摘要；/resume 可回到原会话）\n\n" : "";
   return note + resolveCitations(app, answer);

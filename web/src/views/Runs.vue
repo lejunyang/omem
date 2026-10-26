@@ -291,7 +291,13 @@ async function act(action: "cancel" | "retry" | "apply" | "discard") {
       const message = targets.map(t => `${t.space} · ${t.branch ?? "指定版本"}\n${t.path}`).join("\n\n");
       if (!(await confirmDialog("应用到原目标分支？", { message: `${message}\n\n将写入未提交的修改；需要时自动建立目标分支工作区，仓库主目录保持原分支。`, okText: "应用" }))) return;
     }
-    await post(`/api/runs/${runId}/${action}`);
+    const r = await post<{ id?: string; continued?: boolean }>(`/api/runs/${runId}/${action}`);
+    if (action === "retry" && r?.id) {
+      // A coding run continues in its worktree; an agent run is told what the failed attempt did.
+      toast(r.continued ? "已接着上次的进度重新开始" : "已重新排队", "ok");
+      router.push(`/runs/${r.id}`);
+      return;
+    }
     toast({ cancel: "已停止", retry: "已重新排队", apply: "已应用到目标分支，可在下方检查并提交", discard: "已清理工作区" }[action], "ok");
     void loadDetail();
   } catch (e) {

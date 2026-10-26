@@ -827,8 +827,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.post("/api/runs/:id/cancel", async (req) => cancelRun(app, (req.params as { id: string }).id));
   server.post("/api/runs/:id/retry", async (req) => {
-    const r = getRun(app, (req.params as { id: string }).id);
-    return createRun(app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input: r.input, parentId: r.parentId, lane: r.lane });
+    const id = (req.params as { id: string }).id;
+    const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
+    if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
+    return (await import("../agents/retry.ts")).retryRun(app, id);
   });
   server.get("/api/runs/:id/apply-targets", async (req) => codeApplyTargets(app, (req.params as { id: string }).id));
   server.post("/api/runs/:id/apply", async (req) => applyCodeRun(app, (req.params as { id: string }).id));
@@ -1138,6 +1140,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   // Wake-ups agents set for themselves: timed (queued runs) and on a message (temporary rules).
   server.get("/api/wakes", async () => (await import("../agents/wakes.ts")).pendingWakes(app));
+  // Groups being watched (set_chat_watch): listed with the wake-ups, can be stopped.
+  server.get("/api/watches", async (req) => (who(req) === OWNER ? (await import("../channels/lark-watch.ts")).listWatches(app) : []));
+  server.delete("/api/watches/:chatId", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人可以取消盯群");
+    (await import("../channels/lark-watch.ts")).setWatchRule(app, (req.params as { chatId: string }).chatId, null);
+    return { ok: true };
+  });
   server.delete("/api/wakes/:id", async (req) => {
     (await import("../agents/wakes.ts")).cancelWake(app, (req.params as { id: string }).id);
     return { ok: true };

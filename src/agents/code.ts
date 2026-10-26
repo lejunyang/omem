@@ -225,7 +225,12 @@ export async function runCodeTask(ctx: RunContext) {
   const owner = runUser(app, run.id);
   const spaces = [...new Set([run.spaceId!, ...repos.map((r) => r.id), ...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, owner) : [])])];
   const itemBrief = input.itemId ? `\n\n${materialsBrief(app, input.itemId, owner)}` : "";
-  let coderTask = continueFrom
+  // Retried after a failure: the worktree keeps what the failed attempt changed.
+  const retryOf = (input as { retryOf?: string }).retryOf;
+  const retried = retryOf ? getRun(app, retryOf) : null;
+  let coderTask = retried
+    ? `${(await import("./retry.ts")).attemptNote(app, retried.id)}\n\n工作区里保留了它已经做的改动（git status / git diff 查看）。\n\n# 任务\n\n${input.task}${itemBrief}${where}`
+    : continueFrom
     ? `# 上一轮评审要求修改
 
 ${input.task}
@@ -239,7 +244,13 @@ ${input.task}
   // Finishing a stopped sync that came before coding: the coding is still to do, with the first task.
   if (input.syncResume && !input.syncOnly) coderTask = `${String(getRun(app, rootRunId).input.task ?? "")}${itemBrief}${where}`;
   const skipCoder = !!(input.syncOnly || input.moveToTarget);
-  let coderReply = input.branches ? branchSummary(worktrees) : skipCoder ? synced?.summary ?? "" : await code();
+  // The failed attempt finished coding and stopped later (checks, review): only those are redone.
+  const coded = retried && typeof retried.output.coderSummary === "string" && retried.output.coderAI ? retried.output : null;
+  if (coded) {
+    ctx.output({ coderSummary: coded.coderSummary, coderAI: coded.coderAI, coderAgent: coded.coderAgent, coderSessionId: coded.coderSessionId });
+    ctx.event("status", { text: `上一次尝试已经写完代码，这次从检查和评审接着做` });
+  }
+  let coderReply = input.branches ? branchSummary(worktrees) : skipCoder ? synced?.summary ?? "" : coded ? String(coded.coderSummary) : await code();
   if (synced?.report) coderReply = `${coderReply}\n\n## Git 同步\n\n${synced.summary}\n\n${synced.report}`.trim();
   if (input.branches || skipCoder || synced) ctx.output({ coderSummary: coderReply });
   async function syncPhase(): Promise<"stopped" | { summary: string; report: string; conflicts: number } | null> {
@@ -344,7 +355,7 @@ ${input.task}
       onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
     });
     // A new session on a later round has not seen the original task: give it along with this round's.
-    const first = continueFrom && chain?.rounds[0] && chain.rounds[0] !== run.id ? String(getRun(app, chain.rounds[0]).input.task ?? "") : "";
+    const first = continueFrom && !retried && chain?.rounds[0] && chain.rounds[0] !== run.id ? String(getRun(app, chain.rounds[0]).input.task ?? "") : "";
     const freshTask = first ? `# 原始任务
 
 ${first}

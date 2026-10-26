@@ -39,13 +39,8 @@ async function runAction(app: App, rule: Rule, a: RuleAction, e: RuleEvent, reas
     }
     case "invite-bot": {
       const id = needChat();
-      const appId = app.config.lark.appId;
-      if (!appId) throw new HttpError(400, "没有配置飞书机器人（lark.appId）");
-      // The one write done as the owner: adding omem's own bot to a chat the owner is in, because
-      // the owner configured this rule. No messages, no other members.
-      const { larkCli } = await import("../channels/lark-cli.ts");
-      await larkCli(["im", "chat.members", "create", "--chat-id", id, "--member-id-type", "app_id", "--succeed-type", "1", "--data", JSON.stringify({ id_list: [appId] }), "--as", "user"], 60_000);
-      (await import("./engine.ts")).forgetChatBots(id);
+      // Done as the owner, because the owner configured this rule: omem's own bot only.
+      await (await import("../channels/lark-watch.ts")).inviteOwnBot(app, id);
       return { action: "invite-bot", ok: true, detail: `已把机器人加进 ${e.chat?.name ?? id}` };
     }
     case "capture": {

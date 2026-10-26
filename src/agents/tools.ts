@@ -2049,30 +2049,78 @@ def({
 def({
   name: "set_chat_watch",
   description:
-    "让某个飞书群/会话的消息交给一个 Agent 档案处理（如报警群→告警处理 Agent，oncall 群→答疑 Agent）。on：all 全部消息 / mention 只在 @本人或机器人时 / keyword 匹配 pattern；reply：none 只处理不回复 / draft 回复先给本人确认 / auto 直接用机器人回复（机器人需在群里）。传 remove=true 取消。只在本人明确要求时设置。",
+    "盯一个飞书群：之后群里的消息按批交给你（spec=assistant，默认）或一个更合适的 Agent 档案，在同一个上下文里读，有能回答的、要排查的、要本人知道的再动手，其余不管。本人说“帮我盯一下这个群”“分享群给你帮我看着”时用；长期的分工（报警群→告警 Agent）也用它。" +
+    "note 写本人要的东西（原话）；until 按本人的说法定（2h、3d、ISO 时间；本人说长期才用 never，默认 3d）；batch_minutes 是攒多久看一次（默认 10，@本人或机器人的消息 30 秒内就看），盯的过程中觉得太频繁或太慢可以只传 chat_id 和 batch_minutes 调整。" +
+    "on：all 全部消息 / mention 只在 @本人或机器人时 / keyword 匹配 pattern；reply：none 只看不回 / draft 回复先给本人确认 / auto 直接用机器人回复。" +
+    "invite_bot=true 用本人身份把 omem 的机器人拉进群（机器人不在群里时回复不了、也收不到实时消息），只在本人亲自要求盯群的这一轮可用。remove=true 不再盯。",
   write: true,
   schema: z.object({
-    chat_id: z.string().describe("群 chat_id（oc_…），可用 list_lark_chats 查"),
-    spec: z.string().optional().describe("处理它的 Agent 档案名"),
+    chat_id: z.string().describe("群 chat_id（oc_…）：当前群从会话里看，分享的群在消息里，也可用 list_lark_chats 查"),
+    spec: z.string().optional().describe("谁来盯：assistant（主助手，默认）或 Agent 档案名"),
+    note: z.string().optional().describe("本人要的东西，原话"),
+    until: z.string().optional().describe("到什么时候：2h、3d、ISO 时间或 never；默认 3d"),
+    batch_minutes: z.number().min(0).max(24 * 60).optional().describe("攒多少分钟的消息看一次，默认 10"),
     on: z.enum(["all", "mention", "keyword"]).optional(),
     pattern: z.string().optional(),
     reply: z.enum(["none", "draft", "auto"]).optional(),
     space: z.string().optional().describe("这个群的材料与记录放哪个空间"),
-    note: z.string().optional(),
+    invite_bot: z.boolean().optional(),
     remove: z.boolean().optional(),
   }),
   handler: async (ctx, a) => {
-    if ((ctx.userId ?? "owner") !== "owner") throw new HttpError(403, "只有本人可以设置群监听");
-    const { setWatchRule } = await import("../channels/lark-watch.ts");
+    if ((ctx.userId ?? "owner") !== "owner") throw new HttpError(403, "只有本人可以设置盯群");
+    const { setWatchRule, watchRule, inviteOwnBot, DEFAULT_BATCH_MINUTES } = await import("../channels/lark-watch.ts");
+    const prev = watchRule(ctx.app, a.chat_id);
     if (a.remove) {
       setWatchRule(ctx.app, a.chat_id, null);
-      return `已取消 ${a.chat_id} 的监听处理。`;
+      return `不再盯 ${a.chat_id}。`;
     }
-    if (!a.spec) throw new HttpError(400, "需要 spec（处理它的 Agent 档案）");
-    setWatchRule(ctx.app, a.chat_id, { spec: a.spec, on: a.on ?? "all", pattern: a.pattern, reply: a.reply ?? "draft", spaceId: a.space ? writeSpace(ctx, a.space) : undefined, note: a.note });
-    return `已设置：${a.chat_id} 的${a.on === "mention" ? " @ 消息" : a.on === "keyword" ? `匹配 ${a.pattern} 的消息` : "新消息"}交给 ${a.spec} 处理，回复方式 ${a.reply ?? "draft"}。`;
+    // The bot joins as the owner only when the owner asked for this in their own message.
+    if (a.invite_bot && !ownerAskedThisTurn(ctx)) throw new HttpError(403, "拉机器人进群要本人亲自要求：只能在回答本人消息的这一轮做");
+    const expiresAt = a.until === undefined ? (prev ? prev.expiresAt : untilTime("3d")) : a.until === "never" ? undefined : untilTime(a.until);
+    const rule = {
+      ...prev,
+      spec: a.spec ?? prev?.spec ?? "assistant",
+      on: a.on ?? prev?.on ?? "all",
+      pattern: a.pattern ?? prev?.pattern,
+      reply: a.reply ?? prev?.reply ?? "draft",
+      spaceId: a.space ? writeSpace(ctx, a.space) : prev?.spaceId,
+      note: a.note ?? prev?.note,
+      batchMinutes: a.batch_minutes ?? prev?.batchMinutes ?? DEFAULT_BATCH_MINUTES,
+      expiresAt,
+    };
+    setWatchRule(ctx.app, a.chat_id, rule);
+    let invited = "";
+    if (a.invite_bot) {
+      await inviteOwnBot(ctx.app, a.chat_id);
+      invited = "已用本人身份把机器人拉进群。";
+    }
+    const what = rule.on === "mention" ? " @ 消息" : rule.on === "keyword" ? `匹配 ${rule.pattern} 的消息` : "消息";
+    return `${prev ? "已更新" : "开始盯"} ${a.chat_id}：${what}每 ${rule.batchMinutes} 分钟一批交给 ${rule.spec}，回复方式 ${rule.reply}，${rule.expiresAt ? `到 ${rule.expiresAt.slice(0, 16).replace("T", " ")}（UTC）` : "直到取消"}。${invited}`;
   },
 });
+
+/** "2h", "3d", "45m" or an ISO time, within 30 days. */
+function untilTime(when: string) {
+  const m = /^(\d+(?:\.\d+)?)\s*(m|min|h|d)$/i.exec(when.trim());
+  const t = m ? Date.now() + Number(m[1]) * { m: 60_000, min: 60_000, h: 3600_000, d: 86400_000 }[m[2].toLowerCase() as "m"] : Date.parse(when);
+  if (Number.isNaN(t) || t <= Date.now()) throw new HttpError(400, `看不懂或已经过去的时间：${when}（用 2h、3d、带时区的 ISO 时间，或 never）`);
+  if (t > Date.now() + 30 * 86400_000) throw new HttpError(400, "最多 30 天；本人要长期盯用 never");
+  return new Date(t).toISOString();
+}
+
+/** This turn answers the owner's own words (not a wake-up, a watched group, a rule or another agent). */
+function ownerAskedThisTurn(ctx: ToolContext) {
+  if (!ctx.runId) return false;
+  const r = one<{ kind: string; input: string }>(ctx.app.db, "select kind, input from runs where id = ?", ctx.runId);
+  if (!r || r.kind !== "ask") return false;
+  const input = JSON.parse(r.input) as { messageIds?: string[]; userId?: string; coordinate?: unknown; handoff?: unknown };
+  if (input.coordinate || input.handoff || (input.userId ?? "owner") !== "owner") return false;
+  // Including what the owner added while the turn ran (steer.ts).
+  const steered = one<{ s: string | null }>(ctx.app.db, "select json_extract(output, '$.steered') s from runs where id = ?", ctx.runId)?.s;
+  const ids = [...(input.messageIds ?? []), ...(steered ? (JSON.parse(steered) as string[]) : [])];
+  return ids.some((id) => !!one(ctx.app.db, "select 1 from messages where id = ? and role = 'user' and json_extract(meta, '$.speaker') is null and json_extract(meta, '$.asker') is null and json_extract(meta, '$.wake') is null and json_extract(meta, '$.userId') is null", id));
+}
 
 def({
   name: "classify_source",
@@ -3119,9 +3167,20 @@ async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown
     // Feishu calls speak as the bot of this run's conversation (lark.bots), the main bot otherwise.
     const text = await withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data));
     if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data });
-    return { text, isError: false };
+    return { text: text + (await steering(ctx)), isError: false };
   } catch (error) {
-    return { text: (error as Error).message, isError: true };
+    return { text: (error as Error).message + (await steering(ctx)), isError: true };
+  }
+}
+
+/** Messages that arrived for this turn's conversation while it runs (steer.ts). */
+async function steering(ctx: ToolContext) {
+  if (!ctx.runId) return "";
+  try {
+    return (await import("./steer.ts")).takeSteering(ctx.app, ctx.runId) ?? "";
+  } catch (e) {
+    console.warn("[omem] 补充消息没能交给正在进行的一轮：", (e as Error).message);
+    return "";
   }
 }
 

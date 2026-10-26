@@ -5,6 +5,8 @@ export type AgentEvent =
   | { type: "tool"; id: string; title: string; kind?: string; status?: string; input?: unknown }
   | { type: "plan"; entries: { content: string; status: string }[] }
   | { type: "status"; text: string }
+  // The agent session this turn runs in (known before the turn ends).
+  | { type: "session"; sessionId: string; resumed: boolean }
   // Provider-side queue (traex session_info_update._meta.trae.queueStatus, or queue text).
   | { type: "queue"; queued: boolean; position?: number; message?: string };
 

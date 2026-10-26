@@ -281,6 +281,8 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       session = (await Promise.race([connection.newSession({ cwd: opts.cwd, mcpServers }), failed])) as SessionInfo;
       sessionId = session.sessionId!;
     }
+    // Recorded with the run, so a run that fails halfway can still be continued (retry).
+    if (!opts.probe) emitSetup({ type: "session", sessionId, resumed });
     touch();
     // Permission mode: prefer the role's choice when the agent offers it.
     let disposal: Promise<void> | undefined;

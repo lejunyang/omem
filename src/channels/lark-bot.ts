@@ -578,7 +578,10 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
           },
         },
       );
-      if (answer === null) return;
+      if (answer === null) {
+        await presentation?.close();
+        return;
+      }
       answered = true;
       if (runId) finishCot(app, runId, true);
       const p = await presentation?.close();

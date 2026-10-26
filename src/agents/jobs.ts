@@ -108,6 +108,11 @@ registerHandler("ask", async (ctx) => {
     maybeSummarize(ctx.app, input.conversationId);
     return { answer, session: r.mode };
   }
+  // A watched group's batch with nothing to do: kept in the conversation, out of the run list.
+  if (msgs.every((m) => typeof m.meta.speaker === "string") && isQuiet(answer)) {
+    const id = addMessage(ctx.app, input.conversationId, "assistant", answer, ctx.run.id, { agent: r.agent, session: r.mode, replyTo: ids });
+    return { answer, messageId: id, quiet: true, session: r.mode };
+  }
   // Woken by a result (a coding delegation ended): nobody waits on this turn, so it is posted.
   if ((ctx.run.input as { handoff?: unknown }).handoff) {
     await deliverToThread(ctx.app, input.conversationId, answer, { runId: ctx.run.id, agent: r.agent, session: r.mode, replyTo: ids });
@@ -186,6 +191,9 @@ registerHandler("agent", async (ctx) => {
       if (context) fullTask = `${context}\n\n---\n\n# 这一轮的任务\n\n${task}`;
     }
   }
+  // Retried: what the failed attempt already did comes first, so nothing is posted twice.
+  const retryOf = (ctx.run.input as { retryOf?: string }).retryOf;
+  if (retryOf) fullTask = `${(await import("./retry.ts")).attemptNote(ctx.app, retryOf)}\n\n---\n\n${fullTask}`;
   const go = (resume?: string) =>
     runRole(ctx.app, {
       role: "assistant",
@@ -771,6 +779,7 @@ registerHandler("heartbeat", async (ctx) => {
   const due = deliverDueReminders(app);
   expireWorkFiles(app);
   await expireTemporaryRules(app);
+  (await import("../channels/lark-watch.ts")).expireWatches(app);
   // 2. Watches and waits only need attention when new material arrived.
   const last = one<{ value: string }>(app.db, "select value from kv where key = 'heartbeat_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
   const started = now();

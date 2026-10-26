@@ -7,7 +7,7 @@ import { createRun, listRuns } from "../src/agents/runs.ts";
 import { saveAgentSpec } from "../src/agents/specs.ts";
 import { createThread, findThread, threadMessages } from "../src/agents/threads.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
-import { all } from "../src/core/db.ts";
+import { all, one } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
@@ -16,7 +16,7 @@ import { fillResources, missingResources, sourceMessages, storeMessages } from "
 import { mkdirSync as mkdirS, writeFileSync as writeF } from "node:fs";
 import { run as runSql } from "../src/core/db.ts";
 import { buildCard, setLarkClient } from "../src/channels/lark-send.ts";
-import { routeWatchedMessages, setWatchRule } from "../src/channels/lark-watch.ts";
+import { expireWatches, listWatches, routeWatchedMessages, setWatchRule } from "../src/channels/lark-watch.ts";
 import { recordCodeActivity } from "../src/sources/activity.ts";
 import { appendToSource, upsertSource } from "../src/sources/store.ts";
 import { testApp } from "./helpers.ts";
@@ -182,6 +182,35 @@ describe("watched chats", () => {
     expect(thread.settings.spec).toBe("alert-handler");
     expect(thread.settings.lark).toEqual({ chats: ["oc_alert"], draft: true });
     expect(threadMessages(app, thread.id)[0].meta.speaker).toBe("监控");
+  });
+
+  it("lets the assistant watch a group in batches, in one context, until a time", async () => {
+    const app = testApp();
+    app.config.lark.ownerOpenId = "ou_owner";
+    // Not asked by the owner in this turn (a wake-up, a watched batch…): no inviting the bot.
+    const ask = createRun(app, { kind: "ask", title: "x", input: { conversationId: "c_none", messageIds: [] }, lane: "test-hold", notBefore: "2999-01-01T00:00:00Z" });
+    const ctx = toolContextForToken(app, issueToolToken({ runId: ask.id, spaceId: "personal", spaces: null, tools: null, actor: "agent" }))!;
+    expect((await callTool(ctx, "set_chat_watch", { chat_id: "oc_proj", note: "有人问接口进度就帮我回", invite_bot: true })).text).toMatch(/本人亲自要求/);
+    expect((await callTool(ctx, "set_chat_watch", { chat_id: "oc_proj", note: "有人问接口进度就帮我回" })).text).toMatch(/开始盯 oc_proj：消息每 10 分钟一批交给 assistant/);
+    const t = Date.now();
+    await routeWatchedMessages(app, "oc_proj", "项目群", [{ id: "om_p1", time: String(t), sender: "小王", text: "接口今天能联调吗", topicId: "omt_a" }]);
+    await routeWatchedMessages(app, "oc_proj", "项目群", [{ id: "om_p2", time: String(t), sender: "小李", text: "另一个话题：周会改到周四", topicId: "omt_b" }]);
+    // Both topics in one batch, one conversation; later messages do not push the batch back.
+    const runs = listRuns(app, { kind: "ask" }).filter((r) => r.id !== ask.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].input.messageIds).toHaveLength(2);
+    const due = Date.parse(one<{ not_before: string }>(app.db, "select not_before from runs where id = ?", runs[0].id)!.not_before);
+    expect(due - t).toBeGreaterThan(9 * 60_000);
+    expect(findThread(app, String(runs[0].input.conversationId))!.settings.spec).toBeUndefined();
+    // An @ of the owner brings the batch forward.
+    await routeWatchedMessages(app, "oc_proj", "项目群", [{ id: "om_p3", time: String(t), sender: "小王", text: "@本人 帮看下", mentions: ["ou_owner"] }]);
+    expect(Date.parse(one<{ not_before: string }>(app.db, "select not_before from runs where id = ?", runs[0].id)!.not_before) - Date.now()).toBeLessThan(31_000);
+    // The handler slows down; then the watch runs out.
+    expect((await callTool(ctx, "set_chat_watch", { chat_id: "oc_proj", batch_minutes: 30 })).text).toMatch(/已更新 oc_proj：消息每 30 分钟/);
+    expect(listWatches(app)[0]).toMatchObject({ chatId: "oc_proj", batchMinutes: 30, note: "有人问接口进度就帮我回" });
+    expect(expireWatches(app, new Date(Date.now() + 4 * 86400_000).toISOString())).toBe(1);
+    expect(listWatches(app)).toHaveLength(0);
+    expect(await routeWatchedMessages(app, "oc_proj", "项目群", [{ id: "om_p4", time: String(t), sender: "小王", text: "还在吗" }])).toBe(0);
   });
 });
 

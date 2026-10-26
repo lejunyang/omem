@@ -28,6 +28,8 @@ export type Inbound = Partial<ThreadAddress> & {
   quote?: { messageId?: string; sender?: string; text?: string; origin?: string };
   /** Wait this long for more messages before starting (defaults to sessions.mergeMs for chats, 0 for web). */
   mergeMs?: number;
+  /** Later messages do not extend the wait (only shorten it): a watched chat's batch window. */
+  fixedWindow?: boolean;
   /** Who sent it (resolved from the channel identity); the owner by default. */
   userId?: string;
   /** For watched chats: the person who actually wrote it (not a user of omem). */
@@ -141,7 +143,10 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   // Bursts merge only within one sender: each turn runs with its sender's permissions.
   if (waiting && ((waiting.input.userId as string | undefined) ?? OWNER) === userId) {
     const ids = [...((waiting.input.messageIds as string[] | undefined) ?? []), messageId];
-    if (updateQueuedRun(app, waiting.id, { input: { ...waiting.input, messageIds: ids }, notBefore: mergeMs ? notBefore : undefined, title: truncate(`${waiting.title} / ${text.replace(/\s+/g, " ")}`, 80) })) {
+    // A fixed window (a watched chat's batch) is never pushed back, only brought forward.
+    const due = inb.fixedWindow ? app.db.prepare("select not_before from runs where id = ?").get(waiting.id) as { not_before: string | null } | undefined : undefined;
+    const later = !!due?.not_before && due.not_before <= notBefore;
+    if (updateQueuedRun(app, waiting.id, { input: { ...waiting.input, messageIds: ids }, notBefore: mergeMs && !later ? notBefore : undefined, title: truncate(`${waiting.title} / ${text.replace(/\s+/g, " ")}`, 80) })) {
       app.db.prepare("update messages set run_id = ? where id = ?").run(waiting.id, messageId);
       return { thread, messageId, runId: waiting.id, merged: true, reply: null, started };
     }
