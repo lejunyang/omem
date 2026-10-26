@@ -87,6 +87,7 @@ updated: 2026-10-25
 
 ## 网页
 
+- 编码前的 Git 同步（10-27）：`src/agents/code-sync.ts`（`syncWorktree` 拉取 / 合并 / 变基，`finishSync` 把每轮冲突交给解决者再继续，`moveToTarget` 把未应用的改动变基到目标分支最新提交，`popStash` 放回同步前收起的改动）。`code.ts` 的 `syncPhase` 在编码前运行：冲突交给编码 Agent（`conflictTask`，`roles/coder.md` 加了 `ask_owner` / `wait_answer`），剩下的停下来发提问 `code-sync`（继续 → 新一轮 `syncResume`；放弃 → 回到同步前）。`WorktreeRef` 新增 `start` / `syncHead`：应用时先 `merge --ff-only` 到 `syncHead`（目标分支必须还在 `start`），再应用补丁。没有会话链的网页交办续轮用 `review-fix.ts` 的 `queueStandaloneFix`（可带 `extraInput`）。`code-git.ts` 推送可指定 `branch`，`force` 用 `--force-with-lease=<分支>:<上次拉取的提交>`。接口 `POST /api/runs/:id/move-to-target`、`GET /api/asks/:id`；`/api/delegate` 接受 `sync` / `syncOnly`。
 - 运行页的引用与修改点（10-26）：选中文字后有“加入提问 / 加入修改点”两个按钮，范围是运行详情和从它打开的引用抽屉（带 `data-quotable` 的区域；`CodeView` 行带 `data-line`，引用带上行号）。引用按运行存在本机（`web/src/lib/quotes.ts`），按 [1]、[2] 编号；提问抽屉（`AskAboutRun` 的 `basket`）可缩小成可拖动的图标（`QuoteDock.vue`，位置记在本机），继续选别处再加入；修改点在 `FixBasket.vue` 里逐条写要求，和评审里定为“改”的问题一起开始修改，“概览”的修改框也会带上它们。
 - 差异的上下 / 左右两种排列（`lib/diffLayout.ts`，本机记住），左右时删掉的行和替换它们的行并排；改动文件树（`DiffTree.vue`，文件夹可折叠，单层目录合并显示），在“变更”标签和“活动”的改动里都有。点变更点时把它第一处标记滚到屏幕约三分之一处（以前滚的是整个文件，标记常在屏幕外）。
 - 规则“发到”选群聊后保存，下拉框仍显示群名（以前显示那个群对应会话的标题，常是群里的第一条消息）。

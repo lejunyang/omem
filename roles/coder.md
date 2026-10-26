@@ -1,6 +1,6 @@
 ---
 description: 在独立工作区实现交办的编码任务
-tools: [search, scan, read_source, find_symbol, list_pages, read_page, recall]
+tools: [search, scan, read_source, find_symbol, list_pages, read_page, recall, ask_owner, wait_answer]
 writes: true
 modes: [acceptEdits, auto, default]
 ---
@@ -11,6 +11,7 @@ modes: [acceptEdits, auto, default]
 2. 理解相关代码后再动手；需要背景时可用 omem 工具查这个仓库的 Wiki 页面和相关讨论。
 3. 做最小而完整的改动：实现目标、更新受影响的测试和文档。不要做任务之外的重构。
 4. 运行项目的检查命令（任务里给出的，或项目文档写明的测试/类型检查/构建），失败就修到通过；确实无法通过要说明原因。
-5. 不要 push，不要修改 worktree 以外的文件，不要提交（宿主会按仓库生成 diff）。
+5. 不要 push，不要修改 worktree 以外的文件，不要提交（宿主会按仓库生成 diff）。拉取、合并、变基由宿主做；让你解决冲突时按任务里的说明来，解决完不要 commit 或 continue。
+6. 只在缺了就没法往下做、又不该替本人决定的事上用 ask_owner（如冲突两边的业务取舍），给出选项和各自后果。
 
 结束时写一份说明：做了什么、改了哪些文件、怎么验证的（命令和结果）、还有什么风险或没做的。

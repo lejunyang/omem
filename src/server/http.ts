@@ -842,19 +842,28 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!(scopeFor(app, who(req), [body.space]) ?? [body.space]).includes(body.space)) throw new HttpError(403, "不能访问该仓库");
     return actCodeGit(app, (req.params as { id: string }).id, body, who(req));
   });
+  // The target branch moved since the work began: redo the work on its latest commit (code-sync.ts).
+  server.post("/api/runs/:id/move-to-target", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
+    if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
+    return (await import("../agents/code.ts")).queueMoveToTarget(app, id, who(req));
+  });
   server.post("/api/runs/:id/discard", async (req) => {
     discardCodeRun(app, (req.params as { id: string }).id);
     return { ok: true };
   });
   server.post("/api/delegate", async (req) => {
     // `space` is where the task belongs (a repository or a project); `repos` the repositories it changes.
-    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional(), reviewTier: z.string().optional(), fromBranch: z.string().optional(), itemId: z.string().optional() }), req.body);
+    const sync = z.object({ pull: z.boolean().optional(), onto: z.string().optional(), mode: z.enum(["merge", "rebase"]).optional(), fetch: z.boolean().optional() });
+    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional(), reviewTier: z.string().optional(), fromBranch: z.string().optional(), itemId: z.string().optional(), sync: sync.optional(), syncOnly: z.boolean().optional() }), req.body);
+    if (b.sync && !b.sync.pull && !b.sync.onto) throw new HttpError(400, "同步要选拉取或合并 / 变基到哪个分支");
     const userId = who(req);
     const s = getSpace(app, b.space);
     const repos = codeRepos(app, s.id, b.repos).map((r) => r.id);
     const fromBranches = b.fromBranch ? Object.fromEntries(repos.map((id) => [id, b.fromBranch!])) : undefined;
     if (b.itemId && getItem(app, b.itemId).userId !== userId) throw new HttpError(403, "不能使用他人的事项");
-    const r = createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, itemId: b.itemId }, userId });
+    const r = createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, itemId: b.itemId, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}) }, userId });
     if (b.itemId) linkRunToItem(app, r, b.itemId, userId);
     return r;
   });
@@ -1037,6 +1046,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { listAsks } = await import("../agents/asks.ts");
     const qs = req.query as { conversation?: string; status?: "pending" | "answered" | "cancelled" };
     return listAsks(app, { conversationId: qs.conversation, status: qs.status, userId: who(req), limit: 100 });
+  });
+  server.get("/api/asks/:id", async (req) => {
+    const { getAsk } = await import("../agents/asks.ts");
+    const a = getAsk(app, (req.params as { id: string }).id);
+    if (a.userId !== who(req)) throw new HttpError(404, "没有这个提问");
+    return a;
   });
   server.post("/api/asks/:id/answer", async (req) => {
     const { answerAsk, getAsk } = await import("../agents/asks.ts");

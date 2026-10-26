@@ -298,6 +298,40 @@ async function act(action: "cancel" | "retry" | "apply" | "discard") {
     toast((e as Error).message, "error");
   }
 }
+/** Commits a sync added (a merge, a pull), applied by fast-forward even without a patch. */
+const syncCommits = computed(() => ((out.value.worktrees ?? []) as { syncHead?: string }[]).some((w) => w.syncHead));
+async function moveToTarget() {
+  if (!detail.value) return;
+  if (!(await confirmDialog("移到目标分支的最新提交？", { message: "会开新的一轮：把这次的改动（和同步的提交）变基到目标分支现在的最新提交上，冲突先交给编码 Agent，解决不了会问你。改动没变就沿用这一轮的评审。", okText: "开始" }))) return;
+  try {
+    const r = await post<{ id: string }>(`/api/runs/${detail.value.run.id}/move-to-target`);
+    toast("已安排，完成后再应用", "ok");
+    router.push(`/runs/${r.id}`);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+// A sync that stopped on conflicts: the same decision as the Feishu card, here.
+const syncAsk = ref<{ id: string; status: string; question: string } | null>(null);
+watch(() => [detail.value?.run.id, out.value.verdict, out.value.reviewAskId] as const, async ([, verdict, askId]) => {
+  syncAsk.value = null;
+  if (verdict !== "sync-conflict" || typeof askId !== "string") return;
+  try {
+    const a = await get<{ id: string; status: string; question: string }>(`/api/asks/${askId}`);
+    syncAsk.value = a.status === "pending" ? a : null;
+  } catch { /* gone */ }
+}, { immediate: true });
+async function answerSync(choice: number) {
+  if (!syncAsk.value) return;
+  try {
+    await post(`/api/asks/${syncAsk.value.id}/answer`, { choice });
+    toast(choice === 0 ? "已安排继续同步" : "已放弃这次同步", "ok");
+    syncAsk.value = null;
+    void loadDetail();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 async function copyApplyPath(path: string) {
   try { await navigator.clipboard.writeText(path); toast("已复制接收目录", "ok"); }
   catch { toast("复制失败，请选中目录文字复制", "error"); }
@@ -309,7 +343,10 @@ const modeOptions = [
   { value: "code" as const, label: "实现" },
   { value: "review" as const, label: "评审分支" },
 ];
-const emptyTask = () => ({ repos: [] as string[], task: "", check: "", branch: "", base: "", fromBranch: "" });
+const emptyTask = () => ({ repos: [] as string[], task: "", check: "", branch: "", base: "", fromBranch: "", pull: false, onto: "", syncMode: "merge" as "merge" | "rebase", syncOnly: false });
+const syncModeOptions = [{ value: "merge" as const, label: "合并" }, { value: "rebase" as const, label: "变基" }];
+const ontoOptions = computed(() => [{ value: "", label: "不合并别的分支" }, ...branchOptions.value]);
+const wantsSync = computed(() => task.value.pull || !!task.value.onto);
 const task = ref(emptyTask());
 type BranchList = { current: string; base: string | null; branches: { name: string; commit: string; at: string; subject: string; remote: boolean }[] };
 const branchList = ref<BranchList | null>(null);
@@ -350,7 +387,11 @@ async function delegate() {
     const t = task.value;
     const r = mode.value === "review"
       ? await post<Run>("/api/review-branch", { space, repos: t.repos, branch: t.branch, base: t.base || undefined, task: t.task.trim() || undefined })
-      : await post<Run>("/api/delegate", { space, repos: t.repos, task: t.task, checkCommand: t.check || undefined, fromBranch: t.fromBranch || undefined });
+      : await post<Run>("/api/delegate", {
+          space, repos: t.repos, checkCommand: t.check || undefined, fromBranch: t.fromBranch || undefined,
+          task: t.task.trim() || (t.syncOnly ? `同步${t.pull ? "：拉取最新代码" : ""}${t.onto ? `，${t.syncMode === "merge" ? "合并" : "变基到"} ${t.onto}` : ""}` : t.task),
+          ...(wantsSync.value ? { sync: { pull: t.pull || undefined, onto: t.onto || undefined, mode: t.syncMode }, syncOnly: t.syncOnly } : {}),
+        });
     delegateOpen.value = false;
     task.value = emptyTask();
     router.push(`/runs/${r.id}`);
@@ -425,14 +466,20 @@ const kindOptions = computed(() => [
           <div class="row">
             <button v-if="['queued', 'running'].includes(detail.run.status)" class="btn sm" @click="act('cancel')"><Icon name="stop" :size="13" />停止</button>
             <button v-if="['failed', 'cancelled'].includes(detail.run.status)" class="btn sm" @click="act('retry')"><Icon name="refresh" :size="13" />重试</button>
-            <template v-if="detail.run.kind === 'code' && detail.run.status === 'done' && detail.patches?.length && !out.appliedAt && !out.discardedAt">
+            <template v-if="detail.run.kind === 'code' && detail.run.status === 'done' && (detail.patches?.length || syncCommits) && !out.appliedAt && !out.discardedAt && out.verdict !== 'sync-conflict'">
               <button v-if="!branchReview" class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到原分支</button>
+              <button v-if="!branchReview" class="btn sm" title="目标分支在交办后有了新提交、应用不上时：把改动移到它的最新提交上（冲突交给编码 Agent）" @click="moveToTarget">移到目标分支最新提交</button>
               <button class="btn sm danger" :title="branchReview ? '删除评审用的工作区和它的索引' : undefined" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
             </template>
             <span v-if="out.appliedAt" class="badge ok">已应用 {{ fmtTime(out.appliedAt) }}</span>
             <button v-if="detail.run.kind === 'code'" class="btn ghost sm" @click="explaining = null; asking = 'open'"><Icon name="chat" :size="14" />提问</button>
           </div>
         </header>
+        <section v-if="syncAsk" class="card pad block sync-stop" role="alert">
+          <div class="section-title">Git 同步停在冲突上</div>
+          <p class="pre small">{{ syncAsk.question }}</p>
+          <div class="row wrap"><button class="btn primary sm" @click="answerSync(0)">已解决，继续</button><button class="btn sm" @click="answerSync(1)">放弃这次同步</button></div>
+        </section>
         <!-- After apply: where the change landed, and committing / pushing it there. -->
         <section v-if="out.appliedTo?.length" class="card pad block apply-targets">
           <div class="section-title">接收位置与提交</div>
@@ -579,9 +626,22 @@ const kindOptions = computed(() => [
             <div v-else class="field grow"><span>从哪里开始改</span><UiSelect v-model="task.fromBranch" :options="fromOptions" :search-at="1" aria-label="起点分支" /></div>
             <button class="btn ghost sm" :disabled="branchLoading" title="从 origin 拉取全部分支" @click="loadBranches(true)"><Icon name="refresh" :size="13" />拉取</button>
           </div>
+          <!-- Git work before coding (src/agents/code-sync.ts): conflicts go to the coding Agent, then to the owner. -->
+          <div v-if="mode === 'code' && task.repos.length" class="field sync">
+            <span>编码前先同步（可选）</span>
+            <div class="row wrap">
+              <UiCheckbox v-model="task.pull" size="sm">拉取目标分支在 origin 上的新提交</UiCheckbox>
+            </div>
+            <div class="row wrap">
+              <UiSelect v-model="task.onto" :options="ontoOptions" :search-at="1" width="220px" size="sm" aria-label="再合并或变基到的分支" />
+              <UiSegmented v-if="task.onto" v-model="task.syncMode" size="sm" :options="syncModeOptions" aria-label="合并还是变基" />
+              <UiCheckbox v-if="wantsSync" v-model="task.syncOnly" size="sm">只同步，不再编码</UiCheckbox>
+            </div>
+            <span v-if="wantsSync" class="hint">冲突先交给编码 Agent 解决，拿不准的会问你，解决不了的停下来给你；同步的提交在应用时快进到目标分支，之后可以在“接收位置与提交”里推送（变基过的要强制推送）。</span>
+          </div>
           <label class="field"><span>{{ mode === "review" ? "需求说明和评审要求（可选）" : "任务" }}</span><textarea v-model="task.task" class="textarea" rows="6" :placeholder="mode === 'review' ? '需求要解决什么、验收标准、相关文档或讨论、特别关心的点' : '目标、背景、验收标准、相关讨论'" /></label>
           <label v-if="mode === 'code'" class="field"><span>检查命令（可选，默认用空间设置）</span><input v-model="task.check" class="input mono" placeholder="pnpm test" /></label>
-          <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!task.repos.length || (mode === 'review' ? !task.branch : !task.task.trim())" @click="delegate">{{ mode === "review" ? "开始评审" : "交办" }}</button></div>
+          <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!task.repos.length || (mode === 'review' ? !task.branch : !task.task.trim() && !(wantsSync && task.syncOnly))" @click="delegate">{{ mode === "review" ? "开始评审" : "交办" }}</button></div>
         </template>
       </div>
     </div>
@@ -590,6 +650,9 @@ const kindOptions = computed(() => [
 
 <style scoped>
 .apply-targets { display: grid; gap: 12px; }
+.sync-stop { border-color: var(--warn); display: grid; gap: 8px; }
+.sync-stop p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sync .row { gap: 10px; align-items: center; }
 .apply-targets .section-title { margin: 0; }
 .apply-targets .target { display: grid; gap: 10px; min-width: 0; }
 .apply-targets code { overflow-wrap: anywhere; white-space: normal; min-width: 0; }

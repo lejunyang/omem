@@ -5,7 +5,8 @@
  * tokens, run events) without a model.
  */
 import { Readable, Writable } from "node:stream";
-import { appendFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentSideConnection, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -145,6 +146,17 @@ ${JSON.stringify({ tools, error: res.isError ? res.content : null })}`);
             await client.callTool({ name: "submit_change_points", arguments: { change_points: [point] } });
             await say(`拆分完成 ${JSON.stringify(bad.isError ?? false)}`);
           } finally { await client.close(); }
+          return { stopReason: "end_turn" as const };
+        }
+        // Git conflicts the host hands over: keep both sides and stage them (FAKE_CONFLICT=giveup leaves them).
+        if (prompt.includes("# 解决 Git 冲突")) {
+          const cwd = cwds.get(p.sessionId)!;
+          const files = [...prompt.matchAll(/^- (\S+)$/gm)].map((m) => m[1]).filter((f) => existsSync(join(cwd, f)));
+          if (process.env.FAKE_CONFLICT !== "giveup") for (const f of files) {
+            writeFileSync(join(cwd, f), readFileSync(join(cwd, f), "utf8").replace(/^(<{7}|={7}|>{7}).*\r?\n/gm, ""));
+            execFileSync("git", ["add", f], { cwd });
+          }
+          await say(process.env.FAKE_CONFLICT === "giveup" ? "解决不了" : `合并了两边：${files.join("、")}`);
           return { stopReason: "end_turn" as const };
         }
         if (!check) {

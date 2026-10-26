@@ -83,6 +83,34 @@ describe("Git operations on applied code", { timeout: 60000 }, () => {
     expect(sh(remote, "rev-parse", "refs/heads/feature/refund")).toBe(first.committed);
   });
 
+  it("pushes to another branch when asked, and replaces a diverged one only with force and a lease", async () => {
+    await act("commit");
+    const other = await actCodeGit(app, id, { space: "shop", action: "push", branch: "review/refund", expected_state: status().state });
+    expect(other).toMatchObject({ ok: true, pushed: true, to: "review/refund" });
+    expect(sh(remote, "rev-parse", "refs/heads/review/refund")).toBe(other.head);
+    // The remote branch has a commit the receiving branch does not (as after a rebase here).
+    sh(root, "commit", "--allow-empty", "-qm", "elsewhere");
+    sh(root, "push", "-q", "origin", "HEAD:refs/heads/feature/refund");
+    sh(path, "fetch", "-q", "origin");
+    const plain = await act("push");
+    expect(plain.ok).toBe(false);
+    expect(plain.error).toMatch(/强制推送/);
+    const forced = await actCodeGit(app, id, { space: "shop", action: "push", force: true, expected_state: status().state });
+    expect(forced).toMatchObject({ ok: true, forced: true });
+    expect(sh(remote, "rev-parse", "refs/heads/feature/refund")).toBe(forced.head);
+    // A lease on what was last fetched: a newer remote commit (pushed from another clone) is not overwritten.
+    const clone = join(app.home, "clone");
+    sh(app.home, "clone", "-q", "-b", "feature/refund", remote, clone);
+    sh(clone, "config", "user.name", "Other"); sh(clone, "config", "user.email", "other@example.com");
+    sh(clone, "commit", "--allow-empty", "-qm", "newer elsewhere");
+    sh(clone, "push", "-q", "origin", "feature/refund");
+    const newer = sh(remote, "rev-parse", "refs/heads/feature/refund");
+    sh(path, "commit", "--allow-empty", "-qm", "local only");
+    const stale = await actCodeGit(app, id, { space: "shop", action: "push", force: true, expected_state: status().state });
+    expect(stale.ok).toBe(false);
+    expect(sh(remote, "rev-parse", "refs/heads/feature/refund")).toBe(newer);
+  });
+
   it("rejects non-fast-forward pushes without replacing remote changes", async () => {
     await act("commit");
     sh(root, "commit", "--allow-empty", "-qm", "remote update");

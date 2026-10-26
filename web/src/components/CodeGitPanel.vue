@@ -6,10 +6,11 @@ import { fmtTime } from "../store";
 import Skeleton from "./Skeleton.vue";
 import VirtualList from "./VirtualList.vue";
 import DiffFile from "./DiffFile.vue";
+import UiCheckbox from "./UiCheckbox.vue";
 
 const props = defineProps<{ runId: string; space: string }>();
 type Action = "commit" | "commit_push" | "push";
-type Operation = { id: string; at: string; action: Action; head: string; committed: string | null; pushed: boolean; ok: boolean; error?: string };
+type Operation = { id: string; at: string; action: Action; head: string; committed: string | null; pushed: boolean; ok: boolean; error?: string; to?: string; forced?: boolean };
 type GitStatus = {
   branch: string; head: string; state: string; remote: string | null; pushUnavailable: string | null;
   staged: number; unstaged: number; ahead: number | null; behind: number | null;
@@ -20,6 +21,10 @@ const status = ref<GitStatus | null>(null);
 const loading = ref(false);
 const busy = ref(false);
 const message = ref("");
+// Where to push: the original branch by default, or another (a branch for a merge request).
+const dest = ref("");
+// After a rebase the remote branch has diverged: replace it, with a lease on what was last fetched.
+const force = ref(false);
 const error = ref("");
 const result = ref<Operation | null>(null);
 const diffFiles = computed(() => (status.value?.stagedDiff ?? "").split(/^diff --git /m).filter(Boolean).map(chunk => {
@@ -45,10 +50,11 @@ async function act(action: Action) {
   const runId = props.runId, space = props.space, snapshot = status.value, commitMessage = message.value.trim();
   busy.value = true;
   try {
-    const text = `${space} · ${snapshot.branch}\n${action === "push" ? `推送当前提交 ${snapshot.head.slice(0, 10)}` : `提交 ${snapshot.staged} 个已暂存文件\n提交信息：${commitMessage}`}${action !== "commit" ? `\n推送到 origin/${snapshot.branch}，包含该分支尚未推送的提交。` : ""}${snapshot.unstaged ? `\n${snapshot.unstaged} 个未暂存文件的修改不包含在本次提交中。` : ""}`;
+    const to = dest.value.trim() || snapshot.branch;
+    const text = `${space} · ${snapshot.branch}\n${action === "push" ? `推送当前提交 ${snapshot.head.slice(0, 10)}` : `提交 ${snapshot.staged} 个已暂存文件\n提交信息：${commitMessage}`}${action !== "commit" ? `\n推送到 origin/${to}，包含该分支尚未推送的提交。${force.value ? "\n强制推送：远端分支上本地没有的提交会被替换（只在它仍是上次拉取时的状态才会替换）。" : ""}` : ""}${snapshot.unstaged ? `\n${snapshot.unstaged} 个未暂存文件的修改不包含在本次提交中。` : ""}`;
     if (!(await confirmDialog(`${labels[action]}？`, { message: text, okText: labels[action] }))) return;
     result.value = null;
-    const response = await post<Operation>(`/api/runs/${runId}/git`, { space, action, message: commitMessage, expected_state: snapshot.state });
+    const response = await post<Operation>(`/api/runs/${runId}/git`, { space, action, message: commitMessage, expected_state: snapshot.state, ...(dest.value.trim() ? { branch: dest.value.trim() } : {}), ...(force.value ? { force: true } : {}) });
     if (runId !== props.runId || space !== props.space) return;
     result.value = response;
     if (response.committed) message.value = "";
@@ -68,7 +74,7 @@ async function act(action: Action) {
     <p v-if="error" class="git-error" role="alert">{{ error }}</p>
     <p v-if="result" :class="{ 'git-error': !result.ok }" role="status">
       <template v-if="result.committed">本地提交 {{ result.committed.slice(0, 10) }} 已完成。 </template>
-      <template v-if="result.pushed">已推送到 origin/{{ status?.branch }}。</template>
+      <template v-if="result.pushed">已推送到 origin/{{ result.to ?? status?.branch }}{{ result.forced ? "（强制）" : "" }}。</template>
       <template v-else-if="result.ok">尚未推送。</template>
       <template v-if="result.error">{{ result.error }}</template>
     </p>
@@ -96,6 +102,10 @@ async function act(action: Action) {
         <p v-if="status.diffTruncated" class="muted">差异较长，仅显示前 24,000 字符；完整内容可在接收目录用 git diff --cached 查看。</p>
       </details>
       <label class="field"><span>提交信息</span><textarea v-model="message" class="textarea" rows="3" maxlength="10000" :disabled="busy" placeholder="说明这次改动做了什么" /></label>
+      <div class="row wrap push-to">
+        <label class="field grow"><span>推送到 origin 的分支</span><input v-model="dest" class="input sm mono" :placeholder="status.branch" aria-label="推送到的分支" /></label>
+        <UiCheckbox v-model="force" size="sm" :title="'变基过的分支和远端分叉时用；只在远端仍是上次拉取的状态才会替换'">强制推送（变基后）</UiCheckbox>
+      </div>
       <p class="muted">仅提交暂存区。你后来未暂存的修改会保留；需要一起提交时，请先在接收目录暂存，再刷新检查。</p>
       <div class="row wrap">
         <button class="btn primary sm" :disabled="busy || loading || !!status.blockedReason || !status.staged || !message.trim()" @click="act('commit')">提交</button>
@@ -109,7 +119,7 @@ async function act(action: Action) {
         <div v-for="op in [...status.operations].reverse()" :key="op.id" class="git-operation">
           {{ fmtTime(op.at) }} · {{ labels[op.action] }} · {{ op.ok ? '成功' : '未完成' }}
           <span v-if="op.committed"> · 提交 {{ op.committed.slice(0, 10) }}</span>
-          <span v-if="op.pushed"> · 已推送</span>
+          <span v-if="op.pushed"> · 已推送{{ op.to ? `到 ${op.to}` : "" }}{{ op.forced ? "（强制）" : "" }}</span>
           <p v-if="op.error" class="git-error">{{ op.error }}</p>
         </div>
       </details>
@@ -129,4 +139,6 @@ async function act(action: Action) {
 .git-diff { max-height: 320px; overflow: auto; font-size: 12px; }
 .git-filename { margin-block: 8px; overflow-wrap: anywhere; }
 .git-operation { margin-top: 8px; }
+.push-to { align-items: flex-end; gap: 12px; }
+.push-to .grow { flex: 1; min-width: 200px; }
 </style>

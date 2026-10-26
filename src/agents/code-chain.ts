@@ -81,7 +81,7 @@ export function queueNextCodeRound(
   app: App,
   chain: CodeChain,
   task: string,
-  opts: { resumeSessionId?: string; manual?: boolean; execution?: Execution; reviewExecution?: Execution; reviewOnly?: string[] } = {},
+  opts: { resumeSessionId?: string; manual?: boolean; execution?: Execution; reviewExecution?: Execution; reviewOnly?: string[]; extraInput?: Record<string, unknown> } = {},
 ): { run: Run; chain: CodeChain } | null {
   // Round 1 + automatic continuations up to maxCodeRounds; further rounds need continue_code_run.
   // Reload under a write lock: stale callers and separate MCP processes cannot queue duplicates.
@@ -119,6 +119,8 @@ export function queueNextCodeRound(
         fromReview: input.fromReview,
         // review-lead named the checks the fixes touch; the others are not re-run this round.
         ...(opts.reviewOnly?.length ? { reviewOnly: opts.reviewOnly } : {}),
+        // A round of Git work (finishing a stopped sync, moving onto the latest target) says so here.
+        ...(opts.extraInput ?? {}),
         continueFrom: chain.rounds[0],
         resumeSessionId: opts.execution && ["profile", "model", "effort"].some((key) => opts.execution?.[key as keyof Execution] !== input.execution?.[key as keyof Execution]) ? undefined : opts.resumeSessionId,
         round: next.round,

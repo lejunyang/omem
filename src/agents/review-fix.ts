@@ -130,8 +130,8 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
   return accepted(r);
 }
 
-/** Web/CLI work has no conversation to report to, but still owns reusable worktrees. */
-function queueStandaloneFix(app: App, rootId: string, expectedLastId: string, task: string, userId: string): Run {
+/** Web/CLI work has no conversation to report to, but still owns reusable worktrees. `extraInput`: a round of Git work (code-sync.ts). */
+export function queueStandaloneFix(app: App, rootId: string, expectedLastId: string, task: string, userId: string, extraInput: Record<string, unknown> = {}): Run {
   app.db.exec("BEGIN IMMEDIATE");
   try {
     const rounds = workRuns(app, rootId).map(id => getRun(app, id));
@@ -147,7 +147,8 @@ function queueStandaloneFix(app: App, rootId: string, expectedLastId: string, ta
     const next = createRun(app, {
       kind: "code", spaceId: last.spaceId, userId,
       title: truncate(`交办第 ${rounds.length + 1} 轮：${task.split("\n")[0]}`, 80),
-      input: { ...last.input, task, continueFrom: rootId, resumeSessionId: sessionId, round: rounds.length + 1 },
+      // The last round's Git work is its own; this round does only what it is asked.
+      input: { ...last.input, sync: undefined, syncOnly: undefined, syncResume: undefined, moveToTarget: undefined, ...extraInput, task, continueFrom: rootId, resumeSessionId: sessionId, round: rounds.length + 1 },
       parentId: last.parentId,
     });
     app.db.exec("COMMIT");

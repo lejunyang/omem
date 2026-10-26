@@ -2565,6 +2565,14 @@ def({
   },
 });
 
+/** Git work before coding (src/agents/code-sync.ts). */
+const syncSchema = z.object({
+  pull: z.boolean().optional().describe("先拉取目标分支在 origin 上的新提交（能快进就快进，分叉了按 mode 合并或变基）"),
+  onto: z.string().optional().describe("再合并或变基到这个分支的最新提交（如 main；本地落后 origin 时用 origin 的）"),
+  mode: z.enum(["merge", "rebase"]).optional().describe("merge（默认，产生合并提交）或 rebase"),
+  fetch: z.boolean().optional().describe("先从 origin 拉取（默认 true）"),
+}).refine((x) => x.pull || x.onto, "sync 至少要 pull 或 onto 之一").describe("编码前的 Git 同步：冲突交给编码 Agent 解决，拿不准的它会问本人，解决不了的停下来交给本人；同步产生的提交在应用时快进到目标分支，之后可用 code_git_action 推送（变基过的分支推送要 force）");
+
 def({
   name: "delegate_code",
   description:
@@ -2583,10 +2591,13 @@ def({
     review_checks: z.array(z.string()).optional().describe("本人要求额外加上的评审项（档案名，如 security-review）"),
     from_branch: z.string().optional().describe("在已有分支上继续开发：从本地该分支最新提交开始，不带未提交修改，也不自动拉远端；应用时自动选择或建立原分支的接收工作区"),
     item_id: z.string().optional().describe("这次交办所属的事项：编码 Agent 和评审者会读到它的材料（文档、群聊、要对照的仓库），交办本身也记到事项上"),
+    sync: syncSchema.optional(),
+    sync_only: z.boolean().optional().describe("这次只做 Git 同步（拉取、合并、变基、解决冲突），不再编码；结果的提交在应用时快进到目标分支"),
   }),
   handler: async (ctx, a) => {
     const execution = validateExecution(ctx.app, a.execution);
     await validateReviewChoice(ctx, a.review_tier, a.review_checks);
+    if (a.sync_only && !a.sync) throw new HttpError(400, "sync_only 需要同时给出 sync（拉取或合并 / 变基到哪个分支）");
     const reviewExecution = validateExecution(ctx.app, a.review_execution);
     const ids = [...new Set(a.repo_spaces.map((r) => writeSpace(ctx, r)))];
     const home = a.space ? space(ctx, a.space) : ids[0];
@@ -2598,7 +2609,7 @@ def({
       kind: "code",
       spaceId: home,
       title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
-      input: { task: a.task, execution, reviewExecution, checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}) },
+      input: { task: a.task, execution, reviewExecution, checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
       parentId: ctx.runId,
       userId: ctx.userId ?? OWNER,
     });
@@ -2691,6 +2702,8 @@ def({
     review_execution: executionSchema.optional().describe("独立评审 AI 的临时选择"),
     run_id: z.string().describe("本次交办的任一运行 id（r…），或最初发起交办的 ask 运行 id"),
     task: z.string().describe("这一轮要做什么：评审意见或本人的新要求，写具体"),
+    sync: syncSchema.optional().describe("这一轮编码前先做的 Git 同步（如先合并最新的 main）；工作区里未提交的改动会先收起、同步后放回"),
+    onto_latest_target: z.boolean().optional().describe("只把改动移到目标分支的最新提交上（目标分支有了新提交、应用失败时用），task 可简单写原因；冲突交给编码 Agent，解决不了会问本人"),
   }),
   handler: async (ctx, a) => {
     const execution = validateExecution(ctx.app, a.execution);
@@ -2709,7 +2722,8 @@ def({
     if (findThread(ctx.app, chain.conversationId)?.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能继续本人发起的编码交办");
     // A failed round may have no session of its own: resume the latest one that has.
     const sessionId = rounds.map((r) => (r.output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
-    const next = queueNextCodeRound(ctx.app, chain, a.task, { resumeSessionId: execution ? undefined : sessionId, manual: true, execution, reviewExecution });
+    const extraInput = a.onto_latest_target ? { moveToTarget: true } : a.sync ? { sync: a.sync } : undefined;
+    const next = queueNextCodeRound(ctx.app, chain, a.task, { resumeSessionId: execution ? undefined : sessionId, manual: true, execution, reviewExecution, extraInput });
     if (!next) throw new HttpError(409, "原交办记录不完整，无法继续；请查看 read_run");
     return `已在原交办会话安排第 ${next.chain.round} 轮 ${next.run.id}：同样的工作区和编码会话，完成后自动检查、评审并通知。`;
   },
@@ -2964,7 +2978,7 @@ def({
 
 def({
   name: "code_git_action",
-  description: "本人明确要求后，提交已应用工作区的暂存修改（commit）、提交并推送（commit_push），或仅推送已有提交（push）。须先 code_git_status 检查并传 expected_state；commit 需 message。不自动暂存，不拉取、不强推；推送固定到 origin 的原目标分支，包含分支上尚未推送的提交。多仓库逐个操作；推送失败保留已完成的提交，刷新状态后用 push 重试。返回 ok/error，不能把失败说成成功。",
+  description: "本人明确要求后，提交已应用工作区的暂存修改（commit）、提交并推送（commit_push），或仅推送已有提交（push）。须先 code_git_status 检查并传 expected_state；commit 需 message。不自动暂存，不拉取；默认推送到 origin 的原目标分支（包含分支上尚未推送的提交），branch 可推到别的分支（如新建一个合并请求用的分支）；force 只在本人明确同意时用（变基后远端分叉），按上次拉取的远端状态做 lease 保护。多仓库逐个操作；推送失败保留已完成的提交，刷新状态后用 push 重试。返回 ok/error，不能把失败说成成功。",
   write: true,
   schema: codeGitActionSchema.extend({ run_id: z.string() }),
   handler: async (ctx, a) => {

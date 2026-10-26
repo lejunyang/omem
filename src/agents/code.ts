@@ -5,12 +5,12 @@ import { dirname, join, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
-import { cancelHostAsks } from "./asks.ts";
+import { cancelHostAsks, createAsk, registerAskHandler } from "./asks.ts";
 import { findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
 import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
-import { createRun, getRun, runUser, setRunOutput, type RunContext } from "./runs.ts";
+import { createRun, getRun, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 import { replyOf } from "./types.ts";
 import { isSourceFile } from "../sources/chunk.ts";
@@ -69,6 +69,17 @@ export type CodeInput = {
   itemId?: string;
   /** The branch review this fixes: its reviewers also respect what the owner decided there. */
   fromReview?: string;
+  /**
+   * Git work before coding (code-sync.ts): pull the target branch's remote commits and/or merge or
+   * rebase onto another branch; conflicts go to the coding Agent, then to the owner. `syncOnly`:
+   * that is the whole task, no coding after it.
+   */
+  sync?: import("./code-sync.ts").SyncRequest;
+  syncOnly?: boolean;
+  /** A later round: finish a sync stopped on conflicts the owner has since resolved. */
+  syncResume?: boolean;
+  /** A later round: move the unapplied work onto the target branch's latest commit. */
+  moveToTarget?: boolean;
 };
 
 /** Whether a coding run reviews existing branches (no coding round, nothing to apply). */
@@ -182,7 +193,7 @@ export async function runCodeTask(ctx: RunContext) {
     const r = git(repo.rootPath!, ["worktree", "add", "-q", "-b", branch, path, base]);
     if (!r.ok) throw new Error(`在 ${repo.id} 创建工作区失败：${r.stderr}`);
     const targetBranch = from ? branchFromRef(start!.ref) : git(repo.rootPath!, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() || null;
-    worktrees.push({ space: repo.id, path, branch, base, targetBranch, ...(from ? { baseRef: from } : {}) });
+    worktrees.push({ space: repo.id, path, branch, base, start: base, targetBranch, ...(from ? { baseRef: from } : {}) });
     ctx.event("status", { text: `已在 ${path} 创建 ${repo.id} 的独立工作区（基于 ${from ? `分支 ${from} 的 ` : ""}${base.slice(0, 8)}）` });
   }
   if (chain) {
@@ -214,15 +225,101 @@ export async function runCodeTask(ctx: RunContext) {
   const owner = runUser(app, run.id);
   const spaces = [...new Set([run.spaceId!, ...repos.map((r) => r.id), ...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, owner) : [])])];
   const itemBrief = input.itemId ? `\n\n${materialsBrief(app, input.itemId, owner)}` : "";
-  const coderTask = continueFrom
+  let coderTask = continueFrom
     ? `# 上一轮评审要求修改
 
 ${input.task}
 
 继续在原来的工作区里改，不要重做已经通过的部分；改完重新运行检查命令。${where}`
     : `${input.task}${itemBrief}${where}`;
-  const coderReply = input.branches ? branchSummary(worktrees) : await code();
-  if (input.branches) ctx.output({ coderSummary: coderReply });
+  // ---- Git work first: a sync the owner asked for, finishing one stopped on conflicts, or moving the
+  // work onto the target branch's latest commit. Conflicts go to the coding Agent (code-sync.ts).
+  const synced = await syncPhase();
+  if (synced === "stopped") return { verdict: "sync-conflict" };
+  // Finishing a stopped sync that came before coding: the coding is still to do, with the first task.
+  if (input.syncResume && !input.syncOnly) coderTask = `${String(getRun(app, rootRunId).input.task ?? "")}${itemBrief}${where}`;
+  const skipCoder = !!(input.syncOnly || input.moveToTarget);
+  let coderReply = input.branches ? branchSummary(worktrees) : skipCoder ? synced?.summary ?? "" : await code();
+  if (synced?.report) coderReply = `${coderReply}\n\n## Git 同步\n\n${synced.summary}\n\n${synced.report}`.trim();
+  if (input.branches || skipCoder || synced) ctx.output({ coderSummary: coderReply });
+  async function syncPhase(): Promise<"stopped" | { summary: string; report: string; conflicts: number } | null> {
+    if (input.branches) return null;
+    const wanted = (input.sync && !continueFrom) || (input.sync && continueFrom) || input.syncResume || input.moveToTarget;
+    if (!wanted) return null;
+    const cs = await import("./code-sync.ts");
+    type Pending = { space: string; kind: "sync" | "move"; start?: string; label: string; conflicts: string[] };
+    const before = ((getRun(app, rootRunId).output.syncPending ?? []) as Pending[]);
+    const pending: Pending[] = [];
+    const lines: string[] = [];
+    const reports: string[] = [];
+    let conflicts = 0;
+    for (const [i, wt] of worktrees.entries()) {
+      const root = repos[i].rootPath!;
+      wt.start ??= wt.base;
+      const resolver = resolverFor(wt);
+      const status = (text: string) => ctx.event("status", { text: `${multi ? `${wt.space}：` : ""}${text}` });
+      let steps: import("./code-sync.ts").SyncStep[] = [];
+      let stopped: import("./code-sync.ts").SyncState | null = null;
+      const was = before.find((p) => p.space === wt.space);
+      if (input.syncResume) {
+        if (!was) continue;
+        const from = git(wt.path, ["rev-parse", "HEAD"]).stdout.trim();
+        const found: string[] = [];
+        stopped = await cs.finishSync(wt.path, was.label, resolver, found);
+        if (!stopped && was.kind === "move") { cs.popWip(wt.path); wt.start = was.start ?? wt.start; }
+        if (!stopped && cs.hasSyncStash(wt.path)) stopped = await cs.popStash(wt.path, resolver);
+        steps = [{ label: `${was.label}（本人处理后继续）`, from, to: git(wt.path, ["rev-parse", "HEAD"]).stdout.trim(), conflicts: [...new Set([...was.conflicts, ...found])] }];
+        if (stopped) pending.push({ ...was, label: stopped.label, conflicts: stopped.conflicts });
+      } else if (input.moveToTarget) {
+        const m = await cs.moveToTarget(root, wt, resolver);
+        if (!m.moved) { lines.push(`${wt.space}：已经在 ${wt.targetBranch} 的最新提交上`); continue; }
+        steps = [{ label: `移到 ${wt.targetBranch} 的最新提交 ${m.start!.slice(0, 8)}`, from: m.start!, to: git(wt.path, ["rev-parse", "HEAD"]).stdout.trim(), conflicts: m.conflicts ?? [] }];
+        if (m.stopped) { stopped = m.stopped; pending.push({ space: wt.space, kind: "move", start: m.start, label: m.stopped.label, conflicts: m.stopped.conflicts }); }
+        else wt.start = m.start;
+      } else if (input.sync) {
+        const r = await cs.syncWorktree(root, wt, input.sync, resolver, status);
+        steps = r.steps;
+        if (r.stopped) { stopped = r.stopped; pending.push({ space: wt.space, kind: "sync", label: r.stopped.label, conflicts: r.stopped.conflicts }); }
+      }
+      if (!stopped) {
+        const at = git(wt.path, ["rev-parse", "HEAD"]).stdout.trim();
+        wt.syncHead = at !== wt.start ? at : undefined;
+      }
+      for (const st of steps) {
+        conflicts += st.conflicts.length;
+        lines.push(`${multi ? `${wt.space}：` : ""}${st.label}${st.conflicts.length ? `，解决了 ${st.conflicts.length} 个冲突文件` : ""}`);
+      }
+      const rep = cs.conflictReport(wt.path, steps);
+      if (rep) reports.push(multi ? `### ${wt.space}\n\n${rep}` : rep);
+    }
+    // Later rounds read the worktrees (their start and sync commits) from the first run.
+    ctx.output({ worktrees });
+    if (rootRunId !== run.id) setRunOutput(app, rootRunId, { worktrees });
+    setRunOutput(app, rootRunId, { syncPending: pending.length ? pending : null });
+    for (const l of lines) ctx.event("status", { text: l });
+    if (pending.length) {
+      const ask = askSyncConflict(app, getRun(app, run.id), chain?.conversationId ?? null, pending.map((p) => ({ ...p, path: worktrees.find((w) => w.space === p.space)!.path })));
+      ctx.output({ verdict: "sync-conflict", reviewAskId: ask.id, coderSummary: lines.join("\n") });
+      return "stopped";
+    }
+    return { summary: lines.join("\n"), report: reports.join("\n\n"), conflicts };
+  }
+  function resolverFor(wt: WorktreeRef): import("./code-sync.ts").Resolver {
+    return async (files, label) => {
+      ctx.event("status", { text: `${label}：${files.length} 个文件有冲突，交给编码 Agent 解决（${files.slice(0, 8).join("、")}${files.length > 8 ? "…" : ""}）` });
+      await runRole(app, {
+        role: "coder",
+        execution: input.execution,
+        spaceId: run.spaceId!,
+        spaces,
+        task: conflictTask(wt, files, label, String(getRun(app, rootRunId).input.task ?? input.task)),
+        runId: run.id,
+        cwd: wt.path,
+        signal: ctx.signal,
+        onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
+      });
+    };
+  }
   async function code() {
     let resumeCoder = (input as { resumeSessionId?: string }).resumeSessionId;
     const previousId = chain?.rounds.filter((id) => id !== run.id).at(-1);
@@ -289,8 +386,21 @@ ${coderTask}` : coderTask;
   const statText = results.filter((r) => r.diffStat).map((r) => (multi ? `[${r.space}]\n${r.diffStat}` : r.diffStat)).join("\n\n");
   ctx.output({ repos: results, diffStat: statText, diffBytes: results.reduce((n, r) => n + r.diffBytes, 0), check: multi ? undefined : results[0].check });
   if (!diffs.length) {
+    // Only Git work (a merge, a pull): its commits are what gets applied, by fast-forward.
+    if (worktrees.some((w) => w.syncHead)) {
+      ctx.output({ verdict: "synced" });
+      notify(app, { title: `同步完成，可以应用：${run.title}`, body: truncate(synced && typeof synced === "object" ? synced.summary : coderReply, 600), link: `#/runs/${run.id}` });
+      return { verdict: "synced" };
+    }
     notify(app, { title: `${input.branches ? "分支相对基线没有改动" : "交办未产生改动"}：${run.title}`, body: truncate(coderReply, 400), link: `#/runs/${run.id}` });
     return { verdict: "no-changes" };
+  }
+  // The same change moved onto a newer target without conflicts: the last review still holds.
+  if (input.moveToTarget && synced && typeof synced === "object" && !synced.conflicts) {
+    const previous = chain?.rounds.filter((id) => id !== run.id).map((id) => getRun(app, id)).at(-1);
+    ctx.output({ verdict: previous?.output.verdict ?? null, reviewSkipped: "改动没变，只是移到了目标分支的最新提交上，沿用上一轮的评审" });
+    notify(app, { title: `已移到目标分支最新提交，可以应用：${run.title}`, body: truncate(synced.summary, 600), link: `#/runs/${run.id}` });
+    return { verdict: String(previous?.output.verdict ?? "moved") };
   }
 
   // What changed becomes searchable (spaces wt-…) for the reviewer and afterwards.
@@ -411,7 +521,7 @@ function branchFromRef(ref: string): string | null {
 }
 
 export type AppliedTarget = { space: string; path: string; branch: string | null };
-type ApplyTarget = AppliedTarget & { root: string; file: string; create: boolean; newBranch?: boolean; start?: string };
+type ApplyTarget = AppliedTarget & { root: string; file: string; create: boolean; newBranch?: boolean; start?: string; syncHead?: string; startCommit?: string };
 
 /** Resolve the original branch without switching the user's checkout or writing anything. */
 function applyTargets(app: App, runId: string): ApplyTarget[] {
@@ -421,17 +531,23 @@ function applyTargets(app: App, runId: string): ApplyTarget[] {
   if (isBranchReview(r)) throw new HttpError(400, "分支评审只给评审意见，没有可应用的改动；要改，基于该分支交办编码（from_branch）");
   if (r.output.appliedAt || first.output.appliedAt) throw new HttpError(409, "这次交办已经应用过");
   if (r.output.discardedAt || first.output.discardedAt) throw new HttpError(409, "这次交办已经丢弃");
-  return patchFiles(app, runId).filter(p => readFileSync(p.file, "utf8").trim()).map(p => {
+  if ((first.output.syncPending as unknown[] | undefined)?.length) throw new HttpError(409, "还有没处理完的 Git 冲突，先在提醒卡片里继续或放弃这次同步");
+  const wts = worktreesOf(app, first.id);
+  const withPatch = patchFiles(app, runId).filter(p => readFileSync(p.file, "utf8").trim());
+  // A space with only sync commits (a merge, a pull) is applied too, by fast-forward.
+  const all = [...withPatch, ...wts.filter(w => w.syncHead && !withPatch.some(p => p.space === w.space)).map(w => ({ space: w.space, file: "" }))];
+  return all.map(p => {
     const root = getSpace(app, p.space).rootPath;
     if (!root) throw new HttpError(400, `空间 ${p.space} 没有关联目录`);
-    const wt = worktreesOf(app, first.id).find(w => w.space === p.space);
+    const wt = wts.find(w => w.space === p.space);
+    const sync = wt?.syncHead ? { syncHead: wt.syncHead, startCommit: wt.start ?? wt.base } : {};
     const from = (first.input as CodeInput).fromBranches?.[p.space] ?? wt?.baseRef;
     const target = wt?.targetBranch !== undefined ? wt.targetBranch : from ? branchFromRef(resolveRef(root, from)?.ref ?? `refs/heads/${from.replace(/^refs\/heads\//, "").replace(/^origin\//, "")}`) : undefined;
     const current = git(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() || null;
     if (!target) {
       if (target === null && wt?.base && git(root, ["rev-parse", "HEAD"]).stdout.trim() !== wt.base)
         throw new HttpError(409, `空间 ${p.space} 基于指定提交 ${wt.base.slice(0, 12)}，请核对接收版本后重试`);
-      return { ...p, root, path: root, branch: current, create: false };
+      return { ...p, ...sync, root, path: root, branch: current, create: false };
     }
     if (!git(root, ["check-ref-format", `refs/heads/${target}`]).ok) throw new HttpError(400, "目标分支名称无效");
     const listed = git(root, ["worktree", "list", "--porcelain", "-z"]);
@@ -442,12 +558,12 @@ function applyTargets(app: App, runId: string): ApplyTarget[] {
     const path = listedPath ? resolve(listedPath) : undefined;
     if (path) {
       if (!existsSync(path)) throw new HttpError(409, `目标分支「${target}」的工作区不存在：${path}`);
-      return { ...p, root, path, branch: target, create: false };
+      return { ...p, ...sync, root, path, branch: target, create: false };
     }
     const local = git(root, ["show-ref", "--verify", "--quiet", `refs/heads/${target}`]).ok;
     const start = local ? `refs/heads/${target}` : resolveRef(root, from ?? target)?.ref;
     if (!start) throw new HttpError(409, `目标分支「${target}」不存在，不能应用`);
-    return { ...p, root, path: join(app.runsDir, first.id, "applied", p.space), branch: target, create: true, newBranch: !local, start };
+    return { ...p, ...sync, root, path: join(app.runsDir, first.id, "applied", p.space), branch: target, create: true, newBranch: !local, start };
   });
 }
 
@@ -478,6 +594,7 @@ export function applyCodeRun(app: App, runId: string) {
   const targets = applyTargets(app, runId);
   if (!targets.length) throw new HttpError(404, "没有可应用的改动");
   const created: (ApplyTarget & { createdHead: string })[] = [];
+  const forwarded: ApplyTarget[] = [];
   const applied: string[] = [];
   let applying = false;
   try {
@@ -490,11 +607,22 @@ export function applyCodeRun(app: App, runId: string) {
     for (const t of targets) {
       if (t.branch && git(t.path, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() !== t.branch)
         throw new HttpError(409, `接收目录 ${t.path} 的分支已变化，请重新应用`);
+      // Sync commits go on by fast-forward: only while the target is still where the work began.
+      if (t.syncHead && git(t.path, ["rev-parse", "HEAD"]).stdout.trim() !== t.startCommit)
+        throw new HttpError(409, `${t.branch ?? t.space} 在交办之后有了新提交，同步的结果不能直接快进；点“移到目标分支最新提交”重做一次再应用`);
+    }
+    // Fast-forward first (the patch is relative to the synced commits), undone if a patch then fails.
+    for (const t of targets.filter(t => t.syncHead)) {
+      const ff = git(t.path, ["merge", "--ff-only", t.syncHead!]);
+      if (!ff.ok) throw new HttpError(409, `快进 ${t.branch ?? t.space} 失败（接收目录里的修改和同步的提交冲突？）：${ff.stderr.slice(0, 800)}`);
+      forwarded.push(t);
+    }
+    for (const t of targets.filter(t => t.file)) {
       const check = git(t.path, ["apply", "--check", "--3way", t.file]);
-      if (!check.ok) throw new HttpError(409, `${targets.length > 1 ? `${t.space}：` : ""}无法干净应用到 ${t.branch ?? "指定版本"}（${t.path}）：${check.stderr.slice(0, 1000)}`);
+      if (!check.ok) throw new HttpError(409, `${targets.length > 1 ? `${t.space}：` : ""}无法干净应用到 ${t.branch ?? "指定版本"}（${t.path}）：${check.stderr.slice(0, 1000)}；目标分支变了的话，点“移到目标分支最新提交”重做一次`);
     }
     applying = true;
-    for (const t of targets) {
+    for (const t of targets.filter(t => t.file)) {
       const res = git(t.path, ["apply", "--3way", t.file]);
       if (!res.ok) throw new HttpError(409, `应用到 ${t.path} 失败${applied.length ? `（${applied.join("、")} 已应用）` : ""}：${res.stderr.slice(0, 1000)}`);
       applied.push(t.space);
@@ -502,6 +630,7 @@ export function applyCodeRun(app: App, runId: string) {
   } catch (error) {
     // Preflight failed: remove only the clean worktrees/branches this attempt created.
     // After application starts, retain every destination for recovery, even on failure.
+    if (!applying) for (const t of forwarded.reverse()) git(t.path, ["reset", "-q", "--keep", t.startCommit!]);
     if (!applying) for (const t of created.reverse()) {
       const removed = git(t.root, ["worktree", "remove", t.path]);
       if (removed.ok && t.newBranch && git(t.root, ["rev-parse", `refs/heads/${t.branch}`]).stdout.trim() === t.createdHead)
@@ -522,4 +651,83 @@ export function discardCodeRun(app: App, runId: string) {
   removeWorktrees(app, runId);
   setRunOutput(app, runId, { discardedAt: new Date().toISOString() });
   cancelHostAsks(app, runId, "review-done");
+}
+
+/** What the coding Agent is told when Git stops on conflicts. */
+function conflictTask(wt: WorktreeRef, files: string[], label: string, task: string) {
+  return `# 解决 Git 冲突：${label}
+
+仓库 ${wt.space} 的工作区 ${wt.path} 里，下面这些文件有冲突：
+
+${files.map((f) => `- ${f}`).join("\n")}
+
+这次交办的任务（供理解改动意图）：
+
+${truncate(task, 3000)}
+
+要求：
+1. 读两边的改动（\`git diff\`、\`git log --merge\`、\`git show :2:<文件>\` / \`:3:<文件>\`），按两边的意图合并，不要简单地选一边丢掉另一边的功能。
+2. 业务上拿不准取舍的（两边都改了同一个规则、同一个接口）用 ask_owner 问本人，给出选项并说明各自的后果；本人没回答前不要猜。
+3. 解决后删掉所有冲突标记，对这些文件 \`git add\`；能跑检查命令就跑一下。
+4. 不要 commit，不要 \`git merge --continue\` / \`git rebase --continue\` / \`--abort\`，宿主会接着做。
+5. 结束时逐个文件说明怎么解决的；实在解决不了的，说明卡在哪里（会交给本人）。`;
+}
+
+const SYNC_GO = "已解决，继续";
+const SYNC_STOP = "放弃这次同步";
+
+/** Conflicts the coding Agent could not resolve: the owner resolves them in the worktree, or gives up the sync. */
+function askSyncConflict(app: App, run: Run, conversationId: string | null, left: { space: string; label: string; conflicts: string[]; path: string }[]) {
+  return createAsk(app, {
+    runId: run.id,
+    conversationId,
+    question: [
+      `「${truncate(run.title, 40)}」的 Git 同步有冲突没能自动解决：`,
+      ...left.map((l) => `- ${l.space}（${l.label}）：${l.conflicts.join("、")}\n  工作区：${l.path}`),
+      "在工作区里解决、对这些文件 git add 之后点“继续”（不用 commit）；也可以放弃这次同步，工作区回到同步前的样子。",
+    ].join("\n"),
+    options: [{ label: SYNC_GO }, { label: SYNC_STOP }],
+    context: { handler: "code-sync", codeRunId: run.id },
+  });
+}
+
+registerAskHandler("code-sync", async (app, ask, ctx) => {
+  const run = getRun(app, String(ctx.codeRunId));
+  const rootId = String(run.input.continueFrom ?? run.id);
+  const root = getRun(app, rootId);
+  if (ask.choice === 1) {
+    const { abortSync } = await import("./code-sync.ts");
+    for (const wt of worktreesOf(app, rootId)) if (existsSync(wt.path)) abortSync(wt.path);
+    setRunOutput(app, rootId, { syncPending: null });
+    setRunOutput(app, run.id, { verdict: "sync-aborted" });
+    notify(app, { userId: ask.userId, title: `已放弃这次同步：${run.title}`, body: "工作区回到了同步前的样子。", link: `#/runs/${run.id}` });
+    return;
+  }
+  const note = ask.choice === null ? ask.answer ?? "" : (ask.answer ?? "").slice(SYNC_GO.length + 1);
+  try {
+    await queueGitRound(app, run, `继续 Git 同步（本人已处理冲突）${note.trim() ? `：${note.trim()}` : ""}`, { syncResume: true, syncOnly: !!(root.input as CodeInput).syncOnly || !!(run.input as CodeInput).moveToTarget }, ask.userId);
+  } catch (e) {
+    notify(app, { userId: ask.userId, title: `没能继续同步：${run.title}`, body: (e as Error).message, link: `#/runs/${run.id}` });
+  }
+});
+
+/** Queue a round that moves the unapplied work onto the target branch's latest commit. */
+export async function queueMoveToTarget(app: App, runId: string, userId = OWNER) {
+  const run = getRun(app, runId);
+  if (isBranchReview(run)) throw new HttpError(400, "分支评审没有要移动的改动");
+  return queueGitRound(app, run, "把这次交办的改动移到目标分支的最新提交上（冲突交给编码 Agent，解决不了找本人）", { moveToTarget: true }, userId);
+}
+
+/** A round of Git work in the same worktrees: in the delegation's conversation, or standalone (web, CLI). */
+async function queueGitRound(app: App, run: Run, task: string, extraInput: Record<string, unknown>, userId: string) {
+  const { codeChainFor, queueNextCodeRound } = await import("./code-chain.ts");
+  const chain = codeChainFor(app, run);
+  if (chain) {
+    const next = queueNextCodeRound(app, chain, task, { manual: true, extraInput });
+    if (!next) throw new HttpError(409, "原交办记录不完整，无法继续");
+    return next.run;
+  }
+  const { queueStandaloneFix, workRuns } = await import("./review-fix.ts");
+  const rootId = String(run.input.continueFrom ?? run.id);
+  return queueStandaloneFix(app, rootId, workRuns(app, rootId).at(-1)!, task, userId, extraInput);
 }

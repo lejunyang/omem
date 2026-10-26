@@ -14,12 +14,18 @@ export const codeGitActionSchema = z.object({
   action: z.enum(["commit", "commit_push", "push"]),
   message: z.string().trim().max(10000).optional(),
   expected_state: z.string().min(1),
+  /** Push to this branch of origin instead of the original target branch (a new branch for a merge request, say). */
+  branch: z.string().trim().max(200).optional(),
+  /** After a rebase the remote branch has diverged: replace it, but only if it is still what was last fetched. */
+  force: z.boolean().optional(),
 });
 type Action = z.infer<typeof codeGitActionSchema>;
 type Target = { space: string; path: string; branch: string | null };
 export type CodeGitOperation = {
   id: string; at: string; space: string; branch: string; action: Action["action"]; actor: string;
   before: string; head: string; committed: string | null; pushed: boolean; ok: boolean; error?: string;
+  /** Where it was pushed when not the target branch, and whether it replaced diverged commits. */
+  to?: string; forced?: boolean;
 };
 
 /** Only recorded receiving worktrees are addressable; callers cannot supply a filesystem path. */
@@ -112,8 +118,11 @@ export async function actCodeGit(app: App, runId: string, input: Action, actor =
     if (before.blockedReason) throw new HttpError(409, before.blockedReason);
     if (a.action !== "push" && (!a.message || !before.staged)) throw new HttpError(400, !a.message ? "请填写提交信息" : "没有已暂存的修改；如已提交，请选择仅推送");
     if (a.action !== "commit" && !before.remote) throw new HttpError(400, before.pushUnavailable!);
+    const dest = a.branch?.replace(/^refs\/heads\//, "").replace(/^origin\//, "") || t.branch;
+    if (a.action !== "commit" && !git(t.path, ["check-ref-format", `refs/heads/${dest}`]).ok) throw new HttpError(400, `分支名不合法：${dest}`);
     const operation: CodeGitOperation = { id: randomUUID(), at: new Date().toISOString(), space: a.space, branch: t.branch, action: a.action, actor,
-      before: before.head, head: before.head, committed: null, pushed: false, ok: false };
+      before: before.head, head: before.head, committed: null, pushed: false, ok: false,
+      ...(dest !== t.branch ? { to: dest } : {}), ...(a.force ? { forced: true } : {}) };
     const record = () => {
       const history = (getRun(app, t.first.id).output.gitOperations ?? []) as CodeGitOperation[];
       for (const id of new Set([t.first.id, runId])) {
@@ -138,10 +147,13 @@ export async function actCodeGit(app: App, runId: string, input: Action, actor =
           throw new HttpError(409, "提交后 Git 状态或推送地址发生变化，请刷新后再推送");
       }
       catch (error) { operation.ok = false; operation.error = (error as Error).message; record(); return operation; }
-      const result = await mutate(t.path, ["-c", "remote.origin.mirror=false", "push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no", "origin", `${operation.head}:refs/heads/${t.branch}`]);
+      // Force only with a lease: the remote branch must still be what this repository last fetched.
+      const known = git(t.path, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${dest}`]).stdout.trim();
+      const lease = a.force ? [known ? `--force-with-lease=refs/heads/${dest}:${known}` : `--force-with-lease=refs/heads/${dest}`] : [];
+      const result = await mutate(t.path, ["-c", "remote.origin.mirror=false", "push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no", ...lease, "origin", `${operation.head}:refs/heads/${dest}`]);
       operation.pushed = result.ok;
       operation.ok = result.ok;
-      if (!result.ok) operation.error = `${operation.committed ? "本地提交已完成；" : ""}推送失败，可刷新后仅重试推送：${result.error}`;
+      if (!result.ok) operation.error = `${operation.committed ? "本地提交已完成；" : ""}推送失败，可刷新后仅重试推送${/rejected|non-fast-forward|fetch first/i.test(result.error) && !a.force ? "（远端分支有本地没有的提交：变基过的分支要选“强制推送”，否则先同步）" : ""}：${result.error}`;
       record();
     }
     return operation;
