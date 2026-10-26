@@ -219,6 +219,9 @@ const gapLabel = (g: Gap) => (g.to === null && !file.value ? "下方的代码" :
 .cp > td:first-child { box-shadow: inset 3px 0 0 var(--line-strong); }
 .cp-on > td { background-image: linear-gradient(var(--accent-soft), var(--accent-soft)); }
 .cp-on > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+/* The place 上一处 / 下一处 just went to. */
+.cp-here > td { animation: cp-here 1.6s ease-out; }
+@keyframes cp-here { from { background-color: var(--accent-soft); outline: 2px solid var(--accent); outline-offset: -2px; } to { outline-color: transparent; } }
 /* Side by side: fixed columns, long lines wrap instead of scrolling the half sideways. */
 .split .dtable { table-layout: fixed; }
 .split .cno { width: 52px; }

@@ -8,7 +8,8 @@ import Icon from "./Icon.vue";
  * (open its diff and scroll to it).
  */
 export type TreeFile = { key: string; path: string; add: number; rm: number };
-const props = defineProps<{ files: TreeFile[]; active?: string | null; marked?: Set<string> }>();
+/** `hot`: the files of the change point being looked at, shown with its colour. */
+const props = defineProps<{ files: TreeFile[]; active?: string | null; marked?: Set<string>; hot?: Set<string>; hotColor?: string }>();
 const emit = defineEmits<{ pick: [key: string] }>();
 
 type Dir = { name: string; path: string; dirs: Map<string, Dir>; files: TreeFile[] };
@@ -60,7 +61,7 @@ const lines = computed(() => {
         <Icon :name="closed.has(l.dir.path) ? 'right' : 'down'" :size="12" /><Icon name="folder" :size="13" /><span class="ellipsis">{{ l.dir.name }}</span>
       </button>
       <button v-else class="row-btn file" :class="{ on: active === l.file.key, marked: marked?.has(l.file.key) }" :style="{ paddingLeft: `${24 + l.depth * 14}px` }" :title="l.file.path" @click="emit('pick', l.file.key)">
-        <span class="ellipsis mono">{{ l.name }}</span><span class="add">+{{ l.file.add }}</span><span class="rm">-{{ l.file.rm }}</span>
+        <span class="ellipsis mono">{{ l.name }}</span><span v-if="hot?.has(l.file.key)" class="hot" :style="{ background: hotColor }" title="当前变更点涉及" /><span class="add">+{{ l.file.add }}</span><span class="rm">-{{ l.file.rm }}</span>
       </button>
     </template>
   </nav>
@@ -74,6 +75,7 @@ const lines = computed(() => {
 .dir { color: var(--ink); }
 .file.on { background: var(--accent-soft); color: var(--ink); }
 .file.marked .mono { font-weight: 600; }
+.hot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--accent); }
 .add { color: var(--ok); font-size: 11px; }
 .rm { color: var(--danger); font-size: 11px; }
 </style>

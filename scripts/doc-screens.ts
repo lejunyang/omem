@@ -7,7 +7,8 @@
  * technical plan, a group chat, code, a Wiki page, memories, items, a reviewed delegation, a rule),
  * serves the built web on it and captures each feature at 1440×900 (light). Nothing real is shown,
  * so the images can be published. When a page changes, run it again; the file names stay the same.
- * Uses the installed Edge or Chrome (CHROMIUM=path to override).
+ * Uses the installed Edge or Chrome (CHROMIUM=path to override). With `--serve` it only serves the
+ * demo data and prints the address, to look around by hand.
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,7 +28,8 @@ import { startServer } from "../src/server/http.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { writePage } from "../src/wiki/store.ts";
 
-const out = resolve(process.argv[2] ?? "site/public/screens");
+const serveOnly = process.argv.includes("--serve");
+const out = resolve(process.argv.slice(2).find((a) => !a.startsWith("--")) ?? "site/public/screens");
 mkdirSync(out, { recursive: true });
 const home = mkdtempSync(join(tmpdir(), "omem-screens-"));
 const app = App.open(home);
@@ -258,6 +260,10 @@ const rule = saveRule(app, {
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
+if (serveOnly) {
+  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）`);
+  await new Promise(() => {});
+}
 const browser = await chromium.launch(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : { channel: process.platform === "win32" ? "msedge" : "chrome" });
 const shots: { name: string; path: string; width?: number; dark?: boolean; prepare?: (page: Page) => Promise<void> }[] = [
   { name: "today", path: "/" },
@@ -268,7 +274,7 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; prepa
   { name: "items", path: `/items/${item.id}` },
   { name: "review-overview", path: `/runs/${r.id}` },
   { name: "review-checks", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "评审" }).click(); await p.locator(".check-head").nth(1).click(); await p.waitForTimeout(300); } },
-  { name: "review-change", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.locator(".pick").nth(2).click(); await p.waitForTimeout(1200); } },
+  { name: "review-change", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.locator(".pick").nth(4).click(); await p.waitForTimeout(900); await p.getByRole("button", { name: "下一处" }).click(); await p.waitForTimeout(1200); } },
   { name: "review-split-diff", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.getByRole("radio", { name: "左右" }).click(); await p.getByRole("radio", { name: "文件" }).click(); await p.locator(".tree .row-btn.file").first().click(); await p.waitForTimeout(1200); } },
   { name: "review-activity", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "活动" }).click(); await p.waitForTimeout(500); await p.locator(".sec-head").nth(1).click(); await p.waitForTimeout(300); } },
   { name: "review-quotes", path: `/runs/${r.id}`, prepare: async (p) => {
