@@ -224,6 +224,9 @@ registerHandler("agent", async (ctx) => {
   }
   if (silent) {
     // Whatever it had to say it already posted (or told the owner); the text stays in the run.
+  } else if (rule && isQuiet(answer)) {
+    // It already posted (lark_send, to @ someone) and ends QUIET so the answer is not sent twice.
+    // The run stays listed and its bubble stays: it did work.
   } else if (rule) {
     // A rule's agent answers in the chat only when the rule says so; otherwise the owner gets it.
     if (threadId) await deliverToThread(ctx.app, threadId, answer, { runId: ctx.run.id, agent: name, rule: rule.id });
