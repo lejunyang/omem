@@ -129,6 +129,21 @@ export function listNotifications(app: App, limit = 50) {
   ).map((r) => ({ ...json<Partial<Notification>>(r.context, {}), id: r.id, at: r.at, title: r.title, body: r.body, link: r.link, readAt: r.read_at }));
 }
 
+/** A push held back by quiet hours: sent after them if still unread (takeDeferred). */
+export function deferNotification(app: App, id: string) {
+  run(app.db, "update notifications set context = json_set(coalesce(context, '{}'), '$.deferred', 1) where id = ?", id);
+}
+
+/** The pushes quiet hours held back, taken once: those still unread and less than a day old come back to send. */
+export function takeDeferred(app: App): Notification[] {
+  const rows = all<{ id: string; at: string; title: string; body: string; link: string | null; user_id: string; read_at: string | null; context: string | null }>(app.db, "select * from notifications where json_extract(context, '$.deferred') = 1 order by at");
+  if (!rows.length) return [];
+  run(app.db, `update notifications set context = json_remove(context, '$.deferred') where id in (${rows.map(() => "?").join(",")})`, ...rows.map((r) => r.id));
+  return rows
+    .filter((r) => !r.read_at && Date.now() - Date.parse(r.at) < 24 * 3600_000)
+    .map((r) => ({ ...json<Partial<Notification>>(r.context, {}), id: r.id, at: r.at, title: r.title, body: r.body, link: r.link, readAt: null, userId: r.user_id }));
+}
+
 export function markRead(app: App, id?: string) {
   if (id) run(app.db, "update notifications set read_at = ? where id = ?", now(), id);
   else run(app.db, "update notifications set read_at = ? where read_at is null", now());

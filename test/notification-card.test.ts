@@ -48,3 +48,17 @@ it("keeps item actions and avoids repeating a link already in the item body", ()
   expect(repeated.split(link)).toHaveLength(2);
   expect(repeated).not.toContain("open_url");
 });
+
+it("holds a push back during quiet hours and gives it back once, unless it was read or is old", async () => {
+  const { deferNotification, takeDeferred, markRead } = await import("../src/core/notify.ts");
+  const { run } = await import("../src/core/db.ts");
+  const app = fresh();
+  const waiting = notify(app, { title: "分支评审要求修改：退款", body: "严重 1" });
+  const read = notify(app, { title: "已经看过", body: "" });
+  const old = notify(app, { title: "前天的", body: "" });
+  for (const n of [waiting, read, old]) deferNotification(app, n.id);
+  markRead(app, read.id);
+  run(app.db, "update notifications set at = ? where id = ?", new Date(Date.now() - 2 * 86400_000).toISOString(), old.id);
+  expect(takeDeferred(app).map((n) => n.title)).toEqual(["分支评审要求修改：退款"]);
+  expect(takeDeferred(app)).toEqual([]);
+});

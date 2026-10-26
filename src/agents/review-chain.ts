@@ -250,22 +250,25 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
     stop = "auto-limit";
     setRunOutput(app, run.id, { reviewStop: stop, reviewLead: { ...lead, stop } });
   }
-  if (stop && plan.lead && chain && !branchReview) {
-    const ask = escalate(app, run, chain, { ...lead, stop });
-    setRunOutput(app, run.id, { reviewAskId: ask.id });
-  }
   const results2 = results.filter((r) => r.check);
-  const statLine = results.map((r) => (multi ? `${r.space}：` : "") + (r.diffStat.split("\n").pop() ?? "")).join("\n");
-  const checksLine = results2.length ? `\n检查：${results2.some((r) => r.check!.code !== 0) ? "失败" : "通过"}` : "";
-  const { workForChild } = await import("./agent-work.ts");
-  const work = workForChild(app, run);
-  notify(app, {
-    title: branchReview ? `分支评审${approved ? "通过" : "要求修改"}：${run.title}` : `${approved ? "交办完成，评审通过" : stop ?`交办第 ${round} 轮评审停下来等你决定：${STOP_LABEL[stop]}` : "交办评审要求修改"}：${run.title}`,
-    body: `${statLine}${checksLine}${lead.summary ? `\n${truncate(lead.summary, 300)}` : ""}`,
-    link: `#/runs/${run.id}`,
-    // Inside a multi-agent work the nudge belongs to the work's current topic, not a private DM.
-    ...(work ? { larkConversationId: work.workConversationId } : {}),
-  });
+  const statLine = results.map((r) => (multi ? `${r.space}：` : "") + (r.diffStat.split("\n").pop()?.trim() ?? "")).join("；");
+  const checksLine = results2.length ? `，检查${results2.some((r) => r.check!.code !== 0) ? "没通过" : "通过"}` : "";
+  const digest = reviewDigest(app, getRun(app, run.id), round, lead, `${statLine}${checksLine}`);
+  const title = branchReview ? `分支评审${approved ? "通过" : "要求修改"}：${run.title}` : `${approved ? "交办完成，评审通过" : stop ? `交办第 ${round} 轮评审停下来等你决定：${STOP_LABEL[stop]}` : "交办评审要求修改"}：${run.title}`;
+  // The owner's next step goes out as a card with buttons, in the conversation that asked for the work.
+  const ask = stop && plan.lead && chain && !branchReview ? escalate(app, run, chain, { ...lead, stop }, digest) : askDone(app, run, chain, { title, digest, approved, branchReview });
+  if (ask) setRunOutput(app, run.id, { reviewAskId: ask.id });
+  else {
+    const { workForChild } = await import("./agent-work.ts");
+    const work = workForChild(app, run);
+    notify(app, {
+      title,
+      body: digest,
+      link: `#/runs/${run.id}`,
+      // Inside a multi-agent work the nudge belongs to the work's current topic, not a private DM.
+      ...(work ? { larkConversationId: work.workConversationId } : {}),
+    });
+  }
   // The item's timeline records the outcome (an item deleted since then has none).
   if (input.itemId && one(app.db, "select 1 from items where id = ?", input.itemId)) {
     const { addItemEvent } = await import("../items/store.ts");
@@ -342,10 +345,15 @@ export function askPlan(app: App, run: Run, chain: CodeChain | null, plan: Revie
   const tiers = reviewTiers(app).filter((t) => t.id !== plan.tier);
   const labels = new Map(reviewChecks(app).map((c) => [c.name, c.label]));
   const options = [{ label: "按计划开始评审" }, ...tiers.slice(0, 4).map((t) => ({ label: `改用「${t.name}」档` }))];
+  // What the coder did, so the card says more than “done”.
+  const out = run.output as Out;
+  const change = (out.repos ?? []).map((r) => r.diffStat.split("\n").pop()?.trim()).filter(Boolean).join("；");
+  const failedCheck = (out.repos ?? []).some((r) => r.check && r.check.code !== 0);
+  const coded = isBranchReview(run) ? "" : [change && `**改动**：${change}${(out.repos ?? []).some((r) => r.check) ? `，检查${failedCheck ? "没通过" : "通过"}` : ""}`, out.coderSummary && `**编码 Agent 的说明**：${truncate(out.coderSummary.trim(), 600)}`].filter(Boolean).join("\n");
   return createAsk(app, {
     runId: run.id,
     conversationId: chain?.conversationId ?? null,
-    question: `「${truncate(run.title, 40)}」${isBranchReview(run) ? "分支已检出" : "第 1 轮编码完成"}。评审计划：「${plan.tierName}」档，${plan.checks.map((c) => labels.get(c) ?? c).join("、")}，最多 ${plan.maxRounds} 轮。\n理由：${plan.reasons.join("；")}\n开始评审吗？也可以直接回一句补充要求。`,
+    question: `「${truncate(run.title, 40)}」${isBranchReview(run) ? "分支已检出" : "第 1 轮编码完成"}。${coded ? `\n${coded}\n` : ""}评审计划：「${plan.tierName}」档，${plan.checks.map((c) => labels.get(c) ?? c).join("、")}，最多 ${plan.maxRounds} 轮。\n理由：${plan.reasons.join("；")}\n开始评审吗？也可以直接回一句补充要求。`,
     options,
     context: { handler: "review-plan", codeRunId: run.id, tiers: [plan.tier, ...tiers.slice(0, 4).map((t) => t.id)] },
   });
@@ -379,7 +387,83 @@ async function onRetryAnswer(app: App, ask: Ask, ctx: { codeRunId: string }) {
   createRun(app, { kind: "review", spaceId: run.spaceId, title: `重新评审：${truncate(run.title, 60)}`, input: { codeRunId: run.id, note: ask.choice === null ? ask.answer ?? undefined : undefined }, parentId: run.id });
 }
 
-function escalate(app: App, run: Run, chain: CodeChain, lead: LeadResult) {
+/**
+ * A finished review in a few lines for the owner's card: the ruling, the change, the problems the
+ * fix would take up (the serious ones and those review-lead accepted, as the run page preselects them)
+ * and the requirement split.
+ */
+function reviewDigest(app: App, run: Run, round: number, lead: LeadResult, change: string) {
+  const findings = roundFindings(app, run.id, round).filter((f) => !["rejected", "merged"].includes(f.state));
+  const counts = (["blocker", "major", "minor", "nit"] as const).map((s) => [s, findings.filter((f) => f.severity === s).length] as const).filter(([, n]) => n);
+  const toFix = fixCandidates(app, run.id, round);
+  const where = (f: { file_path: string | null; line: number | null }) => (f.file_path ? ` — \`${f.file_path}${f.line ? `:${f.line}` : ""}\`` : "");
+  const points = (run.output as { changePoints?: { round: number; points: { status: string }[] } }).changePoints;
+  const pts = points?.round === round ? points.points : [];
+  const POINT: Record<string, string> = { done: "已实现", partial: "部分实现", missing: "没实现", extra: "需求外" };
+  return [
+    lead.summary ? `**结论**：${truncate(lead.summary, 400)}` : "",
+    change ? `**改动**：${change}` : "",
+    counts.length ? `**问题**：${counts.map(([s, n]) => `${SEVERITY_LABEL[s]} ${n}`).join(" · ")}${toFix.length ? `，默认要改 ${toFix.length} 个` : ""}` : "**问题**：没有",
+    toFix.slice(0, 5).map((f, i) => `${i + 1}. [${SEVERITY_LABEL[f.severity as Severity]}] ${f.title}${where(f)}`).join("\n"),
+    toFix.length > 5 ? `……另有 ${toFix.length - 5} 个` : "",
+    pts.length ? `**需求拆分**：${pts.length} 个变更点（${Object.keys(POINT).map((s) => [s, pts.filter((p) => p.status === s).length] as const).filter(([, n]) => n).map(([s, n]) => `${POINT[s]} ${n}`).join("、")}）` : "",
+  ].filter(Boolean).join("\n");
+}
+
+/** The findings a fix takes up without the owner picking: their own “改”, else the accepted and the serious open ones. */
+function fixCandidates(app: App, codeRunId: string, round: number) {
+  return roundFindings(app, codeRunId, round).filter((f) => {
+    const decision = (f as { decision?: string | null }).decision;
+    if (decision) return decision === "fix";
+    return f.state === "accepted" || (f.state === "open" && (f.severity === "blocker" || f.severity === "major"));
+  });
+}
+
+const FIX = "按评审修改";
+const LATER = "先不改";
+const APPLY = "应用到仓库";
+const DISCARD = "丢弃改动";
+
+/** The end of a review that needs nothing more from the reviewers: what the owner can do next, as buttons. */
+function askDone(app: App, run: Run, chain: CodeChain | null, d: { title: string; digest: string; approved: boolean; branchReview: boolean }) {
+  const toFix = fixCandidates(app, run.id, roundOf(run));
+  // A passed branch review with nothing to fix leaves nothing to decide.
+  const labels = !d.branchReview && chain && d.approved ? [APPLY, DISCARD] : toFix.length || !d.approved ? [FIX, LATER] : null;
+  if (!labels) return null;
+  const hint = labels[0] === FIX
+    ? `点“${FIX}”就改上面默认要改的问题；可以在输入框补充要求（也会一起改）。要逐个挑选，在网页上的“概览”里选。`
+    : "改动在独立的工作区里，应用后成为仓库里未提交的修改。";
+  return createAsk(app, {
+    runId: run.id,
+    ...(chain ? { conversationId: chain.conversationId } : {}),
+    question: `**${d.title}**\n\n${d.digest}\n\n${hint}`,
+    options: labels.map((label) => ({ label })),
+    context: { handler: "review-done", codeRunId: run.id, labels },
+  });
+}
+
+async function onDoneAnswer(app: App, ask: Ask, ctx: { codeRunId: string; labels: string[] }) {
+  const run = getRun(app, ctx.codeRunId);
+  const picked = ask.choice !== null ? ctx.labels[ask.choice] : null;
+  const extra = (picked ? (ask.answer ?? "").slice(picked.length + 1) : ask.answer ?? "").trim();
+  try {
+    if (picked === FIX || (!picked && extra)) {
+      const { startFix } = await import("./review-fix.ts");
+      await startFix(app, run.id, { findingIds: fixCandidates(app, run.id, roundOf(run)).map((f) => f.id), text: extra || undefined }, ask.userId);
+    } else if (picked === APPLY) {
+      const { applyCodeRun } = await import("./code.ts");
+      applyCodeRun(app, run.id);
+      notify(app, { userId: ask.userId, title: `已应用到仓库：${run.title}`, body: "改动成为仓库工作区里未提交的修改，请在仓库里检查后提交。", link: `#/runs/${run.id}` });
+    } else if (picked === DISCARD) {
+      const { discardCodeRun } = await import("./code.ts");
+      discardCodeRun(app, run.id);
+    }
+  } catch (e) {
+    notify(app, { userId: ask.userId, title: `没能${picked ?? FIX}：${run.title}`, body: (e as Error).message, link: `#/runs/${run.id}` });
+  }
+}
+
+function escalate(app: App, run: Run, chain: CodeChain, lead: LeadResult, digest = "") {
   const options = [
     ...(lead.changeRequest ? [{ label: "按修改单再改一轮" }] : []),
     ...(lead.escalation?.options ?? []).slice(0, 3).map((o) => ({ label: o })),
@@ -392,6 +476,7 @@ function escalate(app: App, run: Run, chain: CodeChain, lead: LeadResult) {
     question: [
       `「${truncate(run.title, 40)}」第 ${lead.round} 轮评审后停了下来：${STOP_LABEL[lead.stop!]}。`,
       lead.escalation?.summary ?? lead.summary,
+      digest,
       "怎么继续？也可以直接回复新的要求，会作为下一轮的任务。",
     ].filter(Boolean).join("\n\n"),
     options: options.slice(0, 6),
@@ -435,7 +520,8 @@ async function onEscalationAnswer(app: App, ask: Ask, ctx: { codeRunId: string; 
 
 registerAskHandler("review-plan", (app, ask, ctx) => onPlanAnswer(app, ask, ctx as { codeRunId: string; tiers: string[] }));
 registerAskHandler("review-retry", (app, ask, ctx) => onRetryAnswer(app, ask, ctx as { codeRunId: string }));
-registerAskHandler("review-escalation", (app, ask, ctx) => onEscalationAnswer(app, ask, ctx as { codeRunId: string; labels: string[] }));
+registerAskHandler("review-done", (app, ask, ctx) => onDoneAnswer(app, ask, ctx as { codeRunId: string; labels: string[] }));
+registerAskHandler("review-escalation",(app, ask, ctx) => onEscalationAnswer(app, ask, ctx as { codeRunId: string; labels: string[] }));
 
 // A confirmed plan reviews in a run of its own; the coding run it reviews keeps the results.
 registerHandler("review", async (ctx) => {

@@ -11,7 +11,7 @@ export const decisionOf = (f: Finding): Decision => f.decision ?? (f.state === "
 export type ChangePoint = { id: string; title: string; status: "done" | "partial" | "missing" | "extra"; requirement: string; implementation: string; refs: string[]; locations: { file: string; start?: number; end?: number }[] };
 export type Review = { id: string; round: number; check_name: string; verdict: "approved" | "changes_requested" | "failed"; summary: string; profile_id: string | null; model: string | null; effort: string | null; created_at: string; findings: Finding[]; change_points: ChangePoint[] };
 export type Lead = { verdict: "approve" | "revise" | "escalate"; summary: string; changeRequest: string; rerun: string[]; by: "lead" | "host"; stop?: string; escalation?: { summary: string } };
-export type AskInfo = { id: string; status: string; question: string; options: { label: string }[]; answer: string | null };
+export type AskInfo = { id: string; status: string; question: string; options: { label: string }[]; answer: string | null; handler?: string | null };
 export type Round = { runId: string; round: number; status: string; plan: { tier: string; tierName: string; checks: string[]; reasons: string[]; lead?: boolean } | null; verdict: string | null; stage: string | null; lead: Lead | null; stop: string | null; ask: AskInfo | null; acceptedByOwner: boolean; changePoints: ChangePoint[] | null; reviewRuns?: { id: string; status: string; title: string }[] };
 type Data = { estimate: { tierName: string; reason: string } | null; rounds: Round[]; reviews: Review[]; labels: Record<string, string> };
 

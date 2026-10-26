@@ -522,6 +522,14 @@ updated: 2026-10-25
 - 分支评审的可读范围：`CodeInput.readSpaces`（`review_branch` 的 `read_spaces`、`POST /api/review-branch` 的 `readSpaces`、`omem review-branch --read`），加进编码与评审运行的空间范围；需求文档在个人空间、迁移要对照源仓库时用。接口按发起人可访问的空间校验。
 - 评审档位条件新增 `change.codeLines`（有效代码改动行数）：`reviewMetrics` 按 `isSourceFile`（`src/sources/chunk.ts`，源代码扩展名，排除 `.min.js`）只累计源代码文件的增删行；档位理由和负责人估计里同时写出总行数和有效代码行数。默认档位不变，可在 Agent 页 → 评审 改用它。
 
+## 编码和评审结束的卡片、夜间通知早上补发（10-26）
+
+- 评审结束（不再自动续轮时）发一张带按钮的卡片（提问 `review-done`，`review-chain.ts` 的 `askDone`）：结论、改动和检查、各级问题数和默认要改的前几个（严重及以上和负责人接受的，与网页默认选中一致）、需求拆分的变更点数。分支评审或没通过的交办：“按评审修改 / 先不改”，输入框的文字作为补充要求一起改；通过的交办：“应用到仓库 / 丢弃改动”。分支评审通过且没有要改的只发通知。停下来等本人决定的（`escalate`）也带上同样的摘要。
+- 确认评审计划的卡片带上编码 Agent 的改动统计、检查结果和说明。
+- 宿主自己的提问（带 `handler` 的：评审计划、评审结果、升级）在非飞书会话里发起时也发到本人和机器人的私聊（`lark-asks.ts` 的 `targetFor`）；Agent 的提问仍只在它的会话里。
+- 在网页上开始修改、应用或丢弃后，评审结果卡片作废（`cancelHostAsks`）；网页“概览”不重复显示这张卡片。
+- 免打扰时段（`notify.quietStart` / `quietEnd`）里的普通通知不再直接丢掉推送：记为待发（`deferNotification`），时段结束后每 5 分钟检查一次，仍未读且不满一天的补发（`takeDeferred`），三条以内逐条发，多了合成一张列表。
+
 ## 评审的过程按评审项分开看（10-26）
 
 - `runs.ts` 的 `addRunEvent`：流式文字按标签（`phase` / `check`）分开合并，同一运行里并行的评审项各写各的文字行，存下的 `text` / `thought` 事件带上标签（之前只存 `{ text }`，并行时会混在一起）。

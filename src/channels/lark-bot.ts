@@ -9,7 +9,7 @@ import { scheduleIngest } from "../agents/jobs.ts";
 import { registerThreadSender } from "../agents/inbox.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
-import { addNotificationSink } from "../core/notify.ts";
+import { addNotificationSink, deferNotification, takeDeferred } from "../core/notify.ts";
 import { identitiesOf, OWNER } from "../core/users.ts";
 import { botOfChannel, withBot } from "../core/bot-context.ts";
 import { importFile, keepOriginal, needsDocumentConversion } from "../sources/import.ts";
@@ -287,17 +287,25 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const [chatId, topic] = t.external_id.split("#");
     return { chatId, inThread: !!topic, replyTo: t.last ?? undefined, bot: botOfChannel(t.channel) };
   };
-  if (!extra) addNotificationSink((n) => withBot(notifyConversation(n)?.bot, async () => {
+  const targetOf = (n: Parameters<Parameters<typeof addNotificationSink>[0]>[0]) => {
     const inThread = notifyConversation(n);
     const target = inThread
       ? (inThread.replyTo ? { replyTo: inThread.replyTo, inThread: inThread.inThread } : { chatId: inThread.chatId })
       : n.userId === OWNER
         ? (kv(app, "lark_owner_chat") ? { chatId: kv(app, "lark_owner_chat")! } : cfg.ownerOpenId ? { userId: cfg.ownerOpenId } : null)
         : { userId: identitiesOf(app, n.userId).find((i) => i.channel === "lark")?.external_id ?? "" };
-    if (!target || (!("userId" in target) && !("chatId" in target) && !("replyTo" in target)) || ("userId" in target && !target.userId)) return;
-    // Push policy: non-urgent nudges stay in-app at night; and when the triggering message is
-    // already read by the owner, the change has been seen — no ping (urgent always pushes).
-    if (n.urgency !== "urgent" && !n.scheduled && inQuietHours(app)) return;
+    if (!target || (!("userId" in target) && !("chatId" in target) && !("replyTo" in target)) || ("userId" in target && !target.userId)) return null;
+    return target;
+  };
+  const push = (n: Parameters<Parameters<typeof addNotificationSink>[0]>[0], deferred = false) => withBot(notifyConversation(n)?.bot, async () => {
+    const target = targetOf(n);
+    if (!target) return;
+    // Push policy: non-urgent nudges wait for the morning (sent then if still unread); and when the
+    // triggering message is already read by the owner, the change has been seen — no ping (urgent always pushes).
+    if (!deferred && n.urgency !== "urgent" && !n.scheduled && inQuietHours(app)) {
+      if (n.urgency !== "silent") deferNotification(app, n.id);
+      return;
+    }
     // Lessons from "忽略": a class of nudges the owner dismissed stays in-app.
     {
       const { aiIgnoreMatch } = await import("../core/notify-ai-gate.ts");
@@ -327,7 +335,27 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       return;
     }
     await sendLark(target, { card });
-  }));
+  });
+  if (!extra) addNotificationSink((n) => push(n));
+
+  // After quiet hours, what waited and is still unread goes out: a few one by one, more as one list.
+  const sendDeferred = async () => {
+    if (inQuietHours(app)) return;
+    const byUser = new Map<string, ReturnType<typeof takeDeferred>>();
+    for (const n of takeDeferred(app)) byUser.set(n.userId, [...(byUser.get(n.userId) ?? []), n]);
+    for (const items of byUser.values()) {
+      if (items.length <= 3) {
+        for (const n of items) await push(n, true).catch((e) => console.warn("[omem] 夜间通知补发失败", e));
+        continue;
+      }
+      const target = targetOf(items[0]);
+      if (!target) continue;
+      const { buildCard } = await import("./lark-send.ts");
+      const lines = items.map((n) => `- ${n.title}`).join("\n");
+      await sendLark(target, { card: buildCard({ title: `夜里的 ${items.length} 条通知`, blocks: [{ markdown: lines }, { note: "详情在网页的通知里" }] }) }).catch((e) => console.warn("[omem] 夜间通知补发失败", e));
+    }
+  };
+  if (!extra) setInterval(() => void sendDeferred().catch(() => {}), 5 * 60_000).unref();
 
   const pending = new Map<string, NodeJS.Timeout>();
   const lastCapture = new Map<string, string>();

@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import "../src/agents/jobs.ts";
 import { applyCodeRun, codePatches, createBranchReview, discardCodeRun, worktreesOf } from "../src/agents/code.ts";
 import { codeChainFor } from "../src/agents/code-chain.ts";
-import { __testHandlers, addRunEvent, cancelRun, createRun, getRun, runEvents, setRunOutput, type Run } from "../src/agents/runs.ts";
+import { __testHandlers, addRunEvent, cancelRun, createRun, getRun, listRuns, runEvents, setRunOutput, type Run } from "../src/agents/runs.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { branchIndexes, indexBranch, sweepWorktreeSpaces } from "../src/agents/worktree-index.ts";
@@ -233,6 +233,9 @@ describe("reviewing an existing branch", () => {
       expect(input).toMatchObject({ fromBranches: { "shop-api": "feature/refund" }, itemId: item.id, fromReview: r.id });
       expect(input.task).toContain(major.title);
       expect(input.task).toContain("部分退款要记操作日志");
+      // The fix was started elsewhere: the review's card stops offering one.
+      const { listAsks } = await import("../src/agents/asks.ts");
+      expect(listAsks(app, { runId: r.id }).map((a) => a.status)).toEqual(["cancelled"]);
       const setAside = input.task.slice(input.task.indexOf("## 这次不改"));
       expect(setAside).toContain("[不改] 命名可以更具体");
       expect(setAside).toContain("[暂不改] 可以补一条测试");
@@ -241,6 +244,33 @@ describe("reviewing an existing branch", () => {
       const read = await callTool(ctx, "read_run", { run_id: r.id });
       expect(read.text).toContain(`#${major.id} [严重`);
       expect(read.text).toMatch(/本人：要改/);
+      cancelRun(app, fixRun.id);
+      discardCodeRun(app, r.id);
+    } finally {
+      await server.close();
+    }
+  }, 120000);
+
+  it("ends with a card to the owner: what the review found and buttons for the next step", async () => {
+    fake();
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      const { listAsks, answerAsk } = await import("../src/agents/asks.ts");
+      const r = createBranchReview(app, { repos: ["shop-api"], branch: "feature/refund", task: "评审退款分支", fetch: false });
+      await exec(r);
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      const [card] = listAsks(app, { runId: r.id, status: "pending" });
+      expect(card.options.map((o) => o.label)).toEqual(["按评审修改", "先不改"]);
+      expect(card.question).toMatch(/分支评审要求修改/);
+      expect(card.question).toMatch(/\*\*问题\*\*：严重 1 · 一般 1 · 提示 1，默认要改 1 个/);
+      expect(card.question).toContain("refund.ts");
+      // A button with a note: the serious finding and the note become the fix, on the branch.
+      await answerAsk(app, card.id, { choice: 0, text: "顺便把退款原因写进日志", by: "owner" });
+      const fixRun = listRuns(app, { kind: "code" }).find((x) => (x.input as { fromReview?: string }).fromReview === r.id)!;
+      const task = (fixRun.input as { task: string }).task;
+      expect(task).toContain("顺便把退款原因写进日志");
+      expect(task).toContain("[严重]");
+      expect(task).not.toMatch(/选定要改的问题[\s\S]*\[一般\][\s\S]*## 本人补充/);
       cancelRun(app, fixRun.id);
       discardCodeRun(app, r.id);
     } finally {

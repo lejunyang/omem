@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
+import { cancelHostAsks } from "./asks.ts";
 import { isBranchReview, worktreesOf } from "./code.ts";
 import { SEVERITY_LABEL, type FindingRow } from "./review.ts";
 import { createRun, getRun, type Run } from "./runs.ts";
@@ -71,6 +72,8 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
   const last = getRun(app, runs.at(-1)!);
   if (!req.findingIds.length && !req.text?.trim()) throw new HttpError(400, "选几个要改的问题，或者写下要改什么");
   const chosen = req.findingIds.map((id) => findingOf(app, runs, id) ?? (() => { throw new HttpError(404, `问题 #${id} 不属于这次交办或评审`); })());
+  // The review's card in Feishu no longer offers a second fix.
+  for (const id of runs) cancelHostAsks(app, id, "review-done");
   for (const f of chosen) run(app.db, "update review_findings set decision = 'fix', decision_note = '' where id = ?", f.id);
   const task = [
     `# 按评审修改：${last.title}`,

@@ -188,6 +188,14 @@ export async function showSuggestions(app: App, runId: string) {
   for (const r of all<Row>(app.db, "select * from asks where run_id = ? and kind = 'suggestion' and status = 'pending' and shown_at is null order by created_at", runId)) await show(app, toAsk(r));
 }
 
+/** Host asks of a run settled some other way (the owner acted on the web page): their cards stop taking answers. */
+export function cancelHostAsks(app: App, runId: string, handler: string) {
+  const open = all<Row>(app.db, "select * from asks where run_id = ? and status = 'pending' and json_extract(context, '$.handler') = ?", runId, handler).map(toAsk);
+  if (!open.length) return;
+  run(app.db, `update asks set status = 'cancelled', answered_at = ? where id in (${open.map(() => "?").join(",")})`, now(), ...open.map((a) => a.id));
+  for (const a of open) closed(app, { ...a, status: "cancelled" });
+}
+
 function cancelOpen(app: App, conversationId: string, kind: AskKind) {
   const open = all<Row>(app.db, "select * from asks where conversation_id = ? and kind = ? and status = 'pending'", conversationId, kind).map(toAsk);
   if (!open.length) return;

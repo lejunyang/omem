@@ -94,7 +94,8 @@ async function startFix() {
 }
 
 // ---- the owner's decision -------------------------------------------------------------------
-const pendingAsk = computed(() => (current.value?.ask?.status === "pending" ? current.value.ask : null));
+// The finished review's card is for Feishu; here the page's own controls (decisions, fix box, apply) do the same.
+const pendingAsk = computed(() => (current.value?.ask?.status === "pending" && current.value.ask.handler !== "review-done" ? current.value.ask : null));
 const reply = ref("");
 const answering = ref(false);
 async function answer(choice: number | null) {

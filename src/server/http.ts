@@ -887,7 +887,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const labels = Object.fromEntries(reviewChecks(app).map((c) => [c.name, c.label]));
     const { getAsk } = await import("../agents/asks.ts");
     // The owner's open decision on a round (plan to confirm, stopped review), answered from the run page.
-    const askOf = (id: unknown) => { try { const a = typeof id === "string" ? getAsk(app, id) : null; return a ? { id: a.id, status: a.status, question: a.question, options: a.options, answer: a.answer } : null; } catch { return null; } };
+    const askOf = (id: unknown) => { try { const a = typeof id === "string" ? getAsk(app, id) : null; return a ? { id: a.id, status: a.status, question: a.question, options: a.options, answer: a.answer, handler: one<{ h: string | null }>(app.db, "select json_extract(context, '$.handler') h from asks where id = ?", a.id)?.h ?? null } : null; } catch { return null; } };
     // A review that waited for the owner (a confirmed plan, a retry, a later split) ran in runs of its own.
     const reviewRuns = (id: string) => all<{ id: string; status: string; title: string }>(app.db, "select id, status, title from runs where parent_id = ? and kind = 'review' order by created_at", id);
     return {

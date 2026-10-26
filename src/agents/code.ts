@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
+import { cancelHostAsks } from "./asks.ts";
 import { findSpace, getSpace, type Space } from "../core/spaces.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
@@ -445,10 +446,12 @@ export function applyCodeRun(app: App, runId: string) {
   }
   setRunOutput(app, runId, { appliedAt: new Date().toISOString() });
   removeWorktrees(app, runId);
+  cancelHostAsks(app, runId, "review-done");
   return { applied: true, spaces: applied };
 }
 
 export function discardCodeRun(app: App, runId: string) {
   removeWorktrees(app, runId);
   setRunOutput(app, runId, { discardedAt: new Date().toISOString() });
+  cancelHostAsks(app, runId, "review-done");
 }

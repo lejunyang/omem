@@ -28,7 +28,7 @@ function button(text: string, name: string, kind: "primary" | "danger" | "defaul
 
 export function askCard(app: App, ask: Ask): Record<string, unknown> {
   if (ask.status !== "pending") {
-    const how = ask.status === "cancelled" ? "已失效（在对话里接着说了）" : ask.kind === "approval" ? (ask.approved ? `已批准${ask.answer ? `：${ask.answer}` : ""}` : `已拒绝${ask.answer ? `：${ask.answer}` : ""}`) : `已选：${ask.answer ?? ""}`;
+    const how = ask.status === "cancelled" ? "已失效（在对话或网页上接着处理了）" : ask.kind === "approval" ? (ask.approved ? `已批准${ask.answer ? `：${ask.answer}` : ""}` : `已拒绝${ask.answer ? `：${ask.answer}` : ""}`) : `已选：${ask.answer ?? ""}`;
     return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitations(app, truncate(ask.question, 1500)) }] : []), { note: how }] });
   }
   const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks: ask.question ? [{ markdown: resolveCitations(app, ask.question) }] : [] });
@@ -56,8 +56,11 @@ export function askCard(app: App, ask: Ask): Record<string, unknown> {
 function targetFor(app: App, ask: Ask, ownerOpenId: string | undefined): { target: Target; chatId: string | null; bot: string } | null {
   if (ask.conversationId) {
     const t = one<{ channel: string; external_id: string | null; last: string | null }>(app.db, "select channel, external_id, json_extract(settings, '$.lastMessageId') last from conversations where id = ?", ask.conversationId);
-    if (t && t.channel !== "lark" && !t.channel.startsWith("lark:")) return null;
-    if (t?.external_id) {
+    // The host's own decisions about background work (a review plan, a finished review) reach the
+    // person in Feishu even when the work was asked for elsewhere; an agent's question stays in its chat.
+    const hostAsk = !!one(app.db, "select 1 from asks where id = ? and json_extract(context, '$.handler') is not null", ask.id);
+    if (t && t.channel !== "lark" && !t.channel.startsWith("lark:") && !hostAsk) return null;
+    if (t?.external_id && (t.channel === "lark" || t.channel.startsWith("lark:"))) {
       // The card goes through the bot of the conversation (lark.bots), whose ids it then uses.
       const bot = botOfChannel(t.channel);
       const [chatId, topic] = t.external_id.split("#");
