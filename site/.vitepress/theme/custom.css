@@ -1,0 +1,248 @@
+/*
+ * The docs look like the omem web app: the same tokens as web/src/styles.css (warm paper
+ * background, ink text, one blue accent, serif headings, quiet cards), mapped onto VitePress.
+ */
+:root {
+  --om-bg: #f7f6f3;
+  --om-panel: #ffffff;
+  --om-sunken: #f0eee9;
+  --om-line: #e4e1da;
+  --om-line-strong: #d2cec5;
+  --om-ink: #1f2328;
+  --om-ink-2: #4b5059;
+  --om-muted: #7a7f88;
+  --om-accent: #2f5bd3;
+  --om-accent-soft: #e9effd;
+  --om-mark: #fff1b8;
+  --om-shadow: 0 1px 2px rgba(20, 20, 20, 0.04), 0 4px 16px rgba(20, 20, 20, 0.06);
+  --om-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+  --om-serif: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", Georgia, serif;
+  --om-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+
+  --vp-c-bg: var(--om-bg);
+  --vp-c-bg-alt: var(--om-sunken);
+  --vp-c-bg-elv: var(--om-panel);
+  --vp-c-bg-soft: var(--om-sunken);
+  --vp-c-divider: var(--om-line);
+  --vp-c-border: var(--om-line-strong);
+  --vp-c-gutter: var(--om-line);
+  --vp-c-text-1: var(--om-ink);
+  --vp-c-text-2: var(--om-ink-2);
+  --vp-c-text-3: var(--om-muted);
+  --vp-c-brand-1: var(--om-accent);
+  --vp-c-brand-2: #2549b0;
+  --vp-c-brand-3: var(--om-accent);
+  --vp-c-brand-soft: var(--om-accent-soft);
+  --vp-c-default-soft: var(--om-sunken);
+  --vp-font-family-base: var(--om-sans);
+  --vp-font-family-mono: var(--om-mono);
+  --vp-code-bg: var(--om-sunken);
+  --vp-nav-bg-color: var(--om-bg);
+  --vp-sidebar-bg-color: #efede8;
+  --vp-home-hero-name-color: var(--om-ink);
+  --vp-button-brand-bg: var(--om-ink);
+  --vp-button-brand-border: var(--om-ink);
+  --vp-button-brand-hover-bg: #34393f;
+  --vp-button-brand-hover-border: #34393f;
+  --vp-button-brand-active-bg: var(--om-ink);
+  --vp-button-alt-bg: var(--om-panel);
+  --vp-button-alt-border: var(--om-line-strong);
+  --vp-custom-block-tip-bg: var(--om-accent-soft);
+  --vp-custom-block-tip-border: transparent;
+}
+
+.dark {
+  --om-bg: #15171a;
+  --om-panel: #1c1f23;
+  --om-sunken: #121417;
+  --om-line: #2b2f35;
+  --om-line-strong: #3a3f46;
+  --om-ink: #e8e6e1;
+  --om-ink-2: #b9b6ae;
+  --om-muted: #8b8f96;
+  --om-accent: #7ea2ff;
+  --om-accent-soft: #1f2a44;
+  --om-mark: #4a3f12;
+  --om-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.3);
+  --vp-c-brand-2: #a3bdff;
+  --vp-sidebar-bg-color: #191b1f;
+  --vp-button-brand-text: #15171a;
+  --vp-button-brand-hover-bg: #d4d1ca;
+  --vp-button-brand-hover-border: #d4d1ca;
+  --vp-button-brand-hover-text: #15171a;
+}
+
+/* Reading first: serif headings, as on the app's Wiki pages. */
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3,
+.VPHero .name,
+.VPHero .text,
+.VPFeature .title {
+  font-family: var(--om-serif);
+  letter-spacing: 0;
+}
+.vp-doc h2 {
+  border-top-color: var(--om-line);
+}
+.vp-doc p,
+.vp-doc li {
+  line-height: 1.8;
+}
+.vp-doc a {
+  text-decoration: none;
+}
+.vp-doc a:hover {
+  text-decoration: underline;
+}
+.vp-doc table {
+  display: table;
+  width: 100%;
+}
+.vp-doc kbd {
+  font-family: var(--om-mono);
+  font-size: 12px;
+  border: 1px solid var(--om-line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 0 5px;
+  background: var(--om-panel);
+}
+
+/* The hero reads like the app's Today page: a plain title, no gradient. */
+.VPHero .name .clip {
+  background: none;
+  -webkit-text-fill-color: var(--om-ink);
+  color: var(--om-ink);
+}
+.VPHero .tagline {
+  color: var(--om-ink-2);
+}
+/* The hero's picture is the app itself (the review page), framed as a card, not a floating logo. */
+.VPHero .image-bg {
+  display: none;
+}
+.VPHero .image-container {
+  width: 100%;
+  height: auto;
+  transform: none;
+}
+.VPHero .image-src {
+  position: static;
+  transform: none;
+  width: 100%;
+  max-width: 100%;
+  max-height: none;
+  border: 1px solid var(--om-line);
+  border-radius: 10px;
+  box-shadow: 0 8px 40px rgba(20, 20, 20, 0.12);
+}
+@media (max-width: 959px) {
+  .VPHero .image {
+    display: none;
+  }
+}
+@media (min-width: 960px) {
+  .VPHero .name,
+  .VPHero .text {
+    font-size: 46px;
+    line-height: 1.25;
+  }
+  .VPHero .tagline {
+    font-size: 18px;
+    line-height: 1.75;
+  }
+  .VPHero.has-image .container {
+    align-items: center;
+  }
+  .VPHero.has-image .main {
+    width: 42%;
+    max-width: none;
+    flex-shrink: 0;
+  }
+  .VPHero.has-image .image {
+    flex: 1;
+    margin: 0 0 0 40px;
+    order: 2;
+  }
+}
+
+/* Features and screenshots are the app's cards: white, hairline border, soft shadow. */
+.VPFeature {
+  background: var(--om-panel) !important;
+  border: 1px solid var(--om-line) !important;
+  border-radius: 10px !important;
+  box-shadow: var(--om-shadow);
+}
+.shot {
+  margin: 20px 0;
+}
+.shot img {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--om-line);
+  border-radius: 10px;
+  box-shadow: var(--om-shadow);
+  background: var(--om-panel);
+}
+.shot.phone img {
+  max-width: 300px;
+  margin: 0 auto;
+}
+.shot figcaption {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--om-muted);
+  text-align: center;
+}
+
+/* Home: the feature tour under the cards, one screenshot per row. */
+.tour {
+  max-width: 1152px;
+  margin: 0 auto;
+  padding: 24px 24px 64px;
+}
+.tour-item {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 8fr);
+  gap: 32px;
+  align-items: center;
+  padding: 36px 0;
+  border-top: 1px solid var(--om-line);
+}
+.tour-item:nth-child(even) {
+  grid-template-columns: minmax(0, 8fr) minmax(0, 5fr);
+}
+.tour-item:nth-child(even) .tour-text {
+  order: 2;
+}
+.tour-text h2 {
+  font-family: var(--om-serif);
+  font-size: 24px;
+  line-height: 1.35;
+  margin: 0 0 12px;
+  border: 0;
+  padding: 0;
+}
+.tour-text p {
+  margin: 0 0 10px;
+  color: var(--om-ink-2);
+  line-height: 1.8;
+}
+.tour-text a {
+  color: var(--om-accent);
+  font-weight: 500;
+}
+.tour .shot {
+  margin: 0;
+}
+@media (max-width: 860px) {
+  .tour-item,
+  .tour-item:nth-child(even) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .tour-item:nth-child(even) .tour-text {
+    order: 0;
+  }
+}

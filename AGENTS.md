@@ -41,6 +41,8 @@
 - Wiki 按读者问题组织，不按文件逐个生成。写作要求在 roles/wiki-writer.md；改写作质量优先改角色说明，其次才改代码。
 - 文档和生成内容用中文，直接具体，避免套话。成稿可按 `.agents/skills/lieflat-less-ai-tone/SKILL.md` 检查表达，不改事实和结构。
 - 功能变了在同一个提交里同步：README（功能介绍、“日常用途”、命令行清单、代码结构）、docs/v2/architecture.md 的实现状态表、acceptance.md 的验收项、`.repo-review/wiki/reference/changes-since-2026-10-13.md`；动了 MCP 工具还要改 `skills/omem/SKILL.md`，动了网页约定改 `.agents/skills/omem-design`。
+- 文档站在 `site/`（VitePress，独立的 package 和锁文件，`cd site && pnpm install --ignore-workspace && pnpm run dev`；推到 main 后由 `.github/workflows/docs.yml` 发布到 GitHub Pages）。功能有变化时同步 `site/features/*.md` 或 `site/guide/*.md` 里对应的页面；主题沿用 `web/src/styles.css` 的 token（`site/.vitepress/theme/custom.css`），网页的颜色和字体变了这里一起改。
+- 截图：`site/public/screens/*.png` 按功能命名（`review-overview`、`wiki-citations`……），文档站和 README 共用。改了这些页面的界面后，`pnpm run build && node scripts/doc-screens.ts` 重新生成全部截图（直接覆盖同名文件）；新功能要截图就在脚本里加演示数据和一项 `shots`。脚本用虚构的演示数据（示例商城 · 退款改造），不要换成本机或常驻服务器的真实数据截图。
 - 这是公开仓库：文档、角色说明、技能、测试、代码注释和提交信息里不写本人和他人的真实信息（姓名、同事名、公司、群名、主机名、真实聊天或记忆内容、Agent 档案名）。举例用虚构的（项目 A、小王、《差旅报销制度》）；用真实数据校准过的规则只写结论。
   - 也不要带进：本机绝对路径（`/Users/<名>/…`、`C:\Users\<名>\…`，写相对路径或 `~`）、公司内网地址（内部 npm 源、内部文档和 Wiki 链接，锁文件里的 `resolved` 也算；示例链接用 `tenant.larkoffice.com`）、公司工具自动加的 `Co-authored-by`、运行记录或 Agent 日志的原样导出。
   - 提交前用 `git diff --cached` 检查一遍上面这些（提交作者邮箱不限）。

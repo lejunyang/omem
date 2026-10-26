@@ -1,0 +1,14 @@
+{
+  "name": "omem-docs",
+  "private": true,
+  "type": "module",
+  "description": "omem 文档站（VitePress）：功能介绍、安装和使用",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.3"
+  }
+}

@@ -2,6 +2,30 @@
 
 个人记忆与助理：把文档、代码、聊天、笔记放进同一个知识库，带依据地回答问题，记住约定并在被纠正时更新，持续跟进事项，还能把编码任务交给其他 Agent 并保留检查与评审结果。
 
+**文档站**：<https://lejunyang.github.io/omem/>（功能介绍、安装和使用，源码在 [site/](site/)）
+
+## 主要特色
+
+**交办编码，多维度评审。** 编码 Agent 在独立 worktree 里改完、跑过检查后，功能、业务、架构、历史、规范几个评审项各自独立审查，评审负责人合并重复的问题、决定哪些要改，再续一轮。每个问题可以选“改 / 暂不改 / 不改”，不改写一句业务理由，之后的评审不再提。
+
+![运行页概览：五个评审项的结论、所用模型和待处理问题](site/public/screens/review-overview.png)
+
+**从需求走到代码。** 业务评审把需求拆成变更点，标出已实现、部分实现、没实现和对应的代码行；点变更点，代码高亮并滚到它的标记。差异可以上下或左右对比，左侧是可折叠的文件树。
+
+![变更：点变更点 C3，对应的代码行高亮](site/public/screens/review-change.png)
+
+**Wiki 的每个论断都贴着出处。** 一页 Wiki 同时引用需求文档、技术方案、讨论群和代码，点任意一个引用，右侧打开原件并高亮被引用的那几行。问答也一样：回答里的引用指向聊天里那一句、需求里那一行。
+
+![Wiki：一页同时引用四份材料，点开代码引用](site/public/screens/wiki-citations.png)
+
+**还有：**
+
+- **选中就能引用**：在差异、评审或打开的原件里选中几段，编号后一起提问，或攒成下一轮的修改点；提问抽屉可以缩小成可拖动的图标。
+- **Git 同步交给它**：交办时先拉取、合并或变基，冲突先交给编码 Agent，拿不准的问你；应用时快进到目标分支，推送到你选的分支。
+- **记忆有版本，事项会收尾**：约定被纠正时旧版本保留并指向新版本；事项有时间线和期限，没进展自己过期，有新消息再打开。
+- **飞书里用**：机器人回答带进度卡片和思考过程，规则一句话写成“遇到什么就做什么”，提问和评审结果都是带按钮的卡片。
+- **不自带模型**：理解和写作交给你已安装的 Agent（Codex、Claude Code、Gemini CLI 等），omem 管存储、索引、调度和权限。
+
 > v2 是一次精简重写（2026-10）。v1 的代码与文档在 Git 历史和 `docs/archive/v1/` 中；设计取舍见 [docs/v2/architecture.md](docs/v2/architecture.md)，评测见 [evaluation.md](docs/v2/evaluation.md)，验收步骤见 [acceptance.md](docs/v2/acceptance.md)。
 
 ## 它怎么工作
@@ -329,6 +353,8 @@ omem peer open <同伴>                     # 在本机浏览器打开它的网�
 pnpm run dev          # node --watch 运行 API，Vite 运行网页
 pnpm run check        # 类型检查 + 测试 + 构建
 node scripts/screens.ts http://127.0.0.1:5173 screens   # 桌面与手机截图
+node scripts/doc-screens.ts         # 文档站与 README 的功能截图（先 pnpm run build；用虚构演示数据，输出 site/public/screens）
+cd site && pnpm install --ignore-workspace && pnpm run dev   # 文档站（VitePress）
 node scripts/eval-retrieval.ts corpus.jsonl queries.jsonl [--vector]
 ```
 
@@ -352,7 +378,8 @@ roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/�
 skills/omem     给外部 Agent 的 omem 使用说明（配合 omem mcp）
 skills/library  内置技能（如 lark-messaging），首次启动播种到 library/_skills
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
-scripts/      脚本：更新（upgrade.ts）、截图、检索与记忆评测、规模测试、临时转发（relay.mjs）
+scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
+site/         文档站（VitePress，独立依赖）：功能介绍与安装使用，截图在 site/public/screens，GitHub Pages 发布（.github/workflows/docs.yml）
 web/          Vue 3 网页
 ```
 

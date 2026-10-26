@@ -35,3 +35,6 @@ package-lock.json
 .scratch/
 .remote/
 CLAUDE.local.md
+
+# Docs site (VitePress) build cache
+site/.vitepress/cache/
