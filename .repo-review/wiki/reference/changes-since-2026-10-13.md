@@ -570,3 +570,7 @@ updated: 2026-10-25
 ## 2026-10-26：定时规则选择群聊与缺失目标处理
 
 “发到”补充已采集的飞书群，不要求先和助理建立会话。保存时创建或复用本人的群会话，不接管访客会话、不发送消息。缺少投递目标的旧规则明确失败，不再追加禁止发群的指令后私发本人；其他机器人会话保留对应机器人。见 `src/rules/destinations.ts`、`src/rules/actions.ts`、`web/src/views/Rules.vue` 和 `test/rule-destinations.test.ts`。
+
+## 2026-10-26：网页独立评审修改可继续下一轮
+
+修复从网页分支评审进入修改后，第二轮误要求问答会话链的问题。无会话链任务通过 `continueFrom`、`resumeSessionId` 复用工作区与编码会话，保留执行配置和来源评审；写事务内拒绝重复提交、工作区缺失或已释放的续轮。失败请求不关闭确认入口、不修改问题决定。实现与回归：`src/agents/review-fix.ts`、`test/review-fix.test.ts`。

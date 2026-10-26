@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
@@ -52,8 +53,8 @@ export function ownerDecisions(app: App, runIds: string[]) {
 const where = (f: Pick<Row, "file_path" | "line">) => (f.file_path ? `${f.file_path}${f.line ? `:${f.line}` : ""}` : "");
 
 /** For a review's task: what the owner already decided, so the reviewers do not raise it again. */
-export function decisionsBrief(app: App, runIds: string[]) {
-  const list = ownerDecisions(app, runIds);
+export function decisionsBrief(app: App, runIds: string[], excludeIds: number[] = []) {
+  const list = ownerDecisions(app, runIds).filter(f => !excludeIds.includes(f.id));
   if (!list.length) return "";
   return [
     "## 本人已经定了的问题",
@@ -72,9 +73,12 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
   const last = getRun(app, runs.at(-1)!);
   if (!req.findingIds.length && !req.text?.trim()) throw new HttpError(400, "选几个要改的问题，或者写下要改什么");
   const chosen = req.findingIds.map((id) => findingOf(app, runs, id) ?? (() => { throw new HttpError(404, `问题 #${id} 不属于这次交办或评审`); })());
-  // The review's card in Feishu no longer offers a second fix.
-  for (const id of runs) cancelHostAsks(app, id, "review-done");
-  for (const f of chosen) run(app.db, "update review_findings set decision = 'fix', decision_note = '' where id = ?", f.id);
+  const accepted = (next: Run) => {
+    // Failed requests must leave the review's actions available for retry.
+    for (const id of runs) cancelHostAsks(app, id, "review-done");
+    for (const f of chosen) run(app.db, "update review_findings set decision = 'fix', decision_note = '' where id = ?", f.id);
+    return next;
+  };
   const task = [
     `# 按评审修改：${last.title}`,
     chosen.length ? `本人从评审（运行 ${runs[0]}）里选定要改的问题：\n\n${chosen.map((f, i) => [
@@ -84,7 +88,7 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
       f.triage_note && `   评审负责人：${f.triage_note}`,
     ].filter(Boolean).join("\n")).join("\n")}` : "",
     req.text?.trim() ? `## 本人补充的要求\n\n${req.text.trim()}` : "",
-    decisionsBrief(app, runs).replace("## 本人已经定了的问题", "## 这次不改的问题").replace(/下面这些[^\n]*/, "下面这些本人决定这次不改，不要动它们："),
+    decisionsBrief(app, runs, req.findingIds).replace("## 本人已经定了的问题", "## 这次不改的问题").replace(/下面这些[^\n]*/, "下面这些本人决定这次不改，不要动它们："),
   ].filter(Boolean).join("\n\n");
 
   const root = getRun(app, runs[0]);
@@ -92,11 +96,11 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     if (last.output.appliedAt || last.output.discardedAt) throw new HttpError(409, "这次交办已经应用或丢弃，工作区已释放；请重新交办");
     const { codeChainFor, queueNextCodeRound } = await import("./code-chain.ts");
     const chain = codeChainFor(app, last) ?? (last.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? null;
-    if (!chain) throw new HttpError(409, "这次交办没有会话链，不能在原工作区续轮；请在问答里交办");
+    if (!chain) return accepted(queueStandaloneFix(app, root.id, last.id, task, userId));
     const sessionId = runs.map((id) => (getRun(app, id).output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
     const next = queueNextCodeRound(app, chain, task, { resumeSessionId: sessionId, manual: true });
     if (!next) throw new HttpError(409, "原交办记录不完整，无法继续");
-    return next.run;
+    return accepted(next.run);
   }
   const input = root.input as { repos?: string[]; branches?: Record<string, { branch: string }>; readSpaces?: string[]; itemId?: string; reviewTier?: string };
   const repos = input.repos ?? worktreesOf(app, root.id).map((w) => w.space);
@@ -123,5 +127,30 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     const { linkRunToItem } = await import("../items/materials.ts");
     linkRunToItem(app, r, input.itemId, userId);
   }
-  return r;
+  return accepted(r);
+}
+
+/** Web/CLI work has no conversation to report to, but still owns reusable worktrees. */
+function queueStandaloneFix(app: App, rootId: string, expectedLastId: string, task: string, userId: string): Run {
+  app.db.exec("BEGIN IMMEDIATE");
+  try {
+    const rounds = workRuns(app, rootId).map(id => getRun(app, id));
+    const last = rounds.at(-1)!;
+    if (last.id !== expectedLastId || rounds.some(r => ["queued", "running"].includes(r.status)))
+      throw new HttpError(409, `已有修改轮次 ${last.id}，请等待完成后继续`);
+    if (rounds.some(r => r.output.appliedAt || r.output.discardedAt))
+      throw new HttpError(409, "原交办已应用或丢弃，工作区已释放，不能续轮");
+    const worktrees = worktreesOf(app, rootId);
+    if (!worktrees.length || worktrees.some(w => !existsSync(w.path)))
+      throw new HttpError(409, "原工作区缺失，不能续轮；请重新交办");
+    const sessionId = rounds.map(r => r.output.coderSessionId).filter(Boolean).at(-1);
+    const next = createRun(app, {
+      kind: "code", spaceId: last.spaceId, userId,
+      title: truncate(`交办第 ${rounds.length + 1} 轮：${task.split("\n")[0]}`, 80),
+      input: { ...last.input, task, continueFrom: rootId, resumeSessionId: sessionId, round: rounds.length + 1 },
+      parentId: last.parentId,
+    });
+    app.db.exec("COMMIT");
+    return next;
+  } catch (e) { if (app.db.isTransaction) app.db.exec("ROLLBACK"); throw e; }
 }

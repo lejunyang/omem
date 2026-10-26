@@ -193,6 +193,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 无问答会话的网页 / CLI 编码交办手动续轮，复用工作区和编码会话，阻止重复提交与已释放工作区续轮 | 已实现；专项回归覆盖 | `src/agents/review-fix.ts` |
 | 空间上下文：问答、原件和运行按当前空间显示；任务规则保存所属空间与结果会话，可选择已采集的飞书群，缺少投递目标时明确失败；主助手为默认执行者，执行空间按动作 → 档案 → 规则 → 触发空间解析；群会话与采集共用绑定解析，旧的无空间任务规则保持全局 | 已实现；专项测试、浏览器空间切换与真实 Agent 抽查通过 | `src/core/capture-space.ts`、`rules/`、`Ask.vue`、`Runs.vue` |
 | 原件归档：手动指定 / 来源绑定 → 按创建顺序首条匹配的归档规则 → archivist 内容判断 → 不确定留个人；条件使用中文选项与目录名称；AI 通过 propose_archive_rule 写草稿，核对后保存；自动归档先于记忆整理，按最终空间分组 | 已实现；2026-10-23 专项测试与真实 Agent 归档、规则草稿匹配抽查通过 | `sources/archive.ts`、`roles/archivist.md`、`roles/archive-rule-writer.md`、`ArchiveRules.vue` |
 | 原件迁移：保留原件、切片、消息位置与引用 ID，同步空间字段并失效向量缓存；原始入口别名防止重新采集另建副本；历史预览 / 应用校验 hash 和当前规则，冲突不合并覆盖；原件详情可指定归属及查看记录 | 已实现，专项测试覆盖；不自动移动已有记忆、事项和 Wiki | `source_routes`、`source_locations`、`source_moves`、`Sources.vue` |
@@ -301,6 +302,8 @@ Vue 3 + TypeScript，单页应用，信息架构：
 尚未做：扫描件 OCR；动态派发与依赖注入的调用无法静态解析（这些仍按名称列为候选）；tsconfig 的自定义 paths 只识别 `@/`、`~/`；多租户（只有多用户的口子）；微信官方接口（只能通过 OneBot 兼容桥）。评测数字见 [evaluation.md](evaluation.md)。
 
 ### 编码交办的失败与恢复
+
+网页或 CLI 独立发起的评审修改没有问答会话链，仍可手动在原工作区续轮。`review-fix.ts` 在写事务中检查最新轮次、运行状态、工作区和应用 / 丢弃状态，保留模型、检查命令、读取空间及原评审关联，用 `continueFrom` 和 `resumeSessionId` 复用成果；不创建虚构会话。失败请求不关闭原确认卡片、不修改问题决定。专项回归见 `test/review-fix.test.ts`。
 
 发起 ask 的 `output.codeChain` 是轮次与卡片消息 ID 的主记录，同步到各轮；排下一轮前用 SQLite 写事务重新读主记录，旧自动回调不再排新轮次，手动请求遇到 queued/running 报具体运行和状态。每轮 `continueFrom` 指向首轮，`resumeSessionId` 取上一轮编码会话。自动推进最多 3 轮；到上限、无改动、失败或取消时写 `awaitingUser / waitReason`，完成结果以带运行 ID 的内部消息放回发起会话，并唤醒发起的主助手一回合（`handoff`）向本人说明结果和下一步；这一回合不给 `delegate_code` / `continue_code_run` / `apply_code_run`，避免绕过轮数限制。
 
