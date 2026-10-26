@@ -214,7 +214,7 @@ export function trySettleCodeChain(app: App, runId: string): boolean {
 }
 
 /** Tools the assistant does not get when it is woken by a coding result: no new rounds behind the owner's back. */
-export const CODE_HANDOFF_DENY = ["delegate_code", "review_branch", "continue_code_run", "apply_code_run"];
+export const CODE_HANDOFF_DENY = ["delegate_code", "review_branch", "continue_code_run", "apply_code_run", "code_git_action"];
 
 /**
  * When a delegation stops (approved, out of automatic rounds, failed, no changes), the assistant

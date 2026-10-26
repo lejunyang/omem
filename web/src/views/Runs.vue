@@ -17,6 +17,7 @@ import ReviewSummary from "../components/ReviewSummary.vue";
 import ReviewChecks from "../components/ReviewChecks.vue";
 import ChangeView from "../components/ChangeView.vue";
 import RunActivity from "../components/RunActivity.vue";
+import CodeGitPanel from "../components/CodeGitPanel.vue";
 import ReviewProcess from "../components/ReviewProcess.vue";
 import { fmtTime, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 import { refAction } from "../lib/refs";
@@ -257,7 +258,7 @@ async function act(action: "cancel" | "retry" | "apply" | "discard") {
       if (!(await confirmDialog("应用到原目标分支？", { message: `${message}\n\n将写入未提交的修改；需要时自动建立目标分支工作区，仓库主目录保持原分支。`, okText: "应用" }))) return;
     }
     await post(`/api/runs/${runId}/${action}`);
-    toast({ cancel: "已停止", retry: "已重新排队", apply: "已应用到目标分支，请在下方接收目录检查并提交", discard: "已清理工作区" }[action], "ok");
+    toast({ cancel: "已停止", retry: "已重新排队", apply: "已应用到目标分支，可在下方检查并提交", discard: "已清理工作区" }[action], "ok");
     void loadDetail();
   } catch (e) {
     toast((e as Error).message, "error");
@@ -398,11 +399,12 @@ const kindOptions = computed(() => [
             <button v-if="detail.run.kind === 'code'" class="btn ghost sm" @click="explaining = null; asking = { quote: '', label: '' }"><Icon name="chat" :size="14" />提问</button>
           </div>
           <div v-if="out.appliedTo?.length" class="stack small apply-targets">
-            <strong>接收位置 · 未自动提交</strong>
+            <strong>接收位置</strong>
             <div v-for="t in (out.appliedTo as ApplyTarget[])" :key="t.space" class="stack">
               <span>{{ t.space }} · {{ t.branch ?? "指定版本" }}</span>
               <code>{{ t.path }}</code>
               <button class="btn ghost sm" @click="copyApplyPath(t.path)">复制目录</button>
+              <CodeGitPanel :key="`${detail.run.id}:${t.space}`" :run-id="detail.run.id" :space="t.space" />
             </div>
           </div>
         </header>
@@ -540,7 +542,7 @@ const kindOptions = computed(() => [
 
 <style scoped>
 .apply-targets code { overflow-wrap: anywhere; white-space: normal; }
-.apply-targets button { align-self: flex-start; }
+.apply-targets button { align-self: flex-start; justify-self: start; }
 .branch-row {
   display: flex;
   gap: 12px;

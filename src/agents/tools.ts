@@ -1,4 +1,5 @@
 import { withBot } from "../core/bot-context.ts";
+import { actCodeGit, codeGitActionSchema, readCodeGit } from "./code-git.ts";
 import { generateWiki } from "../wiki/generate.ts";
 import { archiveRuleSchema, sourceRoute, moveSource, prepareArchive, ARCHIVE_FIELDS } from "../sources/archive.ts";
 import { executionSchema, validateExecution } from "./execution.ts";
@@ -2580,7 +2581,7 @@ def({
     space: z.string().optional().describe("任务所属的空间（如项目空间），默认第一个仓库"),
     review_tier: z.string().optional().describe("本人点名的评审档位（id 或名字，如“完整”）；不传按改动大小自动选"),
     review_checks: z.array(z.string()).optional().describe("本人要求额外加上的评审项（档案名，如 security-review）"),
-    from_branch: z.string().optional().describe("在已有分支上继续开发（如按分支评审的意见修改）：worktree 从这个分支的最新提交开始，而不是仓库当前检出的 HEAD；应用时要求本人的工作区也在这个分支上才能干净应用"),
+    from_branch: z.string().optional().describe("在已有分支上继续开发：从本地该分支最新提交开始，不带未提交修改，也不自动拉远端；应用时自动选择或建立原分支的接收工作区"),
     item_id: z.string().optional().describe("这次交办所属的事项：编码 Agent 和评审者会读到它的材料（文档、群聊、要对照的仓库），交办本身也记到事项上"),
   }),
   handler: async (ctx, a) => {
@@ -2946,7 +2947,30 @@ def({
     for (const id of repos) inScope(ctx, id, "代码");
     const { applyCodeRun } = await import("./code.ts");
     const res = applyCodeRun(ctx.app, a.run_id);
-    return `已把运行 ${a.run_id} 的改动应用到原目标分支（未提交）：\n${res.targets.map(t => `- ${t.space} · ${t.branch ?? "指定版本"}：${t.path}`).join("\n")}\n请在以上接收目录检查后提交。编码用的 worktree 已删除，接收工作区保留。`;
+    return `已把运行 ${a.run_id} 的改动应用到原目标分支（未提交）：\n${res.targets.map(t => `- ${t.space} · ${t.branch ?? "指定版本"}：${t.path}`).join("\n")}\n可在网页填写提交信息，或在本人要求后先 code_git_status 再 code_git_action 提交或推送。编码用的 worktree 已删除，接收工作区保留。`;
+  },
+});
+
+def({
+  name: "code_git_status",
+  description: "读取已应用编码运行的接收工作区 Git 状态、已暂存 diff、未暂存文件、提交/推送记录。按 run_id 和仓库 space 定位，不接受任意目录。远端领先/落后数来自本地缓存，不会 fetch。提交只包含暂存区；先检查这些内容，再用返回的 state 调用 code_git_action。",
+  schema: z.object({ run_id: z.string(), space: z.string() }),
+  handler: (ctx, a) => {
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "Git 操作只对本人开放");
+    if (!(scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces) ?? [a.space]).includes(a.space)) throw new HttpError(403, "本次不能读取该仓库");
+    return JSON.stringify(readCodeGit(ctx.app, a.run_id, a.space));
+  },
+});
+
+def({
+  name: "code_git_action",
+  description: "本人明确要求后，提交已应用工作区的暂存修改（commit）、提交并推送（commit_push），或仅推送已有提交（push）。须先 code_git_status 检查并传 expected_state；commit 需 message。不自动暂存，不拉取、不强推；推送固定到 origin 的原目标分支，包含分支上尚未推送的提交。多仓库逐个操作；推送失败保留已完成的提交，刷新状态后用 push 重试。返回 ok/error，不能把失败说成成功。",
+  write: true,
+  schema: codeGitActionSchema.extend({ run_id: z.string() }),
+  handler: async (ctx, a) => {
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "Git 操作只对本人开放");
+    inScope(ctx, a.space, "代码提交");
+    return JSON.stringify(await actCodeGit(ctx.app, a.run_id, a, ctx.runId ? `agent:${ctx.runId}` : ctx.actor));
   },
 });
 

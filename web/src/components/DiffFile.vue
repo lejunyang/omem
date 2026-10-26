@@ -11,7 +11,7 @@ import { toast } from "../store";
  * review's mapping of the requirement to the code) mark their lines; the active one is highlighted.
  */
 export type DiffPoint = { id: string; mark: string; color: string; start: number; end: number };
-const props = withDefaults(defineProps<{ runId: string; space: string; lines: string[]; points?: DiffPoint[]; active?: string | null }>(), { points: () => [], active: null });
+const props = withDefaults(defineProps<{ runId: string; space: string; lines: string[]; points?: DiffPoint[]; active?: string | null; expandable?: boolean }>(), { points: () => [], active: null, expandable: true });
 const emit = defineEmits<{ point: [id: string] }>();
 
 type Row = { kind: "add" | "del" | "ctx" | "meta"; old: number | null; new: number | null; text: string };
@@ -114,7 +114,8 @@ const marksAt = (h: Hunk, j: number) => {
   return pointsAt(r.new).filter((p) => prev === null || prev < p.start || prev > p.end);
 };
 const rowClass = (r: Row) => [r.kind, { cp: pointsAt(r.new).length > 0, "cp-on": !!props.active && pointsAt(r.new).some((p) => p.id === props.active) }];
-const canExpand = (g: Gap) => !deleted.value && (g.to === null ? !file.value || hidden(g) > 0 : hidden(g) > 0);
+// An index preview must not expand context from the working copy, which may have later edits.
+const canExpand = (g: Gap) => props.expandable && !deleted.value && (g.to === null ? !file.value || hidden(g) > 0 : hidden(g) > 0);
 const gapLabel = (g: Gap) => (g.to === null && !file.value ? "下方的代码" : `${hidden(g)} 行未改动`);
 </script>
 

@@ -17,6 +17,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import { applyCodeRun, codeApplyTargets, codePatches, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
+import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
   addSourceNote, applyAttentionRulesToExisting, deleteAttentionRule, LEVEL_LABELS, LEVELS, levelCounts, levelOf, listAttentionRules, NOTE_KINDS, removeSourceNote,
@@ -831,6 +832,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
   server.get("/api/runs/:id/apply-targets", async (req) => codeApplyTargets(app, (req.params as { id: string }).id));
   server.post("/api/runs/:id/apply", async (req) => applyCodeRun(app, (req.params as { id: string }).id));
+  server.get("/api/runs/:id/git", async (req) => {
+    const { space } = q(z.object({ space: z.string().min(1) }), req.query);
+    if (!(scopeFor(app, who(req), [space]) ?? [space]).includes(space)) throw new HttpError(403, "不能访问该仓库");
+    return readCodeGit(app, (req.params as { id: string }).id, space);
+  });
+  server.post("/api/runs/:id/git", async (req) => {
+    const body = q(codeGitActionSchema, req.body);
+    if (!(scopeFor(app, who(req), [body.space]) ?? [body.space]).includes(body.space)) throw new HttpError(403, "不能访问该仓库");
+    return actCodeGit(app, (req.params as { id: string }).id, body, who(req));
+  });
   server.post("/api/runs/:id/discard", async (req) => {
     discardCodeRun(app, (req.params as { id: string }).id);
     return { ok: true };

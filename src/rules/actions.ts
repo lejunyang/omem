@@ -94,7 +94,7 @@ function ruleFiles(app: App, rule: Rule) {
 /** The main assistant run by a rule: one space, the rule's chat only, and no delegation or rule editing. */
 function assistantScope(spec: string, space: string, lark: { chats: string[]; draft: boolean }) {
   if (spec !== "assistant") return {};
-  return { assistantScope: { spaces: [space], userId: OWNER, denyTools: ["run_agent", "delegate_code", "continue_agent_work", "continue_code_run", "apply_code_run", "save_rule", "set_chat_watch"], lark } };
+  return { assistantScope: { spaces: [space], userId: OWNER, denyTools: ["run_agent", "delegate_code", "continue_agent_work", "continue_code_run", "apply_code_run", "code_git_action", "save_rule", "set_chat_watch"], lark } };
 }
 
 /**
