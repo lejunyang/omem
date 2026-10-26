@@ -118,7 +118,7 @@
 .VPHero .tagline {
   color: var(--om-ink-2);
 }
-/* The hero's picture is the app itself (the review page), framed as a card, not a floating logo. */
+/* The hero's picture is the app itself (HeroCollage.vue: a few screenshots as cards), not a floating logo. */
 .VPHero .image-bg {
   display: none;
 }

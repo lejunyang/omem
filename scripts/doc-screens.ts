@@ -190,11 +190,13 @@ writeFileSync(join(app.runsDir, r.id, "patches", "shop.patch"), patch);
 const stat = sh(wtPath, "diff", "--cached", "--stat", "HEAD");
 const checks = ["reviewer", "review-business", "review-arch", "review-history", "review-style"];
 const points = [
-  { id: "C1", title: "只退已发货的行", status: "done", requirement: "退款只计算已发货的行；未发货的行走取消流程（[需求](src:" + prd + "#L7-L7)）", implementation: "refundLineAmounts 先按 shipped 过滤", refs: [`src:${prd}#L7-L7`], locations: [{ file: "refund.js", start: 10, end: 11 }] },
-  { id: "C2", title: "优惠按实付比例分摊", status: "done", requirement: "订单级优惠按各行实付金额比例分摊（[需求](src:" + prd + "#L8-L8)）", implementation: "按 amount / total 计算每行份额", refs: [`src:${prd}#L8-L8`], locations: [{ file: "refund.js", start: 13, end: 20 }] },
-  { id: "C3", title: "尾差归最后一行", status: "partial", requirement: "分摊的尾差归最后一行（[需求](src:" + prd + "#L9-L9)）", implementation: "最后一行取剩余额；分摊结果为负时没有处理", refs: [`src:${prd}#L9-L9`], locations: [{ file: "refund.js", start: 16, end: 19 }] },
-  { id: "C4", title: "金额精度两位小数", status: "partial", requirement: "超出精度直接报错，不四舍五入（[需求](src:" + prd + "#L10-L10)）", implementation: "toCents 用 Math.round，12.345 不会报错", refs: [`src:${prd}#L10-L10`], locations: [{ file: "refund.js", start: 2, end: 7 }] },
-  { id: "C5", title: "补测试与说明", status: "done", requirement: "验收用例（[需求](src:" + prd + "#L12-L14)）", implementation: "test.js 覆盖三条验收", refs: [], locations: [{ file: "test.js", start: 4, end: 9 }, { file: "README.md", start: 5, end: 7 }] },
+  { id: "M1", title: "退款金额计算", status: "partial", requirement: "退款金额的计算规则（[需求](src:" + prd + "#L7-L10)）", implementation: "refund.js：先过滤、再分摊、按分计算", refs: [`src:${prd}#L7-L10`], locations: [] },
+  { id: "M2", title: "验收与说明", status: "done", requirement: "验收用例和对外说明", implementation: "", refs: [], locations: [] },
+  { id: "C1", parent: "M1", title: "只退已发货的行", status: "done", requirement: "退款只计算已发货的行；未发货的行走取消流程（[需求](src:" + prd + "#L7-L7)）", implementation: "refundLineAmounts 先按 shipped 过滤", refs: [`src:${prd}#L7-L7`], locations: [{ file: "refund.js", start: 10, end: 11 }] },
+  { id: "C2", parent: "M1", title: "优惠按实付比例分摊", status: "done", requirement: "订单级优惠按各行实付金额比例分摊（[需求](src:" + prd + "#L8-L8)）", implementation: "按 amount / total 计算每行份额", refs: [`src:${prd}#L8-L8`], locations: [{ file: "refund.js", start: 13, end: 20 }] },
+  { id: "C3", parent: "M1", title: "尾差归最后一行", status: "partial", requirement: "分摊的尾差归最后一行（[需求](src:" + prd + "#L9-L9)）", implementation: "最后一行取剩余额；分摊结果为负时没有处理", refs: [`src:${prd}#L9-L9`], locations: [{ file: "refund.js", start: 16, end: 19 }] },
+  { id: "C4", parent: "M1", title: "金额精度两位小数", status: "partial", requirement: "超出精度直接报错，不四舍五入（[需求](src:" + prd + "#L10-L10)）", implementation: "toCents 用 Math.round，12.345 不会报错", refs: [`src:${prd}#L10-L10`], locations: [{ file: "refund.js", start: 2, end: 7 }] },
+  { id: "C5", parent: "M2", title: "补测试与说明", status: "done", requirement: "验收用例（[需求](src:" + prd + "#L12-L14)）", implementation: "test.js 覆盖三条验收", refs: [], locations: [{ file: "test.js", start: 4, end: 9 }, { file: "README.md", start: 5, end: 7 }] },
 ];
 setRunOutput(app, r.id, {
   worktrees: [{ space: "shop", path: wtPath, branch: `omem/${r.id}`, base, start: base, targetBranch: "main" }],
@@ -274,7 +276,7 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; prepa
   { name: "items", path: `/items/${item.id}` },
   { name: "review-overview", path: `/runs/${r.id}` },
   { name: "review-checks", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "评审" }).click(); await p.locator(".check-head").nth(1).click(); await p.waitForTimeout(300); } },
-  { name: "review-change", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.locator(".pick").nth(4).click(); await p.waitForTimeout(900); await p.getByRole("button", { name: "下一处" }).click(); await p.waitForTimeout(1200); } },
+  { name: "review-change", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.locator(".pick", { hasText: "补测试与说明" }).click(); await p.waitForTimeout(900); await p.getByRole("button", { name: "下一处" }).click(); await p.waitForTimeout(1200); } },
   { name: "review-split-diff", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.getByRole("radio", { name: "左右" }).click(); await p.getByRole("radio", { name: "文件" }).click(); await p.locator(".tree .row-btn.file").first().click(); await p.waitForTimeout(1200); } },
   { name: "review-activity", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "活动" }).click(); await p.waitForTimeout(500); await p.locator(".sec-head").nth(1).click(); await p.waitForTimeout(300); } },
   { name: "review-quotes", path: `/runs/${r.id}`, prepare: async (p) => {
@@ -302,7 +304,10 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; prepa
   { name: "delegate-sync", path: "/runs", prepare: async (p) => { await p.getByRole("button", { name: "交办" }).first().click(); await p.waitForTimeout(400); await p.locator("textarea").first().fill("把 main 合并进来，再把退款精度改成超出两位小数报错"); await p.getByText("拉取目标分支在 origin 上的新提交").click(); await p.waitForTimeout(300); } },
   { name: "rules", path: `/rules?id=${rule.id}` },
   { name: "agents", path: "/agents" },
-  { name: "review-overview-dark", path: `/runs/${r.id}`, dark: true },
+  // The docs home's hero: these three in dark too.
+  { name: "ask-citations-dark", path: `/ask/${t.id}`, dark: true },
+  { name: "memory-dark", path: "/memory", dark: true },
+  { name: "sources-dark", path: `/sources/${prd}`, dark: true },
   { name: "review-change-mobile", path: `/runs/${r.id}`, width: 390, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.waitForTimeout(400); } },
 ];
 let failed = 0;
