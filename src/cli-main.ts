@@ -178,11 +178,12 @@ program
 
 program
   .command("pull <host>")
-  .description("从另一台机器拉取 omem 数据（已配对的同伴走 HTTP，其他按 ssh 主机）：默认合并进本地，--overwrite 整体替换（旧数据留备份）")
+  .description("拉取另一台机器的业务数据、附件、知识库、代码仓库与编码工作区（同伴走 HTTP，其他走 SSH）；默认合并，--overwrite 替换并备份")
   .option("--remote-home <dir>", "远端数据目录", "~/.omem")
-  .option("--overwrite", "用远端数据替换本地（原件、记忆、事项、会话、知识库），本地配置和密钥保留")
+  .option("--overwrite", "替换本地业务数据、文件与托管仓库并备份；本机配置、密钥、令牌和采集游标保留")
   .option("--dry-run", "只统计合并结果，不写入")
   .action(async (host: string, o) => {
+    if (o.overwrite && o.dryRun) throw new Error("--overwrite 不能与 --dry-run 同时使用；预览合并时只加 --dry-run。");
     const { fetchRemote, mergeLibrary, overwriteLocal, cleanupFetched } = await import("./core/pull.ts");
     const log = (s: string) => console.error(s);
     const local = open();
@@ -197,7 +198,7 @@ program
       if (o.overwrite) {
         local.db.close();
         const backup = overwriteLocal(home(), fetched);
-        console.log(`已用 ${host} 的数据替换本地。原数据在 ${backup}；配置与密钥未改动。`);
+        console.log(`已用 ${host} 的数据替换本地。原数据在 ${backup}；配置、密钥、令牌和采集游标保留。任务规则和定时任务已停用，请按需启用。`);
         return;
       }
       const r = mergeLibrary(local, fetched, { dryRun: o.dryRun, log });

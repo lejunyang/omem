@@ -1364,10 +1364,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { runPeerCommand } = await import("../core/peer-exec.ts");
     return { node: (await import("../core/peers.ts")).nodeId(app), result: await runPeerCommand(app, b.command, b.args) };
   });
-  server.get("/api/peer/snapshot", async (_req, reply) => {
+  server.get("/api/peer/snapshot", async (req, reply) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能拉取设备快照");
     const { snapshotStream } = await import("../core/pull.ts");
     reply.type("application/x-tar");
-    return reply.send(snapshotStream(app));
+    return reply.send(await snapshotStream(app));
   });
   server.get("/api/peers", async () => {
     const { listPeers, nodeId } = await import("../core/peers.ts");

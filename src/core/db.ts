@@ -700,6 +700,25 @@ const migrations: string[] = [
   // The owner's call on each finding (src/agents/review-fix.ts): fix / later / wontfix and why.
   `alter table review_findings add column decision text;
    alter table review_findings add column decision_note text not null default '';`,
+  // Integer primary keys are local counters. Give business rows a portable identity and
+  // revision so pulling two databases neither collides nor loses later review decisions.
+  ["item_events", "memory_recalls", "rule_firings", "source_moves", "review_findings", "source_notes", "item_materials", "archive_rules", "attention_rules",
+    "reviews", "asks", "lark_messages", "item_update_proposals", "profile_proposals", "source_routes", "source_locations", "item_checks", "chat_settings", "digest_done"].map((table) => `
+    alter table ${table} add column sync_key text not null default '';
+    alter table ${table} add column sync_updated_at text not null default '';
+    update ${table} set sync_key = lower(hex(randomblob(16))), sync_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
+    create unique index ${table}_sync on ${table}(sync_key) where sync_key != '';
+    create trigger ${table}_sync_insert after insert on ${table} when new.sync_key = '' begin
+      update ${table} set sync_key = lower(hex(randomblob(16))), sync_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') where rowid = new.rowid;
+    end;
+    create trigger ${table}_sync_update after update on ${table}
+      when new.sync_key = old.sync_key and new.sync_updated_at = old.sync_updated_at begin
+      update ${table} set sync_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') where rowid = new.rowid;
+    end;
+  `).join("\n") + `
+    create table pull_aliases(table_name text not null, remote_key text not null, local_key text not null,
+      primary key(table_name, remote_key));
+  `,
 ];
 
 export type Db = DatabaseSync;

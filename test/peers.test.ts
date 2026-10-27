@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import { boot } from "../src/main.ts";
 import { addPeer, decodeInvite, findPeer, invite, localUrls, openPeerUi, peerJson, setPeerUrl } from "../src/core/peers.ts";
 import { cleanupFetched, fetchPeer, mergeLibrary } from "../src/core/pull.ts";
 import { remember, listMemories } from "../src/memory/store.ts";
+import { createApiToken, createUser } from "../src/core/users.ts";
 
 const servers: { close(): Promise<unknown> }[] = [];
 afterAll(async () => {
@@ -28,6 +29,9 @@ describe("peers", () => {
     const relay = await node("relay");
     const laptop = await node("laptop");
     remember(server, { spaceId: "personal", kind: "fact", content: "服务器上的一条记忆。", createdBy: "user" });
+    writeFileSync(join(server.filesDir, "abcdef0123456789.png"), "embedded media");
+    writeFileSync(join(laptop.filesDir, "abcdef0123456789.png"), "embedded media");
+    writeFileSync(join(server.filesDir, "fedcba9876543210.pdf"), "remote original");
 
     // relay can reach server; laptop can only reach relay.
     await addPeer(relay, invite(server, { url: server.baseUrl! }).code);
@@ -60,6 +64,10 @@ describe("peers", () => {
     // Without the paired token the server refuses.
     const anon = await fetch(`${server.baseUrl}/api/diag`);
     expect(anon.status).toBe(401);
+    const member = createUser(server, { id: "demo-member", name: "示例成员" });
+    const memberToken = createApiToken(server, member.id);
+    const snapshotDenied = await fetch(`${server.baseUrl}/api/peer/snapshot`, { headers: { authorization: `Bearer ${memberToken}` } });
+    expect(snapshotDenied.status).toBe(403);
 
     const fetched = await fetchPeer(laptop, "server");
     try {
@@ -68,6 +76,8 @@ describe("peers", () => {
       cleanupFetched(fetched);
     }
     expect(listMemories(laptop, { status: "active" }).map((m) => m.content)).toContain("服务器上的一条记忆。");
+    expect(readFileSync(join(laptop.filesDir, "fedcba9876543210.pdf"), "utf8")).toBe("remote original");
+    expect(readFileSync(join(laptop.filesDir, "abcdef0123456789.png"), "utf8")).toBe("embedded media");
   }, 60000);
 });
 
