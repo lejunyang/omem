@@ -45,7 +45,46 @@ async function askToken() {
   return true;
 }
 
+/**
+ * The button the owner just pressed shows that the change it asked for is under way: a write
+ * request (not GET) started within a moment of the press marks it `busy` (a spinner, not pressable
+ * again) until the request settles. One place for every button, instead of a flag per handler.
+ */
+let pressed: { el: HTMLElement; at: number } | null = null;
+if (typeof document !== "undefined") {
+  document.addEventListener("click", (e) => {
+    const b = (e.target as Element | null)?.closest?.("button.btn");
+    if (b) pressed = { el: b as HTMLElement, at: performance.now() };
+  }, true);
+}
+const busyCount = new WeakMap<HTMLElement, number>();
+function markBusy(method: string | undefined): () => void {
+  const p = pressed;
+  if (!method || method === "GET" || !p || !p.el.isConnected || performance.now() - p.at > 2000) return () => {};
+  const el = p.el;
+  busyCount.set(el, (busyCount.get(el) ?? 0) + 1);
+  el.classList.add("busy");
+  el.setAttribute("aria-busy", "true");
+  return () => {
+    const n = (busyCount.get(el) ?? 1) - 1;
+    busyCount.set(el, n);
+    if (n <= 0) {
+      el.classList.remove("busy");
+      el.removeAttribute("aria-busy");
+    }
+  };
+}
+
 export async function api<T = any>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
+  const done = (init as { retried?: boolean }).retried ? () => {} : markBusy(init.method);
+  try {
+    return await request<T>(path, init);
+  } finally {
+    done();
+  }
+}
+
+async function request<T>(path: string, init: RequestInit & { json?: unknown }): Promise<T> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string>) };
   const t = token();
   if (t) headers.authorization = `Bearer ${t}`;

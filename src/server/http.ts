@@ -1042,12 +1042,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       // The next rounds' review (code-steer.ts RoundReview) and the functional reviewer's AI for them.
       review: z.object({ tier: z.string().optional(), checks: z.array(z.string()).optional(), split: z.boolean().optional(), rotate: z.boolean().optional() }).optional(),
       reviewAi: z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() }).optional(),
+      applyFirst: z.boolean().optional(),
     }), req.body);
     if (b.review?.tier) await tierExists(b.review.tier);
     const { validateExecution } = await import("../agents/execution.ts");
     const reviewExecution = b.reviewAi ? validateExecution(app, { ...b.reviewAi, source: "user", reason: "本人在网页上按评审修改时指定" }) : undefined;
     const { startFix } = await import("../agents/review-fix.ts");
-    return startFix(app, id, { findingIds: b.findingIds, text: b.text, review: b.review, reviewExecution }, who(req));
+    return startFix(app, id, { findingIds: b.findingIds, text: b.text, review: b.review, reviewExecution, applyFirst: b.applyFirst }, who(req));
   });
   // The owner's words for a delegation while it runs, and the review its rounds get from now on (code-steer.ts).
   server.post("/api/runs/:id/notes", async (req) => {

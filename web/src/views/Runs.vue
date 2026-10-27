@@ -962,10 +962,10 @@ const kindOptions = computed(() => [
   box-shadow: var(--shadow-lg);
 }
 /* It floats over text: the hover tint goes on top of an opaque panel, not over the text below. */
-.sel-ask .btn:not(.primary):hover {
+.sel-ask .btn:not(.primary):hover:not(:disabled) {
   background: linear-gradient(var(--hover), var(--hover)), var(--panel);
 }
-.sel-ask .btn.primary:hover {
+.sel-ask .btn.primary:hover:not(:disabled) {
   opacity: 1;
   filter: brightness(0.9);
 }

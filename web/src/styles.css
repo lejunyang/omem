@@ -170,7 +170,8 @@ kbd {
   font-weight: 500;
   transition: background 0.12s, border-color 0.12s;
 }
-.btn:hover {
+/* A disabled button keeps its look on hover (no tint, no darker primary). */
+.btn:hover:not(:disabled) {
   background: var(--hover);
   text-decoration: none;
 }
@@ -183,7 +184,8 @@ kbd {
   border-color: var(--ink);
   color: var(--bg);
 }
-.btn.primary:hover {
+.btn.primary:hover:not(:disabled) {
+  background: var(--ink);
   opacity: 0.88;
 }
 .btn.accent {
@@ -195,8 +197,43 @@ kbd {
   border-color: transparent;
   background: transparent;
 }
-.btn.ghost:hover {
+.btn.ghost:hover:not(:disabled) {
   background: var(--hover);
+}
+/* A request the button started is under way (api.ts marks it): not pressable, a spinner after the label. */
+.btn.busy {
+  pointer-events: none;
+  opacity: 0.7;
+}
+.btn.busy::after {
+  content: "";
+  width: 11px;
+  height: 11px;
+  flex: none;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin 0.7s linear infinite;
+}
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
+}
+/* A button that reads as a link (“换评审 AI”, “评审原文”). */
+.lnk {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+.lnk:hover {
+  text-decoration: underline;
+}
+.lnk:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  text-decoration: none;
 }
 .btn.danger {
   color: var(--danger);

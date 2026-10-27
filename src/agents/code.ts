@@ -712,8 +712,12 @@ function removeWorktrees(app: App, runId: string) {
  * Apply a finished run's patches to the user's working trees as uncommitted changes, every
  * repository or none (all are checked first). The worktrees are removed afterwards; the
  * patches stay with the run.
+ *
+ * `keepWorking` (“先应用到原分支，再接着改”): the worktrees stay for the next round. What was
+ * applied is committed there and becomes the new start, so later rounds' diffs (and the next
+ * apply) hold only what came after.
  */
-export function applyCodeRun(app: App, runId: string) {
+export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: boolean } = {}) {
   const r = getRun(app, runId);
   const targets = applyTargets(app, runId);
   if (!targets.length) throw new HttpError(404, "没有可应用的改动");
@@ -765,6 +769,23 @@ export function applyCodeRun(app: App, runId: string) {
   const appliedTo = targets.map(({ space, path, branch }) => ({ space, path, branch }));
   const appliedAt = new Date().toISOString();
   const firstId = String(r.input.continueFrom ?? r.id);
+  if (opts.keepWorking) {
+    const wts = worktreesOf(app, firstId);
+    for (const wt of wts) {
+      if (!targets.some((t) => t.space === wt.space)) continue;
+      git(wt.path, ["add", "-A"]);
+      const id = git(wt.path, ["config", "user.email"]).stdout.trim() ? [] : ["-c", "user.name=omem", "-c", "user.email=omem@localhost"];
+      const c = git(wt.path, [...id, "commit", "-q", "--no-verify", "--allow-empty", "-m", `omem: 已应用到 ${appliedTo.find((t) => t.space === wt.space)?.branch ?? "原分支"}（第 ${r.input.round ?? 1} 轮）`]);
+      if (!c.ok) throw new HttpError(409, `已应用，但没能在工作区 ${wt.path} 记下应用的位置：${c.stderr.slice(0, 400)}`);
+      wt.start = git(wt.path, ["rev-parse", "HEAD"]).stdout.trim();
+      wt.syncHead = undefined;
+    }
+    setRunOutput(app, firstId, { worktrees: wts, partlyAppliedTo: appliedTo, partlyAppliedAt: appliedAt });
+    // Shown on the run page like a full apply (where it landed, commit there); the work goes on.
+    setRunOutput(app, runId, { appliedTo, partlyAppliedAt: appliedAt });
+    cancelHostAsks(app, runId, "review-done");
+    return { applied: true, spaces: applied, targets: appliedTo };
+  }
   for (const id of new Set([firstId, runId])) setRunOutput(app, id, { appliedAt, appliedTo });
   removeWorktrees(app, runId);
   cancelHostAsks(app, runId, "review-done");

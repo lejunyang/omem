@@ -90,7 +90,7 @@ export function openDelegationOn(app: App, repos: string[], branch: string | nul
   return null;
 }
 
-export async function startFix(app: App, runId: string, req: { findingIds: number[]; text?: string; review?: RoundReview; reviewExecution?: Execution }, userId: string): Promise<Run> {
+export async function startFix(app: App, runId: string, req: { findingIds: number[]; text?: string; review?: RoundReview; reviewExecution?: Execution; applyFirst?: boolean }, userId: string): Promise<Run> {
   const runs = workRuns(app, runId);
   const last = getRun(app, runs.at(-1)!);
   if (!req.findingIds.length && !req.text?.trim()) throw new HttpError(400, "选几个要改的问题，或者写下要改什么");
@@ -123,8 +123,11 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
   const into = branchReview ? openDelegationOn(app, repos, Object.values(input.branches ?? {})[0]?.branch, userId) : last;
   if (into && branchReview && ["queued", "running"].includes(into.status))
     throw new HttpError(409, `交办 ${into.id}（${into.title}）正在改同一个分支，等这一轮结束再改；要马上加要求，补充给正在编码的 Agent（运行页“补充”或 message_code_run）`);
+  if (req.applyFirst && (!into || into !== last)) throw new HttpError(400, "分支评审没有可应用的改动；先应用要在交办编码上做");
   if (into) {
     if (into.output.appliedAt || into.output.discardedAt) throw new HttpError(409, "这次交办已经应用或丢弃，工作区已释放；请重新交办");
+    // “先应用到原分支，再接着改”: the owner gets what is done now; the next round goes on in the same worktree.
+    if (req.applyFirst) (await import("./code.ts")).applyCodeRun(app, into.id, { keepWorking: true });
     const { codeChainFor, queueNextCodeRound } = await import("./code-chain.ts");
     const chain = codeChainFor(app, into) ?? (into.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? null;
     const extraInput = { ...(branchReview ? { fromReview: root.id } : {}), ...(req.reviewExecution ? { reviewExecution: req.reviewExecution } : {}) };

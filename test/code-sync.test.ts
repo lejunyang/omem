@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import "../src/agents/jobs.ts";
@@ -212,6 +212,28 @@ describe("a sync-only delegation, end to end", { timeout: 120000 }, () => {
       expect(sh(w.path, "merge-base", "--is-ancestor", pushed, "HEAD")).toBe("");
       expect(readFileSync(join(w.path, "notes.txt"), "utf8")).toBe("from a colleague\n");
       expect(String(getRun(app, r.id).output.coderSummary)).toMatch(/## Git 同步\n\n(拉取|合并) origin\/feature\/refund/);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("applies what is done and keeps the worktree: the next diff holds only later work", async () => {
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      delegate("resolve");
+      const r = createRun(app, { kind: "code", spaceId: "shop", title: "退款只按未发货行", input: { task: "退款只按未发货的行计算", repos: ["shop"], fromBranches: { shop: "feature/refund" }, reviewTier: "light" } });
+      await exec(r.id);
+      sql(app.db, "update runs set status = 'done' where id = ?", r.id);
+      const res = applyCodeRun(app, r.id, { keepWorking: true });
+      const target = res.targets[0];
+      expect(readFileSync(join(target.path, "refund.ts"), "utf8")).toContain("round = 1");
+      const [w] = worktreesOf(app, r.id);
+      expect(existsSync(w.path)).toBe(true);
+      expect(sh(w.path, "log", "-1", "--format=%s")).toMatch(/^omem: 已应用到 feature\/refund/);
+      expect(sh(w.path, "diff", "--cached", "HEAD")).toBe("");
+      expect(w.start).toBe(sh(w.path, "rev-parse", "HEAD"));
+      expect(getRun(app, r.id).output).toMatchObject({ partlyAppliedAt: expect.any(String) });
+      expect(getRun(app, r.id).output.appliedAt).toBeUndefined();
     } finally {
       await server.close();
     }

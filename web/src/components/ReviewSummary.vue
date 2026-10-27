@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { post, put } from "../api";
-import { promptDialog } from "../lib/dialog";
+import { confirmDialog, promptDialog } from "../lib/dialog";
 import Markdown from "./Markdown.vue";
 import UiSegmented from "./UiSegmented.vue";
 import { relTime, toast } from "../store";
@@ -69,7 +69,8 @@ async function decide(f: Finding, d: Decision) {
   }
   try {
     await put(`/api/runs/${props.runId}/findings/${f.id}`, { decision: d, note });
-    for (const r of rv.reviews.value) for (const x of r.findings) if (x.id === f.id) Object.assign(x, { decision: d, decision_note: note });
+    // Every round's copy: a carried “暂不改” lives in an earlier round's review.
+    for (const r of rv.data.value?.reviews ?? []) for (const x of r.findings) if (x.id === f.id) Object.assign(x, { decision: d, decision_note: note });
   } catch (e) {
     toast((e as Error).message, "error");
   }
@@ -85,13 +86,15 @@ const starting = ref(false);
 const router = useRouter();
 // Passages the owner selected on the page (“加入修改点”) go along with the findings and the extra text.
 const picked = computed(() => quotesOf(props.runId, "fix"));
-async function startFix() {
+// `applyFirst`: what is done now goes to the target branch (uncommitted) before the next round, which goes on in the same worktree.
+async function startFix(applyFirst = false) {
   const ids = rv.findings.value.filter((f) => decisionOf(f) === "fix").map((f) => f.id);
   const text = [quotesText(picked.value, "本人在页面上选中、要求修改的地方（按 [1]、[2] 编号）："), draft.value.text.trim()].filter(Boolean).join("\n\n");
   if (starting.value || (!ids.length && !text)) return;
+  if (applyFirst && !(await confirmDialog("先应用到原分支，再接着改？", { message: "现在的改动先写进原目标分支（未提交，可以在运行页提交）；下一轮在同一个工作区接着改，之后再应用只带新的改动。", okText: "应用并接着改" }))) return;
   starting.value = true;
   try {
-    const r = await post<{ id: string }>(`/api/runs/${props.runId}/fix`, { findingIds: ids, text: text || undefined, ...draftReview(draft.value) });
+    const r = await post<{ id: string }>(`/api/runs/${props.runId}/fix`, { findingIds: ids, text: text || undefined, ...draftReview(draft.value), ...(applyFirst ? { applyFirst: true } : {}) });
     clearFixDraft(props.runId);
     clearQuotes(props.runId, "fix");
     toast(props.branchReview ? "已基于这个分支交办修改" : "已安排下一轮修改", "ok");
@@ -211,11 +214,14 @@ async function answer(choice: number | null) {
         <span class="spacer" />
         <span class="muted small">要改 {{ tally.fix }} · 暂不改 {{ tally.later }} · 不改 {{ tally.wontfix }}</span>
       </div>
-      <p class="muted small">在上面每个问题右侧选“改 / 暂不改 / 不改”（不改要写理由，之后的评审不再提）。需求有变化、评审没发现的问题写在下面，一起交给编码 Agent。{{ branchReview ? "这个分支已有没应用的交办时续在它上面，否则基于分支的最新提交交办；改完照常检查和评审。" : "续在原来的工作区和编码会话里，开始前先拉取目标分支的最新提交。" }}</p>
-      <textarea v-model="draft.text" class="textarea" rows="4" placeholder="补充要求（可选）：需求变化、要一起改的其他问题、实现上的约束" aria-label="补充要求" />
+      <textarea v-model="draft.text" class="textarea" rows="3" placeholder="补充要求（可选）：需求变化、评审没发现的问题、实现上的约束" aria-label="补充要求" />
       <p v-if="picked.length" class="muted small">另有 {{ picked.length }} 处选中加入的修改点（右下角“修改点”里查看），会一起交给编码 Agent。</p>
-      <NextRoundReview :draft="draft" />
-      <div class="row"><span class="spacer" /><button class="btn primary sm" :disabled="starting || (!tally.fix && !draft.text.trim() && !picked.length)" @click="startFix">开始修改{{ tally.fix || picked.length ? `（${[tally.fix ? `${tally.fix} 个问题` : "", picked.length ? `${picked.length} 处修改点` : "", draft.text.trim() ? "补充" : ""].filter(Boolean).join(" + ")}）` : "" }}</button></div>
+      <div class="row wrap actions">
+        <NextRoundReview :draft="draft" />
+        <span class="spacer" />
+        <button v-if="!branchReview" class="btn sm" title="现在的改动先写进原分支（未提交），下一轮在同一个工作区接着改" :disabled="starting || (!tally.fix && !draft.text.trim() && !picked.length)" @click="startFix(true)">先应用再接着改</button>
+        <button class="btn primary sm" :disabled="starting || (!tally.fix && !draft.text.trim() && !picked.length)" @click="startFix()">开始修改{{ tally.fix || picked.length ? `（${[tally.fix ? `${tally.fix} 个问题` : "", picked.length ? `${picked.length} 处修改点` : "", draft.text.trim() ? "补充" : ""].filter(Boolean).join(" + ")}）` : "" }}</button>
+      </div>
     </div>
   </section>
 </template>
@@ -261,6 +267,7 @@ async function answer(choice: number | null) {
 .wontfix { color: var(--ink-2); background: var(--sunken); border-radius: 6px; padding: 3px 8px; justify-self: start; }
 .fix { display: grid; gap: 8px; }
 .fix p { margin: 0; }
+.actions { gap: 8px; align-items: flex-start; }
 @media (max-width: 760px) {
   .check-row { grid-template-columns: 10px 52px minmax(0, 1fr) auto; }
   .ai { display: none; }

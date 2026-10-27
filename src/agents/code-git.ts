@@ -32,9 +32,10 @@ export type CodeGitOperation = {
 function targetOf(app: App, runId: string, space: string) {
   const run = getRun(app, runId);
   const first = getRun(app, String(run.input.continueFrom ?? run.id));
-  if (run.kind !== "code" || first.kind !== "code" || !first.output.appliedAt)
+  // Applied for good, or applied while the work goes on (“先应用到原分支，再接着改”).
+  if (run.kind !== "code" || first.kind !== "code" || !(first.output.appliedAt || first.output.partlyAppliedAt))
     throw new HttpError(400, "请先应用编码改动，再提交或推送");
-  const target = (first.output.appliedTo as Target[] | undefined)?.find(t => t.space === space);
+  const target = ((first.output.appliedTo ?? first.output.partlyAppliedTo) as Target[] | undefined)?.find(t => t.space === space);
   if (!target) throw new HttpError(404, "这个运行没有该仓库的接收工作区");
   const root = findSpace(app, space)?.rootPath;
   if (!root || !existsSync(target.path)) throw new HttpError(409, "接收工作区不存在，请检查仓库位置");

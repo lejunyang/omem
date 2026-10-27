@@ -45,6 +45,12 @@ const split = ref(props.review?.split !== false);
 const rotateOf = (r?: RoundReview) => (r?.rotate === undefined ? "" : r.rotate ? "on" : "off");
 const rotate = ref<"" | "on" | "off">(rotateOf(props.review));
 watch(() => props.review, (r) => { tier.value = r?.tier ?? ""; split.value = r?.split !== false; rotate.value = rotateOf(r); });
+const reviewOpen = ref(false);
+const reviewSummary = computed(() => [
+  tier.value ? `「${tiers.value.find((t) => t.id === tier.value)?.name ?? tier.value}」档` : "",
+  split.value ? "" : "不拆需求",
+  rotate.value === "on" ? "每轮换模型" : rotate.value === "off" ? "不换模型" : "",
+].filter(Boolean).join("，") || "按改动自动选");
 const ROTATE = [{ value: "" as const, label: "模型按档位设置" }, { value: "on" as const, label: "每轮换模型" }, { value: "off" as const, label: "不换模型" }];
 const tierOptions = computed(() => [{ value: "", label: "按改动自动选" }, ...tiers.value.map((t) => ({ value: t.id, label: `「${t.name}」档` }))]);
 async function saveReview() {
@@ -72,11 +78,11 @@ async function saveReview() {
       <input v-model="text" class="input sm grow" placeholder="新要求或纠正，原话就行" aria-label="补充给编码 Agent" @keydown.enter="send" />
       <button class="btn sm" :disabled="sending || !text.trim()" @click="send">发送</button>
     </div>
-    <div class="row wrap small">
-      <span class="muted">之后的评审</span>
+    <button class="lnk small review-toggle" :aria-expanded="reviewOpen" @click="reviewOpen = !reviewOpen">之后的评审：{{ reviewSummary }} {{ reviewOpen ? "▴" : "▾" }}</button>
+    <div v-if="reviewOpen" class="row wrap small choices">
       <UiSelect v-model="tier" :options="tierOptions" size="sm" width="170px" aria-label="之后各轮的评审档位" @change="saveReview" />
-      <UiCheckbox v-model="split" size="sm" @update:model-value="saveReview">拆需求</UiCheckbox>
       <UiSelect v-model="rotate" :options="ROTATE" size="sm" width="150px" aria-label="之后各轮评审换不换模型" @change="saveReview" />
+      <UiCheckbox v-model="split" size="sm" @update:model-value="saveReview">拆需求</UiCheckbox>
     </div>
   </section>
 </template>
@@ -87,4 +93,6 @@ async function saveReview() {
 .grow { flex: 1; min-width: 0; }
 .notes { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
 .notes li { overflow-wrap: anywhere; }
+.review-toggle { justify-self: start; }
+.choices { gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; background: var(--sunken); }
 </style>

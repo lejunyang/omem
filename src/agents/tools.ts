@@ -2775,6 +2775,7 @@ def({
     task: z.string().describe("这一轮要做什么：评审意见或本人的新要求，写具体"),
     sync: syncSchema.optional().describe("这一轮编码前先做的 Git 同步（如先合并最新的 main）；工作区里未提交的改动会先收起、同步后放回"),
     onto_latest_target: z.boolean().optional().describe("只把改动移到目标分支的最新提交上（目标分支有了新提交、应用失败时用），task 可简单写原因；冲突交给编码 Agent，解决不了会问本人"),
+    apply_first: z.boolean().optional().describe("本人说“先应用到原分支再继续改”时 true：上一轮的改动先应用到目标分支，这一轮在同一个工作区接着改"),
     ...roundReviewSchema,
   }),
   handler: async (ctx, a) => {
@@ -2796,6 +2797,7 @@ def({
     const sessionId = rounds.map((r) => (r.output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
     const extraInput = a.onto_latest_target ? { moveToTarget: true } : a.sync ? { sync: a.sync } : undefined;
     const roundReview = await roundReviewOf(ctx, a);
+    if (a.apply_first) (await import("./code.ts")).applyCodeRun(ctx.app, last.id, { keepWorking: true });
     const next = queueNextCodeRound(ctx.app, chain, a.task, { resumeSessionId: execution ? undefined : sessionId, manual: true, execution, reviewExecution, roundReview, extraInput });
     if (!next) throw new HttpError(409, "原交办记录不完整，无法继续；请查看 read_run");
     return `已在原交办会话安排第 ${next.chain.round} 轮 ${next.run.id}：同样的工作区和编码会话，完成后自动检查、评审并通知。`;
@@ -2814,6 +2816,7 @@ def({
     wontfix: z.array(z.object({ id: z.number().int(), reason: z.string().min(1).max(1000) })).optional().describe("不改的问题和本人给的理由"),
     text: z.string().max(20000).optional().describe("本人补充的修改要求，原话为主"),
     review_execution: executionSchema.optional().describe("这一轮功能评审 AI 的临时选择"),
+    apply_first: z.boolean().optional().describe("本人说“先应用到原分支再继续改”时 true：现在的改动先应用到目标分支（未提交，可再 code_git_action 提交），下一轮在同一个工作区接着改，之后的应用只带新的改动"),
     ...roundReviewSchema,
   }),
   handler: async (ctx, a) => {
@@ -2825,7 +2828,7 @@ def({
     for (const id of a.later ?? []) setFindingDecision(ctx.app, r.id, id, "later");
     for (const w of a.wontfix ?? []) setFindingDecision(ctx.app, r.id, w.id, "wontfix", w.reason);
     if (!a.fix?.length && !a.text?.trim()) return `已记下：${(a.later ?? []).length} 个暂不改，${(a.wontfix ?? []).length} 个不改。没有要改的，没有开始修改。`;
-    const next = await startFix(ctx.app, r.id, { findingIds: a.fix ?? [], text: a.text, review, reviewExecution }, ctx.userId ?? OWNER);
+    const next = await startFix(ctx.app, r.id, { findingIds: a.fix ?? [], text: a.text, review, reviewExecution, applyFirst: a.apply_first }, ctx.userId ?? OWNER);
     return `已开始修改，运行 ${next.id}（${next.title}）：改 ${(a.fix ?? []).length} 个问题${a.text?.trim() ? "和补充的要求" : ""}，暂不改 ${(a.later ?? []).length} 个，不改 ${(a.wontfix ?? []).length} 个。完成后会检查、评审并通知。`;
   },
 });
