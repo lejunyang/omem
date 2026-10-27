@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     port: Number(process.env.OMEM_WEB_PORT ?? 5173),
-    proxy: { "/api": { target: api, changeOrigin: false }, "/mcp": api },
+    proxy: { "/api": { target: api, changeOrigin: false }, "/mcp": api, "/ide": { target: api, ws: true } },
   },
   build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 1500 },
 });

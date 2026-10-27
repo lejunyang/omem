@@ -200,6 +200,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 网页版 VS Code：设置打开后，运行页“在 VS Code 中打开”可选网页版；omem 按需启动官方 `code serve-web`（本机回环、随机端口与 connection token），`/api/ide/open` 给本人会话 cookie 后跳到 `/ide`，`/ide` 的 HTTP 与 WebSocket 由 omem 代理并加上 token；停服结束进程树，遗留进程下次启动前清理 | 已实现；2026-10-28，`test/ide-web.test.ts`（假 serve-web：鉴权、转发、WebSocket、缺 CLI、遗留进程），本地开发实例用真实 serve-web 打开过工作区；`peer open` 中转不支持 | `src/server/ide-web.ts`、`http.ts` 的 `/api/ide/open`、`web/src/components/OpenInIde.vue` |
 | VS Code 插件第一版（`vscode/`）：按打开的文件夹认出交办（`GET /api/code-runs/at`），评审问题显示为代码上的评论线程并可标改 / 暂不改 / 不改，选中代码在线程里提问（走问答会话）或记修改点，“开始修改”续轮，任务文档 + CodeLens 交办，状态栏与过程输出 | 已实现；2026-10-28，真实 VS Code 1.124 集成测试（`vscode/test/run.mjs`），界面按钮与真实模型待验 | `vscode/src`、`src/agents/code.ts` 的 `codeRunsAt` |
 | 复用工作区：仓库空间可把已有的 worktree（`workspaces`）和 omem 自建的几个（`pool`）借给交办，租约在工作区 git 目录里、随运行链接失效，归还时重置但保留忽略的文件、回到原分支；准备命令（`setupCommand`）按锁文件变化才运行；检查命令在 Windows 上的引号修正。运行页“在 VS Code 中打开”（本机链接或 Remote-SSH 链接，SSH 主机名存在看的人的浏览器里；`GET /api/runs/:id/folders`）；网页版 VS Code 与插件见 docs/v2/ide.md（计划） | 已实现；2026-10-28，`test/workspaces.test.ts`、`test/branch-review.test.ts`（假 ACP 两次交办只准备一次） | `src/agents/workspaces.ts`、`code.ts` 的 `codeFolders`、设置 → 空间、`web/src/components/OpenInIde.vue` |
 | `omem peer pull` 拉取完整业务数据、文件与代码仓库：辅助表跨设备标识、引用换算、聊天追加合并、仓库与编码工作区恢复、覆盖备份与失败回滚；新导入的执行任务停用 | 已实现；2026-10-27，SSH、HTTP 中转、冲突与恢复回归覆盖，跨真实设备待验 | `src/core/pull.ts`、`pull-data.ts`、`pull-transfer.ts`、`pull-snapshot.ts`、`pull-repos.ts` |

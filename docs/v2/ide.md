@@ -2,7 +2,7 @@
 
 目标：交办编码不用每次重装依赖；评审时能在 VS Code 里直接打开交办的工作区，用编辑器自己的跳转、搜索、Git 面板看代码；最后由 VS Code 插件把发起交办、看过程、评审、应用和推送接到 omem。宿主仍只做数据、调度和权限，插件和网页一样只是客户端。
 
-分三步做：复用工作区、桌面 VS Code 打开、插件第一版已实现，网页版 VS Code 还是计划。
+分三步做：复用工作区、在 VS Code 里打开（桌面版和网页版）、插件第一版，都已实现。
 
 ## 一、复用工作区（已实现）
 
@@ -25,7 +25,7 @@
 
 `omem peer pull` 不需要改：快照按 `runs/*/work/*` 收集编码工作区，链接按真实路径读出，在另一台机器上恢复成普通目录；那台机器上没有对应租约，归还时只删目录。空间设置会随数据拉到别的设备，那里不存在的目录会被跳过。
 
-## 二、在 VS Code 里打开工作区（桌面版已实现，网页版计划）
+## 二、在 VS Code 里打开工作区（已实现）
 
 ### 桌面 VS Code（已实现）
 
@@ -38,22 +38,25 @@
 
 - 网页在本机：直接用本地链接。
 - 网页在别的电脑上（局域网链接、`omem peer open`）：第一次点时要填这台机器在那台电脑上的 SSH 主机名，存在那台电脑的浏览器里，按 omem 机器的主机名区分。主机名是看的人那边 `~/.ssh/config` 里的名字，所以不放在 omem 的配置里。
-- 编辑器可选 VS Code、VS Code Insiders、Cursor，链接格式相同，只换协议名。
+- 编辑器可选 VS Code、VS Code Insiders、Cursor，链接格式相同，只换协议名；本人打开了网页版时还可以选“网页版 VS Code”（见下）。
 
 插件的运行列表也放同样的入口。
 
 不建议依赖 Remote Tunnels：鉴权在微软那边，不归 omem 管，公司网络也常常拦。
 
-### 网页版 VS Code
+### 网页版 VS Code（已实现）
 
-可以由 omem 托管：`code serve-web`（官方，需接受微软许可）或 openvscode-server（MIT，扩展来自 Open VSX）。omem 启动一个只监听 127.0.0.1 的实例，在自己的 HTTP 服务上反向代理到 `/ide/`，链接形如 `/ide/?folder=<工作区路径>`。鉴权用 omem 自己的：外层是 omem 令牌（或本机信任），服务端的 connection token 只在 omem 内部使用。只能经别的设备访问的机器复用 `peer open` 的中转。
+用官方的 `code serve-web`，鉴权全由 omem 做（`src/server/ide-web.ts`）。“设置 → 外观与说明 → 网页版 VS Code”打开后（配置 `ide.web.enabled`，`ide.web.command` 可指定 CLI），“在 VS Code 中打开”的编辑器里多一项“网页版 VS Code”。
 
-前提和限制：
-
-- HTTP 服务和 peer 中转要能转发 WebSocket（现在只有 SSE）。
-- 网页 VS Code 自带终端和扩展宿主，等于这台机器的 shell，也限制不了只看某个目录。只对本人开放，访客和成员都不行；和 `peerCommands` 不给任意 shell 是同一个考虑。
-
-所以排在插件之后。
+- **启动**：第一次用到时启动 `serve-web --host 127.0.0.1 --port <随机空闲端口> --connection-token <随机> --server-base-path /ide`，数据放在数据目录的 `ide/`。CLI 依次找 `ide.web.command`、`code-tunnel`（桌面版 `code` 旁边的那个 CLI 本体；Windows 上的 `code.cmd` 会启动桌面程序）、`code`（服务器上的独立 CLI）。第一次打开页面时 serve-web 从微软下载对应版本的服务端，这段时间 omem 返回一个会自动刷新的等待页。
+- **入口**：页面上是一个普通链接 `/api/ide/open?folder=<路径>`（不在本机时带令牌查询参数，和下载链接一样），新标签页打开。它只对本人开放：启动 serve-web，给浏览器一个 `Path=/ide`、HttpOnly 的会话 cookie，再跳到 `/ide/?folder=…`（Windows 路径换成 `/e:/…`）。
+- **代理**：`/ide` 下的 HTTP（不解析请求体）和 WebSocket 升级都原样转给 serve-web。放行条件：会话 cookie 有效，或请求来自本机回环、没带令牌且 omem 没配令牌（和 API 的本机信任一致）。转发时去掉 omem 的 cookie 和 Authorization，加上 serve-web 认的 `vscode-tkn` cookie，所以 connection token 不出 omem。会话在内存里，omem 重启后从网页重新点一次。
+- **进程**：WebSocket 任一端断开就关掉两端；停服时连同 serve-web 启动的服务端整棵进程树一起结束；pid 记在 `ide/serve-web.pid`，被强杀或被 watch 重启的 omem 下次启动前先结束遗留的那个（核对命令行确实是带 connection token 的 serve-web 才动）。
+- **开发**：Vite 的 `/ide` 代理开了 `ws`。
+- **限制**：
+  - 网页 VS Code 自带终端和扩展宿主，等于这台机器的命令行，也限制不了只看某个目录。所以只对本人开放，成员、访客的接口白名单里没有它。
+  - `omem peer open` 的中转只转 HTTP，不转 WebSocket，经它打开的网页用不了网页版；直连（本机或局域网带令牌的链接）可以。
+  - 浏览器语言是中文时，serve-web 从微软拉的中文语言包可能和服务端版本对不上，界面文字错位；是上游的问题，在 VS Code 里“配置显示语言”换成英文即可。
 
 ## 三、VS Code 插件（第一版已实现）
 

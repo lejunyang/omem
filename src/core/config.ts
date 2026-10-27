@@ -196,6 +196,10 @@ export const configSchema = z.object({
     })
     .default(() => ({ tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2, rotation: [] })),
   approvals: z.object({ tools: z.array(z.string()).default([]), waitSeconds: z.number().int().min(0).max(50).default(40) }).default({ tools: [], waitSeconds: 40 }),
+  /** Web VS Code under /ide: the official `code serve-web` behind omem's own auth (src/server/ide-web.ts). */
+  ide: z
+    .object({ web: z.object({ enabled: z.boolean().default(false), command: z.string().optional() }).default({ enabled: false }) })
+    .default({ web: { enabled: false } }),
   /** This instance among its peers (`omem peer`): defaults to the host name. */
   node: z.object({ id: z.string().optional() }).default({}),
   /** Memory quality: write-time checks, cross-model review, side-by-side comparison. */

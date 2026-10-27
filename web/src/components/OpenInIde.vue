@@ -1,24 +1,32 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { get } from "../api";
-import { editor, editorOptions, ideUrl, sshAliases } from "../lib/ide";
+import { authUrl, get } from "../api";
+import { editor, editorOptions, ideUrl, sshAliases, type DesktopEditor } from "../lib/ide";
 import Icon from "./Icon.vue";
 import UiSelect from "./UiSelect.vue";
 
-/** “在 VS Code 中打开” for a coding run: its worktrees, or where the change was applied. */
+/**
+ * “在 VS Code 中打开” for a coding run: its worktrees, or where the change was applied. Desktop
+ * editors get a link (local or Remote-SSH); “网页版” opens omem's /ide when the owner turned it on.
+ */
 const props = defineProps<{ runId: string; spaceName: (id: string) => string }>();
 type Folder = { space: string; path: string; kind: "work" | "applied"; branch: string | null };
-const info = ref<{ local: boolean; host: string; folders: Folder[] } | null>(null);
+type Info = { local: boolean; host: string; web: boolean; folders: Folder[] };
+const info = ref<Info | null>(null);
 const open = ref(false);
 const settings = ref(false);
 
 async function load() {
   info.value = null;
-  info.value = await get<{ local: boolean; host: string; folders: Folder[] }>(`/api/runs/${props.runId}/folders`).catch(() => null);
+  info.value = await get<Info>(`/api/runs/${props.runId}/folders`).catch(() => null);
 }
 watch(() => props.runId, load, { immediate: true });
 
-const label = computed(() => editorOptions.find((o) => o.value === editor.value)?.label ?? "VS Code");
+/** The web option only where this omem serves it; a stored choice of it elsewhere falls back. */
+const options = computed(() => editorOptions.filter((o) => o.value !== "web" || info.value?.web));
+const chosen = computed(() => (editor.value === "web" && !info.value?.web ? "vscode" : editor.value));
+const isWeb = computed(() => chosen.value === "web");
+const label = computed(() => editorOptions.find((o) => o.value === chosen.value)?.label ?? "VS Code");
 const alias = computed({
   get: () => (info.value ? sshAliases.value[info.value.host] ?? "" : ""),
   set: (v: string) => {
@@ -26,8 +34,11 @@ const alias = computed({
   },
 });
 /** Away from the machine without an SSH alias yet: the link cannot work, ask for it first. */
-const needsAlias = computed(() => !!info.value && !info.value.local && !alias.value);
-const href = (f: Folder) => ideUrl(editor.value, f.path, info.value?.local ? undefined : alias.value);
+const needsAlias = computed(() => !isWeb.value && !!info.value && !info.value.local && !alias.value);
+const href = (f: Folder) =>
+  isWeb.value ? authUrl(`/api/ide/open?folder=${encodeURIComponent(f.path)}`) : ideUrl(chosen.value as DesktopEditor, f.path, info.value?.local ? undefined : alias.value);
+const target = computed(() => (isWeb.value ? "_blank" : undefined));
+
 
 function toggle() {
   if (needsAlias.value) settings.value = true;
@@ -62,24 +73,24 @@ function gear() {
 
 <template>
   <div v-if="info?.folders.length" ref="root" class="ide" @keydown.esc="open = false">
-    <a v-if="info.folders.length === 1 && !needsAlias" class="btn sm" :href="href(info.folders[0])" :title="info.folders[0].path"><Icon name="code" :size="14" />在 {{ label }} 中打开</a>
-    <button v-else class="btn sm" :aria-expanded="open" @click="toggle"><Icon name="code" :size="14" />在 {{ label }} 中打开</button>
+    <a v-if="info.folders.length === 1 && !needsAlias" class="btn sm" :href="href(info.folders[0])" :target="target" :title="info.folders[0].path"><Icon name="code" :size="14" />{{ isWeb ? "在网页版 VS Code 中打开" : `在 ${label} 中打开` }}</a>
+    <button v-else class="btn sm" :aria-expanded="open" @click="toggle"><Icon name="code" :size="14" />{{ isWeb ? "在网页版 VS Code 中打开" : `在 ${label} 中打开` }}</button>
     <button class="btn ghost sm icon" :aria-expanded="open && settings" aria-label="打开方式" @click="gear"><Icon name="settings" :size="13" /></button>
     <div v-if="open" class="menu card" role="dialog" aria-label="在编辑器中打开" :style="{ top: `${at.top}px`, left: `${at.left}px`, width: `${at.width}px` }">
       <template v-if="!needsAlias">
-        <a v-for="f in info.folders" :key="f.path" class="item" :href="href(f)" @click="open = false">
+        <a v-for="f in info.folders" :key="f.path" class="item" :href="href(f)" :target="target" @click="open = false">
           <strong>{{ spaceName(f.space) }}</strong>
           <span class="badge">{{ f.kind === "applied" ? "接收位置" : "工作区" }}{{ f.branch ? ` · ${f.branch}` : "" }}</span>
           <code class="small path">{{ f.path }}</code>
         </a>
       </template>
       <div v-if="settings || needsAlias" class="stack settings">
-        <label class="field"><span>编辑器</span><UiSelect v-model="editor" size="sm" :options="editorOptions" aria-label="编辑器" /></label>
-        <label v-if="!info.local" class="field">
+        <label class="field"><span>编辑器</span><UiSelect :model-value="chosen" size="sm" :options="options" aria-label="编辑器" @update:model-value="(v) => (editor = v)" /></label>
+        <label v-if="!info.local && !isWeb" class="field">
           <span>这台机器（{{ info.host }}）在你电脑上的 SSH 主机名</span>
           <input v-model.lazy="alias" class="input mono" placeholder="~/.ssh/config 里的 Host，如 devbox" />
         </label>
-        <span class="hint">{{ info.local ? "网页就在这台机器上，直接打开本地目录。" : "经 Remote-SSH 打开，要先能用 ssh 连上它；需要跳板的在 ~/.ssh/config 里配 ProxyJump。" }}</span>
+        <span class="hint">{{ isWeb ? "在新标签页里打开这台机器上的网页版 VS Code，不用装 VS Code 或配 SSH。" : info.local ? "网页就在这台机器上，直接打开本地目录。" : "经 Remote-SSH 打开，要先能用 ssh 连上它；需要跳板的在 ~/.ssh/config 里配 ProxyJump。" }}</span>
       </div>
     </div>
   </div>

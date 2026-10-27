@@ -4,15 +4,18 @@ import { ref, watch } from "vue";
  * Opening a coding run's folder in a desktop editor (docs/v2/ide.md). Which editor and the SSH
  * alias of each omem machine belong to the viewer's computer, so they are remembered here.
  */
-export type Editor = "vscode" | "vscode-insiders" | "cursor";
+/** `web`: VS Code in the browser, served by omem under /ide (when the owner turned it on). */
+export type Editor = "vscode" | "vscode-insiders" | "cursor" | "web";
+export type DesktopEditor = Exclude<Editor, "web">;
 export const editorOptions: { value: Editor; label: string }[] = [
   { value: "vscode", label: "VS Code" },
   { value: "vscode-insiders", label: "VS Code Insiders" },
   { value: "cursor", label: "Cursor" },
+  { value: "web", label: "网页版 VS Code" },
 ];
 
 /** `scheme://file/<path>` on this machine, `scheme://vscode-remote/ssh-remote+<alias>/<path>` over SSH. */
-export function ideUrl(editor: Editor, path: string, ssh?: string) {
+export function ideUrl(editor: DesktopEditor, path: string, ssh?: string) {
   const p = path.replace(/\\/g, "/");
   const abs = encodeURI(p.startsWith("/") ? p : `/${p}`).replace(/[?#]/g, encodeURIComponent);
   return ssh ? `${editor}://vscode-remote/ssh-remote+${encodeURIComponent(ssh)}${abs}` : `${editor}://file${abs}`;

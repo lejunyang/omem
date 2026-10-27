@@ -17,6 +17,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import { applyCodeRun, codeApplyTargets, codeFolders, codePatches, codeRunsAt, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
+import { IDE_BASE, attachIdeUpgrade, ensureIdeWeb, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
@@ -834,8 +835,32 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/runs/:id/folders", async (req) => {
     const id = (req.params as { id: string }).id;
     const local = !bearer(req) && /^(127\.|::1$|::ffff:127\.)/.test(req.ip ?? "");
-    return { local, host: hostname(), platform: process.platform, folders: codeFolders(app, id) };
+    return { local, host: hostname(), platform: process.platform, web: app.config.ide.web.enabled, folders: codeFolders(app, id) };
   });
+  // Web VS Code (src/server/ide-web.ts): an ordinary link (the token as a query, like downloads)
+  // starts serve-web, gives the owner's browser the session cookie that opens /ide and redirects
+  // there; /ide itself is proxied raw, body unread.
+  server.get("/api/ide/open", async (req, reply) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "网页版 VS Code 只对本人开放");
+    const { folder } = q(z.object({ folder: z.string().optional(), token: z.string().optional() }), req.query);
+    // Opened in a new tab: a readable sentence, not JSON.
+    const failed = await ensureIdeWeb(app).then(() => null, (e: Error) => e.message);
+    if (failed) return reply.code(503).type("text/plain; charset=utf-8").send(failed);
+    reply.header("set-cookie", newIdeSession()).header("cache-control", "no-store");
+    return reply.redirect(`${IDE_BASE}/${folder ? `?folder=${encodeURIComponent(ideFolder(folder))}` : ""}`);
+  });
+  await server.register(async (ide) => {
+    ide.removeAllContentTypeParsers();
+    ide.addContentTypeParser("*", (_req, _payload, done) => done(null));
+    const pass = async (req: FastifyRequest, reply: FastifyReply) => {
+      reply.hijack();
+      await proxyIde(app, req.raw, reply.raw);
+    };
+    ide.all(IDE_BASE, pass);
+    ide.all(`${IDE_BASE}/*`, pass);
+  });
+  attachIdeUpgrade(app, server.server);
+  server.addHook("onClose", async () => stopIdeWeb());
   // The delegations an editor opened on `folder` belongs to (the VS Code extension, docs/v2/ide.md).
   server.get("/api/code-runs/at", async (req) => {
     const { folder } = q(z.object({ folder: z.string().min(1) }), req.query);

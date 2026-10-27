@@ -868,6 +868,11 @@ async function saveEdit() {
 
     <section v-else-if="tab === 'about'" class="stack">
       <div class="field"><span>主题</span><UiSegmented v-model="state.theme" aria-label="主题" :options="[{ value: 'auto', label: '跟随系统' }, { value: 'light', label: '浅色' }, { value: 'dark', label: '深色' }]" /></div>
+      <div v-if="config" class="card pad stack">
+        <UiCheckbox :model-value="!!config.ide?.web?.enabled" switch @change="(v) => saveConfig({ ide: { ...config.ide, web: { ...config.ide?.web, enabled: v } } })">网页版 VS Code</UiCheckbox>
+        <span class="hint">编码运行的“在 VS Code 中打开”里多一项“网页版”，在浏览器里打开交办的工作区，不用本地装 VS Code 或配 SSH。用的是这台机器上官方的 <span class="mono">code serve-web</span>（第一次打开时会从微软下载对应版本的服务端），由 omem 代理和鉴权，只对本人开放；它带终端，等于这台机器的命令行。</span>
+        <label class="field"><span>code 命令（留空自动找）</span><input :value="config.ide?.web?.command ?? ''" class="input mono" placeholder="code，或 code CLI 的完整路径" @change="(e) => saveConfig({ ide: { ...config.ide, web: { ...config.ide?.web, command: (e.target as HTMLInputElement).value.trim() || undefined } } })" /></label>
+      </div>
       <div class="card pad small stack">
         <div><kbd>Ctrl K</kbd> 搜索或提问 · <kbd>Ctrl J</kbd> 保存材料 · <kbd>Esc</kbd> 关闭引用层</div>
         <div class="muted">omem 也可以作为 MCP 服务给其他 Agent 使用：<span class="mono">omem mcp</span>（加 <span class="mono">--read-only</span> 只开放读取）。</div>

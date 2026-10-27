@@ -15,6 +15,8 @@
 
 网页在 omem 所在的机器上时直接打开本地目录。从别的电脑看（局域网链接、`omem peer open`）时用 Remote-SSH：第一次点会让你填这台机器在你电脑上的 SSH 主机名（`~/.ssh/config` 里的 Host），记在你的浏览器里。旁边的齿轮可以换成 VS Code Insiders 或 Cursor。
 
+在“设置 → 外观与说明”打开“网页版 VS Code”后，齿轮里还能选“网页版 VS Code”：在新标签页里打开 omem 所在机器上的工作区，不用本地装 VS Code，也不用配 SSH。它用的是这台机器上官方的 `code serve-web`（第一次打开会先下载服务端），由 omem 代理和鉴权，只对你开放；它带终端，等于这台机器的命令行。经 `omem peer open` 打开的网页暂时用不了。
+
 ## VS Code 插件
 
 仓库的 `vscode/` 里有插件（`pnpm run package` 打出 .vsix 安装）。打开交办的工作区后：
