@@ -3,7 +3,8 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { discardCodeRun } from "../src/agents/code.ts";
+import { codeFolders, discardCodeRun } from "../src/agents/code.ts";
+import { ideUrl } from "../web/src/lib/ide.ts";
 import { createRun, setRunOutput } from "../src/agents/runs.ts";
 import { leaseWorkspace, listWorkspaces, managedSlot, releaseWorkspace, setupDone, setupKey, workDirOf } from "../src/agents/workspaces.ts";
 import { run as sql } from "../src/core/db.ts";
@@ -97,10 +98,19 @@ describe("reusable workspaces", () => {
     writeFileSync(join(slot, "app.ts"), "export const a = 3;\n");
     setRunOutput(app, r.id, { worktrees: [{ space: "shop-web", path: link, branch: `omem/${r.id}`, base: head, slot }] });
     sql(app.db, "update runs set status = 'done' where id = ?", r.id);
+    // An editor opens the slot itself, not the link to it.
+    expect(codeFolders(app, r.id)).toEqual([{ space: "shop-web", path: slot, kind: "work", branch: `omem/${r.id}` }]);
     discardCodeRun(app, r.id);
+    expect(codeFolders(app, r.id)).toEqual([]);
     expect(existsSync(link)).toBe(false);
     expect(existsSync(slot)).toBe(true);
     expect(sh(root, "branch", "--list", `omem/${r.id}`).trim()).toBe("");
     expect(listWorkspaces(app, repo())).toMatchObject([{ state: "free" }]);
+  });
+
+  it("links to a folder in the editor, locally or over Remote-SSH", () => {
+    expect(ideUrl("vscode", "E:\\work\\shop web")).toBe("vscode://file/E:/work/shop%20web");
+    expect(ideUrl("cursor", "/home/me/repo#1")).toBe("cursor://file/home/me/repo%231");
+    expect(ideUrl("vscode", "/srv/omem/runs/r1/work/shop-web", "devbox")).toBe("vscode://vscode-remote/ssh-remote+devbox/srv/omem/runs/r1/work/shop-web");
   });
 });

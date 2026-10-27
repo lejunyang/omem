@@ -2,7 +2,7 @@
 
 目标：交办编码不用每次重装依赖；评审时能在 VS Code 里直接打开交办的工作区，用编辑器自己的跳转、搜索、Git 面板看代码；最后由 VS Code 插件把发起交办、看过程、评审、应用和推送接到 omem。宿主仍只做数据、调度和权限，插件和网页一样只是客户端。
 
-分三步做，第一步已实现。
+分三步做：复用工作区、桌面 VS Code 打开已实现，网页版 VS Code 和插件还是计划。
 
 ## 一、复用工作区（已实现）
 
@@ -25,16 +25,22 @@
 
 `omem peer pull` 不需要改：快照按 `runs/*/work/*` 收集编码工作区，链接按真实路径读出，在另一台机器上恢复成普通目录；那台机器上没有对应租约，归还时只删目录。空间设置会随数据拉到别的设备，那里不存在的目录会被跳过。
 
-## 二、在 VS Code 里打开工作区（计划）
+## 二、在 VS Code 里打开工作区（桌面版已实现，网页版计划）
 
-### 桌面 VS Code
+### 桌面 VS Code（已实现）
 
 桌面版能连远程的方式只有几种：Remote-SSH、Remote Tunnels（`code tunnel`，经微软的中继，用 GitHub 或微软账号登录）、WSL、Dev Containers。omem 管不了 VS Code 的连接，只负责给出能直接打开的链接：
 
 - 本机：`vscode://file/<工作区路径>`
-- 远程设备：`vscode://vscode-remote/ssh-remote+<SSH 主机别名><工作区路径>`。主机别名按设备配置（peers 的 `ide.sshHost`），要先在 `~/.ssh/config` 里能连上；需要跳板的用 `ProxyJump`。
+- 远程设备：`vscode://vscode-remote/ssh-remote+<SSH 主机别名><工作区路径>`，要先在 `~/.ssh/config` 里能连上；需要跳板的用 `ProxyJump`。
 
-运行页和插件的运行列表都放“在 VS Code 中打开”。打开的是工作区真实路径（复用工作区就是那个目录），这样 VS Code 的 Git 面板直接认得它。
+编码运行的页头有“在 VS Code 中打开”（`web/src/components/OpenInIde.vue`、`lib/ide.ts`）。`GET /api/runs/:id/folders`（只对本人）给出能打开的目录：工作区还在时是工作区的真实路径（复用工作区就是那个目录，VS Code 的 Git 面板直接认得它），应用后是接收位置；还带上 `local`（请求来自本机回环且没带令牌，网页就在这台机器上）和这台机器的主机名。
+
+- 网页在本机：直接用本地链接。
+- 网页在别的电脑上（局域网链接、`omem peer open`）：第一次点时要填这台机器在那台电脑上的 SSH 主机名，存在那台电脑的浏览器里，按 omem 机器的主机名区分。主机名是看的人那边 `~/.ssh/config` 里的名字，所以不放在 omem 的配置里。
+- 编辑器可选 VS Code、VS Code Insiders、Cursor，链接格式相同，只换协议名。
+
+插件的运行列表也放同样的入口。
 
 不建议依赖 Remote Tunnels：鉴权在微软那边，不归 omem 管，公司网络也常常拦。
 

@@ -7,7 +7,7 @@ import { profileDetail } from "../agents/profiles.ts";
 import { cachedProbe } from "../agents/probe.ts";
 import { applyProposal, attachSkills, profileExists, rejectProposal } from "../agents/proposals.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { dirname, join, resolve, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyMultipart from "@fastify/multipart";
@@ -16,7 +16,7 @@ import fastifyCompress from "@fastify/compress";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
-import { applyCodeRun, codeApplyTargets, codePatches, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
+import { applyCodeRun, codeApplyTargets, codeFolders, codePatches, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
@@ -828,6 +828,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
     if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
     return { run: { ...r, waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children: listRuns(app, { parentId: id }), patches: r.kind === "code" ? codePatches(app, id) : undefined, context: runContext(app, r) };
+  });
+  // Folders to open in an editor; `local`: the page is on this machine (loopback, no token), so a
+  // local link works; otherwise the viewer reaches them over SSH (`host` keys their alias for it).
+  server.get("/api/runs/:id/folders", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const local = !bearer(req) && /^(127\.|::1$|::ffff:127\.)/.test(req.ip ?? "");
+    return { local, host: hostname(), platform: process.platform, folders: codeFolders(app, id) };
   });
   server.post("/api/runs/:id/cancel", async (req) => {
     const id = (req.params as { id: string }).id;

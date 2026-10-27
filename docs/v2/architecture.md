@@ -200,7 +200,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
-| 复用工作区：仓库空间可把已有的 worktree（`workspaces`）和 omem 自建的几个（`pool`）借给交办，租约在工作区 git 目录里、随运行链接失效，归还时重置但保留忽略的文件、回到原分支；准备命令（`setupCommand`）按锁文件变化才运行；检查命令在 Windows 上的引号修正。VS Code 打开工作区与插件见 docs/v2/ide.md（计划） | 已实现；2026-10-28，`test/workspaces.test.ts`、`test/branch-review.test.ts`（假 ACP 两次交办只准备一次） | `src/agents/workspaces.ts`、`code.ts`、设置 → 空间 |
+| 复用工作区：仓库空间可把已有的 worktree（`workspaces`）和 omem 自建的几个（`pool`）借给交办，租约在工作区 git 目录里、随运行链接失效，归还时重置但保留忽略的文件、回到原分支；准备命令（`setupCommand`）按锁文件变化才运行；检查命令在 Windows 上的引号修正。运行页“在 VS Code 中打开”（本机链接或 Remote-SSH 链接，SSH 主机名存在看的人的浏览器里；`GET /api/runs/:id/folders`）；网页版 VS Code 与插件见 docs/v2/ide.md（计划） | 已实现；2026-10-28，`test/workspaces.test.ts`、`test/branch-review.test.ts`（假 ACP 两次交办只准备一次） | `src/agents/workspaces.ts`、`code.ts` 的 `codeFolders`、设置 → 空间、`web/src/components/OpenInIde.vue` |
 | `omem peer pull` 拉取完整业务数据、文件与代码仓库：辅助表跨设备标识、引用换算、聊天追加合并、仓库与编码工作区恢复、覆盖备份与失败回滚；新导入的执行任务停用 | 已实现；2026-10-27，SSH、HTTP 中转、冲突与恢复回归覆盖，跨真实设备待验 | `src/core/pull.ts`、`pull-data.ts`、`pull-transfer.ts`、`pull-snapshot.ts`、`pull-repos.ts` |
 | 应用后查看 Git 状态和暂存 diff，网页填写提交信息或主助手工具提交 / 推送；按运行与仓库限定接收目录、状态检查、保留失败后的本地提交及操作记录 | 已实现；临时 Git 仓库回归覆盖 | `src/agents/code-git.ts`、`test/code-git.test.ts`、`web/src/components/CodeGitPanel.vue` |
 | 编码修改应用到原目标分支，复用或建立接收工作区，不切换仓库主目录；续轮沿用首轮目标，确认框及结果显示实际目录，应用后读文件走接收位置 | 已实现；真实 Git 专项回归覆盖 | `src/agents/code.ts`、`test/code-worktrees.test.ts` |

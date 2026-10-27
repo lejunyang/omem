@@ -19,6 +19,7 @@ import DiffTree from "../components/DiffTree.vue";
 import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import ReviewSummary from "../components/ReviewSummary.vue";
 import CodeSteer from "../components/CodeSteer.vue";
+import OpenInIde from "../components/OpenInIde.vue";
 import ReviewChecks from "../components/ReviewChecks.vue";
 import ChangeView from "../components/ChangeView.vue";
 import RunActivity from "../components/RunActivity.vue";
@@ -484,6 +485,7 @@ const kindOptions = computed(() => [
               <button class="btn sm danger" :title="branchReview ? '删除评审用的工作区和它的索引' : undefined" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
             </template>
             <span v-if="out.appliedAt" class="badge ok">已应用 {{ fmtTime(out.appliedAt) }}</span>
+            <OpenInIde v-if="detail.run.kind === 'code'" :key="`${detail.run.id}:${out.appliedAt ?? ''}:${out.discardedAt ?? ''}:${detail.run.status}`" :run-id="detail.run.id" :space-name="spaceName" />
             <button v-if="detail.run.kind === 'code'" class="btn ghost sm" @click="explaining = null; asking = 'open'"><Icon name="chat" :size="14" />提问</button>
           </div>
         </header>

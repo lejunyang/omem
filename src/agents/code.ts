@@ -647,6 +647,19 @@ function applyTargets(app: App, runId: string): ApplyTarget[] {
   });
 }
 
+/**
+ * Folders an editor can open for a coding run (docs/v2/ide.md): its worktrees while they exist (a
+ * reused slot by its own path), and where the change landed once applied.
+ */
+export function codeFolders(app: App, runId: string): { space: string; path: string; kind: "work" | "applied"; branch: string | null }[] {
+  const r = getRun(app, runId);
+  if (r.kind !== "code") return [];
+  const rootId = String(r.input.continueFrom ?? r.id);
+  const applied = (getRun(app, rootId).output.appliedTo ?? r.output.appliedTo) as AppliedTarget[] | undefined;
+  if (applied?.length) return applied.filter((t) => existsSync(t.path)).map((t) => ({ space: t.space, path: t.path, kind: "applied", branch: t.branch }));
+  return worktreesOf(app, rootId).filter((w) => existsSync(w.path)).map((w) => ({ space: w.space, path: workDirOf(w), kind: "work", branch: w.branch || w.ref || null }));
+}
+
 /** Preview for the confirmation dialog; creating branch worktrees happens only on apply. */
 export function codeApplyTargets(app: App, runId: string): AppliedTarget[] {
   return applyTargets(app, runId).map(({ space, path, branch }) => ({ space, path, branch }));

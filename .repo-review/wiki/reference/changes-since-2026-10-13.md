@@ -636,3 +636,4 @@ updated: 2026-10-28
 - **准备命令**：仓库设置 `setupCommand`，`code.ts` 在同步之后、编码之前对每个工作区比较命令和锁文件（Git 索引里的版本）与上次成功时的 `setupKey`，变了才运行；失败不中止，失败输出交给编码 Agent。
 - **检查命令的引号**：`code.ts` 的 `shell` 在 Windows 上照 Node `shell: true` 的方式原样传给 cmd，带双引号的检查命令以前会被转义坏。
 - **网页与接口**：设置 → 空间 → 编辑（仓库空间）加准备命令、复用工作区数量和目录，列出各工作区状态；`GET /api/spaces/:id/workspaces`。
+- **在 VS Code 中打开**：`code.ts` 的 `codeFolders`（工作区的真实路径，应用后为接收位置）与 `GET /api/runs/:id/folders`（带 `local`、主机名）；网页 `OpenInIde.vue` 和 `lib/ide.ts` 生成 `vscode://file/…` 或 `vscode://vscode-remote/ssh-remote+<别名>/…`，SSH 别名和编辑器（VS Code / Insiders / Cursor）存在看的人的浏览器里。
