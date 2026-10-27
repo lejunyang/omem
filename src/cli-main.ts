@@ -7,7 +7,9 @@ import { ask, scheduleIngest, scheduleSpaceSync, type PageBrief } from "./agents
 import { createMcpServer } from "./agents/mcp-server.ts";
 import { listAgentProfiles } from "./agents/runner.ts";
 import { createRun, getRun, waitForRun, type Run } from "./agents/runs.ts";
-import { callTool, toolSchemas } from "./agents/tools.ts";
+import { callTool, mcpTools, toolSchemas } from "./agents/tools.ts";
+import { toolArgs } from "./agents/tool-cli.ts";
+import { ROLE_TOOLS } from "./agents/tool-help.ts";
 import { App, type AppEvent } from "./core/app.ts";
 import { configPath, omemHome } from "./core/config.ts";
 import { createSpace, ensurePersonalSpace, getSpace, kindLabel, listSpaces, relatedIds, relateSpaces, spaceForDir, unrelateSpaces, updateSpace } from "./core/spaces.ts";
@@ -1029,6 +1031,16 @@ agents
     console.log(`✓ ${p.id} → ${p.command} ${p.args.join(" ")}\n第一次使用前，先在终端直接运行该 Agent 登录一次。`);
   });
 
+/** What an outside agent (omem mcp, or omem tool without a run token) may use: everything but delegating code. */
+function externalToolContext(o: { readOnly?: boolean; space?: string }) {
+  const app = open();
+  const readOnly = new Set(["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "list_runs", "read_run"]);
+  // An agent working inside a repository gets that repository's space (and its related ones) by default.
+  const spaceId = o.space ? getSpace(app, o.space).id : (spaceForDir(app, process.cwd()) ?? "personal");
+  const tools = new Set(toolSchemas(o.readOnly ? readOnly : null).map((t) => t.name).filter((n) => !ROLE_TOOLS.includes(n) && n !== "delegate_code" && n !== "review_branch"));
+  return { app, runId: null, spaceId, spaces: null, tools, actor: "agent" as const };
+}
+
 program
   .command("mcp")
   .description("以 stdio MCP 服务暴露 omem 工具（供 Claude Code、Codex 等直接使用个人库）")
@@ -1036,14 +1048,30 @@ program
   .option("--space <id>", "默认空间（不填时按当前目录找关联了它的空间，找不到用 personal）")
   .action(async (o) => {
     const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
-    const app = open();
-    const readOnly = new Set(["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "list_runs", "read_run"]);
-    // An agent working inside a repository gets that repository's space (and its related ones) by default.
-    const spaceId = o.space ? getSpace(app, o.space).id : (spaceForDir(app, process.cwd()) ?? "personal");
-    const ctx = { app, runId: null, spaceId, spaces: null, tools: o.readOnly ? readOnly : null, actor: "agent" as const };
-    const tools = new Set(toolSchemas(ctx.tools).map((t) => t.name).filter((n) => n !== "submit_plan" && n !== "delegate_code" && n !== "review_branch"));
-    const server = createMcpServer({ list: async () => toolSchemas(tools), call: (name, args) => callTool({ ...ctx, tools }, name, args) });
+    const ctx = externalToolContext(o);
+    const server = createMcpServer({ list: async () => mcpTools(ctx.tools), call: (name, args) => callTool(ctx, name, args) });
     await server.connect(new StdioServerTransport());
+  });
+
+program
+  .command("tool")
+  .description("在终端里调用 omem 工具（omem tool help 看说明）；omem 运行里的 Agent 带着本次运行的权限（OMEM_TOKEN）")
+  .argument("[name]", "工具名；help 看说明；不填列出能用的工具")
+  .argument("[args...]", "JSON 参数，或 键=值（值是 JSON 就按 JSON 解析）；help 后面跟工具名或分组")
+  .option("-f, --file <path>", "从文件读 JSON 参数（- 为标准输入）")
+  .option("--read-only", "没有运行令牌时只开放读取类工具")
+  .option("--space <id>", "没有运行令牌时的默认空间")
+  .action(async (name: string | undefined, rest: string[], o: { file?: string; readOnly?: boolean; space?: string }) => {
+    const call = !name || name === "help" ? { tool: "omem_help", args: { topic: rest.join(",") || undefined } } : { tool: name, args: toolArgs(rest, o.file) };
+    const token = process.env.OMEM_TOKEN;
+    let r: { text: string; isError: boolean };
+    if (token) {
+      const url = process.env.OMEM_URL ?? "http://127.0.0.1:4317";
+      const res = await fetch(`${url}/api/tools/${encodeURIComponent(call.tool)}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(call.args) });
+      r = res.ok ? ((await res.json()) as typeof r) : { text: `调用失败：HTTP ${res.status} ${await res.text()}`, isError: true };
+    } else r = await callTool(externalToolContext(o), call.tool, call.args);
+    (r.isError ? process.stderr : process.stdout).write(r.text.endsWith("\n") ? r.text : r.text + "\n");
+    if (r.isError) process.exitCode = 1;
   });
 
 program

@@ -51,7 +51,7 @@ flowchart LR
 - **原件**是依据，只保留最新版；聊天按追加保存。**Wiki、记忆、事项**是派生知识，都引用原件。
 - **空间归属与归档**：问答、原件（含文档）、运行列表跟随所选空间；切换空间退出旧详情。规则分为“任务规则”和“归档规则”。自动采集优先使用手动归属和来源绑定，再按创建顺序匹配条件，未命中的批量交给归档角色判断，不确定的仍放个人空间。归档规则可让 AI 编写草稿，核对后保存启用；历史材料先预览再应用，迁移保留 ID、引用和行号。
 - **原件页**：普通空间按列表展示；代码仓库空间在文件较多时按目录展示，网址和会话标识保留为独立原件。
-- 理解和写作由你已安装的 **Agent** 完成（通过 ACP 或命令行），它们用 omem 的 MCP 工具检索、阅读、写入，同时保有自己的文件与搜索能力。omem 负责存储、索引、调度和权限，不自带模型。
+- 理解和写作由你已安装的 **Agent** 完成（通过 ACP 或命令行），它们用 omem 的工具（MCP，或 shell 里的 `omem tool`）检索、阅读、写入，同时保有自己的文件与搜索能力。omem 负责存储、索引、调度和权限，不自带模型。
 - **Wiki** 是 Markdown 文件，整个知识库目录是一个 Git 仓库，每次修改都有历史和差异。
 - **记忆**被更正时不覆盖：旧版本标记为“已被更正”并链接到新版本，所以“之前怎么约定的”和“现在是什么”都能回答。
 - **记忆按目录分层**：每条记忆在空间里有一个目录（如 `工作/项目A/发布`，最多三层），记忆页左侧是目录树。助理写记忆时按目录说明选目录，没有合适的才新建并写一句说明；拿不准的先放“未归档”，每两小时由整理目录的运行归档，每周再看一遍结构（拆太满的、并太小的、补说明）。标签只用来串起跨目录的东西（同一个人、同一个季度）。
@@ -218,6 +218,7 @@ omem branches shop-api [--fetch] [--index <分支>] [--drop <分支>]   # 分支
 omem digest proj --mode triage --title-contains 值班 --goal "…"     # 整理存量材料：分级 / 精读（--mode digest --agent <档案>）；--parallel 同时几批，--pace <任务> 调速度；不带参数看进度
 omem search --space shop-api --branch feature/refund "退款金额"     # 查分支上的代码
 omem mcp [--read-only] [--space <id>]       # 把个人库作为 MCP 服务给其他 Agent 用（默认空间按当前目录所在的仓库空间）
+omem tool [工具名] [JSON | 键=值 … | -f 文件]  # 在终端里调用 omem 工具；omem tool help [工具名|分组] 看说明；omem 运行里的 Agent 带着本次运行的权限
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
 omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入
 omem roles [list|customize|reset|merge] <名>  # 内置角色：复制到知识库自定义、恢复源码版本、合并源码更新（冲突交给模型）
@@ -249,7 +250,9 @@ omem link                                   # 从其他设备打开网页的链�
 
 ## 给其他 Agent 用
 
-在 Claude Code、Codex 等里把 omem 配成 MCP 服务（`omem mcp`，只读用 `--read-only`），它们就能检索你的知识库、读原文、记记忆和事项。`skills/omem/SKILL.md` 是给这些 Agent 的使用说明（工具清单、写记忆的要求、命令行），可以直接放进它们的技能目录。
+在 Claude Code、Codex 等里把 omem 配成 MCP 服务（`omem mcp`，只读用 `--read-only`），它们就能检索你的知识库、读原文、记记忆和事项。`skills/omem/SKILL.md` 是给这些 Agent 的使用说明（概览和接入方式），各类工具的做法分在 `skills/omem/references/` 里，可以把整个目录放进它们的技能目录。能跑 shell 的 Agent 也可以不配 MCP，直接用 `omem tool <工具名> 键=值 …`。
+
+工具很多（约 100 个），为了不占上下文，常用的二十来个直接作为 MCP 工具列出，其余的经 `omem_help`（看说明）和 `omem_call`（调用）使用；omem 自己调用的 Agent 也是这样。omem 启动 Agent 时给它的进程带上本次运行的令牌（`OMEM_TOKEN`）并把 `omem` 放进 PATH，它在 shell 里用 `omem tool` 时，能用的工具和能读写的空间与 MCP 一样由服务检查。
 
 ## 记录编码 Agent 的会话
 
@@ -391,7 +394,7 @@ src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角�
 src/channels  飞书机器人（发送、卡片、进度、回调、监听群、访客提问、多个机器人与互相转交 lark-bots.ts）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查、巡检、简报、做梦、筛群、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md
-skills/omem     给外部 Agent 的 omem 使用说明（配合 omem mcp）
+skills/omem     omem 工具的使用说明：SKILL.md 概览，references/ 按分组讲做法（omem_help(分组) 返回同一份内容）
 skills/library  内置技能（如 lark-messaging），首次启动播种到 library/_skills
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
 scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）

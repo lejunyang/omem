@@ -5,7 +5,7 @@
 ## 仓库里的几类说明
 
 - `roles/*.md`：omem 自己调用 Agent 时各角色的工作说明（`_common.md` 是共同部分，含“怎么写记忆”）；`config.ts` 的 `roleNames` 列出全部角色，新增角色两边都要加。
-- `skills/omem/SKILL.md`：给外部 Agent（配 `omem mcp`）的使用说明。MCP 工具的名字、参数或写入规则变了要同步它。
+- `skills/omem/`：omem 工具的使用说明，外部 Agent（`omem mcp` 或 `omem tool`）和 omem 自己的 Agent 共用。`SKILL.md` 只写概览和接入，各类工具的做法在 `references/<分组>.md`（`omem_help(分组)` 返回它）。新增工具要放进 `src/agents/tool-help.ts` 的 `TOOL_GROUPS`，并在对应 reference 里写要点；只有几乎每次都用、或某个角色专门用来交结果的工具才加进 `CORE_TOOLS`（直接列出），其余经 `omem_call` 使用，不占上下文。工具的名字、参数或写入规则变了要同步对应的 reference。
 - `skills/library/*`：内置技能，首次启动播种到数据目录的 `library/_skills`（已播种的不会被覆盖）。
 - `.agents/skills/*`：在本仓库开发时用的技能（`omem-design` 网页约定、`osdk-guide`、`lieflat-less-ai-tone` 中文表达检查）。网页约定变了更新 `omem-design`。
 - `CLAUDE.md` 只引入本文件；个人的说明（机器、账号、进行中的事）放 `CLAUDE.local.md`，不进仓库。
@@ -40,7 +40,7 @@
 
 - Wiki 按读者问题组织，不按文件逐个生成。写作要求在 roles/wiki-writer.md；改写作质量优先改角色说明，其次才改代码。
 - 文档和生成内容用中文，直接具体，避免套话。成稿可按 `.agents/skills/lieflat-less-ai-tone/SKILL.md` 检查表达，不改事实和结构。
-- 功能变了在同一个提交里同步：README（功能介绍、“日常用途”、命令行清单、代码结构）、docs/v2/architecture.md 的实现状态表、acceptance.md 的验收项、`.repo-review/wiki/reference/changes-since-2026-10-13.md`；动了 MCP 工具还要改 `skills/omem/SKILL.md`，动了网页约定改 `.agents/skills/omem-design`。
+- 功能变了在同一个提交里同步：README（功能介绍、“日常用途”、命令行清单、代码结构）、docs/v2/architecture.md 的实现状态表、acceptance.md 的验收项、`.repo-review/wiki/reference/changes-since-2026-10-13.md`；动了 omem 工具还要改 `skills/omem/references/` 里对应的分组，动了网页约定改 `.agents/skills/omem-design`。
 - VS Code 插件在 `vscode/`（独立 package 和锁文件，`cd vscode && pnpm install --ignore-workspace && pnpm run build`；`node test/run.mjs` 在真实 VS Code 里测）。它只调 HTTP API，宿主改了运行、评审、问答、交办的接口要一起看它；设计在 docs/v2/ide.md。
 - 文档站在 `site/`（VitePress，独立的 package 和锁文件，`cd site && pnpm install --ignore-workspace && pnpm run dev`；推到 main 后由 `.github/workflows/docs.yml` 发布到 GitHub Pages）。功能有变化时同步 `site/features/*.md` 或 `site/guide/*.md` 里对应的页面；主题沿用 `web/src/styles.css` 的 token（`site/.vitepress/theme/custom.css`），网页的颜色和字体变了这里一起改。
 - 截图：`site/public/screens/*.png` 按功能命名（`review-overview`、`wiki-citations`……），文档站和 README 共用。改了这些页面的界面后，`pnpm run build && node scripts/doc-screens.ts` 重新生成全部截图（直接覆盖同名文件）；新功能要截图就在脚本里加演示数据和一项 `shots`。脚本用虚构的演示数据（示例商城 · 退款改造），不要换成本机或常驻服务器的真实数据截图。

@@ -30,7 +30,7 @@ import { createMcpServer } from "../agents/mcp-server.ts";
 import { listAgentProfiles, loadRole, profileFor, resolveRunProfile } from "../agents/runner.ts";
 import type { RoleName } from "../core/config.ts";
 import { cancelRun, countRuns, createRun, getRun, listRuns, queueReason, runEvents } from "../agents/runs.ts";
-import { callTool, toolContextForToken, toolList, toolSchemas } from "../agents/tools.ts";
+import { callTool, mcpTools, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { configSchema, saveConfig } from "../core/config.ts";
@@ -113,11 +113,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!ctx) throw new HttpError(401, "无效的工具令牌");
     return ctx;
   };
-  server.get("/api/tools", async (req) => ({ tools: toolSchemas(toolCtx(req).tools) }));
+  server.get("/api/tools", async (req) => ({ tools: mcpTools(toolCtx(req).tools) }));
   server.post("/api/tools/:name", async (req) => callTool(toolCtx(req), (req.params as { name: string }).name, req.body));
   const mcp = async (req: FastifyRequest, reply: FastifyReply) => {
     const ctx = toolCtx(req);
-    const mcpServer = createMcpServer({ list: async () => toolSchemas(ctx.tools), call: (name, args) => callTool(ctx, name, args) });
+    const mcpServer = createMcpServer({ list: async () => mcpTools(ctx.tools), call: (name, args) => callTool(ctx, name, args) });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     reply.hijack();
     reply.raw.on("close", () => {

@@ -37,6 +37,7 @@ import { findAgentSpec, listAgentSpecs, listSkills, readSkillFile, readAgentSpec
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
 import { setApprovalExecutor } from "./asks.ts";
+import { helpText, metaSchemas, splitDirect } from "./tool-help.ts";
 
 export type ToolContext = {
   app: App;
@@ -3262,7 +3263,23 @@ export function toolSchemas(filter?: Set<string> | null) {
   return toolList(filter).map((t) => ({ name: t.name, description: t.description, inputSchema: z.toJSONSchema(t.schema) as Record<string, unknown> }));
 }
 
+/** What an MCP client lists: the run's core tools, plus omem_help / omem_call for the rest (tool-help.ts). */
+export function mcpTools(filter?: Set<string> | null) {
+  const { direct, rest } = splitDirect(toolSchemas(filter));
+  return rest.length ? [...direct, ...metaSchemas(rest)] : direct;
+}
+
+const metaArgs = { omem_help: z.object({ topic: z.string().optional() }), omem_call: z.object({ tool: z.string(), args: z.record(z.string(), z.unknown()).optional() }) };
+
 export async function callTool(ctx: ToolContext, name: string, args: unknown): Promise<{ text: string; isError: boolean }> {
+  if (name === "omem_help" || name === "omem_call") {
+    const parsed = metaArgs[name].safeParse(args ?? {});
+    if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
+    if (name === "omem_help") return { text: helpText(toolSchemas(ctx.tools), (parsed.data as { topic?: string }).topic), isError: false };
+    const call = parsed.data as { tool: string; args?: Record<string, unknown> };
+    if (call.tool === "omem_help" || call.tool === "omem_call") return { text: "omem_call 不能调用它自己或 omem_help", isError: true };
+    return callTool(ctx, call.tool, call.args ?? {});
+  }
   const tool = tools.find((t) => t.name === name);
   if (!tool || (ctx.tools && !ctx.tools.has(name))) return { text: `工具 ${name} 不可用`, isError: true };
   const parsed = tool.schema.safeParse(args ?? {});

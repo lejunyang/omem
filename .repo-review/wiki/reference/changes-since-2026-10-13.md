@@ -644,3 +644,13 @@ updated: 2026-10-28
 - **插件连配对的设备不再要本机服务**：`connection.ts` 的 `pairedPeers` 读数据目录（`omem.home` / `OMEM_HOME` / `~/.omem`）的 `secrets/peers.json`，`target()` 照 `peerFetch` 的走法算出请求地址和令牌（直连用设备地址，`via` 发到中间设备的 `/api/peers/<id>`，地址不应答时试其他地址）；没有数据目录时才经本机服务转发。连接选项改名“本机配对的设备”。
 - **先应用再接着改**：`code.ts` 的 `applyCodeRun(…, { keepWorking })` 应用后保留工作区，把应用的部分在工作区里提交（`omem: 已应用到 …`）作为新的起点，之后的差异和下一次应用只含新改的；`partlyAppliedTo` / `partlyAppliedAt` 让运行页和 `code_git_action` 能在接收目录提交。网页概览的“先应用再接着改”、`fix_review` / `continue_code_run` 的 `apply_first`。
 - **按钮状态**：`styles.css` 的悬停样式不作用于禁用的按钮；`api.ts` 给触发写请求的按钮加 `busy`（转圈、不可点），请求结束移除；`.lnk` 改为全局样式。评审选项收成一行摘要，点开再选；之前各轮的“暂不改”改为“改”时本地状态同步更新。
+
+## 2026-10-28：工具按需给出、omem tool 命令行
+
+起因是主助手每次会话要带 80 个工具、约 65KB 的参数说明，每加一个能力就再多一个工具。
+
+- **按需给出**：新增 `src/agents/tool-help.ts`。`CORE_TOOLS` 是直接列出的常用工具（检索、读原件、记忆、事项、问本人、`lark_send`，以及各后台角色交结果的工具）；一次运行能用的工具超过 `DIRECT_ALL`（20）个时，其余的不单独列出，换成 `omem_help`（工具名看说明和参数，分组 id 看 `skills/omem/references/<分组>.md`，不填列出全部）和 `omem_call(tool, args)`。`omem_call` 的说明里按分组列着本次能用的工具名和一句话用途。`tools.ts` 的 `mcpTools` 给 MCP 列表用（`/api/tools`、`/mcp`、`omem mcp`），`callTool` 处理这两个工具，转调时照常检查工具清单、审批和对比运行。主助手的工具说明约从 65KB 降到 18KB；工具不多的角色不变。
+- **omem tool**：`src/cli-main.ts` 新增 `omem tool [名] [参数…]`：一个 JSON 对象、`键=值`（值能按 JSON 解析就按 JSON）或 `-f 文件`（`-` 为标准输入）；`omem tool help [名|分组]`。有 `OMEM_TOKEN` 时调服务的 `/api/tools/<名>`，没有时按 `omem mcp` 的范围在本机执行（`externalToolContext`，不含交办编码、评审分支和角色专用工具）。
+- **Agent 进程的环境**：新增 `src/agents/tool-cli.ts`。`prepareRun` 的 `mcp.env` 带 `OMEM_URL`、`OMEM_TOKEN`，并把 `<数据目录>/bin` 放到 PATH 前面，那里的 `omem`（Windows 为 `omem.cmd`）用当前的 node 运行当前的 omem；`acp.ts`、`cli.ts` 启动 Agent 时合并进去。环境变量本身不授权，权限仍由令牌决定。
+- **说明拆分**：`skills/omem/SKILL.md` 只留概览、接入方式和分组表，原来的长清单按分组移到 `references/`（sources、memory、items、wiki、agents、owner、code、lark、learning）。`roles/_common.md` 开头说明了 `omem_call` / `omem_help` 和 `omem tool`。
+- 测试：`test/tool-help.test.ts`（分组完整、列表拆分、权限、参数说明、命令行参数、环境）。

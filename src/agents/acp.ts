@@ -55,7 +55,7 @@ export type AcpHandle = {
 };
 
 export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitSetup: (e: AgentEvent) => void = () => {}): Promise<AcpHandle> {
-  const child = launch(profile.command, profile.args, { cwd: opts.cwd, env: { ...profile.env, ...opts.env } });
+  const child = launch(profile.command, profile.args, { cwd: opts.cwd, env: { ...profile.env, ...opts.mcp?.env, ...opts.env } });
   let stderr = "";
   child.stderr.on("data", (d: Buffer) => {
     stderr = (stderr + d.toString()).slice(-4000);

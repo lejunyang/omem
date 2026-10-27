@@ -79,4 +79,11 @@ osdk run upgrade --restart    # 或 node scripts/upgrade.ts --restart
 omem mcp                  # 只读用 --read-only
 ```
 
-它们就能检索你的知识库、读原文、记记忆和事项。仓库里的 `skills/omem/SKILL.md` 是给这些 Agent 的使用说明，可以放进它们的技能目录。
+它们就能检索你的知识库、读原文、记记忆和事项。仓库里的 `skills/omem/` 是给这些 Agent 的使用说明（`SKILL.md` 概览，`references/` 按分组），可以整个放进它们的技能目录。能跑 shell 的 Agent 也可以直接用命令行：
+
+```bash
+omem tool help memory                      # 记忆类工具的做法
+omem tool search query="退款 幂等"           # 调用一个工具，键=值 或一个 JSON 对象
+```
+
+常用的工具直接列出，其余的经 `omem_help`（看说明）和 `omem_call`（调用）使用，不会一次把一百个工具的说明塞进 Agent 的上下文。

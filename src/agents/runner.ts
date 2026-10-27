@@ -21,6 +21,7 @@ import { isAgentRunError, type AgentEvent, type AgentResult, type McpAccess } fr
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, type AgentSpec, type McpServerSpec } from "./specs.ts";
 import { isBuiltinRole, roleOverrideText, rolesDir } from "./builtin-roles.ts";
+import { agentToolEnv } from "./tool-cli.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -318,7 +319,7 @@ export function prepareRun(
     system,
     stableSystem: system.replace(currentTime, "<current-time>"),
     token,
-    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge() },
+    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: agentToolEnv(app.home, app.baseUrl, token) },
     extraMcp: input.reviewCheck || input.reviewLead ? {} : spec?.mcp ?? {},
     allowWrites: input.reviewCheck || input.reviewLead ? false : spec ? spec.writes : role!.writes,
     modes: input.reviewCheck || input.reviewLead ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,

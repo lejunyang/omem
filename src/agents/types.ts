@@ -17,6 +17,8 @@ export type McpAccess = {
   baseUrl: string;
   token: string;
   stdio: { command: string; args: string[] };
+  /** For the agent process: the token and an `omem` on PATH, so `omem tool` in its shell acts for this run. */
+  env?: Record<string, string>;
 };
 
 export type AgentRequest = {

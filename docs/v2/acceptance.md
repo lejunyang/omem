@@ -525,6 +525,14 @@ TraeX 与其他 ACP 的清理补验：
 | 设置 → Agent → 任务选型开着、列了候选，让助手交办一件简单的整理和一件跨模块的改动 | 两次交办的 `execution` 分别选了合适的候选，`source: auto`，运行详情显示所选模型和理由 | 待真实模型验 |
 | Agent 页、设置页来回切换几次 | 只在第一次没有缓存时检测模型，之后直接显示上次结果和检测时间；点“重新检测”才再问后端 | 本地检查 |
 
+## 工具按需给出与 omem tool（2026-10-28）
+
+- 对主助手问一个要交办编码的问题（“让 shop-api 修一下退款金额”）：运行事件里它调用的是 `omem_call`（tool=delegate_code），交办照常开始；问一个要查记忆的问题，直接调用 `recall`。
+- 运行中让 Agent 在 shell 里执行 `omem tool help memory`：输出记忆分组的做法和本次能用的记忆工具；执行 `omem tool list_memory_folders`：返回本人的记忆目录。让一个只读角色执行 `omem tool forget memory_id=m_x reason=x`：报“工具 forget 不可用”，退出码 1。
+- 本人在终端里 `omem tool search query=退款`：不需要服务在运行；`omem tool delegate_code task=x`：报不可用。
+- 外部 Claude Code / Codex 配 `omem mcp`：工具列表里有 `search`、`recall` 等和 `omem_help`、`omem_call`，没有 `delegate_code`、`submit_review` 等角色专用工具。
+- 自动回归：`test/tool-help.test.ts`。
+
 ## 交办进行中调整与评审页修正（2026-10-27）
 
 - 概览里写了补充要求，切到“变更”再回来：文字还在；刷新页面也还在，点“开始修改”后清空。
