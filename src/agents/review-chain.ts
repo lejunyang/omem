@@ -16,6 +16,7 @@ import { runRole } from "./runner.ts";
 import { createRun, getRun, registerHandler, runUser, setRunOutput, type Run } from "./runs.ts";
 import { readAgentSpec } from "./specs.ts";
 import { replyOf } from "./types.ts";
+import { workDirOf } from "./workspaces.ts";
 
 /**
  * One review round of a coding delegation (docs/v2/review.md §4): the planned checks run in their
@@ -70,7 +71,7 @@ async function reviewContext(app: App, codeRunId: string, note?: string) {
   const worktrees = worktreesOf(app, root);
   const results = out.repos ?? [];
   const multi = results.length > 1;
-  const cwd = multi ? join(app.runsDir, root, "work") : worktrees[0]?.path;
+  const cwd = multi ? join(app.runsDir, root, "work") : worktrees[0] && workDirOf(worktrees[0]);
   const { materialSpaces, materialsBrief } = await import("../items/materials.ts");
   const owner = runUser(app, run.id);
   const spaces = [...new Set([run.spaceId!, ...results.map((r) => r.space), ...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, owner) : [])])];

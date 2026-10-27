@@ -192,8 +192,15 @@ async function openSpace(s: Space) {
   editing.value = { ...s, settings: { ...s.settings } };
   related.value = s.related ?? [];
   newRelated.value = { space: "", note: "" };
+  workspaceText.value = ((s.settings.workspaces as string[] | undefined) ?? []).join("\n");
+  slots.value = [];
   guide.value = (await get<{ guide: string }>(`/api/spaces/${s.id}`)).guide;
+  if (s.rootPath) slots.value = await get<WorkspaceSlot[]>(`/api/spaces/${s.id}/workspaces`).catch(() => []);
 }
+type WorkspaceSlot = { path: string; managed: boolean; state: "free" | "leased" | "missing" | "invalid" | "dirty"; run?: string; reason?: string };
+const SLOT_STATE: Record<WorkspaceSlot["state"], string> = { free: "空闲", leased: "使用中", missing: "第一次用到时创建", invalid: "不可用", dirty: "有改动，跳过" };
+const workspaceText = ref("");
+const slots = ref<WorkspaceSlot[]>([]);
 const related = ref<SpaceRelation[]>([]);
 const newRelated = ref({ space: "", note: "" });
 /** Last folder of a repo path, without the hash suffix added to cloned repos. */
@@ -224,6 +231,11 @@ async function removeRelated(r: SpaceRelation) {
 }
 async function saveSpace() {
   if (!editing.value) return;
+  if (editing.value.rootPath) {
+    const st = editing.value.settings;
+    st.workspaces = workspaceText.value.split("\n").map((l) => l.trim()).filter(Boolean);
+    st.pool = Math.max(0, Math.min(8, Math.floor(Number(st.pool) || 0)));
+  }
   await patch(`/api/spaces/${editing.value.id}`, { name: editing.value.name, description: editing.value.description, settings: editing.value.settings, guide: guide.value });
   toast("空间已保存", "ok");
   editing.value = null;
@@ -884,6 +896,28 @@ async function saveEdit() {
         <label class="field"><span>空间指南（SPACE.md，Agent 每次工作前都会读）</span><textarea v-model="guide" class="textarea mono" rows="10" /></label>
         <UiCheckbox :model-value="editing.settings.autoIngest !== false && (editing.kind !== 'repo' || editing.settings.autoIngest === true)" @change="(v) => (editing!.settings.autoIngest = v)">新材料保存后让助理整理（更新记忆、事项、相关页面）</UiCheckbox>
         <label v-if="editing.rootPath" class="field"><span>检查命令（交办编码后运行）</span><input v-model="editing.settings.checkCommand" class="input mono" placeholder="npm test" /></label>
+        <template v-if="editing.rootPath">
+          <label class="field">
+            <span>准备命令（新工作区或锁文件变了时，编码前运行）</span>
+            <input v-model="editing.settings.setupCommand" class="input mono" placeholder="pnpm install --frozen-lockfile" />
+          </label>
+          <div class="field">
+            <span>复用工作区（装好的依赖留着给下一次交办用）</span>
+            <div class="row wrap">
+              <input v-model.number="editing.settings.pool" type="number" min="0" max="8" class="input pool" aria-label="omem 自建的复用工作区数量" />
+              <span class="muted small grow">个由 omem 建在数据目录里；0 表示不建</span>
+            </div>
+            <textarea v-model="workspaceText" class="textarea mono" rows="2" placeholder="已有的工作区目录，一行一个（这个仓库 git worktree add 出来的）" />
+            <span class="hint">已有目录只在没有未提交改动时借用，用完回到原来的分支；被忽略的文件（node_modules 等）一直保留。都占满时照旧新建工作区。</span>
+            <ul v-if="slots.length" class="slots">
+              <li v-for="s in slots" :key="s.path" class="row">
+                <span class="mono small grow slot-path" :title="s.path">{{ s.path }}</span>
+                <span class="badge" :title="s.reason || undefined">{{ SLOT_STATE[s.state] }}</span>
+                <a v-if="s.run" class="small" :href="`#/runs/${s.run}`">运行</a>
+              </li>
+            </ul>
+          </div>
+        </template>
         <UiCheckbox v-if="editing.rootPath" :model-value="editing.settings.autoLint !== false" @change="(v) => (editing!.settings.autoLint = v)">同步后自动检查受影响的 Wiki 页面</UiCheckbox>
         <div class="row"><span class="spacer" /><button class="btn primary" @click="saveSpace">保存</button></div>
       </div>
@@ -897,6 +931,21 @@ async function saveEdit() {
   grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   gap: 12px;
   min-width: 0;
+}
+.pool {
+  width: 72px;
+}
+.slots {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  min-width: 0;
+}
+.slot-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .fb-row {
   padding: 6px 0;

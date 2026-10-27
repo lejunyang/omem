@@ -64,7 +64,8 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
     _skills/<名称>/SKILL.md    技能（内置技能从 skills/library 播种）
   files/                      上传与采集的原始文件（代码仓库只记录路径，不复制）
   repos/                      对话接入 Git 链接后克隆的仓库（不在知识库 Git 中）
-  runs/<run-id>/              交办编码的 worktree（work/<空间>/）与补丁（patches/<空间>.patch）
+  runs/<run-id>/              交办编码的 worktree（work/<空间>/，借用复用工作区时是指向它的链接）与补丁（patches/<空间>.patch）
+  workspaces/<空间>/<n>/       仓库空间设置 pool 时 omem 自建的复用工作区（docs/v2/ide.md）
   agents/<id>/<版本>/          从 ACP 注册表下载的 Agent 程序
   secrets/                    lark.json（App Secret）、peers.json（同伴地址与令牌），均 0600
   service/                    后台服务的 PM2 数据与日志
@@ -199,6 +200,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 复用工作区：仓库空间可把已有的 worktree（`workspaces`）和 omem 自建的几个（`pool`）借给交办，租约在工作区 git 目录里、随运行链接失效，归还时重置但保留忽略的文件、回到原分支；准备命令（`setupCommand`）按锁文件变化才运行；检查命令在 Windows 上的引号修正。VS Code 打开工作区与插件见 docs/v2/ide.md（计划） | 已实现；2026-10-28，`test/workspaces.test.ts`、`test/branch-review.test.ts`（假 ACP 两次交办只准备一次） | `src/agents/workspaces.ts`、`code.ts`、设置 → 空间 |
 | `omem peer pull` 拉取完整业务数据、文件与代码仓库：辅助表跨设备标识、引用换算、聊天追加合并、仓库与编码工作区恢复、覆盖备份与失败回滚；新导入的执行任务停用 | 已实现；2026-10-27，SSH、HTTP 中转、冲突与恢复回归覆盖，跨真实设备待验 | `src/core/pull.ts`、`pull-data.ts`、`pull-transfer.ts`、`pull-snapshot.ts`、`pull-repos.ts` |
 | 应用后查看 Git 状态和暂存 diff，网页填写提交信息或主助手工具提交 / 推送；按运行与仓库限定接收目录、状态检查、保留失败后的本地提交及操作记录 | 已实现；临时 Git 仓库回归覆盖 | `src/agents/code-git.ts`、`test/code-git.test.ts`、`web/src/components/CodeGitPanel.vue` |
 | 编码修改应用到原目标分支，复用或建立接收工作区，不切换仓库主目录；续轮沿用首轮目标，确认框及结果显示实际目录，应用后读文件走接收位置 | 已实现；真实 Git 专项回归覆盖 | `src/agents/code.ts`、`test/code-worktrees.test.ts` |

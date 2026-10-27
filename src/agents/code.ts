@@ -12,6 +12,7 @@ import { resolveRunProfile, runRole } from "./runner.ts";
 import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
 import { createRun, getRun, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
+import { leaseWorkspace, releaseWorkspace, setupDone, setupKey, workDirOf, type WorkspaceSettings } from "./workspaces.ts";
 import { replyOf } from "./types.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { isSourceFile } from "../sources/chunk.ts";
@@ -22,7 +23,8 @@ function shell(command: string, cwd: string, signal: AbortSignal, timeoutMs = 20
   const started = Date.now();
   return new Promise((resolve) => {
     const isWin = process.platform === "win32";
-    const child = spawn(isWin ? (process.env.ComSpec ?? "cmd.exe") : "sh", isWin ? ["/d", "/s", "/c", command] : ["-c", command], { cwd, windowsHide: true, env: { ...process.env, CI: "1" } });
+    // Verbatim on Windows, as Node's own `shell: true`: quotes inside the command reach cmd unescaped.
+    const child = spawn(isWin ? (process.env.ComSpec ?? "cmd.exe") : "sh", isWin ? ["/d", "/s", "/c", `"${command}"`] : ["-c", command], { cwd, windowsHide: true, windowsVerbatimArguments: isWin, env: { ...process.env, CI: "1" } });
     let output = "";
     const add = (d: Buffer) => {
       output = (output + d.toString()).slice(-20000);
@@ -181,21 +183,21 @@ export async function runCodeTask(ctx: RunContext) {
       continue;
     }
     const path = join(workDir, repo.id);
+    const log = (text: string) => ctx.event("status", { text });
     if (input.branches) {
-      const wt = checkoutBranch(repo, input.branches[repo.id], path, input.fetch !== false);
+      const wt = checkoutBranch(app, repo, rootRunId, input.branches[repo.id], path, input.fetch !== false, log);
       worktrees.push(wt);
-      ctx.event("status", { text: `已在 ${path} 检出 ${repo.id} 的分支 ${wt.ref}（${wt.tip!.slice(0, 8)}），评审它相对 ${wt.baseRef} 的改动（分叉点 ${wt.base.slice(0, 8)}）` });
+      log(`已在 ${wt.slot ? `复用工作区 ${wt.slot}` : path} 检出 ${repo.id} 的分支 ${wt.ref}（${wt.tip!.slice(0, 8)}），评审它相对 ${wt.baseRef} 的改动（分叉点 ${wt.base.slice(0, 8)}）`);
       continue;
     }
     const from = input.fromBranches?.[repo.id];
     const start = from ? resolveRef(repo.rootPath!, from) : null;
     if (from && !start) throw new HttpError(404, `${repo.id} 里没有分支 ${from}`);
     const base = start?.commit ?? git(repo.rootPath!, ["rev-parse", "HEAD"]).stdout.trim();
-    const r = git(repo.rootPath!, ["worktree", "add", "-q", "-b", branch, path, base]);
-    if (!r.ok) throw new Error(`在 ${repo.id} 创建工作区失败：${r.stderr}`);
+    const slot = addWorktree(app, repo, rootRunId, path, base, branch, log);
     const targetBranch = from ? branchFromRef(start!.ref) : git(repo.rootPath!, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() || null;
-    worktrees.push({ space: repo.id, path, branch, base, start: base, targetBranch, ...(from ? { baseRef: from } : {}) });
-    ctx.event("status", { text: `已在 ${path} 创建 ${repo.id} 的独立工作区（基于 ${from ? `分支 ${from} 的 ` : ""}${base.slice(0, 8)}）` });
+    worktrees.push({ space: repo.id, path, branch, base, start: base, targetBranch, ...(from ? { baseRef: from } : {}), ...(slot ? { slot } : {}) });
+    log(`已在 ${slot ? `复用工作区 ${slot}` : path} 准备好 ${repo.id} 的独立工作区（基于 ${from ? `分支 ${from} 的 ` : ""}${base.slice(0, 8)}）`);
   }
   if (chain) {
     const { saveCodeChain } = await import("./code-chain.ts");
@@ -218,10 +220,10 @@ export async function runCodeTask(ctx: RunContext) {
   const commandFor = (repo: Space) => input.checks?.[repo.id] ?? input.checkCommand ?? (repo.settings.checkCommand as string | undefined);
   const where = multi
     ? `\n\n（这次要一起改 ${repos.length} 个仓库。工作目录 ${workDir} 下每个子目录是一个仓库的独立 worktree：\n${repos
-        .map((r, i) => `- ${r.id}（${r.name}）：${worktrees[i].path}${commandFor(r) ? `；检查命令：${commandFor(r)}` : ""}`)
+        .map((r, i) => `- ${r.id}（${r.name}）：${workDirOf(worktrees[i])}${commandFor(r) ? `；检查命令：${commandFor(r)}` : ""}`)
         .join("\n")}\n用 omem 工具查这几个仓库时传 space: "*"。）`
-    : `${commandFor(repos[0]) ? `\n\n检查命令：${commandFor(repos[0])}` : ""}\n\n（工作目录是独立 worktree：${worktrees[0].path}）`;
-  const cwd = multi ? workDir : worktrees[0].path;
+    : `${commandFor(repos[0]) ? `\n\n检查命令：${commandFor(repos[0])}` : ""}\n\n（工作目录是独立 worktree：${workDirOf(worktrees[0])}）`;
+  const cwd = multi ? workDir : workDirOf(worktrees[0]);
   // The run's space may be a project; the agents read it and every repository (and their related spaces).
   const owner = runUser(app, run.id);
   const spaces = [...new Set([run.spaceId!, ...repos.map((r) => r.id), ...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, owner) : [])])];
@@ -244,6 +246,24 @@ ${input.task}
   if (synced === "stopped") return { verdict: "sync-conflict" };
   // Finishing a stopped sync that came before coding: the coding is still to do, with the first task.
   if (input.syncResume && !input.syncOnly) coderTask = `${String(getRun(app, rootRunId).input.task ?? "")}${itemBrief}${where}`;
+  // Dependencies: a new worktree has none, a reused one only when its lockfiles changed (workspaces.ts).
+  for (const [i, repo] of repos.entries()) {
+    const command = (repo.settings as WorkspaceSettings).setupCommand?.trim();
+    const dir = workDirOf(worktrees[i]);
+    const key = command ? setupKey(dir, command) : null;
+    if (!command || !key) continue;
+    ctx.event("status", { text: `准备依赖${multi ? `（${repo.id}）` : ""}：${command}` });
+    const r = await shell(command, dir, ctx.signal);
+    if (ctx.signal.aborted) throw new Error("已取消");
+    if (r.code === 0) {
+      setupDone(dir, key);
+      ctx.event("status", { text: `依赖已准备${multi ? `（${repo.id}）` : ""}，用时 ${Math.round(r.ms / 1000)} 秒` });
+    } else {
+      const tail = r.output.slice(-1500);
+      ctx.event("status", { text: `准备命令失败${multi ? `（${repo.id}）` : ""}，退出码 ${r.code}：\n${tail}` });
+      coderTask = `${coderTask}\n\n（宿主在 ${repo.id} 运行准备命令 \`${command}\` 失败，退出码 ${r.code}，依赖可能不全；需要时自己修好再继续。输出末尾：\n${fence("", tail)}）`;
+    }
+  }
   const skipCoder = !!(input.syncOnly || input.moveToTarget);
   // What the owner added while this round waited in the queue.
   const early = input.branches || skipCoder ? [] : pendingNotes(app, run.id);
@@ -339,7 +359,7 @@ ${input.task}
         spaces,
         task: conflictTask(wt, files, label, String(getRun(app, rootRunId).input.task ?? input.task)),
         runId: run.id,
-        cwd: wt.path,
+        cwd: workDirOf(wt),
         signal: ctx.signal,
         onEvent: (e) => ctx.event(e.type, { ...e, phase: "coder" }),
       });
@@ -408,7 +428,7 @@ ${coderTask}` : coderTask;
     let check: Check | null = null;
     if (command) {
       ctx.event("status", { text: `运行检查${multi ? `（${repo.id}）` : ""}：${command}` });
-      const r = await shell(command, wt.path, ctx.signal);
+      const r = await shell(command, workDirOf(wt), ctx.signal);
       check = { command, ...r, output: r.output.slice(-8000) };
       ctx.event("check", { ...check, space: repo.id });
     }
@@ -487,7 +507,7 @@ ${coderTask}` : coderTask;
  * moved back to where it left the base (`reset --soft`), so its changes are staged against HEAD
  * like a delegation's and the diff, metrics, index and file views work unchanged.
  */
-function checkoutBranch(repo: Space, target: { branch: string; base?: string } | undefined, path: string, fetch: boolean): WorktreeRef {
+function checkoutBranch(app: App, repo: Space, runId: string, target: { branch: string; base?: string } | undefined, path: string, fetch: boolean, log: (text: string) => void): WorktreeRef {
   if (!target?.branch) throw new HttpError(400, `没有指定 ${repo.id} 要评审的分支`);
   const root = repo.rootPath!;
   const baseRef = target.base || defaultBaseRef(root);
@@ -500,11 +520,28 @@ function checkoutBranch(repo: Space, target: { branch: string; base?: string } |
   const mb = git(root, ["merge-base", baseTip.commit, tip.commit]);
   if (!mb.ok) throw new HttpError(400, `${target.branch} 和 ${baseRef} 没有共同的提交`);
   const base = mb.stdout.trim();
-  const add = git(root, ["worktree", "add", "-q", "--detach", path, tip.commit]);
-  if (!add.ok) throw new Error(`在 ${repo.id} 检出 ${target.branch} 失败：${add.stderr}`);
+  const slot = addWorktree(app, repo, runId, path, tip.commit, null, log);
   const reset = git(path, ["reset", "-q", "--soft", base]);
   if (!reset.ok) throw new Error(`在 ${repo.id} 准备评审工作区失败：${reset.stderr}`);
-  return { space: repo.id, path, branch: "", base, ref: target.branch, tip: tip.commit, baseRef };
+  return { space: repo.id, path, branch: "", base, ref: target.branch, tip: tip.commit, baseRef, ...(slot ? { slot } : {}) };
+}
+
+/**
+ * The run's worktree of `repo` at `path`, on a new `branch` (or detached) at `commit`: a reusable
+ * slot linked there when one is free (workspaces.ts, returned), else a new worktree.
+ */
+function addWorktree(app: App, repo: Space, runId: string, path: string, commit: string, branch: string | null, log: (text: string) => void): string | undefined {
+  const root = repo.rootPath!;
+  const slot = leaseWorkspace(app, repo, runId, path, log);
+  if (slot) {
+    const moved = git(slot, ["checkout", "-q", ...(branch ? ["-B", branch] : ["--detach"]), commit]);
+    if (moved.ok) return slot;
+    releaseWorkspace(runId, { path, slot });
+    log(`复用工作区 ${slot} 没能切到 ${commit.slice(0, 8)}，改为新建工作区：${moved.stderr.trim().slice(0, 300)}`);
+  }
+  const r = git(root, ["worktree", "add", "-q", ...(branch ? ["-b", branch] : ["--detach"]), path, commit]);
+  if (!r.ok) throw new Error(`在 ${repo.id} 创建工作区失败：${r.stderr}`);
+  return undefined;
 }
 
 /** What the reviewers read in place of a coding Agent's summary: the branch and its commits. */
@@ -617,11 +654,15 @@ export function codeApplyTargets(app: App, runId: string): AppliedTarget[] {
 
 /** Remove the run's worktrees and branches, and the temporary index of what they changed. */
 function removeWorktrees(app: App, runId: string) {
+  const leasedBy = String(getRun(app, runId).input.continueFrom ?? runId);
   for (const wt of worktreesOf(app, runId)) {
     const root = findSpace(app, wt.space)?.rootPath;
     if (!root || !existsSync(root)) continue;
-    if (existsSync(wt.path)) git(root, ["worktree", "remove", "--force", wt.path]);
-    else git(root, ["worktree", "prune"]);
+    // A reusable slot is reset and kept for the next run.
+    if (!releaseWorkspace(leasedBy, wt)) {
+      if (existsSync(wt.path)) git(root, ["worktree", "remove", "--force", wt.path]);
+      else git(root, ["worktree", "prune"]);
+    }
     if (wt.branch) git(root, ["branch", "-D", wt.branch]);
   }
   for (const s of worktreeSpacesOf(app, runId)) dropWorktreeSpace(app, s.id);

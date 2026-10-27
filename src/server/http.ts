@@ -183,6 +183,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return updateSpace(app, id, { name: b.name, description: b.description, settings: b.settings ? { ...getSpace(app, id).settings, ...b.settings } : undefined });
   });
   server.post("/api/spaces/:id/sync", async (req) => scheduleSpaceSync(app, (req.params as { id: string }).id));
+  server.get("/api/spaces/:id/workspaces", async (req) => {
+    const { listWorkspaces } = await import("../agents/workspaces.ts");
+    return listWorkspaces(app, getSpace(app, (req.params as { id: string }).id));
+  });
 
   // ------------------------------------------------------------------ sources
   server.get("/api/sources", async (req) => {

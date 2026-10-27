@@ -12,7 +12,8 @@ import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { branchIndexes, indexBranch, sweepWorktreeSpaces } from "../src/agents/worktree-index.ts";
 import { run } from "../src/core/db.ts";
 import { listBranches, resolveRef } from "../src/core/git.ts";
-import { createSpace } from "../src/core/spaces.ts";
+import { createSpace, getSpace, updateSpace } from "../src/core/spaces.ts";
+import { managedSlot } from "../src/agents/workspaces.ts";
 import { search } from "../src/search/search.ts";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
@@ -342,6 +343,32 @@ describe("reviewing an existing branch", () => {
       expect(patch).not.toContain("lines.ts");
       discardCodeRun(app, r.id);
     } finally {
+      await server.close();
+    }
+  }, 120000);
+
+  it("codes in a reused workspace: dependencies are prepared once and stay for the next run", async () => {
+    fake();
+    writeFileSync(join(dir, ".git", "info", "exclude"), "node_modules/\n");
+    const before = getSpace(app, "shop-api").settings;
+    const setup = `node -e "const fs=require('fs');fs.mkdirSync('node_modules',{recursive:true});fs.appendFileSync('node_modules/installs','x')"`;
+    updateSpace(app, "shop-api", { settings: { ...before, pool: 1, setupCommand: setup } });
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      for (const n of [1, 2]) {
+        const r = createRun(app, { kind: "code", spaceId: "shop-api", title: `第 ${n} 次`, input: { task: "按评审意见修改", repos: ["shop-api"], fromBranches: { "shop-api": "feature/refund" } } });
+        await exec(r);
+        const [wt] = worktreesOf(app, r.id);
+        expect(wt.slot).toBe(managedSlot(app, "shop-api", 1));
+        const prepared = runEvents(app, r.id).filter((e) => String((e.data as { text?: string }).text ?? "").startsWith("准备依赖"));
+        expect(prepared).toHaveLength(n === 1 ? 1 : 0);
+        expect(readFileSync(join(wt.slot!, "node_modules", "installs"), "utf8")).toBe("x");
+        expect(codePatches(app, r.id)[0].patch).not.toContain("node_modules");
+        run(app.db, "update runs set status = 'done' where id = ?", r.id);
+        discardCodeRun(app, r.id);
+      }
+    } finally {
+      updateSpace(app, "shop-api", { settings: before });
       await server.close();
     }
   }, 120000);

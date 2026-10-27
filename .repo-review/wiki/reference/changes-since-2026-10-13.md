@@ -2,7 +2,7 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，按模块列出入口文件；读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-10-27
+updated: 2026-10-28
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
@@ -627,3 +627,12 @@ updated: 2026-10-27
 - **网页**：`ReviewSummary.vue` 的“待处理”按本人还要处理的算（含负责人定为要改的提示），最新一轮带上之前各轮的“暂不改”；补充要求和评审选项存在 `lib/quotes.ts` 的 `fixDraft`，切标签不丢，“修改点”抽屉共用；`NextRoundReview.vue` 选之后的评审档位、拆需求和评审 AI；`CodeSteer.vue` 在进行中的交办上补充和改评审；选中文字浮出的按钮悬停底色不透明。
 - **编码交办卡片只放状态**：`src/channels/lark-code-progress.ts` 的 `snapshot` 不再把运行事件（编码 Agent 的流式文字、每次工具调用）附在卡片上；卡片只有轮次、状态、评审结论和结果，过程看思考气泡。
 - **Windows 上的拉取**：`pull-transfer.ts` 解包时以快照目录为工作目录、用相对路径调用 `tar`（Git for Windows 的 GNU tar 会把 `C:\…` 当成远程主机）。
+
+## 2026-10-28：复用工作区、准备命令
+
+起因是大仓库每次交办都在 `runs/` 下的新 worktree 里重装依赖。设计和后面两步（在 VS Code 里打开工作区、VS Code 插件）写在 `docs/v2/ide.md`。
+
+- **复用工作区**：新增 `src/agents/workspaces.ts`。仓库空间设置 `workspaces`（本人已有的 `git worktree add` 目录）和 `pool`（omem 在数据目录 `workspaces/<空间>/<n>` 自建的数量），`leaseWorkspace` 借出、`releaseWorkspace` 归还。租约是工作区 git 目录里的 `omem-lease.json`，只在运行目录 `runs/<id>/work/<空间>` 的链接（Windows 为 junction）指向它时有效；本人的目录有未提交改动不借；归还时 `reset --hard` + `clean -fd`（保留忽略的文件）并回到原分支。`code.ts` 的 `addWorktree` 先借、借不到再新建；`WorktreeRef.slot` 记真实目录，`workDirOf` 让编码 Agent、检查和评审在真实目录里运行；`removeWorktrees` 对借来的只归还不删除。
+- **准备命令**：仓库设置 `setupCommand`，`code.ts` 在同步之后、编码之前对每个工作区比较命令和锁文件（Git 索引里的版本）与上次成功时的 `setupKey`，变了才运行；失败不中止，失败输出交给编码 Agent。
+- **检查命令的引号**：`code.ts` 的 `shell` 在 Windows 上照 Node `shell: true` 的方式原样传给 cmd，带双引号的检查命令以前会被转义坏。
+- **网页与接口**：设置 → 空间 → 编辑（仓库空间）加准备命令、复用工作区数量和目录，列出各工作区状态；`GET /api/spaces/:id/workspaces`。
