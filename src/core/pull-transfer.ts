@@ -13,9 +13,10 @@ const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 function unpack(dir: string): Fetched {
   const archive = join(dir, "snapshot.tar");
-  const listing = spawnSync("tar", ["-tf", archive], { encoding: "utf8", maxBuffer: 256 * 1024 ** 2 });
+  // Relative to the snapshot dir: GNU tar (Git for Windows) reads "C:\…" as a remote host.
+  const listing = spawnSync("tar", ["-tf", "snapshot.tar"], { cwd: dir, encoding: "utf8", maxBuffer: 256 * 1024 ** 2 });
   if (listing.status !== 0 || listing.stdout.split("\n").some((p) => p.startsWith("/") || /^[A-Za-z]:/.test(p) || p.split(/[\\/]/).includes(".."))) throw new Error("快照目录不合法或传输不完整");
-  const untar = spawnSync("tar", ["-xf", archive, "-C", dir]);
+  const untar = spawnSync("tar", ["-xf", "snapshot.tar"], { cwd: dir });
   if (untar.status !== 0) throw new Error(`解包失败：${untar.stderr.toString().slice(-300)}`);
   rmSync(archive);
   if (!existsSync(join(dir, "omem.db"))) throw new Error("快照里没有 omem.db");

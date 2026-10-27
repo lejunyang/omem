@@ -20,7 +20,7 @@ async function snapshot(app: App): Promise<Fetched> {
   const dir = mkdtempSync(join(tmpdir(), "omem-snap-test-"));
   const archive = join(dir, "snapshot.tar");
   await pipeline(await snapshotStream(app), createWriteStream(archive));
-  execFileSync("tar", ["-xf", archive, "-C", dir]);
+  execFileSync("tar", ["-xf", "snapshot.tar"], { cwd: dir });
   rmSync(archive);
   return { dbDir: dir, libraryDir: join(dir, "library"), filesDir: join(dir, "files"), fetchedFiles: readdirSync(join(dir, "files")) };
 }
@@ -256,7 +256,8 @@ describe("complete portable pulls", () => {
     expect(git(root, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "libs/sub"]).ok).toBe(true);
     git(root, ["commit", "-qm", "add submodule"]);
     const localRoot = mkdtempSync(join(tmpdir(), "omem-fast-forward-"));
-    git(localRoot, ["clone", "-q", root, "."]);
+    // Byte-exact checkout on Windows too (a global autocrlf rewrites line ends).
+    git(localRoot, ["clone", "-q", "-c", "core.autocrlf=false", root, "."]);
     createSpace(local, { id: "demo", name: "示例仓库", kind: "repo", rootPath: localRoot });
     createSpace(remote, { id: "demo", name: "示例仓库", kind: "repo", rootPath: root });
     writeFileSync(join(root, "app.txt"), "new commit\n");
@@ -268,11 +269,13 @@ describe("complete portable pulls", () => {
       expect(git(localRoot, ["rev-parse", "HEAD"]).stdout).toBe(git(root, ["rev-parse", "HEAD"]).stdout);
       const saved = join(local.home, "repos/pulled", readdirSync(join(local.home, "repos/pulled"))[0]);
       expect(git(join(saved, "libs/sub"), ["rev-parse", "HEAD"]).stdout).toBe(git(sub, ["rev-parse", "HEAD"]).stdout);
-      expect(readFileSync(join(saved, "libs/sub/app.txt"), "utf8")).toBe("base\n");
+      // The restored checkout follows this machine's line-end setting (autocrlf on Windows).
+      expect(readFileSync(join(saved, "libs/sub/app.txt"), "utf8").replace(/\r\n/g, "\n")).toBe("base\n");
     } finally { cleanupFetched(f); }
   });
 
-  it("SSH fetch includes a remote-only original and embedded media, and overwrite keeps every fetched file", () => {
+  // The fake ssh is a shell script on PATH, which Windows cannot run as "ssh".
+  it.skipIf(process.platform === "win32")("SSH fetch includes a remote-only original and embedded media, and overwrite keeps every fetched file", () => {
     const local = testApp();
     const remote = testApp();
     upsertSource(remote, { spaceId: "personal", kind: "doc", uri: "report", title: "报告", text: "![图](/api/files/abcdef0123456789.png)", meta: { original: "report.pdf" } });

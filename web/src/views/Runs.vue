@@ -18,6 +18,7 @@ import DiffFile from "../components/DiffFile.vue";
 import DiffTree from "../components/DiffTree.vue";
 import { diffLayout, diffLayoutOptions } from "../lib/diffLayout";
 import ReviewSummary from "../components/ReviewSummary.vue";
+import CodeSteer from "../components/CodeSteer.vue";
 import ReviewChecks from "../components/ReviewChecks.vue";
 import ChangeView from "../components/ChangeView.vue";
 import RunActivity from "../components/RunActivity.vue";
@@ -486,6 +487,8 @@ const kindOptions = computed(() => [
             <button v-if="detail.run.kind === 'code'" class="btn ghost sm" @click="explaining = null; asking = 'open'"><Icon name="chat" :size="14" />提问</button>
           </div>
         </header>
+        <!-- A delegation's round in progress: the owner's words for the coding Agent, and the review from now on. -->
+        <CodeSteer v-if="detail.run.kind === 'code' && !branchReview && ['queued', 'running'].includes(detail.run.status)" :run-id="detail.run.id" :coding="typeof out.coderSummary !== 'string'" :notes="(out.notes ?? []) as { id: string; text: string; at: string; deliveredAt?: string }[]" :review="(detail.run.input as { roundReview?: { tier?: string; split?: boolean } }).roundReview" @changed="loadDetail" />
         <section v-if="syncAsk" class="card pad block sync-stop" role="alert">
           <div class="section-title">Git 同步停在冲突上</div>
           <p class="pre small">{{ syncAsk.question }}</p>
@@ -955,6 +958,14 @@ const kindOptions = computed(() => [
 }
 .sel-ask .btn {
   box-shadow: var(--shadow-lg);
+}
+/* It floats over text: the hover tint goes on top of an opaque panel, not over the text below. */
+.sel-ask .btn:not(.primary):hover {
+  background: linear-gradient(var(--hover), var(--hover)), var(--panel);
+}
+.sel-ask .btn.primary:hover {
+  opacity: 1;
+  filter: brightness(0.9);
 }
 .diff-cols { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 14px; align-items: start; }
 .diff-cols:not(:has(.diff-tree)) { grid-template-columns: minmax(0, 1fr); }

@@ -13,6 +13,7 @@ import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
 import { createRun, getRun, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 import { replyOf } from "./types.ts";
+import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { isSourceFile } from "../sources/chunk.ts";
 import { OWNER } from "../core/users.ts";
 import { linkRunToItem, materialSpaces, materialsBrief } from "../items/materials.ts";
@@ -244,6 +245,12 @@ ${input.task}
   // Finishing a stopped sync that came before coding: the coding is still to do, with the first task.
   if (input.syncResume && !input.syncOnly) coderTask = `${String(getRun(app, rootRunId).input.task ?? "")}${itemBrief}${where}`;
   const skipCoder = !!(input.syncOnly || input.moveToTarget);
+  // What the owner added while this round waited in the queue.
+  const early = input.branches || skipCoder ? [] : pendingNotes(app, run.id);
+  if (early.length) {
+    coderTask = `${coderTask}\n\n${notesText(early)}`;
+    markNotesDelivered(app, run.id, early);
+  }
   // The failed attempt finished coding and stopped later (checks, review): only those are redone.
   const coded = retried && typeof retried.output.coderSummary === "string" && retried.output.coderAI ? retried.output : null;
   if (coded) {
@@ -251,12 +258,16 @@ ${input.task}
     ctx.event("status", { text: `上一次尝试已经写完代码，这次从检查和评审接着做` });
   }
   let coderReply = input.branches ? branchSummary(worktrees) : skipCoder ? synced?.summary ?? "" : coded ? String(coded.coderSummary) : await code();
-  if (synced?.report) coderReply = `${coderReply}\n\n## Git 同步\n\n${synced.summary}\n\n${synced.report}`.trim();
+  // What Git brought in before coding goes to the reviewers too, not only the conflicts.
+  if (synced?.report || (synced?.summary && !skipCoder)) coderReply = `${coderReply}\n\n## Git 同步\n\n${[synced.summary, synced.report].filter(Boolean).join("\n\n")}`.trim();
   if (input.branches || skipCoder || synced) ctx.output({ coderSummary: coderReply });
   async function syncPhase(): Promise<"stopped" | { summary: string; report: string; conflicts: number } | null> {
     if (input.branches) return null;
-    const wanted = (input.sync && !continueFrom) || (input.sync && continueFrom) || input.syncResume || input.moveToTarget;
-    if (!wanted) return null;
+    // Every coding round starts from the target branch's latest commits on origin, asked or not:
+    // coding on an old commit leaves the work to be merged by hand later. Nothing to pull, no trace.
+    const implicit = !input.sync && !input.syncResume && !input.moveToTarget && !input.syncOnly && !retryOf && worktrees.some((w) => w.targetBranch);
+    const req: import("./code-sync.ts").SyncRequest | undefined = input.sync ?? (implicit ? { pull: true, fetch: false } : undefined);
+    if (!req && !input.syncResume && !input.moveToTarget) return null;
     const cs = await import("./code-sync.ts");
     type Pending = { space: string; kind: "sync" | "move"; start?: string; label: string; conflicts: string[] };
     const before = ((getRun(app, rootRunId).output.syncPending ?? []) as Pending[]);
@@ -287,8 +298,10 @@ ${input.task}
         steps = [{ label: `移到 ${wt.targetBranch} 的最新提交 ${m.start!.slice(0, 8)}`, from: m.start!, to: git(wt.path, ["rev-parse", "HEAD"]).stdout.trim(), conflicts: m.conflicts ?? [] }];
         if (m.stopped) { stopped = m.stopped; pending.push({ space: wt.space, kind: "move", start: m.start, label: m.stopped.label, conflicts: m.stopped.conflicts }); }
         else wt.start = m.start;
-      } else if (input.sync) {
-        const r = await cs.syncWorktree(root, wt, input.sync, resolver, status);
+      } else if (req) {
+        // Nothing new on origin: leave the worktree (and its uncommitted work) alone.
+        if (implicit && !cs.behindOrigin(root, wt)) continue;
+        const r = await cs.syncWorktree(root, wt, req, resolver, status);
         steps = r.steps;
         if (r.stopped) { stopped = r.stopped; pending.push({ space: wt.space, kind: "sync", label: r.stopped.label, conflicts: r.stopped.conflicts }); }
       }
@@ -303,6 +316,7 @@ ${input.task}
       const rep = cs.conflictReport(wt.path, steps);
       if (rep) reports.push(multi ? `### ${wt.space}\n\n${rep}` : rep);
     }
+    if (implicit && !conflicts && !pending.length && !lines.length) return null;
     // Later rounds read the worktrees (their start and sync commits) from the first run.
     ctx.output({ worktrees });
     if (rootRunId !== run.id) setRunOutput(app, rootRunId, { worktrees });
@@ -371,8 +385,19 @@ ${coderTask}` : coderTask;
       ctx.event("status", { phase: "coder", text: `没能接上上一轮的编码会话（${truncate((e as Error).message, 200)}），换新会话继续` });
       coder = await runCoder(freshTask);
     }
-    ctx.output({ coderSummary: replyOf(coder).trim(), coderAI: coder.ai, coderAgent: coder.profileId, coderSessionId: coder.sessionId });
-    return replyOf(coder);
+    // What the owner added while it worked and it did not pick up at an omem tool call: one more turn
+    // in the same session, before the checks (code-steer.ts).
+    let reply = replyOf(coder);
+    for (let i = 0; i < 3 && !ctx.signal.aborted && coder.sessionId; i++) {
+      const notes = pendingNotes(app, run.id);
+      if (!notes.length) break;
+      markNotesDelivered(app, run.id, notes);
+      ctx.event("status", { phase: "coder", text: `把 ${notes.length} 条本人补充交给编码 Agent，接着改` });
+      coder = await runCoder(notesText(notes), coder.sessionId);
+      reply = `${reply}\n\n## 按本人补充继续\n\n${replyOf(coder)}`;
+    }
+    ctx.output({ coderSummary: reply.trim(), coderAI: coder.ai, coderAgent: coder.profileId, coderSessionId: coder.sessionId });
+    return reply;
   }
 
   const results: RepoResult[] = [];
@@ -429,8 +454,15 @@ ${coderTask}` : coderTask;
   const { planReview, refineReviewPlan } = await import("./review.ts");
   const { askModel } = await import("./oneshot.ts");
   const previousPlan = chain?.rounds.filter((id) => id !== run.id).map((id) => getRun(app, id).output.reviewPlan as ReviewPlan | undefined).filter(Boolean).at(-1);
-  let plan = planReview(app, reviewMetrics(worktrees, results, input.task), { tier: input.reviewTier, extraChecks: input.reviewChecks, previous: previousPlan });
-  if (!previousPlan) {
+  // The owner's choice for this round on (read now: it may have been set while the round coded).
+  const owned = (getRun(app, run.id).input as { roundReview?: RoundReview }).roundReview;
+  const ownerSays = !!(owned?.tier || owned?.checks?.length);
+  let plan = planReview(app, reviewMetrics(worktrees, results, input.task), ownerSays
+    ? { tier: owned!.tier ?? input.reviewTier, extraChecks: owned!.checks?.length ? [] : input.reviewChecks, only: owned!.checks }
+    : { tier: input.reviewTier, extraChecks: input.reviewChecks, previous: previousPlan });
+  if (ownerSays) {
+    plan = { ...plan, confirmPlan: false, reasons: [...plan.reasons, `本人指定这一轮起的评审：${owned!.checks?.length ? `只做 ${plan.checks.join("、")}` : `「${plan.tierName}」档`}${owned!.split === false ? "，不拆需求" : ""}`] };
+  } else if (!previousPlan) {
     // Triage after coding: the owner's words on tiers and checks, review-lead's estimate, and with a
     // lead one step lighter when the change turned out small. Weighed once, on the first round.
     const estimate = getRun(app, run.id).output.reviewEstimate as ReviewEstimate | undefined;

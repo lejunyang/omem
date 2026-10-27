@@ -58,7 +58,8 @@ beforeEach(() => {
   sh(root, "worktree", "add", "-q", "-b", "omem/r1", wtPath, start);
   wt = { space: "shop", path: wtPath, branch: "omem/r1", base: start, start, targetBranch: "feature/refund" };
 }, 60000);
-afterEach(() => { app.db.close(); rmSync(app.home, { recursive: true, force: true }); });
+// A reviewer's Agent process may still be exiting (Windows keeps its directory busy): leave the temp dir then.
+afterEach(() => { app.db.close(); try { rmSync(app.home, { recursive: true, force: true }); } catch { /* still in use */ } });
 
 describe("Git sync before coding", { timeout: 60000 }, () => {
   it("merges another branch, sends its conflicts to the resolver and finishes the merge", async () => {
@@ -195,6 +196,26 @@ describe("a sync-only delegation, end to end", { timeout: 120000 }, () => {
     sh(root, "checkout", "-q", "main");
     return createRun(app, { kind: "code", spaceId: "shop", title: "把 main 合并到 feature/refund", input: { task: "合并 main，解决冲突", repos: ["shop"], fromBranches: { shop: "feature/refund" }, sync: { onto: "main", fetch: false }, syncOnly: true } });
   };
+
+  it("every coding round first pulls what others pushed to the target branch", async () => {
+    const server = await startServer(app, { port: 0, quiet: true });
+    try {
+      delegate("resolve");
+      const other = join(app.home, "other");
+      sh(app.home, "clone", "-q", "-b", "feature/refund", remote, other);
+      sh(other, "config", "core.autocrlf", "false"); sh(other, "config", "user.name", "Other"); sh(other, "config", "user.email", "other@example.com");
+      const pushed = commit(other, "notes.txt", "from a colleague\n", "colleague");
+      sh(other, "push", "-q", "origin", "feature/refund");
+      const r = createRun(app, { kind: "code", spaceId: "shop", title: "退款只按未发货行", input: { task: "退款只按未发货的行计算", repos: ["shop"], fromBranches: { shop: "feature/refund" }, reviewTier: "light" } });
+      await exec(r.id);
+      const [w] = worktreesOf(app, r.id);
+      expect(sh(w.path, "merge-base", "--is-ancestor", pushed, "HEAD")).toBe("");
+      expect(readFileSync(join(w.path, "notes.txt"), "utf8")).toBe("from a colleague\n");
+      expect(String(getRun(app, r.id).output.coderSummary)).toMatch(/## Git 同步\n\n(拉取|合并) origin\/feature\/refund/);
+    } finally {
+      await server.close();
+    }
+  });
 
   it("the coding Agent resolves the conflict; apply fast-forwards the target branch", async () => {
     const server = await startServer(app, { port: 0, quiet: true });

@@ -6,7 +6,8 @@ import Icon from "./Icon.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import { toast } from "../store";
 import { decisionOf, type Reviews } from "../lib/reviews";
-import { clearQuotes, quotesOf, quotesText, removeQuote } from "../lib/quotes";
+import { clearFixDraft, clearQuotes, draftReview, fixDraft, quotesOf, quotesText, removeQuote } from "../lib/quotes";
+import NextRoundReview from "./NextRoundReview.vue";
 
 /**
  * The next round of changes gathered by selecting text on the run page (“加入修改点”): numbered
@@ -19,7 +20,8 @@ const router = useRouter();
 const quotes = computed(() => quotesOf(props.runId, "fix"));
 const findingIds = computed(() => props.rv.findings.value.filter((f) => decisionOf(f) === "fix").map((f) => f.id));
 const withFindings = ref(true);
-const extra = ref("");
+// The same draft as the 概览 fix box: the owner's text and the next rounds' review.
+const draft = computed(() => fixDraft(props.runId));
 const starting = ref(false);
 const returnTo = document.activeElement as HTMLElement | null;
 const panel = ref<HTMLElement | null>(null);
@@ -28,11 +30,12 @@ onBeforeUnmount(() => returnTo?.focus?.());
 
 async function start() {
   const ids = withFindings.value ? findingIds.value : [];
-  const text = [quotesText(quotes.value, "本人在页面上选中、要求修改的地方（按 [1]、[2] 编号）："), extra.value.trim()].filter(Boolean).join("\n\n");
+  const text = [quotesText(quotes.value, "本人在页面上选中、要求修改的地方（按 [1]、[2] 编号）："), draft.value.text.trim()].filter(Boolean).join("\n\n");
   if (starting.value || (!ids.length && !text)) return;
   starting.value = true;
   try {
-    const r = await post<{ id: string }>(`/api/runs/${props.runId}/fix`, { findingIds: ids, text: text || undefined });
+    const r = await post<{ id: string }>(`/api/runs/${props.runId}/fix`, { findingIds: ids, text: text || undefined, ...draftReview(draft.value) });
+    clearFixDraft(props.runId);
     clearQuotes(props.runId, "fix");
     toast(props.branchReview ? "已基于这个分支交办修改" : "已安排下一轮修改", "ok");
     emit("close");
@@ -64,11 +67,12 @@ async function start() {
     <div class="compose">
       <p v-if="!canFix" class="muted small">这次交办已经应用、丢弃或还没完成，不能从这里续改；可以先把这些内容复制到新的交办里。</p>
       <UiCheckbox v-if="findingIds.length" v-model="withFindings" size="sm">同时改评审里定为“改”的 {{ findingIds.length }} 个问题</UiCheckbox>
-      <textarea v-model="extra" class="textarea" rows="3" placeholder="其他要求（可选）：需求变化、实现上的约束" aria-label="其他要求" />
+      <textarea v-model="draft.text" class="textarea" rows="3" placeholder="其他要求（可选）：需求变化、实现上的约束" aria-label="其他要求" />
+      <NextRoundReview :draft="draft" />
       <div class="row">
         <span class="muted small">{{ quotes.length }} 处{{ withFindings && findingIds.length ? ` + ${findingIds.length} 个问题` : "" }}</span>
         <span class="spacer" />
-        <button class="btn primary sm" :disabled="!canFix || starting || (!quotes.length && !extra.trim() && !(withFindings && findingIds.length))" @click="start">开始修改</button>
+        <button class="btn primary sm" :disabled="!canFix || starting || (!quotes.length && !draft.text.trim() && !(withFindings && findingIds.length))" @click="start">开始修改</button>
       </div>
     </div>
   </aside>

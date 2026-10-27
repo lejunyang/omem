@@ -81,7 +81,7 @@ export function matchesReview(c: ReviewCondition | null | undefined, m: ReviewMe
 
 // ---- settings ----------------------------------------------------------------------------------
 
-export type Tier = { id: string; name: string; when: ReviewCondition | null; guide?: string; checks: string[]; maxRounds: number; lead?: boolean; confirmPlan?: boolean };
+export type Tier = { id: string; name: string; when: ReviewCondition | null; guide?: string; checks: string[]; maxRounds: number; lead?: boolean; confirmPlan?: boolean; rotateModels?: boolean };
 export type CheckSetting = { label: string; blocks: "blocker" | "major" | "minor"; when: ReviewCondition | null; guide?: string };
 export type CheckInfo = CheckSetting & { name: string; builtin: boolean; about: string; missing: boolean };
 
@@ -109,9 +109,13 @@ export const tierSchema = z.object({
   maxRounds: z.number().int().min(1).max(10),
   lead: z.boolean().default(false),
   confirmPlan: z.boolean().default(false),
+  /** From the second round each check runs on the next model of `rotation`, for a different take. */
+  rotateModels: z.boolean().default(false),
 });
+/** The models review rounds rotate through (tiers with `rotateModels`). */
+export const rotationSchema = z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })).max(12).default([]);
 export const checkSettingSchema = z.object({ label: z.string().trim().min(1).max(12), blocks: z.enum(["blocker", "major", "minor"]), when: reviewCondition.nullable(), guide: z.string().trim().max(2000).default("") });
-export const reviewSettingsSchema = z.object({ tiers: z.array(tierSchema).min(1).max(12), checks: z.record(z.string(), checkSettingSchema), rereviewAllEvery: z.number().int().min(1).max(10).default(2) });
+export const reviewSettingsSchema = z.object({ tiers: z.array(tierSchema).min(1).max(12), checks: z.record(z.string(), checkSettingSchema), rereviewAllEvery: z.number().int().min(1).max(10).default(2), rotation: rotationSchema });
 
 /** Check names must exist; the last tier is the catch-all (no condition), so every change has one. */
 export function validateReviewSettings(app: App, input: unknown) {
@@ -134,12 +138,24 @@ export function validateReviewSettings(app: App, input: unknown) {
 }
 
 export function defaultReviewSettings() {
-  return { tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2 };
+  return { tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2, rotation: [] };
 }
 
 // ---- planning ----------------------------------------------------------------------------------
 
-export type ReviewPlan = { tier: string; tierName: string; checks: string[]; maxRounds: number; reasons: string[]; metrics: ReviewMetrics; lead?: boolean; confirmPlan?: boolean };
+export type ReviewPlan = { tier: string; tierName: string; checks: string[]; maxRounds: number; reasons: string[]; metrics: ReviewMetrics; lead?: boolean; confirmPlan?: boolean; rotateModels?: boolean };
+
+/**
+ * The AI a check uses in a round when its tier (or the owner, `roundReview.rotate`) rotates models:
+ * round 1 keeps the check's own; from round 2 the checks walk `review.rotation`, each offset by its
+ * place so the checks of one round also differ. Null keeps the check's own AI.
+ */
+export function rotatedExecution(app: App, round: number, checkIndex: number, rotate: boolean | undefined) {
+  const list = app.config.review.rotation ?? [];
+  if (!rotate || round < 2 || !list.length) return null;
+  const pick = list[(round - 2 + checkIndex) % list.length];
+  return { ...pick, source: "auto" as const, reason: `多轮评审换模型：第 ${round} 轮` };
+}
 /** review-lead's guess before any code is written: which tier the task will likely need. */
 export type ReviewEstimate = { tier: string; tierName: string; reason: string };
 
@@ -147,7 +163,8 @@ export type ReviewEstimate = { tier: string; tierName: string; reason: string };
  * First tier whose condition matches, unless the task named one; checks whose own condition
  * matches are added. A later round never goes to a lighter tier than an earlier one chose.
  */
-export function planReview(app: App, metrics: ReviewMetrics, opts: { tier?: string; extraChecks?: string[]; previous?: ReviewPlan } = {}): ReviewPlan {
+/** `only`: the owner named the exact checks (a round “只做功能评审”); the tier then only sets rounds and the lead. */
+export function planReview(app: App, metrics: ReviewMetrics, opts: { tier?: string; extraChecks?: string[]; previous?: ReviewPlan; only?: string[] } = {}): ReviewPlan {
   const tiers = reviewTiers(app);
   const reasons: string[] = [];
   let index = tiers.findIndex((t) => matchesReview(t.when, metrics));
@@ -165,9 +182,13 @@ export function planReview(app: App, metrics: ReviewMetrics, opts: { tier?: stri
     index = before;
   }
   const tier = tiers[index];
-  const checks = [...tier.checks];
   const usable = new Map(reviewChecks(app).map((c) => [c.name, c]));
-  for (const c of usable.values()) {
+  if (opts.only?.length) {
+    const unknown = opts.only.filter((n) => !usable.has(n));
+    if (unknown.length) throw new HttpError(400, `没有评审项 ${unknown.join("、")}`);
+  }
+  const checks = opts.only?.length ? [...opts.only] : [...tier.checks];
+  for (const c of opts.only?.length ? [] : usable.values()) {
     if (c.when && !checks.includes(c.name) && matchesReview(c.when, metrics)) {
       checks.push(c.name);
       reasons.push(`改动满足「${c.label}」评审的加入条件`);
@@ -182,7 +203,7 @@ export function planReview(app: App, metrics: ReviewMetrics, opts: { tier?: stri
   const dropped = checks.filter((n) => !runnable.includes(n));
   if (dropped.length) reasons.push(`缺少评审项：${dropped.join("、")}（档案不存在或是草稿），已跳过`);
   if (!runnable.length) runnable.push("reviewer");
-  return { tier: tier.id, tierName: tier.name, checks: runnable, maxRounds: tier.maxRounds, reasons, metrics, lead: !!tier.lead, confirmPlan: !!tier.confirmPlan };
+  return { tier: tier.id, tierName: tier.name, checks: runnable, maxRounds: tier.maxRounds, reasons, metrics, lead: !!tier.lead, confirmPlan: !!tier.confirmPlan, rotateModels: !!tier.rotateModels };
 }
 
 /**

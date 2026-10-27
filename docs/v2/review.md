@@ -354,4 +354,4 @@ create table item_materials (
 - **计划确认**：`confirmPlan` 的档位在第一轮编码后停下（`verdict: awaiting-plan`、`waitReason: plan`），用提问卡片列出“按计划开始评审 / 改用某档”，也可以回一句补充要求。答复由 `registerAskHandler` 注册的处理器接住，另开 `review` 运行在同一工作区评审，结果仍写在编码运行上。
 - **裁决**：评审项都结束后，`review-lead` 只读加 `rule_review`，逐条 `accept / reject / merge`（驳回必须写理由，合并只能合到本轮另一条），给出 `approve / revise / escalate`、修改单和下一轮复审的评审项。负责人没提交或失败时退回第一阶段的合并规则。
 - **增量复审**：下一轮的 `input.reviewOnly` 是负责人指定的评审项；每 `config.review.rereviewAllEvery` 轮全部重审。
-- **停止**：`stopReason` 按顺序判断负责人 `escalate`、到轮数上限、同一问题（评审项 + 文件 + 去标点的标题）连续三轮被接受、本轮要改的阻塞问题不比上一轮少。停下时写 `output.reviewStop`，链的 `waitReason` 取同名，发提问卡片：按修改单再改一轮 / 负责人给的做法 / 接受现在的改动 / 先停下；直接回复的文字作为下一轮任务。
+- **停止**：`stopReason` 按顺序判断负责人 `escalate`、到轮数上限、同一问题（评审项 + 文件 + 去标点的标题）连续三轮被接受、本轮要改的阻塞问题不比上一轮少。停下时写 `output.reviewStop`，链的 `waitReason` 取同名，发提问卡片：按修改单再改一轮 / 负责人给的做法 / 接受现在的改动 / 先停下；卡片输入框里写的文字作为下一轮任务（会话里不以选项开头的话交给助手，不当作这张卡片的回答）。本人可以随时改之后各轮的评审（`input.roundReview`：档位可以比上一轮轻，不受“不降档”限制；只做哪些评审项；不拆需求），见 `src/agents/code-steer.ts`。

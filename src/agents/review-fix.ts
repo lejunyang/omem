@@ -6,6 +6,9 @@ import { cancelHostAsks } from "./asks.ts";
 import { isBranchReview, worktreesOf } from "./code.ts";
 import { SEVERITY_LABEL, type FindingRow } from "./review.ts";
 import { createRun, getRun, type Run } from "./runs.ts";
+import type { Execution } from "./execution.ts";
+import type { RoundReview } from "./code-steer.ts";
+import { OWNER } from "../core/users.ts";
 
 /**
  * What the owner does with a review's findings (docs/v2/review.md §6): each one is fixed now
@@ -68,7 +71,26 @@ export function decisionsBrief(app: App, runIds: string[], excludeIds: number[] 
  * the task, with the findings left alone listed so the coder does not touch them. A delegation
  * continues as its next round; a reviewed branch is coded on (`fromBranches`), for the same item.
  */
-export async function startFix(app: App, runId: string, req: { findingIds: number[]; text?: string }, userId: string): Promise<Run> {
+/**
+ * An unapplied delegation that still holds a worktree for one of these repositories and lands on
+ * `branch`. New work on that branch continues there instead of opening a second worktree: two
+ * delegations changing one branch side by side end with the owner merging them by hand.
+ */
+export function openDelegationOn(app: App, repos: string[], branch: string | null | undefined, userId: string): Run | null {
+  if (!branch) return null;
+  const want = branch.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+  const since = new Date(Date.now() - 30 * 86400_000).toISOString();
+  const roots = all<{ id: string }>(app.db, "select id from runs where kind = 'code' and json_extract(input, '$.continueFrom') is null and json_extract(input, '$.branches') is null and json_extract(output, '$.appliedAt') is null and json_extract(output, '$.discardedAt') is null and coalesce(user_id, ?) = ? and created_at > ? order by created_at desc limit 50", OWNER, userId, since);
+  for (const { id } of roots) {
+    if (!worktreesOf(app, id).some((w) => repos.includes(w.space) && w.targetBranch === want && existsSync(w.path))) continue;
+    const rounds = workRuns(app, id).map((x) => getRun(app, x));
+    if (rounds.some((x) => x.output.appliedAt || x.output.discardedAt)) continue;
+    return rounds.at(-1)!;
+  }
+  return null;
+}
+
+export async function startFix(app: App, runId: string, req: { findingIds: number[]; text?: string; review?: RoundReview; reviewExecution?: Execution }, userId: string): Promise<Run> {
   const runs = workRuns(app, runId);
   const last = getRun(app, runs.at(-1)!);
   if (!req.findingIds.length && !req.text?.trim()) throw new HttpError(400, "选几个要改的问题，或者写下要改什么");
@@ -77,6 +99,8 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     // Failed requests must leave the review's actions available for retry.
     for (const id of runs) cancelHostAsks(app, id, "review-done");
     for (const f of chosen) run(app.db, "update review_findings set decision = 'fix', decision_note = '' where id = ?", f.id);
+    // What the owner left unpicked waits (“暂不改”) and stays in view in the rounds after this one.
+    run(app.db, `update review_findings set decision = 'later' where decision is null and severity != 'nit' and state in ('open', 'accepted') and review_id in (select id from reviews where code_run_id = ?)${chosen.length ? ` and id not in (${chosen.map(() => "?").join(",")})` : ""}`, last.id, ...chosen.map((f) => f.id));
     return next;
   };
   const task = [
@@ -92,18 +116,25 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
   ].filter(Boolean).join("\n\n");
 
   const root = getRun(app, runs[0]);
-  if (!isBranchReview(root)) {
-    if (last.output.appliedAt || last.output.discardedAt) throw new HttpError(409, "这次交办已经应用或丢弃，工作区已释放；请重新交办");
+  const input = root.input as { repos?: string[]; branches?: Record<string, { branch: string }>; readSpaces?: string[]; itemId?: string; reviewTier?: string };
+  const branchReview = isBranchReview(root);
+  const repos = input.repos ?? worktreesOf(app, root.id).map((w) => w.space);
+  // A reviewed branch that a delegation is already changing: the fix is that delegation's next round.
+  const into = branchReview ? openDelegationOn(app, repos, Object.values(input.branches ?? {})[0]?.branch, userId) : last;
+  if (into && branchReview && ["queued", "running"].includes(into.status))
+    throw new HttpError(409, `交办 ${into.id}（${into.title}）正在改同一个分支，等这一轮结束再改；要马上加要求，补充给正在编码的 Agent（运行页“补充”或 message_code_run）`);
+  if (into) {
+    if (into.output.appliedAt || into.output.discardedAt) throw new HttpError(409, "这次交办已经应用或丢弃，工作区已释放；请重新交办");
     const { codeChainFor, queueNextCodeRound } = await import("./code-chain.ts");
-    const chain = codeChainFor(app, last) ?? (last.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? null;
-    if (!chain) return accepted(queueStandaloneFix(app, root.id, last.id, task, userId));
-    const sessionId = runs.map((id) => (getRun(app, id).output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
-    const next = queueNextCodeRound(app, chain, task, { resumeSessionId: sessionId, manual: true });
+    const chain = codeChainFor(app, into) ?? (into.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? null;
+    const extraInput = { ...(branchReview ? { fromReview: root.id } : {}), ...(req.reviewExecution ? { reviewExecution: req.reviewExecution } : {}) };
+    const intoRuns = workRuns(app, into.id);
+    if (!chain) return accepted(queueStandaloneFix(app, intoRuns[0], into.id, task, userId, { ...extraInput, ...(req.review ? { roundReview: req.review } : {}) }));
+    const sessionId = intoRuns.map((id) => (getRun(app, id).output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
+    const next = queueNextCodeRound(app, chain, task, { resumeSessionId: sessionId, manual: true, roundReview: req.review, reviewExecution: req.reviewExecution, extraInput });
     if (!next) throw new HttpError(409, "原交办记录不完整，无法继续");
     return accepted(next.run);
   }
-  const input = root.input as { repos?: string[]; branches?: Record<string, { branch: string }>; readSpaces?: string[]; itemId?: string; reviewTier?: string };
-  const repos = input.repos ?? worktreesOf(app, root.id).map((w) => w.space);
   const r = createRun(app, {
     kind: "code",
     spaceId: root.spaceId,
@@ -115,6 +146,8 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
       readSpaces: input.readSpaces,
       itemId: input.itemId,
       reviewTier: input.reviewTier,
+      roundReview: req.review,
+      reviewExecution: req.reviewExecution,
       fromReview: root.id,
     },
     // Under the conversation that asked for the review, so progress and results go back there.

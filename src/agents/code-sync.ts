@@ -145,6 +145,13 @@ export async function popStash(path: string, resolver: Resolver): Promise<SyncSt
   return null;
 }
 
+/** Fetch the target branch and tell whether origin has commits the worktree does not (a failed fetch counts as no). */
+export function behindOrigin(root: string, wt: WorktreeRef): boolean {
+  if (!wt.targetBranch || !fetchBranch(root, wt.targetBranch).ok) return false;
+  const remote = resolveRef(root, `refs/remotes/origin/${wt.targetBranch}`);
+  return !!remote && !git(wt.path, ["merge-base", "--is-ancestor", remote.commit, head(wt.path)]).ok;
+}
+
 async function syncSteps(root: string, wt: WorktreeRef, req: SyncRequest, resolver: Resolver, status: (text: string) => void) {
   const steps: SyncStep[] = [];
   const mode: SyncMode = req.mode ?? "merge";

@@ -6,6 +6,7 @@ import { getThread } from "./threads.ts";
 import type { Run } from "./runs.ts";
 import { createRun, getRun, setRunOutput } from "./runs.ts";
 import { refreshWork, workForChild } from "./agent-work.ts";
+import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 
 /**
  * A delegated coding run reports back to the conversation that requested it, and keeps going
@@ -23,7 +24,7 @@ export type CodeChain = {
   larkKey: string | null;
   /** The one progress card message for the whole chain, updated as rounds run. */
   larkMessageId: string | null;
-  waitReason?: "auto-limit" | "review" | "no-changes" | "failed" | "plan" | "not-converging" | "stalemate" | "escalated";
+  waitReason?: "auto-limit" | "review" | "no-changes" | "failed" | "plan" | "not-converging" | "stalemate" | "escalated" | "stopped";
   round: number;
   rounds: string[];
   /** The last coding run id; its Agent session is resumed on the next round. */
@@ -81,7 +82,7 @@ export function queueNextCodeRound(
   app: App,
   chain: CodeChain,
   task: string,
-  opts: { resumeSessionId?: string; manual?: boolean; execution?: Execution; reviewExecution?: Execution; reviewOnly?: string[]; extraInput?: Record<string, unknown> } = {},
+  opts: { resumeSessionId?: string; manual?: boolean; execution?: Execution; reviewExecution?: Execution; reviewOnly?: string[]; roundReview?: RoundReview; extraInput?: Record<string, unknown> } = {},
 ): { run: Run; chain: CodeChain } | null {
   // Round 1 + automatic continuations up to maxCodeRounds; further rounds need continue_code_run.
   // Reload under a write lock: stale callers and separate MCP processes cannot queue duplicates.
@@ -99,7 +100,13 @@ export function queueNextCodeRound(
     if (!opts.manual && current.status !== "running" && current.status !== "done") return null;
     const last = one<{ space_id: string | null; input: string }>(app.db, "select space_id, input from runs where id = ?", chain.lastCodeRunId!);
     if (!last) return null;
-    const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; readSpaces?: string[]; itemId?: string; fromReview?: string };
+    const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; roundReview?: RoundReview; readSpaces?: string[]; itemId?: string; fromReview?: string };
+    // What the owner added while the last round ran and nobody delivered yet goes with this round's task.
+    const notes = pendingNotes(app, chain.lastCodeRunId!);
+    if (notes.length) {
+      task = `${task}\n\n${notesText(notes)}`;
+      markNotesDelivered(app, chain.lastCodeRunId!, notes);
+    }
     const next: CodeChain = { ...chain, round: chain.round + 1, awaitingUser: false, waitReason: undefined, rounds: [...chain.rounds] };
     const r = createRun(app, {
       kind: "code",
@@ -114,6 +121,8 @@ export function queueNextCodeRound(
         checks: input.checks,
         reviewTier: input.reviewTier,
         reviewChecks: input.reviewChecks,
+        // The owner's choice for the review (“从简”) holds for the rounds after it until changed.
+        roundReview: opts.roundReview ?? input.roundReview,
         readSpaces: input.readSpaces,
         itemId: input.itemId,
         fromReview: input.fromReview,
@@ -180,7 +189,7 @@ export function settleCodeChain(app: App, runId: string) {
       saveCodeChain(app, next, next.askRunId, ...next.rounds);
     } else {
       const next = setChainAwaitingUser(app, chain, true);
-      next.waitReason = r.status !== "done" ? "failed" : r.output.verdict === "no-changes" ? "no-changes" : (r.output.reviewStop as CodeChain["waitReason"]) ?? (chain.round >= maxCodeRounds(app, chain) ? "auto-limit" : "review");
+      next.waitReason = r.output.stoppedByOwner ? "stopped" : r.status !== "done" ? "failed" : r.output.verdict === "no-changes" ? "no-changes" : (r.output.reviewStop as CodeChain["waitReason"]) ?? (chain.round >= maxCodeRounds(app, chain) ? "auto-limit" : "review");
       saveCodeChain(app, next, next.askRunId, ...next.rounds);
     }
     // The originating assistant can consume the result on its next turn. Do not wake a
@@ -229,6 +238,8 @@ function wakeAssistantForCodeResult(app: App, runId: string) {
   const chain = r.output.codeChain as CodeChain | undefined;
   const messageId = r.output.codeResultMessageId as string | undefined;
   if (!chain || !messageId || r.output.codeResultHandedOff || chain.lastCodeRunId !== r.id || r.output.verdict === "awaiting-plan") return;
+  // Stopped on the owner's word: whoever stopped it already told them.
+  if (r.output.stoppedByOwner) return;
   // An automatic next round is already queued: nothing to tell yet.
   if (r.status === "done" && r.output.verdict === "changes-requested" && chain.round < maxCodeRounds(app, chain) && !chain.awaitingUser) return;
   setRunOutput(app, runId, { codeResultHandedOff: true });

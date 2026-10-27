@@ -613,3 +613,17 @@ updated: 2026-10-27
 ## 2026-10-27：每次评审都单独拆需求
 
 之前档位里有业务评审时，变更点靠业务评审在 `submit_review` 里顺带交 `change_points`；需求一大，问题清单和变更点要一次交齐，常被漏掉，本人只好在“变更”里手动点“拆分需求”。现在 `reviewRound` 不论档位都和各评审项同时跑一步单独的需求拆分（`splitChangePoints`，提交 `submit_change_points`），失败时随没完成的评审项在 30 秒后自动重试一次；业务评审的角色说明不再要求交变更点，字段只为旧的自定义说明保留。评审进行中“变更”标签显示“需求拆分和各评审项同时进行”，不再给“拆分需求”按钮；按要求起的拆分运行（包括主助手发起的、刷新页面前发起的）页面会接着跟进。概览里的“需求拆分”统计改用 `currentPoints`。实现：`src/agents/review-chain.ts`、`roles/review-business.md`、`web/src/components/ChangeView.vue`；回归：`test/branch-review.test.ts`。
+
+## 2026-10-27：交办进行中调整、每轮先拉取、一个分支一个交办
+
+起因是一次长交办里：本人在会话里随口问的话被当成“按评审修改”卡片的回答，接连开了好几轮；按分支评审修改又在同一分支开了第二个工作区；“后面从简”没有办法落到评审上，也停不下来。
+
+- **卡片回答**：`src/agents/asks.ts` 的 `answerFromMessage`。宿主处理的提问（`context.handler`：评审结束、评审计划、停下的评审、同步冲突）只认编号或以选项开头的回复；其他话照常交给助手。`Ask.handler` 让文字渠道的提示也说清这一点。
+- **交办进行中调整**：新增 `src/agents/code-steer.ts`。`addCodeNote` 把本人的补充记在当前一轮的 `output.notes`；编码中的 Agent 在下一次 omem 工具调用时收到（`tools.ts` 的 `steering`），没收到的在它这一轮写完、检查之前接着同一会话交给它（`code.ts` 的 `code()`）；已写完代码的随下一轮任务（`queueNextCodeRound`）。`setRoundReview` 设之后各轮的评审（`input.roundReview`：档位可比之前轻、只做哪些评审项、`split: false` 不拆需求），还没开始评审的这一轮也生效，续轮沿用。`stopCodeWork` 停下这一轮和排队中的评审，链停在 `waitReason: "stopped"`，不唤醒助手接手。工具 `message_code_run` / `set_code_review` / `stop_code_run`，`continue_code_run` / `fix_review` 多了评审选项；接口 `POST /api/runs/:id/notes`、`PUT /api/runs/:id/round-review`，`/fix` 收 `review` 和 `reviewAi`，编码运行的“停止”按本人停下处理。
+- **评审计划**：`review.ts` 的 `planReview` 多了 `only`（只做这些评审项）；本人指定的那轮不受“上一轮已是某档，不降档”的限制，不再走计划确认；`review-chain.ts` 在 `split: false` 时不跑需求拆分。
+- **每轮先拉取**：`code.ts` 的 `syncPhase` 在没有显式同步时，先用 `code-sync.ts` 的 `behindOrigin` 看目标分支在 origin 上有没有新提交，有就按 `pull` 合进来（冲突照常交给编码 Agent）；拉到的内容写进运行说明的“Git 同步”。
+- **一个分支一个交办**：`review-fix.ts` 的 `openDelegationOn` 找同一仓库、同一目标分支上没应用的交办。`delegate_code`（除非 `parallel`）和网页交办遇到时拒绝；分支评审的 `startFix` 续在它上面（它还在跑时拒绝）。`startFix` 把没选“改”的未定问题记为 `later`。
+- **多轮换模型**：档位的 `rotateModels` 和共用的 `review.rotation`（`config.ts`、`review.ts` 的 `rotatedExecution`）；第 1 轮各评审项用自己档案的模型，之后按轮次加评审项序号在列表里轮换。`roundReview.rotate` 让一次交办单独开关（工具参数 `rotate_models`）。设置在 `ReviewSettings.vue` 档位页“怎么推进”。
+- **网页**：`ReviewSummary.vue` 的“待处理”按本人还要处理的算（含负责人定为要改的提示），最新一轮带上之前各轮的“暂不改”；补充要求和评审选项存在 `lib/quotes.ts` 的 `fixDraft`，切标签不丢，“修改点”抽屉共用；`NextRoundReview.vue` 选之后的评审档位、拆需求和评审 AI；`CodeSteer.vue` 在进行中的交办上补充和改评审；选中文字浮出的按钮悬停底色不透明。
+- **编码交办卡片只放状态**：`src/channels/lark-code-progress.ts` 的 `snapshot` 不再把运行事件（编码 Agent 的流式文字、每次工具调用）附在卡片上；卡片只有轮次、状态、评审结论和结果，过程看思考气泡。
+- **Windows 上的拉取**：`pull-transfer.ts` 解包时以快照目录为工作目录、用相对路径调用 `tar`（Git for Windows 的 GNU tar 会把 `C:\…` 当成远程主机）。

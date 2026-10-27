@@ -52,6 +52,22 @@ describe("asking the owner", () => {
     await settleAsks(app, runId);
   });
 
+  it("a question the host acts on is not answered by whatever the owner says next in the chat", async () => {
+    const { app, thread, runId } = working("done");
+    const { registerAskHandler } = await import("../src/agents/asks.ts");
+    const handled: string[] = [];
+    registerAskHandler("test-hosted", async (_app, a) => void handled.push(a.answer ?? ""));
+    const ask = createAsk(app, { runId, conversationId: thread.id, question: "评审结束，怎么办？", options: [{ label: "按评审修改" }, { label: "先不改" }], context: { handler: "test-hosted" } });
+    // Meant for the assistant: a turn of its own, the card stays open.
+    expect((await receive(app, { conversationId: thread.id, text: "现在有权限了吗，刚刚绑定了机器人" })).runId).toBeTruthy();
+    expect(getAsk(app, ask.id).status).toBe("pending");
+    expect(handled).toEqual([]);
+    // Starting with an option (and what to add) is the answer.
+    expect((await receive(app, { conversationId: thread.id, text: "按评审修改，另外把空态也改了" })).runId).toBeNull();
+    expect(getAsk(app, ask.id)).toMatchObject({ status: "answered", choice: 0 });
+    expect(handled).toEqual(["按评审修改：另外把空态也改了"]);
+  });
+
   it("suggested next steps show under the reply; a click says its message, a new message lets them lapse", async () => {
     const { app, thread, ctx, runId } = working();
     const r = await callTool(ctx, "suggest_next", { options: [{ label: "按 A 改", message: "按方案 A 改，改完跑测试" }, "先不改"] });

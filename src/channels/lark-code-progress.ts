@@ -87,17 +87,12 @@ export function snapshot(app: App, chain: CodeChain) {
       : latest.output.verdict === "no-changes" ? "未产生改动，等本人处理"
       : `评审要求修改${chain.round >= maxCodeRounds(app, chain) ? "，已到自动推进上限" : ""}，等本人处理`
     : latest.status === "queued" ? "已安排下一轮（复用原工作区和编码会话）" : "进行中";
-  const events = all<{ type: string; data: string }>(app.db, "select type,data from run_events where run_id=? and type in ('status','text','tool') order by seq desc limit 12", latest.id).reverse();
-  const lines = events.map((e) => {
-    const d = JSON.parse(e.data);
-    return String(d.text ?? d.title ?? "").slice(-500);
-  }).filter(Boolean).join("\n").slice(-2500);
+  // The card is the state (round, status, review, result); the process goes in the thinking bubbles.
   blocks.unshift({ markdown: `第 ${chain.round} 轮 · ${status}\n运行：${latest.id}` });
   const estimate = getRun(app, chain.rounds[0]).output.reviewEstimate as { tierName: string; reason: string } | undefined;
   const review = reviewLines(app, latest.id);
   if (review) blocks.splice(1, 0, { markdown: review });
   else if (estimate && !terminal) blocks.splice(1, 0, { markdown: `评审负责人预估：「${estimate.tierName}」档（${estimate.reason}）` });
-  if (lines && !terminal) blocks.push({ markdown: lines });
   if (terminal && latest.output.coderSummary) blocks.push({ fold: { title: "编码说明", markdown: String(latest.output.coderSummary).slice(0, 2000) } });
   if (terminal) blocks.push({ markdown: `检查：${JSON.stringify(latest.output.check ?? latest.output.repos ?? "未配置").slice(0, 1500)}` });
   return buildCard({ title: "编码交办", color: terminal ? approved ? "green" : "orange" : "wathet", blocks });

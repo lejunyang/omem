@@ -56,3 +56,45 @@ export function quotesText(list: Quote[], heading: string) {
   if (!list.length) return "";
   return [heading, ...list.map((q, i) => `[${i + 1}] ${q.label}：\n\n${fence(q.quote)}${q.note?.trim() ? `\n\n要求：${q.note.trim()}` : ""}`)].join("\n\n");
 }
+
+/**
+ * The rest of the next round's request on a run page: the owner's own text and the review the
+ * rounds get from now on. One draft per run, shared by the 概览 fix box and the 修改点 drawer, kept
+ * in this browser until the fix starts — switching tabs or reloading does not lose it.
+ */
+/** `rotate`: "" keeps the tier's setting, "on" / "off" overrides it (another model each round). */
+export type FixDraft = { text: string; tier: string; split: boolean; rotate?: "" | "on" | "off"; ai: { agent?: string; model?: string; effort?: string } };
+const DRAFT_KEY = "omem.fixDrafts";
+const loadDrafts = (): Record<string, FixDraft> => {
+  try {
+    return JSON.parse(localStorage.getItem(DRAFT_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+};
+const drafts = reactive<Record<string, FixDraft>>(loadDrafts());
+watch(drafts, (d) => {
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(Object.fromEntries(Object.entries(d).filter(([, x]) => x.text.trim() || x.tier || !x.split || x.rotate || x.ai.agent))));
+  } catch {
+    /* private mode */
+  }
+}, { deep: true });
+
+export function fixDraft(runId: string): FixDraft {
+  drafts[runId] ??= { text: "", tier: "", split: true, rotate: "", ai: {} };
+  return drafts[runId];
+}
+
+export function clearFixDraft(runId: string) {
+  delete drafts[runId];
+}
+
+/** The draft's review choice as the fix request sends it (nothing when left as it was). */
+export function draftReview(d: FixDraft) {
+  const review = { ...(d.tier ? { tier: d.tier } : {}), ...(!d.split ? { split: false } : {}), ...(d.rotate ? { rotate: d.rotate === "on" } : {}) };
+  return {
+    ...(Object.keys(review).length ? { review } : {}),
+    ...(d.ai.agent ? { reviewAi: { profile: d.ai.agent, ...(d.ai.model ? { model: d.ai.model } : {}), ...(d.ai.effort ? { effort: d.ai.effort } : {}) } } : {}),
+  };
+}

@@ -8,6 +8,7 @@ import Skeleton from "./Skeleton.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSegmented from "./UiSegmented.vue";
 import UiSelect from "./UiSelect.vue";
+import AiDefaults from "./AiDefaults.vue";
 import { confirmDialog } from "../lib/dialog";
 import { toast } from "../store";
 
@@ -17,9 +18,11 @@ import { toast } from "../store";
  * Everything is saved together (config.review).
  */
 type Blocks = "blocker" | "major" | "minor";
-type Tier = { id: string; name: string; when: Condition | null; guide: string; checks: string[]; maxRounds: number; lead: boolean; confirmPlan: boolean };
+type Tier = { id: string; name: string; when: Condition | null; guide: string; checks: string[]; maxRounds: number; lead: boolean; confirmPlan: boolean; rotateModels?: boolean };
+type Pick = { profile: string; model?: string; effort?: string };
+type Backend = { id: string; name?: string; installed: boolean; transport: string; model?: string; effort?: string };
 type Check = { name: string; label: string; blocks: Blocks; when: Condition | null; guide: string; builtin: boolean; about: string; missing: boolean; ai: { profile: string; model?: string; effort?: string } | null };
-type Settings = { tiers: Tier[]; rereviewAllEvery: number; checks: Check[]; specs: { name: string; description: string }[]; recent: Record<string, number> };
+type Settings = { tiers: Tier[]; rereviewAllEvery: number; rotation?: Pick[]; checks: Check[]; specs: { name: string; description: string }[]; recent: Record<string, number> };
 
 const route = useRoute();
 const router = useRouter();
@@ -30,6 +33,9 @@ const saved = ref<Settings | null>(null);
 const tiers = ref<Tier[]>([]);
 const checks = ref<Check[]>([]);
 const rereviewAllEvery = ref(2);
+// The models review rounds rotate through, shared by every tier that turns rotation on.
+const rotation = ref<Pick[]>([]);
+const backends = ref<Backend[]>([]);
 const options = ref<{ fields: Record<string, string>; descriptions: Record<string, string>; ops: string[] }>({ fields: {}, descriptions: {}, ops: [] });
 const NUMERIC = ["change.lines", "change.codeLines", "change.files", "change.repos"];
 const fieldOps = Object.fromEntries(NUMERIC.map((f) => [f, ["gte", "lte", "equals"]]));
@@ -48,12 +54,14 @@ function reset(s: Settings) {
   tiers.value = JSON.parse(JSON.stringify(s.tiers));
   checks.value = JSON.parse(JSON.stringify(s.checks));
   rereviewAllEvery.value = s.rereviewAllEvery ?? 2;
+  rotation.value = JSON.parse(JSON.stringify(s.rotation ?? []));
   dirty.value = false;
 }
 async function load() {
   try {
-    const [s, o] = await Promise.all([get<Settings>("/api/review-settings"), get<typeof options.value>("/api/review-options")]);
+    const [s, o, st] = await Promise.all([get<Settings>("/api/review-settings"), get<typeof options.value>("/api/review-options"), get<{ agents: Backend[] }>("/api/settings")]);
     options.value = o;
+    backends.value = st.agents;
     reset(s);
   } catch (e) {
     toast((e as Error).message, "error");
@@ -76,6 +84,7 @@ async function save() {
     const body = {
       tiers: tiers.value,
       rereviewAllEvery: rereviewAllEvery.value,
+      rotation: rotation.value.filter((p) => p.profile),
       checks: Object.fromEntries(checks.value.map((c) => [c.name, { label: c.label, blocks: c.blocks, when: c.when, guide: c.guide ?? "" }])),
     };
     await put("/api/review-settings", body);
@@ -230,6 +239,17 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
             <input v-model.number="tier.maxRounds" class="input num" type="number" min="1" max="10" inputmode="numeric" aria-label="最多轮数" @input="touch" /></label>
           <label v-if="tier.lead" class="row opt"><span class="grow">每隔几轮全部评审项重审一次<span class="muted small sub">防止只复审一部分时漏掉新问题；所有档位共用</span></span>
             <input v-model.number="rereviewAllEvery" class="input num" type="number" min="1" max="10" inputmode="numeric" aria-label="全部重审的间隔" @input="touch" /></label>
+          <div class="row opt"><span class="grow">多轮时换模型复审<span class="muted small sub">第 1 轮用各评审项自己的模型；从第 2 轮起每项换用下面列表里的下一个，同一轮各项也错开，多看几种意见。交办时也可以单独开关</span></span>
+            <UiCheckbox :model-value="!!tier.rotateModels" switch aria-label="多轮时换模型复审" @update:model-value="(v) => { tier!.rotateModels = !!v; touch(); }" /></div>
+          <div v-if="tier.rotateModels" class="rotation stack">
+            <span class="muted small">轮换用的模型（所有档位共用）</span>
+            <div v-for="(p, i) in rotation" :key="i" class="row wrap">
+              <AiDefaults :model-value="{ agent: p.profile, model: p.model, effort: p.effort }" :backends="backends.map((b) => ({ ...b, name: b.name || b.id }))" default-backend="" @update:model-value="(v) => { Object.assign(p, { profile: v.agent ?? '', model: v.model || undefined, effort: v.effort || undefined }); touch(); }" />
+              <button class="btn ghost sm danger" @click="rotation.splice(i, 1); touch()">移除</button>
+            </div>
+            <div><button class="btn sm" :disabled="rotation.length >= 12" @click="rotation.push({ profile: '' }); touch()">＋ 添加模型</button></div>
+            <small v-if="!rotation.length" class="muted">列表为空时不换模型。</small>
+          </div>
           <small class="muted">每轮 {{ tier.checks.length }} 个评审运行{{ tier.lead ? " + 1 个负责人运行" : "" }}。</small>
         </section>
       </div>
@@ -305,6 +325,7 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
 </template>
 
 <style scoped>
+.rotation { display: grid; gap: 8px; padding: 4px 0 10px; min-width: 0; }
 .review { display: flex; height: 100%; }
 .list-col { width: 300px; flex: none; border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
 .items { overflow-y: auto; padding: 6px; flex: 1; }

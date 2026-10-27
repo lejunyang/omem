@@ -825,7 +825,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
     return { run: { ...r, waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children: listRuns(app, { parentId: id }), patches: r.kind === "code" ? codePatches(app, id) : undefined, context: runContext(app, r) };
   });
-  server.post("/api/runs/:id/cancel", async (req) => cancelRun(app, (req.params as { id: string }).id));
+  server.post("/api/runs/:id/cancel", async (req) => {
+    const id = (req.params as { id: string }).id;
+    // Stopping a coding round from the page is the owner's stop: no automatic round after it.
+    const r = getRun(app, id);
+    if (r.kind === "code" && ["queued", "running"].includes(r.status)) {
+      const { stopCodeWork } = await import("../agents/code-steer.ts");
+      stopCodeWork(app, id, "本人在网页上停下");
+      return getRun(app, id);
+    }
+    return cancelRun(app, id);
+  });
   server.post("/api/runs/:id/retry", async (req) => {
     const id = (req.params as { id: string }).id;
     const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
@@ -858,12 +868,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/delegate", async (req) => {
     // `space` is where the task belongs (a repository or a project); `repos` the repositories it changes.
     const sync = z.object({ pull: z.boolean().optional(), onto: z.string().optional(), mode: z.enum(["merge", "rebase"]).optional(), fetch: z.boolean().optional() });
-    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional(), reviewTier: z.string().optional(), fromBranch: z.string().optional(), itemId: z.string().optional(), sync: sync.optional(), syncOnly: z.boolean().optional() }), req.body);
+    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional(), reviewTier: z.string().optional(), fromBranch: z.string().optional(), itemId: z.string().optional(), sync: sync.optional(), syncOnly: z.boolean().optional(), parallel: z.boolean().optional() }), req.body);
     if (b.sync && !b.sync.pull && !b.sync.onto) throw new HttpError(400, "同步要选拉取或合并 / 变基到哪个分支");
     const userId = who(req);
     const s = getSpace(app, b.space);
     const repos = codeRepos(app, s.id, b.repos).map((r) => r.id);
     const fromBranches = b.fromBranch ? Object.fromEntries(repos.map((id) => [id, b.fromBranch!])) : undefined;
+    if (!b.parallel) {
+      const { openDelegationOn } = await import("../agents/review-fix.ts");
+      const branch = b.fromBranch ?? git(getSpace(app, repos[0]).rootPath ?? "", ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim();
+      const open = openDelegationOn(app, repos, branch, userId);
+      if (open) throw new HttpError(409, `分支 ${branch} 上已有没应用的交办「${open.title}」（${open.id}），在它上面接着改，或者先应用 / 丢弃它`);
+    }
     if (b.itemId && getItem(app, b.itemId).userId !== userId) throw new HttpError(403, "不能使用他人的事项");
     const r = createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, itemId: b.itemId, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}) }, userId });
     if (b.itemId) linkRunToItem(app, r, b.itemId, userId);
@@ -885,7 +901,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // How recent delegations fell into the tiers, to judge the thresholds.
     const recent = all<{ tier: string | null; n: number }>(app.db, "select json_extract(output, '$.reviewPlan.tier') tier, count(*) n from (select output from runs where kind = 'code' and json_extract(input, '$.round') is null order by created_at desc limit 30) group by tier");
     const specs = listAgentSpecs(app).filter((s) => !checks.some((c) => c.name === s.name)).map((s) => ({ name: s.name, description: s.description }));
-    return { tiers: reviewTiers(app), rereviewAllEvery: app.config.review.rereviewAllEvery, checks, specs, recent: Object.fromEntries(recent.filter((r) => r.tier).map((r) => [r.tier, r.n])) };
+    return { tiers: reviewTiers(app), rereviewAllEvery: app.config.review.rereviewAllEvery, rotation: app.config.review.rotation ?? [], checks, specs, recent: Object.fromEntries(recent.filter((r) => r.tier).map((r) => [r.tier, r.n])) };
   });
   server.put("/api/review-settings", async (req) => {
     const { validateReviewSettings } = await import("../agents/review.ts");
@@ -931,6 +947,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
     if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
   };
+  const tierExists = async (tier: string) => {
+    const { reviewTiers } = await import("../agents/review.ts");
+    if (!reviewTiers(app).some((t) => t.id === tier || t.name === tier)) throw new HttpError(400, `没有评审档位 ${tier}`);
+  };
   server.put("/api/runs/:id/findings/:fid", async (req) => {
     const p = req.params as { id: string; fid: string };
     ownRun(req, p.id);
@@ -950,9 +970,34 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/runs/:id/fix", async (req) => {
     const id = (req.params as { id: string }).id;
     ownRun(req, id);
-    const b = q(z.object({ findingIds: z.array(z.number().int()).max(200), text: z.string().max(20000).optional() }), req.body);
+    const b = q(z.object({
+      findingIds: z.array(z.number().int()).max(200),
+      text: z.string().max(20000).optional(),
+      // The next rounds' review (code-steer.ts RoundReview) and the functional reviewer's AI for them.
+      review: z.object({ tier: z.string().optional(), checks: z.array(z.string()).optional(), split: z.boolean().optional(), rotate: z.boolean().optional() }).optional(),
+      reviewAi: z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() }).optional(),
+    }), req.body);
+    if (b.review?.tier) await tierExists(b.review.tier);
+    const { validateExecution } = await import("../agents/execution.ts");
+    const reviewExecution = b.reviewAi ? validateExecution(app, { ...b.reviewAi, source: "user", reason: "本人在网页上按评审修改时指定" }) : undefined;
     const { startFix } = await import("../agents/review-fix.ts");
-    return startFix(app, id, b, who(req));
+    return startFix(app, id, { findingIds: b.findingIds, text: b.text, review: b.review, reviewExecution }, who(req));
+  });
+  // The owner's words for a delegation while it runs, and the review its rounds get from now on (code-steer.ts).
+  server.post("/api/runs/:id/notes", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const b = q(z.object({ text: z.string().min(1).max(20000) }), req.body);
+    const { addCodeNote } = await import("../agents/code-steer.ts");
+    return addCodeNote(app, id, b.text, who(req));
+  });
+  server.put("/api/runs/:id/round-review", async (req) => {
+    const id = (req.params as { id: string }).id;
+    ownRun(req, id);
+    const b = q(z.object({ tier: z.string().optional(), checks: z.array(z.string()).optional(), split: z.boolean().optional(), rotate: z.boolean().optional() }), req.body);
+    if (b.tier) await tierExists(b.tier);
+    const { setRoundReview } = await import("../agents/code-steer.ts");
+    return setRoundReview(app, id, b);
   });
 
   // A file a delegation or review names (`space` optional; a path may start with the repository's

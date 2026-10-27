@@ -7,7 +7,8 @@ import Markdown from "./Markdown.vue";
 import UiSegmented from "./UiSegmented.vue";
 import { relTime, toast } from "../store";
 import { refAction } from "../lib/refs";
-import { clearQuotes, quotesOf, quotesText } from "../lib/quotes";
+import { clearFixDraft, clearQuotes, draftReview, fixDraft, quotesOf, quotesText } from "../lib/quotes";
+import NextRoundReview from "./NextRoundReview.vue";
 import { decisionOf, findingWhere, pointCount, reviewAi, settled, severityCounts, SEV, type Decision, type Finding, type Reviews } from "../lib/reviews";
 
 /**
@@ -36,11 +37,14 @@ const headline = computed(() => {
 });
 const lastAt = computed(() => rv.reviews.value.reduce((t, r) => (r.created_at > t ? r.created_at : t), ""));
 
-// Problems: open ones first; the rest (hints, rejected, merged) behind “全部”.
-const quiet = (f: Finding) => f.severity === "nit" || settled(f);
+// “待处理”: every finding the owner still has a call on (to fix, put off, or not yet decided) and
+// whatever is set to be fixed; behind “全部” only what review-lead rejected or merged and the hints
+// nobody asked to fix.
+const quiet = (f: Finding) => settled(f) || (f.severity === "nit" && decisionOf(f) !== "fix");
 const filter = ref<"open" | "all">("open");
 const openCount = computed(() => rv.findings.value.filter((f) => !quiet(f)).length);
-const filterOptions = computed(() => [{ value: "open" as const, label: `未解决 ${openCount.value}` }, { value: "all" as const, label: `全部 ${rv.findings.value.length}` }]);
+const quietCount = computed(() => rv.findings.value.length - openCount.value);
+const filterOptions = computed(() => [{ value: "open" as const, label: `待处理 ${openCount.value}` }, { value: "all" as const, label: `全部 ${rv.findings.value.length}` }]);
 const shown = computed(() => (filter.value === "all" ? rv.findings.value : rv.findings.value.filter((f) => !quiet(f))));
 const open = ref(new Set<number>());
 const toggle = (id: number) => { const n = new Set(open.value); n.has(id) ? n.delete(id) : n.add(id); open.value = n; };
@@ -75,19 +79,20 @@ const tally = computed(() => {
   for (const f of rv.findings.value) t[decisionOf(f)]++;
   return t;
 });
-const extra = ref("");
+// The text and the next rounds' review survive switching tabs (lib/quotes.ts keeps them per run).
+const draft = computed(() => fixDraft(props.runId));
 const starting = ref(false);
 const router = useRouter();
 // Passages the owner selected on the page (“加入修改点”) go along with the findings and the extra text.
 const picked = computed(() => quotesOf(props.runId, "fix"));
 async function startFix() {
   const ids = rv.findings.value.filter((f) => decisionOf(f) === "fix").map((f) => f.id);
-  const text = [quotesText(picked.value, "本人在页面上选中、要求修改的地方（按 [1]、[2] 编号）："), extra.value.trim()].filter(Boolean).join("\n\n");
+  const text = [quotesText(picked.value, "本人在页面上选中、要求修改的地方（按 [1]、[2] 编号）："), draft.value.text.trim()].filter(Boolean).join("\n\n");
   if (starting.value || (!ids.length && !text)) return;
   starting.value = true;
   try {
-    const r = await post<{ id: string }>(`/api/runs/${props.runId}/fix`, { findingIds: ids, text: text || undefined });
-    extra.value = "";
+    const r = await post<{ id: string }>(`/api/runs/${props.runId}/fix`, { findingIds: ids, text: text || undefined, ...draftReview(draft.value) });
+    clearFixDraft(props.runId);
     clearQuotes(props.runId, "fix");
     toast(props.branchReview ? "已基于这个分支交办修改" : "已安排下一轮修改", "ok");
     router.push(`/runs/${r.id}`);
@@ -176,13 +181,14 @@ async function answer(choice: number | null) {
     <div v-if="rv.findings.value.length" class="card pad findings">
       <div class="row"><div class="section-title flat">待处理问题</div><span class="spacer" /><UiSegmented v-model="filter" size="sm" :options="filterOptions" aria-label="显示哪些问题" /></div>
       <p v-if="!shown.length" class="muted small">没有要处理的问题。</p>
+      <p v-if="filter === 'open' && quietCount" class="muted small">另有 {{ quietCount }} 个已驳回、已合并或只是提示的，在“全部”里。</p>
       <div v-for="f in shown" :key="f.id" class="finding" :class="{ dim: quiet(f) }">
         <div class="row line1">
           <span class="badge" :class="SEV[f.severity].cls">{{ SEV[f.severity].text }}</span>
           <button class="title" :aria-expanded="open.has(f.id)" @click="toggle(f.id)">{{ f.title }}</button>
           <span v-if="STATE[f.state]" class="badge" :class="{ warn: f.state === 'accepted' }">{{ STATE[f.state] }}</span>
           <span class="spacer" />
-          <span class="muted small nowrap">{{ rv.label(f.check) }} · #{{ f.id }}</span>
+          <span class="muted small nowrap">{{ f.fromRound ? `第 ${f.fromRound} 轮 · ` : "" }}{{ rv.label(f.check) }} · #{{ f.id }}</span>
           <UiSegmented v-if="deciding" :model-value="decisionOf(f)" class="decide-f" size="sm" :options="DECISIONS" :aria-label="`#${f.id} 怎么处理`" @change="(d) => decide(f, d)" />
         </div>
         <div v-if="f.decision === 'wontfix' && f.decision_note" class="small wontfix">不改：{{ f.decision_note }}</div>
@@ -205,10 +211,11 @@ async function answer(choice: number | null) {
         <span class="spacer" />
         <span class="muted small">要改 {{ tally.fix }} · 暂不改 {{ tally.later }} · 不改 {{ tally.wontfix }}</span>
       </div>
-      <p class="muted small">在上面每个问题右侧选“改 / 暂不改 / 不改”（不改要写理由，之后的评审不再提）。需求有变化、评审没发现的问题写在下面，一起交给编码 Agent。{{ branchReview ? "会基于这个分支的最新提交交办，改完照常检查和评审。" : "续在原来的工作区和编码会话里。" }}</p>
-      <textarea v-model="extra" class="textarea" rows="4" placeholder="补充要求（可选）：需求变化、要一起改的其他问题、实现上的约束" aria-label="补充要求" />
+      <p class="muted small">在上面每个问题右侧选“改 / 暂不改 / 不改”（不改要写理由，之后的评审不再提）。需求有变化、评审没发现的问题写在下面，一起交给编码 Agent。{{ branchReview ? "这个分支已有没应用的交办时续在它上面，否则基于分支的最新提交交办；改完照常检查和评审。" : "续在原来的工作区和编码会话里，开始前先拉取目标分支的最新提交。" }}</p>
+      <textarea v-model="draft.text" class="textarea" rows="4" placeholder="补充要求（可选）：需求变化、要一起改的其他问题、实现上的约束" aria-label="补充要求" />
       <p v-if="picked.length" class="muted small">另有 {{ picked.length }} 处选中加入的修改点（右下角“修改点”里查看），会一起交给编码 Agent。</p>
-      <div class="row"><span class="spacer" /><button class="btn primary sm" :disabled="starting || (!tally.fix && !extra.trim() && !picked.length)" @click="startFix">开始修改{{ tally.fix || picked.length ? `（${[tally.fix ? `${tally.fix} 个问题` : "", picked.length ? `${picked.length} 处修改点` : "", extra.trim() ? "补充" : ""].filter(Boolean).join(" + ")}）` : "" }}</button></div>
+      <NextRoundReview :draft="draft" />
+      <div class="row"><span class="spacer" /><button class="btn primary sm" :disabled="starting || (!tally.fix && !draft.text.trim() && !picked.length)" @click="startFix">开始修改{{ tally.fix || picked.length ? `（${[tally.fix ? `${tally.fix} 个问题` : "", picked.length ? `${picked.length} 处修改点` : "", draft.text.trim() ? "补充" : ""].filter(Boolean).join(" + ")}）` : "" }}</button></div>
     </div>
   </section>
 </template>

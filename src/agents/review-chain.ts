@@ -7,8 +7,9 @@ import { HttpError, truncate } from "../core/util.ts";
 import { createAsk, registerAskHandler, type Ask } from "./asks.ts";
 import { type CodeChain, queueNextCodeRound, maxCodeRounds, saveCodeChain, setChainAwaitingUser } from "./code-chain.ts";
 import { codePatches, isBranchReview, worktreesOf } from "./code.ts";
+import type { RoundReview } from "./code-steer.ts";
 import {
-  blocksAt, checkBrief, recordReview, reviewChecks, reviewFor, reviewTiers, roundFindings, stopReason,
+  blocksAt, checkBrief, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason,
   SEVERITY_LABEL, STOP_LABEL, type ChangePoint, type LeadResult, type ReviewPlan, type Severity, type StopReason,
 } from "./review.ts";
 import { runRole } from "./runner.ts";
@@ -178,7 +179,9 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
     rc.event("status", { text: `需求拆分没有完成：${(e as Error).message}` });
     return false;
   });
-  const split = splitOnce();
+  // The owner can leave the split out (“只做最简评审”): the change points stay as the last round had them.
+  const noSplit = (run.input as { roundReview?: RoundReview }).roundReview?.split === false;
+  const split = noSplit ? Promise.resolve(true) : splitOnce();
 
   // Each check is its own session with read-only tools; one failing does not stop the others.
   const runCheck = async (name: string) => {
@@ -187,7 +190,8 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
       role: (info.builtin ? name : "reviewer") as RoleName,
       ...(info.builtin ? {} : { spec: readAgentSpec(app, name) }),
       reviewCheck: true,
-      execution: name === "reviewer" ? input.reviewExecution : undefined,
+      // Rounds after the first may each take another model (the tier's or the owner's choice), for a different take.
+      execution: rotatedExecution(app, round, plan.checks.indexOf(name), (run.input as { roundReview?: RoundReview }).roundReview?.rotate ?? plan.rotateModels) ?? (name === "reviewer" ? input.reviewExecution : undefined),
       spaceId: run.spaceId!,
       spaces,
       alsoRead: indexed,
@@ -514,7 +518,7 @@ function escalate(app: App, run: Run, chain: CodeChain, lead: LeadResult, digest
       `「${truncate(run.title, 40)}」第 ${lead.round} 轮评审后停了下来：${STOP_LABEL[lead.stop!]}。`,
       lead.escalation?.summary ?? lead.summary,
       digest,
-      "怎么继续？也可以直接回复新的要求，会作为下一轮的任务。",
+      "怎么继续？也可以在卡片的输入框里写新的要求，作为下一轮的任务（在会话里直接说的话交给助手，不当作这里的回答）。",
     ].filter(Boolean).join("\n\n"),
     options: options.slice(0, 6),
     context: { handler: "review-escalation", codeRunId: run.id, labels: options.map((o) => o.label) },

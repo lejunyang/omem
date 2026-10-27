@@ -53,11 +53,13 @@ export function useReviews(runId: Ref<string>, refreshKey: Ref<string | undefine
     return [...list].sort((a, b) => order.indexOf(a.check_name) - order.indexOf(b.check_name));
   });
   const label = (name: string) => data.value?.labels[name] ?? name;
-  const findings = computed(() =>
-    reviews.value
-      .flatMap((r) => r.findings.map((f) => ({ ...f, check: r.check_name })))
-      .sort((a, b) => Number(settled(a)) - Number(settled(b)) || RANK[a.severity] - RANK[b.severity]),
-  );
+  const findings = computed(() => {
+    const own: (Finding & { check: string; fromRound?: number })[] = reviews.value.flatMap((r) => r.findings.map((f) => ({ ...f, check: r.check_name })));
+    // In the latest round, what the owner put off (“暂不改”) in earlier rounds stays in view to take up again.
+    const latest = round.value === (data.value?.rounds.at(-1)?.round ?? round.value);
+    const carried = latest ? (data.value?.reviews ?? []).filter((r) => r.round < round.value).flatMap((r) => r.findings.filter((f) => f.decision === "later").map((f) => ({ ...f, check: r.check_name, fromRound: r.round }))) : [];
+    return [...own, ...carried].sort((a, b) => Number(settled(a)) - Number(settled(b)) || RANK[a.severity] - RANK[b.severity]);
+  });
   /** The change points of this round: the requirement split of its own if one ran, else the business check's. */
   const changePoints = computed(() => {
     if (current.value?.changePoints?.length) return current.value.changePoints;

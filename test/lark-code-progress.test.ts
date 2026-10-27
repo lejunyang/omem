@@ -272,3 +272,15 @@ it("shows a cancelled run as awaiting handling even if its review was already ap
   expect(message.text).toContain("已结束：cancelled");
   expect(message.text).toContain("等待本人处理");
 });
+
+it("the card shows the state only; the coder's process stays out of it (that is the thinking bubbles')", async () => {
+  const { ask, code } = fixture();
+  const { addRunEvent } = await import("../src/agents/runs.ts");
+  addRunEvent(app, code.id, "status", { text: "已在工作区开始编码" });
+  for (let i = 0; i < 20; i++) addRunEvent(app, code.id, "text", { text: `模型输出片段${i}` });
+  addRunEvent(app, code.id, "tool", { title: "运行 pnpm test" });
+  await flushCodeProgress(app, ask.id);
+  const card = JSON.stringify(reply.mock.calls.at(-1)![0]);
+  expect(card).toContain("进行中");
+  for (const t of ["已在工作区开始编码", "模型输出片段", "运行 pnpm test"]) expect(card).not.toContain(t);
+});

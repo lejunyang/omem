@@ -41,6 +41,8 @@ export type Ask = {
   createdAt: string;
   answeredAt: string | null;
   answeredBy: string | null;
+  /** The host acts on the answer (review and coding decisions); free text in the chat does not answer it. */
+  handler: string | null;
 };
 
 type Row = {
@@ -88,6 +90,7 @@ const toAsk = (r: Row): Ask => ({
   createdAt: r.created_at,
   answeredAt: r.answered_at,
   answeredBy: r.answered_by,
+  handler: ((JSON.parse(r.context ?? "{}") as { handler?: unknown }).handler as string | undefined) ?? null,
 });
 
 export function getAsk(app: App, id: string): Ask {
@@ -179,7 +182,7 @@ async function show(app: App, ask: Ask) {
 export function askText(ask: Ask) {
   const opts = ask.kind === "approval" ? ["批准", "拒绝"] : ask.options.map((o) => o.label);
   const head = ask.kind === "approval" ? "需要你批准：" : ask.kind === "question" ? "需要你回答：" : ask.question ? "" : "下一步可以：";
-  const how = ask.kind === "approval" ? "回复“批准”或“拒绝 + 理由”。" : opts.length ? `回复编号选择${ask.allowText ? "，或直接写你的回答" : ""}。` : "直接回复即可。";
+  const how = ask.kind === "approval" ? "回复“批准”或“拒绝 + 理由”。" : opts.length ? `回复编号选择${ask.handler ? (ask.allowText ? "，要补充就以选项开头接着写（如“" + opts[0] + "，另外……”）" : "") : ask.allowText ? "，或直接写你的回答" : ""}。` : "直接回复即可。";
   return `${head}${ask.question}\n${ask.kind === "approval" ? "" : opts.map((o, i) => `${i + 1}. ${o}`).join("\n")}\n${how}`.replace(/\n{2,}/g, "\n").trim();
 }
 
@@ -353,6 +356,10 @@ export async function settleAsks(app: App, runId: string) {
  * newest one with options; an approval needs a clear 批准/拒绝; otherwise the message answers an
  * open question, and open suggestions lapse (the owner went another way). Returns true when the
  * message was taken as an answer by an agent waiting for it, so it must not start another turn.
+ *
+ * Questions the host acts on (`context.handler`: start a round, apply, confirm a plan) are not
+ * answered by whatever the owner writes next — that is usually meant for the assistant. They take
+ * a bare number or a message that starts with one of their options (“按评审修改，另外……”).
  */
 export async function answerFromMessage(app: App, conversationId: string, text: string, userId: string): Promise<boolean> {
   const open = all<Row>(app.db, "select * from asks where conversation_id = ? and user_id = ? and status = 'pending' and shown_at is not null order by created_at desc", conversationId, userId).map(toAsk);
@@ -376,6 +383,12 @@ export async function answerFromMessage(app: App, conversationId: string, text: 
       await answerAsk(app, a.id, { approved: /^(批准|同意|可以|允许)$/.test(m[1]), text: m[2], by: userId, viaMessage: !taken });
       if (taken) return true;
       taken = true;
+    } else if (a.kind === "question" && !taken && a.handler) {
+      const t = text.trim();
+      const i = a.options.findIndex((o) => t === o.label || (t.startsWith(o.label) && /^[，,。:：\s]/.test(t.slice(o.label.length))));
+      if (i < 0) continue;
+      await answerAsk(app, a.id, { choice: i, text: t.slice(a.options[i].label.length).replace(/^[，,。:：\s]+/, ""), by: userId });
+      return true;
     } else if (a.kind === "question" && !taken) {
       const awaited = isAwaited(a.id);
       await answerAsk(app, a.id, { text, by: userId, viaMessage: !awaited });
