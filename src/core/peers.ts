@@ -201,12 +201,15 @@ export function codeVersion(root: string) {
  * (through its `via` chain if any) with the paired token, so the browser needs no
  * token and the peer need not be reachable from here. Listens on 127.0.0.1 only.
  * Uploads (multipart) work for direct peers; through a middle node only JSON bodies do.
+ * Web VS Code (/ide, with its WebSocket) goes through the raw tunnel instead (peer-tunnel.ts).
  */
 export async function openPeerUi(app: App, id: string, port = 0) {
   if (!findPeer(app, id)) throw new Error(`没有名为 ${id} 的同伴（omem peer list 查看）`);
   const { createServer } = await import("node:http");
   const { Readable } = await import("node:stream");
+  const { tunneled, tunnelHttp, tunnelUpgrade } = await import("./peer-tunnel.ts");
   const server = createServer(async (req, res) => {
+    if (tunneled(req.url ?? "/")) return tunnelHttp(app, id, req.url ?? "/", req, res);
     try {
       const chunks: Buffer[] = [];
       for await (const c of req) chunks.push(c as Buffer);
@@ -232,6 +235,10 @@ export async function openPeerUi(app: App, id: string, port = 0) {
       if (!res.headersSent) res.writeHead(502, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: (e as Error).message }));
     }
+  });
+  server.on("upgrade", (req, socket, head) => {
+    if (tunneled(req.url ?? "/")) tunnelUpgrade(app, id, req.url ?? "/", req, socket, head);
+    else socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
   });
   await new Promise<void>((ok, fail) => server.once("error", fail).listen(port, "127.0.0.1", () => ok()));
   const addr = server.address() as { port: number };

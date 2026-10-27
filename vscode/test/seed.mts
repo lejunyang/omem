@@ -14,6 +14,8 @@ import { createRun, setRunOutput } from "../../src/agents/runs.ts";
 import { recordReview } from "../../src/agents/review.ts";
 import { run as sql } from "../../src/core/db.ts";
 import { boot } from "../../src/main.ts";
+import { addPeer } from "../../src/core/peers.ts";
+import { createApiToken, OWNER } from "../../src/core/users.ts";
 
 const home = process.argv[2] ?? mkdtempSync(join(tmpdir(), "omem-vscode-"));
 const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" };
@@ -51,8 +53,12 @@ recordReview(app, {
   ],
 });
 sql(app.db, "update runs set status = 'done', finished_at = ? where id = ?", new Date().toISOString(), r.id);
+
+// Paired with itself, for the "through this omem to a paired device" connection.
+const port = Number(process.env.OMEM_TEST_PORT ?? 4391);
+const token = createApiToken(app, OWNER, "vscode-test");
+await addPeer(app, "omem1." + Buffer.from(JSON.stringify({ id: "box", urls: [`http://127.0.0.1:${port}`], token })).toString("base64url"));
 app.db.close();
 
-const port = Number(process.env.OMEM_TEST_PORT ?? 4391);
 await boot(home, { port, quiet: true, background: false });
-console.log(JSON.stringify({ url: `http://127.0.0.1:${port}`, folder, runId: r.id }));
+console.log(JSON.stringify({ url: `http://127.0.0.1:${port}`, folder, runId: r.id, token }));

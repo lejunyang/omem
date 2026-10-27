@@ -858,8 +858,33 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     };
     ide.all(IDE_BASE, pass);
     ide.all(`${IDE_BASE}/*`, pass);
+    // A peer's web VS Code through this node (`omem peer open` of a peer reached via this one):
+    // forwarded raw like /ide itself; the auth hook above already let only the owner in.
+    const relay = async (req: FastifyRequest, reply: FastifyReply) => {
+      const { tunnelHttp } = await import("../core/peer-tunnel.ts");
+      const hops = Number(req.headers["x-omem-hops"] ?? 0);
+      if (hops > 3) throw new HttpError(508, "同伴转发层数过多");
+      const { id } = req.params as { id: string };
+      reply.hijack();
+      tunnelHttp(app, id, req.url.slice(`/api/peers/${encodeURIComponent(id)}`.length), req.raw, reply.raw, hops + 1);
+    };
+    ide.all("/api/peers/:id/ide", relay);
+    ide.all("/api/peers/:id/ide/*", relay);
+    ide.get("/api/peers/:id/api/ide/open", relay);
   });
   attachIdeUpgrade(app, server.server);
+  // Its WebSocket: upgrades skip the hooks, so the owner's token is checked here.
+  server.server.on("upgrade", async (req, socket, head) => {
+    const m = /^\/api\/peers\/([^/?]+)(\/.*)$/.exec(req.url ?? "");
+    if (!m) return;
+    const { tunneled, tunnelUpgrade } = await import("../core/peer-tunnel.ts");
+    if (!tunneled(m[2])) return void socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
+    const h = req.headers.authorization;
+    const hops = Number(req.headers["x-omem-hops"] ?? 0);
+    if (!h?.startsWith("Bearer ") || userForToken(app, h.slice(7)) !== OWNER) return void socket.end("HTTP/1.1 401 Unauthorized\r\n\r\n");
+    if (hops > 3) return void socket.end("HTTP/1.1 508 Loop Detected\r\n\r\n");
+    tunnelUpgrade(app, decodeURIComponent(m[1]), m[2], req, socket, head, hops + 1);
+  });
   server.addHook("onClose", async () => stopIdeWeb());
   // The delegations an editor opened on `folder` belongs to (the VS Code extension, docs/v2/ide.md).
   server.get("/api/code-runs/at", async (req) => {

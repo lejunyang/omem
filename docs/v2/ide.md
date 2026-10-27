@@ -52,10 +52,10 @@
 - **入口**：页面上是一个普通链接 `/api/ide/open?folder=<路径>`（不在本机时带令牌查询参数，和下载链接一样），新标签页打开。它只对本人开放：启动 serve-web，给浏览器一个 `Path=/ide`、HttpOnly 的会话 cookie，再跳到 `/ide/?folder=…`（Windows 路径换成 `/e:/…`）。
 - **代理**：`/ide` 下的 HTTP（不解析请求体）和 WebSocket 升级都原样转给 serve-web。放行条件：会话 cookie 有效，或请求来自本机回环、没带令牌且 omem 没配令牌（和 API 的本机信任一致）。转发时去掉 omem 的 cookie 和 Authorization，加上 serve-web 认的 `vscode-tkn` cookie，所以 connection token 不出 omem。会话在内存里，omem 重启后从网页重新点一次。
 - **进程**：WebSocket 任一端断开就关掉两端；停服时连同 serve-web 启动的服务端整棵进程树一起结束；pid 记在 `ide/serve-web.pid`，被强杀或被 watch 重启的 omem 下次启动前先结束遗留的那个（核对命令行确实是带 connection token 的 serve-web 才动）。
+- **经 `omem peer open`**：`/ide` 和 `/api/ide/open` 不走 fetch 式的转发（它跟随跳转、只转部分请求头、不转 WebSocket），而是原样转发（`src/core/peer-tunnel.ts`）：本机的 `peer open` 把请求连同 WebSocket 升级发给路上第一台直连的设备，带配对令牌；中间设备在 `/api/peers/<id>/ide…` 上同样原样转给下一台（升级请求不经过钩子，单独核对本人令牌，最多 4 跳）。目标设备上本人令牌也能进 `/ide`。所以常驻服务器经中转也能用网页版。
 - **开发**：Vite 的 `/ide` 代理开了 `ws`。
 - **限制**：
   - 网页 VS Code 自带终端和扩展宿主，等于这台机器的命令行，也限制不了只看某个目录。所以只对本人开放，成员、访客的接口白名单里没有它。
-  - `omem peer open` 的中转只转 HTTP，不转 WebSocket，经它打开的网页用不了网页版；直连（本机或局域网带令牌的链接）可以。
   - 浏览器语言是中文时，serve-web 从微软拉的中文语言包可能和服务端版本对不上，界面文字错位；是上游的问题，在 VS Code 里“配置显示语言”换成英文即可。
 
 ## 三、VS Code 插件（第一版已实现）
@@ -64,8 +64,12 @@
 
 ### 连接
 
-- `extensionKind: ["workspace", "ui"]`：经 Remote-SSH 打开远程工作区时插件跑在那台机器上，直接连那台的 omem，走本机信任，不用配令牌。
-- 本地使用时配置 omem 地址，令牌（`omem user token`）存在 SecretStorage。
+- 设置项 `omem.connection` 选连接方式，每种只用到自己的那一两项；命令“omem：连接 omem…”（状态栏左下的 omem 也能点开）按方式一步步填，填完试连：
+  - **这台机器上的 omem**（`local`，默认）：插件所在机器的 omem，只有端口（`omem.port`）。`extensionKind: ["workspace", "ui"]` 让 Remote-SSH / WSL / 容器窗口里的插件跑在那边，所以连到 omem 那台时也选这个，走本机信任；默认端口没人应答才问端口，omem 配了令牌才问令牌。
+  - **粘贴配对码或链接** / **填地址和令牌**（`direct`）：另一台机器的 omem（`omem.url`）。`omem link` 的链接或 `omem peer invite` 的配对码整段粘贴，逐个地址试连，第一个能用的留下。令牌按服务地址存在 SecretStorage，换来换去各自保留。
+  - **经本机 omem 转发到配对的设备**（`peer`）：从本机 omem 的 `GET /api/peers` 里选（`omem.peer`），请求发到 `/api/peers/<id>/…`，经中转的设备也行，不用另填令牌。网页链接这时改成提示用 `omem peer open`。
+- 状态栏显示连上没有，悬停看连的是哪台；没连上时“交办”视图只显示“连接 omem”按钮。
+- 路径：omem 给的是它那台机器上的路径。连本机时就是本地文件；Remote-SSH 窗口里换成该窗口的远程地址；连别的机器（`direct` / `peer`）时用 `omem.sshHost`（`~/.ssh/config` 的 Host）拼成 `vscode-remote://ssh-remote+<host>/…`，当前窗口已连在那台上时不用填。不在那台机器上的文件夹不会被认成交办的工作区。
 - 当前文件夹对应哪个运行：`GET /api/code-runs/at?folder=<路径>`（`code.ts` 的 `codeRunsAt`），按工作区的链接路径、复用工作区的真实路径和应用后的接收位置反查，返回各轮运行。
 
 ### 交互：网页的做法换成 VS Code 自己的

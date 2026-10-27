@@ -88,10 +88,12 @@ export class Workbench implements vscode.TreeDataProvider<Item> {
     const d = f.decision ? `${DECISION[f.decision]}${f.decision_note ? `：${f.decision_note}` : ""}` : "未定";
     ft.thread.label = `#${f.id} [${SEVERITY[f.severity]}] ${f.title} · ${d}`;
     ft.thread.contextValue = f.decision ? `finding-${f.decision}` : "finding";
+    // The thread's title already names it (number, severity, title, decision); the comment, under
+    // the check's name, is what the reviewer said about it.
     const body = new vscode.MarkdownString(
-      [`**[${SEVERITY[f.severity]}] ${f.title}**`, f.detail, f.suggestion && `**建议**：${f.suggestion}`, f.triage_note && `**评审负责人**：${f.triage_note}`, `— ${ft.check} · #${f.id} · ${d}`]
+      [f.detail, f.suggestion && `**建议**：${f.suggestion}`, f.triage_note && `**评审负责人**：${f.triage_note}`]
         .filter(Boolean)
-        .join("\n\n"),
+        .join("\n\n") || f.title,
     );
     const rest = ft.thread.comments.slice(1);
     ft.thread.comments = [comment(body, { name: ft.check }), ...rest];

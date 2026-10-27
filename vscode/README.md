@@ -4,8 +4,16 @@
 
 ## 连接
 
-- 插件优先跑在工作区所在的机器上（`extensionKind: workspace`）。经 Remote-SSH 打开 omem 那台机器上的交办工作区时，插件直接连那台的 omem（默认 `http://127.0.0.1:4317`），不用令牌。
-- 本地连别处的 omem：设置 `omem.url`，再运行“omem：设置访问令牌”，填 omem 所在机器上 `omem user token` 给出的令牌（存在 VS Code 的 SecretStorage）。
+点状态栏左下的 omem，或运行命令“omem：连接 omem…”，选 omem 在哪里：
+
+| 情况 | 选 | 要填 |
+| --- | --- | --- |
+| omem 就在这台电脑上，或这个窗口用 Remote-SSH / WSL / 容器连在 omem 那台机器上（插件装在那边） | 这台机器上的 omem | 一般什么都不用填；端口不是 4317 时填端口 |
+| 另一台机器的 omem，能直接访问 | 粘贴配对码或链接 | 那台机器上 `omem link` 或 `omem peer invite` 的输出 |
+| 同上，手头有地址和令牌 | 填地址和令牌 | 地址和 `omem user token` 的令牌 |
+| 那台机器只能经中转访问，本机 omem 已经 `omem peer add` 配好 | 经本机 omem 转发到配对的设备 | 从列表里选设备 |
+
+后三种连的是别的机器：要从评审跳到代码、打开交办的工作区，还得填那台机器的 SSH 主机名（`omem.sshHost`，`~/.ssh/config` 里的 Host），用 Remote-SSH 打开。令牌存在系统钥匙串（SecretStorage），不进设置文件。设置页（搜 omem）里也能直接改，每项写了在哪种方式下用。
 
 ## 用法
 

@@ -29,7 +29,7 @@ try {
     extensionDevelopmentPath: resolve(here, ".."),
     extensionTestsPath: resolve(here, "suite.cjs"),
     launchArgs: [seeded.folder, "--disable-extensions", "--skip-welcome", "--skip-release-notes", "--user-data-dir", join(home, "vscode-user")],
-    extensionTestsEnv: { OMEM_TEST_URL: seeded.url, OMEM_TEST_RUN: seeded.runId },
+    extensionTestsEnv: { OMEM_TEST_URL: seeded.url, OMEM_TEST_RUN: seeded.runId, OMEM_TEST_TOKEN: seeded.token },
   });
 } catch (e) {
   console.error(e);

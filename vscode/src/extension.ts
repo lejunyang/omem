@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
 import { Api, type Folder, type Run } from "./api";
+import { askSshHost, connect, Status } from "./connect";
+import { Connection } from "./connection";
 import { Current } from "./current";
 import { Delegate } from "./delegate";
 import { Progress } from "./progress";
@@ -12,7 +14,8 @@ import { Workbench } from "./review";
  * through omem's HTTP API, as the web page does.
  */
 export async function activate(context: vscode.ExtensionContext) {
-  const api = new Api(context.secrets);
+  const api = new Api(new Connection(context.secrets));
+  const status = new Status(api);
   const fail = (e: unknown) => void vscode.window.showErrorMessage(`omem：${(e as Error).message}`);
   const current = new Current(api);
   const bench = new Workbench(api, current);
@@ -33,13 +36,19 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }));
   const runOf = (arg: unknown) => (arg instanceof RunItem ? arg.run?.id : typeof arg === "string" ? arg : current.run?.id);
+  const openWeb = (runId: string) => {
+    const uri = api.conn.web(`/runs/${runId}`);
+    if (uri) void vscode.env.openExternal(uri);
+    else void vscode.window.showInformationMessage(`经转发连接时，网页在本机终端里用 omem peer open ${api.conn.peer} 打开，再到“运行”里找这次交办`);
+  };
   const started = async (run: Run, what: string) => {
     const pick = await vscode.window.showInformationMessage(`${what}：${run.title}`, "看过程", "在网页中查看");
     if (pick === "看过程") progress.output.show(true);
-    if (pick === "在网页中查看") void vscode.env.openExternal(api.web(`/runs/${run.id}`));
+    if (pick === "在网页中查看") openWeb(run.id);
   };
 
   context.subscriptions.push(
+    status,
     bench,
     progress,
     vscode.window.registerTreeDataProvider("omem.runs", runs),
@@ -47,22 +56,28 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.languages.registerCodeLensProvider({ language: "markdown" }, delegate),
     vscode.workspace.onDidChangeWorkspaceFolders(() => void current.detect().catch(() => {})),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("omem.url")) void current.detect().then(() => runs.refresh()).catch(fail);
+      if (["connection", "url", "port", "peer", "sshHost"].some((k) => e.affectsConfiguration(`omem.${k}`))) void reconnect();
     }),
   );
 
+  // A changed connection: check it, then everything shown comes from the new omem.
+  const reconnect = async () => {
+    if (await status.check()) await current.detect().catch(() => current.set(null));
+    else await current.set(null).catch(() => {});
+    runs.refresh();
+  };
+  cmd("omem.connect", () => connect(api, status));
   cmd("omem.refresh", async () => {
+    await status.check();
     runs.refresh();
     if (current.run) await current.select(current.run.id);
     else await current.detect();
   });
   cmd("omem.setToken", async () => {
-    const token = await vscode.window.showInputBox({ title: "omem 访问令牌", prompt: "omem 所在机器上运行 omem user token 得到；留空则删除", password: true, ignoreFocusOut: true });
+    const token = await vscode.window.showInputBox({ title: `${api.conn.describe()} 的访问令牌`, prompt: "omem 所在机器上运行 omem user token 得到；留空则删除", password: true, ignoreFocusOut: true });
     if (token === undefined) return;
-    if (token.trim()) await context.secrets.store("omem.token", token.trim());
-    else await context.secrets.delete("omem.token");
-    await current.detect();
-    runs.refresh();
+    await api.conn.setToken(token.trim() || null);
+    await reconnect();
   });
   cmd("omem.showRun", async (arg) => {
     const id = runOf(arg);
@@ -76,11 +91,15 @@ export async function activate(context: vscode.ExtensionContext) {
     const { folders } = await api.get<{ folders: Folder[] }>(`/api/runs/${id}/folders`);
     if (!folders.length) return void vscode.window.showWarningMessage("这次交办的工作区已经释放了");
     const f = folders.length === 1 ? folders[0] : (await vscode.window.showQuickPick(folders.map((x) => ({ label: x.space, description: x.path, f: x })), { title: "打开哪个仓库" }))?.f;
-    if (f) await vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.file(f.path), { forceNewWindow: !!vscode.workspace.workspaceFolders?.length });
+    if (!f) return;
+    let uri = api.conn.uri(f.path);
+    if (!uri && (await askSshHost(true))) uri = api.conn.uri(f.path);
+    if (!uri) return void vscode.window.showWarningMessage(`工作区在 omem 那台机器上（${f.path}），要填 SSH 主机名才能用 Remote-SSH 打开`);
+    await vscode.commands.executeCommand("vscode.openFolder", uri, { forceNewWindow: !!vscode.workspace.workspaceFolders?.length });
   });
   cmd("omem.openWeb", (arg) => {
     const id = runOf(arg);
-    if (id) void vscode.env.openExternal(api.web(`/runs/${id}`));
+    if (id) openWeb(id);
   });
   cmd("omem.showProgress", () => progress.output.show(true));
   cmd("omem.reveal", async (uri: vscode.Uri, line: number, thread?: vscode.CommentThread) => {
@@ -134,8 +153,9 @@ export async function activate(context: vscode.ExtensionContext) {
     await started(run, "已交办");
   });
 
-  await current.detect().catch(() => current.set(null));
-  return { api, current, bench, runs, delegate };
+  if (await status.check()) await current.detect().catch(() => current.set(null));
+  else await current.set(null).catch(() => {});
+  return { api, status, current, bench, runs, delegate };
 }
 
 export function deactivate() {}

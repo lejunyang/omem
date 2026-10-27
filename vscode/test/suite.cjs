@@ -13,10 +13,50 @@ const wait = async (what, check, ms = 60000) => {
 };
 
 exports.run = async function run() {
-  await vscode.workspace.getConfiguration("omem").update("url", process.env.OMEM_TEST_URL, vscode.ConfigurationTarget.Global);
+  const config = vscode.workspace.getConfiguration("omem");
+  const G = vscode.ConfigurationTarget.Global;
+  const port = Number(new URL(process.env.OMEM_TEST_URL).port);
   const ext = vscode.extensions.getExtension("omem.omem-vscode");
-  const { api, current, bench, delegate } = await ext.activate();
+  const { api, status, current, bench, runs, delegate } = await ext.activate();
   const step = (s) => console.log(`  · ${s}`);
+
+  step("连接：这台机器上的 omem（只填端口）");
+  await config.update("connection", "local", G);
+  await config.update("port", port, G);
+  assert.equal(api.base, process.env.OMEM_TEST_URL);
+  assert.equal(await status.check(), true);
+  assert.match(status.item.text, /plug/);
+
+  step("连接：直接连接，令牌不对时视图显示“连接 omem”");
+  await config.update("connection", "direct", G);
+  await config.update("url", process.env.OMEM_TEST_URL + "/", G);
+  await api.conn.setToken("wrong");
+  assert.equal(await status.check(), false);
+  assert.match(status.item.text, /未连接/);
+  assert.deepEqual(await runs.getChildren(), [], "没连上时列表为空，显示欢迎页的连接按钮");
+
+  step("连接：粘贴 omem link 的链接，地址和令牌都填好");
+  const { fromPasted } = require("../out/connection.js");
+  const got = await fromPasted(`${process.env.OMEM_TEST_URL}/?token=${process.env.OMEM_TEST_TOKEN}`);
+  assert.equal(got.url, process.env.OMEM_TEST_URL);
+  await api.conn.setToken(got.token, got.url);
+  assert.equal(await status.check(), true);
+  await assert.rejects(fromPasted("随便写的"), /认不出来/);
+
+  step("连接：经本机 omem 转发到配对的设备");
+  await config.update("connection", "peer", G);
+  await config.update("peer", "box", G);
+  assert.equal(api.base, `${process.env.OMEM_TEST_URL}/api/peers/box`);
+  assert.equal(await status.check(), true);
+  assert.equal(api.conn.web("/runs/x"), null, "经转发时网页链接改成提示 omem peer open");
+  // That machine's files are not this window's without an SSH host: no delegation here.
+  await current.detect();
+  assert.equal(current.run, null);
+  await config.update("sshHost", "box-host", G);
+  assert.equal(api.conn.uri("/srv/work/a.ts").toString(), "vscode-remote://ssh-remote%2Bbox-host/srv/work/a.ts");
+  assert.equal(api.conn.path(api.conn.uri("E:\\work\\a.ts")), "E:/work/a.ts");
+  await config.update("sshHost", undefined, G);
+  await config.update("connection", "local", G);
 
   step("打开的文件夹认出是哪次交办");
   await current.detect();

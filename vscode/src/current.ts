@@ -16,8 +16,10 @@ export class Current {
   /** Find the delegation of an open workspace folder. */
   async detect() {
     for (const f of vscode.workspace.workspaceFolders ?? []) {
-      if (f.uri.scheme !== "file") continue;
-      const { runs } = await this.api.get<{ runs: RunAt[] }>(`/api/code-runs/at?folder=${encodeURIComponent(f.uri.fsPath)}`);
+      // A folder on another machine than omem's is not one of its delegations.
+      const path = this.api.conn.path(f.uri);
+      if (!path) continue;
+      const { runs } = await this.api.get<{ runs: RunAt[] }>(`/api/code-runs/at?folder=${encodeURIComponent(path)}`);
       if (runs[0]) return this.set(runs[0]);
     }
     await this.set(null);
@@ -47,7 +49,9 @@ export class Current {
 
   /** Whether a file is inside one of the delegation's folders. */
   contains(uri: vscode.Uri) {
-    const p = norm(uri.fsPath);
+    const at = this.api.conn.path(uri);
+    if (!at) return false;
+    const p = norm(at);
     return this.folders.some((f) => p.startsWith(norm(f.path) + "/") || p === norm(f.path));
   }
 
@@ -55,10 +59,11 @@ export class Current {
   async resolve(file: string): Promise<vscode.Uri | null> {
     const rel = file.replace(/\\/g, "/").replace(/^\.?\//, "");
     const head = rel.split("/")[0];
-    const candidates = [
-      ...this.folders.filter((f) => f.space === head).map((f) => vscode.Uri.joinPath(vscode.Uri.file(f.path), rel.slice(head.length + 1))),
-      ...this.folders.map((f) => vscode.Uri.joinPath(vscode.Uri.file(f.path), rel)),
-    ];
+    const at = (f: Folder, r: string) => {
+      const root = this.api.conn.uri(f.path);
+      return root ? [vscode.Uri.joinPath(root, r)] : [];
+    };
+    const candidates = [...this.folders.filter((f) => f.space === head).flatMap((f) => at(f, rel.slice(head.length + 1))), ...this.folders.flatMap((f) => at(f, rel))];
     for (const uri of candidates) {
       try {
         await vscode.workspace.fs.stat(uri);
@@ -70,11 +75,12 @@ export class Current {
 
   /** A file's path as the delegation names it, for questions and fix points. */
   relative(uri: vscode.Uri) {
-    const p = norm(uri.fsPath);
-    const f = this.folders.find((x) => p.startsWith(norm(x.path) + "/"));
-    if (!f) return vscode.workspace.asRelativePath(uri);
+    const at = this.api.conn.path(uri);
+    const p = at ? norm(at) : "";
+    const f = at ? this.folders.find((x) => p.startsWith(norm(x.path) + "/")) : undefined;
+    if (!at || !f) return vscode.workspace.asRelativePath(uri);
     // norm only changes case and slashes: the same length cuts the original.
-    const rel = uri.fsPath.replace(/\\/g, "/").slice(norm(f.path).length + 1);
+    const rel = at.replace(/\\/g, "/").slice(norm(f.path).length + 1);
     return this.folders.length > 1 ? `${f.space}/${rel}` : rel;
   }
 }

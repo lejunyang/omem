@@ -138,7 +138,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 | 交办进行中加要求、改评审、叫停 | 运行页“补充给编码 Agent”，或对助手说（`message_code_run`）：编码 Agent 这一轮就收到，不用等它结束；“后面评审从简 / 别再拆需求”（`set_code_review`）从还没开始评审的这一轮生效；“停止”或“先停”（`stop_code_run`）不再自动续轮。每轮编码前先拉取目标分支在 origin 上的新提交；同一个分支一次只有一个没应用的交办 |
 | 交办时不想每次重装依赖 | 设置 → 空间 → 编辑仓库：“准备命令”填装依赖的命令（如 `pnpm install --frozen-lockfile`），“复用工作区”填 omem 自建几个，或列出你已经装好依赖的 `git worktree add` 目录。交办借一个空闲的用，用完重置回去，`node_modules` 等忽略的文件留着；准备命令只在新工作区或锁文件变了时运行。你的目录有未提交改动时不借，用完回到原来的分支 |
 | 在 VS Code 里处理评审 | 装 `vscode/` 里的插件（`pnpm run package` 打出 .vsix）：打开交办的工作区后，评审问题挂在代码行上，线程标题点“改 / 暂不改 / 不改”；选中代码 `Ctrl+Alt+A` 提问或记修改点；侧栏“修改单”点“开始修改”续一轮；侧栏“交办”的 ＋ 写任务文档交办；状态栏看轮次和过程。经 Remote-SSH 打开时插件直接连那台机器上的 omem |
-| 不装 VS Code 也在浏览器里看交办的代码 | 设置 → 外观与说明 打开“网页版 VS Code”，运行页“在 VS Code 中打开”旁的齿轮里选“网页版 VS Code”：新标签页里就是这台机器上交办的工作区。用的是官方 `code serve-web`（机器上要有 VS Code 或它的命令行），omem 代理并鉴权，只对你开放 |
+| 不装 VS Code 也在浏览器里看交办的代码 | 设置 → 外观与说明 打开“网页版 VS Code”，运行页“在 VS Code 中打开”旁的齿轮里选“网页版 VS Code”：新标签页里就是这台机器上交办的工作区。用的是官方 `code serve-web`（机器上要有 VS Code 或它的命令行），omem 代理并鉴权，只对你开放；经 `omem peer open` 看常驻服务器时也能用 |
 | 用 VS Code 看交办的代码 | 运行页点“在 VS Code 中打开”：本机直接打开工作区，从别的电脑看时第一次填一下那台机器的 SSH 主机名，之后经 Remote-SSH 打开；改动在源代码管理面板里。齿轮里可换 Insiders 或 Cursor |
 | 大型需求：文档、群聊、代码分支、要对照的源仓库归到一处 | 说“建一个『退款改造』事项，把这些文档、群和分支挂上去”，或在事项详情的“材料”区添加；之后说“评审这个事项的分支”，评审者会读这些材料，评审结果、分支和结论都挂回事项，从事项点进运行页 |
 | 告诉 omem 哪些材料重要、哪些过时或没用 | 原件页给每份选“重点关注 / 一般 / 仅检索 / 忽略”，过时或关键的段落加标注（写清以哪份为准）；或在问答里说“这个知识库都是历史资料”“oncall 群的要重点看”，助手会定级、加标注或存成规则。重点的排在检索前面，仅检索的排后面，忽略的不再出现；过时段落命中时带着标注 |
@@ -395,7 +395,7 @@ skills/omem     给外部 Agent 的 omem 使用说明（配合 omem mcp）
 skills/library  内置技能（如 lark-messaging），首次启动播种到 library/_skills
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
 scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
-vscode/       VS Code 插件（独立依赖）：交办列表、评审问题评论线程、选中提问与修改点、发起交办；在真实 VS Code 里跑的测试在 vscode/test
+vscode/       VS Code 插件（独立依赖）：连接方式（本机 / 直接 / 经本机 omem 转发）、交办列表、评审问题评论线程、选中提问与修改点、发起交办；在真实 VS Code 里跑的测试在 vscode/test
 site/         文档站（VitePress，独立依赖）：功能介绍与安装使用，截图在 site/public/screens，GitHub Pages 发布（.github/workflows/docs.yml）
 web/          Vue 3 网页
 ```

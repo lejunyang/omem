@@ -1,23 +1,19 @@
-import * as vscode from "vscode";
 
-/**
- * The omem HTTP API, as the web page uses it. On the machine omem runs on (locally, or this
- * extension running remotely over Remote-SSH) loopback is trusted without a token; elsewhere the
- * owner's token (`omem user token`) is kept in SecretStorage.
- */
+import type { Connection } from "./connection";
+
+/** The omem HTTP API, as the web page uses it, at the omem the connection points to. */
 export class Api {
-  constructor(private readonly secrets: vscode.SecretStorage) {}
+  /** Whether the last request reached omem with access (false: no answer, or a token is missing). */
+  reachable = false;
+
+  constructor(readonly conn: Connection) {}
 
   get base() {
-    return (vscode.workspace.getConfiguration("omem").get<string>("url") || "http://127.0.0.1:4317").replace(/\/+$/, "");
-  }
-
-  web(hash: string) {
-    return vscode.Uri.parse(`${this.base}/#${hash}`);
+    return this.conn.base;
   }
 
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const token = await this.secrets.get("omem.token");
+    const token = await this.conn.token();
     let res: Response;
     try {
       res = await fetch(this.base + path, {
@@ -26,8 +22,10 @@ export class Api {
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch (e) {
-      throw new Error(`连不上 omem（${this.base}）：${(e as Error).message}。设置里的 omem.url 对吗？`);
+      this.reachable = false;
+      throw new Error(`连不上 omem（${this.conn.describe()}）：${(e as Error).message}。运行“omem：连接 omem…”检查连接方式`);
     }
+    this.reachable = res.status !== 401;
     const text = await res.text();
     let data: unknown = null;
     try {
@@ -37,7 +35,7 @@ export class Api {
     }
     if (!res.ok) {
       const msg = (data as { error?: string } | null)?.error ?? (typeof data === "string" ? data : res.statusText);
-      throw new Error(res.status === 401 ? "omem 要访问令牌：运行“omem：设置访问令牌”" : msg);
+      throw new Error(res.status === 401 ? `${this.conn.describe()} 要访问令牌：运行“omem：连接 omem…”` : msg);
     }
     return data as T;
   }

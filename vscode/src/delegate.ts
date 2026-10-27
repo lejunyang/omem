@@ -45,7 +45,10 @@ export class Delegate implements vscode.CodeLensProvider {
 
   private guessSpace(spaces: Space[]) {
     if (this.current.run?.space) return this.current.run.space;
-    const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => norm(f.uri.fsPath));
+    const folders = (vscode.workspace.workspaceFolders ?? []).flatMap((f) => {
+      const at = this.api.conn.path(f.uri);
+      return at ? [norm(at)] : [];
+    });
     return spaces.find((s) => s.rootPath && folders.includes(norm(s.rootPath)))?.id;
   }
 

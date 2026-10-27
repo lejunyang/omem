@@ -31,6 +31,8 @@ export class Runs implements vscode.TreeDataProvider<RunItem> {
       const here = this.current.run;
       return firsts.map((r) => new RunItem(latest.get(r.id) ?? r, !!here && here.rounds.includes(r.id)));
     } catch (e) {
+      // Not connected: the view's welcome text says how to connect.
+      if (!this.api.reachable) return [];
       const item = new RunItem(null, false);
       item.label = (e as Error).message;
       return [item];

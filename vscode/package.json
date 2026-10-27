@@ -17,10 +17,42 @@
     "configuration": {
       "title": "omem",
       "properties": {
+        "omem.connection": {
+          "type": "string",
+          "enum": ["local", "direct", "peer"],
+          "enumItemLabels": ["这台机器上的 omem", "直接连接另一台机器", "经本机 omem 转发到配对的设备"],
+          "enumDescriptions": [
+            "omem 跑在插件所在的机器上：这台电脑，或 Remote-SSH / WSL / 容器窗口连到的那台（插件要装在那边）。一般不用令牌。",
+            "填下面的“地址”，令牌用命令“omem：连接 omem…”粘贴配对码或链接（存在系统钥匙串里，不在设置文件里）。",
+            "这台电脑的 omem 已用 omem peer add 配好那台设备（经中转的也行），填下面的“设备”。"
+          ],
+          "default": "local",
+          "order": 0,
+          "markdownDescription": "omem 在哪里。最省事的是运行命令 **omem：连接 omem…**（或点状态栏左下的 omem），按步骤填好。"
+        },
+        "omem.port": {
+          "type": "number",
+          "default": 4317,
+          "order": 1,
+          "markdownDescription": "这台机器上 omem 的端口。连接方式为 **这台机器上的 omem** 或 **经本机 omem 转发** 时用。"
+        },
         "omem.url": {
           "type": "string",
-          "default": "http://127.0.0.1:4317",
-          "markdownDescription": "omem 服务地址。插件跑在 omem 所在的机器上（本机或经 Remote-SSH）时不用令牌；否则用 **omem：设置访问令牌** 填 `omem user token` 给出的令牌。"
+          "default": "",
+          "order": 2,
+          "markdownDescription": "另一台机器上 omem 的地址，如 `http://192.168.1.20:4317`。连接方式为 **直接连接** 时用。"
+        },
+        "omem.peer": {
+          "type": "string",
+          "default": "",
+          "order": 3,
+          "markdownDescription": "转发到的设备名（本机 `omem peer list` 里的名字）。连接方式为 **经本机 omem 转发** 时用。"
+        },
+        "omem.sshHost": {
+          "type": "string",
+          "default": "",
+          "order": 4,
+          "markdownDescription": "omem 那台机器在 `~/.ssh/config` 里的 Host。直接连接或经转发时，用 Remote-SSH 打开交办的工作区、从评审跳到代码要用它；当前窗口已经用 Remote-SSH 连在那台机器上时可以不填。"
         }
       }
     },
@@ -34,9 +66,12 @@
       ]
     },
     "viewsWelcome": [
-      { "view": "omem.review", "contents": "当前文件夹不是 omem 交办的工作区。\n在“交办”里选一个运行看评审，或打开它的工作区。\n[发起交办](command:omem.delegate)" }
+      { "view": "omem.runs", "when": "!omem.connected", "contents": "还没连上 omem。\n[连接 omem](command:omem.connect)\n可以连这台机器上的 omem、另一台机器的 omem（粘贴配对码或链接），或经本机 omem 转发到配对的设备。" },
+      { "view": "omem.review", "when": "!omem.connected", "contents": "连上 omem 后，这里是当前交办的评审问题和修改点。" },
+      { "view": "omem.review", "when": "omem.connected", "contents": "当前文件夹不是 omem 交办的工作区。\n在“交办”里选一个运行看评审，或打开它的工作区。\n[发起交办](command:omem.delegate)" }
     ],
     "commands": [
+      { "command": "omem.connect", "title": "连接 omem…", "category": "omem", "icon": "$(plug)" },
       { "command": "omem.refresh", "title": "刷新", "category": "omem", "icon": "$(refresh)" },
       { "command": "omem.delegate", "title": "交办编码", "category": "omem", "icon": "$(add)" },
       { "command": "omem.submitTask", "title": "提交交办", "category": "omem" },
@@ -85,14 +120,15 @@
         { "command": "omem.thread.fixPoint", "when": "commentController == omem && omem.hasRun && commentThread =~ /^(draft|fixpoint)$/", "group": "inline@2" }
       ],
       "comments/commentThread/title": [
-        { "command": "omem.finding.fix", "when": "commentController == omem && commentThread =~ /^finding/", "group": "inline@1" },
-        { "command": "omem.finding.later", "when": "commentController == omem && commentThread =~ /^finding/", "group": "inline@2" },
-        { "command": "omem.finding.wontfix", "when": "commentController == omem && commentThread =~ /^finding/", "group": "inline@3" },
+        { "command": "omem.finding.fix", "when": "commentController == omem && commentThread =~ /^finding(-later|-wontfix)?$/", "group": "inline@1" },
+        { "command": "omem.finding.later", "when": "commentController == omem && commentThread =~ /^finding(-fix|-wontfix)?$/", "group": "inline@2" },
+        { "command": "omem.finding.wontfix", "when": "commentController == omem && commentThread =~ /^finding(-fix|-later)?$/", "group": "inline@3" },
         { "command": "omem.finding.clear", "when": "commentController == omem && commentThread =~ /^finding-/" },
         { "command": "omem.thread.delete", "when": "commentController == omem && commentThread =~ /^(draft|asked|fixpoint)$/", "group": "inline@9" }
       ],
       "view/title": [
         { "command": "omem.delegate", "when": "view == omem.runs", "group": "navigation@1" },
+        { "command": "omem.connect", "when": "view == omem.runs", "group": "navigation@8" },
         { "command": "omem.refresh", "when": "view == omem.runs || view == omem.review", "group": "navigation@9" },
         { "command": "omem.startFix", "when": "view == omem.review && omem.hasRun", "group": "navigation@1" },
         { "command": "omem.showProgress", "when": "view == omem.review && omem.hasRun", "group": "navigation@2" }
@@ -101,9 +137,9 @@
         { "command": "omem.openRunFolder", "when": "view == omem.runs && viewItem =~ /folder/", "group": "inline@1" },
         { "command": "omem.openWeb", "when": "view == omem.runs && viewItem =~ /^run/", "group": "inline@2" },
         { "command": "omem.showRun", "when": "view == omem.runs && viewItem =~ /^run/", "group": "1@1" },
-        { "command": "omem.finding.fix", "when": "view == omem.review && viewItem =~ /^finding/", "group": "1@1" },
-        { "command": "omem.finding.later", "when": "view == omem.review && viewItem =~ /^finding/", "group": "1@2" },
-        { "command": "omem.finding.wontfix", "when": "view == omem.review && viewItem =~ /^finding/", "group": "1@3" },
+        { "command": "omem.finding.fix", "when": "view == omem.review && viewItem =~ /^finding(-later|-wontfix)?$/", "group": "1@1" },
+        { "command": "omem.finding.later", "when": "view == omem.review && viewItem =~ /^finding(-fix|-wontfix)?$/", "group": "1@2" },
+        { "command": "omem.finding.wontfix", "when": "view == omem.review && viewItem =~ /^finding(-fix|-later)?$/", "group": "1@3" },
         { "command": "omem.finding.clear", "when": "view == omem.review && viewItem =~ /^finding-/", "group": "1@4" },
         { "command": "omem.thread.delete", "when": "view == omem.review && viewItem == fixpoint", "group": "inline@1" }
       ]

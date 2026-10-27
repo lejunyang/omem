@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { startServer } from "../src/server/http.ts";
 import { ideFolder, stopIdeWeb } from "../src/server/ide-web.ts";
+import { addPeer, openPeerUi } from "../src/core/peers.ts";
 import { testApp } from "./helpers.ts";
 
 /**
@@ -115,6 +116,51 @@ describe("web VS Code under /ide", () => {
     expect((await fetch(`${base}/api/me`, { headers: { authorization: "Bearer owner-secret" } })).status).toBe(200);
     app.config.ide.web.command = fake;
   });
+
+  it("opens through `omem peer open`, also via a middle node, WebSocket included", async () => {
+    const code = (id: string, url: string, token: string) => "omem1." + Buffer.from(JSON.stringify({ id, urls: [url], token })).toString("base64url");
+    const middle = testApp();
+    middle.config.token = "middle-secret";
+    const mid = await startServer(middle, { port: 0, host: "127.0.0.1", quiet: true });
+    const midUrl = `http://127.0.0.1:${(mid.server.address() as { port: number }).port}`;
+    await addPeer(middle, code("box", base, "owner-secret"));
+    const laptop = testApp();
+    await addPeer(laptop, code("mid", midUrl, "middle-secret"));
+    await addPeer(laptop, code("box", "", "owner-secret"), { via: "mid" });
+    // "box" is reached through "mid": laptop → mid (/api/peers/box/…) → box.
+    {
+      const ui = await openPeerUi(laptop, "box");
+      try {
+        const s = await fetch(`${ui.url}/api/ide/open?folder=${encodeURIComponent("/srv/work/shop")}`, { redirect: "manual" });
+        expect(s.status).toBe(302);
+        expect(s.headers.get("location")).toBe("/ide/?folder=%2Fsrv%2Fwork%2Fshop");
+        // No cookie needed here: the paired token goes along.
+        const seen = await (await fetch(`${ui.url}/ide/static/x.js`)).json();
+        expect(seen.path).toBe("/ide/static/x.js");
+        expect(seen.auth).toBeNull();
+        const posted = await fetch(`${ui.url}/ide/api/x`, { method: "POST", headers: { "content-type": "application/octet-stream" }, body: "raw-bytes" });
+        expect((await posted.json()).body).toBe("raw-bytes");
+        const echo = await new Promise<string>((ok, fail) => {
+          const req = request(`${ui.url}/ide/remote`, { headers: { connection: "Upgrade", upgrade: "websocket" } });
+          req.on("upgrade", (_res, socket) => {
+            socket.once("data", (d) => (ok(String(d)), socket.destroy()));
+            socket.write("ping");
+          });
+          req.on("response", (res) => fail(new Error(`status ${res.statusCode}`)));
+          req.on("error", fail);
+          req.end();
+        });
+        expect(echo).toBe("echo:ping");
+      } finally {
+        await ui.close();
+      }
+    }
+    // The middle node relays only for its owner.
+    expect((await fetch(`${midUrl}/api/peers/box/ide/`)).status).toBe(401);
+    await mid.close();
+    middle.db.close();
+    laptop.db.close();
+  }, 30000);
 
   it("stops a serve-web an earlier omem left running before starting its own", async () => {
     stopIdeWeb();

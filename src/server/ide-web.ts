@@ -6,12 +6,13 @@ import { connect, createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { resolveCommand } from "../agents/spawn.ts";
+import { OWNER, userForToken } from "../core/users.ts";
 
 /**
  * Web VS Code under /ide (docs/v2/ide.md): the official `code serve-web`, started on first use on a
  * loopback port with a connection token only omem knows. omem proxies /ide (HTTP and WebSocket),
  * lets through only the owner (this machine without a configured token, or a session cookie the
- * owner got from `POST /api/ide/session`), and adds the token on the way in. It is a shell on this
+ * owner got from `GET /api/ide/open`, or the owner's token from a forwarding omem), and adds the token on the way in. It is a shell on this
  * machine, so never for members or guests.
  */
 export const IDE_BASE = "/ide";
@@ -153,9 +154,14 @@ function cookies(req: IncomingMessage) {
   return Object.fromEntries((req.headers.cookie ?? "").split(";").map((c) => c.trim().split("=")).filter((p) => p[0]).map(([k, ...v]) => [k, v.join("=")]));
 }
 
-/** The owner's: a session cookie, or this machine when omem trusts loopback (no token configured). */
+/**
+ * The owner's: a session cookie, the owner's token (another omem forwarding for `omem peer open`),
+ * or this machine when omem trusts loopback (no token configured).
+ */
 export function ideAllowed(app: App, req: IncomingMessage) {
   if (sessions.has(cookies(req)[COOKIE] ?? "")) return true;
+  const auth = req.headers.authorization;
+  if (auth?.startsWith("Bearer ")) return userForToken(app, auth.slice(7)) === OWNER;
   const ip = req.socket.remoteAddress ?? "";
   return !app.config.token && /^(127\.|::1$|::ffff:127\.)/.test(ip) && !req.headers.authorization;
 }
