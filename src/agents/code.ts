@@ -1,8 +1,9 @@
 import { executionArgs, type Execution } from "./execution.ts";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { App } from "../core/app.ts";
+import { all } from "../core/db.ts";
 import { defaultBaseRef, fetchBranch, git, isGitRepo, resolveRef } from "../core/git.ts";
 import { notify } from "../core/notify.ts";
 import { cancelHostAsks, createAsk, registerAskHandler } from "./asks.ts";
@@ -658,6 +659,32 @@ export function codeFolders(app: App, runId: string): { space: string; path: str
   const applied = (getRun(app, rootId).output.appliedTo ?? r.output.appliedTo) as AppliedTarget[] | undefined;
   if (applied?.length) return applied.filter((t) => existsSync(t.path)).map((t) => ({ space: t.space, path: t.path, kind: "applied", branch: t.branch }));
   return worktreesOf(app, rootId).filter((w) => existsSync(w.path)).map((w) => ({ space: w.space, path: workDirOf(w), kind: "work", branch: w.branch || w.ref || null }));
+}
+
+/**
+ * The delegations whose folder (worktree, reused slot or applied target) `folder` is, newest first,
+ * with their rounds: how an editor opened on that folder finds its run (docs/v2/ide.md).
+ */
+export function codeRunsAt(app: App, folder: string, userId: string | null) {
+  const norm = (p: string) => {
+    let r = resolve(p);
+    try {
+      r = realpathSync(r);
+    } catch {}
+    return process.platform === "win32" ? r.toLowerCase() : r;
+  };
+  const want = norm(folder);
+  const roots = all<{ id: string; user_id: string | null }>(app.db, "select id, user_id from runs where kind = 'code' and json_extract(input, '$.continueFrom') is null order by created_at desc limit 300");
+  const out: { id: string; rounds: string[]; title: string; status: string; space: string | null; folder: "work" | "applied" }[] = [];
+  for (const root of roots) {
+    if (userId && root.user_id !== userId) continue;
+    const hit = codeFolders(app, root.id).find((f) => norm(f.path) === want);
+    if (!hit) continue;
+    const rounds = all<{ id: string }>(app.db, "select id from runs where id = ? or (kind = 'code' and json_extract(input, '$.continueFrom') = ?) order by created_at", root.id, root.id).map((x) => x.id);
+    const last = getRun(app, rounds.at(-1)!);
+    out.push({ id: last.id, rounds, title: last.title, status: last.status, space: last.spaceId, folder: hit.kind });
+  }
+  return out;
 }
 
 /** Preview for the confirmation dialog; creating branch worktrees happens only on apply. */

@@ -16,7 +16,7 @@ import fastifyCompress from "@fastify/compress";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
-import { applyCodeRun, codeApplyTargets, codeFolders, codePatches, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
+import { applyCodeRun, codeApplyTargets, codeFolders, codePatches, codeRunsAt, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
@@ -835,6 +835,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const id = (req.params as { id: string }).id;
     const local = !bearer(req) && /^(127\.|::1$|::ffff:127\.)/.test(req.ip ?? "");
     return { local, host: hostname(), platform: process.platform, folders: codeFolders(app, id) };
+  });
+  // The delegations an editor opened on `folder` belongs to (the VS Code extension, docs/v2/ide.md).
+  server.get("/api/code-runs/at", async (req) => {
+    const { folder } = q(z.object({ folder: z.string().min(1) }), req.query);
+    return { runs: codeRunsAt(app, folder, who(req) === OWNER ? null : who(req)) };
   });
   server.post("/api/runs/:id/cancel", async (req) => {
     const id = (req.params as { id: string }).id;

@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { codeFolders, discardCodeRun } from "../src/agents/code.ts";
+import { codeFolders, codeRunsAt, discardCodeRun } from "../src/agents/code.ts";
 import { ideUrl } from "../web/src/lib/ide.ts";
 import { createRun, setRunOutput } from "../src/agents/runs.ts";
 import { leaseWorkspace, listWorkspaces, managedSlot, releaseWorkspace, setupDone, setupKey, workDirOf } from "../src/agents/workspaces.ts";
@@ -100,6 +100,9 @@ describe("reusable workspaces", () => {
     sql(app.db, "update runs set status = 'done' where id = ?", r.id);
     // An editor opens the slot itself, not the link to it.
     expect(codeFolders(app, r.id)).toEqual([{ space: "shop-web", path: slot, kind: "work", branch: `omem/${r.id}` }]);
+    // The VS Code extension finds the run from the folder it opened, through the link or the slot.
+    expect(codeRunsAt(app, slot, null)).toMatchObject([{ id: r.id, rounds: [r.id], folder: "work" }]);
+    expect(codeRunsAt(app, slot, "someone-else")).toEqual([]);
     discardCodeRun(app, r.id);
     expect(codeFolders(app, r.id)).toEqual([]);
     expect(existsSync(link)).toBe(false);

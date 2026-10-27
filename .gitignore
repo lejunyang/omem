@@ -38,3 +38,8 @@ CLAUDE.local.md
 
 # Docs site (VitePress) build cache
 site/.vitepress/cache/
+
+# VS Code extension (vscode/)
+vscode/out/
+vscode/.vscode-test/
+vscode/*.vsix

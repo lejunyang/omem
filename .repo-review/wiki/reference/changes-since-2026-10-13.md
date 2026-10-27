@@ -637,3 +637,4 @@ updated: 2026-10-28
 - **检查命令的引号**：`code.ts` 的 `shell` 在 Windows 上照 Node `shell: true` 的方式原样传给 cmd，带双引号的检查命令以前会被转义坏。
 - **网页与接口**：设置 → 空间 → 编辑（仓库空间）加准备命令、复用工作区数量和目录，列出各工作区状态；`GET /api/spaces/:id/workspaces`。
 - **在 VS Code 中打开**：`code.ts` 的 `codeFolders`（工作区的真实路径，应用后为接收位置）与 `GET /api/runs/:id/folders`（带 `local`、主机名）；网页 `OpenInIde.vue` 和 `lib/ide.ts` 生成 `vscode://file/…` 或 `vscode://vscode-remote/ssh-remote+<别名>/…`，SSH 别名和编辑器（VS Code / Insiders / Cursor）存在看的人的浏览器里。
+- **VS Code 插件第一版**：新增 `vscode/`（独立 package），设计在 `docs/v2/ide.md` 第三节。宿主新增 `GET /api/code-runs/at?folder=`（`code.ts` 的 `codeRunsAt`，按文件夹找交办和各轮）。插件：`current.ts`（当前交办、路径对应）、`review.ts`（评论控制器：评审问题线程与改 / 暂不改 / 不改，选中提问走 `/api/ask` 并轮询会话写回线程，修改点，“开始修改”调 `/fix`；“修改单”视图）、`runs.ts`、`progress.ts`（`/api/runs/:id?after=` 轮询事件到输出通道和状态栏）、`delegate.ts`（任务文档 + CodeLens 调 `/api/delegate`）。`vscode/test/run.mjs` 用 `seed.mts` 起演示 omem，在真实 VS Code 里跑 `suite.cjs`。

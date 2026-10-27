@@ -1,0 +1,128 @@
+{
+  "name": "omem-vscode",
+  "displayName": "omem",
+  "description": "在 VS Code 里发起 omem 交办编码、看过程、处理评审问题、就代码提问",
+  "version": "0.1.0",
+  "publisher": "omem",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "extensionKind": ["workspace", "ui"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "configuration": {
+      "title": "omem",
+      "properties": {
+        "omem.url": {
+          "type": "string",
+          "default": "http://127.0.0.1:4317",
+          "markdownDescription": "omem 服务地址。插件跑在 omem 所在的机器上（本机或经 Remote-SSH）时不用令牌；否则用 **omem：设置访问令牌** 填 `omem user token` 给出的令牌。"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [{ "id": "omem", "title": "omem", "icon": "media/omem.svg" }]
+    },
+    "views": {
+      "omem": [
+        { "id": "omem.runs", "name": "交办" },
+        { "id": "omem.review", "name": "修改单" }
+      ]
+    },
+    "viewsWelcome": [
+      { "view": "omem.review", "contents": "当前文件夹不是 omem 交办的工作区。\n在“交办”里选一个运行看评审，或打开它的工作区。\n[发起交办](command:omem.delegate)" }
+    ],
+    "commands": [
+      { "command": "omem.refresh", "title": "刷新", "category": "omem", "icon": "$(refresh)" },
+      { "command": "omem.delegate", "title": "交办编码", "category": "omem", "icon": "$(add)" },
+      { "command": "omem.submitTask", "title": "提交交办", "category": "omem" },
+      { "command": "omem.quoteToTask", "title": "引用到交办任务", "category": "omem" },
+      { "command": "omem.setToken", "title": "设置访问令牌", "category": "omem" },
+      { "command": "omem.showRun", "title": "看评审", "category": "omem" },
+      { "command": "omem.openRunFolder", "title": "打开工作区", "category": "omem", "icon": "$(folder-opened)" },
+      { "command": "omem.openWeb", "title": "在网页中查看", "category": "omem", "icon": "$(link-external)" },
+      { "command": "omem.showProgress", "title": "看过程", "category": "omem", "icon": "$(output)" },
+      { "command": "omem.askSelection", "title": "问 omem", "category": "omem" },
+      { "command": "omem.fixSelection", "title": "加入修改点", "category": "omem" },
+      { "command": "omem.thread.ask", "title": "提问", "category": "omem" },
+      { "command": "omem.thread.fixPoint", "title": "记为修改点", "category": "omem" },
+      { "command": "omem.thread.delete", "title": "删除", "category": "omem", "icon": "$(trash)" },
+      { "command": "omem.finding.fix", "title": "改", "category": "omem" },
+      { "command": "omem.finding.later", "title": "暂不改", "category": "omem" },
+      { "command": "omem.finding.wontfix", "title": "不改", "category": "omem" },
+      { "command": "omem.finding.clear", "title": "撤销决定", "category": "omem" },
+      { "command": "omem.startFix", "title": "开始修改", "category": "omem", "icon": "$(play)" },
+      { "command": "omem.reveal", "title": "转到代码", "category": "omem" }
+    ],
+    "menus": {
+      "commandPalette": [
+        { "command": "omem.submitTask", "when": "false" },
+        { "command": "omem.showRun", "when": "false" },
+        { "command": "omem.openRunFolder", "when": "false" },
+        { "command": "omem.thread.ask", "when": "false" },
+        { "command": "omem.thread.fixPoint", "when": "false" },
+        { "command": "omem.thread.delete", "when": "false" },
+        { "command": "omem.finding.fix", "when": "false" },
+        { "command": "omem.finding.later", "when": "false" },
+        { "command": "omem.finding.wontfix", "when": "false" },
+        { "command": "omem.finding.clear", "when": "false" },
+        { "command": "omem.reveal", "when": "false" },
+        { "command": "omem.askSelection", "when": "editorHasSelection" },
+        { "command": "omem.fixSelection", "when": "editorHasSelection && omem.hasRun" },
+        { "command": "omem.quoteToTask", "when": "editorHasSelection" }
+      ],
+      "editor/context": [
+        { "command": "omem.askSelection", "when": "editorHasSelection", "group": "omem@1" },
+        { "command": "omem.fixSelection", "when": "editorHasSelection && omem.hasRun", "group": "omem@2" },
+        { "command": "omem.quoteToTask", "when": "editorHasSelection", "group": "omem@3" }
+      ],
+      "comments/commentThread/context": [
+        { "command": "omem.thread.ask", "when": "commentController == omem && commentThread != fixpoint", "group": "inline@1" },
+        { "command": "omem.thread.fixPoint", "when": "commentController == omem && omem.hasRun && commentThread =~ /^(draft|fixpoint)$/", "group": "inline@2" }
+      ],
+      "comments/commentThread/title": [
+        { "command": "omem.finding.fix", "when": "commentController == omem && commentThread =~ /^finding/", "group": "inline@1" },
+        { "command": "omem.finding.later", "when": "commentController == omem && commentThread =~ /^finding/", "group": "inline@2" },
+        { "command": "omem.finding.wontfix", "when": "commentController == omem && commentThread =~ /^finding/", "group": "inline@3" },
+        { "command": "omem.finding.clear", "when": "commentController == omem && commentThread =~ /^finding-/" },
+        { "command": "omem.thread.delete", "when": "commentController == omem && commentThread =~ /^(draft|asked|fixpoint)$/", "group": "inline@9" }
+      ],
+      "view/title": [
+        { "command": "omem.delegate", "when": "view == omem.runs", "group": "navigation@1" },
+        { "command": "omem.refresh", "when": "view == omem.runs || view == omem.review", "group": "navigation@9" },
+        { "command": "omem.startFix", "when": "view == omem.review && omem.hasRun", "group": "navigation@1" },
+        { "command": "omem.showProgress", "when": "view == omem.review && omem.hasRun", "group": "navigation@2" }
+      ],
+      "view/item/context": [
+        { "command": "omem.openRunFolder", "when": "view == omem.runs && viewItem =~ /folder/", "group": "inline@1" },
+        { "command": "omem.openWeb", "when": "view == omem.runs && viewItem =~ /^run/", "group": "inline@2" },
+        { "command": "omem.showRun", "when": "view == omem.runs && viewItem =~ /^run/", "group": "1@1" },
+        { "command": "omem.finding.fix", "when": "view == omem.review && viewItem =~ /^finding/", "group": "1@1" },
+        { "command": "omem.finding.later", "when": "view == omem.review && viewItem =~ /^finding/", "group": "1@2" },
+        { "command": "omem.finding.wontfix", "when": "view == omem.review && viewItem =~ /^finding/", "group": "1@3" },
+        { "command": "omem.finding.clear", "when": "view == omem.review && viewItem =~ /^finding-/", "group": "1@4" },
+        { "command": "omem.thread.delete", "when": "view == omem.review && viewItem == fixpoint", "group": "inline@1" }
+      ]
+    },
+    "keybindings": [
+      { "command": "omem.askSelection", "key": "ctrl+alt+a", "mac": "cmd+alt+a", "when": "editorHasSelection" }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "test": "npm run build && node test/run.mjs",
+    "package": "vsce package --no-dependencies --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "1.90.0",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "^5.6.0"
+  }
+}
