@@ -20,11 +20,11 @@
         "omem.connection": {
           "type": "string",
           "enum": ["local", "direct", "peer"],
-          "enumItemLabels": ["这台机器上的 omem", "直接连接另一台机器", "经本机 omem 转发到配对的设备"],
+          "enumItemLabels": ["这台机器上的 omem", "直接连接另一台机器", "本机配对的设备"],
           "enumDescriptions": [
             "omem 跑在插件所在的机器上：这台电脑，或 Remote-SSH / WSL / 容器窗口连到的那台（插件要装在那边）。一般不用令牌。",
             "填下面的“地址”，令牌用命令“omem：连接 omem…”粘贴配对码或链接（存在系统钥匙串里，不在设置文件里）。",
-            "这台电脑的 omem 已用 omem peer add 配好那台设备（经中转的也行），填下面的“设备”。"
+            "本机 omem peer add 配好的设备（经中转的也行），填下面的“设备”。配对信息从 omem 的数据目录读，本机 omem 服务不用开。"
           ],
           "default": "local",
           "order": 0,
@@ -34,7 +34,7 @@
           "type": "number",
           "default": 4317,
           "order": 1,
-          "markdownDescription": "这台机器上 omem 的端口。连接方式为 **这台机器上的 omem** 或 **经本机 omem 转发** 时用。"
+          "markdownDescription": "这台机器上 omem 的端口。连接方式为 **这台机器上的 omem** 时用。"
         },
         "omem.url": {
           "type": "string",
@@ -46,13 +46,19 @@
           "type": "string",
           "default": "",
           "order": 3,
-          "markdownDescription": "转发到的设备名（本机 `omem peer list` 里的名字）。连接方式为 **经本机 omem 转发** 时用。"
+          "markdownDescription": "设备名（本机 `omem peer list` 里的名字）。连接方式为 **本机配对的设备** 时用。"
+        },
+        "omem.home": {
+          "type": "string",
+          "default": "",
+          "order": 4,
+          "markdownDescription": "本机 omem 的数据目录，读配对信息用。默认是 `OMEM_HOME` 或 `~/.omem`，不在那里时填。连接方式为 **本机配对的设备** 时用。"
         },
         "omem.sshHost": {
           "type": "string",
           "default": "",
-          "order": 4,
-          "markdownDescription": "omem 那台机器在 `~/.ssh/config` 里的 Host。直接连接或经转发时，用 Remote-SSH 打开交办的工作区、从评审跳到代码要用它；当前窗口已经用 Remote-SSH 连在那台机器上时可以不填。"
+          "order": 5,
+          "markdownDescription": "omem 那台机器在 `~/.ssh/config` 里的 Host。连另一台机器（直接连接或配对的设备）时，用 Remote-SSH 打开交办的工作区、从评审跳到代码要用它；当前窗口已经用 Remote-SSH 连在那台机器上时可以不填。"
         }
       }
     },
@@ -66,7 +72,7 @@
       ]
     },
     "viewsWelcome": [
-      { "view": "omem.runs", "when": "!omem.connected", "contents": "还没连上 omem。\n[连接 omem](command:omem.connect)\n可以连这台机器上的 omem、另一台机器的 omem（粘贴配对码或链接），或经本机 omem 转发到配对的设备。" },
+      { "view": "omem.runs", "when": "!omem.connected", "contents": "还没连上 omem。\n[连接 omem](command:omem.connect)\n可以连这台机器上的 omem、另一台机器的 omem（粘贴配对码或链接），或本机 omem peer add 配好的设备。" },
       { "view": "omem.review", "when": "!omem.connected", "contents": "连上 omem 后，这里是当前交办的评审问题和修改点。" },
       { "view": "omem.review", "when": "omem.connected", "contents": "当前文件夹不是 omem 交办的工作区。\n在“交办”里选一个运行看评审，或打开它的工作区。\n[发起交办](command:omem.delegate)" }
     ],

@@ -23,7 +23,7 @@ exports.run = async function run() {
   step("连接：这台机器上的 omem（只填端口）");
   await config.update("connection", "local", G);
   await config.update("port", port, G);
-  assert.equal(api.base, process.env.OMEM_TEST_URL);
+  assert.equal((await api.conn.target()).base, process.env.OMEM_TEST_URL);
   assert.equal(await status.check(), true);
   assert.match(status.item.text, /plug/);
 
@@ -43,11 +43,17 @@ exports.run = async function run() {
   assert.equal(await status.check(), true);
   await assert.rejects(fromPasted("随便写的"), /认不出来/);
 
-  step("连接：经本机 omem 转发到配对的设备");
+  step("连接：本机配对的设备，从数据目录读配对，本机 omem 服务不用开");
   await config.update("connection", "peer", G);
   await config.update("peer", "box", G);
-  assert.equal(api.base, `${process.env.OMEM_TEST_URL}/api/peers/box`);
+  await config.update("home", process.env.OMEM_TEST_HOME, G);
+  await config.update("port", 9, G);
+  assert.deepEqual(await api.conn.target(), { base: process.env.OMEM_TEST_URL, token: process.env.OMEM_TEST_TOKEN });
   assert.equal(await status.check(), true);
+  await config.update("peer", "nobody", G);
+  await assert.rejects(api.conn.target(), /本机没有配对 nobody/);
+  await config.update("peer", "box", G);
+  await config.update("port", port, G);
   assert.equal(api.conn.web("/runs/x"), null, "经转发时网页链接改成提示 omem peer open");
   // That machine's files are not this window's without an SSH host: no delegation here.
   await current.detect();
@@ -56,6 +62,7 @@ exports.run = async function run() {
   assert.equal(api.conn.uri("/srv/work/a.ts").toString(), "vscode-remote://ssh-remote%2Bbox-host/srv/work/a.ts");
   assert.equal(api.conn.path(api.conn.uri("E:\\work\\a.ts")), "E:/work/a.ts");
   await config.update("sshHost", undefined, G);
+  await config.update("home", undefined, G);
   await config.update("connection", "local", G);
 
   step("打开的文件夹认出是哪次交办");

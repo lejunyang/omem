@@ -395,7 +395,7 @@ skills/omem     给外部 Agent 的 omem 使用说明（配合 omem mcp）
 skills/library  内置技能（如 lark-messaging），首次启动播种到 library/_skills
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
 scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
-vscode/       VS Code 插件（独立依赖）：连接方式（本机 / 直接 / 经本机 omem 转发）、交办列表、评审问题评论线程、选中提问与修改点、发起交办；在真实 VS Code 里跑的测试在 vscode/test
+vscode/       VS Code 插件（独立依赖）：连接方式（本机 / 直接 / 本机配对的设备）、交办列表、评审问题评论线程、选中提问与修改点、发起交办；在真实 VS Code 里跑的测试在 vscode/test
 site/         文档站（VitePress，独立依赖）：功能介绍与安装使用，截图在 site/public/screens，GitHub Pages 发布（.github/workflows/docs.yml）
 web/          Vue 3 网页
 ```

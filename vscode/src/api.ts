@@ -8,15 +8,11 @@ export class Api {
 
   constructor(readonly conn: Connection) {}
 
-  get base() {
-    return this.conn.base;
-  }
-
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const token = await this.conn.token();
     let res: Response;
     try {
-      res = await fetch(this.base + path, {
+      const { base, token } = await this.conn.target();
+      res = await fetch(base + path, {
         method,
         headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...(token ? { authorization: `Bearer ${token}` } : {}) },
         body: body === undefined ? undefined : JSON.stringify(body),

@@ -1,6 +1,7 @@
+import { join } from "node:path";
 import * as vscode from "vscode";
 import type { Api } from "./api";
-import { fromPasted, type Mode } from "./connection";
+import { fromPasted, omemHome, pairedPeers, type Mode } from "./connection";
 
 const cfg = () => vscode.workspace.getConfiguration("omem");
 const G = vscode.ConfigurationTarget.Global;
@@ -107,24 +108,27 @@ export async function connect(api: Api, status: Status) {
       },
     },
     {
-      label: "$(references) 经本机 omem 转发到配对的设备",
+      label: "$(references) 本机配对的设备",
       description: conn.mode === "peer" ? `当前：${conn.peer}` : undefined,
-      detail: "本机 omem 用 omem peer add 配好的设备，经中转的也行；不用另填地址和令牌",
+      detail: "omem peer list 里的设备，经中转的也行；本机 omem 服务不用开，也不用另填地址和令牌",
       go: async () => {
-        const local = `http://127.0.0.1:${cfg().get<number>("port") || 4317}`;
-        const token = await conn.token();
-        let peers: { id: string; url: string; via: string | null }[];
-        try {
-          const r = await fetch(`${local}/api/peers`, { headers: token ? { authorization: `Bearer ${token}` } : {}, signal: AbortSignal.timeout(4000) });
-          if (!r.ok) throw new Error(r.status === 401 ? "本机 omem 要令牌：先用“这台机器上的 omem”连上" : r.statusText);
-          peers = ((await r.json()) as { peers: typeof peers }).peers;
-        } catch (e) {
-          throw new Error(`读不到本机 omem 配对的设备（${local}）：${(e as Error).message}`);
+        // The pairings are files in omem's data directory; only without one here ask the service.
+        let peers: { id: string; url: string; via?: string | null }[] | null = pairedPeers();
+        if (!peers) {
+          const local = `http://127.0.0.1:${cfg().get<number>("port") || 4317}`;
+          const token = await conn.token();
+          try {
+            const r = await fetch(`${local}/api/peers`, { headers: token ? { authorization: `Bearer ${token}` } : {}, signal: AbortSignal.timeout(4000) });
+            if (!r.ok) throw new Error(r.status === 401 ? "本机 omem 要令牌" : r.statusText);
+            peers = ((await r.json()) as { peers: { id: string; url: string; via: string | null }[] }).peers;
+          } catch (e) {
+            throw new Error(`这台电脑上没找到 omem 的配对信息（${join(omemHome(), "secrets", "peers.json")}），本机 omem 服务也连不上（${(e as Error).message}）。数据目录不在默认位置的话，在设置 omem.home 里填`);
+          }
         }
-        if (!peers.length) throw new Error("本机 omem 还没有配对的设备：在那台机器上 omem peer invite，本机 omem peer add <配对码>");
+        if (!peers.length) throw new Error("本机还没有配对的设备：在那台机器上 omem peer invite，本机 omem peer add <配对码>");
         const pick = await vscode.window.showQuickPick(
           peers.map((p) => ({ label: p.id, description: p.via ? `经 ${p.via}` : p.url, picked: p.id === conn.peer })),
-          { title: "转发到哪台设备" },
+          { title: "连哪台设备" },
         );
         if (!pick) return;
         await set({ connection: "peer", peer: pick.label });

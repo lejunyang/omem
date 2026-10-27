@@ -67,7 +67,7 @@
 - 设置项 `omem.connection` 选连接方式，每种只用到自己的那一两项；命令“omem：连接 omem…”（状态栏左下的 omem 也能点开）按方式一步步填，填完试连：
   - **这台机器上的 omem**（`local`，默认）：插件所在机器的 omem，只有端口（`omem.port`）。`extensionKind: ["workspace", "ui"]` 让 Remote-SSH / WSL / 容器窗口里的插件跑在那边，所以连到 omem 那台时也选这个，走本机信任；默认端口没人应答才问端口，omem 配了令牌才问令牌。
   - **粘贴配对码或链接** / **填地址和令牌**（`direct`）：另一台机器的 omem（`omem.url`）。`omem link` 的链接或 `omem peer invite` 的配对码整段粘贴，逐个地址试连，第一个能用的留下。令牌按服务地址存在 SecretStorage，换来换去各自保留。
-  - **经本机 omem 转发到配对的设备**（`peer`）：从本机 omem 的 `GET /api/peers` 里选（`omem.peer`），请求发到 `/api/peers/<id>/…`，经中转的设备也行，不用另填令牌。网页链接这时改成提示用 `omem peer open`。
+  - **本机配对的设备**（`peer`）：从本机 omem 数据目录的 `secrets/peers.json` 里选（`omem.peer`；数据目录按 `omem.home`、`OMEM_HOME`、`~/.omem` 找），插件照 `omem peer` 的走法直接连：直连的设备用它的地址和配对令牌（当前地址不应答时试配对码里的其他地址），`via` 的设备发到中间设备的 `/api/peers/<id>/…`。本机 omem 服务不用开；这台电脑上没有数据目录时才经本机服务的 `/api/peers` 转发。网页链接这时改成提示用 `omem peer open`。
 - 状态栏显示连上没有，悬停看连的是哪台；没连上时“交办”视图只显示“连接 omem”按钮。
 - 路径：omem 给的是它那台机器上的路径。连本机时就是本地文件；Remote-SSH 窗口里换成该窗口的远程地址；连别的机器（`direct` / `peer`）时用 `omem.sshHost`（`~/.ssh/config` 的 Host）拼成 `vscode-remote://ssh-remote+<host>/…`，当前窗口已连在那台上时不用填。不在那台机器上的文件夹不会被认成交办的工作区。
 - 当前文件夹对应哪个运行：`GET /api/code-runs/at?folder=<路径>`（`code.ts` 的 `codeRunsAt`），按工作区的链接路径、复用工作区的真实路径和应用后的接收位置反查，返回各轮运行。

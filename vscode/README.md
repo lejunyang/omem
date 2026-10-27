@@ -11,7 +11,7 @@
 | omem 就在这台电脑上，或这个窗口用 Remote-SSH / WSL / 容器连在 omem 那台机器上（插件装在那边） | 这台机器上的 omem | 一般什么都不用填；端口不是 4317 时填端口 |
 | 另一台机器的 omem，能直接访问 | 粘贴配对码或链接 | 那台机器上 `omem link` 或 `omem peer invite` 的输出 |
 | 同上，手头有地址和令牌 | 填地址和令牌 | 地址和 `omem user token` 的令牌 |
-| 那台机器只能经中转访问，本机 omem 已经 `omem peer add` 配好 | 经本机 omem 转发到配对的设备 | 从列表里选设备 |
+| 本机 omem 已经 `omem peer add` 配好那台机器（只能经中转访问的也行） | 本机配对的设备 | 从 `omem peer list` 的设备里选；本机 omem 服务不用开 |
 
 后三种连的是别的机器：要从评审跳到代码、打开交办的工作区，还得填那台机器的 SSH 主机名（`omem.sshHost`，`~/.ssh/config` 里的 Host），用 Remote-SSH 打开。令牌存在系统钥匙串（SecretStorage），不进设置文件。设置页（搜 omem）里也能直接改，每项写了在哪种方式下用。
 

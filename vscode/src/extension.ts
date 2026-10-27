@@ -39,7 +39,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const openWeb = (runId: string) => {
     const uri = api.conn.web(`/runs/${runId}`);
     if (uri) void vscode.env.openExternal(uri);
-    else void vscode.window.showInformationMessage(`经转发连接时，网页在本机终端里用 omem peer open ${api.conn.peer} 打开，再到“运行”里找这次交办`);
+    else void vscode.window.showInformationMessage(`连配对的设备时，网页在本机终端里用 omem peer open ${api.conn.peer} 打开，再到“运行”里找这次交办`);
   };
   const started = async (run: Run, what: string) => {
     const pick = await vscode.window.showInformationMessage(`${what}：${run.title}`, "看过程", "在网页中查看");
@@ -56,7 +56,7 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.languages.registerCodeLensProvider({ language: "markdown" }, delegate),
     vscode.workspace.onDidChangeWorkspaceFolders(() => void current.detect().catch(() => {})),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (["connection", "url", "port", "peer", "sshHost"].some((k) => e.affectsConfiguration(`omem.${k}`))) void reconnect();
+      if (["connection", "url", "port", "peer", "home", "sshHost"].some((k) => e.affectsConfiguration(`omem.${k}`))) void reconnect();
     }),
   );
 
