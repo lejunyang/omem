@@ -142,6 +142,8 @@ describe("reviewing an existing branch", () => {
       expect(done.coderSummary).toContain("feature/refund");
       expect(done.coderSummary).toContain("只退未发货的行");
       expect(done.coderSummary).toContain("HEAD 特意放在分叉点");
+      // The tier has the business check, and the requirement split still ran as a session of its own.
+      expect((getRun(app, r.id).output as { changePoints?: { points: { id: string }[] } }).changePoints?.points.map((p) => p.id)).toEqual(["C1"]);
       const [wt] = worktreesOf(app, r.id);
       expect(wt).toMatchObject({ ref: "feature/refund", branch: "", baseRef: "main" });
       // The coder never ran (it would have appended to refund.ts).

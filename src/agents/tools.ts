@@ -3079,7 +3079,7 @@ def({
       implementation: z.string().max(2000).optional().describe("代码怎么做、为什么这么写"),
       refs: z.array(z.string().max(300)).max(20).optional().describe("依据：src:<原件id>#L起-L止、mem:<id>"),
       locations: z.array(z.object({ file: z.string().max(500).describe("仓库内路径；几个仓库时写成 仓库空间id/路径"), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).max(30).optional().describe("实现它的代码位置（改动后的行号）；找不到精确行就只写文件"),
-    })).max(100).optional().describe("业务评审填写：需求拆成的变更点和各自的实现位置，网页的“变更”视图按它把需求和代码对上。其他评审项不用填"),
+    })).max(100).optional().describe("不用填：变更点由和评审同时进行的需求拆分提交（submit_change_points）。只为兼容旧的自定义评审说明保留"),
   }),
   handler: async (ctx, a) => {
     const check = ctx.spec ?? ctx.role;

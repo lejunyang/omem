@@ -172,9 +172,13 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   if (!plan) throw new HttpError(409, "这次交办还没有评审计划");
   setRunOutput(app, run.id, { reviewStage: "checks" });
   rc.event("status", { text: `独立评审中：「${plan.tierName}」档，${plan.checks.map(label).join("、")}（${plan.reasons.join("；")}）` });
-  // The requirement split into change points comes from the business check; without one in this
-  // tier, a split of its own runs next to the checks.
-  const split = plan.checks.includes("review-business") ? null : splitChangePoints(app, run.id, rc).catch((e) => rc.event("status", { text: `需求拆分没有完成：${(e as Error).message}` }));
+  // The requirement split into change points runs as a session of its own next to the checks, in
+  // every tier: left to the business check, a long submission would often come without it.
+  const splitOnce = () => splitChangePoints(app, run.id, rc).then(() => true, (e) => {
+    rc.event("status", { text: `需求拆分没有完成：${(e as Error).message}` });
+    return false;
+  });
+  const split = splitOnce();
 
   // Each check is its own session with read-only tools; one failing does not stop the others.
   const runCheck = async (name: string) => {
@@ -203,15 +207,16 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
     return { name, text, ai: res.ai, profileId: res.profileId };
   };
   const outcomes = await Promise.allSettled(plan.checks.map(runCheck));
-  await split;
+  const splitOk = await split;
   // A review is worth a second try (a stalled backend, a dropped connection); what fails again goes
-  // to the owner, who decides whether to try once more.
+  // to the owner, who decides whether to try once more. The split gets its second try alongside.
   const retry = plan.checks.flatMap((name, i) => (outcomes[i].status === "rejected" ? [i] : []));
-  if (retry.length && !rc.signal.aborted) {
-    rc.event("status", { text: `${retry.map((i) => label(plan.checks[i])).join("、")}没有完成，${REVIEW_RETRY_DELAY_MS / 1000} 秒后自动重试一次` });
+  if ((retry.length || !splitOk) && !rc.signal.aborted) {
+    const what = [...retry.map((i) => label(plan.checks[i])), ...(splitOk ? [] : ["需求拆分"])];
+    rc.event("status", { text: `${what.join("、")}没有完成，${REVIEW_RETRY_DELAY_MS / 1000} 秒后自动重试一次` });
     await new Promise((ok) => { const t = setTimeout(ok, REVIEW_RETRY_DELAY_MS); rc.signal.addEventListener("abort", () => { clearTimeout(t); ok(null); }, { once: true }); });
     if (rc.signal.aborted) throw new Error("CANCELLED");
-    const again = await Promise.allSettled(retry.map((i) => runCheck(plan.checks[i])));
+    const [again] = await Promise.all([Promise.allSettled(retry.map((i) => runCheck(plan.checks[i]))), splitOk ? null : splitOnce()]);
     retry.forEach((i, k) => { outcomes[i] = again[k]; });
   }
   const failed = outcomes.flatMap((o, i) => (o.status === "rejected" ? [{ name: plan.checks[i], error: (o.reason as Error).message }] : []));
@@ -430,8 +435,7 @@ function reviewDigest(app: App, run: Run, round: number, lead: LeadResult, chang
   const counts = (["blocker", "major", "minor", "nit"] as const).map((s) => [s, findings.filter((f) => f.severity === s).length] as const).filter(([, n]) => n);
   const toFix = fixCandidates(app, run.id, round);
   const where = (f: { file_path: string | null; line: number | null }) => (f.file_path ? ` — \`${f.file_path}${f.line ? `:${f.line}` : ""}\`` : "");
-  const points = (run.output as { changePoints?: { round: number; points: { status: string }[] } }).changePoints;
-  const pts = points?.round === round ? points.points : [];
+  const pts = currentPoints(app, run);
   const POINT: Record<string, string> = { done: "已实现", partial: "部分实现", missing: "没实现", extra: "需求外" };
   return [
     lead.summary ? `**结论**：${truncate(lead.summary, 400)}` : "",

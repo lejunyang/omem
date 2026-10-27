@@ -229,6 +229,13 @@ async function follow() {
   }
   splitTimer = setTimeout(follow, 5000);
 }
+// The review's own split runs next to its checks; a split run on request (perhaps started before a
+// reload, or by the assistant) is followed until it ends.
+const reviewing = computed(() => ["queued", "checks"].includes(props.rv.current.value?.stage ?? ""));
+watch(() => props.rv.current.value?.reviewRuns, (runs) => {
+  const open = runs?.find((r) => ["queued", "running"].includes(r.status) && /^(重新整理)?需求拆分/.test(r.title));
+  if (open && !splitRun.value) { splitRun.value = open.id; void follow(); }
+}, { immediate: true });
 async function split(revise = false) {
   let note: string | undefined;
   if (revise) {
@@ -264,7 +271,8 @@ const viewOptions = [{ value: "points" as const, label: "变更点" }, { value: 
         </div>
         <div v-else class="split">
           <p class="muted small">这一轮还没有需求拆分：把需求拆成变更点、标出各自的实现位置，就能在这里从需求走到代码。之后的评审会自动拆分。</p>
-          <button v-if="!splitRun" class="btn sm primary" @click="split()">拆分需求</button>
+          <p v-if="reviewing && !splitRun" class="muted small">需求拆分和各评审项同时进行，完成后出现在这里。</p>
+          <button v-else-if="!splitRun" class="btn sm primary" @click="split()">拆分需求</button>
           <p v-else class="muted small">拆分中，读完需求材料和改动大约要几分钟。<router-link :to="`/runs/${splitRun}`">看过程</router-link></p>
         </div>
         <div v-for="{ p, depth, n } in rows" :key="p.id" class="point" :class="{ on: active === p.id, group: n > 0 }" :style="{ marginLeft: `${depth * 14}px` }" :data-ask-label="`变更点 ${p.id} ${p.title}`">

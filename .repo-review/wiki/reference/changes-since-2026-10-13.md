@@ -607,3 +607,7 @@ updated: 2026-10-25
 - **重新整理**：`requestSplit` 起一个只做拆分的 `review` 运行，`revise` 时把当前的变更点（`currentPoints`：本轮单独的拆分，或业务评审交的）和本人的要求一起交给拆分者，在原来的上面调整、编号尽量不变，整份替换；同一轮还有评审或拆分在跑时拒绝。入口：“变更”里的“重新整理”（`POST /api/runs/:id/change-points` 带 `revise` / `note`），主助手的 `resplit_change_points`。
 - 实现：`src/agents/review.ts`、`review-chain.ts`、`tools.ts`、`web/src/components/ChangeView.vue`、`DiffFile.vue`；回归：`test/branch-review.test.ts`。
 - 文档站首页：问答、记忆、原件排在前面，评审放后面；首屏图换成三张截图叠放的 `HeroCollage.vue`（浅色 / 深色各一套，`doc-screens` 生成 `*-dark`）。
+
+## 2026-10-27：每次评审都单独拆需求
+
+之前档位里有业务评审时，变更点靠业务评审在 `submit_review` 里顺带交 `change_points`；需求一大，问题清单和变更点要一次交齐，常被漏掉，本人只好在“变更”里手动点“拆分需求”。现在 `reviewRound` 不论档位都和各评审项同时跑一步单独的需求拆分（`splitChangePoints`，提交 `submit_change_points`），失败时随没完成的评审项在 30 秒后自动重试一次；业务评审的角色说明不再要求交变更点，字段只为旧的自定义说明保留。评审进行中“变更”标签显示“需求拆分和各评审项同时进行”，不再给“拆分需求”按钮；按要求起的拆分运行（包括主助手发起的、刷新页面前发起的）页面会接着跟进。概览里的“需求拆分”统计改用 `currentPoints`。实现：`src/agents/review-chain.ts`、`roles/review-business.md`、`web/src/components/ChangeView.vue`；回归：`test/branch-review.test.ts`。
