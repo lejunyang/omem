@@ -14,7 +14,7 @@ omem peer add <配对码> --via <中间那台> # 只能经中间那台访问
 omem diag <同伴>                      # 版本、数量、最近失败、采集状态、Agent
 omem peer commands <同伴>             # 可远程执行的命令
 omem peer call <同伴> update          # 拉代码、装依赖、构建、重启
-omem pull <同伴>                      # 拉一份快照合并进本机
+omem peer pull <同伴>                 # 拉一份快照合并进本机
 omem peer open <同伴>                 # 在本机浏览器打开它的网页
 ```
 

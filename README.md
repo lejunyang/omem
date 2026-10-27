@@ -150,7 +150,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 | 减少巡检、材料整理在后端的重复会话 | 默认按权限与角色复用后台 ACP 会话，超过 60% 上下文换新；不支持用量报告的后端保持单次任务 |
 | 每天早上知道今天该处理什么 | 定时任务开启“简报”，通过站内和机器人推送 |
 | 看记忆写得好不好、哪个模型写得好 | “记忆 → 质量”：按模型看写入数、被退回的原因、复核结果；`omem memories stats`。旧记忆可用 `omem memories check` 过一遍检查 |
-| 一台机器常驻，在别的电脑上看它、拉数据和代码仓库 | 见“多台设备”：`omem peer invite` / `add` 配对，`omem pull` 合并原件、记忆、规则、评审记录、Wiki、档案、附件与仓库，`omem link` 在浏览器里打开 |
+| 一台机器常驻，在别的电脑上看它、拉数据和代码仓库 | 见“多台设备”：`omem peer invite` / `add` 配对，`omem peer pull` 合并原件、记忆、规则、评审记录、Wiki、档案、附件与仓库，`omem link` 在浏览器里打开 |
 | 某类事以后都按固定做法办，或交给专门的 Agent | 说“把这个做法记成技能”“建一个负责代码评审的 Agent”；在“Agent”页查看和编辑（＋ 新建是一张完整的表单）；`/as 名称 任务` 交给它，结果发回当前会话 |
 | 查看和编辑一个技能的附属说明、清单或脚本 | Agent → 技能：展开目录、切换文件、编辑保存；新建文件可填写多层路径。支持不超过 2 MB 的 UTF-8 文本，修改保留 Git 历史 |
 | 从新上下文开始任务，或把任务放在独立飞书话题里 | `/new 任务描述` 开新会话并立即执行；在飞书群聊或机器人私聊的主界面发送 `/topic 任务描述`（群里需 @ 机器人），以本条消息开启话题并保持独立上下文；话题内拒绝此指令 |
@@ -339,9 +339,9 @@ omem peer call <同伴> sql '{"query":"select count(*) from lark_messages"}'   #
 omem peer call <同伴> update               # git pull --ff-only、安装依赖、构建、重启服务
 omem peer call <同伴> lark-docs-refresh '{}'  # 让它在后台重新读飞书文档，完成后发通知；进度看 lark-docs-status
 omem peer call <同伴> lark-doc-import '{"url":"https://…/docx/…"}'  # 立即读一篇，返回素材下载情况和没处理掉的标签
-omem pull <同伴>                          # 经 HTTP 合并数据、附件、仓库与编码工作区（手动）
-omem pull <同伴> --dry-run                # 预览数据库合并，不改本机数据或仓库
-omem pull <同伴> --overwrite              # 停掉本机服务后替换；旧数据库、文件和仓库留备份
+omem peer pull <同伴>                     # 经 HTTP 合并数据、附件、仓库与编码工作区（手动）
+omem peer pull <同伴> --dry-run           # 预览数据库合并，不改本机数据或仓库
+omem peer pull <同伴> --overwrite         # 停掉本机服务后替换；旧数据库、文件和仓库留备份
 omem peer open <同伴>                     # 在本机浏览器打开它的网页，经中间机器的也行，不用令牌
 ```
 

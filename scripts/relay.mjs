@@ -63,6 +63,7 @@ const OMEM = [
   ["link"],
   ["peer", "commands"],
   ["peer", "call"],
+  ["peer", "pull"],
   ["peer", "invite"],
   ["peer", "add"],
   ["service", "status"],
@@ -76,7 +77,6 @@ const OMEM = [
   ["run"],
   ["items"],
   ["search"],
-  ["pull"],
   ["agents"],
   ["space", "list"],
 ];
@@ -197,7 +197,7 @@ async function tick() {
         const target = config.targets[req.target];
         if (!target) throw new Error(`没有目标 ${req.target}（可用：${Object.keys(config.targets).join(", ")}）`);
         const plan = check(req.cmd, target);
-        const long = req.cmd[0] === "pnpm" || (req.cmd[0] === "omem" && (req.cmd[1] === "pull" || (req.cmd[1] === "peer" && req.cmd[2] === "call")));
+        const long = req.cmd[0] === "pnpm" || (req.cmd[0] === "omem" && req.cmd[1] === "peer" && ["call", "pull"].includes(req.cmd[2]));
         log(`${id} → ${req.target}: ${req.cmd.join(" ")}`);
         const timeout = Math.min(req.timeoutMs ?? (long ? 900_000 : 180_000), 1_800_000);
         result = { id, ok: true, ...(await (target.local ? exec(null, timeout, plan) : exec(sshArgs(req.target, remoteLine(plan)), timeout))) };

@@ -176,7 +176,9 @@ program
     if ((a === "start" || a === "restart") && !s.healthy) process.exitCode = 1;
   });
 
-program
+// ------------------------------------------------------------------- peers
+const peer = program.command("peer").description("同伴：其他运行 omem 的设备（配对、诊断、拉取数据、远程执行检查命令）");
+peer
   .command("pull <host>")
   .description("拉取另一台机器的业务数据、附件、知识库、代码仓库与编码工作区（同伴走 HTTP，其他走 SSH）；默认合并，--overwrite 替换并备份")
   .option("--remote-home <dir>", "远端数据目录", "~/.omem")
@@ -212,8 +214,6 @@ program
     }
   });
 
-// ------------------------------------------------------------------- peers
-const peer = program.command("peer").description("同伴：其他运行 omem 的设备（配对、诊断、远程执行检查命令）");
 peer
   .command("invite")
   .description("在本机生成配对码，交给另一台设备的 omem peer add（服务不必正在运行）")

@@ -76,9 +76,9 @@ omem peer invite --label laptop     # 打印配对码
 omem peer add <配对码> [--via <中间那台>]
 omem diag <同伴>
 omem peer call <同伴> update
-omem pull <同伴>
-omem pull <同伴> --dry-run
-omem pull <同伴> --overwrite       # 先停本机服务；旧数据留备份
+omem peer pull <同伴>
+omem peer pull <同伴> --dry-run
+omem peer pull <同伴> --overwrite  # 先停本机服务；旧数据留备份
 omem peer open <同伴>
 omem link
 ```

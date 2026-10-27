@@ -1353,7 +1353,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // ----------------------------------------------------------------- settings
   // ------------------------------------------------------------------- peers
   // Diagnostics and a fixed set of commands for other devices (owner only), a consistent
-  // snapshot for `omem pull`, and forwarding to peers this instance can reach.
+  // snapshot for `omem peer pull`, and forwarding to peers this instance can reach.
   server.get("/api/diag", async () => (await import("../core/peer-exec.ts")).diag(app));
   server.get("/api/peer/commands", async () => {
     const { peerCommands } = await import("../core/peer-exec.ts");

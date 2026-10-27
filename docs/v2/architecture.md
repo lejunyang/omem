@@ -130,7 +130,7 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 ### 5. 交办 Agent
 `coder` 在目标仓库的 Git worktree 中工作；一个需求要同时改几个仓库（前端和接口、SDK 和调用方）时，每个仓库各开一个 worktree，放在同一个工作目录下，由同一个 coder 一起改。完成后宿主在每个仓库运行各自的检查命令，`reviewer`（可配置为不同模型）评审全部 diff；Run 页面显示计划、实际命令、按仓库的检查输出和 diff、评审结论。应用补丁需本人确认，所有仓库先逐个检查能否干净应用，都能才一起应用，之后删除 worktree。
 
-改过的文件（新增和修改的，不含删除）在 worktree 存在期间建索引，放在临时空间 `wt-<运行id>-<仓库空间>`（类型 `worktree`）里：评审和之后的问答能用 `search` / `find_symbol` 查到新代码，仓库自己的索引不受影响。临时空间不出现在空间列表和定时任务里，只能读不能写；`omem pull` 会随可恢复的编码工作区拉取它的原件，避免评审引用丢失。worktree 删除（应用、丢弃，或手动删掉后的下一次仓库同步）时连同索引一起删除。
+改过的文件（新增和修改的，不含删除）在 worktree 存在期间建索引，放在临时空间 `wt-<运行id>-<仓库空间>`（类型 `worktree`）里：评审和之后的问答能用 `search` / `find_symbol` 查到新代码，仓库自己的索引不受影响。临时空间不出现在空间列表和定时任务里，只能读不能写；`omem peer pull` 会随可恢复的编码工作区拉取它的原件，避免评审引用丢失。worktree 删除（应用、丢弃，或手动删掉后的下一次仓库同步）时连同索引一起删除。
 
 **分支。** 仓库空间的索引只对应当前检出的工作区；其他分支用同样的临时空间叠在仓库上：
 
@@ -181,7 +181,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 远程命令刻意做成固定清单（`peerCommands`，每条有参数校验），而不是任意 shell：要核对的多是飞书原始返回、数据库内容、日志和版本，这些都能用只读命令覆盖；会改东西的只有采集、回溯、触发定时任务、`git pull --ff-only` 和重启。
 
-`omem pull` 仍是手动单向拉取。HTTP 与 SSH 共用 `pull-snapshot.ts` 的快照程序：SQLite 一致性副本、整个 `library/` 和 `files/`、运行补丁、仓库 Git bundle 与非忽略工作文件；已检出的子模块和编码 worktree 各自保存为可独立恢复的仓库，不传 `.git` 中的凭据配置与 hooks。HTTP 下载落到临时文件，不把完整快照放进内存。只允许本人下载快照。
+`omem peer pull` 仍是手动单向拉取。HTTP 与 SSH 共用 `pull-snapshot.ts` 的快照程序：SQLite 一致性副本、整个 `library/` 和 `files/`、运行补丁、仓库 Git bundle 与非忽略工作文件；已检出的子模块和编码 worktree 各自保存为可独立恢复的仓库，不传 `.git` 中的凭据配置与 hooks。HTTP 下载落到临时文件，不把完整快照放进内存。只允许本人下载快照。
 
 `pull-data.ts` 明确列出全部业务表：除了原件、记忆、事项、会话和运行，还合并规则、定时任务、归档和标注、结构化聊天、学习、记忆质量与召回、材料关联、评审与问题等记录。自增主键表使用 `sync_key` / `sync_updated_at` 跨设备识别与比较；导入时重新分配本地主键，换算问题合并关系和可操作的问题编号。旧副本按自然键对上后，设备本地 `pull_aliases` 保留标识映射。原件按空间和 URI 对上，普通正文取较新版本，聊天保留本机行号并追加远端缺行，远端的原件 ID、引用和结构化行号在临时副本中换成本地值；Wiki 文件同样换算引用。物理删除不传播，已有墓碑和撤回状态按记录更新。
 
@@ -199,7 +199,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
-| 手动拉取完整业务数据、文件与代码仓库：辅助表跨设备标识、引用换算、聊天追加合并、仓库与编码工作区恢复、覆盖备份与失败回滚；新导入的执行任务停用 | 已实现；2026-10-27，SSH、HTTP 中转、冲突与恢复回归覆盖，跨真实设备待验 | `src/core/pull.ts`、`pull-data.ts`、`pull-transfer.ts`、`pull-snapshot.ts`、`pull-repos.ts` |
+| `omem peer pull` 拉取完整业务数据、文件与代码仓库：辅助表跨设备标识、引用换算、聊天追加合并、仓库与编码工作区恢复、覆盖备份与失败回滚；新导入的执行任务停用 | 已实现；2026-10-27，SSH、HTTP 中转、冲突与恢复回归覆盖，跨真实设备待验 | `src/core/pull.ts`、`pull-data.ts`、`pull-transfer.ts`、`pull-snapshot.ts`、`pull-repos.ts` |
 | 应用后查看 Git 状态和暂存 diff，网页填写提交信息或主助手工具提交 / 推送；按运行与仓库限定接收目录、状态检查、保留失败后的本地提交及操作记录 | 已实现；临时 Git 仓库回归覆盖 | `src/agents/code-git.ts`、`test/code-git.test.ts`、`web/src/components/CodeGitPanel.vue` |
 | 编码修改应用到原目标分支，复用或建立接收工作区，不切换仓库主目录；续轮沿用首轮目标，确认框及结果显示实际目录，应用后读文件走接收位置 | 已实现；真实 Git 专项回归覆盖 | `src/agents/code.ts`、`test/code-worktrees.test.ts` |
 | 无问答会话的网页 / CLI 编码交办手动续轮，复用工作区和编码会话，阻止重复提交与已释放工作区续轮 | 已实现；专项回归覆盖 | `src/agents/review-fix.ts` |
@@ -271,7 +271,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 飞书机器人接入：读 lark-cli 的应用与登录状态和 omem 已保存的应用；绑定已有应用或扫码新建（官方 SDK `registerApp`，同时申请权限、长连接事件和卡片回调）；校验凭据和机器人能力；扫码人 open_id 设为本人；App Secret 存 `secrets/lark.json`（0600）；lark-cli 未登录时就地扫码登录 | 已实现；SDK 注册流程真实发起到二维码一步，扫码确认待真实账号验收；其余假客户端测试覆盖 | `src/channels/lark-setup.ts` |
 | 后台服务 `omem service`：自带 PM2（独立 PM2_HOME）、崩溃自动重启、pm2-logrotate 日志轮换；`enable` / `disable` 开机自启（macOS LaunchAgent、Linux systemd 用户服务 + linger 或 crontab `@reboot`、Windows 启动文件夹里的隐藏脚本） | 已实现；macOS 本机 start / restart / stop / status 验证；三个平台的自启文件与命令有单元测试，真机待验收 | `src/core/service.ts`、`src/core/autostart.ts` |
 | 更新：`osdk run upgrade` / `scripts/upgrade.ts`（拉代码、装依赖、构建、`npm install -g .`、可选重启）；远程 `update` 命令复用它 | 已实现 | `scripts/upgrade.ts`、`osdk.toml` |
-| 多台设备（同伴）：一行配对码配对（本机各网卡地址 + 本人 API 令牌，add 时挑能连上的，之后断线自动换地址）；`omem link` 给浏览器的带令牌链接；`omem peer open` 在本机转发同伴的整个网页（转发端点对 GET 也放行网页文件）；`omem user tokens|revoke`；经中间节点转发（`via`，最多 3 跳）；`/api/diag` 诊断；固定的远程命令（诊断、日志、配置、飞书只读查询、采集与回溯、记忆统计、运行记录、只读 SQL、git、更新并重启）；`omem pull <同伴>` 经 HTTP 拉快照；默认监听所有网卡，没有配置令牌时只信任本机请求（旧配置里写出的 `127.0.0.1` 视为未设置，`localhost` 表示只给本机） | 已实现，三节点（服务器、中间、笔记本）测试覆盖；真实设备待验收 | `src/core/peers.ts`、`peer-exec.ts`、`pull.ts` 的 `fetchPeer`、`omem peer` |
+| 多台设备（同伴）：一行配对码配对（本机各网卡地址 + 本人 API 令牌，add 时挑能连上的，之后断线自动换地址）；`omem link` 给浏览器的带令牌链接；`omem peer open` 在本机转发同伴的整个网页（转发端点对 GET 也放行网页文件）；`omem user tokens|revoke`；经中间节点转发（`via`，最多 3 跳）；`/api/diag` 诊断；固定的远程命令（诊断、日志、配置、飞书只读查询、采集与回溯、记忆统计、运行记录、只读 SQL、git、更新并重启）；`omem peer pull <同伴>` 经 HTTP 拉快照；默认监听所有网卡，没有配置令牌时只信任本机请求（旧配置里写出的 `127.0.0.1` 视为未设置，`localhost` 表示只给本机） | 已实现，三节点（服务器、中间、笔记本）测试覆盖；真实设备待验收 | `src/core/peers.ts`、`peer-exec.ts`、`pull.ts` 的 `fetchPeer`、`omem peer` |
 | 临时白名单转发 `scripts/relay.mjs`：文件收件箱 → 经 ssh（可多跳）执行允许的命令 → 结果写回 | 已实现；用假 ssh 验证了两跳下参数原样传递 | `scripts/relay.mjs` |
 | 飞书机器人能力：回复/话题回复、表情、Markdown、图片文件、Card 2.0（按钮、下拉、输入、选人、日期、表单）、限定处理人、草稿确认、原生思考气泡及状态兜底卡片（不再显示过程）；气泡投递失败尝试撤回并单独写 `output.thinkingDelivery`，不修改任务状态，超时不冷却后续轮次，权限拒绝只冷却当前群；卡片与表情的慢请求在回答收尾时等待并清理；卡片回调回到原会话；分享的群读出群名、chat_id 和是否已采集，合并转发读出其中的消息，引用助手自己的回复时取回答原文 | 已实现；假客户端测试覆盖，真实飞书待验收 | `src/channels/lark-send.ts`、`lark-actions.ts`、`lark-progress.ts`、技能 `lark-messaging` |
 | 飞书个人采集（lark-cli）：全部或订阅会话增量拉取（每会话游标、话题回复）、附件与文档链接入库、日程、妙记 | 已实现；模拟 lark-cli 测试覆盖，真实账号待验收 | `src/channels/lark-personal.ts` |
