@@ -671,3 +671,6 @@ updated: 2026-10-28
 - **更新原通知**：`notify` 接受 `replaces`（之前通知的 id）：新通知的 context 记 `replaces`，原通知标为已读、记 `replacedBy` 并取消夜间暂缓；飞书渠道发送普通通知后记下 `larkMessageId` / `larkBot`（`setNotificationCard`），遇到 `replaces` 时改原卡片而不是发新的，改失败才发新卡片。`notify` 工具返回通知 id，参数加 `replaces`；`skills/omem/references/items.md` 同步。
 - **配置合并保存**：`src/core/config.ts` 的 `saveConfig` 改为三方合并（`mergeConfig`）：以本进程上次读入或保存时的配置为基准，只把本进程改过的字段写到磁盘上的现状之上，其余以文件为准，传入的对象变成合并结果。以前服务、`omem setup`、CLI 各持一份启动时的完整配置，谁后保存就整份覆盖别人改过的项（包括服务运行期间的手改）。
 - **飞书工具默认发到本会话**：`lark_send` / `lark_card` 等不填 `chat_id`、`reply_to`、`user_id` 时，发到本次运行所在的飞书会话（`tools.ts` 的 `runLarkChat`）。起因：本人在私聊里让助理发起授权，Agent 拿不到当前私聊的 chat_id，发不了可更新的授权卡片，只好改用 `notify`。
+- **飞书回答带运行 id、按 id 查找**：飞书回答卡片底部小字“运行 <id>”（`lark-send.ts` 的 markdown 内容支持 `note`，`lark-progress.ts` 的 `finish` 带上，访客的回答也带）。新增 `src/core/lookup.ts` 的 `lookupId` 与 `GET /api/lookup?id=`：运行、记忆、原件、事项、消息、对话、规则、通知、页面按 id 查（接受 `运行 `、`src:`、`mem:`、`msg:` 前缀和 `#L` 行号），按调用者能看的空间过滤；`CommandPalette.vue` 输入像 id 的内容时把命中放在第一行，回车打开对应页面或引用抽屉。
+- **运行记下新建还是更新**：`tool-write` 事件多记工具回执 `result`（前 400 字）；`runWrites` 从回执里取 id 和“已新建 / 已更新 / 已更正”，旧事件仍按原来的方式推断；`RunActivity.vue` 显示为“新建工作文件：…”“更正记忆：…”。
+

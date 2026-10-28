@@ -14,7 +14,7 @@ const live = ref("");
 const expanded = ref(props.open);
 let lastSeq = 0;
 type WriteTarget = { kind: "source" | "memory" | "item" | "rule"; id: string } | { kind: "page"; space: string; slug: string };
-type RunWrite = { tool: string; label: string; space?: string | null; target?: WriteTarget; n?: number };
+type RunWrite = { tool: string; label: string; action?: "新建" | "更新" | "更正"; space?: string | null; target?: WriteTarget; n?: number };
 const writes = ref<RunWrite[]>([]);
 
 async function load() {
@@ -58,7 +58,9 @@ const text = computed(() => events.value.filter((e) => e.type === "text").map((e
 const running = computed(() => run.value && ["queued", "running"].includes(run.value.status));
 
 // What the run wrote, each opening where it lives (the citation drawer, the item, the rule).
-const writeKind: Record<string, string> = { write_file: "工作文件", remember: "记忆", write_page: "页面", upsert_item: "事项", save_rule: "规则" };
+const writeKind: Record<string, string> = { write_file: "工作文件", remember: "记忆", supersede: "记忆", write_page: "页面", upsert_item: "事项", save_rule: "规则" };
+/** "新建工作文件：…", "更正记忆：…". */
+const writeTitle = (w: RunWrite) => `${writeKind[w.tool] ? `${w.action ?? ""}${writeKind[w.tool]}：` : ""}${w.label}`;
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 function writeLink(w: RunWrite) {
   const t = w.target;
@@ -86,10 +88,10 @@ defineExpose({ text });
     </button>
     <div v-if="!running && (writes.length || (link && steps.length))" class="wrote small">
       <template v-if="writes.length">
-        <span class="muted">写下了</span>
+        <span class="muted">这次写下</span>
         <template v-for="(w, i) in writes" :key="i">
-          <router-link v-if="writeLink(w)" :to="writeLink(w)!" class="w">{{ writeKind[w.tool] ? `${writeKind[w.tool]}：` : "" }}{{ w.label }}</router-link>
-          <a v-else-if="w.target" href="#" class="w" @click.prevent="openWrite(w)">{{ writeKind[w.tool] ? `${writeKind[w.tool]}：` : "" }}{{ w.label }}</a>
+          <router-link v-if="writeLink(w)" :to="writeLink(w)!" class="w">{{ writeTitle(w) }}</router-link>
+          <a v-else-if="w.target" href="#" class="w" @click.prevent="openWrite(w)">{{ writeTitle(w) }}</a>
           <span v-else class="w plain" :title="w.tool">{{ prettyTool(w.tool) }}{{ w.label ? `：${w.label}` : "" }}{{ w.n ? ` ×${w.n}` : "" }}</span>
           <span v-if="w.space && w.space !== run?.spaceId" class="muted">（{{ spaceName(w.space) }}）</span>
         </template>

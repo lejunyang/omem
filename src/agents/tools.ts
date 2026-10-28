@@ -3366,7 +3366,7 @@ async function runTool(ctx: ToolContext, tool: Tool, name: string, data: unknown
   try {
     // Feishu calls speak as the bot of this run's conversation (lark.bots), the main bot otherwise.
     const text = await withBot(ctx.larkBot, () => tool.handler(ctx, parsed.data));
-    if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data });
+    if (ctx.runId && tool.write && one(ctx.app.db, "select id from runs where id=?", ctx.runId)) addRunEvent(ctx.app, ctx.runId, "tool-write", { name, args: parsed.data, result: String(text).slice(0, 400) });
     return { text: text + (await steering(ctx)), isError: false };
   } catch (error) {
     return { text: (error as Error).message + (await steering(ctx)), isError: true };

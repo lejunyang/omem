@@ -2,13 +2,14 @@
 import UiCheckbox from "./UiCheckbox.vue";
 import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { get, post, type Hit } from "../api";
+import { get, post, type Hit, type IdHit } from "../api";
 import { openCitation, state } from "../store";
 import Icon from "./Icon.vue";
 
 const router = useRouter();
 const q = ref("");
 const hits = ref<Hit[]>([]);
+const idHits = ref<IdHit[]>([]);
 const active = ref(0);
 const input = ref<HTMLInputElement>();
 const scopeAll = ref(true);
@@ -31,11 +32,19 @@ watch(
 watch([q, scopeAll], () => {
   clearTimeout(timer);
   const my = ++seq;
-  if (!q.value.trim()) return void ((hits.value = []), (searching.value = false));
+  if (!q.value.trim()) return void ((hits.value = []), (idHits.value = []), (searching.value = false));
   searching.value = true;
   timer = setTimeout(async () => {
-    const r = await get<{ hits: Hit[] }>(`/api/search?q=${encodeURIComponent(q.value)}&limit=14${scopeAll.value ? "" : `&space=${state.space}`}`).catch(() => ({ hits: [] }));
+    // Something that looks like an id (one word with letters and digits) is also looked up as one.
+    // "运行 r…" is how the id reads under a Feishu answer.
+    const t = q.value.trim().replace(/^(运行|run)\s+/i, "");
+    const asId = /^\S{6,}$/.test(t) && /\d/.test(t) && /[a-z]/i.test(t);
+    const [r, ids] = await Promise.all([
+      get<{ hits: Hit[] }>(`/api/search?q=${encodeURIComponent(q.value)}&limit=14${scopeAll.value ? "" : `&space=${state.space}`}`).catch(() => ({ hits: [] })),
+      asId ? get<{ hits: IdHit[] }>(`/api/lookup?id=${encodeURIComponent(t)}`).catch(() => ({ hits: [] })) : { hits: [] as IdHit[] },
+    ]);
     if (my === seq) {
+      idHits.value = ids.hits;
       hits.value = r.hits;
       active.value = 0;
       searching.value = false;
@@ -61,7 +70,20 @@ const actions = computed(() => {
   for (const n of navs) if (!t || n.label.includes(t)) list.push({ label: `前往 ${n.label}`, icon: n.icon, run: () => router.push(n.to) });
   return list;
 });
-const rows = computed(() => [...actions.value.slice(0, 1), ...hits.value.map((h) => ({ hit: h })), ...actions.value.slice(1)] as ({ hit: Hit } | (typeof actions.value)[number])[]);
+// An exact id goes first: that is what was asked for.
+const rows = computed(() => [...idHits.value.map((h) => ({ idHit: h })), ...actions.value.slice(0, 1), ...hits.value.map((h) => ({ hit: h })), ...actions.value.slice(1)] as ({ idHit: IdHit } | { hit: Hit } | (typeof actions.value)[number])[]);
+const idLabel: Record<IdHit["type"], string> = { run: "运行", memory: "记忆", source: "原件", item: "事项", message: "消息", conversation: "对话", rule: "规则", page: "页面", notification: "通知" };
+function openId(h: IdHit) {
+  if (h.type === "run") router.push(`/runs/${h.id}`);
+  else if (h.type === "item") router.push(`/items/${h.id}`);
+  else if (h.type === "conversation") router.push(`/ask/${h.id}`);
+  else if (h.type === "rule") router.push({ path: "/rules", query: { id: h.id } });
+  else if (h.type === "notification") router.push("/notifications");
+  else if (h.type === "page") openCitation({ kind: "page", space: h.spaceId!, slug: h.slug! }, true);
+  else if (h.type === "memory") openCitation({ kind: "memory", id: h.id }, true);
+  else if (h.type === "message") openCitation({ kind: "message", id: h.id }, true);
+  else openCitation({ kind: "source", id: h.id }, true);
+}
 
 async function askAssistant(text: string) {
   const r = await post<{ conversationId: string }>("/api/ask", { text, space: state.space });
@@ -71,7 +93,8 @@ function choose(i: number) {
   const row = rows.value[i];
   if (!row) return;
   state.palette = false;
-  if ("hit" in row) {
+  if ("idHit" in row) openId(row.idHit);
+  else if ("hit" in row) {
     const h = row.hit;
     if (h.type === "page") router.push(`/wiki/${h.spaceId}/${h.path}`);
     else if (h.type === "memory") openCitation({ kind: "memory", id: h.id }, true);
@@ -98,7 +121,15 @@ const typeLabel: Record<string, string> = { page: "页面", memory: "记忆", ch
       </div>
       <div class="rows">
         <template v-for="(row, i) in rows" :key="i">
-          <button v-if="'hit' in row" class="row-item" :class="{ on: i === active, stale: searching }" @mouseenter="active = i" @click="choose(i)">
+          <button v-if="'idHit' in row" class="row-item id-hit" :class="{ on: i === active }" @mouseenter="active = i" @click="choose(i)">
+            <span class="badge accent">{{ idLabel[row.idHit.type] }}</span>
+            <span class="main">
+              <span class="ttl ellipsis">{{ row.idHit.title }}</span>
+              <span class="snip ellipsis muted">{{ row.idHit.snippet }}</span>
+            </span>
+            <span class="muted small mono">{{ row.idHit.id.length > 24 ? row.idHit.id.slice(0, 24) + "…" : row.idHit.id }}</span>
+          </button>
+          <button v-else-if="'hit' in row" class="row-item" :class="{ on: i === active, stale: searching }" @mouseenter="active = i" @click="choose(i)">
             <span class="badge">{{ typeLabel[row.hit.type] }}</span>
             <span class="main">
               <span class="ttl ellipsis">{{ row.hit.type === "page" ? row.hit.title : row.hit.type === "memory" ? row.hit.title || "记忆" : row.hit.uri }}<span v-if="row.hit.lineStart" class="muted">:{{ row.hit.lineStart }}</span></span>
@@ -112,7 +143,7 @@ const typeLabel: Record<string, string> = { page: "页面", memory: "记忆", ch
           </button>
         </template>
         <div v-if="searching" class="muted small pad row searching"><span class="spinner" />搜索中…</div>
-        <div v-else-if="q && !hits.length" class="muted small pad">没有直接命中。按回车让助理调查。</div>
+        <div v-else-if="q && !hits.length && !idHits.length" class="muted small pad">没有直接命中。按回车让助理调查。</div>
       </div>
       <div class="foot muted small"><kbd>↑</kbd><kbd>↓</kbd> 选择 · <kbd>Enter</kbd> 打开 · <kbd>Esc</kbd> 关闭</div>
     </div>

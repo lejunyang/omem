@@ -6,7 +6,7 @@ import { getRun } from "../agents/runs.ts";
 import { cotEvent, cotLiveFor, startCot } from "./lark-cot.ts";
 
 /** A fallback status card; reasoning and partial answers belong only in the native bubble. */
-export type Progress = { messageId: string; finish(answer: string): Promise<void>; fail(message: string): Promise<void> };
+export type Progress = { messageId: string; finish(answer: string, note?: string): Promise<void>; fail(message: string): Promise<void> };
 
 export async function startProgress(_app: App, at: { messageId: string; inThread: boolean }, _runId: string, react = true): Promise<Progress> {
   const started = Date.now();
@@ -23,10 +23,10 @@ export async function startProgress(_app: App, at: { messageId: string; inThread
   };
   return {
     messageId: sent.messageId,
-    finish: (answer: string) => withBot(bot, async () => {
+    finish: (answer: string, extra?: string) => withBot(bot, async () => {
       await close();
       const secs = Math.round((Date.now() - started) / 1000);
-      const note = `${secs} 秒`;
+      const note = [extra, `${secs} 秒`].filter(Boolean).join(" · ");
       // Very long answers do not fit one card: the card keeps the start, the rest follows as messages.
       const head = answer.length > 18000 ? answer.slice(0, 18000) : answer;
       await updateLarkCard(sent.messageId, buildCard({ blocks: [{ markdown: head || "（没有回答）" }, { note }] })).catch(async () => {

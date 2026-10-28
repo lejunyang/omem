@@ -395,6 +395,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   }
 
   // ------------------------------------------------------------------- search
+  // An id pasted into search (the run id under a Feishu answer, src:/mem:/msg:, an item…): what it names.
+  server.get("/api/lookup", async (req) => {
+    const o = q(z.object({ id: z.string() }), req.query);
+    const { lookupId } = await import("../core/lookup.ts");
+    return { hits: lookupId(app, o.id, who(req)) };
+  });
   server.get("/api/search", async (req) => {
     const o = q(z.object({ q: z.string().min(1), space: z.string().optional(), types: z.string().optional(), limit: z.coerce.number().optional(), branch: z.string().optional() }), req.query);
     const requested = o.space && o.space !== "*" ? o.space.split(",") : null;

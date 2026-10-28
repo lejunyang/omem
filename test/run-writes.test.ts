@@ -27,5 +27,32 @@ it("lists what a run wrote, each pointing where it lives", () => {
   expect(w[0].label).toBe("经营信息入口排查");
   expect(w[2].target).toEqual({ kind: "page", space: "personal", slug: "cases/homepage-domain" });
   expect(w[3].n).toBe(2);
+  expect(w[0].action).toBe("新建");
+  expect(w[1].action).toBe("新建");
   expect(runWrites(app, getRun(app, createRun(app, { kind: "ask", title: "只查询" }).id))).toEqual([]);
+});
+
+it("reads ids and new-or-updated from the tool's answer", async () => {
+  const { upsertItem } = await import("../src/items/store.ts");
+  const app = testApp();
+  apps.push(app);
+  const item = upsertItem(app, undefined, { title: "退款接口文档" });
+  const r = createRun(app, { kind: "ask", spaceId: "personal", title: "更新事项" });
+  addRunEvent(app, r.id, "tool-write", { name: "upsert_item", args: { id: item.id, status: "done" }, result: `已更新事项 ${item.id}：[todo/done] 退款接口文档` });
+  addRunEvent(app, r.id, "tool-write", { name: "write_page", args: { page: "cases/refund", title: "退款超时" }, result: "已创建页面 personal/cases/refund。引用原件 0 个" });
+  const w = runWrites(app, getRun(app, r.id));
+  expect(w[0]).toMatchObject({ action: "更新", label: "退款接口文档", target: { kind: "item", id: item.id } });
+  expect(w[1]).toMatchObject({ action: "新建", target: { kind: "page", space: "personal", slug: "cases/refund" } });
+});
+
+it("finds what an id names, within the spaces the caller may read", async () => {
+  const { lookupId } = await import("../src/core/lookup.ts");
+  const app = testApp();
+  apps.push(app);
+  const r = createRun(app, { kind: "ask", spaceId: "personal", title: "查一下经营信息" });
+  const m = remember(app, { spaceId: "personal", kind: "fact", content: "示例商城的退款走异步回调" });
+  expect(lookupId(app, `运行 ${r.id}`)).toMatchObject([{ type: "run", id: r.id, title: "查一下经营信息" }]);
+  expect(lookupId(app, `mem:${m.id}`)).toMatchObject([{ type: "memory", id: m.id }]);
+  expect(lookupId(app, "no-such-id-123")).toEqual([]);
+  expect(lookupId(app, "两个 词")).toEqual([]);
 });

@@ -198,7 +198,7 @@ export function buildCard(spec: CardSpec): Record<string, unknown> {
 export type Target = { chatId?: string; userId?: string; replyTo?: string; inThread?: boolean; uuid?: string; /** One of lark.bots; the main bot when absent. */ bot?: string | null };
 export type Content =
   | { text: string }
-  | { markdown: string; title?: string }
+  | { markdown: string; title?: string; /** Small grey line under the text (the run id under an answer). */ note?: string }
   | { card: Record<string, unknown> }
   | { image: string }
   | { file: string };
@@ -206,7 +206,7 @@ export type Content =
 /** Markdown goes as a single-element card: Feishu renders it fully only inside cards. */
 function payload(c: Content): { msg_type: string; content: string } {
   if ("text" in c) return { msg_type: "text", content: JSON.stringify({ text: c.text }) };
-  if ("markdown" in c) return { msg_type: "interactive", content: JSON.stringify(buildCard({ title: c.title, blocks: [{ markdown: c.markdown }] })) };
+  if ("markdown" in c) return { msg_type: "interactive", content: JSON.stringify(buildCard({ title: c.title, blocks: [{ markdown: c.markdown }, ...(c.note ? [{ note: c.note }] : [])] })) };
   if ("card" in c) return { msg_type: "interactive", content: JSON.stringify(c.card) };
   if ("image" in c) return { msg_type: "image", content: JSON.stringify({ image_key: c.image }) };
   return { msg_type: "file", content: JSON.stringify({ file_key: c.file }) };
@@ -259,7 +259,7 @@ export type Delivery = { onlyTo?: { name: string; id: string }[]; urgent?: { nam
 /** Card form of any text content (members-only messages must be cards). */
 export function asCard(content: Content): Record<string, unknown> {
   if ("card" in content) return content.card;
-  if ("markdown" in content) return buildCard({ title: content.title, blocks: [{ markdown: content.markdown }] });
+  if ("markdown" in content) return buildCard({ title: content.title, blocks: [{ markdown: content.markdown }, ...(content.note ? [{ note: content.note }] : [])] });
   if ("text" in content) return buildCard({ blocks: [{ markdown: content.text }] });
   throw new HttpError(400, "图片和文件不能只给部分人看");
 }

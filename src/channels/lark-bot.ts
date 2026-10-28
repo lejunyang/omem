@@ -208,7 +208,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
 
   const nameOf = larkSenderNames(app, client);
 
-  const reply = (chatId: string, markdown: string, replyTo?: string, inThread = false) => sendLark(replyTo ? { replyTo, inThread } : { chatId }, { markdown });
+  const reply = (chatId: string, markdown: string, replyTo?: string, inThread = false, note?: string) => sendLark(replyTo ? { replyTo, inThread } : { chatId }, { markdown, ...(note ? { note } : {}) });
 
   /**
    * Group names for shared group cards: the bot can only read groups it is in, so fall back to
@@ -494,7 +494,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     if (working) await unreactLark(m.messageId, working);
     if (withOwner && v?.verdict === "answer") return true;
     const say = v?.verdict === "refuse" ? v.reply : v?.verdict === "answer" ? v.answer : "";
-    if (say) await reply(m.chatId, resolveCitations(app, say), m.messageId, !!m.topicId).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
+    if (say) await reply(m.chatId, resolveCitations(app, say), m.messageId, !!m.topicId, `运行 ${r.id}`).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
     return false;
   };
 
@@ -599,7 +599,9 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       if (runId) finishCot(app, runId, true);
       const p = await presentation?.close();
       const shown = renderBotMentions(app, ref, answer);
-      const sentId = p ? (await p.finish(shown), p.messageId) : (await reply(m.chatId, shown, replyMessageId, replyInThread)).messageId;
+      // The run id in small print: the owner can search it in omem to see what the run did and wrote.
+      const note = runId ? `运行 ${runId}` : undefined;
+      const sentId = p ? (await p.finish(shown, note), p.messageId) : (await reply(m.chatId, shown, replyMessageId, replyInThread, note)).messageId;
       // It @-ed another omem bot: that one takes it from here.
       if (m.chatType === "group" && sentId) relayMentions(app, ref, { chatId: m.chatId, topicId: m.topicId, messageId: sentId, text: answer });
       if (runId && !p) await reactLark(m.messageId, "DONE").catch(() => {});
