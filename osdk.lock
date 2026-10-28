@@ -13,14 +13,22 @@ url = "https://nodejs.org/dist/v24.18.1/node-v24.18.1-linux-x64.tar.gz"
 file_name = "node-v24.18.1-linux-x64.tar.gz"
 checksum = "sha256:9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"
 
-[platforms.macos-arm64.tools.bun]
-request = "latest"
-version = "1.4.2"
+[platforms.macos-arm64.tools.node]
+request = "24.18.1"
+version = "24.18.1"
 
-[platforms.macos-arm64.tools.bun.artifact]
-url = "https://registry.npmjs.org/@oven/bun-darwin-aarch64/-/bun-darwin-aarch64-1.4.2.tgz"
-file_name = "bun-1.4.2.tgz"
-checksum = "sha512:31775990fd5f79ab6ac59fbf5535d61b50558cce0e1817a1558d90f3c11e523ffb2f450c782188b66c8f61337ec31be5189e85eba244b73b30f86bd059ec276a"
+[platforms.macos-arm64.tools.node.options]
+arch = "arm64"
+corepack = "false"
+
+[platforms.macos-arm64.tools.node.artifact]
+url = "https://nodejs.org/dist/v24.18.1/node-v24.18.1-darwin-arm64.tar.gz"
+file_name = "node-v24.18.1-darwin-arm64.tar.gz"
+checksum = "sha256:eb02f7fab96d3d67de40c5ec8566096fcb4c2026728787683ae5a97eb612b941"
+
+[platforms.macos-arm64.tools.pnpm]
+request = "11"
+version = "11.28.9"
 
 [platforms.windows-x64.tools.bun]
 request = "1.4.2"
@@ -895,7 +903,7 @@ installer = "pnpm"
 installer_version = "11.28.5"
 runtime = "node@24.18.1"
 manifest = "package.json"
-manifest_sha256 = "12d73780dff4890a297cb9ed72e6c9e8cdd3f46496d560620454684f97ffeb05"
+manifest_sha256 = "bb251771d78890075c2a7d1a7dfa479dbce1f7850fc74c2cb25ff4b001277967"
 run = "pnpm install --frozen-lockfile"
 allow_build_from_source = true
 
@@ -906,9 +914,9 @@ sha256 = "d0487e551ba72b698a7b202c00848af52fcf775d3941b26e8aa0471f5559b78c"
 
 [skills.lieflat-less-ai-tone]
 source = "github:larashero3-dotcom/lieflat-less-ai-tone"
-content_hash = "b3-v2:6278369adea32899d53db039423e51d99f9109bf60cd602a0ed373e354ad2cae"
+content_hash = "b3-v2:1c0a9d1dfc38ee2a1a01006c25ddca69b1de74cb3d171b0766bbf70a51e87fc1"
 requested_ref = "branch:main"
-resolved_commit = "27d29232f10124db904ca9c0536d0b67cb3b2833"
+resolved_commit = "fe13f1a0712cd2c138b6cdc500a77927d5bf04ec"
 agents = ["universal"]
 install_mode = "copy"
 
