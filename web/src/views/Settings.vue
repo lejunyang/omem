@@ -198,7 +198,7 @@ async function openSpace(s: Space) {
   guide.value = (await get<{ guide: string }>(`/api/spaces/${s.id}`)).guide;
   if (s.rootPath) slots.value = await get<WorkspaceSlot[]>(`/api/spaces/${s.id}/workspaces`).catch(() => []);
 }
-type WorkspaceSlot = { path: string; managed: boolean; state: "free" | "leased" | "missing" | "invalid" | "dirty"; run?: string; reason?: string };
+type WorkspaceSlot = { path: string; managed: boolean; main?: boolean; state: "free" | "leased" | "missing" | "invalid" | "dirty"; run?: string; reason?: string };
 const SLOT_STATE: Record<WorkspaceSlot["state"], string> = { free: "空闲", leased: "使用中", missing: "第一次用到时创建", invalid: "不可用", dirty: "有改动，跳过" };
 const workspaceText = ref("");
 const slots = ref<WorkspaceSlot[]>([]);
@@ -914,9 +914,11 @@ async function saveEdit() {
             </div>
             <textarea v-model="workspaceText" class="textarea mono" rows="2" placeholder="已有的工作区目录，一行一个（这个仓库 git worktree add 出来的）" />
             <span class="hint">已有目录只在没有未提交改动时借用，用完回到原来的分支；被忽略的文件（node_modules 等）一直保留。都占满时照旧新建工作区。</span>
+            <UiCheckbox :model-value="!!editing.settings.inPlace" @change="(v) => (editing!.settings.inPlace = v)">直接在仓库主目录里改</UiCheckbox>
+            <span class="hint">主目录没有未提交的改动时优先借给交办：在它当前的分支上改，不建新分支；应用就是把改动留在原处，丢弃会把主目录重置（包括你在交办期间在这里做的修改）。同一时间只有一个交办能用主目录。</span>
             <ul v-if="slots.length" class="slots">
               <li v-for="s in slots" :key="s.path" class="row">
-                <span class="mono small grow slot-path" :title="s.path">{{ s.path }}</span>
+                <span class="mono small grow slot-path" :title="s.path">{{ s.main ? "主目录 · " : "" }}{{ s.path }}</span>
                 <span class="badge" :title="s.reason || undefined">{{ SLOT_STATE[s.state] }}</span>
                 <a v-if="s.run" class="small" :href="`#/runs/${s.run}`">运行</a>
               </li>

@@ -5,7 +5,7 @@
 - `list_spaces`：空间（领域）列表和空间之间的关联。默认空间是当前目录所在的仓库空间（`omem mcp` / `omem tool` 在仓库里启动时），否则是 `personal`。
 - 不传 `space` 时 `search`、`scan`、`find_symbol` 会连同默认空间的相关空间一起查，结果里标出命中所在空间；传 `space` 只查那一个，`"*"` 搜全部。
 - `relate_spaces`：记下两个空间之间的关联（一个仓库调用另一个的接口、共用 SDK、同一项目），note 写清关系。本人移除过的关联不能再加。
-- `create_space` / `connect_repository`：建空间、把代码仓库接成空间，只在本人要求时做。
+- `create_space` / `connect_repository`：建空间、把代码仓库接成空间，只在本人要求时做。同一仓库（git remote 相同）已有空间时 `connect_repository` 返回那个空间而不新建，改关联到新目录要 `relink: true`。
 
 ## 检索与阅读
 

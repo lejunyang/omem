@@ -20,8 +20,14 @@
 ## 应用与 Git
 
 - `apply_code_run` 把改动应用到交办时指定的目标分支（续轮沿用首轮目标）：复用该分支已有工作区，没有则自动建立接收工作区，不切换仓库主目录。返回实际分支和目录；不要要求本人手动切分支，也不要说已提交或已推送。补丁真正冲突时保留编码成果。
+- `clean_code_runs`：本人要清理交办留下的东西时用。先不带 `confirm` 列出清单：没应用的交办（丢弃后工作区删掉，复用工作区和仓库主目录重置）、`receivers: true` 时已应用交办的接收工作区（连同没提交的改动）、没有对应交办的遗留工作区，每项写着改了几个文件。本人同意后带 `confirm: true` 和 `run_ids` 再调，只处理这些。进行中的交办不在清单里。
 - `code_git_status(run_id, space)` 查看已应用接收工作区的分支、HEAD、暂存 diff、未暂存文件及操作记录。仅本人可用，限定本次可读空间。远端领先 / 落后数是本地缓存，不自动 fetch。
 - `code_git_action(run_id, space, action, expected_state, message?, branch?, force?)`：本人要求后操作；`action` 为 `commit`、`commit_push` 或 `push`。先读状态并检查 diff，`expected_state` 传其 `state`，提交需非空 `message`；只提交暂存区，不自动 add。默认推送到 origin 的原目标分支，`branch` 可推到别的分支；`force` 只在本人明确同意时用（带 lease）。状态过期需重读，返回 `ok: false` 时不能说成功；推送失败保留本地 commit，刷新后仅重试 push。不要让编码 Agent 绕过工具在接收目录提交或推送。
+
+## 工作区与依赖
+
+- 交办默认每次新建 worktree，依赖要重装。`set_code_workspaces(space, pool?, workspaces?, setup_command?, in_place?)` 让它复用：`pool` 是 omem 自建的长期工作区（保留 node_modules 等被忽略的文件），`workspaces` 借本人已有、装好依赖的 worktree（干净时才借），`setup_command` 只在新工作区或锁文件变了时运行，`in_place` 允许直接在仓库主目录里改（主目录干净时优先，在当前分支上改，应用时改动留在原处，丢弃会重置主目录）。
+- 本人给一个本地仓库路径要交办：先 `connect_repository`。同一仓库（remote 相同）已经有空间时不会新建，返回那个空间；要它改用这个目录，本人同意后带 `space` 和 `relink: true`（那个空间还有没应用的交办时不能改）。
 
 ## 同步
 

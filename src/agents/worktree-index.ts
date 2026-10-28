@@ -28,7 +28,7 @@ import { ensureGrammars } from "../sources/treesitter.ts";
  * the last of the commits it added on top of `start`, delivered by fast-forward on apply.
  */
 /** `slot`: a reusable worktree lent to the run (workspaces.ts); `path` is then a link to it. */
-export type WorktreeRef = { space: string; path: string; branch: string; base: string; ref?: string; tip?: string; baseRef?: string; targetBranch?: string | null; start?: string; syncHead?: string; slot?: string };
+export type WorktreeRef = { space: string; path: string; branch: string; base: string; ref?: string; tip?: string; baseRef?: string; targetBranch?: string | null; start?: string; syncHead?: string; slot?: string; inPlace?: boolean };
 /** A delegation's worktree (`runId`, `path`) or a branch index (`branch`, `commit`), both over repository `repo`. */
 type WorktreeSettings = { runId?: string; repo: string; path?: string; base: string; branch?: string; baseRef?: string; commit?: string; deleted?: string[] };
 

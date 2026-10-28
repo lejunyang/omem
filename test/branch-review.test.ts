@@ -372,4 +372,53 @@ describe("reviewing an existing branch", () => {
       await server.close();
     }
   }, 120000);
+
+  it("codes in the repository's main directory when allowed: applying keeps the changes there, discarding resets it", async () => {
+    fake();
+    const before = getSpace(app, "shop-api").settings;
+    updateSpace(app, "shop-api", { settings: { ...before, inPlace: true } });
+    const branch = git("symbolic-ref", "--short", "HEAD").trim();
+    const server = await startServer(app, { port: 0, quiet: true });
+    const status = () => git("status", "--porcelain").trim();
+    try {
+      expect(status()).toBe("");
+      const r = createRun(app, { kind: "code", spaceId: "shop-api", title: "主目录里改", input: { task: "按评审意见修改", repos: ["shop-api"] } });
+      await exec(r);
+      const [wt] = worktreesOf(app, r.id);
+      expect(wt).toMatchObject({ inPlace: true, branch: "", targetBranch: branch });
+      expect(resolve(wt.slot!)).toBe(resolve(dir));
+      expect(status()).not.toBe("");
+      const changed = status();
+      run(app.db, "update runs set status = 'done' where id = ?", r.id);
+      const res = applyCodeRun(app, r.id);
+      expect(res.targets).toMatchObject([{ space: "shop-api", branch }]);
+      expect(resolve(res.targets[0].path)).toBe(resolve(dir));
+      // Already there: nothing applied twice, nothing reset, still on the owner's branch, no omem branch.
+      expect(status()).toBe(changed);
+      expect(git("symbolic-ref", "--short", "HEAD").trim()).toBe(branch);
+      expect(git("branch", "--list", `omem/${r.id}`).trim()).toBe("");
+
+      // While the main directory has uncommitted changes, the next run gets a worktree of its own.
+      const r2 = createRun(app, { kind: "code", spaceId: "shop-api", title: "另一处", input: { task: "按评审意见修改", repos: ["shop-api"] } });
+      await exec(r2);
+      expect(worktreesOf(app, r2.id)[0].inPlace).toBeUndefined();
+      run(app.db, "update runs set status = 'done' where id = ?", r2.id);
+      discardCodeRun(app, r2.id);
+      expect(status()).toBe(changed);
+
+      // Discarding a run that worked in the main directory resets it.
+      git("stash", "-u", "-q");
+      const r3 = createRun(app, { kind: "code", spaceId: "shop-api", title: "丢弃", input: { task: "按评审意见修改", repos: ["shop-api"] } });
+      await exec(r3);
+      expect(worktreesOf(app, r3.id)[0].inPlace).toBe(true);
+      run(app.db, "update runs set status = 'done' where id = ?", r3.id);
+      discardCodeRun(app, r3.id);
+      expect(status()).toBe("");
+      expect(git("symbolic-ref", "--short", "HEAD").trim()).toBe(branch);
+      git("stash", "drop", "-q");
+    } finally {
+      updateSpace(app, "shop-api", { settings: before });
+      await server.close();
+    }
+  }, 180000);
 });

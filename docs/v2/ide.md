@@ -9,7 +9,8 @@
 每次交办在 `runs/<运行id>/work/<空间>` 新建 worktree，被忽略的文件（`node_modules`、构建缓存）不会跟着来，大仓库每次都要装依赖。仓库空间可以把几个长期存在的 worktree 借给交办用（`src/agents/workspaces.ts`）：
 
 - **`pool`**：omem 自建的数量（0–8），第一次用到时在数据目录 `workspaces/<空间>/<n>` 下 `git worktree add --detach`。
-- **`workspaces`**：本人已有的工作区目录（已经装好依赖的那几个）。必须是这个仓库 `git worktree add` 出来的（和仓库共用提交记录），不能是仓库主目录，也不能是另一份克隆。
+- **`workspaces`**：本人已有的工作区目录（已经装好依赖的那几个）。必须是这个仓库 `git worktree add` 出来的（和仓库共用提交记录），不能是另一份克隆；仓库主目录用下面的 `inPlace`。
+- **`inPlace`**：仓库主目录本身，排在最前。主目录干净时借给交办，运行就在它当前的分支上改（`from_branch` 不同时先切到那个分支），不建 `omem/<运行id>` 分支；应用时改动已经在目标分支的目录里，不再打补丁，只交回租约、不重置；丢弃和别的工作区一样重置并回到原分支。主目录有改动、分支对不上或切不过去时，这次改用下一个工作区或新建。
 - **`setupCommand`**：准备命令。编码前在每个工作区检查一次：命令和锁文件（`pnpm-lock.yaml`、`package-lock.json`、`Cargo.lock`、`go.sum`、`uv.lock` 等，按 Git 索引里的版本）与上次成功运行时一样就跳过，否则运行。新建的 worktree 没有记录，总会运行。失败不中止，编码 Agent 会收到失败输出。
 
 借用过程：
@@ -21,7 +22,11 @@
 5. 应用或丢弃时归还：删除链接，`reset --hard`、`clean -fd`（不带 `-x`，忽略的文件保留），回到借出前的分支（自建的回到游离状态），删除租约，再删 `omem/<运行id>` 分支。
 6. 都被占用时照旧新建 worktree。
 
-设置在“设置 → 空间 → 编辑”（仓库空间），下面列出每个工作区的状态：空闲、使用中（链到运行）、第一次用到时创建、不可用、有改动。接口 `GET /api/spaces/:id/workspaces`。
+设置在“设置 → 空间 → 编辑”（仓库空间），下面列出每个工作区的状态：空闲、使用中（链到运行）、第一次用到时创建、不可用、有改动。接口 `GET /api/spaces/:id/workspaces`。助手用 `set_code_workspaces` 改同样的几项。
+
+清理（`clean_code_runs`，`src/agents/code-cleanup.ts`）：列出没应用也没丢弃、工作区还在的交办（复用工作区和主目录给出真实路径和改动文件数），已应用交办在 `runs/<id>/applied/` 下的接收工作区（要求时），以及 `runs/` 下没有对应交办、或交办已应用 / 丢弃的遗留 worktree。先列清单，本人同意后按运行 id 只处理这些：丢弃走 `discardCodeRun`，接收和遗留的 `git worktree remove --force`，最后 `worktree prune`。进行中的不列入。
+
+同一仓库的另一份目录（`connect_repository`）：按 `git remote` 认（https 和 ssh 两种写法、大小写、`.git` 后缀都算同一个）。已有空间时不新建，返回那个空间；`relink: true` 把空间改关联到新目录，前提是它没有进行中或没应用的交办（工作区属于原来的仓库），omem 自建的复用工作区一起删掉，下次在新仓库上重建。
 
 `omem peer pull` 不需要改：快照按 `runs/*/work/*` 收集编码工作区，链接按真实路径读出，在另一台机器上恢复成普通目录；那台机器上没有对应租约，归还时只删目录。空间设置会随数据拉到别的设备，那里不存在的目录会被跳过。
 

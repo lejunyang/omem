@@ -195,10 +195,12 @@ export async function runCodeTask(ctx: RunContext) {
     const start = from ? resolveRef(repo.rootPath!, from) : null;
     if (from && !start) throw new HttpError(404, `${repo.id} 里没有分支 ${from}`);
     const base = start?.commit ?? git(repo.rootPath!, ["rev-parse", "HEAD"]).stdout.trim();
-    const slot = addWorktree(app, repo, rootRunId, path, base, branch, log);
     const targetBranch = from ? branchFromRef(start!.ref) : git(repo.rootPath!, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() || null;
-    worktrees.push({ space: repo.id, path, branch, base, start: base, targetBranch, ...(from ? { baseRef: from } : {}), ...(slot ? { slot } : {}) });
-    log(`已在 ${slot ? `复用工作区 ${slot}` : path} 准备好 ${repo.id} 的独立工作区（基于 ${from ? `分支 ${from} 的 ` : ""}${base.slice(0, 8)}）`);
+    const slot = addWorktree(app, repo, rootRunId, path, base, branch, log, targetBranch);
+    const inPlace = !!slot?.main;
+    // In the main directory the run works on the branch checked out there: no omem branch to delete.
+    worktrees.push({ space: repo.id, path, branch: inPlace ? "" : branch, base, start: base, targetBranch, ...(from ? { baseRef: from } : {}), ...(slot ? { slot: slot.path } : {}), ...(inPlace ? { inPlace } : {}) });
+    log(inPlace ? `直接在 ${repo.id} 的仓库主目录 ${slot!.path} 里改（分支 ${targetBranch}，基于 ${base.slice(0, 8)}）` : `已在 ${slot ? `复用工作区 ${slot.path}` : path} 准备好 ${repo.id} 的独立工作区（基于 ${from ? `分支 ${from} 的 ` : ""}${base.slice(0, 8)}）`);
   }
   if (chain) {
     const { saveCodeChain } = await import("./code-chain.ts");
@@ -521,7 +523,7 @@ function checkoutBranch(app: App, repo: Space, runId: string, target: { branch: 
   const mb = git(root, ["merge-base", baseTip.commit, tip.commit]);
   if (!mb.ok) throw new HttpError(400, `${target.branch} 和 ${baseRef} 没有共同的提交`);
   const base = mb.stdout.trim();
-  const slot = addWorktree(app, repo, runId, path, tip.commit, null, log);
+  const slot = addWorktree(app, repo, runId, path, tip.commit, null, log, undefined, false)?.path;
   const reset = git(path, ["reset", "-q", "--soft", base]);
   if (!reset.ok) throw new Error(`在 ${repo.id} 准备评审工作区失败：${reset.stderr}`);
   return { space: repo.id, path, branch: "", base, ref: target.branch, tip: tip.commit, baseRef, ...(slot ? { slot } : {}) };
@@ -531,14 +533,28 @@ function checkoutBranch(app: App, repo: Space, runId: string, target: { branch: 
  * The run's worktree of `repo` at `path`, on a new `branch` (or detached) at `commit`: a reusable
  * slot linked there when one is free (workspaces.ts, returned), else a new worktree.
  */
-function addWorktree(app: App, repo: Space, runId: string, path: string, commit: string, branch: string | null, log: (text: string) => void): string | undefined {
+/**
+ * A worktree for a run at `path`: a leased slot (linked there) or a new one. In the main directory
+ * (`onBranch`: the branch the run targets) the run stays on that branch at `commit`; anything else
+ * there, and it falls back to a slot or a new worktree.
+ */
+function addWorktree(app: App, repo: Space, runId: string, path: string, commit: string, branch: string | null, log: (text: string) => void, onBranch?: string | null, main = true): { path: string; main: boolean } | undefined {
   const root = repo.rootPath!;
-  const slot = leaseWorkspace(app, repo, runId, path, log);
+  const lease = (allowMain: boolean) => leaseWorkspace(app, repo, runId, path, log, { main: allowMain });
+  let slot = lease(main);
+  if (slot?.main) {
+    const at = git(slot.path, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim();
+    const moved = !onBranch ? { ok: false, stderr: "主目录不在分支上" } : at === onBranch ? { ok: true, stderr: "" } : git(slot.path, ["checkout", "-q", onBranch]);
+    if (moved.ok && git(slot.path, ["rev-parse", "HEAD"]).stdout.trim() === commit) return slot;
+    releaseWorkspace(runId, { path, slot: slot.path });
+    log(`仓库主目录没能停在 ${onBranch ?? "目标分支"} 的 ${commit.slice(0, 8)}，改用独立工作区${moved.ok ? "" : `：${moved.stderr.trim().slice(0, 300)}`}`);
+    slot = lease(false);
+  }
   if (slot) {
-    const moved = git(slot, ["checkout", "-q", ...(branch ? ["-B", branch] : ["--detach"]), commit]);
+    const moved = git(slot.path, ["checkout", "-q", ...(branch ? ["-B", branch] : ["--detach"]), commit]);
     if (moved.ok) return slot;
-    releaseWorkspace(runId, { path, slot });
-    log(`复用工作区 ${slot} 没能切到 ${commit.slice(0, 8)}，改为新建工作区：${moved.stderr.trim().slice(0, 300)}`);
+    releaseWorkspace(runId, { path, slot: slot.path });
+    log(`复用工作区 ${slot.path} 没能切到 ${commit.slice(0, 8)}，改为新建工作区：${moved.stderr.trim().slice(0, 300)}`);
   }
   const r = git(root, ["worktree", "add", "-q", ...(branch ? ["-b", branch] : ["--detach"]), path, commit]);
   if (!r.ok) throw new Error(`在 ${repo.id} 创建工作区失败：${r.stderr}`);
@@ -621,6 +637,12 @@ function applyTargets(app: App, runId: string): ApplyTarget[] {
     const root = getSpace(app, p.space).rootPath;
     if (!root) throw new HttpError(400, `空间 ${p.space} 没有关联目录`);
     const wt = wts.find(w => w.space === p.space);
+    // Worked on in the main directory: the changes are already where they would be applied.
+    if (wt?.inPlace) {
+      const current = git(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() || null;
+      if (wt.targetBranch && current !== wt.targetBranch) throw new HttpError(409, `仓库主目录 ${root} 已不在分支 ${wt.targetBranch} 上（现在是 ${current ?? "游离 HEAD"}），切回去再应用`);
+      return { space: p.space, file: "", root, path: root, branch: current, create: false };
+    }
     const sync = wt?.syncHead ? { syncHead: wt.syncHead, startCommit: wt.start ?? wt.base } : {};
     const from = (first.input as CodeInput).fromBranches?.[p.space] ?? wt?.baseRef;
     const target = wt?.targetBranch !== undefined ? wt.targetBranch : from ? branchFromRef(resolveRef(root, from)?.ref ?? `refs/heads/${from.replace(/^refs\/heads\//, "").replace(/^origin\//, "")}`) : undefined;
@@ -693,13 +715,13 @@ export function codeApplyTargets(app: App, runId: string): AppliedTarget[] {
 }
 
 /** Remove the run's worktrees and branches, and the temporary index of what they changed. */
-function removeWorktrees(app: App, runId: string) {
+function removeWorktrees(app: App, runId: string, opts: { applied?: boolean } = {}) {
   const leasedBy = String(getRun(app, runId).input.continueFrom ?? runId);
   for (const wt of worktreesOf(app, runId)) {
     const root = findSpace(app, wt.space)?.rootPath;
     if (!root || !existsSync(root)) continue;
-    // A reusable slot is reset and kept for the next run.
-    if (!releaseWorkspace(leasedBy, wt)) {
+    // A reusable slot is reset and kept for the next run; the main directory keeps an applied run's changes.
+    if (!releaseWorkspace(leasedBy, wt, { keep: opts.applied && wt.inPlace })) {
       if (existsSync(wt.path)) git(root, ["worktree", "remove", "--force", wt.path]);
       else git(root, ["worktree", "prune"]);
     }
@@ -772,7 +794,8 @@ export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: bool
   if (opts.keepWorking) {
     const wts = worktreesOf(app, firstId);
     for (const wt of wts) {
-      if (!targets.some((t) => t.space === wt.space)) continue;
+      // The main directory's branch is the owner's: nothing committed there, the work just goes on.
+      if (!targets.some((t) => t.space === wt.space) || wt.inPlace) continue;
       git(wt.path, ["add", "-A"]);
       const id = git(wt.path, ["config", "user.email"]).stdout.trim() ? [] : ["-c", "user.name=omem", "-c", "user.email=omem@localhost"];
       const c = git(wt.path, [...id, "commit", "-q", "--no-verify", "--allow-empty", "-m", `omem: 已应用到 ${appliedTo.find((t) => t.space === wt.space)?.branch ?? "原分支"}（第 ${r.input.round ?? 1} 轮）`]);
@@ -787,7 +810,7 @@ export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: bool
     return { applied: true, spaces: applied, targets: appliedTo };
   }
   for (const id of new Set([firstId, runId])) setRunOutput(app, id, { appliedAt, appliedTo });
-  removeWorktrees(app, runId);
+  removeWorktrees(app, runId, { applied: true });
   cancelHostAsks(app, runId, "review-done");
   return { applied: true, spaces: applied, targets: appliedTo };
 }

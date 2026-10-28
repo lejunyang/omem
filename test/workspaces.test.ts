@@ -32,7 +32,7 @@ describe("reusable workspaces", () => {
   it("creates omem's own slot on first use, keeps ignored files and drops the run's changes when given back", () => {
     updateSpace(app, "shop-web", { settings: { pool: 1 } });
     const link = join(app.runsDir, "r1", "work", "shop-web");
-    const slot = leaseWorkspace(app, repo(), "r1", link, noLog)!;
+    const slot = leaseWorkspace(app, repo(), "r1", link, noLog)!.path;
     expect(slot).toBe(managedSlot(app, "shop-web", 1));
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
     expect(workDirOf({ path: link })).toBe(slot);
@@ -52,7 +52,7 @@ describe("reusable workspaces", () => {
     expect(readFileSync(join(slot, "node_modules", "dep.js"), "utf8")).toBe("installed");
     expect(listWorkspaces(app, repo())).toMatchObject([{ state: "free" }]);
     // A lease whose run link is gone does not hold the slot.
-    expect(leaseWorkspace(app, repo(), "r3", join(app.runsDir, "r3", "work", "shop-web"), noLog)).toBe(slot);
+    expect(leaseWorkspace(app, repo(), "r3", join(app.runsDir, "r3", "work", "shop-web"), noLog)?.path).toBe(slot);
     releaseWorkspace("r3", { path: join(app.runsDir, "r3", "work", "shop-web"), slot });
   });
 
@@ -72,7 +72,7 @@ describe("reusable workspaces", () => {
 
     sh(mine, "clean", "-fdq");
     const link = join(app.runsDir, "r5", "work", "shop-web");
-    expect(leaseWorkspace(app, repo(), "r5", link, noLog)).toBe(mine);
+    expect(leaseWorkspace(app, repo(), "r5", link, noLog)?.path).toBe(mine);
     sh(mine, "checkout", "-q", "-B", "omem/r5", head);
     releaseWorkspace("r5", { path: link, slot: mine });
     expect(sh(mine, "symbolic-ref", "--short", "HEAD").trim()).toBe("feature-x");
@@ -93,7 +93,7 @@ describe("reusable workspaces", () => {
     updateSpace(app, "shop-web", { settings: { pool: 1 } });
     const r = createRun(app, { kind: "code", spaceId: "shop-web", title: "改按钮", input: { task: "改按钮" } });
     const link = join(app.runsDir, r.id, "work", "shop-web");
-    const slot = leaseWorkspace(app, repo(), r.id, link, noLog)!;
+    const slot = leaseWorkspace(app, repo(), r.id, link, noLog)!.path;
     sh(slot, "checkout", "-q", "-B", `omem/${r.id}`, head);
     writeFileSync(join(slot, "app.ts"), "export const a = 3;\n");
     setRunOutput(app, r.id, { worktrees: [{ space: "shop-web", path: link, branch: `omem/${r.id}`, base: head, slot }] });

@@ -227,6 +227,36 @@ const sourceKinds: Record<string, HitType[]> = {
 
 // ---------------------------------------------------------------- read tools
 
+/** A repository's remotes, normalized so one URL in its https and ssh forms compares equal. */
+function remoteKeys(dir: string) {
+  const urls = git(dir, ["remote", "-v"]).stdout.split("\n").map((l) => l.split(/\s+/)[1]).filter(Boolean);
+  return new Set(urls.map(remoteKey));
+}
+export function remoteKey(url: string) {
+  const m = /^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^@/]+@)?([^/:]+)(?::\d+)?[:/]+(.+?)(?:\.git)?\/*$/i.exec(url.trim());
+  return m ? `${m[1].toLowerCase()}/${m[2].toLowerCase()}` : url.trim();
+}
+
+/**
+ * Point a repository space at another checkout of the same repository: refused while delegations
+ * still have worktrees from the old one; omem's own reusable worktrees belong to the old repository
+ * and are removed (made again from the new one when used).
+ */
+async function relinkSpace(ctx: ToolContext, id: string, root: string) {
+  const s = findSpace(ctx.app, id)!;
+  const { cleanupCandidates } = await import("./code-cleanup.ts");
+  const open = cleanupCandidates(ctx.app, { userId: null, spaces: new Set([id]) });
+  const left = [...open.running.map((r) => r.run), ...open.items.filter((i) => i.kind === "discard").map((i) => i.run)];
+  if (left.length) throw new HttpError(409, `空间 ${id} 还有进行中或没应用的交办（${[...new Set(left)].join("、")}），它们的工作区在原来的仓库里；先应用或用 clean_code_runs 清理再改`);
+  const old = s.rootPath!;
+  const { managedSlot } = await import("./workspaces.ts");
+  const pool = Math.min(8, Number((s.settings as { pool?: number }).pool) || 0);
+  for (let n = 1; n <= pool; n++) git(old, ["worktree", "remove", "--force", managedSlot(ctx.app, id, n)]);
+  updateSpace(ctx.app, id, { rootPath: root });
+  const report = await syncDirectorySpace(ctx.app, id);
+  return `空间 ${id}（${s.name}）改为关联 ${root}（原来是 ${old}）。重新导入：新增 ${report.created}，更新 ${report.updated}。${pool ? `omem 自建的 ${pool} 个复用工作区属于原来的仓库，已删掉，下次交办在新目录的仓库上重建。` : ""}交办在 repo_spaces 里写 "${id}"。`;
+}
+
 function manageSpaces(ctx: ToolContext) {
   const user = findUser(ctx.app, ctx.userId ?? OWNER);
   if (!user || user.disabledAt || user.role !== "owner" || ctx.spaces !== null)
@@ -253,21 +283,30 @@ def({
 
 def({
   name: "connect_repository",
-  description: "本人要求接入仓库时使用：本地绝对路径关联 Git 根目录；HTTP(S)/SSH Git 链接尝试 clone 到 omem 数据目录 repos/ 后关联。可指定已有空间；否则按仓库路径复用或创建 repo 空间。自动导入代码。不会覆盖已有的不同仓库。",
-  schema: z.object({ repository: z.string().trim().min(1), space: z.string().optional(), id: z.string().optional(), name: z.string().trim().min(1).optional(), description: z.string().optional() }),
+  description: "本人要求接入仓库时使用：本地绝对路径关联 Git 根目录；HTTP(S)/SSH Git 链接尝试 clone 到 omem 数据目录 repos/ 后关联。可指定已有空间；否则按仓库路径复用或创建 repo 空间。自动导入代码。不会覆盖已有的不同仓库。\n同一个仓库（git remote 相同）已经有空间、只是关联的是别处的目录时，不新建空间，返回那个空间：交办直接用它。本人要让那个空间改用这个目录（比如这里装好了依赖、平时在这里开发）时，带 space 和 relink: true 再调；那个空间还有没应用的交办时不能改。",
+  schema: z.object({ repository: z.string().trim().min(1), space: z.string().optional(), id: z.string().optional(), name: z.string().trim().min(1).optional(), description: z.string().optional(), relink: z.boolean().optional().describe("本人同意后，让同一仓库（remote 相同）的已有空间改为关联这个目录") }),
   write: true,
   handler: async (ctx, a) => {
     manageSpaces(ctx);
     if (a.space && a.id) throw new HttpError(400, "关联已有空间用 space；新建空间用 id，不要同时填写");
     const target = a.space ? findSpace(ctx.app, space(ctx, a.space)) : a.id ? findSpace(ctx.app, slugify(a.id)) : null;
     const root = isAbsolute(a.repository) ? repositoryRoot(a.repository) : await cloneRepository(ctx.app, a.repository);
-    if (target?.rootPath && repositoryRoot(target.rootPath) !== root)
-      throw new HttpError(409, `空间 ${target.id} 已关联另一仓库；请创建独立空间，未更改原关联`);
-    const same = listSpaces(ctx.app).find((s) => {
-      if (!s.rootPath) return false;
-      try { return repositoryRoot(s.rootPath) === root; } catch { return false; }
-    });
+    const rootOf = (p: string) => { try { return repositoryRoot(p); } catch { return null; } };
+    const same = listSpaces(ctx.app).find((s) => !!s.rootPath && rootOf(s.rootPath) === root);
+    // Another checkout of a repository that already has a space (same remote, different directory).
+    const mine = remoteKeys(root);
+    const twin = same ? undefined : listSpaces(ctx.app).find((s) => s.kind === "repo" && !!s.rootPath && rootOf(s.rootPath) !== root && [...remoteKeys(s.rootPath)].some((k) => mine.has(k)));
+    if (target?.rootPath && rootOf(target.rootPath) !== root) {
+      const sameRepo = [...remoteKeys(target.rootPath)].some((k) => mine.has(k));
+      if (!sameRepo) throw new HttpError(409, `空间 ${target.id} 已关联另一仓库；请创建独立空间，未更改原关联`);
+      if (!a.relink) return `空间 ${target.id}（${target.name}）和这个目录是同一个仓库（remote 相同），它现在关联的是 ${target.rootPath}。交办可以直接用它；本人同意让它改用 ${root} 时，带 relink: true 再调。没有改动。`;
+      return relinkSpace(ctx, target.id, root);
+    }
     if (target && same && target.id !== same.id) throw new HttpError(409, `仓库已关联空间 ${same.id}；请直接使用该空间`);
+    if (!target && twin) {
+      if (!a.relink) return `这个仓库已经有空间 ${twin.id}（${twin.name}，remote 相同），关联的是另一个目录 ${twin.rootPath}，没有新建空间。交办直接在 repo_spaces 里写 "${twin.id}"，编码在那个目录的仓库上做。要让 ${twin.id} 改用 ${root}（比如这里装好了依赖、平时在这里开发），本人同意后带 space: "${twin.id}" 和 relink: true 再调。`;
+      return relinkSpace(ctx, twin.id, root);
+    }
     let s = target ?? same;
     if (!s) {
       const name = a.name ?? root.split(/[\\/]/).pop()!;
@@ -3149,6 +3188,63 @@ def({
     const { applyCodeRun } = await import("./code.ts");
     const res = applyCodeRun(ctx.app, a.run_id);
     return `已把运行 ${a.run_id} 的改动应用到原目标分支（未提交）：\n${res.targets.map(t => `- ${t.space} · ${t.branch ?? "指定版本"}：${t.path}`).join("\n")}\n可在网页填写提交信息，或在本人要求后先 code_git_status 再 code_git_action 提交或推送。编码用的 worktree 已删除，接收工作区保留。`;
+  },
+});
+
+def({
+  name: "clean_code_runs",
+  description:
+    "本人要求清理交办留下的东西时用：丢弃没应用的交办（删掉它的工作区；复用工作区和仓库主目录会重置回去，改动不再保留）、删掉已应用交办的接收工作区（receivers: true，里面没提交的改动一起删掉）、删掉已经没有对应交办的遗留工作区。进行中的交办不动（先 stop_code_run）。先不带 confirm 调一次，把清单（每项的交办、仓库、目录、改了几个文件）给本人看；本人同意后带 confirm: true 和要清理的 run_ids 再调，只处理这些。",
+  write: true,
+  schema: z.object({
+    space: z.string().optional().describe("只看这个仓库空间"),
+    run_ids: z.array(z.string()).optional().describe("只看或只清理这些交办（任一轮的运行 id）；confirm 时必填"),
+    receivers: z.boolean().optional().describe("也列出 / 删掉已应用交办的接收工作区（runs/<id>/applied 下的）"),
+    confirm: z.boolean().optional().describe("本人看过清单并同意后才传 true"),
+  }),
+  handler: async (ctx, a) => {
+    if (a.confirm && !a.run_ids?.length) throw new HttpError(400, "confirm 时要传 run_ids：先不带 confirm 列出清单，本人同意哪些就传哪些");
+    const spaces = a.space ? [space(ctx, a.space)] : ctx.spaces;
+    const { cleanupCandidates, cleanItems } = await import("./code-cleanup.ts");
+    const userId = ctx.userId && ctx.userId !== OWNER ? ctx.userId : null;
+    const found = cleanupCandidates(ctx.app, { userId, spaces: spaces ? new Set(spaces) : null, runIds: a.run_ids, receivers: a.receivers });
+    for (const s of new Set(found.items.map((i) => i.space))) inScope(ctx, s, "代码");
+    const label = { discard: "没应用的交办", receiver: "已应用交办的接收工作区", stray: "遗留工作区" } as const;
+    const list = found.items.map((i) => `- [${label[i.kind]}] ${i.run} · ${i.title} · ${i.space}${i.branch ? `（${i.branch}）` : ""}\n  ${i.path} · ${i.changed ? `改了 ${i.changed} 个文件` : "没有改动"}`).join("\n");
+    const busy = found.running.length ? `\n进行中、没有列入：${found.running.map((r) => `${r.run}（${r.title}）`).join("、")}` : "";
+    if (!a.confirm) return found.items.length ? `可以清理的（还没动）：\n${list}${busy}\n\n本人同意后带 confirm: true 和 run_ids 再调。${a.receivers ? "" : "已应用交办的接收工作区没有列出，要一起看传 receivers: true。"}` : `没有可清理的交办工作区。${busy}`;
+    const res = cleanItems(ctx.app, found.items);
+    return `已清理：\n${res.done.map((d) => `- ${d}`).join("\n") || "（无）"}${res.failed.length ? `\n没能清理：\n${res.failed.map((f) => `- ${f}`).join("\n")}` : ""}${busy}`;
+  },
+});
+
+def({
+  name: "set_code_workspaces",
+  description:
+    "本人要求时设置仓库空间的交办工作区，让交办复用已装好的依赖：pool 是 omem 自建的长期工作区个数（0 关闭，最多 8；归还时重置改动、保留 node_modules 等被忽略的文件）；workspaces 是本人已有、装好依赖的 worktree 目录（同一仓库 git worktree add 建的，干净时才借）；setup_command 在新工作区或锁文件变了时运行（如 pnpm install）；in_place 允许直接在仓库主目录里改（主目录干净时优先借给交办，在它当前分支上改、不建新分支，应用时改动留在原处，丢弃会把主目录重置）。不传的项不变。返回各工作区现在的状态。",
+  write: true,
+  schema: z.object({
+    space: z.string().describe("仓库空间 id"),
+    pool: z.number().int().min(0).max(8).optional(),
+    workspaces: z.array(z.string()).optional().describe("本人已有的 worktree 目录（绝对路径）；传空数组清空"),
+    setup_command: z.string().optional().describe("准备依赖的命令；传空字符串清空"),
+    in_place: z.boolean().optional(),
+  }),
+  handler: async (ctx, a) => {
+    const id = writeSpace(ctx, a.space);
+    const s = findSpace(ctx.app, id)!;
+    if (s.kind !== "repo" || !s.rootPath) throw new HttpError(400, `空间 ${id} 不是关联了目录的仓库空间`);
+    const st = { ...s.settings } as Record<string, unknown>;
+    if (a.pool !== undefined) st.pool = a.pool;
+    if (a.workspaces !== undefined) st.workspaces = a.workspaces.map((p) => p.trim()).filter(Boolean);
+    if (a.setup_command !== undefined) st.setupCommand = a.setup_command.trim() || undefined;
+    if (a.in_place !== undefined) st.inPlace = a.in_place;
+    const next = updateSpace(ctx.app, id, { settings: st });
+    const { listWorkspaces } = await import("./workspaces.ts");
+    const state = { free: "空闲", leased: "借出", missing: "第一次用时创建", invalid: "不能用", dirty: "有没提交的改动，暂不借出" } as const;
+    const slots = listWorkspaces(ctx.app, next).map((w) => `- ${w.main ? "仓库主目录 " : w.managed ? "omem 自建 " : ""}${w.path}：${state[w.state]}${w.run ? `（${w.run}）` : ""}${w.reason ? `，${w.reason}` : ""}`);
+    const ns = next.settings as { pool?: number; setupCommand?: string; inPlace?: boolean };
+    return `已更新 ${id} 的交办工作区：自建 ${ns.pool ?? 0} 个${ns.inPlace ? "，允许在主目录里改" : ""}${ns.setupCommand ? `，准备命令 ${ns.setupCommand}` : "，没有准备命令"}。\n${slots.join("\n") || "（没有可复用的工作区，交办每次新建）"}`;
   },
 });
 

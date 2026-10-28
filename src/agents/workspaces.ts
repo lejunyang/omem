@@ -13,17 +13,20 @@ import { now, sha256 } from "../core/util.ts";
  *
  * - `workspaces`: worktrees the owner already has (with dependencies installed), lent only while
  *   clean and given back on the branch they were on;
- * - `pool`: worktrees omem creates under `<data>/workspaces/<space>/<n>` on first use.
+ * - `pool`: worktrees omem creates under `<data>/workspaces/<space>/<n>` on first use;
+ * - `inPlace`: the repository's main directory itself, lent first while it is clean. The run works
+ *   on the branch checked out there (no omem branch); applying keeps its changes where they are,
+ *   discarding resets the directory like any other slot.
  *
  * A lease is a file in the worktree's own git directory naming the run; the run reaches the slot
  * through a link at its usual place (`runs/<id>/work/<space>`), so a lease is held exactly while
  * that link exists. Releasing resets the slot (tracked and untracked files, not ignored ones) and
  * removes the link. `setupCommand` runs in any worktree whose lockfiles changed since it last ran.
  */
-export type WorkspaceSettings = { workspaces?: string[]; pool?: number; setupCommand?: string };
+export type WorkspaceSettings = { workspaces?: string[]; pool?: number; setupCommand?: string; inPlace?: boolean };
 
 type Lease = { run: string; space: string; prev: string | null; at: string };
-export type WorkspaceSlot = { path: string; managed: boolean; state: "free" | "leased" | "missing" | "invalid" | "dirty"; run?: string; reason?: string };
+export type WorkspaceSlot = { path: string; managed: boolean; main?: boolean; state: "free" | "leased" | "missing" | "invalid" | "dirty"; run?: string; reason?: string };
 
 const MAX_POOL = 8;
 const LEASE = "omem-lease.json";
@@ -57,19 +60,23 @@ export function managedSlot(app: App, repoId: string, n: number) {
   return join(app.home, "workspaces", repoId, String(n));
 }
 
-function candidates(app: App, repo: Space) {
+type Candidate = { path: string; managed: boolean; main?: boolean };
+
+function candidates(app: App, repo: Space, opts: { main?: boolean } = {}): Candidate[] {
   const st = repo.settings as WorkspaceSettings;
+  const main = st.inPlace && repo.rootPath && opts.main !== false ? [{ path: repo.rootPath, managed: false, main: true }] : [];
   const listed = (Array.isArray(st.workspaces) ? st.workspaces : []).map((p) => String(p).trim()).filter(Boolean).map((p) => ({ path: expand(p), managed: false }));
   const n = Math.max(0, Math.min(MAX_POOL, Math.floor(Number(st.pool) || 0)));
-  return [...listed, ...Array.from({ length: n }, (_, i) => ({ path: managedSlot(app, repo.id, i + 1), managed: true }))];
+  return [...main, ...listed, ...Array.from({ length: n }, (_, i) => ({ path: managedSlot(app, repo.id, i + 1), managed: true }))];
 }
 
 /** Why a directory cannot be lent to runs of `root`'s repository, or null. */
-function unusable(root: string, path: string) {
+function unusable(root: string, c: Candidate) {
+  const path = c.path;
   if (!existsSync(path)) return "目录不存在";
   const top = git(path, ["rev-parse", "--show-toplevel"]);
   if (!top.ok || real(top.stdout.trim()) !== real(path)) return "不是 Git 工作区的根目录";
-  if (real(path) === real(root)) return "是仓库主目录本身";
+  if (real(path) === real(root)) return c.main ? null : "是仓库主目录本身（要在主目录里改，打开“在主目录里改”）";
   if (commonDir(path) !== commonDir(root)) return "不是这个仓库的工作区（用 git worktree add 建，和仓库共用提交记录）";
   return null;
 }
@@ -97,7 +104,7 @@ export function listWorkspaces(app: App, repo: Space): WorkspaceSlot[] {
   const root = repo.rootPath;
   return candidates(app, repo).map((c) => {
     if (c.managed && !existsSync(c.path)) return { ...c, state: "missing" as const };
-    const reason = root ? unusable(root, c.path) : "空间没有关联仓库";
+    const reason = root ? unusable(root, c) : "空间没有关联仓库";
     if (reason) return { ...c, state: "invalid" as const, reason };
     const dir = gitDir(c.path)!;
     const run = holder(app, c.path, join(dir, LEASE));
@@ -109,10 +116,11 @@ export function listWorkspaces(app: App, repo: Space): WorkspaceSlot[] {
 /**
  * Lend run `runId` a free slot of `repo` and link it at `link`; null when none is free (the caller
  * makes a new worktree as before). The slot keeps whatever is checked out; the caller moves it.
+ * `main: false` leaves the main directory out (a branch review moves HEAD around).
  */
-export function leaseWorkspace(app: App, repo: Space, runId: string, link: string, log: (text: string) => void): string | null {
+export function leaseWorkspace(app: App, repo: Space, runId: string, link: string, log: (text: string) => void, opts: { main?: boolean } = {}): { path: string; main: boolean } | null {
   const root = repo.rootPath!;
-  for (const c of candidates(app, repo)) {
+  for (const c of candidates(app, repo, opts)) {
     if (c.managed && !existsSync(c.path)) {
       mkdirSync(dirname(c.path), { recursive: true });
       git(root, ["worktree", "prune"]);
@@ -122,7 +130,7 @@ export function leaseWorkspace(app: App, repo: Space, runId: string, link: strin
         continue;
       }
     }
-    const reason = unusable(root, c.path);
+    const reason = unusable(root, c);
     if (reason) {
       log(`跳过复用工作区 ${c.path}：${reason}`);
       continue;
@@ -139,7 +147,7 @@ export function leaseWorkspace(app: App, repo: Space, runId: string, link: strin
       // omem's own slots hold nothing but runs' leftovers; the owner's are theirs.
       if (!c.managed) {
         rmSync(file, { force: true });
-        log(`跳过复用工作区 ${c.path}：有没提交的改动`);
+        log(`${c.main ? "仓库主目录" : "跳过复用工作区"} ${c.path}：有没提交的改动${c.main ? "，这次不在主目录里改" : ""}`);
         continue;
       }
       git(c.path, ["reset", "-q", "--hard"]);
@@ -156,7 +164,7 @@ export function leaseWorkspace(app: App, repo: Space, runId: string, link: strin
       log(`没能链接复用工作区 ${c.path}：${(e as Error).message}`);
       continue;
     }
-    return c.path;
+    return { path: c.path, main: !!c.main };
   }
   return null;
 }
@@ -164,8 +172,9 @@ export function leaseWorkspace(app: App, repo: Space, runId: string, link: strin
 /**
  * Give a leased slot back: drop the run's link, then (if the lease is still this run's) reset the
  * slot's tracked and untracked files and return it to the branch it was on. Ignored files stay.
+ * `keep` gives it back as it is: the main directory after its run was applied.
  */
-export function releaseWorkspace(runId: string, wt: { path: string; slot?: string }) {
+export function releaseWorkspace(runId: string, wt: { path: string; slot?: string }, opts: { keep?: boolean } = {}) {
   if (!wt.slot) return false;
   if (isLink(wt.path)) {
     try {
@@ -180,6 +189,10 @@ export function releaseWorkspace(runId: string, wt: { path: string; slot?: strin
   const lease = readLease(file);
   // Another run has it now, or this record came from another machine.
   if (lease?.run !== runId) return true;
+  if (opts.keep) {
+    rmSync(file, { force: true });
+    return true;
+  }
   git(wt.slot, ["reset", "-q", "--hard"]);
   git(wt.slot, ["clean", "-fdq"]);
   const commit = !lease.prev || /^[0-9a-f]{40,64}$/.test(lease.prev);
