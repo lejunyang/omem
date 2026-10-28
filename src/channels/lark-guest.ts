@@ -6,6 +6,7 @@ import { jsonIn } from "../agents/oneshot.ts";
 import { runRole } from "../agents/runner.ts";
 import { createRun, getRun, waitForRun, type RunContext } from "../agents/runs.ts";
 import { replyOf } from "../agents/types.ts";
+import type { CardBlock } from "./lark-send.ts";
 
 /**
  * Guest mode: someone who is not a user @-ing the bot in a group (or writing to it one-to-one),
@@ -138,4 +139,40 @@ export async function guestRun(ctx: RunContext): Promise<GuestVerdict> {
   ].join("\n");
   const r = await runRole(ctx.app, { role: "guest", spaceId, spaces, task, runId: ctx.run.id, signal: ctx.signal, lark: { chats: [] }, onEvent: (e) => ctx.event(e.type, e) });
   return { verdict, reason, answer: replyOf(r).trim() };
+}
+
+// ---- the owner lets a refused guest through --------------------------------------------------
+
+/** Each bot registers how it answers a message the owner let through (its own handler and identity). */
+const approvers = new Map<string, (inbound: unknown, by: string) => Promise<void>>();
+export function onGuestApproved(bot: string, fn: (inbound: unknown, by: string) => Promise<void>) {
+  approvers.set(bot, fn);
+}
+
+export type GuestApproval = { bot: string; runId: string; chatId: string; chatName?: string; senderName: string; text: string; reason: string; inbound: unknown };
+
+/** The card that asks the owner whether this person may use the assistant for this message. */
+export function guestApprovalCard(a: Pick<GuestApproval, "chatName" | "chatId" | "senderName" | "text" | "reason" | "runId">, state?: "approved" | "declined") {
+  const fields = [
+    { label: "群", value: a.chatName ?? a.chatId },
+    { label: "谁", value: a.senderName },
+  ];
+  const blocks: CardBlock[] = [
+    { fields },
+    { markdown: `**请求**\n${truncate(a.text, 1200)}` },
+    { markdown: `**门卫为什么拦下**\n${a.reason || "没有写理由"}` },
+  ];
+  if (!state) blocks.push({ buttons: [{ text: "同意这次", value: "approve", style: "primary" }, { text: "不同意", value: "decline" }] });
+  blocks.push({ note: state === "approved" ? `已同意，主助手按你的身份处理这条请求 · 运行 ${a.runId}` : state === "declined" ? `已忽略 · 运行 ${a.runId}` : `只有你能看到这张卡片。同意后由主助手处理这条请求（能用你的工具和资料），不同意就不理会 · 运行 ${a.runId}` });
+  return { title: state === "approved" ? "已同意访客使用" : state === "declined" ? "没有同意访客使用" : "有人想用你的机器人，被门卫拦下了", color: state === "approved" ? "green" : state === "declined" ? "grey" : "orange", blocks };
+}
+
+/** The owner answered the card: through, the bot that took the message answers it as for the owner. */
+export async function decideGuest(app: App, a: GuestApproval, approve: boolean, by: string) {
+  const { addRunEvent } = await import("../agents/runs.ts");
+  addRunEvent(app, a.runId, "status", { text: approve ? "本人同意了这次请求，交给主助手处理" : "本人没有同意，忽略" });
+  if (!approve) return;
+  const fn = approvers.get(a.bot);
+  if (!fn) throw new Error("处理这条消息的机器人现在没有运行");
+  await fn(a.inbound, by);
 }

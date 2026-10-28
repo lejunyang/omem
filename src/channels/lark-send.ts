@@ -316,7 +316,7 @@ export type Interaction = {
   chatId: string | null;
   conversationId: string | null;
   runId: string | null;
-  purpose: "agent" | "draft" | "model" | "ask";
+  purpose: "agent" | "draft" | "model" | "ask" | "guest-approval";
   allowed: string[];
   payload: Record<string, unknown>;
   status: "open" | "done" | "expired";

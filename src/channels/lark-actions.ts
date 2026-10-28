@@ -44,6 +44,19 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
       return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };
     }
   }
+  if (inter.purpose === "guest-approval") {
+    // A guest the gatekeeper refused (lark-guest.ts): the owner lets this message through or not.
+    const { decideGuest, guestApprovalCard } = await import("./lark-guest.ts");
+    const a = inter.payload as import("./lark-guest.ts").GuestApproval;
+    const approve = (value as { action?: string } | undefined)?.action === "approve";
+    closeInteraction(app, inter.id, operator);
+    try {
+      await decideGuest(app, a, approve, operator);
+    } catch (e) {
+      return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };
+    }
+    return { toast: { type: "success", content: approve ? "已同意，正在处理" : "已忽略" }, card: rawCard(buildCard(guestApprovalCard(a, approve ? "approved" : "declined"))) };
+  }
   if (inter.purpose === "draft") {
     const choice = (value as { action?: string } | undefined)?.action;
     closeInteraction(app, inter.id, operator);

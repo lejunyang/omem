@@ -27,7 +27,7 @@ import { larkBotInfo, larkOwnerOpenId, openLarkTopic, postedByOmem, reactLark, s
 import { bindAnswerer, botChannel, botRoster, chatContext, keepsRecords, larkUser, learnPeerIds, personSpoke, registerRelay, relayMentions, renderBotMentions, rosterNote, type BotRef } from "./lark-bots.ts";
 import { larkAppSecret } from "./lark-setup.ts";
 import { routeWatchedMessages } from "./lark-watch.ts";
-import { askAsGuest, guestsAllowed, ownerInChat, waitGuest } from "./lark-guest.ts";
+import { askAsGuest, guestApprovalCard, guestsAllowed, onGuestApproved, ownerInChat, waitGuest, type GuestApproval } from "./lark-guest.ts";
 import { claimedByRule, markAddressed } from "../rules/store.ts";
 import { larkSenderNames } from "./lark-sender.ts";
 
@@ -495,12 +495,34 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     if (withOwner && v?.verdict === "answer") return true;
     const say = v?.verdict === "refuse" ? v.reply : v?.verdict === "answer" ? v.answer : "";
     if (say) await reply(m.chatId, resolveCitations(app, say), m.messageId, !!m.topicId, `运行 ${r.id}`).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
+    // A person (not a bot) refused in a group: ask the owner whether to let this one through.
+    if (v?.verdict === "refuse" && !m.fromApp && m.chatType === "group") await askOwnerAboutGuest(m, r.id, v.reason).catch((e) => console.warn("[omem] 访客确认卡片发送失败", e));
     return false;
   };
 
-  const handle = async (m: Inbound) => {
+  /**
+   * A card only the owner sees (an ephemeral card in the group when the owner is in it, otherwise in
+   * the owner's private chat): let this person use the assistant for this message, or not.
+   */
+  const askOwnerAboutGuest = async (m: Inbound, runId: string, reason: string) => {
+    const owner = ownerOpenId();
+    if (!owner) return;
+    const { buildCard, recordInteraction, sendEphemeral } = await import("./lark-send.ts");
+    const a: GuestApproval = { bot: ref, runId, chatId: m.chatId, chatName: groupName(m.chatId), senderName: m.senderName, text: spoken(m), reason, inbound: m };
+    const card = buildCard(guestApprovalCard(a));
+    let messageId: string | undefined;
+    if (await ownerInChat(app, m.chatId)) messageId = (await sendEphemeral(m.chatId, owner, card, extra ? ref : null).catch(() => null))?.messageId;
+    if (!messageId) {
+      const dm = kv(app, key("lark_owner_chat"));
+      messageId = (await sendLark(dm ? { chatId: dm } : { userId: owner }, { card })).messageId;
+    }
+    recordInteraction(app, { messageId, chatId: m.chatId, conversationId: null, runId, purpose: "guest-approval", allowed: [owner], payload: a, ...(extra ? { bot: ref } : {}) });
+  };
+
+  /** `approved`: the owner let a refused guest through (its records were kept the first time). */
+  const handle = async (m: Inbound, approved?: { by: string }) => {
     let ruled: Promise<void> | null = null;
-    if (m.chatType === "group") {
+    if (m.chatType === "group" && !approved) {
       // The chat's records (capture, rules, watched chats) are kept once: by the main bot when it is
       // in the chat, otherwise by this one (lark-bots.ts).
       const keeps = await keepsRecords(ref, m.chatId);
@@ -526,13 +548,16 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     // In a group the owner is in, the owner may let colleagues talk to the assistant itself.
     let asker: string | undefined;
     if (!userId) {
-      if (!(await answerGuest(m, ruled))) return;
+      if (!approved && !(await answerGuest(m, ruled))) return;
       userId = OWNER;
       asker = m.senderName;
     }
     if (m.chatType === "p2p" && userId === OWNER) kv(app, key("lark_owner_chat"), m.chatId);
     const text = spoken(m);
-    const context = m.chatType === "group" ? [rosterNote(app, ref), groupContext(m)].filter(Boolean).join("\n\n") : "";
+    const context = [
+      approved ? `本人看过门卫拦下的这条请求，同意让 ${m.senderName} 这次使用你：照常处理，结果回在群里。` : "",
+      ...(m.chatType === "group" ? [rosterNote(app, ref), groupContext(m)] : []),
+    ].filter(Boolean).join("\n\n");
     if (!text) return;
     const spaceId = m.chatType === "group" ? groupSpace(m.chatId) : userId === OWNER ? cfg.defaultSpace : undefined;
     bindAnswerer(app, ref, { channel, chatId: m.chatId, topicId: m.topicId, isGroup: m.chatType === "group", spaceId, userId });
@@ -737,6 +762,11 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   }));
   // Everything this bot receives is handled as this bot.
   let processing: Promise<void> = Promise.resolve();
+  // The owner let a refused guest through: answered like any message to this bot, in the background
+  // (the card callback has to answer within seconds).
+  onGuestApproved(ref, async (inbound, by) => {
+    processing = withBot(ref, () => handle(inbound as Inbound, { by })).catch((e) => console.warn(`[omem] 飞书机器人 ${ref} 处理同意的访客请求失败`, e));
+  });
   return {
     // Acknowledge at once: Feishu redelivers an event it has not heard back about within a few
     // seconds, and a slow handler also holds back the messages sent right after it.

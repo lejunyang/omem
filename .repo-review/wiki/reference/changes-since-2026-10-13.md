@@ -673,4 +673,5 @@ updated: 2026-10-28
 - **飞书工具默认发到本会话**：`lark_send` / `lark_card` 等不填 `chat_id`、`reply_to`、`user_id` 时，发到本次运行所在的飞书会话（`tools.ts` 的 `runLarkChat`）。起因：本人在私聊里让助理发起授权，Agent 拿不到当前私聊的 chat_id，发不了可更新的授权卡片，只好改用 `notify`。
 - **飞书回答带运行 id、按 id 查找**：飞书回答卡片底部小字“运行 <id>”（`lark-send.ts` 的 markdown 内容支持 `note`，`lark-progress.ts` 的 `finish` 带上，访客的回答也带）。新增 `src/core/lookup.ts` 的 `lookupId` 与 `GET /api/lookup?id=`：运行、记忆、原件、事项、消息、对话、规则、通知、页面按 id 查（接受 `运行 `、`src:`、`mem:`、`msg:` 前缀和 `#L` 行号），按调用者能看的空间过滤；`CommandPalette.vue` 输入像 id 的内容时把命中放在第一行，回车打开对应页面或引用抽屉。
 - **运行记下新建还是更新**：`tool-write` 事件多记工具回执 `result`（前 400 字）；`runWrites` 从回执里取 id 和“已新建 / 已更新 / 已更正”，旧事件仍按原来的方式推断；`RunActivity.vue` 显示为“新建工作文件：…”“更正记忆：…”。
+- **访客被拒后本人确认**：`lark-bot.ts` 的 `answerGuest` 在群里拒绝一个人后调用 `askOwnerAboutGuest`：本人在群里（`ownerInChat`）就发群内仅本人可见的卡片（`sendEphemeral`），否则发到本人私聊；交互 `purpose=guest-approval`，payload 存原消息。`lark-actions.ts` 处理按钮：同意时 `decideGuest` 把原消息交回注册的机器人（`onGuestApproved`），`handle(m, { by })` 跳过采集和门卫，按本人身份交给主助手，上下文写明本人同意；不同意只在 guest 运行记一条状态。`roles/gatekeeper.md` 的群内拒绝回复改为“需要主人同意，已经去问了”。运行记录页加“当前空间 / 所有空间”。
 

@@ -72,7 +72,9 @@ async function load() {
   }
 }
 async function loadPage(offset: number) {
-  const q = new URLSearchParams({ space: state.space, limit: String(PAGE), offset: String(offset), brief: "1" });
+  const q = new URLSearchParams({ limit: String(PAGE), offset: String(offset), brief: "1" });
+  // A guest's question runs in the group's space, a rule in the chat's: "所有空间" finds them from anywhere.
+  if (scope.value === "space") q.set("space", state.space);
   if (keyword.value.trim()) q.set("q", keyword.value.trim());
   if (kindFilter.value.length) q.set("kind", kindFilter.value.join(","));
   if (showQuiet.value) q.set("all", "true");
@@ -104,6 +106,8 @@ onMounted(() => {
   void load();
   void loadDetail();
 });
+const scope = ref<"space" | "all">("space");
+watch(scope, load);
 watch(kindFilter, load);
 watch(showQuiet, load);
 watch(statusFilter, load);
@@ -430,6 +434,7 @@ const kindOptions = computed(() => [
         <button class="btn sm" title="交办编码任务" @click="delegateOpen = true"><Icon name="code" :size="14" />交办</button>
         <ChipPicker v-model="kindFilter" class="kind-filter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
         <UiSegmented v-model="statusFilter" class="status-filter" size="sm" aria-label="状态" :options="statusOptions" />
+        <UiSegmented v-model="scope" class="scope-filter" size="sm" aria-label="范围" :options="[{ value: 'space', label: '当前空间' }, { value: 'all', label: '所有空间' }]" />
         <UiCheckbox v-model="showQuiet" size="sm" class="small muted" title="后台任务（巡检、检查页面、筛选群、复盘…）没发现要处理的事时以 QUIET 结束，这些运行默认不显示；勾选后一起显示">含无事可报</UiCheckbox>
       </div>
       <div class="items" @scroll.passive="onListScroll">
@@ -717,7 +722,7 @@ const kindOptions = computed(() => [
   grid-template-areas:
     "title . delegate"
     "search search search"
-    "status status status"
+    "status scope scope"
     "kind kind quiet";
   row-gap: 8px;
   align-items: center;
@@ -729,6 +734,7 @@ const kindOptions = computed(() => [
 .head .btn[title="交办编码任务"] { grid-area: delegate; }
 .head .kind-filter { grid-area: kind; justify-self: start; }
 .head .status-filter { grid-area: status; justify-self: start; }
+.head .scope-filter { grid-area: scope; justify-self: end; }
 .head .small.muted { grid-area: quiet; justify-self: end; white-space: nowrap; }
 @media (max-width: 480px) {
   .head {
@@ -737,6 +743,7 @@ const kindOptions = computed(() => [
       "title delegate"
       "search search"
       "status status"
+      "scope scope"
       "kind quiet";
   }
 }
