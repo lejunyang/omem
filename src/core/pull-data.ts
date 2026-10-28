@@ -45,6 +45,9 @@ export const pullTables: Table[] = [
   { name: "digest_jobs", key: ["id"], newer: "updated_at" },
   { name: "digest_done", key: ["job_id", "source_id"] },
   { name: "reviews", key: ["id"], newer: "sync_updated_at" },
+  // The id is derived from (plugin, user, collection, key), so the same record on two devices meets.
+  { name: "plugin_records", key: ["id"], newer: "updated_at" },
+  { name: "plugin_blocks", key: ["id"], newer: "updated_at" },
   ...[
     ["item_events", ["item_id", "at", "kind", "text"]],
     ["memory_recalls", ["memory_id", "run_id", "agent_profile", "at", "via"]],

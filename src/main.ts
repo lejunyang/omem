@@ -59,6 +59,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   const { seedBuiltinSkills } = await import("./agents/specs.ts");
   const { packageRoot } = await import("./setup.ts");
   seedBuiltinSkills(app, packageRoot());
+  const { loadPlugins } = await import("./plugins/registry.ts");
+  await loadPlugins(app);
   const server = await startServer(app, opts);
   {
     const { compactArchiveQueue } = await import("./sources/archive.ts");

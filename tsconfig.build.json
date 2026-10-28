@@ -8,6 +8,6 @@
     "declaration": false,
     "sourceMap": false
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "plugins/*/*.ts"],
   "exclude": ["src/**/*.test.ts"]
 }

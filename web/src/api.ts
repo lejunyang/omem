@@ -112,7 +112,8 @@ export type ServerEvent =
   | { type: "run-event"; runId: string; seq: number; event: { type: string; data: any; at: string } }
   | { type: "notification"; id: string; title: string; body: string; link?: string | null }
   | { type: "changed"; entity: string; id: string; spaceId?: string }
-  | { type: "ask"; id: string; status: string; conversationId: string | null };
+  | { type: "ask"; id: string; status: string; conversationId: string | null }
+  | { type: "plugin"; plugin: string; conversationId: string; blockId?: string };
 
 /** A question, suggested next steps or an approval from an agent (server: agents/asks.ts). */
 export type Ask = {

@@ -24,6 +24,7 @@
 - **Git 同步交给它**：交办时先拉取、合并或变基，冲突先交给编码 Agent，拿不准的问你；应用时快进到目标分支，推送到你选的分支。
 - **不用每次重装依赖**：仓库可以把几个装好依赖的工作区借给交办轮流用，准备命令只在锁文件变了时才跑。
 - **记忆有版本，事项会收尾**：约定被纠正时旧版本保留并指向新版本；事项有时间线和期限，没进展自己过期，有新消息再打开。
+- **插件做强交互的事**：一个插件打包 Agent 档案、技能、工具、数据和独立页面。内置的“英语练习”按场景出一组题（中英互选、填空、听写、翻译），一次提交，宿主判客观题、陪练评翻译并点评，按记下的水平和薄弱点出下一组。
 - **飞书里用**：机器人回答带进度卡片和思考过程，规则一句话写成“遇到什么就做什么”，提问和评审结果都是带按钮的卡片。
 - **不自带模型**：理解和写作交给你已安装的 Agent（Codex、Claude Code、Gemini CLI 等），omem 管存储、索引、调度和权限。
 
@@ -152,6 +153,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 | 一个群里放几个各管一摊的机器人，让它们互相 @ 着讨论 | `omem setup` → 渠道 → 飞书 → 添加机器人，选回答的 Agent 档案；群里同时 @ 它们，或让一个在回复里 @ 另一个 |
 | 让群里的同事也能 @ 机器人问项目的事 | 设置 → 渠道 开启访客提问；只读这个群的空间，危险或无关的提问直接拒绝 |
 | 采集消息、筛选关注群、生成简报 | `omem setup` 选择读取方式，或设置 → 渠道 勾选会话（只读）；定时任务里开启采集、巡检和“筛选值得关注的飞书群” |
+| 成组练英语，按水平和薄弱点出题 | 左侧“英语练习”：选场景和侧重点开始，陪练出一组题，做完一起提交；选择、填空、听写当场判分，翻译由陪练评分点评，接着出下一组。右侧是各项水平、近 14 天练习量和薄弱点。陪练是 Agent 页里的 `english-tutor`，可以改说明、挂技能 |
 | 用间隔重复学习（如英语） | 打开材料点“生成卡片”，在“学习”页按 FSRS 复习；或对助理说“我想练英语开会表达，每天 8 张，晚上九点提醒我”建学习目标；聊天里 `/review` 复习；可与 Anki 互相导入导出（制表符文本） |
 | 减少巡检、材料整理在后端的重复会话 | 默认按权限与角色复用后台 ACP 会话，超过 60% 上下文换新；不支持用量报告的后端保持单次任务 |
 | 每天早上知道今天该处理什么 | 定时任务开启“简报”，通过站内和机器人推送 |
@@ -371,6 +373,7 @@ omem peer open <同伴>                     # 在本机浏览器打开它的网�
 ```bash
 pnpm run dev          # node --watch 运行 API，Vite 运行网页
 pnpm run check        # 类型检查 + 测试 + 构建
+pnpm run build:plugins   # 只构建插件页面（web/dist/plugins/<id>；dev 会自动监听构建）
 node scripts/screens.ts http://127.0.0.1:5173 screens   # 桌面与手机截图
 node scripts/doc-screens.ts         # 文档站与 README 的功能截图（先 pnpm run build；用虚构演示数据，输出 site/public/screens）
 cd site && pnpm install --ignore-workspace && pnpm run dev   # 文档站（VitePress）
@@ -390,11 +393,13 @@ src/memory    记忆（目录、有效期、版本链、写入检查与复核统
 src/items     事项（时间线）
 src/wiki      统一生成入口、页面文件、链接与引用索引、过期检测
 src/learn     FSRS 卡片、学习目标
+src/plugins   插件：清单与加载、插件档案、插件记录（plugin_records）、内容块（交出、提交、判分）、插件接口与页面（docs/v2/plugins.md）
 src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts
 src/channels  飞书机器人（发送、卡片、进度、回调、监听群、访客提问、多个机器人与互相转交 lark-bots.ts）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查、巡检、简报、做梦、筛群、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md
 skills/omem     omem 工具的使用说明：SKILL.md 概览，references/ 按分组讲做法（omem_help(分组) 返回同一份内容）
+plugins/      内置插件（english：档案、出题技能、判分与学习者画像 server.ts、页面 web/）；sdk/client.ts 是插件页面与外壳的桥
 skills/library  内置技能（如 lark-messaging），首次启动播种到 library/_skills
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
 scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）

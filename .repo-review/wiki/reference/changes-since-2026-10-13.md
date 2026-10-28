@@ -14,6 +14,10 @@ updated: 2026-10-28
 - **整理合并与队列隔离**（10-25）：`src/agents/jobs.ts` 将同空间、同要求的待整理材料去重合并，等待 30 秒、每批最多 40 份，同空间串行，保留聊天最早待整理行号。`src/agents/runs.ts` 先筛选有空位的任务类别，避免前 100 条后台积压挡住后续对话。空间自动整理开关不启动回溯；显式请求的历史回溯完成后，旧聊天也会作为新入库材料参与整理。
 - **gzip**（10-25）：`src/server/http.ts` 按客户端支持压缩网页静态资源和超过 1 KB 的 JSON 等文本响应，实时事件保持流式发送。
 
+## 插件
+
+- **插件系统与英语练习**（10-28）：设计在 `docs/v2/plugins.md`。`src/plugins/registry.ts` 加载 `plugins/<id>/plugin.yaml`，插件档案经 `specs.ts` 的 `setPluginSpecSource` 出现在档案列表（本人改过的存 `library/_agents`，带 `plugin` 字段），技能播种到 `library/_skills`，工具与内容块由 `server.ts` 的 `register(api)` 注册（名字带 `<id>_` 前缀）。表 `plugin_records`（插件记录，`plugin_query` / `plugin_put`）和 `plugin_blocks`（内容块，答案只在服务端）。`src/plugins/blocks.ts`：内容块工具只能在 `plugin:<id>` 会话里用，提交后宿主判分、结果作为带 `meta.submission` 的消息进入会话（`inbox.ts` 的 `Inbound.meta`）。接口在 `src/plugins/http.ts`（`/api/plugins/*`、`/plugins/<id>/` 静态页）。网页 `web/src/views/Plugin.vue` 用无同源权限的 iframe 载入插件页，经 `plugins/sdk/client.ts` 的 postMessage 只转发本插件的接口。内置 `plugins/english`：`english_quiz`（选择、填空、听写、翻译）、`english_grade`、`english_snapshot`，学习者画像在 `learner.ts`（类 Elo 技能分、知识点、薄弱和该复习的点）。插件页面由 `scripts/build-plugins.ts` 构建到 `web/dist/plugins/<id>/`。
+
 ## 记忆
 
 - **写入检查、复核、对比运行**（10-18）：`src/memory/quality.ts`、`roles/memory-reviewer.md`、`jobs.ts` 的 `memory-review` / `ingest-shadow`，网页“记忆 → 质量”，`omem memories stats|check|prune|rejections`。详见 [记忆与事项](../concepts/memory-and-items.md) 的“记忆质量”一节。

@@ -32,6 +32,7 @@ export const TOOL_GROUPS: { id: string; label: string; tools: string[] }[] = [
   { id: "code", label: "编码交办、评审与 Git", tools: ["delegate_code", "review_branch", "list_branches", "continue_code_run", "fix_review", "message_code_run", "set_code_review", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "code_git_status", "code_git_action", "submit_review", "submit_change_points", "rule_review"] },
   { id: "lark", label: "飞书", tools: ["lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "set_chat_watch", "lark_wiki_crawl", "lark_doc_create", "lark_doc_update", "lark_doc_move", "list_lark_chats", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription"] },
   { id: "learning", label: "学习", tools: ["create_card", "set_learning_goal", "learning_progress"] },
+  { id: "plugins", label: "插件", tools: ["plugin_query", "plugin_put"] },
 ];
 
 type ToolInfo = { name: string; description: string; inputSchema: Record<string, unknown> };
@@ -74,7 +75,7 @@ export function metaSchemas(rest: ToolInfo[]): ToolInfo[] {
   return [
     {
       name: "omem_help",
-      description: "查看 omem 工具的用法：topic 填工具名（可用逗号分隔多个）看完整说明和参数；填分组 id（sources、memory、items、wiki、agents、owner、code、lark、learning）看这一类的做法和要点；不填列出本次能用的全部工具。",
+      description: "查看 omem 工具的用法：topic 填工具名（可用逗号分隔多个）看完整说明和参数；填分组 id（sources、memory、items、wiki、agents、owner、code、lark、learning、plugins，或插件 id）看这一类的做法和要点；不填列出本次能用的全部工具。",
       inputSchema: { type: "object", properties: { topic: { type: "string", description: "工具名、分组 id，或不填" } } },
     },
     {

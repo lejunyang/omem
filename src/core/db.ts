@@ -719,6 +719,39 @@ const migrations: string[] = [
     create table pull_aliases(table_name text not null, remote_key text not null, local_key text not null,
       primary key(table_name, remote_key));
   `,
+  // Plugins (docs/v2/plugins.md): each plugin's own records, and the content blocks its agents
+  // put in front of the owner (answers kept here, never sent to the page before submission).
+  `
+  create table plugin_records (
+    id text primary key,
+    plugin text not null,
+    user_id text not null default 'owner',
+    space_id text not null,
+    collection text not null,
+    key text not null,
+    data text not null,
+    created_at text not null,
+    updated_at text not null
+  );
+  create unique index plugin_records_key on plugin_records(plugin, user_id, collection, key);
+  create index plugin_records_recent on plugin_records(plugin, user_id, collection, created_at);
+  create table plugin_blocks (
+    id text primary key,
+    plugin text not null,
+    kind text not null,
+    conversation_id text not null,
+    run_id text,
+    user_id text not null default 'owner',
+    data text not null,
+    status text not null default 'open',
+    answers text,
+    result text,
+    created_at text not null,
+    submitted_at text,
+    updated_at text not null
+  );
+  create index plugin_blocks_conversation on plugin_blocks(conversation_id, created_at);
+  `,
 ];
 
 export type Db = DatabaseSync;

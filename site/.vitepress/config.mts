@@ -39,6 +39,7 @@ export default defineConfig({
           { text: "Git 同步、应用与推送", link: "/features/git" },
           { text: "引用与修改点", link: "/features/quotes" },
           { text: "规则与 Agent 档案", link: "/features/rules-agents" },
+          { text: "插件与英语练习", link: "/features/plugins" },
           { text: "飞书", link: "/features/lark" },
           { text: "多台设备", link: "/features/devices" },
         ],

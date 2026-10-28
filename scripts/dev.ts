@@ -13,9 +13,14 @@ const run = (cmd: string, args: string[], shell = false) => spawn(cmd, args, { c
 
 const api = run(process.execPath, ["--watch-path=src", "--watch-path=roles", "src/cli.ts", "serve", "--port", env.OMEM_PORT]);
 const web = run(isWin ? "npx.cmd" : "npx", ["vite", "--config", "web/vite.config.ts"], isWin);
+// Plugin pages are served by the API from web/dist/plugins (they run in an iframe of their own) and
+// rebuilt here. plugins/ is not watched by the API, so editing a page does not restart a running
+// tutor; after changing a plugin's server.ts, manifest or agents, restart dev.
+const pages = run(process.execPath, ["scripts/build-plugins.ts", "--watch"]);
 const stop = () => {
   api.kill();
   web.kill();
+  pages.kill();
   process.exit(0);
 };
 process.on("SIGINT", stop);

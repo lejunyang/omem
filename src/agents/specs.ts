@@ -50,6 +50,8 @@ export const agentSpecSchema = z.object({
   mcp: z.record(z.string(), mcpServerSchema).default({}),
   /** Extra project instructions in the style of AGENTS.md / CLAUDE.md. */
   instructions: z.string().optional(),
+  /** Comes from this plugin (docs/v2/plugins.md); its runs read and write the plugin's records. */
+  plugin: z.string().optional(),
 });
 export type AgentSpec = z.infer<typeof agentSpecSchema> & { prompt: string; updatedBy?: string };
 
@@ -58,7 +60,7 @@ export const DEFAULT_SPEC_TOOLS = ["list_spaces", "search", "scan", "read_source
 const agentsDir = (app: App) => join(app.libraryDir, "_agents");
 const skillsDir = (app: App) => join(app.libraryDir, "_skills");
 
-function splitFrontmatter(raw: string): { meta: Record<string, unknown>; body: string } {
+export function splitFrontmatter(raw: string): { meta: Record<string, unknown>; body: string } {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(raw);
   return m ? { meta: (YAML.parse(m[1]) ?? {}) as Record<string, unknown>, body: raw.slice(m[0].length).trim() } : { meta: {}, body: raw.trim() };
 }
@@ -76,11 +78,22 @@ function checkSpecName(name: string) {
 
 // ---- agents ---------------------------------------------------------------
 
+/**
+ * Specs that ship inside plugins (src/plugins/registry.ts). A copy in library/_agents with the
+ * same name is the owner's customized version and wins; deleting it brings the plugin's back.
+ */
+type SpecSource = { find: (app: App, name: string) => AgentSpec | null; list: (app: App) => AgentSpec[]; raw: (name: string) => string | null };
+let pluginSpecs: SpecSource | null = null;
+export function setPluginSpecSource(source: SpecSource | null) {
+  pluginSpecs = source;
+}
+
 export function listAgentSpecs(app: App, opts: { includeDrafts?: boolean } = {}): AgentSpec[] {
   const dir = agentsDir(app);
-  if (!existsSync(dir)) return [];
   const out: AgentSpec[] = [];
-  for (const f of readdirSync(dir).filter((f) => f.endsWith(".md")).sort()) {
+  const own = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).sort() : [];
+  for (const spec of pluginSpecs?.list(app) ?? []) if (!own.includes(`${spec.name}.md`)) out.push(spec);
+  for (const f of own) {
     try {
       const spec = readAgentSpec(app, f.slice(0, -3));
       if (spec.status === "active" || opts.includeDrafts) out.push(spec);
@@ -92,12 +105,16 @@ export function listAgentSpecs(app: App, opts: { includeDrafts?: boolean } = {})
 }
 
 export function findAgentSpec(app: App, name: string): AgentSpec | null {
-  return existsSync(join(agentsDir(app), `${name}.md`)) ? readAgentSpec(app, name) : null;
+  return existsSync(join(agentsDir(app), `${name}.md`)) ? readAgentSpec(app, name) : (NAME.test(name) ? pluginSpecs?.find(app, name) ?? null : null);
 }
 
 export function readAgentSpec(app: App, name: string): AgentSpec {
   const file = join(agentsDir(app), `${checkName(name)}.md`);
-  if (!existsSync(file)) throw new HttpError(404, `没有名为 ${name} 的 Agent 档案`);
+  if (!existsSync(file)) {
+    const fromPlugin = pluginSpecs?.find(app, name);
+    if (fromPlugin) return fromPlugin;
+    throw new HttpError(404, `没有名为 ${name} 的 Agent 档案`);
+  }
   const { meta, body } = splitFrontmatter(readFileSync(file, "utf8"));
   const parsed = agentSpecSchema.parse({ ...meta, name });
   return { ...parsed, prompt: body };
@@ -133,6 +150,7 @@ export function saveAgentSpec(app: App, input: Partial<z.input<typeof agentSpecS
 
 export function deleteAgentSpec(app: App, name: string, actor: "user" | "agent" = "user") {
   const file = join(agentsDir(app), `${checkName(name)}.md`);
+  if (!existsSync(file) && pluginSpecs?.find(app, name)) throw new HttpError(400, `${name} 是插件自带的档案，不能删除；自定义过的删掉后会回到插件的版本`);
   if (!existsSync(file)) throw new HttpError(404, `没有名为 ${name} 的 Agent 档案`);
   rmSync(file);
   commitLibrary(app.libraryDir, `${actor}: delete agent ${name}`);
@@ -298,6 +316,11 @@ export function agentIndex(app: App) {
 
 export function readRaw(app: App, kind: "agent" | "skill", name: string) {
   const file = kind === "agent" ? join(agentsDir(app), `${checkName(name)}.md`) : skillPath(app, name, "SKILL.md");
+  // A plugin's own spec, not customized yet: saving the edited text makes the library copy.
+  if (!existsSync(file) && kind === "agent") {
+    const raw = pluginSpecs?.raw(name);
+    if (raw) return raw;
+  }
   if (!existsSync(file)) throw new HttpError(404, `不存在：${name}`);
   return readFileSync(file, "utf8");
 }

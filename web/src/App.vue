@@ -8,6 +8,7 @@ import DialogHost from "./components/DialogHost.vue";
 import Skeleton from "./components/Skeleton.vue";
 import UiSelect from "./components/UiSelect.vue";
 import Icon from "./components/Icon.vue";
+import { get } from "./api";
 import { kindLabel, loadSpaces, refreshUnread, state } from "./store";
 import { preloadRoute } from "./preload";
 
@@ -19,7 +20,7 @@ watch(() => state.space, () => {
 });
 const menu = ref(false);
 const loadError = ref("");
-const nav = [
+const nav = ref<{ to: string; label: string; icon: string; exact?: boolean }[]>([
   { to: "/", label: "今日", icon: "home", exact: true },
   { to: "/ask", label: "问答", icon: "chat" },
   { to: "/wiki", label: "Wiki", icon: "book" },
@@ -30,7 +31,13 @@ const nav = [
   { to: "/agents", label: "Agent", icon: "layers" },
   { to: "/rules", label: "规则", icon: "zap" },
   { to: "/runs", label: "运行", icon: "activity" },
-];
+]);
+// Plugins with a page (docs/v2/plugins.md) go right after 学习.
+async function addPluginPages() {
+  const plugins = await get<{ id: string; icon: string; page: { title: string } | null }[]>("/api/plugins").catch(() => []);
+  const at = nav.value.findIndex((n) => n.to === "/learn") + 1;
+  nav.value.splice(at, 0, ...plugins.filter((p) => p.page).map((p) => ({ to: `/plugin/${p.id}`, label: p.page!.title, icon: p.icon })));
+}
 const isActive = (to: string, exact?: boolean) =>
   exact ? route.path === to : route.path === to || route.path.startsWith(to + "/") || (to === "/wiki" && route.path.startsWith("/graph"));
 
@@ -49,6 +56,7 @@ onMounted(async () => {
   try {
     await loadSpaces();
     await refreshUnread();
+    await addPluginPages();
   } catch (e) {
     loadError.value = (e as Error).message;
   }

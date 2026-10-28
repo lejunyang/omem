@@ -37,6 +37,7 @@ Space（空间/领域）
 Conversation（会话）   网页对话、私聊、群、话题；绑定一个 Agent 会话，带滚动摘要
 Run（运行）            一次 Agent 执行：问答、整理、交办编码、评审、做梦
 Agent 档案 / 技能       library/_agents、library/_skills：可复用的专门 Agent 和做法
+Plugin（插件）         plugins/<id>：档案、技能、工具、内容块、插件记录和独立页面（docs/v2/plugins.md）
 User（用户）           默认只有主人；登记的同事有自己的个人空间和可访问空间
 Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消息（只读；本人亲手发的私聊指令例外）、Telegram、OneBot（QQ/微信）
 ```
@@ -67,6 +68,7 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
   runs/<run-id>/              交办编码的 worktree（work/<空间>/，借用复用工作区时是指向它的链接）与补丁（patches/<空间>.patch）
   workspaces/<空间>/<n>/       仓库空间设置 pool 时 omem 自建的复用工作区（docs/v2/ide.md）
   agents/<id>/<版本>/          从 ACP 注册表下载的 Agent 程序
+  （插件页面构建在包内 web/dist/plugins/<id>/，插件记录在 omem.db 的 plugin_records / plugin_blocks）
   secrets/                    lark.json（App Secret）、peers.json（同伴地址与令牌），均 0600
   service/                    后台服务的 PM2 数据与日志
 ```
@@ -200,6 +202,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 插件第一期（docs/v2/plugins.md）：内置插件加载（清单、档案进档案列表、技能播种、空间）、插件记录（`plugin_query` / `plugin_put`）、内容块协议（Agent 用插件声明的工具交出，答案只在服务端，本人整组提交，插件判分，结果作为下一条消息进入同一会话）、插件页（无同源权限的 iframe + postMessage SDK，只转发本插件接口，主题同步）；内置英语练习：选择、填空、听写（浏览器朗读）、翻译，宿主判客观题、陪练 `english_grade` 评翻译，学习者画像（技能分、知识点、薄弱与该复习、近 14 天） | 已实现；2026-10-28，`test/plugins.test.ts`；本地开发实例用真实 codex 走过出题、提交、评分、出下一组（见 acceptance） | `src/plugins/`、`plugins/english/`、`plugins/sdk/client.ts`、`web/src/views/Plugin.vue`、`scripts/build-plugins.ts` |
 | 网页版 VS Code：设置打开后，运行页“在 VS Code 中打开”可选网页版；omem 按需启动官方 `code serve-web`（本机回环、随机端口与 connection token），`/api/ide/open` 给本人会话 cookie 后跳到 `/ide`，`/ide` 的 HTTP 与 WebSocket 由 omem 代理并加上 token；停服结束进程树，遗留进程下次启动前清理 | 已实现；2026-10-28，`test/ide-web.test.ts`（假 serve-web：鉴权、转发、WebSocket、缺 CLI、遗留进程），本地开发实例用真实 serve-web 打开过工作区，也经 `omem peer open` 打开过；`peer open` 与中间节点原样转发 `/ide`（含 WebSocket，`src/core/peer-tunnel.ts`），三节点用例覆盖 | `src/server/ide-web.ts`、`http.ts` 的 `/api/ide/open`、`web/src/components/OpenInIde.vue` |
 | VS Code 插件第一版（`vscode/`）：连接方式（本机 / 直接连接 / 本机配对的设备，读数据目录的配对直接连，不用本机服务）由“连接 omem…”逐步设置，状态栏显示连接，路径经 Remote-SSH 对应；按打开的文件夹认出交办（`GET /api/code-runs/at`），评审问题显示为代码上的评论线程并可标改 / 暂不改 / 不改，选中代码在线程里提问（走问答会话）或记修改点，“开始修改”续轮，任务文档 + CodeLens 交办，状态栏与过程输出 | 已实现；2026-10-28，真实 VS Code 1.124 集成测试（`vscode/test/run.mjs`，含三种连接）；桌面 VS Code 里看过连接选择、未连接状态、评审线程与决定按钮；真实模型待验 | `vscode/src`、`src/agents/code.ts` 的 `codeRunsAt` |
 | 复用工作区：仓库空间可把已有的 worktree（`workspaces`）和 omem 自建的几个（`pool`）借给交办，租约在工作区 git 目录里、随运行链接失效，归还时重置但保留忽略的文件、回到原分支；准备命令（`setupCommand`）按锁文件变化才运行；检查命令在 Windows 上的引号修正。运行页“在 VS Code 中打开”（本机链接或 Remote-SSH 链接，SSH 主机名存在看的人的浏览器里；`GET /api/runs/:id/folders`）；网页版 VS Code 与插件见 docs/v2/ide.md | 已实现；2026-10-28，`test/workspaces.test.ts`、`test/branch-review.test.ts`（假 ACP 两次交办只准备一次） | `src/agents/workspaces.ts`、`code.ts` 的 `codeFolders`、设置 → 空间、`web/src/components/OpenInIde.vue` |

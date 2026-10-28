@@ -21,7 +21,7 @@ import { state, toast } from "../store";
  * reset / merge when the source changes) and skills. A profile shows who it is (a form, or the
  * raw file), what it has learned and how it is evolving.
  */
-type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; skills: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string };
+type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; skills: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
 type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean };
 type Skill = { name: string; description: string; status: "active" | "draft"; files: string[] };
 type Options = { backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean }[]; defaultTools: string[] };
@@ -357,7 +357,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           <div class="group">我的档案</div>
           <button v-for="x in specs" :key="x.name" class="li" :class="{ on: x.name === specName }" @click="go({ tab: 'agents', name: x.name })">
             <div class="grow">
-              <div class="row"><strong class="ellipsis">{{ x.name }}</strong><span v-if="x.status === 'draft'" class="badge">草稿</span></div>
+              <div class="row"><strong class="ellipsis">{{ x.name }}</strong><span v-if="x.status === 'draft'" class="badge">草稿</span><span v-if="x.plugin" class="badge" :title="`来自插件 ${x.plugin}`">插件</span></div>
               <div class="muted small clamp">{{ x.description }}</div>
             </div>
           </button>

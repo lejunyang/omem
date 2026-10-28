@@ -17,6 +17,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import { applyCodeRun, codeApplyTargets, codeFolders, codePatches, codeRunsAt, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
+import { registerPluginRoutes } from "../plugins/http.ts";
 import { IDE_BASE, attachIdeUpgrade, ensureIdeWeb, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
@@ -1529,6 +1530,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     Object.assign(app.config, next);
     return { config: app.config, restart };
   });
+
+  // ---------------------------------------------------------------- plugins
+  registerPluginRoutes(server, app, who);
 
   // -------------------------------------------------------------------- web
   const dist = webDist();

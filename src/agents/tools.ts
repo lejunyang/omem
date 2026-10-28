@@ -38,6 +38,7 @@ import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.t
 import { describeThread, findThread, listThreads, threadMessages } from "./threads.ts";
 import { setApprovalExecutor } from "./asks.ts";
 import { helpText, metaSchemas, splitDirect } from "./tool-help.ts";
+import { pluginStore } from "../plugins/store.ts";
 
 export type ToolContext = {
   app: App;
@@ -74,6 +75,8 @@ export type ToolContext = {
   spec?: string;
   /** Comparison run: writes are recorded for grading, never applied. */
   shadow?: { parentRunId: string | null };
+  /** The plugin whose agent is running (docs/v2/plugins.md): plugin_query / plugin_put work on its records. */
+  plugin?: string;
 };
 
 /**
@@ -3252,6 +3255,53 @@ def({
     return `已记录第 ${round} 轮裁决（${a.verdict}，${a.rulings.length} 条）。`;
   },
 });
+
+// ------------------------------------------------------------------ plugins
+
+/** The plugin of this run (an agent shipped in a plugin), or a clear refusal. */
+function pluginOf(ctx: ToolContext) {
+  if (!ctx.plugin) throw new HttpError(400, "这个工具只在插件的 Agent 运行里可用");
+  return ctx.plugin;
+}
+
+def({
+  name: "plugin_query",
+  description: "读本插件存的记录（docs/v2/plugins.md）：给 key 取一条，不给则按创建时间从新到旧列出集合里的记录。只能读本次运行所属插件、本人的数据。",
+  schema: z.object({
+    collection: z.string().describe("集合名，如 attempts"),
+    key: z.string().optional(),
+    limit: z.number().int().min(1).max(500).optional().describe("默认 50"),
+    since: z.string().optional().describe("只要这个时间（ISO）以后创建的"),
+  }),
+  handler: (ctx, a) => {
+    const store = pluginStore(ctx.app, pluginOf(ctx), ctx.userId ?? OWNER, ctx.spaceId);
+    if (a.key) {
+      const data = store.get(a.collection, a.key);
+      return data ? JSON.stringify(data, null, 1) : `${a.collection} 里没有 ${a.key}`;
+    }
+    const rows = store.list(a.collection, { limit: a.limit ?? 50, since: a.since });
+    if (!rows.length) return `${a.collection} 里还没有记录`;
+    return truncate(rows.map((r) => `- ${r.key}（${r.createdAt.slice(0, 16)}）：${JSON.stringify(r.data)}`).join("\n"), 30_000);
+  },
+});
+
+def({
+  name: "plugin_put",
+  description: "写本插件的一条记录：给 key 就覆盖那一条，不给就新加一条。只写插件自己的工作数据（进度、草稿、设置）；偏好和经验用 remember。",
+  schema: z.object({ collection: z.string(), key: z.string().optional(), data: z.record(z.string(), z.unknown()) }),
+  write: true,
+  handler: (ctx, a) => {
+    const key = pluginStore(ctx.app, pluginOf(ctx), ctx.userId ?? OWNER, ctx.spaceId).put(a.collection, a.key, a.data);
+    return `已写入 ${a.collection}/${key}`;
+  },
+});
+
+export type HostTool = Tool;
+/** Tools a plugin brings (src/plugins/registry.ts); names carry the plugin id as prefix. */
+export function registerTool(t: HostTool) {
+  if (tools.some((x) => x.name === t.name)) throw new Error(`工具 ${t.name} 已存在`);
+  tools.push(t);
+}
 
 // ------------------------------------------------------------------ registry
 

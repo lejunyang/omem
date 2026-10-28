@@ -52,6 +52,7 @@ omem tool upsert_item -f item.json          # 参数多或在 Windows 上时用�
 | `code` | 编码交办、评审、应用改动、Git 同步与提交 | [references/code.md](references/code.md) |
 | `lark` | 飞书消息与卡片、飞书文档、采集设置与历史回溯 | [references/lark.md](references/lark.md) |
 | `learning` | 学习目标与卡片 | [references/learning.md](references/learning.md) |
+| `plugins` | 插件档案读写插件自己的记录；插件的内容块工具（如 `english_quiz`）按插件 id 成组 | [references/plugins.md](references/plugins.md) |
 
 ## 通用要求
 

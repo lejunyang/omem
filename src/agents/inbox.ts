@@ -34,6 +34,8 @@ export type Inbound = Partial<ThreadAddress> & {
   userId?: string;
   /** For watched chats: the person who actually wrote it (not a user of omem). */
   speaker?: string;
+  /** Kept on the stored message (a plugin page's submission: meta.submission). Never an answer to an open ask. */
+  meta?: Record<string, unknown>;
   /** A colleague (not a user) asking the assistant in a group the owner is in (lark.guests.ownerPresent). */
   asker?: string;
   /** Said for the owner by an ask (a clicked suggestion, a delivered answer): not itself an answer. */
@@ -114,7 +116,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
 
   // A reply to an open question (or a number picking a suggested step). When an agent is waiting
   // for it inside its turn, it is the answer there and starts no turn of its own.
-  if (!freshTask && !inb.fromAsk && !inb.speaker && !inb.asker) {
+  if (!freshTask && !inb.fromAsk && !inb.speaker && !inb.asker && !inb.meta) {
     const { answerFromMessage } = await import("./asks.ts");
     if (await answerFromMessage(app, thread.id, text, userId)) {
       const messageId = addMessage(app, thread.id, "user", text, null, { answer: true, ...(inb.externalMessageId ? { externalId: inb.externalMessageId } : {}) });
@@ -122,7 +124,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     }
   }
 
-  const meta: Record<string, unknown> = userId === OWNER ? {} : { userId };
+  const meta: Record<string, unknown> = { ...inb.meta, ...(userId === OWNER ? {} : { userId }) };
   if (inb.fromAsk) meta.fromAsk = true;
   if (inb.context) {
     meta.context = inb.context;
