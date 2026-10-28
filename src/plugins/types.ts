@@ -44,6 +44,8 @@ export type PluginTool<S extends z.ZodObject = z.ZodObject> = {
   write?: boolean;
   /** The plugin's page may call it too (as the owner, never another plugin's). */
   page?: boolean;
+  /** Every call by an agent waits for the owner's OK (clicking, typing, anything done on a machine). */
+  approval?: boolean;
   handler: (ctx: PluginContext, args: z.infer<S>) => string | Promise<string>;
 };
 
@@ -72,8 +74,12 @@ export type PluginBlock<S extends z.ZodObject = z.ZodObject> = {
 
 export type PluginApi = {
   id: string;
+  /** The host's zod: plugins in the data directory cannot import packages. */
+  z: typeof import("zod").z;
   tool<S extends z.ZodObject>(tool: PluginTool<S>): void;
   block<S extends z.ZodObject>(block: PluginBlock<S>): void;
+  /** One of the services the manifest declares: started on first use, its address and the token it expects. */
+  service(name: string): { ensure(): Promise<{ url: string; token: string }> };
 };
 
 export type PluginRegister = (api: PluginApi) => void | Promise<void>;

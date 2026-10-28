@@ -17,7 +17,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import { applyCodeRun, codeApplyTargets, codeFolders, codePatches, codeRunsAt, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
-import { registerPluginRoutes } from "../plugins/http.ts";
+import { attachPluginStreams, registerPluginRoutes } from "../plugins/http.ts";
 import { IDE_BASE, attachIdeUpgrade, ensureIdeWeb, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
@@ -874,6 +874,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     ide.get("/api/peers/:id/api/ide/open", relay);
   });
   attachIdeUpgrade(app, server.server);
+  attachPluginStreams(app, server.server);
   // Its WebSocket: upgrades skip the hooks, so the owner's token is checked here.
   server.server.on("upgrade", async (req, socket, head) => {
     const m = /^\/api\/peers\/([^/?]+)(\/.*)$/.exec(req.url ?? "");

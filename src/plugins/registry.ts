@@ -10,18 +10,21 @@ import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { agentSpecSchema, setPluginSpecSource, splitFrontmatter, type AgentSpec } from "../agents/specs.ts";
 import { CORE_TOOLS, TOOL_GROUPS } from "../agents/tool-help.ts";
-import { registerTool, toolList, type ToolContext } from "../agents/tools.ts";
+import { registerTool, toolList, unregisterTools, type ToolContext } from "../agents/tools.ts";
 import { blockTool, pluginContext, type PluginEnv } from "./blocks.ts";
 import { GENERIC_BLOCKS, genericToolName } from "./generic.ts";
+import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
 import { pluginSettings, settingFieldSchema } from "./settings.ts";
+import { setTrust, trustState } from "./trust.ts";
 import type { PluginApi, PluginBlock, PluginRegister, PluginTool } from "./types.ts";
 
 /**
  * Plugins (docs/v2/plugins.md): a directory with plugin.yaml, agent specs, skills, an optional
- * server.ts (tools and content blocks) and an optional page. Built-in ones live in the package's
- * plugins/ (pages built to web/dist/plugins/<id>/); the owner's own in <data>/plugins/, where
- * server code is not loaded (only declarations, skills and a ready-built web/). The host never
- * branches on a plugin's name: what a plugin may do is what its manifest declares.
+ * server.ts (tools and content blocks), services and an optional page. Built-in ones live in the
+ * package's plugins/ (pages built to web/dist/plugins/<id>/); the owner's own in <data>/plugins/,
+ * where code (server.ts, services) runs only once the owner has trusted it (trust.ts), and again
+ * after every change to it. The host never branches on a plugin's name: what a plugin may do is
+ * what its manifest declares.
  */
 const ID = /^[a-z][a-z0-9]{1,23}$/;
 const SPEC = /^[a-z0-9][a-z0-9-]{0,30}$/;
@@ -38,14 +41,23 @@ export const manifestSchema = z.object({
   tools: z.array(z.string()).default([]),
   page: z.object({ title: z.string() }).optional(),
   settings: z.array(settingFieldSchema).default([]),
+  /** Processes the plugin keeps running (services.ts); code, so a data-directory plugin needs trust. */
+  services: z.array(serviceSchema).default([]),
+  /** WebSockets to a service that the plugin's page may open (through the shell, as the owner). */
+  streams: z.array(streamSchema).default([]),
 });
 export type PluginManifest = z.infer<typeof manifestSchema>;
 
 export type LoadedPlugin = {
   manifest: PluginManifest;
   dir: string;
-  /** builtin: ships with omem; data: the owner's, in <data>/plugins (no server code). */
+  /** builtin: ships with omem; data: the owner's, in <data>/plugins. */
   source: "builtin" | "data";
+  /**
+   * Whether its code runs: builtin; none (a data plugin without code); trusted; or, for a data
+   * plugin with code the owner has not confirmed (yet, or since it changed), required / changed.
+   */
+  trust: "builtin" | "none" | "trusted" | "required" | "changed";
   specs: AgentSpec[];
   /** Tools the plugin registered; `page` ones its page may call. */
   tools: { name: string; page: boolean }[];
@@ -89,23 +101,29 @@ for (const def of GENERIC_BLOCKS.values()) {
 }
 TOOL_GROUPS.find((g) => g.id === "plugins")?.tools.push(...[...GENERIC_BLOCKS.keys()].map(genericToolName));
 
-async function importServer(dir: string, id: string): Promise<PluginRegister | null> {
-  const file = built ? join(packageRoot(), "dist", "plugins", id, "server.js") : join(dir, "server.ts");
-  if (!existsSync(file)) return null;
-  const mod = (await import(pathToFileURL(file).href)) as { default?: PluginRegister };
+async function importServer(dir: string, id: string, source: LoadedPlugin["source"]): Promise<PluginRegister | null> {
+  const file = source === "builtin" ? (built ? join(packageRoot(), "dist", "plugins", id, "server.js") : join(dir, "server.ts")) : SERVER_FILES.map((f) => join(dir, f)).find((f) => existsSync(f));
+  if (!file || !existsSync(file)) return null;
+  // A changed file must load anew after trust is withdrawn and given again.
+  const mod = (await import(`${pathToFileURL(file).href}?v=${Date.now()}`)) as { default?: PluginRegister };
   if (typeof mod.default !== "function") throw new Error(`插件 ${id} 的 server 没有默认导出 register(api)`);
   return mod.default;
 }
 
+const SERVER_FILES = ["server.ts", "server.js", "server.mjs"];
+/** A data plugin brings code when it has a server file or services. */
+export const hasCode = (dir: string, m: PluginManifest) => m.services.length > 0 || SERVER_FILES.some((f) => existsSync(join(dir, f)));
+
 /** Tools and blocks are process-wide (like the host's own tools); register a plugin once. */
-async function register(dir: string, manifest: PluginManifest, source: LoadedPlugin["source"]): Promise<LoadedPlugin> {
+async function register(app: App, dir: string, manifest: PluginManifest, source: LoadedPlugin["source"]): Promise<LoadedPlugin> {
   const own: LoadedPlugin["tools"] = [];
   const blocks = new Map<string, PluginBlock>();
-  const prefix = `${manifest.id}_`;
+  for (const st of manifest.streams) if (!manifest.services.some((x) => x.name === st.service)) throw new Error(`流 ${st.name} 用的服务 ${st.service} 没有在 services 里声明`);
   const p: LoadedPlugin = {
     manifest,
     dir,
     source,
+    trust: source === "builtin" ? "builtin" : hasCode(dir, manifest) ? trustState(app, manifest.id, dir) : "none",
     specs: [],
     tools: own,
     blocks,
@@ -120,12 +138,23 @@ async function register(dir: string, manifest: PluginManifest, source: LoadedPlu
       },
     },
   };
+  if (p.trust === "builtin" || p.trust === "trusted") await loadCode(app, p);
+  else if (p.trust !== "none") console.warn(`[omem] 插件 ${manifest.id} 带代码，${p.trust === "changed" ? "代码在信任之后改过" : "还没有被信任"}：在设置 → 插件里确认后才会运行；档案、技能和页面照常可用`);
+  p.specs = readSpecs(p);
+  return p;
+}
+
+/** Run the plugin's server code: its tools and blocks register. Data plugins only once trusted. */
+async function loadCode(app: App, p: LoadedPlugin) {
+  const { manifest } = p;
+  const prefix = `${manifest.id}_`;
   const api: PluginApi = {
     id: manifest.id,
+    z,
     tool(t: PluginTool<any>) {
       if (!t.name.startsWith(prefix)) throw new Error(`插件 ${manifest.id} 的工具名要以 ${prefix} 开头：${t.name}`);
-      registerTool({ name: t.name, description: t.description, schema: t.schema, write: t.write, handler: (ctx, args) => t.handler(asPlugin(p.env, ctx), args) });
-      own.push({ name: t.name, page: !!t.page });
+      registerTool({ name: t.name, description: t.description, schema: t.schema, write: t.write, handler: (ctx, args) => t.handler(asPlugin(p.env, ctx), args) }, { approval: t.approval });
+      p.tools.push({ name: t.name, page: !!t.page });
     },
     block(b: PluginBlock<any>) {
       if (!/^[a-z][a-z0-9_]{0,23}$/.test(b.kind)) throw new Error(`内容块类型不合法：${b.kind}`);
@@ -134,20 +163,63 @@ async function register(dir: string, manifest: PluginManifest, source: LoadedPlu
       registerTool(blockTool(name, b, () => p.env));
       // Handing in a block is what the plugin's agent is there for: offered directly, like a role's submit tool.
       CORE_TOOLS.add(name);
-      blocks.set(b.kind, b);
-      own.push({ name, page: false });
+      p.blocks.set(b.kind, b);
+      p.tools.push({ name, page: false });
+    },
+    service(name: string) {
+      const spec = manifest.services.find((s) => s.name === name);
+      if (!spec) throw new Error(`插件 ${manifest.id} 没有声明服务 ${name}`);
+      return {
+        ensure: async () => {
+          const { port, token } = await ensureService(app, { id: manifest.id, dir: p.dir }, spec);
+          return { url: `http://127.0.0.1:${port}`, token };
+        },
+      };
     },
   };
-  if (source === "builtin") {
-    const reg = await importServer(dir, manifest.id);
-    if (reg) await reg(api);
-  } else if (existsSync(join(dir, "server.ts")) || existsSync(join(dir, "server.js"))) {
-    console.warn(`[omem] 插件 ${manifest.id} 在数据目录里，暂不加载它的服务端代码；档案、技能和页面照常可用`);
-  }
-  if (own.length) TOOL_GROUPS.push({ id: manifest.id, label: manifest.name, tools: own.map((t) => t.name) });
-  p.specs = readSpecs(p);
-  return p;
+  const reg = await importServer(p.dir, manifest.id, p.source);
+  if (reg) await reg(api);
+  const group = TOOL_GROUPS.find((g) => g.id === manifest.id);
+  if (group) group.tools = p.tools.map((t) => t.name);
+  else if (p.tools.length) TOOL_GROUPS.push({ id: manifest.id, label: manifest.name, tools: p.tools.map((t) => t.name) });
 }
+
+/** The owner confirms a data plugin's code (as it is now): it runs from here on, no restart. */
+export async function trustPlugin(app: App, id: string) {
+  const p = getPlugin(id);
+  if (p.source !== "data" || !hasCode(p.dir, p.manifest)) throw new HttpError(400, `插件 ${id} 不需要信任`);
+  setTrust(app, id, p.dir);
+  if (p.trust !== "trusted") {
+    unloadCode(p);
+    p.trust = "trusted";
+    await loadCode(app, p);
+    p.specs = readSpecs(p);
+  }
+  return describePlugin(p);
+}
+
+/** Trust withdrawn: its tools and blocks go away and its services stop at once. */
+export function untrustPlugin(app: App, id: string) {
+  const p = getPlugin(id);
+  if (p.source !== "data") throw new HttpError(400, `插件 ${id} 是内置的`);
+  setTrust(app, id, null);
+  unloadCode(p);
+  p.trust = hasCode(p.dir, p.manifest) ? "required" : "none";
+  p.specs = readSpecs(p);
+  return describePlugin(p);
+}
+
+function unloadCode(p: LoadedPlugin) {
+  unregisterTools(p.tools.map((t) => t.name));
+  p.tools.splice(0);
+  p.blocks.clear();
+  stopPluginServices(p.manifest.id);
+  const group = TOOL_GROUPS.findIndex((g) => g.id === p.manifest.id);
+  if (group >= 0) TOOL_GROUPS.splice(group, 1);
+}
+
+/** Its services and streams are usable only when its code may run. */
+export const codeRuns = (p: LoadedPlugin) => p.trust === "builtin" || p.trust === "trusted";
 
 function readSpecs(p: LoadedPlugin): AgentSpec[] {
   const { manifest } = p;
@@ -232,7 +304,7 @@ export async function loadPlugins(app: App, roots: { dir: string; source: Loaded
         let p = plugins.get(manifest.id);
         if (p && p.dir !== dir) throw new Error(`已有同名插件（${p.source === "builtin" ? "内置" : p.dir}）`);
         if (!p) {
-          p = await register(dir, manifest, root.source);
+          p = await register(app, dir, manifest, root.source);
           plugins.set(manifest.id, p);
         }
         ensureSpace(app, p.manifest);
@@ -270,5 +342,10 @@ export function describePlugin(p: LoadedPlugin) {
     // own: the plugin's page in a sandboxed frame (built or not yet); otherwise the shell's default page.
     page: p.manifest.page ? { title: p.manifest.page.title, own: hasOwnPage(p), built: !!pluginWebDir(p) } : null,
     settings: p.manifest.settings.length > 0,
+    trust: p.trust,
+    dir: p.source === "data" ? p.dir : null,
+    tools: p.tools.map((t) => t.name),
+    services: p.manifest.services.map((s) => ({ name: s.name, description: s.description, command: [s.command, ...s.args].join(" ") })),
+    streams: p.manifest.streams.map((s) => ({ name: s.name, description: s.description, service: s.service })),
   };
 }

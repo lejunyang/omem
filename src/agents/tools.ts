@@ -3298,10 +3298,21 @@ def({
 
 export type HostTool = Tool;
 /** Tools a plugin brings (src/plugins/registry.ts); names carry the plugin id as prefix. */
-export function registerTool(t: HostTool) {
+export function registerTool(t: HostTool, opts: { approval?: boolean } = {}) {
   if (tools.some((x) => x.name === t.name)) throw new Error(`工具 ${t.name} 已存在`);
   tools.push(t);
+  if (opts.approval) alwaysApprove.add(t.name);
 }
+/** A plugin whose trust was withdrawn: its tools go away at once. */
+export function unregisterTools(names: string[]) {
+  for (const n of names) {
+    const i = tools.findIndex((t) => t.name === n);
+    if (i >= 0) tools.splice(i, 1);
+    alwaysApprove.delete(n);
+  }
+}
+/** Tools that wait for the owner's OK whatever approvals.tools says (a plugin's clicks and keystrokes on a machine). */
+const alwaysApprove = new Set<string>();
 
 // ------------------------------------------------------------------ registry
 
@@ -3335,7 +3346,7 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) return { text: `参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
   if (ctx.shadow && (tool.write || SHADOW_BLOCKED.has(name))) return { text: recordShadow(ctx, name, parsed.data as Record<string, unknown>), isError: false };
-  if (ctx.actor === "agent" && !ctx.approved && ctx.app.config.approvals.tools.includes(name)) return held(ctx, name, parsed.data as Record<string, unknown>);
+  if (ctx.actor === "agent" && !ctx.approved && (ctx.app.config.approvals.tools.includes(name) || alwaysApprove.has(name))) return held(ctx, name, parsed.data as Record<string, unknown>);
   return runTool(ctx, tool, name, parsed.data);
 }
 

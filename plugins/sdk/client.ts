@@ -22,6 +22,19 @@ export type Omem = {
   navigate(to: string): void;
   /** Open the shell's settings dialog for this plugin; a saved change arrives as a plugin event with settings: true. */
   openSettings(): void;
+  /**
+   * A WebSocket to one of the plugin's streams (its service, started if needed), opened by the shell
+   * as the owner and relayed here. Binary messages arrive as ArrayBuffer.
+   */
+  stream(name: string): OmemStream;
+};
+
+export type OmemStream = {
+  send(data: string | ArrayBuffer): void;
+  close(): void;
+  onopen?: () => void;
+  onmessage?: (data: string | ArrayBuffer) => void;
+  onclose?: (reason: string) => void;
 };
 
 type Msg = { omem: 1; type: string; [k: string]: unknown };
@@ -29,6 +42,7 @@ type Msg = { omem: 1; type: string; [k: string]: unknown };
 let seq = 0;
 const waiting = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 const listeners = new Set<(e: OmemEvent) => void>();
+const streams = new Map<number, OmemStream>();
 const send = (m: Record<string, unknown>) => window.parent.postMessage({ omem: 1, ...m }, "*");
 
 function applyTheme(vars: Record<string, string>, scheme: string) {
@@ -66,6 +80,19 @@ export function connect(): Promise<Omem> {
           },
           navigate: (to) => send({ type: "navigate", to }),
           openSettings: () => send({ type: "settings" }),
+          stream: (name) => {
+            const sid = ++seq;
+            const st: OmemStream = {
+              send: (data) => (typeof data === "string" ? send({ type: "stream-send", sid, data }) : window.parent.postMessage({ omem: 1, type: "stream-send", sid, data }, "*", [data])),
+              close: () => {
+                streams.delete(sid);
+                send({ type: "stream-close", sid });
+              },
+            };
+            streams.set(sid, st);
+            send({ type: "stream-open", sid, name });
+            return st;
+          },
         });
       } else if (m.type === "response") {
         const w = waiting.get(m.id as number);
@@ -74,6 +101,16 @@ export function connect(): Promise<Omem> {
         if (m.ok) w.resolve(m.data);
         else w.reject(new Error(String(m.error ?? "请求失败")));
       } else if (m.type === "event") for (const l of listeners) l(m.event as OmemEvent);
+      else if (m.type === "stream-event") {
+        const st = streams.get(m.sid as number);
+        if (!st) return;
+        if (m.event === "open") st.onopen?.();
+        else if (m.event === "message") st.onmessage?.(m.data as string | ArrayBuffer);
+        else if (m.event === "close") {
+          streams.delete(m.sid as number);
+          st.onclose?.(String(m.reason ?? ""));
+        }
+      }
     });
     send({ type: "ready" });
   });

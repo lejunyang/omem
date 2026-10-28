@@ -24,4 +24,16 @@ for (const id of ids) {
     build: { outDir: join(root, "web", "dist", "plugins", id), emptyOutDir: true, chunkSizeWarningLimit: 1500, ...(watch ? { watch: {} } : {}) },
   });
 }
-if (!watch) console.log(`插件页面：${ids.join("、") || "（无）"}`);
+// The SDK as one module for pages written as plain HTML (plugins in the data directory): /plugins/_sdk/omem.js.
+await build({
+  configFile: false,
+  root,
+  logLevel: watch ? "warn" : "info",
+  build: {
+    outDir: join(root, "web", "dist", "plugins", "_sdk"),
+    emptyOutDir: true,
+    lib: { entry: join(root, "plugins", "sdk", "client.ts"), formats: ["es"], fileName: () => "omem.js" },
+    ...(watch ? { watch: {} } : {}),
+  },
+});
+if (!watch) console.log(`插件页面：${ids.join("、") || "（无）"}；SDK：/plugins/_sdk/omem.js`);

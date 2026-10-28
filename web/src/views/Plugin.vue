@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { api, get, onServerEvent } from "../api";
+import { api, authUrl, get, onServerEvent } from "../api";
 import PluginDefault from "../components/PluginDefault.vue";
 import PluginSettings from "../components/PluginSettings.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -32,19 +32,46 @@ function theme() {
 const post = (m: Record<string, unknown>) => frame.value?.contentWindow?.postMessage({ omem: 1, ...m }, "*");
 
 const PATH = /^[a-z0-9][a-z0-9_\-/]*(\?[a-zA-Z0-9_\-=&%.:]*)?$/;
+
+// The page's streams: the shell opens the WebSocket (it may carry the owner's token) and relays frames.
+const sockets = new Map<number, WebSocket>();
+function streamEvent(sid: number, event: string, extra: Record<string, unknown> = {}, transfer?: Transferable[]) {
+  frame.value?.contentWindow?.postMessage({ omem: 1, type: "stream-event", sid, event, ...extra }, "*", transfer ?? []);
+}
+function openStream(sid: number, name: string) {
+  if (!/^[a-z][a-z0-9-]{0,23}$/.test(name) || sockets.has(sid)) return streamEvent(sid, "close", { reason: `不允许的流：${name}` });
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${authUrl(`/api/plugins/${id}/streams/${name}`)}`);
+  ws.binaryType = "arraybuffer";
+  sockets.set(sid, ws);
+  ws.onopen = () => streamEvent(sid, "open");
+  ws.onmessage = (e) => (e.data instanceof ArrayBuffer ? streamEvent(sid, "message", { data: e.data }, [e.data]) : streamEvent(sid, "message", { data: String(e.data) }));
+  ws.onclose = (e) => {
+    sockets.delete(sid);
+    streamEvent(sid, "close", { reason: e.reason || (e.code === 1000 ? "" : `连接断开（${e.code}）`) });
+  };
+}
 async function onMessage(e: MessageEvent) {
   if (!frame.value || e.source !== frame.value.contentWindow) return;
-  const m = e.data as { omem?: number; type?: string; id?: number; method?: string; path?: string; body?: unknown; to?: string };
+  const m = e.data as { omem?: number; type?: string; id?: number; sid?: number; method?: string; path?: string; body?: unknown; to?: string };
   if (!m || m.omem !== 1) return;
   if (m.type === "ready") post({ type: "init", plugin: id, params: Object.fromEntries(Object.entries(route.query).filter(([, v]) => typeof v === "string")), ...theme() });
   else if (m.type === "settings") settingsOpen.value = !!info.value?.settings;
+  else if (m.type === "stream-open") openStream(Number(m.sid), String((m as { name?: unknown }).name ?? ""));
+  else if (m.type === "stream-send") {
+    const ws = sockets.get(Number(m.sid));
+    const data = (m as { data?: unknown }).data;
+    if (ws?.readyState === WebSocket.OPEN && (typeof data === "string" || data instanceof ArrayBuffer)) ws.send(data);
+  } else if (m.type === "stream-close") {
+    sockets.get(Number(m.sid))?.close();
+    sockets.delete(Number(m.sid));
+  }
   else if (m.type === "navigate" && typeof m.to === "string" && m.to.startsWith("/") && !m.to.startsWith("//")) void router.push(m.to);
   else if (m.type === "request") {
     const path = String(m.path ?? "");
-    const method = m.method === "POST" ? "POST" : "GET";
+    const method = m.method === "POST" ? "POST" : m.method === "DELETE" ? "DELETE" : "GET";
     if (!PATH.test(path) || path.split("/").includes("..")) return post({ type: "response", id: m.id, ok: false, error: `不允许的路径：${path}` });
     try {
-      const data = await api(`/api/plugins/${id}/${path}`, method === "POST" ? { method, json: m.body ?? {} } : {});
+      const data = await api(`/api/plugins/${id}/${path}`, method === "POST" ? { method, json: m.body ?? {} } : { method });
       post({ type: "response", id: m.id, ok: true, data });
     } catch (err) {
       post({ type: "response", id: m.id, ok: false, error: (err as Error).message });
@@ -72,6 +99,8 @@ onBeforeUnmount(() => {
   window.removeEventListener("message", onMessage);
   dark?.removeEventListener("change", resend);
   off?.();
+  for (const ws of sockets.values()) ws.close();
+  sockets.clear();
 });
 </script>
 

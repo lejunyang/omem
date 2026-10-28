@@ -2,10 +2,11 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request, type IncomingMessage, type Server } from "node:http";
-import { connect, createServer, type Socket } from "node:net";
+import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { resolveCommand } from "../agents/spawn.ts";
+import { freePort, killPid, reachable } from "../core/procs.ts";
 import { OWNER, userForToken } from "../core/users.ts";
 
 /**
@@ -35,23 +36,6 @@ function cli(app: App) {
   const found = set ? resolveCommand(set) : resolveCommand("code-tunnel") ?? resolveCommand("code");
   return { name: set || "code", ...(found ?? { file: set || "code", prefix: [] as string[] }) };
 }
-
-function freePort() {
-  return new Promise<number>((ok, fail) => {
-    const s = createServer();
-    s.once("error", fail).listen(0, "127.0.0.1", () => {
-      const p = (s.address() as { port: number }).port;
-      s.close(() => ok(p));
-    });
-  });
-}
-
-const reachable = (p: number) =>
-  new Promise<boolean>((ok) => {
-    const s = connect(p, "127.0.0.1");
-    s.once("connect", () => (s.destroy(), ok(true)));
-    s.once("error", () => ok(false));
-  });
 
 /** Start serve-web unless it runs; resolves to its port. */
 export function ensureIdeWeb(app: App): Promise<number> {
@@ -101,18 +85,6 @@ export function ensureIdeWeb(app: App): Promise<number> {
 /** serve-web runs the server as its own child: stop the whole tree. */
 function killTree(child: ChildProcess) {
   if (child.exitCode === null && child.pid) killPid(child.pid);
-}
-function killPid(pid: number) {
-  if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-  else {
-    try {
-      process.kill(-pid, "SIGTERM");
-    } catch {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {}
-    }
-  }
 }
 
 /**

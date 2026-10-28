@@ -1,12 +1,17 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
-import { extname, join, normalize, sep } from "node:path";
+import type { IncomingMessage, Server } from "node:http";
+import { connect, type Socket } from "node:net";
+import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
+import { OWNER, userForToken } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { callTool } from "../agents/tools.ts";
 import { createSession, listSessions, sendMessage, sessionView, submitBlock } from "./blocks.ts";
-import { describePlugin, findPlugin, getPlugin, listPlugins, pluginWebDir } from "./registry.ts";
+import { codeRuns, describePlugin, findPlugin, getPlugin, listPlugins, pluginWebDir, trustPlugin, untrustPlugin } from "./registry.ts";
+import { ensureService, serviceStatus, stopService, streamUse } from "./services.ts";
 import { savePluginSettings } from "./settings.ts";
 import { pluginStore } from "./store.ts";
 
@@ -85,6 +90,42 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
     return { text: r.text };
   });
 
+  // Trust: a data-directory plugin's code runs only after the owner confirms it (trust.ts).
+  server.post("/api/plugins/:id/trust", async (req) => trustPlugin(app, plugin(req).manifest.id));
+  server.delete("/api/plugins/:id/trust", async (req) => untrustPlugin(app, plugin(req).manifest.id));
+
+  // Services: the page (or the settings) may start and stop the plugin's own ones.
+  const service = (req: FastifyRequest) => {
+    const p = plugin(req);
+    const name = (req.params as { name: string }).name;
+    const spec = p.manifest.services.find((s) => s.name === name);
+    if (!spec) throw new HttpError(404, `插件 ${p.manifest.id} 没有服务 ${name}`);
+    if (!codeRuns(p)) throw new HttpError(403, `插件 ${p.manifest.id} 的代码还没有被信任：在设置 → 插件里确认`);
+    return { p, spec };
+  };
+  server.get("/api/plugins/:id/services", async (req) => {
+    const p = plugin(req);
+    return serviceStatus(p.manifest.id, p.manifest.services);
+  });
+  server.post("/api/plugins/:id/services/:name/start", async (req) => {
+    const { p, spec } = service(req);
+    await ensureService(app, { id: p.manifest.id, dir: p.dir }, spec);
+    return serviceStatus(p.manifest.id, [spec])[0];
+  });
+  server.post("/api/plugins/:id/services/:name/stop", async (req) => {
+    const { p, spec } = service(req);
+    stopService(p.manifest.id, spec.name);
+    return serviceStatus(p.manifest.id, [spec])[0];
+  });
+
+  // The page's helper for plugins whose page is plain HTML (data directory): the SDK as one module.
+  server.get("/plugins/_sdk/omem.js", async (_req, reply) => {
+    const file = join(webDistRoot(), "plugins", "_sdk", "omem.js");
+    if (!existsSync(file)) return reply.status(404).send("SDK 还没有构建（pnpm run build）");
+    reply.header("access-control-allow-origin", "*").header("cache-control", "no-cache").type(TYPES[".js"]);
+    return reply.send(createReadStream(file));
+  });
+
   // Built pages. They run in a sandboxed iframe (an opaque origin), where module scripts are
   // fetched in CORS mode: these public build files say anyone may load them.
   server.get("/plugins/:id/*", async (req, reply) => {
@@ -101,4 +142,72 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
     return reply.send(createReadStream(file));
   });
   server.get("/plugins/:id", async (req, reply) => reply.redirect(`/plugins/${(req.params as { id: string }).id}/`));
+}
+
+const here = dirname(fileURLToPath(import.meta.url));
+function webDistRoot() {
+  for (const c of [resolve(here, "../../web/dist"), resolve(here, "../../../web/dist")]) if (existsSync(c)) return c;
+  return resolve(here, "../../web/dist");
+}
+
+/**
+ * The owner only: the token (the shell adds it as a query, like the event stream; another omem
+ * forwarding sends it as a header), or this machine while omem trusts loopback (no token configured).
+ */
+function streamAllowed(app: App, req: IncomingMessage) {
+  const url = new URL(req.url ?? "/", "http://x");
+  const auth = req.headers.authorization;
+  const token = auth?.startsWith("Bearer ") ? auth.slice(7) : url.searchParams.get("token");
+  if (token) return userForToken(app, token) === OWNER;
+  const ip = req.socket.remoteAddress ?? "";
+  return !app.config.token && /^(127\.|::1$|::ffff:127\.)/.test(ip);
+}
+
+const STREAM = /^\/api\/plugins\/([a-z][a-z0-9]{1,23})\/streams\/([a-z][a-z0-9-]{0,23})(\?.*)?$/;
+
+/**
+ * Streams (docs/v2/plugins.md): a WebSocket upgrade under /api/plugins/<id>/streams/<name> goes to
+ * the plugin's service, started if needed, after the owner check; the service gets its token instead
+ * of the owner's. The connection is passed through as it is, frames and all.
+ */
+export function attachPluginStreams(app: App, server: Server) {
+  server.on("upgrade", (req: IncomingMessage, socket: Socket, head: Buffer) => {
+    const m = STREAM.exec(req.url ?? "");
+    if (!m) return;
+    const refuse = (status: string) => void socket.end(`HTTP/1.1 ${status}\r\n\r\n`);
+    if (!streamAllowed(app, req)) return refuse("401 Unauthorized");
+    const p = findPlugin(m[1]);
+    const stream = p?.manifest.streams.find((s) => s.name === m[2]);
+    const spec = stream && p?.manifest.services.find((s) => s.name === stream.service);
+    if (!p || !stream || !spec) return refuse("404 Not Found");
+    if (!codeRuns(p)) return refuse("403 Forbidden");
+    ensureService(app, { id: p.manifest.id, dir: p.dir }, spec).then(
+      ({ port, token }) => {
+        const upstream = connect(port, "127.0.0.1", () => {
+          const headers: Record<string, string | string[]> = {};
+          for (const [k, v] of Object.entries(req.headers)) if (v !== undefined && k !== "cookie" && k !== "authorization") headers[k] = v;
+          headers.host = `127.0.0.1:${port}`;
+          headers.authorization = `Bearer ${token}`;
+          const lines = Object.entries(headers).flatMap(([k, v]) => (Array.isArray(v) ? v.map((x) => `${k}: ${x}`) : [`${k}: ${v}`]));
+          upstream.write(`GET ${stream.path} HTTP/1.1\r\n${lines.join("\r\n")}\r\n\r\n`);
+          if (head.length) upstream.write(head);
+          upstream.pipe(socket);
+          socket.pipe(upstream);
+          streamUse(p.manifest.id, spec.name, 1);
+        });
+        let ended = false;
+        // Either side gone ends both: a half-open socket would keep the service from being idle.
+        const close = () => {
+          if (!ended) {
+            ended = true;
+            streamUse(p.manifest.id, spec.name, -1);
+          }
+          upstream.destroy();
+          socket.destroy();
+        };
+        for (const s of [upstream, socket]) s.on("error", close).on("close", close).on("end", close);
+      },
+      () => refuse("503 Service Unavailable"),
+    );
+  });
 }

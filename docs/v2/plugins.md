@@ -11,11 +11,20 @@ plugins/<id>/
   plugin.yaml          清单
   agents/<名>.md        Agent 档案（格式同 library/_agents），对外名字是 <id>-<名>
   skills/<名>/SKILL.md  技能，首次启动播种到 library/_skills（已有的不覆盖）
-  server.ts            服务端代码：工具、内容块、判分（只有内置插件可以带）
-  web/                 页面：内置插件放源码，构建到 web/dist/plugins/<id>/；数据目录里的插件放构建好的文件
+  server.ts            服务端代码：工具、内容块、判分（数据目录里也可以是 server.js / server.mjs）
+  web/                 页面：内置插件放源码，构建到 web/dist/plugins/<id>/；数据目录里的插件放构建好的文件（或手写的 HTML）
+  其他文件              服务的程序（清单 services 里的命令在插件目录里运行）
 ```
 
-内置插件在仓库的 `plugins/`。本人自己的插件（包括接内部系统的）放数据目录 `<数据目录>/plugins/<id>/`，不进仓库。数据目录里的插件只加载声明：清单、档案、技能和构建好的 `web/`，**不加载 `server.ts`**（带代码的插件要等第三期的信任确认）。没有自己页面的插件用外壳的默认页（会话、回复、通用内容块）。和内置插件同 id 的不加载。
+内置插件在仓库的 `plugins/`。本人自己的插件（包括接内部系统的）放数据目录 `<数据目录>/plugins/<id>/`，不进仓库。没有自己页面的插件用外壳的默认页（会话、回复、通用内容块）。和内置插件同 id 的不加载。
+
+### 信任
+
+数据目录里的插件带代码（`server.*` 或 `services`）时，代码以本人的身份运行，所以**本人确认之前一行都不运行**：清单、档案、技能和页面照常可用，工具、内容块和服务不注册、不启动。设置 → 插件列出每个插件的来源、状态、目录、服务的命令；“信任并运行”后立即加载，不用重启。
+
+确认的是代码此刻的样子：清单加上插件目录里除 `web/`、`agents/`、`skills/`、`node_modules/` 以外的所有文件的哈希（超过 50 MB 的文件按大小和修改时间算），存在本机的 `secrets/plugin-trust.json`（不随多设备同步，每台机器各自确认）。代码改过，状态变成“代码改过，需要重新确认”，重启后不再加载。撤销信任时它的工具马上注销、服务停止。
+
+数据目录里的代码不能 `import` 包：`api.z` 是宿主的 zod，服务用 `OMEM_SERVICE_SDK` 指向的帮助模块。
 
 ## 清单
 
@@ -51,7 +60,31 @@ export default function register(api: PluginApi) {
 
 - `api.tool`：注册工具，名字必须以 `<id>_` 开头；`page: true` 的工具页面也能调。`ctx` 里有本次运行的用户、空间、运行 id，限定在本插件、本用户的存储 `ctx.store`，本人的设置 `ctx.settings()`，以及 `ctx.present(kind, data, 会话)`：不经 Agent 直接往本人的某个插件会话里放一个块（题库出题就是这样）。
 - `api.block`：注册一种内容块，宿主自动生成同名工具 `<id>_<kind>` 让 Agent 交出这种块（见下）。`display: true` 的块只展示、不用提交；否则要有 `grade`。
-- 构建时 `server.ts` 随 `tsc` 编译到 `dist/plugins/<id>/server.js`，类型只从 `src/plugins/types.ts` 引入。
+- `api.tool` 的 `approval: true`：Agent 每次调用都先等本人批准（问本人的卡片 / 今天页，和 `approvals.tools` 同一套），用于点击、输入这类在机器上动手的工具。
+- `api.service(name).ensure()`：启动（如果没在运行）清单里声明的服务，返回 `{ url, token }`；请求带 `authorization: Bearer <token>`。
+- 内置插件的 `server.ts` 随 `tsc` 编译到 `dist/plugins/<id>/server.js`，类型只从 `src/plugins/types.ts` 引入。
+
+## 服务与流
+
+清单声明插件的常驻进程和它对页面开放的 WebSocket：
+
+```yaml
+services:
+  - { name: probe, command: node, args: [probe.mjs], idleMinutes: 10, description: 每秒采一次 CPU 和内存 }
+streams:
+  - { name: live, service: probe, path: /live }
+```
+
+- **服务**（`src/plugins/services.ts`）：第一次用到时启动（工具里 `api.service().ensure()`、页面打开流、设置里点“启动”），在插件目录里运行，`command: node` 用 omem 自己的 Node。拿到的环境变量：`OMEM_SERVICE_PORT`（只在 127.0.0.1 上监听）、`OMEM_SERVICE_TOKEN`（只认带这个令牌的请求）、`OMEM_PLUGIN_DIR`、`OMEM_PLUGIN_DATA`（`<数据目录>/plugin-data/<id>/`，它自己的数据）、`OMEM_SERVICE_SDK`。omem 的令牌、密钥类环境变量不传给它。没有打开的流且超过 `idleMinutes` 没用就停；omem 退出时停；上次没停掉的（被杀、开发时重启）下次启动前按记下的进程号清掉。最近 200 行输出在设置 → 插件里看。
+- **服务的帮助模块** `plugins/sdk/service.mjs`（不依赖任何包）：`serve({ http(req, res), socket(ws) })`，检查令牌、处理 WebSocket 握手和帧（文本、二进制、ping、关闭，单条最多 16 MB）。
+- **流**：页面 `omem.stream("live")` → 外壳打开 `ws(s)://…/api/plugins/<id>/streams/<name>`（带本人的令牌，和事件流一样）→ omem 检查是本人、插件的代码已被信任、流已声明 → 启动服务 → 把连接原样转到服务的 `path`，请求头里换成服务的令牌。外壳和页面之间用 postMessage 中继，二进制帧转移所有权、不复制（截屏这类每秒几帧的数据可以直接走）。有流打开时服务不会被当成空闲。
+- 页面写成普通 HTML 时，`<script type="module">import { connect } from "/plugins/_sdk/omem.js"</script>` 就能用 SDK（同一份 `plugins/sdk/client.ts`，构建时打包成一个模块，含表单和图表的渲染）。
+
+### 例子：看机器状态
+
+一个只有四个文件的数据目录插件（开发时的验收用例）：`plugin.yaml` 声明服务 `probe` 和流 `live`；`probe.mjs` 用 `service.mjs` 每秒把 CPU、内存推给所有连接，HTTP `/now` 返回当前值；`server.ts` 注册工具 `pulse_read`（`api.service("probe").ensure()` 后请求 `/now`）；`web/index.html` 打开流画两条进度条。信任之后，页面每秒更新；`/as pulse-watcher 机器现在负载怎么样？` 时档案调用 `pulse_read` 回答。
+
+远程看屏幕、一起操作的插件照同样的结构：服务截屏推二进制帧、接收页面发来的点击；Agent 用的“点击”“输入”工具标 `approval: true`，每次本人批准后才执行。截屏和输入依赖系统（Windows、macOS、Linux 各不相同），由插件自己实现，不进宿主。
 
 ## 交互协议：内容块
 
@@ -122,6 +155,9 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 | `GET /api/plugins/:id/data/:collection` | 页面读插件存储（只读） |
 | `POST /api/plugins/:id/call/:tool` | 页面调用插件自己的工具（以本人身份，限本插件标了 `page` 的工具） |
 | `GET` / `PUT /api/plugins/:id/settings` | 设置项和当前值；保存一项或几项 |
+| `POST` / `DELETE /api/plugins/:id/trust` | 信任数据目录插件的代码 / 撤销 |
+| `GET /api/plugins/:id/services`、`POST …/services/:name/start`、`…/stop` | 服务状态与最近输出；启动、停止（代码未被信任时拒绝） |
+| `GET /api/plugins/:id/streams/:name`（WebSocket） | 流，只给本人，转到插件的服务 |
 
 ## 英语学习插件
 
@@ -161,4 +197,5 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 1. **第一期**（2026-10-28）：清单与加载、插件档案进 Agent 列表、插件存储、内容块协议、插件页 iframe 与 SDK、英语插件（四种题型、宿主判分、Agent 评翻译、画像与学习曲线）。
 2. **第二期**（2026-10-28）：插件设置；宿主通用块（`plugin_form`、`plugin_chart`）和默认插件页；数据目录里的声明式插件；英语题库（陪练补题、宿主按画像选题）；插件会话链接与网页地址（飞书里交出的块转成练习页链接）。
    还没做：内容块在问答页和运行详情里显示、“每日练习”规则模板、服务端语音合成（听写原文就不用发到页面）。
-3. **第三期**：数据目录里带代码的插件与信任确认；`services`（插件的常驻进程，宿主按需启停）与 `streams`（宿主鉴权后转发 WebSocket，照 `ide-web.ts`），用于远程看屏幕、一起操作这类插件；危险操作走 `approvals.tools`。
+3. **第三期**（2026-10-28）：数据目录里带代码的插件与信任确认（代码哈希，改了重新确认，撤销立即卸载）；`services`（按需启动、空闲停止、清理遗留进程、输出可看）与 `streams`（本人鉴权后转发 WebSocket，外壳中继给沙箱页面）；`approval: true` 的插件工具每次等本人批准；`plugins/sdk/service.mjs` 和 `/plugins/_sdk/omem.js` 让数据目录插件不装包也能写服务和页面；设置 → 插件。
+   还没做：`omem peer open` 经中间设备转发流；服务作为 MCP 服务器直接给 Agent 提供工具（现在经 `server.ts` 的工具转一层）；截屏、输入这类系统相关的现成插件。

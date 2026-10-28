@@ -188,7 +188,7 @@ describe("plugins", () => {
     await expect(submitBlock(app, env, { blockId: chart.id, userId: "owner", answers: {} })).rejects.toThrow(/只用来展示/);
   });
 
-  it("a plugin in the data directory: declarations and skills only, the default page, no server code", async () => {
+  it("a plugin in the data directory: declarations and skills, the default page; its code waits for trust", async () => {
     const app = testApp();
     const dir = join(app.home, "plugins", "journal");
     mkdirSync(join(dir, "agents"), { recursive: true });
@@ -200,12 +200,13 @@ describe("plugins", () => {
     await loadPlugins(app);
     const p = getPlugin("journal");
     expect(p.source).toBe("data");
+    expect(p.trust).toBe("required");
     expect(findAgentSpec(app, "journal-coach")!.tools.sort()).toEqual(["plugin_chart", "plugin_form", "plugin_put", "plugin_query", "recall"]);
     expect(listSkills(app).map((s) => s.name)).toContain("journal-style");
     const server = await startServer(app, { port: 0, quiet: true });
     try {
       const listed = (await server.inject({ url: "/api/plugins" })).json() as { id: string; source: string; page: unknown }[];
-      expect(listed.find((x) => x.id === "journal")).toMatchObject({ source: "data", page: { title: "日记", own: false, built: false } });
+      expect(listed.find((x) => x.id === "journal")).toMatchObject({ source: "data", trust: "required", page: { title: "日记", own: false, built: false } });
     } finally {
       await server.close();
     }
