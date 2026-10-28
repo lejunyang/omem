@@ -104,6 +104,7 @@ function startConsumer(app: App, key: string) {
     } catch {
       return;
     }
+    sample(app, `event:${key}`, v);
     const info = meetingInfo(v);
     if (!info) return;
     const done = key === JOINED ? ownerJoinedMeeting(app, info) : meetingEnded(app, info.id, "会议结束");
@@ -133,6 +134,7 @@ function startConsumer(app: App, key: string) {
     if (/\[event\] ready/.test(d)) {
       c.ready = true;
       consumerError = null;
+      log(`开始接收 ${key}`);
       retryAt.delete(key);
     }
   });
@@ -141,6 +143,7 @@ function startConsumer(app: App, key: string) {
     if (consumers.get(key) === c) consumers.delete(key);
     if (!c.stopping) {
       consumerError = consumeError(c.stderr) ?? consumerError ?? "lark-cli 的事件监听退出了";
+      log(`${key} 的监听退出：${consumerError}`);
       const prev = retryAt.get(key)?.tries ?? 0;
       // A consumer that ran a while died of something passing; one that never came up waits longer each time.
       const tries = c.ready && Date.now() - c.startedAt > 5 * 60_000 ? 0 : prev + 1;
@@ -215,6 +218,7 @@ let lastPoll = 0;
 async function pollActive(app: App) {
   lastPoll = Date.now();
   const v = await larkCli(["vc", "+meeting-list-active", "--as", "user", "--format", "json"], 30_000);
+  sample(app, "list-active", v);
   const list = (v?.data?.meetings ?? v?.data?.items ?? v?.meetings ?? v?.items ?? v?.data ?? []) as Record<string, unknown>[];
   for (const m of Array.isArray(list) ? list : []) {
     const info = meetingInfo(m);
@@ -244,6 +248,7 @@ export async function ownerJoinedMeeting(app: App, m: MeetingInfo) {
   );
   const people = await readParticipants(app, m.id).catch(() => null);
   if (people) update(app, m.id, { participants: JSON.stringify(people) });
+  log(`你加入了会议「${m.topic ?? ""}」（${m.id}，会议号 ${m.no ?? "?"}），参会 ${people?.length ?? "?"} 人，交给规则判断`);
   await dispatchMeeting(app, m.id);
 }
 
@@ -385,6 +390,7 @@ async function startPlan(app: App, id: string, plan: MeetingPlan): Promise<strin
   const space = plan.space ?? (plan.spec && plan.spec !== "assistant" ? findAgentSpec(app, plan.spec)?.space : undefined) ?? plan.ruleSpace ?? captureSpace(app);
   update(app, id, { status: listen ? "listening" : "joined", bots: JSON.stringify(joined), space_id: findSpace(app, space) ? space : "personal", error: null, ended_at: null, reader: null, page_token: null });
   const failed = joined.filter((j) => !j.ok);
+  log(`会议「${row.topic}」（${id}）：${joined.map((j) => `${j.name} ${j.ok ? "已入会" : `入会失败：${j.error}`}`).join("；") || "不拉机器人"}；${listen ? "开始跟进" : "不跟进"}`);
   const parts = [
     joined.filter((j) => j.ok).length ? `已把 ${joined.filter((j) => j.ok).map((j) => j.name).join("、")} 拉进会议` : "",
     failed.length ? `${failed.map((j) => `${j.name} 没能入会：${j.error}`).join("；")}` : "",
@@ -434,11 +440,13 @@ async function fetchEvents(app: App, row: Row, reader: string, token: string | n
     if (reader === "user") {
       const v = await larkCli(["vc", "+meeting-events", "--as", "user", "--meeting-id", row.meeting_id, "--page-all", "--format", "json", ...(next ? ["--page-token", next] : [])], 60_000);
       const d = v?.data ?? v;
+      sample(app, "events:user", v);
       events.push(...normalize(d));
       next = str(d?.page_token) ?? next;
     } else {
       for (let page = 0; page < 20; page++) {
         const d = await botCall(reader.slice(4), "GET", "/open-apis/vc/v1/bots/events", { params: { meeting_id: row.meeting_id, page_size: 100, ...(next ? { page_token: next } : {}) } });
+        sample(app, "events:bot", d);
         events.push(...normalize(d));
         next = str(d?.page_token) ?? next;
         if (!d?.has_more) break;
@@ -571,6 +579,23 @@ function writeSource(app: App, row: Row, minutes?: string) {
   if (r.id !== row.source_id) update(app, row.meeting_id, { source_id: r.id });
   return r;
 }
+
+/**
+ * What Feishu actually sent, kept for checking the field names this code guesses at (the newest of
+ * each kind, cut to 20 000 characters, in kv `lark_meeting_samples`). Read it with
+ * `select value from kv where key = 'lark_meeting_samples'`.
+ */
+function sample(app: App, kind: string, value: unknown) {
+  try {
+    const all_ = json<Record<string, { at: string; value: string }>>(one<{ value: string }>(app.db, "select value from kv where key = 'lark_meeting_samples'")?.value, {});
+    const text = JSON.stringify(value);
+    // An empty page says little: keep the last one that had events.
+    if (/^events:/.test(kind) && all_[kind] && !/"event_id"|"_items"/.test(text)) return;
+    all_[kind] = { at: now(), value: text.slice(0, 20_000) };
+    run(app.db, "insert into kv(key,value) values('lark_meeting_samples', ?) on conflict(key) do update set value = excluded.value", JSON.stringify(all_));
+  } catch {}
+}
+const log = (text: string) => console.log(`[omem] 会议：${text}`);
 
 const due = new Map<string, number>();
 /** Since when a meeting could not be read by anyone. */
@@ -754,6 +779,7 @@ export async function meetingEnded(app: App, id: string, why: string) {
     }
   if (row.status !== "listening" && row.status !== "joined") return void update(app, id, { status: row.status === "asked" || row.status === "seen" ? "passed" : row.status, ended_at: now() });
   update(app, id, { status: "ended", ended_at: now(), error: why === "owner-left" ? "owner-left" : null, bots: JSON.stringify(bots) });
+  log(`会议「${row.topic}」（${id}）结束跟进：${why === "owner-left" ? "你离开了会议" : why}；记录 ${one<{ n: number }>(app.db, "select count(*) as n from lark_meeting_lines where meeting_id = ?", id)?.n ?? 0} 行`);
   if (!plan) return;
   const done = getRow(app, id)!;
   const src = writeSource(app, done);
@@ -768,6 +794,7 @@ export async function meetingEnded(app: App, id: string, why: string) {
 /** After a recorded meeting: its minutes, once Feishu has them, go into the same source. */
 async function mergeMinutes(app: App, row: Row) {
   const v = await larkCli(["vc", "+detail", "--meeting-ids", row.meeting_id, "--as", "user", "--format", "json"], 60_000);
+  sample(app, "detail", v);
   const token = findKey(v, "minute_token");
   if (!token) return;
   const { minutesSeen, minutesText } = await import("./lark-personal.ts");
