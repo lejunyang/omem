@@ -6,6 +6,7 @@ import { fmtTime, memoryKindLabel, openCitation, state, statusLabel, type Citati
 import CodeView from "./CodeView.vue";
 import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
+import MemoryText from "./MemoryText.vue";
 import { readsAsDocument } from "../lib/sources";
 
 const router = useRouter();
@@ -182,7 +183,7 @@ const title = computed(() => {
               <span v-if="memory.memory.status !== 'active'" class="badge warn">{{ statusLabel[memory.memory.status] }}</span>
               <span class="muted">{{ memory.memory.subject }}</span>
             </div>
-            <p>{{ memory.memory.content }}</p>
+            <p><MemoryText :text="memory.memory.content" :space="memory.memory.spaceId" /></p>
             <div class="muted small">有效期：{{ fmtTime(memory.memory.validFrom, false) || "?" }} → {{ memory.memory.validTo ? fmtTime(memory.memory.validTo, false) : "至今" }} · {{ memory.memory.createdBy === "user" ? "本人" : "助理" }}记录</div>
           </div>
           <div v-if="memory.memory.sourceRefs.length" class="refs">
@@ -197,7 +198,7 @@ const title = computed(() => {
             <ol>
               <li v-for="h in memory.history" :key="h.id" :class="{ cur: h.id === memory.memory.id }">
                 <div class="small muted">{{ fmtTime(h.validFrom) }} · {{ statusLabel[h.status] }}</div>
-                <div>{{ h.content }}</div>
+                <div><MemoryText :text="h.content" :space="h.spaceId" /></div>
               </li>
             </ol>
           </div>

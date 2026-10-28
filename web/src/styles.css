@@ -218,6 +218,17 @@ kbd {
 @keyframes btn-spin {
   to { transform: rotate(360deg); }
 }
+/* A small spinner beside a search box while its request is out. */
+.spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border: 2px solid var(--muted);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin 0.7s linear infinite;
+}
 /* A button that reads as a link (“换评审 AI”, “评审原文”). */
 .lnk {
   border: 0;

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { del, get, onServerEvent, patch, post, type Memory, type MemoryFolder, type MemoryQuality } from "../api";
 import MemoryCard from "../components/MemoryCard.vue";
+import MemoryText from "../components/MemoryText.vue";
 import MemoryFolderTree, { type FolderSelection } from "../components/MemoryFolderTree.vue";
 import Icon from "../components/Icon.vue";
 import UiSegmented from "../components/UiSegmented.vue";
@@ -138,7 +139,9 @@ function onTreeDrop(d: { space: string; folder: string; ids: string[] }) {
   void moveMemories(d.space, ids, d.folder);
 }
 
+let loadSeq = 0;
 async function load() {
+  const my = ++loadSeq;
   loading.value = true;
   try {
     const p = new URLSearchParams({ status: status.value });
@@ -150,9 +153,10 @@ async function load() {
     else if (sel.value.folder) p.set("folder", sel.value.folder);
     if (review.value) p.set("review", review.value);
     if (tag.value) p.set("tag", tag.value);
-    memories.value = await get<Memory[]>(`/api/memories?${p}`);
+    const r = await get<Memory[]>(`/api/memories?${p}`);
+    if (my === loadSeq) memories.value = r;
   } finally {
-    loading.value = false;
+    if (my === loadSeq) loading.value = false;
   }
 }
 async function loadTags() {
@@ -170,6 +174,7 @@ watch(scope, () => {
 });
 watch(q, () => {
   clearTimeout(timer);
+  loading.value = true;
   timer = setTimeout(load, 250);
 });
 const off = onServerEvent((e) => {
@@ -339,7 +344,7 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
         </form>
 
         <div class="filters row wrap">
-          <div class="search row"><Icon name="search" :size="15" /><input v-model="q" placeholder="搜索记忆" /></div>
+          <div class="search row"><Icon name="search" :size="15" /><input v-model="q" placeholder="搜索记忆" /><span v-if="loading && q.trim()" class="spinner" aria-label="搜索中" /></div>
           <UiSelect v-model="kind" width="120px" aria-label="类型" :options="[{ value: '', label: '全部类型' }, ...kindOptions]" />
           <UiSelect
             v-model="status"
@@ -489,7 +494,7 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
         <template v-if="gaps.retracted.length">
           <h2 class="section-title">复核撤回的记忆</h2>
           <div v-for="g in gaps.retracted" :key="g.id" class="rej">
-            <p class="content">{{ g.content }}</p>
+            <p class="content"><MemoryText :text="g.content" /></p>
             <p v-if="g.note" class="content muted-ink">{{ g.note }}</p>
           </div>
         </template>
@@ -554,7 +559,7 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
                 <p v-if="!c.live.length && !c.rejected.length" class="muted small">没有写记忆</p>
                 <div v-for="m in c.live" :key="m.id" class="prop">
                   <span v-if="m.review_verdict" class="badge" :class="verdictClass(m.review_verdict)">{{ reviewLabel[m.review_verdict] ?? m.review_verdict }}</span>
-                  {{ m.content }}
+                  <MemoryText :text="m.content" />
                 </div>
                 <div v-for="(r, i) in c.rejected" :key="i" class="prop rejected"><span class="badge danger">拒绝：{{ r.codes.map((x) => codeLabel[x] ?? x).join("、") }}</span>{{ r.content }}</div>
               </div>

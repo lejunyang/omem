@@ -62,3 +62,18 @@ it("holds a push back during quiet hours and gives it back once, unless it was r
   expect(takeDeferred(app).map((n) => n.title)).toEqual(["分支评审要求修改：退款"]);
   expect(takeDeferred(app)).toEqual([]);
 });
+
+it("lets a later notification stand for an earlier one: the earlier card is the one to edit", async () => {
+  const { notificationCardOf, setNotificationCard } = await import("../src/core/notify.ts");
+  const { one } = await import("../src/core/db.ts");
+  const app = fresh();
+  const asked = notify(app, { title: "飞书授权：读周报目录", body: "请打开链接完成授权。", link: "https://example.com/authorize" });
+  setNotificationCard(app, asked.id, "om_auth", null);
+  const done = notify(app, { title: "飞书授权已完成", body: "已恢复周报目录核对。", replaces: asked.id });
+  expect(done.replaces).toBe(asked.id);
+  expect(notificationCardOf(app, done.replaces!)).toEqual({ messageId: "om_auth", bot: null });
+  const before = one<{ read_at: string | null; context: string }>(app.db, "select read_at, context from notifications where id = ?", asked.id)!;
+  expect(before.read_at).toBeTruthy();
+  expect(JSON.parse(before.context).replacedBy).toBe(done.id);
+  expect(() => notify(app, { title: "别人的", body: "", replaces: "n_missing" })).toThrow(/没有可以更新的通知/);
+});

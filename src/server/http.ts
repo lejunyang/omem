@@ -42,6 +42,7 @@ import { createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpac
 import { HttpError } from "../core/util.ts";
 import { accessibleSpaces, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
+import { runWrites } from "../agents/run-writes.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
 import { refExcerpt } from "../items/evidence.ts";
 import { getItem, itemEvents, listItems, upsertItem } from "../items/store.ts";
@@ -829,7 +830,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const r = getRun(app, id);
     const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
     if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
-    return { run: { ...r, waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children: listRuns(app, { parentId: id }), patches: r.kind === "code" ? codePatches(app, id) : undefined, context: runContext(app, r) };
+    return { run: { ...r, waiting: queueReason(app, r) }, events: runEvents(app, id, o.after ?? 0), children: listRuns(app, { parentId: id }), patches: r.kind === "code" ? codePatches(app, id) : undefined, context: runContext(app, r), writes: runWrites(app, r) };
   });
   // Folders to open in an editor; `local`: the page is on this machine (loopback, no token), so a
   // local link works; otherwise the viewer reaches them over SSH (`host` keys their alias for it).

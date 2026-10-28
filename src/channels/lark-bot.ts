@@ -9,7 +9,7 @@ import { scheduleIngest } from "../agents/jobs.ts";
 import { registerThreadSender } from "../agents/inbox.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
-import { addNotificationSink, deferNotification, takeDeferred } from "../core/notify.ts";
+import { addNotificationSink, deferNotification, notificationCardOf, setNotificationCard, takeDeferred } from "../core/notify.ts";
 import { identitiesOf, OWNER } from "../core/users.ts";
 import { botOfChannel, withBot } from "../core/bot-context.ts";
 import { importFile, keepOriginal, needsDocumentConversion } from "../sources/import.ts";
@@ -300,6 +300,18 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   const push = (n: Parameters<Parameters<typeof addNotificationSink>[0]>[0], deferred = false) => withBot(notifyConversation(n)?.bot, async () => {
     const target = targetOf(n);
     if (!target) return;
+    // The newer state of a card already sent (an authorization now done): edit that card, no new ping.
+    const earlier = n.replaces ? notificationCardOf(app, n.replaces) : null;
+    if (earlier) {
+      const { updateLarkCard } = await import("./lark-send.ts");
+      try {
+        await updateLarkCard(earlier.messageId, notificationCard(app, n), earlier.bot);
+        setNotificationCard(app, n.id, earlier.messageId, earlier.bot);
+        return;
+      } catch (e) {
+        console.warn(`[omem] 更新原通知卡片失败，改为发新卡片：${(e as Error).message}`);
+      }
+    }
     // Push policy: non-urgent nudges wait for the morning (sent then if still unread); and when the
     // triggering message is already read by the owner, the change has been seen — no ping (urgent always pushes).
     if (!deferred && n.urgency !== "urgent" && !n.scheduled && inQuietHours(app)) {
@@ -334,7 +346,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       recordInteraction(app, { messageId: sent.messageId, chatId: ("chatId" in target ? target.chatId : null) ?? null, conversationId: null, runId: null, purpose: "agent", allowed: [], payload: { itemId: n.entityId, notificationId: n.id, userId: n.userId } });
       return;
     }
-    await sendLark(target, { card });
+    const sent = await sendLark(target, { card });
+    setNotificationCard(app, n.id, sent.messageId, notifyConversation(n)?.bot);
   });
   if (!extra) addNotificationSink((n) => push(n));
 

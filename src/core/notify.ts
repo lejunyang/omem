@@ -53,6 +53,11 @@ export type Notification = {
   larkConversationId?: string;
   /** The daily item digest: items that closed by themselves (can be reopened) and that close soon (can be kept). */
   digest?: { closed: string[]; soon: string[] };
+  /** This is the newer state of an earlier notification (a pending authorization now done): channels edit the card they sent for it instead of sending another. */
+  replaces?: string;
+  /** Set by the Feishu channel: the card it sent (or edited) for this notification, so a later one can replace it. */
+  larkMessageId?: string;
+  larkBot?: string | null;
 };
 
 type Sink = (n: Notification) => Promise<void> | void;
@@ -65,9 +70,11 @@ export function addNotificationSink(sink: Sink) {
 /** Notify a person (the owner by default): stored in-app and pushed to the channels that know them. */
 export function notify(
   app: App,
-  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[] } },
+  input: { title: string; body?: string; link?: string | null; userId?: string; entity?: string; entityId?: string; actions?: NotifyAction[]; sourceRefs?: string[]; eventId?: number; runId?: string | null; urgency?: NotifyUrgency; scheduled?: boolean; digest?: { closed: string[]; soon: string[] }; replaces?: string },
 ) {
   const userId = input.userId ?? "owner";
+  const replaced = input.replaces ? one<{ id: string; user_id: string }>(app.db, "select id, user_id from notifications where id = ?", input.replaces) : undefined;
+  if (input.replaces && (!replaced || replaced.user_id !== userId)) throw new HttpError(404, `没有可以更新的通知 ${input.replaces}`);
   let sourceRefs = input.sourceRefs ?? [];
   if (input.entityId) {
     const item = getItem(app, input.entityId);
@@ -113,9 +120,12 @@ export function notify(
     urgency: input.urgency ?? "normal",
     ...(input.scheduled ? { scheduled: true } : {}),
     ...(input.digest ? { digest: input.digest } : {}),
+    ...(replaced ? { replaces: replaced.id } : {}),
     ...(input.entityId ? { entity: input.entity ?? "item", entityId: input.entityId, actions: input.actions ?? [] } : {}),
   };
-  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, urgency: n.urgency, scheduled: n.scheduled, digest: n.digest }));
+  run(app.db, "insert into notifications(id,at,title,body,link,user_id,context) values(?,?,?,?,?,?,?)", n.id, n.at, n.title, n.body, n.link, n.userId, JSON.stringify({ entity: n.entity, entityId: n.entityId, actions: n.actions, sourceRefs: n.sourceRefs, eventId: n.eventId, runId: n.runId, urgency: n.urgency, scheduled: n.scheduled, digest: n.digest, replaces: n.replaces }));
+  // The earlier one is now history: read, and no longer waiting for the morning.
+  if (replaced) run(app.db, "update notifications set read_at = coalesce(read_at, ?), context = json_remove(json_set(coalesce(context, '{}'), '$.replacedBy', ?), '$.deferred') where id = ?", n.at, n.id, replaced.id);
   app.emit({ type: "notification", id: n.id, title: n.title, body: n.body, link: n.link });
   for (const sink of sinks) Promise.resolve(sink(n)).catch((e) => console.warn("[omem] 通知发送失败", e));
   return n;
@@ -142,6 +152,16 @@ export function takeDeferred(app: App): Notification[] {
   return rows
     .filter((r) => !r.read_at && Date.now() - Date.parse(r.at) < 24 * 3600_000)
     .map((r) => ({ ...json<Partial<Notification>>(r.context, {}), id: r.id, at: r.at, title: r.title, body: r.body, link: r.link, readAt: null, userId: r.user_id }));
+}
+
+/** Remember the Feishu card a notification went out as (see `replaces`). */
+export function setNotificationCard(app: App, id: string, messageId: string, bot?: string | null) {
+  run(app.db, "update notifications set context = json_set(coalesce(context, '{}'), '$.larkMessageId', ?, '$.larkBot', ?) where id = ?", messageId, bot ?? null, id);
+}
+/** The Feishu card sent for a notification, if any. */
+export function notificationCardOf(app: App, id: string) {
+  const r = one<{ m: string | null; b: string | null }>(app.db, "select json_extract(context, '$.larkMessageId') m, json_extract(context, '$.larkBot') b from notifications where id = ?", id);
+  return r?.m ? { messageId: r.m, bot: r.b } : null;
 }
 
 export function markRead(app: App, id?: string) {

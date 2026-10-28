@@ -2406,6 +2406,7 @@ def({
     source_refs: refs.describe("仅本次变化的来源；不传时兼容读取该事项最近事件，绝不读取全部历史来源"),
     event_id: z.number().int().positive().optional(),
     urgency: z.enum(["normal", "urgent"]).optional().describe("紧急（高优先级、已过期、点名本人且限时）才传 urgent：可在免打扰时段推送。默认 normal"),
+    replaces: z.string().optional().describe("之前一条通知的 id（发通知时返回的 n…）：这条是它的新状态（授权已完成、等待已结束），飞书里直接改那张卡片，不另发；原通知标为已读"),
   }),
   handler: (ctx, a) => {
     if (a.entity_id) {
@@ -2415,7 +2416,7 @@ def({
       const event = a.event_id === undefined ? itemEvents(ctx.app, item.id).at(-1) : itemEvents(ctx.app, item.id).find((e) => e.id === a.event_id);
       validateItemRefs(ctx.app, a.source_refs ?? event?.sourceRefs ?? [], ctx.userId ?? OWNER, ctx.spaces);
     } else validateItemRefs(ctx.app, a.source_refs ?? [], ctx.userId ?? OWNER, ctx.spaces);
-    notify(ctx.app, {
+    const n = notify(ctx.app, {
       title: a.title,
       body: a.body,
       link: a.link ?? (ctx.runId ? `#/runs/${ctx.runId}` : null),
@@ -2425,9 +2426,10 @@ def({
       sourceRefs: a.source_refs,
       eventId: a.event_id,
       runId: ctx.runId,
+      replaces: a.replaces,
       ...(a.urgency ? { urgency: a.urgency } : {}),
     });
-    return "已通知";
+    return a.replaces ? `已更新通知 ${a.replaces}（新 id ${n.id}）` : `已通知（id ${n.id}；之后状态变了可传 replaces=${n.id} 更新这张卡片）`;
   },
 });
 

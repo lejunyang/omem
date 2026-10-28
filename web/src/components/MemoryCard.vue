@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Memory } from "../api";
 import Icon from "./Icon.vue";
+import MemoryText from "./MemoryText.vue";
 import { fmtTime, memoryKindLabel, statusLabel } from "../store";
 
 defineProps<{
@@ -51,7 +52,7 @@ function verdictClass(v?: string | null) {
     </div>
     <div v-if="$slots.editor" class="edit-slot"><slot name="editor" :m="m" /></div>
     <p v-else class="content">
-      <strong v-if="m.subject" class="subject-line">{{ m.subject }}：</strong>{{ m.content }}
+      <strong v-if="m.subject" class="subject-line">{{ m.subject }}：</strong><MemoryText :text="m.content" :space="m.spaceId" />
     </p>
     <p v-if="m.reviewNote && m.reviewVerdict && m.reviewVerdict !== 'keep'" class="note small muted">复核：{{ m.reviewNote }}</p>
   </div>

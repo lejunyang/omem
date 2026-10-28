@@ -3,19 +3,25 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { get, onServerEvent, type Run, type RunEvent } from "../api";
 import Icon from "./Icon.vue";
 import { prettyTool } from "../lib/tools";
+import { openCitation, state } from "../store";
 
-const props = withDefaults(defineProps<{ runId: string; showText?: boolean; open?: boolean }>(), { showText: true, open: false });
+/** `link`: offer the run's full record (off on the run page itself). */
+const props = withDefaults(defineProps<{ runId: string; showText?: boolean; open?: boolean; link?: boolean }>(), { showText: true, open: false, link: true });
 const emit = defineEmits<{ done: [run: Run]; text: [text: string] }>();
 const run = ref<Run | null>(null);
 const events = ref<RunEvent[]>([]);
 const live = ref("");
 const expanded = ref(props.open);
 let lastSeq = 0;
+type WriteTarget = { kind: "source" | "memory" | "item" | "rule"; id: string } | { kind: "page"; space: string; slug: string };
+type RunWrite = { tool: string; label: string; space?: string | null; target?: WriteTarget; n?: number };
+const writes = ref<RunWrite[]>([]);
 
 async function load() {
-  const r = await get<{ run: Run; events: RunEvent[] }>(`/api/runs/${props.runId}?after=0`);
+  const r = await get<{ run: Run; events: RunEvent[]; writes?: RunWrite[] }>(`/api/runs/${props.runId}?after=0`);
   run.value = r.run;
   events.value = r.events;
+  writes.value = r.writes ?? [];
   lastSeq = r.events.at(-1)?.seq ?? 0;
   live.value = "";
   if (["done", "failed", "cancelled"].includes(r.run.status)) emit("done", r.run);
@@ -50,6 +56,22 @@ const steps = computed(() => {
 const statusLines = computed(() => events.value.filter((e) => e.type === "status" || e.type === "check").slice(-3));
 const text = computed(() => events.value.filter((e) => e.type === "text").map((e) => e.data.text).join("") + live.value);
 const running = computed(() => run.value && ["queued", "running"].includes(run.value.status));
+
+// What the run wrote, each opening where it lives (the citation drawer, the item, the rule).
+const writeKind: Record<string, string> = { write_file: "工作文件", remember: "记忆", write_page: "页面", upsert_item: "事项", save_rule: "规则" };
+const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
+function writeLink(w: RunWrite) {
+  const t = w.target;
+  if (!t) return undefined;
+  if (t.kind === "item") return `/items/${t.id}`;
+  if (t.kind === "rule") return `/rules?id=${encodeURIComponent(t.id)}`;
+  return undefined;
+}
+function openWrite(w: RunWrite) {
+  const t = w.target;
+  if (!t || t.kind === "item" || t.kind === "rule") return;
+  openCitation(t.kind === "page" ? { kind: "page", space: t.space, slug: t.slug } : t.kind === "source" ? { kind: "source", id: t.id } : { kind: "memory", id: t.id }, true);
+}
 defineExpose({ text });
 </script>
 
@@ -62,6 +84,18 @@ defineExpose({ text });
       <span v-if="running && steps.length" class="muted ellipsis last">{{ prettyTool(steps[steps.length - 1].title) }}</span>
       <Icon :name="expanded ? 'down' : 'right'" :size="14" />
     </button>
+    <div v-if="!running && (writes.length || (link && steps.length))" class="wrote small">
+      <template v-if="writes.length">
+        <span class="muted">写下了</span>
+        <template v-for="(w, i) in writes" :key="i">
+          <router-link v-if="writeLink(w)" :to="writeLink(w)!" class="w">{{ writeKind[w.tool] ? `${writeKind[w.tool]}：` : "" }}{{ w.label }}</router-link>
+          <a v-else-if="w.target" href="#" class="w" @click.prevent="openWrite(w)">{{ writeKind[w.tool] ? `${writeKind[w.tool]}：` : "" }}{{ w.label }}</a>
+          <span v-else class="w plain" :title="w.tool">{{ prettyTool(w.tool) }}{{ w.label ? `：${w.label}` : "" }}{{ w.n ? ` ×${w.n}` : "" }}</span>
+          <span v-if="w.space && w.space !== run?.spaceId" class="muted">（{{ spaceName(w.space) }}）</span>
+        </template>
+      </template>
+      <router-link v-if="link" :to="`/runs/${runId}`" class="muted rec">运行记录</router-link>
+    </div>
     <ol v-if="expanded && steps.length" class="steps">
       <li v-for="(s, i) in steps" :key="i" :class="s.status">
         <span class="dot" />
@@ -95,6 +129,24 @@ defineExpose({ text });
   cursor: pointer;
   justify-self: start;
   max-width: 100%;
+}
+.wrote {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.wrote .w {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.wrote .plain {
+  color: var(--ink-2);
+}
+.wrote .rec {
+  margin-left: auto;
 }
 .summary:hover {
   background: var(--hover);

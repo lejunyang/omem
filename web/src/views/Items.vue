@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { get, onServerEvent, patch, post, type Item, type ItemEvent } from "../api";
 import Icon from "../components/Icon.vue";
@@ -22,17 +22,32 @@ type WorkFile = { id: string; uri: string; title: string; updatedAt: string; exp
 const detail = ref<{ item: Item; events: ItemEvent[]; excerpts?: Record<string, { title: string; text: string }>; files?: WorkFile[]; expiry?: { at: string; text: string } | null; materials?: Material[] } | null>(null);
 const quick = ref("");
 const viaAssistant = ref(true);
+const adding = ref(false);
+const query = ref("");
+const searching = ref(false);
 const note = ref("");
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 
 const loading = ref(true);
+// A search looks through closed items too: what you are looking for may already be done.
+const searchAll = computed(() => showDone.value || !!query.value.trim());
+let loadSeq = 0;
 async function load() {
+  const my = ++loadSeq;
+  const t = query.value.trim();
   try {
-    items.value = await get<Item[]>(`/api/items?status=${showDone.value ? "all" : "active"}${scope.value === "space" ? `&space=${state.space}` : ""}`);
+    const r = await get<Item[]>(`/api/items?status=${searchAll.value ? "all" : "active"}${scope.value === "space" ? `&space=${state.space}` : ""}${t ? `&q=${encodeURIComponent(t)}` : ""}`);
+    if (my === loadSeq) items.value = r;
   } finally {
-    loading.value = false;
+    if (my === loadSeq) loading.value = searching.value = false;
   }
 }
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+watch(query, () => {
+  clearTimeout(searchTimer);
+  searching.value = true;
+  searchTimer = setTimeout(load, 200);
+});
 async function loadDetail() {
   const id = route.params.id as string | undefined;
   detail.value = id ? await get(`/api/items/${id}`).catch(() => null) : null;
@@ -110,7 +125,20 @@ async function addQuick() {
     await post("/api/items", { title: t, space: state.space });
   }
   quick.value = "";
+  adding.value = false;
   void load();
+}
+const newInput = ref<HTMLTextAreaElement>();
+watch(adding, async (open) => {
+  if (!open) return;
+  await nextTick();
+  newInput.value?.focus();
+});
+/** Enter adds, Shift+Enter breaks the line; Enter that confirms an IME candidate does neither. */
+function onNewEnter(e: KeyboardEvent) {
+  if (e.isComposing) return;
+  e.preventDefault();
+  void addQuick();
 }
 async function setStatus(i: Item, status: string) {
   await patch(`/api/items/${i.id}`, { status });
@@ -138,18 +166,20 @@ async function addNote() {
         <p>待办、提醒、等待回复和持续关注。助理会在材料更新时推进它们，只在需要你时通知。</p>
       </div>
       <span class="spacer" />
-      <div class="row small">
-        <UiSegmented v-model="scope" size="sm" aria-label="范围" :options="[{ value: 'all', label: '所有空间' }, { value: 'space', label: '当前空间' }]" />
-        <UiCheckbox v-model="showDone" size="sm">显示已完成</UiCheckbox>
-      </div>
+      <button class="btn primary sm" @click="adding = true"><Icon name="plus" :size="15" />新建事项</button>
     </div>
 
-    <form class="quick card row" @submit.prevent="addQuick">
-      <Icon name="plus" :size="16" />
-      <input v-model="quick" placeholder="例如：周五下午提醒我交报销单；等小王回复接口文档；关注项目A的需求变化" />
-      <UiCheckbox v-model="viaAssistant" size="sm" class="small muted" title="交给助理理解时间、对象并关联背景">让助理处理</UiCheckbox>
-      <button class="btn primary sm" :disabled="!quick.trim()">添加</button>
-    </form>
+    <div class="toolbar row wrap">
+      <label class="search row" :class="{ busy: searching }">
+        <Icon name="search" :size="15" />
+        <input v-model="query" placeholder="搜索标题、详情、等待对象" aria-label="搜索事项" />
+        <span v-if="searching" class="spinner" aria-label="搜索中" />
+        <button v-else-if="query" type="button" class="btn ghost sm icon" aria-label="清空" @click="query = ''"><Icon name="x" :size="13" /></button>
+      </label>
+      <span class="spacer" />
+      <UiSegmented v-model="scope" size="sm" aria-label="范围" :options="[{ value: 'all', label: '所有空间' }, { value: 'space', label: '当前空间' }]" />
+      <UiCheckbox v-model="showDone" size="sm" class="small">显示已完成</UiCheckbox>
+    </div>
 
     <div v-if="expiry && !expiry.backlogApplied && expiry.backlog.length" class="card pad backlog row wrap">
       <Icon name="clock" :size="16" />
@@ -157,7 +187,8 @@ async function addNote() {
       <span class="spacer" />
       <button class="btn sm primary" @click="backlogOpen = true">查看并收尾</button>
     </div>
-    <div class="board">
+    <p v-if="query.trim() && !searching && !loading && !items.length" class="muted none-found">没有标题、详情或等待对象里含“{{ query.trim() }}”的事项。</p>
+    <div v-else class="board">
       <section v-for="c in columns" :key="c.key" class="col">
         <h2 class="section-title row"><Icon :name="c.icon" :size="14" />{{ c.title }} <span class="count">{{ c.items.length }}</span></h2>
         <div class="cards">
@@ -180,7 +211,7 @@ async function addNote() {
       </section>
     </div>
 
-    <section v-if="showDone && closed.length" class="done-list">
+    <section v-if="searchAll && closed.length" class="done-list">
       <h2 class="section-title">已完成 / 已取消 / 已过期</h2>
       <div class="list">
         <router-link v-for="i in closed" :key="i.id" :to="`/items/${i.id}`" class="li muted"><Icon :name="i.status === 'expired' ? 'clock' : 'check'" :size="15" /><span class="strike">{{ i.title }}</span><span class="spacer" /><span class="badge">{{ closedLabel[i.status] }}</span><span class="small">{{ relTime(i.closedAt) }}</span></router-link>
@@ -265,6 +296,26 @@ async function addNote() {
         </div>
       </aside>
     </div>
+    <div v-if="adding" class="panel-overlay center" @mousedown.self="adding = false" @keydown.esc="adding = false">
+      <form class="modal" role="dialog" aria-modal="true" aria-labelledby="new-item-title" @submit.prevent="addQuick">
+        <header class="row"><strong id="new-item-title">新建事项</strong><span class="spacer" /><button type="button" class="btn ghost sm icon" aria-label="关闭" @click="adding = false"><Icon name="x" /></button></header>
+        <textarea
+          ref="newInput"
+          v-model="quick"
+          class="textarea"
+          rows="3"
+          placeholder="例如：周五下午提醒我交报销单；等小王回复接口文档；关注项目A的需求变化"
+          @keydown.enter.exact="onNewEnter"
+        />
+        <div class="row">
+          <UiCheckbox v-model="viaAssistant" size="sm" class="small" title="交给助理理解时间、对象并关联背景">让助理处理</UiCheckbox>
+          <span class="muted small">{{ viaAssistant ? "助理会理解时间和对象、关联背景后建事项" : "按原文建一条待办" }}</span>
+          <span class="spacer" />
+          <button type="button" class="btn" @click="adding = false">取消</button>
+          <button class="btn primary" :disabled="!quick.trim()">添加</button>
+        </div>
+      </form>
+    </div>
     <div v-if="backlogOpen && expiry" class="panel-overlay center" @mousedown.self="backlogOpen = false" @keydown.esc="backlogOpen = false">
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="backlog-title">
         <header class="row"><strong id="backlog-title">收尾积压的事项</strong><span class="spacer" /><button class="btn ghost sm icon" aria-label="关闭" @click="backlogOpen = false"><Icon name="x" /></button></header>
@@ -344,20 +395,36 @@ async function addNote() {
 .bl .ttl {
   font-size: 14px;
 }
-.quick {
-  padding: 6px 8px 6px 14px;
-  margin-bottom: 22px;
+.toolbar {
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.search {
+  flex: 0 1 340px;
+  min-width: 0;
+  gap: 6px;
+  padding: 0 6px 0 10px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
   color: var(--muted);
 }
-.quick input:not([type]) {
+.search:focus-within {
+  border-color: var(--accent);
+}
+.search input {
   flex: 1;
+  min-width: 0;
   border: 0;
   outline: 0;
   background: none;
-  font-size: 14.5px;
-  padding: 6px 0;
+  font: inherit;
+  font-size: 14px;
   color: var(--ink);
-  min-width: 0;
+}
+.none-found {
+  padding: 24px 0;
 }
 .board {
   display: grid;

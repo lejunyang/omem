@@ -661,3 +661,12 @@ updated: 2026-10-28
 - **Agent 进程的环境**：新增 `src/agents/tool-cli.ts`。`prepareRun` 的 `mcp.env` 带 `OMEM_URL`、`OMEM_TOKEN`，并把 `<数据目录>/bin` 放到 PATH 前面，那里的 `omem`（Windows 为 `omem.cmd`）用当前的 node 运行当前的 omem；`acp.ts`、`cli.ts` 启动 Agent 时合并进去。环境变量本身不授权，权限仍由令牌决定。
 - **说明拆分**：`skills/omem/SKILL.md` 只留概览、接入方式和分组表，原来的长清单按分组移到 `references/`（sources、memory、items、wiki、agents、owner、code、lark、learning）。`roles/_common.md` 开头说明了 `omem_call` / `omem_help` 和 `omem tool`。
 - 测试：`test/tool-help.test.ts`（分组完整、列表拆分、权限、参数说明、命令行参数、环境）。
+
+## 2026-10-28：事项搜索、记忆里的引用、运行写下的东西、更新原通知、配置合并保存
+
+- **事项页**：`Items.vue` 的快速输入框改为右上角“新建事项”弹窗；新增搜索框（`/api/items?q=`，搜索时 `status=all`，请求按序号丢弃过时结果，进行中显示 `.spinner`）。
+- **记忆里的引用**：新增 `web/src/components/MemoryText.vue`，把记忆正文里的 `[[slug]]` / `[[空间:slug|文字]]`、`[文字](src:…)`、裸 `src:` / `mem:` / `msg:` 变成链接，经 `openCitation` 在引用抽屉里打开；`MemoryCard`、`CitationDrawer` 的记忆和演变、记忆页的复核撤回与对比运行都用它。
+- **搜索加载态**：`CommandPalette.vue` 在防抖和请求期间显示“搜索中…”，旧结果变淡；`Memory.vue` 输入后立即进入加载态并丢弃过时结果；`styles.css` 新增 `.spinner`。
+- **运行写下的东西**：新增 `src/agents/run-writes.ts` 的 `runWrites`，按运行的 `tool-write` 事件和带运行 id 的行（工作文件 `meta.runId`、记忆 `run_id`）列出写下的东西及打开位置；`GET /api/runs/:id` 返回 `writes`。`RunActivity.vue` 在结束的运行下列出它们并给“运行记录”链接（运行页自身不显示链接）。起因：问答回答末尾的“已记录：…”只说写了什么，网页上找不到，工作文件又写在别的空间。
+- **更新原通知**：`notify` 接受 `replaces`（之前通知的 id）：新通知的 context 记 `replaces`，原通知标为已读、记 `replacedBy` 并取消夜间暂缓；飞书渠道发送普通通知后记下 `larkMessageId` / `larkBot`（`setNotificationCard`），遇到 `replaces` 时改原卡片而不是发新的，改失败才发新卡片。`notify` 工具返回通知 id，参数加 `replaces`；`skills/omem/references/items.md` 同步。
+- **配置合并保存**：`src/core/config.ts` 的 `saveConfig` 改为三方合并（`mergeConfig`）：以本进程上次读入或保存时的配置为基准，只把本进程改过的字段写到磁盘上的现状之上，其余以文件为准，传入的对象变成合并结果。以前服务、`omem setup`、CLI 各持一份启动时的完整配置，谁后保存就整份覆盖别人改过的项（包括服务运行期间的手改）。

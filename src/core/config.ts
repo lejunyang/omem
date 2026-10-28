@@ -577,12 +577,63 @@ export function loadConfig(home = omemHome()): Config {
   if (raw.host === "127.0.0.1") delete raw.host;
   const config = configSchema.parse(raw);
   if (process.env.OMEM_PORT) config.port = Number(process.env.OMEM_PORT);
+  loadedAs.set(resolve(home), structuredClone(config));
   return config;
 }
 
+/** The config each home was last loaded or saved as by this process: what a save diffs against. */
+const loadedAs = new Map<string, Config>();
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Three-way merge: what this process changed since it loaded (`ours` against `base`) goes over the
+ * file as it is now (`theirs`); everything else stays as the file has it. Objects merge key by key,
+ * other values (arrays included) are taken whole.
+ */
+export function mergeConfig(base: unknown, ours: unknown, theirs: unknown): unknown {
+  if (same(ours, base)) return theirs;
+  if (!isObject(ours) || !isObject(base) || !isObject(theirs)) return ours;
+  const out: Record<string, unknown> = { ...theirs };
+  for (const k of new Set([...Object.keys(base), ...Object.keys(ours)])) {
+    if (same(ours[k], base[k])) continue;
+    if (ours[k] === undefined) delete out[k];
+    else out[k] = mergeConfig(base[k], ours[k], theirs[k]);
+  }
+  return out;
+}
+
+/**
+ * Save a config. The service, `omem setup` and CLI commands each hold the config they loaded; a
+ * plain write of the whole object would undo what another of them (or a hand edit) changed since.
+ * So only the fields this process changed are written over the file as it is now, and `config`
+ * becomes the merged result (callers then copy it into `app.config`).
+ */
 export function saveConfig(config: Config, home = omemHome()) {
   mkdirSync(home, { recursive: true });
-  writeFileSync(configPath(home), JSON.stringify(config, null, 2) + "\n");
+  const path = configPath(home);
+  const base = loadedAs.get(resolve(home));
+  let theirs: unknown;
+  try {
+    theirs = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : undefined;
+  } catch {
+    theirs = undefined;
+  }
+  let merged = base && isObject(theirs) ? mergeConfig(base, config, theirs) : config;
+  let parsed: Config | undefined;
+  if (merged !== config) {
+    // A file another hand left unreadable for this version is overwritten as before, not merged.
+    const r = configSchema.safeParse((merged as { host?: string }).host === "127.0.0.1" ? { ...(merged as object), host: undefined } : merged);
+    if (r.success) parsed = r.data;
+    else merged = config;
+  }
+  writeFileSync(path, JSON.stringify(merged, null, 2) + "\n");
+  if (parsed) {
+    if (process.env.OMEM_PORT) parsed.port = Number(process.env.OMEM_PORT);
+    // Only the sections the file changed are replaced: others keep their objects (some are held by reference).
+    for (const k of Object.keys(parsed) as (keyof Config)[]) if (!same(config[k], parsed[k])) (config as Record<string, unknown>)[k] = parsed[k];
+  }
+  loadedAs.set(resolve(home), structuredClone(config));
 }
 
 export function allProfiles(config: Config): AgentProfile[] {

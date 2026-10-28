@@ -12,6 +12,7 @@ const hits = ref<Hit[]>([]);
 const active = ref(0);
 const input = ref<HTMLInputElement>();
 const scopeAll = ref(true);
+const searching = ref(false);
 let timer: ReturnType<typeof setTimeout> | undefined;
 let seq = 0;
 
@@ -29,13 +30,15 @@ watch(
 );
 watch([q, scopeAll], () => {
   clearTimeout(timer);
-  if (!q.value.trim()) return void (hits.value = []);
+  const my = ++seq;
+  if (!q.value.trim()) return void ((hits.value = []), (searching.value = false));
+  searching.value = true;
   timer = setTimeout(async () => {
-    const my = ++seq;
     const r = await get<{ hits: Hit[] }>(`/api/search?q=${encodeURIComponent(q.value)}&limit=14${scopeAll.value ? "" : `&space=${state.space}`}`).catch(() => ({ hits: [] }));
     if (my === seq) {
       hits.value = r.hits;
       active.value = 0;
+      searching.value = false;
     }
   }, 180);
 });
@@ -90,11 +93,12 @@ const typeLabel: Record<string, string> = { page: "页面", memory: "记忆", ch
       <div class="bar">
         <Icon name="search" />
         <input ref="input" v-model="q" placeholder="搜索原件、页面、记忆，或直接提问…" @keydown="onKey" />
+        <span v-if="searching" class="spinner" aria-label="搜索中" />
         <UiCheckbox v-model="scopeAll" size="sm" class="scope small">全部空间</UiCheckbox>
       </div>
       <div class="rows">
         <template v-for="(row, i) in rows" :key="i">
-          <button v-if="'hit' in row" class="row-item" :class="{ on: i === active }" @mouseenter="active = i" @click="choose(i)">
+          <button v-if="'hit' in row" class="row-item" :class="{ on: i === active, stale: searching }" @mouseenter="active = i" @click="choose(i)">
             <span class="badge">{{ typeLabel[row.hit.type] }}</span>
             <span class="main">
               <span class="ttl ellipsis">{{ row.hit.type === "page" ? row.hit.title : row.hit.type === "memory" ? row.hit.title || "记忆" : row.hit.uri }}<span v-if="row.hit.lineStart" class="muted">:{{ row.hit.lineStart }}</span></span>
@@ -107,7 +111,8 @@ const typeLabel: Record<string, string> = { page: "页面", memory: "记忆", ch
             <span class="main"><span class="ttl ellipsis">{{ row.label }}</span></span>
           </button>
         </template>
-        <div v-if="q && !hits.length" class="muted small pad">没有直接命中。按回车让助理调查。</div>
+        <div v-if="searching" class="muted small pad row searching"><span class="spinner" />搜索中…</div>
+        <div v-else-if="q && !hits.length" class="muted small pad">没有直接命中。按回车让助理调查。</div>
       </div>
       <div class="foot muted small"><kbd>↑</kbd><kbd>↓</kbd> 选择 · <kbd>Enter</kbd> 打开 · <kbd>Esc</kbd> 关闭</div>
     </div>
@@ -186,6 +191,12 @@ const typeLabel: Record<string, string> = { page: "页面", memory: "记忆", ch
 }
 .snip {
   font-size: 12px;
+}
+.row-item.stale {
+  opacity: 0.55;
+}
+.searching {
+  gap: 8px;
 }
 .pad {
   padding: 10px;

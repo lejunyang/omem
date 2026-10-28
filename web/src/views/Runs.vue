@@ -559,7 +559,7 @@ const kindOptions = computed(() => [
 
         <ReviewProcess v-if="hasReview" :rv="rv" :focus="processFocus" />
         <section v-else class="block">
-          <RunActivity :run-id="detail.run.id" :open="['queued', 'running'].includes(detail.run.status)">
+          <RunActivity :run-id="detail.run.id" :link="false" :open="['queued', 'running'].includes(detail.run.status)">
             <template #default="{ text, running }">
               <Markdown v-if="running && text" :source="text" />
             </template>
