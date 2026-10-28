@@ -150,7 +150,7 @@ export async function deliverCoordination(ctx: RunContext, coordinate: { workId:
 
 // Delegation to an agent spec ("/as name task", run_agent): answer goes back to the thread it came from.
 registerHandler("agent", async (ctx) => {
-  const { spec: name, task, threadId, agentWorkId, consultOf, rule, lark, silent, replyAt, resumeSessionId: resumeRule, execution, assistantScope } = ctx.run.input as {
+  const { spec: name, task, threadId, agentWorkId, consultOf, rule, lark, silent, meeting, replyAt, resumeSessionId: resumeRule, execution, assistantScope } = ctx.run.input as {
     execution?: Execution;
     assistantScope?: import("./agent-work.ts").AssistantScope;
     spec: string;
@@ -163,6 +163,8 @@ registerHandler("agent", async (ctx) => {
     lark?: { chats: string[] | null; draft?: boolean; urgent?: boolean; private?: boolean; bot?: string };
     /** A rule's silent investigation: nothing is delivered; the agent posts itself when it decides to. */
     silent?: { chatId: string; messageId: string; topicId: string | null };
+    /** Listening to a meeting for a rule (lark-meetings.ts): like silent, it speaks only through notify / meeting_send. */
+    meeting?: { id: string; bot: string | null; answer: boolean };
     /** A rule's agent answering in a topic under this message (its bubble or answer opens the topic). */
     replyAt?: { chatId: string; messageId: string };
     /** A silent agent picking up a topic it follows continues its earlier session. */
@@ -208,7 +210,7 @@ registerHandler("agent", async (ctx) => {
       signal: ctx.signal,
       onEvent: (e) => ctx.event(e.type, e),
       resumeSessionId: resume,
-      persistSession: !!agentWorkId || !!silent,
+      persistSession: !!agentWorkId || !!silent || !!meeting,
       lark: assistantScope?.lark ?? lark,
     });
   let r;
@@ -230,7 +232,7 @@ registerHandler("agent", async (ctx) => {
     await (await import("../channels/lark-cot.ts")).endCot(ctx.app, ctx.run.id, { ok: true, quiet });
     if (quiet) return { answer, quiet: true, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
   }
-  if (silent) {
+  if (silent || meeting) {
     // Whatever it had to say it already posted (or told the owner); the text stays in the run.
   } else if (rule && isQuiet(answer)) {
     // It already posted (lark_send, to @ someone) and ends QUIET so the answer is not sent twice.

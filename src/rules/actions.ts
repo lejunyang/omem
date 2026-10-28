@@ -62,6 +62,11 @@ async function runAction(app: App, rule: Rule, a: RuleAction, e: RuleEvent, reas
       const r = fireWake(app, { note: a.note, target: a.target, setBy: t?.setBy ?? { runId: null, agent: "规则" }, setAt: t?.setAt ?? rule.createdAt }, eventSummary(e));
       return { action: "wake", ok: !r.skipped, detail: r.skipped ?? `已唤醒 ${a.target.spec ?? "会话里的助理"}`, runId: r.runId };
     }
+    case "meeting-bot": {
+      const { meetingAction } = await import("../channels/lark-meetings.ts");
+      const detail = await meetingAction(app, { ...a, ruleId: rule.id, ruleName: rule.name, ruleDescription: rule.description, ruleSpace: rule.spaceId }, e);
+      return { action: "meeting-bot", ok: true, detail };
+    }
     case "agent":
       return a.reply === "silent" ? silentAgent(app, rule, a, e, reason, extra.discussion ?? "") : agentAction(app, rule, a, e, reason);
   }
@@ -87,7 +92,7 @@ function ruleFiles(app: App, rule: Rule) {
 }
 
 /** The main assistant run by a rule: one space, the rule's chat only, and no delegation or rule editing. */
-function assistantScope(spec: string, space: string, lark: { chats: string[]; draft: boolean }) {
+export function assistantScope(spec: string, space: string, lark: { chats: string[]; draft: boolean }) {
   if (spec !== "assistant") return {};
   return { assistantScope: { spaces: [space], userId: OWNER, denyTools: ["run_agent", "delegate_code", "continue_agent_work", "continue_code_run", "apply_code_run", "code_git_action", "save_rule", "set_chat_watch"], lark } };
 }

@@ -67,6 +67,9 @@ export const LARK_BOT_ADDONS = {
       "task:task:write",
       "task:tasklist:read",
       "vc:meeting.meetingevent:read",
+      // Rules that bring the bot into the owner's meetings (lark-meetings.ts).
+      "vc:meeting.bot.join:write",
+      "vc:meeting.message:write",
     ],
     // User identity: what personal capture through lark-cli reads (only if lark-cli is pointed at this same app).
     user: [
@@ -88,6 +91,8 @@ export const LARK_BOT_ADDONS = {
       "minutes:minutes.search:read",
       "minutes:minutes.artifacts:read",
       "vc:note:read",
+      // Knowing when the owner joins a meeting, and reading what is said there (lark-meetings.ts).
+      "vc:meeting.meetingevent:read",
     ],
   },
   events: {
@@ -226,10 +231,31 @@ export async function registerLarkBot(opts: {
 export type LarkCheck = { botName?: string; botOpenId?: string; missingScopes: string[]; scopesUnknown?: boolean; error?: string };
 
 /** The developer console page that asks for these permissions on this app (the owner opens it and applies). */
-export function larkScopeLink(appId: string, scopes: string[], brand?: string) {
+export function larkScopeLink(appId: string, scopes: string[], brand?: string, tokenType: "tenant" | "user" = "tenant") {
   const host = brand === "lark" ? "open.larksuite.com" : "open.feishu.cn";
   // Scope names are [a-z:._] only; Feishu's own links write them as they are.
-  return `https://${host}/app/${appId}/auth?q=${scopes.join(",")}&op_from=openapi&token_type=tenant`;
+  return `https://${host}/app/${appId}/auth?q=${scopes.join(",")}&op_from=openapi&token_type=${tokenType}`;
+}
+
+/** The developer console page where an app subscribes to events. */
+export function larkEventLink(appId: string, brand?: string) {
+  return `https://${brand === "lark" ? "open.larksuite.com" : "open.feishu.cn"}/app/${appId}/event`;
+}
+
+/** The permissions granted to an app (tenant token → application info); null when they cannot be read. */
+export async function larkAppScopes(appId: string, appSecret: string, request: typeof fetch = fetch): Promise<Set<string> | null> {
+  const base = "https://open.feishu.cn/open-apis";
+  try {
+    const t = (await (
+      await request(`${base}/auth/v3/tenant_access_token/internal`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ app_id: appId, app_secret: appSecret }), signal: AbortSignal.timeout(15_000) })
+    ).json()) as { code?: number; tenant_access_token?: string };
+    if (t.code !== 0 || !t.tenant_access_token) return null;
+    const app = (await (await request(`${base}/application/v6/applications/${appId}?lang=zh_cn`, { headers: { authorization: `Bearer ${t.tenant_access_token}` }, signal: AbortSignal.timeout(15_000) })).json()) as { code?: number; data?: { app?: { scopes?: { scope: string }[] } } };
+    const have = new Set((app.data?.app?.scopes ?? []).map((s) => s.scope));
+    return app.code === 0 && have.size ? have : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Get a tenant token and read the bot's info and granted scopes. Does not send anything. */

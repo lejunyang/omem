@@ -17,7 +17,7 @@
 一条规则（表 `rules`）：
 
 - `description`：本人的原话，规则的依据。条件和动作都可以重新从它生成。
-- `trigger`：`message`（新消息，含卡片）、`chat-new`（第一次看到的群）、`schedule`（cron）。`once: "event" | "chat"`：每条消息都可能触发，或每个群只触发一次（拉机器人、开始监听这类）。
+- `trigger`：`message`（新消息，含卡片）、`chat-new`（第一次看到的群）、`schedule`（cron）、`meeting`（本人加入飞书视频会议，见下文“会议规则”）。`once: "event" | "chat"`：每条消息都可能触发，或每个群只触发一次（拉机器人、开始监听这类）。
 - `conditions`：确定的条件（JSON，见下），可以为空。
 - `judge`：`code`（只看条件）、`ai`（只交给模型）、`code+ai`（条件先筛，命中的再请模型确认）。条件为空时只能是 `ai`。
 - `actions`：按顺序执行。
@@ -33,7 +33,7 @@
 ] }
 ```
 
-字段：`chat.id`、`chat.name`、`chat.kind`（group / p2p）、`chat.bots`（群里的机器人名字，第一次用到时用本人的 lark-cli 读成员，缓存一天）、`chat.hasOwnBot`（群里有没有 omem 自己的机器人，按 `lark.appId` 比对成员的应用 id，不看名字；机器人收到的消息直接算有；读不到成员时视为未知，is true / is false 都不成立）、`sender.name`、`sender.email`、`sender.kind`（owner / user / bot）、`message.text`、`message.type`（text / post / interactive（卡片）/ image / file…）、`message.mentionsOwner`、`message.mentionsBot`、`message.inTopic`、`message.cardTitle`。运算：`equals`、`contains`、`startsWith`、`endsWith`、`matches`（正则）、`in`（列表）、`is`（布尔）。组合：`all`、`any`、`not`。
+字段：`chat.id`、`chat.name`、`chat.kind`（group / p2p）、`chat.bots`（群里的机器人名字，第一次用到时用本人的 lark-cli 读成员，缓存一天）、`chat.hasOwnBot`（群里有没有 omem 自己的机器人，按 `lark.appId` 比对成员的应用 id，不看名字；机器人收到的消息直接算有；读不到成员时视为未知，is true / is false 都不成立）、`sender.name`、`sender.email`、`sender.kind`（owner / user / bot）、`message.text`、`message.type`（text / post / interactive（卡片）/ image / file…）、`message.mentionsOwner`、`message.mentionsBot`、`message.inTopic`、`message.cardTitle`。运算：`equals`、`contains`、`startsWith`、`endsWith`、`matches`（正则）、`in`（列表）、`is`（布尔）、`gte` / `lte`（比数字，用于参会人数）。组合：`all`、`any`、`not`。会议规则只用会议字段：`meeting.title`、`meeting.no`、`meeting.participants`（名字列表，`contains` / `in` 判断某人在不在）、`meeting.participantCount`、`meeting.host`。
 
 “固化成代码”就是这份 JSON：宿主直接求值，不执行模型写的程序。模型从规则原话生成条件，本人在页面上看到的是一句句“群名包含 报警”，可以直接改；生成后先在最近的消息上试一遍，看命中了哪些。
 
@@ -80,6 +80,26 @@
 - `capture`：把这个群设为“与本人有关”并立刻采集一次（之后按 ingest 策略整理）。
 - `notify`：通知本人（可标紧急），正文带规则名、事件摘要和理由。
 
+### 会议规则：本人入会时拉机器人进会
+
+“我加入标题带‘评审’、三个人以上的会议时，问我要不要把机器人拉进去，记录会议，有人问到我时提醒我”：触发 `meeting`，条件 `meeting.title contains 评审` 且 `meeting.participantCount gte 3`，动作 `meeting-bot`。实现在 `src/channels/lark-meetings.ts`。
+
+- **知道本人入会**：本人的 lark-cli（用户身份，只读）常驻 `event consume vc.meeting.participant_meeting_joined_v1`，另一个进程收 `…_ended_v1`；只在有启用的会议规则时运行，停时关掉 stdin 让 lark-cli 自己退订。收不到事件（没订阅、没权限、进程起不来）时每分钟查一次 `vc +meeting-list-active` 代替。每场会议记一行 `lark_meetings`，交给规则一次；没有规则命中时，入会后十分钟内参会人变了再交一次（每条规则每场会议仍只触发一次，`rule_handled` 的键是 `meeting:<id>`）。参会人来自本人身份读到的会中事件（加入减离开）。不写条件的会议规则表示每场会议。
+- **拉机器人**：`bots` 是 `main` 或 `lark.bots` 的 id，每个机器人用自己的应用身份调 `POST /open-apis/vc/v1/bots/join`（`join_type: 1`，9 位会议号）。`confirm`（默认开）先由主机器人给本人发卡片（`card_interactions.purpose = meeting-join`），点“拉进去”才入会。机器人入会所有参会人都能看到；不拉机器人（`bots` 为空）只以本人身份读会中事件做记录，别人看不到，不用问。入会失败（会议没打开“允许智能体加入”、密码、等候室、缺权限）通知本人原因。没有任何以本人身份写飞书的操作。
+- **会里能拿到什么**：结构化事件，没有音视频——参会人加入 / 离开、实时转写（`sentence_id` 会被修订，按最新文本覆盖原位置）、会中聊天（表情是 `message_type = 3`）、共享文档开始 / 结束（带文档链接）。机器人在会中时用它的身份读 `GET /open-apis/vc/v1/bots/events`（按 `page_token` 增量），否则以本人身份读 `vc +meeting-events`。每 20 秒读一次，写进 `lark_meeting_lines`。
+- **记录**（`record`，默认开）：整场会议是一份 `kind=meeting` 的原件（`lark:meeting:<id>`），边开边更新，会议结束后交给整理；之后每 10 分钟查一次 `vc +detail` 拿妙记，把妙记（总结、待办、章节、逐字稿）补进同一份原件，并记为已读，每小时的妙记采集不再另存一份。`importShared` 把会上共享的飞书文档导入同一空间。
+- **旁听**（`spec`）：每 3 分钟（新内容超过 40 行时提前）把新的记录交给这个档案一次，同一会议串行、接着上一轮的会话（`lane = meeting:<id>`）。它不复述、不总结，只有有人点本人的名、要本人表态，或出现和本人有关的决定、待办、风险时用 `notify` 告诉本人，其余回 QUIET（运行输入带 `meeting`，结果不投递）。`answer` 打开时，会中聊天里点名某个机器人的话立刻交给它，它用 `meeting_send` 以那个机器人的身份在会中聊天回答（只有这类运行能用这个工具）。会议结束（或本人离会）后再跑一次，给本人一份简短纪要（结论、待办、未决问题、风险），经通知送达。
+- **本人离会**：读到本人的 `participant_left`（按 lark-cli 和各机器人应用里本人的 open_id 或名字认）就结束这场的跟进；`leaveWithOwner`（默认开）让机器人一起 `POST …/bots/leave`。本人回到同一场会议时按原来的安排再拉一次。
+- **限制**：会议规则只能用会议字段，动作只能是拉机器人入会、通知，或交给 Agent（只告诉我）；不能等待、跳过或静默排查。机器人不能在会上说话（实时音频需要单独的协议，不在本期）。
+
+### 权限检查
+
+会议规则保存后（规则页的“飞书权限”和 `save_rule` 的结果里）立即检查，`src/rules/permissions.ts`：
+
+- lark-cli：有没有配置应用、有没有以本人身份登录；应用有没有开通用户身份的 `vc:meeting.meetingevent:read`（没开给开发者后台申请链接，`token_type=user`）；开了但登录没授权时发起只要这一项的授权，给本人确认链接（`requestUserScopes`）。入会事件要在 lark-cli 的应用里订阅（给“事件与回调”页面链接）；事件流起来后显示“正在接收”，起不来时显示 lark-cli 的报错。
+- 每个要拉的机器人：用它的 App Secret 换租户令牌读已开通的权限，缺 `vc:meeting.bot.join:write`、`vc:meeting.meetingevent:read`（回答提问还要 `vc:meeting.message:write`）就给这个应用的申请链接。
+- 读不到的列为注意事项：权限的数据范围（“会议的归属者 包含 与应用的可用范围一致”）、会议本身的“允许智能体加入”和 AI 纪要开关。
+
 ### 临时规则：Agent 设给自己的唤醒
 
 本人的规则之外，Agent 可以为自己手上的事设临时的等待（`src/agents/wakes.ts`）：
@@ -106,7 +126,7 @@
 
 ## 实现
 
-`src/rules/`：`types.ts`（结构与校验）、`conditions.ts`（求值与中文描述）、`store.ts`（表与去重）、`engine.ts`（事件分发、判断、试运行）、`actions.ts`、`compile.ts`（模型生成条件、模型判断）。事件来源：`lark-bot.ts`（机器人所在群的实时消息）、`lark-personal.ts`（本人采集的所有会话，含第一次读到的群）、定时任务 `rule:<id>`。
+`src/rules/`：`types.ts`（结构与校验）、`conditions.ts`（求值与中文描述）、`store.ts`（表与去重）、`engine.ts`（事件分发、判断、试运行）、`actions.ts`、`compile.ts`（模型生成条件、模型判断）。事件来源：`lark-bot.ts`（机器人所在群的实时消息）、`lark-personal.ts`（本人采集的所有会话，含第一次读到的群）、`lark-meetings.ts`（本人入会）、定时任务 `rule:<id>`。权限检查在 `permissions.ts`。
 
 ## 所属空间与主助手
 

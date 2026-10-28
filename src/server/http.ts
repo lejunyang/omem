@@ -1279,6 +1279,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const r = getRule(app, id);
     return { ...r, conditionText: describe(r.conditions), firings: listFirings(app, id) };
   });
+  // What a rule needs from Feishu (meetings: lark-cli and bot permissions), with links to fix the gaps.
+  server.get("/api/rules/:id/permissions", async (req) => {
+    const { getRule } = await import("../rules/store.ts");
+    return (await import("../rules/permissions.ts")).rulePermissions(app, getRule(app, (req.params as { id: string }).id));
+  });
   server.post("/api/rules", async (req) => (await import("../rules/store.ts")).saveRule(app, req.body as never, "user"));
   server.put("/api/rules/:id", async (req) => (await import("../rules/store.ts")).saveRule(app, { ...(req.body as object), id: (req.params as { id: string }).id } as never, "user"));
   server.delete("/api/rules/:id", async (req) => {
@@ -1296,11 +1301,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return (await import("../rules/engine.ts")).testRule(app, b.rule as never, { chatId: b.chatId, days: b.days, ai: b.ai });
   });
   server.get("/api/rule-options", async () => {
-    const { FIELDS, OPS } = await import("../rules/types.ts");
+    const { FIELDS, OPS, EVENT_FIELDS } = await import("../rules/types.ts");
+    const { larkBotInfo } = await import("../channels/lark-send.ts");
     const { ruleGroups } = await import("../rules/destinations.ts");
     return {
       fields: FIELDS,
       ops: OPS,
+      eventFields: EVENT_FIELDS,
+      // omem's bots a meeting rule can bring in ("main" and lark.bots).
+      bots: [
+        ...(app.config.lark.appId ? [{ id: "main", name: one<{ value: string }>(app.db, "select value from kv where key = 'lark_bot_name'")?.value ?? larkBotInfo("main")?.name ?? "主机器人" }] : []),
+        ...app.config.lark.bots.filter((b) => b.enabled).map((b) => ({ id: b.id, name: larkBotInfo(b.id)?.name ?? b.id })),
+      ],
       specs: [{ name: "assistant", description: "主助手：未指定专用档案的日常任务" }, ...listAgentSpecs(app).map((s) => ({ name: s.name, description: s.description }))],
       chats: all<{ chat_id: string; name: string }>(app.db, "select chat_id, name from lark_cursors where chat_id like 'oc_%' and name != '' order by updated_at desc limit 300"),
       conversations: all(app.db, "select id,title,channel,space_id,external_id from conversations where user_id = ? order by updated_at desc limit 300", OWNER),

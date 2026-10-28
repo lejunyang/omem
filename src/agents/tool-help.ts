@@ -30,7 +30,7 @@ export const TOOL_GROUPS: { id: string; label: string; tools: string[] }[] = [
   { id: "agents", label: "Agent、技能与运行", tools: ["list_agents", "save_agent", "run_agent", "continue_agent_work", "ask_agent", "list_ai_backends", "switch_run_ai", "list_skills", "read_skill", "save_skill", "propose_profile_change", "list_runs", "read_run"] },
   { id: "owner", label: "问本人、唤醒与规则", tools: ["ask_owner", "wait_answer", "suggest_next", "wake_later", "wake_on_message", "cancel_wake", "list_rules", "save_rule"] },
   { id: "code", label: "编码交办、评审与 Git", tools: ["delegate_code", "review_branch", "list_branches", "continue_code_run", "fix_review", "message_code_run", "set_code_review", "stop_code_run", "resplit_change_points", "retry_code_progress", "apply_code_run", "code_git_status", "code_git_action", "submit_review", "submit_change_points", "rule_review"] },
-  { id: "lark", label: "飞书", tools: ["lark_send", "lark_react", "lark_card", "lark_update_card", "lark_send_file", "set_chat_watch", "lark_wiki_crawl", "lark_doc_create", "lark_doc_update", "lark_doc_move", "list_lark_chats", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription"] },
+  { id: "lark", label: "飞书", tools: ["lark_send", "lark_react", "meeting_send", "lark_card", "lark_update_card", "lark_send_file", "set_chat_watch", "lark_wiki_crawl", "lark_doc_create", "lark_doc_update", "lark_doc_move", "list_lark_chats", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription"] },
   { id: "learning", label: "学习", tools: ["create_card", "set_learning_goal", "learning_progress"] },
   { id: "plugins", label: "插件", tools: ["plugin_query", "plugin_put"] },
 ];

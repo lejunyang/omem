@@ -18,6 +18,11 @@ function larkCliScript() {
   }
 }
 
+/** The command line that runs lark-cli with these arguments (for long-running processes such as `event consume`). */
+export function larkCliCommand(args: string[]): [string, string[]] {
+  return [process.execPath, [larkCliScript(), ...args]];
+}
+
 /** Run lark-cli in the terminal (device-flow login): its prompts and QR code go straight to the user. */
 export function larkCliInteractive(args: string[]) {
   if (override) return 0;

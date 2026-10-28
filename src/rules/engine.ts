@@ -163,8 +163,13 @@ export async function judge(app: App, rule: Pick<Rule, "id" | "description" | "c
   if (e.kind === "schedule") return { match: true, by: "code", reason: "定时" };
   const read = eventReader(e, { chatBots: (id) => chatBots(app, id), ownAppId: app.config.lark.appId || undefined });
   if (rule.judge !== "ai") {
-    if (!rule.conditions || !(await evaluate(rule.conditions, read))) return { match: false, by: "code", reason: "" };
-    if (rule.judge === "code") return { match: true, by: "code", reason: describe(rule.conditions) };
+    // A meeting rule without conditions is about every meeting the owner joins.
+    if (!rule.conditions && e.kind === "meeting") {
+      if (rule.judge === "code") return { match: true, by: "code", reason: "每场会议" };
+    } else {
+      if (!rule.conditions || !(await evaluate(rule.conditions, read))) return { match: false, by: "code", reason: "" };
+      if (rule.judge === "code") return { match: true, by: "code", reason: describe(rule.conditions) };
+    }
   }
   if (opts.ai === false) return { match: true, by: rule.judge, reason: "（试运行没有请模型判断）" };
   if (!takeAiBudget(rule.id)) return { match: false, by: "limit", reason: `这一小时已请模型判断 ${AI_PER_HOUR} 次` };
@@ -232,6 +237,7 @@ export function eventFromRow(app: App, r: MessageRow, owner?: string | null): Ru
  */
 export async function testRule(app: App, input: RuleInput, opts: { chatId?: string; days?: number; limit?: number; ai?: boolean } = {}) {
   const rule = ruleInputSchema.parse({ ...input, enabled: false });
+  if (rule.trigger.event === "meeting") return testMeetingRule(app, rule);
   if (rule.trigger.event !== "message") return { checked: 0, matches: [], note: "只有“新消息”规则能拿最近的消息试" };
   const since = Date.now() - (opts.days ?? 3) * 86400_000;
   const rows = all<MessageRow>(
@@ -261,4 +267,16 @@ export async function testRule(app: App, input: RuleInput, opts: { chatId?: stri
     matches,
     note: rule.judge === "ai" && !opts.ai ? "这条规则只交给模型判断：勾选“请模型判断”抽样试几条" : rule.judge === "code+ai" && !opts.ai ? "列出的是条件命中的消息，还要模型确认" : "",
   };
+}
+
+/** A meeting rule tried on the meetings omem saw the owner join recently (no model, nothing fired). */
+async function testMeetingRule(app: App, rule: Rule | ReturnType<typeof ruleInputSchema.parse>) {
+  const { recentMeetingEvents } = await import("../channels/lark-meetings.ts");
+  const events = recentMeetingEvents(app, 30);
+  const matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string }[] = [];
+  for (const e of events) {
+    const d = await judge(app, { ...rule, id: `test:${now()}` }, e, { ai: false });
+    if (d.match) matches.push({ messageId: e.meeting!.id, chat: e.meeting!.title || "（无标题会议）", sender: `${e.meeting!.participants.length} 人`, text: e.meeting!.participants.join("、"), at: e.at, reason: d.reason, by: d.by });
+  }
+  return { checked: events.length, matches, note: events.length ? (rule.judge !== "code" ? "列出的是条件命中的会议，还要模型确认" : "") : "还没有记录到你加入过的会议（启用会议规则后，omem 才开始留意你入会）" };
 }

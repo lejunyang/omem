@@ -23,9 +23,19 @@ export const FIELDS = {
   "message.mentionsBot": "@ 了 omem 机器人",
   "message.inTopic": "在话题里",
   "message.cardTitle": "卡片标题",
+  "meeting.title": "会议标题",
+  "meeting.no": "会议号（9 位）",
+  "meeting.participants": "参会人（名字：你入会时和之后十分钟内在会里的人）",
+  "meeting.participantCount": "参会人数",
+  "meeting.host": "主持人",
 } as const;
 export type Field = keyof typeof FIELDS;
-export const OPS = ["equals", "contains", "startsWith", "endsWith", "matches", "in", "is"] as const;
+/** Which fields each trigger has: a meeting has no chat or message, a message no meeting. */
+export const EVENT_FIELDS: Record<"message" | "meeting", Field[]> = {
+  message: (Object.keys(FIELDS) as Field[]).filter((f) => !f.startsWith("meeting.")),
+  meeting: (Object.keys(FIELDS) as Field[]).filter((f) => f.startsWith("meeting.")),
+};
+export const OPS = ["equals", "contains", "startsWith", "endsWith", "matches", "in", "is", "gte", "lte"] as const;
 export type Op = (typeof OPS)[number];
 
 export type Leaf = { field: Field; op: Op; value: string | boolean | string[] };
@@ -68,6 +78,26 @@ export const actionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("invite-bot") }),
   z.object({ type: z.literal("capture") }),
   z.object({ type: z.literal("notify"), urgent: z.boolean().default(false) }),
+  /**
+   * The owner joined a meeting (trigger `meeting`): bring omem's bots in (`bots`: "main" or ids of
+   * lark.bots; empty = none, listening as the owner only), after asking the owner on a card unless
+   * `confirm` is off. `record` keeps the meeting (transcript, chat, who came and went) as a source;
+   * `spec` listens along and tells the owner when they are needed; `answer` lets it answer questions
+   * put to a bot in the meeting chat; `importShared` imports documents shared on screen;
+   * `leaveWithOwner` takes the bots out when the owner leaves. See src/channels/lark-meetings.ts.
+   */
+  z.object({
+    type: z.literal("meeting-bot"),
+    bots: z.array(z.string()).max(8).default(["main"]),
+    confirm: z.boolean().default(true),
+    record: z.boolean().default(true),
+    spec: z.string().default(""),
+    space: z.string().transform(v => v || undefined).optional(),
+    task: z.string().default(""),
+    answer: z.boolean().default(false),
+    importShared: z.boolean().default(true),
+    leaveWithOwner: z.boolean().default(true),
+  }),
   /** Only in temporary rules an agent sets (agents/wakes.ts): wake a conversation's agent or a profile. */
   z.object({ type: z.literal("wake"), note: z.string(), target: z.object({ conversationId: z.string().optional(), spec: z.string().optional(), resumeRunId: z.string().optional() }) }),
 ]);
@@ -80,7 +110,7 @@ export const ruleInputSchema = z.object({
   description: z.string().trim().min(1).max(2000),
   enabled: z.boolean().default(false),
   trigger: z.object({
-    event: z.enum(["message", "chat-new", "schedule"]).default("message"),
+    event: z.enum(["message", "chat-new", "schedule", "meeting"]).default("message"),
     once: z.enum(["event", "chat"]).default("event"),
     cron: z.string().optional(),
     /** Wait this long after a match before acting (no one responded in time → act). */
@@ -104,13 +134,15 @@ export type Rule = z.infer<typeof ruleInputSchema> & { id: string; createdAt: st
 export type RuleEvent = {
   /** Dedupe key: one message (or chat, or schedule tick) is handled once per rule. */
   key: string;
-  kind: "message" | "chat-new" | "schedule";
+  kind: "message" | "chat-new" | "schedule" | "meeting";
   at: string;
   chat?: { id: string; name: string; kind: "group" | "p2p" };
   sender?: { id?: string; name: string; email?: string | null; kind: "owner" | "user" | "bot" };
   message?: { id: string; text: string; type: string; mentionsOwner: boolean; mentionsBot: boolean; topicId?: string | null; cardTitle?: string | null };
+  /** The meeting the owner joined (trigger `meeting`). */
+  meeting?: { id: string; no?: string; title: string; participants: string[]; host?: string; calendarEventId?: string };
   /** Where it came from: the bot sees groups it is in in real time; the owner's capture sees every chat. */
-  via: "bot" | "capture" | "schedule" | "test";
+  via: "bot" | "capture" | "schedule" | "test" | "meeting";
   /** The Feishu bot that saw it (via bot): "main" or one of lark.bots; its agent answers through it. */
   bot?: string;
 };

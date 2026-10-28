@@ -85,7 +85,8 @@ export function overwriteLocal(home: string, fetched: Fetched | string) {
   // Validate the snapshot and schema before moving any local data.
   openDb(join(dir, "omem.db")).close();
   readManifest(dir);
-  const deviceTables = ["api_tokens", "kv", "lark_cursors"];
+  // Meetings this device is following (lark-meetings.ts) stay with it; their records travel as sources.
+  const deviceTables = ["api_tokens", "kv", "lark_cursors", "lark_meetings", "lark_meeting_lines"];
   const deviceData = new Map<string, Row[]>();
   if (existsSync(join(home, "omem.db"))) {
     const old = openDb(join(home, "omem.db"));

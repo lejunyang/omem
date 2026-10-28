@@ -23,7 +23,8 @@ type Action =
   | { type: "watch"; spec: string; on: "all" | "mention" | "keyword"; pattern?: string; reply: Reply }
   | { type: "invite-bot" }
   | { type: "capture" }
-  | { type: "notify"; urgent: boolean };
+  | { type: "notify"; urgent: boolean }
+  | { type: "meeting-bot"; bots: string[]; confirm: boolean; record: boolean; spec: string; space?: string; task: string; answer: boolean; importShared: boolean; leaveWithOwner: boolean };
 type Rule = {
   id?: string;
   spaceId?: string;
@@ -31,7 +32,7 @@ type Rule = {
   name: string;
   description: string;
   enabled: boolean;
-  trigger: { event: "message" | "chat-new" | "schedule"; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[] };
+  trigger: { event: "message" | "chat-new" | "schedule" | "meeting"; once: "event" | "chat"; cron?: string; waitMinutes: number; unless: Unless[] };
   conditions: Condition | null;
   judge: "code" | "ai" | "code+ai";
   actions: Action[];
@@ -41,7 +42,7 @@ type Rule = {
   createdBy?: string;
 };
 type Firing = { id: number; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
-type Options = { fields: Record<string, string>; ops: string[]; specs: { name: string; description: string }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
+type Options = { fields: Record<string, string>; eventFields?: Record<"message" | "meeting", string[]>; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
 type TestResult = { checked: number; matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string }[]; note: string };
 
 const route = useRoute();
@@ -104,6 +105,8 @@ async function loadCurrent() {
     firings.value = r.firings;
     form.value = { ...r };
     dirty.value = false;
+    perms.value = null;
+    if (r.trigger.event === "meeting") void checkPermissions(r.id!);
   } catch (e) {
     toast((e as Error).message, "error");
   }
@@ -155,6 +158,7 @@ async function save() {
     await loadList();
     if (!f.id) await router.replace({ query: { id: saved.id! } });
     else await loadCurrent();
+    if (f.trigger.event === "meeting") void checkPermissions(saved.id!);
   } catch (e) {
     toast((e as Error).message, "error");
   } finally {
@@ -179,7 +183,7 @@ async function remove() {
 }
 
 // ---- actions ------------------------------------------------------------------------
-const ACTION_LABEL: Record<Action["type"], string> = { agent: "交给 Agent", watch: "持续监听这个群", "invite-bot": "拉机器人进群", capture: "优先采集这个群", notify: "通知我" };
+const ACTION_LABEL: Record<Action["type"], string> = { agent: "交给 Agent", watch: "持续监听这个群", "invite-bot": "拉机器人进群", capture: "优先采集这个群", notify: "通知我", "meeting-bot": "拉机器人入会" };
 const replyOptions = [
   { value: "none", label: "只告诉我" },
   { value: "draft", label: "先给我看" },
@@ -223,6 +227,7 @@ function addAction(type: string | null) {
     type === "agent" ? { type, spec, task: "", ownTopic: false, reply: "none" }
     : type === "watch" ? { type, spec, on: "mention", reply: "draft" }
     : type === "notify" ? { type, urgent: false }
+    : type === "meeting-bot" ? meetingAction()
     : ({ type } as Action);
   form.value.actions.push(a);
   touch();
@@ -235,11 +240,54 @@ function moveAction(i: number, d: number) {
   touch();
 }
 const scheduleOnly = computed(() => form.value?.trigger.event === "schedule");
+const meetingRule = computed(() => form.value?.trigger.event === "meeting");
+const meetingAction = (): Action => ({ type: "meeting-bot", bots: options.value.bots?.length ? [options.value.bots[0].id] : [], confirm: true, record: true, spec: "", task: "", answer: false, importShared: true, leaveWithOwner: true });
 const addOptions = computed(() =>
   (Object.keys(ACTION_LABEL) as Action["type"][])
+    .filter((t) => (meetingRule.value ? ["meeting-bot", "notify"].includes(t) : t !== "meeting-bot"))
     .filter((t) => !scheduleOnly.value || t === "agent" || t === "notify")
     .map((t) => ({ value: t as string | null, label: ACTION_LABEL[t], hint: t === "invite-bot" && !options.value.botReady ? "需要先配置飞书机器人" : "" })),
 );
+
+// ---- meetings ---------------------------------------------------------------------------
+/** The condition fields that make sense for this trigger: a meeting has no chat or message. */
+const condFields = computed(() => {
+  const keys = options.value.eventFields?.[meetingRule.value ? "meeting" : "message"];
+  return keys ? Object.fromEntries(keys.map((k) => [k, options.value.fields[k]])) : options.value.fields;
+});
+const fieldOps = { "meeting.participantCount": ["gte", "lte", "equals"] };
+const meetingSpecOptions = computed(() => [{ value: "", label: "不旁听" }, ...specOptions.value]);
+/** Switching to or from the meeting trigger: keep the actions that still fit, add or drop the meeting one. */
+function onTrigger() {
+  const f = form.value;
+  if (!f) return;
+  if (f.trigger.event === "meeting") {
+    f.actions = f.actions.filter((a) => a.type === "notify" || a.type === "meeting-bot");
+    if (!f.actions.some((a) => a.type === "meeting-bot")) f.actions.unshift(meetingAction());
+    f.trigger.waitMinutes = 0;
+    f.trigger.unless = [];
+  } else f.actions = f.actions.filter((a) => a.type !== "meeting-bot");
+  if (!f.actions.length) f.actions.push({ type: "agent", spec: "assistant", task: "", ownTopic: false, reply: "none" });
+  touch();
+}
+function toggleBot(a: Extract<Action, { type: "meeting-bot" }>, id: string, on: boolean) {
+  a.bots = on ? [...new Set([...a.bots, id])] : a.bots.filter((b) => b !== id);
+  if (!a.bots.length) a.answer = false;
+  touch();
+}
+type Perms = { issues: { who: string; problem: string; scopes?: string[]; link?: string; linkText?: string }[]; notes: string[]; ok: string[] };
+const perms = ref<Perms | null>(null);
+const checking = ref(false);
+async function checkPermissions(id: string) {
+  checking.value = true;
+  try {
+    perms.value = await get<Perms>(`/api/rules/${id}/permissions`);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    checking.value = false;
+  }
+}
 
 // ---- trying it ------------------------------------------------------------------------
 const test = ref<TestResult | null>(null);
@@ -267,6 +315,7 @@ const EXAMPLES = [
   "报警群里小王或小李发报警卡片时，在卡片下开话题交给 alert-analyst 分析，需要关注就直接 @ 值班人",
   "群名包含“答疑”的群，把机器人拉进去，之后 @ 机器人的问题交给 support-agent，回复先给我看",
   "任何群里有人提到“合同到期”就通知我",
+  "我加入标题带“评审”的会议时，问我要不要把机器人拉进去，记录会议，有人问到我时提醒我",
 ];
 function startFrom(text: string) {
   void router.replace({ query: { new: "1" } }).then(() => {
@@ -385,10 +434,11 @@ function startFrom(text: string) {
         <section class="block">
           <div class="block-head"><h3>什么时候看</h3></div>
           <div class="row wrap">
-            <UiSegmented v-model="form.trigger.event" size="sm" :options="[{ value: 'message', label: '新消息' }, { value: 'chat-new', label: '第一次看到的群' }, { value: 'schedule', label: '定时' }]" aria-label="触发" @change="touch" />
+            <UiSegmented v-model="form.trigger.event" size="sm" :options="[{ value: 'message', label: '新消息' }, { value: 'chat-new', label: '第一次看到的群' }, { value: 'schedule', label: '定时' }, { value: 'meeting', label: '我加入会议时' }]" aria-label="触发" @change="onTrigger" />
             <UiSegmented v-if="form.trigger.event === 'message'" v-model="form.trigger.once" size="sm" :options="[{ value: 'event', label: '每条消息' }, { value: 'chat', label: '每个群只一次' }]" aria-label="触发次数" @change="touch" />
             <input v-if="form.trigger.event === 'schedule'" v-model="form.trigger.cron" class="input sm mono cron" placeholder="0 9 * * 1-5" aria-label="cron" @input="touch" />
-            <UiSelect v-if="form.trigger.event !== 'schedule'" :model-value="form.spaceId ?? ''" size="sm" width="200px" :options="spaceOptions('所有空间的群')" aria-label="只看哪个空间的群" @update:model-value="(v) => ((form!.spaceId = String(v || '')), touch())" />
+            <UiSelect v-if="form.trigger.event !== 'schedule' && !meetingRule" :model-value="form.spaceId ?? ''" size="sm" width="200px" :options="spaceOptions('所有空间的群')" aria-label="只看哪个空间的群" @update:model-value="(v) => ((form!.spaceId = String(v || '')), touch())" />
+            <UiSelect v-if="meetingRule" :model-value="form.spaceId ?? ''" size="sm" width="200px" :options="spaceOptions('会议记录放默认空间')" aria-label="会议记录放哪个空间" @update:model-value="(v) => ((form!.spaceId = String(v || '')), touch())" />
           </div>
           <div v-if="form.trigger.event === 'message'" class="row wrap">
             <label class="row inline small">命中后等
@@ -399,6 +449,7 @@ function startFrom(text: string) {
           </div>
           <small v-if="form.trigger.event === 'message'" class="muted">“每个群只一次”适合拉机器人、开始监听这类一次就够的事。等待和跳过在动手前看一眼这段讨论：你在话题里或半小时内在群里说过话，算“已在讨论里”。</small>
           <small v-else-if="form.trigger.event === 'schedule'" class="muted">cron 写法：分 时 日 月 周，例如 0 9 * * 1-5 是工作日早上 9 点。</small>
+          <small v-else-if="meetingRule" class="muted">你加入一场飞书视频会议时判断（用你的 lark-cli 登录接收入会事件）。每场会议对这条规则只触发一次；入会后十分钟内参会人变了会再判断一次。不写条件就是每场会议。</small>
         </section>
 
         <section v-if="form.trigger.event !== 'schedule'" class="block">
@@ -407,7 +458,7 @@ function startFrom(text: string) {
             <UiSegmented v-model="form.judge" size="sm" :options="[{ value: 'code', label: '按条件' }, { value: 'code+ai', label: '条件 + AI 确认' }, { value: 'ai', label: '交给 AI 判断' }]" aria-label="判断方式" @change="touch" />
             <small class="muted">{{ judgeHint }}</small>
           </div>
-          <RuleConditions v-model="form.conditions" :fields="options.fields" :ops="options.ops" @update:model-value="touch" />
+          <RuleConditions v-model="form.conditions" :fields="condFields" :ops="options.ops" :field-ops="fieldOps" @update:model-value="touch" />
         </section>
 
         <section class="block">
@@ -447,6 +498,28 @@ function startFrom(text: string) {
                 <UiSegmented v-model="a.reply" size="sm" :options="replyOptions" aria-label="回复方式" @change="touch" />
               </div>
             </template>
+            <template v-else-if="a.type === 'meeting-bot'">
+              <div class="row wrap">
+                <span class="small">拉进会的机器人</span>
+                <UiCheckbox v-for="b in options.bots ?? []" :key="b.id" :model-value="a.bots.includes(b.id)" size="sm" @change="(v) => toggleBot(a, b.id, v)">{{ b.name }}</UiCheckbox>
+                <small v-if="!options.bots?.length" class="muted">还没有飞书机器人：只能以你的身份记录</small>
+              </div>
+              <small v-if="!a.bots.length" class="muted">不拉机器人时只以你的身份读会中事件做记录，别人看不到。</small>
+              <div class="row wrap">
+                <UiCheckbox v-model="a.confirm" size="sm" :disabled="!a.bots.length" @change="touch">先发卡片问我</UiCheckbox>
+                <UiCheckbox v-model="a.record" size="sm" @change="touch">保存会议记录（转写、会中聊天、进出）</UiCheckbox>
+                <UiCheckbox v-model="a.importShared" size="sm" @change="touch">导入会上共享的文档</UiCheckbox>
+                <UiCheckbox v-model="a.leaveWithOwner" size="sm" :disabled="!a.bots.length" @change="touch">我离会时机器人一起离开</UiCheckbox>
+              </div>
+              <div class="row wrap">
+                <span class="small">旁听</span>
+                <UiSelect v-model="a.spec" size="sm" width="180px" :options="meetingSpecOptions" aria-label="旁听的 Agent" @change="touch" />
+                <UiSelect v-if="a.spec" :model-value="a.space ?? ''" size="sm" width="170px" :options="spaceOptions('默认空间')" aria-label="在哪个空间里查资料" @update:model-value="(v) => ((a.space = String(v || '')), touch())" />
+                <UiCheckbox v-if="a.spec" v-model="a.answer" size="sm" :disabled="!a.bots.length" @change="touch">回答会中聊天里点名机器人的问题</UiCheckbox>
+              </div>
+              <small class="muted">{{ a.spec ? "每隔几分钟看一次新说的话：有人点你的名、要你表态，或有和你有关的决定、待办、风险时提醒你；会后给你一份简短纪要。" : "不旁听时只保存记录，会后整理进记忆和事项。" }}机器人入会所有参会人都能看到；会议要允许智能体加入。</small>
+              <textarea v-if="a.spec" v-model="a.task" class="input" rows="2" placeholder="要它特别留意的，例如：涉及排期和人力的决定都告诉我" @input="touch" />
+            </template>
             <template v-else-if="a.type === 'notify'">
               <UiCheckbox v-model="a.urgent" size="sm" @change="touch">紧急（夜间也推送）</UiCheckbox>
             </template>
@@ -456,10 +529,29 @@ function startFrom(text: string) {
           <UiSelect v-model="addPick" size="sm" width="160px" placeholder="＋ 添加动作" :options="addOptions" aria-label="添加动作" @change="addAction" />
         </section>
 
-        <section v-if="form.trigger.event === 'message'" class="block">
-          <div class="block-head"><h3>用最近的消息试一试</h3><span class="muted small">只看不做：最近三天采集到的消息里哪些会命中</span></div>
+        <section v-if="meetingRule && form.id" class="block">
+          <div class="block-head">
+            <h3>飞书权限</h3>
+            <span class="muted small">入会事件用你的 lark-cli 登录，入会和读会议用机器人自己的应用</span>
+            <span class="spacer" />
+            <button class="btn ghost sm" :disabled="checking" @click="checkPermissions(form.id!)">{{ checking ? "检查中…" : "重新检查" }}</button>
+          </div>
+          <Skeleton v-if="checking && !perms" :rows="2" />
+          <template v-else-if="perms">
+            <div v-for="(x, i) in perms.issues" :key="`i${i}`" class="perm err small">
+              <div><strong>{{ x.who }}</strong>：{{ x.problem }}<template v-if="x.scopes?.length">（<code>{{ x.scopes.join("、") }}</code>）</template></div>
+              <a v-if="x.link" :href="x.link" target="_blank" rel="noopener">{{ x.linkText ?? "打开" }}</a>
+            </div>
+            <div v-for="(x, i) in perms.ok" :key="`o${i}`" class="ok small">✓ {{ x }}</div>
+            <div v-for="(x, i) in perms.notes" :key="`n${i}`" class="muted small">注意：{{ x }}</div>
+            <p v-if="!perms.issues.length" class="muted small">没有发现缺的权限。</p>
+          </template>
+        </section>
+
+        <section v-if="form.trigger.event === 'message' || meetingRule" class="block">
+          <div class="block-head"><h3>{{ meetingRule ? "用最近的会议试一试" : "用最近的消息试一试" }}</h3><span class="muted small">{{ meetingRule ? "只看不做：omem 记下的你最近加入的会议里哪些会命中" : "只看不做：最近三天采集到的消息里哪些会命中" }}</span></div>
           <div class="row wrap">
-            <UiSelect v-model="testChat" size="sm" width="220px" :options="chatOptions" :search-at="8" aria-label="会话" />
+            <UiSelect v-if="!meetingRule" v-model="testChat" size="sm" width="220px" :options="chatOptions" :search-at="8" aria-label="会话" />
             <UiCheckbox v-if="form.judge !== 'code'" v-model="testAi" size="sm">请模型判断（抽样 5 条）</UiCheckbox>
             <button class="btn sm" :disabled="testing" @click="runTest">{{ testing ? "试运行中…" : "试一试" }}</button>
           </div>
@@ -631,6 +723,16 @@ function startFrom(text: string) {
 }
 .ok {
   color: var(--ok);
+}
+.perm {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+.perm a {
+  flex: none;
 }
 .err {
   color: var(--danger);

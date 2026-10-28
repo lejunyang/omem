@@ -722,30 +722,49 @@ export async function captureMinutes(app: App, touched: Map<string, Set<string>>
   const spaceId = findSpace(app, app.config.lark.capture.space) ? app.config.lark.capture.space : "personal";
   let n = 0;
   for (const [token, title] of tokens) {
-    const dir = mkdtempSync(join(tmpdir(), "omem-minutes-"));
     try {
-      const v = await larkCli(["minutes", "+detail", "--minute-tokens", token, "--summary", "--todo", "--chapter", "--transcript", "--output-dir", dir, "--overwrite", "--as", "user", "--format", "json"], 180_000, dir);
-      const m = ((v.data?.minutes ?? []) as Record<string, any>[])[0] ?? {};
-      const a = m.artifacts ?? {};
-      let transcript = "";
-      const file = a.transcript_file ? (existsSync(a.transcript_file) ? a.transcript_file : join(dir, a.transcript_file)) : null;
-      if (file && existsSync(file)) transcript = readFileSync(file, "utf8");
-      const todos = (a.todos ?? []).map((t: any) => `- ${t.content ?? t.text ?? JSON.stringify(t)}`).join("\n");
-      const chapters = (a.chapters ?? []).map((c: any) => `- ${c.title ?? ""}${c.summary ? `：${c.summary}` : ""}`).join("\n");
-      const text = [`# ${m.title ?? title}`, a.summary ? `## 总结\n\n${a.summary}` : "", todos ? `## 待办\n\n${todos}` : "", chapters ? `## 章节\n\n${chapters}` : "", transcript ? `## 逐字稿\n\n${transcript}` : ""].filter(Boolean).join("\n\n");
-      const r = upsertSource(app, { archive: true, spaceId, kind: "meeting", uri: `lark:minutes:${token}`, title: `妙记：${m.title ?? title}`, text, meta: { via: "lark-cli", minuteToken: token } });
+      const m = await minutesText(token, title);
+      const r = upsertSource(app, { archive: true, spaceId, kind: "meeting", uri: `lark:minutes:${token}`, title: `妙记：${m.title}`, text: m.text, meta: { via: "lark-cli", minuteToken: token } });
       touched.set(spaceId, new Set([...(touched.get(spaceId) ?? []), r.id]));
       seen.add(token);
       n++;
     } catch (e) {
       console.warn(`[omem] 读取妙记 ${token} 失败：${(e as Error).message}`);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
     }
   }
+  // A meeting's record may have taken some minutes meanwhile (minutesSeen): keep those too.
+  for (const t of json<string[]>(one<{ value: string }>(app.db, "select value from kv where key = 'lark_minutes_seen'")?.value, [])) seen.add(t);
   run(app.db, "insert into kv(key,value) values('lark_minutes_seen', ?) on conflict(key) do update set value = excluded.value", JSON.stringify([...seen].slice(-500)));
   run(app.db, "insert into kv(key,value) values('lark_minutes_since', ?) on conflict(key) do update set value = excluded.value", new Date(Date.now() - 86400_000).toISOString());
   return n;
+}
+
+/** One minutes' summary, todos, chapters and transcript as text (owner identity, read-only). */
+export async function minutesText(token: string, fallbackTitle = token): Promise<{ title: string; text: string }> {
+  const dir = mkdtempSync(join(tmpdir(), "omem-minutes-"));
+  try {
+    const v = await larkCli(["minutes", "+detail", "--minute-tokens", token, "--summary", "--todo", "--chapter", "--transcript", "--output-dir", dir, "--overwrite", "--as", "user", "--format", "json"], 180_000, dir);
+    const m = ((v.data?.minutes ?? []) as Record<string, any>[])[0] ?? {};
+    const a = m.artifacts ?? {};
+    let transcript = "";
+    const file = a.transcript_file ? (existsSync(a.transcript_file) ? a.transcript_file : join(dir, a.transcript_file)) : null;
+    if (file && existsSync(file)) transcript = readFileSync(file, "utf8");
+    const todos = (a.todos ?? []).map((t: any) => `- ${t.content ?? t.text ?? JSON.stringify(t)}`).join("\n");
+    const chapters = (a.chapters ?? []).map((c: any) => `- ${c.title ?? ""}${c.summary ? `：${c.summary}` : ""}`).join("\n");
+    const title = m.title ?? fallbackTitle;
+    const text = [`# ${title}`, a.summary ? `## 总结\n\n${a.summary}` : "", todos ? `## 待办\n\n${todos}` : "", chapters ? `## 章节\n\n${chapters}` : "", transcript ? `## 逐字稿\n\n${transcript}` : ""].filter(Boolean).join("\n\n");
+    return { title, text };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Minutes already kept (as their own source or inside a meeting's record): the hourly capture skips them. */
+export function minutesSeen(app: App, token: string, add = false) {
+  const seen: string[] = json(one<{ value: string }>(app.db, "select value from kv where key = 'lark_minutes_seen'")?.value, []);
+  if (!add) return seen.includes(token);
+  if (!seen.includes(token)) run(app.db, "insert into kv(key,value) values('lark_minutes_seen', ?) on conflict(key) do update set value = excluded.value", JSON.stringify([...seen, token].slice(-500)));
+  return true;
 }
 
 /** Recent messages of chats that are not subscribed yet, for the curator role to judge. */

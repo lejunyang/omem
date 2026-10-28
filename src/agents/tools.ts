@@ -1994,6 +1994,21 @@ def({
   },
 });
 
+def({
+  name: "meeting_send",
+  description:
+    "在你正在旁听的飞书会议里，以机器人身份往会中聊天发一句话（所有参会人可见）。只在规则允许回答会中提问、且有人点名问机器人时用；简短，只回答问题。",
+  write: true,
+  schema: z.object({ text: z.string().min(1).max(500) }),
+  handler: async (ctx, a) => {
+    const m = ctx.runId ? (getRun(ctx.app, ctx.runId).input.meeting as { id: string; bot: string | null; answer: boolean } | undefined) : undefined;
+    if (!m?.answer || !m.bot) throw new HttpError(403, "这次运行不能在会中发言（只有规则允许回答会中提问的旁听可以）");
+    const { sendMeetingMessage } = await import("../channels/lark-meetings.ts");
+    await sendMeetingMessage(ctx.app, m.id, m.bot, a.text);
+    return "已发到会中聊天";
+  },
+});
+
 const cardField = z.union([
   z.object({ type: z.literal("input"), name: z.string(), label: z.string().optional(), placeholder: z.string().optional(), required: z.boolean().optional(), multiline: z.boolean().optional(), default: z.string().optional() }),
   z.object({ type: z.enum(["select", "multi_select"]), name: z.string(), label: z.string().optional(), placeholder: z.string().optional(), options: z.array(z.object({ text: z.string(), value: z.string() })), required: z.boolean().optional(), default: z.string().optional() }),
@@ -2188,7 +2203,7 @@ def({
 def({
   name: "save_rule",
   description:
-    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、优先采集、通知本人）。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用，回复里请本人到规则页（#/rules）核对后启用；本人明确说现在就启用时 enabled=true。",
+    "新建或修改一条规则：遇到某种情况（新消息、第一次看到的群、定时、本人加入飞书会议）就自动做事（交给某个 Agent、开话题处理、拉机器人进群、拉机器人入会并旁听、优先采集、通知本人）。会议规则保存后会检查飞书权限，缺的会连同申请链接写在结果里。本人说“以后 xx 群里我被 @ 就…”“报警群里有 xx 卡片就交给 yy 分析”时用。description 写本人的原话；不给 conditions/actions 时由模型从原话生成。默认不启用，回复里请本人到规则页（#/rules）核对后启用；本人明确说现在就启用时 enabled=true。",
   write: true,
   schema: z.object({
     id: z.string().optional().describe("修改已有规则时填（list_rules）"),
@@ -2217,7 +2232,11 @@ def({
     input.conversationId = current?.conversationId ?? origin;
     for (const action of (input.actions ?? []) as { space?: string }[]) if (action.space) writeSpace(ctx, action.space);
     const saved = saveRule(ctx.app, { ...(input as object), id: a.id, name: a.name ?? (input.name as string), enabled: a.enabled ?? current?.enabled ?? false } as never, "agent");
-    return `已${current ? "更新" : "建好"}规则 ${saved.id}「${saved.name}」${saved.enabled ? "（已启用）" : "（未启用，请本人到规则页核对后启用）"}：条件 ${describe(saved.conditions)}；判断 ${saved.judge}；动作 ${saved.actions.map((x) => x.type + ("spec" in x ? `:${x.spec}` : "")).join("、")}。链接：#/rules?id=${saved.id}`;
+    const summary = `已${current ? "更新" : "建好"}规则 ${saved.id}「${saved.name}」${saved.enabled ? "（已启用）" : "（未启用，请本人到规则页核对后启用）"}：条件 ${describe(saved.conditions)}；判断 ${saved.judge}；动作 ${saved.actions.map((x) => x.type + ("spec" in x && x.spec ? `:${x.spec}` : "")).join("、")}。链接：#/rules?id=${saved.id}`;
+    // Rules that need Feishu permissions (meetings): what is missing, with the links to apply, for the owner.
+    const { rulePermissions, permissionText } = await import("../rules/permissions.ts");
+    const p = await rulePermissions(ctx.app, saved);
+    return p.issues.length || p.notes.length ? `${summary}\n\n${permissionText(p)}\n把缺的权限和申请链接原样告诉本人。` : summary;
   },
 });
 

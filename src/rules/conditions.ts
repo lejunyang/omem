@@ -50,6 +50,16 @@ export function eventReader(e: RuleEvent, lookups: { chatBots?: (chatId: string)
         return e.message ? !!e.message.topicId : undefined;
       case "message.cardTitle":
         return e.message?.cardTitle ?? undefined;
+      case "meeting.title":
+        return e.meeting?.title;
+      case "meeting.no":
+        return e.meeting?.no;
+      case "meeting.participants":
+        return e.meeting?.participants;
+      case "meeting.participantCount":
+        return e.meeting ? e.meeting.participants.length : undefined;
+      case "meeting.host":
+        return e.meeting?.host;
     }
   };
 }
@@ -59,6 +69,12 @@ const norm = (s: string) => s.toLowerCase();
 export function leafMatches(leaf: Pick<Leaf, "op" | "value">, raw: unknown): boolean {
   if (raw === undefined || raw === null) return false;
   if (leaf.op === "is") return Boolean(raw) === (leaf.value === true || leaf.value === "true");
+  if (leaf.op === "gte" || leaf.op === "lte") {
+    const n = Number(raw);
+    const w = Number(Array.isArray(leaf.value) ? leaf.value[0] : leaf.value);
+    if (!Number.isFinite(n) || !Number.isFinite(w)) return false;
+    return leaf.op === "gte" ? n >= w : n <= w;
+  }
   const values = Array.isArray(raw) ? raw.map(String) : [String(raw)];
   const want = Array.isArray(leaf.value) ? leaf.value.map(String) : [String(leaf.value)];
   const any = (f: (v: string, w: string) => boolean) => values.some((v) => want.some((w) => f(norm(v), norm(w))));
@@ -108,7 +124,7 @@ export function fieldsOf(c: Condition | null): Field[] {
   return [c.field];
 }
 
-const OP_LABEL: Record<Leaf["op"], string> = { equals: "是", contains: "包含", startsWith: "开头是", endsWith: "结尾是", matches: "匹配", in: "是其中之一", is: "" };
+const OP_LABEL: Record<Leaf["op"], string> = { equals: "是", contains: "包含", startsWith: "开头是", endsWith: "结尾是", matches: "匹配", in: "是其中之一", is: "", gte: "至少", lte: "至多" };
 
 /** The condition as the owner reads it: “群名包含 报警，并且（发送人是其中之一 小王、小李）”. */
 export function describe(c: Condition | null): string {

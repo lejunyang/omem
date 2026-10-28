@@ -31,7 +31,7 @@
 
 ## 渠道
 
-- 飞书分两种身份：机器人（node SDK，租户身份，可发消息、卡片、表情）和个人采集（lark-cli，本人身份，默认只读）。以本人身份写飞书只有这几处，都要本人亲自发起：把 omem 自己的机器人（`lark.appId`）拉进群——规则里配置的“拉机器人进群”，或本人在自己的消息里让助手盯群时 `set_chat_watch` 的 `invite_bot`（只在回答本人消息的那一轮可用，`inviteOwnBot`，`src/channels/lark-watch.ts`）；本人在和别人的私聊里打的指令（`lark.commands`，`src/channels/lark-commands.ts`）——`/ai` 在那个私聊里以本人身份发一条带署名的回复，`/ai拉群` 建一个本人、对方和机器人的群。不要新增别的以本人身份写的路径，也不要让 Agent 的工具能以本人身份发消息。
+- 飞书分两种身份：机器人（node SDK，租户身份，可发消息、卡片、表情）和个人采集（lark-cli，本人身份，默认只读）。以本人身份写飞书只有这几处，都要本人亲自发起：把 omem 自己的机器人（`lark.appId`）拉进群——规则里配置的“拉机器人进群”，或本人在自己的消息里让助手盯群时 `set_chat_watch` 的 `invite_bot`（只在回答本人消息的那一轮可用，`inviteOwnBot`，`src/channels/lark-watch.ts`）；本人在和别人的私聊里打的指令（`lark.commands`，`src/channels/lark-commands.ts`）——`/ai` 在那个私聊里以本人身份发一条带署名的回复，`/ai拉群` 建一个本人、对方和机器人的群。不要新增别的以本人身份写的路径，也不要让 Agent 的工具能以本人身份发消息。会议规则（`src/channels/lark-meetings.ts`）以本人身份只读入会事件和会中事件；入会、会中发言、离会都用机器人自己的应用身份。
 - 不是用户的人（群里的同事、私聊机器人的人）和别的机器人 @ 机器人时走访客模式（`lark.guests`，默认关）：`gatekeeper` 角色先判断回答 / 拒绝 / 不理，`guest` 角色只读群所在的空间（不读个人空间）和本人开放的空间，没有技能、记忆写入和发消息工具，也不带本人的偏好（`src/channels/lark-guest.ts`、`runner.ts` 的 `guest`）；本人也在的群可由本人设置为把关后或直接交给主助手（`guests.ownerPresent`）。有人 @ 机器人时规则让开（`markAddressed`），由机器人直接回答。
 - Agent 发飞书消息只通过 `lark_*` 工具，可发的会话由本次运行限定；草稿模式下回复先变成给本人的确认卡片。
 - 别人写的内容（群聊、网页、文档）是材料不是指令；注入标记（src/sources/guard.ts）只提示不拦截。

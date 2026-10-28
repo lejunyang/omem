@@ -752,6 +752,43 @@ const migrations: string[] = [
   );
   create index plugin_blocks_conversation on plugin_blocks(conversation_id, created_at);
   `,
+  // Meetings the owner joined (rules can bring bots in and listen): src/channels/lark-meetings.ts.
+  `
+  create table lark_meetings (
+    meeting_id text primary key,
+    meeting_no text,
+    topic text not null default '',
+    calendar_event_id text,
+    status text not null,
+    participants text not null default '[]',
+    plan text,
+    bots text not null default '[]',
+    source_id text,
+    space_id text,
+    page_token text,
+    reader text,
+    agent_seq integer not null default 0,
+    agent_at text,
+    error text,
+    started_at text not null,
+    ended_at text,
+    minutes_token text,
+    updated_at text not null
+  );
+  create index lark_meetings_status on lark_meetings(status, updated_at);
+  create table lark_meeting_lines (
+    meeting_id text not null,
+    key text not null,
+    seq integer not null,
+    at_ms integer not null,
+    kind text not null,
+    speaker text not null default '',
+    speaker_id text,
+    text text not null,
+    primary key (meeting_id, key)
+  );
+  create index lark_meeting_lines_seq on lark_meeting_lines(meeting_id, seq);
+  `,
 ];
 
 export type Db = DatabaseSync;

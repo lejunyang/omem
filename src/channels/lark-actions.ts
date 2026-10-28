@@ -57,6 +57,18 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
     }
     return { toast: { type: "success", content: approve ? "已同意，正在处理" : "已忽略" }, card: rawCard(buildCard(guestApprovalCard(a, approve ? "approved" : "declined"))) };
   }
+  if (inter.purpose === "meeting-join") {
+    // A meeting rule asking whether to bring the bots in (lark-meetings.ts).
+    const { decideMeetingJoin } = await import("./lark-meetings.ts");
+    const approve = (value as { action?: string } | undefined)?.action === "approve";
+    closeInteraction(app, inter.id, operator);
+    try {
+      const card = await decideMeetingJoin(app, inter.payload as { meetingId: string }, approve);
+      return { toast: { type: "success", content: approve ? "已处理" : "这次不拉" }, card: rawCard(buildCard(card)) };
+    } catch (e) {
+      return { toast: { type: "error", content: (e as Error).message.slice(0, 80) } };
+    }
+  }
   if (inter.purpose === "draft") {
     const choice = (value as { action?: string } | undefined)?.action;
     closeInteraction(app, inter.id, operator);

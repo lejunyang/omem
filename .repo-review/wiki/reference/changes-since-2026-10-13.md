@@ -675,3 +675,11 @@ updated: 2026-10-28
 - **运行记下新建还是更新**：`tool-write` 事件多记工具回执 `result`（前 400 字）；`runWrites` 从回执里取 id 和“已新建 / 已更新 / 已更正”，旧事件仍按原来的方式推断；`RunActivity.vue` 显示为“新建工作文件：…”“更正记忆：…”。
 - **访客被拒后本人确认**：`lark-bot.ts` 的 `answerGuest` 在群里拒绝一个人后调用 `askOwnerAboutGuest`：本人在群里（`ownerInChat`）就发群内仅本人可见的卡片（`sendEphemeral`），否则发到本人私聊；交互 `purpose=guest-approval`，payload 存原消息。`lark-actions.ts` 处理按钮：同意时 `decideGuest` 把原消息交回注册的机器人（`onGuestApproved`），`handle(m, { by })` 跳过采集和门卫，按本人身份交给主助手，上下文写明本人同意；不同意只在 guest 运行记一条状态。`roles/gatekeeper.md` 的群内拒绝回复改为“需要主人同意，已经去问了”。运行记录页加“当前空间 / 所有空间”。
 
+## 2026-10-28：会议规则（本人入会时拉机器人进会）
+
+- **触发与条件**：`rules/types.ts` 加触发 `meeting`、字段 `meeting.title / no / participants / participantCount / host`（`EVENT_FIELDS` 按触发分组，`/api/rule-options` 给出）、运算 `gte` / `lte`；`store.ts` 校验会议规则只用会议字段、动作只能是 `meeting-bot` / `notify` / 只告诉我的 `agent`；不写条件的会议规则表示每场会议（`engine.judge`）。`testRule` 对会议规则用 `lark_meetings` 里最近的会议试。
+- **入会事件**：新增 `src/channels/lark-meetings.ts`。有启用的会议规则时常驻两个 `lark-cli event consume`（`vc.meeting.participant_meeting_joined_v1` / `…_ended_v1`，用户身份；关 stdin 停止），起不来就每分钟 `vc +meeting-list-active`。`main.ts` 每 15 秒 `tickMeetings`。新表 `lark_meetings`、`lark_meeting_lines`（迁移）。
+- **动作 `meeting-bot`**：`bots`（`main` / `lark.bots` id）、`confirm`、`record`、`spec`、`space`、`task`、`answer`、`importShared`、`leaveWithOwner`。入会、读事件、会中发消息、离会都用机器人自己的客户端调 `vc/v1/bots/{join,events,message,leave}`（请求格式按 lark-cli 1.0.97 的 `--dry-run` 核对）。确认卡片 `purpose=meeting-join`，`lark-actions.ts` 处理。
+- **记录与旁听**：会中事件两种形态都认（lark-cli 的 `event_type + payload`、接口的 `activity_event_type + *_items`），转写按 `sentence_id` 覆盖；会议原件 `lark:meeting:<id>`，结束后 `scheduleIngest`，再用 `vc +detail` 找 `minute_token` 把妙记补进去（`lark-personal.ts` 拆出 `minutesText`、`minutesSeen`）。旁听运行 `lane=meeting:<id>`，输入带 `meeting` 时结果不投递（`jobs.ts`）；新工具 `meeting_send`（只在 `meeting.answer` 的运行里可用，`skills/omem/references/lark.md`）。
+- **权限检查**：新增 `src/rules/permissions.ts` 与 `GET /api/rules/:id/permissions`；`save_rule` 结果附上。`lark-setup.ts` 加 `larkAppScopes`、`larkEventLink`，`larkScopeLink` 可指定 `token_type`；机器人清单加 `vc:meeting.bot.join:write`、`vc:meeting.message:write`，lark-cli 用户清单加 `vc:meeting.meetingevent:read`。
+- **界面**：`Rules.vue` 触发加“我加入会议时”，条件字段随触发切换，动作“拉机器人入会”的编辑项，“飞书权限”一节（重新检查），“用最近的会议试一试”。

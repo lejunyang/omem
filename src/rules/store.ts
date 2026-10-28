@@ -4,6 +4,8 @@ import { getThread } from "../agents/threads.ts";
 import { all, one, run } from "../core/db.ts";
 import { deleteSchedule, upsertSchedule } from "../core/scheduler.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
+import { readAgentSpec } from "../agents/specs.ts";
+import { fieldsOf } from "./conditions.ts";
 import { ruleInputSchema, type Rule, type RuleInput, type Temporary } from "./types.ts";
 
 type Row = {
@@ -44,6 +46,27 @@ const toRule = (r: Row): Rule => ({
   temporary: r.temporary ? json(r.temporary, null) : null,
 });
 
+/** A meeting has no chat or message; the meeting action needs a meeting. */
+function checkMeetingRule(app: App, r: ReturnType<typeof ruleInputSchema.parse>) {
+  const meeting = r.trigger.event === "meeting";
+  if (!meeting && r.actions.some((a) => a.type === "meeting-bot")) throw new HttpError(400, "“拉机器人入会”只用于“我加入会议时”触发的规则");
+  if (!meeting) return;
+  if (r.actions.some((a) => a.type !== "meeting-bot" && a.type !== "notify" && !(a.type === "agent" && !a.ownTopic && a.reply === "none")))
+    throw new HttpError(400, "会议规则没有群和消息：只能拉机器人入会、通知本人，或交给 Agent（只告诉我）");
+  if (r.trigger.waitMinutes || r.trigger.unless.length) throw new HttpError(400, "会议规则不能等待回应或按讨论跳过");
+  const bad = r.conditions ? fieldsOf(r.conditions).filter((f) => !f.startsWith("meeting.")) : [];
+  if (bad.length) throw new HttpError(400, `会议规则只能用会议的字段，不能用 ${[...new Set(bad)].join("、")}`);
+  for (const a of r.actions) {
+    if (a.type !== "meeting-bot") continue;
+    const known = new Set(["main", ...app.config.lark.bots.map((b) => b.id)]);
+    const unknown = a.bots.filter((b) => !known.has(b));
+    if (unknown.length) throw new HttpError(400, `没有这些飞书机器人：${unknown.join("、")}（main 是主机器人，其余写 lark.bots 的 id）`);
+    if (a.answer && !a.bots.length) throw new HttpError(400, "在会中回答问题需要至少拉一个机器人进会");
+    if (a.spec && a.spec !== "assistant") readAgentSpec(app, a.spec);
+    if (a.space) getSpace(app, a.space);
+  }
+}
+
 export function listRules(app: App, opts: { enabledOnly?: boolean } = {}): Rule[] {
   return all<Row>(app.db, `select * from rules ${opts.enabledOnly ? "where enabled = 1" : ""} order by created_at`).map(toRule);
 }
@@ -66,13 +89,15 @@ export function saveRule(app: App, input: RuleInput & { id?: string; temporary?:
   }
   const prevTemp = input.id ? one<{ temporary: string | null }>(app.db, "select temporary from rules where id = ?", input.id)?.temporary : null;
   if (r.actions.some((a) => a.type === "wake") && !input.temporary && !prevTemp) throw new HttpError(400, "“唤醒”只用于 Agent 设的临时规则（wake_on_message）");
-  if (r.judge !== "ai" && !r.conditions && r.trigger.event !== "schedule") throw new HttpError(400, "按条件判断需要条件；没有条件就选“交给 AI 判断”，或先从规则原话生成条件");
+  // Every meeting the owner joins is a reasonable rule (the card asks first); every message is not.
+  if (r.judge !== "ai" && !r.conditions && r.trigger.event !== "schedule" && r.trigger.event !== "meeting") throw new HttpError(400, "按条件判断需要条件；没有条件就选“交给 AI 判断”，或先从规则原话生成条件");
   if (r.trigger.event === "schedule" && !r.trigger.cron) throw new HttpError(400, "定时规则需要 cron，例如 0 9 * * 1-5");
   if (r.trigger.event === "schedule" && r.actions.some((a) => a.type === "invite-bot" || a.type === "capture" || a.type === "watch" || (a.type === "agent" && a.ownTopic)))
     throw new HttpError(400, "定时规则没有具体的群或消息：只能交给 Agent（不开话题）或通知本人");
   if (r.trigger.event === "schedule" && (r.trigger.waitMinutes || r.trigger.unless.length || r.actions.some((a) => a.type === "agent" && a.reply === "silent")))
     throw new HttpError(400, "定时规则没有具体的讨论：不能等待回应、不能按“本人已在处理/已有人回复”跳过，也不能静默排查");
   if (r.trigger.event === "schedule" && !r.conversationId && r.actions.some(a => a.type === "agent" && ["auto", "draft"].includes(a.reply))) throw new HttpError(400, "定时规则要回复时，先选发到哪个会话；不回复就选“只告诉我”");
+  checkMeetingRule(app, r);
   const at = now();
   const id = input.id ?? newId("rule");
   const prev = input.id ? one<Row>(app.db, "select * from rules where id = ?", input.id) : undefined;
