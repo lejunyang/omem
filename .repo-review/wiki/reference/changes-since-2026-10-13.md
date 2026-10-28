@@ -685,3 +685,9 @@ updated: 2026-10-28
 - **记录与旁听**：会中事件两种形态都认（lark-cli 的 `event_type + payload`、接口的 `activity_event_type + *_items`），转写按 `sentence_id` 覆盖；会议原件 `lark:meeting:<id>`，结束后 `scheduleIngest`，再用 `vc +detail` 找 `minute_token` 把妙记补进去（`lark-personal.ts` 拆出 `minutesText`、`minutesSeen`）。旁听运行 `lane=meeting:<id>`，输入带 `meeting` 时结果不投递（`jobs.ts`）；新工具 `meeting_send`（只在 `meeting.answer` 的运行里可用，`skills/omem/references/lark.md`）。
 - **权限检查**：新增 `src/rules/permissions.ts` 与 `GET /api/rules/:id/permissions`；`save_rule` 结果附上。`lark-setup.ts` 加 `larkAppScopes`、`larkEventLink`，`larkScopeLink` 可指定 `token_type`；机器人清单加 `vc:meeting.bot.join:write`、`vc:meeting.message:write`，lark-cli 用户清单加 `vc:meeting.meetingevent:read`。
 - **界面**：`Rules.vue` 触发加“我加入会议时”，条件字段随触发切换，动作“拉机器人入会”的编辑项，“飞书权限”一节（重新检查），“用最近的会议试一试”。
+
+## 10-29：提醒时区、会议不建事项、工具按分组授权
+
+- **提醒晚 8 小时**：事项的提醒时间按写入时的样子存（`2026-10-28T16:45:00+08:00`），到期查询却拿它和 `now()`（UTC，`…Z`）按字符串比，东八区的提醒要等 UTC 走到同一个钟点才发出。`items/store.ts` 加 `UTC(col)`（SQLite `strftime` 换算成 UTC）用于 `dueReminders`、事项排序和巡检的过期查询；存的值不变，Agent 读到的仍是本人的时间。
+- **会议不建事项**：`roles/ingest.md`：飞书日程和会议邀请本身不建事项、不设提醒（飞书自己提醒），只有分给本人的具体任务才建；`_common.md` 同样写明。
+- **工具按分组授权**：`tool-help.ts` 的 `expandTools`：角色和 Agent 档案的 `tools` 可写 `group:<分组>` 和 `-<工具>`，加载时展开（`ROLE_TOOLS` 不随分组授出），保存角色时检查分组名。主助手改成按分组写（排除 `write_page`、`propose_item_update`、`propose_profile_change`、`meeting_send`），实际可用的工具和以前一样；以后新工具放进分组就可用，自定义过的主助手也不用再为工具清单合并。

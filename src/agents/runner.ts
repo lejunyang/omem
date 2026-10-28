@@ -20,6 +20,7 @@ import { issueToolToken, revokeToolToken } from "./tools.ts";
 import { isAgentRunError, type AgentEvent, type AgentResult, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, type AgentSpec, type McpServerSpec } from "./specs.ts";
+import { expandTools } from "./tool-help.ts";
 import { isBuiltinRole, roleOverrideText, rolesDir } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
 
@@ -43,7 +44,7 @@ function parseRole(name: string, raw: string, customized: boolean): Role {
   return {
     name,
     description: meta.description ?? "",
-    tools: meta.tools ?? [],
+    tools: expandTools(meta.tools ?? []),
     writes: !!meta.writes,
     modes: meta.modes ?? [],
     skills: meta.skills ?? [],
@@ -255,7 +256,7 @@ export function prepareRun(
   if (!space) throw new HttpError(404, `空间不存在：${spaceId}`);
   if (!app.baseUrl) throw new Error("omem 服务尚未启动，无法为 Agent 提供工具");
   const cwd = input.cwd ?? spec?.cwd ?? space.rootPath ?? spaceDir(app, space.id);
-  const tools = new Set(spec ? (spec.tools.length ? spec.tools : DEFAULT_SPEC_TOOLS) : role!.tools);
+  const tools = new Set(spec ? (spec.tools.length ? expandTools(spec.tools) : DEFAULT_SPEC_TOOLS) : role!.tools);
   /**
    * Answering someone who is not a user (guest role): only the role's own tools and the spaces it
    * was given — no skills (they may describe internal systems), no related spaces, none of the

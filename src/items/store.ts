@@ -199,15 +199,22 @@ export function listItems(app: App, opts: { spaceIds?: string[]; spaceId?: strin
   return all<Row>(
     app.db,
     `select * from items ${where.length ? "where " + where.join(" and ") : ""}
-     order by case status when 'open' then 0 when 'waiting' then 1 when 'snoozed' then 2 else 3 end, priority, coalesce(due_at, remind_at, updated_at) limit ?`,
+     order by case status when 'open' then 0 when 'waiting' then 1 when 'snoozed' then 2 else 3 end, priority, coalesce(${UTC("due_at")}, ${UTC("remind_at")}, updated_at) limit ?`,
     ...params,
     opts.limit ?? 300,
   ).map(toItem);
 }
 
+/**
+ * A due or reminder time as UTC in SQL. They are stored as written (`2026-10-28T17:00:00+08:00`, which
+ * the agents read back as the owner's time); compared as text with `now()` (UTC, `…Z`) a time with
+ * an offset east of UTC would come out hours late.
+ */
+export const UTC = (col: string) => `strftime('%Y-%m-%dT%H:%M:%fZ', ${col})`;
+
 /** Items whose reminder time has passed and are not closed. */
 export function dueReminders(app: App, at = now()) {
-  return all<Row>(app.db, "select * from items where status in ('open','waiting','snoozed') and remind_at is not null and remind_at <= ?", at).map(toItem);
+  return all<Row>(app.db, `select * from items where status in ('open','waiting','snoozed') and remind_at is not null and ${UTC("remind_at")} <= ?`, at).map(toItem);
 }
 
 /** Reminder evidence belongs to the scheduling event, not the item's later progress. */

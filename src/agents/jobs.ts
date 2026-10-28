@@ -8,7 +8,7 @@ import { notify } from "../core/notify.ts";
 import { findSpace, getSpace, listSpaces, relatedIds, relatedSpaces, updateSpace } from "../core/spaces.ts";
 import { json, newId, now, truncate } from "../core/util.ts";
 import { deliverDueReminders } from "../items/reminders.ts";
-import { listItems, upsertItem } from "../items/store.ts";
+import { listItems, upsertItem, UTC } from "../items/store.ts";
 import { syncDirectorySpace } from "../sources/import.ts";
 import { appendToSource, getSource, sourceText } from "../sources/store.ts";
 import { listPages, pageExists, syncWiki } from "../wiki/store.ts";
@@ -817,7 +817,7 @@ registerHandler("dream", async (ctx) => {
   );
   const items = all<{ id: string; space_id: string; kind: string; title: string; status: string; remind_at: string | null; due_at: string | null }>(
     app.db,
-    "select id, space_id, kind, title, status, remind_at, due_at from items where updated_at > ? or (status in ('open','waiting','snoozed') and coalesce(due_at, remind_at, '9999') < ?) order by updated_at desc limit 80",
+    `select id, space_id, kind, title, status, remind_at, due_at from items where updated_at > ? or (status in ('open','waiting','snoozed') and coalesce(${UTC("due_at")}, ${UTC("remind_at")}, '9999') < ?) order by updated_at desc limit 80`,
     since,
     now(),
   );

@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { roleNames } from "../core/config.ts";
 import { commitLibrary, fileHistory, git } from "../core/git.ts";
+import { TOOL_GROUPS, unknownGroups } from "./tool-help.ts";
 import { HttpError } from "../core/util.ts";
 
 /**
@@ -25,7 +26,11 @@ import { HttpError } from "../core/util.ts";
 
 export const roleMetaSchema = z.object({
   description: z.string().min(1),
-  tools: z.array(z.string()).default([]),
+  /** Tool names, `group:<id>` for a whole group, `-<name>` to leave one out (tool-help.ts expandTools). */
+  tools: z.array(z.string()).default([]).superRefine((l, ctx) => {
+    const bad = unknownGroups(l);
+    if (bad.length) ctx.addIssue({ code: "custom", message: `没有这些工具分组：${bad.join("、")}；可用 ${TOOL_GROUPS.map((g) => `group:${g.id}`).join("、")}` });
+  }),
   writes: z.boolean().default(false),
   modes: z.array(z.string()).default([]),
   /** Skills this role uses regularly (listed first in its skill index). */

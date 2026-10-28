@@ -35,6 +35,26 @@ export const TOOL_GROUPS: { id: string; label: string; tools: string[] }[] = [
   { id: "plugins", label: "插件", tools: ["plugin_query", "plugin_put"] },
 ];
 
+/**
+ * A role's or profile's `tools` as tool names: `group:<id>` stands for every tool of that group
+ * (so a tool added to the group needs no edit of the roles, nor of the owner's customized copies),
+ * `-<name>` takes one back out. A role's own hand-in tools (ROLE_TOOLS) never come with a group.
+ */
+export function expandTools(list: string[]): string[] {
+  const out = new Set<string>();
+  for (const t of list) {
+    const g = /^group:(.+)$/.exec(t);
+    if (g) {
+      for (const name of TOOL_GROUPS.find((x) => x.id === g[1])?.tools ?? []) if (!ROLE_TOOLS.includes(name)) out.add(name);
+    } else if (!t.startsWith("-")) out.add(t);
+  }
+  for (const t of list) if (t.startsWith("-")) out.delete(t.slice(1));
+  return [...out];
+}
+
+/** `group:<id>` entries that name no group. */
+export const unknownGroups = (list: string[]) => list.filter((t) => /^group:/.test(t) && !TOOL_GROUPS.some((g) => `group:${g.id}` === t));
+
 type ToolInfo = { name: string; description: string; inputSchema: Record<string, unknown> };
 
 /** Which of the allowed tools are offered directly; the rest go through omem_call. */
