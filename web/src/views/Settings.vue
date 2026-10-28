@@ -678,6 +678,7 @@ async function saveEdit() {
         <label class="field"><span>本人 open_id（setup 扫码通常自动填）</span><input class="input mono" :value="config.lark.ownerOpenId ?? ''" placeholder="不知道可先私聊机器人一句，再运行 omem setup" @change="saveConfig({ lark: { ...config.lark, ownerOpenId: ($event.target as HTMLInputElement).value } })" /></label>
       </div>
       <div class="field"><span>默认空间</span><UiSelect :model-value="config.lark.defaultSpace" width="240px" aria-label="默认空间" :options="state.spaces.map((s) => ({ value: s.id, label: s.name }))" @change="(v) => saveConfig({ lark: { ...config.lark, defaultSpace: v } })" /></div>
+      <label class="field"><span>网页地址（从飞书或其他设备打开 omem 页面用）</span><input class="input mono" :value="config.webUrl ?? ''" placeholder="如 http://192.0.2.10:4317，或反向代理的地址" @change="saveConfig({ webUrl: ($event.target as HTMLInputElement).value.trim() }, '已保存网页地址')" /><span class="muted small">填了以后，通知卡片里的“打开链接”和插件页的链接（如英语练习）在飞书里能直接打开；从其他设备打开还需要令牌（<span class="mono">omem link</span>）。</span></label>
 
       <div class="card pad stack">
         <strong>其他机器人</strong>

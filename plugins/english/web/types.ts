@@ -19,7 +19,7 @@ export type ItemResult = { id: string; correct: boolean | null; score: number | 
 export type Block = {
   id: string;
   kind: string;
-  status: "open" | "submitted";
+  status: "open" | "submitted" | "shown";
   data: { title: string; intro?: string; items: QuizItem[] };
   answers: Record<string, unknown> | null;
   result: { items: ItemResult[] } | null;
@@ -38,19 +38,21 @@ export type Snapshot = {
   due: { point: string }[];
   errors: { tag: string; count: number }[];
   daily: { date: string; count: number; accuracy: number | null }[];
+  bank: { total: number; scenes: { scene: string; count: number }[] };
+  settings: { source: string; quizSize: string; voice: string; rate: string; dailyGoal: number };
 };
 
 export const SKILL_LABEL: Record<string, string> = { vocab: "词汇", grammar: "语法", listening: "听力", translation: "翻译", reading: "阅读" };
 export const TYPE_LABEL: Record<string, string> = { choice: "选择", cloze: "填空", dictation: "听写", translate: "翻译" };
 
-/** Read aloud with the browser's voices; the closest English voice for the language asked. */
-export function speak(a: Audio, slower = false) {
+/** Read aloud with the browser's voices; the owner's accent and speed (settings) win over the item's. */
+export function speak(a: Audio, slower = false, pref?: { lang: string; rate: number }) {
   const synth = window.speechSynthesis;
   if (!synth) return false;
   synth.cancel();
   const u = new SpeechSynthesisUtterance(a.text);
-  u.lang = a.lang ?? "en-US";
-  u.rate = (a.rate ?? 1) * (slower ? 0.75 : 1);
+  u.lang = pref?.lang ?? a.lang ?? "en-US";
+  u.rate = (a.rate ?? 1) * (pref?.rate ?? 1) * (slower ? 0.75 : 1);
   const voices = synth.getVoices();
   const voice = voices.find((v) => v.lang === u.lang) ?? voices.find((v) => v.lang.startsWith("en"));
   if (voice) u.voice = voice;

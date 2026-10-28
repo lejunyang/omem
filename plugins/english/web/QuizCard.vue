@@ -3,7 +3,7 @@ import { computed, reactive, ref } from "vue";
 import { speak, TYPE_LABEL, type Block, type QuizItem } from "./types";
 
 /** One batch of questions: answered together, handed in once, then shown with its results. */
-const props = defineProps<{ block: Block; submit: (answers: Record<string, unknown>) => Promise<void> }>();
+const props = defineProps<{ block: Block; voice?: { lang: string; rate: number }; submit: (answers: Record<string, unknown>) => Promise<void> }>();
 
 const answers = reactive<Record<string, unknown>>({ ...(props.block.answers ?? {}) });
 const sending = ref(false);
@@ -64,8 +64,8 @@ function mark(id: string) {
 
         <p v-if="it.prompt && it.type !== 'cloze'" class="prompt">{{ it.prompt }}</p>
         <div v-if="it.audio" class="row audio">
-          <button class="btn sm" type="button" :disabled="!canSpeak" @click="speak(it.audio!)">▶ 播放</button>
-          <button class="btn sm ghost" type="button" :disabled="!canSpeak" @click="speak(it.audio!, true)">慢速</button>
+          <button class="btn sm" type="button" :disabled="!canSpeak" @click="speak(it.audio!, false, voice)">▶ 播放</button>
+          <button class="btn sm ghost" type="button" :disabled="!canSpeak" @click="speak(it.audio!, true, voice)">慢速</button>
           <span v-if="!canSpeak" class="small muted">这个浏览器不支持朗读</span>
         </div>
 

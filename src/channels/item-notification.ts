@@ -3,11 +3,13 @@ import { one } from "../core/db.ts";
 import type { Notification } from "../core/notify.ts";
 import { notificationOrigins, resolveCitations } from "./common.ts";
 import { buildCard, type CardButton } from "./lark-send.ts";
+import { webLink } from "../core/util.ts";
 
-function linkButton(link: string | null): CardButton[] {
+/** Page links (#/...) open from Feishu once the web address is configured (config.webUrl). */
+function linkButton(app: App, link: string | null): CardButton[] {
   if (!link) return [];
   try {
-    const url = new URL(link);
+    const url = new URL(webLink(app, link));
     if (url.protocol === "https:" || url.protocol === "http:") return [{ text: "打开链接", url: url.href }];
   } catch { /* Internal routes and invalid URLs cannot be opened from Feishu. */ }
   return [];
@@ -38,7 +40,7 @@ export function itemDigestCard(app: App, n: Notification) {
 export function notificationCard(app: App, n: Notification) {
   if (n.digest) return itemDigestCard(app, n);
   if (n.entity === "item" && n.entityId) return itemNotificationCard(app, n);
-  const buttons = linkButton(n.link);
+  const buttons = linkButton(app, n.link);
   return buildCard({
     title: n.title,
     blocks: [
@@ -71,7 +73,7 @@ export function itemNotificationCard(app: App, n: Notification) {
         buttons: [
           { text: "已处理", value: `item:done:${n.entityId}`, style: "primary" },
           { text: "忽略", value: `item:cancel:${n.entityId}` },
-          ...linkButton(n.link).filter((b) => !urls.has(b.url!)),
+          ...linkButton(app, n.link).filter((b) => !urls.has(b.url!)),
           ...((n.actions ?? []).map((a) => ({ text: a.label, value: `item:act:${n.entityId}:${a.action}`, ...(a.style ? { style: a.style } : {}) }))),
         ],
       },

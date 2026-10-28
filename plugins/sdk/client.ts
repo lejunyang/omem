@@ -5,17 +5,23 @@
  * /api/plugins/<this plugin>/. The shell also sends the theme and the server events of this plugin.
  */
 export type OmemEvent =
-  | { type: "plugin"; plugin: string; conversationId: string; blockId?: string }
+  | { type: "plugin"; plugin: string; conversationId: string; blockId?: string; settings?: boolean }
   | { type: "run"; runId: string; status: string };
+
+export { renderBlock, GENERIC_KINDS, type BlockView } from "./blocks";
 
 export type Omem = {
   plugin: string;
+  /** The query of the shell's route (#/plugin/<id>?session=…): a link can open a given session. */
+  params: Record<string, string>;
   /** Paths are relative to /api/plugins/<id>/ (e.g. "sessions"). */
   get<T = any>(path: string): Promise<T>;
   post<T = any>(path: string, body?: unknown): Promise<T>;
   on(fn: (e: OmemEvent) => void): () => void;
   /** Open an omem page in the shell (e.g. "/learn"). */
   navigate(to: string): void;
+  /** Open the shell's settings dialog for this plugin; a saved change arrives as a plugin event with settings: true. */
+  openSettings(): void;
 };
 
 type Msg = { omem: 1; type: string; [k: string]: unknown };
@@ -51,6 +57,7 @@ export function connect(): Promise<Omem> {
           });
         resolve({
           plugin,
+          params: (m.params as Record<string, string>) ?? {},
           get: (path) => request("GET", path),
           post: (path, body) => request("POST", path, body ?? {}),
           on: (fn) => {
@@ -58,6 +65,7 @@ export function connect(): Promise<Omem> {
             return () => listeners.delete(fn);
           },
           navigate: (to) => send({ type: "navigate", to }),
+          openSettings: () => send({ type: "settings" }),
         });
       } else if (m.type === "response") {
         const w = waiting.get(m.id as number);

@@ -73,3 +73,27 @@ export function pluginStore(app: App, plugin: string, userId: string, spaceId: s
     },
   };
 }
+
+/** The owner's settings for a plugin (src/plugins/settings.ts): a reserved collection plugin code and agents cannot name. */
+const SETTINGS = "_settings";
+export function readSettingsRecord(app: App, plugin: string, userId: string): Record<string, unknown> {
+  const r = one<{ data: string }>(app.db, "select data from plugin_records where id = ?", recordId(plugin, userId, SETTINGS, "values"));
+  return r ? json(r.data, {}) : {};
+}
+export function writeSettingsRecord(app: App, plugin: string, userId: string, spaceId: string, values: Record<string, unknown>) {
+  const at = now();
+  run(
+    app.db,
+    `insert into plugin_records(id,plugin,user_id,space_id,collection,key,data,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)
+     on conflict(id) do update set data = excluded.data, updated_at = excluded.updated_at`,
+    recordId(plugin, userId, SETTINGS, "values"),
+    plugin,
+    userId,
+    spaceId,
+    SETTINGS,
+    "values",
+    JSON.stringify(values),
+    at,
+    at,
+  );
+}

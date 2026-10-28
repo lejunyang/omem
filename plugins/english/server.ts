@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { PluginApi, PluginContext } from "../../src/plugins/types.ts";
-import { applyAttempt, LEVELS, normalize, PASS, SKILLS, snapshot, snapshotText, wordAccuracy, type Attempt } from "./learner.ts";
+import { applyAttempt, LEVELS, normalize, PASS, pickFromBank, SKILLS, snapshot, snapshotText, wordAccuracy, type Attempt, type BankEntry } from "./learner.ts";
 
 /**
  * English practice (docs/v2/plugins.md): the tutor hands in a batch of questions with
@@ -70,11 +70,24 @@ function grade(ctx: PluginContext & { blockId: string }, data: Quiz, answers: Re
   const graded = items.filter((i) => !i.pending);
   const pending = items.filter((i) => i.pending);
   const head = `【提交】${data.title}：${graded.length ? `判过分的 ${graded.length} 题对 ${graded.filter((i) => i.correct).length} 题` : "没有可自动判分的题"}${pending.length ? `，${pending.length} 题待你评分` : ""}。`;
-  const tail = pending.length
-    ? `先用 english_grade(block_id="${ctx.blockId}") 给待评的题打分并写点评，再总结这一组、出下一组。`
-    : "点评这一组，再按需要出下一组。";
+  const grading = pending.length ? `先用 english_grade(block_id="${ctx.blockId}") 给待评的题打分并写点评，再` : "";
+  const settings = ctx.settings();
+  const target = Number(settings.quizSize) * 3;
+  const left = ctx.store.count("bank");
+  // From the bank the next set is drawn at once; the tutor's part is to comment and keep the bank stocked.
+  const tail =
+    settings.source === "bank"
+      ? `${grading}点评这一组。出题方式是题库：本人点“下一组”会从题库里直接取，不要用 english_quiz 出下一组。题库现在 ${left} 题${left < target ? `，用 english_bank_add 补到约 ${target} 题（按刚才的结果：答错的知识点换个问法再考，薄弱点占三分之一；场景和这一组相同）` : "，够用，不用补"}。`
+      : `${grading}总结这一组、出下一组。`;
   return { result: { items, at }, message: [head, ...lines, "", tail].join("\n") };
 }
+
+function checkItem(it: Item, i: number) {
+  if (it.type === "choice" && it.answer >= it.options.length) throw new Error(`第 ${i + 1} 题的 answer 超出了选项范围（共 ${it.options.length} 个选项，下标从 0 开始）`);
+  if (it.type === "cloze" && (it.text.match(/_{3,}/g) ?? []).length !== 1) throw new Error(`第 ${i + 1} 题（cloze）的 text 要有且只有一个 ___`);
+}
+
+const BANK_MAX = 300;
 
 export default function register(api: PluginApi) {
   api.block({
@@ -85,8 +98,7 @@ export default function register(api: PluginApi) {
     prepare: (q) => {
       const used = new Set<string>();
       const items = q.items.map((it, i) => {
-        if (it.type === "choice" && it.answer >= it.options.length) throw new Error(`第 ${i + 1} 题的 answer 超出了选项范围（共 ${it.options.length} 个选项，下标从 0 开始）`);
-        if (it.type === "cloze" && (it.text.match(/_{3,}/g) ?? []).length !== 1) throw new Error(`第 ${i + 1} 题（cloze）的 text 要有且只有一个 ___`);
+        checkItem(it, i);
         let id = it.id && !used.has(it.id) ? it.id : `q${i + 1}`;
         while (used.has(id)) id += "x";
         used.add(id);
@@ -125,7 +137,46 @@ export default function register(api: PluginApi) {
     page: true,
     handler: (ctx, a) => {
       const s = snapshot(ctx.store);
-      return a.format === "json" ? JSON.stringify(s) : snapshotText(s);
+      const settings = ctx.settings();
+      if (a.format === "json") return JSON.stringify({ ...s, settings });
+      return `${snapshotText(s)}\n本人的设置：出题方式 ${settings.source === "bank" ? "题库（本人从题库取下一组，你负责点评和补题）" : "陪练现出（每组由你用 english_quiz 出）"}，每组 ${settings.quizSize} 题，每天目标 ${settings.dailyGoal} 题。`;
+    },
+  });
+
+  api.tool({
+    name: "english_bank_add",
+    description:
+      "往题库里加题，供本人点“下一组”时直接取（出题方式是题库时用）。题目格式和 english_quiz 的 items 一样（不用写 id）；scene 写这批题的场景，和本人选的场景名一致（如“餐厅点餐”），不限场景的留空。宿主按画像从题库挑题：薄弱和该复习的知识点优先、难度贴近本人等级，所以 points 和 level 要标准。",
+    schema: z.object({ scene: z.string().max(40).default(""), items: z.array(item).min(1).max(40) }),
+    write: true,
+    handler: (ctx, a) => {
+      const have = ctx.store.count("bank");
+      if (have + a.items.length > BANK_MAX) return `题库最多 ${BANK_MAX} 题，现在有 ${have} 题；少加一些，或等本人做掉一部分再补。`;
+      a.items.forEach((it, i) => checkItem(it, i));
+      const at = new Date().toISOString();
+      for (const it of a.items) {
+        const { id: _id, ...rest } = it;
+        ctx.store.put("bank", null, { item: { ...rest, points: rest.points.map((p) => p.trim().toLowerCase()).filter(Boolean) }, scene: a.scene.trim(), addedAt: at } satisfies BankEntry);
+      }
+      return `已加入题库 ${a.items.length} 题（场景：${a.scene || "不限"}），题库现在 ${have + a.items.length} 题。`;
+    },
+  });
+
+  api.tool({
+    name: "english_next",
+    description: "从题库里按画像挑下一组题，放进练习页的会话（页面上的“下一组”按钮用）。题库不够时不出题，返回 drawn=false。",
+    schema: z.object({ session_id: z.string(), scene: z.string().max(40).optional() }),
+    page: true,
+    write: true,
+    handler: (ctx, a) => {
+      const size = Number(ctx.settings().quizSize) || 8;
+      const entries = ctx.store.list<BankEntry>("bank", { limit: 5000 });
+      const picked = pickFromBank(entries, snapshot(ctx.store), { size, scene: a.scene });
+      if (!picked) return JSON.stringify({ drawn: false, bank: entries.length });
+      const scene = a.scene?.trim();
+      const blockId = ctx.present("quiz", { title: `${scene || "综合"}（题库）`, items: picked.map((e) => e.data.item) }, a.session_id);
+      for (const e of picked) ctx.store.delete("bank", e.key);
+      return JSON.stringify({ drawn: true, blockId, bank: entries.length - picked.length });
     },
   });
 

@@ -15,5 +15,6 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "plugins/*/*.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "plugins/*/*.ts"],
+  "exclude": ["plugins/sdk"]
 }

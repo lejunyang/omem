@@ -12,3 +12,37 @@ skills: [english-item-writing]
 tools: [search, read_source, list_sources, recall, remember, supersede, create_card, learning_progress]
 page:
   title: 英语练习
+settings:
+  - key: source
+    label: 出题方式
+    type: select
+    options:
+      - { value: bank, label: 题库：下一组马上出，陪练在后台按你的情况补题 }
+      - { value: tutor, label: 陪练现出：每组都按刚才的结果出，要等一两分钟 }
+    default: bank
+  - key: quizSize
+    label: 每组题数
+    type: select
+    options: ["6", "8", "10", "12"]
+    default: "8"
+  - key: voice
+    label: 朗读口音
+    type: select
+    options:
+      - { value: en-US, label: 美式 }
+      - { value: en-GB, label: 英式 }
+    default: en-US
+  - key: rate
+    label: 朗读语速
+    type: select
+    options:
+      - { value: "0.8", label: 慢 }
+      - { value: "0.9", label: 稍慢 }
+      - { value: "1", label: 正常 }
+    default: "1"
+  - key: dailyGoal
+    label: 每天目标题数
+    type: number
+    min: 5
+    max: 300
+    default: 30

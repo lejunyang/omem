@@ -12,10 +12,10 @@ plugins/<id>/
   agents/<名>.md        Agent 档案（格式同 library/_agents），对外名字是 <id>-<名>
   skills/<名>/SKILL.md  技能，首次启动播种到 library/_skills（已有的不覆盖）
   server.ts            服务端代码：工具、内容块、判分（只有内置插件可以带）
-  web/                 页面源码；构建到 web/dist/plugins/<id>/
+  web/                 页面：内置插件放源码，构建到 web/dist/plugins/<id>/；数据目录里的插件放构建好的文件
 ```
 
-内置插件在仓库的 `plugins/`。本人自己的插件（包括接内部系统的）以后放数据目录 `plugins/<id>/`，不进仓库；第一期只加载内置插件。
+内置插件在仓库的 `plugins/`。本人自己的插件（包括接内部系统的）放数据目录 `<数据目录>/plugins/<id>/`，不进仓库。数据目录里的插件只加载声明：清单、档案、技能和构建好的 `web/`，**不加载 `server.ts`**（带代码的插件要等第三期的信任确认）。没有自己页面的插件用外壳的默认页（会话、回复、通用内容块）。和内置插件同 id 的不加载。
 
 ## 清单
 
@@ -28,10 +28,13 @@ icon: cap
 agents: [tutor]                                         # → english-tutor
 skills: [english-item-writing]
 tools: [recall, remember, supersede, notify, create_card, learning_progress]   # 插件档案可用的宿主工具
-page: { title: 英语练习 }                                # 有 web/ 时出现在导航
+page: { title: 英语练习 }                                # 出现在导航；没有 web/ 时用默认页
+settings:                                               # 本人的设置，外壳统一渲染
+  - { key: quizSize, label: 每组题数, type: select, options: ["6", "8", "10", "12"], default: "8" }
+  - { key: dailyGoal, label: 每天目标题数, type: number, min: 5, max: 300, default: 30 }
 ```
 
-- 插件档案能用的工具 = 清单 `tools` + 插件自己注册的工具 + 通用插件工具（`plugin_query`、`plugin_put`）。档案 frontmatter 里写的 `tools` 只能在这个范围内选，超出的忽略并警告。
+- 插件档案能用的工具 = 清单 `tools` + 插件自己注册的工具 + 通用插件工具（`plugin_query`、`plugin_put`、`plugin_form`、`plugin_chart`）。档案 frontmatter 里写的 `tools` 只能在这个范围内选，超出的忽略并警告。
 - 插件档案和普通档案一样出现在 Agent 页，可以 `/as english-tutor`、`run_agent`、挂技能、有专属记忆、由 coach 复盘。本人在 Agent 页改它，就在 `library/_agents/` 存一份自定义版本（带 `plugin` 字段）；删掉自定义版本回到插件自带的版本。
 - 名字带插件前缀：档案 `english-tutor`，工具 `english_quiz`，避免与内置角色、本人的档案和别的插件撞名。宿主不按插件名特判任何逻辑。
 
@@ -46,8 +49,8 @@ export default function register(api: PluginApi) {
 }
 ```
 
-- `api.tool`：注册工具，名字必须以 `<id>_` 开头。`ctx` 里有本次运行的用户、空间、运行 id 和限定在本插件、本用户的存储 `ctx.store`。
-- `api.block`：注册一种内容块，宿主自动生成同名工具 `<id>_<kind>` 让 Agent 交出这种块（见下）。
+- `api.tool`：注册工具，名字必须以 `<id>_` 开头；`page: true` 的工具页面也能调。`ctx` 里有本次运行的用户、空间、运行 id，限定在本插件、本用户的存储 `ctx.store`，本人的设置 `ctx.settings()`，以及 `ctx.present(kind, data, 会话)`：不经 Agent 直接往本人的某个插件会话里放一个块（题库出题就是这样）。
+- `api.block`：注册一种内容块，宿主自动生成同名工具 `<id>_<kind>` 让 Agent 交出这种块（见下）。`display: true` 的块只展示、不用提交；否则要有 `grade`。
 - 构建时 `server.ts` 随 `tsc` 编译到 `dist/plugins/<id>/server.js`，类型只从 `src/plugins/types.ts` 引入。
 
 ## 交互协议：内容块
@@ -68,13 +71,30 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 
 - 答案只在服务端；页面拿到的是 `publicView` 的结果，提交后结果里才带正确答案。
 - 一个块只能提交一次。Agent 还在运行时提交，消息照常排进会话（运行中的追加消息机制，`steer.ts`）。
-- 页面显示会话的消息和块，按时间排；Agent 的文字是 Markdown。
+- 页面显示会话的消息和块；Agent 的文字是 Markdown。一轮的回复在这一轮结束时才存下，所以块排在交出它的那一轮回复之后。
+
+### 宿主的通用块
+
+每个插件的档案都能用，没写代码和页面的插件也能交互：
+
+| 工具 | 内容 | 提交后 |
+| --- | --- | --- |
+| `plugin_form` | 表单：文字、多行、数字、单选、多选、1–5 打分；可标必填 | 宿主检查必填（缺了退回，块重新可填），整理成“【提交】标题 / - 字段：值”交给 Agent |
+| `plugin_chart` | 柱状图或折线图，最多 4 组数据，一条纵轴 | 只展示 |
+
+渲染在 `plugins/sdk/blocks.ts`，不依赖框架：外壳的默认页和插件自己的页面都用它（英语练习页里陪练交的表单和图表也是它画的）。图表的颜色是验证过色觉和对比度的 4 个分类色，深浅色各一套；两组以上有图例，每根柱子悬停有数值，“看数据”展开成表格。
+
+### 不在插件页里的时候
+
+插件档案在别的会话里（比如飞书里 `/as english-tutor`）交出内容块时，宿主替本人新开一个这个插件的会话，把块放进去，工具结果里给 Agent 一个链接 `#/plugin/<id>?session=<会话>`，让它发给本人。配置了网页地址（`config.webUrl`，设置 → 渠道）时链接是完整地址，飞书里能直接打开；页面打开时停在那个会话上。同一个地址也让通知卡片里的页面链接能从飞书打开。
 
 ## 存储
 
 表 `plugin_records`：`(plugin, user_id, collection, key)` 唯一，`data` 是 JSON，带 `space_id`、创建和更新时间，参与多设备合并。插件的服务端代码用 `ctx.store`，Agent 用 `plugin_query` / `plugin_put`（只能读写本次运行所属插件的数据）。不需要为插件写迁移。
 
-表 `plugin_blocks`：内容块（含答案）、提交的答案、判分结果、状态（open / submitted）。
+表 `plugin_blocks`：内容块（含答案）、提交的答案、判分结果、状态（open / submitted / shown）。
+
+本人的设置存在插件记录的保留集合 `_settings` 里，按清单 `settings` 校验（单选只能是列出的值，数字在范围内），插件代码用 `ctx.settings()` 读，Agent 和 `plugin_query` 读不到这个集合。
 
 逐题的作答、统计这类数据放插件存储，不写进记忆；偏好（“想多练听力”“喜欢商务场景”）由档案写成专属记忆。
 
@@ -85,7 +105,8 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 - iframe 带 `sandbox="allow-scripts allow-forms allow-popups"`、不给同源，页面拿不到本人的 Cookie、令牌和 localStorage，也不能直接调 `/api`。
 - 页面经 `plugins/sdk/client.ts`（postMessage）请求外壳，外壳只转发到 `/api/plugins/<id>/…`，其他路径拒绝。
 - 外壳把主题 token（`--bg`、`--ink`、`--accent`……）和深浅色发给页面，主题切换时再发一次；页面字体、颜色与主站一致。
-- 外壳把服务端事件里和本插件有关的（`plugin`、`run`）转给页面，页面据此刷新。
+- 外壳把服务端事件里和本插件有关的（`plugin`、`run`）转给页面，页面据此刷新；初始化时还带上路由的查询参数（`params.session` 指定打开哪个会话）。
+- 页面调 `openSettings()` 让外壳打开设置弹窗；保存后页面收到 `settings: true` 的事件。
 - 插件页面的静态文件带 `access-control-allow-origin: *`（沙箱里的 module script 要求跨源许可），只是公开的构建产物。
 
 ### 插件接口
@@ -99,7 +120,8 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 | `POST /api/plugins/:id/sessions/:cid/messages` | 本人说一句话 |
 | `POST /api/plugins/:id/blocks/:bid/submit` | 提交一个块 |
 | `GET /api/plugins/:id/data/:collection` | 页面读插件存储（只读） |
-| `POST /api/plugins/:id/call/:tool` | 页面调用插件自己的工具（以本人身份，限本插件的工具） |
+| `POST /api/plugins/:id/call/:tool` | 页面调用插件自己的工具（以本人身份，限本插件标了 `page` 的工具） |
+| `GET` / `PUT /api/plugins/:id/settings` | 设置项和当前值；保存一项或几项 |
 
 ## 英语学习插件
 
@@ -127,8 +149,16 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 
 出题方向由 Agent 决定（场景、题型比例、难度略高于当前水平、薄弱点占一部分），宿主只给数据。
 
+**出题方式**（设置“出题方式”，默认题库）：
+
+- **题库**：陪练用 `english_bank_add` 提前往题库（插件记录 `bank`，最多 300 题）里补题，标好场景、技能、等级和知识点。本人点“下一组”时，页面调 `english_next`，宿主当场按画像挑题放进会话，不用等模型：薄弱知识点 +3、该复习的 +2、同场景 +2、等级与本人相同或高一级 +1、低于本人 −1；同一类题不超过一半（翻译不超过四分之一，它要等陪练评分），同一知识点尽量不重复；挑走的题从题库删掉。题库里这个场景的题不到半组、或总数不够一组时不出，页面改请陪练现出。提交后的消息告诉陪练“不要出下一组，题库剩多少，补到约三组的量”，陪练这一轮只点评和补题。选了“侧重”的新练习也交给陪练现出。
+- **陪练现出**：每组由陪练用 `english_quiz` 出，最贴合刚才的结果，但每组要等一两分钟。
+
+其余设置：每组题数、朗读口音（美式 / 英式）和语速、每天目标题数（学习情况里显示今天完成了多少）。
+
 ## 分期
 
-1. **第一期（本次）**：清单与加载、插件档案进 Agent 列表、插件存储、内容块协议、插件页 iframe 与 SDK、英语插件（四种题型、宿主判分、Agent 评翻译、画像与学习曲线）。
-2. **第二期**：宿主通用块（`form`、`markdown`、`chart`），没写前端的插件也能交互；内容块在问答页和运行详情里显示；飞书里退化成带“打开练习页”的卡片；题库预取（Agent 在后台补题，宿主按画像选题，减少等待）；插件设置页；“每日练习”规则模板；服务端语音合成。
-3. **第三期**：数据目录里的插件与信任确认；`services`（插件的常驻进程，宿主按需启停）与 `streams`（宿主鉴权后转发 WebSocket，照 `ide-web.ts`），用于远程看屏幕、一起操作这类插件；危险操作走 `approvals.tools`。
+1. **第一期**（2026-10-28）：清单与加载、插件档案进 Agent 列表、插件存储、内容块协议、插件页 iframe 与 SDK、英语插件（四种题型、宿主判分、Agent 评翻译、画像与学习曲线）。
+2. **第二期**（2026-10-28）：插件设置；宿主通用块（`plugin_form`、`plugin_chart`）和默认插件页；数据目录里的声明式插件；英语题库（陪练补题、宿主按画像选题）；插件会话链接与网页地址（飞书里交出的块转成练习页链接）。
+   还没做：内容块在问答页和运行详情里显示、“每日练习”规则模板、服务端语音合成（听写原文就不用发到页面）。
+3. **第三期**：数据目录里带代码的插件与信任确认；`services`（插件的常驻进程，宿主按需启停）与 `streams`（宿主鉴权后转发 WebSocket，照 `ide-web.ts`），用于远程看屏幕、一起操作这类插件；危险操作走 `approvals.tools`。

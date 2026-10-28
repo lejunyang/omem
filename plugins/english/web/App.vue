@@ -3,6 +3,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { connect, type Omem } from "../../sdk/client";
+import GenericBlock from "./GenericBlock.vue";
 import Progress from "./Progress.vue";
 import QuizCard from "./QuizCard.vue";
 import type { Block, Message, Session, SessionInfo, Snapshot } from "./types";
@@ -42,6 +43,13 @@ const entries = computed<Entry[]>(() => {
   return out.sort((a, b) => a.at.localeCompare(b.at));
 });
 const md = (text: string) => DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
+const settings = computed(() => snap.value?.settings ?? { source: "bank", quizSize: "8", voice: "en-US", rate: "1", dailyGoal: 30 });
+const voice = computed(() => ({ lang: settings.value.voice, rate: Number(settings.value.rate) || 1 }));
+/** The scene a session is about: its title is "<scene> · <date>". */
+const sceneOf = (s: { title: string } | null) => s?.title.split(" · ")[0].trim() ?? "";
+// The next set is up to the owner when nothing is waiting to be answered and the tutor is idle.
+const canDraw = computed(() => !!current.value && !current.value.busy && !current.value.blocks.some((b) => b.status === "open"));
+const drawNote = ref("");
 
 async function loadSnapshot() {
   try {
@@ -70,6 +78,13 @@ const refresh = (scroll = true) => {
   timer = setTimeout(() => current.value && void loadSession(current.value.id, scroll).catch(() => {}), 250);
 };
 
+/** From the bank, at once; false when the bank cannot make a set for this scene. */
+async function drawFromBank(id: string, sceneName: string) {
+  const r = JSON.parse((await omem!.post<{ text: string }>("call/english_next", { session_id: id, scene: sceneName || undefined })).text) as { drawn: boolean; bank: number };
+  if (snap.value) snap.value = { ...snap.value, bank: { ...snap.value.bank, total: r.bank } };
+  return r.drawn;
+}
+
 async function start() {
   const text = `来一组「${scene.value}」场景的练习${focus.value === "混合" ? "" : `，侧重${focus.value}`}。`;
   sending.value = true;
@@ -77,7 +92,9 @@ async function start() {
   let id: string | null = null;
   try {
     id = (await omem!.post<{ id: string }>("sessions", { title: `${scene.value} · ${new Date().toLocaleDateString()}` })).id;
-    await omem!.post(`sessions/${id}/messages`, { text });
+    // A focus asks for a particular mix the bank does not know about: that set is the tutor's.
+    const fromBank = settings.value.source === "bank" && focus.value === "混合" && (await drawFromBank(id, scene.value.trim()));
+    if (!fromBank) await omem!.post(`sessions/${id}/messages`, { text: settings.value.source === "bank" ? `${text}（题库里这个场景的题不够，请先出这一组，再补题库。）` : text });
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -104,11 +121,33 @@ async function say() {
   }
 }
 
+async function next() {
+  if (!current.value) return;
+  const id = current.value.id;
+  sending.value = true;
+  drawNote.value = "";
+  error.value = "";
+  try {
+    if (settings.value.source === "bank" && (await drawFromBank(id, sceneOf(current.value)))) await loadSession(id, true);
+    else {
+      if (settings.value.source === "bank") drawNote.value = "题库里的题不够，这一组请陪练现出。";
+      await omem!.post(`sessions/${id}/messages`, { text: settings.value.source === "bank" ? "题库不够了，请出下一组，再补一下题库。" : "出下一组。" });
+      await loadSession(id, true);
+    }
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    sending.value = false;
+  }
+}
+
 async function submit(block: Block, answers: Record<string, unknown>) {
   await omem!.post(`blocks/${block.id}/submit`, { answers });
   await loadSession(current.value!.id, true);
   void loadSnapshot();
 }
+
+const openSettings = () => omem?.openSettings();
 
 function fresh() {
   current.value = null;
@@ -128,12 +167,15 @@ onMounted(async () => {
   try {
     omem = await connect();
     omem.on((e) => {
+      if (e.type === "plugin" && e.settings) return void loadSnapshot();
       if (!current.value) return;
       if (e.type === "plugin" && e.conversationId === current.value.id) refresh();
       else if (e.type === "run" && current.value.busy) refresh();
     });
     sessions.value = await omem.get<SessionInfo[]>("sessions");
-    if (sessions.value.length) await loadSession(sessions.value[0].id, true);
+    // A link (a Feishu message) may name the session to open.
+    const wanted = omem.params.session && sessions.value.some((s) => s.id === omem!.params.session) ? omem.params.session : sessions.value[0]?.id;
+    if (wanted) await loadSession(wanted, true);
     void loadSnapshot();
     // Events can be missed (a reconnect); while the tutor is working, look again now and then.
     poll = setInterval(() => current.value?.busy && refresh(false), 4000);
@@ -164,6 +206,7 @@ onBeforeUnmount(() => {
           </li>
         </ul>
       </div>
+      <button class="btn sm ghost" type="button" @click="openSettings">设置</button>
       <button class="btn sm primary" type="button" @click="fresh">新练习</button>
     </header>
 
@@ -191,12 +234,17 @@ onBeforeUnmount(() => {
         <template v-else>
           <div ref="timeline" class="timeline">
             <template v-for="e in entries" :key="e.kind === 'block' ? e.block.id : e.message.id">
-              <QuizCard v-if="e.kind === 'block'" :block="e.block" :submit="(a) => submit(e.block, a)" />
+              <QuizCard v-if="e.kind === 'block' && e.block.kind === 'quiz'" :block="e.block" :voice="voice" :submit="(a) => submit(e.block, a)" />
+              <GenericBlock v-else-if="e.kind === 'block'" :block="e.block" :submit="(a) => submit(e.block, a)" />
               <p v-else-if="e.message.submission" class="note small muted">已提交这一组</p>
               <div v-else-if="e.message.role === 'assistant'" class="bot md" v-html="md(e.message.text)" />
               <p v-else class="me">{{ e.message.text }}</p>
             </template>
             <p v-if="current.busy" class="note small muted" aria-live="polite">陪练在准备…</p>
+          </div>
+          <div v-if="canDraw" class="next row">
+            <button class="btn primary" type="button" :disabled="sending" @click="next">{{ sending ? "准备中…" : "下一组" }}</button>
+            <span class="small muted">{{ drawNote || (settings.source === "bank" ? `从题库里按你的情况挑，题库还有 ${snap?.bank.total ?? 0} 题` : "陪练按刚才的结果现出，要等一两分钟") }}</span>
           </div>
           <form class="composer" @submit.prevent="say">
             <textarea v-model="draft" class="field" rows="2" placeholder="和陪练说：太难了 / 多来点听力 / 这个词怎么用（Ctrl+Enter 发送）" aria-label="和陪练说" @keydown.enter.ctrl.prevent="say" @keydown.enter.meta.prevent="say" />
@@ -204,7 +252,7 @@ onBeforeUnmount(() => {
           </form>
         </template>
       </main>
-      <Progress class="side" :snap="snap" />
+      <Progress class="side" :snap="snap" :goal="Number(settings.dailyGoal) || 0" />
     </div>
   </div>
 </template>
@@ -300,6 +348,9 @@ onBeforeUnmount(() => {
 }
 .note {
   text-align: center;
+}
+.next {
+  flex-wrap: wrap;
 }
 .composer {
   display: flex;

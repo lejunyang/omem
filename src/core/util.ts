@@ -53,3 +53,13 @@ export class HttpError extends Error {
     this.status = status;
   }
 }
+
+/**
+ * A link to one of omem's pages (`#/...`): absolute when `webUrl` is configured, so it opens from
+ * another device or a Feishu card; otherwise left as it is (opens only inside omem's own pages).
+ */
+export function webLink(app: { config: { webUrl?: string } }, link: string) {
+  const base = app.config.webUrl?.trim().replace(/\/+$/, "");
+  if (!base || !link.startsWith("#/")) return link;
+  return `${base}/${link}`;
+}

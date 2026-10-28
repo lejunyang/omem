@@ -3,7 +3,7 @@ import { computed } from "vue";
 import { SKILL_LABEL, type Snapshot } from "./types";
 
 /** Levels, the last 14 days and what to work on, from english_snapshot. */
-const props = defineProps<{ snap: Snapshot | null }>();
+const props = defineProps<{ snap: Snapshot | null; goal: number }>();
 const peak = computed(() => Math.max(1, ...(props.snap?.daily ?? []).map((d) => d.count)));
 const pct = (x: number | null) => (x === null ? "—" : `${Math.round(x * 100)}%`);
 const width = (rating: number) => `${Math.max(4, Math.min(100, ((rating - 600) / 900) * 100))}%`;
@@ -15,7 +15,11 @@ const width = (rating: number) => `${Math.max(4, Math.min(100, ((rating - 600) /
       <div class="row">
         <h3>学习情况</h3>
         <span class="spacer" />
-        <span class="small muted">共 {{ snap.total }} 题 · 今天 {{ snap.today }}</span>
+        <span class="small muted">共 {{ snap.total }} 题</span>
+      </div>
+      <div v-if="goal" class="goal">
+        <div class="row small"><span>今天 {{ snap.today }} / {{ goal }} 题</span><span class="spacer" /><span v-if="snap.today >= goal" class="done">完成</span></div>
+        <span class="bar" role="progressbar" :aria-valuenow="snap.today" aria-valuemin="0" :aria-valuemax="goal" aria-label="今天的目标"><i :style="{ width: `${Math.min(100, (snap.today / goal) * 100)}%` }" /></span>
       </div>
       <ul class="skills">
         <li v-for="s in snap.skills" :key="s.skill" :title="`分数 ${s.rating}，近 7 天正确率 ${pct(s.last7)}，之前 ${pct(s.before)}`">
@@ -54,6 +58,17 @@ const width = (rating: number) => `${Math.max(4, Math.min(100, ((rating - 600) /
 }
 h3 {
   font-size: 15px;
+}
+.goal {
+  display: grid;
+  gap: 4px;
+}
+.goal .bar {
+  display: block;
+}
+.done {
+  color: var(--ok);
+  font-weight: 600;
 }
 .skills {
   list-style: none;

@@ -82,6 +82,11 @@ export const configSchema = z.object({
   port: z.number().int().default(4317),
   /** Optional bearer token for the HTTP API; when set, even this machine needs it. */
   token: z.string().optional(),
+  /**
+   * Where the owner opens the web pages from elsewhere (another device, a Feishu card), e.g.
+   * http://192.0.2.10:4317 or a reverse proxy. Links to pages (#/...) become absolute with it.
+   */
+  webUrl: z.string().optional(),
   timezone: z.string().default(Intl.DateTimeFormat().resolvedOptions().timeZone),
   language: z.string().default("zh-CN"),
   /** Background runs (ingest, wiki, dream…) at the same time; each model's own limit is agents.capacity. */

@@ -113,7 +113,7 @@ export type ServerEvent =
   | { type: "notification"; id: string; title: string; body: string; link?: string | null }
   | { type: "changed"; entity: string; id: string; spaceId?: string }
   | { type: "ask"; id: string; status: string; conversationId: string | null }
-  | { type: "plugin"; plugin: string; conversationId: string; blockId?: string };
+  | { type: "plugin"; plugin: string; conversationId: string; blockId?: string; settings?: boolean };
 
 /** A question, suggested next steps or an approval from an agent (server: agents/asks.ts). */
 export type Ask = {
