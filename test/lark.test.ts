@@ -144,6 +144,17 @@ describe("feishu bot messaging", () => {
     expect(last.meta.speaker).toBe("ou_a");
   });
 
+  it("without a target, posts into the Feishu conversation the run is answering", async () => {
+    const app = testApp();
+    const client = fakeClient();
+    setLarkClient(client);
+    const t = createThread(app, { spaceId: "personal", channel: "lark", key: "oc_p2p" });
+    const run = createRun(app, { kind: "ask", title: "x", input: { conversationId: t.id, messageIds: [] }, lane: "test-hold", notBefore: "2999-01-01T00:00:00Z" });
+    const ctx = toolContextForToken(app, issueToolToken({ runId: run.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: null }))!;
+    expect((await callTool(ctx, "lark_card", { title: "飞书授权", blocks: [{ markdown: "请打开链接完成授权" }] })).isError).toBe(false);
+    expect(client.calls.find((c) => c.op === "create")!.args.data.receive_id).toBe("oc_p2p");
+  });
+
   it("turns posts into drafts the owner approves", async () => {
     const app = testApp();
     app.config.lark.ownerOpenId = "ou_owner";

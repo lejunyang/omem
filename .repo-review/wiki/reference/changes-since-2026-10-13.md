@@ -670,3 +670,4 @@ updated: 2026-10-28
 - **运行写下的东西**：新增 `src/agents/run-writes.ts` 的 `runWrites`，按运行的 `tool-write` 事件和带运行 id 的行（工作文件 `meta.runId`、记忆 `run_id`）列出写下的东西及打开位置；`GET /api/runs/:id` 返回 `writes`。`RunActivity.vue` 在结束的运行下列出它们并给“运行记录”链接（运行页自身不显示链接）。起因：问答回答末尾的“已记录：…”只说写了什么，网页上找不到，工作文件又写在别的空间。
 - **更新原通知**：`notify` 接受 `replaces`（之前通知的 id）：新通知的 context 记 `replaces`，原通知标为已读、记 `replacedBy` 并取消夜间暂缓；飞书渠道发送普通通知后记下 `larkMessageId` / `larkBot`（`setNotificationCard`），遇到 `replaces` 时改原卡片而不是发新的，改失败才发新卡片。`notify` 工具返回通知 id，参数加 `replaces`；`skills/omem/references/items.md` 同步。
 - **配置合并保存**：`src/core/config.ts` 的 `saveConfig` 改为三方合并（`mergeConfig`）：以本进程上次读入或保存时的配置为基准，只把本进程改过的字段写到磁盘上的现状之上，其余以文件为准，传入的对象变成合并结果。以前服务、`omem setup`、CLI 各持一份启动时的完整配置，谁后保存就整份覆盖别人改过的项（包括服务运行期间的手改）。
+- **飞书工具默认发到本会话**：`lark_send` / `lark_card` 等不填 `chat_id`、`reply_to`、`user_id` 时，发到本次运行所在的飞书会话（`tools.ts` 的 `runLarkChat`）。起因：本人在私聊里让助理发起授权，Agent 拿不到当前私聊的 chat_id，发不了可更新的授权卡片，只好改用 `notify`。

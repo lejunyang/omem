@@ -1818,7 +1818,7 @@ def({
 // ---- Feishu bot messaging ---------------------------------------------------------
 
 const larkTarget = z.object({
-  chat_id: z.string().optional().describe("群或单聊 chat_id（oc_…）"),
+  chat_id: z.string().optional().describe("群或单聊 chat_id（oc_…）；chat_id、reply_to、user_id 都不填时发到本次对话所在的飞书会话"),
   reply_to: z.string().optional().describe("回复某条消息（om_…）"),
   in_thread: z.boolean().optional().describe("回复时开话题 / 在话题里回复"),
   user_id: z.string().optional().describe("私聊某人（open_id，ou_…）"),
@@ -1851,6 +1851,8 @@ async function larkGuard(ctx: ToolContext, t: LarkTargetArgs) {
     if (chat && chat !== actual) throw new HttpError(400, "chat_id 与被回复消息所在的飞书会话不一致");
     chat = actual;
   }
+  // No target given: the Feishu conversation this run is answering (its chat_id is not in the prompt).
+  if (!chat && !t.user_id) chat = runLarkChat(ctx) ?? undefined;
   const destination = chat ?? t.user_id;
   if (ctx.larkChats === undefined || (ctx.larkChats && !(destination && ctx.larkChats.includes(destination))))
     throw new HttpError(403, `本次任务不能往这个飞书会话发消息${chat ? `（${chat}）` : ""}`);
@@ -1863,6 +1865,13 @@ function runThread(ctx: ToolContext) {
   const r = one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId);
   const input = r ? (JSON.parse(r.input) as { conversationId?: string; threadId?: string }) : {};
   return input.conversationId ?? input.threadId ?? null;
+}
+
+/** The Feishu chat of the conversation this run belongs to, if it is one. */
+function runLarkChat(ctx: ToolContext) {
+  const convId = runThread(ctx);
+  const conv = convId ? one<{ external_id: string | null }>(ctx.app.db, "select external_id from conversations where id = ? and (channel = 'lark' or channel like 'lark:%')", convId) : undefined;
+  return conv?.external_id?.split("#")[0] || null;
 }
 
 /** Who an urgent / members-only message reaches, checked against what this run may do. */
@@ -1923,7 +1932,7 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
   const skippedNote = skipped.length ? `；已跳过不在目标群的 @ 对象：${[...new Set(skipped)].join("、")}。无需重试或在群内说明。` : "";
   // Posting into the chat this run is answering in a topic: stay inside that topic (files,
   // follow-ups) instead of landing at the top of the chat.
-  let target: import("../channels/lark-send.ts").Target = delivery.onlyTo ? { chatId: chat! } : { chatId: t.chat_id, userId: t.user_id, replyTo: t.reply_to, inThread: t.in_thread, bot: ctx.larkBot };
+  let target: import("../channels/lark-send.ts").Target = delivery.onlyTo ? { chatId: chat! } : { chatId: t.chat_id ?? (t.reply_to ? undefined : chat ?? undefined), userId: t.user_id, replyTo: t.reply_to, inThread: t.in_thread, bot: ctx.larkBot };
   if (!t.reply_to && !t.user_id && chat && !delivery.onlyTo) {
     const convId = runThread(ctx);
     const conv = convId ? one<{ external_id: string | null; last: string | null }>(ctx.app.db, "select external_id, json_extract(settings,'$.lastMessageId') last from conversations where id = ?", convId) : undefined;
