@@ -4,7 +4,7 @@ import { ref, watch } from "vue";
  * Opening a coding run's folder in a desktop editor (docs/v2/ide.md). Which editor and the SSH
  * alias of each omem machine belong to the viewer's computer, so they are remembered here.
  */
-/** `web`: VS Code in the browser, served by omem under /ide (when the owner turned it on). */
+/** `web`: VS Code in the browser, served by omem under /ide (owner only). */
 export type Editor = "vscode" | "vscode-insiders" | "cursor" | "web";
 export type DesktopEditor = Exclude<Editor, "web">;
 export const editorOptions: { value: Editor; label: string }[] = [

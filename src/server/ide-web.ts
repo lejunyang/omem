@@ -29,17 +29,19 @@ const sessions = new Set<string>();
 
 /**
  * The VS Code CLI to run: the configured command, else `code-tunnel` (the CLI itself, shipped beside
- * the desktop app's `code`), else `code` (the standalone CLI on a server).
+ * the desktop app's `code`), else `code` (the standalone CLI on a server). Null when none is there.
  */
-function cli(app: App) {
+export function ideCli(app: App) {
   const set = app.config.ide.web.command?.trim();
-  const found = set ? resolveCommand(set) : resolveCommand("code-tunnel") ?? resolveCommand("code");
-  return { name: set || "code", ...(found ?? { file: set || "code", prefix: [] as string[] }) };
+  for (const name of set ? [set] : ["code-tunnel", "code"]) {
+    const found = resolveCommand(name);
+    if (found) return { name, ...found, path: found.prefix.at(-1) ?? found.file };
+  }
+  return null;
 }
 
 /** Start serve-web unless it runs; resolves to its port. */
 export function ensureIdeWeb(app: App): Promise<number> {
-  if (!app.config.ide.web.enabled) return Promise.reject(new Error("网页版 VS Code 没有打开：设置 → 外观与说明 → 网页版 VS Code"));
   if (proc && proc.exitCode === null && port) return Promise.resolve(port);
   starting ??= (async () => {
     port = await freePort();
@@ -48,7 +50,10 @@ export function ensureIdeWeb(app: App): Promise<number> {
     mkdirSync(dir, { recursive: true });
     const args = ["serve-web", "--host", "127.0.0.1", "--port", String(port), "--connection-token", token, "--accept-server-license-terms", "--server-base-path", IDE_BASE, "--server-data-dir", join(dir, "server"), "--cli-data-dir", join(dir, "cli"), "--disable-telemetry"];
     reapOrphan(join(dir, "serve-web.pid"));
-    const command = cli(app);
+    const command = ideCli(app);
+    const set = app.config.ide.web.command?.trim();
+    if (!command)
+      throw new Error(set ? `找不到 ${set}：在运行页“在 VS Code 中打开”旁的齿轮里改成 VS Code 命令行的完整路径` : "这台机器上找不到 VS Code 的命令行（code-tunnel、code）：装上 VS Code 或它的独立命令行，或在运行页“在 VS Code 中打开”旁的齿轮里填它的路径");
     // resolveCommand runs a .cmd through cmd.exe itself; the arguments are ours (paths, a hex token).
     const child = spawn(command.file, [...command.prefix, ...args], { windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
     let log = "";
@@ -144,6 +149,9 @@ function upstreamHeaders(req: IncomingMessage) {
   for (const [k, v] of Object.entries(req.headers)) if (v !== undefined && k !== "cookie" && k !== "authorization") out[k] = v;
   const kept = (req.headers.cookie ?? "").split(";").map((c) => c.trim()).filter((c) => c && !c.startsWith(`${COOKIE}=`) && !c.startsWith("vscode-tkn="));
   out.cookie = [...kept, `vscode-tkn=${token}`].join("; ");
+  // The page tells the browser where to open its WebSocket from the host it was asked for: the
+  // address the browser used (first hop's, through `omem peer open`), not serve-web's own port.
+  out["x-forwarded-host"] = (req.headers["x-forwarded-host"] as string | undefined) ?? req.headers.host ?? out.host;
   out.host = `127.0.0.1:${port}`;
   return out;
 }

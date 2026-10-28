@@ -125,6 +125,8 @@ export class Workbench implements vscode.TreeDataProvider<Item> {
     const sel = editor.selection;
     const thread = this.controller.createCommentThread(editor.document.uri, new vscode.Range(sel.start.line, 0, sel.end.line, 0), []);
     thread.contextValue = "draft";
+    // An empty thread gets VS Code's own delete button; ours is for threads with something in them.
+    thread.label = "问 omem，或记为修改点";
     thread.canReply = true;
     thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
     return thread;
@@ -143,7 +145,10 @@ export class Workbench implements vscode.TreeDataProvider<Item> {
     const thread = reply.thread;
     const question = reply.text.trim();
     if (!question) return;
-    if (thread.contextValue === "draft") thread.contextValue = "asked";
+    if (thread.contextValue === "draft") {
+      thread.contextValue = "asked";
+      thread.label = "问 omem";
+    }
     thread.comments = [...thread.comments, comment(question, me)];
     const waiting = comment("思考中…");
     thread.comments = [...thread.comments, waiting];

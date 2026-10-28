@@ -18,7 +18,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import { applyCodeRun, codeApplyTargets, codeFolders, codePatches, codeRunsAt, codeRepos, createBranchReview, discardCodeRun } from "../agents/code.ts";
 import { attachPluginStreams, registerPluginRoutes } from "../plugins/http.ts";
-import { IDE_BASE, attachIdeUpgrade, ensureIdeWeb, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
+import { IDE_BASE, attachIdeUpgrade, ensureIdeWeb, ideCli, ideFolder, newIdeSession, proxyIde, stopIdeWeb } from "./ide-web.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
@@ -843,11 +843,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/runs/:id/folders", async (req) => {
     const id = (req.params as { id: string }).id;
     const local = !bearer(req) && /^(127\.|::1$|::ffff:127\.)/.test(req.ip ?? "");
-    return { local, host: hostname(), platform: process.platform, web: app.config.ide.web.enabled, folders: codeFolders(app, id) };
+    return { local, host: hostname(), platform: process.platform, folders: codeFolders(app, id) };
   });
   // Web VS Code (src/server/ide-web.ts): an ordinary link (the token as a query, like downloads)
   // starts serve-web, gives the owner's browser the session cookie that opens /ide and redirects
   // there; /ide itself is proxied raw, body unread.
+  // Which VS Code CLI web VS Code would run here (the gear menu shows it next to the command field).
+  server.get("/api/ide/cli", async () => {
+    const found = ideCli(app);
+    return { command: app.config.ide.web.command ?? null, found: found?.path ?? null };
+  });
   server.get("/api/ide/open", async (req, reply) => {
     if (who(req) !== OWNER) throw new HttpError(403, "网页版 VS Code 只对本人开放");
     const { folder } = q(z.object({ folder: z.string().optional(), token: z.string().optional() }), req.query);

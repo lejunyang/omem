@@ -27,6 +27,8 @@ function upstream(app: App, id: string, req: IncomingMessage, path: string, hops
   for (const [k, v] of Object.entries(req.headers)) if (v !== undefined && !["host", "authorization", "x-omem-hops"].includes(k)) headers[k] = v;
   headers.authorization = `Bearer ${r.token}`;
   headers["x-omem-hops"] = String(r.hops);
+  // Kept from the first hop: web VS Code addresses its WebSocket to the host the browser used.
+  if (!headers["x-forwarded-host"] && req.headers.host) headers["x-forwarded-host"] = req.headers.host;
   return (target.protocol === "https:" ? httpsRequest : httpRequest)(target, { method: req.method, headers, agent: false });
 }
 

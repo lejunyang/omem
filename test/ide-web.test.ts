@@ -25,7 +25,7 @@ const s = createServer((req, res) => {
   let body = "";
   req.on("data", (d) => (body += d)).on("end", () => {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ path: req.url, method: req.method, cookie: req.headers.cookie, auth: req.headers.authorization ?? null, base: at("--server-base-path"), body }));
+    res.end(JSON.stringify({ path: req.url, method: req.method, cookie: req.headers.cookie, auth: req.headers.authorization ?? null, fwd: req.headers["x-forwarded-host"] ?? null, base: at("--server-base-path"), body }));
   });
 });
 s.on("upgrade", (req, socket) => {
@@ -40,7 +40,7 @@ writeFileSync(fake, process.platform === "win32" ? `@"${process.execPath}" "${jo
 if (process.platform !== "win32") chmodSync(fake, 0o755);
 
 const app = testApp();
-app.config.ide = { web: { enabled: true, command: fake } };
+app.config.ide = { web: { command: fake } };
 app.config.token = "owner-secret";
 const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
 const base = `http://127.0.0.1:${(server.server.address() as { port: number }).port}`;
@@ -72,6 +72,8 @@ describe("web VS Code under /ide", () => {
     expect(seen.cookie).toMatch(/vscode-tkn=[0-9a-f]{48}/);
     expect(seen.cookie).toContain("other=1");
     expect(seen.cookie).not.toContain("omem_ide");
+    // serve-web addresses its WebSocket from this: the host the browser used, not its own port.
+    expect(seen.fwd).toBe(new URL(base).host);
 
     // Bodies pass through unparsed.
     const posted = await fetch(`${base}/ide/api/x`, { method: "POST", headers: { cookie, "content-type": "application/octet-stream" }, body: "raw-bytes" });
@@ -99,21 +101,29 @@ describe("web VS Code under /ide", () => {
     expect((await upgrade({})).status).toBe(401);
   }, 30000);
 
-  it("is off unless the owner turns it on", async () => {
-    app.config.ide.web.enabled = false;
-    const s = await fetch(`${base}/api/ide/open?token=owner-secret`, { redirect: "manual" });
-    expect(s.status).toBe(503);
-    expect(await s.text()).toMatch(/没有打开/);
-    app.config.ide.web.enabled = true;
-  });
-
-  it("reports a missing code CLI instead of taking the server down", async () => {
+  it("says which CLI it would run, and why it cannot when the configured one is not there", async () => {
+    const owner = { headers: { authorization: "Bearer owner-secret" } };
+    expect(await (await fetch(`${base}/api/ide/cli`, owner)).json()).toEqual({ command: fake, found: fake });
     stopIdeWeb();
     app.config.ide.web.command = join(dir, "no-such-code");
+    expect((await (await fetch(`${base}/api/ide/cli`, owner)).json()).found).toBeNull();
+    const s = await fetch(`${base}/api/ide/open?token=owner-secret`, { redirect: "manual" });
+    expect(s.status).toBe(503);
+    expect(await s.text()).toMatch(/找不到 .*no-such-code：在运行页/);
+    // The server keeps running.
+    expect((await fetch(`${base}/api/me`, owner)).status).toBe(200);
+    app.config.ide.web.command = fake;
+  });
+
+  it("reports a CLI that does not start instead of taking the server down", async () => {
+    stopIdeWeb();
+    const broken = join(dir, process.platform === "win32" ? "broken.cmd" : "broken.sh");
+    writeFileSync(broken, process.platform === "win32" ? "@exit /b 3\r\n" : "#!/bin/sh\nexit 3\n");
+    if (process.platform !== "win32") chmodSync(broken, 0o755);
+    app.config.ide.web.command = broken;
     const s = await fetch(`${base}/api/ide/open?token=owner-secret`, { redirect: "manual" });
     expect(s.status).toBe(503);
     expect(await s.text()).toMatch(/没能启动网页版 VS Code/);
-    expect((await fetch(`${base}/api/me`, { headers: { authorization: "Bearer owner-secret" } })).status).toBe(200);
     app.config.ide.web.command = fake;
   });
 
@@ -138,6 +148,7 @@ describe("web VS Code under /ide", () => {
         const seen = await (await fetch(`${ui.url}/ide/static/x.js`)).json();
         expect(seen.path).toBe("/ide/static/x.js");
         expect(seen.auth).toBeNull();
+        expect(seen.fwd).toBe(new URL(ui.url).host);
         const posted = await fetch(`${ui.url}/ide/api/x`, { method: "POST", headers: { "content-type": "application/octet-stream" }, body: "raw-bytes" });
         expect((await posted.json()).body).toBe("raw-bytes");
         const echo = await new Promise<string>((ok, fail) => {

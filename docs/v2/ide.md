@@ -46,17 +46,19 @@
 
 ### 网页版 VS Code（已实现）
 
-用官方的 `code serve-web`，鉴权全由 omem 做（`src/server/ide-web.ts`）。“设置 → 外观与说明 → 网页版 VS Code”打开后（配置 `ide.web.enabled`，`ide.web.command` 可指定 CLI），“在 VS Code 中打开”的编辑器里多一项“网页版 VS Code”。
+用官方的 `code serve-web`，鉴权全由 omem 做（`src/server/ide-web.ts`）。编码运行的“在 VS Code 中打开”里一直有“网页版 VS Code”这一项（只对本人，不另设开关）。选它时齿轮面板里显示 omem 那台机器上要用的 VS Code 命令行（`GET /api/ide/cli`：配置的 `ide.web.command`，或自动找到的路径），可以就地填路径（存进配置）；找不到时面板里提示，打开时返回一句说明。
 
 - **启动**：第一次用到时启动 `serve-web --host 127.0.0.1 --port <随机空闲端口> --connection-token <随机> --server-base-path /ide`，数据放在数据目录的 `ide/`。CLI 依次找 `ide.web.command`、`code-tunnel`（桌面版 `code` 旁边的那个 CLI 本体；Windows 上的 `code.cmd` 会启动桌面程序）、`code`（服务器上的独立 CLI）。第一次打开页面时 serve-web 从微软下载对应版本的服务端，这段时间 omem 返回一个会自动刷新的等待页。
 - **入口**：页面上是一个普通链接 `/api/ide/open?folder=<路径>`（不在本机时带令牌查询参数，和下载链接一样），新标签页打开。它只对本人开放：启动 serve-web，给浏览器一个 `Path=/ide`、HttpOnly 的会话 cookie，再跳到 `/ide/?folder=…`（Windows 路径换成 `/e:/…`）。
 - **代理**：`/ide` 下的 HTTP（不解析请求体）和 WebSocket 升级都原样转给 serve-web。放行条件：会话 cookie 有效，或请求来自本机回环、没带令牌且 omem 没配令牌（和 API 的本机信任一致）。转发时去掉 omem 的 cookie 和 Authorization，加上 serve-web 认的 `vscode-tkn` cookie，所以 connection token 不出 omem。会话在内存里，omem 重启后从网页重新点一次。
 - **进程**：WebSocket 任一端断开就关掉两端；停服时连同 serve-web 启动的服务端整棵进程树一起结束；pid 记在 `ide/serve-web.pid`，被强杀或被 watch 重启的 omem 下次启动前先结束遗留的那个（核对命令行确实是带 connection token 的 serve-web 才动）。
 - **经 `omem peer open`**：`/ide` 和 `/api/ide/open` 不走 fetch 式的转发（它跟随跳转、只转部分请求头、不转 WebSocket），而是原样转发（`src/core/peer-tunnel.ts`）：本机的 `peer open` 把请求连同 WebSocket 升级发给路上第一台直连的设备，带配对令牌；中间设备在 `/api/peers/<id>/ide…` 上同样原样转给下一台（升级请求不经过钩子，单独核对本人令牌，最多 4 跳）。目标设备上本人令牌也能进 `/ide`。所以常驻服务器经中转也能用网页版。
+- **地址**：serve-web 按请求的 Host 告诉浏览器 WebSocket 连哪里，omem 转发时要把 Host 改成它的回环端口，所以另带 `X-Forwarded-Host`（浏览器实际用的地址，经 `peer open` 时由第一跳加上、之后各跳不改）。少了它，浏览器会去连 `127.0.0.1:<serve-web 端口>`：在 omem 那台机器上碰巧能连上，换一台就是 1006 断开。
 - **开发**：Vite 的 `/ide` 代理开了 `ws`。
 - **限制**：
   - 网页 VS Code 自带终端和扩展宿主，等于这台机器的命令行，也限制不了只看某个目录。所以只对本人开放，成员、访客的接口白名单里没有它。
   - 浏览器语言是中文时，serve-web 从微软拉的中文语言包可能和服务端版本对不上，界面文字错位；是上游的问题，在 VS Code 里“配置显示语言”换成英文即可。
+  - 设置和扩展不是桌面 VS Code 的：网页版的用户设置、主题、快捷键存在浏览器里（按地址分开，`peer open` 换了端口就是另一份），扩展装在 omem 那台机器的 `ide/server` 下。官方的办法是在网页版里登录同一个 GitHub 或微软账号打开“设置同步”（客户端里带着微软的同步服务配置；登录流程没有验证过）。
 
 ## 三、VS Code 插件（第一版已实现）
 

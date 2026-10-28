@@ -112,6 +112,8 @@ export class Connection {
     if (this.mode === "local") return open ? { scheme: open.uri.scheme, authority: open.uri.authority } : "file";
     const host = (cfg().get<string>("sshHost") || "").trim();
     if (host) return { scheme: "vscode-remote", authority: `ssh-remote+${host}` };
+    // An address on this machine (another port, a token) is still this machine's files.
+    if (this.mode === "direct" && /^https?:\/\/(127\.|localhost[:/]|\[::1\])/.test(this.server + "/")) return open ? { scheme: open.uri.scheme, authority: open.uri.authority } : "file";
     return open ? { scheme: open.uri.scheme, authority: open.uri.authority } : null;
   }
 

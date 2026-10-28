@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { authUrl, get } from "../api";
+import { authUrl, get, put } from "../api";
 import { editor, editorOptions, ideUrl, sshAliases, type DesktopEditor } from "../lib/ide";
 import Icon from "./Icon.vue";
 import UiSelect from "./UiSelect.vue";
 
 /**
  * “在 VS Code 中打开” for a coding run: its worktrees, or where the change was applied. Desktop
- * editors get a link (local or Remote-SSH); “网页版” opens omem's /ide when the owner turned it on.
+ * editors get a link (local or Remote-SSH); “网页版” opens omem's /ide, run by this machine's VS Code
+ * CLI (detected, or the command set here).
  */
 const props = defineProps<{ runId: string; spaceName: (id: string) => string }>();
 type Folder = { space: string; path: string; kind: "work" | "applied"; branch: string | null };
-type Info = { local: boolean; host: string; web: boolean; folders: Folder[] };
+type Info = { local: boolean; host: string; folders: Folder[] };
 const info = ref<Info | null>(null);
 const open = ref(false);
 const settings = ref(false);
@@ -22,10 +23,23 @@ async function load() {
 }
 watch(() => props.runId, load, { immediate: true });
 
-/** The web option only where this omem serves it; a stored choice of it elsewhere falls back. */
-const options = computed(() => editorOptions.filter((o) => o.value !== "web" || info.value?.web));
-const chosen = computed(() => (editor.value === "web" && !info.value?.web ? "vscode" : editor.value));
+const options = editorOptions;
+const chosen = editor;
 const isWeb = computed(() => chosen.value === "web");
+
+/** The VS Code CLI web VS Code runs on omem's machine: the one set here, or the one found there. */
+const cli = ref<{ command: string | null; found: string | null } | null>(null);
+const command = ref("");
+async function loadCli() {
+  cli.value = await get<{ command: string | null; found: string | null }>("/api/ide/cli").catch(() => null);
+  command.value = cli.value?.command ?? "";
+}
+async function saveCommand() {
+  const v = command.value.trim();
+  if (v === (cli.value?.command ?? "")) return;
+  await put("/api/settings", { ide: { web: { command: v || undefined } } });
+  await loadCli();
+}
 const label = computed(() => editorOptions.find((o) => o.value === chosen.value)?.label ?? "VS Code");
 const alias = computed({
   get: () => (info.value ? sshAliases.value[info.value.host] ?? "" : ""),
@@ -69,6 +83,9 @@ function gear() {
   open.value = !(open.value && settings.value);
   settings.value = true;
 }
+watch([open, isWeb], ([o, w]) => {
+  if (o && w && !cli.value) void loadCli();
+});
 </script>
 
 <template>
@@ -90,7 +107,15 @@ function gear() {
           <span>这台机器（{{ info.host }}）在你电脑上的 SSH 主机名</span>
           <input v-model.lazy="alias" class="input mono" placeholder="~/.ssh/config 里的 Host，如 devbox" />
         </label>
-        <span class="hint">{{ isWeb ? "在新标签页里打开这台机器上的网页版 VS Code，不用装 VS Code 或配 SSH。" : info.local ? "网页就在这台机器上，直接打开本地目录。" : "经 Remote-SSH 打开，要先能用 ssh 连上它；需要跳板的在 ~/.ssh/config 里配 ProxyJump。" }}</span>
+        <template v-if="isWeb">
+          <label class="field">
+            <span>{{ info.host }} 上的 VS Code 命令行</span>
+            <input v-model="command" class="input mono" placeholder="留空自动找 code-tunnel 或 code" @change="saveCommand" @keydown.enter="saveCommand" />
+          </label>
+          <span v-if="cli" class="hint" :class="{ warn: !cli.found }">{{ cli.found ? `用的是 ${cli.found}` : cli.command ? `找不到 ${cli.command}，改成完整路径` : "这台机器上没找到 code-tunnel 或 code：装上 VS Code 或它的独立命令行，或在上面填路径" }}</span>
+          <span class="hint">在新标签页里打开这台机器上的工作区，不用本地装 VS Code 或配 SSH。用的是官方 code serve-web（第一次打开会先下载服务端），由 omem 代理和鉴权，只对你开放；它带终端，等于这台机器的命令行。</span>
+        </template>
+        <span v-else class="hint">{{ info.local ? "网页就在这台机器上，直接打开本地目录。" : "经 Remote-SSH 打开，要先能用 ssh 连上它；需要跳板的在 ~/.ssh/config 里配 ProxyJump。" }}</span>
       </div>
     </div>
   </div>
@@ -134,5 +159,8 @@ function gear() {
 .settings {
   padding: 6px 8px;
   border-top: 1px solid var(--line);
+}
+.warn {
+  color: var(--warn);
 }
 </style>

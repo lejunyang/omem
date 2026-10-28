@@ -130,7 +130,7 @@
         { "command": "omem.finding.later", "when": "commentController == omem && commentThread =~ /^finding(-fix|-wontfix)?$/", "group": "inline@2" },
         { "command": "omem.finding.wontfix", "when": "commentController == omem && commentThread =~ /^finding(-fix|-later)?$/", "group": "inline@3" },
         { "command": "omem.finding.clear", "when": "commentController == omem && commentThread =~ /^finding-/" },
-        { "command": "omem.thread.delete", "when": "commentController == omem && commentThread =~ /^(draft|asked|fixpoint)$/", "group": "inline@9" }
+        { "command": "omem.thread.delete", "when": "commentController == omem && commentThread =~ /^(asked|fixpoint)$/", "group": "inline@9" }
       ],
       "view/title": [
         { "command": "omem.delegate", "when": "view == omem.runs", "group": "navigation@1" },
