@@ -71,6 +71,11 @@ const rate = (c: Counts) => (c.positive + c.negative ? Math.round((c.positive / 
   gap: 8px;
   min-width: 0;
 }
+.fb p {
+  margin: 0;
+  max-width: none;
+  text-align: left;
+}
 .fb-head {
   display: flex;
   align-items: center;
