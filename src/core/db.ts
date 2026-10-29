@@ -845,6 +845,9 @@ const migrations: string[] = [
   create index feedback_run on feedback(run_id, at);
   create index feedback_at on feedback(at);
   `,
+  // Profile proposals nobody answered expire after 14 days (src/agents/proposals.ts); the notice
+  // sent before that is recorded so it goes out once.
+  `alter table profile_proposals add column expiry_notice_at text;`,
 ];
 
 export type Db = DatabaseSync;

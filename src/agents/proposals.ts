@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { one, run } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
 import { HttpError, newId, now } from "../core/util.ts";
 import { customizeRole, isBuiltinRole, saveRoleOverride, updateRoleMeta } from "./builtin-roles.ts";
 import { findAgentSpec, saveAgentSpec, saveSkill } from "./specs.ts";
@@ -30,7 +30,7 @@ export function createProposal(app: App, input: { target: string; kind: Proposal
   run(
     app.db,
     `insert into profile_proposals(id, target, kind, title, body, reason, status, run_id, created_at) values(?,?,?,?,?,?,'pending',?,?)
-     on conflict(id) do update set body = excluded.body, reason = excluded.reason, run_id = excluded.run_id, created_at = excluded.created_at`,
+     on conflict(id) do update set body = excluded.body, reason = excluded.reason, run_id = excluded.run_id, created_at = excluded.created_at, expiry_notice_at = null`,
     id,
     input.target,
     input.kind,
@@ -93,3 +93,46 @@ export function attachSkills(app: App, target: string, add: string[], remove: st
   }
 }
 
+
+/** Pending proposals expire this many days after they were made (or last refined by a review). */
+export const PROPOSAL_DAYS = 14;
+/** The owner hears about it this many days before. */
+export const PROPOSAL_NOTICE_DAYS = 2;
+
+export function proposalExpiresAt(createdAt: string) {
+  return new Date(Date.parse(createdAt) + PROPOSAL_DAYS * 86400_000).toISOString();
+}
+
+/**
+ * Nightly: pending proposals older than 14 days become "expired" (they can be proposed again by a
+ * later review); those that will expire within two days are announced once, in one notification.
+ * There is no cap on how many may be pending.
+ */
+export async function expireProposals(app: App, at = Date.now()) {
+  const cutoff = new Date(at - PROPOSAL_DAYS * 86400_000).toISOString();
+  const soon = new Date(at - (PROPOSAL_DAYS - PROPOSAL_NOTICE_DAYS) * 86400_000).toISOString();
+  const expired = run(app.db, "update profile_proposals set status = 'expired', resolved_at = ?, resolved_by = 'system' where status = 'pending' and created_at < ?", new Date(at).toISOString(), cutoff).changes;
+  const due = all<{ id: string; target: string; kind: string; title: string; created_at: string }>(
+    app.db,
+    "select id, target, kind, title, created_at from profile_proposals where status = 'pending' and created_at < ? and expiry_notice_at is null order by target, created_at",
+    soon,
+  );
+  if (due.length) {
+    const { notify } = await import("../core/notify.ts");
+    const label: Record<string, string> = { prompt: "提示词", skill: "技能", settings: "设置" };
+    const targets = [...new Set(due.map((d) => d.target))];
+    notify(app, {
+      title: `${due.length} 条档案改进建议两天内过期`,
+      body: [
+        ...due.slice(0, 12).map((d) => `- ${d.target} · ${label[d.kind] ?? d.kind}：${d.title}（${proposalExpiresAt(d.created_at).slice(0, 10)} 过期）`),
+        ...(due.length > 12 ? [`- 另有 ${due.length - 12} 条`] : []),
+        "",
+        "要用的在 Agent 页采纳；不处理的到期自动过期，之后的复盘还可能再提。",
+      ].join("\n"),
+      link: `#/agents?tab=agents&${targets.length === 1 ? `${isBuiltinRole(targets[0]) ? "role" : "name"}=${encodeURIComponent(targets[0])}` : ""}`,
+    });
+    const stamp = new Date(at).toISOString();
+    for (const d of due) run(app.db, "update profile_proposals set expiry_notice_at = ? where id = ?", stamp, d.id);
+  }
+  return { expired, noticed: due.length };
+}

@@ -857,3 +857,8 @@ updated: 2026-10-28
 - **存量经验**：`src/memory/digest-merge.ts` 找 digest 运行写的有效 experience 记忆，按引用的第一个原件（同空间、同档案）分组，组内向量 ≥ 0.75 单链聚类（没有向量时按原件），每晚给 dreamer 最大的 4 组、每组至多 8 条；`roles/dreamer.md` 新增第 00 步。
 - **网页**：`GET /api/dream/status`；记忆 → 不足 显示开关、下次时间、上次整理、待合并条数和“立即整理一次”，关着且有不足时提示一次（看过记在本机浏览器）。
 - 手动跑一次：`omem peer call <设备> schedule-run '{"id":"dream"}'`（定时关着也能跑）。
+
+## 10-30：档案改进建议 14 天过期
+
+- `proposals.ts` 的 `expireProposals`：随夜里的 `profile-review` 定时一起跑；待处理超过 14 天的改为 `expired`（`resolved_by = system`），12 天以上、还没提醒过的合并成一条通知（“N 条档案改进建议两天内过期”，凌晨发出的按免打扰早上补发），`profile_proposals.expiry_notice_at` 记已提醒。待处理不设上限。同一档案同一标题的建议被之后的复盘再提时，`created_at` 和提醒一起重置。
+- 档案页：待采纳建议显示“N 天后过期”，历史里标“已过期”。
