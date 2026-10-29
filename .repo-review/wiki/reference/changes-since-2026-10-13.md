@@ -700,3 +700,8 @@ updated: 2026-10-28
 - 编码交办结束的卡片原来把运行输出的 `repos`（含 `git diff --stat` 的文件列表）原样转成 JSON 放在“检查：”后面；没有配置检查命令或交办了多个仓库时都会这样。`src/channels/lark-code-progress.ts` 的 `checkLines` 改为每个仓库一行：检查命令通过 / 未通过（退出码、耗时）或“没有配置检查命令”，加上改动规模（`--stat` 最后一行）。文件明细只在运行页看。
 - 运行标题在创建时截成 60–80 字的标签，交给 Agent 的任务（`input.task` / `input.text`）不截。运行列表的简要模式（`listRuns` 的 `brief`）现在带上任务的前 600 字，`web/src/views/Runs.vue` 的列表项和详情标题悬浮时显示它。
 - 记忆里的页面引用（如 `[[cases/x]]`）原来带着类名 `page`，被全局 `.page` 的页面内边距撑开，左右留白很大、虚线下划线错位；`web/src/components/MemoryText.vue` 的类名改为 `ref-<种类>`。运行记录列表头部的状态和范围两组筛选不再挤在一行，状态单独一行，范围与“含无事可报”一行。
+
+## 10-29：换仓库目录
+
+- 复用工作区只认和仓库共用提交记录的 `git worktree`；同一仓库（remote 相同）单独 clone 的目录以前只显示“不可用”，本人得知道去让助手 relink。现在 `listWorkspaces` 把它标成 `clone`，设置页给出“设为仓库目录”，保存时也会问；空间设置多了“仓库目录 · 换目录”。
+- 换目录的逻辑从 `connect_repository` 抽到 `src/agents/repo-relink.ts`（`relinkRepoSpace`）：进行中的交办拒绝，没应用的交办先返回清单、确认后丢弃，删 omem 自建的复用工作区，把新目录从复用列表里去掉。接口 `POST /api/spaces/:id/relink`。`remoteKey` / `sameRepository` 移到 `core/repositories.ts`。

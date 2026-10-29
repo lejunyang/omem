@@ -11,7 +11,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
-import { cloneRepository, repositoryRoot } from "../core/repositories.ts";
+import { cloneRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { findUser, OWNER, canWrite, scopeFor } from "../core/users.ts";
 import { HttpError, newId, now, slugify, truncate } from "../core/util.ts";
 import { createCard } from "../learn/cards.ts";
@@ -227,34 +227,14 @@ const sourceKinds: Record<string, HitType[]> = {
 
 // ---------------------------------------------------------------- read tools
 
-/** A repository's remotes, normalized so one URL in its https and ssh forms compares equal. */
-function remoteKeys(dir: string) {
-  const urls = git(dir, ["remote", "-v"]).stdout.split("\n").map((l) => l.split(/\s+/)[1]).filter(Boolean);
-  return new Set(urls.map(remoteKey));
-}
-export function remoteKey(url: string) {
-  const m = /^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^@/]+@)?([^/:]+)(?::\d+)?[:/]+(.+?)(?:\.git)?\/*$/i.exec(url.trim());
-  return m ? `${m[1].toLowerCase()}/${m[2].toLowerCase()}` : url.trim();
-}
-
-/**
- * Point a repository space at another checkout of the same repository: refused while delegations
- * still have worktrees from the old one; omem's own reusable worktrees belong to the old repository
- * and are removed (made again from the new one when used).
- */
+/** Point a repository space at another checkout of the same repository (repo-relink.ts). */
 async function relinkSpace(ctx: ToolContext, id: string, root: string) {
   const s = findSpace(ctx.app, id)!;
-  const { cleanupCandidates } = await import("./code-cleanup.ts");
-  const open = cleanupCandidates(ctx.app, { userId: null, spaces: new Set([id]) });
-  const left = [...open.running.map((r) => r.run), ...open.items.filter((i) => i.kind === "discard").map((i) => i.run)];
-  if (left.length) throw new HttpError(409, `空间 ${id} 还有进行中或没应用的交办（${[...new Set(left)].join("、")}），它们的工作区在原来的仓库里；先应用或用 clean_code_runs 清理再改`);
-  const old = s.rootPath!;
-  const { managedSlot } = await import("./workspaces.ts");
-  const pool = Math.min(8, Number((s.settings as { pool?: number }).pool) || 0);
-  for (let n = 1; n <= pool; n++) git(old, ["worktree", "remove", "--force", managedSlot(ctx.app, id, n)]);
-  updateSpace(ctx.app, id, { rootPath: root });
+  const { relinkRepoSpace } = await import("./repo-relink.ts");
+  const r = relinkRepoSpace(ctx.app, id, root);
+  if (!r.done) throw new HttpError(409, `空间 ${id} 还有没应用的交办（${r.pending.map((p) => p.run).join("、")}），它们的工作区在原来的仓库里；先应用，或本人同意后用 clean_code_runs 丢弃再改`);
   const report = await syncDirectorySpace(ctx.app, id);
-  return `空间 ${id}（${s.name}）改为关联 ${root}（原来是 ${old}）。重新导入：新增 ${report.created}，更新 ${report.updated}。${pool ? `omem 自建的 ${pool} 个复用工作区属于原来的仓库，已删掉，下次交办在新目录的仓库上重建。` : ""}交办在 repo_spaces 里写 "${id}"。`;
+  return `空间 ${id}（${s.name}）改为关联 ${r.root}（原来是 ${r.old}）。重新导入：新增 ${report.created}，更新 ${report.updated}。${r.pool ? `omem 自建的 ${r.pool} 个复用工作区属于原来的仓库，已删掉，下次交办在新目录的仓库上重建。` : ""}交办在 repo_spaces 里写 "${id}"。`;
 }
 
 function manageSpaces(ctx: ToolContext) {
@@ -297,8 +277,7 @@ def({
     const mine = remoteKeys(root);
     const twin = same ? undefined : listSpaces(ctx.app).find((s) => s.kind === "repo" && !!s.rootPath && rootOf(s.rootPath) !== root && [...remoteKeys(s.rootPath)].some((k) => mine.has(k)));
     if (target?.rootPath && rootOf(target.rootPath) !== root) {
-      const sameRepo = [...remoteKeys(target.rootPath)].some((k) => mine.has(k));
-      if (!sameRepo) throw new HttpError(409, `空间 ${target.id} 已关联另一仓库；请创建独立空间，未更改原关联`);
+      if (!sameRepository(target.rootPath, root)) throw new HttpError(409, `空间 ${target.id} 已关联另一仓库；请创建独立空间，未更改原关联`);
       if (!a.relink) return `空间 ${target.id}（${target.name}）和这个目录是同一个仓库（remote 相同），它现在关联的是 ${target.rootPath}。交办可以直接用它；本人同意让它改用 ${root} 时，带 relink: true 再调。没有改动。`;
       return relinkSpace(ctx, target.id, root);
     }

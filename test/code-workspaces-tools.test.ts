@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
-import { callTool, remoteKey, type ToolContext } from "../src/agents/tools.ts";
+import { callTool, type ToolContext } from "../src/agents/tools.ts";
+import { remoteKey } from "../src/core/repositories.ts";
+import { relinkRepoSpace } from "../src/agents/repo-relink.ts";
+import { listWorkspaces } from "../src/agents/workspaces.ts";
 import { run as sql } from "../src/core/db.ts";
 import { getSpace, listSpaces } from "../src/core/spaces.ts";
 import { testApp } from "./helpers.ts";
@@ -95,5 +98,35 @@ describe("delegation workspaces from the assistant", () => {
     const moved = await call("connect_repository", { repository: second, space: "shop", relink: true });
     expect(moved).toContain("改为关联");
     expect(getSpace(app, "shop").rootPath).toBe(realpathSync(second));
+  });
+
+  it("tells a separate clone listed as a workspace from a worktree, and moves the space to it once unapplied work is let go", () => {
+    // The space is on `second` now; the owner lists `first` (its own .git, same remote) as a workspace.
+    sql(app.db, "update spaces set settings = json_set(settings, '$.workspaces', json_array(?)) where id = 'shop'", first);
+    const [slot] = listWorkspaces(app, getSpace(app, "shop"));
+    expect(slot).toMatchObject({ state: "invalid", clone: true });
+    expect(slot.reason).toContain("仓库目录");
+
+    const r = createRun(app, { kind: "code", spaceId: "shop", title: "改标题", input: { task: "改标题", repos: ["shop"] } });
+    const work = join(app.runsDir, r.id, "work", "shop");
+    git(second, "worktree", "add", "-q", "-b", `omem/${r.id}`, work, "HEAD");
+    setRunOutput(app, r.id, { worktrees: [{ space: "shop", path: work, branch: `omem/${r.id}`, base: git(second, "rev-parse", "HEAD").trim() }] });
+    sql(app.db, "update runs set status = 'done' where id = ?", r.id);
+
+    const asked = relinkRepoSpace(app, "shop", first);
+    expect(asked).toEqual({ done: false, pending: [{ run: r.id, title: "改标题" }] });
+    expect(getSpace(app, "shop").rootPath).toBe(realpathSync(second));
+
+    const done = relinkRepoSpace(app, "shop", first, { discard: true });
+    expect(done).toMatchObject({ done: true, root: realpathSync(first), discarded: [r.id] });
+    expect(getRun(app, r.id).output.discardedAt).toBeTruthy();
+    expect(existsSync(work)).toBe(false);
+    expect(getSpace(app, "shop").settings.workspaces).toEqual([]);
+
+    const other = join(base, "other");
+    mkdirSync(other);
+    git(other, "init", "-q");
+    git(other, "remote", "add", "origin", "https://example.com/team/other.git");
+    expect(() => relinkRepoSpace(app, "shop", other)).toThrow(/不是同一个/);
   });
 });

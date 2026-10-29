@@ -80,6 +80,24 @@ export function repositoryUrl(value: string): string {
   return url.toString();
 }
 
+/** A remote URL normalized so one repository's https, ssh and scp-style forms compare equal. */
+export function remoteKey(url: string) {
+  const m = /^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^@/]+@)?([^/:]+)(?::\d+)?[:/]+(.+?)(?:\.git)?\/*$/i.exec(url.trim());
+  return m ? `${m[1].toLowerCase()}/${m[2].toLowerCase()}` : url.trim();
+}
+
+/** A checkout's remotes as `remoteKey`s. */
+export function remoteKeys(dir: string) {
+  const urls = git(dir, ["remote", "-v"]).stdout.split("\n").map((l) => l.split(/\s+/)[1]).filter(Boolean);
+  return new Set(urls.map(remoteKey));
+}
+
+/** Two checkouts of one repository: a remote in common (each may have its own .git). */
+export function sameRepository(a: string, b: string) {
+  const mine = remoteKeys(a);
+  return [...remoteKeys(b)].some((k) => mine.has(k));
+}
+
 export function repositoryRoot(path: string): string {
   if (!existsSync(path) || !statSync(path).isDirectory()) throw new HttpError(400, `仓库目录不存在：${path}`);
   const result = git(path, ["rev-parse", "--show-toplevel"]);

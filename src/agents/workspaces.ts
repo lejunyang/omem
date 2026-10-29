@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { git } from "../core/git.ts";
+import { sameRepository } from "../core/repositories.ts";
 import type { Space } from "../core/spaces.ts";
 import { now, sha256 } from "../core/util.ts";
 
@@ -26,7 +27,8 @@ import { now, sha256 } from "../core/util.ts";
 export type WorkspaceSettings = { workspaces?: string[]; pool?: number; setupCommand?: string; inPlace?: boolean };
 
 type Lease = { run: string; space: string; prev: string | null; at: string };
-export type WorkspaceSlot = { path: string; managed: boolean; main?: boolean; state: "free" | "leased" | "missing" | "invalid" | "dirty"; run?: string; reason?: string };
+/** `clone`: another clone of the same repository (same remote, its own .git), which can become the space's directory instead. */
+export type WorkspaceSlot = { path: string; managed: boolean; main?: boolean; clone?: boolean; state: "free" | "leased" | "missing" | "invalid" | "dirty"; run?: string; reason?: string };
 
 const MAX_POOL = 8;
 const LEASE = "omem-lease.json";
@@ -70,6 +72,8 @@ function candidates(app: App, repo: Space, opts: { main?: boolean } = {}): Candi
   return [...main, ...listed, ...Array.from({ length: n }, (_, i) => ({ path: managedSlot(app, repo.id, i + 1), managed: true }))];
 }
 
+const CLONE = "是这个仓库的另一份克隆（remote 相同，但有自己的 .git），不能借给交办；要在这个目录里编码，把它设为空间的仓库目录";
+
 /** Why a directory cannot be lent to runs of `root`'s repository, or null. */
 function unusable(root: string, c: Candidate) {
   const path = c.path;
@@ -77,7 +81,7 @@ function unusable(root: string, c: Candidate) {
   const top = git(path, ["rev-parse", "--show-toplevel"]);
   if (!top.ok || real(top.stdout.trim()) !== real(path)) return "不是 Git 工作区的根目录";
   if (real(path) === real(root)) return c.main ? null : "是仓库主目录本身（要在主目录里改，打开“在主目录里改”）";
-  if (commonDir(path) !== commonDir(root)) return "不是这个仓库的工作区（用 git worktree add 建，和仓库共用提交记录）";
+  if (commonDir(path) !== commonDir(root)) return sameRepository(path, root) ? CLONE : "不是这个仓库的工作区（用 git worktree add 建，和仓库共用提交记录）";
   return null;
 }
 
@@ -105,7 +109,7 @@ export function listWorkspaces(app: App, repo: Space): WorkspaceSlot[] {
   return candidates(app, repo).map((c) => {
     if (c.managed && !existsSync(c.path)) return { ...c, state: "missing" as const };
     const reason = root ? unusable(root, c) : "空间没有关联仓库";
-    if (reason) return { ...c, state: "invalid" as const, reason };
+    if (reason) return { ...c, state: "invalid" as const, reason, ...(reason === CLONE ? { clone: true } : {}) };
     const dir = gitDir(c.path)!;
     const run = holder(app, c.path, join(dir, LEASE));
     if (run) return { ...c, state: "leased" as const, run };

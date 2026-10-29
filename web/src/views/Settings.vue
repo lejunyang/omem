@@ -11,7 +11,7 @@ import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
 import PluginsSettings from "../components/PluginsSettings.vue";
 import { fmtTime, kindLabel, loadSpaces, state, toast } from "../store";
-import { confirmDialog } from "../lib/dialog";
+import { confirmDialog, promptDialog } from "../lib/dialog";
 
 type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string };
 type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
@@ -198,7 +198,7 @@ async function openSpace(s: Space) {
   guide.value = (await get<{ guide: string }>(`/api/spaces/${s.id}`)).guide;
   if (s.rootPath) slots.value = await get<WorkspaceSlot[]>(`/api/spaces/${s.id}/workspaces`).catch(() => []);
 }
-type WorkspaceSlot = { path: string; managed: boolean; main?: boolean; state: "free" | "leased" | "missing" | "invalid" | "dirty"; run?: string; reason?: string };
+type WorkspaceSlot = { path: string; managed: boolean; main?: boolean; clone?: boolean; state: "free" | "leased" | "missing" | "invalid" | "dirty"; run?: string; reason?: string };
 const SLOT_STATE: Record<WorkspaceSlot["state"], string> = { free: "空闲", leased: "使用中", missing: "第一次用到时创建", invalid: "不可用", dirty: "有改动，跳过" };
 const workspaceText = ref("");
 const slots = ref<WorkspaceSlot[]>([]);
@@ -237,10 +237,48 @@ async function saveSpace() {
     st.workspaces = workspaceText.value.split("\n").map((l) => l.trim()).filter(Boolean);
     st.pool = Math.max(0, Math.min(8, Math.floor(Number(st.pool) || 0)));
   }
-  await patch(`/api/spaces/${editing.value.id}`, { name: editing.value.name, description: editing.value.description, settings: editing.value.settings, guide: guide.value });
+  const s = editing.value;
+  await patch(`/api/spaces/${s.id}`, { name: s.name, description: s.description, settings: s.settings, guide: guide.value });
   toast("空间已保存", "ok");
+  // A directory listed as a workspace that is its own clone of the repository: offer to code there instead.
+  const clone = s.rootPath ? (await get<WorkspaceSlot[]>(`/api/spaces/${s.id}/workspaces`).catch(() => [])).find((x) => x.clone) : undefined;
+  if (clone && (await confirmDialog("改用这个目录作为仓库目录？", { message: `${clone.path} 和空间现在的仓库目录 ${s.rootPath} 是同一个仓库（remote 相同）的两份克隆，不能当复用工作区借给交办。改用它之后，交办从这个目录的当前分支开始、应用回这里，代码也从这里重新导入。`, okText: "改用这个目录" }))) {
+    if (!(await relink(clone.path))) return;
+  }
   editing.value = null;
   await loadSpaces();
+}
+/** Point the space being edited at another checkout of its repository; false when it did not happen. */
+async function relink(path: string): Promise<boolean> {
+  const s = editing.value;
+  if (!s) return false;
+  try {
+    type Result = { done: true; old: string; root: string } | { done: false; pending: { run: string; title: string }[] };
+    let r = await post<Result>(`/api/spaces/${s.id}/relink`, { path });
+    if (!r.done) {
+      const list = r.pending.map((p) => `· ${p.title}`).join("\n");
+      const ok = await confirmDialog(`丢弃 ${r.pending.length} 个没应用的交办？`, { message: `它们的工作区在原来的仓库 ${s.rootPath} 里，换目录前要先处理：\n${list}\n\n要保留改动就先去运行页应用，再回来换。`, okText: "丢弃并换目录", danger: true });
+      if (!ok) return false;
+      r = await post<Result>(`/api/spaces/${s.id}/relink`, { path, discard: true });
+      if (!r.done) return false;
+    }
+    toast(`仓库目录改为 ${r.root}，正在重新导入`, "ok");
+    s.rootPath = r.root;
+    s.settings = (await get<Space>(`/api/spaces/${s.id}`)).settings;
+    workspaceText.value = ((s.settings.workspaces as string[] | undefined) ?? []).join("\n");
+    slots.value = await get<WorkspaceSlot[]>(`/api/spaces/${s.id}/workspaces`).catch(() => []);
+    await loadSpaces();
+    return true;
+  } catch (e) {
+    toast((e as Error).message, "error");
+    return false;
+  }
+}
+async function changeRoot() {
+  const s = editing.value;
+  if (!s) return;
+  const path = (await promptDialog("换一个仓库目录", { message: "填同一个仓库（git remote 相同）在这台机器上的另一份克隆，比如你平时开发、装好了依赖的目录。交办会从它的当前分支开始，应用也回到这里。", value: s.rootPath ?? "", placeholder: "/home/me/code/app", okText: "换" }))?.trim();
+  if (path && path !== s.rootPath) await relink(path);
 }
 async function toggleSchedule(s: Schedule) {
   await put(`/api/schedules/${s.id}`, { enabled: !s.enabled });
@@ -902,17 +940,25 @@ async function saveEdit() {
         <UiCheckbox :model-value="editing.settings.autoIngest !== false && (editing.kind !== 'repo' || editing.settings.autoIngest === true)" @change="(v) => (editing!.settings.autoIngest = v)">新材料保存后让助理整理（更新记忆、事项、相关页面）</UiCheckbox>
         <label v-if="editing.rootPath" class="field"><span>检查命令（交办编码后运行）</span><input v-model="editing.settings.checkCommand" class="input mono" placeholder="npm test" /></label>
         <template v-if="editing.rootPath">
+          <div v-if="editing.kind === 'repo'" class="field fit">
+            <span>仓库目录（交办从这里的当前分支开始，应用回这里）</span>
+            <div class="row fit">
+              <span class="mono small grow slot-path" :title="editing.rootPath">{{ editing.rootPath }}</span>
+              <button class="btn sm" @click="changeRoot">换目录</button>
+            </div>
+            <span class="hint">同一个仓库在别处的克隆（remote 相同）可以换过来，比如你平时开发、装好了依赖的目录；没应用的交办要先应用或丢弃。</span>
+          </div>
           <label class="field">
             <span>准备命令（新工作区或锁文件变了时，编码前运行）</span>
             <input v-model="editing.settings.setupCommand" class="input mono" placeholder="pnpm install --frozen-lockfile" />
           </label>
-          <div class="field">
+          <div class="field fit">
             <span>复用工作区（装好的依赖留着给下一次交办用）</span>
             <div class="row wrap">
               <input v-model.number="editing.settings.pool" type="number" min="0" max="8" class="input pool" aria-label="omem 自建的复用工作区数量" />
               <span class="muted small grow">个由 omem 建在数据目录里；0 表示不建</span>
             </div>
-            <textarea v-model="workspaceText" class="textarea mono" rows="2" placeholder="已有的工作区目录，一行一个（这个仓库 git worktree add 出来的）" />
+            <textarea v-model="workspaceText" class="textarea mono" rows="2" placeholder="已有的工作区目录，一行一个（这个仓库 git worktree add 出来的；单独 clone 的目录用上面的“换目录”）" />
             <span class="hint">已有目录只在没有未提交改动时借用，用完回到原来的分支；被忽略的文件（node_modules 等）一直保留。都占满时照旧新建工作区。</span>
             <UiCheckbox :model-value="!!editing.settings.inPlace" @change="(v) => (editing!.settings.inPlace = v)">直接在仓库主目录里改</UiCheckbox>
             <span class="hint">主目录没有未提交的改动时优先借给交办：在它当前的分支上改，不建新分支；应用就是把改动留在原处，丢弃会把主目录重置（包括你在交办期间在这里做的修改）。同一时间只有一个交办能用主目录。</span>
@@ -921,6 +967,7 @@ async function saveEdit() {
                 <span class="mono small grow slot-path" :title="s.path">{{ s.main ? "主目录 · " : "" }}{{ s.path }}</span>
                 <span class="badge" :title="s.reason || undefined">{{ SLOT_STATE[s.state] }}</span>
                 <a v-if="s.run" class="small" :href="`#/runs/${s.run}`">运行</a>
+                <button v-if="s.clone" class="btn sm" @click="relink(s.path)">设为仓库目录</button>
               </li>
             </ul>
           </div>
@@ -946,6 +993,9 @@ async function saveEdit() {
   list-style: none;
   margin: 4px 0 0;
   padding: 0;
+  min-width: 0;
+}
+.fit {
   min-width: 0;
 }
 .slot-path {

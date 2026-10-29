@@ -190,6 +190,15 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { listWorkspaces } = await import("../agents/workspaces.ts");
     return listWorkspaces(app, getSpace(app, (req.params as { id: string }).id));
   });
+  // Another checkout of the same repository becomes the space's directory (delegations start and apply there).
+  server.post("/api/spaces/:id/relink", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const b = q(z.object({ path: z.string().trim().min(1), discard: z.boolean().optional() }), req.body);
+    const { relinkRepoSpace } = await import("../agents/repo-relink.ts");
+    const r = relinkRepoSpace(app, id, b.path, { discard: b.discard });
+    if (r.done) scheduleSpaceSync(app, id);
+    return r;
+  });
 
   // ------------------------------------------------------------------ sources
   server.get("/api/sources", async (req) => {

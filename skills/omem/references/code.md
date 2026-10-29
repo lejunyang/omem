@@ -26,7 +26,7 @@
 
 ## 工作区与依赖
 
-- 交办默认每次新建 worktree，依赖要重装。`set_code_workspaces(space, pool?, workspaces?, setup_command?, in_place?)` 让它复用：`pool` 是 omem 自建的长期工作区（保留 node_modules 等被忽略的文件），`workspaces` 借本人已有、装好依赖的 worktree（干净时才借），`setup_command` 只在新工作区或锁文件变了时运行，`in_place` 允许直接在仓库主目录里改（主目录干净时优先，在当前分支上改，应用时改动留在原处，丢弃会重置主目录）。
+- 交办默认每次新建 worktree，依赖要重装。`set_code_workspaces(space, pool?, workspaces?, setup_command?, in_place?)` 让它复用：`pool` 是 omem 自建的长期工作区（保留 node_modules 等被忽略的文件），`workspaces` 借本人已有、装好依赖的 worktree（干净时才借），`setup_command` 只在新工作区或锁文件变了时运行，`in_place` 允许直接在仓库主目录里改（主目录干净时优先，在当前分支上改，应用时改动留在原处，丢弃会重置主目录）。`workspaces` 只认 `git worktree add` 出来的目录；本人另一份克隆（remote 相同、自己的 .git）不能借，要在那里编码就用 `connect_repository(那个目录, space, relink: true)` 把空间换过去（本人确认后；有没应用的交办先应用或经本人同意丢弃）。
 - 本人给一个本地仓库路径要交办：先 `connect_repository`。同一仓库（remote 相同）已经有空间时不会新建，返回那个空间；要它改用这个目录，本人同意后带 `space` 和 `relink: true`（那个空间还有没应用的交办时不能改）。
 
 ## 同步
