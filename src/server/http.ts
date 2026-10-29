@@ -1552,6 +1552,29 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { runPeerCommand } = await import("../core/peer-exec.ts");
     return { node: (await import("../core/peers.ts")).nodeId(app), result: await runPeerCommand(app, b.command, b.args) };
   });
+  // One omem tool call from another device's Agent, as the owner with the tool set `omem mcp`
+  // gives minus everything that acts outward (agents/peer-agent.ts); recorded in a run per session.
+  const peerScope = z.object({
+    caller: z.string().max(80).optional(),
+    space: z.string().max(200).optional(),
+    spaces: z.array(z.string().max(200)).max(100).optional(),
+    readOnly: z.boolean().optional(),
+    agent: z.string().max(80).optional(),
+    model: z.string().max(120).optional(),
+  });
+  server.get("/api/peer/tools", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能使用同伴的工具接口");
+    const o = q(peerScope.extend({ spaces: z.string().optional(), readOnly: z.string().optional() }), req.query);
+    const { peerTools } = await import("../agents/peer-agent.ts");
+    return { node: (await import("../core/peers.ts")).nodeId(app), tools: peerTools(app, { ...o, spaces: o.spaces?.split(",").filter(Boolean), readOnly: o.readOnly === "1" || o.readOnly === "true" }) };
+  });
+  server.post("/api/peer/tool", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能使用同伴的工具接口");
+    const b = q(peerScope.extend({ session: z.string().min(1).max(80), name: z.string().max(80), args: z.unknown().optional() }), req.body);
+    const { peerToolCall } = await import("../agents/peer-agent.ts");
+    const { name, args, ...scope } = b;
+    return { node: (await import("../core/peers.ts")).nodeId(app), ...(await peerToolCall(app, scope, name, args)) };
+  });
   server.get("/api/peer/snapshot", async (req, reply) => {
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人能拉取设备快照");
     const { snapshotStream } = await import("../core/pull.ts");

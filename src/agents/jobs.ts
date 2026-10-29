@@ -992,6 +992,10 @@ registerHandler("rule-fire", async (ctx) => {
   return fireAfterWait(ctx.app, ruleId, key, event);
 });
 
+// An outside Agent's session run (peer-agent.ts) is open while it is used and closed by a timer; one
+// left over from a restart is requeued by the worker and simply ends here.
+registerHandler("peer-agent", async () => ({ ended: "服务重启，会话结束；同一会话再次调用会重新打开这条运行" }));
+
 registerHandler("guest", async (ctx) => (await import("../channels/lark-guest.ts")).guestRun(ctx));
 
 registerHandler("lark-command", async (ctx) => (await import("../channels/lark-commands.ts")).commandRun(ctx));
