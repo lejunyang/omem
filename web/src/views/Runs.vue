@@ -727,8 +727,9 @@ const kindOptions = computed(() => [
   grid-template-areas:
     "title . delegate"
     "search search search"
-    "status scope scope"
-    "kind kind quiet";
+    "status status status"
+    "scope scope quiet"
+    "kind kind kind";
   row-gap: 8px;
   align-items: center;
 }
@@ -739,7 +740,7 @@ const kindOptions = computed(() => [
 .head .btn[title="交办编码任务"] { grid-area: delegate; }
 .head .kind-filter { grid-area: kind; justify-self: start; }
 .head .status-filter { grid-area: status; justify-self: start; }
-.head .scope-filter { grid-area: scope; justify-self: end; }
+.head .scope-filter { grid-area: scope; justify-self: start; }
 .head .small.muted { grid-area: quiet; justify-self: end; white-space: nowrap; }
 @media (max-width: 480px) {
   .head {
@@ -748,8 +749,8 @@ const kindOptions = computed(() => [
       "title delegate"
       "search search"
       "status status"
-      "scope scope"
-      "kind quiet";
+      "scope quiet"
+      "kind kind";
   }
 }
 .sm-select {

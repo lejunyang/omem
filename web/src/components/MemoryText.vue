@@ -41,7 +41,7 @@ function open(e: MouseEvent, t: CitationTarget) {
 </script>
 
 <template>
-  <span class="memory-text"><template v-for="(p, i) in parts" :key="i"><a v-if="p.target" href="#" class="ref" :class="p.target.kind" :title="p.target.kind === 'page' ? `${p.target.space}:${p.target.slug}` : undefined" @click.prevent.stop="open($event, p.target)">{{ p.text }}</a><template v-else>{{ p.text }}</template></template></span>
+  <span class="memory-text"><template v-for="(p, i) in parts" :key="i"><a v-if="p.target" href="#" class="ref" :class="`ref-${p.target.kind}`" :title="p.target.kind === 'page' ? `${p.target.space}:${p.target.slug}` : undefined" @click.prevent.stop="open($event, p.target)">{{ p.text }}</a><template v-else>{{ p.text }}</template></template></span>
 </template>
 
 <style scoped>
@@ -54,9 +54,10 @@ function open(e: MouseEvent, t: CitationTarget) {
   text-decoration: none;
   border-bottom-style: solid;
 }
-.ref.source,
-.ref.memory,
-.ref.message {
+/* Prefixed: a bare `page` class would pick up the global page layout (padding). */
+.ref-source,
+.ref-memory,
+.ref-message {
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 0.88em;
 }
