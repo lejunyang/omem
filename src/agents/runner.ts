@@ -23,6 +23,7 @@ import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, type AgentSpec, type McpSer
 import { expandTools } from "./tool-help.ts";
 import { isBuiltinRole, roleOverrideText, rolesDir } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
+import { embedQuery } from "../search/embeddings.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -73,7 +74,23 @@ export function loadRole(name: string, app?: App): Role {
   return role;
 }
 
-const commonGuide = () => readFileSync(join(rolesDir(), "_common.md"), "utf8");
+/**
+ * The shared guide, without the sections about tools this run does not have: a section whose heading
+ * is followed by `<!-- tools: a b -->` stays when the run has any of them (a coder reads nothing
+ * about items, wake-ups or how to write memories).
+ */
+export function commonGuide(tools: Set<string>) {
+  const text = readFileSync(join(rolesDir(), "_common.md"), "utf8").replace(/\r\n/g, "\n");
+  return text
+    .split(/(?=^## )/m)
+    .flatMap((part) => {
+      const m = /^(## [^\n]*\n)<!-- tools: ([^>]*?) -->\n/.exec(part);
+      if (!m) return [part];
+      return m[2].split(/\s+/).some((t) => tools.has(t)) ? [part.replace(m[0], m[1])] : [];
+    })
+    .join("")
+    .trim();
+}
 
 export function listAgentProfiles(app: App) {
   return allProfiles(app.config).map((p) => {
@@ -112,17 +129,19 @@ function localTime(app: App) {
  * Self-improvement loop: preferences the owner stated and lessons distilled by
  * the dreamer (experience memories) are handed to every future run.
  */
-function learnedContext(app: App, spaceId: string, userId: string, spec: string | null) {
+type Lesson = { kind: string; subject: string; content: string; agent: string | null; embedding: Uint8Array | null };
+
+function lessonRows(app: App, spaceId: string, userId: string, spec: string | null, vectors = false) {
   // With review on, only memories the reviewer (or the owner) accepted are handed to every run:
   // a bad lesson repeated in every prompt costs more than a missing one.
   const vetted = app.config.memory.review.enabled ? "and (created_by = 'user' or review_verdict = 'keep')" : "";
-  const rows = all<{ kind: string; subject: string; content: string; agent: string | null }>(
+  return all<Lesson>(
     app.db,
     // A profile's own experience goes with it whatever space it runs in (an investigator learns from
     // the on-call groups of one project space and is called from the personal space).
-    `select kind, subject, content, agent from memories where status = 'active' ${vetted} and (agent is null or agent = ?) and (
+    `select kind, subject, content, agent, ${vectors ? "embedding" : "null as embedding"} from memories where status = 'active' ${vetted} and (agent is null or agent = ?) and (
        (kind = 'preference' and space_id in (?, ?) and coalesce(user_id, 'owner') = ?) or (kind = 'experience' and (space_id = ? or agent = ?))
-     ) order by kind = 'preference' desc, agent is not null desc, updated_at desc limit 24`,
+     ) order by kind = 'preference' desc, agent is not null desc, updated_at desc limit 2000`,
     spec ?? "",
     personalSpaceId(userId),
     spaceId,
@@ -130,7 +149,40 @@ function learnedContext(app: App, spaceId: string, userId: string, spec: string 
     spaceId,
     spec ?? "",
   );
-  return rows.map((r) => `- ${r.kind === "preference" ? "偏好" : "经验"}${r.agent ? "（本档案）" : ""}${r.subject ? `（${r.subject}）` : ""}：${r.content}`).join("\n");
+}
+
+const lessonLines = (rows: Lesson[]) => rows.map((r) => `- ${r.kind === "preference" ? "偏好" : "经验"}${r.agent ? "（本档案）" : ""}${r.subject ? `（${r.subject}）` : ""}：${r.content}`).join("\n");
+
+/** With no task in view (a conversation's standing context): the newest, preferences first. */
+function learnedContext(app: App, spaceId: string, userId: string, spec: string | null) {
+  return lessonLines(lessonRows(app, spaceId, userId, spec).slice(0, 24));
+}
+
+/** Shared preferences and experience a task run is told: the closest to the task, at most this many. */
+const TASK_LESSONS = 8;
+
+/**
+ * For a task: the profile's or role's own lessons, and of the shared ones only the closest to the task
+ * (cosine on memory vectors; the newest without vectors). A coder is not told how the owner swipes
+ * back on a phone or how on-call cases were triaged.
+ */
+async function taskLessons(app: App, spaceId: string, userId: string, spec: string | null, about: string) {
+  const rows = lessonRows(app, spaceId, userId, spec, true);
+  const own = rows.filter((r) => r.agent).slice(0, 16);
+  const shared = rows.filter((r) => !r.agent);
+  const q = shared.length > TASK_LESSONS ? await embedQuery(app, about, "query").catch(() => null) : null;
+  let near = shared.slice(0, TASK_LESSONS);
+  if (q) {
+    const score = (e: Uint8Array) => {
+      const v = new Float32Array(e.buffer, e.byteOffset, e.byteLength / 4);
+      if (v.length !== q.length) return -1;
+      let s = 0;
+      for (let i = 0; i < v.length; i++) s += v[i] * q[i];
+      return s;
+    };
+    near = shared.filter((r) => r.embedding).map((r) => ({ r, s: score(r.embedding!) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, TASK_LESSONS).map((x) => x.r);
+  }
+  return lessonLines([...own, ...near]);
 }
 
 export type RoleRunInput = {
@@ -245,7 +297,7 @@ export function recordRunAI(app: App, runId: string | null, profile: AgentProfil
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; reviewLead?: boolean },
+  input: { actor: Actor; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; reviewLead?: boolean; lessons?: string },
 ): PreparedRun {
   const userId = input.userId ?? OWNER;
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -304,15 +356,15 @@ export function prepareRun(
   const token = issueToolToken({ runId: input.runId, spaceId: space.id, spaces: readable, writable: scoped ?? undefined, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, plugin: spec?.plugin, shadow: input.shadow });
   const guide = spaceGuide(app, space.id).trim();
   // A built-in role learns like a spec: its own experience and preferences, its regular skills first.
-  const lessons = guest ? "" : learnedContext(app, space.id, userId, spec?.name ?? (roleName === "assistant" ? null : roleName));
-  const skills = guest ? "" : spec ? skillIndex(app, spec.skills) : skillIndex(app, undefined, role!.skills);
+  const lessons = guest ? "" : input.lessons ?? learnedContext(app, space.id, userId, spec?.name ?? (roleName === "assistant" ? null : roleName));
+  const skills = guest ? "" : skillIndex(app, spec ? spec.skills : roleName === "assistant" ? undefined : role!.skills);
   const agents = roleName === "assistant" && !spec ? agentIndex(app) : "";
   const routing = !guest && DELEGATING.some((t) => tools.has(t)) ? routingGuide(app, profile) : "";
   const body = spec
     ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`
     : `# 角色：${role!.description}\n\n${role!.body}`;
   const system = [
-    commonGuide(),
+    commonGuide(tools),
     body,
     `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`,
   ].join("\n\n---\n\n");
@@ -425,7 +477,10 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const execution = validateExecution(app, input.execution ?? runAI(app, input.runId));
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
-  const base = prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead });
+  // The lessons that bear on this task (a conversation gets the newest instead, see prepareRun).
+  const lessons = input.role === "guest" && !input.spec ? "" : await taskLessons(app, input.spec?.space && !input.spaceId ? input.spec.space : input.spaceId, input.userId ?? OWNER, input.spec?.name ?? (input.role === "assistant" ? null : input.role), `${input.spec?.description ?? loadRole(input.role, app).description}
+${input.task}`);
+  const base = prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead });
   if (execution) {
     try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }); }
     catch (e) { revokeToolToken(base.token); throw e; }
@@ -450,7 +505,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     const moved = slot.index > 0;
     i += slot.index;
     const profile = chain[i];
-    const prep = i === 0 ? base : prepareRun(app, { actor, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead });
+    const prep = i === 0 ? base : prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd ?? base.cwd, profileId: profile.id, userId: input.userId, model: profile.model ?? undefined, effort: profile.effort ?? undefined, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead });
     if (i > 0 && !input.shadow) recordRunAI(app, input.runId, prep.profile, true);
     try {
       const req = {

@@ -102,9 +102,12 @@ describe("built-in roles as profiles", () => {
     app.baseUrl = "http://127.0.0.1:1";
     const rev = prepareRun(app, { actor: { role: "reviewer" }, spaceId: "personal", runId: null });
     expect(rev.system).toContain("先看类型是否被 any 绕过");
-    expect(rev.system).toMatch(/ts-review（你常用的）/);
+    expect(rev.system).toMatch(/- ts-review：TypeScript 评审清单/);
     const other = prepareRun(app, { actor: { role: "tutor" }, spaceId: "personal", runId: null });
     expect(other.system).not.toContain("先看类型是否被 any 绕过");
+    // Another role knows the skill by name only.
+    expect(other.system).toMatch(/其他技能（用到时 read_skill 读全文）：.*ts-review/);
+    expect(other.system).not.toContain("TypeScript 评审清单");
     // Inside a reviewer run, recall sees shared + its own.
     expect((await callTool(ctxFor(app, { role: "reviewer" }), "recall", {})).text).toMatch(/reviewer 专用/);
     expect((await callTool(ctxFor(app, { role: "tutor" }), "recall", {})).text).toBe("没有相关记忆。");

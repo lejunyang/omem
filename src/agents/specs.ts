@@ -299,11 +299,18 @@ export function deleteSkill(app: App, name: string, actor: "user" | "agent" = "u
 
 /** The progressive-disclosure index handed to agents: names and when to use, bodies on demand. */
 /** `names`: only these (an agent spec's skills); `first`: all, these listed first and marked (a role's regular ones). */
-export function skillIndex(app: App, names?: string[], first: string[] = []) {
+/**
+ * The skills a run is told about. `names`: its own (a profile's or a role's regular skills), each with
+ * its description; the rest only by name, so a specialist does not carry every runbook's summary.
+ * Without `names` (the main assistant, which hands work out) every skill is described.
+ */
+export function skillIndex(app: App, names?: string[]) {
   const all = listSkills(app);
-  const picked = names?.length ? all.filter((s) => names.includes(s.name)) : [...all.filter((s) => first.includes(s.name)), ...all.filter((s) => !first.includes(s.name))];
-  if (!picked.length) return "";
-  return picked.map((s) => `- ${s.name}${first.includes(s.name) ? "（你常用的）" : ""}：${s.description}（全文：read_skill，或读取 ${join(s.dir, "SKILL.md")}）`).join("\n");
+  const line = (s: (typeof all)[number]) => `- ${s.name}：${s.description}（全文：read_skill，或读取 ${join(s.dir, "SKILL.md")}）`;
+  if (!names) return all.map(line).join("\n");
+  const own = all.filter((s) => names.includes(s.name));
+  const rest = all.filter((s) => !names.includes(s.name));
+  return [...own.map(line), ...(rest.length ? [`- 其他技能（用到时 read_skill 读全文）：${rest.map((s) => s.name).join("、")}`] : [])].join("\n");
 }
 
 export function agentIndex(app: App) {
