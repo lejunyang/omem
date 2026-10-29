@@ -26,6 +26,7 @@ import RunActivity from "../components/RunActivity.vue";
 import CodeGitPanel from "../components/CodeGitPanel.vue";
 import CodeBranchPanel from "../components/CodeBranchPanel.vue";
 import ReviewProcess from "../components/ReviewProcess.vue";
+import ContextUsage from "../components/ContextUsage.vue";
 import { fmtTime, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 import { refAction } from "../lib/refs";
 import { addQuote, quotesOf, type QuoteKind } from "../lib/quotes";
@@ -572,6 +573,8 @@ const kindOptions = computed(() => [
           <div class="section-title row">任务<span class="spacer" /><button v-if="taskLong" class="btn ghost sm" @click="taskOpen = !taskOpen">{{ taskOpen ? "收起" : "展开全部" }}</button></div>
           <div class="pre task" :class="{ clipped: taskLong && !taskOpen }">{{ taskText }}</div>
         </section>
+
+        <ContextUsage :events="detail.events" />
 
         <ReviewProcess v-if="hasReview" :rv="rv" :focus="processFocus" />
         <section v-else class="block">

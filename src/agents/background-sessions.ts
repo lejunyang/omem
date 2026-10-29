@@ -3,7 +3,7 @@ import type { App } from "../core/app.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import type { PreparedRun } from "./runner.ts";
 import { issueToolToken, retargetToolToken, revokeToolToken, toolContextForToken } from "./tools.ts";
-import { withInstructions, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
+import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 
 type Live = { key: string; handle: AcpHandle; token: string; busy: boolean; usedAt: number; usage?: AgentResult["contextUsage"]; timer?: NodeJS.Timeout; releasing?: Promise<void> };
 const pools = new Map<App, Set<Live>>();
@@ -70,8 +70,8 @@ export async function backgroundTurn(app: App, prep: PreparedRun, req: AgentRequ
   try {
     if (req.signal?.aborted) throw new Error("CANCELLED");
     const prompt = continuing
-      ? `（${prep.now}）\n\n# 本轮独立任务\n\n${task}\n\n只处理本轮列出的材料；历史任务不重复执行，旧材料需要时重新读取。`
-      : withInstructions(entry.handle, req.system, req.prompt);
+      ? sessionPrompt({ resumed: true }, req, `（${prep.now}）\n\n# 本轮独立任务\n\n${task}\n\n只处理本轮列出的材料；历史任务不重复执行，旧材料需要时重新读取。`, emit)
+      : sessionPrompt(entry.handle, req, req.prompt, emit);
     const result = await entry.handle.prompt(prompt, emit, req.signal);
     entry.usage = result.contextUsage;
     entry.usedAt = Date.now();

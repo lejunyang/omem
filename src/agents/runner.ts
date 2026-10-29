@@ -17,7 +17,7 @@ import { backendAvailable } from "./availability.ts";
 import { acquire, choosableProfiles, excluded, loadLines } from "./capacity.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
 import { issueToolToken, revokeToolToken } from "./tools.ts";
-import { isAgentRunError, type AgentEvent, type AgentResult, type McpAccess } from "./types.ts";
+import { isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { agentIndex, DEFAULT_SPEC_TOOLS, skillIndex, type AgentSpec, type McpServerSpec } from "./specs.ts";
 import { expandTools } from "./tool-help.ts";
@@ -246,6 +246,8 @@ export type PreparedRun = {
   system: string;
   /** The current time, said at the start of each turn. */
   now: string;
+  /** What `system` is made of, reported with each turn for the run page. */
+  parts: InstructionParts;
   token: string;
   mcp: McpAccess;
   extraMcp: Record<string, McpServerSpec>;
@@ -363,16 +365,15 @@ export function prepareRun(
   const body = spec
     ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`
     : `# 角色：${role!.description}\n\n${role!.body}`;
-  const system = [
-    commonGuide(tools),
-    body,
-    `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`,
-  ].join("\n\n---\n\n");
+  const common = commonGuide(tools);
+  const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
+  const system = [common, body, environment].join("\n\n---\n\n");
   return {
     profile,
     cwd,
     system,
     now: `现在：${localTime(app)}`,
+    parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length },
     token,
     mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: agentToolEnv(app.home, app.baseUrl, token) },
     extraMcp: input.reviewCheck || input.reviewLead ? {} : spec?.mcp ?? {},
@@ -513,6 +514,7 @@ ${input.task}`);
         cwd: prep.cwd,
         // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
         system: prep.system,
+        parts: prep.parts,
         prompt: `（${prep.now}）\n\n# 任务\n\n${input.task}`,
         allowWrites: prep.allowWrites,
         modes: prep.modes,

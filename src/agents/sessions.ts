@@ -10,7 +10,7 @@ import { createRun, runsInLane, type RunContext } from "./runs.ts";
 import { findAgentSpec } from "./specs.ts";
 import { chatSettings, describeThread, findThread, getThread, threadMessages, updateThread, type Thread, type ThreadMessage } from "./threads.ts";
 import { retargetToolToken, revokeToolToken } from "./tools.ts";
-import { replyOf, withInstructions, type AgentEvent } from "./types.ts";
+import { replyOf, sessionPrompt, type AgentEvent } from "./types.ts";
 import { autoTurnsSinceOwner, maxAutoTurns, refreshWork } from "./agent-work.ts";
 import { passiveBlock, passiveRecall } from "../memory/passive.ts";
 import { recordRecalls } from "../memory/recall-stats.ts";
@@ -263,7 +263,7 @@ ${WAKE_NOTE}`
       : watched
       ? watchedNote(app, t, messages)
       : `# ${userId === "owner" ? "本人新消息" : `${userName(app, userId)}的新消息`}\n\n${renderMessages(messages, app)}\n\n${NEW_TURN_NOTE}${recalled ? `\n\n${recalled}` : ""}`;
-  // A new session's first turn; the standing instructions go with it (withInstructions) or as its system prompt.
+  // A new session's first turn; the standing instructions go with it (sessionPrompt) or as its system prompt.
   const freshBody = () => `（${prep.now}）\n\n# 会话背景\n\n${coldContext(app, getThread(app, threadId), messages[0]?.createdAt ?? new Date().toISOString())}\n\n---\n\n${newPart}`;
   if (tooLong) emit({ type: "status", text: `本会话已进行 ${t.agentTurns} 轮，换用新的 Agent 会话（带摘要）` });
 
@@ -280,6 +280,7 @@ ${WAKE_NOTE}`
           {
             cwd: prep.cwd,
             system: prep.system,
+            parts: prep.parts,
             prompt: resume ? `（${stamp(new Date().toISOString())}）\n\n${newPart}` : freshBody(),
             allowWrites: prep.allowWrites,
             modes: prep.modes,
@@ -332,6 +333,7 @@ ${WAKE_NOTE}`
           {
             cwd: curPrep.cwd,
             system: curPrep.system,
+            parts: curPrep.parts,
             prompt: `（${curPrep.now}）\n\n${newPart}`,
             allowWrites: curPrep.allowWrites,
             modes: curPrep.modes,
@@ -385,7 +387,8 @@ ${WAKE_NOTE}`
       l.busy = true;
       let done = false;
       try {
-        const promptText = mode === "fresh" ? withInstructions(l.handle, curPrep.system, step === 0 ? freshBody() : `（${curPrep.now}）\n\n${newPart}`) : `（现在 ${stamp(new Date().toISOString())}）\n\n${newPart}`;
+        // A live or resumed session already has the instructions.
+        const promptText = sessionPrompt(mode === "fresh" ? l.handle : { resumed: true }, curPrep, mode === "fresh" ? (step === 0 ? freshBody() : `（${curPrep.now}）\n\n${newPart}`) : `（现在 ${stamp(new Date().toISOString())}）\n\n${newPart}`, emit);
         let r;
         try {
           r = await l.handle.prompt(promptText, emit, ctx.signal);
@@ -410,7 +413,7 @@ ${WAKE_NOTE}`
           live.set(threadId, l);
           mode = "fresh";
           curPrep = again;
-          r = await handle.prompt(withInstructions(handle, again.system, freshBody()), emit, ctx.signal);
+          r = await handle.prompt(sessionPrompt(handle, again, freshBody(), emit), emit, ctx.signal);
         }
         save(l.handle.sessionId, mode === "fresh" ? 1 : t.agentTurns + 1);
         answer = replyOf(r);

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentProfile } from "../core/config.ts";
-import { agentRunError, replyFromSegments, withInstructions, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
+import { agentRunError, replyFromSegments, sessionPrompt, withInstructions, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 
 /**
  * Doubao as a model backend, through the Doubao OpenAPI (Managed Agent: sessions, events,
@@ -255,7 +255,8 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
   const token = await doubaoAccessToken(ctx.home, ctx.app);
   if (!token) throw new Error("豆包还没有授权：在运行 omem 的电脑上执行 omem doubao login（或网页 Agent 页的豆包授权）");
   const signal = req.signal;
-  // The standing instructions open a new session; a resumed one already has them.
+  // The standing instructions open a new session; a resumed one already has them. What went is
+  // reported once the session is known (a resume that fails becomes a new session).
   const userMessage = (resumed: boolean) => ({ type: "user.message", contents: [{ type: "text", text: withInstructions({ resumed }, req.system, req.prompt) }] });
   let sessionId = req.resumeSessionId;
   let queryId: string;
@@ -263,6 +264,7 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
     try {
       const d = await api<{ messages: Message[] }>(token, "POST", `/v1/sessions/${sessionId}/events`, { uuid: randomUUID(), events: [userMessage(true)] });
       queryId = d.messages[0].id;
+      sessionPrompt({ resumed: true }, req, req.prompt, emit);
     } catch (e) {
       if ((e as Error).message === "CANCELLED") throw e;
       emit({ type: "status", text: `无法继续之前的豆包会话，改为新会话：${(e as Error).message.slice(0, 120)}` });
@@ -273,6 +275,7 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
     const d = await api<{ id: string; messages: Message[] }>(token, "POST", "/v1/sessions", { uuid: randomUUID(), initial_events: [userMessage(false)] });
     sessionId = d.id;
     queryId = d.messages[0].id;
+    sessionPrompt({ resumed: false }, req, req.prompt, emit);
   }
   emit({ type: "status", text: "已连接 豆包" });
 

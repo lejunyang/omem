@@ -3,7 +3,7 @@ import type { AgentProfile } from "../core/config.ts";
 import { archiveSession } from "./session-archive.ts";
 import { resolveModelOption } from "./models.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
-import { agentRunError, replyFromSegments, withInstructions, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult } from "./types.ts";
+import { agentRunError, replyFromSegments, sessionPrompt, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult } from "./types.ts";
 
 // Provider queue text shown as a normal message by some CLIs (traex included).
 const QUEUE_TEXT = /(?:排队|队列|queue[d]?|waiting (?:in )?(?:the )?queue)[^\d]{0,20}(\d+)?/i;
@@ -498,7 +498,7 @@ export async function runAcp(profile: AgentProfile, req: AgentRequest, emit: (e:
   try {
     if (req.probe) return { text: "", stopReason: "probe", agent: handle.agent, probe: handle.probe };
     if (req.signal?.aborted) throw new Error("CANCELLED");
-    return await handle.prompt(withInstructions(handle, req.system, req.prompt), emit, req.signal);
+    return await handle.prompt(sessionPrompt(handle, req, req.prompt, emit), emit, req.signal);
   } finally {
     req.signal?.removeEventListener("abort", onAbort);
     if (!req.persistSession && !req.resumeSessionId) await handle.discard();

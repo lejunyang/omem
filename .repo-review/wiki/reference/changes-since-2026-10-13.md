@@ -771,3 +771,10 @@ updated: 2026-10-28
 
 - `review-fix.ts` 的 `startFix`：只选了问题、没写补充要求、也没指定之后各轮评审项时，下一轮 `reviewOnly` 是这些问题所在的评审项；每 `review.rereviewAllEvery` 轮（默认 2）照旧全部重审。`queueStandaloneFix` 不再从上一轮继承 `reviewOnly`。
 - `code.ts`：`reviewOnly` 不再只在有评审负责人的档位生效；运行里的评审理由写“这一轮只复审要改的问题所在的评审项：…（每 N 轮全部重审）”。需求拆分不受影响（仍按“每次评审都单独拆需求”）。
+
+## 10-30：运行页“上下文”
+
+以前运行记录里看不出发给 Agent 的说明有多大、模型每次调用读了多少上下文。
+
+- **`prompt` 事件**：`types.ts` 的 `sessionPrompt`（包住 `withInstructions`）每轮记一条：说明怎么发的（`system` 系统提示 / `message` 第一条消息 / `resumed` 接上会话没发 / `none`）、说明字数、这一轮消息字数，新会话还有 `parts`（共同约定、角色、环境、偏好与经验条数和字数、技能目录）。`prepareRun` 算 `parts`；ACP、CLI、豆包、后台会话池、对话都经它发。
+- **网页**：`web/src/components/ContextUsage.vue`，运行详情活动区上方的“上下文”：按编码 Agent、各评审项、负责人分开，列说明组成、发出的消息、模型调用次数（同一数值重复上报只算一次）、上下文起始 → 峰值、累计读入（各次调用的上下文之和）。数据来自已有的 `usage` 事件和新的 `prompt` 事件，不改接口。文档截图 `run-context`。

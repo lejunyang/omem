@@ -248,6 +248,15 @@ for (const c of checks) {
 }
 addRunEvent(app, r.id, "tool", { id: "lead-0", title: "rule_review", status: "completed", phase: "lead" });
 addRunEvent(app, r.id, "text", { text: "接受两个严重问题，驳回规范项的注释建议；下一轮只复审功能和业务。", phase: "lead" });
+// The 上下文 card: how each agent got its instructions and the context its model calls carried (made-up figures).
+const demoParts = (role: number, lessons: number) => ({ common: role > 800 ? 1950 : 1540, role, environment: 260, lessons: lessons * 40, lessonCount: lessons, skills: 60 });
+const usage = (who: Record<string, string>, from: number, steps: number[]) => { let used = from; for (const s of steps) addRunEvent(app, r.id, "usage", { used: (used += s), size: 475000, ...who }); };
+addRunEvent(app, r.id, "prompt", { via: "system", instructions: 3400, message: 620, parts: demoParts(910, 5), phase: "coder" });
+usage({ phase: "coder" }, 33800, [1200, 4100, 2600, 5200, 3800, 900]);
+for (const c of checks) {
+  addRunEvent(app, r.id, "prompt", { via: "system", instructions: 2900, message: 9800, parts: demoParts(c === "review-style" ? 1580 : 900, 3), phase: "reviewer", check: c });
+  usage({ phase: "reviewer", check: c }, 41000, [2600, 3100, 1800]);
+}
 run(app.db, "update runs set status = 'done', finished_at = ? where id = ?", new Date().toISOString(), r.id);
 
 // ---- a rule -----------------------------------------------------------------------------------
@@ -297,6 +306,7 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; prepa
   { name: "review-change", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.locator(".pick", { hasText: "补测试与说明" }).click(); await p.waitForTimeout(900); await p.getByRole("button", { name: "下一处" }).click(); await p.waitForTimeout(1200); } },
   { name: "review-split-diff", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.getByRole("radio", { name: "左右" }).click(); await p.getByRole("radio", { name: "文件" }).click(); await p.locator(".tree .row-btn.file").first().click(); await p.waitForTimeout(1200); } },
   { name: "review-activity", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "活动" }).click(); await p.waitForTimeout(500); await p.locator(".sec-head").nth(1).click(); await p.waitForTimeout(300); } },
+  { name: "run-context", path: `/runs/${r.id}`, prepare: async (p) => { await p.getByRole("tab", { name: "活动" }).click(); await p.waitForTimeout(500); const s = p.locator("details.usage summary"); await s.click(); await s.scrollIntoViewIfNeeded(); await p.waitForTimeout(300); } },
   { name: "review-quotes", path: `/runs/${r.id}`, prepare: async (p) => {
     await p.getByRole("tab", { name: /变更/ }).click();
     await p.locator(".pick").first().click();

@@ -14,7 +14,7 @@ afterEach(async () => { for (const f of cleanups.splice(0)) await f(); });
 
 let lastApp: App | null = null;
 
-type Echo = { session: string; resumed: boolean; system: string | null; prompt: string };
+type Echo = { session: string; resumed: boolean; system: string | null; prompt: string; sent: Record<string, unknown> };
 
 async function setup(env: Record<string, string>) {
   const app = testApp();
@@ -25,8 +25,10 @@ async function setup(env: Record<string, string>) {
   cleanups.push(() => server.close());
   return async (task: string, resumeSessionId?: string) => {
     const run = createRun(app, { kind: "code", spaceId: "personal", title: "测试交办" });
-    const r = await runRole(app, { role: "coder", spaceId: "personal", task, runId: run.id, resumeSessionId, persistSession: true });
-    return JSON.parse(r.text) as Echo;
+    const events: { type: string }[] = [];
+    const r = await runRole(app, { role: "coder", spaceId: "personal", task, runId: run.id, resumeSessionId, persistSession: true, onEvent: (e) => events.push(e) });
+    // What the run page reads: how the instructions went and how big the turn was.
+    return { ...JSON.parse(r.text), sent: events.find((e) => e.type === "prompt") } as Echo;
   };
 }
 
@@ -90,6 +92,9 @@ describe("standing instructions", () => {
     expect(next).toMatchObject({ session: first.session, resumed: true });
     expect(next.prompt).not.toContain("# 角色：");
     expect(next.prompt).toContain("按评审修改：补上测试");
+    expect(first.sent).toMatchObject({ via: "message", message: first.prompt.length, parts: { lessonCount: 0 } });
+    expect(next.sent).toMatchObject({ via: "resumed", message: next.prompt.length });
+    expect(next.sent.parts).toBeUndefined();
   }, 60000);
 
   it("go in as the system prompt when the agent takes one, without the clock", async () => {
@@ -103,5 +108,6 @@ describe("standing instructions", () => {
     const next = await turn("按评审修改：补上测试", first.session);
     expect(next).toMatchObject({ session: first.session, resumed: true, system: first.system });
     expect(next.prompt).not.toContain("# 角色：");
+    expect(first.sent).toMatchObject({ via: "system", instructions: first.system!.length });
   }, 60000);
 });

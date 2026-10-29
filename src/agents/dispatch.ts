@@ -3,7 +3,7 @@ import type { AgentProfile } from "../core/config.ts";
 import { runAcp } from "./acp.ts";
 import { runCli } from "./cli.ts";
 import { doubaoAppFor, doubaoApps, runDoubao } from "./doubao.ts";
-import { withInstructions, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
+import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 
 /** One turn on any backend: ACP, a CLI fallback, or the Doubao OpenAPI. */
 export async function runBackend(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
@@ -16,5 +16,5 @@ export async function runBackend(app: App, profile: AgentProfile, req: AgentRequ
   }
   // The CLIs take no system prompt here: the instructions open a new session, a resumed one has them
   // (a session that cannot be resumed fails, and the caller starts a new one).
-  return runCli(profile, { ...req, prompt: withInstructions({ resumed: !!req.resumeSessionId }, req.system, req.prompt), system: undefined }, emit);
+  return runCli(profile, { ...req, prompt: sessionPrompt({ resumed: !!req.resumeSessionId }, req, req.prompt, emit), system: undefined }, emit);
 }

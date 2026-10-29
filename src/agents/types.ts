@@ -1,5 +1,8 @@
 export type AgentEvent =
   | { type: "usage"; used: number; size: number }
+  // What a turn sent: how the standing instructions went (system prompt, the head of the first
+  // message, or not at all into a resumed session), their size by part, and the message's size.
+  | { type: "prompt"; via: "system" | "message" | "resumed" | "none"; instructions: number; message: number; parts?: InstructionParts }
   | { type: "text"; text: string }
   | { type: "thought"; text: string }
   | { type: "tool"; id: string; title: string; kind?: string; status?: string; input?: unknown }
@@ -31,6 +34,8 @@ export type AgentRequest = {
    * message. Never repeated into a resumed session.
    */
   system?: string;
+  /** What `system` is made of, reported with the turn (characters; lessons also as a count). */
+  parts?: InstructionParts;
   mcp?: McpAccess;
   /** Allow edit/delete/move tool kinds (coding in a worktree). */
   allowWrites?: boolean;
@@ -77,6 +82,16 @@ export type AgentResult = {
  */
 export function withInstructions(session: { resumed: boolean; system?: boolean }, system: string | undefined, text: string) {
   return !system || session.resumed || session.system ? text : `${system}\n\n---\n\n${text}`;
+}
+
+export type InstructionParts = { common: number; role: number; environment: number; lessons: number; lessonCount: number; skills: number };
+
+/** withInstructions, reporting what the turn sent (a `prompt` event: the run page's “上下文” card). */
+export function sessionPrompt(session: { resumed: boolean; system?: boolean }, req: { system?: string; parts?: InstructionParts }, text: string, emit: (e: AgentEvent) => void) {
+  const out = withInstructions(session, req.system, text);
+  const via = !req.system ? "none" : session.resumed ? "resumed" : session.system ? "system" : "message";
+  emit({ type: "prompt", via, instructions: req.system?.length ?? 0, message: out.length, ...(req.parts && via !== "resumed" ? { parts: req.parts } : {}) });
+  return out;
 }
 
 /** The part of an agent's output meant as the answer. */

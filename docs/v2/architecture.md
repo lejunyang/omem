@@ -319,6 +319,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 编码续轮按上下文换会话：上一轮编码会话结束时的上下文超过 `sessions.codeResumeMaxTokens`（默认 100K）就新开，任务带原始任务、工作分支提交和上一轮说明 | 已实现；假 ACP 两轮测试 | `src/agents/code.ts` 的 `code()`、`test/code-resume.test.ts` |
 | 说明按任务裁剪：`_common.md` 小节用 `<!-- tools: … -->` 标出相关工具，运行没有这些工具就不放；任务运行的共享偏好与经验取与任务最接近的 8 条（无向量取最新），自己的照旧；技能目录只给自己的说明、其他列名字 | 已实现；测试覆盖（字符向量假模型）；真实向量的相关度没有另行校准，按名次取前 8 | `runner.ts` 的 `commonGuide` / `taskLessons`、`specs.ts` 的 `skillIndex`、`roles/_common.md` |
 | 按评审修改只复审提出问题的评审项：只选了问题时下一轮 `reviewOnly` 为这些问题的评审项，每 `rereviewAllEvery` 轮全审；有补充要求或本人指定评审项时全审；不再限于有负责人的档位 | 已实现；测试覆盖 | `src/agents/review-fix.ts` 的 `startFix`、`code.ts` |
+| 运行页“上下文”：每轮记 `prompt` 事件（说明怎么发、字数、组成），和 `usage` 一起在运行详情按编码 Agent / 评审项汇总调用次数、上下文起止、累计读入 | 已实现；测试覆盖事件，真实 Codex ACP 两轮核对，1440 / 390 宽度检查 | `types.ts` 的 `sessionPrompt`、`web/src/components/ContextUsage.vue` |
 | 整理入队：同空间、同要求合并排队原件并去重，等待 30 秒，每批最多 40 份，同空间串行；保存最早待整理行号。调度先按可用并发槽筛选再取候选，超过 100 条后台积压也不会挡住对话 | 已实现，批量合并与双向队列隔离回归覆盖 | `src/agents/jobs.ts`、`runs.ts`、`test/ingest-queue.test.ts`、`run-queue.test.ts` |
 | 原件归属判断入队：同空间合并进任何一个未满 40 份的排队任务，已排队的原件不重复；启动时把旧队列重新打包（去重、去掉已不待判的、每批 40 份，空出来的取消）。同一会话只判断一次：留在个人空间的聊天追加新消息、已判断过的会话的历史月份原件，都沿用那次判断，不再排 AI；本人点“重新判断”的不受影响 | 已实现，测试覆盖 | `src/sources/archive.ts` 的 `queueArchive`、`compactArchiveQueue`、`chatJudgement`，`main.ts` |
 | 任务选型进环境：自主选型打开且有候选时，能交办的运行（主助手、能 `run_agent` / `delegate_code` 等的档案）的环境说明里列出本人的候选、总体偏好和自己这次用的 AI；角色说明要求每次交办对照候选选择，没有更合适的才用默认 | 已实现，测试覆盖；真实模型待验 | `src/agents/runner.ts` 的 `routingGuide`、`roles/_common.md` |
