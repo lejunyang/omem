@@ -5,7 +5,7 @@ export type AgentEvent =
   | { type: "prompt"; via: "system" | "message" | "resumed" | "none"; instructions: number; message: number; parts?: InstructionParts }
   | { type: "text"; text: string }
   | { type: "thought"; text: string }
-  | { type: "tool"; id: string; title: string; kind?: string; status?: string; input?: unknown }
+  | { type: "tool"; id: string; title: string; kind?: string; status?: string; input?: unknown; /** Duration, on the completed/failed event. */ ms?: number }
   | { type: "plan"; entries: { content: string; status: string }[] }
   | { type: "status"; text: string }
   // The agent session this turn runs in (known before the turn ends).

@@ -862,3 +862,9 @@ updated: 2026-10-28
 
 - `proposals.ts` 的 `expireProposals`：随夜里的 `profile-review` 定时一起跑；待处理超过 14 天的改为 `expired`（`resolved_by = system`），12 天以上、还没提醒过的合并成一条通知（“N 条档案改进建议两天内过期”，凌晨发出的按免打扰早上补发），`profile_proposals.expiry_notice_at` 记已提醒。待处理不设上限。同一档案同一标题的建议被之后的复盘再提时，`created_at` 和提醒一起重置。
 - 档案页：待采纳建议显示“N 天后过期”，历史里标“已过期”。
+
+## 10-30：存量整理单独的并发槽、工具耗时、后台会话按 token 换新
+
+- **并发槽**：`runs.ts` 把运行分成对话、后台、存量整理三类；`digest` 和 `triage` 一次一个（`BULK_SLOTS`），不占 `concurrency` 的后台槽；排队原因写“等存量整理空位”。10-24、10-28 大批整理时 ingest 排队超时、triage 600 秒没开始回答、Agent 说“omem 接口未返回”都和它抢槽有关。
+- **工具耗时**：`acp.ts` 在工具调用完成或失败的事件上加 `ms`；`peer-exec.ts` 的 `toolLatency` 读最近 24 小时运行的工具事件，`omem diag` 的 `toolLatency` 给出 n、p50、p90、最大值和 p90 最慢的 5 个工具（至少 5 次），p90 超过 30 秒带 `warning`。
+- **后台会话**：`background-sessions.ts` 的 `tooFull`：上下文占比超过 `maxContextRatio` 或 token 数超过 `sessions.background.maxContextTokens`（默认 120000，0 关）就不再复用；ingest、digest、heartbeat 单次运行的上下文峰值曾到 15～17 万。

@@ -92,7 +92,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
   const seenUnknown = new Set<string>();
   // The active prompt registers queue handling here so sessionUpdate can switch watchdogs.
   let promptQueue: { enter: (position?: number, message?: string) => void; exit: () => void } | null = null;
-  const tools = new Map<string, { title: string; kind?: string; status?: string }>();
+  const tools = new Map<string, { title: string; kind?: string; status?: string; startedAt?: number }>();
   const output = new WritableStream<Uint8Array>({
     write: (chunk) => new Promise((resolve, reject) => child.stdin.write(chunk, (e) => (e ? reject(e) : resolve()))),
   });
@@ -182,16 +182,18 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
           case "tool_call": {
             gotOutput = true;
             if (segments[segments.length - 1].trim()) segments.push("");
-            const t = { title: update.title, kind: update.kind ?? undefined, status: update.status ?? "pending" };
+            const t = { title: update.title, kind: update.kind ?? undefined, status: update.status ?? "pending", startedAt: Date.now() };
             tools.set(update.toolCallId, t);
-            emit({ type: "tool", id: update.toolCallId, ...t, input: update.rawInput });
+            emit({ type: "tool", id: update.toolCallId, title: t.title, kind: t.kind, status: t.status, input: update.rawInput });
             break;
           }
           case "tool_call_update": {
             const prev = tools.get(update.toolCallId) ?? { title: update.title ?? "tool" };
             const t = { ...prev, title: update.title ?? prev.title, status: update.status ?? prev.status };
             tools.set(update.toolCallId, t);
-            if (update.status === "completed" || update.status === "failed") emit({ type: "tool", id: update.toolCallId, ...t });
+            // How long the call took (diag reports the p90; slow omem tools show up there).
+            const { startedAt, ...shown } = t;
+            if (update.status === "completed" || update.status === "failed") emit({ type: "tool", id: update.toolCallId, ...shown, ...(startedAt ? { ms: Date.now() - startedAt } : {}) });
             break;
           }
           case "plan":

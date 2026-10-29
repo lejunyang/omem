@@ -34,6 +34,11 @@ process.once("exit", () => {
   for (const pool of pools.values()) for (const entry of pool) entry.handle.close();
 });
 
+/** Past the ratio of the window, or past the absolute token limit (`maxContextTokens`, 0: none). */
+export function tooFull(usage: { used: number; size: number }, config: { maxContextRatio: number; maxContextTokens?: number }) {
+  return usage.used / usage.size > config.maxContextRatio || (!!config.maxContextTokens && usage.used > config.maxContextTokens);
+}
+
 /** Only recurring jobs opt in. Conversations, coding chains and blind comparisons stay independent. */
 export async function backgroundTurn(app: App, prep: PreparedRun, req: AgentRequest, task: string, runId: string | null, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   const config = app.config.sessions.background;
@@ -47,7 +52,7 @@ export async function backgroundTurn(app: App, prep: PreparedRun, req: AgentRequ
   }))).digest("hex");
   let pool = pools.get(app);
   if (!pool) { pool = new Set(); pools.set(app, pool); }
-  let entry = [...pool].find((e) => !e.busy && e.key === key && e.handle.alive() && e.usage && e.usage.used / e.usage.size <= config.maxContextRatio);
+  let entry = [...pool].find((e) => !e.busy && e.key === key && e.handle.alive() && e.usage && !tooFull(e.usage, config));
   const continuing = !!entry;
   if (entry) {
     entry.busy = true;
@@ -75,8 +80,8 @@ export async function backgroundTurn(app: App, prep: PreparedRun, req: AgentRequ
     const result = await entry.handle.prompt(prompt, emit, req.signal);
     entry.usage = result.contextUsage;
     entry.usedAt = Date.now();
-    if (!entry.usage || entry.usage.used / entry.usage.size > config.maxContextRatio || result.stopReason !== "end_turn") {
-      emit({ type: "status", text: !entry.usage ? "后端未上报本轮上下文用量，下次使用新会话" : `释放后台会话 · 上下文 ${Math.round(entry.usage.used / entry.usage.size * 100)}%` });
+    if (!entry.usage || tooFull(entry.usage, config) || result.stopReason !== "end_turn") {
+      emit({ type: "status", text: !entry.usage ? "后端未上报本轮上下文用量，下次使用新会话" : `释放后台会话 · 上下文 ${Math.round(entry.usage.used / entry.usage.size * 100)}%（${Math.round(entry.usage.used / 1000)}k）` });
       await release(app, entry);
     } else {
       entry.busy = false;

@@ -24,6 +24,47 @@ import { vectorIndex } from "../search/vectors.ts";
 
 const packageRoot = async () => (await import("../setup.ts")).packageRoot();
 
+/** Above this p90 a tool call is slow enough that agents give up on omem and work around it. */
+export const SLOW_TOOL_MS = 30_000;
+
+/**
+ * How long agents' tool calls took (the `ms` on completed tool events, acp.ts) in runs of the last
+ * `hours`: count, p50, p90, max overall and the slowest tools by p90 (at least 5 calls each).
+ */
+export function toolLatency(app: App, hours = 24) {
+  const since = new Date(Date.now() - hours * 3600_000).toISOString();
+  const rows = all<{ title: string | null; ms: number }>(
+    app.db,
+    `select json_extract(e.data, '$.title') title, json_extract(e.data, '$.ms') ms from run_events e
+      where e.run_id in (select id from runs where created_at > ?) and e.type = 'tool' and instr(e.data, '"ms":') > 0`,
+    since,
+  ).filter((r) => typeof r.ms === "number");
+  const pct = (xs: number[], p: number) => (xs.length ? xs[Math.min(xs.length - 1, Math.floor(p * xs.length))] : 0);
+  const all_ = rows.map((r) => r.ms).sort((a, b) => a - b);
+  const byTool = new Map<string, number[]>();
+  // omem tools show as "omem · <name>" or "mcp__omem__<name>"; others by their title's first words.
+  const name = (t: string | null) => (t ?? "?").replace(/^mcp__\w+__/, "").split(/[\s(:：]/)[0].slice(0, 60) || "?";
+  for (const r of rows) byTool.set(name(r.title), [...(byTool.get(name(r.title)) ?? []), r.ms]);
+  const slowest = [...byTool]
+    .filter(([, xs]) => xs.length >= 5)
+    .map(([tool, xs]) => {
+      xs.sort((a, b) => a - b);
+      return { tool, n: xs.length, p90Ms: pct(xs, 0.9), maxMs: xs.at(-1)! };
+    })
+    .sort((a, b) => b.p90Ms - a.p90Ms)
+    .slice(0, 5);
+  const p90 = pct(all_, 0.9);
+  return {
+    hours,
+    n: all_.length,
+    p50Ms: pct(all_, 0.5),
+    p90Ms: p90,
+    maxMs: all_.at(-1) ?? 0,
+    slowest,
+    ...(p90 > SLOW_TOOL_MS ? { warning: `最近 ${hours} 小时工具调用的 p90 是 ${Math.round(p90 / 1000)} 秒，超过 ${SLOW_TOOL_MS / 1000} 秒：多半在排队（看 runsRunning 和存量整理），Agent 会绕开 omem 改读本地副本` } : {}),
+  };
+}
+
 /** Health and state in one call. */
 export async function diag(app: App) {
   const root = await packageRoot();
@@ -48,6 +89,7 @@ export async function diag(app: App) {
       runsQueued: count("select count(*) n from runs where status = 'queued'"),
       runsRunning: count("select count(*) n from runs where status = 'running'"),
     },
+    toolLatency: toolLatency(app),
     schedules: listSchedules(app).map((s) => ({ id: s.id, enabled: s.enabled, cron: s.cron, lastRunAt: s.lastRunAt, next: next[s.id] })),
     recentFailures: all<{ id: string; kind: string; title: string; error: string | null; finished_at: string | null }>(
       app.db,
