@@ -16,9 +16,23 @@ omem peer commands <同伴>             # 可远程执行的命令
 omem peer call <同伴> update          # 拉代码、装依赖、构建、重启
 omem peer pull <同伴>                 # 拉一份快照合并进本机
 omem peer open <同伴>                 # 在本机浏览器打开它的网页
+omem tool --peer <同伴> search query=退款  # 用本机的 Agent 整理它的库（见下）
 ```
 
 远程命令是固定的一组（诊断、日志、配置、只读查询、手动采集与回溯、运行记录、只读 SQL、查看 AI 后端 / 检索 / 运行说明 / 网页版 VS Code、git 与更新、重启），没有任意 shell。配对码里的令牌可以随时撤销。
+
+### 用本机的模型整理它的库
+
+常驻服务器上的知识库想让本机的 Claude Code、Codex 来整理（用本机的模型，而不是服务器自己的），不用登录服务器，直接把工具指到同伴上：
+
+```bash
+omem tool --peer <同伴>                          # 列出能用的工具
+omem tool --peer <同伴> search query=退款 space=project-a
+omem tool --peer <同伴> --session 整理项目A remember '{"kind":"fact","content":"…"}'
+omem mcp --peer <同伴>                           # 或配成 MCP 服务给 Agent 用
+```
+
+工具和 `omem mcp` 是同一套，但去掉了会对外发消息或动手的：飞书发送、通知、交办编码、让对方机器的 Agent 或模型干活、唤醒，以及改档案、技能和规则。读取、检索、记忆、Wiki 页面、原件关注度与标注、事项这些整理类的读写都可以。每次调用都记在对方的一条“同伴的外部 Agent”运行里（一个会话一条，`--session` 区分），运行页能看到做了什么，写入的记忆来源档案是 `peer:<本机名>`。本机不用开 omem 服务；经中间机器连接时，中间机器不用更新。`--space` 选默认空间，`--spaces a,b` 限定可读写的空间，`--read-only` 只读。
 
 ## 多人
 

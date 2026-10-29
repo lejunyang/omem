@@ -55,6 +55,7 @@ omem agents add gemini --via npx
 omem roles [list|customize|reset|merge] <名>   # 内置角色：自定义、恢复、合并源码更新
 omem mcp [--read-only] [--space <id>]           # 作为 MCP 服务给其他 Agent 用
 omem tool [工具名] [JSON | 键=值 … | -f 文件]     # 在终端里调用 omem 工具；omem tool help [工具名|分组] 看说明
+omem tool --peer <同伴> [工具名] [参数…]         # 在同伴上调用（用本机的模型整理它的库），mcp 也有 --peer
 omem hook claude|codex                          # 把编码 Agent 的会话记进知识库
 ```
 

@@ -30,6 +30,23 @@ omem tool upsert_item -f item.json          # 参数多或在 Windows 上时用�
 
 在 omem 自己的运行里，Agent 进程带着 `OMEM_URL` 和 `OMEM_TOKEN`，`omem` 命令在 PATH 上：`omem tool` 用的是这次运行的令牌，能用的工具、能读写的空间、能发消息的飞书会话都和 MCP 一样由 omem 服务检查，环境变量本身不授予任何权限。没有令牌时（本人在终端里、外部 Agent）按 `omem mcp` 的范围在本机直接执行。
 
+**在另一台设备上用这个库**：本机和另一台装着 omem 的机器（常驻服务器）配过对（`omem peer add`，见 README“多台设备”），就可以用本机的模型整理那台机器上的原件、记忆、Wiki 和事项，不用它自己的模型：
+
+```bash
+omem peer list                                       # 看有哪些同伴
+omem tool --peer <同伴>                              # 列出那台能用的工具
+omem tool --peer <同伴> help memory
+omem tool --peer <同伴> search query="退款 幂等" space=project-a
+omem tool --peer <同伴> --session "整理项目A记忆" remember '{"kind":"fact","content":"…","source_refs":["src:…#L3-L5"]}'
+```
+
+MCP 同理，`omem mcp --peer <同伴>`（`args` 写 `["mcp", "--peer", "<同伴>"]`；`--read-only`、`--space <id>`、`--spaces a,b` 照用）：工具列表和调用都转给那台机器，一个 MCP 进程在对方记成一条运行。要点：
+
+- 工具是 `omem mcp` 那一套，但**去掉了所有对外发消息或动手的**：飞书发消息、卡片、文档写入，`notify`，交办编码和评审，`run_agent` / `ask_agent` / `generate_wiki` / `digest_sources`（会用对方机器的模型），唤醒，改档案、技能、规则和采集设置。调用它们会被拒绝并说明；这些事请本人在那台机器或网页上做。读取、检索、记忆（remember / supersede / forget）、写页面、原件关注度和标注、事项、整理记忆目录等整理类的写入都可以。
+- 每次调用都记在对方的一条运行里（类型“同伴的外部 Agent”，本人在运行页能看到每次调用和写入）；记忆等写入带着这条运行和 `peer:<本机名>` 作为来源档案。**会话**决定归哪条运行：`--session <名>`（或环境变量 `OMEM_PEER_SESSION`），不填时 `omem tool` 按“本机名 + 当天日期”、`omem mcp` 每个进程一个。换一件事就换个会话名。`OMEM_PEER_AGENT`、`OMEM_PEER_MODEL` 可以告诉对方是哪个 Agent、哪个模型，记在运行和记忆的来源里。
+- 默认空间是 `personal`（不看本机的当前目录），要在某个空间干活就 `--space`；`--spaces a,b` 把能读写的空间限定在这几个。
+- 本机不用开 omem 服务：直接按配对时存的地址请求（经中间节点的同伴由中间节点转发 `/api/` 请求，中间节点不需要更新）。
+
 ## 工具怎么给出
 
 常用的工具直接作为 MCP 工具列出（检索、读原件、记忆、事项、问本人、发飞书消息等）。其余的不单独列出，避免占上下文：

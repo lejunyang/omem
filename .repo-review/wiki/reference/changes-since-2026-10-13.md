@@ -826,3 +826,13 @@ updated: 2026-10-28
 - **`ide` 远程命令**：多了 `interfaceStrings`（每种已装语言翻译了多少条）、`omemExtension`（源码摘要和已装的是否一致）、`reuse`（各来源设置的键数、桌面版快捷键条数和片段文件名、扩展的版本 / 平台 / 能不能用；不含内容）、`lastStart`。
 - 终端：本机直连和经 `peer open` 都能建终端、跑命令；常驻服务器上之前的会话都没有 `ptyhost.log`，终端请求从没到过服务端，当时是菜单错位找不到入口。更新后用 `ide` 的 `logs.sessions` 确认。
 - 回归：`test/ide-setup.test.ts`（按键翻译与英文兜底、选语言包与重建、改写页面、插件安装 / 刷新 / 换版本 / 无编译器、设置播种、扩展沿用）、`test/ide-web.test.ts`（经代理的页面改写与翻译脚本、插件已装、环境变量）。
+
+## 10-30：外部 Agent 用同伴的库（omem tool --peer / omem mcp --peer）
+
+让本机的 Claude Code 用本机的模型整理常驻服务器的数据（原件、记忆、Wiki、事项），不走服务器自己的模型。
+
+- **目标节点**：`src/agents/peer-agent.ts`；`http.ts` 新增 `GET /api/peer/tools`（`mcpTools` 同款列表，参数 `space`、`spaces`、`readOnly`）和 `POST /api/peer/tool`（`session`、`name`、`args`、`caller` 等）。鉴权同其他 `/api/`：本人令牌；成员令牌 403。名字不合法、`args` 不是对象返回 400；没有或不允许的工具返回 `isError` 的结果。
+- **工具集**：内置分组里的工具，去掉角色交结果的 `ROLE_TOOLS`、插件工具和 `PEER_DENY`（飞书发送 / 卡片 / 文档写入 / 采集设置、`notify`、`ask_owner` / `wait_answer` / `suggest_next`、唤醒、`run_agent` / `ask_agent` / `generate_wiki` / `digest_sources` / `switch_run_ai`、交办编码与评审与 Git 动作、`save_agent` / `save_skill` / `save_rule` / `connect_repository` 等）。`test/peer-tools.test.ts` 的归类用例：每个内置工具都要在某个分组里，`PEER_DENY` 里的名字都要是真工具。`READ_ONLY_TOOLS` 抽到同一文件，`omem mcp --read-only` 共用。
+- **运行归属**：调用方的本机名 + 会话名对应一条 `peer-agent` 运行（标题“同伴 <本机名> 的外部 Agent（<会话>）”，第一次调用创建、状态进行中；闲置 15 分钟变完成，再用时重新打开；服务重启后由 `jobs.ts` 里的处理器直接结束）。每次调用一条 `tool` 事件（被拒的带 `refused`），写入工具的 `tool-write`；记忆等带 `run_id`、`agent_profile = peer:<本机名>`、调用方告知的模型。`omem_help` 不新建运行。网页运行页加了“同伴的外部 Agent”类型名。
+- **客户端**：`cli-main.ts` 的 `peerToolBackend`：`omem tool --peer <id> [名] [参数]`、`omem mcp --peer <id>`（`--session`、`--space`、`--spaces`、`--read-only`；环境变量 `OMEM_PEER_SESSION` / `OMEM_PEER_AGENT` / `OMEM_PEER_MODEL`）。走 `peerJson`，读本机 peers.json，本机服务不必运行；经中间节点只用它的 `/api/peers/<id>/…` 转发，中间节点不用更新。默认会话：`omem tool` 为“cli-本机名-日期”，`omem mcp` 每个进程一个。
+- **文档**：`skills/omem/SKILL.md` 的“在另一台设备上用这个库”、README 命令行清单、architecture“多台设备”和状态表、acceptance P4b、文档站设备页。

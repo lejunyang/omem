@@ -122,6 +122,7 @@ export const runKindLabel: Record<string, string> = {
   "rule-fire": "规则（等待后）",
   "profile-review": "复盘",
   "role-merge": "合并角色",
+  "peer-agent": "同伴的外部 Agent",
 };
 export const statusLabel: Record<string, string> = {
   queued: "排队中",

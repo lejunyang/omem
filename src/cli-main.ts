@@ -10,6 +10,7 @@ import { createRun, getRun, waitForRun, type Run } from "./agents/runs.ts";
 import { callTool, mcpTools, toolSchemas } from "./agents/tools.ts";
 import { toolArgs } from "./agents/tool-cli.ts";
 import { ROLE_TOOLS } from "./agents/tool-help.ts";
+import { READ_ONLY_TOOLS } from "./agents/peer-agent.ts";
 import { App, type AppEvent } from "./core/app.ts";
 import { configPath, omemHome } from "./core/config.ts";
 import { createSpace, ensurePersonalSpace, getSpace, kindLabel, listSpaces, relatedIds, relateSpaces, spaceForDir, unrelateSpaces, updateSpace } from "./core/spaces.ts";
@@ -1034,20 +1035,64 @@ agents
 /** What an outside agent (omem mcp, or omem tool without a run token) may use: everything but delegating code. */
 function externalToolContext(o: { readOnly?: boolean; space?: string }) {
   const app = open();
-  const readOnly = new Set(["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "list_runs", "read_run"]);
   // An agent working inside a repository gets that repository's space (and its related ones) by default.
   const spaceId = o.space ? getSpace(app, o.space).id : (spaceForDir(app, process.cwd()) ?? "personal");
-  const tools = new Set(toolSchemas(o.readOnly ? readOnly : null).map((t) => t.name).filter((n) => !ROLE_TOOLS.includes(n) && n !== "delegate_code" && n !== "review_branch"));
+  const tools = new Set(toolSchemas(o.readOnly ? READ_ONLY_TOOLS : null).map((t) => t.name).filter((n) => !ROLE_TOOLS.includes(n) && n !== "delegate_code" && n !== "review_branch"));
   return { app, runId: null, spaceId, spaces: null, tools, actor: "agent" as const };
 }
+
+type PeerToolOptions = { peer: string; space?: string; spaces?: string; readOnly?: boolean; session?: string };
+
+/**
+ * The tools of another device (omem peer): list and call go to its `/api/peer/tools` and
+ * `/api/peer/tool` through the same peer client as `omem peer call` — straight from this
+ * machine's peers.json, so the local service need not be running; a peer behind a middle node goes
+ * through that node's forwarding, which needs no update. One session = one run on the peer.
+ */
+async function peerToolBackend(o: PeerToolOptions, defaultSession: string) {
+  const app = open();
+  const { nodeId, peerJson, findPeer } = await import("./core/peers.ts");
+  if (!findPeer(app, o.peer)) throw new Error(`没有名为 ${o.peer} 的同伴（omem peer list 查看）`);
+  const scope = {
+    caller: nodeId(app),
+    space: o.space,
+    spaces: o.spaces ? o.spaces.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
+    readOnly: o.readOnly || undefined,
+    agent: process.env.OMEM_PEER_AGENT || undefined,
+    model: process.env.OMEM_PEER_MODEL || undefined,
+  };
+  const session = o.session || process.env.OMEM_PEER_SESSION || defaultSession;
+  const query = new URLSearchParams(Object.entries({ ...scope, spaces: scope.spaces?.join(","), readOnly: scope.readOnly ? "1" : undefined }).filter((e): e is [string, string] => typeof e[1] === "string")).toString();
+  return {
+    list: async () => (await peerJson<{ tools: { name: string; description: string; inputSchema: Record<string, unknown> }[] }>(app, o.peer, `/api/peer/tools?${query}`, undefined, 30_000)).tools,
+    call: async (name: string, args: unknown): Promise<{ text: string; isError: boolean }> => {
+      try {
+        const r = await peerJson<{ text: string; isError: boolean }>(app, o.peer, "/api/peer/tool", { ...scope, session, name, args }, 15 * 60_000);
+        return { text: r.text, isError: r.isError };
+      } catch (e) {
+        return { text: `调用失败：${(e as Error).message}`, isError: true };
+      }
+    },
+  };
+}
+const today = () => new Date().toLocaleDateString("sv");
 
 program
   .command("mcp")
   .description("以 stdio MCP 服务暴露 omem 工具（供 Claude Code、Codex 等直接使用个人库）")
   .option("--read-only", "只开放读取类工具")
   .option("--space <id>", "默认空间（不填时按当前目录找关联了它的空间，找不到用 personal）")
+  .option("--peer <id>", "使用同伴（另一台设备）上的库：工具在那台机器上执行，不含对外发消息、交办、唤醒这类的工具；每个 MCP 会话在对方记成一条运行")
+  .option("--spaces <ids>", "--peer 时只开放这些空间（逗号分隔）")
+  .option("--session <name>", "--peer 时的会话名（对方一个会话一条运行；默认每个 MCP 进程一个）")
   .action(async (o) => {
     const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
+    if (o.peer) {
+      const { nodeId } = await import("./core/peers.ts");
+      const backend = await peerToolBackend(o, `mcp-${nodeId(open())}-${Date.now().toString(36)}`);
+      await createMcpServer(backend).connect(new StdioServerTransport());
+      return;
+    }
     const ctx = externalToolContext(o);
     const server = createMcpServer({ list: async () => mcpTools(ctx.tools), call: (name, args) => callTool(ctx, name, args) });
     await server.connect(new StdioServerTransport());
@@ -1061,11 +1106,17 @@ program
   .option("-f, --file <path>", "从文件读 JSON 参数（- 为标准输入）")
   .option("--read-only", "没有运行令牌时只开放读取类工具")
   .option("--space <id>", "没有运行令牌时的默认空间")
-  .action(async (name: string | undefined, rest: string[], o: { file?: string; readOnly?: boolean; space?: string }) => {
+  .option("--peer <id>", "在同伴（另一台设备）上调用：那台机器上的库，不含对外发消息、交办、唤醒这类的工具；调用在对方记成一条运行（omem peer list 看同伴）")
+  .option("--spaces <ids>", "--peer 时只开放这些空间（逗号分隔）")
+  .option("--session <name>", "--peer 时的会话名（对方一个会话一条运行；默认本机名加当天日期，也可用环境变量 OMEM_PEER_SESSION）")
+  .action(async (name: string | undefined, rest: string[], o: { file?: string; readOnly?: boolean; space?: string; peer?: string; spaces?: string; session?: string }) => {
     const call = !name || name === "help" ? { tool: "omem_help", args: { topic: rest.join(",") || undefined } } : { tool: name, args: toolArgs(rest, o.file) };
     const token = process.env.OMEM_TOKEN;
     let r: { text: string; isError: boolean };
-    if (token) {
+    if (o.peer) {
+      const { nodeId } = await import("./core/peers.ts");
+      r = await (await peerToolBackend({ ...o, peer: o.peer }, `cli-${nodeId(open())}-${today()}`)).call(call.tool, call.args);
+    } else if (token) {
       const url = process.env.OMEM_URL ?? "http://127.0.0.1:4317";
       const res = await fetch(`${url}/api/tools/${encodeURIComponent(call.tool)}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(call.args) });
       r = res.ok ? ((await res.json()) as typeof r) : { text: `调用失败：HTTP ${res.status} ${await res.text()}`, isError: true };
