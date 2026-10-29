@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import YAML from "yaml";
 import { z } from "zod";
@@ -353,9 +353,11 @@ export function saveRaw(app: App, kind: "agent" | "skill", name: string, raw: st
 }
 
 /**
- * Skills that ship with omem (skills/library/<name>/SKILL.md in the package)
- * are copied into the library the first time; afterwards the library copy is
- * the owner's to edit.
+ * Skills that ship with omem (skills/library/<name>/ in the package, SKILL.md plus any
+ * references/ files) are copied into the library the first time; afterwards the library copy
+ * is the owner's to edit. The check is per skill name, so a skill added by a newer omem
+ * reaches an existing install at its next start while edited or deleted-and-recreated
+ * copies of older ones are never overwritten.
  */
 export function seedBuiltinSkills(app: App, packageRoot: string) {
   const dir = join(packageRoot, "skills", "library");
@@ -364,8 +366,7 @@ export function seedBuiltinSkills(app: App, packageRoot: string) {
   for (const name of readdirSync(dir)) {
     const src = join(dir, name, "SKILL.md");
     if (!existsSync(src) || existsSync(join(skillsDir(app), name, "SKILL.md"))) continue;
-    mkdirSync(join(skillsDir(app), name), { recursive: true });
-    writeFileSync(join(skillsDir(app), name, "SKILL.md"), readFileSync(src, "utf8"));
+    cpSync(join(dir, name), join(skillsDir(app), name), { recursive: true, force: false });
     added.push(name);
   }
   if (added.length) commitLibrary(app.libraryDir, `omem: add built-in skills ${added.join(", ")}`);

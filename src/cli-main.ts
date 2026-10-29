@@ -1106,7 +1106,7 @@ program
 
 program
   .command("setup [component]")
-  .description("设置向导：Agent、向量模型、文档解析、渠道、会话、定时任务。也可直接 setup embeddings | documents")
+  .description("设置向导：Agent、向量模型、文档解析、渠道、会话、定时任务。也可直接 setup embeddings | documents | desktop")
   .option("--model <id-or-dir>", "embeddings：模型 id、本地目录，或 bge-small-zh / bge-base-zh / bge-m3（经 osdk 下载）")
   .option("--no-osdk", "不经 osdk，直接从 Hugging Face 下载")
   .action(async (component: string | undefined, o) => {
@@ -1146,7 +1146,15 @@ program
       console.log(`Docling 模型已就绪：${app.config.documents.doclingArtifacts}`);
       return;
     }
-    throw new Error("用法：omem setup（交互式）| omem setup embeddings [--model …] | omem setup documents");
+    if (component === "desktop") {
+      // Non-interactive: install or update ai-auto-desktop, then the read-only environment check.
+      if (!setup.installDesktop()) throw new Error("没有装好 ai-auto-desktop");
+      console.log(setup.desktopStateLine());
+      const probe = setup.probeDesktop();
+      if (probe) console.log([`环境检查：${probe.line}`, ...probe.notes.map((n) => `  · ${n}`)].join("\n"));
+      return;
+    }
+    throw new Error("用法：omem setup（交互式）| omem setup embeddings [--model …] | omem setup documents | omem setup desktop");
   });
 
 program.addCommand(memoriesCommand);

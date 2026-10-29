@@ -6,7 +6,7 @@
 
 - `roles/*.md`：omem 自己调用 Agent 时各角色的工作说明（`_common.md` 是共同部分，含“怎么写记忆”；小节标题下写 `<!-- tools: a b -->` 的只给有其中某个工具的运行，新加只和某类工具有关的小节也这样标）；`config.ts` 的 `roleNames` 列出全部角色，新增角色两边都要加。
 - `skills/omem/`：omem 工具的使用说明，外部 Agent（`omem mcp` 或 `omem tool`）和 omem 自己的 Agent 共用。`SKILL.md` 只写概览和接入，各类工具的做法在 `references/<分组>.md`（`omem_help(分组)` 返回它）。新增工具要放进 `src/agents/tool-help.ts` 的 `TOOL_GROUPS`，并在对应 reference 里写要点。角色的 `tools:` 可以写 `group:<分组>`（`-<工具>` 排除一个），主助手就是这样写的：放进分组的新工具对它自动可用，本人自定义过的角色也不用再合并工具清单；后台角色仍写精确清单，只给某个角色交结果用的工具放 `ROLE_TOOLS`，不随分组授出；只有几乎每次都用、或某个角色专门用来交结果的工具才加进 `CORE_TOOLS`（直接列出），其余经 `omem_call` 使用，不占上下文。工具的名字、参数或写入规则变了要同步对应的 reference。
-- `skills/library/*`：内置技能，首次启动播种到数据目录的 `library/_skills`（已播种的不会被覆盖）。
+- `skills/library/*`：内置技能（`SKILL.md`，可带 `references/`），启动时播种到数据目录的 `library/_skills`：按技能名只补缺的（已有的不会被覆盖，新版新增的会补进已有数据目录）。`desktop-control` 教用 ai-auto-desktop（`aad`）操作桌面和浏览器；`aad` 的安装与查找在 `src/core/tools.ts`、`omem setup desktop`。
 - `.agents/skills/*`：在本仓库开发时用的技能（`omem-design` 网页约定、`osdk-guide`、`lieflat-less-ai-tone` 中文表达检查）。网页约定变了更新 `omem-design`。
 - `CLAUDE.md` 只引入本文件；个人的说明（机器、账号、进行中的事）放 `CLAUDE.local.md`，不进仓库。
 - `docs/v2/`：架构与实现状态表、验收、评测；`.repo-review/wiki/`：本仓库 Wiki（生成内容，新改动先记在 `reference/changes-since-2026-10-13.md`）。

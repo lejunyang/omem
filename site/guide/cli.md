@@ -10,6 +10,7 @@ omem service start|stop|restart|status|logs
 omem service enable|disable         # 开机自启（macOS LaunchAgent、Linux systemd 用户服务、Windows 启动文件夹）
 omem setup                          # 设置向导
 omem setup embeddings --model bge-small-zh   # 只开启向量检索
+omem setup desktop                  # 安装或更新桌面与浏览器控制（aad），并做环境检查
 ```
 
 ## 材料与检索

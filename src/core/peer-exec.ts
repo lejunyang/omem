@@ -9,6 +9,7 @@ import { all, one } from "./db.ts";
 import { codeVersion, listPeers, nodeId } from "./peers.ts";
 import { listSchedules, nextRuns, triggerSchedule } from "./scheduler.ts";
 import { roleNames } from "./config.ts";
+import { desktopControl } from "./tools.ts";
 import { HttpError } from "./util.ts";
 import { memoryHistory, memoryNow } from "./memory-watch.ts";
 import { vectorIndex } from "../search/vectors.ts";
@@ -60,6 +61,8 @@ export async function diag(app: App) {
       lastMentionsCheck: kv("lark_mentions_since_ms") ? new Date(Number(kv("lark_mentions_since_ms"))).toISOString() : null,
       lastHeartbeat: kv("heartbeat_at"),
     },
+    // Optional local tools; aad is desktop and browser control (skill desktop-control).
+    tools: { aad: desktopControl.status() },
     agents: { default: app.config.agents.default ?? null, roles: app.config.agents.roles, review: app.config.memory.review, compare: app.config.memory.compare },
     peers: listPeers(app).map((p) => ({ id: p.id, url: p.url, via: p.via ?? null })),
   };

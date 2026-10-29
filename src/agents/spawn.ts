@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
+import { withAgentPath } from "../core/tools.ts";
 
 /**
  * Find an executable on PATH. On Windows npm installs `.cmd` shims, which
@@ -48,7 +49,8 @@ export function commandExists(command: string) {
 }
 
 export function launch(command: string, args: string[], opts: { cwd: string; env?: NodeJS.ProcessEnv }): ChildProcessWithoutNullStreams {
-  const env = { ...process.env, ...opts.env };
+  // Agents get tools osdk installed (desktop control) on PATH without the owner putting osdk shims there.
+  const env = withAgentPath({ ...process.env, ...opts.env });
   const resolved = resolveCommand(command, env);
   if (!resolved) throw new Error(`找不到命令 ${command}。请安装对应 Agent CLI 或在设置中修改命令。`);
   const child = spawn(resolved.file, [...resolved.prefix, ...args], {

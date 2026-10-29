@@ -737,3 +737,12 @@ TraeX 与其他 ACP 的清理补验：
 - 说明按任务裁剪：编码交办的说明里没有“怎么写记忆”“事项与本人的回复”“按任务选择 AI”等小节，主助手的对话里都在；偏好与经验里只有编码 Agent 自己的和与任务最接近的 8 条共享的（有记忆向量时），不再有手机手势、值班排查这类无关记忆；技能目录里别的技能只有名字。回归：`test/instructions.test.ts`、`test/profiles.test.ts`。
 - 按评审修改只复审相关评审项：评审后只选“架构”提出的问题点“按评审修改”，下一轮（第 3、5…轮，`rereviewAllEvery` 为 2 时）只跑架构一项，评审理由写明；同时写了补充要求、或指定了之后各轮的评审项时照常全审；第 2、4…轮全部重审。回归：`test/code-steer.test.ts` 的 “fixing chosen findings”。
 - 运行页“上下文”：打开一次编码交办的运行详情 → 活动，上方“上下文”标题行写模型调用次数和累计读入；展开后编码和每个评审项各一行：说明作为系统提示（或放在第一条消息）多少字、各部分字数和偏好条数，续轮那一轮写“接上会话，没再发”；调用次数、上下文起始 → 峰值、累计。390 宽度不横向溢出。2026-10-30 本机用真实 Codex ACP（gpt-6.1-sol / low）跑两轮编码验证：说明 2981 字作为 developer instructions 只出现一次，两轮用户消息分别 126 / 115 字，第二轮上下文 19.3K → 20.9K。
+
+## 桌面与浏览器控制（2026-10-30）
+
+- `omem setup desktop`：没装时经 osdk 装好 ai-auto-desktop 并打印“已安装 aad 版本”和环境检查（可用 / 降级 / 不可用及原因）；已装时再运行不重复下载。`omem setup` 的“要设置哪些部分”里有“桌面与浏览器控制”，开头一行显示 aad 是否装好；没有 osdk 时给出安装指引和发布页，不报错退出。
+- `omem diag` 里 `tools.aad` 是 `{ installed, version, via }`；网页设置 → Agent 的“桌面与浏览器控制”卡片显示同样的状态，点“安装 / 更新到最新”后变成已安装。
+- osdk 的 shims 在 PATH 上但没选用 aad 时（直接运行 `aad` 报 “no backend provides aad”），omem 启动的 Agent 里 `aad --version` 仍能运行（PATH 前面是 osdk 的安装目录）。
+- 新增的内置技能到已有的数据目录：升级后重启，技能页出现 `desktop-control` 且带 `references/aad.md`；你改过或自己建的同名技能不被覆盖，别的内置技能不受影响。
+- 让助理“看一下现在有哪些窗口”：它读技能后运行 `aad apps`，不点击不输入；让它“在浏览器里填表并点提交”：它先说明要点哪个元素，等你确认再动手，密码框不填。
+- 回归：`test/desktop-control.test.ts`（技能播种与不覆盖、Linux 资产模板、假 osdk 的安装与按目录查找、失败垫片、PATH 注入）。2026-10-30 在 Windows 本机用 aad 0.0.2 + 无界面 Chrome（临时 profile，本地假页面）验证：`AAD_CDP_PORT` 下 `aad apps` 列出页面，`describe`、`do fill`、`do click`、`find`、`capture` 结果与技能里的写法一致。macOS、Linux 的安装路径（Linux 的 musl 模板、`osdk install` 的选项键）和桌面窗口的真实操作待在那两台上验证。

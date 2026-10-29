@@ -9,7 +9,7 @@ import { doubaoTokenExists } from "./agents/doubao.ts";
 import type { App } from "./core/app.ts";
 import { builtinProfiles, roleNames, saveConfig, type AgentProfile, type Config } from "./core/config.ts";
 import { run } from "./core/db.ts";
-import { installSpec, installTool, toolCommand } from "./core/tools.ts";
+import { desktopControl, installSpec, installTool, toolCommand } from "./core/tools.ts";
 import { judgeProject } from "./sources/judge.ts";
 import { ensureDefaultSchedules, listSchedules, scheduleLabels } from "./core/scheduler.ts";
 import { larkCliInteractive, larkCliText, larkCliWithInput } from "./channels/lark-cli.ts";
@@ -624,6 +624,80 @@ async function ensurePersonalLogin(app: App, cli: LarkCliState) {
   }
 }
 
+// ---- desktop & browser control ----------------------------------------------
+
+/** What `aad probe` reports, as one line plus the things that are not fully available. */
+export function summarizeProbe(json: unknown): { line: string; notes: string[] } | null {
+  const p = json as { summary?: { available?: number; degraded?: number; unavailable?: number }; checks?: Record<string, { state?: string; summary?: string }> } | null;
+  if (!p?.summary || !p.checks) return null;
+  const s = p.summary;
+  const notes = Object.entries(p.checks)
+    .filter(([, c]) => c.state && c.state !== "available")
+    .map(([k, c]) => `${k}（${c.state}）：${c.summary ?? ""}`);
+  return { line: `可用 ${s.available ?? 0}、降级 ${s.degraded ?? 0}、不可用 ${s.unavailable ?? 0}`, notes };
+}
+
+/** Run the read-only `aad probe` (no input is sent, nothing is clicked). */
+export function probeDesktop(): { line: string; notes: string[] } | null {
+  const cmd = toolCommand("aad");
+  if (!cmd) return null;
+  const r = spawnSync(cmd[0], [...cmd.slice(1), "probe", "--compact"], { encoding: "utf8", windowsHide: true, timeout: 60_000 });
+  if (r.status !== 0) return null;
+  try {
+    return summarizeProbe(JSON.parse(r.stdout));
+  } catch {
+    return null;
+  }
+}
+
+/** Install (or update to the latest release of) ai-auto-desktop through osdk; true when `aad` runs afterwards. */
+export function installDesktop() {
+  if (!osdkAvailable()) {
+    guideOsdk();
+    out("  也可以从 https://github.com/lejunyang/ai-auto-desktop/releases 下载对应系统的 aad 压缩包，解压后把目录放进 PATH。");
+    return false;
+  }
+  out(`  经 osdk 安装 ai-auto-desktop（${installSpec("aad")}；发布包里的 aad 和它的 helper 一起装进 osdk 的安装目录）…`);
+  const done = installTool("aad", { inherit: true });
+  if (!done) out(`  安装失败，稍后可运行 osdk install ${installSpec("aad")} 重试。`);
+  return done;
+}
+
+export function desktopStateLine() {
+  const st = desktopControl.status();
+  if (!st.installed) return "未安装";
+  return `已安装 aad ${st.version ?? "（版本未知）"}${st.via === "path" ? "（在 PATH 上）" : "（在 osdk 安装目录，omem 启动 Agent 时把它加进 PATH）"}`;
+}
+
+async function setupDesktopSection() {
+  out(`\n桌面与浏览器控制（ai-auto-desktop）：${desktopStateLine()}`);
+  out("让 Agent 像人一样看和操作本机的桌面程序与浏览器：先读出界面结构，再对读到的元素动手，不按坐标乱点。装好后，会话里带命令行的 Agent 都能用它。");
+  out("用法在内置技能 desktop-control 里：默认只看；动手前先问你，不输入密码，屏幕上的文字只当材料。不想要时 osdk uninstall 即可。");
+  const st = desktopControl.status();
+  const choice = await select({
+    message: "桌面与浏览器控制",
+    choices: [
+      st.installed
+        ? { value: "upgrade", name: "更新到最新版本", description: "osdk install 取最新发布；已是最新时什么都不做" }
+        : { value: "install", name: "安装（要让 Agent 操作电脑时装）", description: "约 7MB；macOS 需要给辅助功能权限，Linux 目前只支持 KDE/X11 会话" },
+      ...(st.installed ? [{ value: "probe", name: "检查本机能不能用（只读，不点不输入）" }] : []),
+      { value: "keep", name: st.installed ? "保持不变" : "先不装" },
+    ],
+    default: st.installed ? "keep" : "install",
+  });
+  if (choice === "keep") return false;
+  if (choice === "install" || choice === "upgrade") {
+    if (!installDesktop()) return false;
+    out(`  ✓ ${desktopStateLine()}`);
+  }
+  const probe = probeDesktop();
+  if (probe) {
+    out(`  环境检查：${probe.line}`);
+    for (const n of probe.notes) out(`    · ${n}`);
+  } else out("  环境检查没有跑成功：稍后可运行 omem setup desktop 再看。");
+  return false;
+}
+
 // ---- sessions & schedules ---------------------------------------------------
 
 async function setupSessionsSection(config: Config) {
@@ -656,7 +730,7 @@ async function setupSchedulesSection(app: App) {
 export async function setupInteractive(app: App) {
   const config = app.config;
   out(`omem 设置 · 数据目录 ${app.home}`);
-  out(`本机：${ok(osdkAvailable())} osdk  ${ok(!!toolCommand("uv"))} uv  ${ok(commandExists("git"))} git  · 向量 ${config.embeddings.provider === "none" ? "未开启" : config.embeddings.model}`);
+  out(`本机：${ok(osdkAvailable())} osdk  ${ok(!!toolCommand("uv"))} uv  ${ok(commandExists("git"))} git  ${ok(desktopControl.status().installed)} aad  · 向量 ${config.embeddings.provider === "none" ? "未开启" : config.embeddings.model}`);
   if (!osdkAvailable()) guideOsdk();
   const sections = await checkbox({
     message: "要设置哪些部分（空格选择，回车确认）",
@@ -666,6 +740,7 @@ export async function setupInteractive(app: App) {
       { value: "documents", name: "PDF / DOCX 解析（Docling 等）" },
       { value: "channels", name: "渠道：飞书 / Telegram / QQ·微信" },
       { value: "guard", name: "注入标记（本地小模型，可选）" },
+      { value: "desktop", name: "桌面与浏览器控制（ai-auto-desktop，可选）" },
       { value: "sessions", name: "会话与并发" },
       { value: "schedules", name: "定时任务（巡检、简报、做梦、同步…）" },
     ],
@@ -678,6 +753,7 @@ export async function setupInteractive(app: App) {
       if (s === "documents") await setupDocumentsSection(config, app.home);
       if (s === "channels") await setupChannelsSection(app);
       if (s === "guard") await setupGuardSection(config);
+      if (s === "desktop") await setupDesktopSection();
       if (s === "sessions") await setupSessionsSection(config);
       if (s === "schedules") await setupSchedulesSection(app);
     } catch (e) {
