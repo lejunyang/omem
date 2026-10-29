@@ -30,6 +30,12 @@ import { larkBotInfo } from "./lark-send.ts";
  *   They are kept as one meeting source (transcript lines keep their latest revision), handed to the
  *   rule's agent in windows (it tells the owner when they are needed, and may answer questions put
  *   to a bot in the meeting chat), and, once the meeting ends, the minutes are added to the same source.
+ * - Who is there: participants from the owner's view of the meeting events (bots left out of the
+ *   count), and how many the calendar event invited (groups by their members, rooms left out), found
+ *   through the event's meeting link. Either may be unknown; a rule then treats it as such.
+ * - Invited by hand: someone puts one of omem's bots into a meeting from the meeting itself
+ *   (`vc.bot.meeting_invited_v1`, subscribed in that bot's app). The owner's invitation is followed
+ *   at once, anyone else's goes to the owner on a card. No rule needed.
  */
 
 const JOINED = "vc.meeting.participant_meeting_joined_v1";
@@ -43,7 +49,7 @@ const WINDOW_LINES = 40;
 type MeetingRequest = Extract<RuleAction, { type: "meeting-bot" }> & { ruleId: string; ruleName: string; ruleDescription: string; ruleSpace?: string };
 export type MeetingPlan = Omit<MeetingRequest, "confirm"> & { confirm: boolean; confirmationReason?: string };
 export type MeetingInfo = { id: string; no?: string; topic?: string; calendarEventId?: string; startTime?: string };
-type Person = { id?: string; name: string; host?: boolean };
+type Person = { id?: string; name: string; host?: boolean; bot?: boolean };
 type Joined = { bot: string; ok: boolean; name?: string; error?: string; left?: boolean };
 type Row = {
   meeting_id: string;
@@ -52,6 +58,8 @@ type Row = {
   calendar_event_id: string | null;
   status: "seen" | "asked" | "listening" | "joined" | "declined" | "passed" | "ended";
   participants: string;
+  /** How many the calendar event invited; null while unknown. */
+  invited: number | null;
   plan: string | null;
   bots: string;
   source_id: string | null;
@@ -82,7 +90,9 @@ async function meetingRulesOn(app: App) {
 
 // ---- noticing the owner joined ---------------------------------------------------------------
 
-type Consumer = { proc: ChildProcess; ready: boolean; stderr: string; startedAt: number; stopping?: boolean };
+type Consumer = { proc: ChildProcess; ready: boolean; readyAt?: number; stderr: string; startedAt: number; stopping?: boolean };
+/** lark-cli says “ready” before Feishu checks the subscription: a consumer counts once it stays up this long. */
+const SETTLED_MS = 45_000;
 const consumers = new Map<string, Consumer>();
 const retryAt = new Map<string, { at: number; tries: number }>();
 let consumerError: string | null = null;
@@ -95,8 +105,8 @@ export function setMeetingConsumerForTests(fn: typeof consumerOverride) {
 
 /** Whether omem is hearing about the owner's meetings, and the last reason it is not. */
 export function meetingWatchStatus() {
-  const ready = [...consumers.values()].some((c) => c.ready);
-  return { listening: ready, polling: !ready && consumers.size === 0 ? !!lastPoll : false, error: ready ? null : consumerError };
+  const settled = [...consumers.values()].some((c) => c.ready && Date.now() - (c.readyAt ?? 0) > SETTLED_MS);
+  return { listening: settled, polling: !settled && !!lastPoll, error: settled ? null : consumerError };
 }
 
 function startConsumer(app: App, key: string) {
@@ -115,7 +125,7 @@ function startConsumer(app: App, key: string) {
   };
   if (consumerOverride) {
     const c = consumerOverride(key, onLine);
-    if (c) consumers.set(key, { proc: { stdin: { end: c.stop }, kill: c.stop } as unknown as ChildProcess, ready: true, stderr: "", startedAt: Date.now() });
+    if (c) consumers.set(key, { proc: { stdin: { end: c.stop }, kill: c.stop } as unknown as ChildProcess, ready: true, readyAt: 0, stderr: "", startedAt: Date.now() });
     return;
   }
   const [cmd, args] = larkCliCommand(["event", "consume", key, "--as", "user"]);
@@ -136,9 +146,8 @@ function startConsumer(app: App, key: string) {
     c.stderr = (c.stderr + d).slice(-4000);
     if (/\[event\] ready/.test(d)) {
       c.ready = true;
-      consumerError = null;
+      c.readyAt = Date.now();
       log(`开始接收 ${key}`);
-      retryAt.delete(key);
     }
   });
   proc.on("error", (e) => (consumerError = `启动 lark-cli 失败：${e.message}`));
@@ -146,6 +155,8 @@ function startConsumer(app: App, key: string) {
     if (consumers.get(key) === c) consumers.delete(key);
     if (!c.stopping) {
       consumerError = consumeError(c.stderr) ?? consumerError ?? "lark-cli 的事件监听退出了";
+      // Feishu refused it (no subscription, no permission) right after “ready”: not listening after all.
+      if (c.ready && Date.now() - (c.readyAt ?? 0) <= SETTLED_MS) c.ready = false;
       log(`${key} 的监听退出：${consumerError}`);
       const prev = retryAt.get(key)?.tries ?? 0;
       // A consumer that ran a while died of something passing; one that never came up waits longer each time.
@@ -250,9 +261,10 @@ export async function ownerJoinedMeeting(app: App, m: MeetingInfo) {
     m.startTime && !Number.isNaN(Date.parse(m.startTime)) ? new Date(m.startTime).toISOString() : at,
     at,
   );
-  const people = await readParticipants(app, m.id).catch(() => null);
+  const [people, invited] = await Promise.all([readParticipants(app, m.id).catch(() => null), invitedCount(app, m.no ?? null, m.calendarEventId ?? null).catch(() => null)]);
   if (people) update(app, m.id, { participants: JSON.stringify(people) });
-  log(`你加入了会议「${m.topic ?? ""}」（${m.id}，会议号 ${m.no ?? "?"}），参会 ${people?.length ?? "?"} 人，交给规则判断`);
+  if (invited !== null) update(app, m.id, { invited });
+  log(`你加入了会议「${m.topic ?? ""}」（${m.id}，会议号 ${m.no ?? "?"}），参会 ${people ? countOf(people) : "?"} 人、会邀 ${invited ?? "?"} 人，交给规则判断`);
   await dispatchMeeting(app, m.id);
 }
 
@@ -262,6 +274,65 @@ async function readParticipants(app: App, id: string): Promise<Person[] | null> 
   const people = foldPeople([], r.events);
   // The owner is in the meeting. No participant events means the count is unknown, not zero.
   return people.length ? people : null;
+}
+
+/** How many people are in the meeting: omem's and other bots do not count. */
+export const countOf = (people: Person[]) => people.filter((p) => !p.bot).length;
+
+/**
+ * How many the meeting's calendar event invited, as the owner sees it: people, plus the members of
+ * invited groups (each person once), without meeting rooms and those who declined. The event is
+ * found by its meeting link (it ends in the meeting number), in the captured calendar or today's
+ * agenda. Null when there is no event or it cannot be read.
+ */
+async function invitedCount(app: App, meetingNo: string | null, eventId: string | null): Promise<number | null> {
+  if (!eventId && meetingNo) {
+    const src = one<{ uri: string }>(app.db, "select uri from sources where uri like 'lark:calendar:%' and text like ? and deleted_at is null order by updated_at desc limit 1", `%/j/${meetingNo}%`);
+    eventId = src?.uri.slice("lark:calendar:".length) ?? null;
+  }
+  if (!eventId && meetingNo) {
+    const start = new Date(Date.now() - 12 * 3600_000).toISOString();
+    const end = new Date(Date.now() + 12 * 3600_000).toISOString();
+    const v = await larkCli(["calendar", "+agenda", "--start", start, "--end", end, "--as", "user", "--format", "json"], 30_000);
+    sample(app, "agenda", v);
+    const events = (v?.data?.events ?? v?.data?.items ?? v?.data ?? []) as Record<string, any>[];
+    const hit = (Array.isArray(events) ? events : []).find((e) => new RegExp(`/j/${meetingNo}(\\D|$)`).test(String(e.vchat?.meeting_url ?? "")));
+    eventId = str(hit?.event_id ?? hit?.id) ?? null;
+  }
+  if (!eventId) return null;
+  let calendar = one<{ value: string }>(app.db, "select value from kv where key = 'lark_primary_calendar'")?.value;
+  if (!calendar) {
+    const v = await larkCli(["api", "POST", "/open-apis/calendar/v4/calendars/primary", "--data", "{}", "--as", "user"], 30_000);
+    calendar = str(v?.data?.calendars?.[0]?.calendar?.calendar_id ?? v?.calendars?.[0]?.calendar?.calendar_id);
+    if (!calendar) return null;
+    run(app.db, "insert into kv(key,value) values('lark_primary_calendar', ?) on conflict(key) do update set value = excluded.value", calendar);
+  }
+  const base = `/open-apis/calendar/v4/calendars/${encodeURIComponent(calendar)}/events/${encodeURIComponent(eventId)}/attendees`;
+  const pages = async (url: string, kind: string) => {
+    const items: Record<string, any>[] = [];
+    let token: string | undefined;
+    for (let i = 0; i < 10; i++) {
+      const v = await larkCli(["api", "GET", url, "--params", JSON.stringify({ page_size: 100, user_id_type: "open_id", ...(token ? { page_token: token } : {}) }), "--as", "user"], 30_000);
+      if (i === 0) sample(app, kind, v);
+      const d = v?.data ?? v;
+      items.push(...((d?.items ?? []) as Record<string, any>[]));
+      token = d?.has_more ? str(d.page_token) : undefined;
+      if (!token) break;
+    }
+    return items;
+  };
+  const who = new Set<string>();
+  let others = 0;
+  for (const a of await pages(base, "attendees")) {
+    if (a.rsvp_status === "decline" || a.type === "resource") continue;
+    if (a.type === "chat") {
+      const members = await pages(`${base}/${encodeURIComponent(String(a.attendee_id))}/chat_members`, "chat-members").catch(() => null);
+      if (!members) return null;
+      for (const m of members) if (m.rsvp_status !== "decline") who.add(String(m.open_id ?? m.user_id ?? m.display_name));
+    } else if (a.type === "user") who.add(String(a.user_id ?? a.attendee_id));
+    else others++;
+  }
+  return who.size + others;
 }
 
 function foldPeople(start: Person[], events: NormEvent[]) {
@@ -285,7 +356,7 @@ function eventOf(row: Row): RuleEvent {
     key: `meeting:${row.meeting_id}`,
     kind: "meeting",
     at: row.started_at,
-    meeting: { id: row.meeting_id, no: row.meeting_no ?? undefined, title: row.topic, participants: people.map((p) => p.name).filter(Boolean), participantCount: people.length || null, host: people.find((p) => p.host)?.name, calendarEventId: row.calendar_event_id ?? undefined },
+    meeting: { id: row.meeting_id, no: row.meeting_no ?? undefined, title: row.topic, participants: people.map((p) => p.name).filter(Boolean), participantCount: people.length ? countOf(people) : null, invitedCount: row.invited ?? null, host: people.find((p) => p.host)?.name, calendarEventId: row.calendar_event_id ?? undefined },
     via: "meeting",
   };
 }
@@ -338,7 +409,7 @@ function botName(app: App, ref: string) {
 
 type CardPayload = { meetingId: string };
 /** The card that asks the owner whether to bring the bots in. */
-export function meetingCard(app: App, row: Pick<Row, "meeting_id" | "topic" | "meeting_no" | "participants">, plan: MeetingPlan, state?: "approved" | "declined" | "gone") {
+export function meetingCard(app: App, row: Pick<Row, "meeting_id" | "topic" | "meeting_no" | "participants"> & { invited?: number | null }, plan: MeetingPlan, state?: "approved" | "declined" | "gone") {
   const people = peopleOf(row);
   const doing = [
     plan.record ? "保存会议记录（转写、会中聊天、进出）" : "",
@@ -348,7 +419,7 @@ export function meetingCard(app: App, row: Pick<Row, "meeting_id" | "topic" | "m
     plan.leaveWithOwner ? "你离会时机器人一起离开" : "",
   ].filter(Boolean);
   const blocks: import("./lark-send.ts").CardBlock[] = [
-    { fields: [{ label: "会议", value: row.topic || "（无标题）" }, { label: "会议号", value: row.meeting_no ?? "—" }, { label: "人数", value: people.length ? String(people.length) : "未知" }, { label: "规则", value: plan.ruleName }] },
+    { fields: [{ label: "会议", value: row.topic || "（无标题）" }, { label: "会议号", value: row.meeting_no ?? "—" }, { label: "人数", value: `${people.length ? `在会 ${countOf(people)}` : "在会人数未知"} · ${row.invited !== null && row.invited !== undefined ? `会邀 ${row.invited}` : "会邀未知"}` }, { label: "规则", value: plan.ruleName }] },
     { markdown: `**拉进会的机器人**：${botNames(app, plan.bots).join("、")}${doing.length ? `\n**之后**：${doing.join("；")}` : ""}` },
     ...(plan.confirmationReason ? [{ markdown: `**确认方式**：${plan.confirmationReason}` }] : []),
   ];
@@ -406,10 +477,50 @@ async function startPlan(app: App, id: string, plan: MeetingPlan): Promise<strin
     failed.length ? `${failed.map((j) => `${j.name} 没能入会：${j.error}`).join("；")}` : "",
     listen ? (plan.record ? "开始记录会议" : "开始旁听") : "",
   ].filter(Boolean);
-  if (failed.length) notify(app, { title: `会议「${row.topic || "无标题"}」：机器人没能入会`, body: `${failed.map((j) => `- ${j.name}：${j.error}`).join("\n")}\n\n规则「${plan.ruleName}」。`, link: `#/rules?id=${plan.ruleId}` });
+  if (failed.length) notify(app, { title: `会议「${row.topic || "无标题"}」：机器人没能入会`, body: `${failed.map((j) => `- ${j.name}：${j.error}`).join("\n")}\n\n${plan.ruleId === INVITED ? plan.ruleName : `规则「${plan.ruleName}」`}。`, link: plan.ruleId === INVITED ? "#/rules" : `#/rules?id=${plan.ruleId}` });
   return parts.join("；") || "没有要做的";
 }
 
+
+// ---- a bot invited from the meeting itself ----------------------------------------------------------
+
+const INVITED = "invited";
+type Invite = { meeting?: { id?: string; topic?: string; meeting_no?: string; start_time?: string }; inviter?: { id?: string; user_name?: string }; bot?: { id?: string } };
+
+/**
+ * Someone put bot `ref` into a meeting from the meeting (`vc.bot.meeting_invited_v1`). It joins and
+ * keeps the record the way the owner's meeting rule for this bot says (else: record, answer when
+ * asked by name, import what is shared). The owner's invitation goes ahead; anyone else's is asked
+ * on a card first.
+ */
+export async function botInvitedToMeeting(app: App, ref: string, data: Invite): Promise<string> {
+  sample(app, "invited", data);
+  const id = str(data.meeting?.id);
+  const no = str(data.meeting?.meeting_no);
+  if (!id || !no) return "邀请里没有会议号";
+  const { larkOwnerOpenId } = await import("./lark-send.ts");
+  const byOwner = !!data.inviter?.id && data.inviter.id === larkOwnerOpenId(app, ref);
+  const inviter = byOwner ? "你" : (data.inviter?.user_name ?? "别人");
+  let row = getRow(app, id);
+  if (row && json<Joined[]>(row.bots, []).some((b) => b.bot === ref && b.ok && !b.left) && ["listening", "joined"].includes(row.status)) return "机器人已经在会里";
+  if (!row) {
+    const at = now();
+    run(app.db, "insert into lark_meetings(meeting_id, meeting_no, topic, status, participants, started_at, updated_at) values(?,?,?,?,?,?,?)", id, no, str(data.meeting?.topic) ?? "", "passed", "null", at, at);
+    row = getRow(app, id)!;
+  }
+  const { listRules } = await import("../rules/store.ts");
+  const like = listRules(app, { enabledOnly: true }).filter((r) => r.trigger.event === "meeting").flatMap((r) => r.actions.filter((a) => a.type === "meeting-bot" && a.bots.includes(ref)).map((a) => ({ r, a: a as MeetingRequest })))[0];
+  const base = like?.a ?? { type: "meeting-bot" as const, bots: [ref], confirm: true, record: true, spec: "", task: "", answer: true, importShared: true, leaveWithOwner: false };
+  const plan: MeetingPlan = { ...base, bots: [ref], confirm: !byOwner, leaveWithOwner: false, ruleId: INVITED, ruleName: `${inviter}在会议里邀请了${botName(app, ref)}`, ruleDescription: `${inviter}在会议里邀请机器人入会${like ? `（按规则「${like.r.name}」的设置）` : ""}`, ...(like?.r.spaceId ? { ruleSpace: like.r.spaceId } : {}) };
+  update(app, id, { plan: JSON.stringify(plan), meeting_no: no });
+  log(`${inviter}把 ${botName(app, ref)} 邀请进会议「${row.topic}」（${id}）${byOwner ? "，直接入会" : "，先问你"}`);
+  if (plan.confirm) {
+    await askOwner(app, getRow(app, id)!, plan);
+    update(app, id, { status: "asked" });
+    return "已发卡片问你";
+  }
+  return startPlan(app, id, plan);
+}
 
 // ---- calls as one of omem's bots -------------------------------------------------------------------
 
@@ -497,7 +608,9 @@ function person(it: Record<string, any>, e: NormEvent): Person | null {
   const id = str(typeof u.id === "object" ? (u.id.open_id ?? u.id.user_id) : u.id) ?? str(u.open_id ?? u.user_id);
   const name = str(u.name ?? u.user_name ?? u.display_name ?? u.nick_name ?? u.label) ?? id;
   if (!name) return null;
-  return { id, name, ...(/host|主持/i.test(String(u.role ?? it.role ?? "")) || u.is_host ? { host: true } : {}) };
+  // user_type 10 is an app (an agent such as omem's bot); participant_type says so in the owner's view.
+  const bot = u.user_type === 10 || /bot|agent|app/i.test(String(u.participant_type ?? ""));
+  return { id, name, ...(/host|主持/i.test(String(u.role ?? it.role ?? "")) || u.is_host ? { host: true } : {}), ...(bot ? { bot: true } : {}) };
 }
 
 type Line = { key: string; at: number; kind: string; speaker: string; speakerId?: string; text: string };
@@ -842,7 +955,12 @@ export async function tickMeetings(app: App) {
     const live = all<Row>(app.db, "select * from lark_meetings where status in ('seen','asked','listening','joined') or (status = 'ended' and minutes_token is null and plan is not null and ended_at > ?)", new Date(Date.now() - 6 * 3600_000).toISOString());
     if (want) ensureConsumers(app);
     else stopConsumers();
-    if (want && ![...consumers.values()].some((c) => c.ready) && isDue("poll", 60_000)) await pollActive(app).catch((e) => (consumerError ??= (e as Error).message));
+    // A consumer that stayed up clears the last error; until then the minute poll stands in.
+    if ([...consumers.values()].some((c) => c.ready && Date.now() - (c.readyAt ?? 0) > SETTLED_MS)) {
+      consumerError = null;
+      retryAt.clear();
+    }
+    if (want && !meetingWatchStatus().listening && isDue("poll", 60_000)) await pollActive(app).catch((e) => (consumerError ??= (e as Error).message));
     for (const row of live) {
       try {
         await follow(app, row);

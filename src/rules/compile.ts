@@ -50,7 +50,7 @@ export async function draftRule(app: App, description: string, current?: Partial
     "- 群名用 contains：本人说“报警群”“值班群”通常指名字里带这几个字的群，不是名字恰好等于它；只有本人给了完整群名或群 id 才用 equals。",
     "- 发送人只给了名字就用 sender.name；给了邮箱用 sender.email。群里有某个机器人用 chat.bots contains。“报警卡片”用 message.type equals interactive。",
     `- 本人说的“助理机器人”“omem 机器人”“我的机器人”指 omem 自己的飞书机器人${botName ? `（名字是「${botName}」）` : ""}：判断它在不在群里用 chat.hasOwnBot（is true / false），不要用 chat.bots 去猜它的名字。`,
-    "- 本人说“我入会/开会时”“会议里”：trigger.event 用 meeting（本人加入一场视频会议时触发，每场会议对每条规则只触发一次），条件只能用 meeting.* 字段（标题用 meeting.title contains，人数用 meeting.participantCount gte/lte，某人在会上用 meeting.participants contains 名字），动作用 meeting-bot；没说拉哪个机器人就是 [\"main\"]，没说“直接拉、不用问我”就 confirm=true；说“帮我听着/有人问我时提醒我”就 spec 写 assistant 或点名的档案。",
+    "- 本人说“我入会/开会时”“会议里”：trigger.event 用 meeting（本人加入一场视频会议时触发，每场会议对每条规则只触发一次），条件只能用 meeting.* 字段（标题用 meeting.title contains，在会人数用 meeting.participantCount gte/lte（入会那一刻在会里的人，早进会时还少），日程邀请了多少人用 meeting.invitedCount（群按成员算；说“大会、人多的会”一般指会邀人数），某人在会上用 meeting.participants contains 名字），动作用 meeting-bot；没说拉哪个机器人就是 [\"main\"]，没说“直接拉、不用问我”就 confirm=true；说“帮我听着/有人问我时提醒我”就 spec 写 assistant 或点名的档案。",
     "- 会议里“某条件下先问，否则直接拉”写在同一个 meeting-bot 动作的 confirm 条件里，不放进整条规则的 conditions，也不拆成多条规则。例如“30 人及以上先问，否则直接拉”：conditions=null，confirm={\"field\":\"meeting.participantCount\",\"op\":\"gte\",\"value\":\"30\"}；如果还限定会议标题，标题条件才放 conditions。",
     "- 未指定专用档案的任务交给 assistant（主助手），不选择第一个或最接近的档案。本人点名的档案不存在时不要替换，改用 notify 提示缺档案。定时任务允许 reply=auto 发回创建时的会话。",
   ].join("\n");
@@ -73,7 +73,7 @@ export function eventSummary(e: RuleEvent) {
     e.chat ? `${e.chat.kind === "p2p" ? "私聊" : "群"}「${e.chat.name}」（${e.chat.id}）` : "",
     e.sender ? `发送人 ${e.sender.name}${e.sender.email ? `（${e.sender.email}）` : ""}${e.sender.kind === "bot" ? "（机器人）" : e.sender.kind === "owner" ? "（本人）" : ""}` : "",
     e.message ? `${e.message.type === "interactive" ? "卡片" : "消息"}${e.message.cardTitle ? `「${e.message.cardTitle}」` : ""}${e.message.mentionsOwner ? "，@ 了本人" : ""}${e.message.topicId ? "，在话题里" : ""}：${truncate(e.message.text.replace(/\s+/g, " "), 1000)}` : "",
-    e.meeting ? `本人加入会议「${e.meeting.title || "（无标题）"}」${e.meeting.no ? `（会议号 ${e.meeting.no}）` : ""}，${e.meeting.participantCount === null ? "人数未知" : `${e.meeting.participantCount ?? e.meeting.participants.length} 人`}${e.meeting.participants.length ? `：${truncate(e.meeting.participants.join("、"), 300)}` : ""}${e.meeting.host ? `；主持人 ${e.meeting.host}` : ""}` : "",
+    e.meeting ? `本人加入会议「${e.meeting.title || "（无标题）"}」${e.meeting.no ? `（会议号 ${e.meeting.no}）` : ""}，${e.meeting.participantCount === null ? "在会人数未知" : `在会 ${e.meeting.participantCount ?? e.meeting.participants.length} 人`}${typeof e.meeting.invitedCount === "number" ? `、会邀 ${e.meeting.invitedCount} 人` : "、会邀人数未知"}${e.meeting.participants.length ? `：${truncate(e.meeting.participants.join("、"), 300)}` : ""}${e.meeting.host ? `；主持人 ${e.meeting.host}` : ""}` : "",
     e.kind === "chat-new" ? "第一次看到这个群" : e.kind === "schedule" ? `定时触发（${e.at}）` : "",
   ];
   return parts.filter(Boolean).join("；");

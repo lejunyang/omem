@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
-import { ownerJoinedMeeting, resetMeetingsForTests, setMeetingConsumerForTests, tickMeetings } from "../src/channels/lark-meetings.ts";
+import { botInvitedToMeeting, ownerJoinedMeeting, resetMeetingsForTests, setMeetingConsumerForTests, tickMeetings } from "../src/channels/lark-meetings.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { listNotifications } from "../src/core/notify.ts";
@@ -96,7 +96,7 @@ describe("meetings the owner joins", () => {
     expect(listFirings(app, rule.id)[0].results[0].detail).toContain(shouldAsk ? "满足确认条件" : "不满足确认条件");
     const preview = await testRule(app, rule);
     expect(preview.matches).toHaveLength(1);
-    expect(preview.matches[0]).toMatchObject({ sender: `${count} 人`, action: expect.stringContaining(shouldAsk ? "先发卡片" : "直接拉") });
+    expect(preview.matches[0]).toMatchObject({ sender: `在会 ${count} 人`, action: expect.stringContaining(shouldAsk ? "先发卡片" : "直接拉") });
     // Trying the rule never sends a card or joins a meeting.
     expect(cards).toHaveLength(shouldAsk ? 1 : 0);
     if (shouldAsk) {
@@ -119,9 +119,9 @@ describe("meetings the owner joins", () => {
     await ownerJoinedMeeting(app, { id: "unknown", no: "123456789", topic: "方案评审" });
     expect(calls).toEqual([]);
     expect(cards).toHaveLength(1);
-    expect(JSON.stringify(cards[0])).toContain("参会人数未知");
+    expect(JSON.stringify(cards[0])).toContain("在会人数未知");
     const preview = await testRule(app, rule);
-    expect(preview.matches[0]).toMatchObject({ sender: "人数未知", action: expect.stringContaining("未知，先发卡片") });
+    expect(preview.matches[0]).toMatchObject({ sender: "在会人数未知", action: expect.stringContaining("在会人数未知，先发卡片") });
     const e: RuleEvent = { key: "u", kind: "meeting", at: "", via: "test", meeting: { id: "unknown", title: "评审", participants: [], participantCount: null } };
     expect(await evaluate({ field: "meeting.participantCount", op: "lte", value: "29" }, eventReader(e))).toBe(false);
     expect((await meetingConfirmation({ bots: ["main"], confirm: { not: confirmAt30 } }, e)).confirm).toBe(true);
@@ -194,6 +194,59 @@ describe("meetings the owner joins", () => {
     const last = JSON.parse(all<{ input: string }>(app.db, "select input from runs where lane = 'meeting:m1' order by rowid").at(-1)!.input);
     expect(last.meeting).toBeUndefined();
     expect(last.task).toContain("会后纪要");
+  });
+
+  it("counts who the calendar event invited (groups by members, no rooms or declines) and leaves bots out of who is there", async () => {
+    const { app, calls, cards } = setup();
+    const lark: string[][] = [];
+    setLarkCliForTests(async (args) => {
+      lark.push(args);
+      if (args[1] === "+meeting-events") return { ok: true, data: { events: [joined("e0", [["ou_owner", "我"], ["ou_a", "小王"]]), { event_id: "e1", event_type: "participant_joined", event_time: at(1), payload: { participant_joined_items: [{ participant: { id: "ou_bot", user_name: "小助理", user_type: 10 } }] } }] } };
+      if (args[1] === "+agenda") return { ok: true, data: [{ event_id: "ev_other", vchat: { meeting_url: "https://vc.example.com/j/1234567890" } }, { event_id: "ev1", vchat: { meeting_url: "https://vc.example.com/j/123456789" } }] };
+      if (args[0] === "api" && args[2].endsWith("/calendars/primary")) return { code: 0, data: { calendars: [{ calendar: { calendar_id: "cal_me" } }] } };
+      if (args[0] === "api" && args[2].endsWith("/chat_members")) return { code: 0, data: { items: [{ open_id: "ou_a" }, { open_id: "ou_c" }, { open_id: "ou_d", rsvp_status: "decline" }], has_more: false } };
+      if (args[0] === "api" && args[2].endsWith("/attendees")) return { code: 0, data: { items: [{ type: "user", user_id: "ou_owner" }, { type: "user", user_id: "ou_a" }, { type: "user", user_id: "ou_b", rsvp_status: "decline" }, { type: "chat", attendee_id: "att_chat", chat_id: "oc_team" }, { type: "resource", attendee_id: "room1" }], has_more: false } };
+      return { ok: true, data: {} };
+    });
+    saveRule(app, { name: "会邀多就问", description: "会邀 3 人及以上先问，否则直接拉", enabled: true, trigger: { event: "meeting" }, actions: [{ type: "meeting-bot", confirm: { field: "meeting.invitedCount", op: "gte", value: "3" }, record: false }] });
+    await ownerJoinedMeeting(app, { id: "big", no: "123456789", topic: "方案评审" });
+    const row = one<{ invited: number; participants: string }>(app.db, "select invited, participants from lark_meetings where meeting_id = 'big'")!;
+    // 我、小王 and the group's 小丙 (小王 once, 小丁 declined); 小乙 declined, the room is not a person.
+    expect(row.invited).toBe(3);
+    expect(lark.find((a) => a[0] === "api" && a[2].endsWith("/attendees"))?.[2]).toBe("/open-apis/calendar/v4/calendars/cal_me/events/ev1/attendees");
+    expect(cards).toHaveLength(1);
+    expect(JSON.stringify(cards[0])).toContain("在会 2 · 会邀 3");
+    expect(calls.filter((c) => c.url.endsWith("/bots/join"))).toHaveLength(0);
+    // The captured calendar is used before asking Feishu for today's agenda.
+    run(app.db, "insert into sources(id, space_id, kind, uri, title, text, hash, captured_at, updated_at) values('s_cal','personal','event','lark:calendar:ev2','日程','- 会议链接：https://vc.example.com/j/987654321','h','2026-10-28','2026-10-28')");
+    lark.length = 0;
+    await ownerJoinedMeeting(app, { id: "small", no: "987654321", topic: "周会" });
+    expect(lark.some((a) => a[1] === "+agenda")).toBe(false);
+    expect(lark.find((a) => a[0] === "api" && a[2].endsWith("/attendees"))?.[2]).toContain("/events/ev2/attendees");
+    // A meeting with no calendar event: unknown, so the rule asks.
+    setLarkCliForTests(async (args) => (args[1] === "+agenda" ? { ok: true, data: [] } : { ok: true, data: { events: [] } }));
+    await ownerJoinedMeeting(app, { id: "adhoc", no: "555555555", topic: "临时会" });
+    expect(one<{ invited: number | null }>(app.db, "select invited from lark_meetings where meeting_id = 'adhoc'")!.invited).toBeNull();
+    expect(cards).toHaveLength(3);
+    expect(JSON.stringify(cards[2])).toContain("会邀人数未知");
+  });
+
+  it("joins when the owner invites a bot from the meeting, and asks when someone else does", async () => {
+    const { app, calls, cards } = setup();
+    expect(await botInvitedToMeeting(app, "main", { meeting: { id: "m9", meeting_no: "999999999", topic: "临时讨论" }, inviter: { id: "ou_owner", user_name: "我" } })).toContain("已把 小助理 拉进会议");
+    expect(calls[0]).toMatchObject({ url: "/open-apis/vc/v1/bots/join", data: { join_identify: { meeting_no: "999999999" } } });
+    const row = one<{ status: string; plan: string }>(app.db, "select status, plan from lark_meetings where meeting_id = 'm9'")!;
+    expect(row.status).toBe("listening");
+    expect(JSON.parse(row.plan)).toMatchObject({ bots: ["main"], record: true, answer: true, confirm: false });
+    // Already in: a second invitation does nothing.
+    expect(await botInvitedToMeeting(app, "main", { meeting: { id: "m9", meeting_no: "999999999" }, inviter: { id: "ou_owner" } })).toContain("已经在会里");
+    // Someone else's invitation is the owner's call.
+    expect(await botInvitedToMeeting(app, "main", { meeting: { id: "m10", meeting_no: "101010101", topic: "外部会" }, inviter: { id: "ou_x", user_name: "小王" } })).toContain("卡片");
+    expect(cards).toHaveLength(1);
+    expect(JSON.stringify(cards[0])).toContain("小王在会议里邀请了小助理");
+    expect(calls.filter((c) => c.url.endsWith("/bots/join"))).toHaveLength(1);
+    await handleCardAction(app, { operator: { open_id: "ou_owner" }, context: { open_message_id: "om_card1" }, action: { tag: "button", value: { action: "approve" } } });
+    expect(calls.filter((c) => c.url.endsWith("/bots/join"))).toHaveLength(2);
   });
 
   it("asks the owner on a card first; joins only after a yes", async () => {

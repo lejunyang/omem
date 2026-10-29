@@ -9,7 +9,7 @@ export async function meetingConfirmation(action: Pick<Extract<RuleAction, { typ
   const unknown: string[] = [];
   for (const field of new Set(fieldsOf(action.confirm))) {
     const value = await read(field);
-    if (value === undefined || value === null || value === "") unknown.push(FIELDS[field]);
+    if (value === undefined || value === null || value === "") unknown.push(FIELDS[field].replace(/（.*）$/, ""));
   }
   if (unknown.length) return { confirm: true, reason: `${unknown.join("、")}未知，先发卡片问你` };
   const confirm = await evaluate(action.confirm, read);

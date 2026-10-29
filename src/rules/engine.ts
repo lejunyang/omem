@@ -278,7 +278,7 @@ async function testMeetingRule(app: App, rule: Rule | ReturnType<typeof ruleInpu
   const action = rule.actions.find((a) => a.type === "meeting-bot");
   for (const e of events) {
     const d = await judge(app, { ...rule, id: `test:${now()}` }, e, { ai: false });
-    if (d.match) matches.push({ messageId: e.meeting!.id, chat: e.meeting!.title || "（无标题会议）", sender: e.meeting!.participantCount === null ? "人数未知" : `${e.meeting!.participantCount ?? e.meeting!.participants.length} 人`, text: e.meeting!.participants.join("、"), at: e.at, reason: d.reason, by: d.by, ...(action ? { action: (await meetingConfirmation(action, e)).reason } : {}) });
+    if (d.match) matches.push({ messageId: e.meeting!.id, chat: e.meeting!.title || "（无标题会议）", sender: `${e.meeting!.participantCount === null ? "在会人数未知" : `在会 ${e.meeting!.participantCount ?? e.meeting!.participants.length} 人`}${typeof e.meeting!.invitedCount === "number" ? ` · 会邀 ${e.meeting!.invitedCount} 人` : ""}`, text: e.meeting!.participants.join("、"), at: e.at, reason: d.reason, by: d.by, ...(action ? { action: (await meetingConfirmation(action, e)).reason } : {}) });
   }
   return { checked: events.length, matches, note: events.length ? (rule.judge !== "code" ? "列出的是条件命中的会议，还要模型确认" : "") : "还没有记录到你加入过的会议（启用会议规则后，omem 才开始留意你入会）" };
 }

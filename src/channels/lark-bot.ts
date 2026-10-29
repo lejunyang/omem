@@ -173,6 +173,9 @@ export async function startLarkBot(app: App, ref: BotRef = "main") {
   const dispatcher = new lark.EventDispatcher({ loggerLevel: lark.LoggerLevel.warn }).register({
     "im.message.receive_v1": handlers.message,
     "card.action.trigger": handlers.cardAction,
+    // Put into a meeting from the meeting itself (lark-meetings.ts); the app must subscribe to it.
+    "vc.bot.meeting_invited_v1": (d: Record<string, unknown>) =>
+      void import("./lark-meetings.ts").then((m) => m.botInvitedToMeeting(app, ref, d)).catch((e) => console.warn(`[omem] 处理会议邀请失败：${(e as Error).message}`)),
   } as never);
   const ws = new lark.WSClient({ appId, appSecret, domain: lark.Domain.Feishu, loggerLevel: lark.LoggerLevel.warn });
   await ws.start({ eventDispatcher: dispatcher });

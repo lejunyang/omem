@@ -244,7 +244,7 @@ const meetingRule = computed(() => form.value?.trigger.event === "meeting");
 const meetingAction = (): Action => ({ type: "meeting-bot", bots: options.value.bots?.length ? [options.value.bots[0].id] : [], confirm: true, record: true, spec: "", task: "", answer: false, importShared: true, leaveWithOwner: true });
 const confirmOptions = [{ value: "always", label: "始终询问" }, { value: "never", label: "直接加入" }, { value: "condition", label: "满足条件时询问" }];
 function setConfirmation(a: Extract<Action, { type: "meeting-bot" }>, mode: string) {
-  a.confirm = mode === "always" ? true : mode === "never" ? false : { field: "meeting.participantCount", op: "gte", value: "30" };
+  a.confirm = mode === "always" ? true : mode === "never" ? false : { field: "meeting.invitedCount", op: "gte", value: "30" };
   touch();
 }
 const addOptions = computed(() =>

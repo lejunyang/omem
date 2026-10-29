@@ -22,6 +22,7 @@ export async function rulePermissions(app: App, rule: Pick<Rule, "trigger" | "ac
   const bots = new Map<string, { answer: boolean }>();
   for (const a of rule.actions) if (a.type === "meeting-bot") for (const b of a.bots) bots.set(b, { answer: (bots.get(b)?.answer ?? false) || a.answer });
   for (const [ref, need] of bots) await checkBot(app, ref, need.answer, out);
+  if (bots.size) out.notes.push("想在会议里自己把机器人拉进来：机器人的应用要在“事件与回调”里订阅“机器人被邀请入会”（vc.bot.meeting_invited_v1，长连接接收）。你邀请的直接入会，别人邀请的先发卡片问你；会议设置同下。");
   if (bots.size) {
     out.notes.push("应用的会议权限还要配“权限可访问的数据范围”：开发者后台 → 权限管理 → 数据范围，选“按条件筛选”，条件“会议的归属者 包含 与应用的可用范围一致”；配完重新发布版本。omem 读不到这一项。");
     out.notes.push("会议本身要允许机器人进：多人视频会议、开着 AI 纪要、安全设置里打开“允许智能体加入”；有密码、等候室或只许特定人入会时机器人会被拦下。");
@@ -68,14 +69,16 @@ async function checkCli(app: App, out: PermissionReport) {
   const w = meetingWatchStatus();
   const subscribe = `应用要在“事件与回调”里订阅 ${CLI_EVENTS.join("、")}（用户身份事件），并用长连接接收`;
   if (w.listening) out.ok.push("正在接收你入会的事件");
+  // The minute poll works: the events only make it quicker, so this is a note, not a gap.
+  else if (w.error && w.polling) out.notes.push(`收不到你入会的事件（${w.error}），现在每分钟查一次你所在的会议代替，规则照常工作，最多晚一分钟。要即时：${subscribe}（${larkEventLink(state.appId, state.brand)}）。`);
   else if (w.error)
     out.issues.push({
       who: `lark-cli 的应用（${state.appId}）`,
-      problem: `还收不到你入会的事件：${w.error}。${subscribe}。收不到时 omem 每分钟查一次你所在的会议代替，会晚一点。`,
+      problem: `（可选）还收不到你入会的事件：${w.error}。现在每分钟查一次你所在的会议代替，规则照常工作，只是最多晚一分钟；要即时就${subscribe}。`,
       link: larkEventLink(state.appId, state.brand),
       linkText: "去订阅事件",
     });
-  else out.notes.push(`规则启用后 omem 开始接收你入会的事件；${subscribe}（${larkEventLink(state.appId, state.brand)}）。启用一两分钟后再检查一次可以确认。`);
+  else out.notes.push(`规则启用后 omem 开始接收你入会的事件（${subscribe}，${larkEventLink(state.appId, state.brand)}）；没订阅也能用，每分钟查一次你所在的会议代替。启用一两分钟后再检查一次可以确认。`);
 }
 
 async function checkBot(app: App, ref: string, answer: boolean, out: PermissionReport) {

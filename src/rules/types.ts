@@ -26,7 +26,8 @@ export const FIELDS = {
   "meeting.title": "会议标题",
   "meeting.no": "会议号（9 位）",
   "meeting.participants": "参会人（名字：你入会时和之后十分钟内在会里的人）",
-  "meeting.participantCount": "参会人数",
+  "meeting.participantCount": "在会人数（入会时和之后十分钟内，不算机器人）",
+  "meeting.invitedCount": "会邀人数（日程邀请的人，群按成员算，不算会议室和拒绝的）",
   "meeting.host": "主持人",
 } as const;
 export type Field = keyof typeof FIELDS;
@@ -147,8 +148,8 @@ export type RuleEvent = {
   chat?: { id: string; name: string; kind: "group" | "p2p" };
   sender?: { id?: string; name: string; email?: string | null; kind: "owner" | "user" | "bot" };
   message?: { id: string; text: string; type: string; mentionsOwner: boolean; mentionsBot: boolean; topicId?: string | null; cardTitle?: string | null };
-  /** The meeting the owner joined. participantCount: null = unknown; omitted = count participants. */
-  meeting?: { id: string; no?: string; title: string; participants: string[]; participantCount?: number | null; host?: string; calendarEventId?: string };
+  /** The meeting the owner joined. participantCount: null = unknown; omitted = count participants. invitedCount: null or omitted = unknown. */
+  meeting?: { id: string; no?: string; title: string; participants: string[]; participantCount?: number | null; invitedCount?: number | null; host?: string; calendarEventId?: string };
   /** Where it came from: the bot sees groups it is in in real time; the owner's capture sees every chat. */
   via: "bot" | "capture" | "schedule" | "test" | "meeting";
   /** The Feishu bot that saw it (via bot): "main" or one of lark.bots; its agent answers through it. */

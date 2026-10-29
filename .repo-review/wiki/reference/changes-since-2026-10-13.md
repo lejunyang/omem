@@ -728,3 +728,10 @@ updated: 2026-10-28
 - `Rules.vue` 的入会确认改为“始终询问 / 直接加入 / 满足条件时询问”，复用会议条件编辑器；试运行显示入会方式。`scripts/doc-screens.ts` 增加虚构的会议规则和截图。
 - 回归覆盖 29 / 30 / 31 人、人数未知、嵌套条件、卡片确认、旧布尔值与试运行不执行动作；工具用法同步到 `skills/omem/references/owner.md`。
 - 验证：`LANGUAGE=C pnpm run check` 通过（94 个测试文件、553 项测试、类型与构建）；真实 Codex gpt-6.1-sol / low 生成两条单规则草稿并核对人数边界；1440 / 390 宽度检查切换、修改、保存回读和试运行，无横向溢出。文档截图使用虚构数据重新生成；真实会议待验。
+
+## 10-30：会邀人数、在会议里拉机器人、入会事件状态
+
+- **两种人数**：规则字段加 `meeting.invitedCount`（会邀人数）。`lark-meetings.ts` 的 `invitedCount` 按会议链接（`/j/<会议号>`）在已采集的日程原件里找日程 id，找不到再查 `calendar +agenda`；主日历 id 缓存在 kv `lark_primary_calendar`；参与人按 `calendar/v4/.../attendees` 读，`chat` 类型按 `chat_members` 展开去重，跳过会议室和拒绝的。入会时和在会人数一起读，存进新列 `lark_meetings.invited`（迁移）。`meeting.participantCount` 不再算 `user_type = 10` 的应用（`Person.bot`，`countOf`）。确认卡片和试运行写两种人数；规则页“满足条件时询问”的默认条件改为会邀人数 ≥ 30；生成规则的提示说明两者区别。
+- **在会议里拉机器人**：每个机器人的长连接注册 `vc.bot.meeting_invited_v1`，`botInvitedToMeeting`：本人邀请的直接 `bots/join`，别人邀请的发 `meeting-join` 卡片；设置取本人为这个机器人设的会议规则，没有就记录、回答、导入共享文档。不需要规则，`ruleId` 为 `invited`。
+- **入会事件状态**：lark-cli 先打印 ready、十几秒后才因没订阅退出，以前权限检查会误报“正在接收”。现在监听要稳定 45 秒才算在接收，45 秒内退出的不算；没在接收就每分钟轮询。轮询能用时，权限检查把它写成说明，不算缺项。
+

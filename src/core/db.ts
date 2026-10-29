@@ -789,6 +789,8 @@ const migrations: string[] = [
   );
   create index lark_meeting_lines_seq on lark_meeting_lines(meeting_id, seq);
   `,
+  // How many a meeting's calendar event invited (null: unknown).
+  `alter table lark_meetings add column invited integer;`,
 ];
 
 export type Db = DatabaseSync;
