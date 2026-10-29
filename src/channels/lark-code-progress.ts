@@ -5,6 +5,7 @@ import { all, one, run } from "../core/db.ts";
 import { type CodeChain, saveCodeChain, trySettleCodeChain, maxCodeRounds } from "../agents/code-chain.ts";
 import { getThread } from "../agents/threads.ts";
 import { getRun } from "../agents/runs.ts";
+import { findSpace } from "../core/spaces.ts";
 import { reviewChecks, reviewsOf, STOP_LABEL, SEVERITY_LABEL, type LeadResult, type ReviewPlan, type StopReason } from "../agents/review.ts";
 import { buildCard, sendLark, updateLarkCard, larkClient, type CardBlock } from "./lark-send.ts";
 
@@ -65,6 +66,21 @@ function reviewLines(app: App, runId: string): string {
   return [`**评审 · 「${plan.tierName}」档**`, ...lines, lead?.by === "lead" ? `负责人：${lead.summary}` : ""].filter(Boolean).join("\n");
 }
 
+type RepoCheck = { space: string; diffStat?: string; check: { command: string; code: number; ms?: number } | null };
+
+/** One line per repository: the check's result and the size of the change. Details stay in the run. */
+function checkLines(app: App, repos: RepoCheck[] | undefined): string {
+  if (!repos?.length) return "";
+  return repos.map((r) => {
+    const name = repos.length > 1 ? `${findSpace(app, r.space)?.name ?? r.space}：` : "";
+    const check = !r.check ? "没有配置检查命令"
+      : `检查 \`${r.check.command}\` ${r.check.code === 0 ? "通过" : `未通过（退出码 ${r.check.code}）`}${r.check.ms ? `，${Math.round(r.check.ms / 1000)} 秒` : ""}`;
+    // Last line of `git diff --stat`: "3 files changed, 10 insertions(+), 2 deletions(-)".
+    const size = r.diffStat?.trim().split("\n").pop()?.trim();
+    return `- ${name}${check}${size ? `；${size}` : ""}`;
+  }).join("\n");
+}
+
 export function snapshot(app: App, chain: CodeChain) {
   const latest = getRun(app, chain.lastCodeRunId!);
   const blocks: CardBlock[] = [{ note: `交办标识：${chain.askRunId}` }];
@@ -94,7 +110,10 @@ export function snapshot(app: App, chain: CodeChain) {
   if (review) blocks.splice(1, 0, { markdown: review });
   else if (estimate && !terminal) blocks.splice(1, 0, { markdown: `评审负责人预估：「${estimate.tierName}」档（${estimate.reason}）` });
   if (terminal && latest.output.coderSummary) blocks.push({ fold: { title: "编码说明", markdown: String(latest.output.coderSummary).slice(0, 2000) } });
-  if (terminal) blocks.push({ markdown: `检查：${JSON.stringify(latest.output.check ?? latest.output.repos ?? "未配置").slice(0, 1500)}` });
+  // Runs from before multi-repository delegation only have `check`.
+  const repos = (latest.output.repos as RepoCheck[] | undefined) ?? (latest.output.check ? [{ space: "", check: latest.output.check as RepoCheck["check"] }] : undefined);
+  const checks = terminal ? checkLines(app, repos) : "";
+  if (checks) blocks.push({ markdown: checks });
   return buildCard({ title: "编码交办", color: terminal ? approved ? "green" : "orange" : "wathet", blocks });
 }
 

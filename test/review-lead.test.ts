@@ -112,6 +112,10 @@ describe("review-lead", () => {
       expect(card).toContain("停下来等你决定");
       expect(card).toContain("业务：要求修改");
       expect(card).toContain("负责人：");
+      // The check line is a summary, not the run's raw repos output.
+      expect(card).toContain("没有配置检查命令");
+      expect(card).toContain("1 file changed");
+      expect(card).not.toContain("diffStat");
       const decide = getAsk(app, out2.reviewAskId);
       expect(decide.question).toContain("没有收敛");
       expect(listAsks(app, { status: "pending" }).map((a) => a.id)).toContain(decide.id);

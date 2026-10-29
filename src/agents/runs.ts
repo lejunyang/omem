@@ -173,7 +173,10 @@ function runWhere(opts: RunFilter) {
 export function listRuns(app: App, opts: RunFilter & { limit?: number; offset?: number; brief?: boolean } = {}) {
   const w = runWhere(opts);
   const limit = Math.min(opts.limit ?? 100, 500);
-  const cols = opts.brief ? "*, '{}' as input, '{}' as output" : "*";
+  // Titles are short labels; a brief list keeps the head of the task for the hover hint.
+  const cols = opts.brief
+    ? "*, json_object('task', substr(coalesce(json_extract(input,'$.task'), json_extract(input,'$.text'), ''), 1, 600)) as input, '{}' as output"
+    : "*";
   return all<Row>(app.db, `select ${cols} from runs ${w.sql} order by created_at desc limit ? offset ?`, ...w.params, limit, opts.offset ?? 0).map(toRun);
 }
 

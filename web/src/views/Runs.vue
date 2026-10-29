@@ -146,6 +146,11 @@ const taskText = computed(() => {
   const i = (detail.value?.run.input ?? {}) as { task?: string; text?: string };
   return String(i.task ?? i.text ?? "");
 });
+// Titles are cut to a short label when the run is made; the hover shows the task's own text.
+function hintOf(r: { title: string; input?: Record<string, unknown> }) {
+  const task = String(r.input?.task ?? r.input?.text ?? "").trim();
+  return task.length > r.title.length ? `${r.title}\n\n${task.length >= 600 ? `${task.slice(0, 600)}…` : task}` : r.title;
+}
 const taskLong = computed(() => taskText.value.split("\n").length > 14 || taskText.value.length > 1200);
 const taskOpen = ref(false);
 watch(id, () => (taskOpen.value = false));
@@ -441,7 +446,7 @@ const kindOptions = computed(() => [
         <Skeleton v-if="listLoading && !runs.length" :rows="8" />
         <VirtualList v-else :items="runs" :item-key="(r) => r.id" :estimate="54">
           <template #default="{ item: r }">
-            <router-link :to="`/runs/${r.id}`" class="run" :class="{ on: r.id === id }" :title="r.title">
+            <router-link :to="`/runs/${r.id}`" class="run" :class="{ on: r.id === id }" :title="hintOf(r)">
               <span class="st" :class="r.status" />
               <div class="grow">
                 <div class="ellipsis">{{ r.title }}</div>
@@ -474,7 +479,7 @@ const kindOptions = computed(() => [
             <span v-if="rv.current.value?.plan" class="badge">「{{ rv.current.value.plan.tierName }}」档</span>
             <router-link v-for="it in ctxInfo?.items ?? []" :key="it.id" :to="`/items/${it.id}`" class="item-link" :title="it.title">事项：{{ it.title }}</router-link>
           </div>
-          <h1 :title="detail.run.title">{{ detail.run.title }}</h1>
+          <h1 :title="hintOf(detail.run)">{{ detail.run.title }}</h1>
           <div v-if="detail.run.kind === 'code' && fileCount" class="row wrap small muted sub">
             <span>{{ diffs.length > 1 ? `${diffs.length} 个仓库 · ` : "" }}{{ fileCount }} 个文件 · <span class="add">+{{ lineCount.add }}</span> <span class="rm">−{{ lineCount.rm }}</span><template v-if="checkPassed !== null"> · 检查{{ checkPassed ? "通过" : "没通过" }}</template></span>
             <span class="spacer" />

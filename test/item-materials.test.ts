@@ -61,7 +61,7 @@ describe("item materials", () => {
 });
 
 describe("finding runs", () => {
-  it("filters by keyword and by the built-in roles a run used, and leaves input and output out of brief lists", () => {
+  it("filters by keyword and by the built-in roles a run used, and keeps only the task's head in brief lists", () => {
     const a = createRun(app, { kind: "code", spaceId: "personal", title: "评审分支 feature/refund-split", input: { task: "对照源仓库的退款卡片" } });
     const b = createRun(app, { kind: "ingest", spaceId: "personal", title: "整理新材料" });
     run(app.db, "update runs set roles = '|coder|review-style|' where id = ?", a.id);
@@ -71,7 +71,11 @@ describe("finding runs", () => {
     expect(listRuns(app, { q: "100%" })).toEqual([]);
     expect(listRuns(app, { kind: "role:review-style" }).map((r) => r.id)).toEqual([a.id]);
     expect(countRuns(app, { kind: "role:review-style,ingest" })).toBe(2);
-    expect(listRuns(app, { q: "refund-split", brief: true })[0].input).toEqual({});
+    const brief = listRuns(app, { q: "refund-split", brief: true })[0];
+    expect(brief.input).toEqual({ task: "对照源仓库的退款卡片" });
+    expect(brief.output).toEqual({});
     expect(getRun(app, a.id).input).toMatchObject({ task: "对照源仓库的退款卡片" });
+    run(app.db, "update runs set input = json_set(input, '$.task', ?) where id = ?", "长".repeat(2000), a.id);
+    expect(String(listRuns(app, { q: "refund-split", brief: true })[0].input.task)).toHaveLength(600);
   });
 });
