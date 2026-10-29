@@ -868,3 +868,10 @@ updated: 2026-10-28
 - **并发槽**：`runs.ts` 把运行分成对话、后台、存量整理三类；`digest` 和 `triage` 一次一个（`BULK_SLOTS`），不占 `concurrency` 的后台槽；排队原因写“等存量整理空位”。10-24、10-28 大批整理时 ingest 排队超时、triage 600 秒没开始回答、Agent 说“omem 接口未返回”都和它抢槽有关。
 - **工具耗时**：`acp.ts` 在工具调用完成或失败的事件上加 `ms`；`peer-exec.ts` 的 `toolLatency` 读最近 24 小时运行的工具事件，`omem diag` 的 `toolLatency` 给出 n、p50、p90、最大值和 p90 最慢的 5 个工具（至少 5 次），p90 超过 30 秒带 `warning`。
 - **后台会话**：`background-sessions.ts` 的 `tooFull`：上下文占比超过 `maxContextRatio` 或 token 数超过 `sessions.background.maxContextTokens`（默认 120000，0 关）就不再复用；ingest、digest、heartbeat 单次运行的上下文峰值曾到 15～17 万。
+
+## 10-30：公开评测数据的清单与下载脚本
+
+- `scripts/bench/datasets.json`：LongMemEval_s / oracle（MIT）、T2Retrieval、DuRetrieval（Apache-2.0，上游 DuReader-retrieval，Hugging Face 卡片未写）、LoCoMo（CC BY-NC 4.0，只在本机跑）；地址、Hugging Face 公布的 SHA-256、大小。LoCoMo 来自 GitHub，没有公布哈希，`--pin` 第一次下载后写入。
+- `scripts/bench/fetch.ts <名>`：下载到 `.scratch/bench/<名>/raw/`，校验哈希（不符删除并停下），转换：C-MTEB 三个 parquet 经 `cmteb_to_jsonl.py`（Python + pandas，原 `prep-t2.py` 并入，种子和抽法不变）成 corpus.jsonl / queries.jsonl；LoCoMo 经 `locomo.ts` 转成 LongMemEval 的形状（`haystack_key` 让同一段对话的问题共用一个空间）。
+- `eval-longmemeval.ts --recall`：不启动服务、不用模型，按会话排序算 Recall@5/@10、All@10、NDCG@10，按类型分；`--vector` 用本地向量。
+- 只手动跑，没有定时任务；数字写进 `docs/v2/evaluation.md`。

@@ -9,6 +9,15 @@
  * This measures "retrieve and reason over raw history with tools" (no
  * pre-ingestion into memories). Use a cheap model for smoke runs; report the
  * model when quoting numbers.
+ *
+ * Session-level retrieval only, no model (cheap; run it first):
+ *
+ *   node scripts/eval-longmemeval.ts <file.json> --recall [--per-type 1000] [--vector] [--home DIR]
+ *
+ * ranks each question's sessions with omem's search (one hit per session) and reports Recall@5/@10
+ * (share of the evidence sessions `answer_session_ids` in the top k), All@10 (every evidence session
+ * in the top 10) and NDCG@10, overall and by type; abstention questions (`_abs`) have no evidence and
+ * are skipped. LoCoMo converted by scripts/bench/fetch.ts has the same shape.
  */
 process.removeAllListeners("warning");
 const { readFileSync, appendFileSync, existsSync } = await import("node:fs");
@@ -33,23 +42,84 @@ const home = opt("--home", join(process.cwd(), ".scratch", "eval-lme"));
 const concurrency = Number(opt("--concurrency", "3"));
 const out = opt("--out", join(home, "results.jsonl"));
 
-type Q = { question_id: string; question_type: string; question: string; question_date: string; answer: string; haystack_dates: string[]; haystack_session_ids: string[]; haystack_sessions: { role: string; content: string }[][] };
+type Q = { question_id: string; question_type: string; question: string; question_date: string; answer: string; haystack_dates: string[]; haystack_session_ids: string[]; haystack_sessions: { role: string; content: string }[][]; answer_session_ids?: string[]; /** Questions sharing one history (LoCoMo) share a space. */ haystack_key?: string };
 const data = JSON.parse(readFileSync(dataPath, "utf8")) as Q[];
-const picked = types.flatMap((t) => data.filter((q) => q.question_type === t).slice(0, perType));
+const recallMode = args.includes("--recall");
+// --types all: every type in the file (LoCoMo's categories differ from LongMemEval's).
+const typeList = opt("--types", "") === "all" || (recallMode && !args.includes("--types")) ? [...new Set(data.map((q) => q.question_type))] : types;
+const picked = typeList.flatMap((t) => data.filter((q) => q.question_type === t).slice(0, recallMode && !args.includes("--per-type") ? Infinity : perType));
 const done = new Set(existsSync(out) ? readFileSync(out, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l).id) : []);
+
+if (recallMode) {
+  await sessionRecall();
+  process.exit(0);
+}
 
 const { app, server } = await boot(home, { port: 0, quiet: true, background: false });
 
-function load(q: Q) {
-  const spaceId = `lme-${q.question_id.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-  if (findSpace(app, spaceId)) return spaceId;
-  createSpace(app, { id: spaceId, name: spaceId, kind: "personal" });
+/** Session-level Recall@k with omem's search, no model. */
+async function sessionRecall() {
+  const { App } = await import("../src/core/app.ts");
+  const { search } = await import("../src/search/search.ts");
+  const { embedPending } = await import("../src/search/embeddings.ts");
+  const { all } = await import("../src/core/db.ts");
+  const vector = args.includes("--vector");
+  const recallHome = opt("--home", join(process.cwd(), ".scratch", vector ? "eval-lme-recall-vector" : "eval-lme-recall"));
+  const lib = App.open(recallHome);
+  lib.config.embeddings.provider = vector ? "local" : "none";
+  const qs = picked.filter((q) => !q.question_id.endsWith("_abs") && q.answer_session_ids?.length);
+  const t0 = Date.now();
+  for (const q of qs) loadInto(lib, q);
+  console.error(`loaded ${qs.length} questions in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  if (vector) for (let n = await embedPending(lib, 64); n; n = await embedPending(lib, 64));
+  const sessionOf = new Map(all<{ id: string; uri: string }>(lib.db, "select id, uri from sources").map((r) => [r.id, r.uri.replace(/^session-|\.md$/g, "")]));
+  const dcg = (rel: boolean[]) => rel.reduce((s, r, i) => s + (r ? 1 / Math.log2(i + 2) : 0), 0);
+  type Acc = { n: number; r5: number; r10: number; all10: number; ndcg: number };
+  const zero = (): Acc => ({ n: 0, r5: 0, r10: 0, all10: 0, ndcg: 0 });
+  const total = zero();
+  const byType = new Map<string, Acc>();
+  let ms = 0;
+  for (const q of qs) {
+    const t = performance.now();
+    const hits = await search(lib, q.question, { spaces: [spaceOf(q)], types: ["chunk"], limit: 50, perSource: 1 });
+    ms += performance.now() - t;
+    const ranked = hits.map((h) => sessionOf.get(h.sourceId!)).filter((x): x is string => !!x);
+    const gold = new Set(q.answer_session_ids!.map(String));
+    const top = (k: number) => ranked.slice(0, k).filter((s) => gold.has(s)).length;
+    const ideal = dcg([...gold].slice(0, 10).map(() => true));
+    const acc = byType.get(q.question_type) ?? zero();
+    byType.set(q.question_type, acc);
+    for (const a of [acc, total]) {
+      a.n++;
+      a.r5 += top(5) / gold.size;
+      a.r10 += top(10) / gold.size;
+      a.all10 += top(10) === gold.size ? 1 : 0;
+      a.ndcg += dcg(ranked.slice(0, 10).map((s) => gold.has(s))) / (ideal || 1);
+    }
+  }
+  const fmt = (a: Acc) => ({ n: a.n, "Recall@5": +((100 * a.r5) / a.n).toFixed(2), "Recall@10": +((100 * a.r10) / a.n).toFixed(2), "All@10": +((100 * a.all10) / a.n).toFixed(2), "NDCG@10": +((100 * a.ndcg) / a.n).toFixed(2) });
+  console.log(JSON.stringify({ data: dataPath.split(/[\\/]/).pop(), mode: vector ? "fts+vector (RRF)" : "fts", ...fmt(total), avgMs: +(ms / Math.max(1, qs.length)).toFixed(1), byType: Object.fromEntries([...byType].map(([k, v]) => [k, fmt(v)])) }, null, 1));
+}
+
+function spaceOf(q: Q) {
+  return `lme-${(q.haystack_key ?? q.question_id).toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+/** One space per question; one chat source per history session (uri session-<id>.md). */
+function loadInto(target: import("../src/core/app.ts").App, q: Q) {
+  const spaceId = spaceOf(q);
+  if (findSpace(target, spaceId)) return spaceId;
+  createSpace(target, { id: spaceId, name: spaceId, kind: "personal" });
   q.haystack_sessions.forEach((session, i) => {
     const date = q.haystack_dates[i];
     const text = `# Chat session ${date}\n\n` + session.map((t) => `**${t.role}** (${date}): ${t.content}`).join("\n\n");
-    upsertSource(app, { spaceId, kind: "chat", uri: `session-${q.haystack_session_ids[i]}.md`, title: `Chat ${date}`, text, meta: { date } });
+    upsertSource(target, { spaceId, kind: "chat", uri: `session-${q.haystack_session_ids[i]}.md`, title: `Chat ${date}`, text, meta: { date } });
   });
   return spaceId;
+}
+
+function load(q: Q) {
+  return loadInto(app, q);
 }
 
 async function judge(q: Q, response: string): Promise<{ ok: boolean; raw: string }> {

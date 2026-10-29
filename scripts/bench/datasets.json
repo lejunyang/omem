@@ -1,0 +1,102 @@
+{
+  "longmemeval_s": {
+    "description": "LongMemEval_s（cleaned）：500 题，每题约 50 段历史会话；带 answer_session_ids，可算会话级 Recall（不用模型）",
+    "license": "MIT",
+    "commercial": true,
+    "convert": "longmemeval",
+    "files": [
+      {
+        "url": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json",
+        "name": "longmemeval_s_cleaned.json",
+        "size": 277383467,
+        "sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442"
+      }
+    ]
+  },
+  "longmemeval_oracle": {
+    "description": "LongMemEval oracle：同样 500 题，只给含证据的会话（检查作答链路，不考检索）",
+    "license": "MIT",
+    "commercial": true,
+    "convert": "longmemeval",
+    "files": [
+      {
+        "url": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json",
+        "name": "longmemeval_oracle.json",
+        "size": 15388478,
+        "sha256": "821a2034d219ab45846873dd14c14f12cfe7776e73527a483f9dac095d38620c"
+      }
+    ]
+  },
+  "t2retrieval": {
+    "description": "C-MTEB T2Retrieval dev 子集（中文检索）：随机 400 问 + 全部相关文档 + 15,000 篇干扰文档（与 2026-10-12 的数字同一抽法）",
+    "license": "Apache-2.0",
+    "commercial": true,
+    "convert": "cmteb-retrieval",
+    "files": [
+      {
+        "role": "corpus",
+        "url": "https://huggingface.co/datasets/C-MTEB/T2Retrieval/resolve/main/data/corpus-00000-of-00001-8afe7b7a7eca49e3.parquet",
+        "name": "corpus.parquet",
+        "size": 156789043,
+        "sha256": "d4a207a9277eb1cf31f68ab6a7236cbf3e8fbf9493e0e2b577a34660929fcd17"
+      },
+      {
+        "role": "queries",
+        "url": "https://huggingface.co/datasets/C-MTEB/T2Retrieval/resolve/main/data/queries-00000-of-00001-930bf3b805a80dd9.parquet",
+        "name": "queries.parquet",
+        "size": 817492,
+        "sha256": "47a5866f1e668700420f44b200f9808c9e799208a46da147dfe380b40fb406ec"
+      },
+      {
+        "role": "qrels",
+        "url": "https://huggingface.co/datasets/C-MTEB/T2Retrieval-qrels/resolve/main/data/dev-00000-of-00001-92ed0416056ff7e1.parquet",
+        "name": "qrels-dev.parquet",
+        "size": 1146734,
+        "sha256": "a283ce5c8bd739e7f5524107586eb21e68d7736172524b79eb5bd844c4b78c00"
+      }
+    ]
+  },
+  "duretrieval": {
+    "description": "C-MTEB DuRetrieval dev 子集（中文检索，第二个对照集，来自百度搜索的真实问题）：按 T2 的方式随机 400 问 + 相关文档 + 15,000 篇干扰文档",
+    "license": "Apache-2.0（上游 DuReader-retrieval；Hugging Face 卡片未写许可，引用数字前再核）",
+    "commercial": true,
+    "convert": "cmteb-retrieval",
+    "files": [
+      {
+        "role": "corpus",
+        "url": "https://huggingface.co/datasets/C-MTEB/DuRetrieval/resolve/main/data/corpus-00000-of-00001-19b9e924cb33e4d5.parquet",
+        "name": "corpus.parquet",
+        "size": 64412709,
+        "sha256": "d4b4eb51b63549ef0851a15fc63c2a61b703dce95e3727b535a08f7ba1d14424"
+      },
+      {
+        "role": "queries",
+        "url": "https://huggingface.co/datasets/C-MTEB/DuRetrieval/resolve/main/data/queries-00000-of-00001-7c7edb40be6b560c.parquet",
+        "name": "queries.parquet",
+        "size": 118461,
+        "sha256": "62ac55e764bffd4ffceb0aa51e7a536a0e5932f23c8606566906db6a9efb4b94"
+      },
+      {
+        "role": "qrels",
+        "url": "https://huggingface.co/datasets/C-MTEB/DuRetrieval-qrels/resolve/main/data/dev-00000-of-00001-d3c385852a7c0c9d.parquet",
+        "name": "qrels-dev.parquet",
+        "size": 420443,
+        "sha256": "c87e7c16f535a98b29ee0ebf6977639c793e3bd149c04634a1810273cfd3c3e5"
+      }
+    ]
+  },
+  "locomo": {
+    "description": "LoCoMo：10 段很长的双人对话，约 2,000 问（单跳、多跳、时间、常识、对抗）；转换成 LongMemEval 的形状（每段对话一个空间，evidence 的 D<n> 换成会话 id），可算会话级 Recall",
+    "license": "CC BY-NC 4.0（非商用）：只在本机跑，不分发数据、不把数据或转换结果放进仓库",
+    "commercial": false,
+    "convert": "locomo",
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json",
+        "name": "locomo10.json",
+        "size": null,
+        "sha256": null
+      }
+    ]
+  }
+}

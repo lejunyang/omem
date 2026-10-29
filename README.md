@@ -412,6 +412,8 @@ node scripts/screens.ts http://127.0.0.1:5173 screens   # 桌面与手机截图
 node scripts/doc-screens.ts         # 文档站与 README 的功能截图（先 pnpm run build；用虚构演示数据，输出 site/public/screens）
 cd site && pnpm install --ignore-workspace && pnpm run dev   # 文档站（VitePress）
 node scripts/eval-retrieval.ts corpus.jsonl queries.jsonl [--vector]
+node scripts/bench/fetch.ts [名称]   # 公开评测数据：下载、校验哈希、转换（清单 scripts/bench/datasets.json；手动跑）
+node scripts/eval-longmemeval.ts <文件> --recall [--vector]   # LongMemEval / LoCoMo 会话级 Recall，不用模型
 ```
 
 交办时可以先做 Git 同步：拉取目标分支在 origin 上的新提交，再合并或变基到另一个分支（如 main），也可以只同步不编码。冲突先交给编码 Agent 解决，业务上拿不准的它会问你，解决不了的停下来发卡片给你（在工作区里解决后点“继续”，或放弃这次同步）。同步的提交在应用时快进到目标分支；目标分支在交办后又有了新提交、应用不上时，点“移到目标分支最新提交”重做一次。已应用的编码改动可在运行详情填写提交信息，选择“提交”或“提交并推送”；也可让主助手通过 `code_git_status` / `code_git_action` 操作。只提交暂存区，未暂存修改保留；默认推送到原分支的 `origin`，也可以推到别的分支，变基过的分支可强制推送（带 lease，远端有别人的新提交时不会覆盖）；失败保留本地提交并可仅重试推送。提交与推送目前走网页或工具，未新增 CLI 子命令。
