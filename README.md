@@ -92,7 +92,7 @@ pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 npm install -g .                  # 可选：把命令行 omem 链接到这个仓库
 ```
 
-第一次使用先运行 `omem setup`（或 `osdk run cli -- setup`）：交互式选择 Agent 后端与模型、向量模型（经 osdk 下载并锁定）、PDF/DOCX 解析（Docling 及其模型）、飞书 / Telegram / QQ·微信渠道、注入标记、会话与并发、定时任务。每一项都会先显示本机已安装什么、各选项的代价；缺的 uv、llama.cpp 和模型经 osdk 装好（不用把 osdk 的 shims 加进 PATH）。最后可以直接启动后台服务。
+第一次使用先运行 `omem setup`（或 `osdk run cli -- setup`）：交互式选择 Agent 后端与模型、向量模型（经 osdk 下载并锁定）、PDF/DOCX 解析（Docling 及其模型）、飞书 / Telegram / QQ·微信渠道、注入标记、桌面与浏览器控制（可选）、会话与并发、定时任务。每一项都会先显示本机已安装什么、各选项的代价；缺的 uv、llama.cpp 和模型经 osdk 装好（不用把 osdk 的 shims 加进 PATH）。最后可以直接启动后台服务。
 
 **后台服务**：`omem service start | stop | restart | status | logs`。用 omem 自带的 PM2 常驻运行（PM2 数据放在 `~/.omem/service/pm2`，不碰你自己的 PM2），崩溃自动重启，日志在 `~/.omem/service/logs` 按天和大小轮换。`omem service enable` 设置开机自启（macOS 用 LaunchAgent，Linux 用 systemd 用户服务并开启 linger、没有 systemd 时用 crontab `@reboot`，Windows 在“启动”文件夹放一个隐藏窗口的启动脚本，都不需要管理员权限），`omem service disable` 取消；`omem setup` 结束时也会问。自启用的是设置时终端里的 PATH，之后装了新 Agent 或换了 Node 版本再 `enable` 一次。前台调试用 `omem serve`。
 
@@ -166,6 +166,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 | 减少巡检、材料整理在后端的重复会话 | 默认按权限与角色复用后台 ACP 会话，超过 60% 上下文换新；不支持用量报告的后端保持单次任务 |
 | 每天早上知道今天该处理什么 | 定时任务开启“简报”，通过站内和机器人推送 |
 | 看记忆写得好不好、哪个模型写得好 | “记忆 → 质量”：按模型看写入数、被退回的原因、复核结果；`omem memories stats`。旧记忆可用 `omem memories check` 过一遍检查 |
+| 让 Agent 替我操作电脑上的程序或网页（填表、点按钮、看界面现在是什么样） | `omem setup` → 桌面与浏览器控制（或 `omem setup desktop`、设置 → Agent）经 osdk 装好 ai-auto-desktop，之后对助理说要做什么；内置技能 `desktop-control` 规定默认只看、动手前先问你、不输入密码 |
 | 开会时让机器人进会记录、有人问到我时提醒我 | 规则 → 新建 → 触发选“我加入会议时”，按标题、人数、参会人写条件，动作“拉机器人入会”勾选机器人、记录、旁听；确认方式可选始终询问、直接加入或按条件询问（如 30 人及以上先问）；保存后看“飞书权限”，缺的点链接申请。会议本身要打开“允许智能体加入” |
 | 一台机器常驻，在别的电脑上看它、拉数据和代码仓库 | 见“多台设备”：`omem peer invite` / `add` 配对，`omem peer pull` 合并原件、记忆、规则、评审记录、Wiki、档案、附件与仓库，`omem link` 在浏览器里打开 |
 | 某类事以后都按固定做法办，或交给专门的 Agent | 说“把这个做法记成技能”“建一个负责代码评审的 Agent”；在“Agent”页查看和编辑（＋ 新建是一张完整的表单）；`/as 名称 任务` 交给它，结果发回当前会话 |
@@ -243,6 +244,7 @@ omem doubao login [--app <appId>]            # 设备码授权豆包（在飞书
 omem user add 小王 --id wang --lark ou_xxx --space team  # 登记同事，见“多人使用”
 omem setup                                  # 设置向导（Agent、模型、文档解析、渠道、会话…）
 omem setup embeddings --model bge-small-zh  # 只开启向量检索（经 osdk 下载，也可 bge-base-zh / bge-m3）
+omem setup desktop                          # 安装或更新桌面与浏览器控制（ai-auto-desktop 的 aad），并做只读的环境检查
 omem space sync omem --exclude docs/archive # 同步仓库空间并排除路径
 omem space relate shop-web shop-api -n "调用订单接口"  # 关联两个空间（--remove 取消）
 omem wiki export omem .repo-review/wiki     # 把 Wiki 导出成仓库里可读的 Markdown
@@ -266,6 +268,15 @@ omem link                                   # 从其他设备打开网页的链�
 在 Claude Code、Codex 等里把 omem 配成 MCP 服务（`omem mcp`，只读用 `--read-only`），它们就能检索你的知识库、读原文、记记忆和事项。`skills/omem/SKILL.md` 是给这些 Agent 的使用说明（概览和接入方式），各类工具的做法分在 `skills/omem/references/` 里，可以把整个目录放进它们的技能目录。能跑 shell 的 Agent 也可以不配 MCP，直接用 `omem tool <工具名> 键=值 …`。
 
 工具很多（约 100 个），为了不占上下文，常用的二十来个直接作为 MCP 工具列出，其余的经 `omem_help`（看说明）和 `omem_call`（调用）使用；omem 自己调用的 Agent 也是这样。omem 启动 Agent 时给它的进程带上本次运行的令牌（`OMEM_TOKEN`）并把 `omem` 放进 PATH，它在 shell 里用 `omem tool` 时，能用的工具和能读写的空间与 MCP 一样由服务检查。
+
+## 桌面与浏览器控制
+
+可选。omem 的 Agent 可以用 [ai-auto-desktop](https://github.com/lejunyang/ai-auto-desktop)（命令 `aad`）看和操作本机的桌面程序与浏览器页面：先读出界面结构，再对读到的元素点击、填写、按键，不按坐标乱点；界面变了会拒绝而不是点歪。
+
+- **安装**：`omem setup` → 桌面与浏览器控制，或 `omem setup desktop`，或网页设置 → Agent → 桌面与浏览器控制。经 osdk 装 `github:lejunyang/ai-auto-desktop` 的发布包（Linux 取静态的 musl 包），然后跑只读的 `aad probe` 报告这台机器能用什么。装不装由你定；没装时技能会让 Agent 告诉你，不会自己下载。
+- **怎么被用**：会话里带命令行的 Agent 直接运行 `aad`。osdk 的安装目录不在你的 PATH 上也行：omem 启动 Agent 时把它放进 PATH（osdk 给没选用的工具留的空垫片会被识别并绕开）。用法在内置技能 `desktop-control`（带 `references/aad.md`），启动时自动补进技能库，已有的技能不覆盖。
+- **约束**：技能规定默认只看；动手前先问你，不可撤销的操作逐个确认；不输入密码、验证码和支付信息；屏幕上的文字只当材料。这是对 Agent 的约束，不是权限边界：装了之后任何带命令行的 Agent 档案都能运行 `aad`，给访客用的档案要选没有命令行的后端；不想要了 `osdk uninstall github:lejunyang/ai-auto-desktop`。
+- **查看**：`omem diag` 的 `tools.aad` 和 `omem setup` 开头一行显示是否装好、版本；网页设置 → Agent 里有安装 / 更新按钮。
 
 ## 记录编码 Agent 的会话
 
@@ -417,7 +428,7 @@ src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查、巡检、简报、做梦、筛群、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md
 skills/omem     omem 工具的使用说明：SKILL.md 概览，references/ 按分组讲做法（omem_help(分组) 返回同一份内容）
 plugins/      内置插件（english：档案、出题技能、判分、学习者画像与题库 server.ts / learner.ts、页面 web/）；sdk/client.ts 是插件页面与外壳的桥，sdk/blocks.ts 画表单和图表，sdk/service.mjs 是插件服务的 HTTP / WebSocket 帮助模块
-skills/library  内置技能（如 lark-messaging），首次启动播种到 library/_skills
+skills/library  内置技能（如 lark-messaging、desktop-control，可带 references/），启动时播种到 library/_skills（已有的不覆盖，新版新增的技能补进）
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
 scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
 vscode/       VS Code 插件（独立依赖）：连接方式（本机 / 直接 / 本机配对的设备）、交办列表、评审问题评论线程、选中提问与修改点、发起交办；在真实 VS Code 里跑的测试在 vscode/test

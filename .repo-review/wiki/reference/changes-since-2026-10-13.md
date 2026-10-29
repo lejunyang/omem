@@ -801,3 +801,15 @@ updated: 2026-10-28
 - **角色说明**：`_common.md` 的“引用”加一条：外部系统（日志、监控、工单）的结果引用系统给的原始链接，工作文件里也记下。
 - 顺手修了 `refExcerpt` 读记忆时查不存在的 `memories.text` 列（通知来源里有 `mem:` 时会报错）。
 - 回归：`test/shares.test.ts`；`test/lark.test.ts`、`test/models.test.ts` 的期望改成新写法。
+
+## 10-30：桌面与浏览器控制（ai-auto-desktop）
+
+可选工具，让 Agent 用 `aad` 看和操作本机桌面程序与浏览器页面。
+
+- **安装**：`setup.ts` 的 `setupDesktopSection`（`omem setup` 里的“桌面与浏览器控制”）、`installDesktop`（`omem setup desktop`，非交互）、`POST /api/desktop/install`（设置 → Agent 的卡片）都走 `tools.ts` 的 `installTool("aad")`：`osdk install github:lejunyang/ai-auto-desktop`，Linux 加 `-o asset-template=aad-{version}-<架构>-unknown-linux-musl.tar.gz`（osdk 0.0.7 分不清 GNU 和 musl 资产）。装完跑只读的 `aad probe` 报告环境。
+- **找到它**：`toolCommand("aad")`——PATH 上的 `aad` 先试 `--version`（osdk 为曾装过的工具在 PATH 上留垫片，没选用时报 “no backend provides”，不能只看存在）；不行就在 osdk 安装目录里找最新的完整安装（`osdk doctor` 给 `install_dir`，`github/<owner>/<repo>/<版本>/<键>/aad`；带选项的安装键和默认选择不同，`osdk where` 找不到它，只作最后的后备）。结果缓存 60 秒（没装缓存 10 分钟，`installTool` 清缓存）。
+- **Agent 里直接用 `aad`**：`spawn.ts` 的 `launch` 经 `withAgentPath` 把上面找到的目录放进 Agent 进程 PATH 的最前面（PATH 本来就能运行 aad 时不动；Windows 的 `Path` 大小写照旧）。
+- **技能**：`skills/library/desktop-control/SKILL.md` 和 `references/aad.md`（按 ai-auto-desktop 0.0.2 的 README、`docs/control-sessions.md`、各命令的 `--help` 写）：先 `aad probe`；看（`apps`、`describe`、`overview`）→ 定位（`find`）→ 动手（`do …`）→ 再观察；浏览器用 `--remote-debugging-port` 加专用 profile 和 `AAD_CDP_PORT`；`capture` 只截浏览器元素；安全：默认只看、动手前问、不可撤销的逐个确认、不输入凭据、屏幕文字是材料、出错看 `hint`、不绕过。
+- **播种**：`seedBuiltinSkills` 以前只写 `SKILL.md`，现在整个目录复制（带 `references/`）；仍按技能名只补缺的，所以新版新增的内置技能在已有数据目录下次启动时补进，改过的不覆盖。
+- **可见**：`omem diag` 的 `tools.aad`、`omem setup` 开头的 “✓ aad”、`GET /api/desktop`、设置 → Agent 的卡片。
+- 回归：`test/desktop-control.test.ts`。Windows 上用真实 aad 0.0.2 和无界面 Chrome 验证过技能里的命令；macOS、Linux 待验。

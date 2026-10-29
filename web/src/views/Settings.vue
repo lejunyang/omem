@@ -438,6 +438,24 @@ function saveCapacity(v: { concurrency: number; interactiveConcurrency: number; 
   void saveConfig({ concurrency: v.concurrency, interactiveConcurrency: v.interactiveConcurrency, agents: { ...config.value.agents, capacity: { perModel: v.perModel, limits: v.limits } } }, "已保存并行设置");
 }
 const missingProfiles = computed(() => profiles.value.filter((p) => !p.installed));
+// Desktop and browser control (ai-auto-desktop's aad): optional, installed through osdk.
+type Desktop = { installed: boolean; version: string | null; via: "path" | "osdk" | null; spec: string };
+const desktop = ref<Desktop | null>(null);
+const desktopBusy = ref(false);
+watch(tab, (t) => {
+  if (t === "agents" && !desktop.value) void get<Desktop>("/api/desktop").then((d) => (desktop.value = d)).catch(() => {});
+}, { immediate: true });
+async function installDesktop() {
+  desktopBusy.value = true;
+  try {
+    desktop.value = await post<Desktop>("/api/desktop/install", {});
+    toast(`已安装 aad ${desktop.value.version ?? ""}`);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    desktopBusy.value = false;
+  }
+}
 type RegistryAgent = { id: string; name: string; version: string; description?: string; website?: string; added: boolean; ways: string[] };
 const registry = ref<RegistryAgent[] | null>(null);
 const registryBusy = ref("");
@@ -569,6 +587,21 @@ async function saveEdit() {
             <div v-else-if="probes[p.id].data?.effortsByModel && p.model" class="small muted">{{ p.model }} 没有思考强度设置</div>
           </div>
         </template>
+      </div>
+      <div v-if="desktop" class="card pad stack">
+        <div class="row">
+          <div class="section-title grow">桌面与浏览器控制</div>
+          <span v-if="desktop.installed" class="badge ok">已安装{{ desktop.version ? ` ${desktop.version}` : "" }}</span>
+          <span v-else class="badge">未安装</span>
+        </div>
+        <p class="muted small">
+          ai-auto-desktop（<span class="mono">aad</span>）让带命令行的 Agent 看和操作本机的桌面程序与浏览器：先读出界面结构，再对读到的元素动手。用法在内置技能 <span class="mono">desktop-control</span>：默认只看，动手前先问你，不输入密码。
+          <template v-if="desktop.installed && desktop.via === 'osdk'">在 osdk 安装目录里，omem 启动 Agent 时会把它加进 PATH。</template>
+        </p>
+        <div class="row">
+          <button class="btn ghost sm" :disabled="desktopBusy" @click="installDesktop">{{ desktopBusy ? "安装中…" : desktop.installed ? "更新到最新" : "安装" }}</button>
+          <span class="muted small">经 osdk 安装 <span class="mono">{{ desktop.spec }}</span>；终端里 <span class="mono">omem setup desktop</span> 同样可用并带环境检查</span>
+        </div>
       </div>
       <div class="card pad stack">
         <div class="row"><div class="section-title grow">ACP 注册表</div><button class="btn ghost sm" @click="loadRegistry">{{ registry ? "刷新" : "浏览" }}</button></div>

@@ -746,3 +746,12 @@ TraeX 与其他 ACP 的清理补验：
 - 设置 → 分享：列出刚才的分享（标题、哪次运行、群名、引用了什么、打开几次）；撤销后链接显示“链接无效、已撤销或已过期”。有效期改成 7 天后新建的分享显示失效时间。
 - 清空网页地址再问一次：回答里代码、记忆这类引用直接省略，文档和飞书消息的链接照常。
 - 回归：`test/shares.test.ts`（句中与句末、代码块不动、Wiki 小节、访客运行不复制个人空间、卡片多段共用一个分享、补读位置、来自飞书的消息、撤销与过期、免令牌接口只返回快照）、`test/lark.test.ts`、`test/item-evidence.test.ts`。
+
+## 桌面与浏览器控制（2026-10-30）
+
+- `omem setup desktop`：没装时经 osdk 装好 ai-auto-desktop 并打印“已安装 aad 版本”和环境检查（可用 / 降级 / 不可用及原因）；已装时再运行不重复下载。`omem setup` 的“要设置哪些部分”里有“桌面与浏览器控制”，开头一行显示 aad 是否装好；没有 osdk 时给出安装指引和发布页，不报错退出。
+- `omem diag` 里 `tools.aad` 是 `{ installed, version, via }`；网页设置 → Agent 的“桌面与浏览器控制”卡片显示同样的状态，点“安装 / 更新到最新”后变成已安装。
+- osdk 的 shims 在 PATH 上但没选用 aad 时（直接运行 `aad` 报 “no backend provides aad”），omem 启动的 Agent 里 `aad --version` 仍能运行（PATH 前面是 osdk 的安装目录）。
+- 新增的内置技能到已有的数据目录：升级后重启，技能页出现 `desktop-control` 且带 `references/aad.md`；你改过或自己建的同名技能不被覆盖，别的内置技能不受影响。
+- 让助理“看一下现在有哪些窗口”：它读技能后运行 `aad apps`，不点击不输入；让它“在浏览器里填表并点提交”：它先说明要点哪个元素，等你确认再动手，密码框不填。
+- 回归：`test/desktop-control.test.ts`（技能播种与不覆盖、Linux 资产模板、假 osdk 的安装与按目录查找、失败垫片、PATH 注入）。2026-10-30 在 Windows 本机用 aad 0.0.2 + 无界面 Chrome（临时 profile，本地假页面）验证：`AAD_CDP_PORT` 下 `aad apps` 列出页面，`describe`、`do fill`、`do click`、`find`、`capture` 结果与技能里的写法一致。macOS、Linux 的安装路径（Linux 的 musl 模板、`osdk install` 的选项键）和桌面窗口的真实操作待在那两台上验证。

@@ -331,6 +331,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 私聊指令：每分钟用 lark-cli 搜本人在单聊里发的消息，`/ai` → `lark-command` 运行：主助手读最近的私聊处理，以本人身份 `+messages-send --as user` 回在原私聊（署名，Markdown；本人身份发不了气泡和卡片），按私聊续 Agent 会话；`/ai拉群` → 以本人身份 `+chat-create`（对方 + omem 机器人），机器人在新群里用之前的私聊作上下文回答 | 已实现，模拟 lark-cli 测试覆盖；真实账号待验（建群需要 lark-cli 有建群权限） | `src/channels/lark-commands.ts`、`main.ts` |
 | 向量规模：按空间 int8 矩阵 | 已实现；17 万片段 nDCG 86.76 → 86.62，常驻 1.5GB → 0.42GB | `src/search/vectors.ts`、`scripts/bench-scale.ts` |
 | 渠道：网页、CLI、MCP、飞书机器人、飞书个人消息（只读）、Telegram、OneBot（QQ/微信桥） | 已实现；OneBot 有模拟服务端测试；飞书与 Telegram 需真实账号验收 | `src/channels` |
+| 桌面与浏览器控制：`omem setup` / `omem setup desktop` / 设置 → Agent 经 osdk 装 ai-auto-desktop 的 `aad`（`github:lejunyang/ai-auto-desktop`，Linux 带 musl 资产模板，按目录找已装的程序，识别 osdk 对未选用工具的失败垫片）；`launch` 给 Agent 进程的 PATH 前面放它的目录；内置技能 `desktop-control`（`references/aad.md`）教看→定位→动手→验证、浏览器调试端口、安全规则；`omem diag` 的 `tools.aad`；`seedBuiltinSkills` 连 `references/` 一起播种，只补缺的技能 | 已实现；假 osdk / 假 aad 测试覆盖查找与安装，Windows 上用真实 aad 0.0.2 在无界面 Chrome 里走通 apps → describe → fill → click → find → capture；macOS / Linux 的安装和桌面操作待真机 | `src/core/tools.ts`、`src/setup.ts`、`src/agents/spawn.ts`、`src/agents/specs.ts`、`skills/library/desktop-control/` |
 | v1 导入 | 已实现，合成库测试 | `src/migrate-v1.ts` |
 
 定时规则的投递目标可选择已有助理会话或已采集的飞书群。选择群后保存时建立本人所属的群会话，不发送消息、不复用访客会话；执行沿用所选会话的机器人。缺少目标的旧规则在动作阶段失败并记录原因，不再转为私发。实现：`src/rules/destinations.ts`、`actions.ts`、`web/src/views/Rules.vue`；专项测试覆盖。

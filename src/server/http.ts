@@ -1552,6 +1552,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Diagnostics and a fixed set of commands for other devices (owner only), a consistent
   // snapshot for `omem peer pull`, and forwarding to peers this instance can reach.
   server.get("/api/diag", async () => (await import("../core/peer-exec.ts")).diag(app));
+  // Desktop and browser control (ai-auto-desktop's `aad`): is it installed, which version; install or update it through osdk.
+  server.get("/api/desktop", async () => {
+    const { desktopControl } = await import("../core/tools.ts");
+    return { ...desktopControl.status(), spec: desktopControl.spec() };
+  });
+  server.post("/api/desktop/install", async () => {
+    const { desktopControl, installTool } = await import("../core/tools.ts");
+    if (!installTool("aad")) throw new HttpError(500, `安装失败：在终端运行 omem setup desktop 看详细输出（或 osdk install ${desktopControl.spec()}）`);
+    return { ...desktopControl.status(), spec: desktopControl.spec() };
+  });
   // Disk usage of the data directory (settings → 占用); the scan runs in a child process.
   server.get("/api/storage", async (req) => {
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人能查看占用");
