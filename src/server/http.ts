@@ -355,8 +355,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const o = q(z.object({ from: z.coerce.number().optional(), to: z.coerce.number().optional(), window: z.coerce.number().optional() }), req.query);
     const chat = o.window && getSource(app, id).kind === "chat";
     const r = o.window ? readSource(app, id, 1, chat ? undefined : o.window, chat ? o.window : undefined) : readSource(app, id, o.from, o.to);
-    const citedBy = all<{ page_id: string; title: string }>(app.db, "select distinct c.page_id, p.title from page_cites c join pages p on p.id = c.page_id where c.source_id = ?", id);
-    return { ...r, outline: sourceOutline(app, id), citedBy, notes: sourceNotes(app, id) };
+    // An old id of a merged duplicate opens the copy that was kept.
+    const sid = r.source.id;
+    const citedBy = all<{ page_id: string; title: string }>(app.db, "select distinct c.page_id, p.title from page_cites c join pages p on p.id = c.page_id where c.source_id = ?", sid);
+    return { ...r, outline: sourceOutline(app, sid), citedBy, notes: sourceNotes(app, sid) };
   });
   // Chat sources captured from Feishu: messages with quotes, images and reactions for a chat-like view.
   server.get("/api/sources/:id/messages", async (req) => {

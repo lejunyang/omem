@@ -72,7 +72,7 @@ const CHAT_TYPES: Record<string, string> = { group: "群聊", topic: "话题群"
 const KIND_GROUPS: Record<string, string> = {
   note: "笔记", work: "工作文件", conversation: "对话", activity: "活动", event: "日程", meeting: "会议与妙记", image: "图片", web: "网页", doc: "文档", code: "代码", chat: "聊天",
 };
-const DOC_URL = /^https?:\/\/[^/]+\/(docx|wiki|docs)\/([A-Za-z0-9]+)/;
+const DOC_URL = /^https?:\/\/[^/]+\/(docx|wiki|docs)\/([A-Za-z0-9_-]+)/;
 const hasScheme = (uri: string) => /^[a-z][a-z\d+.-]*:/i.test(uri) && !/^[a-z]:[\\/]/i.test(uri);
 const MONTH = (d: string | null | undefined) => (d && /^\d{4}-\d{2}/.test(d) ? d.slice(0, 7) : "");
 /** Sort descending by date: later months first. */

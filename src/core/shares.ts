@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { App } from "./app.ts";
 import { all, one, run } from "./db.ts";
+import { canonicalSourceId } from "../sources/duplicates.ts";
 import { HttpError, json, newId, now } from "./util.ts";
 import { accessibleSpaces, OWNER } from "./users.ts";
 import { readPage } from "../wiki/store.ts";
@@ -79,7 +80,8 @@ function clipLines(lines: string[]) {
 }
 
 function sourceItem(app: App, scope: string[] | null, id: string, from: number | null, to: number | null) {
-  const s = one<{ title: string; kind: string; uri: string; text: string; space_id: string }>(app.db, "select title, kind, uri, text, space_id from sources where id = ? and deleted_at is null", id);
+  // A merged duplicate's old id resolves to the copy that was kept (sources/duplicates.ts).
+  const s = one<{ title: string; kind: string; uri: string; text: string; space_id: string }>(app.db, "select title, kind, uri, text, space_id from sources where id = ? and deleted_at is null", canonicalSourceId(app, id));
   if (!s || !inScope(scope, s.space_id)) return null;
   const all = s.text ? s.text.split("\n") : [];
   const total = all.length;

@@ -29,6 +29,7 @@ import {
   removeSourceNote, saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceNotes, type Level,
 } from "../sources/attention.ts";
 import { catalog, nodePath, treeChildren, type TreeFilter } from "../sources/catalog.ts";
+import { canonicalSourceId } from "../sources/duplicates.ts";
 import { importText, importUrl, repoFiles, syncDirectorySpace } from "../sources/import.ts";
 import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
 import { listPages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
@@ -198,7 +199,7 @@ function resolveSource(ctx: ToolContext, ref: string, spaceId?: string | null) {
     if (scope && !scope.includes(row.space_id)) throw new HttpError(403, `本次运行不能访问空间 ${row.space_id} 的记忆`);
     return `__mem__:${id}`;
   }
-  const byId = one<{ id: string; space_id: string }>(ctx.app.db, "select id, space_id from sources where id = ?", clean);
+  const byId = one<{ id: string; space_id: string }>(ctx.app.db, "select id, space_id from sources where id = ?", canonicalSourceId(ctx.app, clean));
   if (byId && canRead(ctx, byId.space_id)) return byId.id;
   const sid = spaceId ? space(ctx, spaceId) : null;
   const rows = all<{ id: string; space_id: string; uri: string }>(
@@ -388,7 +389,8 @@ def({
         const elsewhere = h.spaceId !== ctx.spaceId && h.type !== "page" ? `〔空间 ${h.spaceId}〕` : "";
         const level = h.attention ? `〔${LEVEL_LABELS[h.attention as Level] ?? h.attention}〕` : "";
         const notes = h.notes?.length ? `\n   ${h.notes.join(" ")}` : "";
-        return `${i + 1}. ${elsewhere}${level}${where}  [${h.via.join("+")}]${notes}\n${truncate(h.snippet, 500).replace(/^/gm, "   ")}`;
+        const twins = h.sameAs?.length ? `\n   （另有 ${h.sameAs.length} 份相同内容：${h.sameAs.slice(0, 5).map((s) => s.sourceId).join("、")}${h.sameAs.length > 5 ? "…" : ""}）` : "";
+        return `${i + 1}. ${elsewhere}${level}${where}  [${h.via.join("+")}]${notes}${twins}\n${truncate(h.snippet, 500).replace(/^/gm, "   ")}`;
       })
       .join("\n\n");
   },

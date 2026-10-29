@@ -1,6 +1,7 @@
 import { prepareArchive, finishArchive, moveSource } from "./archive.ts";
 import { applyAttentionRules, effectiveLevel, levelSql, relocateNotes } from "./attention.ts";
 import { watchCatalog } from "./catalog.ts";
+import { aliasTarget } from "./duplicates.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, json, newId, now, sha256, sliceLines } from "../core/util.ts";
@@ -208,8 +209,9 @@ export function purgeSource(app: App, id: string) {
   });
 }
 
+/** A source by id; an id merged into another source (sources/duplicates.ts) gives that source. */
 export function getSource(app: App, id: string): Source {
-  const r = one<Row>(app.db, `select ${COLS} from sources where id = ?`, id);
+  const r = one<Row>(app.db, `select ${COLS} from sources where id = ?`, aliasTarget(app, id) ?? id);
   if (!r) throw new HttpError(404, `原件不存在：${id}`);
   return toSource(r);
 }
@@ -226,7 +228,7 @@ export function sourceText(app: App, id: string): string {
 /** Lines `from`–`to` (default: all); `last` takes the last that many lines instead (a chat's latest). */
 export function readSource(app: App, id: string, from?: number, to?: number, last?: number) {
   const source = getSource(app, id);
-  const text = sourceText(app, id);
+  const text = sourceText(app, source.id);
   const total = text ? text.split("\n").length : 0;
   const start = Math.max(1, last ? total - last + 1 : (from ?? 1));
   const end = Math.min(total, to ?? total);

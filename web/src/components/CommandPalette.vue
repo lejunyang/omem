@@ -71,7 +71,18 @@ const actions = computed(() => {
   return list;
 });
 // An exact id goes first: that is what was asked for.
-const rows = computed(() => [...idHits.value.map((h) => ({ idHit: h })), ...actions.value.slice(0, 1), ...hits.value.map((h) => ({ hit: h })), ...actions.value.slice(1)] as ({ idHit: IdHit } | { hit: Hit } | (typeof actions.value)[number])[]);
+/** Hits whose identical copies (“另有 N 份相同内容”) are unfolded. */
+const unfolded = ref(new Set<string>());
+const hitRows = computed(() =>
+  hits.value.flatMap((h) => {
+    const out: ({ hit: Hit; twin?: boolean } | { twins: Hit })[] = [{ hit: h }];
+    if (!h.sameAs?.length) return out;
+    out.push({ twins: h });
+    if (unfolded.value.has(h.id)) for (const s of h.sameAs) out.push({ hit: { ...h, ...s, id: `${h.id}:${s.sourceId}`, sameAs: undefined }, twin: true });
+    return out;
+  }),
+);
+const rows = computed(() => [...idHits.value.map((h) => ({ idHit: h })), ...actions.value.slice(0, 1), ...hitRows.value, ...actions.value.slice(1)] as ({ idHit: IdHit } | { hit: Hit; twin?: boolean } | { twins: Hit } | (typeof actions.value)[number])[]);
 const idLabel: Record<IdHit["type"], string> = { run: "运行", memory: "记忆", source: "原件", item: "事项", message: "消息", conversation: "对话", rule: "规则", page: "页面", notification: "通知" };
 function openId(h: IdHit) {
   if (h.type === "run") router.push(`/runs/${h.id}`);
@@ -92,6 +103,12 @@ async function askAssistant(text: string) {
 function choose(i: number) {
   const row = rows.value[i];
   if (!row) return;
+  if ("twins" in row) {
+    const next = new Set(unfolded.value);
+    next.has(row.twins.id) ? next.delete(row.twins.id) : next.add(row.twins.id);
+    unfolded.value = next;
+    return;
+  }
   state.palette = false;
   if ("idHit" in row) openId(row.idHit);
   else if ("hit" in row) {
@@ -129,7 +146,10 @@ const typeLabel: Record<string, string> = { page: "页面", memory: "记忆", ch
             </span>
             <span class="muted small mono">{{ row.idHit.id.length > 24 ? row.idHit.id.slice(0, 24) + "…" : row.idHit.id }}</span>
           </button>
-          <button v-else-if="'hit' in row" class="row-item" :class="{ on: i === active, stale: searching }" @mouseenter="active = i" @click="choose(i)">
+          <button v-else-if="'twins' in row" class="row-item twins muted small" :class="{ on: i === active }" :aria-expanded="unfolded.has(row.twins.id)" @mouseenter="active = i" @click="choose(i)">
+            <Icon :name="unfolded.has(row.twins.id) ? 'down' : 'right'" :size="12" />另有 {{ row.twins.sameAs!.length }} 份相同内容
+          </button>
+          <button v-else-if="'hit' in row" class="row-item" :class="{ on: i === active, stale: searching, twin: row.twin }" @mouseenter="active = i" @click="choose(i)">
             <span class="badge">{{ typeLabel[row.hit.type] }}</span>
             <span class="main">
               <span class="ttl ellipsis">{{ row.hit.type === "page" ? row.hit.title : row.hit.type === "memory" ? row.hit.title || "记忆" : row.hit.uri }}<span v-if="row.hit.lineStart" class="muted">:{{ row.hit.lineStart }}</span></span>
@@ -196,6 +216,13 @@ const typeLabel: Record<string, string> = { page: "页面", memory: "记忆", ch
 .rows {
   overflow: auto;
   padding: 6px;
+}
+.row-item.twins {
+  gap: 4px;
+  padding-left: 52px;
+}
+.row-item.twin {
+  padding-left: 28px;
 }
 .row-item {
   display: flex;

@@ -25,7 +25,7 @@ node scripts/eval-retrieval.ts t2_corpus.jsonl t2_queries.jsonl --home .scratch/
 node scripts/eval-retrieval.ts … --vector-only | --fts-weight 0.3
 ```
 
-2026-10-30，原件治理第一期（目录档继承、标注按比例和复核状态生效、被引用加分）前后，同一份 17,086 篇语料和 400 个问题：全文 nDCG@10 69.01 → 69.01（Recall@10 67.47、Recall@50 78.17、MRR@10 79.78 不变），全文 + 向量（权重 0.5）86.61 → 86.61（Recall@10 85.55、Recall@50 95.60、MRR@10 93.67 不变）。公开集没有关注程度、标注和引用，这组数字说明新规则在没有这些信号时不改变排序；它们对真实材料的效果要在常驻服务器上看复核和命中。耗时这次在高负载的机器上测，前后不可比（同一代码两次 FTS 平均 51 ms 和 72 ms），单独测新增的引用和标注查询每次约 0.15 ms。
+2026-10-30，原件治理第一期（目录档继承、标注按比例和复核状态生效、被引用加分、相同内容折叠）前后，同一份 17,086 篇语料和 400 个问题：全文 nDCG@10 69.01 → 69.01（Recall@10 67.47、Recall@50 78.17、MRR@10 79.78 不变），全文 + 向量（权重 0.5）86.61 → 86.61（Recall@10 85.55、Recall@50 95.60、MRR@10 93.67 不变）。公开集没有关注程度、标注和引用，这组数字说明新规则在没有这些信号时不改变排序；它们对真实材料的效果要在常驻服务器上看复核和命中。耗时这次在高负载的机器上测，前后不可比（同一代码两次 FTS 平均 51 ms 和 72 ms），单独测新增的引用和标注查询每次约 0.15 ms。
 
 `prep_t2.py`：用 huggingface_hub 下载 `C-MTEB/T2Retrieval` 的 corpus/queries parquet 和 `C-MTEB/T2Retrieval-qrels` 的 dev，`random.seed(7)` 抽 400 个有正例的问题，加 15,000 篇随机干扰文档，写成 JSONL（`{"id","text"}` 与 `{"id","text","rels":{docId:grade}}`）。
 

@@ -253,6 +253,7 @@ omem wiki export omem .repo-review/wiki     # 把 Wiki 导出成仓库里可读�
 omem hook claude|codex                      # 记录编码 Agent 会话（配在钩子里）
 omem peer invite|add|list|call / omem diag   # 多台设备：配对、诊断、远程检查，见“多台设备”
 omem lark docs-refresh [--space <id>]        # 重新读已保存的飞书文档（补下载图片、画板，导入链接的文档）
+omem lark docs-dedupe [--space <id>] [--apply]  # 合并同一篇飞书文档的 /docx/ 与 /wiki/ 两份原件，默认只列出
 omem lark docs-missing [--retry|--ignore all] # 链接里读不到的飞书文档（多半没权限）：立即重试或不再重试
 omem lark docs-check [--force]               # 检查飞书文档有没有更新（默认只查到期的）
 omem lark backfill [会话…|--name 群名片段|--kind group|--all] [--days 0]  # 回溯这些会话的历史消息（服务采集时逐页推进）
@@ -321,6 +322,7 @@ omem link                                   # 从其他设备打开网页的链�
 
 - 消息：可选“所有有新消息的会话”或“只读订阅的会话 + @我”。每个群或私聊存成一份聊天原件，第一次往前读 72 小时，之后每次只拉上次之后的新消息，包括话题里的回复；回复别人的消息会带上被引用的那句；图片、文件会下载保存；飞书文档链接会读成原件。
 - @我消息直接写入对应群原件，联系人学习照常执行；旧的 `lark:mentions` 聚合原件保留，不再追加。
+- 同一篇飞书文档只存一份：在知识库里的文档按 /wiki/ 链接保存，先用 /docx/ 链接导入、后来又从知识库读到（或反过来）时都落到同一份原件。以前留下的两份用 `omem lark docs-dedupe --apply`（远程 `sources-merge-duplicates`）合并：标注、关注程度和引用移到知识库那份，旧 id 保留为别名，记忆、页面、聊天和分享里的旧引用照常能打开。内容完全相同的不同文档不合并，检索时只显示一份，注明“另有 N 份相同内容”。
 - 飞书文档：里面的图片、画板（缩略图）、视频和附件（默认 100 MB 以内，`lark.capture.docMediaMaxMB`）都下载到本地，原件页不用登录飞书就能看；内嵌的电子表格读成表格，同步块读出原文，分栏、高亮块、按钮、勾选框和子页面列表照常显示，多维表格保留链接。文档里链接的其他飞书文档一并读进同一空间（默认往下两层，`docLinkDepth`，层数从最先给的那篇算起；每篇最多 30 篇，`docMaxLinked`），链接换成本地原件；知识库页面在知识库里的子页面也算它的链接（每页最多 50 个，`docWikiChildren`，正文没链接到的列在末尾“知识库子页面”），一次导入最多读 100 篇（`docMaxPerImport`）。更大的知识库用知识库爬取（`lark_wiki_crawl` 工具或 `omem lark wiki-crawl`）：从一个页面按目录树逐层往下读，可设层数、总量（默认 2000 篇，`wikiCrawlMaxDocs`）和每批篇数，进度存在库里，读完一批暂停等下次继续（定时规则或助理的唤醒），重启后接着读；设置 → 渠道 → 飞书文档里看进度、继续或停止。读不到的（多半是没有权限）汇总发一条通知，之后每 6 小时重试、最多 3 次（`docRetryHours`、`docRetryMax`），用完就不再提（已删除的、不是文档的链接如表格和多维表格不重试也不提醒）；不需要的用 `omem lark docs-missing --ignore` 放弃。读到后只整理新读到的那篇，原文里只改那条链接。以前存的文档用 `omem lark docs-refresh` 重新读一遍补上图片；重新读取中途重启服务会接着读。
 - 文档更新：每天检查一次到期的文档，在文档上次修改后 7 天、1 个月、3 个月、半年、一年各查一次（`docRecheckDays`），先问飞书最后修改时间，改过的才重新读并整理；超过一年没改的不再查。
 - 更早的历史：新会话里按“保存并整理”处理的（单聊、订阅的群）默认再往前补 30 天；任何会话都可以在原件页点“回溯历史”、用 `omem lark backfill --name 报警 --days 0` 一次安排一批，或对助理说“把名字带‘报警’的群全部历史读进来，图片附件也补上”。回溯时图片和附件随消息下载；以前存下却缺图片或附件的消息（采集时没下载、早期只记了 key）用 `omem lark fill-files` 补拉（远程：`peer call <机器> lark-fill-files`）。机器人在群里实时写下的消息，本人采集再读到时不会重复写。历史在单独的后台循环里按设定速度读（默认每分钟 20 页、同时 2 个会话，被限流时自动放慢；会话多时对助理说“回溯快一点”，它会调高速度），按月存成“群名（2026-09 历史）”原件，只保存可检索，不触发整理（除非要求）。
@@ -381,6 +383,7 @@ omem peer call <同伴> ide '{}'              # 只读：网页版 VS Code 的�
 omem peer call <同伴> agent-upgrade '{"id":"codex"}'   # 把已装的 ACP 适配器（如 codex-acp）升到 npm 最新版，返回前后版本
 omem peer call <同伴> lark-docs-refresh '{}'  # 让它在后台重新读飞书文档，完成后发通知；进度看 lark-docs-status
 omem peer call <同伴> lark-docs-refresh '{"metadataOnly":true,"unchecked":true}'  # 只补读从没读过知识库位置的文档的目录（不重读正文），补全原件页的知识库目录树
+omem peer call <同伴> sources-merge-duplicates '{}'  # 列出同一篇飞书文档的 /docx/ 与 /wiki/ 两份原件；'{"dryRun":false}' 合并（旧 id 保留为别名）
 omem peer call <同伴> lark-doc-import '{"url":"https://…/docx/…"}'  # 立即读一篇，返回素材下载情况和没处理掉的标签
 omem tool --peer <同伴> search query=退款     # 用本机的 Agent 整理它的库：工具在它上面执行，每次调用记成它的一条运行；见 skills/omem/SKILL.md“在另一台设备上用这个库”
 omem peer pull <同伴>                     # 经 HTTP 合并数据、附件、仓库与编码工作区（手动）

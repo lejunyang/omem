@@ -3,6 +3,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import YAML from "yaml";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
+import { canonicalSourceId } from "../sources/duplicates.ts";
 import { commitLibrary, fileAt, fileDiff, fileHistory } from "../core/git.ts";
 import { getSpace, spaceDir } from "../core/spaces.ts";
 import { HttpError, now, sha256 } from "../core/util.ts";
@@ -70,7 +71,7 @@ export function extractCites(body: string): { ref: string; lineStart: number | n
 }
 
 export function resolveSourceRef(app: App, spaceId: string, ref: string): { id: string; hash: string } | null {
-  const byId = one<{ id: string; hash: string }>(app.db, "select id, hash from sources where id = ?", ref);
+  const byId = one<{ id: string; hash: string }>(app.db, "select id, hash from sources where id = ?", canonicalSourceId(app, ref));
   if (byId) return byId;
   return (
     one<{ id: string; hash: string }>(app.db, "select id, hash from sources where space_id = ? and uri = ?", spaceId, ref) ??

@@ -882,6 +882,12 @@ const migrations: string[] = [
   create table source_cites (source_id text not null, ref text not null, kind text not null, at text not null, primary key (source_id, ref));
   create index source_cites_ref on source_cites(ref);
   `,
+  // The same Feishu document captured by its /docx/ link and as a knowledge-base page: merged into the
+  // wiki copy by an explicit job (sources/duplicates.ts); the old id stays as an alias so citations resolve.
+  `
+  create table source_aliases (alias_id text primary key, source_id text not null, reason text not null, detail text not null default '{}', created_at text not null);
+  create index source_aliases_target on source_aliases(source_id);
+  `,
 ];
 
 export type Db = DatabaseSync;

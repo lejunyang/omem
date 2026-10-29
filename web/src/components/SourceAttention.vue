@@ -91,6 +91,7 @@ const refMarkdown = (r: string) => (/^(src|mem):|^\[\[/.test(r) ? (r.startsWith(
       <span class="muted">关注程度</span>
       <UiSegmented v-model="level" size="sm" aria-label="关注程度" :options="levelOptions" @change="setLevel" />
       <span v-if="source.attention && source.attentionBy && source.attentionBy !== 'owner'" class="muted">{{ BY[source.attentionBy] }}</span>
+      <span v-if="source.level?.inherited" class="muted" title="所在目录设了关注程度；这份自己定的档在同级或更高的人定时才优先">现在随所在目录：{{ levelOptions.find((o) => o.value === source.level!.level)?.label }}{{ source.level.by === "owner" ? "（你定的）" : source.level.by === "agent" ? "（Agent 定的）" : "" }}</span>
       <span class="spacer" />
       <button class="btn ghost sm" type="button" :aria-expanded="adding" @click="adding = !adding"><Icon name="plus" :size="13" />标注</button>
     </div>

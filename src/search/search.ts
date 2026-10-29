@@ -30,6 +30,10 @@ export type Hit = {
   notes?: string[];
   /** Ids of those notes (counted for the review list, not returned). */
   noteIds?: number[];
+  /** Other sources with exactly the same text, folded into this hit (“另有 N 份相同内容”). */
+  sameAs?: { sourceId: string; uri: string; title: string; spaceId: string }[];
+  /** The source's text hash (for folding identical documents; not returned). */
+  hash?: string;
 };
 
 export type SearchOptions = {
@@ -164,9 +168,9 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
   if (match && types.has("chunk") && route.fts) {
     const sf = spaceFilter("c.space_id", opts.spaces);
     const kinds = opts.sourceKinds?.length ? ` and s.kind in (${opts.sourceKinds.map(() => "?").join(",")})` : "";
-    const rows = all<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; line_start: number; line_end: number; text: string; stitle: string; attention: string | null }>(
+    const rows = all<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; line_start: number; line_end: number; text: string; stitle: string; attention: string | null; hash: string }>(
       app.db,
-      `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, ${levelSql()} attention
+      `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, ${levelSql()} attention, s.hash
        from chunks_fts f join chunks c on c.id = f.rowid join sources s on s.id = c.source_id
        where chunks_fts match ? ${sf.sql} ${kinds}${underSql} and s.deleted_at is null ${opts.includeIgnored ? "" : `and coalesce(${levelSql()}, '') != 'ignore'`}
        order by bm25(chunks_fts, 4.0, 1.0) limit ?`,
@@ -194,6 +198,7 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
           lineEnd: r.line_end,
           snippet: snippet(r.text, query),
           ...(r.attention ? { attention: r.attention } : {}),
+          hash: r.hash,
         },
       })),
     );
@@ -281,9 +286,9 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
     const vec = await vectorSearch(app, query, opts.spaces, underIds ? pool * 5 : pool).catch(() => []);
     if (vec.length) {
       const ids = vec.map((v) => v.chunkId);
-      const rows = all<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; stitle: string; line_start: number; line_end: number; text: string; deleted_at: string | null; attention: string | null }>(
+      const rows = all<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; stitle: string; line_start: number; line_end: number; text: string; deleted_at: string | null; attention: string | null; hash: string }>(
         app.db,
-        `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, s.deleted_at, ${levelSql()} attention
+        `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, s.deleted_at, ${levelSql()} attention, s.hash
          from chunks c join sources s on s.id = c.source_id where c.id in (${ids.map(() => "?").join(",")})`,
         ...ids,
       );
@@ -310,6 +315,7 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
               lineEnd: r.line_end,
               snippet: snippet(r.text, query),
               ...(r.attention ? { attention: r.attention } : {}),
+              hash: r.hash,
             },
           })),
       );
@@ -338,7 +344,15 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
   const out: Hit[] = [];
   const perSource = new Map<string, number>();
   const cap = opts.perSource ?? 3;
+  // Different documents with identical text (copies, templates filled the same way): one is shown, the others are named on it.
+  const same = new Map<string, Hit>();
   for (const h of hits) {
+    const twin = h.type === "chunk" && h.hash && h.sourceKind !== "code" ? `${h.hash}#${h.lineStart}` : null;
+    const first = twin ? same.get(twin) : undefined;
+    if (first && first.sourceId !== h.sourceId) {
+      if (!first.sameAs?.some((s) => s.sourceId === h.sourceId)) (first.sameAs ??= []).push({ sourceId: h.sourceId!, uri: h.uri!, title: h.title, spaceId: h.spaceId });
+      continue;
+    }
     if (h.type === "chunk" || h.type === "symbol") {
       const dup = out.find(
         (o) => (o.type === "chunk" || o.type === "symbol") && o.sourceId === h.sourceId && o.lineStart! <= h.lineEnd! && h.lineStart! <= o.lineEnd!,
@@ -354,10 +368,14 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
       perSource.set(h.sourceId!, n + 1);
     }
     out.push(h);
+    if (twin) same.set(twin, h);
     if (out.length >= limit) break;
   }
   // Which notes shaped what was returned (the review list is ordered by this).
   countNoteHits(app, out.flatMap((h) => h.noteIds ?? []));
-  for (const h of out) delete h.noteIds;
+  for (const h of out) {
+    delete h.noteIds;
+    delete h.hash;
+  }
   return out;
 }

@@ -307,6 +307,11 @@ export const peerCommands: Record<string, Command> = {
       return refreshInBackground(app, a);
     },
   },
+  "sources-merge-duplicates": {
+    description: "合并同一篇飞书文档的 /docx/ 与 /wiki/ 两份原件（同一空间）：默认只列出（dryRun），dryRun: false 才合并；docx 那份变成别名，标注、关注程度和引用移到知识库那份，旧 id 的引用照常可读",
+    schema: z.object({ space: z.string().max(64).optional(), dryRun: z.boolean().default(true), limit: z.number().int().min(1).max(10_000).optional() }),
+    run: async (app, a) => (await import("../sources/duplicates.ts")).mergeDuplicateDocs(app, a),
+  },
   "lark-doc-import": {
     description: "立即读取一篇飞书文档成原件（含素材和链接的文档），返回结果；不交给整理，除非 ingest",
     schema: z.object({ url: z.string().url(), space: z.string().max(64).default("personal"), depth: z.number().int().min(0).max(5).optional(), force: z.boolean().default(true), ingest: z.boolean().default(false) }),

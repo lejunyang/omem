@@ -857,3 +857,11 @@ updated: 2026-10-28
 - **锚定**（`anchor.ts`）：新标注存 quote / hash，`upsertSource` 在文档正文变化且有行标注时调用 `relocateNotes`，找不到记 `stale_at`，找回来清掉。
 - **复核**：`reviewQueue`、`GET /api/sources/review`、`POST /api/source-notes/:id/review`、`POST /api/sources/node-level/review`；原件页“待复核”（`SourceReview.vue`），原件详情的标注带状态和确认 / 否定。
 - **工具与角色**：`annotate_source` 加 `quote`、`exclude`，被否定的不能再加；`read_source` 不列否定的、标出待确认和失效；distiller / ingest 的说明补上 quote、exclude 和按目录定级。
+
+## 10-30：重复原件合并与相同内容折叠（原件治理第一期之三）
+
+- **防止**（`lark-docs.ts` 的 `importLarkDocument`）：读到文档在知识库里时按 `/wiki/<节点>` 保存；从知识库链接读到、而库里已有同一 document id 的 /docx/ 副本时，把那份的 uri 改成 /wiki/ 链接接着用。docx 链接本来就能按 document id 找到知识库副本。
+- **合并**（`src/sources/duplicates.ts`）：`findDuplicateDocs` 按 document id、`wiki_nodes.obj_token` 或节点找同一空间里的成对副本；`mergeDuplicateDocs` 默认只列出，`dryRun: false` 时每对一个事务：标注按段落移到知识库那份（找不到记失效）、关注程度在更高的人定时带过去、各表的 `source_id`（`page_cites`、`digest_done`、`source_locations`、`source_moves`、`lark_messages`、`wiki_nodes`、`source_cites`…）和事项材料改过去、docx 那份变成保留正文的墓碑，`source_aliases` 记旧 id → 新 id 和 `detail`。入口：`omem lark docs-dedupe [--apply]`、远程 `sources-merge-duplicates`。
+- **解析旧 id**：`aliasTarget` / `canonicalSourceId`，用在 `getSource`（`readSource` 读新 id 的正文）、`read_source` 的 `resolveSource`、`/api/sources/:id`、分享快照、飞书引用链接、Wiki 引用。
+- **相同内容折叠**（`search.ts`）：非代码原件按正文 hash 和起始行折叠，留排名最高的一份，`sameAs` 列出其余；`search` 工具写“另有 N 份相同内容”，命令面板可展开。
+

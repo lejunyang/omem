@@ -552,18 +552,29 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   const chain = new Set(opts.chain ?? []).add(url);
   const unreadable = opts.unreadable ?? [];
   const budget = opts.budget ?? { left: cfg.docMaxPerImport };
-  const existing = findLarkDoc(app, spaceId, url, !!opts.archive);
-  const prev = json<Partial<LarkDocMeta>>(existing?.meta, {});
-  // Reached by several routes (given directly and as someone's link): the deepest reach wins.
-  const depth = Math.max(given, prev.depth ?? -1);
+  let existing = findLarkDoc(app, spaceId, url, !!opts.archive);
+  let prev = json<Partial<LarkDocMeta>>(existing?.meta, {});
   const doc = await fetchDoc(url);
   const { node: wiki, meta: wikiMeta } = await readWikiMetadata(app, url, prev);
-  const uri = existing ? (one<{ uri: string }>(app.db, "select uri from sources where id = ?", existing.id)?.uri ?? url) : url;
+  // One copy per document (sources/duplicates.ts): a knowledge-base page is kept under its /wiki/ link,
+  // whichever link came first — a docx link finds the wiki copy, a wiki link finds an older docx copy.
+  const wikiUrl = wiki?.nodeToken && wiki.nodeType !== "shortcut" ? `${origin}/wiki/${wiki.nodeToken}` : null;
+  if (!existing && wikiUrl) {
+    existing = findLarkDoc(app, spaceId, wikiUrl, !!opts.archive) ?? (doc.documentId ? findLarkDoc(app, spaceId, `${origin}/docx/${doc.documentId}`, !!opts.archive) : undefined);
+    prev = json<Partial<LarkDocMeta>>(existing?.meta, {});
+  }
+  // Reached by several routes (given directly and as someone's link): the deepest reach wins.
+  const depth = Math.max(given, prev.depth ?? -1);
+  let uri = existing ? (one<{ uri: string }>(app.db, "select uri from sources where id = ?", existing.id)?.uri ?? url) : (wikiUrl ?? url);
+  if (existing && wikiUrl && uri.includes("/docx/") && !one(app.db, "select 1 from sources where space_id = (select space_id from sources where id = ?) and uri = ?", existing.id, wikiUrl)) {
+    run(app.db, "update sources set uri = ? where id = ?", wikiUrl, existing.id);
+    uri = wikiUrl;
+  }
   const fetchedAt = new Date().toISOString();
   // Refresh routing metadata even when the document body has not changed.
   const deeper = given > (prev.depth ?? -1);
   if (existing && !opts.force && !deeper && prev.revision && prev.revision === doc.revision && prev.media && !Object.keys(prev.missing ?? {}).length) {
-    const meta = { ...prev, ...wikiMeta, fetchedAt, depth };
+    const meta = { ...prev, ...wikiMeta, fetchedAt, depth, ...(uri === wikiUrl ? { url: wikiUrl } : {}) };
     if (opts.archive) upsertSource(app, { archive: true, spaceId, kind: "doc", uri, title: existing.title, text: sourceText(app, existing.id), meta });
     run(app.db, "update sources set meta = ? where id = ?", JSON.stringify(meta), existing.id);
     if (wiki) linkWikiSource(app, wiki.nodeToken, existing.id);
@@ -614,7 +625,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   const keptMedia = Object.fromEntries(Object.entries(ctx.media).filter(([t]) => ctx.used.has(t)));
   const meta: LarkDocMeta = {
     ...wikiMeta,
-    url,
+    url: uri === wikiUrl ? wikiUrl : url,
     ...(prev.parentUrl || opts.chain?.size ? { parentUrl: prev.parentUrl ?? [...opts.chain!].at(-1) } : {}),
     via: "lark-cli",
     fetchedAt,
