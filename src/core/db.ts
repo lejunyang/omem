@@ -867,6 +867,21 @@ const migrations: string[] = [
   create index wiki_nodes_obj on wiki_nodes(obj_token) where obj_token is not null;
   ${FILL_WIKI_NODES}
   `,
+  // Notes anchored to their passage and reviewed by the owner (sources/attention.ts, anchor.ts):
+  // quote / quote_hash follow the passage when a document is read again, stale_at when it is gone;
+  // agents' notes are pending until the owner confirms or rejects them. How often a note shaped search
+  // results is counted per device (review order). source_cites: which answers cite a source (a light
+  // ranking boost with the pages that cite it, sources/cites.ts).
+  `
+  alter table source_notes add column quote text;
+  alter table source_notes add column quote_hash text;
+  alter table source_notes add column status text not null default 'pending';
+  alter table source_notes add column stale_at text;
+  update source_notes set status = 'confirmed' where by = 'owner';
+  create table source_note_hits (note_id integer primary key, n integer not null default 0, at text);
+  create table source_cites (source_id text not null, ref text not null, kind text not null, at text not null, primary key (source_id, ref));
+  create index source_cites_ref on source_cites(ref);
+  `,
 ];
 
 export type Db = DatabaseSync;

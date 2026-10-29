@@ -1,5 +1,5 @@
 import { prepareArchive, finishArchive, moveSource } from "./archive.ts";
-import { applyAttentionRules, effectiveLevel, levelSql } from "./attention.ts";
+import { applyAttentionRules, effectiveLevel, levelSql, relocateNotes } from "./attention.ts";
 import { watchCatalog } from "./catalog.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
@@ -108,6 +108,10 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
   }
   const id = existing?.id ?? newId("s");
   const at = now();
+  // Notes follow their passage when a document changed (chats only grow, their lines stay).
+  const before = existing && !existing.deleted_at && !["chat", "conversation", "activity"].includes(input.kind) && one(app.db, "select 1 from source_notes where source_id = ? and line_start is not null limit 1", id)
+    ? sourceText(app, id)
+    : null;
   tx(app.db, () => {
     if (existing) {
       clearIndex(app, id);
@@ -141,6 +145,7 @@ export function upsertSource(app: App, input: UpsertInput): UpsertResult {
       );
     }
     writeIndex(app, id, input.spaceId, input.kind, input.uri, input.title, text);
+    if (before !== null) relocateNotes(app, id, before, text);
   });
   if (!["code", "conversation", "activity", "work"].includes(input.kind)) applyAttentionRules(app, id, { ...input, text });
   if (prepared) finishArchive(app, id, prepared);

@@ -21,6 +21,7 @@
 原件有关注程度（重点 / 一般 / 仅检索 / 忽略）和行标注（已过时 / 有误 / 关键）：检索结果和 `read_source` 会带上，过时段落以标注写的为准。`set_source_attention`、`annotate_source` 可以改，本人定的不会被改；`attention_rules` 管理按条件批量定关注程度的规则。
 
 - **目录**：`list_sources()` 列出空间的顶层目录（知识库 `wiki:<id>`、云文档 `lark-drive`、聊天 `chat:group` / `chat:p2p`…、网站 `site:<域名>`、会议 `kind:meeting`），`list_sources(under=<节点 key>, depth)` 往下看，每行带节点 key、份数和各档数量；知识库节点是 `wn:<token>`，一个会话是 `chat:<会话id>`。`search(under=…)` 只在这个目录里查。
+- **标注**：`annotate_source(source, kind, quote | from/to, note, ref)`，kind 多一个 `exclude`（不检索：测试数据、粘贴的日志、无关段落）。位置优先给 `quote`（照抄段落开头），文档改版后能找回；过时和有误的 `ref` 写到行，检索命中时会附上那几行。你写的标注先按一半强度影响排序，本人确认后才完全生效；本人否定过的同一条不能再加。读到“原文已改动”的标注，位置可能不对，按原文判断。
 - **先按目录定，再挑例外**：整个知识库、目录或群是同一档时 `set_source_attention(under=<节点 key>, space, level, reason)`，子树连同以后进来的都按这一档；单份自己定过的档不受目录影响（本人的目录档会压过 Agent 给单份定的档）。和目录不同的几份再用 `ids` 单独设。本人定过或否定过的目录档改不了。
 
 ## 保存与整理材料

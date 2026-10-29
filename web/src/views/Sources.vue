@@ -7,6 +7,7 @@ import CodeView from "../components/CodeView.vue";
 import Skeleton from "../components/Skeleton.vue";
 import VirtualList from "../components/VirtualList.vue";
 import SourceTree from "../components/SourceTree.vue";
+import SourceReview from "../components/SourceReview.vue";
 import { readsAsDocument } from "../lib/sources";
 import UiSelect from "../components/UiSelect.vue";
 import Icon from "../components/Icon.vue";
@@ -88,6 +89,18 @@ const itemsEl = ref<HTMLElement | null>(null);
 const catalogView = computed(() => !!space.value && space.value.kind !== "repo");
 const qApplied = ref("");
 const treeRef = ref<InstanceType<typeof SourceTree> | null>(null);
+const reviewRef = ref<InstanceType<typeof SourceReview> | null>(null);
+/** The review list (agents' notes and folder levels waiting for the owner) instead of the tree. */
+const reviewing = ref(false);
+const reviewCount = ref(0);
+async function loadReviewCount() {
+  try {
+    const r = await get<{ notes: unknown[]; levels: unknown[] }>(`/api/sources/review?space=${encodeURIComponent(state.space)}`);
+    reviewCount.value = r.notes.length + r.levels.length;
+  } catch {
+    reviewCount.value = 0;
+  }
+}
 async function load() {
   const seq = ++loadSeq;
   qApplied.value = q.value;
@@ -176,12 +189,13 @@ onMounted(() => {
   void load();
   void loadDetail();
   void loadLevels();
+  if (catalogView.value) void loadReviewCount();
 });
 watch(kind, load);
 watch(level, load);
 /** After a level or a note changed: the detail, the counts and the list's badges. */
 async function attentionChanged() {
-  await Promise.all([loadDetail(), loadLevels(), treeRef.value?.reload()]);
+  await Promise.all([loadDetail(), loadLevels(), treeRef.value?.reload(), reviewing.value ? reviewRef.value?.load() : loadReviewCount()]);
   const s = detail.value?.source;
   const row = s && list.value.find((x) => x.id === s.id);
   if (row && s) Object.assign(row, { attention: s.attention, attentionBy: s.attentionBy });
@@ -327,14 +341,16 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
         </div>
         <input v-model="q" class="input" placeholder="按标题或路径筛选" />
         <div v-if="space?.kind !== 'repo'" class="kinds row wrap" role="group" aria-label="关注程度">
-          <button v-for="o in levelOptions" :key="o.value" class="kind" :class="{ on: level === o.value }" :aria-pressed="level === o.value" @click="level = o.value">{{ o.label }}</button>
+          <button v-for="o in levelOptions" :key="o.value" class="kind" :class="{ on: !reviewing && level === o.value }" :aria-pressed="!reviewing && level === o.value" @click="level = o.value; reviewing = false">{{ o.label }}</button>
+          <button class="kind review" :class="{ on: reviewing }" :aria-pressed="reviewing" title="Agent 写的标注和目录定级，按影响排序，确认或否定" @click="reviewing = !reviewing">待复核{{ reviewCount ? ` ${reviewCount}` : "" }}</button>
         </div>
         <div class="kinds row wrap">
           <button v-for="k in ['', 'doc', 'code', 'chat', 'note', 'web', 'image', 'conversation', 'work']" :key="k" class="kind" :class="{ on: kind === k }" @click="kind = k">{{ { "": "全部", doc: "文档", code: "代码", chat: "聊天", note: "笔记", web: "网页", image: "图片", conversation: "对话", work: "工作文件" }[k] }}</button>
         </div>
       </div>
       <div ref="itemsEl" class="items" @scroll.passive="onListScroll">
-        <SourceTree v-if="catalogView" ref="treeRef" :space="state.space" :kind="kind" :level="level" :q="qApplied" :current="id" @total="(n) => (total = n)" />
+        <SourceReview v-if="catalogView && reviewing" ref="reviewRef" :space="state.space" @count="(n) => (reviewCount = n)" @changed="attentionChanged" />
+        <SourceTree v-else-if="catalogView" ref="treeRef" :space="state.space" :kind="kind" :level="level" :q="qApplied" :current="id" @total="(n) => (total = n)" />
         <Skeleton v-else-if="listLoading && !list.length" :rows="8" />
         <VirtualList v-else-if="isTree" :items="tree" :item-key="(r) => (r.kind === 'dir' ? `d:${r.path}` : r.source.id)" :estimate="28">
           <template #default="{ item: r }">

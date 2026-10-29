@@ -12,7 +12,10 @@ import { fmtTime, toast } from "../store";
  * How much a source matters, and notes on its parts (outdated / wrong / key). The level decides
  * search rank and whether the source is digested; notes travel with search hits and readings.
  */
-export type SourceNote = { id: number; sourceId: string; lineStart: number | null; lineEnd: number | null; kind: "outdated" | "wrong" | "key" | "note"; note: string; ref: string | null; by: string; createdAt: string };
+export type SourceNote = {
+  id: number; sourceId: string; lineStart: number | null; lineEnd: number | null; kind: "outdated" | "wrong" | "key" | "note" | "exclude"; note: string; ref: string | null; by: string; createdAt: string;
+  quote?: string | null; status?: "pending" | "confirmed" | "rejected"; staleAt?: string | null;
+};
 
 const props = defineProps<{ source: Source; notes: SourceNote[] }>();
 const emit = defineEmits<{ changed: []; goLine: [from: number, to: number] }>();
@@ -36,7 +39,23 @@ async function setLevel(v: Level) {
   }
 }
 
-const NOTE_LABEL: Record<SourceNote["kind"], string> = { outdated: "已过时", wrong: "有误", key: "关键", note: "备注" };
+const NOTE_LABEL: Record<SourceNote["kind"], string> = { outdated: "已过时", wrong: "有误", key: "关键", note: "备注", exclude: "不检索" };
+/** An agent's note weighs at half strength until confirmed; a rejected one not at all; a stale one lost its passage. */
+function statusOf(n: SourceNote) {
+  if (n.staleAt) return { label: "原文已改动", title: "文档重新读取后找不到被标的那段，暂不参与排序", cls: "warn" };
+  if (n.by === "owner") return null;
+  if (n.status === "rejected") return { label: "已否定", title: "不影响排序，Agent 不会再加同一条", cls: "" };
+  if (n.status === "confirmed") return { label: "已确认", title: "你确认过，完全生效", cls: "ok" };
+  return { label: "待确认", title: "Agent 标的，先按一半强度影响排序；确认后完全生效（有误、不检索的段落确认后不再被检索）", cls: "" };
+}
+async function review(n: SourceNote, decision: "confirm" | "reject") {
+  try {
+    await post(`/api/source-notes/${n.id}/review`, { decision });
+    emit("changed");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
 const noteKinds = (Object.keys(NOTE_LABEL) as SourceNote["kind"][]).map((k) => ({ value: k, label: NOTE_LABEL[k] }));
 const adding = ref(false);
 const draft = ref({ kind: "outdated" as SourceNote["kind"], from: "", to: "", note: "", ref: "" });
@@ -89,12 +108,17 @@ const refMarkdown = (r: string) => (/^(src|mem):|^\[\[/.test(r) ? (r.startsWith(
       </div>
     </div>
     <ul v-if="sorted.length" class="notes">
-      <li v-for="n in sorted" :key="n.id" :class="n.kind">
-        <span class="badge" :class="{ danger: n.kind === 'wrong', warn: n.kind === 'outdated', accent: n.kind === 'key' }">{{ NOTE_LABEL[n.kind] }}</span>
+      <li v-for="n in sorted" :key="n.id" :class="[n.kind, { off: n.status === 'rejected' }]">
+        <span class="badge" :class="{ danger: n.kind === 'wrong' || n.kind === 'exclude', warn: n.kind === 'outdated', accent: n.kind === 'key' }">{{ NOTE_LABEL[n.kind] }}</span>
         <a v-if="n.lineStart !== null" href="#" class="mono" @click.prevent="emit('goLine', n.lineStart!, n.lineEnd ?? n.lineStart!)">{{ lines(n) }}</a>
         <span v-else class="muted">整份</span>
         <span class="text">{{ n.note }}<template v-if="n.ref"> · 以 <Markdown class="inline" :source="refMarkdown(n.ref)" :space="source.spaceId" /> 为准</template></span>
         <span class="muted by" :title="fmtTime(n.createdAt)">{{ n.by === "owner" ? "你" : "Agent" }}</span>
+        <span v-if="statusOf(n)" class="badge st" :class="statusOf(n)!.cls" :title="statusOf(n)!.title">{{ statusOf(n)!.label }}</span>
+        <template v-if="n.by !== 'owner' && n.status === 'pending'">
+          <button class="btn ghost sm" type="button" title="确认这条标注" @click="review(n, 'confirm')">确认</button>
+          <button class="btn ghost sm" type="button" title="否定这条标注" @click="review(n, 'reject')">否定</button>
+        </template>
         <button class="btn ghost sm icon" title="删除标注" @click="removeNote(n)"><Icon name="x" :size="12" /></button>
       </li>
     </ul>
@@ -141,8 +165,16 @@ const refMarkdown = (r: string) => (/^(src|mem):|^\[\[/.test(r) ? (r.startsWith(
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.notes .by {
+.notes .by,
+.notes .st {
   flex: none;
+}
+.notes li {
+  flex-wrap: wrap;
+}
+.notes li.off .text {
+  text-decoration: line-through;
+  color: var(--muted);
 }
 .inline,
 .inline :deep(p) {

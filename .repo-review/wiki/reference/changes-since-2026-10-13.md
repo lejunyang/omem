@@ -849,3 +849,11 @@ updated: 2026-10-28
 - **目录定级**：`source_node_levels`（`setNodeLevel` / `reviewNodeLevel` / `applyNodeLevels`），`sources.node_level` / `node_level_by` 存最近的目录档；`effectiveLevel` / `levelSql` 定实际的档（原件自己的档在同级或更高的人定时优先）。检索、计数、整理任务、ingest 都改用实际的档。
 - **接口与工具**：`GET /api/sources/tree`、`PUT /api/sources/node-level`；`list_sources(under, depth)`、`search(under)`、`set_source_attention(under)`；分级任务列出“所在目录”，`triager` 先按目录定。
 - **界面**：`web/src/components/SourceTree.vue`（懒加载、展开状态存 localStorage、行尾菜单设档、灰色节点“采集”），非仓库空间的原件页用它。
+
+## 10-30：标注治理与被引用次数（原件治理第一期之二）
+
+- **迁移**：`source_notes` 加 `quote`、`quote_hash`、`status`（pending / confirmed / rejected，本人写的迁移成 confirmed）、`stale_at`；新表 `source_note_hits`（本机统计，不同步）、`source_cites`（同步）。
+- **排序**（`attention.ts` 的 `noteFactor`、`search.ts` 的 `weigh`）：`w ^ (强度 × 比例)`，比例 = 重叠行 / 片段行，至少 0.25；强度 1 / 0.5 / 0；本人或确认过的“有误”“不检索”盖住一半以上或整份时去掉命中；过时和有误的命中附 ref 指向的前 200 字；被引用加分 `1 + 0.1 × min(1, ln(1+n)/ln(21))`（`cites.ts`，回答在 `addMessage` 记，旧回答启动时补记一次，页面取 `page_cites`）。
+- **锚定**（`anchor.ts`）：新标注存 quote / hash，`upsertSource` 在文档正文变化且有行标注时调用 `relocateNotes`，找不到记 `stale_at`，找回来清掉。
+- **复核**：`reviewQueue`、`GET /api/sources/review`、`POST /api/source-notes/:id/review`、`POST /api/sources/node-level/review`；原件页“待复核”（`SourceReview.vue`），原件详情的标注带状态和确认 / 否定。
+- **工具与角色**：`annotate_source` 加 `quote`、`exclude`，被否定的不能再加；`read_source` 不列否定的、标出待确认和失效；distiller / ingest 的说明补上 quote、exclude 和按目录定级。

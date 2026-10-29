@@ -1,8 +1,9 @@
 import type { App } from "../core/app.ts";
-import { all } from "../core/db.ts";
+import { all, one } from "../core/db.ts";
 import { matchQuery, terms } from "./tokenize.ts";
 import { vectorSearch } from "./embeddings.ts";
-import { LEVEL_WEIGHT, levelSql, NOTE_WEIGHT, notesOf, notesOn, noteText, type Level } from "../sources/attention.ts";
+import { countNoteHits, LEVEL_WEIGHT, levelSql, noteFactor, notesOf, notesOn, noteText, type Level, type SourceNote } from "../sources/attention.ts";
+import { citeBoost, citeCounts } from "../sources/cites.ts";
 import { catalog, sourcesUnder } from "../sources/catalog.ts";
 
 export type HitType = "chunk" | "page" | "memory" | "symbol";
@@ -27,6 +28,8 @@ export type Hit = {
   attention?: string;
   /** Notes on the hit's lines: outdated, wrong, key (sources/attention.ts). */
   notes?: string[];
+  /** Ids of those notes (counted for the review list, not returned). */
+  noteIds?: number[];
 };
 
 export type SearchOptions = {
@@ -95,20 +98,51 @@ export function shadowedFiles(app: App, spaces?: string[]): Map<string, Set<stri
 }
 
 /**
- * How much the owner cares about the source (focus up, reference down) and what is marked on the
- * hit's lines (outdated / wrong down, key up). The notes travel with the hit so the reader sees
- * “this part is outdated, read X instead” next to the snippet.
+ * How much the owner cares about the source (focus up, reference down), what is marked on the hit's
+ * lines and how often the source was cited. A note acts in proportion to the part of the hit it covers,
+ * an agent's at half strength until the owner confirms it (`noteFactor`); passages the owner marks (or
+ * confirms) wrong or not to search are left out. The notes travel with the hit, with the first lines of
+ * the correction they point at, so the reader sees “this part is outdated, read X instead” next to the
+ * snippet. Citations give at most ×1.1 (sources/cites.ts).
  */
-function weigh(app: App, hits: Hit[]): Hit[] {
-  const notes = notesOf(app, hits.flatMap((h) => (h.sourceId && h.type !== "symbol" ? [h.sourceId] : [])));
+function weigh(app: App, hits: Hit[], spaces?: string[]): Hit[] {
+  const ids = hits.flatMap((h) => (h.sourceId && h.type !== "symbol" ? [h.sourceId] : []));
+  const notes = notesOf(app, ids);
+  const cites = citeCounts(app, hits.flatMap((h) => (h.sourceId ? [h.sourceId] : [])));
+  const kept: Hit[] = [];
   for (const h of hits) {
     if (h.attention) h.score *= LEVEL_WEIGHT[h.attention as Level] ?? 1;
+    const cited = h.sourceId ? cites.get(h.sourceId) : 0;
+    if (cited) h.score *= citeBoost(cited);
     const on = notesOn(notes.get(h.sourceId ?? ""), h.lineStart, h.lineEnd).filter((n) => n.kind !== "note" || n.lineStart !== null);
-    if (!on.length) continue;
-    for (const n of on) if (n.kind !== "note") h.score *= NOTE_WEIGHT[n.kind];
-    h.notes = on.map(noteText);
+    if (!on.length) {
+      kept.push(h);
+      continue;
+    }
+    let drop = false;
+    for (const n of on) {
+      const f = noteFactor(n, h.lineStart, h.lineEnd);
+      if (f.drop) drop = true;
+      h.score *= f.factor;
+    }
+    if (drop) continue;
+    h.notes = on.map((n) => noteText(n) + correction(app, n, spaces));
+    h.noteIds = on.map((n) => n.id);
+    kept.push(h);
   }
-  return hits;
+  return kept;
+}
+
+/** The first lines a wrong or outdated note points at (readable spaces only), so the reader need not look them up. */
+function correction(app: App, n: SourceNote, spaces?: string[]) {
+  if ((n.kind !== "wrong" && n.kind !== "outdated") || !n.ref) return "";
+  const m = /src:([\w-]+)(?:#L(\d+)(?:-L?(\d+))?)?/.exec(n.ref);
+  if (!m) return "";
+  const s = one<{ space_id: string; text: string; deleted_at: string | null }>(app.db, "select space_id, text, deleted_at from sources where id = ?", m[1]);
+  if (!s || s.deleted_at || (spaces?.length && !spaces.includes(s.space_id))) return "";
+  const from = m[2] ? Number(m[2]) : 1;
+  const text = s.text.split("\n").slice(from - 1, m[3] ? Number(m[3]) : from + 4).join(" ").replace(/\s+/g, " ").trim();
+  return text ? ` 更正原文：“${text.slice(0, 200)}${text.length > 200 ? "…" : ""}”` : "";
 }
 
 type Ranked = { key: string; hit: Omit<Hit, "score" | "via">; rank: number; via: string; weight?: number };
@@ -299,7 +333,7 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
       } else fused.set(item.key, { ...item.hit, score: add, via: [item.via] });
     }
   const shadow = shadowedFiles(app, opts.spaces);
-  const hits = weigh(app, [...fused.values()].filter((h) => !(h.uri && shadow.get(h.spaceId)?.has(h.uri)))).sort((a, b) => b.score - a.score);
+  const hits = weigh(app, [...fused.values()].filter((h) => !(h.uri && shadow.get(h.spaceId)?.has(h.uri))), opts.spaces).sort((a, b) => b.score - a.score);
   // A symbol hit and a chunk covering the same lines are the same evidence.
   const out: Hit[] = [];
   const perSource = new Map<string, number>();
@@ -322,5 +356,8 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
     out.push(h);
     if (out.length >= limit) break;
   }
+  // Which notes shaped what was returned (the review list is ordered by this).
+  countNoteHits(app, out.flatMap((h) => h.noteIds ?? []));
+  for (const h of out) delete h.noteIds;
   return out;
 }

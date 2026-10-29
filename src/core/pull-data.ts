@@ -52,6 +52,7 @@ export const pullTables: Table[] = [
   { name: "wiki_spaces", key: ["id"], newer: "coalesce(checked_at, '')" },
   { name: "wiki_nodes", key: ["token"], newer: "coalesce(checked_at, '')" },
   { name: "source_node_levels", key: ["space_id", "node_key"], newer: "updated_at" },
+  { name: "source_cites", key: ["source_id", "ref"] },
   ...[
     ["item_events", ["item_id", "at", "kind", "text"]],
     ["memory_recalls", ["memory_id", "run_id", "agent_profile", "at", "via"]],

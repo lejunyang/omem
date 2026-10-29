@@ -23,7 +23,7 @@ import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
   addSourceNote, applyAttentionRulesToExisting, deleteAttentionRule, LEVEL_LABELS, LEVELS, levelCounts, levelOf, listAttentionRules, NOTE_KINDS, removeSourceNote,
-  saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceFilter, sourceNotes,
+  saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceFilter, sourceNotes, reviewQueue, reviewSourceNote, reviewNodeLevel,
 } from "../sources/attention.ts";
 import { defaultBaseRef, fetchBranch, git, isGitRepo, listBranches } from "../core/git.ts";
 import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePages, type PageBrief } from "../agents/jobs.ts";
@@ -252,6 +252,24 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     ownerOnly(req);
     const b = q(z.object({ kind: z.enum(NOTE_KINDS), lineStart: z.number().int().nullable().optional(), lineEnd: z.number().int().nullable().optional(), note: z.string().max(500), ref: z.string().nullable().optional() }), req.body);
     return addSourceNote(app, { sourceId: (req.params as { id: string }).id, ...b, by: "owner" });
+  });
+  // What waits for the owner: agents' notes and folder levels, by impact (sources/attention.ts reviewQueue).
+  server.get("/api/sources/review", async (req) => {
+    const o = q(z.object({ space: z.string() }), req.query);
+    if (!(scopeFor(app, who(req), [o.space]) ?? [o.space]).includes(o.space)) throw new HttpError(403, `不能访问空间 ${o.space}`);
+    return reviewQueue(app, o.space);
+  });
+  server.post("/api/source-notes/:id/review", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ decision: z.enum(["confirm", "reject"]) }), req.body);
+    reviewSourceNote(app, Number((req.params as { id: string }).id), b.decision);
+    return { ok: true };
+  });
+  server.post("/api/sources/node-level/review", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ space: z.string(), node: z.string().min(1), decision: z.enum(["confirm", "reject"]) }), req.body);
+    reviewNodeLevel(app, b.space, b.node, b.decision);
+    return { ok: true };
   });
   server.delete("/api/source-notes/:id", async (req) => {
     ownerOnly(req);
