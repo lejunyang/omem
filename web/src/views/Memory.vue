@@ -9,7 +9,7 @@ import UiSegmented from "../components/UiSegmented.vue";
 import VirtualList from "../components/VirtualList.vue";
 import UiSelect from "../components/UiSelect.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
-import { fmtTime, memoryKindLabel, openCitation, runKindLabel, state, statusLabel, toast } from "../store";
+import { fmtTime, memoryKindLabel, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 
 const tab = ref<"list" | "quality" | "recall" | "gaps">("list");
 const memories = ref<Memory[]>([]);
@@ -278,6 +278,36 @@ const gaps = ref<Gaps | null>(null);
 const gapDays = ref(7);
 async function loadGaps() {
   gaps.value = await get<Gaps>(`/api/shortcomings?days=${gapDays.value}`);
+  dream.value = await get<Dream>("/api/dream/status").catch(() => null);
+}
+// The nightly dream that works through these signals (src/agents/jobs.ts "dream").
+type Dream = { enabled: boolean; cron: string | null; next: string | null; lastDreamAt: string | null; lastRun: { id: string; status: string; at: string } | null; digestExperiences: number };
+const dream = ref<Dream | null>(null);
+const DREAM_HINT = "omem.memory.dreamHintSeen";
+const dreamHintSeen = ref((() => {
+  try {
+    return localStorage.getItem(DREAM_HINT) === "1";
+  } catch {
+    return false;
+  }
+})());
+function hideDreamHint() {
+  dreamHintSeen.value = true;
+  try {
+    localStorage.setItem(DREAM_HINT, "1");
+  } catch {}
+}
+const dreaming = ref(false);
+async function dreamNow() {
+  dreaming.value = true;
+  try {
+    await post("/api/schedules/dream/run");
+    toast("已开始整理，完成后在“运行”里看报告", "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    dreaming.value = false;
+  }
 }
 watch(tab, (t) => t === "gaps" && loadGaps());
 watch(gapDays, loadGaps);
@@ -469,6 +499,19 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
           <span class="spacer" />
           <UiSegmented v-model="gapDays" size="sm" aria-label="统计范围" :options="[{ value: 7, label: '7 天' }, { value: 30, label: '30 天' }]" />
         </div>
+        <div v-if="dream" class="row wrap small dream">
+          <span>每晚整理：</span>
+          <span v-if="dream.enabled" class="badge ok">已开启{{ dream.next ? ` · 下次 ${fmtTime(dream.next)}` : "" }}</span>
+          <span v-else class="badge warn">定时已关闭</span>
+          <span class="muted">上次整理 <router-link v-if="dream.lastRun" :to="`/runs/${dream.lastRun.id}`">{{ relTime(dream.lastRun.at) }}</router-link><template v-else>还没有过</template></span>
+          <span v-if="dream.digestExperiences" class="muted">· 存量整理写的经验记忆 {{ dream.digestExperiences }} 条待逐步合并</span>
+          <span class="spacer" />
+          <button class="btn sm" :disabled="dreaming" @click="dreamNow">立即整理一次</button>
+        </div>
+        <p v-if="dream && !dream.enabled && !gapsEmpty && !dreamHintSeen" class="small warn-text dream-hint">
+          每晚整理关着，下面这些不足没人去补。可以先点“立即整理一次”看看报告，再到 设置 → 定时任务 打开。
+          <button class="btn ghost sm" @click="hideDreamHint">知道了</button>
+        </p>
         <div v-if="gapsEmpty" class="empty small">这段时间没有发现不足。</div>
         <template v-if="gaps.notFound.length">
           <h2 class="section-title">回答说没找到</h2>
@@ -818,6 +861,16 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
 }
 .qhead {
   margin-bottom: 18px;
+}
+.dream {
+  gap: 6px 10px;
+  margin-bottom: 10px;
+}
+.dream-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
 }
 .section-title {
   margin-top: 22px;

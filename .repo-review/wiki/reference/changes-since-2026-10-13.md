@@ -849,3 +849,11 @@ updated: 2026-10-28
 - **用途**：`feedbackStats`（`GET /api/feedback/stats`）按档案和模型分本人 / 其他用户 / 访客；Agent 页首屏和档案“进化”一栏显示；`profile-jobs.ts` 的复盘证据带表情、有负面的运行优先选入；`gaps.ts` 的不足信号加负面表情（做梦和记忆页“不足”）；`diag` 的 `lark.reactions` 报近 7 天是否收到过表情事件。
 - **通知闸门**：`notify-gate.ts` 的 `ownerReactions` 先读 `feedback`；lark-cli 的解析原来读 `data.items` 和数组形式的 `operators`，真机输出是 `data.messages[].reactions = { counts, details: [{ emoji_type, operator: { operator_id } }] }`，按真机改（`reactionsBy`），`test/item-expiry.test.ts` 的模拟数据一并改成真实形状。
 - **权限与事件检查**：`lark-setup.ts` 的 `checkLarkApp` 从应用信息里多读 `event.subscribed_events`、`callback`、线上版本的 `events`；`lark-bot-check.ts` 对照 `LARK_BOT_EVENTS`（收消息、两个表情事件、可选的会议邀请）和卡片回调，`GET /api/lark/bot-check`、`POST /api/lark/bot-check/:ref/scan`（重走应用注册补齐）；设置 → 渠道 新卡片；远程命令 `lark-bot-permissions` 多返回 `events`、`callbacks`、`reactionsQuiet`。读不到订阅时用“近 7 天发了 20 条以上却没有表情事件”提示。
+
+## 10-30：做梦第一次只看 7 天、新库默认开、逐晚合并存量经验
+
+- **时间窗**：`jobs.ts` 的 `dreamSince`：没有 kv `dream_at` 时从 7 天前看起（原来是 1970，会把最近 80 条记忆、60 句话一次塞进去）。
+- **默认开**：`scheduler.ts` 的 `dream` 默认 `enabled: true`；`ensureDefaultSchedules` 是 `insert or ignore`，已有的库保持原来的开关。
+- **存量经验**：`src/memory/digest-merge.ts` 找 digest 运行写的有效 experience 记忆，按引用的第一个原件（同空间、同档案）分组，组内向量 ≥ 0.75 单链聚类（没有向量时按原件），每晚给 dreamer 最大的 4 组、每组至多 8 条；`roles/dreamer.md` 新增第 00 步。
+- **网页**：`GET /api/dream/status`；记忆 → 不足 显示开关、下次时间、上次整理、待合并条数和“立即整理一次”，关着且有不足时提示一次（看过记在本机浏览器）。
+- 手动跑一次：`omem peer call <设备> schedule-run '{"id":"dream"}'`（定时关着也能跑）。

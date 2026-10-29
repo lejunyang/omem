@@ -151,7 +151,7 @@ Channel（渠道）        Web、CLI、MCP、飞书机器人、飞书个人消�
 新材料由 `ingest` 随到随整理；整批回溯的群、一次导入的知识库是存量，由本人开的整理任务（`digest_jobs`，`src/agents/digest.ts`）一批一批地做：`triage` 交给 `triager` 按标题、目录和开头定级（默认每批 150 份），`digest` 交给 `distiller` 精读重点和一般的材料（默认每批最多 40 份、约 15 万字，重点在前，正文带行号直接附在任务里），写主题页、案例页、原件标注和必要的记忆；任务可指定一个 Agent 档案，排查经验写成它的专属记忆。每个任务同时跑 `parallel` 批（默认 1，可随时调），各批材料不重叠；`after` 让任务等另一个任务做完再开始（先分级、再精读同一批）；进度里做过后被降档的材料仍算已做，批次结束和定时任务 `digest`（每 10 分钟）补排；做过的原件按 hash 记下，内容变了会重做；连续 3 批失败自动暂停并通知。入口：`digest_sources` 工具、原件页“整理”、`omem digest`、远程 `digest-status`。`ingest` 同样会写主题页和标注、跳过仅检索和忽略的材料。
 
 ### 7. 做梦（整理）
-每晚：合并重复记忆、标记冲突（两条同时有效又互相矛盾）、过期提醒、Wiki 断链与孤立页、从运行记录提炼可复用技能建议。结果写进“整理报告”，变更走工具并可回滚（Git）。
+每晚（定时 `dream`，3:30；新库默认开，已有的库保持原来的开关）：合并重复记忆、标记冲突（两条同时有效又互相矛盾）、过期提醒、Wiki 断链与孤立页、从运行记录提炼可复用技能建议。从上次整理（kv `dream_at`）看起，第一次只看最近 7 天。存量整理（digest）写下的大批 experience 记忆按“同一原件、向量相近”分组，每晚先处理最大的几组（`src/memory/digest-merge.ts`），合并成一条可复用的结论或撤回，逐步消化。记忆页“不足”一栏显示开关、上次整理时间和待合并条数，关着且有不足时提示一次。结果写进“整理报告”，变更走工具并可回滚（Git）。
 
 ## 界面
 
@@ -266,7 +266,7 @@ Vue 3 + TypeScript，单页应用，信息架构：
 | 记忆质量：写入检查（免责式、超长、转述原件、事件复述、助理汇报、运行流水、无来源、重复）退回并说明原因；每小时盲评复核（保留/改写/撤回，可用不同模型）；对比运行（其他模型的写入只记录）；按模型统计；记忆标签与档案专属记忆 | 已实现，测试覆盖；规则用一批真实运行产生的 Agent 记忆校准过；复核与对比运行待真实模型验收 | `src/memory/quality.ts`、`roles/memory-reviewer.md`、网页“记忆 → 质量”、`omem memories` |
 | 代码仓库 Wiki：规划 → 逐页写作 → 原件变化后检查 | 已实现；zustand 12 页实测 | `roles/wiki-*.md` |
 | 巡检（到期提醒不调模型；关注/等待有新材料时才调用） | 已实现 | `roles/heartbeat.md` |
-| 简报、做梦整理、经验与偏好回灌到后续任务 | 已实现 | `roles/brief.md`、`dreamer.md`、`runner.ts` |
+| 简报、做梦整理、经验与偏好回灌到后续任务；做梦第一次只看 7 天、新库默认开、存量整理的经验记忆分组逐晚合并、记忆页显示整理状态 | 已实现；做梦部分 2026-10-30，`test/dream.test.ts` | `roles/brief.md`、`dreamer.md`、`runner.ts`、`src/agents/jobs.ts`、`src/memory/digest-merge.ts` |
 | 交办编码：worktree → 检查 → 独立评审 → 确认后应用；评审不通过自动续轮（最多 3 轮），复用同一 worktree 和编码 Agent 会话；长任务 `run_agent(own_topic=true)` 开独立工作会话（飞书话题），digester 只把结论回主会话 | 已实现，演示仓库实测 | `src/agents/code.ts`、`code-chain.ts`、`agent-work.ts` |
 | 编码进度卡片：已有话题解析真实消息锚点，原卡片跨轮更新；创建/更新失败持久记录脱敏错误、有限重试和重启恢复，显式 `retry_code_progress` 恢复；自动三轮上限后持久等待本人，手动继续可到第 4 轮及以后 | 假客户端和工具回归覆盖；真实飞书待应用后验收 | `src/channels/lark-code-progress.ts`、`src/agents/code-chain.ts`、`tools.ts` |
 | 分支：评审已有分支（检出到 worktree、`reset --soft` 到分叉点，复用评审链，只出意见）、基于分支交办编码（`from_branch`）、按分支检索（分支索引空间 + 仓库同名文件让位）；网页“交办 → 评审分支”、`omem review-branch` / `branches` / `search --branch` | 已实现，测试覆盖（`test/branch-review.test.ts`，假 ACP 走完评审链）；2026-10-25；真实 Agent 与常驻服务器上的大分支待验 | `src/agents/code.ts`、`worktree-index.ts`、`src/search/search.ts`、`src/core/git.ts` |
