@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import * as vscode from "vscode";
 import type { Api } from "./api";
-import { fromPasted, omemHome, pairedPeers, type Mode } from "./connection";
+import { fromPasted, hostOmem, omemHome, pairedPeers, type Mode } from "./connection";
 
 const cfg = () => vscode.workspace.getConfiguration("omem");
 const G = vscode.ConfigurationTarget.Global;
@@ -60,6 +60,13 @@ export async function connect(api: Api, status: Status) {
         ? `omem 在这个窗口连到的机器上（${vscode.env.remoteName}）；插件要装在那边`
         : "omem 在这台电脑上；用 Remote-SSH 连到 omem 那台时也选这个",
       go: async () => {
+        // In omem's web VS Code the omem that runs it answers: no port or token to ask for.
+        const hosted = hostOmem();
+        if (hosted && (await probe(hosted.url, hosted.token)) === "ok") {
+          await cfg().update("port", undefined, G);
+          await set({ connection: "local" });
+          return true;
+        }
         // Ask only for what the default does not settle: the port when nothing answers there, a
         // token when omem has one configured.
         let port = cfg().get<number>("port") || 4317;

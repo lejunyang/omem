@@ -213,7 +213,21 @@ export const configSchema = z.object({
     .default(() => ({ tiers: defaultReviewTiers(), checks: {}, rereviewAllEvery: 2, rotation: [] })),
   approvals: z.object({ tools: z.array(z.string()).default([]), waitSeconds: z.number().int().min(0).max(50).default(40) }).default({ tools: [], waitSeconds: 40 }),
   /** Web VS Code under /ide: the official `code serve-web` behind omem's own auth (src/server/ide-web.ts). */
-  ide: z.object({ web: z.object({ command: z.string().optional() }).default({}) }).default({ web: {} }),
+  ide: z
+    .object({
+      web: z
+        .object({
+          command: z.string().optional(),
+          /** Install the repo's own VS Code extension (vscode/) into it, kept at the repo's version (on unless false). */
+          omemExtension: z.boolean().optional(),
+          /** Seed its machine settings from Remote-SSH's (or the desktop VS Code's) on this machine when it has none (on unless false). */
+          reuseSettings: z.boolean().optional(),
+          /** Copy the extensions Remote-SSH (or the desktop VS Code) installed here that fit this platform and server, each once (off unless true). */
+          reuseExtensions: z.boolean().optional(),
+        })
+        .default({}),
+    })
+    .default({ web: {} }),
   /** This instance among its peers (`omem peer`): defaults to the host name. */
   node: z.object({ id: z.string().optional() }).default({}),
   /** Memory quality: write-time checks, cross-model review, side-by-side comparison. */
