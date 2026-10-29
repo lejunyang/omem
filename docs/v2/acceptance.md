@@ -734,3 +734,4 @@ TraeX 与其他 ACP 的清理补验：
 - 回归：`test/instructions.test.ts`（新会话带说明、续轮不带；声明 `systemPrompt` 的 Agent 收到不含时间的说明，恢复时再带一次）、`test/threads.test.ts`、`test/background-sessions.test.ts`。
 - 编码续轮换新会话：交办一个要改好几轮的任务，上一轮结束时编码会话超过 100K 上下文（运行记录里上下文用量），下一轮过程第一行是“上一轮的编码会话已有 …K 上下文，这一轮换新会话”，编码 Agent 从工作分支的提交接着改，不重做；没超过时照旧接着上一轮的会话。回归：`test/code-resume.test.ts`。
 - 说明按任务裁剪：编码交办的说明里没有“怎么写记忆”“事项与本人的回复”“按任务选择 AI”等小节，主助手的对话里都在；偏好与经验里只有编码 Agent 自己的和与任务最接近的 8 条共享的（有记忆向量时），不再有手机手势、值班排查这类无关记忆；技能目录里别的技能只有名字。回归：`test/instructions.test.ts`、`test/profiles.test.ts`。
+- 按评审修改只复审相关评审项：评审后只选“架构”提出的问题点“按评审修改”，下一轮（第 3、5…轮，`rereviewAllEvery` 为 2 时）只跑架构一项，评审理由写明；同时写了补充要求、或指定了之后各轮的评审项时照常全审；第 2、4…轮全部重审。回归：`test/code-steer.test.ts` 的 “fixing chosen findings”。

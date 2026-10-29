@@ -82,6 +82,25 @@ describe("one delegation per branch", () => {
   });
 });
 
+describe("fixing chosen findings", () => {
+  it("re-reviews only the checks that raised them, all of them every few rounds or with the owner's own words", async () => {
+    const { app, code } = delegation("done");
+    setRunOutput(app, code.id, { coderSessionId: "coder-1" });
+    app.config.review.rereviewAllEvery = 3;
+    const arch = finding(app, code.id, "major", "接口两边对不上");
+    run(app.db, "update reviews set check_name = 'review-arch' where id = (select review_id from review_findings where id = ?)", arch);
+    const next = await startFix(app, code.id, { findingIds: [arch] }, "owner");
+    expect(next.input).toMatchObject({ round: 2, reviewOnly: ["review-arch"] });
+    run(app.db, "update runs set status='done' where id=?", next.id);
+    // Round 3 of every 3: everything again.
+    const third = await startFix(app, next.id, { findingIds: [arch] }, "owner");
+    expect(third.input.reviewOnly).toBeUndefined();
+    run(app.db, "update runs set status='done' where id=?", third.id);
+    const fourth = await startFix(app, third.id, { findingIds: [arch], text: "顺便把空态也改了" }, "owner");
+    expect(fourth.input.reviewOnly).toBeUndefined();
+  });
+});
+
 describe("another model each review round", () => {
   it("keeps each check's own model in round 1, then walks the rotation, offset per check", async () => {
     const app = testApp();

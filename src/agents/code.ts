@@ -537,9 +537,10 @@ ${input.task}
     // lead one step lighter when the change turned out small. Weighed once, on the first round.
     const estimate = getRun(app, run.id).output.reviewEstimate as ReviewEstimate | undefined;
     plan = await refineReviewPlan(app, plan, { task: input.task, diff: diffs.join("\n\n"), tierNamed: !!input.reviewTier, estimate }, (p) => askModel(app, p, { timeoutMs: 90_000, signal: ctx.signal }));
-  } else if (plan.lead && input.reviewOnly?.length) {
+  } else if (input.reviewOnly?.length) {
+    // Named by review-lead, or the checks whose findings the owner chose to fix (review-fix.ts).
     const only = plan.checks.filter((c) => input.reviewOnly!.includes(c));
-    if (only.length) plan = { ...plan, checks: only, reasons: [...plan.reasons, `评审负责人安排这一轮只复审受影响的：${only.join("、")}`] };
+    if (only.length) plan = { ...plan, checks: only, reasons: [...plan.reasons, `这一轮只复审要改的问题所在的评审项：${only.join("、")}（每 ${app.config.review.rereviewAllEvery} 轮全部重审）`] };
   }
   ctx.output({ reviewPlan: plan });
   const { askPlan, reviewRound } = await import("./review-chain.ts");

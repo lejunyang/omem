@@ -132,9 +132,14 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     const chain = codeChainFor(app, into) ?? (into.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? null;
     const extraInput = { ...(branchReview ? { fromReview: root.id } : {}), ...(req.reviewExecution ? { reviewExecution: req.reviewExecution } : {}) };
     const intoRuns = workRuns(app, into.id);
-    if (!chain) return accepted(queueStandaloneFix(app, intoRuns[0], into.id, task, userId, { ...extraInput, ...(req.review ? { roundReview: req.review } : {}) }));
+    // Fixing chosen findings: the next round re-reviews only the checks that raised them, and every
+    // check every `rereviewAllEvery` rounds (as when review-lead names them). The owner's own words,
+    // or the checks the owner picked for the next rounds, leave the plan as it is.
+    const every = app.config.review.rereviewAllEvery;
+    const reviewOnly = chosen.length && !req.text?.trim() && !req.review?.checks?.length && (intoRuns.length + 1) % every !== 0 ? [...new Set(chosen.map((f) => f.check_name))] : undefined;
+    if (!chain) return accepted(queueStandaloneFix(app, intoRuns[0], into.id, task, userId, { ...extraInput, ...(req.review ? { roundReview: req.review } : {}), reviewOnly }));
     const sessionId = intoRuns.map((id) => (getRun(app, id).output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
-    const next = queueNextCodeRound(app, chain, task, { resumeSessionId: sessionId, manual: true, roundReview: req.review, reviewExecution: req.reviewExecution, extraInput });
+    const next = queueNextCodeRound(app, chain, task, { resumeSessionId: sessionId, manual: true, roundReview: req.review, reviewExecution: req.reviewExecution, reviewOnly, extraInput });
     if (!next) throw new HttpError(409, "原交办记录不完整，无法继续");
     return accepted(next.run);
   }
@@ -184,7 +189,7 @@ export function queueStandaloneFix(app: App, rootId: string, expectedLastId: str
       kind: "code", spaceId: last.spaceId, userId,
       title: truncate(`交办第 ${rounds.length + 1} 轮：${task.split("\n")[0]}`, 80),
       // The last round's Git work is its own; this round does only what it is asked.
-      input: { ...last.input, sync: undefined, syncOnly: undefined, syncResume: undefined, moveToTarget: undefined, ...extraInput, task, continueFrom: rootId, resumeSessionId: sessionId, round: rounds.length + 1 },
+      input: { ...last.input, sync: undefined, syncOnly: undefined, syncResume: undefined, moveToTarget: undefined, reviewOnly: undefined, ...extraInput, task, continueFrom: rootId, resumeSessionId: sessionId, round: rounds.length + 1 },
       parentId: last.parentId,
     });
     app.db.exec("COMMIT");
