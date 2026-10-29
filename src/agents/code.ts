@@ -388,6 +388,14 @@ ${input.task}
       const profile = resolveRunProfile(app, { actor: { role: "coder" }, ...executionArgs(input.execution) });
       const expected = { profile: profile.id, model: profile.model, effort: profile.effort };
       if (previous.output.coderAI && JSON.stringify(previous.output.coderAI) !== JSON.stringify(expected)) resumeCoder = undefined;
+      // Every call of a resumed round carries the session's whole history (files read, checks, earlier
+      // rounds): past the limit a new session reads the branch instead.
+      const held = previous.output.coderContext as { used: number; size: number } | undefined;
+      const limit = app.config.sessions.codeResumeMaxTokens;
+      if (resumeCoder && held && held.used > limit) {
+        resumeCoder = undefined;
+        ctx.event("status", { phase: "coder", text: `上一轮的编码会话已有 ${Math.round(held.used / 1000)}K 上下文（超过 ${Math.round(limit / 1000)}K），这一轮换新会话，从工作分支接着做` });
+      }
     }
     // Later rounds resume this session, so it is kept even on backends that would discard it.
     const runCoder = (task: string, resumeSessionId?: string) => runRole(app, {
@@ -405,11 +413,17 @@ ${input.task}
     });
     // A new session on a later round has not seen the original task: give it along with this round's.
     const first = continueFrom && !retried && chain?.rounds[0] && chain.rounds[0] !== run.id ? String(getRun(app, chain.rounds[0]).input.task ?? "") : "";
-    const freshTask = first ? `# 原始任务
-
-${first}
-
-${coderTask}` : coderTask;
+    // …and what the earlier rounds did, which it reads from the branch rather than from their history.
+    const before = previousId ? String(getRun(app, previousId).output.coderSummary ?? "") : "";
+    const commits = worktrees.map((wt) => {
+      const log = git(workDirOf(wt), ["log", "--oneline", "-30", `${wt.start ?? wt.base}..HEAD`]);
+      return log.ok && log.stdout.trim() ? `${multi ? `${wt.space}：\n` : ""}${log.stdout.trim()}` : "";
+    }).filter(Boolean).join("\n\n");
+    const freshTask = first ? [
+      `# 原始任务\n\n${first}`,
+      `# 之前各轮已经做的\n\n这是一个新会话。之前各轮的改动都在工作区里${commits ? `，工作分支上的提交：\n\n${fence("", commits)}` : ""}\n\n需要时用 git log / git diff 看具体改动，不要重做。${before ? `\n\n上一轮编码 Agent 的说明：\n\n${truncate(before, 4000)}` : ""}`,
+      coderTask,
+    ].join("\n\n") : coderTask;
     let coder: Awaited<ReturnType<typeof runCoder>>;
     try {
       coder = await runCoder(resumeCoder ? coderTask : freshTask, resumeCoder);
@@ -431,7 +445,7 @@ ${coderTask}` : coderTask;
       coder = await runCoder(notesText(notes), coder.sessionId);
       reply = `${reply}\n\n## 按本人补充继续\n\n${replyOf(coder)}`;
     }
-    ctx.output({ coderSummary: reply.trim(), coderAI: coder.ai, coderAgent: coder.profileId, coderSessionId: coder.sessionId });
+    ctx.output({ coderSummary: reply.trim(), coderAI: coder.ai, coderAgent: coder.profileId, coderSessionId: coder.sessionId, coderContext: coder.contextUsage });
     return reply;
   }
 

@@ -751,3 +751,10 @@ updated: 2026-10-28
 - **只发一次**：`AgentRequest` 分成 `system`（常驻说明）和 `prompt`（这一轮）。`types.ts` 的 `withInstructions`：新会话、且说明没有作为系统提示时，才把说明放在第一条消息前面；接上的会话只发这一轮。`runner.ts` 的 `runRole`（编码续轮、补充说明那一轮、多 Agent 话题续轮、规则、会议、`/ai`）、`sessions.ts`、`background-sessions.ts`、`dispatch.ts`（CLI）、`doubao.ts` 都走它。
 - **系统提示**：Agent 在 `initialize` 里声明 `sessionCapabilities.systemPrompt` 时，`acp.ts` 在 `session/new`、`session/resume`、`session/load` 带上 `systemPrompt`（append 模式）。实测 codex-acp 2.5.0 把它变成 Codex 的 developer instructions，换进程恢复后仍在，恢复时改不了（沿用建会话时的）；claude-agent-acp 0.99.0 按进程设置，所以恢复时也要带。ACP SDK 1.8.0 不认这个字段，发送时原样带出。
 - **时间移出说明**：`prepareRun` 的 `system` 不再含当前时间（`now` 单独给），每轮消息开头写“现在：…”，说明在会话里保持不变，后台会话池直接用它做身份。
+
+## 10-30：编码续轮的会话太长就换新会话
+
+同一条交办续 9 轮时，编码会话的上下文涨到 100K–240K，后几轮每次模型调用都要带着它（10-27 两条链，编码 Agent 的调用平均约 150K）。
+
+- `config.sessions.codeResumeMaxTokens`（默认 100000，0 表示每轮都新开）。`code.ts` 的 `code()`：上一轮结束时记下 `output.coderContext`（后端 `usage_update` 的最新占用），超过上限就不再 `resumeSessionId`，运行里写一行“换新会话”。
+- 新会话的任务：原始任务、“之前各轮已经做的”（每个工作区 `git log --oneline <start>..HEAD` 最多 30 条，上一轮编码说明前 4000 字）、这一轮的评审要求；改动从工作分支读。旧交办（没有提交的）同样提示改动在工作区里。

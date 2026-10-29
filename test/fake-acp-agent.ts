@@ -196,6 +196,8 @@ ${JSON.stringify({ tools, error: res.isError ? res.content : null })}`);
           return { stopReason: "end_turn" as const };
         }
         if (!check) {
+          // FAKE_CODER_LOG: what the coder was sent, one JSON line per turn.
+          if (process.env.FAKE_CODER_LOG) appendFileSync(process.env.FAKE_CODER_LOG, JSON.stringify({ session: p.sessionId, prompt }) + "\n");
           appendFileSync(join(cwds.get(p.sessionId)!, "refund.ts"), `export const round = ${prompt.includes("上一轮评审要求修改") ? 2 : 1};
 `);
           await say("已实现退款金额计算。");
