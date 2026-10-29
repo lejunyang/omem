@@ -9,26 +9,21 @@ type Field = { id: string; label: string; type: "text" | "textarea" | "number" |
 
 export const GENERIC_KINDS = ["form", "chart"];
 
+// Buttons, inputs and the card are omem's own classes (web/src/styles.css, /plugins/_sdk/omem.css for
+// plain HTML pages); only the layout and the chart are here.
 const CSS = `
-.ob { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius, 10px); padding: 16px 18px; display: grid; gap: 12px; min-width: 0; color: var(--ink); font: inherit; }
+.ob { display: grid; gap: 12px; min-width: 0; color: var(--ink); }
 .ob h3 { margin: 0; font: 600 16px/1.35 var(--serif); }
 .ob p { margin: 0; }
 .ob .ob-muted { color: var(--muted); font-size: 12.5px; }
 .ob .ob-field { display: grid; gap: 6px; min-width: 0; }
 .ob .ob-label { font-weight: 550; overflow-wrap: anywhere; }
 .ob .ob-req { color: var(--danger); margin-left: 2px; }
-.ob input, .ob textarea { font: inherit; color: inherit; width: 100%; min-width: 0; border: 1px solid var(--line-strong); background: var(--panel); border-radius: 8px; padding: 7px 10px; box-sizing: border-box; }
-.ob textarea { resize: vertical; }
-.ob input:focus, .ob textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .ob .ob-options { display: flex; flex-wrap: wrap; gap: 6px; }
-.ob .ob-opt { font: inherit; color: inherit; border: 1px solid var(--line-strong); background: var(--panel); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
-.ob .ob-opt[aria-pressed="true"], .ob .ob-opt[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-.ob .ob-opt:disabled { cursor: default; }
-.ob button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ob .ob-opt { border-radius: 999px; font-weight: 400; }
+.ob .ob-opt[aria-pressed="true"], .ob .ob-opt[aria-checked="true"], .ob .ob-opt[aria-pressed="true"]:hover, .ob .ob-opt[aria-checked="true"]:hover { border-color: var(--ink); background: var(--ink); color: var(--bg); }
 .ob .ob-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ob .ob-spacer { flex: 1; }
-.ob .ob-submit { font: inherit; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); border-radius: 8px; padding: 6px 14px; cursor: pointer; }
-.ob .ob-submit:disabled { opacity: 0.6; cursor: default; }
 .ob .ob-err { color: var(--danger); font-size: 12.5px; }
 .ob .ob-value { color: var(--ink-2); overflow-wrap: anywhere; }
 .ob svg { width: 100%; height: auto; display: block; overflow: visible; }
@@ -112,9 +107,9 @@ function form(doc: Document, block: BlockView, submit: (answers: Record<string, 
     const label = h(doc, "span", { class: "ob-label", id: labelId }, f.label, f.required ? h(doc, "span", { class: "ob-req", "aria-hidden": "true" }, "*") : null);
     if (!open) return h(doc, "div", { class: "ob-field" }, label, h(doc, "span", { class: "ob-value" }, shown[f.id] || "（没填）"));
     let control: HTMLElement;
-    if (f.type === "textarea") control = h(doc, "textarea", { rows: 3, placeholder: f.placeholder, "aria-labelledby": labelId, oninput: (e) => (values[f.id] = (e.target as HTMLTextAreaElement).value) });
+    if (f.type === "textarea") control = h(doc, "textarea", { class: "textarea", rows: 3, placeholder: f.placeholder, "aria-labelledby": labelId, oninput: (e) => (values[f.id] = (e.target as HTMLTextAreaElement).value) });
     else if (f.type === "text" || f.type === "number")
-      control = h(doc, "input", { type: f.type === "number" ? "number" : "text", placeholder: f.placeholder, "aria-labelledby": labelId, oninput: (e) => (values[f.id] = (e.target as HTMLInputElement).value) });
+      control = h(doc, "input", { class: "input", type: f.type === "number" ? "number" : "text", placeholder: f.placeholder, "aria-labelledby": labelId, oninput: (e) => (values[f.id] = (e.target as HTMLInputElement).value) });
     else {
       // Choices are buttons (single: radio group; several: toggles; scale: 1–5).
       const options = f.type === "scale" ? ["1", "2", "3", "4", "5"] : f.options;
@@ -129,7 +124,7 @@ function form(doc: Document, block: BlockView, submit: (answers: Record<string, 
       for (const o of options) {
         const b = h(doc, "button", {
           type: "button",
-          class: "ob-opt",
+          class: "btn sm ob-opt",
           ...(multi ? {} : { role: "radio" }),
           onclick: () => {
             if (multi) {
@@ -149,7 +144,7 @@ function form(doc: Document, block: BlockView, submit: (answers: Record<string, 
     return h(doc, "div", { class: "ob-field" }, label, control);
   });
   const err = h(doc, "span", { class: "ob-err", role: "alert" });
-  const button = h(doc, "button", { type: "button", class: "ob-submit" }, d.submit_label || "提交") as HTMLButtonElement;
+  const button = h(doc, "button", { type: "button", class: "btn primary" }, d.submit_label || "提交") as HTMLButtonElement;
   button.addEventListener("click", async () => {
     button.disabled = true;
     err.textContent = "";
@@ -163,7 +158,7 @@ function form(doc: Document, block: BlockView, submit: (answers: Record<string, 
   return h(
     doc,
     "section",
-    { class: "ob", "aria-label": d.title },
+    { class: "ob card pad", "aria-label": d.title },
     h(doc, "h3", {}, d.title),
     d.intro ? h(doc, "p", { class: "ob-muted" }, d.intro) : null,
     ...fields,
@@ -233,5 +228,5 @@ function chart(doc: Document, block: BlockView, W: number) {
     h(doc, "summary", {}, "看数据"),
     h(doc, "table", {}, h(doc, "thead", {}, h(doc, "tr", {}, h(doc, "th", {}, ""), ...d.series.map((ser) => h(doc, "th", {}, ser.name)))), h(doc, "tbody", {}, ...d.labels.map((l, i) => h(doc, "tr", {}, h(doc, "th", {}, l), ...d.series.map((ser) => h(doc, "td", { class: "num" }, `${fmt(ser.values[i])}${d.unit ?? ""}`)))))),
   );
-  return h(doc, "section", { class: "ob", "aria-label": d.title }, h(doc, "h3", {}, d.title), legend, svg, d.note ? h(doc, "p", { class: "ob-muted" }, d.note) : null, table);
+  return h(doc, "section", { class: "ob card pad", "aria-label": d.title }, h(doc, "h3", {}, d.title), legend, svg, d.note ? h(doc, "p", { class: "ob-muted" }, d.note) : null, table);
 }

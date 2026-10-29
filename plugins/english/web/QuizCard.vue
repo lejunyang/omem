@@ -56,8 +56,8 @@ function mark(id: string) {
       <li v-for="(it, n) in block.data.items" :key="it.id" class="item" :class="mark(it.id)?.cls">
         <div class="meta row small">
           <span class="num">{{ n + 1 }}</span>
-          <span class="tag">{{ TYPE_LABEL[it.type] ?? it.type }}{{ it.type === "translate" ? (it.direction === "zh-en" ? " · 中译英" : " · 英译中") : "" }}</span>
-          <span class="tag">{{ it.level }}</span>
+          <span class="badge">{{ TYPE_LABEL[it.type] ?? it.type }}{{ it.type === "translate" ? (it.direction === "zh-en" ? " · 中译英" : " · 英译中") : "" }}</span>
+          <span class="badge">{{ it.level }}</span>
           <span class="spacer" />
           <span v-if="mark(it.id)" class="mark" :class="mark(it.id)!.cls">{{ mark(it.id)!.text }}</span>
         </div>
@@ -86,13 +86,13 @@ function mark(id: string) {
         <div v-else-if="it.type === 'cloze'" class="cloze">
           <p v-if="it.prompt" class="small muted">{{ it.prompt }}</p>
           <p class="sentence">
-            {{ clozeParts(it)[0] }}<input v-model="answers[it.id]" class="field blank" :disabled="!open" :aria-label="`第 ${n + 1} 题的空`" autocomplete="off" spellcheck="false" />{{ clozeParts(it)[1] }}
+            {{ clozeParts(it)[0] }}<input v-model="answers[it.id]" class="input blank" :disabled="!open" :aria-label="`第 ${n + 1} 题的空`" autocomplete="off" spellcheck="false" />{{ clozeParts(it)[1] }}
           </p>
         </div>
 
-        <input v-else-if="it.type === 'dictation'" v-model="answers[it.id]" class="field" :disabled="!open" placeholder="写下听到的句子" autocomplete="off" spellcheck="false" :aria-label="`第 ${n + 1} 题`" />
+        <input v-else-if="it.type === 'dictation'" v-model="answers[it.id]" class="input" :disabled="!open" placeholder="写下听到的句子" autocomplete="off" spellcheck="false" :aria-label="`第 ${n + 1} 题`" />
 
-        <textarea v-else v-model="answers[it.id] as string" class="field" rows="2" :disabled="!open" :placeholder="it.direction === 'zh-en' ? '用英文写' : '用中文写'" :aria-label="`第 ${n + 1} 题`" />
+        <textarea v-else v-model="answers[it.id] as string" class="textarea" rows="2" :disabled="!open" :placeholder="it.direction === 'zh-en' ? '用英文写' : '用中文写'" :aria-label="`第 ${n + 1} 题`" />
 
         <div v-if="!open && results.get(it.id)" class="answer small">
           <p v-if="it.type !== 'choice'">
@@ -194,9 +194,12 @@ function mark(id: string) {
   cursor: pointer;
   overflow-wrap: anywhere;
 }
+.option:hover:not(:disabled) {
+  background: var(--hover);
+}
 .option.on {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
 }
 .option.right {
   border-color: var(--ok);

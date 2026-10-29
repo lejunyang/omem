@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import Skeleton from "../../../web/src/components/Skeleton.vue";
 import { SKILL_LABEL, type Snapshot } from "./types";
 
 /** Levels, the last 14 days and what to work on, from english_snapshot. */
@@ -39,13 +40,13 @@ const width = (rating: number) => `${Math.max(4, Math.min(100, ((rating - 600) /
       <div v-if="snap.weak.length">
         <p class="small muted">薄弱点</p>
         <p class="points">
-          <span v-for="w in snap.weak.slice(0, 8)" :key="w.point" class="tag" :title="`见过 ${w.seen} 次，正确率 ${pct(w.accuracy)}`">{{ w.point.replace(/^[a-z]+:/, "") }}</span>
+          <span v-for="w in snap.weak.slice(0, 8)" :key="w.point" class="badge" :title="`见过 ${w.seen} 次，正确率 ${pct(w.accuracy)}`">{{ w.point.replace(/^[a-z]+:/, "") }}</span>
         </p>
       </div>
       <p v-if="snap.due.length" class="small muted">该复习 {{ snap.due.length }} 个知识点</p>
       <p v-if="!snap.total" class="small muted">做完第一组后，这里会显示各项水平和每天的练习量。</p>
     </template>
-    <p v-else class="small muted">读取学习情况…</p>
+    <Skeleton v-else variant="lines" :rows="4" />
   </aside>
 </template>
 

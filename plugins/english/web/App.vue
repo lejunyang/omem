@@ -3,6 +3,8 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { connect, type Omem } from "../../sdk/client";
+import Skeleton from "../../../web/src/components/Skeleton.vue";
+import UiSegmented from "../../../web/src/components/UiSegmented.vue";
 import GenericBlock from "./GenericBlock.vue";
 import Progress from "./Progress.vue";
 import QuizCard from "./QuizCard.vue";
@@ -213,7 +215,7 @@ onBeforeUnmount(() => {
     <div class="layout">
       <main class="main">
         <p v-if="error" class="card err">{{ error }}</p>
-        <p v-if="loading" class="muted">连接中…</p>
+        <Skeleton v-if="loading" variant="cards" :rows="2" />
 
         <section v-else-if="!current" class="welcome card">
           <h2>练什么场景？</h2>
@@ -221,10 +223,10 @@ onBeforeUnmount(() => {
           <div class="chips" role="group" aria-label="场景">
             <button v-for="s in SCENES" :key="s" type="button" class="chip" :class="{ on: scene === s }" :aria-pressed="scene === s" @click="scene = s">{{ s }}</button>
           </div>
-          <input v-model="scene" class="field" aria-label="或者自己写一个场景" placeholder="或者自己写一个场景" />
-          <div class="chips" role="group" aria-label="侧重">
+          <input v-model="scene" class="input" aria-label="或者自己写一个场景" placeholder="或者自己写一个场景" />
+          <div class="row wrap">
             <span class="small muted">侧重</span>
-            <button v-for="f in FOCUS" :key="f" type="button" class="chip" :class="{ on: focus === f }" :aria-pressed="focus === f" @click="focus = f">{{ f }}</button>
+            <UiSegmented v-model="focus" :options="FOCUS.map((f) => ({ value: f, label: f }))" size="sm" aria-label="侧重" />
           </div>
           <div class="row">
             <button class="btn primary" type="button" :disabled="sending || !scene.trim()" @click="start">{{ sending ? "开始中…" : "开始" }}</button>
@@ -247,7 +249,7 @@ onBeforeUnmount(() => {
             <span class="small muted">{{ drawNote || (settings.source === "bank" ? `从题库里按你的情况挑，题库还有 ${snap?.bank.total ?? 0} 题` : "陪练按刚才的结果现出，要等一两分钟") }}</span>
           </div>
           <form class="composer" @submit.prevent="say">
-            <textarea v-model="draft" class="field" rows="2" placeholder="和陪练说：太难了 / 多来点听力 / 这个词怎么用（Ctrl+Enter 发送）" aria-label="和陪练说" @keydown.enter.ctrl.prevent="say" @keydown.enter.meta.prevent="say" />
+            <textarea v-model="draft" class="textarea" rows="2" placeholder="和陪练说：太难了 / 多来点听力 / 这个词怎么用（Ctrl+Enter 发送）" aria-label="和陪练说" @keydown.enter.ctrl.prevent="say" @keydown.enter.meta.prevent="say" />
             <button class="btn" type="submit" :disabled="sending || !draft.trim()">发送</button>
           </form>
         </template>
@@ -351,6 +353,9 @@ onBeforeUnmount(() => {
 }
 .next {
   flex-wrap: wrap;
+}
+.composer .textarea {
+  min-height: 0;
 }
 .composer {
   display: flex;
