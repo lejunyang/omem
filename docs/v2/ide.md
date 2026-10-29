@@ -80,10 +80,16 @@
 - **经 `omem peer open`**：`/ide` 和 `/api/ide/open` 不走 fetch 式的转发（它跟随跳转、只转部分请求头、不转 WebSocket），而是原样转发（`src/core/peer-tunnel.ts`）：本机的 `peer open` 把请求连同 WebSocket 升级发给路上第一台直连的设备，带配对令牌；中间设备在 `/api/peers/<id>/ide…` 上同样原样转给下一台（升级请求不经过钩子，单独核对本人令牌，最多 4 跳）。目标设备上本人令牌也能进 `/ide`。所以常驻服务器经中转也能用网页版。
 - **地址**：serve-web 按请求的 Host 告诉浏览器 WebSocket 连哪里，omem 转发时要把 Host 改成它的回环端口，所以另带 `X-Forwarded-Host`（浏览器实际用的地址，经 `peer open` 时由第一跳加上、之后各跳不改）。少了它，浏览器会去连 `127.0.0.1:<serve-web 端口>`：在 omem 那台机器上碰巧能连上，换一台就是 1006 断开。
 - **开发**：Vite 的 `/ide` 代理开了 `ws`。
+- **界面语言**（`src/server/ide-locale.ts`）：VS Code 的界面文字是一个按位置取的数组（服务端的 `out/nls.messages.json`，键在 `nls.keys.json`），每一版都不同。浏览器不是英文时，serve-web 的页面从微软的 CDN 取翻译好的数组（`www.vscode-unpkg.net/nls/<提交>/<版本>/<语言>/nls.messages.js`）。2026-10 的 1.143、1.144 两版，CDN 给的数组分别有 26299、27686 项，服务端是 24284、25233 项（市场上最新的中文语言包是 1.131），按位置一取，菜单、命令面板、对话框的文字全是别处的（“粘贴”显示成“剪切”，资源管理器的标题是一句提示语）。这和装没装语言包、语言包版本无关：没有和服务端同一版的语言包可取。现在 omem 改写 serve-web 的页面，不让它去 CDN 取，改成 `/ide/_omem/nls/<提交>/<语言>.js`：按 VS Code 自己生成服务端翻译的办法（`resolveNLSConfiguration`），对这一版的每个键取已装语言包（`ide/server/extensions` 里登记的、该语言最新的一个）里同一个键的翻译，没有就用英文。语言包比服务端旧，只是新加的文字是英文，不会错位；结果按服务端提交、语言、语言包版本缓存在 `ide/nls/`，服务端或语言包一换就重新生成。没装这个语言的语言包时页面是英文，VS Code 会提示装，装好刷新后生效。语言仍按 VS Code 自己的规则定（`vscode.nls.locale` cookie，否则浏览器的 Accept-Language）。
+- **omem 插件**（`src/server/ide-setup.ts`）：每次启动 serve-web 前，把仓库 `vscode/` 的插件装进 `ide/server/extensions/omem.omem-vscode-<版本>`：用仓库里的 TypeScript 逐个文件转成 CommonJS（不做类型检查；没有 TypeScript 时用已构建的 `vscode/out`），带上 package.json、README、图标，按 VS Code 的格式登记进 `extensions.json`，清掉它扫描用户扩展的缓存。目录里记着源码摘要，摘要没变就不动，所以 omem 更新重启后第一次打开网页版时换成新的。serve-web 带着 `OMEM_URL`（这台 omem 的回环地址）、`OMEM_TOKEN`（配了令牌时）、`OMEM_HOME` 启动，扩展宿主继承这些环境变量；插件的“这台机器上的 omem”在没设 `omem.port` 时就连 `OMEM_URL`，令牌也从这里来，状态栏显示“打开这个网页版 VS Code 的 omem”。插件声明支持受限模式（`untrustedWorkspaces`），没信任文件夹时也能用。`ide.web.omemExtension: false` 不装。
+- **沿用这台机器上的设置**：网页版的服务端设置文件 `ide/server/data/Machine/settings.json`（设置里的“远程”一栏，除了只能在应用级设的项，都对网页版生效）还不存在时，从这台机器上第一个有设置的地方拿一份：Remote-SSH 的 `~/.vscode-server/data/Machine/settings.json`（Insiders 同理），否则桌面 VS Code 的用户设置。去掉 `omem.*` 几项（那边怎么连 omem 和这里无关），来源记在旁边的 `.omem-seeded.json`。之后不再同步，网页版里改的是它自己的。`ide.web.reuseSettings: false` 不拿。
+- **沿用扩展**（`ide.web.reuseExtensions: true`，默认关）：启动前把 Remote-SSH（`~/.vscode-server/extensions`）和桌面 VS Code（`~/.vscode/extensions`）登记的扩展里，平台对得上（通用或本机的 `<系统>-<架构>`）、`engines.vscode` 允许当前服务端版本、网页版里还没有的，各复制一份并登记。每个扩展只拿一次（记在 `ide/reused-extensions.json`），网页版里卸掉的不会再装回来。不直接共用那边的目录：两个不同版本的服务端会各自改 `extensions.json`、升级或清理对方要用的扩展。
+- **遗留的服务端**：serve-web 被强杀时，它启动的服务端（`server-main.js`）不一定跟着退出（常驻服务器上见过只剩服务端在跑）。启动前按 `--server-data-dir <omem 的 ide/server>` 和 `--server-base-path /ide` 认出这类进程并结束。
+- **终端**：终端经管理连接（同一条 WebSocket）走，第一次建终端时服务端才启动 pty host 并写 `ptyhost.log`。本机（Windows）直连和经 `omem peer open` 一跳转发都试过：新建终端、运行命令正常；文件夹没被信任（受限模式）时会先问一次，点“取消”终端照样打开。常驻服务器上之前的几次会话里都没有 `ptyhost.log`，也没有 pty host 进程，说明终端请求从没到过服务端；当时菜单和对话框文字全错位，找不到“新建终端”。`omem peer call <它> ide '{}'` 的 `logs.sessions` 能看到哪次会话建过终端。
 - **限制**：
   - 网页 VS Code 自带终端和扩展宿主，等于这台机器的命令行，也限制不了只看某个目录。所以只对本人开放，成员、访客的接口白名单里没有它。
-  - 浏览器语言是中文时，serve-web 从微软拉的中文语言包可能和服务端版本对不上，界面文字错位；是上游的问题，在 VS Code 里“配置显示语言”换成英文即可。
-  - 设置和扩展不是桌面 VS Code 的：网页版的用户设置、主题、快捷键存在浏览器里（按地址分开，`peer open` 换了端口就是另一份），扩展装在 omem 那台机器的 `ide/server` 下。官方的办法是在网页版里登录同一个 GitHub 或微软账号打开“设置同步”（客户端里带着微软的同步服务配置；登录流程没有验证过）。
+  - 快捷键、代码片段、主题这类用户数据，网页版存在浏览器里（按地址分开，`peer open` 换了端口就是另一份），服务端放不进去，omem 不复制。要和桌面一致，官方的办法是在网页版里登录同一个 GitHub 或微软账号打开“设置同步”（客户端里带着微软的同步服务配置；登录流程没有验证过）。
+  - `omem peer call <它> ide '{}'` 列出这台机器上可沿用的来源：设置的键数、桌面版快捷键条数和片段文件名、各扩展的版本 / 平台 / 能不能用及原因（只有名字和数量，不含内容），以及界面翻译了多少条（`interfaceStrings`）、omem 插件是不是最新（`omemExtension`）。
 
 ## 三、VS Code 插件（第一版已实现）
 

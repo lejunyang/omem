@@ -142,7 +142,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 | 清理交办留下的工作区和没确认的交办 | 跟助手说“把没确认的交办清理一下”：它先列出每次交办的仓库、分支、改了几个文件（还有没对应交办的遗留工作区，要的话连旧交办应用后留下的接收工作区），你同意哪些就只丢弃哪些（这次交办新建、没推送的分支一起删）。进行中的交办不动；事项结束时它的交办占着的工作区自动归还，分支保留 |
 | 在自己的另一份仓库上交办 | 把本地路径给助手：同一个仓库（git remote 相同）已经有空间时不会再建一个，助手告诉你用哪个空间；要让那个空间改用这份目录（比如这里装好了依赖），说一声它会改关联（那个空间还有没应用的交办时要先清理） |
 | 在 VS Code 里处理评审 | 装 `vscode/` 里的插件（`pnpm run package` 打出 .vsix）：打开交办的工作区后，评审问题挂在代码行上，线程标题点“改 / 暂不改 / 不改”；选中代码 `Ctrl+Alt+A` 提问或记修改点；侧栏“修改单”点“开始修改”续一轮；侧栏“交办”的 ＋ 写任务文档交办；状态栏看轮次和过程。经 Remote-SSH 打开时插件直接连那台机器上的 omem |
-| 不装 VS Code 也在浏览器里看交办的代码 | 运行页“在 VS Code 中打开”旁的齿轮里选“网页版 VS Code”（同一处能看用的是哪个 VS Code 命令行，找不到时填路径）：新标签页里就是这台机器上交办的工作区。用的是官方 `code serve-web`（机器上要有 VS Code 或它的命令行），omem 代理并鉴权，只对你开放；经 `omem peer open` 看常驻服务器时也能用 |
+| 不装 VS Code 也在浏览器里看交办的代码 | 运行页“在 VS Code 中打开”旁的齿轮里选“网页版 VS Code”（同一处能看用的是哪个 VS Code 命令行，找不到时填路径）：新标签页里就是这台机器上交办的工作区。用的是官方 `code serve-web`（机器上要有 VS Code 或它的命令行），omem 代理并鉴权，只对你开放；经 `omem peer open` 看常驻服务器时也能用。浏览器是中文时界面用已装语言包按键翻译（语言包比服务端旧，没翻到的显示英文，不会错位）；omem 自己的插件已经装好并连上这台 omem；网页版还没有自己的设置时，拿这台机器上 Remote-SSH（或桌面 VS Code）的设置做初始值（`ide.web.reuseSettings`），`ide.web.reuseExtensions: true` 时再把那边装的、适合这台机器和这一版的扩展各复制一份 |
 | 用 VS Code 看交办的代码 | 运行页点“在 VS Code 中打开”：本机直接打开工作区，从别的电脑看时第一次填一下那台机器的 SSH 主机名，之后经 Remote-SSH 打开；改动在源代码管理面板里。齿轮里可换 Insiders 或 Cursor |
 | 大型需求：文档、群聊、代码分支、要对照的源仓库归到一处 | 说“建一个『退款改造』事项，把这些文档、群和分支挂上去”，或在事项详情的“材料”区添加；之后说“评审这个事项的分支”，评审者会读这些材料，评审结果、分支和结论都挂回事项，从事项点进运行页 |
 | 告诉 omem 哪些材料重要、哪些过时或没用 | 原件页给每份选“重点关注 / 一般 / 仅检索 / 忽略”，过时或关键的段落加标注（写清以哪份为准）；或在问答里说“这个知识库都是历史资料”“oncall 群的要重点看”，助手会定级、加标注或存成规则。重点的排在检索前面，仅检索的排后面，忽略的不再出现；过时段落命中时带着标注 |
@@ -361,7 +361,7 @@ omem peer call <同伴> update               # git pull --ff-only、安装依赖
 omem peer call <同伴> agents '{}'           # 只读：它上面的 AI 后端、ACP 适配器的已装版本、模型和探测结果
 omem peer call <同伴> search '{"query":"退款规则","limit":5}'   # 只读：Agent 的 search 工具同一套检索，看真实数据上的命中
 omem peer call <同伴> prompt '{"space":"personal","role":"coder","task":"…"}'   # 只读：预览一次运行收到的常驻说明（不含令牌）
-omem peer call <同伴> ide '{}'              # 只读：网页版 VS Code 的服务端版本、扩展与语言包、语言和终端设置、日志、进程
+omem peer call <同伴> ide '{}'              # 只读：网页版 VS Code 的服务端版本、扩展与语言包（界面按键翻译了多少）、omem 插件、可复用的设置与扩展、语言和终端设置、日志、进程
 omem peer call <同伴> lark-docs-refresh '{}'  # 让它在后台重新读飞书文档，完成后发通知；进度看 lark-docs-status
 omem peer call <同伴> lark-doc-import '{"url":"https://…/docx/…"}'  # 立即读一篇，返回素材下载情况和没处理掉的标签
 omem peer pull <同伴>                     # 经 HTTP 合并数据、附件、仓库与编码工作区（手动）
@@ -417,7 +417,7 @@ plugins/      内置插件（english：档案、出题技能、判分、学习�
 skills/library  内置技能（如 lark-messaging），首次启动播种到 library/_skills
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
 scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
-vscode/       VS Code 插件（独立依赖）：连接方式（本机 / 直接 / 本机配对的设备）、交办列表、评审问题评论线程、选中提问与修改点、发起交办；在真实 VS Code 里跑的测试在 vscode/test
+vscode/       VS Code 插件（独立依赖；omem 的网页版 VS Code 启动前从源码编译装进去，连本机 omem 不用设置）：连接方式（本机 / 直接 / 本机配对的设备）、交办列表、评审问题评论线程、选中提问与修改点、发起交办；在真实 VS Code 里跑的测试在 vscode/test
 site/         文档站（VitePress，独立依赖）：功能介绍与安装使用，截图在 site/public/screens，GitHub Pages 发布（.github/workflows/docs.yml）
 web/          Vue 3 网页
 ```

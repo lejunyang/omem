@@ -789,3 +789,15 @@ updated: 2026-10-28
 - **`ide`**：`ide-web.ts` 的 `ideWebReport`。VS Code 命令行、serve-web 下载的各版本服务端（版本、提交、`node-pty` 原生模块）、服务端数据 / 用户数据 / 扩展目录、已装扩展、语言包与服务端版本差几个小版本（`minorsBehindServer`，差得多时菜单会半中半英）、`argv.json` 的 `locale`、语言和终端相关设置、最近几次服务端日志（ptyhost / remoteagent 末尾，连接令牌已隐藏）、运行中的 serve-web 进程（`procs.ts` 的 `findProcesses`）。
 - 回归：`test/peer-commands.test.ts`（参数校验、各命令的返回形状、令牌不外泄）。
 - 验证：`omem peer call <同伴> agents '{}'` 看适配器版本；`search` 查一个真实问题；`prompt` 看说明里的偏好与经验；`ide` 看语言包版本和终端日志。
+
+## 10-30：网页版 VS Code 的界面翻译、omem 插件和沿用本机配置
+
+中文浏览器打开网页版 VS Code，几乎所有菜单、命令和对话框的文字都是别处的。原因不在语言包：serve-web 的页面从微软 CDN（`www.vscode-unpkg.net/nls/<提交>/<版本>/<语言>/nls.messages.js`）取按位置排列的界面文字，1.143、1.144 两版 CDN 给的数组比服务端多两千多项（市场上最新的中文语言包是 1.131），位置全错开。
+
+- **界面翻译**：`src/server/ide-locale.ts`。代理改写 serve-web 的工作台页面（请求页面时不要压缩），把 CDN 的脚本换成 `/ide/_omem/nls/<提交>/<语言>.js`：照 VS Code 生成服务端翻译的办法，对这一版 `nls.keys.json` 的每个键取已装语言包 `main.i18n.json` 里的翻译，没有就用英文（`translateMessages`）；语言包取 `extensions.json` 登记的、该语言最新的一个（`packFor`）；结果按提交、语言、语言包版本缓存在 `ide/nls/`（`workbenchNls`）。没有语言包、键和文字数对不上时页面用英文。1.144 + 1.131 语言包：25233 条里 20398 条有翻译。
+- **omem 插件**：`src/server/ide-setup.ts` 的 `installOmemExtension`，serve-web 启动前用仓库的 TypeScript 把 `vscode/src` 转成 CommonJS（没有 TypeScript 时用 `vscode/out`），连同 package.json、README、图标放进 `ide/server/extensions/omem.omem-vscode-<版本>` 并登记进 `extensions.json`，删掉 VS Code 的用户扩展扫描缓存；源码摘要（`.omem-source.json`）没变就跳过。`ide-web.ts` 启动 serve-web 时带 `OMEM_URL`（omem 实际监听的回环端口）、`OMEM_TOKEN`、`OMEM_HOME`；插件 `connection.ts` 的 `hostOmem()` 在没设 `omem.port` 时用它们。插件声明 `untrustedWorkspaces` 支持，受限模式下也启用。配置 `ide.web.omemExtension: false` 关掉。
+- **沿用本机配置**：`seedMachineSettings` 在网页版没有 `data/Machine/settings.json` 时，从 `~/.vscode-server`（Insiders 同理）的机器设置或桌面 VS Code 的用户设置拿一份，去掉 `omem.*`，来源记在 `.omem-seeded.json`（`ide.web.reuseSettings: false` 关掉）。`reuseExtensions`（`ide.web.reuseExtensions: true` 才做）复制 Remote-SSH 和桌面版登记的、平台和 `engines.vscode` 都合适、网页版里还没有的扩展，每个只拿一次（`ide/reused-extensions.json`）。快捷键、片段在浏览器里，不复制。
+- **遗留服务端**：启动前结束带着 omem 的 `--server-data-dir` 和 `--server-base-path /ide`、却没有 serve-web 的 `server-main.js`（`reapServers`）。
+- **`ide` 远程命令**：多了 `interfaceStrings`（每种已装语言翻译了多少条）、`omemExtension`（源码摘要和已装的是否一致）、`reuse`（各来源设置的键数、桌面版快捷键条数和片段文件名、扩展的版本 / 平台 / 能不能用；不含内容）、`lastStart`。
+- 终端：本机直连和经 `peer open` 都能建终端、跑命令；常驻服务器上之前的会话都没有 `ptyhost.log`，终端请求从没到过服务端，当时是菜单错位找不到入口。更新后用 `ide` 的 `logs.sessions` 确认。
+- 回归：`test/ide-setup.test.ts`（按键翻译与英文兜底、选语言包与重建、改写页面、插件安装 / 刷新 / 换版本 / 无编译器、设置播种、扩展沿用）、`test/ide-web.test.ts`（经代理的页面改写与翻译脚本、插件已装、环境变量）。

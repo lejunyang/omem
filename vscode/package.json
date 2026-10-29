@@ -11,6 +11,7 @@
   },
   "categories": ["Other"],
   "extensionKind": ["workspace", "ui"],
+  "capabilities": { "untrustedWorkspaces": { "supported": true }, "virtualWorkspaces": false },
   "main": "./out/extension.js",
   "activationEvents": ["onStartupFinished"],
   "contributes": {
