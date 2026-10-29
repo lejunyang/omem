@@ -38,7 +38,7 @@
 - **档案**是一个专门的处理者：做什么、用哪些技能和工具、默认后端和模型。说“建一个负责代码评审的 Agent”，或在“Agent”页新建；`/as 名称 任务` 交给它。
 - **内置角色**（编码、各评审项、整理、Wiki 写作……）也能自定义，omem 更新后可以合并或恢复源码版本（`omem roles`）。
 - **技能**是沉淀下来的做法（`library/_skills/<名>/SKILL.md`），可以挂到档案上。说“把这个做法记成技能”。
-- **内置技能**：随 omem 一起来的（`lark-messaging`、`desktop-control`……），启动时补进技能库，已有的不覆盖。`desktop-control` 教 Agent 用 ai-auto-desktop 看和操作本机的桌面程序与浏览器：先 `omem setup desktop` 装好；默认只看，动手前先问你，不输入密码。
+- **内置技能**：随 omem 一起来的（`lark-messaging`、`desktop-control`、`wiki-writing`……），启动时补进技能库，已有的不覆盖。`wiki-writing` 规定页面和案例页怎么写给人读：开头给答案，样本进表格，不写调查过程，写 Wiki 的角色都挂着它，想改写法直接在技能页改。`desktop-control` 教 Agent 用 ai-auto-desktop 看和操作本机的桌面程序与浏览器：先 `omem setup desktop` 装好；默认只看，动手前先问你，不输入密码。
 - **复盘**：每晚复盘有纠正、失败或收到表情的档案，提示词和技能的改动提成建议，等你采纳；建议 14 天没处理会过期，过期前两天提醒一次。Agent 页首屏按档案和模型统计飞书里收到的表情。
 - **多 Agent 协作**：长任务用独立会话（飞书话题），每轮交回报告后由主助手接手，决定继续、汇报或请你决定；Agent 之间可以互相请教。
 

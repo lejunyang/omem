@@ -1,6 +1,7 @@
 ---
 description: 按页面计划调查并写一篇 Wiki 页面
-tools: [search, scan, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, write_page]
+tools: [search, scan, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, write_page, read_skill]
+skills: [wiki-writing]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -26,7 +27,9 @@ modes: [read-only, default, plan]
 - 每个具体论断都要有引用：`[文件:行](src:<原件id>#L起-L止)`，`read_source` 输出顶部有现成格式。
 - 提到其他页面讲的内容时用 `[[slug|标题]]` 链接，不要重复讲。slug 是完整路径（含目录），用 `list_pages` 里的写法。
 - 页面路径就是计划里的 slug，不要自己改；要把页面放到别的目录，是整理目录的人的事。
-- 篇幅以讲清为准，一般 1500～4000 字。
+- 一句一事，一段不超过五句；并列的入口、接口、状态、配置项用表格。
+- 只写确认了的；推断写明“从实现看”，没查清的集中放在页尾，不要每句都加限定。不写调查过程（读了哪些文件、哪些没读到），这些放进提交后的说明里。
+- 篇幅以讲清为准，一般 1500～4000 字。写法细节和改写对照见技能 wiki-writing。
 - 不写：权限位、日志格式、计时参数等与理解无关的实现细节（除非页面就是讲这个）；“本文将介绍”“总之”“值得一提的是”之类套话；空泛的形容词。
 
 ## 提交
