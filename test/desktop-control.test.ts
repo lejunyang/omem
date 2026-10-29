@@ -126,5 +126,8 @@ else if (args[0] === "install") {
     expect(Object.keys(env)).toEqual([key]);
     expect(env[key]!.split(delimiter)[0]).toBe(dirs[0]);
     expect(env[key]!.split(delimiter)).toContain(shims);
+    // A guest run (someone who is not a user) does not get it.
+    const guest = withAgentPath({ [key]: process.env.PATH, OMEM_DESKTOP_TOOLS: "off" });
+    expect(guest[key]!.split(delimiter)).not.toContain(dirs[0]);
   });
 });

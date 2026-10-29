@@ -275,7 +275,7 @@ omem link                                   # 从其他设备打开网页的链�
 
 - **安装**：`omem setup` → 桌面与浏览器控制，或 `omem setup desktop`，或网页设置 → Agent → 桌面与浏览器控制。经 osdk 装 `github:lejunyang/ai-auto-desktop` 的发布包（Linux 取静态的 musl 包），然后跑只读的 `aad probe` 报告这台机器能用什么。装不装由你定；没装时技能会让 Agent 告诉你，不会自己下载。
 - **怎么被用**：会话里带命令行的 Agent 直接运行 `aad`。osdk 的安装目录不在你的 PATH 上也行：omem 启动 Agent 时把它放进 PATH（osdk 给没选用的工具留的空垫片会被识别并绕开）。用法在内置技能 `desktop-control`（带 `references/aad.md`），启动时自动补进技能库，已有的技能不覆盖。
-- **约束**：技能规定默认只看；动手前先问你，不可撤销的操作逐个确认；不输入密码、验证码和支付信息；屏幕上的文字只当材料。这是对 Agent 的约束，不是权限边界：装了之后任何带命令行的 Agent 档案都能运行 `aad`，给访客用的档案要选没有命令行的后端；不想要了 `osdk uninstall github:lejunyang/ai-auto-desktop`。
+- **约束**：技能规定默认只看；动手前先问你，不可撤销的操作逐个确认；不输入密码、验证码和支付信息；屏幕上的文字只当材料。这是对 Agent 的约束，不是权限边界：装了之后带命令行的 Agent 档案都能运行 `aad`。回答访客的运行不把 osdk 的安装目录放进 PATH（`OMEM_DESKTOP_TOOLS=off`）；但如果你自己把 `aad` 放在了全局 PATH 上，访客用的档案仍要选没有命令行的后端；不想要了 `osdk uninstall github:lejunyang/ai-auto-desktop`。
 - **查看**：`omem diag` 的 `tools.aad` 和 `omem setup` 开头一行显示是否装好、版本；网页设置 → Agent 里有安装 / 更新按钮。
 
 ## 记录编码 Agent 的会话

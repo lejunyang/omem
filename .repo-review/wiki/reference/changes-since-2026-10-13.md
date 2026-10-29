@@ -813,3 +813,4 @@ updated: 2026-10-28
 - **播种**：`seedBuiltinSkills` 以前只写 `SKILL.md`，现在整个目录复制（带 `references/`）；仍按技能名只补缺的，所以新版新增的内置技能在已有数据目录下次启动时补进，改过的不覆盖。
 - **可见**：`omem diag` 的 `tools.aad`、`omem setup` 开头的 “✓ aad”、`GET /api/desktop`、设置 → Agent 的卡片。
 - 回归：`test/desktop-control.test.ts`。Windows 上用真实 aad 0.0.2 和无界面 Chrome 验证过技能里的命令；macOS、Linux 待验。
+- **访客运行不给桌面控制**（10-30）：`prepareRun` 给访客运行的进程环境加 `OMEM_DESKTOP_TOOLS=off`，`tools.ts` 的 `withAgentPath` 见到它就不把 osdk 里 `aad` 的安装目录放进 PATH。

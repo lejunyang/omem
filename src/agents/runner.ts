@@ -382,7 +382,7 @@ export function prepareRun(
     now: `现在：${localTime(app)}`,
     parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length },
     token,
-    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: agentToolEnv(app.home, app.baseUrl, token) },
+    mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: { ...agentToolEnv(app.home, app.baseUrl, token), ...(guest ? { OMEM_DESKTOP_TOOLS: "off" } : {}) } },
     extraMcp: input.reviewCheck || input.reviewLead ? {} : spec?.mcp ?? {},
     allowWrites: input.reviewCheck || input.reviewLead ? false : spec ? spec.writes : role!.writes,
     modes: input.reviewCheck || input.reviewLead ? ["read-only", "default", "plan"] : spec ? (spec.writes ? ["acceptEdits", "default"] : ["read-only", "default", "plan"]) : role!.modes,

@@ -166,6 +166,8 @@ export function agentPathDirs(): string[] {
 
 /** `env` with the agent tool directories at the front of its PATH (whatever case the platform spells the key in). */
 export function withAgentPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  // Runs answering someone who is not a user (guest) do not get desktop control (runner.ts prepareRun).
+  if (env.OMEM_DESKTOP_TOOLS === "off") return env;
   const extra = agentPathDirs();
   if (!extra.length) return env;
   const key = Object.keys(env).find((k) => k.toLowerCase() === "path") ?? "PATH";
