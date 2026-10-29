@@ -185,6 +185,13 @@ async function taskLessons(app: App, spaceId: string, userId: string, spec: stri
   return lessonLines([...own, ...near]);
 }
 
+/** The lessons that bear on a task run (a conversation gets the newest instead, see prepareRun). */
+export async function lessonsForTask(app: App, input: { role: RoleName; spec?: AgentSpec; spaceId: string; userId?: string; task: string }) {
+  if (input.role === "guest" && !input.spec) return "";
+  return taskLessons(app, input.spec?.space && !input.spaceId ? input.spec.space : input.spaceId, input.userId ?? OWNER, input.spec?.name ?? (input.role === "assistant" ? null : input.role), `${input.spec?.description ?? loadRole(input.role, app).description}
+${input.task}`);
+}
+
 export type RoleRunInput = {
   execution?: Execution;
   role: RoleName;
@@ -478,9 +485,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const execution = validateExecution(app, input.execution ?? runAI(app, input.runId));
   input = { ...input, ...executionArgs(execution) };
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
-  // The lessons that bear on this task (a conversation gets the newest instead, see prepareRun).
-  const lessons = input.role === "guest" && !input.spec ? "" : await taskLessons(app, input.spec?.space && !input.spaceId ? input.spec.space : input.spaceId, input.userId ?? OWNER, input.spec?.name ?? (input.role === "assistant" ? null : input.role), `${input.spec?.description ?? loadRole(input.role, app).description}
-${input.task}`);
+  const lessons = await lessonsForTask(app, input);
   const base = prepareRun(app, { actor, lessons, spaceId: input.spaceId, spaces: input.spaces, alsoRead: input.alsoRead, readScope: input.readScope, runId: input.runId, cwd: input.cwd, profileId: input.profileId, userId: input.userId, model: input.model, effort: input.effort, shadow: input.shadow, denyTools: input.denyTools, lark: input.lark, reviewCheck: input.reviewCheck, reviewLead: input.reviewLead });
   if (execution) {
     try { validateExecution(app, { ...execution, model: base.profile.model, effort: base.profile.effort }); }

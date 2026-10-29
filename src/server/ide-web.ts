@@ -1,13 +1,14 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { request, type IncomingMessage, type Server } from "node:http";
 import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import type { App } from "../core/app.ts";
 import { resolveCommand } from "../agents/spawn.ts";
-import { freePort, killPid, reachable } from "../core/procs.ts";
+import { findProcesses, freePort, killPid, reachable } from "../core/procs.ts";
 import { OWNER, userForToken } from "../core/users.ts";
+import { truncate } from "../core/util.ts";
 
 /**
  * Web VS Code under /ide (docs/v2/ide.md): the official `code serve-web`, started on first use on a
@@ -207,4 +208,141 @@ export function attachIdeUpgrade(app: App, server: Server) {
       () => socket.end("HTTP/1.1 503 Service Unavailable\r\n\r\n"),
     );
   });
+}
+
+// ---- state, for diagnosing the web VS Code on a machine (peer command `ide`) --------------------
+
+/** JSON with comments and trailing commas (VS Code's settings.json, argv.json); null when it does not parse. */
+function readJsonc(file: string): unknown {
+  try {
+    const text = readFileSync(file, "utf8");
+    let out = "";
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (c === '"') {
+        let j = i + 1;
+        while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+        out += text.slice(i, j + 1);
+        i = j;
+      } else if (c === "/" && text[i + 1] === "/") {
+        while (i < text.length && text[i] !== "\n") i++;
+        out += "\n";
+      } else if (c === "/" && text[i + 1] === "*") {
+        i = text.indexOf("*/", i + 2);
+        if (i < 0) break;
+        i++;
+      } else out += c;
+    }
+    return JSON.parse(out.replace(/,(\s*[}\]])/g, "$1"));
+  } catch {
+    return null;
+  }
+}
+const readObject = (file: string) => (readJsonc(file) ?? null) as Record<string, any> | null;
+
+const subdirs = (path: string) => (existsSync(path) ? readdirSync(path, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : []);
+/** The connection token must not leave the machine in a command line or a log line. */
+const redactIde = (s: string) => s.replace(/(--connection-token(?:-file)?[= ])\S+/g, "$1<已隐藏>").replace(/((?:vscode-tkn|tkn)=)[^\s;&"]+/g, "$1<已隐藏>");
+function tailLines(file: string, n: number) {
+  try {
+    return readFileSync(file, "utf8").slice(-60_000).split(/\r?\n/).filter(Boolean).slice(-n).map((l) => redactIde(truncate(l, 400)));
+  } catch {
+    return [];
+  }
+}
+const minorOf = (v: string | undefined) => Number(/^\D*(\d+)\.(\d+)/.exec(v ?? "")?.[2] ?? NaN);
+
+/**
+ * What the web VS Code on this machine is made of: the CLI, the server serve-web downloaded (version,
+ * commit, terminal native modules), its data and extension directories, installed extensions and language
+ * packs against the server's version, language and terminal settings, recent server logs and the
+ * processes that run. Read-only; no tokens.
+ */
+export function ideWebReport(app: App) {
+  const root = join(app.home, "ide");
+  const serverDir = join(root, "server");
+  const dataDir = join(serverDir, "data");
+  const extDir = join(serverDir, "extensions");
+  const configured = app.config.ide.web.command?.trim() || null;
+  const cli = ideCli(app);
+  const servers = subdirs(join(root, "cli", "serve-web")).map((commit) => {
+    const dir = join(root, "cli", "serve-web", commit);
+    const product = readObject(join(dir, "product.json")) ?? {};
+    const pty = join(dir, "node_modules", "node-pty", "build", "Release");
+    return {
+      commit,
+      version: (product.version as string | undefined) ?? null,
+      quality: (product.quality as string | undefined) ?? null,
+      binary: ["bin/code-server", "bin/code-server.cmd"].find((b) => existsSync(join(dir, b))) ?? null,
+      nodePty: { installed: existsSync(join(dir, "node_modules", "node-pty")), native: existsSync(pty) ? readdirSync(pty).filter((f) => f.endsWith(".node")) : [] },
+      modifiedAt: statSync(dir).mtime.toISOString(),
+    };
+  });
+  // The one serve-web used last is the newest download.
+  servers.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+  const serverVersion = servers[0]?.version ?? undefined;
+
+  const listed = readJsonc(join(extDir, "extensions.json"));
+  const fromFile = Array.isArray(listed) ? listed.filter((e) => e?.identifier?.id).map((e) => `${e.identifier.id}@${e.version}`) : [];
+  // Without extensions.json: the folder names, `<id>-<version>`.
+  const extensions = fromFile.length ? fromFile : subdirs(extDir).map((d) => d.replace(/-(\d[\w.]*)$/, "@$1"));
+  const packs = subdirs(extDir).filter((d) => /language-pack/i.test(d)).map((d) => {
+    const pkg = readObject(join(extDir, d, "package.json"));
+    const version = pkg?.version as string | undefined;
+    return {
+      extension: d,
+      languages: ((pkg?.contributes?.localizations ?? []) as { languageId?: string }[]).map((l) => l.languageId).filter(Boolean),
+      engine: (pkg?.engines?.vscode as string | undefined) ?? null,
+      // A pack made for an older server translates the strings it knew; the newer ones come out in English or mismatched.
+      minorsBehindServer: Number.isNaN(minorOf(serverVersion)) || Number.isNaN(minorOf(version)) ? null : minorOf(serverVersion) - minorOf(version),
+    };
+  });
+  const registry = readObject(join(dataDir, "languagepacks.json")) ?? {};
+  const registered = Object.entries(registry).map(([language, v]) => ({
+    language,
+    extensions: ((v?.extensions ?? []) as { extensionIdentifier?: { id?: string }; version?: string }[]).map((e) => `${e.extensionIdentifier?.id}@${e.version}`),
+    translations: Object.keys(v?.translations ?? {}).length,
+    mainFileExists: !!v?.translations?.vscode && existsSync(v.translations.vscode),
+  }));
+
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const argvFiles = [join(serverDir, "argv.json"), join(dataDir, "argv.json"), join(dataDir, "User", "argv.json"), ...(home ? [join(home, ".vscode-server", "argv.json"), join(home, ".vscode", "argv.json")] : [])];
+  const argv = argvFiles.filter((f) => existsSync(f)).map((file) => ({ file, locale: (readObject(file)?.locale as string | undefined) ?? null }));
+  const settings = [join(dataDir, "User", "settings.json"), join(dataDir, "Machine", "settings.json")].map((file) => {
+    const all = readObject(file);
+    return { file, exists: existsSync(file), parsed: !!all, relevant: Object.fromEntries(Object.entries(all ?? {}).filter(([k]) => /locale|language|terminal|shell/i.test(k))) };
+  });
+
+  const sessions = subdirs(join(dataDir, "logs")).slice(-5).reverse().map((name) => ({ name, files: readdirSync(join(dataDir, "logs", name)).sort() }));
+  const latest = sessions[0]?.name;
+  const logs = latest ? Object.fromEntries(["ptyhost.log", "remoteagent.log"].filter((f) => existsSync(join(dataDir, "logs", latest, f))).map((f) => [f, tailLines(join(dataDir, "logs", latest, f), 15)])) : {};
+
+  let pidFile: { pid: number; alive: boolean } | null = null;
+  try {
+    const pid = Number(readFileSync(join(root, "serve-web.pid"), "utf8").trim());
+    if (pid) {
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+      pidFile = { pid, alive };
+    }
+  } catch {}
+  return {
+    cli: { name: cli?.name ?? null, path: cli?.path ?? null, configured },
+    dirs: { root, cliData: join(root, "cli"), serverData: serverDir, userData: join(dataDir, "User"), extensions: extDir },
+    servers,
+    extensions,
+    languagePacks: { installed: packs, registered },
+    locale: { argv, settings, env: Object.fromEntries(["LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"].map((k) => [k, process.env[k] ?? null])) },
+    terminal: { shell: process.env.SHELL ?? process.env.ComSpec ?? null, nodePty: servers[0]?.nodePty ?? null },
+    logs: { sessions, ...logs },
+    running: {
+      own: proc && proc.exitCode === null ? { pid: proc.pid ?? null, port } : null,
+      pidFile,
+      processes: findProcesses(/serve-web|server-main\.js|bin[\\/]code-server|ptyHost/i).slice(0, 20).map((p) => ({ pid: p.pid, cmd: redactIde(truncate(p.cmd, 500)) })),
+    },
+  };
 }

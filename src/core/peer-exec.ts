@@ -8,6 +8,7 @@ import type { App } from "./app.ts";
 import { all, one } from "./db.ts";
 import { codeVersion, listPeers, nodeId } from "./peers.ts";
 import { listSchedules, nextRuns, triggerSchedule } from "./scheduler.ts";
+import { roleNames } from "./config.ts";
 import { HttpError } from "./util.ts";
 import { memoryHistory, memoryNow } from "./memory-watch.ts";
 import { vectorIndex } from "../search/vectors.ts";
@@ -399,6 +400,26 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "schedule-run": { description: "立即触发一个定时任务", schema: z.object({ id }), run: (app, a) => ({ ok: triggerSchedule(app, a.id) }) },
+  agents: {
+    description: "这台机器上的 AI 后端：命令、是否装好、ACP 适配器（npm 包）的已装版本、配置的模型和强度、缓存的探测结果（不启动 Agent）",
+    schema: z.object({}),
+    run: async (app) => (await import("./peer-inspect.ts")).agentsReport(app),
+  },
+  search: {
+    description: "只读：用 Agent 的 search 工具同一套检索（本人身份）查一个问题，返回命中的原件 id、标题、uri、类型、空间、分数和工具会给出的片段；space 缺省为所有空间",
+    schema: z.object({ query: z.string().min(1).max(500), space: z.string().max(200).optional(), limit: z.number().int().min(1).max(30).default(12) }),
+    run: async (app, a) => (await import("./peer-inspect.ts")).searchPreview(app, a),
+  },
+  prompt: {
+    description: "只读：预览一次运行会收到的常驻说明（共同约定、角色或档案、环境、偏好与经验、技能目录）；给 task 时偏好与经验按任务取最接近的；不含工具令牌，system 最多 30000 字",
+    schema: z.object({ role: z.enum(roleNames).optional(), agent: z.string().regex(/^[a-z0-9][a-z0-9-]{0,47}$/).optional(), space: z.string().min(1).max(200), task: z.string().max(4000).optional() }),
+    run: async (app, a) => (await import("./peer-inspect.ts")).promptPreview(app, a),
+  },
+  ide: {
+    description: "只读：网页版 VS Code 的状态（CLI、serve-web 下载的服务端版本和提交、数据和扩展目录、已装扩展与语言包、语言和终端相关设置、服务端日志、运行中的进程；不含令牌）",
+    schema: z.object({}),
+    run: async (app) => (await import("../server/ide-web.ts")).ideWebReport(app),
+  },
   sql: {
     description: "只读查询数据库（select / with / pragma，最多 500 行）",
     schema: z.object({ query: z.string().min(1).max(5000) }),

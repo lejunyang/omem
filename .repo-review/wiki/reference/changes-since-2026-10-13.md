@@ -778,3 +778,14 @@ updated: 2026-10-28
 
 - **`prompt` 事件**：`types.ts` 的 `sessionPrompt`（包住 `withInstructions`）每轮记一条：说明怎么发的（`system` 系统提示 / `message` 第一条消息 / `resumed` 接上会话没发 / `none`）、说明字数、这一轮消息字数，新会话还有 `parts`（共同约定、角色、环境、偏好与经验条数和字数、技能目录）。`prepareRun` 算 `parts`；ACP、CLI、豆包、后台会话池、对话都经它发。
 - **网页**：`web/src/components/ContextUsage.vue`，运行详情活动区上方的“上下文”：按编码 Agent、各评审项、负责人分开，列说明组成、发出的消息、模型调用次数（同一数值重复上报只算一次）、上下文起始 → 峰值、累计读入（各次调用的上下文之和）。数据来自已有的 `usage` 事件和新的 `prompt` 事件，不改接口。文档截图 `run-context`。
+
+## 10-30：只读远程命令 agents / search / prompt / ide
+
+在本机查常驻服务器上的行为，不用 ssh 上去：`omem peer call <同伴> <命令> '<json>'`，都只读，参数都校验，经中间节点转发时中间节点不用更新（`/api/peers/<id>/api/peer/exec` 原样转给目标，命令名只在目标上核对）。
+
+- **`agents`**：`peer-inspect.ts` 的 `agentsReport`。每个后端的命令、是否装好、解析到的路径、ACP 适配器 npm 包的已装版本（顺着命令的符号链接或 npm 垫片找 `node_modules` 里的 package.json，不启动 Agent；npx 档案只给包名）、配置的模型和强度、`cachedProbe`。用来确认 codex-acp 是否够新（2.5.0 起收 `systemPrompt`）。
+- **`search`**：`searchPreview`，本人身份跑和 `search` 工具同一个 `search()`，参数 `query`、`space`（缺省所有空间）、`limit`（最多 30）；返回原件 id、标题、uri、类型、空间、行号、分数、命中通道和工具会给的片段（500 字内）。
+- **`prompt`**：`promptPreview`，`role` 或 `agent`（档案名，二选一）加 `space`，可带 `task`（`runner.ts` 新导出的 `lessonsForTask` 按任务取偏好与经验，`runRole` 同用它）。返回 `parts`、`system`（最多 30000 字）、`now`；工具令牌签发后立刻撤销，结果里没有令牌和 MCP 环境。
+- **`ide`**：`ide-web.ts` 的 `ideWebReport`。VS Code 命令行、serve-web 下载的各版本服务端（版本、提交、`node-pty` 原生模块）、服务端数据 / 用户数据 / 扩展目录、已装扩展、语言包与服务端版本差几个小版本（`minorsBehindServer`，差得多时菜单会半中半英）、`argv.json` 的 `locale`、语言和终端相关设置、最近几次服务端日志（ptyhost / remoteagent 末尾，连接令牌已隐藏）、运行中的 serve-web 进程（`procs.ts` 的 `findProcesses`）。
+- 回归：`test/peer-commands.test.ts`（参数校验、各命令的返回形状、令牌不外泄）。
+- 验证：`omem peer call <同伴> agents '{}'` 看适配器版本；`search` 查一个真实问题；`prompt` 看说明里的偏好与经验；`ide` 看语言包版本和终端日志。

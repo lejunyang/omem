@@ -41,3 +41,16 @@ export function killPid(pid: number) {
     }
   }
 }
+
+/** Running processes whose command line matches (a read-only listing: nothing is stopped). */
+export function findProcesses(match: RegExp): { pid: number; cmd: string }[] {
+  const r = process.platform === "win32"
+    ? spawnSync("powershell", ["-NoProfile", "-Command", 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }'], { encoding: "utf8", windowsHide: true, timeout: 20_000, maxBuffer: 20_000_000 })
+    : spawnSync("ps", ["-eo", "pid=,args="], { encoding: "utf8", timeout: 20_000, maxBuffer: 20_000_000 });
+  const out: { pid: number; cmd: string }[] = [];
+  for (const line of (r.stdout ?? "").split(/\r?\n/)) {
+    const m = process.platform === "win32" ? /^(\d+)\t(.*)$/.exec(line) : /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (m && Number(m[1]) !== process.pid && match.test(m[2])) out.push({ pid: Number(m[1]), cmd: m[2] });
+  }
+  return out;
+}
