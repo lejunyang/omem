@@ -735,3 +735,11 @@ updated: 2026-10-28
 - **在会议里拉机器人**：每个机器人的长连接注册 `vc.bot.meeting_invited_v1`，`botInvitedToMeeting`：本人邀请的直接 `bots/join`，别人邀请的发 `meeting-join` 卡片；设置取本人为这个机器人设的会议规则，没有就记录、回答、导入共享文档。不需要规则，`ruleId` 为 `invited`。
 - **入会事件状态**：lark-cli 先打印 ready、十几秒后才因没订阅退出，以前权限检查会误报“正在接收”。现在监听要稳定 45 秒才算在接收，45 秒内退出的不算；没在接收就每分钟轮询。轮询能用时，权限检查把它写成说明，不算缺项。
 
+
+## 10-30：设置页“占用”
+
+常驻服务器的数据目录到了几十 GB，要知道是飞书文档、群聊附件还是数据库占的，才能决定要不要压缩图片和视频。
+
+- **统计**（新增 `src/core/storage-scan.ts`）：顶层各项递归求和（不跟随符号链接）；`files/` 每个文件按引用归来源——`lark_messages.resources` 和 kv `lark_res:*` 是聊天附件，原件 `meta.media` 是在线文档里下载的图片和附件，`meta.original` 按原件 uri 是否 `lark:` 分聊天附件或导入原件，没人引用的单列——再按扩展名分图片、视频、音频、文档、压缩包、其他；数据库用 `dbstat` 按表（索引并入所属表）汇总，表名归到原件、切块、全文索引、代码、飞书、运行、会话、记忆、Wiki、事项几个模块，原件按 `kind` 加来处（`lark:`、`directoryRoot`、链接）统计正文、切块和向量字节，另报 `freelist` 空闲页。
+- **运行方式**（`src/core/storage.ts`）：`dbstat` 要读遍所有页（本机 1 GB 的库约 10 秒），放到子进程里跑，只读连接，结果 JSON 存 kv `storage_report`，重启后还在；同一时间只跑一个。没用 worker 线程：`node --watch` 下 worker 会多发模块跟踪消息，而且子进程的内存不算在服务进程里。
+- **接口与网页**：`GET /api/storage`、`POST /api/storage/scan`（只有本人）；`web/src/components/StorageUsage.vue`，设置页新标签“占用”，统计中每 3 秒刷新。

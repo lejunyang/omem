@@ -10,12 +10,13 @@ import UiCheckbox from "../components/UiCheckbox.vue";
 import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
 import PluginsSettings from "../components/PluginsSettings.vue";
+import StorageUsage from "../components/StorageUsage.vue";
 import { fmtTime, kindLabel, loadSpaces, state, toast } from "../store";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 
 type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string };
 type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
-const tab = ref<"spaces" | "agents" | "schedules" | "search" | "lark" | "plugins" | "about">("spaces");
+const tab = ref<"spaces" | "agents" | "schedules" | "search" | "lark" | "plugins" | "storage" | "about">("spaces");
 const config = ref<any>(null);
 const profiles = ref<Profile[]>([]);
 const home = ref("");
@@ -484,7 +485,7 @@ async function saveEdit() {
   <div class="page">
     <div class="page-head"><div><h1>设置</h1><p v-if="home" class="mono small">数据目录：{{ home }}</p></div></div>
     <div class="tabs">
-      <button v-for="[k, l] in [['spaces', '空间'], ['agents', 'Agent'], ['schedules', '定时任务'], ['search', '检索'], ['lark', '渠道'], ['plugins', '插件'], ['about', '外观与说明']]" :key="k" :class="{ on: tab === k }" @click="tab = k as any">{{ l }}</button>
+      <button v-for="[k, l] in [['spaces', '空间'], ['agents', 'Agent'], ['schedules', '定时任务'], ['search', '检索'], ['lark', '渠道'], ['plugins', '插件'], ['storage', '占用'], ['about', '外观与说明']]" :key="k" :class="{ on: tab === k }" @click="tab = k as any">{{ l }}</button>
     </div>
 
     <section v-if="tab === 'spaces'" class="stack">
@@ -896,6 +897,9 @@ async function saveEdit() {
 
     <section v-else-if="tab === 'plugins'" class="stack">
       <PluginsSettings />
+    </section>
+    <section v-else-if="tab === 'storage'" class="stack">
+      <StorageUsage />
     </section>
     <section v-else-if="tab === 'about'" class="stack">
       <div class="field"><span>主题</span><UiSegmented v-model="state.theme" aria-label="主题" :options="[{ value: 'auto', label: '跟随系统' }, { value: 'light', label: '浅色' }, { value: 'dark', label: '深色' }]" /></div>

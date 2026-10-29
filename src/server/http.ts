@@ -1532,6 +1532,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Diagnostics and a fixed set of commands for other devices (owner only), a consistent
   // snapshot for `omem peer pull`, and forwarding to peers this instance can reach.
   server.get("/api/diag", async () => (await import("../core/peer-exec.ts")).diag(app));
+  // Disk usage of the data directory (settings → 占用); the scan runs in a child process.
+  server.get("/api/storage", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能查看占用");
+    return (await import("../core/storage.ts")).storageStatus(app);
+  });
+  server.post("/api/storage/scan", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能查看占用");
+    const m = await import("../core/storage.ts");
+    void m.startStorageScan(app);
+    return m.storageStatus(app);
+  });
   server.get("/api/peer/commands", async () => {
     const { peerCommands } = await import("../core/peer-exec.ts");
     return Object.fromEntries(Object.entries(peerCommands).map(([k, c]) => [k, c.description]));

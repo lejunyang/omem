@@ -51,7 +51,7 @@ omem service start        # 后台常驻（崩溃自动重启）；stop / restar
 omem service enable       # 开机自启
 ```
 
-数据目录默认 `~/.omem`（`--home` 或 `OMEM_HOME` 可改）：`config.json` 是配置，`omem.db` 是索引与记录，`library/` 是 Wiki 的 Git 仓库，`files/` 存原始文件，`runs/` 存交办编码的工作区和补丁。
+数据目录默认 `~/.omem`（`--home` 或 `OMEM_HOME` 可改）：`config.json` 是配置，`omem.db` 是索引与记录，`library/` 是 Wiki 的 Git 仓库，`files/` 存原始文件，`runs/` 存交办编码的工作区和补丁。各部分占了多少（附件按图片、视频等类型和来源分开，数据库按模块和表分开）在 **设置 → 占用** 里统计。
 
 默认监听所有网卡，方便其他设备配对；本机请求不需要令牌，其他机器必须带令牌。只想本机访问，在配置里写 `"host": "localhost"`。
 
