@@ -884,3 +884,4 @@ updated: 2026-10-30
 - `scripts/bench/fetch.ts <名>`：下载到 `.scratch/bench/<名>/raw/`，校验哈希（不符删除并停下），转换：C-MTEB 三个 parquet 经 `cmteb_to_jsonl.py`（Python + pandas，原 `prep-t2.py` 并入，种子和抽法不变）成 corpus.jsonl / queries.jsonl；LoCoMo 经 `locomo.ts` 转成 LongMemEval 的形状（`haystack_key` 让同一段对话的问题共用一个空间）。
 - `eval-longmemeval.ts --recall`：不启动服务、不用模型，按会话排序算 Recall@5/@10、All@10、NDCG@10，按类型分；`--vector` 用本地向量。
 - 只手动跑，没有定时任务；数字写进 `docs/v2/evaluation.md`。
+- **档案建议不会不打招呼就过期**（10-30）：`proposals.ts` 的 `expireProposals` 只让已经通知过、且通知已满两天的建议过期；超过 14 天却从没通知过的（检查上线前提的、服务停过的）先通知，两天后才过期，通知里写的是实际过期日期。

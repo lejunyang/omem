@@ -106,12 +106,17 @@ export function proposalExpiresAt(createdAt: string) {
 /**
  * Nightly: pending proposals older than 14 days become "expired" (they can be proposed again by a
  * later review); those that will expire within two days are announced once, in one notification.
+ * Nothing expires unannounced: one past 14 days that was never announced (made before this check
+ * existed, or while the service was off) is announced now and expires two days later.
  * There is no cap on how many may be pending.
  */
 export async function expireProposals(app: App, at = Date.now()) {
   const cutoff = new Date(at - PROPOSAL_DAYS * 86400_000).toISOString();
   const soon = new Date(at - (PROPOSAL_DAYS - PROPOSAL_NOTICE_DAYS) * 86400_000).toISOString();
-  const expired = run(app.db, "update profile_proposals set status = 'expired', resolved_at = ?, resolved_by = 'system' where status = 'pending' and created_at < ?", new Date(at).toISOString(), cutoff).changes;
+  const told = new Date(at - PROPOSAL_NOTICE_DAYS * 86400_000).toISOString();
+  const expired = run(app.db, "update profile_proposals set status = 'expired', resolved_at = ?, resolved_by = 'system' where status = 'pending' and created_at < ? and expiry_notice_at <= ?", new Date(at).toISOString(), cutoff, told).changes;
+  // Announced now: two days from now at the earliest.
+  const expiresOn = (created: string) => new Date(Math.max(Date.parse(proposalExpiresAt(created)), at + PROPOSAL_NOTICE_DAYS * 86400_000)).toISOString().slice(0, 10);
   const due = all<{ id: string; target: string; kind: string; title: string; created_at: string }>(
     app.db,
     "select id, target, kind, title, created_at from profile_proposals where status = 'pending' and created_at < ? and expiry_notice_at is null order by target, created_at",
@@ -124,7 +129,7 @@ export async function expireProposals(app: App, at = Date.now()) {
     notify(app, {
       title: `${due.length} 条档案改进建议两天内过期`,
       body: [
-        ...due.slice(0, 12).map((d) => `- ${d.target} · ${label[d.kind] ?? d.kind}：${d.title}（${proposalExpiresAt(d.created_at).slice(0, 10)} 过期）`),
+        ...due.slice(0, 12).map((d) => `- ${d.target} · ${label[d.kind] ?? d.kind}：${d.title}（${expiresOn(d.created_at)} 过期）`),
         ...(due.length > 12 ? [`- 另有 ${due.length - 12} 条`] : []),
         "",
         "要用的在 Agent 页采纳；不处理的到期自动过期，之后的复盘还可能再提。",
