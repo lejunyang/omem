@@ -4,11 +4,14 @@ import { useRoute, useRouter } from "vue-router";
 import { del, get, onServerEvent, post, put, type Run } from "../api";
 import Icon from "../components/Icon.vue";
 import Skeleton from "../components/Skeleton.vue";
-import { confirmDialog } from "../lib/dialog";
+import UiSelect from "../components/UiSelect.vue";
+import WikiAttention, { type StalePage, type Upkeep } from "../components/WikiAttention.vue";
+import WikiTree from "../components/WikiTree.vue";
+import { confirmDialog, promptDialog } from "../lib/dialog";
+import type { NavNode } from "../lib/wikiTree";
 import Markdown from "../components/Markdown.vue";
-import { fmtTime, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
+import { fmtTime, openCitation, relTime, state, toast } from "../store";
 
-type NavNode = { slug?: string; title: string; children: NavNode[] };
 type PageSummary = { slug: string; title: string; summary: string; kind: string; updatedAt: string; staleSources: number };
 type PageData = {
   id: string;
@@ -34,7 +37,9 @@ const slug = computed(() => {
 });
 const nav = ref<NavNode[]>([]);
 const pages = ref<PageSummary[]>([]);
-const stale = ref(0);
+const aliases = ref<string[]>([]);
+const stalePageList = ref<StalePage[]>([]);
+const upkeep = ref<Upkeep | null>(null);
 const page = ref<PageData | null>(null);
 const notFound = ref(false);
 const toc = ref<{ id: string; text: string; level: number }[]>([]);
@@ -46,7 +51,7 @@ const rewriteOpen = ref(false);
 const rewriteNote = ref("");
 const planOpen = ref(false);
 const newOpen = ref(false);
-const newPage = ref({ title: "", question: "", outline: "", slug: "" });
+const newPage = ref({ title: "", question: "", outline: "", slug: "", folder: "" });
 const planFocus = ref("");
 const navOpen = ref(false);
 const version = ref<{ hash: string; diff: string } | null>(null);
@@ -63,10 +68,12 @@ watch(
 const spaceLoading = ref(true);
 const pageLoading = ref(false);
 async function loadSpace() {
-  const r = await get<{ nav: NavNode[]; pages: PageSummary[]; stale: number }>(`/api/wiki/${space.value}`);
+  const r = await get<{ nav: NavNode[]; pages: PageSummary[]; aliases: string[]; stalePages: StalePage[]; upkeep: Upkeep }>(`/api/wiki/${space.value}`);
   nav.value = r.nav;
   pages.value = r.pages;
-  stale.value = r.stale;
+  aliases.value = r.aliases;
+  stalePageList.value = r.stalePages;
+  upkeep.value = r.upkeep;
   runs.value = (await get<{ runs: Run[] }>(`/api/runs?space=${space.value}&limit=30`)).runs.filter((x) => x.kind.startsWith("wiki-") && ["queued", "running"].includes(x.status));
 }
 async function loadPage() {
@@ -78,6 +85,8 @@ async function loadPage() {
   if (!page.value || page.value.slug !== target) pageLoading.value = true;
   try {
     page.value = await get<PageData>(`/api/wiki/${space.value}/page/${target}`);
+    // A page that moved opens at its new path.
+    if (slug.value && page.value.slug !== slug.value) void router.replace(`/wiki/${space.value}/${page.value.slug}`);
   } catch {
     page.value = null;
     notFound.value = true;
@@ -116,29 +125,42 @@ function jump(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-const filteredNav = computed(() => {
-  const f = filter.value.trim().toLowerCase();
-  if (!f) return nav.value;
-  const keep = (n: NavNode): NavNode | null => {
-    const kids = n.children.map(keep).filter(Boolean) as NavNode[];
-    return n.title.toLowerCase().includes(f) || (n.slug ?? "").includes(f) || kids.length ? { ...n, children: kids } : null;
-  };
-  return nav.value.map(keep).filter(Boolean) as NavNode[];
-});
-const slugs = computed(() => pages.value.map((p) => p.slug));
+// Old paths of moved pages count as existing, so a link to one is not shown as missing.
+const slugs = computed(() => [...pages.value.map((p) => p.slug), ...aliases.value]);
 const currentSlug = computed(() => page.value?.slug ?? "");
+const hasHome = computed(() => pages.value.some((p) => p.slug === "index"));
 const staleSources = computed(() => page.value?.context.sources.filter((s) => s.stale || s.deleted) ?? []);
-const section = computed(() => {
-  const find = (ns: NavNode[], path: string[]): string[] | null => {
+const titles = computed(() => Object.fromEntries(pages.value.map((p) => [p.slug, p.title])));
+const pageStale = computed(() => !!page.value && stalePageList.value.some((p) => p.slug === page.value!.slug));
+type Folder = { path: string; title: string; slug?: string; count: number; depth: number };
+const folders = computed(() => {
+  const out: Folder[] = [];
+  const walk = (ns: NavNode[], depth: number) => {
     for (const n of ns) {
-      if (n.slug === currentSlug.value) return path;
-      const r = find(n.children, n.slug ? path : [...path, n.title]);
-      if (r) return r;
+      if (n.folder === undefined) continue;
+      out.push({ path: n.folder, title: n.title, slug: n.slug, count: n.count ?? 0, depth });
+      walk(n.children, depth + 1);
     }
-    return null;
   };
-  return find(nav.value, []) ?? [];
+  walk(nav.value, 0);
+  return out;
 });
+// The folders above the page: a name, linked when the folder has an index page of its own.
+const crumbs = computed(() => {
+  const parts = currentSlug.value.split("/").slice(0, -1);
+  return parts.map((_, i) => {
+    const path = parts.slice(0, i + 1).join("/");
+    const f = folders.value.find((x) => x.path === path);
+    return { title: f?.title ?? parts[i], slug: f?.slug };
+  });
+});
+const topFolders = computed(() => nav.value.filter((n) => n.folder !== undefined));
+const topPages = computed(() => nav.value.filter((n) => n.folder === undefined && n.slug));
+const tree = ref<InstanceType<typeof WikiTree>>();
+function showFolder(path: string) {
+  navOpen.value = true;
+  tree.value?.openFolder(path);
+}
 
 function startEdit() {
   if (!page.value) return;
@@ -174,10 +196,11 @@ async function rewrite() {
   void loadSpace();
 }
 async function createPage() {
-  const slug = newPage.value.slug.trim() || newPage.value.title.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 60);
+  const name = newPage.value.slug.trim() || newPage.value.title.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 60);
+  const slug = name.includes("/") || !newPage.value.folder ? name : `${newPage.value.folder}/${name}`;
   await post(`/api/wiki/${space.value}/write`, { slug, title: newPage.value.title, question: newPage.value.question, outline: newPage.value.outline, kind: "guide", entry_points: [] });
   newOpen.value = false;
-  newPage.value = { title: "", question: "", outline: "", slug: "" };
+  newPage.value = { title: "", question: "", outline: "", slug: "", folder: "" };
   toast("助理开始调查并写作这一页", "ok");
   void loadSpace();
 }
@@ -187,10 +210,38 @@ async function plan() {
   toast("助理开始调查并规划目录，之后会逐页写作", "ok");
   void loadSpace();
 }
-async function lint() {
-  await post(`/api/wiki/${space.value}/lint`);
-  toast("已安排检查受影响的页面", "ok");
+async function lint(slugs: string[] = []) {
+  await post(`/api/wiki/${space.value}/lint`, slugs.length ? { pages: slugs } : {});
+  toast(slugs.length === 1 ? "已安排检查这一页" : "已安排检查受影响的页面", "ok");
   void loadSpace();
+}
+async function organize() {
+  try {
+    await post(`/api/wiki/${space.value}/organize`);
+    toast("助理开始整理目录：把散落的页面放进合适的目录", "ok");
+    void loadSpace();
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+async function movePage() {
+  if (!page.value) return;
+  const to = await promptDialog("移动页面", { message: "新路径：目录用 /，如 guides/overview。旧路径的链接会自动指到新位置。", value: page.value.slug, okText: "移动" });
+  const target = to?.split("/").map((x) => x.trim()).filter(Boolean).join("/");
+  if (!target || target === page.value.slug) return;
+  try {
+    await post(`/api/wiki/${space.value}/move`, { moves: [{ from: page.value.slug, to: target }] });
+    toast("已移动", "ok");
+    await loadSpace();
+    await router.replace(`/wiki/${space.value}/${target}`);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+const noticeEl = ref<HTMLElement>();
+function toNotice() {
+  navOpen.value = false;
+  noticeEl.value?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 async function showVersion(hash: string) {
   if (!page.value) return;
@@ -210,32 +261,31 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
           <router-link :to="`/graph/${space}`" class="btn ghost sm icon" title="页面关系图"><Icon name="graph" :size="16" /></router-link>
           <button class="btn ghost sm icon" title="写一页新文章" @click="newOpen = true"><Icon name="plus" :size="16" /></button>
           <button class="btn ghost sm icon" title="规划/更新目录" @click="planOpen = true"><Icon name="sparkles" :size="16" /></button>
+          <button class="btn ghost sm icon" title="整理目录：把散落在顶层、挤在一起的页面放进合适的目录" aria-label="整理目录" @click="organize"><Icon name="folder" :size="16" /></button>
         </div>
-        <input v-model="filter" class="input filter" placeholder="筛选页面" />
+        <input v-model="filter" class="input filter" placeholder="筛选页面" aria-label="筛选页面" />
+        <button v-if="stalePageList.length" class="nav-warn" type="button" @click="toNotice"><Icon name="alert" :size="13" />{{ stalePageList.length }} 页的原件已变化</button>
       </div>
       <div class="tree">
-        <template v-for="(n, i) in filteredNav" :key="i">
-          <div v-if="!n.slug" class="group">{{ n.title }}</div>
-          <router-link v-else :to="`/wiki/${space}/${n.slug}`" class="node" :class="{ on: n.slug === currentSlug }" @click="navOpen = false">{{ n.title }}</router-link>
-          <template v-for="(c, j) in n.children" :key="`${i}-${j}`">
-            <router-link v-if="c.slug" :to="`/wiki/${space}/${c.slug}`" class="node" :class="{ on: c.slug === currentSlug, sub: !!n.slug }" @click="navOpen = false">{{ c.title }}</router-link>
-            <div v-else class="node muted" :class="{ sub: !!n.slug }">{{ c.title }}</div>
-            <router-link v-for="(g, k) in c.children.filter((x) => x.slug)" :key="`${i}-${j}-${k}`" :to="`/wiki/${space}/${g.slug}`" class="node sub2" :class="{ on: g.slug === currentSlug }">{{ g.title }}</router-link>
-          </template>
-        </template>
+        <router-link v-if="hasHome" :to="`/wiki/${space}`" class="home" :class="{ on: currentSlug === 'index' }" @click="navOpen = false"><Icon name="home" :size="14" />首页</router-link>
+        <WikiTree v-if="nav.length" ref="tree" :nodes="nav" :space="space" :current="currentSlug" :filter="filter" :total="pages.length" @navigate="navOpen = false" />
         <Skeleton v-if="spaceLoading && !pages.length" :rows="8" variant="lines" />
         <div v-else-if="!pages.length" class="muted small pad">还没有页面</div>
       </div>
       <div v-if="runs.length" class="running">
         <div class="section-title">进行中</div>
-        <router-link v-for="r in runs" :key="r.id" :to="`/runs/${r.id}`" class="node small"><span class="spin" />{{ r.title }}</router-link>
+        <router-link v-for="r in runs" :key="r.id" :to="`/runs/${r.id}`" class="run-link small"><span class="spin" />{{ r.title }}</router-link>
       </div>
-      <button v-if="stale" class="btn sm stale-btn" @click="lint"><Icon name="refresh" :size="14" />{{ stale }} 页的原件已变化 · 检查</button>
     </aside>
 
     <main class="content">
       <div class="mobile-bar row">
         <button class="btn sm" @click="navOpen = !navOpen"><Icon name="menu" :size="15" />目录</button>
+        <button v-if="stalePageList.length" class="btn sm warn-btn" @click="toNotice"><Icon name="alert" :size="14" />{{ stalePageList.length }} 页原件已变化</button>
+      </div>
+
+      <div ref="noticeEl" class="notice-anchor">
+        <WikiAttention :space="space" :pages="stalePageList" :titles="titles" :upkeep="upkeep" :expanded="!slug" @check="lint" />
       </div>
 
       <div v-if="(spaceLoading && !pages.length) || pageLoading" class="page-loading"><Skeleton variant="text" :rows="12" /></div>
@@ -255,10 +305,20 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
 
       <div v-else-if="!page" class="overview">
         <h1>{{ spaceName }}</h1>
-        <div class="cards">
-          <router-link v-for="p in pages" :key="p.slug" :to="`/wiki/${space}/${p.slug}`" class="card pad pcard">
-            <strong>{{ p.title }}</strong>
-            <span class="muted small clamp">{{ p.summary }}</span>
+        <div v-if="topFolders.length" class="cards">
+          <div v-for="f in topFolders" :key="f.folder" class="card pad pcard folder-card">
+            <router-link v-if="f.slug" :to="`/wiki/${space}/${f.slug}`" class="fname"><Icon name="folder" :size="15" />{{ f.title }}</router-link>
+            <span v-else class="fname"><Icon name="folder" :size="15" />{{ f.title }}</span>
+            <span class="muted small">{{ f.count }} 页<template v-if="f.stale"> · {{ f.stale }} 页原件已变化</template></span>
+            <router-link v-for="c in f.children.filter((x) => x.folder === undefined && x.slug).slice(0, 4)" :key="c.slug" :to="`/wiki/${space}/${c.slug}`" class="small sub">{{ c.title }}</router-link>
+            <button class="btn ghost sm more" type="button" @click="showFolder(f.folder!)">在目录里展开</button>
+          </div>
+        </div>
+        <div v-if="topPages.length" class="section-title top-title">{{ topFolders.length ? "顶层页面" : "全部页面" }}</div>
+        <div v-if="topPages.length" class="cards">
+          <router-link v-for="n in topPages" :key="n.slug" :to="`/wiki/${space}/${n.slug}`" class="card pad pcard">
+            <strong>{{ n.title }}</strong>
+            <span class="muted small clamp">{{ pages.find((p) => p.slug === n.slug)?.summary }}</span>
           </router-link>
         </div>
       </div>
@@ -278,7 +338,10 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
       <article v-else class="article">
         <div class="crumbs muted small">
           <router-link :to="`/wiki/${space}`">{{ spaceName }}</router-link>
-          <template v-for="s in section" :key="s"> / {{ s }}</template>
+          <template v-for="c in crumbs" :key="c.title">
+            / <router-link v-if="c.slug" :to="`/wiki/${space}/${c.slug}`">{{ c.title }}</router-link
+            ><template v-else>{{ c.title }}</template>
+          </template>
         </div>
         <h1 class="title">{{ page.meta.title }}</h1>
         <p v-if="page.meta.summary" class="lead">{{ page.meta.summary }}</p>
@@ -286,8 +349,10 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
           <span class="muted small">更新于 {{ page.meta.updated ?? fmtTime(page.updatedAt, false) }}</span>
           <span v-if="page.context.sources.length" class="muted small">· 引用 {{ page.context.sources.length }} 份原件</span>
           <span v-if="staleSources.length" class="badge warn" :title="staleSources.map((s) => s.uri).join('\n')"><Icon name="alert" :size="12" />{{ staleSources.length }} 份原件已变化</span>
+          <button v-if="pageStale" class="btn ghost sm" :disabled="upkeep?.running" @click="lint([page.slug])"><Icon name="refresh" :size="14" />检查这页</button>
           <span class="spacer" />
           <button class="btn ghost sm" @click="startEdit"><Icon name="edit" :size="14" />编辑</button>
+          <button v-if="page.slug !== 'index'" class="btn ghost sm" @click="movePage"><Icon name="folder" :size="14" />移动</button>
           <button class="btn ghost sm" @click="rewriteOpen = true"><Icon name="sparkles" :size="14" />让助理改写</button>
           <button class="btn ghost sm icon danger" title="删除页面" @click="remove"><Icon name="trash" :size="14" /></button>
         </div>
@@ -344,6 +409,10 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
         <header class="row"><strong>写一页新文章</strong><span class="spacer" /><button class="btn ghost sm icon" @click="newOpen = false"><Icon name="x" /></button></header>
         <p class="muted small">说清楚读者想弄明白什么，助理会在「{{ spaceName }}」的材料里调查后写作，并引用原文。</p>
         <label class="field"><span>标题</span><input v-model="newPage.title" class="input" placeholder="例如：一条飞书消息进来之后发生了什么" /></label>
+        <div class="field">
+          <span>放在哪个目录</span>
+          <UiSelect v-model="newPage.folder" aria-label="目录" :options="[{ value: '', label: '顶层（之后由助理归类）' }, ...folders.map((f) => ({ value: f.path, label: f.path, hint: f.count + ' 页' }))]" />
+        </div>
         <label class="field"><span>读者问题</span><textarea v-model="newPage.question" class="textarea" rows="3" placeholder="读者读完应该能回答什么、能做什么" /></label>
         <label class="field"><span>讲解思路（可选）</span><textarea v-model="newPage.outline" class="textarea" rows="2" placeholder="例如：先用一个真实例子走完全流程，再讲设计取舍" /></label>
         <div class="row"><span class="spacer" /><button class="btn primary" :disabled="!newPage.title.trim() || !newPage.question.trim()" @click="createPage">开始写作</button></div>
@@ -398,37 +467,73 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
   display: grid;
   gap: 1px;
 }
-.group {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--muted);
-  letter-spacing: 0.03em;
-  padding: 12px 8px 4px;
-}
-.node {
+.home {
   display: flex;
-  gap: 6px;
+  gap: 7px;
   align-items: center;
   padding: 5px 8px;
   border-radius: 6px;
   color: var(--ink-2);
   font-size: 13.5px;
-  line-height: 1.45;
 }
-.node:hover {
+.home:hover {
   background: var(--hover);
   text-decoration: none;
 }
-.node.on {
+.home.on {
   background: var(--accent-soft);
   color: var(--accent);
-  font-weight: 550;
+  font-weight: 600;
 }
-.node.sub {
-  padding-left: 20px;
+.run-link {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 8px;
+  color: var(--ink-2);
 }
-.node.sub2 {
-  padding-left: 32px;
+.nav-warn {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line));
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+}
+.warn-btn {
+  color: var(--warn);
+}
+.notice-anchor {
+  scroll-margin-top: 12px;
+}
+.folder-card {
+  align-content: start;
+}
+.fname {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.folder-card .sub {
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+  padding-left: 21px;
+}
+.folder-card .more {
+  justify-self: start;
+  margin-top: 4px;
+}
+.top-title {
+  margin: 22px 0 8px;
 }
 .running {
   border-top: 1px solid var(--line);
@@ -447,10 +552,6 @@ const spaceName = computed(() => state.spaces.find((s) => s.id === space.value)?
   to {
     transform: rotate(360deg);
   }
-}
-.stale-btn {
-  color: var(--warn);
-  justify-content: flex-start;
 }
 .pad {
   padding: 8px;

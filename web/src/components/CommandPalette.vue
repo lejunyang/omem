@@ -3,7 +3,8 @@ import UiCheckbox from "./UiCheckbox.vue";
 import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { get, post, type Hit, type IdHit } from "../api";
-import { openCitation, state } from "../store";
+import { openCitation, sourceKindLabel, state } from "../store";
+import HitText from "./HitText.vue";
 import Icon from "./Icon.vue";
 
 const router = useRouter();
@@ -108,6 +109,8 @@ function onKey(e: KeyboardEvent) {
   else if (e.key === "Escape") state.palette = false;
 }
 const typeLabel: Record<string, string> = { page: "页面", memory: "记忆", chunk: "原件", symbol: "代码" };
+const hitLabel = (h: Hit) => (h.type === "chunk" ? (h.sourceKind && sourceKindLabel[h.sourceKind]) || typeLabel.chunk : typeLabel[h.type]);
+const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 </script>
 
 <template>
@@ -130,12 +133,13 @@ const typeLabel: Record<string, string> = { page: "页面", memory: "记忆", ch
             <span class="muted small mono">{{ row.idHit.id.length > 24 ? row.idHit.id.slice(0, 24) + "…" : row.idHit.id }}</span>
           </button>
           <button v-else-if="'hit' in row" class="row-item" :class="{ on: i === active, stale: searching }" @mouseenter="active = i" @click="choose(i)">
-            <span class="badge">{{ typeLabel[row.hit.type] }}</span>
+            <span class="badge">{{ hitLabel(row.hit) }}</span>
             <span class="main">
-              <span class="ttl ellipsis">{{ row.hit.type === "page" ? row.hit.title : row.hit.type === "memory" ? row.hit.title || "记忆" : row.hit.uri }}<span v-if="row.hit.lineStart" class="muted">:{{ row.hit.lineStart }}</span></span>
-              <span class="snip ellipsis muted">{{ row.hit.snippet.replace(/\s+/g, " ") }}</span>
+              <span class="ttl"><HitText :text="row.hit.display?.title ?? row.hit.title" :marks="row.hit.display?.titleMarks" /><span v-if="row.hit.lineStart" class="muted">:{{ row.hit.lineStart }}</span></span>
+              <span v-if="row.hit.display?.place || row.hit.display?.link" class="where muted small ellipsis">{{ [row.hit.display.place, row.hit.display.link].filter(Boolean).join(" · ") }}</span>
+              <span class="snip muted"><HitText :text="row.hit.display?.text ?? row.hit.snippet.replace(/\s+/g, ' ')" :marks="row.hit.display?.marks" /></span>
             </span>
-            <span class="muted small">{{ row.hit.spaceId }}</span>
+            <span class="muted small space">{{ spaceName(row.hit.spaceId) }}</span>
           </button>
           <button v-else class="row-item" :class="{ on: i === active }" @mouseenter="active = i" @click="choose(i)">
             <Icon :name="row.icon" :size="16" />
@@ -219,9 +223,33 @@ const typeLabel: Record<string, string> = { page: "页面", memory: "记忆", ch
 }
 .ttl {
   font-weight: 500;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .snip {
   font-size: 12px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.where {
+  font-size: 11.5px;
+}
+.space {
+  flex: none;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.badge {
+  flex: none;
 }
 .row-item.stale {
   opacity: 0.55;

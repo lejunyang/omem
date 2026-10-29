@@ -86,6 +86,8 @@ onServerEvent((e) => {
   if (e.type === "changed" && e.entity === "space") void loadSpaces();
 });
 
+/** What a source is, in words (search hits, lists). */
+export const sourceKindLabel: Record<string, string> = { doc: "文档", code: "代码", chat: "聊天", note: "笔记", web: "网页", image: "图片", conversation: "对话", meeting: "会议", event: "日程", activity: "动态", work: "工作文件" };
 export const kindLabel: Record<string, string> = {
   personal: "个人",
   project: "项目",
@@ -101,6 +103,7 @@ export const runKindLabel: Record<string, string> = {
   "wiki-plan": "规划目录",
   "wiki-write": "写作页面",
   "wiki-lint": "检查页面",
+  "wiki-organize": "整理 Wiki 目录",
   heartbeat: "巡检",
   dream: "整理记忆",
   code: "交办编码",

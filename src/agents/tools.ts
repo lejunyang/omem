@@ -30,7 +30,7 @@ import {
 } from "../sources/attention.ts";
 import { importText, importUrl, repoFiles, syncDirectorySpace } from "../sources/import.ts";
 import { getSource, listSources, readSource, sourceOutline, sourceText, upsertSource } from "../sources/store.ts";
-import { listPages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
+import { confirmPage, folderOf, folderOverview, listPages, movePages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
 import { addRunEvent, createRun, getRun, listRuns, runEvents, runUser, setRunOutput } from "./runs.ts";
 import { takeCodeSteering } from "./code-steer.ts";
 import { findAgentSpec, listAgentSpecs, listSkills, readSkillFile, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
@@ -1006,11 +1006,32 @@ def({
 
 def({
   name: "list_pages",
-  description: "列出某空间已有的 Wiki 页面（路径、标题、摘要、引用的原件是否已变化）。写新页面前先看有没有可更新的页面。",
-  schema: z.object({ space: z.string().optional() }),
+  description:
+    "列出某空间已有的 Wiki 页面（路径、标题、摘要、引用的原件是否已变化）。页面按目录组织（路径 a/b/c 是目录 a/b 里的页面 c）：写新页面前先看有没有可更新的页面、有没有合适的目录。页面很多时先给目录概况，再用 folder 看某个目录。",
+  schema: z.object({
+    space: z.string().optional(),
+    folder: z.string().optional().describe("只列这个目录（含子目录）的页面，如 flows；不填且页面很多时先给目录概况"),
+    direct: z.boolean().optional().describe("只列直接放在目录里的页面，不含子目录里的；不填 folder 时即顶层页面"),
+    limit: z.number().int().min(1).max(300).optional().describe("最多列几页，默认 150"),
+    offset: z.number().int().min(0).optional(),
+  }),
   handler: (ctx, a) => {
     const pages = listPages(ctx.app, space(ctx, a.space));
-    return pages.map((p) => `- ${p.slug}「${p.title}」${p.summary ? "：" + truncate(p.summary, 100) : ""}${p.staleSources ? `（${p.staleSources} 个引用原件已变化）` : ""}`).join("\n") || "（这个空间还没有页面）";
+    if (!pages.length) return "（这个空间还没有页面）";
+    const line = (p: (typeof pages)[number]) => `- ${p.slug}「${p.title}」${p.summary ? "：" + truncate(p.summary, 100) : ""}${p.staleSources ? `（${p.staleSources} 个引用原件已变化）` : ""}`;
+    const folder = a.folder?.replace(/^\/+|\/+$/g, "");
+    const scoped = a.folder !== undefined || a.direct;
+    if (!scoped && pages.length > 80) {
+      const top = pages.filter((p) => !p.slug.includes("/"));
+      return `共 ${pages.length} 页，先看目录：\n${folderOverview(pages)}\n\n顶层页面：\n${top.map(line).join("\n") || "（无）"}\n\n用 folder=<目录> 列某个目录的页面（direct 只看直接放在里面的，limit / offset 翻页）。`;
+    }
+    const list = scoped ? pages.filter((p) => (a.direct ? folderOf(p.slug) === (folder ?? "") : folder ? p.slug.startsWith(folder + "/") : true)) : pages;
+    if (!list.length) return `${folder ? `目录 ${folder}` : "这里"}没有页面。\n${folderOverview(pages)}`;
+    const offset = a.offset ?? 0;
+    const limit = a.limit ?? 150;
+    const shown = list.slice(offset, offset + limit);
+    const head = !scoped && pages.length > 20 ? `目录概况：\n${folderOverview(pages)}\n\n` : "";
+    return head + shown.map(line).join("\n") + (list.length > offset + limit ? `\n…还有 ${list.length - offset - limit} 页（offset=${offset + limit}）` : "");
   },
 });
 
@@ -1024,10 +1045,10 @@ def({
     if (!sp && slug.includes("/") && findSpace(ctx.app, slug.split("/")[0])) [sp, slug] = [slug.split("/")[0], slug.split("/").slice(1).join("/")];
     const id = space(ctx, sp);
     const p = readPage(ctx.app, id, slug);
-    const c = pageContext(ctx.app, id, slug);
+    const c = pageContext(ctx.app, id, p.slug);
     const stale = c.sources.filter((s) => s.stale || s.deleted);
     return [
-      `页面 ${id}/${slug} · ${p.meta.kind ?? "page"} · 更新于 ${p.meta.updated ?? p.updatedAt.slice(0, 10)}`,
+      `页面 ${id}/${p.slug}${p.slug !== slug ? `（原路径 ${slug} 已移到这里）` : ""} ·${p.meta.kind ?? "page"} · 更新于 ${p.meta.updated ?? p.updatedAt.slice(0, 10)}`,
       stale.length ? `注意：${stale.length} 个引用原件在写作后已变化：${stale.map((s) => s.uri).join(", ")}` : "",
       `---\n# ${p.meta.title}\n${p.meta.summary ? "> " + p.meta.summary + "\n" : ""}\n${p.body}`,
       c.backlinks.length ? `---\n被这些页面链接：${c.backlinks.map((b) => b.slug).join(", ")}` : "",
@@ -1176,7 +1197,45 @@ def({
     appendLog(ctx.app, id, `${existed ? "更新" : "新建"} [[${p.slug}]]${a.reason ? "：" + a.reason : ""}`);
     if (ctx.runId) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "change", data: { entity: "page", id: p.id }, at: new Date().toISOString() } });
     const c = pageContext(ctx.app, id, p.slug);
-    return `已${existed ? "更新" : "创建"}页面 ${p.id}。引用原件 ${c.sources.length} 个${c.missingLinks.length ? `；这些链接目标还不存在：${c.missingLinks.join(", ")}` : ""}`;
+    const folders = !existed && !p.slug.includes("/") && p.slug !== "index" ? [...new Set(listPages(ctx.app, id).filter((x) => x.slug.includes("/")).map((x) => x.slug.split("/")[0]))] : [];
+    return `已${existed ? "更新" : "创建"}页面 ${p.id}。引用原件 ${c.sources.length} 个${c.missingLinks.length ? `；这些链接目标还不存在：${c.missingLinks.join(", ")}` : ""}${
+      folders.length ? `\n这页放在了顶层；空间里已有目录：${folders.slice(0, 20).join("、")}。有合适的就用 move_page 移进去（旧路径的链接会自动跟过去）。` : ""
+    }`;
+  },
+});
+
+def({
+  name: "move_page",
+  description:
+    "移动或改名 Wiki 页面，或整个目录（from 和 to 都以 / 结尾，如 cases/ → cases/账号/）。页面内容和它引用原件的状态不变；旧路径留作别名（带旧路径的链接、记忆、书签仍能打开），其他页面里的 [[链接]] 会改成新路径。用来把页面放进合适的目录、拆分太挤的目录、给目录改名。一次最多 300 页，index 是空间首页不能移动。",
+  write: true,
+  schema: z.object({
+    moves: z
+      .array(z.object({ from: z.string().describe("现在的路径，如 overview；移动整个目录写 cases/"), to: z.string().describe("新路径，如 guides/overview；目录写 kb/cases/") }))
+      .min(1)
+      .max(300),
+    space: z.string().optional(),
+    reason: z.string().optional().describe("为什么这样整理，写入版本历史和整理日志"),
+  }),
+  handler: (ctx, a) => {
+    const id = writeSpace(ctx, a.space);
+    const r = movePages(ctx.app, id, a.moves, { actor: ctx.actor, message: `${ctx.actor}: move ${a.moves.length} entries in ${id}${a.reason ? " — " + a.reason : ""}${ctx.runId ? ` (run ${ctx.runId})` : ""}` });
+    appendLog(ctx.app, id, `移动 ${r.moved.length} 页（${r.moved[0].from} → ${r.moved[0].to}${r.moved.length > 1 ? " 等" : ""}）${a.reason ? "：" + a.reason : ""}`);
+    return `已移动 ${r.moved.length} 页，改了 ${r.linksFixed} 个页面里的链接。${r.moved.slice(0, 12).map((m) => `\n- ${m.from} → ${m.to}`).join("")}${r.moved.length > 12 ? `\n…另有 ${r.moved.length - 12} 页` : ""}`;
+  },
+});
+
+def({
+  name: "confirm_page",
+  description:
+    "核对过一篇 Wiki 页面，它引用的原件虽然变了，但页面的说法仍然成立（没有需要改的）：把页面“引用的原件已变化”的提示清掉，页面内容不变。改了页面用 write_page 即可，不需要再调它。引用的原件已被删除的，提示清不掉，要改写引用。",
+  write: true,
+  schema: z.object({ page: z.string().describe("页面路径"), space: z.string().optional(), note: z.string().optional().describe("核对了什么，为什么仍然成立") }),
+  handler: (ctx, a) => {
+    const id = writeSpace(ctx, a.space);
+    const r = confirmPage(ctx.app, id, a.page);
+    appendLog(ctx.app, id, `核对 [[${r.id.slice(id.length + 1)}]] 仍然成立${a.note ? "：" + a.note : ""}`);
+    return `已记录：页面 ${r.id} 核对过，引用的原件按现在的版本算。${r.deleted.length ? `\n这些引用的原件已被删除，提示还在，需要改写引用：${r.deleted.join("、")}` : ""}`;
   },
 });
 

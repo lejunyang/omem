@@ -788,6 +788,21 @@ wiki
     console.log((r.output as { summary?: string }).summary ?? "");
   });
 wiki
+  .command("move <space> <from> <to>")
+  .description("移动或改名一页；整个目录写成 cases/ kb/cases/（旧路径的链接会自动指到新位置）")
+  .action(async (sp, from, to) => {
+    const { movePages } = await import("./wiki/store.ts");
+    const r = movePages(open(), sp, [{ from, to }], { actor: "user" });
+    console.log(`已移动 ${r.moved.length} 页，改了 ${r.linksFixed} 个页面里的链接。`);
+  });
+wiki
+  .command("organize <space>")
+  .description("把顶层散落、挤在一个目录里的页面整理进合适的目录（wiki-organizer 角色）")
+  .action(async (sp) => {
+    const r = await runJob((app) => createRun(app, { kind: "wiki-organize", spaceId: sp, title: "整理 Wiki 目录" }), { stream: false });
+    console.log((r.output as { summary?: string }).summary ?? "");
+  });
+wiki
   .command("export <space> <dir>")
   .description("把 Wiki 导出成普通 Markdown 目录（页面互链、原件引用改成仓库内相对链接，适合提交到仓库或在 GitHub 上看）")
   .option("--repo-root <dir>", "引用原件所在的仓库根目录（默认是空间关联的目录）")

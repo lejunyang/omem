@@ -151,6 +151,27 @@ writePage(app, "shop", "refund/amount", {
 }, { actor: "wiki-writer" });
 writePage(app, "shop", "refund/release", { meta: { title: "退款改造上线步骤", kind: "howto" }, body: "上线前回放上月部分发货退款，对比新旧结果（[技术方案](src:" + tech + "#L6-L6)）。\n" }, { actor: "wiki-writer" });
 
+// A nested folder tree (refund/cases/…), a folder with its own index page, a home page, and a page
+// whose cited document changed after it was written (the "originals changed" notice).
+const coupon = upsertSource(app, { spaceId: "shop", kind: "doc", uri: "docs/优惠券叠加规则.md", title: "优惠券叠加规则", text: "# 优惠券叠加规则\n\n同一订单最多叠加两张券。\n" }).id;
+writePage(app, "shop", "index", { meta: { title: "示例商城 Wiki", summary: "退款改造相关的规则、流程和排查案例", kind: "index" }, body: "从 [[refund/index|退款改造]] 开始读；线上问题先看 [[refund/cases/partial-shipment-over-refund|排查案例]]。\n" }, { actor: "wiki-writer" });
+writePage(app, "shop", "overview", { meta: { title: "项目概览", summary: "示例商城的模块和阅读路线", kind: "guide" }, body: "示例商城分订单、支付、退款三个模块；退款改造见 [[refund/amount]]。\n" }, { actor: "wiki-writer" });
+writePage(app, "shop", "refund/index", { meta: { title: "退款改造", summary: "规则、上线和排查案例", kind: "index" }, body: "退款改造的规则在 [[refund/amount]]，上线步骤在 [[refund/release]]，历史问题按 [[refund/cases/partial-shipment-over-refund|案例]] 查。\n" }, { actor: "wiki-writer" });
+writePage(app, "shop", "refund/cases/partial-shipment-over-refund", { meta: { title: "部分发货多退了钱", summary: "旧算法按整单金额退款，部分发货的订单会多退", kind: "case" }, body: "现象：部分发货的订单退款金额大于已发货金额。原因见 [[refund/amount]]（[群聊](src:" + chat + "#L1-L1)）。\n" }, { actor: "wiki-writer" });
+writePage(app, "shop", "refund/cases/coupon-negative", { meta: { title: "满减分摊出现负数", summary: "尾差处理不当会让某一行分摊成负数", kind: "case" }, body: "满减分摊时最后一行承担尾差，优惠大于实付时会出现负数（[群聊](src:" + chat + "#L6-L6)）。\n" }, { actor: "wiki-writer" });
+writePage(app, "shop", "ops/coupon-stacking", { meta: { title: "优惠券叠加限制", summary: "同一订单最多叠加几张券", kind: "reference" }, body: "同一订单最多叠加两张券（[规则文档](src:" + coupon + "#L3-L3)）。\n" }, { actor: "wiki-writer" });
+upsertSource(app, { spaceId: "shop", kind: "doc", uri: "docs/优惠券叠加规则.md", title: "优惠券叠加规则", text: "# 优惠券叠加规则\n\n同一订单最多叠加三张券，其中满减券最多一张。\n" });
+upsertSource(app, { spaceId: "shop", kind: "doc", uri: "https://tenant.larkoffice.com/docx/DemoRefundPlan", title: "退款改造排期与分工（飞书文档）", meta: { wikiSpaceName: "示例商城", wikiPath: "项目文档 / 退款改造" }, text: [
+  "# 排期与分工",
+  "",
+  "详细方案见[技术方案](https://tenant.larkoffice.com/docx/DemoTech?from=wiki)，**尾差分摊**的实现由小王负责。",
+  "",
+  "<table><thead><tr><th>阶段</th><th>负责人</th><th>说明</th></tr></thead><tbody>",
+  "<tr><td>开发</td><td>小王</td><td>实现&nbsp;<b>分摊</b>与尾差处理，补单元测试</td></tr>",
+  "<tr><td>回放</td><td>小李</td><td>回放上月 2000 笔部分发货退款并对比</td></tr>",
+  "</tbody></table>",
+].join("\n") });
+
 // ---- memories and items -----------------------------------------------------------------------
 const mem = [
   { kind: "decision", subject: "退款分摊", content: "订单级优惠按各行实付比例分摊，尾差归最后一行（产品阿青 10-21 确认）", sourceRefs: [`src:${chat}#L3-L3`], folder: "退款改造/规则" },
@@ -321,6 +342,9 @@ const browser = await chromium.launch(process.env.CHROMIUM ? { executablePath: p
 const shots: { name: string; path: string; width?: number; dark?: boolean; prepare?: (page: Page) => Promise<void> }[] = [
   { name: "today", path: "/" },
   { name: "ask-citations", path: `/ask/${t.id}` },
+  { name: "wiki-tree", path: "/wiki/shop/refund/cases/partial-shipment-over-refund" },
+  { name: "wiki-tree-mobile", path: "/wiki/shop/refund/cases/partial-shipment-over-refund", width: 390, prepare: async (p) => { await p.getByRole("button", { name: "目录" }).click(); await p.waitForTimeout(400); } },
+  { name: "search-hits", path: "/", prepare: async (p) => { await p.keyboard.press("Control+k"); await p.getByPlaceholder(/搜索原件/).fill("尾差 分摊"); await p.waitForTimeout(1500); } },
   { name: "wiki-citations", path: "/wiki/shop/refund/amount", prepare: async (p) => { await p.getByText("refund.js 第 10–21 行").first().click(); await p.waitForTimeout(1000); } },
   { name: "sources", path: `/sources/${prd}` },
   { name: "memory", path: "/memory" },

@@ -814,6 +814,9 @@ const migrations: string[] = [
   create index shares_run on shares(run_id);
   alter table lark_messages add column position integer;
   `,
+  // Where a wiki page used to live: a moved page keeps its old paths so links and citations to them still open it (src/wiki/store.ts movePages).
+  `create table page_aliases(space_id text not null, alias text not null, slug text not null, primary key(space_id, alias));
+  create index page_aliases_slug on page_aliases(space_id, slug);`,
 ];
 
 export type Db = DatabaseSync;

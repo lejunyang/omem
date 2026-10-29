@@ -995,7 +995,8 @@ async function saveEdit() {
             <span v-else class="muted small">还没有，第一次交办时建。</span>
           </div>
         </template>
-        <UiCheckbox v-if="editing.rootPath" :model-value="editing.settings.autoLint !== false" @change="(v) => (editing!.settings.autoLint = v)">同步后自动检查受影响的 Wiki 页面</UiCheckbox>
+        <UiCheckbox :model-value="editing.settings.autoLint !== false" @change="(v) => (editing!.settings.autoLint = v)">原件变化后自动检查受影响的 Wiki 页面（稳定半小时后，一次最多 10 页）</UiCheckbox>
+        <UiCheckbox :model-value="editing.settings.autoOrganize !== false" @change="(v) => (editing!.settings.autoOrganize = v)">自动把顶层散落、挤在一起的 Wiki 页面整理进目录</UiCheckbox>
         <div class="row"><span class="spacer" /><button class="btn primary" @click="saveSpace">保存</button></div>
       </div>
     </div>

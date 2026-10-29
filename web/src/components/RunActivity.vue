@@ -14,7 +14,7 @@ const live = ref("");
 const expanded = ref(props.open);
 let lastSeq = 0;
 type WriteTarget = { kind: "source" | "memory" | "item" | "rule"; id: string } | { kind: "page"; space: string; slug: string };
-type RunWrite = { tool: string; label: string; action?: "新建" | "更新" | "更正"; space?: string | null; target?: WriteTarget; n?: number };
+type RunWrite = { tool: string; label: string; action?: "新建" | "更新" | "更正" | "移动"; space?: string | null; target?: WriteTarget; n?: number };
 const writes = ref<RunWrite[]>([]);
 
 async function load() {

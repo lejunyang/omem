@@ -41,7 +41,7 @@ function repo() {
 describe("complete portable pulls", () => {
   it("accounts for every business table explicitly", () => {
     const app = testApp();
-    const derived = new Set(["chunks", "symbols", "code_refs", "pages", "page_rowids", "page_links", "page_cites", "memory_rowids"]);
+    const derived = new Set(["chunks", "symbols", "code_refs", "pages", "page_rowids", "page_links", "page_cites", "page_aliases", "memory_rowids"]);
     const device = new Set(["kv", "api_tokens", "lark_cursors", "pull_aliases", "lark_meetings", "lark_meeting_lines", "shares"]);
     const covered = new Set(["spaces", "sources", "lark_people", ...pullTables.map((t) => t.name)]);
     const tables = all<{ name: string }>(app.db, "select name from sqlite_master where type = 'table' and name not like 'sqlite_%' and name not like '%_fts%' and name not like 'memory_fts%'");

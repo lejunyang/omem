@@ -1,4 +1,5 @@
 import { generateWiki } from "../wiki/generate.ts";
+import { presentHits } from "../search/present.ts";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { symbolRelations } from "../sources/callgraph.ts";
 import { deleteSkillFile, listSkillFiles, readSkillFile, saveSkillFile, DEFAULT_SPEC_TOOLS, deleteAgentSpec, deleteSkill, listAgentSpecs, listSkills, readAgentSpec, readRaw, readSkill, saveAgentSpec, saveRaw, saveSkill } from "../agents/specs.ts";
@@ -41,7 +42,7 @@ import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedul
 import { createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
 import { listShares, readShare, revokeShare } from "../core/shares.ts";
-import { accessibleSpaces, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
+import { accessibleSpaces, canWrite, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { runWrites } from "../agents/run-writes.ts";
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
@@ -54,7 +55,8 @@ import { ensureFolder, listFolders, moveMemories, normalizeFolder, relocateFolde
 import { search } from "../search/search.ts";
 import { importFile, importText, importUrl } from "../sources/import.ts";
 import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
-import { deletePage, listPages, pageContext, pageVersion, readPage, spaceGuide, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
+import { deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
+import { upkeepStatus } from "../wiki/upkeep.ts";
 
 /** GET /api/share/<token>: exactly this, no query, no other path under it. */
 const SHARE_ROUTE = /^\/api\/share\/[A-Za-z0-9_-]{43}$/;
@@ -441,7 +443,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       branch = await indexBranch(app, spaces[0], o.branch);
       spaces = [spaces[0], branch.space];
     }
-    return { hits: await search(app, o.q, { spaces, types: o.types ? (o.types.split(",") as never) : undefined, limit: o.limit ?? 30, perSource: 2 }), branch };
+    const found = await search(app, o.q, { spaces, types: o.types ? (o.types.split(",") as never) : undefined, limit: o.limit ?? 30, perSource: 2 });
+    return { hits: presentHits(app, found, o.q), branch };
   });
 
   // ------------------------------------------------------------------- branches of a repository space
@@ -607,13 +610,24 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/wiki/:space", async (req) => {
     const space = (req.params as { space: string }).space;
     syncWiki(app, space);
-    return { nav: wikiNav(app, space), pages: listPages(app, space), stale: stalePages(app, space).length };
+    const staleList = staleDetail(app, space);
+    const aliases = all<{ alias: string }>(app.db, "select alias from page_aliases where space_id = ?", space).map((r) => r.alias);
+    // stale: how many pages cite an original that changed; stalePages: which ones and what changed; upkeep: what checks itself.
+    return {
+      nav: wikiNav(app, space),
+      pages: listPages(app, space),
+      aliases,
+      stale: staleList.length,
+      stalePages: staleList.map((p) => ({ slug: p.slug, sources: p.sources })),
+      upkeep: upkeepStatus(app, space),
+    };
   });
   server.get("/api/wiki/:space/page/*", async (req) => {
     const { space, "*": slug } = req.params as { space: string; "*": string };
     const v = (req.query as { version?: string }).version;
     if (v) return pageVersion(app, space, slug, v);
-    return { ...readPage(app, space, slug), context: pageContext(app, space, slug) };
+    const page = readPage(app, space, slug);
+    return { ...page, context: pageContext(app, space, page.slug) };
   });
   server.put("/api/wiki/:space/page/*", async (req) => {
     const { space, "*": slug } = req.params as { space: string; "*": string };
@@ -639,7 +653,26 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const brief: PageBrief = { slug: b.slug, title: b.title, kind: b.kind, question: b.question, outline: b.outline, entry_points: b.entry_points };
     return createRun(app, { kind: "wiki-write", spaceId: space, title: `写作：${b.title}`, input: { brief, instructions: b.instructions } });
   });
-  server.post("/api/wiki/:space/lint", async (req) => createRun(app, { kind: "wiki-lint", spaceId: (req.params as { space: string }).space, title: "检查受影响页面" }));
+  server.post("/api/wiki/:space/lint", async (req) => {
+    const space = (req.params as { space: string }).space;
+    const b = q(z.object({ pages: z.array(z.string()).optional() }), req.body ?? {});
+    return createRun(app, { kind: "wiki-lint", spaceId: space, title: b.pages?.length ? `检查 ${b.pages.length} 页` : "检查受影响页面", input: b.pages?.length ? { pages: b.pages } : {} });
+  });
+  // Move or rename pages / folders (a folder: from and to end in "/"); old paths keep opening the page.
+  server.post("/api/wiki/:space/move", async (req) => {
+    const space = (req.params as { space: string }).space;
+    if (!canWrite(app, who(req), space)) throw new HttpError(403, `不能修改空间 ${space} 的 Wiki`);
+    const b = q(z.object({ moves: z.array(z.object({ from: z.string(), to: z.string() })).min(1).max(300) }), req.body);
+    const r = movePages(app, space, b.moves, { actor: "user" });
+    return { moved: r.moved, linksFixed: r.linksFixed };
+  });
+  // Sort pages into folders: a run of the wiki-organizer role.
+  server.post("/api/wiki/:space/organize", async (req) => {
+    const space = (req.params as { space: string }).space;
+    if (!canWrite(app, who(req), space)) throw new HttpError(403, `不能修改空间 ${space} 的 Wiki`);
+    if (one(app.db, "select 1 from runs where kind = 'wiki-organize' and space_id = ? and status in ('queued','running')", space)) throw new HttpError(409, "已有整理目录的运行在进行");
+    return createRun(app, { kind: "wiki-organize", spaceId: space, title: "整理 Wiki 目录", userId: who(req) });
+  });
   server.get("/api/graph", async (req) => {
     const o = q(z.object({ space: z.string().optional() }), req.query);
     const nodes = all<{ id: string; title: string; space_id: string; kind: string }>(app.db, `select id, title, space_id, kind from pages ${o.space ? "where space_id = ?" : ""}`, ...(o.space ? [o.space] : []));

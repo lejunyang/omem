@@ -1,6 +1,6 @@
 ---
 description: 为一个代码仓库或一组材料规划 Wiki 目录
-tools: [search, scan, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, submit_plan, write_page]
+tools: [search, scan, read_source, source_outline, list_sources, find_symbol, list_pages, read_page, submit_plan, write_page, move_page]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -15,7 +15,7 @@ modes: [read-only, default, plan]
 - 顺着一两条最核心的用户流程追代码（例如“用户输入 → 处理 → 存储 → 返回”），弄清模块间的真实调用关系。
 - 描述当前实现以当前代码和测试为准；文档补充背景、需求和设计意图。冲突时查清差异，在计划中标出过时说法与待核实处；已有助手草稿只作线索，不能当作事实来源。
 - 留意项目自己的术语，后面页面要解释它们。
-- 已有页面（`list_pages`）要考虑复用，不要无故推倒。
+- 已有页面（`list_pages`，页面多时先给目录概况）要考虑复用，不要无故推倒；已有的目录结构也一样，新页面放进现有目录，目录风格（命名、层级）跟着已有的走。
 
 ## 目录原则
 
@@ -28,11 +28,15 @@ modes: [read-only, default, plan]
   5. “修改指南”：常见改动分别从哪里下手、要注意什么。
   6. 参考页（可选）：配置项、命令、接口清单。
 - 小项目 4～6 页，中型项目 8～15 页，大项目不超过 25 页。宁可少而深。
-- slug 用简短英文短横线，如 `overview`、`flows/ingest`、`howto/add-a-channel`。
+- slug 用简短英文短横线，路径里的 `/` 就是目录：`overview`、`flows/ingest`、`howto/add-a-channel`。每页都要想好放在哪个目录：
+  - 页面按读者问题分目录（流程、概念、指南、参考、案例……），目录名短而稳定，层级不超过 3 层；一个目录至少 3 页以上才值得建，页面更多（超过 30 页）就分子目录；
+  - 只有 `overview`、`quickstart` 这类总览和入门页放顶层，其余都放进目录；
+  - 新目录可以写一页 `<目录>/index`（kind=index，标题是目录给读者看的名字，一句话说明放什么，不用列页面——目录树会自己列）；
+  - 已有页面放的位置不合适时，用 `move_page` 移动或给目录改名（旧路径的链接自动跟过去），不要重写一页再删旧的。
 
 ## 提交
 
-1. 调用 `submit_plan` 提交每页：slug、标题、类型、读者问题、讲解路线（用哪个真实例子、按什么顺序讲）、调查入口（具体文件/符号）。讲解路线要具体到能指导写作者，例如“以导入一个 Markdown 文件为例，依次讲 importFile → upsertSource → chunkMarkdown → 写入 FTS”。
+1. 调用 `submit_plan` 提交每页：slug（带目录）、标题、类型、读者问题、讲解路线（用哪个真实例子、按什么顺序讲）、调查入口（具体文件/符号）；`section` 填目录给读者看的名字。讲解路线要具体到能指导写作者，例如“以导入一个 Markdown 文件为例，依次讲 importFile → upsertSource → chunkMarkdown → 写入 FTS”。
 2. 用 `write_page` 写 `index` 页（kind=index）：一段话介绍这个项目，然后按分组列出页面（`## 分组名` 下用 `- [[slug|标题]] —— 一句话说明`），读者从这里开始读。
 
 最后简短说明规划思路。

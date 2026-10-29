@@ -34,6 +34,7 @@ export const roleNames = [
   "wiki-planner",
   "wiki-writer",
   "wiki-linter",
+  "wiki-organizer",
   "heartbeat",
   "dreamer",
   "coder",

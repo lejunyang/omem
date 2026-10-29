@@ -2,7 +2,7 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，按模块列出入口文件；读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-10-28
+updated: 2026-10-30
 ---
 
 这套 Wiki 主体生成于 2026-10-13。之后的提交按模块整理如下，每条给出改了什么和从哪个文件读起。[记忆与事项](../concepts/memory-and-items.md)、[渠道](../concepts/channels.md) 和 [参考](./tools-commands-runs.md) 已按 2026-10-18 的代码补过，其他页面可能还停在旧实现。以代码为准。
@@ -841,3 +841,12 @@ updated: 2026-10-28
 
 - **时段**：`runner.ts` 的 `routingGuide` 加一句：偏好和候选里写了时段（峰谷价格、排队高峰）的按每轮开头的现在时间选；不再把各模型的占用写进说明（说明一个会话只发一次，占用会过期），改为要求交办前用 `list_ai_backends` 看，它的结果加了 `now`（本人时区的日期、星期和时间）。`capacity.ts` 的 `loadLines` 随之删除。设置里候选“适合哪些任务”的提示写上可以写时段。
 - **`agent-upgrade`**（`peer-exec.ts`）：把目录里带 npm 包、且已经全局装好的 ACP 适配器升到 npm 最新版（`npm i -g <包>@latest`），返回升级前后的版本；别的包一律拒绝。
+
+## 10-30：Wiki 多级目录、原件变化提示与自动检查、搜索命中呈现
+
+- **目录**：页面路径就是目录（`a/b/c` 在目录 `a/b` 里，没有单独的目录表）。`src/wiki/store.ts` 的 `buildNav` 从路径生成目录树（目录名取自它的 `index` 页标题，空间 `index` 是首页），`wikiNav` 不再读 `index.md` 里的分组；`movePages` / `expandMoves` 移动页面或整个目录（旧路径写进页面 `aliases` 和新表 `page_aliases`，`readPage` / `pageContext` 对旧路径照常打开，其他页面里的 `[[链接]]` 与 `](wiki:…)` 由 `rewriteLinks` 改成新路径，页面引用的原件状态不因移动或改链接而重置）。新工具 `move_page`、`confirm_page`，`list_pages` 加 `folder` / `direct` / `limit` / `offset`（页面多时先给 `folderOverview`），`write_page` 把页面放在顶层时提示已有目录。HTTP：`GET /api/wiki/:space` 多返回 `aliases`、`stalePages`、`upkeep`；`POST /api/wiki/:space/move`、`/organize`；`/lint` 可带 `pages`。CLI：`omem wiki move`、`omem wiki organize`。
+- **整理目录**：新角色 `roles/wiki-organizer.md`（`config.roleNames`）和运行类型 `wiki-organize`（`jobs.ts`）：顶层页面 ≥ 6 或某目录直接页面 > 40 时按主题分目录，一轮最多看 150 页，还有剩余且这一轮移动了页面就接着排下一轮（最多 12 轮）。规划、写作、检查角色说明加了目录要求；`wiki-plan` / `wiki-write` 的任务里页面超过 80 页只给目录概况。
+- **网页**：`web/src/components/WikiTree.vue`（可折叠目录树，页数、过期标记，展开状态存在浏览器 `omem.wiki.open.<空间>`，几百行用 `VirtualList`）、`WikiTreeRow.vue`、`lib/wikiTree.ts`；`WikiAttention.vue` 把“N 页引用的原件已变化”放到页面顶部（目录顶部和手机顶栏也有入口）；页面头部加“移动”“检查这页”，新建页面可选目录，概览页按目录卡片显示。
+- **自动检查**：`src/wiki/upkeep.ts`（`main.ts` 启动）。原件变化触发一个 30 分钟防抖计时，启动 3 分钟后和每小时再看一次；原件已安静 30 分钟、该页 24 小时内没检查过、空间 3 小时内没跑过检查，才排 `wiki-lint`，一次最多 10 页；聊天、会话、动态、会议这类只追加的原件不触发；`autoLint` 设置现在对所有空间有效（原来只在代码仓库同步后），新增 `autoOrganize`。`wiki-lint` 运行的输入可带 `pages`，手动检查仍看全部。
+- **搜索**：`src/search/present.ts` 给 `GET /api/search` 的每个命中加 `display`（标题、标题高亮范围、去掉 Markdown / HTML 标记后匹配处周围的摘录和高亮范围、所在位置、短链接）；排序和 `search` 工具的片段不变。网页 `HitText.vue` 用文本节点和 `<mark>` 渲染，`CommandPalette.vue` 显示标题而不是链接。
+- 测试：`test/wiki-tree.test.ts`、`test/wiki-upkeep.test.ts`、`test/search-present.test.ts`。

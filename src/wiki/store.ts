@@ -16,6 +16,8 @@ export type PageMeta = {
   order?: number;
   tags?: string[];
   updated?: string;
+  /** Paths the page used to have (set when it is moved), so old links still open it. */
+  aliases?: string[];
   [key: string]: unknown;
 };
 export type Page = { id: string; spaceId: string; slug: string; meta: PageMeta; body: string; updatedAt: string };
@@ -79,12 +81,23 @@ export function resolveSourceRef(app: App, spaceId: string, ref: string): { id: 
   );
 }
 
-function indexPage(app: App, spaceId: string, slug: string, meta: PageMeta, body: string, mtime: string) {
+/** A link's target as a page id: a page that moved is linked through its new path. */
+function linkTarget(app: App, spaceId: string, to: string) {
+  const id = to.includes(":") ? to.replace(":", "/") : `${spaceId}/${to}`;
+  if (one(app.db, "select 1 from pages where id = ?", id)) return id;
+  const sp = id.slice(0, id.indexOf("/"));
+  const a = one<{ slug: string }>(app.db, "select slug from page_aliases where space_id = ? and alias = ?", sp, id.slice(sp.length + 1));
+  return a ? `${sp}/${a.slug}` : id;
+}
+
+/** `keep`: a re-save that is not a re-check (a move, a rewritten link) keeps the original's recorded state of what each citation was when written. */
+function indexPage(app: App, spaceId: string, slug: string, meta: PageMeta, body: string, mtime: string, keep?: { fromId: string }) {
   const id = `${spaceId}/${slug}`;
   const hash = sha256(serializePage(meta, body));
   const existing = one<{ hash: string }>(app.db, "select hash from pages where id = ?", id);
   if (existing?.hash === hash) return false;
   tx(app.db, () => {
+    const was = new Map(keep ? all<{ source_id: string; hash: string }>(app.db, "select source_id, hash from page_cites where page_id = ?", keep.fromId).map((r) => [r.source_id, r.hash]) : []);
     run(
       app.db,
       `insert into pages(id,space_id,slug,title,summary,kind,body,hash,updated_at) values(?,?,?,?,?,?,?,?,?)
@@ -104,11 +117,13 @@ function indexPage(app: App, spaceId: string, slug: string, meta: PageMeta, body
     const rowid = r?.rowid ?? Number(run(app.db, "insert into page_rowids(page_id) values(?)", id).lastInsertRowid);
     run(app.db, "insert into pages_fts(rowid,title,body) values(?,?,?)", rowid, indexText(`${meta.title} ${meta.summary ?? ""} ${slug}`), indexText(body));
     run(app.db, "delete from page_links where from_id = ?", id);
-    for (const to of extractLinks(body)) run(app.db, "insert or ignore into page_links(from_id,to_id) values(?,?)", id, to.includes(":") ? to.replace(":", "/") : `${spaceId}/${to}`);
+    for (const to of extractLinks(body)) run(app.db, "insert or ignore into page_links(from_id,to_id) values(?,?)", id, linkTarget(app, spaceId, to));
+    run(app.db, "delete from page_aliases where space_id = ? and slug = ?", spaceId, slug);
+    for (const a of aliasesOf(meta)) if (a !== slug) run(app.db, "insert or replace into page_aliases(space_id,alias,slug) values(?,?,?)", spaceId, a, slug);
     run(app.db, "delete from page_cites where page_id = ?", id);
     for (const c of extractCites(body)) {
       const s = resolveSourceRef(app, spaceId, c.ref);
-      if (s) run(app.db, "insert into page_cites(page_id,source_id,line_start,line_end,hash) values(?,?,?,?,?)", id, s.id, c.lineStart, c.lineEnd, s.hash);
+      if (s) run(app.db, "insert into page_cites(page_id,source_id,line_start,line_end,hash) values(?,?,?,?,?)", id, s.id, c.lineStart, c.lineEnd, was.get(s.id) ?? s.hash);
     }
   });
   app.emit({ type: "changed", entity: "page", id, spaceId });
@@ -124,6 +139,8 @@ function removeIndex(app: App, id: string) {
   run(app.db, "delete from pages where id = ?", id);
   run(app.db, "delete from page_links where from_id = ?", id);
   run(app.db, "delete from page_cites where page_id = ?", id);
+  const sp = id.slice(0, id.indexOf("/"));
+  run(app.db, "delete from page_aliases where space_id = ? and slug = ?", sp, id.slice(sp.length + 1));
 }
 
 export function writePage(
@@ -152,10 +169,24 @@ export function deletePage(app: App, spaceId: string, slugInput: string, actor =
   app.emit({ type: "changed", entity: "page", id: `${spaceId}/${slug}`, spaceId });
 }
 
+/** The page's current path: itself, or where it moved to (following old paths); null when no such page. */
+export function resolveSlug(app: App, spaceId: string, slugInput: string): string | null {
+  let slug = checkSlug(slugInput);
+  for (let i = 0; i < 6; i++) {
+    if (existsSync(pageFile(app, spaceId, slug))) return slug;
+    const a = one<{ slug: string }>(app.db, "select slug from page_aliases where space_id = ? and alias = ?", spaceId, slug);
+    if (!a || a.slug === slug) return null;
+    slug = a.slug;
+  }
+  return null;
+}
+
+/** Reads a page; a path the page used to have opens it at its new path (`slug` in the result is the current one). */
 export function readPage(app: App, spaceId: string, slugInput: string): Page {
-  const slug = checkSlug(slugInput);
+  const asked = checkSlug(slugInput);
+  const slug = resolveSlug(app, spaceId, asked) ?? asked;
   const file = pageFile(app, spaceId, slug);
-  if (!existsSync(file)) throw new HttpError(404, `页面不存在：${spaceId}/${slug}`);
+  if (!existsSync(file)) throw new HttpError(404, `页面不存在：${spaceId}/${asked}`);
   const { meta, body } = parsePage(readFileSync(file, "utf8"));
   return { id: `${spaceId}/${slug}`, spaceId, slug, meta, body, updatedAt: statSync(file).mtime.toISOString() };
 }
@@ -164,7 +195,8 @@ export function pageExists(app: App, spaceId: string, slug: string) {
   return existsSync(pageFile(app, spaceId, slug));
 }
 
-export function pageContext(app: App, spaceId: string, slug: string) {
+export function pageContext(app: App, spaceId: string, slugInput: string) {
+  const slug = resolveSlug(app, spaceId, slugInput) ?? slugInput;
   const id = `${spaceId}/${slug}`;
   const backlinks = all<{ id: string; title: string; space_id: string; slug: string }>(
     app.db,
@@ -195,6 +227,8 @@ export function pageVersion(app: App, spaceId: string, slug: string, hash: strin
   if (raw === null) throw new HttpError(404, "没有这个版本");
   return { ...parsePage(raw), diff: fileDiff(app.libraryDir, hash, rel) };
 }
+
+const aliasesOf = (meta: PageMeta) => (Array.isArray(meta.aliases) ? meta.aliases.filter((a): a is string => typeof a === "string" && /^[\p{L}\p{N}][\p{L}\p{N}._\-/]*$/u.test(a)) : []);
 
 export type PageSummary = { slug: string; title: string; summary: string; kind: string; order: number | null; updatedAt: string; staleSources: number };
 export function listPages(app: App, spaceId: string): PageSummary[] {
@@ -236,43 +270,264 @@ export function syncWiki(app: App, spaceId: string) {
   return { indexed, removed };
 }
 
-/** Navigation tree: parsed from index.md links when present, else all pages by slug. */
-export function wikiNav(app: App, spaceId: string) {
-  const pages = listPages(app, spaceId);
-  const titles = new Map(pages.map((p) => [p.slug, p.title]));
-  type Node = { slug?: string; title: string; children: Node[] };
-  const root: Node[] = [];
-  if (titles.has("index")) {
-    const { body } = readPage(app, spaceId, "index");
-    const stack: { indent: number; node: Node }[] = [];
-    let section: Node | null = null;
-    for (const line of body.split("\n")) {
-      const head = /^#{2,3}\s+(.+)$/.exec(line);
-      if (head) {
-        section = { title: head[1].trim(), children: [] };
-        root.push(section);
-        stack.length = 0;
-        continue;
-      }
-      const m = /^(\s*)[-*+]\s+(.*)$/.exec(line);
-      if (!m) continue;
-      const link = /\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/.exec(m[2]);
-      const node: Node = link ? { slug: link[1].trim(), title: link[2]?.trim() || titles.get(link[1].trim()) || link[1].trim(), children: [] } : { title: m[2].replace(/[*_`]/g, "").trim(), children: [] };
-      const indent = m[1].replace(/\t/g, "  ").length;
-      while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
-      const parent = stack[stack.length - 1]?.node;
-      (parent ? parent.children : section ? section.children : root).push(node);
-      stack.push({ indent, node });
+export type NavNode = {
+  /** The page this entry opens: a page, or a folder's `index` page. */
+  slug?: string;
+  title: string;
+  /** Set on folders: the path. */
+  folder?: string;
+  /** Pages in the folder and below (folder index pages not counted). */
+  count?: number;
+  /** Of those, pages whose cited originals changed. */
+  stale?: number;
+  children: NavNode[];
+};
+
+export const folderOf = (slug: string) => (slug.includes("/") ? slug.slice(0, slug.lastIndexOf("/")) : "");
+
+/**
+ * The folder tree of a space, from page paths: `a/b/c` is page `c` in folder `a/b`. A folder
+ * takes its name from its own `index` page (`a/b/index`, which then opens when the folder is
+ * clicked) and from the last path segment otherwise. The space's `index` page is the home and
+ * not in the tree. At each level pages come first, then folders, both in path order.
+ */
+export function buildNav(pages: Pick<PageSummary, "slug" | "title" | "staleSources">[]): NavNode[] {
+  const root: NavNode = { title: "", children: [] };
+  const folders = new Map<string, NavNode>([["", root]]);
+  const folder = (path: string): NavNode => {
+    const have = folders.get(path);
+    if (have) return have;
+    const node: NavNode = { title: path.slice(path.lastIndexOf("/") + 1), folder: path, count: 0, stale: 0, children: [] };
+    folders.set(path, node);
+    folder(folderOf(path)).children.push(node);
+    return node;
+  };
+  for (const p of [...pages].sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0))) {
+    if (p.slug === "index") continue;
+    const dir = folderOf(p.slug);
+    if (p.slug.endsWith("/index")) {
+      const f = folder(dir);
+      f.title = p.title;
+      f.slug = p.slug;
+      continue;
     }
-    const listed = new Set<string>();
-    const walk = (ns: Node[]) => ns.forEach((n) => (n.slug && listed.add(n.slug), walk(n.children)));
-    walk(root);
-    const rest = pages.filter((p) => p.slug !== "index" && !listed.has(p.slug));
-    if (rest.length) root.push({ title: "其他页面", children: rest.map((p) => ({ slug: p.slug, title: p.title, children: [] })) });
-    return root;
+    folder(dir).children.push({ slug: p.slug, title: p.title, stale: p.staleSources, children: [] });
+    for (let d = dir; d; d = folderOf(d)) {
+      const f = folder(d);
+      f.count = (f.count ?? 0) + 1;
+      if (p.staleSources) f.stale = (f.stale ?? 0) + 1;
+    }
   }
-  for (const p of pages.sort((a, b) => (a.order ?? 999) - (b.order ?? 999) || a.slug.localeCompare(b.slug))) root.push({ slug: p.slug, title: p.title, children: [] });
-  return root;
+  const order = (n: NavNode) => {
+    const pagesFirst = n.children.filter((c) => c.folder === undefined);
+    const dirs = n.children.filter((c) => c.folder !== undefined).sort((a, b) => (a.folder! < b.folder! ? -1 : 1));
+    n.children = [...pagesFirst, ...dirs];
+    dirs.forEach(order);
+  };
+  order(root);
+  return root.children;
+}
+
+export function wikiNav(app: App, spaceId: string): NavNode[] {
+  return buildNav(listPages(app, spaceId));
+}
+
+/** How the folders are laid out (pages per folder), for agents that place or move pages. */
+export function folderOverview(pages: Pick<PageSummary, "slug">[], maxLines = 60): string {
+  const direct = new Map<string, number>();
+  const total = new Map<string, number>();
+  for (const p of pages) {
+    if (p.slug === "index") continue;
+    const dir = folderOf(p.slug);
+    const n = p.slug.endsWith("/index") ? 0 : 1;
+    direct.set(dir, (direct.get(dir) ?? 0) + n);
+    for (let d = dir; d; d = folderOf(d)) total.set(d, (total.get(d) ?? 0) + n);
+  }
+  const dirs = [...new Set([...direct.keys(), ...total.keys()])].filter(Boolean).sort();
+  const lines = [`顶层 ${direct.get("") ?? 0} 页（不含 index）`];
+  for (const d of dirs) lines.push(`${"  ".repeat(d.split("/").length - 1)}${d}/ 共 ${total.get(d) ?? 0} 页${(direct.get(d) ?? 0) !== (total.get(d) ?? 0) ? `（直接 ${direct.get(d) ?? 0}）` : ""}`);
+  return lines.slice(0, maxLines).join("\n") + (lines.length > maxLines ? `\n…另有 ${lines.length - maxLines} 个目录` : "");
+}
+
+/** What needs sorting into folders: pages left at the top level, and folders holding too many pages directly. */
+export const LOOSE_PAGES = 6;
+export const CROWDED_PAGES = 40;
+export function organizeNeeds(pages: Pick<PageSummary, "slug">[]) {
+  const direct = new Map<string, string[]>();
+  for (const p of pages) {
+    if (p.slug === "index" || p.slug.endsWith("/index")) continue;
+    const d = folderOf(p.slug);
+    direct.set(d, [...(direct.get(d) ?? []), p.slug]);
+  }
+  const loose = direct.get("") ?? [];
+  const crowded = [...direct]
+    .filter(([d, l]) => d && l.length > CROWDED_PAGES)
+    .map(([folder, l]) => ({ folder, count: l.length }))
+    .sort((a, b) => b.count - a.count);
+  return { loose: loose.length >= LOOSE_PAGES ? loose : [], crowded };
+}
+
+// ------------------------------------------------------------------ moving pages
+
+export type PageMove = { from: string; to: string };
+
+/** Fix links to moved pages in `body` (`[[slug]]`, `[[space:slug]]`, `](wiki:slug)`); `here` is the page's own space. */
+export function rewriteLinks(body: string, here: string, moved: { space: string; map: Map<string, string> }): string {
+  const fix = (raw: string) => {
+    const colon = raw.indexOf(":");
+    const space = colon > 0 ? raw.slice(0, colon) : here;
+    const slug = (colon > 0 ? raw.slice(colon + 1) : raw).trim();
+    if (space !== moved.space) return raw;
+    const to = moved.map.get(slug);
+    return to ? (colon > 0 ? `${space}:${to}` : to) : raw;
+  };
+  return body
+    .replace(/\[\[([^\]|#]+)((?:#[^\]|]*)?(?:\|[^\]]*)?)\]\]/g, (m, t: string, rest: string) => {
+      const r = fix(t);
+      return r === t ? m : `[[${r}${rest}]]`;
+    })
+    .replace(/\]\(wiki:([^)#\s]+)/g, (m, t: string) => {
+      let raw = t;
+      try {
+        raw = decodeURIComponent(t);
+      } catch {}
+      const r = fix(raw);
+      return r === raw ? m : `](wiki:${r}`;
+    });
+}
+
+/** Folder moves (`from` and `to` ending in `/`) become one move per page. */
+export function expandMoves(app: App, spaceId: string, moves: PageMove[]): PageMove[] {
+  const slugs = all<{ slug: string }>(app.db, "select slug from pages where space_id = ?", spaceId).map((r) => r.slug);
+  const out: PageMove[] = [];
+  for (const m of moves) {
+    if (m.from.endsWith("/") || m.to.endsWith("/")) {
+      if (!(m.from.endsWith("/") && m.to.endsWith("/"))) throw new HttpError(400, `移动整个目录时 from 和 to 都以 / 结尾：${m.from} → ${m.to}`);
+      const from = checkSlug(m.from) + "/";
+      const to = checkSlug(m.to) + "/";
+      const inside = slugs.filter((s) => s.startsWith(from));
+      if (!inside.length) throw new HttpError(404, `目录 ${from} 下没有页面`);
+      for (const s of inside) out.push({ from: s, to: to + s.slice(from.length) });
+    } else out.push({ from: checkSlug(m.from), to: checkSlug(m.to) });
+  }
+  return out;
+}
+
+function pruneEmptyDirs(dir: string, root: string) {
+  for (let d = dir; d.length > root.length && d.startsWith(root); d = dirname(d)) {
+    try {
+      if (readdirSync(d).length) return;
+      rmSync(d, { recursive: true });
+    } catch {
+      return;
+    }
+  }
+}
+
+/**
+ * Move or rename pages (and whole folders). Each page keeps its content and its recorded state
+ * of what it cited; its old path is kept as an alias so links, memories and bookmarks that use it
+ * still open the page, and `[[links]]` in other pages are rewritten to the new path. One commit.
+ */
+export function movePages(app: App, spaceId: string, input: PageMove[], opts: { actor?: string; message?: string } = {}) {
+  const moves = expandMoves(app, spaceId, input);
+  if (!moves.length) throw new HttpError(400, "没有要移动的页面");
+  if (moves.length > 300) throw new HttpError(400, `一次最多移动 300 页（这次 ${moves.length} 页），分几次做`);
+  const froms = new Set<string>();
+  const tos = new Set<string>();
+  for (const m of moves) {
+    if (m.from === m.to) throw new HttpError(400, `${m.from} 已经在这个位置`);
+    if (m.from === "index" || m.to === "index") throw new HttpError(400, "index 是空间的首页，不能移动，也不能把别的页面改成 index");
+    if (froms.has(m.from)) throw new HttpError(400, `${m.from} 出现了两次`);
+    if (tos.has(m.to)) throw new HttpError(400, `两个页面要移到同一个位置：${m.to}`);
+    froms.add(m.from);
+    tos.add(m.to);
+    if (!existsSync(pageFile(app, spaceId, m.from))) throw new HttpError(404, `页面不存在：${spaceId}/${m.from}`);
+  }
+  const live = new Set(all<{ slug: string }>(app.db, "select slug from pages where space_id = ?", spaceId).map((r) => r.slug));
+  for (const s of froms) live.delete(s);
+  for (const m of moves) {
+    if (live.has(m.to) || (existsSync(pageFile(app, spaceId, m.to)) && !froms.has(m.to))) throw new HttpError(409, `目标已有页面：${m.to}`);
+    const parts = m.to.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const dir = parts.slice(0, i).join("/");
+      if (live.has(dir) || tos.has(dir)) throw new HttpError(409, `${dir} 是一个页面，不能再作为目录放 ${m.to}`);
+    }
+    if ([...live, ...tos].some((s) => s.startsWith(m.to + "/"))) throw new HttpError(409, `${m.to} 是一个目录，不能作为页面路径`);
+  }
+  const oldIds = moves.map((m) => `${spaceId}/${m.from}`);
+  const linkers = new Set(all<{ from_id: string }>(app.db, `select distinct from_id from page_links where to_id in (${oldIds.map(() => "?").join(",")})`, ...oldIds).map((r) => r.from_id));
+  // 1. Read everything first (a target may be another move's source).
+  const read = moves.map((m) => {
+    const { meta, body } = parsePage(readFileSync(pageFile(app, spaceId, m.from), "utf8"));
+    const was = all<{ source_id: string; hash: string }>(app.db, "select source_id, hash from page_cites where page_id = ?", `${spaceId}/${m.from}`);
+    return { ...m, meta, body, was };
+  });
+  const root = wikiDir(app, spaceId);
+  // 2. Old files and index rows out, new files in.
+  for (const r of read) {
+    rmSync(pageFile(app, spaceId, r.from));
+    removeIndex(app, `${spaceId}/${r.from}`);
+  }
+  const map = new Map(moves.map((m) => [m.from, m.to]));
+  for (const r of read) {
+    const aliases = [...new Set([...(r.meta.aliases ?? []), r.from])].filter((a) => a !== r.to && !tos.has(a));
+    const meta: PageMeta = { ...r.meta, aliases };
+    // A moved page's own links to other moved pages are fixed too.
+    const body = rewriteLinks(r.body, spaceId, { space: spaceId, map });
+    const file = pageFile(app, spaceId, r.to);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, serializePage(meta, body));
+    indexPage(app, spaceId, r.to, meta, body.trim() + "\n", statSync(file).mtime.toISOString());
+    // The page did not change, so what it cited was checked as long ago as before the move.
+    for (const c of r.was) run(app.db, "update page_cites set hash = ? where page_id = ? and source_id = ?", c.hash, `${spaceId}/${r.to}`, c.source_id);
+  }
+  for (const r of read) pruneEmptyDirs(dirname(pageFile(app, spaceId, r.from)), root);
+  // 3. Other pages that link to a moved page.
+  let linksFixed = 0;
+  for (const id of linkers) {
+    const sp = id.slice(0, id.indexOf("/"));
+    const slug0 = id.slice(sp.length + 1);
+    const slug = sp === spaceId ? (map.get(slug0) ?? slug0) : slug0;
+    const file = pageFile(app, sp, slug);
+    if (!existsSync(file)) continue;
+    const { meta, body } = parsePage(readFileSync(file, "utf8"));
+    const next = rewriteLinks(body, sp, { space: spaceId, map });
+    if (next === body) continue;
+    writeFileSync(file, serializePage(meta, next));
+    indexPage(app, sp, slug, meta, next.trim() + "\n", statSync(file).mtime.toISOString(), { fromId: `${sp}/${slug}` });
+    linksFixed++;
+  }
+  commitLibrary(app.libraryDir, opts.message ?? `${opts.actor ?? "agent"}: move ${moves.length} pages in ${spaceId}`);
+  return { moved: moves, linksFixed };
+}
+
+/** The page was checked and still holds: its recorded state of what it cited is brought up to date. Content is untouched. */
+export function confirmPage(app: App, spaceId: string, slugInput: string) {
+  const slug = resolveSlug(app, spaceId, slugInput);
+  if (!slug) throw new HttpError(404, `页面不存在：${spaceId}/${slugInput}`);
+  const id = `${spaceId}/${slug}`;
+  run(app.db, "update page_cites set hash = (select s.hash from sources s where s.id = page_cites.source_id) where page_id = ? and source_id in (select id from sources)", id);
+  const gone = all<{ uri: string }>(app.db, "select distinct s.uri from page_cites c join sources s on s.id = c.source_id where c.page_id = ? and s.deleted_at is not null", id).map((r) => r.uri);
+  app.emit({ type: "changed", entity: "page", id, spaceId });
+  return { id, deleted: gone };
+}
+
+/** Pages whose cited originals changed since they were written, with what changed. */
+export function staleDetail(app: App, spaceId: string) {
+  const rows = all<{ page_id: string; source_id: string; uri: string; title: string; kind: string; updated_at: string; deleted_at: string | null }>(
+    app.db,
+    `select distinct c.page_id, c.source_id, s.uri, s.title, s.kind, s.updated_at, s.deleted_at from page_cites c join sources s on s.id = c.source_id
+     join pages p on p.id = c.page_id where p.space_id = ? and (s.hash != c.hash or s.deleted_at is not null)`,
+    spaceId,
+  );
+  const by = new Map<string, { slug: string; sources: { id: string; uri: string; title: string; kind: string; updatedAt: string; deleted: boolean }[] }>();
+  for (const r of rows) {
+    const e = by.get(r.page_id) ?? { slug: r.page_id.slice(spaceId.length + 1), sources: [] };
+    e.sources.push({ id: r.source_id, uri: r.uri, title: r.title, kind: r.kind, updatedAt: r.updated_at, deleted: !!r.deleted_at });
+    by.set(r.page_id, e);
+  }
+  return [...by.values()].sort((a, b) => (a.slug < b.slug ? -1 : 1));
 }
 
 export function spaceGuide(app: App, spaceId: string) {

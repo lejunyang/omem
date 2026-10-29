@@ -23,6 +23,7 @@ const ROLE_RUNS: Record<string, string[]> = {
   "wiki-planner": ["wiki-plan"],
   "wiki-writer": ["wiki-write"],
   "wiki-linter": ["wiki-lint"],
+  "wiki-organizer": ["wiki-organize"],
   tutor: ["tutor"],
   brief: ["brief"],
   curator: ["curate"],

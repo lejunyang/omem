@@ -11,7 +11,7 @@ import { deliverDueReminders } from "../items/reminders.ts";
 import { listItems, upsertItem, UTC } from "../items/store.ts";
 import { syncDirectorySpace } from "../sources/import.ts";
 import { appendToSource, getSource, sourceText } from "../sources/store.ts";
-import { listPages, pageExists, syncWiki } from "../wiki/store.ts";
+import { folderOverview, listPages, organizeNeeds, pageExists, syncWiki } from "../wiki/store.ts";
 import { runCodeTask } from "./code.ts";
 import { deliverToThread, receive } from "./inbox.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
@@ -685,7 +685,9 @@ registerHandler("wiki-plan", async (ctx) => {
     spaceId,
     [
       focus ? `本人的要求：${focus}` : "为这个空间规划完整的 Wiki。",
-      existing.length ? `已有页面：\n${existing.map((p) => `- ${p.slug}「${p.title}」`).join("\n")}` : "目前还没有页面。",
+      existing.length
+        ? `已有页面（${existing.length} 页，路径里的 / 是目录）：\n${existing.length > 80 ? `${folderOverview(existing)}\n页面太多没有逐个列出：用 list_pages(folder=…) 看某个目录里的页面。` : existing.map((p) => `- ${p.slug}「${p.title}」`).join("\n")}`
+        : "目前还没有页面。",
       ...sources.map(id => `材料空间 ${id}：\n${sourceMap(ctx.app, id)}`),
     ].join("\n\n"),
     [spaceId],
@@ -706,6 +708,7 @@ registerHandler("wiki-write", async (ctx) => {
   const spaceId = ctx.run.spaceId!;
   const { brief, instructions, readSpaces } = ctx.run.input as { brief: PageBrief; instructions?: string; readSpaces?: string[] };
   const exists = pageExists(ctx.app, spaceId, brief.slug);
+  const pagesNow = listPages(ctx.app, spaceId);
   const task = [
     `页面：${brief.slug}「${brief.title}」（类型：${brief.kind}）`,
     `读者问题：${brief.question}`,
@@ -713,7 +716,8 @@ registerHandler("wiki-write", async (ctx) => {
     `调查入口：${(brief.entry_points ?? []).join("、") || "自行调查"}`,
     exists ? "这个页面已经存在：先 read_page，保留仍然正确且有用的内容，在此基础上改进。" : "",
     instructions ? `本人的补充要求：${instructions}` : "",
-    "其他已有/计划中的页面（需要时链接它们，不要重复讲）：\n" + listPages(ctx.app, spaceId).map((p) => `- [[${p.slug}]] ${p.title}`).join("\n"),
+    "其他已有/计划中的页面（需要时链接它们，不要重复讲）：\n" +
+      (pagesNow.length > 80 ? `${folderOverview(pagesNow)}\n页面太多没有逐个列出：用 list_pages(folder=…) 看相关目录。` : pagesNow.map((p) => `- [[${p.slug}]] ${p.title}`).join("\n")),
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -735,11 +739,51 @@ export function stalePages(app: App, spaceId: string) {
 registerHandler("wiki-lint", async (ctx) => {
   const spaceId = ctx.run.spaceId!;
   syncWiki(ctx.app, spaceId);
-  const stale = stalePages(ctx.app, spaceId);
+  // An automatic check names the pages it chose (a batch); a manual one looks at all of them.
+  const only = (ctx.run.input as { pages?: string[] }).pages;
+  const stale = stalePages(ctx.app, spaceId).filter((s) => !only?.length || only.includes(s.page_id.slice(spaceId.length + 1)));
   if (!stale.length) return { quiet: true, summary: "没有受影响的页面" };
   const task = `受影响的页面与变化的原件：\n${stale.map((s) => `- ${s.page_id.split("/").slice(1).join("/")}：${s.uris}`).join("\n")}`;
   const r = await agent(ctx, "wiki-linter", spaceId, task);
   return { quiet: isQuiet(r.text), summary: r.text.trim(), pages: stale.length };
+});
+
+/** Pages one folder pass looks at (the rest of a crowded folder goes to the next pass). */
+const ORGANIZE_PAGES = 150;
+const ORGANIZE_ROUNDS = 12;
+
+/**
+ * Sort a space's pages into folders: pages left at the top level, and folders that hold too many
+ * pages directly. The role decides folder names and which page goes where (move_page); a long
+ * backlog carries on in the next run while a pass still moves pages.
+ */
+registerHandler("wiki-organize", async (ctx) => {
+  const spaceId = ctx.run.spaceId!;
+  const input = ctx.run.input as { round?: number };
+  syncWiki(ctx.app, spaceId);
+  const before = listPages(ctx.app, spaceId);
+  const needs = organizeNeeds(before);
+  if (!needs.loose.length && !needs.crowded.length) return { quiet: true, moved: 0, summary: "目录已经整齐" };
+  const titles = new Map(before.map((p) => [p.slug, p.title]));
+  const line = (slug: string) => `- ${slug}「${titles.get(slug)}」`;
+  const task = [
+    `这个空间的 Wiki 现有目录：\n${folderOverview(before)}`,
+    needs.loose.length ? `顶层有 ${needs.loose.length} 页没放进目录（index 不算）：\n${needs.loose.slice(0, 80).map(line).join("\n")}${needs.loose.length > 80 ? `\n…另有 ${needs.loose.length - 80} 页` : ""}` : "",
+    needs.crowded.length
+      ? `直接放了很多页的目录：${needs.crowded.map((c) => `${c.folder}/（${c.count}）`).join("、")}。先处理 ${needs.crowded[0].folder}/：用 list_pages(folder="${needs.crowded[0].folder}", direct=true, limit=${ORGANIZE_PAGES}) 读标题和摘要，按主题拆成子目录。这一轮最多处理 ${ORGANIZE_PAGES} 页，没处理完的留给下一轮。`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const r = await agent(ctx, "wiki-organizer", spaceId, task, [spaceId]);
+  const after = listPages(ctx.app, spaceId);
+  const now = new Set(after.map((p) => p.slug));
+  const moved = before.filter((p) => !now.has(p.slug)).length;
+  const again = organizeNeeds(after);
+  const round = input.round ?? 1;
+  if (moved > 0 && (again.loose.length || again.crowded.length) && round < ORGANIZE_ROUNDS)
+    createRun(ctx.app, { kind: "wiki-organize", spaceId, title: "整理 Wiki 目录（续）", input: { round: round + 1, auto: (ctx.run.input as { auto?: boolean }).auto }, parentId: ctx.run.parentId ?? undefined });
+  return { quiet: moved === 0 && isQuiet(r.text), moved, loose: again.loose.length, crowded: again.crowded.length, summary: r.text.trim() };
 });
 
 // --------------------------------------------------------------------- sync

@@ -10,7 +10,7 @@ export type WriteTarget =
   | { kind: "page"; space: string; slug: string }
   | { kind: "item"; id: string }
   | { kind: "rule"; id: string };
-export type WriteAction = "新建" | "更新" | "更正";
+export type WriteAction = "新建" | "更新" | "更正" | "移动";
 export type RunWrite = { tool: string; label: string; action?: WriteAction; space?: string | null; target?: WriteTarget; n?: number };
 
 const clip = (s: unknown, n = 80) => {
@@ -72,6 +72,10 @@ export function runWrites(app: App, run: Run): RunWrite[] {
       const space = pageId ? pageId.slice(0, pageId.indexOf("/")) : String(args.space ?? run.spaceId ?? "personal");
       const slug = pageId ? pageId.slice(pageId.indexOf("/") + 1) : String(args.page);
       add({ tool: name, label: String(args.title ?? slug), action, space, target: { kind: "page", space, slug } });
+    } else if (name === "move_page") {
+      const moves = (args.moves ?? []) as { from: string; to: string }[];
+      const sp = String(args.space ?? run.spaceId ?? "personal");
+      add({ tool: name, label: moves.length === 1 ? `${moves[0].from} → ${moves[0].to}` : `${moves.length} 项：${moves[0]?.from ?? ""} → ${moves[0]?.to ?? ""} 等`, action: "移动", space: sp, target: moves.length === 1 ? { kind: "page", space: sp, slug: moves[0].to } : undefined });
     } else if (name === "upsert_item") {
       const id = /事项 (i[0-9a-z]+)/.exec(result ?? "")?.[1] ?? (args.id ? String(args.id) : one<{ id: string }>(app.db, "select id from items where title = ? and created_at >= ? order by created_at limit 1", String(args.title ?? ""), since)?.id);
       const item = id ? one<{ id: string; title: string; space_id: string }>(app.db, "select id, title, space_id from items where id = ?", id) : undefined;
