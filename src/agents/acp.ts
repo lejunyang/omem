@@ -3,7 +3,7 @@ import type { AgentProfile } from "../core/config.ts";
 import { archiveSession } from "./session-archive.ts";
 import { resolveModelOption } from "./models.ts";
 import { idleWatchdog, launch, stop } from "./spawn.ts";
-import { agentRunError, replyFromSegments, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult } from "./types.ts";
+import { agentRunError, replyFromSegments, withInstructions, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult } from "./types.ts";
 
 // Provider queue text shown as a normal message by some CLIs (traex included).
 const QUEUE_TEXT = /(?:排队|队列|queue[d]?|waiting (?:in )?(?:the )?queue)[^\d]{0,20}(\d+)?/i;
@@ -30,6 +30,8 @@ export type AcpOpenOptions = {
   env?: Record<string, string>;
   /** Continue an earlier agent session (resume, or load when only that is offered). */
   resumeSessionId?: string;
+  /** Standing instructions, as the session's system prompt when the agent takes one. */
+  system?: string;
   probe?: boolean;
   strictSelection?: { model?: boolean; effort?: boolean };
   /** Max time to wait in the provider queue before failing with kind="queue". 0 = unlimited. */
@@ -46,6 +48,8 @@ export type AcpHandle = {
   agent: string;
   /** true when an earlier session was resumed (the agent remembers it). */
   resumed: boolean;
+  /** true when the standing instructions went in as the session's system prompt. */
+  system: boolean;
   alive(): boolean;
   prompt(text: string, emit: (e: AgentEvent) => void, signal?: AbortSignal): Promise<AgentResult>;
   close(): void;
@@ -231,8 +235,12 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       failed,
     ]);
     touch();
-    const caps = init.agentCapabilities as { mcpCapabilities?: { http?: boolean }; loadSession?: boolean; sessionCapabilities?: { resume?: unknown; delete?: unknown } } | undefined;
+    const caps = init.agentCapabilities as { mcpCapabilities?: { http?: boolean }; loadSession?: boolean; sessionCapabilities?: { resume?: unknown; delete?: unknown; systemPrompt?: unknown } } | undefined;
     const httpMcp = !!caps?.mcpCapabilities?.http;
+    // Standing instructions as the system prompt (ACP systemPrompt, append mode): not a message the
+    // agent can compact away, and Codex keeps them with a resumed session. Sent again on resume,
+    // since some agents (Claude Code) set the system prompt per process.
+    const system = opts.system && caps?.sessionCapabilities?.systemPrompt ? { systemPrompt: { mode: "append", content: [{ type: "text", text: opts.system }] } } : {};
     const mcpServers: McpServer[] = opts.mcp
       ? httpMcp
         ? [{ type: "http", name: "omem", url: opts.mcp.url, headers: [{ name: "authorization", value: `Bearer ${opts.mcp.token}` }] }]
@@ -263,10 +271,10 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
     if (opts.resumeSessionId && (caps?.sessionCapabilities?.resume || caps?.loadSession)) {
       try {
         if (caps.sessionCapabilities?.resume)
-          session = (await Promise.race([connection.resumeSession({ sessionId: opts.resumeSessionId, cwd: opts.cwd, mcpServers }), failed])) as SessionInfo;
+          session = (await Promise.race([connection.resumeSession({ sessionId: opts.resumeSessionId, cwd: opts.cwd, mcpServers, ...system }), failed])) as SessionInfo;
         else {
           replaying = true;
-          session = (await Promise.race([connection.loadSession({ sessionId: opts.resumeSessionId, cwd: opts.cwd, mcpServers }), failed])) as SessionInfo;
+          session = (await Promise.race([connection.loadSession({ sessionId: opts.resumeSessionId, cwd: opts.cwd, mcpServers, ...system }), failed])) as SessionInfo;
           replaying = false;
         }
         sessionId = opts.resumeSessionId;
@@ -278,7 +286,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       }
     }
     if (!session) {
-      session = (await Promise.race([connection.newSession({ cwd: opts.cwd, mcpServers }), failed])) as SessionInfo;
+      session = (await Promise.race([connection.newSession({ cwd: opts.cwd, mcpServers, ...system }), failed])) as SessionInfo;
       sessionId = session.sessionId!;
     }
     // Recorded with the run, so a run that fails halfway can still be continued (retry).
@@ -326,7 +334,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
         ...(effortsByModel ? { effortsByModel } : {}),
       };
       await discard();
-      return { sessionId, agent: agentName, resumed, alive: () => false, prompt: async () => ({ text: "", stopReason: "probe", agent: agentName }), close, discard, probe };
+      return { sessionId, agent: agentName, resumed, system: false, alive: () => false, prompt: async () => ({ text: "", stopReason: "probe", agent: agentName }), close, discard, probe };
     }
     for (const [key, value] of [
       ["model", profile.model],
@@ -370,6 +378,7 @@ export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitS
       sessionId,
       agent: agentName,
       resumed,
+      system: "systemPrompt" in system,
       alive: () => !dead,
       close,
       discard,
@@ -485,11 +494,11 @@ function explain(error: unknown, profile: AgentProfile) {
 export async function runAcp(profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   const onAbort = () => {};
   req.signal?.addEventListener("abort", onAbort, { once: true });
-  const handle = await openAcp(profile, { cwd: req.cwd, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, env: req.env, resumeSessionId: req.resumeSessionId, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
+  const handle = await openAcp(profile, { cwd: req.cwd, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
   try {
     if (req.probe) return { text: "", stopReason: "probe", agent: handle.agent, probe: handle.probe };
     if (req.signal?.aborted) throw new Error("CANCELLED");
-    return await handle.prompt(req.prompt, emit, req.signal);
+    return await handle.prompt(withInstructions(handle, req.system, req.prompt), emit, req.signal);
   } finally {
     req.signal?.removeEventListener("abort", onAbort);
     if (!req.persistSession && !req.resumeSessionId) await handle.discard();

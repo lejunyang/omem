@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentProfile } from "../core/config.ts";
-import { agentRunError, replyFromSegments, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
+import { agentRunError, replyFromSegments, withInstructions, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 
 /**
  * Doubao as a model backend, through the Doubao OpenAPI (Managed Agent: sessions, events,
@@ -255,12 +255,13 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
   const token = await doubaoAccessToken(ctx.home, ctx.app);
   if (!token) throw new Error("豆包还没有授权：在运行 omem 的电脑上执行 omem doubao login（或网页 Agent 页的豆包授权）");
   const signal = req.signal;
-  const userMessage = { type: "user.message", contents: [{ type: "text", text: req.prompt }] };
+  // The standing instructions open a new session; a resumed one already has them.
+  const userMessage = (resumed: boolean) => ({ type: "user.message", contents: [{ type: "text", text: withInstructions({ resumed }, req.system, req.prompt) }] });
   let sessionId = req.resumeSessionId;
   let queryId: string;
   if (sessionId) {
     try {
-      const d = await api<{ messages: Message[] }>(token, "POST", `/v1/sessions/${sessionId}/events`, { uuid: randomUUID(), events: [userMessage] });
+      const d = await api<{ messages: Message[] }>(token, "POST", `/v1/sessions/${sessionId}/events`, { uuid: randomUUID(), events: [userMessage(true)] });
       queryId = d.messages[0].id;
     } catch (e) {
       if ((e as Error).message === "CANCELLED") throw e;
@@ -269,7 +270,7 @@ export async function runDoubao(profile: AgentProfile, req: AgentRequest, emit: 
     }
   }
   if (!sessionId) {
-    const d = await api<{ id: string; messages: Message[] }>(token, "POST", "/v1/sessions", { uuid: randomUUID(), initial_events: [userMessage] });
+    const d = await api<{ id: string; messages: Message[] }>(token, "POST", "/v1/sessions", { uuid: randomUUID(), initial_events: [userMessage(false)] });
     sessionId = d.id;
     queryId = d.messages[0].id;
   }

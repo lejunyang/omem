@@ -3,7 +3,7 @@ import type { AgentProfile } from "../core/config.ts";
 import { runAcp } from "./acp.ts";
 import { runCli } from "./cli.ts";
 import { doubaoAppFor, doubaoApps, runDoubao } from "./doubao.ts";
-import type { AgentEvent, AgentRequest, AgentResult } from "./types.ts";
+import { withInstructions, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 
 /** One turn on any backend: ACP, a CLI fallback, or the Doubao OpenAPI. */
 export async function runBackend(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
@@ -14,5 +14,7 @@ export async function runBackend(app: App, profile: AgentProfile, req: AgentRequ
     if (req.mcp || Object.keys(req.extraMcp ?? {}).length) emit({ type: "status", text: "豆包在云端运行，用不了 omem 的工具；只按提示里给的材料回答" });
     return runDoubao(profile, req, emit, { home: app.home, app: da });
   }
-  return runCli(profile, req, emit);
+  // The CLIs take no system prompt here: the instructions open a new session, a resumed one has them
+  // (a session that cannot be resumed fails, and the caller starts a new one).
+  return runCli(profile, { ...req, prompt: withInstructions({ resumed: !!req.resumeSessionId }, req.system, req.prompt), system: undefined }, emit);
 }

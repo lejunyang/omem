@@ -3,7 +3,7 @@ import type { App } from "../core/app.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import type { PreparedRun } from "./runner.ts";
 import { issueToolToken, retargetToolToken, revokeToolToken, toolContextForToken } from "./tools.ts";
-import type { AgentEvent, AgentRequest, AgentResult } from "./types.ts";
+import { withInstructions, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 
 type Live = { key: string; handle: AcpHandle; token: string; busy: boolean; usedAt: number; usage?: AgentResult["contextUsage"]; timer?: NodeJS.Timeout; releasing?: Promise<void> };
 const pools = new Map<App, Set<Live>>();
@@ -42,7 +42,7 @@ export async function backgroundTurn(app: App, prep: PreparedRun, req: AgentRequ
   if (!ctx) throw new Error("后台会话的工具权限已失效");
   const { app: _app, runId: _run, ...scope } = ctx;
   const key = createHash("sha256").update(JSON.stringify(stable({
-    scope, system: prep.stableSystem, profile: prep.profile, cwd: prep.cwd,
+    scope, system: prep.system, profile: prep.profile, cwd: prep.cwd,
     extraMcp: prep.extraMcp, allowWrites: prep.allowWrites, modes: prep.modes,
   }))).digest("hex");
   let pool = pools.get(app);
@@ -70,8 +70,8 @@ export async function backgroundTurn(app: App, prep: PreparedRun, req: AgentRequ
   try {
     if (req.signal?.aborted) throw new Error("CANCELLED");
     const prompt = continuing
-      ? `（现在 ${new Date().toISOString()}，时区 ${app.config.timezone}）\n\n# 本轮独立任务\n\n${task}\n\n只处理本轮列出的材料；历史任务不重复执行，旧材料需要时重新读取。`
-      : req.prompt;
+      ? `（${prep.now}）\n\n# 本轮独立任务\n\n${task}\n\n只处理本轮列出的材料；历史任务不重复执行，旧材料需要时重新读取。`
+      : withInstructions(entry.handle, req.system, req.prompt);
     const result = await entry.handle.prompt(prompt, emit, req.signal);
     entry.usage = result.contextUsage;
     entry.usedAt = Date.now();

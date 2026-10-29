@@ -743,3 +743,11 @@ updated: 2026-10-28
 - **统计**（新增 `src/core/storage-scan.ts`）：顶层各项递归求和（不跟随符号链接）；`files/` 每个文件按引用归来源——`lark_messages.resources` 和 kv `lark_res:*` 是聊天附件，原件 `meta.media` 是在线文档里下载的图片和附件，`meta.original` 按原件 uri 是否 `lark:` 分聊天附件或导入原件，没人引用的单列——再按扩展名分图片、视频、音频、文档、压缩包、其他；数据库用 `dbstat` 按表（索引并入所属表）汇总，表名归到原件、切块、全文索引、代码、飞书、运行、会话、记忆、Wiki、事项几个模块，原件按 `kind` 加来处（`lark:`、`directoryRoot`、链接）统计正文、切块和向量字节，另报 `freelist` 空闲页。
 - **运行方式**（`src/core/storage.ts`）：`dbstat` 要读遍所有页（本机 1 GB 的库约 10 秒），放到子进程里跑，只读连接，结果 JSON 存 kv `storage_report`，重启后还在；同一时间只跑一个。没用 worker 线程：`node --watch` 下 worker 会多发模块跟踪消息，而且子进程的内存不算在服务进程里。
 - **接口与网页**：`GET /api/storage`、`POST /api/storage/scan`（只有本人）；`web/src/components/StorageUsage.vue`，设置页新标签“占用”，统计中每 3 秒刷新。
+
+## 10-30：角色说明每个会话只发一次，能当系统提示的就当系统提示
+
+10-27 一条编码交办续了 9 轮，每轮都把整段说明（`_common.md`、角色、环境、偏好与经验、技能目录）连同任务重发进同一个会话。
+
+- **只发一次**：`AgentRequest` 分成 `system`（常驻说明）和 `prompt`（这一轮）。`types.ts` 的 `withInstructions`：新会话、且说明没有作为系统提示时，才把说明放在第一条消息前面；接上的会话只发这一轮。`runner.ts` 的 `runRole`（编码续轮、补充说明那一轮、多 Agent 话题续轮、规则、会议、`/ai`）、`sessions.ts`、`background-sessions.ts`、`dispatch.ts`（CLI）、`doubao.ts` 都走它。
+- **系统提示**：Agent 在 `initialize` 里声明 `sessionCapabilities.systemPrompt` 时，`acp.ts` 在 `session/new`、`session/resume`、`session/load` 带上 `systemPrompt`（append 模式）。实测 codex-acp 2.5.0 把它变成 Codex 的 developer instructions，换进程恢复后仍在，恢复时改不了（沿用建会话时的）；claude-agent-acp 0.99.0 按进程设置，所以恢复时也要带。ACP SDK 1.8.0 不认这个字段，发送时原样带出。
+- **时间移出说明**：`prepareRun` 的 `system` 不再含当前时间（`now` 单独给），每轮消息开头写“现在：…”，说明在会话里保持不变，后台会话池直接用它做身份。

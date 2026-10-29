@@ -4,7 +4,7 @@
  * answers. It exercises the real host path (ACP client, stdio MCP bridge, tool
  * tokens, run events) without a model.
  */
-import { Readable, Writable } from "node:stream";
+import { PassThrough, Readable, Writable } from "node:stream";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -14,6 +14,33 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 const sessions = new Map<string, McpServer[]>();
 const cwds = new Map<string, string>();
+// FAKE_SYSTEM=1: take the client's systemPrompt (ACP, append mode) on new and resumed sessions.
+const takesSystem = process.env.FAKE_SYSTEM === "1";
+const systems = new Map<string, string>();
+const systemText = (p: { systemPrompt?: { content?: { text?: string }[] } }) => p.systemPrompt?.content?.map((b) => b.text ?? "").join("\n\n");
+// This SDK drops request fields it does not know (systemPrompt), so read them from the raw lines.
+const newSystems: (string | undefined)[] = [];
+const input = new PassThrough();
+let rawLine = "";
+process.stdin.on("data", (chunk: Buffer) => {
+  rawLine += chunk.toString("utf8");
+  let nl: number;
+  while ((nl = rawLine.indexOf("\n")) >= 0) {
+    const line = rawLine.slice(0, nl);
+    rawLine = rawLine.slice(nl + 1);
+    let m: { method?: string; params?: { sessionId?: string } };
+    try { m = JSON.parse(line); } catch { continue; }
+    if (m.method === "session/new") newSystems.push(systemText(m.params as never));
+    else if ((m.method === "session/resume" || m.method === "session/load") && m.params?.sessionId) {
+      const system = systemText(m.params as never);
+      if (system !== undefined) systems.set(m.params.sessionId, system);
+    }
+  }
+  input.write(chunk);
+});
+process.stdin.on("end", () => input.end());
+// FAKE_MODE=echo: answer with the session, whether it was resumed, its system prompt and this turn's text.
+const echo = process.env.FAKE_MODE === "echo";
 const turns = new Map<string, number>();
 const resumed = new Set<string>();
 // FAKE_MODE=thread: no tools, answer with what the host sent (for session/thread tests).
@@ -42,7 +69,7 @@ new AgentSideConnection(
     async initialize() {
       return {
         protocolVersion: 1,
-        agentCapabilities: { mcpCapabilities: { http: false }, sessionCapabilities: { ...(threadMode ? { resume: {} } : {}), ...(process.env.FAKE_DELETE_LOG ? { delete: {} } : {}) } },
+        agentCapabilities: { mcpCapabilities: { http: false }, sessionCapabilities: { ...(threadMode || echo ? { resume: {} } : {}), ...(process.env.FAKE_DELETE_LOG ? { delete: {} } : {}), ...(takesSystem ? { systemPrompt: {} } : {}) } },
         agentInfo: { name: "fake-agent", version: "1" },
       } as never;
     },
@@ -50,6 +77,8 @@ new AgentSideConnection(
       const id = `s${process.pid}-${sessions.size + 1}`;
       sessions.set(id, p.mcpServers);
       cwds.set(id, p.cwd);
+      const system = newSystems.shift();
+      if (system !== undefined) systems.set(id, system);
       if (legacy)
         return {
           sessionId: id,
@@ -186,6 +215,10 @@ ${JSON.stringify({ check, tools })}`);
         } finally { await client.close(); }
         return { stopReason: "end_turn" as const };
       }
+      if (echo) {
+        await say(JSON.stringify({ session: p.sessionId, resumed: resumed.has(p.sessionId), system: systems.get(p.sessionId) ?? null, prompt }));
+        return { stopReason: "end_turn" };
+      }
       if (process.env.FAKE_MODE === "background") {
         const n = (turns.get(p.sessionId) ?? 0) + 1;
         turns.set(p.sessionId, n);
@@ -256,5 +289,5 @@ ${JSON.stringify({ check, tools })}`);
       return { stopReason: "end_turn" };
     },
   }),
-  ndJsonStream(Writable.toWeb(process.stdout) as WritableStream<Uint8Array>, Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>),
+  ndJsonStream(Writable.toWeb(process.stdout) as WritableStream<Uint8Array>, Readable.toWeb(input) as ReadableStream<Uint8Array>),
 );

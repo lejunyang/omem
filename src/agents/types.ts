@@ -23,7 +23,14 @@ export type McpAccess = {
 
 export type AgentRequest = {
   cwd: string;
+  /** This turn's text. */
   prompt: string;
+  /**
+   * Standing instructions (shared rules, role, environment, learned context). The agent's system
+   * prompt when it takes one (ACP `systemPrompt`); otherwise the head of a new session's first
+   * message. Never repeated into a resumed session.
+   */
+  system?: string;
   mcp?: McpAccess;
   /** Allow edit/delete/move tool kinds (coding in a worktree). */
   allowWrites?: boolean;
@@ -64,6 +71,14 @@ export type AgentResult = {
   agent: string;
   probe?: AgentProbe;
 };
+/**
+ * A turn's text for a session: the standing instructions go in front only in a new session that
+ * did not take them as its system prompt. A resumed session already has them.
+ */
+export function withInstructions(session: { resumed: boolean; system?: boolean }, system: string | undefined, text: string) {
+  return !system || session.resumed || session.system ? text : `${system}\n\n---\n\n${text}`;
+}
+
 /** The part of an agent's output meant as the answer. */
 export const replyOf = (r: { text: string; reply?: string }) => (r.reply && r.reply.trim() ? r.reply : r.text);
 

@@ -187,10 +187,13 @@ export type Actor = { role: RoleName } | { spec: AgentSpec };
 export type PreparedRun = {
   profile: AgentProfile;
   cwd: string;
-  /** Everything before the task: shared rules, role or spec, environment, learned context. */
+  /**
+   * Standing instructions: shared rules, role or spec, environment, learned context. Without the
+   * clock, so a session can keep them (as its system prompt) across turns; see `now`.
+   */
   system: string;
-  /** Standing instructions without the changing clock, for safe session reuse. */
-  stableSystem: string;
+  /** The current time, said at the start of each turn. */
+  now: string;
   token: string;
   mcp: McpAccess;
   extraMcp: Record<string, McpServerSpec>;
@@ -308,17 +311,16 @@ export function prepareRun(
   const body = spec
     ? `# 角色：${spec.description}\n\n${spec.prompt}${spec.instructions ? `\n\n## 工作约定（AGENTS.md）\n\n${spec.instructions}` : ""}`
     : `# 角色：${role!.description}\n\n${role!.body}`;
-  const currentTime = localTime(app);
   const system = [
     commonGuide(),
     body,
-    `# 环境\n\n- 现在：${currentTime}${userId !== OWNER ? `\n- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}` : ""}\n- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`,
+    `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped)}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（可用 run_agent 交给它们）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`,
   ].join("\n\n---\n\n");
   return {
     profile,
     cwd,
     system,
-    stableSystem: system.replace(currentTime, "<current-time>"),
+    now: `现在：${localTime(app)}`,
     token,
     mcp: { url: `${app.baseUrl}/mcp`, baseUrl: app.baseUrl, token, stdio: mcpBridge(), env: agentToolEnv(app.home, app.baseUrl, token) },
     extraMcp: input.reviewCheck || input.reviewLead ? {} : spec?.mcp ?? {},
@@ -454,7 +456,9 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       const req = {
         strictSelection: execution ? { model: !!execution.model, effort: !!execution.effort } : undefined,
         cwd: prep.cwd,
-        prompt: `${prep.system}\n\n---\n\n# 任务\n\n${input.task}`,
+        // The instructions go once per session (see withInstructions); a resumed session gets the task alone.
+        system: prep.system,
+        prompt: `（${prep.now}）\n\n# 任务\n\n${input.task}`,
         allowWrites: prep.allowWrites,
         modes: prep.modes,
         signal: input.signal,
