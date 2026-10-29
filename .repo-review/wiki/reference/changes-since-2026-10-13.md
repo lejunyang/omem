@@ -705,3 +705,5 @@ updated: 2026-10-28
 
 - 复用工作区只认和仓库共用提交记录的 `git worktree`；同一仓库（remote 相同）单独 clone 的目录以前只显示“不可用”，本人得知道去让助手 relink。现在 `listWorkspaces` 把它标成 `clone`，设置页给出“设为仓库目录”，保存时也会问；空间设置多了“仓库目录 · 换目录”。
 - 换目录的逻辑从 `connect_repository` 抽到 `src/agents/repo-relink.ts`（`relinkRepoSpace`）：进行中的交办拒绝，没应用的交办先返回清单、确认后丢弃，删 omem 自建的复用工作区，把新目录从复用列表里去掉。接口 `POST /api/spaces/:id/relink`。`remoteKey` / `sameRepository` 移到 `core/repositories.ts`。
+
+- 并行交办：主目录借给某个交办（`inPlace`）还没应用或丢弃时，别的交办应用到主目录会被拒绝（`applyTargets` 查 `leasedTo`），以免两次改动混在一起、丢弃时一并被重置。

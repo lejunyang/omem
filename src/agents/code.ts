@@ -13,7 +13,7 @@ import { resolveRunProfile, runRole } from "./runner.ts";
 import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
 import { createRun, getRun, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
-import { leaseWorkspace, releaseWorkspace, setupDone, setupKey, workDirOf, type WorkspaceSettings } from "./workspaces.ts";
+import { leasedTo, leaseWorkspace, releaseWorkspace, setupDone, setupKey, workDirOf, type WorkspaceSettings } from "./workspaces.ts";
 import { replyOf } from "./types.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { isSourceFile } from "../sources/chunk.ts";
@@ -633,7 +633,7 @@ function applyTargets(app: App, runId: string): ApplyTarget[] {
   const withPatch = patchFiles(app, runId).filter(p => readFileSync(p.file, "utf8").trim());
   // A space with only sync commits (a merge, a pull) is applied too, by fast-forward.
   const all = [...withPatch, ...wts.filter(w => w.syncHead && !withPatch.some(p => p.space === w.space)).map(w => ({ space: w.space, file: "" }))];
-  return all.map(p => {
+  const targets = all.map((p): ApplyTarget => {
     const root = getSpace(app, p.space).rootPath;
     if (!root) throw new HttpError(400, `空间 ${p.space} 没有关联目录`);
     const wt = wts.find(w => w.space === p.space);
@@ -668,6 +668,13 @@ function applyTargets(app: App, runId: string): ApplyTarget[] {
     if (!start) throw new HttpError(409, `目标分支「${target}」不存在，不能应用`);
     return { ...p, ...sync, root, path: join(app.runsDir, first.id, "applied", p.space), branch: target, create: true, newBranch: !local, start };
   });
+  // A directory another delegation is coding in (the main directory, lent “直接在主目录里改”): applying
+  // there would mix both changes, and discarding that one would wipe this one out.
+  for (const t of targets) {
+    const by = t.create ? null : leasedTo(app, t.path);
+    if (by && by !== first.id) throw new HttpError(409, `${t.path} 正借给交办 ${by}（直接在主目录里改），它还没应用或丢弃；现在应用会把两次的改动混在一起。先应用或丢弃那次交办，再应用这次`);
+  }
+  return targets;
 }
 
 /**

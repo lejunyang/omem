@@ -101,6 +101,12 @@ function holder(app: App, slot: string, file: string) {
   return isLink(link) && real(link) === real(slot) ? lease.run : null;
 }
 
+/** The run a worktree (the main directory included) is lent to right now, or null. */
+export function leasedTo(app: App, path: string) {
+  const dir = existsSync(path) ? gitDir(path) : null;
+  return dir ? holder(app, path, join(dir, LEASE)) : null;
+}
+
 const dirty = (path: string) => git(path, ["status", "--porcelain"]).stdout.trim() !== "";
 
 /** The repository's lendable worktrees and their state (settings page). */

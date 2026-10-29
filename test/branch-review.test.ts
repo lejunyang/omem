@@ -412,6 +412,13 @@ describe("reviewing an existing branch", () => {
       await exec(r3);
       expect(worktreesOf(app, r3.id)[0].inPlace).toBe(true);
       run(app.db, "update runs set status = 'done' where id = ?", r3.id);
+      // Meanwhile another delegation in a worktree of its own may not land in the borrowed main directory.
+      const r4 = createRun(app, { kind: "code", spaceId: "shop-api", title: "并行", input: { task: "按评审意见修改", repos: ["shop-api"] } });
+      await exec(r4);
+      expect(worktreesOf(app, r4.id)[0].inPlace).toBeUndefined();
+      run(app.db, "update runs set status = 'done' where id = ?", r4.id);
+      expect(() => applyCodeRun(app, r4.id)).toThrow(new RegExp(`正借给交办 ${r3.id}`));
+      discardCodeRun(app, r4.id);
       discardCodeRun(app, r3.id);
       expect(status()).toBe("");
       expect(git("symbolic-ref", "--short", "HEAD").trim()).toBe(branch);
