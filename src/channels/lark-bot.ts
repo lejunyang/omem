@@ -250,7 +250,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const [chatId, topic] = (thread.key ?? "").split("#");
     if (!chatId) return;
     // Internal citations and paths on this machine mean nothing in Feishu.
-    const markdown = resolveCitations(app, raw);
+    const cite = { runId: typeof meta.runId === "string" ? meta.runId : null, chatId };
+    const markdown = await resolveCitations(app, raw, cite);
     // First message of a multi-agent work topic: open the topic from the request message.
     if (!topic && typeof (meta as { openTopicFrom?: unknown }).openTopicFrom === "string") {
       const sent = await sendLark({ replyTo: String(meta.openTopicFrom), inThread: true }, { markdown });
@@ -272,7 +273,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const details = typeof meta.details === "string" && meta.details.trim() ? String(meta.details) : "";
     if (details) {
       const { buildCard } = await import("./lark-send.ts");
-      const card = buildCard({ wide: true, blocks: [{ markdown }, { fold: { title: String(meta.detailsTitle ?? "完整记录"), markdown: resolveCitations(app, details) } }] });
+      const card = buildCard({ wide: true, blocks: [{ markdown }, { fold: { title: String(meta.detailsTitle ?? "完整记录"), markdown: await resolveCitations(app, details, cite) } }] });
       const to = thread.settings.lastMessageId ? { replyTo: thread.settings.lastMessageId, inThread: !!topic } : { chatId };
       await sendLark(to, { card });
       return;
@@ -497,7 +498,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     if (working) await unreactLark(m.messageId, working);
     if (withOwner && v?.verdict === "answer") return true;
     const say = v?.verdict === "refuse" ? v.reply : v?.verdict === "answer" ? v.answer : "";
-    if (say) await reply(m.chatId, resolveCitations(app, say), m.messageId, !!m.topicId, `运行 ${r.id}`).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
+    if (say) await reply(m.chatId, await resolveCitations(app, say, { runId: r.id, chatId: m.chatId }), m.messageId, !!m.topicId, `运行 ${r.id}`).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
     // A person (not a bot) refused in a group: ask the owner whether to let this one through.
     if (v?.verdict === "refuse" && !m.fromApp && m.chatType === "group") await askOwnerAboutGuest(m, r.id, v.reason).catch((e) => console.warn("[omem] 访客确认卡片发送失败", e));
     return false;
@@ -635,6 +636,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       if (runId && !p) await reactLark(m.messageId, "DONE").catch(() => {});
       // A later quote of this reply reads back as an empty card; this maps it to the answer.
       if (runId && sentId) run(app.db, "update messages set meta = json_set(meta, '$.larkMessageId', ?) where run_id = ? and role = 'assistant'", sentId, runId);
+      // The share its citations link to records which message it belongs to (settings → 分享链接).
+      if (runId && sentId) (await import("../core/shares.ts")).attachShareMessage(app, runId, sentId);
       // Next steps the agent offered go right under its reply.
       if (runId) await showSuggestions(app, runId).catch((e) => console.warn("[omem] 下一步按钮发送失败：", (e as Error).message));
     } catch (e) {

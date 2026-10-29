@@ -791,6 +791,29 @@ const migrations: string[] = [
   `,
   // How many a meeting's calendar event invited (null: unknown).
   `alter table lark_meetings add column invited integer;`,
+  // Read-only share links for what a message sent outside omem cites (core/shares.ts): a snapshot of
+  // the cited items, found by the token's hash. A message's position in its chat (lark-cli's
+  // message_position) makes a Feishu link that opens the chat at that message.
+  `
+  create table shares (
+    id text primary key,
+    token_hash text not null unique,
+    user_id text not null default 'owner',
+    run_id text,
+    message_id text,
+    origin text not null default '',
+    title text not null default '',
+    items text not null default '[]',
+    created_at text not null,
+    expires_at text,
+    revoked_at text,
+    views integer not null default 0,
+    viewed_at text
+  );
+  create index shares_user on shares(user_id, created_at);
+  create index shares_run on shares(run_id);
+  alter table lark_messages add column position integer;
+  `,
 ];
 
 export type Db = DatabaseSync;

@@ -3,7 +3,7 @@ import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
 import { identitiesOf, OWNER } from "../core/users.ts";
-import { resolveCitations } from "./common.ts";
+import { resolveCitationsSync } from "./common.ts";
 import { buildCard, closeInteraction, getInteraction, larkOwnerOpenId, recordInteraction, sendLark, updateLarkCard, type Target } from "./lark-send.ts";
 import { botOfChannel } from "../core/bot-context.ts";
 
@@ -29,9 +29,9 @@ function button(text: string, name: string, kind: "primary" | "danger" | "defaul
 export function askCard(app: App, ask: Ask): Record<string, unknown> {
   if (ask.status !== "pending") {
     const how = ask.status === "cancelled" ? "已失效（在对话或网页上接着处理了）" : ask.kind === "approval" ? (ask.approved ? `已批准${ask.answer ? `：${ask.answer}` : ""}` : `已拒绝${ask.answer ? `：${ask.answer}` : ""}`) : `已选：${ask.answer ?? ""}`;
-    return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitations(app, truncate(ask.question, 1500)) }] : []), { note: how }] });
+    return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind] }), blocks: [...(ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, 1500)) }] : []), { note: how }] });
   }
-  const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks: ask.question ? [{ markdown: resolveCitations(app, ask.question) }] : [] });
+  const card = buildCard({ ...(ask.kind === "suggestion" ? {} : { title: TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks: ask.question ? [{ markdown: resolveCitationsSync(app, ask.question) }] : [] });
   const elements = (card.body as { elements: unknown[] }).elements;
   const buttons =
     ask.kind === "approval"

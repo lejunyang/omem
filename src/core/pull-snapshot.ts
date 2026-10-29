@@ -10,7 +10,7 @@ const db = new DatabaseSync(path.join(home, 'omem.db'), { readOnly: true });
 db.prepare('vacuum into ?').run(path.join(dest, 'omem.db'));
 db.close();
 const snap = new DatabaseSync(path.join(dest, 'omem.db'));
-for (const table of ['api_tokens', 'kv', 'lark_cursors', 'pull_aliases', 'lark_meetings', 'lark_meeting_lines'])
+for (const table of ['api_tokens', 'kv', 'lark_cursors', 'pull_aliases', 'lark_meetings', 'lark_meeting_lines', 'shares'])
   if (snap.prepare("select 1 from sqlite_master where type='table' and name=?").get(table)) snap.exec('delete from ' + table);
 const manifest = { version: 1, home, repositories: [] };
 const seen = new Map();

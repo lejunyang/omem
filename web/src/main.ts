@@ -25,6 +25,8 @@ const routes: RouteRecordRaw[] = [
   view("/rules", () => import("./views/Rules.vue")),
   view("/notifications", () => import("./views/Notifications.vue")),
   view("/settings", () => import("./views/Settings.vue")),
+  // A read-only share link (no token, no app frame): App.vue renders it alone.
+  view("/share/:token/:item?", () => import("./views/Share.vue"), "/share"),
 ];
 
 const router = createRouter({

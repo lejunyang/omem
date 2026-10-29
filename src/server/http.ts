@@ -40,6 +40,7 @@ import { deleteIgnoreRule, listIgnoreRules } from "../core/notify-lessons.ts";
 import { listSchedules, nextRuns, scheduleLabels, triggerSchedule, upsertSchedule } from "../core/scheduler.ts";
 import { createSpace, findSpace, getSpace, listSpaces, relatedSpaces, relateSpaces, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { HttpError } from "../core/util.ts";
+import { listShares, readShare, revokeShare } from "../core/shares.ts";
 import { accessibleSpaces, getUser, OWNER, scopeFor, userForToken } from "../core/users.ts";
 import { getGoal, goalSummary, listGoals, upsertGoal } from "../learn/goals.ts";
 import { runWrites } from "../agents/run-writes.ts";
@@ -54,6 +55,9 @@ import { search } from "../search/search.ts";
 import { importFile, importText, importUrl } from "../sources/import.ts";
 import { deleteSource, getSource, listSourcePaths, listSources, readSource, sourceOutline } from "../sources/store.ts";
 import { deletePage, listPages, pageContext, pageVersion, readPage, spaceGuide, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
+
+/** GET /api/share/<token>: exactly this, no query, no other path under it. */
+const SHARE_ROUTE = /^\/api\/share\/[A-Za-z0-9_-]{43}$/;
 
 const here = dirname(fileURLToPath(import.meta.url));
 function webDist() {
@@ -95,6 +99,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.decorateRequest("userId", "owner");
   server.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/api/") || req.url.startsWith("/api/tools")) return;
+    // The one read without a token: a share link (core/shares.ts) carries its own, and the route
+    // returns only the snapshot that share holds.
+    if (req.method === "GET" && SHARE_ROUTE.test(req.url)) return;
     const token = bearer(req);
     // Without a token only this machine is trusted, even when listening on all interfaces.
     const local = /^(127\.|::1$|::ffff:127\.)/.test(req.ip ?? "");
@@ -104,6 +111,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (userId !== OWNER && !MEMBER_ROUTES.some((re) => re.test(req.url))) reply.status(403).send({ error: "这个接口只对 omem 的主人开放" });
   });
   const who = (req: FastifyRequest) => (req as FastifyRequest & { userId?: string }).userId ?? OWNER;
+
+  // ------------------------------------------------------------------- shares
+  server.get("/api/share/:token", async (req, reply) => {
+    reply.header("cache-control", "no-store").header("x-robots-tag", "noindex").header("referrer-policy", "no-referrer");
+    const share = readShare(app, (req.params as { token: string }).token);
+    if (!share) return reply.status(404).send({ error: "这个分享链接无效、已撤销或已过期" });
+    return share;
+  });
+  server.get("/api/shares", async (req) => ({ shares: listShares(app, who(req)), webUrl: !!app.config.webUrl?.trim(), expiryDays: app.config.shares.expiryDays }));
+  server.delete("/api/shares/:id", async (req) => {
+    revokeShare(app, (req.params as { id: string }).id, who(req));
+    return { ok: true };
+  });
   server.get("/api/me", async (req) => {
     const u = getUser(app, who(req));
     return { ...u, spaces: accessibleSpaces(app, u.id) };

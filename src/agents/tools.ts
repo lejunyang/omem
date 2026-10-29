@@ -1930,9 +1930,10 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
   const chat = await larkGuard(ctx, t);
   const delivery = await larkDelivery(ctx, t, chat);
   const { resolveCitations, resolveCardCitations } = await import("../channels/common.ts");
-  if ("text" in content) content = { text: resolveCitations(ctx.app, content.text) };
-  else if ("markdown" in content) content = { ...content, markdown: resolveCitations(ctx.app, content.markdown) };
-  else if ("card" in content) content = { card: resolveCardCitations(ctx.app, content.card) };
+  const cite = { runId: ctx.runId, chatId: chat ?? undefined };
+  if ("text" in content) content = { text: await resolveCitations(ctx.app, content.text, cite) };
+  else if ("markdown" in content) content = { ...content, markdown: await resolveCitations(ctx.app, content.markdown, cite) };
+  else if ("card" in content) content = { card: await resolveCardCitations(ctx.app, content.card, cite) };
   const skipped: string[] = [];
   if (t.mentions?.length) {
     // Real @-mentions using IDs verified for the sending bot (see lark-people.ts).
@@ -2083,7 +2084,7 @@ def({
     await larkGuard(ctx, { reply_to: a.message_id });
     const { buildCard, updateLarkCard } = await import("../channels/lark-send.ts");
     const { resolveCardCitations } = await import("../channels/common.ts");
-    await updateLarkCard(a.message_id, resolveCardCitations(ctx.app, a.raw_card ?? buildCard({ title: a.title, color: a.color, blocks: (a.blocks ?? []) as never })), ctx.larkBot);
+    await updateLarkCard(a.message_id, await resolveCardCitations(ctx.app, a.raw_card ?? buildCard({ title: a.title, color: a.color, blocks: (a.blocks ?? []) as never }), { runId: ctx.runId }), ctx.larkBot);
     return "已更新卡片";
   },
 });

@@ -1,7 +1,7 @@
 import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
 import type { Notification } from "../core/notify.ts";
-import { notificationOrigins, resolveCitations } from "./common.ts";
+import { notificationOrigins, resolveCitationsSync } from "./common.ts";
 import { buildCard, type CardButton } from "./lark-send.ts";
 import { webLink } from "../core/util.ts";
 
@@ -44,7 +44,7 @@ export function notificationCard(app: App, n: Notification) {
   return buildCard({
     title: n.title,
     blocks: [
-      { markdown: resolveCitations(app, n.body) || " " },
+      { markdown: resolveCitationsSync(app, n.body) || " " },
       ...(buttons.length ? [{ buttons }] : []),
     ],
   });
@@ -60,7 +60,7 @@ export function itemNotificationCard(app: App, n: Notification) {
     urls.add(url);
     return link;
   });
-  const body = uniqueLinks(resolveCitations(app, scopedBody));
+  const body = uniqueLinks(resolveCitationsSync(app, scopedBody));
   const links = uniqueLinks(notificationOrigins(app, n.sourceRefs ?? []));
   const origin = links ? `**来源**\n${links}` : "";
   return buildCard({

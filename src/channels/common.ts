@@ -1,14 +1,14 @@
 import { receive, type Inbound } from "../agents/inbox.ts";
 import { getRun, waitForRun } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
-import { all, one } from "../core/db.ts";
 import { refExcerpt } from "../items/evidence.ts";
+import { citationUrl, resolveCitations } from "./citations.ts";
 
 /**
  * Shared path for chat channels (Feishu, Telegram, QQ via OneBot…): the
  * owner's message enters the inbox (commands, threads, merging) and the answer
- * comes back as plain Markdown with internal citation links reduced to their
- * labels (other apps cannot open them). Returns null when the message was
+ * comes back as plain Markdown with internal citations made openable or left out
+ * (citations.ts: other apps cannot open omem's own references). Returns null when the message was
  * merged into a turn whose answer another call is already waiting for.
  */
 export async function answerFromChannel(
@@ -33,68 +33,10 @@ export async function answerFromChannel(
   }
   const answer = done.status === "done" ? String((getRun(app, r.runId).output as { answer?: string }).answer ?? "") : done.status === "cancelled" ? "（已停止）" : `处理失败：${done.error ?? done.status}`;
   const note = r.started === "renewed" ? "（距上次对话较久，已开始新会话并带上之前的摘要；/resume 可回到原会话）\n\n" : "";
-  return note + resolveCitations(app, answer);
+  return note + (await resolveCitations(app, answer, { runId: r.runId, chatId: input.chatId }));
 }
 
-/**
- * Make citations usable outside omem: a source whose original is a web/Feishu
- * document becomes a real link; a Feishu chat source opens that chat; anything
- * else (memories, messages, wiki pages, omem-internal #/ routes) becomes plain
- * text, because other apps cannot open it.
- */
-export function resolveCitations(app: App, md: string) {
-  const withSources = md.replace(/\[([^\]]*)\]\(src:([A-Za-z0-9_]+)(?:#[^)]*)?\)/g, (_all, label: string, id: string) => {
-    const s = one<{ uri: string }>(app.db, "select uri from sources where id = ?", id);
-    const url = s ? externalUrl(s.uri) : null;
-    return url ? `[${label}](${url})` : label;
-  });
-  return localPathLinks(app, plainCitations(withSources).replace(/\[([^\]]*)\]\(#\/[^)]*\)/g, "$1"));
-}
-
-/** Convert only rendered Markdown in cards; callback values and other protocol data stay intact. */
-export function resolveCardCitations(app: App, card: Record<string, unknown>): Record<string, unknown> {
-  function visit(value: unknown): unknown {
-    if (Array.isArray(value)) return value.map(visit);
-    if (!value || typeof value !== "object") return value;
-    const node = value as Record<string, unknown>;
-    return Object.fromEntries(Object.entries(node).map(([key, child]) => [key,
-      key === "content" && typeof child === "string" && (node.tag === "markdown" || node.tag === "lark_md")
-        ? resolveCitations(app, child)
-        : key === "value" ? child : visit(child),
-    ]));
-  }
-  return visit(card) as Record<string, unknown>;
-}
-
-/**
- * Links to files on this machine (`[下载页取数](/data/…/repo/src/a.ts#L10)`, `file://…`) open
- * nothing in a chat app. A file inside a repository space becomes `仓库 · 路径:行`, anything else
- * keeps its label and file name as plain text; real files are meant to go as attachments.
- */
-export function localPathLinks(app: App, md: string) {
-  const repos = all<{ name: string; root_path: string }>(app.db, "select name, root_path from spaces where root_path is not null and root_path != ''")
-    .map((r) => ({ name: r.name, root: r.root_path.replace(/[\\/]+$/, "") }))
-    .sort((a, b) => b.root.length - a.root.length);
-  return md.replace(/\[([^\]]*)\]\(((?:file:\/\/)?(?:\/|[A-Za-z]:[\\/])[^)\s]*)\)/g, (_all, label: string, target: string) => {
-    const [rawPath, frag] = target.replace(/^file:\/\//, "").split("#");
-    let path = rawPath;
-    try {
-      path = decodeURIComponent(rawPath);
-    } catch {}
-    const lines = /^L(\d+)(?:-L?(\d+))?$/.exec(frag ?? "");
-    const at = lines ? `:${lines[1]}${lines[2] && lines[2] !== lines[1] ? `-${lines[2]}` : ""}` : "";
-    const repo = repos.find((r) => path === r.root || path.startsWith(`${r.root}/`) || path.startsWith(`${r.root}\\`));
-    const where = repo ? `${repo.name} · \`${path.slice(repo.root.length + 1)}${at}\`` : `\`${path.split(/[\\/]/).pop()}${at}\``;
-    return label && !where.includes(label) ? `${label}（${where}）` : where;
-  });
-}
-
-function externalUrl(uri: string): string | null {
-  if (/^https?:\/\//.test(uri)) return uri;
-  const chat = /^lark:(oc_[A-Za-z0-9]+)/.exec(uri);
-  if (chat) return `https://applink.feishu.cn/client/chat/open?openChatId=${chat[1]}`;
-  return null;
-}
+export { citationUrl, externalUrl, localPathLinks, resolveCardCitations, resolveCitations, resolveCitationsSync } from "./citations.ts";
 
 export function plainCitations(md: string) {
   return md
@@ -129,9 +71,9 @@ export function notificationOrigins(app: App, refs: string[]) {
     if (!/^(src|mem|msg):/.test(ref)) continue;
     const ex = refExcerpt(app, ref);
     if (!ex) continue;
-    const resolved = ref.startsWith("src:") ? resolveCitations(app, `[x](${ref})`) : "";
-    const url = /^\[x\]\((https?:\/\/.*)\)$/.exec(resolved)?.[1] ?? null;
-    const key = url ?? ref.replace(/#.*$/, "");
+    const url = /^(src|msg):/.test(ref) ? citationUrl(app, ref) : null;
+    // Lines of one chat share an entry (opening at the first one cited).
+    const key = url?.replace(/&position=\d+$/, "") ?? ref.replace(/#.*$/, "");
     const g = groups.get(key) ?? { url, title: ex.title, excerpts: [] };
     if (ex.text && !g.excerpts.includes(ex.text)) g.excerpts.push(ex.text);
     groups.set(key, g);

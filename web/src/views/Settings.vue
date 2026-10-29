@@ -11,12 +11,13 @@ import UiSegmented from "../components/UiSegmented.vue";
 import UiSelect from "../components/UiSelect.vue";
 import PluginsSettings from "../components/PluginsSettings.vue";
 import StorageUsage from "../components/StorageUsage.vue";
+import ShareSettings from "../components/ShareSettings.vue";
 import { fmtTime, kindLabel, loadSpaces, state, toast } from "../store";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 
 type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string };
 type Schedule = { id: string; kind: string; cron: string; enabled: boolean; lastRunAt: string | null; config: Record<string, any> };
-const tab = ref<"spaces" | "agents" | "schedules" | "search" | "lark" | "plugins" | "storage" | "about">("spaces");
+const tab = ref<"spaces" | "agents" | "schedules" | "search" | "lark" | "shares" | "plugins" | "storage" | "about">("spaces");
 const config = ref<any>(null);
 const profiles = ref<Profile[]>([]);
 const home = ref("");
@@ -485,7 +486,7 @@ async function saveEdit() {
   <div class="page">
     <div class="page-head"><div><h1>设置</h1><p v-if="home" class="mono small">数据目录：{{ home }}</p></div></div>
     <div class="tabs">
-      <button v-for="[k, l] in [['spaces', '空间'], ['agents', 'Agent'], ['schedules', '定时任务'], ['search', '检索'], ['lark', '渠道'], ['plugins', '插件'], ['storage', '占用'], ['about', '外观与说明']]" :key="k" :class="{ on: tab === k }" @click="tab = k as any">{{ l }}</button>
+      <button v-for="[k, l] in [['spaces', '空间'], ['agents', 'Agent'], ['schedules', '定时任务'], ['search', '检索'], ['lark', '渠道'], ['shares', '分享'], ['plugins', '插件'], ['storage', '占用'], ['about', '外观与说明']]" :key="k" :class="{ on: tab === k }" @click="tab = k as any">{{ l }}</button>
     </div>
 
     <section v-if="tab === 'spaces'" class="stack">
@@ -706,7 +707,7 @@ async function saveEdit() {
         <label class="field"><span>本人 open_id（setup 扫码通常自动填）</span><input class="input mono" :value="config.lark.ownerOpenId ?? ''" placeholder="不知道可先私聊机器人一句，再运行 omem setup" @change="saveConfig({ lark: { ...config.lark, ownerOpenId: ($event.target as HTMLInputElement).value } })" /></label>
       </div>
       <div class="field"><span>默认空间</span><UiSelect :model-value="config.lark.defaultSpace" width="240px" aria-label="默认空间" :options="state.spaces.map((s) => ({ value: s.id, label: s.name }))" @change="(v) => saveConfig({ lark: { ...config.lark, defaultSpace: v } })" /></div>
-      <label class="field"><span>网页地址（从飞书或其他设备打开 omem 页面用）</span><input class="input mono" :value="config.webUrl ?? ''" placeholder="如 http://192.0.2.10:4317，或反向代理的地址" @change="saveConfig({ webUrl: ($event.target as HTMLInputElement).value.trim() }, '已保存网页地址')" /><span class="muted small">填了以后，通知卡片里的“打开链接”和插件页的链接（如英语练习）在飞书里能直接打开；从其他设备打开还需要令牌（<span class="mono">omem link</span>）。</span></label>
+      <label class="field"><span>网页地址（从飞书或其他设备打开 omem 页面用）</span><input class="input mono" :value="config.webUrl ?? ''" placeholder="如 http://192.0.2.10:4317，或反向代理的地址" @change="saveConfig({ webUrl: ($event.target as HTMLInputElement).value.trim() }, '已保存网页地址')" /><span class="muted small">填了以后，通知卡片里的“打开链接”和插件页的链接（如英语练习）在飞书里能直接打开，回答里引用的代码、工作文件、记忆和 Wiki 变成只读分享链接（设置 → 分享）；从其他设备打开还需要令牌（<span class="mono">omem link</span>）。</span></label>
 
       <div class="card pad stack">
         <strong>其他机器人</strong>
@@ -895,6 +896,9 @@ async function saveEdit() {
       </div>
     </section>
 
+    <section v-else-if="tab === 'shares'" class="stack">
+      <ShareSettings />
+    </section>
     <section v-else-if="tab === 'plugins'" class="stack">
       <PluginsSettings />
     </section>

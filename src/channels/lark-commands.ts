@@ -139,7 +139,7 @@ async function aiReply(ctx: RunContext, c: Command, transcript: string, name: st
   const answer = replyOf(r).trim();
   if (!answer || /^NO_REPLY\s*$/i.test(answer)) return { answer, sent: false };
   const { resolveCitations } = await import("./common.ts");
-  const body = `${resolveCitations(app, answer)}\n\n${cfg.signature}`.trim();
+  const body = `${await resolveCitations(app, answer, { runId: ctx.run.id, chatId: c.chatId })}\n\n${cfg.signature}`.trim();
   await larkCli(["im", "+messages-send", "--as", "user", "--chat-id", c.chatId, "--markdown", body, "--idempotency-key", `omem-${c.messageId}`.slice(0, 50), "--format", "json"], 60_000);
   return { answer, sent: true };
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import CaptureDialog from "./components/CaptureDialog.vue";
 import CitationDrawer from "./components/CitationDrawer.vue";
@@ -51,7 +51,10 @@ function onKey(e: KeyboardEvent) {
     state.capture = true;
   }
 }
+// A share link is opened by people without a token: no frame, nothing else loaded.
+const bare = computed(() => route.path.startsWith("/share/") || (!route.matched.length && location.hash.startsWith("#/share/")));
 onMounted(async () => {
+  if (location.hash.startsWith("#/share/")) return;
   window.addEventListener("keydown", onKey);
   try {
     await loadSpaces();
@@ -73,7 +76,8 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
 </script>
 
 <template>
-  <div class="shell" :class="{ 'menu-open': menu }">
+  <router-view v-if="bare" />
+  <div v-else class="shell" :class="{ 'menu-open': menu }">
     <aside class="side">
       <div class="brand row">
         <span class="logo" aria-hidden="true"><svg viewBox="0 0 32 32" width="22" height="22"><rect width="32" height="32" rx="8" fill="currentColor" /><circle cx="16" cy="16" r="7" fill="none" stroke="var(--bg)" stroke-width="3" /></svg></span>

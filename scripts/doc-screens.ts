@@ -24,6 +24,7 @@ import { createSpace, ensurePersonalSpace } from "../src/core/spaces.ts";
 import { addItemEvent, upsertItem } from "../src/items/store.ts";
 import { remember } from "../src/memory/store.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
+import { resolveCitationsNow } from "../src/channels/citations.ts";
 import { saveRule } from "../src/rules/store.ts";
 import { startServer } from "../src/server/http.ts";
 import { upsertSource } from "../src/sources/store.ts";
@@ -286,11 +287,34 @@ for (const count of [29, 30]) run(app.db,
   JSON.stringify(Array.from({ length: count }, (_, i) => ({ id: `demo-${i}`, name: `参会人${i + 1}` }))), new Date().toISOString(), new Date().toISOString(),
 );
 
+// ---- a share link: what a Feishu answer cited, readable without omem ---------------------------
+const investigation = upsertSource(app, { spaceId: "shop", kind: "work", uri: "work/investigations/partial-refund", title: "部分发货多退：排查记录", text: [
+  "# 部分发货多退：排查记录",
+  "调查时间：10-22，只读查询。",
+  "",
+  "## 回放结果",
+  "| 订单 | 已发货行 | 旧算法退款 | 新算法退款 |",
+  "| --- | --- | --- | --- |",
+  "| 1001 | 2 / 3 | 300.00 | 200.00 |",
+  "| 1002 | 1 / 2 | 99.90 | 49.95 |",
+  "| 1003 | 3 / 3 | 120.00 | 120.00 |",
+  "",
+  "日志平台里这三单的查询：https://logs.example.com/search?q=refund_partial",
+].join("\n") }).id;
+run(app.db, "insert into runs(id, kind, space_id, status, title, created_at, user_id) values('r_share_demo', 'ask', 'shop', 'done', '部分发货为什么多退', ?, 'owner')", new Date().toISOString());
+app.config.webUrl = "https://omem.example.com";
+const shareAnswer = resolveCitationsNow(app, [[
+  `部分发货的单子会多退，是旧算法按整单金额算的。回放了三单，两单多退，全发货的那单不受影响。[回放结果](src:${investigation}#L5-L9)`,
+  `新算法只算已发货的行，金额先换成分再分摊。[实现](src:${code}#L10-L21) [需求](src:${prd}#L7-L9)`,
+].join("\n\n")], { runId: "r_share_demo" })[0];
+const shareToken = /#\/share\/([\w-]{43})/.exec(shareAnswer)![1];
+app.config.webUrl = undefined;
+
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
 if (serveOnly) {
-  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）`);
+  console.log(`演示数据：${url}/#/runs/${r.id}（Ctrl+C 结束）；分享页 ${url}/#/share/${shareToken}`);
   await new Promise(() => {});
 }
 const browser = await chromium.launch(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : { channel: process.platform === "win32" ? "msedge" : "chrome" });
@@ -333,6 +357,8 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; prepa
   { name: "rules", path: `/rules?id=${rule.id}` },
   { name: "meeting-rule-confirmation", path: `/rules?id=${meetingRule.id}`, prepare: async (p) => { await p.getByText("入会确认", { exact: true }).scrollIntoViewIfNeeded(); } },
   { name: "agents", path: "/agents" },
+  { name: "share-link", path: `/share/${shareToken}` },
+  { name: "share-link-mobile", path: `/share/${shareToken}/1`, width: 390 },
   // The docs home's hero: these three in dark too.
   { name: "ask-citations-dark", path: `/ask/${t.id}`, dark: true },
   { name: "memory-dark", path: "/memory", dark: true },

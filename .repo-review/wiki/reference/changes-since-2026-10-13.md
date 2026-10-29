@@ -789,3 +789,15 @@ updated: 2026-10-28
 - **`ide`**：`ide-web.ts` 的 `ideWebReport`。VS Code 命令行、serve-web 下载的各版本服务端（版本、提交、`node-pty` 原生模块）、服务端数据 / 用户数据 / 扩展目录、已装扩展、语言包与服务端版本差几个小版本（`minorsBehindServer`，差得多时菜单会半中半英）、`argv.json` 的 `locale`、语言和终端相关设置、最近几次服务端日志（ptyhost / remoteagent 末尾，连接令牌已隐藏）、运行中的 serve-web 进程（`procs.ts` 的 `findProcesses`）。
 - 回归：`test/peer-commands.test.ts`（参数校验、各命令的返回形状、令牌不外泄）。
 - 验证：`omem peer call <同伴> agents '{}'` 看适配器版本；`search` 查一个真实问题；`prompt` 看说明里的偏好与经验；`ide` 看语言包版本和终端日志。
+
+## 10-30：飞书里的引用与只读分享链接
+
+一次群里的回答结论不错，但每段末尾的引用在飞书里只剩一串标题（“日志摘录及 LogID”“关键代码与调用位置”……）：10-23 的转换只把有外部地址的原件换成链接，其余留下文字。
+
+- **`src/channels/citations.ts`**（从 `common.ts` 移出，`common.ts` 仍转出 `resolveCitations` 等）：逐条判断引用在句中还是句末（前面是句末标点、另一个句末引用，或独占一行），句中的保留文字并链到目标，句末的换成 ①② 链接，没有目标的句末引用直接去掉；代码块里的不动。目标：网页和飞书文档链原文；飞书聊天原件的行经 `lark_messages(source_id, line)` 找到消息，`msg:` 来自飞书会话的按 `meta.externalId` 找到消息，链接是 `applink …/chat/open?openChatId=<群>&position=<位置>`，位置来自 lark-cli 返回的 `message_position`（新增 `lark_messages.position`，采集时保存；缺的在发送前 `prefetchLarkPositions` 用一次 `+messages-mget` 补，失败 10 分钟内不再试，读不到时只打开会话）。其余（代码、工作文件、记忆、Wiki、omem 内的消息）有运行 id 时进一份分享。卡片的多个 Markdown 块一起编号、共用一个分享。`resolveCitations` / `resolveCardCitations` 变成异步，事项通知和提问卡片用同步的 `resolveCitationsSync`（不建分享）。
+- **`src/core/shares.ts`**：`prepareShare` 按运行能读的空间（访客运行用 `input.spaces`，其他按运行的用户）复制被引的部分：原件被引行前后各 3 行（表格从表头起，没给行号的最多 400 行），记忆正文，Wiki 页面或 `#小节`，会话消息；里面的 `src:`/`mem:`/`[[…]]` 只留文字，omem 的图片换成说明。令牌 32 字节随机，表里只存 SHA-256；`shares.expiryDays`（默认 0 不过期）；撤销或过期时清空副本。记录运行、来处（飞书 · 群名）、标题（发出去的第一行）和回答发出后的飞书消息 id（`attachShareMessage`）。分享随设备，`pull` 不带过去（`pull.ts` / `pull-snapshot.ts` 的设备表）。
+- **接口**：`GET /api/share/:token`（43 位令牌、无查询串，`http.ts` 的 `SHARE_ROUTE`）在鉴权钩子前放行，只返回快照，`no-store`、`noindex`；`GET /api/shares`、`DELETE /api/shares/:id` 只给本人。
+- **网页**：`#/share/<令牌>/<序号>` 由 `views/Share.vue` 单独渲染（`App.vue` 的 `bare`，不加载空间、不弹令牌框），代码按行高亮被引范围，Markdown 经 DOMPurify 后把引用、Wiki 链接和非 http 链接变成文字；设置 → 分享（`ShareSettings.vue`）改有效期、看打开次数、撤销。文档截图新增 `share-link`、`share-link-mobile`。
+- **角色说明**：`_common.md` 的“引用”加一条：外部系统（日志、监控、工单）的结果引用系统给的原始链接，工作文件里也记下。
+- 顺手修了 `refExcerpt` 读记忆时查不存在的 `memories.text` 列（通知来源里有 `mem:` 时会报错）。
+- 回归：`test/shares.test.ts`；`test/lark.test.ts`、`test/models.test.ts` 的期望改成新写法。

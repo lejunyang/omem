@@ -46,6 +46,8 @@ export type LarkMessage = {
   nested?: boolean;
   /** Set on a thread host whose replies all came nested with it. */
   expanded?: boolean;
+  /** lark-cli: the message's place in its chat; `applink …/chat/open?openChatId=…&position=` opens the chat there. */
+  message_position?: string | number;
 };
 
 export const timeMs = (t: string) => (/^\d+$/.test(t) ? Number(t) : Date.parse(t));
@@ -248,15 +250,16 @@ export function storeMessages(
     messages.forEach((m, i) =>
       run(
         app.db,
-        `insert into lark_messages(message_id,chat_id,thread_id,parent_id,sender_id,sender_name,sender_kind,msg_type,content,create_ms,source_id,line,archive,resources,reactions,mentions,raw_content)
-         values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `insert into lark_messages(message_id,chat_id,thread_id,parent_id,sender_id,sender_name,sender_kind,msg_type,content,create_ms,source_id,line,archive,resources,reactions,mentions,raw_content,position)
+         values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          on conflict(message_id) do update set thread_id = coalesce(excluded.thread_id, lark_messages.thread_id), parent_id = coalesce(excluded.parent_id, lark_messages.parent_id),
            content = excluded.content,
            sender_name = case when excluded.sender_name != '' then excluded.sender_name else lark_messages.sender_name end,
            sender_kind = case when excluded.sender_kind != 'user' then excluded.sender_kind else lark_messages.sender_kind end,
            source_id = coalesce(excluded.source_id, lark_messages.source_id), line = coalesce(excluded.line, lark_messages.line),
            archive = coalesce(excluded.archive, lark_messages.archive), resources = json_patch(lark_messages.resources, excluded.resources),
-           reactions = excluded.reactions, mentions = case when excluded.mentions != '[]' then excluded.mentions else lark_messages.mentions end, raw_content = coalesce(excluded.raw_content, lark_messages.raw_content)`,
+           reactions = excluded.reactions, mentions = case when excluded.mentions != '[]' then excluded.mentions else lark_messages.mentions end, raw_content = coalesce(excluded.raw_content, lark_messages.raw_content),
+           position = coalesce(excluded.position, lark_messages.position)`,
         m.message_id,
         m.chat_id ?? chatId,
         m.thread_id ?? null,
@@ -274,9 +277,16 @@ export function storeMessages(
         JSON.stringify(Array.isArray(m.reactions) ? m.reactions : ((m.reactions as { counts?: unknown })?.counts ?? [])),
         JSON.stringify((m.mentions ?? []).map((x) => ({ id: typeof x.id === "string" ? x.id : (x.id?.open_id ?? ""), name: x.name ?? "" })).filter((x) => x.id)),
         m.raw_content ?? (typeof m.content === "object" ? JSON.stringify(m.content) : typeof m.content === "string" && /^\s*[{[]/.test(m.content) ? m.content : null),
+        positionOf(m),
       ),
     );
   });
+}
+
+/** The message's place in its chat, when lark-cli gave one. */
+export function positionOf(m: Pick<LarkMessage, "message_position">): number | null {
+  const n = Number(m.message_position);
+  return m.message_position !== undefined && m.message_position !== "" && Number.isInteger(n) && n >= 0 ? n : null;
 }
 
 /** Names and emails of the people in these messages (senders and @-mentions), for display and for the bot to @ them. */

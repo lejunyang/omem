@@ -52,8 +52,9 @@ describe("feishu bot messaging", () => {
     setLarkClient(client);
     const uri = "https://tenant.larkoffice.com/docx/Guide";
     const doc = upsertSource(app, { spaceId: "personal", kind: "doc", uri, title: "操作说明", text: "申请后需确认" });
-    const md = `[流程说明](src:${doc.id}#L1-L1) [记忆](mem:m1) [缺失](src:missing)`;
-    const expected = `[流程说明](${uri}) 记忆 缺失`;
+    // Inline: the words link to the document. Trailing, with nothing to open (no run, so no share): left out.
+    const md = `按[流程说明](src:${doc.id}#L1-L1)办理。[记忆](mem:m1) [缺失](src:missing)`;
+    const expected = `按[流程说明](${uri})办理。`;
     const ctx = toolContextForToken(app, issueToolToken({ runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: ["oc_g"] }))!;
     for (const content of [{ text: md }, { markdown: md }]) {
       expect((await callTool(ctx, "lark_send", { chat_id: "oc_g", ...content })).isError).toBe(false);
@@ -85,7 +86,7 @@ describe("feishu bot messaging", () => {
     setLarkClient(client);
     const uri = "https://tenant.larkoffice.com/docx/Guide";
     const doc = upsertSource(app, { spaceId: "personal", kind: "doc", uri, title: "操作说明", text: "申请后需确认\n完成后可删除" });
-    const answer = `[流程说明](src:${doc.id}#L1-L1) [删除规则](src:${doc.id}#L1-L2)`;
+    const answer = `先确认，见[流程说明](src:${doc.id}#L1-L1)。完成后可删除。[删除规则](src:${doc.id}#L1-L2)`;
     app.config.agents.profiles.push({ id: "citation-test", transport: "acp", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")], env: { FAKE_SAY: answer }, idleTimeoutMs: 30000 });
     saveAgentSpec(app, { name: "topic-helper", description: "话题回复", agent: "citation-test", prompt: "按原件回答" }, "user");
     const run = createRun(app, { kind: "agent", spaceId: "personal", title: "话题回复", input: { spec: "topic-helper", task: "回复流程", rule: { id: "rule_fixture", name: "回复" }, replyAt: { chatId: "oc_g", messageId: "om_g1" }, lark: { chats: ["oc_g"] } } });
@@ -95,7 +96,7 @@ describe("feishu bot messaging", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].args.data.reply_in_thread).toBe(true);
     const body = JSON.parse(sent[0].args.data.content).body.elements[0].content;
-    expect(body).toBe(`[流程说明](${uri}) [删除规则](${uri})`);
+    expect(body).toBe(`先确认，见[流程说明](${uri})。完成后可删除。[①](${uri})`);
     // Posted its conclusion itself (lark_send to @ someone) and ends QUIET: nothing is sent twice.
     app.config.agents.profiles.find(p => p.id === "citation-test")!.env.FAKE_SAY = "结论已在话题里发出。\n\nQUIET";
     await handlers.get("agent")!({ app, run, signal: AbortSignal.timeout(30000), event: () => {}, output: () => {} });

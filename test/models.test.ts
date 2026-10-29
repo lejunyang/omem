@@ -98,7 +98,7 @@ describe("feishu item reminder cards", () => {
     const app = testApp();
     const doc = upsertSource(app, { spaceId: "personal", kind: "doc", uri: "https://tenant.larkoffice.com/docx/AbC", title: "文档", text: "x" });
     const chat = upsertSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_123abc", title: "群", text: "y" });
-    const out = resolveCitations(app, `[文档](src:${doc.id}#L1-L2) [群](src:${chat.id}) [记忆](mem:m1) [详情](#/runs/r1)`);
+    const out = await resolveCitations(app, `见[文档](src:${doc.id}#L1-L2)和[群](src:${chat.id})。[记忆](mem:m1) [详情](#/runs/r1)`);
     expect(out).toContain("[文档](https://tenant.larkoffice.com/docx/AbC)");
     expect(out).toContain("openChatId=oc_123abc");
     expect(out).not.toContain("mem:");

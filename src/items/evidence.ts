@@ -33,7 +33,7 @@ export function refExcerpt(app: App, ref: string, max = 60): { title: string; te
     return t.length > max ? `${t.slice(0, max)}…` : t;
   };
   if (m[1] === "mem") {
-    const r = one<{ text: string; space_id: string }>(app.db, "select text, space_id from memories where id = ?", m[2]);
+    const r = one<{ text: string; space_id: string }>(app.db, "select content as text, space_id from memories where id = ?", m[2]);
     return r ? { title: "记忆", text: clip(r.text), spaceId: r.space_id } : null;
   }
   if (m[1] === "msg") {

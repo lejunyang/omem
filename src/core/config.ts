@@ -87,6 +87,11 @@ export const configSchema = z.object({
    * http://192.0.2.10:4317 or a reverse proxy. Links to pages (#/...) become absolute with it.
    */
   webUrl: z.string().optional(),
+  /**
+   * Read-only share links that messages sent outside omem (Feishu) use for what they cite
+   * (core/shares.ts); they need `webUrl`. expiryDays 0: links do not expire (revoke them in settings).
+   */
+  shares: z.object({ expiryDays: z.number().int().min(0).max(3650).default(0) }).default({ expiryDays: 0 }),
   timezone: z.string().default(Intl.DateTimeFormat().resolvedOptions().timeZone),
   language: z.string().default("zh-CN"),
   /** Background runs (ingest, wiki, dream…) at the same time; each model's own limit is agents.capacity. */
