@@ -408,6 +408,24 @@ export const peerCommands: Record<string, Command> = {
     schema: z.object({}),
     run: async (app) => (await import("./peer-inspect.ts")).agentsReport(app),
   },
+  "agent-upgrade": {
+    description: "更新：把一个已经装好的 ACP 适配器（目录里有 npm 包的后端，如 codex、claude）升级到 npm 上的最新版（npm i -g <包>@latest）；新会话起生效",
+    schema: z.object({ id: z.string().regex(/^[a-z0-9-]{1,40}$/) }),
+    run: async (app, a) => {
+      const { catalogEntry } = await import("../agents/catalog.ts");
+      const { listAgentProfiles } = await import("../agents/runner.ts");
+      const { adapterPackage } = await import("./peer-inspect.ts");
+      // Only a catalog package already installed globally here: nothing new gets onto the machine.
+      const entry = catalogEntry(a.id);
+      const profile = listAgentProfiles(app).find((p) => p.id === a.id);
+      if (!entry?.npm || !profile || profile.command !== entry.command) throw new HttpError(400, `${a.id} 不是目录里带 npm 包的后端`);
+      const before = adapterPackage(profile);
+      if (before?.via !== "installed" || before.name !== entry.npm) throw new HttpError(400, `${a.id} 的适配器不是全局安装的 ${entry.npm}，不在这里升级`);
+      const r = sh("npm", ["i", "-g", `${entry.npm}@latest`], app.home, 600_000);
+      const after = adapterPackage(profile);
+      return { ok: r.code === 0, package: entry.npm, before: before.version, after: after?.version ?? null, output: (r.stdout + r.stderr).split("\n").slice(-15).join("\n") };
+    },
+  },
   search: {
     description: "只读：用 Agent 的 search 工具同一套检索（本人身份）查一个问题，返回命中的原件 id、标题、uri、类型、空间、分数和工具会给出的片段；space 缺省为所有空间",
     schema: z.object({ query: z.string().min(1).max(500), space: z.string().max(200).optional(), limit: z.number().int().min(1).max(30).default(12) }),

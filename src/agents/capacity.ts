@@ -161,21 +161,3 @@ export function recentStats(app: App): ModelStats[] {
   });
 }
 
-/** One line per model: what it takes now, and its recent record (for the assistant choosing a model). */
-export function loadLines(app: App, models: { profile: AgentProfile; model?: string }[]) {
-  const stats = recentStats(app);
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const m of models) {
-    const p = { ...m.profile, model: m.model ?? m.profile.model };
-    const k = `${p.id}|${p.model ?? ""}`;
-    if (seen.has(k) || excluded(app, p)) continue;
-    seen.add(k);
-    const st = stats.find((x) => x.profile === p.id && x.model === (p.model ?? ""));
-    const waiting = [...state(app).slots].filter((x) => x.waiting && x.key === keyOf(p)).length;
-    const rec = st ? `；近 7 天完成 ${st.done}、失败 ${st.failed}${st.medianMinutes !== null ? `、中位 ${st.medianMinutes} 分钟` : ""}` : "";
-    const cap = backendLimitOf(app, p);
-    out.push(`- ${label(p)}：正在用 ${usedOf(app, p)}/${limitOf(app, p)}${cap !== undefined ? `（${p.id} 合计 ${backendUsedOf(app, p)}/${cap}）` : ""}${waiting ? `，等 ${waiting}` : ""}${rec}`);
-  }
-  return out;
-}

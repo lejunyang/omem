@@ -14,7 +14,7 @@ import { resolveRoleProfile } from "./models.ts";
 import { runBackend } from "./dispatch.ts";
 import { backgroundTurn } from "./background-sessions.ts";
 import { backendAvailable } from "./availability.ts";
-import { acquire, choosableProfiles, excluded, loadLines } from "./capacity.ts";
+import { acquire, choosableProfiles, excluded } from "./capacity.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
 import { issueToolToken, revokeToolToken } from "./tools.ts";
 import { isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
@@ -402,20 +402,15 @@ function routingGuide(app: App, profile: AgentProfile) {
   const r = app.config.agents.routing;
   if (!r.automatic) return "";
   const ai = (c: { profile: string; model?: string; effort?: string }) => [c.profile, c.model, c.effort].filter(Boolean).join(" / ");
-  const choosable = choosableProfiles(app);
-  // The models worth a look: the owner's candidates, each backend's default and the models roles use.
-  const models: { profile: AgentProfile; model?: string }[] = [];
-  const add = (id: string, model?: string) => { const p = choosable.find((x) => x.id === id); if (p) models.push({ profile: p, model }); };
-  for (const c of r.candidates) add(c.profile, c.model);
-  for (const p of choosable) if (p.transport !== "doubao") add(p.id, p.model);
-  for (const byProfile of Object.values(app.config.agents.roleModels)) for (const [id, m] of Object.entries(byProfile)) add(id, m.model);
-  const load = loadLines(app, models).slice(0, 16);
-  const doubao = choosable.some((p) => p.transport === "doubao");
+  const doubao = choosableProfiles(app).some((p) => p.transport === "doubao");
+  // What changes during a session (load, the time) is not written here: these instructions are sent
+  // once per session. The time opens every turn; the load comes from list_ai_backends.
   return [
     `你这次用的是 ${ai({ profile: profile.id, model: profile.model, effort: profile.effort })}；交办出去的运行不带 execution 时用对方档案的设置。`,
     ...(r.guidance.trim() ? [`本人的总体偏好：${r.guidance.trim()}`] : []),
     ...(r.candidates.length ? ["本人列出的候选：", ...r.candidates.map((c) => `- ${ai(c)}：${c.when}`)] : []),
-    ...(load.length ? ["各模型现在的占用（正在用/上限）和近况；同样合适时选空闲、失败少的，满了的会排队：", ...load] : []),
+    "偏好和候选里写了时段的（峰谷价格、排队高峰、某段时间不用），按每轮消息开头的现在时间对照着选。",
+    "交办前用 list_ai_backends 看各模型现在的占用（正在用/上限）和近 7 天的完成、失败：同样合适时选空闲、失败少的，满了的会排队。",
     ...(doubao ? ["doubao（豆包 OpenAPI）在云端运行，用不了 omem 的工具：只适合纯调研、写作。交给它时先自己把要用的材料取出来，原文一次性写进任务。"] : []),
   ].join("\n");
 }

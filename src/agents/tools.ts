@@ -778,9 +778,12 @@ def({
         return { model, used: usedOf(ctx.app, q), limit: limitOf(ctx.app, q), ...(st ? { recent7d: { done: st.done, failed: st.failed, medianMinutes: st.medianMinutes } } : {}) };
       });
     };
+    const tz = ctx.app.config.timezone;
     return JSON.stringify({
+      // Candidates may prefer some hours (off-peak prices, provider queues): the time to compare with.
+      now: `${new Intl.DateTimeFormat("zh-CN", { timeZone: tz, dateStyle: "full", timeStyle: "short" }).format(new Date())}（${tz}）`,
       routing: ctx.app.config.agents.routing,
-      note: "limit 为 0 的模型本人不想自动使用，不要选。doubao 没有 omem 工具，只用于把材料原文写进任务的纯调研和写作。",
+      note: "limit 为 0 的模型本人不想自动使用，不要选。doubao 没有 omem 工具，只用于把材料原文写进任务的纯调研和写作。候选说明里写了时段的，按 now 对照。",
       backends: backends.filter((p) => p.installed && choosable.has(p.id) && (!a.profile || p.id === a.profile)).map((p) => {
         const probe = cachedProbe(ctx.app, p.id);
         return { id: p.id, name: p.name, transport: p.transport, tools: p.transport !== "doubao", model: p.model, effort: p.effort, backendLimit: backendLimitOf(ctx.app, p), models: models(p), efforts: probe?.effortsByModel ?? probe?.efforts };

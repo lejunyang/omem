@@ -31,6 +31,10 @@ describe("read-only peer commands: agents, search, prompt, ide", () => {
     await expect(call("prompt", { space: "personal", agent: "nobody-here" })).rejects.toThrow(/没有名为/);
     await expect(call("prompt", { space: "personal", agent: "x", role: "coder" })).rejects.toThrow();
     await expect(call("prompt", { space: "没有这个空间" })).rejects.toThrow(/空间不存在/);
+    // agent-upgrade: only an installed catalog npm adapter, never an arbitrary package.
+    await expect(call("agent-upgrade", { id: "../npm" })).rejects.toThrow(/id/);
+    await expect(call("agent-upgrade", { id: "cursor" })).rejects.toThrow(/不是目录里带 npm 包的后端/);
+    await expect(call("agent-upgrade", { id: "nothing-like-this" })).rejects.toThrow(/不是目录里带 npm 包的后端/);
   });
 
   it("search returns the hits the agents' tool would see, with where they come from", async () => {

@@ -836,3 +836,8 @@ updated: 2026-10-28
 - **运行归属**：调用方的本机名 + 会话名对应一条 `peer-agent` 运行（标题“同伴 <本机名> 的外部 Agent（<会话>）”，第一次调用创建、状态进行中；闲置 15 分钟变完成，再用时重新打开；服务重启后由 `jobs.ts` 里的处理器直接结束）。每次调用一条 `tool` 事件（被拒的带 `refused`），写入工具的 `tool-write`；记忆等带 `run_id`、`agent_profile = peer:<本机名>`、调用方告知的模型。`omem_help` 不新建运行。网页运行页加了“同伴的外部 Agent”类型名。
 - **客户端**：`cli-main.ts` 的 `peerToolBackend`：`omem tool --peer <id> [名] [参数]`、`omem mcp --peer <id>`（`--session`、`--space`、`--spaces`、`--read-only`；环境变量 `OMEM_PEER_SESSION` / `OMEM_PEER_AGENT` / `OMEM_PEER_MODEL`）。走 `peerJson`，读本机 peers.json，本机服务不必运行；经中间节点只用它的 `/api/peers/<id>/…` 转发，中间节点不用更新。默认会话：`omem tool` 为“cli-本机名-日期”，`omem mcp` 每个进程一个。
 - **文档**：`skills/omem/SKILL.md` 的“在另一台设备上用这个库”、README 命令行清单、architecture“多台设备”和状态表、acceptance P4b、文档站设备页。
+
+## 10-30：任务选型看时段；升级 ACP 适配器的远程命令
+
+- **时段**：`runner.ts` 的 `routingGuide` 加一句：偏好和候选里写了时段（峰谷价格、排队高峰）的按每轮开头的现在时间选；不再把各模型的占用写进说明（说明一个会话只发一次，占用会过期），改为要求交办前用 `list_ai_backends` 看，它的结果加了 `now`（本人时区的日期、星期和时间）。`capacity.ts` 的 `loadLines` 随之删除。设置里候选“适合哪些任务”的提示写上可以写时段。
+- **`agent-upgrade`**（`peer-exec.ts`）：把目录里带 npm 包、且已经全局装好的 ACP 适配器升到 npm 最新版（`npm i -g <包>@latest`），返回升级前后的版本；别的包一律拒绝。

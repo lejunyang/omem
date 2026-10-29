@@ -31,6 +31,11 @@ describe("task routing in view", () => {
     expect(main.system).toContain("## 任务选型");
     expect(main.system).toContain("- codex / fast-1：简单判断");
     expect(main.system).toContain("评审用不同于编码的模型");
+    // Time-of-day preferences are compared with the time each turn opens with; the load is looked up
+    // (the instructions stay the same for a whole session, so neither is written into them).
+    expect(main.system).toContain("按每轮消息开头的现在时间对照着选");
+    expect(main.system).toContain("交办前用 list_ai_backends 看各模型现在的占用");
+    expect(main.system).not.toMatch(/正在用 \d+\/\d+/);
     // A background role hands nothing on.
     expect(prepareRun(app, { actor: { role: "ingest" }, spaceId: "personal", runId: null }).system).not.toContain("## 任务选型");
     app.config.agents.routing.automatic = false;

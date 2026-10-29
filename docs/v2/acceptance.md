@@ -759,3 +759,8 @@ TraeX 与其他 ACP 的清理补验：
 - 新增的内置技能到已有的数据目录：升级后重启，技能页出现 `desktop-control` 且带 `references/aad.md`；你改过或自己建的同名技能不被覆盖，别的内置技能不受影响。
 - 让助理“看一下现在有哪些窗口”：它读技能后运行 `aad apps`，不点击不输入；让它“在浏览器里填表并点提交”：它先说明要点哪个元素，等你确认再动手，密码框不填。
 - 回归：`test/desktop-control.test.ts`（技能播种与不覆盖、Linux 资产模板、假 osdk 的安装与按目录查找、失败垫片、PATH 注入）。2026-10-30 在 Windows 本机用 aad 0.0.2 + 无界面 Chrome（临时 profile，本地假页面）验证：`AAD_CDP_PORT` 下 `aad apps` 列出页面，`describe`、`do fill`、`do click`、`find`、`capture` 结果与技能里的写法一致。macOS、Linux 的安装路径（Linux 的 musl 模板、`osdk install` 的选项键）和桌面窗口的真实操作待在那两台上验证。
+
+## 任务选型看时段、升级适配器（2026-10-30）
+
+- 设置 → Agent → 任务选型的候选里写“工作日白天排队，晚上和周末优先”：主助手在工作日白天交办时选别的候选，晚上选它；说明里没有各模型的占用数字，交办前会调用 list_ai_backends（结果里有 now）。
+- `omem peer call <同伴> agent-upgrade '{"id":"codex"}'`：返回 codex-acp 升级前后的版本；对目录外或没全局装的后端报错。
