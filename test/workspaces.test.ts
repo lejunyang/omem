@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { codeFolders, codeRunsAt, discardCodeRun } from "../src/agents/code.ts";
 import { ideUrl } from "../web/src/lib/ide.ts";
 import { createRun, setRunOutput } from "../src/agents/runs.ts";
-import { leaseWorkspace, listWorkspaces, managedSlot, releaseWorkspace, setupDone, setupKey, workDirOf } from "../src/agents/workspaces.ts";
+import { leaseWorkspace, listWorkspaces, managedSlot, releaseWorkspace, setupCommandFor, setupDone, setupKey, workDirOf } from "../src/agents/workspaces.ts";
 import { run as sql } from "../src/core/db.ts";
 import { createSpace, getSpace, updateSpace } from "../src/core/spaces.ts";
 import { testApp } from "./helpers.ts";
@@ -29,16 +29,17 @@ const head = sh(root, "rev-parse", "HEAD").trim();
 const noLog = () => {};
 
 describe("reusable workspaces", () => {
-  it("creates omem's own slot on first use, keeps ignored files and drops the run's changes when given back", () => {
-    updateSpace(app, "shop-web", { settings: { pool: 1 } });
+  it("makes omem's own slots as needed, keeps ignored files and drops the run's changes when given back", () => {
     const link = join(app.runsDir, "r1", "work", "shop-web");
     const slot = leaseWorkspace(app, repo(), "r1", link, noLog)!.path;
     expect(slot).toBe(managedSlot(app, "shop-web", 1));
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
     expect(workDirOf({ path: link })).toBe(slot);
-    // The only slot is taken: the next run makes its own worktree.
-    expect(leaseWorkspace(app, repo(), "r2", join(app.runsDir, "r2", "work", "shop-web"), noLog)).toBeNull();
-    expect(listWorkspaces(app, repo())).toMatchObject([{ state: "leased", run: "r1" }]);
+    // The first is taken: the next run gets a second one.
+    const link2 = join(app.runsDir, "r2", "work", "shop-web");
+    expect(leaseWorkspace(app, repo(), "r2", link2, noLog)?.path).toBe(managedSlot(app, "shop-web", 2));
+    releaseWorkspace("r2", { path: link2, slot: managedSlot(app, "shop-web", 2) });
+    expect(listWorkspaces(app, repo())).toMatchObject([{ state: "leased", run: "r1" }, { state: "free" }]);
 
     sh(slot, "checkout", "-q", "-B", "omem/r1", head);
     mkdirSync(join(slot, "node_modules"), { recursive: true });
@@ -50,32 +51,38 @@ describe("reusable workspaces", () => {
     expect(readFileSync(join(slot, "app.ts"), "utf8").trimEnd()).toBe("export const a = 1;");
     expect(existsSync(join(slot, "new.ts"))).toBe(false);
     expect(readFileSync(join(slot, "node_modules", "dep.js"), "utf8")).toBe("installed");
-    expect(listWorkspaces(app, repo())).toMatchObject([{ state: "free" }]);
+    expect(listWorkspaces(app, repo()).map((s) => s.state)).toEqual(["free", "free"]);
     // A lease whose run link is gone does not hold the slot.
     expect(leaseWorkspace(app, repo(), "r3", join(app.runsDir, "r3", "work", "shop-web"), noLog)?.path).toBe(slot);
     releaseWorkspace("r3", { path: join(app.runsDir, "r3", "work", "shop-web"), slot });
   });
 
-  it("lends the owner's worktree only while clean, and gives it back on its branch", () => {
-    const mine = join(mkdtempSync(join(tmpdir(), "omem-ws-mine-")), "feature");
-    sh(root, "worktree", "add", "-q", "-b", "feature-x", mine, head);
-    const other = mkdtempSync(join(tmpdir(), "omem-ws-clone-"));
-    sh(other, "clone", "-q", root, ".");
-    updateSpace(app, "shop-web", { settings: { workspaces: [mine, other, join(root, "missing")] } });
-    expect(listWorkspaces(app, repo()).map((s) => s.state)).toEqual(["free", "invalid", "invalid"]);
-
-    writeFileSync(join(mine, "draft.ts"), "work in progress");
+  it("when all are taken, takes one back from an idle run whose work is on a branch, never from a busy one", () => {
+    const links = [1, 2, 3, 4].map((n) => join(app.runsDir, `h${n}`, "work", "shop-web"));
+    const held = links.map((l, i) => leaseWorkspace(app, repo(), `h${i + 1}`, l, noLog)!.path);
+    expect(held).toEqual([1, 2, 3, 4].map((n) => managedSlot(app, "shop-web", n)));
+    const link = join(app.runsDir, "h5", "work", "shop-web");
+    expect(leaseWorkspace(app, repo(), "h5", link, noLog)).toBeNull();
+    // h1 is busy, h2's slot holds commits on no branch, h3 is idle with its HEAD on a branch.
+    sh(held[1], "checkout", "-q", "--detach", head);
+    writeFileSync(join(held[1], "app.ts"), "export const a = 9;\n");
+    sh(held[1], "commit", "-qam", "not on a branch");
+    sh(held[2], "checkout", "-q", "--detach", head);
     const logs: string[] = [];
-    expect(leaseWorkspace(app, repo(), "r4", join(app.runsDir, "r4", "work", "shop-web"), (t) => logs.push(t))).toBeNull();
-    expect(logs.join("\n")).toMatch(/未提交|没提交/);
-    expect(existsSync(join(mine, "draft.ts"))).toBe(true);
+    const got = leaseWorkspace(app, repo(), "h5", link, (t) => logs.push(t), { idle: (run) => run !== "h1" });
+    expect(got?.path).toBe(held[2]);
+    expect(logs.join("\n")).toContain("收回交办 h3");
+    expect(existsSync(links[2])).toBe(false);
+    for (const [i, l] of [...links, link].entries()) releaseWorkspace(i < 4 ? `h${i + 1}` : "h5", { path: l, slot: i < 4 ? held[i] : held[2] });
+  });
 
-    sh(mine, "clean", "-fdq");
-    const link = join(app.runsDir, "r5", "work", "shop-web");
-    expect(leaseWorkspace(app, repo(), "r5", link, noLog)?.path).toBe(mine);
-    sh(mine, "checkout", "-q", "-B", "omem/r5", head);
-    releaseWorkspace("r5", { path: link, slot: mine });
-    expect(sh(mine, "symbolic-ref", "--short", "HEAD").trim()).toBe("feature-x");
+  it("picks the setup command by the lockfile unless the space names one", () => {
+    expect(setupCommandFor(repo(), root)).toBe("pnpm install --frozen-lockfile --prefer-offline");
+    updateSpace(app, "shop-web", { settings: { setupCommand: "make deps" } });
+    expect(setupCommandFor(repo(), root)).toBe("make deps");
+    updateSpace(app, "shop-web", { settings: { setupCommand: "none" } });
+    expect(setupCommandFor(repo(), root)).toBeNull();
+    updateSpace(app, "shop-web", { settings: {} });
   });
 
   it("runs the setup command again only when a lockfile changed", () => {
@@ -90,7 +97,6 @@ describe("reusable workspaces", () => {
   });
 
   it("discarding a run gives its slot back and deletes the run's branch", () => {
-    updateSpace(app, "shop-web", { settings: { pool: 1 } });
     const r = createRun(app, { kind: "code", spaceId: "shop-web", title: "改按钮", input: { task: "改按钮" } });
     const link = join(app.runsDir, r.id, "work", "shop-web");
     const slot = leaseWorkspace(app, repo(), r.id, link, noLog)!.path;
@@ -108,7 +114,7 @@ describe("reusable workspaces", () => {
     expect(existsSync(link)).toBe(false);
     expect(existsSync(slot)).toBe(true);
     expect(sh(root, "branch", "--list", `omem/${r.id}`).trim()).toBe("");
-    expect(listWorkspaces(app, repo())).toMatchObject([{ state: "free" }]);
+    expect(listWorkspaces(app, repo()).every((s) => s.state === "free")).toBe(true);
   });
 
   it("links to a folder in the editor, locally or over Remote-SSH", () => {

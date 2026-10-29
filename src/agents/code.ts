@@ -13,7 +13,8 @@ import { resolveRunProfile, runRole } from "./runner.ts";
 import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
 import { createRun, getRun, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
-import { leasedTo, leaseWorkspace, releaseWorkspace, setupDone, setupKey, workDirOf, type WorkspaceSettings } from "./workspaces.ts";
+import { leasedTo, leaseWorkspace, releaseWorkspace, setupCommandFor, setupDone, setupKey, workDirOf } from "./workspaces.ts";
+import { branchWorktree, changeBase, checkedOutAt, confirmBranchRun, isBranchWork, planBranch, releaseBranchRun, settleRound, siblingsText } from "./code-branch.ts";
 import { replyOf } from "./types.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { isSourceFile } from "../sources/chunk.ts";
@@ -65,8 +66,10 @@ export type CodeInput = {
    */
   branches?: Record<string, { branch: string; base?: string }>;
   fetch?: boolean;
-  /** Code on top of an existing branch (by repository space) instead of the checked-out HEAD. */
+  /** Code on top of an existing branch (by repository space): its work branch (code-branch.ts). */
   fromBranches?: Record<string, string>;
+  /** A new work branch's name (by repository space); without it the coding Agent names a temporary one. */
+  branchNames?: Record<string, string>;
   /** More spaces the coder and reviewers may read: requirement docs, the source of a migration, past cases. */
   readSpaces?: string[];
   /** The item this work is for: the coder and reviewers read its materials (src/items/materials.ts). */
@@ -177,30 +180,34 @@ export async function runCodeTask(ctx: RunContext) {
   mkdirSync(join(dir, "patches"), { recursive: true });
   const known = worktreesOf(app, rootRunId);
   const worktrees: WorktreeRef[] = [];
+  const branchNotes: Record<string, string> = {};
   for (const repo of repos) {
-    const have = known.find((w) => w.space === repo.id && existsSync(w.path));
-    if (have) {
-      worktrees.push(have);
-      continue;
-    }
     const path = join(workDir, repo.id);
     const log = (text: string) => ctx.event("status", { text });
+    const was = known.find((w) => w.space === repo.id);
+    // A work branch: every round places a workspace (kept, or lent again) on the branch's latest commit.
+    if (was?.commits || (!was && !input.branches)) {
+      const { wt, note } = branchWorktree(app, repo, rootRunId, path, was ?? planBranch(repo, rootRunId, { from: input.fromBranches?.[repo.id], name: input.branchNames?.[repo.id] }), log);
+      worktrees.push(wt);
+      branchNotes[repo.id] = note;
+      if (!was) log(`${repo.id} 的工作分支 ${wt.branch}（${wt.newBranch ? `从${wt.cutFrom ? ` ${wt.cutFrom} 的` : ""} ${wt.base.slice(0, 8)} 切出` : `已有分支，从 ${wt.base.slice(0, 8)} 接着做`}），工作区 ${workDirOf(wt)}`);
+      continue;
+    }
+    if (was && existsSync(was.path)) {
+      worktrees.push(was);
+      continue;
+    }
     if (input.branches) {
       const wt = checkoutBranch(app, repo, rootRunId, input.branches[repo.id], path, input.fetch !== false, log);
       worktrees.push(wt);
       log(`已在 ${wt.slot ? `复用工作区 ${wt.slot}` : path} 检出 ${repo.id} 的分支 ${wt.ref}（${wt.tip!.slice(0, 8)}），评审它相对 ${wt.baseRef} 的改动（分叉点 ${wt.base.slice(0, 8)}）`);
       continue;
     }
-    const from = input.fromBranches?.[repo.id];
-    const start = from ? resolveRef(repo.rootPath!, from) : null;
-    if (from && !start) throw new HttpError(404, `${repo.id} 里没有分支 ${from}`);
-    const base = start?.commit ?? git(repo.rootPath!, ["rev-parse", "HEAD"]).stdout.trim();
-    const targetBranch = from ? branchFromRef(start!.ref) : git(repo.rootPath!, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim() || null;
-    const slot = addWorktree(app, repo, rootRunId, path, base, branch, log, targetBranch);
-    const inPlace = !!slot?.main;
-    // In the main directory the run works on the branch checked out there: no omem branch to delete.
-    worktrees.push({ space: repo.id, path, branch: inPlace ? "" : branch, base, start: base, targetBranch, ...(from ? { baseRef: from } : {}), ...(slot ? { slot: slot.path } : {}), ...(inPlace ? { inPlace } : {}) });
-    log(inPlace ? `直接在 ${repo.id} 的仓库主目录 ${slot!.path} 里改（分支 ${targetBranch}，基于 ${base.slice(0, 8)}）` : `已在 ${slot ? `复用工作区 ${slot.path}` : path} 准备好 ${repo.id} 的独立工作区（基于 ${from ? `分支 ${from} 的 ` : ""}${base.slice(0, 8)}）`);
+    // An older delegation whose worktree is gone: a plain worktree at the commit it began from.
+    const wt = was!;
+    const made = git(repo.rootPath!, ["worktree", "add", "-q", "--detach", path, wt.start ?? wt.base]);
+    if (!made.ok) throw new Error(`在 ${repo.id} 创建工作区失败：${made.stderr}`);
+    worktrees.push({ ...wt, path, slot: undefined, inPlace: undefined });
   }
   if (chain) {
     const { saveCodeChain } = await import("./code-chain.ts");
@@ -221,11 +228,16 @@ export async function runCodeTask(ctx: RunContext) {
     }
   }
   const commandFor = (repo: Space) => input.checks?.[repo.id] ?? input.checkCommand ?? (repo.settings.checkCommand as string | undefined);
+  const branchText = (i: number) => {
+    const wt = worktrees[i];
+    if (!wt.commits) return "这次交办的改动由宿主生成 diff，不要提交。";
+    return [branchNotes[wt.space], "按功能分几次提交（遵守仓库的提交信息规范），不要 push；这一轮结束时没提交的改动由宿主提交。", siblingsText(app, wt.space, rootRunId)].filter(Boolean).join("\n");
+  };
   const where = multi
     ? `\n\n（这次要一起改 ${repos.length} 个仓库。工作目录 ${workDir} 下每个子目录是一个仓库的独立 worktree：\n${repos
-        .map((r, i) => `- ${r.id}（${r.name}）：${workDirOf(worktrees[i])}${commandFor(r) ? `；检查命令：${commandFor(r)}` : ""}`)
+        .map((r, i) => `- ${r.id}（${r.name}）：${workDirOf(worktrees[i])}${commandFor(r) ? `；检查命令：${commandFor(r)}` : ""}\n  ${branchText(i).replace(/\n/g, "\n  ")}`)
         .join("\n")}\n用 omem 工具查这几个仓库时传 space: "*"。）`
-    : `${commandFor(repos[0]) ? `\n\n检查命令：${commandFor(repos[0])}` : ""}\n\n（工作目录是独立 worktree：${workDirOf(worktrees[0])}）`;
+    : `${commandFor(repos[0]) ? `\n\n检查命令：${commandFor(repos[0])}` : ""}\n\n（工作目录是独立 worktree：${workDirOf(worktrees[0])}）\n\n## 分支\n\n${branchText(0)}`;
   const cwd = multi ? workDir : workDirOf(worktrees[0]);
   // The run's space may be a project; the agents read it and every repository (and their related spaces).
   const owner = runUser(app, run.id);
@@ -251,8 +263,8 @@ ${input.task}
   if (input.syncResume && !input.syncOnly) coderTask = `${String(getRun(app, rootRunId).input.task ?? "")}${itemBrief}${where}`;
   // Dependencies: a new worktree has none, a reused one only when its lockfiles changed (workspaces.ts).
   for (const [i, repo] of repos.entries()) {
-    const command = (repo.settings as WorkspaceSettings).setupCommand?.trim();
     const dir = workDirOf(worktrees[i]);
+    const command = setupCommandFor(repo, dir);
     const key = command ? setupKey(dir, command) : null;
     if (!command || !key) continue;
     ctx.event("status", { text: `准备依赖${multi ? `（${repo.id}）` : ""}：${command}` });
@@ -435,15 +447,36 @@ ${coderTask}` : coderTask;
       check = { command, ...r, output: r.output.slice(-8000) };
       ctx.event("check", { ...check, space: repo.id });
     }
-    git(wt.path, ["add", "-A"]);
-    const diff = git(wt.path, ["diff", "--cached", "--no-color", "HEAD"]).stdout;
-    const stat = git(wt.path, ["diff", "--cached", "--stat", "HEAD"]).stdout.trim();
+    if (wt.commits) {
+      // Whatever is left uncommitted becomes this round's last commit; then it goes onto the branch.
+      const round = Number(run.input.round ?? 1);
+      const settled = settleRound(repo.rootPath!, wt, `${truncate(run.title, 60)}（第 ${round} 轮没提交的改动）`);
+      const tell = (text: string) => ctx.event("status", { text: `${multi ? `${repo.id}：` : ""}${text}` });
+      if (settled.committed) tell(`把没提交的改动提交为 ${settled.committed.slice(0, 8)}`);
+      if (settled.renamed) tell(`分支 ${settled.renamed} 改名为 ${settled.branch}`);
+      if (settled.followed) tell(`${settled.followed} 已快进到 ${settled.branch} 的最新提交`);
+      if (settled.followError) {
+        tell(settled.followError);
+        notify(app, { title: `提交没能放回分支：${run.title}`, body: settled.followError, link: `#/runs/${run.id}` });
+      }
+      ctx.output({ worktrees });
+      if (rootRunId !== run.id) setRunOutput(app, rootRunId, { worktrees });
+    } else git(wt.path, ["add", "-A"]);
+    const range = changeRange(wt);
+    const diff = git(wt.path, ["diff", "--no-color", ...range]).stdout;
+    const stat = git(wt.path, ["diff", "--stat", ...range]).stdout.trim();
     writeFileSync(patchFile(app, run.id, repo.id), diff);
     results.push({ space: repo.id, diffStat: stat, diffBytes: diff.length, check });
     if (diff.trim()) diffs.push(multi ? `### ${repo.id}\n\n${fence("diff", diff)}` : fence("diff", diff));
   }
   const statText = results.filter((r) => r.diffStat).map((r) => (multi ? `[${r.space}]\n${r.diffStat}` : r.diffStat)).join("\n\n");
   ctx.output({ repos: results, diffStat: statText, diffBytes: results.reduce((n, r) => n + r.diffBytes, 0), check: multi ? undefined : results[0].check });
+  // Only Git work on a work branch: its commits are on the branch already, and what came in is not this work to review.
+  if (skipCoder && worktrees.some((w) => w.commits)) {
+    ctx.output({ verdict: "synced" });
+    notify(app, { title: `同步完成：${run.title}`, body: truncate(synced && typeof synced === "object" ? synced.summary : coderReply, 600), link: `#/runs/${run.id}` });
+    return { verdict: "synced" };
+  }
   if (!diffs.length) {
     // Only Git work (a merge, a pull): its commits are what gets applied, by fast-forward.
     if (worktrees.some((w) => w.syncHead)) {
@@ -523,40 +556,22 @@ function checkoutBranch(app: App, repo: Space, runId: string, target: { branch: 
   const mb = git(root, ["merge-base", baseTip.commit, tip.commit]);
   if (!mb.ok) throw new HttpError(400, `${target.branch} 和 ${baseRef} 没有共同的提交`);
   const base = mb.stdout.trim();
-  const slot = addWorktree(app, repo, runId, path, tip.commit, null, log, undefined, false)?.path;
+  const slot = addWorktree(app, repo, runId, path, tip.commit, log)?.path;
   const reset = git(path, ["reset", "-q", "--soft", base]);
   if (!reset.ok) throw new Error(`在 ${repo.id} 准备评审工作区失败：${reset.stderr}`);
   return { space: repo.id, path, branch: "", base, ref: target.branch, tip: tip.commit, baseRef, ...(slot ? { slot } : {}) };
 }
 
-/**
- * The run's worktree of `repo` at `path`, on a new `branch` (or detached) at `commit`: a reusable
- * slot linked there when one is free (workspaces.ts, returned), else a new worktree.
- */
-/**
- * A worktree for a run at `path`: a leased slot (linked there) or a new one. In the main directory
- * (`onBranch`: the branch the run targets) the run stays on that branch at `commit`; anything else
- * there, and it falls back to a slot or a new worktree.
- */
-function addWorktree(app: App, repo: Space, runId: string, path: string, commit: string, branch: string | null, log: (text: string) => void, onBranch?: string | null, main = true): { path: string; main: boolean } | undefined {
-  const root = repo.rootPath!;
-  const lease = (allowMain: boolean) => leaseWorkspace(app, repo, runId, path, log, { main: allowMain });
-  let slot = lease(main);
-  if (slot?.main) {
-    const at = git(slot.path, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim();
-    const moved = !onBranch ? { ok: false, stderr: "主目录不在分支上" } : at === onBranch ? { ok: true, stderr: "" } : git(slot.path, ["checkout", "-q", onBranch]);
-    if (moved.ok && git(slot.path, ["rev-parse", "HEAD"]).stdout.trim() === commit) return slot;
-    releaseWorkspace(runId, { path, slot: slot.path });
-    log(`仓库主目录没能停在 ${onBranch ?? "目标分支"} 的 ${commit.slice(0, 8)}，改用独立工作区${moved.ok ? "" : `：${moved.stderr.trim().slice(0, 300)}`}`);
-    slot = lease(false);
-  }
+/** A worktree for reviewing a branch at `path`, detached at `commit`: a lent slot (returned) or a new one. */
+function addWorktree(app: App, repo: Space, runId: string, path: string, commit: string, log: (text: string) => void): { path: string } | undefined {
+  const slot = leaseWorkspace(app, repo, runId, path, log);
   if (slot) {
-    const moved = git(slot.path, ["checkout", "-q", ...(branch ? ["-B", branch] : ["--detach"]), commit]);
+    const moved = git(slot.path, ["checkout", "-q", "--detach", commit]);
     if (moved.ok) return slot;
     releaseWorkspace(runId, { path, slot: slot.path });
-    log(`复用工作区 ${slot.path} 没能切到 ${commit.slice(0, 8)}，改为新建工作区：${moved.stderr.trim().slice(0, 300)}`);
+    log(`工作区 ${slot.path} 没能切到 ${commit.slice(0, 8)}，改为新建工作区：${moved.stderr.trim().slice(0, 300)}`);
   }
-  const r = git(root, ["worktree", "add", "-q", ...(branch ? ["-b", branch] : ["--detach"]), path, commit]);
+  const r = git(repo.rootPath!, ["worktree", "add", "-q", "--detach", path, commit]);
   if (!r.ok) throw new Error(`在 ${repo.id} 创建工作区失败：${r.stderr}`);
   return undefined;
 }
@@ -569,6 +584,11 @@ function branchSummary(worktrees: WorktreeRef[]) {
   }).join("\n\n");
 }
 
+/** What a worktree's change is measured as: a work branch against where it starts, an older delegation's staged change against HEAD. */
+function changeRange(wt: WorktreeRef) {
+  return wt.commits ? [changeBase(wt.path, wt), "HEAD"] : ["--cached", "HEAD"];
+}
+
 /** What review tiers are chosen by: the size and place of the change, whether checks passed. */
 function reviewMetrics(worktrees: WorktreeRef[], results: RepoResult[], task: string): ReviewMetrics {
   let lines = 0;
@@ -576,7 +596,7 @@ function reviewMetrics(worktrees: WorktreeRef[], results: RepoResult[], task: st
   const paths: string[] = [];
   for (const [i, r] of results.entries()) {
     if (!r.diffBytes) continue;
-    for (const row of git(worktrees[i].path, ["diff", "--cached", "--numstat", "HEAD"]).stdout.split("\n")) {
+    for (const row of git(worktrees[i].path, ["diff", "--numstat", ...changeRange(worktrees[i])]).stdout.split("\n")) {
       const [add, del, file] = row.split("\t");
       if (!file) continue;
       const n = (Number(add) || 0) + (Number(del) || 0);
@@ -687,7 +707,13 @@ export function codeFolders(app: App, runId: string): { space: string; path: str
   const rootId = String(r.input.continueFrom ?? r.id);
   const applied = (getRun(app, rootId).output.appliedTo ?? r.output.appliedTo) as AppliedTarget[] | undefined;
   if (applied?.length) return applied.filter((t) => existsSync(t.path)).map((t) => ({ space: t.space, path: t.path, kind: "applied", branch: t.branch }));
-  return worktreesOf(app, rootId).filter((w) => existsSync(w.path)).map((w) => ({ space: w.space, path: workDirOf(w), kind: "work", branch: w.branch || w.ref || null }));
+  return worktreesOf(app, rootId).flatMap((w) => {
+    if (existsSync(w.path)) return [{ space: w.space, path: workDirOf(w), kind: "work" as const, branch: w.branch || w.ref || null }];
+    // A work branch between rounds: where it is checked out, if anywhere.
+    const root = w.commits ? findSpace(app, w.space)?.rootPath : null;
+    const at = root ? checkedOutAt(root, w.branch) : null;
+    return at ? [{ space: w.space, path: at, kind: "work" as const, branch: w.branch }] : [];
+  });
 }
 
 /**
@@ -718,6 +744,12 @@ export function codeRunsAt(app: App, folder: string, userId: string | null) {
 
 /** Preview for the confirmation dialog; creating branch worktrees happens only on apply. */
 export function codeApplyTargets(app: App, runId: string): AppliedTarget[] {
+  const wts = worktreesOf(app, String(getRun(app, runId).input.continueFrom ?? runId));
+  // A work branch is pushed, not applied: where it is checked out (or the repository), and its name.
+  if (isBranchWork(wts)) return wts.filter((w) => w.commits).map((w) => {
+    const root = findSpace(app, w.space)?.rootPath ?? "";
+    return { space: w.space, path: (root && checkedOutAt(root, w.branch)) || root, branch: w.branch };
+  });
   return applyTargets(app, runId).map(({ space, path, branch }) => ({ space, path, branch }));
 }
 
@@ -725,6 +757,7 @@ export function codeApplyTargets(app: App, runId: string): AppliedTarget[] {
 function removeWorktrees(app: App, runId: string, opts: { applied?: boolean } = {}) {
   const leasedBy = String(getRun(app, runId).input.continueFrom ?? runId);
   for (const wt of worktreesOf(app, runId)) {
+    if (wt.commits) continue;
     const root = findSpace(app, wt.space)?.rootPath;
     if (!root || !existsSync(root)) continue;
     // A reusable slot is reset and kept for the next run; the main directory keeps an applied run's changes.
@@ -746,8 +779,14 @@ function removeWorktrees(app: App, runId: string, opts: { applied?: boolean } = 
  * applied is committed there and becomes the new start, so later rounds' diffs (and the next
  * apply) hold only what came after.
  */
-export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: boolean } = {}) {
+export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: boolean; squash?: string; force?: boolean } = {}) {
   const r = getRun(app, runId);
+  if (isBranchWork(worktreesOf(app, String(r.input.continueFrom ?? r.id)))) {
+    // The commits are on the branch already (and in the main directory when it has the branch).
+    if (opts.keepWorking) return { applied: false, spaces: [] as string[], targets: [] as AppliedTarget[] };
+    if (r.kind !== "code" || isBranchReview(r)) throw new HttpError(400, "只有编码交办能确认");
+    return confirmBranchRun(app, runId, { squash: opts.squash, force: opts.force });
+  }
   const targets = applyTargets(app, runId);
   if (!targets.length) throw new HttpError(404, "没有可应用的改动");
   const created: (ApplyTarget & { createdHead: string })[] = [];
@@ -823,6 +862,9 @@ export function applyCodeRun(app: App, runId: string, opts: { keepWorking?: bool
 }
 
 export function discardCodeRun(app: App, runId: string) {
+  const r = getRun(app, runId);
+  if (getRun(app, String(r.input.continueFrom ?? r.id)).output.appliedAt && isBranchWork(worktreesOf(app, runId))) throw new HttpError(409, "这次交办已经确认过");
+  releaseBranchRun(app, runId, { discard: true });
   removeWorktrees(app, runId);
   setRunOutput(app, runId, { discardedAt: new Date().toISOString() });
   cancelHostAsks(app, runId, "review-done");
@@ -891,6 +933,15 @@ export async function queueMoveToTarget(app: App, runId: string, userId = OWNER)
   const run = getRun(app, runId);
   if (isBranchReview(run)) throw new HttpError(400, "分支评审没有要移动的改动");
   return queueGitRound(app, run, "把这次交办的改动移到目标分支的最新提交上（冲突交给编码 Agent，解决不了找本人）", { moveToTarget: true }, userId);
+}
+
+/** Queue a round that merges or rebases the work branch onto another branch (conflicts to the coding Agent). */
+export async function queueSyncRound(app: App, runId: string, sync: { onto: string; mode: "merge" | "rebase" }, userId = OWNER) {
+  const run = getRun(app, runId);
+  if (isBranchReview(run)) throw new HttpError(400, "分支评审没有工作分支");
+  const first = getRun(app, String(run.input.continueFrom ?? run.id));
+  if (first.output.appliedAt || first.output.discardedAt) throw new HttpError(409, "这次交办已经确认或丢弃");
+  return queueGitRound(app, run, `把 ${sync.onto} ${sync.mode === "rebase" ? "变基" : "合并"}到工作分支上（冲突交给编码 Agent，解决不了找本人）`, { sync: { onto: sync.onto, mode: sync.mode }, syncOnly: true }, userId);
 }
 
 /** A round of Git work in the same worktrees: in the delegation's conversation, or standalone (web, CLI). */

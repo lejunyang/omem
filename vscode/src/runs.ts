@@ -48,7 +48,9 @@ export class RunItem extends vscode.TreeItem {
       return;
     }
     const out = run.output;
-    const state = out.appliedAt ? "已应用" : out.discardedAt ? "已丢弃" : STATUS[run.status] ?? run.status;
+    // A delegation on work branches is confirmed (pushed), not applied (docs/v2/ide.md).
+    const confirmed = ((out.worktrees ?? []) as { commits?: boolean }[]).some((w) => w.commits);
+    const state = out.appliedAt ? (confirmed ? "已确认" : "已应用") : out.discardedAt ? "已丢弃" : STATUS[run.status] ?? run.status;
     const round = (run.input as { round?: number }).round;
     this.description = `${here ? "● 当前 · " : ""}${round ? `第 ${round} 轮 · ` : ""}${state}${out.verdict ? ` · ${verdict(String(out.verdict))}` : ""}`;
     this.tooltip = `${run.title}\n${run.id} · ${new Date(run.createdAt).toLocaleString()}`;

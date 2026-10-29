@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -373,58 +373,72 @@ describe("reviewing an existing branch", () => {
     }
   }, 120000);
 
-  it("codes in the repository's main directory when allowed: applying keeps the changes there, discarding resets it", async () => {
+  it("codes on a work branch: commits per round, the main directory that has the branch follows, then squash and confirm", async () => {
     fake();
-    const before = getSpace(app, "shop-api").settings;
-    updateSpace(app, "shop-api", { settings: { ...before, inPlace: true } });
-    const branch = git("symbolic-ref", "--short", "HEAD").trim();
     const server = await startServer(app, { port: 0, quiet: true });
     const status = () => git("status", "--porcelain").trim();
+    const on = () => git("symbolic-ref", "--short", "HEAD").trim();
+    const start = on();
     try {
-      expect(status()).toBe("");
-      const r = createRun(app, { kind: "code", spaceId: "shop-api", title: "主目录里改", input: { task: "按评审意见修改", repos: ["shop-api"] } });
+      // A new delegation: a temporary branch cut from the main directory's HEAD, in a lent workspace.
+      const r = createRun(app, { kind: "code", spaceId: "shop-api", title: "只退未发货行", input: { task: "按评审意见修改", repos: ["shop-api"] } });
       await exec(r);
       const [wt] = worktreesOf(app, r.id);
-      expect(wt).toMatchObject({ inPlace: true, branch: "", targetBranch: branch });
-      expect(resolve(wt.slot!)).toBe(resolve(dir));
-      expect(status()).not.toBe("");
-      const changed = status();
+      expect(wt).toMatchObject({ commits: true, newBranch: true, branch: `omem/${r.id}`, cutFrom: start, slot: managedSlot(app, "shop-api", 1) });
+      expect(git("log", "-1", "--format=%s", wt.branch)).toContain("第 1 轮没提交的改动");
+      expect(git("show", `${wt.branch}:refund.ts`)).toContain("round = 1");
+      // The main directory is untouched until the owner checks the branch out there.
+      expect(status()).toBe("");
+      expect(on()).toBe(start);
       run(app.db, "update runs set status = 'done' where id = ?", r.id);
-      const res = applyCodeRun(app, r.id);
-      expect(res.targets).toMatchObject([{ space: "shop-api", branch }]);
-      expect(resolve(res.targets[0].path)).toBe(resolve(dir));
-      // Already there: nothing applied twice, nothing reset, still on the owner's branch, no omem branch.
-      expect(status()).toBe(changed);
-      expect(git("symbolic-ref", "--short", "HEAD").trim()).toBe(branch);
-      expect(git("branch", "--list", `omem/${r.id}`).trim()).toBe("");
 
-      // While the main directory has uncommitted changes, the next run gets a worktree of its own.
+      const { renameWorkBranch, checkoutInMain, siblingsText, branchStatus } = await import("../src/agents/code-branch.ts");
+      renameWorkBranch(app, r.id, "shop-api", "feat/refund-shipped");
+      expect(worktreesOf(app, r.id)[0].branch).toBe("feat/refund-shipped");
+      checkoutInMain(app, r.id, "shop-api");
+      expect(on()).toBe("feat/refund-shipped");
+      expect(branchStatus(app, r.id)[0]).toMatchObject({ branch: "feat/refund-shipped", inMain: true, pushed: false, remote: false });
+
+      // A parallel delegation gets its own branch and workspace, and is told about this one.
       const r2 = createRun(app, { kind: "code", spaceId: "shop-api", title: "另一处", input: { task: "按评审意见修改", repos: ["shop-api"] } });
       await exec(r2);
-      expect(worktreesOf(app, r2.id)[0].inPlace).toBeUndefined();
+      const [wt2] = worktreesOf(app, r2.id);
+      expect(wt2.slot).toBe(managedSlot(app, "shop-api", 2));
+      expect(siblingsText(app, "shop-api", r2.id)).toContain("feat/refund-shipped：只退未发货行");
       run(app.db, "update runs set status = 'done' where id = ?", r2.id);
-      discardCodeRun(app, r2.id);
-      expect(status()).toBe(changed);
 
-      // Discarding a run that worked in the main directory resets it.
-      git("stash", "-u", "-q");
-      const r3 = createRun(app, { kind: "code", spaceId: "shop-api", title: "丢弃", input: { task: "按评审意见修改", repos: ["shop-api"] } });
-      await exec(r3);
-      expect(worktreesOf(app, r3.id)[0].inPlace).toBe(true);
-      run(app.db, "update runs set status = 'done' where id = ?", r3.id);
-      // Meanwhile another delegation in a worktree of its own may not land in the borrowed main directory.
-      const r4 = createRun(app, { kind: "code", spaceId: "shop-api", title: "并行", input: { task: "按评审意见修改", repos: ["shop-api"] } });
-      await exec(r4);
-      expect(worktreesOf(app, r4.id)[0].inPlace).toBeUndefined();
-      run(app.db, "update runs set status = 'done' where id = ?", r4.id);
-      expect(() => applyCodeRun(app, r4.id)).toThrow(new RegExp(`正借给交办 ${r3.id}`));
-      discardCodeRun(app, r4.id);
-      discardCodeRun(app, r3.id);
+      // The next round works detached at the branch's tip and fast-forwards the main directory.
+      const next = createRun(app, { kind: "code", spaceId: "shop-api", title: "只退未发货行", input: { task: "上一轮评审要求修改", repos: ["shop-api"], continueFrom: r.id, round: 2 } });
+      await exec(next);
+      expect(git("log", "-1", "--format=%s")).toContain("第 2 轮没提交的改动");
+      expect(git("rev-parse", "HEAD").trim()).toBe(git("rev-parse", "feat/refund-shipped").trim());
       expect(status()).toBe("");
-      expect(git("symbolic-ref", "--short", "HEAD").trim()).toBe(branch);
-      git("stash", "drop", "-q");
+      expect(readFileSync(join(dir, "refund.ts"), "utf8")).toContain("round = 1");
+      run(app.db, "update runs set status = 'done' where id = ?", next.id);
+      expect(branchStatus(app, next.id)[0].commits).toHaveLength(2);
+
+      // Confirming squashes when asked; with no origin it stays local. The workspace is given back.
+      const res = applyCodeRun(app, next.id, { squash: "退款只按未发货的行计算" }) as ReturnType<typeof applyCodeRun> & { notes: string[] };
+      expect(res.notes.join("\n")).toMatch(/2 个提交压缩成一个[\s\S]*没有 origin/);
+      expect(git("log", "-1", "--format=%s").trim()).toBe("退款只按未发货的行计算");
+      expect(status()).toBe("");
+      expect(getRun(app, r.id).output.appliedAt).toBeTruthy();
+      expect(() => discardCodeRun(app, r.id)).toThrow(/确认过/);
+
+      // The item the other one was for ends: its workspace is given back, its branch stays.
+      const { upsertItem } = await import("../src/items/store.ts");
+      const { linkRunToItem } = await import("../src/items/materials.ts");
+      const item = upsertItem(app, undefined, { spaceId: "personal", title: "另一处", kind: "todo" }, "user");
+      linkRunToItem(app, getRun(app, r2.id), item.id, "owner");
+      upsertItem(app, item.id, { status: "done" }, "user");
+      await new Promise((ok) => setTimeout(ok, 200));
+      expect(existsSync(wt2.path)).toBe(false);
+      expect(git("branch", "--list", wt2.branch).trim()).not.toBe("");
+      // Discarding the other one deletes the branch it made (never pushed, checked out nowhere).
+      discardCodeRun(app, r2.id);
+      expect(git("branch", "--list", wt2.branch).trim()).toBe("");
+      git("checkout", "-q", start);
     } finally {
-      updateSpace(app, "shop-api", { settings: before });
       await server.close();
     }
   }, 180000);

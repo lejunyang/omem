@@ -193,14 +193,12 @@ async function openSpace(s: Space) {
   editing.value = { ...s, settings: { ...s.settings } };
   related.value = s.related ?? [];
   newRelated.value = { space: "", note: "" };
-  workspaceText.value = ((s.settings.workspaces as string[] | undefined) ?? []).join("\n");
   slots.value = [];
   guide.value = (await get<{ guide: string }>(`/api/spaces/${s.id}`)).guide;
   if (s.rootPath) slots.value = await get<WorkspaceSlot[]>(`/api/spaces/${s.id}/workspaces`).catch(() => []);
 }
-type WorkspaceSlot = { path: string; managed: boolean; main?: boolean; clone?: boolean; state: "free" | "leased" | "missing" | "invalid" | "dirty"; run?: string; reason?: string };
-const SLOT_STATE: Record<WorkspaceSlot["state"], string> = { free: "空闲", leased: "使用中", missing: "第一次用到时创建", invalid: "不可用", dirty: "有改动，跳过" };
-const workspaceText = ref("");
+type WorkspaceSlot = { path: string; state: "free" | "leased" | "invalid" | "dirty"; run?: string; branch?: string | null; reason?: string };
+const SLOT_STATE: Record<WorkspaceSlot["state"], string> = { free: "空闲", leased: "借出", invalid: "不可用", dirty: "空闲（有残留，借出时清掉）" };
 const slots = ref<WorkspaceSlot[]>([]);
 const related = ref<SpaceRelation[]>([]);
 const newRelated = ref({ space: "", note: "" });
@@ -232,19 +230,10 @@ async function removeRelated(r: SpaceRelation) {
 }
 async function saveSpace() {
   if (!editing.value) return;
-  if (editing.value.rootPath) {
-    const st = editing.value.settings;
-    st.workspaces = workspaceText.value.split("\n").map((l) => l.trim()).filter(Boolean);
-    st.pool = Math.max(0, Math.min(8, Math.floor(Number(st.pool) || 0)));
-  }
   const s = editing.value;
+  if (typeof s.settings.setupCommand === "string" && !s.settings.setupCommand.trim()) delete s.settings.setupCommand;
   await patch(`/api/spaces/${s.id}`, { name: s.name, description: s.description, settings: s.settings, guide: guide.value });
   toast("空间已保存", "ok");
-  // A directory listed as a workspace that is its own clone of the repository: offer to code there instead.
-  const clone = s.rootPath ? (await get<WorkspaceSlot[]>(`/api/spaces/${s.id}/workspaces`).catch(() => [])).find((x) => x.clone) : undefined;
-  if (clone && (await confirmDialog("改用这个目录作为仓库目录？", { message: `${clone.path} 和空间现在的仓库目录 ${s.rootPath} 是同一个仓库（remote 相同）的两份克隆，不能当复用工作区借给交办。改用它之后，交办从这个目录的当前分支开始、应用回这里，代码也从这里重新导入。`, okText: "改用这个目录" }))) {
-    if (!(await relink(clone.path))) return;
-  }
   editing.value = null;
   await loadSpaces();
 }
@@ -257,7 +246,7 @@ async function relink(path: string): Promise<boolean> {
     let r = await post<Result>(`/api/spaces/${s.id}/relink`, { path });
     if (!r.done) {
       const list = r.pending.map((p) => `· ${p.title}`).join("\n");
-      const ok = await confirmDialog(`丢弃 ${r.pending.length} 个没应用的交办？`, { message: `它们的工作区在原来的仓库 ${s.rootPath} 里，换目录前要先处理：\n${list}\n\n要保留改动就先去运行页应用，再回来换。`, okText: "丢弃并换目录", danger: true });
+      const ok = await confirmDialog(`丢弃 ${r.pending.length} 个没确认的交办？`, { message: `它们的工作区和分支在原来的仓库 ${s.rootPath} 里，换目录前要先处理：\n${list}\n\n要保留就先去运行页确认（推送），再回来换。`, okText: "丢弃并换目录", danger: true });
       if (!ok) return false;
       r = await post<Result>(`/api/spaces/${s.id}/relink`, { path, discard: true });
       if (!r.done) return false;
@@ -265,7 +254,6 @@ async function relink(path: string): Promise<boolean> {
     toast(`仓库目录改为 ${r.root}，正在重新导入`, "ok");
     s.rootPath = r.root;
     s.settings = (await get<Space>(`/api/spaces/${s.id}`)).settings;
-    workspaceText.value = ((s.settings.workspaces as string[] | undefined) ?? []).join("\n");
     slots.value = await get<WorkspaceSlot[]>(`/api/spaces/${s.id}/workspaces`).catch(() => []);
     await loadSpaces();
     return true;
@@ -277,7 +265,7 @@ async function relink(path: string): Promise<boolean> {
 async function changeRoot() {
   const s = editing.value;
   if (!s) return;
-  const path = (await promptDialog("换一个仓库目录", { message: "填同一个仓库（git remote 相同）在这台机器上的另一份克隆，比如你平时开发、装好了依赖的目录。交办会从它的当前分支开始，应用也回到这里。", value: s.rootPath ?? "", placeholder: "/home/me/code/app", okText: "换" }))?.trim();
+  const path = (await promptDialog("换一个仓库目录", { message: "填同一个仓库（git remote 相同）在这台机器上的另一份克隆，比如你平时开发的目录。交办从它当前的提交切出工作分支，在这里检出的分支每轮结束会自动快进。", value: s.rootPath ?? "", placeholder: "/home/me/code/app", okText: "换" }))?.trim();
   if (path && path !== s.rootPath) await relink(path);
 }
 async function toggleSchedule(s: Schedule) {
@@ -941,35 +929,29 @@ async function saveEdit() {
         <label v-if="editing.rootPath" class="field"><span>检查命令（交办编码后运行）</span><input v-model="editing.settings.checkCommand" class="input mono" placeholder="npm test" /></label>
         <template v-if="editing.rootPath">
           <div v-if="editing.kind === 'repo'" class="field fit">
-            <span>仓库目录（交办从这里的当前分支开始，应用回这里）</span>
+            <span>仓库目录（交办从这里当前的提交切出工作分支）</span>
             <div class="row fit">
               <span class="mono small grow slot-path" :title="editing.rootPath">{{ editing.rootPath }}</span>
               <button class="btn sm" @click="changeRoot">换目录</button>
             </div>
-            <span class="hint">同一个仓库在别处的克隆（remote 相同）可以换过来，比如你平时开发、装好了依赖的目录；没应用的交办要先应用或丢弃。</span>
+            <span class="hint">同一个仓库在别处的克隆（remote 相同）可以换过来，比如你平时开发的目录。在这个目录检出交办的分支，每轮的提交会自动快进过来。</span>
           </div>
           <label class="field">
             <span>准备命令（新工作区或锁文件变了时，编码前运行）</span>
-            <input v-model="editing.settings.setupCommand" class="input mono" placeholder="pnpm install --frozen-lockfile" />
+            <input v-model="editing.settings.setupCommand" class="input mono" placeholder="不填按锁文件自动选（pnpm / yarn / npm / bun）；填 none 不准备" />
           </label>
-          <div class="field fit">
-            <span>复用工作区（装好的依赖留着给下一次交办用）</span>
-            <div class="row wrap">
-              <input v-model.number="editing.settings.pool" type="number" min="0" max="8" class="input pool" aria-label="omem 自建的复用工作区数量" />
-              <span class="muted small grow">个由 omem 建在数据目录里；0 表示不建</span>
-            </div>
-            <textarea v-model="workspaceText" class="textarea mono" rows="2" placeholder="已有的工作区目录，一行一个（这个仓库 git worktree add 出来的；单独 clone 的目录用上面的“换目录”）" />
-            <span class="hint">已有目录只在没有未提交改动时借用，用完回到原来的分支；被忽略的文件（node_modules 等）一直保留。都占满时照旧新建工作区。</span>
-            <UiCheckbox :model-value="!!editing.settings.inPlace" @change="(v) => (editing!.settings.inPlace = v)">直接在仓库主目录里改</UiCheckbox>
-            <span class="hint">主目录没有未提交的改动时优先借给交办：在它当前的分支上改，不建新分支；应用就是把改动留在原处，丢弃会把主目录重置（包括你在交办期间在这里做的修改）。同一时间只有一个交办能用主目录。</span>
+          <div v-if="editing.kind === 'repo'" class="field fit">
+            <span>交办工作区</span>
+            <span class="hint">omem 按需在数据目录里建，最多 4 个，闲着的会收回给新的交办；被忽略的文件（node_modules 等）一直保留，不用设置。</span>
             <ul v-if="slots.length" class="slots">
               <li v-for="s in slots" :key="s.path" class="row">
-                <span class="mono small grow slot-path" :title="s.path">{{ s.main ? "主目录 · " : "" }}{{ s.path }}</span>
+                <span class="mono small grow slot-path" :title="s.path">{{ s.path }}</span>
+                <span v-if="s.branch" class="mono small">{{ s.branch }}</span>
                 <span class="badge" :title="s.reason || undefined">{{ SLOT_STATE[s.state] }}</span>
                 <a v-if="s.run" class="small" :href="`#/runs/${s.run}`">运行</a>
-                <button v-if="s.clone" class="btn sm" @click="relink(s.path)">设为仓库目录</button>
               </li>
             </ul>
+            <span v-else class="muted small">还没有，第一次交办时建。</span>
           </div>
         </template>
         <UiCheckbox v-if="editing.rootPath" :model-value="editing.settings.autoLint !== false" @change="(v) => (editing!.settings.autoLint = v)">同步后自动检查受影响的 Wiki 页面</UiCheckbox>
@@ -985,9 +967,6 @@ async function saveEdit() {
   grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   gap: 12px;
   min-width: 0;
-}
-.pool {
-  width: 72px;
 }
 .slots {
   list-style: none;

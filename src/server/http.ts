@@ -932,7 +932,33 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return (await import("../agents/retry.ts")).retryRun(app, id);
   });
   server.get("/api/runs/:id/apply-targets", async (req) => codeApplyTargets(app, (req.params as { id: string }).id));
-  server.post("/api/runs/:id/apply", async (req) => applyCodeRun(app, (req.params as { id: string }).id));
+  server.post("/api/runs/:id/apply", async (req) => {
+    const b = q(z.object({ squash: z.string().trim().max(10000).optional(), force: z.boolean().optional() }), req.body ?? {});
+    return applyCodeRun(app, (req.params as { id: string }).id, { squash: b.squash || undefined, force: b.force });
+  });
+  // A delegation's work branch (src/agents/code-branch.ts): its state, and what the owner does with it before confirming.
+  server.get("/api/runs/:id/branch", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const owner = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", id)?.user_id;
+    if (who(req) !== OWNER && owner !== who(req)) throw new HttpError(404, "运行不存在");
+    return (await import("../agents/code-branch.ts")).branchStatus(app, id);
+  });
+  server.post("/api/runs/:id/branch", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const b = q(z.object({ space: z.string().min(1), action: z.enum(["rename", "checkout", "squash"]), name: z.string().trim().max(200).optional(), message: z.string().trim().max(10000).optional() }), req.body);
+    if (who(req) !== OWNER) throw new HttpError(403, "分支操作只对本人开放");
+    const m = await import("../agents/code-branch.ts");
+    if (b.action === "rename") return m.renameWorkBranch(app, id, b.space, b.name ?? "");
+    if (b.action === "checkout") return m.checkoutInMain(app, id, b.space);
+    return m.squashWorkBranch(app, id, b.space, b.message ?? "");
+  });
+  // Merge or rebase the work branch onto another branch: a round of Git work, conflicts to the coding Agent.
+  server.post("/api/runs/:id/sync", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const b = q(z.object({ onto: z.string().trim().min(1).max(200), mode: z.enum(["merge", "rebase"]).optional() }), req.body);
+    if (who(req) !== OWNER) throw new HttpError(403, "分支操作只对本人开放");
+    return (await import("../agents/code.ts")).queueSyncRound(app, id, { onto: b.onto, mode: b.mode ?? "merge" }, who(req));
+  });
   server.get("/api/runs/:id/git", async (req) => {
     const { space } = q(z.object({ space: z.string().min(1) }), req.query);
     if (!(scopeFor(app, who(req), [space]) ?? [space]).includes(space)) throw new HttpError(403, "不能访问该仓库");
@@ -957,20 +983,22 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/delegate", async (req) => {
     // `space` is where the task belongs (a repository or a project); `repos` the repositories it changes.
     const sync = z.object({ pull: z.boolean().optional(), onto: z.string().optional(), mode: z.enum(["merge", "rebase"]).optional(), fetch: z.boolean().optional() });
-    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional(), reviewTier: z.string().optional(), fromBranch: z.string().optional(), itemId: z.string().optional(), sync: sync.optional(), syncOnly: z.boolean().optional(), parallel: z.boolean().optional() }), req.body);
+    const b = q(z.object({ space: z.string(), repos: z.array(z.string()).optional(), task: z.string().min(1), checkCommand: z.string().optional(), reviewTier: z.string().optional(), fromBranch: z.string().optional(), branch: z.string().trim().max(200).optional(), itemId: z.string().optional(), sync: sync.optional(), syncOnly: z.boolean().optional(), parallel: z.boolean().optional() }), req.body);
     if (b.sync && !b.sync.pull && !b.sync.onto) throw new HttpError(400, "同步要选拉取或合并 / 变基到哪个分支");
     const userId = who(req);
     const s = getSpace(app, b.space);
     const repos = codeRepos(app, s.id, b.repos).map((r) => r.id);
     const fromBranches = b.fromBranch ? Object.fromEntries(repos.map((id) => [id, b.fromBranch!])) : undefined;
-    if (!b.parallel) {
+    const branchNames = b.branch ? Object.fromEntries(repos.map((id) => [id, b.branch!])) : undefined;
+    // A new delegation gets a new branch; only one that works on an existing branch can meet another.
+    const onBranch = b.fromBranch ?? b.branch;
+    if (!b.parallel && onBranch) {
       const { openDelegationOn } = await import("../agents/review-fix.ts");
-      const branch = b.fromBranch ?? git(getSpace(app, repos[0]).rootPath ?? "", ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim();
-      const open = openDelegationOn(app, repos, branch, userId);
-      if (open) throw new HttpError(409, `分支 ${branch} 上已有没应用的交办「${open.title}」（${open.id}），在它上面接着改，或者先应用 / 丢弃它`);
+      const open = openDelegationOn(app, repos, onBranch, userId);
+      if (open) throw new HttpError(409, `分支 ${onBranch} 上已有没确认的交办「${open.title}」（${open.id}），在它上面接着改，或者先确认 / 丢弃它`);
     }
     if (b.itemId && getItem(app, b.itemId).userId !== userId) throw new HttpError(403, "不能使用他人的事项");
-    const r = createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, itemId: b.itemId, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}) }, userId });
+    const r = createRun(app, { kind: "code", spaceId: s.id, title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, branchNames, itemId: b.itemId, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}) }, userId });
     if (b.itemId) linkRunToItem(app, r, b.itemId, userId);
     return r;
   });
@@ -1109,8 +1137,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       const wt = worktrees.find((w) => w.space === space);
       const appliedTo = (r.output.appliedTo ?? getRun(app, root).output.appliedTo) as { space: string; path: string }[] | undefined;
       const base = wt && existsSync(wt.path) ? wt.path : appliedTo?.find(t => t.space === space)?.path ?? findSpace(app, space)?.rootPath;
-      if (wt && !existsSync(wt.path) && wt.tip && base) {
-        const shown = git(base, ["show", `${wt.tip}:${path}`]);
+      // A reviewed branch's tip, or a work branch between rounds (its workspace given back).
+      const tip = wt?.tip ?? (wt?.commits ? `refs/heads/${wt.branch}` : undefined);
+      if (wt && !existsSync(wt.path) && tip && base) {
+        const shown = git(base, ["show", `${tip}:${path}`]);
         if (shown.ok) return { lines: shown.stdout.split(/\r?\n/), from: "branch", space, path };
       }
       if (!base) continue;

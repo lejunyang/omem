@@ -464,16 +464,20 @@ function fixCandidates(app: App, codeRunId: string, round: number) {
 const FIX = "按评审修改";
 const LATER = "先不改";
 const APPLY = "应用到仓库";
+const CONFIRM = "确认并推送";
 const DISCARD = "丢弃改动";
 
 /** The end of a review that needs nothing more from the reviewers: what the owner can do next, as buttons. */
 function askDone(app: App, run: Run, chain: CodeChain | null, d: { title: string; digest: string; approved: boolean; branchReview: boolean }) {
   const toFix = fixCandidates(app, run.id, roundOf(run));
   // A passed branch review with nothing to fix leaves nothing to decide.
-  const labels = !d.branchReview && chain && d.approved ? [APPLY, DISCARD] : toFix.length || !d.approved ? [FIX, LATER] : null;
+  const branch = ((getRun(app, String(run.input.continueFrom ?? run.id)).output.worktrees ?? []) as { commits?: boolean }[]).some((w) => w.commits);
+  const labels = !d.branchReview && chain && d.approved ? [branch ? CONFIRM : APPLY, DISCARD] : toFix.length || !d.approved ? [FIX, LATER] : null;
   if (!labels) return null;
   const hint = labels[0] === FIX
     ? `点“${FIX}”就改上面默认要改的问题；可以在输入框补充要求（也会一起改）。要逐个挑选，在网页上的“概览”里选。`
+    : branch
+    ? "改动已经按提交在工作分支上；确认后推到 origin，归还工作区。要压缩提交、改分支名或先在仓库目录检出验证，在网页的运行页操作。"
     : "改动在独立的工作区里，应用后成为仓库里未提交的修改。";
   return createAsk(app, {
     runId: run.id,
@@ -492,10 +496,12 @@ async function onDoneAnswer(app: App, ask: Ask, ctx: { codeRunId: string; labels
     if (picked === FIX || (!picked && extra)) {
       const { startFix } = await import("./review-fix.ts");
       await startFix(app, run.id, { findingIds: fixCandidates(app, run.id, roundOf(run)).map((f) => f.id), text: extra || undefined }, ask.userId);
-    } else if (picked === APPLY) {
+    } else if (picked === APPLY || picked === CONFIRM) {
       const { applyCodeRun } = await import("./code.ts");
-      applyCodeRun(app, run.id);
-      notify(app, { userId: ask.userId, title: `已应用到仓库：${run.title}`, body: "改动成为仓库工作区里未提交的修改，请在仓库里检查后提交。", link: `#/runs/${run.id}` });
+      const res = applyCodeRun(app, run.id) as { pushed?: { branch: string }[]; notes?: string[] };
+      notify(app, picked === CONFIRM
+        ? { userId: ask.userId, title: `已确认：${run.title}`, body: [res.pushed?.length ? `已推送 ${res.pushed.map((p) => p.branch).join("、")}。` : "", ...(res.notes ?? [])].filter(Boolean).join("\n") || "工作区已归还，分支保留。", link: `#/runs/${run.id}` }
+        : { userId: ask.userId, title: `已应用到仓库：${run.title}`, body: "改动成为仓库工作区里未提交的修改，请在仓库里检查后提交。", link: `#/runs/${run.id}` });
     } else if (picked === DISCARD) {
       const { discardCodeRun } = await import("./code.ts");
       discardCodeRun(app, run.id);

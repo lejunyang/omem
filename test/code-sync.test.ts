@@ -217,29 +217,36 @@ describe("a sync-only delegation, end to end", { timeout: 120000 }, () => {
     }
   });
 
-  it("applies what is done and keeps the worktree: the next diff holds only later work", async () => {
+  it("commits each round on the work branch, and confirming pushes it", async () => {
     const server = await startServer(app, { port: 0, quiet: true });
     try {
       delegate("resolve");
+      const before = sh(root, "rev-parse", "feature/refund");
       const r = createRun(app, { kind: "code", spaceId: "shop", title: "退款只按未发货行", input: { task: "退款只按未发货的行计算", repos: ["shop"], fromBranches: { shop: "feature/refund" }, reviewTier: "light" } });
       await exec(r.id);
-      sql(app.db, "update runs set status = 'done' where id = ?", r.id);
-      const res = applyCodeRun(app, r.id, { keepWorking: true });
-      const target = res.targets[0];
-      expect(readFileSync(join(target.path, "refund.ts"), "utf8")).toContain("round = 1");
       const [w] = worktreesOf(app, r.id);
-      expect(existsSync(w.path)).toBe(true);
-      expect(sh(w.path, "log", "-1", "--format=%s")).toMatch(/^omem: 已应用到 feature\/refund/);
-      expect(sh(w.path, "diff", "--cached", "HEAD")).toBe("");
-      expect(w.start).toBe(sh(w.path, "rev-parse", "HEAD"));
-      expect(getRun(app, r.id).output).toMatchObject({ partlyAppliedAt: expect.any(String) });
-      expect(getRun(app, r.id).output.appliedAt).toBeUndefined();
+      expect(w).toMatchObject({ commits: true, branch: "feature/refund" });
+      // What the Agent left uncommitted is a commit on the branch; the workspace is clean and detached.
+      expect(sh(root, "log", "-1", "--format=%s", "feature/refund")).toContain("第 1 轮没提交的改动");
+      expect(sh(root, "show", "feature/refund:refund.ts")).toContain("round = 1");
+      expect(sh(w.path, "status", "--porcelain")).toBe("");
+      expect(git(w.path, ["symbolic-ref", "-q", "HEAD"]).ok).toBe(false);
+      // The diff the reviewers saw is the branch since the work began.
+      expect(readFileSync(join(app.runsDir, r.id, "patches", "shop.patch"), "utf8")).toContain("round = 1");
+      expect(sh(root, "merge-base", "--is-ancestor", before, "feature/refund")).toBe("");
+      sql(app.db, "update runs set status = 'done' where id = ?", r.id);
+      const res = applyCodeRun(app, r.id) as ReturnType<typeof applyCodeRun> & { pushed: { branch: string }[] };
+      expect(res.pushed.map((p) => p.branch)).toEqual(["feature/refund"]);
+      expect(sh(remote, "rev-parse", "feature/refund")).toBe(sh(root, "rev-parse", "feature/refund"));
+      expect(sh(root, "rev-parse", "--abbrev-ref", "feature/refund@{upstream}")).toBe("origin/feature/refund");
+      expect(existsSync(w.path)).toBe(false);
+      expect(getRun(app, r.id).output.appliedAt).toBeTruthy();
     } finally {
       await server.close();
     }
   });
 
-  it("the coding Agent resolves the conflict; apply fast-forwards the target branch", async () => {
+  it("the coding Agent resolves the conflict; the merge is on the work branch", async () => {
     const server = await startServer(app, { port: 0, quiet: true });
     try {
       const r = delegate("resolve");
@@ -248,10 +255,10 @@ describe("a sync-only delegation, end to end", { timeout: 120000 }, () => {
       const out = getRun(app, r.id).output as { coderSummary: string };
       expect(out.coderSummary).toMatch(/合并 main，解决了 1 个冲突文件/);
       expect(out.coderSummary).toContain("rules.txt");
-      const res = applyCodeRun(app, r.id);
-      const target = res.targets[0];
-      expect(sh(target.path, "log", "-1", "--format=%P").split(" ")).toHaveLength(2);
-      expect(readFileSync(join(target.path, "rules.txt"), "utf8")).toBe("refund: unshipped lines\nrefund: shipped lines\n");
+      expect(sh(root, "log", "-1", "--format=%P", "feature/refund").split(" ")).toHaveLength(2);
+      expect(sh(root, "show", "feature/refund:rules.txt")).toBe("refund: unshipped lines\nrefund: shipped lines");
+      applyCodeRun(app, r.id);
+      expect(sh(remote, "rev-parse", "feature/refund")).toBe(sh(root, "rev-parse", "feature/refund"));
     } finally {
       await server.close();
     }
@@ -276,8 +283,7 @@ describe("a sync-only delegation, end to end", { timeout: 120000 }, () => {
       expect(next.input).toMatchObject({ syncResume: true, syncOnly: true });
       expect((await exec(next.id)).verdict).toBe("synced");
       sql(app.db, "update runs set status = 'done' where id = ?", next.id);
-      const res = applyCodeRun(app, next.id);
-      expect(readFileSync(join(res.targets[0].path, "rules.txt"), "utf8")).toBe("refund: shipped lines only\n");
+      expect(sh(root, "show", "feature/refund:rules.txt")).toBe("refund: shipped lines only");
     } finally {
       await server.close();
     }

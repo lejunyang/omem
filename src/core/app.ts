@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { loadConfig, omemHome, type Config } from "./config.ts";
 import { openDb, type Db } from "./db.ts";
 import { disableGitFsmonitor, ensureLibraryRepo } from "./git.ts";
@@ -28,13 +28,14 @@ export class App {
   readonly db: Db;
 
   constructor(home: string, config: Config, db: Db) {
-    this.home = home;
+    // Absolute: paths under it are handed to processes (git) that run in other directories.
+    this.home = resolve(home);
     this.config = config;
     this.db = db;
     this.events.setMaxListeners(100);
-    this.libraryDir = join(home, "library");
-    this.filesDir = join(home, "files");
-    this.runsDir = join(home, "runs");
+    this.libraryDir = join(this.home, "library");
+    this.filesDir = join(this.home, "files");
+    this.runsDir = join(this.home, "runs");
     for (const dir of [this.libraryDir, this.filesDir, this.runsDir]) mkdirSync(dir, { recursive: true });
     ensureLibraryRepo(this.libraryDir);
   }

@@ -7,6 +7,7 @@ import { findSpace } from "../core/spaces.ts";
 import { discardCodeRun, worktreesOf } from "./code.ts";
 import { listRuns, runUser, type Run } from "./runs.ts";
 import { workDirOf } from "./workspaces.ts";
+import { changeBase } from "./code-branch.ts";
 
 /**
  * Cleaning up after delegations (the assistant's `clean_code_runs`): what is left on disk and how to
@@ -73,8 +74,12 @@ export function cleanupCandidates(app: App, opts: { userId: string | null; space
       continue;
     }
     if (!applied && !discarded) {
-      for (const wt of worktreesOf(app, latest.id).filter((w) => repos.includes(w.space) && existsSync(w.path)))
-        items.push({ kind: "discard", run: latest.id, title: latest.title, space: wt.space, path: workDirOf(wt), changed: changedFiles(wt.path), branch: wt.inPlace ? wt.targetBranch : wt.branch || null });
+      for (const wt of worktreesOf(app, latest.id).filter((w) => repos.includes(w.space) && (existsSync(w.path) || w.commits))) {
+        // A work branch's change is its commits; discarding deletes the branch when this delegation made it and never pushed it.
+        const root = wt.commits ? findSpace(app, wt.space)?.rootPath : null;
+        const changed = root ? git(root, ["diff", "--name-only", changeBase(root, wt, `refs/heads/${wt.branch}`), `refs/heads/${wt.branch}`]).stdout.split("\n").filter(Boolean).length : changedFiles(wt.path);
+        items.push({ kind: "discard", run: latest.id, title: latest.title, space: wt.space, path: existsSync(wt.path) ? workDirOf(wt) : root ?? wt.path, changed, branch: wt.inPlace ? wt.targetBranch : wt.branch || null });
+      }
     }
     if (applied && opts.receivers) {
       const targets = (applied.output.appliedTo ?? c.first.output.appliedTo ?? []) as { space: string; path: string; branch: string | null }[];

@@ -82,7 +82,7 @@ export function openDelegationOn(app: App, repos: string[], branch: string | nul
   const since = new Date(Date.now() - 30 * 86400_000).toISOString();
   const roots = all<{ id: string }>(app.db, "select id from runs where kind = 'code' and json_extract(input, '$.continueFrom') is null and json_extract(input, '$.branches') is null and json_extract(output, '$.appliedAt') is null and json_extract(output, '$.discardedAt') is null and coalesce(user_id, ?) = ? and created_at > ? order by created_at desc limit 50", OWNER, userId, since);
   for (const { id } of roots) {
-    if (!worktreesOf(app, id).some((w) => repos.includes(w.space) && w.targetBranch === want && existsSync(w.path))) continue;
+    if (!worktreesOf(app, id).some((w) => repos.includes(w.space) && w.targetBranch === want && (w.commits || existsSync(w.path)))) continue;
     const rounds = workRuns(app, id).map((x) => getRun(app, x));
     if (rounds.some((x) => x.output.appliedAt || x.output.discardedAt)) continue;
     return rounds.at(-1)!;

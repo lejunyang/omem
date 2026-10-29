@@ -14,20 +14,21 @@
 - `message_code_run(run_id, text)`：把本人的补充交给正在编码的 Agent（它下一次调用 omem 工具时收到，最晚在这一轮检查前接着同一会话交给它；这一轮已写完代码时随下一轮的任务交付）。
 - `set_code_review(run_id, review_tier?, review_checks?, split?)` 改之后的评审：档位可以比之前轻，`review_checks` 只做这些评审项，`split: false` 不再拆需求，`rotate_models` 之后每轮各评审项换用评审设置里轮换列表的下一个模型；还没开始评审的这一轮就生效，之后的轮次沿用。
 - `stop_code_run(run_id, reason?)`：停下进行中的编码或评审，不再自动续轮，工作区保留。
-- `continue_code_run` 和 `fix_review` 也接受 `review_tier` / `review_checks` / `split` / `rotate_models`，`fix_review` 另可传 `review_execution`；两者的 `apply_first: true` 先把现在的改动应用到目标分支（未提交），下一轮在同一个工作区接着改。
+- `continue_code_run` 和 `fix_review` 也接受 `review_tier` / `review_checks` / `split` / `rotate_models`，`fix_review` 另可传 `review_execution`；两者的 `apply_first: true` 只对以前的交办有用（先应用再接着改）；工作分支上的交办每轮都已经提交在分支上。
 - `resplit_change_points`：重新整理已有评审的需求拆分（网页“变更”里的变更点），不重跑整个评审；没提到的保持，评审没有拆分时就新拆一份。
 
-## 应用与 Git
+## 工作分支、确认与 Git
 
-- `apply_code_run` 把改动应用到交办时指定的目标分支（续轮沿用首轮目标）：复用该分支已有工作区，没有则自动建立接收工作区，不切换仓库主目录。返回实际分支和目录；不要要求本人手动切分支，也不要说已提交或已推送。补丁真正冲突时保留编码成果。
-- `clean_code_runs`：本人要清理交办留下的东西时用。先不带 `confirm` 列出清单：没应用的交办（丢弃后工作区删掉，复用工作区和仓库主目录重置）、`receivers: true` 时已应用交办的接收工作区（连同没提交的改动）、没有对应交办的遗留工作区，每项写着改了几个文件。本人同意后带 `confirm: true` 和 `run_ids` 再调，只处理这些。进行中的交办不在清单里。
-- `code_git_status(run_id, space)` 查看已应用接收工作区的分支、HEAD、暂存 diff、未暂存文件及操作记录。仅本人可用，限定本次可读空间。远端领先 / 落后数是本地缓存，不自动 fetch。
-- `code_git_action(run_id, space, action, expected_state, message?, branch?, force?)`：本人要求后操作；`action` 为 `commit`、`commit_push` 或 `push`。先读状态并检查 diff，`expected_state` 传其 `state`，提交需非空 `message`；只提交暂存区，不自动 add。默认推送到 origin 的原目标分支，`branch` 可推到别的分支；`force` 只在本人明确同意时用（带 lease）。状态过期需重读，返回 `ok: false` 时不能说成功；推送失败保留本地 commit，刷新后仅重试 push。不要让编码 Agent 绕过工具在接收目录提交或推送。
+- 交办每个仓库一条工作分支：`delegate_code` 不传分支时从仓库目录当前的提交切出临时分支，编码 Agent 按功能改名；`from_branch` 接着已有分支提交；`branch` 指定新分支名（本人说了才传）。编码 Agent 按功能提交，一轮剩下没提交的由宿主提交；不要让它 push。同一个分支一次只有一个没确认的交办，新交办默认各开一条分支，可以并行。
+- `code_branch(run_id, action, …)`：本人要求时用，进行中的交办等这一轮结束。`status` 看每个仓库的分支、切出点、提交、推送状态和检出位置；`rename(name)` 改名；`checkout_main` 把仓库目录切到这条分支（目录要干净），之后每轮的提交自动快进到那里，本人可以直接在仓库目录运行验证；`squash(message)` 压缩成一个提交；`sync(onto, mode)` 排一轮把另一个分支合并（或变基）进来，冲突交给编码 Agent。
+- `apply_code_run(run_id, squash_message?, force?)`：本人明确说确认 / 推送 / 合入时用。工作分支上的交办：可先压缩，推到 origin 的同名分支并设为上游，归还工作区，分支保留；远端有本地没有的提交时报错，本人同意覆盖才传 `force`（带 lease）。没有 origin 时只在本地确认。返回推送了哪些分支，失败就照实说。
+- 以前的交办（工作区里是未提交的改动）：`apply_code_run` 把改动应用到目标分支的工作区（未提交），之后 `code_git_status(run_id, space)` 看接收工作区的状态和暂存 diff，`code_git_action(run_id, space, action, expected_state, …)` 提交或推送（`expected_state` 传刚读到的 `state`；只提交暂存区；`force` 只在本人同意时用）。
+- `clean_code_runs`：本人要清理交办留下的东西时用。先不带 `confirm` 列出清单：没确认的交办（丢弃后工作区归还，这次新建、没推送、没在别处检出的分支一起删）、`receivers: true` 时以前交办的接收工作区、没有对应交办的遗留工作区，每项写着改了几个文件。本人同意后带 `confirm: true` 和 `run_ids` 再调，只处理这些。进行中的交办不在清单里。
 
 ## 工作区与依赖
 
-- 交办默认每次新建 worktree，依赖要重装。`set_code_workspaces(space, pool?, workspaces?, setup_command?, in_place?)` 让它复用：`pool` 是 omem 自建的长期工作区（保留 node_modules 等被忽略的文件），`workspaces` 借本人已有、装好依赖的 worktree（干净时才借），`setup_command` 只在新工作区或锁文件变了时运行，`in_place` 允许直接在仓库主目录里改（主目录干净时优先，在当前分支上改，应用时改动留在原处，丢弃会重置主目录）。`workspaces` 只认 `git worktree add` 出来的目录；本人另一份克隆（remote 相同、自己的 .git）不能借，要在那里编码就用 `connect_repository(那个目录, space, relink: true)` 把空间换过去（本人确认后；有没应用的交办先应用或经本人同意丢弃）。
-- 本人给一个本地仓库路径要交办：先 `connect_repository`。同一仓库（remote 相同）已经有空间时不会新建，返回那个空间；要它改用这个目录，本人同意后带 `space` 和 `relink: true`（那个空间还有没应用的交办时不能改）。
+- 工作区由 omem 自动管：按需建（每个仓库最多 4 个），闲着的收回给新交办，保留 node_modules 等被忽略的文件；事项结束时它的交办占着的工作区自动归还。`set_code_workspaces(space, setup_command?)` 只设准备命令（不设时按锁文件自动选 pnpm / yarn / npm / bun，`none` 不准备），并列出各工作区的状态。
+- 本人给一个本地仓库路径要交办：先 `connect_repository`。同一仓库（remote 相同）已经有空间时不会新建，返回那个空间；要它改用这个目录，本人同意后带 `space` 和 `relink: true`（那个空间还有没确认的交办时不能改）。
 
 ## 同步
 

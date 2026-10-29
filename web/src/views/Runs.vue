@@ -24,6 +24,7 @@ import ReviewChecks from "../components/ReviewChecks.vue";
 import ChangeView from "../components/ChangeView.vue";
 import RunActivity from "../components/RunActivity.vue";
 import CodeGitPanel from "../components/CodeGitPanel.vue";
+import CodeBranchPanel from "../components/CodeBranchPanel.vue";
 import ReviewProcess from "../components/ReviewProcess.vue";
 import { fmtTime, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 import { refAction } from "../lib/refs";
@@ -307,6 +308,7 @@ async function act(action: "cancel" | "retry" | "apply" | "discard") {
       const message = targets.map(t => `${t.space} · ${t.branch ?? "指定版本"}\n${t.path}`).join("\n\n");
       if (!(await confirmDialog("应用到原目标分支？", { message: `${message}\n\n将写入未提交的修改；需要时自动建立目标分支工作区，仓库主目录保持原分支。`, okText: "应用" }))) return;
     }
+    if (action === "discard" && branchWork.value && !(await confirmDialog("丢弃这次交办？", { message: "归还工作区。这次交办新建的分支如果没推送、也没在别处检出，会连同上面的提交一起删掉。", okText: "丢弃", danger: true }))) return;
     const r = await post<{ id?: string; continued?: boolean }>(`/api/runs/${runId}/${action}`);
     if (action === "retry" && r?.id) {
       // A coding run continues in its worktree; an agent run is told what the failed attempt did.
@@ -320,6 +322,8 @@ async function act(action: "cancel" | "retry" | "apply" | "discard") {
     toast((e as Error).message, "error");
   }
 }
+/** A delegation on work branches: commits per round, confirmed by pushing (no apply, no commit step). */
+const branchWork = computed(() => !branchReview.value && ((out.value.worktrees ?? []) as { commits?: boolean }[]).some((w) => w.commits));
 /** Commits a sync added (a merge, a pull), applied by fast-forward even without a patch. */
 const syncCommits = computed(() => ((out.value.worktrees ?? []) as { syncHead?: string }[]).some((w) => w.syncHead));
 async function moveToTarget() {
@@ -490,11 +494,11 @@ const kindOptions = computed(() => [
             <button v-if="['queued', 'running'].includes(detail.run.status)" class="btn sm" @click="act('cancel')"><Icon name="stop" :size="13" />停止</button>
             <button v-if="['failed', 'cancelled'].includes(detail.run.status)" class="btn sm" @click="act('retry')"><Icon name="refresh" :size="13" />重试</button>
             <template v-if="detail.run.kind === 'code' && detail.run.status === 'done' && (detail.patches?.length || syncCommits) && !out.appliedAt && !out.discardedAt && out.verdict !== 'sync-conflict'">
-              <button v-if="!branchReview" class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到原分支</button>
-              <button v-if="!branchReview" class="btn sm" title="目标分支在交办后有了新提交、应用不上时：把改动移到它的最新提交上（冲突交给编码 Agent）" @click="moveToTarget">移到目标分支最新提交</button>
-              <button class="btn sm danger" :title="branchReview ? '删除评审用的工作区和它的索引' : undefined" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
+              <button v-if="!branchReview && !branchWork" class="btn primary sm" @click="act('apply')"><Icon name="check" :size="14" />应用到原分支</button>
+              <button v-if="!branchReview && !branchWork" class="btn sm" title="目标分支在交办后有了新提交、应用不上时：把改动移到它的最新提交上（冲突交给编码 Agent）" @click="moveToTarget">移到目标分支最新提交</button>
+              <button class="btn sm danger" :title="branchReview ? '删除评审用的工作区和它的索引' : branchWork ? '归还工作区；这次交办新建、没推送的分支一起删掉' : undefined" @click="act('discard')">{{ branchReview ? "清理工作区" : "丢弃" }}</button>
             </template>
-            <span v-if="out.appliedAt" class="badge ok">已应用 {{ fmtTime(out.appliedAt) }}</span>
+            <span v-if="out.appliedAt && !branchWork" class="badge ok">已应用 {{ fmtTime(out.appliedAt) }}</span>
             <OpenInIde v-if="detail.run.kind === 'code'" :key="`${detail.run.id}:${out.appliedAt ?? ''}:${out.discardedAt ?? ''}:${detail.run.status}`" :run-id="detail.run.id" :space-name="spaceName" />
             <button v-if="detail.run.kind === 'code'" class="btn ghost sm" @click="explaining = null; asking = 'open'"><Icon name="chat" :size="14" />提问</button>
           </div>
@@ -506,8 +510,10 @@ const kindOptions = computed(() => [
           <p class="pre small">{{ syncAsk.question }}</p>
           <div class="row wrap"><button class="btn primary sm" @click="answerSync(0)">已解决，继续</button><button class="btn sm" @click="answerSync(1)">放弃这次同步</button></div>
         </section>
-        <!-- After apply: where the change landed, and committing / pushing it there. -->
-        <section v-if="out.appliedTo?.length" class="card pad block apply-targets">
+        <!-- A work branch: its commits, where it is checked out, and confirming (pushing) it. -->
+        <CodeBranchPanel v-if="branchWork && detail.run.kind === 'code' && !out.discardedAt" :run-id="detail.run.id" :title="detail.run.title" :busy="['queued', 'running'].includes(detail.run.status)" :confirmed-at="(out.appliedAt as string | undefined) ?? null" :space-name="spaceName" @changed="loadDetail" @synced="(id) => router.push(`/runs/${id}`)" />
+        <!-- After apply (an older delegation): where the change landed, and committing / pushing it there. -->
+        <section v-if="out.appliedTo?.length && !branchWork" class="card pad block apply-targets">
           <div class="section-title">接收位置与提交</div>
           <div v-for="t in (out.appliedTo as ApplyTarget[])" :key="t.space" class="target">
             <div class="row wrap small">
@@ -523,7 +529,7 @@ const kindOptions = computed(() => [
         <nav v-if="hasReview" class="tabs" role="tablist" aria-label="运行详情">
           <button v-for="t in tabs" :key="t.id" role="tab" class="tab" :class="{ on: tab === t.id }" :aria-selected="tab === t.id" @click="tab = t.id">{{ t.label }}</button>
         </nav>
-        <ReviewSummary v-if="hasReview && tab === 'overview'" :rv="rv" :run-id="detail.run.id" :review-text="out.review" :branch-review="branchReview" :can-fix="detail.run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" data-ask-label="评审" @ask="(c) => quote('ask', c)" @go="(t) => (tab = t)" />
+        <ReviewSummary v-if="hasReview && tab === 'overview'" :rv="rv" :run-id="detail.run.id" :review-text="out.review" :branch-review="branchReview" :branch-work="branchWork" :can-fix="detail.run.status === 'done' && !out.appliedAt && (branchReview || !out.discardedAt)" data-ask-label="评审" @ask="(c) => quote('ask', c)" @go="(t) => (tab = t)" />
         <ChangeView v-if="hasReview && tab === 'change'" :rv="rv" :run-id="detail.run.id" :diffs="diffs" @explain="explain" />
         <ReviewChecks v-if="hasReview && tab === 'review'" :rv="rv" :run-id="detail.run.id" data-ask-label="评审" @process="(c) => { processFocus = c; tab = 'activity'; }" />
 

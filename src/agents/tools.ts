@@ -234,7 +234,7 @@ async function relinkSpace(ctx: ToolContext, id: string, root: string) {
   const r = relinkRepoSpace(ctx.app, id, root);
   if (!r.done) throw new HttpError(409, `空间 ${id} 还有没应用的交办（${r.pending.map((p) => p.run).join("、")}），它们的工作区在原来的仓库里；先应用，或本人同意后用 clean_code_runs 丢弃再改`);
   const report = await syncDirectorySpace(ctx.app, id);
-  return `空间 ${id}（${s.name}）改为关联 ${r.root}（原来是 ${r.old}）。重新导入：新增 ${report.created}，更新 ${report.updated}。${r.pool ? `omem 自建的 ${r.pool} 个复用工作区属于原来的仓库，已删掉，下次交办在新目录的仓库上重建。` : ""}交办在 repo_spaces 里写 "${id}"。`;
+  return `空间 ${id}（${s.name}）改为关联 ${r.root}（原来是 ${r.old}）。重新导入：新增 ${report.created}，更新 ${report.updated}。${r.pool ? `omem 自建的 ${r.pool} 个工作区属于原来的仓库，已删掉，下次交办在新目录的仓库上重建。` : ""}交办在 repo_spaces 里写 "${id}"。`;
 }
 
 function manageSpaces(ctx: ToolContext) {
@@ -2700,7 +2700,7 @@ async function roundReviewOf(ctx: ToolContext, a: { review_tier?: string; review
 def({
   name: "delegate_code",
   description:
-    "交办编码任务：每个涉及的代码仓库空间各开一个独立 Git worktree，由同一个编码 Agent 一起实现，分别运行检查，再按评审档位由一个或几个评审项（功能、业务、架构、规范、历史，或本人建的专项）各自独立审查；应用时所有仓库一起应用。改过的文件在工作区存在期间可检索（交办工作区空间）。返回运行 id，可用 read_run 查看进度。仅在用户明确要求实现/修改代码时使用。",
+    "交办编码任务：每个涉及的代码仓库空间各有一条工作分支（新建的从仓库目录当前的提交切出，或接着已有分支），在 omem 自动管理的工作区里由同一个编码 Agent 一起实现并按功能提交，分别运行检查，再按评审档位由一个或几个评审项（功能、业务、架构、规范、历史，或本人建的专项）各自独立审查。之后的轮次在同一条分支上接着提交；分支在仓库目录检出时每轮结束会快进过去。最后本人确认时推送（apply_code_run）。返回运行 id，可用 read_run 查看进度。仅在用户明确要求实现/修改代码时使用。",
   write: true,
   schema: z.object({
     execution: executionSchema.optional().describe("编码 AI 的临时选择"),
@@ -2713,7 +2713,8 @@ def({
     space: z.string().optional().describe("任务所属的空间（如项目空间），默认第一个仓库"),
     review_tier: z.string().optional().describe("本人点名的评审档位（id 或名字，如“完整”）；不传按改动大小自动选"),
     review_checks: z.array(z.string()).optional().describe("本人要求额外加上的评审项（档案名，如 security-review）"),
-    from_branch: z.string().optional().describe("在已有分支上继续开发：从本地该分支最新提交开始，不带未提交修改，也不自动拉远端；应用时自动选择或建立原分支的接收工作区"),
+    from_branch: z.string().optional().describe("在已有分支上继续开发：提交接着加在这条分支上（本地没有、origin 上有的先建本地分支）；不带未提交修改"),
+    branch: z.string().max(200).optional().describe("新工作分支的名字（本人指定了才传，如 feat/refund-shipped）；不传时用临时名，编码 Agent 按功能改名。本地已有同名分支就当作 from_branch"),
     item_id: z.string().optional().describe("这次交办所属的事项：编码 Agent 和评审者会读到它的材料（文档、群聊、要对照的仓库），交办本身也记到事项上"),
     sync: syncSchema.optional(),
     sync_only: z.boolean().optional().describe("这次只做 Git 同步（拉取、合并、变基、解决冲突），不再编码；结果的提交在应用时快进到目标分支"),
@@ -2730,18 +2731,19 @@ def({
     const repos = codeRepos(ctx.app, home, ids);
     if (a.from_branch) for (const repo of repos) if (!resolveRef(repo.rootPath!, a.from_branch)) throw new HttpError(404, `${repo.id} 里没有分支 ${a.from_branch}；用 list_branches 查看`);
     // One delegation per branch: a second worktree on the same branch has to be merged by hand later.
-    if (!a.parallel) {
+    // A new delegation gets its own branch; only one on an existing branch can meet another there.
+    const onBranch = a.from_branch ?? a.branch;
+    if (!a.parallel && onBranch) {
       const { openDelegationOn } = await import("./review-fix.ts");
-      const branch = a.from_branch ?? git(repos[0].rootPath!, ["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout.trim();
-      const open = openDelegationOn(ctx.app, ids, branch, ctx.userId ?? OWNER);
-      if (open) throw new HttpError(409, `分支 ${branch} 上已有没应用的交办 ${open.id}（${open.title}，${open.status}）。新的要求续在它上面：进行中用 message_code_run 补充，结束后用 continue_code_run；本人明确要另开一次才传 parallel: true`);
+      const open = openDelegationOn(ctx.app, ids, onBranch, ctx.userId ?? OWNER);
+      if (open) throw new HttpError(409, `分支 ${onBranch} 上已有没确认的交办 ${open.id}（${open.title}，${open.status}）。新的要求续在它上面：进行中用 message_code_run 补充，结束后用 continue_code_run；本人明确要另开一次才传 parallel: true`);
     }
     const itemId = a.item_id ? itemFor(ctx, a.item_id) : undefined;
     const r = createRun(ctx.app, {
       kind: "code",
       spaceId: home,
       title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
-      input: { task: a.task, execution, reviewExecution, checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
+      input: { task: a.task, execution, reviewExecution, checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
       parentId: ctx.runId,
       userId: ctx.userId ?? OWNER,
     });
@@ -3166,16 +3168,57 @@ def({
 
 def({
   name: "apply_code_run",
-  description: "把已完成并通过评审的交办改动应用到原目标分支的工作区（未提交的修改）；目标分支没有工作区时自动建立，不切换仓库主目录，返回实际接收路径；涉及多个仓库时一起应用，任一仓库不能干净应用就都不动。应用后删除交办的 worktree。只在本人明确要求应用/合入时使用。",
+  description: "本人明确要求确认 / 推送 / 合入时用。工作分支上的交办：可先压缩成一个提交（squash_message），把每个仓库的工作分支推到 origin 的同名分支并设为上游，然后归还工作区，分支保留；远端有本地没有的提交时拒绝，本人同意覆盖才传 force。这次改动之前开始的旧交办：把改动应用到原目标分支的工作区（未提交的修改），之后可用 code_git_action 提交。",
   write: true,
-  schema: z.object({ run_id: z.string() }),
+  schema: z.object({
+    run_id: z.string(),
+    squash_message: z.string().max(10000).optional().describe("本人要求压缩成一个提交时传：压缩后的提交信息"),
+    force: z.boolean().optional().describe("本人同意覆盖远端分支时才传（按上次拉取的远端状态带 lease）"),
+  }),
   handler: async (ctx, a) => {
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "确认交办只对本人开放");
     const r = getRun(ctx.app, a.run_id);
     const repos = (r.input as { repos?: string[] }).repos ?? (r.spaceId ? [r.spaceId] : []);
     for (const id of repos) inScope(ctx, id, "代码");
     const { applyCodeRun } = await import("./code.ts");
-    const res = applyCodeRun(ctx.app, a.run_id);
+    const res = applyCodeRun(ctx.app, a.run_id, { squash: a.squash_message?.trim() || undefined, force: a.force }) as ReturnType<typeof applyCodeRun> & { pushed?: { space: string; branch: string; forced?: boolean }[]; notes?: string[] };
+    if (res.pushed) return `已确认运行 ${a.run_id}：\n${[...res.pushed.map((p) => `- ${p.space}：推送 ${p.branch} 到 origin${p.forced ? "（覆盖了远端）" : ""}`), ...(res.notes ?? []).map((n) => `- ${n}`)].join("\n")}\n工作区已归还，分支保留。`;
     return `已把运行 ${a.run_id} 的改动应用到原目标分支（未提交）：\n${res.targets.map(t => `- ${t.space} · ${t.branch ?? "指定版本"}：${t.path}`).join("\n")}\n可在网页填写提交信息，或在本人要求后先 code_git_status 再 code_git_action 提交或推送。编码用的 worktree 已删除，接收工作区保留。`;
+  },
+});
+
+def({
+  name: "code_branch",
+  description:
+    "交办工作分支上的操作（只对本人，本人要求时用；进行中的交办先等这一轮结束）：status 列出每个仓库的工作分支、切出点、提交、推送状态和检出位置；rename 改分支名；checkout_main 把仓库目录切到这条分支（目录要干净），之后每轮的提交会快进到那里，本人可以在仓库目录直接运行验证；squash 把分支压缩成一个提交；sync 排一轮把另一个分支合并（或变基）进来，冲突交给编码 Agent。确认推送用 apply_code_run。",
+  write: true,
+  schema: z.object({
+    run_id: z.string(),
+    action: z.enum(["status", "rename", "checkout_main", "squash", "sync"]),
+    space: z.string().optional().describe("仓库空间 id；交办只有一个仓库时可不传（status 不用传）"),
+    name: z.string().max(200).optional().describe("rename：新分支名"),
+    message: z.string().max(10000).optional().describe("squash：压缩后的提交信息"),
+    onto: z.string().max(200).optional().describe("sync：要合并进来的分支（如 main、origin/main）"),
+    mode: z.enum(["merge", "rebase"]).optional().describe("sync：默认 merge"),
+  }),
+  handler: async (ctx, a) => {
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "分支操作只对本人开放");
+    const r = getRun(ctx.app, a.run_id);
+    const repos = (r.input as { repos?: string[] }).repos ?? (r.spaceId ? [r.spaceId] : []);
+    for (const id of repos) inScope(ctx, id, "代码");
+    const m = await import("./code-branch.ts");
+    if (a.action === "status") return JSON.stringify(m.branchStatus(ctx.app, a.run_id));
+    if (a.action === "sync") {
+      if (!a.onto) throw new HttpError(400, "sync 要传 onto");
+      const { queueSyncRound } = await import("./code.ts");
+      const next = await queueSyncRound(ctx.app, a.run_id, { onto: a.onto, mode: a.mode ?? "merge" }, ctx.userId ?? OWNER);
+      return `已排一轮同步 ${next.id}：把 ${a.onto} ${a.mode === "rebase" ? "变基" : "合并"}到工作分支上。`;
+    }
+    const sp = a.space ?? (repos.length === 1 ? repos[0] : null);
+    if (!sp) throw new HttpError(400, `这次交办有几个仓库（${repos.join("、")}），传 space`);
+    if (a.action === "rename") return JSON.stringify(m.renameWorkBranch(ctx.app, a.run_id, sp, a.name ?? ""));
+    if (a.action === "checkout_main") return JSON.stringify(m.checkoutInMain(ctx.app, a.run_id, sp));
+    return JSON.stringify(m.squashWorkBranch(ctx.app, a.run_id, sp, a.message ?? ""));
   },
 });
 
@@ -3209,30 +3252,24 @@ def({
 def({
   name: "set_code_workspaces",
   description:
-    "本人要求时设置仓库空间的交办工作区，让交办复用已装好的依赖：pool 是 omem 自建的长期工作区个数（0 关闭，最多 8；归还时重置改动、保留 node_modules 等被忽略的文件）；workspaces 是本人已有、装好依赖的 worktree 目录（同一仓库 git worktree add 建的，干净时才借）；setup_command 在新工作区或锁文件变了时运行（如 pnpm install）；in_place 允许直接在仓库主目录里改（主目录干净时优先借给交办，在它当前分支上改、不建新分支，应用时改动留在原处，丢弃会把主目录重置）。不传的项不变。返回各工作区现在的状态。",
+    "本人要求时设置仓库空间交办用的准备命令（在新工作区或锁文件变了时运行，如 pnpm install；不设时按锁文件自动选 pnpm / yarn / npm / bun，传 none 表示不准备），并列出 omem 自建工作区的状态。工作区的个数和借还由 omem 自动管，不用设。",
   write: true,
   schema: z.object({
     space: z.string().describe("仓库空间 id"),
-    pool: z.number().int().min(0).max(8).optional(),
-    workspaces: z.array(z.string()).optional().describe("本人已有的 worktree 目录（绝对路径）；传空数组清空"),
-    setup_command: z.string().optional().describe("准备依赖的命令；传空字符串清空"),
-    in_place: z.boolean().optional(),
+    setup_command: z.string().optional().describe("准备依赖的命令；传空字符串恢复自动，传 none 不准备"),
   }),
   handler: async (ctx, a) => {
     const id = writeSpace(ctx, a.space);
     const s = findSpace(ctx.app, id)!;
     if (s.kind !== "repo" || !s.rootPath) throw new HttpError(400, `空间 ${id} 不是关联了目录的仓库空间`);
     const st = { ...s.settings } as Record<string, unknown>;
-    if (a.pool !== undefined) st.pool = a.pool;
-    if (a.workspaces !== undefined) st.workspaces = a.workspaces.map((p) => p.trim()).filter(Boolean);
     if (a.setup_command !== undefined) st.setupCommand = a.setup_command.trim() || undefined;
-    if (a.in_place !== undefined) st.inPlace = a.in_place;
     const next = updateSpace(ctx.app, id, { settings: st });
-    const { listWorkspaces } = await import("./workspaces.ts");
-    const state = { free: "空闲", leased: "借出", missing: "第一次用时创建", invalid: "不能用", dirty: "有没提交的改动，暂不借出" } as const;
-    const slots = listWorkspaces(ctx.app, next).map((w) => `- ${w.main ? "仓库主目录 " : w.managed ? "omem 自建 " : ""}${w.path}：${state[w.state]}${w.run ? `（${w.run}）` : ""}${w.reason ? `，${w.reason}` : ""}`);
-    const ns = next.settings as { pool?: number; setupCommand?: string; inPlace?: boolean };
-    return `已更新 ${id} 的交办工作区：自建 ${ns.pool ?? 0} 个${ns.inPlace ? "，允许在主目录里改" : ""}${ns.setupCommand ? `，准备命令 ${ns.setupCommand}` : "，没有准备命令"}。\n${slots.join("\n") || "（没有可复用的工作区，交办每次新建）"}`;
+    const { listWorkspaces, setupCommandFor } = await import("./workspaces.ts");
+    const state = { free: "空闲", leased: "借出", invalid: "不能用", dirty: "有上次留下的改动，下次借出时清掉" } as const;
+    const slots = listWorkspaces(ctx.app, next).map((w) => `- ${w.path}：${state[w.state]}${w.run ? `（${w.run}）` : ""}${w.reason && w.state === "invalid" ? `，${w.reason}` : ""}`);
+    const command = setupCommandFor(next, next.rootPath!);
+    return `${id} 的准备命令：${command ?? "不准备"}${(next.settings as { setupCommand?: string }).setupCommand ? "" : "（自动）"}。\n${slots.join("\n") || "（还没有建工作区，第一次交办时建）"}`;
   },
 });
 

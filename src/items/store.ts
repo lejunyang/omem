@@ -178,6 +178,8 @@ export function upsertItem(app: App, id: string | undefined, input: ItemInput, a
     if (changes.length || input.note || JSON.stringify(nextRefs) !== JSON.stringify(old.sourceRefs)) addItemEvent(app, id, changes.length ? "updated" : "note", [input.note, changes.join("；")].filter(Boolean).join("\n"), actor, mode === "remove" ? [] : input.sourceRefs ?? []);
   });
   app.emit({ type: "changed", entity: "item", id, spaceId: old.spaceId });
+  // An item that ended gives back the workspaces its delegations still hold (their branches stay).
+  if (closing) void import("../agents/code-branch.ts").then((m) => m.releaseItemWorkspaces(app, id)).catch(() => {});
   return getItem(app, id);
 }
 

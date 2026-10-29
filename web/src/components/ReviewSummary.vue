@@ -16,7 +16,8 @@ import { decisionOf, findingWhere, pointCount, reviewAi, settled, severityCounts
  * summary, one line per check, the change request, and the problems to deal with. When the review
  * waits for the owner (a plan to confirm, or a stop) the decision is answered here.
  */
-const props = defineProps<{ rv: Reviews; runId: string; reviewText?: string; branchReview?: boolean; canFix?: boolean }>();
+// `branchWork`: a delegation on work branches, whose rounds are commits already (nothing to apply first).
+const props = defineProps<{ rv: Reviews; runId: string; reviewText?: string; branchReview?: boolean; branchWork?: boolean; canFix?: boolean }>();
 const emit = defineEmits<{ ask: [context: { quote: string; label: string }]; go: [tab: "review" | "change"] }>();
 
 const STATE: Record<string, string> = { accepted: "要改", rejected: "已驳回", merged: "已合并" };
@@ -219,7 +220,7 @@ async function answer(choice: number | null) {
       <div class="row wrap actions">
         <NextRoundReview :draft="draft" />
         <span class="spacer" />
-        <button v-if="!branchReview" class="btn sm" title="现在的改动先写进原分支（未提交），下一轮在同一个工作区接着改" :disabled="starting || (!tally.fix && !draft.text.trim() && !picked.length)" @click="startFix(true)">先应用再接着改</button>
+        <button v-if="!branchReview && !branchWork" class="btn sm" title="现在的改动先写进原分支（未提交），下一轮在同一个工作区接着改" :disabled="starting || (!tally.fix && !draft.text.trim() && !picked.length)" @click="startFix(true)">先应用再接着改</button>
         <button class="btn primary sm" :disabled="starting || (!tally.fix && !draft.text.trim() && !picked.length)" @click="startFix()">开始修改{{ tally.fix || picked.length ? `（${[tally.fix ? `${tally.fix} 个问题` : "", picked.length ? `${picked.length} 处修改点` : "", draft.text.trim() ? "补充" : ""].filter(Boolean).join(" + ")}）` : "" }}</button>
       </div>
     </div>

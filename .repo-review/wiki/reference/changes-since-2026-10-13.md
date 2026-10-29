@@ -707,3 +707,17 @@ updated: 2026-10-28
 - 换目录的逻辑从 `connect_repository` 抽到 `src/agents/repo-relink.ts`（`relinkRepoSpace`）：进行中的交办拒绝，没应用的交办先返回清单、确认后丢弃，删 omem 自建的复用工作区，把新目录从复用列表里去掉。接口 `POST /api/spaces/:id/relink`。`remoteKey` / `sameRepository` 移到 `core/repositories.ts`。
 
 - 并行交办：主目录借给某个交办（`inPlace`）还没应用或丢弃时，别的交办应用到主目录会被拒绝（`applyTargets` 查 `leasedTo`），以免两次改动混在一起、丢弃时一并被重置。
+
+## 10-29：交办改成工作分支，工作区自动管理
+
+本人用下来觉得别扭：几轮的改动以未提交的形式堆在一起不好回溯；“应用”“提交”两步都要手动，主目录要应用后才看得到；复用工作区要填个数、填目录、开“主目录里改”，填错了还要回去看哪个不可用。改法（设计在 docs/v2/ide.md 第一节）：
+
+- **工作分支**（新增 `src/agents/code-branch.ts`）：`planBranch` 定分支（`fromBranches` 接着已有分支，只在 origin 上的先建本地分支；`branchNames` 新名；否则 `omem/<运行id>` 由编码 Agent 用 `git branch -m` 改名，`settleRound` 读回）。新分支从仓库目录的本地 HEAD 切出，记 `cutFrom`，改动按和它的分叉点算（`changeBase`）。`WorktreeRef` 加 `commits`、`newBranch`、`cutFrom`、`pending`。
+- **每轮**：`branchWorktree` 借工作区并 `placeOnBranch`。分支没在别处检出就直接检出它；在别处（仓库目录）检出就以游离 HEAD 停在分支末端，`settleRound` 结束时在那里 `merge --ff-only`，快进不了就记 `pending`、通知本人，下一轮不挪工作区并让编码 Agent 先合并。未检出的分支用带旧值校验的 `update-ref`。宿主把剩下没提交的改动（含检查命令改出来的）提交成“第 N 轮没提交的改动”，之后工作区回到游离状态。diff、改动规模、补丁按 `changeBase..HEAD` 算（以前的交办仍是 `--cached HEAD`）。只做同步的一轮直接记 `synced`，不再评审合并进来的代码。同步停在冲突上时 `placeOnBranch` 不动工作区。
+- **编码任务**加“分支”一节：在哪条分支、怎么提交、要不要改名，以及同一仓库其他没确认交办的分支（`siblingsText`），可以 cherry-pick。`roles/coder.md` 的“不要提交”改为按分支说明提交。
+- **确认**：`applyCodeRun` 对工作分支上的交办转到 `confirmBranchRun`：可先压缩（`commit-tree` 同一棵树，检出处 `reset --soft`），推到 origin 同名分支（分叉时只有压缩过或本人同意才带 lease 覆盖），设上游，归还工作区，记 `appliedAt` / `pushed`。`discardCodeRun` 归还工作区，删这次新建、没推送、没在别处检出的分支。评审结束卡片的“应用到仓库”在这类交办上变成“确认并推送”。`keepWorking` 对它们不做事。
+- **工作区**（`workspaces.ts` 重写）：只剩 omem 自建的 `workspaces/<空间>/<n>`，按需建到 `MAX_POOL` = 4，满了就收回闲着的（运行不在进行、干净、HEAD 在某条分支上，`parked`），对方的链接删掉，下一轮再借。`pool`、`workspaces`、`inPlace` 设置不再起作用（借着它们的旧交办照旧归还）。`setupCommandFor` 不设时按锁文件选 pnpm / yarn / bun / npm，`none` 不准备。事项结束（`upsertItem` 关闭时）`releaseItemWorkspaces` 归还没确认交办占着的工作区，分支保留。
+- **接口和工具**：`GET/POST /api/runs/:id/branch`（`rename` / `checkout` / `squash`）、`POST /api/runs/:id/sync`（`queueSyncRound`）、`POST /api/runs/:id/apply` 带 `squash` / `force`，`/api/delegate` 带 `branch`。工具 `code_branch`（放进 code 分组，交给编码交办和规则的主助手不可用），`apply_code_run` 加 `squash_message` / `force`，`delegate_code` 加 `branch`、只在指定已有分支时查重复交办，`set_code_workspaces` 只剩准备命令。读文件接口在工作区归还后从分支读。
+- **网页**：运行页新增 `CodeBranchPanel.vue`（提交列表、推送状态、检出位置；改名、在仓库目录检出、压缩、合并 / 变基、确认并推送），工作分支的交办不再显示“应用到原分支”“移到目标分支最新提交”和接收位置面板；设置 → 空间只剩仓库目录（换目录）、准备命令和工作区状态。
+- **顺带修的**：`App` 的数据目录改为绝对路径。以前用相对的 `--home ./.omem` 时，`git worktree add` 在仓库目录里解析工作区路径，建错地方。
+
