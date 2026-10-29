@@ -300,8 +300,8 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "lark-docs-refresh": {
-    description: "重新读取已保存的飞书文档（下载图片、画板等素材，导入链接的文档），在后台运行，完成后发通知；metadataOnly 只更新中文知识库和目录，ids 可限于指定原件；stop: true 在当前这篇读完后停下",
-    schema: z.object({ space: z.string().max(64).optional(), limit: z.number().int().min(1).max(10_000).optional(), metadataOnly: z.boolean().default(false), ids: z.array(id).min(1).max(100).optional(), stop: z.boolean().optional() }),
+    description: "重新读取已保存的飞书文档（下载图片、画板等素材，导入链接的文档），在后台运行，完成后发通知；metadataOnly 只更新中文知识库和目录（同时写进知识库目录树），unchecked 只挑从没读过目录位置的文档，ids 可限于指定原件；stop: true 在当前这篇读完后停下",
+    schema: z.object({ space: z.string().max(64).optional(), limit: z.number().int().min(1).max(10_000).optional(), metadataOnly: z.boolean().default(false), unchecked: z.boolean().optional(), ids: z.array(id).min(1).max(100).optional(), stop: z.boolean().optional() }),
     run: async (app, a) => {
       const { refreshInBackground } = await import("../channels/lark-docs.ts");
       return refreshInBackground(app, a);

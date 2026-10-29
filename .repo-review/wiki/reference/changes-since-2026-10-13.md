@@ -841,3 +841,11 @@ updated: 2026-10-28
 
 - **时段**：`runner.ts` 的 `routingGuide` 加一句：偏好和候选里写了时段（峰谷价格、排队高峰）的按每轮开头的现在时间选；不再把各模型的占用写进说明（说明一个会话只发一次，占用会过期），改为要求交办前用 `list_ai_backends` 看，它的结果加了 `now`（本人时区的日期、星期和时间）。`capacity.ts` 的 `loadLines` 随之删除。设置里候选“适合哪些任务”的提示写上可以写时段。
 - **`agent-upgrade`**（`peer-exec.ts`）：把目录里带 npm 包、且已经全局装好的 ACP 适配器升到 npm 最新版（`npm i -g <包>@latest`），返回升级前后的版本；别的包一律拒绝。
+
+## 10-30：原件目录树与按目录定级（原件治理第一期）
+
+- **目录**（`src/sources/catalog.ts`）：按种类给每份原件一条节点链（`dir:`、`wiki:` / `wn:`、`lark-drive` / `from:` / `lark-drive:direct`、`chat:<类型>` / `chat:<会话>` / `chat:<会话>:images`、`site:`、`kind:<种类>[:年[-月]]`），一个空间的树在内存里建好并缓存（原件变化事件作废）。`treeChildren` 返回一层，带份数、各档数量、标注数、节点自己的档。
+- **知识库层级**：新表 `wiki_spaces`、`wiki_nodes`（迁移用已有 meta 填，`FILL_WIKI_NODES`，不联网，`checked_at` 为空）；`lark-wiki.ts` 的 `recordWikiNodes` 在 `wikiLocation`（采集、只读目录刷新）时写节点和全部祖先，`wikiChildren` 列出的子节点也写；`lark-docs-refresh` 加 `unchecked`（从没读过位置、或节点还没被新代码读过的文档）。
+- **目录定级**：`source_node_levels`（`setNodeLevel` / `reviewNodeLevel` / `applyNodeLevels`），`sources.node_level` / `node_level_by` 存最近的目录档；`effectiveLevel` / `levelSql` 定实际的档（原件自己的档在同级或更高的人定时优先）。检索、计数、整理任务、ingest 都改用实际的档。
+- **接口与工具**：`GET /api/sources/tree`、`PUT /api/sources/node-level`；`list_sources(under, depth)`、`search(under)`、`set_source_attention(under)`；分级任务列出“所在目录”，`triager` 先按目录定。
+- **界面**：`web/src/components/SourceTree.vue`（懒加载、展开状态存 localStorage、行尾菜单设档、灰色节点“采集”），非仓库空间的原件页用它。

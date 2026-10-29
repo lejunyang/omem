@@ -4,7 +4,8 @@ import { all, one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { getSpace } from "../core/spaces.ts";
 import { HttpError, json, newId, now, truncate } from "../core/util.ts";
-import { filterSql, LEVEL_LABELS, sourceFilter, sourceNotes, noteText, type Level, type SourceFilter } from "../sources/attention.ts";
+import { effectiveLevel, filterSql, LEVEL_LABELS, levelSql, sourceFilter, sourceNotes, noteText, type SourceFilter } from "../sources/attention.ts";
+import { catalog, nodePath, sourcesUnder } from "../sources/catalog.ts";
 import { executionSchema, type Execution } from "./execution.ts";
 import { runRole } from "./runner.ts";
 import { createRun, getRun, registerHandler } from "./runs.ts";
@@ -58,10 +59,10 @@ const DIGEST_MAX = 40;
 const MAX_FAILURES = 3;
 
 /** Which sources a job covers: its filter in its space; a digest skips reference and ignore. */
-function pendingSql(job: DigestJob, keepDone = false) {
+function pendingSql(app: App, job: DigestJob, keepDone = false) {
   const f: SourceFilter = { ...job.body.filter, space: job.spaceId };
-  const w = filterSql(f);
-  const skip = job.mode === "digest" ? "(s.attention is null or s.attention in ('focus'))" : "(s.attention_by is null or s.attention_by != 'owner')";
+  const w = filterSql(f, null, app);
+  const skip = job.mode === "digest" ? `(${levelSql()} is null or ${levelSql()} in ('focus'))` : "(s.attention_by is null or s.attention_by != 'owner')";
   return {
     from: `from sources s left join digest_done d on d.job_id = ? and d.source_id = s.id where ${w.sql} and (${skip}${keepDone ? " or d.source_id is not null" : ""})`,
     params: [job.id, ...w.params],
@@ -71,7 +72,7 @@ function pendingSql(job: DigestJob, keepDone = false) {
 
 /** Progress: sources this job already did count even when the batch then lowered their level. */
 export function countDigest(app: App, job: DigestJob) {
-  const q = pendingSql(job, true);
+  const q = pendingSql(app, job, true);
   const r = one<{ total: number; pending: number | null }>(app.db, `select count(*) total, sum((d.source_id is null or d.hash != s.hash) and ${q.skip}) pending ${q.from}`, ...q.params)!;
   return { total: r.total, left: r.pending ?? 0 };
 }
@@ -121,10 +122,10 @@ function inflight(app: App, jobId: string) {
 
 /** The next sources of a job, leaving out those other batches took: focus first, then the most recently updated. */
 function nextBatch(app: App, job: DigestJob, taken: Set<string>) {
-  const q = pendingSql(job);
+  const q = pendingSql(app, job);
   const rows = all<{ id: string; size: number }>(
     app.db,
-    `select s.id, length(s.text) size ${q.from} and (d.source_id is null or d.hash != s.hash) order by s.attention = 'focus' desc, s.updated_at desc limit ?`,
+    `select s.id, length(s.text) size ${q.from} and (d.source_id is null or d.hash != s.hash) order by ${levelSql()} = 'focus' desc, s.updated_at desc limit ?`,
     ...q.params,
     400 + taken.size,
   ).filter((r) => !taken.has(r.id));
@@ -204,15 +205,35 @@ export function describeJob(job: DigestJob) {
 
 // ---- the batch runs ----------------------------------------------------------------------------
 
-function sourceLines(app: App, ids: string[], head: number) {
+/**
+ * The catalog folders this batch sits in (sources/catalog.ts), largest share first: a triager sets a
+ * whole folder at once (`set_source_attention(under=…)`) and then only the exceptions.
+ */
+function folderLines(app: App, spaceId: string, ids: string[]) {
+  const cat = catalog(app, spaceId);
+  const count = new Map<string, number>();
+  for (const id of ids) {
+    const own = cat.nodeOf.get(id);
+    const parent = own ? cat.nodes.get(own)?.parent : undefined;
+    if (parent) count.set(parent, (count.get(parent) ?? 0) + 1);
+  }
+  return [...count].sort((a, b) => b[1] - a[1]).slice(0, 30)
+    .map(([k, n]) => `- ${k}「${nodePath(cat, k)}」：本批 ${n} 份，目录里共 ${sourcesUnder(cat, k).length} 份`).join("\n");
+}
+
+function sourceLines(app: App, ids: string[], head: number, spaceId?: string) {
+  const cat = spaceId ? catalog(app, spaceId) : null;
   return ids.map((id) => {
-    const s = one<{ id: string; kind: string; title: string; uri: string; meta: string; attention: string | null; attention_by: string | null; updated_at: string; text: string }>(
-      app.db, "select id, kind, title, uri, meta, attention, attention_by, updated_at, text from sources where id = ?", id);
+    const s = one<{ id: string; kind: string; title: string; uri: string; meta: string; attention: string | null; attention_by: string | null; node_level: string | null; node_level_by: string | null; updated_at: string; text: string }>(
+      app.db, "select id, kind, title, uri, meta, attention, attention_by, node_level, node_level_by, updated_at, text from sources where id = ?", id);
     if (!s) return "";
     const meta = json<Record<string, unknown>>(s.meta, {});
-    const where = [meta.wikiSpaceName, meta.wikiPath].filter(Boolean).join(" / ");
+    const own = cat?.nodeOf.get(id);
+    const folder = own ? cat!.nodes.get(own)?.parent : undefined;
+    const where = folder ? `目录 ${folder}` : [meta.wikiSpaceName, meta.wikiPath].filter(Boolean).join(" / ");
     const lines = s.text.split("\n").length;
-    const level = s.attention ? `，现在：${LEVEL_LABELS[s.attention as Level]}${s.attention_by === "owner" ? "（本人定的）" : ""}` : "";
+    const lv = effectiveLevel(s);
+    const level = lv.level !== "normal" ? `，现在：${LEVEL_LABELS[lv.level]}${lv.by === "owner" ? "（本人定的）" : ""}${lv.inherited ? "（随目录）" : ""}` : "";
     const notes = sourceNotes(app, id);
     const top = head ? `\n  开头：${truncate(s.text.slice(0, head).replace(/\s+/g, " "), head)}` : "";
     return `- ${s.id} 〔${s.kind}〕${s.title}${where ? `（${where}）` : ""} · ${lines} 行 · 更新于 ${s.updated_at.slice(0, 10)}${level}${notes.length ? `\n  已有标注：${notes.map(noteText).join(" ")}` : ""}${top}`;
@@ -247,7 +268,7 @@ async function runBatch(ctx: Parameters<Parameters<typeof registerHandler>[1]>[0
   const goal = b.goal ? `\n\n## 本人要的\n\n${b.goal}` : "";
   const forAgent = b.agent ? `\n\n## 经验写给谁\n\n这批材料的经验（遇到 X 先看 Y、某类问题的判断方法）写成 \`${b.agent}\` 的专属记忆：\`remember(kind="experience", agent="${b.agent}", …)\`；案例写成页面（\`cases/<主题>\`），记忆里链接到它。` : "";
   const task = mode === "triage"
-    ? `给下面 ${sourceIds.length} 份材料分级（空间 ${job.spaceId}）。${goal}\n\n## 材料\n\n${sourceLines(ctx.app, sourceIds, 300)}`
+    ? `给下面 ${sourceIds.length} 份材料分级（空间 ${job.spaceId}）。${goal}\n\n## 所在目录\n\n${folderLines(ctx.app, job.spaceId, sourceIds) || "（没有共同的目录）"}\n\n## 材料\n\n${sourceLines(ctx.app, sourceIds, 300, job.spaceId)}`
     : `整理下面 ${sourceIds.length} 份已经入库的材料（空间 ${job.spaceId}）。${goal}${forAgent}\n\n## 材料（重点关注的在前）\n\n${sourceLines(ctx.app, sourceIds, 0)}\n\n## 正文（带行号，标注时用这些行号）\n\n${sourceBodies(ctx.app, sourceIds, b.chars ?? DIGEST_CHARS)}`;
   let ok = false;
   try {

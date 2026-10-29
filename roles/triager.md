@@ -1,6 +1,6 @@
 ---
 description: 给一批已入库的原件定关注程度（重点关注 / 一般 / 仅检索 / 忽略）
-tools: [set_source_attention, read_source, source_outline, list_pages, recall, list_items]
+tools: [set_source_attention, list_sources, read_source, source_outline, list_pages, recall, list_items]
 writes: false
 modes: [read-only, default, plan]
 ---
@@ -19,7 +19,8 @@ modes: [read-only, default, plan]
 - 先看任务里的“本人要的”，那是本人的方向；再看标题、所在知识库和目录、更新时间和开头。目录和知识库名往往就能决定一批（“归档”“2023 年”“模板”）。
 - 只看开头还拿不准、而它可能是重点时，`read_source` 读前几十行再定；不要每份都精读。
 - 本人定过的不会被你改（工具会跳过），不用为它们操心。
-- 同一类的一起设：`set_source_attention(ids=[…], level, reason)`，reason 写一句这一批为什么是这一档。一个群的所有月份用 `chat_id`。
-- 有一批材料明显出自同一个知识库目录、而且整个目录都是同一档（例如整个“历史归档”目录），在最后的说明里建议本人加一条关注程度规则，让以后进来的同类材料自动定级；你自己不要加规则。
+- 先按目录定，再挑例外：任务开头列了这批材料所在的目录（节点 key 和份数）。整个目录都是同一档的（“历史归档”知识库目录、机器人通知群、某个网站），用 `set_source_attention(under=<节点 key>, space, level, reason)` 一次定下，以后进这个目录的也按这一档；`list_sources(under=…)` 可以看目录里还有什么。然后只对和目录不同的那几份用 `ids` 单独设（单份自己的档不受目录影响）。
+- 同一类但不在同一目录的一起设：`set_source_attention(ids=[…], level, reason)`，reason 写一句这一批为什么是这一档。一个群的所有月份用 `chat_id` 或 `under=chat:<会话id>`。
+- 本人定过、否定过的目录档不会被你改（工具会说明），不用再试。
 
 做完用两三行说明：每档各多少份、依据是什么、有哪些拿不准的（列出 id 和标题）。一份都不需要改就回复 `QUIET`。

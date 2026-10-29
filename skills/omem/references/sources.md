@@ -20,6 +20,9 @@
 
 原件有关注程度（重点 / 一般 / 仅检索 / 忽略）和行标注（已过时 / 有误 / 关键）：检索结果和 `read_source` 会带上，过时段落以标注写的为准。`set_source_attention`、`annotate_source` 可以改，本人定的不会被改；`attention_rules` 管理按条件批量定关注程度的规则。
 
+- **目录**：`list_sources()` 列出空间的顶层目录（知识库 `wiki:<id>`、云文档 `lark-drive`、聊天 `chat:group` / `chat:p2p`…、网站 `site:<域名>`、会议 `kind:meeting`），`list_sources(under=<节点 key>, depth)` 往下看，每行带节点 key、份数和各档数量；知识库节点是 `wn:<token>`，一个会话是 `chat:<会话id>`。`search(under=…)` 只在这个目录里查。
+- **先按目录定，再挑例外**：整个知识库、目录或群是同一档时 `set_source_attention(under=<节点 key>, space, level, reason)`，子树连同以后进来的都按这一档；单份自己定过的档不受目录影响（本人的目录档会压过 Agent 给单份定的档）。和目录不同的几份再用 `ids` 单独设。本人定过或否定过的目录档改不了。
+
 ## 保存与整理材料
 
 - `import_url`：保存网页或飞书文档；读飞书文档时可给 `depth`（链接和知识库子页面往下几层），整个知识库用 `lark_wiki_crawl`（见 lark 分组）。

@@ -2,7 +2,8 @@ import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
 import { matchQuery, terms } from "./tokenize.ts";
 import { vectorSearch } from "./embeddings.ts";
-import { LEVEL_WEIGHT, NOTE_WEIGHT, notesOf, notesOn, noteText, type Level } from "../sources/attention.ts";
+import { LEVEL_WEIGHT, levelSql, NOTE_WEIGHT, notesOf, notesOn, noteText, type Level } from "../sources/attention.ts";
+import { catalog, sourcesUnder } from "../sources/catalog.ts";
 
 export type HitType = "chunk" | "page" | "memory" | "symbol";
 export type Hit = {
@@ -42,6 +43,8 @@ export type SearchOptions = {
   routes?: { fts?: boolean; vector?: boolean; symbol?: boolean };
   /** RRF weight of the full-text route when dense vectors are also used. */
   ftsWeight?: number;
+  /** Only sources below this catalog node of a space (sources/catalog.ts); pages and memories are left out. */
+  under?: { space: string; node: string };
 };
 
 const RRF_K = 60;
@@ -118,18 +121,25 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
   const match = matchQuery(query);
 
   const route = { fts: true, vector: true, symbol: true, ...opts.routes };
+  // A folder of the catalog: its sources only.
+  const underIds = opts.under ? sourcesUnder(catalog(app, opts.under.space), opts.under.node) : null;
+  if (underIds) for (const t of ["page", "memory"] as const) types.delete(t);
+  const inUnder = underIds ? new Set(underIds) : null;
+  const underSql = underIds ? " and c.source_id in (select value from json_each(?))" : "";
+  const underParams = underIds ? [JSON.stringify(underIds)] : [];
   if (match && types.has("chunk") && route.fts) {
     const sf = spaceFilter("c.space_id", opts.spaces);
     const kinds = opts.sourceKinds?.length ? ` and s.kind in (${opts.sourceKinds.map(() => "?").join(",")})` : "";
     const rows = all<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; line_start: number; line_end: number; text: string; stitle: string; attention: string | null }>(
       app.db,
-      `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, s.attention
+      `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, ${levelSql()} attention
        from chunks_fts f join chunks c on c.id = f.rowid join sources s on s.id = c.source_id
-       where chunks_fts match ? ${sf.sql} ${kinds} and s.deleted_at is null ${opts.includeIgnored ? "" : "and (s.attention is null or s.attention != 'ignore')"}
+       where chunks_fts match ? ${sf.sql} ${kinds}${underSql} and s.deleted_at is null ${opts.includeIgnored ? "" : `and coalesce(${levelSql()}, '') != 'ignore'`}
        order by bm25(chunks_fts, 4.0, 1.0) limit ?`,
       match,
       ...sf.params,
       ...(opts.sourceKinds ?? []),
+      ...underParams,
       pool,
     );
     lists.push(
@@ -163,10 +173,11 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
         app.db,
         `select y.source_id, y.space_id, y.name, y.qname, y.kind, y.line_start, y.line_end, y.signature, s.uri
          from symbols y join sources s on s.id = y.source_id
-         where lower(y.name) in (${idents.map(() => "?").join(",")}) ${sf.sql} and s.deleted_at is null
+         where lower(y.name) in (${idents.map(() => "?").join(",")}) ${sf.sql}${underIds ? " and y.source_id in (select value from json_each(?))" : ""} and s.deleted_at is null
          order by y.exported desc, (y.line_end - y.line_start) desc limit 30`,
         ...idents.map((i) => i.toLowerCase()),
         ...sf.params,
+        ...underParams,
       );
       lists.push(
         rows.map((r, i) => ({
@@ -233,12 +244,12 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
   }
 
   if (types.has("chunk") && route.vector) {
-    const vec = await vectorSearch(app, query, opts.spaces, pool).catch(() => []);
+    const vec = await vectorSearch(app, query, opts.spaces, underIds ? pool * 5 : pool).catch(() => []);
     if (vec.length) {
       const ids = vec.map((v) => v.chunkId);
       const rows = all<{ id: number; space_id: string; title: string; path: string; source_id: string; uri: string; kind: string; stitle: string; line_start: number; line_end: number; text: string; deleted_at: string | null; attention: string | null }>(
         app.db,
-        `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, s.deleted_at, s.attention
+        `select c.id, c.space_id, c.title, c.path, c.source_id, s.uri, s.kind, s.title stitle, c.line_start, c.line_end, c.text, s.deleted_at, ${levelSql()} attention
          from chunks c join sources s on s.id = c.source_id where c.id in (${ids.map(() => "?").join(",")})`,
         ...ids,
       );
@@ -247,7 +258,7 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
       lists.push(
         vec
           .map((v) => byId.get(v.chunkId))
-          .filter((r): r is NonNullable<typeof r> => !!r && !r.deleted_at && (!kinds || kinds.has(r.kind)) && (opts.includeIgnored || r.attention !== "ignore"))
+          .filter((r): r is NonNullable<typeof r> => !!r && !r.deleted_at && (!kinds || kinds.has(r.kind)) && (opts.includeIgnored || r.attention !== "ignore") && (!inUnder || inUnder.has(r.source_id)))
           .map((r, i) => ({
             key: `chunk:${r.id}`,
             rank: i,

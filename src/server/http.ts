@@ -23,7 +23,7 @@ import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
   addSourceNote, applyAttentionRulesToExisting, deleteAttentionRule, LEVEL_LABELS, LEVELS, levelCounts, levelOf, listAttentionRules, NOTE_KINDS, removeSourceNote,
-  saveAttentionRule, selectSources, setAttention, sourceFilter, sourceNotes,
+  saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceFilter, sourceNotes,
 } from "../sources/attention.ts";
 import { defaultBaseRef, fetchBranch, git, isGitRepo, listBranches } from "../core/git.ts";
 import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePages, type PageBrief } from "../agents/jobs.ts";
@@ -299,6 +299,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/agents/load", async () => {
     const c = await import("../agents/capacity.ts");
     return { now: c.loadReport(app), recent: c.recentStats(app) };
+  });
+  // The catalog of a space, one level at a time (sources/catalog.ts): counts and levels follow the filters.
+  server.get("/api/sources/tree", async (req) => {
+    const o = q(z.object({ space: z.string(), node: z.string().default(""), kind: z.string().optional(), level: z.enum(LEVELS).optional(), q: z.string().optional() }), req.query);
+    if (!(scopeFor(app, who(req), [o.space]) ?? [o.space]).includes(o.space)) throw new HttpError(403, `不能访问空间 ${o.space}`);
+    const { treeChildren } = await import("../sources/catalog.ts");
+    return treeChildren(app, o.space, o.node, { kind: o.kind, level: o.level, q: o.q });
+  });
+  // A level for a whole folder of the catalog (and what arrives there later).
+  server.put("/api/sources/node-level", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ space: z.string(), node: z.string().min(1), level: z.enum(LEVELS).nullable() }), req.body);
+    return setNodeLevel(app, b.space, b.node, b.level, "owner", { reason: "本人在原件目录里设置" });
   });
   server.get("/api/sources/paths", async (req) => {
     const o = q(z.object({ space: z.string(), kind: z.string().optional(), q: z.string().optional() }), req.query);

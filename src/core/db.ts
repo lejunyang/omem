@@ -6,6 +6,21 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
  * Wiki pages live as Markdown in the library (a Git repository); the
  * `pages` table is only their search projection.
  */
+/** Knowledge-base nodes from what captures kept in meta (no network); idempotent, exported for tests. */
+export const FILL_WIKI_NODES = `
+  insert or ignore into wiki_spaces(id, name)
+    select json_extract(meta, '$.wikiSpaceId'), max(coalesce(json_extract(meta, '$.wikiSpaceName'), ''))
+    from sources where kind = 'doc' and coalesce(json_extract(meta, '$.wikiSpaceId'), '') != '' group by 1;
+  insert or ignore into wiki_nodes(token, wiki_space_id, parent_token, title, obj_token, obj_type, source_id, error)
+    select json_extract(meta, '$.wikiNodeToken'), json_extract(meta, '$.wikiSpaceId'), json_extract(meta, '$.wikiParentNodeToken'), title,
+      json_extract(meta, '$.documentId'), 'docx', id, json_extract(meta, '$.wikiMetadataError')
+    from sources where kind = 'doc' and deleted_at is null and coalesce(json_extract(meta, '$.wikiNodeToken'), '') != ''
+    order by (uri like '%/wiki/%') desc, updated_at desc;
+  insert or ignore into wiki_nodes(token, wiki_space_id, title)
+    select json_extract(meta, '$.wikiParentNodeToken'), json_extract(meta, '$.wikiSpaceId'), coalesce(json_extract(meta, '$.wikiParentTitle'), '')
+    from sources where kind = 'doc' and deleted_at is null and coalesce(json_extract(meta, '$.wikiParentNodeToken'), '') != '';
+`;
+
 const migrations: string[] = [
   `
   create table spaces (
@@ -813,6 +828,44 @@ const migrations: string[] = [
   create index shares_user on shares(user_id, created_at);
   create index shares_run on shares(run_id);
   alter table lark_messages add column position integer;
+  `,
+  // Feishu knowledge bases as a tree (src/sources/catalog.ts): every node a doc sits under, captured
+  // or not (source_id null), so the sources page and agents can browse and set levels by folder.
+  // Filled from what earlier captures kept in meta (no network); checked_at stays null until the node
+  // is read again (`lark-docs-refresh` with `unchecked`), which also writes the missing ancestors.
+  // Levels set on a catalog node hold for its subtree (sources/attention.ts `setNodeLevel`); each
+  // source keeps the nearest one in node_level so search can filter in SQL.
+  `
+  alter table sources add column node_level text;
+  alter table sources add column node_level_by text;
+  create table source_node_levels (
+    space_id text not null,
+    node_key text not null,
+    level text not null,
+    by text not null,
+    status text not null default 'active',
+    reason text not null default '',
+    run_id text,
+    updated_at text not null,
+    primary key (space_id, node_key)
+  );
+  create table wiki_spaces (id text primary key, name text not null default '', checked_at text);
+  create table wiki_nodes (
+    token text primary key,
+    wiki_space_id text,
+    parent_token text,
+    title text not null default '',
+    obj_token text,
+    obj_type text,
+    node_type text,
+    has_child integer,
+    source_id text,
+    checked_at text,
+    error text
+  );
+  create index wiki_nodes_parent on wiki_nodes(parent_token);
+  create index wiki_nodes_obj on wiki_nodes(obj_token) where obj_token is not null;
+  ${FILL_WIKI_NODES}
   `,
 ];
 

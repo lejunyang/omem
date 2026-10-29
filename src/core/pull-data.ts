@@ -48,6 +48,10 @@ export const pullTables: Table[] = [
   // The id is derived from (plugin, user, collection, key), so the same record on two devices meets.
   { name: "plugin_records", key: ["id"], newer: "updated_at" },
   { name: "plugin_blocks", key: ["id"], newer: "updated_at" },
+  // Feishu knowledge-base tree (sources/catalog.ts): what was read last wins.
+  { name: "wiki_spaces", key: ["id"], newer: "coalesce(checked_at, '')" },
+  { name: "wiki_nodes", key: ["token"], newer: "coalesce(checked_at, '')" },
+  { name: "source_node_levels", key: ["space_id", "node_key"], newer: "updated_at" },
   ...[
     ["item_events", ["item_id", "at", "kind", "text"]],
     ["memory_recalls", ["memory_id", "run_id", "agent_profile", "at", "via"]],

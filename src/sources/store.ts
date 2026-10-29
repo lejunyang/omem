@@ -1,5 +1,6 @@
 import { prepareArchive, finishArchive, moveSource } from "./archive.ts";
-import { applyAttentionRules } from "./attention.ts";
+import { applyAttentionRules, effectiveLevel, levelSql } from "./attention.ts";
+import { watchCatalog } from "./catalog.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, json, newId, now, sha256, sliceLines } from "../core/util.ts";
@@ -24,10 +25,16 @@ export type Source = {
   /** focus / reference / ignore (null = normal), and who set it (sources/attention.ts). */
   attention?: string | null;
   attentionBy?: string | null;
+  /** The level of the nearest folder above it (catalog node), and the level that counts. */
+  nodeLevel?: string | null;
+  nodeLevelBy?: string | null;
+  level?: { level: string; by: string | null; inherited: boolean };
 };
 type Row = {
   attention?: string | null;
   attention_by?: string | null;
+  node_level?: string | null;
+  node_level_by?: string | null;
   id: string;
   space_id: string;
   kind: string;
@@ -56,8 +63,11 @@ const toSource = (r: Row): Source => ({
   lines: r.text === undefined ? undefined : r.text.split("\n").length,
   attention: r.attention ?? null,
   attentionBy: r.attention_by ?? null,
+  nodeLevel: r.node_level ?? null,
+  nodeLevelBy: r.node_level_by ?? null,
+  level: effectiveLevel(r),
 });
-const COLS = "id,space_id,kind,uri,title,mime,hash,meta,captured_at,updated_at,deleted_at,attention,attention_by";
+const COLS = "id,space_id,kind,uri,title,mime,hash,meta,captured_at,updated_at,deleted_at,attention,attention_by,node_level,node_level_by";
 
 export type UpsertInput = {
   /** Automatic collection; explicit imports leave this unset. */
@@ -77,6 +87,7 @@ export type UpsertResult = { id: string; status: "created" | "updated" | "unchan
  * documents keep only the newest original; conversation sources append.
  */
 export function upsertSource(app: App, input: UpsertInput): UpsertResult {
+  watchCatalog(app);
   const prepared = prepareArchive(app, input);
   if (prepared) {
     if (prepared.sourceId && getSource(app, prepared.sourceId).spaceId !== prepared.input.spaceId)
@@ -225,7 +236,7 @@ export function listSources(app: App, opts: { spaceId?: string; kind?: string; q
     params.push(opts.spaceId);
   }
   if (opts.level) {
-    where.push(opts.level === "normal" ? "attention is null" : "attention = ?");
+    where.push(opts.level === "normal" ? `${levelSql("sources")} is null` : `${levelSql("sources")} = ?`);
     if (opts.level !== "normal") params.push(opts.level);
   }
   if (opts.kind) {

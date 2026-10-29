@@ -6,6 +6,7 @@ import ChatView from "../components/ChatView.vue";
 import CodeView from "../components/CodeView.vue";
 import Skeleton from "../components/Skeleton.vue";
 import VirtualList from "../components/VirtualList.vue";
+import SourceTree from "../components/SourceTree.vue";
 import { readsAsDocument } from "../lib/sources";
 import UiSelect from "../components/UiSelect.vue";
 import Icon from "../components/Icon.vue";
@@ -83,8 +84,18 @@ const hl = computed(() => (route.query.from ? { from: Number(route.query.from), 
 
 let loadSeq = 0;
 const itemsEl = ref<HTMLElement | null>(null);
+/** Spaces other than repositories are browsed as the catalog tree (SourceTree loads it lazily). */
+const catalogView = computed(() => !!space.value && space.value.kind !== "repo");
+const qApplied = ref("");
+const treeRef = ref<InstanceType<typeof SourceTree> | null>(null);
 async function load() {
   const seq = ++loadSeq;
+  qApplied.value = q.value;
+  if (catalogView.value) {
+    list.value = [];
+    listLoading.value = false;
+    return;
+  }
   listLoading.value = true;
   try {
     // A repository is shown as a tree: it needs every path at once (a page of a collapsed tree
@@ -170,7 +181,7 @@ watch(kind, load);
 watch(level, load);
 /** After a level or a note changed: the detail, the counts and the list's badges. */
 async function attentionChanged() {
-  await Promise.all([loadDetail(), loadLevels()]);
+  await Promise.all([loadDetail(), loadLevels(), treeRef.value?.reload()]);
   const s = detail.value?.source;
   const row = s && list.value.find((x) => x.id === s.id);
   if (row && s) Object.assign(row, { attention: s.attention, attentionBy: s.attentionBy });
@@ -323,7 +334,8 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
         </div>
       </div>
       <div ref="itemsEl" class="items" @scroll.passive="onListScroll">
-        <Skeleton v-if="listLoading && !list.length" :rows="8" />
+        <SourceTree v-if="catalogView" ref="treeRef" :space="state.space" :kind="kind" :level="level" :q="qApplied" :current="id" @total="(n) => (total = n)" />
+        <Skeleton v-else-if="listLoading && !list.length" :rows="8" />
         <VirtualList v-else-if="isTree" :items="tree" :item-key="(r) => (r.kind === 'dir' ? `d:${r.path}` : r.source.id)" :estimate="28">
           <template #default="{ item: r }">
             <button v-if="r.kind === 'dir'" class="row-btn dir" :style="{ paddingLeft: 8 + r.depth * 14 + 'px' }" @click="toggle(r.path)">
@@ -342,7 +354,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
             </router-link>
           </template>
         </VirtualList>
-        <div v-if="!list.length && !listLoading" class="empty small">
+        <div v-if="!catalogView && !list.length && !listLoading" class="empty small">
           <p>这个空间还没有原件。</p>
           <button class="btn sm" @click="state.capture = true"><Icon name="plus" :size="14" />保存材料</button>
         </div>
