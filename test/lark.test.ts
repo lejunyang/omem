@@ -155,6 +155,23 @@ describe("feishu bot messaging", () => {
     expect(client.calls.find((c) => c.op === "create")!.args.data.receive_id).toBe("oc_p2p");
   });
 
+  it("updates its own card without asking Feishu where it is", async () => {
+    const app = testApp();
+    const client = fakeClient();
+    // The bot may not read messages: only what omem recorded tells where the card is.
+    client.im.message.get = async () => ({ code: 230027, msg: "Lack of necessary permissions" }) as any;
+    setLarkClient(client);
+    const t = createThread(app, { spaceId: "personal", channel: "lark", key: "oc_p2p" });
+    const run = createRun(app, { kind: "ask", title: "x", input: { conversationId: t.id, messageIds: [] }, lane: "test-hold", notBefore: "2999-01-01T00:00:00Z" });
+    const ctx = toolContextForToken(app, issueToolToken({ runId: run.id, spaceId: "personal", spaces: null, tools: null, actor: "agent", larkChats: null }))!;
+    const sent = await callTool(ctx, "lark_card", { title: "测试", blocks: [{ buttons: [{ text: "选项一", value: "test_option_1" }] }] });
+    const cardId = /已发送 (om_\d+)/.exec(sent.text)![1];
+    const r = await callTool(ctx, "lark_update_card", { message_id: cardId, title: "测试成功", blocks: [{ markdown: "按钮正常" }] });
+    expect(r).toMatchObject({ isError: false, text: "已更新卡片" });
+    const other = await callTool(ctx, "lark_update_card", { message_id: "om_unknown", blocks: [{ markdown: "x" }] });
+    expect(other.text).toMatch(/无法确认消息 om_unknown 所在的飞书会话（飞书：230027/);
+  });
+
   it("turns posts into drafts the owner approves", async () => {
     const app = testApp();
     app.config.lark.ownerOpenId = "ou_owner";

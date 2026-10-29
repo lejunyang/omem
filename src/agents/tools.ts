@@ -1884,9 +1884,18 @@ async function larkGuard(ctx: ToolContext, t: LarkTargetArgs) {
   const client = larkClientFor(ctx.larkBot);
   let chat = t.chat_id;
   if (t.reply_to) {
-    const r = await client.im.message.get({ path: { message_id: t.reply_to } }).catch(() => null);
-    const actual = r?.data?.items?.[0]?.chat_id;
-    if (!actual) throw new HttpError(400, "无法确认被回复消息所在的飞书会话");
+    // Where the message is: the bot's own cards and the messages it has seen are recorded here;
+    // only others are asked from Feishu (which needs the bot's permission to read messages).
+    let actual =
+      one<{ chat_id: string }>(ctx.app.db, "select chat_id from card_interactions where message_id = ? and chat_id is not null order by created_at desc limit 1", t.reply_to)?.chat_id ??
+      one<{ chat_id: string }>(ctx.app.db, "select chat_id from lark_messages where message_id = ?", t.reply_to)?.chat_id;
+    let why = "";
+    if (!actual) {
+      const r = await client.im.message.get({ path: { message_id: t.reply_to } }).catch((e: Error) => ((why = e.message), null));
+      actual = r?.data?.items?.[0]?.chat_id;
+      if (!actual && r && (r as { code?: number }).code) why = `${(r as { code?: number }).code} ${(r as { msg?: string }).msg ?? ""}`;
+    }
+    if (!actual) throw new HttpError(400, `无法确认消息 ${t.reply_to} 所在的飞书会话${why ? `（飞书：${why.slice(0, 160)}）` : ""}`);
     if (chat && chat !== actual) throw new HttpError(400, "chat_id 与被回复消息所在的飞书会话不一致");
     chat = actual;
   }

@@ -691,3 +691,5 @@ updated: 2026-10-28
 - **提醒晚 8 小时**：事项的提醒时间按写入时的样子存（`2026-10-28T16:45:00+08:00`），到期查询却拿它和 `now()`（UTC，`…Z`）按字符串比，东八区的提醒要等 UTC 走到同一个钟点才发出。`items/store.ts` 加 `UTC(col)`（SQLite `strftime` 换算成 UTC）用于 `dueReminders`、事项排序和巡检的过期查询；存的值不变，Agent 读到的仍是本人的时间。
 - **会议不建事项**：`roles/ingest.md`：飞书日程和会议邀请本身不建事项、不设提醒（飞书自己提醒），只有分给本人的具体任务才建；`_common.md` 同样写明。
 - **工具按分组授权**：`tool-help.ts` 的 `expandTools`：角色和 Agent 档案的 `tools` 可写 `group:<分组>` 和 `-<工具>`，加载时展开（`ROLE_TOOLS` 不随分组授出），保存角色时检查分组名。主助手改成按分组写（排除 `write_page`、`propose_item_update`、`propose_profile_change`、`meeting_send`），实际可用的工具和以前一样；以后新工具放进分组就可用，自定义过的主助手也不用再为工具清单合并。
+- **改卡片不再依赖读消息接口**：`tools.ts` 的 `larkGuard` 遇到 `reply_to` / `lark_update_card` 时，先从 `card_interactions`（机器人发的卡片）和 `lark_messages` 找消息所在的会话，找不到才调飞书 `im.message.get`，失败时把飞书的错误码带进报错。起因：机器人读不了消息时，改自己刚发的卡片也报“无法确认被回复消息所在的飞书会话”。
+
