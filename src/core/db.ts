@@ -817,6 +817,40 @@ const migrations: string[] = [
   // Where a wiki page used to live: a moved page keeps its old paths so links and citations to them still open it (src/wiki/store.ts movePages).
   `create table page_aliases(space_id text not null, alias text not null, slug text not null, primary key(space_id, alias));
   create index page_aliases_slug on page_aliases(space_id, slug);`,
+  // What omem's bots posted in Feishu (src/channels/lark-feedback.ts), so a reaction on it finds the
+  // run that wrote it; and the reactions themselves (everyone's; removing one only fills removed_at).
+  `
+  create table lark_sent (
+    message_id text primary key,
+    chat_id text,
+    run_id text,
+    conversation_id text,
+    purpose text not null default 'answer',   -- answer | notification | card | progress
+    bot text not null default 'main',
+    at text not null
+  );
+  create index lark_sent_run on lark_sent(run_id);
+  create table feedback (
+    id text primary key,
+    channel text not null default 'lark',
+    message_id text not null,
+    run_id text,
+    bot text,
+    on_bot integer not null default 1,        -- 0: the owner's reaction on someone else's message
+    actor_id text not null,
+    actor_kind text not null,                 -- owner | member | guest | bot
+    emoji text not null,
+    polarity text not null,                   -- positive | negative | ack | neutral
+    at text not null,
+    removed_at text
+  );
+  create index feedback_message on feedback(message_id);
+  create index feedback_run on feedback(run_id, at);
+  create index feedback_at on feedback(at);
+  `,
+  // Profile proposals nobody answered expire after 14 days (src/agents/proposals.ts); the notice
+  // sent before that is recorded so it goes out once.
+  `alter table profile_proposals add column expiry_notice_at text;`,
 ];
 
 export type Db = DatabaseSync;

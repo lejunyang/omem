@@ -276,7 +276,19 @@ const handlers = new Map<string, Handler>();
 const controllers = new Map<string, AbortController>();
 /** Conversations get their own slots so a long background job never delays a reply. */
 const INTERACTIVE = new Set<string>(["ask", "agent"]);
-const active = { interactive: 0, background: 0 };
+/**
+ * The bulk digest of stored material (digest.ts: grading and distilling batch after batch) gets a
+ * slot of its own, one at a time: new material (ingest), the heartbeat and other background work
+ * keep their slots and are never queued behind a long digest batch.
+ */
+const BULK = new Set<string>(["digest", "triage"]);
+export const BULK_SLOTS = 1;
+type Cls = "interactive" | "background" | "bulk";
+const classOf = (kind: string): Cls => (INTERACTIVE.has(kind) ? "interactive" : BULK.has(kind) ? "bulk" : "background");
+const limitOf = (app: App, cls: Cls) => (cls === "interactive" ? app.config.interactiveConcurrency : cls === "bulk" ? BULK_SLOTS : app.config.concurrency);
+const inList = (s: Set<string>) => [...s].map((k) => `'${k}'`).join(",");
+const classSql = (cls: Cls, col = "kind") => (cls === "interactive" ? `${col} in (${inList(INTERACTIVE)})` : cls === "bulk" ? `${col} in (${inList(BULK)})` : `${col} not in (${inList(INTERACTIVE)},${inList(BULK)})`);
+const active: Record<Cls, number> = { interactive: 0, background: 0, bulk: 0 };
 let started = false;
 /** Last activity (run event / output) per live run; watchdog fails interactive
  *  runs silent for too long, so a dead agent process cannot wedge a whole
@@ -312,24 +324,21 @@ export function queueReason(app: App, r: Run): string | null {
     const older = one<{ n: number }>(app.db, "select count(*) n from runs where lane = ? and status = 'queued' and created_at < ?", row.lane, row.created_at)!.n;
     if (busy || older) return `等同一会话里前面的运行${busy ? `（${busy.id} 进行中）` : ""}${older ? `，前面还有 ${older} 个` : ""}`;
   }
-  const interactive = INTERACTIVE.has(row.kind);
-  const limit = interactive ? app.config.interactiveConcurrency : app.config.concurrency;
-  const kinds = [...INTERACTIVE].map((k) => `'${k}'`).join(",");
-  const same = interactive ? `kind in (${kinds})` : `kind not in (${kinds})`;
+  const cls = classOf(row.kind);
+  const limit = limitOf(app, cls);
+  const same = classSql(cls);
   const running = one<{ n: number }>(app.db, `select count(*) n from runs where status = 'running' and ${same}`)!.n;
   const ahead = one<{ n: number }>(app.db, `select count(*) n from runs where status = 'queued' and ${same} and created_at < ? and (not_before is null or not_before <= ?)`, row.created_at, now())!.n;
-  return `等${interactive ? "对话" : "后台任务"}空位：同时最多 ${limit} 个，正在运行 ${running} 个${ahead ? `，前面还排着 ${ahead} 个` : ""}`;
+  return `等${cls === "interactive" ? "对话" : cls === "bulk" ? "存量整理" : "后台任务"}空位：同时最多 ${limit} 个，正在运行 ${running} 个${ahead ? `，前面还排着 ${ahead} 个` : ""}`;
 }
 
 function nextRunnable(app: App): Row | undefined {
-  const interactive = active.interactive < app.config.interactiveConcurrency;
-  const background = active.background < app.config.concurrency;
-  if (!interactive && !background) return;
-  const kinds = [...INTERACTIVE].map(k => `'${k}'`).join(",");
+  const open = (["interactive", "background", "bulk"] as Cls[]).filter((c) => active[c] < limitOf(app, c));
+  if (!open.length) return;
   const candidates = all<Row>(
     app.db,
     `select * from runs q where q.status = 'queued' and (q.not_before is null or q.not_before <= ?)
-       and (${interactive ? `q.kind in (${kinds})` : "0"} or ${background ? `q.kind not in (${kinds})` : "0"})
+       and (${open.map((c) => classSql(c, "q.kind")).join(" or ")})
        and (q.lane is null or not exists (select 1 from runs r where r.lane = q.lane and r.status = 'running'))
        and (q.lane is null or not exists (select 1 from runs r where r.lane = q.lane and r.status = 'queued'
          and (r.created_at < q.created_at or (r.created_at = q.created_at and r.rowid < q.rowid))))
@@ -345,9 +354,8 @@ function nextRunnable(app: App): Row | undefined {
       const older = one<{ n: number }>(app.db, "select count(*) n from runs where lane = ? and status = 'queued' and created_at < ?", c.lane, c.created_at);
       if (older?.n) continue;
     }
-    const cls = INTERACTIVE.has(c.kind) ? "interactive" : "background";
-    const limit = cls === "interactive" ? app.config.interactiveConcurrency : app.config.concurrency;
-    if (active[cls] < limit) return c;
+    const cls = classOf(c.kind);
+    if (active[cls] < limitOf(app, cls)) return c;
   }
   return undefined;
 }
@@ -380,7 +388,7 @@ function kick(app: App) {
   for (;;) {
     const next = nextRunnable(app);
     if (!next) return;
-    const cls = INTERACTIVE.has(next.kind) ? "interactive" : "background";
+    const cls = classOf(next.kind);
     const handler = handlers.get(next.kind);
     if (!handler) {
       run(app.db, "update runs set status='failed', error=?, finished_at=? where id=?", `没有处理器：${next.kind}`, now(), next.id);

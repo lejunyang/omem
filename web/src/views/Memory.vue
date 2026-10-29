@@ -9,7 +9,7 @@ import UiSegmented from "../components/UiSegmented.vue";
 import VirtualList from "../components/VirtualList.vue";
 import UiSelect from "../components/UiSelect.vue";
 import { confirmDialog, promptDialog } from "../lib/dialog";
-import { fmtTime, memoryKindLabel, openCitation, runKindLabel, state, statusLabel, toast } from "../store";
+import { fmtTime, memoryKindLabel, openCitation, relTime, runKindLabel, state, statusLabel, toast } from "../store";
 
 const tab = ref<"list" | "quality" | "recall" | "gaps">("list");
 const memories = ref<Memory[]>([]);
@@ -272,15 +272,47 @@ type Gaps = {
   rejectedWrites: { n: number; codes: Record<string, number> };
   retracted: { id: string; content: string; note: string }[];
   passive: { shown: number; used: number };
+  reactions?: { negative: { messageId: string; runId: string | null; emoji: string; actorKind: string; at: string; answer: string }[]; positive: number };
 };
 const gaps = ref<Gaps | null>(null);
 const gapDays = ref(7);
 async function loadGaps() {
   gaps.value = await get<Gaps>(`/api/shortcomings?days=${gapDays.value}`);
+  dream.value = await get<Dream>("/api/dream/status").catch(() => null);
+}
+// The nightly dream that works through these signals (src/agents/jobs.ts "dream").
+type Dream = { enabled: boolean; cron: string | null; next: string | null; lastDreamAt: string | null; lastRun: { id: string; status: string; at: string } | null; digestExperiences: number };
+const dream = ref<Dream | null>(null);
+const DREAM_HINT = "omem.memory.dreamHintSeen";
+const dreamHintSeen = ref((() => {
+  try {
+    return localStorage.getItem(DREAM_HINT) === "1";
+  } catch {
+    return false;
+  }
+})());
+function hideDreamHint() {
+  dreamHintSeen.value = true;
+  try {
+    localStorage.setItem(DREAM_HINT, "1");
+  } catch {}
+}
+const dreaming = ref(false);
+async function dreamNow() {
+  dreaming.value = true;
+  try {
+    await post("/api/schedules/dream/run");
+    toast("已开始整理，完成后在“运行”里看报告", "ok");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    dreaming.value = false;
+  }
 }
 watch(tab, (t) => t === "gaps" && loadGaps());
 watch(gapDays, loadGaps);
-const gapsEmpty = computed(() => !!gaps.value && !gaps.value.notFound.length && !gaps.value.corrections.length && !gaps.value.failedRuns.length && !gaps.value.retracted.length && !gaps.value.rejectedWrites.n);
+const gapsEmpty = computed(() => !!gaps.value && !gaps.value.notFound.length && !gaps.value.corrections.length && !gaps.value.failedRuns.length && !gaps.value.retracted.length && !gaps.value.rejectedWrites.n && !gaps.value.reactions?.negative.length);
+const actorLabel: Record<string, string> = { owner: "你", member: "其他用户", guest: "访客" };
 const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract" ? "danger" : v === "rewrite" ? "warn" : "");
 </script>
 
@@ -463,10 +495,23 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
       <div v-if="!gaps" class="skeleton"><div v-for="i in 3" :key="i" class="sk-line" /></div>
       <template v-else>
         <div class="row wrap qhead">
-          <span class="muted small">从日常运行里按规则挑出的线索：回答说没找到、本人纠正了回答、失败的运行、被撤回或拦下的记忆。每晚整理时会逐条看能不能补（记下缺的事实、写经验或案例、建事项问你）。</span>
+          <span class="muted small">从日常运行里按规则挑出的线索：回答说没找到、本人纠正了回答、飞书里对回答加的负面表情、失败的运行、被撤回或拦下的记忆。每晚整理时会逐条看能不能补（记下缺的事实、写经验或案例、建事项问你）。</span>
           <span class="spacer" />
           <UiSegmented v-model="gapDays" size="sm" aria-label="统计范围" :options="[{ value: 7, label: '7 天' }, { value: 30, label: '30 天' }]" />
         </div>
+        <div v-if="dream" class="row wrap small dream">
+          <span>每晚整理：</span>
+          <span v-if="dream.enabled" class="badge ok">已开启{{ dream.next ? ` · 下次 ${fmtTime(dream.next)}` : "" }}</span>
+          <span v-else class="badge warn">定时已关闭</span>
+          <span class="muted">上次整理 <router-link v-if="dream.lastRun" :to="`/runs/${dream.lastRun.id}`">{{ relTime(dream.lastRun.at) }}</router-link><template v-else>还没有过</template></span>
+          <span v-if="dream.digestExperiences" class="muted">· 存量整理写的经验记忆 {{ dream.digestExperiences }} 条待逐步合并</span>
+          <span class="spacer" />
+          <button class="btn sm" :disabled="dreaming" @click="dreamNow">立即整理一次</button>
+        </div>
+        <p v-if="dream && !dream.enabled && !gapsEmpty && !dreamHintSeen" class="small warn-text dream-hint">
+          每晚整理关着，下面这些不足没人去补。可以先点“立即整理一次”看看报告，再到 设置 → 定时任务 打开。
+          <button class="btn ghost sm" @click="hideDreamHint">知道了</button>
+        </p>
         <div v-if="gapsEmpty" class="empty small">这段时间没有发现不足。</div>
         <template v-if="gaps.notFound.length">
           <h2 class="section-title">回答说没找到</h2>
@@ -483,6 +528,13 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
             <p class="content">你说：{{ g.said }}</p>
             <p class="content muted-ink">之前答：{{ g.answer }}</p>
           </a>
+        </template>
+        <template v-if="gaps.reactions?.negative.length">
+          <h2 class="section-title">回答收到负面表情 <span class="muted small">同期正面 {{ gaps.reactions.positive }} 个</span></h2>
+          <component :is="g.runId ? 'router-link' : 'div'" v-for="g in gaps.reactions.negative" :key="g.messageId + g.emoji + g.actorKind" :to="g.runId ? `/runs/${g.runId}` : undefined" class="rej gap">
+            <div class="row small wrap"><span class="badge danger">{{ actorLabel[g.actorKind] ?? g.actorKind }} · {{ g.emoji }}</span><span class="muted">{{ fmtTime(g.at) }}</span></div>
+            <p v-if="g.answer" class="content muted-ink">回答：{{ g.answer }}</p>
+          </component>
         </template>
         <template v-if="gaps.failedRuns.length">
           <h2 class="section-title">失败的运行</h2>
@@ -809,6 +861,16 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
 }
 .qhead {
   margin-bottom: 18px;
+}
+.dream {
+  gap: 6px 10px;
+  margin-bottom: 10px;
+}
+.dream-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
 }
 .section-title {
   margin-top: 22px;

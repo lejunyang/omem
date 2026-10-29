@@ -14,6 +14,7 @@ import MemoryCard from "./MemoryCard.vue";
  * What a profile (agent spec or built-in role) has learned and how it is evolving: its mounted
  * skills, its own memories, the changes its reviews proposed, its use and its history.
  */
+type Counts = { positive: number; negative: number; ack: number; neutral: number };
 export type Proposal = { id: string; kind: "prompt" | "skill" | "settings"; title: string; body: string; reason: string; status: string; createdAt: string; runId: string | null };
 export type ProfileDetail = {
   kind: "spec" | "role";
@@ -21,7 +22,15 @@ export type ProfileDetail = {
   availableSkills: { name: string; description: string; status: string }[];
   memories: Memory[];
   proposals: Proposal[];
-  usage: { runs30d: Record<string, number>; lastRun: { id: string; at: string; status: string } | null; recalls30d: number; recallHits30d: number; lastReviewAt: string | null };
+  usage: {
+    runs30d: Record<string, number>;
+    lastRun: { id: string; at: string; status: string } | null;
+    recalls30d: number;
+    recallHits30d: number;
+    lastReviewAt: string | null;
+    /** Emoji reactions on what its runs sent in Feishu (30 days). */
+    feedback30d?: { owner: Counts; others: Counts; guests: Counts } | null;
+  };
   history: { hash: string; at: string; message: string }[];
 };
 
@@ -94,6 +103,10 @@ async function review() {
   }
 }
 const runs = computed(() => Object.values(props.detail.usage.runs30d).reduce((a, b) => a + b, 0));
+const fb = computed(() => props.detail.usage.feedback30d ?? null);
+// Pending proposals expire 14 days after they were made (src/agents/proposals.ts).
+const expiresAt = (p: Proposal) => new Date(Date.parse(p.createdAt) + 14 * 86400_000).toISOString();
+const daysLeft = (p: Proposal) => Math.ceil((Date.parse(expiresAt(p)) - Date.now()) / 86400_000);
 </script>
 
 <template>
@@ -128,14 +141,16 @@ const runs = computed(() => Object.values(props.detail.usage.runs30d).reduce((a,
         <span>专属记忆被召回 <b>{{ detail.usage.recalls30d }}</b> 次 · 用上 {{ detail.usage.recallHits30d }}</span>
         <span v-if="detail.usage.lastRun">上次运行 <router-link :to="`/runs/${detail.usage.lastRun.id}`">{{ relTime(detail.usage.lastRun.at) }}</router-link></span>
         <span>上次复盘 {{ detail.usage.lastReviewAt ? relTime(detail.usage.lastReviewAt) : "还没有" }}</span>
+        <span v-if="fb" :title="'确认类表情（OK、DONE、+1…）只表示收到，不算好坏'">你的表情 正面 <b>{{ fb.owner.positive }}</b> · 负面 <b>{{ fb.owner.negative }}</b> · 确认 {{ fb.owner.ack }}</span>
+        <span v-if="fb && (fb.others.positive + fb.others.negative + fb.guests.positive + fb.guests.negative)" class="muted">其他人 正面 {{ fb.others.positive + fb.guests.positive }} · 负面 {{ fb.others.negative + fb.guests.negative }}</span>
       </div>
-      <p class="muted small">每晚复盘最近有纠正或失败的档案：经验和偏好直接记成它的专属记忆（经过检查和复核），提示词、技能、设置的改动列在下面，你采纳后才生效。</p>
+      <p class="muted small">每晚复盘最近有纠正、失败或收到表情的档案：经验和偏好直接记成它的专属记忆（经过检查和复核），提示词、技能、设置的改动列在下面，你采纳后才生效；14 天没处理的建议会过期，过期前两天提醒一次。</p>
 
       <div v-for="p in pending" :key="p.id" class="proposal">
         <div class="row">
           <span class="badge accent">{{ kindLabel[p.kind] }}</span>
           <strong class="grow">{{ p.title }}</strong>
-          <span class="muted small">{{ relTime(p.createdAt) }}</span>
+          <span class="muted small" :title="`${fmtTime(expiresAt(p))} 过期，到期前两天提醒`">{{ relTime(p.createdAt) }} · {{ daysLeft(p) > 0 ? `${daysLeft(p)} 天后过期` : "今天过期" }}</span>
         </div>
         <div v-if="p.reason" class="muted small reason"><Markdown :source="p.reason" /></div>
         <div v-if="p.kind === 'prompt'" class="diff">
@@ -157,7 +172,7 @@ const runs = computed(() => Object.values(props.detail.usage.runs30d).reduce((a,
       <p v-if="!pending.length" class="muted small">没有待确认的建议。</p>
       <details v-if="resolved.length || detail.history.length" class="history">
         <summary class="small">历史</summary>
-        <div v-for="p in resolved" :key="p.id" class="small hist-line"><span class="badge">{{ p.status === "applied" ? "已采纳" : "已忽略" }}</span> {{ kindLabel[p.kind] }} · {{ p.title }}</div>
+        <div v-for="p in resolved" :key="p.id" class="small hist-line"><span class="badge">{{ p.status === "applied" ? "已采纳" : p.status === "expired" ? "已过期" : "已忽略" }}</span> {{ kindLabel[p.kind] }} · {{ p.title }}</div>
         <div v-for="c in detail.history" :key="c.hash" class="small hist-line mono"><span class="muted">{{ fmtTime(c.at) }}</span> {{ c.message }}</div>
       </details>
     </section>

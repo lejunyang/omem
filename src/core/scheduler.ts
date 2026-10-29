@@ -7,7 +7,11 @@ export type Schedule = { id: string; kind: string; cron: string; spaceId: string
 type Row = { id: string; kind: string; cron: string; space_id: string | null; config: string; enabled: number; last_run_at: string | null };
 const toSchedule = (r: Row): Schedule => ({ id: r.id, kind: r.kind, cron: r.cron, spaceId: r.space_id, config: json(r.config, {}), enabled: !!r.enabled, lastRunAt: r.last_run_at });
 
-/** Built-in schedules exist from the start; background ones begin disabled except reminders. */
+/**
+ * Built-in schedules exist from the start. A library created after a default changed gets the new
+ * default; existing ones keep the row they have (`insert or ignore`), so turning the nightly dream on
+ * by default does not switch it on for libraries that already had it off.
+ */
 const DEFAULTS: { id: string; kind: string; cron: string; enabled: boolean; label: string }[] = [
   { id: "heartbeat", kind: "heartbeat", cron: "*/15 * * * *", enabled: true, label: "巡检：到期提醒、等待回复与关注事项" },
   { id: "activity", kind: "activity", cron: "*/30 * * * *", enabled: true, label: "记录代码仓库的活动：新提交和未提交的改动（只读本机 Git）" },
@@ -17,7 +21,7 @@ const DEFAULTS: { id: string; kind: string; cron: string; enabled: boolean; labe
   { id: "item-sweep", kind: "item-sweep", cron: "7 * * * *", enabled: true, label: "事项收尾：没有新进展的按期限自动过期；本人在来源会话里回过、回了表情的，交给助理判断是否已办并关掉（都能在事项页恢复）" },
   { id: "item-digest", kind: "item-digest", cron: "30 9 * * *", enabled: true, label: "事项清点：每天一张卡片，列出自动收尾的和明天过期的，可逐条保留或恢复（没有变化时不发）" },
   { id: "memory-organize", kind: "memory-organize", cron: "50 */2 * * *", enabled: true, label: "整理记忆目录：把还没归档的记忆放进目录，每周看一遍目录结构（拆、并、改名、补说明；没有新记忆时什么都不做）" },
-  { id: "dream", kind: "dream", cron: "30 3 * * *", enabled: false, label: "每晚整理记忆与页面" },
+  { id: "dream", kind: "dream", cron: "30 3 * * *", enabled: true, label: "每晚整理记忆与页面：合并重复和存量整理写下的经验记忆、处理冲突与过期、按不足信号补漏（第一次只看最近 7 天）" },
   { id: "profile-review", kind: "profile-review", cron: "10 4 * * *", enabled: true, label: "复盘 Agent 档案和内置角色：最近的运行和本人随后的纠正沉淀成它们的记忆，提示词、技能和设置的改动提为待确认的建议（最近没有足够运行或没有纠正时什么都不做）" },
   { id: "repo-sync", kind: "repo-sync", cron: "0 * * * *", enabled: false, label: "每小时同步代码仓库空间并检查受影响页面" },
   { id: "lark-curate", kind: "lark-curate", cron: "15 9 * * 1", enabled: false, label: "每周按设定方向筛选值得关注的飞书群（需要填写方向）" },

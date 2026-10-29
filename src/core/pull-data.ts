@@ -48,6 +48,9 @@ export const pullTables: Table[] = [
   // The id is derived from (plugin, user, collection, key), so the same record on two devices meets.
   { name: "plugin_records", key: ["id"], newer: "updated_at" },
   { name: "plugin_blocks", key: ["id"], newer: "updated_at" },
+  { name: "lark_sent", key: ["message_id"], newer: "at" },
+  // The id is derived from (message, person, emoji), so the same reaction on two devices meets.
+  { name: "feedback", key: ["id"], newer: "coalesce(removed_at, at)" },
   ...[
     ["item_events", ["item_id", "at", "kind", "text"]],
     ["memory_recalls", ["memory_id", "run_id", "agent_profile", "at", "via"]],

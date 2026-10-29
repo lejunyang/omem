@@ -27,7 +27,11 @@ registerScheduleKind("digest", (app) => void import("./agents/digest.ts").then((
 registerScheduleKind("memory-organize", (app) => scheduleMemoryOrganize(app));
 registerScheduleKind("item-sweep", (app) => void sweepItems(app).catch((e) => console.warn("[omem] 事项收尾失败：", e.message)));
 registerScheduleKind("item-digest", (app) => void sendItemDigests(app).catch((e) => console.warn("[omem] 事项清点失败：", e.message)));
-registerScheduleKind("profile-review", (app) => void import("./agents/profile-jobs.ts").then((m) => m.nightlyProfileReviews(app)));
+registerScheduleKind("profile-review", (app) => {
+  void import("./agents/profile-jobs.ts").then((m) => m.nightlyProfileReviews(app));
+  // Proposals nobody answered for 14 days expire; a notice goes out two days before.
+  void import("./agents/proposals.ts").then((m) => m.expireProposals(app)).catch((e) => console.warn(`[omem] 档案建议过期处理失败：${(e as Error).message}`));
+});
 registerScheduleKind("rule", (app, s) => void import("./rules/engine.ts").then((m) => m.fireScheduledRule(app, String((s.config as { ruleId?: string }).ruleId))));
 registerScheduleKind("learn", (app) => learningTick(app));
 registerScheduleKind("activity", (app) => {

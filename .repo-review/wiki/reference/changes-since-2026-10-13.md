@@ -850,3 +850,37 @@ updated: 2026-10-30
 - **自动检查**：`src/wiki/upkeep.ts`（`main.ts` 启动）。原件变化触发一个 30 分钟防抖计时，启动 3 分钟后和每小时再看一次；原件已安静 30 分钟、该页 24 小时内没检查过、空间 3 小时内没跑过检查，才排 `wiki-lint`，一次最多 10 页；聊天、会话、动态、会议这类只追加的原件不触发；`autoLint` 设置现在对所有空间有效（原来只在代码仓库同步后），新增 `autoOrganize`。`wiki-lint` 运行的输入可带 `pages`，手动检查仍看全部。
 - **搜索**：`src/search/present.ts` 给 `GET /api/search` 的每个命中加 `display`（标题、标题高亮范围、去掉 Markdown / HTML 标记后匹配处周围的摘录和高亮范围、所在位置、短链接）；排序和 `search` 工具的片段不变。网页 `HitText.vue` 用文本节点和 `<mark>` 渲染，`CommandPalette.vue` 显示标题而不是链接。
 - 测试：`test/wiki-tree.test.ts`、`test/wiki-upkeep.test.ts`、`test/search-present.test.ts`。
+
+## 10-30：表情反馈与机器人权限、事件检查
+
+- **记录发出的消息**：`lark-send.ts` 的 `sendLark` / `sendEphemeral` 发出后报给 `onLarkSent`，`lark-feedback.ts` 写进 `lark_sent`（消息 id、会话、运行、对话、用途、机器人）。`Target` 多了 `purpose`、`runId`、`conversationId`；回答、通知、进度卡片、交办进度、工具发送、线程投递各自带上；进度卡片变成回答时 `markLarkSent` 改成 answer。
+- **表情事件**：`lark-bot.ts` 给每个机器人注册 `im.message.reaction.created_v1` / `deleted_v1`，交给 `onLarkReaction`：应用加的忽略；机器人发的消息上谁的都记（本人 / 其他用户 / 访客），别人的消息上只记本人的；`feedback` 存原始 emoji_type 和 `feedback.emoji` 映射的极性（确认类单列，未知为中性），取消只填 `removed_at`，id 由（消息、人、表情）派生，多台设备拉取时相遇。前 3 个原始事件在 kv `lark_reaction_samples`。
+- **用途**：`feedbackStats`（`GET /api/feedback/stats`）按档案和模型分本人 / 其他用户 / 访客；Agent 页首屏和档案“进化”一栏显示；`profile-jobs.ts` 的复盘证据带表情、有负面的运行优先选入；`gaps.ts` 的不足信号加负面表情（做梦和记忆页“不足”）；`diag` 的 `lark.reactions` 报近 7 天是否收到过表情事件。
+- **通知闸门**：`notify-gate.ts` 的 `ownerReactions` 先读 `feedback`；lark-cli 的解析原来读 `data.items` 和数组形式的 `operators`，真机输出是 `data.messages[].reactions = { counts, details: [{ emoji_type, operator: { operator_id } }] }`，按真机改（`reactionsBy`），`test/item-expiry.test.ts` 的模拟数据一并改成真实形状。
+- **权限与事件检查**：`lark-setup.ts` 的 `checkLarkApp` 从应用信息里多读 `event.subscribed_events`、`callback`、线上版本的 `events`；`lark-bot-check.ts` 对照 `LARK_BOT_EVENTS`（收消息、两个表情事件、可选的会议邀请）和卡片回调，`GET /api/lark/bot-check`、`POST /api/lark/bot-check/:ref/scan`（重走应用注册补齐）；设置 → 渠道 新卡片；远程命令 `lark-bot-permissions` 多返回 `events`、`callbacks`、`reactionsQuiet`。读不到订阅时用“近 7 天发了 20 条以上却没有表情事件”提示。
+
+## 10-30：做梦第一次只看 7 天、新库默认开、逐晚合并存量经验
+
+- **时间窗**：`jobs.ts` 的 `dreamSince`：没有 kv `dream_at` 时从 7 天前看起（原来是 1970，会把最近 80 条记忆、60 句话一次塞进去）。
+- **默认开**：`scheduler.ts` 的 `dream` 默认 `enabled: true`；`ensureDefaultSchedules` 是 `insert or ignore`，已有的库保持原来的开关。
+- **存量经验**：`src/memory/digest-merge.ts` 找 digest 运行写的有效 experience 记忆，按引用的第一个原件（同空间、同档案）分组，组内向量 ≥ 0.75 单链聚类（没有向量时按原件），每晚给 dreamer 最大的 4 组、每组至多 8 条；`roles/dreamer.md` 新增第 00 步。
+- **网页**：`GET /api/dream/status`；记忆 → 不足 显示开关、下次时间、上次整理、待合并条数和“立即整理一次”，关着且有不足时提示一次（看过记在本机浏览器）。
+- 手动跑一次：`omem peer call <设备> schedule-run '{"id":"dream"}'`（定时关着也能跑）。
+
+## 10-30：档案改进建议 14 天过期
+
+- `proposals.ts` 的 `expireProposals`：随夜里的 `profile-review` 定时一起跑；待处理超过 14 天的改为 `expired`（`resolved_by = system`），12 天以上、还没提醒过的合并成一条通知（“N 条档案改进建议两天内过期”，凌晨发出的按免打扰早上补发），`profile_proposals.expiry_notice_at` 记已提醒。待处理不设上限。同一档案同一标题的建议被之后的复盘再提时，`created_at` 和提醒一起重置。
+- 档案页：待采纳建议显示“N 天后过期”，历史里标“已过期”。
+
+## 10-30：存量整理单独的并发槽、工具耗时、后台会话按 token 换新
+
+- **并发槽**：`runs.ts` 把运行分成对话、后台、存量整理三类；`digest` 和 `triage` 一次一个（`BULK_SLOTS`），不占 `concurrency` 的后台槽；排队原因写“等存量整理空位”。10-24、10-28 大批整理时 ingest 排队超时、triage 600 秒没开始回答、Agent 说“omem 接口未返回”都和它抢槽有关。
+- **工具耗时**：`acp.ts` 在工具调用完成或失败的事件上加 `ms`；`peer-exec.ts` 的 `toolLatency` 读最近 24 小时运行的工具事件，`omem diag` 的 `toolLatency` 给出 n、p50、p90、最大值和 p90 最慢的 5 个工具（至少 5 次），p90 超过 30 秒带 `warning`。
+- **后台会话**：`background-sessions.ts` 的 `tooFull`：上下文占比超过 `maxContextRatio` 或 token 数超过 `sessions.background.maxContextTokens`（默认 120000，0 关）就不再复用；ingest、digest、heartbeat 单次运行的上下文峰值曾到 15～17 万。
+
+## 10-30：公开评测数据的清单与下载脚本
+
+- `scripts/bench/datasets.json`：LongMemEval_s / oracle（MIT）、T2Retrieval、DuRetrieval（Apache-2.0，上游 DuReader-retrieval，Hugging Face 卡片未写）、LoCoMo（CC BY-NC 4.0，只在本机跑）；地址、Hugging Face 公布的 SHA-256、大小。LoCoMo 来自 GitHub，没有公布哈希，`--pin` 第一次下载后写入。
+- `scripts/bench/fetch.ts <名>`：下载到 `.scratch/bench/<名>/raw/`，校验哈希（不符删除并停下），转换：C-MTEB 三个 parquet 经 `cmteb_to_jsonl.py`（Python + pandas，原 `prep-t2.py` 并入，种子和抽法不变）成 corpus.jsonl / queries.jsonl；LoCoMo 经 `locomo.ts` 转成 LongMemEval 的形状（`haystack_key` 让同一段对话的问题共用一个空间）。
+- `eval-longmemeval.ts --recall`：不启动服务、不用模型，按会话排序算 Recall@5/@10、All@10、NDCG@10，按类型分；`--vector` 用本地向量。
+- 只手动跑，没有定时任务；数字写进 `docs/v2/evaluation.md`。

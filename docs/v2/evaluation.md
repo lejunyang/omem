@@ -2,6 +2,33 @@
 
 数字只对应下面写明的数据、模型和日期，换模型或改检索后要重跑，不能沿用。
 
+## 公开数据从哪来（2026-10-30）
+
+调检索或记忆时手动跑，不设定时任务。数据清单在 `scripts/bench/datasets.json`（下载地址、SHA-256、许可、大小），`scripts/bench/fetch.ts` 下载到 `.scratch/bench/<名>/`（已在 .gitignore），校验哈希，再转换成评测脚本读的格式。仓库里只放脚本和清单，数字写在本页。
+
+| 名称 | 测什么 | 规模 | 许可 | 转换后 | 指标 |
+| --- | --- | --- | --- | --- | --- |
+| `longmemeval_s` | 长期记忆：检索 + 作答 | 500 题，每题约 50 段会话，277 MB | MIT | 原 JSON | 会话级 Recall@5/@10、All@10、NDCG@10（`--recall`，不用模型）；按类准确率（模型作答 + 模型评判） |
+| `longmemeval_oracle` | 只给证据会话，查作答链路 | 500 题，15 MB | MIT | 原 JSON | 准确率 |
+| `t2retrieval` | 中文检索 | 400 问 + 相关文档 + 15,000 篇干扰 | Apache-2.0 | corpus.jsonl / queries.jsonl | nDCG@10、Recall@10/@50、MRR@10 |
+| `duretrieval` | 中文检索，第二个对照集（百度搜索的真实问题） | 同上抽法，原始 10 万篇 / 2,000 问 | Apache-2.0（上游 DuReader-retrieval；Hugging Face 卡片没写，引用前再核） | 同上 | 同上 |
+| `locomo` | 很长的双人对话、时间推理 | 10 段对话，约 2,000 问 | CC BY-NC 4.0，**只在本机跑，不分发数据和转换结果** | LongMemEval 的形状（`locomo_lme.json`，每段对话一个空间，evidence 的 `D<n>` 换成会话 id） | 会话级 Recall（同上）；作答准确率 |
+
+```bash
+node scripts/bench/fetch.ts                         # 列出清单
+node scripts/bench/fetch.ts longmemeval_s           # 下载、校验
+node scripts/eval-longmemeval.ts .scratch/bench/longmemeval_s/raw/longmemeval_s_cleaned.json --recall            # 全文
+node scripts/eval-longmemeval.ts .scratch/bench/longmemeval_s/raw/longmemeval_s_cleaned.json --recall --vector   # 全文 + 向量
+node scripts/bench/fetch.ts duretrieval             # 要 Python 的 pandas、pyarrow
+node scripts/eval-retrieval.ts .scratch/bench/duretrieval/corpus.jsonl .scratch/bench/duretrieval/queries.jsonl --home .scratch/eval-du --vector
+node scripts/bench/fetch.ts locomo --pin            # 上游没公布哈希：第一次下载后把哈希写进清单
+node scripts/eval-longmemeval.ts .scratch/bench/locomo/locomo_lme.json --recall
+```
+
+会话级 Recall 只看检索：每题的历史会话各存成一个聊天原件，用 omem 的 `search`（每个原件取一个片段）对问题排序，看证据会话（`answer_session_ids`）进没进前 k。弃答题（`_abs`、LoCoMo 第 5 类）没有证据，不计。它不需要模型，换检索参数后先跑它，再决定要不要花钱跑作答。
+
+还没有结果：清单和脚本 2026-10-30 加入，LongMemEval 会话级 Recall、DuRetrieval、LoCoMo 都还没在完整数据上跑过，下一次调检索时补上，并和 T2 一起列在这里。作答准确率按每类 10 题做日常对比，大改动再跑全量（全量 500 题模型费用在数十美元量级）。
+
 ## 检索：T2Retrieval 子集（中文）
 
 2026-10-12。C-MTEB/T2Retrieval dev：随机 400 个问题，语料为这些问题的全部相关文档加 15,000 篇随机干扰文档，共 17,086 篇（平均 885 字）。文档级指标（同一文档的多个片段合并）。不是完整 118k 语料，不能和 MTEB 榜单直接比较。
@@ -19,13 +46,13 @@
 复现：
 
 ```bash
-python3 scripts/prep-t2.py    # 见下文，生成 t2_corpus.jsonl / t2_queries.jsonl
-node scripts/eval-retrieval.ts t2_corpus.jsonl t2_queries.jsonl --home .scratch/eval-t2            # 全文
-node scripts/eval-retrieval.ts t2_corpus.jsonl t2_queries.jsonl --home .scratch/eval-t2 --vector   # 融合
+node scripts/bench/fetch.ts t2retrieval    # 生成 .scratch/bench/t2retrieval/corpus.jsonl / queries.jsonl
+node scripts/eval-retrieval.ts .scratch/bench/t2retrieval/corpus.jsonl .scratch/bench/t2retrieval/queries.jsonl --home .scratch/eval-t2            # 全文
+node scripts/eval-retrieval.ts .scratch/bench/t2retrieval/corpus.jsonl .scratch/bench/t2retrieval/queries.jsonl --home .scratch/eval-t2 --vector   # 融合
 node scripts/eval-retrieval.ts … --vector-only | --fts-weight 0.3
 ```
 
-`prep_t2.py`：用 huggingface_hub 下载 `C-MTEB/T2Retrieval` 的 corpus/queries parquet 和 `C-MTEB/T2Retrieval-qrels` 的 dev，`random.seed(7)` 抽 400 个有正例的问题，加 15,000 篇随机干扰文档，写成 JSONL（`{"id","text"}` 与 `{"id","text","rels":{docId:grade}}`）。
+转换（`scripts/bench/cmteb_to_jsonl.py`，原来的 `prep-t2.py` 并进了这里）：读 `C-MTEB/T2Retrieval` 的 corpus/queries parquet 和 `C-MTEB/T2Retrieval-qrels` 的 dev，`random.seed(7)` 抽 400 个有正例的问题，加 15,000 篇随机干扰文档，写成 JSONL（`{"id","text"}` 与 `{"id","text","rels":{docId:grade}}`）。步骤和种子没变，抽出来的子集和上表一致。
 
 ## 长期记忆问答：LongMemEval_s（cleaned）小样本
 

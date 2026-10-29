@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { one } from "../core/db.ts";
 import { readMessageIds } from "./lark-read.ts";
 import { larkCli } from "./lark-cli.ts";
+import { ownerReactionsSeen } from "./lark-feedback.ts";
 
 /**
  * Decide whether a notification should actually ping the owner.
@@ -92,25 +93,49 @@ async function ownerReacted(app: App, messageId: string): Promise<boolean> {
   return ((await ownerReactions(app, messageId)) ?? []).length > 0;
 }
 
-/** The emoji types the owner put on a message (e.g. DONE, OK); null when it cannot be read. */
+/**
+ * The emoji types the owner put on a message (e.g. DONE, OK); null when it cannot be read.
+ * Reactions the bots' events already delivered (lark-feedback.ts) come first; lark-cli is asked only
+ * when they have none for this message (the bot is not in that chat, or the events are off).
+ */
 export async function ownerReactions(app: App, messageId: string): Promise<string[] | null> {
+  const seen = ownerReactionsSeen(app, messageId);
+  if (seen) return seen;
   // Reactions are read with lark-cli, whose ids belong to its own app: compare with the owner as it sees them.
   if (!cliOwner || Date.now() - cliOwner.at > 3600_000) cliOwner = { at: Date.now(), id: await (await import("./lark-personal.ts")).ownerOpenId() };
   const owner = cliOwner.id;
   if (!owner) return null;
   try {
     const v = await larkCli(["im", "+messages-mget", "--message-ids", messageId, "--as", "user", "--format", "json"], 30_000);
-    const items: any[] = v?.data?.items ?? v?.items ?? [];
-    const reactions: any[] = items[0]?.reactions ?? items[0]?.body?.reactions ?? [];
-    return reactions
-      .filter((r) => {
-        const operators: any[] = r.operators ?? r.users ?? r.operator_ids ?? [];
-        return operators.some((o) => o.open_id === owner || o.user_id === owner);
-      })
-      .map((r) => String(r.reaction_type?.emoji_type ?? r.emoji_type ?? r.type ?? "?"));
+    return reactionsBy(v, messageId, owner);
   } catch {
     return null;
   }
+}
+
+/**
+ * The emoji types `person` put on a message, from lark-cli's `+messages-mget` output:
+ * `data.messages[].reactions = { counts: [{ reaction_type, count }], details: [{ emoji_type, operator: { operator_id, operator_type } }] }`
+ * (checked against the real CLI; a message without reactions has no `reactions`). The older
+ * array form with `operators` is still read.
+ */
+export function reactionsBy(v: any, messageId: string, person: string): string[] {
+  const list: any[] = v?.data?.messages ?? v?.data?.items ?? v?.messages ?? v?.items ?? [];
+  const msg = list.find((m) => m?.message_id === messageId) ?? (list.length === 1 ? list[0] : undefined);
+  const r = msg?.reactions ?? msg?.body?.reactions;
+  if (!r) return [];
+  if (Array.isArray(r?.details)) {
+    return r.details
+      .filter((d: any) => (d.operator?.operator_id ?? d.operator_id) === person)
+      .map((d: any) => String(d.emoji_type ?? d.reaction_type?.emoji_type ?? "?"));
+  }
+  const arr: any[] = Array.isArray(r) ? r : [];
+  return arr
+    .filter((x) => {
+      const operators: any[] = x.operators ?? x.users ?? x.operator_ids ?? [];
+      return operators.some((o) => o.open_id === person || o.user_id === person || o.operator_id === person);
+    })
+    .map((x) => String(x.reaction_type?.emoji_type ?? x.emoji_type ?? x.type ?? "?"));
 }
 
 export type OwnerFollowUp = {

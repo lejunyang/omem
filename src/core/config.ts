@@ -26,6 +26,13 @@ export const agentProfileSchema = z.object({
 });
 export type AgentProfile = z.infer<typeof agentProfileSchema>;
 
+/** Feishu emoji_type names by what they say about an answer (checked against real events; `feedback.emoji`). */
+export const DEFAULT_FEEDBACK_EMOJI = {
+  positive: ["THUMBSUP", "APPLAUSE", "PRAISE", "AWESOMEN", "FINGERHEART", "HEART", "MUSCLE", "Fire", "HUNDRED", "100", "LGTM"],
+  negative: ["ThumbsDown", "CrossMark", "FACEPALM", "SPEECHLESS", "WHAT", "DIZZY", "ERROR"],
+  ack: ["OK", "DONE", "Get", "CheckMark", "JIAYI", "OnIt", "Yes"],
+};
+
 export const roleNames = [
   "assistant",
   "ingest",
@@ -113,7 +120,12 @@ export const configSchema = z.object({
         liveMinutes: z.number().min(0).default(60),
         maxLive: z.number().int().min(0).max(8).default(3),
         maxContextRatio: z.number().positive().max(1).default(0.6),
-      }).default({ enabled: true, liveMinutes: 60, maxLive: 3, maxContextRatio: 0.6 }),
+        /**
+         * Also start a new session once the context holds more than this many tokens, whatever the
+         * window size (a 1M window at 0.6 would otherwise carry 600k into every call). 0: ratio only.
+         */
+        maxContextTokens: z.number().int().min(0).default(120_000),
+      }).default({ enabled: true, liveMinutes: 60, maxLive: 3, maxContextRatio: 0.6, maxContextTokens: 120_000 }),
       /**
        * A coding round continues the previous round's agent session only while that session held at
        * most this many tokens of context; past it (every call of the round would carry the whole
@@ -127,7 +139,7 @@ export const configSchema = z.object({
       /** A message that is only material (shared group, forward, image, file) waits this long for the words that usually follow. */
       contentWaitMs: z.number().int().min(0).default(15_000),
     })
-    .default(() => ({ liveMinutes: 20, maxLive: 3, maxTurns: 40, background: { enabled: true, liveMinutes: 60, maxLive: 3, maxContextRatio: 0.6 }, codeResumeMaxTokens: 100_000, idleHours: 12, mergeMs: 1500, contentWaitMs: 15_000 })),
+    .default(() => ({ liveMinutes: 20, maxLive: 3, maxTurns: 40, background: { enabled: true, liveMinutes: 60, maxLive: 3, maxContextRatio: 0.6, maxContextTokens: 120_000 }, codeResumeMaxTokens: 100_000, idleHours: 12, mergeMs: 1500, contentWaitMs: 15_000 })),
   agents: z
     .object({
       default: z.string().optional(),
@@ -533,6 +545,22 @@ export const configSchema = z.object({
       quietEnd: z.number().int().min(0).max(23).default(9),
     })
     .default({ onlyUnread: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9 }),
+  /**
+   * Reactions on what the bots sent (src/channels/lark-feedback.ts). Feishu emoji_type names, matched
+   * without case; anything not listed is neutral. Acknowledgements (OK, DONE, +1…) say "received", not
+   * "good": they are kept apart and do not count as quality.
+   */
+  feedback: z
+    .object({
+      emoji: z
+        .object({
+          positive: z.array(z.string()).default(DEFAULT_FEEDBACK_EMOJI.positive),
+          negative: z.array(z.string()).default(DEFAULT_FEEDBACK_EMOJI.negative),
+          ack: z.array(z.string()).default(DEFAULT_FEEDBACK_EMOJI.ack),
+        })
+        .default(DEFAULT_FEEDBACK_EMOJI),
+    })
+    .default({ emoji: DEFAULT_FEEDBACK_EMOJI }),
   /**
    * Items close themselves: one with no new progress for `days[kind]` (counted from its
    * last activity: the owner touching it or new evidence) becomes "expired"; a reminder

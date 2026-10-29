@@ -8,14 +8,14 @@ import { cotEvent, cotLiveFor, startCot } from "./lark-cot.ts";
 /** A fallback status card; reasoning and partial answers belong only in the native bubble. */
 export type Progress = { messageId: string; finish(answer: string, note?: string): Promise<void>; fail(message: string): Promise<void> };
 
-export async function startProgress(_app: App, at: { messageId: string; inThread: boolean }, _runId: string, react = true): Promise<Progress> {
+export async function startProgress(_app: App, at: { messageId: string; inThread: boolean }, runId: string, react = true): Promise<Progress> {
   const started = Date.now();
   const bot = currentBot();
   let reaction: string | undefined;
   try {
     if (react) reaction = await reactLark(at.messageId, "OnIt");
   } catch {}
-  const sent = await sendLark({ replyTo: at.messageId, inThread: at.inThread }, { card: buildCard({
+  const sent = await sendLark({ replyTo: at.messageId, inThread: at.inThread, purpose: "progress", runId }, { card: buildCard({
     title: "处理中", color: "wathet", blocks: [{ markdown: "思考气泡暂不可用，任务仍在处理。完成后这里显示结果。" }],
   }) });
   const close = async () => {
@@ -30,9 +30,9 @@ export async function startProgress(_app: App, at: { messageId: string; inThread
       // Very long answers do not fit one card: the card keeps the start, the rest follows as messages.
       const head = answer.length > 18000 ? answer.slice(0, 18000) : answer;
       await updateLarkCard(sent.messageId, buildCard({ blocks: [{ markdown: head || "（没有回答）" }, { note }] })).catch(async () => {
-        await sendLark({ replyTo: at.messageId, inThread: at.inThread }, { markdown: head });
+        await sendLark({ replyTo: at.messageId, inThread: at.inThread, runId }, { markdown: head });
       });
-      if (answer.length > 18000) await sendLark({ replyTo: at.messageId, inThread: at.inThread }, { markdown: answer.slice(18000) });
+      if (answer.length > 18000) await sendLark({ replyTo: at.messageId, inThread: at.inThread, runId }, { markdown: answer.slice(18000) });
       await reactLark(at.messageId, "DONE").catch(() => {});
     }),
     fail: (message: string) => withBot(bot, async () => {

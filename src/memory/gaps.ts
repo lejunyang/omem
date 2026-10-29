@@ -1,11 +1,13 @@
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { truncate } from "../core/util.ts";
+import { negativeReactions, positiveReactionCount } from "../channels/lark-feedback.ts";
 
 /**
  * Shortcomings visible in daily use, collected without a model: runs that failed, answers that
  * found nothing, the owner correcting an answer, memory writes the checks or the reviewer threw
- * out, and memories passive recall offered but nobody used. The dreamer reads them each night and
+ * out, memories passive recall offered but nobody used, and negative emoji reactions on what the
+ * bots sent in Feishu (src/channels/lark-feedback.ts). The dreamer reads them each night and
  * fills what it can (a missing fact, an experience, a case page); the Memory page lists them.
  * Signals are hints, not verdicts: "没找到" can be a correct answer.
  */
@@ -17,6 +19,8 @@ export type Shortcomings = {
   rejectedWrites: { n: number; codes: Record<string, number>; examples: string[] };
   retracted: { id: string; content: string; note: string }[];
   passive: { shown: number; used: number };
+  /** Negative reactions on bot messages (the owner's first), and how many positive ones there were. */
+  reactions: { negative: ReturnType<typeof negativeReactions>; positive: number };
 };
 
 /** An answer saying it could not find what was asked. */
@@ -81,17 +85,21 @@ export function shortcomings(app: App, opts: { since?: string; limit?: number } 
     rejectedWrites: { n: rejected.length, codes, examples: rejected.slice(0, 3).map((r) => truncate(r.content, 100)) },
     retracted,
     passive,
+    reactions: { negative: negativeReactions(app, since, limit), positive: positiveReactionCount(app, since) },
   };
 }
 
 export function hasShortcomings(s: Shortcomings) {
-  return !!(s.failedRuns.length || s.notFound.length || s.corrections.length || s.rejectedWrites.n || s.retracted.length);
+  return !!(s.failedRuns.length || s.notFound.length || s.corrections.length || s.rejectedWrites.n || s.retracted.length || s.reactions.negative.length);
 }
 
 /** The section of the dreamer's task. */
 export function shortcomingsText(s: Shortcomings) {
   const parts = [
     s.notFound.length ? `回答说没找到（缺的知识，或检索没找对地方）：\n${s.notFound.map((x) => `- msg:${x.messageId} 问「${x.question}」→ 答「${x.answer}」`).join("\n")}` : "",
+    s.reactions.negative.length
+      ? `飞书里对回答加了负面表情（${s.reactions.positive} 个正面表情作对照）：\n${s.reactions.negative.map((x) => `- ${x.runId ? `运行 ${x.runId}` : `消息 ${x.messageId}`} ${x.actorKind === "owner" ? "本人" : x.actorKind === "member" ? "其他用户" : "访客"}加了 ${x.emoji}${x.answer ? `；回答「${x.answer}」` : ""}`).join("\n")}`
+      : "",
     s.corrections.length ? `本人纠正了回答：\n${s.corrections.map((x) => `- msg:${x.messageId} 本人说「${x.said}」；之前答「${x.answer}」`).join("\n")}` : "",
     s.failedRuns.length ? `失败的运行：\n${s.failedRuns.map((x) => `- ${x.kind} ${x.n} 次，最近 ${x.lastRunId}：${x.lastError}`).join("\n")}` : "",
     s.retracted.length ? `复核撤回的记忆：\n${s.retracted.map((x) => `- ${x.id}「${x.content}」${x.note ? `：${x.note}` : ""}`).join("\n")}` : "",

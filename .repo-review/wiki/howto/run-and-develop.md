@@ -138,7 +138,7 @@ node scripts/eval-retrieval.ts <corpus.jsonl> <queries.jsonl> [--vector | --vect
 - 不加 `--vector` 时强制 `embeddings.provider = "none"`，只测全文；`--vector` 在导入后循环 `embedPending` 补齐向量，测全文加向量融合；`--vector-only` 关掉全文和符号路线。`--fts-weight` 调融合里全文的权重。
 - 评测的是文档级：`search` 以 `types:["chunk"]`、`perSource:1` 取前 50，片段合并回原件，再算 nDCG@10、Recall@10/@50、MRR@10 和平均耗时，输出一行 JSON。
 
-已有的对照数据在 `docs/v2/evaluation.md`：T2Retrieval 400 问加 15,000 篇干扰文档，全文 nDCG@10 为 69.01，纯向量 87.25，默认融合（全文权重 0.5）86.76（[evaluation.md](../../../docs/v2/evaluation.md#L5-L25)）。改检索后重跑同一份数据，同时跑 `--vector-only` 和默认融合作对照。数据用 `scripts/prep-t2.py` 生成（固定 `random.seed(7)`）。这些数字只对应当时的数据和模型，换模型要重跑；换向量模型本身会清空旧向量。
+已有的对照数据在 `docs/v2/evaluation.md`：T2Retrieval 400 问加 15,000 篇干扰文档，全文 nDCG@10 为 69.01，纯向量 87.25，默认融合（全文权重 0.5）86.76（[evaluation.md](../../../docs/v2/evaluation.md#L5-L25)）。改检索后重跑同一份数据，同时跑 `--vector-only` 和默认融合作对照。数据用 `node scripts/bench/fetch.ts t2retrieval` 生成（原来的 `scripts/prep-t2.py` 已并入 `scripts/bench/cmteb_to_jsonl.py`）（固定 `random.seed(7)`）。这些数字只对应当时的数据和模型，换模型要重跑；换向量模型本身会清空旧向量。
 
 ## 类型擦除运行 TypeScript
 

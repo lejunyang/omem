@@ -745,6 +745,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { shortcomings } = await import("../memory/gaps.ts");
     return shortcomings(app, { since: new Date(Date.now() - days * 86400_000).toISOString(), limit: 20 });
   });
+  // The nightly dream: whether it is on, when it last looked, and how many digest experiences wait to be merged.
+  server.get("/api/dream/status", async () => {
+    const s = listSchedules(app).find((x) => x.id === "dream") ?? null;
+    const last = one<{ id: string; status: string; created_at: string; finished_at: string | null }>(app.db, "select id, status, created_at, finished_at from runs where kind = 'dream' order by created_at desc limit 1") ?? null;
+    const { digestExperienceCount } = await import("../memory/digest-merge.ts");
+    return {
+      enabled: !!s?.enabled,
+      cron: s?.cron ?? null,
+      next: s ? (nextRuns(app)[s.id] ?? null) : null,
+      lastDreamAt: one<{ value: string }>(app.db, "select value from kv where key = 'dream_at'")?.value ?? null,
+      lastRun: last ? { id: last.id, status: last.status, at: last.finished_at ?? last.created_at } : null,
+      digestExperiences: digestExperienceCount(app),
+    };
+  });
   // Quality per backend/model, recent write-time rejections, and side-by-side comparison runs.
   server.get("/api/memory-quality", async (req) => {
     const days = Number((req.query as { days?: string }).days ?? 30) || 30;
@@ -1503,6 +1517,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const scopes = b.scopes ?? (await missingUserScopes(["wiki-read", "doc-write"])).missing.map((m) => m.anyOf[0]);
     if (!scopes.length) return { url: null };
     return requestUserScopes(app, scopes, "在设置页补齐授权：");
+  });
+  // The bot apps' permissions and event subscriptions (lark-bot-check.ts), and fixing them by scan.
+  server.get("/api/lark/bot-check", async () => ({ bots: await (await import("../channels/lark-bot-check.ts")).checkLarkBots(app) }));
+  server.post("/api/lark/bot-check/:ref/scan", async (req) => {
+    const ref = q(z.object({ ref: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/) }), req.params).ref;
+    return (await import("../channels/lark-bot-check.ts")).updateLarkBotByScan(app, ref);
+  });
+  // Reactions on what the bots sent, by profile and model (lark-feedback.ts).
+  server.get("/api/feedback/stats", async (req) => {
+    const days = q(z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }), req.query ?? {}).days;
+    return (await import("../channels/lark-feedback.ts")).feedbackStats(app, days);
   });
   // Knowledge-base crawls (lark-wiki.ts): progress, continue, stop.
   server.get("/api/lark/wiki-crawls", async () => ({ crawls: (await import("../channels/lark-wiki.ts")).listCrawls(app) }));

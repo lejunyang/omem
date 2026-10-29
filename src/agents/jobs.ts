@@ -29,6 +29,7 @@ import { nearMemories, sameTopicPairs } from "../memory/passive.ts";
 import { expireWorkFiles } from "../sources/work.ts";
 import { expireTemporaryRules } from "./wakes.ts";
 import { hasShortcomings, shortcomings, shortcomingsText } from "../memory/gaps.ts";
+import { digestMergeText } from "../memory/digest-merge.ts";
 import "./profile-jobs.ts";
 import "./wakes.ts";
 import "./digest.ts";
@@ -243,7 +244,7 @@ registerHandler("agent", async (ctx) => {
     else if (replyAt) {
       const { sendLark } = await import("../channels/lark-send.ts");
       const { resolveCitations } = await import("../channels/common.ts");
-      await sendLark({ replyTo: replyAt.messageId, inThread: true, bot: lark?.bot }, { markdown: await resolveCitations(ctx.app, answer, { runId: ctx.run.id, chatId: replyAt.chatId }) });
+      await sendLark({ replyTo: replyAt.messageId, inThread: true, bot: lark?.bot, runId: ctx.run.id }, { markdown: await resolveCitations(ctx.app, answer, { runId: ctx.run.id, chatId: replyAt.chatId }) });
     }
     else notify(ctx.app, { title: `${name}（规则「${rule.name}」）`, body: truncate(answer, 3000), link: `#/runs/${ctx.run.id}` });
   } else if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: name });
@@ -851,9 +852,14 @@ registerHandler("heartbeat", async (ctx) => {
 
 // -------------------------------------------------------------------- dream
 
+/** The first night looks back a week, not at everything ever written. */
+export function dreamSince(app: App) {
+  return one<{ value: string }>(app.db, "select value from kv where key = 'dream_at'")?.value ?? new Date(Date.now() - 7 * 86400_000).toISOString();
+}
+
 registerHandler("dream", async (ctx) => {
   const app = ctx.app;
-  const since = one<{ value: string }>(app.db, "select value from kv where key = 'dream_at'")?.value ?? "1970-01-01";
+  const since = dreamSince(app);
   const mems = all<{ id: string; space_id: string; kind: string; subject: string; content: string; status: string }>(
     app.db,
     "select id, space_id, kind, subject, content, status from memories where updated_at > ? order by updated_at desc limit 80",
@@ -874,8 +880,9 @@ registerHandler("dream", async (ctx) => {
   ).reverse();
   run(app.db, "insert into kv(key,value) values('dream_at', ?) on conflict(key) do update set value = excluded.value", now());
   const candidates = relationCandidates(app);
-  const gaps = shortcomings(app, { since: since > "2000" ? since : undefined });
-  if (!mems.length && !items.length && !said.length && !candidates.length && !hasShortcomings(gaps)) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
+  const gaps = shortcomings(app, { since });
+  const merge = digestMergeText(app);
+  if (!mems.length && !items.length && !said.length && !candidates.length && !hasShortcomings(gaps) && !merge) return { quiet: true, summary: "自上次整理以来没有新的记忆、事项或对话" };
   const relations = listSpaces(app).flatMap((s) => relatedSpaces(app, s.id).filter((r) => s.id < r.space).map((r) => `- ${s.id} ↔ ${r.space}${r.note ? `：${r.note}` : ""}`));
   const task = [
     `上次整理：${since}`,
@@ -884,6 +891,7 @@ registerHandler("dream", async (ctx) => {
     said.length ? `期间本人说过的话（检查有没有漏记的计划、承诺、等待和长期事实；来源写 msg:<id>）：\n${said.map((m) => `- msg:${m.id} ${m.created_at.slice(0, 16)}：${truncate(m.text.replace(/\s+/g, " "), 300)}`).join("\n")}` : "",
     runs.length ? `期间的后台运行（用于提炼经验）：\n${runs.map((r) => `- [${r.kind}/${r.status}] ${r.title}${r.error ? "：" + truncate(r.error, 120) : ""}`).join("\n")}` : "",
     relations.length ? `已关联的空间：\n${relations.join("\n")}` : "",
+    merge,
     (() => {
       const pairs = sameTopicPairs(app, mems.filter((m) => m.status === "active").map((m) => m.id));
       return pairs.length

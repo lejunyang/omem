@@ -24,6 +24,47 @@ import { vectorIndex } from "../search/vectors.ts";
 
 const packageRoot = async () => (await import("../setup.ts")).packageRoot();
 
+/** Above this p90 a tool call is slow enough that agents give up on omem and work around it. */
+export const SLOW_TOOL_MS = 30_000;
+
+/**
+ * How long agents' tool calls took (the `ms` on completed tool events, acp.ts) in runs of the last
+ * `hours`: count, p50, p90, max overall and the slowest tools by p90 (at least 5 calls each).
+ */
+export function toolLatency(app: App, hours = 24) {
+  const since = new Date(Date.now() - hours * 3600_000).toISOString();
+  const rows = all<{ title: string | null; ms: number }>(
+    app.db,
+    `select json_extract(e.data, '$.title') title, json_extract(e.data, '$.ms') ms from run_events e
+      where e.run_id in (select id from runs where created_at > ?) and e.type = 'tool' and instr(e.data, '"ms":') > 0`,
+    since,
+  ).filter((r) => typeof r.ms === "number");
+  const pct = (xs: number[], p: number) => (xs.length ? xs[Math.min(xs.length - 1, Math.floor(p * xs.length))] : 0);
+  const all_ = rows.map((r) => r.ms).sort((a, b) => a - b);
+  const byTool = new Map<string, number[]>();
+  // omem tools show as "omem · <name>" or "mcp__omem__<name>"; others by their title's first words.
+  const name = (t: string | null) => (t ?? "?").replace(/^mcp__\w+__/, "").split(/[\s(:：]/)[0].slice(0, 60) || "?";
+  for (const r of rows) byTool.set(name(r.title), [...(byTool.get(name(r.title)) ?? []), r.ms]);
+  const slowest = [...byTool]
+    .filter(([, xs]) => xs.length >= 5)
+    .map(([tool, xs]) => {
+      xs.sort((a, b) => a - b);
+      return { tool, n: xs.length, p90Ms: pct(xs, 0.9), maxMs: xs.at(-1)! };
+    })
+    .sort((a, b) => b.p90Ms - a.p90Ms)
+    .slice(0, 5);
+  const p90 = pct(all_, 0.9);
+  return {
+    hours,
+    n: all_.length,
+    p50Ms: pct(all_, 0.5),
+    p90Ms: p90,
+    maxMs: all_.at(-1) ?? 0,
+    slowest,
+    ...(p90 > SLOW_TOOL_MS ? { warning: `最近 ${hours} 小时工具调用的 p90 是 ${Math.round(p90 / 1000)} 秒，超过 ${SLOW_TOOL_MS / 1000} 秒：多半在排队（看 runsRunning 和存量整理），Agent 会绕开 omem 改读本地副本` } : {}),
+  };
+}
+
 /** Health and state in one call. */
 export async function diag(app: App) {
   const root = await packageRoot();
@@ -48,6 +89,7 @@ export async function diag(app: App) {
       runsQueued: count("select count(*) n from runs where status = 'queued'"),
       runsRunning: count("select count(*) n from runs where status = 'running'"),
     },
+    toolLatency: toolLatency(app),
     schedules: listSchedules(app).map((s) => ({ id: s.id, enabled: s.enabled, cron: s.cron, lastRunAt: s.lastRunAt, next: next[s.id] })),
     recentFailures: all<{ id: string; kind: string; title: string; error: string | null; finished_at: string | null }>(
       app.db,
@@ -60,6 +102,8 @@ export async function diag(app: App) {
       backfilling: count("select count(*) n from lark_cursors where backfill_to_ms is not null and oldest_ms > backfill_to_ms"),
       lastMentionsCheck: kv("lark_mentions_since_ms") ? new Date(Number(kv("lark_mentions_since_ms"))).toISOString() : null,
       lastHeartbeat: kv("heartbeat_at"),
+      // Reaction feedback (lark-feedback.ts): whether the events arrive at all; samples in kv lark_reaction_samples.
+      reactions: (await import("../channels/lark-feedback.ts")).reactionEventsQuiet(app),
     },
     // Optional local tools; aad is desktop and browser control (skill desktop-control).
     tools: { aad: desktopControl.status() },
@@ -250,29 +294,25 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "lark-bot-permissions": {
-    description: "飞书机器人缺哪些权限（含 @ 人要用的 user_id、邮箱），返回一键申请的链接；scan: true 时在后台发起扫码补齐，返回二维码链接（在飞书里打开确认）",
-    schema: z.object({ scan: z.boolean().default(false) }),
+    description: "飞书机器人缺哪些权限（含 @ 人要用的 user_id、邮箱）和事件订阅（收消息、表情反馈、会议邀请、卡片回调），返回一键申请的链接；scan: true 时在后台发起扫码补齐，返回二维码链接（在飞书里打开确认）",
+    schema: z.object({ scan: z.boolean().default(false), bot: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/).default("main") }),
     run: async (app, a) => {
-      const { checkLarkApp, larkAppSecret, larkScopeLink, LARK_BOT_ADDONS, registerLarkBot, saveLarkSecret } = await import("../channels/lark-setup.ts");
-      const cfg = app.config.lark;
-      const secret = larkAppSecret(app.home, cfg.appId, cfg.appSecretEnv);
-      if (!cfg.appId || !secret) throw new Error("还没有绑定飞书机器人");
-      const check = await checkLarkApp(cfg.appId, secret);
-      if (check.error) throw new Error(check.error);
-      const missing = check.scopesUnknown ? LARK_BOT_ADDONS.scopes.tenant : check.missingScopes;
-      const out: Record<string, unknown> = { bot: check.botName, scopesUnknown: !!check.scopesUnknown, missing, link: missing.length ? larkScopeLink(cfg.appId, missing) : null };
-      if (a.scan) {
-        out.scan = await new Promise((resolve) => {
-          registerLarkBot({ appId: cfg.appId, onQr: (url, expires) => resolve({ url, expiresInMinutes: Math.round(expires / 60) }) })
-            .then(async (creds) => {
-              saveLarkSecret(app.home, { ...creds, name: check.botName });
-              const { notify } = await import("./notify.ts");
-              const after = await checkLarkApp(creds.appId, creds.appSecret);
-              notify(app, { title: "飞书机器人权限已更新", body: after.missingScopes.length ? `仍缺：${after.missingScopes.join("、")}（可能在等管理员审批）` : "权限已补齐" });
-            })
-            .catch((e) => resolve({ error: (e as Error).message }));
-        });
-      }
+      const { checkLarkBots, updateLarkBotByScan } = await import("../channels/lark-bot-check.ts");
+      const bots = await checkLarkBots(app);
+      const main = bots.find((b) => b.ref === a.bot);
+      if (!main) throw new Error("还没有绑定飞书机器人");
+      if (main.error && !main.name) throw new Error(main.error);
+      const out: Record<string, unknown> = {
+        bot: main.name,
+        scopesUnknown: main.scopes.unknown,
+        missing: main.scopes.missing,
+        link: main.scopes.link,
+        events: main.events,
+        callbacks: main.callbacks,
+        reactionsQuiet: main.reactionsQuiet,
+        others: bots.filter((b) => b.ref !== a.bot).map((b) => ({ ref: b.ref, name: b.name, error: b.error, missing: b.scopes.missing, eventsMissing: b.events.missing.map((e) => e.name) })),
+      };
+      if (a.scan) out.scan = await updateLarkBotByScan(app, a.bot);
       return out;
     },
   },

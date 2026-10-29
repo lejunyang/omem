@@ -137,6 +137,45 @@ async function checkPerms() {
     permsLoading.value = false;
   }
 }
+// The bot apps' permissions and event subscriptions (src/channels/lark-bot-check.ts).
+type BotEvent = { name: string; label: string; optional?: boolean };
+type BotCheck = {
+  ref: string;
+  appId: string;
+  name?: string;
+  error?: string;
+  scopes: { missing: string[]; unknown: boolean; link: string | null };
+  events: { subscribed: string[] | null; missing: BotEvent[]; unpublished: string[]; mode: string | null; link: string };
+  callbacks: { subscribed: string[] | null; missing: { name: string; label: string }[] };
+  reactionsQuiet: { days: number; botMessages: number; reactions: number; everReceived: boolean; quiet: boolean };
+};
+const botCheck = ref<BotCheck[] | null>(null);
+const botChecking = ref(false);
+const scanLinks = ref<Record<string, string>>({});
+async function checkBots() {
+  botChecking.value = true;
+  try {
+    botCheck.value = (await get<{ bots: BotCheck[] }>("/api/lark/bot-check")).bots;
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    botChecking.value = false;
+  }
+}
+async function scanBot(ref_: string) {
+  try {
+    const r = await post<{ url?: string; error?: string }>(`/api/lark/bot-check/${ref_}/scan`, {});
+    if (r.url) {
+      scanLinks.value = { ...scanLinks.value, [ref_]: r.url };
+      window.open(r.url, "_blank", "noopener");
+    } else toast(r.error ?? "没有拿到扫码链接", "error");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+const required = (b: BotCheck) => b.events.missing.filter((e) => !e.optional);
+const optional = (b: BotCheck) => b.events.missing.filter((e) => e.optional);
+
 async function grantPerms() {
   try {
     const r = await post<{ url: string | null }>("/api/lark/user-permissions", {});
@@ -739,6 +778,39 @@ async function saveEdit() {
         <p class="muted small">在终端运行 <span class="mono">omem setup</span> → 渠道 → 飞书机器人：扫码创建新机器人，或绑定 lark-cli 里已有的应用；权限、长连接事件和卡片回调一并申请，不用在开放平台手工配置，也不用复制 App Secret。密钥只存在本机 <span class="mono">secrets/lark.json</span>（环境变量 {{ config.lark.appSecretEnv }} 可覆盖）。</p>
         <label class="field"><span>本人 open_id（setup 扫码通常自动填）</span><input class="input mono" :value="config.lark.ownerOpenId ?? ''" placeholder="不知道可先私聊机器人一句，再运行 omem setup" @change="saveConfig({ lark: { ...config.lark, ownerOpenId: ($event.target as HTMLInputElement).value } })" /></label>
       </div>
+      <div v-if="config.lark.appId" class="card pad stack">
+        <div class="row wrap">
+          <strong>机器人权限与事件</strong><span class="spacer" />
+          <button class="btn sm" :disabled="botChecking" @click="checkBots">{{ botChecking ? "检查中…" : "检查" }}</button>
+        </div>
+        <p class="muted small">omem 用到的应用权限、事件订阅（收消息、表情反馈、会议邀请）和卡片回调。缺的权限可以直接去开发者后台申请；“扫码更新”在飞书里确认后一次补齐权限、事件和回调。事件订阅改了以后，要在开发者后台发布新版本才生效。</p>
+        <div v-for="b in botCheck ?? []" :key="b.ref" class="bot-row stack">
+          <div class="row wrap">
+            <strong>{{ b.name ?? b.ref }}</strong><span class="muted small mono">{{ b.appId }}</span><span class="spacer" />
+            <button class="btn sm" @click="scanBot(b.ref)">扫码更新</button>
+          </div>
+          <p v-if="b.error" class="small warn-text">{{ b.error }}</p>
+          <div class="small">
+            权限：
+            <template v-if="b.scopes.unknown">读不到已开通的权限，<a v-if="b.scopes.link" :href="b.scopes.link" target="_blank" rel="noopener">在开发者后台核对并申请</a></template>
+            <template v-else-if="b.scopes.missing.length">缺 {{ b.scopes.missing.length }} 项，<a :href="b.scopes.link!" target="_blank" rel="noopener">一键申请</a><div class="muted mono break">{{ b.scopes.missing.join("、") }}</div></template>
+            <span v-else class="badge accent">齐全</span>
+          </div>
+          <div class="small">
+            事件：
+            <template v-if="b.events.subscribed === null">
+              读不到订阅列表<template v-if="b.reactionsQuiet.quiet">；最近 {{ b.reactionsQuiet.days }} 天机器人发了 {{ b.reactionsQuiet.botMessages }} 条消息，一个表情事件都没收到，多半没订阅表情事件</template><template v-else-if="!b.reactionsQuiet.everReceived">；还没收到过表情事件</template>。
+            </template>
+            <template v-else-if="required(b).length">缺 {{ required(b).map((e) => e.label).join("、") }}<div class="muted mono break">{{ required(b).map((e) => e.name).join("、") }}</div></template>
+            <span v-else class="badge accent">已订阅</span>
+            <span v-if="b.events.subscribed !== null && optional(b).length" class="muted">（可选，未订阅：{{ optional(b).map((e) => e.label).join("、") }}）</span>
+            <div v-if="b.events.unpublished.length" class="warn-text">已订阅但线上版本还没有：{{ b.events.unpublished.join("、") }}，发布新版本后生效</div>
+            <a :href="b.events.link" target="_blank" rel="noopener">去事件订阅页面</a>
+          </div>
+          <div v-if="b.callbacks.missing.length" class="small warn-text">卡片回调未订阅：{{ b.callbacks.missing.map((c) => `${c.label}（${c.name}）`).join("、") }}</div>
+          <a v-if="scanLinks[b.ref]" class="small" :href="scanLinks[b.ref]" target="_blank" rel="noopener">在飞书里打开扫码链接确认（确认后会收到通知）</a>
+        </div>
+      </div>
       <div class="field"><span>默认空间</span><UiSelect :model-value="config.lark.defaultSpace" width="240px" aria-label="默认空间" :options="state.spaces.map((s) => ({ value: s.id, label: s.name }))" @change="(v) => saveConfig({ lark: { ...config.lark, defaultSpace: v } })" /></div>
       <label class="field"><span>网页地址（从飞书或其他设备打开 omem 页面用）</span><input class="input mono" :value="config.webUrl ?? ''" placeholder="如 http://192.0.2.10:4317，或反向代理的地址" @change="saveConfig({ webUrl: ($event.target as HTMLInputElement).value.trim() }, '已保存网页地址')" /><span class="muted small">填了以后，通知卡片里的“打开链接”和插件页的链接（如英语练习）在飞书里能直接打开，回答里引用的代码、工作文件、记忆和 Wiki 变成只读分享链接（设置 → 分享）；从其他设备打开还需要令牌（<span class="mono">omem link</span>）。</span></label>
 
@@ -1120,6 +1192,10 @@ async function saveEdit() {
   padding-top: 10px;
   display: grid;
   gap: 8px;
+  min-width: 0;
+}
+.break {
+  overflow-wrap: anywhere;
 }
 .probe {
   padding: 10px 16px;
