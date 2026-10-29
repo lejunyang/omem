@@ -74,7 +74,9 @@ describe("items close themselves", () => {
     setLarkCliForTests(async (args) => {
       if (args.includes("auth")) return { data: { identities: { user: { openId: "ou_me" } } } };
       const id = args[args.indexOf("--message-ids") + 1];
-      return { data: { items: [{ reactions: (reactions[id] ?? []).map((t) => ({ reaction_type: { emoji_type: t }, operators: [{ open_id: "ou_me" }] })) }] } };
+      // The shape lark-cli's +messages-mget really returns (checked against the CLI).
+      const mine = reactions[id] ?? [];
+      return { data: { messages: [{ message_id: id, ...(mine.length ? { reactions: { counts: mine.map((t) => ({ count: "1", reaction_type: t })), details: mine.map((t) => ({ action_time: "1793267838", emoji_type: t, operator: { operator_id: "ou_me", operator_type: "user" } })) } } : {}) }], total: 1 } };
     });
     const t = Date.now() - 3 * 3600_000;
     const chat = upsertSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_x", title: "项目 A 群", text: [line(t, "小王", "@本人 员工号要加白", "om_1"), line(t + 60_000, "本人（本人）", "已经加白了", "om_2")].join("\n") });

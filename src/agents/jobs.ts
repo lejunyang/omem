@@ -243,7 +243,7 @@ registerHandler("agent", async (ctx) => {
     else if (replyAt) {
       const { sendLark } = await import("../channels/lark-send.ts");
       const { resolveCitations } = await import("../channels/common.ts");
-      await sendLark({ replyTo: replyAt.messageId, inThread: true, bot: lark?.bot }, { markdown: await resolveCitations(ctx.app, answer, { runId: ctx.run.id, chatId: replyAt.chatId }) });
+      await sendLark({ replyTo: replyAt.messageId, inThread: true, bot: lark?.bot, runId: ctx.run.id }, { markdown: await resolveCitations(ctx.app, answer, { runId: ctx.run.id, chatId: replyAt.chatId }) });
     }
     else notify(ctx.app, { title: `${name}（规则「${rule.name}」）`, body: truncate(answer, 3000), link: `#/runs/${ctx.run.id}` });
   } else if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: name });

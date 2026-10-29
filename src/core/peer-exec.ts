@@ -60,6 +60,8 @@ export async function diag(app: App) {
       backfilling: count("select count(*) n from lark_cursors where backfill_to_ms is not null and oldest_ms > backfill_to_ms"),
       lastMentionsCheck: kv("lark_mentions_since_ms") ? new Date(Number(kv("lark_mentions_since_ms"))).toISOString() : null,
       lastHeartbeat: kv("heartbeat_at"),
+      // Reaction feedback (lark-feedback.ts): whether the events arrive at all; samples in kv lark_reaction_samples.
+      reactions: (await import("../channels/lark-feedback.ts")).reactionEventsQuiet(app),
     },
     // Optional local tools; aad is desktop and browser control (skill desktop-control).
     tools: { aad: desktopControl.status() },
@@ -250,29 +252,25 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "lark-bot-permissions": {
-    description: "飞书机器人缺哪些权限（含 @ 人要用的 user_id、邮箱），返回一键申请的链接；scan: true 时在后台发起扫码补齐，返回二维码链接（在飞书里打开确认）",
-    schema: z.object({ scan: z.boolean().default(false) }),
+    description: "飞书机器人缺哪些权限（含 @ 人要用的 user_id、邮箱）和事件订阅（收消息、表情反馈、会议邀请、卡片回调），返回一键申请的链接；scan: true 时在后台发起扫码补齐，返回二维码链接（在飞书里打开确认）",
+    schema: z.object({ scan: z.boolean().default(false), bot: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/).default("main") }),
     run: async (app, a) => {
-      const { checkLarkApp, larkAppSecret, larkScopeLink, LARK_BOT_ADDONS, registerLarkBot, saveLarkSecret } = await import("../channels/lark-setup.ts");
-      const cfg = app.config.lark;
-      const secret = larkAppSecret(app.home, cfg.appId, cfg.appSecretEnv);
-      if (!cfg.appId || !secret) throw new Error("还没有绑定飞书机器人");
-      const check = await checkLarkApp(cfg.appId, secret);
-      if (check.error) throw new Error(check.error);
-      const missing = check.scopesUnknown ? LARK_BOT_ADDONS.scopes.tenant : check.missingScopes;
-      const out: Record<string, unknown> = { bot: check.botName, scopesUnknown: !!check.scopesUnknown, missing, link: missing.length ? larkScopeLink(cfg.appId, missing) : null };
-      if (a.scan) {
-        out.scan = await new Promise((resolve) => {
-          registerLarkBot({ appId: cfg.appId, onQr: (url, expires) => resolve({ url, expiresInMinutes: Math.round(expires / 60) }) })
-            .then(async (creds) => {
-              saveLarkSecret(app.home, { ...creds, name: check.botName });
-              const { notify } = await import("./notify.ts");
-              const after = await checkLarkApp(creds.appId, creds.appSecret);
-              notify(app, { title: "飞书机器人权限已更新", body: after.missingScopes.length ? `仍缺：${after.missingScopes.join("、")}（可能在等管理员审批）` : "权限已补齐" });
-            })
-            .catch((e) => resolve({ error: (e as Error).message }));
-        });
-      }
+      const { checkLarkBots, updateLarkBotByScan } = await import("../channels/lark-bot-check.ts");
+      const bots = await checkLarkBots(app);
+      const main = bots.find((b) => b.ref === a.bot);
+      if (!main) throw new Error("还没有绑定飞书机器人");
+      if (main.error && !main.name) throw new Error(main.error);
+      const out: Record<string, unknown> = {
+        bot: main.name,
+        scopesUnknown: main.scopes.unknown,
+        missing: main.scopes.missing,
+        link: main.scopes.link,
+        events: main.events,
+        callbacks: main.callbacks,
+        reactionsQuiet: main.reactionsQuiet,
+        others: bots.filter((b) => b.ref !== a.bot).map((b) => ({ ref: b.ref, name: b.name, error: b.error, missing: b.scopes.missing, eventsMissing: b.events.missing.map((e) => e.name) })),
+      };
+      if (a.scan) out.scan = await updateLarkBotByScan(app, a.bot);
       return out;
     },
   },

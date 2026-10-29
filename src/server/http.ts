@@ -1471,6 +1471,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!scopes.length) return { url: null };
     return requestUserScopes(app, scopes, "在设置页补齐授权：");
   });
+  // The bot apps' permissions and event subscriptions (lark-bot-check.ts), and fixing them by scan.
+  server.get("/api/lark/bot-check", async () => ({ bots: await (await import("../channels/lark-bot-check.ts")).checkLarkBots(app) }));
+  server.post("/api/lark/bot-check/:ref/scan", async (req) => {
+    const ref = q(z.object({ ref: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/) }), req.params).ref;
+    return (await import("../channels/lark-bot-check.ts")).updateLarkBotByScan(app, ref);
+  });
+  // Reactions on what the bots sent, by profile and model (lark-feedback.ts).
+  server.get("/api/feedback/stats", async (req) => {
+    const days = q(z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }), req.query ?? {}).days;
+    return (await import("../channels/lark-feedback.ts")).feedbackStats(app, days);
+  });
   // Knowledge-base crawls (lark-wiki.ts): progress, continue, stop.
   server.get("/api/lark/wiki-crawls", async () => ({ crawls: (await import("../channels/lark-wiki.ts")).listCrawls(app) }));
   server.post("/api/lark/wiki-crawls/:id/:op", async (req) => {

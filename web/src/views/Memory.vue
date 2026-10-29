@@ -272,6 +272,7 @@ type Gaps = {
   rejectedWrites: { n: number; codes: Record<string, number> };
   retracted: { id: string; content: string; note: string }[];
   passive: { shown: number; used: number };
+  reactions?: { negative: { messageId: string; runId: string | null; emoji: string; actorKind: string; at: string; answer: string }[]; positive: number };
 };
 const gaps = ref<Gaps | null>(null);
 const gapDays = ref(7);
@@ -280,7 +281,8 @@ async function loadGaps() {
 }
 watch(tab, (t) => t === "gaps" && loadGaps());
 watch(gapDays, loadGaps);
-const gapsEmpty = computed(() => !!gaps.value && !gaps.value.notFound.length && !gaps.value.corrections.length && !gaps.value.failedRuns.length && !gaps.value.retracted.length && !gaps.value.rejectedWrites.n);
+const gapsEmpty = computed(() => !!gaps.value && !gaps.value.notFound.length && !gaps.value.corrections.length && !gaps.value.failedRuns.length && !gaps.value.retracted.length && !gaps.value.rejectedWrites.n && !gaps.value.reactions?.negative.length);
+const actorLabel: Record<string, string> = { owner: "你", member: "其他用户", guest: "访客" };
 const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract" ? "danger" : v === "rewrite" ? "warn" : "");
 </script>
 
@@ -463,7 +465,7 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
       <div v-if="!gaps" class="skeleton"><div v-for="i in 3" :key="i" class="sk-line" /></div>
       <template v-else>
         <div class="row wrap qhead">
-          <span class="muted small">从日常运行里按规则挑出的线索：回答说没找到、本人纠正了回答、失败的运行、被撤回或拦下的记忆。每晚整理时会逐条看能不能补（记下缺的事实、写经验或案例、建事项问你）。</span>
+          <span class="muted small">从日常运行里按规则挑出的线索：回答说没找到、本人纠正了回答、飞书里对回答加的负面表情、失败的运行、被撤回或拦下的记忆。每晚整理时会逐条看能不能补（记下缺的事实、写经验或案例、建事项问你）。</span>
           <span class="spacer" />
           <UiSegmented v-model="gapDays" size="sm" aria-label="统计范围" :options="[{ value: 7, label: '7 天' }, { value: 30, label: '30 天' }]" />
         </div>
@@ -483,6 +485,13 @@ const verdictClass = (v: string | null) => (v === "keep" ? "ok" : v === "retract
             <p class="content">你说：{{ g.said }}</p>
             <p class="content muted-ink">之前答：{{ g.answer }}</p>
           </a>
+        </template>
+        <template v-if="gaps.reactions?.negative.length">
+          <h2 class="section-title">回答收到负面表情 <span class="muted small">同期正面 {{ gaps.reactions.positive }} 个</span></h2>
+          <component :is="g.runId ? 'router-link' : 'div'" v-for="g in gaps.reactions.negative" :key="g.messageId + g.emoji + g.actorKind" :to="g.runId ? `/runs/${g.runId}` : undefined" class="rej gap">
+            <div class="row small wrap"><span class="badge danger">{{ actorLabel[g.actorKind] ?? g.actorKind }} · {{ g.emoji }}</span><span class="muted">{{ fmtTime(g.at) }}</span></div>
+            <p v-if="g.answer" class="content muted-ink">回答：{{ g.answer }}</p>
+          </component>
         </template>
         <template v-if="gaps.failedRuns.length">
           <h2 class="section-title">失败的运行</h2>

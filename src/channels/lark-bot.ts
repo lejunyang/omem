@@ -23,13 +23,14 @@ import { startReplyProgress } from "./lark-progress.ts";
 import { finishCot } from "./lark-cot.ts";
 import { watchAgentBubbles } from "./lark-agent-cot.ts";
 import { handleCardAction } from "./lark-actions.ts";
-import { larkBotInfo, larkOwnerOpenId, openLarkTopic, postedByOmem, reactLark, sendLark, setLarkBotClient, unreactLark } from "./lark-send.ts";
+import { larkBotInfo, larkOwnerOpenId, onLarkSent, openLarkTopic, postedByOmem, reactLark, sendLark, setLarkBotClient, unreactLark } from "./lark-send.ts";
 import { bindAnswerer, botChannel, botRoster, chatContext, keepsRecords, larkUser, learnPeerIds, personSpoke, registerRelay, relayMentions, renderBotMentions, rosterNote, type BotRef } from "./lark-bots.ts";
 import { larkAppSecret } from "./lark-setup.ts";
 import { routeWatchedMessages } from "./lark-watch.ts";
 import { askAsGuest, guestApprovalCard, guestsAllowed, onGuestApproved, ownerInChat, waitGuest, type GuestApproval } from "./lark-guest.ts";
 import { claimedByRule, markAddressed } from "../rules/store.ts";
 import { larkSenderNames } from "./lark-sender.ts";
+import { markLarkSent, onLarkReaction, recordLarkSent } from "./lark-feedback.ts";
 
 /**
  * Feishu/Lark bot channel.
@@ -173,6 +174,9 @@ export async function startLarkBot(app: App, ref: BotRef = "main") {
   const dispatcher = new lark.EventDispatcher({ loggerLevel: lark.LoggerLevel.warn }).register({
     "im.message.receive_v1": handlers.message,
     "card.action.trigger": handlers.cardAction,
+    // Reactions on what the bots sent (lark-feedback.ts); the app must subscribe to both (lark-setup.ts does).
+    "im.message.reaction.created_v1": (d: unknown) => handlers.reaction(d, "created"),
+    "im.message.reaction.deleted_v1": (d: unknown) => handlers.reaction(d, "deleted"),
     // Put into a meeting from the meeting itself (lark-meetings.ts); the app must subscribe to it.
     "vc.bot.meeting_invited_v1": (d: Record<string, unknown>) =>
       void import("./lark-meetings.ts").then((m) => m.botInvitedToMeeting(app, ref, d)).catch((e) => console.warn(`[omem] 处理会议邀请失败：${(e as Error).message}`)),
@@ -202,6 +206,8 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   }
   const botName = kv(app, key("lark_bot_name")) ?? ref;
   setLarkBotClient(ref, client, botOpenId, botName);
+  // What every bot posts is recorded, so reactions on it find their run.
+  onLarkSent((sent) => recordLarkSent(app, sent));
   // Shared by all bots; each follows the conversation or card it belongs to.
   if (!extra) {
     registerCodeProgress(app);
@@ -211,7 +217,10 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
 
   const nameOf = larkSenderNames(app, client);
 
-  const reply = (chatId: string, markdown: string, replyTo?: string, inThread = false, note?: string) => sendLark(replyTo ? { replyTo, inThread } : { chatId }, { markdown, ...(note ? { note } : {}) });
+  /** `rec`: the run and conversation the message answers for (lark-feedback.ts). */
+  type Rec = { runId?: string | null; conversationId?: string | null };
+  const reply = (chatId: string, markdown: string, replyTo?: string, inThread = false, note?: string, rec: Rec = {}) =>
+    sendLark(replyTo ? { replyTo, inThread, ...rec } : { chatId, ...rec }, { markdown, ...(note ? { note } : {}) });
 
   /**
    * Group names for shared group cards: the bot can only read groups it is in, so fall back to
@@ -254,7 +263,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const markdown = await resolveCitations(app, raw, cite);
     // First message of a multi-agent work topic: open the topic from the request message.
     if (!topic && typeof (meta as { openTopicFrom?: unknown }).openTopicFrom === "string") {
-      const sent = await sendLark({ replyTo: String(meta.openTopicFrom), inThread: true }, { markdown });
+      const sent = await sendLark({ replyTo: String(meta.openTopicFrom), inThread: true, runId: cite.runId, conversationId: thread.id }, { markdown });
       // Keep Feishu's thread id as is (omt_…): replies inside the topic arrive with the same id,
       // so they resolve to this work conversation instead of starting a second one.
       if (sent.threadId) {
@@ -275,10 +284,10 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       const { buildCard } = await import("./lark-send.ts");
       const card = buildCard({ wide: true, blocks: [{ markdown }, { fold: { title: String(meta.detailsTitle ?? "完整记录"), markdown: await resolveCitations(app, details, cite) } }] });
       const to = thread.settings.lastMessageId ? { replyTo: thread.settings.lastMessageId, inThread: !!topic } : { chatId };
-      await sendLark(to, { card });
+      await sendLark({ ...to, purpose: "answer", runId: cite.runId, conversationId: thread.id }, { card });
       return;
     }
-    await reply(chatId, markdown, thread.settings.lastMessageId, !!topic);
+    await reply(chatId, markdown, thread.settings.lastMessageId, !!topic, undefined, { runId: cite.runId, conversationId: thread.id });
   }));
 
   // Background work tied to a conversation goes there (its Feishu topic, through its bot), never as
@@ -302,8 +311,9 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     return target;
   };
   const push = (n: Parameters<Parameters<typeof addNotificationSink>[0]>[0], deferred = false) => withBot(notifyConversation(n)?.bot, async () => {
-    const target = targetOf(n);
-    if (!target) return;
+    const to = targetOf(n);
+    if (!to) return;
+    const target = { ...to, purpose: "notification" as const };
     // The newer state of a card already sent (an authorization now done): edit that card, no new ping.
     const earlier = n.replaces ? notificationCardOf(app, n.replaces) : null;
     if (earlier) {
@@ -369,7 +379,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       if (!target) continue;
       const { buildCard } = await import("./lark-send.ts");
       const lines = items.map((n) => `- ${n.title}`).join("\n");
-      await sendLark(target, { card: buildCard({ title: `夜里的 ${items.length} 条通知`, blocks: [{ markdown: lines }, { note: "详情在网页的通知里" }] }) }).catch((e) => console.warn("[omem] 夜间通知补发失败", e));
+      await sendLark({ ...target, purpose: "notification" }, { card: buildCard({ title: `夜里的 ${items.length} 条通知`, blocks: [{ markdown: lines }, { note: "详情在网页的通知里" }] }) }).catch((e) => console.warn("[omem] 夜间通知补发失败", e));
     }
   };
   if (!extra) setInterval(() => void sendDeferred().catch(() => {}), 5 * 60_000).unref();
@@ -498,7 +508,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     if (working) await unreactLark(m.messageId, working);
     if (withOwner && v?.verdict === "answer") return true;
     const say = v?.verdict === "refuse" ? v.reply : v?.verdict === "answer" ? v.answer : "";
-    if (say) await reply(m.chatId, await resolveCitations(app, say, { runId: r.id, chatId: m.chatId }), m.messageId, !!m.topicId, `运行 ${r.id}`).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
+    if (say) await reply(m.chatId, await resolveCitations(app, say, { runId: r.id, chatId: m.chatId }), m.messageId, !!m.topicId, `运行 ${r.id}`, { runId: r.id }).catch((e) => console.warn("[omem] 飞书访客回复失败", e));
     // A person (not a bot) refused in a group: ask the owner whether to let this one through.
     if (v?.verdict === "refuse" && !m.fromApp && m.chatType === "group") await askOwnerAboutGuest(m, r.id, v.reason).catch((e) => console.warn("[omem] 访客确认卡片发送失败", e));
     return false;
@@ -630,7 +640,9 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       const shown = renderBotMentions(app, ref, answer);
       // The run id in small print: the owner can search it in omem to see what the run did and wrote.
       const note = runId ? `运行 ${runId}` : undefined;
-      const sentId = p ? (await p.finish(shown, note), p.messageId) : (await reply(m.chatId, shown, replyMessageId, replyInThread, note)).messageId;
+      const sentId = p ? (await p.finish(shown, note), p.messageId) : (await reply(m.chatId, shown, replyMessageId, replyInThread, note, { runId })).messageId;
+      // The progress card became the answer: reactions on it are about this run.
+      if (sentId) markLarkSent(app, sentId, { purpose: "answer", runId, chatId: m.chatId, bot: ref });
       // It @-ed another omem bot: that one takes it from here.
       if (m.chatType === "group" && sentId) relayMentions(app, ref, { chatId: m.chatId, topicId: m.topicId, messageId: sentId, text: answer });
       if (runId && !p) await reactLark(m.messageId, "DONE").catch(() => {});
@@ -788,6 +800,21 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
         console.warn("[omem] 卡片操作处理失败", e);
         return { toast: { type: "error", content: "处理失败，请稍后再试" } };
       }
+    },
+    /** Someone added or removed an emoji on a message: feedback on what the bot sent (lark-feedback.ts). */
+    reaction: async (data: any, kind: "created" | "deleted") => {
+      try {
+        const actorOf = (ids: { open_id?: string; user_id?: string }) => {
+          const owner = ownerOpenId();
+          if (owner && ids.open_id === owner) return "owner" as const;
+          const user = larkUser(app, ids, ref);
+          return user === OWNER ? ("owner" as const) : user ? ("member" as const) : ("guest" as const);
+        };
+        onLarkReaction(app, ref, data ?? {}, kind, actorOf, postedByOmem);
+      } catch (e) {
+        console.warn(`[omem] 飞书机器人 ${ref} 记录表情失败：${(e as Error).message}`);
+      }
+      return {};
     },
     /** The handling of the last message (tests wait for it). */
     settled: () => processing,

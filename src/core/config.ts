@@ -26,6 +26,13 @@ export const agentProfileSchema = z.object({
 });
 export type AgentProfile = z.infer<typeof agentProfileSchema>;
 
+/** Feishu emoji_type names by what they say about an answer (checked against real events; `feedback.emoji`). */
+export const DEFAULT_FEEDBACK_EMOJI = {
+  positive: ["THUMBSUP", "APPLAUSE", "PRAISE", "AWESOMEN", "FINGERHEART", "HEART", "MUSCLE", "Fire", "HUNDRED", "100", "LGTM"],
+  negative: ["ThumbsDown", "CrossMark", "FACEPALM", "SPEECHLESS", "WHAT", "DIZZY", "ERROR"],
+  ack: ["OK", "DONE", "Get", "CheckMark", "JIAYI", "OnIt", "Yes"],
+};
+
 export const roleNames = [
   "assistant",
   "ingest",
@@ -532,6 +539,22 @@ export const configSchema = z.object({
       quietEnd: z.number().int().min(0).max(23).default(9),
     })
     .default({ onlyUnread: true, firstNudgeDelayMinutes: 30, quietStart: 22, quietEnd: 9 }),
+  /**
+   * Reactions on what the bots sent (src/channels/lark-feedback.ts). Feishu emoji_type names, matched
+   * without case; anything not listed is neutral. Acknowledgements (OK, DONE, +1…) say "received", not
+   * "good": they are kept apart and do not count as quality.
+   */
+  feedback: z
+    .object({
+      emoji: z
+        .object({
+          positive: z.array(z.string()).default(DEFAULT_FEEDBACK_EMOJI.positive),
+          negative: z.array(z.string()).default(DEFAULT_FEEDBACK_EMOJI.negative),
+          ack: z.array(z.string()).default(DEFAULT_FEEDBACK_EMOJI.ack),
+        })
+        .default(DEFAULT_FEEDBACK_EMOJI),
+    })
+    .default({ emoji: DEFAULT_FEEDBACK_EMOJI }),
   /**
    * Items close themselves: one with no new progress for `days[kind]` (counted from its
    * last activity: the owner touching it or new evidence) becomes "expired"; a reminder

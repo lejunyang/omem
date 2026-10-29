@@ -841,3 +841,11 @@ updated: 2026-10-28
 
 - **时段**：`runner.ts` 的 `routingGuide` 加一句：偏好和候选里写了时段（峰谷价格、排队高峰）的按每轮开头的现在时间选；不再把各模型的占用写进说明（说明一个会话只发一次，占用会过期），改为要求交办前用 `list_ai_backends` 看，它的结果加了 `now`（本人时区的日期、星期和时间）。`capacity.ts` 的 `loadLines` 随之删除。设置里候选“适合哪些任务”的提示写上可以写时段。
 - **`agent-upgrade`**（`peer-exec.ts`）：把目录里带 npm 包、且已经全局装好的 ACP 适配器升到 npm 最新版（`npm i -g <包>@latest`），返回升级前后的版本；别的包一律拒绝。
+
+## 10-30：表情反馈与机器人权限、事件检查
+
+- **记录发出的消息**：`lark-send.ts` 的 `sendLark` / `sendEphemeral` 发出后报给 `onLarkSent`，`lark-feedback.ts` 写进 `lark_sent`（消息 id、会话、运行、对话、用途、机器人）。`Target` 多了 `purpose`、`runId`、`conversationId`；回答、通知、进度卡片、交办进度、工具发送、线程投递各自带上；进度卡片变成回答时 `markLarkSent` 改成 answer。
+- **表情事件**：`lark-bot.ts` 给每个机器人注册 `im.message.reaction.created_v1` / `deleted_v1`，交给 `onLarkReaction`：应用加的忽略；机器人发的消息上谁的都记（本人 / 其他用户 / 访客），别人的消息上只记本人的；`feedback` 存原始 emoji_type 和 `feedback.emoji` 映射的极性（确认类单列，未知为中性），取消只填 `removed_at`，id 由（消息、人、表情）派生，多台设备拉取时相遇。前 3 个原始事件在 kv `lark_reaction_samples`。
+- **用途**：`feedbackStats`（`GET /api/feedback/stats`）按档案和模型分本人 / 其他用户 / 访客；Agent 页首屏和档案“进化”一栏显示；`profile-jobs.ts` 的复盘证据带表情、有负面的运行优先选入；`gaps.ts` 的不足信号加负面表情（做梦和记忆页“不足”）；`diag` 的 `lark.reactions` 报近 7 天是否收到过表情事件。
+- **通知闸门**：`notify-gate.ts` 的 `ownerReactions` 先读 `feedback`；lark-cli 的解析原来读 `data.items` 和数组形式的 `operators`，真机输出是 `data.messages[].reactions = { counts, details: [{ emoji_type, operator: { operator_id } }] }`，按真机改（`reactionsBy`），`test/item-expiry.test.ts` 的模拟数据一并改成真实形状。
+- **权限与事件检查**：`lark-setup.ts` 的 `checkLarkApp` 从应用信息里多读 `event.subscribed_events`、`callback`、线上版本的 `events`；`lark-bot-check.ts` 对照 `LARK_BOT_EVENTS`（收消息、两个表情事件、可选的会议邀请）和卡片回调，`GET /api/lark/bot-check`、`POST /api/lark/bot-check/:ref/scan`（重走应用注册补齐）；设置 → 渠道 新卡片；远程命令 `lark-bot-permissions` 多返回 `events`、`callbacks`、`reactionsQuiet`。读不到订阅时用“近 7 天发了 20 条以上却没有表情事件”提示。

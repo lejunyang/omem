@@ -198,7 +198,7 @@ async function deliverAs(app: App, askId: string) {
         d.ordinaryReply = info?.data?.chat_mode === "p2p";
         saveDelivery(app, askId, d);
       }
-      const sent = await sendLark(d.anchor ? { replyTo: d.anchor, inThread: !d.ordinaryReply, uuid } : { chatId: larkKey.split("#")[0], uuid }, { card });
+      const sent = await sendLark(d.anchor ? { replyTo: d.anchor, inThread: !d.ordinaryReply, uuid, purpose: "progress" } : { chatId: larkKey.split("#")[0], uuid, purpose: "progress" }, { card });
       if (!sent.messageId) throw new Error("飞书返回缺少消息 ID");
       chain = { ...chainAt(app, askId)!, larkMessageId: sent.messageId, larkKey: !larkKey.includes("#") && sent.threadId ? `${larkKey}#${sent.threadId}` : larkKey };
       saveCodeChain(app, chain, askId, ...chain.rounds);

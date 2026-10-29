@@ -8,6 +8,7 @@ import { profileDetail } from "./profiles.ts";
 import { loadRole, runRole } from "./runner.ts";
 import { createRun, registerHandler, runsInLane } from "./runs.ts";
 import { listAgentSpecs, readAgentSpec } from "./specs.ts";
+import { runReactions, runReactionsText } from "../channels/lark-feedback.ts";
 
 /** Which runs show a built-in role at work (an agent spec's are its `agent` runs). */
 const ROLE_RUNS: Record<string, string[]> = {
@@ -32,15 +33,19 @@ const ROLE_RUNS: Record<string, string[]> = {
 
 type EvidenceRun = { id: string; kind: string; status: string; title: string; error: string | null; created_at: string; finished_at: string | null; input: string; output: string | null };
 
-/** The profile's runs since its last review (newest last). */
+/**
+ * The profile's runs since its last review (newest last). Runs someone reacted to negatively come
+ * first when there are more than `limit` (lark-feedback.ts), then the newest.
+ */
 function recentRuns(app: App, name: string, since: string, limit = 12): EvidenceRun[] {
   const cols = "id, kind, status, title, error, created_at, finished_at, input, output";
+  const negative = "(select count(*) from feedback f where f.run_id = runs.id and f.polarity = 'negative' and f.removed_at is null and f.on_bot = 1)";
   const rows = isBuiltinRole(name)
     ? (ROLE_RUNS[name] ?? []).length
-      ? all<EvidenceRun>(app.db, `select ${cols} from runs where kind in (${ROLE_RUNS[name].map(() => "?").join(",")}) and created_at > ? and status in ('done','failed') and quiet = 0 order by created_at desc limit ?`, ...ROLE_RUNS[name], since, limit)
+      ? all<EvidenceRun>(app.db, `select ${cols} from runs where kind in (${ROLE_RUNS[name].map(() => "?").join(",")}) and created_at > ? and status in ('done','failed') and quiet = 0 order by ${negative} > 0 desc, created_at desc limit ?`, ...ROLE_RUNS[name], since, limit)
       : []
-    : all<EvidenceRun>(app.db, `select ${cols} from runs where kind = 'agent' and json_extract(input, '$.spec') = ? and created_at > ? and status in ('done','failed') order by created_at desc limit ?`, name, since, limit);
-  return rows.reverse();
+    : all<EvidenceRun>(app.db, `select ${cols} from runs where kind = 'agent' and json_extract(input, '$.spec') = ? and created_at > ? and status in ('done','failed') order by ${negative} > 0 desc, created_at desc limit ?`, name, since, limit);
+  return rows.sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
 /** What the run produced that this profile is answerable for. */
@@ -84,6 +89,10 @@ export function reviewTask(app: App, name: string, since: string) {
       r.error ? `错误：${truncate(r.error, 300)}` : "",
       `产出：${truncate(resultOf(name, r).trim() || "（无）", 1500)}`,
       said.length ? `之后本人说：\n${said.map((m) => `- msg:${m.id}（${m.created_at.slice(0, 16)}）${truncate(m.text.replace(/\s+/g, " "), 400)}`).join("\n")}` : "之后本人没有说什么",
+      (() => {
+        const r_ = runReactionsText(app, r.id);
+        return r_ ? `飞书里对它的回复加的表情：${r_}（确认收到类表情只表示看到了，不算好坏）` : "";
+      })(),
     ].filter(Boolean).join("\n");
   });
   return {
@@ -134,7 +143,7 @@ export function nightlyProfileReviews(app: App) {
     const since = one<{ value: string }>(app.db, "select value from kv where key = ?", `profile_review_at:${name}`)?.value ?? new Date(Date.now() - 14 * 86400_000).toISOString();
     const runs = recentRuns(app, name, since, 30);
     if (runs.length < 3) continue;
-    if (!runs.some((r) => r.status === "failed" || ownerAfter(app, r).length)) continue;
+    if (!runs.some((r) => r.status === "failed" || ownerAfter(app, r).length || runReactions(app, r.id).some((x) => x.actor_kind === "owner" && (x.polarity === "negative" || x.polarity === "positive")))) continue;
     scheduleProfileReview(app, name);
     queued++;
   }

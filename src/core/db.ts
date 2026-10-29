@@ -814,6 +814,37 @@ const migrations: string[] = [
   create index shares_run on shares(run_id);
   alter table lark_messages add column position integer;
   `,
+  // What omem's bots posted in Feishu (src/channels/lark-feedback.ts), so a reaction on it finds the
+  // run that wrote it; and the reactions themselves (everyone's; removing one only fills removed_at).
+  `
+  create table lark_sent (
+    message_id text primary key,
+    chat_id text,
+    run_id text,
+    conversation_id text,
+    purpose text not null default 'answer',   -- answer | notification | card | progress
+    bot text not null default 'main',
+    at text not null
+  );
+  create index lark_sent_run on lark_sent(run_id);
+  create table feedback (
+    id text primary key,
+    channel text not null default 'lark',
+    message_id text not null,
+    run_id text,
+    bot text,
+    on_bot integer not null default 1,        -- 0: the owner's reaction on someone else's message
+    actor_id text not null,
+    actor_kind text not null,                 -- owner | member | guest | bot
+    emoji text not null,
+    polarity text not null,                   -- positive | negative | ack | neutral
+    at text not null,
+    removed_at text
+  );
+  create index feedback_message on feedback(message_id);
+  create index feedback_run on feedback(run_id, at);
+  create index feedback_at on feedback(at);
+  `,
 ];
 
 export type Db = DatabaseSync;

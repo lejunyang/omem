@@ -7,6 +7,7 @@ import VirtualList from "../components/VirtualList.vue";
 import ChipPicker from "../components/ChipPicker.vue";
 import Icon from "../components/Icon.vue";
 import ReviewSettings from "../components/ReviewSettings.vue";
+import FeedbackStats from "../components/FeedbackStats.vue";
 import Markdown from "../components/Markdown.vue";
 import ProfileLearning, { type ProfileDetail } from "../components/ProfileLearning.vue";
 import Skeleton from "../components/Skeleton.vue";
@@ -393,6 +394,7 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         <p v-if="tab === 'agents'">专门做某类事的 Agent：用途、提示词、后端与模型、可用工具、技能、工作目录。内置角色是 omem 自己调用的（独立评审、编码、整理…），也可以自定义。它们都会随使用积累专属记忆，复盘后提出改进建议。</p>
         <p v-else>可复用的做法（SKILL.md）。挂到档案上，它做对应的事之前会先读全文照做。草稿启用后才会出现在目录里。</p>
         <button class="btn" @click="go({ tab, new: '1' })"><Icon name="plus" :size="14" />{{ tab === "agents" ? "新建 Agent 档案" : "新建技能" }}</button>
+        <FeedbackStats v-if="tab === 'agents'" class="feedback" />
       </div>
       <div v-else-if="detailLoading" class="pad"><Skeleton variant="lines" :rows="14" /></div>
 
@@ -719,6 +721,9 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
   text-align: center;
   color: var(--ink-2);
   padding: 0 16px;
+}
+.empty .feedback {
+  margin-top: 28px;
 }
 @media (max-width: 760px) {
   .agents {

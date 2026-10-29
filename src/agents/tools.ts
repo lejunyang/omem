@@ -1984,7 +1984,7 @@ async function larkPost(ctx: ToolContext, t: LarkTargetArgs, content: import("..
     send.recordInteraction(ctx.app, { messageId: sent.messageId, chatId: null, conversationId: runThread(ctx), runId: ctx.runId, purpose: "draft", allowed: [ownerTarget], payload: { target, content, delivery } });
     return `已作为草稿发给本人确认（还没有发出）。${skippedNote}`;
   }
-  const sent = await send.deliverLark(target, content, delivery);
+  const sent = await send.deliverLark({ ...target, runId: ctx.runId ?? null, conversationId: runThread(ctx) }, content, delivery);
   // A rule's silent agent that spoke in a topic follows it: replies there come back to it.
   if (ctx.runId && chat && sent.threadId) {
     const input = (getRun(ctx.app, ctx.runId).input ?? {}) as { silent?: unknown; rule?: { id: string }; spec?: string };

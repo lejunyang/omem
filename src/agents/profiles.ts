@@ -3,6 +3,7 @@ import { all, one } from "../core/db.ts";
 import { listMemories } from "../memory/store.ts";
 import { isBuiltinRole, roleHistory, roleOverrideText, roleSourceText, roleState } from "./builtin-roles.ts";
 import { loadRole } from "./runner.ts";
+import { feedbackStats } from "../channels/lark-feedback.ts";
 import { agentSpecHistory, listSkills, readAgentSpec, readSkill } from "./specs.ts";
 
 /**
@@ -62,11 +63,14 @@ export function profileUsage(app: App, name: string) {
     since,
   );
   const lastReview = one<{ value: string }>(app.db, "select value from kv where key = ?", `profile_review_at:${name}`)?.value ?? null;
+  // Reactions on what its runs sent in Feishu: the owner's, other users' and guests' apart.
+  const feedback = feedbackStats(app, 30).byProfile.find((r) => r.key === name) ?? null;
   return {
     runs30d: Object.fromEntries(runs.map((r) => [r.status, r.n])) as Record<string, number>,
     lastRun: last ? { id: last.id, at: last.created_at, status: last.status } : null,
     recalls30d: recall?.recalls ?? 0,
     recallHits30d: recall?.used ?? 0,
     lastReviewAt: lastReview,
+    feedback30d: feedback ? { owner: feedback.owner, others: feedback.others, guests: feedback.guests } : null,
   };
 }

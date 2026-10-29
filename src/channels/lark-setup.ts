@@ -227,8 +227,48 @@ export async function registerLarkBot(opts: {
 
 // ---- verification --------------------------------------------------------------
 
-/** `scopesUnknown`: the app's granted permissions could not be read, so `missingScopes` may be incomplete. */
-export type LarkCheck = { botName?: string; botOpenId?: string; missingScopes: string[]; scopesUnknown?: boolean; error?: string };
+/**
+ * Events and callbacks omem's code handles (lark-bot.ts). `optional`: only some features need it
+ * (meeting rules); the rest the bot needs for answering, cards and reaction feedback.
+ */
+export const LARK_BOT_EVENTS: { name: string; label: string; optional?: boolean }[] = [
+  { name: "im.message.receive_v1", label: "收消息（私聊、群里 @ 和群消息）" },
+  { name: "im.message.reaction.created_v1", label: "有人加表情（回答的反馈）" },
+  { name: "im.message.reaction.deleted_v1", label: "有人取消表情" },
+  { name: "vc.bot.meeting_invited_v1", label: "机器人被邀请入会（会议规则）", optional: true },
+];
+export const LARK_BOT_CALLBACKS = [{ name: "card.action.trigger", label: "卡片按钮和表单" }];
+
+/**
+ * `scopesUnknown`: the app's granted permissions could not be read, so `missingScopes` may be incomplete.
+ * `events` / `callbacks`: what the application info says the app subscribes to (null: not readable);
+ * `publishedEvents`: the events of the version online, when that version could be read.
+ */
+export type LarkCheck = {
+  botName?: string;
+  botOpenId?: string;
+  missingScopes: string[];
+  scopesUnknown?: boolean;
+  error?: string;
+  events?: string[] | null;
+  publishedEvents?: string[] | null;
+  eventMode?: string | null;
+  callbacks?: string[] | null;
+  callbackMode?: string | null;
+};
+
+type AppInfo = {
+  code?: number;
+  data?: {
+    app?: {
+      scopes?: { scope: string }[];
+      online_version_id?: string;
+      event?: { subscription_type?: string; subscribed_events?: string[] };
+      callback?: { callback_type?: string; subscribed_callbacks?: string[] };
+      callback_info?: { callback_type?: string; subscribed_callbacks?: string[] };
+    };
+  };
+};
 
 /** The developer console page that asks for these permissions on this app (the owner opens it and applies). */
 export function larkScopeLink(appId: string, scopes: string[], brand?: string, tokenType: "tenant" | "user" = "tenant") {
@@ -271,15 +311,32 @@ export async function checkLarkApp(appId: string, appSecret: string, request: ty
     if (bot.code !== 0) return { missingScopes: [], error: `应用没有开启机器人能力（${bot.code}：${bot.msg ?? ""}）` };
     let missing: string[] = [];
     let unknown = true;
+    const subs: Pick<LarkCheck, "events" | "publishedEvents" | "eventMode" | "callbacks" | "callbackMode"> = { events: null, publishedEvents: null, eventMode: null, callbacks: null, callbackMode: null };
     try {
-      const app = (await (await request(`${base}/application/v6/applications/${appId}?lang=zh_cn`, { headers, signal: AbortSignal.timeout(15_000) })).json()) as { code?: number; data?: { app?: { scopes?: { scope: string }[] } } };
-      const have = new Set((app.data?.app?.scopes ?? []).map((s) => s.scope));
-      if (app.code === 0 && have.size) {
+      // Application info (application v6, the app reading itself): granted scopes, and the event and
+      // callback subscriptions as the SDK's types describe them (app.event.subscribed_events, app.callback).
+      const app = (await (await request(`${base}/application/v6/applications/${appId}?lang=zh_cn`, { headers, signal: AbortSignal.timeout(15_000) })).json()) as AppInfo;
+      const info = app.code === 0 ? app.data?.app : undefined;
+      const have = new Set((info?.scopes ?? []).map((s) => s.scope));
+      if (have.size) {
         missing = LARK_BOT_ADDONS.scopes.tenant.filter((s) => !have.has(s));
         unknown = false;
       }
+      if (Array.isArray(info?.event?.subscribed_events)) subs.events = info.event.subscribed_events;
+      subs.eventMode = info?.event?.subscription_type ?? null;
+      const cb = info?.callback ?? info?.callback_info;
+      if (Array.isArray(cb?.subscribed_callbacks)) subs.callbacks = cb.subscribed_callbacks;
+      subs.callbackMode = cb?.callback_type ?? null;
+      // The version online is what Feishu delivers; a subscription added since needs a new version.
+      if (info?.online_version_id) {
+        try {
+          const v = (await (await request(`${base}/application/v6/applications/${appId}/app_versions/${info.online_version_id}?lang=zh_cn`, { headers, signal: AbortSignal.timeout(15_000) })).json()) as { code?: number; data?: { app_version?: { events?: string[] } } };
+          const ev = v.code === 0 ? v.data?.app_version?.events : undefined;
+          if (Array.isArray(ev) && ev.every((e) => typeof e === "string" && e.includes("."))) subs.publishedEvents = ev;
+        } catch {}
+      }
     } catch {}
-    return { botName: bot.bot?.app_name, botOpenId: bot.bot?.open_id, missingScopes: missing, ...(unknown ? { scopesUnknown: true } : {}) };
+    return { botName: bot.bot?.app_name, botOpenId: bot.bot?.open_id, missingScopes: missing, ...(unknown ? { scopesUnknown: true } : {}), ...subs };
   } catch (e) {
     return { missingScopes: [], error: `连不上飞书开放平台：${(e as Error).message}` };
   }

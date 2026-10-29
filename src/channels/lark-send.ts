@@ -4,6 +4,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 import { currentBot } from "../core/bot-context.ts";
+import type { SentPurpose } from "./lark-feedback.ts";
 
 /**
  * Everything the Feishu bot can say: plain or Markdown text, replies (in a
@@ -195,7 +196,45 @@ export function buildCard(spec: CardSpec): Record<string, unknown> {
 
 // ---- sending ----------------------------------------------------------------------
 
-export type Target = { chatId?: string; userId?: string; replyTo?: string; inThread?: boolean; uuid?: string; /** One of lark.bots; the main bot when absent. */ bot?: string | null };
+export type Target = {
+  chatId?: string;
+  userId?: string;
+  replyTo?: string;
+  inThread?: boolean;
+  uuid?: string;
+  /** One of lark.bots; the main bot when absent. */
+  bot?: string | null;
+  /** What the message is, for the record of what bots posted (lark-feedback.ts); cards default to "card", the rest to "answer". */
+  purpose?: SentPurpose;
+  /** The run that wrote it, when known. */
+  runId?: string | null;
+  conversationId?: string | null;
+};
+
+/**
+ * Every message a bot posts is reported here (lark-feedback.ts keeps them, so reactions find their
+ * run). Set once the bots start; tests and tools without it simply do not record.
+ */
+type SentListener = (s: { messageId: string; chatId: string | null; runId: string | null; conversationId: string | null; purpose: SentPurpose; bot: string }) => void;
+let sentListener: SentListener | null = null;
+export function onLarkSent(fn: SentListener | null) {
+  sentListener = fn;
+}
+function reportSent(to: Target, content: Content | null, d: { message_id?: string; chat_id?: string } | undefined) {
+  if (!sentListener || !d?.message_id) return;
+  try {
+    sentListener({
+      messageId: d.message_id,
+      chatId: d.chat_id ?? to.chatId ?? null,
+      runId: to.runId ?? null,
+      conversationId: to.conversationId ?? null,
+      purpose: to.purpose ?? (content && !("card" in content) ? "answer" : "card"),
+      bot: to.bot || currentBot(),
+    });
+  } catch (e) {
+    console.warn(`[omem] 记录机器人发出的消息失败：${(e as Error).message}`);
+  }
+}
 export type Content =
   | { text: string }
   | { markdown: string; title?: string; /** Small grey line under the text (the run id under an answer). */ note?: string }
@@ -222,6 +261,7 @@ export async function sendLark(to: Target, content: Content): Promise<{ messageI
   else throw new HttpError(400, "需要 chatId、userId 或 replyTo");
   const d = check(r, "发送飞书消息");
   remember(d?.message_id);
+  reportSent(to, content, d);
   return { messageId: d?.message_id, threadId: d?.thread_id };
 }
 
@@ -242,6 +282,7 @@ const idField = (id: string) => (id.startsWith("ou_") ? "open_id" : "user_id");
 export async function sendEphemeral(chatId: string, person: string, card: Record<string, unknown>, bot?: string | null): Promise<{ messageId: string }> {
   const r = await larkClientFor(bot).request({ method: "POST", url: "/open-apis/ephemeral/v1/send", data: { chat_id: chatId, [idField(person)]: person, msg_type: "interactive", card } });
   const d = check(r, "发送仅部分人可见的卡片");
+  reportSent({ chatId, bot, purpose: "card" }, null, d);
   return { messageId: d?.message_id };
 }
 
