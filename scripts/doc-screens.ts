@@ -23,6 +23,7 @@ import { git } from "../src/core/git.ts";
 import { createSpace, ensurePersonalSpace } from "../src/core/spaces.ts";
 import { addItemEvent, upsertItem } from "../src/items/store.ts";
 import { remember } from "../src/memory/store.ts";
+import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { saveRule } from "../src/rules/store.ts";
 import { startServer } from "../src/server/http.ts";
 import { upsertSource } from "../src/sources/store.ts";
@@ -34,6 +35,7 @@ mkdirSync(out, { recursive: true });
 const home = mkdtempSync(join(tmpdir(), "omem-screens-"));
 const app = App.open(home);
 ensurePersonalSpace(app);
+setLarkCliForTests(async () => ({}));
 
 // ---- a small repository with a delegation's change in a worktree --------------------------------
 const repo = join(home, "shop");
@@ -259,6 +261,22 @@ const rule = saveRule(app, {
   actions: [{ type: "agent", spec: "assistant", task: "整理问题和下一步", reply: "draft", ownTopic: true }],
 } as never);
 
+// A meeting rule with conditional confirmation; all bot and meeting data here is fictional.
+app.config.lark.appId = "cli_demo_meeting";
+app.config.lark.appSecretEnv = "OMEM_DEMO_UNUSED_SECRET";
+run(app.db, "insert or replace into kv(key, value) values('lark_bot_name', '会议助手')");
+const meetingRule = saveRule(app, {
+  spaceId: "shop", name: "入会时按人数确认",
+  description: "当我进入会议时，自动拉我的机器人进来，若人数大于等于 30 人，先发卡片问我，否则直接拉进来。",
+  trigger: { event: "meeting" },
+  actions: [{ type: "meeting-bot", confirm: { field: "meeting.participantCount", op: "gte", value: "30" } }],
+});
+for (const count of [29, 30]) run(app.db,
+  "insert into lark_meetings(meeting_id, meeting_no, topic, status, participants, started_at, updated_at) values(?,?,?,?,?,?,?)",
+  `demo-${count}`, "123456789", count === 29 ? "退款方案评审" : "商城项目同步", "seen",
+  JSON.stringify(Array.from({ length: count }, (_, i) => ({ id: `demo-${i}`, name: `参会人${i + 1}` }))), new Date().toISOString(), new Date().toISOString(),
+);
+
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
@@ -303,6 +321,7 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; prepa
   } },
   { name: "delegate-sync", path: "/runs", prepare: async (p) => { await p.getByRole("button", { name: "交办" }).first().click(); await p.waitForTimeout(400); await p.locator("textarea").first().fill("把 main 合并进来，再把退款精度改成超出两位小数报错"); await p.getByText("拉取目标分支在 origin 上的新提交").click(); await p.waitForTimeout(300); } },
   { name: "rules", path: `/rules?id=${rule.id}` },
+  { name: "meeting-rule-confirmation", path: `/rules?id=${meetingRule.id}`, prepare: async (p) => { await p.getByText("入会确认", { exact: true }).scrollIntoViewIfNeeded(); } },
   { name: "agents", path: "/agents" },
   // The docs home's hero: these three in dark too.
   { name: "ask-citations-dark", path: `/ask/${t.id}`, dark: true },
@@ -316,6 +335,7 @@ for (const s of shots) {
   const page = await browser.newPage({ viewport: { width, height: width < 600 ? 844 : 900 }, colorScheme: s.dark ? "dark" : "light", deviceScaleFactor: width < 600 ? 2 : 1 });
   // Every page opens on the demo project's space.
   await page.addInitScript(() => localStorage.setItem("omem-space", "shop"));
+  await page.route(`**/api/rules/${meetingRule.id}/permissions`, route => route.fulfill({ json: { issues: [], ok: ["演示数据：会议权限已配置"], notes: ["会议需要允许智能体加入"] } }));
   try {
     await page.goto(`${url}/#${s.path}`);
     await page.waitForLoadState("networkidle");

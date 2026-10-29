@@ -24,7 +24,7 @@ type Action =
   | { type: "invite-bot" }
   | { type: "capture" }
   | { type: "notify"; urgent: boolean }
-  | { type: "meeting-bot"; bots: string[]; confirm: boolean; record: boolean; spec: string; space?: string; task: string; answer: boolean; importShared: boolean; leaveWithOwner: boolean };
+  | { type: "meeting-bot"; bots: string[]; confirm: boolean | Condition; record: boolean; spec: string; space?: string; task: string; answer: boolean; importShared: boolean; leaveWithOwner: boolean };
 type Rule = {
   id?: string;
   spaceId?: string;
@@ -43,7 +43,7 @@ type Rule = {
 };
 type Firing = { id: number; at: string; summary: string; judgedBy: string; reason: string; results: { action: string; ok: boolean; detail: string; runId?: string }[] };
 type Options = { fields: Record<string, string>; eventFields?: Record<"message" | "meeting", string[]>; bots?: { id: string; name: string }[]; ops: string[]; specs: { name: string; description: string }[]; chats: { chat_id: string; name: string }[]; botReady: boolean; groups: { chat_id: string; name: string }[]; conversations: { id: string; title: string; channel: string; space_id: string; external_id: string | null }[] };
-type TestResult = { checked: number; matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string }[]; note: string };
+type TestResult = { checked: number; matches: { messageId: string; chat: string; sender: string; text: string; at: string; reason: string; by: string; action?: string }[]; note: string };
 
 const route = useRoute();
 const router = useRouter();
@@ -242,6 +242,11 @@ function moveAction(i: number, d: number) {
 const scheduleOnly = computed(() => form.value?.trigger.event === "schedule");
 const meetingRule = computed(() => form.value?.trigger.event === "meeting");
 const meetingAction = (): Action => ({ type: "meeting-bot", bots: options.value.bots?.length ? [options.value.bots[0].id] : [], confirm: true, record: true, spec: "", task: "", answer: false, importShared: true, leaveWithOwner: true });
+const confirmOptions = [{ value: "always", label: "始终询问" }, { value: "never", label: "直接加入" }, { value: "condition", label: "满足条件时询问" }];
+function setConfirmation(a: Extract<Action, { type: "meeting-bot" }>, mode: string) {
+  a.confirm = mode === "always" ? true : mode === "never" ? false : { field: "meeting.participantCount", op: "gte", value: "30" };
+  touch();
+}
 const addOptions = computed(() =>
   (Object.keys(ACTION_LABEL) as Action["type"][])
     .filter((t) => (meetingRule.value ? ["meeting-bot", "notify"].includes(t) : t !== "meeting-bot"))
@@ -506,7 +511,14 @@ function startFrom(text: string) {
               </div>
               <small v-if="!a.bots.length" class="muted">不拉机器人时只以你的身份读会中事件做记录，别人看不到。</small>
               <div class="row wrap">
-                <UiCheckbox v-model="a.confirm" size="sm" :disabled="!a.bots.length" @change="touch">先发卡片问我</UiCheckbox>
+                <span class="small">入会确认</span>
+                <UiSelect :model-value="typeof a.confirm === 'object' ? 'condition' : a.confirm ? 'always' : 'never'" size="sm" width="200px" :options="confirmOptions" :disabled="!a.bots.length" aria-label="入会确认方式" @update:model-value="(v) => setConfirmation(a, String(v))" />
+              </div>
+              <template v-if="typeof a.confirm === 'object' && a.bots.length">
+                <RuleConditions :model-value="a.confirm" :fields="condFields" :ops="options.ops" :field-ops="fieldOps" @update:model-value="(v) => ((a.confirm = v ?? { all: [] }), touch())" />
+                <small class="muted">满足以上条件时先发卡片问你，否则直接加入。条件数据未知时也先问你；按本次入会触发时的数据判断。</small>
+              </template>
+              <div class="row wrap">
                 <UiCheckbox v-model="a.record" size="sm" @change="touch">保存会议记录（转写、会中聊天、进出）</UiCheckbox>
                 <UiCheckbox v-model="a.importShared" size="sm" @change="touch">导入会上共享的文档</UiCheckbox>
                 <UiCheckbox v-model="a.leaveWithOwner" size="sm" :disabled="!a.bots.length" @change="touch">我离会时机器人一起离开</UiCheckbox>
@@ -561,6 +573,7 @@ function startFrom(text: string) {
               <div class="row"><strong class="ellipsis">{{ m.chat }}</strong><span class="muted">· {{ m.sender }} · {{ fmtTime(m.at) }}</span></div>
               <div class="clamp">{{ m.text }}</div>
               <div class="muted">{{ m.by === "code" ? "条件" : "模型" }}：{{ m.reason }}</div>
+              <div v-if="m.action">入会方式：{{ m.action }}</div>
             </div>
           </template>
         </section>

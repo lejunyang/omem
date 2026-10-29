@@ -16,4 +16,5 @@
 
 - `list_rules` / `save_rule(description, rule?, enabled?)`：本人的规则（遇到什么情况自动叫哪个 Agent 做什么，见 docs/v2/rules.md）。只在本人明确要求时建；不给 `rule` 时由模型从原话生成条件和动作；默认不启用，请本人到规则页核对。会议规则（本人入会时拉机器人进会、记录、旁听）保存后结果里带权限检查，缺的权限和申请链接原样告诉本人。
 - `rule` 可含 `spaceId`、`trigger`、`conditions`、`judge`、`actions`。`agent` 动作的 `spec` 默认 `assistant`，可选 `space` 指定执行空间；省略时按档案、规则、触发空间解析。没有专用档案的日常任务用主助手，不挑最接近的档案代替。
+- 会议动作 `meeting-bot.confirm` 可写 true（始终询问）、false（直接加入）或会议条件。比如“30 人及以上先问，否则直接拉”：整条规则 `conditions=null`，动作 `confirm={"field":"meeting.participantCount","op":"gte","value":"30"}`；若还限定会议标题，标题才放整条规则的 `conditions`。确认条件支持 all / any / not，只能用会议字段；数据未知时先问本人，按本次触发的数据判断。一次 `save_rule` 就能保存这条规则。
 - 定时任务 `reply=auto` 发回结果会话，`none` 通知本人，`draft` 的群消息先给本人确认。

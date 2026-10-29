@@ -9,6 +9,7 @@ import { HttpError, json, now, truncate } from "../core/util.ts";
 import { createRun } from "../agents/runs.ts";
 import { findAgentSpec } from "../agents/specs.ts";
 import { assistantScope } from "../rules/actions.ts";
+import { meetingConfirmation } from "../rules/meeting.ts";
 import type { RuleAction, RuleEvent } from "../rules/types.ts";
 import { upsertSource } from "../sources/store.ts";
 import { larkCli, larkCliCommand } from "./lark-cli.ts";
@@ -39,7 +40,8 @@ const REDISPATCH_MS = 10 * 60_000;
 const WINDOW_MS = 3 * 60_000;
 const WINDOW_LINES = 40;
 
-export type MeetingPlan = Extract<RuleAction, { type: "meeting-bot" }> & { ruleId: string; ruleName: string; ruleDescription: string; ruleSpace?: string };
+type MeetingRequest = Extract<RuleAction, { type: "meeting-bot" }> & { ruleId: string; ruleName: string; ruleDescription: string; ruleSpace?: string };
+export type MeetingPlan = Omit<MeetingRequest, "confirm"> & { confirm: boolean; confirmationReason?: string };
 export type MeetingInfo = { id: string; no?: string; topic?: string; calendarEventId?: string; startTime?: string };
 type Person = { id?: string; name: string; host?: boolean };
 type Joined = { bot: string; ok: boolean; name?: string; error?: string; left?: boolean };
@@ -66,6 +68,7 @@ type Row = {
 };
 
 const getRow = (app: App, id: string) => one<Row>(app.db, "select * from lark_meetings where meeting_id = ?", id);
+const peopleOf = (row: Pick<Row, "participants">) => json<Person[] | null>(row.participants, null) ?? [];
 function update(app: App, id: string, set: Partial<Record<keyof Row, string | number | null>>) {
   const keys = Object.keys(set);
   run(app.db, `update lark_meetings set ${keys.map((k) => `${k} = ?`).join(", ")}, updated_at = ? where meeting_id = ?`, ...keys.map((k) => set[k as keyof Row] ?? null), now(), id);
@@ -237,12 +240,13 @@ export async function ownerJoinedMeeting(app: App, m: MeetingInfo) {
   const at = now();
   run(
     app.db,
-    "insert into lark_meetings(meeting_id, meeting_no, topic, calendar_event_id, status, started_at, updated_at) values(?,?,?,?,?,?,?)",
+    "insert into lark_meetings(meeting_id, meeting_no, topic, calendar_event_id, status, participants, started_at, updated_at) values(?,?,?,?,?,?,?,?)",
     m.id,
     m.no ?? null,
     m.topic ?? "",
     m.calendarEventId ?? null,
     "seen",
+    "null",
     m.startTime && !Number.isNaN(Date.parse(m.startTime)) ? new Date(m.startTime).toISOString() : at,
     at,
   );
@@ -253,9 +257,11 @@ export async function ownerJoinedMeeting(app: App, m: MeetingInfo) {
 }
 
 /** The participants as the owner sees them (joined minus left), from the meeting's events. */
-async function readParticipants(app: App, id: string): Promise<Person[]> {
+async function readParticipants(app: App, id: string): Promise<Person[] | null> {
   const r = await fetchEvents(app, getRow(app, id)!, "user", null);
-  return foldPeople([], r.events);
+  const people = foldPeople([], r.events);
+  // The owner is in the meeting. No participant events means the count is unknown, not zero.
+  return people.length ? people : null;
 }
 
 function foldPeople(start: Person[], events: NormEvent[]) {
@@ -274,12 +280,12 @@ function foldPeople(start: Person[], events: NormEvent[]) {
 
 /** The rule event for a meeting as it stands. */
 function eventOf(row: Row): RuleEvent {
-  const people = json<Person[]>(row.participants, []);
+  const people = peopleOf(row);
   return {
     key: `meeting:${row.meeting_id}`,
     kind: "meeting",
     at: row.started_at,
-    meeting: { id: row.meeting_id, no: row.meeting_no ?? undefined, title: row.topic, participants: people.map((p) => p.name).filter(Boolean), host: people.find((p) => p.host)?.name, calendarEventId: row.calendar_event_id ?? undefined },
+    meeting: { id: row.meeting_id, no: row.meeting_no ?? undefined, title: row.topic, participants: people.map((p) => p.name).filter(Boolean), participantCount: people.length || null, host: people.find((p) => p.host)?.name, calendarEventId: row.calendar_event_id ?? undefined },
     via: "meeting",
   };
 }
@@ -297,13 +303,15 @@ export function recentMeetingEvents(app: App, limit = 30): RuleEvent[] {
 // ---- the rule's action -----------------------------------------------------------------------
 
 /** A meeting rule fired (rules/actions.ts): ask the owner first, or go ahead. */
-export async function meetingAction(app: App, plan: MeetingPlan, e: RuleEvent): Promise<string> {
+export async function meetingAction(app: App, request: MeetingRequest, e: RuleEvent): Promise<string> {
   const id = e.meeting?.id;
   if (!id) throw new HttpError(400, "这次触发没有会议");
   const row = getRow(app, id);
   if (!row) throw new HttpError(404, "没有这场会议的记录");
   if (row.plan) return `这场会议已经由规则「${json<MeetingPlan>(row.plan, null as never)?.ruleName ?? "?"}」处理`;
-  if (plan.bots.length && !row.meeting_no) throw new HttpError(400, "事件里没有会议号，机器人没法入会");
+  if (request.bots.length && !row.meeting_no) throw new HttpError(400, "事件里没有会议号，机器人没法入会");
+  const decision = await meetingConfirmation(request, e);
+  const plan: MeetingPlan = { ...request, confirm: decision.confirm, ...(typeof request.confirm === "object" ? { confirmationReason: decision.reason } : {}) };
   update(app, id, { plan: JSON.stringify(plan) });
   // Recording as the owner shows nothing to anyone: no need to ask. Bots in the meeting are seen by all.
   if (plan.confirm && plan.bots.length) {
@@ -314,9 +322,10 @@ export async function meetingAction(app: App, plan: MeetingPlan, e: RuleEvent): 
       throw e;
     }
     update(app, id, { status: "asked" });
-    return `已发卡片问你要不要把 ${botNames(app, plan.bots).join("、")} 拉进会议`;
+    return `${plan.confirmationReason ? `${plan.confirmationReason}；` : ""}已发卡片问你要不要把 ${botNames(app, plan.bots).join("、")} 拉进会议`;
   }
-  return startPlan(app, id, plan);
+  const detail = await startPlan(app, id, plan);
+  return `${plan.confirmationReason ? `${plan.confirmationReason}；` : ""}${detail}`;
 }
 
 function botNames(app: App, refs: string[]) {
@@ -330,7 +339,7 @@ function botName(app: App, ref: string) {
 type CardPayload = { meetingId: string };
 /** The card that asks the owner whether to bring the bots in. */
 export function meetingCard(app: App, row: Pick<Row, "meeting_id" | "topic" | "meeting_no" | "participants">, plan: MeetingPlan, state?: "approved" | "declined" | "gone") {
-  const people = json<Person[]>(row.participants, []);
+  const people = peopleOf(row);
   const doing = [
     plan.record ? "保存会议记录（转写、会中聊天、进出）" : "",
     plan.spec ? `${plan.spec === "assistant" ? "主助手" : plan.spec} 旁听，需要你时提醒你` : "",
@@ -339,8 +348,9 @@ export function meetingCard(app: App, row: Pick<Row, "meeting_id" | "topic" | "m
     plan.leaveWithOwner ? "你离会时机器人一起离开" : "",
   ].filter(Boolean);
   const blocks: import("./lark-send.ts").CardBlock[] = [
-    { fields: [{ label: "会议", value: row.topic || "（无标题）" }, { label: "会议号", value: row.meeting_no ?? "—" }, { label: "人数", value: String(people.length) }, { label: "规则", value: plan.ruleName }] },
+    { fields: [{ label: "会议", value: row.topic || "（无标题）" }, { label: "会议号", value: row.meeting_no ?? "—" }, { label: "人数", value: people.length ? String(people.length) : "未知" }, { label: "规则", value: plan.ruleName }] },
     { markdown: `**拉进会的机器人**：${botNames(app, plan.bots).join("、")}${doing.length ? `\n**之后**：${doing.join("；")}` : ""}` },
+    ...(plan.confirmationReason ? [{ markdown: `**确认方式**：${plan.confirmationReason}` }] : []),
   ];
   if (!state) blocks.push({ buttons: [{ text: "拉进去", value: "approve", style: "primary" }, { text: "这次不用", value: "decline" }] });
   blocks.push({ note: state === "approved" ? "已拉机器人入会" : state === "declined" ? "这场会议不拉机器人" : state === "gone" ? "会议已经结束" : "机器人入会后所有参会人都能看到它。会议需要允许智能体加入。" });
@@ -567,7 +577,7 @@ function writeSource(app: App, row: Row, minutes?: string) {
   const plan = row.plan ? json<MeetingPlan>(row.plan, null as never) : null;
   if (!plan?.record) return null;
   const lines = all<LineRow>(app.db, "select seq, at_ms, kind, speaker, text from lark_meeting_lines where meeting_id = ? order by at_ms, seq", row.meeting_id);
-  const people = json<Person[]>(row.participants, []);
+  const people = peopleOf(row);
   const day = row.started_at.slice(0, 10);
   const text = [
     `# 会议：${row.topic || "无标题"}`,
@@ -642,7 +652,7 @@ async function listen(app: App, row: Row) {
   failing.delete(row.meeting_id);
   update(app, row.meeting_id, { page_token: got.token, error: null });
   const { lines, shares } = linesOf(got.events);
-  const people = foldPeople(json<Person[]>(row.participants, []), got.events);
+  const people = foldPeople(peopleOf(row), got.events);
   if (got.events.length) update(app, row.meeting_id, { participants: JSON.stringify(people) });
   const added = saveLines(app, row.meeting_id, lines);
   const fresh = getRow(app, row.meeting_id)!;
@@ -686,7 +696,7 @@ function startAgent(app: App, row: Row, plan: MeetingPlan, opts: { question?: Li
     if (!fresh.some((l) => l.kind === "transcript" || l.kind === "chat")) return;
   }
   const bots = json<Joined[]>(row.bots, []).filter((b) => b.ok && !b.left);
-  const people = json<Person[]>(row.participants, []);
+  const people = peopleOf(row);
   const say = plan.answer && bots.length ? bots[0] : null;
   const head = [
     `本人的规则「${plan.ruleName}」：${plan.ruleDescription}`,
@@ -855,7 +865,7 @@ async function follow(app: App, row: Row) {
       {
         const people = await readParticipants(app, row.meeting_id).catch(() => null);
         if (!people) return;
-        const before = json<Person[]>(row.participants, []).map((p) => p.name).sort().join("|");
+        const before = peopleOf(row).map((p) => p.name).sort().join("|");
         if (people.map((p) => p.name).sort().join("|") === before) return;
         run(app.db, "update lark_meetings set participants = ? where meeting_id = ?", JSON.stringify(people), row.meeting_id);
         await dispatchMeeting(app, row.meeting_id);

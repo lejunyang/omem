@@ -55,9 +55,9 @@ export function eventReader(e: RuleEvent, lookups: { chatBots?: (chatId: string)
       case "meeting.no":
         return e.meeting?.no;
       case "meeting.participants":
-        return e.meeting?.participants;
+        return e.meeting?.participantCount === null ? undefined : e.meeting?.participants;
       case "meeting.participantCount":
-        return e.meeting ? e.meeting.participants.length : undefined;
+        return e.meeting?.participantCount === null ? undefined : e.meeting?.participantCount ?? e.meeting?.participants.length;
       case "meeting.host":
         return e.meeting?.host;
     }

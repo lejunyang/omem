@@ -50,6 +50,13 @@ export const conditionSchema: z.ZodType<Condition> = z.lazy(() =>
   z.union([leafSchema, z.object({ all: z.array(conditionSchema) }), z.object({ any: z.array(conditionSchema) }), z.object({ not: conditionSchema })]),
 );
 
+function isMeetingCondition(c: Condition): boolean {
+  if ("field" in c) return c.field.startsWith("meeting.");
+  if ("not" in c) return isMeetingCondition(c.not);
+  const parts = "all" in c ? c.all : c.any;
+  return parts.length > 0 && parts.every(isMeetingCondition);
+}
+
 const reply = z.enum(["none", "draft", "auto"]);
 /**
  * How a rule's agent may speak. none: its conclusion goes to the owner only. draft: what it says in
@@ -81,7 +88,8 @@ export const actionSchema = z.discriminatedUnion("type", [
   /**
    * The owner joined a meeting (trigger `meeting`): bring omem's bots in (`bots`: "main" or ids of
    * lark.bots; empty = none, listening as the owner only), after asking the owner on a card unless
-   * `confirm` is off. `record` keeps the meeting (transcript, chat, who came and went) as a source;
+   * `confirm` is off, or a meeting condition decides when to ask. `record` keeps the meeting
+   * (transcript, chat, who came and went) as a source;
    * `spec` listens along and tells the owner when they are needed; `answer` lets it answer questions
    * put to a bot in the meeting chat; `importShared` imports documents shared on screen;
    * `leaveWithOwner` takes the bots out when the owner leaves. See src/channels/lark-meetings.ts.
@@ -89,7 +97,7 @@ export const actionSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("meeting-bot"),
     bots: z.array(z.string()).max(8).default(["main"]),
-    confirm: z.boolean().default(true),
+    confirm: z.union([z.boolean(), conditionSchema.refine(isMeetingCondition, "确认条件至少写一项，且只能用会议字段")]).default(true),
     record: z.boolean().default(true),
     spec: z.string().default(""),
     space: z.string().transform(v => v || undefined).optional(),
@@ -139,8 +147,8 @@ export type RuleEvent = {
   chat?: { id: string; name: string; kind: "group" | "p2p" };
   sender?: { id?: string; name: string; email?: string | null; kind: "owner" | "user" | "bot" };
   message?: { id: string; text: string; type: string; mentionsOwner: boolean; mentionsBot: boolean; topicId?: string | null; cardTitle?: string | null };
-  /** The meeting the owner joined (trigger `meeting`). */
-  meeting?: { id: string; no?: string; title: string; participants: string[]; host?: string; calendarEventId?: string };
+  /** The meeting the owner joined. participantCount: null = unknown; omitted = count participants. */
+  meeting?: { id: string; no?: string; title: string; participants: string[]; participantCount?: number | null; host?: string; calendarEventId?: string };
   /** Where it came from: the bot sees groups it is in in real time; the owner's capture sees every chat. */
   via: "bot" | "capture" | "schedule" | "test" | "meeting";
   /** The Feishu bot that saw it (via bot): "main" or one of lark.bots; its agent answers through it. */

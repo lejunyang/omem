@@ -22,7 +22,7 @@ const ACTIONS = `动作（按顺序执行，至少一个）：
 - {"type":"invite-bot"}：以本人身份把 omem 的机器人拉进这个群
 - {"type":"capture"}：把这个群设为与本人有关，立刻采集一次
 - {"type":"notify","urgent":false}：通知本人
-- {"type":"meeting-bot","bots":["main"],"confirm":true,"record":true,"spec":"旁听的档案名（不旁听写空字符串）","task":"旁听时要它特别留意的","answer":false,"importShared":true,"leaveWithOwner":true}：只用于 meeting 触发。bots 是要拉进会议的 omem 机器人（main 是主机器人，其余写 lark.bots 的 id；空数组表示不拉机器人、只以本人身份记录）；confirm 先发卡片问本人再拉；record 把会议的转写、会中聊天、进出记录存成会议原件；spec 旁听并在需要本人时提醒；answer 允许在会中聊天里回答点名机器人的问题；importShared 导入会上共享的文档；leaveWithOwner 本人离会时机器人一起离开`;
+- {"type":"meeting-bot","bots":["main"],"confirm":true,"record":true,"spec":"旁听的档案名（不旁听写空字符串）","task":"旁听时要它特别留意的","answer":false,"importShared":true,"leaveWithOwner":true}：只用于 meeting 触发。bots 是要拉进会议的 omem 机器人（main 是主机器人，其余写 lark.bots 的 id；空数组表示不拉机器人、只以本人身份记录）；confirm=true 始终先问，false 直接拉，也可写会议条件（沿用上面的条件结构）：满足时先发卡片问本人，不满足直接拉；record 把会议的转写、会中聊天、进出记录存成会议原件；spec 旁听并在需要本人时提醒；answer 允许在会中聊天里回答点名机器人的问题；importShared 导入会上共享的文档；leaveWithOwner 本人离会时机器人一起离开`;
 
 export async function draftRule(app: App, description: string, current?: Partial<RuleInput>): Promise<{ rule?: RuleInput; error?: string; summary?: string }> {
   const specs = listAgentSpecs(app).map((s) => `- ${s.name}：${s.description}`).join("\n") || "（还没有 Agent 档案）";
@@ -51,11 +51,16 @@ export async function draftRule(app: App, description: string, current?: Partial
     "- 发送人只给了名字就用 sender.name；给了邮箱用 sender.email。群里有某个机器人用 chat.bots contains。“报警卡片”用 message.type equals interactive。",
     `- 本人说的“助理机器人”“omem 机器人”“我的机器人”指 omem 自己的飞书机器人${botName ? `（名字是「${botName}」）` : ""}：判断它在不在群里用 chat.hasOwnBot（is true / false），不要用 chat.bots 去猜它的名字。`,
     "- 本人说“我入会/开会时”“会议里”：trigger.event 用 meeting（本人加入一场视频会议时触发，每场会议对每条规则只触发一次），条件只能用 meeting.* 字段（标题用 meeting.title contains，人数用 meeting.participantCount gte/lte，某人在会上用 meeting.participants contains 名字），动作用 meeting-bot；没说拉哪个机器人就是 [\"main\"]，没说“直接拉、不用问我”就 confirm=true；说“帮我听着/有人问我时提醒我”就 spec 写 assistant 或点名的档案。",
+    "- 会议里“某条件下先问，否则直接拉”写在同一个 meeting-bot 动作的 confirm 条件里，不放进整条规则的 conditions，也不拆成多条规则。例如“30 人及以上先问，否则直接拉”：conditions=null，confirm={\"field\":\"meeting.participantCount\",\"op\":\"gte\",\"value\":\"30\"}；如果还限定会议标题，标题条件才放 conditions。",
     "- 未指定专用档案的任务交给 assistant（主助手），不选择第一个或最接近的档案。本人点名的档案不存在时不要替换，改用 notify 提示缺档案。定时任务允许 reply=auto 发回创建时的会话。",
   ].join("\n");
   const out = await askModel(app, prompt, { timeoutMs: 120_000 });
-  const raw = jsonIn<Record<string, unknown>>(out);
+  const response = jsonIn<Record<string, unknown>>(out);
+  const raw = response?.rule && typeof response.rule === "object" && !Array.isArray(response.rule) ? response.rule as Record<string, unknown> : response;
   if (!raw) return { error: "模型没有给出可用的规则，请换个说法或手动填写" };
+  if (typeof raw.error === "string") return { error: `模型没能生成规则：${raw.error}` };
+  const missing = [!raw.name && "规则名称", !Array.isArray(raw.actions) && "动作清单"].filter(Boolean);
+  if (missing.length) return { error: `模型没有生成完整的规则，缺少${missing.join("、")}。请重新生成，或在下方手动填写。` };
   const parsed = ruleInputSchema.safeParse({ ...raw, spaceId: current?.spaceId, conversationId: current?.conversationId, description, enabled: current?.enabled ?? false });
   if (!parsed.success) return { error: `模型给出的规则不完整：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("；")}` };
   const rule = parsed.data;
@@ -68,7 +73,7 @@ export function eventSummary(e: RuleEvent) {
     e.chat ? `${e.chat.kind === "p2p" ? "私聊" : "群"}「${e.chat.name}」（${e.chat.id}）` : "",
     e.sender ? `发送人 ${e.sender.name}${e.sender.email ? `（${e.sender.email}）` : ""}${e.sender.kind === "bot" ? "（机器人）" : e.sender.kind === "owner" ? "（本人）" : ""}` : "",
     e.message ? `${e.message.type === "interactive" ? "卡片" : "消息"}${e.message.cardTitle ? `「${e.message.cardTitle}」` : ""}${e.message.mentionsOwner ? "，@ 了本人" : ""}${e.message.topicId ? "，在话题里" : ""}：${truncate(e.message.text.replace(/\s+/g, " "), 1000)}` : "",
-    e.meeting ? `本人加入会议「${e.meeting.title || "（无标题）"}」${e.meeting.no ? `（会议号 ${e.meeting.no}）` : ""}，${e.meeting.participants.length} 人${e.meeting.participants.length ? `：${truncate(e.meeting.participants.join("、"), 300)}` : ""}${e.meeting.host ? `；主持人 ${e.meeting.host}` : ""}` : "",
+    e.meeting ? `本人加入会议「${e.meeting.title || "（无标题）"}」${e.meeting.no ? `（会议号 ${e.meeting.no}）` : ""}，${e.meeting.participantCount === null ? "人数未知" : `${e.meeting.participantCount ?? e.meeting.participants.length} 人`}${e.meeting.participants.length ? `：${truncate(e.meeting.participants.join("、"), 300)}` : ""}${e.meeting.host ? `；主持人 ${e.meeting.host}` : ""}` : "",
     e.kind === "chat-new" ? "第一次看到这个群" : e.kind === "schedule" ? `定时触发（${e.at}）` : "",
   ];
   return parts.filter(Boolean).join("；");

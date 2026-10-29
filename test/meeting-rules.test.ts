@@ -3,11 +3,13 @@ import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { setLarkCliForTests } from "../src/channels/lark-cli.ts";
 import { ownerJoinedMeeting, resetMeetingsForTests, setMeetingConsumerForTests, tickMeetings } from "../src/channels/lark-meetings.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
-import { all, one } from "../src/core/db.ts";
+import { all, one, run } from "../src/core/db.ts";
 import { listNotifications } from "../src/core/notify.ts";
 import { evaluate, eventReader } from "../src/rules/conditions.ts";
-import { listFirings, saveRule } from "../src/rules/store.ts";
-import type { RuleEvent } from "../src/rules/types.ts";
+import { listFirings, saveRule, getRule } from "../src/rules/store.ts";
+import { testRule } from "../src/rules/engine.ts";
+import { meetingConfirmation } from "../src/rules/meeting.ts";
+import type { Condition, RuleEvent } from "../src/rules/types.ts";
 import { testApp } from "./helpers.ts";
 
 const apps: ReturnType<typeof testApp>[] = [];
@@ -21,6 +23,7 @@ afterEach(() => {
 
 const at = (min: number) => String(Date.parse("2026-10-28T02:00:00Z") + min * 60_000);
 const joined = (id: string, people: [string, string][]) => ({ event_id: id, event_type: "participant_joined", event_time: at(0), payload: { participant_joined_items: people.map(([pid, name]) => ({ participant: { id: pid, name } })) } });
+const confirmAt30: Condition = { field: "meeting.participantCount", op: "gte", value: "30" };
 
 /** A fake Feishu: the main bot's API calls and cards, and the owner's lark-cli. */
 function setup() {
@@ -71,10 +74,70 @@ describe("meeting rule conditions", () => {
     expect(() => saveRule(app, { name: "d", description: "d", trigger: meeting, conditions: null, judge: "code", actions: [{ type: "meeting-bot", bots: ["nope"] }] })).toThrow(/没有这些飞书机器人/);
     // Every meeting, no conditions: allowed (the card asks first).
     expect(saveRule(app, { name: "e", description: "每场会议都问我", trigger: meeting, conditions: null, judge: "code", actions: [{ type: "meeting-bot", bots: ["main"] }] }).actions[0]).toMatchObject({ type: "meeting-bot", confirm: true, record: true });
+    for (const confirm of [{ field: "chat.name", op: "contains", value: "群" }, { all: [] }, { not: { any: [] } }]) {
+      expect(() => saveRule(app, { name: "f", description: "错误确认条件", trigger: meeting, actions: [{ type: "meeting-bot", confirm: confirm as Condition }] })).toThrow(/确认条件/);
+    }
   });
 });
 
 describe("meetings the owner joins", () => {
+  it.each([29, 30, 31])("uses a single rule to ask at 30 participants or more (%i people), with the same preview", async (count) => {
+    const { app, calls, cards } = setup();
+    const rule = saveRule(app, { name: "按人数确认", description: "入会时 30 人及以上先问，否则直接拉机器人", enabled: true, trigger: { event: "meeting" }, actions: [{ type: "meeting-bot", confirm: confirmAt30, record: false }] });
+    expect(getRule(app, rule.id).actions[0]).toMatchObject({ confirm: confirmAt30 });
+    const people: [string, string][] = Array.from({ length: count }, (_, i) => [`ou_${i}`, `参会人${i + 1}`]);
+    setLarkCliForTests(async () => ({ ok: true, data: { events: [joined("people", people)] } }));
+    await ownerJoinedMeeting(app, { id: "sized", no: "123456789", topic: "方案评审" });
+    const shouldAsk = count >= 30;
+    expect(cards).toHaveLength(shouldAsk ? 1 : 0);
+    expect(calls.filter(c => c.url.endsWith("/bots/join"))).toHaveLength(shouldAsk ? 0 : 1);
+    const stored = one<{ plan: string }>(app.db, "select plan from lark_meetings where meeting_id = 'sized'")!;
+    expect(JSON.parse(stored.plan)).toMatchObject({ confirm: shouldAsk, confirmationReason: expect.stringContaining(shouldAsk ? "先发卡片" : "直接拉") });
+    expect(listFirings(app, rule.id)[0].results[0].detail).toContain(shouldAsk ? "满足确认条件" : "不满足确认条件");
+    const preview = await testRule(app, rule);
+    expect(preview.matches).toHaveLength(1);
+    expect(preview.matches[0]).toMatchObject({ sender: `${count} 人`, action: expect.stringContaining(shouldAsk ? "先发卡片" : "直接拉") });
+    // Trying the rule never sends a card or joins a meeting.
+    expect(cards).toHaveLength(shouldAsk ? 1 : 0);
+    if (shouldAsk) {
+      // Editing the rule and updating people later do not change this card's stored decision.
+      saveRule(app, { ...rule, temporary: undefined, actions: [{ type: "meeting-bot", confirm: false }] });
+      run(app.db, "update lark_meetings set participants = '[]' where meeting_id = 'sized'");
+      await handleCardAction(app, { operator: { open_id: "ou_owner" }, context: { open_message_id: "om_card1" }, action: { value: { action: "approve" } } });
+      expect(calls.filter(c => c.url.endsWith("/bots/join"))).toHaveLength(1);
+      expect(JSON.parse(one<{ plan: string }>(app.db, "select plan from lark_meetings where meeting_id = 'sized'")!.plan).confirm).toBe(true);
+    }
+  });
+
+  it.each(["failed", "empty"])("asks when participant data is %s, without treating it as zero", async (mode) => {
+    const { app, calls, cards } = setup();
+    const rule = saveRule(app, { name: "按人数确认", description: "30 人及以上先问", enabled: true, trigger: { event: "meeting" }, actions: [{ type: "meeting-bot", confirm: confirmAt30 }] });
+    setLarkCliForTests(async () => {
+      if (mode === "failed") throw new Error("无法读取参会人");
+      return { ok: true, data: { events: [] } };
+    });
+    await ownerJoinedMeeting(app, { id: "unknown", no: "123456789", topic: "方案评审" });
+    expect(calls).toEqual([]);
+    expect(cards).toHaveLength(1);
+    expect(JSON.stringify(cards[0])).toContain("参会人数未知");
+    const preview = await testRule(app, rule);
+    expect(preview.matches[0]).toMatchObject({ sender: "人数未知", action: expect.stringContaining("未知，先发卡片") });
+    const e: RuleEvent = { key: "u", kind: "meeting", at: "", via: "test", meeting: { id: "unknown", title: "评审", participants: [], participantCount: null } };
+    expect(await evaluate({ field: "meeting.participantCount", op: "lte", value: "29" }, eventReader(e))).toBe(false);
+    expect((await meetingConfirmation({ bots: ["main"], confirm: { not: confirmAt30 } }, e)).confirm).toBe(true);
+    expect((await meetingConfirmation({ bots: [], confirm: confirmAt30 }, e)).confirm).toBe(false);
+    expect((await meetingConfirmation({ bots: ["main"], confirm: false }, e)).confirm).toBe(false);
+    // An explicitly known zero remains different from an unknown count.
+    expect((await meetingConfirmation({ bots: ["main"], confirm: confirmAt30 }, { ...e, meeting: { ...e.meeting!, participantCount: 0 } })).confirm).toBe(false);
+  });
+
+  it("uses nested meeting conditions for confirmation", async () => {
+    const e: RuleEvent = { key: "c", kind: "meeting", at: "", via: "test", meeting: { id: "m", title: "方案评审", participants: ["小王"], participantCount: 29 } };
+    const confirm: Condition = { any: [confirmAt30, { all: [{ field: "meeting.title", op: "contains", value: "评审" }, { not: { field: "meeting.participants", op: "contains", value: "小李" } }] }] };
+    expect((await meetingConfirmation({ bots: ["main"], confirm }, e)).confirm).toBe(true);
+    expect((await meetingConfirmation({ bots: ["main"], confirm }, { ...e, meeting: { ...e.meeting!, title: "周会" } })).confirm).toBe(false);
+  });
+
   it("brings the bot in, keeps the record (latest transcript wins), listens, and leaves with the owner", async () => {
     const { app, calls, botEvents } = setup();
     const rule = saveRule(app, {
