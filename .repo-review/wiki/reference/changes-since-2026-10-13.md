@@ -885,3 +885,26 @@ updated: 2026-10-30
 - `eval-longmemeval.ts --recall`：不启动服务、不用模型，按会话排序算 Recall@5/@10、All@10、NDCG@10，按类型分；`--vector` 用本地向量。
 - 只手动跑，没有定时任务；数字写进 `docs/v2/evaluation.md`。
 - **档案建议不会不打招呼就过期**（10-30）：`proposals.ts` 的 `expireProposals` 只让已经通知过、且通知已满两天的建议过期；超过 14 天却从没通知过的（检查上线前提的、服务停过的）先通知，两天后才过期，通知里写的是实际过期日期。
+## 10-30：原件目录树与按目录定级（原件治理第一期）
+
+- **目录**（`src/sources/catalog.ts`）：按种类给每份原件一条节点链（`dir:`、`wiki:` / `wn:`、`lark-drive` / `from:` / `lark-drive:direct`、`chat:<类型>` / `chat:<会话>` / `chat:<会话>:images`、`site:`、`kind:<种类>[:年[-月]]`），一个空间的树在内存里建好并缓存（原件变化事件作废）。`treeChildren` 返回一层，带份数、各档数量、标注数、节点自己的档。
+- **知识库层级**：新表 `wiki_spaces`、`wiki_nodes`（迁移用已有 meta 填，`FILL_WIKI_NODES`，不联网，`checked_at` 为空）；`lark-wiki.ts` 的 `recordWikiNodes` 在 `wikiLocation`（采集、只读目录刷新）时写节点和全部祖先，`wikiChildren` 列出的子节点也写；`lark-docs-refresh` 加 `unchecked`（从没读过位置、或节点还没被新代码读过的文档）。
+- **目录定级**：`source_node_levels`（`setNodeLevel` / `reviewNodeLevel` / `applyNodeLevels`），`sources.node_level` / `node_level_by` 存最近的目录档；`effectiveLevel` / `levelSql` 定实际的档（原件自己的档在同级或更高的人定时优先）。检索、计数、整理任务、ingest 都改用实际的档。
+- **接口与工具**：`GET /api/sources/tree`、`PUT /api/sources/node-level`；`list_sources(under, depth)`、`search(under)`、`set_source_attention(under)`；分级任务列出“所在目录”，`triager` 先按目录定。
+- **界面**：`web/src/components/SourceTree.vue`（懒加载、展开状态存 localStorage、行尾菜单设档、灰色节点“采集”），非仓库空间的原件页用它。
+
+## 10-30：标注治理与被引用次数（原件治理第一期之二）
+
+- **迁移**：`source_notes` 加 `quote`、`quote_hash`、`status`（pending / confirmed / rejected，本人写的迁移成 confirmed）、`stale_at`；新表 `source_note_hits`（本机统计，不同步）、`source_cites`（同步）。
+- **排序**（`attention.ts` 的 `noteFactor`、`search.ts` 的 `weigh`）：`w ^ (强度 × 比例)`，比例 = 重叠行 / 片段行，至少 0.25；强度 1 / 0.5 / 0；本人或确认过的“有误”“不检索”盖住一半以上或整份时去掉命中；过时和有误的命中附 ref 指向的前 200 字；被引用加分 `1 + 0.1 × min(1, ln(1+n)/ln(21))`（`cites.ts`，回答在 `addMessage` 记，旧回答启动时补记一次，页面取 `page_cites`）。
+- **锚定**（`anchor.ts`）：新标注存 quote / hash，`upsertSource` 在文档正文变化且有行标注时调用 `relocateNotes`，找不到记 `stale_at`，找回来清掉。
+- **复核**：`reviewQueue`、`GET /api/sources/review`、`POST /api/source-notes/:id/review`、`POST /api/sources/node-level/review`；原件页“待复核”（`SourceReview.vue`），原件详情的标注带状态和确认 / 否定。
+- **工具与角色**：`annotate_source` 加 `quote`、`exclude`，被否定的不能再加；`read_source` 不列否定的、标出待确认和失效；distiller / ingest 的说明补上 quote、exclude 和按目录定级。
+
+## 10-30：重复原件合并与相同内容折叠（原件治理第一期之三）
+
+- **防止**（`lark-docs.ts` 的 `importLarkDocument`）：读到文档在知识库里时按 `/wiki/<节点>` 保存；从知识库链接读到、而库里已有同一 document id 的 /docx/ 副本时，把那份的 uri 改成 /wiki/ 链接接着用。docx 链接本来就能按 document id 找到知识库副本。
+- **合并**（`src/sources/duplicates.ts`）：`findDuplicateDocs` 按 document id、`wiki_nodes.obj_token` 或节点找同一空间里的成对副本；`mergeDuplicateDocs` 默认只列出，`dryRun: false` 时每对一个事务：标注按段落移到知识库那份（找不到记失效）、关注程度在更高的人定时带过去、各表的 `source_id`（`page_cites`、`digest_done`、`source_locations`、`source_moves`、`lark_messages`、`wiki_nodes`、`source_cites`…）和事项材料改过去、docx 那份变成保留正文的墓碑，`source_aliases` 记旧 id → 新 id 和 `detail`。入口：`omem lark docs-dedupe [--apply]`、远程 `sources-merge-duplicates`。
+- **解析旧 id**：`aliasTarget` / `canonicalSourceId`，用在 `getSource`（`readSource` 读新 id 的正文）、`read_source` 的 `resolveSource`、`/api/sources/:id`、分享快照、飞书引用链接、Wiki 引用。
+- **相同内容折叠**（`search.ts`）：非代码原件按正文 hash 和起始行折叠，留排名最高的一份，`sameAs` 列出其余；`search` 工具写“另有 N 份相同内容”，命令面板可展开。
+

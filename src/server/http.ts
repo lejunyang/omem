@@ -24,7 +24,7 @@ import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
 import {
   addSourceNote, applyAttentionRulesToExisting, deleteAttentionRule, LEVEL_LABELS, LEVELS, levelCounts, levelOf, listAttentionRules, NOTE_KINDS, removeSourceNote,
-  saveAttentionRule, selectSources, setAttention, sourceFilter, sourceNotes,
+  saveAttentionRule, selectSources, setAttention, setNodeLevel, sourceFilter, sourceNotes, reviewQueue, reviewSourceNote, reviewNodeLevel,
 } from "../sources/attention.ts";
 import { defaultBaseRef, fetchBranch, git, isGitRepo, listBranches } from "../core/git.ts";
 import { ask, conversationMessages, scheduleIngest, scheduleSpaceSync, stalePages, type PageBrief } from "../agents/jobs.ts";
@@ -255,6 +255,24 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ kind: z.enum(NOTE_KINDS), lineStart: z.number().int().nullable().optional(), lineEnd: z.number().int().nullable().optional(), note: z.string().max(500), ref: z.string().nullable().optional() }), req.body);
     return addSourceNote(app, { sourceId: (req.params as { id: string }).id, ...b, by: "owner" });
   });
+  // What waits for the owner: agents' notes and folder levels, by impact (sources/attention.ts reviewQueue).
+  server.get("/api/sources/review", async (req) => {
+    const o = q(z.object({ space: z.string() }), req.query);
+    if (!(scopeFor(app, who(req), [o.space]) ?? [o.space]).includes(o.space)) throw new HttpError(403, `不能访问空间 ${o.space}`);
+    return reviewQueue(app, o.space);
+  });
+  server.post("/api/source-notes/:id/review", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ decision: z.enum(["confirm", "reject"]) }), req.body);
+    reviewSourceNote(app, Number((req.params as { id: string }).id), b.decision);
+    return { ok: true };
+  });
+  server.post("/api/sources/node-level/review", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ space: z.string(), node: z.string().min(1), decision: z.enum(["confirm", "reject"]) }), req.body);
+    reviewNodeLevel(app, b.space, b.node, b.decision);
+    return { ok: true };
+  });
   server.delete("/api/source-notes/:id", async (req) => {
     ownerOnly(req);
     removeSourceNote(app, Number((req.params as { id: string }).id), "owner");
@@ -302,6 +320,19 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const c = await import("../agents/capacity.ts");
     return { now: c.loadReport(app), recent: c.recentStats(app) };
   });
+  // The catalog of a space, one level at a time (sources/catalog.ts): counts and levels follow the filters.
+  server.get("/api/sources/tree", async (req) => {
+    const o = q(z.object({ space: z.string(), node: z.string().default(""), kind: z.string().optional(), level: z.enum(LEVELS).optional(), q: z.string().optional() }), req.query);
+    if (!(scopeFor(app, who(req), [o.space]) ?? [o.space]).includes(o.space)) throw new HttpError(403, `不能访问空间 ${o.space}`);
+    const { treeChildren } = await import("../sources/catalog.ts");
+    return treeChildren(app, o.space, o.node, { kind: o.kind, level: o.level, q: o.q });
+  });
+  // A level for a whole folder of the catalog (and what arrives there later).
+  server.put("/api/sources/node-level", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ space: z.string(), node: z.string().min(1), level: z.enum(LEVELS).nullable() }), req.body);
+    return setNodeLevel(app, b.space, b.node, b.level, "owner", { reason: "本人在原件目录里设置" });
+  });
   server.get("/api/sources/paths", async (req) => {
     const o = q(z.object({ space: z.string(), kind: z.string().optional(), q: z.string().optional() }), req.query);
     return listSourcePaths(app, { spaceId: o.space, kind: o.kind, q: o.q });
@@ -326,8 +357,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const o = q(z.object({ from: z.coerce.number().optional(), to: z.coerce.number().optional(), window: z.coerce.number().optional() }), req.query);
     const chat = o.window && getSource(app, id).kind === "chat";
     const r = o.window ? readSource(app, id, 1, chat ? undefined : o.window, chat ? o.window : undefined) : readSource(app, id, o.from, o.to);
-    const citedBy = all<{ page_id: string; title: string }>(app.db, "select distinct c.page_id, p.title from page_cites c join pages p on p.id = c.page_id where c.source_id = ?", id);
-    return { ...r, outline: sourceOutline(app, id), citedBy, notes: sourceNotes(app, id) };
+    // An old id of a merged duplicate opens the copy that was kept.
+    const sid = r.source.id;
+    const citedBy = all<{ page_id: string; title: string }>(app.db, "select distinct c.page_id, p.title from page_cites c join pages p on p.id = c.page_id where c.source_id = ?", sid);
+    return { ...r, outline: sourceOutline(app, sid), citedBy, notes: sourceNotes(app, sid) };
   });
   // Chat sources captured from Feishu: messages with quotes, images and reactions for a chat-like view.
   server.get("/api/sources/:id/messages", async (req) => {

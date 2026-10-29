@@ -28,6 +28,8 @@ import { resolveCitationsNow } from "../src/channels/citations.ts";
 import { saveRule } from "../src/rules/store.ts";
 import { startServer } from "../src/server/http.ts";
 import { upsertSource } from "../src/sources/store.ts";
+import { addSourceNote, setAttention, setNodeLevel } from "../src/sources/attention.ts";
+import { recordWikiNodes } from "../src/channels/lark-wiki.ts";
 import { writePage } from "../src/wiki/store.ts";
 
 const serveOnly = process.argv.includes("--serve");
@@ -127,6 +129,31 @@ const chat = upsertSource(app, { spaceId: "shop", kind: "chat", uri: "lark:oc_de
 const code = upsertSource(app, { spaceId: "shop", kind: "code", uri: "refund.js", title: "refund.js", text: REFUND_AFTER }).id;
 upsertSource(app, { spaceId: "personal", kind: "note", uri: "note:weekly", title: "本周计划", text: "- 周四前上线退款改造\n- 周五和小王对一下发货状态的接口\n" });
 upsertSource(app, { spaceId: "shop", kind: "doc", uri: "docs/优惠券规则.md", title: "优惠券规则", text: "# 优惠券规则\n\n满减券按订单实付金额计算门槛。\n" });
+
+// ---- a project space browsed as a catalog: a knowledge base, linked docs, chats, a site, a meeting ----
+createSpace(app, { id: "refund", name: "退款改造", kind: "project", description: "退款改造项目的需求、讨论与会议" });
+const LARK = "https://tenant.larkoffice.com";
+const kbNode = (token: string, title: string, parent?: string, hasChild = false) => ({ spaceId: "kb_demo", nodeToken: token, objToken: `obj_${token}`, objType: "docx", nodeType: "origin", parentNodeToken: parent, title, hasChild });
+recordWikiNodes(app, [kbNode("wn_root", "交易中台"), kbNode("wn_refund", "退款改造", "wn_root", true), kbNode("wn_prd", "退款改造需求", "wn_refund"), kbNode("wn_tech", "退款技术方案", "wn_refund"),
+  kbNode("wn_review", "上线复盘", "wn_refund"), kbNode("wn_old", "2025 年退款方案（归档）", "wn_root")], { spaceName: "项目 A 知识库" });
+const kbDoc = (token: string, title: string, text: string) => upsertSource(app, { spaceId: "refund", kind: "doc", uri: `${LARK}/wiki/${token}`, title, text,
+  meta: { via: "lark-cli", url: `${LARK}/wiki/${token}`, wikiSpaceId: "kb_demo", wikiNodeToken: token, documentId: `obj_${token}` } }).id;
+const kbPrd = kbDoc("wn_prd", "退款改造需求", "# 退款改造需求\n\n部分发货只退已发货的行。\n订单级优惠按实付比例分摊，尾差归最后一行。\n");
+kbDoc("wn_tech", "退款技术方案", "# 退款技术方案\n\n金额按分计算，超出两位小数报错。\n");
+const kbOld = kbDoc("wn_old", "2025 年退款方案（归档）", "# 2025 年退款方案\n\n退款按订单总额计算。\n");
+upsertSource(app, { spaceId: "refund", kind: "doc", uri: `${LARK}/docx/dx_api`, title: "退款接口说明", text: "# 退款接口\n\nPOST /refunds\n", meta: { via: "lark-cli", url: `${LARK}/docx/dx_api`, parentUrl: `${LARK}/wiki/wn_prd` } });
+upsertSource(app, { spaceId: "refund", kind: "doc", uri: `${LARK}/docx/dx_week`, title: "退款改造周报", text: "# 周报\n\n本周完成分摊规则。\n", meta: { via: "lark-cli", url: `${LARK}/docx/dx_week` } });
+for (const m of ["2026-09", "2026-08"]) upsertSource(app, { spaceId: "refund", kind: "chat", uri: `lark:oc_demo_team@${m}`, title: `退款改造讨论群（${m} 历史）`, text: `[${m}-03 10:00] 小王: 发货状态接口改好了`, meta: { chatId: "oc_demo_team", chatKind: "group", month: m, history: true } });
+upsertSource(app, { spaceId: "refund", kind: "chat", uri: "lark:oc_demo_team", title: "退款改造讨论群", text: "[10-21 10:02] 阿青: 尾差归最后一行\n[10-21 10:05] 小王: 收到", meta: { chatId: "oc_demo_team", chatMode: "group" } });
+upsertSource(app, { spaceId: "refund", kind: "image", uri: "lark:oc_demo_team/img_demo.png", title: "img_demo.png", text: "截图：退款明细" });
+upsertSource(app, { spaceId: "refund", kind: "chat", uri: "lark:oc_demo_alert", title: "订单告警通知", text: "[10-29 03:00] 机器人: 退款接口 P99 超过 800ms", meta: { chatId: "oc_demo_alert", chatMode: "group" } });
+upsertSource(app, { spaceId: "refund", kind: "chat", uri: "lark:oc_demo_dm", title: "与 小王 的私聊", text: "[10-22 15:00] 小王: 接口今天能联调", meta: { chatId: "oc_demo_dm", chatMode: "p2p" } });
+upsertSource(app, { spaceId: "refund", kind: "web", uri: "https://example.com/payments/refund-rounding", title: "退款金额的尾差处理", text: "尾差归最后一行是常见做法。", meta: { url: "https://example.com/payments/refund-rounding" } });
+upsertSource(app, { spaceId: "refund", kind: "meeting", uri: "lark:minutes:demo_weekly", title: "妙记：退款改造周会", text: "阿青：周四上线。", meta: { date: "2026-10-23" } });
+setNodeLevel(app, "refund", "chat:oc_demo_alert", "ignore", "owner", { reason: "机器人通知" });
+setNodeLevel(app, "refund", "wn:wn_old", "reference", "agent", { reason: "已被 2026 年的方案取代" });
+setAttention(app, [kbPrd], "focus", "owner");
+addSourceNote(app, { sourceId: kbOld, lineStart: 3, lineEnd: 3, kind: "outdated", note: "现在按已发货的行计算", ref: `src:${kbPrd}#L3-L3`, by: "agent" });
 
 // ---- Wiki: one page drawing on several kinds of material ----------------------------------------
 writePage(app, "shop", "refund/amount", {
@@ -339,7 +366,7 @@ if (serveOnly) {
   await new Promise(() => {});
 }
 const browser = await chromium.launch(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : { channel: process.platform === "win32" ? "msedge" : "chrome" });
-const shots: { name: string; path: string; width?: number; dark?: boolean; prepare?: (page: Page) => Promise<void> }[] = [
+const shots: { name: string; path: string; width?: number; dark?: boolean; space?: string; init?: Record<string, string>; prepare?: (page: Page) => Promise<void> }[] = [
   { name: "today", path: "/" },
   { name: "ask-citations", path: `/ask/${t.id}` },
   { name: "wiki-tree", path: "/wiki/shop/refund/cases/partial-shipment-over-refund" },
@@ -347,6 +374,8 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; prepa
   { name: "search-hits", path: "/", prepare: async (p) => { await p.keyboard.press("Control+k"); await p.getByPlaceholder(/搜索原件/).fill("尾差 分摊"); await p.waitForTimeout(1500); } },
   { name: "wiki-citations", path: "/wiki/shop/refund/amount", prepare: async (p) => { await p.getByText("refund.js 第 10–21 行").first().click(); await p.waitForTimeout(1000); } },
   { name: "sources", path: `/sources/${prd}` },
+  { name: "sources-catalog", path: `/sources/${kbPrd}`, space: "refund", init: { "omem.sourceTree.refund": JSON.stringify(["wiki:kb_demo", "wn:wn_root", "wn:wn_refund", "chat:group", "chat:oc_demo_team", "lark-drive"]) } },
+  { name: "sources-review", path: `/sources/${kbOld}`, space: "refund", prepare: async (p) => { await p.getByRole("button", { name: /待复核/ }).click(); await p.waitForTimeout(600); } },
   { name: "memory", path: "/memory" },
   { name: "items", path: `/items/${item.id}` },
   { name: "review-overview", path: `/runs/${r.id}` },
@@ -394,7 +423,10 @@ for (const s of shots) {
   const width = s.width ?? 1440;
   const page = await browser.newPage({ viewport: { width, height: width < 600 ? 844 : 900 }, colorScheme: s.dark ? "dark" : "light", deviceScaleFactor: width < 600 ? 2 : 1 });
   // Every page opens on the demo project's space.
-  await page.addInitScript(() => localStorage.setItem("omem-space", "shop"));
+  await page.addInitScript(([space, init]) => {
+    localStorage.setItem("omem-space", space);
+    for (const [k, v] of Object.entries(init)) localStorage.setItem(k, v);
+  }, [s.space ?? "shop", s.init ?? {}] as const);
   await page.route(`**/api/rules/${meetingRule.id}/permissions`, route => route.fulfill({ json: { issues: [], ok: ["演示数据：会议权限已配置"], notes: ["会议需要允许智能体加入"] } }));
   try {
     await page.goto(`${url}/#${s.path}`);

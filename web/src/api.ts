@@ -156,7 +156,7 @@ export type SpaceRelation = { space: string; name: string; kind: string; note: s
 export type Space = { id: string; name: string; kind: string; description: string; rootPath: string | null; settings: Record<string, any>; sources?: number; pages?: number; related?: SpaceRelation[] };
 /** How a hit is shown (src/search/present.ts): clean text around the match and the matched ranges. */
 export type HitDisplay = { title: string; titleMarks: [number, number][]; text: string; marks: [number, number][]; place: string; link: string };
-export type Hit = { type: "chunk" | "page" | "memory" | "symbol"; id: string; spaceId: string; title: string; path: string; sourceId?: string; uri?: string; sourceKind?: string; lineStart?: number; lineEnd?: number; snippet: string; score: number; via: string[]; status?: string; display?: HitDisplay };
+export type Hit = { type: "chunk" | "page" | "memory" | "symbol"; id: string; spaceId: string; title: string; path: string; sourceId?: string; uri?: string; sourceKind?: string; lineStart?: number; lineEnd?: number; snippet: string; score: number; via: string[]; status?: string; notes?: string[]; display?: HitDisplay; sameAs?: { sourceId: string; uri: string; title: string; spaceId: string }[] };
 /** What an id names (`GET /api/lookup`). */
 export type IdHit = { type: "run" | "memory" | "source" | "item" | "message" | "conversation" | "rule" | "page" | "notification"; id: string; title: string; snippet: string; spaceId: string | null; slug?: string; conversationId?: string; at?: string };
 export type Memory = {
@@ -207,5 +207,5 @@ export type Run = { id: string; kind: string; spaceId: string | null; status: st
 /** "codex · gpt-6.1-sol · low": what a run ran on, or its backend alone for runs recorded before models were. */
 export const aiLabel = (r: Pick<Run, "ai" | "profileId">) => (r.ai ? [r.ai.profile, r.ai.model, r.ai.effort].filter(Boolean).join(" · ") : r.profileId ?? "");
 export type RunEvent = { seq: number; at: string; type: string; data: any };
-export type Source = { id: string; spaceId: string; kind: string; uri: string; title: string; mime: string | null; meta: any; capturedAt: string; updatedAt: string; deletedAt: string | null; lines?: number; attention?: "focus" | "reference" | "ignore" | null; attentionBy?: "owner" | "agent" | "rule" | null };
+export type Source = { id: string; spaceId: string; kind: string; uri: string; title: string; mime: string | null; meta: any; capturedAt: string; updatedAt: string; deletedAt: string | null; lines?: number; attention?: "focus" | "reference" | "ignore" | null; attentionBy?: "owner" | "agent" | "rule" | null; level?: { level: string; by: string | null; inherited: boolean } };
 export type Card = { id: string; spaceId: string; front: string; back: string; sourceRefs: string[]; dueAt: string; reps: number; lapses: number; state: number; suspended: boolean };

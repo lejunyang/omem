@@ -414,6 +414,20 @@ lark
     }
   });
 lark
+  .command("docs-dedupe")
+  .description("合并同一篇飞书文档的 /docx/ 与 /wiki/ 两份原件：默认只列出，--apply 才合并（旧 id 保留为别名，引用照常可读）")
+  .option("--space <id>", "只处理这个空间")
+  .option("--apply", "真的合并")
+  .action(async (o) => {
+    const app = open();
+    const { mergeDuplicateDocs } = await import("./sources/duplicates.ts");
+    const r = mergeDuplicateDocs(app, { space: o.space, dryRun: !o.apply });
+    if (r.dryRun) {
+      console.log(`${r.pairs} 对重复${r.pairs ? "（加 --apply 合并）" : ""}`);
+      for (const p of r.sample ?? []) console.log(`  ${p.docx.id} → ${p.wiki.id}《${p.wiki.title}》`);
+    } else console.log(`合并了 ${r.merged}/${r.pairs} 对`);
+  });
+lark
   .command("docs-missing")
   .description("链接里读不到的飞书文档（多半是没有权限）")
   .option("--retry", "立即重试（包括次数用完已放弃的，不包括 --ignore 过的）")

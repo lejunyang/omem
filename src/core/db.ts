@@ -6,6 +6,21 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
  * Wiki pages live as Markdown in the library (a Git repository); the
  * `pages` table is only their search projection.
  */
+/** Knowledge-base nodes from what captures kept in meta (no network); idempotent, exported for tests. */
+export const FILL_WIKI_NODES = `
+  insert or ignore into wiki_spaces(id, name)
+    select json_extract(meta, '$.wikiSpaceId'), max(coalesce(json_extract(meta, '$.wikiSpaceName'), ''))
+    from sources where kind = 'doc' and coalesce(json_extract(meta, '$.wikiSpaceId'), '') != '' group by 1;
+  insert or ignore into wiki_nodes(token, wiki_space_id, parent_token, title, obj_token, obj_type, source_id, error)
+    select json_extract(meta, '$.wikiNodeToken'), json_extract(meta, '$.wikiSpaceId'), json_extract(meta, '$.wikiParentNodeToken'), title,
+      json_extract(meta, '$.documentId'), 'docx', id, json_extract(meta, '$.wikiMetadataError')
+    from sources where kind = 'doc' and deleted_at is null and coalesce(json_extract(meta, '$.wikiNodeToken'), '') != ''
+    order by (uri like '%/wiki/%') desc, updated_at desc;
+  insert or ignore into wiki_nodes(token, wiki_space_id, title)
+    select json_extract(meta, '$.wikiParentNodeToken'), json_extract(meta, '$.wikiSpaceId'), coalesce(json_extract(meta, '$.wikiParentTitle'), '')
+    from sources where kind = 'doc' and deleted_at is null and coalesce(json_extract(meta, '$.wikiParentNodeToken'), '') != '';
+`;
+
 const migrations: string[] = [
   `
   create table spaces (
@@ -851,6 +866,65 @@ const migrations: string[] = [
   // Profile proposals nobody answered expire after 14 days (src/agents/proposals.ts); the notice
   // sent before that is recorded so it goes out once.
   `alter table profile_proposals add column expiry_notice_at text;`,
+  // Feishu knowledge bases as a tree (src/sources/catalog.ts): every node a doc sits under, captured
+  // or not (source_id null), so the sources page and agents can browse and set levels by folder.
+  // Filled from what earlier captures kept in meta (no network); checked_at stays null until the node
+  // is read again (`lark-docs-refresh` with `unchecked`), which also writes the missing ancestors.
+  // Levels set on a catalog node hold for its subtree (sources/attention.ts `setNodeLevel`); each
+  // source keeps the nearest one in node_level so search can filter in SQL.
+  `
+  alter table sources add column node_level text;
+  alter table sources add column node_level_by text;
+  create table source_node_levels (
+    space_id text not null,
+    node_key text not null,
+    level text not null,
+    by text not null,
+    status text not null default 'active',
+    reason text not null default '',
+    run_id text,
+    updated_at text not null,
+    primary key (space_id, node_key)
+  );
+  create table wiki_spaces (id text primary key, name text not null default '', checked_at text);
+  create table wiki_nodes (
+    token text primary key,
+    wiki_space_id text,
+    parent_token text,
+    title text not null default '',
+    obj_token text,
+    obj_type text,
+    node_type text,
+    has_child integer,
+    source_id text,
+    checked_at text,
+    error text
+  );
+  create index wiki_nodes_parent on wiki_nodes(parent_token);
+  create index wiki_nodes_obj on wiki_nodes(obj_token) where obj_token is not null;
+  ${FILL_WIKI_NODES}
+  `,
+  // Notes anchored to their passage and reviewed by the owner (sources/attention.ts, anchor.ts):
+  // quote / quote_hash follow the passage when a document is read again, stale_at when it is gone;
+  // agents' notes are pending until the owner confirms or rejects them. How often a note shaped search
+  // results is counted per device (review order). source_cites: which answers cite a source (a light
+  // ranking boost with the pages that cite it, sources/cites.ts).
+  `
+  alter table source_notes add column quote text;
+  alter table source_notes add column quote_hash text;
+  alter table source_notes add column status text not null default 'pending';
+  alter table source_notes add column stale_at text;
+  update source_notes set status = 'confirmed' where by = 'owner';
+  create table source_note_hits (note_id integer primary key, n integer not null default 0, at text);
+  create table source_cites (source_id text not null, ref text not null, kind text not null, at text not null, primary key (source_id, ref));
+  create index source_cites_ref on source_cites(ref);
+  `,
+  // The same Feishu document captured by its /docx/ link and as a knowledge-base page: merged into the
+  // wiki copy by an explicit job (sources/duplicates.ts); the old id stays as an alias so citations resolve.
+  `
+  create table source_aliases (alias_id text primary key, source_id text not null, reason text not null, detail text not null default '{}', created_at text not null);
+  create index source_aliases_target on source_aliases(source_id);
+  `,
 ];
 
 export type Db = DatabaseSync;

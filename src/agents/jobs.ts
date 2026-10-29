@@ -271,7 +271,7 @@ export function scheduleIngest(app: App, spaceId: string, sourceIds: string[], n
   for (const id of new Set(sourceIds)) {
     const s = getSource(app, id);
     // Material marked “only searchable” or “ignore” is not digested.
-    if (s.deletedAt || s.attention === "reference" || s.attention === "ignore") continue;
+    if (s.deletedAt || s.level?.level === "reference" || s.level?.level === "ignore") continue;
     if (sourceRoute(app, id)?.pending && one(app.db, "select 1 from runs where kind='archive' and status in ('queued','running') and exists(select 1 from json_each(runs.input,'$.sourceIds') where value=?)", id)) {
       run(app.db, "update source_routes set ingest=1 where source_id=?", id);
       continue;

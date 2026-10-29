@@ -4,6 +4,7 @@ import { notify } from "../core/notify.ts";
 import { HttpError, json, newId } from "../core/util.ts";
 import { asOwner } from "./lark-auth.ts";
 import { larkCli } from "./lark-cli.ts";
+import { catalogChanged } from "../sources/catalog.ts";
 
 /**
  * Feishu knowledge bases (wiki) read as the owner: a node's place in the tree and its children.
@@ -55,7 +56,33 @@ export async function wikiNode(app: App, token: string): Promise<WikiNode | null
   }
 }
 
-export type WikiLocation = { node: WikiNode | null; spaceName?: string; parentTitle?: string; path?: string; errors: string[] };
+export type WikiLocation = { node: WikiNode | null; spaceName?: string; parentTitle?: string; path?: string; errors: string[]; ancestors?: WikiNode[] };
+
+/**
+ * Keep nodes read from Feishu in `wiki_nodes` (the knowledge-base tree of sources/catalog.ts): the
+ * node, its title and parent as Feishu has them now. `sourceId` links the omem copy of a doc; a node
+ * nobody captured keeps a null source and shows greyed out. `error` marks the top of a chain whose
+ * parent could not be read (no permission), so its subtree hangs under “（无权限的上级）”.
+ */
+export function recordWikiNodes(app: App, nodes: WikiNode[], opts: { sourceId?: string; spaceName?: string; error?: string | null } = {}) {
+  const at = new Date().toISOString();
+  const up = app.db.prepare(`insert into wiki_nodes(token, wiki_space_id, parent_token, title, obj_token, obj_type, node_type, has_child, source_id, checked_at, error)
+    values(?,?,?,?,?,?,?,?,?,?,null) on conflict(token) do update set wiki_space_id = excluded.wiki_space_id, parent_token = excluded.parent_token,
+    title = case when excluded.title != '' then excluded.title else wiki_nodes.title end, obj_token = excluded.obj_token, obj_type = excluded.obj_type,
+    node_type = excluded.node_type, has_child = excluded.has_child, checked_at = excluded.checked_at, error = null,
+    source_id = coalesce(excluded.source_id, wiki_nodes.source_id)`);
+  for (const n of nodes) {
+    if (!n.nodeToken) continue;
+    up.run(n.nodeToken, n.spaceId || null, n.parentNodeToken ?? null, n.title, n.objToken || null, n.objType || null, n.nodeType || null, n.hasChild ? 1 : 0, null, at);
+  }
+  if (opts.sourceId && nodes[0]?.nodeToken) run(app.db, "update wiki_nodes set source_id = ? where token = ?", opts.sourceId, nodes[0].nodeToken);
+  const top = nodes.at(-1);
+  if (opts.error && top?.parentNodeToken) run(app.db, "update wiki_nodes set error = ? where token = ?", opts.error.slice(0, 300), top.nodeToken);
+  const space = nodes[0]?.spaceId;
+  if (space) run(app.db, `insert into wiki_spaces(id, name, checked_at) values(?, ?, ?) on conflict(id) do update set
+    name = case when excluded.name != '' then excluded.name else wiki_spaces.name end, checked_at = excluded.checked_at`, space, opts.spaceName ?? "", at);
+  if (nodes.length) catalogChanged(app);
+}
 const locationCaches = new WeakMap<App, Map<string, { until: number; value: Promise<unknown> }>>();
 export function clearWikiLocationCache(app: App) { locationCaches.delete(app); }
 function cachedLocation<T>(app: App, key: string, read: () => Promise<T>): Promise<T> {
@@ -99,6 +126,7 @@ export async function wikiLocation(app: App, token: string, known?: WikiNode | n
     result.parentTitle = ancestors[0]?.title;
     result.path = ancestors.map(n => n.title).reverse().join(" / ");
   } catch (e) { result.errors.push((e as Error).message); }
+  result.ancestors = ancestors;
   return result;
 }
 
@@ -111,7 +139,10 @@ export async function wikiChildren(app: App, node: Pick<WikiNode, "spaceId" | "n
       larkCli(["wiki", "+node-list", "--space-id", node.spaceId, "--parent-node-token", node.nodeToken, "--page-size", "50", ...(token ? ["--page-token", token] : []), "--as", "user", "--format", "json"], 60_000),
     );
     const d = v?.data ?? v;
-    for (const n of (d?.nodes ?? d?.items ?? []) as unknown[]) nodes.push(toNode(n));
+    const page = ((d?.nodes ?? d?.items ?? []) as unknown[]).map(toNode);
+    nodes.push(...page);
+    // Children seen while listing are part of the tree too (greyed out until captured).
+    try { recordWikiNodes(app, page); } catch {}
     if (!d?.has_more || !d?.page_token) return { nodes: nodes.slice(0, max), more: nodes.length > max };
     token = String(d.page_token);
   }

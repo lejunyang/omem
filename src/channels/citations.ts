@@ -1,5 +1,6 @@
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
+import { canonicalSourceId } from "../sources/duplicates.ts";
 import { json } from "../core/util.ts";
 import { prepareShare, type ShareRef } from "../core/shares.ts";
 
@@ -96,7 +97,7 @@ function larkUrl(app: App, t: LarkTarget) {
 }
 
 function sourceRow(app: App, id: string) {
-  return one<{ uri: string }>(app.db, "select uri from sources where id = ? and deleted_at is null", id);
+  return one<{ uri: string }>(app.db, "select uri from sources where id = ? and deleted_at is null", canonicalSourceId(app, id));
 }
 
 function target(app: App, ref: string): { url: string | null; shareable: boolean } {

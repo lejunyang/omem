@@ -2,6 +2,7 @@ import { captureSpace } from "../core/capture-space.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now, truncate } from "../core/util.ts";
+import { recordCites } from "../sources/cites.ts";
 import { appendToSource } from "../sources/store.ts";
 
 /**
@@ -312,6 +313,8 @@ export function ensureConversation(app: App, input: { id?: string; spaceId: stri
 export function addMessage(app: App, conversationId: string, role: "user" | "assistant", text: string, runId?: string | null, meta: Record<string, unknown> = {}) {
   const id = newId("msg");
   run(app.db, "insert into messages(id,conversation_id,role,text,run_id,meta,created_at) values(?,?,?,?,?,?,?)", id, conversationId, role, text, runId ?? null, JSON.stringify(meta), now());
+  // Which sources answers cite (a light ranking boost, sources/cites.ts).
+  if (role === "assistant") recordCites(app, text, `msg:${id}`);
   run(
     app.db,
     "update conversations set updated_at = ?, title = case when title = '' and ? = 'user' and ? = 0 then ? else title end where id = ?",

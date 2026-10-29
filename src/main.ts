@@ -93,6 +93,10 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     import("./channels/lark-docs.ts")
       .then((m) => m.resumeRefresh(app))
       .catch((e) => console.warn("[omem] 继续重新读取飞书文档失败：", e.message));
+    // Answers given before citations were counted count too (once).
+    import("./sources/cites.ts")
+      .then((m) => m.backfillCites(app))
+      .catch((e) => console.warn("[omem] 统计原件被引用次数失败：", e.message));
     import("./channels/lark-wiki.ts")
       .then((m) => m.resumeCrawls(app))
       .catch((e) => console.warn("[omem] 继续爬取飞书知识库失败：", e.message));

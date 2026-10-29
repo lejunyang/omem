@@ -509,8 +509,11 @@ type ImportOpts = {
 async function readWikiMetadata(app: App, url: string, previous: Partial<LarkDocMeta> = {}) {
   const empty = { wikiSpaceName: undefined, wikiParentTitle: undefined, wikiPath: undefined, wikiMetadataCheckedAt: new Date().toISOString(), wikiMetadataError: undefined };
   try {
-    const location = await (await import("./lark-wiki.ts")).wikiLocation(app, url);
+    const wiki = await import("./lark-wiki.ts");
+    const location = await wiki.wikiLocation(app, url);
     const node = location.node;
+    // The node and every ancestor read on the way go into the tree (sources/catalog.ts).
+    if (node) wiki.recordWikiNodes(app, [node, ...(location.ancestors ?? [])], { spaceName: location.spaceName, error: location.errors.find((e) => /上级|层级|权限|permission/i.test(e)) ?? null });
     return { node, meta: { ...empty, wikiSpaceId: node?.spaceId || undefined, wikiNodeToken: node?.nodeToken || undefined, wikiParentNodeToken: node?.parentNodeToken || undefined,
       wikiSpaceName: location.spaceName, wikiParentTitle: location.parentTitle, wikiPath: location.path, wikiMetadataError: location.errors.join("；") || undefined } };
   } catch (e) {
@@ -520,16 +523,24 @@ async function readWikiMetadata(app: App, url: string, previous: Partial<LarkDoc
   }
 }
 
+/** The omem copy of a knowledge-base node (a /wiki/ copy is preferred over a /docx/ one of the same doc). */
+function linkWikiSource(app: App, token: string, id: string) {
+  if (!token) return;
+  run(app.db, `update wiki_nodes set source_id = ? where token = ? and (source_id is null or source_id = ? or not exists (select 1 from sources where id = wiki_nodes.source_id and deleted_at is null)
+    or (select uri from sources where id = ?) like '%/wiki/%')`, id, token, id, id);
+}
+
 /** Refresh directory names only: never download media, follow linked documents or rewrite evidence. */
 export async function refreshLarkWikiLocation(app: App, id: string) {
   const row = one<{ uri: string; meta: string }>(app.db, "select uri,meta from sources where id=? and kind='doc' and deleted_at is null", id);
   if (!row) throw new Error("文档不存在");
   const previous = json<Partial<LarkDocMeta>>(row.meta, {});
   const { url } = normalizeDocUrl(previous.url ?? row.uri);
-  const { meta } = await readWikiMetadata(app, url, previous);
+  const { meta, node } = await readWikiMetadata(app, url, previous);
   const current = one<{ meta: string }>(app.db, "select meta from sources where id=? and uri=? and deleted_at is null", id, row.uri);
   if (!current) throw new Error("文档已变化，请重新读取目录");
   run(app.db, "update sources set meta=? where id=?", JSON.stringify({ ...json(current.meta, {}), ...meta }), id);
+  if (node) linkWikiSource(app, node.nodeToken, id);
   if (meta.wikiMetadataError) throw new Error(meta.wikiMetadataError);
   return meta;
 }
@@ -541,20 +552,32 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   const chain = new Set(opts.chain ?? []).add(url);
   const unreadable = opts.unreadable ?? [];
   const budget = opts.budget ?? { left: cfg.docMaxPerImport };
-  const existing = findLarkDoc(app, spaceId, url, !!opts.archive);
-  const prev = json<Partial<LarkDocMeta>>(existing?.meta, {});
-  // Reached by several routes (given directly and as someone's link): the deepest reach wins.
-  const depth = Math.max(given, prev.depth ?? -1);
+  let existing = findLarkDoc(app, spaceId, url, !!opts.archive);
+  let prev = json<Partial<LarkDocMeta>>(existing?.meta, {});
   const doc = await fetchDoc(url);
   const { node: wiki, meta: wikiMeta } = await readWikiMetadata(app, url, prev);
-  const uri = existing ? (one<{ uri: string }>(app.db, "select uri from sources where id = ?", existing.id)?.uri ?? url) : url;
+  // One copy per document (sources/duplicates.ts): a knowledge-base page is kept under its /wiki/ link,
+  // whichever link came first — a docx link finds the wiki copy, a wiki link finds an older docx copy.
+  const wikiUrl = wiki?.nodeToken && wiki.nodeType !== "shortcut" ? `${origin}/wiki/${wiki.nodeToken}` : null;
+  if (!existing && wikiUrl) {
+    existing = findLarkDoc(app, spaceId, wikiUrl, !!opts.archive) ?? (doc.documentId ? findLarkDoc(app, spaceId, `${origin}/docx/${doc.documentId}`, !!opts.archive) : undefined);
+    prev = json<Partial<LarkDocMeta>>(existing?.meta, {});
+  }
+  // Reached by several routes (given directly and as someone's link): the deepest reach wins.
+  const depth = Math.max(given, prev.depth ?? -1);
+  let uri = existing ? (one<{ uri: string }>(app.db, "select uri from sources where id = ?", existing.id)?.uri ?? url) : (wikiUrl ?? url);
+  if (existing && wikiUrl && uri.includes("/docx/") && !one(app.db, "select 1 from sources where space_id = (select space_id from sources where id = ?) and uri = ?", existing.id, wikiUrl)) {
+    run(app.db, "update sources set uri = ? where id = ?", wikiUrl, existing.id);
+    uri = wikiUrl;
+  }
   const fetchedAt = new Date().toISOString();
   // Refresh routing metadata even when the document body has not changed.
   const deeper = given > (prev.depth ?? -1);
   if (existing && !opts.force && !deeper && prev.revision && prev.revision === doc.revision && prev.media && !Object.keys(prev.missing ?? {}).length) {
-    const meta = { ...prev, ...wikiMeta, fetchedAt, depth };
+    const meta = { ...prev, ...wikiMeta, fetchedAt, depth, ...(uri === wikiUrl ? { url: wikiUrl } : {}) };
     if (opts.archive) upsertSource(app, { archive: true, spaceId, kind: "doc", uri, title: existing.title, text: sourceText(app, existing.id), meta });
     run(app.db, "update sources set meta = ? where id = ?", JSON.stringify(meta), existing.id);
+    if (wiki) linkWikiSource(app, wiki.nodeToken, existing.id);
     return { id: existing.id, status: "unchanged", related: [], missing: [] };
   }
 
@@ -602,7 +625,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   const keptMedia = Object.fromEntries(Object.entries(ctx.media).filter(([t]) => ctx.used.has(t)));
   const meta: LarkDocMeta = {
     ...wikiMeta,
-    url,
+    url: uri === wikiUrl ? wikiUrl : url,
     ...(prev.parentUrl || opts.chain?.size ? { parentUrl: prev.parentUrl ?? [...opts.chain!].at(-1) } : {}),
     via: "lark-cli",
     fetchedAt,
@@ -618,6 +641,7 @@ export async function importLarkDocument(app: App, spaceId: string, input: strin
   };
   const r = upsertSource(app, { archive: opts.archive, spaceId, kind: "doc", uri, title: doc.title, text, meta });
   if (r.status === "unchanged") run(app.db, "update sources set meta = ? where id = ?", JSON.stringify(meta), r.id);
+  if (wiki) linkWikiSource(app, wiki.nodeToken, r.id);
   if (missing.length) unreadable.push(...recordMissing(app, spaceId, r.id, doc.title, missing));
   // Linked docs that link back were saved before this one existed.
   if (r.status === "created") for (const id of related) relinkParent(app, id, url, r.id, doc.title);
@@ -808,11 +832,18 @@ function saveRefresh(app: App, s: RefreshState | null) {
   else run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", REFRESH_KEY, JSON.stringify(s));
 }
 
-export function startRefresh(app: App, opts: { space?: string; limit?: number; metadataOnly?: boolean; ids?: string[] } = {}): RefreshState {
+/**
+ * Docs whose place in a knowledge base was never read, or was read before the tree kept nodes
+ * (`wiki_nodes.checked_at` null: only what the old meta had, without the ancestors).
+ */
+export const UNCHECKED_SQL = `(json_extract(meta, '$.wikiMetadataCheckedAt') is null or (coalesce(json_extract(meta, '$.wikiNodeToken'), '') != ''
+  and not exists (select 1 from wiki_nodes n where n.token = json_extract(sources.meta, '$.wikiNodeToken') and n.checked_at is not null)))`;
+
+export function startRefresh(app: App, opts: { space?: string; limit?: number; metadataOnly?: boolean; ids?: string[]; unchecked?: boolean } = {}): RefreshState {
   const rows = all<{ id: string }>(
     app.db,
     `select id from sources where kind = 'doc' and deleted_at is null and json_extract(meta, '$.via') = 'lark-cli'
-       ${opts.space ? "and space_id = ?" : ""} ${opts.ids?.length ? `and id in (${opts.ids.map(() => "?").join(",")})` : ""} order by updated_at desc limit ?`,
+       ${opts.space ? "and space_id = ?" : ""} ${opts.ids?.length ? `and id in (${opts.ids.map(() => "?").join(",")})` : ""} ${opts.unchecked ? `and ${UNCHECKED_SQL}` : ""} order by updated_at desc limit ?`,
     ...(opts.space ? [opts.space] : []),
     ...(opts.ids?.length ? opts.ids : []),
     opts.limit ?? 100_000,
@@ -879,7 +910,7 @@ let stopRequested = false;
  * Run (or resume) a refresh without waiting; the owner gets one notification when it is done,
  * including the linked docs that could not be read. `stop` cancels it after the current doc.
  */
-export function refreshInBackground(app: App, opts: { space?: string; limit?: number; stop?: boolean; resume?: boolean; metadataOnly?: boolean; ids?: string[] } = {}) {
+export function refreshInBackground(app: App, opts: { space?: string; limit?: number; stop?: boolean; resume?: boolean; metadataOnly?: boolean; ids?: string[]; unchecked?: boolean } = {}) {
   if (opts.stop) {
     stopRequested = !!refreshing;
     if (!refreshing) saveRefresh(app, null);
