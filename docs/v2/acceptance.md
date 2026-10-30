@@ -591,7 +591,7 @@ TraeX 与其他 ACP 的清理补验：
 - 页面写成普通 HTML、从 `/plugins/_sdk/omem.js` 引入 SDK 能用（插件页在沙箱 iframe 里）；引入 `/plugins/_sdk/omem.css` 后按钮、输入框、卡片和主站一样。
 - 英语练习页和 SDK 画的表单、图表用的是 omem 的样式和组件：主按钮是主站的深色按钮（不是蓝色），侧重用分段选择，加载时是骨架；深浅色都对。
 - 侧栏里英语练习的图标和“学习”不一样；设置 → 插件里点插件名前的图标，选一个后侧栏马上换，“用插件自己的图标”恢复。数据目录插件的清单写 `icon: 文件名.svg`（放在 `web/` 里）时侧栏显示这个图形，颜色跟随文字。
-- `pnpm run dev` 时改 `plugins/english/web/*.vue`、`@omem/plugin-sdk` 或 `web/src/styles.css`，打开着的英语练习页原地更新；`pnpm run build` 后不开 dev 也能打开（`web/dist/plugins/english`）。
+- `pnpm run dev` 时改 `plugins/english/web/*.vue`、`omem-plugin-sdk` 或 `web/src/styles.css`，打开着的英语练习页原地更新；`pnpm run build` 后不开 dev 也能打开（`web/dist/plugins/english`）。
 - 根目录 `pnpm install` 装好应用、VS Code 插件和文档站；`pnpm install --frozen-lockfile --filter omem` 只装应用；`pnpm --filter omem-vscode run build`、`pnpm --filter omem-docs run build` 能构建。
 - 回归：`test/plugin-services.test.ts`（信任前不运行、信任后工具与服务、改代码要重新确认、撤销即卸载、需批准的工具、流的文本与二进制、令牌与未知流被拒）。
 

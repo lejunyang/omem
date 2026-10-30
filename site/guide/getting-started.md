@@ -28,6 +28,12 @@ pnpm run build
 npm install -g .          # 把 omem 命令链接到这个仓库（可选）
 ```
 
+也可以直接装 npm 上的发布版（包名 omem-assistant，命令是 omem）：
+
+```bash
+npm install -g omem-assistant
+```
+
 用 osdk 管理 Node、pnpm 和可选的本地模型时：
 
 ```bash

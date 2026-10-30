@@ -16,7 +16,7 @@ plugins/<id>/
   其他文件              服务的程序（清单 services 里的命令在插件目录里运行）
 ```
 
-插件 SDK 不在 `plugins/` 里，它不是插件：`packages/plugin-sdk`（`@omem/plugin-sdk`，pnpm workspace 里的一个包）。`client.ts` 是页面和外壳之间的桥，`blocks.ts` 画表单和图表，`service.mjs` 是服务端的 HTTP / WebSocket 帮助模块。内置插件的页面 `import { connect } from "@omem/plugin-sdk"`（Vite 别名），数据目录里手写 HTML 的页面用构建好的 `/plugins/_sdk/omem.js`。
+插件 SDK 不在 `plugins/` 里，它不是插件：`packages/plugin-sdk`（`omem-plugin-sdk`，pnpm workspace 里的一个包）。`client.ts` 是页面和外壳之间的桥，`blocks.ts` 画表单和图表，`service.mjs` 是服务端的 HTTP / WebSocket 帮助模块。内置插件的页面 `import { connect } from "omem-plugin-sdk"`（仓库里是指向源码的 Vite 别名；npm 上发布同名的包，带构建好的 `dist/` 和类型，给在 omem 仓库之外写插件页面的人用），数据目录里手写 HTML 的页面用构建好的 `/plugins/_sdk/omem.js`。
 
 内置插件在仓库的 `plugins/`。本人自己的插件（包括接内部系统的）放数据目录 `<数据目录>/plugins/<id>/`，不进仓库。没有自己页面的插件用外壳的默认页（会话、回复、通用内容块）。和内置插件同 id 的不加载。
 

@@ -1,12 +1,26 @@
 {
-  "name": "@omem/plugin-sdk",
-  "version": "0.1.0",
-  "private": true,
+  "name": "omem-plugin-sdk",
+  "version": "0.0.1",
+  "description": "SDK for omem plugin pages and services: talk to omem through the shell, draw its forms and charts, serve HTTP and WebSocket to omem.",
+  "license": "Apache-2.0",
   "type": "module",
-  "description": "omem 插件页面和插件服务用的 SDK：页面经外壳调 /api/plugins/<id>/…（client.ts）、画表单和图表（blocks.ts）；服务端的 HTTP / WebSocket 帮助模块（service.mjs）。不是插件。",
   "exports": {
-    ".": "./client.ts",
-    "./blocks": "./blocks.ts",
+    ".": { "types": "./dist/client.d.ts", "default": "./dist/client.js" },
+    "./blocks": { "types": "./dist/blocks.d.ts", "default": "./dist/blocks.js" },
     "./service": "./service.mjs"
-  }
+  },
+  "files": ["dist", "service.mjs", "README.md"],
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vite": "7.3.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lejunyang/omem.git",
+    "directory": "packages/plugin-sdk"
+  },
+  "publishConfig": { "access": "public" }
 }

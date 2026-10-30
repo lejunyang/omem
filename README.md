@@ -88,9 +88,12 @@ osdk install && osdk deps --frozen
 osdk run dev          # API :4317 + 网页 :5173，数据在 ./.omem
 
 # 或直接用 npm/pnpm（pnpm workspace：应用、插件 SDK、VS Code 插件、文档站共用一份锁文件）
-pnpm install                      # 只要应用：pnpm install --filter omem
+pnpm install                      # 只要应用：pnpm install --filter omem-assistant
 pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 npm install -g .                  # 可选：把命令行 omem 链接到这个仓库
+
+# 或从 npm 装发布版（包名 omem-assistant，命令是 omem）
+npm install -g omem-assistant
 ```
 
 第一次使用先运行 `omem setup`（或 `osdk run cli -- setup`）：交互式选择 Agent 后端与模型、向量模型（经 osdk 下载并锁定）、PDF/DOCX 解析（Docling 及其模型）、飞书 / Telegram / QQ·微信渠道、注入标记、桌面与浏览器控制（可选）、会话与并发、定时任务。每一项都会先显示本机已安装什么、各选项的代价；缺的 uv、llama.cpp 和模型经 osdk 装好（不用把 osdk 的 shims 加进 PATH）。最后可以直接启动后台服务。
@@ -468,7 +471,7 @@ src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查/目录整理、巡检、简报、做梦、筛群、知识库归属建议（kb-scout）、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md
 skills/omem     omem 工具的使用说明：SKILL.md 概览，references/ 按分组讲做法（omem_help(分组) 返回同一份内容）
 plugins/      内置插件（english：档案、出题技能、判分、学习者画像与题库 server.ts / learner.ts、页面 web/）
-packages/plugin-sdk   插件 SDK（@omem/plugin-sdk，不是插件）：client.ts 是插件页面与外壳的桥，blocks.ts 画表单和图表，service.mjs 是插件服务的 HTTP / WebSocket 帮助模块
+packages/plugin-sdk   插件 SDK（omem-plugin-sdk，不是插件）：client.ts 是插件页面与外壳的桥，blocks.ts 画表单和图表，service.mjs 是插件服务的 HTTP / WebSocket 帮助模块
 skills/library  内置技能（如 lark-messaging、desktop-control、wiki-writing，可带 references/），启动时播种到 library/_skills（已有的不覆盖，新版新增的技能补进）
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
 scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
@@ -480,6 +483,8 @@ web/          Vue 3 网页
 `lark-personal.ts` 做本人身份的轮询，`lark-bot.ts` 接收机器人事件，`lark-sender.ts` 分开解析人与机器人的发送者名称，`lark-resource-parse.ts` 独立处理已保存附件的解析，`lark-messages.ts` 统一两路消息、资源与原件行。`lark-docs.ts` 读飞书文档（素材本地化、链接与知识库子页面），`lark-wiki.ts` 是知识库节点与分批爬取，`lark-knowledge.ts` 发现能看到的知识库、记下 kb-scout 的归属建议和本人的决定、每晚按份额继续各知识库的爬取，`lark-doc-write.ts` 以本人身份写文档（判断位置是不是本人自己的），`lark-auth.ts` 检查 lark-cli 本人登录的权限，缺了就发起授权。
 
 角色说明在 `roles/*.md`，改它们就能调整 Agent 的工作方式，不需要改代码。
+
+**发布到 npm**：两个包，`omem-assistant`（应用，仓库根目录）和 `omem-plugin-sdk`（`packages/plugin-sdk`）。改好 `package.json` 的 `version`，提交信息里写 `[publish]`，推到 main 后 `.github/workflows/publish.yml` 构建并发布版本号还没发过的那个（或两个），带 provenance；也可以在 Actions 页手动运行。本地看会发出什么：`node scripts/publish-npm.ts --dry-run`（先 `pnpm run build` 和 `pnpm --filter omem-plugin-sdk run build`）。VS Code 插件和文档站不发 npm。
 
 ## 当前限制
 

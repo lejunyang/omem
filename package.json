@@ -1,5 +1,5 @@
 {
-  "name": "omem",
+  "name": "omem-assistant",
   "version": "0.2.0",
   "description": "Personal memory and assistant: understand materials, find answers with evidence, follow up and delegate work to agents.",
   "license": "Apache-2.0",
@@ -69,8 +69,8 @@
     "web/dist",
     "roles",
     "plugins/*/plugin.yaml",
-    "plugins/*/agents",
-    "plugins/*/skills",
+    "plugins/*/agents/**",
+    "plugins/*/skills/**",
     "packages/plugin-sdk/service.mjs",
     "scripts/document-parser/convert.py",
     "scripts/document-parser/pyproject.toml",

@@ -113,7 +113,14 @@ importers:
         specifier: 3.8.1
         version: 3.8.1
 
-  packages/plugin-sdk: {}
+  packages/plugin-sdk:
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vite:
+        specifier: 7.3.1
+        version: 7.3.1(@types/node@24.10.1)(yaml@2.9.1)
 
   site:
     devDependencies:

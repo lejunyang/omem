@@ -1,0 +1,44 @@
+# npm packages (scripts/publish-npm.ts): omem-assistant (the app) and omem-plugin-sdk. Runs on a push
+# to main when one of the pushed commits has [publish] in its message, or by hand. Only a package whose
+# version is not on npm yet is published: bump "version" in its package.json in that push.
+#
+# Authentication: the NPM_TOKEN secret (an npm granular token that can publish both packages), or
+# npm trusted publishing (configured on npmjs.com for this repository and workflow; then NPM_TOKEN
+# can be removed). Either way the packages get provenance from this workflow.
+name: publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # provenance, and trusted publishing
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || contains(join(github.event.commits.*.message, ' '), '[publish]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      # Only the two published packages, not the docs site or the VS Code extension.
+      - run: pnpm install --frozen-lockfile --filter omem-assistant --filter omem-plugin-sdk
+      - run: pnpm run typecheck
+      - run: pnpm run build
+      - run: pnpm --filter omem-plugin-sdk run build
+      - run: node scripts/publish-npm.ts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

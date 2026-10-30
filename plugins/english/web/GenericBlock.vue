@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
-import { renderBlock, type BlockView } from "@omem/plugin-sdk";
+import { renderBlock, type BlockView } from "omem-plugin-sdk";
 
 /** A host block (form, chart) the tutor handed in, drawn by the SDK's renderer. */
 const props = defineProps<{ block: BlockView; submit: (answers: Record<string, unknown>) => Promise<void> }>();

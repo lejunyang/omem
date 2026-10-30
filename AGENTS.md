@@ -60,7 +60,7 @@
 ## 运行与依赖
 
 - Node 22.18+ 直接运行 TypeScript（类型擦除），import 写 `.ts` 后缀，只用可擦除语法（不用参数属性、enum、namespace）。构建由 tsc 改写后缀到 dist/。
-- 仓库是 pnpm workspace（根是应用，另有 `packages/plugin-sdk`、`vscode`、`site`），一份 `pnpm-lock.yaml`；服务器上只装应用（`pnpm install --filter omem`，`scripts/upgrade.ts` 和 osdk 的依赖安装都这样做）。插件 SDK 在 `packages/plugin-sdk`（`@omem/plugin-sdk`），不在 `plugins/` 里。
+- 仓库是 pnpm workspace（根是应用，另有 `packages/plugin-sdk`、`vscode`、`site`），一份 `pnpm-lock.yaml`；服务器上只装应用（`pnpm install --filter omem-assistant`，`scripts/upgrade.ts` 和 osdk 的依赖安装都这样做）。插件 SDK 在 `packages/plugin-sdk`（`omem-plugin-sdk`），不在 `plugins/` 里。
 - osdk 管理工具链、依赖和可选模型（`osdk run dev/check`）；不强制本地大模型。向量模型可选，换模型会清空旧向量。交互式配置统一放在 `omem setup`（src/setup.ts）。
 - 个人配置、数据库、原件、密钥、模型权重、下载的 Agent 程序不进 Git。
 - 多台设备（`src/core/peers.ts`、`peer-exec.ts`）：远程命令只加进 `peerCommands` 的固定清单并带参数校验，不提供任意 shell；飞书相关的远程命令同样只读。没有配置令牌时 API 只信任本机来源的请求。`scripts/relay.mjs` 的白名单同理，只放检查与更新类命令。
@@ -71,3 +71,4 @@
 - 改检索后用 `scripts/eval-retrieval.ts` 在公开数据（如 T2Retrieval 子集）上对比 nDCG@10，报告实际数字和对照组，不要用少量自选问题代替；规模相关改动用 `scripts/bench-scale.ts`。
 - 改角色说明或工具后，用真实 Agent（Codex gpt-6.1-sol/luna 低 effort，或 Claude Code）跑一两个真实问题检查行为；不要为了验证批量生成知识。
 - 每个完整功能切片通过检查后提交；不 push，除非用户要求。
+- npm 上的包是 `omem-assistant`（根目录）和 `omem-plugin-sdk`；提交信息带 `[publish]` 推到 main 时由 `.github/workflows/publish.yml` 发布版本号没发过的包。不要自己加 `[publish]` 或改版本号，除非用户要求；改了 `package.json` 的 `files` 后用 `npm pack --dry-run` 看一遍包里的文件。

@@ -1,7 +1,7 @@
 /**
  * Plugin pages with Vite (docs/v2/plugins.md), shared by web/vite.config.ts and scripts/build-plugins.ts.
  *
- * - `@omem/plugin-sdk` → packages/plugin-sdk (the shell's default page and plugin pages import it).
+ * - `omem-plugin-sdk` → packages/plugin-sdk (the shell's default page and plugin pages import it).
  * - In development the dev server serves each built-in plugin's page from source with HMR, at the
  *   same /plugins/<id>/ the API serves the build from; /plugins/_sdk/omem.js and omem.css come from
  *   source too. Other /plugins/ paths (pages of data-directory plugins) still go to the API.
@@ -14,8 +14,8 @@ export const repoRoot = resolve(import.meta.dirname, "..");
 const sdkDir = join(repoRoot, "packages", "plugin-sdk");
 
 export const sdkAlias = [
-  { find: /^@omem\/plugin-sdk$/, replacement: join(sdkDir, "client.ts") },
-  { find: /^@omem\/plugin-sdk\/blocks$/, replacement: join(sdkDir, "blocks.ts") },
+  { find: /^omem-plugin-sdk$/, replacement: join(sdkDir, "client.ts") },
+  { find: /^omem-plugin-sdk\/blocks$/, replacement: join(sdkDir, "blocks.ts") },
 ];
 
 const fsUrl = (path: string) => `/@fs/${path.replace(/\\/g, "/").replace(/^\//, "")}`;
