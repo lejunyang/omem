@@ -16,6 +16,7 @@ import { backgroundTurn } from "./background-sessions.ts";
 import { backendAvailable } from "./availability.ts";
 import { acquire, choosableProfiles, excluded } from "./capacity.ts";
 import { catalogEntry, installHint } from "./catalog.ts";
+import { DOUBAO_CLI_INSTALL } from "./doubao-cli.ts";
 import { issueToolToken, revokeToolToken } from "./tools.ts";
 import { isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
@@ -96,6 +97,7 @@ export function commonGuide(tools: Set<string>) {
 export function listAgentProfiles(app: App) {
   return allProfiles(app.config).map((p) => {
     if (p.transport === "doubao") return { ...p, installed: backendAvailable(p, app.home), install: backendAvailable(p, app.home) ? undefined : "omem doubao login（设备码授权，omem doubao status 查权限）" };
+    if (p.transport === "doubao-cli") return { ...p, installed: backendAvailable(p, app.home), install: backendAvailable(p, app.home) ? undefined : DOUBAO_CLI_INSTALL };
     const e = catalogEntry(p.id);
     return { ...p, installed: backendAvailable(p, app.home), install: e && e.command === p.command ? installHint(e) : undefined };
   });

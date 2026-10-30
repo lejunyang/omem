@@ -1135,6 +1135,7 @@ agents
     const missing = all.filter((p) => !p.installed);
     if (o.all) for (const p of missing) {
       if (p.transport === "doubao") { console.log(`· ${p.id.padEnd(12)} 豆包 OpenAPI：omem doubao login 授权后可用`); continue; }
+      if (p.install && !catalogEntry(p.id)) { console.log(`· ${p.id.padEnd(12)} ${p.command}  安装：${p.install}`); continue; }
       const e = catalogEntry(p.id);
       console.log(`· ${p.id.padEnd(12)} ${p.command} ${p.args.join(" ")}${e ? `  安装：${installHint(e) || "见官网"}` : ""}`);
     }

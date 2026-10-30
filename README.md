@@ -78,6 +78,7 @@ flowchart LR
 | Kimi CLI / Mistral Vibe | `uv tool install kimi-cli` / `mistral-vibe` | `kimi` / `vibe` |
 | goose、Kilo、Auggie、Cline、Factory Droid、Grok、MiniMax、Amp、Junie、Devin、pi、DeepAgents、TraeX | 见 `omem agents --all` | 同名 |
 | Claude / Codex / TraeX 命令行（非 ACP 兜底） | `claude`、`codex` 或 `traex` 在 PATH 中 | `claude-cli` / `codex-cli` / `traex-cli` |
+| 豆包 CLI（本机运行，omem 工具经 `omem tool`） | `npm i -g @bytedance/doubao-cli`，再 `doubao login` | `doubao-cli` |
 | 豆包 OpenAPI（云端 Managed Agent，无需本地程序） | 飞书应用开了豆包用户权限并授权：`omem doubao status` / `omem doubao login` | `doubao` |
 
 `omem agents` 列出已识别的 Agent；`omem agents registry` 列出官方 ACP 注册表里的全部 Agent，`omem agents add <id> [--via npx|uvx|binary]` 一步加入（npm 包可以 npx 运行不安装，独立程序会下载并校验到数据目录）。`omem setup` 和网页“设置 → Agent → ACP 注册表”做同样的事。每个 Agent 第一次用前在终端直接运行一次完成登录；模型和推理强度在“检测模型”里选。

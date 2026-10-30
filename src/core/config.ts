@@ -8,8 +8,11 @@ import { acpCatalog, catalogProfile, upgradeProfileArgs } from "../agents/catalo
 export const agentProfileSchema = z.object({
   id: z.string().min(1),
   name: z.string().optional(),
-  /** acp: Agent Client Protocol over stdio. claude-cli / codex-cli: one-shot fallbacks. doubao: Doubao OpenAPI (cloud, no omem tools). */
-  transport: z.enum(["acp", "claude-cli", "codex-cli", "doubao"]),
+  /**
+   * acp: Agent Client Protocol over stdio. claude-cli / codex-cli: one-shot fallbacks. doubao: Doubao OpenAPI (cloud, no omem tools).
+   * doubao-cli: the Doubao CLI on this machine (omem tools through `omem tool` in its shell; agents/doubao-cli.ts).
+   */
+  transport: z.enum(["acp", "claude-cli", "codex-cli", "doubao", "doubao-cli"]),
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
   /** Same executable, followed by these arguments and the session id; fallback when ACP has no session/delete. */
@@ -694,9 +697,11 @@ const cliProfiles: AgentProfile[] = [
 ];
 /** Doubao through its OpenAPI: no local command (`command` is only a label); available once authorized. */
 const doubaoProfile: AgentProfile = { id: "doubao", name: "豆包 (OpenAPI)", transport: "doubao", command: "doubao-openapi", args: [], env: {}, idleTimeoutMs: 600_000 };
+/** The Doubao CLI prints nothing until a turn ends, so the idle limit is the whole turn's. */
+const doubaoCliProfile: AgentProfile = { id: "doubao-cli", name: "豆包 (CLI)", transport: "doubao-cli", command: "doubao", args: [], env: {}, idleTimeoutMs: 1_800_000 };
 
 /** ACP agents from the catalog (codex, claude, gemini, copilot, …) plus the one-shot CLI fallbacks. Order = auto-pick priority. */
-export const builtinProfiles: AgentProfile[] = [...acpCatalog.slice(0, 3).map(catalogProfile), ...cliProfiles, ...acpCatalog.slice(3).map(catalogProfile), doubaoProfile];
+export const builtinProfiles: AgentProfile[] = [...acpCatalog.slice(0, 3).map(catalogProfile), ...cliProfiles, ...acpCatalog.slice(3).map(catalogProfile), doubaoCliProfile, doubaoProfile];
 
 export function omemHome(): string {
   if (process.env.OMEM_HOME) return resolve(process.env.OMEM_HOME);

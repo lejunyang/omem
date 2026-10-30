@@ -419,13 +419,15 @@ const probes = computed(() => {
   }
   return out;
 });
+/** Backends that can report their models and effort levels. */
+const probeable = (p: Profile) => p.transport === "acp" || p.transport === "doubao-cli";
 async function probe(p: Profile, refresh = true) {
-  if (p.transport !== "acp") return;
+  if (!probeable(p)) return;
   await detectProbe(p.id, refresh);
 }
 /** Read cached probes (or probe once) for every installed ACP agent so role dropdowns can fill. */
 async function loadProbes() {
-  await Promise.all(installedProfiles.value.filter((p) => p.transport === "acp" && !probes.value[p.id]).map((p) => probe(p, false)));
+  await Promise.all(installedProfiles.value.filter((p) => probeable(p) && !probes.value[p.id]).map((p) => probe(p, false)));
 }
 async function setProfileOption(p: Profile, key: "model" | "effort", value: string) {
   const { installed, install, ...rest } = p;
@@ -593,7 +595,7 @@ async function saveEdit() {
               <div><strong>{{ p.name ?? p.id }}</strong> <span class="muted small mono">{{ p.id }}</span></div>
               <div class="muted small mono">{{ p.transport }} · {{ p.command }} {{ p.args.join(" ") }}<template v-if="p.model"> · {{ p.model }}</template><template v-if="p.effort"> · {{ p.effort }}</template></div>
             </div>
-            <button v-if="p.transport === 'acp'" class="btn ghost sm" :disabled="probes[p.id]?.loading" @click="probe(p)">{{ probes[p.id]?.loading ? "检测中…" : "检测模型" }}</button>
+            <button v-if="probeable(p)" class="btn ghost sm" :disabled="probes[p.id]?.loading" @click="probe(p)">{{ probes[p.id]?.loading ? "检测中…" : "检测模型" }}</button>
             <button class="btn ghost sm" @click="editProfile(p)">{{ editingProfile === p.id ? "收起" : "编辑" }}</button>
           </div>
           <div v-if="editingProfile === p.id" class="edit-box stack">
@@ -728,7 +730,7 @@ async function saveEdit() {
       <div class="card pad stack">
         <div class="section-title">添加或修改 Agent 配置</div>
         <textarea v-model="profileJson" class="textarea mono" rows="9" placeholder='{"id":"codex-sol","name":"Codex · Sol","transport":"acp","command":"codex-acp","args":[],"model":"gpt-6.1-sol","effort":"low"}' />
-        <div class="row"><span class="muted small">transport：acp / claude-cli / codex-cli。model、effort 必须是该 Agent 支持的值。</span><span class="spacer" /><button class="btn primary sm" :disabled="!profileJson.trim()" @click="addProfile">保存</button></div>
+        <div class="row"><span class="muted small">transport：acp / claude-cli / codex-cli / doubao-cli。model、effort 必须是该 Agent 支持的值。</span><span class="spacer" /><button class="btn primary sm" :disabled="!profileJson.trim()" @click="addProfile">保存</button></div>
       </div>
     </section>
 

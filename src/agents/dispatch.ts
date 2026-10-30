@@ -3,9 +3,10 @@ import type { AgentProfile } from "../core/config.ts";
 import { runAcp } from "./acp.ts";
 import { runCli } from "./cli.ts";
 import { doubaoAppFor, doubaoApps, runDoubao } from "./doubao.ts";
+import { DOUBAO_TOOL_NOTE, runDoubaoCli } from "./doubao-cli.ts";
 import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 
-/** One turn on any backend: ACP, a CLI fallback, or the Doubao OpenAPI. */
+/** One turn on any backend: ACP, a CLI fallback, the Doubao CLI or the Doubao OpenAPI. */
 export async function runBackend(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   if (profile.transport === "acp") return runAcp(profile, req, emit);
   if (profile.transport === "doubao") {
@@ -13,6 +14,11 @@ export async function runBackend(app: App, profile: AgentProfile, req: AgentRequ
     if (!da) throw new Error("豆包需要一个绑定了 App Secret 的飞书应用（omem setup → 飞书机器人），再运行 omem doubao login 授权");
     if (req.mcp || Object.keys(req.extraMcp ?? {}).length) emit({ type: "status", text: "豆包在云端运行，用不了 omem 的工具；只按提示里给的材料回答" });
     return runDoubao(profile, req, emit, { home: app.home, app: da });
+  }
+  if (profile.transport === "doubao-cli") {
+    if (Object.keys(req.extraMcp ?? {}).length) emit({ type: "status", text: "豆包 CLI 接不了额外的 MCP 服务器，只用 omem 的工具" });
+    const system = req.mcp ? [req.system, DOUBAO_TOOL_NOTE].filter(Boolean).join("\n\n") : req.system;
+    return runDoubaoCli(profile, { ...req, prompt: sessionPrompt({ resumed: !!req.resumeSessionId }, { ...req, system }, req.prompt, emit), system: undefined }, emit);
   }
   // The CLIs take no system prompt here: the instructions open a new session, a resumed one has them
   // (a session that cannot be resumed fails, and the caller starts a new one).

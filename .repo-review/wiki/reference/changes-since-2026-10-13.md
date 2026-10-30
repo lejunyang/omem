@@ -1017,3 +1017,11 @@ updated: 2026-10-30
 - 拆分反馈：`ownerCorrections` 也算 Agent 按本人要求做的更正（`by` 不是节点作者），每条写出节点类型、所在上级和是谁改的；`roles/coach.md` 加“读本人对产出的修改”：同类错两次以上提说明修改，一次记做法经验，不把业务规则写进记忆。
 - `code_workspace` 加 `import`（`from_run`）：把另一次没应用的交办保存的 patch 用 `git apply --3way` 导入工作区（要求工作区干净，先 merge 它基于的提交），用于接手旧交办；之后旧交办可丢弃。
 - 外部 Agent 的交办在确认或丢弃前不让出工作区（`code-branch.ts` 的 `idle()`）：原来它停在 `awaiting-peer-code`（状态 done）时会被新交办收走并 `reset --hard`，未提交的修改丢失。
+
+## 10-31：豆包 CLI 作为后端
+
+- 新传输 `doubao-cli`（`src/agents/doubao-cli.ts`，内置档案“豆包 (CLI)”，空闲上限 30 分钟：整轮结束前没有输出）。`doubao -p` 的 stdout 是最终回复，stderr 的 `{"type":"session"}` 是会话 id，`--resume` 续聊；`--model`、`--effort`、`--permission-mode`（编码 `always_allow`，其余 `ask_risky`）、`-C` 工作目录。
+- 没有 MCP：有 omem 工具时说明末尾加 `DOUBAO_TOOL_NOTE`，让它在 shell 里用 `omem tool`（`agentToolEnv` 的令牌和 PATH 会传到它执行的命令）；额外 MCP 服务器给不了，发一条状态说明。
+- 提示超过 6000 字或只能经 cmd 调用时写进 `tmpdir()/omem-doubao/<uuid>.md` 让它先读，结束后删掉；默认命令 `doubao` 直接调用 npm 包解压的原生程序（`doubaoAppRoot()`，和包里 `runtime.cjs` 的位置一致）。
+- 检测模型（`probeDoubaoCli`，网页 Agent 页的“检测模型”也对它开放）：`--model` 给一个不存在的名字读出可用模型，再按模型试 `--effort none` / `max` 读出强度；都带 `--resume 1`，合法组合停在找会话这一步，不新建对话。
+- 它的对话存在豆包账号里，CLI 不能删除或归档。

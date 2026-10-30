@@ -15,6 +15,7 @@
 | OpenCode | `npm i -g opencode-ai` | `opencode` |
 | 其他（Cursor、Kimi、goose、Cline……） | 见 `omem agents --all` | 同名 |
 | Claude / Codex 命令行（没有 ACP 时的后备） | `claude` 或 `codex` 在 PATH 中 | `claude-cli` / `codex-cli` |
+| 豆包 CLI | `npm i -g @bytedance/doubao-cli`，再 `doubao login` | `doubao-cli` |
 
 每个 Agent 第一次用之前，在终端里直接运行一次完成登录。
 

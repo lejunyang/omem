@@ -1,6 +1,7 @@
 import type { AgentProfile } from "../core/config.ts";
 import { commandExists } from "./spawn.ts";
 import { runAcp } from "./acp.ts";
+import { probeDoubaoCli } from "./doubao-cli.ts";
 
 /**
  * The models and effort levels an ACP backend actually offers. Probes open
@@ -47,6 +48,13 @@ export function saveProbe(app: { db: { prepare: (sql: string) => { run(...p: unk
 export async function probeProfile(profile: AgentProfile): Promise<ProbeInfo> {
   if (profile.transport === "doubao")
     return { at: new Date().toISOString(), agent: "豆包 OpenAPI", models: [], efforts: [], error: "豆包后端没有可选模型和思考强度；授权状态用 omem doubao status 查看" };
+  if (profile.transport === "doubao-cli" && commandExists(profile.command))
+    try {
+      const { models, effortsByModel } = await probeDoubaoCli(profile);
+      return { at: new Date().toISOString(), agent: "豆包 CLI", models, efforts: [...new Set(Object.values(effortsByModel).flat())], effortsByModel };
+    } catch (e) {
+      return { at: new Date().toISOString(), agent: "豆包 CLI", models: [], efforts: [], error: (e as Error).message.slice(0, 300) };
+    }
   if (profile.transport !== "acp" || !commandExists(profile.command))
     return { at: new Date().toISOString(), agent: profile.command, models: [], efforts: [], error: "命令行后端报不出可选的模型，可以手填" };
   try {
