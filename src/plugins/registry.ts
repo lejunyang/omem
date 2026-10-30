@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import YAML from "yaml";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
+import { saveConfig } from "../core/config.ts";
 import { commitLibrary } from "../core/git.ts";
 import { createSpace, findSpace, type SpaceKind } from "../core/spaces.ts";
 import { OWNER } from "../core/users.ts";
@@ -33,7 +34,8 @@ export const manifestSchema = z.object({
   id: z.string().regex(ID, "插件 id 只能用小写字母和数字，字母开头，2–24 个字符"),
   name: z.string().min(1),
   description: z.string().default(""),
-  icon: z.string().default("box"),
+  /** The nav icon: a name from web/src/lib/icons.ts, or an .svg in the page's directory (web/, or web/public/ for a built page). */
+  icon: z.string().regex(/^([a-z][a-z0-9-]*|[\w./-]+\.svg)$/, "图标写图标名，或页面目录里的 .svg 文件").default("box"),
   space: z.object({ id: z.string(), name: z.string(), kind: z.enum(["learning", "topic", "project"]).default("topic"), description: z.string().default("") }).optional(),
   agents: z.array(z.string().regex(SPEC)).default([]),
   skills: z.array(z.string()).default([]),
@@ -292,7 +294,28 @@ function ensureSpace(app: App, m: PluginManifest) {
  * Load (once per process) and set up for this library: space, skills. Built-in plugins first; a
  * plugin in the data directory with the same id is skipped. A broken plugin is skipped with a warning.
  */
+let host: App | null = null;
+
+/** The icon the nav shows: the owner's choice (settings → 插件), else the manifest's; an .svg becomes its URL. */
+export function pluginIcon(p: LoadedPlugin) {
+  const icon = host?.config.plugins.icons[p.manifest.id] || p.manifest.icon;
+  return icon.endsWith(".svg") ? `/plugins/${p.manifest.id}/${icon.replace(/^\.?\//, "")}` : icon;
+}
+
+/** The owner picks another nav icon for a plugin (a built-in name; empty: back to the manifest's). */
+export function setPluginIcon(app: App, id: string, icon: string) {
+  const p = getPlugin(id);
+  if (icon && !/^[a-z][a-z0-9-]*$/.test(icon)) throw new HttpError(400, "图标名不对");
+  const icons = { ...app.config.plugins.icons };
+  if (icon) icons[p.manifest.id] = icon;
+  else delete icons[p.manifest.id];
+  app.config.plugins = { ...app.config.plugins, icons };
+  saveConfig(app.config, app.home);
+  return describePlugin(p);
+}
+
 export async function loadPlugins(app: App, roots: { dir: string; source: LoadedPlugin["source"] }[] = [{ dir: builtinPluginsDir(), source: "builtin" }, { dir: dataPluginsDir(app), source: "data" }]) {
+  host = app;
   for (const root of roots) {
     if (!existsSync(root.dir)) continue;
     for (const entry of readdirSync(root.dir, { withFileTypes: true })) {
@@ -329,18 +352,22 @@ export function pluginWebDir(p: LoadedPlugin) {
   return existsSync(join(web, "index.html")) ? web : null;
 }
 
+/** Under scripts/dev.ts the Vite dev server serves built-in pages from source (web/vite-plugin-pages.ts). */
+const devPages = (p: LoadedPlugin) => p.source === "builtin" && process.env.OMEM_DEV_PAGES === "1";
+
 /** For the nav and the plugin list: what each one offers. */
 export function describePlugin(p: LoadedPlugin) {
   return {
     id: p.manifest.id,
     name: p.manifest.name,
     description: p.manifest.description,
-    icon: p.manifest.icon,
+    icon: pluginIcon(p),
+    iconChosen: !!host?.config.plugins.icons[p.manifest.id],
     source: p.source,
     space: p.manifest.space?.id ?? null,
     agents: p.specs.map((s) => ({ name: s.name, description: s.description })),
     // own: the plugin's page in a sandboxed frame (built or not yet); otherwise the shell's default page.
-    page: p.manifest.page ? { title: p.manifest.page.title, own: hasOwnPage(p), built: !!pluginWebDir(p) } : null,
+    page: p.manifest.page ? { title: p.manifest.page.title, own: hasOwnPage(p), built: !!pluginWebDir(p) || devPages(p) } : null,
     settings: p.manifest.settings.length > 0,
     trust: p.trust,
     dir: p.source === "data" ? p.dir : null,

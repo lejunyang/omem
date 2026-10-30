@@ -66,6 +66,8 @@ family = "docling"
 
 [deps.pnpm]
 auto = true
+# The workspace also has the docs site and the VS Code extension; the app needs only its own.
+run = "pnpm install --frozen-lockfile --filter omem"
 allow_build_from_source = true
 
 [skills.osdk-guide]

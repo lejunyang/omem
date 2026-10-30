@@ -71,7 +71,7 @@
     "plugins/*/plugin.yaml",
     "plugins/*/agents",
     "plugins/*/skills",
-    "plugins/sdk/service.mjs",
+    "packages/plugin-sdk/service.mjs",
     "scripts/document-parser/convert.py",
     "scripts/document-parser/pyproject.toml",
     "scripts/document-parser/uv.lock",

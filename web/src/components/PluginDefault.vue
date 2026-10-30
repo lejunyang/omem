@@ -3,14 +3,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import { get, onServerEvent, post } from "../api";
 import { toast } from "../store";
-import { renderBlock, type BlockView } from "../../../plugins/sdk/blocks";
+import { renderBlock, type BlockView } from "@omem/plugin-sdk/blocks";
 import Icon from "./Icon.vue";
 import Markdown from "./Markdown.vue";
 import Skeleton from "./Skeleton.vue";
 
 /**
  * The page of a plugin without one of its own (docs/v2/plugins.md): sessions with the plugin's
- * agent, its replies, and the host's blocks (forms, charts) drawn by plugins/sdk/blocks.ts.
+ * agent, its replies, and the host's blocks (forms, charts) drawn by @omem/plugin-sdk (packages/plugin-sdk/blocks.ts).
  */
 type Info = { id: string; name: string; description: string; agents: { name: string; description: string }[]; page: { title: string } | null; settings: boolean };
 type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string; submission: string | null };

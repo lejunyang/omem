@@ -177,7 +177,7 @@ export function installOmemExtension(opts: { source: string | null; extDir: stri
   if (listed && readJson(join(target, ".omem-source.json"))?.digest === digest && existsSync(join(target, "out", "extension.js"))) return { status: "current", version, digest };
 
   const built = existsSync(join(source, "out", "extension.js"));
-  if (!transpile && !built) return { status: "unavailable", version, reason: "没有 TypeScript 编译器，vscode/out 也没构建（cd vscode && pnpm install --ignore-workspace && pnpm run build）" };
+  if (!transpile && !built) return { status: "unavailable", version, reason: "没有 TypeScript 编译器，vscode/out 也没构建（pnpm install && pnpm --filter omem-vscode run build）" };
   mkdirSync(extDir, { recursive: true });
   const staging = join(extDir, `.${folder}.omem-staging`);
   rmSync(staging, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 id: english
 name: 英语学习
 description: 按场景出一组题（中英互选、填空、听写、句子翻译），一次提交，AI 点评并按水平和薄弱点调整下一组
-icon: cap
+icon: languages
 space:
   id: english
   name: 英语学习

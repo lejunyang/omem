@@ -17,7 +17,7 @@ import { resolveCommand } from "../agents/spawn.ts";
  *
  * The service gets: OMEM_SERVICE_PORT (listen on 127.0.0.1 there), OMEM_SERVICE_TOKEN (requests
  * from omem carry `authorization: Bearer <token>`; refuse others), OMEM_PLUGIN_DIR, OMEM_PLUGIN_DATA
- * (a directory of its own under the data directory) and OMEM_SERVICE_SDK (plugins/sdk/service.mjs,
+ * (a directory of its own under the data directory) and OMEM_SERVICE_SDK (packages/plugin-sdk/service.mjs,
  * a dependency-free HTTP + WebSocket helper).
  */
 export const serviceSchema = z.object({
@@ -49,9 +49,9 @@ const logs = new Map<string, string[]>();
 const key = (plugin: string, name: string) => `${plugin}/${name}`;
 
 const here = dirname(fileURLToPath(import.meta.url));
-/** plugins/sdk/service.mjs, from source (src/plugins) and the build (dist/src/plugins). */
+/** packages/plugin-sdk/service.mjs, from source (src/plugins) and the build (dist/src/plugins). */
 function serviceSdk() {
-  for (const c of [resolve(here, "../../plugins/sdk/service.mjs"), resolve(here, "../../../plugins/sdk/service.mjs")]) if (existsSync(c)) return pathToFileURL(c).href;
+  for (const c of [resolve(here, "../../packages/plugin-sdk/service.mjs"), resolve(here, "../../../packages/plugin-sdk/service.mjs")]) if (existsSync(c)) return pathToFileURL(c).href;
   return "";
 }
 

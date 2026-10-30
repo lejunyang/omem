@@ -16,6 +16,8 @@ plugins/<id>/
   其他文件              服务的程序（清单 services 里的命令在插件目录里运行）
 ```
 
+插件 SDK 不在 `plugins/` 里，它不是插件：`packages/plugin-sdk`（`@omem/plugin-sdk`，pnpm workspace 里的一个包）。`client.ts` 是页面和外壳之间的桥，`blocks.ts` 画表单和图表，`service.mjs` 是服务端的 HTTP / WebSocket 帮助模块。内置插件的页面 `import { connect } from "@omem/plugin-sdk"`（Vite 别名），数据目录里手写 HTML 的页面用构建好的 `/plugins/_sdk/omem.js`。
+
 内置插件在仓库的 `plugins/`。本人自己的插件（包括接内部系统的）放数据目录 `<数据目录>/plugins/<id>/`，不进仓库。没有自己页面的插件用外壳的默认页（会话、回复、通用内容块）。和内置插件同 id 的不加载。
 
 ### 信任
@@ -33,7 +35,7 @@ id: english
 name: 英语学习
 description: 按场景出题、批量提交、AI 点评，记录水平和薄弱点
 space: { id: english, name: 英语学习, kind: learning }   # 不存在就建
-icon: cap
+icon: languages                                         # 导航图标：图标名（web/src/lib/icons.ts），或页面目录里的 .svg
 agents: [tutor]                                         # → english-tutor
 skills: [english-item-writing]
 tools: [recall, remember, supersede, notify, create_card, learning_progress]   # 插件档案可用的宿主工具
@@ -45,6 +47,7 @@ settings:                                               # 本人的设置，外�
 
 - 插件档案能用的工具 = 清单 `tools` + 插件自己注册的工具 + 通用插件工具（`plugin_query`、`plugin_put`、`plugin_form`、`plugin_chart`）。档案 frontmatter 里写的 `tools` 只能在这个范围内选，超出的忽略并警告。
 - 插件档案和普通档案一样出现在 Agent 页，可以 `/as english-tutor`、`run_agent`、挂技能、有专属记忆、由 coach 复盘。本人在 Agent 页改它，就在 `library/_agents/` 存一份自定义版本（带 `plugin` 字段）；删掉自定义版本回到插件自带的版本。
+- 导航图标：`icon` 写图标名（`web/src/lib/icons.ts`，设置 → 插件的图标选择里列出的那些），或页面目录里的一个 `.svg`（内置插件放 `web/public/`，数据目录插件放 `web/`），按当前文字颜色画出。本人可以在设置 → 插件里点图标换一个，存在配置的 `plugins.icons`，“用插件自己的图标”恢复。
 - 名字带插件前缀：档案 `english-tutor`，工具 `english_quiz`，避免与内置角色、本人的档案和别的插件撞名。宿主不按插件名特判任何逻辑。
 
 ## 服务端代码
@@ -76,9 +79,9 @@ streams:
 ```
 
 - **服务**（`src/plugins/services.ts`）：第一次用到时启动（工具里 `api.service().ensure()`、页面打开流、设置里点“启动”），在插件目录里运行，`command: node` 用 omem 自己的 Node。拿到的环境变量：`OMEM_SERVICE_PORT`（只在 127.0.0.1 上监听）、`OMEM_SERVICE_TOKEN`（只认带这个令牌的请求）、`OMEM_PLUGIN_DIR`、`OMEM_PLUGIN_DATA`（`<数据目录>/plugin-data/<id>/`，它自己的数据）、`OMEM_SERVICE_SDK`。omem 的令牌、密钥类环境变量不传给它。没有打开的流且超过 `idleMinutes` 没用就停；omem 退出时停；上次没停掉的（被杀、开发时重启）下次启动前按记下的进程号清掉。最近 200 行输出在设置 → 插件里看。
-- **服务的帮助模块** `plugins/sdk/service.mjs`（不依赖任何包）：`serve({ http(req, res), socket(ws) })`，检查令牌、处理 WebSocket 握手和帧（文本、二进制、ping、关闭，单条最多 16 MB）。
+- **服务的帮助模块** `packages/plugin-sdk/service.mjs`（不依赖任何包）：`serve({ http(req, res), socket(ws) })`，检查令牌、处理 WebSocket 握手和帧（文本、二进制、ping、关闭，单条最多 16 MB）。
 - **流**：页面 `omem.stream("live")` → 外壳打开 `ws(s)://…/api/plugins/<id>/streams/<name>`（带本人的令牌，和事件流一样）→ omem 检查是本人、插件的代码已被信任、流已声明 → 启动服务 → 把连接原样转到服务的 `path`，请求头里换成服务的令牌。外壳和页面之间用 postMessage 中继，二进制帧转移所有权、不复制（截屏这类每秒几帧的数据可以直接走）。有流打开时服务不会被当成空闲。
-- 页面写成普通 HTML 时，`<script type="module">import { connect } from "/plugins/_sdk/omem.js"</script>` 就能用 SDK（同一份 `plugins/sdk/client.ts`，构建时打包成一个模块，含表单和图表的渲染），`<link rel="stylesheet" href="/plugins/_sdk/omem.css">` 拿到 omem 的按钮、输入框、卡片等样式。
+- 页面写成普通 HTML 时，`<script type="module">import { connect } from "/plugins/_sdk/omem.js"</script>` 就能用 SDK（同一份 `packages/plugin-sdk/client.ts`，构建时打包成一个模块，含表单和图表的渲染），`<link rel="stylesheet" href="/plugins/_sdk/omem.css">` 拿到 omem 的按钮、输入框、卡片等样式。
 
 ### 例子：看机器状态
 
@@ -115,7 +118,7 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 | `plugin_form` | 表单：文字、多行、数字、单选、多选、1–5 打分；可标必填 | 宿主检查必填（缺了退回，块重新可填），整理成“【提交】标题 / - 字段：值”交给 Agent |
 | `plugin_chart` | 柱状图或折线图，最多 4 组数据，一条纵轴 | 只展示 |
 
-渲染在 `plugins/sdk/blocks.ts`，不依赖框架：外壳的默认页和插件自己的页面都用它（英语练习页里陪练交的表单和图表也是它画的）。图表的颜色是验证过色觉和对比度的 4 个分类色，深浅色各一套；两组以上有图例，每根柱子悬停有数值，“看数据”展开成表格。
+渲染在 `packages/plugin-sdk/blocks.ts`，不依赖框架：外壳的默认页和插件自己的页面都用它（英语练习页里陪练交的表单和图表也是它画的）。图表的颜色是验证过色觉和对比度的 4 个分类色，深浅色各一套；两组以上有图例，每根柱子悬停有数值，“看数据”展开成表格。
 
 ### 不在插件页里的时候
 
@@ -136,12 +139,13 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 插件页面放在 `#/plugin/<id>`，外壳用 iframe 载入 `/plugins/<id>/`：
 
 - iframe 带 `sandbox="allow-scripts allow-forms allow-popups"`、不给同源，页面拿不到本人的 Cookie、令牌和 localStorage，也不能直接调 `/api`。
-- 页面经 `plugins/sdk/client.ts`（postMessage）请求外壳，外壳只转发到 `/api/plugins/<id>/…`，其他路径拒绝。
+- 页面经 `packages/plugin-sdk/client.ts`（postMessage）请求外壳，外壳只转发到 `/api/plugins/<id>/…`，其他路径拒绝。
 - 外壳把主题 token（`--bg`、`--ink`、`--accent`……）和深浅色发给页面，主题切换时再发一次；页面字体、颜色与主站一致。
 - 页面用 omem 自己的样式和组件，不另做一套：内置插件的页面直接引入 `web/src/styles.css`（`.btn`、`.btn.primary`、`.input`、`.textarea`、`.card`、`.badge`……）和 `web/src/components` 里不依赖主站状态的组件（`UiSegmented`、`UiCheckbox`、`UiSelect`、`Skeleton`、`Icon`）；普通 HTML 页面引入 `/plugins/_sdk/omem.css`（构建时从 `styles.css` 复制）。SDK 画的表单和图表也用这些类，只补自己的布局。
 - 外壳把服务端事件里和本插件有关的（`plugin`、`run`）转给页面，页面据此刷新；初始化时还带上路由的查询参数（`params.session` 指定打开哪个会话）。
 - 页面调 `openSettings()` 让外壳打开设置弹窗；保存后页面收到 `settings: true` 的事件。
 - 插件页面的静态文件带 `access-control-allow-origin: *`（沙箱里的 module script 要求跨源许可），只是公开的构建产物。
+- 构建和开发：内置插件的页面就是一个 Vite 页面。`pnpm run build` 最后一步（`scripts/build-plugins.ts`）把每个 `plugins/<id>/web/index.html` 构建到 `web/dist/plugins/<id>/`，再打包 SDK（`/plugins/_sdk/omem.js`、`omem.css`）。开发时（`pnpm run dev`）不构建：网页的 Vite 开发服务器在同一个 `/plugins/<id>/` 直接从源码提供页面（`web/vite-plugin-pages.ts`），改页面、SDK 或 omem 的样式和组件都热更新，不用刷新；只给插件页面会加载的路径（页面源码、SDK、`web/src`、依赖、Vite 客户端）加跨源许可。数据目录插件的页面不经过 Vite，仍由 API 提供。
 
 ### 插件接口
 
@@ -198,5 +202,5 @@ Agent 不靠输出 JSON 文本和页面交互，而是调用工具交出**内容
 1. **第一期**（2026-10-28）：清单与加载、插件档案进 Agent 列表、插件存储、内容块协议、插件页 iframe 与 SDK、英语插件（四种题型、宿主判分、Agent 评翻译、画像与学习曲线）。
 2. **第二期**（2026-10-28）：插件设置；宿主通用块（`plugin_form`、`plugin_chart`）和默认插件页；数据目录里的声明式插件；英语题库（陪练补题、宿主按画像选题）；插件会话链接与网页地址（飞书里交出的块转成练习页链接）。
    还没做：内容块在问答页和运行详情里显示、“每日练习”规则模板、服务端语音合成（听写原文就不用发到页面）。
-3. **第三期**（2026-10-28）：数据目录里带代码的插件与信任确认（代码哈希，改了重新确认，撤销立即卸载）；`services`（按需启动、空闲停止、清理遗留进程、输出可看）与 `streams`（本人鉴权后转发 WebSocket，外壳中继给沙箱页面）；`approval: true` 的插件工具每次等本人批准；`plugins/sdk/service.mjs` 和 `/plugins/_sdk/omem.js` 让数据目录插件不装包也能写服务和页面；设置 → 插件。
+3. **第三期**（2026-10-28）：数据目录里带代码的插件与信任确认（代码哈希，改了重新确认，撤销立即卸载）；`services`（按需启动、空闲停止、清理遗留进程、输出可看）与 `streams`（本人鉴权后转发 WebSocket，外壳中继给沙箱页面）；`approval: true` 的插件工具每次等本人批准；`packages/plugin-sdk/service.mjs` 和 `/plugins/_sdk/omem.js` 让数据目录插件不装包也能写服务和页面；设置 → 插件。
    还没做：`omem peer open` 经中间设备转发流；服务作为 MCP 服务器直接给 Agent 提供工具（现在经 `server.ts` 的工具转一层）；截屏、输入这类系统相关的现成插件。

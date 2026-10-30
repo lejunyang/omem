@@ -36,9 +36,13 @@ const nav = ref<{ to: string; label: string; icon: string; exact?: boolean }[]>(
 // Plugins with a page (docs/v2/plugins.md) go right after 学习.
 async function addPluginPages() {
   const plugins = await get<{ id: string; icon: string; page: { title: string } | null }[]>("/api/plugins").catch(() => []);
-  const at = nav.value.findIndex((n) => n.to === "/learn") + 1;
-  nav.value.splice(at, 0, ...plugins.filter((p) => p.page).map((p) => ({ to: `/plugin/${p.id}`, label: p.page!.title, icon: p.icon })));
+  const rest = nav.value.filter((n) => !n.to.startsWith("/plugin/"));
+  const at = rest.findIndex((n) => n.to === "/learn") + 1;
+  rest.splice(at, 0, ...plugins.filter((p) => p.page).map((p) => ({ to: `/plugin/${p.id}`, label: p.page!.title, icon: p.icon })));
+  nav.value = rest;
 }
+// Settings → 插件 changed an icon.
+watch(() => state.pluginsChanged, addPluginPages);
 const isActive = (to: string, exact?: boolean) =>
   exact ? route.path === to : route.path === to || route.path.startsWith(to + "/") || (to === "/wiki" && route.path.startsWith("/graph"));
 

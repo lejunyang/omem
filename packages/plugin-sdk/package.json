@@ -1,0 +1,12 @@
+{
+  "name": "@omem/plugin-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "omem 插件页面和插件服务用的 SDK：页面经外壳调 /api/plugins/<id>/…（client.ts）、画表单和图表（blocks.ts）；服务端的 HTTP / WebSocket 帮助模块（service.mjs）。不是插件。",
+  "exports": {
+    ".": "./client.ts",
+    "./blocks": "./blocks.ts",
+    "./service": "./service.mjs"
+  }
+}

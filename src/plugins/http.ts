@@ -11,7 +11,7 @@ import { HttpError } from "../core/util.ts";
 import { trustedLocal } from "../server/origin.ts";
 import { callTool } from "../agents/tools.ts";
 import { createSession, listSessions, sendMessage, sessionView, submitBlock } from "./blocks.ts";
-import { codeRuns, describePlugin, findPlugin, getPlugin, listPlugins, pluginWebDir, trustPlugin, untrustPlugin } from "./registry.ts";
+import { codeRuns, describePlugin, findPlugin, getPlugin, listPlugins, pluginWebDir, setPluginIcon, trustPlugin, untrustPlugin } from "./registry.ts";
 import { ensureService, serviceStatus, stopService, streamUse } from "./services.ts";
 import { savePluginSettings } from "./settings.ts";
 import { pluginStore } from "./store.ts";
@@ -92,6 +92,7 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
   });
 
   // Trust: a data-directory plugin's code runs only after the owner confirms it (trust.ts).
+  server.put("/api/plugins/:id/icon", async (req) => setPluginIcon(app, plugin(req).manifest.id, String((req.body as { icon?: unknown })?.icon ?? "")));
   server.post("/api/plugins/:id/trust", async (req) => trustPlugin(app, plugin(req).manifest.id));
   server.delete("/api/plugins/:id/trust", async (req) => untrustPlugin(app, plugin(req).manifest.id));
 

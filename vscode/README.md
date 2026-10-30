@@ -29,7 +29,7 @@
 ## 开发
 
 ```bash
-cd vscode && pnpm install --ignore-workspace && pnpm run build
+pnpm install && pnpm --filter omem-vscode run build   # 在仓库根目录：vscode/ 是 pnpm workspace 里的一个包
 ```
 
 `node test/run.mjs` 启动一个带演示数据的 omem（`test/seed.mts`），在真实 VS Code 里跑 `test/suite.cjs`；`VSCODE_PATH` 指向已安装的 Code 可执行文件可以不下载。打包：`pnpm run package`。

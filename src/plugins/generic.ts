@@ -5,7 +5,7 @@ import type { PluginBlock } from "./types.ts";
 /**
  * Blocks the host offers every plugin (docs/v2/plugins.md), so a plugin without code or a page of
  * its own can still ask for a form or show a chart. Their agents hand them in with plugin_form /
- * plugin_chart; plugins/sdk/blocks.ts renders them, on the shell's default page and in plugin pages.
+ * plugin_chart; packages/plugin-sdk/blocks.ts renders them, on the shell's default page and in plugin pages.
  */
 const field = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,30}$/).describe("字段 id"),

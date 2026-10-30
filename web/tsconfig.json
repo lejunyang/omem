@@ -8,7 +8,8 @@
     "jsx": "preserve",
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "paths": { "@omem/plugin-sdk": ["../packages/plugin-sdk/client.ts"], "@omem/plugin-sdk/blocks": ["../packages/plugin-sdk/blocks.ts"] }
   },
-  "include": ["src/**/*.ts", "src/**/*.vue", "../plugins/sdk/*.ts", "../plugins/*/web/**/*.ts", "../plugins/*/web/**/*.vue"]
+  "include": ["src/**/*.ts", "src/**/*.vue", "../packages/plugin-sdk/*.ts", "../plugins/*/web/**/*.ts", "../plugins/*/web/**/*.vue"]
 }

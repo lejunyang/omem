@@ -7,6 +7,7 @@ on:
     branches: [main]
     paths:
       - "site/**"
+      - "pnpm-lock.yaml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -22,24 +23,20 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: site
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # “更新于” on each page comes from Git history
       - uses: pnpm/action-setup@v4
         with:
-          version: 8
+          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: site/pnpm-lock.yaml
-      # site/ has its own lockfile, apart from the app's workspace.
-      - run: pnpm install --frozen-lockfile --ignore-workspace
-      - run: pnpm run build
+      # One lockfile for the workspace; only the docs site's dependencies are installed.
+      - run: pnpm install --frozen-lockfile --filter omem-docs
+      - run: pnpm --filter omem-docs run build
         env:
           DOCS_BASE: /${{ github.event.repository.name }}/
       - uses: actions/configure-pages@v5

@@ -128,6 +128,8 @@ export const configSchema = z.object({
    * Read-only share links that messages sent outside omem (Feishu) use for what they cite
    * (core/shares.ts); they need `webUrl`. expiryDays 0: links do not expire (revoke them in settings).
    */
+  /** Per-plugin choices of the owner that are not the plugin's own settings: the nav icon. */
+  plugins: z.object({ icons: z.record(z.string(), z.string()).default({}) }).default({ icons: {} }),
   shares: z.object({ expiryDays: z.number().int().min(0).max(3650).default(0) }).default({ expiryDays: 0 }),
   timezone: z.string().default(Intl.DateTimeFormat().resolvedOptions().timeZone),
   language: z.string().default("zh-CN"),

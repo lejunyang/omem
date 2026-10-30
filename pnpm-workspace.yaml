@@ -1,6 +1,14 @@
+# One workspace, one lockfile: the app (root), the plugin SDK, the VS Code extension and the docs site.
+# A server only needs the app: scripts/upgrade.ts and osdk install with `--filter omem`.
+packages:
+  - packages/*
+  - vscode
+  - site
 allowBuilds:
   '@larksuite/cli': true
+  '@vscode/vsce-sign': true
   esbuild: true
+  keytar: true
   onnxruntime-node: true
   protobufjs: true
   sharp: true

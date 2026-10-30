@@ -590,6 +590,9 @@ TraeX 与其他 ACP 的清理补验：
 - 配置了访问令牌（`token`）后，不带令牌直接连 `ws://…/api/plugins/<id>/streams/<name>` 被拒；网页里的流照常（外壳带着本人的令牌）。不存在的流、未信任插件的流被拒。
 - 页面写成普通 HTML、从 `/plugins/_sdk/omem.js` 引入 SDK 能用（插件页在沙箱 iframe 里）；引入 `/plugins/_sdk/omem.css` 后按钮、输入框、卡片和主站一样。
 - 英语练习页和 SDK 画的表单、图表用的是 omem 的样式和组件：主按钮是主站的深色按钮（不是蓝色），侧重用分段选择，加载时是骨架；深浅色都对。
+- 侧栏里英语练习的图标和“学习”不一样；设置 → 插件里点插件名前的图标，选一个后侧栏马上换，“用插件自己的图标”恢复。数据目录插件的清单写 `icon: 文件名.svg`（放在 `web/` 里）时侧栏显示这个图形，颜色跟随文字。
+- `pnpm run dev` 时改 `plugins/english/web/*.vue`、`@omem/plugin-sdk` 或 `web/src/styles.css`，打开着的英语练习页原地更新；`pnpm run build` 后不开 dev 也能打开（`web/dist/plugins/english`）。
+- 根目录 `pnpm install` 装好应用、VS Code 插件和文档站；`pnpm install --frozen-lockfile --filter omem` 只装应用；`pnpm --filter omem-vscode run build`、`pnpm --filter omem-docs run build` 能构建。
 - 回归：`test/plugin-services.test.ts`（信任前不运行、信任后工具与服务、改代码要重新确认、撤销即卸载、需批准的工具、流的文本与二进制、令牌与未知流被拒）。
 
 验证结果：插件相关测试 12 项通过。本地开发实例里的演示插件（机器状态，四个文件）在 Chrome 里走过：设置页显示未信任 → 确认 → 已信任；插件页（普通 HTML + `/plugins/_sdk/omem.js`）经外壳中继连上流，状态每秒更新；设置里服务“运行中”、输出有启动记录；390 宽度设置页无横向溢出。真实 codex 经 `/as pulse-watcher` 调 `pulse_read`，答出当时的 CPU 和内存。没验证：服务空闲自动停止只看了代码和测试里的手动停止；经 `omem peer open` 的流转发没做。

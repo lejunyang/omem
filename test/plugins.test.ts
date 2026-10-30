@@ -4,7 +4,7 @@ import { callTool, issueToolToken, toolContextForToken } from "../src/agents/too
 import { all, one, run } from "../src/core/db.ts";
 import { findSpace } from "../src/core/spaces.ts";
 import { createSession, sessionView, submitBlock } from "../src/plugins/blocks.ts";
-import { getPlugin, loadPlugins } from "../src/plugins/registry.ts";
+import { describePlugin, getPlugin, loadPlugins, setPluginIcon } from "../src/plugins/registry.ts";
 import { pluginStore } from "../src/plugins/store.ts";
 import { webLink } from "../src/core/util.ts";
 import { levelOf, nextRating, normalize, pickFromBank, snapshot, wordAccuracy, type BankEntry } from "../plugins/english/learner.ts";
@@ -186,6 +186,20 @@ describe("plugins", () => {
     const msg = one<{ text: string }>(app.db, "select text from messages where conversation_id = ? and role = 'user' order by created_at desc limit 1", conversationId)!;
     expect(msg.text).toBe("【提交】这周的目标\n- 想练的场景：面试\n- 每天几分钟：20\n- 信心：5");
     await expect(submitBlock(app, env, { blockId: chart.id, userId: "owner", answers: {} })).rejects.toThrow(/只用来展示/);
+  });
+
+  it("nav icons: the manifest's name or .svg, and the owner's choice over it", async () => {
+    const app = testApp();
+    const dir = join(app.home, "plugins", "drawn");
+    mkdirSync(join(dir, "web"), { recursive: true });
+    writeFileSync(join(dir, "plugin.yaml"), ["id: drawn", "name: 画", "icon: web-icon.svg", "page: { title: 画 }"].join("\n"));
+    await loadPlugins(app);
+    expect(describePlugin(getPlugin("english")).icon).toBe("languages");
+    expect(describePlugin(getPlugin("drawn")).icon).toBe("/plugins/drawn/web-icon.svg");
+    expect(setPluginIcon(app, "drawn", "notebook")).toMatchObject({ icon: "notebook", iconChosen: true });
+    expect(app.config.plugins.icons).toEqual({ drawn: "notebook" });
+    expect(() => setPluginIcon(app, "drawn", "../x.svg")).toThrow();
+    expect(setPluginIcon(app, "drawn", "")).toMatchObject({ icon: "/plugins/drawn/web-icon.svg", iconChosen: false });
   });
 
   it("a plugin in the data directory: declarations and skills, the default page; its code waits for trust", async () => {

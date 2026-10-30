@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { del, get, post } from "../api";
+import { del, get, post, put } from "../api";
+import { PLUGIN_ICONS } from "../lib/icons";
 import { confirmDialog } from "../lib/dialog";
-import { toast } from "../store";
+import { state, toast } from "../store";
+import Icon from "./Icon.vue";
 import Skeleton from "./Skeleton.vue";
 
 /**
@@ -16,6 +18,8 @@ type Plugin = {
   description: string;
   source: "builtin" | "data";
   dir: string | null;
+  icon: string;
+  iconChosen: boolean;
   trust: "builtin" | "none" | "trusted" | "required" | "changed";
   agents: { name: string }[];
   tools: string[];
@@ -27,6 +31,7 @@ type Plugin = {
 const plugins = ref<Plugin[] | null>(null);
 const services = ref<Record<string, Service[]>>({});
 const openLog = ref<string | null>(null);
+const picking = ref<string | null>(null);
 
 const TRUST: Record<Plugin["trust"], string> = { builtin: "内置", none: "只有声明，不含代码", trusted: "已信任", required: "带代码，未信任", changed: "代码改过，需要重新确认" };
 
@@ -65,6 +70,18 @@ async function service(p: Plugin, name: string, action: "start" | "stop") {
   services.value[p.id] = await get<Service[]>(`/api/plugins/${p.id}/services`);
 }
 
+/** The nav icon (empty: back to the plugin's own). */
+async function setIcon(p: Plugin, icon: string) {
+  try {
+    const next = await put<Plugin>(`/api/plugins/${p.id}/icon`, { icon });
+    Object.assign(p, { icon: next.icon, iconChosen: next.iconChosen });
+    picking.value = null;
+    state.pluginsChanged++;
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+
 onMounted(() => void load().catch((e) => toast((e as Error).message, "error")));
 </script>
 
@@ -75,11 +92,40 @@ onMounted(() => void load().catch((e) => toast((e as Error).message, "error")));
     <p v-else-if="!plugins.length" class="muted">还没有插件。</p>
     <div v-for="p in plugins ?? []" :key="p.id" class="card pad stack">
       <div class="row wrap">
+        <button
+          v-if="p.page"
+          class="btn ghost sm icon"
+          :title="`菜单图标（${p.page.title}）`"
+          :aria-label="`换菜单图标（${p.page.title}）`"
+          :aria-expanded="picking === p.id"
+          @click="picking = picking === p.id ? null : p.id"
+        >
+          <Icon :name="p.icon" :size="17" />
+        </button>
         <strong>{{ p.name }}</strong><span class="muted small mono">{{ p.id }}</span>
         <span class="badge" :class="{ warn: p.trust === 'required' || p.trust === 'changed', ok: p.trust === 'trusted' }">{{ TRUST[p.trust] }}</span>
         <span class="spacer" />
         <button v-if="p.trust === 'required' || p.trust === 'changed'" class="btn sm primary" @click="trust(p)">信任并运行</button>
         <button v-if="p.trust === 'trusted'" class="btn ghost sm danger" @click="untrust(p)">撤销信任</button>
+      </div>
+      <div v-if="picking === p.id" class="icons stack">
+        <div class="grid" role="radiogroup" :aria-label="`${p.page?.title} 的菜单图标`">
+          <button
+            v-for="i in PLUGIN_ICONS"
+            :key="i.name"
+            type="button"
+            role="radio"
+            class="btn ghost sm icon"
+            :class="{ on: p.icon === i.name }"
+            :aria-checked="p.icon === i.name"
+            :title="i.label"
+            :aria-label="i.label"
+            @click="setIcon(p, i.name)"
+          >
+            <Icon :name="i.name" :size="17" />
+          </button>
+        </div>
+        <div v-if="p.iconChosen" class="row"><button class="lnk small" @click="setIcon(p, '')">用插件自己的图标</button></div>
       </div>
       <p v-if="p.description" class="muted small">{{ p.description }}</p>
       <p v-if="p.dir" class="muted small mono path">{{ p.dir }}</p>
@@ -140,5 +186,14 @@ onMounted(() => void load().catch((e) => toast((e as Error).message, "error")));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0;
+}
+.icons .grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.icons .btn.on {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 </style>

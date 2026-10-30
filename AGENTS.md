@@ -41,8 +41,8 @@
 - Wiki 按用户问题组织，不按文件逐个生成。写作要求在 roles/wiki-writer.md、roles/distiller.md，页面写法（案例页模板、改写对照）在内置技能 `skills/library/wiki-writing`；改写作质量优先改角色说明和这个技能，其次才改代码。
 - 文档和生成内容用中文，直接具体，避免套话。成稿可按 `.agents/skills/lieflat-less-ai-tone/SKILL.md` 检查表达，不改事实和结构。
 - 功能变了在同一个提交里同步：README（功能介绍、“日常用途”、命令行清单、代码结构）、docs/v2/architecture.md 的实现状态表、acceptance.md 的验收项、`.repo-review/wiki/reference/changes-since-2026-10-13.md`；动了 omem 工具还要改 `skills/omem/references/` 里对应的分组，动了网页约定改 `.agents/skills/omem-design`。
-- VS Code 插件在 `vscode/`（独立 package 和锁文件，`cd vscode && pnpm install --ignore-workspace && pnpm run build`；`node test/run.mjs` 在真实 VS Code 里测）。它只调 HTTP API，宿主改了运行、评审、问答、交办的接口要一起看它；设计在 docs/v2/ide.md。
-- 文档站在 `site/`（VitePress，独立的 package 和锁文件，`cd site && pnpm install --ignore-workspace && pnpm run dev`；推到 main 后由 `.github/workflows/docs.yml` 发布到 GitHub Pages）。功能有变化时同步 `site/features/*.md` 或 `site/guide/*.md` 里对应的页面；主题沿用 `web/src/styles.css` 的 token（`site/.vitepress/theme/custom.css`），网页的颜色和字体变了这里一起改。
+- VS Code 插件在 `vscode/`（pnpm workspace 里的一个包，`pnpm install && pnpm --filter omem-vscode run build`；`node test/run.mjs` 在真实 VS Code 里测）。它只调 HTTP API，宿主改了运行、评审、问答、交办的接口要一起看它；设计在 docs/v2/ide.md。
+- 文档站在 `site/`（VitePress，workspace 里的一个包，`pnpm --filter omem-docs run dev`；推到 main 后由 `.github/workflows/docs.yml` 发布到 GitHub Pages）。功能有变化时同步 `site/features/*.md` 或 `site/guide/*.md` 里对应的页面；主题沿用 `web/src/styles.css` 的 token（`site/.vitepress/theme/custom.css`），网页的颜色和字体变了这里一起改。
 - 截图：`site/public/screens/*.png` 按功能命名（`review-overview`、`wiki-citations`……），文档站和 README 共用。改了这些页面的界面后，`pnpm run build && node scripts/doc-screens.ts` 重新生成全部截图（直接覆盖同名文件）；新功能要截图就在脚本里加演示数据和一项 `shots`。脚本用虚构的演示数据（示例商城 · 退款改造），不要换成本机或常驻服务器的真实数据截图。
 - 这是公开仓库：文档、角色说明、技能、测试、代码注释和提交信息里不写本人和他人的真实信息（姓名、同事名、公司、群名、主机名、真实聊天或记忆内容、Agent 档案名）。举例用虚构的（项目 A、小王、《差旅报销制度》）；用真实数据校准过的规则只写结论。
   - 也不要带进：本机绝对路径（`/Users/<名>/…`、`C:\Users\<名>\…`，写相对路径或 `~`）、公司内网地址（内部 npm 源、内部文档和 Wiki 链接，锁文件里的 `resolved` 也算；示例链接用 `tenant.larkoffice.com`）、公司工具自动加的 `Co-authored-by`、运行记录或 Agent 日志的原样导出。
@@ -60,6 +60,7 @@
 ## 运行与依赖
 
 - Node 22.18+ 直接运行 TypeScript（类型擦除），import 写 `.ts` 后缀，只用可擦除语法（不用参数属性、enum、namespace）。构建由 tsc 改写后缀到 dist/。
+- 仓库是 pnpm workspace（根是应用，另有 `packages/plugin-sdk`、`vscode`、`site`），一份 `pnpm-lock.yaml`；服务器上只装应用（`pnpm install --filter omem`，`scripts/upgrade.ts` 和 osdk 的依赖安装都这样做）。插件 SDK 在 `packages/plugin-sdk`（`@omem/plugin-sdk`），不在 `plugins/` 里。
 - osdk 管理工具链、依赖和可选模型（`osdk run dev/check`）；不强制本地大模型。向量模型可选，换模型会清空旧向量。交互式配置统一放在 `omem setup`（src/setup.ts）。
 - 个人配置、数据库、原件、密钥、模型权重、下载的 Agent 程序不进 Git。
 - 多台设备（`src/core/peers.ts`、`peer-exec.ts`）：远程命令只加进 `peerCommands` 的固定清单并带参数校验，不提供任意 shell；飞书相关的远程命令同样只读。没有配置令牌时 API 只信任本机来源的请求。`scripts/relay.mjs` 的白名单同理，只放检查与更新类命令。

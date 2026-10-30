@@ -21,6 +21,8 @@ export const state = reactive({
   spaces: [] as Space[],
   space: stored("omem-space", "personal"),
   unread: 0,
+  /** Bumped when a plugin's nav entry changes (settings → 插件), so the nav reloads it. */
+  pluginsChanged: 0,
   toasts: [] as { id: number; text: string; kind: "info" | "ok" | "error"; link?: string }[],
   /** Stack of citation targets shown in the side drawer. */
   trail: [] as CitationTarget[],

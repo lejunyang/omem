@@ -2,7 +2,7 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
-import { connect, type Omem } from "../../sdk/client";
+import { connect, type Omem } from "@omem/plugin-sdk";
 import Skeleton from "../../../web/src/components/Skeleton.vue";
 import UiSegmented from "../../../web/src/components/UiSegmented.vue";
 import GenericBlock from "./GenericBlock.vue";
@@ -13,7 +13,7 @@ import type { Block, Message, Session, SessionInfo, Snapshot } from "./types";
 /**
  * 英语练习: a session with the tutor (english-tutor). The tutor hands in batches of questions
  * (english_quiz), the owner answers and submits each batch, the tutor reads the graded result
- * and goes on. Everything goes through the shell (plugins/sdk), never straight to /api.
+ * and goes on. Everything goes through the shell (@omem/plugin-sdk), never straight to /api.
  */
 let omem: Omem | null = null;
 const sessions = ref<SessionInfo[]>([]);

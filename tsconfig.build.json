@@ -9,5 +9,5 @@
     "sourceMap": false
   },
   "include": ["src/**/*.ts", "plugins/*/*.ts"],
-  "exclude": ["src/**/*.test.ts", "plugins/sdk"]
+  "exclude": ["src/**/*.test.ts"]
 }

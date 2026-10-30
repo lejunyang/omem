@@ -87,8 +87,8 @@ flowchart LR
 osdk install && osdk deps --frozen
 osdk run dev          # API :4317 + 网页 :5173，数据在 ./.omem
 
-# 或直接用 npm/pnpm
-pnpm install
+# 或直接用 npm/pnpm（pnpm workspace：应用、插件 SDK、VS Code 插件、文档站共用一份锁文件）
+pnpm install                      # 只要应用：pnpm install --filter omem
 pnpm run build && pnpm start      # http://127.0.0.1:4317，数据在 ~/.omem
 npm install -g .                  # 可选：把命令行 omem 链接到这个仓库
 ```
@@ -166,7 +166,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 | 采集消息、筛选关注群、生成简报 | `omem setup` 选择读取方式，或设置 → 渠道 勾选会话（只读）；定时任务里开启采集、巡检和“筛选值得关注的飞书群” |
 | 成组练英语，按水平和薄弱点出题 | 左侧“英语练习”：选场景和侧重点开始，做完一组一起提交；选择、填空、听写当场判分，翻译由陪练评分点评。“下一组”从陪练补好的题库里按你的情况马上挑（设置里可改成每组由陪练现出），题库里没这个场景的题时由陪练出。右侧是各项水平、今天的目标、近 14 天练习量和薄弱点；“设置”里改每组题数、朗读口音和语速。陪练是 Agent 页里的 `english-tutor`，可以改说明、挂技能 |
 | 做一个自己的小插件（复盘、问卷、打卡） | 在数据目录建 `plugins/<id>/plugin.yaml`、`agents/<名>.md`（可带 `skills/`、`settings`），重启后侧栏出现它的页面：和它的 Agent 对话，Agent 能发表单让你填、画图给你看。不加载数据目录里的代码。格式见 [docs/v2/plugins.md](docs/v2/plugins.md) |
-| 插件要一个常驻进程（采集、看屏幕、连设备），页面实时显示 | 清单里写 `services` 和 `streams`，服务用 `plugins/sdk/service.mjs`，页面 `omem.stream(名)`；数据目录插件带代码时在设置 → 插件里点“信任并运行”，代码改了要重新确认；服务的状态和输出也在那里看。点击、输入这类工具标 `approval: true`，每次等你批准 |
+| 插件要一个常驻进程（采集、看屏幕、连设备），页面实时显示 | 清单里写 `services` 和 `streams`，服务用 `packages/plugin-sdk/service.mjs`，页面 `omem.stream(名)`；数据目录插件带代码时在设置 → 插件里点“信任并运行”，代码改了要重新确认；服务的状态和输出也在那里看。点击、输入这类工具标 `approval: true`，每次等你批准 |
 | 在飞书里点开 omem 的页面 | 设置 → 渠道 → 网页地址，填其他设备能访问的地址；通知卡片的“打开链接”、插件 Agent 在飞书里给的练习链接都能直接打开 |
 | 飞书回答里的引用点开就能看，给群里的同事看也行 | 填好网页地址后，回答句末的 ①② 打开只读分享（被引的代码行、排查记录、记忆、Wiki 小节），聊天引用直接跳到飞书里那条消息；设置 → 分享 改新分享的有效期（默认长期有效）、看打开次数、撤销 |
 | 用间隔重复学习（如英语） | 打开材料点“生成卡片”，在“学习”页按 FSRS 复习；或对助理说“我想练英语开会表达，每天 8 张，晚上九点提醒我”建学习目标；聊天里 `/review` 复习；可与 Anki 互相导入导出（制表符文本） |
@@ -439,10 +439,10 @@ omem peer acp <设备> <Agent>              # 用它的 ACP Agent（stdio 上说
 ```bash
 pnpm run dev          # node --watch 运行 API，Vite 运行网页
 pnpm run check        # 类型检查 + 测试 + 构建
-pnpm run build:plugins   # 只构建插件页面（web/dist/plugins/<id>；dev 会自动监听构建）
+pnpm run build:plugins   # 只构建插件页面（web/dist/plugins/<id>）和 SDK；dev 时 Vite 直接从源码提供插件页面，带热更新
 node scripts/screens.ts http://127.0.0.1:5173 screens   # 桌面与手机截图
 node scripts/doc-screens.ts         # 文档站与 README 的功能截图（先 pnpm run build；用虚构演示数据，输出 site/public/screens）
-cd site && pnpm install --ignore-workspace && pnpm run dev   # 文档站（VitePress）
+pnpm --filter omem-docs run dev   # 文档站（VitePress）
 node scripts/eval-retrieval.ts corpus.jsonl queries.jsonl [--vector]
 node scripts/bench/fetch.ts [名称]   # 公开评测数据：下载、校验哈希、转换（清单 scripts/bench/datasets.json；手动跑）
 node scripts/eval-longmemeval.ts <文件> --recall [--vector]   # LongMemEval / LoCoMo 会话级 Recall，不用模型
@@ -467,12 +467,13 @@ src/channels  发出去的消息里的引用（citations.ts）、飞书机器人
 src/setup.ts  omem setup 交互式向导
 roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查/目录整理、巡检、简报、做梦、筛群、知识库归属建议（kb-scout）、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md
 skills/omem     omem 工具的使用说明：SKILL.md 概览，references/ 按分组讲做法（omem_help(分组) 返回同一份内容）
-plugins/      内置插件（english：档案、出题技能、判分、学习者画像与题库 server.ts / learner.ts、页面 web/）；sdk/client.ts 是插件页面与外壳的桥，sdk/blocks.ts 画表单和图表，sdk/service.mjs 是插件服务的 HTTP / WebSocket 帮助模块
+plugins/      内置插件（english：档案、出题技能、判分、学习者画像与题库 server.ts / learner.ts、页面 web/）
+packages/plugin-sdk   插件 SDK（@omem/plugin-sdk，不是插件）：client.ts 是插件页面与外壳的桥，blocks.ts 画表单和图表，service.mjs 是插件服务的 HTTP / WebSocket 帮助模块
 skills/library  内置技能（如 lark-messaging、desktop-control、wiki-writing，可带 references/），启动时播种到 library/_skills（已有的不覆盖，新版新增的技能补进）
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
 scripts/      脚本：更新（upgrade.ts）、截图（screens.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
-vscode/       VS Code 插件（独立依赖；omem 的网页版 VS Code 启动前从源码编译装进去，连本机 omem 不用设置）：连接方式（本机 / 直接 / 本机配对的设备）、交办列表、评审问题评论线程、选中提问与修改点、发起交办；在真实 VS Code 里跑的测试在 vscode/test
-site/         文档站（VitePress，独立依赖）：功能介绍与安装使用，截图在 site/public/screens，GitHub Pages 发布（.github/workflows/docs.yml）
+vscode/       VS Code 插件（workspace 里的包 omem-vscode；omem 的网页版 VS Code 启动前从源码编译装进去，连本机 omem 不用设置）：连接方式（本机 / 直接 / 本机配对的设备）、交办列表、评审问题评论线程、选中提问与修改点、发起交办；在真实 VS Code 里跑的测试在 vscode/test
+site/         文档站（VitePress，workspace 里的包 omem-docs）：功能介绍与安装使用，截图在 site/public/screens，GitHub Pages 发布（.github/workflows/docs.yml）
 web/          Vue 3 网页
 ```
 
