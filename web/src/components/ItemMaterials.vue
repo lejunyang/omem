@@ -4,6 +4,7 @@ import { del, get, post, type Source } from "../api";
 import Icon from "./Icon.vue";
 import UiSegmented from "./UiSegmented.vue";
 import UiSelect from "./UiSelect.vue";
+import { promptDialog } from "../lib/dialog";
 import { openCitation, relTime, state, statusLabel, toast } from "../store";
 
 /**
@@ -13,7 +14,7 @@ import { openCitation, relTime, state, statusLabel, toast } from "../store";
  */
 export type Material = {
   id: number;
-  kind: "source" | "conversation" | "repo" | "space" | "run";
+  kind: "source" | "conversation" | "repo" | "space" | "run" | "req";
   ref: string;
   label: string;
   title: string;
@@ -28,6 +29,7 @@ const props = defineProps<{ itemId: string; materials: Material[] }>();
 const emit = defineEmits<{ changed: [] }>();
 
 const GROUPS: { kinds: Material["kind"][]; title: string }[] = [
+  { kinds: ["req"], title: "需求点" },
   { kinds: ["run"], title: "评审与交办" },
   { kinds: ["source"], title: "文档与群聊" },
   { kinds: ["repo", "space"], title: "代码" },
@@ -49,11 +51,36 @@ async function remove(m: Material) {
 
 // ---- adding --------------------------------------------------------------------------------
 const adding = ref(false);
-type AddKind = "source" | "repo" | "space" | "run";
+type AddKind = "source" | "req" | "repo" | "space" | "run";
 const kind = ref<AddKind>("source");
-const kindOptions = [{ value: "source" as const, label: "原件" }, { value: "repo" as const, label: "仓库分支" }, { value: "space" as const, label: "空间" }, { value: "run" as const, label: "运行" }];
+const kindOptions = [{ value: "source" as const, label: "原件" }, { value: "req" as const, label: "需求点" }, { value: "repo" as const, label: "仓库分支" }, { value: "space" as const, label: "空间" }, { value: "run" as const, label: "运行" }];
+// The req-splitter role reads the materials and writes the requirement tree (src/agents/req-split.ts).
+const splitting = ref(false);
+async function split() {
+  const note = await promptDialog("拆需求点", { message: "AI 读这个事项的材料，把需求点和测试点写进业务空间的需求树，写完在需求页确认。可以补充要求（拆到多细、重点、哪些先不拆）。", placeholder: "可以不填", okText: "开始拆" });
+  if (note === null) return;
+  splitting.value = true;
+  try {
+    const r = await post<{ id: string }>(`/api/items/${props.itemId}/split-requirements`, { note: note.trim() || undefined });
+    toast(`已开始拆需求点（运行 ${r.id}），完成后这里会出现需求点`);
+  } catch (e) {
+    toast((e as Error).message, "error");
+  } finally {
+    splitting.value = false;
+  }
+}
 const query = ref("");
 const found = ref<Source[]>([]);
+const reqHits = ref<{ id: string; spaceId: string; title: string }[]>([]);
+let reqTimer: ReturnType<typeof setTimeout> | undefined;
+watch([query, kind], ([v, k]) => {
+  if (k !== "req") return;
+  clearTimeout(reqTimer);
+  if (!v.trim()) return void (reqHits.value = []);
+  reqTimer = setTimeout(async () => {
+    reqHits.value = (await get<{ hits: typeof reqHits.value }>(`/api/search?q=${encodeURIComponent(v.trim())}&space=*&types=requirement&limit=10`).catch(() => ({ hits: [] }))).hits;
+  }, 250);
+});
 let timer: ReturnType<typeof setTimeout> | undefined;
 watch(query, (q) => {
   clearTimeout(timer);
@@ -95,7 +122,7 @@ function addCurrent() {
 
 <template>
   <div class="materials">
-    <div class="section-title row">材料<span class="spacer" /><button class="btn ghost sm" :aria-expanded="adding" @click="adding = !adding"><Icon name="plus" :size="13" />{{ adding ? "收起" : "添加" }}</button></div>
+    <div class="section-title row">材料<span class="spacer" /><button class="btn ghost sm" :disabled="splitting" title="AI 读这些材料，拆成需求树里的需求点和测试点" @click="split"><Icon name="target" :size="13" />拆需求点</button><button class="btn ghost sm" :aria-expanded="adding" @click="adding = !adding"><Icon name="plus" :size="13" />{{ adding ? "收起" : "添加" }}</button></div>
     <p v-if="!materials.length && !adding" class="muted small">把这件事的需求和技术文档、群聊、仓库和分支挂在这里；为它发起的评审和交办会读到这些材料，也会列在这里。也可以直接对助理说“把这几份文档和分支挂到这个事项上”。</p>
 
     <div v-if="adding" class="add card pad">
@@ -106,6 +133,12 @@ function addCurrent() {
           <span class="ellipsis">{{ s.title }}</span><span class="muted small">{{ spaceName(s.spaceId) }} · {{ s.kind }}</span>
         </button>
       </template>
+      <template v-else-if="kind === 'req'">
+        <input v-model="query" class="input sm" placeholder="搜索需求点（连同它下面的全部一起挂上）" aria-label="搜索需求点" />
+        <button v-for="h in reqHits" :key="h.id" class="hit" @click="add(h.id)">
+          <span class="ellipsis">{{ h.title }}</span><span class="muted small">{{ spaceName(h.spaceId) }}</span>
+        </button>
+      </template>
       <div v-else-if="kind === 'repo'" class="row wrap">
         <UiSelect v-model="repo" size="sm" width="180px" :options="repoOptions" placeholder="代码仓库" aria-label="代码仓库" />
         <UiSelect v-model="branch" size="sm" width="220px" :options="branches" :search-at="1" placeholder="分支（可选）" aria-label="分支" />
@@ -113,7 +146,7 @@ function addCurrent() {
       <UiSelect v-else-if="kind === 'space'" v-model="space" size="sm" :options="spaceOptions" :search-at="8" placeholder="要对照或一起读的空间" aria-label="空间" />
       <input v-else v-model="runId" class="input sm mono" placeholder="运行 id，如 r0m…" aria-label="运行 id" @keydown.enter="addCurrent" />
       <input v-model="note" class="input sm" placeholder="说明（可选），如：只作参考，实际接口在前端 BFF" aria-label="说明" />
-      <div v-if="kind !== 'source' || /^(src:)?s\w{8,}/.test(query.trim())" class="row"><span class="spacer" /><button class="btn sm primary" @click="addCurrent">加上</button></div>
+      <div v-if="kind !== 'req' && (kind !== 'source' || /^(src:)?s\w{8,}/.test(query.trim()))" class="row"><span class="spacer" /><button class="btn sm primary" @click="addCurrent">加上</button></div>
     </div>
 
     <div v-for="g in groups" :key="g.title" class="group">
@@ -121,6 +154,7 @@ function addCurrent() {
       <div v-for="m in g.list" :key="m.id" class="m">
         <div class="mrow">
           <router-link v-if="m.kind === 'run'" :to="`/runs/${m.ref}`" class="t ellipsis" :title="m.title">{{ m.title }}</router-link>
+          <router-link v-else-if="m.kind === 'req'" :to="`/reqs/${m.ref}`" class="t ellipsis" :title="m.title">{{ m.title }}</router-link>
           <a v-else-if="m.kind === 'source' && m.readable && !m.missing" href="#" class="t ellipsis" :title="m.title" @click.prevent="openCitation({ kind: 'source', id: m.ref }, true)">{{ m.title }}</a>
           <router-link v-else-if="m.kind === 'conversation'" :to="`/ask/${m.ref}`" class="t ellipsis">{{ m.title }}</router-link>
           <span v-else class="t ellipsis" :title="m.title">{{ m.kind === "repo" ? `${spaceName(m.meta.space ?? m.ref)} · ${m.meta.branch ?? "当前检出"}` : m.title }}</span>

@@ -189,6 +189,8 @@ export function presentHits(app: App, hits: Hit[], query: string): PresentedHit[
       title = h.title || "记忆";
     } else if (h.type === "symbol") {
       place = h.path;
+    } else if (h.type === "requirement") {
+      place = "需求点";
     }
     const e = excerpt(raw, needles);
     const plainTitle = plainText(title);

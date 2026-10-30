@@ -26,6 +26,7 @@ const nav = ref<{ to: string; label: string; icon: string; exact?: boolean }[]>(
   { to: "/ask", label: "问答", icon: "chat" },
   { to: "/wiki", label: "Wiki", icon: "book" },
   { to: "/items", label: "事项", icon: "checkbox" },
+  { to: "/reqs", label: "需求", icon: "target" },
   { to: "/memory", label: "记忆", icon: "brain" },
   { to: "/sources", label: "原件", icon: "file" },
   { to: "/learn", label: "学习", icon: "cap" },

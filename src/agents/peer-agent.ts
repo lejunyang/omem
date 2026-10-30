@@ -21,7 +21,8 @@ import { callTool, mcpTools, toolList, type ToolContext } from "./tools.ts";
 
 /**
  * Tools an outside Agent on another device does not get: they post to Feishu or notify people,
- * hand work to this machine's own Agents or code workers (which would use this machine's models),
+ * hand work to this machine's code workers or start its batch jobs (run_agent / ask_agent are the
+ * exception: queued as runs the device reads with read_run, see tools.ts peerDispatch),
  * wake or schedule later, wait for the owner, or change what runs here (profiles, skills, rules,
  * capture settings, repositories). Reading them (list_agents, list_rules, list_lark_chats…) stays.
  * test/peer-tools.test.ts fails when a new tool is in neither this list nor PEER_ALLOWED.
@@ -30,7 +31,7 @@ export const PEER_DENY = new Set([
   "lark_send", "lark_react", "meeting_send", "lark_card", "lark_update_card", "lark_send_file", "lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_wiki_crawl",
   "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "refresh_item_notification", "notify",
   "ask_owner", "wait_answer", "suggest_next", "wake_later", "wake_on_message", "cancel_wake",
-  "run_agent", "continue_agent_work", "ask_agent", "switch_run_ai", "generate_wiki", "digest_sources",
+  "continue_agent_work", "switch_run_ai", "generate_wiki", "digest_sources",
   "delegate_code", "continue_code_run", "fix_review", "message_code_run", "set_code_review", "stop_code_run", "resplit_change_points", "retry_code_progress",
   "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_action",
   "connect_repository", "save_agent", "save_skill", "save_rule", "ignore_notification_rule",

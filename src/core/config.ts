@@ -68,6 +68,7 @@ export const roleNames = [
   "review-lead",
   "replay-judge",
   "kb-scout",
+  "req-splitter",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
 

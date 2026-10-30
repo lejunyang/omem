@@ -33,6 +33,7 @@ import { digestMergeText } from "../memory/digest-merge.ts";
 // Also registers the kb-scout handler (channels/lark-knowledge.ts).
 import { readsSince } from "../channels/lark-knowledge.ts";
 import "./profile-jobs.ts";
+import "./req-split.ts";
 import "./wakes.ts";
 import "./digest.ts";
 import { helpedCounts, replayDreamText } from "./replay.ts";

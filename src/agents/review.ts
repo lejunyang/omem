@@ -14,7 +14,7 @@ import { findAgentSpec } from "./specs.ts";
  */
 
 /** What a check may use, whatever its profile allows elsewhere: reading, plus submit_review. */
-export const REVIEW_TOOLS = ["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "read_item", "list_conversations", "read_conversation", "list_skills", "read_skill"];
+export const REVIEW_TOOLS = ["list_spaces", "search", "req_read", "req_tree", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "read_item", "list_conversations", "read_conversation", "list_skills", "read_skill"];
 
 /** Built-in checks: label and one line on what each looks at. */
 export const BUILTIN_CHECKS: Record<string, { label: string; about: string }> = {
@@ -318,6 +318,8 @@ export const changePointSchema = z.object({
   implementation: z.string().max(2000).default(""),
   refs: z.array(z.string().max(300)).max(20).default([]),
   locations: z.array(z.object({ file: z.string().min(1).max(500), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).max(30).default([]),
+  /** The requirement node it stands for (items/requirements.ts), when the item has a tree. */
+  req: z.string().max(40).optional(),
 });
 export type ChangePoint = z.infer<typeof changePointSchema>;
 

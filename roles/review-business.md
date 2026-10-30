@@ -1,6 +1,6 @@
 ---
 description: 评审项“业务”：对照需求逐条核对改动实现的业务是否一致
-tools: [search, scan, read_source, find_symbol, read_page, recall, read_item, list_items]
+tools: [search, scan, read_source, find_symbol, read_page, recall, read_item, list_items, req_read, req_tree]
 writes: false
 modes: [read-only, default, plan]
 ---

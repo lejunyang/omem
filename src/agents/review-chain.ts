@@ -86,7 +86,7 @@ async function reviewContext(app: App, codeRunId: string, note?: string) {
   const checkText = results.map((r) => (r.check ? `${head(r)}命令：${r.check.command}\n退出码：${r.check.code}\n\n${fence("", r.check.output.slice(-4000))}` : `${head(r)}没有配置检查命令。`)).join("\n\n");
   const brief = [
     `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${input.task}`,
-    input.itemId ? materialsBrief(app, input.itemId, owner) : "",
+    input.itemId ? materialsBrief(app, input.itemId, owner, { since: root !== run.id ? getRun(app, root).createdAt : undefined }) : "",
     decisionsBrief(app, [...workRuns(app, run.id), ...(input.fromReview ? workRuns(app, input.fromReview) : [])]),
     note ? `## 本人确认评审计划时补充\n\n${note}` : "",
     multi ? `## 涉及的仓库\n\n${worktrees.map((w) => `- ${w.space}：${w.path}`).join("\n")}\n\n工作目录下每个子目录是一个仓库的 worktree；改过的文件也能用 omem 工具查（space: "*"）。` : "",
@@ -108,6 +108,7 @@ const SPLIT_BRIEF = [
   "- 每个写需求怎么说（带 `src:` 引用，需求文档、群聊、技术方案里的原文）、代码怎么做；",
   "- 状态：done 已实现 / partial 部分实现 / missing 没实现 / extra 需求外的改动；",
   "- 实现位置：文件和改动后的行段（几个仓库时路径前加仓库空间 id），找不准行号就只写文件，不要编；引用的原件 id 要从 search / read_source 的结果里原样抄。",
+  "- 任务里有“需求点”一节时，那就是拆好的需求：按它的层级和顺序给每个需求点（功能）一个变更点，`req` 填它的 id，标题沿用；不在需求点里的改动写成 extra、不填 `req`。测试点不单独成变更点，在对应功能的“代码怎么做”里说明有没有对应的测试。需求点本身有问题（写错、缺了、和代码的实际口径不一致）在最后的文字里说明，不要自己改需求树。",
   "读完材料和 diff 后调用一次 `submit_change_points` 提交，再用一两句话说明拆分的思路。",
 ].join("\n");
 

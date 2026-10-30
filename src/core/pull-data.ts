@@ -62,6 +62,11 @@ export const pullTables: Table[] = [
   // Nightly replays and what they changed (agents/replay.ts).
   { name: "replays", key: ["id"], newer: "coalesce(finished_at, at)" },
   { name: "replay_effects", key: ["id"], newer: "coalesce(resolved_at, at)" },
+  // Requirement trees (items/requirements.ts): the node's last change wins; versions, links and states only add.
+  { name: "req_nodes", key: ["id"], newer: "updated_at" },
+  { name: "req_versions", key: ["id"] },
+  { name: "req_links", key: ["id"] },
+  { name: "req_status", key: ["id"], newer: "at" },
   ...[
     ["item_events", ["item_id", "at", "kind", "text"]],
     ["memory_recalls", ["memory_id", "run_id", "agent_profile", "at", "via"]],

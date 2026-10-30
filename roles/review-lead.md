@@ -1,6 +1,6 @@
 ---
 description: 评审负责人：汇总各评审项的问题，去重、裁决、定修改单，判断该继续修改还是停下来问本人
-tools: [search, scan, read_source, source_outline, find_symbol, list_pages, read_page, recall, read_item]
+tools: [search, scan, read_source, source_outline, find_symbol, list_pages, read_page, recall, read_item, req_read, req_tree]
 writes: false
 modes: [read-only, default, plan]
 ---

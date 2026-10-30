@@ -996,3 +996,8 @@ updated: 2026-10-30
 - **提问**（`vscode/src/review.ts`）：命令立即返回，输入框清空；回答按运行事件流式写回线程，思考和工具折叠在 `<details>` 里，结束后换成最终回答。
 - **评审问题的线程可以“记为修改点”**：问题标为“改”，修改点带问题编号进下一轮；删掉修改点不删问题线程。
 - **网页版 VS Code**（`vscode/src/connection.ts`）：有 `OMEM_URL` 时固定连它、用 `OMEM_TOKEN`，不看浏览器里存的连接设置和令牌；“连接 omem…”只提示。
+
+## 10-31：需求树；设备交办这台机器的 Agent
+
+- **需求树**（新增 `src/items/requirements.ts`、`src/agents/req-split.ts`、`roles/req-splitter.md`、`web/src/views/Requirements.vue`，设计 `docs/v2/requirements.md`）：迁移加 `req_nodes`、`req_versions`、`req_links`、`req_status`、`reqs_fts` / `req_rowids`。每空间一棵树，节点 id 固定，每次修改一个版本（`correct` / `change`，业务变更必须写原因；删除分 `delete` / `remove`），跨空间关联，Agent 写的待确认。检索加 `requirement` 命中类型（`search` 的 `scope: "requirements"`），测试点不进。事项材料加 `req`；`materialsBrief` 带上需求点（`reqBrief`），续轮带交办开始后的业务变更。变更点加 `req`，`submit_change_points` 记 `req_status`。工具 `req_tree`、`req_read`、`save_requirements`、`split_requirements`（分组 items）；编码和评审角色加 `req_read`、`req_tree`。HTTP：`/api/requirements`、`/api/requirements/:id`、`POST /api/requirements`、`POST /api/items/:id/split-requirements`。导航加“需求”，事项材料加“拆需求点”。设备拉取带上四张表并重建检索。
+- **设备交办**：`run_agent` / `ask_agent` 不再在 `PEER_DENY` 里；经 `--peer` 调用时排成 `agent` 运行（`fromPeer`），立即返回运行 id，用 `read_run` 取结果。

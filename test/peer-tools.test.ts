@@ -53,7 +53,7 @@ describe("an outside Agent on another device uses this instance's tools", () => 
     expect(peerToolNames().has("rule_review") || peerToolNames({ readOnly: true }).has("submit_review")).toBe(false);
     const full = peerToolNames();
     expect(full.has("upsert_item") && full.has("set_source_attention") && full.has("organize_memories") && full.has("supersede") && full.has("forget")).toBe(true);
-    expect(full.has("run_agent") || full.has("wake_later") || full.has("lark_card")).toBe(false);
+    expect(full.has("wake_later") || full.has("lark_card")).toBe(false);
     const ro = await peerJson<{ tools: { name: string }[] }>(laptop, "server", "/api/peer/tools?readOnly=1");
     expect(ro.tools.map((t) => t.name)).not.toContain("remember");
     // help does not open a run
@@ -96,7 +96,6 @@ describe("an outside Agent on another device uses this instance's tools", () => 
       ["lark_send", { text: "hi" }],
       ["notify", { title: "t", body: "b" }],
       ["delegate_code", { task: "x" }],
-      ["run_agent", { name: "x", task: "y" }],
       ["wake_later", { minutes: 1, note: "n" }],
       ["omem_call", { tool: "lark_send", args: { text: "hi" } }],
       ["omem_call", { tool: "notify", args: { title: "t", body: "b" } }],
@@ -108,6 +107,13 @@ describe("an outside Agent on another device uses this instance's tools", () => 
     expect((await call("lark_send", { text: "hi" })).text).toMatch(/不对设备的外部 Agent 开放/);
     expect(all<{ n: number }>(server.db, "select count(*) n from notifications")[0].n).toBe(before);
     expect(runEvents(server, read.runId!).some((e) => e.type === "tool" && (e.data as { refused?: boolean }).refused === true)).toBe(true);
+    // Handing work to this machine's Agents is queued as a run of the device's session, read back with read_run.
+    const handed = await call("omem_call", { tool: "run_agent", args: { name: "assistant", task: "整理项目 B 的记忆目录" } });
+    expect(handed.isError).toBe(false);
+    const queued = handed.text.match(/运行 (r\w+)/)![1];
+    expect(listRuns(server, { kind: "agent", includeQuiet: true }).find((r) => r.id === queued)).toMatchObject({ parentId: read.runId, input: { spec: "assistant", fromPeer: "laptop" } });
+    expect((await call("omem_call", { tool: "ask_agent", args: { name: "no-such-profile", question: "?" } })).text).toMatch(/没有名为 no-such-profile/);
+    expect(full.has("run_agent") && full.has("ask_agent")).toBe(true);
     // a role-only tool is not available either
     expect((await call("submit_plan", { pages: [] })).text).toMatch(/不可用/);
 

@@ -6,10 +6,10 @@ import { countNoteHits, LEVEL_WEIGHT, levelSql, noteFactor, notesOf, notesOn, no
 import { citeBoost, citeCounts } from "../sources/cites.ts";
 import { catalog, sourcesUnder } from "../sources/catalog.ts";
 
-export type HitType = "chunk" | "page" | "memory" | "symbol";
+export type HitType = "chunk" | "page" | "memory" | "symbol" | "requirement";
 export type Hit = {
   type: HitType;
-  /** chunk: chunk id; page: space/slug; memory: memory id; symbol: source id#qname */
+  /** chunk: chunk id; page: space/slug; memory: memory id; symbol: source id#qname; requirement: node id */
   id: string;
   spaceId: string;
   title: string;
@@ -156,14 +156,14 @@ type Ranked = { key: string; hit: Omit<Hit, "score" | "via">; rank: number; via:
 export async function search(app: App, query: string, opts: SearchOptions = {}): Promise<Hit[]> {
   const limit = opts.limit ?? 20;
   const pool = Math.max(60, limit * 4);
-  const types = new Set(opts.types ?? ["chunk", "page", "memory", "symbol"]);
+  const types = new Set(opts.types ?? ["chunk", "page", "memory", "symbol", "requirement"]);
   const lists: Ranked[][] = [];
   const match = matchQuery(query);
 
   const route = { fts: true, vector: true, symbol: true, ...opts.routes };
   // A folder of the catalog: its sources only.
   const underIds = opts.under ? sourcesUnder(catalog(app, opts.under.space), opts.under.node) : null;
-  if (underIds) for (const t of ["page", "memory"] as const) types.delete(t);
+  if (underIds) for (const t of ["page", "memory", "requirement"] as const) types.delete(t);
   const inUnder = underIds ? new Set(underIds) : null;
   const underSql = underIds ? " and c.source_id in (select value from json_each(?))" : "";
   const underParams = underIds ? [JSON.stringify(underIds)] : [];
@@ -259,6 +259,27 @@ export async function search(app: App, query: string, opts: SearchOptions = {}):
         rank: i,
         via: "知识页",
         hit: { type: "page", id: r.id, spaceId: r.space_id, title: r.title, path: r.slug, snippet: r.summary || snippet(r.body, query) },
+      })),
+    );
+  }
+
+  // Requirement points (items/requirements.ts): the title is the path in the tree; test points are not indexed.
+  if (match && types.has("requirement")) {
+    const sf = spaceFilter("q.space_id", opts.spaces);
+    const rows = all<{ id: string; space_id: string; kind: string; title: string; body: string; acceptance: string }>(
+      app.db,
+      `select q.id, q.space_id, q.kind, q.title, q.body, q.acceptance from reqs_fts f join req_rowids r on r.rowid = f.rowid join req_nodes q on q.id = r.node_id
+       where reqs_fts match ? and q.status = 'active' ${sf.sql} order by bm25(reqs_fts, 3.0, 1.0) limit ?`,
+      match,
+      ...sf.params,
+      pool,
+    );
+    lists.push(
+      rows.map((r, i) => ({
+        key: `requirement:${r.id}`,
+        rank: i,
+        via: "需求点",
+        hit: { type: "requirement", id: r.id, spaceId: r.space_id, title: r.title, path: r.kind, snippet: snippet(`${r.body}\n${r.acceptance}`.trim() || r.title, query) },
       })),
     );
   }

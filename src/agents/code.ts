@@ -250,7 +250,9 @@ export async function runCodeTask(ctx: RunContext) {
   // The run's space may be a project; the agents read it and every repository (and their related spaces).
   const owner = runUser(app, run.id);
   const spaces = [...new Set([run.spaceId!, ...repos.map((r) => r.id), ...(input.readSpaces ?? []), ...(input.itemId ? materialSpaces(app, input.itemId, owner) : [])])];
-  const itemBrief = input.itemId ? `\n\n${materialsBrief(app, input.itemId, owner)}` : "";
+  // Later rounds also see the business changes to the requirement points since the delegation began.
+  const began = continueFrom ? getRun(app, continueFrom).createdAt : undefined;
+  const itemBrief = input.itemId ? `\n\n${materialsBrief(app, input.itemId, owner, { since: began })}` : "";
   // Retried after a failure: the worktree keeps what the failed attempt changed.
   const retryOf = (input as { retryOf?: string }).retryOf;
   const retried = retryOf ? getRun(app, retryOf) : null;

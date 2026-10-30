@@ -32,6 +32,7 @@ const ROLE_RUNS: Record<string, string[]> = {
   gatekeeper: ["guest"],
   guest: ["guest"],
   "kb-scout": ["kb-scout"],
+  "req-splitter": ["req-split"],
 };
 
 type EvidenceRun = { id: string; kind: string; status: string; title: string; error: string | null; created_at: string; finished_at: string | null; input: string; output: string | null };

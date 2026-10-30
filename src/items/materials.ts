@@ -3,16 +3,18 @@ import { all, one, run } from "../core/db.ts";
 import { findSpace } from "../core/spaces.ts";
 import { HttpError, json, now } from "../core/util.ts";
 import { accessibleSpaces } from "../core/users.ts";
+import { reqBrief, findReq, pathText, reqPath } from "./requirements.ts";
 import { addItemEvent, getItem } from "./store.ts";
 
 /**
  * What an item is about, kept with it (docs/v2/review.md §5.1): originals (documents, chats),
  * conversations with omem, repositories with a branch, whole spaces to read (a migration's source
- * repository), and the delegations and reviews done for it. Reviews and delegations of the item read
- * these; the item page shows them together.
+ * repository), the delegations and reviews done for it, and the part of a space's requirement tree it
+ * is about (`req`: a node and everything under it, items/requirements.ts). Reviews and delegations of
+ * the item read these; the item page shows them together.
  */
-export type MaterialKind = "source" | "conversation" | "repo" | "space" | "run";
-export const MATERIAL_KINDS: readonly MaterialKind[] = ["source", "conversation", "repo", "space", "run"];
+export type MaterialKind = "source" | "conversation" | "repo" | "space" | "run" | "req";
+export const MATERIAL_KINDS: readonly MaterialKind[] = ["source", "conversation", "repo", "space", "run", "req"];
 export type MaterialInput = { kind: MaterialKind; ref: string; branch?: string; base?: string; label?: string; note?: string };
 export type Material = {
   id: number;
@@ -38,6 +40,7 @@ export function itemMaterials(app: App, itemId: string): Material[] {
 function normalize(m: MaterialInput) {
   const ref = m.ref.trim();
   if (m.kind === "source") return ref.replace(/^src:/, "").replace(/#.*$/, "");
+  if (m.kind === "req") return ref.replace(/^req:/, "");
   if (m.kind === "repo") return `${ref.split("#")[0]}#${m.branch?.trim() || ref.split("#")[1] || ""}`;
   return ref;
 }
@@ -53,6 +56,11 @@ function resolve(app: App, kind: MaterialKind, ref: string): { spaceId: string |
     const c = one<{ space_id: string; title: string; user_id: string }>(app.db, "select space_id, title, user_id from conversations where id = ?", ref);
     if (!c) throw new HttpError(404, `会话不存在：${ref}`);
     return { spaceId: c.space_id, title: c.title || ref, userId: c.user_id };
+  }
+  if (kind === "req") {
+    const n = findReq(app, ref);
+    if (!n) throw new HttpError(404, `需求点不存在：${ref}`);
+    return { spaceId: n.spaceId, title: pathText(reqPath(app, n)), status: n.status === "active" ? undefined : "deleted" };
   }
   if (kind === "run") {
     const r = one<{ space_id: string | null; title: string; status: string; user_id: string | null }>(app.db, "select space_id, title, status, user_id from runs where id = ?", ref);
@@ -131,12 +139,18 @@ export function materialSpaces(app: App, itemId: string, userId: string) {
   return [...new Set(materialViews(app, itemId, userId).filter((m) => m.readable && !m.missing && m.spaceId && m.kind !== "run").map((m) => m.spaceId!))];
 }
 
-const KIND_LABEL: Record<MaterialKind, string> = { source: "原件", conversation: "会话", repo: "仓库分支", space: "空间", run: "运行" };
+const KIND_LABEL: Record<MaterialKind, string> = { source: "原件", conversation: "会话", repo: "仓库分支", space: "空间", run: "运行", req: "需求点" };
 
-/** The item and its materials, as a section of a review's or delegation's task. */
-export function materialsBrief(app: App, itemId: string, userId: string) {
+/**
+ * The item and its materials, as a section of a review's or delegation's task. With requirement nodes
+ * among them, the tree under them follows; `since` lists the business changes after that time (the
+ * delegation's earlier rounds were built before them).
+ */
+export function materialsBrief(app: App, itemId: string, userId: string, opts: { since?: string } = {}) {
   const item = getItem(app, itemId);
-  const list = materialViews(app, itemId, userId).filter((m) => m.readable && !m.missing);
+  const all_ = materialViews(app, itemId, userId).filter((m) => m.readable && !m.missing);
+  const reqs = all_.filter((m) => m.kind === "req").map((m) => m.ref);
+  const list = all_.filter((m) => m.kind !== "req");
   const line = (m: MaterialView) => {
     const ref = m.kind === "source" ? `src:${m.ref}` : m.kind === "repo" ? `仓库空间 ${m.meta.space}，分支 ${m.meta.branch ?? "当前检出"}${m.meta.base ? `，基线 ${m.meta.base}` : ""}` : m.kind === "space" ? `空间 ${m.ref}` : m.kind === "conversation" ? `会话 ${m.ref}` : `运行 ${m.ref}（${m.status ?? ""}）`;
     return `- [${KIND_LABEL[m.kind]}] ${m.title} — ${ref}${m.changed ? "（加入后有更新）" : ""}${m.meta.note ? `：${m.meta.note}` : ""}`;
@@ -147,7 +161,8 @@ export function materialsBrief(app: App, itemId: string, userId: string) {
     `## 所属事项：${item.title}（${item.id}）`,
     item.detail ? item.detail : "",
     decisions.length ? `本人的业务决定（以这些为准）：\n${decisions.map((d) => `- ${d.at.slice(0, 10)} ${d.text}`).join("\n")}` : "",
-    list.length ? `材料（用 read_source 读原件，search 限定到这些空间检索；“运行”是之前为这个事项做过的交办或评审，可用 read_run 看结论）：\n${list.map(line).join("\n")}` : "这个事项还没有材料。",
+    list.length ? `材料（用 read_source 读原件，search 限定到这些空间检索；“运行”是之前为这个事项做过的交办或评审，可用 read_run 看结论）：\n${list.map(line).join("\n")}` : reqs.length ? "" : "这个事项还没有材料。",
+    reqs.length ? reqBrief(app, reqs, opts) : "",
   ].filter(Boolean).join("\n\n");
 }
 

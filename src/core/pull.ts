@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { reindexMemory } from "../memory/store.ts";
+import { reindexReq } from "../items/requirements.ts";
 import { reindexSource } from "../sources/store.ts";
 import { syncWiki } from "../wiki/store.ts";
 import type { App } from "./app.ts";
@@ -209,6 +210,7 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
       }
       localize(db, "r", protectedRuns);
       if (!opts.dryRun) for (const m of all<{ id: string }>(db, "select m.id from memories m join r.memories x on x.id = m.id where x.updated_at = m.updated_at")) reindexMemory(app, m.id);
+      if (!opts.dryRun) for (const q of all<{ id: string }>(db, "select q.id from req_nodes q join r.req_nodes x on x.id = q.id where x.updated_at = q.updated_at")) reindexReq(app, q.id);
       if (opts.dryRun) throw new DryRun();
     });
   } catch (e) { if (!(e instanceof DryRun)) throw e; }

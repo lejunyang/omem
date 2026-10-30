@@ -4,9 +4,19 @@
 
 - `list_items` / `read_item` / `upsert_item`：待办、等待回复、提醒、关注、待决定。时间用带时区的 ISO 格式。
 - `list_items(space: "*")` 在本次可发现空间内查已有事项，查询在分页前限定空间；`read_item(item_id)` 返回完整事项、时间线和材料。
-- 一个需求这类要反复回来看的事，用 `upsert_item` 的 `materials_add`（`kind`：source 原件 / conversation 会话 / repo 仓库加 `branch` / space 空间 / run 运行，可写 `note`）把文档、群聊、分支和要对照的仓库挂上，`materials_remove` 移除；只改材料不会动事项本身。
+- 一个需求这类要反复回来看的事，用 `upsert_item` 的 `materials_add`（`kind`：source 原件 / conversation 会话 / repo 仓库加 `branch` / space 空间 / run 运行 / req 需求点，可写 `note`）把文档、群聊、分支、要对照的仓库和这次要做的需求点挂上，`materials_remove` 移除；只改材料不会动事项本身。
 - 事项会自己收尾：一段时间没有新进展会变成 `expired`（`list_items` 的 active 不含它）。新材料和一件已过期的事项有关时用 `list_items(status: "expired")` 找到它再 `upsert_item` 记进展，它会重新打开，不要另建；不用为了“一直没动静”去关事项。
 - 后台 ingest 的事项发现可覆盖本人可访问空间，普通原件检索与写权限仍保持原范围。
+
+## 需求树
+
+业务空间里“系统应该做什么”的长期记录（docs/v2/requirements.md）：系统 → 模块 → 页面 → 功能（需求点），功能下挂测试点。交办和评审按事项挂的需求点开发、核对。
+
+- `req_tree(space, under?, tests?)` 看树，每个节点有固定 id；`req_read(id)` 看需求、验收、测试点、关联、时间线和最近一次评审的状态。`search(scope: "requirements")` 只查需求点。
+- `save_requirements(ops)`：一批操作原子执行。`add` 用 `key` 起名，同批后面用 `$key` 当 parent；`edit` / `delete` 必须选 `change`：`correct`（写错了，没有业务含义）或 `change`（业务规则变了，写 `reason`，带 `source_refs`）。不要为了改规则删掉重建：用 edit + change，历史才连得上。
+- 跨业务的需求用 `link`（另一个空间的需求点 id，`note` 写关系），不要复制一份。
+- Agent 写的节点待本人确认；本人说“确认”时让本人在需求页点，或本人在网页上改。
+- `split_requirements(item_id, note?)`：让拆需求的角色（`req-splitter`，本人可在 Agent 页改说明、模型和挂的技能）读事项的材料拆进树里，后台运行；拆完它改动的最上层节点自动挂到事项上。先用 `upsert_item` 把需求文档、讨论挂好。
 
 ## 来源
 

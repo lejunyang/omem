@@ -14,6 +14,7 @@ const routes: RouteRecordRaw[] = [
   view("/graph/:space?", () => import("./views/Graph.vue"), "/graph"),
   view("/wiki/:space?/:slug(.*)*", () => import("./views/Wiki.vue"), "/wiki"),
   view("/items/:id?", () => import("./views/Items.vue"), "/items"),
+  view("/reqs/:id?", () => import("./views/Requirements.vue"), "/reqs"),
   view("/memory", () => import("./views/Memory.vue")),
   view("/sources/kb", () => import("./views/KnowledgeBases.vue"), "/sources/kb"),
   view("/sources/:id?", () => import("./views/Sources.vue"), "/sources"),

@@ -941,7 +941,54 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const { itemExpiry } = await import("../items/expiry.ts");
     return { item, events: itemEvents(app, id), excerpts, files, expiry: itemExpiry(app, item), materials: materialViews(app, id, who(req)).map(materialForPage(app)) };
   });
-  const materialBody = z.object({ kind: z.enum(["source", "conversation", "repo", "space", "run"]), ref: z.string().min(1), branch: z.string().optional(), base: z.string().optional(), label: z.string().optional(), note: z.string().optional() });
+  // Requirement trees (items/requirements.ts, docs/v2/requirements.md): read by space, written as a
+  // batch of operations by the owner (confirmed at once), split from an item by the req-splitter role.
+  const readableSpace = (req: { headers: unknown }, id: string) => {
+    const allowed = accessibleSpaces(app, who(req as never));
+    if (allowed && !allowed.includes(id)) throw new HttpError(403, `不能访问空间 ${id}`);
+    return id;
+  };
+  server.get("/api/requirements", async (req) => {
+    const o = q(z.object({ space: z.string(), removed: z.coerce.boolean().optional() }), req.query);
+    const { reqTree, reqStatuses } = await import("../items/requirements.ts");
+    const spaceId = readableSpace(req, getSpace(app, o.space).id);
+    const nodes = reqTree(app, spaceId, { removed: o.removed });
+    const states = reqStatuses(app, nodes.map((n) => n.id));
+    const links = all<{ node: string; n: number }>(app.db, `select node, count(*) n from (select from_id node from req_links union all select to_id node from req_links) where node in (select id from req_nodes where space_id = ?) group by node`, spaceId);
+    const linkCount = new Map(links.map((l) => [l.node, l.n]));
+    return { nodes: nodes.map((n) => ({ ...n, state: states.get(n.id) ?? null, links: linkCount.get(n.id) ?? 0 })) };
+  });
+  server.get("/api/requirements/:id", async (req) => {
+    const { reqDetail } = await import("../items/requirements.ts");
+    const d = reqDetail(app, (req.params as { id: string }).id);
+    readableSpace(req, d.node.spaceId);
+    const allowed = accessibleSpaces(app, who(req));
+    return { ...d, links: d.links.filter((l) => !l.other || !allowed || allowed.includes(l.other.spaceId)) };
+  });
+  server.post("/api/requirements", async (req) => {
+    const { reqOpSchema, saveReqs } = await import("../items/requirements.ts");
+    const b = q(z.object({ space: z.string(), ops: z.array(reqOpSchema).min(1).max(200) }), req.body);
+    const user = who(req);
+    return saveReqs(app, b.ops, { by: "user", label: "本人" }, {
+      canWrite: (id) => {
+        readableSpace(req, id);
+        if (!canWrite(app, user, id)) throw new HttpError(403, `无权修改空间 ${id}`);
+      },
+      canRead: (id) => void readableSpace(req, id),
+      defaultSpace: getSpace(app, b.space).id,
+    });
+  });
+  server.post("/api/items/:id/split-requirements", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const b = q(z.object({ space: z.string().optional(), note: z.string().max(4000).optional() }), req.body ?? {});
+    const item = getItem(app, id);
+    const target = b.space ? getSpace(app, b.space).id : item.spaceId;
+    readableSpace(req, target);
+    if (!canWrite(app, who(req), target)) throw new HttpError(403, `无权修改空间 ${target}`);
+    const { startReqSplit } = await import("../agents/req-split.ts");
+    return startReqSplit(app, { itemId: id, space: target, note: b.note, userId: who(req) });
+  });
+  const materialBody = z.object({ kind: z.enum(["source", "conversation", "repo", "space", "run", "req"]), ref: z.string().min(1), branch: z.string().optional(), base: z.string().optional(), label: z.string().optional(), note: z.string().optional() });
   server.post("/api/items/:id/materials", async (req) => {
     const b = q(z.object({ materials: z.array(materialBody).min(1) }), req.body);
     return addMaterials(app, (req.params as { id: string }).id, b.materials, who(req), "user");

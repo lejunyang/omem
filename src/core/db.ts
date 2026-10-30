@@ -1019,6 +1019,70 @@ const migrations: string[] = [
   );
   create index file_variants_file on file_variants(file) where file is not null;
   `,
+  // Requirement trees (items/requirements.ts): per space, system → module → page → feature, test
+  // points under features; every change kept as a version (a correction or a business change).
+  `create table req_nodes (
+    id text primary key,
+    space_id text not null,
+    parent_id text,
+    kind text not null,
+    seq integer not null default 0,
+    title text not null,
+    body text not null default '',
+    acceptance text not null default '',
+    refs text not null default '[]',
+    tests text not null default '[]',
+    confirmed integer not null default 0,
+    status text not null default 'active',
+    version integer not null default 1,
+    created_by text not null default 'agent',
+    created_at text not null,
+    updated_at text not null
+  );
+  create index req_nodes_tree on req_nodes(space_id, parent_id, seq);
+  create table req_versions (
+    id text primary key,
+    node_id text not null,
+    version integer not null,
+    change text not null,
+    title text not null,
+    body text not null default '',
+    acceptance text not null default '',
+    refs text not null default '[]',
+    tests text not null default '[]',
+    parent_id text,
+    reason text not null default '',
+    source_refs text not null default '[]',
+    by text not null default 'agent',
+    run_id text,
+    at text not null
+  );
+  create index req_versions_node on req_versions(node_id, version);
+  create table req_links (
+    id text primary key,
+    from_id text not null,
+    to_id text not null,
+    kind text not null default 'relates',
+    note text not null default '',
+    created_at text not null,
+    unique(from_id, to_id)
+  );
+  create index req_links_to on req_links(to_id);
+  create table req_status (
+    id text primary key,
+    node_id text not null,
+    run_id text not null,
+    round integer not null default 1,
+    status text not null,
+    locations text not null default '[]',
+    note text not null default '',
+    at text not null,
+    unique(node_id, run_id, round)
+  );
+  create index req_status_node on req_status(node_id, at);
+  create virtual table reqs_fts using fts5(title, body, content='', contentless_delete=1, tokenize="unicode61 remove_diacritics 2");
+  create table req_rowids (rowid integer primary key, node_id text unique not null);
+  `,
 ];
 
 export type Db = DatabaseSync;

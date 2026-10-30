@@ -1,3 +1,4 @@
+import { recordReqStatus, findReq } from "../items/requirements.ts";
 import { withBot } from "../core/bot-context.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "./code-git.ts";
 import { generateWiki } from "../wiki/generate.ts";
@@ -228,10 +229,11 @@ const fmtLines = (text: string, start: number) =>
     .join("\n");
 
 const sourceKinds: Record<string, HitType[]> = {
-  all: ["chunk", "page", "memory", "symbol"],
+  all: ["chunk", "page", "memory", "symbol", "requirement"],
   sources: ["chunk", "symbol"],
   pages: ["page"],
   memories: ["memory"],
+  requirements: ["requirement"],
 };
 
 /**
@@ -376,11 +378,11 @@ def({
 def({
   name: "search",
   description:
-    "在知识库中检索：原件片段（文档/代码/聊天）、Wiki 页面、记忆。返回线索而非结论；需要细节时用 read_source / read_page 补读。查代码名称时直接用标识符。",
+    "在知识库中检索：原件片段（文档/代码/聊天）、Wiki 页面、记忆、需求点。返回线索而非结论；需要细节时用 read_source / read_page / req_read 补读。查代码名称时直接用标识符。",
   schema: z.object({
     query: z.string().describe("自然语言问题或关键词，中英文均可"),
     space: z.string().optional().describe("空间 id；'*' 表示所有可访问空间；默认当前空间加上它的相关空间"),
-    scope: z.enum(["all", "sources", "pages", "memories"]).optional(),
+    scope: z.enum(["all", "sources", "pages", "memories", "requirements"]).optional(),
     source_kind: z.enum(["doc", "code", "chat", "note", "web"]).optional(),
     limit: z.number().int().min(1).max(40).optional(),
     branch: z.string().optional().describe("查代码仓库某个分支上的代码（space 填仓库空间）：分支改过的文件按分支上的版本，其余按仓库；第一次查时建索引"),
@@ -405,7 +407,9 @@ def({
             ? `页面 ${h.spaceId}/${h.path}「${h.title}」`
             : h.type === "memory"
               ? `记忆 ${h.id}（${h.path}${h.status && h.status !== "active" ? "，" + h.status : ""}）${h.title ? "主题：" + h.title : ""}`
-              : `原件 ${h.sourceId} ${h.uri} L${h.lineStart}-${h.lineEnd}${h.path && h.path !== h.uri ? " · " + h.path : ""}`;
+              : h.type === "requirement"
+                ? `需求点 ${h.id}「${h.title}」`
+                : `原件 ${h.sourceId} ${h.uri} L${h.lineStart}-${h.lineEnd}${h.path && h.path !== h.uri ? " · " + h.path : ""}`;
         const elsewhere = h.spaceId !== ctx.spaceId && h.type !== "page" ? `〔空间 ${h.spaceId}〕` : "";
         const level = h.attention ? `〔${LEVEL_LABELS[h.attention as Level] ?? h.attention}〕` : "";
         const notes = h.notes?.length ? `\n   ${h.notes.join(" ")}` : "";
@@ -915,6 +919,24 @@ function assistantTaskScope(ctx: ToolContext) {
   };
 }
 
+/**
+ * An outside Agent on a paired device hands work to one of this machine's Agents (peer-agent.ts):
+ * queued as a run of the device's session, with this machine's models; the device reads the result
+ * with read_run. There is no conversation to report back to, so the run only keeps its result.
+ */
+function peerDispatch(ctx: ToolContext, spec: { name: string; space?: string }, task: string, execution: ReturnType<typeof validateExecution>, space?: string) {
+  // The main assistant works with the device's own tool set (nothing outward), as for any task it is handed.
+  const assistantScope = spec.name === "assistant" ? assistantTaskScope(ctx) : undefined;
+  const r = createRun(ctx.app, {
+    kind: "agent",
+    spaceId: space ? writeSpace(ctx, space) : (spec.space ?? ctx.spaceId),
+    title: `${spec.name}（设备 ${ctx.peer!.caller} 交办）：${truncate(task, 50)}`,
+    input: { spec: spec.name, task, execution, assistantScope, fromPeer: ctx.peer!.caller },
+    parentId: ctx.runId,
+  });
+  return `已交给这台机器上的 ${spec.name}，运行 ${r.id}（用这台机器的模型）。用 read_run 看进度和结果，做完前状态是 queued / running。`;
+}
+
 def({
   name: "run_agent",
   description:
@@ -929,8 +951,9 @@ def({
   handler: async (ctx, a) => {
     const execution = validateExecution(ctx.app, a.execution);
     const spec = a.name === "assistant" ? { name: "assistant", status: "active", space: undefined } : readAgentSpec(ctx.app, a.name);
-    const assistantScope = a.name === "assistant" ? assistantTaskScope(ctx) : undefined;
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
+    if (ctx.peer) return peerDispatch(ctx, spec, a.task, execution, a.space);
+    const assistantScope = a.name === "assistant" ? assistantTaskScope(ctx) : undefined;
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const conversationId = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
     if (!conversationId) throw new HttpError(400, "只能在一个会话里交办 Agent");
@@ -1030,6 +1053,8 @@ def({
     const spec = readAgentSpec(ctx.app, a.name);
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
     if (spec.name === ctx.spec) throw new HttpError(400, "不能请教自己");
+    // From another device the answer can take longer than a forwarded request waits: queue it like run_agent.
+    if (ctx.peer) return peerDispatch(ctx, spec, a.question, execution);
     const { consultAgent } = await import("./consult.ts");
     return consultAgent(ctx.app, { spec, execution, question: a.question, askedBy: ctx.spec ?? "主助手", parentRunId: ctx.runId, spaceId: spec.space ?? ctx.spaceId, userId: ctx.userId });
   },
@@ -1658,8 +1683,8 @@ def({
     expected_source_refs: refs,
     space: z.string().optional(),
     materials_add: z.array(z.object({
-      kind: z.enum(["source", "conversation", "repo", "space", "run"]).describe("source 原件（文档、群聊、网页…）/ conversation 和 omem 的会话 / repo 代码仓库空间加分支 / space 整个空间（如迁移要对照的源仓库）/ run 为它做过的交办或评审"),
-      ref: z.string().describe("source：原件 id（src:… 也可以）；repo / space：空间 id；conversation：会话 id；run：运行 id"),
+      kind: z.enum(["source", "conversation", "repo", "space", "run", "req"]).describe("source 原件（文档、群聊、网页…）/ conversation 和 omem 的会话 / repo 代码仓库空间加分支 / space 整个空间（如迁移要对照的源仓库）/ run 为它做过的交办或评审 / req 需求树里这次要做的节点（连同它下面的全部）"),
+      ref: z.string().describe("source：原件 id（src:… 也可以）；repo / space：空间 id；conversation：会话 id；run：运行 id；req：需求点 id"),
       branch: z.string().optional().describe("repo：分支名"),
       base: z.string().optional().describe("repo：对照的基线分支"),
       note: z.string().max(300).optional().describe("这份材料是什么、怎么用（如“只作参考，实际接口在前端 BFF”）"),
@@ -3547,6 +3572,128 @@ def({
   },
 });
 
+// ---------------------------------------------------------------- requirements (items/requirements.ts)
+
+const reqFields = {
+  title: z.string().max(200).optional(),
+  body: z.string().max(8000).optional().describe("需求怎么说：规则、口径、边界，带 [文字](src:<原件id>#L起-L止) 引用"),
+  acceptance: z.string().max(4000).optional().describe("怎样算做到了（验收说明）"),
+  refs: z.array(z.string().max(300)).max(30).optional().describe("依据：src:<原件id>#L起-L止、mem:<id>"),
+  tests: z.array(z.object({ file: z.string().max(300).optional(), name: z.string().max(300).optional() })).max(20).optional().describe("测试点对应的测试（文件、用例名）；只对测试点有效"),
+  kind: z.enum(["system", "module", "page", "feature", "test"]).optional().describe("system 系统 / module 模块 / page 页面 / feature 功能（需求点）/ test 测试点（只能在功能或测试点下）"),
+};
+
+def({
+  name: "req_tree",
+  description: "看一个空间的需求树（系统 → 模块 → 页面 → 功能，功能下挂测试点）：每行一个节点，带固定 id、类型、是否待本人确认、最近一次评审的状态。under 只看某个节点以下；tests=false 不列测试点。",
+  schema: z.object({
+    space: z.string().optional(),
+    under: z.string().optional().describe("节点 id"),
+    depth: z.number().int().min(1).max(10).optional(),
+    tests: z.boolean().optional(),
+    removed: z.boolean().optional().describe("也列出删除、移除的节点"),
+  }),
+  handler: async (ctx, a) => {
+    const { reqTree, reqStatuses, getReq, REQ_KIND_LABEL } = await import("../items/requirements.ts");
+    const spaceId = a.under ? space(ctx, getReq(ctx.app, a.under).spaceId) : space(ctx, a.space);
+    const nodes = reqTree(ctx.app, spaceId, { under: a.under, depth: a.depth, tests: a.tests, removed: a.removed });
+    if (!nodes.length) return `空间 ${spaceId} 还没有需求树。用 save_requirements 建：先系统 / 模块 / 页面，再在下面加功能和测试点。`;
+    const states = reqStatuses(ctx.app, nodes.map((n) => n.id));
+    const label: Record<string, string> = { done: "已实现", partial: "部分实现", missing: "没实现", extra: "需求外" };
+    return `空间 ${spaceId} 的需求树：\n` + nodes.map((n) => {
+      const st = states.get(n.id);
+      const tags = [n.status !== "active" ? (n.status === "removed" ? "已移除" : "已删除") : "", !n.confirmed ? "待确认" : "", st ? `${label[st.status] ?? st.status}（${st.runId} 第 ${st.round} 轮）` : ""].filter(Boolean).join("，");
+      return `${"  ".repeat(n.depth)}- [${REQ_KIND_LABEL[n.kind]} ${n.id}] ${n.title}${tags ? `（${tags}）` : ""}`;
+    }).join("\n");
+  },
+});
+
+def({
+  name: "req_read",
+  description: "读一个需求点：所在路径、需求原文、验收、依据、测试点、关联的其他需求点（可以在别的业务空间）、每次修改的时间线（更正 / 业务变更及原因）、最近一次评审里的实现状态和代码位置。",
+  schema: z.object({ id: z.string().describe("需求点 id（q…，或 req:q…）") }),
+  handler: async (ctx, a) => {
+    const { reqDetail, REQ_KIND_LABEL, REQ_CHANGE_LABEL } = await import("../items/requirements.ts");
+    const d = reqDetail(ctx.app, a.id);
+    space(ctx, d.node.spaceId);
+    const n = d.node;
+    return [
+      `# [${REQ_KIND_LABEL[n.kind]} ${n.id}] ${n.title}${n.status !== "active" ? `（${n.status === "removed" ? "已移除" : "已删除"}）` : ""}${n.confirmed ? "" : "（待本人确认）"}`,
+      `空间 ${n.spaceId} · 路径：${d.path.map((p) => p.title).join(" / ")} · 第 ${n.version} 版`,
+      n.body ? `## 需求\n\n${n.body}` : "",
+      n.acceptance ? `## 验收\n\n${n.acceptance}` : "",
+      n.refs.length ? `依据：${n.refs.join(" ")}` : "",
+      n.tests.length ? `对应测试：${n.tests.map((t) => [t.file, t.name].filter(Boolean).join(" › ")).join("；")}` : "",
+      d.children.length ? `## 下级\n\n${d.children.map((c) => `- [${REQ_KIND_LABEL[c.kind]} ${c.id}] ${c.title}`).join("\n")}` : "",
+      d.links.length ? `## 关联\n\n${d.links.map((l) => `- ${l.direction === "out" ? "→" : "←"} ${l.other ? `${l.other.id}「${l.other.title}」（空间 ${l.other.spaceId}）` : "（已不存在）"}${l.note ? `：${l.note}` : ""}`).join("\n")}` : "",
+      d.state ? `## 最近一次评审\n\n${d.state.runId} 第 ${d.state.round} 轮：${d.state.status}${d.state.locations.length ? `；位置：${d.state.locations.map((l) => `${l.file}${l.start ? `:${l.start}${l.end ? `-${l.end}` : ""}` : ""}`).join("、")}` : ""}${d.state.note ? `；${d.state.note}` : ""}` : "",
+      `## 时间线\n\n${d.versions.map((v) => `- ${v.at.slice(0, 16).replace("T", " ")} 第 ${v.version} 版 ${REQ_CHANGE_LABEL[v.change]}（${v.by}）${v.reason ? `：${v.reason}` : ""}${v.sourceRefs.length ? ` ${v.sourceRefs.join(" ")}` : ""}`).join("\n")}`,
+    ].filter(Boolean).join("\n\n");
+  },
+});
+
+def({
+  name: "split_requirements",
+  description: "让拆需求的角色（req-splitter，本人可在 Agent 页改它的说明、模型和挂的技能）读一个事项的材料，把需求点和测试点写进业务空间的需求树（后台运行，写的节点待本人确认，涉及的最上层节点自动挂到事项上）。先用 upsert_item 把需求文档、讨论等材料挂好。返回运行 id。",
+  write: true,
+  schema: z.object({
+    item_id: z.string(),
+    space: z.string().optional().describe("需求树所在的业务空间，默认事项的空间"),
+    note: z.string().max(4000).optional().describe("本人的要求：拆到多细、重点、哪些先不拆"),
+  }),
+  handler: async (ctx, a) => {
+    const item = getItem(ctx.app, itemFor(ctx, a.item_id));
+    const target = writeSpace(ctx, a.space ?? item.spaceId);
+    const { startReqSplit } = await import("./req-split.ts");
+    const r = startReqSplit(ctx.app, { itemId: item.id, space: target, note: a.note, userId: ctx.userId ?? OWNER, parentId: ctx.runId });
+    return `已开始拆需求点（运行 ${r.id}）：写进空间 ${target} 的需求树，完成后在需求页确认；进度用 read_run 看。`;
+  },
+});
+
+def({
+  name: "save_requirements",
+  description:
+    "修改需求树（一次一批，原子执行）。op：add 新建（parent 上级 id；同批里可用 key 起名，后面用 \"$key\" 引用）、edit 修改、delete 删除、restore 恢复、link / unlink 关联别的需求点（可以跨业务空间，跨业务的需求互相引用，不要复制一份）。改动分两种，必须选：change: \"correct\"（写错了、拆错了，没有业务含义）或 \"change\"（业务规则变了，要写 reason 和 source_refs，留给以后决策时回溯）。Agent 写的节点标为待本人确认。",
+  write: true,
+  schema: z.object({
+    space: z.string().optional().describe("新建顶层节点所在的空间，默认当前空间"),
+    ops: z.array(z.object({
+      op: z.enum(["add", "edit", "delete", "restore", "link", "unlink"]),
+      id: z.string().optional().describe("edit / delete / restore / link / unlink：节点 id 或 $key"),
+      key: z.string().max(40).optional().describe("add：给新节点起个临时名，同批后面的 parent / id / to 用 $key"),
+      parent: z.string().nullable().optional().describe("add：上级 id（不填为顶层）；edit：挪到这个上级下面（null 挪到顶层）"),
+      after: z.string().optional().describe("add：排在同级的哪个节点后面"),
+      to: z.string().optional().describe("link / unlink：另一个需求点 id（可以在别的空间）"),
+      note: z.string().max(500).optional().describe("link：关系说明（如“下单时校验对方的资质状态”）"),
+      change: z.enum(["correct", "change"]).optional().describe("edit / delete 必填：correct 更正（写错了）/ change 业务变更"),
+      reason: z.string().max(1000).optional().describe("change 时必填：业务为什么变"),
+      source_refs: z.array(z.string().max(300)).max(20).optional().describe("change 时：变更的依据（群聊、会议、文档的 src: 引用）"),
+      ...reqFields,
+    })).min(1).max(200),
+  }),
+  handler: async (ctx, a) => {
+    const { saveReqs } = await import("../items/requirements.ts");
+    const ops = a.ops.map((o) => {
+      const need = (v: unknown, what: string) => {
+        if (v === undefined || v === null || v === "") throw new HttpError(400, `${o.op} 缺少 ${what}`);
+        return v as string;
+      };
+      if (o.op === "add") return { op: "add" as const, key: o.key, parent: o.parent ?? undefined, after: o.after, space: o.parent ? undefined : a.space, title: need(o.title, "title"), body: o.body, acceptance: o.acceptance, refs: o.refs, tests: o.tests, kind: o.kind };
+      if (o.op === "edit") return { op: "edit" as const, id: need(o.id, "id"), change: need(o.change, "change（correct / change）") as "correct" | "change", reason: o.reason, source_refs: o.source_refs, parent: o.parent, title: o.title, body: o.body, acceptance: o.acceptance, refs: o.refs, tests: o.tests, kind: o.kind };
+      if (o.op === "delete") return { op: "delete" as const, id: need(o.id, "id"), change: need(o.change, "change（correct 写错了删掉 / change 业务不要了）") as "correct" | "change", reason: o.reason, source_refs: o.source_refs };
+      if (o.op === "restore") return { op: "restore" as const, id: need(o.id, "id"), reason: o.reason };
+      return { op: o.op as "link" | "unlink", id: need(o.id, "id"), to: need(o.to, "to"), note: o.note };
+    }) as import("../items/requirements.ts").ReqOp[];
+    const r = saveReqs(ctx.app, ops, { by: ctx.actor === "user" ? "user" : "agent", label: ctx.actor === "user" ? "本人" : (ctx.spec ?? ctx.agentProfile ?? ctx.role ?? "agent"), runId: ctx.runId }, {
+      canWrite: (id) => void writeSpace(ctx, id),
+      canRead: (id) => void space(ctx, id),
+      defaultSpace: a.space ? space(ctx, a.space) : ctx.spaceId,
+    });
+    const keys = Object.entries(r.keys);
+    return `${r.done.map((d) => `- ${d.what}（${d.id}）`).join("\n")}${keys.length ? `\n新节点：${keys.map(([k, id]) => `$${k}=${id}`).join("，")}` : ""}${ctx.actor === "user" ? "" : "\nAgent 写的需求点标为待本人确认。"}`;
+  },
+});
+
 def({
   name: "review_task",
   description: "设备的外部 Agent 用：取自己用 review_branch 发起的分支评审的材料——需求、检查结果、改动统计、各评审项的要求和提交方式（part=brief，默认）；完整 diff 用 part=diff 按 offset 分页取。评审还在准备时会说明，稍后再取。",
@@ -3625,6 +3772,7 @@ def({
       implementation: z.string().max(2000).optional().describe("代码怎么做、为什么这么写"),
       refs: z.array(z.string().max(300)).max(20).optional(),
       locations: z.array(z.object({ file: z.string().max(500), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).max(30).optional(),
+      req: z.string().max(40).optional().describe("事项有需求点时：这个变更点对应的需求点 id（q…）。每个需求点都要有一个变更点；需求外的改动不填"),
     })).min(1).max(100),
     run_id: z.string().optional().describe("只在设备的外部 Agent 评审时填：review_branch 返回的运行 id"),
   }),
@@ -3639,8 +3787,13 @@ def({
     if (bad) throw new HttpError(400, `变更点的层级不对：${bad}。改正后再提交。`);
     const dead = deadRefs(ctx.app, points.flatMap((c) => c.refs));
     if (dead.length) throw new HttpError(400, `这些引用找不到对应的原件或记忆：${dead.join("、")}。id 多半抄错了，用 search / read_source 核对后改正再提交（找不到就去掉）。`);
-    setRunOutput(ctx.app, r.id, { changePoints: { round: (r.input as { round?: number }).round ?? 1, points, at: new Date().toISOString() } });
-    return `已记录 ${points.length} 个变更点。`;
+    const unknown = points.filter((p) => p.req && !findReq(ctx.app, p.req)).map((p) => p.req);
+    if (unknown.length) throw new HttpError(400, `这些需求点 id 不存在：${unknown.join("、")}；照任务里“需求点”一节的 id 抄`);
+    const round = (r.input as { round?: number }).round ?? 1;
+    setRunOutput(ctx.app, r.id, { changePoints: { round, points, at: new Date().toISOString() } });
+    recordReqStatus(ctx.app, r.id, round, points);
+    const mapped = points.filter((p) => p.req).length;
+    return `已记录 ${points.length} 个变更点${mapped ? `，其中 ${mapped} 个对上了需求点` : ""}。`;
   },
 });
 
