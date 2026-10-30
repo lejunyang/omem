@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { get } from "../api";
 import Icon from "../components/Icon.vue";
@@ -13,6 +13,12 @@ const route = useRoute();
 const router = useRouter();
 const space = computed(() => (route.params.space as string) || state.space);
 if (route.params.space && route.params.space !== state.space && state.spaces.some((x) => x.id === route.params.space)) state.space = route.params.space as string;
+watch(
+  () => state.space,
+  (s) => {
+    if (route.params.space && s !== route.params.space) router.push(`/graph/${s}`);
+  },
+);
 const nodes = ref<Node[]>([]);
 const edges = ref<Edge[]>([]);
 const hover = ref<string | null>(null);

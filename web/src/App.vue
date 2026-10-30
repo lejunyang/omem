@@ -121,7 +121,8 @@ const cycleTheme = () => (state.theme = state.theme === "auto" ? "dark" : state.
         <button class="btn ghost icon" aria-label="保存材料" @click="state.capture = true"><Icon name="plus" /></button>
       </div>
       <div v-if="loadError" class="page"><div class="card pad err">无法连接 omem 服务：{{ loadError }}</div></div>
-      <router-view v-else-if="state.spaces.length" :key="route.path.split('/')[1] + state.space" />
+      <!-- A page whose path names the space (/wiki/<space>, /graph/<space>) follows the path: picking a space pushes the new path first. -->
+      <router-view v-else-if="state.spaces.length" :key="route.path.split('/')[1] + String(route.params.space || state.space)" />
       <div v-else class="page"><Skeleton variant="text" :rows="8" /></div>
     </main>
 

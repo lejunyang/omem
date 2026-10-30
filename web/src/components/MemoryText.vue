@@ -23,7 +23,8 @@ const parts = computed<Part[]>(() => {
     last = m.index + m[0].length;
     if (m[1]) {
       const t = m[1].trim();
-      const [space, slug] = /^[\w-]+:/.test(t) ? [t.slice(0, t.indexOf(":")), t.slice(t.indexOf(":") + 1)] : [props.space ?? state.space, t];
+      // Slugs have no ":", space ids may be any script (`[[项目A:cases/x]]`).
+      const [space, slug] = /^[^:/\s]+:/.test(t) ? [t.slice(0, t.indexOf(":")), t.slice(t.indexOf(":") + 1)] : [props.space ?? state.space, t];
       out.push({ text: m[2] ?? slug, target: { kind: "page", space, slug } });
     } else if (m[3]) {
       const r = /^src:([^#]+)(?:#L(\d+)(?:-L?(\d+))?)?/.exec(m[4]);

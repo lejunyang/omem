@@ -109,14 +109,17 @@ watch(
 );
 watch(slug, loadPage);
 
+// A busy instance sends many page and run events (any run, any space): reload the tree at most once a few seconds.
+let reload: ReturnType<typeof setTimeout> | null = null;
+const reloadSpace = () => (reload ??= setTimeout(() => ((reload = null), void loadSpace()), 3000));
 const off = onServerEvent((e) => {
   if (e.type === "changed" && e.entity === "page" && e.spaceId === space.value) {
-    void loadSpace();
+    reloadSpace();
     if (page.value && e.id === page.value.id && !editing.value) void loadPage();
   }
-  if (e.type === "run") void loadSpace();
+  if (e.type === "run") reloadSpace();
 });
-onBeforeUnmount(() => off());
+onBeforeUnmount(() => (off(), reload && clearTimeout(reload)));
 
 function onRendered(el: HTMLElement) {
   toc.value = [...el.querySelectorAll<HTMLElement>("h2, h3")].map((h) => ({ id: h.id, text: h.textContent ?? "", level: h.tagName === "H2" ? 2 : 3 }));

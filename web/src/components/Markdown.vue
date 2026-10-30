@@ -18,8 +18,9 @@ async function enhance() {
     const set = new Set(props.existingPages);
     for (const a of root.value.querySelectorAll<HTMLAnchorElement>("a.wikilink")) {
       const t = a.dataset.wiki!;
-      const slug = t.includes(":") ? t.split(":")[1] : t;
-      if (!set.has(slug)) a.classList.add("missing"), (a.title = "页面尚不存在");
+      const [space, slug] = t.includes(":") ? t.split(":") : [props.space, t];
+      // existingPages are this space's pages; a link into another space is not checked here.
+      if (space === props.space && !set.has(slug)) a.classList.add("missing"), (a.title = "页面尚不存在");
     }
   }
   root.value.querySelectorAll<HTMLElement>("h2, h3").forEach((h, i) => (h.id ||= `s-${i + 1}`));

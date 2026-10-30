@@ -4,7 +4,7 @@ import type { App } from "../core/app.ts";
 import { one, run, tx } from "../core/db.ts";
 import { OWNER, canWrite } from "../core/users.ts";
 import { larkUser } from "./lark-bots.ts";
-import { buildCard, closeInteraction, deliverLark, describeAction, interactionForMessage, sendLark, updateLarkCard, type Content, type Delivery, type Target } from "./lark-send.ts";
+import { buildCard, closeInteraction, deliverLark, describeAction, interactionForMessage, sendLark, type Content, type Delivery, type Target } from "./lark-send.ts";
 
 /**
  * A button press, select or form submit on one of the bot's cards
@@ -74,12 +74,23 @@ export async function handleCardAction(app: App, data: any, nameOf: (openId: str
     closeInteraction(app, inter.id, operator);
     const p = inter.payload as { target: Target; content: Content; delivery?: Delivery };
     if (choice === "send") {
-      await deliverLark(p.target, p.content, p.delivery);
-      await updateLarkCard(messageId, buildCard({ title: "已发送", color: "green", blocks: [{ markdown: previewOf(p.content) }, { note: `${opName} 确认发送` }] })).catch(() => {});
-    } else await updateLarkCard(messageId, buildCard({ title: "没有发送", color: "grey", blocks: [{ markdown: previewOf(p.content) }] })).catch(() => {});
+      try {
+        await deliverLark(p.target, p.content, p.delivery);
+      } catch (e) {
+        // Not sent: the buttons stay usable for another try.
+        run(app.db, "update card_interactions set status = 'open', handled_at = null, handled_by = null where id = ?", inter.id);
+        return { toast: { type: "error", content: `没有发出去：${(e as Error).message}`.slice(0, 80) } };
+      }
+    }
     if (inter.conversationId && findThread(app, inter.conversationId))
       addMessage(app, inter.conversationId, "assistant", choice === "send" ? "（本人确认，草稿已发出）" : "（本人决定不发这条草稿）", null, { command: true });
-    return { toast: { type: "success", content: choice === "send" ? "已发送" : "已放弃" } };
+    // The new card goes back in the callback response, like the other cards here: an API update made
+    // while the callback is still open does not reliably replace what the clicker sees.
+    const card =
+      choice === "send"
+        ? buildCard({ title: "已发送", color: "green", blocks: [{ markdown: previewOf(p.content) }, { note: `${opName} 确认发送` }] })
+        : buildCard({ title: "没有发送", color: "grey", blocks: [{ markdown: previewOf(p.content) }, { note: `${opName} 决定不发` }] });
+    return { toast: { type: "success", content: choice === "send" ? "已发送" : "已放弃" }, card: rawCard(card) };
   }
   if (!inter.conversationId || !findThread(app, inter.conversationId)) {
     // Standalone item notification card: resolve the item button without an agent turn.

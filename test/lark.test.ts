@@ -184,11 +184,23 @@ describe("feishu bot messaging", () => {
     expect(draft.args.data.receive_id).toBe("ou_owner");
     const draftId = "om_1";
     expect(await handleCardAction(app, { operator: { open_id: "ou_x" }, context: { open_message_id: draftId }, action: { value: { action: "send" } } })).toMatchObject({ toast: { type: "error" } });
-    await handleCardAction(app, { operator: { open_id: "ou_owner" }, context: { open_message_id: draftId }, action: { value: { action: "send" } } });
+    // The clicked card comes back changed in the callback response (no buttons left).
+    const sent = await handleCardAction(app, { operator: { open_id: "ou_owner" }, context: { open_message_id: draftId }, action: { value: { action: "send" } } });
+    expect(sent).toMatchObject({ toast: { content: "已发送" }, card: { type: "raw", data: { header: { title: { content: "已发送" } } } } });
+    expect(JSON.stringify(sent.card)).not.toContain("callback");
     const real = client.calls.filter((c) => c.op === "create")[1];
     expect(real.args.data.receive_id).toBe("oc_g");
     expect(JSON.parse(real.args.data.content).body.elements[0].content).toBe("**已处理**");
     expect(await handleCardAction(app, { operator: { open_id: "ou_owner" }, context: { open_message_id: draftId }, action: { value: { action: "send" } } })).toMatchObject({ toast: { content: "已经处理过了" } });
+
+    // "不发": nothing is sent and the card says so.
+    expect((await callTool(ctx, "lark_send", { chat_id: "oc_g", markdown: "再想想" })).text).toMatch(/草稿/);
+    const creates = client.calls.filter((c) => c.op === "create").length;
+    const second = `om_${creates}`;
+    const dropped = await handleCardAction(app, { operator: { open_id: "ou_owner" }, context: { open_message_id: second }, action: { value: { action: "drop" } } });
+    expect(dropped).toMatchObject({ toast: { content: "已放弃" }, card: { type: "raw", data: { header: { title: { content: "没有发送" } } } } });
+    expect(JSON.stringify(dropped.card)).not.toContain("callback");
+    expect(client.calls.filter((c) => c.op === "create")).toHaveLength(creates);
   });
 });
 
