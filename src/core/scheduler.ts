@@ -28,6 +28,8 @@ const DEFAULTS: { id: string; kind: string; cron: string; enabled: boolean; labe
   { id: "lark-docs-watch", kind: "lark-docs-watch", cron: "40 4 * * *", enabled: true, label: "检查飞书文档有没有更新：上次修改后 7 天、1 个月、3 个月、半年、一年各查一次，有修改才重新读（没有飞书文档时什么都不做）" },
   { id: "digest", kind: "digest", cron: "*/10 * * * *", enabled: true, label: "整理存量材料：按本人开的整理任务，一批一批地给原件分级、把重点材料提炼成知识页和记忆（没有进行中的整理任务时什么都不做）" },
   { id: "lark-poll", kind: "lark-poll", cron: "*/10 * * * *", enabled: false, label: "采集飞书消息（全部或已订阅的会话，含附件和文档）、日程和妙记（只读）；被监听的群交给处理 Agent" },
+  { id: "lark-kb-discover", kind: "lark-kb-discover", cron: "20 2 * * 0", enabled: true, label: "每周列出能看到的飞书知识库：新出现的浅读一层目录，交给助理按本人写的方向提归属建议（只读；lark-cli 没有本人登录时什么都不做）" },
+  { id: "lark-kb-read", kind: "lark-kb-read", cron: "30 2 * * *", enabled: true, label: "每晚从已归入空间的飞书知识库读一些文档并交给整理：总篇数和各库份额在原件 → 知识库里设，空间里已有的不重复读（没有归入的知识库时什么都不做）" },
 ];
 export const scheduleLabels = Object.fromEntries(DEFAULTS.map((d) => [d.kind, d.label]));
 

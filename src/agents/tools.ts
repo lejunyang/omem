@@ -2712,6 +2712,62 @@ def({
   },
 });
 
+def({
+  name: "propose_knowledge_mapping",
+  description:
+    "给一个飞书知识库提归属建议（只在给知识库分类的任务里用，kb 填任务里列出的 id）：map 归入已有空间（space）；create 新建空间（new_space：id、name、kind、description，几个知识库同一个领域就用同一个新空间）；ignore 不读；later 先放着（方向变了再看）。priority 决定每晚读的份额（high / normal / low），level 是读进来以后的初始关注程度（focus / normal / reference）。本人开了自动应用时立即生效，否则等本人确认。",
+  write: true,
+  schema: z.object({
+    kb: z.string().min(1).max(80),
+    action: z.enum(["map", "create", "ignore", "later"]),
+    space: z.string().optional().describe("map：已有空间的 id"),
+    new_space: z
+      .object({
+        id: z.string().describe("小写字母、数字和连字符"),
+        name: z.string(),
+        kind: z.enum(["project", "topic", "learning"]).optional(),
+        description: z.string().describe("一句话：这个空间放什么"),
+      })
+      .optional(),
+    priority: z.enum(["high", "normal", "low"]).default("normal"),
+    level: z.enum(["focus", "normal", "reference"]).default("normal"),
+    reason: z.string().trim().min(1).max(500),
+  }),
+  handler: async (ctx, a) => {
+    if (ctx.role !== "kb-scout" || !ctx.runId) throw new HttpError(403, "仅给知识库分类的角色可使用");
+    const ids = (getRun(ctx.app, ctx.runId).input.kbIds as string[] | undefined) ?? [];
+    if (!ids.includes(a.kb)) throw new HttpError(403, `知识库 ${a.kb} 不在本次任务里`);
+    const k = await import("../channels/lark-knowledge.ts");
+    let action = a.action;
+    let target: string | undefined;
+    let fresh: import("../channels/lark-knowledge.ts").NewSpace | undefined;
+    if (action === "map") {
+      if (!a.space) throw new HttpError(400, "map 要填 space（已有空间的 id）");
+      target = writeSpace(ctx, a.space);
+      const kind = findSpace(ctx.app, target)!.kind;
+      if (kind === "repo") throw new HttpError(400, `空间 ${target} 是代码仓库，知识库不放进去；选别的空间或新建`);
+    } else if (action === "create") {
+      if (!a.new_space) throw new HttpError(400, "create 要填 new_space（id、name、kind、description）");
+      // Creating spaces is the owner's main runs' right; here the run must see every space.
+      if (ctx.spaces !== null) throw new HttpError(403, "本次任务不能新建空间");
+      const parsed = k.newSpaceSchema.safeParse(a.new_space);
+      if (!parsed.success) throw new HttpError(400, `new_space：${parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("；")}`);
+      fresh = parsed.data;
+      const have = findSpace(ctx.app, slugify(fresh.id));
+      if (have && have.name !== fresh.name) throw new HttpError(409, `空间 id ${have.id} 已经是「${have.name}」：要放进它就用 map，否则换一个 id`);
+      if (have) {
+        action = "map";
+        target = have.id;
+        fresh = undefined;
+      }
+    }
+    const r = await k.proposeMapping(ctx.app, a.kb, { action, space: target, newSpace: fresh, priority: a.priority, level: a.level, reason: a.reason }, { by: "kb-scout", runId: ctx.runId });
+    const name = r.kb.name || a.kb;
+    if (!r.applied) return action === "later" ? `已记下：《${name}》先放着。` : `已记下对《${name}》的建议，等本人确认。`;
+    return `已应用（本人开了自动应用）：《${name}》${r.kb.status === "mapped" ? `归入空间 ${r.kb.targetSpace}` : r.kb.status === "ignored" ? "不读" : "先放着"}${"error" in r && r.error ? `；目录暂时没读到（${r.error}），夜里会再试` : ""}。`;
+  },
+});
+
 // ---- Feishu docs written as the owner -------------------------------------------------
 
 /**

@@ -16,7 +16,8 @@ const route = useRoute();
 const router = useRouter();
 watch(() => state.space, () => {
   const section = route.path.split("/")[1];
-  if (["ask", "sources", "runs"].includes(section)) void router.replace(`/${section}`);
+  // The knowledge-base list is not per space: it stays.
+  if (["ask", "sources", "runs"].includes(section) && route.path !== "/sources/kb") void router.replace(`/${section}`);
 });
 const menu = ref(false);
 const loadError = ref("");

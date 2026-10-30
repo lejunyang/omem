@@ -336,6 +336,7 @@ const kindIcon: Record<string, string> = { code: "code", doc: "file", chat: "cha
           <span class="muted small">{{ listLoading && !list.length ? "" : total }}</span>
           <span class="spacer" />
           <button v-if="space?.kind !== 'repo'" class="btn ghost sm" title="分级、整理已入库的材料" @click="digestOpen = true"><Icon name="layers" :size="14" />整理</button>
+          <router-link to="/sources/kb" class="btn ghost sm" title="你能看到的飞书知识库：归入空间，每晚读一些"><Icon name="book" :size="14" />知识库</router-link>
           <button v-if="space?.rootPath" class="btn ghost sm icon" title="同步关联目录" @click="sync"><Icon name="refresh" :size="15" /></button>
           <button class="btn ghost sm icon" title="保存材料" @click="state.capture = true"><Icon name="plus" :size="15" /></button>
         </div>

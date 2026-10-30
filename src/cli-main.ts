@@ -577,6 +577,68 @@ lark
     show(w.crawlSummary(c));
   });
 
+const kb = lark.command("kb").description("能看到的飞书知识库：发现、归入空间、每晚读一些（只读飞书）");
+kb.command("list")
+  .description("列出发现过的知识库：状态、建议的空间和理由、读的进度")
+  .option("--status <status>", "new / proposed / later / mapped / ignored / gone / all")
+  .action(async (o) => {
+    const app = open();
+    const k = await import("./channels/lark-knowledge.ts");
+    const list = k.listKnowledgeBases(app, { status: o.status });
+    if (!list.length) return console.log("还没有发现过知识库：运行 omem lark kb discover");
+    for (const x of list) {
+      const p = x.proposal;
+      const where = x.status === "mapped" ? ` → ${x.targetSpace}（${k.PRIORITY_LABELS[x.priority]}${x.paused ? "，暂停" : ""}）` : p && x.status !== "ignored" ? `  建议：${p.action === "create" ? `新建 ${p.newSpace?.id}` : p.action === "map" ? `归入 ${p.space}` : p.action}（${p.reason}）` : "";
+      console.log(`${x.id}  ${(x.goneAt ? "gone" : x.status).padEnd(8)} 《${x.name}》${where}  已读 ${x.progress.read}，已有 ${x.progress.known}`);
+    }
+  });
+kb.command("discover")
+  .description("立即发现：列出能看到的知识库，新出现的浅读一层目录，排队交给 kb-scout 提建议（要服务在运行才会执行）")
+  .option("--walk <n>", "这次最多浅读几个知识库的目录", "100")
+  .action(async (o) => {
+    const app = open();
+    const k = await import("./channels/lark-knowledge.ts");
+    const r = await k.discoverKnowledgeBases(app, { walk: Number(o.walk) });
+    console.log(`看到 ${r.found} 个知识库，新出现 ${r.added}，已看不到 ${r.gone}，浅读了 ${r.walked} 个的目录${r.scoutRunId ? `；已排队提建议（运行 ${r.scoutRunId}）` : ""}`);
+    for (const e of r.errors) console.log(`  ${e}`);
+  });
+kb.command("read")
+  .description("立即从已归入空间的知识库读一批（默认每晚的篇数），读到的交给整理")
+  .option("--limit <n>", "读多少篇")
+  .option("--kb <id>", "只读这一个知识库")
+  .action(async (o) => {
+    const app = open();
+    const k = await import("./channels/lark-knowledge.ts");
+    const r = await k.readKnowledgeDaily(app, { limit: o.limit ? Number(o.limit) : undefined, kb: o.kb });
+    if (r.skipped) return console.log(r.skipped);
+    for (const x of r.results) console.log(`《${x.name}》→ ${x.space}：读了 ${x.read}/${x.share}，已有 ${x.known}，不是文档 ${x.skipped}，失败 ${x.failed}${x.done ? "，读完了" : ""}${x.skippedBecause ? `，跳过：${x.skippedBecause}` : ""}${x.error ? `，出错：${x.error}` : ""}`);
+    console.log(`共读 ${r.read} 篇`);
+  });
+kb.command("map <id> <action>")
+  .description("处理一个知识库：accept / map / create / ignore / later / reset / pause / resume / update")
+  .option("--space <id>", "map：已有空间")
+  .option("--new-id <id>", "create：新空间的 id")
+  .option("--name <name>", "create：新空间的名称")
+  .option("--kind <kind>", "create：project / topic / learning", "topic")
+  .option("--description <text>", "create：这个空间放什么")
+  .option("--priority <p>", "high / normal / low")
+  .option("--level <l>", "focus / normal / reference")
+  .option("--share <n>", "每晚固定读几篇（none 恢复按优先级分）")
+  .action(async (id, action, o) => {
+    const app = open();
+    const k = await import("./channels/lark-knowledge.ts");
+    const body: Record<string, unknown> = { action };
+    if (o.space) body.space = o.space;
+    if (o.newId) body.newSpace = { id: o.newId, name: o.name ?? o.newId, kind: o.kind, description: o.description ?? "" };
+    if (o.priority) body.priority = o.priority;
+    if (o.level) body.level = o.level;
+    if (o.share !== undefined) body.dailyShare = o.share === "none" ? null : Number(o.share);
+    const r = await k.kbAction(app, id, body);
+    const x = "kb" in r ? r.kb : null;
+    console.log(x ? `《${x.name}》：${k.STATUS_LABELS[x.status]}${x.targetSpace && x.status === "mapped" ? ` → ${x.targetSpace}` : ""}` : "已处理");
+    if ("error" in r && r.error) console.log(`目录暂时没读到：${r.error}（每晚读取时会再试）`);
+  });
+
 const space = program.command("space").description("管理空间（领域隔离：个人 / 项目 / 代码仓库 / 学习 / 通用）");
 space
   .command("list")

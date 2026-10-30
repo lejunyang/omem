@@ -30,6 +30,8 @@ import { expireWorkFiles } from "../sources/work.ts";
 import { expireTemporaryRules } from "./wakes.ts";
 import { hasShortcomings, shortcomings, shortcomingsText } from "../memory/gaps.ts";
 import { digestMergeText } from "../memory/digest-merge.ts";
+// Also registers the kb-scout handler (channels/lark-knowledge.ts).
+import { readsSince } from "../channels/lark-knowledge.ts";
 import "./profile-jobs.ts";
 import "./wakes.ts";
 import "./digest.ts";
@@ -922,7 +924,11 @@ registerHandler("brief", async (ctx) => {
   const items = listItems(app, { status: "active" });
   const fresh = all<{ id: string; space_id: string; uri: string; title: string; kind: string }>(
     app.db,
-    "select id, space_id, uri, title, kind from sources where updated_at > ? and deleted_at is null and kind not in ('code', 'conversation') order by updated_at desc limit 60",
+    // Pages the nightly reading brought from mapped knowledge bases are backlog, not changes: one line below says how many.
+    `select id, space_id, uri, title, kind from sources where updated_at > ? and deleted_at is null and kind not in ('code', 'conversation')
+       and not (captured_at > ? and coalesce(json_extract(meta, '$.wikiSpaceId'), '') in (select id from wiki_spaces where status = 'mapped' and discovered_at is not null))
+       order by updated_at desc limit 60`,
+    since,
     since,
   );
   const runs = all<{ id: string; kind: string; title: string; status: string }>(app.db, "select id, kind, title, status from runs where finished_at > ? and kind in ('code','wiki-plan','wiki-write','ingest') order by finished_at desc limit 30", since);
@@ -932,6 +938,10 @@ registerHandler("brief", async (ctx) => {
     `进行中的事项（${items.length}）：\n${items.map((i) => `- ${i.id} [${i.kind}/${i.status}] ${i.title}${i.dueAt ? " 截止 " + i.dueAt : ""}${i.remindAt ? " 提醒 " + i.remindAt : ""}${i.waitingOn ? " 等待 " + i.waitingOn : ""}（更新于 ${i.updatedAt.slice(0, 16)}）`).join("\n") || "（无）"}`,
     `期间新增或更新的材料（${fresh.length}）：\n${fresh.map((s) => `- ${s.id} ${s.space_id}:${s.uri}「${s.title}」(${s.kind})`).join("\n") || "（无）"}`,
     `期间完成的后台运行：\n${runs.map((r) => `- ${r.id} [${r.kind}/${r.status}] ${r.title}`).join("\n") || "（无）"}`,
+    (() => {
+      const kb = readsSince(app, since);
+      return kb ? `飞书知识库：上次简报以来${kb}，已交给整理。简报里用一句话提到。` : "";
+    })(),
     (() => {
       const s = studyStats(app);
       return s.due ? `学习：${s.due} 张卡片到期待复习（共 ${s.total} 张，今天已复习 ${s.reviewedToday} 张），简报里提一句并给出“学习”页入口。` : "";

@@ -1571,6 +1571,37 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (op === "continue") return w.continueCrawl(app, id);
     throw new HttpError(400, "未知操作");
   });
+  // Knowledge bases the owner can see (lark-knowledge.ts): list with proposals and progress, discover, read, decide, settings.
+  server.get("/api/lark/kb", async (req) => {
+    const o = q(z.object({ status: z.enum(["new", "proposed", "later", "mapped", "ignored", "gone", "all"]).optional() }), req.query ?? {});
+    const k = await import("../channels/lark-knowledge.ts");
+    return { ...k.knowledgeOverview(app), kbs: k.listKnowledgeBases(app, { status: o.status ?? "all" }), origin: k.knowledgeOrigin(app) };
+  });
+  server.post("/api/lark/kb/discover", async (req) => {
+    ownerOnly(req);
+    return (await import("../channels/lark-knowledge.ts")).startDiscovery(app);
+  });
+  server.post("/api/lark/kb/read", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ limit: z.number().int().min(1).max(500).optional() }), req.body ?? {});
+    return (await import("../channels/lark-knowledge.ts")).startReading(app, b);
+  });
+  server.put("/api/lark/kb/settings", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ direction: z.string().max(4000).optional(), autoApply: z.boolean().optional(), dailyDocs: z.number().int().min(0).max(2000).optional() }), req.body ?? {});
+    const changed = b.direction !== undefined && b.direction.trim() !== (app.config.lark.knowledge?.direction ?? "").trim();
+    const next = structuredClone(app.config);
+    next.lark.knowledge = { ...next.lark.knowledge, ...Object.fromEntries(Object.entries(b).filter(([, v]) => v !== undefined)) };
+    saveConfig(next, app.home);
+    Object.assign(app.config, next);
+    // A changed direction brings the knowledge bases put aside back to the scout.
+    if (changed) (await import("../channels/lark-knowledge.ts")).directionChanged(app);
+    return { settings: app.config.lark.knowledge };
+  });
+  server.post("/api/lark/kb/:id", async (req) => {
+    ownerOnly(req);
+    return (await import("../channels/lark-knowledge.ts")).kbAction(app, (req.params as { id: string }).id, req.body);
+  });
 
   server.post("/api/agents/:id/probe", async (req) => {
     const { allProfiles } = await import("../core/config.ts");

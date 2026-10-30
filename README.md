@@ -52,6 +52,7 @@ flowchart LR
 - **原件**是依据，只保留最新版；聊天按追加保存。**Wiki、记忆、事项**是派生知识，都引用原件。
 - **空间归属与归档**：问答、原件（含文档）、运行列表跟随所选空间；切换空间退出旧详情。规则分为“任务规则”和“归档规则”。自动采集优先使用手动归属和来源绑定，再按创建顺序匹配条件，未命中的批量交给归档角色判断，不确定的仍放个人空间。归档规则可让 AI 编写草稿，核对后保存启用；历史材料先预览再应用，迁移保留 ID、引用和行号。
 - **原件页**：普通空间按目录树展示，一层一层展开：飞书知识库按知识库和节点层级（文档本身也是节点，下面还能有子页面），知识库外的云文档按“由哪篇文档链接进来”或“直接导入”，聊天按群聊 / 话题群 / 单聊 / 机器人、再按会话和月份（会话里的图片收在“图片”下），网页按站点，会议和日程按年月，笔记和工作文件按月。每个目录带份数和关注程度色点，筛选（关键词、类型、关注程度）同时作用于计数。在任一目录上设关注程度，整个子树连同以后进来的都按这一档。知识库里看到过、但还没采集的节点显示为灰色，点“采集”读进来。代码仓库空间在文件较多时按路径目录展示，网址和会话标识保留为独立原件。
+- **主动读飞书知识库**：omem 每周列出你在飞书里能看到的知识库，由 kb-scout 角色按你写的方向提议每个知识库放进哪个空间（已有的或新建的）、先读哪些、读进来按什么关注程度；你确认后（或开了“建议直接生效”）每晚按优先级读一些，目录级的关注程度让整个知识库的页面都按这一档。只读飞书，不改知识库。
 - 理解和写作由你已安装的 **Agent** 完成（通过 ACP 或命令行），它们用 omem 的工具（MCP，或 shell 里的 `omem tool`）检索、阅读、写入，同时保有自己的文件与搜索能力。omem 负责存储、索引、调度和权限，不自带模型。
 - **Wiki** 是 Markdown 文件，整个知识库目录是一个 Git 仓库，每次修改都有历史和差异。页面按路径分目录（`a/b/c` 是目录 `a/b` 里的页面 `c`），网页里是可折叠的目录树；页面移动后旧路径仍能打开。
 - **记忆**被更正时不覆盖：旧版本标记为“已被更正”并链接到新版本，所以“之前怎么约定的”和“现在是什么”都能回答。
@@ -135,6 +136,7 @@ npm install -g .                  # 可选：把命令行 omem 链接到这个�
 | 排查过的问题以后还能想起来 | 事项经过几轮进展才结束时，助理会把排查过程写成案例页（`cases/…`：现象、判断、原因、解法、适用条件）并记一条经验指向它，下次遇到类似的能召回 |
 | 让助理过一会儿、或等某人回复后自己接着做 | 说“半小时后看看 CI 结果”“小王发了发布单就检查回滚方案”；它设一个定时或等消息的唤醒，到时候在原会话里接着做，没变化不打扰你。规则触发的档案给自己设复查时，沿用原空间、话题和回复权限；没有新变化时保持安静。待触发的在“规则”页底部“临时唤醒”里，可以取消；确认弹窗里的长说明可滚动阅读，手机上也能操作 |
 | 把一个飞书知识库（或其中一大块目录）读进来 | 发知识库页面链接时，它的子页面会跟着读（从这篇算往下两层，一次最多 100 篇，设置 → 渠道 → 飞书文档可改）；要整个知识库就说“把这个知识库按目录读进来，每天读 200 篇”，助理开一个知识库爬取，配合定时规则每天继续一批，进度存在库里 |
+| 让 omem 自己去读我能看到、但没读过的飞书知识库 | 原件 → 知识库：每周日列出你能看到的全部知识库（含个人文档库），新出现的浅读一层目录；在页面上写一句方向（“我负责项目 A 的退款，行政类不用读”），助理按方向逐个提议归入哪个空间、要不要新建空间、优先级和初始关注程度，你采纳、改目标或不读（也可以让建议直接生效）。之后每晚 2:30 按优先级从已归入的知识库共读 30 篇（可改），空间里已有的不重复读，读到的照常交给整理；简报里说一句读了多少 |
 | 让助理把整理结果写成飞书文档 | 说“整理成一篇飞书文档”：它以你的身份新建（默认在你的个人文档库），也能追加、改写、移动；要放进团队知识库时，每次新建、改写、覆盖和移动都先把具体位置发给你批准 |
 | 记忆多了按领域翻 | 记忆页左侧目录树，点开某个目录看其中（含子目录）的记忆；拖到别的目录上或点“移动”就换了位置；目录可新建、改说明、改名（改成已有的就合并）、删除（记忆上移一层）；旧记忆点目录树上的整理按钮让助理归档一遍 |
 | 看助理哪里还不够好 | “记忆 → 不足”：回答说没找到、你纠正了回答、失败的运行、被撤回的记忆；每晚整理时逐条看能不能补 |
@@ -265,6 +267,10 @@ omem lark docs-check [--force]               # 检查飞书文档有没有更新
 omem lark backfill [会话…|--name 群名片段|--kind group|--all] [--days 0]  # 回溯这些会话的历史消息（服务采集时逐页推进）
 omem lark fill-files [会话…|--name …|--all]  # 补拉已保存消息里缺的图片和附件
 omem lark wiki-crawl [<知识库页面链接> --depth 3 --max 500 --batch 100 | --continue <id> | --stop <id>]  # 按目录树读飞书知识库，不带参数看进度
+omem lark kb list [--status proposed|mapped|…]  # 能看到的飞书知识库：状态、建议的空间和理由、每晚读的进度
+omem lark kb discover                        # 立即发现知识库，新出现的浅读一层目录，排队交给 kb-scout 提建议
+omem lark kb read [--limit 30] [--kb <id>]    # 立即从已归入空间的知识库读一批
+omem lark kb map <id> accept|map|create|ignore|later|reset|pause|resume|update [--space …|--new-id … --name … --description …] [--priority high] [--level reference] [--share 5]  # 处理一个知识库
 omem lark user-permissions [--grant]         # lark-cli 本人登录缺哪些权限（读知识库、写文档），--grant 发起授权
 omem lark bot-permissions [--scan]           # 机器人缺哪些权限（@ 人要 user_id、邮箱），给申请链接或扫码补齐
 omem link                                   # 从其他设备打开网页的链接（带令牌）
@@ -392,6 +398,8 @@ omem peer call <同伴> lark-docs-refresh '{}'  # 让它在后台重新读飞书
 omem peer call <同伴> lark-docs-refresh '{"metadataOnly":true,"unchecked":true}'  # 只补读从没读过知识库位置的文档的目录（不重读正文），补全原件页的知识库目录树
 omem peer call <同伴> sources-merge-duplicates '{}'  # 列出同一篇飞书文档的 /docx/ 与 /wiki/ 两份原件；'{"dryRun":false}' 合并（旧 id 保留为别名）
 omem peer call <同伴> lark-doc-import '{"url":"https://…/docx/…"}'  # 立即读一篇，返回素材下载情况和没处理掉的标签
+omem peer call <同伴> lark-kb-list '{"status":"proposed"}'  # 能看到的飞书知识库、建议和每晚读的进度；lark-kb-discover 立即发现，lark-kb-read 立即读一批
+omem peer call <同伴> lark-kb-map '{"kb":"<知识库 id>","action":"accept"}'  # 采纳建议；map / create / ignore / later / reset / pause / resume / update（只改 omem 自己的库）
 omem tool --peer <同伴> search query=退款     # 用本机的 Agent 整理它的库：工具在它上面执行，每次调用记成它的一条运行；见 skills/omem/SKILL.md“在另一台设备上用这个库”
 omem peer pull <同伴>                     # 经 HTTP 合并数据、附件、仓库与编码工作区（手动）
 omem peer pull <同伴> --dry-run           # 预览数据库合并，不改本机数据或仓库
@@ -442,7 +450,7 @@ src/plugins   插件：清单与加载（内置与数据目录）、信任（tru
 src/agents    ACP/CLI 运行与 Agent 目录（catalog.ts）、MCP 工具、角色、会话与命令、档案与技能目录编辑（specs.ts）、临时 AI 选型校验（execution.ts）、后台会话复用与上下文轮换（background-sessions.ts）、后台任务、交办编码与复用工作区（workspaces.ts）、应用后的 Git 提交与推送（code-git.ts）；豆包 OpenAPI 后端在 doubao.ts（鉴权与设备码）/ dispatch.ts
 src/channels  发出去的消息里的引用（citations.ts）、飞书机器人（发送、卡片、进度、回调、监听群、访客提问、多个机器人与互相转交 lark-bots.ts）、飞书私聊指令、飞书个人采集（lark-cli，消息结构化与历史回溯、文档素材与链接本地化）、Telegram、OneBot
 src/setup.ts  omem setup 交互式向导
-roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查/目录整理、巡检、简报、做梦、筛群、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md
+roles/        各角色的工作说明（问答、整理、Wiki 规划/写作/检查/目录整理、巡检、简报、做梦、筛群、知识库归属建议（kb-scout）、摘要、编码、评审及业务/架构/规范/历史四个评审项、记忆复核、记忆目录整理、事项收尾、出卡），共同部分在 _common.md
 skills/omem     omem 工具的使用说明：SKILL.md 概览，references/ 按分组讲做法（omem_help(分组) 返回同一份内容）
 plugins/      内置插件（english：档案、出题技能、判分、学习者画像与题库 server.ts / learner.ts、页面 web/）；sdk/client.ts 是插件页面与外壳的桥，sdk/blocks.ts 画表单和图表，sdk/service.mjs 是插件服务的 HTTP / WebSocket 帮助模块
 skills/library  内置技能（如 lark-messaging、desktop-control，可带 references/），启动时播种到 library/_skills（已有的不覆盖，新版新增的技能补进）
@@ -453,7 +461,7 @@ site/         文档站（VitePress，独立依赖）：功能介绍与安装使
 web/          Vue 3 网页
 ```
 
-`lark-personal.ts` 做本人身份的轮询，`lark-bot.ts` 接收机器人事件，`lark-sender.ts` 分开解析人与机器人的发送者名称，`lark-resource-parse.ts` 独立处理已保存附件的解析，`lark-messages.ts` 统一两路消息、资源与原件行。`lark-docs.ts` 读飞书文档（素材本地化、链接与知识库子页面），`lark-wiki.ts` 是知识库节点与分批爬取，`lark-doc-write.ts` 以本人身份写文档（判断位置是不是本人自己的），`lark-auth.ts` 检查 lark-cli 本人登录的权限，缺了就发起授权。
+`lark-personal.ts` 做本人身份的轮询，`lark-bot.ts` 接收机器人事件，`lark-sender.ts` 分开解析人与机器人的发送者名称，`lark-resource-parse.ts` 独立处理已保存附件的解析，`lark-messages.ts` 统一两路消息、资源与原件行。`lark-docs.ts` 读飞书文档（素材本地化、链接与知识库子页面），`lark-wiki.ts` 是知识库节点与分批爬取，`lark-knowledge.ts` 发现能看到的知识库、记下 kb-scout 的归属建议和本人的决定、每晚按份额继续各知识库的爬取，`lark-doc-write.ts` 以本人身份写文档（判断位置是不是本人自己的），`lark-auth.ts` 检查 lark-cli 本人登录的权限，缺了就发起授权。
 
 角色说明在 `roles/*.md`，改它们就能调整 Agent 的工作方式，不需要改代码。
 
