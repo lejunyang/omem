@@ -140,8 +140,12 @@ export class Workbench implements vscode.TreeDataProvider<Item> {
     return { file, text, range: r };
   }
 
-  /** Send the reply as a question; the answer comes back into the same thread. */
-  async ask(reply: vscode.CommentReply) {
+  /**
+   * Send the reply as a question; the answer comes back into the same thread. The command returns at
+   * once (VS Code clears the reply box when it does) and the answer streams in: the thinking and the
+   * tools it used folded above what it says.
+   */
+  ask(reply: vscode.CommentReply) {
     const thread = reply.thread;
     const question = reply.text.trim();
     if (!question) return;
@@ -150,8 +154,17 @@ export class Workbench implements vscode.TreeDataProvider<Item> {
       thread.label = "问 omem";
     }
     thread.comments = [...thread.comments, comment(question, me)];
-    const waiting = comment("思考中…");
-    thread.comments = [...thread.comments, waiting];
+    void this.answer(thread, question);
+  }
+
+  private async answer(thread: vscode.CommentThread, question: string) {
+    let shown = comment("思考中…");
+    thread.comments = [...thread.comments, shown];
+    const update = (body: string | vscode.MarkdownString) => {
+      const next = comment(body);
+      thread.comments = thread.comments.map((c) => (c === shown ? next : c));
+      shown = next;
+    };
     const { file, text } = this.excerpt(thread);
     const ft = this.threadFinding.get(thread);
     const run = this.current.run;
@@ -165,46 +178,86 @@ export class Workbench implements vscode.TreeDataProvider<Item> {
     ].filter(Boolean).join("\n\n");
     try {
       const before = this.conversations.get(thread);
-      const r = await this.api.post<{ conversationId: string }>("/api/ask", { text: body, space: run?.space ?? undefined, conversationId: before });
+      const r = await this.api.post<{ conversationId: string; runId?: string }>("/api/ask", { text: body, space: run?.space ?? undefined, conversationId: before });
       this.conversations.set(thread, r.conversationId);
-      const answer = await this.waitAnswer(r.conversationId);
-      thread.comments = [...thread.comments.filter((c) => c !== waiting), comment(new vscode.MarkdownString(answer))];
+      const answer = await this.follow(r.conversationId, r.runId, (live) => update(live));
+      update(answer);
     } catch (e) {
-      thread.comments = [...thread.comments.filter((c) => c !== waiting), comment(`没问成：${(e as Error).message}`)];
+      update(`没问成：${(e as Error).message}`);
     }
   }
 
-  private async waitAnswer(conversationId: string) {
+  /**
+   * Follow the answering run's events: thinking and tool calls go into a folded block, what it says
+   * below; the final text is the conversation's reply once the run is over.
+   */
+  private async follow(conversationId: string, runId: string | undefined, live: (body: vscode.MarkdownString) => void) {
     const deadline = Date.now() + 15 * 60_000;
+    let after = 0;
+    let thought = "";
+    let said = "";
+    const tools: string[] = [];
+    let ended = 0;
+    const render = (final?: string) => {
+      const steps = [thought.trim(), tools.length ? tools.map((t) => `- ${t}`).join("\n") : ""].filter(Boolean).join("\n\n");
+      const md = new vscode.MarkdownString(
+        [steps ? `<details><summary>${final === undefined ? "思考中…" : "思考过程"}</summary>\n\n${steps}\n\n</details>` : final === undefined ? "思考中…" : "", final ?? said].filter(Boolean).join("\n\n"),
+      );
+      md.supportHtml = true;
+      return md;
+    };
     while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 1000));
+      if (runId) {
+        const { run, events } = await this.api.get<{ run: Run; events: { seq: number; type: string; data: { text?: string; title?: string; status?: string } }[] }>(`/api/runs/${runId}?after=${after}`);
+        for (const e of events) {
+          after = Math.max(after, e.seq);
+          if (e.type === "thought") thought += e.data.text ?? "";
+          else if (e.type === "text") said += e.data.text ?? "";
+          else if (e.type === "tool" && e.data.title && e.data.status !== "completed" && e.data.status !== "failed") tools.push(e.data.title);
+        }
+        if (run.status === "queued" || run.status === "running") {
+          live(render());
+          continue;
+        }
+      }
       const { messages } = await this.api.get<{ messages: Message[] }>(`/api/conversations/${conversationId}`);
       const last = messages.at(-1);
-      if (last?.role === "assistant") return last.text;
+      if (last?.role === "assistant") return render(last.text);
+      if (runId && ++ended >= 3) throw new Error("这次回答没有完成，到网页的问答里看");
     }
     throw new Error("等了 15 分钟还没有回答，到网页的问答里看");
   }
 
-  /** Keep the reply as a fix point for the next round. */
-  fixPoint(reply: vscode.CommentReply) {
+  /**
+   * Keep the reply as a fix point for the next round. On a finding's thread it says how to fix that
+   * finding: the finding is marked 改 and the point goes along with it.
+   */
+  async fixPoint(reply: vscode.CommentReply) {
     const text = reply.text.trim();
     if (!text) return;
     const thread = reply.thread;
+    const ft = this.threadFinding.get(thread);
     const { file, text: quote, range } = this.excerpt(thread);
     const existing = this.fixPoints.find((p) => p.thread === thread);
     if (existing) existing.text = `${existing.text}\n${text}`;
-    else this.fixPoints.push({ thread, file, range, quote, text });
-    thread.contextValue = "fixpoint";
-    thread.label = "修改点";
+    else this.fixPoints.push({ thread, file, range, quote, text: ft ? `评审问题 #${ft.finding.id}（${ft.finding.title}）按这个改：${text}` : text });
+    if (!ft) {
+      thread.contextValue = "fixpoint";
+      thread.label = "修改点";
+    }
     thread.comments = [...thread.comments, comment(text, me, "修改点")];
     this.changed.fire(undefined);
+    if (ft && ft.finding.decision !== "fix") await this.decide(ft, "fix");
   }
 
   deleteThread(arg: unknown) {
     const thread = arg instanceof FixPointItem ? arg.point.thread : ((arg as { thread?: vscode.CommentThread })?.thread ?? (arg as vscode.CommentThread));
     if (!thread) return;
     this.fixPoints = this.fixPoints.filter((p) => p.thread !== thread);
-    thread.dispose();
+    // A finding's thread stays; only the fix point written in it goes.
+    if (this.threadFinding.has(thread)) thread.comments = thread.comments.filter((c) => c.label !== "修改点");
+    else thread.dispose();
     this.changed.fire(undefined);
   }
 
@@ -226,7 +279,7 @@ export class Workbench implements vscode.TreeDataProvider<Item> {
       return null;
     }
     const next = await this.api.post<Run>(`/api/runs/${run.id}/fix`, { findingIds: chosen.map((f) => f.finding.id), text: text || undefined });
-    for (const p of this.fixPoints) p.thread.dispose();
+    for (const p of this.fixPoints) if (!this.threadFinding.has(p.thread)) p.thread.dispose();
     this.fixPoints = [];
     this.changed.fire(undefined);
     return next;

@@ -45,22 +45,22 @@ const trim = (u: string) => u.trim().replace(/\/+$/, "");
 
 /**
  * Running inside omem's web VS Code (src/server/ide-web.ts): that omem's address and token, which it
- * puts in the environment of the server the extension host runs in. "This machine's omem" then
- * needs no port or token, unless `omem.port` is set.
+ * puts in the environment of the server the extension host runs in. The extension then uses it and
+ * nothing else (see `mode`).
  */
 export function hostOmem(): { url: string; token: string | undefined } | null {
   const url = process.env.OMEM_URL?.trim();
   return url && /^http:\/\/127\.0\.0\.1:\d+$/.test(url) ? { url, token: process.env.OMEM_TOKEN || undefined } : null;
 }
-const portSet = () => {
-  const p = cfg().inspect<number>("port");
-  return p?.workspaceFolderValue !== undefined || p?.workspaceValue !== undefined || p?.globalValue !== undefined;
-};
 
 export class Connection {
   constructor(private readonly secrets: vscode.SecretStorage) {}
 
   get mode(): Mode {
+    // omem's web VS Code always talks to the omem that opened it. Its user settings and saved tokens
+    // live in the browser, so a choice made in some other web VS Code (another device opened through
+    // `omem peer open`, an earlier manual setup) must not point it elsewhere.
+    if (hostOmem()) return "local";
     const set = cfg().inspect<string>("connection");
     const explicit = set?.workspaceFolderValue ?? set?.workspaceValue ?? set?.globalValue;
     if (explicit === "local" || explicit === "direct" || explicit === "peer") return explicit;
@@ -73,7 +73,7 @@ export class Connection {
   get server() {
     if (this.mode === "direct") return trim(cfg().get<string>("url") || "http://127.0.0.1:4317");
     const hosted = hostOmem();
-    if (hosted && !portSet()) return hosted.url;
+    if (hosted) return hosted.url;
     return `http://127.0.0.1:${cfg().get<number>("port") || 4317}`;
   }
 
@@ -108,11 +108,9 @@ export class Connection {
     return `omem.token:${server}`;
   }
   async token() {
-    const saved = (await this.secrets.get(this.key())) ?? (await this.secrets.get("omem.token"));
-    if (saved) return saved;
-    // omem's web VS Code: the omem that started it gave its token along with its address.
     const hosted = hostOmem();
-    return hosted && this.mode !== "direct" && this.server === hosted.url ? hosted.token : undefined;
+    if (hosted) return hosted.token;
+    return (await this.secrets.get(this.key())) ?? (await this.secrets.get("omem.token")) ?? undefined;
   }
   async setToken(token: string | null, server = this.server) {
     if (token) await this.secrets.store(this.key(server), token);

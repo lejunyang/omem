@@ -990,3 +990,9 @@ updated: 2026-10-30
 
 - **外部 Agent 评审分支**：`review_branch` 不再在 `PEER_DENY` 里。经 `--peer` 调用时（`ToolContext.peer`），建的分支评审带 `peerReviewer`：编码运行检出、取 diff、建索引、定计划后以 `awaiting-peer` 结束（跳过预判、精调、负责人和计划确认），不问本机任何模型，也不占并发槽。新工具 `review_task`（只给外部 Agent，材料 + 各评审项的角色说明，diff 分页），`submit_review` / `submit_change_points` 加 `run_id`、`check`；三者在 `ROLE_TOOLS` 里不随分组授出，经 `PEER_REVIEW_TOOLS` 给外部 Agent。最后一项交齐时 `peerSubmitted` 排 `review` 运行，`reviewRound` 读已交的结论汇总（`review-chain.ts`）。网页显示“等外部 Agent 评审”。`test/branch-review.test.ts` 覆盖。
 - **按钮悬停**（`web/src/styles.css`）：通用 `.btn:hover` 改成在原底色上叠一层 `--hover`（`background-image`），实心按钮（`.primary`、`.accent`、`.danger-fill`）悬停统一变淡；`danger-fill` 从 `DialogHost.vue` 移到公共样式。原来红色确认按钮悬停会变成浅底白字。
+
+## 10-31：VS Code 插件：提问流式显示、问题线程写修改点、网页版固定连接
+
+- **提问**（`vscode/src/review.ts`）：命令立即返回，输入框清空；回答按运行事件流式写回线程，思考和工具折叠在 `<details>` 里，结束后换成最终回答。
+- **评审问题的线程可以“记为修改点”**：问题标为“改”，修改点带问题编号进下一轮；删掉修改点不删问题线程。
+- **网页版 VS Code**（`vscode/src/connection.ts`）：有 `OMEM_URL` 时固定连它、用 `OMEM_TOKEN`，不看浏览器里存的连接设置和令牌；“连接 omem…”只提示。

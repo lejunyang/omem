@@ -65,6 +65,26 @@ exports.run = async function run() {
   await config.update("home", undefined, G);
   await config.update("connection", "local", G);
 
+  step("在 omem 的网页版 VS Code 里，固定连打开它的 omem，不看浏览器里存的设置");
+  const hostedUrl = process.env.OMEM_TEST_URL;
+  {
+    process.env.OMEM_URL = hostedUrl;
+    process.env.OMEM_TOKEN = process.env.OMEM_TEST_TOKEN;
+    await config.update("connection", "peer", G);
+    await config.update("peer", "elsewhere", G);
+    try {
+      assert.equal(api.conn.mode, "local");
+      assert.equal(api.conn.server, hostedUrl);
+      assert.equal(await api.conn.token(), process.env.OMEM_TEST_TOKEN);
+      await api.get("/api/me");
+    } finally {
+      delete process.env.OMEM_URL;
+      delete process.env.OMEM_TOKEN;
+      await config.update("peer", undefined, G);
+      await config.update("connection", "local", G);
+    }
+  }
+
   step("打开的文件夹认出是哪次交办");
   await current.detect();
   assert.equal(current.run?.id, process.env.OMEM_TEST_RUN);
@@ -91,14 +111,26 @@ exports.run = async function run() {
   const editor = await vscode.window.showTextDocument(doc);
   editor.selection = new vscode.Selection(1, 0, 1, 10);
   const asked = bench.startThread(editor);
-  await bench.ask({ thread: asked, text: "这里为什么乘 100？" });
+  // Returns at once (VS Code clears the reply box then); the answer streams into the thread.
+  bench.ask({ thread: asked, text: "这里为什么乘 100？" });
   assert.equal(asked.contextValue, "asked");
-  assert.equal(asked.comments.length, 2);
+  const body = (c) => (typeof c.body === "string" ? c.body : c.body.value);
+  await wait("回答", () => asked.comments.length === 2 && !/^(<details>[\s\S]*<\/details>\s*)?思考中…$/.test(body(asked.comments[1]).trim()));
   const answer = asked.comments[1];
   assert.equal(answer.author.name, "omem");
   const text = typeof answer.body === "string" ? answer.body : answer.body.value;
   assert.doesNotMatch(text, /没问成/);
   assert.match(text, /乘 100/, "假 Agent 回显问题");
+
+  step("在评审问题的线程上写修改点：问题标为“改”，修改点带上问题编号");
+  await vscode.commands.executeCommand("omem.finding.clear", major.thread);
+  await bench.fixPoint({ thread: major.thread, text: "四舍五入改成向零取整" });
+  assert.equal(major.thread.contextValue, "finding-fix");
+  assert.equal(bench.fixPoints.length, 1);
+  assert.match(bench.fixPoints[0].text, new RegExp(`#${major.finding.id}.*向零取整`));
+  bench.deleteThread(major.thread);
+  assert.equal(bench.fixPoints.length, 0);
+  assert.ok(bench.findings.includes(major) && major.thread.comments.every((c) => c.label !== "修改点"), "删掉修改点，问题的线程还在");
 
   step("记修改点，和标了“改”的问题一起开始修改");
   editor.selection = new vscode.Selection(0, 0, 0, 5);

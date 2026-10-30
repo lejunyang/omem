@@ -49,6 +49,10 @@ type Choice = vscode.QuickPickItem & { go: () => Promise<boolean | undefined> };
 /** “连接 omem…”: pick how omem is reached, fill only what that way needs, check it answers. */
 export async function connect(api: Api, status: Status) {
   const conn = api.conn;
+  if (hostOmem()) {
+    void vscode.window.showInformationMessage("网页版 VS Code 固定连接打开它的 omem，不用设置。要连别的机器，用本机的 VS Code。");
+    return status.check();
+  }
   const set = async (values: Record<string, unknown>) => {
     for (const [k, v] of Object.entries(values)) await cfg().update(k, v, G);
   };

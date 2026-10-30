@@ -124,7 +124,7 @@
       ],
       "comments/commentThread/context": [
         { "command": "omem.thread.ask", "when": "commentController == omem && commentThread != fixpoint", "group": "inline@1" },
-        { "command": "omem.thread.fixPoint", "when": "commentController == omem && omem.hasRun && commentThread =~ /^(draft|fixpoint)$/", "group": "inline@2" }
+        { "command": "omem.thread.fixPoint", "when": "commentController == omem && omem.hasRun && commentThread =~ /^(draft|fixpoint|finding.*)$/", "group": "inline@2" }
       ],
       "comments/commentThread/title": [
         { "command": "omem.finding.fix", "when": "commentController == omem && commentThread =~ /^finding(-later|-wontfix)?$/", "group": "inline@1" },
