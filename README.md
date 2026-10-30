@@ -401,6 +401,7 @@ omem peer call <同伴> agent-upgrade '{"id":"codex"}'   # 把已装的 ACP 适�
 omem peer call <同伴> lark-docs-refresh '{}'  # 让它在后台重新读飞书文档，完成后发通知；进度看 lark-docs-status
 omem peer call <同伴> lark-docs-refresh '{"metadataOnly":true,"unchecked":true}'  # 只补读从没读过知识库位置的文档的目录（不重读正文），补全原件页的知识库目录树
 omem peer call <同伴> sources-merge-duplicates '{}'  # 列出同一篇飞书文档的 /docx/ 与 /wiki/ 两份原件；'{"dryRun":false}' 合并（旧 id 保留为别名）
+omem peer call <同伴> wiki-restore-aliases '{"space":"<空间>"}'  # 列出被重写后丢了旧路径的 Wiki 页面（从知识库 Git 历史找回）；加 "dryRun":false 补回
 omem peer call <同伴> lark-doc-import '{"url":"https://…/docx/…"}'  # 立即读一篇，返回素材下载情况和没处理掉的标签
 omem peer call <同伴> lark-kb-list '{"status":"proposed"}'  # 能看到的飞书知识库、建议和每晚读的进度；lark-kb-discover 立即发现，lark-kb-read 立即读一批
 omem peer call <同伴> lark-kb-map '{"kb":"<知识库 id>","action":"accept"}'  # 采纳建议；map / create / ignore / later / reset / pause / resume / update（只改 omem 自己的库）

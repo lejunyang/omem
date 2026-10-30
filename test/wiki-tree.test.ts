@@ -1,10 +1,11 @@
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
+import { commitLibrary } from "../src/core/git.ts";
 import { spaceDir } from "../src/core/spaces.ts";
 import { upsertSource } from "../src/sources/store.ts";
-import { buildNav, folderOverview, listPages, movePages, organizeNeeds, pageContext, readPage, rewriteLinks, staleDetail, syncWiki, writePage } from "../src/wiki/store.ts";
+import { buildNav, folderOverview, listPages, movePages, organizeNeeds, pageContext, readPage, restoreAliases, rewriteLinks, serializePage, staleDetail, syncWiki, writePage } from "../src/wiki/store.ts";
 import { ancestors, defaultOpen, flattenNav } from "../web/src/lib/wikiTree.ts";
 import { testApp } from "./helpers.ts";
 
@@ -96,6 +97,39 @@ describe("moving pages", () => {
     expect(readPage(app, "personal", "guides/alpha").slug).toBe("alpha2");
     expect(readPage(app, "personal", "beta").body.trim()).toBe("链到 [[alpha2]]");
     expect(pageContext(app, "personal", "alpha2").backlinks.map((b) => b.slug)).toEqual(["beta"]);
+  });
+
+  it("keeps old paths when a moved page is rewritten, and restores the ones earlier rewrites lost", () => {
+    const app = testApp();
+    page(app, "a", "甲");
+    movePages(app, "personal", [{ from: "a", to: "dir/a" }]);
+    // A writer sends title, summary and kind only; the old path stays.
+    writePage(app, "personal", "dir/a", { meta: { title: "甲二", summary: "摘要", kind: "case" }, body: "新正文" });
+    expect(readPage(app, "personal", "dir/a").meta.aliases).toEqual(["a"]);
+    expect(readPage(app, "personal", "a").slug).toBe("dir/a");
+
+    // Before that, a rewrite dropped them: emulate it, committed like any page write.
+    page(app, "b", "乙");
+    page(app, "e", "戊");
+    movePages(app, "personal", [{ from: "b", to: "dir/b" }, { from: "e", to: "dir/e" }]);
+    for (const slug of ["dir/b", "dir/e"]) writeFileSync(join(spaceDir(app, "personal"), "wiki", `${slug}.md`), serializePage({ title: slug }, "重写过的正文"));
+    app.db.exec("update pages set hash = ''");
+    syncWiki(app, "personal");
+    commitLibrary(app.libraryDir, "test: rewrite without aliases");
+    expect(() => readPage(app, "personal", "b")).toThrow(/不存在/);
+    // A page now lives at one of the lost paths; the other page moves on.
+    page(app, "e", "新的戊");
+    movePages(app, "personal", [{ from: "dir/b", to: "dir2/b" }]);
+
+    const dry = restoreAliases(app, "personal", { dryRun: true });
+    expect(dry).toMatchObject({ dryRun: true, pages: 1, aliases: 1, sample: [{ page: "dir2/b", aliases: ["b"] }] });
+    expect(() => readPage(app, "personal", "b")).toThrow(/不存在/);
+    restoreAliases(app, "personal");
+    expect(readPage(app, "personal", "b").slug).toBe("dir2/b");
+    expect(readPage(app, "personal", "dir2/b").meta.aliases?.sort()).toEqual(["b", "dir/b"]);
+    expect(readPage(app, "personal", "e").meta.title).toBe("新的戊");
+    // Running it again finds nothing more.
+    expect(restoreAliases(app, "personal").pages).toBe(0);
   });
 
   it("refuses moves that would collide or break the tree", () => {

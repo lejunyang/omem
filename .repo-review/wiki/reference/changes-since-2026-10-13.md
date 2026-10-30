@@ -935,3 +935,9 @@ updated: 2026-10-30
 - **每晚读取**（`readKnowledgeDaily`，定时任务 `lark-kb-read` 每天 2:30）：`splitBudget` 先扣固定份额，再按优先级 3:2:1 分 `dailyDocs`；`crawlLoop` 对 `skipCaptured` 的爬取跳过空间里已有的页面（按 wiki 链接或 document id 找，记 `known`，不占份额）；读完的知识库把剩下的让给别的；前一晚读的还在排队整理时跳过那个空间。爬取交接前先 `applyNodeLevels`，仅检索的页面不进整理。每批写 `lark_kb_reads`；简报任务多一行“从飞书知识库读了 N 篇”，材料列表里不再逐篇列这些页面。
 - **爬取存储**：每个爬取一个 kv 键 `lark_wiki_crawl/<id>`（原来所有爬取在 `lark_wiki_crawls` 一个值里，每读一篇都整体重写），旧值第一次读取时拆开；`forgetCrawl` 删掉被新爬取取代的。
 - **入口**：网页原件 → 知识库（`web/src/views/KnowledgeBases.vue`，路由 `/sources/kb`，方向、建议直接生效和每晚篇数也在这里设）；接口 `/api/lark/kb*`；远程 `lark-kb-list` / `lark-kb-discover` / `lark-kb-read` / `lark-kb-map`；`omem lark kb list|discover|read|map`；配置 `lark.knowledge`（`direction`、`autoApply`、`dailyDocs`、`origin`）。拉取时 `wiki_spaces` 按 `checked_at` 和新的 `updated_at` 取新的。
+
+## 10-31：重写页面不再丢旧路径
+
+- **问题**：`move_page` 把旧路径记在页面 frontmatter 的 `aliases`，`writePage` 却用写作者给的 meta（标题、摘要、类型）整个替换，移动后再重写的页面旧路径就丢了，`page_aliases` 跟着清掉，链接和记忆里的 `[[旧路径]]` 打不开。
+- **修正**（`wiki/store.ts`）：`writePage` 合并文件里已有的 `aliases`。
+- **补回**：`restoreAliases(app, space, {dryRun})` 读知识库 `git log -p` 里该空间每个页面文件写过的 `aliases:` 条目，沿旧路径往前追，补回现在没有页面占用的；远程 `wiki-restore-aliases`（默认只列出）。`test/wiki-tree.test.ts` 覆盖重写保留和从历史补回。

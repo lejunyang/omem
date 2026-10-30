@@ -4,7 +4,7 @@ import YAML from "yaml";
 import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { canonicalSourceId } from "../sources/duplicates.ts";
-import { commitLibrary, fileAt, fileDiff, fileHistory } from "../core/git.ts";
+import { commitLibrary, fileAt, fileDiff, fileHistory, git } from "../core/git.ts";
 import { getSpace, spaceDir } from "../core/spaces.ts";
 import { HttpError, now, sha256 } from "../core/util.ts";
 import { indexText } from "../search/tokenize.ts";
@@ -154,7 +154,11 @@ export function writePage(
   const slug = checkSlug(slugInput);
   const file = pageFile(app, spaceId, slug);
   mkdirSync(dirname(file), { recursive: true });
-  const meta = { ...input.meta, updated: now().slice(0, 10) };
+  // A rewrite keeps the paths the page used to have (move_page records them): links and memories
+  // that point at an old path keep opening it. Writers only send title, summary and kind.
+  const before = existsSync(file) ? aliasesOf(parsePage(readFileSync(file, "utf8")).meta) : [];
+  const aliases = [...new Set([...before, ...aliasesOf(input.meta)])].filter((a) => a !== slug);
+  const meta = { ...input.meta, ...(aliases.length ? { aliases } : {}), updated: now().slice(0, 10) };
   writeFileSync(file, serializePage(meta, input.body));
   indexPage(app, spaceId, slug, meta, input.body.trim() + "\n", now());
   if (opts.commit !== false) commitLibrary(app.libraryDir, opts.message ?? `${opts.actor ?? "agent"}: update ${spaceId}/${slug}`);
@@ -501,6 +505,72 @@ export function movePages(app: App, spaceId: string, input: PageMove[], opts: { 
   }
   commitLibrary(app.libraryDir, opts.message ?? `${opts.actor ?? "agent"}: move ${moves.length} pages in ${spaceId}`);
   return { moved: moves, linksFixed };
+}
+
+/**
+ * Old paths that pages lost: before writePage kept `aliases`, rewriting a moved page dropped them,
+ * and links and memories pointing at the old path stopped opening it. The library's Git history
+ * still has every `aliases:` entry a page file was written with; each page gets back the ones of its
+ * own file and, transitively, of the files it used to be, except paths where a page lives now.
+ * dryRun only reports.
+ */
+export function restoreAliases(app: App, spaceId: string, opts: { dryRun?: boolean } = {}) {
+  const root = wikiDir(app, spaceId);
+  const rel = relative(app.libraryDir, root).split(sep).join("/");
+  const log = existsSync(join(app.libraryDir, ".git")) ? git(app.libraryDir, ["-c", "core.quotepath=false", "log", "-p", "--no-color", "--no-renames", "--format=", "--", rel]).stdout : "";
+  // Slug → every alias its file was ever written with.
+  const seen = new Map<string, Set<string>>();
+  let slug = "";
+  let inList = false;
+  for (const line of log.split("\n")) {
+    if (line.startsWith("+++ ")) {
+      const path = line.slice(4).replace(/^"|"$/g, "").replace(/^b\//, "");
+      slug = path.startsWith(`${rel}/`) && path.endsWith(".md") ? path.slice(rel.length + 1, -3) : "";
+      inList = false;
+      continue;
+    }
+    if (line === "+aliases:") {
+      inList = true;
+      continue;
+    }
+    const item = inList && slug ? /^\+\s+-\s+(.+)$/.exec(line) : null;
+    if (!item) {
+      inList = false;
+      continue;
+    }
+    let alias: unknown = item[1];
+    try {
+      alias = YAML.parse(item[1]);
+    } catch {}
+    if (typeof alias === "string" && aliasesOf({ title: "", aliases: [alias] }).length) (seen.get(slug) ?? seen.set(slug, new Set()).get(slug)!).add(alias);
+  }
+  const live = new Set(all<{ slug: string }>(app.db, "select slug from pages where space_id = ?", spaceId).map((r) => r.slug));
+  const restored: { page: string; aliases: string[] }[] = [];
+  for (const page of live) {
+    const file = pageFile(app, spaceId, page);
+    if (!existsSync(file)) continue;
+    const found = new Set<string>();
+    const queue = [page];
+    while (queue.length) {
+      for (const a of seen.get(queue.shift()!) ?? []) {
+        if (found.has(a) || a === page) continue;
+        found.add(a);
+        // A path another page lives at now is that page's history, not this one's.
+        if (!live.has(a)) queue.push(a);
+      }
+    }
+    const { meta, body } = parsePage(readFileSync(file, "utf8"));
+    const have = new Set(aliasesOf(meta));
+    const missing = [...found].filter((a) => !have.has(a) && !live.has(a));
+    if (!missing.length) continue;
+    restored.push({ page, aliases: missing });
+    if (opts.dryRun) continue;
+    const next = { ...meta, aliases: [...have, ...missing] };
+    writeFileSync(file, serializePage(next, body));
+    indexPage(app, spaceId, page, next, body.trim() + "\n", statSync(file).mtime.toISOString(), { fromId: `${spaceId}/${page}` });
+  }
+  if (restored.length && !opts.dryRun) commitLibrary(app.libraryDir, `omem: restore old paths of ${restored.length} pages in ${spaceId}`);
+  return { dryRun: !!opts.dryRun, pages: restored.length, aliases: restored.reduce((n, r) => n + r.aliases.length, 0), sample: restored.slice(0, 20) };
 }
 
 /** The page was checked and still holds: its recorded state of what it cited is brought up to date. Content is untouched. */

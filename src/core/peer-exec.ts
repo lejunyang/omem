@@ -349,6 +349,11 @@ export const peerCommands: Record<string, Command> = {
       return refreshInBackground(app, a);
     },
   },
+  "wiki-restore-aliases": {
+    description: "找回 Wiki 页面丢掉的旧路径：移动过的页面被重写后旧路径不再能打开，从知识库的 Git 历史里补回（现有页面占着的路径不补）；默认只列出（dryRun），dryRun: false 才写回",
+    schema: z.object({ space: z.string().min(1).max(64), dryRun: z.boolean().default(true) }),
+    run: async (app, a) => (await import("../wiki/store.ts")).restoreAliases(app, a.space, { dryRun: a.dryRun }),
+  },
   "sources-merge-duplicates": {
     description: "合并同一篇飞书文档的 /docx/ 与 /wiki/ 两份原件（同一空间）：默认只列出（dryRun），dryRun: false 才合并；docx 那份变成别名，标注、关注程度和引用移到知识库那份，旧 id 的引用照常可读",
     schema: z.object({ space: z.string().max(64).optional(), dryRun: z.boolean().default(true), limit: z.number().int().min(1).max(10_000).optional() }),
