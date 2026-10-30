@@ -252,13 +252,6 @@
 .tour .shot {
   margin: 0;
 }
-/* A tour row whose picture is a code sample (e.g. a plugin manifest) instead of a screenshot. */
-.tour-item > div[class*="language-"] {
-  margin: 0;
-  border: 1px solid var(--om-line);
-  border-radius: 10px;
-  box-shadow: var(--om-shadow);
-}
 @media (max-width: 860px) {
   .tour-item,
   .tour-item:nth-child(even) {

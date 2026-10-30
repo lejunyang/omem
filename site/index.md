@@ -160,19 +160,7 @@ features:
     <p><a href="./features/plugins">插件 →</a></p>
   </div>
 
-```yaml
-# ~/.omem/plugins/journal/plugin.yaml
-id: journal
-name: 每日复盘
-agents: [coach]
-tools: [recall, remember]
-page: { title: 每日复盘 }
-settings:
-  - key: tone
-    label: 语气
-    type: select
-    options: [温和, 直接]
-```
+  <Shot src="plugin-english" />
 
 </div>
 

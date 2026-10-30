@@ -8,17 +8,24 @@
  * serves the built web on it and captures each feature at 1440×900 (light). Nothing real is shown,
  * so the images can be published. When a page changes, run it again; the file names stay the same.
  * Uses the installed Edge or Chrome (CHROMIUM=path to override). With `--serve` it only serves the
- * demo data and prints the address, to look around by hand.
+ * demo data and prints the address, to look around by hand; `--only=name,name` captures just those.
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium, type Page } from "playwright";
 import { addMessage, createThread } from "../src/agents/threads.ts";
+import { createAsk } from "../src/agents/asks.ts";
+import { findAgentSpec } from "../src/agents/specs.ts";
+import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
+import { createSession, pluginContext } from "../src/plugins/blocks.ts";
+import { getPlugin, loadPlugins } from "../src/plugins/registry.ts";
+import { pluginStore } from "../src/plugins/store.ts";
+import { applyAttempt, type Attempt } from "../plugins/english/learner.ts";
 import { recordReview } from "../src/agents/review.ts";
 import { addRunEvent, createRun, setRunOutput } from "../src/agents/runs.ts";
 import { App } from "../src/core/app.ts";
-import { all, run } from "../src/core/db.ts";
+import { all, one, run } from "../src/core/db.ts";
 import { git } from "../src/core/git.ts";
 import { createSpace, ensurePersonalSpace } from "../src/core/spaces.ts";
 import { addItemEvent, upsertItem } from "../src/items/store.ts";
@@ -33,6 +40,8 @@ import { recordWikiNodes } from "../src/channels/lark-wiki.ts";
 import { writePage } from "../src/wiki/store.ts";
 
 const serveOnly = process.argv.includes("--serve");
+// --only=a,b: capture just these (the others keep their files).
+const only = process.argv.find((a) => a.startsWith("--only="))?.slice(7).split(",");
 const out = resolve(process.argv.slice(2).find((a) => !a.startsWith("--")) ?? "site/public/screens");
 mkdirSync(out, { recursive: true });
 const home = mkdtempSync(join(tmpdir(), "omem-screens-"));
@@ -358,6 +367,83 @@ const shareAnswer = resolveCitationsNow(app, [[
 const shareToken = /#\/share\/([\w-]{43})/.exec(shareAnswer)![1];
 app.config.webUrl = undefined;
 
+// ---- an ask: the assistant needs a decision before it goes on ---------------------------------
+const decide = createThread(app, { channel: "web", spaceId: "shop", title: "退款改造上线前的回放", userId: "owner" });
+addMessage(app, decide.id, "user", "退款改造周四上线，上线前帮我把上月的部分发货退款回放一遍。");
+addMessage(app, decide.id, "assistant", "上月部分发货的退款一共 2 134 笔，其中 37 笔用了满减券，按新的分摊方式有 3 笔会出现 0.01 元的尾差。全量回放大约要 40 分钟。");
+createAsk(app, {
+  runId: null, conversationId: decide.id, kind: "question",
+  question: "满减券那 37 笔的分摊口径小李还没确认，回放要先用哪种口径？",
+  options: [{ label: "按实付比例分摊（需求里的写法）" }, { label: "先跳过这 37 笔，等小李确认" }, { label: "两种都回放，结果对比给我" }],
+});
+
+// ---- plugins: the built-in English practice and a data-directory plugin on the default page ------
+const journalDir = join(home, "plugins", "journal");
+mkdirSync(join(journalDir, "agents"), { recursive: true });
+writeFileSync(join(journalDir, "plugin.yaml"), [
+  "id: journal", "name: 每日复盘", "description: 每天收工前回顾做了什么、卡在哪里、明天先做什么", "icon: notebook",
+  "agents: [coach]", "tools: [recall, remember]", "page: { title: 每日复盘 }",
+  "settings:", "  - { key: tone, label: 语气, type: select, options: [温和, 直接], default: 温和 }",
+].join("\n"));
+writeFileSync(join(journalDir, "agents", "coach.md"), "---\ndescription: 陪本人做每日复盘\n---\n\n每天收工前问本人今天做了什么、卡在哪里、明天先做什么，用表单收集，用图表看一周的节奏。\n");
+await loadPlugins(app);
+const pluginTurn = async (plugin: string, agent: string, spaceId: string, title: string) => {
+  const { id: conversationId } = await createSession(app, { plugin, agent, spaceId, userId: "owner", title });
+  const runId = `r_${plugin}_demo`;
+  run(app.db, "insert into runs(id,kind,space_id,status,title,input,created_at,lane) values(?,?,?,?,?,?,?,?)", runId, "ask", spaceId, "running", title, JSON.stringify({ conversationId }), new Date().toISOString(), conversationId);
+  const spec = findAgentSpec(app, agent)!;
+  const ctx = toolContextForToken(app, issueToolToken({ runId, spaceId, spaces: [spaceId], tools: new Set(spec.tools), actor: "agent", spec: spec.name, plugin: spec.plugin }))!;
+  const done = () => run(app.db, "update runs set status = 'done', finished_at = ? where id = ?", new Date().toISOString(), runId);
+  return { conversationId, runId, ctx, done };
+};
+
+// Two weeks of practice, so the side panel has levels, a curve and weak points.
+const english = pluginStore(app, "english", "owner", "english");
+const practice: [Attempt["skill"], Attempt["level"], string][] = [
+  ["vocab", "A2", "word:receipt"], ["vocab", "B1", "phrase:on-the-house"], ["grammar", "B1", "grammar:would-like"], ["listening", "B1", "phrase:medium-rare"],
+  ["translation", "B1", "word:allergic"], ["reading", "B1", "word:reservation"], ["grammar", "B2", "grammar:present-perfect"], ["vocab", "B1", "phrase:split-the-bill"],
+];
+for (let day = 13; day >= 0; day--) {
+  const count = [12, 0, 16, 20, 8, 24, 18, 0, 22, 26, 14, 30, 24, 16][13 - day];
+  for (let i = 0; i < count; i++) {
+    const [skill, level, point] = practice[(i + day) % practice.length];
+    const correct = (i * 7 + day * 3) % 10 >= (point === "phrase:medium-rare" || point === "grammar:present-perfect" ? 6 : 3);
+    const a: Attempt = { block: `demo-${day}`, item: `q${i}`, type: "choice", skill, level, points: [point], prompt: "", given: "", expected: "", score: correct ? 1 : 0.3, correct, errorTags: correct ? [] : [skill === "grammar" ? "tense" : "spelling"], feedback: "", at: new Date(Date.now() - day * 86400_000 - (count - i) * 60_000).toISOString() };
+    english.put("attempts", `demo-${day}:q${i}`, a);
+    applyAttempt(english, a);
+  }
+}
+// One set handed in and commented on, then the next one open.
+const tutor = await pluginTurn("english", "english-tutor", "english", "餐厅点餐");
+const englishEnv = getPlugin("english").env;
+addMessage(app, tutor.conversationId, "user", "来一组餐厅点餐的题，侧重听力");
+await callTool(tutor.ctx, "english_quiz", { title: "餐厅点餐 · 第 3 组", items: [
+  { type: "choice", prompt: "服务员说 “It's on the house.”，意思是：", options: ["这道菜要另付钱", "这道菜免费", "这道菜在楼上"], answer: 1, skill: "vocab", level: "B1", points: ["phrase:on-the-house"], explanation: "on the house = 店家请客" },
+  { type: "cloze", text: "Could we ___ the bill? I'll pay for the drinks.", answer: ["split"], skill: "vocab", level: "B1", points: ["phrase:split-the-bill"] },
+  { type: "dictation", audio: { text: "I'd like my steak medium rare, please." }, skill: "listening", level: "B1", points: ["phrase:medium-rare"] },
+  { type: "translate", direction: "zh-en", prompt: "我对花生过敏，这道菜里有吗？", reference: "I'm allergic to peanuts. Are there any in this dish?", skill: "translation", level: "B1", points: ["word:allergic"] },
+] });
+const handedIn = one<{ id: string; data: string }>(app.db, "select id, data from plugin_blocks where conversation_id = ? order by created_at desc limit 1", tutor.conversationId)!;
+const quizAnswers = { q1: 1, q2: "split", q3: "I like my steak medium rare please", q4: "I'm allergic to peanut. Does this dish have it?" };
+const gradedQuiz = await englishEnv.def("quiz")!.grade!({ ...pluginContext(app, englishEnv, { userId: "owner", spaceId: "english", runId: null, actor: "user", conversationId: tutor.conversationId }), blockId: handedIn.id }, JSON.parse(handedIn.data), quizAnswers);
+run(app.db, "update plugin_blocks set status = 'submitted', answers = ?, result = ?, submitted_at = ?, updated_at = ? where id = ?", JSON.stringify(quizAnswers), JSON.stringify(gradedQuiz.result ?? null), new Date().toISOString(), new Date().toISOString(), handedIn.id);
+addMessage(app, tutor.conversationId, "user", gradedQuiz.message, null, { submission: handedIn.id });
+await callTool(tutor.ctx, "english_grade", { block_id: handedIn.id, grades: [{ item_id: "q4", score: 0.8, feedback: "意思对了。peanuts 要用复数；“里面有吗”更自然的说法是 Are there any in this dish?", error_tags: ["plural"] }, { item_id: "q3", feedback: "I'd like 的 'd 很轻，听到 like 前面那一下停顿就是它" }] });
+addMessage(app, tutor.conversationId, "assistant", "这组对了 3 题。听写里 **I'd like** 又听成了 I like，这是第三次了，下一组多放两道带 'd 的句子；翻译意思都对，注意 peanuts 用复数。题库里还有 18 道餐厅的题，点“下一组”就能接着做。", tutor.runId);
+tutor.done();
+
+// A plugin with no page of its own: the agent asks with a form and shows a chart.
+const journal = await pluginTurn("journal", "journal-coach", "personal", "10-30 复盘");
+addMessage(app, journal.conversationId, "user", "今天收工了，复盘一下");
+addMessage(app, journal.conversationId, "assistant", "先填一下今天的情况，我帮你排明天。下面是这周每天的专注时长：周三只有 2 小时，比计划少一半，那天下午被退款的线上问题打断了。", journal.runId);
+await callTool(journal.ctx, "plugin_form", { title: "今天", fields: [
+  { id: "done", label: "做完了什么", type: "text", required: true },
+  { id: "first", label: "明天先做", type: "choice", options: ["退款回放", "评审小王的分支", "写周报"] },
+  { id: "energy", label: "精力", type: "scale" },
+] });
+await callTool(journal.ctx, "plugin_chart", { title: "这周每天的专注时长（小时）", kind: "bar", labels: ["周一", "周二", "周三", "周四", "周五"], series: [{ name: "计划", values: [5, 5, 4, 5, 4] }, { name: "实际", values: [3.5, 4.5, 2, 4, 3] }] });
+journal.done();
+
 // ---- capture ----------------------------------------------------------------------------------
 const server = await startServer(app, { port: 0, host: "127.0.0.1", quiet: true });
 const url = app.baseUrl;
@@ -410,6 +496,9 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "rules", path: `/rules?id=${rule.id}` },
   { name: "meeting-rule-confirmation", path: `/rules?id=${meetingRule.id}`, prepare: async (p) => { await p.getByText("入会确认", { exact: true }).scrollIntoViewIfNeeded(); } },
   { name: "agents", path: "/agents" },
+  { name: "ask-question", path: `/ask/${decide.id}` },
+  { name: "plugin-english", path: `/plugin/english?session=${tutor.conversationId}`, prepare: async (p) => { await p.waitForTimeout(1500); } },
+  { name: "plugin-default", path: `/plugin/journal?session=${journal.conversationId}`, space: "personal", prepare: async (p) => { await p.waitForTimeout(1500); } },
   { name: "share-link", path: `/share/${shareToken}` },
   { name: "share-link-mobile", path: `/share/${shareToken}/1`, width: 390 },
   // The docs home's hero: these three in dark too.
@@ -419,7 +508,7 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "review-change-mobile", path: `/runs/${r.id}`, width: 390, prepare: async (p) => { await p.getByRole("tab", { name: /变更/ }).click(); await p.waitForTimeout(400); } },
 ];
 let failed = 0;
-for (const s of shots) {
+for (const s of shots.filter((s) => !only || only.includes(s.name))) {
   const width = s.width ?? 1440;
   const page = await browser.newPage({ viewport: { width, height: width < 600 ? 844 : 900 }, colorScheme: s.dark ? "dark" : "light", deviceScaleFactor: width < 600 ? 2 : 1 });
   // Every page opens on the demo project's space.
