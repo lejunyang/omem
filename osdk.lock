@@ -30,15 +30,6 @@ checksum = "sha256:eb02f7fab96d3d67de40c5ec8566096fcb4c2026728787683ae5a97eb612b
 request = "11"
 version = "11.28.9"
 
-[platforms.windows-x64.tools.bun]
-request = "1.4.2"
-version = "1.4.2"
-
-[platforms.windows-x64.tools.bun.artifact]
-url = "https://registry.npmmirror.com/@oven/bun-windows-x64/-/bun-windows-x64-1.4.2.tgz"
-file_name = "bun-1.4.2.tgz"
-checksum = "sha512:f9b37a3ae56577ff5d893fd12d25d25bb244e82bcd13780bf57b0012350b8b59d4b1777a0cd3ba1ae03d8cd74d6f7afc3dd2459d81ebe5aca9355d4e8f745df6"
-
 [platforms.windows-x64.tools.node]
 request = "24.18.1"
 version = "24.18.1"
@@ -54,12 +45,12 @@ checksum = "sha256:ec56b84a7551893ab2324ebdfdc4ab974a63b4781162600b68a1293cc3e53
 
 [platforms.windows-x64.tools.pnpm]
 request = "11"
-version = "11.28.5"
+version = "11.28.9"
 
 [platforms.windows-x64.tools.pnpm.artifact]
-url = "https://registry.npmmirror.com/pnpm/-/pnpm-11.28.5.tgz"
-file_name = "pnpm-11.28.5.tgz"
-checksum = "sha512:484563d30b4c2ad27cb48aa94ff2b302dbcebc8ff6bf28816c2589886e146ce7f76f354f3bc1a438e6f5e9768c302aa0a6f7add8232903cd4cf81426cbc14d9e"
+url = "https://registry.npmmirror.com/pnpm/-/pnpm-11.28.9.tgz"
+file_name = "pnpm-11.28.9.tgz"
+checksum = "sha512:35421cea2720eca3f5ad722b67e8ef18f4d3cd4745ed2fcfeb0dc288d4e9437fad3870d91ee6e83f268f0f6f7e0f62723317b19617bb45ee4333172ef51159f8"
 
 [models.decision-2b]
 provider = "huggingface"
@@ -910,7 +901,7 @@ allow_build_from_source = true
 [deps.pnpm.native_lock]
 kind = "pnpm-lock"
 path = "pnpm-lock.yaml"
-sha256 = "42edf383c1be1caa6aa911a019ebb63dc466e89c2c3e8b9bdb5c93be0069017f"
+sha256 = "ed2e9d73d8cc40af5f5bc0ba805677a2bf40d84f99ea6170e99b5ce93c9f255f"
 
 [skills.lieflat-less-ai-tone]
 source = "github:larashero3-dotcom/lieflat-less-ai-tone"
