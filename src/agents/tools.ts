@@ -84,6 +84,8 @@ export type ToolContext = {
   plugin?: string;
   /** A replay arm: what it may see as of the question's time (agents/replay-view.ts). */
   view?: RunView;
+  /** An outside Agent on a paired device (peer-agent.ts): review_branch makes it the reviewer. */
+  peer?: { caller: string; session: string };
 };
 
 /**
@@ -3031,20 +3033,24 @@ def({
     fetch: z.boolean().optional().describe("先从 origin 拉取分支和基线（默认是）"),
     review_tier: z.string().optional().describe("本人点名的评审档位（id 或名字，如“完整”）；不传按改动大小自动选"),
     review_checks: z.array(z.string()).optional().describe("本人要求额外加上的评审项（档案名）"),
-    review_execution: executionSchema.optional().describe("功能评审 AI 的临时选择"),
+    review_execution: executionSchema.optional().describe("功能评审 AI 的临时选择（设备的外部 Agent 发起时不用填：评审由它自己做）"),
     read_spaces: z.array(z.string()).optional().describe("评审者还要读的空间：需求文档所在的空间、迁移需求的源仓库、相关案例所在的项目空间"),
     item_id: z.string().optional().describe("这次评审所属的事项（需求）：评审者会读到事项的材料，评审和分支记到事项上，结论写进事项时间线。大型需求先用 upsert_item 建事项、挂好材料再评审"),
   }),
   handler: async (ctx, a) => {
     await validateReviewChoice(ctx, a.review_tier, a.review_checks);
+    // From another device the caller reviews: nothing here asks this machine's models.
+    if (ctx.peer && a.review_execution) throw new HttpError(400, "设备的外部 Agent 发起的评审由它自己做，不能指定这台机器的评审 AI");
+    const peerReviewer = ctx.peer ? { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } : undefined;
     const readSpaces = (a.read_spaces ?? []).map((r) => space(ctx, r));
     const reviewExecution = validateExecution(ctx.app, a.review_execution);
     const ids = [...new Set(a.repo_spaces.map((r) => space(ctx, r)))];
     const { createBranchReview } = await import("./code.ts");
     const r = createBranchReview(ctx.app, {
       space: a.space ? space(ctx, a.space) : undefined, repos: ids, branch: a.branch, branches: a.branches, base: a.base, task: a.task, title: a.title, fetch: a.fetch,
-      reviewTier: a.review_tier, reviewChecks: a.review_checks, reviewExecution, readSpaces, itemId: a.item_id ? itemFor(ctx, a.item_id) : undefined,
+      reviewTier: a.review_tier, reviewChecks: a.review_checks, reviewExecution, readSpaces, itemId: a.item_id ? itemFor(ctx, a.item_id) : undefined, peerReviewer,
     }, ctx.runId, ctx.userId ?? OWNER);
+    if (peerReviewer) return `已开始准备评审，运行 ${r.id}：这台机器检出分支、取改动、建索引，评审项留给你。用 review_task（run_id=${r.id}）取材料和各评审项的要求，评审后用 submit_review 逐项提交。`;
     // The chain carries the result back to this conversation (and the Feishu progress card).
     const { codeChainFor } = await import("./code-chain.ts");
     codeChainFor(ctx.app, r);
@@ -3542,6 +3548,21 @@ def({
 });
 
 def({
+  name: "review_task",
+  description: "设备的外部 Agent 用：取自己用 review_branch 发起的分支评审的材料——需求、检查结果、改动统计、各评审项的要求和提交方式（part=brief，默认）；完整 diff 用 part=diff 按 offset 分页取。评审还在准备时会说明，稍后再取。",
+  schema: z.object({
+    run_id: z.string().describe("review_branch 返回的运行 id"),
+    part: z.enum(["brief", "diff"]).optional(),
+    offset: z.number().int().min(0).optional().describe("part=diff 时从第几个字开始（上一段末尾给出）"),
+  }),
+  handler: async (ctx, a) => {
+    if (!ctx.peer) throw new HttpError(400, "review_task 只给设备的外部 Agent 用；这台机器上的评审项在自己的会话里拿到材料");
+    const { peerReviewTask } = await import("./review-chain.ts");
+    return peerReviewTask(ctx.app, a.run_id, ctx.peer.caller, { part: a.part, offset: a.offset });
+  },
+});
+
+def({
   name: "submit_review",
   description: "评审项提交这一轮的结论和问题清单（只在交办编码的评审里可用）。每条问题写清严重级别、文件和行、问题、建议和依据；没有问题时 findings 传空数组。提交后再用文字写结论。",
   schema: z.object({
@@ -3567,11 +3588,14 @@ def({
       refs: z.array(z.string().max(300)).max(20).optional().describe("依据：src:<原件id>#L起-L止、mem:<id>"),
       locations: z.array(z.object({ file: z.string().max(500).describe("仓库内路径；几个仓库时写成 仓库空间id/路径"), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).max(30).optional().describe("实现它的代码位置（改动后的行号）；找不到精确行就只写文件"),
     })).max(100).optional().describe("不用填：变更点由和评审同时进行的需求拆分提交（submit_change_points）。只为兼容旧的自定义评审说明保留"),
+    run_id: z.string().optional().describe("只在设备的外部 Agent 评审时填：review_branch 返回的运行 id"),
+    check: z.string().optional().describe("只在设备的外部 Agent 评审时填：这条结论属于哪个评审项（review_task 列出的名字）"),
   }),
   handler: async (ctx, a) => {
-    const check = ctx.spec ?? ctx.role;
-    const { codeRunOf } = await import("./review-chain.ts");
-    const r = codeRunOf(ctx.app, ctx.runId);
+    const chain = await import("./review-chain.ts");
+    if (ctx.peer && (!a.run_id || !a.check)) throw new HttpError(400, "设备的外部 Agent 提交评审要带 run_id 和 check");
+    const check = ctx.peer ? a.check : (ctx.spec ?? ctx.role);
+    const r = ctx.peer ? chain.acceptPeerSubmission(ctx.app, a.run_id!, ctx.peer.caller, a.check) : chain.codeRunOf(ctx.app, ctx.runId);
     const plan = (r?.output as { reviewPlan?: import("./review.ts").ReviewPlan } | undefined)?.reviewPlan;
     if (!r || !check || !plan?.checks.includes(check)) throw new HttpError(400, "submit_review 只能在交办编码的评审项里使用");
     const { changePointSchema, findingSchema, recordReview } = await import("./review.ts");
@@ -3583,7 +3607,8 @@ def({
     const dead = deadRefs(ctx.app, [...findings.flatMap((f) => f.evidence), ...changePoints.flatMap((c) => c.refs)]);
     if (dead.length) throw new HttpError(400, `这些引用找不到对应的原件或记忆：${dead.join("、")}。id 多半抄错了，用 search / read_source 核对后改正再提交（找不到就去掉这条依据）。`);
     recordReview(ctx.app, { codeRunId: r.id, round: (r.input as { round?: number }).round ?? 1, check, tier: plan.tier, verdict: a.verdict, summary: a.summary, findings, changePoints, ai: { profile: ctx.agentProfile, model: ctx.model ?? undefined, effort: ctx.effort ?? undefined } });
-    return `已记录评审结论（${a.verdict === "approved" ? "通过" : "需要修改"}，${findings.length} 条问题${changePoints.length ? `，${changePoints.length} 个变更点` : ""}）。接着用文字写结论。`;
+    const what = `已记录${ctx.peer ? `「${check}」的` : ""}评审结论（${a.verdict === "approved" ? "通过" : "需要修改"}，${findings.length} 条问题${changePoints.length ? `，${changePoints.length} 个变更点` : ""}）。`;
+    return ctx.peer ? `${what}${chain.peerSubmitted(ctx.app, r.id)}` : `${what}接着用文字写结论。`;
   },
 });
 
@@ -3601,10 +3626,12 @@ def({
       refs: z.array(z.string().max(300)).max(20).optional(),
       locations: z.array(z.object({ file: z.string().max(500), start: z.number().int().min(1).optional(), end: z.number().int().min(1).optional() })).max(30).optional(),
     })).min(1).max(100),
+    run_id: z.string().optional().describe("只在设备的外部 Agent 评审时填：review_branch 返回的运行 id"),
   }),
   handler: async (ctx, a) => {
-    const { codeRunOf } = await import("./review-chain.ts");
-    const r = codeRunOf(ctx.app, ctx.runId);
+    const { acceptPeerSubmission, codeRunOf } = await import("./review-chain.ts");
+    if (ctx.peer && !a.run_id) throw new HttpError(400, "设备的外部 Agent 提交需求拆分要带 run_id");
+    const r = ctx.peer ? acceptPeerSubmission(ctx.app, a.run_id!, ctx.peer.caller) : codeRunOf(ctx.app, ctx.runId);
     if (!r) throw new HttpError(400, "submit_change_points 只能在交办编码或分支评审的评审里使用");
     const { changePointSchema, deadRefs, pointTreeProblem } = await import("./review.ts");
     const points = a.change_points.map((c) => changePointSchema.parse(c));

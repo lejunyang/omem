@@ -48,6 +48,9 @@ describe("an outside Agent on another device uses this instance's tools", () => 
     expect(listed.node).toBe("server");
     expect(names).toEqual(expect.arrayContaining(["search", "read_source", "remember", "write_page", "omem_help", "omem_call"]));
     for (const n of ["lark_send", "notify", "delegate_code", "submit_plan"]) expect(names).not.toContain(n);
+    // Reviewing a branch itself: review_branch from a device, and the hand-ins it needs for that.
+    expect(["review_branch", "review_task", "submit_review", "submit_change_points"].every((n) => peerToolNames().has(n))).toBe(true);
+    expect(peerToolNames().has("rule_review") || peerToolNames({ readOnly: true }).has("submit_review")).toBe(false);
     const full = peerToolNames();
     expect(full.has("upsert_item") && full.has("set_source_attention") && full.has("organize_memories") && full.has("supersede") && full.has("forget")).toBe(true);
     expect(full.has("run_agent") || full.has("wake_later") || full.has("lark_card")).toBe(false);

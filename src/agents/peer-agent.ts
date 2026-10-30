@@ -31,10 +31,16 @@ export const PEER_DENY = new Set([
   "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "refresh_item_notification", "notify",
   "ask_owner", "wait_answer", "suggest_next", "wake_later", "wake_on_message", "cancel_wake",
   "run_agent", "continue_agent_work", "ask_agent", "switch_run_ai", "generate_wiki", "digest_sources",
-  "delegate_code", "review_branch", "continue_code_run", "fix_review", "message_code_run", "set_code_review", "stop_code_run", "resplit_change_points", "retry_code_progress",
+  "delegate_code", "continue_code_run", "fix_review", "message_code_run", "set_code_review", "stop_code_run", "resplit_change_points", "retry_code_progress",
   "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_action",
   "connect_repository", "save_agent", "save_skill", "save_rule", "ignore_notification_rule",
 ]);
+
+/**
+ * Role hand-ins an outside Agent does get: review_branch from another device makes that Agent the
+ * reviewer (no model here is asked), and it reads and hands in the review through these.
+ */
+export const PEER_REVIEW_TOOLS = ["review_task", "submit_review", "submit_change_points"];
 
 /** Tools that only read (the same list `omem mcp --read-only` offers). */
 export const READ_ONLY_TOOLS = new Set(["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "list_runs", "read_run"]);
@@ -45,7 +51,7 @@ export function peerToolNames(opts: { readOnly?: boolean } = {}) {
   return new Set(
     toolList()
       .map((t) => t.name)
-      .filter((n) => builtin.has(n) && !ROLE_TOOLS.includes(n) && !PEER_DENY.has(n) && (!opts.readOnly || READ_ONLY_TOOLS.has(n))),
+      .filter((n) => builtin.has(n) && (!ROLE_TOOLS.includes(n) || PEER_REVIEW_TOOLS.includes(n)) && !PEER_DENY.has(n) && (!opts.readOnly || READ_ONLY_TOOLS.has(n))),
   );
 }
 
@@ -81,6 +87,7 @@ export function peerToolContext(app: App, scope: PeerAgentScope, runId: string |
     actor: "agent",
     userId: OWNER,
     agentProfile: `peer:${caller}`,
+    peer: { caller, session: clean(scope.session, 80, "session") },
     model: scope.model ? clean(scope.model, 80, "") || null : null,
     effort: scope.effort ? clean(scope.effort, 40, "") || null : null,
   };

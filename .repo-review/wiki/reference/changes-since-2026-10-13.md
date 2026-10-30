@@ -985,3 +985,8 @@ updated: 2026-10-30
 ## 10-31：飞书知识库页可搜索
 
 - **搜索**（`web/src/views/KnowledgeBases.vue`）：状态筛选旁加搜索框，在浏览器里按空格分词，每个词都要出现在名称、说明、浅读的目录标题（含子页面标题）、归入的空间名或建议（目标、新空间名、理由）里；状态标签的数字按搜索结果重算；当前标签没有匹配而别的有时给“在全部里看”。Esc 清空。接口不变。
+
+## 10-31：设备的外部 Agent 评审分支；按钮悬停
+
+- **外部 Agent 评审分支**：`review_branch` 不再在 `PEER_DENY` 里。经 `--peer` 调用时（`ToolContext.peer`），建的分支评审带 `peerReviewer`：编码运行检出、取 diff、建索引、定计划后以 `awaiting-peer` 结束（跳过预判、精调、负责人和计划确认），不问本机任何模型，也不占并发槽。新工具 `review_task`（只给外部 Agent，材料 + 各评审项的角色说明，diff 分页），`submit_review` / `submit_change_points` 加 `run_id`、`check`；三者在 `ROLE_TOOLS` 里不随分组授出，经 `PEER_REVIEW_TOOLS` 给外部 Agent。最后一项交齐时 `peerSubmitted` 排 `review` 运行，`reviewRound` 读已交的结论汇总（`review-chain.ts`）。网页显示“等外部 Agent 评审”。`test/branch-review.test.ts` 覆盖。
+- **按钮悬停**（`web/src/styles.css`）：通用 `.btn:hover` 改成在原底色上叠一层 `--hover`（`background-image`），实心按钮（`.primary`、`.accent`、`.danger-fill`）悬停统一变淡；`danger-fill` 从 `DialogHost.vue` 移到公共样式。原来红色确认按钮悬停会变成浅底白字。

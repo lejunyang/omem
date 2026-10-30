@@ -87,7 +87,14 @@ export type CodeInput = {
   syncResume?: boolean;
   /** A later round: move the unapplied work onto the target branch's latest commit. */
   moveToTarget?: boolean;
+  /**
+   * A branch review an outside Agent on a paired device does itself (peer-agent.ts, review_branch
+   * over `--peer`): this machine prepares the worktrees, index and plan, then waits for that Agent's
+   * submit_review / submit_change_points; none of this machine's models is asked anything.
+   */
+  peerReviewer?: PeerReviewer;
 };
+export type PeerReviewer = { caller: string; session: string; agent?: string; model?: string };
 
 /** Whether a coding run reviews existing branches (no coding round, nothing to apply). */
 export const isBranchReview = (r: { input: unknown }) => !!(r.input as CodeInput).branches;
@@ -104,7 +111,7 @@ export type BranchReviewRequest = {
   fetch?: boolean;
   /** Spaces the reviewers may read besides the repositories (already checked against the caller's access). */
   readSpaces?: string[];
-} & Pick<CodeInput, "reviewTier" | "reviewChecks" | "reviewExecution" | "itemId">;
+} & Pick<CodeInput, "reviewTier" | "reviewChecks" | "reviewExecution" | "itemId" | "peerReviewer">;
 
 /** Queue a review of existing branches: a `code` run without the coding round (runCodeTask). */
 export function createBranchReview(app: App, req: BranchReviewRequest, parentId?: string | null, userId = OWNER) {
@@ -126,6 +133,7 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
       reviewChecks: req.reviewChecks,
       readSpaces: req.readSpaces?.length ? [...new Set(req.readSpaces)] : undefined,
       itemId: req.itemId,
+      peerReviewer: req.peerReviewer,
     } satisfies CodeInput,
     parentId: parentId ?? undefined,
     userId,
@@ -218,7 +226,7 @@ export async function runCodeTask(ctx: RunContext) {
 
   // Triage before coding: review-lead guesses the tier from the task (shown with the progress, and
   // a heavier option the post-coding triage weighs). Only when a tier has a lead to do it.
-  if (!continueFrom && !input.reviewTier && app.config.review.tiers.some((t) => t.lead)) {
+  if (!continueFrom && !input.reviewTier && !input.peerReviewer && app.config.review.tiers.some((t) => t.lead)) {
     const { estimateReview } = await import("./review.ts");
     const { askModel } = await import("./oneshot.ts");
     const estimate = await estimateReview(app, input.task, (p) => askModel(app, p, { timeoutMs: 60_000, signal: ctx.signal }));
@@ -532,6 +540,9 @@ ${input.task}
     : { tier: input.reviewTier, extraChecks: input.reviewChecks, previous: previousPlan });
   if (ownerSays) {
     plan = { ...plan, confirmPlan: false, reasons: [...plan.reasons, `本人指定这一轮起的评审：${owned!.checks?.length ? `只做 ${plan.checks.join("、")}` : `「${plan.tierName}」档`}${owned!.split === false ? "，不拆需求" : ""}`] };
+  } else if (input.peerReviewer) {
+    // The outside Agent reviews and nobody here rules: no triage, no lead, no plan to confirm.
+    plan = { ...plan, lead: false, confirmPlan: false, rotateModels: false, reasons: [...plan.reasons, `由设备 ${input.peerReviewer.caller} 的外部 Agent 评审`] };
   } else if (!previousPlan) {
     // Triage after coding: the owner's words on tiers and checks, review-lead's estimate, and with a
     // lead one step lighter when the change turned out small. Weighed once, on the first round.
@@ -544,6 +555,13 @@ ${input.task}
   }
   ctx.output({ reviewPlan: plan });
   const { askPlan, reviewRound } = await import("./review-chain.ts");
+  if (input.peerReviewer) {
+    // The run ends here so it holds no slot while the other device reviews; its last submission
+    // queues the `review` run that rules (review-chain.ts, peerSubmitted).
+    ctx.event("status", { text: `评审项「${plan.checks.join("、")}」等设备 ${input.peerReviewer.caller} 的外部 Agent 提交（review_task 取材料）` });
+    ctx.output({ verdict: "awaiting-peer", reviewStage: "peer" });
+    return { verdict: "awaiting-peer" };
+  }
   if (plan.confirmPlan && !previousPlan) {
     const ask = askPlan(app, getRun(app, run.id), chain, plan);
     ctx.event("status", { text: `评审计划「${plan.tierName}」档等本人确认后开始` });

@@ -6,13 +6,13 @@ import { one } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { createAsk, registerAskHandler, type Ask } from "./asks.ts";
 import { type CodeChain, queueNextCodeRound, maxCodeRounds, saveCodeChain, setChainAwaitingUser } from "./code-chain.ts";
-import { codePatches, isBranchReview, worktreesOf } from "./code.ts";
+import { codePatches, isBranchReview, worktreesOf, type PeerReviewer } from "./code.ts";
 import type { RoundReview } from "./code-steer.ts";
 import {
   blocksAt, checkBrief, recordReview, reviewChecks, reviewFor, reviewTiers, rotatedExecution, roundFindings, stopReason,
   SEVERITY_LABEL, STOP_LABEL, type ChangePoint, type LeadResult, type ReviewPlan, type Severity, type StopReason,
 } from "./review.ts";
-import { runRole } from "./runner.ts";
+import { loadRole, runRole } from "./runner.ts";
 import { createRun, getRun, registerHandler, runUser, setRunOutput, type Run } from "./runs.ts";
 import { readAgentSpec } from "./specs.ts";
 import { replyOf } from "./types.ts";
@@ -61,7 +61,7 @@ const roundOf = (r: Run) => (r.input as { round?: number }).round ?? 1;
  */
 async function reviewContext(app: App, codeRunId: string, note?: string) {
   const run = getRun(app, codeRunId);
-  const input = run.input as { task: string; reviewExecution?: import("./execution.ts").Execution; repos?: string[]; readSpaces?: string[]; itemId?: string; fromReview?: string };
+  const input = run.input as { task: string; reviewExecution?: import("./execution.ts").Execution; repos?: string[]; readSpaces?: string[]; itemId?: string; fromReview?: string; peerReviewer?: PeerReviewer };
   const { decisionsBrief, workRuns } = await import("./review-fix.ts");
   const out = run.output as Out;
   const plan = out.reviewPlan;
@@ -84,7 +84,7 @@ async function reviewContext(app: App, codeRunId: string, note?: string) {
 
   const head = (r: { space: string }) => (multi ? `### ${r.space}\n\n` : "");
   const checkText = results.map((r) => (r.check ? `${head(r)}命令：${r.check.command}\n退出码：${r.check.code}\n\n${fence("", r.check.output.slice(-4000))}` : `${head(r)}没有配置检查命令。`)).join("\n\n");
-  const reviewTask = [
+  const brief = [
     `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${input.task}`,
     input.itemId ? materialsBrief(app, input.itemId, owner) : "",
     decisionsBrief(app, [...workRuns(app, run.id), ...(input.fromReview ? workRuns(app, input.fromReview) : [])]),
@@ -93,10 +93,11 @@ async function reviewContext(app: App, codeRunId: string, note?: string) {
     `## ${branchReview ? "要评审的分支" : "编码 Agent 的说明"}\n\n${out.coderSummary ?? ""}`,
     `## 检查结果\n\n${checkText}`,
     `## 改动统计\n\n${statText}`,
-    `## 完整 diff\n\n${truncate(diffs.join("\n\n"), 80000)}`,
   ].filter(Boolean).join("\n\n");
+  const diffText = diffs.join("\n\n");
+  const reviewTask = `${brief}\n\n## 完整 diff\n\n${truncate(diffText, 80000)}`;
 
-  return { run, input, out, plan, round, branchReview, root, worktrees, results, multi, cwd, spaces, indexed, infos, label, reviewTask };
+  return { run, input, out, plan, round, branchReview, root, worktrees, results, multi, cwd, spaces, indexed, infos, label, reviewTask, brief, diffText };
 }
 
 const SPLIT_BRIEF = [
@@ -172,6 +173,8 @@ export function currentPoints(app: App, run: Run): ChangePoint[] {
 export async function reviewRound(app: App, codeRunId: string, rc: RoundContext, opts: { note?: string } = {}): Promise<{ verdict: string; continuedRunId?: string }> {
   const { run, input, out, plan, round, branchReview, root, worktrees, results, multi, cwd, spaces, indexed, infos, label, reviewTask } = await reviewContext(app, codeRunId, opts.note);
   if (!plan) throw new HttpError(409, "这次交办还没有评审计划");
+  // An outside Agent on a paired device already submitted every check (and the split, if it made one).
+  const peer = input.peerReviewer;
   setRunOutput(app, run.id, { reviewStage: "checks" });
   rc.event("status", { text: `独立评审中：「${plan.tierName}」档，${plan.checks.map(label).join("、")}（${plan.reasons.join("；")}）` });
   // The requirement split into change points runs as a session of its own next to the checks, in
@@ -181,11 +184,17 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
     return false;
   });
   // The owner can leave the split out (“只做最简评审”): the change points stay as the last round had them.
-  const noSplit = (run.input as { roundReview?: RoundReview }).roundReview?.split === false;
+  const noSplit = !!peer || (run.input as { roundReview?: RoundReview }).roundReview?.split === false;
   const split = noSplit ? Promise.resolve(true) : splitOnce();
 
   // Each check is its own session with read-only tools; one failing does not stop the others.
   const runCheck = async (name: string) => {
+    if (peer) {
+      const row = reviewFor(app, run.id, round, name);
+      if (!row) throw new Error(`设备 ${peer.caller} 的外部 Agent 没有提交这一项`);
+      const profile = row.profile_id ?? `peer:${peer.caller}`;
+      return { name, text: row.summary, ai: { profile, model: row.model ?? undefined, effort: row.effort ?? undefined }, profileId: profile };
+    }
     const info = infos.get(name)!;
     const res = await runRole(app, {
       role: (info.builtin ? name : "reviewer") as RoleName,
@@ -216,7 +225,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
   // A review is worth a second try (a stalled backend, a dropped connection); what fails again goes
   // to the owner, who decides whether to try once more. The split gets its second try alongside.
   const retry = plan.checks.flatMap((name, i) => (outcomes[i].status === "rejected" ? [i] : []));
-  if ((retry.length || !splitOk) && !rc.signal.aborted) {
+  if ((retry.length || !splitOk) && !rc.signal.aborted && !peer) {
     const what = [...retry.map((i) => label(plan.checks[i])), ...(splitOk ? [] : ["需求拆分"])];
     rc.event("status", { text: `${what.join("、")}没有完成，${REVIEW_RETRY_DELAY_MS / 1000} 秒后自动重试一次` });
     await new Promise((ok) => { const t = setTimeout(ok, REVIEW_RETRY_DELAY_MS); rc.signal.addEventListener("abort", () => { clearTimeout(t); ok(null); }, { once: true }); });
@@ -225,7 +234,7 @@ export async function reviewRound(app: App, codeRunId: string, rc: RoundContext,
     retry.forEach((i, k) => { outcomes[i] = again[k]; });
   }
   const failed = outcomes.flatMap((o, i) => (o.status === "rejected" ? [{ name: plan.checks[i], error: (o.reason as Error).message }] : []));
-  if (failed.length && !rc.signal.aborted) {
+  if (failed.length && !rc.signal.aborted && !peer) {
     const ask = askRetry(app, run, chainOf(app, run), failed.map((f) => ({ check: label(f.name), error: f.error })), failed.length === outcomes.length);
     setRunOutput(app, run.id, { reviewAskId: ask.id });
   }
@@ -530,6 +539,87 @@ function escalate(app: App, run: Run, chain: CodeChain, lead: LeadResult, digest
     options: options.slice(0, 6),
     context: { handler: "review-escalation", codeRunId: run.id, labels: options.map((o) => o.label) },
   });
+}
+
+// ---- an outside Agent as the reviewer ------------------------------------------------------------
+
+/** The branch review a device's outside Agent reviews, checked against the caller. */
+function peerReview(app: App, codeRunId: string, caller: string) {
+  const run = getRun(app, codeRunId);
+  const peer = run.kind === "code" ? (run.input as { peerReviewer?: PeerReviewer }).peerReviewer : undefined;
+  if (!peer) throw new HttpError(400, `运行 ${codeRunId} 不是交给设备外部 Agent 的分支评审`);
+  if (peer.caller !== caller) throw new HttpError(403, `这次评审交给的是设备 ${peer.caller}，不是 ${caller}`);
+  return { run, peer };
+}
+
+const DIFF_PAGE = 40_000;
+
+/**
+ * What the outside Agent reads to review: the same materials the checks here read, each check's
+ * own guide (its role or profile), and how to hand results in. `diff` pages through the full diff.
+ */
+export async function peerReviewTask(app: App, codeRunId: string, caller: string, opts: { part?: "brief" | "diff"; offset?: number } = {}) {
+  const { run } = peerReview(app, codeRunId, caller);
+  const stage = (run.output as { reviewStage?: string }).reviewStage;
+  if (!(run.output as Out).reviewPlan) {
+    if (run.status === "queued" || run.status === "running") return `运行 ${run.id} 还在准备：检出分支、取改动、建索引。过一两分钟再取。`;
+    throw new HttpError(409, `运行 ${run.id} 没有准备好评审（${run.status}${run.error ? `：${run.error}` : ""}）`);
+  }
+  const { plan, round, indexed, infos, label, brief, diffText, results, worktrees } = await reviewContext(app, codeRunId);
+  if (opts.part === "diff") {
+    const at = Math.max(0, opts.offset ?? 0);
+    const page = diffText.slice(at, at + DIFF_PAGE);
+    const next = at + page.length < diffText.length ? `\n\n（共 ${diffText.length} 字，下一段 offset=${at + page.length}）` : "\n\n（diff 到此为止）";
+    return `${fence("diff", page)}${next}`;
+  }
+  const submitted = new Set(plan!.checks.filter((c) => reviewFor(app, run.id, round, c)));
+  const pending = plan!.checks.filter((c) => !submitted.has(c));
+  const points = currentPoints(app, run).length;
+  const guide = (name: string) => {
+    const info = infos.get(name)!;
+    const text = info.builtin ? loadRole(name, app).body : readAgentSpec(app, name).prompt;
+    return [`## 评审项 ${name}（${label(name)}）${submitted.has(name) ? "：已提交" : ""}`, info.guide ? `本人对这一项的要求：${info.guide}` : "", text, checkBrief(info, plan!)].filter(Boolean).join("\n\n");
+  };
+  const stageLine = stage === "peer" ? `还没提交：${pending.length ? pending.map(label).join("、") : "（无）"}` : `评审已经${stage === "done" ? "结束" : "在汇总"}，不再接收提交`;
+  return [
+    `# 分支评审 ${run.id}：${run.title}`,
+    [
+      `这次评审交给你（第 ${round} 轮，「${plan!.tierName}」档）。${stageLine}；需求拆分${points ? `已提交 ${points} 个变更点` : "还没提交"}。`,
+      "工作区在评审所在的机器上，不在你这台机器上：",
+      `- 改过的文件已建索引，空间 ${indexed.length ? indexed.join("、") : "（没有）"}：用 read_source / search / find_symbol 读，space 填这些 id；`,
+      `- 没改过的文件在仓库空间 ${results.map((r) => r.space).join("、")}（检出的是它平时的分支，和这次的基线可能有出入）；`,
+      "- 完整 diff 用 review_task 的 part=diff 分页取。",
+      "提交：先用 submit_change_points（带 run_id）交需求拆分（可选，交了网页“变更”视图才有内容），再每个评审项调用一次 submit_review（带 run_id 和 check）。最后一项交上去，这台机器就汇总结论、通知本人；不用再写文字结论。",
+      worktrees.length > 1 ? `涉及 ${worktrees.length} 个仓库：文件路径写成 仓库空间id/路径。` : "",
+    ].filter(Boolean).join("\n"),
+    brief,
+    `## 需求拆分（可选）\n\n${SPLIT_BRIEF.replace(/^## .*\n/, "")}`,
+    ...plan!.checks.map(guide),
+  ].join("\n\n");
+}
+
+/** Whether the run takes this outside Agent's submissions now (throws why not). */
+export function acceptPeerSubmission(app: App, codeRunId: string, caller: string, check?: string) {
+  const { run } = peerReview(app, codeRunId, caller);
+  const out = run.output as Out & { reviewStage?: string };
+  if (out.reviewStage !== "peer" || !out.reviewPlan) throw new HttpError(409, out.reviewPlan ? "这次评审已经在汇总或结束了，不再接收提交" : "评审还在准备，先用 review_task 看准备好了没有");
+  if (check && !out.reviewPlan.checks.includes(check)) throw new HttpError(400, `这次评审没有评审项 ${check}；有：${out.reviewPlan.checks.join("、")}`);
+  return run;
+}
+
+/**
+ * After each check an outside Agent submits: with every check in, queue the `review` run that
+ * rules (reviewRound reads the submissions instead of running the checks). Returns what to tell it.
+ */
+export function peerSubmitted(app: App, codeRunId: string) {
+  const run = getRun(app, codeRunId);
+  const plan = (run.output as Out).reviewPlan!;
+  const round = roundOf(run);
+  const pending = plan.checks.filter((c) => !reviewFor(app, run.id, round, c));
+  if (pending.length) return `还差：${pending.join("、")}。`;
+  setRunOutput(app, run.id, { verdict: null, reviewStage: "queued" });
+  const r = createRun(app, { kind: "review", spaceId: run.spaceId, title: `评审：${truncate(run.title, 60)}`, input: { codeRunId: run.id }, parentId: run.id });
+  return `评审项都交齐了，已开始汇总（运行 ${r.id}），结论会通知本人。`;
 }
 
 async function onPlanAnswer(app: App, ask: Ask, ctx: { codeRunId: string; tiers: string[] }) {

@@ -443,3 +443,65 @@ describe("reviewing an existing branch", () => {
     }
   }, 180000);
 });
+
+describe("a branch review an outside Agent on another device does itself", () => {
+  it("prepares the branch here, waits for the Agent's submissions without asking a model here, then rules", async () => {
+    // No backend at all: anything that asked a model here would fail.
+    app.config.agents.default = "no-such-backend";
+    app.config.review = {
+      tiers: [{ id: "full", name: "完整", guide: "", when: null, checks: ["reviewer", "review-style"], maxRounds: 2, lead: true, confirmPlan: true }],
+      rereviewAllEvery: 2,
+      checks: {},
+    };
+    const peerCtx = (caller: string): ToolContext => ({ app, runId: null, spaceId: "shop-api", spaces: null, tools: null, actor: "agent", agentProfile: `peer:${caller}`, model: "claude-test", peer: { caller, session: "评审" } });
+    const ctx = peerCtx("laptop");
+    expect((await callTool(ctx, "review_branch", { repo_spaces: ["shop-api"], branch: "feature/refund", fetch: false, review_execution: { profile: "x", reason: "y" } })).text).toMatch(/它自己做/);
+    const started = await callTool(ctx, "review_branch", { repo_spaces: ["shop-api"], branch: "feature/refund", task: "退款只按未发货的行计算", fetch: false });
+    expect(started.isError).toBeFalsy();
+    const runId = started.text.match(/运行 (r\w+)/)![1];
+    expect((await callTool(ctx, "review_task", { run_id: runId })).text).toMatch(/还在准备/);
+
+    run(app.db, "update runs set status = 'running' where id = ?", runId);
+    const out = (await __testHandlers.get("code")!({
+      app, run: getRun(app, runId), signal: new AbortController().signal,
+      event: (type, data) => addRunEvent(app, runId, type, data),
+      output: (data) => setRunOutput(app, runId, data),
+    })) as { verdict: string };
+    run(app.db, "update runs set status = 'done' where id = ?", runId);
+    expect(out.verdict).toBe("awaiting-peer");
+    const plan = getRun(app, runId).output.reviewPlan as { checks: string[]; lead: boolean; confirmPlan: boolean };
+    expect(plan).toMatchObject({ checks: ["reviewer", "review-style"], lead: false, confirmPlan: false });
+
+    // The brief: the materials, each check's own guide, how to hand in; the diff by pages.
+    const brief = (await callTool(ctx, "review_task", { run_id: runId })).text;
+    expect(brief).toContain("退款只按未发货的行计算");
+    expect(brief).toContain("规范与代码质量评审者");
+    expect(brief).toMatch(/还没提交：.*、/);
+    const diff = (await callTool(ctx, "review_task", { run_id: runId, part: "diff" })).text;
+    expect(diff).toContain("shippedOnly");
+    expect(diff).toContain("diff 到此为止");
+    // Another device, or this machine's own reviewers, cannot hand in for it.
+    expect((await callTool(peerCtx("other"), "review_task", { run_id: runId })).text).toMatch(/不是 other/);
+    expect((await callTool({ ...ctx, peer: undefined }, "review_task", { run_id: runId })).isError).toBe(true);
+    expect((await callTool(ctx, "submit_review", { verdict: "approved", summary: "x", findings: [], run_id: runId, check: "review-arch" })).text).toMatch(/没有评审项 review-arch/);
+
+    const points = await callTool(ctx, "submit_change_points", { run_id: runId, change_points: [{ id: "C1", title: "只退未发货的行", status: "done", locations: [{ file: "refund.ts", start: 1, end: 3 }] }] });
+    expect(points.isError).toBeFalsy();
+    const first = await callTool(ctx, "submit_review", { run_id: runId, check: "reviewer", verdict: "changes_requested", summary: "过滤条件反了", findings: [{ severity: "blocker", file: "lines.ts", line: 2, title: "过滤了已发货的行", suggestion: "改成 l.shipped === false 的反面" }] });
+    expect(first.text).toMatch(/还差：review-style/);
+    expect(listRuns(app, { includeQuiet: true }).filter((r) => r.kind === "review" && r.parentId === runId)).toHaveLength(0);
+    const last = await callTool(ctx, "submit_review", { run_id: runId, check: "review-style", verdict: "approved", summary: "写法和相邻代码一致", findings: [] });
+    expect(last.text).toMatch(/都交齐了/);
+    expect((await callTool(ctx, "submit_review", { run_id: runId, check: "review-style", verdict: "approved", summary: "again", findings: [] })).text).toMatch(/不再接收/);
+
+    // The queued ruling reads the submissions; the host merges them (no lead, no model).
+    const ruling = listRuns(app, { includeQuiet: true }).find((r) => r.kind === "review" && r.parentId === runId)!;
+    await __testHandlers.get("review")!({ app, run: ruling, signal: new AbortController().signal, event: (type, data) => addRunEvent(app, ruling.id, type, data), output: () => {} });
+    const done = getRun(app, runId).output as { verdict: string; reviewStage: string; reviewLead: { by: string }; changePoints: { points: unknown[] } };
+    expect(done).toMatchObject({ verdict: "changes-requested", reviewStage: "done", reviewLead: { by: "host" } });
+    expect(done.changePoints.points).toHaveLength(1);
+    const { reviewsOf } = await import("../src/agents/review.ts");
+    expect(reviewsOf(app, [runId]).map((r) => [r.check_name, r.profile_id, r.model])).toEqual(expect.arrayContaining([["reviewer", "peer:laptop", "claude-test"], ["review-style", "peer:laptop", "claude-test"]]));
+    discardCodeRun(app, runId);
+  }, 120000);
+});

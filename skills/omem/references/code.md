@@ -1,6 +1,6 @@
 # 编码交办、评审与 Git（code）
 
-交办编码（`delegate_code`）和评审已有分支（`review_branch`）不对外部客户端（`omem mcp`、没有运行令牌的 `omem tool`）开放，在 omem 的问答里说或用 `omem delegate` / `omem review-branch`。
+交办编码（`delegate_code`）和评审已有分支（`review_branch`）不对外部客户端（`omem mcp`、没有运行令牌的 `omem tool`）开放，在 omem 的问答里说或用 `omem delegate` / `omem review-branch`。例外是另一台设备上的 Agent（`omem tool --peer` / `omem mcp --peer`）：它可以 `review_branch`，评审由它自己做，见下面“设备的外部 Agent 评审分支”。
 
 ## 交办
 
@@ -39,3 +39,12 @@
 ## 评审角色专用
 
 `submit_review`、`submit_change_points`（评审项）和 `rule_review`（评审负责人）只在对应的评审运行里可用。
+
+## 设备的外部 Agent 评审分支
+
+经 `--peer` 调用时，`review_branch` 的评审项交给调用方自己（用调用方的模型），那台机器不问任何模型：
+
+1. `review_branch`（不能带 `review_execution`）：那台机器检出分支、取改动、建索引、定评审计划（不做预判和负责人汇总，不等本人确认计划），返回运行 id。
+2. `review_task(run_id)`：取需求、检查结果、改动统计、各评审项的角色说明和要求；还在准备时会说明，过一会再取。完整 diff 用 `part=diff`，按返回的 `offset` 分页。工作区不在调用方机器上：改过的文件用 `read_source` / `search` / `find_symbol` 读，space 填说明里列的索引空间。
+3. `submit_change_points(run_id, …)`：需求拆分（可选，网页“变更”视图用它）。要交就在最后一个评审项之前交。
+4. 每个评审项 `submit_review(run_id, check, …)`。最后一项交上去后，那台机器按各项的阻断级别汇总结论、通知本人；之后不再接收提交。只有发起评审的那台设备能取材料和提交。
