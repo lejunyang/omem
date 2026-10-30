@@ -1319,6 +1319,8 @@ program
   .description("设置向导：Agent、向量模型、文档解析、渠道、会话、定时任务。也可直接 setup embeddings | documents | desktop | ffmpeg")
   .option("--model <id-or-dir>", "embeddings：模型 id、本地目录，或 bge-small-zh / bge-base-zh / bge-m3（经 osdk 下载）")
   .option("--no-osdk", "不经 osdk，直接从 Hugging Face 下载")
+  .option("--concurrency <n>", "ffmpeg：同时压缩几个文件")
+  .option("--auto <mode>", "ffmpeg：新下载的附件自动压缩，lossy | lossless | off")
   .action(async (component: string | undefined, o) => {
     const app = open();
     const { saveConfig } = await import("./core/config.ts");
@@ -1368,6 +1370,19 @@ program
       // Non-interactive: install ffmpeg through osdk for compressing stored media (settings → 占用).
       if (!setup.installFfmpeg()) throw new Error("没有装好 ffmpeg");
       console.log(setup.ffmpegStateLine());
+      const media = app.config.media;
+      if (o.concurrency) {
+        const n = Number(o.concurrency);
+        if (!Number.isInteger(n) || n < 1 || n > 64) throw new Error("--concurrency 要是 1 到 64 的整数");
+        media.concurrency = n;
+      }
+      if (o.auto) {
+        if (!["lossy", "lossless", "off"].includes(o.auto)) throw new Error("--auto 只能是 lossy、lossless 或 off");
+        media.auto.enabled = o.auto !== "off";
+        if (o.auto !== "off") media.auto.mode = o.auto;
+      }
+      if (o.concurrency || o.auto) saveConfig(app.config, app.home);
+      console.log(`同时压缩 ${media.concurrency} 个；新下载的附件${media.auto.enabled ? `自动${media.auto.mode === "lossy" ? "有损" : "无损"}压缩（${media.auto.deleteOriginals ? "删除" : "保留"}原文件）` : "不自动压缩"}`);
       return;
     }
     throw new Error("用法：omem setup（交互式）| omem setup embeddings [--model …] | omem setup documents | omem setup desktop | omem setup ffmpeg");

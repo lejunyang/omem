@@ -114,6 +114,17 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     import("./channels/lark-wiki.ts")
       .then((m) => m.resumeCrawls(app))
       .catch((e) => console.warn("[omem] 继续爬取飞书知识库失败：", e.message));
+    // Compressing attachments: a job cut off by the restart carries on; media.auto picks up new files.
+    void import("./core/media.ts").then((m) => {
+      try {
+        if (m.resumeMediaJob(app)) console.log("[omem] 继续上次没做完的附件压缩");
+      } catch (e) {
+        console.warn("[omem] 继续附件压缩失败：", (e as Error).message);
+      }
+      setInterval(() => {
+        try { m.tickAutoCompress(app); } catch (e) { console.warn("[omem] 自动压缩附件失败：", (e as Error).message); }
+      }, 60_000).unref();
+    });
     if (app.config.embeddings.provider !== "none") {
       const loop = async () => {
         try {

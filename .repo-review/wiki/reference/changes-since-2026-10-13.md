@@ -964,6 +964,7 @@ updated: 2026-10-30
 - **压缩**（新增 `src/core/media.ts`）：候选按大小倒序；有损图片 WebP、视频 SVT-AV1（没有时 x264）、音频 Opus（没有时 AAC），可限长边；无损只做 PNG/BMP/TIFF/GIF → 无损 WebP、WAV/AIFF → FLAC。ffprobe 核对时长，省不到 10% 记为 kept。结果写 `file_variants`，作业状态在内存、结束后存 kv `media_compress_last`。
 - **对应关系**（新增 `src/core/stored-files.ts`、迁移 `file_variants`）：原件名仍是引用，`storedName` 在原件不在时返回压缩件；`sendStoredFile` 按实际文件给类型和下载名，飞书附件与文档图片的存在检查、`read_source` 给 Agent 的路径、`keepOriginal`（不把压缩过的原件写回）都走它；`storage-scan` 把压缩件归到原件的来源；`file_variants` 进 `pullTables`。
 - **网页**：`web/src/components/MediaCompress.vue`，放在占用页附件卡片下。
+- **并发、接着做、自动压缩**：配置 `media.concurrency`（默认 2，每次补位时读，改了即生效；ffmpeg 加 `-threads 核数÷并发`）和 `media.auto`（开关与方式、质量、长边、最小文件、是否删原件）。作业状态边做边存 kv `media_compress_last`，`finishedAt` 为空说明被中断，`boot` 里 `resumeMediaJob` 接着做，计数延续、`resumed` 加一；停止后 `POST /api/media/resume` 继续。压缩件改名进 `files/` 前先记 `pending`，`cleanPending` 撤掉中断留下的。`keepOriginal` 存下新文件时 `markStoredFileAdded`，`tickAutoCompress` 每分钟看一次，只压 `media_auto_since`（打开时记下）之后到的文件（取 mtime、ctime、birthtime 最大值，Windows 的 CopyFile 会保留源文件 mtime）。候选修正：无损记录的质量为空，之前同样设置失败的会被重复尝试；可选 `retryFailed`。向导和 `omem setup ffmpeg --concurrency/--auto` 也能设。
 
 ## 10-31：设置 → 设备，用设备的 Agent，本机信任收紧
 

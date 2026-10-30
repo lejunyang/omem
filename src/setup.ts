@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readlinkSync, symlinkSync, unlinkSync } from "node:fs";
+import { cpus } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkbox, confirm, input, number, password, select } from "@inquirer/prompts";
@@ -746,14 +747,25 @@ export function ffmpegStateLine() {
   return `已安装 ffmpeg ${st.version ?? "（版本未知）"}${st.via === "path" ? "（在 PATH 上）" : "（经 osdk）"}${toolCommand("ffprobe") ? "" : "；没有 ffprobe，压缩后不核对时长"}`;
 }
 
-async function setupFfmpegSection() {
+async function setupFfmpegSection(config: Config) {
   out(`
 附件压缩（ffmpeg）：${ffmpegStateLine()}`);
   out("把 files/ 里的图片转成 WebP、视频转成 AV1、音频转成 Opus 或 FLAC，可选无损或有损。原来的引用不变，打开时自动换成压缩后的文件。");
   out("装好后在网页的 设置 → 占用 里选范围和方式，开始压缩。");
-  if (toolStatus("ffmpeg").installed) return false;
-  if (!(await confirm({ message: "现在安装 ffmpeg？", default: true }))) return false;
-  if (installFfmpeg()) out(`  ✓ ${ffmpegStateLine()}`);
+  if (!toolStatus("ffmpeg").installed) {
+    if (!(await confirm({ message: "现在安装 ffmpeg？", default: true }))) return false;
+    if (!installFfmpeg()) return false;
+    out(`  ✓ ${ffmpegStateLine()}`);
+  }
+  const cores = cpus().length;
+  config.media.concurrency = (await number({ message: `同时压缩几个文件（本机 ${cores} 核，每个 ffmpeg 分到核数 ÷ 这个数的线程）`, default: config.media.concurrency, min: 1, max: 64 })) ?? config.media.concurrency;
+  const a = config.media.auto;
+  a.enabled = await confirm({ message: "新下载的图片、视频、音频自动压缩？（只管打开之后新存下的，已有的在网页上压）", default: a.enabled });
+  if (!a.enabled) return false;
+  a.mode = await select({ message: "自动压缩的方式", default: a.mode, choices: [{ value: "lossy", name: "有损：图片 WebP、视频 AV1、音频 Opus，省得多" }, { value: "lossless", name: "无损：只压 PNG/BMP/TIFF/GIF 和 WAV，内容不变" }] });
+  if (a.mode === "lossy") a.quality = await select({ message: "质量", default: a.quality, choices: [{ value: "high", name: "高" }, { value: "medium", name: "均衡" }, { value: "low", name: "省空间" }] });
+  a.deleteOriginals = await confirm({ message: "压缩后删除原文件？（否则两份都留着，之后在网页上删）", default: a.deleteOriginals });
+  out(`  ✓ 自动压缩已打开：${a.mode === "lossy" ? "有损" : "无损"}，${a.deleteOriginals ? "删除" : "保留"}原文件，跳过小于 ${Math.round(a.minBytes / 1024)} KB 的。其余设置在网页的 设置 → 占用。`);
   return false;
 }
 
@@ -787,7 +799,7 @@ export async function setupInteractive(app: App) {
       if (s === "channels") await setupChannelsSection(app);
       if (s === "guard") await setupGuardSection(config);
       if (s === "desktop") await setupDesktopSection();
-      if (s === "ffmpeg") await setupFfmpegSection();
+      if (s === "ffmpeg") await setupFfmpegSection(config);
       if (s === "sessions") await setupSessionsSection(config);
       if (s === "schedules") await setupSchedulesSection(app);
     } catch (e) {

@@ -650,6 +650,26 @@ export const configSchema = z.object({
       infer: z.boolean().default(true),
     })
     .default({ expiry: true, days: { todo: 14, decision: 7, watch: 7, waiting: 14, reminder: 1 }, infer: true }),
+  /**
+   * Compressing stored media (src/core/media.ts): how many ffmpeg run at once, and whether media
+   * downloaded from now on is compressed by itself (with these settings) while ffmpeg is there.
+   */
+  media: z
+    .object({
+      concurrency: z.number().int().min(1).max(64).default(2),
+      auto: z
+        .object({
+          enabled: z.boolean().default(false),
+          types: z.array(z.enum(["image", "video", "audio"])).min(1).default(["image", "video", "audio"]),
+          mode: z.enum(["lossless", "lossy"]).default("lossy"),
+          quality: z.enum(["high", "medium", "low"]).default("medium"),
+          maxSide: z.number().int().min(0).max(16384).default(0),
+          minBytes: z.number().int().min(0).default(100 * 1024),
+          deleteOriginals: z.boolean().default(true),
+        })
+        .default({ enabled: false, types: ["image", "video", "audio"], mode: "lossy", quality: "medium", maxSide: 0, minBytes: 100 * 1024, deleteOriginals: true }),
+    })
+    .default({ concurrency: 2, auto: { enabled: false, types: ["image", "video", "audio"], mode: "lossy", quality: "medium", maxSide: 0, minBytes: 100 * 1024, deleteOriginals: true } }),
   /** OneBot v11 forward WebSocket: QQ (NapCat / LLOneBot / Lagrange) and compatible WeChat bridges. */
   onebot: z
     .object({

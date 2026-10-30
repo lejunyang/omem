@@ -12,6 +12,7 @@ omem setup                          # 设置向导
 omem setup embeddings --model bge-small-zh   # 只开启向量检索
 omem setup desktop                  # 安装或更新桌面与浏览器控制（aad），并做环境检查
 omem setup ffmpeg                   # 经 osdk 安装 ffmpeg，用来压缩附件
+omem setup ffmpeg --concurrency 4 --auto lossy   # 同时压 4 个；新下载的附件自动压缩（off 关掉）
 ```
 
 ## 材料与检索

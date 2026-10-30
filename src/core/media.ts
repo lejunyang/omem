@@ -1,11 +1,12 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
-import { setPriority } from "node:os";
+import { cpus, setPriority } from "node:os";
 import { extname, join } from "node:path";
 import type { App } from "./app.ts";
 import { all, one, run } from "./db.ts";
 import { mediaType, type MediaType } from "./storage-scan.ts";
+import { markStoredFileAdded, takeStoredFileAdded } from "./stored-files.ts";
 import { forgetTool, installArgs, installSpec, toolCommand, toolStatus } from "./tools.ts";
 
 /**
@@ -15,8 +16,16 @@ import { forgetTool, installArgs, installSpec, toolCommand, toolStatus } from ".
  * when it saves at least 10%; otherwise the original is recorded as kept and not tried again
  * with the same settings.
  *
- * One job at a time, one ffmpeg at a time at low priority, in the server process (the work is in
- * ffmpeg). Settings → 占用 drives it: GET/POST /api/media….
+ * One job at a time in the server process, running `media.concurrency` ffmpeg at once at low
+ * priority (read as it goes: a change applies to the running job). Progress is saved as it goes;
+ * a job cut off by a restart or crash carries on when the service starts again (resumeMediaJob),
+ * and one stopped by hand continues from the page. Finished files are never redone: candidates()
+ * skips what file_variants already has. A copy is renamed into files/ under a 'pending' row, so a
+ * crash in between leaves nothing unaccounted for (cleanPending).
+ *
+ * `media.auto`: while ffmpeg is there, media stored after it was turned on is compressed by itself
+ * (tickAutoCompress, after keepOriginal stores something new). Settings → 占用 drives all of it:
+ * GET/POST /api/media….
  */
 export type MediaKind = Extract<MediaType, "image" | "video" | "audio">;
 export type CompressOptions = {
@@ -29,6 +38,8 @@ export type CompressOptions = {
   deleteOriginals: boolean;
   /** Stop after this many files (a trial run); 0 for all. */
   limit: number;
+  /** Try again files that failed with the same settings (normally skipped). */
+  retryFailed?: boolean;
 };
 type Result = { name: string; type: MediaKind; status: "done" | "kept" | "failed"; from: number; to?: number; file?: string; error?: string };
 export type MediaJob = {
@@ -44,11 +55,16 @@ export type MediaJob = {
   failed: number;
   processedBytes: number;
   savedBytes: number;
-  current: { name: string; type: MediaKind; bytes: number; progress: number } | null;
+  running: { name: string; type: MediaKind; bytes: number; progress: number }[];
   recent: Result[];
+  /** Started by media.auto for newly stored files. */
+  auto?: boolean;
+  /** Times it carried on after a restart or a stop. */
+  resumed?: number;
 };
 
 const LAST = "media_compress_last";
+const AUTO_SINCE = "media_auto_since";
 const SAVE_RATIO = 0.9;
 /** What lossless mode can do anything for: re-encoding already-compressed formats losslessly only grows them. */
 const LOSSLESS: Record<MediaKind, RegExp> = { image: /^\.(png|bmp|tiff?|gif)$/, video: /^$/, audio: /^\.(wav|aiff?)$/ };
@@ -133,7 +149,7 @@ function eligible(name: string, type: MediaKind, mode: CompressOptions["mode"]) 
 }
 
 /** Stored media files that compressing with these settings would try, largest first. */
-export function candidates(app: App, o: Pick<CompressOptions, "types" | "mode" | "quality" | "minBytes">): Candidate[] {
+export function candidates(app: App, o: Pick<CompressOptions, "types" | "mode" | "quality" | "minBytes" | "retryFailed">, since = 0): Candidate[] {
   const variants = all<Variant>(app.db, "select original, status, file, mode, quality from file_variants");
   const outputs = new Set(variants.filter((v) => v.file && v.file !== v.original).map((v) => v.file));
   const tried = new Map(variants.map((v) => [v.original, v]));
@@ -144,9 +160,11 @@ export function candidates(app: App, o: Pick<CompressOptions, "types" | "mode" |
     const type = mediaType(name);
     if (!o.types.includes(type as MediaKind) || outputs.has(name) || !eligible(name, type as MediaKind, o.mode)) continue;
     const v = tried.get(name);
-    if (v && (v.status === "done" || (v.mode === o.mode && v.quality === o.quality))) continue;
+    if (v && (v.status === "done" || v.status === "pending" || (v.mode === o.mode && v.quality === (o.mode === "lossy" ? o.quality : "") && !(o.retryFailed && v.status === "failed")))) continue;
     const st = statSync(join(app.filesDir, name), { throwIfNoEntry: false });
     if (!st?.isFile() || st.size < o.minBytes) continue;
+    // A copy may keep the source's mtime (CopyFile on Windows): it arrived at the latest of the three.
+    if (since && Math.max(st.mtimeMs, st.ctimeMs, st.birthtimeMs) < since) continue;
     out.push({ name, type: type as MediaKind, bytes: st.size });
   }
   return out.sort((a, b) => b.bytes - a.bytes);
@@ -161,8 +179,9 @@ export function compressedSummary(app: App) {
     bytes += r.bytes ?? 0;
     if (existsSync(join(app.filesDir, r.original))) { kept++; keptBytes += r.original_bytes; }
   }
-  const skipped = one<{ n: number }>(app.db, "select count(*) n from file_variants where status != 'done'")?.n ?? 0;
-  return { files: rows.length, originalBytes, bytes, originalsOnDisk: { files: kept, bytes: keptBytes }, skipped };
+  const n = (status: string) => one<{ n: number }>(app.db, "select count(*) n from file_variants where status = ?", status)?.n ?? 0;
+  const failed = n("failed");
+  return { files: rows.length, originalBytes, bytes, originalsOnDisk: { files: kept, bytes: keptBytes }, skipped: failed + n("kept"), failed };
 }
 
 /** Per type, what the default lossy and lossless settings would try. */
@@ -211,14 +230,14 @@ export function encodePlan(name: string, type: MediaKind, o: CompressOptions, en
 }
 
 let job: MediaJob | null = null;
-let current: ChildProcess | null = null;
+const children = new Set<ChildProcess>();
 let stopping = false;
 
 /** Run a tool and collect its output; `onLine` sees stdout lines as they come (ffmpeg -progress). */
 function runTool(cmd: string[], args: string[], onLine?: (line: string) => void): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((ok) => {
     const p = spawn(cmd[0], [...cmd.slice(1), ...args], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    current = p;
+    children.add(p);
     if (p.pid) try { setPriority(p.pid, 15); } catch { /* not permitted here */ }
     let stdout = "", stderr = "", buf = "";
     p.stdout!.on("data", (d: Buffer) => {
@@ -232,7 +251,7 @@ function runTool(cmd: string[], args: string[], onLine?: (line: string) => void)
     });
     p.stderr!.on("data", (d: Buffer) => { stderr = (stderr + d.toString()).slice(-4000); });
     p.on("error", (e) => { stderr += e.message; });
-    p.on("close", (code) => { current = null; ok({ code, stdout, stderr }); });
+    p.on("close", (code) => { children.delete(p); ok({ code, stdout, stderr }); });
   });
 }
 
@@ -254,8 +273,8 @@ function hashFile(path: string): Promise<string> {
 const lastError = (stderr: string) => stderr.trim().split("\n").filter((l) => !/already installed/.test(l)).pop()?.slice(0, 300) || "ffmpeg 失败";
 
 /** Compress one stored file; records the outcome in file_variants. */
-async function compressOne(app: App, c: Candidate, o: CompressOptions, enc: string[], tmpDir: string): Promise<Result> {
-  const record = (r: Omit<Result, "name" | "type" | "from">, codec = "") => {
+async function compressOne(app: App, c: Candidate, o: CompressOptions, enc: string[], tmpDir: string, slot: MediaJob["running"][number]): Promise<Result> {
+  const record = <R extends Omit<Result, "name" | "type" | "from" | "status"> & { status: Result["status"] | "pending" }>(r: R, codec = "") => {
     run(app.db, `insert or replace into file_variants(original, status, file, mode, quality, codec, original_bytes, bytes, error, created_at) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       c.name, r.status, r.file ?? null, o.mode, o.mode === "lossy" ? o.quality : "", codec, c.bytes, r.to ?? null, r.error ?? null, new Date().toISOString());
     return { name: c.name, type: c.type, from: c.bytes, ...r };
@@ -268,9 +287,11 @@ async function compressOne(app: App, c: Candidate, o: CompressOptions, enc: stri
   const tmp = join(tmpDir, `${c.name}${plan.ext}`);
   try {
     const duration = c.type === "image" ? null : await probeDuration(input);
-    const r = await runTool(ffmpeg, ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", input, ...plan.args, "-progress", "pipe:1", "-nostats", tmp], (line) => {
+    // Several run at once: each gets its share of the cores rather than all of them.
+    const threads = String(Math.max(1, Math.floor(cpus().length / concurrency(app))));
+    const r = await runTool(ffmpeg, ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", input, ...plan.args, "-threads", threads, "-progress", "pipe:1", "-nostats", tmp], (line) => {
       const us = /^out_time_us=(\d+)/.exec(line)?.[1];
-      if (us && duration && job?.current) job.current.progress = Math.min(1, Number(us) / 1e6 / duration);
+      if (us && duration) slot.progress = Math.min(1, Number(us) / 1e6 / duration);
     });
     if (stopping) return { name: c.name, type: c.type, from: c.bytes, status: "failed", error: "已停止" };
     if (r.code !== 0 || !existsSync(tmp)) return record({ status: "failed", error: lastError(r.stderr) }, plan.codec);
@@ -284,8 +305,12 @@ async function compressOne(app: App, c: Candidate, o: CompressOptions, enc: stri
     if (size > c.bytes * SAVE_RATIO) return record({ status: "kept", to: size, error: "压缩后没有小 10% 以上，保留原文件" }, plan.codec);
     const file = `${(await hashFile(tmp)).slice(0, 16)}${plan.ext}`;
     const target = join(app.filesDir, file);
+    // 'pending' first: a crash between the rename and 'done' leaves a row that cleanPending undoes.
     if (existsSync(target)) rmSync(tmp, { force: true });
-    else renameSync(tmp, target);
+    else {
+      record({ status: "pending", file, to: size }, plan.codec);
+      renameSync(tmp, target);
+    }
     const result = record({ status: "done", file, to: size }, plan.codec);
     // A file that cannot be removed right now (open elsewhere) stays; "删除这些原件" gets it later.
     if (o.deleteOriginals) try { unlinkSync(input); } catch { /* kept */ }
@@ -295,17 +320,32 @@ async function compressOne(app: App, c: Candidate, o: CompressOptions, enc: stri
   }
 }
 
+const concurrency = (app: App) => Math.max(1, Math.min(app.config.media?.concurrency ?? 2, cpus().length * 2));
+
+/** Copies renamed into files/ by a run that did not get to record them as done. */
+function cleanPending(app: App) {
+  for (const r of all<Variant>(app.db, "select original, file from file_variants where status = 'pending'")) {
+    if (r.file) rmSync(join(app.filesDir, r.file), { force: true });
+    run(app.db, "delete from file_variants where original = ?", r.original);
+  }
+}
+
+const save = (app: App, state: MediaJob) => run(app.db, "insert or replace into kv(key, value) values(?, ?)", LAST, JSON.stringify(state));
+const autoSince = (app: App) => Number(one<{ value: string }>(app.db, "select value from kv where key = ?", AUTO_SINCE)?.value ?? 0);
+
 /** The running job, or the last one (kept in kv across restarts). */
 export function mediaJobState(app: App): MediaJob | null {
   if (job) return job;
   const raw = one<{ value: string }>(app.db, "select value from kv where key = ?", LAST)?.value;
-  return raw ? (JSON.parse(raw) as MediaJob) : null;
+  if (!raw) return null;
+  // Saved by a process that is gone (or before jobs ran several at once): nothing is running.
+  return { ...(JSON.parse(raw) as MediaJob), running: [] };
 }
 
 export function stopMediaJob() {
   if (!job || job.finishedAt) return false;
   stopping = true;
-  current?.kill();
+  for (const p of children) p.kill();
   return true;
 }
 
@@ -313,45 +353,114 @@ export function stopMediaJob() {
 export function startMediaJob(app: App, o: CompressOptions) {
   if (job && !job.finishedAt) throw new Error("已有压缩在进行");
   if (!toolCommand("ffmpeg")) throw new Error("还没有安装 ffmpeg");
-  const enc = ffmpegEncoders();
+  cleanPending(app);
   let list = candidates(app, o);
   if (o.limit > 0) list = list.slice(0, o.limit);
+  return runJob(app, o, list);
+}
+
+/**
+ * Carry on with the last job: on startup when it was cut off (saved without finishedAt), from
+ * the page after it was stopped (`stopped`). Files it finished are skipped by candidates(); a
+ * trial run does only what is left of its limit.
+ */
+export function resumeMediaJob(app: App, opts: { stopped?: boolean } = {}) {
+  if (job && !job.finishedAt) return null;
+  const last = mediaJobState(app);
+  if (!last || (last.finishedAt && !(opts.stopped && last.stopped))) return null;
+  if (!toolCommand("ffmpeg")) {
+    if (!last.finishedAt) save(app, { ...last, finishedAt: new Date().toISOString(), error: "服务重启后找不到 ffmpeg，没有继续" });
+    return null;
+  }
+  cleanPending(app);
+  const handled = last.done + last.kept + last.failed;
+  let list = candidates(app, last.options, last.auto ? autoSince(app) : 0);
+  if (last.options.limit > 0) list = list.slice(0, Math.max(0, last.options.limit - handled));
+  return runJob(app, last.options, list, last);
+}
+
+function runJob(app: App, o: CompressOptions, list: Candidate[], prev?: MediaJob, auto = false): MediaJob {
+  const enc = ffmpegEncoders();
   stopping = false;
-  const state: MediaJob = {
-    options: o, startedAt: new Date().toISOString(), finishedAt: null, stopped: false, error: null,
-    total: list.length, totalBytes: list.reduce((s, c) => s + c.bytes, 0),
-    done: 0, kept: 0, failed: 0, processedBytes: 0, savedBytes: 0, current: null, recent: [],
-  };
-  job = state;
-  const tmpDir = join(app.filesDir, ".compressing");
-  void (async () => {
-    try {
-      rmSync(tmpDir, { recursive: true, force: true });
-      mkdirSync(tmpDir, { recursive: true });
-      for (const c of list) {
-        if (stopping) break;
-        // Something else (a pull, a second device) may have removed or compressed it meanwhile.
-        if (!existsSync(join(app.filesDir, c.name))) continue;
-        state.current = { ...c, progress: 0 };
-        const r = await compressOne(app, c, o, enc, tmpDir);
-        if (stopping) break;
-        state[r.status === "done" ? "done" : r.status === "kept" ? "kept" : "failed"]++;
-        state.processedBytes += c.bytes;
-        if (r.status === "done") state.savedBytes += c.bytes - (r.to ?? 0);
-        state.recent = [r, ...state.recent].slice(0, 30);
+  const state: MediaJob = prev
+    ? {
+        ...prev, finishedAt: null, stopped: false, error: null, running: [], resumed: (prev.resumed ?? 0) + 1,
+        total: prev.done + prev.kept + prev.failed + list.length, totalBytes: prev.processedBytes + list.reduce((s, c) => s + c.bytes, 0),
       }
-    } catch (e) {
-      state.error = (e as Error).message;
+    : {
+        options: o, startedAt: new Date().toISOString(), finishedAt: null, stopped: false, error: null,
+        total: list.length, totalBytes: list.reduce((s, c) => s + c.bytes, 0),
+        done: 0, kept: 0, failed: 0, processedBytes: 0, savedBytes: 0, running: [], recent: [], auto,
+      };
+  job = state;
+  save(app, state);
+  const tmpDir = join(app.filesDir, ".compressing");
+  rmSync(tmpDir, { recursive: true, force: true });
+  mkdirSync(tmpDir, { recursive: true });
+  let next = 0;
+  const finish = () => {
+    rmSync(tmpDir, { recursive: true, force: true });
+    state.stopped = stopping;
+    state.finishedAt = new Date().toISOString();
+    save(app, state);
+    job = null;
+    // What was stored meanwhile is looked at on the next auto tick.
+    markStoredFileAdded();
+  };
+  const work = async (c: Candidate) => {
+    const slot = { ...c, progress: 0 };
+    state.running.push(slot);
+    try {
+      const r = await compressOne(app, c, o, enc, tmpDir, slot);
+      if (stopping) return;
+      state[r.status === "done" ? "done" : r.status === "kept" ? "kept" : "failed"]++;
+      state.processedBytes += c.bytes;
+      if (r.status === "done") state.savedBytes += c.bytes - (r.to ?? 0);
+      state.recent = [r, ...state.recent].slice(0, 30);
     } finally {
-      rmSync(tmpDir, { recursive: true, force: true });
-      state.current = null;
-      state.stopped = stopping;
-      state.finishedAt = new Date().toISOString();
-      run(app.db, "insert or replace into kv(key, value) values(?, ?)", LAST, JSON.stringify(state));
-      job = null;
+      state.running = state.running.filter((s) => s !== slot);
     }
-  })();
+  };
+  // Up to `media.concurrency` at once, read on every refill so a change applies to this job.
+  const fill = () => {
+    if (state.finishedAt) return;
+    while (!stopping && !state.error && next < list.length && state.running.length < concurrency(app)) {
+      const c = list[next++];
+      // Something else (a pull, a second device) may have removed or compressed it meanwhile.
+      if (!existsSync(join(app.filesDir, c.name))) continue;
+      void work(c)
+        .catch((e) => { state.error = (e as Error).message; })
+        .finally(() => {
+          save(app, state);
+          fill();
+        });
+    }
+    if (!state.running.length) finish();
+  };
+  fill();
   return state;
+}
+
+/**
+ * media.auto, every minute: compress what keepOriginal stored since auto was turned on (files
+ * already there are left to a job started by hand). Waits while ffmpeg is missing or a job runs.
+ */
+export function tickAutoCompress(app: App) {
+  const a = app.config.media?.auto;
+  if (!a?.enabled) {
+    run(app.db, "delete from kv where key = ?", AUTO_SINCE);
+    return null;
+  }
+  let since = autoSince(app);
+  if (!since) {
+    since = Date.now();
+    run(app.db, "insert or replace into kv(key, value) values(?, ?)", AUTO_SINCE, String(since));
+  }
+  if ((job && !job.finishedAt) || !ffmpegStatus().ffmpeg.installed || !takeStoredFileAdded()) return null;
+  const o: CompressOptions = { types: a.types, mode: a.mode, quality: a.quality, maxSide: a.maxSide, minBytes: a.minBytes, deleteOriginals: a.deleteOriginals, limit: 0 };
+  cleanPending(app);
+  const list = candidates(app, o, since);
+  return list.length ? runJob(app, o, list, undefined, true) : null;
 }
 
 /** Delete originals that already have a compressed copy (compressed with "keep originals"). */

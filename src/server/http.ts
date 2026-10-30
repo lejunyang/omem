@@ -1762,7 +1762,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   // Compressing stored media with ffmpeg (settings → 占用): install and detect ffmpeg, start or stop a job.
   const mediaState = async () => {
     const m = await import("../core/media.ts");
-    return { ffmpeg: m.ffmpegStatus(), overview: m.mediaOverview(app), compressed: m.compressedSummary(app), job: m.mediaJobState(app) };
+    return { ffmpeg: m.ffmpegStatus(), overview: m.mediaOverview(app), compressed: m.compressedSummary(app), job: m.mediaJobState(app), settings: app.config.media, cpus: (await import("node:os")).cpus().length };
   };
   const mediaOwner = (req: FastifyRequest) => {
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人能压缩附件");
@@ -1785,6 +1785,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       minBytes: z.number().int().min(0).default(0),
       deleteOriginals: z.boolean().default(true),
       limit: z.number().int().min(0).default(0),
+      retryFailed: z.boolean().default(false),
     }), req.body);
     try {
       (await import("../core/media.ts")).startMediaJob(app, o);
@@ -1796,6 +1797,11 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/media/stop", async (req) => {
     mediaOwner(req);
     (await import("../core/media.ts")).stopMediaJob();
+    return mediaState();
+  });
+  server.post("/api/media/resume", async (req) => {
+    mediaOwner(req);
+    if (!(await import("../core/media.ts")).resumeMediaJob(app, { stopped: true })) throw new HttpError(409, "没有可以继续的压缩，或者还没有 ffmpeg");
     return mediaState();
   });
   server.post("/api/media/delete-originals", async (req) => {

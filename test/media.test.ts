@@ -1,12 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { all, run as sql } from "../src/core/db.ts";
-import { candidates, compressedSummary, deleteCompressedOriginals, encodePlan, mediaJobState, startMediaJob, type CompressOptions } from "../src/core/media.ts";
-import { hasStoredFile, storedName } from "../src/core/stored-files.ts";
+import { candidates, compressedSummary, deleteCompressedOriginals, encodePlan, mediaJobState, resumeMediaJob, startMediaJob, tickAutoCompress, type CompressOptions, type MediaJob } from "../src/core/media.ts";
+import { hasStoredFile, markStoredFileAdded, storedName } from "../src/core/stored-files.ts";
 import { scanStorage } from "../src/core/storage-scan.ts";
-import { toolCommand } from "../src/core/tools.ts";
+import { setToolResolverForTests, toolCommand } from "../src/core/tools.ts";
 import { keepOriginal } from "../src/sources/import.ts";
 import { testApp } from "./helpers.ts";
 
@@ -46,6 +46,39 @@ describe("media compression", () => {
     sql(app.db, "insert into file_variants(original, status, mode, quality, original_bytes, created_at) values('bbbbbbbbbbbbbbb2.jpg', 'kept', 'lossy', 'medium', 2000, '')");
     expect(names(opts())).toEqual(["bbbbbbbbbbbbbbb1.png"]);
     expect(names(opts({ quality: "low" }))).toEqual(["bbbbbbbbbbbbbbb1.png", "bbbbbbbbbbbbbbb2.jpg"]);
+  });
+
+  it("skips pending rows and failures unless asked, and only takes files newer than `since`", () => {
+    writeFileSync(join(app.filesDir, "fffffffffffffff1.png"), Buffer.alloc(3000));
+    writeFileSync(join(app.filesDir, "fffffffffffffff2.png"), Buffer.alloc(3000));
+    writeFileSync(join(app.filesDir, "fffffffffffffff3.png"), Buffer.alloc(3000));
+    const names = (o: CompressOptions, since = 0) => candidates(app, o, since).map((c) => c.name).filter((n) => n.startsWith("ffff"));
+    sql(app.db, "insert into file_variants(original, status, mode, quality, original_bytes, created_at) values('fffffffffffffff1.png', 'pending', 'lossy', 'medium', 3000, '')");
+    // Lossless rows are recorded without a quality: a failure there is not retried either.
+    sql(app.db, "insert into file_variants(original, status, mode, quality, original_bytes, created_at) values('fffffffffffffff2.png', 'failed', 'lossless', '', 3000, '')");
+    expect(names(opts({ mode: "lossless", quality: "high" }))).toEqual(["fffffffffffffff3.png"]);
+    expect(names(opts({ mode: "lossless", retryFailed: true }))).toEqual(["fffffffffffffff2.png", "fffffffffffffff3.png"]);
+    const old = new Date(Date.now() - 3_600_000);
+    utimesSync(join(app.filesDir, "fffffffffffffff3.png"), old, old);
+    // ctime moves with utimes, so `since` in the future leaves everything out and in the past keeps it.
+    expect(names(opts({ mode: "lossless" }), Date.now() + 60_000)).toEqual([]);
+    expect(names(opts({ mode: "lossless" }), Date.now() - 60_000)).toEqual(["fffffffffffffff3.png"]);
+    sql(app.db, "delete from file_variants where original like 'ffff%'");
+  });
+
+  it("marks a cut-off job as ended when ffmpeg is gone after the restart", () => {
+    const cut: Partial<MediaJob> = { options: opts(), startedAt: "", finishedAt: null, stopped: false, error: null, total: 3, totalBytes: 3, done: 1, kept: 0, failed: 0, processedBytes: 1, savedBytes: 0, running: [{ name: "x.png", type: "image", bytes: 1, progress: 0.5 }], recent: [] };
+    sql(app.db, "insert or replace into kv(key, value) values('media_compress_last', ?)", JSON.stringify(cut));
+    expect(mediaJobState(app)?.running).toEqual([]);
+    setToolResolverForTests(() => null);
+    try {
+      expect(resumeMediaJob(app)).toBeNull();
+    } finally {
+      setToolResolverForTests(null);
+    }
+    expect(mediaJobState(app)).toMatchObject({ error: expect.stringMatching(/找不到 ffmpeg/), finishedAt: expect.any(String) });
+    // Finished (not stopped) jobs are not resumed from the page either.
+    expect(resumeMediaJob(app, { stopped: true })).toBeNull();
   });
 
   it("opens the compressed copy under the original name", () => {
@@ -105,5 +138,34 @@ describe("media compression", () => {
     const video = all<{ status: string; file: string | null; error: string | null }>(app.db, "select status, file, error from file_variants where original = 'eeeeeeeeeeeeeee3.mp4'")[0];
     expect(video.status, video.error ?? "").toBe("done");
     expect(video.file).toMatch(/\.mp4$/);
+
+    // Cut off by a crash: a copy renamed in but not yet recorded as done is undone, and the rest is done
+    // with the counts carried on.
+    app.config.media.concurrency = 2;
+    make("eeeeeeeeeeeeeee4.bmp", ["-f", "lavfi", "-i", "testsrc=size=320x240", "-frames:v", "1"]);
+    make("eeeeeeeeeeeeeee5.bmp", ["-f", "lavfi", "-i", "testsrc2=size=320x240", "-frames:v", "1"]);
+    writeFileSync(join(app.filesDir, "eeeeeeeeeeeeeee6.webp"), Buffer.from("half done"));
+    sql(app.db, "insert into file_variants(original, status, file, mode, quality, original_bytes, created_at) values('eeeeeeeeeeeeeee4.bmp', 'pending', 'eeeeeeeeeeeeeee6.webp', 'lossless', '', 1, '')");
+    const cut = { ...job, options: only(opts({ mode: "lossless", types: ["image"] })), finishedAt: null, done: 2, kept: 0, failed: 0, running: [] };
+    sql(app.db, "insert or replace into kv(key, value) values('media_compress_last', ?)", JSON.stringify(cut));
+    expect(resumeMediaJob(app)).not.toBeNull();
+    for (let i = 0; i < 600 && !mediaJobState(app)?.finishedAt; i++) await new Promise((r) => setTimeout(r, 100));
+    expect(mediaJobState(app)).toMatchObject({ done: 4, total: 4, resumed: 1, error: null });
+    expect(existsSync(join(app.filesDir, "eeeeeeeeeeeeeee6.webp"))).toBe(false);
+    expect(all(app.db, "select 1 from file_variants where status = 'pending'")).toEqual([]);
+
+    // media.auto: only what is stored after it was turned on.
+    make("eeeeeeeeeeeeeee7.bmp", ["-f", "lavfi", "-i", "testsrc=size=320x240", "-frames:v", "1"]);
+    app.config.media.auto = { ...app.config.media.auto, enabled: true, mode: "lossless", minBytes: 5_000 };
+    expect(tickAutoCompress(app)).toBeNull();
+    await new Promise((r) => setTimeout(r, 50));
+    make("eeeeeeeeeeeeeee8.bmp", ["-f", "lavfi", "-i", "testsrc2=size=320x240", "-frames:v", "1"]);
+    markStoredFileAdded();
+    expect(tickAutoCompress(app)?.auto).toBe(true);
+    for (let i = 0; i < 600 && !mediaJobState(app)?.finishedAt; i++) await new Promise((r) => setTimeout(r, 100));
+    expect(storedName(app, "eeeeeeeeeeeeeee8.bmp")).toMatch(/\.webp$/);
+    expect(existsSync(join(app.filesDir, "eeeeeeeeeeeeeee7.bmp"))).toBe(true);
+    // Nothing new stored: the next tick does nothing.
+    expect(tickAutoCompress(app)).toBeNull();
   }, 180_000);
 });

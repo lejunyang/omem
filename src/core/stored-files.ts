@@ -24,3 +24,12 @@ export function storedPath(app: App, name: string): string | null {
 }
 
 export const hasStoredFile = (app: App, name: string) => storedName(app, name) !== null;
+
+/** Set when a new file lands in files/ (keepOriginal); media.ts's auto compression looks only then. */
+let added = true;
+export const markStoredFileAdded = () => { added = true; };
+export function takeStoredFileAdded() {
+  const was = added;
+  added = false;
+  return was;
+}
