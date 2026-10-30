@@ -202,4 +202,21 @@ describe("the catalog of a space", () => {
     expect(s.todo).not.toContain(fresh);
     expect(s.todo).not.toContain(drive);
   });
+
+  it("titles a knowledge base Feishu will not name by a page in it, and folders it cannot read say so; the owner can name it", () => {
+    const app = testApp();
+    run(app.db, "insert into wiki_spaces(id, name) values('kbx', '')");
+    run(app.db, "insert into wiki_nodes(token, wiki_space_id, parent_token, title, error) values('top', 'kbx', 'hidden', '使用手册', null), ('hidden', 'kbx', null, '', '131006'), ('leaf', 'kbx', 'top', '模型列表', null)");
+    upsertSource(app, { spaceId: "personal", kind: "doc", uri: `${ORIGIN}/wiki/leaf`, title: "模型列表", text: "x", meta: { via: "lark-cli", url: `${ORIGIN}/wiki/leaf`, wikiNodeToken: "leaf", wikiSpaceId: "kbx" } });
+    catalogChanged(app);
+    const root = treeChildren(app, "personal", "").nodes.find((n) => n.kind === "wiki-space")!;
+    expect(root).toMatchObject({ key: "wiki:kbx", title: "「使用手册」所在的知识库", unnamed: true });
+    expect(treeChildren(app, "personal", "wiki:kbx").nodes.map((n) => n.title)).toEqual(["（无权限或未读取的上级）"]);
+    expect(treeChildren(app, "personal", "wiki:kbx:orphan").nodes.map((n) => n.title)).toEqual(["（无权限查看的目录）"]);
+    run(app.db, "update wiki_spaces set name = '模型平台' where id = 'kbx'");
+    catalogChanged(app);
+    const named = treeChildren(app, "personal", "").nodes.find((n) => n.kind === "wiki-space")!;
+    expect(named.title).toBe("模型平台");
+    expect(named.unnamed).toBeUndefined();
+  });
 });

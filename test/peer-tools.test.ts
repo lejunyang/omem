@@ -71,11 +71,13 @@ describe("an outside Agent on another device uses this instance's tools", () => 
     expect(runEvents(server, read.runId!).map((e) => e.type)).toContain("tool");
 
     // ---- a write call (through omem_call): same session, same run; the memory carries the run and the peer as its agent
-    const w = await call("omem_call", { tool: "remember", args: { content: "项目 A 每周二下午发布。", kind: "fact" } }, { model: "claude-test" });
+    const w = await call("omem_call", { tool: "remember", args: { content: "项目 A 每周二下午发布。", kind: "fact" } }, { agent: "claude-code", model: "claude-test", effort: "medium" });
     expect(w.isError).toBe(false);
     expect(w.runId).toBe(read.runId);
     const mem = listMemories(server, { status: "active" }).find((m) => m.content === "项目 A 每周二下午发布。")!;
-    expect(mem).toMatchObject({ runId: read.runId, agentProfile: "peer:laptop", model: "claude-test", createdBy: "agent" });
+    expect(mem).toMatchObject({ runId: read.runId, agentProfile: "peer:laptop", model: "claude-test", effort: "medium", createdBy: "agent" });
+    // The run shows what ran on the other side, like any run's AI.
+    expect(listRuns(server, { kind: "peer-agent", includeQuiet: true })[0].ai).toEqual({ profile: "peer:laptop:claude-code", model: "claude-test", effort: "medium" });
     const events = runEvents(server, read.runId!);
     expect(events.filter((e) => e.type === "tool")).toHaveLength(2);
     expect(events.some((e) => e.type === "tool-write" && (e.data as { name?: string }).name === "remember")).toBe(true);

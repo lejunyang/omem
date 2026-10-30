@@ -333,6 +333,16 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ space: z.string(), node: z.string().min(1), level: z.enum(LEVELS).nullable() }), req.body);
     return setNodeLevel(app, b.space, b.node, b.level, "owner", { reason: "本人在原件目录里设置" });
   });
+  // A name for a knowledge base Feishu will not name (the owner is not a member). A name Feishu gives
+  // later (after joining) replaces it.
+  server.put("/api/sources/wiki-space-name", async (req) => {
+    ownerOnly(req);
+    const b = q(z.object({ id: z.string().min(1).max(80), name: z.string().trim().min(1).max(80) }), req.body);
+    if (!run(app.db, "update wiki_spaces set name = ? where id = ?", b.name, b.id).changes) throw new HttpError(404, "没有这个知识库");
+    const { catalogChanged } = await import("../sources/catalog.ts");
+    catalogChanged(app);
+    return { ok: true };
+  });
   server.get("/api/sources/paths", async (req) => {
     const o = q(z.object({ space: z.string(), kind: z.string().optional(), q: z.string().optional() }), req.query);
     return listSourcePaths(app, { spaceId: o.space, kind: o.kind, q: o.q });
@@ -1730,6 +1740,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     readOnly: z.boolean().optional(),
     agent: z.string().max(80).optional(),
     model: z.string().max(120).optional(),
+    effort: z.string().max(40).optional(),
   });
   server.get("/api/peer/tools", async (req) => {
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人能使用同伴的工具接口");

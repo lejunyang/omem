@@ -32,6 +32,8 @@ export type CatalogNode = {
   uncaptured?: boolean;
   /** Feishu link to capture an uncaptured node, or to open it. */
   url?: string;
+  /** A knowledge base whose name Feishu does not give (the owner is not a member): titled by a page in it. */
+  unnamed?: boolean;
   /** Sort key within the parent (ascending). */
   sort: string;
 };
@@ -124,6 +126,21 @@ export function buildCatalog(app: App, spaceId: string): Catalog {
   const rows = all<CatalogRow>(app.db, `${ROW_SQL} where space_id = ? and deleted_at is null order by (uri like '%/wiki/%') desc`, spaceId);
   const wiki = new Map(all<WikiRow>(app.db, "select token, wiki_space_id, parent_token, title, obj_type, node_type, has_child, error from wiki_nodes").map((r) => [r.token, r]));
   const wikiNames = new Map(all<{ id: string; name: string }>(app.db, "select id, name from wiki_spaces").map((r) => [r.id, r.name]));
+  // A knowledge base the owner is not a member of: Feishu gives neither its name nor the folders above
+  // the shared pages (131006). It is titled by the top-most page known in it until the owner names it.
+  const topPage = new Map<string, { title: string; depth: number }>();
+  for (const n of wiki.values()) {
+    if (!n.wiki_space_id || wikiNames.get(n.wiki_space_id) || !n.title) continue;
+    let depth = 0;
+    for (let p = n.parent_token; p && wiki.has(p) && depth < 64; p = wiki.get(p)!.parent_token) depth++;
+    const best = topPage.get(n.wiki_space_id);
+    if (!best || depth < best.depth || (depth === best.depth && n.title < best.title)) topPage.set(n.wiki_space_id, { title: n.title, depth });
+  }
+  const spaceTitle = (wsid: string) => {
+    const t = topPage.get(wsid)?.title;
+    return wikiNames.get(wsid) || (t ? `「${t.length > 30 ? t.slice(0, 29) + "…" : t}」所在的知识库` : "未加入的知识库");
+  };
+  const nodeTitle = (n: WikiRow) => n.title || (n.error ? "（无权限查看的目录）" : "（还没读到标题的目录）");
   const cat: Catalog = { spaceId, nodes: new Map(), children: new Map(), nodeOf: new Map(), rows: new Map(rows.map((r) => [r.id, r])), builtAt: Date.now() };
   const add = (n: Omit<CatalogNode, "sort"> & { sort?: string }) => {
     const have = cat.nodes.get(n.key);
@@ -139,7 +156,7 @@ export function buildCatalog(app: App, spaceId: string): Catalog {
     else cat.children.set(n.parent, [n.key]);
     return node;
   };
-  const chain = (parts: { key: string; title: string; kind: NodeKind; sort?: string; url?: string }[]) => {
+  const chain = (parts: { key: string; title: string; kind: NodeKind; sort?: string; url?: string; unnamed?: boolean }[]) => {
     let parent = ROOT;
     for (const p of parts) {
       add({ ...p, parent });
@@ -194,9 +211,9 @@ export function buildCatalog(app: App, spaceId: string): Catalog {
     const top = up.at(-1) ?? wiki.get(token);
     if (top?.error) orphan = true;
     return [
-      { key: `wiki:${wsid}`, title: wikiNames.get(wsid) || "知识库", kind: "wiki-space" as const, sort: `1${wikiNames.get(wsid) ?? wsid}` },
+      { key: `wiki:${wsid}`, title: spaceTitle(wsid), kind: "wiki-space" as const, sort: `1${spaceTitle(wsid)}`, ...(wikiNames.get(wsid) ? {} : { unnamed: true }) },
       ...(orphan ? [{ key: `wiki:${wsid}:orphan`, title: "（无权限或未读取的上级）", kind: "group" as const, sort: "￿" }] : []),
-      ...up.reverse().map((n) => ({ key: `wn:${n.token}`, title: n.title || "（未命名节点）", kind: "wiki-node" as const })),
+      ...up.reverse().map((n) => ({ key: `wn:${n.token}`, title: nodeTitle(n), kind: "wiki-node" as const })),
     ];
   };
 
@@ -285,7 +302,7 @@ export function buildCatalog(app: App, spaceId: string): Catalog {
       const parent = n.parent_token ? `wn:${n.parent_token}` : `wiki:${n.wiki_space_id}`;
       if (!cat.nodes.has(parent)) continue;
       const origin = origins.get(n.wiki_space_id);
-      add({ key: `wn:${n.token}`, title: n.title || "（未命名节点）", kind: "wiki-node", parent, uncaptured: true, ...(origin ? { url: `${origin}/wiki/${n.token}` } : {}) });
+      add({ key: `wn:${n.token}`, title: nodeTitle(n), kind: "wiki-node", parent, uncaptured: true, ...(origin ? { url: `${origin}/wiki/${n.token}` } : {}) });
       grew = true;
     }
   }
@@ -358,6 +375,7 @@ export type TreeEntry = {
   uncaptured?: boolean;
   url?: string;
   updatedAt?: string;
+  unnamed?: boolean;
 };
 
 const emptyLevels = (): Record<Level, number> => ({ focus: 0, normal: 0, reference: 0, ignore: 0 });
@@ -407,6 +425,7 @@ export function treeChildren(app: App, spaceId: string, key: string, f: TreeFilt
       ...(set ? { level: { level: set.level, by: set.by, status: set.status } } : own && own.level !== "normal" ? { level: { level: own.level, by: own.by, inherited: own.inherited } } : {}),
       ...(n.uncaptured ? { uncaptured: true } : {}),
       ...(n.url ? { url: n.url } : {}),
+      ...(n.unnamed ? { unnamed: true } : {}),
     });
   }
   const path: { key: string; title: string }[] = [];

@@ -58,9 +58,10 @@ export type PeerAgentScope = {
   /** Narrow what may be read and written to these spaces (all by default). */
   spaces?: string[];
   readOnly?: boolean;
-  /** The Agent and model on the other side, for the run's provenance. */
+  /** The Agent, model and effort on the other side, for the run's provenance (run page, memories). */
   agent?: string;
   model?: string;
+  effort?: string;
 };
 
 const clean = (s: string | undefined, max: number, fallback: string) => (s ?? "").replace(/[\x00-\x1f]/g, " ").trim().slice(0, max) || fallback;
@@ -81,6 +82,7 @@ export function peerToolContext(app: App, scope: PeerAgentScope, runId: string |
     userId: OWNER,
     agentProfile: `peer:${caller}`,
     model: scope.model ? clean(scope.model, 80, "") || null : null,
+    effort: scope.effort ? clean(scope.effort, 40, "") || null : null,
   };
 }
 
@@ -107,7 +109,7 @@ function sessionRun(app: App, scope: PeerAgentScope, spaceId: string) {
       kind: "peer-agent",
       spaceId,
       title: truncate(`同伴 ${caller} 的外部 Agent（${session}）`, 80),
-      input: { caller, session, agent: scope.agent ? clean(scope.agent, 60, "") : undefined, model: scope.model ? clean(scope.model, 80, "") : undefined, readOnly: scope.readOnly || undefined, spaces: scope.spaces },
+      input: { caller, session, agent: scope.agent ? clean(scope.agent, 60, "") : undefined, model: scope.model ? clean(scope.model, 80, "") : undefined, effort: scope.effort ? clean(scope.effort, 40, "") : undefined, readOnly: scope.readOnly || undefined, spaces: scope.spaces },
     });
     // Claimed before the worker's next look (it runs on a microtask after this synchronous step);
     // a run left over from a restart is finished by the handler in jobs.ts.
@@ -117,6 +119,15 @@ function sessionRun(app: App, scope: PeerAgentScope, spaceId: string) {
   } else if (r.status !== "running") {
     run(app.db, "update runs set status = 'running', finished_at = null, error = null where id = ?", r.id);
     app.emit({ type: "run", runId: r.id, status: "running" });
+  }
+  // What ran on the other side, shown like any run's AI (profile · model · effort); a later call that
+  // names a different model or effort replaces it.
+  const agent = scope.agent ? clean(scope.agent, 60, "") : "";
+  const model = scope.model ? clean(scope.model, 80, "") : "";
+  const effort = scope.effort ? clean(scope.effort, 40, "") : "";
+  if (agent || model || effort) {
+    const profile = agent ? `peer:${caller}:${agent}` : `peer:${caller}`;
+    run(app.db, "update runs set ai = ?, profile_id = ? where id = ?", JSON.stringify({ profile, model: model || undefined, effort: effort || undefined }), profile, r.id);
   }
   clearTimeout(idle.get(r.id));
   idle.set(r.id, setTimeout(() => finish(app, r!.id), IDLE_MS).unref());

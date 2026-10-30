@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { get, post, put } from "../api";
+import { promptDialog } from "../lib/dialog";
 import { toast } from "../store";
 import Icon from "./Icon.vue";
 import Skeleton from "./Skeleton.vue";
@@ -27,6 +28,8 @@ export type TreeEntry = {
   level?: { level: Level; by: string | null; status?: string; inherited?: boolean };
   uncaptured?: boolean;
   url?: string;
+  /** A knowledge base Feishu will not name (not a member): titled by a page in it, the owner can name it. */
+  unnamed?: boolean;
 };
 
 const props = defineProps<{ space: string; kind?: string; level?: string; q?: string; current?: string }>();
@@ -143,6 +146,18 @@ async function setLevel(e: TreeEntry, level: Level | null) {
     toast((err as Error).message, "error");
   }
 }
+async function nameSpace(e: TreeEntry) {
+  const name = (await promptDialog("给这个知识库起个名字", { message: "你不是这个知识库的成员，飞书不给它的名字；这里先按里面的页面起了一个。加入知识库后飞书给的名字会替换它。", placeholder: "知识库名称", okText: "保存" }))?.trim();
+  if (!name) return;
+  try {
+    await put("/api/sources/wiki-space-name", { id: e.key.slice("wiki:".length), name });
+    menuFor.value = null;
+    toast("已命名", "ok");
+    await reload();
+  } catch (err) {
+    toast((err as Error).message, "error");
+  }
+}
 const capturing = ref(new Set<string>());
 async function capture(e: TreeEntry) {
   if (!e.url) return;
@@ -176,6 +191,7 @@ defineExpose({ reload });
         <span class="muted">{{ r.entry.kind === "source" ? "这份原件" : "这个目录和以后进来的" }}</span>
         <UiSegmented :model-value="ownLevel(r.entry)" size="sm" aria-label="关注程度" :options="levelOptions" @change="(v) => setLevel(r.entry, v)" />
         <button v-if="r.entry.level && !r.entry.level.inherited" class="btn ghost sm" type="button" @click="setLevel(r.entry, null)">清除</button>
+        <button v-if="r.entry.kind === 'wiki-space' && r.entry.unnamed" class="btn ghost sm" type="button" @click="nameSpace(r.entry)">命名</button>
         <button class="btn ghost sm icon" type="button" title="收起" @click="menuFor = null"><Icon name="x" :size="13" /></button>
       </div>
       <div v-else class="tree-row" :class="{ on: r.entry.sourceId && r.entry.sourceId === current, grey: r.entry.uncaptured }" :style="{ paddingLeft: 6 + r.depth * 14 + 'px' }">

@@ -942,3 +942,8 @@ updated: 2026-10-30
 - **修正**（`wiki/store.ts`）：`writePage` 合并文件里已有的 `aliases`。
 - **补回**：`restoreAliases(app, space, {dryRun})` 读知识库 `git log -p` 里该空间每个页面文件写过的 `aliases:` 条目，沿旧路径往前追，补回现在没有页面占用的；远程 `wiki-restore-aliases`（默认只列出）。`test/wiki-tree.test.ts` 覆盖重写保留和从历史补回。
 - **远程开关定时任务**：peer 命令 `schedule-set {id, enabled}` 只改已有定时任务的开关（时间和配置不变），与 `schedule-run` 配合在常驻服务器上打开做梦、夜间复盘等。
+
+## 10-31：同伴协作登记模型和强度，原件目录里看不到名字的知识库
+
+- **同伴的外部 Agent**：`omem tool --peer` / `omem mcp --peer` 加 `--agent`、`--model`、`--effort`（环境变量 `OMEM_PEER_AGENT` / `OMEM_PEER_MODEL` / 新增 `OMEM_PEER_EFFORT`）；目标节点把这条 `peer-agent` 运行的 `ai` 记成 `{profile: peer:<调用方>:<Agent>, model, effort}`（运行页照常显示），工具上下文带上强度，写入的记忆记模型和强度。`test/peer-tools.test.ts` 覆盖。
+- **不是成员的知识库**：飞书对非成员不给知识库名字和共享页面以上的目录（131006），以前目录树里只显示“知识库”“（未命名节点）”。现在用其中最上层的已知页面起名（“「X」所在的知识库”，`unnamed`），读不到标题的目录写“（无权限查看的目录）”或“（还没读到标题的目录）”；原件目录的行菜单可“命名”（`PUT /api/sources/wiki-space-name`），加入知识库后飞书给的名字会替换它。`test/source-catalog.test.ts` 覆盖。

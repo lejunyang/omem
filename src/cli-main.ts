@@ -1177,7 +1177,7 @@ function externalToolContext(o: { readOnly?: boolean; space?: string }) {
   return { app, runId: null, spaceId, spaces: null, tools, actor: "agent" as const };
 }
 
-type PeerToolOptions = { peer: string; space?: string; spaces?: string; readOnly?: boolean; session?: string };
+type PeerToolOptions = { peer: string; space?: string; spaces?: string; readOnly?: boolean; session?: string; agent?: string; model?: string; effort?: string };
 
 /**
  * The tools of another device (omem peer): list and call go to its `/api/peer/tools` and
@@ -1194,8 +1194,9 @@ async function peerToolBackend(o: PeerToolOptions, defaultSession: string) {
     space: o.space,
     spaces: o.spaces ? o.spaces.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
     readOnly: o.readOnly || undefined,
-    agent: process.env.OMEM_PEER_AGENT || undefined,
-    model: process.env.OMEM_PEER_MODEL || undefined,
+    agent: o.agent || process.env.OMEM_PEER_AGENT || undefined,
+    model: o.model || process.env.OMEM_PEER_MODEL || undefined,
+    effort: o.effort || process.env.OMEM_PEER_EFFORT || undefined,
   };
   const session = o.session || process.env.OMEM_PEER_SESSION || defaultSession;
   const query = new URLSearchParams(Object.entries({ ...scope, spaces: scope.spaces?.join(","), readOnly: scope.readOnly ? "1" : undefined }).filter((e): e is [string, string] => typeof e[1] === "string")).toString();
@@ -1221,6 +1222,9 @@ program
   .option("--peer <id>", "使用同伴（另一台设备）上的库：工具在那台机器上执行，不含对外发消息、交办、唤醒这类的工具；每个 MCP 会话在对方记成一条运行")
   .option("--spaces <ids>", "--peer 时只开放这些空间（逗号分隔）")
   .option("--session <name>", "--peer 时的会话名（对方一个会话一条运行；默认每个 MCP 进程一个）")
+  .option("--agent <name>", "--peer 时在对方运行记录里登记的 Agent 名（如 claude-code；也可用环境变量 OMEM_PEER_AGENT）")
+  .option("--model <id>", "--peer 时登记的模型（也可用 OMEM_PEER_MODEL）")
+  .option("--effort <level>", "--peer 时登记的推理强度（也可用 OMEM_PEER_EFFORT）")
   .action(async (o) => {
     const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
     if (o.peer) {
@@ -1245,7 +1249,10 @@ program
   .option("--peer <id>", "在同伴（另一台设备）上调用：那台机器上的库，不含对外发消息、交办、唤醒这类的工具；调用在对方记成一条运行（omem peer list 看同伴）")
   .option("--spaces <ids>", "--peer 时只开放这些空间（逗号分隔）")
   .option("--session <name>", "--peer 时的会话名（对方一个会话一条运行；默认本机名加当天日期，也可用环境变量 OMEM_PEER_SESSION）")
-  .action(async (name: string | undefined, rest: string[], o: { file?: string; readOnly?: boolean; space?: string; peer?: string; spaces?: string; session?: string }) => {
+  .option("--agent <name>", "--peer 时在对方运行记录里登记的 Agent 名（如 claude-code；也可用环境变量 OMEM_PEER_AGENT）")
+  .option("--model <id>", "--peer 时登记的模型（也可用 OMEM_PEER_MODEL）")
+  .option("--effort <level>", "--peer 时登记的推理强度（也可用 OMEM_PEER_EFFORT）")
+  .action(async (name: string | undefined, rest: string[], o: { file?: string; readOnly?: boolean; space?: string; peer?: string; spaces?: string; session?: string; agent?: string; model?: string; effort?: string }) => {
     const call = !name || name === "help" ? { tool: "omem_help", args: { topic: rest.join(",") || undefined } } : { tool: name, args: toolArgs(rest, o.file) };
     const token = process.env.OMEM_TOKEN;
     let r: { text: string; isError: boolean };
