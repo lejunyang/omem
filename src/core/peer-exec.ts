@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { App } from "./app.ts";
 import { all, one } from "./db.ts";
 import { codeVersion, listPeers, nodeId } from "./peers.ts";
-import { listSchedules, nextRuns, triggerSchedule } from "./scheduler.ts";
+import { listSchedules, nextRuns, triggerSchedule, upsertSchedule } from "./scheduler.ts";
 import { REPLAY_AXES, roleNames } from "./config.ts";
 import { desktopControl } from "./tools.ts";
 import { HttpError } from "./util.ts";
@@ -508,6 +508,15 @@ export const peerCommands: Record<string, Command> = {
     },
   },
   "schedule-run": { description: "立即触发一个定时任务", schema: z.object({ id }), run: (app, a) => ({ ok: triggerSchedule(app, a.id) }) },
+  "schedule-set": {
+    description: "打开或关闭一个已有的定时任务（只改 enabled，时间和配置不变），返回它现在的状态",
+    schema: z.object({ id, enabled: z.boolean() }),
+    run: (app, a) => {
+      const s = listSchedules(app).find((x) => x.id === a.id);
+      if (!s) throw new Error(`没有这个定时任务：${a.id}`);
+      return upsertSchedule(app, { ...s, enabled: a.enabled });
+    },
+  },
   replays: {
     description: "只读：夜间复盘的状态（定时是否打开、replay-judge 的模型、上次结果或没跑的原因、近 28 天胜平负和评判一致数）和最近的复盘（问题、轴、结论、检查、建议）",
     schema: z.object({ limit: z.number().int().min(1).max(100).default(20) }),

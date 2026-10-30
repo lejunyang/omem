@@ -130,3 +130,16 @@ describe("read-only peer commands: agents, search, prompt, ide", () => {
     expect(r.running.own).toBeNull();
   }, 60_000);
 });
+
+describe("schedule-set", () => {
+  it("turns an existing schedule on or off and nothing else", async () => {
+    const { ensureDefaultSchedules, listSchedules } = await import("../src/core/scheduler.ts");
+    ensureDefaultSchedules(app);
+    const before = listSchedules(app).find((s) => s.id === "dream")!;
+    const off = await call("schedule-set", { id: "dream", enabled: false });
+    expect(off).toMatchObject({ id: "dream", enabled: false, cron: before.cron });
+    expect((await call("schedule-set", { id: "dream", enabled: true })).enabled).toBe(true);
+    await expect(call("schedule-set", { id: "no-such-schedule", enabled: true })).rejects.toThrow(/没有这个定时任务/);
+    await expect(call("schedule-set", { id: "dream" })).rejects.toThrow(/enabled/);
+  });
+});

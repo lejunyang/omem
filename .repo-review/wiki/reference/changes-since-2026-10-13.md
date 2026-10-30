@@ -941,3 +941,4 @@ updated: 2026-10-30
 - **问题**：`move_page` 把旧路径记在页面 frontmatter 的 `aliases`，`writePage` 却用写作者给的 meta（标题、摘要、类型）整个替换，移动后再重写的页面旧路径就丢了，`page_aliases` 跟着清掉，链接和记忆里的 `[[旧路径]]` 打不开。
 - **修正**（`wiki/store.ts`）：`writePage` 合并文件里已有的 `aliases`。
 - **补回**：`restoreAliases(app, space, {dryRun})` 读知识库 `git log -p` 里该空间每个页面文件写过的 `aliases:` 条目，沿旧路径往前追，补回现在没有页面占用的；远程 `wiki-restore-aliases`（默认只列出）。`test/wiki-tree.test.ts` 覆盖重写保留和从历史补回。
+- **远程开关定时任务**：peer 命令 `schedule-set {id, enabled}` 只改已有定时任务的开关（时间和配置不变），与 `schedule-run` 配合在常驻服务器上打开做梦、夜间复盘等。
