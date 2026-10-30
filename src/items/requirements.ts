@@ -428,12 +428,16 @@ export function ownerCorrections(app: App, opts: { runId?: string; spaceId?: str
   const where = opts.runId
     ? "q.id in (select node_id from req_versions where run_id = ? and change = 'create')"
     : "q.space_id = ? and q.created_by != '本人'";
-  const rows = all<VersionRow & { space_id: string }>(
+  // Fixes by someone other than the writer: the owner, or an Agent the owner told to fix it (the
+  // assistant, the owner's Agent on another device). Business changes are not mistakes and stay out.
+  const raw = all<VersionRow & { space_id: string; kind: string; parent: string | null }>(
     app.db,
-    `select v.*, q.space_id from req_versions v join req_nodes q on q.id = v.node_id where ${where} and v.by = '本人' and v.change in ('correct','delete','confirm') order by v.at desc limit ?`,
+    `select v.*, q.space_id, q.kind, (select title from req_nodes p where p.id = q.parent_id) parent from req_versions v join req_nodes q on q.id = v.node_id
+     where ${where} and ((v.by != q.created_by and v.change in ('correct','delete')) or (v.by = '本人' and v.change = 'confirm')) order by v.at desc limit ?`,
     opts.runId ?? opts.spaceId ?? "",
     (opts.limit ?? 20) * 3,
-  ).map(toVersion);
+  );
+  const rows = raw.map(toVersion);
   const confirmed = rows.filter((v) => v.change === "confirm").length;
   const lines: string[] = [];
   for (const v of rows.filter((x) => x.change !== "confirm").slice(0, opts.limit ?? 20)) {
@@ -444,8 +448,10 @@ export function ownerCorrections(app: App, opts: { runId?: string; spaceId?: str
     if (was && was.parentId !== v.parentId) diff.push(`移到「${v.parentId ? (findReq(app, v.parentId)?.title ?? v.parentId) : "最上层"}」下`);
     if (was && was.body !== v.body) diff.push(`需求改为：${truncate(v.body.replace(/\s+/g, " "), 160)}`);
     if (was && was.acceptance !== v.acceptance) diff.push(`验收改为：${truncate(v.acceptance.replace(/\s+/g, " "), 120)}`);
-    const what = v.change === "delete" ? `删掉了「${v.title}」` : diff.join("；") || `改了「${v.title}」`;
-    lines.push(`- ${v.at.slice(0, 10)} ${what}${v.reason ? `（${v.reason}）` : ""}`);
+    const row = raw.find((r) => r.id === v.id)!;
+    const where_ = `${REQ_KIND_LABEL[row.kind as ReqKind] ?? row.kind}${row.parent ? `（在「${row.parent}」下）` : ""}`;
+    const what = v.change === "delete" ? `删掉了${where_}「${v.title}」` : `${where_}「${was?.title ?? v.title}」：${diff.join("；") || "改了内容"}`;
+    lines.push(`- ${v.at.slice(0, 10)}${v.by === "本人" ? "" : ` ${v.by} 按本人要求`} ${what}${v.reason ? `（${v.reason}）` : ""}`);
   }
   return { confirmed, lines };
 }

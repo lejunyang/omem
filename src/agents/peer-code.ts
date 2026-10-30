@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, wr
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
-import { git } from "../core/git.ts";
+import { git, resolveRef } from "../core/git.ts";
 import { getSpace } from "../core/spaces.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { materialsBrief } from "../items/materials.ts";
@@ -122,7 +122,8 @@ export type WorkspaceAction = {
   args?: string[];
   wait?: number;
   job?: string;
-  git?: "status" | "diff" | "log" | "commit";
+  git?: "status" | "diff" | "log" | "commit" | "merge" | "merge-abort";
+  ref?: string;
   message?: string;
   summary?: string;
   review?: "peer" | "here";
@@ -242,6 +243,25 @@ ${String(work.last.input.task ?? "")}` : "";
           const d = git(dir, ["diff", "--no-color", "HEAD", ...(a.path ? ["--", locate(work, a.path).rel] : [])]).stdout;
           const from = a.from ?? 0;
           out.push(head + (d ? `${d.slice(from, from + 30000)}${d.length > from + 30000 ? `\n…（from=${from + 30000} 接着取）` : ""}` : "（没有未提交的改动）"));
+        } else if (op === "merge" || op === "merge-abort") {
+          // Another branch's work merged in; conflicts stay in the files for this Agent to resolve,
+          // then `commit` concludes the merge (or merge-abort gives it up).
+          editable(work);
+          if (op === "merge-abort") {
+            const r = git(dir, ["merge", "--abort"]);
+            out.push(`${head}${r.ok ? "已放弃合并" : `没有进行中的合并：${truncate(r.stderr, 200)}`}`);
+            continue;
+          }
+          if (!a.ref?.trim()) throw new HttpError(400, "merge 要给 ref（要合并进来的分支，如 origin/feat/x）");
+          if (git(dir, ["status", "--porcelain"]).stdout.trim()) throw new HttpError(409, "工作区有没提交的改动，先 commit 再合并");
+          git(dir, ["fetch", "-q", "origin"]);
+          const target = resolveRef(dir, a.ref.trim());
+          if (!target) throw new HttpError(404, `没有分支 ${a.ref}`);
+          const r = git(dir, ["merge", "--no-edit", "--no-verify", target.ref]);
+          const conflicts = git(dir, ["diff", "--name-only", "--diff-filter=U"]).stdout.split("\n").filter(Boolean);
+          if (r.ok) out.push(`${head}已合并 ${target.ref}（${target.commit.slice(0, 8)}）：${git(dir, ["log", "-1", "--format=%h %s"]).stdout.trim()}`);
+          else if (conflicts.length) out.push(`${head}合并 ${target.ref} 有 ${conflicts.length} 个文件冲突，冲突标记留在文件里：\n${conflicts.join("\n")}\n逐个改好后用 git=commit 完成合并（或 merge-abort 放弃）。`);
+          else throw new HttpError(500, `合并失败：${truncate(r.stderr || r.stdout, 500)}`);
         } else {
           editable(work);
           if (!a.message?.trim()) throw new HttpError(400, "commit 要给 message（遵守仓库的提交信息规范）");

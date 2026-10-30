@@ -57,5 +57,5 @@
 2. `code_workspace(run_id, action=brief)`：任务、事项材料（含需求点）、工作分支、能运行的命令、各轮状态；还在准备时会说明。
 3. 看和改：`list`、`read`（`from` 分页，每页 400 行）、`grep`（正则，`path` 限定目录）、`write`（整个文件）、`edit`（`old` 要唯一，或 `replace_all`）、`delete`。路径是仓库里的相对路径，几个仓库时写成 `仓库空间id/路径`；`.git` 和工作区外不能动。
 4. 运行：`run` 只能运行本人给仓库设的命令（仓库设置里的检查命令 `check`、准备命令 `setup`、“设备的外部 Agent 可以运行的命令”里的 `名字: 命令`），`args` 追加不带空格和 shell 符号的参数（测试文件、选项）。最多等 `wait` 秒（≤100），没跑完用 `output` 取；同一时间只跑一条。
-5. `git`：`status`、`diff`、`log`、`commit`（`message`，按功能分几次提交，不 push）。
+5. `git`：`status`、`diff`、`log`、`commit`（`message`，按功能分几次提交，不 push）；`merge`（`ref`，先 fetch，要求工作区干净）把另一条分支合并进来，冲突标记留在文件里，改好后 `commit` 完成合并，`merge-abort` 放弃。
 6. `finish(summary, review)`：排下一轮，提交剩下的改动、运行检查命令、取 diff，再交给评审：`review=peer`（默认）按“设备的外部 Agent 评审分支”的 2–4 步自己评审（`run_id` 用 finish 返回的那一轮），`here` 交给那台机器的评审 Agent。评审要求修改就在同一个工作区接着改，再 `finish`。轮次排队或进行时不能改文件。应用（推送）由本人在网页上确认。

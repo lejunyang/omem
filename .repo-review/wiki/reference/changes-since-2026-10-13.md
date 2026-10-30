@@ -1013,3 +1013,5 @@ updated: 2026-10-30
 - `delegate_code` 不再在 `PEER_DENY` 里。经 `--peer` 调用时交办带 `peerCoder`（不能指定编码 AI 和 Git 同步）：`runCodeTask` 建好工作分支、工作区、装好依赖后以 `awaiting-peer-code` 结束，跳过预判和本人补充的投递。
 - 新工具 `code_workspace`（`src/agents/peer-code.ts`，`ROLE_TOOLS` 里，经 `PEER_REVIEW_TOOLS` 给外部 Agent）：brief / list / read / grep / write / edit / delete / run / output / git / finish。路径限定在工作区内、不能动 `.git`；`run` 只运行仓库设置里的检查命令、准备命令和新设置 `peerCommands`（设置页“设备的外部 Agent 可以运行的命令”，一行一个“名字: 命令”），参数按 `SAFE_ARG` 校验，后台执行可轮询；轮次排队或进行时不能改。
 - `finish` 用 `queueStandaloneFix` 排一轮带 `peerFinished`（不随续轮复制）：跳过隐式同步和编码，summary 当编码说明，照常提交、检查、diff、索引，`review=peer` 时带 `peerReviewer` 走外部 Agent 评审。`test/peer-code.test.ts` 覆盖。
+- `code_workspace` 加 `git=merge`（`ref`，先 fetch、要求工作区干净，冲突标记留在文件里由调用方改好再 `commit`）和 `merge-abort`：外部 Agent 编码时把另一条分支合并进来。
+- 拆分反馈：`ownerCorrections` 也算 Agent 按本人要求做的更正（`by` 不是节点作者），每条写出节点类型、所在上级和是谁改的；`roles/coach.md` 加“读本人对产出的修改”：同类错两次以上提说明修改，一次记做法经验，不把业务规则写进记忆。

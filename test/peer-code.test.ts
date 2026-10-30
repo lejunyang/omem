@@ -67,6 +67,17 @@ describe("coding an outside Agent on another device does itself", () => {
     const ran = (await callTool(ctx, "code_workspace", { run_id: runId, action: "run", command: "test", args: ["lines.test.ts"] })).text;
     expect(ran).toMatch(/退出码 0[\s\S]*tests ran/);
     expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "git", git: "commit", message: "只退未发货的行" })).text).toMatch(/已提交/);
+    // Another branch merged in: the conflict stays in the file, the Agent fixes it and commits.
+    git("checkout", "-q", "-b", "feat/other", "main");
+    writeFileSync(join(dir, "refund.ts"), "export function refundAmount() {\n  return -1;\n}\n");
+    git("commit", "-qam", "other");
+    git("checkout", "-q", "main");
+    const merged = (await callTool(ctx, "code_workspace", { run_id: runId, action: "git", git: "merge", ref: "feat/other" })).text;
+    expect(merged).toMatch(/1 个文件冲突[\s\S]*refund\.ts/);
+    expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "read", path: "refund.ts" })).text).toContain("<<<<<<<");
+    await callTool(ctx, "code_workspace", { run_id: runId, action: "write", path: "refund.ts", content: "export function refundAmount(lines: { shipped: boolean }[]) {\n  return lines.filter((l) => !l.shipped).length;\n}\n" });
+    expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "git", git: "commit", message: "合并 feat/other" })).text).toMatch(/已提交/);
+    expect((await callTool(ctx, "code_workspace", { run_id: runId, action: "git", git: "log" })).text).toMatch(/合并 feat\/other/);
     // Another device, or this machine's own Agents, cannot work in it.
     expect((await callTool(peerCtx("other"), "code_workspace", { run_id: runId, action: "brief" })).text).toMatch(/不是 other/);
     expect((await callTool({ ...ctx, peer: undefined }, "code_workspace", { run_id: runId, action: "brief" })).isError).toBe(true);

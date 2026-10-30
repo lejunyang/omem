@@ -117,9 +117,15 @@ describe("requirement trees", () => {
     save([{ op: "edit", id: k.a, change: "correct", title: "每人每天最多领 3 张" }, { op: "delete", id: extra.id, change: "correct", reason: "PRD 没有这条" }, { op: "confirm", id: k.p }]);
     const forRun = ownerCorrections(app, { runId: "r-split" });
     const text = forRun.lines.join("\n");
-    expect(text).toMatch(/标题「优化领券」→「每人每天最多领 3 张」/);
-    expect(text).toMatch(/删掉了「多余的点」（PRD 没有这条）/);
+    expect(text).toMatch(/功能（在「优惠券页」下）「优化领券」：标题「优化领券」→「每人每天最多领 3 张」/);
+    expect(text).toMatch(/删掉了功能（在「优惠券页」下）「多余的点」（PRD 没有这条）/);
     expect(forRun.confirmed).toBeGreaterThan(0);
     expect(ownerCorrections(app, { spaceId: "shop" }).lines.length).toBeGreaterThanOrEqual(2);
+    // An Agent fixing it on the owner's word counts too, and says who; the writer's own edits do not.
+    save([{ op: "edit", id: k.a, change: "correct", acceptance: "第 4 张提示今日已领完" }], { by: "agent", label: "peer:laptop" });
+    save([{ op: "edit", id: k.p, change: "correct", title: "优惠券领取页" }], agent);
+    const again = ownerCorrections(app, { runId: "r-split" }).lines.join("\n");
+    expect(again).toMatch(/peer:laptop 按本人要求 功能.*验收改为：第 4 张提示今日已领完/);
+    expect(again).not.toMatch(/「优惠券页」：标题/);
   });
 });
