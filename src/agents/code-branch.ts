@@ -84,10 +84,17 @@ export function planBranch(repo: Space, runId: string, opts: { from?: string; na
   return { branch: name, base, newBranch: true, ...(cutFrom ? { cutFrom } : {}) };
 }
 
-/** A run that is not running or queued may lose its idle workspace to another run. */
+/**
+ * A run that is not running or queued may lose its idle workspace to another run — except a
+ * delegation an outside Agent codes (peer-code.ts): between rounds its uncommitted edits live in
+ * the workspace, so it keeps it until confirmed or discarded.
+ */
 const idle = (app: App) => (id: string) => {
   try {
-    return !["queued", "running"].includes(getRun(app, id).status);
+    const run = getRun(app, id);
+    const root = run.input.continueFrom ? getRun(app, String(run.input.continueFrom)) : run;
+    if ((root.input as { peerCoder?: unknown }).peerCoder && !root.output.appliedAt && !root.output.discardedAt) return false;
+    return !["queued", "running"].includes(run.status);
   } catch {
     return true;
   }

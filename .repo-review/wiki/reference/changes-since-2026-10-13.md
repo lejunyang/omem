@@ -1016,3 +1016,4 @@ updated: 2026-10-30
 - `code_workspace` 加 `git=merge`（`ref`，先 fetch、要求工作区干净，冲突标记留在文件里由调用方改好再 `commit`）和 `merge-abort`：外部 Agent 编码时把另一条分支合并进来。
 - 拆分反馈：`ownerCorrections` 也算 Agent 按本人要求做的更正（`by` 不是节点作者），每条写出节点类型、所在上级和是谁改的；`roles/coach.md` 加“读本人对产出的修改”：同类错两次以上提说明修改，一次记做法经验，不把业务规则写进记忆。
 - `code_workspace` 加 `import`（`from_run`）：把另一次没应用的交办保存的 patch 用 `git apply --3way` 导入工作区（要求工作区干净，先 merge 它基于的提交），用于接手旧交办；之后旧交办可丢弃。
+- 外部 Agent 的交办在确认或丢弃前不让出工作区（`code-branch.ts` 的 `idle()`）：原来它停在 `awaiting-peer-code`（状态 done）时会被新交办收走并 `reset --hard`，未提交的修改丢失。
