@@ -2993,6 +2993,8 @@ def({
     parallel: z.boolean().optional().describe("本人明确要求在同一个分支上另开一次交办时才传 true；默认同一分支已有没应用的交办时拒绝，应续在那次交办上"),
   }),
   handler: async (ctx, a) => {
+    // From another device the caller codes: this machine only prepares the worktree (peer-code.ts).
+    if (ctx.peer && (a.execution || a.sync)) throw new HttpError(400, "设备的外部 Agent 交办的编码由它自己做：不能指定这台机器的编码 AI，Git 同步也用不上");
     const execution = validateExecution(ctx.app, a.execution);
     await validateReviewChoice(ctx, a.review_tier, a.review_checks);
     if (a.sync_only && !a.sync) throw new HttpError(400, "sync_only 需要同时给出 sync（拉取或合并 / 变基到哪个分支）");
@@ -3015,11 +3017,12 @@ def({
       kind: "code",
       spaceId: home,
       title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
-      input: { task: a.task, execution, reviewExecution, checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
+      input: { task: a.task, execution, reviewExecution, ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: a.sync, syncOnly: !!a.sync_only } : {}) },
       parentId: ctx.runId,
       userId: ctx.userId ?? OWNER,
     });
     if (itemId) (await import("../items/materials.ts")).linkRunToItem(ctx.app, r, itemId, ctx.userId ?? OWNER);
+    if (ctx.peer) return `已开始准备，运行 ${r.id}：这台机器建工作分支和工作区、装依赖，代码由你来写。用 code_workspace（run_id=${r.id}，action=brief）看任务、工作区和能运行的命令；准备好之前 brief 会说明。`;
     // Seed the chain so later rounds (and the Feishu progress topic) find the original ask.
     const { codeChainFor } = await import("./code-chain.ts");
     const chain = codeChainFor(ctx.app, r);
@@ -3691,6 +3694,36 @@ def({
     });
     const keys = Object.entries(r.keys);
     return `${r.done.map((d) => `- ${d.what}（${d.id}）`).join("\n")}${keys.length ? `\n新节点：${keys.map(([k, id]) => `$${k}=${id}`).join("，")}` : ""}${ctx.actor === "user" ? "" : "\nAgent 写的需求点标为待本人确认。"}`;
+  },
+});
+
+def({
+  name: "code_workspace",
+  description:
+    "设备的外部 Agent 用：在自己用 delegate_code 交办的编码里写代码。action：brief（任务、事项材料、工作分支、本人允许运行的命令、各轮状态）、list（文件）、read（path，from 起 400 行）、grep（pattern 正则，path 限定目录）、write（path + content 整个文件）、edit（path + old + new，old 要唯一，或 replace_all）、delete、run（command 写允许的命令名，args 追加参数如测试文件；最多等 wait 秒，没跑完用 output 取）、output（job）、git（git=status / diff / log / commit + message）、finish（summary：改了什么、怎么验证、还差什么；这台机器提交剩下的改动、运行检查命令，再按 review 交给评审：peer 你自己评审，here 这台机器的评审 Agent）。几个仓库时 path 写成 仓库空间id/路径。",
+  schema: z.object({
+    run_id: z.string().describe("delegate_code 返回的运行 id（之后各轮的 id 也可以）"),
+    action: z.enum(["brief", "list", "read", "grep", "write", "edit", "delete", "run", "output", "git", "finish"]),
+    path: z.string().max(500).optional(),
+    from: z.number().int().min(0).optional().describe("read 从第几行；list / git diff 的分页位置"),
+    content: z.string().optional(),
+    old: z.string().optional(),
+    new: z.string().optional(),
+    replace_all: z.boolean().optional(),
+    pattern: z.string().max(500).optional(),
+    command: z.string().max(60).optional(),
+    args: z.array(z.string().max(300)).max(30).optional(),
+    wait: z.number().int().min(0).max(100).optional().describe("run / output 最多等几秒（默认 90）"),
+    job: z.string().max(80).optional(),
+    git: z.enum(["status", "diff", "log", "commit"]).optional(),
+    message: z.string().max(2000).optional(),
+    summary: z.string().max(8000).optional(),
+    review: z.enum(["peer", "here"]).optional().describe("finish 后谁评审，默认 peer（你自己）"),
+  }),
+  handler: async (ctx, a) => {
+    if (!ctx.peer) throw new HttpError(400, "code_workspace 只给设备的外部 Agent 用；这台机器的编码 Agent 直接在工作区里改");
+    const { peerWorkspace } = await import("./peer-code.ts");
+    return peerWorkspace(ctx.app, a.run_id, ctx.peer.caller, a);
   },
 });
 

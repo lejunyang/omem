@@ -47,9 +47,9 @@ describe("an outside Agent on another device uses this instance's tools", () => 
     const names = listed.tools.map((t) => t.name);
     expect(listed.node).toBe("server");
     expect(names).toEqual(expect.arrayContaining(["search", "read_source", "remember", "write_page", "omem_help", "omem_call"]));
-    for (const n of ["lark_send", "notify", "delegate_code", "submit_plan"]) expect(names).not.toContain(n);
+    for (const n of ["lark_send", "notify", "apply_code_run", "submit_plan"]) expect(names).not.toContain(n);
     // Reviewing a branch itself: review_branch from a device, and the hand-ins it needs for that.
-    expect(["review_branch", "review_task", "submit_review", "submit_change_points"].every((n) => peerToolNames().has(n))).toBe(true);
+    expect(["review_branch", "review_task", "submit_review", "submit_change_points", "delegate_code", "code_workspace"].every((n) => peerToolNames().has(n))).toBe(true);
     expect(peerToolNames().has("rule_review") || peerToolNames({ readOnly: true }).has("submit_review")).toBe(false);
     const full = peerToolNames();
     expect(full.has("upsert_item") && full.has("set_source_attention") && full.has("organize_memories") && full.has("supersede") && full.has("forget")).toBe(true);
@@ -95,7 +95,7 @@ describe("an outside Agent on another device uses this instance's tools", () => 
     for (const [name, args] of [
       ["lark_send", { text: "hi" }],
       ["notify", { title: "t", body: "b" }],
-      ["delegate_code", { task: "x" }],
+      ["apply_code_run", { run_id: "x" }],
       ["wake_later", { minutes: 1, note: "n" }],
       ["omem_call", { tool: "lark_send", args: { text: "hi" } }],
       ["omem_call", { tool: "notify", args: { title: "t", body: "b" } }],

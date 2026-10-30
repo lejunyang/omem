@@ -14,7 +14,7 @@ it("expands tool groups, never with a role's own hand-in tools, and takes out wh
 
 it("gives the assistant every tool of its groups, so a new tool in a group needs no edit of the role", () => {
   const tools = loadRole("assistant").tools;
-  const code = TOOL_GROUPS.find((g) => g.id === "code")!.tools.filter((t) => !["review_task", "submit_review", "submit_change_points", "rule_review"].includes(t));
+  const code = TOOL_GROUPS.find((g) => g.id === "code")!.tools.filter((t) => !["review_task", "code_workspace", "submit_review", "submit_change_points", "rule_review"].includes(t));
   expect(tools).toEqual(expect.arrayContaining(code));
   for (const t of ["write_page", "propose_item_update", "propose_profile_change", "meeting_send", "plugin_put"]) expect(tools).not.toContain(t);
 });

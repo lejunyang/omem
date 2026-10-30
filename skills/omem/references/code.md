@@ -1,6 +1,6 @@
 # 编码交办、评审与 Git（code）
 
-交办编码（`delegate_code`）和评审已有分支（`review_branch`）不对外部客户端（`omem mcp`、没有运行令牌的 `omem tool`）开放，在 omem 的问答里说或用 `omem delegate` / `omem review-branch`。例外是另一台设备上的 Agent（`omem tool --peer` / `omem mcp --peer`）：它可以 `review_branch`，评审由它自己做，见下面“设备的外部 Agent 评审分支”。
+交办编码（`delegate_code`）和评审已有分支（`review_branch`）不对外部客户端（`omem mcp`、没有运行令牌的 `omem tool`）开放，在 omem 的问答里说或用 `omem delegate` / `omem review-branch`。例外是另一台设备上的 Agent（`omem tool --peer` / `omem mcp --peer`）：它可以 `review_branch`，评审由它自己做，见下面“设备的外部 Agent 评审分支”；也可以 `delegate_code`，代码由它自己写，见“设备的外部 Agent 编码”。
 
 ## 交办
 
@@ -48,3 +48,14 @@
 2. `review_task(run_id)`：取需求、检查结果、改动统计、各评审项的角色说明和要求；还在准备时会说明，过一会再取。完整 diff 用 `part=diff`，按返回的 `offset` 分页。工作区不在调用方机器上：改过的文件用 `read_source` / `search` / `find_symbol` 读，space 填说明里列的索引空间。
 3. `submit_change_points(run_id, …)`：需求拆分（可选，网页“变更”视图用它）。要交就在最后一个评审项之前交。
 4. 每个评审项 `submit_review(run_id, check, …)`。最后一项交上去后，那台机器按各项的阻断级别汇总结论、通知本人；之后不再接收提交。只有发起评审的那台设备能取材料和提交。
+
+## 设备的外部 Agent 编码
+
+经 `--peer` 调用时，`delegate_code` 的编码交给调用方自己，那台机器只建工作分支和工作区、装依赖，不问任何模型写代码：
+
+1. `delegate_code`（不能带 `execution`、`sync`；可带 `branch`、`from_branch`、`item_id`）：返回运行 id，第一轮准备好后以 `awaiting-peer-code` 结束。
+2. `code_workspace(run_id, action=brief)`：任务、事项材料（含需求点）、工作分支、能运行的命令、各轮状态；还在准备时会说明。
+3. 看和改：`list`、`read`（`from` 分页，每页 400 行）、`grep`（正则，`path` 限定目录）、`write`（整个文件）、`edit`（`old` 要唯一，或 `replace_all`）、`delete`。路径是仓库里的相对路径，几个仓库时写成 `仓库空间id/路径`；`.git` 和工作区外不能动。
+4. 运行：`run` 只能运行本人给仓库设的命令（仓库设置里的检查命令 `check`、准备命令 `setup`、“设备的外部 Agent 可以运行的命令”里的 `名字: 命令`），`args` 追加不带空格和 shell 符号的参数（测试文件、选项）。最多等 `wait` 秒（≤100），没跑完用 `output` 取；同一时间只跑一条。
+5. `git`：`status`、`diff`、`log`、`commit`（`message`，按功能分几次提交，不 push）。
+6. `finish(summary, review)`：排下一轮，提交剩下的改动、运行检查命令、取 diff，再交给评审：`review=peer`（默认）按“设备的外部 Agent 评审分支”的 2–4 步自己评审（`run_id` 用 finish 返回的那一轮），`here` 交给那台机器的评审 Agent。评审要求修改就在同一个工作区接着改，再 `finish`。轮次排队或进行时不能改文件。应用（推送）由本人在网页上确认。

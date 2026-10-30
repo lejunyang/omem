@@ -73,6 +73,7 @@ export function useReviews(runId: Ref<string>, refreshKey: Ref<string | undefine
     if (["queued", "checks", "lead"].includes(c.stage ?? "")) return { text: c.stage === "lead" ? "负责人汇总中" : "评审中", cls: "accent" };
     if (c.verdict === "awaiting-plan") return { text: "计划等你确认", cls: "accent" };
     if (c.stage === "peer") return { text: "等外部 Agent 评审", cls: "accent" };
+    if (c.verdict === "awaiting-peer-code") return { text: "等外部 Agent 编码", cls: "accent" };
     if (c.verdict === "approved") return { text: c.acceptedByOwner ? "你已接受" : "评审通过", cls: "ok" };
     if (c.stop) return { text: "等你决定", cls: "warn" };
     if (c.verdict === "changes-requested") return { text: "需要修改", cls: "warn" };

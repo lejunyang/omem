@@ -36,7 +36,7 @@ const GROUPS: { kinds: Material["kind"][]; title: string }[] = [
   { kinds: ["conversation"], title: "会话" },
 ];
 const groups = computed(() => GROUPS.map((g) => ({ ...g, list: props.materials.filter((m) => g.kinds.includes(m.kind)) })).filter((g) => g.list.length));
-const VERDICT: Record<string, { text: string; cls: string }> = { approved: { text: "评审通过", cls: "ok" }, "changes-requested": { text: "要求修改", cls: "warn" }, "awaiting-plan": { text: "等你确认计划", cls: "accent" }, "awaiting-peer": { text: "等外部 Agent 评审", cls: "accent" } };
+const VERDICT: Record<string, { text: string; cls: string }> = { approved: { text: "评审通过", cls: "ok" }, "changes-requested": { text: "要求修改", cls: "warn" }, "awaiting-plan": { text: "等你确认计划", cls: "accent" }, "awaiting-peer": { text: "等外部 Agent 评审", cls: "accent" }, "awaiting-peer-code": { text: "等外部 Agent 编码", cls: "accent" } };
 const runBadge = (m: Material) => (m.run?.verdict && VERDICT[m.run.verdict]) || { text: statusLabel[m.run?.status ?? ""] ?? m.run?.status ?? "", cls: m.run?.status === "failed" ? "danger" : "" };
 const spaceName = (id: string) => state.spaces.find((s) => s.id === id)?.name ?? id;
 

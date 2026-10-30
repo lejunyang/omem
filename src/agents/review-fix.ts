@@ -189,7 +189,7 @@ export function queueStandaloneFix(app: App, rootId: string, expectedLastId: str
       kind: "code", spaceId: last.spaceId, userId,
       title: truncate(`交办第 ${rounds.length + 1} 轮：${task.split("\n")[0]}`, 80),
       // The last round's Git work is its own; this round does only what it is asked.
-      input: { ...last.input, sync: undefined, syncOnly: undefined, syncResume: undefined, moveToTarget: undefined, reviewOnly: undefined, ...extraInput, task, continueFrom: rootId, resumeSessionId: sessionId, round: rounds.length + 1 },
+      input: { ...last.input, sync: undefined, syncOnly: undefined, syncResume: undefined, moveToTarget: undefined, reviewOnly: undefined, peerFinished: undefined, ...extraInput, task, continueFrom: rootId, resumeSessionId: sessionId, round: rounds.length + 1 },
       parentId: last.parentId,
     });
     app.db.exec("COMMIT");

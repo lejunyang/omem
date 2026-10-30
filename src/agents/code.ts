@@ -93,6 +93,13 @@ export type CodeInput = {
    * submit_review / submit_change_points; none of this machine's models is asked anything.
    */
   peerReviewer?: PeerReviewer;
+  /**
+   * Coding an outside Agent on a paired device does itself (peer-code.ts, delegate_code over
+   * `--peer`): a round prepares the worktree and stops; the Agent edits through code_workspace, and
+   * its `finish` queues a round with `peerFinished` that commits, checks and reviews what it did.
+   */
+  peerCoder?: PeerReviewer;
+  peerFinished?: boolean;
 };
 export type PeerReviewer = { caller: string; session: string; agent?: string; model?: string };
 
@@ -226,7 +233,7 @@ export async function runCodeTask(ctx: RunContext) {
 
   // Triage before coding: review-lead guesses the tier from the task (shown with the progress, and
   // a heavier option the post-coding triage weighs). Only when a tier has a lead to do it.
-  if (!continueFrom && !input.reviewTier && !input.peerReviewer && app.config.review.tiers.some((t) => t.lead)) {
+  if (!continueFrom && !input.reviewTier && !input.peerReviewer && !input.peerCoder && app.config.review.tiers.some((t) => t.lead)) {
     const { estimateReview } = await import("./review.ts");
     const { askModel } = await import("./oneshot.ts");
     const estimate = await estimateReview(app, input.task, (p) => askModel(app, p, { timeoutMs: 60_000, signal: ctx.signal }));
@@ -290,8 +297,14 @@ ${input.task}
     }
   }
   const skipCoder = !!(input.syncOnly || input.moveToTarget);
+  if (input.peerCoder && !input.peerFinished && !skipCoder) {
+    // The other device's Agent codes now; the run ends so it holds no slot meanwhile.
+    ctx.event("status", { text: `工作区已准备好，等设备 ${input.peerCoder.caller} 的外部 Agent 编码（code_workspace，run_id=${run.id}）` });
+    ctx.output({ verdict: "awaiting-peer-code" });
+    return { verdict: "awaiting-peer-code" };
+  }
   // What the owner added while this round waited in the queue.
-  const early = input.branches || skipCoder ? [] : pendingNotes(app, run.id);
+  const early = input.branches || skipCoder || input.peerCoder ? [] : pendingNotes(app, run.id);
   if (early.length) {
     coderTask = `${coderTask}\n\n${notesText(early)}`;
     markNotesDelivered(app, run.id, early);
@@ -302,7 +315,8 @@ ${input.task}
     ctx.output({ coderSummary: coded.coderSummary, coderAI: coded.coderAI, coderAgent: coded.coderAgent, coderSessionId: coded.coderSessionId });
     ctx.event("status", { text: `上一次尝试已经写完代码，这次从检查和评审接着做` });
   }
-  let coderReply = input.branches ? branchSummary(worktrees) : skipCoder ? synced?.summary ?? "" : coded ? String(coded.coderSummary) : await code();
+  if (input.peerFinished) ctx.output({ coderSummary: input.task, coderAI: { profile: `peer:${input.peerCoder?.caller ?? "?"}`, model: input.peerCoder?.model } });
+  let coderReply = input.branches ? branchSummary(worktrees) : skipCoder ? synced?.summary ?? "" : input.peerFinished ? input.task : coded ? String(coded.coderSummary) : await code();
   // What Git brought in before coding goes to the reviewers too, not only the conflicts.
   if (synced?.report || (synced?.summary && !skipCoder)) coderReply = `${coderReply}\n\n## Git 同步\n\n${[synced.summary, synced.report].filter(Boolean).join("\n\n")}`.trim();
   if (input.branches || skipCoder || synced) ctx.output({ coderSummary: coderReply });
@@ -310,7 +324,7 @@ ${input.task}
     if (input.branches) return null;
     // Every coding round starts from the target branch's latest commits on origin, asked or not:
     // coding on an old commit leaves the work to be merged by hand later. Nothing to pull, no trace.
-    const implicit = !input.sync && !input.syncResume && !input.moveToTarget && !input.syncOnly && !retryOf && worktrees.some((w) => w.targetBranch);
+    const implicit = !input.sync && !input.syncResume && !input.moveToTarget && !input.syncOnly && !retryOf && !input.peerFinished && worktrees.some((w) => w.targetBranch);
     const req: import("./code-sync.ts").SyncRequest | undefined = input.sync ?? (implicit ? { pull: true, fetch: false } : undefined);
     if (!req && !input.syncResume && !input.moveToTarget) return null;
     const cs = await import("./code-sync.ts");

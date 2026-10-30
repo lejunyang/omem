@@ -1007,3 +1007,9 @@ updated: 2026-10-30
 - **拆分写法**（`roles/req-splitter.md` 重写）：系统按端（PC端、移动端…），空间即产品；公共规则单独成页面并 link，不重复；依据优先级（本人决定 > 后来的群聊口径 > PRD > 旧实现）；迁移需求必须核对并引用旧代码；acceptance 写可观察的结果；测试点一条一个场景，覆盖边界、错误提示、权限、状态和存量数据。
 - **从修改里学**：`ownerCorrections`（`src/items/requirements.ts`）取本人对 Agent 写的节点的更正、删除和确认；`req-split` 任务列出同空间最近的修改，`profile-jobs.ts` 的 req-splitter 复盘证据带上每次拆分之后本人的处理。
 - **需求页**：树可折叠（按空间存在浏览器里，首次只展开到模块）、全部展开 / 收起、隐藏测试点、按标题 / 需求 / 验收 / id 搜索（匹配项连同路径）。
+
+## 10-31：设备的外部 Agent 编码
+
+- `delegate_code` 不再在 `PEER_DENY` 里。经 `--peer` 调用时交办带 `peerCoder`（不能指定编码 AI 和 Git 同步）：`runCodeTask` 建好工作分支、工作区、装好依赖后以 `awaiting-peer-code` 结束，跳过预判和本人补充的投递。
+- 新工具 `code_workspace`（`src/agents/peer-code.ts`，`ROLE_TOOLS` 里，经 `PEER_REVIEW_TOOLS` 给外部 Agent）：brief / list / read / grep / write / edit / delete / run / output / git / finish。路径限定在工作区内、不能动 `.git`；`run` 只运行仓库设置里的检查命令、准备命令和新设置 `peerCommands`（设置页“设备的外部 Agent 可以运行的命令”，一行一个“名字: 命令”），参数按 `SAFE_ARG` 校验，后台执行可轮询；轮次排队或进行时不能改。
+- `finish` 用 `queueStandaloneFix` 排一轮带 `peerFinished`（不随续轮复制）：跳过隐式同步和编码，summary 当编码说明，照常提交、检查、diff、索引，`review=peer` 时带 `peerReviewer` 走外部 Agent 评审。`test/peer-code.test.ts` 覆盖。

@@ -1064,6 +1064,10 @@ async function saveEdit() {
             <span>准备命令（新工作区或锁文件变了时，编码前运行）</span>
             <input v-model="editing.settings.setupCommand" class="input mono" placeholder="不填按锁文件自动选（pnpm / yarn / npm / bun）；填 none 不准备" />
           </label>
+          <label v-if="editing.kind === 'repo'" class="field">
+            <span>设备的外部 Agent 可以运行的命令（它经 --peer 交办编码时；一行一个“名字: 命令”，检查和准备命令自动包含）</span>
+            <textarea v-model="editing.settings.peerCommands" class="textarea mono" rows="3" placeholder="test: npx vitest run&#10;lint: npx eslint" />
+          </label>
           <div v-if="editing.kind === 'repo'" class="field fit">
             <span>交办工作区</span>
             <span class="hint">omem 按需在数据目录里建，最多 4 个，闲着的会收回给新的交办；被忽略的文件（node_modules 等）一直保留，不用设置。</span>

@@ -42,7 +42,7 @@ omem tool --peer <设备> --session "整理项目A记忆" remember '{"kind":"fac
 
 MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备>"]`；`--read-only`、`--space <id>`、`--spaces a,b` 照用）：工具列表和调用都转给那台机器，一个 MCP 进程在对方记成一条运行。要点：
 
-- 工具是 `omem mcp` 那一套，但**去掉了所有对外发消息或动手的**：飞书发消息、卡片、文档写入，`notify`，交办编码（`review_branch` 例外：评审由你自己做，见 `references/code.md`），`generate_wiki` / `digest_sources`，唤醒，改档案、技能、规则和采集设置。调用它们会被拒绝并说明；这些事请本人在那台机器或网页上做。读取、检索、记忆（remember / supersede / forget）、写页面、原件关注度和标注、事项、整理记忆目录等整理类的写入都可以。
+- 工具是 `omem mcp` 那一套，但**去掉了所有对外发消息或动手的**：飞书发消息、卡片、文档写入，`notify`，交办编码的后续操作和应用（`review_branch`、`delegate_code` 例外：评审和编码由你自己做，见 `references/code.md`），`generate_wiki` / `digest_sources`，唤醒，改档案、技能、规则和采集设置。调用它们会被拒绝并说明；这些事请本人在那台机器或网页上做。读取、检索、记忆（remember / supersede / forget）、写页面、原件关注度和标注、事项、整理记忆目录等整理类的写入都可以。
 - 要那台机器上的 Agent 去做（用它的模型、它机器上的技能，比如在它那里操作浏览器）：`run_agent(name, task)` 或 `ask_agent(name, question)` 排成一个运行，立即返回运行 id，用 `read_run` 看进度和结果；没有会话可以回复，结果只在运行里。交给 `assistant` 时它只有你这边能用的工具（不对外发消息）。
 - 每次调用都记在对方的一条运行里（类型“设备的外部 Agent”，本人在运行页能看到每次调用和写入）；记忆等写入带着这条运行和 `peer:<本机名>` 作为来源档案。**会话**决定归哪条运行：`--session <名>`（或环境变量 `OMEM_PEER_SESSION`），不填时 `omem tool` 按“本机名 + 当天日期”、`omem mcp` 每个进程一个。换一件事就换个会话名。用 `--agent`、`--model`、`--effort`（或环境变量 `OMEM_PEER_AGENT`、`OMEM_PEER_MODEL`、`OMEM_PEER_EFFORT`）告诉对方是哪个 Agent、哪个模型和强度：运行页像其他运行一样显示“peer:<本机名>:<Agent> · 模型 · 强度”，写入的记忆也带着模型和强度。
 - 默认空间是 `personal`（不看本机的当前目录），要在某个空间干活就 `--space`；`--spaces a,b` 把能读写的空间限定在这几个。

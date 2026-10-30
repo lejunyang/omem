@@ -248,7 +248,7 @@ omem digest proj --mode triage --title-contains 值班 --goal "…"     # 整理
 omem search --space shop-api --branch feature/refund "退款金额"     # 查分支上的代码
 omem mcp [--read-only] [--space <id>]       # 把个人库作为 MCP 服务给其他 Agent 用（默认空间按当前目录所在的仓库空间）
 omem tool [工具名] [JSON | 键=值 … | -f 文件]  # 在终端里调用 omem 工具；omem tool help [工具名|分组] 看说明；omem 运行里的 Agent 带着本次运行的权限
-omem tool --peer <设备> [工具名] [参数…]      # 在设备（常驻服务器）上调用工具：用本机的模型整理它的数据，不含对外发消息、交办、唤醒（`review_branch` 例外：评审由本机 Agent 自己做，`review_task` 取材料、`submit_review` 逐项交）；调用记在它那里的一条“设备的外部 Agent”运行（--session 分会话，--space / --spaces / --read-only；--agent / --model / --effort 登记本机用的 Agent、模型和强度，显示在那条运行上）
+omem tool --peer <设备> [工具名] [参数…]      # 在设备（常驻服务器）上调用工具：用本机的模型整理它的数据，不含对外发消息、交办、唤醒（`review_branch`、`delegate_code` 例外：评审和编码由本机 Agent 自己做，`review_task` 取材料、`submit_review` 逐项交；`code_workspace` 在它的工作区里读写文件、运行本人允许的命令、提交）；调用记在它那里的一条“设备的外部 Agent”运行（--session 分会话，--space / --spaces / --read-only；--agent / --model / --effort 登记本机用的 Agent、模型和强度，显示在那条运行上）
 omem mcp --peer <设备>                      # 同上，作为 stdio MCP 服务给本机的 Claude Code、Codex 用
 omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事项
 omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入

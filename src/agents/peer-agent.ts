@@ -32,16 +32,17 @@ export const PEER_DENY = new Set([
   "set_chat_watch", "set_lark_backfill", "set_lark_capture_policy", "set_lark_subscription", "refresh_item_notification", "notify",
   "ask_owner", "wait_answer", "suggest_next", "wake_later", "wake_on_message", "cancel_wake",
   "continue_agent_work", "switch_run_ai", "generate_wiki", "digest_sources",
-  "delegate_code", "continue_code_run", "fix_review", "message_code_run", "set_code_review", "stop_code_run", "resplit_change_points", "retry_code_progress",
+  "continue_code_run", "fix_review", "message_code_run", "set_code_review", "stop_code_run", "resplit_change_points", "retry_code_progress",
   "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_action",
   "connect_repository", "save_agent", "save_skill", "save_rule", "ignore_notification_rule",
 ]);
 
 /**
  * Role hand-ins an outside Agent does get: review_branch from another device makes that Agent the
- * reviewer (no model here is asked), and it reads and hands in the review through these.
+ * reviewer (no model here is asked), and it reads and hands in the review through these;
+ * delegate_code from another device makes it the coder, working through code_workspace.
  */
-export const PEER_REVIEW_TOOLS = ["review_task", "submit_review", "submit_change_points"];
+export const PEER_REVIEW_TOOLS = ["review_task", "submit_review", "submit_change_points", "code_workspace"];
 
 /** Tools that only read (the same list `omem mcp --read-only` offers). */
 export const READ_ONLY_TOOLS = new Set(["list_spaces", "search", "scan", "read_source", "source_outline", "list_sources", "find_symbol", "list_pages", "read_page", "recall", "list_items", "list_runs", "read_run"]);
