@@ -233,8 +233,31 @@
   color: var(--om-accent);
   font-weight: 500;
 }
+.tour-text .tour-kicker {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--om-accent);
+}
+.tour-text ul {
+  margin: 0 0 12px;
+  padding-left: 1.2em;
+  color: var(--om-ink-2);
+  line-height: 1.75;
+}
+.tour-text li + li {
+  margin-top: 4px;
+}
 .tour .shot {
   margin: 0;
+}
+/* A tour row whose picture is a code sample (e.g. a plugin manifest) instead of a screenshot. */
+.tour-item > div[class*="language-"] {
+  margin: 0;
+  border: 1px solid var(--om-line);
+  border-radius: 10px;
+  box-shadow: var(--om-shadow);
 }
 @media (max-width: 860px) {
   .tour-item,
