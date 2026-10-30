@@ -130,13 +130,13 @@ export async function wikiLocation(app: App, token: string, known?: WikiNode | n
   return result;
 }
 
-/** Child nodes of a node, up to `max` (pages of 50). */
+/** Child nodes of a node, up to `max` (pages of 50); an empty `nodeToken` lists the knowledge base's top-level nodes. */
 export async function wikiChildren(app: App, node: Pick<WikiNode, "spaceId" | "nodeToken">, max: number): Promise<{ nodes: WikiNode[]; more: boolean }> {
   const nodes: WikiNode[] = [];
   let token = "";
   for (let page = 0; nodes.length < max && page < 200; page++) {
     const v = await asOwner(app, "读取飞书知识库的子页面", () =>
-      larkCli(["wiki", "+node-list", "--space-id", node.spaceId, "--parent-node-token", node.nodeToken, "--page-size", "50", ...(token ? ["--page-token", token] : []), "--as", "user", "--format", "json"], 60_000),
+      larkCli(["wiki", "+node-list", "--space-id", node.spaceId, ...(node.nodeToken ? ["--parent-node-token", node.nodeToken] : []), "--page-size", "50", ...(token ? ["--page-token", token] : []), "--as", "user", "--format", "json"], 60_000),
     );
     const d = v?.data ?? v;
     const page = ((d?.nodes ?? d?.items ?? []) as unknown[]).map(toNode);
@@ -171,7 +171,10 @@ export async function personalLibrary(app: App): Promise<string> {
 
 // ---- crawls ------------------------------------------------------------------------------
 
+/** Hand-over counters are kept under `${KEY}:<id>`; before 2026-10-30 every crawl lived in one value under KEY. */
 const KEY = "lark_wiki_crawls";
+/** Each crawl under a key of its own, so a step of one crawl does not rewrite the others' queues. */
+const ONE = "lark_wiki_crawl/";
 
 type Entry = { url: string; depth: number; title?: string; node?: WikiNode };
 export type WikiCrawl = {
@@ -180,6 +183,12 @@ export type WikiCrawl = {
   spaceId: string;
   root: string;
   rootTitle?: string;
+  /** A whole knowledge base read from its top-level nodes (lark-knowledge.ts), not from one page. */
+  wikiSpaceId?: string;
+  /** Pages already captured in the space are passed over without reading them (their updates come from the docs check). */
+  skipCaptured?: boolean;
+  /** Pages passed over because the space already has them (with `skipCaptured`). */
+  known?: number;
   /** Levels of children below the root to read. */
   depth: number;
   maxDocs: number;
@@ -201,15 +210,30 @@ export type WikiCrawl = {
   by?: string;
 };
 
-function crawls(app: App): WikiCrawl[] {
-  return json(one<{ value: string }>(app.db, "select value from kv where key = ?", KEY)?.value, []);
+const split = new WeakSet<App>();
+/** Crawls saved the old way (all in one value) move to a key each, once. */
+function splitLegacy(app: App) {
+  if (split.has(app)) return;
+  split.add(app);
+  const legacy = one<{ value: string }>(app.db, "select value from kv where key = ?", KEY)?.value;
+  if (legacy === undefined) return;
+  for (const c of json<WikiCrawl[]>(legacy, [])) run(app.db, "insert or ignore into kv(key,value) values(?,?)", ONE + c.id, JSON.stringify(c));
+  run(app.db, "delete from kv where key = ?", KEY);
 }
-function save(app: App, list: WikiCrawl[]) {
-  run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", KEY, JSON.stringify(list));
+function crawls(app: App): WikiCrawl[] {
+  splitLegacy(app);
+  return all<{ value: string }>(app.db, "select value from kv where substr(key, 1, ?) = ?", ONE.length, ONE)
+    .map((r) => json<WikiCrawl | null>(r.value, null))
+    .filter((c): c is WikiCrawl => !!c)
+    .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+}
+function load(app: App, id: string): WikiCrawl | null {
+  splitLegacy(app);
+  return json<WikiCrawl | null>(one<{ value: string }>(app.db, "select value from kv where key = ?", ONE + id)?.value, null);
 }
 function put(app: App, c: WikiCrawl) {
   c.updatedAt = new Date().toISOString();
-  save(app, [...crawls(app).filter((x) => x.id !== c.id), c]);
+  run(app.db, "insert into kv(key,value) values(?,?) on conflict(key) do update set value = excluded.value", ONE + c.id, JSON.stringify(c));
 }
 
 /** A crawl as the owner and agents see it (without the queue). */
@@ -223,9 +247,60 @@ export function listCrawls(app: App) {
 }
 
 export function getCrawl(app: App, id: string) {
-  const c = crawls(app).find((x) => x.id === id);
+  const c = load(app, id);
   if (!c) throw new HttpError(404, `没有这个知识库爬取：${id}`);
   return c;
+}
+
+/** Drop a finished or stopped crawl (its queue and hand-over counter). */
+export function forgetCrawl(app: App, id: string) {
+  const c = load(app, id);
+  if (!c || c.status === "running" || c.status === "paused") return false;
+  run(app.db, "delete from kv where key in (?, ?)", ONE + id, `${KEY}:${id}`);
+  return true;
+}
+
+/** Being read right now in this process (a background loop holds it). */
+export const crawlBusy = (id: string) => driving.has(id);
+
+/**
+ * Start reading a whole knowledge base into a space: its top-level nodes are queued (read now, one
+ * listing), and the crawl waits paused until it is continued batch by batch (lark-knowledge.ts reads
+ * a share of the daily budget from it). Pages the space already has are passed over. An open crawl
+ * of the same knowledge base into the same space is returned instead of a second one.
+ */
+export async function startSpaceCrawl(app: App, input: { spaceId: string; wikiSpaceId: string; title: string; origin: string; depth?: number; maxDocs?: number; batch: number; by?: string }) {
+  const same = crawls(app).find((c) => c.wikiSpaceId === input.wikiSpaceId && c.spaceId === input.spaceId && (c.status === "running" || c.status === "paused"));
+  if (same) return crawlSummary(same);
+  const depth = Math.max(0, Math.min(50, input.depth ?? 50));
+  const { nodes, more } = await wikiChildren(app, { spaceId: input.wikiSpaceId, nodeToken: "" }, 5000);
+  const queue = nodes.map((n) => ({ url: nodeUrl(input.origin, n), depth, title: n.title, node: n }));
+  const at = new Date().toISOString();
+  const c: WikiCrawl = {
+    id: newId("wc"),
+    spaceId: input.spaceId,
+    root: `${input.origin}/wiki/space/${input.wikiSpaceId}`,
+    rootTitle: input.title,
+    wikiSpaceId: input.wikiSpaceId,
+    skipCaptured: true,
+    known: 0,
+    depth,
+    maxDocs: Math.max(1, input.maxDocs ?? 100_000),
+    batch: Math.max(1, input.batch),
+    status: "paused",
+    queue,
+    seen: [...new Set(queue.map((e) => e.url))],
+    read: 0,
+    failed: 0,
+    skipped: more ? 1 : 0,
+    ids: [],
+    errors: [],
+    startedAt: at,
+    updatedAt: at,
+    by: input.by,
+  };
+  put(app, c);
+  return crawlSummary(c);
 }
 
 /**
@@ -302,13 +377,18 @@ function drive(app: App, id: string) {
 
 /** Read queued nodes one by one until the batch, the queue or `maxDocs` runs out; progress is saved after each. */
 export async function crawlLoop(app: App, id: string) {
-  const { importLarkDocument, relinkParent } = await import("./lark-docs.ts");
+  const { findLarkDoc, importLarkDocument, relinkParent } = await import("./lark-docs.ts");
+  // The space's copy of a page: by its wiki link, or by the document behind it (a /docx/ copy).
+  const captured = (c: WikiCrawl, url: string, node: WikiNode) =>
+    !!(findLarkDoc(app, c.spaceId, url) ?? (node.objToken ? findLarkDoc(app, c.spaceId, `${new URL(url).origin}/docx/${node.objToken}`) : undefined));
   let inBatch = 0;
+  let steps = 0;
   for (;;) {
     const c = getCrawl(app, id);
     if (c.status !== "running") return c;
     if (!c.queue.length || c.read >= c.maxDocs) return finish(app, c);
-    if (c.batch && inBatch >= c.batch) {
+    // Pages passed over (already there, not docs) cost a listing each: one batch walks a bounded number of them too.
+    if (c.batch && (inBatch >= c.batch || (c.skipCaptured && steps >= c.batch * 20 + 100))) {
       c.status = "paused";
       put(app, c);
       await handOver(app, c, false);
@@ -319,6 +399,7 @@ export async function crawlLoop(app: App, id: string) {
       // Children come with their node; only the root is looked up.
       const node = entry.node ?? (await wikiNode(app, entry.url));
       if (node && !isReadableNode(node)) c.skipped++;
+      else if (c.skipCaptured && node && captured(c, entry.url, node)) c.known = (c.known ?? 0) + 1;
       else {
         // Only this page: its children come from the queue, its links stay links (or local copies).
         const r = await importLarkDocument(app, c.spaceId, entry.url, { depth: 0, wikiChildren: false });
@@ -341,9 +422,11 @@ export async function crawlLoop(app: App, id: string) {
           const origin = new URL(entry.url).origin;
           const room = Math.max(0, c.maxDocs - c.read - c.queue.length + 1);
           const { nodes, more } = await wikiChildren(app, node, room);
+          const seen = new Set(c.seen);
           for (const n of nodes) {
             const url = nodeUrl(origin, n);
-            if (c.seen.includes(url)) continue;
+            if (seen.has(url)) continue;
+            seen.add(url);
             c.seen.push(url);
             c.queue.push({ url, depth: entry.depth - 1, title: n.title, node: n });
           }
@@ -362,6 +445,7 @@ export async function crawlLoop(app: App, id: string) {
       if (c.errors.length < 50) c.errors.push(`${entry.title ?? entry.url}：${(e as Error).message.slice(0, 200)}`);
     }
     c.queue.shift();
+    steps++;
     put(app, c);
   }
 }
@@ -380,6 +464,8 @@ async function handOver(app: App, c: WikiCrawl, done: boolean) {
   const handed = json<Record<string, number>>(one<{ value: string }>(app.db, "select value from kv where key = ?", `${KEY}:${c.id}`)?.value, {});
   const fresh = c.ids.slice(handed.n ?? 0);
   if (fresh.length) {
+    // Folder levels (a knowledge base set to “only searchable”) reach the new pages before deciding what to digest.
+    if (one(app.db, "select 1 from source_node_levels where space_id = ? limit 1", c.spaceId)) (await import("../sources/attention.ts")).applyNodeLevels(app, c.spaceId);
     const { scheduleIngest } = await import("../agents/jobs.ts");
     scheduleIngest(app, c.spaceId, fresh, `飞书知识库《${c.rootTitle ?? c.root}》`);
   }
@@ -387,7 +473,7 @@ async function handOver(app: App, c: WikiCrawl, done: boolean) {
   if (done)
     notify(app, {
       title: `飞书知识库读取完成：《${c.rootTitle ?? c.root}》`,
-      body: `读了 ${c.read} 篇${c.failed ? `，${c.failed} 篇失败` : ""}${c.skipped ? `，${c.skipped} 个页面没读（不是文档、超出层数或总量）` : ""}，已交给整理。`,
+      body: `读了 ${c.read} 篇${c.known ? `，${c.known} 篇空间里已有、没再读` : ""}${c.failed ? `，${c.failed} 篇失败` : ""}${c.skipped ? `，${c.skipped} 个页面没读（不是文档、超出层数或总量）` : ""}，已交给整理。`,
       urgency: "silent",
     });
 }

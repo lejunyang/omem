@@ -67,6 +67,8 @@ omem hook claude|codex                          # 把编码 Agent 的会话记�
 omem lark backfill --name 报警 --days 0         # 回溯会话历史
 omem lark fill-files --all                      # 补拉缺的图片和附件
 omem lark wiki-crawl <知识库页面链接> --depth 3   # 按目录树读飞书知识库
+omem lark kb list | discover | read [--limit 30]  # 能看到的飞书知识库：建议、发现、每晚的读取
+omem lark kb map <知识库 id> accept|map|create|ignore|pause …  # 处理一个知识库的归属
 omem lark docs-refresh | docs-missing | docs-check
 omem lark user-permissions [--grant] | bot-permissions [--scan]
 ```

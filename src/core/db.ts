@@ -965,6 +965,45 @@ const migrations: string[] = [
   create index replay_effects_replay on replay_effects(replay_id);
   create index replay_effects_target on replay_effects(target_kind, target_id, effect);
   `,
+  // Every Feishu knowledge base the owner can see (channels/lark-knowledge.ts): what discovery read
+  // (description, type, top-level sample; gone_at when no longer listed), the kb-scout's proposal
+  // (which space, priority, initial level) and the owner's decision, and the daily reading into the
+  // mapped space. A row with discovered_at null is only known from a captured doc. lark_kb_reads: one
+  // row per day's batch of a knowledge base (read, already there, not docs, failed).
+  `
+  alter table wiki_spaces add column description text not null default '';
+  alter table wiki_spaces add column space_type text;
+  alter table wiki_spaces add column visibility text;
+  alter table wiki_spaces add column discovered_at text;
+  alter table wiki_spaces add column last_seen_at text;
+  alter table wiki_spaces add column gone_at text;
+  alter table wiki_spaces add column sample text;
+  alter table wiki_spaces add column status text not null default 'new';
+  alter table wiki_spaces add column target_space text;
+  alter table wiki_spaces add column priority text not null default 'normal';
+  alter table wiki_spaces add column level text not null default 'normal';
+  alter table wiki_spaces add column daily_share integer;
+  alter table wiki_spaces add column proposal text;
+  alter table wiki_spaces add column scouted_at text;
+  alter table wiki_spaces add column decided_at text;
+  alter table wiki_spaces add column decided_by text;
+  alter table wiki_spaces add column paused integer not null default 0;
+  alter table wiki_spaces add column crawl_id text;
+  alter table wiki_spaces add column updated_at text;
+  create index wiki_spaces_status on wiki_spaces(status) where discovered_at is not null;
+  create table lark_kb_reads (
+    id integer primary key,
+    at text not null,
+    kb_id text not null,
+    space_id text not null,
+    read integer not null default 0,
+    known integer not null default 0,
+    skipped integer not null default 0,
+    failed integer not null default 0
+  );
+  create index lark_kb_reads_kb on lark_kb_reads(kb_id, at);
+  create index lark_kb_reads_at on lark_kb_reads(at);
+  `,
 ];
 
 export type Db = DatabaseSync;

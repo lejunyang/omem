@@ -15,6 +15,7 @@ const routes: RouteRecordRaw[] = [
   view("/wiki/:space?/:slug(.*)*", () => import("./views/Wiki.vue"), "/wiki"),
   view("/items/:id?", () => import("./views/Items.vue"), "/items"),
   view("/memory", () => import("./views/Memory.vue")),
+  view("/sources/kb", () => import("./views/KnowledgeBases.vue"), "/sources/kb"),
   view("/sources/:id?", () => import("./views/Sources.vue"), "/sources"),
   view("/learn", () => import("./views/Learn.vue")),
   view("/plugin/:id", () => import("./views/Plugin.vue"), "/plugin"),
@@ -36,6 +37,6 @@ const router = createRouter({
 });
 
 // After the first view has settled, pull every other chunk at idle.
-router.isReady().then(() => preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/memory", "/sources", "/learn", "/plugin", "/runs", "/agents", "/rules", "/rules/archive", "/notifications", "/settings"]));
+router.isReady().then(() => preloadWhenIdle(["/", "/ask", "/graph", "/wiki", "/items", "/memory", "/sources", "/sources/kb", "/learn", "/plugin", "/runs", "/agents", "/rules", "/rules/archive", "/notifications", "/settings"]));
 
 createApp(App).use(router).mount("#app");

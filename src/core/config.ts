@@ -64,6 +64,7 @@ export const roleNames = [
   "review-history",
   "review-lead",
   "replay-judge",
+  "kb-scout",
 ] as const;
 export type RoleName = (typeof roleNames)[number];
 
@@ -512,6 +513,22 @@ export const configSchema = z.object({
           context: z.number().int().min(1).max(100).default(30),
         })
         .default({ enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 }),
+      /**
+       * Knowledge bases the owner can see (src/channels/lark-knowledge.ts, read-only): discovered weekly,
+       * sorted into spaces by the kb-scout role along `direction` (the owner's words), and read a little
+       * every night: `dailyDocs` docs in all, shared by the mapped ones by priority. `autoApply`: the
+       * scout's proposals take effect without the owner's OK (one notification says what was done).
+       * `origin`: host of the doc links (e.g. https://tenant.larkoffice.com); by default the one most
+       * captured docs use.
+       */
+      knowledge: z
+        .object({
+          direction: z.string().max(4000).default(""),
+          autoApply: z.boolean().default(false),
+          dailyDocs: z.number().int().min(0).max(2000).default(30),
+          origin: z.string().url().optional(),
+        })
+        .default({ direction: "", autoApply: false, dailyDocs: 30 }),
     })
     .default({
       enabled: false,
@@ -546,6 +563,7 @@ export const configSchema = z.object({
       },
       guests: { enabled: false, p2p: false, spaces: [], perHour: 20, ownerPresent: "guest" },
       commands: { enabled: false, ai: "/ai", group: "/ai拉群", signature: "（此消息由 AI 代发）", context: 30 },
+      knowledge: { direction: "", autoApply: false, dailyDocs: 30 },
     }),
   telegram: z
     .object({

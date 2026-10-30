@@ -99,9 +99,10 @@ export function nodeLevels(app: App, spaceId: string, opts: { all?: boolean } = 
  * never changes the owner's folder level, and does not set again a level the owner rejected there.
  * `null` clears it.
  */
-export function setNodeLevel(app: App, spaceId: string, key: string, level: Level | null, by: SetBy, opts: { reason?: string; runId?: string | null } = {}) {
+export function setNodeLevel(app: App, spaceId: string, key: string, level: Level | null, by: SetBy, opts: { reason?: string; runId?: string | null; future?: boolean } = {}) {
   const cat = catalog(app, spaceId);
-  if (!cat.nodes.has(key)) throw new HttpError(404, `目录里没有这个节点：${key}（用 list_sources 看节点）`);
+  // `future`: a node its sources will bring (a knowledge base mapped to the space before its first page is read).
+  if (!cat.nodes.has(key) && !opts.future) throw new HttpError(404, `目录里没有这个节点：${key}（用 list_sources 看节点）`);
   const have = one<{ level: string; by: SetBy; status: string }>(app.db, "select level, by, status from source_node_levels where space_id = ? and node_key = ?", spaceId, key);
   if (have && have.status !== "rejected" && RANK[have.by] > RANK[by]) return { changed: false, kept: true, sources: 0 };
   if (have?.status === "rejected" && by !== "owner" && have.level === (level ?? "normal")) return { changed: false, kept: true, rejected: true, sources: 0 };

@@ -926,3 +926,12 @@ updated: 2026-10-30
 - **选型证据**：`replayModelEvidence` → `list_ai_backends` 的 `replay28d`；`runner.ts` 的任务选型说明加一句“只作参考”。
 - **入口**：定时任务 `replay`（4:30，默认关）、`omem replay [list|run]`、`GET /api/replays`、`POST /api/replays/run`、`POST /api/replay-effects/:id/:action`、同伴命令 `replays` / `replay-run`、`omem diag` 的 `replay`；设置 → Agent → 夜间复盘（`web/src/components/ReplaySettings.vue`），Agent 页首屏的复盘列表（`ReplayList.vue`）。档案 frontmatter 新增 `traits`（`research` 用于 R3），MCP 条目新增 `readOnly`。表 `replays`、`replay_effects`（迁移，随 `peer pull` 同步）。
 - **未做**：K 轴、coach 按汇总证据提 `routing.candidates`、私有回归集。
+
+## 10-30：主动读能看到的飞书知识库
+
+- **发现**（`src/channels/lark-knowledge.ts` 的 `discoverKnowledgeBases`）：`wiki +space-list --page-all --page-limit 0` 和 `wiki spaces get my_library`（列表里没有个人文档库），写进 `wiki_spaces` 的新列（简介、类型、可见性、`discovered_at` / `last_seen_at` / `gone_at`）；列表完整时没再出现的记 `gone_at`。新出现的 `walkSample`：顶层一页、前 5 个顶层页面的下一层各 10 个，存 `sample`，调用之间停 300 毫秒。定时任务 `lark-kb-discover`（每周日 2:20，lark-cli 没登录时不做）；`lark-wiki.ts` 的 `wikiChildren` 不给节点时列顶层。`lark-auth.ts` 的 wiki-read 多了 `wiki:space:retrieve`。
+- **归属建议**：新角色 `kb-scout`（`roles/kb-scout.md`，运行 `kb-scout`，每批 25 个），任务里有 `lark.knowledge.direction`、已有空间和样本；它的交付工具 `propose_knowledge_mapping`（`ROLE_TOOLS`，在 lark 分组）校验任务里的知识库和可写空间，新建空间要求运行能看所有空间，同名同 id 的新空间当作归入。`proposeMapping` 存 `proposal`（含方向的 hash，`later` 的在方向变了后重看），`autoApply` 时直接 `acceptProposal`。运行结束一条通知（`notifyProposals`，链接 `#/sources/kb`），再排下一批；看过的一周内不再看。
+- **决定**（`applyMapping` / `kbAction`）：map / create / ignore / later / reset / pause / resume / update / read；新空间用 `createSpace`；初始程度写到目标空间的 `wiki:<知识库>` 节点（`attention.ts` 的 `setNodeLevel` 加 `future`，节点还没有页面时也能定）；`ensureCrawl` 用 `lark-wiki.ts` 新增的 `startSpaceCrawl` 从顶层建暂停的爬取（`wikiSpaceId`、`skipCaptured`），改目标时停掉旧的，读完一周后重走。
+- **每晚读取**（`readKnowledgeDaily`，定时任务 `lark-kb-read` 每天 2:30）：`splitBudget` 先扣固定份额，再按优先级 3:2:1 分 `dailyDocs`；`crawlLoop` 对 `skipCaptured` 的爬取跳过空间里已有的页面（按 wiki 链接或 document id 找，记 `known`，不占份额）；读完的知识库把剩下的让给别的；前一晚读的还在排队整理时跳过那个空间。爬取交接前先 `applyNodeLevels`，仅检索的页面不进整理。每批写 `lark_kb_reads`；简报任务多一行“从飞书知识库读了 N 篇”，材料列表里不再逐篇列这些页面。
+- **爬取存储**：每个爬取一个 kv 键 `lark_wiki_crawl/<id>`（原来所有爬取在 `lark_wiki_crawls` 一个值里，每读一篇都整体重写），旧值第一次读取时拆开；`forgetCrawl` 删掉被新爬取取代的。
+- **入口**：网页原件 → 知识库（`web/src/views/KnowledgeBases.vue`，路由 `/sources/kb`，方向、建议直接生效和每晚篇数也在这里设）；接口 `/api/lark/kb*`；远程 `lark-kb-list` / `lark-kb-discover` / `lark-kb-read` / `lark-kb-map`；`omem lark kb list|discover|read|map`；配置 `lark.knowledge`（`direction`、`autoApply`、`dailyDocs`、`origin`）。拉取时 `wiki_spaces` 按 `checked_at` 和新的 `updated_at` 取新的。

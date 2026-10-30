@@ -51,6 +51,18 @@ registerScheduleKind("lark-docs-watch", (app) => {
     .catch((e) => console.warn("[omem] 检查飞书文档更新失败：", e.message));
 });
 
+// Feishu knowledge bases (channels/lark-knowledge.ts): weekly discovery, nightly reading.
+registerScheduleKind("lark-kb-discover", (app) => {
+  import("./channels/lark-knowledge.ts")
+    .then((m) => m.discoverKnowledgeBases(app, { scheduled: true }))
+    .catch((e) => console.warn("[omem] 发现飞书知识库失败：", e.message));
+});
+registerScheduleKind("lark-kb-read", (app) => {
+  import("./channels/lark-knowledge.ts")
+    .then((m) => m.readKnowledgeDaily(app, { scheduled: true }))
+    .catch((e) => console.warn("[omem] 读飞书知识库失败：", e.message));
+});
+
 export type BootOptions = { port?: number; host?: string; quiet?: boolean; background?: boolean };
 
 /** Open the library, start the API, the run worker and (optionally) background schedules. */

@@ -354,6 +354,59 @@ export const peerCommands: Record<string, Command> = {
     schema: z.object({ space: z.string().max(64).optional(), dryRun: z.boolean().default(true), limit: z.number().int().min(1).max(10_000).optional() }),
     run: async (app, a) => (await import("../sources/duplicates.ts")).mergeDuplicateDocs(app, a),
   },
+  "lark-kb-list": {
+    description: "能看到的飞书知识库（发现过的）：状态（还没判断 / 有建议 / 先放着 / 已归入 / 不读，gone 是已看不到的）、建议的空间和理由、优先级、每晚读的进度；附发现和最近一晚读取的情况",
+    schema: z.object({ status: z.enum(["new", "proposed", "later", "mapped", "ignored", "gone", "all"]).optional(), limit: z.number().int().min(1).max(2000).default(200) }),
+    run: async (app, a) => {
+      const k = await import("../channels/lark-knowledge.ts");
+      const list = k.listKnowledgeBases(app, { status: a.status });
+      return {
+        ...k.knowledgeOverview(app),
+        total: list.length,
+        kbs: list.slice(0, a.limit).map((kb) => ({
+          id: kb.id, name: kb.name, type: kb.spaceType, status: kb.status, gone: !!kb.goneAt, target: kb.targetSpace, priority: kb.priority, level: kb.level, dailyShare: kb.dailyShare, paused: kb.paused,
+          proposal: kb.proposal && { action: kb.proposal.action, space: kb.proposal.space, newSpace: kb.proposal.newSpace, priority: kb.proposal.priority, level: kb.proposal.level, reason: kb.proposal.reason, at: kb.proposal.at },
+          sample: kb.sample && { roots: kb.sample.rootCount, more: kb.sample.more, titles: kb.sample.roots.slice(0, 8).map((r) => r.title), error: kb.sample.error },
+          progress: kb.progress,
+        })),
+      };
+    },
+  },
+  "lark-kb-discover": {
+    description: "立即发现能看到的飞书知识库（只读）：新出现的浅读一层目录，交给 kb-scout 提建议；在后台运行，进度和结果看 lark-kb-list",
+    schema: z.object({}),
+    run: async (app) => (await import("../channels/lark-knowledge.ts")).startDiscovery(app),
+  },
+  "lark-kb-read": {
+    description: "立即从已归入空间的飞书知识库读一批（只读）：limit 篇（默认每晚的篇数），kb 只读这一个知识库；在后台运行，结果看 lark-kb-list 的 reading",
+    schema: z.object({ limit: z.number().int().min(1).max(500).optional(), kb: z.string().regex(/^[\w-]{1,80}$/).optional() }),
+    run: async (app, a) => {
+      const k = await import("../channels/lark-knowledge.ts");
+      if (a.kb && k.getKb(app, a.kb)?.status !== "mapped") throw new HttpError(409, `知识库 ${a.kb} 还没有归入空间`);
+      return k.startReading(app, a);
+    },
+  },
+  "lark-kb-map": {
+    description: "处理一个飞书知识库（只改 omem 自己的库，读飞书仍是只读）：accept 采纳建议；map 归入已有空间（space）；create 新建空间（new_space）；ignore 不读；later 先放着；reset 重新交给 kb-scout；pause / resume 暂停或继续每晚的读取；update 改 priority / level / daily_share",
+    schema: z.object({
+      kb: z.string().regex(/^[\w-]{1,80}$/),
+      action: z.enum(["accept", "map", "create", "ignore", "later", "reset", "pause", "resume", "update"]),
+      space: z.string().max(80).optional(),
+      new_space: z.object({ id: z.string(), name: z.string(), kind: z.enum(["project", "topic", "learning"]).optional(), description: z.string() }).optional(),
+      priority: z.enum(["high", "normal", "low"]).optional(),
+      level: z.enum(["focus", "normal", "reference"]).optional(),
+      daily_share: z.number().int().min(0).max(2000).nullable().optional(),
+    }),
+    run: async (app, a) => {
+      const k = await import("../channels/lark-knowledge.ts");
+      const body = { action: a.action, space: a.space, newSpace: a.new_space, priority: a.priority, level: a.level, dailyShare: a.daily_share };
+      const parsed = k.kbActionSchema.safeParse(Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined)));
+      if (!parsed.success) throw new HttpError(400, parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+      const r = await k.kbAction(app, a.kb, parsed.data);
+      const kb = "kb" in r ? r.kb : null;
+      return { ...r, kb: kb && { id: kb.id, name: kb.name, status: kb.status, target: kb.targetSpace, priority: kb.priority, level: kb.level, paused: kb.paused, crawlId: kb.crawlId } };
+    },
+  },
   "lark-doc-import": {
     description: "立即读取一篇飞书文档成原件（含素材和链接的文档），返回结果；不交给整理，除非 ingest",
     schema: z.object({ url: z.string().url(), space: z.string().max(64).default("personal"), depth: z.number().int().min(0).max(5).optional(), force: z.boolean().default(true), ingest: z.boolean().default(false) }),

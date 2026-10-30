@@ -15,6 +15,18 @@
 - `lark_doc_create` / `lark_doc_update` / `lark_doc_move`：以本人身份写飞书文档，只在本人要求时用。
 - 读文档用 `import_url`（可给 `depth`）；整个知识库用 `lark_wiki_crawl`（start / continue / stop / status，可分批）。
 
+## 能看到的知识库（kb-scout）
+
+omem 每周列出本人能看到的全部飞书知识库，交给 kb-scout 角色提归属建议；只有它能用 `propose_knowledge_mapping`，kb 填任务里列出的 id：
+
+- `map` + `space`：归入已有空间（不能是代码仓库空间）。
+- `create` + `new_space`（id 用小写字母、数字和连字符，name，kind 为 project / topic / learning，description 一句话）：新建空间。同一领域的几个知识库用同一个新空间（同 id、同名称）；id 被别的空间占了会被拒绝。
+- `ignore` 不读；`later` 先放着，方向变了以后再问。
+- `priority`（high / normal / low）决定每晚读的份额（3:2:1），`level`（focus / normal / reference）写在目标空间的知识库目录上，读进来的页面都按这一档，reference 的只检索、不整理。
+- `reason` 写依据：方向里的哪一点、目录里的哪些标题。
+
+本人开了“建议直接生效”时调用即生效（新建空间、开始每晚读取），否则等本人在原件 → 知识库确认。本人已经定过的知识库不能再提。只看名称、简介和目录标题判断，不读文档内容。
+
 ## 采集设置
 
 `list_lark_chats` 列出会话；`set_lark_subscription`、`set_lark_capture_policy`、`set_lark_backfill` 会改本人的飞书采集设置，只在本人明确要求时用。

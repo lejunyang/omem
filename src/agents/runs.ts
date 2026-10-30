@@ -5,7 +5,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 
-export type RunKind = "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "memory-review" | "memory-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge";
+export type RunKind = "archive" | "archive-rule-draft" | "ask" | "agent" | "agent-followup" | "thread-summary" | "learn-feed" | "ingest" | "wiki-plan" | "wiki-write" | "wiki-lint" | "wiki-organize" | "heartbeat" | "dream" | "code" | "review" | "tutor" | "sync" | "brief" | "curate" | "ingest-shadow" | "memory-review" | "memory-organize" | "item-settle" | "role-merge" | "profile-review" | "rule-fire" | "guest" | "lark-command" | "lark-resource-parse" | "wake" | "triage" | "digest" | "peer-agent" | "replay" | "replay-arm" | "replay-judge" | "kb-scout";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 export type Run = {
   /** Background run that found nothing to do; hidden from the default run list. */

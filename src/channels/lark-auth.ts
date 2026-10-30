@@ -15,6 +15,7 @@ export const USER_FEATURES: Record<string, { label: string; anyOf: string[] }[]>
   "wiki-read": [
     { label: "读知识库节点和子节点", anyOf: ["wiki:node:retrieve", "wiki:wiki:readonly", "wiki:wiki"] },
     { label: "读知识库信息", anyOf: ["wiki:space:read", "wiki:wiki:readonly", "wiki:wiki"] },
+    { label: "列出能看到的知识库", anyOf: ["wiki:space:retrieve", "wiki:wiki:readonly", "wiki:wiki"] },
   ],
   "doc-write": [
     { label: "新建文档", anyOf: ["docx:document:create", "docx:document"] },
